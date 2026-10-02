@@ -57,7 +57,7 @@ table_source(path; mode = "soundings") = Dict{String, Any}("kind" => "table", "m
                             tracers = ["co2"])
         model, mesh = fake_model()
         s = build_observation_sampler(spec, model.state, model.grid; origin = ORIGIN,
-                                      dates = [Date(2021, 12, 1), Date(2021, 12, 2)], halo_width = 0)
+                                      window_seconds = (-86400.0, 86400.0), halo_width = 0)
         @test s isa ObservationSampler
         @test length(s.soundings) == 8 && length(s.sites) == 3
         @test issorted(s.sounding_times)
@@ -166,7 +166,7 @@ end
                             time_interpolation = "nearest_window", write_profile_for_sites = true)
         model, _ = fake_model()
         s = build_observation_sampler(spec, model.state, model.grid; origin = ORIGIN,
-                                      dates = [Date(2021, 12, 2)], halo_width = 0)
+                                      window_seconds = (0.0, 86400.0), halo_width = 0)
         begin_observation_day!(s, "20211202", 1)
         observe_window_boundary!(s, model.state, 0.0; next_window_seconds = 3600.0)       # emits a
         model.state.tracers_raw[:, :, :, 1] .*= 2
@@ -213,7 +213,7 @@ end
         spec = sampler_spec(dir; sources = Any[table_source(csv)])
         model, _ = fake_model()
         s = build_observation_sampler(spec, model.state, model.grid; origin = ORIGIN,
-                                      dates = [Date(2021, 12, 2)], halo_width = 0)
+                                      window_seconds = (0.0, 86400.0), halo_width = 0)
         begin_observation_day!(s, "20211202", 1)
         observe_window_boundary!(s, model.state, 0.0; next_window_seconds = 3600.0)       # holds p, q (guess: 1 h)
         @test length(s.pending.range) == 2
@@ -241,18 +241,18 @@ end
         model, _ = fake_model()
         bad = sampler_spec(dir; sources = Any[table_source(csv)], tracers = ["sf6"])
         @test_throws ArgumentError build_observation_sampler(bad, model.state, model.grid; origin = ORIGIN,
-                                                             dates = [Date(2021, 12, 2)], halo_width = 0)
+                                                             window_seconds = (0.0, 86400.0), halo_width = 0)
         hybrid_top = AtmosGrid(model.grid.horizontal, HybridSigmaPressure([0.0, 0.0, 0.0, 0.0], [0.01, 0.1, 0.5, 1.0]), CPU(); FT = Float64)
         spec = sampler_spec(dir; sources = Any[table_source(csv)])
         @test_throws ArgumentError build_observation_sampler(spec, model.state, hybrid_top; origin = ORIGIN,
-                                                             dates = [Date(2021, 12, 2)], halo_width = 0)
+                                                             window_seconds = (0.0, 86400.0), halo_width = 0)
         # Regional mesh: requests outside the domain are counted, not sampled.
         regional = LatLonMesh(; FT = Float64, Nx = 4, Ny = 3, longitude = (0, 40), latitude = (0, 30))
         rgrid = AtmosGrid(regional, model.grid.vertical, CPU(); FT = Float64)
         sites = joinpath(dir, "sites.csv")
         write(sites, "id,lat,lon\ninside,10,20\noutside,-50,100\n")
         rspec = sampler_spec(dir; sources = Any[table_source(csv), table_source(sites; mode = "sites")])
-        rs = build_observation_sampler(rspec, model.state, rgrid; origin = ORIGIN, dates = [Date(2021, 12, 2)], halo_width = 0)
+        rs = build_observation_sampler(rspec, model.state, rgrid; origin = ORIGIN, window_seconds = (0.0, 86400.0), halo_width = 0)
         @test isempty(rs.soundings) && rs.counters.unlocated_soundings == 1
         @test length(rs.sites) == 1 && rs.counters.unlocated_sites == 1
         begin_observation_day!(rs, "20211202", 1)
@@ -342,7 +342,7 @@ end
         spec = sampler_spec(dir; sources = Any[table_source(csv)])
         model, _ = fake_model()
         s = build_observation_sampler(spec, model.state, model.grid; origin = ORIGIN,
-                                      dates = [Date(2021, 12, 2)], halo_width = 0)
+                                      window_seconds = (0.0, 86400.0), halo_width = 0)
         begin_observation_day!(s, "20211202", 1)
         begin_observation_day!(s, "20211203", 2)          # single file: later calls are no-ops
         observe_window_boundary!(s, model.state, 0.0; next_window_seconds = 3600.0)       # nothing held
@@ -370,7 +370,7 @@ end
         spec = sampler_spec(dir; sources = Any[table_source(csv), table_source(sites; mode = "sites")])
         model, _ = fake_model(; FT = Float32)
         s = build_observation_sampler(spec, model.state, model.grid; origin = ORIGIN,
-                                      dates = [Date(2021, 12, 2)], halo_width = 0)
+                                      window_seconds = (0.0, 86400.0), halo_width = 0)
         begin_observation_day!(s, "20211202", 1)
         warm = fill(Float32(300), size(model.state.air_mass))
         observe_window_boundary!(s, model.state, 0.0; next_window_seconds = 3600.0, temperature = warm)
@@ -396,11 +396,27 @@ end
         csv = joinpath(dir, "soundings.csv")
         write(csv, "id,time,lat,lon\nnp,2021-12-02T00:30:00,89,0\nsp,2021-12-02T00:30:00,-89,0\neq,2021-12-02T00:30:00,0,100\n")
         spec = sampler_spec(dir; sources = Any[table_source(csv)])
-        s = build_observation_sampler(spec, state, grid; origin = ORIGIN, dates = [Date(2021, 12, 2)], halo_width = 2)
+        sites = joinpath(dir, "sites.csv")
+        write(sites, "id,lat,lon,intake_height\nn,60,10,10\ns,-60,200,10\n")
+        spec = sampler_spec(dir; sources = Any[table_source(csv), table_source(sites; mode = "sites")])
+        s = build_observation_sampler(spec, state, grid; origin = ORIGIN, window_seconds = (0.0, 86400.0), halo_width = 2)
         begin_observation_day!(s, "20211202", 1)
-        observe_window_boundary!(s, state, 0.0; next_window_seconds = 3600.0)
+        # GCHP VDIFF temperature panels are interior-only (Nc × Nc × Nz) while air mass is halo-padded.
+        warm = ntuple(p -> [250.0 + 10p + i + 0.1j for i in 1:4, j in 1:4, k in 1:2], 6)
+        observe_window_boundary!(s, state, 0.0; next_window_seconds = 3600.0, temperature = warm)
         observe_window_boundary!(s, state, 3600.0; next_window_seconds = 3600.0)
+        bad = ntuple(_ -> fill(300.0, 5, 5, 2), 6)
+        @test_throws DimensionMismatch observe_window_boundary!(s, state, 7200.0; next_window_seconds = 3600.0,
+                                                                temperature = bad)
         finish_observations!(s); close(s)
+        NCDataset(joinpath(dir, "obs_sites.nc"), "r") do ds
+            @test ds["height_method"][:, 1] == Int8[2, 2]
+            @test ds["height_method"][:, 2] == Int8[0, 0]
+            top = ds["intake_layer_top_agl"][:, :]
+            expected = [(250 + 10ds["cell_panel"][n] + ds["cell_i"][n] + 0.1ds["cell_j"][n]) / 280 for n in 1:2]
+            @test top[:, 1] ./ top[:, 2] ≈ expected rtol = 1e-5
+            @test length(unique(ds["cell_panel"][:])) == 2
+        end
         NCDataset(joinpath(dir, "obs_soundings.nc"), "r") do ds
             panels = ds["cell_panel"][:]
             @test length(unique(panels)) == 3

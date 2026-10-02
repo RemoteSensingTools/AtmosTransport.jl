@@ -370,11 +370,6 @@ area, and column air mass per area.
 
 ### `[output.observations]` — sampling at observation points
 
-**Status:** the `[output.observations]` contract below is parsed and
-validated (`validate_config` rejects unknown keys and a missing run origin).
-Runtime sampling is being wired in; an enabled table currently fails at
-startup with an `ArgumentError` naming this limitation.
-
 Instead of (or in addition to) gridded snapshots, the run can sample tracer
 profiles at **soundings** (time-stamped points such as OCO-2 Lite soundings)
 and at fixed **sites** (surface stations such as NOAA ObsPack). Sampling uses
@@ -391,7 +386,8 @@ path = "~/data/AtmosTransport/output/obs_{YYYYMMDD}.nc"   # -> obs_<date>_soundi
 time_interpolation = "linear"            # "linear" | "nearest_window"
 tracers = ["co2_natural", "co2_fossil"]  # omit for all tracers
 write_profile_for_sites = false          # true also writes full site profiles
-layer_height_temperature_kelvin = 280.0  # fallback for layer heights when the binary has no temperature
+layer_height_temperature_kelvin = 280.0  # layer-height temperature; cubed-sphere binaries with GCHP
+                                         #   VDIFF fields use their layer temperature instead
 # start_time = "2021-12-02T00:00:00"     # required only when [input].start_date is absent
 deflate_level = 0
 
@@ -418,17 +414,29 @@ The file partition follows `[output].split`: one `_soundings` and one `_sites`
 file per run, or one pair per daily binary with `{date}`/`{YYYYMMDD}`
 substituted. Unknown keys in this table or in a source are rejected. Source
 paths are templates expanded per run day. Sounding times are absolute UTC, so
-the run needs an origin: `[input].start_date` at 00:00 UTC, or `start_time`
-when the inputs are an explicit `binary_paths` list; `validate_config`
-enforces this.
+the run needs an origin, the start of window 1 of the first binary:
+`[input].start_date` at 00:00 UTC, or `start_time` when the inputs are an
+explicit `binary_paths` list. `validate_config` enforces this, and the run
+refuses an origin on a different day than the first binary's date label.
+Only soundings inside the transported span are sampled; a single-file run
+with `start_window > 1` starts that many windows after the origin.
 
-Planned file contents (documented in [Output schema](@ref) as the writers
-land): per sounding, id, time, location, containing cell, bracketing sample
-times and weight, dry interface pressures, per-layer dry air mass, each
-tracer's profile (dry mole fraction) and column mean; per site and window end,
-the tracer value in the layer containing the intake height, the lowest-layer
-value, the chosen layer index with its bottom/top heights, and surface
-pressure. Averaging kernels are applied offline.
+Each sounding row holds the id, time, location, containing cell, bracketing
+sample times and weight, dry interface pressures, per-layer dry air mass, and
+each tracer's profile (dry mole fraction) and column mean. Each site record
+holds, per window end, the tracer value in the layer containing the intake
+height, the lowest-layer value, the chosen layer with its bottom and top
+heights, and surface pressure. Averaging kernels are applied offline. See
+[Output schema](@ref) for the variable tables.
+
+Observation sampling adds one small gather per window and does not change
+transport: the transported state and gridded snapshot output are unchanged
+with or without it (tested on lat-lon runs; on lat-lon and reduced-Gaussian
+runs it makes the runner step window by window, as snapshots do). Station
+heights are hypsometric with dry-air temperature; they use the window's
+temperature, so they lag the window end by up to one window. With
+`split = "daily"` snapshots, observation appends wait for the background
+daily snapshot write, because all NetCDF writes share one lock.
 
 ### Multi-threaded execution
 

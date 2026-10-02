@@ -199,3 +199,20 @@ end
     @test out[1] ≈ 400e-6 && isnan(out[2]) && out[3] ≈ 410e-6
     @test column_mean_vmr(Float32[1, 1], Float32[1f-6, 3f-6]) ≈ 2e-6 rtol = 1e-6
 end
+
+@testset "intake layers on the real GEOS L72 grid (k = 1 at the top)" begin
+    cfg = O.TOML.parsefile(joinpath(@__DIR__, "..", "..", "config", "geos_L72_coefficients.toml"))
+    A = Float64.(cfg["coefficients"]["a"])
+    B = Float64.(cfg["coefficients"]["b"])
+    @test B[1] == 0 && B[end] == 1                  # file is top-down like the model
+    ps, g, area = 101325.0, 9.80665, 1e10
+    air = diff(A .+ B .* ps) .* area ./ g
+    p_half = interface_pressures!(zeros(73), air, area, g, A[1])
+    @test p_half[end] ≈ ps rtol = 1e-12
+    z = layer_heights_agl!(zeros(73), p_half, ConstantLayerTemperature(280.0), g)
+    @test 110 < z[72] < 140                          # surface layer ~124 m thick
+    @test intake_layer_index(z, 10.0) == 72
+    @test intake_layer_index(z, 100.0) == 72
+    @test intake_layer_index(z, 300.0) == 70
+    @test intake_layer_index(z, 500.0) == 69
+end

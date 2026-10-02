@@ -56,7 +56,9 @@ struct GatherPlan
     position::Vector{Int}
 end
 
-function GatherPlan(cells::AbstractVector{CellLocation}, npanel::Int)
+# `column` selects the slab index: the halo-aware `c.column` for state arrays,
+# or `c.cell` for interior-only fields. Grouping and positions do not depend on it.
+function GatherPlan(cells::AbstractVector{CellLocation}, npanel::Int; column = c -> c.column)
     counts = zeros(Int, npanel)
     for c in cells
         counts[c.panel] += 1
@@ -68,7 +70,7 @@ function GatherPlan(cells::AbstractVector{CellLocation}, npanel::Int)
     for (i, c) in enumerate(cells)
         cursor[c.panel] += 1
         position[i] = cursor[c.panel]
-        columns[cursor[c.panel]] = Int32(c.column)
+        columns[cursor[c.panel]] = Int32(column(c))
     end
     ranges = [starts[p] + 1:starts[p] + counts[p] for p in 1:npanel]
     return GatherPlan(columns, ranges, position)
@@ -123,20 +125,17 @@ function _resolve_tracer_slots(state, tracers)
 end
 
 """
-    build_observation_sampler(spec, state, grid; origin, dates, halo_width)
+    build_observation_sampler(spec, state, grid; origin, window_seconds, halo_width)
 
-Read every source, locate the requests on `grid.horizontal`, and prepare the
-device gather buffers. Output files are opened by `begin_observation_day!`.
+Read every source for the days covering `window_seconds` (seconds after
+`origin`, half-open), locate the requests on `grid.horizontal`, and prepare
+the device gather buffers. Output files are opened by `begin_observation_day!`.
 `NoObservationOutput` yields `NoObservationSampler()`.
 """
 build_observation_sampler(::NoObservationOutput, args...; kwargs...) = NoObservationSampler()
-# TODO(observation sampling, phase 6): remove once the runner builds the
-# sampler from the model state; `validate_config` rejects enabled tables now.
-build_observation_sampler(::ObservationOutputSpec) =
-    throw(ArgumentError(OBSERVATION_RUNTIME_UNAVAILABLE_MESSAGE))
 
 function build_observation_sampler(spec::ObservationOutputSpec, state, grid;
-                                   origin::DateTime, dates::AbstractVector{Date},
+                                   origin::DateTime, window_seconds::Tuple{Real, Real},
                                    halo_width::Integer)
     mesh = grid.horizontal
     vertical = grid.vertical
@@ -146,7 +145,7 @@ function build_observation_sampler(spec::ObservationOutputSpec, state, grid;
     reference = _reference_array(state.air_mass)
     nlevel = size(reference, ndims(reference))
     locator = cell_locator(mesh; halo_width)
-    set = build_observation_set(spec.sources, origin, dates)
+    set = build_observation_set(spec.sources, origin, window_seconds)
 
     soundings = SoundingRequest[]
     times = Float64[]
@@ -275,8 +274,9 @@ end
 Sample `state` at a met-window end `time_seconds` after the run origin.
 `next_window_seconds` is the length of the window that starts now (it sets
 which soundings receive their first sample). `temperature`, when given, is
-a per-layer temperature field with the air-mass layout used for site layer
-heights; otherwise the configured constant applies. Call once at `t = 0`
+a per-layer temperature field (K, k = 1 at the top) used for site layer
+heights, either with the air-mass layout or, on the cubed sphere, as
+interior-only panels; otherwise the configured constant applies. Call once at `t = 0`
 on the initial state and after every window.
 """
 observe_window_boundary!(::NoObservationSampler, state, time_seconds::Real; kwargs...) = nothing
@@ -307,9 +307,20 @@ function _gather!(s::ObservationSampler, state, range::UnitRange{Int}, temperatu
             s.temperature_buffers = ObservationGatherBuffers(s.buffers.air, s.nlevel, Int[];
                                                              capacity = s.buffers.capacity)
         end
-        gather_field!(s.temperature_buffers, temperature, plan.columns, plan.panel_ranges)
+        tplan = _field_plan(s, cells, plan, temperature)
+        gather_field!(s.temperature_buffers, temperature, tplan.columns, tplan.panel_ranges)
     end
     return plan
+end
+
+# Lat-lon and reduced-Gaussian fields share the state layout.
+_field_plan(s::ObservationSampler, cells, plan::GatherPlan, ::AbstractArray) = plan
+function _field_plan(s::ObservationSampler, cells, plan::GatherPlan, field::NTuple{6, <:AbstractArray})
+    n1 = size(field[1], 1)
+    Nc = s.mesh.Nc
+    n1 == Nc + 2 * s.locator.halo_width && return plan
+    n1 == Nc && return GatherPlan(cells, s.npanel; column = c -> c.cell)
+    throw(DimensionMismatch("temperature panels are $(n1) wide; expected $(Nc) or $(Nc + 2 * s.locator.halo_width)"))
 end
 
 _site_position(plan::GatherPlan, nsounding::Int, i::Int) = plan.position[nsounding + i]

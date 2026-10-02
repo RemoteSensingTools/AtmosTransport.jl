@@ -71,7 +71,6 @@ export AbstractTableFormat, AutoTableFormat, CSVTableFormat, TOMLTableFormat, Ne
 export AbstractObservationTimeInterpolation, LinearWindowInterpolation, NearestWindowSampling
 export AbstractObservationOutput, NoObservationOutput, ObservationOutputSpec
 export observation_output_spec, observations_enabled, observation_output_path
-export OBSERVATION_RUNTIME_UNAVAILABLE_MESSAGE
 export SoundingRequest, SiteRequest, ObservationSet
 export read_observation_requests, build_observation_set, expand_observation_paths
 export CellLocation, AbstractCellLocator, LatLonCellLocator, ReducedGaussianCellLocator

@@ -554,17 +554,33 @@ function _run_window_seconds(origin::DateTime, dates::AbstractVector{Date})
     return t0, t1
 end
 
-"""
-    build_observation_set(sources, origin, dates) -> ObservationSet
+# Calendar days whose files may hold requests inside the seconds window.
+function _window_days(origin::DateTime, (t0, t1)::Tuple{Real, Real})
+    isfinite(t0) && isfinite(t1) && t1 > t0 || throw(ArgumentError(
+        "observation window must be a finite, non-empty interval; got ($(t0), $(t1))"))
+    first_day = Date(origin + Millisecond(floor(Int, 1000 * t0)))
+    last_day = Date(origin + Millisecond(ceil(Int, 1000 * t1)) - Millisecond(1))
+    return collect(first_day:Day(1):last_day)
+end
 
-Read every source, keep the soundings inside the run window (the run days
-as a half-open interval), sort them by time (stable), and merge sites by
+"""
+    build_observation_set(sources, origin, window_seconds) -> ObservationSet
+    build_observation_set(sources, origin, dates)
+
+Read every source for the days covering the window, keep the soundings with
+`window_seconds[1] <= t < window_seconds[2]` (seconds after `origin`; the
+`dates` form uses whole days), sort them by time (stable), and merge sites by
 `id`. Sites that repeat with the same location are deduplicated; the same
 `id` with a different location is an error. Per-source counts are logged.
 """
+build_observation_set(sources::AbstractVector{<:AbstractObservationSource}, origin::DateTime,
+                      dates::AbstractVector{Date}) =
+    build_observation_set(sources, origin, _run_window_seconds(origin, dates))
+
 function build_observation_set(sources::AbstractVector{<:AbstractObservationSource},
-                               origin::DateTime, dates::AbstractVector{Date})
-    t0, t1 = _run_window_seconds(origin, dates)
+                               origin::DateTime, window_seconds::Tuple{Real, Real})
+    t0, t1 = Float64.(window_seconds)
+    dates = _window_days(origin, (t0, t1))
     soundings = SoundingRequest[]
     sites = SiteRequest[]
     seen = Dict{String, SiteRequest}()

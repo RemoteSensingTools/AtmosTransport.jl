@@ -8,10 +8,28 @@
   observation points (OCO-2 Lite soundings, NOAA ObsPack sites, generic point
   tables) from the containing model cell at met-window ends. The table is
   parsed by `observation_output_spec` and checked by `validate_config`, which
-  rejects unknown keys and requires an absolute run origin. Runtime sampling
-  is being wired in; an enabled table currently fails at startup.
+  rejects unknown keys and requires an absolute run origin. Both runners
+  sample at t = 0 and at every met-window end: soundings are blended linearly
+  between the two bracketing window ends (or taken from the nearest), sites
+  get the intake-layer value from hypsometric heights. Output goes to
+  append-only `_soundings` / `_sites` NetCDF files (see the output schema).
+  Gridded snapshot output is unchanged.
+- All runtime NetCDF writes, including the background daily snapshot task,
+  now share one lock; netcdf-c is not thread-safe.
 - `[output.fields].tracers = "name"` (a single string) no longer throws a
   `MethodError`; it selects that one tracer as documented.
+
+### Verification and remaining limits
+
+- New core tests cover config parsing, cell location on every topology
+  against independent references, source readers (including a real OCO-2
+  Lite file check), the device gather, pressure and height
+  reconstruction on GEOS L72, the sampler's time bookkeeping, and end-to-end
+  lat-lon and cubed-sphere runs, including identical results across a
+  binary handoff. An opt-in CUDA test covers the gather on an L40S.
+- Station placement uses a constant temperature except on cubed-sphere
+  binaries with GCHP VDIFF temperatures. Averaging kernels are applied
+  offline.
 
 ## 0.4.0 — 2026-09-06
 

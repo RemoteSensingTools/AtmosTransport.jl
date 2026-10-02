@@ -73,9 +73,11 @@ read.
   and snapshot NetCDF output
 - [`runner/`](runner/) — the runner's progress timer, configuration validation,
   runtime summary, owned input/output resources, observation-sampling glue
-  (`runner/observations.jl`: parses `[output.observations]`, hands the
-  sampler to `RunSnapshotOutput` so it closes with the snapshot stream, and
-  holds the `validate_config` origin and runtime-support checks), and
+  (`runner/observations.jl`: builds the `[output.observations]` sampler from
+  the model state, hands it to `RunSnapshotOutput` so it closes with the
+  snapshot stream, resolves the run origin and run days, and holds the
+  `validate_config` origin check; both runners call it at t = 0 and at every
+  met-window end, forcing the per-window loop when sampling is on), and
   model setup. These files are included
   inside `DrivenRunner`; the top-level file retains the transport loops.
   Single-file NetCDF appends selected snapshots without retaining past frames;

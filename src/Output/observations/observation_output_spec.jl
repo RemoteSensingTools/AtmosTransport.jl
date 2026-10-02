@@ -76,10 +76,6 @@ const _TIME_INTERPOLATIONS = (linear = LinearWindowInterpolation(),
 # unguarded `tryparse` would accept "20211202" as the year 20,211,202.
 const _ISO_UTC_RE = r"^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?)?$"
 
-const OBSERVATION_RUNTIME_UNAVAILABLE_MESSAGE =
-    "[output.observations] is parsed, but runtime observation sampling is not " *
-    "available in this build yet; set enabled = false or remove the table."
-
 # Shared strict UTC parser for config values and table columns.
 _parse_iso_utc(::Nothing, ::AbstractString) = nothing
 _parse_iso_utc(value::DateTime, ::AbstractString) = value

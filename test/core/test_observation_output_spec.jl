@@ -40,8 +40,9 @@ end
     out = R.RunSnapshotOutput()
     @test out.observations isa NoObservationSampler
     @test close(out) === nothing
-    @test R._install_observation_sampler!(out, _obs_cfg(; enabled = false), SingleOutputFile()) isa
-          NoObservationSampler
+    @test R._install_observation_sampler!(out, _obs_cfg(; enabled = false), SingleOutputFile(), nothing,
+                                          nothing; cfg = Dict{String, Any}(), binary_paths = String[],
+                                          halo_width = 0) isa NoObservationSampler
     @test out.observations isa NoObservationSampler
 end
 
@@ -230,11 +231,10 @@ end
     ok, errors = validate_config(Dict{String, Any}("input" => input, "output" => off))
     @test !any(e -> occursin("observations", e) || occursin("split", e), errors)
 
-    # Enabled: an explicit binary list needs start_time, and this build has no runtime sampler yet.
+    # Enabled: an explicit binary list needs start_time.
     ok, errors = validate_config(Dict{String, Any}("input" => input, "output" => _obs_cfg()))
     @test !ok
     @test any(e -> occursin("absolute run origin", e), errors)
-    @test any(e -> occursin("not available in this build yet", e), errors)
     with_origin = _obs_cfg(; start_time = "2021-12-02T00:00:00")
     ok, errors = validate_config(Dict{String, Any}("input" => input, "output" => with_origin))
     @test !any(e -> occursin("absolute run origin", e), errors)
@@ -283,19 +283,13 @@ end
         @test reference[2] == disabled[2]
         @test reference[3] == disabled[3]
 
-        enabled = Dict{String, Any}(
+        # A missing literal source file fails the run before any output is written.
+        missing_source = Dict{String, Any}(
             "path" => joinpath(dir, "obs.nc"),
             "start_time" => "2021-12-02T00:00:00",
             "sources" => Any[Dict{String, Any}("kind" => "table", "mode" => "soundings",
                                                "path" => joinpath(dir, "points.csv"))])
-        err = try
-            run_with(joinpath(dir, "enabled.nc"), enabled)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ArgumentError
-        err isa ArgumentError && @test occursin("not available in this build yet", sprint(showerror, err))
+        @test_throws ArgumentError run_with(joinpath(dir, "enabled.nc"), missing_source)
         @test !isfile(joinpath(dir, "obs_soundings.nc"))
     end
 end

@@ -218,12 +218,8 @@ function validate_config(cfg::AbstractDict)
             nothing
         end
         if spec !== nothing
-            # Separate captures so a config with several problems reports all of them.
             _capture_config_error!(errors) do
                 _check_observation_time_origin(spec, cfg)
-            end
-            _capture_config_error!(errors) do
-                _check_observation_runtime_support(spec)
             end
         end
     end
