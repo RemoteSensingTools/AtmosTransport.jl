@@ -89,6 +89,7 @@ function append_snapshot!(stream::NetCDFSnapshotStream, frame::AbstractSnapshotF
     keys, names, Nz = _validate_stream_frame(stream, frame)
     mesh = stream.grid.horizontal
     first_record = stream.count == 0
+    lock(_NETCDF_IO_LOCK)   # shared with observation appends and the daily write task
     try
         if first_record
             _ensure_parent_dir(stream.path)
@@ -121,6 +122,8 @@ function append_snapshot!(stream::NetCDFSnapshotStream, frame::AbstractSnapshotF
             # Preserve the original write error when cleanup also fails.
         end
         rethrow()
+    finally
+        unlock(_NETCDF_IO_LOCK)
     end
     stream.count += 1
     stream.last_time = frame.time_hours

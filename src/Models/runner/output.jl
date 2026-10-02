@@ -133,8 +133,12 @@ function _write_frames_to_disk(spec::RuntimeOutputSpec, path::AbstractString,
         write_snapshot_binary(path, frames, grid; mass_basis = mass_basis,
                               options = spec.options)
     else
-        write_snapshot_netcdf(path, frames, grid; mass_basis = mass_basis,
-                              options = spec.options, fields = spec.fields)
+        # netcdf-c is not thread-safe: observation appends on the main thread
+        # and this background write share one lock.
+        lock(_NETCDF_IO_LOCK) do
+            write_snapshot_netcdf(path, frames, grid; mass_basis = mass_basis,
+                                  options = spec.options, fields = spec.fields)
+        end
     end
     return path
 end

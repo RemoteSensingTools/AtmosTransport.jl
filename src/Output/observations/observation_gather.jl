@@ -280,6 +280,16 @@ layer_temperature(t::ProfileLayerTemperature, k, z_bottom) = Float64(t.kelvin[k]
 height_method_label(::ConstantLayerTemperature) = :constant
 height_method_label(::SurfaceLapseTemperature) = :surface_lapse
 height_method_label(::ProfileLayerTemperature) = :profile
+# Integer codes stored in the site files; `HEIGHT_METHOD_CODES` is the single table.
+const HEIGHT_METHOD_CODES = (
+    (ConstantLayerTemperature, Int8(0), "constant temperature"),
+    (SurfaceLapseTemperature, Int8(1), "2 m temperature with lapse rate"),
+    (ProfileLayerTemperature, Int8(2), "layer temperature profile"))
+height_method_code(::ConstantLayerTemperature) = HEIGHT_METHOD_CODES[1][2]
+height_method_code(::SurfaceLapseTemperature) = HEIGHT_METHOD_CODES[2][2]
+height_method_code(::ProfileLayerTemperature) = HEIGHT_METHOD_CODES[3][2]
+height_method_codes_description() =
+    join(("$(code) = $(text)" for (_, code, text) in HEIGHT_METHOD_CODES), ", ")
 
 "Dry-air gas constant [J kg⁻¹ K⁻¹]; the same value the diffusion dz helpers use."
 const OBSERVATION_R_DRY = 287.04

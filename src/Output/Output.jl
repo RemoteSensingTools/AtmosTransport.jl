@@ -37,6 +37,11 @@ function _config_bool(value, path::AbstractString)
     return value
 end
 
+# netcdf-c is not thread-safe, even across files. Daily snapshot files are
+# written on a spawned task while observation and single-file snapshot appends
+# happen on the main thread, so every runtime NetCDF write takes this lock.
+const _NETCDF_IO_LOCK = ReentrantLock()
+
 import ..expand_data_path
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                GnomonicPanelConvention, GEOSNativePanelConvention,
@@ -94,6 +99,7 @@ include("observations/observation_readers.jl")
 include("observations/observation_output_spec.jl")
 include("observations/cell_locator.jl")
 include("observations/observation_gather.jl")
+include("observations/observation_netcdf.jl")
 include("observations/observation_sampler.jl")
 
 end # module Output

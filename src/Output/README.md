@@ -42,10 +42,17 @@ writing topology-specific NetCDF files directly.
   `(level, observation)` buffers, plus the host Float64 reconstruction of
   interface pressures, hypsometric layer heights (`AbstractLayerTemperature`
   sources), intake layer index, mixing-ratio profiles, and column means.
-- `observations/observation_sampler.jl` defines the runtime sampler interface
-  (`observe_window_boundary!`, `begin_observation_day!`, `finish_observations!`) and
-  the `NoObservationSampler` default that keeps runs without observation output
-  unchanged.
+- `observations/observation_netcdf.jl` holds the append-only sounding and site
+  NetCDF sinks (`SoundingNetCDFStream`, `SiteNetCDFStream`): files are created
+  on open, every append is flushed and publishes a `completed_*` attribute, and
+  all runtime NetCDF writes share `_NETCDF_IO_LOCK` because netcdf-c is not
+  thread-safe across the background daily snapshot task.
+- `observations/observation_sampler.jl` is the runtime sampler: at every
+  met-window end it gathers the bracketing soundings plus all sites in one
+  launch, blends sounding masses linearly between the two window ends (or takes
+  the nearest end), reconstructs pressures, heights, intake layers, and mixing
+  ratios on the host, and appends to the streams. `NoObservationSampler` is the
+  default that keeps runs without observation output unchanged.
 
 ## Topology Contract
 

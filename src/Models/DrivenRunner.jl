@@ -104,7 +104,7 @@ using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, S
                 output_enabled, output_path, output_path_for_day,
                 capture_snapshot, write_snapshot_netcdf, write_snapshot_binary,
                 NoObservationOutput, ObservationOutputSpec, observation_output_spec,
-                OBSERVATION_RUNTIME_UNAVAILABLE_MESSAGE,
+                OBSERVATION_RUNTIME_UNAVAILABLE_MESSAGE, _NETCDF_IO_LOCK,
                 AbstractObservationSampler, NoObservationSampler, build_observation_sampler
 # TransportModel + DrivenSimulation live alongside us in the Models module;
 # reach up to the parent and pull them in.

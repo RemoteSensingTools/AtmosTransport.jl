@@ -102,8 +102,8 @@ function _cf_time_origin(s::AbstractString, label::AbstractString)
     t = String(strip(chopsuffix(t, "UTC")))
     offset = match(r"([+-])(\d{1,2})(?::?(\d{2}))?$", t)
     if offset !== nothing && occursin(r"\d[T ]\d", t)
-        hours = parse(Int, offset.captures[2])
-        minutes = offset.captures[3] === nothing ? 0 : parse(Int, offset.captures[3])
+        hours = parse(Int, something(offset.captures[2], "0"))
+        minutes = parse(Int, something(offset.captures[3], "0"))
         hours == 0 && minutes == 0 || throw(ArgumentError(
             "$(label): time origin $(repr(s)) has a non-UTC offset"))
         t = String(strip(t[1:prevind(t, offset.offset)]))
@@ -308,7 +308,7 @@ function _read_requests_file!(::Vector{SoundingRequest}, sites::Vector{SiteReque
     return nothing
 end
 
-_nanmedian(v) = (x = filter(isfinite, v); isempty(x) ? NaN : median!(x))
+_nanmedian(v::AbstractVector{Float64}) = (x = filter(isfinite, v); isempty(x) ? NaN : median!(x))
 # `+ 0.0` folds -0.0 into 0.0 so rounding cannot split one site in two.
 _round_intake(h) = isfinite(h) ? round(h; digits = 1) + 0.0 : NaN
 _height_label(h) = isfinite(h) ? @sprintf("%gmagl", h) : "surface"
