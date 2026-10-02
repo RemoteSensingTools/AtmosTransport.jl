@@ -448,6 +448,7 @@ function _load_timevarying_surface_flux_field(cfg, ::Type{FT},
 end
 
 include("surface_flux_regridding.jl")
+include("surface_flux_native.jl")
 
 # ---------------------------------------------------------------------------
 # build_surface_flux_source — LL / RG / CS
@@ -458,8 +459,8 @@ include("surface_flux_regridding.jl")
 @inline _surface_flux_time_varying(cfg) =
     _config_bool(cfg, "time_varying", false, "surface-flux time_varying")
 
-# Kinds for which a 3D (lon,lat,time) time-varying series is supported.
-@inline _surface_flux_supports_time_varying(kind::Symbol) = kind === :lmdz_co2
+# LL series are regridded; cs_native already matches the runtime mesh.
+@inline _surface_flux_supports_time_varying(kind::Symbol) = kind in (:lmdz_co2, :cs_native)
 
 function build_surface_flux_source(grid::AtmosGrid{<:LatLonMesh},
                                    tracer_name::Symbol, cfg, ::Type{FT};
@@ -547,6 +548,10 @@ kinds `_load_file_surface_flux_field` understands work
 (`gridfed_fossil_co2` or user-supplied `file` + `variable`).
 Conservative regridding is enforced — CS bilinear is not supported.
 
+For `kind = "cs_native"` and `time_varying = true`, an aligned NetCDF
+`(time,nf,Ydim,Xdim)` series is loaded directly, multiplied by native cell
+areas, and converted to storage units. No regridding is applied.
+
 If `cfg["time_varying"] = true` and the kind supports a 3-D
 (lon,lat,time) series (currently `:lmdz_co2`), the builder keeps every
 time slice, builds the LL→CS regridder ONCE, applies it per slice, and
@@ -570,7 +575,9 @@ function build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
 
     if _surface_flux_time_varying(cfg)
         _surface_flux_supports_time_varying(kind) || throw(ArgumentError(
-            "time-varying surface flux not supported for kind=$(kind); supported: :lmdz_co2"))
+            "time-varying surface flux not supported for kind=$(kind); supported: :lmdz_co2, :cs_native"))
+        kind === :cs_native && return _build_native_timevarying_cs_surface_flux_source(
+            mesh, tracer_name, cfg, FT, reference_time)
         return _build_timevarying_cs_surface_flux_source(mesh, tracer_name, cfg, FT, reference_time)
     end
 
