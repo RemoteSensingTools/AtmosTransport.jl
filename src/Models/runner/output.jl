@@ -36,11 +36,16 @@ function _push_snapshot_frame!(::SingleOutputFile,
 end
 
 # The outer run owns this resource, including exceptional exits from either topology.
+# `observations` is the `[output.observations]` sampler (a no-op by default); it
+# is closed after the snapshot stream so both get the same lifetime guarantees.
 mutable struct RunSnapshotOutput
     stream::Union{Nothing,NetCDFSnapshotStream}
     pending_write::Union{Nothing,Task}
+    observations::AbstractObservationSampler
 end
-RunSnapshotOutput() = RunSnapshotOutput(nothing, nothing)
+RunSnapshotOutput() = RunSnapshotOutput(nothing, nothing, NoObservationSampler())
+RunSnapshotOutput(stream, pending_write) =
+    RunSnapshotOutput(stream, pending_write, NoObservationSampler())
 
 function _wait_pending_output!(output::RunSnapshotOutput)
     task = output.pending_write
@@ -55,12 +60,17 @@ function _wait_pending_output!(output::RunSnapshotOutput)
 end
 
 function Base.close(output::RunSnapshotOutput)
-    stream = output.stream
-    if stream === nothing
-        _wait_pending_output!(output)
-    else
-        _with_run_resource(stream) do
+    # Take the sampler so a second close cannot close it twice.
+    sampler = output.observations
+    output.observations = NoObservationSampler()
+    _with_run_resource(sampler) do
+        stream = output.stream
+        if stream === nothing
             _wait_pending_output!(output)
+        else
+            _with_run_resource(stream) do
+                _wait_pending_output!(output)
+            end
         end
     end
     return nothing

@@ -368,6 +368,66 @@ Defaults match the historical writer: all tracers, full per-level tracer VMR,
 column means, column tracer mass per area, stored air mass, layer air mass per
 area, and column air mass per area.
 
+### `[output.observations]` — sampling at observation points
+
+**Status:** the `[output.observations]` contract below is parsed and
+validated (`validate_config` rejects unknown keys and a missing run origin).
+Runtime sampling is being wired in; an enabled table currently fails at
+startup with an `ArgumentError` naming this limitation.
+
+Instead of (or in addition to) gridded snapshots, the run can sample tracer
+profiles at **soundings** (time-stamped points such as OCO-2 Lite soundings)
+and at fixed **sites** (surface stations such as NOAA ObsPack). Sampling uses
+the model cell containing each point, at met-window ends only; that is where
+convection and chemistry have been applied and the state is complete.
+Soundings are blended linearly between the two window ends bracketing their
+time (`time_interpolation = "linear"`, the default) or taken from the nearest
+window end (`"nearest_window"`). Sites are written at every window end.
+
+```toml
+[output.observations]
+enabled = true
+path = "~/data/AtmosTransport/output/obs_{YYYYMMDD}.nc"   # -> obs_<date>_soundings.nc, obs_<date>_sites.nc
+time_interpolation = "linear"            # "linear" | "nearest_window"
+tracers = ["co2_natural", "co2_fossil"]  # omit for all tracers
+write_profile_for_sites = false          # true also writes full site profiles
+layer_height_temperature_kelvin = 280.0  # fallback for layer heights when the binary has no temperature
+# start_time = "2021-12-02T00:00:00"     # required only when [input].start_date is absent
+deflate_level = 0
+
+[[output.observations.sources]]
+kind = "oco2_lite"                       # NASA Lite XCO2 files; one request per quality-passing sounding
+path = "~/data/oco2/{YYYY}/oco2_LtCO2_{YYMMDD}_*.nc4"
+quality_flag_max = 0
+
+[[output.observations.sources]]
+kind = "obspack"                         # NOAA ObsPack NetCDF dataset files
+mode = "sites"                           # "sites" (station series) | "soundings" (per record)
+path = "~/data/obspack/data/nc/co2_*_surface-insitu_*.nc"
+site_grouping = "site_code"              # "site_code" | "location"
+
+[[output.observations.sources]]
+kind = "table"                           # id,time,lat,lon[,altitude_agl] as .csv, .toml, or .nc
+mode = "soundings"
+path = "~/data/points.csv"
+```
+
+The file partition follows `[output].split`: one `_soundings` and one `_sites`
+file per run, or one pair per daily binary with `{date}`/`{YYYYMMDD}`
+substituted. Unknown keys in this table or in a source are rejected. Source
+paths are templates expanded per run day. Sounding times are absolute UTC, so
+the run needs an origin: `[input].start_date` at 00:00 UTC, or `start_time`
+when the inputs are an explicit `binary_paths` list; `validate_config`
+enforces this.
+
+Planned file contents (documented in [Output schema](@ref) as the writers
+land): per sounding, id, time, location, containing cell, bracketing sample
+times and weight, dry interface pressures, per-layer dry air mass, each
+tracer's profile (dry mole fraction) and column mean; per site and window end,
+the tracer value in the layer containing the intake height, the lowest-layer
+value, the chosen layer index with its bottom/top heights, and surface
+pressure. Averaging kernels are applied offline.
+
 ### Multi-threaded execution
 
 ```bash

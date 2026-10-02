@@ -55,6 +55,16 @@ export output_fields, output_field_spec, output_path_for_day
 export tracer_fields, layer_selection, layer_selection_label, air_mass_layer_selection
 export capture_snapshot, write_snapshot_netcdf, write_snapshot_binary
 export column_mean_mixing_ratio, layer_mass_per_area, column_mass_per_area
+export AbstractObservationSource, OCO2LiteSource, ObsPackSource, TableSource
+export AbstractObservationMode, SoundingMode, SiteMode
+export AbstractSiteGrouping, SiteCodeGrouping, LocationGrouping
+export AbstractTableFormat, AutoTableFormat, CSVTableFormat, TOMLTableFormat, NetCDFTableFormat
+export AbstractObservationTimeInterpolation, LinearWindowInterpolation, NearestWindowSampling
+export AbstractObservationOutput, NoObservationOutput, ObservationOutputSpec
+export observation_output_spec, observations_enabled, observation_output_path
+export OBSERVATION_RUNTIME_UNAVAILABLE_MESSAGE
+export AbstractObservationSampler, NoObservationSampler, build_observation_sampler
+export observe_window_boundary!, begin_observation_day!, finish_observations!
 
 include("snapshots.jl")
 include("runtime_output.jl")
@@ -65,5 +75,8 @@ include("netcdf_schema.jl")
 include("netcdf_writer.jl")
 include("netcdf_stream.jl")
 include("binary_writer.jl")
+include("observations/observation_sources.jl")
+include("observations/observation_output_spec.jl")
+include("observations/observation_sampler.jl")
 
 end # module Output

@@ -1,5 +1,18 @@
 # Release notes
 
+## Unreleased
+
+### Runtime and output
+
+- New `[output.observations]` contract for sampling tracer profiles at
+  observation points (OCO-2 Lite soundings, NOAA ObsPack sites, generic point
+  tables) from the containing model cell at met-window ends. The table is
+  parsed by `observation_output_spec` and checked by `validate_config`, which
+  rejects unknown keys and requires an absolute run origin. Runtime sampling
+  is being wired in; an enabled table currently fails at startup.
+- `[output.fields].tracers = "name"` (a single string) no longer throws a
+  `MethodError`; it selects that one tracer as documented.
+
 ## 0.4.0 — 2026-09-06
 
 This release changes cubed-sphere numerical results and runtime/output

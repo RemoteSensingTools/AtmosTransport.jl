@@ -19,6 +19,16 @@ writing topology-specific NetCDF files directly.
 - `diagnostics.jl` derives VMR, column means, and mass-per-area fields.
 - `netcdf_schema.jl` defines topology-specific dimensions, coordinates, and metadata.
 - `netcdf_writer.jl` writes topology-specific payload variables through one public API.
+- `observations/observation_sources.jl` defines the typed `[[output.observations.sources]]`
+  descriptors (`OCO2LiteSource`, `ObsPackSource`, `TableSource`), the singleton
+  mode / grouping / table-format types they dispatch on, and their validation.
+- `observations/observation_output_spec.jl` parses `[output.observations]` into
+  `ObservationOutputSpec` (or `NoObservationOutput`), rejecting unknown keys, and
+  resolves `_soundings` / `_sites` file paths with the snapshot day template.
+- `observations/observation_sampler.jl` defines the runtime sampler interface
+  (`observe_window_boundary!`, `begin_observation_day!`, `finish_observations!`) and
+  the `NoObservationSampler` default that keeps runs without observation output
+  unchanged.
 
 ## Topology Contract
 

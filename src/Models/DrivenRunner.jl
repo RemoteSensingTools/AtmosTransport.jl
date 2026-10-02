@@ -102,7 +102,10 @@ using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, S
                 AbstractOutputPartition, SingleOutputFile, DailyOutputFiles,
                 RuntimeOutputSpec, runtime_output_spec, snapshot_hours,
                 output_enabled, output_path, output_path_for_day,
-                capture_snapshot, write_snapshot_netcdf, write_snapshot_binary
+                capture_snapshot, write_snapshot_netcdf, write_snapshot_binary,
+                NoObservationOutput, ObservationOutputSpec, observation_output_spec,
+                OBSERVATION_RUNTIME_UNAVAILABLE_MESSAGE,
+                AbstractObservationSampler, NoObservationSampler, build_observation_sampler
 # TransportModel + DrivenSimulation live alongside us in the Models module;
 # reach up to the parent and pull them in.
 using ..Models: TransportModel
@@ -123,6 +126,7 @@ include("runner/configuration.jl")
 include("runner/summary.jl")
 include("runner/resources.jl")
 include("runner/output.jl")
+include("runner/observations.jl")
 include("runner/model_setup.jl")
 
 # ===========================================================================
@@ -334,6 +338,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                           stop_window_override = stop_window_override))
     snapshot_schedule_hours = snapshot_hours(output_spec)
     do_snapshots = output_enabled(output_spec)
+    _install_observation_sampler!(output_resources, output_cfg, output_spec.partition)
     recipe = build_runtime_physics_recipe(cfg, first_driver, FT)
     _validate_capability_match(first_driver, recipe)
 
@@ -606,6 +611,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                           stop_window_override = stop_window_override))
     snapshot_schedule_hours = snapshot_hours(output_spec)
     do_snapshots = output_enabled(output_spec)
+    _install_observation_sampler!(output_resources, output_cfg, output_spec.partition)
     if stop_window_override !== nothing && length(binary_paths) > 1 &&
        Int(stop_window_override) < total_windows(driver1)
         throw(ArgumentError(

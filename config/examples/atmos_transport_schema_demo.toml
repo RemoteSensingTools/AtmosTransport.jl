@@ -53,3 +53,17 @@ path = "~/data/AtmosTransport/output/schema_demo_{date}.nc"
 split = "daily"
 deflate_level = 1
 shuffle = true
+
+# Optional: sample tracer profiles at observation points instead of (or in
+# addition to) gridded snapshots. Sampling happens at met-window ends from the
+# containing model cell. Set enabled = true and point the sources at real files.
+[output.observations]
+enabled = false
+path = "~/data/AtmosTransport/output/schema_demo_obs_{date}.nc"
+time_interpolation = "linear"
+
+[[output.observations.sources]]
+kind = "table"
+mode = "soundings"
+path = "~/data/AtmosTransport/observations/points.csv"
+
