@@ -35,8 +35,47 @@ instead of writing full hourly 3-D fields and sampling them offline.
   (observation appends, single-file snapshot appends, the background daily
   snapshot task) takes `_NETCDF_IO_LOCK`.
 - **Naming.** The reader entry point is `read_observation_requests` because
-  `Adjoints` already exports `read_observations` and both are re-exported at
-  top level.
+  `Adjoints` already exports `read_observations`; both modules are brought
+  into `AtmosTransport` with `using`, so a second exported name would be
+  ambiguous there.
+- **Point events vs. station series.** Everything sampled once at its own
+  time (satellite soundings, ObsPack records including aircraft, station time
+  lists) is a point event in the `_soundings` file, with an intake-layer value.
+  Stations sampled repeatedly are series in the `_sites` file. A station row
+  picks its schedule by keys: none → `EveryWindow`, `start_time`/`end_time` →
+  `TimeRange`, `times` → `TimeList` (expanded into point events). This covers
+  the OCO-2 v11 MIP in-situ protocol (every ObsPack record, aircraft at
+  altitude) and hourly TCCON-site profiles with one mechanism.
+- **Quality filters are types.** `QualityFlagFilter(variable, max)` covers
+  Lite `xco2_quality_flag` (0 = good). The MIP `assimilate_flag` is
+  categorical (0 = not assimilated, 1 = assimilated, 2 = withheld; 742,558 /
+  2,628,961 / 141,984 records in the OCO-2 file), so `<= max` cannot select
+  the assimilated set; `QualityFlagValues(variable, values)` does.
+  `NoQualityFilter` keeps every record, as the MIP co-sampling requires.
+- **Times are never guessed.** NetCDF table time columns are decoded from
+  their CF units; a bare number in CSV/TOML is an error.
+- **Non-blocking writes.** Observation rows are queued and flushed when the
+  shared NetCDF lock is free; retired daily files close when the lock is free.
+  Measured before this change: the daily snapshot write held the lock for
+  ~7 s at each C90 day boundary while the run waited.
+- **Editor schema is checked.** Every config choice is a `oneOf` entry whose
+  description names its Julia type; `test_observation_schema.jl` fails when
+  the parser's choice tables and the schema disagree.
+
+## Known limits
+
+- All sources are read at startup, cut to the run span before request
+  records are built. The whole-mission MIP file takes ~6 s and ~2 GB of
+  transient memory to read.
+- Two chained runs that share a boundary both emit an event exactly on it
+  (the window end is inclusive).
+- The transported span is estimated from the first binary's window count
+  times the number of binaries.
+- Dry surface pressure of the 2021 ERA5 C90 binaries equals OCO-2 retrieved
+  total surface pressure over ocean (ratio 1.000; expected ~0.996): the
+  binaries' global mean dry pressure (98,733 Pa) is the 5.135e18 kg dry-mass
+  pin converted with R = 6.371e6 m and g = 9.80665. Mixing ratios are
+  unaffected; map profiles to retrieval levels in normalised pressure (p/ps).
 
 ## Not in scope
 

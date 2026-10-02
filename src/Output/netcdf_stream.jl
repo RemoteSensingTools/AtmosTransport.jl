@@ -39,7 +39,7 @@ function Base.close(stream::NetCDFSnapshotStream)
     stream.closed && return nothing
     try
         dataset = stream.dataset
-        dataset === nothing || close(dataset)
+        dataset === nothing || with_netcdf_lock(() -> close(dataset))
     finally
         stream.dataset = nothing
         stream.closed = true

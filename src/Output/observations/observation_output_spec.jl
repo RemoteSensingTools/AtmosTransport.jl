@@ -6,6 +6,7 @@
 # by default; sites are written at every end.
 # ---------------------------------------------------------------------------
 
+"How point events are placed in time between met-window ends."
 abstract type AbstractObservationTimeInterpolation end
 
 "Blend the two met-window-end samples bracketing each sounding time (default)."
@@ -45,7 +46,7 @@ struct ObservationOutputSpec{P <: AbstractOutputPartition,
     sources::Vector{AbstractObservationSource}
 end
 
-# Keyword constructor so later phases cannot slip a field out of order.
+# Keyword constructor: the struct has many positional fields of similar types.
 function ObservationOutputSpec(; path::AbstractString,
                                  partition::AbstractOutputPartition,
                                  time_interpolation::AbstractObservationTimeInterpolation,
@@ -60,6 +61,7 @@ function ObservationOutputSpec(; path::AbstractString,
                                  start_time, Int(deflate_level), sources)
 end
 
+"Whether a parsed `[output.observations]` table asks for sampling."
 observations_enabled(::NoObservationOutput) = false
 observations_enabled(::ObservationOutputSpec) = true
 
@@ -174,9 +176,6 @@ function observation_output_spec(output_cfg::AbstractDict;
         deflate_level = _parse_observation_deflate_level(get(obs_cfg, "deflate_level", 0)),
         sources = _parse_observation_sources(obs_cfg))
 end
-
-_has_day_token(path::AbstractString) =
-    occursin("{date}", path) || occursin("{YYYYMMDD}", path) || occursin("{day}", path)
 
 """
     observation_output_path(spec, mode, date_label, day_index) -> String

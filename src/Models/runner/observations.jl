@@ -30,6 +30,21 @@ _check_observation_time_origin(::NoObservationOutput, cfg) = nothing
 _check_observation_time_origin(spec::ObservationOutputSpec, cfg) =
     (_observation_time_origin(spec, cfg); nothing)
 
+# Sampled tracers must exist in `[tracers]` (when the config uses that table).
+_check_observation_tracers(::NoObservationOutput, cfg) = nothing
+function _check_observation_tracers(spec::ObservationOutputSpec, cfg)
+    spec.tracers === nothing && return nothing
+    tracers_cfg = get(cfg, "tracers", nothing)
+    tracers_cfg isa AbstractDict || return nothing
+    defined = Set(Symbol(String(k)) for k in keys(tracers_cfg))
+    missing_names = [t for t in spec.tracers if !(t in defined)]
+    isempty(missing_names) || throw(ArgumentError(
+        "[output.observations].tracers names $(join(String.(missing_names), ", ")), which " *
+        "[tracers] does not define; defined: $(join(sort!(String.(collect(defined))), ", "))"))
+    check_observation_tracer_names(spec.tracers)
+    return nothing
+end
+
 function _binary_label_date(path::AbstractString)
     label = _binary_date_label(path)
     isempty(label) && return nothing
@@ -67,6 +82,11 @@ function _build_sampler(spec::ObservationOutputSpec, state, grid; cfg, binary_pa
                         offset_seconds, span_seconds)
     origin = _observation_time_origin(spec, cfg)
     _check_origin_against_binaries(origin, binary_paths)
+    for mode in (SoundingMode(), SiteMode())
+        _check_unique_day_paths(spec.partition,
+            (label, idx) -> observation_output_path(spec, mode, label, idx), binary_paths,
+            "[output.observations].path")
+    end
     t0 = Float64(offset_seconds)
     window_seconds = (t0, t0 + Float64(span_seconds))
     @info "observation sampling window: $(origin + Millisecond(round(Int, 1000 * window_seconds[1]))) " *
@@ -87,7 +107,9 @@ end
 # GCHP VDIFF layer temperature (cubed-sphere binaries only, interior panels,
 # k = 1 at the top) of the window that just ended; otherwise the sampler's
 # constant applies. Virtual-temperature effects are neglected.
-_window_temperature(sim) = sim.window.vdiff === nothing ? nothing : sim.window.vdiff.t
+_window_temperature(sim) = _vdiff_temperature(sim.window.vdiff)
+_vdiff_temperature(::Nothing) = nothing
+_vdiff_temperature(vdiff) = vdiff.t
 
 _observe_window_end!(timer, ::NoObservationSampler, sim, seconds::Real) = nothing
 function _observe_window_end!(timer, sampler::AbstractObservationSampler, sim, seconds::Real)

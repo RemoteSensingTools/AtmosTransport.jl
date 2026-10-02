@@ -246,16 +246,19 @@ function write_snapshot_netcdf(path::AbstractString,
     tracer_keys = _select_tracer_keys(_check_same_keys(frames), fields)
 
     _ensure_parent_dir(expanded)
-    ds = _create_netcdf_dataset(expanded)
-    try
-        _define_common_attributes!(ds, mesh, frames, mass_basis; options = options)
-        ds.attrib["output_fields"] = _fields_string(fields, tracer_keys)
-        geometry = _define_geometry!(ds, mesh, Nz, times)
-        _write_tracer_total_mass!(ds, frames, tracer_keys, mass_basis)
-        _write_snapshot_payload!(ds, mesh, frames, tracer_keys, geometry,
-                                 mass_basis, options, fields)
-    finally
-        close(ds)
+    # netcdf-c is not thread-safe; daily writes run on a background task.
+    with_netcdf_lock() do
+        ds = _create_netcdf_dataset(expanded)
+        try
+            _define_common_attributes!(ds, mesh, frames, mass_basis; options = options)
+            ds.attrib["output_fields"] = _fields_string(fields, tracer_keys)
+            geometry = _define_geometry!(ds, mesh, Nz, times)
+            _write_tracer_total_mass!(ds, frames, tracer_keys, mass_basis)
+            _write_snapshot_payload!(ds, mesh, frames, tracer_keys, geometry,
+                                     mass_basis, options, fields)
+        finally
+            close(ds)
+        end
     end
     @info @sprintf("Saved snapshots: %s (%d frame(s), %s, mass_basis=%s)",
                    expanded, length(frames), summary(mesh), mass_basis)

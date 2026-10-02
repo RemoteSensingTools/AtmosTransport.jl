@@ -66,7 +66,7 @@ module DrivenRunner
 
 using Adapt
 using ..Models: _config_bool
-using Dates: Date, DateTime, Day, Millisecond, Time, @dateformat_str
+using Dates: Date, DateTime, Millisecond, Time, @dateformat_str
 using Printf: @sprintf, @printf
 using Logging
 using ProgressMeter: Progress, next!, finish!, update!
@@ -106,7 +106,8 @@ using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, S
                 NoObservationOutput, ObservationOutputSpec, observation_output_spec,
                 AbstractObservationSampler, NoObservationSampler, build_observation_sampler,
                 samples_observations, begin_observation_day!, observe_window_boundary!,
-                finish_observations!, _NETCDF_IO_LOCK
+                finish_observations!, check_observation_tracer_names,
+                observation_output_path, SoundingMode, SiteMode
 # TransportModel + DrivenSimulation live alongside us in the Models module;
 # reach up to the parent and pull them in.
 using ..Models: TransportModel
@@ -339,6 +340,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                           stop_window_override = stop_window_override))
     snapshot_schedule_hours = snapshot_hours(output_spec)
     do_snapshots = output_enabled(output_spec)
+    _check_snapshot_day_paths(output_spec, binary_paths)
     recipe = build_runtime_physics_recipe(cfg, first_driver, FT)
     _validate_capability_match(first_driver, recipe)
 
@@ -630,6 +632,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                           stop_window_override = stop_window_override))
     snapshot_schedule_hours = snapshot_hours(output_spec)
     do_snapshots = output_enabled(output_spec)
+    _check_snapshot_day_paths(output_spec, binary_paths)
     if stop_window_override !== nothing && length(binary_paths) > 1 &&
        Int(stop_window_override) < total_windows(driver1)
         throw(ArgumentError(

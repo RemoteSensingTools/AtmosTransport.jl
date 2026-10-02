@@ -5,11 +5,13 @@
 # Runners call the interface once per met window, never per cell.
 #
 # Time semantics (linear interpolation): at window end `t_k` the sampler
-# gathers every sounding in [t_{k-1}, t_k + Δt_next). Soundings in
+# gathers every point event in [t_{k-1}, t_k + Δt_next). Events in
 # [t_{k-1}, t_k) receive their second sample and are emitted as the linear
 # blend of the two window-end states (masses are blended, then divided);
-# soundings in [t_k, t_k + Δt_next) are held with their first sample. The
-# first call at t = 0 on the initial state seeds the first bracket.
+# events in [t_k, t_k + Δt_next) are held with their first sample. The first
+# call at t = 0 on the initial state seeds the first bracket; events exactly
+# at the final window end are emitted from that last sample at the finish.
+# Station series are written at every window end their schedule allows.
 # ---------------------------------------------------------------------------
 
 abstract type AbstractObservationSampler end
@@ -27,6 +29,7 @@ mutable struct PendingSoundings
     t_prev::Float64              # window end (seconds) at which they were sampled
     air::Matrix{Float64}         # (nlevel, n) in request order
     tracers::Array{Float64, 3}   # (nlevel, ntracer, n) in request order
+    temperature::Union{Nothing, Matrix{Float64}}   # (nlevel, n) layer temperature, if the run has one
 end
 
 "Running totals reported in the summary attributes and the end-of-run log."
@@ -76,6 +79,14 @@ function GatherPlan(cells::AbstractVector{CellLocation}, npanel::Int; column = c
     return GatherPlan(columns, ranges, position)
 end
 
+"""
+    ObservationSampler
+
+Runtime state of observation sampling: the located point events and sites,
+device gather buffers, the held first samples of events awaiting their
+second sample, the open (and retired daily) output streams, and counters.
+Built by [`build_observation_sampler`](@ref).
+"""
 mutable struct ObservationSampler{M, L <: AbstractCellLocator,
                                   TI <: AbstractObservationTimeInterpolation,
                                   B <: ObservationGatherBuffers} <: AbstractObservationSampler
@@ -88,7 +99,7 @@ mutable struct ObservationSampler{M, L <: AbstractCellLocator,
     nlevel::Int
     p_top::Float64
     gravity::Float64
-    mass_basis::Symbol
+    mass_basis::AbstractMassBasis
     npanel::Int
     soundings::Vector{SoundingRequest}      # located, time-sorted
     sounding_times::Vector{Float64}
@@ -102,10 +113,16 @@ mutable struct ObservationSampler{M, L <: AbstractCellLocator,
     last_boundary::Float64                  # NaN before the first call
     soundings_stream::Union{Nothing, SoundingNetCDFStream}
     sites_stream::Union{Nothing, SiteNetCDFStream}
+    retired::Vector{AbstractObservationStream}   # previous days' files still flushing
+    opened_paths::Set{String}
+    started::Bool
     counters::ObservationCounters
     counters_at_open::ObservationCounters   # totals when the current files were opened
     finished::Bool
 end
+
+_npanel(::CubedSphereMesh) = 6
+_npanel(_) = 1
 
 _reference_array(a::AbstractArray) = a
 _reference_array(a::NTuple{6}) = a[1]
@@ -142,6 +159,7 @@ function build_observation_sampler(spec::ObservationOutputSpec, state, grid;
     iszero(vertical.B[1]) || throw(ArgumentError(
         "observation sampling needs a pure-pressure top interface (B[1] == 0); got B[1] = $(vertical.B[1])"))
     names, slots = _resolve_tracer_slots(state, spec.tracers)
+    check_observation_tracer_names(names)
     reference = _reference_array(state.air_mass)
     nlevel = size(reference, ndims(reference))
     locator = cell_locator(mesh; halo_width)
@@ -166,16 +184,18 @@ function build_observation_sampler(spec::ObservationOutputSpec, state, grid;
         push!(sites, site)
         push!(site_cells, cell)
     end
-    npanel = mesh isa CubedSphereMesh ? 6 : 1
     buffers = ObservationGatherBuffers(reference, nlevel, slots;
                                        capacity = max(1024, length(sites) + 1))
-    @info "observation sampling: $(length(soundings)) soundings and $(length(sites)) sites located " *
+    @info "observation sampling: $(length(soundings)) point events and $(length(sites)) station series located " *
           "($(counters.unlocated_soundings + counters.unlocated_sites) outside the mesh, " *
-          "$(set.dropped_outside_window) outside the run window)"
+          "$(set.dropped_outside_window) outside the run window, $(set.skipped_invalid) source rows skipped)"
+    isempty(soundings) && isempty(sites) &&
+        @warn "observation sampling has nothing to sample; no observation files will be written"
     return ObservationSampler(spec, origin, mesh, locator, spec.time_interpolation, names, nlevel,
                               Float64(vertical.A[1]), Float64(gravity(grid)),
-                              _basis_symbol(mass_basis(state)), npanel, soundings, times, cells,
+                              mass_basis(state), _npanel(mesh), soundings, times, cells,
                               sites, site_cells, buffers, nothing, 1, nothing, NaN, nothing, nothing,
+                              AbstractObservationStream[], Set{String}(), false,
                               counters, ObservationCounters(), false)
 end
 
@@ -196,11 +216,52 @@ function _stream_attributes(s::ObservationSampler)
         "gravity" => s.gravity)
 end
 
-function _close_streams!(s::ObservationSampler)
-    s.soundings_stream === nothing || close(s.soundings_stream)
-    s.sites_stream === nothing || close(s.sites_stream)
+_current_streams(s::ObservationSampler) =
+    AbstractObservationStream[st for st in (s.soundings_stream, s.sites_stream) if st !== nothing]
+
+# Hand the current day's files to the retired list; they flush and close
+# whenever the NetCDF lock is free, so a day switch never waits for the
+# background snapshot write.
+function _retire_streams!(s::ObservationSampler)
+    append!(s.retired, _current_streams(s))
     s.soundings_stream = nothing
     s.sites_stream = nothing
+    _reap_retired!(s)
+    return nothing
+end
+
+# Streams leave the retired list only once closed; a close that throws leaves
+# the list consistent (the failing stream is poisoned and dropped first).
+function _reap_retired!(s::ObservationSampler)
+    i = 1
+    while i <= length(s.retired)
+        stream = s.retired[i]
+        closed = try
+            _try_close!(stream)
+        catch
+            deleteat!(s.retired, i)
+            rethrow()
+        end
+        closed ? deleteat!(s.retired, i) : (i += 1)
+    end
+    return nothing
+end
+
+# Close every stream; each close is attempted even if an earlier one throws.
+function _close_streams!(s::ObservationSampler)
+    streams = vcat(_current_streams(s), s.retired)
+    s.soundings_stream = nothing
+    s.sites_stream = nothing
+    empty!(s.retired)
+    errors = Any[]
+    for st in streams
+        try
+            close(st)
+        catch err
+            push!(errors, err)
+        end
+    end
+    isempty(errors) || throw(length(errors) == 1 ? only(errors) : CompositeException(errors))
     return nothing
 end
 
@@ -220,19 +281,30 @@ function _write_file_summaries!(s::ObservationSampler)
     return nothing
 end
 
+function _claim_path!(s::ObservationSampler, path::AbstractString)
+    path in s.opened_paths && throw(ArgumentError(
+        "observation output $(path) would be written twice in this run; use a {date}, " *
+        "{YYYYMMDD}, or {day} token in [output.observations].path for daily files"))
+    push!(s.opened_paths, path)
+    return path
+end
+
+# Each file exists only when it has requests: a soundings file for point
+# events, a sites file for station series.
 function _open_streams!(s::ObservationSampler, date_label::AbstractString, day_index::Integer)
     s.counters_at_open = copy(s.counters)
     attributes = _stream_attributes(s)
-    s.soundings_stream = SoundingNetCDFStream(
-        observation_output_path(s.spec, SoundingMode(), date_label, day_index), s.mesh, s.nlevel,
-        s.tracer_names; mass_basis = s.mass_basis, origin = s.origin,
-        deflate_level = s.spec.deflate_level, attributes)
-    # A sites file only when there are sites: a zero-length `site` dimension helps nobody.
-    s.sites_stream = isempty(s.sites) ? nothing : SiteNetCDFStream(
-        observation_output_path(s.spec, SiteMode(), date_label, day_index), s.mesh, s.nlevel,
-        s.tracer_names, s.sites, s.site_cells; mass_basis = s.mass_basis, origin = s.origin,
-        deflate_level = s.spec.deflate_level, write_profiles = s.spec.write_profile_for_sites,
-        attributes)
+    if !isempty(s.soundings)
+        path = _claim_path!(s, observation_output_path(s.spec, SoundingMode(), date_label, day_index))
+        s.soundings_stream = SoundingNetCDFStream(path, s.mesh, s.nlevel, s.tracer_names;
+            mass_basis = s.mass_basis, origin = s.origin, deflate_level = s.spec.deflate_level, attributes)
+    end
+    if !isempty(s.sites)
+        path = _claim_path!(s, observation_output_path(s.spec, SiteMode(), date_label, day_index))
+        s.sites_stream = SiteNetCDFStream(path, s.mesh, s.nlevel, s.tracer_names, s.sites, s.site_cells;
+            mass_basis = s.mass_basis, origin = s.origin, deflate_level = s.spec.deflate_level,
+            write_profiles = s.spec.write_profile_for_sites, attributes)
+    end
     return nothing
 end
 
@@ -255,14 +327,16 @@ function begin_observation_day!(s::ObservationSampler, date_label::AbstractStrin
 end
 
 function _begin_day!(::SingleOutputFile, s::ObservationSampler, date_label, day_index)
-    s.soundings_stream === nothing && _open_streams!(s, date_label, day_index)
+    s.started || _open_streams!(s, date_label, day_index)
+    s.started = true
     return nothing
 end
 
 function _begin_day!(::DailyOutputFiles, s::ObservationSampler, date_label, day_index)
     _write_file_summaries!(s)
-    _close_streams!(s)
+    _retire_streams!(s)
     _open_streams!(s, date_label, day_index)
+    s.started = true
     return nothing
 end
 
@@ -284,7 +358,7 @@ observe_window_boundary!(::NoObservationSampler, state, time_seconds::Real; kwar
 function observe_window_boundary!(s::ObservationSampler, state, time_seconds::Real;
                                   next_window_seconds::Real, temperature = nothing)
     s.finished && throw(ArgumentError("observation sampler already finished"))
-    s.soundings_stream === nothing && throw(ArgumentError(
+    s.started || throw(ArgumentError(
         "begin_observation_day! must run before the first window boundary"))
     t = Float64(time_seconds)
     dt_next = Float64(next_window_seconds)
@@ -294,23 +368,28 @@ function observe_window_boundary!(s::ObservationSampler, state, time_seconds::Re
         "window boundaries must increase; got $(t) after $(s.last_boundary)"))
     _observe!(s.time_interpolation, s, state, t, dt_next, temperature)
     s.last_boundary = t
+    _reap_retired!(s)
     return nothing
 end
 
-# Gather the sounding indices `range` plus every site, in one launch.
+# Gather the point events `range` plus every site, in one launch.
 function _gather!(s::ObservationSampler, state, range::UnitRange{Int}, temperature)
     cells = vcat(view(s.sounding_cells, range), s.site_cells)
     plan = GatherPlan(cells, s.npanel)
     gather_columns!(s.buffers, state, plan.columns, plan.panel_ranges)
-    if temperature !== nothing
-        if s.temperature_buffers === nothing
-            s.temperature_buffers = ObservationGatherBuffers(s.buffers.air, s.nlevel, Int[];
-                                                             capacity = s.buffers.capacity)
-        end
-        tplan = _field_plan(s, cells, plan, temperature)
-        gather_field!(s.temperature_buffers, temperature, tplan.columns, tplan.panel_ranges)
-    end
+    _gather_temperature!(s, cells, plan, temperature)
     return plan
+end
+
+_gather_temperature!(s::ObservationSampler, cells, plan::GatherPlan, ::Nothing) = nothing
+function _gather_temperature!(s::ObservationSampler, cells, plan::GatherPlan, temperature)
+    if s.temperature_buffers === nothing
+        s.temperature_buffers = ObservationGatherBuffers(s.buffers.air, s.nlevel, Int[];
+                                                         capacity = s.buffers.capacity)
+    end
+    tplan = _field_plan(s, cells, plan, temperature)
+    gather_field!(s.temperature_buffers, temperature, tplan.columns, tplan.panel_ranges)
+    return nothing
 end
 
 # Lat-lon and reduced-Gaussian fields share the state layout.
@@ -322,8 +401,6 @@ function _field_plan(s::ObservationSampler, cells, plan::GatherPlan, field::NTup
     n1 == Nc && return GatherPlan(cells, s.npanel; column = c -> c.cell)
     throw(DimensionMismatch("temperature panels are $(n1) wide; expected $(Nc) or $(Nc + 2 * s.locator.halo_width)"))
 end
-
-_site_position(plan::GatherPlan, nsounding::Int, i::Int) = plan.position[nsounding + i]
 
 function _observe!(::LinearWindowInterpolation, s::ObservationSampler, state, t::Float64,
                    dt_next::Float64, temperature)
@@ -345,9 +422,9 @@ function _observe!(::LinearWindowInterpolation, s::ObservationSampler, state, t:
     plan = _gather!(s, state, range, temperature)
     nsounding = length(range)
     if mid > lo
-        _emit_bracketed!(s, pending, lo, mid, t, plan)
+        _emit_bracketed!(s, pending, lo, mid, t, plan, temperature)
     end
-    s.pending = mid < hi_next ? _hold!(s, mid, hi_next, t, plan, lo) : nothing
+    s.pending = mid < hi_next ? _hold!(s, mid, hi_next, t, plan, lo, temperature) : nothing
     s.cursor = hi_next
     _emit_sites!(s, t, plan, nsounding, temperature)
     return nothing
@@ -367,10 +444,12 @@ function _observe!(::NearestWindowSampling, s::ObservationSampler, state, t::Flo
     plan = _gather!(s, state, range, temperature)
     nsounding = length(range)
     if nsounding > 0
-        batch = _sounding_batch(s, range, fill(t, nsounding), fill(t, nsounding),
-                                fill(NaN32, nsounding), zeros(Int8, nsounding),
+        times_now = fill(t, nsounding)
+        batch = _sounding_batch(s, range, times_now, times_now, fill(NaN32, nsounding),
+                                fill(interp_flag(NearestWindowSampling()), nsounding),
                                 (i, k) -> s.buffers.air_host[k, plan.position[i]],
-                                (i, k, tr) -> s.buffers.tracers_host[k, tr, plan.position[i]])
+                                (i, k, tr) -> s.buffers.tracers_host[k, tr, plan.position[i]],
+                                i -> _row_layer_temperature(s, plan.position[i], temperature))
         append_soundings!(s.soundings_stream, batch)
         s.counters.emitted += nsounding
     end
@@ -384,7 +463,7 @@ end
 # length between binaries, or after a window without soundings) are emitted
 # one-sided from the current state.
 function _emit_bracketed!(s::ObservationSampler, pending::Union{Nothing, PendingSoundings},
-                          lo::Int, mid::Int, t::Float64, plan::GatherPlan)
+                          lo::Int, mid::Int, t::Float64, plan::GatherPlan, temperature)
     n = mid - lo
     times = s.sounding_times
     t_prev = pending === nothing ? t : pending.t_prev
@@ -394,7 +473,7 @@ function _emit_bracketed!(s::ObservationSampler, pending::Union{Nothing, Pending
     bracketed = [idx <= last_held for idx in lo:mid - 1]
     w = [bracketed[i] ? clamp((times[lo + i - 1] - t_prev) / span, 0.0, 1.0) : 1.0 for i in 1:n]
     weights = Float32.(w)
-    flags = Int8[b ? 0 : 1 for b in bracketed]
+    flags = [interp_flag(LinearWindowInterpolation(), b) for b in bracketed]
     prev = [b ? t_prev : t for b in bracketed]
     next = fill(t, n)
     air = s.buffers.air_host
@@ -407,20 +486,25 @@ function _emit_bracketed!(s::ObservationSampler, pending::Union{Nothing, Pending
         current = Float64(tracers[k, tr, plan.position[i]])
         bracketed[i] ? (1 - w[i]) * pending.tracers[k, tr, lo - pending_lo + i] + w[i] * current : current
     end
-    batch = _sounding_batch(s, lo:mid - 1, prev, next, weights, flags, blend_air, blend_tracer)
+    layer_temperature = i -> _row_layer_temperature(s, plan.position[i], temperature)
+    batch = _sounding_batch(s, lo:mid - 1, prev, next, weights, flags, blend_air, blend_tracer,
+                            layer_temperature)
     append_soundings!(s.soundings_stream, batch)
     s.counters.emitted += n
     s.counters.one_sided += count(!, bracketed)
     return nothing
 end
 
-# Copy the first samples of soundings mid:hi-1 out of the gather buffers.
-function _hold!(s::ObservationSampler, mid::Int, hi::Int, t::Float64, plan::GatherPlan, lo::Int)
+# Copy the first samples of soundings mid:hi-1 out of the gather buffers. The
+# layer temperature is kept too: events exactly at the final window end are
+# emitted from this sample alone (`_emit_held!`).
+function _hold!(s::ObservationSampler, mid::Int, hi::Int, t::Float64, plan::GatherPlan, lo::Int,
+                temperature)
     n = hi - mid
+    slots = [plan.position[idx - lo + 1] for idx in mid:hi - 1]
     air = Matrix{Float64}(undef, s.nlevel, n)
     tracers = Array{Float64, 3}(undef, s.nlevel, length(s.tracer_names), n)
-    for (i, idx) in enumerate(mid:hi - 1)
-        slot = plan.position[idx - lo + 1]
+    for (i, slot) in enumerate(slots)
         @inbounds for k in 1:s.nlevel
             air[k, i] = Float64(s.buffers.air_host[k, slot])
             for tr in 1:length(s.tracer_names)
@@ -428,14 +512,24 @@ function _hold!(s::ObservationSampler, mid::Int, hi::Int, t::Float64, plan::Gath
             end
         end
     end
-    return PendingSoundings(mid:hi - 1, t, air, tracers)
+    return PendingSoundings(mid:hi - 1, t, air, tracers, _held_temperature(s, slots, temperature))
 end
 
-# Assemble the output rows for soundings `range`; `air_at(i, k)` and
-# `tracer_at(i, k, tr)` return the (already blended) masses of the i-th row.
+_held_temperature(s::ObservationSampler, slots, ::Nothing) = nothing
+_held_temperature(s::ObservationSampler, slots, temperature) =
+    Float64.(s.temperature_buffers.air_host[:, slots])
+
+_held_layer_temperature(s::ObservationSampler, ::Nothing, i::Int) =
+    ConstantLayerTemperature(s.spec.layer_height_temperature_kelvin)
+_held_layer_temperature(s::ObservationSampler, temperature::Matrix{Float64}, i::Int) =
+    ProfileLayerTemperature(view(temperature, :, i))
+
+# Assemble the output rows for point events `range`; `air_at(i, k)` and
+# `tracer_at(i, k, tr)` return the (already blended) masses of the i-th row
+# and `temperature_at(i)` its `AbstractLayerTemperature` for intake heights.
 function _sounding_batch(s::ObservationSampler, range::UnitRange{Int}, prev::Vector{Float64},
                          next::Vector{Float64}, weights::Vector{Float32}, flags::Vector{Int8},
-                         air_at, tracer_at)
+                         air_at, tracer_at, temperature_at)
     n = length(range)
     nlevel = s.nlevel
     ntracer = length(s.tracer_names)
@@ -444,9 +538,16 @@ function _sounding_batch(s::ObservationSampler, range::UnitRange{Int}, prev::Vec
     per_area = Matrix{Float64}(undef, nlevel, n)
     vmr = Array{Float64, 3}(undef, nlevel, ntracer, n)
     means = Matrix{Float64}(undef, ntracer, n)
+    intake_values = Matrix{Float64}(undef, ntracer, n)
+    levels = Vector{Int32}(undef, n)
+    bottoms = Vector{Float64}(undef, n)
+    tops = Vector{Float64}(undef, n)
+    methods = Vector{Int8}(undef, n)
     air_col = Vector{Float64}(undef, nlevel)
     tracer_col = Vector{Float64}(undef, nlevel)
+    z_half = Vector{Float64}(undef, nlevel + 1)
     cells = Vector{CellLocation}(undef, n)
+    requests = view(s.soundings, range)
     for (i, idx) in enumerate(range)
         cell = s.sounding_cells[idx]
         cells[i] = cell
@@ -454,26 +555,40 @@ function _sounding_batch(s::ObservationSampler, range::UnitRange{Int}, prev::Vec
             air_col[k] = air_at(i, k)
             per_area[k, i] = air_col[k] / cell.area
         end
-        interface_pressures!(view(p_half, :, i), air_col, cell.area, s.gravity, s.p_top)
+        p = view(p_half, :, i)
+        interface_pressures!(p, air_col, cell.area, s.gravity, s.p_top)
+        layer_temperature = temperature_at(i)
+        layer_heights_agl!(z_half, p, layer_temperature, s.gravity)
+        level = intake_layer_index(z_half, requests[i].intake_height_m)
+        levels[i] = Int32(level)
+        bottoms[i] = z_half[level + 1]
+        tops[i] = z_half[level]
+        methods[i] = height_method_code(layer_temperature)
         for tr in 1:ntracer
             @inbounds for k in 1:nlevel
                 tracer_col[k] = tracer_at(i, k, tr)
             end
-            mixing_ratio_profile!(view(vmr, :, tr, i), air_col, tracer_col)
+            profile = view(vmr, :, tr, i)
+            mixing_ratio_profile!(profile, air_col, tracer_col)
             means[tr, i] = column_mean_vmr(air_col, tracer_col)
+            intake_values[tr, i] = profile[level]
         end
     end
-    requests = view(s.soundings, range)
-    return SoundingBatch([r.id for r in requests], Int32[r.source for r in requests],
-                         [origin_unix + r.time_seconds for r in requests],
-                         [r.lat for r in requests], [r.lon for r in requests], cells,
-                         prev .+ origin_unix, next .+ origin_unix, weights, flags,
-                         p_half, per_area, vmr, means)
+    return SoundingBatch(; ids = [r.id for r in requests], sources = Int32[r.source for r in requests],
+                         times = [origin_unix + r.time_seconds for r in requests],
+                         latitudes = [r.lat for r in requests], longitudes = [r.lon for r in requests],
+                         cells, sample_time_prev = prev .+ origin_unix, sample_time_next = next .+ origin_unix,
+                         weights, flags, p_half, air_mass_per_area = per_area, tracers = vmr,
+                         column_means = means, elevations = [r.elevation_m for r in requests],
+                         intake_heights = [r.intake_height_m for r in requests], intake_levels = levels,
+                         layer_bottom = bottoms, layer_top = tops, height_methods = methods, intake_values)
 end
 
-_layer_temperature(s::ObservationSampler, slot::Int, ::Nothing) =
+# Layer temperature for heights: the gathered per-layer field when the run
+# passes one, otherwise the configured constant.
+_row_layer_temperature(s::ObservationSampler, slot::Int, ::Nothing) =
     ConstantLayerTemperature(s.spec.layer_height_temperature_kelvin)
-_layer_temperature(s::ObservationSampler, slot::Int, temperature) =
+_row_layer_temperature(s::ObservationSampler, slot::Int, temperature) =
     ProfileLayerTemperature(view(s.temperature_buffers.air_host, :, slot))
 
 function _emit_sites!(s::ObservationSampler, t::Float64, plan::GatherPlan, nsounding::Int, temperature)
@@ -490,13 +605,17 @@ function _emit_sites!(s::ObservationSampler, t::Float64, plan::GatherPlan, nsoun
     tracer_col = Vector{Float64}(undef, nlevel)
     vmr = Vector{Float64}(undef, nlevel)
     for (i, site) in enumerate(s.sites)
-        slot = _site_position(plan, nsounding, i)
+        if !site_active(site.schedule, t)
+            _blank_site!(record, i, profiles)
+            continue
+        end
+        slot = plan.position[nsounding + i]
         cell = s.site_cells[i]
         @inbounds for k in 1:nlevel
             air_col[k] = Float64(s.buffers.air_host[k, slot])
         end
         interface_pressures!(p_half, air_col, cell.area, s.gravity, s.p_top)
-        layer_temperature = _layer_temperature(s, slot, temperature)
+        layer_temperature = _row_layer_temperature(s, slot, temperature)
         layer_heights_agl!(z_half, p_half, layer_temperature, s.gravity)
         level = intake_layer_index(z_half, site.intake_height_m)
         record.ps[i] = p_half[nlevel + 1]
@@ -523,21 +642,45 @@ function _emit_sites!(s::ObservationSampler, t::Float64, plan::GatherPlan, nsoun
     return nothing
 end
 
+# A site outside its time range: NaN values, layer 0.
+function _blank_site!(record::SiteRecord, i::Int, profiles::Bool)
+    record.ps[i] = NaN
+    record.intake_level[i] = 0
+    record.layer_bottom[i] = NaN
+    record.layer_top[i] = NaN
+    record.height_method[i] = HEIGHT_METHOD_NOT_SAMPLED
+    record.values[i, :] .= NaN
+    record.surface_values[i, :] .= NaN
+    if profiles
+        record.profiles[:, i, :] .= NaN
+        record.p_half[:, i] .= NaN
+        record.air_mass_per_area[:, i] .= NaN
+    end
+    return nothing
+end
+
 # -- end of run -------------------------------------------------------------
 
 """
     finish_observations!(sampler)
 
-Drop soundings that never received their second sample, write the summary
-attributes, and warn about anything that was not sampled. Idempotent.
+Emit events exactly at the final window end, drop events that never received
+their second sample, write the summary attributes, and warn about anything
+that was not sampled. Idempotent.
 """
 finish_observations!(::NoObservationSampler) = nothing
 
 function finish_observations!(s::ObservationSampler)
     s.finished && return nothing
     pending = s.pending
-    held = pending === nothing ? 0 : length(pending.range)
     s.pending = nothing
+    held = 0
+    if pending !== nothing
+        # Events exactly at the last window end have their complete sample.
+        at_end = searchsortedlast(view(s.sounding_times, pending.range), pending.t_prev)
+        at_end > 0 && _emit_held!(s, pending, at_end)
+        held = length(pending.range) - at_end
+    end
     s.counters.dropped_after_end += held + max(length(s.sounding_times) - s.cursor + 1, 0)
     c = s.counters
     _write_file_summaries!(s)
@@ -548,6 +691,18 @@ function finish_observations!(s::ObservationSampler)
     @info "observation sampling wrote $(c.emitted) soundings ($(c.one_sided) one-sided) and " *
           "$(c.site_records) site records"
     s.finished = true
+    return nothing
+end
+
+function _emit_held!(s::ObservationSampler, pending::PendingSoundings, n::Int)
+    t = pending.t_prev
+    times_now = fill(t, n)
+    batch = _sounding_batch(s, first(pending.range):first(pending.range) + n - 1, times_now, times_now,
+                            zeros(Float32, n), fill(interp_flag(LinearWindowInterpolation(), true), n),
+                            (i, k) -> pending.air[k, i], (i, k, tr) -> pending.tracers[k, tr, i],
+                            i -> _held_layer_temperature(s, pending.temperature, i))
+    append_soundings!(s.soundings_stream, batch)
+    s.counters.emitted += n
     return nothing
 end
 

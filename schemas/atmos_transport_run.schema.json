@@ -282,7 +282,20 @@
         "cadence_hours": {"type": "number", "exclusiveMinimum": 0},
         "start_hour": {"type": "number", "minimum": 0, "default": 0},
         "stop_hour": {"type": "number", "minimum": 0},
-        "split": {"type": "string", "enum": ["single", "daily"], "default": "single"},
+        "split": {
+          "description": "AbstractOutputPartition for snapshot and observation files.",
+          "default": "single",
+          "oneOf": [
+            {
+              "const": "single",
+              "description": "SingleOutputFile: one file for the whole run (aliases one_file, one-file)."
+            },
+            {
+              "const": "daily",
+              "description": "DailyOutputFiles: one file per input binary/day, named by {date}/{YYYYMMDD}/{day} or a _<date> suffix (aliases per_day, per-day, day)."
+            }
+          ]
+        },
         "deflate_level": {"type": "integer", "minimum": 0, "maximum": 9, "default": 0},
         "shuffle": {"type": "boolean", "default": true},
         "snapshot_file": {"type": "string", "description": "Legacy alias for output.path."},
@@ -294,42 +307,265 @@
     },
     "observation_output": {
       "type": "object",
-      "description": "Observation sampling output: tracer profiles at sounding (time, lat, lon) events and station time series, sampled from the containing model cell at met-window ends. Writes <path>_soundings.nc and <path>_sites.nc.",
+      "description": "Observation sampling ([output.observations] → ObservationOutputSpec). Samples the containing model cell at met-window ends and writes <path>_soundings.nc (point events: satellite soundings, ObsPack records, site time lists) and <path>_sites.nc (hourly station series). Files follow [output].split.",
       "additionalProperties": false,
       "properties": {
-        "enabled": {"type": "boolean", "default": true},
-        "path": {"type": "string", "description": "Output path template. `_soundings` / `_sites` is inserted before the extension; with [output].split = \"daily\", {date}, {YYYYMMDD} and {day} are substituted per input binary."},
-        "time_interpolation": {"type": "string", "enum": ["linear", "nearest_window"], "default": "linear", "description": "linear: blend the two met-window ends bracketing each sounding time; nearest_window: single nearest window end."},
-        "tracers": {
-          "oneOf": [
-            {"type": "string"},
-            {"type": "array", "minItems": 1, "items": {"type": "string"}}
-          ],
-          "description": "Tracers to sample; omit for all model tracers."
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "false → NoObservationOutput (sampling off, no files)."
         },
-        "write_profile_for_sites": {"type": "boolean", "default": false},
-        "layer_height_temperature_kelvin": {"type": "number", "exclusiveMinimum": 0, "default": 280.0, "description": "Fallback temperature for hypsometric layer heights when the binary carries no temperature."},
-        "start_time": {"description": "Run origin as ISO-8601 UTC (quoted string or TOML date-time). Only used when [input].start_date is absent."},
+        "path": {
+          "type": "string",
+          "description": "Output path template. _soundings / _sites is inserted before the extension; {date}, {YYYYMMDD} or {day} are substituted per input binary (day index when the binary name has no date)."
+        },
+        "time_interpolation": {
+          "description": "How point events are placed in time between met-window ends (AbstractObservationTimeInterpolation).",
+          "default": "linear",
+          "oneOf": [
+            {
+              "const": "linear",
+              "description": "LinearWindowInterpolation: blend the air and tracer masses of the two window ends bracketing each event (interp_flag 0; 1 when only one sample exists)."
+            },
+            {
+              "const": "nearest_window",
+              "description": "NearestWindowSampling: use the single nearest window end (interp_flag 2)."
+            }
+          ]
+        },
+        "tracers": {
+          "description": "Tracers to sample (Union{Nothing, Vector{Symbol}}); omit or \"all\" for every model tracer (nothing). Must exist in [tracers].",
+          "anyOf": [
+            {
+              "const": "all",
+              "description": "nothing: every model tracer."
+            },
+            {
+              "type": "string",
+              "description": "One tracer name."
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {"type": "string"},
+              "description": "Tracer names, in output order."
+            }
+          ]
+        },
+        "write_profile_for_sites": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also write full profiles, interface pressures and layer air mass in the _sites file."
+        },
+        "layer_height_temperature_kelvin": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 280.0,
+          "description": "ConstantLayerTemperature used for intake-layer heights. Cubed-sphere binaries with GCHP VDIFF fields use their layer temperature instead (ProfileLayerTemperature)."
+        },
+        "start_time": {
+          "description": "Run origin, ISO-8601 UTC string or TOML date-time; only used (and then required) when [input].start_date is absent. Must equal start_date at 00:00 when both are given."
+        },
         "deflate_level": {"type": "integer", "minimum": 0, "maximum": 9, "default": 0},
         "sources": {
           "type": "array",
           "minItems": 1,
-          "items": {"$ref": "#/definitions/observation_source"}
+          "items": {"$ref": "#/definitions/observation_source"},
+          "description": "Where requests come from ([[output.observations.sources]] → AbstractObservationSource)."
         }
       }
     },
     "observation_source": {
       "type": "object",
+      "description": "One [[output.observations.sources]] table; `kind` selects the AbstractObservationSource type.",
       "required": ["kind", "path"],
       "additionalProperties": false,
       "properties": {
-        "kind": {"type": "string", "enum": ["oco2_lite", "obspack", "table"]},
-        "path": {"type": "string", "description": "File or glob template; {YYYY}, {YYYYMMDD}, {YYMMDD} and * expand per run day."},
-        "mode": {"type": "string", "enum": ["soundings", "sites"], "description": "Required for obspack and table sources."},
-        "quality_flag_max": {"type": "integer", "minimum": 0, "default": 0, "description": "oco2_lite: keep soundings with xco2_quality_flag <= this value."},
-        "site_grouping": {"type": "string", "enum": ["site_code", "location"], "default": "site_code", "description": "obspack sites: group records by site_code attribute + intake height, or by location."},
-        "format": {"type": "string", "enum": ["auto", "csv", "toml", "netcdf"], "default": "auto"}
-      }
+        "kind": {
+          "oneOf": [
+            {
+              "const": "oco2_lite",
+              "description": "OCO2LiteSource: NASA OCO-2/OCO-3 Lite files or OCO-2 v11 MIP 10-second averages (sounding_id, time, latitude, longitude). Point events only."
+            },
+            {
+              "const": "obspack",
+              "description": "ObsPackSource: NOAA ObsPack NetCDF files: per-record point events (mode = \"soundings\") or station series (mode = \"sites\")."
+            },
+            {
+              "const": "table",
+              "description": "TableSource: Your own CSV/TOML/NetCDF list of point events or sites (see schemas/observation_sites.schema.json)."
+            }
+          ]
+        },
+        "path": {
+          "type": "string",
+          "description": "File or template: {YYYYMMDD} or {date}, {YYMMDD}, {YYYY}, {MM}, {DD} are substituted per run day; * and ? wildcards in the file name. A path without date tokens must match."
+        },
+        "mode": {
+          "description": "AbstractObservationMode. Required for obspack and table; oco2_lite is always soundings.",
+          "oneOf": [
+            {
+              "const": "soundings",
+              "description": "SoundingMode: point events, each sampled once at its own time and intake height (_soundings file)."
+            },
+            {
+              "const": "sites",
+              "description": "SiteMode: station series written at met-window ends per site schedule (_sites file; time lists become point events)."
+            }
+          ]
+        },
+        "quality_filter": {
+          "description": "oco2_lite only (AbstractQualityFilter): which records become point events.",
+          "default": "flag_max",
+          "oneOf": [
+            {
+              "const": "flag_max",
+              "description": "QualityFlagFilter(quality_variable, quality_flag_max): keep records with flag <= quality_flag_max (Lite files: xco2_quality_flag, 0 = good)."
+            },
+            {
+              "const": "flag_values",
+              "description": "QualityFlagValues(quality_variable, quality_flag_values): keep records whose flag is listed (MIP files: quality_variable = \"assimilate_flag\", values 0 = not assimilated, 1 = assimilated, 2 = withheld)."
+            },
+            {
+              "const": "none",
+              "description": "NoQualityFilter: keep every record (the OCO-2 v11 MIP co-samples all 10-s averages)."
+            }
+          ]
+        },
+        "quality_variable": {
+          "type": "string",
+          "minLength": 1,
+          "default": "xco2_quality_flag",
+          "description": "oco2_lite with quality_filter = \"flag_max\" or \"flag_values\": the integer flag variable to test."
+        },
+        "quality_flag_max": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "quality_filter = \"flag_max\" only: largest accepted flag value."
+        },
+        "quality_flag_values": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "integer"},
+          "description": "quality_filter = \"flag_values\" only (required there): accepted flag values, e.g. [1]."
+        },
+        "site_grouping": {
+          "description": "obspack sites only (AbstractSiteGrouping).",
+          "default": "site_code",
+          "oneOf": [
+            {
+              "const": "site_code",
+              "description": "SiteCodeGrouping: one site per dataset file and intake height; id = dataset name [+ _<h>magl]."
+            },
+            {
+              "const": "location",
+              "description": "LocationGrouping: one site per rounded (lat, lon, intake); id = <site_code>_<lat>N_<lon>E_<h>magl."
+            }
+          ]
+        },
+        "format": {
+          "description": "table only (AbstractTableFormat).",
+          "default": "auto",
+          "oneOf": [
+            {
+              "const": "auto",
+              "description": "AutoTableFormat: pick from the extension: .csv, .toml, .nc/.nc4."
+            },
+            {
+              "const": "csv",
+              "description": "CSVTableFormat: header line, comma-separated, # comments, no quoting; list-valued times use ';'."
+            },
+            {
+              "const": "toml",
+              "description": "TOMLTableFormat: [[soundings]] or [[sites]] arrays of tables; times may be a TOML array."
+            },
+            {
+              "const": "netcdf",
+              "description": "NetCDFTableFormat: 1-D variables along the record dimension; CF time units."
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"const": "oco2_lite"}}, "required": ["kind"]},
+          "then": {
+            "not": {"anyOf": [{"required": ["format"]}, {"required": ["site_grouping"]}]},
+            "properties": {"mode": {"const": "soundings"}}
+          }
+        },
+        {
+          "if": {"properties": {"kind": {"const": "obspack"}}, "required": ["kind"]},
+          "then": {
+            "not": {
+              "anyOf": [
+                {"required": ["format"]},
+                {"required": ["quality_flag_max"]},
+                {"required": ["quality_variable"]},
+                {"required": ["quality_filter"]},
+                {"required": ["quality_flag_values"]}
+              ]
+            },
+            "required": ["mode"]
+          }
+        },
+        {
+          "if": {"properties": {"kind": {"const": "table"}}, "required": ["kind"]},
+          "then": {
+            "not": {
+              "anyOf": [
+                {"required": ["quality_flag_max"]},
+                {"required": ["quality_variable"]},
+                {"required": ["site_grouping"]},
+                {"required": ["quality_filter"]},
+                {"required": ["quality_flag_values"]}
+              ]
+            },
+            "required": ["mode"]
+          }
+        },
+        {
+          "if": {
+            "properties": {"quality_filter": {"const": "none"}},
+            "required": ["quality_filter"]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {"required": ["quality_variable"]},
+                {"required": ["quality_flag_max"]},
+                {"required": ["quality_flag_values"]}
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {"quality_filter": {"const": "flag_values"}},
+            "required": ["quality_filter"]
+          },
+          "then": {"required": ["quality_flag_values"], "not": {"required": ["quality_flag_max"]}}
+        },
+        {
+          "if": {"not": {"required": ["quality_filter"]}},
+          "then": {"not": {"required": ["quality_flag_values"]}}
+        },
+        {
+          "if": {
+            "properties": {"quality_filter": {"const": "flag_max"}},
+            "required": ["quality_filter"]
+          },
+          "then": {"not": {"required": ["quality_flag_values"]}}
+        },
+        {
+          "if": {
+            "properties": {"kind": {"const": "obspack"}, "mode": {"const": "soundings"}},
+            "required": ["kind", "mode"]
+          },
+          "then": {"not": {"required": ["site_grouping"]}}
+        }
+      ]
     },
     "hours": {
       "type": "array",

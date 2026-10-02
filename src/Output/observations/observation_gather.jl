@@ -288,8 +288,21 @@ const HEIGHT_METHOD_CODES = (
 height_method_code(::ConstantLayerTemperature) = HEIGHT_METHOD_CODES[1][2]
 height_method_code(::SurfaceLapseTemperature) = HEIGHT_METHOD_CODES[2][2]
 height_method_code(::ProfileLayerTemperature) = HEIGHT_METHOD_CODES[3][2]
+"Code written for a site outside its time range (no heights computed)."
+const HEIGHT_METHOD_NOT_SAMPLED = Int8(-1)
 height_method_codes_description() =
-    join(("$(code) = $(text)" for (_, code, text) in HEIGHT_METHOD_CODES), ", ")
+    join(("$(code) = $(text)" for (_, code, text) in HEIGHT_METHOD_CODES), ", ") *
+    ", $(HEIGHT_METHOD_NOT_SAMPLED) = not sampled (site outside its time range)"
+
+"""
+Integer `interp_flag` codes of point-event rows: blended between two window
+ends, sampled one-sided at the later end (window length changed between
+binaries), or taken from the nearest window end (`nearest_window` mode).
+"""
+const INTERP_FLAG_CODES = (bracketed = Int8(0), one_sided = Int8(1), nearest_window = Int8(2))
+interp_flag(::NearestWindowSampling) = INTERP_FLAG_CODES.nearest_window
+interp_flag(::LinearWindowInterpolation, bracketed::Bool) =
+    bracketed ? INTERP_FLAG_CODES.bracketed : INTERP_FLAG_CODES.one_sided
 
 "Dry-air gas constant [J kg⁻¹ K⁻¹]; the same value the diffusion dz helpers use."
 const OBSERVATION_R_DRY = 287.04

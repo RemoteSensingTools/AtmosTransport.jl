@@ -370,73 +370,107 @@ area, and column air mass per area.
 
 ### `[output.observations]` — sampling at observation points
 
-Instead of (or in addition to) gridded snapshots, the run can sample tracer
-profiles at **soundings** (time-stamped points such as OCO-2 Lite soundings)
-and at fixed **sites** (surface stations such as NOAA ObsPack). Sampling uses
-the model cell containing each point, at met-window ends only; that is where
-convection and chemistry have been applied and the state is complete.
-Soundings are blended linearly between the two window ends bracketing their
-time (`time_interpolation = "linear"`, the default) or taken from the nearest
-window end (`"nearest_window"`). Sites are written at every window end.
+Instead of (or in addition to) gridded snapshots, a run can sample tracers at
+observation points. **Point events** are sampled once at their own time:
+satellite soundings, ObsPack flask, continuous, or aircraft records, and
+station time lists. **Station series** are written at every met-window end
+their schedule allows. Sampling uses the model cell containing each point and
+happens at met-window ends, where convection and chemistry have been applied.
+Every choice below maps to a Julia type; the editor schema
+(`schemas/atmos_transport_run.schema.json`, used by Taplo / Even Better TOML)
+shows that type when you hover over a value.
 
 ```toml
 [output.observations]
 enabled = true
 path = "~/data/AtmosTransport/output/obs_{YYYYMMDD}.nc"   # -> obs_<date>_soundings.nc, obs_<date>_sites.nc
-time_interpolation = "linear"            # "linear" | "nearest_window"
-tracers = ["co2_natural", "co2_fossil"]  # omit for all tracers
-write_profile_for_sites = false          # true also writes full site profiles
-layer_height_temperature_kelvin = 280.0  # layer-height temperature; cubed-sphere binaries with GCHP
-                                         #   VDIFF fields use their layer temperature instead
+time_interpolation = "linear"            # LinearWindowInterpolation | "nearest_window" (NearestWindowSampling)
+tracers = ["co2_natural", "co2_fossil"]  # omit for all tracers; must exist in [tracers]
+write_profile_for_sites = true           # also write full station profiles (e.g. TCCON sites)
+layer_height_temperature_kelvin = 280.0  # ConstantLayerTemperature for intake heights
 # start_time = "2021-12-02T00:00:00"     # required only when [input].start_date is absent
 deflate_level = 0
 
 [[output.observations.sources]]
-kind = "oco2_lite"                       # NASA Lite XCO2 files; one request per quality-passing sounding
-path = "~/data/oco2/{YYYY}/oco2_LtCO2_{YYMMDD}_*.nc4"
-quality_flag_max = 0
+kind = "oco2_lite"                       # OCO2LiteSource: Lite files or OCO-2 v11 MIP 10-s averages
+path = "/kiwi-data/Data/model/OCO2MIP/observation_input/OCO2_b11.2_10sec_GOOD_r2.nc4"
+quality_filter = "none"                  # NoQualityFilter; default "flag_max" = QualityFlagFilter("xco2_quality_flag", 0)
 
 [[output.observations.sources]]
-kind = "obspack"                         # NOAA ObsPack NetCDF dataset files
-mode = "sites"                           # "sites" (station series) | "soundings" (per record)
-path = "~/data/obspack/data/nc/co2_*_surface-insitu_*.nc"
-site_grouping = "site_code"              # "site_code": one site per dataset file (and intake height),
-                                         #   id = dataset name [+ "_<h>magl"]; "location": one site per
-                                         #   rounded (lat, lon, intake), id = "<code>_<lat>N_<lon>E_<h>magl"
+kind = "obspack"                         # ObsPackSource
+mode = "soundings"                       # SoundingMode: every record at its own time and intake height
+path = "~/data/obspack/data/nc/co2_*.nc"
 
 [[output.observations.sources]]
-kind = "table"                           # id,time,lat,lon[,altitude_agl] as .csv, .toml, or .nc
-mode = "soundings"
-path = "~/data/points.csv"
+kind = "table"                           # TableSource: your own CSV / TOML / NetCDF list
+mode = "sites"                           # SiteMode: station series per site schedule
+path = "~/data/AtmosTransport/observations/tccon_sites.csv"
 ```
 
-The file partition follows `[output].split`: one `_soundings` and one `_sites`
-file per run, or one pair per daily binary with `{date}`/`{YYYYMMDD}`
-substituted. Unknown keys in this table or in a source are rejected. Source
-paths are templates expanded per run day. Sounding times are absolute UTC, so
-the run needs an origin, the start of window 1 of the first binary:
-`[input].start_date` at 00:00 UTC, or `start_time` when the inputs are an
-explicit `binary_paths` list. `validate_config` enforces this, and the run
-refuses an origin on a different day than the first binary's date label.
-Only soundings inside the transported span are sampled; a single-file run
-with `start_window > 1` starts that many windows after the origin.
+| Key | Choices → type |
+|---|---|
+| `kind` | `"oco2_lite"` → `OCO2LiteSource`, `"obspack"` → `ObsPackSource`, `"table"` → `TableSource` |
+| `mode` | `"soundings"` → `SoundingMode` (point events), `"sites"` → `SiteMode` (station series); required for `obspack` and `table` |
+| `quality_filter` | `oco2_lite` only: `"flag_max"` (default) → `QualityFlagFilter(quality_variable, quality_flag_max)` keeps flags `<= max`; `"flag_values"` → `QualityFlagValues(quality_variable, quality_flag_values)` keeps listed flags (MIP `assimilate_flag`: 0 not assimilated, 1 assimilated, 2 withheld, so `[1]` selects the assimilated set); `"none"` → `NoQualityFilter`. Keys of the other filters are rejected. |
+| `split` (in `[output]`) | `"single"` → `SingleOutputFile`, `"daily"` → `DailyOutputFiles`; observation files follow it |
+| `site_grouping` | `obspack` sites only: `"site_code"` → `SiteCodeGrouping`, `"location"` → `LocationGrouping` |
+| `format` | `table` only: `"auto"`, `"csv"`, `"toml"`, `"netcdf"` → `AutoTableFormat`, `CSVTableFormat`, `TOMLTableFormat`, `NetCDFTableFormat` |
+| `time_interpolation` | `"linear"` → `LinearWindowInterpolation`, `"nearest_window"` → `NearestWindowSampling` |
 
-Each sounding row holds the id, time, location, containing cell, bracketing
-sample times and weight, dry interface pressures, per-layer dry air mass, and
-each tracer's profile (dry mole fraction) and column mean. Each site record
-holds, per window end, the tracer value in the layer containing the intake
-height, the lowest-layer value, the chosen layer with its bottom and top
-heights, and surface pressure. Averaging kernels are applied offline. See
-[Output schema](@ref) for the variable tables.
+Source paths are templates: `{YYYYMMDD}` (or `{date}`), `{YYMMDD}`, `{YYYY}`,
+`{MM}`, `{DD}` are substituted per run day, and `*` / `?` wildcards expand in
+the file name. A path without date tokens must match at least one file.
+
+**Station tables.** A `table` source with `mode = "sites"` reads `id`, `lat`,
+`lon`, optional `elevation` (m asl) and `intake_height` (m above ground) or
+`altitude` (m asl, converted with `elevation`). Each row's schedule follows
+from its keys:
+
+| Row keys | Schedule | Output |
+|---|---|---|
+| none | `EveryWindow` | every met-window end, `_sites` file |
+| `start_time`, `end_time` | `TimeRange` | window ends inside the range; NaN outside |
+| `times` | `TimeList` | one point event per listed UTC time, `_soundings` file |
+
+In CSV, list several times in one `times` cell separated by `;`. Times are
+ISO-8601 UTC strings or TOML date-times (no offset, or `Z`); in NetCDF tables
+`time`, `start_time`, and `end_time` are decoded from their CF units, and bare
+numbers are rejected elsewhere. A site id that repeats (across rows, daily
+files, or sources) must keep its location; its time lists are merged, and any
+other schedules must agree. Unknown CSV/TOML columns are an error, so a
+misspelt `intake_height` cannot silently select the lowest layer. TOML site
+tables can declare `#:schema .../schemas/observation_sites.schema.json` for
+editor help; `config/examples/observation_sites_demo.toml` shows all three
+schedules. Point-event tables (`mode = "soundings"`) read `id`, `time`, `lat`,
+`lon` and the same optional height columns.
+
+**Intake layer.** The model has no orography, so the intake layer is chosen
+by height above the model's own surface, from hypsometric layer heights
+(GCHP VDIFF temperatures on cubed-sphere binaries that carry them, else the
+constant above). Each output row records the chosen layer, its bottom and top
+heights, and the model surface pressure, so mountain sites show their
+representativeness gap.
+
+**Time and files.** The run origin is the start of window 1 of the first
+binary: `[input].start_date` at 00:00 UTC, or `start_time` with an explicit
+`binary_paths` list; `validate_config` enforces it and the run refuses an
+origin on another day than the first binary's date label. Only point events
+inside the transported span are sampled (an event exactly at the final window
+end is kept, so two chained runs sharing a boundary both write it). The file
+partition follows `[output].split`; daily files use the day index when a
+binary name carries no date, and two binaries resolving to the same daily file
+(snapshots or observations) fail before transport starts. A `_soundings` file exists only when there are
+point events and a `_sites` file only when there are station series.
+Observation rows are queued and written whenever the shared NetCDF lock is
+free, so a background daily snapshot write never stalls the run. All sources
+are read at startup, keeping only records inside the run span; reading the
+whole-mission MIP file takes a few seconds and about 2 GB of transient memory. Averaging kernels are applied offline.
+See [Output schema](@ref) for the variable tables.
 
 Observation sampling adds one small gather per window and does not change
 transport: the transported state and gridded snapshot output are unchanged
 with or without it (tested on lat-lon runs; on lat-lon and reduced-Gaussian
-runs it makes the runner step window by window, as snapshots do). Station
-heights are hypsometric with dry-air temperature; they use the window's
-temperature, so they lag the window end by up to one window. With
-`split = "daily"` snapshots, observation appends wait for the background
-daily snapshot write, because all NetCDF writes share one lock.
+runs it makes the runner step window by window, as snapshots do).
 
 ### Multi-threaded execution
 

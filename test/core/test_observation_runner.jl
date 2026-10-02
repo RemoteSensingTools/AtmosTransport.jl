@@ -71,7 +71,7 @@ end
         NCDataset(joinpath(dir, "obs_sites.nc"), "r") do ds
             @test ds.attrib["completed_times"] == 3                    # t = 0, 1 h, 2 h
             @test ds["time"][:] == [ORIGIN, ORIGIN + Hour(1), ORIGIN + Hour(2)]
-            @test all(isapprox.(ds["co2"][:, :], 400e-6; rtol = 1e-6))
+            @test all(isapprox.(ds["co2_intake"][:, :], 400e-6; rtol = 1e-6))
             @test all(ds["intake_level"][:, :] .== 1)
             @test all(ds["height_method"][:, :] .== 0)
         end
@@ -185,7 +185,7 @@ end
         NCDataset(joinpath(dir, "cont_sites.nc"), "r") do c
             NCDataset(joinpath(dir, "split_sites.nc"), "r") do s
                 @test c.attrib["completed_times"] == s.attrib["completed_times"] == 5
-                @test c["co2"][:, :] ≈ s["co2"][:, :] rtol = 1e-10
+                @test c["co2_intake"][:, :] ≈ s["co2_intake"][:, :] rtol = 1e-10
                 @test c["intake_level"][:, :] == s["intake_level"][:, :]
                 # Toy fixture: 5 equal-sigma layers (~20% of the column each, lowest ~1.8 km),
                 # so both intakes sit in layer 5. Real-grid placement is tested in

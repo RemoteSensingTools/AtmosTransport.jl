@@ -107,7 +107,7 @@ end
                               "format" => "toml")
     spec = O.observation_output_spec(_obs_cfg(; sources = Any[oco, obspack, table]))
     @test spec.sources[1] isa OCO2LiteSource
-    @test spec.sources[1].quality_flag_max == 1
+    @test spec.sources[1].quality_filter == O.QualityFlagFilter("xco2_quality_flag", 1)
     @test O.source_kind(spec.sources[1]) === :oco2_lite
     @test O.source_mode(spec.sources[1]) isa SoundingMode
     @test spec.sources[2] isa ObsPackSource
@@ -121,7 +121,17 @@ end
     @test O.observation_output_spec(_obs_cfg(; sources = Any[default_grouping])).sources[1].site_grouping isa
           SiteCodeGrouping
     oco_explicit = Dict{String, Any}("kind" => "oco2_lite", "mode" => "soundings", "path" => "/tmp/x.nc4")
-    @test O.observation_output_spec(_obs_cfg(; sources = Any[oco_explicit])).sources[1].quality_flag_max == 0
+    @test O.observation_output_spec(_obs_cfg(; sources = Any[oco_explicit])).sources[1].quality_filter.max == 0
+    # OCO-2 v11 MIP 10-second files: filter on assimilate_flag, or keep everything.
+    mip = Dict{String, Any}("kind" => "oco2_lite", "path" => "/tmp/x.nc4", "quality_variable" => "assimilate_flag",
+                            "quality_flag_max" => 2)
+    @test O.observation_output_spec(_obs_cfg(; sources = Any[mip])).sources[1].quality_filter ==
+          O.QualityFlagFilter("assimilate_flag", 2)
+    everything = Dict{String, Any}("kind" => "oco2_lite", "path" => "/tmp/x.nc4", "quality_filter" => "none")
+    @test O.observation_output_spec(_obs_cfg(; sources = Any[everything])).sources[1].quality_filter isa O.NoQualityFilter
+    contradictory = Dict{String, Any}("kind" => "oco2_lite", "path" => "/tmp/x.nc4", "quality_filter" => "none",
+                                      "quality_flag_max" => 0)
+    @test_throws ArgumentError O.observation_output_spec(_obs_cfg(; sources = Any[contradictory]))
     home = Dict{String, Any}("kind" => "table", "mode" => "sites", "path" => "~/points.csv")
     @test O.observation_output_spec(_obs_cfg(; sources = Any[home])).sources[1].path_template ==
           joinpath(homedir(), "points.csv")

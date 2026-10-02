@@ -6,36 +6,10 @@ using AtmosTransport.Output: observation_output_spec, build_observation_sampler,
                              append_site_record!, CellLocation, GatherPlan, samples_observations
 const O = AtmosTransport.Output
 
-const ORIGIN = DateTime(2021, 12, 2)
-unix(dt) = datetime2unix(dt)
-const G = 9.80665
-
-# A 4×3 lat-lon column model with 3 levels, p_top = 100 Pa, uniform co2.
-function fake_model(; q = 400e-6, FT = Float64)
-    mesh = LatLonMesh(; FT = FT, Nx = 4, Ny = 3)
-    A = FT[100.0, 0.0, 0.0, 0.0]
-    B = FT[0.0, 0.1, 0.5, 1.0]
-    grid = AtmosGrid(mesh, HybridSigmaPressure(A, B), CPU(); FT = FT)
-    area = [cell_area(mesh, i, j) for i in 1:4, j in 1:3]
-    ps = 98_000.0
-    air = Array{FT}(undef, 4, 3, 3)
-    for k in 1:3, j in 1:3, i in 1:4
-        dp = (A[k + 1] + B[k + 1] * ps) - (A[k] + B[k] * ps)
-        air[i, j, k] = FT(dp * area[i, j] / G * (1 + 0.01 * i))   # slightly column dependent
-    end
-    state = CellState(DryBasis, air; co2 = air .* FT(q), ch4 = air .* FT(1.9e-6))
-    return (; state, grid), mesh
-end
-
-function sampler_spec(dir; split = "single", sources, kwargs...)
-    obs_path = split == "daily" ? joinpath(dir, "obs_{YYYYMMDD}.nc") : joinpath(dir, "obs.nc")
-    output_cfg = Dict{String, Any}("path" => joinpath(dir, "snap.nc"), "hours" => [0.0], "split" => split,
-        "observations" => Dict{String, Any}("path" => obs_path,
-                                            "sources" => sources, Dict(String(k) => v for (k, v) in kwargs)...))
-    return observation_output_spec(output_cfg)
-end
-
-table_source(path; mode = "soundings") = Dict{String, Any}("kind" => "table", "mode" => mode, "path" => path)
+include(joinpath(@__DIR__, "..", "fixtures", "observation_fixtures.jl"))
+using .ObservationTestFixtures
+const G = GRAVITY
+fake_model(; kwargs...) = fake_ll_model(; kwargs...)
 
 @testset "linear bracketing across window ends" begin
     mktempdir() do dir
@@ -130,7 +104,7 @@ table_source(path; mode = "soundings") = Dict{String, Any}("kind" => "table", "m
             @test ds.attrib["completed_times"] == 3
             @test ds["site_id"][:] == ["low", "high", "none"]
             @test ds["time"][:] == [ORIGIN, ORIGIN + Hour(1), ORIGIN + Hour(2)]
-            co2 = ds["co2"][:, :]
+            co2 = ds["co2_intake"][:, :]
             @test size(co2) == (3, 3)
             @test all(co2[:, 1] .≈ 400e-6) && all(co2[:, 2] .≈ 800e-6) && all(co2[:, 3] .≈ 1600e-6)
             @test ds["co2_surface"][:, :] ≈ co2
@@ -143,7 +117,7 @@ table_source(path; mode = "soundings") = Dict{String, Any}("kind" => "table", "m
             @test all(ds["intake_layer_top_agl"][1, :] .> 10)
             @test all(ds["intake_layer_top_agl"][2, :] .> 50_000)    # column top with p_top = 100 Pa (~56 km)
             @test isnan(ds["intake_height"][3])
-            @test !haskey(ds, "co2_profile")
+            @test !haskey(ds, "co2")                       # profiles are opt-in
             @test ds.attrib["n_records"] == 3
         end
     end
@@ -179,7 +153,7 @@ end
         NCDataset(joinpath(dir, "obs_20211202_soundings.nc"), "r") do ds
             @test ds["id"][:] == ["a", "b", "c", "d"]
             @test all(isnan, ds["interp_weight"][:])
-            @test all(ds["interp_flag"][:] .== 0)
+            @test all(ds["interp_flag"][:] .== 2)           # nearest window end
             @test ds["sample_time_prev"][:] == ds["sample_time_next"][:]
             @test ds["co2"][1, :] ≈ [400e-6, 800e-6, 800e-6, 800e-6]
             @test ds.attrib["completed_soundings"] == 4
@@ -191,8 +165,8 @@ end
         end
         NCDataset(joinpath(dir, "obs_20211203_sites.nc"), "r") do ds
             @test ds.attrib["completed_times"] == 1
-            @test size(ds["co2_profile"]) == (3, 1, 1)
-            @test all(ds["co2_profile"][:, 1, 1] .≈ 1600e-6)
+            @test size(ds["co2"]) == (3, 1, 1)
+            @test all(ds["co2"][:, 1, 1] .≈ 1600e-6)
             @test size(ds["p_half_dry"]) == (4, 1, 1)
             @test ds["p_half_dry"][1, 1, 1] == 100
             @test size(ds["air_mass_per_area_dry"]) == (3, 1, 1)
@@ -258,11 +232,7 @@ end
         begin_observation_day!(rs, "20211202", 1)
         observe_window_boundary!(rs, model.state, 0.0; next_window_seconds = 3600.0)
         finish_observations!(rs); close(rs)
-        NCDataset(joinpath(dir, "obs_soundings.nc"), "r") do ds
-            @test ds.attrib["completed_soundings"] == 0
-            @test ds.attrib["n_unlocated_soundings"] == 1
-            @test ds.dim["obs"] == 0
-        end
+        @test !isfile(joinpath(dir, "obs_soundings.nc"))   # no point events → no soundings file
         NCDataset(joinpath(dir, "obs_sites.nc"), "r") do ds
             @test ds["site_id"][:] == ["inside"]
             @test ds.attrib["n_unlocated_sites"] == 1
@@ -285,22 +255,23 @@ end
         mesh = LatLonMesh(; FT = Float64, Nx = 2, Ny = 2)
         stream = SoundingNetCDFStream(joinpath(dir, "s.nc"), mesh, 2, [:co2]; mass_basis = :dry, origin = ORIGIN)
         cell = CellLocation(1, 1, 1, 1, 1, 0.0, 0.0, 1.0)
-        good = SoundingBatch(["x"], Int32[1], [0.0], [0.0], [0.0], [cell], [0.0], [0.0], Float32[0], Int8[0],
-                             reshape([1.0, 2.0, 3.0], 3, 1), reshape([1.0, 1.0], 2, 1),
-                             reshape([4e-4, 4e-4], 2, 1, 1), reshape([4e-4], 1, 1))
+        function test_batch(; ids = ["x"], nlevel = 2, ph_levels = nlevel + 1, ntracer = 1)
+            n = length(ids)
+            return SoundingBatch(; ids, sources = Int32[1], times = [0.0], latitudes = [0.0], longitudes = [0.0],
+                                 cells = [cell], sample_time_prev = [0.0], sample_time_next = [0.0],
+                                 weights = Float32[0], flags = Int8[0],
+                                 p_half = reshape(collect(1.0:ph_levels), ph_levels, 1),
+                                 air_mass_per_area = ones(nlevel, 1), tracers = fill(4e-4, nlevel, ntracer, 1),
+                                 column_means = fill(4e-4, ntracer, 1), elevations = [NaN], intake_heights = [NaN],
+                                 intake_levels = Int32[nlevel], layer_bottom = [0.0], layer_top = [10.0],
+                                 height_methods = Int8[0], intake_values = fill(4e-4, ntracer, 1))
+        end
+        good = test_batch()
         @test append_soundings!(stream, good) == 1
         # Inconsistent batches cannot be constructed; consistent ones of the wrong depth are refused.
-        @test_throws DimensionMismatch SoundingBatch(["y"], Int32[1], [0.0], [0.0], [0.0], [cell], [0.0], [0.0],
-                                                     Float32[0], Int8[0], reshape([1.0, 2.0], 2, 1),
-                                                     reshape([1.0, 1.0], 2, 1), reshape([4e-4, 4e-4], 2, 1, 1),
-                                                     reshape([4e-4], 1, 1))
-        @test_throws DimensionMismatch SoundingBatch(["y", "z"], Int32[1], [0.0], [0.0], [0.0], [cell], [0.0], [0.0],
-                                                     Float32[0], Int8[0], reshape([1.0, 2.0, 3.0], 3, 1),
-                                                     reshape([1.0, 1.0], 2, 1), reshape([4e-4, 4e-4], 2, 1, 1),
-                                                     reshape([4e-4], 1, 1))
-        deep = SoundingBatch(["y"], Int32[1], [0.0], [0.0], [0.0], [cell], [0.0], [0.0], Float32[0], Int8[0],
-                             reshape(collect(1.0:4.0), 4, 1), reshape([1.0, 1.0, 1.0], 3, 1),
-                             reshape(fill(4e-4, 3), 3, 1, 1), reshape([4e-4], 1, 1))
+        @test_throws DimensionMismatch test_batch(; ph_levels = 2)
+        @test_throws DimensionMismatch test_batch(; ids = ["y", "z"])
+        deep = test_batch(; nlevel = 3)
         @test_throws DimensionMismatch append_soundings!(stream, deep)
         # A failed append poisons the stream; the published count is unchanged.
         poisoned = SoundingNetCDFStream(joinpath(dir, "p.nc"), mesh, 2, [:co2]; mass_basis = :dry, origin = ORIGIN)

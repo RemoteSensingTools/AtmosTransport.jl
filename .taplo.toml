@@ -1,6 +1,15 @@
 [[rule]]
 include = ["config/examples/*.toml"]
+exclude = ["config/examples/observation_sites_demo.toml"]
 
 [rule.schema]
 path = "./schemas/atmos_transport_run.schema.json"
+enabled = true
+
+# Observation tables read by [[output.observations.sources]] with kind = "table".
+[[rule]]
+include = ["config/examples/observation_sites_demo.toml", "config/observations/*.toml"]
+
+[rule.schema]
+path = "./schemas/observation_sites.schema.json"
 enabled = true

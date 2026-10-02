@@ -14,8 +14,21 @@
   get the intake-layer value from hypsometric heights. Output goes to
   append-only `_soundings` / `_sites` NetCDF files (see the output schema).
   Gridded snapshot output is unchanged.
+- Point events (satellite soundings, ObsPack records, station time lists)
+  carry an intake height and get `<tracer>_intake` from the layer containing
+  it; station tables choose `EveryWindow`, `TimeRange`, or `TimeList`
+  schedules per row and accept `altitude` with `elevation`; repeated site ids
+  merge their time lists. OCO sources take a typed `quality_filter`
+  (`"flag_max"`, `"flag_values"` for categorical flags such as the MIP
+  `assimilate_flag`, or `"none"` to co-sample every record). The editor schema documents every choice with its Julia
+  type and is checked against the parser by a test; site tables have their own
+  schema (`schemas/observation_sites.schema.json`).
 - All runtime NetCDF writes, including the background daily snapshot task,
-  now share one lock; netcdf-c is not thread-safe.
+  share one lock (`with_netcdf_lock`); netcdf-c is not thread-safe.
+  Observation rows queue while the lock is busy instead of stalling the run.
+- Daily output files (snapshots and observations) now use the day index when
+  a binary name carries no date; previously every day wrote the same file.
+  Two binaries that still resolve to one daily file fail before transport.
 - `[output.fields].tracers = "name"` (a single string) no longer throws a
   `MethodError`; it selects that one tracer as documented.
 

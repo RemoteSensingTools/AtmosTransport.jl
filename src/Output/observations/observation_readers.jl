@@ -4,9 +4,12 @@
 # `read_observation_requests(source, index, origin, dates)` expands the
 # source's path template for the run days and calls `_read_requests_file!`
 # once per file, dispatched on the source type and its mode. Times become
-# Float64 seconds since `origin` (UTC); rows with fill values or impossible
-# coordinates are skipped. `build_observation_set` merges every source, keeps
-# only requests inside the run window, and logs what it kept and dropped.
+# Float64 seconds since `origin` (UTC). Satellite and ObsPack rows with fill
+# values, impossible coordinates, or a failed quality filter are skipped and
+# counted in `ReadStats`; generic tables are user-written, so an invalid row
+# there is an error. `build_observation_set` merges every source, expands
+# site time lists into point events, keeps only events inside the
+# transported span, and logs what it kept, skipped, and dropped.
 # ---------------------------------------------------------------------------
 
 # -- path templates ---------------------------------------------------------
@@ -96,7 +99,9 @@ const _CF_UNIT_SECONDS = Dict(
     "day" => 86400.0, "days" => 86400.0, "d" => 86400.0)
 
 # "1970-01-01 00:00:00", "...T00:00:00Z", "... UTC", "... +00:00". Non-zero
-# offsets are rejected: every supported product is UTC.
+# offsets are rejected: every supported product is UTC. Unlike config times
+# this accepts non-padded CF origins such as "1900-1-1", so it does not use
+# the strict `_ISO_UTC_RE` gate.
 function _cf_time_origin(s::AbstractString, label::AbstractString)
     t = String(strip(s))
     t = String(strip(chopsuffix(t, "UTC")))
@@ -167,7 +172,7 @@ function _fill_as(::Type{T}, fill::Real) where {T <: Integer}
 end
 
 function _time_unix_seconds(var, label::AbstractString)
-    units = var.attrib isa AbstractDict ? get(var.attrib, "units", nothing) : get(var.attrib, "units", nothing)
+    units = get(var.attrib, "units", nothing)
     units isa AbstractString || throw(ArgumentError("$(label): time variable has no units attribute"))
     return _cf_unix_seconds(_raw_numeric(var, label), units, label)
 end
@@ -195,6 +200,19 @@ end
 
 # -- generic entry point ----------------------------------------------------
 
+"Rows a reader skipped instead of turning into requests."
+Base.@kwdef mutable struct ReadStats
+    skipped_invalid::Int = 0     # fill values or impossible coordinates/times
+    skipped_quality::Int = 0     # rejected by the source's quality filter
+    outside_window::Int = 0      # point events dropped by the reader's window prefilter
+end
+
+# Reader-side window prefilter, in seconds after the origin. Large satellite
+# files (the MIP OCO-2 file spans the whole mission) are cut before their
+# request records are built.
+_in_window(::Nothing, t::Real) = true
+_in_window((t0, t1)::Tuple{Float64, Float64}, t::Real) = t0 <= t <= t1
+
 """
     read_observation_requests(source, source_index, origin, dates) -> (soundings, sites)
 
@@ -205,13 +223,15 @@ values or impossible coordinates are skipped; a source that resolves to no
 file at all logs a warning.
 """
 function read_observation_requests(source::AbstractObservationSource, source_index::Int,
-                                   origin::DateTime, dates::AbstractVector{Date})
+                                   origin::DateTime, dates::AbstractVector{Date};
+                                   stats::ReadStats = ReadStats(),
+                                   window::Union{Nothing, Tuple{Float64, Float64}} = nothing)
     soundings = SoundingRequest[]
     sites = SiteRequest[]
     paths = expand_observation_paths(source_path_template(source), dates)
     isempty(paths) && @warn "observation source $(source_index) ($(source_kind(source))) matched no files for the run days" template = source_path_template(source)
     for path in paths
-        _read_requests_file!(soundings, sites, source, path, source_index, origin)
+        _read_requests_file!(soundings, sites, source, path, source_index, origin, stats, window)
     end
     return soundings, sites
 end
@@ -220,8 +240,8 @@ end
 
 function _read_requests_file!(soundings::Vector{SoundingRequest}, ::Vector{SiteRequest},
                               source::OCO2LiteSource, path::AbstractString, source_index::Int,
-                              origin::DateTime)
-    label = "oco2_lite $(basename(path))"
+                              origin::DateTime, stats::ReadStats, window)
+    label = "oco2_lite $(path)"
     origin_unix = datetime2unix(origin)
     NCDataset(path, "r") do ds
         ids = vec(Array(_nc_variable(ds, ("sounding_id",), label).var))
@@ -229,17 +249,34 @@ function _read_requests_file!(soundings::Vector{SoundingRequest}, ::Vector{SiteR
         times = _time_unix_seconds(_nc_variable(ds, ("time",), label), label)
         lats = _raw_numeric(_nc_variable(ds, ("latitude",), label), label)
         lons = _raw_numeric(_nc_variable(ds, ("longitude",), label), label)
-        flags = _raw_numeric(_nc_variable(ds, ("xco2_quality_flag",), label), label)
-        _check_same_length(label, n, ("time", times), ("latitude", lats),
-                           ("longitude", lons), ("xco2_quality_flag", flags))
+        keep = _quality_mask(source.quality_filter, ds, n, label)
+        _check_same_length(label, n, ("time", times), ("latitude", lats), ("longitude", lons))
         for k in 1:n
-            isfinite(flags[k]) && flags[k] <= source.quality_flag_max || continue
-            isvalid_lonlat(lons[k], lats[k]) && isfinite(times[k]) && !iszero(ids[k]) || continue
-            push!(soundings, SoundingRequest(string(ids[k]), times[k] - origin_unix,
-                                             lons[k], lats[k], source_index))
+            if !keep[k]
+                stats.skipped_quality += 1
+            elseif isfinite(times[k]) && !_in_window(window, times[k] - origin_unix)
+                stats.outside_window += 1
+            elseif !(isvalid_lonlat(lons[k], lats[k]) && isfinite(times[k]) && !iszero(ids[k]))
+                stats.skipped_invalid += 1
+            else
+                push!(soundings, SoundingRequest(string(ids[k]), times[k] - origin_unix,
+                                                 lons[k], lats[k], source_index))
+            end
         end
     end
     return nothing
+end
+
+_quality_mask(::NoQualityFilter, ds, n::Int, label) = trues(n)
+function _quality_mask(filter::QualityFlagFilter, ds, n::Int, label)
+    flags = _raw_numeric(_nc_variable(ds, (filter.variable,), label), label)
+    _check_same_length(label, n, (filter.variable, flags))
+    return [isfinite(f) && f <= filter.max for f in flags]
+end
+function _quality_mask(filter::QualityFlagValues, ds, n::Int, label)
+    flags = _raw_numeric(_nc_variable(ds, (filter.variable,), label), label)
+    _check_same_length(label, n, (filter.variable, flags))
+    return [isfinite(f) && insorted(f, filter.values) for f in flags]
 end
 
 # -- NOAA ObsPack -----------------------------------------------------------
@@ -261,7 +298,7 @@ end
 _attr_float(ds, name) = (v = get(ds.attrib, name, nothing); v isa Real ? Float64(v) : NaN)
 
 function _obspack_records(path::AbstractString)
-    label = "obspack $(basename(path))"
+    label = "obspack $(path)"
     dataset = first(splitext(basename(path)))
     return NCDataset(path, "r") do ds
         times = _time_unix_seconds(_nc_variable(ds, ("time",), label), label)
@@ -288,23 +325,33 @@ function _obspack_records(path::AbstractString)
     end
 end
 
+# Every record is a point event at its own time and intake height (flasks,
+# continuous records, and aircraft alike), as the OCO-2 v11 MIP requires.
 function _read_requests_file!(soundings::Vector{SoundingRequest}, ::Vector{SiteRequest},
                               ::ObsPackSource{SoundingMode}, path::AbstractString,
-                              source_index::Int, origin::DateTime)
+                              source_index::Int, origin::DateTime, stats::ReadStats, window)
     rec = _obspack_records(path)
     origin_unix = datetime2unix(origin)
     for k in eachindex(rec.times)
-        isvalid_lonlat(rec.lons[k], rec.lats[k]) && isfinite(rec.times[k]) || continue
-        push!(soundings, SoundingRequest(rec.ids[k], rec.times[k] - origin_unix,
-                                         rec.lons[k], rec.lats[k], source_index))
+        if isfinite(rec.times[k]) && !_in_window(window, rec.times[k] - origin_unix)
+            stats.outside_window += 1
+        elseif isvalid_lonlat(rec.lons[k], rec.lats[k]) && isfinite(rec.times[k])
+            push!(soundings, SoundingRequest(rec.ids[k], rec.times[k] - origin_unix,
+                                             rec.lons[k], rec.lats[k], source_index,
+                                             rec.elevation[k], rec.intake[k]))
+        else
+            stats.skipped_invalid += 1
+        end
     end
     return nothing
 end
 
 function _read_requests_file!(::Vector{SoundingRequest}, sites::Vector{SiteRequest},
                               source::ObsPackSource{SiteMode}, path::AbstractString,
-                              source_index::Int, ::DateTime)
-    append!(sites, _obspack_sites(source.site_grouping, _obspack_records(path), source_index))
+                              source_index::Int, ::DateTime, stats::ReadStats, window)
+    rec = _obspack_records(path)
+    stats.skipped_invalid += count(k -> !isvalid_lonlat(rec.lons[k], rec.lats[k]), eachindex(rec.times))
+    append!(sites, _obspack_sites(source.site_grouping, rec, source_index))
     return nothing
 end
 
@@ -350,7 +397,18 @@ const _TABLE_TIME_KEYS = ("time", "datetime")
 const _TABLE_LAT_KEYS = ("lat", "latitude")
 const _TABLE_LON_KEYS = ("lon", "longitude")
 const _TABLE_INTAKE_KEYS = ("intake_height", "intake_height_m", "altitude_agl", "height_agl")
+const _TABLE_ALTITUDE_KEYS = ("altitude", "altitude_asl")
 const _TABLE_ELEVATION_KEYS = ("elevation", "elevation_m")
+const _TABLE_START_KEYS = ("start_time",)
+const _TABLE_END_KEYS = ("end_time", "stop_time")
+const _TABLE_TIMES_KEYS = ("times",)
+const _TABLE_DECODED_TIME_KEYS = (_TABLE_TIME_KEYS..., _TABLE_START_KEYS..., _TABLE_END_KEYS...)
+# Every column a table may carry; anything else is reported, because a
+# misspelt optional column (e.g. `intake_hieght`) would otherwise fall back
+# silently to its default.
+const _TABLE_KNOWN_KEYS = (_TABLE_ID_KEYS..., _TABLE_TIME_KEYS..., _TABLE_LAT_KEYS..., _TABLE_LON_KEYS...,
+                           _TABLE_INTAKE_KEYS..., _TABLE_ALTITUDE_KEYS..., _TABLE_ELEVATION_KEYS...,
+                           _TABLE_START_KEYS..., _TABLE_END_KEYS..., _TABLE_TIMES_KEYS...)
 
 # A table is a Dict from lower-case column name to a column vector. CSV
 # columns are Vector{String}, NetCDF columns are concrete numeric or string
@@ -382,13 +440,38 @@ function _table_optional_float(column_values, label::AbstractString, column::Abs
     return _table_float(x, label, column)
 end
 
-# NetCDF time columns arrive as unix seconds; CSV/TOML values are parsed strictly.
-function _table_utc_seconds(v, origin_unix::Float64, label::AbstractString, k::Int)
-    if v isa Real && !(v isa Bool)
-        isfinite(v) || throw(ArgumentError("$(label): row $(k) has a fill or non-finite time"))
-        return Float64(v) - origin_unix
-    end
-    return datetime2unix(_parse_iso_utc(v, "$(label) row $(k) time")) - origin_unix
+# A NetCDF time cell already decoded from its CF units (unix seconds; NaN for
+# fill values). Wrapping it keeps a decoded time distinct from a bare number,
+# which is rejected because its units would be a guess.
+struct _UnixTime
+    seconds::Float64
+end
+
+# Time cells: decoded NetCDF times, TOML date-times, or ISO-8601 UTC strings.
+function _table_utc_seconds(v::_UnixTime, origin_unix::Float64, label::AbstractString, k::Int)
+    isfinite(v.seconds) || throw(ArgumentError("$(label): row $(k) has a fill or non-finite time"))
+    return v.seconds - origin_unix
+end
+_table_utc_seconds(v::Real, ::Float64, label::AbstractString, k::Int) = throw(ArgumentError(
+    "$(label): row $(k) has a bare number $(repr(v)) as a time; use an ISO-8601 UTC string, " *
+    "a TOML date-time, or a NetCDF variable with CF time units"))
+_table_utc_seconds(v, origin_unix::Float64, label::AbstractString, k::Int) =
+    datetime2unix(_parse_iso_utc(v, "$(label) row $(k) time")) - origin_unix
+
+# Elevation (m asl) and intake height (m above ground); `altitude` (m asl)
+# is converted with the elevation when no intake height is given.
+function _table_heights(columns::_TableColumns, label::AbstractString, k::Int)
+    elevation = _table_optional_float(_column(columns, _TABLE_ELEVATION_KEYS, label; required = false),
+                                      label, "elevation", k)
+    intake = _table_optional_float(_column(columns, _TABLE_INTAKE_KEYS, label; required = false),
+                                   label, "intake_height", k)
+    isnan(intake) || return elevation, intake
+    altitude = _table_optional_float(_column(columns, _TABLE_ALTITUDE_KEYS, label; required = false),
+                                     label, "altitude", k)
+    isnan(altitude) && return elevation, intake
+    isnan(elevation) && throw(ArgumentError(
+        "$(label): row $(k) gives an altitude above sea level but no elevation to convert it"))
+    return elevation, altitude - elevation
 end
 
 function _soundings_from_columns(columns::_TableColumns, source_index::Int, origin::DateTime,
@@ -406,29 +489,64 @@ function _soundings_from_columns(columns::_TableColumns, source_index::Int, orig
         lat = _table_float(lats[k], label, "lat")
         isvalid_lonlat(lon, lat) || throw(ArgumentError(
             "$(label): row $(k) has an invalid location ($(lon), $(lat))"))
+        elevation, intake = _table_heights(columns, label, k)
         push!(out, SoundingRequest(string(ids[k]), _table_utc_seconds(times[k], origin_unix, label, k),
-                                   lon, lat, source_index))
+                                   lon, lat, source_index, elevation, intake))
     end
     return out
 end
 
-function _sites_from_columns(columns::_TableColumns, source_index::Int, label::AbstractString)
+# A table cell, with empty strings, `missing`, and NetCDF fill times read as
+# `nothing` so the schedule methods below can dispatch on presence.
+_table_cell(::Nothing, k::Int) = nothing
+_table_cell(column, k::Int) = _present(column[k])
+_present(x) = x
+_present(::Missing) = nothing
+_present(x::AbstractString) = isempty(strip(x)) ? nothing : x
+_present(x::_UnixTime) = isnan(x.seconds) ? nothing : x
+
+# `times` holds a TOML array or a `;`-separated CSV string of UTC times.
+_table_time_list(x::AbstractString) = [String(strip(t)) for t in split(x, ';') if !isempty(strip(t))]
+_table_time_list(x::AbstractVector) = collect(x)
+_table_time_list(x) = [x]
+
+function _site_schedule(columns::_TableColumns, origin_unix::Float64, label::AbstractString, k::Int)
+    start = _table_cell(_column(columns, _TABLE_START_KEYS, label; required = false), k)
+    stop = _table_cell(_column(columns, _TABLE_END_KEYS, label; required = false), k)
+    times = _table_cell(_column(columns, _TABLE_TIMES_KEYS, label; required = false), k)
+    return _make_schedule(start, stop, times, origin_unix, label, k)
+end
+
+# (start_time, end_time, times) cells -> schedule; `nothing` marks an empty cell.
+_make_schedule(::Nothing, ::Nothing, ::Nothing, origin_unix, label, k) = EveryWindow()
+_make_schedule(start, stop, ::Nothing, origin_unix, label, k) =
+    TimeRange(_table_utc_seconds(start, origin_unix, label, k),
+              _table_utc_seconds(stop, origin_unix, label, k))
+_make_schedule(::Nothing, ::Nothing, times, origin_unix, label, k) =
+    TimeList([_table_utc_seconds(t, origin_unix, label, k) for t in _table_time_list(times)])
+_make_schedule(::Nothing, stop, ::Nothing, origin_unix, label, k) = _half_range(label, k)
+_make_schedule(start, ::Nothing, ::Nothing, origin_unix, label, k) = _half_range(label, k)
+_make_schedule(start, stop, times, origin_unix, label, k) = throw(ArgumentError(
+    "$(label): row $(k) sets both a time range and a time list; choose one"))
+_half_range(label, k) = throw(ArgumentError("$(label): row $(k) needs both start_time and end_time"))
+
+function _sites_from_columns(columns::_TableColumns, source_index::Int, origin::DateTime,
+                             label::AbstractString)
     ids = _column(columns, _TABLE_ID_KEYS, label)
     lats = _column(columns, _TABLE_LAT_KEYS, label)
     lons = _column(columns, _TABLE_LON_KEYS, label)
-    intake = _column(columns, _TABLE_INTAKE_KEYS, label; required = false)
-    elevation = _column(columns, _TABLE_ELEVATION_KEYS, label; required = false)
     n = length(ids)
     _check_same_length(label, n, ("lat", lats), ("lon", lons))
+    origin_unix = datetime2unix(origin)
     out = SiteRequest[]
     for k in 1:n
         lon = _table_float(lons[k], label, "lon")
         lat = _table_float(lats[k], label, "lat")
         isvalid_lonlat(lon, lat) || throw(ArgumentError(
             "$(label): row $(k) has an invalid location ($(lon), $(lat))"))
-        push!(out, SiteRequest(string(ids[k]), lon, lat,
-                               _table_optional_float(elevation, label, "elevation", k),
-                               _table_optional_float(intake, label, "intake_height", k), source_index))
+        elevation, intake = _table_heights(columns, label, k)
+        push!(out, SiteRequest(string(ids[k]), lon, lat, elevation, intake, source_index,
+                               _site_schedule(columns, origin_unix, label, k)))
     end
     return out
 end
@@ -485,8 +603,10 @@ function _read_toml_columns(path::AbstractString, mode::AbstractObservationMode,
 end
 
 # NetCDF: every 1-D variable (plus 2-D NC_CHAR string arrays) along the row
-# dimension. `time`/`datetime` are converted to unix seconds; integer ids
-# stay integers so their decimal strings are exact.
+# dimension. Time columns (`time`, `start_time`, `end_time`, ...) are decoded
+# from their CF units into `_UnixTime`; integer ids stay integers so their
+# decimal strings are exact. A per-site `times` list cannot be a 1-D NetCDF
+# column; use CSV or TOML for time lists.
 function _read_netcdf_columns(path::AbstractString, label::AbstractString)
     return NCDataset(path, "r") do ds
         columns = _TableColumns()
@@ -497,8 +617,8 @@ function _read_netcdf_columns(path::AbstractString, label::AbstractString)
                 columns[lname] = _string_vector(var, label)
             elseif ndims(var) != 1
                 continue
-            elseif lname in _TABLE_TIME_KEYS
-                columns[lname] = _time_unix_seconds(var, label)
+            elseif lname in _TABLE_DECODED_TIME_KEYS
+                columns[lname] = _UnixTime.(_time_unix_seconds(var, label))
             elseif eltype(var.var) <: Integer
                 columns[lname] = vec(Array(var.var))
             elseif eltype(var.var) <: Real
@@ -525,21 +645,42 @@ _read_table_columns(::TOMLTableFormat, path::AbstractString, mode::AbstractObser
 _read_table_columns(::NetCDFTableFormat, path::AbstractString, ::AbstractObservationMode, label::AbstractString) =
     _read_netcdf_columns(path, label)
 
+# Unknown columns are an error for CSV and TOML (user-written tables); NetCDF
+# files often carry extra variables, so those are only listed at debug level.
+_check_table_columns(::Union{CSVTableFormat, TOMLTableFormat}, columns, label) =
+    _check_known_keys(columns, _TABLE_KNOWN_KEYS, "$(label) column")
+function _check_table_columns(::NetCDFTableFormat, columns, label)
+    extra = sort!([k for k in keys(columns) if !(k in _TABLE_KNOWN_KEYS)])
+    isempty(extra) || @debug "$(label): ignoring variables $(join(extra, ", "))"
+    return nothing
+end
+
+function _table_columns(source::TableSource, path::AbstractString, label::AbstractString)
+    format = _table_format(source.format, path, label)
+    columns = _read_table_columns(format, path, source.mode, label)
+    _check_table_columns(format, columns, label)
+    return columns
+end
+
 function _read_requests_file!(soundings::Vector{SoundingRequest}, ::Vector{SiteRequest},
                               source::TableSource{SoundingMode}, path::AbstractString,
-                              source_index::Int, origin::DateTime)
-    label = "table $(basename(path))"
-    columns = _read_table_columns(_table_format(source.format, path, label), path, SoundingMode(), label)
+                              source_index::Int, origin::DateTime, ::ReadStats, window)
+    label = "table $(path)"
+    columns = _table_columns(source, path, label)
+    for key in (_TABLE_START_KEYS..., _TABLE_END_KEYS..., _TABLE_TIMES_KEYS...)
+        haskey(columns, key) && throw(ArgumentError(
+            "$(label): column $(key) is a site schedule; it has no meaning with mode = \"soundings\""))
+    end
     append!(soundings, _soundings_from_columns(columns, source_index, origin, label))
     return nothing
 end
 
 function _read_requests_file!(::Vector{SoundingRequest}, sites::Vector{SiteRequest},
                               source::TableSource{SiteMode}, path::AbstractString,
-                              source_index::Int, ::DateTime)
-    label = "table $(basename(path))"
-    columns = _read_table_columns(_table_format(source.format, path, label), path, SiteMode(), label)
-    append!(sites, _sites_from_columns(columns, source_index, label))
+                              source_index::Int, origin::DateTime, ::ReadStats, window)
+    label = "table $(path)"
+    columns = _table_columns(source, path, label)
+    append!(sites, _sites_from_columns(columns, source_index, origin, label))
     return nothing
 end
 
@@ -567,11 +708,13 @@ end
     build_observation_set(sources, origin, window_seconds) -> ObservationSet
     build_observation_set(sources, origin, dates)
 
-Read every source for the days covering the window, keep the soundings with
-`window_seconds[1] <= t < window_seconds[2]` (seconds after `origin`; the
-`dates` form uses whole days), sort them by time (stable), and merge sites by
-`id`. Sites that repeat with the same location are deduplicated; the same
-`id` with a different location is an error. Per-source counts are logged.
+Read every source for the days covering the window, merge sites by `id`,
+expand site time lists into point events, keep the point events with
+`window_seconds[1] <= t <= window_seconds[2]` (seconds after `origin`; the
+`dates` form uses whole days), and sort them by time (stable). A site `id`
+that repeats (across rows, daily files, or sources) must keep its location;
+time lists of a repeated id are merged, and other schedules must be equal.
+Per-source counts are logged.
 """
 build_observation_set(sources::AbstractVector{<:AbstractObservationSource}, origin::DateTime,
                       dates::AbstractVector{Date}) =
@@ -581,41 +724,66 @@ function build_observation_set(sources::AbstractVector{<:AbstractObservationSour
                                origin::DateTime, window_seconds::Tuple{Real, Real})
     t0, t1 = Float64.(window_seconds)
     dates = _window_days(origin, (t0, t1))
-    soundings = SoundingRequest[]
-    sites = SiteRequest[]
-    seen = Dict{String, SiteRequest}()
-    dropped_outside = 0
+    events = SoundingRequest[]
+    merged = Dict{String, SiteRequest}()
+    order = String[]
+    stats = [ReadStats() for _ in sources]
     for (index, source) in enumerate(sources)
-        s, p = read_observation_requests(source, index, origin, dates)
-        kept = 0
-        for request in s
-            if t0 <= request.time_seconds < t1
-                push!(soundings, request)
-                kept += 1
-            else
-                dropped_outside += 1
-            end
+        source_events, stations = read_observation_requests(source, index, origin, dates;
+                                                           stats = stats[index], window = (t0, t1))
+        append!(events, source_events)
+        for site in stations
+            previous = get(merged, site.id, nothing)
+            previous === nothing && push!(order, site.id)
+            merged[site.id] = previous === nothing ? site : _merge_site(previous, site)
         end
-        for site in p
-            previous = get(seen, site.id, nothing)
-            if previous === nothing
-                seen[site.id] = site
-                push!(sites, site)
-            elseif !_same_site(previous, site)
-                throw(ArgumentError(
-                    "observation site id $(repr(site.id)) appears with different locations " *
-                    "($(previous.lon), $(previous.lat), $(previous.intake_height_m)) vs " *
-                    "($(site.lon), $(site.lat), $(site.intake_height_m))"))
-            end
+    end
+    series = SiteRequest[]
+    for id in order
+        _expand_site!(events, series, merged[id])
+    end
+    nsource = length(sources)
+    kept, outside = zeros(Int, nsource), [s.outside_window for s in stats]
+    soundings = SoundingRequest[]
+    for request in events
+        if t0 <= request.time_seconds <= t1
+            push!(soundings, request)
+            kept[request.source] += 1
+        else
+            outside[request.source] += 1
         end
+    end
+    for (index, source) in enumerate(sources)
+        nseries = count(site -> site.source == index, series)
         @info "observation source $(index) ($(source_kind(source)), $(mode_label(source_mode(source)))): " *
-              "$(kept) soundings in the run window, $(length(s) - kept) outside, $(length(p)) sites"
+              "$(kept[index]) point events in the run window, $(outside[index]) outside, " *
+              "$(nseries) station series, $(stats[index].skipped_quality) rows failed the quality filter, " *
+              "$(stats[index].skipped_invalid) rows invalid"
     end
     sort!(soundings; by = r -> r.time_seconds, alg = MergeSort)
-    return ObservationSet(origin, soundings, sites, dropped_outside)
+    skipped = sum(s -> s.skipped_invalid + s.skipped_quality, stats; init = 0)
+    return ObservationSet(origin, soundings, series, sum(outside; init = 0), skipped)
 end
 
-_same_site(a::SiteRequest, b::SiteRequest) =
+# A repeated site id: same place, merged schedule. The first occurrence keeps
+# its source index and metadata.
+function _merge_site(a::SiteRequest, b::SiteRequest)
+    _same_location(a, b) || throw(ArgumentError(
+        "observation site id $(repr(a.id)) appears with different locations " *
+        "($(a.lon), $(a.lat), $(a.intake_height_m)) vs ($(b.lon), $(b.lat), $(b.intake_height_m))"))
+    schedule = _merge_schedule(a.schedule, b.schedule, a.id)
+    return SiteRequest(a.id, a.lon, a.lat, a.elevation_m, a.intake_height_m, a.source, schedule)
+end
+
+_same_location(a::SiteRequest, b::SiteRequest) =
     isapprox(a.lon, b.lon; atol = 1e-6) && isapprox(a.lat, b.lat; atol = 1e-6) &&
     (isequal(a.intake_height_m, b.intake_height_m) ||
      isapprox(a.intake_height_m, b.intake_height_m; atol = 0.05))
+
+# Time lists of one site (e.g. a daily flask table) are combined; any other
+# pair of schedules must agree, since a site series has one schedule.
+_merge_schedule(a::TimeList, b::TimeList, id) = TimeList(unique!(vcat(a.times_seconds, b.times_seconds)))
+_merge_schedule(a::AbstractSiteSchedule, b::AbstractSiteSchedule, id) =
+    a == b ? a : throw(ArgumentError(
+        "observation site id $(repr(id)) appears with different schedules " *
+        "($(schedule_label(a)) vs $(schedule_label(b))); give each schedule its own id"))

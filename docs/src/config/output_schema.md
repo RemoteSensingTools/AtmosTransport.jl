@@ -203,48 +203,55 @@ are in the global header so consumers can reconstruct the panel layout if needed
 
 ## Observation sampling files
 
-`[output.observations]` writes two append-only NetCDF files next to (or
-instead of) the gridded snapshots: `<path>_soundings.nc` and `<path>_sites.nc`
-(one pair per daily binary with `split = "daily"`). Both carry
+`[output.observations]` writes `<path>_soundings.nc` for point events and
+`<path>_sites.nc` for station series (one pair per daily binary with
+`split = "daily"`; each file only when it has requests). Both carry
 `output_contract = "AtmosTransport observations v1"`, `mass_basis`,
 `run_time_origin`, `time_interpolation`, `horizontal_sampling =
-"containing_cell"`, the source list as JSON in `sources`, and the usual
-provenance attributes. Times are Float64 `seconds since 1970-01-01 00:00:00`
-(UTC). Level 1 is the top of the atmosphere. On a dry-basis run the pressure
-and air-mass variables carry a `_dry` suffix; they are dry partial pressures,
+"containing_cell"`, `height_method_codes`, the source list as JSON in
+`sources`, and the snapshot provenance attributes. Times are Float64
+`seconds since 1970-01-01 00:00:00` (UTC). Level 1 is the top of the
+atmosphere. On a dry-basis run the pressure and air-mass variables carry a
+`_dry` suffix; they are dry partial pressures,
 `p_half[1] = A_ifc[1]` and `p_half[k+1] = p_half[k] + g·m[k]/area`.
+In both files `<tracer>` is the profile, `<tracer>_intake` the value in the
+layer containing the intake height, and intake heights are measured above the
+model surface.
 
 Only rows up to `completed_soundings` / `completed_times` are guaranteed
 complete; the summary attributes (`n_emitted`, `n_before_start`,
 `n_after_end`, `n_one_sided`, `n_unlocated_*`, `n_records`) count the rows of
 that file.
 
-Soundings file, dimensions `obs` (unlimited), `lev`, `ilev = lev + 1`:
+Soundings file (point events), dimensions `obs` (unlimited), `lev`, `ilev = lev + 1`:
 
 | Variable | Dims | Meaning |
 |---|---|---|
-| `id`, `source` | obs | observation id; 1-based index into the configured sources |
-| `time`, `latitude`, `longitude` | obs | observation time and location |
+| `id`, `source` | obs | sounding_id, obspack_id, or table/site id; 1-based source index |
+| `time`, `latitude`, `longitude` | obs | event time and location |
+| `elevation`, `intake_height` | obs | from the source (NaN unknown; NaN intake = lowest layer) |
 | `cell_lon`, `cell_lat`, `cell_index`, `cell_i`, `cell_j`, `cell_panel`, `cell_area` | obs | containing model cell (`cell_panel` on the cubed sphere only) |
 | `sample_time_prev`, `sample_time_next`, `interp_weight` | obs | bracketing window ends and the weight of the later one |
-| `interp_flag` | obs | 0 bracketed, 1 one-sided (single sample) |
+| `interp_flag` | obs | 0 bracketed, 1 one-sided (single sample), 2 nearest window end |
 | `ps_dry`, `p_half_dry` | obs; (ilev, obs) | surface and interface pressures (Pa) |
 | `air_mass_per_area_dry` | (lev, obs) | layer air mass per area (kg m⁻²) |
-| `<tracer>`, `<tracer>_column_mean` | (lev, obs); obs | dry mole fraction profile and air-mass-weighted column mean |
+| `intake_level`, `intake_layer_bottom_agl`, `intake_layer_top_agl`, `height_method` | obs | layer holding the intake and its heights above the model surface |
+| `<tracer>`, `<tracer>_column_mean`, `<tracer>_intake` | (lev, obs); obs; obs | dry mole fraction profile, air-mass-weighted column mean, intake-layer value |
 
-Sites file, dimensions `site`, `time` (unlimited), and `lev`/`ilev` when
-`write_profile_for_sites = true`:
+Sites file (station series), dimensions `site`, `time` (unlimited), and
+`lev`/`ilev` when `write_profile_for_sites = true`:
 
 | Variable | Dims | Meaning |
 |---|---|---|
 | `site_id`, `source`, `latitude`, `longitude`, `elevation`, `intake_height` | site | site metadata (NaN when unknown) |
+| `schedule_start`, `schedule_end` | site | `TimeRange` bounds (NaN for every-window sites) |
 | `cell_*` | site | containing model cell |
 | `time` | time | met-window end |
 | `ps_dry` | (site, time) | surface pressure |
-| `intake_level`, `intake_layer_bottom_agl`, `intake_layer_top_agl` | (site, time) | layer containing the intake and its heights above ground |
-| `height_method` | (site, time) | temperature used for heights (see `height_method_codes`) |
-| `<tracer>`, `<tracer>_surface` | (site, time) | intake-layer and lowest-layer mole fraction |
-| `<tracer>_profile`, `p_half_dry`, `air_mass_per_area_dry` | (lev or ilev, site, time) | optional full profiles |
+| `intake_level`, `intake_layer_bottom_agl`, `intake_layer_top_agl` | (site, time) | layer containing the intake (0 = outside the site's range) |
+| `height_method` | (site, time) | temperature used for heights (see `height_method_codes`; -1 = not sampled) |
+| `<tracer>_intake`, `<tracer>_surface` | (site, time) | intake-layer and lowest-layer mole fraction (NaN outside the range) |
+| `<tracer>`, `p_half_dry`, `air_mass_per_area_dry` | (lev or ilev, site, time) | optional full profiles |
 
 ## Reading the snapshot
 

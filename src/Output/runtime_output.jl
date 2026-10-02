@@ -314,17 +314,23 @@ function _insert_suffix_before_extension(path::AbstractString, suffix::AbstractS
     return isempty(ext) ? string(root, suffix, ".nc") : string(root, suffix, ext)
 end
 
+"Whether an output path carries a per-day token (`{date}`, `{YYYYMMDD}`, `{day}`)."
+_has_day_token(path::AbstractString) =
+    occursin("{date}", path) || occursin("{YYYYMMDD}", path) || occursin("{day}", path)
+
 # Shared by snapshot and observation output: substitute `{date}`, `{YYYYMMDD}`
-# and `{day}` when present, otherwise insert the day label before the extension.
+# and `{day}` when present, otherwise insert the day label before the
+# extension. Binaries without a date in their name fall back to the
+# zero-padded day index, so daily files never collide on an empty label.
 function _substitute_day_template(path::AbstractString, date_label::AbstractString,
                                   day_index::Integer)
     day = lpad(string(day_index), 3, '0')
-    if occursin("{date}", path) || occursin("{YYYYMMDD}", path) || occursin("{day}", path)
-        out = replace(path, "{date}" => date_label)
-        out = replace(out, "{YYYYMMDD}" => date_label)
+    label = isempty(date_label) ? day : date_label
+    if _has_day_token(path)
+        out = replace(path, "{date}" => label)
+        out = replace(out, "{YYYYMMDD}" => label)
         return replace(out, "{day}" => day)
     end
-    label = isempty(date_label) ? day : date_label
     return _insert_suffix_before_extension(path, "_" * label)
 end
 

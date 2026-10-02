@@ -211,15 +211,17 @@ function validate_config(cfg::AbstractDict)
     # are per-day templates and are resolved by the runner.
     output_cfg = get(cfg, "output", nothing)
     if output_cfg isa AbstractDict
-        spec = try
-            observation_output_spec(output_cfg)
-        catch err
-            push!(errors, sprint(showerror, err))
-            nothing
+        spec_ref = Ref{Any}(nothing)
+        _capture_config_error!(errors) do
+            spec_ref[] = observation_output_spec(output_cfg)
         end
+        spec = spec_ref[]
         if spec !== nothing
             _capture_config_error!(errors) do
                 _check_observation_time_origin(spec, cfg)
+            end
+            _capture_config_error!(errors) do
+                _check_observation_tracers(spec, cfg)
             end
         end
     end
