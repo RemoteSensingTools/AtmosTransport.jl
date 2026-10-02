@@ -41,7 +41,8 @@ using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                nx, ny, nrings, ring_longitudes, cell_index, ncells,
                cell_area, panel_cell_center_lonlat, panel_cell_corner_lonlat,
                cs_definition, coordinate_law, center_law, longitude_offset_deg,
-               cs_definition_tag, coordinate_law_tag, center_law_tag
+               cs_definition_tag, coordinate_law_tag, center_law_tag,
+               lonlat_to_panel_xy
 using ..State: DryBasis, MoistBasis, mass_basis, tracer_names, get_tracer
 
 export AbstractSnapshotFrame, SnapshotFrame, SelectedSnapshotFrame, SnapshotWriteOptions
@@ -63,6 +64,8 @@ export AbstractObservationTimeInterpolation, LinearWindowInterpolation, NearestW
 export AbstractObservationOutput, NoObservationOutput, ObservationOutputSpec
 export observation_output_spec, observations_enabled, observation_output_path
 export OBSERVATION_RUNTIME_UNAVAILABLE_MESSAGE
+export CellLocation, AbstractCellLocator, LatLonCellLocator, ReducedGaussianCellLocator
+export CubedSphereCellLocator, cell_locator, locate, ncolumns, isvalid_lonlat
 export AbstractObservationSampler, NoObservationSampler, build_observation_sampler
 export observe_window_boundary!, begin_observation_day!, finish_observations!
 
@@ -77,6 +80,7 @@ include("netcdf_stream.jl")
 include("binary_writer.jl")
 include("observations/observation_sources.jl")
 include("observations/observation_output_spec.jl")
+include("observations/cell_locator.jl")
 include("observations/observation_sampler.jl")
 
 end # module Output

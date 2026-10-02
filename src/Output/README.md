@@ -25,6 +25,10 @@ writing topology-specific NetCDF files directly.
 - `observations/observation_output_spec.jl` parses `[output.observations]` into
   `ObservationOutputSpec` (or `NoObservationOutput`), rejecting unknown keys, and
   resolves `_soundings` / `_sites` file paths with the snapshot day template.
+- `observations/cell_locator.jl` maps an observation (lon, lat) to its containing
+  cell per topology (`cell_locator`, `locate` → `CellLocation` with native cell
+  index, halo-aware device column, centre and area). Lat-lon and reduced
+  Gaussian use the face arrays; the cubed sphere uses `lonlat_to_panel_xy`.
 - `observations/observation_sampler.jl` defines the runtime sampler interface
   (`observe_window_boundary!`, `begin_observation_day!`, `finish_observations!`) and
   the `NoObservationSampler` default that keeps runs without observation output
