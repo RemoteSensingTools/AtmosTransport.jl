@@ -1,0 +1,88 @@
+# Net-flux experiment: GPP minus a flat respiration, GEOS C90, 2018-2025.
+#
+# Two tracers, one met stream (same archive as the other SIF-GPP runs):
+#
+#   co2_reco_flat  driven by RECO_FLAT_CO2_FLUX alone: each cell's
+#                  climatological annual-mean GPP uptake, sign-flipped and
+#                  constant in time (128.96 Pg C/yr of emission). Response to a
+#                  steady source; rises ~469 ppm over the record. 10 ppm
+#                  carrier (a pure source needs no positivity headroom).
+#
+#   co2_gpp_net    driven by GPP_CO2_FLUX_NET = GPP + flat Reco: annually
+#                  balanced net flux. Carries the full seasonal cycle and full
+#                  interannual variability with no secular drawdown. By
+#                  linearity its response must equal xco2_anom + xco2_clim
+#                  from the earlier runs (and co2_gpp_full + co2_reco_flat);
+#                  the direct run is the more precise product and doubles as an
+#                  end-to-end linearity check. 150 ppm carrier: the analogous
+#                  control tracer's column minimum was -59 ppm.
+#
+# Flux file: v3, built by scripts/preprocessing/build_sif_gpp_multiyear_c90_flux.py.
+# Existing variables in v3 are bit-identical to v1/v2; NET == FLUX + RECO bitwise.
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder = "$ATMOSTRANSPORT_DATA_ROOT/met/c90_l66"
+start_date = "2018-05-01"
+end_date = "2025-12-31"
+file_pattern = "era5_n320_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_reco_flat]
+  [tracers.co2_reco_flat.init]
+  kind = "uniform"
+  background = 1.0e-5          # 10 ppm carrier; subtract from output
+
+  [tracers.co2_reco_flat.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/sif_gpp_daily_co2flux_c90_2018_2025_v3.nc"
+  variable = "RECO_FLAT_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_gpp_net]
+  [tracers.co2_gpp_net.init]
+  kind = "uniform"
+  background = 1.5e-4          # 150 ppm carrier; subtract from output
+
+  [tracers.co2_gpp_net.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/sif_gpp_daily_co2flux_c90_2018_2025_v3.nc"
+  variable = "GPP_CO2_FLUX_NET"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[diffusion]
+kind = "tm5_dkg"
+surface_flux_boundary = true
+
+[convection]
+kind = "none"
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 24
+path = "$ATMOSTRANSPORT_DATA_ROOT/output/sif_gpp_net_c90/sif_gpp_net_c90_{YYYYMMDD}.nc"
+deflate_level = 1
+shuffle = true
+
+[output.fields]
+tracers = ["co2_reco_flat", "co2_gpp_net"]
+layers = "none"
+column_mean = true
+column_mass_per_area = false
+air_mass_layers = "none"
+air_mass = false
+air_mass_per_area = false
+column_air_mass_per_area = false

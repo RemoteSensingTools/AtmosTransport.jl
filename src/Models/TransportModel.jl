@@ -37,25 +37,26 @@ Helpers `with_convection(model, op)` and
 `with_convection_forcing(model, forcing)` parallel
 `with_chemistry` / `with_diffusion` / `with_emissions`.
 """
-struct TransportModelWorkspace{AdvT, ConvT, DiffT}
+struct TransportModelWorkspace{AdvT, ConvT, ChemT, DiffT}
     advection_ws  :: AdvT
     convection_ws :: ConvT
+    chemistry_ws  :: ChemT
     diffusion_ws  :: DiffT
 end
 
-TransportModelWorkspace(advection_ws; convection_ws = nothing,
+TransportModelWorkspace(advection_ws; convection_ws = nothing, chemistry_ws = nothing,
                         diffusion_ws = nothing) =
-    TransportModelWorkspace(advection_ws, convection_ws, diffusion_ws)
+    TransportModelWorkspace(advection_ws, convection_ws, chemistry_ws, diffusion_ws)
 
 function Base.getproperty(workspace::TransportModelWorkspace, name::Symbol)
-    if name === :advection_ws || name === :convection_ws || name === :diffusion_ws
+    if name === :advection_ws || name === :convection_ws || name === :chemistry_ws || name === :diffusion_ws
         return getfield(workspace, name)
     end
     return getproperty(getfield(workspace, :advection_ws), name)
 end
 
 function Base.propertynames(workspace::TransportModelWorkspace, private::Bool = false)
-    return (:advection_ws, :convection_ws, :diffusion_ws,
+    return (:advection_ws, :convection_ws, :chemistry_ws, :diffusion_ws,
             propertynames(getfield(workspace, :advection_ws), private)...)
 end
 
@@ -63,6 +64,8 @@ function Adapt.adapt_structure(to, workspace::TransportModelWorkspace)
     advection_ws = Adapt.adapt(to, workspace.advection_ws)
     convection_ws = workspace.convection_ws === nothing ? nothing :
                     Adapt.adapt(to, workspace.convection_ws)
+    chemistry_ws = workspace.chemistry_ws === nothing ? nothing :
+                   Adapt.adapt(to, workspace.chemistry_ws)
     diffusion_ws = if workspace.diffusion_ws !== nothing &&
                       workspace.advection_ws !== nothing &&
                       workspace.diffusion_ws.w_scratch === workspace.advection_ws.w_scratch &&
@@ -71,10 +74,24 @@ function Adapt.adapt_structure(to, workspace::TransportModelWorkspace)
     else
         Adapt.adapt(to, workspace.diffusion_ws)
     end
-    return TransportModelWorkspace(advection_ws; convection_ws, diffusion_ws)
+    return TransportModelWorkspace(advection_ws; convection_ws, chemistry_ws, diffusion_ws)
 end
 
 _convection_workspace_for(::NoConvection, state, grid) = nothing
+_chemistry_workspace_for(::NoChemistry, state, grid) = nothing
+_chemistry_workspace_for(::AbstractChemistryOperator, state, grid) = nothing
+function _chemistry_workspace_for(operator::CompositeChemistry, state, grid)
+    chemistry_workspace_plan(operator, state, grid)
+    workspaces = map(operator.schemes) do scheme
+        _chemistry_workspace_for(scheme, state, grid)
+    end
+    return CompositeChemistryWorkspace(workspaces)
+end
+
+function Adapt.adapt_structure(to, workspace::CompositeChemistryWorkspace)
+    return CompositeChemistryWorkspace(Adapt.adapt(to, workspace.workspaces))
+end
+
 _cs_advection_workspace_for(::AbstractAdvectionScheme,
                             state::CubedSphereState,
                             grid::AtmosGrid{<:CubedSphereMesh}) =
@@ -180,9 +197,20 @@ function _with_convection_workspace(workspace, convection_ws)
         return workspace.convection_ws === convection_ws ?
                workspace :
                TransportModelWorkspace(workspace.advection_ws; convection_ws,
+                                       chemistry_ws = workspace.chemistry_ws,
                                        diffusion_ws = workspace.diffusion_ws)
     end
     return TransportModelWorkspace(workspace; convection_ws = convection_ws)
+end
+
+function _with_chemistry_workspace(workspace, chemistry_ws)
+    if workspace isa TransportModelWorkspace
+        return workspace.chemistry_ws === chemistry_ws ? workspace :
+               TransportModelWorkspace(workspace.advection_ws;
+                                       convection_ws = workspace.convection_ws,
+                                       chemistry_ws, diffusion_ws = workspace.diffusion_ws)
+    end
+    return TransportModelWorkspace(workspace; chemistry_ws)
 end
 
 function _with_diffusion_workspace(workspace::TransportModelWorkspace, op, state, grid)
@@ -201,7 +229,7 @@ function _with_diffusion_workspace(workspace::TransportModelWorkspace, op, state
         ColumnDiffusionWorkspace(state.air_mass)
     end
     return TransportModelWorkspace(workspace.advection_ws;
-        convection_ws=workspace.convection_ws,
+        convection_ws=workspace.convection_ws, chemistry_ws=workspace.chemistry_ws,
         diffusion_ws=scratch)
 end
 
@@ -231,6 +259,8 @@ function TransportModel(state::CellState{B},
                         convection_forcing::ConvectionForcing = ConvectionForcing()) where {B <: AbstractMassBasis}
     workspace_model = _with_convection_workspace(
         workspace, _convection_workspace_for(convection, state, grid))
+    workspace_model = _with_chemistry_workspace(
+        workspace_model, _chemistry_workspace_for(chemistry, state, grid))
     workspace_model = _with_diffusion_workspace(workspace_model, diffusion, state, grid)
     return TransportModel{typeof(state), typeof(fluxes), typeof(grid),
                           typeof(advection), typeof(workspace_model),
@@ -252,6 +282,8 @@ function TransportModel(state::CellState{B},
                         convection_forcing::ConvectionForcing = ConvectionForcing()) where {B <: AbstractMassBasis}
     workspace_model = _with_convection_workspace(
         workspace, _convection_workspace_for(convection, state, grid))
+    workspace_model = _with_chemistry_workspace(
+        workspace_model, _chemistry_workspace_for(chemistry, state, grid))
     workspace_model = _with_diffusion_workspace(workspace_model, diffusion, state, grid)
     return TransportModel{typeof(state), typeof(fluxes), typeof(grid),
                           typeof(advection), typeof(workspace_model),
@@ -286,6 +318,8 @@ function TransportModel(state::CubedSphereState{B},
                         convection_forcing::ConvectionForcing = ConvectionForcing()) where {B <: AbstractMassBasis}
     workspace_model = _with_convection_workspace(
         workspace, _convection_workspace_for(convection, state, grid))
+    workspace_model = _with_chemistry_workspace(
+        workspace_model, _chemistry_workspace_for(chemistry, state, grid))
     workspace_model = _with_diffusion_workspace(workspace_model, diffusion, state, grid)
     return TransportModel{typeof(state), typeof(fluxes), typeof(grid),
                           typeof(advection), typeof(workspace_model),
@@ -304,13 +338,15 @@ model rather than held at the sim level, so this helper is primarily
 useful for tests that want to swap chemistry on a constructed model.
 """
 function with_chemistry(model::TransportModel, chemistry::AbstractChemistryOperator)
+    chemistry_ws = _chemistry_workspace_for(chemistry, model.state, model.grid)
+    workspace = _with_chemistry_workspace(model.workspace, chemistry_ws)
     return TransportModel{typeof(model.state), typeof(model.fluxes),
                           typeof(model.grid), typeof(model.advection),
-                          typeof(model.workspace), typeof(chemistry),
+                          typeof(workspace), typeof(chemistry),
                           typeof(model.diffusion), typeof(model.emissions),
                           typeof(model.convection), typeof(model.convection_forcing)}(
         model.state, model.fluxes, model.grid, model.advection,
-        model.workspace, chemistry, model.diffusion, model.emissions,
+        workspace, chemistry, model.diffusion, model.emissions,
         model.convection, model.convection_forcing)
 end
 
@@ -456,7 +492,9 @@ chemistry block.
 """
 function convection_chemistry_step!(model::TransportModel, dt; meteo = nothing)
     _convection_block!(model.convection, model, dt)
-    SectionTimer.@section :chemistry chemistry_block!(model.state, meteo, model.grid, model.chemistry, dt)
+    SectionTimer.@section :chemistry chemistry_block!(
+        model.state, meteo, model.grid, model.chemistry, dt;
+        workspace = model.workspace.chemistry_ws)
     return nothing
 end
 

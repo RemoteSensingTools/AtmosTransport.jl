@@ -263,6 +263,12 @@ export AbstractConvection, NoConvection, CMFMCConvection, TM5Convection,
 export ConvectionForcing, apply_convection!, has_convection_forcing
 export AbstractMetDriver, AbstractTransportWindow, StructuredTransportWindow
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
+export AtmosChemistryOperator
+export AbstractChemistryForcingProvider, ConstantChemistryForcing
+export CallUpdatedChemistryForcing
+export CompositeChemistryPlan, CompositeChemistryWorkspace
+export chemistry_workspace_plan
+export chemistry_workspace_storage_bytes
 export ConstantField, ProfileKzField
 export apply!
 

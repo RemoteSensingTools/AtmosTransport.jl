@@ -174,8 +174,8 @@ kind = "edgar_sf6"
 
 Registered surface-flux source kinds (full list in
 `src/Models/InitialConditionIO.jl`): `lmdz_co2`, `gridfed_fossil_co2`,
-`edgar_sf6`, `zhang_rn222`, plus a generic `file` for arbitrary
-NetCDF sources. There is no `edgar_co2` kind — use
+`edgar_sf6`, `zhang_rn222`, `cs_native`, plus a generic `file` for arbitrary
+regular-latitude/longitude NetCDF sources. There is no `edgar_co2` kind — use
 `gridfed_fossil_co2` for the GridFED-derived fossil CO₂ inventory.
 Known tracer names carry built-in molar masses; for a custom tracer, set
 `molar_mass_kg_mol` inside its `surface_flux` table.
@@ -187,11 +187,19 @@ diurnal cycle instead of a monthly mean:
 ```toml
 [tracers.co2_natural.surface_flux]
 kind            = "lmdz_co2"
+file_pattern    = "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_{YYYYMM}_FT24r2_ra_sfc_3h_co2_flux.nc"
+year            = 2022
 time_varying    = true            # advance through the inventory's time slices
 temporal_scheme = "stepwise"      # how slices are applied between sample times
 ```
 
-`temporal_scheme` (default `"stepwise"` for `lmdz_co2`) is one of:
+`file_pattern` expands `{YYYYMM}` to all twelve months of `year` (or the
+run-start year when `year` is omitted). For a span that crosses calendar
+years, use `files = ["/path/to/month1.nc", "/path/to/month2.nc", ...]` in
+chronological order. GridFED supports the same time-varying path; its twelve
+monthly totals are converted using the actual number of days in each month.
+
+`temporal_scheme` (default `"stepwise"` for LMDZ and GridFED) is one of:
 
 - `"stepwise"` — hold each slice piecewise-constant until the next sample.
   This matches GEOS-Chem/HEMCO's exact CAMS treatment (verified against
@@ -204,6 +212,25 @@ Slices are indexed by **absolute** time since the run's `start_date`, so a
 multi-day run advances through the inventory correctly (a per-day clock would
 replay the first day's slices — the cause of the historical co2_natural
 +1 Pg/month surplus, now fixed).
+
+An already aligned panel-native flux-density series can bypass horizontal
+regridding:
+
+```toml
+[tracers.co2_sif_gpp.surface_flux]
+kind              = "cs_native"
+file              = "/path/to/hourly_c180_flux.nc"
+variable          = "CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying      = true
+temporal_scheme   = "stepwise"
+```
+
+The NetCDF variable must use `(time,nf,Ydim,Xdim)` dimensions on disk, match
+the transport cube resolution and GEOS-native panel convention, and contain a
+per-area, per-second species mass flux. The loader performs no horizontal
+interpolation: it multiplies the density by the runtime mesh's exact cell
+areas and converts the physical species rate to the dry-air storage basis.
 
 ### `[advection]`, `[diffusion]`, `[convection]`, `[chemistry]`
 

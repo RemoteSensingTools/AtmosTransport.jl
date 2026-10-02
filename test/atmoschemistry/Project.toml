@@ -1,0 +1,18 @@
+[deps]
+Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+AtmosChemistry = "da83bf7d-bf16-4f51-8c61-734f5a572bda"
+AtmosTransport = "fcfdcc98-126e-435e-9a83-ddb11e65593a"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[sources]
+AtmosChemistry = {path = "../../../AtmosChemistry.jl"}
+AtmosTransport = {path = "../.."}
+
+[compat]
+Adapt = "4"
+AtmosChemistry = "0.1"
+AtmosTransport = "0.2"
+CUDA = "5"
+Test = "1"
+julia = "1.10"

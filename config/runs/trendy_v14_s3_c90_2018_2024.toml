@@ -1,0 +1,171 @@
+# TRENDYv14 S3 GPP/TER/NEE transport, GEOS C90, 2018-05-01 .. 2024-12-31.
+#
+# Three prominent TRENDY DGVMs (CLM6.0, JULES-ES, ORCHIDEE), each carried as
+# three tracers: GPP-only uptake (900 ppm carrier, ~400 ppm drawdown over the
+# window), TER-only emission (10 ppm carrier, rises), and the directly
+# simulated NEE = GPP - TER (150 ppm carrier). Direct NEE avoids the
+# large-carrier Float32 differencing penalty measured in the SIF-GPP campaign
+# (docs/memos/SIF_GPP_IAV_XCO2_2018_2025.md section 4g/4k). Same met stream,
+# window aligned with the SIF experiment; TRENDY v14 ends 2024-12.
+#
+# Fluxes: scripts/preprocessing/prepare_trendy_s3_multiyear_c90.py
+# (conservative remap of monthly gpp/ra/rh, daily by monthly-midpoint
+# interpolation with exact per-month renormalization).
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder = "$ATMOSTRANSPORT_DATA_ROOT/met/c90_l66"
+start_date = "2018-05-01"
+end_date = "2024-12-31"
+file_pattern = "era5_n320_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_clm_gpp]
+  [tracers.co2_clm_gpp.init]
+  kind = "uniform"
+  background = 9.0e-4
+
+  [tracers.co2_clm_gpp.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c90_2018_2024.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_clm_ter]
+  [tracers.co2_clm_ter.init]
+  kind = "uniform"
+  background = 1.0e-5
+
+  [tracers.co2_clm_ter.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c90_2018_2024.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_clm_nee]
+  [tracers.co2_clm_nee.init]
+  kind = "uniform"
+  background = 1.5e-4
+
+  [tracers.co2_clm_nee.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c90_2018_2024.nc"
+  variable = "NEE_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_jules_es_gpp]
+  [tracers.co2_jules_es_gpp.init]
+  kind = "uniform"
+  background = 9.0e-4
+
+  [tracers.co2_jules_es_gpp.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy/TRENDYv14_S3_JULES-ES_gpp_ter_nee_daily_co2flux_c90_2018_2024.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_jules_es_ter]
+  [tracers.co2_jules_es_ter.init]
+  kind = "uniform"
+  background = 1.0e-5
+
+  [tracers.co2_jules_es_ter.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy/TRENDYv14_S3_JULES-ES_gpp_ter_nee_daily_co2flux_c90_2018_2024.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_jules_es_nee]
+  [tracers.co2_jules_es_nee.init]
+  kind = "uniform"
+  background = 1.5e-4
+
+  [tracers.co2_jules_es_nee.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy/TRENDYv14_S3_JULES-ES_gpp_ter_nee_daily_co2flux_c90_2018_2024.nc"
+  variable = "NEE_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_orchidee_gpp]
+  [tracers.co2_orchidee_gpp.init]
+  kind = "uniform"
+  background = 9.0e-4
+
+  [tracers.co2_orchidee_gpp.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy/TRENDYv14_S3_ORCHIDEE_gpp_ter_nee_daily_co2flux_c90_2018_2024.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_orchidee_ter]
+  [tracers.co2_orchidee_ter.init]
+  kind = "uniform"
+  background = 1.0e-5
+
+  [tracers.co2_orchidee_ter.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy/TRENDYv14_S3_ORCHIDEE_gpp_ter_nee_daily_co2flux_c90_2018_2024.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_orchidee_nee]
+  [tracers.co2_orchidee_nee.init]
+  kind = "uniform"
+  background = 1.5e-4
+
+  [tracers.co2_orchidee_nee.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy/TRENDYv14_S3_ORCHIDEE_gpp_ter_nee_daily_co2flux_c90_2018_2024.nc"
+  variable = "NEE_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[diffusion]
+kind = "tm5_dkg"
+surface_flux_boundary = true
+
+[convection]
+kind = "none"
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 24
+path = "$ATMOSTRANSPORT_DATA_ROOT/output/trendy_c90/trendy_c90_{YYYYMMDD}.nc"
+deflate_level = 1
+shuffle = true
+
+[output.fields]
+tracers = ["co2_clm_gpp", "co2_clm_ter", "co2_clm_nee", "co2_jules_es_gpp", "co2_jules_es_ter", "co2_jules_es_nee", "co2_orchidee_gpp", "co2_orchidee_ter", "co2_orchidee_nee"]
+layers = "none"
+column_mean = true
+column_mass_per_area = false
+air_mass_layers = "none"
+air_mass = false
+air_mass_per_area = false
+column_air_mass_per_area = false

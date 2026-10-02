@@ -10,7 +10,7 @@
 ## Status tracker
 
 Single source of truth for what is production-ready, what is preview /
-experimental, and what is planned. Updated `2026-07-11`. Items move out
+experimental, and what is planned. Updated `2026-08-28`. Items move out
 of "experimental" only after a passing CPU+GPU regression suite and a
 documented validation run.
 
@@ -84,7 +84,8 @@ documented validation run.
 | `ExponentialDecay` (radioactive / first-order) | ✅ | Used for `222Rn → 222Pb` etc. |
 | Wet deposition | ❌ | No `AbstractWetDeposition` family yet |
 | Dry deposition (resistance-based) | ❌ | Today only via surface flux |
-| Photolysis / fast chemistry | ❌ | Out of scope |
+| `AtmosChemistry.jl` gas chemistry extension | 🧪 | Typed dry-basis CPU/CUDA coupling; active-species subsets, supplied J-values, bounded tiles |
+| Owned photolysis calculation | ❌ | Supply J-values through typed chemistry forcing |
 
 ### Adjoint and inversion
 

@@ -64,6 +64,12 @@ export reconstruction_order, required_halo_width
 
 # Chemistry
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
+export AtmosChemistryOperator
+export AbstractChemistryForcingProvider, ConstantChemistryForcing
+export CallUpdatedChemistryForcing
+export CompositeChemistryPlan, CompositeChemistryWorkspace
+export chemistry_workspace_plan
+export chemistry_workspace_storage_bytes
 export chemistry_block!
 
 # Diffusion solver infrastructure + operator types

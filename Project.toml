@@ -39,12 +39,14 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [weakdeps]
+AtmosChemistry = "da83bf7d-bf16-4f51-8c61-734f5a572bda"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
 Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
 NVTX = "5da4648a-3479-48b8-97b9-01cb529c0a1f"
 
 [extensions]
+AtmosTransportAtmosChemistryExt = "AtmosChemistry"
 AtmosTransportCUDAExt = "CUDA"
 AtmosTransportMakieExt = "Makie"
 AtmosTransportMetalExt = "Metal"
@@ -54,6 +56,7 @@ AtmosTransportNVTXExt = "NVTX"
 Adapt = "4"
 Aqua = "0.8"
 ArgParse = "1.2.0"
+AtmosChemistry = "0.1"
 CUDA = "5"
 ConservativeRegridding = "=0.2.0"
 CubedSphere = "0.3.4"

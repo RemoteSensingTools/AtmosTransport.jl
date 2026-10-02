@@ -94,6 +94,7 @@ using ..Regridding: build_regridder, apply_regridder!
 using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField,
                     HorizontalVectorField, HorizontalFluxField
 using ..MetDrivers: TransportBinaryReader, TransportBinaryHeader, write_transport_binary,
+                    CubedSphereBinaryReader, load_cs_window, mesh_definition,
                     TRANSPORT_BINARY_FORMAT_VERSION,
                     StreamingTransportBinaryWriter,
                     open_streaming_transport_binary, write_streaming_window!,
@@ -264,6 +265,10 @@ include("met_readers.jl")
 
 # GEOS → CS passthrough orchestrator
 include("transport_binary/cubed_sphere_geos.jl")
+
+# Experimental nested CS-binary operator restriction (for example C90 → C30).
+# Kept after the GEOS workflow so it reuses the same audited block-sum rules.
+include("transport_binary/cubed_sphere_coarsen.jl")
 
 # ERA5 N320 → CS transport-binary writer. Drives one UTC day end-to-end
 # through the per-window pipeline shipped in `sources/era5.jl` plus the

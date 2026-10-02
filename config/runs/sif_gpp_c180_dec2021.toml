@@ -1,0 +1,49 @@
+# December 2021 transport of the length-of-day-corrected SIF-derived GPP
+# uptake. The input flux is hourly, negative to the atmosphere, and refined
+# exactly from the native GEOS C90 parent grid to C180. A 400 ppm carrier keeps
+# the signed uptake anomaly in the positive-tracer regime; subtract 400 ppm in
+# diagnostics to isolate the transported SIF-GPP signal.
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega_regularized"
+start_date   = "2021-12-01"
+end_date     = "2021-12-31"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_sif_gpp]
+  [tracers.co2_sif_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_sif_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021.nc"
+  variable = "CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = true
+
+[convection]
+kind = "cmfmc_matrix"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 0
+
+[output]
+format = "binary_mmap"
+split = "daily"
+snapshot_interval_hours = 1
+snapshot_file = "~/data/AtmosTransport/output/sif_gpp_c180_dec2021_hourly/sif_gpp_c180_{YYYYMMDD}.atmsnap"
