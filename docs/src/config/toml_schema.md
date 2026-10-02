@@ -371,7 +371,9 @@ area, and column air mass per area.
 ### `[output.observations]` — sampling at observation points
 
 Instead of (or in addition to) gridded snapshots, a run can sample tracers at
-observation points. **Point events** are sampled once at their own time:
+observation points. A step-by-step guide with a runnable example
+(`config/examples/observation_sampling_oco2mip.toml`) and Python recipes for
+OCO averaging kernels is in `docs/memos/2026-10-02_observation_sampling_guide.md`. **Point events** are sampled once at their own time:
 satellite soundings, ObsPack flask, continuous, or aircraft records, and
 station time lists. **Station series** are written at every met-window end
 their schedule allows. Sampling uses the model cell containing each point and

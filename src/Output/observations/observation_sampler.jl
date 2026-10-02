@@ -314,9 +314,13 @@ end
 Called by the runner before the first window boundary of each input binary.
 Single-file runs open their files on the first call; daily runs close the
 previous day's files and open the next pair. Rows are written to the files
-open at emission time: a sounding from the last window of a day receives its
-second sample at the first window end of the next day and therefore lands in
-that day's file.
+open at emission time. A binary's last window ends at the next day's 00:00,
+which is still observed before the next binary opens: with linear
+interpolation a sounding lands in the file of its own day, and each day's
+sites file ends with the 00:00 sample of the next day (the first file also
+holds the initial state at t = 0). With `nearest_window`, soundings in the
+first half window after 00:00 are emitted at that boundary and land in the
+previous day's file.
 """
 begin_observation_day!(::NoObservationSampler, ::AbstractString, ::Integer) = nothing
 

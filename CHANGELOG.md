@@ -23,6 +23,10 @@
   `assimilate_flag`, or `"none"` to co-sample every record). The editor schema documents every choice with its Julia
   type and is checked against the parser by a test; site tables have their own
   schema (`schemas/observation_sites.schema.json`).
+- User guide `docs/memos/2026-10-02_observation_sampling_guide.md` with a
+  runnable OCO-2 MIP + TCCON example
+  (`config/examples/observation_sampling_oco2mip.toml`, site table
+  `config/examples/tccon_ggg2020_sites.csv`).
 - All runtime NetCDF writes, including the background daily snapshot task,
   share one lock (`with_netcdf_lock`); netcdf-c is not thread-safe.
   Observation rows queue while the lock is busy instead of stalling the run.
