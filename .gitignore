@@ -67,3 +67,6 @@ nohup.out
 # global `*.png` rule above, but listed explicitly so the intent is
 # obvious in `.gitignore`.
 /plots/
+
+# Rust build output of tools such as tools/atmos-bin
+/tools/*/target/
