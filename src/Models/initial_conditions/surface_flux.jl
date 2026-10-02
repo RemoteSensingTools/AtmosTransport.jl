@@ -41,13 +41,22 @@ function _days_in_month(year::Integer, month::Integer)
     return _DAYS_PER_MONTH_COMMON[month]
 end
 
+# The inventory year in a file name: a standalone 19xx/20xx not preceded by a
+# version marker (`GCP-GridFEDv2024.0_2022.short.nc` is 2022). Several
+# distinct candidates are ambiguous and must be resolved with `year`.
 function _infer_year_from_path(path::AbstractString)
-    # Product/version strings can themselves contain a year (for example
-    # `GCP-GridFEDv2024.0_2022.short.nc`). The terminal calendar-like year in
-    # the basename identifies the inventory year; select the final match.
-    matches = collect(eachmatch(r"(?:^|[^\d])((?:19|20)\d{2})(?:[^\d]|$)", basename(path)))
-    isempty(matches) && return nothing
-    return parse(Int, last(matches).captures[1])
+    name = basename(path)
+    years = Int[]
+    for m in eachmatch(r"(?<!\d)((?:19|20)\d{2})(?!\d)", name)
+        m.offset > 1 && name[prevind(name, m.offset)] in ('v', 'V') && continue
+        push!(years, parse(Int, m.captures[1]))
+    end
+    unique!(years)
+    isempty(years) && return nothing
+    length(years) == 1 || throw(ArgumentError(
+        "surface-flux file name $(repr(name)) contains several years $(years); " *
+        "set surface_flux.year"))
+    return only(years)
 end
 
 function _infer_year_from_time_units(ds)
@@ -166,8 +175,8 @@ function _resolve_surface_flux_file(cfg, kind::Symbol)
         ("\$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/ZHANG_Rn222/Rn222_Emis_Zhang_Liu_et_al_05x05_mass.nc", "rnemis")
     elseif kind === :lmdz_co2
         # Default points at the Dec 2021 CAMS monthly file. Set
-        # `surface_flux.file` in TOML for other months; multi-month
-        # auto-resolution from a directory is a follow-up.
+        # `surface_flux.file` for another month, or `files` / `file_pattern`
+        # for a time-varying multi-month series.
         ("\$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202112_FT24r2_ra_sfc_3h_co2_flux.nc",
          "flux_apos")
     else
@@ -198,11 +207,14 @@ function _resolve_timevarying_surface_flux_files(
         cfg, kind::Symbol, reference_time::Union{DateTime, Nothing})
     _file, variable, _time_index = _resolve_surface_flux_file(cfg, kind)
 
-    files = if haskey(cfg, "files")
+    files::Vector{String} = if haskey(cfg, "files")
         values = cfg["files"]
         values isa AbstractVector || throw(ArgumentError(
             "time-varying surface_flux.files must be an array of paths"))
-        expand_data_path.(String.(values))
+        length(values) > 1 && haskey(cfg, "year") && throw(ArgumentError(
+            "surface_flux.year applies one calendar year to every file; with several " *
+            "`files`, omit it so each file's year comes from its name or time axis"))
+        [expand_data_path(String(v)) for v in values]
     elseif haskey(cfg, "file_pattern")
         pattern = String(cfg["file_pattern"])
         occursin("{YYYYMM}", pattern) || throw(ArgumentError(
@@ -390,17 +402,9 @@ function _parse_cf_time_origin(s::AbstractString)
     throw(ArgumentError("time-varying surface flux: cannot parse time origin '$(s)'"))
 end
 
-"""
-    _load_timevarying_surface_flux_field(cfg, FT, reference_time)
-        -> TimeVaryingFileSurfaceFluxField{FT}
-
-Like `_load_file_surface_flux_field` but keeps ALL time slices (no
-monthly averaging). Applies the same lat-flip / lon-roll reorientation
-and per-slice unit conversion as the static loader, and reads the time
-coordinate into `times_sec` (seconds since `reference_time`). When
-`reference_time === nothing`, the file's own time origin (first slice)
-is assumed equal to the run start and a warning is emitted.
-"""
+# One file of a time-varying series: all slices (no monthly averaging), the
+# static loader's lat-flip / lon-roll reorientation and unit conversion, and
+# slice times in seconds since `reference_time`.
 function _load_single_timevarying_surface_flux_field(
         cfg, ::Type{FT}, reference_time::Union{DateTime, Nothing},
         file::AbstractString, variable::AbstractString) where FT
@@ -414,8 +418,6 @@ function _load_single_timevarying_surface_flux_field(
         time_var = _ic_find_coord(ds, ["time", "t"])
         isnothing(lon_var) && throw(ArgumentError("could not find longitude coordinate in $file"))
         isnothing(lat_var) && throw(ArgumentError("could not find latitude coordinate in $file"))
-        isnothing(time_var) && kind !== :gridfed_fossil_co2 && throw(ArgumentError(
-            "could not find time coordinate in $file"))
         haskey(ds, variable) || throw(ArgumentError("variable '$variable' not found in $file"))
 
         lon_src = Float64.(ds[lon_var][:])
@@ -462,19 +464,7 @@ function _load_single_timevarying_surface_flux_field(
         end
         raw .*= FT(get(cfg, "scale", 1.0))
 
-        # --- time coordinate ---
-        reference_time === nothing && @warn(
-            "time-varying surface flux: no reference_time supplied; assuming the file's " *
-            "time origin equals the run start (first slice → t=0).")
-        times_sec = if kind === :gridfed_fossil_co2 && isnothing(time_var)
-            source_year = _surface_flux_year(cfg, file, ds)
-            ref = reference_time === nothing ? DateTime(source_year, 1, 1) : reference_time
-            [Dates.value(DateTime(source_year, month, 1) - ref) / 1000.0
-             for month in 1:12]
-        else
-            time_units = String(get(ds[time_var].attrib, "units", ""))
-            _surface_flux_times_seconds(ds[time_var][:], time_units, reference_time)
-        end
+        times_sec = _timevarying_slice_seconds(time_var, ds, cfg, kind, file, reference_time)
 
         # --- emission temporal-stamp convention (CAMS / LMDZ natural CO2) ---
         # The CAMS file (`flux_apos`, 3-hourly, "hours since 2021-12-01") uses
@@ -503,10 +493,37 @@ function _load_single_timevarying_surface_flux_field(
     end
 end
 
+# Slice times (seconds since `reference_time`) from the file's time axis, or,
+# for GridFED files without one, the first instant of each month.
+_timevarying_slice_seconds(time_var::AbstractString, ds, cfg, kind::Symbol, file, reference_time) =
+    _surface_flux_times_seconds(ds[time_var][:], String(get(ds[time_var].attrib, "units", "")),
+                                reference_time)
+function _timevarying_slice_seconds(::Nothing, ds, cfg, kind::Symbol, file, reference_time)
+    kind === :gridfed_fossil_co2 || throw(ArgumentError("could not find time coordinate in $file"))
+    source_year = _surface_flux_year(cfg, file, ds)
+    ref = reference_time === nothing ? DateTime(source_year, 1, 1) : reference_time
+    return [Dates.value(DateTime(source_year, month, 1) - ref) / 1000.0 for month in 1:12]
+end
+
+"""
+    _load_timevarying_surface_flux_field(cfg, FT, reference_time)
+
+Load a regular lon/lat `(lon, lat, time)` surface-flux series from one file
+(`file`), an explicit list (`files = [...]`, chronological), or twelve monthly
+files (`file_pattern` with `{YYYYMM}`, for `year` or the run-start year).
+Slices from all files are concatenated and sorted by time; timestamps must be
+unique and every file must share one lon/lat grid. Units are converted per
+slice to kg species m⁻² s⁻¹ (GridFED monthly totals use each month's length).
+When `reference_time === nothing`, each file's own time origin is taken as
+the run start and a warning is emitted.
+"""
 function _load_timevarying_surface_flux_field(cfg, ::Type{FT},
                                               reference_time::Union{DateTime, Nothing}) where FT
     kind = _surface_flux_kind(cfg)
     kind === :none && return nothing
+    reference_time === nothing && @warn(
+        "time-varying surface flux: no reference_time supplied; assuming the file's " *
+        "time origin equals the run start (first slice → t=0).")
     files, variable = _resolve_timevarying_surface_flux_files(cfg, kind, reference_time)
     fields = [_load_single_timevarying_surface_flux_field(
                   cfg, FT, reference_time, file, variable) for file in files]
@@ -526,7 +543,7 @@ function _load_timevarying_surface_flux_field(cfg, ::Type{FT},
     perm = sortperm(times_sec)
     times_sec = times_sec[perm]
     raw = raw[:, :, perm]
-    all(diff(times_sec) .> 0) || throw(ArgumentError(
+    issorted(times_sec; lt = <=) || throw(ArgumentError(
         "time-varying surface-flux timestamps must be unique and strictly increasing"))
 
     @info "Loaded time-varying surface flux" kind files=length(files) slices=length(times_sec) first_time_seconds=first(times_sec) last_time_seconds=last(times_sec)
@@ -554,6 +571,8 @@ function build_surface_flux_source(grid::AtmosGrid{<:LatLonMesh},
                                    reference_time::Union{DateTime, Nothing} = nothing) where FT
     kind = _surface_flux_kind(cfg)
     kind === :none && return nothing
+    kind === :cs_native && throw(ArgumentError(
+        "surface_flux kind = \"cs_native\" is only available on cubed-sphere runs"))
     _surface_flux_time_varying(cfg) && throw(ArgumentError(
         "time-varying surface flux is CS-only (LatLon support is a follow-up)"))
 
@@ -589,6 +608,8 @@ function build_surface_flux_source(grid::AtmosGrid{<:ReducedGaussianMesh},
                                    reference_time::Union{DateTime, Nothing} = nothing) where FT
     kind = _surface_flux_kind(cfg)
     kind === :none && return nothing
+    kind === :cs_native && throw(ArgumentError(
+        "surface_flux kind = \"cs_native\" is only available on cubed-sphere runs"))
     _surface_flux_time_varying(cfg) && throw(ArgumentError(
         "time-varying surface flux is CS-only (ReducedGaussian support is a follow-up)"))
 
@@ -652,6 +673,8 @@ function build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
                                    reference_time::Union{DateTime, Nothing} = nothing) where FT
     kind = _surface_flux_kind(cfg)
     kind === :none && return nothing
+    kind === :cs_native && !_surface_flux_time_varying(cfg) && throw(ArgumentError(
+        "surface_flux kind = \"cs_native\" requires time_varying = true"))
 
     method = _regridding_method(cfg, "conservative")
     haskey(cfg, "regridding") && method !== :conservative &&

@@ -82,7 +82,7 @@ function _merge_era5_c180_state!(out_fields::ERA5C180RegridFields,
                                   native_delp_moist,
                                   plan::VerticalPlan)
     Nz_out = plan.Nz_output
-    Threads.@threads :static for p in 1:6
+    Threads.@threads :dynamic for p in 1:6
         copyto!(out_fields.ps[p], native_fields.ps[p])
         for a in (out_m[p], out_delp_dry[p], out_fields.u[p],
                   out_fields.v[p], out_fields.t[p], out_fields.qv[p])
@@ -183,6 +183,8 @@ function fill_tm5_dkg_payload!(dkg_c180, c180_fields, air_mass,
     for s in scratches
         _reset!(s.diag)
     end
+    # `:static` pins each iteration to one thread, which the per-thread
+    # `scratches[threadid()]` indexing requires.
     Threads.@threads :static for p in 1:6
         scratch = scratches[Threads.threadid()]
         dp, mp = dkg_c180[p], air_mass[p]
@@ -260,7 +262,7 @@ function process_era5_n320_to_cs_day(date::Date,
                                        global_mass_pin::Bool = false,
                                        global_mass_target_kg::Real = NaN) where FT
     mass_basis === :dry ||
-        throw(ArgumentError("ERA5 N320 → CS writer only supports mass_basis=:dry on this branch; got $(mass_basis)"))
+        throw(ArgumentError("ERA5 N320 → CS writer only supports mass_basis=:dry; got $(mass_basis)"))
     native_vc_cfg = load_hybrid_coefficients(settings.coefficients_file)
     native_vc_ft = HybridSigmaPressure(FT.(native_vc_cfg.A), FT.(native_vc_cfg.B))
     plan = if vertical_plan === nothing

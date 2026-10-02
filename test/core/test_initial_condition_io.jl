@@ -592,6 +592,10 @@ end
         mktempdir() do dir
             @test ICIO._infer_year_from_path(
                 "GCP-GridFEDv2024.0_2022.short.nc") == 2022
+            @test ICIO._infer_year_from_path("GCP-GridFEDv2024.0_2021.short.nc") == 2021
+            @test ICIO._infer_year_from_path("flux_2021_v2024.nc") == 2021
+            @test ICIO._infer_year_from_path("z_cams_l_cams55_202112_FT24r2.nc") === nothing
+            @test_throws ArgumentError ICIO._infer_year_from_path("flux_2021_2022.nc")
             for month in 1:12
                 _write_synthetic_lmdz_flux_file(
                     joinpath(dir, @sprintf("lmdz_%04d%02d.nc", 2022, month)),

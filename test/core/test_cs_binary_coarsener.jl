@@ -46,14 +46,14 @@ using .AtmosTransport.Preprocessing: coarsen_nested_cs_transport_binary
         @test result.output_bytes < result.input_bytes
         @test isfile(output_path * ".coarsen-gated")
 
-        reader = AtmosTransport.MetDrivers.CubedSphereBinaryReader(output_path; FT)
+        reader = AtmosTransport.MetDrivers.TransportBinaryReader(output_path; FT)
         try
-            @test reader.header.Nc == target_Nc
+            @test AtmosTransport.MetDrivers.binary_geometry(reader).Nc == target_Nc
             @test reader.header.steps_per_window_by_window == [1]
             @test reader.header.raw_header["experimental"] == true
             @test reader.header.raw_header["validation_status"] ==
                   "testing_only_not_yet_scientifically_validated"
-            loaded = AtmosTransport.MetDrivers.load_cs_window(reader, 1)
+            loaded = AtmosTransport.MetDrivers.load_window!(reader, 1)
             @test all(panel -> all(==(FT(900)), panel), loaded.m)
             @test all(panel -> all(==(FT(360)), panel), loaded.am)
             @test all(panel -> all(iszero, panel), loaded.bm)
@@ -67,7 +67,7 @@ using .AtmosTransport.Preprocessing: coarsen_nested_cs_transport_binary
                 end
                 @test loaded.dkg[p][i, j, k] == expected
             end
-            driver = AtmosTransport.MetDrivers.CubedSphereTransportDriver(reader; Hp = 1)
+            driver = AtmosTransport.MetDrivers.TransportBinaryDriver(reader; Hp = 1)
             close(driver)
         finally
             isopen(reader.io) && close(reader)

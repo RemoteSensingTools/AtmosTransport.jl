@@ -36,6 +36,40 @@
 - `[output.fields].tracers = "name"` (a single string) no longer throws a
   `MethodError`; it selects that one tracer as documented.
 
+### Surface fluxes and preprocessing
+
+- Time-varying surface fluxes can span several files: `files = [...]` or a
+  `file_pattern` with `{YYYYMM}` plus `year`. `gridfed_fossil_co2` joins the
+  time-varying path (stepwise by default; monthly totals use each month's
+  length), and an inventory's year is taken from the last year in its file
+  name (`GCP-GridFEDv2024.0_2022.short.nc` is 2022).
+- `kind = "cs_native"` with `time_varying = true` reads an already aligned
+  GEOS-native `(time, nf, Ydim, Xdim)` flux-density series and converts it to
+  per-cell storage rates without regridding.
+- ERA5 N320 preprocessing to cubed-sphere grids can select a named L137
+  level set on the target grid (`[vertical] transform = "level_selection"`,
+  `preset = "ml137_66L"`), the recipe behind the C90 L66 ERA5 binaries, plus
+  ARCO-ERA5 diffusion-only configs and a per-year C90 driver script.
+- The ARCO C90/C180 and GEOS-IT OMEGA-regularized preprocessing configs now
+  name the cubed-sphere definition `"gmao_equal_distance"`; the previous
+  `"gmao"` was rejected by the parser.
+- The inventory year in a surface-flux file name skips version markers and
+  rejects ambiguous names. The default GridFED file
+  `GCP-GridFEDv2024.0_2021.short.nc` was read as 2024, a leap year; it is now
+  2021, so static February GridFED rates rise by 29/28.
+- `cs_native` fluxes accept only kg m-2 s-1 units (of the species, or kgC
+  converted by 44/12), reject fill values, and must match the runtime mesh
+  when the file carries `cell_area`.
+- `[vertical].level_selection` presets are rejected on sources without 137
+  native levels, and `[vertical].coefficients_file` is honoured as an alias of
+  `coefficients`.
+- Experimental `coarsen_nested_cs_transport_binary` restricts a cubed-sphere
+  transport binary to a coarser nested grid (for example C90 to C30) by
+  block-summing the transport operator; not yet validated as a replacement
+  for preprocessing at the target resolution.
+- SIF-GPP, FLUXCOM, TRENDY v14, TRANSCOM, GFED, and CATRINE campaign
+  preprocessing, run configs, visualization scripts, and ATBD memos.
+
 ### Verification and remaining limits
 
 - New core tests cover config parsing, cell location on every topology

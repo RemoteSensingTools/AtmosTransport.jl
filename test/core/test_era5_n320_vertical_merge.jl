@@ -91,3 +91,12 @@ end
               sum(sum, getproperty(native_tm5, name))
     end
 end
+
+@testset "level_selection presets require ERA5's 137 native levels" begin
+    vc(n) = AtmosTransport.Grids.HybridSigmaPressure(collect(range(0.0, 0.0; length = n + 1)),
+                                                     collect(range(0.0, 1.0; length = n + 1)))
+    cfg = Dict{String, Any}("transform" => "level_selection", "preset" => " ml137_66L ")
+    setup = Pre._build_native_vertical_setup(cfg, vc(137), Float64)
+    @test setup.Nz == 66
+    @test_throws ErrorException Pre._build_native_vertical_setup(cfg, vc(72), Float64)
+end
