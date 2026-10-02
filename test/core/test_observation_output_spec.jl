@@ -183,6 +183,10 @@ end
     @test O.observation_output_path(single, SoundingMode(), "20211202", 1) ==
           expand_data_path("/tmp/run/obs_soundings.nc")
     @test O.observation_output_path(single, SiteMode(), "", 3) == expand_data_path("/tmp/run/obs_sites.nc")
+    # A single-file run with a day token names the pair after the first day.
+    single_token = O.observation_output_spec(_obs_cfg(; path = "/tmp/run/obs_{YYYYMMDD}.nc"))
+    @test O.observation_output_path(single_token, SoundingMode(), "20211202", 1) ==
+          expand_data_path("/tmp/run/obs_20211202_soundings.nc")
     @test_throws MethodError O.observation_output_path(single, :profiles, "", 1)
     templated = _obs_cfg(; path = "/tmp/run/obs_{YYYYMMDD}.nc"); templated["split"] = "daily"
     daily = O.observation_output_spec(templated)

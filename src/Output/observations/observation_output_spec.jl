@@ -74,25 +74,27 @@ const _TIME_INTERPOLATIONS = (linear = LinearWindowInterpolation(),
                               nearest_window = NearestWindowSampling())
 # Strict ISO-8601 shape. Julia's `yyyy` directive is variable width, so an
 # unguarded `tryparse` would accept "20211202" as the year 20,211,202.
-const _ISO_START_TIME_RE = r"^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?)?$"
+const _ISO_UTC_RE = r"^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?)?$"
 
 const OBSERVATION_RUNTIME_UNAVAILABLE_MESSAGE =
     "[output.observations] is parsed, but runtime observation sampling is not " *
     "available in this build yet; set enabled = false or remove the table."
 
-_parse_start_time(::Nothing) = nothing
-_parse_start_time(value::DateTime) = value
-_parse_start_time(value::Date) = DateTime(value)
-function _parse_start_time(value::AbstractString)
+# Shared strict UTC parser for config values and table columns.
+_parse_iso_utc(::Nothing, ::AbstractString) = nothing
+_parse_iso_utc(value::DateTime, ::AbstractString) = value
+_parse_iso_utc(value::Date, ::AbstractString) = DateTime(value)
+function _parse_iso_utc(value::AbstractString, label::AbstractString)
     s = chopsuffix(String(strip(value)), "Z")
-    parsed = occursin(_ISO_START_TIME_RE, s) ? tryparse(DateTime, replace(s, ' ' => 'T')) : nothing
+    parsed = occursin(_ISO_UTC_RE, s) ? tryparse(DateTime, replace(s, ' ' => 'T')) : nothing
     parsed === nothing && throw(ArgumentError(
-        "[output.observations].start_time must be an ISO-8601 UTC time such as " *
-        "\"2021-12-02T00:00:00\"; got $(repr(value))"))
+        "$(label) must be an ISO-8601 UTC time such as \"2021-12-02T00:00:00\"; got $(repr(value))"))
     return parsed
 end
-_parse_start_time(value) = throw(ArgumentError(
-    "[output.observations].start_time must be a date-time or string; got $(repr(value))"))
+_parse_iso_utc(value, label::AbstractString) = throw(ArgumentError(
+    "$(label) must be a date-time or string; got $(repr(value))"))
+
+_parse_start_time(value) = _parse_iso_utc(value, "[output.observations].start_time")
 
 function _parse_observation_tracers(value)
     tracers = _parse_tracer_names(value; label = "[output.observations].tracers")
@@ -177,16 +179,23 @@ function observation_output_spec(output_cfg::AbstractDict;
         sources = _parse_observation_sources(obs_cfg))
 end
 
+_has_day_token(path::AbstractString) =
+    occursin("{date}", path) || occursin("{YYYYMMDD}", path) || occursin("{day}", path)
+
 """
     observation_output_path(spec, mode, date_label, day_index) -> String
 
-Resolve the file for `mode::AbstractObservationMode`. Single-file runs insert
-`_soundings` / `_sites` before the extension; daily runs first substitute the
-day template exactly like `output_path_for_day`.
+Resolve the file for `mode::AbstractObservationMode`. `_soundings` / `_sites`
+is inserted before the extension. Daily runs substitute the day template
+exactly like `output_path_for_day`; single-file runs substitute it only when
+the path carries a `{date}` / `{YYYYMMDD}` / `{day}` token, using the first
+day's label, and otherwise use the path as given.
 """
-observation_output_path(spec::ObservationOutputSpec{SingleOutputFile}, mode::AbstractObservationMode,
-                        ::AbstractString, ::Integer) =
-    _insert_suffix_before_extension(spec.path, "_" * String(mode_label(mode)))
+function observation_output_path(spec::ObservationOutputSpec{SingleOutputFile}, mode::AbstractObservationMode,
+                                 date_label::AbstractString, day_index::Integer)
+    path = _has_day_token(spec.path) ? _substitute_day_template(spec.path, date_label, day_index) : spec.path
+    return _insert_suffix_before_extension(path, "_" * String(mode_label(mode)))
+end
 
 function observation_output_path(spec::ObservationOutputSpec{DailyOutputFiles},
                                  mode::AbstractObservationMode,

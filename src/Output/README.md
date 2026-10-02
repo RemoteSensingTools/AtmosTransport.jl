@@ -22,6 +22,13 @@ writing topology-specific NetCDF files directly.
 - `observations/observation_sources.jl` defines the typed `[[output.observations.sources]]`
   descriptors (`OCO2LiteSource`, `ObsPackSource`, `TableSource`), the singleton
   mode / grouping / table-format types they dispatch on, and their validation.
+- `observations/observation_requests.jl` defines the sampling requests
+  (`SoundingRequest`, `SiteRequest`) and the per-run `ObservationSet`.
+- `observations/observation_readers.jl` turns sources into requests:
+  `expand_observation_paths` (date tokens + file-name wildcards),
+  `read_observation_requests` per source type and mode (OCO-2 Lite, ObsPack
+  sites or records, CSV/TOML/NetCDF tables), and `build_observation_set`
+  (run-window filter, time-sorted soundings, sites merged by id).
 - `observations/observation_output_spec.jl` parses `[output.observations]` into
   `ObservationOutputSpec` (or `NoObservationOutput`), rejecting unknown keys, and
   resolves `_soundings` / `_sites` file paths with the snapshot day template.

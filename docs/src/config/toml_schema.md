@@ -404,7 +404,9 @@ quality_flag_max = 0
 kind = "obspack"                         # NOAA ObsPack NetCDF dataset files
 mode = "sites"                           # "sites" (station series) | "soundings" (per record)
 path = "~/data/obspack/data/nc/co2_*_surface-insitu_*.nc"
-site_grouping = "site_code"              # "site_code" | "location"
+site_grouping = "site_code"              # "site_code": one site per dataset file (and intake height),
+                                         #   id = dataset name [+ "_<h>magl"]; "location": one site per
+                                         #   rounded (lat, lon, intake), id = "<code>_<lat>N_<lon>E_<h>magl"
 
 [[output.observations.sources]]
 kind = "table"                           # id,time,lat,lon[,altitude_agl] as .csv, .toml, or .nc

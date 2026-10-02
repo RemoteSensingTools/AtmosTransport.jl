@@ -30,9 +30,16 @@ mode_label(::SiteMode) = :sites
 
 "How ObsPack records are grouped into sites."
 abstract type AbstractSiteGrouping end
-"Group by the `site_code` attribute plus intake height."
+"""
+One site per dataset file and distinct intake height. The id is the dataset
+name (ObsPack files already encode site, platform, and lab), suffixed with
+`_<h>magl` only when a file holds several intake heights.
+"""
 struct SiteCodeGrouping <: AbstractSiteGrouping end
-"Group by rounded (lat, lon, intake height)."
+"""
+One site per distinct (lat, lon, intake height) rounded to 0.01° and 0.1 m,
+with ids `<site_code>_<lat>N_<lon>E_<h>magl` in signed decimal degrees.
+"""
 struct LocationGrouping <: AbstractSiteGrouping end
 
 "Encoding of a generic point table."

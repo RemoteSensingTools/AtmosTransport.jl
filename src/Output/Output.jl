@@ -28,6 +28,8 @@ using HDF5_jll
 using JSON3
 using NCDatasets
 using Printf
+using Statistics: median!
+using TOML
 using KernelAbstractions: @kernel, @index, get_backend, synchronize, CPU as KA_CPU
 
 function _config_bool(value, path::AbstractString)
@@ -64,6 +66,8 @@ export AbstractObservationTimeInterpolation, LinearWindowInterpolation, NearestW
 export AbstractObservationOutput, NoObservationOutput, ObservationOutputSpec
 export observation_output_spec, observations_enabled, observation_output_path
 export OBSERVATION_RUNTIME_UNAVAILABLE_MESSAGE
+export SoundingRequest, SiteRequest, ObservationSet
+export read_observation_requests, build_observation_set, expand_observation_paths
 export CellLocation, AbstractCellLocator, LatLonCellLocator, ReducedGaussianCellLocator
 export CubedSphereCellLocator, cell_locator, locate, ncolumns, isvalid_lonlat
 export AbstractObservationSampler, NoObservationSampler, build_observation_sampler
@@ -79,6 +83,8 @@ include("netcdf_writer.jl")
 include("netcdf_stream.jl")
 include("binary_writer.jl")
 include("observations/observation_sources.jl")
+include("observations/observation_requests.jl")
+include("observations/observation_readers.jl")
 include("observations/observation_output_spec.jl")
 include("observations/cell_locator.jl")
 include("observations/observation_sampler.jl")
