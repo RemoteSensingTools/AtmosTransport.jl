@@ -44,8 +44,9 @@ using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                cell_area, panel_cell_center_lonlat, panel_cell_corner_lonlat,
                cs_definition, coordinate_law, center_law, longitude_offset_deg,
                cs_definition_tag, coordinate_law_tag, center_law_tag,
-               lonlat_to_panel_xy
-using ..State: DryBasis, MoistBasis, mass_basis, tracer_names, get_tracer
+               lonlat_to_panel_xy, gravity
+using ..State: DryBasis, MoistBasis, mass_basis, tracer_names, get_tracer,
+               CellState, CubedSphereState, tracer_index
 
 export AbstractSnapshotFrame, SnapshotFrame, SelectedSnapshotFrame, SnapshotWriteOptions
 export AbstractOutputSchedule, AbstractOutputPartition
@@ -70,6 +71,11 @@ export SoundingRequest, SiteRequest, ObservationSet
 export read_observation_requests, build_observation_set, expand_observation_paths
 export CellLocation, AbstractCellLocator, LatLonCellLocator, ReducedGaussianCellLocator
 export CubedSphereCellLocator, cell_locator, locate, ncolumns, isvalid_lonlat
+export ObservationGatherBuffers, gather_columns!, gather_field!
+export interface_pressures!, layer_heights_agl!, intake_layer_index
+export column_mean_vmr, mixing_ratio_profile!
+export AbstractLayerTemperature, ConstantLayerTemperature, SurfaceLapseTemperature
+export ProfileLayerTemperature
 export AbstractObservationSampler, NoObservationSampler, build_observation_sampler
 export observe_window_boundary!, begin_observation_day!, finish_observations!
 
@@ -87,6 +93,7 @@ include("observations/observation_requests.jl")
 include("observations/observation_readers.jl")
 include("observations/observation_output_spec.jl")
 include("observations/cell_locator.jl")
+include("observations/observation_gather.jl")
 include("observations/observation_sampler.jl")
 
 end # module Output
