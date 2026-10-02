@@ -275,18 +275,8 @@ function build_vertical_setup(coeff_path::String, level_range, min_dp::Float64, 
 
     merged_vc, merge_map, mapping_method =
         if !isempty(echlevs_name)
-            echlevs_map = Dict(
-                "ml137_tropo34" => ECHLEVS_ML137_TROPO34,
-                "ml137_66L" => ECHLEVS_ML137_66L,
-                "ml137_cfl94" => ECHLEVS_ML137_CFL94,
-                "ml137_cfl85" => ECHLEVS_ML137_CFL85,
-                "ml137_94L" => ECHLEVS_ML137_CFL94,
-                "ml137_85L" => ECHLEVS_ML137_CFL85,
-                "ml137_full" => collect(137:-1:0),
-            )
-            haskey(echlevs_map, echlevs_name) ||
-                error("Unknown echlevs config: $echlevs_name. Available: $(join(keys(echlevs_map), ", "))")
-            selected_vc, mm = select_levels_echlevs(vc_native, echlevs_map[echlevs_name])
+            selected_vc, mm =
+                select_levels_echlevs(vc_native, echlevs_preset(echlevs_name))
             selected_vc, mm, :merge_map
         elseif target_vertical !== nothing
             target_vc = load_hybrid_coefficients(target_vertical.coeff_path)

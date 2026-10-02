@@ -128,6 +128,30 @@ const ECHLEVS_ML137_CFL85 = vcat(
     collect(65:-1:0),
 )
 
+const ECHLEVS_ML137_PRESETS = Dict(
+    "ml137_tropo34" => ECHLEVS_ML137_TROPO34,
+    "ml137_66L"     => ECHLEVS_ML137_66L,
+    "ml137_cfl94"   => ECHLEVS_ML137_CFL94,
+    "ml137_cfl85"   => ECHLEVS_ML137_CFL85,
+    "ml137_94L"     => ECHLEVS_ML137_CFL94,
+    "ml137_85L"     => ECHLEVS_ML137_CFL85,
+    "ml137_full"    => collect(137:-1:0),
+)
+
+"""
+    echlevs_preset(name) -> Vector{Int}
+
+Resolve a named ERA5 L137 interface-selection preset. The returned vector is
+copied so callers cannot mutate the process-wide preset library.
+"""
+function echlevs_preset(name::AbstractString)
+    key = String(name)
+    haskey(ECHLEVS_ML137_PRESETS, key) ||
+        error("Unknown echlevs config: $key. Available: " *
+              join(sort!(collect(keys(ECHLEVS_ML137_PRESETS))), ", "))
+    return copy(ECHLEVS_ML137_PRESETS[key])
+end
+
 function load_era5_vertical_coordinate(coeff_path::String, level_top::Int, level_bot::Int)
     isfile(coeff_path) || error("Coefficients not found: $coeff_path")
     cfg = TOML.parsefile(coeff_path)

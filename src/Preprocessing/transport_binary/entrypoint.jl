@@ -159,6 +159,13 @@ function _build_native_vertical_setup(cfg_vertical::AbstractDict,
     transform_name = lowercase(String(get(cfg_vertical, "transform", "identity")))
     transform = if transform_name in ("identity", "none")
         IdentityVertical()
+    elseif transform_name in ("level_selection", "echlevs")
+        preset = get(cfg_vertical, "preset",
+                     get(cfg_vertical, "echlevs", get(cfg_vertical, "name", "")))
+        isempty(strip(String(preset))) &&
+            error("`[vertical].transform = \"level_selection\"` requires " *
+                  "`preset = \"ml137_…\"`.")
+        LevelSelection(echlevs_preset(String(preset)))
     elseif transform_name in ("merge_above_pressure", "merge_above_pressure_pa")
         pressure_pa = if haskey(cfg_vertical, "pressure_Pa")
             _vertical_float(cfg_vertical["pressure_Pa"], "pressure_Pa")
@@ -187,7 +194,8 @@ function _build_native_vertical_setup(cfg_vertical::AbstractDict,
                                 "reference_surface_pressure_Pa"))
     else
         error("Unsupported native `[vertical].transform = $(repr(transform_name))`. " *
-              "Supported: identity, merge_above_pressure, merge_layers_thinner_than.")
+              "Supported: identity, level_selection, merge_above_pressure, " *
+              "merge_layers_thinner_than.")
     end
 
     plan = plan_vertical(transform, vc)

@@ -470,6 +470,18 @@ coefficients = "config/geos_L72_coefficients.toml"
 Per-source defaults are baked into the source-descriptor TOML; this
 key is the per-run override.
 
+For native ERA5 N320, named interface-selection presets use:
+
+```toml
+[vertical]
+coefficients_file = "config/era5_L137_coefficients.toml"
+transform = "level_selection"
+preset = "ml137_66L"
+```
+
+Available ERA5 presets are `ml137_tropo34`, `ml137_66L`, `ml137_cfl85`
+(`ml137_85L`), `ml137_cfl94` (`ml137_94L`), and `ml137_full`.
+
 ### `[numerics]`
 
 The numerics block has **different keys** on the spectral and native
