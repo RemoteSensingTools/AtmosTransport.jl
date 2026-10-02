@@ -47,9 +47,9 @@ end
 function _infer_year_from_path(path::AbstractString)
     name = basename(path)
     years = Int[]
-    for m in eachmatch(r"(?<!\d)((?:19|20)\d{2})(?!\d)", name)
+    for m in eachmatch(r"(?<!\d)(?:19|20)\d{2}(?!\d)", name)
         m.offset > 1 && name[prevind(name, m.offset)] in ('v', 'V') && continue
-        push!(years, parse(Int, m.captures[1]))
+        push!(years, parse(Int, m.match))
     end
     unique!(years)
     isempty(years) && return nothing
