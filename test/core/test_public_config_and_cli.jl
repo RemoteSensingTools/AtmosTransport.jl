@@ -193,9 +193,14 @@ end
 
     output = schema.definitions.output.properties
     for key in (:enabled, :format, :path, :hours, :cadence_hours, :split,
-                :deflate_level, :shuffle, :fields)
+                :deflate_level, :shuffle, :fields, :observations)
         @test hasproperty(output, key)
     end
+    @test schema.definitions.observation_output.additionalProperties == false
+    @test schema.definitions.observation_source.additionalProperties == false
+    # Choices are documented `oneOf` consts; test_observation_schema.jl checks them in full.
+    @test Set(String(c.const) for c in schema.definitions.observation_source.properties.kind.oneOf) ==
+          Set(["oco2_lite", "obspack", "table"])
     for retired in (:mode, :path_template, :frequency, :provenance)
         @test !hasproperty(output, retired)
     end

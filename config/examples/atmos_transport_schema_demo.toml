@@ -53,3 +53,30 @@ path = "~/data/AtmosTransport/output/schema_demo_{date}.nc"
 split = "daily"
 deflate_level = 1
 shuffle = true
+
+# Optional: sample tracer profiles at observation points instead of (or in
+# addition to) gridded snapshots. Sampling happens at met-window ends from the
+# containing model cell. Set enabled = true and point the sources at real files.
+# Hover over `kind`, `mode`, `time_interpolation`, `quality_filter`, ... to see
+# the Julia type each choice becomes.
+[output.observations]
+enabled = false
+path = "~/data/AtmosTransport/output/schema_demo_obs_{date}.nc"
+time_interpolation = "linear"        # LinearWindowInterpolation | "nearest_window"
+
+# OCO-2 v11 MIP 10-second averages: co-sample every record (NoQualityFilter).
+[[output.observations.sources]]
+kind = "oco2_lite"
+path = "/kiwi-data/Data/model/OCO2MIP/observation_input/OCO2_b11.2_10sec_GOOD_r2.nc4"
+quality_filter = "none"
+# Only the assimilated records instead:
+# quality_filter = "flag_values"     # QualityFlagValues
+# quality_variable = "assimilate_flag"
+# quality_flag_values = [1]
+
+# Stations from a table (see config/examples/observation_sites_demo.toml).
+[[output.observations.sources]]
+kind = "table"
+mode = "sites"
+path = "~/data/AtmosTransport/observations/tccon_sites.csv"
+

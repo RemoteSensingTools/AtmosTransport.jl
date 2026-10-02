@@ -117,18 +117,18 @@ function _parse_layer_selection(value, key::AbstractString)
     end
 end
 
-function _parse_tracer_names(value)
+function _parse_tracer_names(value; label::AbstractString = "[output.fields].tracers")
     if value === nothing
         return nothing
     elseif value isa AbstractString
         s = lowercase(String(value))
         s in ("*", "all") && return nothing
         s in ("none", "false", "off") && return Symbol[]
-        return Symbol[String(value)]
-    elseif value isa AbstractVector
-        return Symbol.(String.(value))
+        return [Symbol(String(value))]
+    elseif value isa AbstractVector && all(v -> v isa AbstractString, value)
+        return Symbol[Symbol(String(v)) for v in value]
     else
-        throw(ArgumentError("[output.fields].tracers must be a string or array of tracer names"))
+        throw(ArgumentError("$(label) must be a string or array of tracer names; got $(repr(value))"))
     end
 end
 
@@ -314,15 +314,25 @@ function _insert_suffix_before_extension(path::AbstractString, suffix::AbstractS
     return isempty(ext) ? string(root, suffix, ".nc") : string(root, suffix, ext)
 end
 
-function output_path_for_day(spec::RuntimeOutputSpec, date_label::AbstractString,
-                             day_index::Integer)
-    path = spec.path
+"Whether an output path carries a per-day token (`{date}`, `{YYYYMMDD}`, `{day}`)."
+_has_day_token(path::AbstractString) =
+    occursin("{date}", path) || occursin("{YYYYMMDD}", path) || occursin("{day}", path)
+
+# Shared by snapshot and observation output: substitute `{date}`, `{YYYYMMDD}`
+# and `{day}` when present, otherwise insert the day label before the
+# extension. Binaries without a date in their name fall back to the
+# zero-padded day index, so daily files never collide on an empty label.
+function _substitute_day_template(path::AbstractString, date_label::AbstractString,
+                                  day_index::Integer)
     day = lpad(string(day_index), 3, '0')
-    if occursin("{date}", path) || occursin("{YYYYMMDD}", path) || occursin("{day}", path)
-        out = replace(path, "{date}" => date_label)
-        out = replace(out, "{YYYYMMDD}" => date_label)
+    label = isempty(date_label) ? day : date_label
+    if _has_day_token(path)
+        out = replace(path, "{date}" => label)
+        out = replace(out, "{YYYYMMDD}" => label)
         return replace(out, "{day}" => day)
     end
-    label = isempty(date_label) ? day : date_label
     return _insert_suffix_before_extension(path, "_" * label)
 end
+
+output_path_for_day(spec::RuntimeOutputSpec, date_label::AbstractString, day_index::Integer) =
+    _substitute_day_template(spec.path, date_label, day_index)

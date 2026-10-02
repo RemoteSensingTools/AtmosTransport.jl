@@ -237,7 +237,7 @@ export allocate_face_fluxes, allocate_tracers
 export get_tracer, mixing_ratio, total_mass, total_air_mass
 export tracer_names, ntracers
 export capture_snapshot, write_snapshot_netcdf, SnapshotFrame, SnapshotWriteOptions
-export runtime_output_spec
+export runtime_output_spec, observation_output_spec
 export GnomonicPanelConvention, GEOSNativePanelConvention
 
 # Common operator configuration

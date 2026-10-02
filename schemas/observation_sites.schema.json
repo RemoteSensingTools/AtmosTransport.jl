@@ -1,0 +1,159 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AtmosTransport observation table (TOML)",
+  "description": "Point events ([[soundings]]) and stations ([[sites]]) read by an [[output.observations.sources]] entry with kind = \"table\". CSV files use the same column names. Add `#:schema <repo>/schemas/observation_sites.schema.json` to the file for editor help.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "soundings": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/point_event"},
+      "description": "Point events (mode = \"soundings\"), each a SoundingRequest sampled once."
+    },
+    "sites": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/site"},
+      "description": "Stations (mode = \"sites\"), each a SiteRequest with an AbstractSiteSchedule."
+    }
+  },
+  "definitions": {
+    "utc_time": {
+      "anyOf": [
+        {"type": "string", "format": "date-time"},
+        {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?Z?$"
+        }
+      ],
+      "description": "UTC time: a TOML date-time (no offset, or Z; Julia's TOML rejects +hh:mm offsets) or an ISO-8601 string \"2021-12-02T05:00:00\". Bare numbers are rejected in CSV/TOML."
+    },
+    "id": {
+      "type": ["string", "integer"],
+      "description": "Request id, written as a string (id; aliases sounding_id, site_id, site)."
+    },
+    "lat": {
+      "type": "number",
+      "minimum": -90,
+      "maximum": 90,
+      "description": "Latitude [degrees north] (alias latitude)."
+    },
+    "lon": {
+      "type": "number",
+      "minimum": -540,
+      "maximum": 540,
+      "description": "Longitude [degrees east], any wrap (alias longitude)."
+    },
+    "elevation": {
+      "type": "number",
+      "description": "Surface elevation above sea level [m] (alias elevation_m); informational, and used to convert altitude."
+    },
+    "intake_height": {
+      "type": "number",
+      "description": "Intake height above ground [m] (aliases intake_height_m, altitude_agl, height_agl); selects the model layer (omit: lowest layer)."
+    },
+    "altitude": {
+      "type": "number",
+      "description": "Intake altitude above sea level [m] (alias altitude_asl); converted to intake_height = altitude - elevation (needs elevation)."
+    },
+    "point_event": {
+      "type": "object",
+      "description": "SoundingRequest: one point event sampled at its own time (blended between the bracketing met-window ends).",
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/definitions/id"},
+        "sounding_id": {"$ref": "#/definitions/id"},
+        "site_id": {"$ref": "#/definitions/id"},
+        "site": {"$ref": "#/definitions/id"},
+        "lat": {"$ref": "#/definitions/lat"},
+        "latitude": {"$ref": "#/definitions/lat"},
+        "lon": {"$ref": "#/definitions/lon"},
+        "longitude": {"$ref": "#/definitions/lon"},
+        "elevation": {"$ref": "#/definitions/elevation"},
+        "elevation_m": {"$ref": "#/definitions/elevation"},
+        "intake_height": {"$ref": "#/definitions/intake_height"},
+        "intake_height_m": {"$ref": "#/definitions/intake_height"},
+        "altitude_agl": {"$ref": "#/definitions/intake_height"},
+        "height_agl": {"$ref": "#/definitions/intake_height"},
+        "altitude": {"$ref": "#/definitions/altitude"},
+        "altitude_asl": {"$ref": "#/definitions/altitude"},
+        "time": {"$ref": "#/definitions/utc_time"},
+        "datetime": {"$ref": "#/definitions/utc_time"}
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            {"required": ["id"]},
+            {"required": ["sounding_id"]},
+            {"required": ["site_id"]},
+            {"required": ["site"]}
+          ]
+        },
+        {"oneOf": [{"required": ["time"]}, {"required": ["datetime"]}]},
+        {"oneOf": [{"required": ["lat"]}, {"required": ["latitude"]}]},
+        {"oneOf": [{"required": ["lon"]}, {"required": ["longitude"]}]}
+      ]
+    },
+    "site": {
+      "type": "object",
+      "description": "SiteRequest. The keys choose its AbstractSiteSchedule: no schedule keys -> EveryWindow (every met-window end); start_time + end_time (alias stop_time) -> TimeRange (window ends inside the inclusive range, NaN outside); times -> TimeList (one point event per time). Repeated ids merge their time lists; other schedules must agree.",
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/definitions/id"},
+        "sounding_id": {"$ref": "#/definitions/id"},
+        "site_id": {"$ref": "#/definitions/id"},
+        "site": {"$ref": "#/definitions/id"},
+        "lat": {"$ref": "#/definitions/lat"},
+        "latitude": {"$ref": "#/definitions/lat"},
+        "lon": {"$ref": "#/definitions/lon"},
+        "longitude": {"$ref": "#/definitions/lon"},
+        "elevation": {"$ref": "#/definitions/elevation"},
+        "elevation_m": {"$ref": "#/definitions/elevation"},
+        "intake_height": {"$ref": "#/definitions/intake_height"},
+        "intake_height_m": {"$ref": "#/definitions/intake_height"},
+        "altitude_agl": {"$ref": "#/definitions/intake_height"},
+        "height_agl": {"$ref": "#/definitions/intake_height"},
+        "altitude": {"$ref": "#/definitions/altitude"},
+        "altitude_asl": {"$ref": "#/definitions/altitude"},
+        "start_time": {"$ref": "#/definitions/utc_time"},
+        "end_time": {"$ref": "#/definitions/utc_time"},
+        "stop_time": {"$ref": "#/definitions/utc_time"},
+        "times": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/definitions/utc_time"},
+          "description": "TimeList: the site is sampled once at each time, like a point event (_soundings file)."
+        }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            {"required": ["id"]},
+            {"required": ["sounding_id"]},
+            {"required": ["site_id"]},
+            {"required": ["site"]}
+          ]
+        },
+        {"oneOf": [{"required": ["lat"]}, {"required": ["latitude"]}]},
+        {"oneOf": [{"required": ["lon"]}, {"required": ["longitude"]}]},
+        {
+          "not": {
+            "anyOf": [
+              {"required": ["times", "start_time"]},
+              {"required": ["times", "end_time"]},
+              {"required": ["times", "stop_time"]},
+              {"required": ["end_time", "stop_time"]}
+            ]
+          }
+        },
+        {
+          "if": {"required": ["start_time"]},
+          "then": {"anyOf": [{"required": ["end_time"]}, {"required": ["stop_time"]}]}
+        },
+        {
+          "if": {"anyOf": [{"required": ["end_time"]}, {"required": ["stop_time"]}]},
+          "then": {"required": ["start_time"]}
+        }
+      ]
+    }
+  }
+}

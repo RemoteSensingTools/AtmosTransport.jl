@@ -66,7 +66,7 @@ module DrivenRunner
 
 using Adapt
 using ..Models: _config_bool
-using Dates: Date, DateTime
+using Dates: Date, DateTime, Millisecond, Time, @dateformat_str
 using Printf: @sprintf, @printf
 using Logging
 using ProgressMeter: Progress, next!, finish!, update!
@@ -102,7 +102,12 @@ using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, S
                 AbstractOutputPartition, SingleOutputFile, DailyOutputFiles,
                 RuntimeOutputSpec, runtime_output_spec, snapshot_hours,
                 output_enabled, output_path, output_path_for_day,
-                capture_snapshot, write_snapshot_netcdf, write_snapshot_binary
+                capture_snapshot, write_snapshot_netcdf, write_snapshot_binary,
+                NoObservationOutput, ObservationOutputSpec, observation_output_spec,
+                AbstractObservationSampler, NoObservationSampler, build_observation_sampler,
+                samples_observations, begin_observation_day!, observe_window_boundary!,
+                finish_observations!, check_observation_tracer_names,
+                observation_output_path, SoundingMode, SiteMode
 # TransportModel + DrivenSimulation live alongside us in the Models module;
 # reach up to the parent and pull them in.
 using ..Models: TransportModel
@@ -123,6 +128,7 @@ include("runner/configuration.jl")
 include("runner/summary.jl")
 include("runner/resources.jl")
 include("runner/output.jl")
+include("runner/observations.jl")
 include("runner/model_setup.jl")
 
 # ===========================================================================
@@ -334,6 +340,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                           stop_window_override = stop_window_override))
     snapshot_schedule_hours = snapshot_hours(output_spec)
     do_snapshots = output_enabled(output_spec)
+    _check_snapshot_day_paths(output_spec, binary_paths)
     recipe = build_runtime_physics_recipe(cfg, first_driver, FT)
     _validate_capability_match(first_driver, recipe)
 
@@ -347,6 +354,15 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     _assert_gpu_residency!(model.state, arch)
 
     grid_of_first = driver_grid(first_driver)
+    sampler = _install_observation_sampler!(output_resources, output_cfg, output_spec.partition,
+                                            model.state, grid_of_first;
+                                            cfg, binary_paths, halo_width = 0,
+                                            offset_seconds = (start_window - 1) * Float64(window_dt(first_driver)),
+                                            span_seconds = 3600 * _output_default_cap_hours(
+                                                first_driver, length(binary_paths);
+                                                start_window, stop_window_override))
+    # Observation sampling needs the per-window loop even without snapshots.
+    do_windows = do_snapshots || samples_observations(sampler)
     surface_sources = build_surface_flux_sources(grid_of_first, tracer_specs, FT;
                                                  reference_time = _run_reference_time(cfg))
     m0 = total_air_mass(model.state)
@@ -409,6 +425,9 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     end
 
     run_time_seconds = 0.0   # accumulated across binaries (sim clock origin)
+    # Observation times are absolute: a single-file run starting at a later
+    # window begins `start_window - 1` windows after the run origin.
+    observation_offset_seconds = (start_window - 1) * Float64(window_dt(first_driver))
     for (idx, path) in enumerate(binary_paths)
         # `path` (NAS) is kept for date labels/logging; the driver opens the
         # staged local copy when staging is enabled (idx==1 already staged above).
@@ -447,6 +466,9 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
         end
         window_hours = Float64(window_dt(driver)) / 3600.0
         n_windows = stop_window - start_window + 1
+        day_start_seconds = run_time_seconds + observation_offset_seconds
+        windows_done = 0
+        _begin_observation_binary!(timer, sampler, sim, path, idx, day_start_seconds)
         set_progress_status!(timer;
                              status = @sprintf("running %s with %s on %s (%d windows)",
                                                basename(path),
@@ -458,7 +480,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
         synchronize_architecture!(arch)
         t0 = time()
 
-        if do_snapshots
+        if do_windows
             for _ in 1:n_windows
                 # Physics handoff for LL/RG: `run_window!` advances through all
                 # substeps in the current met window. Each substep refreshes
@@ -475,7 +497,10 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                                snapshot_count[],
                                                _output_basename(output_spec)))
                 total_elapsed_hours += window_hours
-                while snap_idx <= length(snapshot_schedule_hours) &&
+                windows_done += 1
+                _observe_window_end!(timer, sampler, sim,
+                                     day_start_seconds + windows_done * Float64(window_dt(driver)))
+                while do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
                       abs(total_elapsed_hours - snapshot_schedule_hours[snap_idx]) < 0.5
                     capture_structured!(total_elapsed_hours)
                     set_progress_status!(timer;
@@ -525,6 +550,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
         close(input_resources)
     end
 
+    finish_observations!(sampler)
     # Drain the last in-flight async daily write before the final flush / mass
     # accounting, so the run never returns with a write still pending.
     _wait_pending_output!(output_resources)
@@ -606,6 +632,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                           stop_window_override = stop_window_override))
     snapshot_schedule_hours = snapshot_hours(output_spec)
     do_snapshots = output_enabled(output_spec)
+    _check_snapshot_day_paths(output_spec, binary_paths)
     if stop_window_override !== nothing && length(binary_paths) > 1 &&
        Int(stop_window_override) < total_windows(driver1)
         throw(ArgumentError(
@@ -670,6 +697,12 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
         fluxes = model.fluxes
     end
     _assert_gpu_residency!(model.state, arch)
+    sampler = _install_observation_sampler!(output_resources, output_cfg, output_spec.partition,
+                                            model.state, grid;
+                                            cfg, binary_paths, halo_width = Hp,
+                                            span_seconds = 3600 * _output_default_cap_hours(
+                                                driver1, length(binary_paths); stop_window_override))
+    observation_clock_seconds = 0.0   # exact Float64 run clock for observation times
 
     # Build surface-flux sources from the parsed tracer specs and log per-source
     # mass rates. Matches the LL/RG path; `DrivenSimulation`'s constructor
@@ -776,6 +809,9 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
         # keep snapshots and the return value aligned with the stepped model.
         input_resources.simulation = sim
         model = sim.model
+        day_start_seconds = observation_clock_seconds
+        windows_done = 0
+        _begin_observation_binary!(timer, sampler, sim, path, driver_idx, day_start_seconds)
 
         day_t0 = time()
         set_progress_status!(timer;
@@ -803,6 +839,9 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                                snapshot_count[],
                                                _output_basename(output_spec)))
                 total_hour += window_hours
+                windows_done += 1
+                _observe_window_end!(timer, sampler, sim,
+                                     day_start_seconds + windows_done * Float64(window_dt(driver)))
                 while do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
                       abs(total_hour - snapshot_schedule_hours[snap_idx]) < 0.5
                     capture_cs!(total_hour)
@@ -820,6 +859,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                              status = @sprintf("finished %s", basename(path)),
                              detail = @sprintf("file wall %.1fs", time() - day_t0),
                              redraw = true)
+        observation_clock_seconds += windows_done * Float64(window_dt(driver))
         if do_snapshots && output_spec.partition isa DailyOutputFiles &&
            output_enabled(output_spec) && !isempty(day_snapshots)
             out_path = _output_path_for_partition(output_spec, output_spec.partition,
@@ -835,6 +875,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
         close(input_resources)
     end
 
+    finish_observations!(sampler)
     # Drain the last in-flight async daily write before the final mass accounting,
     # so the run never returns with a write still pending.
     _wait_pending_output!(output_resources)

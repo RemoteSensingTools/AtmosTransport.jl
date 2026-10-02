@@ -1,6 +1,8 @@
 # Output and visualization API
 
-`Output` defines snapshot capture and persistence. `Visualization` provides
+`Output` defines snapshot capture and persistence, and observation sampling
+(`[output.observations]`: point events and station series sampled at
+met-window ends). `Visualization` provides
 topology-aware field views and optional Makie rendering for those snapshots.
 
 ## Output
