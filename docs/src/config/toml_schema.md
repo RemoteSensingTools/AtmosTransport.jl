@@ -201,7 +201,8 @@ kind = "edgar_sf6"
 Registered surface-flux source kinds (full list in
 `src/Models/InitialConditionIO.jl`): `lmdz_co2`, `gridfed_fossil_co2`,
 `edgar_sf6`, `zhang_rn222`, plus a generic `file` for arbitrary
-NetCDF sources. There is no `edgar_co2` kind — use
+NetCDF sources and `cs_native` for time-varying fluxes already on the native
+cubed-sphere grid. There is no `edgar_co2` kind — use
 `gridfed_fossil_co2` for the GridFED-derived fossil CO₂ inventory.
 Known tracer names carry built-in molar masses; for a custom tracer, set
 `molar_mass_kg_mol` inside its `surface_flux` table.
@@ -230,6 +231,15 @@ Slices are indexed by **absolute** time since the run's `start_date`, so a
 multi-day run advances through the inventory correctly (a per-day clock would
 replay the first day's slices — the cause of the historical co2_natural
 +1 Pg/month surplus, now fixed).
+
+For an already aligned GEOS-native cubed-sphere inventory, use
+`kind = "cs_native"`, `time_varying = true`, `file`, and `variable`.
+The NetCDF variable must have dimensions `(time,nf,Ydim,Xdim)` and contain
+mass flux density in kg species m⁻² s⁻¹. Grid resolution and panel order must
+match the meteorology. The loader multiplies by native mesh cell areas and
+converts to model storage units using the tracer molar mass. It defaults to
+`temporal_scheme = "stepwise"`; signed uptake is retained. The TRENDY ensemble
+example is `config/runs/trendy_v14_s3_all_models_npp_rh_c30_2014_2024.toml`.
 
 ### `[advection]`, `[diffusion]`, `[convection]`, `[chemistry]`
 
