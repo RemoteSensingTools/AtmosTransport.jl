@@ -214,11 +214,19 @@ diurnal cycle instead of a monthly mean:
 ```toml
 [tracers.co2_natural.surface_flux]
 kind            = "lmdz_co2"
+file_pattern    = "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_{YYYYMM}_FT24r2_ra_sfc_3h_co2_flux.nc"
+year            = 2022
 time_varying    = true            # advance through the inventory's time slices
 temporal_scheme = "stepwise"      # how slices are applied between sample times
 ```
 
-`temporal_scheme` (default `"stepwise"` for `lmdz_co2`) is one of:
+`file_pattern` expands `{YYYYMM}` to all twelve months of `year` (or the
+run-start year when `year` is omitted). For a span that crosses calendar
+years, use `files = ["/path/to/month1.nc", "/path/to/month2.nc", ...]` in
+chronological order. GridFED supports the same time-varying path; its twelve
+monthly totals are converted using the actual number of days in each month.
+
+`temporal_scheme` (default `"stepwise"` for LMDZ and GridFED) is one of:
 
 - `"stepwise"` — hold each slice piecewise-constant until the next sample.
   This matches GEOS-Chem/HEMCO's exact CAMS treatment (verified against

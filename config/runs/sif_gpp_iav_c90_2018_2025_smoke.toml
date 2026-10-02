@@ -1,0 +1,105 @@
+# SIF-driven GPP interannual-variability experiment, GEOS C90, 2018-05-01 to 2025-12-31.
+#
+# Two tracers share one met stream and one flux file:
+#
+#   co2_gpp_anom  driven by the GPP flux ANOMALY (flux minus its smoothed
+#                 day-of-year climatology). Because advection and diffusion are
+#                 linear in the tracer, this is exactly the interannual-
+#                 variability component of the XCO2 response -- no post-hoc
+#                 detrending, and no multi-hundred-ppm drawdown. This is the
+#                 primary product. Subtract the 100 ppm carrier from output VMR.
+#
+#   co2_gpp_full  driven by the full GPP uptake flux. Over this record the
+#                 cumulative uptake is ~996 Pg C, i.e. ~469 ppm of drawdown, so
+#                 the carrier is 900 ppm to keep the field positive (the PPM
+#                 limiters assume a non-negative tracer). Subtract 900 ppm.
+#
+# Flux driver: scripts/preprocessing/build_sif_gpp_multiyear_c90_flux.py
+# Calibration: frozen 2021 month x latitude-band SIF-to-GPP regressions, so all
+# interannual variability comes from observed TROPOMI SIF.
+#
+# The C90/L66 format-4 binaries carry advection, pressure, PBL fields and exact
+# TM5 DKG diffusion, but NO convection mass fluxes, so convection stays off.
+# Requires the format-4 runtime snapshot (this checkout).
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder = "$ATMOSTRANSPORT_DATA_ROOT/met/c90_l66"
+start_date = "2018-05-01"
+end_date = "2018-05-03"
+file_pattern = "era5_n320_transport_{YYYYMMDD}_float32.bin"
+
+# NOTE: the format-4 runtime snapshot does NOT implement [input.staging]; the
+# key is silently ignored (the run schema allows additional properties). It is
+# left here commented out for checkouts that do support it. Staging is not
+# needed against kiwi-data anyway -- measured 778 MB/s sequential, versus the
+# ~110 MB/s this run consumes.
+#
+# [input.staging]
+# enabled = true
+# dir = "$ATMOSTRANSPORT_DATA_ROOT/stage"
+# lookahead_days = 3
+# keep_behind_days = 0
+# cleanup_on_exit = true
+
+[advection]
+scheme = "ppm"
+
+# ---------------------------------------------------------------- primary ----
+[tracers.co2_gpp_anom]
+  [tracers.co2_gpp_anom.init]
+  kind = "uniform"
+  background = 1.0e-4          # 100 ppm carrier; subtract from output
+
+  [tracers.co2_gpp_anom.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/sif_gpp_daily_co2flux_c90_2018_2025.nc"
+  variable = "GPP_CO2_FLUX_ANOM"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# ------------------------------------------------------------- full uptake ----
+[tracers.co2_gpp_full]
+  [tracers.co2_gpp_full.init]
+  kind = "uniform"
+  background = 9.0e-4          # 900 ppm carrier; subtract from output
+
+  [tracers.co2_gpp_full.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/sif_gpp_daily_co2flux_c90_2018_2025.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[diffusion]
+kind = "tm5_dkg"
+surface_flux_boundary = true
+
+[convection]
+kind = "none"
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 24
+path = "$ATMOSTRANSPORT_DATA_ROOT/output/sif_gpp_iav_c90_smoke/sif_gpp_iav_c90_{YYYYMMDD}.nc"
+deflate_level = 1
+shuffle = true
+
+[output.fields]
+tracers = ["co2_gpp_anom", "co2_gpp_full"]
+layers = "none"
+column_mean = true
+column_mass_per_area = false
+air_mass_layers = "none"
+air_mass = false
+air_mass_per_area = false
+column_air_mass_per_area = false

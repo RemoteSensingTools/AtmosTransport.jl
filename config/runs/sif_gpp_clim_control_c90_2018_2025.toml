@@ -1,0 +1,71 @@
+# Transport-only control for the SIF-GPP interannual-variability experiment.
+#
+# One tracer driven by GPP_CO2_FLUX_SEAS: the day-of-year GPP climatology with
+# each cell's annual mean removed. The forcing is byte-identical in every year,
+# so this tracer has NO flux interannual variability by construction and any
+# interannual signal it develops comes purely from transport (meteorology).
+# Use it to separate met-driven structure from real GPP IAV in the Hovmoller,
+# and to expose discontinuities in the met archive.
+#
+# Removing each cell's annual mean is what keeps the tracer small: the raw
+# climatology would draw down ~468 ppm over the record and force a large
+# carrier, which costs Float32 precision. A zero-annual-mean seasonal cycle
+# only oscillates, so a 300 ppm carrier is ample. Subtract 300 ppm from output.
+#
+# Same met as config/runs/sif_gpp_iav_c90_2018_2025.toml: C90/L66 format-4
+# binaries with advection, pressure, PBL and exact TM5 DKG diffusion, and NO
+# convection anywhere in the archive (verified across all 2802 headers).
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder = "$ATMOSTRANSPORT_DATA_ROOT/met/c90_l66"
+start_date = "2018-05-01"
+end_date = "2025-12-31"
+file_pattern = "era5_n320_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_gpp_clim]
+  [tracers.co2_gpp_clim.init]
+  kind = "uniform"
+  background = 3.0e-4          # 300 ppm carrier; subtract from output
+
+  [tracers.co2_gpp_clim.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/sif_gpp_daily_co2flux_c90_2018_2025_v2.nc"
+  variable = "GPP_CO2_FLUX_SEAS"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[diffusion]
+kind = "tm5_dkg"
+surface_flux_boundary = true
+
+[convection]
+kind = "none"
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 24
+path = "$ATMOSTRANSPORT_DATA_ROOT/output/sif_gpp_clim_c90/sif_gpp_clim_c90_{YYYYMMDD}.nc"
+deflate_level = 1
+shuffle = true
+
+[output.fields]
+tracers = ["co2_gpp_clim"]
+layers = "none"
+column_mean = true
+column_mass_per_area = false
+air_mass_layers = "none"
+air_mass = false
+air_mass_per_area = false
+column_air_mass_per_area = false

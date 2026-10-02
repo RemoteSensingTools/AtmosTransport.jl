@@ -1,0 +1,114 @@
+# Portable CATRINE C30 case.  The bundle root is supplied at launch as
+# ATMOSTRANSPORT_DATA_ROOT.  December 2021 is the required spin-up; calendar
+# year 2022 is the analysis period.
+
+[input]
+folder       = "$ATMOSTRANSPORT_DATA_ROOT/met"
+start_date   = "2021-12-01"
+end_date     = "2022-12-31"
+file_pattern = "era5_c30_transport_{YYYYMMDD}_float32.bin"
+
+[architecture]
+# CPU is portable across all MacBooks.  It also avoids requiring the optional
+# Julia Metal package.  The run wrapper chooses the available CPU threads.
+use_gpu = false
+backend = "cpu"
+
+[numerics]
+float_type = "Float32"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "file"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/initial_conditions/startCO2_202112010000.nc"
+  variable = "CO2"
+  [tracers.co2_natural.surface_flux]
+  kind = "lmdz_co2"
+  files = [
+    "$ATMOSTRANSPORT_DATA_ROOT/emissions/LMDZ_fluxes/z_cams_l_cams55_202112_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/emissions/LMDZ_fluxes/z_cams_l_cams55_202201_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/emissions/LMDZ_fluxes/z_cams_l_cams55_202202_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/emissions/LMDZ_fluxes/z_cams_l_cams55_202203_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/emissions/LMDZ_fluxes/z_cams_l_cams55_202204_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/emissions/LMDZ_fluxes/z_cams_l_cams55_202205_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/emissions/LMDZ_fluxes/z_cams_l_cams55_202206_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/emissions/LMDZ_fluxes/z_cams_l_cams55_202207_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/emissions/LMDZ_fluxes/z_cams_l_cams55_202208_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/emissions/LMDZ_fluxes/z_cams_l_cams55_202209_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/emissions/LMDZ_fluxes/z_cams_l_cams55_202210_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/emissions/LMDZ_fluxes/z_cams_l_cams55_202211_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/emissions/LMDZ_fluxes/z_cams_l_cams55_202212_FT24r2_ra_sfc_3h_co2_flux.nc",
+  ]
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_fossil]
+  [tracers.co2_fossil.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.co2_fossil.surface_flux]
+  kind = "gridfed_fossil_co2"
+  files = [
+    "$ATMOSTRANSPORT_DATA_ROOT/emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/emissions/gridfed/GCP-GridFEDv2024.0_2022.short.nc",
+  ]
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/initial_conditions/startSF6_202112010000.nc"
+  variable = "SF6"
+  [tracers.sf6.surface_flux]
+  kind = "edgar_sf6"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/emissions/edgar_v8/v8.0_FT2022_GHG_SF6_2022_TOTALS_emi.nc"
+  variable = "emissions"
+  scale = 1.0116635
+
+[tracers.rn222]
+  [tracers.rn222.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.rn222.surface_flux]
+  kind = "zhang_rn222"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/emissions/ZHANG_Rn222/Rn222_Emis_Zhang_Liu_et_al_05x05_mass.nc"
+  variable = "rnemis"
+  time_index = 1
+
+[diffusion]
+kind = "tm5_dkg"
+surface_flux_boundary = true
+
+[convection]
+kind = "tm5"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 66
+n_merge = 1
+
+[chemistry]
+kind = "decay"
+  [chemistry.half_lives_seconds]
+  rn222 = 330350.4
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 6
+path = "$ATMOSTRANSPORT_DATA_ROOT/output/catrine_c30_2022_column_{YYYYMMDD}.nc"
+deflate_level = 1
+shuffle = true
+
+  [output.fields]
+  tracers = ["co2_natural", "co2_fossil", "sf6", "rn222"]
+  layers = "none"
+  column_mean = true
+  column_mass_per_area = false
+  air_mass_layers = "none"
+  air_mass = false
+  air_mass_per_area = false
+  column_air_mass_per_area = false
