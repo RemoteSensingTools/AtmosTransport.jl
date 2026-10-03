@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from netCDF4 import Dataset, date2index
+from netCDF4 import Dataset, date2index, date2num
 
 
 def parse_args() -> argparse.Namespace:
@@ -48,15 +48,18 @@ def main() -> None:
             i1 = int(date2index(args.end, time_in, select="exact"))
         except ValueError:
             # Permit an exclusive bound exactly one source interval after the
-            # final stamp (the usual complete-month case).
+            # final stamp (the usual complete-month case), compared in the
+            # coordinate's own units and calendar.
             vals = np.asarray(time_in[:], dtype=np.float64)
             if len(vals) < 2:
                 raise
-            unit_seconds = (args.end - args.start).total_seconds()
-            expected_count = round(unit_seconds / ((vals[1] - vals[0]) * 3600.0))
-            i1 = i0 + expected_count
-            if i1 != len(vals):
+            end_value = float(date2num(args.end, time_in.units,
+                                       getattr(time_in, "calendar", "standard")))
+            step = vals[-1] - vals[-2]
+            if not np.isclose(end_value, vals[-1] + step, rtol=0.0,
+                              atol=1e-6 * abs(step)):
                 raise
+            i1 = len(vals)
         if not (0 <= i0 < i1 <= len(time_in)):
             raise ValueError(f"invalid time slice [{i0}:{i1}] for {len(time_in)} records")
 

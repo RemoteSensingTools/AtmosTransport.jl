@@ -10,7 +10,7 @@ interpolation, no deseasonalising):
   right   flux-driven XCO2: real minus the climatological-flux control. Exact
           by linearity, and seasonal-free by construction (the flux difference
           has zero calendar-month climatology), so it is shown raw with only
-          the time mean removed.
+          each cell's time mean removed.
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def main() -> None:
     real = z["real"]
     pattern = real - (real * w[None, :]).sum(axis=1, keepdims=True)
     fluxdrv = real - z["clim"]
-    fluxdrv = fluxdrv - fluxdrv.mean()
+    fluxdrv = fluxdrv - fluxdrv.mean(axis=0, keepdims=True)   # each cell's time mean
 
     sel = np.arange(0, len(dates), args.stride)
     v1 = float(np.percentile(np.abs(pattern[sel[::10]]), 99.5))
@@ -79,6 +79,7 @@ def main() -> None:
     fig.colorbar(images[1], cax=cax2, orientation="horizontal", extend="both",
                  label="ppm (flux-driven IAV)")
 
+    args.outdir.mkdir(parents=True, exist_ok=True)
     out = args.outdir / "jules_nee_xco2_daily.mp4"
     writer = FFMpegWriter(fps=args.fps, bitrate=5000,
                           metadata={"title": "JULES-ES XCO2, daily"})

@@ -34,7 +34,13 @@ attach_one() {
     echo "START $ymd"
     "$julia_bin" -t "$threads" --project="$project" \
         "$repo/scripts/preprocessing/attach_catrine_tm5_convection_cs.jl" \
-        "$src" "$nc" "$dst" >"$log" 2>&1
+        "$src" "$nc" "$dst" >"$log" 2>&1 || {
+        # xargs workers do not inherit `set -e`: fail explicitly, and remove a
+        # partial output that the `-s $dst` skip check would otherwise accept.
+        rm -f "$dst"
+        echo "FAILED $ymd (see $log)" >&2
+        return 1
+    }
     echo "DONE  $ymd"
 }
 export -f attach_one

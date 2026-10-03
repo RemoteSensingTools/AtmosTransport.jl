@@ -11,7 +11,7 @@ MAX_JOBS="${2:-4}"
 THREADS_PER_JOB="${3:-16}"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CONFIG="config/preprocessing/era5_n320_arco_diffusion_to_c90.toml"
+BASE_CONFIG="config/preprocessing/era5_n320_arco_diffusion_to_c90.toml"
 DATA_ROOT="${ATMOS_DATA_ROOT:-$HOME/data/AtmosTransport}"
 RAW="$DATA_ROOT/met/era5/N320/hourly/raw"
 OUTPUT="$DATA_ROOT/met/era5/n320_to_c90/transport_binary_v4_l66_f32_no_convection"
@@ -22,22 +22,38 @@ SURFACE_VARS=(surface_pressure boundary_layer_height friction_velocity \
 mkdir -p "$OUTPUT" "$LOGS"
 cd "$REPO" || exit 1
 
+# Preprocess with the same raw and output directories the readiness checks and
+# validation below use, whatever the base config hard-codes.
+CONFIG="$LOGS/era5_n320_arco_diffusion_to_c90_${YEAR}.toml"
+sed -e "s|^root_dir *=.*|root_dir = \"$RAW\"|" \
+    -e "s|^directory *=.*|directory  = \"$OUTPUT\"|" "$BASE_CONFIG" >"$CONFIG"
+grep -q "^root_dir = \"$RAW\"" "$CONFIG" && grep -q "^directory  = \"$OUTPUT\"" "$CONFIG" || {
+    echo "[year] could not set root_dir/directory in $CONFIG" >&2
+    exit 1
+}
+
 core_path() {
     printf '%s/ml_an_native_core/era5_core_%s.grib' "$RAW" "$1"
 }
 
+surface_file_ready() {
+    local path="$RAW/sfc_an_native/arco/$1/$2.nc"
+    [ -f "$path" ] && [ "$(stat -c %s "$path" 2>/dev/null)" -gt 10000000 ]
+}
+
 surface_ready() {
-    local ymd="$1" variable path
+    local ymd="$1" variable
     for variable in "${SURFACE_VARS[@]}"; do
-        path="$RAW/sfc_an_native/arco/$ymd/$variable.nc"
-        [ -f "$path" ] && [ "$(stat -c %s "$path" 2>/dev/null)" -gt 10000000 ] || return 1
+        surface_file_ready "$ymd" "$variable" || return 1
     done
 }
 
+# The day's endpoint also needs the next day's core GRIB and ARCO surface
+# pressure (`_next_day_core_only_handle` in era5_n320_regrid.jl).
 inputs_ready() {
     local ymd="$1" next_ymd="$2"
     [ -s "$(core_path "$ymd")" ] && [ -s "$(core_path "$next_ymd")" ] && \
-        surface_ready "$ymd"
+        surface_ready "$ymd" && surface_file_ready "$next_ymd" surface_pressure
 }
 
 run_day() {
@@ -81,7 +97,7 @@ while [ "$current_epoch" -le "$end_epoch" ]; do
     next_ymd="$(date -u -d "@$next_epoch" +%Y%m%d)"
 
     while ! inputs_ready "$ymd" "$next_ymd"; do
-        echo "[year] wait $iso (current/next core or surface incomplete)"
+        echo "[year] wait $iso (current/next core or surface pressure incomplete)"
         sleep 60
     done
     while [ "$(jobs -rp | wc -l)" -ge "$MAX_JOBS" ]; do

@@ -45,7 +45,13 @@ attach_one() {
     echo "START $ymd"
     "$julia_bin" -t "$threads" --project="$project" \
         "$repo/scripts/preprocessing/attach_catrine_tm5_convection_cs.jl" \
-        "$src" "$nc" "$dst" --force --cache-dir "$cache_dir" >"$log" 2>&1
+        "$src" "$nc" "$dst" --force --cache-dir "$cache_dir" >"$log" 2>&1 || {
+        # xargs workers do not inherit `set -e`: fail explicitly, and leave no
+        # partial output or marker that a rerun would mistake for success.
+        rm -f "$dst" "$marker"
+        echo "FAILED $ymd (see $log)" >&2
+        return 1
+    }
     touch "$marker"
     echo "DONE  $ymd"
 }
