@@ -6,10 +6,12 @@ jobs=${2:-2}
 threads=${3:-8}
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 julia_bin=${ATMOS_C90_CONV_JULIA:-/home/cfranken/.juliaup/bin/julia}
-project=${ATMOS_C90_CONV_PROJECT:-/tmp/AtmosTransportModel-era-c90}
+project=${ATMOS_C90_CONV_PROJECT:-$repo}
 source_dir=${ATMOS_C90_CONV_SOURCE:-/home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_no_convection}
 conv_root=${ATMOS_C90_CONVECTION_ROOT:-/home/cfranken/data/AtmosTransport/met/era5/1.0x1.0/raw/convection}
-output_dir=${ATMOS_C90_CONV_OUTPUT:-/home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour}
+# v3: convection levels mapped surface-first -> top-first (the earlier
+# ..._tm5_convection_1deg_3hour set stored the profiles upside down).
+output_dir=${ATMOS_C90_CONV_OUTPUT:-/home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour_v3}
 cache_dir=${ATMOS_C90_CONV_CACHE:-$HOME/.cache/AtmosTransport/tm5_attach_c90}
 mkdir -p "$cache_dir"
 log_dir="$output_dir/_logs/$year"

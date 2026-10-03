@@ -22,7 +22,7 @@
 # the C30 precedent run.
 
 [input]
-folder       = "~/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour"
+folder       = "~/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour_v3"
 start_date   = "2018-12-01"
 end_date     = "2019-12-31"
 file_pattern = "era5_n320_transport_{YYYYMMDD}_float32.bin"
