@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788737416221,
+  "lastUpdate": 1788738919333,
   "repoUrl": "https://github.com/RemoteSensingTools/AtmosTransport.jl",
   "entries": {
     "Benchmark": [
@@ -32534,6 +32534,750 @@ window.BENCHMARK_DATA = {
           {
             "name": "Operator Breakdown / C4 Float64 CPU-AMD / adjoint / adjoint_forward_reverse",
             "value": 0.018073419,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "fronge@gmail.com",
+            "name": "cfranken",
+            "username": "cfranken"
+          },
+          "committer": {
+            "email": "fronge@gmail.com",
+            "name": "cfranken",
+            "username": "cfranken"
+          },
+          "distinct": true,
+          "id": "1a97ff5085a264686b9d5febf4618c4ed207b0ce",
+          "message": "Link released documentation and record Pages publication checks",
+          "timestamp": "2026-09-06T16:52:53-07:00",
+          "tree_id": "d0510a538efc26e9703beff4aa146b49fa6470a8",
+          "url": "https://github.com/RemoteSensingTools/AtmosTransport.jl/commit/1a97ff5085a264686b9d5febf4618c4ed207b0ce"
+        },
+        "date": 1788738913378,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float32",
+            "value": 0.00430482,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / advection / advection",
+            "value": 0.0043,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / advection / cs_cfl_x",
+            "value": 0.000209,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / advection / cs_sweep_x",
+            "value": 0.00154,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / advection / cs_halo_m_y",
+            "value": 0.000175,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / advection / cs_halo_rm_x",
+            "value": 0.000184,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / advection / cs_halo_m_x",
+            "value": 0.000133,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / advection / cs_sweep_z",
+            "value": 0.000696,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / advection / cs_halo_rm_y",
+            "value": 0.000213,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / advection / cs_sweep_y",
+            "value": 0.001573,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 diffusion 1tr / CPU-AMD / Float32",
+            "value": 0.000435531,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / diffusion / advection",
+            "value": 0.000428,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 convection 1tr / CPU-AMD / Float32",
+            "value": 0.000221548,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / convection / convection",
+            "value": 0.000214,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float32",
+            "value": 0.005344531,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / advection",
+            "value": 0.005085,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / cs_cfl_x",
+            "value": 0.000197,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / cs_sweep_x",
+            "value": 0.001692,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / convection",
+            "value": 0.000253,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / cs_halo_m_y",
+            "value": 0.000123,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / cs_halo_rm_x",
+            "value": 0.000154,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / cs_halo_m_x",
+            "value": 0.00011,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / diffusion",
+            "value": 0.000264,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / cs_sweep_z",
+            "value": 0.000945,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / cs_halo_rm_y",
+            "value": 0.000153,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / cs_sweep_y",
+            "value": 0.001706,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 io 1tr / CPU-AMD / Float32",
+            "value": 0.000728103,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / io / io",
+            "value": 0.000728103,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 adjoint 1tr / CPU-AMD / Float32",
+            "value": 0.015119778,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / adjoint / adjoint_forward_reverse",
+            "value": 0.015119778,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float32",
+            "value": 0.006844151,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / advection / advection",
+            "value": 0.006839,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / advection / cs_cfl_x",
+            "value": 0.000178,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / advection / cs_sweep_x",
+            "value": 0.002561,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / advection / cs_halo_m_y",
+            "value": 0.00011,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / advection / cs_halo_rm_x",
+            "value": 0.000622,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / advection / cs_halo_m_x",
+            "value": 0.000104,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / advection / cs_sweep_z",
+            "value": 0.001132,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / advection / cs_halo_rm_y",
+            "value": 0.000687,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / advection / cs_sweep_y",
+            "value": 0.002294,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 diffusion 4tr / CPU-AMD / Float32",
+            "value": 0.000487299,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / diffusion / advection",
+            "value": 0.000481,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 convection 4tr / CPU-AMD / Float32",
+            "value": 0.000354659,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / convection / convection",
+            "value": 0.000349,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float32",
+            "value": 0.008453629,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / advection",
+            "value": 0.008074,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / cs_cfl_x",
+            "value": 0.000165,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / cs_sweep_x",
+            "value": 0.002875,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / convection",
+            "value": 0.000371,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / cs_halo_m_y",
+            "value": 0.000114,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / cs_halo_rm_x",
+            "value": 0.000608,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / cs_halo_m_x",
+            "value": 0.000103,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / diffusion",
+            "value": 0.000552,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / cs_sweep_z",
+            "value": 0.001231,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / cs_halo_rm_y",
+            "value": 0.000674,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / full / cs_sweep_y",
+            "value": 0.002567,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 io 4tr / CPU-AMD / Float32",
+            "value": 0.000626773,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / io / io",
+            "value": 0.000626773,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 adjoint 4tr / CPU-AMD / Float32",
+            "value": 0.013315909,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float32 CPU-AMD / adjoint / adjoint_forward_reverse",
+            "value": 0.013315909,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float64",
+            "value": 0.004392516,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / advection / advection",
+            "value": 0.004386,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / advection / cs_cfl_x",
+            "value": 0.000209,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / advection / cs_sweep_x",
+            "value": 0.001609,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / advection / cs_halo_m_y",
+            "value": 0.000153,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / advection / cs_halo_rm_x",
+            "value": 0.0002,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / advection / cs_halo_m_x",
+            "value": 0.000155,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / advection / cs_sweep_z",
+            "value": 0.000687,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / advection / cs_halo_rm_y",
+            "value": 0.000223,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / advection / cs_sweep_y",
+            "value": 0.001568,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 diffusion 1tr / CPU-AMD / Float64",
+            "value": 0.000430703,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / diffusion / advection",
+            "value": 0.000423,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 convection 1tr / CPU-AMD / Float64",
+            "value": 0.000218312,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / convection / convection",
+            "value": 0.000209,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float64",
+            "value": 0.005042433,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / advection",
+            "value": 0.004786,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / cs_cfl_x",
+            "value": 0.000173,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / cs_sweep_x",
+            "value": 0.001608,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / convection",
+            "value": 0.000247,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / cs_halo_m_y",
+            "value": 0.000162,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / cs_halo_rm_x",
+            "value": 0.000218,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / cs_halo_m_x",
+            "value": 0.000141,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / diffusion",
+            "value": 0.000364,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / cs_sweep_z",
+            "value": 0.000756,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / cs_halo_rm_y",
+            "value": 0.000225,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / cs_sweep_y",
+            "value": 0.001563,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 io 1tr / CPU-AMD / Float64",
+            "value": 0.001056914,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / io / io",
+            "value": 0.001056914,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 adjoint 1tr / CPU-AMD / Float64",
+            "value": 0.015103423,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / adjoint / adjoint_forward_reverse",
+            "value": 0.015103423,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float64",
+            "value": 0.008176649,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / advection / advection",
+            "value": 0.008169,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / advection / cs_cfl_x",
+            "value": 0.000176,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / advection / cs_sweep_x",
+            "value": 0.002987,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / advection / cs_halo_m_y",
+            "value": 0.000118,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / advection / cs_halo_rm_x",
+            "value": 0.000677,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / advection / cs_halo_m_x",
+            "value": 0.000115,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / advection / cs_sweep_z",
+            "value": 0.001603,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / advection / cs_halo_rm_y",
+            "value": 0.000657,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / advection / cs_sweep_y",
+            "value": 0.002668,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 diffusion 4tr / CPU-AMD / Float64",
+            "value": 0.000521053,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / diffusion / advection",
+            "value": 0.000515,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 convection 4tr / CPU-AMD / Float64",
+            "value": 0.000417428,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / convection / convection",
+            "value": 0.000412,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float64",
+            "value": 0.009450823,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / advection",
+            "value": 0.009042,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / cs_cfl_x",
+            "value": 0.000185,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / cs_sweep_x",
+            "value": 0.003254,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / convection",
+            "value": 0.000402,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / cs_halo_m_y",
+            "value": 0.000117,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / cs_halo_rm_x",
+            "value": 0.000618,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / cs_halo_m_x",
+            "value": 0.00013,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / diffusion",
+            "value": 0.000497,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / cs_sweep_z",
+            "value": 0.001587,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / cs_halo_rm_y",
+            "value": 0.000629,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / full / cs_sweep_y",
+            "value": 0.002786,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 io 4tr / CPU-AMD / Float64",
+            "value": 0.000888607,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / io / io",
+            "value": 0.000888607,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 adjoint 4tr / CPU-AMD / Float64",
+            "value": 0.015327963,
+            "unit": "s/step",
+            "extra": "[object Object]"
+          },
+          {
+            "name": "Operator Breakdown / C4 Float64 CPU-AMD / adjoint / adjoint_forward_reverse",
+            "value": 0.015327963,
             "unit": "s/step",
             "extra": "[object Object]"
           }
