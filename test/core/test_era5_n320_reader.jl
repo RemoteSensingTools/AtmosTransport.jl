@@ -130,6 +130,25 @@ end
         end
     end
 
+    @testset "open_era5_day — ARCO per-variable surface layout" begin
+        mktempdir() do root
+            date = Date(2021, 12, 1)
+            _materialise_placeholders(root, [date], [:core])
+            surface_dir = joinpath(root, "sfc_an_native", "arco", "20211201")
+            mkpath(surface_dir)
+            _placeholder!(joinpath(surface_dir, "surface_pressure.nc"))
+
+            settings = ERA5N320Settings(;
+                root_dir = root,
+                include_surface = true,
+                arco_surface_pressure = true,
+            )
+            h = open_era5_day(settings, date; next_day_handle = false)
+            @test h.surface_path == surface_dir
+            @test h.arco_sp_path == joinpath(surface_dir, "surface_pressure.nc")
+        end
+    end
+
     @testset "open_era5_day — missing required files are errors" begin
         mktempdir() do root
             # Nothing on disk → core read must error, and the message must

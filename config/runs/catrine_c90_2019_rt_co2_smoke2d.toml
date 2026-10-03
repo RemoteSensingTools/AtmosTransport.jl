@@ -1,0 +1,89 @@
+# CATRINE-protocol C90 CO2 run for the Google-RT ML campaign (target year 2019).
+#
+# Purpose: physically consistent 4-D CO2 fields on the SAME C90 grid the RT
+# campaign consumes, replacing the synthetic CO2 axis. Design memo:
+# Google-RT/sandbox/CO2_FIELDS_FROM_ATMOSTRANSPORT.md. Runs on the
+# feature/era-c90-2021 branch (transport-binary format v4).
+#
+# Window: 2018-12-01 -> 2019-12-31 (one-month spin-up from December of the
+# year before, mirroring the CATRINE C30 precedent; IC valid-at 2021-12-01 is
+# seasonally aligned Dec->Dec, epoch offset ~+7 ppm handled at RT ingestion).
+#
+# Flux calendar: the CAMS/LMDZ posterior only exists from 2021-12 onward and
+# StepwiseFlux clamps pre-range times to the FIRST slice, so the input is a
+# single merged file of -3-year time-shifted copies (202112->201812,
+# 2022MM->2019MM; month-of-year exact, source/target years both non-leap),
+# 3168 contiguous 3-hourly slices on a common "hours since 2018-12-01" axis.
+# See ~/data/AtmosTransport/catrine/Emissions/LMDZ_fluxes_shifted_2018_2019/README.md.
+#
+# NOTE (attribution semantics): LMDZ `flux_apos` INCLUDES fossil, so
+# co2_natural carries the TOTAL posterior CO2; co2_fossil is a separate
+# attribution tracer (ML label), NOT to be added on top. Same convention as
+# the C30 precedent run.
+
+[input]
+folder       = "~/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour"
+start_date   = "2018-12-01"
+end_date     = "2018-12-02"
+file_pattern = "era5_n320_transport_{YYYYMMDD}_float32.bin"
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"   # default startCO2_202112010000.nc, Dec-aligned
+  [tracers.co2_natural.surface_flux]
+  kind = "lmdz_co2"
+  time_varying = true
+  temporal_scheme = "stepwise"   # CAMS interval-start stamps, GC-equivalent hold
+  file = "~/data/AtmosTransport/catrine/Emissions/LMDZ_fluxes_shifted_2018_2019/z_cams_l_cams55_201812_201912_FT24r2_ra_sfc_3h_co2_flux.merged.nc"
+  variable = "flux_apos"
+
+[tracers.co2_fossil]
+  [tracers.co2_fossil.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.co2_fossil.surface_flux]
+  kind = "gridfed_fossil_co2"
+  time_index = 1
+  # Static January-2021 GridFED pattern held for the whole run — the same
+  # convention as the CATRINE C30 precedent (this branch has no time-varying
+  # GridFED loader). co2_fossil is an attribution/ML-label tracer; the total
+  # CO2 seasonality lives in co2_natural (LMDZ posterior includes fossil).
+
+[diffusion]
+kind = "tm5_dkg"
+surface_flux_boundary = true
+
+[convection]
+kind = "tm5"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 66
+n_merge = 1
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 3          # exactly the RT scene times (00,03,...,21 UTC)
+path = "~/data/AtmosTransport/output/_smoke_c90_2019_rt/smoke_{YYYYMMDD}.nc"
+deflate_level = 1
+shuffle = true
+
+  [output.fields]
+  tracers = ["co2_natural", "co2_fossil"]
+  layers = "all"                     # full 3-D profiles for per-cell log-p interpolation
+  column_mean = true                 # XCO2 per component (free diagnostics/ML labels)
+  column_mass_per_area = false
+  air_mass_layers = "all"            # per-layer air mass -> Delta-p -> p_half at ingestion
+  air_mass = false
+  air_mass_per_area = true
+  column_air_mass_per_area = false

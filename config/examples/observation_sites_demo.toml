@@ -1,0 +1,35 @@
+#:schema ../../schemas/observation_sites.schema.json
+#
+# Example observation table for [[output.observations.sources]] with
+# kind = "table". Hover over keys in VS Code (Even Better TOML) to see which
+# Julia type each choice becomes.
+#
+#   mode = "sites"     reads [[sites]]      (SiteMode)
+#   mode = "soundings" reads [[soundings]]  (SoundingMode)
+
+# Every met-window end (EveryWindow): no schedule keys.
+[[sites]]
+id = "mlo"
+lat = 19.536
+lon = -155.576
+elevation = 3397.0      # m above sea level
+intake_height = 40.0    # m above ground; selects the model layer
+
+# Only inside a UTC range (TimeRange); NaN outside.
+[[sites]]
+id = "lef_396m"
+lat = 45.945
+lon = -90.273
+elevation = 472.0
+altitude = 868.0        # m above sea level; intake_height = altitude - elevation
+start_time = 2021-12-02T00:00:00
+end_time = 2021-12-31T23:00:00
+
+# Once at each listed UTC time (TimeList), written as point events.
+[[sites]]
+id = "brw_flask"
+lat = 71.323
+lon = -156.611
+elevation = 11.0
+intake_height = 16.0
+times = [2021-12-02T21:00:00, 2021-12-09T21:00:00]

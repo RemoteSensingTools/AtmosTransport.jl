@@ -126,3 +126,56 @@ end
     @test_throws ErrorException close(output)
     @test grid.calls[] == 2
 end
+
+mutable struct CountingSampler <: O.AbstractObservationSampler
+    closes::Int
+    failure::Union{Nothing, Exception}
+end
+
+function Base.close(sampler::CountingSampler)
+    sampler.closes += 1
+    sampler.failure === nothing || throw(sampler.failure)
+    return nothing
+end
+
+@testset "Observation sampler closes once with the other output resources" begin
+    sampler = CountingSampler(0, nothing)
+    output = R.RunSnapshotOutput(nothing, nothing, sampler)
+    @test close(output) === nothing
+    @test sampler.closes == 1
+    @test output.observations isa O.NoObservationSampler
+    @test close(output) === nothing
+    @test sampler.closes == 1
+
+    # A failed daily write and a failing sampler close are both reported, write first.
+    failing = CountingSampler(0, ErrorException("sampler close failed"))
+    output = R.RunSnapshotOutput(nothing, Threads.@spawn(error("daily write failed")), failing)
+    failure = try
+        close(output)
+        nothing
+    catch e
+        e
+    end
+    @test failure isa CompositeException
+    @test length(failure.exceptions) == 2
+    @test failure.exceptions[1] isa TaskFailedException
+    @test failure.exceptions[2] isa ErrorException
+    @test occursin("sampler close failed", sprint(showerror, failure.exceptions[2]))
+    @test failing.closes == 1
+    @test output.pending_write === nothing
+
+    # A run failure is preserved ahead of the sampler's cleanup failure.
+    failing = CountingSampler(0, ErrorException("sampler close failed"))
+    output = R.RunSnapshotOutput(nothing, nothing, failing)
+    failure = try
+        R._with_run_resource(output) do
+            error("transport failed")
+        end
+    catch e
+        e
+    end
+    @test failure isa CompositeException
+    @test occursin("transport failed", sprint(showerror, failure.exceptions[1]))
+    @test occursin("sampler close failed", sprint(showerror, failure.exceptions[2]))
+    @test failing.closes == 1
+end

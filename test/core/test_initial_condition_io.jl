@@ -18,6 +18,8 @@
 # ---------------------------------------------------------------------------
 
 using Test
+using Dates
+using Printf: @sprintf
 import NCDatasets: NCDataset, defDim, defVar
 
 using AtmosTransport
@@ -119,6 +121,51 @@ function _write_synthetic_surface_flux_file(path::AbstractString)
         close(ds)
     end
     return nothing
+end
+
+function _write_synthetic_lmdz_flux_file(path::AbstractString, year::Int, month::Int)
+    ds = NCDataset(path, "c")
+    try
+        defDim(ds, "longitude", 4)
+        defDim(ds, "latitude", 2)
+        defDim(ds, "time", 2)
+        lon = defVar(ds, "longitude", Float64, ("longitude",))
+        lat = defVar(ds, "latitude", Float64, ("latitude",))
+        time = defVar(ds, "time", Float64, ("time",))
+        flux = defVar(ds, "flux_apos", Float32,
+                      ("longitude", "latitude", "time"))
+        lon[:] = [-135.0, -45.0, 45.0, 135.0]
+        lat[:] = [45.0, -45.0]
+        time[:] = [0.0, 3.0]
+        time.attrib["units"] = @sprintf("hours since %04d-%02d-01 00:00:00", year, month)
+        flux[:, :, 1] .= Float32(month)
+        flux[:, :, 2] .= Float32(month + 0.5)
+        flux.attrib["units"] = "kgC m-2 s-1"
+    finally
+        close(ds)
+    end
+end
+
+function _write_synthetic_monthly_gridfed_file(path::AbstractString, year::Int)
+    ds = NCDataset(path, "c")
+    try
+        defDim(ds, "longitude", 4)
+        defDim(ds, "latitude", 2)
+        defDim(ds, "time", 12)  # GridFED has a time dimension but no coordinate variable.
+        lon = defVar(ds, "longitude", Float64, ("longitude",))
+        lat = defVar(ds, "latitude", Float64, ("latitude",))
+        flux = defVar(ds, "TOTAL", Float64,
+                      ("longitude", "latitude", "time"))
+        lon[:] = [-135.0, -45.0, 45.0, 135.0]
+        lat[:] = [45.0, -45.0]
+        for month in 1:12
+            month_seconds = ICIO._days_in_month(year, month) * 86400.0
+            flux[:, :, month] .= month * month_seconds
+        end
+        flux.attrib["units"] = "kgCO2/month/m2"
+    finally
+        close(ds)
+    end
 end
 
 @testset "plan 40 Commit 1b — InitialConditionIO hoist" begin
@@ -541,6 +588,53 @@ end
         end
     end
 
+    @testset "calendar-aware multi-month LMDZ and GridFED loaders" begin
+        mktempdir() do dir
+            @test ICIO._infer_year_from_path(
+                "GCP-GridFEDv2024.0_2022.short.nc") == 2022
+            @test ICIO._infer_year_from_path("GCP-GridFEDv2024.0_2021.short.nc") == 2021
+            @test ICIO._infer_year_from_path("flux_2021_v2024.nc") == 2021
+            @test ICIO._infer_year_from_path("z_cams_l_cams55_202112_FT24r2.nc") === nothing
+            @test_throws ArgumentError ICIO._infer_year_from_path("flux_2021_2022.nc")
+            for month in 1:12
+                _write_synthetic_lmdz_flux_file(
+                    joinpath(dir, @sprintf("lmdz_%04d%02d.nc", 2022, month)),
+                    2022, month)
+            end
+            lmdz_cfg = Dict{String, Any}(
+                "kind" => "lmdz_co2",
+                "file_pattern" => joinpath(dir, "lmdz_{YYYYMM}.nc"),
+                "year" => 2022,
+                "time_varying" => true,
+            )
+            lmdz = ICIO._load_timevarying_surface_flux_field(
+                lmdz_cfg, Float32, DateTime(2022, 1, 1))
+            @test size(lmdz.raw_series) == (4, 2, 24)
+            @test lmdz.times_sec[1:2] == [0.0, 3 * 3600.0]
+            @test lmdz.times_sec[end] ==
+                  Dates.value(DateTime(2022, 12, 1, 3) - DateTime(2022, 1, 1)) / 1000.0
+            @test all(lmdz.raw_series[:, :, 1] .== Float32(44 / 12))
+            @test all(lmdz.raw_series[:, :, 3] .== Float32(2 * 44 / 12))
+
+            gridfed_path = joinpath(dir, "gridfed_2022.nc")
+            _write_synthetic_monthly_gridfed_file(gridfed_path, 2022)
+            gridfed_cfg = Dict{String, Any}(
+                "kind" => "gridfed_fossil_co2",
+                "file" => gridfed_path,
+                "year" => 2022,
+                "time_varying" => true,
+            )
+            gridfed = ICIO._load_timevarying_surface_flux_field(
+                gridfed_cfg, Float64, DateTime(2022, 1, 1))
+            @test size(gridfed.raw_series) == (4, 2, 12)
+            @test gridfed.times_sec[1] == 0.0
+            @test gridfed.times_sec[2] == 31 * 86400.0
+            for month in 1:12
+                @test all(gridfed.raw_series[:, :, month] .== month)
+            end
+        end
+    end
+
     @testset "build_surface_flux_source — `kind = none` returns nothing" begin
         mesh = LatLonMesh(; Nx = 4, Ny = 3,
                           longitude = (0.0, 360.0),
@@ -609,6 +703,49 @@ end
         expected_total = 4π * R^2 * storage_scale
         actual_total = sum(sum(panel) for panel in src.cell_mass_rate)
         @test isapprox(Float64(actual_total), expected_total; rtol = 1e-3)
+    end
+
+    @testset "build_surface_flux_source — native time-varying CS density" begin
+        Nc = 4
+        ntime = 2
+        path = joinpath(mktempdir(), "native_cs_flux.nc")
+        ds = NCDataset(path, "c")
+        defDim(ds, "time", ntime)
+        defDim(ds, "nf", 6)
+        defDim(ds, "Ydim", Nc)
+        defDim(ds, "Xdim", Nc)
+        time_v = defVar(ds, "time", Float64, ("time",),
+                        attrib = Dict("units" => "hours since 2021-12-01 00:00:00"))
+        flux_v = defVar(ds, "CO2_FLUX", Float32,
+                        ("Xdim", "Ydim", "nf", "time"),
+                        attrib = Dict("units" => "kg CO2 m-2 s-1"))
+        time_v[:] = [0.0, 1.0]
+        for t in 1:ntime, p in 1:6
+            flux_v[:, :, p, t] .= Float32(p + 10t)
+        end
+        close(ds)
+
+        mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = 1)
+        vertical = HybridSigmaPressure(FT[0, 50000, 0], FT[1, 0.5, 0])
+        grid = AtmosGrid(mesh, vertical, CPU(); FT = FT)
+        cfg = Dict{String, Any}(
+            "kind" => "cs_native",
+            "file" => path,
+            "variable" => "CO2_FLUX",
+            "time_varying" => true,
+            "molar_mass_kg_mol" => 0.0440095,
+        )
+        src = build_surface_flux_source(
+            grid, :co2_test, cfg, FT; reference_time = DateTime(2021, 12, 1))
+        @test src isa AtmosTransport.TimeVaryingSurfaceFluxSource
+        @test src.times == [0.0, 3600.0]
+        @test src.scheme isa AtmosTransport.StepwiseFlux
+
+        storage_scale = 28.96546e-3 / 44.0095e-3
+        for p in 1:6, t in 1:ntime
+            expected = (p + 10t) .* mesh.cell_areas .* storage_scale
+            @test src.cell_mass_rate_series[p][:, :, t] ≈ expected
+        end
     end
 
     @testset "pack_initial_tracer_mass — CubedSphereMesh (MoistBasis)" begin

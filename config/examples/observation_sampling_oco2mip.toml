@@ -1,0 +1,68 @@
+# Observation sampling example: OCO-2 v11 MIP 10-second soundings plus hourly
+# profiles at the TCCON sites, on 2 days of C90 L66 ERA5 transport.
+#
+#   julia --project=gpu-env scripts/run_transport.jl config/examples/observation_sampling_oco2mip.toml
+#
+# (gpu-env: see docs/src/getting_started/installation.md.) Run from the
+# repository root, because the TCCON table path is relative. The physics here
+# is advection only, and these binaries carry no convection, to keep the
+# example fast. For science runs, merge the observation settings into your
+# production config, with convection and diffusion enabled.
+# Guide: docs/memos/2026-10-02_observation_sampling_guide.md
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_no_convection"
+start_date = "2021-01-01"        # also the time origin for observation sampling
+end_date = "2021-01-02"
+file_pattern = "era5_n320_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_uniform.init]       # 400 ppm everywhere: a sanity check for the sampled values
+kind = "uniform"
+background = 4.0e-4
+
+[tracers.co2_blob.init]
+kind = "gaussian_blob"
+background = 4.0e-4
+amplitude = 2.0e-5
+lon0_deg = -100.0
+lat0_deg = 40.0
+sigma_lon_deg = 25.0
+sigma_lat_deg = 15.0
+
+[diffusion]
+kind = "none"
+
+[convection]
+kind = "none"
+
+[output]
+split = "daily"                  # observation files follow this: one pair per day
+enabled = false                  # no gridded snapshots; observation sampling still runs
+path = "~/data/AtmosTransport/output/oco2mip_example/snap_{YYYYMMDD}.nc"
+
+[output.observations]
+path = "~/data/AtmosTransport/output/oco2mip_example/obs_{YYYYMMDD}.nc"
+time_interpolation = "linear"    # blend the two met-window ends around each sounding
+write_profile_for_sites = true   # full profiles at the TCCON sites, every met window
+
+# Every OCO-2 10-s average in the run window (the MIP co-samples all records).
+[[output.observations.sources]]
+kind = "oco2_lite"
+path = "/kiwi-data/Data/model/OCO2MIP/observation_input/OCO2_b11.2_10sec_GOOD_r2.nc4"
+quality_filter = "none"
+
+# TCCON stations, sampled at every met-window end.
+[[output.observations.sources]]
+kind = "table"
+mode = "sites"
+path = "config/examples/tccon_ggg2020_sites.csv"

@@ -1,0 +1,65 @@
+# GFED5 fire CO2 as a standalone transported tracer on C30,
+# 2014-09-01 .. 2024-12-31, on exactly the met, grid, dates, physics and
+# temporal scheme of trendy_v14_s3_gpp_ra_rh_c30_2014_2024.toml. Transport is
+# linear in the tracer, so this run can be superimposed on the TRENDY NEE
+# tracers, which carry Ra + Rh - GPP only and no fire at all.
+#
+# Flux: prepare_gfed5_fire_flux.py --tag c30 (GFED5.1 finalized to 2022,
+# GFED5NRT reprocessed after; conservative remap, mass-checked per month).
+# Carrier: fire is emission-only, ~2.2 to 4.0 Pg C/yr for 10.3 yr ~= +16 ppm,
+# so a 10 ppm carrier keeps the tracer comfortably positive for the F32
+# PPM limiters.
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder = "$ATMOSTRANSPORT_DATA_ROOT/met/c30_l66"
+start_date = "2014-09-01"
+end_date = "2024-12-31"
+file_pattern = "era5_c30_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_gfed_fire]
+  [tracers.co2_gfed_fire.init]
+  kind = "uniform"
+  background = 1.0e-5
+
+  [tracers.co2_gfed_fire.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/gfed5/GFED5_fire_daily_co2flux_c30_2014_2024.nc"
+  variable = "FIRE_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[diffusion]
+kind = "tm5_dkg"
+surface_flux_boundary = true
+
+[convection]
+kind = "none"
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 24
+path = "$ATMOSTRANSPORT_DATA_ROOT/output/gfed5_fire_c30/gfed5_fire_c30_{YYYYMMDD}.nc"
+deflate_level = 1
+shuffle = true
+
+[output.fields]
+tracers = ["co2_gfed_fire"]
+layers = "none"
+column_mean = true
+column_mass_per_area = false
+air_mass_layers = "none"
+air_mass = false
+air_mass_per_area = false
+column_air_mass_per_area = false

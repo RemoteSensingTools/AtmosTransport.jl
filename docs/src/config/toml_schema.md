@@ -201,7 +201,8 @@ kind = "edgar_sf6"
 Registered surface-flux source kinds (full list in
 `src/Models/InitialConditionIO.jl`): `lmdz_co2`, `gridfed_fossil_co2`,
 `edgar_sf6`, `zhang_rn222`, plus a generic `file` for arbitrary
-NetCDF sources. There is no `edgar_co2` kind — use
+NetCDF sources and `cs_native` for time-varying fluxes already on the native
+cubed-sphere grid. There is no `edgar_co2` kind — use
 `gridfed_fossil_co2` for the GridFED-derived fossil CO₂ inventory.
 Known tracer names carry built-in molar masses; for a custom tracer, set
 `molar_mass_kg_mol` inside its `surface_flux` table.
@@ -213,11 +214,19 @@ diurnal cycle instead of a monthly mean:
 ```toml
 [tracers.co2_natural.surface_flux]
 kind            = "lmdz_co2"
+file_pattern    = "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_{YYYYMM}_FT24r2_ra_sfc_3h_co2_flux.nc"
+year            = 2022
 time_varying    = true            # advance through the inventory's time slices
 temporal_scheme = "stepwise"      # how slices are applied between sample times
 ```
 
-`temporal_scheme` (default `"stepwise"` for `lmdz_co2`) is one of:
+`file_pattern` expands `{YYYYMM}` to all twelve months of `year` (or the
+run-start year when `year` is omitted). For a span that crosses calendar
+years, use `files = ["/path/to/month1.nc", "/path/to/month2.nc", ...]` in
+chronological order. GridFED supports the same time-varying path; its twelve
+monthly totals are converted using the actual number of days in each month.
+
+`temporal_scheme` (default `"stepwise"` for LMDZ and GridFED) is one of:
 
 - `"stepwise"` — hold each slice piecewise-constant until the next sample.
   This matches GEOS-Chem/HEMCO's exact CAMS treatment (verified against
@@ -230,6 +239,15 @@ Slices are indexed by **absolute** time since the run's `start_date`, so a
 multi-day run advances through the inventory correctly (a per-day clock would
 replay the first day's slices — the cause of the historical co2_natural
 +1 Pg/month surplus, now fixed).
+
+For an already aligned GEOS-native cubed-sphere inventory, use
+`kind = "cs_native"`, `time_varying = true`, `file`, and `variable`.
+The NetCDF variable must have dimensions `(time,nf,Ydim,Xdim)` and contain
+mass flux density in kg species m⁻² s⁻¹. Grid resolution and panel order must
+match the meteorology. The loader multiplies by native mesh cell areas and
+converts to model storage units using the tracer molar mass. It defaults to
+`temporal_scheme = "stepwise"`; signed uptake is retained. The TRENDY ensemble
+example is `config/runs/trendy_v14_s3_all_models_npp_rh_c30_2014_2024.toml`.
 
 ### `[advection]`, `[diffusion]`, `[convection]`, `[chemistry]`
 
@@ -368,6 +386,112 @@ Defaults match the historical writer: all tracers, full per-level tracer VMR,
 column means, column tracer mass per area, stored air mass, layer air mass per
 area, and column air mass per area.
 
+### `[output.observations]` — sampling at observation points
+
+Instead of (or in addition to) gridded snapshots, a run can sample tracers at
+observation points. A step-by-step guide with a runnable example
+(`config/examples/observation_sampling_oco2mip.toml`) and Python recipes for
+OCO averaging kernels is in `docs/memos/2026-10-02_observation_sampling_guide.md`. **Point events** are sampled once at their own time:
+satellite soundings, ObsPack flask, continuous, or aircraft records, and
+station time lists. **Station series** are written at every met-window end
+their schedule allows. Sampling uses the model cell containing each point and
+happens at met-window ends, where convection and chemistry have been applied.
+Every choice below maps to a Julia type; the editor schema
+(`schemas/atmos_transport_run.schema.json`, used by Taplo / Even Better TOML)
+shows that type when you hover over a value.
+
+```toml
+[output.observations]
+enabled = true
+path = "~/data/AtmosTransport/output/obs_{YYYYMMDD}.nc"   # -> obs_<date>_soundings.nc, obs_<date>_sites.nc
+time_interpolation = "linear"            # LinearWindowInterpolation | "nearest_window" (NearestWindowSampling)
+tracers = ["co2_natural", "co2_fossil"]  # omit for all tracers; must exist in [tracers]
+write_profile_for_sites = true           # also write full station profiles (e.g. TCCON sites)
+layer_height_temperature_kelvin = 280.0  # ConstantLayerTemperature for intake heights
+# start_time = "2021-12-02T00:00:00"     # required only when [input].start_date is absent
+deflate_level = 0
+
+[[output.observations.sources]]
+kind = "oco2_lite"                       # OCO2LiteSource: Lite files or OCO-2 v11 MIP 10-s averages
+path = "/kiwi-data/Data/model/OCO2MIP/observation_input/OCO2_b11.2_10sec_GOOD_r2.nc4"
+quality_filter = "none"                  # NoQualityFilter; default "flag_max" = QualityFlagFilter("xco2_quality_flag", 0)
+
+[[output.observations.sources]]
+kind = "obspack"                         # ObsPackSource
+mode = "soundings"                       # SoundingMode: every record at its own time and intake height
+path = "~/data/obspack/data/nc/co2_*.nc"
+
+[[output.observations.sources]]
+kind = "table"                           # TableSource: your own CSV / TOML / NetCDF list
+mode = "sites"                           # SiteMode: station series per site schedule
+path = "~/data/AtmosTransport/observations/tccon_sites.csv"
+```
+
+| Key | Choices → type |
+|---|---|
+| `kind` | `"oco2_lite"` → `OCO2LiteSource`, `"obspack"` → `ObsPackSource`, `"table"` → `TableSource` |
+| `mode` | `"soundings"` → `SoundingMode` (point events), `"sites"` → `SiteMode` (station series); required for `obspack` and `table` |
+| `quality_filter` | `oco2_lite` only: `"flag_max"` (default) → `QualityFlagFilter(quality_variable, quality_flag_max)` keeps flags `<= max`; `"flag_values"` → `QualityFlagValues(quality_variable, quality_flag_values)` keeps listed flags (MIP `assimilate_flag`: 0 not assimilated, 1 assimilated, 2 withheld, so `[1]` selects the assimilated set); `"none"` → `NoQualityFilter`. Keys of the other filters are rejected. |
+| `split` (in `[output]`) | `"single"` → `SingleOutputFile`, `"daily"` → `DailyOutputFiles`; observation files follow it |
+| `site_grouping` | `obspack` sites only: `"site_code"` → `SiteCodeGrouping`, `"location"` → `LocationGrouping` |
+| `format` | `table` only: `"auto"`, `"csv"`, `"toml"`, `"netcdf"` → `AutoTableFormat`, `CSVTableFormat`, `TOMLTableFormat`, `NetCDFTableFormat` |
+| `time_interpolation` | `"linear"` → `LinearWindowInterpolation`, `"nearest_window"` → `NearestWindowSampling` |
+
+Source paths are templates: `{YYYYMMDD}` (or `{date}`), `{YYMMDD}`, `{YYYY}`,
+`{MM}`, `{DD}` are substituted per run day, and `*` / `?` wildcards expand in
+the file name. A path without date tokens must match at least one file.
+
+**Station tables.** A `table` source with `mode = "sites"` reads `id`, `lat`,
+`lon`, optional `elevation` (m asl) and `intake_height` (m above ground) or
+`altitude` (m asl, converted with `elevation`). Each row's schedule follows
+from its keys:
+
+| Row keys | Schedule | Output |
+|---|---|---|
+| none | `EveryWindow` | every met-window end, `_sites` file |
+| `start_time`, `end_time` | `TimeRange` | window ends inside the range; NaN outside |
+| `times` | `TimeList` | one point event per listed UTC time, `_soundings` file |
+
+In CSV, list several times in one `times` cell separated by `;`. Times are
+ISO-8601 UTC strings or TOML date-times (no offset, or `Z`); in NetCDF tables
+`time`, `start_time`, and `end_time` are decoded from their CF units, and bare
+numbers are rejected elsewhere. A site id that repeats (across rows, daily
+files, or sources) must keep its location; its time lists are merged, and any
+other schedules must agree. Unknown CSV/TOML columns are an error, so a
+misspelt `intake_height` cannot silently select the lowest layer. TOML site
+tables can declare `#:schema .../schemas/observation_sites.schema.json` for
+editor help; `config/examples/observation_sites_demo.toml` shows all three
+schedules. Point-event tables (`mode = "soundings"`) read `id`, `time`, `lat`,
+`lon` and the same optional height columns.
+
+**Intake layer.** The model has no orography, so the intake layer is chosen
+by height above the model's own surface, from hypsometric layer heights
+(GCHP VDIFF temperatures on cubed-sphere binaries that carry them, else the
+constant above). Each output row records the chosen layer, its bottom and top
+heights, and the model surface pressure, so mountain sites show their
+representativeness gap.
+
+**Time and files.** The run origin is the start of window 1 of the first
+binary: `[input].start_date` at 00:00 UTC, or `start_time` with an explicit
+`binary_paths` list; `validate_config` enforces it and the run refuses an
+origin on another day than the first binary's date label. Only point events
+inside the transported span are sampled (an event exactly at the final window
+end is kept, so two chained runs sharing a boundary both write it). The file
+partition follows `[output].split`; daily files use the day index when a
+binary name carries no date, and two binaries resolving to the same daily file
+(snapshots or observations) fail before transport starts. A `_soundings` file exists only when there are
+point events and a `_sites` file only when there are station series.
+Observation rows are queued and written whenever the shared NetCDF lock is
+free, so a background daily snapshot write never stalls the run. All sources
+are read at startup, keeping only records inside the run span; reading the
+whole-mission MIP file takes a few seconds and about 2 GB of transient memory. Averaging kernels are applied offline.
+See [Output schema](@ref) for the variable tables.
+
+Observation sampling adds one small gather per window and does not change
+transport: the transported state and gridded snapshot output are unchanged
+with or without it (tested on lat-lon runs; on lat-lon and reduced-Gaussian
+runs it makes the runner step window by window, as snapshots do).
+
 ### Multi-threaded execution
 
 ```bash
@@ -469,6 +593,18 @@ coefficients = "config/geos_L72_coefficients.toml"
 
 Per-source defaults are baked into the source-descriptor TOML; this
 key is the per-run override.
+
+For native ERA5 N320, named interface-selection presets use:
+
+```toml
+[vertical]
+coefficients_file = "config/era5_L137_coefficients.toml"
+transform = "level_selection"
+preset = "ml137_66L"
+```
+
+Available ERA5 presets are `ml137_tropo34`, `ml137_66L`, `ml137_cfl85`
+(`ml137_85L`), `ml137_cfl94` (`ml137_94L`), and `ml137_full`.
 
 ### `[numerics]`
 

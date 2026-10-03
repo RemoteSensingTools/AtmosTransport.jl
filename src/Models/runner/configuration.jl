@@ -105,6 +105,20 @@ function _check_config_table_shapes!(cfg, errors)
         _check_config_table!(input["staging"], "[input.staging]", errors)
     end
 
+    output = get(cfg, "output", nothing)
+    if output isa AbstractDict && haskey(output, "observations") &&
+       _check_config_table!(output["observations"], "[output.observations]", errors)
+        sources = get(output["observations"], "sources", nothing)
+        if sources !== nothing && !(sources isa AbstractVector)
+            push!(errors, "[output.observations].sources must be an array of tables " *
+                          "([[output.observations.sources]]); got $(typeof(sources)).")
+        elseif sources isa AbstractVector
+            for (i, source) in enumerate(sources)
+                _check_config_table!(source, "[[output.observations.sources]] entry $i", errors)
+            end
+        end
+    end
+
     tracers = get(cfg, "tracers", nothing)
     tracers isa AbstractDict || return nothing
     for (name, tracer) in pairs(tracers)
@@ -146,9 +160,10 @@ end
 
 Check a driven runtime config and return errors without opening binary readers
 or allocating model state. Checks cover runtime table shapes (including
-`input.staging`, tracer `init` and `surface_flux` subtables), resolved binary
-paths, numeric type,
-backend/float compatibility, and integer run-window bounds. Shape errors are
+`input.staging`, tracer `init` and `surface_flux` subtables, and
+`output.observations` with its `sources` array), resolved binary paths,
+numeric type, backend/float compatibility, the `[output.observations]`
+contract, and integer run-window bounds. Shape errors are
 reported before value checks. Window indices accept integers, not Booleans or
 floating-point values.
 
@@ -189,6 +204,26 @@ function validate_config(cfg::AbstractDict)
     tracers_cfg = get(cfg, "tracers", nothing)
     if tracers_cfg !== nothing && isempty(tracers_cfg)
         push!(errors, "[tracers] was provided but contains no tracer subtables.")
+    end
+
+    # `[output.observations]` is parsed here so unknown keys and invalid
+    # choices fail before any binary is opened. Observation files themselves
+    # are per-day templates and are resolved by the runner.
+    output_cfg = get(cfg, "output", nothing)
+    if output_cfg isa AbstractDict
+        spec_ref = Ref{Any}(nothing)
+        _capture_config_error!(errors) do
+            spec_ref[] = observation_output_spec(output_cfg)
+        end
+        spec = spec_ref[]
+        if spec !== nothing
+            _capture_config_error!(errors) do
+                _check_observation_time_origin(spec, cfg)
+            end
+            _capture_config_error!(errors) do
+                _check_observation_tracers(spec, cfg)
+            end
+        end
     end
 
     _check_run_window_bounds!(cfg, errors)

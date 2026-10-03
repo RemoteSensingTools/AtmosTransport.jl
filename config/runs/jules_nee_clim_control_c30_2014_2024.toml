@@ -1,0 +1,63 @@
+# Transport-only control: JULES-ES NEE replaced by its 2015-2024 mean seasonal
+# cycle, repeated every year, on exactly the met/grid/dates/physics of
+# trendy_v14_s3_gpp_ra_rh_c30_2014_2024.toml. The fluxes have no interannual
+# variability at all, so every XCO2 anomaly this tracer develops comes from
+# meteorology. Comparing its anomaly variance with the real NEE tracer's
+# separates transport IAV from flux IAV.
+#
+# Flux: prepare_climatological_nee_flux.py (repeats to -9.285 Pg C/yr in every
+# non-leap year). Carrier matches the real NEE tracer at 200 ppm.
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder = "$ATMOSTRANSPORT_DATA_ROOT/met/c30_l66"
+start_date = "2014-09-01"
+end_date = "2024-12-31"
+file_pattern = "era5_c30_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_jules_nee_clim]
+  [tracers.co2_jules_nee_clim.init]
+  kind = "uniform"
+  background = 2.0e-4
+
+  [tracers.co2_jules_nee_clim.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy_c30/JULES-ES_NEEclim_daily_co2flux_c30_2014_2024.nc"
+  variable = "NEE_CLIM_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[diffusion]
+kind = "tm5_dkg"
+surface_flux_boundary = true
+
+[convection]
+kind = "none"
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 24
+path = "$ATMOSTRANSPORT_DATA_ROOT/output/jules_nee_clim_c30/jules_nee_clim_c30_{YYYYMMDD}.nc"
+deflate_level = 1
+shuffle = true
+
+[output.fields]
+tracers = ["co2_jules_nee_clim"]
+layers = "none"
+column_mean = true
+column_mass_per_area = false
+air_mass_layers = "none"
+air_mass = false
+air_mass_per_area = false
+column_air_mass_per_area = false

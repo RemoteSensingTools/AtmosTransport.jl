@@ -1,0 +1,700 @@
+# Full-year C90 transport of 23 TRENDYv14 S3 models as 46 independent
+# atmospheric CO2 tracers: one GPP uptake tracer and one TER source tracer
+# per model. Drivers conserve each model's monthly totals; GPP uses the
+# prescribed FLUXCOM-X diurnal timing, while TER is daily-mean (no diurnal
+# cycle). See docs/memos/TRENDYV14_S3_C90_FLUX_DRIVERS_2021_ATBD.md.
+#
+# Every tracer uses a 400 ppm numerical carrier. Subtract 400 ppm from output
+# VMRs to obtain the transported contribution of that model/flux component.
+# Meteorology is C90/L137 ERA5-N320 advection plus TM5 DKG diffusion, without
+# convection.
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder = "~/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l137_f32_no_convection"
+start_date = "2021-01-01"
+end_date = "2021-12-31"
+file_pattern = "era5_n320_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+# TRENDY model: CABLE-POP; component: GPP
+[tracers.co2_trendy_cable_pop_gpp]
+  [tracers.co2_trendy_cable_pop_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_cable_pop_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CABLE-POP_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: CABLE-POP; component: TER
+[tracers.co2_trendy_cable_pop_ter]
+  [tracers.co2_trendy_cable_pop_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_cable_pop_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CABLE-POP_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: CARDAMOM; component: GPP
+[tracers.co2_trendy_cardamom_gpp]
+  [tracers.co2_trendy_cardamom_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_cardamom_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CARDAMOM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: CARDAMOM; component: TER
+[tracers.co2_trendy_cardamom_ter]
+  [tracers.co2_trendy_cardamom_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_cardamom_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CARDAMOM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: CLASSIC; component: GPP
+[tracers.co2_trendy_classic_gpp]
+  [tracers.co2_trendy_classic_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_classic_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CLASSIC_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: CLASSIC; component: TER
+[tracers.co2_trendy_classic_ter]
+  [tracers.co2_trendy_classic_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_classic_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CLASSIC_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: CLM-FATES; component: GPP
+[tracers.co2_trendy_clm_fates_gpp]
+  [tracers.co2_trendy_clm_fates_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_clm_fates_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CLM-FATES_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: CLM-FATES; component: TER
+[tracers.co2_trendy_clm_fates_ter]
+  [tracers.co2_trendy_clm_fates_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_clm_fates_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CLM-FATES_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: CLM; component: GPP
+[tracers.co2_trendy_clm_gpp]
+  [tracers.co2_trendy_clm_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_clm_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CLM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: CLM; component: TER
+[tracers.co2_trendy_clm_ter]
+  [tracers.co2_trendy_clm_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_clm_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CLM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: DLEM; component: GPP
+[tracers.co2_trendy_dlem_gpp]
+  [tracers.co2_trendy_dlem_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_dlem_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_DLEM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: DLEM; component: TER
+[tracers.co2_trendy_dlem_ter]
+  [tracers.co2_trendy_dlem_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_dlem_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_DLEM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: ED; component: GPP
+[tracers.co2_trendy_ed_gpp]
+  [tracers.co2_trendy_ed_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_ed_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_ED_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: ED; component: TER
+[tracers.co2_trendy_ed_ter]
+  [tracers.co2_trendy_ed_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_ed_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_ED_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: ELM-FATES; component: GPP
+[tracers.co2_trendy_elm_fates_gpp]
+  [tracers.co2_trendy_elm_fates_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_elm_fates_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_ELM-FATES_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: ELM-FATES; component: TER
+[tracers.co2_trendy_elm_fates_ter]
+  [tracers.co2_trendy_elm_fates_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_elm_fates_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_ELM-FATES_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: ELM; component: GPP
+[tracers.co2_trendy_elm_gpp]
+  [tracers.co2_trendy_elm_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_elm_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_ELM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: ELM; component: TER
+[tracers.co2_trendy_elm_ter]
+  [tracers.co2_trendy_elm_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_elm_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_ELM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: IBIS; component: GPP
+[tracers.co2_trendy_ibis_gpp]
+  [tracers.co2_trendy_ibis_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_ibis_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_IBIS_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: IBIS; component: TER
+[tracers.co2_trendy_ibis_ter]
+  [tracers.co2_trendy_ibis_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_ibis_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_IBIS_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: ISAM; component: GPP
+[tracers.co2_trendy_isam_gpp]
+  [tracers.co2_trendy_isam_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_isam_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_ISAM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: ISAM; component: TER
+[tracers.co2_trendy_isam_ter]
+  [tracers.co2_trendy_isam_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_isam_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_ISAM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: JSBACH; component: GPP
+[tracers.co2_trendy_jsbach_gpp]
+  [tracers.co2_trendy_jsbach_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_jsbach_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_JSBACH_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: JSBACH; component: TER
+[tracers.co2_trendy_jsbach_ter]
+  [tracers.co2_trendy_jsbach_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_jsbach_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_JSBACH_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: JULES-ES; component: GPP
+[tracers.co2_trendy_jules_es_gpp]
+  [tracers.co2_trendy_jules_es_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_jules_es_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_JULES-ES_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: JULES-ES; component: TER
+[tracers.co2_trendy_jules_es_ter]
+  [tracers.co2_trendy_jules_es_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_jules_es_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_JULES-ES_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: LPJ-GUESS; component: GPP
+[tracers.co2_trendy_lpj_guess_gpp]
+  [tracers.co2_trendy_lpj_guess_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_lpj_guess_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_LPJ-GUESS_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: LPJ-GUESS; component: TER
+[tracers.co2_trendy_lpj_guess_ter]
+  [tracers.co2_trendy_lpj_guess_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_lpj_guess_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_LPJ-GUESS_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: LPJml; component: GPP
+[tracers.co2_trendy_lpjml_gpp]
+  [tracers.co2_trendy_lpjml_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_lpjml_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_LPJml_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: LPJml; component: TER
+[tracers.co2_trendy_lpjml_ter]
+  [tracers.co2_trendy_lpjml_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_lpjml_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_LPJml_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: LPJwsl; component: GPP
+[tracers.co2_trendy_lpjwsl_gpp]
+  [tracers.co2_trendy_lpjwsl_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_lpjwsl_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_LPJwsl_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: LPJwsl; component: TER
+[tracers.co2_trendy_lpjwsl_ter]
+  [tracers.co2_trendy_lpjwsl_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_lpjwsl_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_LPJwsl_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: LPX-Bern; component: GPP
+[tracers.co2_trendy_lpx_bern_gpp]
+  [tracers.co2_trendy_lpx_bern_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_lpx_bern_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_LPX-Bern_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: LPX-Bern; component: TER
+[tracers.co2_trendy_lpx_bern_ter]
+  [tracers.co2_trendy_lpx_bern_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_lpx_bern_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_LPX-Bern_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: ORCHIDEE; component: GPP
+[tracers.co2_trendy_orchidee_gpp]
+  [tracers.co2_trendy_orchidee_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_orchidee_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_ORCHIDEE_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: ORCHIDEE; component: TER
+[tracers.co2_trendy_orchidee_ter]
+  [tracers.co2_trendy_orchidee_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_orchidee_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_ORCHIDEE_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: SDGVM; component: GPP
+[tracers.co2_trendy_sdgvm_gpp]
+  [tracers.co2_trendy_sdgvm_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_sdgvm_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_SDGVM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: SDGVM; component: TER
+[tracers.co2_trendy_sdgvm_ter]
+  [tracers.co2_trendy_sdgvm_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_sdgvm_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_SDGVM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: TEM; component: GPP
+[tracers.co2_trendy_tem_gpp]
+  [tracers.co2_trendy_tem_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_tem_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_TEM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: TEM; component: TER
+[tracers.co2_trendy_tem_ter]
+  [tracers.co2_trendy_tem_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_tem_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_TEM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: VISIT-UT; component: GPP
+[tracers.co2_trendy_visit_ut_gpp]
+  [tracers.co2_trendy_visit_ut_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_visit_ut_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_VISIT-UT_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: VISIT-UT; component: TER
+[tracers.co2_trendy_visit_ut_ter]
+  [tracers.co2_trendy_visit_ut_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_visit_ut_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_VISIT-UT_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: VISIT; component: GPP
+[tracers.co2_trendy_visit_gpp]
+  [tracers.co2_trendy_visit_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_visit_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_VISIT_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: VISIT; component: TER
+[tracers.co2_trendy_visit_ter]
+  [tracers.co2_trendy_visit_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_visit_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_VISIT_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: iMAPLE; component: GPP
+[tracers.co2_trendy_imaple_gpp]
+  [tracers.co2_trendy_imaple_gpp.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_imaple_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_iMAPLE_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+# TRENDY model: iMAPLE; component: TER
+[tracers.co2_trendy_imaple_ter]
+  [tracers.co2_trendy_imaple_ter.init]
+  kind = "uniform"
+  background = 4.0e-4
+  [tracers.co2_trendy_imaple_ter.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_iMAPLE_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
+  variable = "TER_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[diffusion]
+kind = "tm5_dkg"
+surface_flux_boundary = true
+
+[convection]
+kind = "none"
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 3
+snapshot_file = "~/data/AtmosTransport/output/trendy_v14_s3_all_models_gpp_ter_c90_2021_advdiff/trendy_v14_s3_c90_{YYYYMMDD}.nc"
+deflate_level = 1
+shuffle = true
+
+# Save boundary-layer (~900 hPa), mid/free-tropospheric (~700/500 hPa), and
+# dry-air column-mean CO2 contributions for every tracer; omit full L137 fields.
+[output.fields]
+tracers = [
+  "co2_trendy_cable_pop_gpp",
+  "co2_trendy_cable_pop_ter",
+  "co2_trendy_cardamom_gpp",
+  "co2_trendy_cardamom_ter",
+  "co2_trendy_classic_gpp",
+  "co2_trendy_classic_ter",
+  "co2_trendy_clm_fates_gpp",
+  "co2_trendy_clm_fates_ter",
+  "co2_trendy_clm_gpp",
+  "co2_trendy_clm_ter",
+  "co2_trendy_dlem_gpp",
+  "co2_trendy_dlem_ter",
+  "co2_trendy_ed_gpp",
+  "co2_trendy_ed_ter",
+  "co2_trendy_elm_fates_gpp",
+  "co2_trendy_elm_fates_ter",
+  "co2_trendy_elm_gpp",
+  "co2_trendy_elm_ter",
+  "co2_trendy_ibis_gpp",
+  "co2_trendy_ibis_ter",
+  "co2_trendy_isam_gpp",
+  "co2_trendy_isam_ter",
+  "co2_trendy_jsbach_gpp",
+  "co2_trendy_jsbach_ter",
+  "co2_trendy_jules_es_gpp",
+  "co2_trendy_jules_es_ter",
+  "co2_trendy_lpj_guess_gpp",
+  "co2_trendy_lpj_guess_ter",
+  "co2_trendy_lpjml_gpp",
+  "co2_trendy_lpjml_ter",
+  "co2_trendy_lpjwsl_gpp",
+  "co2_trendy_lpjwsl_ter",
+  "co2_trendy_lpx_bern_gpp",
+  "co2_trendy_lpx_bern_ter",
+  "co2_trendy_orchidee_gpp",
+  "co2_trendy_orchidee_ter",
+  "co2_trendy_sdgvm_gpp",
+  "co2_trendy_sdgvm_ter",
+  "co2_trendy_tem_gpp",
+  "co2_trendy_tem_ter",
+  "co2_trendy_visit_ut_gpp",
+  "co2_trendy_visit_ut_ter",
+  "co2_trendy_visit_gpp",
+  "co2_trendy_visit_ter",
+  "co2_trendy_imaple_gpp",
+  "co2_trendy_imaple_ter",
+]
+layers = "selected"
+levels = [96, 105, 118]
+column_mean = true
+column_mass_per_area = false
+air_mass_layers = "none"
+air_mass = false
+air_mass_per_area = false
+column_air_mass_per_area = false
+

@@ -21,6 +21,31 @@ function _output_default_cap_hours(driver, binary_count::Integer;
     return Float64(nw * Int(binary_count)) * Float64(window_dt(driver)) / 3600.0
 end
 
+"""
+    _check_unique_day_paths(partition, path_for, binary_paths, key)
+
+Fail before any transport when two input binaries resolve to the same daily
+output file (`path_for(date_label, index)`), which would otherwise overwrite
+the earlier day silently. `key` names the TOML path setting in the error.
+"""
+_check_unique_day_paths(::SingleOutputFile, path_for, binary_paths, key::AbstractString) = nothing
+function _check_unique_day_paths(::DailyOutputFiles, path_for, binary_paths, key::AbstractString)
+    seen = Dict{String, String}()
+    for (idx, binary) in enumerate(binary_paths)
+        path = path_for(_binary_date_label(binary), idx)
+        previous = get(seen, path, nothing)
+        previous === nothing || throw(ArgumentError(
+            "daily output $(path) would be written for both $(basename(previous)) and " *
+            "$(basename(binary)); add a {day} token to $(key) or give the binaries distinct dates"))
+        seen[path] = binary
+    end
+    return nothing
+end
+
+_check_snapshot_day_paths(spec::RuntimeOutputSpec, binary_paths) =
+    output_enabled(spec) ? _check_unique_day_paths(spec.partition,
+        (label, idx) -> output_path_for_day(spec, label, idx), binary_paths, "[output].path") : nothing
+
 _output_path_for_partition(spec::RuntimeOutputSpec, ::SingleOutputFile,
                            ::AbstractString, ::Integer) = output_path(spec)
 _output_path_for_partition(spec::RuntimeOutputSpec, ::DailyOutputFiles,
@@ -36,11 +61,16 @@ function _push_snapshot_frame!(::SingleOutputFile,
 end
 
 # The outer run owns this resource, including exceptional exits from either topology.
+# `observations` is the `[output.observations]` sampler (a no-op by default); it
+# is closed after the snapshot stream so both get the same lifetime guarantees.
 mutable struct RunSnapshotOutput
     stream::Union{Nothing,NetCDFSnapshotStream}
     pending_write::Union{Nothing,Task}
+    observations::AbstractObservationSampler
 end
-RunSnapshotOutput() = RunSnapshotOutput(nothing, nothing)
+RunSnapshotOutput() = RunSnapshotOutput(nothing, nothing, NoObservationSampler())
+RunSnapshotOutput(stream, pending_write) =
+    RunSnapshotOutput(stream, pending_write, NoObservationSampler())
 
 function _wait_pending_output!(output::RunSnapshotOutput)
     task = output.pending_write
@@ -55,12 +85,17 @@ function _wait_pending_output!(output::RunSnapshotOutput)
 end
 
 function Base.close(output::RunSnapshotOutput)
-    stream = output.stream
-    if stream === nothing
-        _wait_pending_output!(output)
-    else
-        _with_run_resource(stream) do
+    # Take the sampler so a second close cannot close it twice.
+    sampler = output.observations
+    output.observations = NoObservationSampler()
+    _with_run_resource(sampler) do
+        stream = output.stream
+        if stream === nothing
             _wait_pending_output!(output)
+        else
+            _with_run_resource(stream) do
+                _wait_pending_output!(output)
+            end
         end
     end
     return nothing
@@ -123,6 +158,7 @@ function _write_frames_to_disk(spec::RuntimeOutputSpec, path::AbstractString,
         write_snapshot_binary(path, frames, grid; mass_basis = mass_basis,
                               options = spec.options)
     else
+        # The writer takes the shared NetCDF lock itself.
         write_snapshot_netcdf(path, frames, grid; mass_basis = mass_basis,
                               options = spec.options, fields = spec.fields)
     end

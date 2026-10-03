@@ -1,0 +1,35 @@
+# End-to-end L137 -> L66 integration smoke for the ERA5 native pipeline.
+
+[source]
+toml     = "config/met_sources/era5_n320_arco_diffusion.toml"
+root_dir = "/home/cfranken/data/AtmosTransport/met/era5/N320/hourly/raw"
+
+[vertical]
+coefficients_file = "config/era5_L137_coefficients.toml"
+transform = "level_selection"
+preset = "ml137_66L"
+
+[output]
+directory  = "/tmp/atmos-era5-c6-l66-smoke"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 6
+panel_convention    = "geos_native"
+definition          = "gmao_equal_distance"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[numerics]
+float_type                 = "Float32"
+dt_met_seconds             = 3600.0
+chain_mass                 = false
+substep_schedule           = "adaptive_cfl"
+substep_cfl_target         = 0.90
+positivity_cfl_limit       = 0.95
+require_substep_positivity = true
+
+[mass_fix]
+enable = true
+mode = "target_ps_dry"
+target_ps_dry_pa = 98726.0

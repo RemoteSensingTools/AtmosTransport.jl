@@ -159,6 +159,17 @@ function _build_native_vertical_setup(cfg_vertical::AbstractDict,
     transform_name = lowercase(String(get(cfg_vertical, "transform", "identity")))
     transform = if transform_name in ("identity", "none")
         IdentityVertical()
+    elseif transform_name in ("level_selection", "echlevs")
+        preset = strip(String(get(cfg_vertical, "preset", get(cfg_vertical, "echlevs", ""))))
+        isempty(preset) &&
+            error("`[vertical].transform = \"level_selection\"` requires " *
+                  "`preset = \"ml137_…\"`.")
+        # The presets index ERA5's L137 interfaces; on any other native column
+        # they would select the wrong levels.
+        n_levels(vc) == 137 ||
+            error("`[vertical].transform = \"level_selection\"` presets are defined for " *
+                  "ERA5's 137 native levels; this source has $(n_levels(vc)).")
+        LevelSelection(echlevs_preset(preset))
     elseif transform_name in ("merge_above_pressure", "merge_above_pressure_pa")
         pressure_pa = if haskey(cfg_vertical, "pressure_Pa")
             _vertical_float(cfg_vertical["pressure_Pa"], "pressure_Pa")
@@ -187,7 +198,8 @@ function _build_native_vertical_setup(cfg_vertical::AbstractDict,
                                 "reference_surface_pressure_Pa"))
     else
         error("Unsupported native `[vertical].transform = $(repr(transform_name))`. " *
-              "Supported: identity, merge_above_pressure, merge_layers_thinner_than.")
+              "Supported: identity, level_selection, merge_above_pressure, " *
+              "merge_layers_thinner_than.")
     end
 
     plan = plan_vertical(transform, vc)
@@ -276,9 +288,14 @@ function _process_day_native(cfg::AbstractDict;
         settings_kwargs = (settings_kwargs..., physics_layout = Symbol(src_cfg["physics_layout"]))
     end
     cfg_vertical = get(cfg, "vertical", Dict())
-    if haskey(cfg_vertical, "coefficients")
+    # `coefficients` and its alias `coefficients_file` override the met
+    # source's hybrid-coefficient file; giving both is ambiguous.
+    haskey(cfg_vertical, "coefficients") && haskey(cfg_vertical, "coefficients_file") &&
+        error("`[vertical]` sets both `coefficients` and `coefficients_file`; keep one.")
+    for key in ("coefficients", "coefficients_file")
+        haskey(cfg_vertical, key) || continue
         settings_kwargs = (settings_kwargs..., coefficients_file =
-                           expand_data_path(String(cfg_vertical["coefficients"])))
+                           expand_data_path(String(cfg_vertical[key])))
     end
     settings = load_met_settings(toml_path; settings_kwargs...)
 

@@ -71,6 +71,29 @@ function _options_string(options)
                     options.float_type, options.deflate_level, options.shuffle)
 end
 
+# Automated provenance shared by snapshot and observation files: timestamp,
+# source-tree state, runtime, host, and user. Each value is best-effort and
+# falls back to `"unknown"` rather than throwing, so non-git checkouts still
+# produce a complete metadata block.
+function _define_provenance_attributes!(ds)
+    creation_date = _iso8601_utc_now()
+    git_commit    = _git_commit_sha()
+    git_dirty     = _git_dirty_flag()
+    hostname      = try
+        Base.Libc.gethostname()
+    catch
+        "unknown"
+    end
+    ds.attrib["creation_date"]    = creation_date
+    ds.attrib["framework"]        = "AtmosTransport.jl"
+    ds.attrib["framework_commit"] = git_commit
+    ds.attrib["framework_dirty"]  = git_dirty
+    ds.attrib["runtime"]          = _runtime_environment_string()
+    ds.attrib["hostname"]         = hostname
+    ds.attrib["user"]             = get(ENV, "USER", get(ENV, "USERNAME", "unknown"))
+    return creation_date, git_commit, git_dirty
+end
+
 function _define_common_attributes!(ds, mesh, frames, mass_basis_sym::Symbol;
                                      options = nothing)
     ds.attrib["Conventions"]    = "CF-1.8"
@@ -83,27 +106,7 @@ function _define_common_attributes!(ds, mesh, frames, mass_basis_sym::Symbol;
     ds.attrib["mass_basis"]      = String(mass_basis_sym)
     ds.attrib["output_contract"] = _OUTPUT_CONTRACT
 
-    # Automated provenance: timestamp, source-tree state, runtime env,
-    # writer options. Each value is best-effort and falls back to
-    # `"unknown"` rather than throwing — non-git checkouts still
-    # produce a complete metadata block.
-    creation_date = _iso8601_utc_now()
-    git_commit    = _git_commit_sha()
-    git_dirty     = _git_dirty_flag()
-    hostname      = try
-        Base.Libc.gethostname()
-    catch
-        "unknown"
-    end
-    user_id = get(ENV, "USER", get(ENV, "USERNAME", "unknown"))
-
-    ds.attrib["creation_date"]    = creation_date
-    ds.attrib["framework"]        = "AtmosTransport.jl"
-    ds.attrib["framework_commit"] = git_commit
-    ds.attrib["framework_dirty"]  = git_dirty
-    ds.attrib["runtime"]          = _runtime_environment_string()
-    ds.attrib["hostname"]         = hostname
-    ds.attrib["user"]             = user_id
+    creation_date, git_commit, git_dirty = _define_provenance_attributes!(ds)
     options === nothing ||
         (ds.attrib["output_options"] = _options_string(options))
 

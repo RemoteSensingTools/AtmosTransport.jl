@@ -72,7 +72,13 @@ read.
   assertion (`feedback_verify_gpu_runs_on_gpu`), per-window loop,
   and snapshot NetCDF output
 - [`runner/`](runner/) — the runner's progress timer, configuration validation,
-  runtime summary, owned input/output resources, and model setup. These files are included
+  runtime summary, owned input/output resources, observation-sampling glue
+  (`runner/observations.jl`: builds the `[output.observations]` sampler from
+  the model state, hands it to `RunSnapshotOutput` so it closes with the
+  snapshot stream, resolves the run origin and run days, and holds the
+  `validate_config` origin check; both runners call it at t = 0 and at every
+  met-window end, forcing the per-window loop when sampling is on), and
+  model setup. These files are included
   inside `DrivenRunner`; the top-level file retains the transport loops.
   Single-file NetCDF appends selected snapshots without retaining past frames;
   daily output owns and drains at most one background write. Input cleanup

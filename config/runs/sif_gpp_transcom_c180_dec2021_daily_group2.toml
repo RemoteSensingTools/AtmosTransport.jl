@@ -1,0 +1,111 @@
+# December 2021 tagged transport of length-of-day-corrected SIF-derived GPP
+# uptake, split by major TransCom land regions. Antarctica and Greenland are
+# excluded from the masks. A small unassigned tracer is included as an audit
+# residual; the corrected pilot mask leaves ~0.9% of December uptake unassigned.
+#
+# Each regional tracer uses a 100 ppm positivity carrier. Subtract 100 ppm in
+# column diagnostics to isolate the transported uptake contribution.
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder       = "~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32_fullL72_omega_regularized"
+start_date   = "2021-12-01"
+end_date     = "2021-12-31"
+file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[diffusion]
+kind = "geoschem_holtslag_boville_vdiff"
+surface_flux_boundary = true
+
+[convection]
+kind = "cmfmc_matrix"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 0
+
+[output]
+format = "binary_mmap"
+split = "daily"
+snapshot_interval_hours = 24
+snapshot_file = "~/data/AtmosTransport/output/sif_gpp_transcom_c180_dec2021_daily_group2/sif_gpp_transcom_c180_{YYYYMMDD}.atmsnap"
+
+[tracers.co2_sif_na_boreal]
+  [tracers.co2_sif_na_boreal.init]
+  kind = "uniform"
+  background = 1.0e-4
+  [tracers.co2_sif_na_boreal.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021_transcom_tags.nc"
+  variable = "CO2_FLUX_NA_BOREAL"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_sif_na_temperate]
+  [tracers.co2_sif_na_temperate.init]
+  kind = "uniform"
+  background = 1.0e-4
+  [tracers.co2_sif_na_temperate.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021_transcom_tags.nc"
+  variable = "CO2_FLUX_NA_TEMPERATE"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_sif_eurasia_boreal]
+  [tracers.co2_sif_eurasia_boreal.init]
+  kind = "uniform"
+  background = 1.0e-4
+  [tracers.co2_sif_eurasia_boreal.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021_transcom_tags.nc"
+  variable = "CO2_FLUX_EURASIA_BOREAL"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_sif_eurasia_temperate]
+  [tracers.co2_sif_eurasia_temperate.init]
+  kind = "uniform"
+  background = 1.0e-4
+  [tracers.co2_sif_eurasia_temperate.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021_transcom_tags.nc"
+  variable = "CO2_FLUX_EURASIA_TEMPERATE"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_sif_europe]
+  [tracers.co2_sif_europe.init]
+  kind = "uniform"
+  background = 1.0e-4
+  [tracers.co2_sif_europe.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021_transcom_tags.nc"
+  variable = "CO2_FLUX_EUROPE"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_sif_unassigned]
+  [tracers.co2_sif_unassigned.init]
+  kind = "uniform"
+  background = 1.0e-4
+  [tracers.co2_sif_unassigned.surface_flux]
+  kind = "cs_native"
+  file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021_transcom_tags.nc"
+  variable = "CO2_FLUX_UNASSIGNED"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"

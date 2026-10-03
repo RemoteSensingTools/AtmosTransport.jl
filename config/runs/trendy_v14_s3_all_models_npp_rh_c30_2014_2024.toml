@@ -1,0 +1,605 @@
+# TRENDYv14 S3, all 23 usable models; 46 tracers in one C30/L66 run.
+# NPP_CO2_FLUX = Ra-GPP (atmospheric uptake), RH_CO2_FLUX = Rh.
+# Subtract the 1300/10 ppm initial carriers to obtain component responses.
+# Matches the previous OCO-2 comparison window; TRENDYv14 ends in 2024.
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder = "$ATMOSTRANSPORT_DATA_ROOT/met/c30_l66"
+start_date = "2014-09-01"
+end_date = "2024-12-31"
+file_pattern = "era5_c30_transport_{YYYYMMDD}_float32.bin"
+
+[input.staging]
+enabled = true
+dir = "$TRENDY_RUN_ROOT/met_stage"
+lookahead_days = 3
+keep_behind_days = 0
+
+[run]
+air_mass_reset_mode = "preserve_tracer_mass"
+
+[advection]
+scheme = "ppm"
+
+[diffusion]
+kind = "tm5_dkg"
+surface_flux_boundary = true
+
+[convection]
+kind = "none"
+
+[tracers.co2_cable_pop_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_cable_pop_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CABLE-POP_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_cable_pop_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_cable_pop_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CABLE-POP_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_cardamom_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_cardamom_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CARDAMOM_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_cardamom_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_cardamom_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CARDAMOM_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_classic_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_classic_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CLASSIC_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_classic_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_classic_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CLASSIC_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_clm_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_clm_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CLM_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_clm_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_clm_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CLM_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_clm_fates_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_clm_fates_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CLM-FATES_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_clm_fates_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_clm_fates_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CLM-FATES_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_dlem_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_dlem_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_DLEM_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_dlem_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_dlem_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_DLEM_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_ed_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_ed_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ED_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_ed_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_ed_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ED_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_elm_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_elm_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ELM_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_elm_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_elm_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ELM_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_elm_fates_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_elm_fates_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ELM-FATES_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_elm_fates_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_elm_fates_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ELM-FATES_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_ibis_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_ibis_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_IBIS_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_ibis_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_ibis_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_IBIS_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_isam_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_isam_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ISAM_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_isam_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_isam_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ISAM_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_jsbach_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_jsbach_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_JSBACH_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_jsbach_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_jsbach_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_JSBACH_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_jules_es_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_jules_es_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_JULES-ES_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_jules_es_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_jules_es_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_JULES-ES_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_lpj_guess_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_lpj_guess_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_LPJ-GUESS_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_lpj_guess_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_lpj_guess_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_LPJ-GUESS_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_lpjml_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_lpjml_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_LPJml_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_lpjml_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_lpjml_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_LPJml_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_lpjwsl_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_lpjwsl_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_LPJwsl_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_lpjwsl_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_lpjwsl_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_LPJwsl_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_lpx_bern_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_lpx_bern_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_LPX-Bern_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_lpx_bern_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_lpx_bern_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_LPX-Bern_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_orchidee_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_orchidee_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ORCHIDEE_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_orchidee_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_orchidee_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ORCHIDEE_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_sdgvm_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_sdgvm_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_SDGVM_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_sdgvm_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_sdgvm_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_SDGVM_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_tem_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_tem_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_TEM_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_tem_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_tem_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_TEM_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_visit_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_visit_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_VISIT_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_visit_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_visit_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_VISIT_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_visit_ut_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_visit_ut_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_VISIT-UT_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_visit_ut_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_visit_ut_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_VISIT-UT_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_imaple_npp.init]
+kind = "uniform"
+background = 0.0013
+
+[tracers.co2_imaple_npp.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_iMAPLE_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "NPP_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[tracers.co2_imaple_rh.init]
+kind = "uniform"
+background = 1e-05
+
+[tracers.co2_imaple_rh.surface_flux]
+kind = "cs_native"
+file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_iMAPLE_npp_rh_daily_co2flux_c30_2014_2024.nc"
+variable = "RH_CO2_FLUX"
+molar_mass_kg_mol = 0.0440095
+time_varying = true
+temporal_scheme = "stepwise"
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 24
+path = "$TRENDY_RUN_ROOT/output/trendy_allmodels_c30_{YYYYMMDD}.nc"
+deflate_level = 1
+shuffle = true
+
+[output.fields]
+tracers = ["co2_cable_pop_npp", "co2_cable_pop_rh", "co2_cardamom_npp", "co2_cardamom_rh", "co2_classic_npp", "co2_classic_rh", "co2_clm_npp", "co2_clm_rh", "co2_clm_fates_npp", "co2_clm_fates_rh", "co2_dlem_npp", "co2_dlem_rh", "co2_ed_npp", "co2_ed_rh", "co2_elm_npp", "co2_elm_rh", "co2_elm_fates_npp", "co2_elm_fates_rh", "co2_ibis_npp", "co2_ibis_rh", "co2_isam_npp", "co2_isam_rh", "co2_jsbach_npp", "co2_jsbach_rh", "co2_jules_es_npp", "co2_jules_es_rh", "co2_lpj_guess_npp", "co2_lpj_guess_rh", "co2_lpjml_npp", "co2_lpjml_rh", "co2_lpjwsl_npp", "co2_lpjwsl_rh", "co2_lpx_bern_npp", "co2_lpx_bern_rh", "co2_orchidee_npp", "co2_orchidee_rh", "co2_sdgvm_npp", "co2_sdgvm_rh", "co2_tem_npp", "co2_tem_rh", "co2_visit_npp", "co2_visit_rh", "co2_visit_ut_npp", "co2_visit_ut_rh", "co2_imaple_npp", "co2_imaple_rh"]
+layers = "none"
+column_mean = true
+column_mass_per_area = false
+air_mass_layers = "none"
+air_mass = false
+air_mass_per_area = false
+column_air_mass_per_area = false

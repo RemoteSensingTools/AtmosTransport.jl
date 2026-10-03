@@ -1,0 +1,204 @@
+# TRENDYv14 S3 GPP/Ra/Rh/NEE over the full OCO-2 era on C30,
+# 2014-09-01 .. 2024-12-31. Met: spandey era5 C30/L66 format-4 archive
+# (2014-2025 complete, dry basis, DKG diffusion + PBL, no convection --
+# header-verified uniform). 12 tracers in one run; carriers sized for the
+# 10.3-yr window (GPP up to ~770 ppm drawdown -> 1300 ppm carrier).
+# Fluxes: prepare_trendy_s3_multiyear_c90.py --tag c30 with the C30 geometry
+# taken from a catrine C30 model-output file (authoritative native corners).
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[input]
+folder = "$ATMOSTRANSPORT_DATA_ROOT/met/c30_l66"
+start_date = "2014-09-01"
+end_date = "2024-12-31"
+file_pattern = "era5_c30_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_clm_gpp]
+  [tracers.co2_clm_gpp.init]
+  kind = "uniform"
+  background = 1.3e-3
+
+  [tracers.co2_clm_gpp.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy_c30/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c30_2014_2024.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_clm_ra]
+  [tracers.co2_clm_ra.init]
+  kind = "uniform"
+  background = 1.0e-5
+
+  [tracers.co2_clm_ra.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy_c30/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c30_2014_2024.nc"
+  variable = "RA_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_clm_rh]
+  [tracers.co2_clm_rh.init]
+  kind = "uniform"
+  background = 1.0e-5
+
+  [tracers.co2_clm_rh.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy_c30/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c30_2014_2024.nc"
+  variable = "RH_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_clm_nee]
+  [tracers.co2_clm_nee.init]
+  kind = "uniform"
+  background = 2.0e-4
+
+  [tracers.co2_clm_nee.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy_c30/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c30_2014_2024.nc"
+  variable = "NEE_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_jules_es_gpp]
+  [tracers.co2_jules_es_gpp.init]
+  kind = "uniform"
+  background = 1.3e-3
+
+  [tracers.co2_jules_es_gpp.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy_c30/TRENDYv14_S3_JULES-ES_gpp_ter_nee_daily_co2flux_c30_2014_2024.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_jules_es_ra]
+  [tracers.co2_jules_es_ra.init]
+  kind = "uniform"
+  background = 1.0e-5
+
+  [tracers.co2_jules_es_ra.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy_c30/TRENDYv14_S3_JULES-ES_gpp_ter_nee_daily_co2flux_c30_2014_2024.nc"
+  variable = "RA_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_jules_es_rh]
+  [tracers.co2_jules_es_rh.init]
+  kind = "uniform"
+  background = 1.0e-5
+
+  [tracers.co2_jules_es_rh.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy_c30/TRENDYv14_S3_JULES-ES_gpp_ter_nee_daily_co2flux_c30_2014_2024.nc"
+  variable = "RH_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_jules_es_nee]
+  [tracers.co2_jules_es_nee.init]
+  kind = "uniform"
+  background = 2.0e-4
+
+  [tracers.co2_jules_es_nee.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy_c30/TRENDYv14_S3_JULES-ES_gpp_ter_nee_daily_co2flux_c30_2014_2024.nc"
+  variable = "NEE_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_orchidee_gpp]
+  [tracers.co2_orchidee_gpp.init]
+  kind = "uniform"
+  background = 1.3e-3
+
+  [tracers.co2_orchidee_gpp.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy_c30/TRENDYv14_S3_ORCHIDEE_gpp_ter_nee_daily_co2flux_c30_2014_2024.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_orchidee_ra]
+  [tracers.co2_orchidee_ra.init]
+  kind = "uniform"
+  background = 1.0e-5
+
+  [tracers.co2_orchidee_ra.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy_c30/TRENDYv14_S3_ORCHIDEE_gpp_ter_nee_daily_co2flux_c30_2014_2024.nc"
+  variable = "RA_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_orchidee_rh]
+  [tracers.co2_orchidee_rh.init]
+  kind = "uniform"
+  background = 1.0e-5
+
+  [tracers.co2_orchidee_rh.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy_c30/TRENDYv14_S3_ORCHIDEE_gpp_ter_nee_daily_co2flux_c30_2014_2024.nc"
+  variable = "RH_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_orchidee_nee]
+  [tracers.co2_orchidee_nee.init]
+  kind = "uniform"
+  background = 2.0e-4
+
+  [tracers.co2_orchidee_nee.surface_flux]
+  kind = "cs_native"
+  file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy_c30/TRENDYv14_S3_ORCHIDEE_gpp_ter_nee_daily_co2flux_c30_2014_2024.nc"
+  variable = "NEE_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[diffusion]
+kind = "tm5_dkg"
+surface_flux_boundary = true
+
+[convection]
+kind = "none"
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 24
+path = "$ATMOSTRANSPORT_DATA_ROOT/output/trendy_oco2era_c30/trendy_oco2era_c30_{YYYYMMDD}.nc"
+deflate_level = 1
+shuffle = true
+
+[output.fields]
+tracers = ["co2_clm_gpp", "co2_clm_ra", "co2_clm_rh", "co2_clm_nee", "co2_jules_es_gpp", "co2_jules_es_ra", "co2_jules_es_rh", "co2_jules_es_nee", "co2_orchidee_gpp", "co2_orchidee_ra", "co2_orchidee_rh", "co2_orchidee_nee"]
+layers = "none"
+column_mean = true
+column_mass_per_area = false
+air_mass_layers = "none"
+air_mass = false
+air_mass_per_area = false
+column_air_mass_per_area = false

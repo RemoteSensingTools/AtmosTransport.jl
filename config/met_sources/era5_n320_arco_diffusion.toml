@@ -1,0 +1,21 @@
+# ===========================================================================
+# ERA5 N320 assembled from ARCO — surface PBL and exact TM5 diffusion, without
+# convection. This is the production source for transport binaries whose
+# convection forcing will be supplied later as a date-matched sidecar.
+# ===========================================================================
+
+[source]
+name        = "ERA5-N320"
+description = "ECMWF ERA5 native N320 via ARCO, with surface PBL and TM5 diffusion"
+institution = "ECMWF (data) / Google Research (ARCO mirror)"
+reference   = "https://github.com/google-research/arco-era5"
+
+[vertical]
+coefficients_file = "config/era5_L137_coefficients.toml"
+
+[preprocessing]
+level_orientation = "top_down"
+arco_surface_pressure = true
+include_surface       = true
+include_convection    = false
+include_tm5_diffusion = true

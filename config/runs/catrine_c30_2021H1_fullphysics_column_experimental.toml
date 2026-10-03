@@ -1,0 +1,89 @@
+# EXPERIMENTAL January--June 2021 C30 CATRINE runtime run.
+#
+# Advection/PBL are restricted from C90; convection is the legacy CATRINE
+# 1-degree, three-hour TM5 archive mapped to C30. Output contains only the
+# air-mass-weighted column mean for each of the four tracers (no 3-D layers,
+# tracer column masses, or air-mass fields).
+
+[input]
+folder       = "/temp2/catrine-runs/met/era5_c30_2021_fullphysics_experimental"
+start_date   = "2021-01-01"
+end_date     = "2021-06-30"
+file_pattern = "era5_c30_transport_{YYYYMMDD}_float32.bin"
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+  [tracers.co2_natural.surface_flux]
+  kind = "lmdz_co2"
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_fossil]
+  [tracers.co2_fossil.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.co2_fossil.surface_flux]
+  kind = "gridfed_fossil_co2"
+  time_index = 1
+
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+  [tracers.sf6.surface_flux]
+  kind = "edgar_sf6"
+  scale = 1.0116635
+
+[tracers.rn222]
+  [tracers.rn222.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.rn222.surface_flux]
+  kind = "zhang_rn222"
+  time_index = 1
+
+[diffusion]
+kind = "tm5_dkg"
+surface_flux_boundary = true
+
+[convection]
+kind = "tm5"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 66
+n_merge = 1
+
+[chemistry]
+kind = "decay"
+  [chemistry.half_lives_seconds]
+  rn222 = 330350.4
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 3
+path = "/temp2/catrine-runs/output/catrine_c30_2021H1_fullphysics_column/catrine_c30_2021H1_column_{YYYYMMDD}.nc"
+deflate_level = 1
+shuffle = true
+
+  [output.fields]
+  tracers = ["co2_natural", "co2_fossil", "sf6", "rn222"]
+  layers = "none"
+  column_mean = true
+  column_mass_per_area = false
+  air_mass_layers = "none"
+  air_mass = false
+  air_mass_per_area = false
+  column_air_mass_per_area = false

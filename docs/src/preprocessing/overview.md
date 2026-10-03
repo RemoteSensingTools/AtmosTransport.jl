@@ -142,6 +142,19 @@ target_ps_dry_pa      = 98726.0
 qv_global_climatology = 0.00247
 ```
 
+Native ERA5 can reuse the named L137 interface-selection presets:
+
+```toml
+[vertical]
+coefficients_file = "config/era5_L137_coefficients.toml"
+transform = "level_selection"
+preset = "ml137_66L"
+```
+
+The N320 reader still synthesizes all 137 native levels. The transform is
+applied on the target grid: layer mass and horizontal mass fluxes are summed
+over each group, while thermodynamic fields are pressure-mass weighted.
+
 For GEOS-native preprocessing, use `[source] toml = "config/met_sources/geosit.toml"`
 and `root_dir` instead of the spectral `[input]` block. That path reads a
 `[vertical]` table (`transform`, `threshold_pa`, `coefficients`); do not copy
