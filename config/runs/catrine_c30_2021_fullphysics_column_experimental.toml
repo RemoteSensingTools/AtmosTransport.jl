@@ -3,7 +3,7 @@
 # 1-degree, three-hour TM5 archive mapped to C30.
 
 [input]
-folder       = "/temp2/catrine-runs/met/era5_c30_2021_fullphysics_experimental"
+folder       = "/temp2/catrine-runs/met/era5_c30_2021_fullphysics_experimental_v3"   # v3: corrected TM5 convection level order
 start_date   = "2021-01-01"
 end_date     = "2021-12-31"
 file_pattern = "era5_c30_transport_{YYYYMMDD}_float32.bin"

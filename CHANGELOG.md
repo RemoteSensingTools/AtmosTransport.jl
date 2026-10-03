@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Fixes
+
+- `scripts/preprocessing/attach_catrine_tm5_convection_cs.jl` stored the
+  legacy 1-degree TM5 convection upside down. The CATRINE files keep ERA5 L137
+  surface first, and the script summed them through the binary's top-first
+  `merge_map` without reversing, so updraft entrainment landed near the model
+  top. The script now verifies the level order against ERA5 L137 coefficients,
+  the 1-degree grid, the date, and the three-hour slots (from
+  `timevalues_bounds`; the CF `time` variable is corrupt in the 2022-04-30 to
+  2023-12-31 files), and fails if the updraft entrainment's mean level lies in
+  the upper half of the column. Outputs carry attachment tag `..._v3`, the
+  source level order, and the code revision. Every binary set written by
+  earlier versions is upside down: the C90 L66 set for 2018-12 to 2019-12 and
+  the C30 full-physics sets for 2021 and Dec 2021 to 2022. Run configs and
+  driver scripts now point at new `_v3` folders. See
+  `docs/memos/2026-10-03_tm5_attach_level_order.md`.
+
 ### Runtime and output
 
 - New `[output.observations]` contract for sampling tracer profiles at

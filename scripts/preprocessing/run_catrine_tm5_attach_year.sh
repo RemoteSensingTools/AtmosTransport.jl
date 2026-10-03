@@ -6,10 +6,12 @@ jobs=${2:-4}
 threads=${3:-4}
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 julia_bin=${ATMOS_CATRINE_JULIA:-/home/cfranken/.juliaup/bin/julia}
-project=${ATMOS_CATRINE_PROJECT:-/tmp/AtmosTransportModel-era-c90}
+project=${ATMOS_CATRINE_PROJECT:-$repo}
 source_dir=${ATMOS_CATRINE_C30_SOURCE:-/home/cfranken/data/AtmosTransport/met/era5/c90_to_c30/transport_binary_v4_l66_f32_no_convection_experimental}
 conv_root=${ATMOS_CATRINE_CONVECTION_ROOT:-/home/cfranken/data/AtmosTransport/met/era5/1.0x1.0/raw/convection}
-output_dir=${ATMOS_CATRINE_C30_FULLPHYS:-/temp2/catrine-runs/met/era5_c30_2021_fullphysics_experimental}
+# v3: convection levels mapped surface-first -> top-first; the earlier
+# era5_c30_*_fullphysics_experimental sets store the profiles upside down.
+output_dir=${ATMOS_CATRINE_C30_FULLPHYS:-/temp2/catrine-runs/met/era5_c30_2021_fullphysics_experimental_v3}
 log_dir="$output_dir/_logs"
 mkdir -p "$output_dir" "$log_dir"
 
