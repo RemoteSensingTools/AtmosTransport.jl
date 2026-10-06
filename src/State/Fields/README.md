@@ -53,7 +53,12 @@ runs on the host and may refresh caches before an operator launch.
   VDIFF parity.
 - [`PrecomputedCSDkgField.jl`](PrecomputedCSDkgField.jl) — exact TM5
   dry-air interface exchange loaded from the binary `:dkg` payload;
-  the runtime half of `[diffusion] kind = "tm5_dkg"`.
+  the runtime half of `[diffusion] kind = "tm5_dkg"`. Defines
+  `AbstractCSDkgField`, the supertype the conservative `dkg` solver accepts.
+- [`GCHPNonlocalPBLField.jl`](GCHPNonlocalPBLField.jl) — GEOS-Chem's non-local
+  VDIFF PBL scheme (port of `vdiff_mod.F90`): per-window `dkg` from the
+  Holtslag-Boville and Richardson K profiles, plus the counter-gradient
+  emission profile; the runtime half of `[diffusion] kind = "geoschem_nonlocal_vdiff"`.
 - [`StepwiseField.jl`](StepwiseField.jl) — piecewise-constant-in-time
   field cache
 

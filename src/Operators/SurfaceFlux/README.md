@@ -40,7 +40,9 @@ the topology-specific kernels that inject mass into the surface layer.
 - [`PerTracerFluxMap.jl`](PerTracerFluxMap.jl) — tuple-backed source map
   keyed by tracer name
 - [`surface_flux_kernels.jl`](surface_flux_kernels.jl) — structured,
-  face-indexed, and cubed-sphere surface-application kernels
+  face-indexed, and cubed-sphere surface-application kernels; on the cube the
+  emitted mass is placed by `SurfaceLayerDeposit` or `ProfileDeposit` (GEOS-Chem
+  non-local VDIFF spreads fresh emissions over the PBL, see `emission_deposit`)
 - [`operators.jl`](operators.jl) — operator hierarchy, source-to-tracer
   lookup, state-level `apply!`, array-level `apply_surface_flux!`
 

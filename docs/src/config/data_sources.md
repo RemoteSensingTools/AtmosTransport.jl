@@ -187,11 +187,35 @@ pre-regridded CS equivalents) and the preprocessor embeds `PBLH`,
 
 **MERRA-2.** `MERRA2Settings` and the wind-derived CS writer are implemented.
 They read native 0.5° × 0.625° PS/QV/U/V fields, derive mass fluxes, and write
-CS transport binaries through the canonical preprocessing CLI; see
-`config/preprocessing/merra2_c180_dec2021_f32.toml`. MERRA-2 has no native
-MFXC/MFYC, so this is deliberately separate from `AbstractGEOSSettings`.
-The unified `OPeNDAPProtocol.execute!` downloader is still unavailable, so
-raw files must currently be staged separately with NASA Earthdata credentials.
+CS transport binaries through the canonical preprocessing CLI. MERRA-2 has no
+native MFXC/MFYC, so this is deliberately separate from `AbstractGEOSSettings`.
+Two archive layouts are supported (`[preprocessing] layout`):
+
+- `"nasa"` (default) — GES DISC `M2I3NVASM` / `M2T3NVASM` files under
+  `root_dir/{M2I3NVASM,M2T3NVASM}/YYYY/MM/`; mass fluxes only. See
+  `config/preprocessing/merra2_c180_dec2021_f32.toml`. The unified
+  `OPeNDAPProtocol.execute!` downloader is still unavailable, so these files
+  must be staged separately with NASA Earthdata credentials.
+- `"geoschem"` — the GEOS-Chem-processed files that GEOS-Chem and GCHP read,
+  `root_dir/YYYY/MM/MERRA2.YYYYMMDD.{I3,A3dyn,A3mstE,A1}.05x0625.nc4`,
+  publicly mirrored at `s3://gcgrid/GEOS_0.5x0.625/MERRA2/`
+  (`aws s3 sync --no-sign-request`). Same values as the GES DISC files, with
+  levels stored surface first. This layout can also write dry `cmfmc`/`dtrain`
+  (`include_convection`), GEOS-Chem's convective cloud base from A3mstC DQRCU
+  (`include_convective_cloud_base`), the A1 PBL surface fields
+  (`include_surface`), and the VDIFF fields plus the latent heat flux
+  (`include_vdiff_fields`). See `config/met_sources/merra2_geoschem.toml` and
+  `config/preprocessing/merra2_geoschem_c90_l72_f32.toml`; run with
+  `[convection] kind = "cmfmc", cloud_base = "dqrcu"` and
+  `[diffusion] kind = "geoschem_nonlocal_vdiff"` for GEOS-Chem's physics.
+
+`[numerics] dt_met_seconds = 3600` splits every 3-hour MERRA-2 block into three
+hourly windows (endpoint mass, PS, QV and T linear in time, 3-hour mean winds),
+so the hourly A1 boundary-layer fields are used as archived; `10800` writes one
+window per block with A1 averaged over it.
+
+Neither layout carries DELP, so the level order of each day's files is
+detected from the inst3 QV profile (moist end = surface).
 
 ## Try the runtime without external data
 

@@ -51,8 +51,17 @@ struct NoConvectionSpec    <: AbstractConvectionSpec end
 # `clamp` opts the explicit GCHP CMFMC scheme into the positivity clamp +
 # whole-column rescale (stable at few sub-steps for strong convection, still
 # conservative). Default false = the pure conservative explicit scheme.
-struct CMFMCConvectionSpec <: AbstractConvectionSpec
-    clamp :: Bool
+# `cloud_base = "dqrcu"` takes GEOS-Chem's convective cloud base from the binary.
+struct CMFMCConvectionSpec{CB <: AbstractCloudBase} <: AbstractConvectionSpec
+    clamp      :: Bool
+    cloud_base :: CB
+end
+
+function _cloud_base_rule(section)
+    raw = lowercase(String(get(section, "cloud_base", "cmfmc")))
+    raw == "cmfmc" && return CMFMCEdgeCloudBase()
+    raw == "dqrcu" && return ArchivedCloudBase()
+    throw(ArgumentError("Unknown [convection] cloud_base: $(repr(raw)). Supported: cmfmc | dqrcu"))
 end
 
 # Configuration scalars are independent of tracer precision. In particular,
@@ -126,9 +135,12 @@ at execution time. The legacy fallback uses the full column without aggregation.
 """
 function convection_spec(section)
     kind = _parse_convection_kind(section)
+    kind !== :cmfmc && haskey(section, "cloud_base") && throw(ArgumentError(
+        "[convection] cloud_base applies to kind = \"cmfmc\" only; got kind = $(repr(String(section["kind"])))"))
     kind === :none  && return NoConvectionSpec()
     kind === :cmfmc &&
-        return CMFMCConvectionSpec(_spec_bool(section, "clamp", false, "[convection]"))
+        return CMFMCConvectionSpec(_spec_bool(section, "clamp", false, "[convection]"),
+                                   _cloud_base_rule(section))
     knobs = _collab_lu_knobs(section)
     kind === :tm5 && return TM5ConvectionSpec(knobs...)
     return CMFMCMatrixConvectionSpec(knobs...)  # :cmfmc_matrix
@@ -140,7 +152,7 @@ end
 # DIFFERENT operators, so they dispatch on their concrete types.
 materialize(::NoConvectionSpec, ::AbstractRuntimeRecipeStyle)    = NoConvection()
 materialize(s::CMFMCConvectionSpec, ::AbstractRuntimeRecipeStyle) =
-    CMFMCConvection(; clamp = s.clamp)
+    CMFMCConvection(; clamp = s.clamp, cloud_base = s.cloud_base)
 materialize(s::TM5ConvectionSpec, ::AbstractRuntimeRecipeStyle) =
     TM5Convection(; tile_workspace_gib = s.tile_workspace_gib, use_collab_lu = s.use_collab_lu,
                     lmax_conv = s.lmax_conv, n_merge = s.n_merge)
@@ -343,6 +355,8 @@ end
 struct TM5DkgDiffusionSpec <: AbstractDiffusionSpec
     surface_flux_boundary :: Bool
 end
+# GEOS-Chem's non-local VDIFF always adds emissions before one full solve.
+struct GCHPNonlocalVdiffDiffusionSpec <: AbstractDiffusionSpec end
 
 function _parse_diffusion_kind(section)
     raw = lowercase(String(get(section, "kind", "none")))
@@ -351,10 +365,11 @@ function _parse_diffusion_kind(section)
     raw == "tm5_beljaars_viterbo_local_kz" && return :pbl
     raw == "geoschem_holtslag_boville_vdiff" && return :vdiff
     raw == "tm5_dkg" && return :tm5_dkg
+    raw == "geoschem_nonlocal_vdiff" && return :nonlocal_vdiff
     throw(ArgumentError(
         "Unknown [diffusion] kind: $(repr(raw)). Supported: none | constant | " *
         "tm5_beljaars_viterbo_local_kz | geoschem_holtslag_boville_vdiff | " *
-        "tm5_dkg"))
+        "geoschem_nonlocal_vdiff | tm5_dkg"))
 end
 
 """
@@ -388,6 +403,12 @@ function diffusion_spec(section)
             "`kind = \"tm5_dkg\"`."))
     kind = _parse_diffusion_kind(section)
     kind === :none && return NoDiffusionSpec()
+    if kind === :nonlocal_vdiff
+        _spec_bool(section, "surface_flux_boundary", true, "[diffusion]") || throw(ArgumentError(
+            "[diffusion] kind = \"geoschem_nonlocal_vdiff\" adds emissions before one full " *
+            "diffusion solve (GEOS-Chem VDIFF); remove `surface_flux_boundary = false`."))
+        return GCHPNonlocalVdiffDiffusionSpec()
+    end
     sfb = _spec_bool(section, "surface_flux_boundary", false, "[diffusion]")
     kind === :constant &&
         return ConstantDiffusionSpec(_spec_float64(section, "value", 1.0, "[diffusion]"), sfb)
@@ -475,6 +496,21 @@ function materialize(s::TM5DkgDiffusionSpec, ::CubedSphereRuntimeRecipeStyle,
         surface_flux_coupling = _diffusion_surface_coupling(
             s.surface_flux_boundary, CubedSphereRuntimeRecipeStyle()))
 end
+function materialize(::GCHPNonlocalVdiffDiffusionSpec, ::CubedSphereRuntimeRecipeStyle,
+                     ::Type{FT}, context) where {FT}
+    _runtime_has_gchp_nonlocal_vdiff(context) || throw(ArgumentError(
+        "[diffusion] kind = \"geoschem_nonlocal_vdiff\" requires pblh/ustar/pbl_hflux/t2m, " *
+        "pbl_eflux and vdiff_u/vdiff_v/vdiff_t/vdiff_qv sections in the cubed-sphere transport " *
+        "binary (MERRA-2 GEOS-Chem archive with include_vdiff_fields = true)."))
+    Nc, _, Nz = _pbl_cache_shape(context)
+    return ImplicitVerticalDiffusion(; kz_field = GCHPNonlocalPBLField(Nc, Nz, FT),
+                                     surface_flux_coupling = DiffusiveSurfaceFluxBoundary())
+end
+materialize(::GCHPNonlocalVdiffDiffusionSpec, ::AbstractRuntimeRecipeStyle, ::Type{FT},
+            _context) where {FT} =
+    throw(ArgumentError(
+        "[diffusion] kind = \"geoschem_nonlocal_vdiff\" is implemented for cubed-sphere runtime binaries."))
+
 materialize(::TM5DkgDiffusionSpec, ::AbstractRuntimeRecipeStyle, ::Type{FT},
             _context) where {FT} =
     throw(ArgumentError(
@@ -488,5 +524,6 @@ export AbstractAdvectionSpec, UpwindAdvectionSpec, SlopesAdvectionSpec,
 export AbstractChemistrySpec, NoChemistrySpec, DecayChemistrySpec
 export AbstractDiffusionSpec, NoDiffusionSpec, ConstantDiffusionSpec,
        WindowPBLKzDiffusionSpec, HoltslagBovilleVdiffDiffusionSpec,
+       GCHPNonlocalVdiffDiffusionSpec,
        TM5DkgDiffusionSpec
 export convection_spec, advection_spec, chemistry_spec, diffusion_spec, materialize

@@ -249,7 +249,8 @@ export NoSurfaceFlux, SurfaceFluxOperator, SurfaceFluxSource,
        AbstractFluxTemporalScheme, StepwiseFlux, LinearInterpFlux, ConservativeMeanFlux,
        flux_temporal_scheme, PerTracerFluxMap, flux_for
 export AbstractConvection, NoConvection, CMFMCConvection, TM5Convection,
-       CMFMCMatrixConvection, CMFMCWorkspace
+       CMFMCMatrixConvection, CMFMCWorkspace,
+       AbstractCloudBase, CMFMCEdgeCloudBase, ArchivedCloudBase
 export ConvectionForcing, apply_convection!, has_convection_forcing
 export AbstractMetDriver, TransportWindow, current_time
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry

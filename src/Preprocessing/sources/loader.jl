@@ -131,11 +131,18 @@ function _build_met_settings(ctor::Type{MERRA2Settings}, cfg::AbstractDict,
     coefs = String(get(vertical_cfg, "coefficients_file",
                        "config/geos_L72_coefficients.toml"))
     winds_collection      = Symbol(get(pre_cfg, "winds_collection", "tavg3"))
-    for key in ("include_surface", "include_convection", "include_vdiff_fields",
-                "include_tm5_diffusion", "arco_surface_pressure")
+    archive               = merra2_archive(String(get(pre_cfg, "layout", "nasa")))
+    for key in ("include_tm5_diffusion", "arco_surface_pressure")
         haskey(pre_cfg, key) && throw(ArgumentError(
             "MERRA-2 does not implement [preprocessing].$(key); remove the setting"))
     end
-    return ctor(; root_dir,
-                  coefficients_file = coefs, winds_collection, kwargs...)
+    include_surface      = _config_bool(pre_cfg, "include_surface", false, "[preprocessing].include_surface")
+    include_convection   = _config_bool(pre_cfg, "include_convection", false, "[preprocessing].include_convection")
+    include_vdiff_fields = _config_bool(pre_cfg, "include_vdiff_fields", false, "[preprocessing].include_vdiff_fields")
+    include_convective_cloud_base = _config_bool(pre_cfg, "include_convective_cloud_base", false,
+                                                 "[preprocessing].include_convective_cloud_base")
+    return validate_merra2_settings(ctor(; root_dir,
+                  coefficients_file = coefs, winds_collection, archive,
+                  include_surface, include_convection, include_vdiff_fields,
+                  include_convective_cloud_base, kwargs...))
 end

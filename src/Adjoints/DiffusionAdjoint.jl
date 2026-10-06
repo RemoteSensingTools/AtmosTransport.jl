@@ -196,6 +196,11 @@ end
 
 @inline _validate_cs_diffusion_kz_for_adjoint(_op) = nothing
 
+_validate_cs_diffusion_kz_for_adjoint(::ImplicitVerticalDiffusion{FT, <:GCHPNonlocalPBLField}) where FT =
+    throw(ArgumentError(
+        "GEOS-Chem non-local VDIFF has no adjoint yet: the footprint tape neither refreshes " *
+        "the field nor transposes its counter-gradient emission profile."))
+
 function _validate_cs_diffusion_kz_for_adjoint(
     op::ImplicitVerticalDiffusion{FT, <:LocalHoltslagBovilleKzField}) where FT
     @inbounds for p in 1:6
@@ -243,7 +248,7 @@ function _apply_cs_diffusion_adjoint!(lambda_panels::NTuple{6, A},
                                       workspace, dt, meteo,
                                       mesh::CubedSphereMesh) where {
                                           FT, A <: AbstractArray{FT, 3},
-                                          KzF <: PrecomputedCSDkgField{FT}}
+                                          KzF <: AbstractCSDkgField{FT}}
     w_scratch, _ = _require_cs_diffusion_workspace(workspace)
     update_field!(op.kz_field, _adjoint_diffusion_time(FT, meteo))
     Hp, Nc = mesh.Hp, mesh.Nc

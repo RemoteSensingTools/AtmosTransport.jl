@@ -20,6 +20,7 @@ Concrete types:
 - `DerivedKzField{FT, ...}` — Beljaars-Viterbo Kz from surface fields.
 - `WindowPBLKzField{FT, ...}` — cubed-sphere per-window Beljaars-Viterbo Kz.
 - `LocalHoltslagBovilleKzField{FT, ...}` — cubed-sphere GEOS VDIFF local-Kz cache.
+- `GCHPNonlocalPBLField{FT, ...}` — cubed-sphere GEOS-Chem non-local PBL exchange.
 - `StepwiseField{FT, N, A, B, W}` — piecewise-constant in time at any rank.
 
 `PBLPhysicsParameters{FT}` carries the physical constants for
@@ -33,7 +34,8 @@ using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 export AbstractTimeVaryingField, AbstractCubedSphereField
 export ConstantField, ProfileKzField, PreComputedKzField, CubedSphereField
 export DerivedKzField, WindowPBLKzField, LocalHoltslagBovilleKzField
-export PrecomputedCSDkgField
+export AbstractCSDkgField, PrecomputedCSDkgField
+export GCHPNonlocalPBLField, GCHPVdiffParameters, refresh_gchp_nonlocal_pbl!
 export PBLPhysicsParameters, StepwiseField
 export field_value, update_field!, integral_between, panel_field
 export refresh_pbl_kz_cache!, refresh_local_holtslag_boville_kz_cache!,
@@ -119,6 +121,7 @@ include("DerivedKzField.jl")
 include("WindowPBLKzField.jl")
 include("LocalHoltslagBovilleKzField.jl")
 include("PrecomputedCSDkgField.jl")
+include("GCHPNonlocalPBLField.jl")
 include("StepwiseField.jl")
 
 end # module Fields

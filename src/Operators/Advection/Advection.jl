@@ -40,7 +40,7 @@ using ..Diffusion: AbstractDiffusion, DiffusionWorkspace, NoDiffusion,
 # `NoSurfaceFlux`'s `apply_surface_flux!` method returns `nothing`, keeping
 # the default path bit-exact with the no-op behavior.
 using ..SurfaceFlux: AbstractSurfaceFluxOperator, NoSurfaceFlux,
-                     apply_surface_flux!
+                     apply_surface_flux!, emission_deposit
 using ...State: CellState, CubedSphereState,
     AbstractStructuredFaceFluxState, AbstractFaceFluxState,
     StructuredFaceFluxState, AbstractUnstructuredFaceFluxState,

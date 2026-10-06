@@ -258,6 +258,10 @@ function _validate_transport_layout!(header::AbstractDict)
     surface = map(s -> s in sections, _PBL_SURFACE_PAYLOAD_SECTIONS)
     all(surface) || !any(surface) || throw(ArgumentError(
         "Transport-binary contract violation — surface payload sections must be complete"))
+    (:pbl_eflux in sections && !all(surface)) && throw(ArgumentError(
+        "Transport-binary contract violation — pbl_eflux requires the PBL surface sections"))
+    (:cmfmc_cloud_base in sections && !(:cmfmc in sections)) && throw(ArgumentError(
+        "Transport-binary contract violation — cmfmc_cloud_base requires cmfmc"))
     vdiff = map(s -> s in sections, _GCHP_VDIFF_PAYLOAD_SECTIONS)
     all(vdiff) || !any(vdiff) || throw(ArgumentError(
         "Transport-binary contract violation — GCHP VDIFF payload sections must be complete"))

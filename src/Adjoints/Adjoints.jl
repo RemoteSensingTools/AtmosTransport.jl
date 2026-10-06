@@ -40,7 +40,7 @@ using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
     fv_tp_2d_cs!, _sweep_z!, _cs_flux_x_interior, _cs_flux_y_interior
 using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
     apply_vertical_diffusion_vmr!, _dkg_transfer_ratios
-using ..Operators.Convection: CMFMCConvection, CMFMCWorkspace,
+using ..Operators.Convection: CMFMCConvection, _require_edge_cloud_base, CMFMCWorkspace,
     NoConvection, TM5Convection, TM5Workspace,
     CMFMCMatrixConvection, CMFMCMatrixWorkspace,
     invalidate_cmfmc_cache!, invalidate_cmfmc_matrix_cache!,
@@ -49,7 +49,7 @@ using ..Operators.Convection: CMFMCConvection, CMFMCWorkspace,
     _tm5_identity_pivots,
     _launch_cmfmc_matrix_derivation!
 using ..State: AbstractCubedSphereField,
-    LocalHoltslagBovilleKzField, PrecomputedCSDkgField,
+    LocalHoltslagBovilleKzField, AbstractCSDkgField, PrecomputedCSDkgField, GCHPNonlocalPBLField,
     field_value, panel_field, update_field!
 using ..MetDrivers: ConvectionForcing, current_time
 

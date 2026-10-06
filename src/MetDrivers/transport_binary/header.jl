@@ -4,6 +4,13 @@ const _PBL_SURFACE_PAYLOAD_SECTIONS = (:pblh, :ustar, :pbl_hflux, :t2m)
 const _PBL_SURFACE_FIELD_NAMES = (:pblh, :ustar, :hflux, :t2m)
 const _GCHP_VDIFF_PAYLOAD_SECTIONS = (:vdiff_u, :vdiff_v, :vdiff_t, :vdiff_qv)
 const _GCHP_VDIFF_FIELD_NAMES = (:u, :v, :t, :qv)
+# Optional 2-D cubed-sphere sections: surface latent heat flux for the GCHP
+# non-local PBL scheme, and the convective cloud-base layer (top-down index).
+const _CS_OPTIONAL_2D_SECTIONS = (:pbl_eflux, :cmfmc_cloud_base)
+
+# Sections stored as one (Nc, Nc) field per panel.
+@inline _is_cs_2d_section(section::Symbol) =
+    section === :ps || _is_pbl_surface_payload_section(section) || section in _CS_OPTIONAL_2D_SECTIONS
 const TRANSPORT_BINARY_FORMAT_VERSION = 4
 
 @inline _is_pbl_surface_payload_section(section::Symbol) =

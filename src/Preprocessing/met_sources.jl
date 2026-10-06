@@ -236,3 +236,13 @@ Whether this source can populate `RawWindow.vdiff` with layer-center fields
 needed by the GCHP Holtslag-Boville vertical-diffusion data contract.
 """
 has_vdiff_fields(::AbstractMetSettings) = false
+
+"""
+    has_pbl_eflux(settings) -> Bool
+    has_cmfmc_cloud_base(settings) -> Bool
+
+Whether this source writes the surface latent heat flux (GCHP non-local PBL
+scheme) or the convective cloud-base layer (GCHP cloud convection).
+"""
+has_pbl_eflux(::AbstractMetSettings) = false
+has_cmfmc_cloud_base(::AbstractMetSettings) = false

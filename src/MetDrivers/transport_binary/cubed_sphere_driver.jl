@@ -151,7 +151,7 @@ function load_transport_window(
     has_cmfmc_fwd = raw.cmfmc !== nothing
     has_tm5_fwd   = raw.tm5_fields !== nothing
     convection = if has_cmfmc_fwd || has_tm5_fwd
-        ConvectionForcing(raw.cmfmc, raw.dtrain, raw.tm5_fields)
+        ConvectionForcing(raw.cmfmc, raw.dtrain, raw.tm5_fields, raw.cmfmc_cloud_base)
     else
         nothing
     end

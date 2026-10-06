@@ -74,7 +74,7 @@ using FastGaussQuadrature: gausslegendre
 # Re-export parent module types we need
 import ..expand_data_path
 # Source settings and binary readers extend the same public capability queries.
-import ..MetDrivers: has_surface, has_vdiff_fields
+import ..MetDrivers: has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base
 using ..Architectures: CPU
 using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                HybridSigmaPressure, PanelConnectivity,
@@ -289,7 +289,7 @@ include("transport_binary/merra2_latlon_regrid.jl")
 # Met source abstraction
 export AbstractMetSettings, RawWindow
 export read_window!, source_grid, windows_per_day
-export has_convection, has_surface, has_vdiff_fields
+export has_convection, has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base
 export open_day, close_day!, allocate_raw_window
 
 # GEOS native NetCDF reader
@@ -325,7 +325,11 @@ export process_era5_n320_to_cs_day
 # Native MERRA-2 reader + wind-derived → CS writer (GEOS-Chem CO₂ path).
 export MERRA2Settings, MERRA2DayHandles
 export open_merra2_day, close_merra2_day!, merra2_path, merra2_stream_code
-export read_merra2_window_fields, read_merra2_next_day_endpoint
+export read_merra2_window_fields, read_merra2_next_day_endpoint, read_merra2_physics_window
+export MERRA2Archive, NASAArchive, GEOSChemArchive, merra2_archive
+export MERRA2LevelOrder, TopDown, SurfaceFirst, detect_merra2_level_order
+export validate_merra2_settings, merra2_window_physics!,
+       allocate_merra2_window_physics, convective_cloud_base!
 export MERRA2ToC180Pipeline, allocate_merra2_to_c180_pipeline,
        process_merra2_window!, process_merra2_to_cs_day
 

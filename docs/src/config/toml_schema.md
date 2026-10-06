@@ -265,7 +265,12 @@ ppm_order = 7                   # cubed-sphere LinRoodPPM only; ∈ {5, 7}.
 kind  = "constant"              # "none" | "constant" |
                                 # "tm5_beljaars_viterbo_local_kz" |
                                 # "geoschem_holtslag_boville_vdiff" (CS-only;
-                                #   requires include_gchp_vdiff=true binary) |
+                                #   local Kz; requires include_gchp_vdiff=true binary) |
+                                # "geoschem_nonlocal_vdiff" (CS-only; GEOS-Chem's
+                                #   non-local PBL scheme incl. counter-gradient
+                                #   transport of fresh emissions; needs VDIFF +
+                                #   :pbl_eflux, e.g. the MERRA-2 GEOS-Chem archive;
+                                #   always S(dt)->V(dt)) |
                                 # "tm5_dkg" (CS-only; exact TM5 dry-air
                                 #   interface exchange — requires a
                                 #   binary built with include_tm5_diffusion=true)
@@ -278,6 +283,9 @@ kind = "cmfmc"                  # "none" | "cmfmc" | "cmfmc_matrix" | "tm5"
                                 # cmfmc_matrix = TM5 LU solver on GEOS CMFMC
                                 # rates; tm5 = TM5 entrainment (:entu/:detu/
                                 # :entd/:detd payload)
+cloud_base = "cmfmc"            # cmfmc only: "cmfmc" = lowest layer with updraft
+                                # inflow; "dqrcu" = GEOS-Chem's cloud base from the
+                                # binary's :cmfmc_cloud_base (CS-only)
 
 # Collaborative-LU knobs (cmfmc_matrix and tm5). use_collab_lu is REQUIRED for
 # lmax_conv / n_merge to take effect — setting them without it is a hard error.

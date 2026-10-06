@@ -30,9 +30,7 @@ function _cs_section_elements(h::TransportBinaryHeader{CubedSphereBinaryGeometry
         return np * Nc * (Nc + 1) * Nz
     elseif section === :cm
         return np * Nc * Nc * (Nz + 1)
-    elseif section === :ps
-        return np * Nc * Nc
-    elseif _is_pbl_surface_payload_section(section)
+    elseif _is_cs_2d_section(section)
         return np * Nc * Nc
     elseif _is_gchp_vdiff_payload_section(section)
         return np * Nc * Nc * Nz
@@ -108,6 +106,8 @@ function load_window!(reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinar
 
     dkg_present = :dkg in h.payload_sections
     panels_dkg = dkg_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
+    optional_2d = Dict(s => ntuple(_ -> Array{FT}(undef, Nc, Nc), np)
+                       for s in _CS_OPTIONAL_2D_SECTIONS if s in h.payload_sections)
 
     # TM5 convection fields — all four must be present together or
     # all four absent. The runtime `_validate_convection_window!`
@@ -240,6 +240,11 @@ function load_window!(reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinar
                 copyto!(panels_dkg[p], 1, reader.data, o + 1, n)
                 o += n
             end
+        elseif haskey(optional_2d, section)
+            for p in 1:np
+                copyto!(optional_2d[section][p], 1, reader.data, o + 1, Nc * Nc)
+                o += Nc * Nc
+            end
         else
             # Skip unknown sections
             n = _cs_section_elements(h, section)
@@ -255,7 +260,8 @@ function load_window!(reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinar
          entd = panels_entd, detd = panels_detd) :
         nothing
     surface = surface_present ?
-        PBLSurfaceForcing(panels_pblh, panels_ustar, panels_hflux, panels_t2m) :
+        PBLSurfaceForcing(panels_pblh, panels_ustar, panels_hflux, panels_t2m,
+                          get(optional_2d, :pbl_eflux, nothing)) :
         nothing
     vdiff = vdiff_present ?
         (u = panels_vdiff_u, v = panels_vdiff_v,
@@ -274,6 +280,7 @@ function load_window!(reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinar
         tm5_fields = tm5_fields,
         vdiff = vdiff,
         dkg = dkg_present ? panels_dkg : nothing,
+        cmfmc_cloud_base = get(optional_2d, :cmfmc_cloud_base, nothing),
     )
 end
 

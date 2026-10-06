@@ -343,6 +343,7 @@ end
     _copy_storage!(dest.ustar, src.ustar)
     _copy_storage!(dest.hflux, src.hflux)
     _copy_storage!(dest.t2m, src.t2m)
+    _copy_optional_storage!(dest.eflux, src.eflux, :eflux)
     return dest
 end
 
@@ -576,6 +577,15 @@ function _refresh_pbl_kz_for_window!(field::LocalHoltslagBovilleKzField,
     return nothing
 end
 
+function _refresh_pbl_kz_for_window!(field::GCHPNonlocalPBLField,
+                                     sim::DrivenSimulation)
+    mesh = sim.model.grid.horizontal
+    refresh_gchp_nonlocal_pbl!(field, sim.window.surface, sim.window.vdiff, sim.window.air_mass,
+                               mesh.cell_areas, sim.model.grid.vertical;
+                               halo_width = mesh.Hp)
+    return nothing
+end
+
 function _refresh_pbl_kz_for_window!(field::PrecomputedCSDkgField,
                                      sim::DrivenSimulation)
     refresh_precomputed_cs_dkg_cache!(field, sim.window.dkg)
@@ -583,7 +593,7 @@ function _refresh_pbl_kz_for_window!(field::PrecomputedCSDkgField,
 end
 
 @inline function _fill_dz_for_diffusion!(layer_thickness, _ps, _ak, _bk,
-        ::ImplicitVerticalDiffusion{FT, <:PrecomputedCSDkgField}, _window) where FT
+        ::ImplicitVerticalDiffusion{FT, <:AbstractCSDkgField}, _window) where FT
     return layer_thickness
 end
 

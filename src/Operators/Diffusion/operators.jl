@@ -306,7 +306,7 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
                                    workspace::DiffusionWorkspace, dt,
                                    meteo = nothing;
                                    halo_width::Integer) where {FT, A <: AbstractArray{FT, 3},
-                                                                KzF <: PrecomputedCSDkgField{FT}}
+                                                                KzF <: AbstractCSDkgField{FT}}
     w_scratch = workspace.factors
     update_field!(op.kz_field, _diffusion_time(FT, meteo))
     Hp = Int(halo_width)
@@ -334,7 +334,7 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
                                    workspace::DiffusionWorkspace, dt,
                                    meteo = nothing;
                                    halo_width::Integer) where {FT, A <: AbstractArray{FT, 4},
-                                                                KzF <: PrecomputedCSDkgField{FT}}
+                                                                KzF <: AbstractCSDkgField{FT}}
     w_scratch = workspace.factors
     reference_scratch = workspace.references
     length(w_scratch) == 6 && length(reference_scratch) == 6 ||
@@ -568,7 +568,7 @@ function apply_vertical_diffusion_vmr!(rm::NTuple{6, A}, air_mass::NTuple{6},
                                        workspace::DiffusionWorkspace, dt, meteo=nothing;
                                        halo_width::Integer) where {
                                            FT, A <: AbstractArray{FT, 3},
-                                           KzF <: PrecomputedCSDkgField{FT}}
+                                           KzF <: AbstractCSDkgField{FT}}
     _apply_cs_dkg_mass!(rm, air_mass, op, workspace, dt, meteo, halo_width)
 end
 
@@ -577,7 +577,7 @@ function apply_vertical_diffusion_vmr!(rm::NTuple{6, A}, air_mass::NTuple{6},
                                        workspace::DiffusionWorkspace, dt, meteo=nothing;
                                        halo_width::Integer) where {
                                            FT, A <: AbstractArray{FT, 4},
-                                           KzF <: PrecomputedCSDkgField{FT}}
+                                           KzF <: AbstractCSDkgField{FT}}
     _apply_cs_dkg_mass!(rm, air_mass, op, workspace, dt, meteo, halo_width)
 end
 

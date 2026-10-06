@@ -304,6 +304,7 @@ end
     @Const(cmfmc),               # (Nc, Nc, Nz+1) at interfaces
     @Const(dtrain),              # (Nc, Nc, Nz) at centers
     @Const(cell_areas),          # (Nc, Nc)
+    cloud_base,                  # (Nc, Nc) archived cloud-base layer, or nothing
     qc_scratch,                  # (Nc+2Hp, Nc+2Hp, Nz) — workspace
     Nz::Int,
     Nt::Int,
@@ -321,17 +322,7 @@ end
     cell_area = FT(cell_areas[i, j])
 
     @inbounds for t_idx in 1:Nt
-        # Cloud base = largest k with `|cmfmc[k+1]| > tiny` (lowest
-        # altitude with non-zero updraft inflow). See LL kernel above
-        # for the GCHP convention reference (convection_mod.F90:625).
-        cldbase_k = 0
-        for k in Nz:-1:1
-            cmfmc_bot_k = cmfmc[i, j, k + 1]
-            if abs(cmfmc_bot_k) > tiny
-                cldbase_k = k
-                break
-            end
-        end
+        cldbase_k = _cmfmc_cloud_base(cloud_base, cmfmc, i, j, Nz, tiny)
 
         if cldbase_k == 0
             continue
@@ -457,6 +448,27 @@ end
 end
 
 # =========================================================================
+# Cloud base (top-down layer index; 0 = no updraft in the column).
+# =========================================================================
+
+# Without an archived base: the lowest layer with updraft inflow through its
+# bottom edge, i.e. the largest k with |cmfmc[k+1]| > tiny (GCHP scans
+# `DO K = 1, NLAY` from the surface, convection_mod.F90:625).
+@inline function _cmfmc_cloud_base(::Nothing, cmfmc, i, j, Nz, tiny)
+    for k in Nz:-1:1
+        abs(cmfmc[i, j, k + 1]) > tiny && return k
+    end
+    return 0
+end
+
+# GEOS-Chem's cloud base from the met forcing (lowest layer with DQRCU > 0),
+# used whenever the column carries any updraft flux.
+@inline function _cmfmc_cloud_base(cloud_base::AbstractMatrix, cmfmc, i, j, Nz, tiny)
+    _cmfmc_cloud_base(nothing, cmfmc, i, j, Nz, tiny) == 0 && return 0
+    return clamp(unsafe_trunc(Int, cloud_base[i, j]), 1, Nz)
+end
+
+# =========================================================================
 # Main kernel — one thread per (i, j) column.
 # =========================================================================
 
@@ -480,22 +492,8 @@ end
 
     @inbounds for t_idx in 1:Nt
 
-        # ── Pass 0: cloud-base detection ──
-        # Cloud base = lowest altitude with non-zero updraft inflow.
-        # In our TOA-first orientation (k=1=TOA, k=Nz=surface) that is
-        # the LARGEST k with `|cmfmc[k+1]| > tiny`. Scan k=Nz → 1
-        # (surface upward in altitude) and take the first hit.
-        # This mirrors GCHP `convection_mod.F90:625`, where the
-        # surface-up scan `DO K = 1, NLAY` selects the lowest level
-        # with non-zero forcing as the cloud base.
-        cldbase_k = 0
-        for k in Nz:-1:1
-            cmfmc_bot_k = cmfmc[i, j, k + 1]
-            if abs(cmfmc_bot_k) > tiny
-                cldbase_k = k
-                break
-            end
-        end
+        # ── Pass 0: cloud-base detection (see `_cmfmc_cloud_base`) ──
+        cldbase_k = _cmfmc_cloud_base(nothing, cmfmc, i, j, Nz, tiny)
 
         if cldbase_k == 0
             # No active convection in this column — nothing to do.

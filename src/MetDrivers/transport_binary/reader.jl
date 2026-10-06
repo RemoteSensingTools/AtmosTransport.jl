@@ -84,6 +84,8 @@ has_surface(r::TransportBinaryReader) =
     all(s in r.header.payload_sections for s in _PBL_SURFACE_PAYLOAD_SECTIONS)
 has_vdiff_fields(r::TransportBinaryReader) =
     all(s in r.header.payload_sections for s in _GCHP_VDIFF_PAYLOAD_SECTIONS)
+has_pbl_eflux(r::TransportBinaryReader) = :pbl_eflux in r.header.payload_sections
+has_cmfmc_cloud_base(r::TransportBinaryReader) = :cmfmc_cloud_base in r.header.payload_sections
 
 # ---------------------------------------------------------------------------
 # Capability summary + `inspect_binary`

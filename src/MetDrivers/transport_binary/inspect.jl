@@ -9,6 +9,9 @@ _supports_pbl_diffusion(
     reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
 ) = has_surface(reader)
 
+_supports_gchp_nonlocal_vdiff(reader::TransportBinaryReader) =
+    _supports_gchp_vdiff(reader) && has_pbl_eflux(reader)
+
 _supports_gchp_vdiff(::TransportBinaryReader) = false
 _supports_gchp_vdiff(
     reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
@@ -26,6 +29,9 @@ requirements are selected through the reader's geometry type. Fields:
 - `cmfmc_convection :: Bool` — cmfmc present (CS only; LL/RG returns false).
 - `pbl_diffusion :: Bool` — complete runnable PBL forcing (CS only).
 - `gchp_vdiff :: Bool` — complete runnable GCHP VDIFF forcing (CS only).
+- `gchp_nonlocal_vdiff :: Bool` — GCHP VDIFF forcing plus latent heat flux
+  `pbl_eflux`, as GEOS-Chem's non-local PBL scheme needs (CS only).
+- `cmfmc_cloud_base :: Bool` — convective cloud base present.
 - `surface_pressure :: Bool` — ps present.
 - `humidity :: Bool` — qv_start/qv_end present.
 - `mass_basis :: Symbol` — `:dry` or `:moist`.
@@ -44,6 +50,8 @@ function binary_capabilities(reader::TransportBinaryReader)
         cmfmc_convection = has_cmfmc(reader),
         pbl_diffusion    = _supports_pbl_diffusion(reader),
         gchp_vdiff       = _supports_gchp_vdiff(reader),
+        gchp_nonlocal_vdiff = _supports_gchp_nonlocal_vdiff(reader),
+        cmfmc_cloud_base = has_cmfmc_cloud_base(reader),
         surface_pressure = :ps in hdr.payload_sections,
         humidity         = has_qv_endpoints(reader),
         mass_basis       = hdr.mass_basis,
@@ -91,7 +99,9 @@ function _print_capability_rows(io::IO, reader)
     _print_cap(io, caps.replay_gate,      "replay gate",      "(dam, dbm, dcm, dm)")
     _print_cap(io, caps.tm5_convection,   "TM5 convection",   "(entu, detu, entd, detd)")
     _print_cap(io, caps.cmfmc_convection, "CMFMC convection", "(cmfmc)")
+    _print_cap(io, caps.cmfmc_cloud_base, "conv. cloud base", "(cmfmc_cloud_base)")
     _print_cap(io, caps.pbl_diffusion,    "PBL diffusion",    "(pblh, ustar, pbl_hflux, t2m)")
+    _print_cap(io, caps.gchp_nonlocal_vdiff, "GCHP non-local VDIFF", "(+ vdiff_u/v/t/qv, pbl_eflux)")
     _print_cap(io, caps.surface_pressure, "surface pressure", "(ps)")
     _print_cap(io, caps.humidity,         "humidity",         "(qv_start, qv_end)")
     println(io, "  mass_basis       = ", caps.mass_basis)

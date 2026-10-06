@@ -16,10 +16,10 @@
 # ---------------------------------------------------------------------------
 
 """
-    ConvectionForcing{CM, DT, TM}
+    ConvectionForcing{CM, DT, TM, CB}
 
 Container for one window (or one substep) of convective mass-flux
-forcing. Three optional payload slots:
+forcing. Four optional payload slots:
 
 - `cmfmc` — cloud updraft mass flux at level interfaces. Supported
   layouts are structured `(Nx, Ny, Nz+1)`, face-indexed
@@ -34,6 +34,10 @@ forcing. Three optional payload slots:
 - `tm5_fields :: Union{Nothing, NamedTuple{(:entu, :detu, :entd, :detd)}}` —
   four-field entrainment/detrainment arrays at layer centers
   `(Nx, Ny, Nz)`. TM5 / `TM5Convection` consumer.
+- `cloud_base` — convective cloud-base layer (top-down index stored as a
+  float), 2-D like the surface fields (`NTuple{6}` of `(Nc, Nc)` on the cube),
+  or `nothing`. GEOS-Chem takes it from DQRCU; `CMFMCConvection` otherwise
+  derives it from the lowest non-zero CMFMC edge. Requires `cmfmc`.
 
 # Invariants (enforced by the inner constructor)
 
@@ -67,28 +71,33 @@ the initial value of `TransportModel.convection_forcing`;
 - [`allocate_convection_forcing_like`](@ref) — sim-construction
   allocation.
 """
-struct ConvectionForcing{CM, DT, TM}
+struct ConvectionForcing{CM, DT, TM, CB}
     cmfmc      :: CM
     dtrain     :: DT
     tm5_fields :: TM
+    cloud_base :: CB
 
-    function ConvectionForcing{CM, DT, TM}(cmfmc::CM, dtrain::DT, tm5_fields::TM) where {CM, DT, TM}
+    function ConvectionForcing{CM, DT, TM, CB}(cmfmc::CM, dtrain::DT, tm5_fields::TM,
+                                               cloud_base::CB) where {CM, DT, TM, CB}
+        cloud_base !== nothing && cmfmc === nothing && throw(ArgumentError(
+            "ConvectionForcing: cloud_base is populated but cmfmc is nothing."))
         if dtrain !== nothing && cmfmc === nothing
             throw(ArgumentError(
                 "ConvectionForcing: dtrain is populated but cmfmc is nothing. " *
                 "DTRAIN requires CMFMC (DTRAIN detrains from the updraft mass flux). " *
                 "If you meant a Tiedtke-style fallback, set dtrain = nothing too."))
         end
-        return new{CM, DT, TM}(cmfmc, dtrain, tm5_fields)
+        return new{CM, DT, TM, CB}(cmfmc, dtrain, tm5_fields, cloud_base)
     end
 end
 
 # Defining a validating inner constructor suppresses Julia's
 # auto-generated outer constructors, so we provide them explicitly.
-# - 3-arg outer: forwards to the validating inner.
+# - 3/4-arg outer: forwards to the validating inner (no cloud base by default).
 # - 0-arg default: all-nothing placeholder.
-ConvectionForcing(cmfmc::CM, dtrain::DT, tm5_fields::TM) where {CM, DT, TM} =
-    ConvectionForcing{CM, DT, TM}(cmfmc, dtrain, tm5_fields)
+ConvectionForcing(cmfmc::CM, dtrain::DT, tm5_fields::TM,
+                  cloud_base::CB = nothing) where {CM, DT, TM, CB} =
+    ConvectionForcing{CM, DT, TM, CB}(cmfmc, dtrain, tm5_fields, cloud_base)
 ConvectionForcing() = ConvectionForcing(nothing, nothing, nothing)
 
 # =========================================================================
@@ -113,15 +122,16 @@ has_convection_forcing(forcing::ConvectionForcing) =
     forcing.tm5_fields !== nothing
 
 """
-    _cap(f::ConvectionForcing) -> NTuple{3, Bool}
+    _cap(f::ConvectionForcing) -> NTuple{4, Bool}
 
-Capability tuple `(has_cmfmc, has_dtrain, has_tm5_fields)`. Used by
+Capability tuple `(has_cmfmc, has_dtrain, has_tm5_fields, has_cloud_base)`. Used by
 `_check_capability_match` to enforce capability invariance —
 `copy_convection_forcing!` requires exact capability agreement between
 src and dst.
 """
 @inline _cap(f::ConvectionForcing) =
-    (f.cmfmc !== nothing, f.dtrain !== nothing, f.tm5_fields !== nothing)
+    (f.cmfmc !== nothing, f.dtrain !== nothing, f.tm5_fields !== nothing,
+     f.cloud_base !== nothing)
 
 function _check_capability_match(dst::ConvectionForcing, src::ConvectionForcing)
     _cap(dst) == _cap(src) ||
@@ -169,6 +179,7 @@ function copy_convection_forcing!(dst::ConvectionForcing, src::ConvectionForcing
                                       getfield(src.tm5_fields, name))
         end
     end
+    src.cloud_base === nothing || _copy_convection_payload!(dst.cloud_base, src.cloud_base)
     return dst
 end
 
@@ -229,7 +240,9 @@ function allocate_convection_forcing_like(src::ConvectionForcing, backend_hint)
         entd = _allocate_convection_payload_like(src.tm5_fields.entd, adaptor),
         detd = _allocate_convection_payload_like(src.tm5_fields.detd, adaptor),
     )
-    return ConvectionForcing(cmfmc, dtrain, tm5_fields)
+    cloud_base = src.cloud_base === nothing ? nothing :
+        _allocate_convection_payload_like(src.cloud_base, adaptor)
+    return ConvectionForcing(cmfmc, dtrain, tm5_fields, cloud_base)
 end
 
 # =========================================================================
@@ -245,7 +258,7 @@ function Adapt.adapt_structure(to, f::ConvectionForcing)
         entd = Adapt.adapt(to, f.tm5_fields.entd),
         detd = Adapt.adapt(to, f.tm5_fields.detd),
     )
-    return ConvectionForcing(cmfmc, dtrain, tm5_fields)
+    return ConvectionForcing(cmfmc, dtrain, tm5_fields, Adapt.adapt(to, f.cloud_base))
 end
 
 export ConvectionForcing, has_convection_forcing

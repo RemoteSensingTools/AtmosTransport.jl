@@ -30,7 +30,9 @@ module SurfaceFlux
 
 using Adapt
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
-using ...State: CellState, CubedSphereState, get_tracer, tracer_index, eachtracer
+using ...State: CellState, CubedSphereState, get_tracer, tracer_index, eachtracer,
+                GCHPNonlocalPBLField
+using ..Diffusion: ImplicitVerticalDiffusion
 using ...MetDrivers: current_time
 import ..AbstractOperator, ..apply!
 
@@ -40,6 +42,7 @@ export flux_temporal_scheme
 export PerTracerFluxMap, flux_for
 export AbstractSurfaceFluxOperator, NoSurfaceFlux, SurfaceFluxOperator
 export apply_surface_flux!, emitting_tracer_indices
+export SurfaceLayerDeposit, ProfileDeposit, emission_deposit
 
 include("sources.jl")
 include("PerTracerFluxMap.jl")

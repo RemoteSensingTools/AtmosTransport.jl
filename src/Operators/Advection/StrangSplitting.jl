@@ -1146,7 +1146,8 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
             (active_rm, active_m) -> begin
                 apply_surface_flux!(active_rm, emissions_op, workspace, dt, meteo, grid;
                                     tracer_names = state.tracer_names,
-                                    halo_width = state.halo_width)
+                                    halo_width = state.halo_width,
+                                    deposit = emission_deposit(diffusion_op))
                 SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
                     active_rm, active_m, diffusion_op, diffusion_workspace, dt, meteo;
                     halo_width = state.halo_width)
@@ -1195,7 +1196,8 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
             () -> begin
                 apply_surface_flux!(rm_tracer, emissions_op, workspace, dt, meteo, grid;
                                     tracer_names = (tracer_name,),
-                                    halo_width = state.halo_width)
+                                    halo_width = state.halo_width,
+                                    deposit = emission_deposit(diffusion_op))
                 SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
                     rm_tracer, m, diffusion_op, diffusion_workspace, dt, meteo;
                     halo_width = state.halo_width)

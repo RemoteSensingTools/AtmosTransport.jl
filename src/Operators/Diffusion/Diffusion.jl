@@ -27,7 +27,7 @@ using Adapt
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 using ...State: CellState, CubedSphereState,
                 AbstractTimeVaryingField, AbstractCubedSphereField,
-                PrecomputedCSDkgField,
+                AbstractCSDkgField, PrecomputedCSDkgField,
                 field_value, update_field!, panel_field, eachtracer, ntracers
 using ...MetDrivers: current_time
 import ..apply!

@@ -603,6 +603,7 @@ function _require_supported_cs_convection_variant(op::CMFMCConvection)
     op.clamp && throw(ArgumentError(
         "CS adjoint footprints currently require `CMFMCConvection(clamp = false)`: " *
         "the positivity clamp is nonlinear and its branch decisions are not taped."))
+    _require_edge_cloud_base(op.cloud_base, "CS adjoint footprints (the adjoint kernel derives the cloud base from CMFMC)")
     return nothing
 end
 

@@ -60,7 +60,7 @@ flowchart LR
 | **Spectral ERA5** | ✅ unified driver | ✅ unified driver | ✅ unified driver |
 | **GEOS-IT native** | — | — | ✅ unified driver (production) |
 | **GEOS-FP native** | — | — | ✅ unified driver |
-| **MERRA-2 native LL winds** | — | — | 🟡 wind-derived CS writer; raw files staged externally |
+| **MERRA-2 native LL winds** | — | — | 🟡 wind-derived CS writer; convection/PBL fields from the GEOS-Chem archive; files staged externally |
 | **LL transport binary → CS** (regrid passthrough) | — | — | 🟡 `regrid_ll_binary_to_cs` (functional; not yet on the unified driver) |
 
 The source-target implementations share the typed preprocessing contract and
