@@ -1,0 +1,137 @@
+# CATRINE protocol run, ERA5 C90 L66, 2021-12-01 to 2023-12-31.
+#
+# CATRINE D7.1 protocol (catrine/protocol/CATRINE-D7.1-V1.pdf): one-month
+# spin-up from 2021-12-01, target period 2022-01-01 to 2023-12-31, tracers CO2,
+# fossil CO2, SF6, Rn-222, 3-hourly instantaneous 3-D dry mole fractions.
+#   CO2      CAMS (OCO-2 land) disaggregated fluxes, 3-hourly, stepwise; LSCE IC.
+#   fossil   GridFEDv2024.0 monthly TOTAL, null state on 2022-01-01 (zero
+#            emissions in the spin-up), built by catrine_protocol_cs_fluxes.jl.
+#   SF6      EDGARv8.0 2022 map, yearly totals from NOAA growth (2021 for the
+#            spin-up, 2022, 2023); LSCE IC.
+#   Rn-222   Zhang et al. (2021) monthly; null state on 2021-12-01; 3.8235-day decay.
+# The December-only config adds co2_fossil_from_dec2021 (GridFED from
+# 2021-12-01, as in the GEOS-Chem standard) for the GEOS-Chem comparison.
+# Met: ERA5 N320 -> C90 L66 (48,600 cells, below the protocol's 51,000 minimum)
+# with legacy 1-degree TM5 convection attached in the corrected (v3) order.
+
+[input]
+folder       = "~/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour_v3"
+start_date   = "2021-12-01"
+end_date     = "2023-12-31"
+file_pattern = "era5_n320_transport_{YYYYMMDD}_float32.bin"
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+# Float64: global tracer budgets close to machine precision. In Float32 the
+# tracers lose 1.4e-8 of their background mass per hour to rounding (December
+# 2021 no-flux control: -1.03e-5 per month, about -0.1 ppm CO2 over two years);
+# a Float64 no-flux control conserves to 2e-16. Costs about 2x runtime.
+float_type = "Float64"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+  [tracers.co2_natural.surface_flux]
+  kind = "lmdz_co2"
+  files = [
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202112_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202201_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202202_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202203_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202204_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202205_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202206_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202207_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202208_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202209_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202210_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202211_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202212_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202301_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202302_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202303_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202304_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202305_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202306_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202307_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202308_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202309_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202310_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202311_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202312_FT24r2_ra_sfc_3h_co2_flux.nc",
+  ]
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_fossil]
+  [tracers.co2_fossil.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.co2_fossil.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/catrine_protocol/fluxes_c90/catrine_fossil_co2_c90.nc"
+  variable = "fossil_co2"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+  [tracers.sf6.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/catrine_protocol/fluxes_c90/catrine_sf6_c90.nc"
+  variable = "sf6"
+  molar_mass_kg_mol = 0.146055
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.rn222]
+  [tracers.rn222.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.rn222.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/catrine_protocol/fluxes_c90/catrine_rn222_c90.nc"
+  variable = "rn222"
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[diffusion]
+kind = "tm5_dkg"
+surface_flux_boundary = true
+
+[convection]
+kind = "tm5"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 66
+n_merge = 1
+
+[chemistry]
+kind = "decay"
+  [chemistry.half_lives_seconds]
+  rn222 = 330350.4
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 3          # protocol: 3-hourly instantaneous
+path = "/temp1/cfranken/catrine_protocol/output/full/catrine_c90_{YYYYMMDD}.nc"
+
+  [output.fields]
+  layers = "full"                    # 3-D dry mole fractions
+  column_mean = true
+  column_mass_per_area = false
+  air_mass = false
+  air_mass_layers = "full"
+  air_mass_per_area = true           # dry pressure grid: p_half from cumulative g * m / area
+  column_air_mass_per_area = true    # dry surface pressure

@@ -1,0 +1,81 @@
+# CATRINE C90 benchmark companion run, ERA5 C90 L66, 2021-12-01 to 2023-12-31.
+#
+# One tracer, co2_fossil_from_dec2021: GridFED fossil CO2 emitting from
+# 2021-12-01 without the protocol's 2022-01-01 reset, as in the GEOS-Chem
+# CATRINE C90 run (its FossilCO2 burden is 3.30e12 kg on 2022-01-01).
+# Everything else (met, physics, numerics) matches catrine_c90_era5_v3_protocol.toml.
+#
+# Protocol run description:
+#
+# CATRINE D7.1 protocol (catrine/protocol/CATRINE-D7.1-V1.pdf): one-month
+# spin-up from 2021-12-01, target period 2022-01-01 to 2023-12-31, tracers CO2,
+# fossil CO2, SF6, Rn-222, 3-hourly instantaneous 3-D dry mole fractions.
+#   CO2      CAMS (OCO-2 land) disaggregated fluxes, 3-hourly, stepwise; LSCE IC.
+#   fossil   GridFEDv2024.0 monthly TOTAL, null state on 2022-01-01 (zero
+#            emissions in the spin-up), built by catrine_protocol_cs_fluxes.jl.
+#   SF6      EDGARv8.0 2022 map, yearly totals from NOAA growth (2021 for the
+#            spin-up, 2022, 2023); LSCE IC.
+#   Rn-222   Zhang et al. (2021) monthly; null state on 2021-12-01; 3.8235-day decay.
+# Met: ERA5 N320 -> C90 L66 (48,600 cells, below the protocol's 51,000 minimum)
+# with legacy 1-degree TM5 convection attached in the corrected (v3) order.
+
+[input]
+folder       = "~/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour_v3"
+start_date   = "2021-12-01"
+end_date     = "2023-12-31"
+file_pattern = "era5_n320_transport_{YYYYMMDD}_float32.bin"
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+# Float64: global tracer budgets close to machine precision. In Float32 the
+# tracers lose 1.4e-8 of their background mass per hour to rounding (December
+# 2021 no-flux control: -1.03e-5 per month, about -0.1 ppm CO2 over two years);
+# a Float64 no-flux control conserves to 2e-16. Costs about 2x runtime.
+float_type = "Float64"
+
+[advection]
+scheme = "ppm"
+
+[tracers.co2_fossil_from_dec2021]
+  [tracers.co2_fossil_from_dec2021.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.co2_fossil_from_dec2021.surface_flux]
+  kind = "gridfed_fossil_co2"
+  files = [
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2022.short.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2023.short.nc",
+  ]
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[diffusion]
+kind = "tm5_dkg"
+surface_flux_boundary = true
+
+[convection]
+kind = "tm5"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 66
+n_merge = 1
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 3          # protocol: 3-hourly instantaneous
+path = "/temp1/cfranken/catrine_protocol/output/full_fossil_dec2021/catrine_c90_fossil_dec2021_{YYYYMMDD}.nc"
+
+  [output.fields]
+  layers = "full"                    # 3-D dry mole fractions
+  column_mean = true
+  column_mass_per_area = false
+  air_mass = false
+  air_mass_layers = "full"
+  air_mass_per_area = true           # dry pressure grid: p_half from cumulative g * m / area
+  column_air_mass_per_area = true    # dry surface pressure
