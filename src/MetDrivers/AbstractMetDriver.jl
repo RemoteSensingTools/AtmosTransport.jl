@@ -99,8 +99,8 @@ and passes the resulting scalar to each `update_field!(f, t)`.
 
 # Canonical usage
 
-- **Production**: `meteo = sim::DrivenSimulation`; returns `sim.time`,
-  advanced by `sim.time += sim.Δt` at the end of each `step!(sim)`.
+- **Production**: `meteo = sim::DrivenSimulation`; returns `sim.time`
+  (Float64), set from the window and step counters after each `step!(sim)`.
   See `src/Models/DrivenSimulation.jl`.
 - **Unit tests without a sim**: `meteo = nothing`; returns `0.0`.
 """

@@ -64,7 +64,7 @@ using KernelAbstractions: @kernel, @index, @Const, @localmem, @synchronize,
 using ...State: CellState, CubedSphereState
 using ...Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cell_areas_by_latitude
 using ...MetDrivers: ConvectionForcing
-using ...Architectures: _kahan_add
+using ...Architectures: _kahan_add, _neumaier_sum, _ledger_residual
 import ..apply!
 import ..AbstractConvection             # global root from src/Operators/AbstractOperators.jl
 

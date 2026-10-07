@@ -231,8 +231,8 @@ This is the function `strang_split_mt!` calls at the palindrome
 center. The face-indexed reduced-Gaussian path also
 uses it at its H → V → D → V → H center slot.
 
-`meteo` is threaded through to `update_field!(op.kz_field, t)` as
-`t = FT(current_time(meteo))` (or `zero(FT)` if `meteo === nothing`).
+`meteo` is threaded through to `update_field!(op.kz_field, t)` as the Float64
+clock `t = current_time(meteo)` (`0.0` if `meteo === nothing`).
 `air_mass` is mandatory because the solver conserves tracer mass, not the
 geometric integral of mixing ratio.
 
@@ -276,10 +276,6 @@ apply_vertical_diffusion_vmr!(q_raw::AbstractArray{<:Any, 2},
                               ::NoDiffusion, workspace, dt,
                               meteo = nothing) = nothing
 
-@inline function _diffusion_time(::Type{FT}, meteo) where FT
-    return meteo === nothing ? zero(FT) : FT(current_time(meteo))
-end
-
 @inline function _check_diffusion_workspace_shape(dz_scratch, w_scratch,
                                                   expected_shape, shape_label)
     size(dz_scratch) == size(w_scratch) ||
@@ -308,7 +304,7 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
                                    halo_width::Integer) where {FT, A <: AbstractArray{FT, 3},
                                                                 KzF <: AbstractCSDkgField{FT}}
     w_scratch = workspace.factors
-    update_field!(op.kz_field, _diffusion_time(FT, meteo))
+    update_field!(op.kz_field, current_time(meteo))
     Hp = Int(halo_width)
     @inbounds for p in 1:6
         panel_q = q_raw[p]
@@ -340,7 +336,7 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
     length(w_scratch) == 6 && length(reference_scratch) == 6 ||
         throw(DimensionMismatch(
             "cubed-sphere dkg workspace must provide 6 factor and reference panels"))
-    update_field!(op.kz_field, _diffusion_time(FT, meteo))
+    update_field!(op.kz_field, current_time(meteo))
     Hp = Int(halo_width)
     @inbounds for p in 1:6
         panel_q = q_raw[p]
@@ -381,7 +377,7 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
         throw(DimensionMismatch(
             "cubed-sphere diffusion workspace must provide 6 factor and geometry panels"))
 
-    update_field!(op.kz_field, _diffusion_time(FT, meteo))
+    update_field!(op.kz_field, current_time(meteo))
 
     Hp = Int(halo_width)
     @inbounds for p in 1:6
@@ -425,7 +421,7 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
         length(reference_scratch) == 6 || throw(DimensionMismatch(
             "cubed-sphere diffusion workspace must provide 6 factor, geometry, and reference panels"))
 
-    update_field!(op.kz_field, _diffusion_time(FT, meteo))
+    update_field!(op.kz_field, current_time(meteo))
 
     Hp = Int(halo_width)
     @inbounds for p in 1:6
@@ -597,7 +593,7 @@ function _apply_cs_dkg_mass!(rm::NTuple{6}, air_mass::NTuple{6}, op,
         size(workspace.factors[p]) == (Nc, Nj, Nz) ||
             throw(DimensionMismatch("Dkg factor panel $p must have shape $((Nc, Nj, Nz))"))
     end
-    update_field!(op.kz_field, _diffusion_time(FT, meteo))
+    update_field!(op.kz_field, current_time(meteo))
     for p in 1:6
         Nc, Ny = size(rm[p], 1) - 2Hp, size(rm[p], 2) - 2Hp
         Nz, Nt = size(rm[p], 3), size(rm[p], 4)
@@ -675,7 +671,7 @@ function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 4},
     size(air_mass) == (Nx, Ny, Nz) || throw(DimensionMismatch(
         "LL mass-flux diffusion: air_mass shape $(size(air_mass)) does not " *
         "match q_raw spatial shape $((Nx, Ny, Nz))"))
-    update_field!(op.kz_field, _diffusion_time(FT, meteo))
+    update_field!(op.kz_field, current_time(meteo))
     backend = get_backend(q_raw)
     kernel = _vertical_diffusion_kernel_mass_flux!(backend, (8, 8))
     kernel(q_raw, air_mass, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz, Nt;
@@ -697,7 +693,7 @@ function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 3},
     size(air_mass) == (ncells, Nz) || throw(DimensionMismatch(
         "RG mass-flux diffusion: air_mass shape $(size(air_mass)) does not " *
         "match q_raw spatial shape $((ncells, Nz))"))
-    update_field!(op.kz_field, _diffusion_time(FT, meteo))
+    update_field!(op.kz_field, current_time(meteo))
     backend = get_backend(q_raw)
     kernel = _vertical_diffusion_face_kernel_mass_flux!(backend, 256)
     kernel(q_raw, air_mass, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz, Nt;
@@ -719,7 +715,7 @@ function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 2},
     size(air_mass) == (ncells, Nz) || throw(DimensionMismatch(
         "RG mass-flux diffusion: air_mass shape $(size(air_mass)) does not " *
         "match q_raw shape $((ncells, Nz))"))
-    update_field!(op.kz_field, _diffusion_time(FT, meteo))
+    update_field!(op.kz_field, current_time(meteo))
     backend = get_backend(q_raw)
     kernel = _vertical_diffusion_face_single_kernel_mass_flux!(backend, 256)
     kernel(q_raw, air_mass, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz;

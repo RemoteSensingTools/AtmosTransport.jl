@@ -26,21 +26,20 @@
 using KernelAbstractions: @kernel, @index, @Const
 
 """
-    _exp_decay_kernel!(tracers_raw, indices, rates, dt, Nt_op)
+    _exp_decay_kernel!(tracers_raw, indices, decrements, Nt_op)
 
-Apply exponential decay `c *= exp(-rate * dt)` in-place to a packed tracer
-buffer. The kernel does NOT allocate; all inputs are read-only except
-`tracers_raw`.
+Apply exponential decay in place to a packed tracer buffer as
+`c += c · d` with the precomputed decrement `d = expm1(-rate · dt)`
+(see [`decay_decrement`](@ref)). Allocation-free; only `tracers_raw` is written.
 """
 @kernel function _exp_decay_kernel!(tracers_raw,
                                      @Const(indices),
-                                     @Const(rates),
-                                     dt,
+                                     @Const(decrements),
                                      Nt_op)
     I = @index(Global, Cartesian)
     @inbounds for n in Int32(1):Nt_op
         t_idx = indices[n]
-        rate  = rates[n]
-        tracers_raw[I, t_idx] *= exp(-rate * dt)
+        c = tracers_raw[I, t_idx]
+        tracers_raw[I, t_idx] = muladd(c, decrements[n], c)
     end
 end

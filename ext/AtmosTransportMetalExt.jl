@@ -21,6 +21,6 @@ function AtmosTransport.Architectures._reclaim_backend_pool!(::MtlArray)
     return nothing
 end
 
-AtmosTransport.Output._snapshot_accumulator_type(::MetalBackend) = Float32
+AtmosTransport.Architectures._total_accumulator_type(::MetalBackend) = Float32
 
 end # module AtmosTransportMetalExt

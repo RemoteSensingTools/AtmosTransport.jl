@@ -194,20 +194,21 @@ mixing_ratio(state::CellState, name::Symbol) =
     get_tracer(state, name) ./ state.air_mass
 
 """
-    total_mass(state::CellState, name::Symbol) -> scalar
+    total_mass(state::CellState, name::Symbol) -> Float64
 
-Sum the named tracer's conservative model storage across all cells and levels.
+Sum the named tracer's conservative model storage across all cells and levels
+(in Float64, whatever the storage precision).
 For dry VMR tracers this is `sum(χ_dry × dry_air_mass)`, not physical kg
 species unless an explicit molecular-weight conversion is applied.
 """
-total_mass(state::CellState, name::Symbol) = sum(get_tracer(state, name))
+total_mass(state::CellState, name::Symbol) = _compensated_total(get_tracer(state, name))
 
 """
-    total_air_mass(state::CellState) -> scalar
+    total_air_mass(state::CellState) -> Float64
 
-Sum of air mass across all cells and levels.
+Sum of air mass across all cells and levels (in Float64).
 """
-total_air_mass(state::CellState) = sum(state.air_mass)
+total_air_mass(state::CellState) = _compensated_total(state.air_mass)
 
 """
     tracer_names(state::CellState) -> NTuple{Nt, Symbol}

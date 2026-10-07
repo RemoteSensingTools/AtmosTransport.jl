@@ -143,11 +143,17 @@ function _tm5_solve_column_vector!(rm_col, m_col,
                       cell_area = FT(cell_area),
                       f = f_buf, amu = amu_buf, amd = amd_buf)
     _tm5_factorize!(conv1_buf, pivots_buf, Nz, icllfs; icltop_eff = icltop_eff)
+    # Same column mass ledger as the forward operator, so the replayed states
+    # are the forward run's (the ledger is rounding-level; the transpose below
+    # is the adjoint of the exact solve). A vector is a one-tracer column.
+    lo = max(icltop_eff, 1)
+    before = _tm5_column_sum(rm_col, lo, Nz, 1)
     if icllfs > Nz && _tm5_identity_pivots(pivots_buf, Nz, icltop_eff)
         _tm5_solve_vector_bidiagonal!(rm_col, conv1_buf, Nz; icltop_eff)
     else
         _tm5_solve_vector!(rm_col, conv1_buf, pivots_buf, Nz; icltop_eff)
     end
+    _tm5_restore_column_mass!(rm_col, lo, Nz, 1, before)
     return nothing
 end
 

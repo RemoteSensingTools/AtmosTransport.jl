@@ -14,6 +14,7 @@ Provides:
 module State
 
 using Adapt
+using ..Architectures: _compensated_total
 using ..Grids: AbstractHorizontalMesh, AbstractStructuredMesh, CubedSphereMesh,
     StructuredFluxTopology, FaceIndexedFluxTopology,
     flux_topology, ncells, nfaces, nx, ny

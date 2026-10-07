@@ -47,7 +47,9 @@ function _hash_mesh!(io::IO, m::ReducedGaussianMesh)
     return io
 end
 
-const _REGRIDDER_CACHE_VERSION = 2
+# v3: cubed-sphere corners in Float64 for every mesh precision; v2 caches
+# could hold weights from Float32 corners under a precision-free key.
+const _REGRIDDER_CACHE_VERSION = 3
 
 function _regridder_cache_key(src, dst; normalize::Bool)
     io = IOBuffer()

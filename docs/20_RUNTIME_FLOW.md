@@ -62,8 +62,8 @@ else
     step!(sim.model, sim.Δt; meteo = sim)
 end
 
-sim.time += sim.Δt
 sim.iteration += 1
+sim.time = _clock_time(sim)     # Float64, from window and step counters
 
 if _uses_binary_transport_schedule(sim) &&
    sim.iteration == sim.current_window_end_iteration

@@ -75,7 +75,8 @@ mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, PT}
     window_dt             :: FT
     steps_per_window      :: Int
     steps_per_window_schedule :: Vector{Int}
-    time                  :: FT
+    time                  :: Float64    # model clock [s]; Float64 for any FT
+    start_time            :: Float64    # clock at the start of `start_window`
     iteration             :: Int
     start_window          :: Int
     current_window_index  :: Int
@@ -903,7 +904,8 @@ function DrivenSimulation(model::TransportModel,
         FT(window_dt(driver)),
         steps_current,
         step_schedule,
-        FT(start_time),
+        Float64(start_time),
+        Float64(start_time),
         0,
         Int(start_window),
         Int(start_window),
@@ -952,12 +954,13 @@ end
 current_qv(sim::DrivenSimulation) = sim.qv_buffer
 
 """
-    current_time(sim::DrivenSimulation) -> FT
+    current_time(sim::DrivenSimulation) -> Float64
 
 Simulation time [s] at the start of the next step. Returns
-`sim.time`, which is initialized to `FT(start_time)` at sim construction
-(seconds since the RUN start for multi-binary runs)
-and advanced by `sim.time += sim.Δt` at the end of each `step!(sim)`.
+`sim.time` (Float64), which is initialized to `start_time` at sim construction
+(seconds since the RUN start for multi-binary runs) and recomputed from the
+window and step counters at the end of each `step!(sim)`, so window ends fall
+exactly on multiples of `window_dt`.
 
 `sim` is threaded through operators via the `meteo` kwarg:
 
@@ -973,6 +976,13 @@ Meteorological drivers are stateless and deliberately do not implement
 `current_time`; operators receive the simulation clock, not `sim.driver`.
 """
 MetDrivers.current_time(sim::DrivenSimulation) = sim.time
+
+# The clock follows the counters instead of accumulating steps: a Float32
+# clock adding 3600/7 s steps is 3 h off after a year, and even a Float64 sum
+# misses window ends by an ulp.
+_clock_time(sim::DrivenSimulation) = sim.start_time + Float64(sim.window_dt) *
+    ((sim.current_window_index - sim.start_window) +
+     (sim.iteration - sim.current_window_start_iteration) / sim.steps_per_window)
 
 # Diagnostic override for convection-cadence sensitivity studies. Setting
 # ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS=1 forces convection + chemistry to run every
@@ -1001,8 +1011,8 @@ function step!(sim::DrivenSimulation)
     else
         step!(sim.model, sim.Δt; meteo = sim)
     end
-    sim.time += sim.Δt
     sim.iteration += 1
+    sim.time = _clock_time(sim)
     if _uses_binary_transport_schedule(sim) &&
        sim.iteration == sim.current_window_end_iteration
         _maybe_reset_to_window_endpoint!(sim)

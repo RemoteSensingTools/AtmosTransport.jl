@@ -77,6 +77,7 @@ const PAGES = [
         "theory/mass_conservation.md",
         "theory/advection_schemes.md",
         "theory/conservation_budgets.md",
+        "theory/float32_conservation.md",
         "theory/validation_status.md",
         "theory/adjoint_status.md",
     ],

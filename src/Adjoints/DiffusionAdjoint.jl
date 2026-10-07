@@ -15,10 +15,6 @@
 # for the audit chain.
 # ---------------------------------------------------------------------------
 
-@inline function _adjoint_diffusion_time(::Type{FT}, meteo) where FT
-    return meteo === nothing ? zero(FT) : FT(current_time(meteo))
-end
-
 # Mass-flux adjoint: transpose of the forward `Ã = M⁻¹·A·M` (on VMR),
 # which is equivalent to the column-stochastic A on tracer mass. The
 # transposed tridiagonal has:
@@ -250,7 +246,7 @@ function _apply_cs_diffusion_adjoint!(lambda_panels::NTuple{6, A},
                                           FT, A <: AbstractArray{FT, 3},
                                           KzF <: AbstractCSDkgField{FT}}
     w_scratch, _ = _require_cs_diffusion_workspace(workspace)
-    update_field!(op.kz_field, _adjoint_diffusion_time(FT, meteo))
+    update_field!(op.kz_field, current_time(meteo))
     Hp, Nc = mesh.Hp, mesh.Nc
     @inbounds for p in 1:6
         panel_lambda = lambda_panels[p]
@@ -274,7 +270,7 @@ function _apply_cs_diffusion_adjoint!(lambda_panels::NTuple{6, A},
                                           FT, A <: AbstractArray{FT, 3},
                                           KzF <: AbstractCubedSphereField{FT}}
     w_scratch, dz_scratch = _require_cs_diffusion_workspace(workspace)
-    update_field!(op.kz_field, _adjoint_diffusion_time(FT, meteo))
+    update_field!(op.kz_field, current_time(meteo))
 
     Hp = mesh.Hp
     Nc = mesh.Nc

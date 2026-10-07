@@ -150,11 +150,11 @@ end
 function _lonlat_cell_areas_m2(lon::AbstractVector, lat::AbstractVector)
     Nx, Ny = length(lon), length(lat)
     R = 6.371e6
-    # Cell width in radians (assume uniform spacing; first-differences
-    # the coordinate vectors). For periodic lon at the wrap, use the
-    # mean spacing as a stand-in.
-    dlon = Nx > 1 ? deg2rad(abs(lon[2] - lon[1])) : deg2rad(360.0 / Nx)
-    dlat_half = Ny > 1 ? deg2rad(abs(lat[2] - lat[1])) / 2 : deg2rad(180.0 / Ny) / 2
+    # Cell width in radians, assuming uniform spacing. Take it from the full
+    # span: coordinates stored in Float32 make the first difference err by
+    # ~1e-4 relative, a bias of every cell area.
+    dlon = Nx > 1 ? deg2rad(abs(lon[end] - lon[1]) / (Nx - 1)) : deg2rad(360.0 / Nx)
+    dlat_half = Ny > 1 ? deg2rad(abs(lat[end] - lat[1]) / (Ny - 1)) / 2 : deg2rad(180.0 / Ny) / 2
     out = Array{Float64, 2}(undef, Nx, Ny)
     @inbounds for j in 1:Ny
         ϕ = deg2rad(lat[j])
@@ -718,7 +718,7 @@ function _build_timevarying_cs_surface_flux_source(mesh, tracer_name::Symbol, cf
     ntime = length(field.times_sec)
     storage_scale = FT(_surface_flux_storage_scale(tracer_name, cfg))
 
-    regridder = _build_surface_flux_regridder(field.lon, field.lat, mesh, FT)
+    regridder = _build_surface_flux_regridder(field.lon, field.lat, mesh)
     panels_series = ntuple(_ -> Array{FT, 3}(undef, Nc, Nc, ntime), CS_PANEL_COUNT)
 
     slice_panels = ntuple(_ -> Matrix{FT}(undef, Nc, Nc), CS_PANEL_COUNT)

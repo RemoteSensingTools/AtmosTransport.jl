@@ -419,31 +419,56 @@ function _tm5_solve!(rm_col::AbstractMatrix{FT},
     # are unchanged from the previous column's run, so we must skip
     # them here too.
     k_lo = max(Int(icltop_eff), 1)
-    @inbounds for t in 1:Nt
-        # Apply permutation (active rows only).
-        for k in k_lo:Nz
-            piv = pivots[k]
-            if piv != k
-                tmp = rm_col[k, t]
-                rm_col[k, t] = rm_col[piv, t]
-                rm_col[piv, t] = tmp
+    for t in 1:Nt
+        _tm5_solve_shared_tracer!(rm_col, conv1, pivots, Nz, k_lo, t)
+    end
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
+# Column mass ledger. Float32 elimination on the near-identity convection
+# matrix loses 1–2e-8 of the active column per solve, always with the same
+# sign (≈1e-5 of every tracer per month on the L40S). Compensated sums of the
+# active window (`lo:n`, slot `slot` of `q`) before and after the solve give
+# the residual, a few ulps of the largest cell, which is added back there;
+# spread over the column it would round away again. What remains is unbiased.
+# ---------------------------------------------------------------------------
+@inline _tm5_column_sum(q, lo, n, slot) = _neumaier_sum(k -> @inbounds(q[k, slot]), lo:n, eltype(q))
+
+@inline function _tm5_restore_column_mass!(q, lo, n, slot, before)
+    kmax, largest = lo, abs(@inbounds q[lo, slot])
+    @inbounds for k in (lo + 1):n
+        value = abs(q[k, slot])
+        value > largest && ((kmax, largest) = (k, value))
+    end
+    after = _tm5_column_sum(q, lo, n, slot)
+    @inbounds q[kmax, slot] += _ledger_residual(before, after, largest, n - lo + 1)
+    return nothing
+end
+
+# A thread owns one complete shared-memory RHS. There are no workgroup
+# operations here, so KA can inline this helper in each topology kernel.
+@inline function _tm5_solve_shared_tracer!(q, A, pivots, n, lo, slot)
+    @inbounds begin
+        for k in lo:n
+            p = Int(pivots[k])
+            if p != k
+                q[k, slot], q[p, slot] = q[p, slot], q[k, slot]
             end
         end
-        # Forward solve L y = b (unit-diagonal L).
-        for k in k_lo:Nz
-            s = rm_col[k, t]
-            for j in k_lo:(k - 1)
-                s -= conv1[k, j] * rm_col[j, t]
+        for k in lo:n
+            value = q[k, slot]
+            for j in lo:(k - 1)
+                value -= A[k, j] * q[j, slot]
             end
-            rm_col[k, t] = s
+            q[k, slot] = value
         end
-        # Back solve U x = y.
-        for k in Nz:-1:k_lo
-            s = rm_col[k, t]
-            for j in (k + 1):Nz
-                s -= conv1[k, j] * rm_col[j, t]
+        for k in n:-1:lo
+            value = q[k, slot]
+            for j in (k + 1):n
+                value -= A[k, j] * q[j, slot]
             end
-            rm_col[k, t] = s / conv1[k, k]
+            q[k, slot] = value / A[k, k]
         end
     end
     return nothing
@@ -473,6 +498,26 @@ end
             q[k,tracer] = value / A[k,k]
         end
     end
+    return nothing
+end
+
+"""
+    _tm5_conserving_solve_tracer!(q, A, pivots, n, lo, tracer, bidiagonal)
+
+Production convection solve of one tracer column with the mass ledger. TM5's
+convection matrix conserves column mass (unit column sums; the cloud-top
+closure keeps the active window closed), so the residual of the Float32 solve
+is rounding and is returned to the column (see `_ledger_residual`). The plain
+solves above stay exact linear algebra for any matrix.
+"""
+@inline function _tm5_conserving_solve_tracer!(q, A, pivots, n, lo, tracer, bidiagonal::Bool)
+    before = _tm5_column_sum(q, lo, n, tracer)
+    if bidiagonal
+        _tm5_solve_bidiagonal_tracer!(q, A, n, lo, tracer)
+    else
+        _tm5_solve_shared_tracer!(q, A, pivots, n, lo, tracer)
+    end
+    _tm5_restore_column_mass!(q, lo, n, tracer, before)
     return nothing
 end
 
@@ -548,10 +593,9 @@ function _tm5_solve_column!(rm_col::AbstractMatrix{FT},
                       f = f_buf,
                       amu = amu_buf, amd = amd_buf)
     _tm5_factorize!(conv1_buf, pivots_buf, Nz, icllfs; icltop_eff = icltop_eff)
-    if icllfs > Nz && _tm5_identity_pivots(pivots_buf, Nz, icltop_eff)
-        _tm5_solve_bidiagonal!(rm_col, conv1_buf, Nz, Nt; icltop_eff = icltop_eff)
-    else
-        _tm5_solve!(rm_col, conv1_buf, pivots_buf, Nz, Nt; icltop_eff = icltop_eff)
+    bidiagonal = icllfs > Nz && _tm5_identity_pivots(pivots_buf, Nz, icltop_eff)
+    for t in 1:Nt
+        _tm5_conserving_solve_tracer!(rm_col, conv1_buf, pivots_buf, Nz, max(icltop_eff, 1), t, bidiagonal)
     end
     return nothing
 end

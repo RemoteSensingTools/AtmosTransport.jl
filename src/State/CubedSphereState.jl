@@ -160,21 +160,11 @@ function total_mass(state::CubedSphereState, name::Symbol)
     idx = tracer_index(state, name)
     idx === nothing && throw(KeyError(name))
     Hp = halo_width(state)
-    total = zero(eltype(state.air_mass[1]))
-    @inbounds for p in 1:6
-        total += sum(_panel_interior(state.tracers_raw[p], Hp, idx))
-    end
-    return total
+    return _compensated_total(ntuple(p -> _panel_interior(state.tracers_raw[p], Hp, idx), 6))
 end
 
-function total_air_mass(state::CubedSphereState)
-    Hp = halo_width(state)
-    total = zero(eltype(state.air_mass[1]))
-    @inbounds for p in 1:6
-        total += sum(_panel_interior(state.air_mass[p], Hp))
-    end
-    return total
-end
+total_air_mass(state::CubedSphereState) =
+    _compensated_total(ntuple(p -> _panel_interior(state.air_mass[p], halo_width(state)), 6))
 
 tracer_names(state::CubedSphereState) = getfield(state, :tracer_names)
 

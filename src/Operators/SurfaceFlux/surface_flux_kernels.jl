@@ -92,8 +92,10 @@ fractions `profile[i, j, k]` that sum to one: the non-local PBL transport of
 fresh surface emissions in GEOS-Chem's VDIFF (the counter-gradient term
 `∂(ρ K γ)/∂z`, linear in the surface flux). As in GEOS-Chem (`qmincg`), a
 column whose counter-gradient redistribution alone would turn a layer
-negative keeps the emission in the surface layer. Only the surface share is
-Kahan-compensated.
+negative keeps the emission in the surface layer. Upper-layer additions are
+tracked with `_two_sum`, and the surface layer receives the emission minus what
+landed above through the Kahan update, so the column gains exactly the
+emitted mass.
 """
 struct SurfaceLayerDeposit end
 struct ProfileDeposit{P}
@@ -118,6 +120,9 @@ Adapt.adapt_structure(to, d::ProfileDeposit) = ProfileDeposit(Adapt.adapt(to, d.
     return nothing
 end
 
+# The upper-layer shares are added plainly; TwoSum recovers exactly what each
+# addition rounded away, and the surface layer (Kahan) receives `x` minus what
+# actually landed above, so the column gains exactly `x`.
 @inline function _deposit!(q, comp, x, ii, jj, Hp, Nz, t, d::ProfileDeposit)
     f = d.profile
     @inbounds begin
@@ -126,11 +131,16 @@ end
             q[_tracer_cell(q, ii + Hp, jj + Hp, k, t)] + redistributed < 0 &&
                 return _deposit!(q, comp, x, ii, jj, Hp, Nz, t, SurfaceLayerDeposit())
         end
+        lofted, lofted_err = zero(x), zero(x)          # mass that reached layers 1…Nz-1
         for k in 1:(Nz - 1)
-            q[_tracer_cell(q, ii + Hp, jj + Hp, k, t)] += x * f[ii, jj, k]
+            cell = _tracer_cell(q, ii + Hp, jj + Hp, k, t)
+            share = x * f[ii, jj, k]
+            q[cell], lost = _two_sum(q[cell], share)
+            lofted, e = _two_sum(lofted, share)
+            lofted_err += e - lost
         end
     end
-    return _deposit!(q, comp, x * f[ii, jj, Nz], ii, jj, Hp, Nz, t, SurfaceLayerDeposit())
+    return _deposit!(q, comp, (x - lofted) - lofted_err, ii, jj, Hp, Nz, t, SurfaceLayerDeposit())
 end
 
 """

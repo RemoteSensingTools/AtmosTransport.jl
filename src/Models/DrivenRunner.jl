@@ -570,7 +570,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     @info @sprintf("Final air-mass change vs initial state:  %.3e", (m1 - m0) / m0)
     for name in tracer_names(model.state)
         rm0 = Float64(tracer_masses0[name])
-        rm1 = Float64(total_mass(model.state, name))
+        rm1 = total_mass(model.state, name)
         if name in source_tracers
             @info @sprintf("Final model storage for %s (with source): %.12e carrier-air kg",
                            String(name), rm1)
@@ -884,7 +884,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                    time() - t0, snapshot_count[], total_hour)
 
     for name in keys(tracer_init)
-        rm1 = Float64(total_mass(state, name))
+        rm1 = total_mass(state, name)
         if name in source_tracers
             @info @sprintf("  %s total mass (with source): %.6e kg", name, rm1)
         else

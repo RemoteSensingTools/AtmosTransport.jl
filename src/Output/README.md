@@ -9,11 +9,12 @@ writing topology-specific NetCDF files directly.
 
 ## Files
 
-- `snapshots.jl` defines `SnapshotFrame`, `SnapshotWriteOptions`, model-state
-  capture, and compensated Float64 signed tracer totals.
+- `snapshots.jl` defines `SnapshotFrame`, `SnapshotWriteOptions`, and
+  model-state capture.
 - `selected_snapshots.jl` captures requested layers and backend column reductions.
-- `snapshot_totals.jl` computes compensated signed totals without retaining full
-  host tracer volumes on CUDA; Metal copies bounded slabs for CPU Float64 sums.
+- `snapshot_totals.jl` records compensated Float64 signed tracer totals through
+  `Architectures._compensated_total`: in place on CPU and CUDA, in bounded host
+  slabs on Metal.
 - `netcdf_stream.jl` appends single-file runtime output and records completed
   snapshots. Its owner must close the stream on every exit.
 - `diagnostics.jl` derives VMR, column means, and mass-per-area fields.

@@ -11,23 +11,33 @@
 # loader already rolls/reverses them. We infer face boundaries from cell
 # centres, assuming uniform spacing (standard for all ERA5 / Catrine /
 # GridFED products).
+#
+# Products often store centres in Float32 (GridFED: -179.95f0 ...), so the
+# spacing comes from the full span, not the first difference, and extents
+# within 1e-3 of a cell of ±90° or a 360° span snap to them. Otherwise the
+# regridder misses a sliver of the sphere (GridFED: 1.5e-5° of longitude,
+# 2.1e-6 of the global flux). The mesh is Float64 for every run precision:
+# the geometry is evaluated once, and Float32 and Float64 runs share weights.
 # ---------------------------------------------------------------------------
 
-function _build_source_latlon_mesh(lon_src::Vector{Float64}, lat_src::Vector{Float64}, ::Type{FT}) where FT
+const _GLOBAL_EXTENT_SNAP = 1e-3      # fraction of a cell
+
+function _build_source_latlon_mesh(lon_src::Vector{Float64}, lat_src::Vector{Float64})
     Nx_src = length(lon_src)
     Ny_src = length(lat_src)
-    dlon = lon_src[2] - lon_src[1]
-    dlat = lat_src[2] - lat_src[1]
+    min(Nx_src, Ny_src) >= 2 || throw(ArgumentError(
+        "source grid needs at least two longitudes and latitudes, got $(Nx_src)×$(Ny_src)"))
+    dlon = (lon_src[end] - lon_src[1]) / (Nx_src - 1)
+    dlat = (lat_src[end] - lat_src[1]) / (Ny_src - 1)
     lon_west  = lon_src[1]   - dlon / 2
     lon_east  = lon_src[end] + dlon / 2
     lat_south = lat_src[1]   - dlat / 2
     lat_north = lat_src[end] + dlat / 2
-    lat_south = max(lat_south, -90.0)
-    lat_north = min(lat_north, 90.0)
-    if lon_east - lon_west > 360.0
-        lon_east = lon_west + 360.0
-    end
-    return LatLonMesh(; FT = FT, Nx = Nx_src, Ny = Ny_src,
+    snap = _GLOBAL_EXTENT_SNAP
+    lat_south < -90 + snap * dlat && (lat_south = -90.0)
+    lat_north >  90 - snap * dlat && (lat_north =  90.0)
+    lon_east - lon_west > 360 - snap * dlon && (lon_east = lon_west + 360)
+    return LatLonMesh(; FT = Float64, Nx = Nx_src, Ny = Ny_src,
                       longitude = (lon_west, lon_east),
                       latitude  = (lat_south, lat_north))
 end
@@ -149,7 +159,7 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
     B_tgt = grid.vertical.B
 
     source = _load_file_initial_condition_source(cfg, FT, Nz)
-    src_mesh = _build_source_latlon_mesh(source.lon, source.lat, FT)
+    src_mesh = _build_source_latlon_mesh(source.lon, source.lat)
     regridder = build_regridder(src_mesh, mesh)
 
     # 3D VMR: (Nx_src, Ny_src, Nlev_src) → 6 × (Nc, Nc, Nlev_src)

@@ -19,16 +19,11 @@
     return forward_ratio, previous_coupling, d / (one(FT) + forward_ratio)
 end
 
-# Keep the rounding residual of each transfer in a second scalar. This avoids
-# losing small layer masses when a stiff solve carries a large column subtotal.
-@inline function _dkg_two_sum(a, b)
-    total = a + b
-    z = total - a
-    return total, (a - (total - z)) + (b - z)
-end
-
+# Each transfer keeps its rounding residual in a second scalar (`_two_sum`).
+# This avoids losing small layer masses when a stiff solve carries a large
+# column subtotal.
 @inline function _dkg_partition(value, incoming, correction, ratio)
-    amount, error = _dkg_two_sum(value, incoming)
+    amount, error = _two_sum(value, incoming)
     low = error + correction
     iszero(ratio) && return amount + low, zero(incoming), zero(correction)
     if ratio > one(ratio)
@@ -36,15 +31,15 @@ end
         # with its rounding residual to the next layer.
         fraction = one(ratio) / (one(ratio) + ratio)
         retained = muladd(fraction, amount, fraction * low)
-        remainder, error = _dkg_two_sum(amount, -retained)
-        incoming, correction = _dkg_two_sum(remainder, error + low)
+        remainder, error = _two_sum(amount, -retained)
+        incoming, correction = _two_sum(remainder, error + low)
     else
         # Compute a weak transfer directly. Reconstructing it as amount minus
         # rounded retained mass would erase sub-ulp exchange into empty cells.
         fraction = ratio / (one(ratio) + ratio)
         incoming = fraction * amount
         correction = fma(fraction, amount, -incoming) + fraction * low
-        remainder, error = _dkg_two_sum(amount, -incoming)
+        remainder, error = _two_sum(amount, -incoming)
         retained = remainder + (error + low - correction)
     end
     return retained, incoming, correction
@@ -82,10 +77,13 @@ end
     @inbounds begin
         qmin, qmax = typemax(FT), -typemax(FT)
         positive_carrier = true
+        before = (zero(FT), zero(FT))            # compensated column sum, for the ledger
         for k in 1:Nz
             m = air_mass[i, j, k]
+            value = _dkg_mass_value(rm, i, j, k, t)
+            before = _neumaier_add(before..., value)
             positive_carrier &= m > zero(FT)
-            q = m > zero(FT) ? _dkg_mass_value(rm, i, j, k, t) / m : zero(FT)
+            q = m > zero(FT) ? value / m : zero(FT)
             qmin, qmax = min(qmin, q), max(qmax, q)
         end
         # A constant mixing ratio is stationary only when all carrier masses
@@ -111,9 +109,11 @@ end
             _set_dkg_mass!(rm, i, j, k, t, retained)
         end
         incoming, correction = zero(FT), zero(FT)
+        after, kmax, largest, exchanging = (zero(FT), zero(FT)), 0, zero(FT), 0
         for k in Nz:-1:1
             m = air_mass[i, j, k]
             if _dkg_isolated_layer(dkg_field, dt, ii, jj, k, Nz)
+                after = _neumaier_add(after..., _dkg_mass_value(rm, i, j, k, t))
                 incoming, correction = zero(FT), zero(FT)
                 continue
             end
@@ -124,7 +124,23 @@ end
             backward_ratio = k > 1 ? d / (one(FT) + factors[ii, jj, k - 1]) : zero(FT)
             retained, incoming, correction = _dkg_partition(
                 _dkg_mass_value(rm, i, j, k, t), incoming, correction, backward_ratio)
-            _set_dkg_mass!(rm, i, j, k, t, m > zero(FT) ? retained + cref * m : zero(FT))
+            value = m > zero(FT) ? retained + cref * m : zero(FT)
+            _set_dkg_mass!(rm, i, j, k, t, value)
+            after = _neumaier_add(after..., value)
+            exchanging += 1
+            abs(value) > largest && ((kmax, largest) = (k, abs(value)))
+        end
+        # Column mass ledger. The exchange form conserves the column exactly,
+        # but the final `retained + cref·m` writes drop sub-ulp exchanges
+        # (≈1e-7 of SF₆ per month in Float32). The residual, about one ulp of
+        # the largest exchanging layer, is added back there. In about a quarter
+        # of the columns it is below half an ulp and rounds away, so the bias
+        # is removed statistically rather than exactly.
+        # Layers without exchange stay bit-exact, and zero-carrier columns keep
+        # their absorbing convention.
+        if positive_carrier && kmax > 0
+            _set_dkg_mass!(rm, i, j, kmax, t, _dkg_mass_value(rm, i, j, kmax, t) +
+                           _ledger_residual(before, after, largest, exchanging))
         end
     end
     return nothing

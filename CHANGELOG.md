@@ -18,6 +18,44 @@
   the C30 full-physics sets for 2021 and Dec 2021 to 2022. Run configs and
   driver scripts now point at new `_v3` folders. See
   `docs/memos/2026-10-03_tm5_attach_level_order.md`.
+- Cubed-sphere cell areas and edge lengths were computed in the mesh
+  precision. In `Float32` they erred by up to 1.3e-4 per cell at C90,
+  6.8e-4 at C180 and 9.7e-3 at C720. Preprocessing with
+  `float_type = "Float32"` used these areas wherever it converts between
+  pressure and mass. They are now evaluated in `Float64` and rounded once;
+  regenerate `Float32`-preprocessed C180 and finer binaries.
+- The EDGAR tonnes-to-flux normalisation (`_lonlat_cell_areas_m2`) took the
+  grid spacing from the first coordinate difference, which errs by ~1e-4 for
+  coordinates stored in `Float32`. It now uses the full span.
+
+### Numerical changes
+
+- `Float32` runs now conserve global tracer mass to about 1e-6 of the burden
+  per year. Over 3 days of ERA5 C90 transport without sources, the background
+  tracer drifts +9e-9 instead of −9.7e-7 and SF₆ +2.1e-9 instead of −1.0e-6.
+  A small advection bias (≈+1e-6 per year) and, with CMFMC convection, about
+  −1e-6 per year for CO₂ remain. Changes:
+  - TM5 convection and `dkg` diffusion return each column's rounding residual,
+    computed with compensated sums, to its largest participating cell. Only
+    rounding-sized residuals are returned, so a non-conserving matrix stays
+    visible.
+  - GEOS-Chem's non-local emission profile accounts for every upper-layer
+    addition with `TwoSum`.
+  - Cubed-sphere areas, edge lengths and corners, regridding geometry, the
+    decay decrement `expm1(−λΔt)` and the model clock are evaluated in
+    `Float64` and rounded once. The clock follows the window and step
+    counters, so window ends are exact for any step count. Meshes of either
+    precision now regrid on a `Float64` sphere and share cached weights
+    (cache version 3, so every cached regridder is rebuilt once).
+  - Lat-lon flux and initial-condition sources stored in `Float32` (GridFED)
+    snap to exact global extents. Previously the regridder dropped 2.1e-6 of
+    the GridFED flux in `Float64`.
+  - `total_mass` and `total_air_mass` return compensated `Float64` sums,
+    reduced on the device (shared with the snapshot totals).
+
+  `Float32` global totals change at the 1e-6 level. `Float64` global totals
+  change by about 1e-11, except GridFED emissions (+2.1e-6). See
+  `docs/src/theory/float32_conservation.md`.
 
 ### Runtime and output
 

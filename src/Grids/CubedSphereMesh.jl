@@ -438,28 +438,32 @@ function CubedSphereMesh(; FT::Type{<:AbstractFloat} = Float64,
     dx    = zeros(FT, Nc, Nc)
     dy    = zeros(FT, Nc, Nc)
 
-    # Compute geometry for panel 1 — all panels are identical by symmetry
+    # Compute geometry for panel 1 — all panels are identical by symmetry.
+    # Corners, areas and lengths are evaluated in Float64 and rounded once:
+    # Girard's theorem in Float32 errs by up to ~1e-4 per C90 cell, which
+    # biases every area-weighted emission total.
     p = 1
+    R64 = Float64(R)                   # the stored radius, evaluated in Float64
     for j in 1:Nc, i in 1:Nc
-        v1 = _corner_xyz(def, Nc, i,     j,     p, FT)
-        v2 = _corner_xyz(def, Nc, i + 1, j,     p, FT)
-        v3 = _corner_xyz(def, Nc, i + 1, j + 1, p, FT)
-        v4 = _corner_xyz(def, Nc, i,     j + 1, p, FT)
+        v1 = _corner_xyz(def, Nc, i,     j,     p, Float64)
+        v2 = _corner_xyz(def, Nc, i + 1, j,     p, Float64)
+        v3 = _corner_xyz(def, Nc, i + 1, j + 1, p, Float64)
+        v4 = _corner_xyz(def, Nc, i,     j + 1, p, Float64)
 
         # Cell area: exact spherical quadrilateral area via Girard's theorem.
         Ω = spherical_area_quadrilateral(v1, v2, v3, v4)
-        areas[i, j] = R^2 * FT(Ω)
+        areas[i, j] = FT(R64^2 * Ω)
 
         # Δx/Δy are centerline great-circle distances between opposing edge
         # midpoints. They are used as per-cell metric lengths by the flux
         # reconstruction code.
         mid_w = _normalize3(v1[1] + v4[1], v1[2] + v4[2], v1[3] + v4[3])
         mid_e = _normalize3(v2[1] + v3[1], v2[2] + v3[2], v2[3] + v3[3])
-        dx[i, j] = R * FT(spherical_distance(mid_w, mid_e))
+        dx[i, j] = FT(R64 * spherical_distance(mid_w, mid_e))
 
         mid_s = _normalize3(v1[1] + v2[1], v1[2] + v2[2], v1[3] + v2[3])
         mid_n = _normalize3(v4[1] + v3[1], v4[2] + v3[2], v4[3] + v3[3])
-        dy[i, j] = R * FT(spherical_distance(mid_s, mid_n))
+        dy[i, j] = FT(R64 * spherical_distance(mid_s, mid_n))
     end
 
     return CubedSphereMesh{FT, typeof(conv), typeof(def)}(
@@ -662,17 +666,19 @@ end
 
 """
     panel_cell_corner_lonlat(Nc, panel, FT) -> (lons, lats)
-    panel_cell_corner_lonlat(mesh::CubedSphereMesh, panel) -> (lons, lats)
+    panel_cell_corner_lonlat(mesh::CubedSphereMesh, panel[, T = eltype(mesh)]) -> (lons, lats)
 
 Return `(Nc+1, Nc+1)` arrays of cell-corner longitudes and latitudes in
-degrees. The mesh method honors `panel_convention(mesh)`.
+degrees. The mesh method honors `panel_convention(mesh)` and evaluates the
+corners in `T`; regridding geometry passes `Float64` whatever the mesh precision.
 """
 function panel_cell_corner_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat})
     return _panel_cell_corner_lonlat(Nc, panel, FT, EquiangularCubedSphereDefinition())
 end
 
-function panel_cell_corner_lonlat(mesh::CubedSphereMesh{FT}, panel::Int) where FT
-    return _panel_cell_corner_lonlat(mesh.Nc, panel, FT, cs_definition(mesh))
+function panel_cell_corner_lonlat(mesh::CubedSphereMesh{FT}, panel::Int,
+                                  ::Type{T} = FT) where {FT, T <: AbstractFloat}
+    return _panel_cell_corner_lonlat(mesh.Nc, panel, T, cs_definition(mesh))
 end
 
 function _panel_cell_corner_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat},
