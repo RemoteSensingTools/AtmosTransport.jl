@@ -1,6 +1,7 @@
 #!/usr/bin/env julia
 # Cubed-sphere face-flux reconstruction from cell-centre winds: face lengths,
-# the legacy centreline choice, and the divergence of a solid-body rotation.
+# the legacy centreline choice, the divergence of a solid-body rotation, vector
+# face fluxes, and the vector regridding of the winds.
 
 using Test, Statistics
 using AtmosTransport
@@ -28,6 +29,42 @@ function solid_body_winds(mesh, U, tilt)
     P.rotate_winds_to_panel_local!(u, v, u_e, v_n, mesh, 1)
     return u, v
 end
+
+# Exact face fluxes R ∫ u·n ds of a tangent wind `wind(x)` along each face's
+# great-circle arc (3-point Gauss–Legendre), oriented from left to right cell.
+function exact_face_fluxes(mesh, ft, wind)
+    centre = P._cs_cell_bases(mesh)[1]
+    gx, gw = (-sqrt(0.6), 0.0, sqrt(0.6)), (5 / 9, 8 / 9, 5 / 9)
+    map(1:ft.nf) do f
+        a, b = P._cs_face_corners(mesh, ft, f)
+        n = P._unit3(P._cross3(a, b))
+        n = P._dot3(n, centre[ft.face_right[f]] .- centre[ft.face_left[f]]) >= 0 ? n : .-n
+        θ = P._arc3(a, b)
+        s = sum(w * P._dot3(wind((sin(θ * (1 - x) / 2) .* a .+ sin(θ * (1 + x) / 2) .* b) ./ sin(θ)), n)
+                for (x, w) in zip(gx, gw))
+        mesh.radius * s * θ / 2
+    end
+end
+
+# East/north components of `wind(x)` at the cell centres.
+function cell_winds(mesh, wind)
+    Nc = mesh.Nc
+    u_e = ntuple(_ -> zeros(Nc, Nc, 1), 6); v_n = ntuple(_ -> zeros(Nc, Nc, 1), 6)
+    for p in 1:6
+        lon, lat = G.panel_cell_center_lonlat(mesh, p)
+        for j in 1:Nc, i in 1:Nc
+            λ, φ = deg2rad(lon[i, j]), deg2rad(lat[i, j])
+            w = wind((cos(φ) * cos(λ), cos(φ) * sin(λ), sin(φ)))
+            u_e[p][i, j, 1] = P._dot3(w, (-sin(λ), cos(λ), 0.0))
+            v_n[p][i, j, 1] = P._dot3(w, (-sin(φ) * cos(λ), -sin(φ) * sin(λ), cos(φ)))
+        end
+    end
+    return u_e, v_n
+end
+
+canonical_fluxes(am, bm, ft) =
+    [ft.face_dir[f] == 1 ? am[ft.face_panel[f]][ft.face_idx_i[f], ft.face_idx_j[f], 1] :
+                           bm[ft.face_panel[f]][ft.face_idx_i[f], ft.face_idx_j[f], 1] for f in 1:ft.nf]
 
 interior_divergence(am, bm, Nc) =
     [am[p][i, j, 1] - am[p][i + 1, j, 1] + bm[p][i, j, 1] - bm[p][i, j + 1, 1]
@@ -129,6 +166,64 @@ interior_divergence(am, bm, Nc) =
         end
     end
 
+    @testset "fourth-order wind interpolation at interior faces" begin
+        mesh = gmao_mesh(48); Nc = mesh.Nc
+        ft = P.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
+        geo2, geo4 = P.CSVectorFaceGeometry(mesh, ft), P.CSVectorFaceGeometry(mesh, ft; order = 4)
+        @test_throws ArgumentError P.CSVectorFaceGeometry(mesh, ft; order = 3)
+        # the stencil needs two cells on each side in the panel row
+        @test count(!=(0), geo4.outer.slot) == 12 * Nc * (Nc - 3) && geo2.outer === nothing
+        @test all(f -> geo4.coef[f] == geo2.coef[f], findall(==(0), geo4.outer.slot))
+        # a smooth divergent and rotational wind: interior face fluxes against exact line integrals
+        a, b = (0.3, 0.5, 0.8) ./ sqrt(0.98), (0.1, -0.9, 0.3) ./ sqrt(0.91)
+        wind(x) = let k = 12.0, w = 20 .* (cos(k * P._dot3(x, a)) .* a .+ P._cross3(x, cos(k * P._dot3(x, b)) .* b))
+            w .- P._dot3(w, x) .* x
+        end
+        u_e, v_n = cell_winds(mesh, wind)
+        dps = ntuple(_ -> fill(1.0, Nc, Nc, 1), 6)
+        exact = exact_face_fluxes(mesh, ft, wind)
+        interior = ft.mirror_panel .== 0
+        err = map((geo2, geo4)) do geo
+            am = ntuple(_ -> zeros(Nc + 1, Nc, 1), 6); bm = ntuple(_ -> zeros(Nc, Nc + 1, 1), 6)
+            P.cs_vector_face_fluxes!(am, bm, u_e, v_n, dps, geo, ft, 1.0, 1.0, Nc, 1)
+            sqrt(mean(abs2, (canonical_fluxes(am, bm, ft) .- exact)[interior]))
+        end
+        @test err[2] < err[1] / 2
+    end
+
+    @testset "FV3's filter along the faces" begin
+        mesh = gmao_mesh(24); Nc = mesh.Nc
+        ft = P.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
+        geo = P.CSVectorFaceGeometry(mesh, ft; order = 4, along_face_filter = true)
+        face(p, d, i, j) = findfirst(f -> (ft.face_panel[f], ft.face_dir[f], ft.face_idx_i[f], ft.face_idx_j[f]) ==
+                                          (p, d, i, j), 1:ft.nf)
+        f = face(1, 1, 12, 12)                        # deep interior: the five faces along the grid line
+        @test geo.filter.w[f] == (-1, 8, 18, 8, -1) ./ 32
+        @test collect(geo.filter.face[f]) == [face(1, 1, 12, j) for j in 10:14]
+        @test all(f -> sum(geo.filter.w[f]) ≈ 1, findall(==(0), ft.mirror_panel))   # interior: a weighted mean
+        # a wind alternating along the faces of panel 1 (the 2Δ wave the filter removes)
+        u_e = ntuple(p -> p == 1 ? [(-1.0)^j for i in 1:Nc, j in 1:Nc, k in 1:1] : zeros(Nc, Nc, 1), 6)
+        v_n = ntuple(_ -> zeros(Nc, Nc, 1), 6); dps = ntuple(_ -> ones(Nc, Nc, 1), 6)
+        flux(geom) = (am = ntuple(_ -> zeros(Nc + 1, Nc, 1), 6); bm = ntuple(_ -> zeros(Nc, Nc + 1, 1), 6);
+                      P.cs_vector_face_fluxes!(am, bm, u_e, v_n, dps, geom, ft, 1.0, 1.0, Nc, 1); am[1])
+        raw, filtered = flux(P.CSVectorFaceGeometry(mesh, ft; order = 4)), flux(geo)
+        @test maximum(abs, filtered[3:Nc-1, 2:Nc-1, 1]) < 0.01 * maximum(abs, raw[3:Nc-1, 2:Nc-1, 1])
+        @test filtered[3:Nc-1, [1, Nc], 1] == raw[3:Nc-1, [1, Nc], 1]       # first and last rows unfiltered
+        # seam faces stay single-valued: mirror entries carry the filtered canonical flux
+        u_e, v_n = cell_winds(mesh, x -> 30.0 .* (0.0, -x[3], x[2]))   # rotation about the x axis
+        am = ntuple(_ -> zeros(Nc + 1, Nc, 2), 6); bm = ntuple(_ -> zeros(Nc, Nc + 1, 2), 6)
+        u2, v2 = ntuple(p -> cat(u_e[p], u_e[p]; dims = 3), 6), ntuple(p -> cat(v_n[p], v_n[p]; dims = 3), 6)
+        P.cs_vector_face_fluxes!(am, bm, u2, v2, ntuple(_ -> ones(Nc, Nc, 2), 6), geo, ft, 1.0, 1.0, Nc, 2)
+        for f in findall(!=(0), ft.mirror_panel)
+            get(a, b, d, p, i, j) = d == 1 ? a[p][i, j, 2] : b[p][i, j, 2]
+            @test get(am, bm, ft.mirror_dir[f], ft.mirror_panel[f], ft.mirror_idx_i[f], ft.mirror_idx_j[f]) ==
+                  ft.mirror_sign[f] * get(am, bm, ft.face_dir[f], ft.face_panel[f], ft.face_idx_i[f], ft.face_idx_j[f])
+        end
+        # the divergence-free rotation stays nearly divergence-free through the filter
+        div = [am[p][i, j, 2] - am[p][i + 1, j, 2] + bm[p][i, j, 2] - bm[p][i, j + 1, 2] for p in 1:6, i in 1:Nc, j in 1:Nc]
+        @test maximum(abs, div) < 1e-3 * maximum(abs, am[1])
+    end
+
     @testset "layer thickness from the dry mass" begin
         mesh = gmao_mesh(8); Nc, Nz, g = 8, 3, 9.80665
         m = ntuple(_ -> 1e3 .* rand(Nc, Nc, Nz), 6)
@@ -140,6 +235,46 @@ interior_divergence(am, bm, Nc) =
         vc = (A = [0.0, 1000.0, 3000.0, 0.0], B = [0.0, 0.0, 0.2, 1.0])
         P._fill_flux_thickness!(P.MoistFluxThickness(), x, ps, m, vc, mesh, Nc, Nz)
         @test dp[1][1, 1, :] ≈ [1000.0, 2000.0 + 0.2e5, 0.8e5 - 3000.0]
+    end
+
+    @testset "winds regridded as vectors near the poles" begin
+        # 5° latitude-longitude source with pole points (half-width polar caps, as MERRA-2)
+        nx, ny = 72, 37
+        src = G.LatLonMesh{Float64}(nx, ny, 5.0, 5.0, [-180 + 5.0 * (i - 1) for i in 1:nx],
+                                    [-182.5 + 5.0 * (i - 1) for i in 1:nx + 1],
+                                    [-90 + 5.0 * (j - 1) for j in 1:ny],
+                                    [-90; [-92.5 + 5.0 * (j - 1) for j in 2:ny]; 90], 6.371e6)
+        mesh = CubedSphereMesh(; Nc = 12, Hp = 0, FT = Float64, radius = 6.371e6,
+                               convention = G.GEOSNativePanelConvention(),
+                               definition = G.GMAOCubedSphereDefinition(; convention = G.GEOSNativePanelConvention()))
+        Nc, Nz = 12, 1
+        R = AtmosTransport.Regridding.build_regridder(src, mesh; normalize = false)
+        ws = P.allocate_cs_preprocess_workspace(Nc, nx, ny, Nz, length(R.src_areas), length(R.dst_areas), Float64)
+        pipe = (u = ntuple(_ -> zeros(Nc, Nc, Nz), 6), v = ntuple(_ -> zeros(Nc, Nc, Nz), 6))
+        V = (3.0, 11.0, 0.0)                                       # uniform flow across the pole
+        en(λ, φ) = ((-sin(λ), cos(λ), 0.0), (-sin(φ) * cos(λ), -sin(φ) * sin(λ), cos(φ)))
+        u = zeros(nx, ny, Nz); v = zeros(nx, ny, Nz)
+        for j in 1:ny, i in 1:nx
+            e, n = en(deg2rad(src.λᶜ[i]), deg2rad(src.φᶜ[j]))
+            u[i, j, 1], v[i, j, 1] = P._dot3(V, e), P._dot3(V, n)
+        end
+        polar_error = map((P.ScalarWindRegrid(), P.CartesianWindRegrid(src, mesh, Nz, Float64))) do w
+            P._regrid_winds!(w, pipe.u, pipe.v, R, ws, u, v, Nc)
+            lon, lat = G.panel_cell_center_lonlat(mesh, 3)       # the north-polar panel
+            maximum(Iterators.product(1:Nc, 1:Nc)) do (i, j)
+                e, n = en(deg2rad(lon[i, j]), deg2rad(lat[i, j]))
+                hypot(pipe.u[3][i, j, 1] - P._dot3(V, e), pipe.v[3][i, j, 1] - P._dot3(V, n))
+            end
+        end
+        @test polar_error[1] > 0.05 * hypot(V...)      # u and v remapped separately: > 5 % of |V|
+        @test polar_error[2] < 0.1 * polar_error[1]   # the vector remap recovers the flow
+        @test P._wind_regrid(:scalar, src, mesh, Nz, Float64) isa P.ScalarWindRegrid
+        # Float32 buffers, as in production
+        ws32 = P.allocate_cs_preprocess_workspace(Nc, nx, ny, Nz, length(R.src_areas), length(R.dst_areas), Float32)
+        u32, v32 = ntuple(_ -> zeros(Float32, Nc, Nc, Nz), 6), ntuple(_ -> zeros(Float32, Nc, Nc, Nz), 6)
+        P._regrid_winds!(P.CartesianWindRegrid(src, mesh, Nz, Float32), u32, v32, R, ws32,
+                         Float32.(u), Float32.(v), Nc)
+        @test maximum(p -> maximum(abs, u32[p] .- pipe.u[p]), 1:6) < 1e-4 * hypot(V...)
     end
 
     @testset "seam thickness is interpolated along the edge too" begin
@@ -201,6 +336,14 @@ interior_divergence(am, bm, Nc) =
             @test_throws ArgumentError P.load_met_settings(write_toml("wrong.toml", wrong); root_dir = dir)
             era = write_toml("era.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nface_fluxes = \"vector\"\n")
             @test_throws ArgumentError P.load_met_settings(era; root_dir = dir)
+            vec = replace(merra, "[preprocessing]" => "[preprocessing]\nface_fluxes = \"vector\"\nface_interpolation = \"fv3\"\nwind_regrid = \"cartesian\"")
+            s = P.load_met_settings(write_toml("vec.toml", vec); root_dir = dir)
+            @test (s.face_interpolation, s.wind_regrid) == (:fv3, :cartesian)
+            # the cubic stencil belongs to the vector method
+            cubic = replace(merra, "[preprocessing]" => "[preprocessing]\nface_interpolation = \"cubic\"")
+            @test_throws ArgumentError P.load_met_settings(write_toml("cubic.toml", cubic); root_dir = dir)
+            bad_regrid = replace(merra, "[preprocessing]" => "[preprocessing]\nwind_regrid = \"bilinear\"")
+            @test_throws ArgumentError P.load_met_settings(write_toml("regrid.toml", bad_regrid); root_dir = dir)
         end
     end
 end

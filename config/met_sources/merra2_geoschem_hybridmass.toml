@@ -81,7 +81,9 @@ pattern = "MERRA2_{stream}.{collection_name}.{date}.nc4"
 #   column_balance_weights = "mass" | "hybrid_b" | "hybrid_mass"
 #   face_fluxes            = "panel_average" | "vector" (seam-corrected vectors)
 #   face_lengths           = "cell_centerline" | "edge"  (panel_average only)
+#   face_interpolation     = "linear" | "cubic" | "fv3"  (vector only)
 #   flux_thickness         = "moist" | "dry_mass"
+#   wind_regrid            = "scalar" | "cartesian" (as a vector, like GCHP)
 # ---------------------------------------------------------------------------
 [preprocessing]
 layout               = "geoschem"

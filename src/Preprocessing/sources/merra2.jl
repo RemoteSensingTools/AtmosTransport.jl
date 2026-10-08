@@ -135,6 +135,8 @@ Base.@kwdef struct MERRA2Settings{A <: MERRA2Archive} <: AbstractMetSettings
     face_lengths   :: Symbol = :cell_centerline   # face length in the flux: :cell_centerline or :edge
     flux_thickness :: Symbol = :moist             # Δp in the flux: :moist (from moist ps) or :dry_mass
     face_fluxes    :: Symbol = :panel_average     # :panel_average (panel components) or :vector (edge lengths always)
+    face_interpolation :: Symbol = :linear        # :linear, :cubic or :fv3 (cubic + FV3's along-face filter; vector only)
+    wind_regrid    :: Symbol = :scalar            # :scalar (u, v separately) or :cartesian (as a vector)
 end
 
 const MERRA2_NATIVE_LEVEL_COUNT = 72
@@ -145,6 +147,8 @@ const MERRA2_VALID_WINDS_COLLECTIONS = (:tavg3, :inst3)
 const MERRA2_FACE_LENGTHS   = (:cell_centerline, :edge)
 const MERRA2_FACE_FLUXES    = (:panel_average, :vector)
 const MERRA2_FLUX_THICKNESS = (:moist, :dry_mass)
+const MERRA2_FACE_INTERPOLATION = (:linear, :cubic, :fv3)
+const MERRA2_WIND_REGRID    = (:scalar, :cartesian)
 
 
 """
@@ -163,10 +167,14 @@ function validate_merra2_settings(s::MERRA2Settings)
                             "(I3 holds PS, QV, T); use winds_collection=:tavg3 (A3dyn)"))
     for (name, value, kinds) in (("face_lengths", s.face_lengths, MERRA2_FACE_LENGTHS),
                                  ("face_fluxes", s.face_fluxes, MERRA2_FACE_FLUXES),
-                                 ("flux_thickness", s.flux_thickness, MERRA2_FLUX_THICKNESS))
+                                 ("flux_thickness", s.flux_thickness, MERRA2_FLUX_THICKNESS),
+                                 ("face_interpolation", s.face_interpolation, MERRA2_FACE_INTERPOLATION),
+                                 ("wind_regrid", s.wind_regrid, MERRA2_WIND_REGRID))
         value in kinds || throw(ArgumentError(
             "MERRA-2 $(name) must be one of $(join(kinds, ", ")); got :$(value)"))
     end
+    s.face_fluxes === :vector || s.face_interpolation === :linear ||
+        throw(ArgumentError("MERRA-2 face_interpolation applies to face_fluxes = :vector only"))
     haskey(COLUMN_WEIGHT_KINDS, s.column_balance_weights) ||
         throw(ArgumentError("MERRA-2 column_balance_weights must be one of " *
                             join(keys(COLUMN_WEIGHT_KINDS), ", ") *

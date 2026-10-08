@@ -20,8 +20,9 @@ cell faces of the cubed sphere, for each layer and substep.
 **MERRA-2** (`src/Preprocessing/transport_binary/merra2_latlon_regrid.jl`).
 - Inputs: A3dyn 3-hour mean winds (0.5° × 0.625°); I3 instantaneous surface
   pressure and humidity.
-- `u_east` and `v_north` are regridded conservatively to C90 cell means, as
-  two scalars.
+- `u_east` and `v_north` are regridded conservatively to C90 cell means,
+  by default as two scalars (`[preprocessing] wind_regrid = "scalar"`);
+  `"cartesian"` regrids the wind as a vector (see *Poles* below).
 - Hourly windows split each 3-hour block; air mass, `p_s`, humidity and
   temperature are linear in time.
 
@@ -71,6 +72,47 @@ true signal: RMSE 8.8e-3 Pa/s against an RMS of 7.2e-3. With `vector` it is
 1.3e-3, as in the interior. In the extratropics at 30–200 hPa the RMSE falls
 from 8.4e-3 to 4.6e-3 Pa/s.
 
+**Poles.** The east and north unit vectors turn with longitude. Regridding
+`u_east` and `v_north` as two scalars therefore averages components that point
+in different directions. Each of the four C90 cells that meet at a pole spans
+90° of longitude. MERRA-2's pole row holds one wind vector, written in the local
+basis of each longitude. Its Cartesian components vary by only 6–8% along the
+row, while `u` itself changes sign.
+
+Effect of scalar regridding:
+- On an analytic flow across the pole it puts errors of about 5% in the wind
+  poleward of 88°, and 0.5% at 85–88°.
+- After vector face fluxes, the resulting spurious divergence at |lat| > 88°
+  is 2.8 times the global RMS divergence, and 0.28 times it at 85–88°
+  (`/temp1/cfranken/scratch/overnight_2026_10_07/polar_wind_regrid.jl`).
+- Against MERRA-2's vertical velocity (2022-07-15, p < 150 hPa), the ω error
+  poleward of 88° is 7.4e-3 Pa/s, against a true RMS of 2.1e-3 Pa/s. At
+  85–88° it is 1.0e-3 against 2.1e-3.
+
+`wind_regrid = "cartesian"` (`CartesianWindRegrid`) does what MAPL does for
+GCHP's `UA;VA`:
+- writes the source winds as Cartesian components;
+- regrids those three components conservatively;
+- projects the result back onto east and north at each cube-cell centre.
+
+GCHP's own C90 winds (`Met_U`/`Met_V` in the CATRINE output) match it to within
+5e-4 m/s at every latitude and level. They differ from the scalar regrid by
+0.5–1.5 m/s poleward of 88°
+(`/temp1/cfranken/scratch/overnight_2026_10_07/gchp_wind_compare.jl`).
+
+**Interpolation to the faces.** `face_interpolation` (`vector` only) chooses how
+the cell winds reach the face midpoint:
+- `"linear"` (default): the two adjacent cells.
+- `"cubic"`: FV3's fourth-order stencil `(−1, 9, 9, −1)/16` across interior
+  faces that have two cells on each side in the same panel row. The layer
+  thickness stays linear. Against exact line integrals of a smooth analytic
+  wind (wavelength about 30 cells), interior face fluxes are three times more
+  accurate (`face_flux_accuracy.jl`). The divergence gains less, 1.6 times at
+  that wavelength, because the faces next to the seams stay second order
+  (`CSVectorFaceGeometry`); for very smooth winds it is slightly worse.
+- `"fv3"`: `"cubic"` plus the filter that GCHP's restaggering applies along
+  each face (next paragraph).
+
 `flux_thickness = "dry_mass"` uses the dry layer thickness `g m_dry / A` that
 the fluxes transport, instead of the moist `Δp`.
 
@@ -80,12 +122,46 @@ the 0.25° ARCO product. Each hour's winds are held over the following hourly
 window.
 
 **GCHP** takes the same MERRA-2 A3dyn winds. MAPL regrids them conservatively
-to the cube as a vector (three Cartesian components). FV3's
-`fv_computeMassFluxes` then restaggers them to the faces (A → D → C grid,
-fourth-order interior interpolation, along-edge interpolation at cube edges)
-and forms mass fluxes and Courant numbers with dry pressure. The winds are held over each 3-hour block;
-`PS1`/`PS2` are interpolated in time to each 600 s step (GCHP run-directory
-setting `IMPORT_MASS_FLUX_FROM_EXTDATA = .false.` for MERRA-2).
+to the cube as a vector (three Cartesian components). `GCHPctmEnv` then
+restaggers them with `A2D2C` (`GEOS_FV3_Utilities.F90`, `d2a2c_vect` in
+`sw_core.F90`):
+
+1. A → D. The along-edge wind at each face is the average of the two cells'
+   Cartesian winds. At cube edges it is interpolated along the edge
+   (`edge_vect_*`).
+2. D → A, fourth order (`dord4`). In the panel interior (cells at least four
+   from an edge) the step is `(−1, 9, 9, −1)/16`; nearer the edges it is the
+   two-point mean. Together with step 1 this returns the A-grid wind *filtered
+   along the face direction*: `(−1, 8, 18, 8, −1)/32` in the interior and
+   `(1, 2, 1)/4` near the edges. The filter removes the 2Δ wave along the face
+   and keeps 62% of the 4Δ wave.
+3. A → C. Fourth order `(−1, 9, 9, −1)/16` across the face in the interior,
+   one-sided next to the edges, and `edge_interpolate4` on the edges.
+
+`fv_computeMassFluxes` then forms contravariant winds and the swept area
+`u dt dy sin_sg`. It advects the start-of-step dry `Δp = ΔA + ΔB p_s,dry` with
+FV3's PPM over `nsplt` subcycles (`fv_tp_2d`), so the face `Δp` is an
+upwind-swept value, not the two-cell mean. In pure-pressure layers `Δp` is
+uniform at the start, so the first subcycle agrees with the two-cell mean; later
+subcycles see the `Δp` updated by the divergence.
+
+`face_interpolation = "fv3"` reproduces the interior stencils of steps 1–3.
+Four differences from GCHP remain:
+- FV3 interpolates covariant components and converts them to contravariant
+  ones with the grid angles; we project the vector on the face normal.
+- FV3 picks the D → A order per contributing cell; we pick the filter per face
+  from the face's position. They differ in a band three to five cells from the
+  panel edges.
+- The first and last row of a panel are not filtered here; FV3 filters them
+  using halo cells from the neighbouring panel.
+- Next to the edges FV3 uses its one-sided and `edge_interpolate4`
+  interpolations; we use the two-cell value with the along-edge correction.
+
+The winds are held over each 3-hour block. GCHP reads the A3dyn record at
+t + 90 min, so record `r` advects hours `3(r−1)` to `3r`, as here. The CATRINE
+output at 00z holds the previous day's last record: it is the step that ends
+at 00z. `PS1`/`PS2` are interpolated in time to each 600 s step (GCHP
+run-directory setting `IMPORT_MASS_FLUX_FROM_EXTDATA = .false.` for MERRA-2).
 
 **TM5** integrates `U·Δp` along each cell edge from the spectral fields
 (`tmm.F90`), with at least two points per spectral wavelength.

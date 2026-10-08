@@ -229,8 +229,15 @@ Face-flux construction (MERRA-2 only; see
     panel seams.
 - `face_lengths = "cell_centerline"` (default) or `"edge"`: the length used by
   `panel_average`.
+- `face_interpolation` (`vector` only): `"linear"` (default, the two adjacent
+  cells), `"cubic"` (FV3's fourth-order stencil across interior faces) or
+  `"fv3"` (`"cubic"` plus the filter along the face of GCHP's A → D → C
+  restaggering).
 - `flux_thickness = "moist"` (default) or `"dry_mass"`: the layer thickness
   in the fluxes.
+- `wind_regrid = "scalar"` (default) or `"cartesian"`: regrid `u` and `v` as
+  two scalars, or the wind as a vector, as GCHP does. The scalar regrid is
+  off by about 5% poleward of 88°.
 
 `[numerics] dt_met_seconds = 3600` splits every 3-hour MERRA-2 block into three
 hourly windows (endpoint mass, PS, QV and T linear in time, 3-hour mean winds),

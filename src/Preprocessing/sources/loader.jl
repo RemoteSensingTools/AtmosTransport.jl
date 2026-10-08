@@ -51,7 +51,7 @@ end
 # Flux-construction options wired into the MERRA-2 path only; elsewhere the
 # keys would be silently ignored.
 const _MERRA2_ONLY_PREPROCESSING_KEYS = ("column_balance_weights", "face_lengths", "flux_thickness",
-                                         "face_fluxes")
+                                         "face_fluxes", "face_interpolation", "wind_regrid")
 _reject_merra2_only_keys(::Type{MERRA2Settings}, cfg) = nothing
 function _reject_merra2_only_keys(::Type, cfg)
     pre_cfg = get(cfg, "preprocessing", Dict{String,Any}())
@@ -160,6 +160,8 @@ function _build_met_settings(ctor::Type{MERRA2Settings}, cfg::AbstractDict,
     face_lengths   = Symbol(lowercase(String(get(pre_cfg, "face_lengths", "cell_centerline"))))
     flux_thickness = Symbol(lowercase(String(get(pre_cfg, "flux_thickness", "moist"))))
     face_fluxes    = Symbol(lowercase(String(get(pre_cfg, "face_fluxes", "panel_average"))))
+    face_interpolation = Symbol(lowercase(String(get(pre_cfg, "face_interpolation", "linear"))))
+    wind_regrid    = Symbol(lowercase(String(get(pre_cfg, "wind_regrid", "scalar"))))
     face_fluxes === :vector && face_lengths === :cell_centerline && haskey(pre_cfg, "face_lengths") &&
         throw(ArgumentError("[preprocessing] face_fluxes = \"vector\" always uses face edge lengths; " *
                             "remove face_lengths = \"cell_centerline\""))
@@ -167,5 +169,5 @@ function _build_met_settings(ctor::Type{MERRA2Settings}, cfg::AbstractDict,
                   coefficients_file = coefs, winds_collection, archive,
                   include_surface, include_convection, include_vdiff_fields,
                   include_convective_cloud_base, column_balance_weights,
-                  face_lengths, flux_thickness, face_fluxes, kwargs...))
+                  face_lengths, flux_thickness, face_fluxes, face_interpolation, wind_regrid, kwargs...))
 end

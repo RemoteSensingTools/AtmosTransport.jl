@@ -347,4 +347,15 @@ test_profiles(Nz) = (
         @test PPMScheme() isa AtmosTransport.Adjoints.CSAdjointSupportedScheme
         @test !(FV3_PPM isa AtmosTransport.Adjoints.CSAdjointSupportedScheme)
     end
+
+    @testset "run-log labels name the vertical scheme" begin
+        label = AtmosTransport.Models.DrivenRunner._advection_label
+        signed = PPMScheme(; vertical = FV3ScalarProfile(; positive_definite = false))
+        @test label(PPMScheme()) == "PPM"
+        @test label(FV3_PPM) == "PPM, FV3 kord 8 vertical"
+        @test label(signed) == "PPM, FV3 kord 8 vertical (signed)"
+        @test label(LinRoodPPMScheme(7)) == "Lin-Rood PPM7"
+        @test label(LinRoodPPMScheme(7; vertical = FV3_PPM)) == "Lin-Rood PPM7, FV3 kord 8 vertical"
+        @test isempty(Test.detect_ambiguities(AtmosTransport.Models.DrivenRunner))
+    end
 end

@@ -532,7 +532,8 @@ Consumed by `scripts/preprocessing/preprocess_transport_binary.jl`, which
 calls the unified `process_day` preprocessing entry point. Source-specific
 `[preprocessing]` keys live in the met-source descriptor
 (`config/met_sources/*.toml`); the MERRA-2 flux-construction keys
-(`column_balance_weights`, `face_fluxes`, `face_lengths`, `flux_thickness`) are
+(`column_balance_weights`, `face_fluxes`, `face_lengths`, `face_interpolation`,
+`flux_thickness`, `wind_regrid`) are
 described in [Data sources](data_sources.md).
 
 The preprocessing config has a different shape from the run config:
