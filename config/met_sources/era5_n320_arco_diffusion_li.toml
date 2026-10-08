@@ -1,0 +1,31 @@
+# ===========================================================================
+# ERA5 N320 assembled from ARCO — surface PBL and exact TM5 diffusion, without
+# convection; face mass fluxes integrated from the N320 winds and averaged over
+# each hourly window. Convection can be attached later as a date-matched sidecar.
+# ===========================================================================
+
+[source]
+name        = "ERA5-N320"
+description = "ECMWF ERA5 native N320 via ARCO, with surface PBL and TM5 diffusion; line-integral window-mean fluxes"
+institution = "ECMWF (data) / Google Research (ARCO mirror)"
+reference   = "https://github.com/google-research/arco-era5"
+
+[vertical]
+coefficients_file = "config/era5_L137_coefficients.toml"
+
+[preprocessing]
+level_orientation = "top_down"
+arco_surface_pressure = true
+include_surface       = true
+include_convection    = false
+include_tm5_diffusion = true
+# Flux construction (docs/src/theory/vertical_transport.md, section 1):
+# ΔB-weighted column closure; face fluxes integrated along each cube face from
+# the N320 winds, which keeps the convergence of every cube cell at the source
+# resolution; the mean of the face fluxes at the start and end of each hour
+# (trapezoidal rule) instead of the winds at the start. The Cartesian regrid
+# still supplies the cube-centre winds written for diagnostics.
+column_balance_weights = "hybrid_b"
+face_fluxes            = "line_integral"
+flux_time_sampling     = "window_mean"
+wind_regrid            = "cartesian"

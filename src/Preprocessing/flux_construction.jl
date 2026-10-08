@@ -6,7 +6,7 @@
 
 # Accepted values of the `[preprocessing]` flux-construction keys.
 const FACE_LENGTH_KINDS        = (:cell_centerline, :edge)
-const FACE_FLUX_KINDS          = (:panel_average, :vector)
+const FACE_FLUX_KINDS          = (:panel_average, :vector, :line_integral)
 const FACE_INTERPOLATION_KINDS = (:linear, :cubic, :fv3)
 const WIND_REGRID_KINDS        = (:scalar, :cartesian)
 
@@ -21,11 +21,16 @@ function _validate_flux_construction(s, source::AbstractString)
     end
     s.face_fluxes === :vector || s.face_interpolation === :linear ||
         throw(ArgumentError("$source face_interpolation applies to face_fluxes = :vector only"))
+    s.face_fluxes !== :line_integral || _has_source_line_integrals(s) ||
+        throw(ArgumentError("$source does not implement face_fluxes = :line_integral (ERA5 N320 only)"))
     haskey(COLUMN_WEIGHT_KINDS, s.column_balance_weights) ||
         throw(ArgumentError("$source column_balance_weights must be one of " *
                             join(keys(COLUMN_WEIGHT_KINDS), ", ") * "; got :$(s.column_balance_weights)"))
+    _validate_flux_time_sampling(s, source)
     return s
 end
+_validate_flux_time_sampling(s, source) = nothing      # sources without the option (ERA5 N320 has one)
+_has_source_line_integrals(s) = false                  # true for ERA5 N320 (sources/era5.jl)
 
 # How face fluxes are built from the cell-centre winds.
 struct PanelAverageFluxes{L <: AbstractFaceLengths}    # panel components averaged (historical)
@@ -39,7 +44,13 @@ end
 const _FACE_INTERPOLATION = (linear = (order = 2, along_face_filter = false),
                              cubic  = (order = 4, along_face_filter = false),
                              fv3    = (order = 4, along_face_filter = true))
-function _face_flux_method(settings, grid)
+# `source` is the source mesh, needed by `:line_integral` (ERA5 N320 only).
+function _face_flux_method(settings, grid; source = nothing)
+    if settings.face_fluxes === :line_integral
+        source isa ReducedGaussianMesh || throw(ArgumentError(
+            "face_fluxes = :line_integral is implemented for ERA5 N320 sources only"))
+        return LineIntegralFaceFluxes(source, grid.mesh, grid.face_table)
+    end
     settings.face_fluxes === :vector && return VectorFaceFluxes(
         CSVectorFaceGeometry(grid.mesh, grid.face_table; _FACE_INTERPOLATION[settings.face_interpolation]...),
         grid.face_table)
@@ -57,6 +68,9 @@ function _prepare_cell_winds!(::VectorFaceFluxes, x, u_east, v_north, mesh, Nz)
     foreach(copyto!, x.v_local, v_north)
     return nothing
 end
+# The line integrals use the source winds, not the cube-centre ones; they are
+# applied through `_endpoint_face_fluxes!` (era5_n320_regrid.jl), which has them.
+_prepare_cell_winds!(::LineIntegralFaceFluxes, x, u_east, v_north, mesh, Nz) = nothing
 
 _face_fluxes!(m::PanelAverageFluxes, x, g, dt, Nc, Nz) =
     cs_face_fluxes!(x.am, x.bm, x.u_local, x.v_local, x.dp, m.lengths, g, dt, Nc, Nz)

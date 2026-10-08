@@ -62,9 +62,18 @@ Base.@kwdef struct ERA5GRIBSettings{flavor} <: AbstractERA5GRIBSettings
     face_fluxes           :: Symbol = :panel_average
     face_interpolation    :: Symbol = :linear
     wind_regrid           :: Symbol = :scalar
+    # Time sampling of the hourly window fluxes: the winds at the window start
+    # (`:window_start`, historical) or the mean of the face fluxes at the start
+    # and end of the window (`:window_mean`, trapezoidal rule for ∫ u Δp dt).
+    flux_time_sampling    :: Symbol = :window_start
 end
 
 const ERA5N320Settings = ERA5GRIBSettings{:n320}
+const ERA5_FLUX_TIME_SAMPLINGS = (:window_start, :window_mean)
+_has_source_line_integrals(::ERA5GRIBSettings) = true
+_validate_flux_time_sampling(s::ERA5GRIBSettings, source) =
+    s.flux_time_sampling in ERA5_FLUX_TIME_SAMPLINGS || throw(ArgumentError(
+        "$source flux_time_sampling must be one of $(join(ERA5_FLUX_TIME_SAMPLINGS, ", ")); got :$(s.flux_time_sampling)"))
 
 # ---------------------------------------------------------------------------
 # Stream layout.
@@ -115,10 +124,9 @@ end
 # ---------------------------------------------------------------------------
 # Day-handle container.
 #
-# GRIB.jl iterators are forward-only and cheap to reopen, so the handle holds
-# resolved paths rather than pinned `GribFile` objects. This makes
-# `close_day!` a no-op (idempotent) and avoids leaking file descriptors when
-# the reader is restarted mid-day.
+# The handle holds resolved paths plus a lazily built ecCodes index of the
+# core GRIB file (see `_core_messages`); `close_era5_day!` releases the index
+# and is idempotent.
 # ---------------------------------------------------------------------------
 
 """
@@ -132,7 +140,8 @@ endpoint of the last window.
 likewise `surface_path` is `nothing` unless `settings.include_surface` is set.
 `next_core_path` is `nothing` either when the caller passed
 `next_day_handle=false` or when the next-day file is not on disk (last day of
-the available archive).
+the available archive). `core_index` holds the ecCodes index of `core_path`
+once the first window has been read.
 """
 struct ERA5GRIBDayHandles{S <: AbstractERA5GRIBSettings}
     settings             :: S
@@ -150,7 +159,13 @@ struct ERA5GRIBDayHandles{S <: AbstractERA5GRIBSettings}
     # ARCO surface-pressure netCDF for `date` (only set when
     # `settings.arco_surface_pressure`; supplies PS in place of spectral LNSP).
     arco_sp_path         :: Union{Nothing, String}
+    core_index           :: Base.RefValue{Union{Nothing, GRIB.Index}}
 end
+
+ERA5GRIBDayHandles(settings::S, date, core_path, convection_path, surface_path, next_core_path,
+                   prev_convection_path, arco_sp_path) where S <: AbstractERA5GRIBSettings =
+    ERA5GRIBDayHandles{S}(settings, date, core_path, convection_path, surface_path, next_core_path,
+                          prev_convection_path, arco_sp_path, Ref{Union{Nothing, GRIB.Index}}(nothing))
 
 const ERA5_VALID_LEVEL_ORIENTATIONS = (:top_down, :bottom_up)
 
@@ -228,21 +243,41 @@ function open_era5_day(settings::AbstractERA5GRIBSettings, date::Date;
         arco_sp_path = candidate
     end
 
-    return ERA5GRIBDayHandles{typeof(settings)}(
-        settings, date,
-        core_path, convection_path, surface_path, next_core_path,
-        prev_convection_path, arco_sp_path)
+    return ERA5GRIBDayHandles(settings, date,
+                              core_path, convection_path, surface_path, next_core_path,
+                              prev_convection_path, arco_sp_path)
 end
 
 """
     close_era5_day!(handles::ERA5GRIBDayHandles)
 
-Release any resources held by the day handle. Idempotent — safe to call from
-a `finally` block. This is a no-op today because the handle only stores paths,
-but the symbol exists so future flavors that pin file descriptors don't change
-the call surface.
+Release the ecCodes index of the day's core GRIB file, if one was built.
+Idempotent — safe to call from a `finally` block.
 """
-close_era5_day!(::ERA5GRIBDayHandles) = nothing
+function close_era5_day!(handles::ERA5GRIBDayHandles)
+    idx = handles.core_index[]
+    idx === nothing && return nothing
+    GRIB.destroy(idx)
+    handles.core_index[] = nothing
+    return nothing
+end
+
+"""
+    _core_messages(handles, date, hour) -> GRIB.Index
+
+The core GRIB messages of `date` at `hour`. The ecCodes index is built in one
+pass over the file on the first call; later calls seek straight to the messages
+instead of scanning the whole file (12–24 GB per day) once per hourly window.
+"""
+function _core_messages(handles::ERA5GRIBDayHandles, date::Date, hour::Integer)
+    if handles.core_index[] === nothing
+        handles.core_index[] = GRIB.Index(handles.core_path, "dataDate", "dataTime")
+    end
+    idx = handles.core_index[]::GRIB.Index
+    GRIB.select!(idx, "dataDate", parse(Int, Dates.format(date, "yyyymmdd")))
+    GRIB.select!(idx, "dataTime", Int(hour) * 100)
+    return idx
+end
 
 # ---------------------------------------------------------------------------
 # AbstractMetSettings trait hooks.
@@ -377,32 +412,25 @@ that precision. `FT` only controls the eltype of the downstream gridpoint
 fields written via [`read_era5_n320_window_fields!`](@ref).
 """
 struct ERA5N320SpectralWorkspace{FT <: AbstractFloat,
-                                  G <: ReducedGaussianTargetGeometry{FT}}
+                                  G <: ReducedGaussianTargetGeometry{FT},
+                                  S <: ReducedSpectralSynthesis}
     source_grid  :: G
     T            :: Int
     Nz           :: Int
+    # Spectral VO, D and T of every level. After a window is read, `vo_spec`
+    # and `d_spec` hold U·cos φ and V·cos φ instead (`vod2uv!` in place).
     vo_spec      :: Array{ComplexF64, 3}
     d_spec       :: Array{ComplexF64, 3}
     t_spec       :: Array{ComplexF64, 3}
     lnsp_spec    :: Matrix{ComplexF64}
-    # Per-thread spectral-synthesis caches. Each `ReducedSpectralThreadCache`
-    # owns its own `u_spec`/`v_spec` (vod2uv output) and FFT/Legendre buffers,
-    # so the 137-level synthesis loop threads over levels with no shared state
-    # (the dominant cost: ~90% of per-window wall at T639/Nz137). Length =
-    # `Threads.maxthreadid()` at allocation; mirrors the RG path's `work.caches`.
+    # Batched synthesis of all levels (Legendre tables, FFT plans, buffers);
+    # may be shared by workspaces whose reads never overlap.
+    synthesis    :: S
+    # Per-thread caches: `u_spec`/`v_spec` hold the `vod2uv!` output of one
+    # level; the single-field path (`lnsp`) uses the Legendre/FFT buffers.
+    # Length = `Threads.maxthreadid()` at allocation.
     synth_caches :: Vector{ReducedSpectralThreadCache}
     read_buf     :: Vector{Float64}
-    # Per-spectral-field decode scratch. `read_spectral_coeffs!` wants a
-    # concrete `Matrix{ComplexF64}` (not a view), so we keep one matrix per
-    # spectral field and copy the result into the level slot of the cube.
-    # Avoids ~70 GB/day of allocator churn at T639/Nz137.
-    t_scratch    :: Matrix{ComplexF64}
-    vo_scratch   :: Matrix{ComplexF64}
-    d_scratch    :: Matrix{ComplexF64}
-    # Per-thread gridpoint synthesis scratch — `spectral_to_reduced_scalar!`
-    # writes Float64. One buffer per thread so the threaded synthesis loop
-    # never aliases. Length = `Threads.maxthreadid()`.
-    grid_scratches :: Vector{Vector{Float64}}
     have_t       :: BitVector
     have_vo      :: BitVector
     have_d       :: BitVector
@@ -420,7 +448,8 @@ Allocate a fresh workspace sized to `source_grid` (build via
 `Nz` (defaults to 137 in callers, but the workspace itself stays generic).
 """
 function allocate_era5_n320_spectral_workspace(source_grid::ReducedGaussianTargetGeometry{FT},
-                                                T::Integer, Nz::Integer) where FT
+                                                T::Integer, Nz::Integer;
+                                                synthesis = ReducedSpectralSynthesis(source_grid, T, Nz)) where FT
     T  >= 1 || throw(ArgumentError("T must be ≥ 1, got $T"))
     Nz >= 1 || throw(ArgumentError("Nz must be ≥ 1, got $Nz"))
     T_int  = Int(T)
@@ -449,20 +478,19 @@ function allocate_era5_n320_spectral_workspace(source_grid::ReducedGaussianTarge
         zeros(ComplexF64, nc, nc),
         zeros(ComplexF64, nc, nc),
     ) for _ in 1:n_caches]
-    grid_scratches = [zeros(Float64, n_cells) for _ in 1:n_caches]
 
-    return ERA5N320SpectralWorkspace{FT, typeof(source_grid)}(
+    (synthesis.grid.mesh.nlon_per_ring == mesh.nlon_per_ring && synthesis.grid.lats == source_grid.lats &&
+     synthesis.T == T_int && synthesis.Nf == Nz_int) ||
+        throw(ArgumentError("synthesis was built for another grid, truncation or level count"))
+    return ERA5N320SpectralWorkspace{FT, typeof(source_grid), typeof(synthesis)}(
         source_grid, T_int, Nz_int,
         zeros(ComplexF64, nc, nc, Nz_int),     # vo_spec
         zeros(ComplexF64, nc, nc, Nz_int),     # d_spec
         zeros(ComplexF64, nc, nc, Nz_int),     # t_spec
         zeros(ComplexF64, nc, nc),             # lnsp_spec
+        synthesis,
         synth_caches,
         Float64[],                             # read_buf — grows in read_spectral_coeffs!
-        zeros(ComplexF64, nc, nc),             # t_scratch
-        zeros(ComplexF64, nc, nc),             # vo_scratch
-        zeros(ComplexF64, nc, nc),             # d_scratch
-        grid_scratches,
         falses(Nz_int), falses(Nz_int), falses(Nz_int), falses(Nz_int),
         Ref(false),
         zeros(Float64, n_cells),               # lnsp_grid — scratch for PS synthesis
@@ -592,9 +620,6 @@ function read_era5_n320_window_fields!(fields::ERA5N320WindowFields{FT},
                                         hour::Integer) where FT
     0 <= hour <= 23 || throw(ArgumentError("hour must be in 0..23, got $hour"))
 
-    expected_data_date = parse(Int, Dates.format(date, "yyyymmdd"))
-    expected_data_time = Int(hour) * 100
-
     fill!(workspace.have_t,  false)
     fill!(workspace.have_vo, false)
     fill!(workspace.have_d,  false)
@@ -612,42 +637,34 @@ function read_era5_n320_window_fields!(fields::ERA5N320WindowFields{FT},
 
     _prof = get(ENV, "ERA5_N320_PROFILE", "") == "1"
     _t_io = time()
-    GribFile(handles.core_path) do gf
-        for msg in gf
-            Int(msg["dataDate"]) == expected_data_date || continue
-            Int(msg["dataTime"]) == expected_data_time || continue
+    for msg in _core_messages(handles, date, hour)     # only this date and hour
+        grid_type  = String(msg["gridType"])
+        short_name = String(msg["shortName"])
+        level      = Int(msg["level"])
 
-            grid_type  = String(msg["gridType"])
-            short_name = String(msg["shortName"])
-            level      = Int(msg["level"])
-
-            if grid_type == "sh"
-                if short_name == "t"
-                    _read_into_level_slot!(workspace.t_spec, workspace.t_scratch,
-                                            msg, workspace.read_buf, level, Nz)
-                    workspace.have_t[level] = true
-                elseif short_name == "vo"
-                    _read_into_level_slot!(workspace.vo_spec, workspace.vo_scratch,
-                                            msg, workspace.read_buf, level, Nz)
-                    workspace.have_vo[level] = true
-                elseif short_name == "d"
-                    _read_into_level_slot!(workspace.d_spec, workspace.d_scratch,
-                                            msg, workspace.read_buf, level, Nz)
-                    workspace.have_d[level] = true
-                elseif short_name == "lnsp"
-                    read_spectral_coeffs!(workspace.lnsp_spec, msg, workspace.read_buf)
-                    workspace.have_lnsp[] = true
-                end
-            elseif grid_type == "reduced_gg" && short_name == "q"
-                1 <= level <= Nz ||
-                    error("Q level $level outside [1, $Nz] for date=$date hour=$hour")
-                _check_grid_point_layout(msg)
-                vals = msg["values"]
-                pl   = msg["pl"]
-                _reorder_grib_reduced_gg_to_mesh!(
-                    view(fields.qv, :, level), vals, pl, mesh)
-                workspace.have_q[level] = true
+        if grid_type == "sh"
+            if short_name == "t"
+                _read_into_level_slot!(workspace.t_spec, msg, workspace.read_buf, level, Nz)
+                workspace.have_t[level] = true
+            elseif short_name == "vo"
+                _read_into_level_slot!(workspace.vo_spec, msg, workspace.read_buf, level, Nz)
+                workspace.have_vo[level] = true
+            elseif short_name == "d"
+                _read_into_level_slot!(workspace.d_spec, msg, workspace.read_buf, level, Nz)
+                workspace.have_d[level] = true
+            elseif short_name == "lnsp"
+                read_spectral_coeffs!(workspace.lnsp_spec, msg, workspace.read_buf)
+                workspace.have_lnsp[] = true
             end
+        elseif grid_type == "reduced_gg" && short_name == "q"
+            1 <= level <= Nz ||
+                error("Q level $level outside [1, $Nz] for date=$date hour=$hour")
+            _check_grid_point_layout(msg)
+            vals = msg["values"]
+            pl   = msg["pl"]
+            _reorder_grib_reduced_gg_to_mesh!(
+                view(fields.qv, :, level), vals, pl, mesh)
+            workspace.have_q[level] = true
         end
     end
 
@@ -668,37 +685,26 @@ function read_era5_n320_window_fields!(fields::ERA5N320WindowFields{FT},
 
     _prof && (_t_io = time() - _t_io)
 
-    # Spectral → gridpoint synthesis per level. The 137 levels are independent
-    # (each reads its own spectral slice, writes its own gridpoint column), so
-    # the loop threads with per-thread caches/scratch. `:static` keeps
-    # `threadid()` constant within each iteration — valid ONLY because the loop
-    # body has no yield points (no @spawn, I/O, or lock contention); if one is
-    # added later, switch to a chunk-based loop (ChunkSplitters.jl). This is
-    # ~90% of per-window wall at T639/Nz137, so threading it is the win.
+    # Spectral → gridpoint synthesis. `vod2uv!` turns VO, D of each level into
+    # ECMWF's pseudo-winds U·cos φ, V·cos φ (in place; levels are independent),
+    # then each field is synthesised for all levels at once and the winds are
+    # divided by cos φ per ring.
     grid = workspace.source_grid
     caches = workspace.synth_caches
-    scratches = workspace.grid_scratches
 
     _t_synth = time()
     Threads.@threads :static for k in 1:Nz
-        tid     = Threads.threadid()
-        @inbounds cache   = caches[tid]      # tid ≤ maxthreadid() == length(caches)
-        @inbounds scratch = scratches[tid]
-        vo_lvl  = view(workspace.vo_spec, :, :, k)
-        d_lvl   = view(workspace.d_spec,  :, :, k)
-        t_lvl   = view(workspace.t_spec,  :, :, k)
-
-        # vod2uv! produces ECMWF's `U·cos(φ)` / `V·cos(φ)` "pseudo-winds";
-        # the per-ring division below recovers physical `U`, `V` in m/s.
+        cache = caches[Threads.threadid()]   # threadid() ≤ maxthreadid() == length(caches)
+        vo_lvl = view(workspace.vo_spec, :, :, k)
+        d_lvl  = view(workspace.d_spec,  :, :, k)
         vod2uv!(cache.u_spec, cache.v_spec, vo_lvl, d_lvl, T)
-
-        _synthesize_into_column!(view(fields.u, :, k), cache.u_spec, T,
-                                  grid, cache, scratch)
-        _synthesize_into_column!(view(fields.v, :, k), cache.v_spec, T,
-                                  grid, cache, scratch)
-        _synthesize_into_column!(view(fields.t, :, k), t_lvl,        T,
-                                  grid, cache, scratch)
-
+        copyto!(vo_lvl, cache.u_spec)
+        copyto!(d_lvl, cache.v_spec)
+    end
+    synthesize_reduced!(fields.u, workspace.vo_spec, workspace.synthesis)
+    synthesize_reduced!(fields.v, workspace.d_spec,  workspace.synthesis)
+    synthesize_reduced!(fields.t, workspace.t_spec,  workspace.synthesis)
+    Threads.@threads :static for k in 1:Nz
         _divide_by_cos_lat_per_ring!(view(fields.u, :, k), mesh)
         _divide_by_cos_lat_per_ring!(view(fields.v, :, k), mesh)
     end
@@ -794,20 +800,15 @@ function _fill_ps_from_arco_sp!(ps::AbstractVector, source_grid,
     return ps
 end
 
-"""Decode `msg` spectral coefficients into level slot `level` of `cube`, using
-the workspace-owned `scratch` matrix as the `read_spectral_coeffs!` target.
-The cube slice is updated via `copyto!` to avoid any per-call allocation.
-Asserts `1 ≤ level ≤ Nz` so a stray off-archive level fails loudly instead
-of silently aliasing a neighbouring slot."""
-function _read_into_level_slot!(cube::Array{ComplexF64, 3},
-                                 scratch::Matrix{ComplexF64},
-                                 msg,
+"""Decode `msg` spectral coefficients straight into level slot `level` of
+`cube`. Asserts `1 ≤ level ≤ Nz` so a stray off-archive level fails loudly
+instead of silently aliasing a neighbouring slot."""
+function _read_into_level_slot!(cube::Array{ComplexF64, 3}, msg,
                                  read_buf::Vector{Float64},
                                  level::Int, Nz::Int)
     1 <= level <= Nz ||
         error("spectral level $level outside [1, $Nz]")
-    read_spectral_coeffs!(scratch, msg, read_buf)
-    @inbounds @views cube[:, :, level] .= scratch
+    read_spectral_coeffs!(view(cube, :, :, level), msg, read_buf)
     return cube
 end
 
@@ -1626,7 +1627,8 @@ function allocate_era5_n320_to_c180_pipeline(handles::ERA5GRIBDayHandles,
                                                 Nz::Integer = ERA5_NATIVE_LEVEL_COUNT,
                                                 cache_dir::Union{Nothing, AbstractString} = nothing,
                                                 include_convection::Bool = true,
-                                                wind_regrid::Union{Symbol, AbstractWindRegrid} = :scalar) where FT
+                                                wind_regrid::Union{Symbol, AbstractWindRegrid} = :scalar,
+                                                synthesis::Union{Nothing, ReducedSpectralSynthesis} = nothing) where FT
     Nz_int = Int(Nz)
     Nz_int >= 1 || throw(ArgumentError("Nz must be ≥ 1, got $Nz"))
 
@@ -1638,7 +1640,8 @@ function allocate_era5_n320_to_c180_pipeline(handles::ERA5GRIBDayHandles,
                                 "check `settings.coefficients_file` vs the requested Nz"))
 
     cell_areas    = n320_cell_areas(source_grid)
-    spectral_ws   = allocate_era5_n320_spectral_workspace(source_grid, T_trunc, Nz_int)
+    synthesis === nothing && (synthesis = ReducedSpectralSynthesis(source_grid, T_trunc, Nz_int))
+    spectral_ws   = allocate_era5_n320_spectral_workspace(source_grid, T_trunc, Nz_int; synthesis)
     regrid_ws     = allocate_era5_c180_regrid_workspace(source_grid, target_grid, Nz_int;
                                                           cache_dir = cache_dir)
     window_fields = allocate_era5_n320_window_fields(source_grid, Nz_int)

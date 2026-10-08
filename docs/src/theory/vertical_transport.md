@@ -26,8 +26,9 @@ cell faces of the cubed sphere, for each layer and substep.
 - Hourly windows split each 3-hour block; air mass, `p_s`, humidity and
   temperature are linear in time.
 
-Two constructions of the face fluxes are available
-(`[preprocessing] face_fluxes`, MERRA-2 and ERA5 N320 paths):
+Two constructions of the face fluxes from cube-centre winds are available
+(`[preprocessing] face_fluxes`, MERRA-2 and ERA5 N320 paths); ERA5 N320 also
+offers line integrals of the source flow (`"line_integral"`, see **ERA5** below):
 
 - **`panel_average`** (default, historical,
   `src/Preprocessing/cs_transport_helpers.jl`, `cs_face_fluxes!`).
@@ -144,9 +145,49 @@ the cell winds reach the face midpoint:
 the fluxes transport, instead of the moist `Δp`.
 
 **ERA5** (`.../era5_n320_regrid.jl`). Instantaneous hourly winds on the N320
-reduced Gaussian grid, regridded the same way. Surface pressure comes from
-the 0.25° ARCO product. Each hour's winds are held over the following hourly
-window.
+reduced Gaussian grid. Surface pressure comes from the 0.25° ARCO product.
+- With `panel_average` or `vector` the winds are regridded to the cube as
+  above.
+- `face_fluxes = "line_integral"` (`LineIntegralFaceFluxes`) integrates the
+  N320 flow along each cube face instead:
+
+  ```math
+  F_f = \frac{\Delta t}{g} \int_f (\mathbf{V} \cdot \mathbf{N}_f)\, \Delta p \, dl .
+  ```
+
+  A cube face is a great-circle arc, so its unit normal `N_f` is the same
+  vector along it. The Cartesian components of `V Δp` are interpolated
+  bilinearly from the N320 cells to 16 midpoints of the arc. By the divergence
+  theorem the net flux out of a cube cell is then the N320 flow's divergence
+  integrated over the cell; the cell-centre methods smooth it at the cube
+  grid scale. TM5 integrates the spectral winds along its cell edges in the
+  same spirit.
+- `flux_time_sampling = "window_start"` (default) holds the fluxes from the
+  winds at hour `h` over the window `[h, h + 1]`. `"window_mean"` uses
+  `(F(h) + F(h + 1)) / 2`, the trapezoidal rule for the window's mean flux;
+  the Poisson balance then closes it against `m(h + 1) − m(h)` as before.
+  Without a next day on disk the last window uses `F(h)`.
+
+Against ERA5's own vertical velocity (ARCO-ERA5
+`ar/model-level-1h-0p25deg.zarr-v1`, 2022-01-15, C90, `hybrid_b`), in the
+pure-pressure layers above 71 hPa, where `ω = g cm / A`:
+
+| face fluxes | RMSE / RMS of ERA5 ω | slope per C90 cell | slope on 3 × 3 blocks |
+|---|---|---|---|
+| `vector`, `fv3` filter, L137 | 0.37–0.39 | 0.73–0.75 | 0.92–0.94 |
+| `line_integral`, L117 | 0.03 (10–71 hPa), 0.15 (< 10 hPa) | 0.95–1.00 | 0.94–0.99 |
+
+Both are compared with ω at the window start, with `window_start` sampling;
+with `window_mean` the line-integral fluxes match the mean of ω at the start
+and the end of the window equally well. Above 10 hPa the L117 layers merge
+several native levels, and the mean of the interface fluxes differs from the
+layer mean of ω. In hybrid layers above 200 hPa the slope is 1.01 (0.74 with
+`vector`). The line integrals thus resolve ERA5's vertical motion at the cube
+grid scale. Its larger grid-scale values raise the adaptive substep count:
+11–20 per window (mean 14) with `line_integral` and `window_mean` on L117,
+against 10–13 with `vector` on L137 and 9–10 with `vector` on L66. The largest
+column mismatch before the Poisson balance falls from 2.6e11 to 1.2e11 kg.
+Scripts and output: `/temp1/cfranken/scratch/arco_ml_check/`.
 
 **GCHP** takes the same MERRA-2 A3dyn winds. MAPL regrids them conservatively
 to the cube as a vector (three Cartesian components). `GCHPctmEnv` then

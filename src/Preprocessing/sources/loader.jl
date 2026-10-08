@@ -52,9 +52,9 @@ end
 # elsewhere the keys would be silently ignored, so they are rejected.
 const _FLUX_CONSTRUCTION_KEYS = ("column_balance_weights", "face_lengths", "face_fluxes",
                                  "face_interpolation", "wind_regrid")
-const _ALL_FLUX_KEYS = (_FLUX_CONSTRUCTION_KEYS..., "flux_thickness")
-_supported_flux_keys(::Type{MERRA2Settings}) = _ALL_FLUX_KEYS
-_supported_flux_keys(::Type{<:ERA5GRIBSettings}) = _FLUX_CONSTRUCTION_KEYS
+const _ALL_FLUX_KEYS = (_FLUX_CONSTRUCTION_KEYS..., "flux_thickness", "flux_time_sampling")
+_supported_flux_keys(::Type{MERRA2Settings}) = (_FLUX_CONSTRUCTION_KEYS..., "flux_thickness")
+_supported_flux_keys(::Type{<:ERA5GRIBSettings}) = (_FLUX_CONSTRUCTION_KEYS..., "flux_time_sampling")
 _supported_flux_keys(::Type) = ()
 function _reject_unsupported_flux_keys(ctor::Type, cfg)
     pre_cfg = get(cfg, "preprocessing", Dict{String,Any}())
@@ -143,7 +143,9 @@ function _build_met_settings(ctor::Type{<:ERA5GRIBSettings}, cfg::AbstractDict,
     settings = ctor(; root_dir,
                       include_surface, include_convection,
                       include_tm5_diffusion, arco_surface_pressure, level_orientation,
-                      coefficients_file = coefs, _flux_construction_kwargs(pre_cfg)..., kwargs...)
+                      coefficients_file = coefs, _flux_construction_kwargs(pre_cfg)...,
+                      flux_time_sampling = Symbol(lowercase(String(get(pre_cfg, "flux_time_sampling", "window_start")))),
+                      kwargs...)
     return _validate_flux_construction(settings, "ERA5")
 end
 

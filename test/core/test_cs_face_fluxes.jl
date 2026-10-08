@@ -395,6 +395,72 @@ interior_divergence(am, bm, Nc) =
         @test x.u_local == u_ref && x.v_local == v_ref                 # panel-local components
     end
 
+    @testset "face fluxes integrated along the faces from the source grid" begin
+        mesh = gmao_mesh(12); Nc = mesh.Nc
+        ft = P.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
+        src = P.build_target_geometry(Val(:synthetic_reduced_gaussian),
+                                      Dict{String, Any}("gaussian_number" => 96, "nlon_mode" => "octahedral"), Float64).mesh
+        li = P.LineIntegralFaceFluxes(src, mesh, ft)
+        lon, lat = P._source_cell_centers(src)
+        # one layer with Δp = ps = 1 (A = 0, B = 0 → 1) and Δt = g: fluxes are R ∫ V·N ds
+        function li_fluxes(wind)
+            u, v = zeros(length(lon), 1), zeros(length(lon), 1)
+            for c in eachindex(lon)
+                λ, φ = deg2rad(lon[c]), deg2rad(lat[c])
+                w = wind((cos(φ) * cos(λ), cos(φ) * sin(λ), sin(φ)))
+                u[c, 1] = P._dot3(w, (-sin(λ), cos(λ), 0.0))
+                v[c, 1] = P._dot3(w, (-sin(φ) * cos(λ), -sin(φ) * sin(λ), cos(φ)))
+            end
+            am, bm = ntuple(_ -> zeros(Nc + 1, Nc, 1), 6), ntuple(_ -> zeros(Nc, Nc + 1, 1), 6)
+            P.line_integral_face_fluxes!(am, bm, li, u, v, ones(length(lon)), [0.0, 0.0], [0.0, 1.0], 1.0, 1.0, 1)
+            return am, bm
+        end
+        # rotation plus a divergent wind varying over about four cube cells (wavelength 30°)
+        k = 12.0
+        function wind(x)
+            g = k .* (cos(k * x[1]) * sin(k * x[2]) * sin(k * x[3]),
+                      sin(k * x[1]) * cos(k * x[2]) * sin(k * x[3]),
+                      sin(k * x[1]) * sin(k * x[2]) * cos(k * x[3]))
+            return 20.0 .* (0.0, -x[3], x[2]) .+ (g .- P._dot3(g, x) .* x)   # tangent gradient
+        end
+        exact = exact_face_fluxes(mesh, ft, wind)
+        am, bm = li_fluxes(wind)
+        err_li = maximum(abs, canonical_fluxes(am, bm, ft) .- exact)
+        u_e, v_n = cell_winds(mesh, wind)
+        av, bv = ntuple(_ -> zeros(Nc + 1, Nc, 1), 6), ntuple(_ -> zeros(Nc, Nc + 1, 1), 6)
+        P.cs_vector_face_fluxes!(av, bv, u_e, v_n, ntuple(_ -> ones(Nc, Nc, 1), 6),
+                                 P.CSVectorFaceGeometry(mesh, ft), ft, 1.0, 1.0, Nc, 1)
+        err_vec = maximum(abs, canonical_fluxes(av, bv, ft) .- exact)
+        # the integral sees the sub-cell flow that face interpolation smooths away
+        @test err_li < 0.02 * maximum(abs, exact)
+        @test err_li < err_vec / 5
+        # seam faces stay single-valued
+        for f in findall(!=(0), ft.mirror_panel)
+            get(d, p, i, j) = d == 1 ? am[p][i, j, 1] : bm[p][i, j, 1]
+            @test get(ft.mirror_dir[f], ft.mirror_panel[f], ft.mirror_idx_i[f], ft.mirror_idx_j[f]) ==
+                  ft.mirror_sign[f] * get(ft.face_dir[f], ft.face_panel[f], ft.face_idx_i[f], ft.face_idx_j[f])
+        end
+        # a rigid rotation is divergence-free in every cell
+        am, bm = li_fluxes(x -> 30.0 .* (0.0, -x[3], x[2]))
+        div = [am[p][i, j, 1] - am[p][i + 1, j, 1] + bm[p][i, j, 1] - bm[p][i, j + 1, 1] for p in 1:6, i in 1:Nc, j in 1:Nc]
+        @test maximum(abs, div) < 1e-3 * maximum(abs, am[1])
+        @test_throws ArgumentError P._face_flux_method((face_fluxes = :line_integral,),
+                                                       (mesh = mesh, face_table = ft))    # no source mesh
+        # two hybrid layers, varying ps, Float32 output: F = Δp-weighted line integral, scaled by Δt / g
+        A, B = [0.0, 2000.0, 0.0], [0.0, 0.3, 1.0]
+        ps = [1e5 + 2e3 * sind(lat[c]) for c in eachindex(lat)]
+        u = repeat([20.0 * cosd(lat[c]) for c in eachindex(lat)], 1, 2); v = zero(u)   # zonal solid-body flow
+        am, bm = ntuple(_ -> zeros(Float32, Nc + 1, Nc, 2), 6), ntuple(_ -> zeros(Float32, Nc, Nc + 1, 2), 6)
+        P.line_integral_face_fluxes!(am, bm, li, u, v, ps, A, B, 9.80665, 450.0, 2)
+        for k in 1:2
+            dp = abs.(A[k + 1] - A[k] .+ (B[k + 1] - B[k]) .* ps)
+            a1, b1 = ntuple(_ -> zeros(Nc + 1, Nc, 1), 6), ntuple(_ -> zeros(Nc, Nc + 1, 1), 6)
+            P.line_integral_face_fluxes!(a1, b1, li, u[:, k:k] .* dp, v[:, k:k], ones(length(lat)),
+                                         [0.0, 0.0], [0.0, 1.0], 9.80665, 450.0, 1)
+            @test all(p -> am[p][:, :, k] ≈ Float32.(a1[p][:, :, 1]) && bm[p][:, :, k] ≈ Float32.(b1[p][:, :, 1]), 1:6)
+        end
+    end
+
     @testset "flux options in the met-source TOML" begin
         mktempdir() do dir
             write_toml(name, body) = (path = joinpath(dir, name); write(path, body); path)
@@ -419,6 +485,19 @@ interior_divergence(am, bm, Nc) =
             @test_throws ArgumentError P.load_met_settings(era_dry; root_dir = dir)
             era_bad = write_toml("era_bad.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nwind_regrid = \"bilinear\"\n")
             @test_throws ArgumentError P.load_met_settings(era_bad; root_dir = dir)
+            # window-mean fluxes and line integrals are ERA5 N320 options
+            era_li = write_toml("era_li.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nface_fluxes = \"line_integral\"\n" *
+                                               "flux_time_sampling = \"window_mean\"\n")
+            e = P.load_met_settings(era_li; root_dir = dir)
+            @test (e.face_fluxes, e.flux_time_sampling) == (:line_integral, :window_mean)
+            @test P.load_met_settings(write_toml("era00.toml", "[source]\nname = \"ERA5-N320\"\n"); root_dir = dir).flux_time_sampling ===
+                  :window_start
+            era_t = write_toml("era_t.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nflux_time_sampling = \"window_end\"\n")
+            @test_throws ArgumentError P.load_met_settings(era_t; root_dir = dir)
+            merra_t = replace(merra, "[preprocessing]" => "[preprocessing]\nflux_time_sampling = \"window_mean\"")
+            @test_throws ArgumentError P.load_met_settings(write_toml("merra_t.toml", merra_t); root_dir = dir)
+            merra_li = replace(merra, "[preprocessing]" => "[preprocessing]\nface_fluxes = \"line_integral\"")
+            @test_throws ArgumentError P.load_met_settings(write_toml("merra_li.toml", merra_li); root_dir = dir)
             vec = replace(merra, "[preprocessing]" => "[preprocessing]\nface_fluxes = \"vector\"\nface_interpolation = \"fv3\"\nwind_regrid = \"cartesian\"")
             s = P.load_met_settings(write_toml("vec.toml", vec); root_dir = dir)
             @test (s.face_interpolation, s.wind_regrid) == (:fv3, :cartesian)

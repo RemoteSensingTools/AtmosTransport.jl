@@ -13,6 +13,12 @@
   (surface pressure about 3 hPa low and temperature 0.8 K cold poleward of
   89° on C90); results are now divided by the covered fraction. ERA5 N320
   binaries built before this fix carry both biases.
+- The per-ring spectral synthesis (`spectral_to_ring!`) did not mirror the
+  highest wavenumber `(nlon − 1)/2` of rings with an odd number of longitudes,
+  so that wave entered at half amplitude. ERA5 N320 has 72 such rings (of 640).
+  Fixed there and in the batched synthesis below that now serves u, v and T;
+  the change is at most 6e-3 m/s and 2.5e-3 K. The Nyquist term `nlon/2` of
+  even rings still enters with half weight, as before.
 - `scripts/preprocessing/attach_catrine_tm5_convection_cs.jl` stored the
   legacy 1-degree TM5 convection upside down. The CATRINE files keep ERA5 L137
   surface first, and the script summed them through the binary's top-first
@@ -120,6 +126,28 @@
 
 ### Surface fluxes and preprocessing
 
+- ERA5 N320 preprocessing is about five times faster: a C90 day takes about 7
+  minutes on 12 threads instead of 23–38.
+  - The core GRIB file of a day (12–24 GB) is indexed once with ecCodes
+    (`_core_messages`); every hourly window used to scan the whole file.
+  - The spectral synthesis of all 137 levels runs as one BLAS product per
+    zonal wavenumber with precomputed Legendre functions, followed by one
+    inverse real FFT per ring and level (`ReducedSpectralSynthesis`); it
+    recomputed the Legendre table for every ring, level and field before.
+  - Spectral coefficients are decoded straight into the level cubes.
+  - Humidity and surface pressure are unchanged; u, v and T agree to 1e-12
+    relative, apart from the odd-ring fix above.
+- ERA5 N320 option `[preprocessing] face_fluxes = "line_integral"` integrates
+  `(V · N) Δp` along each cube face from the N320 winds and surface pressure
+  (`LineIntegralFaceFluxes`; bilinear N320 values, midpoint rule), following
+  TM5, which integrates the spectral winds along its cell edges, instead of
+  interpolating cube-centre winds to the faces.
+- ERA5 N320 option `[preprocessing] flux_time_sampling = "window_mean"` uses the
+  mean of the face fluxes at the start and end of each hourly window instead of
+  the winds at its start.
+- `config/met_sources/era5_n320_arco_diffusion_li.toml` and
+  `config/preprocessing/era5_n320_arco_diffusion_to_c90_l117_li.toml` combine
+  both with `hybrid_b` on 117 levels (native below about 8 hPa).
 - MERRA-2 preprocessing option `[preprocessing] face_fluxes = "vector"`
   builds face fluxes from the cell winds as 3-D vectors. They are projected
   onto the true face normals, use the faces' great-circle lengths, and are

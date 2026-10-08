@@ -2,7 +2,7 @@
 Read spectral coefficients from a GRIB message into a complex matrix.
 Returns spec[n+1, m+1] for m=0..T, n=m..T (upper triangular).
 """
-function read_spectral_coeffs!(spec::Matrix{ComplexF64}, msg)
+function read_spectral_coeffs!(spec::AbstractMatrix{ComplexF64}, msg)
     return read_spectral_coeffs!(spec, msg, Float64[])
 end
 
@@ -66,7 +66,7 @@ function _validate_spectral_header(msg, nvalues::Integer, spec::AbstractMatrix)
     return J
 end
 
-function read_spectral_coeffs!(spec::Matrix{ComplexF64}, msg, vals::Vector{Float64})
+function read_spectral_coeffs!(spec::AbstractMatrix{ComplexF64}, msg, vals::Vector{Float64})
     handle = msg.ptr
     sz = Ref{Csize_t}(0)
     err = ccall((:codes_get_size, GRIB.eccodes), Cint,
@@ -81,13 +81,15 @@ function read_spectral_coeffs!(spec::Matrix{ComplexF64}, msg, vals::Vector{Float
                 handle, "values", vals, sz)
     _check_eccodes_status(err, "codes_get_double_array(values)")
 
-    fill!(spec, zero(ComplexF64))
-
+    # One pass over `spec`: coefficients for m ≤ n ≤ T, zeros elsewhere.
+    # `_validate_spectral_header` checked the value count and the buffer size.
     idx = 1
-    for m in 0:T
-        for n in m:T
+    @inbounds for m in axes(spec, 2) .- 1, n in axes(spec, 1) .- 1
+        if n >= m && n <= T && m <= T
             spec[n + 1, m + 1] = complex(vals[idx], vals[idx + 1])
             idx += 2
+        else
+            spec[n + 1, m + 1] = zero(ComplexF64)
         end
     end
     return T

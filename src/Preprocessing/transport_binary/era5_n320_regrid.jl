@@ -156,7 +156,7 @@ function _next_day_core_only_handle(handles::ERA5GRIBDayHandles)
                   "$(next_date): $candidate")
         arco_sp = candidate
     end
-    return ERA5GRIBDayHandles{typeof(handles.settings)}(
+    return ERA5GRIBDayHandles(
         handles.settings,
         next_date,
         handles.next_core_path,
@@ -166,6 +166,26 @@ function _next_day_core_only_handle(handles::ERA5GRIBDayHandles)
         nothing,  # prev_convection_path
         arco_sp,  # arco_sp_path (next_date)
     )
+end
+
+"""
+    _endpoint_face_fluxes!(method, x, pipe, vc, gravity, dt_factor, Nc, Nz)
+
+Face mass fluxes `x.am`, `x.bm` of one window endpoint (`pipe`, one hour) on the
+native levels. The cell-centre methods use the regridded cube winds and the cube
+layer thickness from the regridded surface pressure; the line integrals use the
+source (N320) winds and surface pressure directly.
+"""
+function _endpoint_face_fluxes!(method::Union{PanelAverageFluxes, VectorFaceFluxes}, x, pipe, vc,
+                                gravity, dt_factor, Nc, Nz)
+    fill_cs_layer_thickness!(x.dp, pipe.c180_fields.ps, vc.A, vc.B, Nc, Nz)
+    _face_fluxes!(method, x, gravity, dt_factor, Nc, Nz)
+    return nothing
+end
+function _endpoint_face_fluxes!(method::LineIntegralFaceFluxes, x, pipe, vc, gravity, dt_factor, Nc, Nz)
+    w = pipe.window_fields
+    line_integral_face_fluxes!(x.am, x.bm, method, w.u, w.v, w.ps, vc.A, vc.B, gravity, dt_factor, Nz)
+    return nothing
 end
 
 """
@@ -321,7 +341,8 @@ function process_era5_n320_to_cs_day(date::Date,
             handles, target_grid; Nz = Nz_native,
             cache_dir = cache_dir,
             include_convection = include_convection,
-            wind_regrid = cur_pipe.wind)          # one set of wind-regrid buffers for both
+            wind_regrid = cur_pipe.wind,          # one set of wind-regrid buffers for both
+            synthesis = cur_pipe.spectral_ws.synthesis)   # and one synthesis (reads never overlap)
 
         native_vc = cur_pipe.vc
         vc = plan.merged_vc
@@ -358,9 +379,13 @@ function process_era5_n320_to_cs_day(date::Date,
         gravity = FT(GRAV)
         # Flux construction (`[preprocessing]` keys; defaults reproduce the
         # historical panel-average fluxes and mass-weighted column balance).
-        flux_method = _face_flux_method(settings, target_grid)
+        flux_method = _face_flux_method(settings, target_grid; source = cur_pipe.source_grid.mesh)
         flux_x = (am = native_am, bm = native_bm, u_local = native_u_local,
                   v_local = native_v_local, dp = native_dp)
+        # Window-mean fluxes also need the face fluxes at the window end, and the
+        # cell-centre methods their own winds and Δp there.
+        window_mean = settings.flux_time_sampling === :window_mean
+        flux_x_end = window_mean ? map(x -> map(zero, x), flux_x) : nothing
         balance_weights = column_weights(settings.column_balance_weights, vc.B)
         # Per-substep flux scaling for a window taking `steps` substeps. The
         # face flux is the substep-mass amount, so it scales as 1/steps; the
@@ -494,6 +519,7 @@ function process_era5_n320_to_cs_day(date::Date,
             dt_met_seconds = Float64(dt_met_seconds),
             half_dt_seconds = Float64(dt_met_seconds) / 2,
             steps_per_window = steps_per_met,
+            source_flux_sampling = window_mean ? :window_mean : :window_start_endpoint,
             include_flux_delta = true,
             include_tm5conv = include_convection,
             include_surface = settings.include_surface,
@@ -535,7 +561,8 @@ function process_era5_n320_to_cs_day(date::Date,
                 "poisson_balanced" => true,
                 "column_balance_weights" => String(settings.column_balance_weights),
                 "face_fluxes" => String(settings.face_fluxes),
-                "flux_face_lengths" => settings.face_fluxes === :vector ? "edge" : String(settings.face_lengths),
+                "flux_face_lengths" => settings.face_fluxes === :panel_average ? String(settings.face_lengths) : "edge",
+                "flux_time_sampling" => String(settings.flux_time_sampling),
                 "face_interpolation" => String(settings.face_interpolation),
                 "wind_regrid" => String(settings.wind_regrid),
                 "tm5_convection_source" => include_convection ?
@@ -598,10 +625,16 @@ function process_era5_n320_to_cs_day(date::Date,
         # `pipe` rotation + Δp are substep-independent, so they are computed once
         # before the adaptive loop; only the flux scaling (`out_dt_factor_for`),
         # the balance, the mass tendency, and `cm` depend on `steps`.
-        _balance_window_at_steps! = function (pipe, m_dry, m_next, am, bm, cm, dm, steps)
-            fill_cs_layer_thickness!(native_dp, pipe.c180_fields.ps, native_vc.A, native_vc.B,
-                                     Nc, Nz_native)
-            _face_fluxes!(flux_method, flux_x, gravity, out_dt_factor_for(steps), Nc, Nz_native)
+        _balance_window_at_steps! = function (pipe, pipe_end, m_dry, m_next, am, bm, cm, dm, steps)
+            dt = out_dt_factor_for(steps)
+            _endpoint_face_fluxes!(flux_method, flux_x, pipe, native_vc, gravity, dt, Nc, Nz_native)
+            if window_mean    # trapezoidal rule: mean of the start and end fluxes
+                _endpoint_face_fluxes!(flux_method, flux_x_end, pipe_end, native_vc, gravity, dt, Nc, Nz_native)
+                for p in 1:6
+                    native_am[p] .= (native_am[p] .+ flux_x_end.am[p]) ./ 2
+                    native_bm[p] .= (native_bm[p] .+ flux_x_end.bm[p]) ./ 2
+                end
+            end
             _merge_cs_center_extensive!(am, native_am, plan, MassFluxField())
             _merge_cs_center_extensive!(bm, native_bm, plan, MassFluxField())
             bal_diag = if apply_horizontal_balance
@@ -630,9 +663,11 @@ function process_era5_n320_to_cs_day(date::Date,
         # target (or the schedule converges). Returns the chosen `steps` and the
         # final balance diagnostics. Re-prepares at each candidate `steps`
         # (mirrors the GEOS path; guarantees continuity closes at that count).
-        _adapt_window! = function (pipe, m_dry, m_next, am, bm, cm, dm)
+        _adapt_window! = function (pipe, pipe_end, m_dry, m_next, am, bm, cm, dm)
             _prepare_cell_winds!(flux_method, flux_x, pipe.c180_fields.u, pipe.c180_fields.v,
                                  mesh, Nz_native)
+            window_mean && _prepare_cell_winds!(flux_method, flux_x_end, pipe_end.c180_fields.u,
+                                                pipe_end.c180_fields.v, mesh, Nz_native)
             @inbounds for p in 1:6
                 for k in 1:Nz_native
                     dA = Float64(native_vc.A[k + 1]) - Float64(native_vc.A[k])
@@ -644,7 +679,7 @@ function process_era5_n320_to_cs_day(date::Date,
                 end
             end
             steps = steps_per_met
-            bal_diag = _balance_window_at_steps!(pipe, m_dry, m_next, am, bm, cm, dm, steps)
+            bal_diag = _balance_window_at_steps!(pipe, pipe_end, m_dry, m_next, am, bm, cm, dm, steps)
             if substep_policy.adaptive_substeps
                 for _ in 1:_N320_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS
                     # Pass `m_next` so the refinement uses the SAME full-palindrome
@@ -658,7 +693,7 @@ function process_era5_n320_to_cs_day(date::Date,
                     next = next_substeps(substep_policy, steps, pos.ratio)
                     next == steps && break
                     steps = next
-                    bal_diag = _balance_window_at_steps!(pipe, m_dry, m_next, am, bm, cm, dm, steps)
+                    bal_diag = _balance_window_at_steps!(pipe, pipe_end, m_dry, m_next, am, bm, cm, dm, steps)
                 end
             end
             return steps, bal_diag
@@ -685,7 +720,7 @@ function process_era5_n320_to_cs_day(date::Date,
             # count until the per-substep CFL clears the target. Returns the
             # per-window `win_steps` recorded into the schedule.
             t_bal = time()
-            win_steps, bal_diag = _adapt_window!(cur_pipe, cur_m_dry, nxt_m_dry,
+            win_steps, bal_diag = _adapt_window!(cur_pipe, nxt_pipe, cur_m_dry, nxt_m_dry,
                                                  cur_am, cur_bm, cur_cm, cur_dm_dry)
             t_bal = time() - t_bal
             steps_schedule[win - 1] = win_steps
@@ -756,10 +791,14 @@ function process_era5_n320_to_cs_day(date::Date,
         # agnostic so we skip the heavier `process_era5_n320_window!` path.
         next_handles = _next_day_core_only_handle(handles)
         if next_handles !== nothing
-            read_era5_n320_window_fields!(nxt_pipe.window_fields,
-                                           nxt_pipe.spectral_ws,
-                                           next_handles,
-                                           handles.date + Day(1), 0)
+            try
+                read_era5_n320_window_fields!(nxt_pipe.window_fields,
+                                               nxt_pipe.spectral_ws,
+                                               next_handles,
+                                               handles.date + Day(1), 0)
+            finally
+                close_era5_day!(next_handles)
+            end
             regrid_n320_to_c180!(nxt_pipe.c180_fields,
                                    nxt_pipe.window_fields,
                                    nxt_pipe.regrid_ws,
@@ -803,7 +842,9 @@ function process_era5_n320_to_cs_day(date::Date,
 
         # Final window: same adaptive balance against the next-day hour-0 mass
         # endpoint (or the zero-tendency boundary fallback above).
-        final_steps, bal_diag = _adapt_window!(cur_pipe, cur_m_dry, nxt_m_dry,
+        # Without a next day the window end is unknown; the start fluxes stand in.
+        final_steps, bal_diag = _adapt_window!(cur_pipe, next_handles === nothing ? cur_pipe : nxt_pipe,
+                                               cur_m_dry, nxt_m_dry,
                                                cur_am, cur_bm, cur_cm, cur_dm_dry)
         steps_schedule[nwindow] = final_steps
         final_pos_diag = if write_replay_on

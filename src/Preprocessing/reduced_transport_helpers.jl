@@ -325,7 +325,9 @@ function spectral_to_ring!(dest::AbstractVector{Float64},
         fft_buf[m + 1] = Gm
     end
 
-    for m in 1:min(T, div(Nlon, 2) - 1)
+    # Hermitian mirror of every 0 < m < Nlon/2 (for odd Nlon this includes
+    # m = (Nlon − 1)/2); the Nyquist term of an even ring has no mirror.
+    for m in 1:min(T, (Nlon - 1) ÷ 2)
         fft_buf[Nlon - m + 1] = conj(fft_buf[m + 1])
     end
 

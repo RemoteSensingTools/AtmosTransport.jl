@@ -227,6 +227,12 @@ Face-flux construction (MERRA-2 and ERA5 N320; see
   - `"vector"`: combines the winds as 3-D vectors, projects them onto the true
     face normals with true face lengths, and interpolates along the edge at
     panel seams.
+  - `"line_integral"` (ERA5 N320 only): integrates `(V · N) Δp` along each face
+    from the N320 winds and surface pressure (bilinear interpolation of the
+    Cartesian wind components, 16 midpoints per face). TM5 integrates the
+    spectral winds along its cell edges in the same spirit. Each cube cell's
+    convergence is then that of the source flow; the cell-centre methods
+    smooth it at the cube grid scale.
 - `face_lengths = "cell_centerline"` (default) or `"edge"`: the length used by
   `panel_average`.
 - `face_interpolation` (`vector` only): `"linear"` (default, the two adjacent
@@ -238,11 +244,22 @@ Face-flux construction (MERRA-2 and ERA5 N320; see
 - `wind_regrid = "scalar"` (default) or `"cartesian"`: regrid `u` and `v` as
   two scalars, or the wind as a vector, as GCHP does. The scalar regrid is
   off by about 5% poleward of 88°.
+- `flux_time_sampling` (ERA5 N320 only): `"window_start"` (default) holds the
+  instantaneous winds of each hour over the following hourly window;
+  `"window_mean"` uses the mean of the face fluxes at the start and end of the
+  window, the trapezoidal rule for `∫ u Δp dt`, so the fluxes are centred in
+  time. The binary header records it as `source_flux_sampling`.
 
 The GEOS sources reject these keys. `config/met_sources/merra2_geoschem_hm_gchp.toml`
 and `config/met_sources/era5_n320_arco_diffusion_hb_gchp.toml` select GCHP's
 construction; the ERA5 one uses `hybrid_b`, because its 66-level grid has
 hybrid layers up to 82 hPa.
+`config/met_sources/era5_n320_arco_diffusion_li.toml` selects `hybrid_b`,
+`line_integral` and `window_mean`; with
+`config/preprocessing/era5_n320_arco_diffusion_to_c90_l117_li.toml` it keeps
+ERA5's native levels below about 8 hPa and merges the 27 thinner ones above into
+7 (`[vertical] transform = "merge_layers_thinner_than"`, 100 Pa), 117 levels in
+all.
 
 `[numerics] dt_met_seconds = 3600` splits every 3-hour MERRA-2 block into three
 hourly windows (endpoint mass, PS, QV and T linear in time, 3-hour mean winds),

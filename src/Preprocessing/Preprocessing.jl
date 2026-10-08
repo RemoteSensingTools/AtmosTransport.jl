@@ -58,6 +58,7 @@ using JLD2
 using SHA
 using TOML
 using LinearAlgebra: mul!, dot
+using SparseArrays: SparseMatrixCSC, sparse
 using NCDatasets
 
 function _config_bool(value, path::AbstractString)
@@ -212,10 +213,12 @@ include("ring_poisson_balance.jl")
 
 # Reduced Gaussian helpers (RG synthesis, RG balance, RG cm diagnosis)
 include("reduced_transport_helpers.jl")
+include("reduced_spectral_synthesis.jl")
 
 # Cubed-sphere transport helpers (regrid, wind recovery, flux reconstruction)
 include("cs_transport_helpers.jl")
 # Flux construction options shared by the wind-derived paths (MERRA-2, ERA5 N320).
+include("face_line_integrals.jl")
 include("flux_construction.jl")
 
 # Configuration parsing

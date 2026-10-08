@@ -73,14 +73,16 @@ end
         @test size(ws.d_spec)    == (T + 1, T + 1, Nz)
         @test size(ws.t_spec)    == (T + 1, T + 1, Nz)
         @test size(ws.lnsp_spec) == (T + 1, T + 1)
-        # Per-thread synthesis caches/scratch (one per thread; each cache owns
-        # its own u_spec/v_spec). Sized by maxthreadid() so the threaded level
-        # loop can index by threadid().
+        # Per-thread caches (each owns its own u_spec/v_spec for `vod2uv!`),
+        # sized by maxthreadid() so the threaded level loop can index by
+        # threadid(); one batched synthesis for all levels.
         @test length(ws.synth_caches) == Threads.maxthreadid()
-        @test length(ws.grid_scratches) == Threads.maxthreadid()
         @test all(c -> size(c.u_spec) == (T + 1, T + 1), ws.synth_caches)
         @test all(c -> size(c.v_spec) == (T + 1, T + 1), ws.synth_caches)
-        @test all(s -> length(s) == ncells(grid.mesh), ws.grid_scratches)
+        @test (ws.synthesis.T, ws.synthesis.Nf) == (T, Nz)
+        # a synthesis built for another level count is rejected
+        @test_throws ArgumentError allocate_era5_n320_spectral_workspace(
+            grid, T, Nz; synthesis = AtmosTransport.Preprocessing.ReducedSpectralSynthesis(grid, T, Nz + 1))
         @test length(ws.lnsp_grid) == ncells(grid.mesh)
         @test length(ws.have_t)  == Nz
         @test ws.have_lnsp[] === false
