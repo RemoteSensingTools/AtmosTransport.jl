@@ -296,7 +296,9 @@ The vertical profile of FV3's tracer remapping, `scalar_profile` with
 `kord = 8` (`fv_mapz.F90`), which GEOS-Chem High Performance uses for tracers
 (`kord_tr = 8`, positive definite, `iv = 0`). With `positive_definite = false`
 it is FV3's profile for signed fields (`iv = 1`): the three non-negativity
-steps below are omitted and the profile is symmetric under `q → −q`. Use it
+steps below are omitted and the profile is symmetric under `q → −q`, except
+where neighbouring layer means are exactly equal (FV3 resolves such ties with
+its local-minimum branch whatever the sign). Use it
 for tracers that become negative, such as flux anomalies; the
 positive-definite profile flattens layers with a non-positive mean. Each layer carries the parabola
 

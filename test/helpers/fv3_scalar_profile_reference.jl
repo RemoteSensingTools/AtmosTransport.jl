@@ -15,7 +15,8 @@ function fv3_cs_limiters!(a4, k, extm, iv)
         if a4[1, k] <= 0
             a4[2, k] = a4[1, k]; a4[3, k] = a4[1, k]; a4[4, k] = 0
         elseif abs(a4[3, k] - a4[2, k]) < -a4[4, k]
-            if a4[1, k] + 0.25 * (a4[3, k] - a4[2, k])^2 / a4[4, k] + a4[4, k] / 12 < 0
+            T = eltype(a4)
+            if a4[1, k] + T(0.25) * (a4[3, k] - a4[2, k])^2 / a4[4, k] + a4[4, k] * (one(T) / 12) < 0
                 if a4[1, k] < a4[3, k] && a4[1, k] < a4[2, k]
                     a4[3, k] = a4[1, k]; a4[2, k] = a4[1, k]; a4[4, k] = 0
                 elseif a4[3, k] > a4[2, k]
@@ -102,3 +103,20 @@ end
 # Mean of layer l's parabola between fractional positions s1 and s2 (FV3 `map1_q2`).
 fv3_parabola_mean(a4, l, s1, s2) =
     a4[2, l] + (a4[4, l] + a4[3, l] - a4[2, l]) * (s1 + s2) / 2 - a4[4, l] * (s1 * (s1 + s2) + s2^2) / 3
+
+# Conservative remap of layer means `q` from interfaces `pe1` to `pe2` (both top
+# first, in air-mass units) with the kord = 8 profile: each target layer
+# accumulates the parabola integrals of every source layer it overlaps, as in
+# FV3's `mapn_tracer` (which itself always uses iv = 0). Returns the tracer
+# content of each target layer.
+function fv3_remap_content(pe1, q, pe2; iv = 0)   # km² overlap loop: tests only
+    km = length(q); dp1 = diff(pe1)
+    a4 = fv3_scalar_profile_kord8(q, dp1; iv)
+    content = zeros(eltype(q), km)
+    for k in 1:km, l in 1:km
+        lo, hi = max(pe2[k], pe1[l]), min(pe2[k+1], pe1[l+1])
+        hi > lo || continue
+        content[k] += (hi - lo) * fv3_parabola_mean(a4, l, (lo - pe1[l]) / dp1[l], (hi - pe1[l]) / dp1[l])
+    end
+    return content
+end

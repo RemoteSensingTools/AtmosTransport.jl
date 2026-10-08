@@ -23,7 +23,8 @@
 # `FV3ScalarProfile{true}` is FV3's positive-definite profile (`iv = 0`, used
 # by GCHP for all tracers); `FV3ScalarProfile{false}` is its profile for signed
 # fields (`iv = 1`), which omits the three non-negativity steps and is
-# symmetric under q → −q.
+# symmetric under q → −q except where neighbouring layer means are exactly
+# equal (FV3 resolves those ties with its local-minimum branch).
 # ---------------------------------------------------------------------------
 
 @inline _layer_mass(m, i, j, k) = max(m[i, j, k], eps(eltype(m)))
@@ -152,7 +153,8 @@ so the minimum touches zero at the other edge.
 @inline function _fv3_positive_limit(q, q_L, q_R, q_6)
     FT = typeof(q)
     q <= 0 && return q, q, zero(FT)
-    if abs(q_R - q_L) < -q_6 && q + FT(0.25) * (q_R - q_L)^2 / q_6 + q_6 / 12 < 0
+    r12 = one(FT) / 12                       # FV3 multiplies by a rounded 1/12
+    if abs(q_R - q_L) < -q_6 && q + FT(0.25) * (q_R - q_L)^2 / q_6 + q_6 * r12 < 0
         if q < q_R && q < q_L
             return q, q, zero(FT)
         elseif q_R > q_L

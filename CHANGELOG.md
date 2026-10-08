@@ -116,8 +116,9 @@
   layers only). With `"mass"` the correction reaches the stratosphere as a
   vertically coherent `cm` mode; the hybrid options keep it out of the
   pure-pressure layers. In a four-month C90 run against GCHP, `"hybrid_mass"`
-  cut the growth of the bias above 100 hPa by about two thirds, with no
-  near-surface penalty (`docs/src/theory/vertical_transport.md`). Other met
+  cut the growth of the bias above 100 hPa by about two thirds. Near-surface
+  RMSE changed by +0.4 % to −5 % depending on the tracer
+  (`docs/src/theory/vertical_transport.md`). Other met
   sources reject the key.
 
 - Time-varying surface fluxes can span several files: `files = [...]` or a

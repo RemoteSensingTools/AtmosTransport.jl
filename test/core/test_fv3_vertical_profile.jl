@@ -106,6 +106,32 @@ test_profiles(Nz) = (
         end
     end
 
+    @testset "flux form equals FV3's conservative remap onto shifted interfaces" begin
+        # In cumulative air mass, a sweep with interface fluxes F moves interface
+        # e from M_e to M_e − F_e; with each flux below its donor's mass and no
+        # flux through the top or surface, the flux-form update is the remap
+        # onto that grid (as in `mapn_tracer`), computed here by overlap
+        # integration. The signed profile is tested on fields crossing zero.
+        rng = MersenneTwister(12)
+        for q in test_profiles(Nz), (profile, iv, offset) in ((POSITIVE, 0, 0.0), (SIGNED, 1, 0.6))
+            q0 = q .- offset * maximum(q)
+            cm = random_cm(rng, m, 0.49)
+            pe1 = [0.0; cumsum(m)]
+            qbar = (q0 .* m) ./ m                 # the layer means the kernel sees
+            rm_new, _ = kernel_sweep(q0, m, cm, profile)
+            reference = fv3_remap_content(pe1, qbar, pe1 .- cm; iv)
+            @test all(isapprox.(rm_new, reference; rtol = 1e-12, atol = 1e-12 * maximum(abs, reference)))
+        end
+    end
+
+    @testset "positivity limiter multiplies by a rounded 1/12, as FV3 does" begin
+        # Float32 case where q₆/12 and q₆·(1/12) fall on opposite sides of the
+        # threshold; FV3 flattens this parabola.
+        q, q_L, q_6 = 1.7074982f0, 5.1224947f0, -20.489979f0
+        @test q + q_6 * (1f0 / 12) < 0 <= q + q_6 / 12
+        @test AtmosTransport.Operators.Advection._fv3_positive_limit(q, q_L, q_L, q_6) == (q, q, 0f0)
+    end
+
     @testset "column mass, uniform field and positivity ($FT)" for FT in (Float32, Float64)
         rng = MersenneTwister(3)
         mF = column_masses(Nz, FT)

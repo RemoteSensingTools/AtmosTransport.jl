@@ -92,8 +92,12 @@ item 1).
 In a four-month MERRA-2 run (December 2021 – March 2022, PPM, compared with
 GCHP), `hybrid_mass` cut the growth of the bias above 100 hPa from +0.54 to
 +0.19 ppm CO₂ and from +0.066 to +0.023 ppt SF₆. The slope against GCHP
-above 100 hPa rose from 0.89 to 0.97. Near-surface and column RMSE were
-unchanged or slightly lower: CO₂ below 910 hPa went from 0.383 to 0.370 ppm.
+above 100 hPa rose from 0.89 to 0.97. Near-surface RMSE (below 910 hPa)
+changed little:
+- CO₂ fell from 0.383 to 0.370 ppm and SF₆ by 5 %;
+- fossil CO₂ and Rn-222 rose by 0.3–0.4 %.
+
+Column RMSE was unchanged.
 
 **GCHP has no column closure.** FV3 transports tracers horizontally with the
 uncorrected fluxes. It then remaps the Lagrangian layers onto `A + B p_s,adv`,
@@ -190,6 +194,18 @@ q(s) = q_L + s\,\bigl[(q_R - q_L) + q_6 (1 - s)\bigr], \qquad q_6 = 3\,(2\bar q_
 for downward flow (bottom of the layer above) and upward flow (top of the
 layer below).
 
+In cumulative air-mass coordinates, this sweep is FV3's conservative remap of
+the layers (`mapn_tracer`, which uses the positive-definite profile) onto
+interfaces shifted by the swept mass, `M_e → M_e − F_e`. In exact arithmetic
+the two are identical, provided that:
+- no interface flux exceeds its donor layer's air mass;
+- the fluxes through the model top and the surface are zero.
+
+One sweep is one remap with the same profile. GCHP remaps once per 600 s after
+its horizontal step and then applies `fillz` and a global mass rescaling. Here
+the remaps follow the binary's `cm`, twice per substep (per palindrome
+subcycle).
+
 Each interface flux is computed once per column and enters both adjacent
 layers with opposite signs, so the fluxes cancel exactly in the column sum.
 Only the rounding of the cell updates remains, in Float32 as in Float64.
@@ -223,7 +239,8 @@ Tests (`test/core/test_fv3_vertical_profile.jl`):
   transcription of `fv_mapz.F90` for both profiles; the positive-definite
   parabolas are non-negative inside every layer.
 - Beyond a Courant number of one the flux is capped at the donor's content.
-- The fluxes equal the swept integrals of that reference.
+- The fluxes equal the swept integrals of that reference. The whole update
+  equals an independent remap onto the shifted interfaces, to 1e-11.
 - Uniform fields are preserved, column mass telescopes and results stay
   non-negative, in both precisions.
 - A six-panel sweep equals the column kernel column by column, the
@@ -236,6 +253,14 @@ Courant ≤ 0.3; scripts and output in `/temp1/cfranken/scratch/fv3_vertical/`):
 - Relative tracer-mass changes are below 3e-15 in Float64 and 5e-9 in Float32.
   Under the same Float32 test the default PPM changes the uniform background
   tracer by up to 1.4e-8.
+- One-month C90 MERRA-2 run (December 2021, production Courant numbers,
+  `hybrid_mass` binaries):
+  - Float32 − Float64 global tracer totals: −3e-8 (CO₂), +6e-8 (SF₆) and
+    −2e-10 (fossil CO₂).
+  - The default scheme, from the 25-month twin on `mass` binaries (so the
+    closure differs as well), gives −4e-8, +5e-8 and +8e-9 for the same month.
+  - Column-mean differences match (RMS 0.009 ppm CO₂ for both;
+    `/temp1/cfranken/catrine_protocol/compare_f32_f64_dec2021/`).
 - A six-panel sweep costs 1.2 ms in Float32 against 0.47 ms for the default.
   In a four-month C90 run the wall time per window is unchanged
   (0.58–0.60 s).
@@ -269,7 +294,14 @@ In 1-D translation tests (a Gaussian bump moved 30 layers;
 - The FV3 profile is 4–900 times more accurate than `ppm` for widths of 3–24
   layers and Courant numbers of 0.01–0.3.
 
-A four-month 3-D test against GCHP is in progress.
+In four-month MERRA-2 runs against GCHP (December 2021 – March 2022), the FV3
+profile reduced the growth of the CO₂ bias above 100 hPa by about 0.05 ppm,
+with either column-balance weighting:
+- with `mass` weights, from +0.54 to +0.49 ppm;
+- with `hybrid_mass` weights, from +0.19 to +0.14 ppm.
+
+The FV3 profile also lowered near-surface RMSE for every tracer, by 1–3 %.
+The column closure (section 2) is the larger of the two effects.
 
 ## 5. Sub-grid vertical transport
 
