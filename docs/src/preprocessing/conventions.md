@@ -144,6 +144,15 @@ binaries.
         └── era5_thermo_ml_YYYYMMDD.nc          # specific humidity
 ```
 
+### ERA5 N320 native GRIB
+
+Vorticity, divergence, temperature and `lnsp` are spectral and are synthesized
+at the `ReducedGaussianMesh` cell centres, `(i − ½) Δλ` in each ring. Specific
+humidity and the convective mass fluxes are `reduced_gg` grid points whose
+first point is at 0°, so point `i` sits at `(i − 1) Δλ`; the reader
+interpolates them to the cell centres (`_reorder_grib_reduced_gg_to_mesh!`)
+and rejects files whose first point is elsewhere.
+
 ### GEOS-IT C180 native
 
 ```

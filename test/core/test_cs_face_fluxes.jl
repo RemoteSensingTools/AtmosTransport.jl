@@ -302,10 +302,12 @@ interior_divergence(am, bm, Nc) =
         end
         src_flat, dst_flat = zeros(length(lon), Nz), zeros(length(R.dst_areas), Nz)
         # Few-longitude polar rings leave the polar target cells a few percent short of
-        # full coverage (a constant field regrids to 0.97 there); divide by the regridded
-        # constant so the test sees only the vector treatment.
-        coverage = copy(P._regrid_3d_intensive!(dst_flat, src_flat, R, ones(length(lon), Nz)))
-        regrid!(panels, f) = (P._regrid_3d_intensive!(dst_flat, src_flat, R, f); dst_flat ./= coverage;
+        # full coverage; `_regrid_intensive!` divides by the regridded constant.
+        coverage = P.apply_regridder!(zeros(length(R.dst_areas)), R, ones(length(lon)))
+        @test minimum(coverage) < 0.99
+        @test P._regrid_intensive!(dst_flat, src_flat, R, coverage, fill(400.0, length(lon), Nz)) ≈
+              fill(400.0, size(dst_flat)) rtol = 1e-12
+        regrid!(panels, f) = (P._regrid_intensive!(dst_flat, src_flat, R, coverage, f);
                               P._unpack_flat_to_cs_panels_3d!(panels, dst_flat, Nc, Nz))
         u_cs, v_cs = ntuple(_ -> zeros(Nc, Nc, Nz), 6), ntuple(_ -> zeros(Nc, Nc, Nz), 6)
         polar_error = map((P.ScalarWindRegrid(), P.CartesianWindRegrid(rg, mesh, Nz, Float64))) do w

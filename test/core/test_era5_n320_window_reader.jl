@@ -5,8 +5,9 @@
 # Verifies the per-window synthesis surface for the N320 source grid:
 #
 #   1. Workspace + fields allocate with the right shapes/dtypes.
-#   2. `_reorder_grib_reduced_gg_to_mesh!` reverses ring order without
-#      permuting within-ring cells; mismatched ring counts fail loudly.
+#   2. `_reorder_grib_reduced_gg_to_mesh!` reverses ring order and
+#      interpolates the grid points at (i − 1)Δλ to the cell centres at
+#      (i − ½)Δλ; mismatched ring counts fail loudly.
 #   3. Single-mode spectral synthesis via the full workspace pipeline
 #      produces the analytical real-space pattern (constant, then a known
 #      m=1 zonal wave) to FT precision.
@@ -121,6 +122,20 @@ end
             ring_start = mesh.ring_offsets[j_mesh]
             ring_end   = mesh.ring_offsets[j_mesh + 1] - 1
             @test all(out[ring_start:ring_end] .== Float64(j_native))
+        end
+
+        # Grid points at (i - 1)Δλ land on cell centres (i - ½)Δλ: a zonal wave
+        # sampled at the GRIB points comes out at the cell centres with no
+        # phase shift (amplitude cos(Δλ/2) from the linear interpolation).
+        wave_native = Float64[]
+        for n in native_nlon
+            append!(wave_native, [cosd(3 * (i - 1) * 360 / n) for i in 1:n])
+        end
+        _reorder_grib_reduced_gg_to_mesh!(out, wave_native, native_nlon, mesh)
+        for j_mesh in 1:n_rings
+            n = mesh.nlon_per_ring[j_mesh]; Δ = 360 / n
+            ring = out[mesh.ring_offsets[j_mesh]:(mesh.ring_offsets[j_mesh + 1] - 1)]
+            @test ring ≈ [cosd(3 * (i - 0.5) * Δ) * cosd(3 * Δ / 2) for i in 1:n] atol = 1e-12
         end
 
         # Mismatched length errors loudly.

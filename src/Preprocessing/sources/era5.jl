@@ -510,13 +510,32 @@ end
 # miscounted `pl` array fails loudly instead of silently aliasing rings.
 # ---------------------------------------------------------------------------
 
+# `_reorder_grib_reduced_gg_to_mesh!` assumes ECMWF's layout: rings north to
+# south, points west to east from 0°. The ring lengths are symmetric about the
+# equator, so a mirrored file would otherwise pass its ring-count check.
+function _check_grid_point_layout(msg)
+    λ₀ = msg["longitudeOfFirstGridPointInDegrees"]
+    (λ₀ == 0 && msg["iScansNegatively"] == 0 && msg["jScansPositively"] == 0) ||
+        error("ERA5 reduced Gaussian field $(msg["shortName"]): first point at $(λ₀)°, " *
+              "iScansNegatively=$(msg["iScansNegatively"]), jScansPositively=$(msg["jScansPositively"]); " *
+              "expected 0°, 0, 0")
+end
+
 """
     _reorder_grib_reduced_gg_to_mesh!(mesh_vals, native_vals, native_nlon, mesh) -> mesh_vals
 
-Copy `native_vals` (GRIB native ring order, north→south) into `mesh_vals`
-(`ReducedGaussianMesh` order, south→north). Asserts the per-ring counts in
-`native_nlon` match `mesh.nlon_per_ring` (after reversal). Cells within a
-ring are not permuted — only the ring axis flips.
+Put grid-point values `native_vals` (GRIB native ring order, north→south)
+on the mesh cells `mesh_vals` (`ReducedGaussianMesh` order, south→north).
+Asserts the per-ring counts in `native_nlon` match `mesh.nlon_per_ring` (after
+reversal); only the ring axis flips.
+
+Within a ring the GRIB points sit at longitudes `(i − 1) Δλ` (first point
+at 0°, checked by `_check_grid_point_layout`), while the mesh cells, the
+regridder and the spectral synthesis use cell centres at `(i − ½) Δλ`. Each
+cell therefore takes the mean of its two bounding grid points,
+`(q_i + q_{i+1}) / 2` (cyclic): linear interpolation to the cell centre. Copying the points
+directly would shift the field half a cell east — 0.14° at the equator, 10°
+in the 18-point polar rings of N320.
 """
 function _reorder_grib_reduced_gg_to_mesh!(mesh_vals::AbstractVector,
                                             native_vals::AbstractVector,
@@ -535,8 +554,10 @@ function _reorder_grib_reduced_gg_to_mesh!(mesh_vals::AbstractVector,
         n == mesh.nlon_per_ring[j_mesh] ||
             throw(DimensionMismatch("native ring $j_native nlon=$n vs mesh ring $j_mesh nlon=$(mesh.nlon_per_ring[j_mesh])"))
         mesh_start = mesh.ring_offsets[j_mesh]
-        mesh_end   = mesh.ring_offsets[j_mesh + 1] - 1
-        @views mesh_vals[mesh_start:mesh_end] .= native_vals[native_offset:(native_offset + n - 1)]
+        ring = @view native_vals[native_offset:(native_offset + n - 1)]
+        for i in 1:n                           # grid points (i-1)Δλ, iΔλ → cell centre (i-½)Δλ
+            mesh_vals[mesh_start + i - 1] = (ring[i] + ring[i == n ? 1 : i + 1]) / 2
+        end
         native_offset += n
     end
     return mesh_vals
@@ -620,6 +641,7 @@ function read_era5_n320_window_fields!(fields::ERA5N320WindowFields{FT},
             elseif grid_type == "reduced_gg" && short_name == "q"
                 1 <= level <= Nz ||
                     error("Q level $level outside [1, $Nz] for date=$date hour=$hour")
+                _check_grid_point_layout(msg)
                 vals = msg["values"]
                 pl   = msg["pl"]
                 _reorder_grib_reduced_gg_to_mesh!(
@@ -1129,6 +1151,7 @@ function read_era5_n320_convection_window!(fields::ERA5N320ConvectionFields{FT},
             level = Int(msg["level"])
             1 <= level <= Nz || continue
 
+            _check_grid_point_layout(msg)
             vals = msg["values"]
             pl   = msg["pl"]
             _reorder_grib_reduced_gg_to_mesh!(
@@ -1281,10 +1304,12 @@ end
 
 Owns the conservative regridder + flat scratch buffers used by
 [`regrid_n320_to_c180!`](@ref). Allocated once per (source_grid,
-target_grid) pair and reused across every window.
+target_grid) pair and reused across every window. `coverage` is the fraction
+of each target cell covered by the source mesh (see `_regrid_intensive!`).
 """
 struct ERA5C180RegridWorkspace{FT <: AbstractFloat, R}
     regridder    :: R
+    coverage     :: Vector{Float64}
     src_flat_2d  :: Vector{Float64}
     src_flat_3d  :: Matrix{Float64}
     dst_flat_2d  :: Vector{Float64}
@@ -1314,8 +1339,13 @@ function allocate_era5_c180_regrid_workspace(source_grid::ReducedGaussianTargetG
         throw(DimensionMismatch("regridder src_areas length $n_src ≠ N320 cells $(ncells(source_grid.mesh))"))
     n_dst == ncells(target_grid.mesh) ||
         throw(DimensionMismatch("regridder dst_areas length $n_dst ≠ C180 cells $(ncells(target_grid.mesh))"))
+    coverage = apply_regridder!(zeros(n_dst), regridder, ones(n_src))   # regridded constant 1
+    all(c -> 0.9 < c < 1.1, coverage) ||
+        error("N320 → cubed-sphere regridder covers target cells by $(extrema(coverage)) " *
+              "(expected ≈ 1); rebuild the regridder cache")
     return ERA5C180RegridWorkspace{FT, typeof(regridder)}(
         regridder,
+        coverage,
         zeros(Float64, n_src),               # src_flat_2d
         zeros(Float64, n_src, Nz_int),       # src_flat_3d
         zeros(Float64, n_dst),               # dst_flat_2d
@@ -1346,15 +1376,15 @@ function regrid_n320_to_c180!(c180_fields::ERA5C180RegridFields{FT},
         throw(DimensionMismatch("workspace dst Nz $(size(workspace.dst_flat_3d, 2)) ≠ $Nz"))
 
     # PS — 2D intensive field.
-    _regrid_2d_intensive!(workspace.dst_flat_2d, workspace.src_flat_2d,
-                           workspace.regridder, n320_window.ps)
+    _regrid_intensive!(workspace.dst_flat_2d, workspace.src_flat_2d,
+                       workspace.regridder, workspace.coverage, n320_window.ps)
     _unpack_flat_to_cs_panels_2d!(c180_fields.ps, workspace.dst_flat_2d, Nc)
 
     # 3D intensive fields — all share the same workspace scratch. The winds
     # go through `wind` (as two scalars, or as a vector).
     function regrid3d!(dst_panels, src_field)
-        _regrid_3d_intensive!(workspace.dst_flat_3d, workspace.src_flat_3d,
-                               workspace.regridder, src_field)
+        _regrid_intensive!(workspace.dst_flat_3d, workspace.src_flat_3d,
+                           workspace.regridder, workspace.coverage, src_field)
         return _unpack_flat_to_cs_panels_3d!(dst_panels, workspace.dst_flat_3d, Nc, Nz)
     end
     _regrid_winds!(wind, c180_fields.u, c180_fields.v, regrid3d!, n320_window.u, n320_window.v)
@@ -1376,8 +1406,8 @@ function regrid_n320_raw_convection_to_c180!(
             (conv_n320.ddmf, conv_c180.ddmf),
             (conv_n320.udrf, conv_c180.udrf),
             (conv_n320.ddrf, conv_c180.ddrf))
-        _regrid_3d_intensive!(workspace.dst_flat_3d, workspace.src_flat_3d,
-                              workspace.regridder, src_field)
+        _regrid_intensive!(workspace.dst_flat_3d, workspace.src_flat_3d,
+                           workspace.regridder, workspace.coverage, src_field)
         _unpack_flat_to_cs_panels_3d!(dst_panels, workspace.dst_flat_3d, Nc, Nz)
     end
     return conv_c180
@@ -1436,34 +1466,29 @@ end
 # Internal regrid helpers.
 # ---------------------------------------------------------------------------
 
-"""Conservative regrid of a 2D intensive field into the flat `n_dst` output
-buffer via the workspace-owned Float64 `src_scratch`. The single `copyto!`
-handles any Float32 → Float64 promotion that `apply_regridder!`'s sparse-
-matmul requires."""
-function _regrid_2d_intensive!(dst_flat::AbstractVector{Float64},
-                                src_scratch::AbstractVector{Float64},
-                                regridder,
-                                src::AbstractVector)
-    length(src_scratch) == length(src) ||
-        throw(DimensionMismatch("src_scratch length $(length(src_scratch)) ≠ source $(length(src))"))
-    copyto!(src_scratch, src)
-    apply_regridder!(dst_flat, regridder, src_scratch)
-    return dst_flat
-end
+"""
+    _regrid_intensive!(dst_flat, src_scratch, regridder, coverage, src) -> dst_flat
 
-"""Conservative regrid of a 3D intensive field stored as `(n_src, Nz)` into
-the flat `(n_dst, Nz)` output. `apply_regridder!` accepts `AbstractMatrix`
-sources and iterates the column dimension internally — the workspace
-`src_scratch` only exists to materialise a Float64 view of a Float32
-source (one `copyto!`) without per-window allocation."""
-function _regrid_3d_intensive!(dst_flat::AbstractMatrix{Float64},
-                                src_scratch::AbstractMatrix{Float64},
-                                regridder,
-                                src::AbstractMatrix)
+Conservative regrid of an intensive field, `src` of size `n_src` or
+`(n_src, Nz)`, into `dst_flat`: the area-weighted mean over the part of each
+target cell that the source mesh covers. `src_scratch` holds the Float64 copy
+that `apply_regridder!`'s sparse matmul needs, without per-window allocation.
+
+`apply_regridder!` divides by the full target-cell area. The reduced Gaussian
+source cells, however, have great-circle (chord) edges along their latitude
+bounds, so neighbouring rings with different longitude counts leave thin
+slivers uncovered: a constant field regrids to 0.9967 poleward of 89° on C90.
+Dividing by `coverage`, the regridded constant 1, removes this bias.
+"""
+function _regrid_intensive!(dst_flat::AbstractVecOrMat{Float64},
+                            src_scratch::AbstractVecOrMat{Float64},
+                            regridder, coverage::AbstractVector{Float64},
+                            src::AbstractVecOrMat)
     size(src_scratch) == size(src) ||
         throw(DimensionMismatch("src_scratch size $(size(src_scratch)) ≠ source $(size(src))"))
     copyto!(src_scratch, src)
     apply_regridder!(dst_flat, regridder, src_scratch)
+    dst_flat ./= coverage
     return dst_flat
 end
 

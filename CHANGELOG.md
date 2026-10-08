@@ -4,6 +4,15 @@
 
 ### Fixes
 
+- ERA5 N320 preprocessing had two registration errors. The GRIB
+  `reduced_gg` fields (specific humidity and the convective mass fluxes)
+  were placed half a cell east: their first point is at 0°, while the mesh
+  cells are centred at `(i − ½) Δλ`. They are now interpolated to the cell
+  centres. And the N320 → cubed-sphere regridder left up to 0.3 % of the
+  polar cells uncovered, so every intensive field was too small there
+  (surface pressure about 3 hPa low and temperature 0.8 K cold poleward of
+  89° on C90); results are now divided by the covered fraction. ERA5 N320
+  binaries built before this fix carry both biases.
 - `scripts/preprocessing/attach_catrine_tm5_convection_cs.jl` stored the
   legacy 1-degree TM5 convection upside down. The CATRINE files keep ERA5 L137
   surface first, and the script summed them through the binary's top-first

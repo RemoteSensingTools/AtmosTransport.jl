@@ -92,10 +92,12 @@ fossil CO₂ and SF₆, better for Rn-222).
 The ERA5 N320 path (`era5_n320_regrid.jl`) takes the same options, except
 `flux_thickness`; the spectral and lat-lon ERA5 paths (`cubed_sphere_spectral.jl`,
 `cubed_sphere_regrid.jl`) still use `panel_average` and the scalar wind regrid.
-The N320 → C90 regridder covers the polar cells incompletely: a constant field
-regrids to 0.9967 poleward of 89°, 0.998–0.999 at 87–89°, within 1e-3 at
-80–87° and within 2e-4 equatorward of 80° (`n320_const.txt`), so every
-intensive ERA5 field is up to 0.3 % low in the 8 polar cells.
+The reduced Gaussian source cells have great-circle edges along their latitude
+bounds, so they leave up to 0.3 % of the polar C90 cells uncovered. The N320
+path therefore divides every intensive field by the regridded constant 1
+(`_regrid_intensive!`). Before 2026-10-08 a constant field regridded to 0.9967
+poleward of 89°: surface pressure was about 3 hPa low and temperature about
+0.8 K cold in the 8 polar cells.
 
 **Poles.** The east and north unit vectors turn with longitude. Regridding
 `u_east` and `v_north` as two scalars therefore averages components that point
