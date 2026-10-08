@@ -389,7 +389,7 @@ struct MERRA2DayDriver{S, H, G, V, W, B, X, Q}
     policy       :: SubstepSchedulePolicy
     steps_min    :: Int
     cfl_target   :: Float64
-    balance      :: B          # (; tol, project_every, global_solve)
+    balance      :: B          # (; tol, project_every, global_solve, weights)
     positivity_limit :: Float64
     replay_tol   :: Float64
     replay_check :: Bool
@@ -499,14 +499,20 @@ function _balance_window!(d::MERRA2DayDriver, ps_moist, m_a, m_b, steps)
     Nc, Nz = d.grid.Nc, size(m_a[1], 3)
     reconstruct_cs_fluxes!(x.am, x.bm, x.u_local, x.v_local, x.dp, ps_moist, vc.A, vc.B,
                            mesh.Δx, mesh.Δy, FT(GRAV), FT(d.dt_window / (2 * steps)), Nc, Nz)
-    balance! = d.balance.global_solve ? balance_cs_global_mass_fluxes! : balance_cs_column_mass_fluxes!
-    diag = balance!(x.am, x.bm, m_a, m_b, d.grid.face_table, d.grid.cell_degree, steps,
-                    d.grid.poisson_scratch; tol = d.balance.tol, max_iter = 20000,
-                    project_every = d.balance.project_every)
+    g, tol, project_every = d.grid, d.balance.tol, d.balance.project_every
+    diag = if d.balance.global_solve     # per-level solve (diagnostic option)
+        balance_cs_global_mass_fluxes!(x.am, x.bm, m_a, m_b, g.face_table, g.cell_degree,
+                                       steps, g.poisson_scratch; tol, max_iter = 20000,
+                                       project_every)
+    else                                 # column solve, correction spread by `weights`
+        balance_cs_column_mass_fluxes!(x.am, x.bm, m_a, m_b, g.face_table, g.cell_degree,
+                                       steps, g.poisson_scratch; tol, max_iter = 20000,
+                                       project_every, weights = d.balance.weights)
+    end
     sync_all_cs_boundary_mirrors!(x.am, x.bm, mesh.connectivity, Nc, Nz)
     fill_cs_window_mass_tendency!(x.dm, m_a, m_b, steps)
     foreach(c -> fill!(c, zero(FT)), x.cm)
-    diagnose_cs_cm!(x.cm, x.am, x.bm, x.dm, m_a, Nc, Nz)
+    diagnose_cs_cm!(x.cm, x.am, x.bm, x.dm, m_a, Nc, Nz, d.balance.weights)
     return diag
 end
 
@@ -589,6 +595,7 @@ function _merra2_provenance(settings::MERRA2Settings, handles, nsub)
         "merra2_level_order" => string(nameof(typeof(handles.level_order))),
         "winds_collection" => String(settings.winds_collection),
         "merra2_windows_per_block" => nsub,
+        "column_balance_weights" => String(settings.column_balance_weights),
         "merra2_window_interpolation" => nsub == 1 ? "none" :
             "dry mass, PS, QV, T linear in time between 3-hourly I3; 3-hour mean winds")
     has_convection(settings) && (entries["cmfmc_dtrain_source"] =
@@ -693,6 +700,10 @@ function process_merra2_to_cs_day(date::Date,
         @info @sprintf("  Global dry-mass pin ON: target=%.9e kg (%.3f Pa dry ⟨ps⟩)", mass_target,
                        mass_target * GRAV / (6 * sum(Float64, target_grid.mesh.cell_areas)))
 
+    global_solve = horizontal_poisson_balance_enabled()
+    global_solve && settings.column_balance_weights !== :mass && throw(ArgumentError(
+        "column_balance_weights = $(settings.column_balance_weights) applies to the column " *
+        "Poisson balance; it cannot be combined with ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1"))
     handles = open_merra2_day(settings, date; next_day_handle = true)
     try
         new_block() = MERRA2BlockState(allocate_merra2_to_c180_pipeline(target_grid; Nz, cache_dir, settings))
@@ -706,7 +717,7 @@ function process_merra2_to_cs_day(date::Date,
             settings, handles, target_grid, vc, writer, nsub, Float64(dt_met_seconds), policy,
             Int(steps_per_window), Float64(substep_cfl_target),
             (tol = Float64(cs_balance_tol), project_every = Int(cs_balance_project_every),
-             global_solve = horizontal_poisson_balance_enabled()),
+             global_solve, weights = column_weights(settings.column_balance_weights, vc.B)),
             Float64(positivity_cfl_limit), replay_tolerance(FT),
             get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1", mass_target,
             _merra2_window_scratch(FT, target_grid.Nc, Nz),

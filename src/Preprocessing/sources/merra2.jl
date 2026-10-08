@@ -131,6 +131,7 @@ Base.@kwdef struct MERRA2Settings{A <: MERRA2Archive} <: AbstractMetSettings
     include_convection    :: Bool   = false
     include_vdiff_fields  :: Bool   = false
     include_convective_cloud_base :: Bool = false
+    column_balance_weights :: Symbol = :mass   # a key of COLUMN_WEIGHT_KINDS (cs_poisson_balance.jl)
 end
 
 const MERRA2_NATIVE_LEVEL_COUNT = 72
@@ -153,6 +154,10 @@ function validate_merra2_settings(s::MERRA2Settings)
     s.winds_collection === :inst3 && !_has_inst3_winds(s.archive) &&
         throw(ArgumentError("the GEOS-Chem MERRA-2 archive has no instantaneous winds " *
                             "(I3 holds PS, QV, T); use winds_collection=:tavg3 (A3dyn)"))
+    haskey(COLUMN_WEIGHT_KINDS, s.column_balance_weights) ||
+        throw(ArgumentError("MERRA-2 column_balance_weights must be one of " *
+                            join(keys(COLUMN_WEIGHT_KINDS), ", ") *
+                            "; got :$(s.column_balance_weights)"))
     has_cmfmc_cloud_base(s) && !has_convection(s) &&
         throw(ArgumentError("MERRA-2 include_convective_cloud_base needs include_convection"))
     (has_surface(s) || has_convection(s)) && !_has_physics_fields(s.archive) &&

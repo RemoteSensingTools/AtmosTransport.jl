@@ -93,6 +93,17 @@
 
 ### Surface fluxes and preprocessing
 
+- MERRA-2 preprocessing option `[preprocessing] column_balance_weights` sets
+  how the column mass-budget correction of the horizontal fluxes is spread
+  over levels. The options are `"mass"` (default, unchanged),
+  `"hybrid_b"` (by ΔB, as in TM5) and `"hybrid_mass"` (by air mass in hybrid
+  layers only). With `"mass"` the correction reaches the stratosphere as a
+  vertically coherent `cm` mode; the hybrid options keep it out of the
+  pure-pressure layers. In a four-month C90 run against GCHP, `"hybrid_mass"`
+  cut the growth of the bias above 100 hPa by about two thirds, with no
+  near-surface penalty (`docs/src/theory/vertical_transport.md`). Other met
+  sources reject the key.
+
 - Time-varying surface fluxes can span several files: `files = [...]` or a
   `file_pattern` with `{YYYYMM}` plus `year`. `gridfed_fossil_co2` joins the
   time-varying path (stepwise by default; monthly totals use each month's

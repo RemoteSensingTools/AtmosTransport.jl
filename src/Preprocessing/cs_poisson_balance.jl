@@ -924,6 +924,96 @@ function _cs_column_balance_projected_linf(col_am::NTuple{6, Array{FT, 3}},
             mean_abs = abs(mean))
 end
 
+"""
+How a column mass-budget correction is spread over the levels of a column.
+
+- `MassWeightedColumn()`: in proportion to layer air mass (default).
+- `HybridBWeightedColumn(B)`: in proportion to `ΔB_k`, the layer's share of a
+  surface-pressure change, as in TM5. Pure-pressure layers (`ΔB = 0`, the
+  stratosphere) receive none of it, so a column mismatch cannot appear in
+  their vertical mass flux as a coherent mode proportional to pressure.
+- `HybridMassWeightedColumn(B)`: in proportion to layer air mass, but only in
+  layers with `ΔB > 0`; pure-pressure layers receive none of it.
+"""
+abstract type AbstractColumnWeights end
+struct MassWeightedColumn <: AbstractColumnWeights end
+
+# Layer thicknesses in B from hybrid `B` at the `Nz + 1` interfaces, top first.
+function _hybrid_layer_dB(B::AbstractVector{<:AbstractFloat})
+    dB = diff(Float64.(B))
+    all(>=(0), dB) && sum(dB) > 0 ||
+        throw(ArgumentError("hybrid B must be non-decreasing from top to surface and not constant"))
+    return dB
+end
+
+"""
+    HybridBWeightedColumn(B) -> weights
+
+`ΔB_k` weights from hybrid `B` at the `Nz + 1` interfaces, top first.
+"""
+struct HybridBWeightedColumn <: AbstractColumnWeights
+    dB :: Vector{Float64}          # per layer, top first; sums to 1
+    function HybridBWeightedColumn(B::AbstractVector{<:AbstractFloat})
+        dB = _hybrid_layer_dB(B)
+        return new(dB ./ sum(dB))
+    end
+end
+
+"""
+    HybridMassWeightedColumn(B) -> weights
+
+Air-mass weights restricted to the hybrid layers (`ΔB_k > 0`) of interface
+`B`, top first.
+"""
+struct HybridMassWeightedColumn <: AbstractColumnWeights
+    hybrid :: BitVector            # layers with ΔB > 0, top first
+    HybridMassWeightedColumn(B::AbstractVector{<:AbstractFloat}) = new(_hybrid_layer_dB(B) .> 0)
+end
+
+# Weight of level `k` for a face between cells of air mass `m_a`, `m_b`,
+# and for a single cell of air mass `m`.
+@inline _layer_weight(::MassWeightedColumn, m_a, m_b, k) =
+    max(0.0, Float64(m_a)) + max(0.0, Float64(m_b))
+@inline _layer_weight(w::HybridBWeightedColumn, m_a, m_b, k) = w.dB[k]
+@inline _layer_weight(w::HybridMassWeightedColumn, m_a, m_b, k) =
+    w.hybrid[k] ? _layer_weight(MassWeightedColumn(), m_a, m_b, k) : 0.0
+@inline _cell_weight(::MassWeightedColumn, m, k) = m
+@inline _cell_weight(w::HybridBWeightedColumn, m, k) = oftype(m, w.dB[k])
+@inline _cell_weight(w::HybridMassWeightedColumn, m, k) = w.hybrid[k] ? m : zero(m)
+
+# Number of layers the weights are defined for (`nothing`: any).
+_weight_levels(::MassWeightedColumn) = nothing
+_weight_levels(w::HybridBWeightedColumn) = length(w.dB)
+_weight_levels(w::HybridMassWeightedColumn) = length(w.hybrid)
+
+function _check_weight_levels(w::AbstractColumnWeights, Nz)
+    n = _weight_levels(w)
+    n === nothing || n == Nz || throw(DimensionMismatch(
+        "column balance weights are defined for $n layers, the fluxes have $Nz"))
+    return nothing
+end
+
+"""
+    COLUMN_WEIGHT_KINDS
+
+TOML names of the column-balance weightings: `mass`, `hybrid_b`, `hybrid_mass`.
+"""
+const COLUMN_WEIGHT_KINDS = (mass = (B -> MassWeightedColumn()),
+                             hybrid_b = HybridBWeightedColumn,
+                             hybrid_mass = HybridMassWeightedColumn)
+
+"""
+    column_weights(kind::Symbol, B) -> AbstractColumnWeights
+
+Weights named `kind` (a key of `COLUMN_WEIGHT_KINDS`) for hybrid interfaces
+`B`, top first.
+"""
+function column_weights(kind::Symbol, B)
+    haskey(COLUMN_WEIGHT_KINDS, kind) || throw(ArgumentError(
+        "column balance weights must be one of $(keys(COLUMN_WEIGHT_KINDS)); got :$kind"))
+    return COLUMN_WEIGHT_KINDS[kind](B)
+end
+
 function _distribute_cs_column_delta!(panels_am::NTuple{6, Array{FT, 3}},
                                       panels_bm::NTuple{6, Array{FT, 3}},
                                       panels_m::NTuple{6, Array{FT, 3}},
@@ -931,7 +1021,9 @@ function _distribute_cs_column_delta!(panels_am::NTuple{6, Array{FT, 3}},
                                       col_bm::NTuple{6, Array{FT, 3}},
                                       col_am_before::NTuple{6, Array{FT, 3}},
                                       col_bm_before::NTuple{6, Array{FT, 3}},
-                                      Nc::Int, Nz::Int) where FT
+                                      Nc::Int, Nz::Int,
+                                      weights::AbstractColumnWeights = MassWeightedColumn()) where FT
+    _check_weight_levels(weights, Nz)
     max_face_delta = 0.0
     for p in 1:6
         @inbounds for j in 1:Nc, i in 1:Nc + 1
@@ -943,14 +1035,12 @@ function _distribute_cs_column_delta!(panels_am::NTuple{6, Array{FT, 3}},
             i_r = min(i, Nc)
             denom = 0.0
             for k in 1:Nz
-                denom += max(0.0, Float64(panels_m[p][i_l, j, k])) +
-                         max(0.0, Float64(panels_m[p][i_r, j, k]))
+                denom += _layer_weight(weights, panels_m[p][i_l, j, k], panels_m[p][i_r, j, k], k)
             end
             if denom > 0.0
                 applied = 0.0
                 for k in 1:Nz-1
-                    w = (max(0.0, Float64(panels_m[p][i_l, j, k])) +
-                         max(0.0, Float64(panels_m[p][i_r, j, k]))) / denom
+                    w = _layer_weight(weights, panels_m[p][i_l, j, k], panels_m[p][i_r, j, k], k) / denom
                     inc = FT(delta * w)
                     panels_am[p][i, j, k] += inc
                     applied += Float64(inc)
@@ -977,14 +1067,12 @@ function _distribute_cs_column_delta!(panels_am::NTuple{6, Array{FT, 3}},
             j_n = min(j, Nc)
             denom = 0.0
             for k in 1:Nz
-                denom += max(0.0, Float64(panels_m[p][i, j_s, k])) +
-                         max(0.0, Float64(panels_m[p][i, j_n, k]))
+                denom += _layer_weight(weights, panels_m[p][i, j_s, k], panels_m[p][i, j_n, k], k)
             end
             if denom > 0.0
                 applied = 0.0
                 for k in 1:Nz-1
-                    w = (max(0.0, Float64(panels_m[p][i, j_s, k])) +
-                         max(0.0, Float64(panels_m[p][i, j_n, k]))) / denom
+                    w = _layer_weight(weights, panels_m[p][i, j_s, k], panels_m[p][i, j_n, k], k) / denom
                     inc = FT(delta * w)
                     panels_bm[p][i, j, k] += inc
                     applied += Float64(inc)
@@ -1010,7 +1098,8 @@ end
                                    ft, degree, steps_per_window, scratch; ...)
 
 Apply a single vertically integrated CS Poisson correction, then distribute the
-face correction over levels with local air-mass weights.
+face correction over levels with `weights` (`MassWeightedColumn()`, local air
+mass, by default; `HybridBWeightedColumn` follows TM5).
 
 This is the ERA CS default. It enforces the column mass budget required by zero
 top/bottom `cm` while avoiding the legacy per-layer correction that can rewrite
@@ -1030,6 +1119,7 @@ function balance_cs_column_mass_fluxes!(
     project_every::Int=50,
     closure_passes::Int=1,
     closure_tol::Float64=10.0,
+    weights::AbstractColumnWeights=MassWeightedColumn(),
 ) where FT
     Nc = ft.Nc
     Nz = size(panels_am[1], 3)
@@ -1061,7 +1151,7 @@ function balance_cs_column_mass_fluxes!(
             _distribute_cs_column_delta!(panels_am, panels_bm, panels_m,
                                          col_am, col_bm,
                                          col_am_before, col_bm_before,
-                                         Nc, Nz))
+                                         Nc, Nz, weights))
         _sync_cs_mirrors!(panels_am, panels_bm, ft, Nz)
 
         _fill_cs_column_buffers!(col_am, col_bm, col_m, col_m_next,
@@ -1091,17 +1181,20 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    diagnose_cs_cm!(panels_cm, panels_am, panels_bm, panels_dm, panels_m, Nc, Nz)
+    diagnose_cs_cm!(panels_cm, panels_am, panels_bm, panels_dm, panels_m, Nc, Nz[, weights])
 
 Diagnose vertical mass flux `cm` from column-balanced horizontal flux divergence
-and mass tendency for all 6 panels.
+and mass tendency for all 6 panels. A remaining column residual is spread with
+`weights` (layer air mass by default).
 """
 function diagnose_cs_cm!(panels_cm::NTuple{6, Array{FT, 3}},
                           panels_am::NTuple{6, Array{FT, 3}},
                           panels_bm::NTuple{6, Array{FT, 3}},
                           panels_dm::NTuple{6, Array{FT, 3}},
                           panels_m::NTuple{6, Array{FT, 3}},
-                          Nc::Int, Nz::Int) where FT
+                          Nc::Int, Nz::Int,
+                          weights::AbstractColumnWeights = MassWeightedColumn()) where FT
+    _check_weight_levels(weights, Nz)
     for p in 1:6
         am = panels_am[p]
         bm = panels_bm[p]
@@ -1118,17 +1211,17 @@ function diagnose_cs_cm!(panels_cm::NTuple{6, Array{FT, 3}},
                 cm[i, j, k + 1] = cm[i, j, k] + div_h - dm[i, j, k]
             end
 
-            # Redistribute any remaining residual proportionally to m
+            # Redistribute any remaining residual with the column weights
             residual = cm[i, j, Nz + 1]
             if abs(residual) > eps(FT)
                 total_m = zero(FT)
                 for k in 1:Nz
-                    total_m += m[i, j, k]
+                    total_m += _cell_weight(weights, m[i, j, k], k)
                 end
                 if total_m > zero(FT)
                     cum_fix = zero(FT)
                     for k in 1:Nz
-                        frac = m[i, j, k] / total_m
+                        frac = _cell_weight(weights, m[i, j, k], k) / total_m
                         cum_fix += frac * residual
                         cm[i, j, k + 1] -= cum_fix
                     end

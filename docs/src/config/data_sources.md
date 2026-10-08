@@ -209,6 +209,16 @@ Two archive layouts are supported (`[preprocessing] layout`):
   `[convection] kind = "cmfmc", cloud_base = "dqrcu"` and
   `[diffusion] kind = "geoschem_nonlocal_vdiff"` for GEOS-Chem's physics.
 
+`[preprocessing] column_balance_weights` (MERRA-2 only) spreads the column
+mass-budget correction of the horizontal fluxes over the levels:
+- `"mass"` (default): by layer air mass;
+- `"hybrid_b"`: by `ΔB`, as in TM5;
+- `"hybrid_mass"`: by air mass in hybrid layers only.
+
+The hybrid options leave the pure-pressure stratospheric layers untouched.
+See [Vertical transport](../theory/vertical_transport.md) section 2 and
+`config/met_sources/merra2_geoschem_hybrid{b,mass}.toml`.
+
 `[numerics] dt_met_seconds = 3600` splits every 3-hour MERRA-2 block into three
 hourly windows (endpoint mass, PS, QV and T linear in time, 3-hour mean winds),
 so the hourly A1 boundary-layer fields are used as archived; `10800` writes one

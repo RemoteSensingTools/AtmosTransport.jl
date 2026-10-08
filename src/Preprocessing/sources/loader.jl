@@ -44,7 +44,18 @@ function load_met_settings(toml_path::String;
     cfg  = TOML.parsefile(toml_path)
     name = cfg["source"]["name"]
     ctor = _settings_constructor(name)
+    _reject_column_weights(ctor, cfg)
     return _build_met_settings(ctor, cfg, String(root_dir); kwargs...)
+end
+
+# Column-balance weights are wired into the MERRA-2 path only; elsewhere the
+# key would be silently ignored.
+_reject_column_weights(::Type{MERRA2Settings}, cfg) = nothing
+function _reject_column_weights(::Type, cfg)
+    haskey(get(cfg, "preprocessing", Dict{String,Any}()), "column_balance_weights") &&
+        throw(ArgumentError("[preprocessing].column_balance_weights is implemented for " *
+                            "MERRA-2 sources only"))
+    return nothing
 end
 
 # ---------------------------------------------------------------------------
@@ -141,8 +152,9 @@ function _build_met_settings(ctor::Type{MERRA2Settings}, cfg::AbstractDict,
     include_vdiff_fields = _config_bool(pre_cfg, "include_vdiff_fields", false, "[preprocessing].include_vdiff_fields")
     include_convective_cloud_base = _config_bool(pre_cfg, "include_convective_cloud_base", false,
                                                  "[preprocessing].include_convective_cloud_base")
+    column_balance_weights = Symbol(lowercase(String(get(pre_cfg, "column_balance_weights", "mass"))))
     return validate_merra2_settings(ctor(; root_dir,
                   coefficients_file = coefs, winds_collection, archive,
                   include_surface, include_convection, include_vdiff_fields,
-                  include_convective_cloud_base, kwargs...))
+                  include_convective_cloud_base, column_balance_weights, kwargs...))
 end
