@@ -72,6 +72,26 @@ true signal: RMSE 8.8e-3 Pa/s against an RMS of 7.2e-3. With `vector` it is
 1.3e-3, as in the interior. In the extratropics at 30–200 hPa the RMSE falls
 from 8.4e-3 to 4.6e-3 Pa/s.
 
+In a four-month tracer run against GCHP (December 2021 – March 2022, ours
+started from GCHP's first output, `hybrid_mass` and the FV3 vertical
+profile), `vector` changes:
+- the CO₂ growth of the bias above 100 hPa from +0.050 to −0.035 ppm, and the
+  SF₆ growth from +0.006 to −0.004 ppt;
+- the slope against GCHP above 100 hPa from 0.979 to 0.998;
+- the near-surface Rn-222 RMSE by −5 % and the CO₂ RMSE from 0.331 to
+  0.310 ppm.
+
+With in addition `wind_regrid = "cartesian"` and `face_interpolation = "fv3"`
+(GCHP's construction; `config/met_sources/merra2_geoschem_hm_gchp.toml`):
+- the stratospheric growth is the same (−0.036 ppm);
+- the near-surface RMSE falls further, by 15 % (CO₂), 16 % (fossil CO₂) and
+  24 % (Rn-222), and the column CO₂ RMSE from 0.101 to 0.085 ppm.
+`"cubic"` without the filter gives mixed near-surface changes (worse for CO₂,
+fossil CO₂ and SF₆, better for Rn-222).
+
+The ERA5 paths (`cubed_sphere_spectral.jl`, `era5_n320_regrid.jl`) still use
+the `panel_average` construction and the scalar wind regrid.
+
 **Poles.** The east and north unit vectors turn with longitude. Regridding
 `u_east` and `v_north` as two scalars therefore averages components that point
 in different directions. Each of the four C90 cells that meet at a pole spans
@@ -225,6 +245,17 @@ changed little:
 Column RMSE was unchanged. `hybrid_b` gives the same stratospheric
 improvement (+0.19 ppm CO₂) with near-surface RMSE between the two: CO₂
 0.377 ppm.
+
+These growth values include the decay of an initial difference.
+- GCHP's initial lower stratosphere lies 0.5 ppm CO₂ and 0.06 ppt SF₆ above
+  the protocol initial state at 50–100 hPa; ours matches the protocol file.
+  GCHP's state is reproduced, to 0.05 ppm and 0.003 ppt, by placing each
+  protocol layer value at the layer's top interface instead of its middle.
+- Started from GCHP's own first output instead, `hybrid_mass` with the FV3
+  vertical profile grows by +0.05 ppm CO₂ above 100 hPa in four months, not
+  +0.14 (memo `2026-10-07_v0.5_transport_fidelity_backlog.md`, section B1).
+- Differences between options run from the same initial state are not
+  affected.
 
 **GCHP has no column closure.** FV3 transports tracers horizontally with the
 uncorrected fluxes. It then remaps the Lagrangian layers onto `A + B p_s,adv`,
