@@ -258,8 +258,9 @@ interior_divergence(am, bm, Nc) =
             e, n = en(deg2rad(src.λᶜ[i]), deg2rad(src.φᶜ[j]))
             u[i, j, 1], v[i, j, 1] = P._dot3(V, e), P._dot3(V, n)
         end
+        regrid!(panels, f) = P.regrid_3d_to_cs_panels!(panels, R, f, ws, Nc)
         polar_error = map((P.ScalarWindRegrid(), P.CartesianWindRegrid(src, mesh, Nz, Float64))) do w
-            P._regrid_winds!(w, pipe.u, pipe.v, R, ws, u, v, Nc)
+            P._regrid_winds!(w, pipe.u, pipe.v, regrid!, u, v)
             lon, lat = G.panel_cell_center_lonlat(mesh, 3)       # the north-polar panel
             maximum(Iterators.product(1:Nc, 1:Nc)) do (i, j)
                 e, n = en(deg2rad(lon[i, j]), deg2rad(lat[i, j]))
@@ -272,9 +273,56 @@ interior_divergence(am, bm, Nc) =
         # Float32 buffers, as in production
         ws32 = P.allocate_cs_preprocess_workspace(Nc, nx, ny, Nz, length(R.src_areas), length(R.dst_areas), Float32)
         u32, v32 = ntuple(_ -> zeros(Float32, Nc, Nc, Nz), 6), ntuple(_ -> zeros(Float32, Nc, Nc, Nz), 6)
-        P._regrid_winds!(P.CartesianWindRegrid(src, mesh, Nz, Float32), u32, v32, R, ws32,
-                         Float32.(u), Float32.(v), Nc)
+        P._regrid_winds!(P.CartesianWindRegrid(src, mesh, Nz, Float32), u32, v32,
+                         (panels, f) -> P.regrid_3d_to_cs_panels!(panels, R, f, ws32, Nc),
+                         Float32.(u), Float32.(v))
         @test maximum(p -> maximum(abs, u32[p] .- pipe.u[p]), 1:6) < 1e-4 * hypot(V...)
+    end
+
+    @testset "winds regridded as vectors from a reduced Gaussian grid (ERA5)" begin
+        # rings 3° apart south to north, few longitudes near the poles as in N320
+        # (cell centres at (i - ½) Δλ)
+        lats = [-88.5 + 3.0 * (j - 1) for j in 1:60]
+        rg = G.ReducedGaussianMesh(lats, [max(8, round(Int, 120 * cosd(φ))) for φ in lats];
+                                   FT = Float64, radius = 6.371e6)
+        mesh = CubedSphereMesh(; Nc = 12, Hp = 0, FT = Float64, radius = 6.371e6,
+                               convention = G.GEOSNativePanelConvention(),
+                               definition = G.GMAOCubedSphereDefinition(; convention = G.GEOSNativePanelConvention()))
+        Nc, Nz = 12, 2
+        R = AtmosTransport.Regridding.build_regridder(rg, mesh; normalize = false)
+        lon, lat = P._source_cell_centers(rg)
+        @test length(lon) == length(R.src_areas) && lat[1] == lats[1] && lat[end] == lats[end]
+        @test lon[1:8] ≈ [(i - 0.5) * 45 for i in 1:8]       # the southernmost ring has 8 cells
+        V = (3.0, 11.0, 0.0)
+        en(λ, φ) = ((-sin(λ), cos(λ), 0.0), (-sin(φ) * cos(λ), -sin(φ) * sin(λ), cos(φ)))
+        u = zeros(length(lon), Nz); v = similar(u)
+        for c in eachindex(lon)
+            e, n = en(deg2rad(lon[c]), deg2rad(lat[c]))
+            u[c, :] .= P._dot3(V, e); v[c, :] .= P._dot3(V, n)
+        end
+        src_flat, dst_flat = zeros(length(lon), Nz), zeros(length(R.dst_areas), Nz)
+        # Few-longitude polar rings leave the polar target cells a few percent short of
+        # full coverage (a constant field regrids to 0.97 there); divide by the regridded
+        # constant so the test sees only the vector treatment.
+        coverage = copy(P._regrid_3d_intensive!(dst_flat, src_flat, R, ones(length(lon), Nz)))
+        regrid!(panels, f) = (P._regrid_3d_intensive!(dst_flat, src_flat, R, f); dst_flat ./= coverage;
+                              P._unpack_flat_to_cs_panels_3d!(panels, dst_flat, Nc, Nz))
+        u_cs, v_cs = ntuple(_ -> zeros(Nc, Nc, Nz), 6), ntuple(_ -> zeros(Nc, Nc, Nz), 6)
+        polar_error = map((P.ScalarWindRegrid(), P.CartesianWindRegrid(rg, mesh, Nz, Float64))) do w
+            P._regrid_winds!(w, u_cs, v_cs, regrid!, u, v)
+            lonp, latp = G.panel_cell_center_lonlat(mesh, 3)
+            maximum(Iterators.product(1:Nc, 1:Nc, 1:Nz)) do (i, j, k)
+                e, n = en(deg2rad(lonp[i, j]), deg2rad(latp[i, j]))
+                hypot(u_cs[3][i, j, k] - P._dot3(V, e), v_cs[3][i, j, k] - P._dot3(V, n))
+            end
+        end
+        # a C12 cell touching the pole spans 90° of longitude: the scalar regrid is off by
+        # ~13 % of |V| here, the vector regrid by < 1 %
+        @test polar_error[1] > 0.05 * hypot(V...)
+        @test polar_error[2] < 0.1 * polar_error[1]
+        # winds must come level last: a transposed array is rejected, not scrambled
+        @test_throws DimensionMismatch P._regrid_winds!(P.CartesianWindRegrid(rg, mesh, Nz, Float64),
+                                                        u_cs, v_cs, regrid!, permutedims(u), permutedims(v))
     end
 
     @testset "seam thickness is interpolated along the edge too" begin
@@ -310,6 +358,28 @@ interior_divergence(am, bm, Nc) =
         @test sqrt(mean(abs2, rel)) < 1e-4
     end
 
+    @testset "default flux construction is the historical reconstruct_cs_fluxes!" begin
+        # the ERA5 N320 driver now calls the shared methods; the defaults must be bit-identical
+        mesh = gmao_mesh(8); Nc, Nz = 8, 3
+        ft = P.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
+        u_e = ntuple(_ -> randn(Nc, Nc, Nz), 6); v_n = ntuple(_ -> randn(Nc, Nc, Nz), 6)
+        ps = ntuple(_ -> 1e5 .+ 500 .* rand(Nc, Nc), 6)
+        A, B = [0.0, 3000.0, 8000.0, 0.0], [0.0, 0.0, 0.4, 1.0]
+        defaults = (face_fluxes = :panel_average, face_lengths = :cell_centerline, face_interpolation = :linear)
+        method = P._face_flux_method(defaults, (mesh = mesh, face_table = ft))
+        panels(n) = ntuple(_ -> zeros(Nc + n[1], Nc + n[2], Nz), 6)
+        x = (am = panels((1, 0)), bm = panels((0, 1)), u_local = panels((0, 0)), v_local = panels((0, 0)),
+             dp = panels((0, 0)))
+        P._prepare_cell_winds!(method, x, u_e, v_n, mesh, Nz)
+        P.fill_cs_layer_thickness!(x.dp, ps, A, B, Nc, Nz)
+        P._face_fluxes!(method, x, 9.80665, 0.25, Nc, Nz)
+        old = (am = panels((1, 0)), bm = panels((0, 1)), u = panels((0, 0)), v = panels((0, 0)), dp = panels((0, 0)))
+        P.rotate_winds_to_panel_local!(old.u, old.v, u_e, v_n, mesh, Nz)
+        P.reconstruct_cs_fluxes!(old.am, old.bm, old.u, old.v, old.dp, ps, A, B, mesh.Δx, mesh.Δy,
+                                 9.80665, 0.25, Nc, Nz)
+        @test x.am == old.am && x.bm == old.bm
+    end
+
     @testset "each flux method gets the winds it expects" begin
         mesh = gmao_mesh(8); Nc, Nz = 8, 2
         ft = P.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
@@ -334,8 +404,19 @@ interior_divergence(am, bm, Nc) =
             @test_throws ArgumentError P.load_met_settings(write_toml("bad.toml", bad); root_dir = dir)
             wrong = replace(merra, "[preprocessing]" => "[preprocessing]\nface_fluxes = \"spline\"")
             @test_throws ArgumentError P.load_met_settings(write_toml("wrong.toml", wrong); root_dir = dir)
-            era = write_toml("era.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nface_fluxes = \"vector\"\n")
-            @test_throws ArgumentError P.load_met_settings(era; root_dir = dir)
+            # ERA5 N320 takes the shared flux-construction keys, but not the MERRA-2 flux thickness
+            era = write_toml("era.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nface_fluxes = \"vector\"\n" *
+                                         "face_interpolation = \"fv3\"\nwind_regrid = \"cartesian\"\n" *
+                                         "column_balance_weights = \"hybrid_b\"\n")
+            e = P.load_met_settings(era; root_dir = dir)
+            @test (e.face_fluxes, e.face_interpolation, e.wind_regrid, e.column_balance_weights) ==
+                  (:vector, :fv3, :cartesian, :hybrid_b)
+            @test P.load_met_settings(write_toml("era0.toml", "[source]\nname = \"ERA5-N320\"\n"); root_dir = dir).face_fluxes ===
+                  :panel_average
+            era_dry = write_toml("era_dry.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nflux_thickness = \"dry_mass\"\n")
+            @test_throws ArgumentError P.load_met_settings(era_dry; root_dir = dir)
+            era_bad = write_toml("era_bad.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nwind_regrid = \"bilinear\"\n")
+            @test_throws ArgumentError P.load_met_settings(era_bad; root_dir = dir)
             vec = replace(merra, "[preprocessing]" => "[preprocessing]\nface_fluxes = \"vector\"\nface_interpolation = \"fv3\"\nwind_regrid = \"cartesian\"")
             s = P.load_met_settings(write_toml("vec.toml", vec); root_dir = dir)
             @test (s.face_interpolation, s.wind_regrid) == (:fv3, :cartesian)

@@ -410,14 +410,18 @@ end
     @test_throws DimensionMismatch Prep.diagnose_cs_cm!(cm_hyb, am0, bm0, dm, m, Nc, Nz,
                                                         Prep.column_weights(:hybrid_mass, B[2:end]))
 
-    # TOML wiring: MERRA-2 reads the key, other sources reject it
+    # TOML wiring: MERRA-2 and ERA5 N320 read the key, the GEOS sources reject it
     mktempdir() do dir
         merra2 = Prep.load_met_settings(joinpath(pkgdir(AtmosTransport), "config", "met_sources",
                                                  "merra2_geoschem_hybridmass.toml"); root_dir = dir)
         @test merra2.column_balance_weights === :hybrid_mass
         toml = joinpath(dir, "era5.toml")
         write(toml, "[source]\nname = \"ERA5-N320\"\n[preprocessing]\ncolumn_balance_weights = \"hybrid_b\"\n")
-        @test_throws ArgumentError Prep.load_met_settings(toml; root_dir = dir)
+        @test Prep.load_met_settings(toml; root_dir = dir).column_balance_weights === :hybrid_b
+        geos = read(joinpath(pkgdir(AtmosTransport), "config", "met_sources", "geosit.toml"), String)
+        geos_toml = joinpath(dir, "geos.toml")
+        write(geos_toml, replace(geos, r"\[preprocessing\]" => "[preprocessing]\ncolumn_balance_weights = \"hybrid_b\"", count = 1))
+        @test_throws ArgumentError Prep.load_met_settings(geos_toml; root_dir = dir)
     end
 
     @test_throws ArgumentError Prep.column_weights(:pressure, B)

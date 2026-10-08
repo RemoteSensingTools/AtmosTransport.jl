@@ -215,6 +215,8 @@ include("reduced_transport_helpers.jl")
 
 # Cubed-sphere transport helpers (regrid, wind recovery, flux reconstruction)
 include("cs_transport_helpers.jl")
+# Flux construction options shared by the wind-derived paths (MERRA-2, ERA5 N320).
+include("flux_construction.jl")
 
 # Configuration parsing
 include("configuration.jl")

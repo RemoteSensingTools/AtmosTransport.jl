@@ -263,6 +263,10 @@ function process_era5_n320_to_cs_day(date::Date,
                                        global_mass_target_kg::Real = NaN) where FT
     mass_basis === :dry ||
         throw(ArgumentError("ERA5 N320 → CS writer only supports mass_basis=:dry; got $(mass_basis)"))
+    _validate_flux_construction(settings, "ERA5")
+    horizontal_poisson_balance_enabled() && settings.column_balance_weights !== :mass && throw(ArgumentError(
+        "column_balance_weights = $(settings.column_balance_weights) applies to the column " *
+        "Poisson balance; it cannot be combined with ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1"))
     native_vc_cfg = load_hybrid_coefficients(settings.coefficients_file)
     native_vc_ft = HybridSigmaPressure(FT.(native_vc_cfg.A), FT.(native_vc_cfg.B))
     plan = if vertical_plan === nothing
@@ -311,11 +315,13 @@ function process_era5_n320_to_cs_day(date::Date,
         cur_pipe = allocate_era5_n320_to_c180_pipeline(
             handles, target_grid; Nz = Nz_native,
             cache_dir = cache_dir,
-            include_convection = include_convection)
+            include_convection = include_convection,
+            wind_regrid = settings.wind_regrid)
         nxt_pipe = allocate_era5_n320_to_c180_pipeline(
             handles, target_grid; Nz = Nz_native,
             cache_dir = cache_dir,
-            include_convection = include_convection)
+            include_convection = include_convection,
+            wind_regrid = cur_pipe.wind)          # one set of wind-regrid buffers for both
 
         native_vc = cur_pipe.vc
         vc = plan.merged_vc
@@ -349,9 +355,13 @@ function process_era5_n320_to_cs_day(date::Date,
         tm5_merged = include_convection ?
             allocate_era5_c180_tm5_convection_fields(target_grid, Nz_int) : nothing
 
-        Δx = mesh.Δx
-        Δy = mesh.Δy
         gravity = FT(GRAV)
+        # Flux construction (`[preprocessing]` keys; defaults reproduce the
+        # historical panel-average fluxes and mass-weighted column balance).
+        flux_method = _face_flux_method(settings, target_grid)
+        flux_x = (am = native_am, bm = native_bm, u_local = native_u_local,
+                  v_local = native_v_local, dp = native_dp)
+        balance_weights = column_weights(settings.column_balance_weights, vc.B)
         # Per-substep flux scaling for a window taking `steps` substeps. The
         # face flux is the substep-mass amount, so it scales as 1/steps; the
         # adaptive loop re-reconstructs at the chosen `steps`.
@@ -520,6 +530,11 @@ function process_era5_n320_to_cs_day(date::Date,
                 "vertical_Nz_output" => Nz_int,
                 "merge_map" => plan.merge_map,
                 "poisson_balanced" => true,
+                "column_balance_weights" => String(settings.column_balance_weights),
+                "face_fluxes" => String(settings.face_fluxes),
+                "flux_face_lengths" => settings.face_fluxes === :vector ? "edge" : String(settings.face_lengths),
+                "face_interpolation" => String(settings.face_interpolation),
+                "wind_regrid" => String(settings.wind_regrid),
                 "tm5_convection_source" => include_convection ?
                     "ec2tm_from_rates(udmf,ddmf,udrf,ddrf)" : "none",
                 "global_mass_pin_enabled" => do_mass_pin,
@@ -581,11 +596,9 @@ function process_era5_n320_to_cs_day(date::Date,
         # before the adaptive loop; only the flux scaling (`out_dt_factor_for`),
         # the balance, the mass tendency, and `cm` depend on `steps`.
         _balance_window_at_steps! = function (pipe, m_dry, m_next, am, bm, cm, dm, steps)
-            reconstruct_cs_fluxes!(native_am, native_bm,
-                                    native_u_local, native_v_local,
-                                    native_dp, pipe.c180_fields.ps,
-                                    native_vc.A, native_vc.B, Δx, Δy,
-                                    gravity, out_dt_factor_for(steps), Nc, Nz_native)
+            fill_cs_layer_thickness!(native_dp, pipe.c180_fields.ps, native_vc.A, native_vc.B,
+                                     Nc, Nz_native)
+            _face_fluxes!(flux_method, flux_x, gravity, out_dt_factor_for(steps), Nc, Nz_native)
             _merge_cs_center_extensive!(am, native_am, plan, MassFluxField())
             _merge_cs_center_extensive!(bm, native_bm, plan, MassFluxField())
             bal_diag = if apply_horizontal_balance
@@ -599,12 +612,13 @@ function process_era5_n320_to_cs_day(date::Date,
                     am, bm, m_dry, m_next,
                     target_grid.face_table, target_grid.cell_degree, steps,
                     target_grid.poisson_scratch; tol = Float64(cs_balance_tol),
-                    max_iter = 20000, project_every = Int(cs_balance_project_every))
+                    max_iter = 20000, project_every = Int(cs_balance_project_every),
+                    weights = balance_weights)
             end
             sync_all_cs_boundary_mirrors!(am, bm, mesh.connectivity, Nc, Nz_int)
             fill_cs_window_mass_tendency!(dm, m_dry, m_next, steps)
             for p in 1:6; fill!(cm[p], zero(FT)); end
-            diagnose_cs_cm!(cm, am, bm, dm, m_dry, Nc, Nz_int)
+            diagnose_cs_cm!(cm, am, bm, dm, m_dry, Nc, Nz_int, balance_weights)
             return bal_diag
         end
 
@@ -614,9 +628,8 @@ function process_era5_n320_to_cs_day(date::Date,
         # final balance diagnostics. Re-prepares at each candidate `steps`
         # (mirrors the GEOS path; guarantees continuity closes at that count).
         _adapt_window! = function (pipe, m_dry, m_next, am, bm, cm, dm)
-            rotate_winds_to_panel_local!(native_u_local, native_v_local,
-                                          pipe.c180_fields.u, pipe.c180_fields.v,
-                                          mesh, Nz_native)
+            _prepare_cell_winds!(flux_method, flux_x, pipe.c180_fields.u, pipe.c180_fields.v,
+                                 mesh, Nz_native)
             @inbounds for p in 1:6
                 for k in 1:Nz_native
                     dA = Float64(native_vc.A[k + 1]) - Float64(native_vc.A[k])
@@ -747,7 +760,7 @@ function process_era5_n320_to_cs_day(date::Date,
             regrid_n320_to_c180!(nxt_pipe.c180_fields,
                                    nxt_pipe.window_fields,
                                    nxt_pipe.regrid_ws,
-                                   target_grid)
+                                   target_grid, nxt_pipe.wind)
             derive_c180_dry_mass!(native_m_dry, native_delp_dry,
                                    native_ps_dry, native_ps_acc,
                                    nxt_pipe.c180_fields.ps, nxt_pipe.c180_fields.qv,

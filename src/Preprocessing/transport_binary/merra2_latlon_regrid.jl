@@ -69,15 +69,6 @@
 const _MERRA2_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS = 8
 
 """
-    AbstractWindRegrid
-
-How the east/north winds are regridded from the latitude-longitude grid to the
-cube: [`ScalarWindRegrid`](@ref) or [`CartesianWindRegrid`](@ref)
-(`[preprocessing] wind_regrid`).
-"""
-abstract type AbstractWindRegrid end
-
-"""
     MERRA2ToC180Pipeline{FT, R, P, E, W}
 
 Per-day MERRA-2 → C180 preprocessing workspace. Owns the conservative LL→CS
@@ -109,96 +100,6 @@ struct MERRA2ToC180Pipeline{FT <: AbstractFloat, R, P, E, W <: AbstractWindRegri
     edge_src    :: E
     edge_dst    :: E
     wind        :: W
-end
-
-"""
-    ScalarWindRegrid()
-
-Remap `u` and `v` as two independent scalars (historical default). Their basis
-vectors turn with longitude, so near a pole a cube cell averages components that
-point in different directions. A C90 cell touching the pole spans 90° of
-longitude, and its remapped wind is off by about 5% for a flow across the pole; the
-resulting spurious divergence poleward of 88° is several times the global RMS
-divergence (`docs/src/theory/vertical_transport.md`).
-"""
-struct ScalarWindRegrid <: AbstractWindRegrid end
-
-"""
-    CartesianWindRegrid(source_mesh, target_mesh, Nz, FT)
-
-Remap the wind as a vector, as GCHP's MAPL does for `UA;VA`
-(`MAPL_EsmfRegridder.F90`). The source winds are written in fixed Cartesian
-components
-
-    X = −sin λ u − sin φ cos λ v,   Y = cos λ u − sin φ sin λ v,   Z = cos φ v,
-
-the three components are remapped conservatively, and the result is projected
-on the east and north unit vectors at each cube-cell centre. The remapped vector
-is the area mean of the source vectors, so it is not exactly tangent to the
-sphere at the cell centre; the projection drops the small radial part.
-
-Owns the three source-grid component buffers (about 60 MB each for MERRA-2 L72
-in Float32), the remapped `Z` panels, and the basis trigonometry of both grids.
-"""
-struct CartesianWindRegrid{FT} <: AbstractWindRegrid
-    src_xyz  :: NTuple{3, Array{FT, 3}}                    # X, Y, Z on the source grid
-    dst_z    :: NTuple{6, Array{FT, 3}}                    # remapped Z
-    src_trig :: NamedTuple{(:sinλ, :cosλ, :sinφ, :cosφ), NTuple{4, Vector{Float64}}}   # by lon / by lat
-    dst_trig :: NTuple{6, NamedTuple{(:sinλ, :cosλ, :sinφ, :cosφ), NTuple{4, Matrix{Float64}}}}
-end
-
-_trig(λ, φ) = (sinλ = sin.(λ), cosλ = cos.(λ), sinφ = sin.(φ), cosφ = cos.(φ))
-
-function CartesianWindRegrid(source::LatLonMesh, target::CubedSphereMesh, Nz::Integer, ::Type{FT}) where FT
-    λ, φ = deg2rad.(Float64.(source.λᶜ)), deg2rad.(Float64.(source.φᶜ))
-    dst_trig = ntuple(6) do p
-        lon, lat = panel_cell_center_lonlat(target, p)
-        _trig(deg2rad.(Float64.(lon)), deg2rad.(Float64.(lat)))
-    end
-    Nc = target.Nc
-    return CartesianWindRegrid{FT}(ntuple(_ -> zeros(FT, length(λ), length(φ), Nz), 3),
-                                   ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6), _trig(λ, φ), dst_trig)
-end
-
-_wind_regrid(kind::Symbol, source, target, Nz, FT) =
-    kind === :cartesian ? CartesianWindRegrid(source, target, Nz, FT) : ScalarWindRegrid()
-
-"""
-    _regrid_winds!(method, u_cs, v_cs, regridder, ws, u, v, Nc)
-
-Regrid the source east/north winds `u`, `v` (lon, lat, level) to the east/north
-cube panels `u_cs`, `v_cs` with `method`, an [`AbstractWindRegrid`](@ref).
-"""
-function _regrid_winds!(::ScalarWindRegrid, u_cs, v_cs, regridder, ws, u, v, Nc)
-    regrid_3d_to_cs_panels!(u_cs, regridder, u, ws, Nc)
-    regrid_3d_to_cs_panels!(v_cs, regridder, v, ws, Nc)
-    return nothing
-end
-
-function _regrid_winds!(w::CartesianWindRegrid{FT}, u_cs, v_cs, regridder, ws, u, v, Nc) where FT
-    X, Y, Z = w.src_xyz
-    size(u) == size(v) == size(X) || throw(DimensionMismatch(
-        "winds $(size(u)), $(size(v)) do not match the Cartesian buffers $(size(X))"))
-    (; sinλ, cosλ, sinφ, cosφ) = w.src_trig
-    @inbounds for k in axes(u, 3), j in axes(u, 2), i in axes(u, 1)
-        uu, vv = Float64(u[i, j, k]), Float64(v[i, j, k])
-        X[i, j, k] = FT(-sinλ[i] * uu - sinφ[j] * cosλ[i] * vv)
-        Y[i, j, k] = FT( cosλ[i] * uu - sinφ[j] * sinλ[i] * vv)
-        Z[i, j, k] = FT( cosφ[j] * vv)
-    end
-    regrid_3d_to_cs_panels!(u_cs, regridder, X, ws, Nc)      # holds X until projected
-    regrid_3d_to_cs_panels!(v_cs, regridder, Y, ws, Nc)      # holds Y until projected
-    regrid_3d_to_cs_panels!(w.dst_z, regridder, Z, ws, Nc)
-    for p in 1:6
-        (; sinλ, cosλ, sinφ, cosφ) = w.dst_trig[p]
-        ue, vn, z = u_cs[p], v_cs[p], w.dst_z[p]
-        @inbounds for k in axes(ue, 3), j in 1:Nc, i in 1:Nc
-            x, y = Float64(ue[i, j, k]), Float64(vn[i, j, k])
-            ue[i, j, k] = FT(-sinλ[i, j] * x + cosλ[i, j] * y)
-            vn[i, j, k] = FT(-sinφ[i, j] * (cosλ[i, j] * x + sinλ[i, j] * y) + cosφ[i, j] * Float64(z[i, j, k]))
-        end
-    end
-    return nothing
 end
 
 """
@@ -299,8 +200,9 @@ function process_merra2_window!(pipe::MERRA2ToC180Pipeline{FT},
     regrid_2d_to_cs_panels!(pipe.c180_fields.ps, pipe.regridder, fields.ps,
                             pipe.ws, Nc, IntensiveCellField())
     regrid_3d_to_cs_panels!(pipe.c180_fields.qv, pipe.regridder, fields.qv, pipe.ws, Nc)
-    _regrid_winds!(pipe.wind, pipe.c180_fields.u, pipe.c180_fields.v, pipe.regridder, pipe.ws,
-                   fields.u, fields.v, Nc)
+    _regrid_winds!(pipe.wind, pipe.c180_fields.u, pipe.c180_fields.v,
+                   (panels, f) -> regrid_3d_to_cs_panels!(panels, pipe.regridder, f, pipe.ws, Nc),
+                   fields.u, fields.v)
     isempty(pipe.phys) || _regrid_merra2_physics!(pipe, handles, win)
     return pipe
 end
@@ -586,42 +488,6 @@ end
 struct MoistFluxThickness end      # from the moist surface pressure (historical)
 struct DryMassFluxThickness end    # g m_dry / A: the dry air the fluxes transport
 _flux_thickness(kind::Symbol) = (moist = MoistFluxThickness(), dry_mass = DryMassFluxThickness())[kind]
-
-# How face fluxes are built from the cell-centre winds.
-struct PanelAverageFluxes{L <: AbstractFaceLengths}    # panel components averaged (historical)
-    lengths :: L
-end
-struct VectorFaceFluxes{G <: CSVectorFaceGeometry}     # vectors projected on the face normal
-    geom :: G
-    face_table :: CSGlobalFaceTable
-end
-# `face_interpolation` → stencil order across the face and FV3's filter along it.
-const _FACE_INTERPOLATION = (linear = (order = 2, along_face_filter = false),
-                             cubic  = (order = 4, along_face_filter = false),
-                             fv3    = (order = 4, along_face_filter = true))
-function _face_flux_method(settings, grid)
-    settings.face_fluxes === :vector && return VectorFaceFluxes(
-        CSVectorFaceGeometry(grid.mesh, grid.face_table; _FACE_INTERPOLATION[settings.face_interpolation]...),
-        grid.face_table)
-    lengths = settings.face_lengths === :edge ? EdgeLengths(grid.mesh) :
-              CellCenterlineLengths(grid.mesh.Δx, grid.mesh.Δy)
-    return PanelAverageFluxes(lengths)
-end
-
-# Cell-centre winds the method needs: panel-local face-normal components, or
-# the east/north components themselves.
-_prepare_cell_winds!(::PanelAverageFluxes, x, u_east, v_north, mesh, Nz) =
-    rotate_winds_to_panel_local!(x.u_local, x.v_local, u_east, v_north, mesh, Nz)
-function _prepare_cell_winds!(::VectorFaceFluxes, x, u_east, v_north, mesh, Nz)
-    foreach(copyto!, x.u_local, u_east)
-    foreach(copyto!, x.v_local, v_north)
-    return nothing
-end
-
-_face_fluxes!(m::PanelAverageFluxes, x, g, dt, Nc, Nz) =
-    cs_face_fluxes!(x.am, x.bm, x.u_local, x.v_local, x.dp, m.lengths, g, dt, Nc, Nz)
-_face_fluxes!(m::VectorFaceFluxes, x, g, dt, Nc, Nz) =
-    cs_vector_face_fluxes!(x.am, x.bm, x.u_local, x.v_local, x.dp, m.geom, m.face_table, g, dt, Nc, Nz)
 
 _fill_flux_thickness!(::MoistFluxThickness, x, ps_moist, m_a, vc, mesh, Nc, Nz) =
     fill_cs_layer_thickness!(x.dp, ps_moist, vc.A, vc.B, Nc, Nz)

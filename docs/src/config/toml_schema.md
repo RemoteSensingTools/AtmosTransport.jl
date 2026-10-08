@@ -531,9 +531,9 @@ Give GPU runs `--threads=2` (or more) to enable prefetch.
 Consumed by `scripts/preprocessing/preprocess_transport_binary.jl`, which
 calls the unified `process_day` preprocessing entry point. Source-specific
 `[preprocessing]` keys live in the met-source descriptor
-(`config/met_sources/*.toml`); the MERRA-2 flux-construction keys
-(`column_balance_weights`, `face_fluxes`, `face_lengths`, `face_interpolation`,
-`flux_thickness`, `wind_regrid`) are
+(`config/met_sources/*.toml`); the flux-construction keys of the MERRA-2 and
+ERA5 N320 sources (`column_balance_weights`, `face_fluxes`, `face_lengths`,
+`face_interpolation`, `wind_regrid`, and for MERRA-2 `flux_thickness`) are
 described in [Data sources](data_sources.md).
 
 The preprocessing config has a different shape from the run config:

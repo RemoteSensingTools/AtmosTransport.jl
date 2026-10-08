@@ -55,6 +55,13 @@ Base.@kwdef struct ERA5GRIBSettings{flavor} <: AbstractERA5GRIBSettings
     arco_surface_pressure :: Bool   = false
     coefficients_file     :: String = "config/era5_L137_coefficients.toml"
     level_orientation     :: Symbol = :top_down
+    # Flux construction (shared with MERRA-2; see `flux_construction.jl` and
+    # docs/src/config/data_sources.md). The defaults reproduce the historical path.
+    column_balance_weights :: Symbol = :mass
+    face_lengths          :: Symbol = :cell_centerline
+    face_fluxes           :: Symbol = :panel_average
+    face_interpolation    :: Symbol = :linear
+    wind_regrid           :: Symbol = :scalar
 end
 
 const ERA5N320Settings = ERA5GRIBSettings{:n320}
@@ -1317,18 +1324,20 @@ function allocate_era5_c180_regrid_workspace(source_grid::ReducedGaussianTargetG
 end
 
 """
-    regrid_n320_to_c180!(c180_fields, n320_window, workspace, target_grid) -> c180_fields
+    regrid_n320_to_c180!(c180_fields, n320_window, workspace, target_grid,
+                         wind = ScalarWindRegrid()) -> c180_fields
 
 Conservatively regrid PS (2D) and U, V, T, Q (3D) from the N320 source mesh
-to the C180 cubed-sphere target. All five fields are intensive scalars; the
-regridder weights apply directly. The flat scratch buffers in `workspace`
-hold the intermediate Float64 arrays so the call is allocation-free after
-warm-up.
+to the C180 cubed-sphere target. PS, T and Q are intensive scalars; U and V go
+through `wind`, as two scalars (`ScalarWindRegrid`, the default) or as a vector
+(`CartesianWindRegrid`). The flat scratch buffers in `workspace` hold the
+intermediate Float64 arrays.
 """
 function regrid_n320_to_c180!(c180_fields::ERA5C180RegridFields{FT},
                                 n320_window::ERA5N320WindowFields,
                                 workspace::ERA5C180RegridWorkspace{FT},
-                                target_grid::CubedSphereTargetGeometry{FT}) where FT
+                                target_grid::CubedSphereTargetGeometry{FT},
+                                wind::AbstractWindRegrid = ScalarWindRegrid()) where FT
     Nc = target_grid.mesh.Nc
     Nz = size(n320_window.u, 2)
     size(workspace.src_flat_3d, 2) == Nz ||
@@ -1341,16 +1350,16 @@ function regrid_n320_to_c180!(c180_fields::ERA5C180RegridFields{FT},
                            workspace.regridder, n320_window.ps)
     _unpack_flat_to_cs_panels_2d!(c180_fields.ps, workspace.dst_flat_2d, Nc)
 
-    # 3D intensive fields — all share the same workspace scratch.
-    for (src_field, dst_panels) in (
-            (n320_window.u,  c180_fields.u),
-            (n320_window.v,  c180_fields.v),
-            (n320_window.t,  c180_fields.t),
-            (n320_window.qv, c180_fields.qv))
+    # 3D intensive fields — all share the same workspace scratch. The winds
+    # go through `wind` (as two scalars, or as a vector).
+    function regrid3d!(dst_panels, src_field)
         _regrid_3d_intensive!(workspace.dst_flat_3d, workspace.src_flat_3d,
                                workspace.regridder, src_field)
-        _unpack_flat_to_cs_panels_3d!(dst_panels, workspace.dst_flat_3d, Nc, Nz)
+        return _unpack_flat_to_cs_panels_3d!(dst_panels, workspace.dst_flat_3d, Nc, Nz)
     end
+    _regrid_winds!(wind, c180_fields.u, c180_fields.v, regrid3d!, n320_window.u, n320_window.v)
+    regrid3d!(c180_fields.t, n320_window.t)
+    regrid3d!(c180_fields.qv, n320_window.qv)
 
     return c180_fields
 end
@@ -1538,7 +1547,7 @@ end
 # ===========================================================================
 
 """
-    ERA5N320ToC180Pipeline{FT, RW, CSGrid, SrcGrid}
+    ERA5N320ToC180Pipeline{FT, RW, CSGrid, SrcGrid, W}
 
 All-in-one container for the per-day ERA5 N320 → C180 preprocessing
 workspace. Holds the source-grid descriptor, the hybrid coordinate, the
@@ -1551,7 +1560,8 @@ One pipeline allocated per day-handle, reused across the 24 hourly windows.
 struct ERA5N320ToC180Pipeline{FT <: AbstractFloat,
                                RW <: ERA5C180RegridWorkspace{FT},
                                CSGrid <: CubedSphereTargetGeometry{FT},
-                               SrcGrid <: ReducedGaussianTargetGeometry{FT}}
+                               SrcGrid <: ReducedGaussianTargetGeometry{FT},
+                               W <: AbstractWindRegrid}
     source_grid        :: SrcGrid
     target_grid        :: CSGrid
     vc                 :: HybridSigmaPressure
@@ -1567,6 +1577,7 @@ struct ERA5N320ToC180Pipeline{FT <: AbstractFloat,
     tm5_derive_scratches :: Union{Nothing, Vector{TM5ConvectionColumnScratch{FT}}}
     tm5_c180_fields    :: Union{Nothing, ERA5C180TM5ConvectionFields{FT}}
     c180_fields        :: ERA5C180RegridFields{FT}
+    wind               :: W      # how U/V are regridded (`ScalarWindRegrid` or `CartesianWindRegrid`)
 end
 
 """
@@ -1589,7 +1600,8 @@ function allocate_era5_n320_to_c180_pipeline(handles::ERA5GRIBDayHandles,
                                                 target_grid::CubedSphereTargetGeometry{FT};
                                                 Nz::Integer = ERA5_NATIVE_LEVEL_COUNT,
                                                 cache_dir::Union{Nothing, AbstractString} = nothing,
-                                                include_convection::Bool = true) where FT
+                                                include_convection::Bool = true,
+                                                wind_regrid::Union{Symbol, AbstractWindRegrid} = :scalar) where FT
     Nz_int = Int(Nz)
     Nz_int >= 1 || throw(ArgumentError("Nz must be ≥ 1, got $Nz"))
 
@@ -1616,13 +1628,15 @@ function allocate_era5_n320_to_c180_pipeline(handles::ERA5GRIBDayHandles,
     tm5_c180_fields = include_convection ?
         allocate_era5_c180_tm5_convection_fields(target_grid, Nz_int) : nothing
     c180_fields   = allocate_era5_c180_regrid_fields(target_grid, Nz_int)
+    wind          = _wind_regrid(wind_regrid, source_grid.mesh, target_grid.mesh, Nz_int, FT)
 
-    return ERA5N320ToC180Pipeline{FT, typeof(regrid_ws), typeof(target_grid), typeof(source_grid)}(
+    return ERA5N320ToC180Pipeline{FT, typeof(regrid_ws), typeof(target_grid), typeof(source_grid),
+                                  typeof(wind)}(
         source_grid, target_grid, vc, cell_areas,
         spectral_ws, regrid_ws,
         window_fields, dry_fields, convection_fields,
         convection_c180_fields, tm5_derive_scratches, tm5_c180_fields,
-        c180_fields)
+        c180_fields, wind)
 end
 
 """
@@ -1660,7 +1674,7 @@ function process_era5_n320_window!(pipeline::ERA5N320ToC180Pipeline,
     end
     _t = time()
     regrid_n320_to_c180!(pipeline.c180_fields, pipeline.window_fields,
-                           pipeline.regrid_ws, pipeline.target_grid)
+                           pipeline.regrid_ws, pipeline.target_grid, pipeline.wind)
     _t_regrid = time() - _t
     if pipeline.convection_fields !== nothing
         _t = time()

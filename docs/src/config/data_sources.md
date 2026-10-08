@@ -209,7 +209,7 @@ Two archive layouts are supported (`[preprocessing] layout`):
   `[convection] kind = "cmfmc", cloud_base = "dqrcu"` and
   `[diffusion] kind = "geoschem_nonlocal_vdiff"` for GEOS-Chem's physics.
 
-`[preprocessing] column_balance_weights` (MERRA-2 only) spreads the column
+`[preprocessing] column_balance_weights` (MERRA-2 and ERA5 N320) spreads the column
 mass-budget correction of the horizontal fluxes over the levels:
 - `"mass"` (default): by layer air mass;
 - `"hybrid_b"`: by `ΔB`, as in TM5;
@@ -219,7 +219,7 @@ The hybrid options leave the pure-pressure stratospheric layers untouched.
 See [Vertical transport](../theory/vertical_transport.md) section 2 and
 `config/met_sources/merra2_geoschem_hybrid{b,mass}.toml`.
 
-Face-flux construction (MERRA-2 only; see
+Face-flux construction (MERRA-2 and ERA5 N320; see
 [Vertical transport](../theory/vertical_transport.md) section 1):
 - `face_fluxes`:
   - `"panel_average"` (default): averages panel-local wind components, with
@@ -233,11 +233,16 @@ Face-flux construction (MERRA-2 only; see
   cells), `"cubic"` (FV3's fourth-order stencil across interior faces) or
   `"fv3"` (`"cubic"` plus the filter along the face of GCHP's A → D → C
   restaggering).
-- `flux_thickness = "moist"` (default) or `"dry_mass"`: the layer thickness
-  in the fluxes.
+- `flux_thickness = "moist"` (default) or `"dry_mass"` (MERRA-2 only): the
+  layer thickness in the fluxes.
 - `wind_regrid = "scalar"` (default) or `"cartesian"`: regrid `u` and `v` as
   two scalars, or the wind as a vector, as GCHP does. The scalar regrid is
   off by about 5% poleward of 88°.
+
+The GEOS sources reject these keys. `config/met_sources/merra2_geoschem_hm_gchp.toml`
+and `config/met_sources/era5_n320_arco_diffusion_hb_gchp.toml` select GCHP's
+construction; the ERA5 one uses `hybrid_b`, because its 66-level grid has
+hybrid layers up to 82 hPa.
 
 `[numerics] dt_met_seconds = 3600` splits every 3-hour MERRA-2 block into three
 hourly windows (endpoint mass, PS, QV and T linear in time, 3-hour mean winds),

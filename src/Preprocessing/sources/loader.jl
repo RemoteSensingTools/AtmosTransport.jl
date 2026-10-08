@@ -44,22 +44,38 @@ function load_met_settings(toml_path::String;
     cfg  = TOML.parsefile(toml_path)
     name = cfg["source"]["name"]
     ctor = _settings_constructor(name)
-    _reject_merra2_only_keys(ctor, cfg)
+    _reject_unsupported_flux_keys(ctor, cfg)
     return _build_met_settings(ctor, cfg, String(root_dir); kwargs...)
 end
 
-# Flux-construction options wired into the MERRA-2 path only; elsewhere the
-# keys would be silently ignored.
-const _MERRA2_ONLY_PREPROCESSING_KEYS = ("column_balance_weights", "face_lengths", "flux_thickness",
-                                         "face_fluxes", "face_interpolation", "wind_regrid")
-_reject_merra2_only_keys(::Type{MERRA2Settings}, cfg) = nothing
-function _reject_merra2_only_keys(::Type, cfg)
+# Flux-construction options and the sources whose preprocessors implement them;
+# elsewhere the keys would be silently ignored, so they are rejected.
+const _FLUX_CONSTRUCTION_KEYS = ("column_balance_weights", "face_lengths", "face_fluxes",
+                                 "face_interpolation", "wind_regrid")
+const _ALL_FLUX_KEYS = (_FLUX_CONSTRUCTION_KEYS..., "flux_thickness")
+_supported_flux_keys(::Type{MERRA2Settings}) = _ALL_FLUX_KEYS
+_supported_flux_keys(::Type{<:ERA5GRIBSettings}) = _FLUX_CONSTRUCTION_KEYS
+_supported_flux_keys(::Type) = ()
+function _reject_unsupported_flux_keys(ctor::Type, cfg)
     pre_cfg = get(cfg, "preprocessing", Dict{String,Any}())
-    for key in _MERRA2_ONLY_PREPROCESSING_KEYS
-        haskey(pre_cfg, key) && throw(ArgumentError(
-            "[preprocessing].$(key) is implemented for MERRA-2 sources only"))
+    for key in _ALL_FLUX_KEYS
+        haskey(pre_cfg, key) && !(key in _supported_flux_keys(ctor)) && throw(ArgumentError(
+            "[preprocessing].$(key) is not implemented for $(nameof(ctor)) sources"))
     end
     return nothing
+end
+
+# The shared flux-construction keys as settings keyword arguments.
+function _flux_construction_kwargs(pre_cfg)
+    option(key, default) = Symbol(lowercase(String(get(pre_cfg, key, default))))
+    face_fluxes  = option("face_fluxes", "panel_average")
+    face_lengths = option("face_lengths", "cell_centerline")
+    face_fluxes === :vector && face_lengths === :cell_centerline && haskey(pre_cfg, "face_lengths") &&
+        throw(ArgumentError("[preprocessing] face_fluxes = \"vector\" always uses face edge lengths; " *
+                            "remove face_lengths = \"cell_centerline\""))
+    return (column_balance_weights = option("column_balance_weights", "mass"), face_lengths, face_fluxes,
+            face_interpolation = option("face_interpolation", "linear"),
+            wind_regrid = option("wind_regrid", "scalar"))
 end
 
 # ---------------------------------------------------------------------------
@@ -124,10 +140,11 @@ function _build_met_settings(ctor::Type{<:ERA5GRIBSettings}, cfg::AbstractDict,
         throw(ArgumentError("[preprocessing] include_tm5_diffusion=true requires \
                              include_surface=true (needs sshf/slhf/ustar)."))
 
-    return ctor(; root_dir,
-                  include_surface, include_convection,
-                  include_tm5_diffusion, arco_surface_pressure, level_orientation,
-                  coefficients_file = coefs, kwargs...)
+    settings = ctor(; root_dir,
+                      include_surface, include_convection,
+                      include_tm5_diffusion, arco_surface_pressure, level_orientation,
+                      coefficients_file = coefs, _flux_construction_kwargs(pre_cfg)..., kwargs...)
+    return _validate_flux_construction(settings, "ERA5")
 end
 
 # ---------------------------------------------------------------------------
@@ -156,18 +173,10 @@ function _build_met_settings(ctor::Type{MERRA2Settings}, cfg::AbstractDict,
     include_vdiff_fields = _config_bool(pre_cfg, "include_vdiff_fields", false, "[preprocessing].include_vdiff_fields")
     include_convective_cloud_base = _config_bool(pre_cfg, "include_convective_cloud_base", false,
                                                  "[preprocessing].include_convective_cloud_base")
-    column_balance_weights = Symbol(lowercase(String(get(pre_cfg, "column_balance_weights", "mass"))))
-    face_lengths   = Symbol(lowercase(String(get(pre_cfg, "face_lengths", "cell_centerline"))))
     flux_thickness = Symbol(lowercase(String(get(pre_cfg, "flux_thickness", "moist"))))
-    face_fluxes    = Symbol(lowercase(String(get(pre_cfg, "face_fluxes", "panel_average"))))
-    face_interpolation = Symbol(lowercase(String(get(pre_cfg, "face_interpolation", "linear"))))
-    wind_regrid    = Symbol(lowercase(String(get(pre_cfg, "wind_regrid", "scalar"))))
-    face_fluxes === :vector && face_lengths === :cell_centerline && haskey(pre_cfg, "face_lengths") &&
-        throw(ArgumentError("[preprocessing] face_fluxes = \"vector\" always uses face edge lengths; " *
-                            "remove face_lengths = \"cell_centerline\""))
     return validate_merra2_settings(ctor(; root_dir,
                   coefficients_file = coefs, winds_collection, archive,
                   include_surface, include_convection, include_vdiff_fields,
-                  include_convective_cloud_base, column_balance_weights,
-                  face_lengths, flux_thickness, face_fluxes, face_interpolation, wind_regrid, kwargs...))
+                  include_convective_cloud_base, flux_thickness,
+                  _flux_construction_kwargs(pre_cfg)..., kwargs...))
 end
