@@ -79,15 +79,16 @@ and 2022-07-15).
   correlation 0.87–0.99.
 - Below 200 hPa, `hybrid_mass` and `mass` agree with OMEGA equally well
   (correlations within 0.01).
-- `hybrid_b` matched `hybrid_mass` in the stratosphere but was worse in the
-  troposphere (500–850 hPa, 60–30°S: correlation 0.81 against 0.92–0.94).
-  That build had a constructor bug, since fixed: its weights were the B value
-  at each layer's top interface, not `ΔB`. A rebuild with `ΔB` is in
-  progress.
+- `hybrid_b` matches `hybrid_mass` in the stratosphere. In the troposphere
+  it is close but slightly worse, mostly in the southern storm track
+  (60–30°S). The RMS difference from OMEGA, in 1e-3 Pa/s, is:
+  - at 500–850 hPa: 69.9 against 65.8 (January), 76.5 against 69.4 (July);
+  - at 200–500 hPa: 59.4 against 52.3 (January), 65.7 against 56.2 (July).
 
-Per-band values: `/temp1/cfranken/scratch/omega_3way_20220115_final.txt` and
-`omega_3way_20220715.txt` (memo `2026-10-07_v0.5_transport_fidelity_backlog.md`,
-item 1).
+Per-band values: `/temp1/cfranken/scratch/omega_3way_2022{0115,0715}_dB.txt`
+(memo `2026-10-07_v0.5_transport_fidelity_backlog.md`, item 1). A first
+`hybrid_b` build had a constructor bug: its weights were the B value at each
+layer's top interface, not `ΔB`. Its results are superseded by these.
 
 In a four-month MERRA-2 run (December 2021 – March 2022, PPM, compared with
 GCHP), `hybrid_mass` cut the growth of the bias above 100 hPa from +0.54 to
@@ -97,7 +98,9 @@ changed little:
 - CO₂ fell from 0.383 to 0.370 ppm and SF₆ by 5 %;
 - fossil CO₂ and Rn-222 rose by 0.3–0.4 %.
 
-Column RMSE was unchanged.
+Column RMSE was unchanged. `hybrid_b` gives the same stratospheric
+improvement (+0.19 ppm CO₂) with near-surface RMSE between the two: CO₂
+0.377 ppm.
 
 **GCHP has no column closure.** FV3 transports tracers horizontally with the
 uncorrected fluxes. It then remaps the Lagrangian layers onto `A + B p_s,adv`,
