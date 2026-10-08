@@ -449,7 +449,7 @@ end
             rm_out = ntuple(p -> similar(rm_in[p]), 6)
             m_out = ntuple(p -> similar(m_in[p]), 6)
             _sweep_z_panels_mt_pingpong!(rm_out, m_out, rm_in, m_in, panels_cm,
-                                         mesh, scheme; flux_scale = 0.75)
+                                         mesh, scheme, ws_ref; flux_scale = 0.75)
 
             @test max_interior_absdiff_4d(rm_out, rm_ref, Nc, Hp, Nz, Nt) < 1e-12
             @test max_interior_absdiff(m_out, m_ref, Nc, Hp, Nz) < 1e-12

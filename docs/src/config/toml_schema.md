@@ -260,6 +260,11 @@ selector means; relevant config keys:
 scheme    = "linrood"           # "upwind" | "slopes" | "ppm" | "linrood" | "none"
 ppm_order = 7                   # cubed-sphere LinRoodPPM only; ∈ {5, 7}.
                                 # Setting ppm_order with scheme = "ppm" errors.
+# vertical = "fv3_kord8"        # scheme = "ppm" only: "same_as_horizontal"
+                                # (default) | "fv3_kord8" (FV3 scalar_profile,
+                                # positive definite, the GCHP tracer profile)
+                                # | "fv3_kord8_signed" (for tracers that go
+                                # negative); FV3 options are cubed sphere only
 
 [diffusion]
 kind  = "constant"              # "none" | "constant" |

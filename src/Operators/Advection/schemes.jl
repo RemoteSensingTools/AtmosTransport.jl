@@ -267,19 +267,74 @@ struct SlopesScheme{L <: AbstractLimiter} <: AbstractLinearScheme
 end
 SlopesScheme() = SlopesScheme(MonotoneLimiter())
 
+# ---- Vertical reconstruction of the PPM scheme ---------------------------
+
 """
-    PPMScheme{L <: AbstractLimiter} <: AbstractQuadraticScheme
+    AbstractVerticalReconstruction
+
+How [`PPMScheme`](@ref) reconstructs the tracer profile in the vertical sweep.
+The horizontal sweeps are unaffected.
+"""
+abstract type AbstractVerticalReconstruction end
+
+"""
+    SameAsHorizontal <: AbstractVerticalReconstruction
+
+The vertical sweep uses the same face flux as the horizontal sweeps: a
+uniform-index fourth-order edge value, limited with the Colella–Woodward (1984)
+conditions, sets a linear slope toward the outflow face, and the flux takes the
+Russell–Lerner (1981) form. The parabola is never integrated, so the vertical
+sweep is second order. The top two and bottom two layers use upwind fluxes.
+This is the default.
+"""
+struct SameAsHorizontal <: AbstractVerticalReconstruction end
+
+"""
+    FV3ScalarProfile(; positive_definite = true) <: AbstractVerticalReconstruction
+
+The vertical profile of FV3's tracer remapping, `scalar_profile` with
+`kord = 8` (`fv_mapz.F90`), which GEOS-Chem High Performance uses for tracers
+(`kord_tr = 8`, positive definite, `iv = 0`). With `positive_definite = false`
+it is FV3's profile for signed fields (`iv = 1`): the three non-negativity
+steps below are omitted and the profile is symmetric under `q → −q`. Use it
+for tracers that become negative, such as flux anomalies; the
+positive-definite profile flattens layers with a non-positive mean. Each layer carries the parabola
+
+    q(s) = q_L + s [(q_R − q_L) + q_6 (1 − s)],   0 ≤ s ≤ 1 from layer top to bottom,
+
+whose mean is the layer mean. The edge values `q_L`, `q_R` solve FV3's compact
+tridiagonal system, weighted by layer air mass, and are then limited:
+large-scale constraints at every edge (non-negative at local minima), Huynh's
+second constraint and positivity in layers 3 … Nz−2, the standard PPM
+monotonicity limiter in layers 2 and Nz−1, and a monotone, non-negative profile
+in the top and bottom layers.
+
+The flux through an interface is the air-mass flux times the mean of the donor
+layer's parabola over the swept fraction `α = |F| / m_donor` (Courant number
+≤ 1): the bottom fraction of the layer above for downward flow, the top fraction
+of the layer below for upward flow. Each interface flux is evaluated once and
+enters both layers with opposite signs, so only the rounding of the cell
+updates changes the column tracer mass, in every precision.
+
+Available on cubed-sphere grids. See `docs/src/theory/vertical_transport.md`.
+"""
+struct FV3ScalarProfile{PositiveDefinite} <: AbstractVerticalReconstruction end
+FV3ScalarProfile(; positive_definite::Bool = true) = FV3ScalarProfile{positive_definite}()
+
+"""
+    PPMScheme{L <: AbstractLimiter, V <: AbstractVerticalReconstruction} <: AbstractQuadraticScheme
 
 Piecewise Parabolic Method (Colella & Woodward 1984; Putman & Lin 2007).
 
-Reconstructs a parabolic subcell profile constrained by the cell mean
-and limited edge values.  Third-order accurate in smooth regions with
-appropriate limiting.
+Reconstructs a parabolic subcell profile constrained by the cell mean and
+limited edge values. In every sweep that uses the shared face flux, the limited
+edge only sets a linear slope toward the outflow face (Russell–Lerner form), so
+the update is second order with a PPM-informed slope.
 
-Implemented for structured latitude-longitude and cubed-sphere grids, including
-vertical PPM sweeps. The TOML runner selects the default monotone variant with
-`scheme = "ppm"`; it does not accept `ppm_order` for this scheme. Reduced-Gaussian
-face-indexed transport does not support PPM.
+Implemented for structured latitude-longitude and cubed-sphere grids. The TOML
+runner selects the monotone variant with `scheme = "ppm"`; it does not accept
+`ppm_order` for this scheme. Reduced-Gaussian face-indexed transport does not
+support PPM.
 
 Kernel tests and real-input V100 conservation/performance experiments cover
 this path. These do not establish full-model TM5/GCHP parity or positivity of
@@ -287,17 +342,24 @@ the complete cubed-sphere update: small negative column means have been observed
 
 # Fields
 - `limiter::L` — parabolic profile limiting policy (default: `MonotoneLimiter()`)
+- `vertical::V` — vertical reconstruction: [`SameAsHorizontal`](@ref) (default)
+  or [`FV3ScalarProfile`](@ref) (cubed sphere; TOML `vertical = "fv3_kord8"`, or
+  `"fv3_kord8_signed"` for signed tracers)
 
 # Example
 ```julia
-PPMScheme()                          # monotone-limited PPM
-PPMScheme(NoLimiter())               # unlimited (high-order, may oscillate)
+PPMScheme()                                    # monotone-limited PPM
+PPMScheme(NoLimiter())                         # unlimited (may oscillate)
+PPMScheme(; vertical = FV3ScalarProfile())     # FV3 kord = 8 vertical profile
 ```
 """
-struct PPMScheme{L <: AbstractLimiter} <: AbstractQuadraticScheme
+struct PPMScheme{L <: AbstractLimiter, V <: AbstractVerticalReconstruction} <: AbstractQuadraticScheme
     limiter::L
+    vertical::V
 end
-PPMScheme() = PPMScheme(MonotoneLimiter())
+PPMScheme(limiter::AbstractLimiter = MonotoneLimiter();
+          vertical::AbstractVerticalReconstruction = SameAsHorizontal()) =
+    PPMScheme(limiter, vertical)
 
 """
     LinRoodPPMScheme{ORD} <: AbstractAdvectionScheme
@@ -386,4 +448,5 @@ export AbstractAdvectionScheme
 export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
 export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter
 export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme, NoAdvection
+export AbstractVerticalReconstruction, SameAsHorizontal, FV3ScalarProfile
 export reconstruction_order, required_halo_width

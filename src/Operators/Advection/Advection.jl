@@ -65,6 +65,7 @@ include("multitracer_kernels.jl")
 include("HaloExchange.jl")
 include("CubedSphereStrang.jl")
 include("CubedSphereSeams.jl")
+include("vertical_fv3_profile.jl")
 
 # PPM subgrid distributions (shared by CS PPM kernels and LinRood)
 include("ppm_subgrid_distributions.jl")

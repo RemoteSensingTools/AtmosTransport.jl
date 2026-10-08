@@ -24,7 +24,7 @@ using ..Grids: CubedSphereMesh, reciprocal_edge,
     panel_cell_center_lonlat,
     panel_convention, cs_definition, cs_definition_tag
 using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
-    MonotoneLimiter, PPMScheme, SlopesScheme, UpwindScheme,
+    MonotoneLimiter, PPMScheme, SameAsHorizontal, SlopesScheme, UpwindScheme,
     LinRoodPPMScheme,
     fill_panel_halos!, strang_split_cs!, copy_corners!,
     _cs_static_palindrome_subcycle_count,
@@ -74,8 +74,11 @@ using ..Tape: AbstractCSTapeStorage,
               RevolveCheckpoint,
               checkpoint_window_count, checkpoint_window_range
 
-const CSAdjointLinearScheme = Union{UpwindScheme, SlopesScheme{NoLimiter}, PPMScheme{NoLimiter}}
-const CSAdjointNonlinearScheme = Union{PPMScheme{MonotoneLimiter}}
+# PPM adjoints exist for the default vertical reconstruction only; the FV3
+# vertical profile (`FV3ScalarProfile`) has no adjoint yet.
+const CSAdjointLinearScheme = Union{UpwindScheme, SlopesScheme{NoLimiter},
+                                    PPMScheme{NoLimiter, SameAsHorizontal}}
+const CSAdjointNonlinearScheme = Union{PPMScheme{MonotoneLimiter, SameAsHorizontal}}
 # LinRoodPPMScheme is supported via its own
 # horizontal tape record (`_CSLinRoodHorizRecord`) and the kernel
 # adjoints shipped in `src/Operators/Advection/linrood_adjoint_kernels.jl`.

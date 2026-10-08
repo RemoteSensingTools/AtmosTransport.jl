@@ -58,6 +58,7 @@ export AbstractAdvectionScheme
 export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
 export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter
 export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme, NoAdvection
+export AbstractVerticalReconstruction, SameAsHorizontal, FV3ScalarProfile
 export reconstruction_order, required_halo_width
 
 # Chemistry

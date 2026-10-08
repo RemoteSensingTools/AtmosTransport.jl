@@ -9,7 +9,7 @@ using AtmosTransport
 using .AtmosTransport.Models:
     build_runtime_advection, build_runtime_diffusion, build_runtime_convection,
     build_runtime_physics_recipe, validate_runtime_physics_recipe,
-    configured_halo_width, CubedSphereRuntimeRecipeStyle,
+    configured_halo_width, CubedSphereRuntimeRecipeStyle, LatLonRuntimeRecipeStyle,
     convection_spec, TM5ConvectionSpec, CMFMCMatrixConvectionSpec,
     advection_spec, UpwindAdvectionSpec, SlopesAdvectionSpec, PPMAdvectionSpec,
     NoAdvectionSpec, LinRoodAdvectionSpec,
@@ -21,6 +21,7 @@ using .AtmosTransport.State.Fields:
     PrecomputedCSDkgField, field_value, panel_field
 using .AtmosTransport.Operators.Diffusion:
     uses_diffusive_surface_flux_boundary
+using .AtmosTransport.Operators: MonotoneLimiter, SameAsHorizontal, FV3ScalarProfile
 
 const CS_STYLE = CubedSphereRuntimeRecipeStyle()
 cs_advection(cfg) = build_runtime_advection(cfg, CS_STYLE)
@@ -133,6 +134,26 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test_throws ArgumentError advection_spec(Dict("scheme" => "xyz"))
         # LinRood materializes only on cubed-sphere; structured throws.
         @test_throws ArgumentError advection_spec(Dict("scheme" => "linrood_ppm"))
+        # PPM vertical reconstruction: default, FV3 kord = 8 (cubed sphere only).
+        @test advection_spec(Dict("scheme" => "ppm")).vertical isa SameAsHorizontal
+        fv3 = advection_spec(Dict("scheme" => "ppm", "vertical" => "fv3_kord8"))
+        @test fv3.vertical isa FV3ScalarProfile
+        @test materialize(fv3, CS_STYLE) isa PPMScheme{MonotoneLimiter, FV3ScalarProfile{true}}
+        @test materialize(advection_spec(Dict("scheme" => "ppm")), CS_STYLE) == PPMScheme()
+        @test_throws ArgumentError materialize(fv3, LatLonRuntimeRecipeStyle())
+        @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "vertical" => "kord9"))
+        @test_throws ArgumentError advection_spec(Dict("scheme" => "slopes", "vertical" => "fv3_kord8"))
+        @test advection_spec(Dict("scheme" => "ppm", "vertical" => "fv3_kord8_signed")).vertical ==
+              FV3ScalarProfile(; positive_definite = false)
+        @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "vertical" => 8))
+        # `[run].vertical` next to an `[advection]` table is ambiguous
+        @test_throws ArgumentError cs_advection(Dict("run" => Dict("vertical" => "fv3_kord8"),
+                                                     "advection" => Dict("scheme" => "ppm")))
+        @test cs_advection(Dict("advection" => Dict("scheme" => "ppm", "vertical" => "fv3_kord8"))) isa
+              PPMScheme{MonotoneLimiter, FV3ScalarProfile{true}}
+        @test_throws ArgumentError build_runtime_advection(
+            Dict("advection" => Dict("scheme" => "ppm", "vertical" => "fv3_kord8_signed")),
+            LatLonRuntimeRecipeStyle())
     end
 
     @testset "cs_halo_width dispatch" begin

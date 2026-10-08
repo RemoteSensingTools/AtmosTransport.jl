@@ -435,7 +435,7 @@ end
 end
 
 @inline function _add_z_face_adjoint!(lambda_in, m, i, j, face_k, F, scale,
-                                      ::PPMScheme{NoLimiter}, Nz)
+                                      ::PPMScheme{NoLimiter, SameAsHorizontal}, Nz)
     FT = typeof(F)
     at_boundary = (face_k <= Int32(1)) | (face_k > Nz)
     at_boundary && return nothing
@@ -474,7 +474,7 @@ end
 end
 
 @inline function _add_z_face_adjoint!(lambda_in, m, rm, i, j, face_k, F, scale,
-                                      ::PPMScheme{MonotoneLimiter}, Nz)
+                                      ::PPMScheme{MonotoneLimiter, SameAsHorizontal}, Nz)
     at_boundary = (face_k <= Int32(1)) | (face_k > Nz)
     at_boundary && return nothing
     k3l = max(face_k - Int32(3), Int32(1))
@@ -579,7 +579,7 @@ end
 
 @kernel function _cs_zsweep_adjoint_kernel!(lambda_in, @Const(lambda_out),
                                             @Const(m), @Const(rm), @Const(cm),
-                                            scheme::PPMScheme{MonotoneLimiter},
+                                            scheme::PPMScheme{MonotoneLimiter, SameAsHorizontal},
                                             Nc, Hp, Nz, flux_scale)
     ii, jj, k = @index(Global, NTuple)
     @inbounds begin
@@ -631,8 +631,10 @@ function _adjoint_scheme_sweep!(lambda_panels, m_before, flux_panels,
     return nothing
 end
 
+# PPM adjoints cover the default vertical reconstruction only; the FV3 vertical
+# profile (`FV3ScalarProfile`) has no adjoint yet.
 function _adjoint_scheme_sweep!(lambda_panels, m_before, rm_before, flux_panels,
-                                direction::Symbol, scheme::PPMScheme{MonotoneLimiter},
+                                direction::Symbol, scheme::PPMScheme{MonotoneLimiter, SameAsHorizontal},
                                 mesh::CubedSphereMesh, ws::CSAdjointWorkspace,
                                 flux_scale)
     Nc, Hp = mesh.Nc, mesh.Hp

@@ -76,6 +76,7 @@ const PAGES = [
     "Theory" => [
         "theory/mass_conservation.md",
         "theory/advection_schemes.md",
+        "theory/vertical_transport.md",
         "theory/conservation_budgets.md",
         "theory/float32_conservation.md",
         "theory/validation_status.md",

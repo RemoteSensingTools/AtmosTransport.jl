@@ -4,14 +4,15 @@ The runtime ships **four** flux-form advection schemes, each behind the
 abstract type `AbstractAdvectionScheme` declared in
 `src/Operators/Advection/schemes.jl`. Upwind, slopes, and standard PPM use
 directional sweeps. Lin–Rood couples the two horizontal directions and uses
-upwind vertically. The model-facing operator interface dispatches to the
+upwind vertically. On the cubed sphere, PPM can instead use FV3's vertical
+tracer profile (`vertical = "fv3_kord8"`). The model-facing operator interface dispatches to the
 appropriate transport path.
 
 | Scheme | Smooth-flow accuracy | Monotone? | Positive? | LL | CS | RG |
 |---|---|---|---|---|---|---|
 | `UpwindScheme` | 1st order (donor cell) | yes (trivially) | preserves a non-negative input under its CFL contract; also supports signed tracers | yes | yes | **yes — RG's only option today** |
 | `SlopesScheme{L}` | 2nd order in smooth regions (van Leer / Russell-Lerner) | yes if `L = MonotoneLimiter` (default) | no zero clamp in the default signed path; `PositivityLimiter` is explicit opt-in | yes | yes | no (the face-indexed Strang path restricts to `AbstractConstantScheme`) |
-| `PPMScheme{L}` | 3rd order in smooth regions (Colella-Woodward 1984) | profile-limited with `MonotoneLimiter`; full CS update can undershoot | signed; small negative column means observed in CS runs | yes | yes — covered by `test/core/test_cubed_sphere_advection.jl` | no (same rejection) |
+| `PPMScheme{L,V}` | 2nd order: limited Colella–Woodward (1984) edges set a Russell–Lerner slope. With `V = FV3ScalarProfile` the vertical sweep integrates FV3's `kord = 8` parabola (3rd order or better in smooth regions) | profile-limited with `MonotoneLimiter`; full CS update can undershoot | signed; small negative column means observed in CS runs. The FV3 vertical profile is positive definite | yes (default vertical only) | yes — covered by `test/core/test_cubed_sphere_advection.jl` and `test/core/test_fv3_vertical_profile.jl` | no (same rejection) |
 | `LinRoodPPMScheme{ORD}` | piecewise-parabolic; `ORD ∈ {5, 7}` selects the boundary stencil | profile-limited, but the full split update can undershoot | signed; not positivity-preserving | n/a | yes — uses FV3 cross-term advection (`fv_tp_2d_cs!`) | n/a |
 
 The accuracy column describes the **per-face
@@ -31,12 +32,15 @@ Choose the algorithm explicitly when comparing runs:
 |---|---|---|
 | `scheme = "upwind"` | `UpwindScheme()` | upwind |
 | `scheme = "slopes"` | `SlopesScheme(MonotoneLimiter())` | slopes |
-| `scheme = "ppm"` | `PPMScheme(MonotoneLimiter())` | PPM |
+| `scheme = "ppm"` | `PPMScheme(MonotoneLimiter())` | PPM-informed slopes, as horizontally |
+| `scheme = "ppm", vertical = "fv3_kord8"` | `PPMScheme(MonotoneLimiter(), FV3ScalarProfile())` (CS only) | FV3 `scalar_profile`, `kord = 8`, positive definite |
+| `scheme = "ppm", vertical = "fv3_kord8_signed"` | `PPMScheme(MonotoneLimiter(), FV3ScalarProfile(; positive_definite = false))` (CS only) | FV3 `scalar_profile`, `kord = 8`, for signed tracers |
 | `scheme = "linrood", ppm_order = 5` | `LinRoodPPMScheme(5)` (CS only) | upwind |
 | `scheme = "linrood", ppm_order = 7` | `LinRoodPPMScheme(7)` (CS only) | upwind |
 
 Omitting `ppm_order` for Lin–Rood selects 5. Setting it with `scheme = "ppm"`
-is an error: standard split PPM has no order selector. Alternative limiter
+is an error: standard split PPM has no order selector. `vertical` is only
+accepted with `scheme = "ppm"`. Alternative limiter
 objects are selected through the Julia constructors, not a TOML limiter key.
 Packed tracer arrays, GPU workgroup sizes, and copy-back or ping-pong execution
 are implementation choices within a scheme, not additional algorithms.
@@ -80,28 +84,59 @@ formula derivation in that function's docstring.
   argument (see [Mass conservation](@ref) for the precise statement
   and round-off bounds).
 
-## Putman-Lin PPM (`PPMScheme`)
+## PPM-informed slopes (`PPMScheme`)
 
-Piecewise-parabolic reconstruction (Colella & Woodward 1984) with a
-parabolic-edge profile:
+`PPMScheme` builds the piecewise parabola of Colella & Woodward (1984) in each
+cell,
 
 ```math
-χ_c(x) \;\approx\; \chi^L_c \;+\; \xi(\Delta\chi_c \;+\; \chi^{(6)}_c (1 - \xi))
+χ_c(ξ) \;=\; χ^L_c + ξ\bigl(Δχ_c + χ^{(6)}_c (1 - ξ)\bigr), \qquad 0 \le ξ \le 1,
 ```
 
-where `ξ = (x - x_{c-1/2})/Δx_c`, `Δχ_c = χ^R_c − χ^L_c`, and
-`χ^{(6)}_c = 6(χ_c − ½(χ^L_c + χ^R_c))` is the curvature parameter.
-The face flux is the integral of this parabola over the swept region
-`[x_face − u Δt, x_face]`.
+with `Δχ_c = χ^R_c − χ^L_c` and `χ^{(6)}_c = 6(χ_c − ½(χ^L_c + χ^R_c))`. The
+edge values come from the uniform-index fourth-order formula
+`χ_{c+½} = 7/12 (χ_c + χ_{c+1}) − 1/12 (χ_{c−1} + χ_{c+2})` and are limited with
+the Colella–Woodward monotonicity conditions (`_ppm_limit_profile`).
+
+The face flux does not integrate the parabola. Only the limited edge on the
+outflow side is used: it sets the edge offset `s_x = m_c (χ^R_c − χ_c)` (outflow
+to the right) of the Russell–Lerner flux above (`_slopes_face_flux`). The update
+is therefore second order, with a PPM-informed slope. Donor layers within two
+layers of the model top or surface have no slope (upwind flux).
+
+**Vertical reconstruction.** On the cubed sphere,
+`PPMScheme(; vertical = FV3ScalarProfile())` (TOML `vertical = "fv3_kord8"`)
+replaces the vertical face flux with the profile GEOS-Chem High Performance
+uses for tracers: FV3's `scalar_profile` with `kord = 8`. Its edges solve a
+compact tridiagonal system weighted by layer air mass. They are limited with
+large-scale constraints, Huynh's second constraint and a positive-definite
+limiter. The flux integrates the donor layer's parabola over the swept
+fraction. The positive-definite profile flattens layers whose mean is not
+positive, so tracers that become negative (flux anomalies, for example) need
+`vertical = "fv3_kord8_signed"` (FV3's `iv = 1`). Equations, limiter details and tests are in
+[Vertical transport](vertical_transport.md), section 4.
+
+**Measured accuracy.** A Gaussian bump is translated 30 layers on a uniform
+grid; `test/core/test_fv3_vertical_profile.jl` holds a version of this as a
+test. Doubling the bump width from 6 to 12 to 24 layers cuts the RMS error:
+- 4× for `slopes` and the default PPM (second order);
+- 11–23× for the FV3 vertical profile (third order or better);
+- 2× for upwind.
+
+The FV3 profile is 4–900 times more accurate than the default for widths of
+3–24 layers and Courant numbers of 0.01–0.3 (output:
+`/temp1/cfranken/scratch/fv3_vertical/translation_probe.txt`).
 
 **Properties:**
-- 3rd order in smooth regions (one above Slopes); local accuracy
-  drops to first order at limiter saturation.
+- Second order in smooth regions (horizontal sweeps and default vertical);
+  local accuracy drops to first order at limiter saturation.
 - Monotonicity controlled by the limiter parameter; without a
   limiter PPM is **not monotone** and can produce small oscillations
-  near discontinuities.
+  near discontinuities. The FV3 vertical profile is positive definite but
+  not monotone.
 - Shipped on lat-lon AND cubed-sphere structured layouts (the CS
   case is exercised by `test/core/test_cubed_sphere_advection.jl`).
+  The FV3 vertical profile is cubed-sphere only.
   Face-connected PPM for the **reduced-Gaussian** topology is not
   currently wired — and neither is `SlopesScheme` on RG. The
   face-indexed Strang path restricts to `AbstractConstantScheme`, so
@@ -312,7 +347,8 @@ between them. Performance-tuning notes live beside the implementation.
 | Concept | File / function |
 | --- | --- |
 | Scheme abstract root | `src/Operators/Advection/schemes.jl::AbstractAdvectionScheme` |
-| `UpwindScheme`, `SlopesScheme{L}`, `PPMScheme{L}`, `LinRoodPPMScheme{ORD}` | `src/Operators/Advection/schemes.jl` |
+| `UpwindScheme`, `SlopesScheme{L}`, `PPMScheme{L,V}`, `LinRoodPPMScheme{ORD}` | `src/Operators/Advection/schemes.jl` |
+| FV3 vertical profile (`FV3ScalarProfile`) | `src/Operators/Advection/vertical_fv3_profile.jl` |
 | Limiter primitives (branchless, GPU-safe) | `src/Operators/Advection/limiters.jl` |
 | Slopes face flux (Russell-Lerner formula) | `src/Operators/Advection/reconstruction.jl::_slopes_face_flux` |
 | Structured-grid Strang palindrome | `src/Operators/Advection/StrangSplitting.jl::strang_split!` |

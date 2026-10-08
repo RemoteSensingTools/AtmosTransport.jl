@@ -38,7 +38,7 @@ end
 function _advection_section(cfg)
     run = get(cfg, "run", Dict{String,Any}())
     if haskey(cfg, "advection")
-        for key in ("scheme", "ppm_order")
+        for key in ("scheme", "ppm_order", "vertical")
             haskey(run, key) && throw(ArgumentError(
                 "Advection option `[run].$(key)` is ambiguous because `[advection]` " *
                 "is present. Move `$(key)` into `[advection]`; legacy `[run].$(key)` " *

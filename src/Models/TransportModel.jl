@@ -69,11 +69,12 @@ _diffusion_workspace_for(::AbstractDiffusion, state) = DiffusionWorkspace(state)
 
 _convection_workspace_for(::NoConvection, state, grid) = nothing
 
-_cs_advection_workspace_for(::AbstractAdvectionScheme,
+_cs_advection_workspace_for(scheme::AbstractAdvectionScheme,
                             state::CubedSphereState,
                             grid::AtmosGrid{<:CubedSphereMesh}) =
     CSAdvectionWorkspace(grid.horizontal, state.air_mass[1];
-                         n_tracers = ntracers(state))
+                         n_tracers = ntracers(state),
+                         column_scratch = Operators.Advection.needs_column_scratch(scheme))
 
 _cs_advection_workspace_for(::LinRoodPPMScheme,
                             state::CubedSphereState,

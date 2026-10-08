@@ -30,6 +30,22 @@
 
 ### Numerical changes
 
+- New cubed-sphere option `[advection] scheme = "ppm"`, `vertical = "fv3_kord8"`.
+  The vertical sweep integrates FV3's `scalar_profile` parabola (`kord = 8`,
+  positive definite; GCHP's tracer profile) over the swept fraction of the
+  donor layer (`PPMScheme(; vertical = FV3ScalarProfile())`). Use
+  `"fv3_kord8_signed"` for tracers that become negative.
+  - Edges and limited parabolas match a transcription of `fv_mapz.F90`
+    bit for bit.
+  - In 1-D translation tests it is third order or better and 4–900 times
+    more accurate than the default.
+  - `Float32` mass drift is at or below the default's.
+  - The default (`SameAsHorizontal`) is unchanged, and lat-lon runs and the
+    adjoint reject the option.
+  - `CSAdvectionWorkspace` gains `column_scratch` (`column_scratch = true`).
+- `PPMScheme` was documented as third order. It is second order: the limited
+  PPM edge sets a Russell–Lerner slope and the parabola is not integrated.
+  The docs now say so.
 - `Float32` runs now conserve global tracer mass to about 1e-6 of the burden
   per year. Over 3 days of ERA5 C90 transport without sources, the background
   tracer drifts +9e-9 instead of −9.7e-7 and SF₆ +2.1e-9 instead of −1.0e-6.

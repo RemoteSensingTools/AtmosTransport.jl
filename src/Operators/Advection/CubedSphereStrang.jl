@@ -822,25 +822,6 @@ function _sweep_z_panel_mt_pingpong!(rm_4d_out, m_out, rm_4d, m, cm,
     return nothing
 end
 
-function _sweep_z_panels_mt_pingpong!(panels_rm_4d_out::NTuple{6},
-                                      panels_m_out::NTuple{6},
-                                      panels_rm_4d::NTuple{6},
-                                      panels_m::NTuple{6},
-                                      panels_cm::NTuple{6},
-                                      mesh::CubedSphereMesh,
-                                      scheme::AbstractAdvectionScheme;
-                                      flux_scale = one(eltype(panels_m[1])))
-    Nc, Hp = mesh.Nc, mesh.Hp
-    Nz = size(panels_m[1], 3)
-    Nt = size(panels_rm_4d[1], 4)
-    for p in 1:6
-        _sweep_z_panel_mt_pingpong!(panels_rm_4d_out[p], panels_m_out[p],
-                                   panels_rm_4d[p], panels_m[p], panels_cm[p],
-                                   scheme, Nc, Hp, Nz, Nt; flux_scale)
-    end
-    return panels_rm_4d_out, panels_m_out
-end
-
 @kernel function _copy_interior_3d_kernel!(dst, @Const(src), Hp)
     ii, jj, kk = @index(Global, NTuple)
     @inbounds begin
@@ -910,6 +891,9 @@ Pre-allocated cubed-sphere transport workspace.
 - `seam_flux` holds one air and N-tracer transfer per physical panel edge;
   its storage scales with edge length, not panel area. Lin–Rood workspaces
   disable this split-sweep cache (`seam_transport=false`).
+- `column_scratch` is the per-column, per-tracer working storage of the FV3
+  vertical profile (`Nc × Nc × (Nz+1) × 3 max(Nt, 1)`); it is empty unless the
+  workspace is built with `column_scratch=true`.
 - `max_subcycles` tracks this workspace's high-water mark for CFL diagnostics;
   keeping it with the workspace prevents unrelated simulations sharing state.
 """
@@ -923,6 +907,7 @@ struct CSAdvectionWorkspace{FT, A <: AbstractArray{FT, 3},
     m_pp_buf   :: P3
     rm_4d_pp_buf :: P4
     seam_flux  :: A4
+    column_scratch :: A4
     max_subcycles :: Base.RefValue{NTuple{3, Int}}
 end
 
@@ -930,7 +915,8 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
                               FT::Type{<:AbstractFloat} = Float64,
                               array_type::Type{<:AbstractArray} = Array,
                               n_tracers::Integer = 0,
-                              seam_transport::Bool = true)
+                              seam_transport::Bool = true,
+                              column_scratch::Bool = false)
     N = mesh.Nc + 2 * mesh.Hp
     Nt = Int(n_tracers)
     Nt >= 0 || throw(ArgumentError("CSAdvectionWorkspace: n_tracers must be non-negative, got $n_tracers"))
@@ -942,17 +928,19 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
     rm_4d_pp_buf = Nt > 0 ? ntuple(_ -> array_type(zeros(FT, N, N, Nz, Nt)), 6) :
                             ntuple(_ -> rm_4d_A, 6)
     seam_flux = similar(rm_4d_A, FT, mesh.Nc, Nz, max(Nt, 1) + 1, seam_transport ? 12 : 0)
+    scratch = _column_scratch(rm_4d_A, mesh.Nc, Nz, Nt, column_scratch)
     return CSAdvectionWorkspace{FT, typeof(rm_A),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
                                 typeof(rm_4d_pp_buf)}(
-        rm_A, m_A, rm_4d_A, m_pp_buf, rm_4d_pp_buf, seam_flux,
+        rm_A, m_A, rm_4d_A, m_pp_buf, rm_4d_pp_buf, seam_flux, scratch,
         Ref((1, 1, 1)))
 end
 
 function CSAdvectionWorkspace(mesh::CubedSphereMesh,
                               prototype::AbstractArray{FT, 3};
                               n_tracers::Integer = 0,
-                              seam_transport::Bool = true) where {FT <: AbstractFloat}
+                              seam_transport::Bool = true,
+                              column_scratch::Bool = false) where {FT <: AbstractFloat}
     N = mesh.Nc + 2 * mesh.Hp
     Nz = size(prototype, 3)
     Nt = Int(n_tracers)
@@ -965,12 +953,18 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh,
     rm_4d_pp_buf = Nt > 0 ? ntuple(_ -> similar(prototype, FT, N, N, Nz, Nt), 6) :
                             ntuple(_ -> rm_4d_A, 6)
     seam_flux = similar(rm_4d_A, FT, mesh.Nc, Nz, max(Nt, 1) + 1, seam_transport ? 12 : 0)
+    scratch = _column_scratch(rm_4d_A, mesh.Nc, Nz, Nt, column_scratch)
     return CSAdvectionWorkspace{FT, typeof(rm_A),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
                                 typeof(rm_4d_pp_buf)}(
-        rm_A, m_A, rm_4d_A, m_pp_buf, rm_4d_pp_buf, seam_flux,
+        rm_A, m_A, rm_4d_A, m_pp_buf, rm_4d_pp_buf, seam_flux, scratch,
         Ref((1, 1, 1)))
 end
+
+# Per-column, per-tracer working storage of the FV3 vertical profile
+# (`FV3Column` in `vertical_fv3_profile.jl`); empty unless a scheme needs it.
+_column_scratch(prototype, Nc, Nz, Nt, needed::Bool) =
+    needed ? similar(prototype, Nc, Nc, Nz + 1, 3 * max(Nt, 1)) : similar(prototype, 0, 0, 0, 0)
 
 function Adapt.adapt_structure(to, ws::CSAdvectionWorkspace{FT}) where FT
     rm_A = Adapt.adapt(to, ws.rm_A)
@@ -979,10 +973,11 @@ function Adapt.adapt_structure(to, ws::CSAdvectionWorkspace{FT}) where FT
     m_pp_buf = Adapt.adapt(to, ws.m_pp_buf)
     rm_4d_pp_buf = Adapt.adapt(to, ws.rm_4d_pp_buf)
     seam_flux = Adapt.adapt(to, ws.seam_flux)
+    column_scratch = Adapt.adapt(to, ws.column_scratch)
     return CSAdvectionWorkspace{FT, typeof(rm_A),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
                                 typeof(rm_4d_pp_buf)}(
-        rm_A, m_A, rm_4d_A, m_pp_buf, rm_4d_pp_buf, seam_flux,
+        rm_A, m_A, rm_4d_A, m_pp_buf, rm_4d_pp_buf, seam_flux, column_scratch,
         Ref(ws.max_subcycles[]))
 end
 
@@ -1202,7 +1197,6 @@ function strang_split_cs!(panels_rm::NTuple{6},
                           midpoint! = nothing)
     Nc, Hp = mesh.Nc, mesh.Hp
     Nz = size(panels_rm[1], 3)
-    rm_A, m_A = workspace.rm_A, workspace.m_A
     FT = eltype(panels_m[1])
     fs = convert(FT, flux_scale)
     cfl_ft = convert(FT, cfl_limit)
@@ -1256,19 +1250,15 @@ function strang_split_cs!(panels_rm::NTuple{6},
 
     # ---- Z sweep × 2 (subcycled) ----
     SectionTimer.@section :cs_sweep_z for _ in 1:n_z
-        for p in 1:6
-            _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],
-                             scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_z)
-        end
+        _sweep_z_panels!(panels_rm, panels_m, panels_cm, mesh, scheme, workspace;
+                         flux_scale = fs_z)
     end
 
     midpoint! === nothing || midpoint!()
 
     SectionTimer.@section :cs_sweep_z for _ in 1:n_z
-        for p in 1:6
-            _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],
-                             scheme, rm_A, m_A, Nc, Hp, Nz; flux_scale=fs_z)
-        end
+        _sweep_z_panels!(panels_rm, panels_m, panels_cm, mesh, scheme, workspace;
+                         flux_scale = fs_z)
     end
 
     # ---- Reverse: Y sweep (subcycled) ----
@@ -1522,7 +1512,8 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
 
     SectionTimer.@section :cs_sweep_z for _ in 1:n_z
         _sweep_z_panels_mt_pingpong!(spare_rm, spare_m, active_rm, active_m,
-                                     panels_cm, mesh, scheme; flux_scale = fs_z)
+                                     panels_cm, mesh, scheme, workspace;
+                                     flux_scale = fs_z)
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
     end
@@ -1541,7 +1532,8 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
 
     SectionTimer.@section :cs_sweep_z for _ in 1:n_z
         _sweep_z_panels_mt_pingpong!(spare_rm, spare_m, active_rm, active_m,
-                                     panels_cm, mesh, scheme; flux_scale = fs_z)
+                                     panels_cm, mesh, scheme, workspace;
+                                     flux_scale = fs_z)
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
     end
@@ -1571,6 +1563,41 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
     end
 
     return active_rm, active_m
+end
+
+"""Packed-tracer Z-sweep of all six panels into the ping-pong buffers."""
+function _sweep_z_panels_mt_pingpong!(panels_rm_4d_out::NTuple{6},
+                                      panels_m_out::NTuple{6},
+                                      panels_rm_4d::NTuple{6},
+                                      panels_m::NTuple{6},
+                                      panels_cm::NTuple{6},
+                                      mesh::CubedSphereMesh,
+                                      scheme::AbstractAdvectionScheme,
+                                      ::CSAdvectionWorkspace;
+                                      flux_scale = one(eltype(panels_m[1])))
+    Nc, Hp = mesh.Nc, mesh.Hp
+    Nz = size(panels_m[1], 3)
+    Nt = size(panels_rm_4d[1], 4)
+    for p in 1:6
+        _sweep_z_panel_mt_pingpong!(panels_rm_4d_out[p], panels_m_out[p],
+                                   panels_rm_4d[p], panels_m[p], panels_cm[p],
+                                   scheme, Nc, Hp, Nz, Nt; flux_scale)
+    end
+    return panels_rm_4d_out, panels_m_out
+end
+
+"""Single-tracer Z-sweep of all six panels (the split-sweep `strang_split_cs!` path)."""
+function _sweep_z_panels!(panels_rm::NTuple{6}, panels_m::NTuple{6}, panels_cm::NTuple{6},
+                          mesh::CubedSphereMesh, scheme::AbstractAdvectionScheme,
+                          workspace::CSAdvectionWorkspace;
+                          flux_scale = one(eltype(panels_m[1])))
+    Nc, Hp = mesh.Nc, mesh.Hp
+    Nz = size(panels_rm[1], 3)
+    for p in 1:6
+        _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p], scheme,
+                        workspace.rm_A, workspace.m_A, Nc, Hp, Nz; flux_scale)
+    end
+    return nothing
 end
 
 """

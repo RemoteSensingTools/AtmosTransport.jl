@@ -85,7 +85,7 @@ specialized kernels via Julia's multiple dispatch on the grid type.
 | --- | --- | --- |
 | `UpwindScheme` | First order | Donor-cell; cheap, very diffusive. |
 | `SlopesScheme{L}` | Second order | Russell-Lerner slopes (TM5 `sl_advection` port). Limiter parameter `L`. |
-| `PPMScheme{L}` | Third order | Putman-Lin Piecewise Parabolic. Limiter parameter `L`. Supported on LL and CS split-sweep, including vertical PPM; RG supports upwind only. |
+| `PPMScheme{L,V}` | Second order | Limited piecewise-parabolic edges set a Russell–Lerner slope. Limiter parameter `L`. `V = FV3ScalarProfile` (CS only) integrates FV3's `kord = 8` parabola in the vertical sweep. Supported on LL and CS split-sweep; RG supports upwind only. |
 | `LinRoodPPMScheme` | Piecewise parabolic | FV3 horizontal cross terms (CS only), paired with vertical upwind. `ppm_order=5` or `7` selects the edge-value family; both share the same interior reconstruction. |
 
 Reconstruction order does not establish the temporal order or positivity of

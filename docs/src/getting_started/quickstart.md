@@ -132,7 +132,7 @@ Try one edit at a time, then rerun the same command:
 | Experiment | TOML edit |
 |---|---|
 | More diffusive first-order transport | Set `[advection] scheme = "upwind"`. |
-| Putman–Lin PPM | Set `[advection] scheme = "ppm"`. |
+| PPM | Set `[advection] scheme = "ppm"`; on the cubed sphere add `vertical = "fv3_kord8"` for FV3's vertical tracer profile. |
 | A weaker initial anomaly | Set `amplitude = 2.0e-5` (20 ppm). |
 | Fewer snapshots | Set `hours = [0, 2, 4]`. |
 | Double precision on CPU | Set `[numerics] float_type = "Float64"`. |
