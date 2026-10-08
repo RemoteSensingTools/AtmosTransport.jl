@@ -279,6 +279,7 @@ function open_streaming_cs_transport_binary(
     panel_convention_norm = _normalize_cs_panel_convention(panel_convention)
     default_geometry = _cs_default_geometry_tags(panel_convention_norm)
 
+    revision = source_revision()
     merge!(header, Dict{String, Any}(
         # --- Runtime CS contract keys (single source of truth) ---
         # Emitted HERE, at the one choke point every CS writer funnels through,
@@ -291,6 +292,8 @@ function open_streaming_cs_transport_binary(
         # `validate_cs_writer_contract!`. See the 2026-05-31 contract audit.
         "runtime_substep_contract" => "binary_schedule",
         "preprocessor_contract" => "streaming_cs_v4",
+        "git_commit" => revision.commit,                # code that wrote the binary
+        "git_dirty" => revision.dirty != "clean",       # Bool, as in the lat-lon header
         "adaptive_substeps" => false,
         "Nc" => Nc,
         "npanel" => npanel,

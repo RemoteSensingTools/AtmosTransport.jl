@@ -15,6 +15,7 @@ using Printf: @sprintf
 using ..Architectures: array_adapter_for
 using ..State
 using ..Grids
+import ..source_revision
 
 include("AbstractMetDriver.jl")
 include("ConvectionForcing.jl")

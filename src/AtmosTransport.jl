@@ -98,6 +98,48 @@ expand_data_path(p) = expand_data_path(String(p))
 
 export expand_data_path
 
+# ---------------------------------------------------------------------------
+# Source revision, recorded in output files and transport binaries.
+#
+# A git checkout reports `git rev-parse HEAD` and whether it has local
+# changes. A tree exported with `git archive` (the code snapshots that long
+# runs and preprocessing batches use) has no `.git`; git writes the commit
+# into `src/REVISION` on export (`export-subst` in `.gitattributes`).
+# ---------------------------------------------------------------------------
+const _SOURCE_REVISION = Ref{Union{Nothing, @NamedTuple{commit::String, dirty::String}}}(nothing)
+
+"""
+    source_revision() -> (; commit, dirty)
+
+Commit of the AtmosTransport source tree in use and its state: `"clean"`,
+`"dirty"` (local changes) or `"unknown"`. A checkout asks git; an exported tree
+reads `src/REVISION` and reports `"clean"`, since edits after the export
+cannot be detected; anything else gives `commit = "unknown"`. Evaluated once
+per process.
+"""
+function source_revision()
+    rev = _SOURCE_REVISION[]
+    rev === nothing || return rev
+    _SOURCE_REVISION[] = _read_source_revision()      # converts to String
+    return _SOURCE_REVISION[]
+end
+
+function _read_source_revision()
+    root = normpath(joinpath(@__DIR__, ".."))
+    if ispath(joinpath(root, ".git"))                  # checkout or worktree
+        git(args...) = readchomp(pipeline(`git -C $root $args`; stderr = devnull))
+        try
+            return (commit = git("rev-parse", "HEAD"),
+                    dirty = isempty(git("status", "--porcelain")) ? "clean" : "dirty")
+        catch
+        end
+    end
+    file = joinpath(@__DIR__, "REVISION")
+    rev = isfile(file) ? strip(read(file, String)) : ""
+    exported = occursin(r"^[0-9a-f]{40}$", rev)        # "\$Format:%H\$" until exported
+    return exported ? (commit = String(rev), dirty = "clean") : (commit = "unknown", dirty = "unknown")
+end
+
 # ---- Architecture and planetary constants ----
 include("Architectures.jl")
 using .Architectures

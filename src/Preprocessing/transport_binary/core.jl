@@ -54,16 +54,8 @@ function script_provenance(; caller_file::Union{String, Nothing}=nothing)
     preprocess_src_dir = dirname(@__DIR__)
     script_path = caller_file !== nothing ? abspath(caller_file) : preprocess_src_dir
     script_mtime = isfile(script_path) ? mtime(script_path) : 0.0
-    git_commit = try
-        readchomp(pipeline(`git -C $(preprocess_src_dir) rev-parse HEAD`; stderr=devnull))
-    catch
-        "unknown"
-    end
-    git_dirty = try
-        !isempty(readchomp(pipeline(`git -C $(preprocess_src_dir) status --porcelain`; stderr=devnull)))
-    catch
-        false
-    end
+    git_commit, state = source_revision()
+    git_dirty = state != "clean"       # an unidentified tree never reuses a binary
 
     return (
         script_path = script_path,

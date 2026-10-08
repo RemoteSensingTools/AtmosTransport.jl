@@ -29,30 +29,6 @@ end
 
 const _OUTPUT_CONTRACT = "AtmosTransport snapshot v2"
 
-function _git_command(args::Vector{String})
-    # `@__DIR__` is `src/Output/`; pin the repo root via -C so callers
-    # running from arbitrary CWDs still resolve the right tree.
-    repo_dir = joinpath(@__DIR__, "..", "..")
-    return Cmd(vcat(["git", "-C", repo_dir], args))
-end
-
-function _git_commit_sha()
-    try
-        return strip(read(pipeline(_git_command(["rev-parse", "HEAD"]); stderr=devnull), String))
-    catch
-        return "unknown"
-    end
-end
-
-function _git_dirty_flag()
-    try
-        out = strip(read(pipeline(_git_command(["status", "--porcelain"]); stderr=devnull), String))
-        return isempty(out) ? "clean" : "dirty"
-    catch
-        return "unknown"
-    end
-end
-
 function _iso8601_utc_now()
     # Dates.now(UTC) is portable; format with explicit "Z" suffix.
     return Dates.format(Dates.now(Dates.UTC), "yyyy-mm-ddTHH:MM:SS") * "Z"
@@ -77,8 +53,7 @@ end
 # produce a complete metadata block.
 function _define_provenance_attributes!(ds)
     creation_date = _iso8601_utc_now()
-    git_commit    = _git_commit_sha()
-    git_dirty     = _git_dirty_flag()
+    git_commit, git_dirty = source_revision()
     hostname      = try
         Base.Libc.gethostname()
     catch

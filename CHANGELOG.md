@@ -92,6 +92,15 @@
 
 ### Runtime and output
 
+- Runs and preprocessing from `git archive` code snapshots record their commit:
+  git writes it into `src/REVISION` on export (`export-subst`), and
+  `source_revision()` reports it when the tree has no `.git`; edits made after
+  the export are not detected. Snapshot outputs had
+  `framework_commit = "unknown"` before. Cubed-sphere transport binaries now
+  carry `git_commit` and `git_dirty` in their header.
+- `scripts/diagnostics/catrine_benchmark_page.py` writes the CATRINE benchmark
+  web page (agreement tables, monthly stratospheric bias, code versions,
+  figures and animations) from a `catrine_compare_vs_geoschem.py` output.
 - New `[output.observations]` contract for sampling tracer profiles at
   observation points (OCO-2 Lite soundings, NOAA ObsPack sites, generic point
   tables) from the containing model cell at met-window ends. The table is

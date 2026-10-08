@@ -74,6 +74,7 @@ using FastGaussQuadrature: gausslegendre
 
 # Re-export parent module types we need
 import ..expand_data_path
+import ..source_revision
 # Source settings and binary readers extend the same public capability queries.
 import ..MetDrivers: has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base
 using ..Architectures: CPU

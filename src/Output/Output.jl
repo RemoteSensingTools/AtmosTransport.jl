@@ -59,6 +59,7 @@ background task.
 with_netcdf_lock(f) = lock(f, _NETCDF_IO_LOCK)
 
 import ..expand_data_path
+import ..source_revision
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                GnomonicPanelConvention, GEOSNativePanelConvention,
                nx, ny, nrings, ring_longitudes, cell_index, ncells,
