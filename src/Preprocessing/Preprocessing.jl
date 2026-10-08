@@ -76,7 +76,7 @@ import ..expand_data_path
 # Source settings and binary readers extend the same public capability queries.
 import ..MetDrivers: has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base
 using ..Architectures: CPU
-using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
+using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cs_face_edge_lengths, cs_corner_xyz,
                HybridSigmaPressure, PanelConnectivity,
                AbstractCubedSpherePanelConvention,
                AtmosGrid, ncells, nfaces, nrings, nlevels, face_cells, cell_area,

@@ -378,7 +378,7 @@ Everything one day's windows share: settings and open files, the target grid
 and vertical coordinate, the writer, the substep and balance policy, the
 global dry-mass target (`nothing` when unpinned) and the per-window scratch.
 """
-struct MERRA2DayDriver{S, H, G, V, W, B, X, Q}
+struct MERRA2DayDriver{S, H, G, V, W, B, F, X, Q}
     settings     :: S
     handles      :: H
     grid         :: G
@@ -390,6 +390,7 @@ struct MERRA2DayDriver{S, H, G, V, W, B, X, Q}
     steps_min    :: Int
     cfl_target   :: Float64
     balance      :: B          # (; tol, project_every, global_solve, weights)
+    flux         :: F          # (; method, thickness) of the flux reconstruction
     positivity_limit :: Float64
     replay_tol   :: Float64
     replay_check :: Bool
@@ -478,17 +479,55 @@ function _read_next_day_endpoint!(d::MERRA2DayDriver, nxt::MERRA2BlockState, cur
     return _derive_endpoint_mass!(d, nxt)
 end
 
-# Moist layer thickness for flux reconstruction from a moist surface pressure.
-function _fill_moist_delp!(dp, ps_moist, vc)
-    FT = eltype(dp[1])
-    @inbounds for p in 1:6, k in axes(dp[p], 3)
-        dA = Float64(vc.A[k + 1]) - Float64(vc.A[k])
-        dB = Float64(vc.B[k + 1]) - Float64(vc.B[k])
-        for j in axes(dp[p], 2), i in axes(dp[p], 1)
-            dp[p][i, j, k] = FT(abs(dA + dB * Float64(ps_moist[p][i, j])))
-        end
+# Layer thickness that multiplies the winds in the face fluxes.
+struct MoistFluxThickness end      # from the moist surface pressure (historical)
+struct DryMassFluxThickness end    # g m_dry / A: the dry air the fluxes transport
+_flux_thickness(kind::Symbol) = (moist = MoistFluxThickness(), dry_mass = DryMassFluxThickness())[kind]
+
+# How face fluxes are built from the cell-centre winds.
+struct PanelAverageFluxes{L <: AbstractFaceLengths}    # panel components averaged (historical)
+    lengths :: L
+end
+struct VectorFaceFluxes                                # vectors projected on the face normal
+    geom :: CSVectorFaceGeometry
+    face_table :: CSGlobalFaceTable
+end
+function _face_flux_method(settings, grid)
+    settings.face_fluxes === :vector && return VectorFaceFluxes(
+        CSVectorFaceGeometry(grid.mesh, grid.face_table), grid.face_table)
+    lengths = settings.face_lengths === :edge ? EdgeLengths(grid.mesh) :
+              CellCenterlineLengths(grid.mesh.Δx, grid.mesh.Δy)
+    return PanelAverageFluxes(lengths)
+end
+
+# Cell-centre winds the method needs: panel-local face-normal components, or
+# the east/north components themselves.
+_prepare_cell_winds!(::PanelAverageFluxes, x, u_east, v_north, mesh, Nz) =
+    rotate_winds_to_panel_local!(x.u_local, x.v_local, u_east, v_north, mesh, Nz)
+function _prepare_cell_winds!(::VectorFaceFluxes, x, u_east, v_north, mesh, Nz)
+    foreach(copyto!, x.u_local, u_east)
+    foreach(copyto!, x.v_local, v_north)
+    return nothing
+end
+
+_face_fluxes!(m::PanelAverageFluxes, x, g, dt, Nc, Nz) =
+    cs_face_fluxes!(x.am, x.bm, x.u_local, x.v_local, x.dp, m.lengths, g, dt, Nc, Nz)
+_face_fluxes!(m::VectorFaceFluxes, x, g, dt, Nc, Nz) =
+    cs_vector_face_fluxes!(x.am, x.bm, x.u_local, x.v_local, x.dp, m.geom, m.face_table, g, dt, Nc, Nz)
+
+_fill_flux_thickness!(::MoistFluxThickness, x, ps_moist, m_a, vc, mesh, Nc, Nz) =
+    fill_cs_layer_thickness!(x.dp, ps_moist, vc.A, vc.B, Nc, Nz)
+function _fill_flux_thickness!(::DryMassFluxThickness, x, ps_moist, m_a, vc, mesh, Nc, Nz)
+    g, areas = eltype(x.dp[1])(GRAV), mesh.cell_areas
+    @inbounds for p in 1:6, k in 1:Nz, j in 1:Nc, i in 1:Nc
+        x.dp[p][i, j, k] = g * m_a[p][i, j, k] / areas[i, j]
     end
-    return dp
+    return nothing
+end
+
+function _reconstruct_window_fluxes!(flux, x, ps_moist, m_a, vc, mesh, g, dt, Nc, Nz)
+    _fill_flux_thickness!(flux.thickness, x, ps_moist, m_a, vc, mesh, Nc, Nz)
+    return _face_fluxes!(flux.method, x, g, dt, Nc, Nz)
 end
 
 # Fluxes from the panel-local winds, Poisson-balanced against the window's mass
@@ -497,8 +536,8 @@ function _balance_window!(d::MERRA2DayDriver, ps_moist, m_a, m_b, steps)
     x, mesh, vc = d.scratch, d.grid.mesh, d.vc
     FT = eltype(m_a[1])
     Nc, Nz = d.grid.Nc, size(m_a[1], 3)
-    reconstruct_cs_fluxes!(x.am, x.bm, x.u_local, x.v_local, x.dp, ps_moist, vc.A, vc.B,
-                           mesh.Δx, mesh.Δy, FT(GRAV), FT(d.dt_window / (2 * steps)), Nc, Nz)
+    _reconstruct_window_fluxes!(d.flux, x, ps_moist, m_a, vc, mesh,
+                                FT(GRAV), FT(d.dt_window / (2 * steps)), Nc, Nz)
     g, tol, project_every = d.grid, d.balance.tol, d.balance.project_every
     diag = if d.balance.global_solve     # per-level solve (diagnostic option)
         balance_cs_global_mass_fluxes!(x.am, x.bm, m_a, m_b, g.face_table, g.cell_degree,
@@ -518,8 +557,6 @@ end
 
 # Raise the substep count until the per-substep CFL is under the target.
 function _adapt_window!(d::MERRA2DayDriver, ps_moist, m_a, m_b)
-    x = d.scratch
-    _fill_moist_delp!(x.dp, ps_moist, d.vc)
     steps = d.steps_min
     diag = _balance_window!(d, ps_moist, m_a, m_b, steps)
     d.policy.adaptive_substeps || return steps, diag
@@ -562,8 +599,8 @@ end
 function _emit_block!(d::MERRA2DayDriver, cur::MERRA2BlockState, nxt::MERRA2BlockState,
                       blk::Integer, diag::MERRA2DayDiagnostics)
     x, FT = d.scratch, eltype(cur.m_dry[1])
-    rotate_winds_to_panel_local!(x.u_local, x.v_local, cur.pipe.c180_fields.u,
-                                 cur.pipe.c180_fields.v, d.grid.mesh, cur.pipe.Nz)
+    _prepare_cell_winds!(d.flux.method, x, cur.pipe.c180_fields.u, cur.pipe.c180_fields.v,
+                         d.grid.mesh, cur.pipe.Nz)
     for h in 1:d.nsub
         win = (blk - 1) * d.nsub + h
         f0, f1 = (h - 1) / d.nsub, h / d.nsub
@@ -596,6 +633,9 @@ function _merra2_provenance(settings::MERRA2Settings, handles, nsub)
         "winds_collection" => String(settings.winds_collection),
         "merra2_windows_per_block" => nsub,
         "column_balance_weights" => String(settings.column_balance_weights),
+        "flux_face_lengths" => settings.face_fluxes === :vector ? "edge" : String(settings.face_lengths),
+        "flux_thickness" => String(settings.flux_thickness),
+        "face_fluxes" => String(settings.face_fluxes),
         "merra2_window_interpolation" => nsub == 1 ? "none" :
             "dry mass, PS, QV, T linear in time between 3-hourly I3; 3-hour mean winds")
     has_convection(settings) && (entries["cmfmc_dtrain_source"] =
@@ -718,6 +758,8 @@ function process_merra2_to_cs_day(date::Date,
             Int(steps_per_window), Float64(substep_cfl_target),
             (tol = Float64(cs_balance_tol), project_every = Int(cs_balance_project_every),
              global_solve, weights = column_weights(settings.column_balance_weights, vc.B)),
+            (method = _face_flux_method(settings, target_grid),
+             thickness = _flux_thickness(settings.flux_thickness)),
             Float64(positivity_cfl_limit), replay_tolerance(FT),
             get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1", mass_target,
             _merra2_window_scratch(FT, target_grid.Nc, Nz),

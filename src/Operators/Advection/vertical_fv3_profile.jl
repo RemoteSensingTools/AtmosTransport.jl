@@ -288,6 +288,7 @@ Whether `scheme`'s vertical sweep needs per-column working storage in
 """
 needs_column_scratch(::AbstractAdvectionScheme) = false
 needs_column_scratch(::_FV3VerticalPPM) = true
+needs_column_scratch(s::LinRoodPPMScheme) = needs_column_scratch(s.vertical)
 
 function _check_column_scratch(scratch, Nc, Nz, Nt)
     size(scratch)[1:3] == (Nc, Nc, Nz + 1) && size(scratch, 4) >= 3Nt || throw(ArgumentError(

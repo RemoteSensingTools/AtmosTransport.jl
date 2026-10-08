@@ -77,6 +77,11 @@ pattern = "MERRA2_{stream}.{collection_name}.{date}.nc4"
 #   include_convective_cloud_base -> GCHP cloud base from A3mstC DQRCU
 #   include_surface               -> PBLH, USTAR, HFLUX, T2M (local-Kz diffusion)
 #   include_vdiff_fields          -> + U, V, T, QV, EFLUX (GCHP VDIFF diffusion)
+# Flux construction (optional; docs/src/config/data_sources.md):
+#   column_balance_weights = "mass" | "hybrid_b" | "hybrid_mass"
+#   face_fluxes            = "panel_average" | "vector" (seam-corrected vectors)
+#   face_lengths           = "cell_centerline" | "edge"  (panel_average only)
+#   flux_thickness         = "moist" | "dry_mass"
 # ---------------------------------------------------------------------------
 [preprocessing]
 layout               = "geoschem"

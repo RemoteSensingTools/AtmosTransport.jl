@@ -176,16 +176,20 @@ end
 function CSLinRoodAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
                                      FT::Type{<:AbstractFloat} = Float64,
                                      array_type::Type{<:AbstractArray} = Array,
-                                     n_tracers::Integer = 0)
-    cs = CSAdvectionWorkspace(mesh, Nz; FT, array_type, n_tracers, seam_transport=false)
+                                     n_tracers::Integer = 0,
+                                     column_scratch::Bool = false)
+    cs = CSAdvectionWorkspace(mesh, Nz; FT, array_type, n_tracers, seam_transport=false,
+                              column_scratch, column_scratch_tracers = 1)   # tracers run one by one
     lr = LinRoodWorkspace(mesh; FT = FT, Nz = Nz, array_type = array_type)
     return CSLinRoodAdvectionWorkspace{typeof(cs), typeof(lr)}(cs, lr)
 end
 
 function CSLinRoodAdvectionWorkspace(mesh::CubedSphereMesh,
                                      prototype::AbstractArray{FT, 3};
-                                     n_tracers::Integer = 0) where {FT <: AbstractFloat}
-    cs = CSAdvectionWorkspace(mesh, prototype; n_tracers, seam_transport=false)
+                                     n_tracers::Integer = 0,
+                                     column_scratch::Bool = false) where {FT <: AbstractFloat}
+    cs = CSAdvectionWorkspace(mesh, prototype; n_tracers, seam_transport=false, column_scratch,
+                              column_scratch_tracers = 1)                    # tracers run one by one
     lr = LinRoodWorkspace(mesh, prototype)
     return CSLinRoodAdvectionWorkspace{typeof(cs), typeof(lr)}(cs, lr)
 end
@@ -866,13 +870,14 @@ function _strang_split_linrood_ppm_cs!(rm_panels, m_panels, am_panels, bm_panels
                                        mesh::CubedSphereMesh, ::Val{ORD},
                                        ws::CSLinRoodAdvectionWorkspace;
                                        cfl_limit=0.95, midpoint! = nothing,
-                                       damp_coeff=0.0) where ORD
+                                       damp_coeff=0.0,
+                                       vertical::AbstractAdvectionScheme = UpwindScheme()) where ORD
     _ = cfl_limit
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                  mesh, Val(ORD), ws.cs, ws.linrood; damp_coeff)
-    _sweep_z!(rm_panels, m_panels, cm_panels, mesh, ws.cs)
+    _sweep_z_panels!(rm_panels, m_panels, cm_panels, mesh, vertical, ws.cs)
     midpoint! === nothing || midpoint!()
-    _sweep_z!(rm_panels, m_panels, cm_panels, mesh, ws.cs)
+    _sweep_z_panels!(rm_panels, m_panels, cm_panels, mesh, vertical, ws.cs)
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                  mesh, Val(ORD), ws.cs, ws.linrood; damp_coeff = 0.0)
     return nothing

@@ -86,7 +86,7 @@ const CSAdjointNonlinearScheme = Union{PPMScheme{MonotoneLimiter, SameAsHorizont
 # handles the new record type alongside the existing
 # `_CSSweepRecord`, `_CSHaloRecord`, `_CSDiffusionRecord`,
 # `_CSConvectionRecord`, and `_CSMidpointRecord` cases. ORD=5 only.
-const CSAdjointLinRoodScheme = LinRoodPPMScheme
+const CSAdjointLinRoodScheme = LinRoodPPMScheme{<:Any, UpwindScheme}   # upwind vertical only
 const CSAdjointSupportedScheme = Union{CSAdjointLinearScheme,
                                         CSAdjointNonlinearScheme,
                                         CSAdjointLinRoodScheme}

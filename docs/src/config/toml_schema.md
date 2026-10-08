@@ -260,8 +260,9 @@ selector means; relevant config keys:
 scheme    = "linrood"           # "upwind" | "slopes" | "ppm" | "linrood" | "none"
 ppm_order = 7                   # cubed-sphere LinRoodPPM only; ∈ {5, 7}.
                                 # Setting ppm_order with scheme = "ppm" errors.
-# vertical = "fv3_kord8"        # scheme = "ppm" only: "same_as_horizontal"
-                                # (default) | "fv3_kord8" (FV3 scalar_profile,
+# vertical = "fv3_kord8"        # scheme = "ppm": "same_as_horizontal" (default);
+                                # scheme = "linrood": "upwind" (default);
+                                # either: "fv3_kord8" (FV3 scalar_profile,
                                 # positive definite, the GCHP tracer profile)
                                 # | "fv3_kord8_signed" (for tracers that go
                                 # negative); FV3 options are cubed sphere only
@@ -528,7 +529,11 @@ Give GPU runs `--threads=2` (or more) to enable prefetch.
 ## Preprocessing config (`config/preprocessing/*.toml`)
 
 Consumed by `scripts/preprocessing/preprocess_transport_binary.jl`, which
-calls the unified `process_day` preprocessing entry point.
+calls the unified `process_day` preprocessing entry point. Source-specific
+`[preprocessing]` keys live in the met-source descriptor
+(`config/met_sources/*.toml`); the MERRA-2 flux-construction keys
+(`column_balance_weights`, `face_fluxes`, `face_lengths`, `flux_thickness`) are
+described in [Data sources](data_sources.md).
 
 The preprocessing config has a different shape from the run config:
 the **target topology IS specified here** because that's the act of

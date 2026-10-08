@@ -154,6 +154,14 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test_throws ArgumentError build_runtime_advection(
             Dict("advection" => Dict("scheme" => "ppm", "vertical" => "fv3_kord8_signed")),
             LatLonRuntimeRecipeStyle())
+        # Lin-Rood vertical sweeps: upwind (default) or the FV3 profile
+        @test advection_spec(Dict("scheme" => "linrood")).vertical isa UpwindScheme
+        lr = cs_advection(Dict("advection" => Dict("scheme" => "linrood", "ppm_order" => 7,
+                                                    "vertical" => "fv3_kord8")))
+        @test lr isa LinRoodPPMScheme{7, PPMScheme{MonotoneLimiter, FV3ScalarProfile{true}}}
+        @test_throws ArgumentError advection_spec(Dict("scheme" => "linrood",
+                                                       "vertical" => "same_as_horizontal"))
+        @test_throws ArgumentError advection_spec(Dict("scheme" => "slopes", "vertical" => "upwind"))
     end
 
     @testset "cs_halo_width dispatch" begin

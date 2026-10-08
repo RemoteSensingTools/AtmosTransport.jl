@@ -90,6 +90,12 @@ include_surface      = true
 include_convection   = true
 include_vdiff_fields = true
 include_convective_cloud_base = true
+# Experiment: spread the column mass-budget correction by layer mass, but only
+# over hybrid layers (ΔB > 0); pure-pressure (stratospheric) layers get none.
+column_balance_weights = "hybrid_mass"
+# Experiment (2026-10-07): vector face fluxes with the seam correction
+face_fluxes = "vector"
+flux_thickness = "dry_mass"
 
 # ---------------------------------------------------------------------------
 # Collections

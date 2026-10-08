@@ -21,12 +21,58 @@ cell faces of the cubed sphere, for each layer and substep.
 - Inputs: A3dyn 3-hour mean winds (0.5° × 0.625°); I3 instantaneous surface
   pressure and humidity.
 - `u_east` and `v_north` are regridded conservatively to C90 cell means, as
-  two scalars, then rotated into panel-local components.
-- The flux through a face is the mean of the two adjacent cells' normal
-  winds, times the mean of their moist layer thicknesses `Δp_k`, the face
-  length and the time step, divided by `g`.
+  two scalars.
 - Hourly windows split each 3-hour block; air mass, `p_s`, humidity and
   temperature are linear in time.
+
+Two constructions of the face fluxes are available
+(`[preprocessing] face_fluxes`, MERRA-2 path):
+
+- **`panel_average`** (default, historical,
+  `src/Preprocessing/cs_transport_helpers.jl`, `cs_face_fluxes!`).
+  - Each cell's wind is projected onto its panel's local face-normal
+    directions.
+  - The two adjacent cells' projections are averaged.
+  - The result is multiplied by the mean moist layer thickness `Δp_k`, a
+    length, and the time step, and divided by `g`.
+  - The length is the centerline width of the cell on one side of the face
+    (`face_lengths = "cell_centerline"`). `"edge"` uses the face's own
+    great-circle length instead.
+  - At a panel seam only the cell on the owning panel is used.
+- **`vector`** (`cs_vector_face_fluxes!`).
+  - The two cells' winds are combined as 3-D vectors.
+  - At a panel seam the result is further interpolated along the edge to the
+    face midpoint, as FV3 does.
+  - It is then projected onto the face's own unit normal and multiplied by
+    the face's great-circle length and the interpolated layer thickness.
+
+**Why the seams matter.** The cells on both sides of a panel seam are skewed
+along the edge. They are mirror images across the seam, so both centres are
+shifted the same way along the edge and the shift does not cancel. The point
+between the two centres lies 16 % (RMS), up to 25 %, of a face length along the
+edge from the face midpoint; in the panel interior it is 2e-4. (The two centres
+are equally far from the face, to 1e-12.) Averaging the two cells therefore
+takes the wind at the wrong point.
+
+For a solid-body rotation, which has no divergence, the spurious divergence
+relative to the face flux at C90 is as below
+(`/temp1/cfranken/scratch/overnight_2026_10_07/solid_body_divergence.jl`;
+`test/core/test_cs_face_fluxes.jl` checks the same at C48):
+
+| | interior cells | seam cells |
+|---|---|---|
+| `panel_average` | 1e-4 | 4e-3 |
+| `vector` | 2e-7 | 5e-6 |
+
+In pure-pressure layers nothing corrects this divergence (section 2), so it
+becomes vertical motion. Against MERRA-2's own vertical velocity (2022-07-15,
+C90, p < 150 hPa), the `panel_average` error at seam cells is larger than the
+true signal: RMSE 8.8e-3 Pa/s against an RMS of 7.2e-3. With `vector` it is
+1.3e-3, as in the interior. In the extratropics at 30–200 hPa the RMSE falls
+from 8.4e-3 to 4.6e-3 Pa/s.
+
+`flux_thickness = "dry_mass"` uses the dry layer thickness `g m_dry / A` that
+the fluxes transport, instead of the moist `Δp`.
 
 **ERA5** (`.../era5_n320_regrid.jl`). Instantaneous hourly winds on the N320
 reduced Gaussian grid, regridded the same way. Surface pressure comes from
@@ -34,8 +80,10 @@ the 0.25° ARCO product. Each hour's winds are held over the following hourly
 window.
 
 **GCHP** takes the same MERRA-2 A3dyn winds. MAPL regrids them conservatively
-to the cube; FV3's `fv_computeMassFluxes` then forms C-grid mass fluxes and
-Courant numbers with dry pressure. The winds are held over each 3-hour block;
+to the cube as a vector (three Cartesian components). FV3's
+`fv_computeMassFluxes` then restaggers them to the faces (A → D → C grid,
+fourth-order interior interpolation, along-edge interpolation at cube edges)
+and forms mass fluxes and Courant numbers with dry pressure. The winds are held over each 3-hour block;
 `PS1`/`PS2` are interpolated in time to each 600 s step (GCHP run-directory
 setting `IMPORT_MASS_FLUX_FROM_EXTDATA = .false.` for MERRA-2).
 
@@ -107,9 +155,10 @@ uncorrected fluxes. It then remaps the Lagrangian layers onto `A + B p_s,adv`,
 where `p_s,adv` is the surface pressure the flux convergence implies
 (`fv_tracer2d.F90`, `offline_tracer_advection`). The mismatch with the met
 surface pressure stays in `p_s,adv`. The pressure is reset from the met
-fields at the next step, and tracer mass is rescaled globally (troposphere
-only). The implied vertical motion distributes the column convergence by
-`ΔB`.
+fields at the next step. Each tracer's global mass is then rescaled, with the
+factor applied only from the first layer with `B > 0` downward
+(`fv_tracer2d.F90`, about line 977). The implied vertical motion distributes the
+column convergence by `ΔB`.
 
 **TM5** holds its vertical flux at the IFS value and Poisson-corrects the
 horizontal fluxes level by level. The column tendency it closes is
@@ -205,7 +254,8 @@ the two are identical, provided that:
 - the fluxes through the model top and the surface are zero.
 
 One sweep is one remap with the same profile. GCHP remaps once per 600 s after
-its horizontal step and then applies `fillz` and a global mass rescaling. Here
+its horizontal step and then rescales tracer mass globally. `fillz` is off by
+default (`fill = .false.` in `fv_arrays.F90`). Here
 the remaps follow the binary's `cm`, twice per substep (per palindrome
 subcycle).
 
@@ -235,7 +285,8 @@ whatever the sign.
 Differences from GCHP:
 - GCHP remaps Lagrangian layers once per 600 s step; here the profile drives
   each flux-form vertical sweep, with interface fluxes from the binary's `cm`.
-- GCHP applies `fillz` after the remap; the flux form needs no filling.
+- GCHP rescales each tracer's global mass in the hybrid layers after every
+  step; this model conserves tracer mass without rescaling.
 
 Tests (`test/core/test_fv3_vertical_profile.jl`):
 - The edge values and limited parabolas equal, bit for bit, an independent
@@ -268,10 +319,11 @@ Courant ≤ 0.3; scripts and output in `/temp1/cfranken/scratch/fv3_vertical/`):
   In a four-month C90 run the wall time per window is unchanged
   (0.58–0.60 s).
 
-**`scheme = "linrood"`** uses FV3-style cross-term advection horizontally but
-first-order upwind vertically. That is far too diffusive: in a four-month
-MERRA-2 test the stratospheric CO₂ bias against GCHP grew six times faster
-than with `ppm`.
+**`scheme = "linrood"`** uses FV3-style cross-term advection horizontally and,
+by default, first-order upwind vertically. That is far too diffusive: in a
+four-month MERRA-2 test the stratospheric CO₂ bias against GCHP grew six times
+faster than with `ppm`. With `vertical = "fv3_kord8"` its vertical sweeps use
+the FV3 profile above.
 
 **GCHP** has no Eulerian vertical advection. After the horizontal step it
 remaps the Lagrangian layers onto the hybrid levels with PPM

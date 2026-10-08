@@ -180,10 +180,13 @@ end
 PPMAdvectionSpec() = PPMAdvectionSpec(SameAsHorizontal())
 struct NoAdvectionSpec     <: AbstractAdvectionSpec end
 
-# Lin–Rood is cubed-sphere only. `order` selects its PPM edge-value family.
-struct LinRoodAdvectionSpec <: AbstractAdvectionSpec
-    order :: Int
+# Lin–Rood is cubed-sphere only. `order` selects its PPM edge-value family,
+# `vertical` the scheme of its vertical sweeps.
+struct LinRoodAdvectionSpec{Z <: AbstractAdvectionScheme} <: AbstractAdvectionSpec
+    order    :: Int
+    vertical :: Z
 end
+LinRoodAdvectionSpec(order::Integer) = LinRoodAdvectionSpec(Int(order), UpwindScheme())
 
 function _parse_advection_scheme(section)
     raw = lowercase(String(get(section, "scheme", "upwind")))
@@ -211,19 +214,30 @@ function _parse_vertical_reconstruction(section)
     return _VERTICAL_RECONSTRUCTIONS[key]
 end
 
+# Lin–Rood's vertical sweeps: "upwind" (default) or an FV3 profile.
+function _parse_linrood_vertical(section)
+    raw = get(section, "vertical", "upwind")
+    key = raw isa AbstractString ? lowercase(raw) : ""
+    key == "upwind" && return UpwindScheme()
+    key in ("fv3_kord8", "fv3_kord8_signed") || throw(ArgumentError(
+        "[advection] `scheme = \"linrood\"` supports vertical = upwind | fv3_kord8 | " *
+        "fv3_kord8_signed; got $(repr(raw))."))
+    return PPMScheme(; vertical = _VERTICAL_RECONSTRUCTIONS[key])
+end
+
 """
     advection_spec(section) -> AbstractAdvectionSpec
 
 Parse an `[advection]` section into a typed spec. `ppm_order` is only meaningful
 for `scheme = "linrood"`; pairing it with `scheme = "ppm"` is rejected (the split
-PPM path takes no order knob). `vertical` is only meaningful for `scheme = "ppm"`.
-An omitted selector defaults to upwind; an omitted Lin–Rood `ppm_order` defaults
-to 5.
+PPM path takes no order knob). `vertical` applies to `scheme = "ppm"` (default
+`same_as_horizontal`) and `scheme = "linrood"` (default `upwind`). An omitted
+selector defaults to upwind; an omitted Lin–Rood `ppm_order` defaults to 5.
 """
 function advection_spec(section)
     kind = _parse_advection_scheme(section)
-    kind !== :ppm && haskey(section, "vertical") && throw(ArgumentError(
-        "[advection] `vertical` is only valid with `scheme = \"ppm\"`."))
+    kind in (:ppm, :linrood) || !haskey(section, "vertical") || throw(ArgumentError(
+        "[advection] `vertical` is only valid with `scheme = \"ppm\"` or `\"linrood\"`."))
     kind === :upwind && return UpwindAdvectionSpec()
     kind === :slopes && return SlopesAdvectionSpec()
     kind === :none   && return NoAdvectionSpec()
@@ -233,7 +247,8 @@ function advection_spec(section)
             "`scheme = \"ppm\"` selects the standard split `PPMScheme()` path."))
         return PPMAdvectionSpec(_parse_vertical_reconstruction(section))
     end
-    return LinRoodAdvectionSpec(_spec_int(section, "ppm_order", 5, "[advection]"))  # :linrood
+    return LinRoodAdvectionSpec(_spec_int(section, "ppm_order", 5, "[advection]"),  # :linrood
+                                _parse_linrood_vertical(section))
 end
 
 # Materialize with topology gates close to construction: RG currently accepts
@@ -253,11 +268,13 @@ materialize(::PPMAdvectionSpec, ::ReducedGaussianRuntimeRecipeStyle) =
         "[advection] `scheme = \"ppm\"` is not implemented for reduced-Gaussian runs; " *
         "use `scheme = \"upwind\"` or `scheme = \"none\"`."))
 materialize(::NoAdvectionSpec,     ::AbstractRuntimeRecipeStyle) = NoAdvection()
-materialize(s::LinRoodAdvectionSpec, ::CubedSphereRuntimeRecipeStyle) = LinRoodPPMScheme(s.order)
+materialize(s::LinRoodAdvectionSpec, ::CubedSphereRuntimeRecipeStyle) =
+    LinRoodPPMScheme(s.order; vertical = s.vertical)
 materialize(::LinRoodAdvectionSpec, ::AbstractStructuredRuntimeRecipeStyle) = throw(ArgumentError(
     "[advection] `scheme = \"linrood\"` is only available on cubed-sphere runs."))
 
-Base.summary(s::LinRoodAdvectionSpec) = "LinRoodAdvectionSpec(order=$(s.order))"
+Base.summary(s::LinRoodAdvectionSpec) =
+    "LinRoodAdvectionSpec(order=$(s.order), vertical=$(nameof(typeof(s.vertical))))"
 
 # =========================================================================
 # Chemistry

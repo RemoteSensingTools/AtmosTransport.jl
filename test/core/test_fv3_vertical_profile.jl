@@ -294,6 +294,41 @@ test_profiles(Nz) = (
         @test state.tracers.CO2[1][Hp+1, Hp+1, :] ./ state.air_mass[1][Hp+1, Hp+1, :] != q_before
     end
 
+    @testset "Lin-Rood horizontal with the FV3 vertical profile" begin
+        # With no horizontal fluxes, Lin-Rood (H Z Z H) and the split PPM path
+        # (X Y Z Z Y X) both reduce to two FV3 vertical sweeps; they differ only
+        # by Lin-Rood's mixing-ratio round trip in the horizontal step.
+        FT, Nc, Hp, Nz = Float64, 4, 3, 8
+        N = Nc + 2Hp
+        mesh = CubedSphereMesh(; Nc, Hp, FT)
+        vertical = HybridSigmaPressure(collect(FT, range(0, 1e4; length = Nz + 1)), zeros(FT, Nz + 1))
+        grid = AtmosGrid(mesh, vertical, AtmosTransport.CPU(); FT)
+        mcol = column_masses(Nz)
+        function run_once(scheme)
+            panels_m = ntuple(_ -> repeat(column(mcol), N, N, 1), 6)
+            panels_rm = ntuple(p -> panels_m[p] .* (400e-6 .+ 1e-5 .* sin.(reshape(1:Nz, 1, 1, :) .+ p)), 6)
+            state = CubedSphereState(DryBasis, mesh, panels_m; CO2 = panels_rm)
+            fluxes = allocate_face_fluxes(mesh, Nz; FT, basis = DryBasis)
+            for p in 1:6, k in 2:Nz
+                fluxes.cm[p][:, :, k] .= 0.2 * min(mcol[k - 1], mcol[k]) * (-1)^k
+            end
+            model = TransportModel(state, fluxes, grid, scheme)
+            apply!(state, fluxes, grid, scheme, FT(1); workspace = model.workspace.advection_ws)
+            return state, model.workspace.advection_ws
+        end
+        linrood = LinRoodPPMScheme(7; vertical = FV3_PPM)
+        state_lr, ws_lr = run_once(linrood)
+        state_pp, _ = run_once(FV3_PPM)
+        @test size(ws_lr.cs.column_scratch, 4) >= 3
+        @test all(p -> isapprox(state_lr.tracers.CO2[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :],
+                                state_pp.tracers.CO2[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :]; rtol = 1e-12), 1:6)
+        @test LinRoodPPMScheme(7).vertical isa UpwindScheme
+        @test !needs_column_scratch(LinRoodPPMScheme(7)) && needs_column_scratch(linrood)
+        @test_throws TypeError LinRoodPPMScheme(7; vertical = PPMScheme())   # not a LinRoodVertical
+        @test !(linrood isa AtmosTransport.Adjoints.CSAdjointSupportedScheme)
+        @test LinRoodPPMScheme(5) isa AtmosTransport.Adjoints.CSAdjointSupportedScheme
+    end
+
     @testset "dispatch and defaults" begin
         @test PPMScheme() isa PPMScheme{MonotoneLimiter, SameAsHorizontal}
         @test PPMScheme(NoLimiter()) isa PPMScheme{NoLimiter, SameAsHorizontal}

@@ -363,8 +363,12 @@ PPMScheme(limiter::AbstractLimiter = MonotoneLimiter();
           vertical::AbstractVerticalReconstruction = SameAsHorizontal()) =
     PPMScheme(limiter, vertical)
 
+"""Vertical sweeps available to [`LinRoodPPMScheme`](@ref)."""
+const LinRoodVertical = Union{UpwindScheme, PPMScheme{<:AbstractLimiter, <:FV3ScalarProfile}}
+
 """
-    LinRoodPPMScheme{ORD} <: AbstractAdvectionScheme
+    LinRoodPPMScheme{ORD, Z} <: AbstractAdvectionScheme
+    LinRoodPPMScheme(ORD = 5; vertical = UpwindScheme())
 
 Cubed-sphere Lin-Rood / FV3-style cross-term PPM advection with compile-time
 edge-value family `ORD` (not a global spatial or temporal accuracy order).
@@ -372,7 +376,9 @@ edge-value family `ORD` (not a global spatial or temporal accuracy order).
 This is distinct from [`PPMScheme`](@ref): `PPMScheme` participates in the
 standard Strang split implemented by `strang_split_cs!`, while
 `LinRoodPPMScheme` selects the FV3-style horizontal Lin-Rood update
-(`fv_tp_2d_cs!`) paired with the existing vertical upwind sweep.
+(`fv_tp_2d_cs!`). Its vertical sweeps use `vertical`: first-order
+`UpwindScheme()` (default) or `PPMScheme(; vertical = FV3ScalarProfile())`,
+FV3's `kord = 8` profile (TOML `vertical = "fv3_kord8"`).
 
 Supported orders currently match the implemented PPM edge-value families in
 `ppm_subgrid_distributions.jl`:
@@ -382,16 +388,19 @@ Supported orders currently match the implemented PPM edge-value families in
 
 # Examples
 ```julia
-LinRoodPPMScheme()    # default ORD=5
+LinRoodPPMScheme()    # default ORD=5, upwind vertical
 LinRoodPPMScheme(7)   # ORD=7 cubed-sphere boundary treatment
+LinRoodPPMScheme(7; vertical = PPMScheme(; vertical = FV3ScalarProfile()))
 ```
 """
-struct LinRoodPPMScheme{ORD} <: AbstractAdvectionScheme end
+struct LinRoodPPMScheme{ORD, Z <: LinRoodVertical} <: AbstractAdvectionScheme
+    vertical :: Z     # scheme of the vertical sweeps
+end
 
-function LinRoodPPMScheme(order::Integer = 5)
+function LinRoodPPMScheme(order::Integer = 5; vertical::LinRoodVertical = UpwindScheme())
     order in (5, 7) || throw(ArgumentError(
         "LinRoodPPMScheme supports ORD=5 or ORD=7, got ORD=$(order)"))
-    return LinRoodPPMScheme{Int(order)}()
+    return LinRoodPPMScheme{Int(order), typeof(vertical)}(vertical)
 end
 
 # ---- Cubed-sphere execution style + capability traits -------------------

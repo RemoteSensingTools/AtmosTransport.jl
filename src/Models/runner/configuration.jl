@@ -242,9 +242,12 @@ end
 
 _advection_label(scheme) = String(nameof(typeof(scheme)))
 _advection_label(::LinRoodPPMScheme{ORD}) where ORD = "Lin-Rood PPM$(ORD)"
+_advection_label(s::LinRoodPPMScheme{ORD, <:PPMScheme}) where ORD =
+    "Lin-Rood PPM$(ORD), " * _vertical_label(s.vertical.vertical)
 _advection_label(::PPMScheme) = "PPM"
-_advection_label(::PPMScheme{<:Any, FV3ScalarProfile{true}}) = "PPM, FV3 kord 8 vertical"
-_advection_label(::PPMScheme{<:Any, FV3ScalarProfile{false}}) = "PPM, FV3 kord 8 vertical (signed)"
+_advection_label(s::PPMScheme{<:Any, <:FV3ScalarProfile}) = "PPM, " * _vertical_label(s.vertical)
+_vertical_label(::FV3ScalarProfile{true}) = "FV3 kord 8 vertical"
+_vertical_label(::FV3ScalarProfile{false}) = "FV3 kord 8 vertical (signed)"
 _advection_label(::SlopesScheme) = "Slopes"
 _advection_label(::UpwindScheme) = "Upwind"
 

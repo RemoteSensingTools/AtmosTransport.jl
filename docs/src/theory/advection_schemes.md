@@ -4,8 +4,8 @@ The runtime ships **four** flux-form advection schemes, each behind the
 abstract type `AbstractAdvectionScheme` declared in
 `src/Operators/Advection/schemes.jl`. Upwind, slopes, and standard PPM use
 directional sweeps. Lin–Rood couples the two horizontal directions and uses
-upwind vertically. On the cubed sphere, PPM can instead use FV3's vertical
-tracer profile (`vertical = "fv3_kord8"`). The model-facing operator interface dispatches to the
+upwind vertically by default. On the cubed sphere, PPM and Lin–Rood can
+instead use FV3's vertical tracer profile (`vertical = "fv3_kord8"`). The model-facing operator interface dispatches to the
 appropriate transport path.
 
 | Scheme | Smooth-flow accuracy | Monotone? | Positive? | LL | CS | RG |
@@ -37,6 +37,7 @@ Choose the algorithm explicitly when comparing runs:
 | `scheme = "ppm", vertical = "fv3_kord8_signed"` | `PPMScheme(MonotoneLimiter(), FV3ScalarProfile(; positive_definite = false))` (CS only) | FV3 `scalar_profile`, `kord = 8`, for signed tracers |
 | `scheme = "linrood", ppm_order = 5` | `LinRoodPPMScheme(5)` (CS only) | upwind |
 | `scheme = "linrood", ppm_order = 7` | `LinRoodPPMScheme(7)` (CS only) | upwind |
+| `scheme = "linrood", ppm_order = 7, vertical = "fv3_kord8"` | `LinRoodPPMScheme(7; vertical = PPMScheme(; vertical = FV3ScalarProfile()))` (CS only) | FV3 `scalar_profile`, `kord = 8` |
 
 Omitting `ppm_order` for Lin–Rood selects 5. Setting it with `scheme = "ppm"`
 is an error: standard split PPM has no order selector. `vertical` is only
@@ -347,7 +348,7 @@ between them. Performance-tuning notes live beside the implementation.
 | Concept | File / function |
 | --- | --- |
 | Scheme abstract root | `src/Operators/Advection/schemes.jl::AbstractAdvectionScheme` |
-| `UpwindScheme`, `SlopesScheme{L}`, `PPMScheme{L,V}`, `LinRoodPPMScheme{ORD}` | `src/Operators/Advection/schemes.jl` |
+| `UpwindScheme`, `SlopesScheme{L}`, `PPMScheme{L,V}`, `LinRoodPPMScheme{ORD,Z}` | `src/Operators/Advection/schemes.jl` |
 | FV3 vertical profile (`FV3ScalarProfile`) | `src/Operators/Advection/vertical_fv3_profile.jl` |
 | Limiter primitives (branchless, GPU-safe) | `src/Operators/Advection/limiters.jl` |
 | Slopes face flux (Russell-Lerner formula) | `src/Operators/Advection/reconstruction.jl::_slopes_face_flux` |

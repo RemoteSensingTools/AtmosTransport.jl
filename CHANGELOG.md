@@ -42,6 +42,8 @@
   - `Float32` mass drift is at or below the default's.
   - The default (`SameAsHorizontal`) is unchanged, and lat-lon runs and the
     adjoint reject the option.
+  - `scheme = "linrood"` accepts the same `vertical` values. Its default stays
+    upwind: `LinRoodPPMScheme(ORD; vertical = UpwindScheme())`.
   - `CSAdvectionWorkspace` gains `column_scratch` (`column_scratch = true`).
 - `PPMScheme` was documented as third order. It is second order: the limited
   PPM edge sets a Russell–Lerner slope and the parabola is not integrated.
@@ -109,6 +111,19 @@
 
 ### Surface fluxes and preprocessing
 
+- MERRA-2 preprocessing option `[preprocessing] face_fluxes = "vector"`
+  builds face fluxes from the cell winds as 3-D vectors. They are projected
+  onto the true face normals, use the faces' great-circle lengths, and are
+  interpolated along the edge at panel seams, as FV3 does. The default
+  (`"panel_average"`) is unchanged.
+  - The default construction misplaces the seam winds by up to a quarter of a
+    face length and uses cell centerline widths instead of face lengths.
+  - For solid-body rotation the spurious divergence at seam cells drops from
+    4e-3 to 5e-6 of the face flux, and in the interior from 1e-4 to 2e-7.
+  - Against MERRA-2 OMEGA on 2022-07-15 (C90, p < 150 hPa), the
+    vertical-velocity error at seam cells falls from 8.8e-3 to 1.3e-3 Pa/s.
+  - Related opt-in keys: `face_lengths = "edge"` and
+    `flux_thickness = "dry_mass"`.
 - MERRA-2 preprocessing option `[preprocessing] column_balance_weights` sets
   how the column mass-budget correction of the horizontal fluxes is spread
   over levels. The options are `"mass"` (default, unchanged),

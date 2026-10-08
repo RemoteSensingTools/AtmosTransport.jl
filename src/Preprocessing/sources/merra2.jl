@@ -132,12 +132,19 @@ Base.@kwdef struct MERRA2Settings{A <: MERRA2Archive} <: AbstractMetSettings
     include_vdiff_fields  :: Bool   = false
     include_convective_cloud_base :: Bool = false
     column_balance_weights :: Symbol = :mass   # a key of COLUMN_WEIGHT_KINDS (cs_poisson_balance.jl)
+    face_lengths   :: Symbol = :cell_centerline   # face length in the flux: :cell_centerline or :edge
+    flux_thickness :: Symbol = :moist             # Δp in the flux: :moist (from moist ps) or :dry_mass
+    face_fluxes    :: Symbol = :panel_average     # :panel_average (panel components) or :vector (edge lengths always)
 end
 
 const MERRA2_NATIVE_LEVEL_COUNT = 72
 const MERRA2_NX = 576
 const MERRA2_NY = 361
 const MERRA2_VALID_WINDS_COLLECTIONS = (:tavg3, :inst3)
+# Face-flux construction choices (see `merra2_latlon_regrid.jl`).
+const MERRA2_FACE_LENGTHS   = (:cell_centerline, :edge)
+const MERRA2_FACE_FLUXES    = (:panel_average, :vector)
+const MERRA2_FLUX_THICKNESS = (:moist, :dry_mass)
 
 
 """
@@ -154,6 +161,12 @@ function validate_merra2_settings(s::MERRA2Settings)
     s.winds_collection === :inst3 && !_has_inst3_winds(s.archive) &&
         throw(ArgumentError("the GEOS-Chem MERRA-2 archive has no instantaneous winds " *
                             "(I3 holds PS, QV, T); use winds_collection=:tavg3 (A3dyn)"))
+    for (name, value, kinds) in (("face_lengths", s.face_lengths, MERRA2_FACE_LENGTHS),
+                                 ("face_fluxes", s.face_fluxes, MERRA2_FACE_FLUXES),
+                                 ("flux_thickness", s.flux_thickness, MERRA2_FLUX_THICKNESS))
+        value in kinds || throw(ArgumentError(
+            "MERRA-2 $(name) must be one of $(join(kinds, ", ")); got :$(value)"))
+    end
     haskey(COLUMN_WEIGHT_KINDS, s.column_balance_weights) ||
         throw(ArgumentError("MERRA-2 column_balance_weights must be one of " *
                             join(keys(COLUMN_WEIGHT_KINDS), ", ") *

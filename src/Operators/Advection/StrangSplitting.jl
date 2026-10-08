@@ -1088,7 +1088,8 @@ function _cs_transport_step!(::CSLinRoodStyle,
     _strang_split_linrood_ppm_cs!(rm_tracer, m, am, bm, fluxes.cm,
                                   mesh, Val(ORD), workspace;
                                   cfl_limit = cfl_limit,
-                                  midpoint! = midpoint!)
+                                  midpoint! = midpoint!,
+                                  vertical = scheme.vertical)
     return nothing
 end
 

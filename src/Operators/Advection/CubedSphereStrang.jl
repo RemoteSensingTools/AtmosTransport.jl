@@ -892,8 +892,9 @@ Pre-allocated cubed-sphere transport workspace.
   its storage scales with edge length, not panel area. Lin–Rood workspaces
   disable this split-sweep cache (`seam_transport=false`).
 - `column_scratch` is the per-column, per-tracer working storage of the FV3
-  vertical profile (`Nc × Nc × (Nz+1) × 3 max(Nt, 1)`); it is empty unless the
-  workspace is built with `column_scratch=true`.
+  vertical profile (`Nc × Nc × (Nz+1) × 3 max(Nt_s, 1)`, `Nt_s =
+  column_scratch_tracers`, the packed tracer count by default); it is empty
+  unless the workspace is built with `column_scratch=true`.
 - `max_subcycles` tracks this workspace's high-water mark for CFL diagnostics;
   keeping it with the workspace prevents unrelated simulations sharing state.
 """
@@ -916,7 +917,8 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
                               array_type::Type{<:AbstractArray} = Array,
                               n_tracers::Integer = 0,
                               seam_transport::Bool = true,
-                              column_scratch::Bool = false)
+                              column_scratch::Bool = false,
+                              column_scratch_tracers::Integer = n_tracers)
     N = mesh.Nc + 2 * mesh.Hp
     Nt = Int(n_tracers)
     Nt >= 0 || throw(ArgumentError("CSAdvectionWorkspace: n_tracers must be non-negative, got $n_tracers"))
@@ -928,7 +930,7 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
     rm_4d_pp_buf = Nt > 0 ? ntuple(_ -> array_type(zeros(FT, N, N, Nz, Nt)), 6) :
                             ntuple(_ -> rm_4d_A, 6)
     seam_flux = similar(rm_4d_A, FT, mesh.Nc, Nz, max(Nt, 1) + 1, seam_transport ? 12 : 0)
-    scratch = _column_scratch(rm_4d_A, mesh.Nc, Nz, Nt, column_scratch)
+    scratch = _column_scratch(rm_4d_A, mesh.Nc, Nz, Int(column_scratch_tracers), column_scratch)
     return CSAdvectionWorkspace{FT, typeof(rm_A),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
                                 typeof(rm_4d_pp_buf)}(
@@ -940,7 +942,8 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh,
                               prototype::AbstractArray{FT, 3};
                               n_tracers::Integer = 0,
                               seam_transport::Bool = true,
-                              column_scratch::Bool = false) where {FT <: AbstractFloat}
+                              column_scratch::Bool = false,
+                              column_scratch_tracers::Integer = n_tracers) where {FT <: AbstractFloat}
     N = mesh.Nc + 2 * mesh.Hp
     Nz = size(prototype, 3)
     Nt = Int(n_tracers)
@@ -953,7 +956,7 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh,
     rm_4d_pp_buf = Nt > 0 ? ntuple(_ -> similar(prototype, FT, N, N, Nz, Nt), 6) :
                             ntuple(_ -> rm_4d_A, 6)
     seam_flux = similar(rm_4d_A, FT, mesh.Nc, Nz, max(Nt, 1) + 1, seam_transport ? 12 : 0)
-    scratch = _column_scratch(rm_4d_A, mesh.Nc, Nz, Nt, column_scratch)
+    scratch = _column_scratch(rm_4d_A, mesh.Nc, Nz, Int(column_scratch_tracers), column_scratch)
     return CSAdvectionWorkspace{FT, typeof(rm_A),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
                                 typeof(rm_4d_pp_buf)}(
@@ -1603,9 +1606,9 @@ end
 """
     _sweep_z!(rm_panels, m_panels, cm_panels, mesh, ws)
 
-Multi-panel Z-sweep orchestrator for LinRood integration. Applies vertical
-mass-flux advection to all 6 panels using the per-panel `_sweep_z_panel!`.
-Always uses `UpwindScheme()` (matching FV3's upwind vertical advection).
+Upwind Z-sweep of all six panels (`_sweep_z_panel!` with `UpwindScheme()`), used
+by the Lin-Rood adjoint tape and `strang_split_linrood_ppm!`. FV3 itself remaps
+tracers vertically with PPM; see `LinRoodPPMScheme`'s `vertical` option.
 """
 function _sweep_z!(rm_panels, m_panels, cm_panels,
                    mesh::CubedSphereMesh, ws::CSAdvectionWorkspace)

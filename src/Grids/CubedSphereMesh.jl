@@ -597,6 +597,33 @@ end
     return _panel_xyz(def, ξ, η, panel)
 end
 
+"""
+    cs_corner_xyz(mesh::CubedSphereMesh, i, j, panel) -> (x, y, z)
+
+Unit vector of corner `(i, j)` (`1 ≤ i, j ≤ Nc + 1`) of `panel`, in Float64;
+corner `(i, j)` is the lower-left corner of cell `(i, j)`.
+"""
+cs_corner_xyz(mesh::CubedSphereMesh, i::Integer, j::Integer, panel::Integer) =
+    _corner_xyz(mesh.definition, mesh.Nc, i, j, Int(panel), Float64)
+
+"""
+    cs_face_edge_lengths(mesh::CubedSphereMesh) -> (Lx, Ly)
+
+Great-circle lengths of the cell faces of a panel (every panel has the same
+geometry in its local indices). `Lx[i, j]` is the face between cells `i − 1`
+and `i` of row `j` (`(Nc + 1) × Nc`); `Ly[i, j]` the face between cells
+`j − 1` and `j` of column `i` (`Nc × (Nc + 1)`). Evaluated in Float64 from
+the cell corners and rounded once. Unlike `mesh.Δx`/`mesh.Δy` (centerline
+widths of a cell), these are the lengths through which a face flux passes.
+"""
+function cs_face_edge_lengths(mesh::CubedSphereMesh{FT}) where FT
+    Nc, def, R = mesh.Nc, mesh.definition, Float64(mesh.radius)
+    corner(i, j) = _corner_xyz(def, Nc, i, j, 1, Float64)
+    Lx = [FT(R * spherical_distance(corner(i, j), corner(i, j + 1))) for i in 1:Nc+1, j in 1:Nc]
+    Ly = [FT(R * spherical_distance(corner(i, j), corner(i + 1, j))) for i in 1:Nc, j in 1:Nc+1]
+    return Lx, Ly
+end
+
 @inline function _corner_xyz(def::CubedSphereDefinition, Nc::Int,
                              i::Integer, j::Integer, panel::Int,
                              ::Type{FT}) where FT
@@ -979,6 +1006,7 @@ export CubedSphereDefinition, EquiangularCubedSphereDefinition, GMAOCubedSphereD
 export GEOSIT_C180, GEOSFP_C720
 export GnomonicPanelConvention, GEOSNativePanelConvention, panel_connectivity_for
 export CubedSphereMesh, panel_count, panel_convention, panel_labels, cs_definition
+export cs_face_edge_lengths, cs_corner_xyz
 export coordinate_law, center_law, longitude_offset_deg, cs_definition_tag
 export coordinate_law_tag, center_law_tag
 export panel_cell_center_lonlat, panel_cell_corner_lonlat

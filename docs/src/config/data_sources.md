@@ -219,6 +219,19 @@ The hybrid options leave the pure-pressure stratospheric layers untouched.
 See [Vertical transport](../theory/vertical_transport.md) section 2 and
 `config/met_sources/merra2_geoschem_hybrid{b,mass}.toml`.
 
+Face-flux construction (MERRA-2 only; see
+[Vertical transport](../theory/vertical_transport.md) section 1):
+- `face_fluxes`:
+  - `"panel_average"` (default): averages panel-local wind components, with
+    one-sided panel seams;
+  - `"vector"`: combines the winds as 3-D vectors, projects them onto the true
+    face normals with true face lengths, and interpolates along the edge at
+    panel seams.
+- `face_lengths = "cell_centerline"` (default) or `"edge"`: the length used by
+  `panel_average`.
+- `flux_thickness = "moist"` (default) or `"dry_mass"`: the layer thickness
+  in the fluxes.
+
 `[numerics] dt_met_seconds = 3600` splits every 3-hour MERRA-2 block into three
 hourly windows (endpoint mass, PS, QV and T linear in time, 3-hour mean winds),
 so the hourly A1 boundary-layer fields are used as archived; `10800` writes one
