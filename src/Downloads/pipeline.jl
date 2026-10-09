@@ -22,6 +22,10 @@ function download_data!(cfg::Dict{String, Any};
                         dry_run::Bool=false,
                         verify_only::Bool=false)
     config = parse_download_config(cfg)
+    dry_run || verify_only || protocol_can_download(config.protocol) || throw(ArgumentError(
+        "$(nameof(typeof(config.protocol))) downloads are not implemented; run this recipe " *
+        "with --dry-run or --verify, and stage the files with NASA Earthdata credentials " *
+        "(docs/src/config/data_sources.md)."))
 
     # Override dates from CLI if provided
     sched = if !isnothing(start_date) || !isnothing(end_date)
@@ -308,8 +312,8 @@ end
 function execute!(task::DownloadTask, proto::OPeNDAPProtocol;
                   max_retries::Int=3, retry_wait::Int=30)
     # TODO: implement OPeNDAP subset download via NCDatasets remote read
-    error("OPeNDAP download not yet implemented. " *
-          "Use the legacy script for MERRA-2: scripts/downloads/download_test_data.jl")
+    # (`download_data!` refuses OPeNDAP recipes before any task runs).
+    error("OPeNDAP downloads are not implemented (see `protocol_can_download`).")
 end
 
 # HTTP protocol execution

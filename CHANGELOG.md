@@ -61,6 +61,11 @@
   default mesh, ignoring the recorded coordinate law, center law and
   longitude offset (`cs_*` and `longitude_of_central_meridian` attributes).
   `CubedSphereSnapshotTopology` now carries the snapshot's definition.
+- The MERRA-2 download recipe uses OPeNDAP, whose download step is not
+  implemented: it failed at the first file, after creating the output tree,
+  with a message naming a script that no longer exists. `download_data!` now
+  refuses such recipes before doing anything unless `--dry-run` or
+  `--verify` is given (`protocol_can_download`).
 
 ### Numerical changes
 

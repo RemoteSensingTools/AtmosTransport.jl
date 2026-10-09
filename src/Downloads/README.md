@@ -63,8 +63,9 @@ Each file adds a `build_tasks` method for one source and its protocol.
   `GCSProtocol`. With `assemble="single"` it is a verified download. With
   `assemble="concat"` it fetches the component objects concurrently and
   joins them with `cat`.
-- `execute!` for `OPeNDAPProtocol` throws "not yet implemented", so the MERRA-2
-  recipe can dry-run but cannot download.
+- OPeNDAP downloads are not implemented (`protocol_can_download`): the MERRA-2
+  recipe runs with `--dry-run` or `--verify`; without them `download_data!`
+  refuses it before downloading anything.
 
 ## Conventions
 

@@ -263,6 +263,23 @@ end
     ])
 end
 
+@testset "OPeNDAP recipes refuse to download before any task runs" begin
+    DL = AtmosTransport.DataDownloads
+    cfg = TOML.parsefile(joinpath(REPO_ROOT, "config", "downloads", "merra2.toml"))
+    mktempdir() do dir
+        cfg["output"]["data_root"] = dir
+        err = try
+            DL.download_data!(cfg; start_date = Date(2021, 12, 1), end_date = Date(2021, 12, 1))
+        catch e
+            e
+        end
+        @test err isa ArgumentError && occursin("--dry-run", err.msg)
+        @test isempty(readdir(dir))                       # nothing created
+        @test DL.download_data!(cfg; start_date = Date(2021, 12, 1), end_date = Date(2021, 12, 1),
+                                dry_run = true) === nothing
+    end
+end
+
 @testset "runtime preload reports malformed architecture settings" begin
     mktempdir() do dir
         for (name, contents, expected) in (
