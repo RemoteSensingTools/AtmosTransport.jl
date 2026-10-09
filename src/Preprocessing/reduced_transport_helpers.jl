@@ -677,9 +677,9 @@ function balance_reduced_horizontal_fluxes!(hflux::AbstractMatrix{Float64},
             left > 0 && (div[left]  += flux)
             right > 0 && (div[right] -= flux)
         end
-        # 2. Target divergence = forward-window mass tendency per substep.
+        # 2. Residual of the continuity target: outflow = mass loss per substep.
         @inbounds for c in 1:nc
-            rhs[c] = div[c] - (m_next[c, k] - m_cur[c, k]) * inv_scale
+            rhs[c] = div[c] - _target_outflow(m_cur, m_next, c, k, inv_scale)
         end
 
         # 2a. Raw (pre-projection) diagnostics.
@@ -735,7 +735,7 @@ function balance_reduced_horizontal_fluxes!(hflux::AbstractMatrix{Float64},
             right > 0 && (div[right] -= flux)
         end
         @inbounds for c in 1:nc
-            rhs[c] = (div[c] - (m_next[c, k] - m_cur[c, k]) * inv_scale) - rhs_mean
+            rhs[c] = (div[c] - _target_outflow(m_cur, m_next, c, k, inv_scale)) - rhs_mean
         end
         post_proj = 0.0
         @inbounds for c in 1:nc
@@ -765,7 +765,7 @@ function balance_reduced_horizontal_fluxes!(hflux::AbstractMatrix{Float64},
         end
         post_raw = 0.0
         @inbounds for c in 1:nc
-            r = abs(div[c] - (m_next[c, k] - m_cur[c, k]) * inv_scale)
+            r = abs(div[c] - _target_outflow(m_cur, m_next, c, k, inv_scale))
             r > post_raw && (post_raw = r)
         end
         post_raw > max_post_raw && (max_post_raw = post_raw)

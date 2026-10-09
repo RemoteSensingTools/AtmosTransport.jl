@@ -133,13 +133,16 @@ Cases tagged `known_failure` are skipped, and absent from the comparison,
 unless `--tags` or `--cases` names them:
 
 - `pre_o24` (and `run_o24_upwind_cpu_f64`, which needs its binary): the
-  reduced-Gaussian preprocessor fails its own write-time replay gate
-  (relative continuity error 6.0e-3 in window 1). This is section A, item 1
-  of `docs/memos/2026-10-08_code_structure_and_duplication_plan.md`: the
-  reduced-Gaussian Poisson balance target has the opposite sign to the
-  cubed-sphere one. The fix records the two cases and drops the tag (the
-  reduced-Gaussian upwind kernel accumulates with atomics; check that the
-  run case is reproducible first).
+  reduced-Gaussian preprocessor fails its own write-time replay gate. The
+  Poisson balance target had the opposite sign to the cubed-sphere one
+  (relative continuity error 6.0e-3; fixed, section A item 1 of
+  `docs/memos/2026-10-08_code_structure_and_duplication_plan.md`). It still
+  fails at 2e-7 (gate 1e-10): the `cm` closure can only absorb a zero global
+  dry-mass change between window ends, and the reduced-Gaussian path does not
+  apply the humidity-aware dry-mass pin of the lat-lon and cubed-sphere paths
+  (item 11). The fix of item 11 records the two cases and drops the tag (the
+  reduced-Gaussian upwind kernel accumulates with atomics; check that the run
+  case is reproducible first).
 
 ## Adding a case
 

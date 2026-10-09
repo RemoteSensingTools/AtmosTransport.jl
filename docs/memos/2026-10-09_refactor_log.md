@@ -44,3 +44,18 @@ term of the swept-region mean, `c + (1 − α)(br − α·b0)` (FV3 `xppm`, our
 `_ppm_face_value`), so a cell next to a steep gradient can export more tracer
 than it holds. Production C90 MERRA-2 PPM run (2022-01-15): 31–41 % of fossil
 cells and 2 % of Rn-222 cells negative, −1e-5 of the mass.
+
+## Phase 1: diverged copies (bugs)
+
+### A1 — reduced-Gaussian Poisson balance sign (commit after 5dde1005)
+
+Both reduced-Gaussian balance implementations (`balance_compressed_horizontal_fluxes!`,
+`balance_reduced_horizontal_fluxes!`) targeted an outflow divergence of
+`(m_next − m_cur)/(2·steps)` instead of `(m_cur − m_next)/(2·steps)`, and their own
+post-balance diagnostics reused the wrong sign, so only the independent write-time
+replay gate caught it. One helper `_target_outflow` now serves all six sites; a new
+test (`test/core/test_rg_poisson_balance.jl`) checks both implementations against the
+continuity target (it failed with a residual of twice the target before the fix).
+On the O24 golden day the replay error drops from 6.0e-3 to 2.0e-7; the remainder is
+item A11 (no humidity-aware dry-mass pin in the reduced-Gaussian path), so the O24
+goldens stay known failures. No other golden is affected (reduced-Gaussian only).

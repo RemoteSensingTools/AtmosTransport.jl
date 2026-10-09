@@ -183,6 +183,16 @@ function solve_compressed_poisson_pcg!(psi::AbstractVector{Float64},
 end
 
 """
+    _target_outflow(m_cur, m_next, c, k, inv_scale)
+
+Outflow divergence of cell `c` at level `k` that closes continuity over one
+window: a cell exports what it loses, `(m_cur − m_next) / (2 · steps)`, since
+the palindrome applies each window flux twice per substep. Same target as the
+cubed-sphere balance (`cs_poisson_balance.jl`).
+"""
+@inline _target_outflow(m_cur, m_next, c, k, inv_scale) = (m_cur[c, k] - m_next[c, k]) * inv_scale
+
+"""
     balance_compressed_horizontal_fluxes!(hflux, m_cur, m_next,
                                           face_left, face_right,
                                           L::CompressedLaplacian,
@@ -233,9 +243,9 @@ function balance_compressed_horizontal_fluxes!(hflux::AbstractMatrix{Float64},
             right > 0 && (div[right] -= flux)
         end
 
-        # 2. Target divergence = forward-window mass tendency per substep.
+        # 2. Residual of the continuity target: outflow = mass loss per substep.
         @inbounds for c in 1:nc
-            rhs[c] = div[c] - (m_next[c, k] - m_cur[c, k]) * inv_scale
+            rhs[c] = div[c] - _target_outflow(m_cur, m_next, c, k, inv_scale)
         end
 
         # Diagnostics: pre-balance residual
@@ -277,7 +287,7 @@ function balance_compressed_horizontal_fluxes!(hflux::AbstractMatrix{Float64},
             right > 0 && (div[right] -= flux)
         end
         @inbounds for c in 1:nc
-            rhs[c] = (div[c] - (m_next[c, k] - m_cur[c, k]) * inv_scale) - rhs_mean
+            rhs[c] = (div[c] - _target_outflow(m_cur, m_next, c, k, inv_scale)) - rhs_mean
         end
         post_proj = 0.0
         @inbounds for c in 1:nc
@@ -306,7 +316,7 @@ function balance_compressed_horizontal_fluxes!(hflux::AbstractMatrix{Float64},
         end
         post_raw = 0.0
         @inbounds for c in 1:nc
-            r = abs(div[c] - (m_next[c, k] - m_cur[c, k]) * inv_scale)
+            r = abs(div[c] - _target_outflow(m_cur, m_next, c, k, inv_scale))
             r > post_raw && (post_raw = r)
         end
         post_raw > max_post_raw && (max_post_raw = post_raw)
