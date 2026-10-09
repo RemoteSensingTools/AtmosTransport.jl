@@ -629,36 +629,133 @@ default PPM 21.3 and 22.8 s in two runs, while its other two took 51 and
 66 s (a cold start and a load spike). CW84 costs roughly 5–10 % of transport
 time.
 
-## Status (2026-10-09, morning)
+### Quick fixes (one commit each, Codex-reviewed in two rounds)
 
-Branch `refactor/structure-2026-10` (fast-forwarded from `refactor/wip`), 25
-commits on `3684b71a`, not pushed. Every commit was reviewed by Codex; every
-results-changing commit is in the golden reference `ref_current` with the
-deltas stated above (`/temp1/cfranken/goldens/ref_current/ACCEPTED.txt`).
+- `[mass_fix] mode = "initial_endpoint"` is refused outside the GEOS native
+  path (MERRA-2 and ERA5 N320 silently wrote unpinned binaries); the
+  `[mass_fix]` schema section was wrong (said spectral-only).
+- The GEOS writer honors `ATMOSTR_NO_WRITE_REPLAY_CHECK`; with the gate off,
+  the regrid, N320 and MERRA-2 writers now give the positivity gate the end
+  mass as with the gate on.
+- The reduced-Gaussian writer stages to `.tmp` (a failed day deleted an
+  existing binary; the new test fails on the old writer).
+- Visualization regrids cubed-sphere snapshots on their recorded definition
+  (laws and longitude offset).
+- OPeNDAP downloads (the MERRA-2 recipe) are refused before anything is
+  created, unless dry-run or verify.
+
+Golden check at 17bda3f1 (the quick fixes and the API cleanup): the four
+non-slow preprocessing cases are identical, and the three CW84 cases
+reproduce their accepted reference.
+
+### Public API
+
+`reset_workspace!` (exported, no methods) is removed; `MetState`,
+`diagnose_cm_from_continuity_vc!` and `_ka!` are deprecated for removal in the
+next minor release.
+
+### Experiments (plan item A11 remainder and the positivity gates)
+
+- Column weights in the three cubed-sphere loops: no defect. Only the ERA5
+  N320 and MERRA-2 settings carry `column_balance_weights`, and both pass it
+  to the balance and the `cm` closure. The ERA5 spectral, lat-lon → cubed
+  sphere and GEOS paths have no such setting and use air-mass weights.
+  Offering the key there is a feature decision.
+- Positivity-gate denominators: on the lat-lon golden (72 × 37, 4 fixed
+  substeps), the lat-lon gate (each direction's outflow over the start mass)
+  peaks at 0.48 per substep; the cubed-sphere form (twice the summed outflow
+  over min(m, m_next)) peaks at 0.97 (windows 6–7) and would fail the 0.95
+  limit or need 5 substeps there. Adopting the cubed-sphere form for lat-lon
+  changes lat-lon binaries; left for the owner. (Both ratios were computed
+  per window from the stored substep fluxes and masses of the binary.)
+
+### Phase 7 survey (scripts)
+
+A read-only survey classified the scripts (maintained / one-off / unclear):
+diagnostics 25 / 56 / 28, visualization 7 / 8 / 15, preprocessing 20 / 2 / 4,
+benchmarks 9 / 8 / 2, validation 9 / 0 / 2, top level 1 / 3 / 7. Scripts
+that walk transport-binary payloads by hand: 12 (the library has no public
+single-section reader); five read ATMSNAP1 snapshots by hand (no library
+reader). Constants are redefined in about 35 scripts; a lon/lat → xyz helper
+exists in 11 Python files with two argument orders. Source and config comments
+cite several scripts as provenance, and two deleted scripts are still cited,
+ten times in eight files (`download_era5_physics.py` in
+`src/Preprocessing/era5_physics_binary.jl`, its test,
+`config/met_sources/era5.toml` and a legacy preprocessing config; a TRENDY
+config generator in four batch configs).
+
+### Phases 5–7 informed by Oceananigans.jl
+
+At the owner's suggestion the structure of Oceananigans.jl (CliMA, read at
+`bf47112f`) was compared with ours. Patterns to adopt, in order:
+
+1. Requirement traits folded once at model construction (halo width, payload
+   sections, capabilities) instead of per-call halo checks and per-operator
+   capability errors. Oceananigans: `required_halo_size_x`,
+   `closure_required_tracers`, automatic halo sizing.
+2. ENV switches that change results or cadence become config keys recorded in
+   binary headers or run metadata (Oceananigans has no `ENV` read in `src/`;
+   we have about 40 read expressions outside comments). No header records
+   which Poisson balance (column or per layer) built a binary. First: `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE`,
+   `ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS`, `ATMOSTR_ASSERT_CS_BINARY_CFL`.
+3. Types for the GEOS `cm_closure` (a Symbol tested at more than 15 sites) and
+   for surface-flux datasets (unit conversions duplicated per `kind`).
+4. One kernel-launch helper (Oceananigans `launch!`): 168 hand launches and
+   124 `synchronize` calls today. Replace call sites one to one with their
+   current workgroups (bit-identical), then remove synchronizations one at a
+   time behind GPU timing gates (the halo synchronization paces prefetch).
+5. Direction singletons and topology tags (`Periodic` x, `Bounded` y/z) for the
+   nine x/y/z face-flux methods and about 25 per-direction kernels; real
+   differences (the z mass floor) become named methods.
+6. Single-tracer kernels folded into the packed ones (`TracerView`, Nt = 1).
+7. A column-layout type for the TM5, CMFMC and diffusion column kernels.
+8. One window loop with schedule callbacks instead of the structured and
+   cubed-sphere loops in `DrivenRunner.jl`, which each poll snapshot times.
+9. `show`/`summary` for schemes, operators, the model and the simulation,
+   printed at run start.
+10. Tests mirroring `src/` with one backend switch, ExplicitImports checks,
+    and allocation budgets per window.
+11. A bibliography (DocumenterCitations), tested doctests, a developer guide.
+
+Not to copy: unsplit tendencies with Runge–Kutta stepping (the split
+mass-flux sweeps are kept for parity with TM5 and GCHP and for our discrete
+contracts: per-sweep positivity budgets and binary replay), `@muladd` and
+global workgroup heuristics (they break bit-identical goldens), Unicode
+operator names, adaptive time steps (fixed by the binary contract), global
+mutable defaults, and the KernelAbstractions internals behind their mapped
+kernels.
+
+## Status (2026-10-09, afternoon)
+
+`refactor/structure-2026-10` is pushed as PR #21 (25 commits on `3684b71a`,
+stacked on `feature/catrine-c90-benchmark`). `refactor/wip` adds, not yet
+pushed: the CW84 PPM option, five quick fixes, the public-API cleanup, the
+script archive (Phase 7 step 1) and this log. Every commit was reviewed by Codex; every results-changing step is
+in the golden reference `ref_current` (`ACCEPTED.txt`), now including the four
+slow cases and three CW84 cases.
 
 Done:
-- Phase 0: golden harness (24 cases, 20 of them not tagged `slow`).
-- Phase 1: A1, A2, A3, A4, A5, A8, A9 fixed; A11 for the reduced-Gaussian path and
-  the regrid CG limit (column weights in three cubed-sphere loops remain). The
-  reduced-Gaussian O24 goldens pass. A6 was folded into Phase 2; A7 is Phase 2.
-- Phase 2: constants in `PhysicalConstants.jl`; one dry-air set (relative
-  result changes: diffusion dz +3.4e-4, emissions −3.7e-5; dz of future TM5
-  convection attachments); binaries record their mesh radius (new binaries
-  only: runtime cell areas +7.2e-5 relative).
-- Phase 3: about 800 lines of dead code removed; a README in every `src/`
-  folder except `Downloads/sources/` (covered by `Downloads/README.md`);
-  `test_readme_current.jl` checks that each lists its folder's files;
-  `CLAUDE.md` code map; stale comments, docstrings and messages corrected.
-- Phase 4: 13 large files split move-only; no `src/` file is above 1000
-  lines except `era5_n320_regrid.jl` (1004, after the comment corrections).
+- Phases 0–4 (see above).
+- A10 as an option (`limiter = "cw84"`), evaluated on C90 against GCHP; the
+  default PPM is unchanged.
+- The owner's decisions on the public API; the five quick fixes; the column
+  weight question (no defect).
+- Phase 7 step 1: 77 one-off scripts moved to `scripts/completed_experiments/`
+  (index in its README; include and self-reference paths fixed, including
+  20 earlier archived scripts whose include of `cs_regrid_utils.jl` was
+  broken) and a `scripts/README.md`.
 
-For the owner to decide:
-- A10, structured PPM positivity (analysis and partial patch above): every
-  production PPM run would change.
-- Public API with no production caller (listed above): remove or keep.
-- The behavior findings from the README work (listed above).
+For the owner:
+- The MERRA-2 default combination of advection, diffusion and convection that
+  best matches GCHP (GCHP being a benchmark, the options remain for
+  transport-uncertainty estimates). A C90 run of CW84 horizontal sweeps with
+  the FV3 vertical profile is the next comparison.
+- Whether lat-lon preprocessing should use the cubed-sphere positivity gate
+  (more substeps on the lat-lon golden).
+- Whether the ERA5 spectral, lat-lon → cubed sphere and GEOS paths should
+  offer `column_balance_weights`.
 
-Not started: Phase 5 (types for Symbol/ENV switches), Phase 6 (duplication,
-e.g. the two block-coarsening helper sets, whose area-weighted versions differ
-in accumulation precision), Phase 7 (scripts, tests mirroring `src/`; only
-the script section tables are done).
+Not started: Phases 5–7, in the order listed in "Phases 5–7 informed by
+Oceananigans.jl", plus the library readers of Phase 7 (a public
+single-section binary reader and an ATMSNAP1 reader; survey above) and the two block-coarsening helper sets (their area-weighted
+versions differ in accumulation precision).
