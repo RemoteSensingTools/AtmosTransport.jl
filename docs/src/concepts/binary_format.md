@@ -58,6 +58,7 @@ the runtime actually dispatches on:
 | `cs_coordinate_law` | `Symbol` | CS only — e.g. `:equiangular_gnomonic` or `:gmao_equal_distance_gnomonic` |
 | `cs_center_law` | `Symbol` | CS only — `:angular_midpoint` or `:four_corner_normalized` |
 | `longitude_offset_deg` | `Float64` | CS only — final longitude rotation, `-10.0` for GEOS native |
+| `planet_radius_m` | `Float64` | radius [m] of the mesh on which the preprocessor computed cell areas and air masses; the runtime builds its mesh with it. The preprocessors use the IFS radius 6 371 229 m; binaries without the key read as 6 371 000 m |
 | `dt_met_seconds` | `Float64` | met-window cadence (typically 3600 s for hourly ERA5) |
 | `steps_per_window` | `Int` | compatibility scalar, equal to `maximum(steps_per_window_by_window)` |
 | `steps_per_window_by_window` | `Vector{Int}` | required v4 per-window substep schedule used by replay gates and runtime stepping |
@@ -231,6 +232,7 @@ writer = open_streaming_cs_transport_binary(
     cs_coordinate_law = :equiangular_gnomonic,
     cs_center_law = :angular_midpoint,
     longitude_offset_deg = 0.0,
+    planet_radius = mesh.radius,   # required: radius of the mesh the air masses were computed on
     extra_header = Dict(),
 )
 ```

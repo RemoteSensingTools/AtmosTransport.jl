@@ -6,7 +6,8 @@
 #
 #   * Per-scheme face-coefficient helpers (`_upwind_face_coeffs`,
 #     `_slopes_no_limiter_face_coeffs`, `_ppm_no_limiter_face_coeffs`,
-#     and the rm-input monotone PPM variant).
+#     and `_ppm_face_coeffs`, the rm-input variant for the monotone and
+#     CW84 limiters).
 #   * Per-direction interior + face-edge adjoint update helpers
 #     (`_add_x_face_adjoint!`, `_add_y_face_adjoint!`, `_add_z_face_adjoint!`).
 #   * Per-direction sweep adjoint kernels (`_cs_xsweep_adjoint_kernel!`,
@@ -108,6 +109,39 @@ end
     return value, deriv
 end
 
+@inline _ppm_edge_value_ad(c_ll, d_ll, c_l, d_l, c_r, d_r, c_rr, d_rr, ::MonotoneLimiter) =
+    _ppm_edge_value_ad(c_ll, d_ll, c_l, d_l, c_r, d_r, c_rr, d_rr)
+
+# CW84 edge (`_ppm_edge_value(…, ::CW84Limiter)`) with van Leer-limited slopes.
+@inline function _ppm_edge_value_ad(c_ll, d_ll, c_l, d_l, c_r, d_r, c_rr, d_rr, ::CW84Limiter)
+    FT = typeof(c_l)
+    δc_l, dδc_l = _limited_slope_monotone_ad(c_ll, d_ll, c_l, d_l, c_r, d_r)
+    δc_r, dδc_r = _limited_slope_monotone_ad(c_l, d_l, c_r, d_r, c_rr, d_rr)
+    value = (c_l + c_r) / FT(2) - (δc_r - δc_l) / FT(6)
+    deriv = _d6_sub(_d6_scale(_d6_add(d_l, d_r), FT(1) / FT(2)),
+                    _d6_scale(_d6_sub(dδc_r, dδc_l), FT(1) / FT(6)))
+    return value, deriv
+end
+
+# `_limited_slope(c_m, c_0, c_p, MonotoneLimiter())`: the minmod picks the
+# argument of smallest magnitude when all three share a sign.
+@inline function _limited_slope_monotone_ad(c_m, d_m, c_0, d_0, c_p, d_p)
+    FT = typeof(c_0)
+    sc = (c_p - c_m) / 2
+    sp = 2 * (c_p - c_0)
+    sm = 2 * (c_0 - c_m)
+    same_sign = ((sc > zero(FT)) & (sp > zero(FT)) & (sm > zero(FT))) |
+                ((sc < zero(FT)) & (sp < zero(FT)) & (sm < zero(FT)))
+    same_sign || return zero(FT), _d6_zero(FT)
+    if abs(sc) <= abs(sp) && abs(sc) <= abs(sm)
+        return sc, _d6_scale(_d6_sub(d_p, d_m), FT(1) / FT(2))
+    elseif abs(sp) <= abs(sm)
+        return sp, _d6_scale(_d6_sub(d_p, d_0), FT(2))
+    else
+        return sm, _d6_scale(_d6_sub(d_0, d_m), FT(2))
+    end
+end
+
 @inline function _ppm_limit_profile_monotone_ad(q_L, dq_L, c_bar, dc_bar, q_R, dq_R)
     FT = typeof(c_bar)
     is_extremum = (q_R - c_bar) * (c_bar - q_L) <= zero(FT)
@@ -138,10 +172,30 @@ end
 
 @inline _limited_moment_monotone_ad(sx, dsx, _rm_cell, _drm_cell) = (sx, dsx)
 
-@inline function _ppm_monotone_face_coeffs(F,
-                                           m_3, m_2, m_1, m_0, m_p, m_pp,
-                                           rm_3, rm_2, rm_1, rm_0, rm_p, rm_pp,
-                                           interior_l::Bool, interior_r::Bool)
+# Curvature part of the PPM moment (`_ppm_raw_moments`): none for the monotone
+# limiter, α·b₀ with b₀ = (q_L − c) + (q_R − c) for CW84.
+@inline _ppm_curvature_ad(_α, _q_L, _dq_L, c, _dc, _q_R, _dq_R, ::MonotoneLimiter) =
+    (zero(c), _d6_zero(typeof(c)))
+
+@inline function _ppm_curvature_ad(α, q_L, dq_L, c, dc, q_R, dq_R, ::CW84Limiter)
+    FT = typeof(c)
+    b0 = (q_L - c) + (q_R - c)
+    db0 = _d6_sub(_d6_add(dq_L, dq_R), _d6_scale(dc, FT(2)))
+    return α * b0, _d6_scale(db0, α)
+end
+
+"""
+    _ppm_face_coeffs(F, m_3, …, m_pp, rm_3, …, rm_pp, interior_l, interior_r, limiter) → NTuple{6}
+
+Derivatives of the structured PPM face flux (`_xface_tracer_flux` and its y/z
+twins) with respect to the tracer masses of the six stencil cells, for the
+monotone and CW84 limiters. The branches (limiters, flow direction) are those
+of the forward at the taped tracer masses.
+"""
+@inline function _ppm_face_coeffs(F,
+                                  m_3, m_2, m_1, m_0, m_p, m_pp,
+                                  rm_3, rm_2, rm_1, rm_0, rm_p, rm_pp,
+                                  interior_l::Bool, interior_r::Bool, limiter)
     FT = typeof(F)
     m_floor = eps(FT)
     m3 = max(m_3, m_floor)
@@ -165,37 +219,40 @@ end
     dc_p = _d6_basis(FT, 5, inv(mp))
     dc_pp = _d6_basis(FT, 6, inv(mpp))
 
-    e_left, de_left = _ppm_edge_value_ad(c_3, dc_3, c_2, dc_2, c_1, dc_1, c_0, dc_0)
-    e_face, de_face = _ppm_edge_value_ad(c_2, dc_2, c_1, dc_1, c_0, dc_0, c_p, dc_p)
-    e_right, de_right = _ppm_edge_value_ad(c_1, dc_1, c_0, dc_0, c_p, dc_p, c_pp, dc_pp)
+    e_left, de_left = _ppm_edge_value_ad(c_3, dc_3, c_2, dc_2, c_1, dc_1, c_0, dc_0, limiter)
+    e_face, de_face = _ppm_edge_value_ad(c_2, dc_2, c_1, dc_1, c_0, dc_0, c_p, dc_p, limiter)
+    e_right, de_right = _ppm_edge_value_ad(c_1, dc_1, c_0, dc_0, c_p, dc_p, c_pp, dc_pp, limiter)
 
-    _qLl, _dqLl, qRl, dqRl =
+    qLl, dqLl, qRl, dqRl =
         _ppm_limit_profile_monotone_ad(e_left, de_left, c_1, dc_1, e_face, de_face)
-    qLr, dqLr, _qRr, _dqRr =
+    qLr, dqLr, qRr, dqRr =
         _ppm_limit_profile_monotone_ad(e_face, de_face, c_0, dc_0, e_right, de_right)
 
-    sx_l_raw = m1 * (qRl - c_1)
-    dsx_l_raw = _d6_scale(_d6_sub(dqRl, dc_1), m1)
+    α_pos = clamp(F / m1, zero(FT), one(FT))
+    α_neg = clamp(F / m0, -one(FT), zero(FT))
+
+    κ_l, dκ_l = _ppm_curvature_ad(α_pos, qLl, dqLl, c_1, dc_1, qRl, dqRl, limiter)
+    sx_l_raw = m1 * ((qRl - c_1) - κ_l)
+    dsx_l_raw = _d6_scale(_d6_sub(_d6_sub(dqRl, dc_1), dκ_l), m1)
     sx_l, dsx_l = interior_l ?
         _limited_moment_monotone_ad(sx_l_raw, dsx_l_raw, rm_1, _d6_basis(FT, 3, one(FT))) :
         (zero(FT), _d6_zero(FT))
 
-    sx_r_raw = m0 * (c_0 - qLr)
-    dsx_r_raw = _d6_scale(_d6_sub(dc_0, dqLr), m0)
+    κ_r, dκ_r = _ppm_curvature_ad(α_neg, qLr, dqLr, c_0, dc_0, qRr, dqRr, limiter)
+    sx_r_raw = m0 * ((c_0 - qLr) - κ_r)
+    dsx_r_raw = _d6_scale(_d6_sub(_d6_sub(dc_0, dqLr), dκ_r), m0)
     sx_r, dsx_r = interior_r ?
         _limited_moment_monotone_ad(sx_r_raw, dsx_r_raw, rm_0, _d6_basis(FT, 4, one(FT))) :
         (zero(FT), _d6_zero(FT))
 
     if F >= zero(FT)
-        α = clamp(F / m1, zero(FT), one(FT))
         drm_l = _d6_basis(FT, 3, one(FT))
-        return _d6_add(_d6_scale(drm_l, α),
-                       _d6_scale(dsx_l, α * (one(FT) - α)))
+        return _d6_add(_d6_scale(drm_l, α_pos),
+                       _d6_scale(dsx_l, α_pos * (one(FT) - α_pos)))
     else
-        α = clamp(F / m0, -one(FT), zero(FT))
         drm_r = _d6_basis(FT, 4, one(FT))
-        return _d6_sub(_d6_scale(drm_r, α),
-                       _d6_scale(dsx_r, α * (one(FT) + α)))
+        return _d6_sub(_d6_scale(drm_r, α_neg),
+                       _d6_scale(dsx_r, α_neg * (one(FT) + α_neg)))
     end
 end
 
@@ -240,20 +297,20 @@ end
 end
 
 @inline function _add_x_face_adjoint!(lambda_in, m, rm, face_i, j, k, F, scale,
-                                      ::PPMScheme{MonotoneLimiter}, Nx)
+                                      scheme::PPMScheme{<:_PPMTapedLimiter}, Nx)
     i_3  = _wrap_periodic(face_i - Int32(3), Nx)
     i_2  = _wrap_periodic(face_i - Int32(2), Nx)
     i_1  = _wrap_periodic(face_i - Int32(1), Nx)
     i_0  = _wrap_periodic(face_i, Nx)
     i_p  = _wrap_periodic(face_i + Int32(1), Nx)
     i_pp = _wrap_periodic(face_i + Int32(2), Nx)
-    c = _ppm_monotone_face_coeffs(
+    c = _ppm_face_coeffs(
         F,
         m[i_3, j, k], m[i_2, j, k], m[i_1, j, k],
         m[i_0, j, k], m[i_p, j, k], m[i_pp, j, k],
         rm[i_3, j, k], rm[i_2, j, k], rm[i_1, j, k],
         rm[i_0, j, k], rm[i_p, j, k], rm[i_pp, j, k],
-        true, true)
+        true, true, scheme.limiter)
     @atomic lambda_in[i_3,  j, k] += scale * c[1]
     @atomic lambda_in[i_2,  j, k] += scale * c[2]
     @atomic lambda_in[i_1,  j, k] += scale * c[3]
@@ -355,7 +412,7 @@ end
 end
 
 @inline function _add_y_face_adjoint!(lambda_in, m, rm, i, face_j, k, F, scale,
-                                      ::PPMScheme{MonotoneLimiter}, Ny)
+                                      scheme::PPMScheme{<:_PPMTapedLimiter}, Ny)
     at_boundary = (face_j <= Int32(1)) | (face_j > Ny)
     at_boundary && return nothing
     j3l = max(face_j - Int32(3), Int32(1))
@@ -366,13 +423,13 @@ end
     j3r = min(face_j + Int32(2), Ny)
     interior_l = (jl > Int32(2)) & (jl < Ny - Int32(1))
     interior_r = (jr > Int32(2)) & (jr < Ny - Int32(1))
-    c = _ppm_monotone_face_coeffs(
+    c = _ppm_face_coeffs(
         F,
         m[i, j3l, k], m[i, jll, k], m[i, jl, k],
         m[i, jr, k], m[i, jrr, k], m[i, j3r, k],
         rm[i, j3l, k], rm[i, jll, k], rm[i, jl, k],
         rm[i, jr, k], rm[i, jrr, k], rm[i, j3r, k],
-        interior_l, interior_r)
+        interior_l, interior_r, scheme.limiter)
     @atomic lambda_in[i, j3l, k] += scale * c[1]
     @atomic lambda_in[i, jll, k] += scale * c[2]
     @atomic lambda_in[i, jl,  k] += scale * c[3]
@@ -474,7 +531,7 @@ end
 end
 
 @inline function _add_z_face_adjoint!(lambda_in, m, rm, i, j, face_k, F, scale,
-                                      ::PPMScheme{MonotoneLimiter, SameAsHorizontal}, Nz)
+                                      scheme::CSAdjointNonlinearScheme, Nz)
     at_boundary = (face_k <= Int32(1)) | (face_k > Nz)
     at_boundary && return nothing
     k3l = max(face_k - Int32(3), Int32(1))
@@ -485,13 +542,13 @@ end
     k3r = min(face_k + Int32(2), Nz)
     interior_l = (kl > Int32(2)) & (kl < Nz - Int32(1))
     interior_r = (kr > Int32(2)) & (kr < Nz - Int32(1))
-    c = _ppm_monotone_face_coeffs(
+    c = _ppm_face_coeffs(
         F,
         m[i, j, k3l], m[i, j, kll], m[i, j, kl],
         m[i, j, kr], m[i, j, krr], m[i, j, k3r],
         rm[i, j, k3l], rm[i, j, kll], rm[i, j, kl],
         rm[i, j, kr], rm[i, j, krr], rm[i, j, k3r],
-        interior_l, interior_r)
+        interior_l, interior_r, scheme.limiter)
     @atomic lambda_in[i, j, k3l] += scale * c[1]
     @atomic lambda_in[i, j, kll] += scale * c[2]
     @atomic lambda_in[i, j, kl]  += scale * c[3]
@@ -547,7 +604,7 @@ end
 
 @kernel function _cs_xsweep_adjoint_kernel!(lambda_in, @Const(lambda_out),
                                             @Const(m), @Const(rm), @Const(am),
-                                            scheme::PPMScheme{MonotoneLimiter},
+                                            scheme::PPMScheme{<:_PPMTapedLimiter},
                                             Nc, Hp, flux_scale)
     ii, jj, k = @index(Global, NTuple)
     @inbounds begin
@@ -563,7 +620,7 @@ end
 
 @kernel function _cs_ysweep_adjoint_kernel!(lambda_in, @Const(lambda_out),
                                             @Const(m), @Const(rm), @Const(bm),
-                                            scheme::PPMScheme{MonotoneLimiter},
+                                            scheme::PPMScheme{<:_PPMTapedLimiter},
                                             Nc, Hp, flux_scale)
     ii, jj, k = @index(Global, NTuple)
     @inbounds begin
@@ -579,7 +636,7 @@ end
 
 @kernel function _cs_zsweep_adjoint_kernel!(lambda_in, @Const(lambda_out),
                                             @Const(m), @Const(rm), @Const(cm),
-                                            scheme::PPMScheme{MonotoneLimiter, SameAsHorizontal},
+                                            scheme::CSAdjointNonlinearScheme,
                                             Nc, Hp, Nz, flux_scale)
     ii, jj, k = @index(Global, NTuple)
     @inbounds begin
@@ -634,7 +691,7 @@ end
 # PPM adjoints cover the default vertical reconstruction only; the FV3 vertical
 # profile (`FV3ScalarProfile`) has no adjoint yet.
 function _adjoint_scheme_sweep!(lambda_panels, m_before, rm_before, flux_panels,
-                                direction::Symbol, scheme::PPMScheme{MonotoneLimiter, SameAsHorizontal},
+                                direction::Symbol, scheme::CSAdjointNonlinearScheme,
                                 mesh::CubedSphereMesh, ws::CSAdjointWorkspace,
                                 flux_scale)
     Nc, Hp = mesh.Nc, mesh.Hp

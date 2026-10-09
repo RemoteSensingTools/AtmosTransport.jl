@@ -147,15 +147,15 @@ const AbstractArchitecture = Architectures.AbstractArchitecture
 const CPU = Architectures.CPU
 const GPU = Architectures.GPU
 
-# ---- Section timer (host-side wall-clock; off unless ATMOSTR_TIMERS=1) ----
+# ---- Section timer (host-side wall-clock; off unless ATMOSTR_TIMERS=1/true/on/yes) ----
 include("Diagnostics/SectionTimer.jl")
 using .SectionTimer
 
 # ---- Quantity-kind dispatch traits ----
-# Tiny trait module loaded early so any downstream module (Preprocessing,
-# Operators, Output) can dispatch on extensive vs intensive vs vector vs flux
-# field semantics without circular dependencies. See Quantities.jl for the
-# four-type taxonomy and their regrid-handling contracts.
+# Tiny trait module with no dependencies, loaded early so later modules can
+# dispatch on extensive vs intensive vs vector vs flux field semantics.
+# Only Preprocessing uses it (the CS regrid helpers). See
+# Quantities.jl for the four-type taxonomy and their regrid-handling contracts.
 include("Quantities/Quantities.jl")
 using .Quantities
 
@@ -216,10 +216,10 @@ include("Operators/Operators.jl")
 using .Operators
 
 # ---- Adjoint tape storage + records ----
-# Loaded BEFORE `Adjoints/` so the kernels module can `using ..Tape: ...`
-# for the relocated storage policies and record types. The reverse-loop
-# driver that DISPATCHES on these record types still lives in Adjoints
-# (eventual move to `Footprint/`).
+# Loaded BEFORE `Adjoints/` so that module can `using ..Tape: ...` for the
+# storage policies and record types. The reverse-loop driver that
+# dispatches on these record types is `Footprint/ReverseLoop.jl`, a file
+# included into the `Adjoints` module.
 include("Tape/Tape.jl")
 using .Tape
 

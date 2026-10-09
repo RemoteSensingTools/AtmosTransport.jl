@@ -30,6 +30,8 @@ module Fields
 
 using Adapt
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
+using ...Parameters: STANDARD_GRAVITY, CP_DRY_AIR, CP_OVER_R_DIATOMIC, THETA_REFERENCE_PRESSURE,
+                     GEOSCHEM_CONSTANTS, VIRTUAL_TEMPERATURE_FACTOR
 
 export AbstractTimeVaryingField, AbstractCubedSphereField
 export ConstantField, ProfileKzField, PreComputedKzField, CubedSphereField
@@ -109,6 +111,10 @@ end
 @inline field_value(f::ConstantField{FT, N}, ::NTuple{N, Int}) where {FT, N} = f.value
 
 update_field!(f::ConstantField, ::Real) = f
+
+# Potential temperature θ = T (p_ref / p)^κ of air at temperature T and pressure p, κ = R/cp;
+# the boundary-layer fields call it with their own constant sets.
+@inline _potential_temperature(T, p, κ, p_ref) = T * (p_ref / p)^κ
 
 # =========================================================================
 # Rank-3 concrete types

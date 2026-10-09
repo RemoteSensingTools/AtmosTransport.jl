@@ -122,7 +122,7 @@ end
     @test_throws DimensionMismatch CubedSphereState(
         DryBasis, panels_air, panels_raw, (:CO2,); halo_width=2)
 
-    mixed_met = AtmosTransport.State.MetState(
+    mixed_met = @test_deprecated AtmosTransport.State.MetState(
         ones(Float64, 4, 3), ones(Float32, 4, 3, 2))
     @test eltype(mixed_met.ps) === Float64
     @test eltype(mixed_met.q) === Float32

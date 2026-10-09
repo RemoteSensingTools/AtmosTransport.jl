@@ -127,6 +127,14 @@ struct OPeNDAPProtocol <: AbstractDownloadProtocol
 end
 
 """
+    protocol_can_download(protocol) -> Bool
+
+True for protocols with an `execute!` implementation. The others (OPeNDAP)
+can dry-run and verify existing files, but not download.
+"""
+protocol_can_download(::AbstractDownloadProtocol) = false
+
+"""
     HTTPProtocol
 
 Direct HTTP file download via Downloads.jl with Content-Length verification.
@@ -157,6 +165,8 @@ GRIB from its per-variable-group files).
 struct GCSProtocol <: AbstractDownloadProtocol
     bucket_base::String    # e.g. "https://storage.googleapis.com/gcp-public-data-arco-era5"
 end
+
+protocol_can_download(::Union{CDSProtocol, MARSProtocol, HTTPProtocol, S3Protocol, GCSProtocol}) = true
 
 # ---------------------------------------------------------------------------
 # Download tasks — intermediate representation for dry-run and execution

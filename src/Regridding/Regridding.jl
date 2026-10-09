@@ -4,11 +4,13 @@
 Offline conservative regridding between mesh types, built on
 [ConservativeRegridding.jl](https://github.com/JuliaGeo/ConservativeRegridding.jl).
 
-Designed for the preprocessing stage: build a sparse weights matrix once per
-`(source_mesh, target_mesh)` pair, cache it to disk, and reuse at every
-subsequent run. The runtime transport core never calls into this module —
-`TransportBinaryReader` consumes binaries that are
-already on the target grid.
+Build a sparse weights matrix once per `(source_mesh, target_mesh)` pair,
+optionally cache it to disk, and reuse it. Callers are `Preprocessing` (met
+data to target grids), `Models.InitialConditionIO` (initial conditions and
+surface-flux inventories at run setup) and `Visualization` (cubed-sphere to
+lon-lat rasters). The operators and the stepping loop never call into this
+module — `TransportBinaryReader` consumes binaries that are already on the
+target grid.
 
 ## Workflow
 
@@ -46,7 +48,7 @@ required by CR.jl's spherical dual-DFS intersection search.
 ## Known limitations
 
 - `CubedSphereMesh` uses analytical coordinates from
-  `src/Grids/CubedSphereMesh.jl`. `GEOSNativePanelConvention` includes the
+  `src/Grids/cs_mesh_coordinates.jl`. `GEOSNativePanelConvention` includes the
   GEOS-FP/GEOS-IT panel order, native orientation, and global `-10°`
   longitude offset used by GEOS grid files. Left-handed GEOS panels are
   wound correctly for tree traversal while preserving file-order indices.
@@ -58,8 +60,9 @@ required by CR.jl's spherical dual-DFS intersection search.
 
 ## Architecture reference
 
-See `docs/CONSERVATIVE_REGRIDDING.md` for a full write-up of the algorithm,
-conventions, and verification results.
+See `docs/src/preprocessing/regridding.md` for the public API, the weights
+cache, and the mass-consistency correction applied after regridding, and
+`src/Regridding/README.md` for the file map and invariants.
 """
 module Regridding
 
@@ -68,7 +71,7 @@ using ..Grids: AbstractHorizontalMesh, AbstractStructuredMesh,
                AbstractCubedSpherePanelConvention,
                GnomonicPanelConvention, GEOSNativePanelConvention,
                nrings, nboundaries, ring_cell_count, cell_index,
-               nx, ny, ncells, panel_cell_corner_lonlat,
+               nx, ny, ncells, cell_area, panel_cell_corner_lonlat,
                cs_definition, coordinate_law, center_law, longitude_offset_deg,
                cs_definition_tag, coordinate_law_tag, center_law_tag
 

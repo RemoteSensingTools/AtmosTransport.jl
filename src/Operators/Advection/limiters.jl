@@ -192,6 +192,14 @@ No moment limiting — returns ``s_x`` unchanged.
 @inline _limited_moment(sx, rm_cell, ::NoLimiter) = sx
 
 """
+    _limited_moment(sx, rm_cell, ::CW84Limiter)
+
+No moment clamp: the limited CW84 parabola already bounds the swept mean by
+neighbouring cell means (see `MonotoneLimiter`).
+"""
+@inline _limited_moment(sx, _rm_cell, ::CW84Limiter) = sx
+
+"""
     _limited_moment(sx, rm_cell, ::PositivityLimiter)
 
 Clamp ``s_x`` to ``[-r_m, r_m]``. This limiter requires a non-negative

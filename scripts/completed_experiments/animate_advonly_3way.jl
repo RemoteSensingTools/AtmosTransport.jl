@@ -16,7 +16,7 @@
 
 using CairoMakie
 using Dates, Printf, Statistics
-include(joinpath(@__DIR__, "cs_regrid_utils.jl"))
+include(joinpath(@__DIR__, "..", "visualization", "cs_regrid_utils.jl"))
 
 # ── Configuration ─────────────────────────────────────────────────────────
 OUTDIR   = get(ENV, "OUTDIR", "/temp1/catrine/output")

@@ -42,6 +42,39 @@
 - The EDGAR tonnes-to-flux normalisation (`_lonlat_cell_areas_m2`) took the
   grid spacing from the first coordinate difference, which errs by ~1e-4 for
   coordinates stored in `Float32`. It now uses the full span.
+- `[mass_fix] mode = "initial_endpoint"` silently skipped the global dry-mass
+  pin for MERRA-2 and ERA5 N320 sources: their writers pin only to a finite
+  target, and this mode passes none. Only the GEOS native path implements it
+  (`supports_initial_endpoint_mass_pin`); other sources now refuse the mode.
+  No shipped configuration used it.
+- `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` did not skip the write-time replay gate
+  of the GEOS cubed-sphere writer. It does now, through
+  `verify_window!(…; write_replay_on)`, and its log no longer reports a worst
+  replay window when the gate was skipped. With the gate skipped, the
+  cubed-sphere regrid, ERA5 N320 and MERRA-2 writers ran the positivity gate
+  against the window's start mass only; they now also pass the end mass, as
+  with the gate on (only runs with the variable set are affected).
+- The reduced-Gaussian spectral writer wrote straight to the final file, so a
+  day that failed a gate deleted an existing binary of that day. It now
+  stages to `<out>.tmp` like the other writers.
+- Visualization regridded cubed-sphere snapshots on the panel convention's
+  default mesh, ignoring the recorded coordinate law, center law and
+  longitude offset (`cs_*` and `longitude_of_central_meridian` attributes).
+  `CubedSphereSnapshotTopology` now carries the snapshot's definition.
+- The MERRA-2 download recipe uses OPeNDAP, whose download step is not
+  implemented: it failed at the first file, after creating the output tree,
+  with a message naming a script that no longer exists. `download_data!` now
+  refuses such recipes before doing anything unless `--dry-run` or
+  `--verify` is given (`protocol_can_download`).
+- `[numerics] geos_balance_mode` was ignored by the MERRA-2 and ERA5 N320
+  writers, which balanced per layer only with the environment variable
+  `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1`; no header recorded the
+  mode. `[numerics] balance_mode = "column" | "per_layer"` (old name
+  accepted) now selects it on every path, the LL-to-CS regrid script takes
+  `--balance-mode`, and every transport-binary header records
+  `horizontal_balance`. The environment variable still works where it did
+  (every path except GEOS) when the key is absent, with a deprecation
+  warning. Default results are unchanged.
 
 ### Numerical changes
 
@@ -92,6 +125,18 @@
 
 ### Runtime and output
 
+- New PPM option `[advection] limiter = "cw84"` (`PPMScheme(CW84Limiter())`):
+  the complete Colella–Woodward (1984) PPM, with van Leer-limited edge values
+  and a flux that integrates the limited parabola over the swept fraction.
+  Every sweep in which no cell exports more than its air mass keeps
+  non-negative tracers such as fossil CO₂ non-negative, where the default PPM
+  undershoots (−0.16 on a [0, 1] box in a 1-D test). Lat-lon and cubed
+  sphere, CPU and GPU, with the cubed-sphere adjoint. The default
+  `scheme = "ppm"` is unchanged.
+- Deprecated, for removal in the next minor release: `State.MetState`,
+  `diagnose_cm_from_continuity_vc!` and `diagnose_cm_from_continuity_ka!`. No
+  part of the package uses them. Removed: the exported generic function
+  `Preprocessing.reset_workspace!`, which had no methods.
 - Runs and preprocessing from `git archive` code snapshots record their commit:
   git writes it into `src/REVISION` on export (`export-subst`), and
   `source_revision()` reports it when the tree has no `.git`; edits made after

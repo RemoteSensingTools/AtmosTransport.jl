@@ -10,7 +10,7 @@ the reference surface pressure. Returns `(merged_vc, merge_map)` where
 """
 function merge_thin_levels(vc::HybridSigmaPressure{FT};
                            min_thickness_Pa::Real = FT(1000),
-                           p_surface::Real = FT(101325)) where FT
+                           p_surface::Real = FT(STANDARD_PRESSURE)) where FT
     Nz = n_levels(vc)
     ps = FT(p_surface)
     min_dp = FT(min_thickness_Pa)

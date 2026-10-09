@@ -9,7 +9,7 @@
 #   Footer: per-frame R², RMSE, mass stats
 #
 # Usage:
-#   julia --project=. scripts/visualization/animate_catrine_ord7damp_co2.jl
+#   julia --project=. scripts/completed_experiments/animate_catrine_ord7damp_co2.jl
 # ===========================================================================
 
 using CairoMakie
@@ -19,7 +19,7 @@ using Dates
 using Statistics
 using Printf
 
-include(joinpath(@__DIR__, "cs_regrid_utils.jl"))
+include(joinpath(@__DIR__, "..", "visualization", "cs_regrid_utils.jl"))
 
 # ---------------------------------------------------------------------------
 # Configuration

@@ -18,43 +18,8 @@ end
 # Section element counts
 # ---------------------------------------------------------------------------
 
-function _cs_section_elements(h::TransportBinaryHeader{CubedSphereBinaryGeometry},
-                              section::Symbol)
-    g = h.geometry
-    Nc, Nz, np = g.Nc, h.nlevel, g.npanel
-    if section === :m
-        return np * Nc * Nc * Nz
-    elseif section === :am
-        return np * (Nc + 1) * Nc * Nz
-    elseif section === :bm
-        return np * Nc * (Nc + 1) * Nz
-    elseif section === :cm
-        return np * Nc * Nc * (Nz + 1)
-    elseif _is_cs_2d_section(section)
-        return np * Nc * Nc
-    elseif _is_gchp_vdiff_payload_section(section)
-        return np * Nc * Nc * Nz
-    elseif section === :dkg
-        return np * Nc * Nc * Nz
-    elseif section === :cmfmc
-        return np * Nc * Nc * (Nz + 1)
-    elseif section === :dtrain
-        return np * Nc * Nc * Nz
-    # TM5 convection — four layer-center fields.
-    elseif section in (:entu, :detu, :entd, :detd)
-        return np * Nc * Nc * Nz
-    elseif section === :dm
-        return np * Nc * Nc * Nz
-    elseif section in (:dam,)
-        return np * (Nc + 1) * Nc * Nz
-    elseif section in (:dbm,)
-        return np * Nc * (Nc + 1) * Nz
-    elseif section in (:dcm,)
-        return np * Nc * Nc * (Nz + 1)
-    else
-        error("Unknown CS binary section: $section")
-    end
-end
+_cs_section_elements(h::TransportBinaryHeader{CubedSphereBinaryGeometry}, section::Symbol) =
+    _cs_section_elements(h.geometry.Nc, h.geometry.npanel, h.nlevel, section)
 
 # ---------------------------------------------------------------------------
 # Window loading
@@ -373,8 +338,9 @@ function load_grid(
     h = reader.header
     g = h.geometry
     vertical = HybridSigmaPressure(FT.(h.A_ifc), FT.(h.B_ifc))
-    mesh = CubedSphereMesh(; FT, Nc=g.Nc, Hp, definition=mesh_definition(reader))
-    return AtmosGrid(mesh, vertical, arch; FT)
+    mesh = CubedSphereMesh(; FT, Nc=g.Nc, Hp, definition=mesh_definition(reader),
+                           radius=FT(h.planet_radius_m))
+    return AtmosGrid(mesh, vertical, arch; FT, radius=h.planet_radius_m)
 end
 
 export load_surface_window!, mesh_convention, mesh_definition

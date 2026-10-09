@@ -162,17 +162,6 @@ function _era5_api_request(req::Dict{String, Any}, date_str::String, dates::Vect
     return request
 end
 
-function _date_range_from_str(date_str::String)
-    if contains(date_str, "/to/")
-        parts = split(date_str, "/to/")
-        d1 = Date(parts[1])
-        d2 = Date(parts[2])
-        return collect(d1:Day(1):d2)
-    else
-        return [Date(date_str)]
-    end
-end
-
 function _era5_estimate_size(req::Dict{String, Any}, dates::Vector{Date})
     # Rough estimates based on native T639/N320 sizes
     # T639 spectral field ≈ 1.6 MB, N320 gridpoint ≈ 0.8 MB

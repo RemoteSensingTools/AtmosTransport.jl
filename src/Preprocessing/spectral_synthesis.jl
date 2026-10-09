@@ -126,9 +126,9 @@ function vod2uv!(u_spec::Matrix{ComplexF64}, v_spec::Matrix{ComplexF64},
             d_n = d_spec[n + 1, m + 1]    # D_n^m
 
             # IFS Eq 2.14: Û = R_E · (δ·VO_{n-1} + i·σ·D_n − δ_{n+1}·VO_{n+1})
-            u_spec[n + 1, m + 1] = R_EARTH * (delta_mn * vo_nm1 + im * sigma_mn * d_n - delta_mn1 * vo_np1)
+            u_spec[n + 1, m + 1] = IFS_EARTH_RADIUS * (delta_mn * vo_nm1 + im * sigma_mn * d_n - delta_mn1 * vo_np1)
             # IFS Eq 2.15: V̂ = R_E · (−δ·D_{n-1} + i·σ·VO_n + δ_{n+1}·D_{n+1})
-            v_spec[n + 1, m + 1] = R_EARTH * (-delta_mn * d_nm1 + im * sigma_mn * vo_n + delta_mn1 * d_np1)
+            v_spec[n + 1, m + 1] = IFS_EARTH_RADIUS * (-delta_mn * d_nm1 + im * sigma_mn * vo_n + delta_mn1 * d_np1)
         end
     end
     return nothing
@@ -283,7 +283,7 @@ where `area[i, j]` is the horizontal cell area [m²] and `g` is the
 gravitational acceleration [m/s²].
 """
 function compute_air_mass!(m_arr, dp, area, Nlon, Nlat, Nz)
-    inv_g = 1.0 / GRAV  # [s²/m]
+    inv_g = 1.0 / STANDARD_GRAVITY  # [s²/m]
     @inbounds for k in 1:Nz, j in 1:Nlat, i in 1:Nlon
         m_arr[i, j, k] = dp[i, j, k] * area[i, j] * inv_g  # [Pa × m² × s²/m] = [kg]
     end
@@ -341,7 +341,7 @@ winds when no independent vertical mass flux is supplied.
 function compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps,
                               dA, dB, grid::LatLonTargetGeometry, half_dt, Nz)
     Nlon, Nlat = nlon(grid), nlat(grid)
-    R_g = R_EARTH / GRAV   # [m × s²/m] = [s²/m²] — converts dp × R / g to mass/area
+    R_g = IFS_EARTH_RADIUS / STANDARD_GRAVITY   # [m × s²/m] = [s²/m²] — converts dp × R / g to mass/area
     dlon = grid.dlon        # [radians] — longitudinal grid spacing
     dlat = grid.dlat        # [radians] — latitudinal grid spacing
     # --- Zonal mass flux: am[i, j, k] at west face of cell (i, j) ---

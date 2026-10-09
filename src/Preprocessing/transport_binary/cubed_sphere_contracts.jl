@@ -116,12 +116,12 @@ end
                                   halo_width = 0, m_next = nothing)
 
 Verify the per-substep horizontal+vertical positivity contract that the runtime's
-`_cs_static_subcycle_count` depends on. For every interior cell on every panel:
+`_cs_static_palindrome_subcycle_count` depends on. For every interior cell on every panel:
 
-  1. The cell air mass itself must be positive (`m > 0`). A non-positive cell
-     mass is an immediate contract violation — the runtime divides by `m` and
-     would produce `Inf` or `NaN` in the CFL scan. Such a cell is reported with
-     `ratio = Inf` regardless of flux magnitude.
+  1. The cell air mass itself must be positive (`m > 0`), a preprocessing
+     invariant enforced here (the runtime CFL scan skips such cells). A
+     non-positive cell mass is reported with `ratio = Inf` regardless of flux
+     magnitude.
   2. The combined Strang-palindrome outgoing budget
      `2 * (out_x + out_y + out_z)` must not exceed `cfl_limit * m_ref`, where
      `m_ref = min(m, m_next)` when `m_next` is supplied by a caller that wants
@@ -448,15 +448,26 @@ end
 @inline contract_require_positivity(c::CubedSphereContract)  = c.require_substep_positivity
 
 """
-    verify_window!(window, contract::CubedSphereContract, win_idx::Int)
-        -> (; replay, positivity)
+    verify_window!(window, contract::CubedSphereContract, win_idx::Int;
+                   write_replay_on = true) -> (; replay, positivity)
 
 Run the per-window CS contract on a NamedTuple `window` with fields
 `m_cur`, `am`, `bm`, `cm`, `m_next` (each a 6-tuple of panel arrays).
 Delegates to `verify_cs_window_contract!`; the replay gate throws on
-violation, the positivity gate is non-fatal here.
+violation, the positivity gate is non-fatal here. With
+`write_replay_on = false` (`ATMOSTR_NO_WRITE_REPLAY_CHECK=1`) only the
+positivity gate runs and the replay diagnostic is zero.
 """
-function verify_window!(window, contract::CubedSphereContract, win_idx::Integer)
+function verify_window!(window, contract::CubedSphereContract, win_idx::Integer;
+                        write_replay_on::Bool = true)
+    if !write_replay_on
+        positivity = verify_substep_positivity_cs!(window.m_cur, window.am, window.bm, window.cm;
+                                                   cfl_limit  = contract.positivity_cfl_limit,
+                                                   halo_width = contract.halo_width,
+                                                   m_next     = window.m_next)
+        return (replay = (max_rel_err = 0.0, max_abs_err = 0.0, worst_idx = (0, 0, 0, 0)),
+                positivity = positivity)
+    end
     # Lazy-allocate `_div_scratch` on first call (or reallocate on a
     # shape change — should never happen in production but keeps the
     # invariant local). Subsequent calls reuse the buffer; the contract

@@ -2,16 +2,13 @@
 # Per-window RG transport-binary contract surface.
 #
 # Mirrors `cubed_sphere_contracts.jl` and `latlon_contracts.jl` for the
-# face-indexed reduced-Gaussian topology. Today the RG preprocessor calls
-# only `verify_window_continuity_rg` (the replay gate); there is no
-# analogue of `verify_substep_positivity_cs!` for RG fluxes. This surface
-# closes that asymmetry: RG gets the same per-substep positivity gate, the
-# same worst-window accumulator, and the same `require_substep_positivity`
-# escape-hatch policy as CS. The gate is intentionally NOT yet wired into
-# the RG `process_day` path.
+# face-indexed reduced-Gaussian topology: the replay gate
+# (`verify_window_continuity_rg`), the per-substep positivity gate, the
+# worst-window accumulator and the `require_substep_positivity` policy, as for
+# CS. The RG `process_day` checks every balanced window through
+# `_verify_rg_balanced_window!`.
 #
-# RG array shapes (confirmed against `ReducedWindowStorage` and
-# `verify_window_continuity_rg`):
+# RG array shapes (as in `SlidingWindowBuffer` and `verify_window_continuity_rg`):
 #
 #     m_cur      :: (nc, Nz)             # cell-centered mass
 #     hflux      :: (nf, Nz)             # face mass-flux per substep
@@ -29,8 +26,8 @@
 #
 # Boundary stubs (`face_left[f] ≤ 0` or `face_right[f] ≤ 0`) — the
 # south/north pole singularities of the RG mesh — are SKIPPED entirely.
-# This matches the runtime advection in
-# `src/Operators/Advection/StrangSplitting.jl:279`:
+# This matches the runtime face-indexed advection in
+# `src/Operators/Advection/sweeps.jl`:
 #
 #     if left > 0 && right > 0
 #         # accumulate flux to both cells
@@ -55,10 +52,9 @@
 #
 # Direction reported in the diagnostic is `:h` (horizontal) or `:z`
 # (vertical); RG faces aren't axis-aligned, so there is no separate `:x`/
-# `:y` decomposition. The CFL contract is per-direction in CS because
-# each direction runs its own substep schedule, and the same coarsening
-# applies to RG: the horizontal pass is one substep direction (mixed x/y)
-# and the vertical pass is the second.
+# `:y` decomposition. The RG runtime subcycles its horizontal pass (mixed
+# x/y) and its vertical pass independently, so the contract is checked per
+# pass (CS instead shares one palindrome count across X, Y and Z).
 # ===========================================================================
 
 """
@@ -84,7 +80,7 @@ For every cell `(c, k)`:
   1. `m > 0`. A non-positive cell mass is reported with `ratio = Inf`.
   2. Horizontal outgoing mass per substep ≤ `cfl_limit * m`. Only
      interior faces (`face_left > 0 && face_right > 0`) contribute,
-     matching the runtime advection in `StrangSplitting.jl:279`.
+     matching the runtime advection in `Advection/sweeps.jl`.
      Boundary stubs are not counted as outflow here — see
      `verify_boundary_stub_flux_rg` for the separate "non-zero flux on
      a boundary stub" invariant.
@@ -237,7 +233,7 @@ end
 Explicit-invariant scan: any non-zero `hflux` value on a boundary stub
 (`face_left ≤ 0` or `face_right ≤ 0`) is a contract violation. The
 runtime advection silently discards such fluxes
-(`StrangSplitting.jl:279`), so a writer that produces them is emitting
+(`Advection/sweeps.jl`), so a writer that produces them is emitting
 data the runtime cannot apply — almost always a sign-flip or boundary-
 masking bug in preprocessing.
 
@@ -315,7 +311,7 @@ in order:
      (`face_left ≤ 0` / `face_right ≤ 0`) carries non-zero `hflux`
      above `boundary_stub_tol`. No `require_*` escape hatch: such
      fluxes are silently discarded by the runtime
-     (`StrangSplitting.jl:279`), so emitting them is always a writer
+     (`Advection/sweeps.jl`), so emitting them is always a writer
      bug.
   2. **Replay gate** — `verify_window_continuity_rg`; errors on
      failure.
@@ -363,7 +359,7 @@ function verify_rg_window_contract!(m_cur::AbstractMatrix{FT},
               "hflux=$(stub.worst_flux) on face=$(stub.worst_face) " *
               "level=$(stub.worst_level) where face_left=$(face_left[stub.worst_face]) " *
               "face_right=$(face_right[stub.worst_face]); runtime advection " *
-              "(`StrangSplitting.jl:279`) will silently discard this flux. " *
+              "(`Advection/sweeps.jl`) will silently discard this flux. " *
               "Either the writer's boundary-masking logic dropped a zero, " *
               "or `face_left`/`face_right` connectivity has the wrong sign.")
     if div_scratch === nothing

@@ -3,36 +3,27 @@
 """
     _cs_section_elements(Nc, npanel, nlevel, section) -> Int
 
-Return the number of float elements for a given section in a CS binary.
-Panels are stored sequentially within each section.
+Number of float elements of a section in a cubed-sphere binary, the one table
+the writer and the reader share. Panels are stored sequentially within each
+section: cell fields are `Nc × Nc` per level, x faces `(Nc + 1) × Nc`, y faces
+`Nc × (Nc + 1)`, and vertical fluxes and CMFMC sit on the `nlevel + 1`
+interfaces.
 """
 function _cs_section_elements(Nc::Int, npanel::Int, nlevel::Int, section::Symbol)
-    if section === :m
-        return npanel * Nc * Nc * nlevel
-    elseif section === :dm
-        return npanel * Nc * Nc * nlevel
-    elseif section === :am
+    cells = npanel * Nc * Nc
+    if section in (:m, :dm, :dkg, :dtrain, :entu, :detu, :entd, :detd) ||
+       _is_gchp_vdiff_payload_section(section)
+        return cells * nlevel
+    elseif section in (:am, :dam)
         return npanel * (Nc + 1) * Nc * nlevel
-    elseif section === :bm
+    elseif section in (:bm, :dbm)
         return npanel * Nc * (Nc + 1) * nlevel
-    elseif section === :cm
-        return npanel * Nc * Nc * (nlevel + 1)
+    elseif section in (:cm, :dcm, :cmfmc)
+        return cells * (nlevel + 1)
     elseif _is_cs_2d_section(section)
-        return npanel * Nc * Nc
-    elseif _is_gchp_vdiff_payload_section(section)
-        return npanel * Nc * Nc * nlevel
-    elseif section === :dkg
-        return npanel * Nc * Nc * nlevel
-    elseif section === :cmfmc
-        return npanel * Nc * Nc * (nlevel + 1)
-    elseif section === :dtrain
-        return npanel * Nc * Nc * nlevel
-    elseif section === :entu || section === :detu ||
-           section === :entd || section === :detd
-        return npanel * Nc * Nc * nlevel
-    else
-        error("Unsupported CS section: $section")
+        return cells
     end
+    error("Unsupported CS section: $section")
 end
 
 # The latent heat flux travels with the other PBL surface fields.
@@ -41,10 +32,12 @@ end
     hasproperty(window.surface, :eflux) && window.surface.eflux !== nothing
 
 """
-    _pack_cs_window!(dest, offset, window, payload_sections, Nc, npanel)
+    _cs_window_section(window, section) -> NTuple of panels
 
-Pack a CS window (with NTuple-of-panels fields) into a flat buffer.
-Each section's panels are stored sequentially: [P1][P2]...[P6].
+Return the per-panel arrays that a CS window NamedTuple stores for payload
+`section`, resolving PBL surface fields (`window.surface` or top-level
+fields), TM5 convection (`window.tm5_fields`), and GCHP VDIFF
+(`window.vdiff`) sub-tables.
 """
 @inline function _cs_window_section(window, section::Symbol)
     section === :pbl_eflux && return window.surface.eflux
@@ -72,6 +65,12 @@ Each section's panels are stored sequentially: [P1][P2]...[P6].
     return getfield(window, section)
 end
 
+"""
+    _pack_cs_window!(dest, offset, window, payload_sections, Nc, npanel)
+
+Pack a CS window (with NTuple-of-panels fields) into a flat buffer.
+Each section's panels are stored sequentially: [P1][P2]...[P6].
+"""
 function _pack_cs_window!(dest::Vector{FT}, offset::Int,
                            window, payload_sections::Vector{Symbol},
                            Nc::Int, npanel::Int) where FT
@@ -153,17 +152,6 @@ function _validate_streaming_cs_window(writer::StreamingTransportBinaryWriter,
     return nothing
 end
 
-"""
-    open_streaming_cs_transport_binary(path, Nc, npanel, nlevel, nwindow, vc;
-                                       kwargs...) -> StreamingTransportBinaryWriter
-
-Open a CS transport binary for streaming per-window writes.
-
-`vc` is a `HybridSigmaPressure` vertical coordinate. The CS binary uses
-per-panel structured arrays with `StructuredDirectional` topology.
-`panel_convention` must be `"gnomonic"` or `"geos_native"` and is written to
-the header so runtime readers and output tools reconstruct the same mesh.
-"""
 function _normalize_cs_panel_convention(raw)
     norm = lowercase(String(raw))
     norm in ("gnomonic", "geos_native") && return norm
@@ -190,12 +178,16 @@ function _cs_default_geometry_tags(panel_convention)
 end
 
 """
-    open_streaming_cs_transport_binary(path, Nc, npanel, nlevel, nwindow, vc; kwargs...)
+    open_streaming_cs_transport_binary(path, Nc, npanel, nlevel, nwindow, vc;
+                                       kwargs...) -> StreamingTransportBinaryWriter
 
-Open a canonical v4 cubed-sphere binary for streaming window writes. The
-header records the complete panel convention and geometry law so readers
-reconstruct the same mesh. Each subsequent window must match the registered
-panel shapes and payload sections exactly.
+Open a canonical v4 cubed-sphere binary for streaming window writes. `vc` is a
+`HybridSigmaPressure` vertical coordinate; the payload is per-panel structured
+arrays with `StructuredDirectional` topology. The header records the panel
+convention (`"gnomonic"` or `"geos_native"`), the geometry law and
+`planet_radius` (the radius of the mesh on which the air masses were computed),
+so readers reconstruct the same mesh. Each subsequent window must match the
+registered panel shapes and payload sections exactly.
 """
 function open_streaming_cs_transport_binary(
         path::AbstractString,
@@ -228,6 +220,7 @@ function open_streaming_cs_transport_binary(
         cs_coordinate_law = nothing,
         cs_center_law = nothing,
         longitude_offset_deg = nothing,
+        planet_radius::Real,
         extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}())
     include_dtrain && !include_cmfmc &&
         throw(ArgumentError("CS transport binaries cannot include dtrain without cmfmc"))
@@ -263,6 +256,7 @@ function open_streaming_cs_transport_binary(
                                       ncell, nface_h, nlevel, nwindow, vc,
                                       payload_sections, elems_per_window;
                                       FT=FT,
+                                      planet_radius=planet_radius,
                                       header_bytes=header_bytes,
                                       dt_met_seconds=dt_met_seconds,
                                       half_dt_seconds=half_dt_seconds,

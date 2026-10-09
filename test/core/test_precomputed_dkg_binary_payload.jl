@@ -23,7 +23,7 @@ using .AtmosTransport.Adjoints: _vertical_diffusion_cs_single_dkg_adjoint_kernel
     mktemp() do path, io
         close(io)
         writer = AtmosTransport.MetDrivers.open_streaming_cs_transport_binary(
-            path, Nc, np, Nz, 1, vc; FT, include_flux_delta = true,
+            path, Nc, np, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS, FT, include_flux_delta = true,
             include_precomputed_dkg = true, mass_basis = :dry)
         dkg = ntuple(p -> FT[(k == Nz ? 0 : 100p + 10k + i + j)
                              for i in 1:Nc, j in 1:Nc, k in 1:Nz], np)
@@ -83,7 +83,7 @@ using .AtmosTransport.Adjoints: _vertical_diffusion_cs_single_dkg_adjoint_kernel
     end
 
     @test_throws ArgumentError AtmosTransport.MetDrivers.open_streaming_cs_transport_binary(
-        tempname(), Nc, np, Nz, 1, vc; FT,
+        tempname(), Nc, np, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS, FT,
         include_precomputed_dkg = true, mass_basis = :moist)
 
     # Direct-dkg solve conserves column tracer mass without consulting dz.

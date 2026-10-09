@@ -429,6 +429,24 @@ end
     end
 end
 
+@testset "TM5 dz uses the model's R, g and virtual-temperature factor" begin
+    P = AtmosTransport.Parameters
+    ak = [0.0, 100.0, 5000.0, 0.0]
+    bk = [0.0, 0.0, 0.3, 1.0]
+    for FT in (Float32, Float64)
+        T, Q, ps = FT[220, 250, 285], FT[0, 0.002, 0.015], 101325.0
+        R_over_g = FT(P.R_DRY_AIR / P.STANDARD_GRAVITY)
+        p_half = [FT(ak[k]) + FT(bk[k]) * FT(ps) for k in 1:4]
+        dp = diff(p_half)
+        p_mid = FT(0.5) .* (p_half[1:3] .+ p_half[2:4])
+        dz = zeros(FT, 3)
+        dz_hydrostatic_virtual!(dz, T, Q, ps, ak, bk, 3)
+        @test dz == R_over_g .* (T .* (one(FT) .+ FT(P.VIRTUAL_TEMPERATURE_FACTOR) .* Q)) .* dp ./ p_mid
+        dz_hydrostatic_constT!(dz, ps, ak, bk, 3; T_ref = 260)
+        @test dz == R_over_g .* FT(260) .* dp ./ p_mid
+    end
+end
+
 @testset "plan 24 Commit 1: dz_hydrostatic_virtual! shape guards" begin
     ak = Float64[0, 100, 500]; bk = Float64[0, 0.1, 1.0]
     ps = 101325.0

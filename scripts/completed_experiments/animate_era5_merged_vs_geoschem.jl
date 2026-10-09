@@ -13,7 +13,7 @@ using Printf
 using GeoMakie
 import GeoMakie.GeometryBasics
 
-include(joinpath(@__DIR__, "cs_regrid_utils.jl"))
+include(joinpath(@__DIR__, "..", "visualization", "cs_regrid_utils.jl"))
 
 const GC_DIR  = expanduser("~/data/AtmosTransport/catrine-geoschem-runs")
 const AT_FILE = expanduser("~/data/AtmosTransport/catrine/output/era5_hourly_merged_dec2021/catrine_era5_hourly.bin")

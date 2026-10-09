@@ -15,7 +15,7 @@ Tests for the virtual-temperature `dz` helper (D6 fix). Three checks:
      whole point of D6.
 
 NOTE: the runtime fallback `_fill_dz_for_diffusion!` in
-`src/Models/DrivenSimulation.jl` (which warns + reverts to constT when
+`src/Models/driven_physics_refresh.jl` (which warns + reverts to constT when
 the window lacks `vdiff`) is exercised indirectly by the regression
 test suite when LocalHoltslagBovilleKzField runs are loaded. We don't
 unit-test it here because it requires constructing a mock
@@ -27,9 +27,10 @@ using Test
 import AtmosTransport
 using .AtmosTransport.Operators.Diffusion: fill_dz_hydrostatic_virtualT!,
                                             fill_dz_hydrostatic_constT!
+using .AtmosTransport.Parameters: R_DRY_AIR, STANDARD_GRAVITY
 
-const _R_DRY  = 287.04
-const _G_REF  = 9.81
+const _R_DRY  = R_DRY_AIR
+const _G_REF  = STANDARD_GRAVITY
 
 @testset "fill_dz_hydrostatic_virtualT! — single 3D array matches hand formula" begin
     FT = Float64

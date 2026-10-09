@@ -16,14 +16,14 @@
 #
 # Usage:
 #   AT_PATTERN="linrood_advonly" AT_LABEL="LR advonly" OUT_GIF="lr_advonly_vs_gc.gif" \
-#     julia --project=. scripts/visualization/animate_linrood_vs_geoschem.jl
+#     julia --project=. scripts/completed_experiments/animate_linrood_vs_geoschem.jl
 # ===========================================================================
 
 using CairoMakie
 using GeoMakie
 using Dates
 
-include(joinpath(@__DIR__, "cs_regrid_utils.jl"))
+include(joinpath(@__DIR__, "..", "visualization", "cs_regrid_utils.jl"))
 
 # ---------------------------------------------------------------------------
 # Configuration

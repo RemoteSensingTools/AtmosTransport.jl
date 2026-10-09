@@ -31,7 +31,7 @@ Two constructions of the face fluxes from cube-centre winds are available
 offers line integrals of the source flow (`"line_integral"`, see **ERA5** below):
 
 - **`panel_average`** (default, historical,
-  `src/Preprocessing/cs_transport_helpers.jl`, `cs_face_fluxes!`).
+  `src/Preprocessing/cs_flux_reconstruction.jl`, `cs_face_fluxes!`).
   - Each cell's wind is projected onto its panel's local face-normal
     directions.
   - The two adjacent cells' projections are averaged.

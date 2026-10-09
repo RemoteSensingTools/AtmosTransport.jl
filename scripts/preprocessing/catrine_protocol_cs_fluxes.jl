@@ -28,10 +28,9 @@ const ICIO = AtmosTransport.Models.InitialConditionIO
 const CATRINE = joinpath(homedir(), "data", "AtmosTransport", "catrine", "Emissions")
 const ORIGIN = DateTime(2021, 12, 1)
 const M_SF6 = 0.146055            # kg/mol
-# ppt -> kg conversion for the NOAA growth rates. 0.0289644 kg/mol and the
-# 5.135e18 kg global dry-air mass pin of the preprocessing give 25.89 kt/ppt
-# (the runtime's 28.96546e-3 kg/mol would change it by 4e-5).
-const M_DRY_AIR = 0.0289644       # kg/mol
+# ppt -> kg conversion for the NOAA growth rates: the dry-air molar mass and the
+# 5.135e18 kg global dry-air mass pin of the preprocessing give 25.89 kt/ppt.
+const M_DRY_AIR = AtmosTransport.Parameters.DRY_AIR_MOLAR_MASS   # kg/mol
 const DRY_AIR_MASS = 5.135e18     # kg
 
 function settings()

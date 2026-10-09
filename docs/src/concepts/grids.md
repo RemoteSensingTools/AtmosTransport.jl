@@ -255,7 +255,7 @@ panel boundaries).
 
 The tangent basis is what
 `rotate_winds_to_panel_local!` and `rotate_panel_to_geographic!` (in
-`Preprocessing/cs_transport_helpers.jl`) consume.
+`Preprocessing/cs_wind_rotation.jl`) consume.
 
 ## [`AtmosGrid{H, V, Arch, P, FT}`](@id AtmosGrid)
 

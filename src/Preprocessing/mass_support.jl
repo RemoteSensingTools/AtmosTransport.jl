@@ -281,7 +281,8 @@ the periodic lat-lon grid via FFT division by the discrete Laplacian eigenvalues
 The `ws::LLPoissonWorkspace` provides pre-computed eigenvalues, scratch arrays,
 and cached in-place FFT plans for zero-allocation operation.
 
-See CLAUDE.md invariant #13 for details on the balance requirement.
+Horizontal fluxes must be balanced this way before `cm` is diagnosed from
+the explicit endpoint mass tendency.
 """
 function balance_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
                               dm_dt::Array{FT, 3},
@@ -767,17 +768,20 @@ end
 
 Apply a uniform additive offset to `sp` so that ⟨sp⟩_area corresponds to a
 prescribed dry-air mass target inferred from a global humidity climatology.
+`sp` and `area` hold one value per column: lat-lon `(Nx, Ny)` or
+reduced-Gaussian `(ncell,)`.
 """
-function pin_global_mean_ps!(sp::AbstractMatrix{<:Real},
-                             area::AbstractMatrix{<:Real};
+function pin_global_mean_ps!(sp::AbstractArray{<:Real},
+                             area::AbstractArray{<:Real};
                              target_ps_dry_pa::Real = 98726.0,
                              qv_global::Real = 0.00247)
+    size(area) == size(sp) || error("area shape $(size(area)) does not match sp shape $(size(sp))")
     target_ps_total = target_ps_dry_pa / (1.0 - qv_global)
     sum_ps_area = 0.0
     sum_area = 0.0
-    @inbounds for j in axes(sp, 2), i in axes(sp, 1)
-        a = area[i, j]
-        sum_ps_area += sp[i, j] * a
+    @inbounds for c in eachindex(IndexLinear(), sp, area)
+        a = area[c]
+        sum_ps_area += sp[c] * a
         sum_area += a
     end
     ps_mean_current = sum_ps_area / sum_area
@@ -794,34 +798,37 @@ dry surface pressure implied by the native-layer hourly humidity field matches
 the prescribed target.
 
 The correction is still spatially uniform in `ps`; only the global dry-mass
-targeting uses the instantaneous humidity pattern.
+targeting uses the instantaneous humidity pattern. `sp` and `area` hold one
+value per column and `qv` adds the level dimension last: lat-lon `(Nx, Ny)`
+and `(Nx, Ny, Nz)`, or reduced-Gaussian `(ncell,)` and `(ncell, Nz)`.
 """
-function pin_global_mean_ps_using_qv!(sp::AbstractMatrix{<:Real},
-                                      area::AbstractMatrix{<:Real},
+function pin_global_mean_ps_using_qv!(sp::AbstractArray{<:Real},
+                                      area::AbstractArray{<:Real},
                                       dA::AbstractVector,
                                       dB::AbstractVector,
-                                      qv::AbstractArray{<:Real, 3};
+                                      qv::AbstractArray{<:Real};
                                       target_ps_dry_pa::Real = 98726.0)
-    Nx, Ny, Nz = size(qv)
+    Nz = size(qv, ndims(qv))
     length(dA) == Nz || error("length(dA)=$(length(dA)) does not match qv levels $Nz")
     length(dB) == Nz || error("length(dB)=$(length(dB)) does not match qv levels $Nz")
-    size(sp) == (Nx, Ny) || error("sp shape $(size(sp)) does not match qv horizontal shape ($Nx, $Ny)")
-    size(area) == (Nx, Ny) || error("area shape $(size(area)) does not match qv horizontal shape ($Nx, $Ny)")
+    size(qv) == (size(sp)..., Nz) || error("sp shape $(size(sp)) does not match qv horizontal shape $(size(qv)[1:end-1])")
+    size(area) == size(sp) || error("area shape $(size(area)) does not match sp shape $(size(sp))")
+    qv_columns = reshape(qv, length(sp), Nz)
 
     sum_dry_ps_area = 0.0
     sum_alpha_area = 0.0
     sum_area = 0.0
 
-    @inbounds for j in 1:Ny, i in 1:Nx
-        ps_ij = sp[i, j]
+    @inbounds for c in eachindex(IndexLinear(), sp, area)
+        ps_c = sp[c]
         dry_ps_col = 0.0
         alpha_col = 0.0
         for k in 1:Nz
-            q = clamp(qv[i, j, k], 0.0, 0.999999)
-            dry_ps_col += (Float64(dA[k]) + Float64(dB[k]) * ps_ij) * (1.0 - q)
+            q = clamp(qv_columns[c, k], 0.0, 0.999999)
+            dry_ps_col += (Float64(dA[k]) + Float64(dB[k]) * ps_c) * (1.0 - q)
             alpha_col += Float64(dB[k]) * (1.0 - q)
         end
-        a = area[i, j]
+        a = area[c]
         sum_dry_ps_area += dry_ps_col * a
         sum_alpha_area += alpha_col * a
         sum_area += a

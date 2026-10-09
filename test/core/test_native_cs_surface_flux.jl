@@ -34,7 +34,7 @@ using AtmosTransport.Models.InitialConditionIO: build_surface_flux_source
             @test source.times == [-86400,0,86400]
             for p in 1:6, t in 1:3
                 density = [-Float32(i+10j+100p+1000t)*1f-10 for i in 1:Nc, j in 1:Nc]
-                expected = Float64.(density) .* Float64.(mesh.cell_areas) .* (2*0.02896546/0.0440095)
+                expected = Float64.(density) .* Float64.(mesh.cell_areas) .* (2 * AtmosTransport.Parameters.DRY_AIR_MOLAR_MASS / 0.0440095)
                 actual = source.cell_mass_rate_series[p][:,:,t]
                 @test actual ≈ expected rtol=3e-7
                 @test all(<(0), actual)

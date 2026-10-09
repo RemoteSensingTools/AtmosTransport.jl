@@ -407,3 +407,14 @@ threading is enabled only when this trait AND `!chain_mass` both hold.
 """
 supports_day_threading(::AbstractMetSettings) = false
 supports_day_threading(::AbstractERA5GRIBSettings) = true
+
+"""
+    supports_initial_endpoint_mass_pin(settings) -> Bool
+
+True when the source's `process_day` implements `[mass_fix] mode =
+"initial_endpoint"`: the dry mass at the start of the first window becomes the
+pin target of every later window, carried across the days of one run. Only
+the GEOS native path does; the other native sources pin to an explicit target.
+"""
+supports_initial_endpoint_mass_pin(::AbstractMetSettings) = false
+supports_initial_endpoint_mass_pin(::AbstractGEOSSettings) = true

@@ -56,7 +56,7 @@ export TracerView
 # Advection scheme hierarchy
 export AbstractAdvectionScheme
 export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
-export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter
+export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter, CW84Limiter
 export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme, NoAdvection
 export AbstractVerticalReconstruction, SameAsHorizontal, FV3ScalarProfile
 export reconstruction_order, required_halo_width

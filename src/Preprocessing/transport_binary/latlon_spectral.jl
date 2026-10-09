@@ -266,7 +266,8 @@ function flush_final_windows!(workspace::LatLonSpectralWindowWorkspace{FT},
         workspace.transform, workspace.merged, workspace.qv,
         workspace.ps_offsets)
     apply_poisson_balance!(workspace.storage, workspace.last_hour_next,
-                           workspace.steps_schedule, contract, substep_policy)
+                           workspace.steps_schedule, contract, substep_policy;
+                           balance = get(settings, :horizontal_balance, nothing))
     fill_qv_endpoints!(workspace.storage, workspace.last_hour_next)
     return (ReadyWindow{LatLonTargetGeometry, FT}(
                 win_idx,

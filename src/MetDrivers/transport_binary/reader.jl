@@ -88,17 +88,8 @@ has_pbl_eflux(r::TransportBinaryReader) = :pbl_eflux in r.header.payload_section
 has_cmfmc_cloud_base(r::TransportBinaryReader) = :cmfmc_cloud_base in r.header.payload_sections
 
 # ---------------------------------------------------------------------------
-# Capability summary + `inspect_binary`
-#
-# `binary_capabilities(reader)` returns a NamedTuple describing what
-# operators this binary can drive, so the CLI + physics-recipe validator
-# can give precise errors ("config requested `tm5` but binary lacks
-# entu/detu/entd/detd") instead of silently failing at the first step.
-#
-# `inspect_binary(path)` is the library-level entry point that opens a
-# `TransportBinaryReader`, runs all load-time gates, prints a rich report, and returns the
-# capability summary. `scripts/diagnostics/inspect_transport_binary.jl`
-# is a thin CLI over this function.
+# Reader construction. Capability summaries and `inspect_binary` live in
+# `inspect.jl`.
 # ---------------------------------------------------------------------------
 
 function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Float32)
@@ -158,8 +149,9 @@ function load_grid(reader::TransportBinaryReader{<:Any, <:Any, LatLonBinaryGeome
         let interval = _transport_interval_from_centers(g.latitudes, 180.0 / g.Ny)
             (FT(interval[1]), FT(interval[2]))
         end
-    mesh = LatLonMesh(; FT=FT, size=(g.Nx, g.Ny), longitude=longitude, latitude=latitude)
-    return AtmosGrid(mesh, vc, arch; FT=FT)
+    mesh = LatLonMesh(; FT=FT, size=(g.Nx, g.Ny), longitude=longitude, latitude=latitude,
+                      radius=FT(h.planet_radius_m))
+    return AtmosGrid(mesh, vc, arch; FT=FT, radius=h.planet_radius_m)
 end
 
 function load_grid(reader::TransportBinaryReader{<:Any, <:Any, ReducedGaussianBinaryGeometry};
@@ -167,8 +159,8 @@ function load_grid(reader::TransportBinaryReader{<:Any, <:Any, ReducedGaussianBi
     h = reader.header
     g = h.geometry
     vc = HybridSigmaPressure(FT.(h.A_ifc), FT.(h.B_ifc))
-    mesh = ReducedGaussianMesh(g.latitudes, g.nlon_per_ring; FT=FT)
-    return AtmosGrid(mesh, vc, arch; FT=FT)
+    mesh = ReducedGaussianMesh(g.latitudes, g.nlon_per_ring; FT=FT, radius=FT(h.planet_radius_m))
+    return AtmosGrid(mesh, vc, arch; FT=FT, radius=h.planet_radius_m)
 end
 
 _transport_allocate_mass(reader::TransportBinaryReader{FT}) where FT =

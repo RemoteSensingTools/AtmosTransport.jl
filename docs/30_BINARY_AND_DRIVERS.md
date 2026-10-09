@@ -90,4 +90,4 @@ dry-VMR diagnostics must use the corresponding end humidity. Reusing
 - Topology-specific runtime validation:
   `src/MetDrivers/transport_binary/driver.jl`
 - Window/backend lifecycle:
-  `src/Models/DrivenSimulation.jl`
+  `src/Models/driven_window_state.jl`

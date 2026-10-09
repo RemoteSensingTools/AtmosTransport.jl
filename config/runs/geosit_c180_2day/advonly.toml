@@ -28,10 +28,7 @@ start_date = "2021-12-01"
 end_date   = "2021-12-02"
 
 [architecture]
-use_gpu = false                        # Pre-existing GPU CFL-check scalar-indexing bug in
-                                        # `_cs_static_subcycle_count` (CubedSphereStrang.jl:396)
-                                        # affects any CS GPU advonly; tracked separately. Run on
-                                        # CPU for now to validate the GEOS binary content.
+use_gpu = false                        # CPU run validating the GEOS binary content.
 
 [numerics]
 float_type = "Float64"

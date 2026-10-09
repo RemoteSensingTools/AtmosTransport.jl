@@ -57,7 +57,8 @@ function main()
     conv = panel_convention(String(grid_header["panel_convention"]))
     mesh = CubedSphereMesh(
         ; FT = float_type(String(first_header["float_dtype"])), Nc, Hp = 0,
-        definition = definition(String(grid_header["definition"]), conv))
+        definition = definition(String(grid_header["definition"]), conv),
+        radius = Float64(get(grid_header, "planet_radius_m", AtmosTransport.Parameters.EARTH_RADIUS)))
     lon = vcat((vec(panel_cell_center_lonlat(mesh, p)[1]) for p in 1:6)...)
     lat = vcat((vec(panel_cell_center_lonlat(mesh, p)[2]) for p in 1:6)...)
     area = vcat((vec(mesh.cell_areas) for _ in 1:6)...)

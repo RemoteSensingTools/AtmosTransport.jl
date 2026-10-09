@@ -20,9 +20,9 @@ end
 """
     ReducedGaussianTargetGeometry
 
-Geometry descriptor for native ERA5 reduced-Gaussian grids. The target-geometry
-plumbing is in place, but the spectral mass-flux preprocessing path is not yet
-implemented for this target.
+Geometry descriptor for native ERA5 reduced-Gaussian grids. Target of the
+ERA5 spectral preprocessing path in `reduced_spectral_day.jl`, which writes
+face-indexed reduced-Gaussian transport binaries.
 """
 struct ReducedGaussianTargetGeometry{FT, M <: ReducedGaussianMesh{FT}} <: AbstractTargetGeometry
     mesh                 :: M
@@ -57,6 +57,7 @@ target_header_metadata(grid::LatLonTargetGeometry) = Dict{String, Any}(
     "horizontal_topology" => "StructuredDirectional",
     "grid_type" => "latlon",
     "grid_convention" => "TM5",
+    "planet_radius_m" => Float64(grid.mesh.radius),
     "lons" => Float64.(grid.lons),
     "lats" => Float64.(grid.lats),
     "longitude_interval" => Float64[first(grid.mesh.λᶠ), last(grid.mesh.λᶠ)],
@@ -71,6 +72,7 @@ target_header_metadata(grid::ReducedGaussianTargetGeometry) = Dict{String, Any}(
     "horizontal_topology" => "FaceIndexed",
     "grid_type" => "reduced_gaussian",
     "grid_convention" => "ERA5 native reduced Gaussian",
+    "planet_radius_m" => Float64(grid.mesh.radius),
     "gaussian_number" => grid.gaussian_number,
     "latitudes" => Float64.(grid.lats),
     "nlon_per_ring" => copy(grid.nlon_per_ring),
@@ -131,7 +133,7 @@ function build_target_geometry(::Val{:latlon}, cfg_grid, ::Type{FT}) where FT <:
                       size=(Int(cfg_grid["nlon"]), Int(cfg_grid["nlat"])),
                       longitude=get(cfg_grid, "longitude", (-180, 180)),
                       latitude=get(cfg_grid, "latitude", (-90, 90)),
-                      radius=FT(R_EARTH))
+                      radius=FT(IFS_EARTH_RADIUS))
     return LatLonTargetGeometry{FT, typeof(mesh)}(
         mesh,
         copy(mesh.λᶜ),
@@ -168,7 +170,7 @@ function build_target_geometry(::Val{:era5_native_reduced_gaussian}, cfg_grid, :
                                                date=date,
                                                time=time)
     mesh = read_era5_reduced_gaussian_mesh(geometry_source; FT=FT,
-                                           radius=FT(R_EARTH),
+                                           radius=FT(IFS_EARTH_RADIUS),
                                            param_id=param_id,
                                            level=level,
                                            date=date,
@@ -230,7 +232,7 @@ function build_target_geometry(::Val{:synthetic_reduced_gaussian},
               "(use \"regular\" or \"octahedral\")")
     end
 
-    mesh = ReducedGaussianMesh(lat_deg, nlon_per_ring; FT=FT, radius=FT(R_EARTH))
+    mesh = ReducedGaussianMesh(lat_deg, nlon_per_ring; FT=FT, radius=FT(IFS_EARTH_RADIUS))
     lons_by_ring = [FT.(ring_longitudes(mesh, j)) for j in 1:nrings(mesh)]
 
     return ReducedGaussianTargetGeometry{FT, typeof(mesh)}(
@@ -315,6 +317,7 @@ function target_header_metadata(grid::CubedSphereTargetGeometry)
     return Dict{String, Any}(
         "horizontal_topology" => "StructuredDirectional",
         "grid_type" => "cubed_sphere",
+        "planet_radius_m" => Float64(grid.mesh.radius),
         "Nc" => grid.Nc,
         "npanel" => 6,
         "cs_definition" => _cs_definition_tag(grid),
@@ -367,7 +370,7 @@ function build_target_geometry(::Val{:cubed_sphere}, cfg_grid, ::Type{FT}) where
     definition = haskey(cfg_grid, "definition") ?
         _parse_cs_definition(cfg_grid["definition"], convention) :
         nothing
-    mesh = CubedSphereMesh(; Nc=Nc, FT=FT, radius=FT(R_EARTH),
+    mesh = CubedSphereMesh(; Nc=Nc, FT=FT, radius=FT(IFS_EARTH_RADIUS),
                             convention=convention, definition=definition)
 
     conn = mesh.connectivity

@@ -121,6 +121,7 @@ function write_transport_binary(path::AbstractString,
                                       ncell, nface_h, nlevel, length(windows), vc,
                                       payload_sections, elems_per_window;
                                       FT=FT,
+                                      planet_radius=mesh.radius,
                                       header_bytes=header_bytes,
                                       dt_met_seconds=dt_met_seconds,
                                       half_dt_seconds=half_dt_seconds,
@@ -208,6 +209,7 @@ function write_transport_binary(path::AbstractString,
                                       ncell, nface_h, nlevel, length(windows), vc,
                                       payload_sections, elems_per_window;
                                       FT=FT,
+                                      planet_radius=mesh.radius,
                                       header_bytes=header_bytes,
                                       dt_met_seconds=dt_met_seconds,
                                       half_dt_seconds=half_dt_seconds,
@@ -242,7 +244,3 @@ function write_transport_binary(path::AbstractString,
 
     return path
 end
-
-# =========================================================================
-# Streaming (per-window) binary writer
-# =========================================================================

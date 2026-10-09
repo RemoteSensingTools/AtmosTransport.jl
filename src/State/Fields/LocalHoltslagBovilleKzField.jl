@@ -104,13 +104,12 @@ end
 @inline _local_hb_eltype(::LocalHoltslagBovilleKzField{FT}) where FT = FT
 
 @inline function _virtual_temperature(t, qv, ::Type{FT}) where FT
-    return max(FT(t), FT(180)) * (one(FT) + FT(0.61) * max(FT(qv), zero(FT)))
+    return max(FT(t), FT(180)) * (one(FT) + FT(VIRTUAL_TEMPERATURE_FACTOR) * max(FT(qv), zero(FT)))
 end
 
-@inline function _potential_temperature(tv, p_mid, ::PBLPhysicsParameters{FT}) where FT
-    kappa = one(FT) / FT(3.5)
-    return tv * (FT(100000) / max(p_mid, FT(1)))^kappa
-end
+# Virtual potential temperature, κ = R/cp of ideal diatomic dry air.
+@inline _local_hb_theta(tv, p_mid, ::PBLPhysicsParameters{FT}) where FT =
+    _potential_temperature(tv, max(p_mid, FT(1)), one(FT) / FT(CP_OVER_R_DIATOMIC), FT(THETA_REFERENCE_PRESSURE))
 
 @inline function _shear_enhanced_kz(base_kz, z_lower, z_upper, theta_lower,
                                     theta_upper, u_lower, u_upper,
@@ -144,7 +143,7 @@ end
     Nz = size(cache, 3)
     FT = eltype(cache)
     p = params
-    R_dry = p.cp_dry / FT(3.5)
+    R_dry = p.cp_dry / FT(CP_OVER_R_DIATOMIC)
 
     h_pbl = max(FT(pblh[i, j]), FT(100))
     us = max(FT(ustar[i, j]), FT(0.01))
@@ -178,7 +177,7 @@ end
         p_mid = max((p_top + p_bot) / FT(2), FT(1))
         dz_k = delp_k * R_dry * tv / (p.gravity * p_mid)
         z_center = z_above - dz_k / FT(2)
-        theta = _potential_temperature(tv, p_mid, p)
+        theta = _local_hb_theta(tv, p_mid, p)
         base_kz = _beljaars_viterbo_kz(z_center, h_pbl, us, L_ob, Pr_inv, p)
         kz = base_kz
         if k > 1
@@ -264,7 +263,7 @@ function refresh_local_holtslag_boville_kz_cache!(field::LocalHoltslagBovilleKzF
     Hp = Int(halo_width)
     areas = FT.(_host_array(cell_areas))
     p = field.params
-    R_dry = p.cp_dry / FT(3.5)
+    R_dry = p.cp_dry / FT(CP_OVER_R_DIATOMIC)
 
     @inbounds for panel in 1:6
         cache = field.host_cache[panel]
@@ -311,7 +310,7 @@ function refresh_local_holtslag_boville_kz_cache!(field::LocalHoltslagBovilleKzF
                 p_mid = max((p_top + p_bot) / FT(2), FT(1))
                 dz_k = delp_k * R_dry * tv / (p.gravity * p_mid)
                 z_center = z_above - dz_k / FT(2)
-                theta = _potential_temperature(tv, p_mid, p)
+                theta = _local_hb_theta(tv, p_mid, p)
                 base_kz = _beljaars_viterbo_kz(z_center, h_pbl, us, L_ob,
                                                Pr_inv, p)
                 kz = base_kz

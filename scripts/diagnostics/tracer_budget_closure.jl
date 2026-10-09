@@ -88,7 +88,7 @@ const DEFAULT_CFG = abspath(joinpath(@__DIR__, "..", "..",
 
 # Model molar masses (for physical-kg reporting only; the dimensionless
 # closure is computed in storage units and is independent of these).
-const M_DRYAIR = _ICIO._DRY_AIR_MOLAR_MASS_KG_MOL          # kg/mol
+const M_DRYAIR = _ATM.Parameters.DRY_AIR_MOLAR_MASS          # kg/mol
 const M_TRACER = _ICIO._KNOWN_TRACER_MOLAR_MASS_KG_MOL     # Symbol => kg/mol
 
 # ---------------------------------------------------------------------------

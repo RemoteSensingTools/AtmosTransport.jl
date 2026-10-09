@@ -74,7 +74,8 @@ function main()
     conv = _panel_conv(String(h0["grid"]["panel_convention"]))
     def = _def(String(h0["grid"]["definition"]), conv)
     mesh = CubedSphereMesh(; FT = _ftype(String(h0["float_dtype"])),
-                           Nc = Int(h0["grid"]["Nc"]), Hp = 0, definition = def)
+                           Nc = Int(h0["grid"]["Nc"]), Hp = 0, definition = def,
+                           radius = Float64(get(h0["grid"], "planet_radius_m", AtmosTransport.Parameters.EARTH_RADIUS)))
     area = mesh.cell_areas                      # (Nc, Nc), identical per panel
     Atot = 6 * sum(area)
 

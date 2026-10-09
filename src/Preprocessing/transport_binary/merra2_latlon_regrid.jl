@@ -1,10 +1,12 @@
 # ===========================================================================
-# MERRA-2 wind-derived → C180 cubed-sphere transport-binary writer.
+# MERRA-2 wind-derived → cubed-sphere transport-binary writer. The target may
+# be any `Nc`; helpers and buffers named `c180` work for every target
+# resolution.
 #
 # Reproduces the validated GEOS-Chem CO₂ transport input path: derive the
 # horizontal mass fluxes from MERRA-2 WINDS (U/V) + a Cameron-Smith column
 # pressure-fix (the Poisson balance), instead of GEOS native cubed-sphere
-# MFXC. Purely additive — the GEOS-native and ERA5 paths are untouched.
+# MFXC.
 #
 # This is a near-clone of `process_era5_n320_to_cs_day`
 # (transport_binary/era5_n320_regrid.jl): identical mass-derivation, global
@@ -12,16 +14,18 @@
 # (= the pressure-fixer), cm diagnosis, adaptive substep policy, contract
 # verification, and streaming writer. The ONLY substantive change is replacing
 # the ERA5 spectral pipeline with a direct MERRA-2 NetCDF read + conservative
-# regrid to C180, and `nwindow = 8` instead of 24.
+# regrid to the CS target, and 3-hourly source blocks instead of hourly
+# windows.
 #
 # Drives one UTC day end-to-end:
 #
 #   per window (8 × 3-hourly):
 #     1. Read native MERRA-2 LL fields (PS/QV from inst3 slice `win`, U/V from
 #        tavg3 slice `win` = the 3-hr time-average advecting winds) and
-#        conservatively regrid PS / U / V / QV to the C180 target.
-#     2. Re-derive dry-mass on C180 from the regridded moist PS + QV so the
-#        target-side column closure Σ_k DELP_dry = PS_dry holds to roundoff.
+#        conservatively regrid PS / U / V / QV to the CS target.
+#     2. Re-derive dry mass on the target from the regridded moist PS + QV so
+#        the target-side column closure Σ_k DELP_dry = PS_dry holds to
+#        roundoff.
 #     3. Rotate cell-centre winds geographic → panel-local using the CS
 #        tangent basis.
 #     4. Reconstruct Arakawa-C face mass fluxes (am, bm) from rotated U/V
@@ -71,9 +75,9 @@ const _MERRA2_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS = 8
 """
     MERRA2ToC180Pipeline{FT, R, P, E, W}
 
-Per-day MERRA-2 → C180 preprocessing workspace. Owns the conservative LL→CS
-regridder, the CS preprocess scratch, and the per-window regridded C180
-scalar fields (`c180_fields.{ps, qv, u, v}`), laid out as `NTuple{6, …}`
+Per-day MERRA-2 → CS preprocessing workspace. Owns the conservative LL→CS
+regridder, the CS preprocess scratch, and the per-window regridded target-grid
+scalar fields (`c180_fields.{ps, qv, u, v}`, any `Nc`), laid out as `NTuple{6, …}`
 panels so the shared CS helpers (`derive_c180_dry_mass!`,
 `rotate_winds_to_panel_local!`, `reconstruct_cs_fluxes!`) work unchanged.
 
@@ -134,7 +138,7 @@ end
 """
     allocate_merra2_to_c180_pipeline(target_grid; Nz, cache_dir, settings) -> MERRA2ToC180Pipeline
 
-Build (or JLD2-load from `cache_dir`) the MERRA-2 LL → C180 conservative
+Build (or JLD2-load from `cache_dir`) the MERRA-2 LL → CS conservative
 regridder and allocate every per-window buffer, including the physics panels
 `settings` requests. The source LL mesh is built with the TARGET mesh radius
 so the two manifolds match (`build_regridder` rejects a radius mismatch).
@@ -155,7 +159,7 @@ function allocate_merra2_to_c180_pipeline(target_grid::CubedSphereTargetGeometry
     n_src == MERRA2_NX * MERRA2_NY ||
         throw(DimensionMismatch("regridder src_areas length $n_src ≠ MERRA-2 cells $(MERRA2_NX * MERRA2_NY)"))
     n_dst == ncells(target_grid.mesh) ||
-        throw(DimensionMismatch("regridder dst_areas length $n_dst ≠ C180 cells $(ncells(target_grid.mesh))"))
+        throw(DimensionMismatch("regridder dst_areas length $n_dst ≠ target cells $(ncells(target_grid.mesh))"))
 
     ws = allocate_cs_preprocess_workspace(Nc, MERRA2_NX, MERRA2_NY, Nz_int,
                                           n_src, n_dst, FT)
@@ -189,7 +193,7 @@ end
 
 Read native MERRA-2 LL fields for window `win` (PS/QV from inst3 slice `win`,
 U/V from tavg3 slice `win`) and conservatively regrid PS (2D intensive) and
-QV/U/V (3D intensive) onto the C180 panels. U/V/QV are intensive → default
+QV/U/V (3D intensive) onto the CS target panels. U/V/QV are intensive → default
 field type, as in the ERA5 path. The readers return top-down levels whatever
 the file order; requested physics fields are regridded into `pipe.phys`.
 """
@@ -435,7 +439,7 @@ end
 _pin_endpoint_mass!(::Nothing, _grid, _m_dry, _ps_dry) = nothing
 function _pin_endpoint_mass!(target::Float64, grid, m_dry, ps_dry)
     areas = grid.mesh.cell_areas
-    g = eltype(areas)(GRAV)
+    g = eltype(areas)(STANDARD_GRAVITY)
     _pin_cs_global_air_mass!(m_dry, areas, g, target)
     for p in 1:6
         _ps_from_air_mass!(ps_dry[p], m_dry[p], areas, g, size(areas, 1), size(m_dry[p], 3))
@@ -492,7 +496,7 @@ _flux_thickness(kind::Symbol) = (moist = MoistFluxThickness(), dry_mass = DryMas
 _fill_flux_thickness!(::MoistFluxThickness, x, ps_moist, m_a, vc, mesh, Nc, Nz) =
     fill_cs_layer_thickness!(x.dp, ps_moist, vc.A, vc.B, Nc, Nz)
 function _fill_flux_thickness!(::DryMassFluxThickness, x, ps_moist, m_a, vc, mesh, Nc, Nz)
-    g, areas = eltype(x.dp[1])(GRAV), mesh.cell_areas
+    g, areas = eltype(x.dp[1])(STANDARD_GRAVITY), mesh.cell_areas
     @inbounds for p in 1:6, k in 1:Nz, j in 1:Nc, i in 1:Nc
         x.dp[p][i, j, k] = g * m_a[p][i, j, k] / areas[i, j]
     end
@@ -511,7 +515,7 @@ function _balance_window!(d::MERRA2DayDriver, ps_moist, m_a, m_b, steps)
     FT = eltype(m_a[1])
     Nc, Nz = d.grid.Nc, size(m_a[1], 3)
     _reconstruct_window_fluxes!(d.flux, x, ps_moist, m_a, vc, mesh,
-                                FT(GRAV), FT(d.dt_window / (2 * steps)), Nc, Nz)
+                                FT(STANDARD_GRAVITY), FT(d.dt_window / (2 * steps)), Nc, Nz)
     g, tol, project_every = d.grid, d.balance.tol, d.balance.project_every
     diag = if d.balance.global_solve     # per-level solve (diagnostic option)
         balance_cs_global_mass_fluxes!(x.am, x.bm, m_a, m_b, g.face_table, g.cell_degree,
@@ -563,7 +567,8 @@ function _record_window!(diag::MERRA2DayDiagnostics, d::MERRA2DayDriver, m_a, m_
         end
         contract.positivity
     else
-        verify_substep_positivity_cs!(m_a, x.am, x.bm, x.cm; cfl_limit = d.positivity_limit)
+        verify_substep_positivity_cs!(m_a, x.am, x.bm, x.cm; cfl_limit = d.positivity_limit,
+                                      m_next = m_b)
     end
     diag.positivity = update_cs_positivity_accumulator(diag.positivity, positivity, win)
     return diag
@@ -628,7 +633,8 @@ function _merra2_provenance(settings::MERRA2Settings, handles, nsub)
 end
 
 function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{FT}, vc, out_path,
-                             nwindow, nsub, dt_window, steps, policy, mass_target) where FT
+                             nwindow, nsub, dt_window, steps, policy, mass_target,
+                             balance::AbstractHorizontalBalance) where FT
     mkpath(dirname(out_path))
     tmp_path = out_path * ".tmp"
     isfile(tmp_path) && rm(tmp_path)
@@ -642,12 +648,14 @@ function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{
         "target_type" => "cubed_sphere",
         "regrid_method" => "conservative",
         "poisson_balanced" => true,
+        "horizontal_balance" => balance_tag(balance),
         # The column Poisson balance plays the role of the Cameron-Smith
         # pressure fix (`pjc_pfix_mod.F90`, GEOS-Chem Classic): it forces the
         # column flux convergence to match the analyzed dry-mass tendency.
         # GCHP applies no pressure fix; FV3 remaps to its advected surface
         # pressure instead.
-        "wind_flux_pressure_fix" => "cameron_smith_column_balance",
+        "wind_flux_pressure_fix" => balance isa ColumnBalance ?
+            "cameron_smith_column_balance" : "per_layer_poisson_balance",
         "global_mass_pin_enabled" => mass_target !== nothing,
         "global_mass_pin_target_kg" => mass_target))
     inner = open_streaming_cs_transport_binary(
@@ -661,7 +669,7 @@ function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{
         panel_convention = _cs_panel_convention_tag(grid), cs_definition = _cs_definition_tag(grid),
         cs_coordinate_law = _cs_coordinate_law_tag(grid), cs_center_law = _cs_center_law_tag(grid),
         longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
-        extra_header = header)
+        planet_radius = grid.mesh.radius, extra_header = header)
     return CubedSphereBinaryWriter(inner, mass_basis_from_symbol(:dry); Nc = grid.Nc, npanel = 6,
                                    final_path = String(out_path))
 end
@@ -697,9 +705,15 @@ function process_merra2_to_cs_day(date::Date,
                                   require_substep_positivity::Bool = true,
                                   cache_dir::Union{Nothing, AbstractString} = nothing,
                                   global_mass_pin::Bool = false,
-                                  global_mass_target_kg::Real = NaN) where FT
+                                  global_mass_target_kg::Real = NaN,
+                                  horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing) where FT
     mass_basis === :dry ||
         throw(ArgumentError("MERRA-2 → CS writer only supports mass_basis=:dry; got $(mass_basis)"))
+    horizontal_balance = effective_horizontal_balance(horizontal_balance, ColumnBalance())
+    global_solve = horizontal_balance isa LayerBalance
+    global_solve && settings.column_balance_weights !== :mass && throw(ArgumentError(
+        "column_balance_weights = $(settings.column_balance_weights) applies to the column " *
+        "Poisson balance; it cannot be combined with [numerics] balance_mode = \"per_layer\""))
     steps_per_window >= 1 || throw(ArgumentError("steps_per_window must be ≥ 1; got $(steps_per_window)"))
     nsub = merra2_windows_per_block(dt_met_seconds)
     vc = load_hybrid_coefficients(expand_data_path(settings.coefficients_file))
@@ -715,12 +729,8 @@ function process_merra2_to_cs_day(date::Date,
                    string(date), target_grid.Nc, Nz, string(FT), String(settings.winds_collection), nsub)
     mass_target === nothing ||
         @info @sprintf("  Global dry-mass pin ON: target=%.9e kg (%.3f Pa dry ⟨ps⟩)", mass_target,
-                       mass_target * GRAV / (6 * sum(Float64, target_grid.mesh.cell_areas)))
+                       mass_target * STANDARD_GRAVITY / (6 * sum(Float64, target_grid.mesh.cell_areas)))
 
-    global_solve = horizontal_poisson_balance_enabled()
-    global_solve && settings.column_balance_weights !== :mass && throw(ArgumentError(
-        "column_balance_weights = $(settings.column_balance_weights) applies to the column " *
-        "Poisson balance; it cannot be combined with ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1"))
     handles = open_merra2_day(settings, date; next_day_handle = true)
     try
         new_block() = MERRA2BlockState(allocate_merra2_to_c180_pipeline(target_grid; Nz, cache_dir, settings))
@@ -728,7 +738,8 @@ function process_merra2_to_cs_day(date::Date,
         nblock = windows_per_day(settings, date)
         nwindow = nblock * nsub
         writer = _open_merra2_writer(settings, handles, target_grid, vc, out_path, nwindow, nsub,
-                                     Float64(dt_met_seconds), Int(steps_per_window), policy, mass_target)
+                                     Float64(dt_met_seconds), Int(steps_per_window), policy, mass_target,
+                                     horizontal_balance)
         @info @sprintf("  Output: %s (Nc=%d, Nz=%d, FT=%s)", basename(out_path), target_grid.Nc, Nz, string(FT))
         d = MERRA2DayDriver(
             settings, handles, target_grid, vc, writer, nsub, Float64(dt_met_seconds), policy,
@@ -785,10 +796,10 @@ end
 
 Adapter that the unified preprocessor CLI calls into. Forwards to
 [`process_merra2_to_cs_day`](@ref) with the kwargs the underlying function
-accepts; the rest of the unified-CLI day-kwargs (e.g. `chain_mass`,
-`seed_m`, `balance_mode`, `cm_closure`) are absorbed by the trailing
-`kwargs...` and ignored — MERRA-2 has no day-to-day mass-chain state and the
-flux balance is the fixed Cameron-Smith column pressure-fix.
+accepts, including `horizontal_balance` (column by default: the
+Cameron-Smith column pressure fix); the rest of the unified-CLI day-kwargs
+(e.g. `chain_mass`, `seed_m`, `cm_closure`) are absorbed by the trailing
+`kwargs...` and ignored — MERRA-2 has no day-to-day mass-chain state.
 
 Returns `(; final_m = nothing, global_mass_target_kg)` so the unified CLI's
 `seed_m`/`global_mass_target_kg` chain remains a no-op.
@@ -808,6 +819,7 @@ function process_day(date::Date,
                      require_substep_positivity::Bool = true,
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
+                     horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
                      kwargs...)
     steps_floor = min_steps_per_window === nothing ? 1 : Int(min_steps_per_window)
     process_merra2_to_cs_day(date, settings, grid;
@@ -823,7 +835,8 @@ function process_day(date::Date,
         require_substep_positivity = require_substep_positivity,
         cache_dir             = grid.cache_dir,
         global_mass_pin       = global_mass_pin,
-        global_mass_target_kg = global_mass_target_kg)
+        global_mass_target_kg = global_mass_target_kg,
+        horizontal_balance    = horizontal_balance)
     return (; final_m = nothing,
             global_mass_target_kg = global_mass_target_kg)
 end

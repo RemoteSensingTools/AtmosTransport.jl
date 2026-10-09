@@ -184,7 +184,7 @@ end
         staging = joinpath(tmp, "cs.tmp")
         final = joinpath(tmp, "cs.bin")
         inner = open_streaming_cs_transport_binary(
-            staging, Nc, npanel, Nz, 1, vc;
+            staging, Nc, npanel, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
             FT = FT,
             header_bytes = 4096,
             steps_per_window = 1,

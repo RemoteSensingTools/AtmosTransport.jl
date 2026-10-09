@@ -4,8 +4,8 @@
 # MERRA-2 reproduces the validated GEOS-Chem CO₂ transport input path: derive
 # horizontal mass fluxes from MERRA-2 WINDS (U/V) plus a Cameron-Smith
 # column pressure-fix (the Poisson balance), instead of GEOS native
-# cubed-sphere MFXC. This is purely additive — the GEOS-native and ERA5 paths
-# are untouched.
+# cubed-sphere MFXC. The writer (`transport_binary/merra2_latlon_regrid.jl`)
+# accepts any cubed-sphere target resolution.
 #
 # Data lives on a regular 0.5° × 0.625° latitude-longitude grid (576 × 361),
 # 72 hybrid sigma-pressure levels (the GEOS-5 L72 coordinate, SAME as GEOS-FP),
@@ -350,12 +350,12 @@ windows_per_day(::MERRA2Settings, ::Date) = 8
 
 The native MERRA-2 source mesh (576 × 361, -180..180 lon, -90..90 lat). The
 preprocessor builds its own regridder against the *target* mesh radius; this
-descriptor uses `R_EARTH` and is provided for the canonical trait surface.
+descriptor uses `IFS_EARTH_RADIUS` and is provided for the canonical trait surface.
 """
 source_grid(::MERRA2Settings; FT::Type{<:AbstractFloat} = Float64) =
     LatLonMesh(; FT = FT, Nx = MERRA2_NX, Ny = MERRA2_NY,
                 longitude = (-180, 180), latitude = (-90, 90),
-                radius = FT(R_EARTH))
+                radius = FT(IFS_EARTH_RADIUS))
 
 # VDIFF output needs the PBL surface fields too (the Holtslag-Boville closure
 # reads PBLH/USTAR/HFLUX/T2M), so it implies the surface sections.

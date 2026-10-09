@@ -78,6 +78,11 @@ Validated metadata for the current transport-binary format. `geometry` selects
 the horizontal topology through dispatch, while the remaining fields describe
 the common timing, vertical coordinate, mass basis, and payload contract.
 
+`planet_radius_m` is the radius of the sphere on which the preprocessor computed
+cell areas, and so the air masses from pressure thickness (`m = Δp A / g`); the
+runtime builds its mesh with it. Binaries written before the key existed read as
+`EARTH_RADIUS`, the radius the runtime used for them.
+
 `A_ifc` and `B_ifc` define interface pressure as
 `p_half[k] = A_ifc[k] + B_ifc[k] * surface_pressure`, with `k = 1` at the
 top of atmosphere. `flux_kind` distinguishes mass per transport substep from a
@@ -89,6 +94,7 @@ struct TransportBinaryHeader{G <: AbstractTransportBinaryGeometry}
     on_disk_float_type   :: Symbol      # :Float32 or :Float64
     float_bytes          :: Int         # 4 or 8
     geometry             :: G
+    planet_radius_m      :: Float64     # radius of the preprocessing mesh [m]
     ncell                :: Int         # total horizontal cells
     nface_h              :: Int         # total horizontal faces
     nlevel               :: Int         # vertical levels (k=1 TOA, k=nlevel surface)
@@ -171,7 +177,7 @@ end
 @inline _transport_geometry_summary(g::CubedSphereBinaryGeometry, h::TransportBinaryHeader) =
     string("C", g.Nc, ", panels=", g.npanel, ", ", h.nlevel, " levels")
 @inline _transport_geometry_summary(h::TransportBinaryHeader) =
-    _transport_geometry_summary(h.geometry, h)
+    string(_transport_geometry_summary(h.geometry, h), ", radius ", h.planet_radius_m, " m")
 
 @inline function _transport_qv_summary(h::TransportBinaryHeader)
     return (:qv_start in h.payload_sections && :qv_end in h.payload_sections) ?
@@ -212,7 +218,6 @@ end
 
 _transport_is_structured(h::TransportBinaryHeader) = h.geometry isa LatLonBinaryGeometry
 _transport_is_faceindexed(h::TransportBinaryHeader) = h.geometry isa ReducedGaussianBinaryGeometry
-_transport_is_cubed_sphere(h::TransportBinaryHeader) = h.geometry isa CubedSphereBinaryGeometry
 
 function _transport_disk_float_type(sym::Symbol)
     sym === :Float64 ? Float64 : Float32
@@ -353,6 +358,9 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
     grid_type = _transport_parse_grid_type(hdr)
     topology = _transport_parse_topology(hdr)
     geometry = _parse_transport_geometry(hdr, grid_type, topology)
+    planet_radius_m = Float64(get(hdr, :planet_radius_m, EARTH_RADIUS))
+    isfinite(planet_radius_m) && planet_radius_m > 0 ||
+        throw(ArgumentError("planet_radius_m must be finite and positive; got $(planet_radius_m)"))
     ncell = Int(hdr.ncell)
     nface_h = Int(hdr.nface_h)
     nlevel = Int(hdr.nlevel)
@@ -384,6 +392,7 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
         disk_ft,
         float_bytes,
         geometry,
+        planet_radius_m,
         ncell,
         nface_h,
         nlevel,
@@ -430,6 +439,7 @@ function _transport_common_header(grid_type::String,
                                   payload_sections::Vector{Symbol},
                                   elems_per_window::Int;
                                   FT::Type{<:AbstractFloat},
+                                  planet_radius::Real,
                                   header_bytes::Int,
                                   dt_met_seconds::Real,
                                   half_dt_seconds::Real,
@@ -471,6 +481,7 @@ function _transport_common_header(grid_type::String,
         "float_bytes" => sizeof(FT),
         "grid_type" => grid_type,
         "horizontal_topology" => horizontal_topology,
+        "planet_radius_m" => Float64(planet_radius),
         "ncell" => ncell,
         "nface_h" => nface_h,
         "nlevel" => nlevel,

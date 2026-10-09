@@ -6,13 +6,14 @@
 #
 #   * `AbstractCSTapeStorage` — policy abstract.
 #   * `DeviceCSTapeStorage` — original in-memory/backend-resident policy.
-#   * `PinnedHostCSTapeStorage` — GPU runs stage to pinned host memory
-#     with a shared device-side read cache during reverse.
+#   * `PinnedHostCSTapeStorage` — stages to host memory (pinned for
+#     CuArray panels via the CUDA extension) with a shared device-side
+#     read cache during reverse.
 #   * `CSTapeSlot` / `PinnedHostCSTapeSlot` — per-state slot containers.
 #   * `_stage_panels`, `stage_panels!`, `_tape_panels`,
 #     `_allocate_tape_slot` — public-ish staging API.
 #
-# `NetCDFCSTapeStorage` for on-disk checkpointed tapes will be added here.
+# The on-disk policy `MmapCSTapeStorage` lives in `MmapTapeStorage.jl`.
 # ---------------------------------------------------------------------------
 
 abstract type AbstractCSTapeStorage end
@@ -32,9 +33,11 @@ struct DeviceCSTapeStorage <: AbstractCSTapeStorage end
 """
     PinnedHostCSTapeStorage()
 
-Tape storage policy that stages GPU tape states in pinned host memory and
-uses a shared device-side read cache during the reverse pass. This policy
-requires the CUDA extension and CuArray panel states.
+Tape storage policy that stages tape states in host memory and uses a shared
+device-side read cache during the reverse pass. The generic methods allocate
+plain `Array`s, so the policy also works with CPU panel states; the CUDA
+extension specialises `CuArray` panel states to use pinned (`CUDA.pin`) host
+memory and a `CUDA.synchronize` hook.
 """
 mutable struct PinnedHostCSTapeStorage <: AbstractCSTapeStorage
     device_cache::Union{Nothing, CSPanelCache}

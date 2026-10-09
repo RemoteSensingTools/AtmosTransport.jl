@@ -9,12 +9,12 @@
 #   Row 2: ~750 hPa — GC | AT | AT−GC difference
 #
 # Usage:
-#   julia --project=. scripts/visualization/animate_qspace_vs_geoschem_fast.jl
+#   julia --project=. scripts/completed_experiments/animate_qspace_vs_geoschem_fast.jl
 # ---------------------------------------------------------------------------
 
 using CairoMakie
 using Dates, Printf, Statistics
-include(joinpath(@__DIR__, "cs_regrid_utils.jl"))
+include(joinpath(@__DIR__, "..", "visualization", "cs_regrid_utils.jl"))
 
 # ── Configuration ─────────────────────────────────────────────────────────
 AT_DIR  = get(ENV, "AT_DIR",  "/temp1/catrine/output")

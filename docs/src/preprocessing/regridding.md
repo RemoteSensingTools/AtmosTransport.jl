@@ -76,6 +76,9 @@ makes day 2 onward effectively free.
 - **Cache directory:** opt-in via the `cache_dir` kwarg on
   `build_regridder` (the preprocessing TOMLs set
   `[grid] regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"`).
+  Runtime surface-flux sources regridded from lat-lon files always use the
+  cache, in `ATMOSTR_REGRID_CACHE_DIR` if set, else
+  `~/.cache/AtmosTransport/cr_regridding`.
 - **Cache key:** SHA-1 of a tuple containing:
   - source and destination mesh **type** + shape parameters
     (`(Nx, Ny)`, `Nc`, `nlon_per_ring`, panel convention, …),

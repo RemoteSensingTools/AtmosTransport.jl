@@ -14,6 +14,7 @@ extension adds rendering methods for topology-aware snapshot fields.
 module AtmosTransportMakieExt
 
 import AtmosTransport
+using AtmosTransport.Parameters: DRY_AIR_MOLAR_MASS, SPECIES_MOLAR_MASS, STANDARD_GRAVITY
 import AtmosTransport.Visualization:
     HorizontalField, RasterField, SnapshotDataset, SnapshotRegridCache, PlotSpec,
     fieldview, frame_indices, as_raster, robust_colorrange,
@@ -266,13 +267,11 @@ const _CATRINE_GC_FLUX_VAR = Dict(
     :rn222 => "EmisRn_Soil",
 )
 const _CATRINE_MOLAR_MASS = Dict(
-    :co2_natural => 44.0095e-3,
-    :co2_fossil => 44.0095e-3,
-    :sf6 => 146.055e-3,
-    :rn222 => 222.0e-3,
+    :co2_natural => SPECIES_MOLAR_MASS.co2,
+    :co2_fossil => SPECIES_MOLAR_MASS.co2,
+    :sf6 => SPECIES_MOLAR_MASS.sf6,
+    :rn222 => SPECIES_MOLAR_MASS.rn222,
 )
-const _M_DRY_AIR = 28.96546e-3
-const _G_ACCEL = 9.80665
 const _CATRINE_TITLE_DATEFORMAT = DateFormat("yyyy-mm-dd HH:MM")
 
 function _gc_datetime(path::AbstractString)
@@ -395,7 +394,7 @@ function _at_pressure_hpa(air_mass, area)
         acc = 0.0
         a = area[i, j, p]
         for k in 1:nz
-            dp = air_mass[i, j, p, k] / a * _G_ACCEL
+            dp = air_mass[i, j, p, k] / a * STANDARD_GRAVITY
             acc += dp
             out[i, j, p, k] = (acc - 0.5 * dp) / 100.0
         end
@@ -440,7 +439,7 @@ function _column_mean_ppm(vmr_ppm, air_mass)
 end
 
 function _global_burden_kg(vmr_ppm, air_mass, species::Symbol)
-    factor = _CATRINE_MOLAR_MASS[species] / _M_DRY_AIR * 1e-6
+    factor = _CATRINE_MOLAR_MASS[species] / DRY_AIR_MOLAR_MASS * 1e-6
     return sum(vmr_ppm .* air_mass) * factor
 end
 
@@ -459,7 +458,7 @@ function _read_at_flux_kg_s(path::AbstractString, species::Symbol)
     m = match(pat, read(path, String))
     m === nothing && return nothing
     storage_rate = parse(Float64, m.captures[1])
-    return storage_rate * _CATRINE_MOLAR_MASS[species] / _M_DRY_AIR
+    return storage_rate * _CATRINE_MOLAR_MASS[species] / DRY_AIR_MOLAR_MASS
 end
 
 function _budget_text(storage_kg, flux_kg_s, elapsed_s)

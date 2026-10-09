@@ -1,8 +1,7 @@
 # ===========================================================================
 # Forward-run progress timer — Transport vs IO wall-clock breakdown.
 #
-# Mirrors the `main:src/Models/run_loop.jl:105-150` pattern at coarser
-# granularity: three accumulators (driver-open / transport / snapshot
+# Three accumulators (driver-open + window loads / transport / snapshot
 # capture+write) plus a `ProgressMeter.Progress` bar over windows. Always
 # on — no env var gating, no SectionTimer dep. End-of-run summary lands
 # via `@info` so it surfaces alongside the existing run-completion logs.

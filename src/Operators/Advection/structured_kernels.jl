@@ -35,11 +35,10 @@
 # ────────────────
 # Each kernel writes to separate output arrays (rm_new, m_new) while
 # reading from the input arrays (rm, m) marked with @Const.  The caller
-# (sweep_x!/y!/z! in StrangSplitting.jl) copies the output back to the
+# (sweep_x!/y!/z! in sweeps.jl) copies the output back to the
 # input arrays after synchronization.  This double-buffer pattern is
 # ESSENTIAL for correctness: in-place updates would violate the stencil
-# read-before-write contract and break mass conservation by ~10% per step
-# (see CLAUDE.md invariant 4).
+# read-before-write contract and break mass conservation by ~10% per step.
 #
 # Workgroup size
 # ──────────────

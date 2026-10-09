@@ -50,7 +50,7 @@ end
     _native_output_filename(settings, date, FT) -> String
 
 Per-source output filename for native-source preprocessing. Concrete
-sources override this in their own files (e.g. `sources/geos.jl`); the
+sources override this in their own files (e.g. `sources/geos_panels.jl`); the
 default is a source-agnostic prefix.
 """
 _native_output_filename(::AbstractMetSettings, date::Date, FT::Type) =
@@ -93,7 +93,7 @@ _resolve_chain_mass(cfg::AbstractDict) =
 # recommendation) AFTER a contract violation has been recorded — by then the
 # preprocessor has already paid the cost of the loop, so we'd rather refuse
 # to start than throw an `InexactError` at the end. Values > 1.0 are also
-# nonsensical (the runtime's `_cs_static_subcycle_count` only protects
+# nonsensical (the runtime's `_cs_static_palindrome_subcycle_count` only protects
 # against outgoing < cell mass).
 function _resolve_positivity_cfl_limit(cfg::AbstractDict)
     raw = get(get(cfg, "numerics", Dict()), "positivity_cfl_limit", 0.95)
@@ -185,7 +185,7 @@ function _build_native_vertical_setup(cfg_vertical::AbstractDict,
                 _vertical_float(get(cfg_vertical, "target_min_thickness_Pa", Inf),
                                 "target_min_thickness_Pa"),
             reference_surface_pressure_Pa =
-                _vertical_float(get(cfg_vertical, "reference_surface_pressure_Pa", 101325.0),
+                _vertical_float(get(cfg_vertical, "reference_surface_pressure_Pa", STANDARD_PRESSURE),
                                 "reference_surface_pressure_Pa"))
     elseif transform_name in ("merge_layers_thinner_than", "thin_level_merge")
         MergeLayersThinnerThan(
@@ -194,7 +194,7 @@ function _build_native_vertical_setup(cfg_vertical::AbstractDict,
                                     get(cfg_vertical, "target_min_thickness_Pa", 50.0)),
                                 "min_thickness_Pa"),
             reference_surface_pressure_Pa =
-                _vertical_float(get(cfg_vertical, "reference_surface_pressure_Pa", 101325.0),
+                _vertical_float(get(cfg_vertical, "reference_surface_pressure_Pa", STANDARD_PRESSURE),
                                 "reference_surface_pressure_Pa"))
     else
         error("Unsupported native `[vertical].transform = $(repr(transform_name))`. " *
@@ -221,7 +221,9 @@ end
 # carry (e.g. GEOS pressure-fixer chained mass).
 # ---------------------------------------------------------------------------
 
-function _native_mass_fix_target_kg(cfg::AbstractDict, grid)
+# Global dry-mass target of the native-source pin: `NaN` when the pin is off or
+# when it pins to the first window start (`mode = "initial_endpoint"`).
+function _native_mass_fix_target_kg(cfg::AbstractDict, grid, settings)
     mass_fix_cfg = get(cfg, "mass_fix", Dict{String, Any}())
     _config_bool(mass_fix_cfg, "enable", false, "[mass_fix].enable") || return NaN
     haskey(mass_fix_cfg, "target_total_kg") &&
@@ -234,8 +236,11 @@ function _native_mass_fix_target_kg(cfg::AbstractDict, grid)
             error("native-source [mass_fix].mode=\"target_ps_dry\" requires a grid with cell_areas")
         target_ps_dry_pa = Float64(get(mass_fix_cfg, "target_ps_dry_pa", 98726.0))
         total_area = 6.0 * sum(Float64, grid.mesh.cell_areas)
-        return target_ps_dry_pa * total_area / GRAV
+        return target_ps_dry_pa * total_area / STANDARD_GRAVITY
     elseif mode === :initial_endpoint
+        supports_initial_endpoint_mass_pin(settings) || error(
+            "[mass_fix].mode=\"initial_endpoint\" is implemented for GEOS native sources " *
+            "only; $(nameof(typeof(settings))) needs mode=\"target_ps_dry\" or target_total_kg")
         return NaN
     else
         error("native-source [mass_fix].mode must be \"target_ps_dry\" or " *
@@ -309,14 +314,7 @@ function _process_day_native(cfg::AbstractDict;
     require_substep_positivity = _resolve_require_substep_positivity(cfg)
     substep_policy = _resolve_substep_schedule_policy(cfg, positivity_cfl_limit)
     numerics_cfg = get(cfg, "numerics", Dict{String, Any}())
-    balance_mode_raw = lowercase(String(get(numerics_cfg, "geos_balance_mode", "column")))
-    balance_mode = if balance_mode_raw in ("column", "column_poisson")
-        :column
-    elseif balance_mode_raw in ("per_layer", "layer", "layer_local", "global")
-        :per_layer
-    else
-        error("[numerics].geos_balance_mode must be \"column\" or \"per_layer\"; got $(repr(balance_mode_raw))")
-    end
+    horizontal_balance = resolve_horizontal_balance(numerics_cfg)
     cm_closure_raw = lowercase(String(get(numerics_cfg, "geos_cm_closure", "endpoint_balanced")))
     cm_closure = if cm_closure_raw in ("endpoint_balanced", "endpoint", "diagnose", "balanced")
         :endpoint_balanced
@@ -395,7 +393,7 @@ function _process_day_native(cfg::AbstractDict;
     _uses_omega(cm_closure) && !global_mass_pin &&
         error("OMEGA-based GEOS cm closures require [mass_fix].enable=true so " *
               "the per-level Poisson targets have zero global column tendency")
-    configured_global_mass_target_kg = _native_mass_fix_target_kg(cfg, grid)
+    configured_global_mass_target_kg = _native_mass_fix_target_kg(cfg, grid, settings)
     ensure_preprocessor_pair_supported(grid, settings; context = "native-source")
 
     dates = _resolve_dates_native(cfg; day_override, start_date, end_date)
@@ -433,7 +431,7 @@ function _process_day_native(cfg::AbstractDict;
             seed_m          = seed_m_in,
             global_mass_pin = global_mass_pin,
             global_mass_target_kg = configured_global_mass_target_kg,
-            balance_mode = balance_mode,
+            horizontal_balance = horizontal_balance,
             cm_closure = cm_closure,
             smooth_iters = smooth_iters,
             omega_regularization = omega_regularization,
@@ -487,7 +485,7 @@ function _process_day_native(cfg::AbstractDict;
                 seed_m          = seed_m,
                 global_mass_pin = global_mass_pin,
                 global_mass_target_kg = global_mass_target_kg,
-                balance_mode = balance_mode,
+                horizontal_balance = horizontal_balance,
                 cm_closure = cm_closure,
                 smooth_iters = smooth_iters,
                 omega_regularization = omega_regularization,
@@ -576,8 +574,10 @@ Top-level TOML-driven preprocessor entry. Detects source type from `cfg`:
 
 * `[source].toml = "config/met_sources/<source>.toml"` → typed
   `AbstractMetSettings` path, supports cross-day state carry (e.g. GEOS
-  pressure-fixer chained mass) and `--start/--end` date ranges.
+  pressure-fixer chained mass).
 * otherwise → typed ERA5 spectral config path (`[input].spectral_dir`).
+
+Both paths accept a single `day_override` or a `start_date`/`end_date` range.
 
 Both paths converge on `process_day(date, grid::AbstractTargetGeometry,
 settings, vertical; ...)` for the per-day work. There is no parallel

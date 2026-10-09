@@ -15,7 +15,7 @@ by `mass_flux_dt` makes transport ~8× too slow.
 | Where | What |
 |---|---|
 | `[preprocessing] mass_flux_dt_seconds` (source-descriptor TOML, e.g. `config/met_sources/geosit.toml`) | The scalar a user must set. Defaults to `450.0`. |
-| `src/Preprocessing/sources/geos.jl::read_window!` | Where the division happens (`am ∝ MFXC / mass_flux_dt`); the GEOS-CS orchestrator then converts the per-second rate to the binary's `flux_kind = :substep_mass_amount` units before write. |
+| `src/Preprocessing/sources/geos_read_window.jl::read_window!` | Where the division happens (`am ∝ MFXC / mass_flux_dt`); the GEOS-CS orchestrator then converts the per-second rate to the binary's `flux_kind = :substep_mass_amount` units before write. |
 | `state.air_mass` after one window | Should remain `O(1)` relative to its starting value; an `O(8)` jump means the constant got missed. |
 
 Spectral preprocessing does not have an equivalent constant — Holton
@@ -30,8 +30,8 @@ the two adjacent cell-center `(1 − qv)` values.
 | Path | Function | Where |
 |---|---|---|
 | Spectral ERA5 (LL/RG/CS) | `apply_dry_basis_native!` | `src/Preprocessing/mass_support.jl` — runs after spectral synthesis, before binary write. |
-| GEOS native CS | `endpoint_dry_mass!` (centers) + face-averaging | `src/Preprocessing/sources/geos.jl` — runs at endpoint reconstruction. |
-| GEOS convection forcing (cmfmc / dtrain) | `_moist_to_dry_cmfmc!`, `_moist_to_dry_dtrain!` | `src/Preprocessing/sources/geos.jl` — runs in the convection-read block. |
+| GEOS native CS | `endpoint_dry_mass!` (centers) + face-averaging | `src/Preprocessing/sources/geos_panels.jl` — runs at endpoint reconstruction. |
+| GEOS convection forcing (cmfmc / dtrain) | `_moist_to_dry_cmfmc!`, `_moist_to_dry_dtrain!` | `src/Preprocessing/sources/geos_read_window.jl` — runs in the convection-read block. |
 
 `MFXC` / `MFYC` from GEOS are special: per the GMAO product
 documentation they are **already on a dry basis**. Don't apply the

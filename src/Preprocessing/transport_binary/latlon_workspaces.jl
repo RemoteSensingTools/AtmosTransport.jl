@@ -776,13 +776,3 @@ function _store_window_tm5_fields!(storage::WindowStorage{FT},
     tm5_copy_or_regrid_ll!(storage.all_detd[win_idx], tm5_ws.detd_merged_src, tm5_ws)
     return nothing
 end
-
-"""
-    next_day_merged_fields(next_day_hour0, ...)
-
-Process the next day's hour-0 spectral and humidity fields so the current day's
-final window can form forward deltas and carry a consistent mass-fix offset.
-
-Returns `nothing` early when `next_day_hour0 === nothing` (no next-day data
-was loaded, e.g. at the end of the processed range).
-"""

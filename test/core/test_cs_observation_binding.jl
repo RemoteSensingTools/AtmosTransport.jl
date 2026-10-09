@@ -364,3 +364,42 @@ end
         end
     end
 end
+
+# ---------------------------------------------------------------------------
+# Binding uses the containing cell, as the forward observation sampler does
+# ---------------------------------------------------------------------------
+
+using Random: MersenneTwister
+
+@testset "bind_to_mesh — same cell as the forward sampler's locator" begin
+    mesh = _mesh()
+    locator = AT.Output.cell_locator(mesh)
+    rng = MersenneTwister(4242)
+    # Uniform points on the sphere: many lie near cell edges, corners and panel
+    # seams, where the nearest cell centre is not the containing cell.
+    points = [(Float32(rad2deg(asin(2rand(rng) - 1))), Float32(360rand(rng) - 180)) for _ in 1:2000]
+    records = [_record(id = k, dc = _dc_at(0), lat = lat, lon = lon) for (k, (lat, lon)) in enumerate(points)]
+    obs = AT.bind_to_mesh(AT.CSObservationSet(records; time_origin = "2024-06-15 00:00:00"),
+                          mesh, T0_TEST, DT_TEST; nsteps = 24)
+    cells = [AT.Output.locate(locator, Float64(lon), Float64(lat)) for (lat, lon) in points]
+    @test [(o.objective.panel, o.objective.i, o.objective.j) for o in obs] ==
+          [(c.panel, c.i, c.j) for c in cells]
+
+    # Longitudes of any wrap bind to the same cell.
+    lat, lon = points[1]
+    wrapped(l) = only(AT.bind_to_mesh(AT.CSObservationSet([_record(id = 1, dc = _dc_at(0), lat = lat, lon = l)];
+                                                          time_origin = "2024-06-15 00:00:00"),
+                                      mesh, T0_TEST, DT_TEST; nsteps = 24)).objective
+    @test wrapped(lon) == wrapped(lon + 720) == wrapped(lon - 1080)
+
+    # The departure set's alignment check uses the same locator: it accepts the
+    # bound observations and rejects one moved to a neighbouring cell.
+    set = AT.CSObservationSet(records; time_origin = "2024-06-15 00:00:00")
+    simulated = fill(420.0, length(obs))
+    @test length(AT.build_departure_set(set, obs, simulated, mesh, "2024-06-15T00:00:00", DT_TEST, 24)) == length(obs)
+    o = obs[1]
+    moved = AT.CSObservation(o.step, AT.CSColumnMeanObjective(o.objective.panel, mod1(o.objective.i + 1, NC_TEST),
+                                                               o.objective.j), o.value, o.sigma)
+    @test_throws ArgumentError AT.build_departure_set(set, [moved; obs[2:end]], simulated, mesh,
+                                                      "2024-06-15T00:00:00", DT_TEST, 24)
+end

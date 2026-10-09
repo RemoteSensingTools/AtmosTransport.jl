@@ -140,7 +140,7 @@ end
             Nc, npanel, Nz = 2, 6, 1
             vc = HybridSigmaPressure(Float32[0, 1000], Float32[0, 1])
             writer = MD.open_streaming_cs_transport_binary(
-                path, Nc, npanel, Nz, 1, vc;
+                path, Nc, npanel, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
                 FT=Float32, header_bytes=4096, steps_per_window=1,
                 mass_basis=:dry,
             )
@@ -165,7 +165,7 @@ end
             Nc, npanel, Nz = 2, 6, 1
             vc = HybridSigmaPressure(Float32[0, 1000], Float32[0, 1])
             writer = MD.open_streaming_cs_transport_binary(
-                path, Nc, npanel, Nz, 1, vc;
+                path, Nc, npanel, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
                 FT=Float32, header_bytes=4096, steps_per_window=1,
                 mass_basis=:dry,
             )
@@ -187,7 +187,7 @@ end
 
             empty_path = joinpath(dir, "cs-empty-optionals.bin")
             empty_writer = MD.open_streaming_cs_transport_binary(
-                empty_path, Nc, npanel, Nz, 1, vc;
+                empty_path, Nc, npanel, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
                 FT=Float32, header_bytes=4096, steps_per_window=1,
                 mass_basis=:dry,
             )
@@ -374,7 +374,7 @@ end
         Nc, npanel, Nz = 1, 6, 1
         vc = HybridSigmaPressure(Float32[0, 1000], Float32[0, 1])
         cs_writer = MD.open_streaming_cs_transport_binary(
-            cs_path, Nc, npanel, Nz, 1, vc;
+            cs_path, Nc, npanel, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
             FT=Float32, header_bytes=400_000, steps_per_window=1,
             mass_basis=:dry, extra_header=metadata,
         )

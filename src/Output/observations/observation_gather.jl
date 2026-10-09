@@ -304,11 +304,9 @@ interp_flag(::NearestWindowSampling) = INTERP_FLAG_CODES.nearest_window
 interp_flag(::LinearWindowInterpolation, bracketed::Bool) =
     bracketed ? INTERP_FLAG_CODES.bracketed : INTERP_FLAG_CODES.one_sided
 
-"Dry-air gas constant [J kg⁻¹ K⁻¹]; the same value the diffusion dz helpers use."
-const OBSERVATION_R_DRY = 287.04
 
 """
-    layer_heights_agl!(z_half, p_half, temperature, g; R_dry = OBSERVATION_R_DRY)
+    layer_heights_agl!(z_half, p_half, temperature, g; R_dry = R_DRY_AIR)
 
 Hypsometric interface heights above ground (m) from interface pressures,
 `z_half[end] = 0` at the surface, accumulated upward with the layer
@@ -318,7 +316,7 @@ layer upward.
 """
 function layer_heights_agl!(z_half::AbstractVector{Float64}, p_half::AbstractVector{Float64},
                             temperature::AbstractLayerTemperature, g::Real;
-                            R_dry::Float64 = OBSERVATION_R_DRY)
+                            R_dry::Float64 = R_DRY_AIR)
     nlevel = length(p_half) - 1
     length(z_half) == nlevel + 1 || throw(DimensionMismatch(
         "z_half needs $(nlevel + 1) entries; got $(length(z_half))"))

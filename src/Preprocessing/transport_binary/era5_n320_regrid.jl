@@ -1,44 +1,55 @@
 # ===========================================================================
-# ERA5 N320 → C180 cubed-sphere transport-binary writer.
+# ERA5 N320 → cubed-sphere transport-binary writer. The target may be any
+# `Nc`; helpers and buffers named `c180` work for every target resolution.
 #
 # Drives one UTC day end-to-end:
 #
 #   per window (24 hourly):
-#     1. Run the ERA5 per-window pipeline (B/C/D/E from sources/era5.jl):
+#     1. Run the ERA5 per-window pipeline (B/C/D/E from sources/era5*.jl):
 #        synthesise U/V/T/Q/PS on N320, derive dry-basis mass on the source
 #        mesh, read UDMF/DDMF/UDRF/DDRF convection (optional), and
-#        conservatively regrid PS / U / V / T / Q to the C180 target.
-#     2. Re-derive dry-mass on C180 from the regridded moist PS + Q so the
-#        target-side column closure Σ_k DELP_dry = PS_dry holds to roundoff.
+#        conservatively regrid PS / U / V / T / Q to the CS target.
+#     2. Re-derive dry mass on the target from the regridded moist PS + Q so
+#        the target-side column closure Σ_k DELP_dry = PS_dry holds to
+#        roundoff, then apply the vertical plan and the optional global
+#        dry-mass pin.
 #     3. Rotate cell-centre winds geographic → panel-local using the CS
 #        tangent basis.
-#     4. Reconstruct Arakawa-C face mass fluxes (am, bm) from rotated U/V
-#        and panel DELP via the existing CS helper.
+#     4. Reconstruct Arakawa-C face mass fluxes (am, bm) with the configured
+#        flux-construction method.
 #
 #   per window transition (windows 2..24):
 #     5. Read the next window's pipeline output so we can close continuity
 #        against the explicit endpoint-mass target.
 #     6. Poisson-balance the current window's horizontal fluxes against
-#        the next-window mass tendency (column or global balance, same
-#        knob as the LL→CS path).
+#        the next-window mass tendency (column balance by default; per-layer
+#        global balance with `[numerics] balance_mode = "per_layer"`).
 #     7. Diagnose cm from the balanced fluxes + endpoint mass tendency.
+#        With adaptive substeps, steps 6-7 repeat at a higher substep count
+#        until the per-substep CFL is under `substep_cfl_target`; the
+#        per-window schedule is stamped onto the header.
 #     8. Verify the per-substep positivity gate and the write-time replay
 #        gate. Update the worst-case accumulators.
 #     9. Convert the next-window mass target into the forward `dm` payload
 #        and stream-write the window to the staging binary.
 #
-# The final window writes with `dm = 0` (no next-day endpoint look-ahead
-# from a separate file yet — the warning is emitted at write time, mirroring
-# the `allow_terminal_zero_tendency` path in `regrid_ll_binary_to_cs`).
+# The final window closes against the next day's hour-0 endpoint, read from
+# the next day's core GRIB. Only when that file is missing (archive boundary)
+# does it fall back to a zero-tendency endpoint (`m_next = m_cur`) with a
+# warning.
 #
-# Surface (PBL) payload sections are intentionally not written by this
-# branch — the ERA5 N320 source doesn't expose them yet.
+# Surface (PBL) fields (pblh, ustar, hflux, t2m) are written when
+# `include_surface = true`: they are read from the 0.25° regular lat-lon
+# surface data under `sfc_an_native/` (`era5_surface_reader.jl`) and
+# conservatively regridded to the target. With
+# `include_tm5_diffusion = true` the TM5 boundary-layer `dkg` payload is
+# computed on the target from those fields.
 #
-# TM5 convection (entu/detu/entd/detd) IS now written when
+# TM5 convection (entu/detu/entd/detd) is written when
 # `include_convection = true`. The N320 forecast (UDMF/DDMF/UDRF/DDRF)
-# is conservatively mapped to C180 first, then converted to TM5 fields via
-# `ec2tm_from_rates!` using target-grid thermodynamic geometry, and attached
-# to the per-window writer payload as `window.tm5_fields`.
+# is conservatively mapped to the target first, then converted to TM5 fields
+# via `ec2tm_from_rates!` using target-grid thermodynamic geometry, and
+# attached to the per-window writer payload as `window.tm5_fields`.
 # CMFMC/DTRAIN is NOT written from this preprocessor; consumers that
 # want CMFMC should read from a GEOS-IT binary or convert from TM5
 # downstream.
@@ -243,15 +254,18 @@ Generate a v4 cubed-sphere transport binary for one UTC `date` from the
 ERA5 native-GRIB source described by `settings`, written to `out_path`.
 
 `mass_basis` is fixed to `:dry` here — the writer pulls dry-basis layer
-mass and dry surface pressure (re-derived on C180 from regridded PS + Q).
-A `:moist` request would need the moist-basis runtime contract, which is
-not the project's runtime default (`feedback_dry_basis_default.md`).
+mass and dry surface pressure (re-derived on the target from regridded
+PS + Q). Dry basis is the runtime default; a `:moist` request errors.
 
-`steps_per_window` controls the number of Strang substeps per met window
-written into the binary. Each `am` / `bm` per-face slot stores the
-substep-mass amount; the runtime CFL is `cfl = am[i,j,k] / m[i-1,j,k]`
-per substep so a larger value softens the per-substep CFL at the cost of
-a larger binary.
+`steps_per_window` is the number of Strang substeps per met window. With
+`adaptive_substeps = true` (default) it is the floor: each window's count is
+raised until the per-substep CFL is under `substep_cfl_target` (at most
+`max_steps_per_window`), and the per-window schedule is written into the
+header. Each `am` / `bm` per-face slot stores the substep-mass amount. Per
+face, the Courant number of a substep is `|F| / m_donor` (the donor cell
+depends on the flux sign); the runtime subcycling gate sums each cell's
+outgoing x, y and z face fluxes over the palindrome and divides by its mass
+(`cs_subcycling.jl`).
 
 The function stages writes to `out_path.tmp` and promotes to `out_path`
 on success — a partial run leaves no usable file at the requested path.
@@ -280,13 +294,15 @@ function process_era5_n320_to_cs_day(date::Date,
                                        cache_dir::Union{Nothing, AbstractString} = nothing,
                                        include_convection::Bool = false,
                                        global_mass_pin::Bool = false,
-                                       global_mass_target_kg::Real = NaN) where FT
+                                       global_mass_target_kg::Real = NaN,
+                                       horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing) where FT
     mass_basis === :dry ||
         throw(ArgumentError("ERA5 N320 → CS writer only supports mass_basis=:dry; got $(mass_basis)"))
     _validate_flux_construction(settings, "ERA5")
-    horizontal_poisson_balance_enabled() && settings.column_balance_weights !== :mass && throw(ArgumentError(
+    horizontal_balance = effective_horizontal_balance(horizontal_balance, ColumnBalance())
+    horizontal_balance isa LayerBalance && settings.column_balance_weights !== :mass && throw(ArgumentError(
         "column_balance_weights = $(settings.column_balance_weights) applies to the column " *
-        "Poisson balance; it cannot be combined with ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1"))
+        "Poisson balance; it cannot be combined with [numerics] balance_mode = \"per_layer\""))
     native_vc_cfg = load_hybrid_coefficients(settings.coefficients_file)
     native_vc_ft = HybridSigmaPressure(FT.(native_vc_cfg.A), FT.(native_vc_cfg.B))
     plan = if vertical_plan === nothing
@@ -376,7 +392,7 @@ function process_era5_n320_to_cs_day(date::Date,
         tm5_merged = include_convection ?
             allocate_era5_c180_tm5_convection_fields(target_grid, Nz_int) : nothing
 
-        gravity = FT(GRAV)
+        gravity = FT(STANDARD_GRAVITY)
         # Flux construction (`[preprocessing]` keys; defaults reproduce the
         # historical panel-average fluxes and mass-weighted column balance).
         flux_method = _face_flux_method(settings, target_grid; source = cur_pipe.source_grid.mesh)
@@ -530,6 +546,7 @@ function process_era5_n320_to_cs_day(date::Date,
             cs_coordinate_law = _cs_coordinate_law_tag(target_grid),
             cs_center_law = _cs_center_law_tag(target_grid),
             longitude_offset_deg = longitude_offset_deg(cs_definition(mesh)),
+            planet_radius = mesh.radius,
             extra_header = Dict{String, Any}(
                 "preprocessor" => "process_era5_n320_to_cs_day",
                 # Declare the per-window advection substep contract so the
@@ -559,6 +576,7 @@ function process_era5_n320_to_cs_day(date::Date,
                 "vertical_Nz_output" => Nz_int,
                 "merge_map" => plan.merge_map,
                 "poisson_balanced" => true,
+                "horizontal_balance" => balance_tag(horizontal_balance),
                 "column_balance_weights" => String(settings.column_balance_weights),
                 "face_fluxes" => String(settings.face_fluxes),
                 "flux_face_lengths" => settings.face_fluxes === :panel_average ? String(settings.face_lengths) : "edge",
@@ -618,7 +636,7 @@ function process_era5_n320_to_cs_day(date::Date,
         worst_pre = 0.0; worst_post = 0.0; worst_iter = 0
         worst_replay_rel = 0.0; worst_replay_abs = 0.0; worst_replay_win = 0
         worst_positivity = init_cs_positivity_accumulator()
-        apply_horizontal_balance = horizontal_poisson_balance_enabled()
+        apply_horizontal_balance = horizontal_balance isa LayerBalance
 
         # Reconstruct + Poisson-balance + diagnose `cm` for the CURRENT window
         # (`pipe` outputs, balanced against `m_next`) at a given substep count.
@@ -743,7 +761,8 @@ function process_era5_n320_to_cs_day(date::Date,
                 contract.positivity
             else
                 verify_substep_positivity_cs!(cur_m_dry, cur_am, cur_bm, cur_cm;
-                                              cfl_limit = positivity_cfl_limit)
+                                              cfl_limit = positivity_cfl_limit,
+                                              m_next = nxt_m_dry)
             end
             worst_positivity = update_cs_positivity_accumulator(worst_positivity, pos_diag, win - 1)
 
@@ -861,7 +880,8 @@ function process_era5_n320_to_cs_day(date::Date,
             contract.positivity
         else
             verify_substep_positivity_cs!(cur_m_dry, cur_am, cur_bm, cur_cm;
-                                          cfl_limit = positivity_cfl_limit)
+                                          cfl_limit = positivity_cfl_limit,
+                                          m_next = nxt_m_dry)
         end
         worst_positivity = update_cs_positivity_accumulator(worst_positivity, final_pos_diag, nwindow)
         _fill_cs_mass_delta_payload!(cur_dm_dry, cur_m_dry, nxt_m_dry)
@@ -929,12 +949,12 @@ end
                 kwargs...)
 
 Adapter that the unified preprocessor CLI calls into. Forwards to
-`process_era5_n320_to_cs_day` with the kwargs the underlying
-function actually accepts; the rest of the unified-CLI day-kwargs (e.g.
-`chain_mass`, `adaptive_substeps`, `min_steps_per_window`, `seed_m`) are
-absorbed by the trailing `kwargs...` and silently ignored — ERA5 N320 has
-no day-to-day mass-chain state, and the writer currently uses a fixed
-substep count rather than the adaptive policy.
+`process_era5_n320_to_cs_day` the substep policy (`min_steps_per_window` as
+the floor, `adaptive_substeps`, `substep_cfl_target`, `max_steps_per_window`),
+the positivity settings, and the global dry-mass pin. The remaining
+unified-CLI day-kwargs (e.g. `chain_mass`, `seed_m`) are absorbed by the
+trailing `kwargs...` and ignored — ERA5 N320 has no day-to-day mass-chain
+state.
 
 Returns `(; final_m = nothing)` so the unified CLI's `seed_m = get(result,
 :final_m, nothing)` chain remains a no-op.
@@ -954,6 +974,7 @@ function process_day(date::Date,
                      max_steps_per_window::Integer = typemax(Int),
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
+                     horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
                      kwargs...)
     # The substep floor is the policy's min_steps_per_window (the entrypoint
     # resolves it from [numerics]); adaptive scheduling raises it per window to
@@ -974,7 +995,8 @@ function process_day(date::Date,
         cache_dir                 = grid.cache_dir,
         include_convection        = settings.include_convection,
         global_mass_pin           = global_mass_pin,
-        global_mass_target_kg     = global_mass_target_kg)
+        global_mass_target_kg     = global_mass_target_kg,
+        horizontal_balance        = horizontal_balance)
     # Surface the fixed target so the unified driver's serial path can echo it
     # across days (no-op for the threaded path, which uses the config target).
     return (; final_m = nothing,

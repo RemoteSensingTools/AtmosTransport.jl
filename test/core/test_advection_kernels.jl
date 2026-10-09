@@ -22,7 +22,7 @@ using Test
 using AtmosTransport
 using .AtmosTransport: Operators, Grids
 using .AtmosTransport.Grids: cell_areas_by_latitude
-using .AtmosTransport.Operators: MonotoneLimiter, PositivityLimiter,
+using .AtmosTransport.Operators: MonotoneLimiter, PositivityLimiter, CW84Limiter,
                                   strang_split!, strang_split_mt!
 using .AtmosTransport.Operators.Advection: _limited_moment, _xface_tracer_flux
 using .AtmosTransport.MetDrivers: diagnose_cm_from_continuity!
@@ -156,7 +156,8 @@ end
     q0 = FT(400e-6)
 
     for scheme in (SlopesScheme(MonotoneLimiter()),
-                   PPMScheme(MonotoneLimiter()))
+                   PPMScheme(MonotoneLimiter()),
+                   PPMScheme(CW84Limiter()))
         @testset "$(nameof(typeof(scheme)))" begin
             # A uniform negative VMR is a valid signed contribution and must
             # remain uniform while the carrier mass evolves.
@@ -514,7 +515,8 @@ end
 # PPMScheme: {CPU,GPU} × {F32,F64}
 # =========================================================================
 
-@testset "PPMScheme kernels: {CPU,GPU} × {F32,F64}" begin
+@testset "PPMScheme($(nameof(typeof(limiter)))) kernels: {CPU,GPU} × {F32,F64}" for limiter in
+        (MonotoneLimiter(), CW84Limiter())
 
     for FT in (Float64, Float32)
         precision_tag = FT == Float64 ? "F64" : "F32"
@@ -522,7 +524,7 @@ end
         grid, m_cpu, rm_uni_cpu, rm_grad_cpu, am_cpu, bm_cpu, cm_cpu =
             build_test_problem(FT)
 
-        scheme = PPMScheme(MonotoneLimiter())
+        scheme = PPMScheme(limiter)
 
         @testset "CPU $precision_tag: uniform invariance (PPM)" begin
             m_out, rm_out = run_strang!(m_cpu, rm_uni_cpu, am_cpu, bm_cpu, cm_cpu, grid, scheme)
@@ -600,7 +602,7 @@ end
         grid64, m64, _, rm_grad64, am64, bm64, cm64 = build_test_problem(Float64)
         grid32, m32, _, rm_grad32, am32, bm32, cm32 = build_test_problem(Float32)
 
-        scheme = PPMScheme(MonotoneLimiter())
+        scheme = PPMScheme(limiter)
         _, rm_out64 = run_strang!(m64, rm_grad64, am64, bm64, cm64, grid64, scheme; n_steps=4)
         _, rm_out32 = run_strang!(m32, rm_grad32, am32, bm32, cm32, grid32, scheme; n_steps=4)
 
@@ -637,6 +639,7 @@ end
             (UpwindScheme(), "Upwind"),
             (SlopesScheme(MonotoneLimiter()), "Slopes"),
             (PPMScheme(MonotoneLimiter()), "PPM"),
+            (PPMScheme(CW84Limiter()), "PPM-CW84"),
         )
             @testset "CPU $precision_tag $scheme_tag: MT ≡ per-tracer (4 steps)" begin
                 # Per-tracer path (reference)

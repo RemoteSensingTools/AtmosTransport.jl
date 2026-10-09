@@ -19,6 +19,7 @@
 # ---------------------------------------------------------------------------
 
 using Test
+using JSON3
 
 using AtmosTransport
 using .AtmosTransport.Preprocessing: regrid_ll_binary_to_cs, build_target_geometry,
@@ -36,12 +37,14 @@ function _ll_fixture_binary(path::AbstractString;
                             surface_uniform = nothing,
                             tm5_uniform::Real = 0,
                             am_uniform::Real = 0,
-                            bm_uniform::Real = 0)
-    mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny)
+                            bm_uniform::Real = 0,
+                            radius::Real = AtmosTransport.Parameters.IFS_EARTH_RADIUS)
+    # Default: the preprocessors' sphere, which the CS target shares.
+    mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny, radius)
     A_ifc = FT[0, 2500, 5000, 7500, 10000]
     B_ifc = FT[0, 0.1, 0.3, 0.6, 1.0]
     vertical = HybridSigmaPressure(A_ifc, B_ifc)
-    grid = AtmosGrid(mesh, vertical, CPU(); FT = FT)
+    grid = AtmosGrid(mesh, vertical, CPU(); FT = FT, radius)
 
     # ps varies with latitude: lower at poles, higher at equator.
     ps = Array{FT}(undef, Nx, Ny)
@@ -388,6 +391,36 @@ end
             @test_throws ArgumentError regrid_ll_binary_to_cs(
                 ll_path, cs_grid, cs_path;
                 FT = Float64, mass_basis = :moist)
+        end
+    end
+
+    @testset "source and target share one sphere" begin
+        mktempdir() do dir
+            cfg_grid = Dict{String, Any}("Nc" => 4, "regridder_cache_dir" => joinpath(dir, "cr_cache"))
+            cs_grid = build_target_geometry(Val(:cubed_sphere), cfg_grid, Float64)
+
+            # A source on another sphere is rejected.
+            ll_path = joinpath(dir, "ll_earth.bin")
+            _ll_fixture_binary(ll_path; radius = AtmosTransport.Parameters.EARTH_RADIUS)
+            @test_throws ArgumentError regrid_ll_binary_to_cs(ll_path, cs_grid, joinpath(dir, "cs_earth.bin");
+                                                              FT = Float64)
+
+            # A source without the radius key was built on the IFS sphere.
+            ll_path = joinpath(dir, "ll_keyless.bin")
+            _ll_fixture_binary(ll_path; final_dm_fraction = 1e-3)
+            reader = AtmosTransport.MetDrivers.TransportBinaryReader(ll_path; FT = Float64)
+            nbytes = reader.header.header_bytes
+            close(reader)
+            raw = open(io -> read(io, nbytes), ll_path)
+            header = JSON3.read(String(raw[1:findfirst(==(0x00), raw) - 1]), Dict{String, Any})
+            delete!(header, "planet_radius_m")
+            json = Vector{UInt8}(JSON3.write(header))
+            open(io -> write(io, json, zeros(UInt8, nbytes - length(json))), ll_path, "r+")
+            cs_path = joinpath(dir, "cs_keyless.bin")
+            regrid_ll_binary_to_cs(ll_path, cs_grid, cs_path; FT = Float64)
+            reader = AtmosTransport.MetDrivers.TransportBinaryReader(cs_path; FT = Float64)
+            @test reader.header.planet_radius_m == AtmosTransport.Parameters.IFS_EARTH_RADIUS
+            close(reader)
         end
     end
 

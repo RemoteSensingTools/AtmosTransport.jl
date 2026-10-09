@@ -13,9 +13,9 @@ topology-dispatched VMR builders for the unified runtime.
   those shared kinds plus `pressure_layer` and signed `cs_native` fields.
 - [`pack_initial_tracer_mass`](@ref) — basis-aware VMR → conservative model storage
   conversion. Dispatches on `mass_basis::AbstractMassBasis`:
-  - `DryBasis` (default per CLAUDE.md invariant 14): `rm = vmr .* air_mass`.
-  - `MoistBasis`: `rm = vmr .* air_mass .* (1 .- qv)` per CLAUDE.md
-    invariant 9; `qv` must be supplied.
+  - `DryBasis` (the default runtime basis): `rm = vmr .* air_mass`.
+  - `MoistBasis`: `rm = vmr .* air_mass .* (1 .- qv)`, because IC VMRs are
+    dry and `air_mass` is moist; `qv` must be supplied.
 - [`FileInitialConditionSource`](@ref) — container for a loaded IC
   NetCDF (3D VMR + hybrid coefficients + surface pressure).
 
@@ -27,12 +27,14 @@ topology-dispatched VMR builders for the unified runtime.
 - Basis-aware `pack_initial_tracer_mass` (DryBasis + MoistBasis); CS
   output is halo-padded with the halo zeroed. `_build_source_latlon_mesh`
   helper for LL→CS conservative regridding.
-- Surface-flux NetCDF loader (13 helpers + `FileSurfaceFluxField`
-  struct) and LL/RG `build_surface_flux_source` methods; CS
-  `build_surface_flux_source` conservatively LL→CS-regrids the flux (the
-  regridder's `dst_areas` × regridded density already yields kg/s per
-  cell) and unpacks to `NTuple{6, Matrix{FT}}` — satisfying the per-cell
-  kg/s contract at `src/Operators/SurfaceFlux/sources.jl:12`.
+- Surface-flux loaders and builders (`initial_conditions/surface_flux*.jl`):
+  static `FileSurfaceFluxField` and time-varying series, and LL/RG/CS
+  `build_surface_flux_source` methods. CS `build_surface_flux_source`
+  conservatively LL→CS-regrids the flux (the regridder's `dst_areas` ×
+  regridded density already yields kg/s per cell) and unpacks to
+  `NTuple{6, Matrix{FT}}`, or returns a `TimeVaryingSurfaceFluxSource` when
+  `time_varying = true` — satisfying the per-cell rate contract of
+  `SurfaceFluxSource` (`src/Operators/SurfaceFlux/sources.jl`).
 
 Private helpers (underscore-prefixed) stay unexported and are
 accessed by callers (including the canonical driven runtime)
@@ -45,6 +47,7 @@ using Dates
 using ..Models: _config_bool
 
 import ...expand_data_path
+using ...Parameters: AVOGADRO, EARTH_RADIUS, SPECIES_MOLAR_MASS, STANDARD_PRESSURE, DRY_AIR_MOLAR_MASS
 using ..State: AbstractMassBasis, DryBasis, MoistBasis
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                 nrings, ring_longitudes, cell_index, cell_area,
@@ -63,7 +66,7 @@ using ..Grids: AbstractHorizontalMesh, nx, ny, ncells
 using Printf: @sprintf
 
 # ---------------------------------------------------------------------------
-# Longitude-wrap helpers (hoisted from the historical LL/RG runner)
+# Longitude-wrap helpers
 # ---------------------------------------------------------------------------
 
 # NOTE: the source arrays (Catrine, GridFED) may be in [-180, 180)
@@ -72,7 +75,7 @@ using Printf: @sprintf
 @inline wrapped_longitude_360(lon) = mod(lon, 360)
 
 # ---------------------------------------------------------------------------
-# Config-kind resolvers (hoisted from the historical LL/RG runner)
+# Config-kind resolvers
 # ---------------------------------------------------------------------------
 
 @inline _init_kind(cfg) = Symbol(lowercase(String(get(cfg, "kind", "uniform"))))
@@ -99,7 +102,7 @@ end
 end
 
 # ---------------------------------------------------------------------------
-# FileInitialConditionSource struct (hoisted from run_transport_binary.jl:59)
+# FileInitialConditionSource struct
 # ---------------------------------------------------------------------------
 
 """
@@ -133,7 +136,7 @@ struct FileInitialConditionSource{FT}
 end
 
 # ---------------------------------------------------------------------------
-# Bracket search + bilinear interpolation (hoisted from :82,99,132,157)
+# Bracket search + bilinear interpolation
 # ---------------------------------------------------------------------------
 
 function _ic_find_coord(ds, candidates::Vector{String})
@@ -253,7 +256,7 @@ function _sample_bilinear_scalar(raw::AbstractMatrix{T},
 end
 
 # ---------------------------------------------------------------------------
-# IC config resolver + NetCDF loader (hoisted from :198, :353)
+# IC config resolver + NetCDF loader
 # ---------------------------------------------------------------------------
 
 function _resolve_file_init(cfg, kind::Symbol)
@@ -301,7 +304,7 @@ function _load_file_initial_condition_source(cfg, ::Type{FT}, Nz_target::Integer
         has_hybrid = haskey(ds, "ap") && haskey(ds, "bp") && haskey(ds, "Psurf")
         ap = has_hybrid ? Float64.(ds["ap"][:]) : Float64[]
         bp = has_hybrid ? Float64.(ds["bp"][:]) : Float64[]
-        psurf = has_hybrid ? Float64.(nomissing(ds["Psurf"][:, :], 101325.0)) : zeros(Float64, 0, 0)
+        psurf = has_hybrid ? Float64.(nomissing(ds["Psurf"][:, :], STANDARD_PRESSURE)) : zeros(Float64, 0, 0)
 
         if length(lat_src) > 1 && lat_src[1] > lat_src[end]
             raw = raw[:, end:-1:1, :]
@@ -340,7 +343,7 @@ function _load_file_initial_condition_source(cfg, ::Type{FT}, Nz_target::Integer
 end
 
 # ---------------------------------------------------------------------------
-# Vertical log-pressure interpolation (hoisted from :466)
+# Vertical log-pressure interpolation
 # ---------------------------------------------------------------------------
 
 """
@@ -419,11 +422,9 @@ function _interpolate_log_pressure_profile!(dest::AbstractVector{FT},
     # Target half-level pressures from the binary's own hybrid coefficients
     # and surface pressure: `p_half[k] = A[k] + B[k] * ps_tgt`. This is
     # *exact* and decouples vertical remap from `air_mass × g / area`,
-    # which previously drifted by 9-22% on gnomonic CS because
-    # `mesh.cell_areas[i, j]` was inconsistent with the area used by the
-    # preprocessor when writing `m`. Visible symptom (2026-04-24): cube
-    # panel-outline structure in C48 column-mean IC, dissolved by transport
-    # within ~30 h.
+    # which can be off by 9-22% on gnomonic CS when `mesh.cell_areas[i, j]`
+    # differs from the area the preprocessor used when writing `m` (seen as
+    # cube panel-outline structure in a C48 column-mean IC).
     ps_tgt_f = Float64(ps_tgt)
     tgt_p_half = Vector{Float64}(undef, Nz + 1)
     @inbounds for k in 1:(Nz + 1)
@@ -475,7 +476,7 @@ function _copy_profile!(dest::AbstractVector{FT}, src_q::AbstractVector{FT}) whe
 end
 
 # ---------------------------------------------------------------------------
-# Topology-dispatched VMR builder (hoisted from :570, :593, :622, :653)
+# Topology-dispatched VMR builder
 #
 # `build_initial_mixing_ratio` returns **dry VMR** on interior cells.
 # Shapes:
@@ -680,10 +681,9 @@ end
 # ---------------------------------------------------------------------------
 # pack_initial_tracer_mass — basis-aware VMR → tracer-mass conversion
 #
-# Rule (feedback_vmr_to_mass_basis_aware, 2026-04-24): IC VMRs are dry.
+# Rule: IC VMRs are dry.
 # - DryBasis:   air_mass == m_dry   → rm = vmr .* air_mass
 # - MoistBasis: air_mass == m_moist → rm = vmr .* air_mass .* (1 .- qv)
-#               (per CLAUDE.md invariant 9)
 # ---------------------------------------------------------------------------
 
 """
@@ -698,11 +698,11 @@ of halo-padded panels, with the halos set to zero.
 
 ## Dispatch
 
-- `mass_basis::DryBasis` — `air_mass` is `m_dry` per CLAUDE.md
-  invariant 14. Result: `vmr_dry .* air_mass`. `qv` is ignored.
-- `mass_basis::MoistBasis` — `air_mass` is `m_moist` per CLAUDE.md
-  invariant 9. Result: `vmr_dry .* air_mass .* (1 .- qv)`. `qv` must
-  be supplied from the first transport window; missing `qv` errors.
+- `mass_basis::DryBasis` (the default runtime basis) — `air_mass` is
+  `m_dry`. Result: `vmr_dry .* air_mass`. `qv` is ignored.
+- `mass_basis::MoistBasis` — `air_mass` is `m_moist`, so the dry VMR is
+  converted with `1 - qv`. Result: `vmr_dry .* air_mass .* (1 .- qv)`. `qv`
+  must be supplied from the first transport window; missing `qv` errors.
 
 CS dispatch handles per-panel halo packing.
 
@@ -734,7 +734,7 @@ end
 function _pack_tracer_mass(::AtmosGrid{<:LatLonMesh}, air_mass, vmr_dry, ::MoistBasis, qv)
     qv === nothing && throw(ArgumentError(
         "pack_initial_tracer_mass on MoistBasis requires qv (specific humidity) " *
-        "from the first transport window; got qv=nothing. See CLAUDE.md invariant 9."))
+        "from the first transport window to convert dry VMR to moist storage; got qv=nothing."))
     size(qv) == size(air_mass) || throw(DimensionMismatch(
         "qv shape $(size(qv)) must match air_mass shape $(size(air_mass))"))
     return vmr_dry .* air_mass .* (1 .- qv)
@@ -743,7 +743,7 @@ end
 function _pack_tracer_mass(::AtmosGrid{<:ReducedGaussianMesh}, air_mass, vmr_dry, ::MoistBasis, qv)
     qv === nothing && throw(ArgumentError(
         "pack_initial_tracer_mass on MoistBasis requires qv (specific humidity) " *
-        "from the first transport window; got qv=nothing. See CLAUDE.md invariant 9."))
+        "from the first transport window to convert dry VMR to moist storage; got qv=nothing."))
     size(qv) == size(air_mass) || throw(DimensionMismatch(
         "qv shape $(size(qv)) must match air_mass shape $(size(air_mass))"))
     return vmr_dry .* air_mass .* (1 .- qv)

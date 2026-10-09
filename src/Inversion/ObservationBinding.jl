@@ -12,15 +12,14 @@
 #     at `t_start + nsteps*dt` (one past the end) lands on step
 #     `nsteps + 1` and is rejected by the `:reject` policy.
 #
-#   * Geography. `(lat, lon) -> (panel, i, j)` via brute-force nearest
-#     cell center, comparing unit-vector dot products in Cartesian
-#     space. O(M * 6 * Nc^2) per call. Cheap for v1 inversion sizes
-#     (M ~ 10^3-10^4 obs vs C48 = 13_824 cells); replace with a tree
-#     or closed-form panel un-projection if a profile shows this
-#     dominating runtime.
+#   * Geography. `(lat, lon) -> (panel, i, j)` is the cell that contains
+#     the point, from the inverse gnomonic map of the mesh: the locator the
+#     forward observation sampler uses (`Output.cell_locator`/`locate`), so
+#     an observation is sampled and inverted in the same cell. Records store
+#     Float32 coordinates; a point within Float32 rounding of a cell edge can
+#     fall on either side of it.
 #
 # Altitude is dropped: v1 always projects to a column-mean objective.
-# Layer-stratified handling for satellite verticality can come later.
 # ---------------------------------------------------------------------------
 
 import Dates
@@ -77,7 +76,7 @@ function bind_to_mesh(set::CSObservationSet,
     nsteps_max = nsteps === nothing ? typemax(Int) : Int(nsteps)
     tracer_match = tracer_filter === nothing ? nothing : String(tracer_filter)
 
-    cache = _build_cs_cell_center_cache(mesh)
+    locator = cell_locator(mesh)
     out = Vector{CSObservation{CSColumnMeanObjective, Float64}}()
     sizehint!(out, length(set))
 
@@ -103,7 +102,7 @@ function bind_to_mesh(set::CSObservationSet,
         end
 
         p, i, j = _locate_cs_cell(Float64(record.lat),
-                                  Float64(record.lon), cache)
+                                  Float64(record.lon), locator)
         push!(out, CSObservation(k,
                                  CSColumnMeanObjective(p, i, j),
                                  record.value, record.value_sigma))
@@ -114,13 +113,11 @@ end
 # ---------------------------------------------------------------------------
 # Per-record fail-fast validation
 #
-# `CSObservationRecord` built via the keyword constructor (and therefore
-# every record loaded by `read_observations`) is already finite-checked.
-# We re-validate here so a record constructed directly via the positional
-# inner constructor — which bypasses the keyword guard — cannot slip a
-# NaN/Inf coordinate or payload into the 4D-Var pipeline. The
-# per-record error message names the offending `record.id`, which is
-# more useful at debug time than the constructor's generic message.
+# Every `CSObservationRecord` is already checked by its inner constructor,
+# which the positional form, the keyword wrapper and `read_observations`
+# all go through. The repeat check here is defensive; its error messages
+# name the offending `record.id`, which is more useful at debug time than
+# the constructor's generic message.
 # ---------------------------------------------------------------------------
 
 @inline function _validate_bind_record(record::CSObservationRecord)
@@ -164,63 +161,11 @@ _date_components_string(dc::NTuple{6, Int16}) =
 # Geographic mapping
 # ---------------------------------------------------------------------------
 
-# Flat unit-vector cache for all 6 * Nc^2 cell centers. Stored as three
-# Float64 vectors so the hot loop is a plain SIMD-friendly dot product.
-struct _CSCellCenterCache
-    Nc::Int
-    xs::Vector{Float64}
-    ys::Vector{Float64}
-    zs::Vector{Float64}
-end
-
-function _build_cs_cell_center_cache(mesh::CubedSphereMesh)
-    Nc = mesh.Nc
-    n = 6 * Nc * Nc
-    xs = Vector{Float64}(undef, n)
-    ys = Vector{Float64}(undef, n)
-    zs = Vector{Float64}(undef, n)
-    @inbounds for p in 1:6
-        lons, lats = panel_cell_center_lonlat(mesh, p)
-        for j in 1:Nc, i in 1:Nc
-            ux, uy, uz = _lonlat_to_unit_xyz(Float64(lons[i, j]),
-                                              Float64(lats[i, j]))
-            idx = _cs_cache_index(p, i, j, Nc)
-            xs[idx] = ux
-            ys[idx] = uy
-            zs[idx] = uz
-        end
-    end
-    return _CSCellCenterCache(Nc, xs, ys, zs)
-end
-
-@inline _cs_cache_index(p::Integer, i::Integer, j::Integer, Nc::Integer) =
-    ((Int(p) - 1) * Nc + (Int(j) - 1)) * Nc + Int(i)
-
-@inline function _lonlat_to_unit_xyz(lon_deg::Float64, lat_deg::Float64)
-    lon = deg2rad(lon_deg)
-    lat = deg2rad(lat_deg)
-    cl = cos(lat)
-    return (cl * cos(lon), cl * sin(lon), sin(lat))
-end
-
-@inline function _locate_cs_cell(lat_deg::Float64, lon_deg::Float64,
-                                 cache::_CSCellCenterCache)
-    ux, uy, uz = _lonlat_to_unit_xyz(lon_deg, lat_deg)
-    xs = cache.xs; ys = cache.ys; zs = cache.zs
-    best = -Inf
-    best_idx = 1
-    @inbounds for idx in eachindex(xs)
-        d = xs[idx] * ux + ys[idx] * uy + zs[idx] * uz
-        if d > best
-            best = d
-            best_idx = idx
-        end
-    end
-    Nc = cache.Nc
-    idx0 = best_idx - 1
-    i = (idx0 % Nc) + 1
-    idx0 ÷= Nc
-    j = (idx0 % Nc) + 1
-    p = (idx0 ÷ Nc) + 1
-    return (Int(p), Int(i), Int(j))
+# Observations are bound to the cell that contains them, with the locator the
+# forward observation sampler uses (`Output.cell_locator`): the inverse
+# gnomonic map of the mesh; a point on a face belongs to the cell to its east or
+# north (`locate`). Longitudes of any wrap are reduced to [0, 360) first.
+@inline function _locate_cs_cell(lat_deg::Float64, lon_deg::Float64, locator)
+    cell = locate(locator, mod(lon_deg, 360.0), lat_deg)
+    return (cell.panel, cell.i, cell.j)
 end

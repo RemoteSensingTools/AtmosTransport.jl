@@ -31,8 +31,9 @@ function main()
 
     h0 = open(_hdr, files[1], "r")
     conv = _pc(String(h0["grid"]["panel_convention"]))
+    radius = Float64(get(h0["grid"], "planet_radius_m", AtmosTransport.Parameters.EARTH_RADIUS))
     mesh = CubedSphereMesh(; FT = _ft(String(h0["float_dtype"])), Nc = Int(h0["grid"]["Nc"]),
-                           Hp = 0, definition = _df(String(h0["grid"]["definition"]), conv))
+                           Hp = 0, definition = _df(String(h0["grid"]["definition"]), conv), radius)
     Nc = Int(h0["grid"]["Nc"]); Nz = Int(h0["grid"]["Nz"])
     cs_lon = vcat((vec(panel_cell_center_lonlat(mesh, p)[1]) for p in 1:6)...)
     cs_lat = vcat((vec(panel_cell_center_lonlat(mesh, p)[2]) for p in 1:6)...)

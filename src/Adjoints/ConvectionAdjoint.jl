@@ -1,8 +1,10 @@
 # ---------------------------------------------------------------------------
-# Adjoint of CS convection (CMFMC + TM5).
+# Adjoint of CS convection (CMFMC, TM5, CMFMC-matrix).
 #
-# Reverse-mode of `CMFMCConvection` and `TM5Convection` column operators.
-# Contains:
+# Reverse-mode of `CMFMCConvection`, `TM5Convection` and
+# `CMFMCMatrixConvection` column operators. `CMFMCMatrixConvection`
+# derives TM5 `(entu, detu)` rates from `cmfmc` + `dtrain` and delegates
+# to the TM5 forward/adjoint kernels. Contains:
 #   * TM5 forward Thomas/LU solves (`_tm5_solve_vector!`,
 #     `_tm5_solve_column_vector!`) used by the reverse-mode forward
 #     replay path.
@@ -11,7 +13,8 @@
 #   * Per-panel column kernels for both TM5 and CMFMC (forward + adjoint).
 #   * Workspace + forcing validation helpers.
 #   * `_apply_cs_convection_forward!` and `_apply_cs_convection_adjoint!`
-#     dispatch arms for `NoConvection` / `CMFMCConvection` / `TM5Convection`.
+#     dispatch arms for `NoConvection` / `CMFMCConvection` / `TM5Convection`
+#     / `CMFMCMatrixConvection`.
 # ---------------------------------------------------------------------------
 
 function _tm5_solve_vector!(rm_col, conv1, pivots, Nz::Integer;
@@ -258,137 +261,10 @@ end
     end
 end
 
-@inline function _cmfmc_panel_dtrain(cmfmc_panel, dtrain_panel,
-                                     i, j, k, ::Val{true})
-    return dtrain_panel[i, j, k]
-end
-
-@inline function _cmfmc_panel_dtrain(cmfmc_panel, dtrain_panel,
-                                     i, j, k, ::Val{false})
-    FT = eltype(cmfmc_panel)
-    return max(zero(FT), cmfmc_panel[i, j, k + 1] - cmfmc_panel[i, j, k])
-end
-
-@inline function _cmfmc_cloud_base(cmfmc_panel, i, j, Nz::Int, tiny)
-    # Cloud base = largest k with `|cmfmc[k+1]| > tiny` (lowest
-    # altitude with non-zero updraft inflow). Matches the forward
-    # operator's GG1 fix in cmfmc_kernels.jl and GCHP
-    # convection_mod.F90:625.
-    cldbase_k = 0
-    @inbounds for k in Nz:-1:1
-        cmfmc_bot_k = cmfmc_panel[i, j, k + 1]
-        if abs(cmfmc_bot_k) > tiny
-            cldbase_k = k
-            break
-        end
-    end
-    return cldbase_k
-end
-
-@kernel function _cmfmc_cs_panel_column_single_kernel!(
-    rm_panel,
-    @Const(air_mass_panel),
-    @Const(cmfmc_panel),
-    @Const(dtrain_panel),
-    @Const(cell_areas_panel),
-    qc_scratch_panel,
-    Nz::Int,
-    dt,
-    Hp::Int,
-    ::Val{has_dtrain}) where has_dtrain
-    # Bit-exact replay of the production CMFMC forward kernel
-    # (Operators/Convection/cmfmc_kernels.jl `_cmfmc_cs_panel_column_kernel!`).
-    # Used by the adjoint to re-derive the per-substep state that the
-    # adjoint pass needs. MUST stay in lock-step with the production
-    # kernel: GG1 (surface-up cloud-base scan), CC1 (kg/m² well-mix +
-    # cloud-base closure), C3 (entrn≥0 guard, no min() cap).
-    i, j = @index(Global, NTuple)
-    FT = eltype(rm_panel)
-    tiny = FT(_cmfmc_adjoint_tiny(FT))
-    ii = i + Hp
-    jj = j + Hp
-    cell_area = FT(cell_areas_panel[i, j])
-    dt_ft = FT(dt)
-
-    @inbounds begin
-        cldbase_k = _cmfmc_cloud_base(cmfmc_panel, i, j, Nz, tiny)
-        if cldbase_k != 0
-            if cldbase_k < Nz
-                m_cb = air_mass_panel[ii, jj, cldbase_k]
-                q_cldbase = m_cb > tiny ? rm_panel[ii, jj, cldbase_k] / m_cb : zero(FT)
-                cmfmc_at_cldbase = cmfmc_panel[i, j, cldbase_k + 1]
-                if cmfmc_at_cldbase > tiny
-                    qb_num = zero(FT)
-                    mb_pa  = zero(FT)
-                    for k in (cldbase_k + 1):Nz
-                        m_k = air_mass_panel[ii, jj, k]
-                        q_k = m_k > tiny ? rm_panel[ii, jj, k] / m_k : zero(FT)
-                        m_k_pa = m_k / cell_area
-                        qb_num += q_k * m_k_pa
-                        mb_pa  += m_k_pa
-                    end
-                    if mb_pa > zero(FT)
-                        qb = qb_num / mb_pa
-                        qc_mixed = (mb_pa * qb + cmfmc_at_cldbase * q_cldbase * dt_ft) /
-                                   (mb_pa + cmfmc_at_cldbase * dt_ft)
-                        for k in (cldbase_k + 1):Nz
-                            rm_panel[ii, jj, k] = qc_mixed * air_mass_panel[ii, jj, k]
-                        end
-                        m_cb_pa = m_cb / cell_area
-                        if m_cb_pa > tiny
-                            q_cldbase_new = q_cldbase +
-                                cmfmc_at_cldbase * dt_ft * (qc_mixed - q_cldbase) / m_cb_pa
-                            rm_panel[ii, jj, cldbase_k] = q_cldbase_new * m_cb
-                        end
-                    end
-                end
-            end
-
-            qc_below = zero(FT)
-            for k in Nz:-1:1
-                m_k = air_mass_panel[ii, jj, k]
-                q_k = m_k > tiny ? rm_panel[ii, jj, k] / m_k : zero(FT)
-                cmfmc_bot = k < Nz ? cmfmc_panel[i, j, k + 1] : zero(FT)
-                cmfmc_top = cmfmc_panel[i, j, k]
-                dtrain_k = _cmfmc_panel_dtrain(cmfmc_panel, dtrain_panel,
-                                               i, j, k, Val(has_dtrain))
-                cmout = cmfmc_top + dtrain_k
-                entrn = cmout - cmfmc_bot
-                qc = (entrn >= zero(FT) && cmout > tiny) ?
-                     (cmfmc_bot * qc_below + entrn * q_k) / cmout :
-                     qc_below
-                qc_scratch_panel[ii, jj, k] = qc
-                qc_below = qc
-            end
-
-            # Pass 2: conservative interface-flux divergence (production form).
-            # Φ(k) = cmfmc[k]·(qc[k] − q_env_orig(k−1)); update by Φ(k+1) − Φ(k);
-            # cloud-base bottom interface closed (Φ = 0); loop k = 1 … cldbase.
-            q_env_above = zero(FT)
-            for k in 1:cldbase_k
-                m_k = air_mass_panel[ii, jj, k]
-                q_k = m_k > tiny ? rm_panel[ii, jj, k] / m_k : zero(FT)
-                bmass = m_k / cell_area
-                phi_top = cmfmc_panel[i, j, k] * (qc_scratch_panel[ii, jj, k] - q_env_above)
-                phi_bot = k < cldbase_k ?
-                    cmfmc_panel[i, j, k + 1] * (qc_scratch_panel[ii, jj, k + 1] - q_k) : zero(FT)
-                q_new = bmass > tiny ? q_k + (dt_ft / bmass) * (phi_bot - phi_top) : q_k
-                q_env_above = q_k
-                rm_panel[ii, jj, k] = q_new * m_k
-            end
-        end
-    end
-end
-
-# Same scale-aware threshold used by the production CMFMC kernels —
-# noise-safe on Float32 and Float64 alike (above `eps(FT) × scale`,
-# below the smallest physically meaningful cmfmc value). Mirrored
-# here so the adjoint stays in lock-step without pulling Operators
-# code into Adjoints. Keep these values numerically identical to
-# `_cmfmc_tiny` in `Operators/Convection/cmfmc_kernels.jl`.
-@inline _cmfmc_adjoint_tiny(::Type{Float32}) = 1f-6
-@inline _cmfmc_adjoint_tiny(::Type{Float64}) = 1e-14
-@inline _cmfmc_adjoint_tiny(::Type{T}) where {T <: AbstractFloat} = T(1e-14)
+# The CMFMC forward (replayed below) and its adjoint use the production
+# operator's definitions: `_cmfmc_tiny`, the cloud base derived from CMFMC
+# (`_cmfmc_cloud_base(nothing, …)`) and the detrainment array of
+# `_cmfmc_dtrain_array` (DTRAIN, or max(0, CMFMC[k+1] − CMFMC[k]) without it).
 
 @kernel function _cmfmc_cs_panel_column_single_adjoint_kernel!(
     lambda_panel,
@@ -399,8 +275,7 @@ end
     lambda_qc_panel,
     Nz::Int,
     dt,
-    Hp::Int,
-    ::Val{has_dtrain}) where has_dtrain
+    Hp::Int)
     # Transpose of the production CMFMC forward operator (post-audit:
     # GG1 surface-up cloud base, CC1 kg/m² well-mix with cloud-base
     # closure, C3 entrn≥0 guard). Derivation: forward operator is
@@ -411,7 +286,7 @@ end
     # Pass 1 just as qc_scratch carries qc through the forward Pass 1.
     i, j = @index(Global, NTuple)
     FT = eltype(lambda_panel)
-    tiny = FT(_cmfmc_adjoint_tiny(FT))
+    tiny = _cmfmc_tiny(FT)
     ii = i + Hp
     jj = j + Hp
     cell_area = FT(cell_areas_panel[i, j])
@@ -432,7 +307,7 @@ end
         # −α·cb·qc[k] term) and q_new[k−1] (the +α·cbot·qc[k] term), so it is +=
         # into the zeroed scratch. The self-read of λ_panel[k] precedes any
         # cross-write into it (which only ever comes from iteration k+1).
-        cldbase_k_p2 = _cmfmc_cloud_base(cmfmc_panel, i, j, Nz, tiny)
+        cldbase_k_p2 = _cmfmc_cloud_base(nothing, cmfmc_panel, i, j, Nz, tiny)
         for k in 1:cldbase_k_p2
             m_k = air_mass_panel[ii, jj, k]
             lambda_out = lambda_panel[ii, jj, k]
@@ -476,8 +351,7 @@ end
             lambda_qc = lambda_qc_panel[ii, jj, k]
             cmfmc_bot = k < Nz ? cmfmc_panel[i, j, k + 1] : zero(FT)
             cmfmc_top = cmfmc_panel[i, j, k]
-            dtrain_k = _cmfmc_panel_dtrain(cmfmc_panel, dtrain_panel,
-                                           i, j, k, Val(has_dtrain))
+            dtrain_k = dtrain_panel[i, j, k]
             cmout = cmfmc_top + dtrain_k
             entrn = cmout - cmfmc_bot
             if entrn >= zero(FT) && cmout > tiny
@@ -510,19 +384,21 @@ end
         # value), which is why the post-loop store overwrites
         # lambda_panel[k>cb] with a single coefficient rather than
         # accumulating per-layer.
-        cldbase_k = _cmfmc_cloud_base(cmfmc_panel, i, j, Nz, tiny)
+        cldbase_k = _cmfmc_cloud_base(nothing, cmfmc_panel, i, j, Nz, tiny)
         if cldbase_k != 0 && cldbase_k < Nz
             cmfmc_at_cldbase = cmfmc_panel[i, j, cldbase_k + 1]
             if cmfmc_at_cldbase > tiny
-                mb_pa = zero(FT)
-                lambda_qc_mixed = zero(FT)
+                # Compensated sums, as in the forward's sub-cloud mean.
+                mb_pa, mb_pa_comp = zero(FT), zero(FT)
+                lambda_qc_mixed, lambda_qc_comp = zero(FT), zero(FT)
                 for k in (cldbase_k + 1):Nz
                     m_k = air_mass_panel[ii, jj, k]
-                    mb_pa += m_k / cell_area
+                    mb_pa, mb_pa_comp = _kahan_add(mb_pa, mb_pa_comp, m_k / cell_area)
                     # lambda_panel[k] at this point is λ_rm_post0[k].
                     # λ_q_post0[k] = m_k · λ_rm_post0[k]; for k > cb,
                     # all of it flows into λ_qc_mixed.
-                    lambda_qc_mixed += lambda_panel[ii, jj, k] * m_k
+                    lambda_qc_mixed, lambda_qc_comp =
+                        _kahan_add(lambda_qc_mixed, lambda_qc_comp, lambda_panel[ii, jj, k] * m_k)
                 end
                 if mb_pa > zero(FT)
                     gamma_cb = cmfmc_at_cldbase * dt_ft
@@ -669,9 +545,10 @@ end
     # Reason: these helpers are called from `Footprint/ReverseLoop.jl` with a
     # per-step forcing slice that can differ step-to-step. Production
     # `DrivenSimulation` invalidates the cache on met-window advance, but the
-    # footprint path bypasses that hook. Mirrors the CMFMC pattern at
-    # `:622` / `:708` where `invalidate_cmfmc_cache!(workspace)` is called
-    # before every kernel launch for the same reason.
+    # footprint path bypasses that hook. Mirrors the `CMFMCConvection`
+    # methods of `_apply_cs_convection_forward!` / `_apply_cs_convection_adjoint!`
+    # below, which call `invalidate_cmfmc_cache!(workspace)` before every
+    # kernel launch for the same reason.
     invalidate_cmfmc_matrix_cache!(workspace)
     if !workspace.derived_valid[]
         _launch_cmfmc_matrix_derivation!(workspace.derived_entu, workspace.derived_detu,
@@ -699,20 +576,20 @@ function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
     cell_areas = workspace.cell_metrics
     invalidate_cmfmc_cache!(workspace)
     n_sub = _get_or_compute_n_sub!(workspace, cmfmc, panels_m, cell_areas, dt)
-    has_dtrain = dtrain !== nothing
+    dtrain_arr = _cmfmc_dtrain_array(cmfmc, dtrain, panels_m)
     Nc = mesh.Nc
     Hp = mesh.Hp
     Nz = size(panels_rm[1], 3)
     backend = get_backend(panels_rm[1])
-    kernel! = _cmfmc_cs_panel_column_single_kernel!(backend, (16, 16))
+    kernel! = _cmfmc_cs_panel_column_kernel!(backend, (16, 16))    # the production forward
     FT = eltype(panels_rm[1])
     sdt = FT(dt) / FT(n_sub)
     @inbounds for _ in 1:n_sub
         for p in 1:6
-            dtrain_panel = has_dtrain ? dtrain[p] : cmfmc[p]
-            kernel!(panels_rm[p], panels_m[p], cmfmc[p], dtrain_panel,
-                    cell_areas[p], workspace.qc_scratch[p],
-                    Nz, sdt, Hp, Val(has_dtrain);
+            rm_packed = reshape(panels_rm[p], size(panels_rm[p])..., 1)   # one packed tracer
+            kernel!(rm_packed, panels_m[p], cmfmc[p], dtrain_arr[p], cell_areas[p],
+                    nothing, workspace.qc_scratch[p],
+                    Nz, 1, sdt, Hp, Val(true), Val(false);
                     ndrange = (Nc, Nc))
         end
     end
@@ -789,7 +666,7 @@ function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
     cell_areas = workspace.cell_metrics
     invalidate_cmfmc_cache!(workspace)
     n_sub = _get_or_compute_n_sub!(workspace, cmfmc, panels_m, cell_areas, dt)
-    has_dtrain = dtrain !== nothing
+    dtrain_arr = _cmfmc_dtrain_array(cmfmc, dtrain, panels_m)
     Nc = mesh.Nc
     Hp = mesh.Hp
     Nz = size(lambda_panels[1], 3)
@@ -799,10 +676,9 @@ function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
     sdt = FT(dt) / FT(n_sub)
     @inbounds for _ in 1:n_sub
         for p in 1:6
-            dtrain_panel = has_dtrain ? dtrain[p] : cmfmc[p]
-            kernel!(lambda_panels[p], panels_m[p], cmfmc[p], dtrain_panel,
+            kernel!(lambda_panels[p], panels_m[p], cmfmc[p], dtrain_arr[p],
                     cell_areas[p], workspace.qc_scratch[p],
-                    Nz, sdt, Hp, Val(has_dtrain);
+                    Nz, sdt, Hp;
                     ndrange = (Nc, Nc))
         end
     end

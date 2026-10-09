@@ -129,7 +129,7 @@ struct MergeByIndex <: AbstractVerticalTransform
 end
 
 """
-    MergeLayersThinnerThan(min_thickness_Pa; reference_surface_pressure_Pa = 101325.0)
+    MergeLayersThinnerThan(min_thickness_Pa; reference_surface_pressure_Pa = STANDARD_PRESSURE)
 
 Typed wrapper for the existing `merge_thin_levels` algorithm: greedily
 merge adjacent native layers until each output layer exceeds
@@ -137,12 +137,12 @@ merge adjacent native layers until each output layer exceeds
 """
 Base.@kwdef struct MergeLayersThinnerThan <: AbstractVerticalTransform
     min_thickness_Pa              :: Float64
-    reference_surface_pressure_Pa :: Float64 = 101325.0
+    reference_surface_pressure_Pa :: Float64 = STANDARD_PRESSURE
 end
 
 """
     MergeAbovePressure(pressure_Pa; target_min_thickness_Pa = Inf,
-                                     reference_surface_pressure_Pa = 101325.0)
+                                     reference_surface_pressure_Pa = STANDARD_PRESSURE)
 
 Upper-atmosphere coarsening: native layers whose midpoint pressure is
 LOWER than `pressure_Pa` (physically ABOVE the cutoff altitude) get
@@ -159,7 +159,7 @@ troposphere and stratosphere at native resolution.
 Base.@kwdef struct MergeAbovePressure <: AbstractVerticalTransform
     pressure_Pa                   :: Float64
     target_min_thickness_Pa       :: Float64 = Inf
-    reference_surface_pressure_Pa :: Float64 = 101325.0
+    reference_surface_pressure_Pa :: Float64 = STANDARD_PRESSURE
 end
 
 """

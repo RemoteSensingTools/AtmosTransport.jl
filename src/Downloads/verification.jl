@@ -1,5 +1,5 @@
 # ===========================================================================
-# Download verification — ported from scripts/downloads/download_utils.jl
+# Download verification — originally scripts/downloads/download_utils.jl (removed)
 #
 # Content-Length integrity checking for HTTP-based downloads.
 # ===========================================================================

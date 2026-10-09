@@ -6,14 +6,14 @@ after Holtslag & Boville 1993, J. Climate 6, 1825), with GEOS-Chem's physical
 constants (`physconstants.F90`).
 """
 Base.@kwdef struct GCHPVdiffParameters{FT}
-    g              :: FT = 9.80665       # gravity [m s⁻²]
-    R_dry          :: FT = 287.0         # dry-air gas constant [J kg⁻¹ K⁻¹]
-    cp_dry         :: FT = 1004.64       # dry-air heat capacity [J kg⁻¹ K⁻¹]
-    L_vap          :: FT = 2.5104e6      # latent heat of vaporization [J kg⁻¹]
-    ε_virtual      :: FT = 461.0 / 287.0 - 1   # Rv/Rd − 1 (free-troposphere θv)
-    ε_virtual_pbl  :: FT = 0.61          # pbldif's literal for the surface θv
-    p_ref          :: FT = 1e5           # potential-temperature reference [Pa]
-    karman         :: FT = 0.4
+    g              :: FT = GEOSCHEM_CONSTANTS.gravity      # gravity [m s⁻²]
+    R_dry          :: FT = GEOSCHEM_CONSTANTS.r_dry        # dry-air gas constant [J kg⁻¹ K⁻¹]
+    cp_dry         :: FT = GEOSCHEM_CONSTANTS.cp_dry       # dry-air heat capacity [J kg⁻¹ K⁻¹]
+    L_vap          :: FT = GEOSCHEM_CONSTANTS.l_vap        # latent heat of vaporization [J kg⁻¹]
+    ε_virtual      :: FT = GEOSCHEM_CONSTANTS.r_vap / GEOSCHEM_CONSTANTS.r_dry - 1   # Rv/Rd − 1 (free-troposphere θv)
+    ε_virtual_pbl  :: FT = VIRTUAL_TEMPERATURE_FACTOR    # pbldif's literal for the surface θv
+    p_ref          :: FT = GEOSCHEM_CONSTANTS.p_ref        # potential-temperature reference [Pa]
+    karman         :: FT = GEOSCHEM_CONSTANTS.karman
     β_m            :: FT = 15.0          # unstable momentum profile
     β_h            :: FT = 15.0          # unstable heat profile
     β_s            :: FT = 5.0           # stable profile
@@ -82,8 +82,8 @@ Adapt.adapt_structure(to, f::GCHPNonlocalPBLField) =
                          Adapt.adapt(to, f.p_mid), Adapt.adapt(to, f.z_mid), f.params,
                          Adapt.adapt(to, f.cell_areas))
 
-# Potential temperature of a layer.
-@inline _potential_temperature(T, p, prm) = T * (prm.p_ref / p)^(prm.R_dry / prm.cp_dry)
+# Potential temperature of a layer with GEOS-Chem's constants.
+@inline _gchp_theta(T, p, prm) = _potential_temperature(T, p, prm.R_dry / prm.cp_dry, prm.p_ref)
 
 # Free troposphere: Richardson-number closure K = ℓ² |∂v/∂z| f(Ri) (vdiff_mod.F90).
 @inline function _free_troposphere_kz(Δu, Δv, Δz, θv_above, θv_below, ℓ², prm)
@@ -137,7 +137,7 @@ end
     A = FT(area[i, j])
     g, R = prm.g, prm.R_dry
     moist_Δp(k) = g * air_mass[i + Hp, j + Hp, k] / (A * (1 - qv[i, j, k]))
-    θv(k, ε) = _potential_temperature(t[i, j, k], p_mid[i, j, k], prm) * (1 + ε * qv[i, j, k])
+    θv(k, ε) = _gchp_theta(t[i, j, k], p_mid[i, j, k], prm) * (1 + ε * qv[i, j, k])
 
     @inbounds begin
         # Moist mid-layer pressure from the dry air mass and humidity.
@@ -159,7 +159,7 @@ end
 
         # Surface fluxes as kinematic fluxes at the lowest layer.
         ρ_s = p_mid[i, j, Nz] / (R * t[i, j, Nz])
-        θ_s = _potential_temperature(t[i, j, Nz], p_mid[i, j, Nz], prm)
+        θ_s = _gchp_theta(t[i, j, Nz], p_mid[i, j, Nz], prm)
         w_θ = hflux[i, j] / (ρ_s * prm.cp_dry)
         w_q = eflux[i, j] / (prm.L_vap * ρ_s)
         w_θv = w_θ + prm.ε_virtual_pbl * θ_s * w_q

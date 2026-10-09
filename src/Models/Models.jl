@@ -51,6 +51,9 @@ using .InputStaging: InputStager, staged_path_for!, cleanup_staging!
 export InputStager, staged_path_for!, cleanup_staging!
 include("Simulation.jl")
 include("DrivenSimulation.jl")
+include("driven_window_state.jl")
+include("driven_physics_refresh.jl")
+include("driven_stepping.jl")
 include("DrivenRunner.jl")        # library-level driven runner
 using .DrivenRunner: run_driven_simulation, validate_config, TransportTracerSpec
 export run_driven_simulation, validate_config, TransportTracerSpec

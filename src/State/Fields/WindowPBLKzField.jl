@@ -84,7 +84,7 @@ end
     Nz = size(cache, 3)
     FT = eltype(cache)
     p = params
-    R_dry = p.cp_dry / FT(3.5)
+    R_dry = p.cp_dry / FT(CP_OVER_R_DIATOMIC)
 
     h_pbl = max(FT(pblh[i, j]), FT(100))
     us = max(FT(ustar[i, j]), FT(0.01))
@@ -191,7 +191,7 @@ function refresh_pbl_kz_cache!(field::WindowPBLKzField{FT},
     Hp = Int(halo_width)
     areas = FT.(_host_array(cell_areas))
     p = field.params
-    R_dry = p.cp_dry / FT(3.5)
+    R_dry = p.cp_dry / FT(CP_OVER_R_DIATOMIC)
 
     @inbounds for panel in 1:6
         cache = field.host_cache[panel]

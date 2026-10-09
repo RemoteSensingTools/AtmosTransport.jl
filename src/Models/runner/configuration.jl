@@ -245,9 +245,11 @@ end
 # silently lose to the generic method.
 _advection_label(scheme) = String(nameof(typeof(scheme)))
 _advection_label(s::LinRoodPPMScheme{ORD}) where ORD = "Lin-Rood PPM$(ORD)" * _vertical_suffix(s.vertical)
-_advection_label(s::PPMScheme) = "PPM" * _vertical_suffix(s.vertical)
+_advection_label(s::PPMScheme) = "PPM" * _limiter_suffix(s.limiter) * _vertical_suffix(s.vertical)
 _advection_label(::SlopesScheme) = "Slopes"
 _advection_label(::UpwindScheme) = "Upwind"
+_limiter_suffix(::Any) = ""
+_limiter_suffix(::CW84Limiter) = ", CW84"
 _vertical_suffix(::Any) = ""
 _vertical_suffix(v::PPMScheme) = _vertical_suffix(v.vertical)          # Lin-Rood's vertical sweeps
 _vertical_suffix(::FV3ScalarProfile{true}) = ", FV3 kord 8 vertical"

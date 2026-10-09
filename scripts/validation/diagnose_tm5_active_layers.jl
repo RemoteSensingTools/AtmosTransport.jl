@@ -40,33 +40,8 @@ function _output_paths(prefix::AbstractString)
     return root * ".summary.csv", root * ".levels.csv"
 end
 
-function _section_elements(h, section::Symbol)
-    Nc, Nz, np = h.geometry.Nc, h.nlevel, h.geometry.npanel
-    if section === :m
-        return np * Nc * Nc * Nz
-    elseif section === :am
-        return np * (Nc + 1) * Nc * Nz
-    elseif section === :bm
-        return np * Nc * (Nc + 1) * Nz
-    elseif section === :cm
-        return np * Nc * Nc * (Nz + 1)
-    elseif section === :ps || section in (:pblh, :ustar, :pbl_hflux, :t2m)
-        return np * Nc * Nc
-    elseif section === :cmfmc
-        return np * Nc * Nc * (Nz + 1)
-    elseif section === :dtrain || section in (:entu, :detu, :entd, :detd,
-                                               :qv, :qv_start, :qv_end, :dm)
-        return np * Nc * Nc * Nz
-    elseif section === :dam
-        return np * (Nc + 1) * Nc * Nz
-    elseif section === :dbm
-        return np * Nc * (Nc + 1) * Nz
-    elseif section === :dcm
-        return np * Nc * Nc * (Nz + 1)
-    else
-        error("Unknown CS binary section: $section")
-    end
-end
+# Elements of one CS payload section (the library's table, which knows every section).
+_section_elements(h, section::Symbol) = AtmosTransport.MetDrivers._cs_section_elements(h, section)
 
 function _section_offset(h, win::Int, section::Symbol)
     o = (win - 1) * h.elems_per_window

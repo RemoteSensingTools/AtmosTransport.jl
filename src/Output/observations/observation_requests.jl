@@ -111,10 +111,12 @@ SiteRequest(id, lon, lat, elevation_m, intake_height_m, source) =
 """
     ObservationSet(origin, soundings, sites[, dropped_outside_window, skipped_invalid])
 
-Every sampling request of a run. `soundings` are sorted by `time_seconds`
-(stable) and `sites` are unique by `id`. `dropped_outside_window` counts the
-point events outside the transported span; `skipped_invalid` counts source
-rows skipped for fill values, invalid coordinates, or the quality filter.
+Every sampling request of a run. `build_observation_set` sorts `soundings` by
+`time_seconds` (stable) and merges `sites` so they are unique by `id`; the
+constructor itself neither sorts nor deduplicates, and only rejects site
+series with a `TimeList` schedule. `dropped_outside_window` counts the point
+events outside the transported span; `skipped_invalid` counts source rows
+skipped for fill values, invalid coordinates, or the quality filter.
 """
 struct ObservationSet
     origin::DateTime

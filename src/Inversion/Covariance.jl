@@ -21,17 +21,14 @@
 #         once at construction as `sqrt(C̃)` of the FFT eigenvalues of
 #         the wrapped Gaussian kernel.
 #
-# v1 scope — explicitly out:
+# Not covered:
 #   * Cross-panel correlation. Each panel is smoothed independently
-#     with periodic-on-panel boundary conditions. Edge wrap-around at
-#     panel corners is a known v1 limitation (NOTES.md "Phase B —
-#     cross-panel correlation"); a v2 Schur-complement or low-rank
-#     eigen-correction lands later.
-#   * Temporal correlation. v1 operates on a single CSSurfaceFluxControl
-#     `value` shape (`NTuple{6, Matrix{FT}}`). Multi-window temporal
-#     smoothing is not yet implemented.
-#   * GPU storage. The FFTW path is CPU-only. GPU support requires a
-#     CUFFT path (gated on KernelAbstractions backend); deferred.
+#     with periodic-on-panel boundary conditions, so correlation wraps
+#     around inside a panel instead of crossing panel edges and corners.
+#   * Temporal correlation. The operators act on a single
+#     CSSurfaceFluxControl `value` shape (`NTuple{6, Matrix{FT}}`);
+#     there is no multi-window temporal smoothing.
+#   * GPU storage. The FFTW path is CPU-only; there is no CUFFT path.
 # ---------------------------------------------------------------------------
 
 import FFTW
@@ -117,11 +114,11 @@ corresponding minimum two-dimensional covariance eigenvalue is therefore
 approximately its maximum times `eps(FT)`. This is a precision-aware
 regularization of unresolved high-frequency modes.
 
-**v1 limitations**:
+**Limitations**:
 
 - Cross-panel correlation is dropped. Each panel is smoothed in
   isolation; the implicit wrap-around at panel boundaries leaves
-  edge artefacts that v2 will address.
+  edge artefacts.
 - The FFT path is CPU-only.
 - The struct carries mutable `fft_buf` / `fft_scratch` scratch
   buffers reused by every `apply_B_half!` / `_adjoint!` /
@@ -138,10 +135,9 @@ struct IsotropicGaussianCSCovariance{FT, A, P, IP} <: AbstractCSSurfaceFluxCovar
     L_transfer_sqrt::Matrix{FT}
     # Pre-allocated scratch buffers + pre-built FFTW plans reused by
     # every `apply_B_half!` / `_adjoint!` / `_inverse!` call.
-    # Eliminates both the per-call matrix allocations (~50 KB at C48)
-    # and the per-call FFTW-plan construction (the dominant cost
-    # before this commit — `fft!` / `ifft!` rebuild a plan on every
-    # invocation). Mirrors the `LLPoissonWorkspace` pattern in
+    # Avoids per-call matrix allocations (~50 KB at C48) and per-call
+    # FFTW-plan construction (plain `fft!` / `ifft!` rebuild a plan on
+    # every invocation). Mirrors the `LLPoissonWorkspace` pattern in
     # `src/Preprocessing/mass_support.jl`.
     fft_buf::Matrix{Complex{FT}}
     fft_scratch::Matrix{FT}
