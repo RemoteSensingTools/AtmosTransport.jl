@@ -176,7 +176,7 @@ export SubstepSchedulePolicy, clamp_substeps, initial_substeps,
 export ReadyWindow, PreverifiedWindow, PreprocessorRunCache
 export verify_window!, update_accumulator!, summarize_status!
 export contract_replay_tolerance, contract_cfl_limit, contract_require_positivity
-export allocate_window_workspace, reset_workspace!,
+export allocate_window_workspace,
        ingest_window!, drain_ready_windows!, flush_final_windows!
 export LatLonBinaryWriter, ReducedGaussianBinaryWriter, CubedSphereBinaryWriter
 export write_window!, close_streaming_binary!, promote_streaming_binary!,

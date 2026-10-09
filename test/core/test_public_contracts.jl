@@ -15,10 +15,19 @@ const AT = AtmosTransport
 
     ps = zeros(Float32, 3, 2)
     q = zeros(Float64, 3, 2, 4)
-    met = AT.State.MetState(ps, q)
+    met = @test_deprecated AT.State.MetState(ps, q)
     @test met.ps === ps
     @test met.q === q
-    @test_throws DimensionMismatch AT.State.MetState(ps, zeros(3, 3, 4))
+    @test_deprecated @test_throws DimensionMismatch AT.State.MetState(ps, zeros(3, 3, 4))
+
+    # Deprecated, no caller in the package (removed in the next minor release).
+    am, bm, cm = zeros(3, 2, 2), zeros(2, 3, 2), ones(2, 2, 3)
+    vc2 = AT.HybridSigmaPressure([0.0, 0.0, 0.0], [0.0, 0.5, 1.0])
+    @test_deprecated AT.MetDrivers.diagnose_cm_from_continuity_vc!(cm, am, bm, vc2, 2, 2, 2)
+    @test all(iszero, cm)
+    cm .= 1
+    @test_deprecated AT.MetDrivers.diagnose_cm_from_continuity_ka!(cm, am, bm, [0.5, 0.5], 2, 2, 2)
+    @test all(iszero, cm)
 
     mesh = AT.LatLonMesh(Nx=2, Ny=2, radius=6.0e6)
     vc = AT.HybridSigmaPressure([0.0, 100.0], [0.0, 1.0])

@@ -392,13 +392,6 @@ paths.
 function allocate_window_workspace end
 
 """
-    reset_workspace!(workspace, day_state) -> workspace
-
-Reset a reusable workspace before ingesting a new day/source stream.
-"""
-function reset_workspace! end
-
-"""
     ingest_window!(workspace, args...; kwargs...) -> nothing
 
 Consume one source/met window into the topology workspace. Ready windows are

@@ -124,6 +124,10 @@
   undershoots (−0.16 on a [0, 1] box in a 1-D test). Lat-lon and cubed
   sphere, CPU and GPU, with the cubed-sphere adjoint. The default
   `scheme = "ppm"` is unchanged.
+- Deprecated, for removal in the next minor release: `State.MetState`,
+  `diagnose_cm_from_continuity_vc!` and `diagnose_cm_from_continuity_ka!`. No
+  part of the package uses them. Removed: the exported generic function
+  `Preprocessing.reset_workspace!`, which had no methods.
 - Runs and preprocessing from `git archive` code snapshots record their commit:
   git writes it into `src/REVISION` on export (`export-subst`), and
   `source_revision()` reports it when the tree has no `.git`; edits made after

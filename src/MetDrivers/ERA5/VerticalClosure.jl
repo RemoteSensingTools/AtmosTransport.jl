@@ -58,8 +58,17 @@ end
 
 Convenience wrapper that extracts Δb from a `HybridSigmaPressure` vertical
 coordinate before calling the core routine.
+
+!!! warning "Deprecated"
+    No part of AtmosTransport calls it; it will be removed in the next minor
+    release. Equivalent: `diagnose_cm_from_continuity!(cm, am, bm, Δb, Nx, Ny, Nz)` with
+    `Δb = eltype(cm)[AtmosTransport.Grids.b_diff(vc, k) for k in 1:Nz]`.
 """
 function diagnose_cm_from_continuity_vc!(cm, am, bm, vc, Nx, Ny, Nz)
+    Base.depwarn("`diagnose_cm_from_continuity_vc!` is deprecated and will be removed in the " *
+                 "next minor release; call `diagnose_cm_from_continuity!(cm, am, bm, Δb, Nx, Ny, Nz)` " *
+                 "with `Δb = eltype(cm)[AtmosTransport.Grids.b_diff(vc, k) for k in 1:Nz]`.",
+                 :diagnose_cm_from_continuity_vc!)
     FT = eltype(cm)
     Δb = FT[b_diff(vc, k) for k in 1:Nz]
     diagnose_cm_from_continuity!(cm, am, bm, Δb, Nx, Ny, Nz)
@@ -98,12 +107,18 @@ end
     diagnose_cm_from_continuity_ka!(cm, am, bm, Δb, Nx, Ny, Nz)
 
 GPU-compatible version using KernelAbstractions.  One thread per column.
+
+!!! warning "Deprecated"
+    No part of AtmosTransport calls it; it will be removed in the next minor
+    release.
 """
 function diagnose_cm_from_continuity_ka!(cm::AbstractArray{FT, 3},
                                          am::AbstractArray{FT, 3},
                                          bm::AbstractArray{FT, 3},
                                          Δb::AbstractVector{FT},
                                          Nx::Int, Ny::Int, Nz::Int) where FT
+    Base.depwarn("`diagnose_cm_from_continuity_ka!` is deprecated and will be removed in the " *
+                 "next minor release.", :diagnose_cm_from_continuity_ka!)
     backend = get_backend(cm)
     kernel! = _cm_continuity_kernel!(backend, 256)
     kernel!(cm, am, bm, Δb, Int32(Nz); ndrange=(Nx, Ny))

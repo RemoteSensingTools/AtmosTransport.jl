@@ -8,7 +8,7 @@ Provides:
 - `AbstractFaceFluxState` hierarchy — face mass fluxes
   - `AbstractStructuredFaceFluxState` → `StructuredFaceFluxState` (am, bm, cm)
   - `AbstractUnstructuredFaceFluxState` → `FaceIndexedFluxState`
-- `MetState` — upstream meteorological fields (consumed by flux builders, not transport)
+- `MetState` — upstream meteorological fields (deprecated: no caller; removed in the next minor release)
 - Tracer allocation and mixing-ratio utilities
 """
 module State
