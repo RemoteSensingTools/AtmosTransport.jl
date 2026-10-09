@@ -43,20 +43,8 @@ const NZ_MAX = 85
 const NB_MAX = 60   # global cap on bottom-block size (probed max = 53 on production binary).
 const WG_SIZE = 32
 
-function _section_elements(h, section::Symbol)
-    Nc, Nz, np = h.geometry.Nc, h.nlevel, h.geometry.npanel
-    section === :m     && return np * Nc * Nc * Nz
-    section === :am    && return np * (Nc + 1) * Nc * Nz
-    section === :bm    && return np * Nc * (Nc + 1) * Nz
-    section === :cm    && return np * Nc * Nc * (Nz + 1)
-    section === :ps    && return np * Nc * Nc
-    section in (:pblh, :ustar, :pbl_hflux, :t2m) && return np * Nc * Nc
-    section === :cmfmc && return np * Nc * Nc * (Nz + 1)
-    section === :dtrain && return np * Nc * Nc * Nz
-    section in (:entu, :detu, :entd, :detd, :qv, :qv_start, :qv_end, :dm) &&
-        return np * Nc * Nc * Nz
-    error("unknown section: $section")
-end
+# Elements of one CS payload section (the library's table, which knows every section).
+_section_elements(h, section::Symbol) = AtmosTransport.MetDrivers._cs_section_elements(h, section)
 
 function _section_offset(h, win::Int, section::Symbol)
     o = (win - 1) * h.elems_per_window

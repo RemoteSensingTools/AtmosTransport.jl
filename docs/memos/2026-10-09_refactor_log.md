@@ -121,7 +121,7 @@ The writer and the reader had separate section-size tables (the writer's lacked
 the flux-delta sections `dam/dbm/dcm`); the reader's method now delegates to the
 writer's function, which covers every section. Goldens identical (C24 and C90
 preprocessing, three runtime cases); new table-driven test. The script copies of
-the table (nine scripts, some without `dkg`) go with the scripts cleanup.
+the table (twelve scripts) were replaced later (see "A5, script copies").
 
 ### A8 — reduced-Gaussian runs reject the diffusive surface-flux boundary
 
@@ -489,17 +489,26 @@ Output README now lists `Output.jl`, `runtime_output.jl`, `binary_writer.jl`).
 Golden check after Phase 4 (3ca56c55, all 20 non-slow cases): identical.
 The full test suite (`Pkg.test()`, default tiers) passes at 903cba5b.
 
+### A5, script copies
+
+The twelve benchmark and diagnostic scripts that read cubed-sphere binaries
+through their own copy of the section-size table now call the library's
+`MetDrivers._cs_section_elements`. Evaluated against a mock header, every
+copy agreed with the library for every section it knew, except sections that
+cubed-sphere binaries cannot contain: `qv`, `qv_start`, `qv_end` (all copies)
+and `hflux` (two copies). Most copies lacked `dkg`, `dam`/`dbm`/`dcm`, the VDIFF
+sections, `pbl_eflux` and `cmfmc_cloud_base`.
+
 ## Status (2026-10-09, morning)
 
-Branch `refactor/structure-2026-10` (fast-forwarded from `refactor/wip`), 24
+Branch `refactor/structure-2026-10` (fast-forwarded from `refactor/wip`), 25
 commits on `3684b71a`, not pushed. Every commit was reviewed by Codex; every
 results-changing commit is in the golden reference `ref_current` with the
 deltas stated above (`/temp1/cfranken/goldens/ref_current/ACCEPTED.txt`).
 
 Done:
 - Phase 0: golden harness (24 cases, 20 of them not tagged `slow`).
-- Phase 1: A1, A2, A3, A4, A8, A9 fixed; A5 for the reader and writer tables
-  (the script copies go with Phase 7); A11 for the reduced-Gaussian path and
+- Phase 1: A1, A2, A3, A4, A5, A8, A9 fixed; A11 for the reduced-Gaussian path and
   the regrid CG limit (column weights in three cubed-sphere loops remain). The
   reduced-Gaussian O24 goldens pass. A6 was folded into Phase 2; A7 is Phase 2.
 - Phase 2: constants in `PhysicalConstants.jl`; one dry-air set (relative
@@ -521,4 +530,5 @@ For the owner to decide:
 
 Not started: Phase 5 (types for Symbol/ENV switches), Phase 6 (duplication,
 e.g. the two block-coarsening helper sets, whose area-weighted versions differ
-in accumulation precision), Phase 7 (scripts, tests mirroring `src/`).
+in accumulation precision), Phase 7 (scripts, tests mirroring `src/`; only
+the script section tables are done).

@@ -55,22 +55,8 @@ function parse_windows(spec::AbstractString, nwindow::Int)
     return [parse(Int, part) for part in split(spec, ",")]
 end
 
-function cs_section_elements(h, section::Symbol)
-    nc, nz, np = h.geometry.Nc, h.nlevel, h.geometry.npanel
-    section === :m && return np * nc * nc * nz
-    section === :am && return np * (nc + 1) * nc * nz
-    section === :bm && return np * nc * (nc + 1) * nz
-    section === :cm && return np * nc * nc * (nz + 1)
-    section === :ps && return np * nc * nc
-    section in (:pblh, :ustar, :pbl_hflux, :hflux, :t2m) && return np * nc * nc
-    section === :cmfmc && return np * nc * nc * (nz + 1)
-    section in (:dtrain, :entu, :detu, :entd, :detd, :qv, :qv_start, :qv_end, :dm) &&
-        return np * nc * nc * nz
-    section === :dam && return np * (nc + 1) * nc * nz
-    section === :dbm && return np * nc * (nc + 1) * nz
-    section === :dcm && return np * nc * nc * (nz + 1)
-    error("Unknown CS binary section: $section")
-end
+# Elements of one CS payload section (the library's table, which knows every section).
+cs_section_elements(h, section::Symbol) = AtmosTransport.MetDrivers._cs_section_elements(h, section)
 
 function copy_panel_section!(panels, reader, offset::Int)
     next = offset
