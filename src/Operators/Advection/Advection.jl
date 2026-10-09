@@ -80,6 +80,8 @@ include("ppm_subgrid_distributions.jl")
 include("LinRoodSeams.jl")
 include("LinRood.jl")
 include("linrood_adjoint_kernels.jl")
+include("linrood_adjoint_rm_faces.jl")
+include("linrood_adjoint_panel.jl")
 
 include("workspace.jl")
 include("sweeps.jl")

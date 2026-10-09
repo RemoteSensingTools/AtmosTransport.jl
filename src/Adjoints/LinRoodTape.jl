@@ -2,7 +2,7 @@
 # LinRood adjoint tape integration.
 #
 # Wires the per-kernel LinRood adjoints
-# (in `src/Operators/Advection/linrood_adjoint_kernels.jl`) into the
+# (in `src/Operators/Advection/linrood_adjoint_*.jl`) into the
 # CS surface-emission-footprint reverse pass managed by Adjoints.jl.
 # Provides:
 #

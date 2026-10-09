@@ -215,6 +215,8 @@ include("ring_poisson_balance.jl")
 
 # Reduced Gaussian helpers (RG synthesis, RG balance, RG cm diagnosis)
 include("reduced_transport_helpers.jl")
+include("reduced_window_buffer.jl")
+include("reduced_spectral_day.jl")
 include("reduced_spectral_synthesis.jl")
 
 # Cubed-sphere transport helpers (regrid, wind recovery, flux reconstruction)

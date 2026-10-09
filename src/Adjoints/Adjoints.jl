@@ -84,7 +84,7 @@ const CSAdjointLinearScheme = Union{UpwindScheme, SlopesScheme{NoLimiter},
 const CSAdjointNonlinearScheme = Union{PPMScheme{MonotoneLimiter, SameAsHorizontal}}
 # LinRoodPPMScheme is supported via its own
 # horizontal tape record (`_CSLinRoodHorizRecord`) and the kernel
-# adjoints shipped in `src/Operators/Advection/linrood_adjoint_kernels.jl`.
+# adjoints shipped in `src/Operators/Advection/linrood_adjoint_*.jl`.
 # The reverse-loop dispatch arm in `_collect_surface_footprints`
 # handles the new record type alongside the existing
 # `_CSSweepRecord`, `_CSHaloRecord`, `_CSDiffusionRecord`,

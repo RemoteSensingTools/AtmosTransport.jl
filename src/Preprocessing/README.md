@@ -37,7 +37,7 @@ gates before the file is kept (exceptions under Invariants). The runtime reads i
 | Settings type | Target | `process_day` lives in | Day loop |
 |---|---|---|---|
 | `ERA5SpectralSettings` | `LatLonTargetGeometry` | [`transport_binary/latlon_spectral.jl`](transport_binary/latlon_spectral.jl) | unified driver |
-| `ERA5SpectralSettings` | `ReducedGaussianTargetGeometry` | [`reduced_transport_helpers.jl`](reduced_transport_helpers.jl) | unified driver |
+| `ERA5SpectralSettings` | `ReducedGaussianTargetGeometry` | [`reduced_spectral_day.jl`](reduced_spectral_day.jl) | unified driver |
 | `ERA5SpectralSettings` | `CubedSphereTargetGeometry` | [`transport_binary/cubed_sphere_spectral.jl`](transport_binary/cubed_sphere_spectral.jl) | unified driver |
 | `GEOSITSettings`, `GEOSFPSettings` | `CubedSphereTargetGeometry` | [`transport_binary/cubed_sphere_geos.jl`](transport_binary/cubed_sphere_geos.jl) | unified driver |
 | `ERA5N320Settings` | `CubedSphereTargetGeometry` | [`transport_binary/era5_n320_regrid.jl`](transport_binary/era5_n320_regrid.jl) | own loop |
@@ -110,7 +110,9 @@ Files directly in this folder; the subfolders have their own READMEs
 - [`spectral_io.jl`](spectral_io.jl) — spectral GRIB reading, day cache, `read_day_spectral`, `read_hour0_spectral`
 - [`spectral_synthesis.jl`](spectral_synthesis.jl) — Legendre/FFT synthesis to LL, `spectral_to_native_fields!`, native mass and fluxes
 - [`reduced_spectral_synthesis.jl`](reduced_spectral_synthesis.jl) — batched spectral synthesis on reduced-Gaussian rings (`synthesize_reduced!`)
-- [`reduced_transport_helpers.jl`](reduced_transport_helpers.jl) — RG workspaces, synthesis, pin/dry/merge, `balance_window!`, driver hooks, RG `process_day`
+- [`reduced_transport_helpers.jl`](reduced_transport_helpers.jl) — RG workspaces, humidity, spectral synthesis, fluxes, level merge
+- [`reduced_window_buffer.jl`](reduced_window_buffer.jl) — RG two-slot window buffer and workspace, ingest/drain/flush
+- [`reduced_spectral_day.jl`](reduced_spectral_day.jl) — RG window synthesis, pin/dry/merge and next-day end point, `balance_window!`, driver hooks, RG `process_day`
 - [`mass_support.jl`](mass_support.jl) — LL merge/remap, LL Poisson and column balance, qv readers, `apply_dry_basis_native!`, `pin_global_mean_ps!`, `pin_global_mean_ps_using_qv!`
 - [`ring_poisson_balance.jl`](ring_poisson_balance.jl) — RG `CompressedLaplacian`, `balance_compressed_horizontal_fluxes!`
 - [`cs_poisson_balance.jl`](cs_poisson_balance.jl) — CS face table, PCG solver, `balance_cs_global_mass_fluxes!`, `balance_cs_column_mass_fluxes!`, column weights, `diagnose_cs_cm!`

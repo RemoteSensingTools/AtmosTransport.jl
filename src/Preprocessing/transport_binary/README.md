@@ -45,7 +45,7 @@ files are included from [`../Preprocessing.jl`](../Preprocessing.jl) after the s
 | Workflow | Reader | Ingest | Drain | Flush |
 |---|---|---|---|---|
 | LL spectral ([`latlon_spectral.jl`](latlon_spectral.jl)) | `nothing` | synthesize, pin, dry, merge into `WindowStorage` | `()` | `apply_poisson_balance!` over all windows; one `PreverifiedWindow` each |
-| RG spectral ([`../reduced_transport_helpers.jl`](../reduced_transport_helpers.jl)) | `nothing` | synthesize into a two-slot buffer | from window 2: balance and verify window `win - 1` | last window vs next-day 00 UTC, else its own mass |
+| RG spectral ([`../reduced_spectral_day.jl`](../reduced_spectral_day.jl)) | `nothing` | synthesize into a two-slot buffer | from window 2: balance and verify window `win - 1` | last window vs next-day 00 UTC, else its own mass |
 | CS spectral ([`cubed_sphere_spectral.jl`](cubed_sphere_spectral.jl)) | `nothing` | synthesize on staging grid, regrid, build fluxes | from window 2: `_cs_spectral_contract_diag!` for `win - 1` | as RG |
 | GEOS CS ([`cubed_sphere_geos.jl`](cubed_sphere_geos.jl)) | `GEOSNativeReader` | read, pin, balance, `cm`, pick substeps | `verify_window!`, scale fluxes by `2 * steps` | `()` |
 

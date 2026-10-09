@@ -99,8 +99,11 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
   their transpose for conservative Lin–Rood panel exchange
 - [`LinRood.jl`](LinRood.jl) — Lin-Rood style cubed-sphere horizontal
   transport utilities
-- [`linrood_adjoint_kernels.jl`](linrood_adjoint_kernels.jl) —
-  Lin-Rood adjoint kernel helpers used by the CS reverse path
+- [`linrood_adjoint_kernels.jl`](linrood_adjoint_kernels.jl),
+  [`linrood_adjoint_rm_faces.jl`](linrood_adjoint_rm_faces.jl),
+  [`linrood_adjoint_panel.jl`](linrood_adjoint_panel.jl) — Lin-Rood adjoint
+  kernels (update, pre-advection and q-input faces; rm-input faces; the
+  one-panel horizontal adjoint) used by the CS reverse path
 
 ## Common Tasks
 

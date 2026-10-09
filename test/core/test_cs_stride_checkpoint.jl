@@ -542,7 +542,7 @@ end
 @testset "StrideCheckpoint vs FullCheckpoint — LinRoodPPMScheme ORD=7" begin
     # Plan-25 Commit 3b: with the ORD=7 face-kernel adjoints in place
     # (`_apply_ord7_boundary_d6` + ORD=7 grad/chain helpers in
-    # `linrood_adjoint_kernels.jl`), `LinRoodPPMScheme(7)` runs through
+    # `linrood_adjoint_*.jl`), `LinRoodPPMScheme(7)` runs through
     # the tape end-to-end. This testset mirrors the ORD=5
     # "StrideCheckpoint vs FullCheckpoint — LinRoodPPMScheme" testset
     # above, using the same `_footprints_equal` parity helper.

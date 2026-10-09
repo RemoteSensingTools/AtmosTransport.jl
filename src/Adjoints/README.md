@@ -72,7 +72,7 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
 - [`LinRoodTape.jl`](LinRoodTape.jl) — `_CSLinRoodHorizRecord`,
   `_record_cs_linrood_tape`, `_apply_cs_linrood_horizontal_adjoint!`,
   `_linrood_run_forward_step!`. The per-kernel Lin-Rood adjoints live in
-  `../Operators/Advection/linrood_adjoint_kernels.jl`.
+  `../Operators/Advection/linrood_adjoint_*.jl`.
 
 ## Common Tasks
 

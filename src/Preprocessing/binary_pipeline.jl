@@ -22,8 +22,8 @@ Shared contracts and support code are kept separate from topology workflows:
 - `cubed_sphere_contracts.jl` implements CS replay, the CS per-substep
   positivity gate, and `CubedSphereContract{FT}`.
 - `reduced_gaussian_contracts.jl` implements the RG per-substep positivity
-  gate and `ReducedGaussianContract{FT}` (RG replay lives in
-  `reduced_transport_helpers.jl`).
+  gate and `ReducedGaussianContract{FT}` (the RG workflow calls it from
+  `_verify_rg_balanced_window!` in `reduced_spectral_day.jl`).
 - `writer_adapters.jl` wraps the existing LL/RG/CS binary writers behind the
   typed `AbstractBinaryWriter{G, FT, Basis}` surface.
 - `driver.jl` holds the shared unified-preprocessor lifecycle used by

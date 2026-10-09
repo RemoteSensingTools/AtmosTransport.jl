@@ -828,7 +828,7 @@ export LinRoodWorkspace, fv_tp_2d_cs!, fv_tp_2d_cs_q!, strang_split_linrood_ppm!
 export CSLinRoodAdvectionWorkspace
 export apply_divergence_damping_cs!
 # Adjoint kernels. The forward kernels above are paired with
-# reverse-mode kernels defined in `linrood_adjoint_kernels.jl`, included
+# reverse-mode kernels defined in `linrood_adjoint_*.jl`, included
 # alongside this file from `Advection.jl`. Re-export below for `Adjoints`.
 export apply_linrood_update_adjoint!,
        apply_pre_advect_x_adjoint!,
