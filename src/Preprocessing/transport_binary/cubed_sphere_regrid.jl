@@ -99,6 +99,9 @@ face fluxes are reconstructed with the output scaling.
   for legacy LL sources that do not carry `dm`. Production-safe regrids should
   leave this at `false` so the final CS window is closed against an explicit
   endpoint target instead of an inferred zero-tendency fallback.
+- `horizontal_balance = nothing` — `ColumnBalance()` (the default for
+  `nothing`) or `LayerBalance()`; see `effective_horizontal_balance`
+  for the deprecated environment fallback. Recorded in the header.
 - `run_cache = nothing` — optional `PreprocessorRunCache` used to reuse the
   LL→CS conservative regridder across calls in the same preprocessing run.
 """
@@ -113,9 +116,11 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 steps_per_window::Union{Nothing, Integer} = nothing,
                                 cs_balance_tol::Real = 1e-14,
                                 cs_balance_project_every::Integer = 50,
+                                horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
                                 run_cache = nothing)
     t_start = time()
     Nc = cs_grid.Nc
+    balance = effective_horizontal_balance(horizontal_balance, ColumnBalance())
 
     # --- Open LL binary reader ---
     reader = TransportBinaryReader(ll_binary_path; FT=FT)
@@ -132,7 +137,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
 
     # Refuse silent basis relabeling. The function reads raw `m/am/bm/ps`
     # from the source and never touches `qv`, so mismatched basis produces
-    # a mislabeled binary (invariant 14 violation). Matching or unset is OK.
+    # a mislabeled binary. Matching or unset is OK.
     source_basis = Symbol(h.mass_basis)
     output_basis = mass_basis === nothing ? source_basis : Symbol(mass_basis)
     output_basis === source_basis || throw(ArgumentError(
@@ -185,19 +190,24 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     end
     src_dt_factor = FT(met_interval / (2 * src_steps_per_met))
     out_dt_factor = FT(met_interval / (2 * steps_per_met))
-    gravity = FT(GRAV)
+    gravity = FT(STANDARD_GRAVITY)
 
     @info @sprintf("  LL source: %s (%d×%d×%d, %d windows)",
                    basename(ll_binary_path), Nx_ll, Ny_ll, Nz, Nt)
     @info @sprintf("  CS target: C%d (%d panels, %d levels)", Nc, CS_PANEL_COUNT, Nz)
 
     # --- Build LL source mesh for regridder ---
-    # Reconstruct the LL mesh from the binary header metadata
+    # Reconstruct the LL mesh from the binary header metadata. Binaries written
+    # before `planet_radius_m` was recorded were all preprocessed on the IFS
+    # sphere. Source and target must share one sphere.
+    src_radius = haskey(h.raw_header, "planet_radius_m") ? h.planet_radius_m : IFS_EARTH_RADIUS
+    FT(src_radius) == cs_grid.mesh.radius || (close(reader); throw(ArgumentError(
+        "LL source radius $(src_radius) m differs from the CS target radius $(cs_grid.mesh.radius) m")))
     ll_mesh = LatLonMesh(; FT=FT,
                           size=(Nx_ll, Ny_ll),
                           longitude=(-180, 180),
                           latitude=(-90, 90),
-                          radius=FT(R_EARTH))
+                          radius=FT(src_radius))
     ll_lats = FT.(ll_mesh.φᶜ)
     Δy_ll = FT(ll_mesh.radius * deg2rad(ll_mesh.Δφ))
     Δlon_ll = FT(deg2rad(ll_mesh.Δλ))
@@ -264,6 +274,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         cs_coordinate_law=_cs_coordinate_law_tag(cs_grid),
         cs_center_law=_cs_center_law_tag(cs_grid),
         longitude_offset_deg=longitude_offset_deg(cs_definition(cs_grid.mesh)),
+        planet_radius=cs_grid.mesh.radius,
         extra_header=Dict{String, Any}(
             "preprocessor"      => "regrid_ll_binary_to_cs",
             "source_type"       => "ll_transport_binary",
@@ -271,6 +282,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             "target_type"       => "cubed_sphere",
             "regrid_method"     => "conservative",
             "poisson_balanced"  => true,
+            "horizontal_balance" => balance_tag(balance),
         ))
     writer = CubedSphereBinaryWriter(inner_writer, mass_basis_from_symbol(output_basis);
                                      Nc = Nc,
@@ -382,7 +394,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     worst_replay_win = 0
     worst_replay_idx = (0, 0, 0, 0)
     worst_positivity = init_cs_positivity_accumulator()
-    apply_horizontal_balance = horizontal_poisson_balance_enabled()
+    apply_horizontal_balance = balance isa LayerBalance
     if apply_horizontal_balance
         @info "  Applying per-layer CS Poisson mass-flux balance (legacy opt-in)..."
     else
@@ -457,7 +469,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             contract.positivity
         else
             verify_substep_positivity_cs!(cur_m, cur_am, cur_bm, cur_cm;
-                                         cfl_limit = positivity_cfl_limit)
+                                         cfl_limit = positivity_cfl_limit,
+                                         m_next = cs_ws.m_next_panels)
         end
         worst_positivity = update_cs_positivity_accumulator(worst_positivity, pos_diag, win - 1)
         convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
@@ -527,13 +540,13 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
             cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
             cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
-            max_iter=5000, project_every=Int(cs_balance_project_every))
+            max_iter=20000, project_every=Int(cs_balance_project_every))
     else
         balance_cs_column_mass_fluxes!(
             cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
             cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
             cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
-            max_iter=5000, project_every=Int(cs_balance_project_every))
+            max_iter=20000, project_every=Int(cs_balance_project_every))
     end
     t_bal = time() - t_bal
 
@@ -561,7 +574,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         contract.positivity
     else
         verify_substep_positivity_cs!(cur_m, cur_am, cur_bm, cur_cm;
-                                     cfl_limit = positivity_cfl_limit)
+                                     cfl_limit = positivity_cfl_limit,
+                                     m_next = cs_ws.m_next_panels)
     end
     worst_positivity = update_cs_positivity_accumulator(worst_positivity, pos_diag, Nt)
     convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)

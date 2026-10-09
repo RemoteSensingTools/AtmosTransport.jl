@@ -79,7 +79,7 @@ halos, against that serial kernel.
   [`diffusion_kernels.jl`](diffusion_kernels.jl) aligned
 - Tracing runtime integration:
   follow calls from `TransportModel.step!` into advection midpoint hooks
-  in `../Advection/StrangSplitting.jl`
+  in `../Advection/StrangSplitting.jl` (RG: `../Advection/strang_apply.jl`)
 
 ## Cross-Dependencies
 
@@ -87,8 +87,10 @@ halos, against that serial kernel.
   and time-varying field contracts
 - [`../../MetDrivers/`](../../MetDrivers/) provides `current_time`,
   which time-varying Kz fields consume
-- [`../Advection/StrangSplitting.jl`](../Advection/StrangSplitting.jl)
-  embeds diffusion at the transport midpoint
+- [`../Advection/StrangSplitting.jl`](../Advection/StrangSplitting.jl),
+  [`../Advection/multitracer_strang.jl`](../Advection/multitracer_strang.jl) and
+  [`../Advection/strang_apply.jl`](../Advection/strang_apply.jl)
+  embed diffusion at the transport midpoint
 - [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl)
   determines whether diffusion is active in a given run
 

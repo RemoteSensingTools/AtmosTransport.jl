@@ -1,0 +1,205 @@
+# ===========================================================================
+# MERRA-2 (GEOS-Chem archive) — Met Data Source Configuration
+#
+# The GEOS-Chem-processed MERRA-2 files that GEOS-Chem and GCHP read:
+#   s3://gcgrid/GEOS_0.5x0.625/MERRA2/YYYY/MM/MERRA2.YYYYMMDD.{I3,A3dyn,A3mstE,A1}.05x0625.nc4
+# mirrored under [source].root_dir/YYYY/MM/. Same fields as the GES DISC
+# collections (inst3/tavg3 asm_Nv, tavg3 mst_Ne, tavg1 flx/slv) on the same
+# 576 x 361 grid, stored surface-first; the reader detects the level order.
+# Unlike the GES DISC layout it also carries CMFMC/DTRAIN and the PBL fields.
+#
+# NASA Modern-Era Retrospective analysis for Research and Applications,
+# Version 2. Produced with GEOS-5.12.4 DAS.
+#
+# Same 72-level hybrid sigma-pressure vertical coordinate as GEOS-FP.
+# Lower horizontal resolution (0.5° × 0.625°) but long temporal coverage
+# (1980–present), making it the standard for multi-decadal studies.
+#
+# OPeNDAP access: REQUIRES NASA Earthdata authentication (~/.netrc)
+# ===========================================================================
+
+[source]
+name        = "MERRA-2"
+description = "NASA Modern-Era Retrospective analysis for Research and Applications, Version 2"
+institution = "NASA Global Modeling and Assimilation Office (GMAO)"
+reference   = "https://gmao.gsfc.nasa.gov/reanalysis/MERRA-2/"
+
+# ---------------------------------------------------------------------------
+# Native grid specification
+# ---------------------------------------------------------------------------
+[grid]
+type      = "LatitudeLongitude"
+Nx        = 576           # number of longitude points
+Ny        = 361           # number of latitude points
+Nz        = 72            # number of native model levels
+dlon      = 0.625         # longitude spacing (degrees)
+dlat      = 0.5           # latitude spacing (degrees)
+lon_start = -180.0        # first longitude (degrees east)
+lat_start = -90.0         # first latitude (degrees north)
+# ---------------------------------------------------------------------------
+# Vertical coordinate: 72 hybrid sigma-pressure levels
+#
+# Same vertical coordinate as GEOS-FP. All met sources use
+# HybridSigmaPressure(A, B) with source-specific coefficients.
+# ---------------------------------------------------------------------------
+[vertical]
+coordinate_type   = "HybridSigmaPressure"
+coefficients_file = "config/geos_L72_coefficients.toml"
+n_levels          = 72
+n_interfaces      = 73
+surface_pressure_var = "surface_pressure"
+
+# ---------------------------------------------------------------------------
+# Data access configuration
+# ---------------------------------------------------------------------------
+[access]
+protocol      = "opendap"
+base_url      = "https://goldsmr5.gesdisc.eosdis.nasa.gov/opendap/MERRA2"
+auth_required = true
+auth_host     = "urs.earthdata.nasa.gov"
+time_interval = 10800.0   # 3-hourly for 3D fields (seconds)
+
+# MERRA-2 production stream codes — determined by year
+# File naming: MERRA2_{stream}.{collection_name}.{YYYYMMDD}.nc4
+[access.streams]
+100 = [1980, 1991]
+200 = [1992, 2000]
+300 = [2001, 2010]
+400 = [2011, 2099]
+
+[access.file_template]
+pattern = "MERRA2_{stream}.{collection_name}.{date}.nc4"
+
+# ---------------------------------------------------------------------------
+# Preprocessing: wind-derived mass fluxes (Cameron-Smith column pressure fix)
+# plus the GEOS-Chem physics inputs:
+#   include_convection            -> dry CMFMC + DTRAIN ([convection] kind = "cmfmc")
+#   include_convective_cloud_base -> GCHP cloud base from A3mstC DQRCU
+#   include_surface               -> PBLH, USTAR, HFLUX, T2M (local-Kz diffusion)
+#   include_vdiff_fields          -> + U, V, T, QV, EFLUX (GCHP VDIFF diffusion)
+# Flux construction (optional; docs/src/config/data_sources.md):
+#   column_balance_weights = "mass" | "hybrid_b" | "hybrid_mass"
+#   face_fluxes            = "panel_average" | "vector" (seam-corrected vectors)
+#   face_lengths           = "cell_centerline" | "edge"  (panel_average only)
+#   face_interpolation     = "linear" | "cubic" | "fv3"  (vector only)
+#   flux_thickness         = "moist" | "dry_mass"
+#   wind_regrid            = "scalar" | "cartesian" (as a vector, like GCHP)
+# ---------------------------------------------------------------------------
+[preprocessing]
+layout               = "geoschem"
+winds_collection     = "tavg3"      # A3dyn U/V, 3-hour averages
+include_surface      = true
+include_convection   = true
+include_vdiff_fields = true
+include_convective_cloud_base = true
+# Experiment: spread the column mass-budget correction by layer mass, but only
+# over hybrid layers (ΔB > 0); pure-pressure (stratospheric) layers get none.
+column_balance_weights = "hybrid_mass"
+# Experiment (2026-10-07): vector face fluxes with the seam correction
+face_fluxes = "vector"
+flux_thickness = "dry_mass"
+
+# ---------------------------------------------------------------------------
+# Collections
+# ---------------------------------------------------------------------------
+[collections.asm_Nv_inst]
+dataset         = "M2I3NVASM.5.12.4"
+collection_name = "inst3_3d_asm_Nv"
+frequency       = "inst3"
+vertical        = "Nv"
+levels          = 72
+description     = "3-hourly instantaneous 3D assimilated state on native levels"
+
+[collections.asm_Nv_tavg]
+dataset         = "M2T3NVASM.5.12.4"
+collection_name = "tavg3_3d_asm_Nv"
+frequency       = "tavg3"
+vertical        = "Nv"
+levels          = 72
+description     = "3-hourly time-averaged 3D assimilated state on native levels"
+
+[collections.trb_Ne]
+dataset         = "M2T3NETRB.5.12.4"
+collection_name = "tavg3_3d_trb_Ne"
+frequency       = "tavg3"
+vertical        = "Ne"
+levels          = 73
+description     = "3-hourly time-averaged turbulence diagnostics at layer edges"
+
+[collections.mst_Ne]
+dataset         = "M2T3NEMST.5.12.4"
+collection_name = "tavg3_3d_mst_Ne"
+frequency       = "tavg3"
+vertical        = "Ne"
+levels          = 73
+description     = "3-hourly time-averaged moist process diagnostics at layer edges"
+
+[collections.cld_Nv]
+dataset         = "M2T3NVCLD.5.12.4"
+collection_name = "tavg3_3d_cld_Nv"
+frequency       = "tavg3"
+vertical        = "Nv"
+levels          = 72
+description     = "3-hourly time-averaged cloud diagnostics"
+
+[collections.mst_Nv]
+dataset         = "M2T3NVMST.5.12.4"
+collection_name = "tavg3_3d_mst_Nv"
+frequency       = "tavg3"
+vertical        = "Nv"
+levels          = 72
+description     = "3-hourly time-averaged moist process diagnostics at layers"
+
+# ---------------------------------------------------------------------------
+# Variable mapping: canonical_name → native name + collection
+#
+# MERRA-2 uses UPPERCASE native variable names (GEOS-5 convention).
+# ---------------------------------------------------------------------------
+
+[variables.u_wind]
+native_name     = "U"
+collection      = "asm_Nv_inst"
+
+[variables.v_wind]
+native_name     = "V"
+collection      = "asm_Nv_inst"
+
+[variables.w_wind]
+native_name     = "OMEGA"
+collection      = "asm_Nv_inst"
+
+[variables.temperature]
+native_name     = "T"
+collection      = "asm_Nv_inst"
+
+[variables.specific_humidity]
+native_name     = "QV"
+collection      = "asm_Nv_inst"
+
+[variables.surface_pressure]
+native_name     = "PS"
+collection      = "asm_Nv_inst"
+
+[variables.pressure_thickness]
+native_name     = "DELP"
+collection      = "asm_Nv_inst"
+
+[variables.mid_level_pressure]
+native_name     = "PL"
+collection      = "asm_Nv_inst"
+
+[variables.mid_layer_height]
+native_name     = "H"
+collection      = "asm_Nv_inst"
+
+[variables.surface_geopotential]
+native_name     = "PHIS"
+collection      = "asm_Nv_inst"
+
+[variables.diffusivity]
+native_name     = "KH"
+collection      = "trb_Ne"
+
+[variables.edge_pressure]
+native_name     = "PLE"
+collection      = "trb_Ne"

@@ -44,12 +44,12 @@ The adjoint supports the following advection schemes (full union in
 - `UpwindScheme()`
 - `SlopesScheme(NoLimiter())`
 - `PPMScheme(NoLimiter())`
-- `PPMScheme(MonotoneLimiter())` — via a stored tracer-branch tape around the base trajectory
+- `PPMScheme(MonotoneLimiter())` and `PPMScheme(CW84Limiter())` — via a stored tracer-branch tape around the base trajectory
 - `LinRoodPPMScheme(; ppm_order = 5)`
 - `LinRoodPPMScheme(; ppm_order = 7)`
 
 The supporting kernel adjoints in
-`src/Operators/Advection/linrood_adjoint_kernels.jl` are
+`src/Operators/Advection/linrood_adjoint_*.jl` are
 transposition-tested (`test/core/test_linrood_kernel_adjoints.jl`) and
 finite-difference VJP-tested via single-panel and cross-panel halo
 compositions.

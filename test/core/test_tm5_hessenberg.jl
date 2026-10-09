@@ -72,7 +72,9 @@ end
         C._tm5_lu!(dense, pd, n; icltop_eff=lo)
         rhs = rand(rng,FT,n,65) .* m
         reference = copy(rhs)
-        C._tm5_solve!(reference, dense, pd, n, 65; icltop_eff=lo)
+        for tracer in 1:65                       # plain dense solve + column mass ledger
+            C._tm5_conserving_solve_tracer!(reference, dense, pd, n, lo, tracer, false)
+        end
 
         # The automatic production path must agree with explicitly dense LU.
         q, work, piv = copy(rhs), Matrix{FT}(I,n,n), fill(-1,n)
@@ -83,7 +85,13 @@ end
         @test work == dense
         @test piv == pd
         @test minimum(q) >= 0
-        @test maximum(abs.(sum(q;dims=1)-sum(rhs;dims=1)) ./ sum(rhs;dims=1)) < 100eps(FT)
+        # The plain solve conserves to rounding (the matrix is closed), and the
+        # column mass ledger makes it exact up to one rounding in one cell.
+        plain = copy(rhs)
+        C._tm5_solve!(plain, dense, pd, n, 65; icltop_eff=lo)
+        @test maximum(abs.(sum(Float64, plain; dims=1) - sum(Float64, rhs; dims=1)) ./
+                      sum(Float64, rhs; dims=1)) < 100eps(FT)
+        @test all(t -> abs(sum(big, q[:,t]) - sum(big, rhs[:,t])) <= eps(FT) * maximum(q[:,t]), 1:65)
 
         # Exercise the column entry points used by CS adjoint replay too.
         x, y = copy(rhs[:,1]), randn(rng,FT,n)

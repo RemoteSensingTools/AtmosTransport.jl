@@ -193,14 +193,14 @@ function read_era5_reduced_gaussian_geometry(path::AbstractString;
 end
 
 """
-    read_era5_reduced_gaussian_mesh(path; FT=Float64, radius=6.371e6, kwargs...)
+    read_era5_reduced_gaussian_mesh(path; FT=Float64, radius=EARTH_RADIUS, kwargs...)
 
 Convenience wrapper that reads native reduced-Gaussian GRIB geometry and
 returns a `ReducedGaussianMesh` ready for `src` transport geometry.
 """
 function read_era5_reduced_gaussian_mesh(path::AbstractString;
                                          FT::Type{<:AbstractFloat} = Float64,
-                                         radius = FT(6.371e6),
+                                         radius = FT(EARTH_RADIUS),
                                          kwargs...)
     geom = read_era5_reduced_gaussian_geometry(path; FT=FT, kwargs...)
     return ReducedGaussianMesh(geom.latitudes, geom.nlon_per_ring; FT=FT, radius=radius)

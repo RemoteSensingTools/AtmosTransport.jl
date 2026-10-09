@@ -14,14 +14,16 @@ the model-facing `apply!` entrypoints that the transport block calls.
   defines `AbstractAdvectionScheme`, `UpwindScheme`, `SlopesScheme`,
   `PPMScheme`, and `LinRoodPPMScheme`
 - Structured and face-indexed runtime orchestrators:
-  [`StrangSplitting.jl`](StrangSplitting.jl)
-  provides `strang_split!`, `strang_split_mt!`, and `apply!`
+  [`StrangSplitting.jl`](StrangSplitting.jl) provides `strang_split!`,
+  [`multitracer_strang.jl`](multitracer_strang.jl) `strang_split_mt!`, and
+  [`strang_apply.jl`](strang_apply.jl) the `apply!` entry points
 - Cubed-sphere runtime orchestrator:
-  [`CubedSphereStrang.jl`](CubedSphereStrang.jl)
-  provides `strang_split_cs!` and `CSAdvectionWorkspace`
+  [`CubedSphereStrang.jl`](CubedSphereStrang.jl) provides `strang_split_cs!`
+  and `strang_split_cs_mt!`; [`cs_workspace.jl`](cs_workspace.jl)
+  `CSAdvectionWorkspace`
 - Lin–Rood horizontal transport:
-  [`LinRood.jl`](LinRood.jl) provides `fv_tp_2d_cs!` and
-  `CSLinRoodAdvectionWorkspace`; the runtime pairs it with vertical upwind
+  [`linrood_horizontal.jl`](linrood_horizontal.jl) provides `fv_tp_2d_cs!`,
+  [`LinRood.jl`](LinRood.jl) `CSLinRoodAdvectionWorkspace`; the runtime pairs it with vertical upwind
 - Cubed-sphere halo support:
   [`HaloExchange.jl`](HaloExchange.jl)
   provides `fill_panel_halos!` and `copy_corners!`
@@ -30,14 +32,16 @@ the model-facing `apply!` entrypoints that the transport block calls.
 
 ## Runtime Shape
 
-`scheme="ppm"` selects standard split PPM with its default monotone limiter.
+`scheme="ppm"` selects standard split PPM with its default monotone limiter;
+`limiter="cw84"` selects the complete Colella–Woodward PPM (`CW84Limiter`).
 `scheme="linrood"` selects the CS cross-term path; `ppm_order=5` (default) or
 `7` chooses its edge-value family. ORD=7 retains the order-5 interior and adds
 special panel-edge treatment. It does not select a seventh-order transport
 method. Configuration parsing lives in
 [`../../Models/RuntimePhysicsSpecs.jl`](../../Models/RuntimePhysicsSpecs.jl).
 
-- LatLon and reduced-Gaussian transport run through
+- LatLon and reduced-Gaussian transport run through the `apply!` methods in
+  [`strang_apply.jl`](strang_apply.jl) and the palindrome in
   [`StrangSplitting.jl`](StrangSplitting.jl)
 - Cubed-sphere transport runs through
   [`CubedSphereStrang.jl`](CubedSphereStrang.jl)
@@ -66,22 +70,45 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
   sweep kernels and helpers
 - [`multitracer_kernels.jl`](multitracer_kernels.jl) — fused multi-tracer
   transport kernels and `TracerView`
-- [`StrangSplitting.jl`](StrangSplitting.jl) — structured and
-  face-indexed transport palindromes, model-facing `apply!`
+- [`workspace.jl`](workspace.jl) — `AdvectionWorkspace`, the double
+  buffers of the structured and face-indexed sweeps
+- [`sweeps.jl`](sweeps.jl) — directional sweeps: structured x/y/z
+  (generated with `@eval`) and face-indexed horizontal/vertical
+- [`subcycling.jl`](subcycling.jl) — CFL subcycling pass counts and
+  subcycled sweeps
+- [`StrangSplitting.jl`](StrangSplitting.jl) — structured transport
+  palindrome `strang_split!` with the diffusion/surface-flux midpoint
+- [`strang_apply.jl`](strang_apply.jl) — model-facing `apply!` for
+  structured and face-indexed states (the RG `H → V → H` path)
+- [`multitracer_strang.jl`](multitracer_strang.jl) — multi-tracer sweeps
+  and `strang_split_mt!`
 - [`HaloExchange.jl`](HaloExchange.jl) — cubed-sphere panel-edge halo
   exchange and corner fill
+- [`cs_sweep_common.jl`](cs_sweep_common.jl), [`cs_sweep_x.jl`](cs_sweep_x.jl),
+  [`cs_sweep_y.jl`](cs_sweep_y.jl), [`cs_sweep_z.jl`](cs_sweep_z.jl) —
+  cubed-sphere panel sweeps (shared kernels and gamma-clamped upwind, then
+  per direction, with paired seam transfers for X and Y)
+- [`cs_workspace.jl`](cs_workspace.jl) — `CSAdvectionWorkspace`
+- [`cs_subcycling.jl`](cs_subcycling.jl) — static palindrome CFL subcycle count
 - [`CubedSphereStrang.jl`](CubedSphereStrang.jl) — panel-native
-  cubed-sphere palindrome
+  cubed-sphere palindrome (`strang_split_cs!`, `strang_split_cs_mt!`)
+- [`vertical_fv3_profile.jl`](vertical_fv3_profile.jl) — vertical sweep with
+  FV3's `scalar_profile` (kord 8) piecewise-parabolic tracer profile
 - [`CubedSphereSeams.jl`](CubedSphereSeams.jl) — canonical physical seam
   transfers paired across panels within each directional group
 - [`ppm_subgrid_distributions.jl`](ppm_subgrid_distributions.jl) — PPM
   subcell distributions shared by CS-specific code
 - [`LinRoodSeams.jl`](LinRoodSeams.jl) — shared final seam estimates and
   their transpose for conservative Lin–Rood panel exchange
-- [`LinRood.jl`](LinRood.jl) — Lin-Rood style cubed-sphere horizontal
-  transport utilities
-- [`linrood_adjoint_kernels.jl`](linrood_adjoint_kernels.jl) —
-  Lin-Rood adjoint kernel helpers used by the CS reverse path
+- [`LinRood.jl`](LinRood.jl) — Lin-Rood workspace, divergence damping, PPM
+  face, pre-advection and update kernels
+- [`linrood_horizontal.jl`](linrood_horizontal.jl) — Lin-Rood horizontal
+  advection drivers (`fv_tp_2d_cs!`, q-space variant) and the Lin-Rood Strang split
+- [`linrood_adjoint_kernels.jl`](linrood_adjoint_kernels.jl),
+  [`linrood_adjoint_rm_faces.jl`](linrood_adjoint_rm_faces.jl),
+  [`linrood_adjoint_panel.jl`](linrood_adjoint_panel.jl) — Lin-Rood adjoint
+  kernels (update, pre-advection and q-input faces; rm-input faces; the
+  one-panel horizontal adjoint) used by the CS reverse path
 
 ## Common Tasks
 
@@ -99,8 +126,7 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
   [`structured_kernels.jl`](structured_kernels.jl) before adding another
   launch path
 - Debugging topology dispatch:
-  read the `apply!` methods at the end of
-  [`StrangSplitting.jl`](StrangSplitting.jl)
+  read the `apply!` methods in [`strang_apply.jl`](strang_apply.jl)
 
 ## Cross-Dependencies
 

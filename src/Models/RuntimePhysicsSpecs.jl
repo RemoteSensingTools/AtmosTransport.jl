@@ -51,8 +51,17 @@ struct NoConvectionSpec    <: AbstractConvectionSpec end
 # `clamp` opts the explicit GCHP CMFMC scheme into the positivity clamp +
 # whole-column rescale (stable at few sub-steps for strong convection, still
 # conservative). Default false = the pure conservative explicit scheme.
-struct CMFMCConvectionSpec <: AbstractConvectionSpec
-    clamp :: Bool
+# `cloud_base = "dqrcu"` takes GEOS-Chem's convective cloud base from the binary.
+struct CMFMCConvectionSpec{CB <: AbstractCloudBase} <: AbstractConvectionSpec
+    clamp      :: Bool
+    cloud_base :: CB
+end
+
+function _cloud_base_rule(section)
+    raw = lowercase(String(get(section, "cloud_base", "cmfmc")))
+    raw == "cmfmc" && return CMFMCEdgeCloudBase()
+    raw == "dqrcu" && return ArchivedCloudBase()
+    throw(ArgumentError("Unknown [convection] cloud_base: $(repr(raw)). Supported: cmfmc | dqrcu"))
 end
 
 # Configuration scalars are independent of tracer precision. In particular,
@@ -126,9 +135,12 @@ at execution time. The legacy fallback uses the full column without aggregation.
 """
 function convection_spec(section)
     kind = _parse_convection_kind(section)
+    kind !== :cmfmc && haskey(section, "cloud_base") && throw(ArgumentError(
+        "[convection] cloud_base applies to kind = \"cmfmc\" only; got kind = $(repr(String(section["kind"])))"))
     kind === :none  && return NoConvectionSpec()
     kind === :cmfmc &&
-        return CMFMCConvectionSpec(_spec_bool(section, "clamp", false, "[convection]"))
+        return CMFMCConvectionSpec(_spec_bool(section, "clamp", false, "[convection]"),
+                                   _cloud_base_rule(section))
     knobs = _collab_lu_knobs(section)
     kind === :tm5 && return TM5ConvectionSpec(knobs...)
     return CMFMCMatrixConvectionSpec(knobs...)  # :cmfmc_matrix
@@ -140,7 +152,7 @@ end
 # DIFFERENT operators, so they dispatch on their concrete types.
 materialize(::NoConvectionSpec, ::AbstractRuntimeRecipeStyle)    = NoConvection()
 materialize(s::CMFMCConvectionSpec, ::AbstractRuntimeRecipeStyle) =
-    CMFMCConvection(; clamp = s.clamp)
+    CMFMCConvection(; clamp = s.clamp, cloud_base = s.cloud_base)
 materialize(s::TM5ConvectionSpec, ::AbstractRuntimeRecipeStyle) =
     TM5Convection(; tile_workspace_gib = s.tile_workspace_gib, use_collab_lu = s.use_collab_lu,
                     lmax_conv = s.lmax_conv, n_merge = s.n_merge)
@@ -162,13 +174,21 @@ abstract type AbstractAdvectionSpec end
 
 struct UpwindAdvectionSpec <: AbstractAdvectionSpec end
 struct SlopesAdvectionSpec <: AbstractAdvectionSpec end
-struct PPMAdvectionSpec    <: AbstractAdvectionSpec end
+struct PPMAdvectionSpec{L <: AbstractLimiter, V <: AbstractVerticalReconstruction} <: AbstractAdvectionSpec
+    limiter  :: L
+    vertical :: V
+end
+PPMAdvectionSpec(vertical::AbstractVerticalReconstruction = SameAsHorizontal()) =
+    PPMAdvectionSpec(MonotoneLimiter(), vertical)
 struct NoAdvectionSpec     <: AbstractAdvectionSpec end
 
-# Lin–Rood is cubed-sphere only. `order` selects its PPM edge-value family.
-struct LinRoodAdvectionSpec <: AbstractAdvectionSpec
-    order :: Int
+# Lin–Rood is cubed-sphere only. `order` selects its PPM edge-value family,
+# `vertical` the scheme of its vertical sweeps.
+struct LinRoodAdvectionSpec{Z <: AbstractAdvectionScheme} <: AbstractAdvectionSpec
+    order    :: Int
+    vertical :: Z
 end
+LinRoodAdvectionSpec(order::Integer) = LinRoodAdvectionSpec(Int(order), UpwindScheme())
 
 function _parse_advection_scheme(section)
     raw = lowercase(String(get(section, "scheme", "upwind")))
@@ -181,16 +201,61 @@ function _parse_advection_scheme(section)
         "Unknown [advection] scheme: $(repr(raw)). Supported: upwind | slopes | ppm | linrood | none"))
 end
 
+# `[advection] vertical` selects the PPM vertical reconstruction.
+const _VERTICAL_RECONSTRUCTIONS = Dict(
+    "same_as_horizontal" => SameAsHorizontal(),
+    "fv3_kord8"          => FV3ScalarProfile(),                            # GCHP, iv = 0
+    "fv3_kord8_signed"   => FV3ScalarProfile(; positive_definite = false)) # iv = 1
+
+function _parse_vertical_reconstruction(section)
+    raw = get(section, "vertical", "same_as_horizontal")
+    key = raw isa AbstractString ? lowercase(raw) : ""
+    haskey(_VERTICAL_RECONSTRUCTIONS, key) || throw(ArgumentError(
+        "Unknown [advection] vertical: $(repr(raw)). Supported: " *
+        join(sort!(collect(keys(_VERTICAL_RECONSTRUCTIONS))), " | ")))
+    return _VERTICAL_RECONSTRUCTIONS[key]
+end
+
+# `[advection] limiter` selects the PPM limiter: the default monotone PPM, or
+# the complete Colella–Woodward scheme (`CW84Limiter`).
+const _PPM_LIMITERS = Dict("monotone" => MonotoneLimiter(), "cw84" => CW84Limiter())
+
+function _parse_ppm_limiter(section)
+    raw = get(section, "limiter", "monotone")
+    key = raw isa AbstractString ? lowercase(raw) : ""
+    haskey(_PPM_LIMITERS, key) || throw(ArgumentError(
+        "Unknown [advection] limiter: $(repr(raw)). Supported: " *
+        join(sort!(collect(keys(_PPM_LIMITERS))), " | ")))
+    return _PPM_LIMITERS[key]
+end
+
+# Lin–Rood's vertical sweeps: "upwind" (default) or an FV3 profile.
+function _parse_linrood_vertical(section)
+    raw = get(section, "vertical", "upwind")
+    key = raw isa AbstractString ? lowercase(raw) : ""
+    key == "upwind" && return UpwindScheme()
+    key in ("fv3_kord8", "fv3_kord8_signed") || throw(ArgumentError(
+        "[advection] `scheme = \"linrood\"` supports vertical = upwind | fv3_kord8 | " *
+        "fv3_kord8_signed; got $(repr(raw))."))
+    return PPMScheme(; vertical = _VERTICAL_RECONSTRUCTIONS[key])
+end
+
 """
     advection_spec(section) -> AbstractAdvectionSpec
 
 Parse an `[advection]` section into a typed spec. `ppm_order` is only meaningful
 for `scheme = "linrood"`; pairing it with `scheme = "ppm"` is rejected (the split
-PPM path takes no order knob). An omitted selector defaults to upwind; an
-omitted Lin–Rood `ppm_order` defaults to 5.
+PPM path takes no order knob). `vertical` applies to `scheme = "ppm"` (default
+`same_as_horizontal`) and `scheme = "linrood"` (default `upwind`). `limiter`
+applies to `scheme = "ppm"` only (`monotone`, the default, or `cw84`). An omitted
+selector defaults to upwind; an omitted Lin–Rood `ppm_order` defaults to 5.
 """
 function advection_spec(section)
     kind = _parse_advection_scheme(section)
+    kind in (:ppm, :linrood) || !haskey(section, "vertical") || throw(ArgumentError(
+        "[advection] `vertical` is only valid with `scheme = \"ppm\"` or `\"linrood\"`."))
+    kind === :ppm || !haskey(section, "limiter") || throw(ArgumentError(
+        "[advection] `limiter` is only valid with `scheme = \"ppm\"`."))
     kind === :upwind && return UpwindAdvectionSpec()
     kind === :slopes && return SlopesAdvectionSpec()
     kind === :none   && return NoAdvectionSpec()
@@ -198,16 +263,22 @@ function advection_spec(section)
         haskey(section, "ppm_order") && throw(ArgumentError(
             "[advection] `ppm_order` is only valid with `scheme = \"linrood\"`; " *
             "`scheme = \"ppm\"` selects the standard split `PPMScheme()` path."))
-        return PPMAdvectionSpec()
+        return PPMAdvectionSpec(_parse_ppm_limiter(section),
+                                _parse_vertical_reconstruction(section))
     end
-    return LinRoodAdvectionSpec(_spec_int(section, "ppm_order", 5, "[advection]"))  # :linrood
+    return LinRoodAdvectionSpec(_spec_int(section, "ppm_order", 5, "[advection]"),  # :linrood
+                                _parse_linrood_vertical(section))
 end
 
 # Materialize with topology gates close to construction: RG currently accepts
 # only Upwind/NoAdvection, while LinRood is cubed-sphere only.
 materialize(::UpwindAdvectionSpec, ::AbstractRuntimeRecipeStyle) = UpwindScheme()
 materialize(::SlopesAdvectionSpec, ::AbstractRuntimeRecipeStyle) = SlopesScheme()
-materialize(::PPMAdvectionSpec,    ::AbstractRuntimeRecipeStyle) = PPMScheme()
+materialize(s::PPMAdvectionSpec,   ::AbstractRuntimeRecipeStyle) =
+    PPMScheme(s.limiter; vertical = s.vertical)
+materialize(::PPMAdvectionSpec{<:AbstractLimiter, <:FV3ScalarProfile}, ::LatLonRuntimeRecipeStyle) =
+    throw(ArgumentError(
+        "[advection] `vertical = \"fv3_kord8\"` (FV3 profile) is only available on cubed-sphere runs."))
 materialize(::SlopesAdvectionSpec, ::ReducedGaussianRuntimeRecipeStyle) =
     throw(ArgumentError(
         "[advection] `scheme = \"slopes\"` is not implemented for reduced-Gaussian runs; " *
@@ -217,11 +288,13 @@ materialize(::PPMAdvectionSpec, ::ReducedGaussianRuntimeRecipeStyle) =
         "[advection] `scheme = \"ppm\"` is not implemented for reduced-Gaussian runs; " *
         "use `scheme = \"upwind\"` or `scheme = \"none\"`."))
 materialize(::NoAdvectionSpec,     ::AbstractRuntimeRecipeStyle) = NoAdvection()
-materialize(s::LinRoodAdvectionSpec, ::CubedSphereRuntimeRecipeStyle) = LinRoodPPMScheme(s.order)
+materialize(s::LinRoodAdvectionSpec, ::CubedSphereRuntimeRecipeStyle) =
+    LinRoodPPMScheme(s.order; vertical = s.vertical)
 materialize(::LinRoodAdvectionSpec, ::AbstractStructuredRuntimeRecipeStyle) = throw(ArgumentError(
     "[advection] `scheme = \"linrood\"` is only available on cubed-sphere runs."))
 
-Base.summary(s::LinRoodAdvectionSpec) = "LinRoodAdvectionSpec(order=$(s.order))"
+Base.summary(s::LinRoodAdvectionSpec) =
+    "LinRoodAdvectionSpec(order=$(s.order), vertical=$(nameof(typeof(s.vertical))))"
 
 # =========================================================================
 # Chemistry
@@ -343,6 +416,8 @@ end
 struct TM5DkgDiffusionSpec <: AbstractDiffusionSpec
     surface_flux_boundary :: Bool
 end
+# GEOS-Chem's non-local VDIFF always adds emissions before one full solve.
+struct GCHPNonlocalVdiffDiffusionSpec <: AbstractDiffusionSpec end
 
 function _parse_diffusion_kind(section)
     raw = lowercase(String(get(section, "kind", "none")))
@@ -351,10 +426,11 @@ function _parse_diffusion_kind(section)
     raw == "tm5_beljaars_viterbo_local_kz" && return :pbl
     raw == "geoschem_holtslag_boville_vdiff" && return :vdiff
     raw == "tm5_dkg" && return :tm5_dkg
+    raw == "geoschem_nonlocal_vdiff" && return :nonlocal_vdiff
     throw(ArgumentError(
         "Unknown [diffusion] kind: $(repr(raw)). Supported: none | constant | " *
         "tm5_beljaars_viterbo_local_kz | geoschem_holtslag_boville_vdiff | " *
-        "tm5_dkg"))
+        "geoschem_nonlocal_vdiff | tm5_dkg"))
 end
 
 """
@@ -388,6 +464,12 @@ function diffusion_spec(section)
             "`kind = \"tm5_dkg\"`."))
     kind = _parse_diffusion_kind(section)
     kind === :none && return NoDiffusionSpec()
+    if kind === :nonlocal_vdiff
+        _spec_bool(section, "surface_flux_boundary", true, "[diffusion]") || throw(ArgumentError(
+            "[diffusion] kind = \"geoschem_nonlocal_vdiff\" adds emissions before one full " *
+            "diffusion solve (GEOS-Chem VDIFF); remove `surface_flux_boundary = false`."))
+        return GCHPNonlocalVdiffDiffusionSpec()
+    end
     sfb = _spec_bool(section, "surface_flux_boundary", false, "[diffusion]")
     kind === :constant &&
         return ConstantDiffusionSpec(_spec_float64(section, "value", 1.0, "[diffusion]"), sfb)
@@ -475,6 +557,21 @@ function materialize(s::TM5DkgDiffusionSpec, ::CubedSphereRuntimeRecipeStyle,
         surface_flux_coupling = _diffusion_surface_coupling(
             s.surface_flux_boundary, CubedSphereRuntimeRecipeStyle()))
 end
+function materialize(::GCHPNonlocalVdiffDiffusionSpec, ::CubedSphereRuntimeRecipeStyle,
+                     ::Type{FT}, context) where {FT}
+    _runtime_has_gchp_nonlocal_vdiff(context) || throw(ArgumentError(
+        "[diffusion] kind = \"geoschem_nonlocal_vdiff\" requires pblh/ustar/pbl_hflux/t2m, " *
+        "pbl_eflux and vdiff_u/vdiff_v/vdiff_t/vdiff_qv sections in the cubed-sphere transport " *
+        "binary (MERRA-2 GEOS-Chem archive with include_vdiff_fields = true)."))
+    Nc, _, Nz = _pbl_cache_shape(context)
+    return ImplicitVerticalDiffusion(; kz_field = GCHPNonlocalPBLField(Nc, Nz, FT),
+                                     surface_flux_coupling = DiffusiveSurfaceFluxBoundary())
+end
+materialize(::GCHPNonlocalVdiffDiffusionSpec, ::AbstractRuntimeRecipeStyle, ::Type{FT},
+            _context) where {FT} =
+    throw(ArgumentError(
+        "[diffusion] kind = \"geoschem_nonlocal_vdiff\" is implemented for cubed-sphere runtime binaries."))
+
 materialize(::TM5DkgDiffusionSpec, ::AbstractRuntimeRecipeStyle, ::Type{FT},
             _context) where {FT} =
     throw(ArgumentError(
@@ -488,5 +585,6 @@ export AbstractAdvectionSpec, UpwindAdvectionSpec, SlopesAdvectionSpec,
 export AbstractChemistrySpec, NoChemistrySpec, DecayChemistrySpec
 export AbstractDiffusionSpec, NoDiffusionSpec, ConstantDiffusionSpec,
        WindowPBLKzDiffusionSpec, HoltslagBovilleVdiffDiffusionSpec,
+       GCHPNonlocalVdiffDiffusionSpec,
        TM5DkgDiffusionSpec
 export convection_spec, advection_spec, chemistry_spec, diffusion_spec, materialize

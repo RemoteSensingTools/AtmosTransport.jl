@@ -314,4 +314,119 @@ end
 
 @inline _kahan_add(s::T, c::T, x::T) where {T <: Float64} = (s + x, zero(T))
 
+"""
+    _two_sum(a, b) -> (s, e)
+
+Error-free sum (Knuth's TwoSum): `s = fl(a + b)` and `a + b == s + e` exactly.
+"""
+@inline function _two_sum(a::T, b::T) where T <: AbstractFloat
+    s = a + b
+    b_virtual = s - a
+    return s, (a - (s - b_virtual)) + (b - b_virtual)
+end
+
+"""
+    _neumaier_add(s, c, x) -> (s, c)
+
+Compensated running sum: `s + c` tracks `Σx` to about one rounding of the
+total, also when a term exceeds the running sum (Neumaier's variant of Kahan).
+"""
+@inline function _neumaier_add(s::T, c::T, x::T) where T <: AbstractFloat
+    s_new, e = _two_sum(s, x)
+    return s_new, c + e
+end
+
+"""
+    _neumaier_sum(f, ks, T) -> (s, c)
+
+Compensated sum of `f(k)` over `ks` in precision `T`; the total is `s + c`.
+"""
+@inline function _neumaier_sum(f, ks, ::Type{T}) where T
+    s = c = zero(T)
+    for k in ks
+        s, c = _neumaier_add(s, c, f(k))
+    end
+    return s, c
+end
+
+"""
+    _neumaier_gap(before, after) -> Σbefore − Σafter
+
+Difference of two compensated sums of nearly equal totals. `s₀ − s₁` is exact
+(Sterbenz), so the result carries one rounding of the small correction terms.
+"""
+@inline _neumaier_gap((s0, c0), (s1, c1)) = (s0 - s1) + (c0 - c1)
+
+"""
+    _ledger_residual(before, after, largest, n) -> r
+
+Column mass ledger of a mass-conserving solve over `n` cells: the residual
+`Σbefore − Σafter` of the compensated sums, to be added back to the column's
+largest cell (`|largest|`). Only rounding-sized residuals, at most `16n` ulps
+of the largest cell, are returned. A larger one means the operator itself
+loses mass; it stays in the field so budgets reveal it.
+"""
+@inline function _ledger_residual(before, after, largest, n)
+    r = _neumaier_gap(before, after)
+    return abs(r) <= 16n * eps(typeof(r)) * largest ? r : zero(r)
+end
+
+# --- Compensated Float64 totals -----------------------------------------------
+#
+# Global diagnostics must resolve drifts of 1e-9, below what a Float32
+# reduction can see. Device lanes return both terms of a compensated Float64
+# sum so the host combination keeps residuals across lanes. Backends without
+# Float64 kernels (Metal) copy bounded slabs to the host instead.
+
+"""Precision diagnostic-total kernels may use on `backend` (Float32 on Metal)."""
+_total_accumulator_type(_backend) = Float64
+
+KA.@kernel function _compensated_total_lanes!(pairs, values, nlanes, nvalues)
+    lane = KA.@index(Global, Linear)
+    s, c = 0.0, 0.0
+    @inbounds for i in lane:nlanes:nvalues
+        s, c = _neumaier_add(s, c, Float64(values[i]))
+    end
+    @inbounds pairs[1, lane] = s
+    @inbounds pairs[2, lane] = c
+end
+
+function _accumulate_host_total(s, c, values)
+    @inbounds for value in values
+        s, c = _neumaier_add(s, c, Float64(value))
+    end
+    return s, c
+end
+
+function _accumulate_total(s, c, values::AbstractArray)
+    backend = KA.get_backend(values)
+    backend isa KA.CPU && return _accumulate_host_total(s, c, values)
+    isempty(values) && return s, c
+    if _total_accumulator_type(backend) === Float64
+        nlanes = min(4096, cld(length(values), 256))
+        pairs = similar(values, Float64, (2, nlanes))
+        _compensated_total_lanes!(backend, 256)(pairs, values, nlanes, length(values);
+                                                ndrange = nlanes)
+        KA.synchronize(backend)
+        return _accumulate_host_total(s, c, Array(pairs))
+    end
+    axis = ndims(values)
+    for first in 1:16:size(values, axis)
+        slab = Array(selectdim(values, axis, first:min(first + 15, size(values, axis))))
+        s, c = _accumulate_host_total(s, c, slab)
+    end
+    return s, c
+end
+
+_accumulate_total(s, c, parts::Tuple) =
+    foldl((sc, part) -> _accumulate_total(sc..., part), parts; init = (s, c))
+
+"""
+    _compensated_total(values) -> Float64
+
+Compensated Float64 total of a host or device array, or of a tuple of arrays
+(cubed-sphere panels). CPU and CUDA arrays are summed in place.
+"""
+_compensated_total(values) = +(_accumulate_total(0.0, 0.0, values)...)
+
 end # module Architectures

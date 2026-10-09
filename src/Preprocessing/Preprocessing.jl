@@ -1,10 +1,17 @@
 """
     Preprocessing
 
-Transport binary generation from ERA5 spectral meteorological data.
+Transport binary generation from meteorological input.
 
-Provides the complete pipeline from raw spectral GRIB (VO, D, LNSP) to
-Poisson-balanced transport binaries ready for the runtime `TransportBinaryDriver`.
+Converts raw meteorology into mass-balanced transport binaries ready for the
+runtime `TransportBinaryDriver`. Supported sources and targets:
+
+- ERA5 spectral GRIB (VO, D, LNSP) → lat-lon, reduced-Gaussian, or cubed sphere
+- GEOS native cubed-sphere NetCDF (GEOS-IT, GEOS-FP) → cubed sphere (same
+  resolution or nested block coarsening)
+- ERA5 N320 native GRIB → cubed sphere (conservative regrid)
+- MERRA-2 lat-lon NetCDF → cubed sphere (conservative regrid)
+- an existing lat-lon transport binary → cubed sphere (`regrid_transport_binary`)
 
 ## Architecture
 
@@ -15,27 +22,41 @@ The pipeline dispatches on `AbstractTargetGeometry` subtypes:
     ├── ReducedGaussianTargetGeometry     — native ERA5 RG (O90, O160, N320, …)
     └── CubedSphereTargetGeometry         — convention-aware CS (C24, C90, C180, …)
 
-Each target geometry has a dedicated `process_day` method:
+and on the source settings type. Each supported pair has a `process_day` method:
 
-    process_day(date, grid::LatLonTargetGeometry, settings, vertical; …)
-    process_day(date, grid::ReducedGaussianTargetGeometry, settings, vertical; …)
-    process_day(date, grid::CubedSphereTargetGeometry, settings, vertical; …)
+    process_day(date, grid::LatLonTargetGeometry,          settings::ERA5SpectralSettings,     vertical; …)
+    process_day(date, grid::ReducedGaussianTargetGeometry, settings::ERA5SpectralSettings,     vertical; …)
+    process_day(date, grid::CubedSphereTargetGeometry,     settings::ERA5SpectralSettings,     vertical; …)
+    process_day(date, grid::CubedSphereTargetGeometry,     settings::AbstractGEOSSettings,     vertical; …)
+    process_day(date, grid::CubedSphereTargetGeometry,     settings::AbstractERA5GRIBSettings, vertical; …)
+    process_day(date, grid::CubedSphereTargetGeometry,     settings::MERRA2Settings,           vertical; …)
 
-## Pipeline (per day)
+## ERA5 spectral pipeline (per day)
 
 1. Read ERA5 spectral GRIB (VO, D, LNSP) — `spectral_io.jl`
 2. Spectral synthesis (Legendre + FFT → gridpoint) — `spectral_synthesis.jl`
 3. Merge native 137L → transport levels — `vertical_coordinates.jl`
-4. Pin global mean ps (mass fix) — `transport_binary/latlon_workspaces.jl`
-5. Topology-specific transport-binary workflow:
-   - LL: FFT on circulant Laplacian — `mass_support.jl`
-   - RG: compressed-Laplacian CG — `ring_poisson_balance.jl`
-   - CS: global 6-panel graph-Laplacian CG — `cs_poisson_balance.jl`
+4. Pin global mean ps (mass fix) — `pin_global_mean_ps!` /
+   `pin_global_mean_ps_using_qv!` in `mass_support.jl`
+5. Topology-specific horizontal mass-flux balance (`[numerics] balance_mode`,
+   `AbstractHorizontalBalance`, recorded as the header key `horizontal_balance`):
+   - LL: column-integrated FFT Poisson correction distributed over layers by
+     air mass (`balance_column_mass_fluxes!`, `mass_support.jl`); the
+     per-layer FFT Poisson solve with `balance_mode = "per_layer"`
+   - RG: per-layer compressed-Laplacian CG — `ring_poisson_balance.jl`
+   - CS: column-integrated correction by default, per-layer global 6-panel
+     graph-Laplacian CG with `balance_mode = "per_layer"` — `cs_poisson_balance.jl`
 6. Diagnose `cm` from explicit endpoint mass targets — replay continuity
 7. Write transport binary with declared payload semantics and replay checks
 
+The GEOS, ERA5 N320, MERRA-2, and binary-regrid paths implement their own
+mass construction or regridding, flux balancing, and `cm` diagnosis (with an
+optional dry-mass pin where the source has one); every path ends in the same
+write-time replay and positivity gates.
+
 The high-level transport-binary workflows are split under
-`transport_binary/`. Each topology owns a small `process_day` method while
+`transport_binary/`. Each meteorological source/target pair owns a
+`process_day` method (binary regridding has its own entry point) while
 shared binary metadata, endpoint-delta, and replay helpers stay in common
 files.
 
@@ -58,6 +79,7 @@ using JLD2
 using SHA
 using TOML
 using LinearAlgebra: mul!, dot
+using SparseArrays: SparseMatrixCSC, sparse
 using NCDatasets
 
 function _config_bool(value, path::AbstractString)
@@ -73,10 +95,13 @@ using FastGaussQuadrature: gausslegendre
 
 # Re-export parent module types we need
 import ..expand_data_path
+import ..source_revision
 # Source settings and binary readers extend the same public capability queries.
-import ..MetDrivers: has_surface, has_vdiff_fields
+import ..MetDrivers: has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base
 using ..Architectures: CPU
-using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
+using ..Parameters: IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_PRESSURE, TM5_CONSTANTS, R_DRY_AIR,
+                    VIRTUAL_TEMPERATURE_FACTOR
+using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cs_face_edge_lengths, cs_corner_xyz,
                HybridSigmaPressure, PanelConnectivity,
                AbstractCubedSpherePanelConvention,
                AtmosGrid, ncells, nfaces, nrings, nlevels, face_cells, cell_area,
@@ -151,7 +176,7 @@ export SubstepSchedulePolicy, clamp_substeps, initial_substeps,
 export ReadyWindow, PreverifiedWindow, PreprocessorRunCache
 export verify_window!, update_accumulator!, summarize_status!
 export contract_replay_tolerance, contract_cfl_limit, contract_require_positivity
-export allocate_window_workspace, reset_workspace!,
+export allocate_window_workspace,
        ingest_window!, drain_ready_windows!, flush_final_windows!
 export LatLonBinaryWriter, ReducedGaussianBinaryWriter, CubedSphereBinaryWriter
 export write_window!, close_streaming_binary!, promote_streaming_binary!,
@@ -173,7 +198,6 @@ export verify_substep_positivity_rg!, verify_rg_window_contract!,
 include("met_sources.jl")
 
 # Physical constants
-include("constants.jl")
 
 # Statistics dependency for GEOS reader (level-orientation auto-detect)
 using Statistics: mean
@@ -193,6 +217,8 @@ include("vertical_transforms.jl")
 
 # Global 6-panel Poisson balance for cubed-sphere grids
 # (must precede target_geometry.jl which uses CSGlobalFaceTable)
+include("cs_face_table.jl")
+include("cs_poisson_solver.jl")
 include("cs_poisson_balance.jl")
 
 # Target grid geometry (LL, RG, and CS)
@@ -212,9 +238,18 @@ include("ring_poisson_balance.jl")
 
 # Reduced Gaussian helpers (RG synthesis, RG balance, RG cm diagnosis)
 include("reduced_transport_helpers.jl")
+include("reduced_window_buffer.jl")
+include("reduced_spectral_day.jl")
+include("reduced_spectral_synthesis.jl")
 
 # Cubed-sphere transport helpers (regrid, wind recovery, flux reconstruction)
 include("cs_transport_helpers.jl")
+include("cs_flux_reconstruction.jl")
+include("cs_wind_rotation.jl")
+include("cs_native_fluxes.jl")
+# Flux construction options shared by the wind-derived paths (MERRA-2, ERA5 N320).
+include("face_line_integrals.jl")
+include("flux_construction.jl")
 
 # Configuration parsing
 include("configuration.jl")
@@ -241,6 +276,8 @@ include("binary_pipeline.jl")
 
 # Native GEOS NetCDF reader
 include("sources/geos.jl")
+include("sources/geos_panels.jl")
+include("sources/geos_read_window.jl")
 
 # ERA5 native-GRIB reader: N320 settings + day handles, spectral synthesis
 # (VO+D → U/V, LNSP → PS, reduced_gg Q reader), dry-basis layer-mass
@@ -248,6 +285,9 @@ include("sources/geos.jl")
 # regrid to a cubed-sphere target, and the per-window pipeline that
 # wires them all together.
 include("sources/era5.jl")
+include("sources/era5_n320_window.jl")
+include("sources/era5_n320_mass_convection.jl")
+include("sources/era5_n320_to_cs.jl")
 
 # Native MERRA-2 reader: MERRA2Settings + day handles + per-window LL field
 # reader (PS/QV from inst3, U/V from tavg3). Drives the wind-derived → CS
@@ -266,6 +306,10 @@ include("sources/loader.jl")
 include("met_readers.jl")
 
 # GEOS → CS passthrough orchestrator
+include("transport_binary/geos_cs_mass_helpers.jl")
+include("transport_binary/geos_cs_omega.jl")
+include("transport_binary/geos_cs_resolution.jl")
+include("transport_binary/geos_cs_window.jl")
 include("transport_binary/cubed_sphere_geos.jl")
 
 # Experimental nested CS-binary operator restriction (for example C90 → C30).
@@ -273,23 +317,24 @@ include("transport_binary/cubed_sphere_geos.jl")
 include("transport_binary/cubed_sphere_coarsen.jl")
 
 # ERA5 N320 → CS transport-binary writer. Drives one UTC day end-to-end
-# through the per-window pipeline shipped in `sources/era5.jl` plus the
-# C180 dry-mass re-derivation, wind rotation, face flux reconstruction,
+# through the per-window pipeline in `sources/era5*.jl` plus the
+# target-grid dry-mass re-derivation, wind rotation, face flux reconstruction,
 # Poisson balance, and v4 writer.
 include("transport_binary/era5_n320_regrid.jl")
 
 # MERRA-2 wind-derived → CS transport-binary writer. Near-clone of the ERA5
-# N320 writer: direct MERRA-2 NetCDF read + conservative regrid to C180,
-# wind-derived flux reconstruction + Cameron-Smith column pressure-fix
-# (Poisson balance), 8 windows/day. Reproduces the validated GEOS-Chem CO₂
-# transport input path; purely additive. Included after the ERA5 N320 writer
-# so `_fill_cs_mass_delta_payload!` is in scope.
+# N320 writer: direct MERRA-2 NetCDF read + conservative regrid to the CS
+# target, wind-derived flux reconstruction + Cameron-Smith column
+# pressure-fix (Poisson balance), 3-hourly source blocks written as 8 or 24
+# windows/day. Reproduces the validated GEOS-Chem CO₂ transport input path.
+# Included after the ERA5 N320 writer so `_fill_cs_mass_delta_payload!` is in
+# scope.
 include("transport_binary/merra2_latlon_regrid.jl")
 
 # Met source abstraction
 export AbstractMetSettings, RawWindow
 export read_window!, source_grid, windows_per_day
-export has_convection, has_surface, has_vdiff_fields
+export has_convection, has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base
 export open_day, close_day!, allocate_raw_window
 
 # GEOS native NetCDF reader
@@ -325,7 +370,11 @@ export process_era5_n320_to_cs_day
 # Native MERRA-2 reader + wind-derived → CS writer (GEOS-Chem CO₂ path).
 export MERRA2Settings, MERRA2DayHandles
 export open_merra2_day, close_merra2_day!, merra2_path, merra2_stream_code
-export read_merra2_window_fields, read_merra2_next_day_endpoint
+export read_merra2_window_fields, read_merra2_next_day_endpoint, read_merra2_physics_window
+export MERRA2Archive, NASAArchive, GEOSChemArchive, merra2_archive
+export MERRA2LevelOrder, TopDown, SurfaceFirst, detect_merra2_level_order
+export validate_merra2_settings, merra2_window_physics!,
+       allocate_merra2_window_physics, convective_cloud_base!
 export MERRA2ToC180Pipeline, allocate_merra2_to_c180_pipeline,
        process_merra2_window!, process_merra2_to_cs_day
 

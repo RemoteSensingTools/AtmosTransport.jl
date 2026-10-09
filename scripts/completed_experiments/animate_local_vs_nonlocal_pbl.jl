@@ -9,7 +9,7 @@
 # Both datasets are GEOS-IT C180 cubed-sphere, converted to NetCDF.
 #
 # Usage:
-#   julia --project=. scripts/visualization/animate_local_vs_nonlocal_pbl.jl
+#   julia --project=. scripts/completed_experiments/animate_local_vs_nonlocal_pbl.jl
 # ===========================================================================
 
 using CairoMakie
@@ -17,7 +17,7 @@ using GeoMakie
 using Dates
 using Printf
 
-include(joinpath(@__DIR__, "cs_regrid_utils.jl"))
+include(joinpath(@__DIR__, "..", "visualization", "cs_regrid_utils.jl"))
 
 # ---------------------------------------------------------------------------
 # Configuration

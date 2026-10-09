@@ -5,7 +5,7 @@ using Logging, Random
 
 using AtmosTransport
 using .AtmosTransport.Grids: reciprocal_edge
-using .AtmosTransport.Operators: MonotoneLimiter, required_halo_width
+using .AtmosTransport.Operators: MonotoneLimiter, CW84Limiter, required_halo_width
 using .AtmosTransport.Operators.Advection: fill_panel_halos!, strang_split_cs!,
     strang_split_cs_mt!, strang_split!, CSAdvectionWorkspace,
     _sweep_x_panel_mt!, _sweep_y_panel_mt!, _sweep_z_panel_mt!,
@@ -449,7 +449,7 @@ end
             rm_out = ntuple(p -> similar(rm_in[p]), 6)
             m_out = ntuple(p -> similar(m_in[p]), 6)
             _sweep_z_panels_mt_pingpong!(rm_out, m_out, rm_in, m_in, panels_cm,
-                                         mesh, scheme; flux_scale = 0.75)
+                                         mesh, scheme, ws_ref; flux_scale = 0.75)
 
             @test max_interior_absdiff_4d(rm_out, rm_ref, Nc, Hp, Nz, Nt) < 1e-12
             @test max_interior_absdiff(m_out, m_ref, Nc, Hp, Nz) < 1e-12
@@ -807,7 +807,7 @@ end
                        AtmosTransport.Grids.GEOSNativePanelConvention()),
             FT in (Float32, Float64), scheme in
             (UpwindScheme(), SlopesScheme(MonotoneLimiter()), PPMScheme(),
-             LinRoodPPMScheme(5), LinRoodPPMScheme(7))
+             PPMScheme(CW84Limiter()), LinRoodPPMScheme(5), LinRoodPPMScheme(7))
         air_rel, tracer_rel = run_mirrored_seam_advection_conservation(
             scheme; FT, flux_gain=100, convention)
         tolerance = FT == Float32 ? 3e-7 : 2e-14
@@ -852,6 +852,7 @@ end
     schemes = (
         SlopesScheme(MonotoneLimiter()),
         PPMScheme(MonotoneLimiter()),
+        PPMScheme(CW84Limiter()),
         LinRoodPPMScheme(5),
     )
 

@@ -7,7 +7,7 @@
 #   Row 2: CO2 VMR at ~750hPa   (GEOS-Chem | AtmosTransport)
 #
 # Usage:
-#   julia --project=. scripts/visualization/animate_vremap_vs_geoschem_co2.jl
+#   julia --project=. scripts/completed_experiments/animate_vremap_vs_geoschem_co2.jl
 #
 # Environment variables:
 #   AT_PREFIX  — file name prefix for AT output (default: "test_vremap_week")
@@ -20,7 +20,7 @@ using CairoMakie
 using GeoMakie
 using Dates
 
-include(joinpath(@__DIR__, "cs_regrid_utils.jl"))
+include(joinpath(@__DIR__, "..", "visualization", "cs_regrid_utils.jl"))
 
 # ---------------------------------------------------------------------------
 # Configuration

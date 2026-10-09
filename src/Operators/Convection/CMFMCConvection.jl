@@ -97,17 +97,49 @@ scavenging-restoring form remains a wet-deposition follow-up.
 # (unclamped) conservative explicit scheme — exactly mass-conserving but
 # CFL-substep-limited.
 """
-    CMFMCConvection(; clamp=false)
+    CMFMCEdgeCloudBase()
+    ArchivedCloudBase()
+
+Where `CMFMCConvection` puts the convective cloud base, below which the
+column is mixed before the updraft starts. `CMFMCEdgeCloudBase` (default)
+takes the lowest layer with updraft inflow through its bottom edge.
+`ArchivedCloudBase` takes it from the met forcing (`forcing.cloud_base`):
+GEOS-Chem's lowest layer with convective rain production DQRCU > 0
+(`convection_mod.F90`, `DO_RAS_CLOUD_CONVECTION`). Cubed sphere only.
+"""
+abstract type AbstractCloudBase end
+struct CMFMCEdgeCloudBase <: AbstractCloudBase end
+struct ArchivedCloudBase <: AbstractCloudBase end
+
+"""
+    CMFMCConvection(; clamp=false, cloud_base=CMFMCEdgeCloudBase())
 
 Explicit, conservative convection driven by per-layer convective mass flux and
 detrainment from ConvectionForcing. Supported on lat-lon, reduced-Gaussian,
 and cubed-sphere states. Setting clamp=true applies the positivity correction
-and conservative column rescaling used for strong-CFL forcing.
+and conservative column rescaling used for strong-CFL forcing. `cloud_base`
+selects the cloud-base rule (see [`AbstractCloudBase`](@ref)).
 """
-struct CMFMCConvection <: AbstractConvection
-    clamp :: Bool
+struct CMFMCConvection{CB <: AbstractCloudBase} <: AbstractConvection
+    clamp      :: Bool
+    cloud_base :: CB
 end
-CMFMCConvection(; clamp::Bool = false) = CMFMCConvection(clamp)
+CMFMCConvection(; clamp::Bool = false, cloud_base::AbstractCloudBase = CMFMCEdgeCloudBase()) =
+    CMFMCConvection(clamp, cloud_base)
+
+# Paths that only implement the CMFMC-edge cloud base.
+_require_edge_cloud_base(::CMFMCEdgeCloudBase, _where) = nothing
+_require_edge_cloud_base(::AbstractCloudBase, where) = throw(ArgumentError(
+    "CMFMCConvection with an archived cloud base is not implemented for $(where)."))
+
+# Per-panel cloud-base array handed to the kernel (`nothing` = derive from CMFMC).
+_panel_cloud_base(::CMFMCEdgeCloudBase, _forcing, _p) = nothing
+function _panel_cloud_base(::ArchivedCloudBase, forcing, p)
+    forcing.cloud_base === nothing && throw(ArgumentError(
+        "CMFMCConvection(cloud_base = ArchivedCloudBase()) requires `forcing.cloud_base`; " *
+        "regenerate the binary with include_convective_cloud_base = true."))
+    return forcing.cloud_base[p]
+end
 
 # =========================================================================
 # Array-level entry: apply_convection!
@@ -164,6 +196,7 @@ function apply_convection!(q_raw::AbstractArray{FT, 4},
     op.clamp && throw(ArgumentError(
         "CMFMCConvection(clamp=true) is currently implemented for cubed-sphere only; " *
         "the lat-lon column kernel does not yet apply the clamp + column rescale."))
+    _require_edge_cloud_base(op.cloud_base, "lat-lon grids")
 
     cmfmc = forcing.cmfmc
 
@@ -222,6 +255,7 @@ function apply_convection!(q_raw::AbstractArray{FT, 3},
     op.clamp && throw(ArgumentError(
         "CMFMCConvection(clamp=true) is currently implemented for cubed-sphere only; " *
         "the reduced-Gaussian column kernel does not yet apply the clamp + column rescale."))
+    _require_edge_cloud_base(op.cloud_base, "reduced-Gaussian grids")
     forcing.cmfmc === nothing && throw(ArgumentError(
         "CMFMCConvection requires `forcing.cmfmc` to be populated; got nothing. " *
         "Install via `TransportModel.convection_forcing` or " *
@@ -302,6 +336,7 @@ function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
     for _ in 1:n_sub
         for p in 1:6
             kernel(q_raw[p], air_mass[p], cmfmc[p], dtrain_arr[p], cell_areas[p],
+                   _panel_cloud_base(op.cloud_base, forcing, p),
                    workspace.qc_scratch[p],
                    Nz, Nt, sdt, Hp, Val(has_dtrain_val), Val(op.clamp);
                    ndrange = (Nc, Nc))

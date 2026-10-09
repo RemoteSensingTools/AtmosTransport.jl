@@ -1,0 +1,78 @@
+# One day (2021-12-01) on the binary of a spectral-ERA5 preprocessing case (input.binary_paths
+# and the advection scheme are set per case). Physics that needs no met-physics fields:
+# constant Kz, CAMS CO₂ (first 3-hourly field of December 2021), GridFED December 2021 and
+# Zhang Rn-222 December, all static (time-varying sources are cubed-sphere only),
+# Rn-222 decay, a Gaussian blob and a uniform tracer (which advection must keep uniform).
+
+[input]
+binary_paths = []
+
+[architecture]
+use_gpu = false
+backend = "cpu"
+
+[numerics]
+float_type = "Float64"
+
+[advection]
+scheme = "upwind"
+
+[tracers.uniform]
+  [tracers.uniform.init]
+  kind = "uniform"
+  background = 4.0e-4
+
+[tracers.co2]
+  [tracers.co2.init]
+  kind = "catrine_co2"
+  [tracers.co2.surface_flux]
+  kind = "lmdz_co2"
+
+[tracers.fossil]
+  [tracers.fossil.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.fossil.surface_flux]
+  kind = "gridfed_fossil_co2"
+  time_index = 12
+  molar_mass_kg_mol = 0.0440095
+
+[tracers.rn222]
+  [tracers.rn222.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.rn222.surface_flux]
+  kind = "zhang_rn222"
+  month = 12
+  molar_mass_kg_mol = 0.222
+
+[tracers.blob]
+  [tracers.blob.init]
+  kind = "gaussian_blob"
+  background = 0.0
+  amplitude = 1.0e-6
+  lon0_deg = -60.0
+  lat0_deg = 30.0
+  sigma_lon_deg = 15.0
+  sigma_lat_deg = 10.0
+
+[diffusion]
+kind  = "constant"
+value = 1.0
+
+[chemistry]
+kind = "decay"
+  [chemistry.half_lives_seconds]
+  rn222 = 330350.4
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 3
+path = "@OUTPUT@/out_{YYYYMMDD}.nc"
+
+  [output.fields]
+  layers = "full"
+  column_mean = true
+  air_mass_per_area = true
+  column_air_mass_per_area = true

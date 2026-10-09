@@ -43,7 +43,7 @@ one that matches your downstream run:
 | Target | Topology-specific workspace |
 | --- | --- |
 | `LatLonTargetGeometry` | `LatLonSpectralWindowWorkspace` (`src/Preprocessing/transport_binary/latlon_spectral.jl`) |
-| `ReducedGaussianTargetGeometry` | `ReducedGaussianSpectralWindowWorkspace` (`src/Preprocessing/reduced_transport_helpers.jl`) |
+| `ReducedGaussianTargetGeometry` | `ReducedGaussianSpectralWindowWorkspace` (`src/Preprocessing/reduced_window_buffer.jl`) |
 | `CubedSphereTargetGeometry` | `CubedSphereSpectralWindowWorkspace` (`src/Preprocessing/transport_binary/cubed_sphere_spectral.jl`) |
 
 All three workspaces subtype `AbstractWindowWorkspace{G, FT}` and are

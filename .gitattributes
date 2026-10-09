@@ -1,0 +1,2 @@
+# `git archive` writes the commit into src/REVISION (see source_revision in src/AtmosTransport.jl).
+src/REVISION export-subst

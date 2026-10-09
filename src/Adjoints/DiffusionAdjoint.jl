@@ -6,18 +6,13 @@
 # transpose solve (upper-triangular sweep first, then back-substitution).
 # Mass-aware: enters and exits in lambda-on-tracer-mass space.
 #
-# The CS adjoint kernel (commit `bff8933`, 2026-05-25) transposes the
-# TM5-style mass-flux forward coefficients. The forward+adjoint share the
-# same `(dkg, m_k, dt)` ingredients; `a_T[k] = c[k-1]` and `c_T[k] = a[k+1]`
-# reduce to mass-flux entries with the "other layer's" m as normalizer. See
-# file-top doc of `src/Operators/Diffusion/diffusion_kernels.jl` for the
-# forward derivation and `memory/diffusion_full_pipeline_audit_2026_05_25.md`
-# for the audit chain.
+# The CS adjoint kernel transposes the TM5-style mass-flux forward
+# coefficients. The forward+adjoint share the same `(dkg, m_k, dt)`
+# ingredients; `a_T[k] = c[k-1]` and `c_T[k] = a[k+1]` reduce to mass-flux
+# entries with the "other layer's" m as normalizer. See the file-top doc of
+# `src/Operators/Diffusion/diffusion_kernels.jl` for the forward derivation
+# and `docs/src/theory/adjoint_status.md` for the adjoint support status.
 # ---------------------------------------------------------------------------
-
-@inline function _adjoint_diffusion_time(::Type{FT}, meteo) where FT
-    return meteo === nothing ? zero(FT) : FT(current_time(meteo))
-end
 
 # Mass-flux adjoint: transpose of the forward `Ã = M⁻¹·A·M` (on VMR),
 # which is equivalent to the column-stochastic A on tracer mass. The
@@ -196,6 +191,11 @@ end
 
 @inline _validate_cs_diffusion_kz_for_adjoint(_op) = nothing
 
+_validate_cs_diffusion_kz_for_adjoint(::ImplicitVerticalDiffusion{FT, <:GCHPNonlocalPBLField}) where FT =
+    throw(ArgumentError(
+        "GEOS-Chem non-local VDIFF has no adjoint yet: the footprint tape neither refreshes " *
+        "the field nor transposes its counter-gradient emission profile."))
+
 function _validate_cs_diffusion_kz_for_adjoint(
     op::ImplicitVerticalDiffusion{FT, <:LocalHoltslagBovilleKzField}) where FT
     @inbounds for p in 1:6
@@ -243,9 +243,9 @@ function _apply_cs_diffusion_adjoint!(lambda_panels::NTuple{6, A},
                                       workspace, dt, meteo,
                                       mesh::CubedSphereMesh) where {
                                           FT, A <: AbstractArray{FT, 3},
-                                          KzF <: PrecomputedCSDkgField{FT}}
+                                          KzF <: AbstractCSDkgField{FT}}
     w_scratch, _ = _require_cs_diffusion_workspace(workspace)
-    update_field!(op.kz_field, _adjoint_diffusion_time(FT, meteo))
+    update_field!(op.kz_field, current_time(meteo))
     Hp, Nc = mesh.Hp, mesh.Nc
     @inbounds for p in 1:6
         panel_lambda = lambda_panels[p]
@@ -269,7 +269,7 @@ function _apply_cs_diffusion_adjoint!(lambda_panels::NTuple{6, A},
                                           FT, A <: AbstractArray{FT, 3},
                                           KzF <: AbstractCubedSphereField{FT}}
     w_scratch, dz_scratch = _require_cs_diffusion_workspace(workspace)
-    update_field!(op.kz_field, _adjoint_diffusion_time(FT, meteo))
+    update_field!(op.kz_field, current_time(meteo))
 
     Hp = mesh.Hp
     Nc = mesh.Nc

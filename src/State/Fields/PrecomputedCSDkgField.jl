@@ -1,4 +1,13 @@
 """
+    AbstractCSDkgField{FT}
+
+Cubed-sphere diffusion fields that supply interface air-mass exchange `dkg`
+[kg s⁻¹] directly to the conservative implicit solver (`panel_field(f, p)`
+returns a rank-3 `(Nc, Nc, Nz)` field; the last level is the zero-flux surface).
+"""
+abstract type AbstractCSDkgField{FT} <: AbstractCubedSphereField{FT} end
+
+"""
     PrecomputedCSDkgField(host_cache)
 
 Cubed-sphere interface air-mass exchange field loaded from a binary `:dkg`
@@ -11,7 +20,7 @@ mass and virtual-temperature geometry. The runtime must therefore consume it
 directly rather than reconstructing an interface coefficient from layer-centre
 Kz and a second, potentially inconsistent, `dz` profile.
 """
-struct PrecomputedCSDkgField{FT, F <: PreComputedKzField{FT, 3}, H} <: AbstractCubedSphereField{FT}
+struct PrecomputedCSDkgField{FT, F <: PreComputedKzField{FT, 3}, H} <: AbstractCSDkgField{FT}
     panels     :: NTuple{6, F}
     host_cache :: H
 end

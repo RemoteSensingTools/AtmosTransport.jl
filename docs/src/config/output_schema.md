@@ -77,16 +77,22 @@ Every snapshot file carries a CF-style global header set by
 | `creation_date` | ISO-8601 UTC timestamp of the run |
 | `framework` | `"AtmosTransport.jl"` |
 | `framework_commit` | git SHA of the source tree at run time (or `"unknown"`) |
-| `framework_dirty` | `"clean"` or `"dirty"` (uncommitted changes flag) |
+| `framework_dirty` | `"clean"`, `"dirty"` (uncommitted changes) or `"unknown"` |
 | `runtime` | Julia version plus machine, kernel, and operating-system summary |
 | `hostname` | `Base.Libc.gethostname()` at run start |
 | `user` | `$USER` (or `$USERNAME` on Windows; `"unknown"` if neither is set) |
 | `output_options` | `float_type=…, deflate_level=…, shuffle=…` (only present when writer options are passed) |
 | `history` | CF-canonical chain; the writer prepends `"<creation_date>: written by AtmosTransport.Output (commit <sha>[+dirty]) with N frame(s)"` |
 
-Every provenance value is best-effort: non-git checkouts get
-`framework_commit = "unknown"`; environments without a `USER` variable get
-`user = "unknown"`. `output_options` is present when writer options are passed;
+Every provenance value is best-effort. A source tree exported with
+`git archive` (the code snapshots used for long runs) has no `.git`; git writes
+the commit into its `src/REVISION` on export, and the writer reports that commit
+with `framework_dirty = "clean"`; edits made to the tree after the export are
+not detected. Other trees without `.git` get
+`framework_commit = "unknown"`. Environments without a `USER` variable get
+`user = "unknown"`. Cubed-sphere transport binaries record the writing code the
+same way, as `git_commit` and `git_dirty` (true unless known clean) in their
+header. `output_options` is present when writer options are passed;
 the other listed attributes are written by the current NetCDF writer.
 
 ## Lat-lon snapshot

@@ -161,7 +161,8 @@ enhancement = 1.0e-4          # extra dry VMR in lowest n_layers (LL only)
 n_layers    = 3
 ```
 
-Initial-condition kinds (declared in `src/Models/InitialConditionIO.jl`):
+Initial-condition kinds (LL/RG builders in `src/Models/InitialConditionIO.jl`,
+CS builder in `src/Models/initial_conditions/cubed_sphere.jl`):
 
 | Kind | LL | RG | CS | Required keys |
 |---|---|---|---|---|
@@ -199,7 +200,7 @@ kind = "edgar_sf6"
 ```
 
 Registered surface-flux source kinds (full list in
-`src/Models/InitialConditionIO.jl`): `lmdz_co2`, `gridfed_fossil_co2`,
+`src/Models/initial_conditions/surface_flux.jl`): `lmdz_co2`, `gridfed_fossil_co2`,
 `edgar_sf6`, `zhang_rn222`, plus a generic `file` for arbitrary
 NetCDF sources and `cs_native` for time-varying fluxes already on the native
 cubed-sphere grid. There is no `edgar_co2` kind — use
@@ -260,12 +261,27 @@ selector means; relevant config keys:
 scheme    = "linrood"           # "upwind" | "slopes" | "ppm" | "linrood" | "none"
 ppm_order = 7                   # cubed-sphere LinRoodPPM only; ∈ {5, 7}.
                                 # Setting ppm_order with scheme = "ppm" errors.
+# vertical = "fv3_kord8"        # scheme = "ppm": "same_as_horizontal" (default);
+                                # scheme = "linrood": "upwind" (default);
+                                # either: "fv3_kord8" (FV3 scalar_profile,
+                                # positive definite, the GCHP tracer profile)
+                                # | "fv3_kord8_signed" (for tracers that go
+                                # negative); FV3 options are cubed sphere only
+# limiter = "cw84"              # scheme = "ppm" only: "monotone" (default) |
+                                # "cw84" (complete Colella–Woodward PPM; keeps
+                                # tracers non-negative in sweeps where no cell
+                                # exports more than its air mass)
 
 [diffusion]
 kind  = "constant"              # "none" | "constant" |
                                 # "tm5_beljaars_viterbo_local_kz" |
                                 # "geoschem_holtslag_boville_vdiff" (CS-only;
-                                #   requires include_gchp_vdiff=true binary) |
+                                #   local Kz; requires include_gchp_vdiff=true binary) |
+                                # "geoschem_nonlocal_vdiff" (CS-only; GEOS-Chem's
+                                #   non-local PBL scheme incl. counter-gradient
+                                #   transport of fresh emissions; needs VDIFF +
+                                #   :pbl_eflux, e.g. the MERRA-2 GEOS-Chem archive;
+                                #   always S(dt)->V(dt)) |
                                 # "tm5_dkg" (CS-only; exact TM5 dry-air
                                 #   interface exchange — requires a
                                 #   binary built with include_tm5_diffusion=true)
@@ -278,6 +294,9 @@ kind = "cmfmc"                  # "none" | "cmfmc" | "cmfmc_matrix" | "tm5"
                                 # cmfmc_matrix = TM5 LU solver on GEOS CMFMC
                                 # rates; tm5 = TM5 entrainment (:entu/:detu/
                                 # :entd/:detd payload)
+cloud_base = "cmfmc"            # cmfmc only: "cmfmc" = lowest layer with updraft
+                                # inflow; "dqrcu" = GEOS-Chem's cloud base from the
+                                # binary's :cmfmc_cloud_base (CS-only)
 
 # Collaborative-LU knobs (cmfmc_matrix and tm5). use_collab_lu is REQUIRED for
 # lmax_conv / n_merge to take effect — setting them without it is a hard error.
@@ -515,7 +534,12 @@ Give GPU runs `--threads=2` (or more) to enable prefetch.
 ## Preprocessing config (`config/preprocessing/*.toml`)
 
 Consumed by `scripts/preprocessing/preprocess_transport_binary.jl`, which
-calls the unified `process_day` preprocessing entry point.
+calls the unified `process_day` preprocessing entry point. Source-specific
+`[preprocessing]` keys live in the met-source descriptor
+(`config/met_sources/*.toml`); the flux-construction keys of the MERRA-2 and
+ERA5 N320 sources (`column_balance_weights`, `face_fluxes`, `face_lengths`,
+`face_interpolation`, `wind_regrid`, and for MERRA-2 `flux_thickness`) are
+described in [Data sources](data_sources.md).
 
 The preprocessing config has a different shape from the run config:
 the **target topology IS specified here** because that's the act of
@@ -633,6 +657,30 @@ dt_met_seconds = 3600.0      # window cadence (s); 1 hour for GEOS-IT
 default `450.0` — the FV3 dynamics step); there is **no per-run
 `[numerics].mass_flux_dt` override** today.
 
+#### `balance_mode` — horizontal mass-flux balance
+
+Every path closes a window's horizontal mass fluxes against its endpoint mass
+tendency before diagnosing `cm`:
+
+```toml
+[numerics]
+balance_mode = "column"      # default on lat-lon and cubed-sphere paths
+```
+
+- `"column"` — one Poisson solve for the column-integrated divergence; the
+  correction is distributed over the layers (by air mass, or by the source's
+  `column_balance_weights`), so layer winds keep their vertical structure.
+- `"per_layer"` — one Poisson solve per layer (the older mode). The
+  reduced-Gaussian path always balances per layer and rejects `"column"`.
+
+The mode is recorded in every transport-binary header as
+`horizontal_balance` (for GEOS, the balance its `geos_cm_closure` applies:
+`"none"` for the pressure-fixer closures, `"column"` for the moisture-filtered
+and OMEGA closures). `geos_balance_mode` is accepted as an older name. The
+environment variable `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1`, which used
+to select per-layer balance on every path except GEOS, still does so on those
+paths when the key is absent, with a deprecation warning.
+
 #### `geos_cm_closure` — GEOS native CS vertical-flux closure
 
 How the vertical mass flux `cm` is diagnosed when regridding GEOS native fields
@@ -681,7 +729,9 @@ OMEGA modes also require `[mass_fix].enable = true`; without global endpoint
 mass closure, a per-level horizontal Poisson solve cannot realize the global
 column tendency.
 
-### `[mass_fix]` — global PS pinning (spectral path only)
+### `[mass_fix]` — global dry-mass pin
+
+ERA5 spectral path:
 
 ```toml
 [mass_fix]
@@ -690,9 +740,23 @@ target_ps_dry_pa      = 98726.0
 qv_global_climatology = 0.00247
 ```
 
-The GEOS native CS path doesn't apply mass fix (the FV3 dynamical
-core's mass flux is already conservative). LL spectral runs without
-it drift by tens of Pa per window.
+pins the global-mean surface pressure so that the dry air mass stays at
+`target_ps_dry_pa`. LL spectral runs without it drift by tens of Pa per window.
+
+Native sources (GEOS, MERRA-2 and ERA5 N320 to the cubed sphere):
+
+```toml
+[mass_fix]
+enable           = true
+mode             = "target_ps_dry"  # or "initial_endpoint" (GEOS only)
+target_ps_dry_pa = 98726.0          # target_total_kg = … takes precedence
+```
+
+`target_ps_dry` (the default) pins the global dry air mass of every window
+endpoint to `target_ps_dry_pa` times the sphere's area divided by `g`.
+`initial_endpoint` pins to the dry mass at the start of the first window
+instead, carried across the days of one preprocessing run; only the GEOS native
+path implements it, and the other sources reject it.
 
 ## Where to read next
 

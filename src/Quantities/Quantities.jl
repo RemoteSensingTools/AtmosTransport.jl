@@ -2,9 +2,10 @@
     Quantities
 
 Dispatch traits that classify a meteorological field by its
-*regrid-and-conservation semantics*. Used by preprocessing helpers
-(`apply_regridder!` callers) and runtime helpers that pack/unpack tracer
-mass to keep extensive/intensive distinctions explicit at the type level.
+*regrid-and-conservation semantics*. Only `Preprocessing` uses them: the CS
+regrid helpers (`regrid_2d_to_cs_panels!`, `regrid_3d_to_cs_panels!`, which
+call `apply_regridder!`) take a kind argument so extensive/intensive
+distinctions stay explicit at the type level.
 
 The four kinds are not interchangeable. Confusing one for another is the
 exact mistake that produced ~12× polar mass deficits in C180 ERA5
@@ -16,12 +17,13 @@ the spatial distribution proportional to source-cell area variation).
 | `IntensiveCellField` | `ps`, `qv`, `T`, mixing ratios, cell-center winds | Pass-through to `apply_regridder!`. |
 | `ExtensiveCellField` | `m` (kg/cell), tracer mass, accumulated emissions mass | Convert via density: `src ./ src_areas` → regrid → `× dst_areas`. |
 | `HorizontalVectorField` | cell-center `(u, v)` viewed as a tangent vector | Regrid components as intensive, then *rotate* into the target panel-local basis at every CS panel. |
-| `HorizontalFluxField` | window-summed `am`, `bm`, accumulated face-flux integrals | Directed integrals across faces; correct handling needs face-aware regridding (MAPL `CONSERVE_HFLUX`-style) or reconstruction from regridded winds + pressure. The current pipeline reconstructs from winds; this type is the place to plug in a future flux-conservative regridder. |
+| `HorizontalFluxField` | window-summed `am`, `bm`, accumulated face-flux integrals | Directed integrals across faces; correct handling needs face-aware regridding (MAPL `CONSERVE_HFLUX`-style) or reconstruction from regridded winds + pressure. The pipeline reconstructs from winds (`reconstruct_cs_fluxes!`). |
 
 `IntensiveCellField` and `ExtensiveCellField` cover all scalar cell fields
-and are the only kinds the current regrid helpers dispatch on.
-`HorizontalVectorField` and `HorizontalFluxField` are reserved for the
-two paths that need richer handling than scalar regridding can give.
+and are the only kinds the regrid helpers accept. Passing
+`HorizontalVectorField` or `HorizontalFluxField` makes them throw an
+`ArgumentError`, because those fields need richer handling than scalar
+regridding can give.
 
 The trait types are small singletons. Use them as a final positional
 argument on regrid helpers, not as wrapper types around arrays — staying
@@ -65,9 +67,11 @@ struct ExtensiveCellField <: QuantityKind end
 Tangent-plane vector field defined at cell centers: cell-center
 `(u, v)` winds. The components are individually intensive, but at every
 CS panel the vector itself must be re-expressed in the target panel-local
-basis. This requires a rotation step (`tangent_basis`) on top of
-component-wise regridding. Reserved for the path that handles cell-center
-winds; current regrid helpers do not dispatch on this kind.
+basis. This requires a rotation step on top of component-wise regridding:
+`rotate_winds_to_panel_local!` (Preprocessing) projects the regridded
+east/north components onto panel-local face normals built from
+`panel_cell_local_tangent_basis` (Grids). The scalar regrid helpers reject
+this kind with an `ArgumentError`.
 """
 struct HorizontalVectorField <: QuantityKind end
 
@@ -77,10 +81,10 @@ struct HorizontalVectorField <: QuantityKind end
 Directed face-flux integral: window-summed `am`, `bm`, accumulated mass
 flux across a face over a time window. Correct regridding requires
 face-aware operators (MAPL `CONSERVE_HFLUX`) or reconstruction from
-regridded winds + pressure. The current pipeline reconstructs face fluxes
-from regridded cell-center winds and a target-grid pressure thickness;
-this type marks the API surface where a future flux-conservative
-regridder will plug in.
+regridded winds + pressure. The pipeline reconstructs face fluxes from
+regridded cell-center winds and a target-grid pressure thickness
+(`reconstruct_cs_fluxes!`); the scalar regrid helpers reject this kind with
+an `ArgumentError`.
 """
 struct HorizontalFluxField <: QuantityKind end
 

@@ -7,7 +7,7 @@
 # ---------------------------------------------------------------------------
 
 """
-    PBLSurfaceForcing(pblh, ustar, hflux, t2m)
+    PBLSurfaceForcing(pblh, ustar, hflux, t2m[, eflux])
 
 Container for raw surface fields used by the PBL diffusion closure.
 
@@ -23,16 +23,20 @@ Units follow the canonical runtime contract:
 - `ustar` - friction velocity [m s^-1]
 - `hflux` - upward sensible heat flux [W m^-2]
 - `t2m`   - 2 m air temperature [K]
+- `eflux` - upward latent heat flux [W m^-2], or `nothing` (only GEOS-Chem's
+  non-local VDIFF scheme needs it)
 """
-struct PBLSurfaceForcing{P, U, H, T}
+struct PBLSurfaceForcing{P, U, H, T, E}
     pblh  :: P
     ustar :: U
     hflux :: H
     t2m   :: T
+    eflux :: E
 end
 
-PBLSurfaceForcing(; pblh, ustar, hflux, t2m) =
-    PBLSurfaceForcing(pblh, ustar, hflux, t2m)
+PBLSurfaceForcing(pblh, ustar, hflux, t2m) = PBLSurfaceForcing(pblh, ustar, hflux, t2m, nothing)
+PBLSurfaceForcing(; pblh, ustar, hflux, t2m, eflux = nothing) =
+    PBLSurfaceForcing(pblh, ustar, hflux, t2m, eflux)
 
 has_pbl_surface_forcing(f::PBLSurfaceForcing) = true
 has_pbl_surface_forcing(::Nothing) = false
@@ -41,7 +45,8 @@ function Adapt.adapt_structure(_to, f::PBLSurfaceForcing)
     return PBLSurfaceForcing(Adapt.adapt(_to, f.pblh),
                              Adapt.adapt(_to, f.ustar),
                              Adapt.adapt(_to, f.hflux),
-                             Adapt.adapt(_to, f.t2m))
+                             Adapt.adapt(_to, f.t2m),
+                             Adapt.adapt(_to, f.eflux))
 end
 
 export PBLSurfaceForcing, has_pbl_surface_forcing

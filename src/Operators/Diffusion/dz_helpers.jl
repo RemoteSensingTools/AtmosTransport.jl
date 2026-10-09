@@ -34,8 +34,6 @@
 # ---------------------------------------------------------------------------
 
 const _DZ_T_REF_DEFAULT = 260.0
-const _DZ_R_DEFAULT     = 287.04
-const _DZ_G_DEFAULT     = 9.81
 
 @kernel function _dz_hydrostatic_constT_kernel!(dz, @Const(ps),
                                                 @Const(ak_ifc), @Const(bk_ifc),
@@ -54,7 +52,7 @@ end
 
 """
     fill_dz_hydrostatic_constT!(dz, ps, ak_ifc, bk_ifc;
-                                 T_ref = 260, R = 287.04, gravity = 9.81)
+                                 T_ref = 260, R = R_DRY_AIR, gravity = STANDARD_GRAVITY)
 
 Populate a 3D `(Nx, Ny, Nz)` `dz` array (host or device) from surface
 pressure `ps` and hybrid sigma-pressure interface coefficients
@@ -65,8 +63,8 @@ function fill_dz_hydrostatic_constT!(dz::AbstractArray{<:AbstractFloat, 3},
                                       ak_ifc::AbstractVector,
                                       bk_ifc::AbstractVector;
                                       T_ref::Real    = _DZ_T_REF_DEFAULT,
-                                      R::Real        = _DZ_R_DEFAULT,
-                                      gravity::Real  = _DZ_G_DEFAULT)
+                                      R::Real        = R_DRY_AIR,
+                                      gravity::Real  = STANDARD_GRAVITY)
     Nx, Ny, Nz = size(dz)
     size(ps) == (Nx, Ny) || throw(DimensionMismatch(
         "ps shape $(size(ps)) ≠ ($Nx, $Ny) expected from dz"))
@@ -139,7 +137,7 @@ end
 # stratospheric T < 180 K is fine: `dz` just gets a little smaller, which
 # is the correct hydrostatic answer at that altitude.
 @inline _virtual_T_factor(qv::T) where {T<:Real} =
-    one(T) + T(0.61) * max(qv, zero(T))
+    one(T) + T(VIRTUAL_TEMPERATURE_FACTOR) * max(qv, zero(T))
 
 @kernel function _dz_hydrostatic_virtualT_3d_kernel!(dz, @Const(t_lyr),
                                                      @Const(qv_lyr),
@@ -161,7 +159,7 @@ end
 
 """
     fill_dz_hydrostatic_virtualT!(dz, t_lyr, qv_lyr, ps, ak_ifc, bk_ifc;
-                                   R = 287.04, gravity = 9.81)
+                                   R = R_DRY_AIR, gravity = STANDARD_GRAVITY)
 
 Populate a 3D `(Nx, Ny, Nz)` `dz` array using virtual temperature per
 layer: `T_v = T · (1 + 0.61 · qv)`. Matches the geometry the
@@ -178,8 +176,8 @@ function fill_dz_hydrostatic_virtualT!(dz::AbstractArray{<:AbstractFloat, 3},
                                         ps::AbstractArray{<:AbstractFloat, 2},
                                         ak_ifc::AbstractVector,
                                         bk_ifc::AbstractVector;
-                                        R::Real       = _DZ_R_DEFAULT,
-                                        gravity::Real = _DZ_G_DEFAULT)
+                                        R::Real       = R_DRY_AIR,
+                                        gravity::Real = STANDARD_GRAVITY)
     Nx, Ny, Nz = size(dz)
     size(t_lyr)  == (Nx, Ny, Nz) || throw(DimensionMismatch(
         "t_lyr shape $(size(t_lyr)) ≠ ($Nx, $Ny, $Nz) expected from dz"))
@@ -259,8 +257,8 @@ function fill_dz_hydrostatic_constT!(dz::AbstractArray{<:AbstractFloat, 2},
                                       ak_ifc::AbstractVector,
                                       bk_ifc::AbstractVector;
                                       T_ref::Real    = _DZ_T_REF_DEFAULT,
-                                      R::Real        = _DZ_R_DEFAULT,
-                                      gravity::Real  = _DZ_G_DEFAULT)
+                                      R::Real        = R_DRY_AIR,
+                                      gravity::Real  = STANDARD_GRAVITY)
     ncells, Nz = size(dz)
     length(ps) == ncells || throw(DimensionMismatch(
         "ps length $(length(ps)) ≠ ncells=$(ncells) expected from dz"))

@@ -15,6 +15,8 @@ using Printf: @sprintf
 using ..Architectures: array_adapter_for
 using ..State
 using ..Grids
+using ..Parameters: EARTH_RADIUS
+import ..source_revision
 
 include("AbstractMetDriver.jl")
 include("ConvectionForcing.jl")
@@ -51,7 +53,7 @@ export PBLSurfaceForcing, has_pbl_surface_forcing
 export window_count, has_qv_endpoints, has_flux_delta, has_cmfmc
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule
 export binary_capabilities, inspect_binary
-export has_surface, has_vdiff_fields
+export has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base
 export mass_basis, grid_type, horizontal_topology, A_ifc, B_ifc
 export uses_binary_substep_contract
 export source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics

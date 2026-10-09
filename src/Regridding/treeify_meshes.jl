@@ -10,14 +10,14 @@
 #
 # GeometryOpsCore.best_manifold tells CR.jl which manifold (Planar or
 # Spherical) a grid lives on, and at what radius. All AtmosTransport
-# meshes are spherical with radius = mesh.radius (default 6.371e6 m).
+# meshes are spherical with radius = mesh.radius (default 6.371e6 m). The
+# manifold is Float64 for every mesh precision: regridding geometry is
+# evaluated once, Float32 and Float64 runs must share weights, and CR.jl
+# requires source and destination manifolds of the same type.
 
-"""Return `Spherical(radius=mesh.radius)` for a `LatLonMesh`."""
-GOCore.best_manifold(mesh::LatLonMesh)          = GO.Spherical(; radius = mesh.radius)
-"""Return `Spherical(radius=mesh.radius)` for a `CubedSphereMesh`."""
-GOCore.best_manifold(mesh::CubedSphereMesh)     = GO.Spherical(; radius = mesh.radius)
-"""Return `Spherical(radius=mesh.radius)` for a `ReducedGaussianMesh`."""
-GOCore.best_manifold(mesh::ReducedGaussianMesh) = GO.Spherical(; radius = mesh.radius)
+"""Return `Spherical(radius = Float64(mesh.radius))` for an AtmosTransport mesh."""
+GOCore.best_manifold(mesh::Union{LatLonMesh, CubedSphereMesh, ReducedGaussianMesh}) =
+    GO.Spherical(; radius = Float64(mesh.radius))
 
 # ---------------------------------------------------------------------------
 # LatLonMesh → CellBasedGrid(UnitSphericalPoint) → TopDownQuadtreeCursor
@@ -124,7 +124,9 @@ Trees.treeify(mesh::LatLonMesh) = Trees.treeify(GOCore.best_manifold(mesh), mesh
 Return a 6-tuple of `(Nc+1) × (Nc+1)` corner-point matrices, one per panel,
 with corners on the unit sphere. Panel ordering follows `mesh.convention`;
 for each user-visible panel `p`, corner `(i, j)` matches
-`panel_cell_corner_lonlat(mesh, p)`.
+`panel_cell_corner_lonlat(mesh, p, Float64)`. Corners are evaluated in
+Float64 for every mesh precision, so a Float32 run regrids with the same
+weights as a Float64 run (the cache key does not include the precision).
 
 Used by `Trees.treeify(::Spherical, ::CubedSphereMesh)` to assemble a
 `CubedSphereToplevelTree`. Cached externally (the regridder cache includes
@@ -135,10 +137,10 @@ function cubed_sphere_face_corners(mesh::CubedSphereMesh)
     Np  = Nc + 1
     to_sphere = GO.UnitSphereFromGeographic()
     panels = ntuple(6) do user_panel
-        lons, lats = panel_cell_corner_lonlat(mesh, user_panel)
+        lons, lats = panel_cell_corner_lonlat(mesh, user_panel, Float64)
         m = Matrix{UnitSphericalPoint{Float64}}(undef, Np, Np)
         @inbounds for j in 1:Np, i in 1:Np
-            m[i, j] = to_sphere((Float64(lons[i, j]), Float64(lats[i, j])))
+            m[i, j] = to_sphere((lons[i, j], lats[i, j]))
         end
         m
     end

@@ -18,7 +18,6 @@ _load_cs_coarsen_window(reader, win::Int) = load_window!(reader, win)
 
 @inline _cs_coarsen_geometry(header) = binary_geometry(header)
 @inline _cs_coarsen_Nc(header) = _cs_coarsen_geometry(header).Nc
-@inline _cs_coarsen_npanel(header) = _cs_coarsen_geometry(header).npanel
 @inline _cs_coarsen_definition(geometry::CubedSphereBinaryGeometry) = geometry.definition
 
 @inline function _coarsen_sum_cells3!(dst::AbstractArray{FT, 3},
@@ -180,7 +179,8 @@ function _experimental_coarsen_metadata(reader, output_Nc::Int, ratio::Int)
     for key in ("date", "mass_fix_enabled", "mass_fix_target_ps_dry_pa",
                 "global_mass_pin_enabled", "global_mass_pin_target_kg",
                 "vertical_mapping_method", "target_vertical_name",
-                "target_coefficients", "merge_map", "merge_min_thickness_Pa")
+                "target_coefficients", "merge_map", "merge_min_thickness_Pa",
+                "horizontal_balance")    # block sums keep the source's balance
         haskey(raw, key) && (metadata[key] = raw[key])
     end
     return metadata
@@ -258,7 +258,7 @@ function coarsen_nested_cs_transport_binary(
             throw(ArgumentError("source contains an incomplete surface payload"))
         include_dkg = :dkg in h.payload_sections
         mesh = CubedSphereMesh(; Nc = source_Nc, Hp = 0, FT = DiskFT,
-                               definition = mesh_definition(reader))
+                               definition = mesh_definition(reader), radius = DiskFT(h.planet_radius_m))
         source_area = mesh.cell_areas
         buffers = _allocate_nested_cs_coarsen_buffers(
             DiskFT, target, h.nlevel, npanel;
@@ -286,6 +286,7 @@ function coarsen_nested_cs_transport_binary(
             cs_coordinate_law = String(geometry.coordinate_law),
             cs_center_law = String(geometry.center_law),
             longitude_offset_deg = geometry.longitude_offset_deg,
+            planet_radius = h.planet_radius_m,
             extra_header = metadata)
 
         schedule = Vector{Int}(undef, h.nwindow)

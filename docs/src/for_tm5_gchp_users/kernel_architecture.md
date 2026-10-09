@@ -244,10 +244,10 @@ effects can dominate the result.
 | Concern | Primary source |
 | --- | --- |
 | Backend selection and adaptation | `src/Architectures.jl` |
-| Runtime window copies and prefetch | `src/Models/DrivenSimulation.jl` |
+| Runtime window copies and prefetch | `src/Models/driven_window_state.jl` |
 | Section timing | `src/Diagnostics/SectionTimer.jl` |
 | Structured packed sweeps | `src/Operators/Advection/multitracer_kernels.jl` |
-| Cubed-sphere packed sweeps | `src/Operators/Advection/CubedSphereStrang.jl` |
+| Cubed-sphere packed sweeps | `src/Operators/Advection/cs_sweep_{common,x,y,z}.jl` |
 | Memory-mapped binary reader | `src/MetDrivers/transport_binary/reader.jl` |
 
 Continue with [Operators on top of the binary](operators_on_binaries.md) for

@@ -13,9 +13,11 @@
     AbstractMetSettings
 
 Top-level supertype for typed met-data source descriptors used by the
-preprocessor. Concrete subtypes (e.g. `GEOSITSettings`, `MERRA2Settings`,
-`SpectralERA5Settings`) carry source-specific paths and parameters and
-implement the `read_window!` / `source_grid` / `windows_per_day` interface.
+preprocessor. Concrete subtypes (`GEOSITSettings`, `GEOSFPSettings`,
+`ERA5N320Settings`, `MERRA2Settings`, `ERA5SpectralSettings`) carry
+source-specific paths and parameters and implement the parts of the
+`read_window!` / `source_grid` / `windows_per_day` interface that their
+`process_day` path uses (GEOS implements all three).
 
 `process_day(date, grid::AbstractTargetGeometry, settings::AbstractMetSettings,
 vertical; ...)` dispatches on `settings` to pick the reader.
@@ -236,3 +238,13 @@ Whether this source can populate `RawWindow.vdiff` with layer-center fields
 needed by the GCHP Holtslag-Boville vertical-diffusion data contract.
 """
 has_vdiff_fields(::AbstractMetSettings) = false
+
+"""
+    has_pbl_eflux(settings) -> Bool
+    has_cmfmc_cloud_base(settings) -> Bool
+
+Whether this source writes the surface latent heat flux (GCHP non-local PBL
+scheme) or the convective cloud-base layer (GCHP cloud convection).
+"""
+has_pbl_eflux(::AbstractMetSettings) = false
+has_cmfmc_cloud_base(::AbstractMetSettings) = false

@@ -77,83 +77,93 @@ palindrome.
     end
 end
 
-"""
-    _surface_flux_cs_single_kernel!(q_raw, rate, comp, dt, Nz, Hp)
+# ---------------------------------------------------------------------------
+# Cubed sphere: where a column's emitted mass goes.
+# ---------------------------------------------------------------------------
 
-Cubed-sphere single-tracer surface-flux kernel with Kahan compensation.
-`q_raw` is one halo-padded tracer panel `(Nc + 2Hp, Nc + 2Hp, Nz)`,
-`rate` and `comp` are the interior `(Nc, Nc)` panel arrays.
 """
-@kernel function _surface_flux_cs_single_kernel!(q_raw, @Const(rate), comp, dt, Nz, Hp)
-    ii, jj = @index(Global, NTuple)
+    SurfaceLayerDeposit()
+    ProfileDeposit(profile)
+
+Vertical placement of the mass emitted into a cubed-sphere column during one
+step. `SurfaceLayerDeposit` adds it to the surface layer `k = Nz` with Kahan
+compensation. `ProfileDeposit` spreads it over the column with per-layer
+fractions `profile[i, j, k]` that sum to one: the non-local PBL transport of
+fresh surface emissions in GEOS-Chem's VDIFF (the counter-gradient term
+`∂(ρ K γ)/∂z`, linear in the surface flux). As in GEOS-Chem (`qmincg`), a
+column whose counter-gradient redistribution alone would turn a layer
+negative keeps the emission in the surface layer. Upper-layer additions are
+tracked with `_two_sum`, and the surface layer receives the emission minus what
+landed above through the Kahan update, so the column gains exactly the
+emitted mass.
+"""
+struct SurfaceLayerDeposit end
+struct ProfileDeposit{P}
+    profile :: P
+end
+
+Adapt.adapt_structure(to, d::ProfileDeposit) = ProfileDeposit(Adapt.adapt(to, d.profile))
+
+# One cell of a single-tracer (3-D) or packed multi-tracer (4-D) panel.
+@inline _tracer_cell(::AbstractArray{<:Any, 3}, i, j, k, _t) = CartesianIndex(i, j, k)
+@inline _tracer_cell(::AbstractArray{<:Any, 4}, i, j, k, t) = CartesianIndex(i, j, k, t)
+
+@inline function _deposit!(q, comp, x, ii, jj, Hp, Nz, t, ::SurfaceLayerDeposit)
     @inbounds begin
-        x = rate[ii, jj] * dt
-        s = q_raw[ii + Hp, jj + Hp, Nz]
-        c = comp[ii, jj]
-        y = x - c
-        t = s + y
-        comp[ii, jj]                  = (t - s) - y
-        q_raw[ii + Hp, jj + Hp, Nz]  = t
+        cell = _tracer_cell(q, ii + Hp, jj + Hp, Nz, t)
+        s = q[cell]
+        y = x - comp[ii, jj]
+        s_new = s + y
+        comp[ii, jj] = (s_new - s) - y
+        q[cell] = s_new
     end
+    return nothing
+end
+
+# The upper-layer shares are added plainly; TwoSum recovers exactly what each
+# addition rounded away, and the surface layer (Kahan) receives `x` minus what
+# actually landed above, so the column gains exactly `x`.
+@inline function _deposit!(q, comp, x, ii, jj, Hp, Nz, t, d::ProfileDeposit)
+    f = d.profile
+    @inbounds begin
+        for k in 1:Nz
+            redistributed = x * (f[ii, jj, k] - (k == Nz))       # counter-gradient part only
+            q[_tracer_cell(q, ii + Hp, jj + Hp, k, t)] + redistributed < 0 &&
+                return _deposit!(q, comp, x, ii, jj, Hp, Nz, t, SurfaceLayerDeposit())
+        end
+        lofted, lofted_err = zero(x), zero(x)          # mass that reached layers 1…Nz-1
+        for k in 1:(Nz - 1)
+            cell = _tracer_cell(q, ii + Hp, jj + Hp, k, t)
+            share = x * f[ii, jj, k]
+            q[cell], lost = _two_sum(q[cell], share)
+            lofted, e = _two_sum(lofted, share)
+            lofted_err += e - lost
+        end
+    end
+    return _deposit!(q, comp, (x - lofted) - lofted_err, ii, jj, Hp, Nz, t, SurfaceLayerDeposit())
 end
 
 """
-    _surface_flux_cs_single_interp_kernel!(q_raw, series, comp, w0, w1, i0, i1, dt, Nz, Hp)
+    _surface_flux_cs_kernel!(q_raw, rate, comp, dt, tracer_idx, Nz, Hp, deposit)
 
-Cubed-sphere single-tracer time-interpolated surface-flux kernel with
-Kahan compensation. The blended increment `(w0·series[i0] + w1·series[i1])·dt`
-is added via Kahan to `q_raw[ii+Hp, jj+Hp, Nz]`.
+Cubed-sphere surface-flux kernel for one halo-padded panel, single-tracer
+`(Nc + 2Hp, Nc + 2Hp, Nz)` or packed `(…, Nz, Nt)` (`tracer_idx` selects the
+slab; ignored for single-tracer panels). `rate`/`comp` are interior `(Nc, Nc)`.
 """
-@kernel function _surface_flux_cs_single_interp_kernel!(q_raw, @Const(series),
-                                                        comp, w0, w1, i0, i1, dt, Nz, Hp)
+@kernel function _surface_flux_cs_kernel!(q_raw, @Const(rate), comp, dt, tracer_idx, Nz, Hp, deposit)
     ii, jj = @index(Global, NTuple)
-    @inbounds begin
-        x = (w0 * series[ii, jj, i0] + w1 * series[ii, jj, i1]) * dt
-        s = q_raw[ii + Hp, jj + Hp, Nz]
-        c = comp[ii, jj]
-        y = x - c
-        t = s + y
-        comp[ii, jj]                  = (t - s) - y
-        q_raw[ii + Hp, jj + Hp, Nz]  = t
-    end
+    @inbounds _deposit!(q_raw, comp, rate[ii, jj] * dt, ii, jj, Hp, Nz, tracer_idx, deposit)
 end
 
 """
-    _surface_flux_cs_kernel!(q_raw, rate, comp, dt, tracer_idx, Nz, Hp)
+    _surface_flux_cs_interp_kernel!(q_raw, series, comp, w0, w1, i0, i1, dt, tracer_idx, Nz, Hp, deposit)
 
-Packed cubed-sphere surface-flux kernel with Kahan compensation. `q_raw`
-is one halo-padded panel `(Nc + 2Hp, Nc + 2Hp, Nz, Nt)` and `rate`/`comp`
-are the interior `(Nc, Nc)` panel arrays.
+Time-interpolated variant: the increment is `(w0·series[i0] + w1·series[i1])·dt`.
 """
-@kernel function _surface_flux_cs_kernel!(q_raw, @Const(rate), comp, dt, tracer_idx, Nz, Hp)
+@kernel function _surface_flux_cs_interp_kernel!(q_raw, @Const(series), comp, w0, w1, i0, i1,
+                                                  dt, tracer_idx, Nz, Hp, deposit)
     ii, jj = @index(Global, NTuple)
-    @inbounds begin
-        x = rate[ii, jj] * dt
-        s = q_raw[ii + Hp, jj + Hp, Nz, tracer_idx]
-        c = comp[ii, jj]
-        y = x - c
-        t = s + y
-        comp[ii, jj]                              = (t - s) - y
-        q_raw[ii + Hp, jj + Hp, Nz, tracer_idx]  = t
-    end
+    @inbounds _deposit!(q_raw, comp, (w0 * series[ii, jj, i0] + w1 * series[ii, jj, i1]) * dt,
+                        ii, jj, Hp, Nz, tracer_idx, deposit)
 end
 
-"""
-    _surface_flux_cs_interp_kernel!(q_raw, series, comp, w0, w1, i0, i1, dt, tracer_idx, Nz, Hp)
-
-Packed cubed-sphere time-interpolated surface-flux kernel with Kahan
-compensation. The blended increment is applied to `tracer_idx` via Kahan.
-"""
-@kernel function _surface_flux_cs_interp_kernel!(q_raw, @Const(series),
-                                                  comp, w0, w1, i0, i1, dt, tracer_idx, Nz, Hp)
-    ii, jj = @index(Global, NTuple)
-    @inbounds begin
-        x = (w0 * series[ii, jj, i0] + w1 * series[ii, jj, i1]) * dt
-        s = q_raw[ii + Hp, jj + Hp, Nz, tracer_idx]
-        c = comp[ii, jj]
-        y = x - c
-        t = s + y
-        comp[ii, jj]                              = (t - s) - y
-        q_raw[ii + Hp, jj + Hp, Nz, tracer_idx]  = t
-    end
-end

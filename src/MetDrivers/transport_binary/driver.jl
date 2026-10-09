@@ -148,8 +148,9 @@ function _validate_replay_consistency_ll(reader::TransportBinaryReader{FT}) wher
     return (worst_window = worst_win, worst_rel = worst_rel, worst_abs = worst_abs)
 end
 
-# Dispatch stub: CS topology not yet covered by load-time replay.
-# The write-time gate covers it; extend here if needed.
+# No-op fallback for arguments that are not a `TransportBinaryReader`.
+# Cubed-sphere binaries have their own load-time gate,
+# `_validate_replay_consistency_cs` (`cubed_sphere_driver.jl`).
 _validate_replay_consistency_ll(::Any) = nothing
 
 @inline function _rg_face_connectivity(mesh)

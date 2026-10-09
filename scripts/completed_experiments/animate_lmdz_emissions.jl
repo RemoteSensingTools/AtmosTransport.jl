@@ -9,7 +9,7 @@ using Dates
 using JSON3
 using Printf
 
-include(joinpath(@__DIR__, "cs_regrid_utils.jl"))
+include(joinpath(@__DIR__, "..", "visualization", "cs_regrid_utils.jl"))
 
 const BIN_PATH = expanduser("~/data/AtmosTransport/catrine/preprocessed_c180/lmdz_co2_cs_c180_float32.bin")
 const GC_DIR = joinpath(homedir(), "data", "AtmosTransport", "catrine-geoschem-runs")

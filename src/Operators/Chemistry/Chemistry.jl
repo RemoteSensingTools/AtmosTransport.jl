@@ -142,6 +142,27 @@ function apply!(state, meteo, grid, ::NoChemistry, dt;
 end
 
 """
+    decay_decrement(FT, rate, dt) -> FT
+
+`expm1(-rate · dt)` evaluated in Float64 and rounded once. In Float32,
+`exp(-rate · dt)` carries a relative error of up to ~3e-5 in the decayed
+fraction `1 − exp(-rate · dt)` (Rn-222, dt = 300–900 s), a fixed bias of the
+tracer lifetime.
+"""
+decay_decrement(::Type{FT}, rate, dt) where FT <: AbstractFloat =
+    FT(expm1(-Float64(rate) * Float64(dt)))
+
+# Refresh each rate for the Float64 model clock and form the decrements the
+# kernel applies. `ConstantField.update_field!` ignores `t`; time-varying rate
+# fields (e.g. `StepwiseField`) consume it here. Callers without a met driver
+# pass `meteo = nothing`, whose `current_time` is 0.0.
+_decay_decrements(op::ExponentialDecay{FT, N}, meteo, dt) where {FT, N} = ntuple(N) do n
+    rate = op.decay_rates[n]
+    update_field!(rate, current_time(meteo))
+    decay_decrement(FT, field_value(rate, ()), dt)
+end
+
+"""
     apply!(state::CellState, meteo, grid, op::ExponentialDecay, dt; workspace=nothing)
 
 Decay every tracer listed in `op.tracer_names` by `exp(-rate * dt)` in
@@ -166,20 +187,7 @@ function apply!(state::CellState, meteo, grid,
         Int32(idx)
     end
 
-    # Refresh rate caches for the current time, then materialize to scalars
-    # for the kernel. `ConstantField.update_field!` ignores `t`; once
-    # non-constant rate fields (e.g. `StepwiseField{FT, 0}` for time-varying
-    # decay rates) are wired in, this is where they consume simulation time.
-    # For `meteo === nothing` (test fixtures, direct TransportModel callers
-    # without a met driver), fall back to `zero(FT)`; the stub at
-    # `AbstractMetDriver.jl:77` already returns `0.0` so concrete drivers
-    # wanting to drive time-varying fields must override.
-    t = meteo === nothing ? zero(FT) : FT(current_time(meteo))
-    rates = ntuple(N) do n
-        r = op.decay_rates[n]
-        update_field!(r, t)
-        field_value(r, ())
-    end
+    decrements = _decay_decrements(op, meteo, dt)
 
     raw = state.tracers_raw
     backend = get_backend(raw)
@@ -188,7 +196,7 @@ function apply!(state::CellState, meteo, grid,
     # Launch across the spatial axes; the trailing tracer axis is handled
     # by the kernel's inner loop over `indices`.
     spatial_shape = ntuple(i -> size(raw, i), ndims(raw) - 1)
-    kernel!(raw, indices, rates, FT(dt), Int32(N);
+    kernel!(raw, indices, decrements, Int32(N);
             ndrange = spatial_shape)
     synchronize(backend)
     return state
@@ -244,12 +252,7 @@ function apply!(state::CubedSphereState, meteo, grid,
         Int32(idx)
     end
 
-    t = meteo === nothing ? zero(FT) : FT(current_time(meteo))
-    rates = ntuple(N) do n
-        r = op.decay_rates[n]
-        update_field!(r, t)
-        field_value(r, ())
-    end
+    decrements = _decay_decrements(op, meteo, dt)
 
     # Launch once per panel. One panel's raw has shape (Nx, Ny, Nz, Nt);
     # ndrange iterates over (Nx, Ny, Nz) and the kernel's inner loop
@@ -258,13 +261,12 @@ function apply!(state::CubedSphereState, meteo, grid,
     backend = get_backend(raws[1])
     kernel! = _exp_decay_kernel!(backend, 256)
 
-    dt_FT = FT(dt)
     N_i32 = Int32(N)
 
     @inbounds for p in 1:6
         raw = raws[p]
         spatial_shape = ntuple(i -> size(raw, i), ndims(raw) - 1)
-        kernel!(raw, indices, rates, dt_FT, N_i32;
+        kernel!(raw, indices, decrements, N_i32;
                 ndrange = spatial_shape)
     end
     synchronize(backend)

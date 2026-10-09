@@ -365,7 +365,7 @@ South Africa hotspot spot check:
 
 Fix applied in code:
 
-- `src/Preprocessing/cs_transport_helpers.jl` now projects geographic winds
+- `src/Preprocessing/cs_wind_rotation.jl` now projects geographic winds
   onto face normals derived from the panel tangent basis before reconstructing
   CS face fluxes.
 - `rotate_panel_to_geographic!` now solves the inverse face-normal Gram system.

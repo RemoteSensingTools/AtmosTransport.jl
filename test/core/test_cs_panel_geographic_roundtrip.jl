@@ -2,7 +2,7 @@
 # ---------------------------------------------------------------------------
 # Plan geos-followups Section D, Commit 1.
 #
-# Cover the two new helpers added to `cs_transport_helpers.jl`:
+# Cover the two rotation helpers in `cs_wind_rotation.jl`:
 #
 #   - `rotate_panel_to_geographic!`     — inverse of
 #       `rotate_winds_to_panel_local!`. The forward path projects geographic

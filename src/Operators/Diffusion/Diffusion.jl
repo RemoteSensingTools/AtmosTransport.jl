@@ -27,9 +27,11 @@ using Adapt
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 using ...State: CellState, CubedSphereState,
                 AbstractTimeVaryingField, AbstractCubedSphereField,
-                PrecomputedCSDkgField,
+                AbstractCSDkgField, PrecomputedCSDkgField,
                 field_value, update_field!, panel_field, eachtracer, ntracers
 using ...MetDrivers: current_time
+using ...Architectures: _two_sum, _neumaier_add, _ledger_residual
+using ...Parameters: VIRTUAL_TEMPERATURE_FACTOR, R_DRY_AIR, STANDARD_GRAVITY
 import ..apply!
 import ..AbstractDiffusion                # global root from src/Operators/AbstractOperators.jl
 

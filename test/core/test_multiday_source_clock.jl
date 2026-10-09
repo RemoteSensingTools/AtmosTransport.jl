@@ -21,7 +21,7 @@ using AtmosTransport
 using .AtmosTransport.MetDrivers: driver_grid, current_time
 using .AtmosTransport.Operators.SurfaceFlux: StepwiseFlux, _flux_temporal_weights
 
-function _write_clock_test_binary(path; FT = Float64)
+function _write_clock_test_binary(path; FT = Float64, steps = 2)
     Nx, Ny, Nz = 4, 3, 2
     mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny)
     vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
@@ -40,7 +40,7 @@ function _write_clock_test_binary(path; FT = Float64)
     ]
     write_transport_binary(path, grid, windows;
                            FT = FT, dt_met_seconds = 3600.0,
-                           half_dt_seconds = 1800.0, steps_per_window = 2,
+                           half_dt_seconds = 1800.0, steps_per_window = steps,
                            mass_basis = :moist,
                            source_flux_sampling = :window_start_endpoint)
     return grid
@@ -68,6 +68,28 @@ end
         @test current_time(sim) == day2
         step!(sim)
         @test current_time(sim) == day2 + sim.Δt   # advances FROM the origin
+    end
+end
+
+@testset "Float64 clock lands on window ends for any step count" begin
+    # Seven steps per hour: a Float32 clock adding 3600/7 s is 3 h off after a
+    # year, and a Float64 sum misses window ends by an ulp.
+    mktemp() do path, io
+        close(io)
+        _write_clock_test_binary(path; FT = Float32, steps = 7)
+        driver = TransportBinaryDriver(path; FT = Float32, arch = CPU())
+        grid = driver_grid(driver)
+        state = CellState(MoistBasis, ones(Float32, 4, 3, 2); CO2 = fill(400f-6, 4, 3, 2))
+        fluxes = allocate_face_fluxes(grid.horizontal, 2; FT = Float32, basis = MoistBasis)
+        sim = DrivenSimulation(TransportModel(state, fluxes, grid, UpwindScheme()), driver;
+                               start_time = 86400.0)
+        times = map(1:14) do _
+            step!(sim)
+            current_time(sim)
+        end
+        @test eltype(times) === Float64
+        @test times[7] == 86400.0 + 3600 && times[14] == 86400.0 + 7200
+        @test times ≈ 86400.0 .+ (1:14) .* (3600 / 7) rtol = 4eps()
     end
 end
 

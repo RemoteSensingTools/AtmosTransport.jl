@@ -58,6 +58,7 @@ the runtime actually dispatches on:
 | `cs_coordinate_law` | `Symbol` | CS only — e.g. `:equiangular_gnomonic` or `:gmao_equal_distance_gnomonic` |
 | `cs_center_law` | `Symbol` | CS only — `:angular_midpoint` or `:four_corner_normalized` |
 | `longitude_offset_deg` | `Float64` | CS only — final longitude rotation, `-10.0` for GEOS native |
+| `planet_radius_m` | `Float64` | radius [m] of the mesh on which the preprocessor computed cell areas and air masses; the runtime builds its mesh with it. The preprocessors use the IFS radius 6 371 229 m; binaries without the key read as 6 371 000 m |
 | `dt_met_seconds` | `Float64` | met-window cadence (typically 3600 s for hourly ERA5) |
 | `steps_per_window` | `Int` | compatibility scalar, equal to `maximum(steps_per_window_by_window)` |
 | `steps_per_window_by_window` | `Vector{Int}` | required v4 per-window substep schedule used by replay gates and runtime stepping |
@@ -107,6 +108,8 @@ The full list lives in `src/MetDrivers/TransportBinary.jl`.
 | `:pblh`, `:ustar`, `:pbl_hflux`, `:t2m` | Surface payload — feeds the `WindowPBLKzField` runtime Kz path. |
 | `:vdiff_u`, `:vdiff_v`, `:vdiff_t`, `:vdiff_qv` | GEOS VDIFF state — feeds the `LocalHoltslagBovilleKzField` local Kz. |
 | `:dkg` | Exact TM5 dry-air interface exchange [kg s⁻¹] between layers `k` and `k+1`; the final level is the zero-flux surface boundary. |
+| `:pbl_eflux` (CS, with the surface sections) | Upward latent heat flux [W m⁻²]; with the VDIFF sections it enables GEOS-Chem's non-local PBL scheme (`geoschem_nonlocal_vdiff`, `GCHPNonlocalPBLField`). Loaded into `surface.eflux`. |
+| `:cmfmc_cloud_base` (CS, with `:cmfmc`) | Convective cloud-base layer, a top-down index stored as a float (GEOS-Chem: lowest layer with DQRCU > 0); used by `[convection] cloud_base = "dqrcu"`. |
 
 The PBL surface and GCHP VDIFF sections together replace the older "constant
 or profile-shaped Kz from runtime config" model. Cubed-sphere runs with
@@ -137,6 +140,8 @@ returns a `NamedTuple`:
 | `cmfmc_convection :: Bool` | `true` iff `:cmfmc` is present (CS only) |
 | `pbl_diffusion :: Bool` | `true` iff the four PBL surface sections (`:pblh`, `:ustar`, `:pbl_hflux`, `:t2m`) are present (CS only) |
 | `gchp_vdiff :: Bool` | `true` iff all GCHP VDIFF fields and all four PBL surface fields are present (CS only) |
+| `gchp_nonlocal_vdiff :: Bool` | `gchp_vdiff` plus `:pbl_eflux` (CS only) |
+| `cmfmc_cloud_base :: Bool` | `true` iff `:cmfmc_cloud_base` is present |
 | `surface_pressure :: Bool` | `true` iff `:ps` is present |
 | `humidity :: Bool` | `true` iff both `:qv_start` and `:qv_end` are present |
 | `mass_basis :: Symbol` | `:dry` or `:moist` (echoed from header) |
@@ -220,11 +225,14 @@ writer = open_streaming_cs_transport_binary(
     include_surface = false,       # writes :pblh, :ustar, :pbl_hflux, :t2m
     include_tm5conv = false,       # writes :entu, :detu, :entd, :detd
     include_gchp_vdiff = false,    # writes :vdiff_u, :vdiff_v, :vdiff_t, :vdiff_qv
+    include_pbl_eflux = false,     # writes :pbl_eflux (window.surface.eflux; requires include_surface)
+    include_cmfmc_cloud_base = false, # writes :cmfmc_cloud_base (requires include_cmfmc)
     panel_convention = :gnomonic,  # or :geos_native
     cs_definition = :equiangular_gnomonic,
     cs_coordinate_law = :equiangular_gnomonic,
     cs_center_law = :angular_midpoint,
     longitude_offset_deg = 0.0,
+    planet_radius = mesh.radius,   # required: radius of the mesh the air masses were computed on
     extra_header = Dict(),
 )
 ```

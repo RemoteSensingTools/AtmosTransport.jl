@@ -297,7 +297,7 @@ is bit-identical to the pre-clamp behavior.
     #       mass over the window (e.g. C180 panel-4 south edge cell at
     #       lat 44°N has window-CFL ≈ 1.6 after balance).
     #   (2) Future coarser grids or different met sources where per-substep
-    #       CFL exceeds 1 before the runtime's `_cs_static_subcycle_count`
+    #       CFL exceeds 1 before the runtime's `_cs_static_palindrome_subcycle_count`
     #       can subdivide.
     # Without the clamp, `α = F/eps` blows up and the polynomial overflows.
     # With the clamp, α saturates at ±1 → degrades to upwind locally,
@@ -564,6 +564,30 @@ Stencil: 4 cells `[c_ll, c_l | c_r, c_rr]` with the interface between `c_l` and 
 end
 
 """
+    _ppm_edge_value(c_ll, c_l, c_r, c_rr, limiter) → FT
+
+Edge value between `c_l` and `c_r` for `PPMScheme{L}`. The default limiters use
+the unlimited fourth-order edge above. `CW84Limiter` uses CW84 eq. 1.7 with van
+Leer-limited slopes (eq. 1.8, the minmod of `_limited_slope`),
+
+```math
+e_{i+1/2} = \\frac{c_i + c_{i+1}}{2} - \\frac{δc_{i+1} - δc_i}{6},
+```
+
+which lies between `c_l` and `c_r` and equals the fourth-order edge where
+neither slope is limited.
+"""
+@inline _ppm_edge_value(c_ll, c_l, c_r, c_rr, ::AbstractLimiter) =
+    _ppm_edge_value(c_ll, c_l, c_r, c_rr)
+
+@inline function _ppm_edge_value(c_ll, c_l, c_r, c_rr, ::CW84Limiter)
+    FT = typeof(c_l)
+    δc_l = _limited_slope(c_ll, c_l, c_r, MonotoneLimiter())
+    δc_r = _limited_slope(c_l, c_r, c_rr, MonotoneLimiter())
+    return (c_l + c_r) / FT(2) - (δc_r - δc_l) / FT(6)
+end
+
+"""
     _ppm_limit_profile(q_L, c_bar, q_R, ::MonotoneLimiter) → (q_L, q_R)
 
 Apply Colella & Woodward (1984) monotonicity constraints to the PPM
@@ -622,6 +646,43 @@ but sufficient for species that must remain ≥ 0.
     return max(q_L, zero(FT)), max(q_R, zero(FT))
 end
 
+"""
+    _ppm_limit_profile(q_L, c_bar, q_R, ::CW84Limiter) → (q_L, q_R)
+
+The monotonicity conditions of `MonotoneLimiter` (CW84 eq. 1.10).
+"""
+@inline _ppm_limit_profile(q_L, c_bar, q_R, ::CW84Limiter) =
+    _ppm_limit_profile(q_L, c_bar, q_R, MonotoneLimiter())
+
+"""
+    _ppm_raw_moments(F, m_l, c_l, q_L_l, q_R_l, m_r, c_r, q_L_r, q_R_r, limiter) → (sx_l, sx_r)
+
+Moments of the two donor cells of a face for `_slopes_face_flux`: the left cell
+(outflow through its right edge when `F ≥ 0`) and the right cell (outflow
+through its left edge when `F < 0`). `m_l` and `m_r` are the floored masses.
+
+The default limiters use the limited outflow edge as a linear
+(Russell–Lerner) slope: `sx_l = m_l (q_R_l − c_l)`, `sx_r = m_r (c_r − q_L_r)`.
+
+`CW84Limiter` adds the parabola's curvature `b₀ = (q_L − c) + (q_R − c)` over
+the swept fraction `α` (clamped like in `_slopes_face_flux`),
+
+    sx_l = m_l ((q_R_l − c_l) − α₊ b₀_l),   sx_r = m_r ((c_r − q_L_r) − α₋ b₀_r),
+
+so that `_slopes_face_flux` returns `F` times the mean of the donor parabola
+over the swept part of the cell (CW84 eq. 1.12).
+"""
+@inline _ppm_raw_moments(F, m_l, c_l, q_L_l, q_R_l, m_r, c_r, q_L_r, q_R_r, ::AbstractLimiter) =
+    (m_l * (q_R_l - c_l), m_r * (c_r - q_L_r))
+
+@inline function _ppm_raw_moments(F, m_l, c_l, q_L_l, q_R_l, m_r, c_r, q_L_r, q_R_r, ::CW84Limiter)
+    α_pos = clamp(F / m_l, zero(F), one(F))
+    α_neg = clamp(F / m_r, -one(F), zero(F))
+    b0_l = (q_L_l - c_l) + (q_R_l - c_l)
+    b0_r = (q_L_r - c_r) + (q_R_r - c_r)
+    return m_l * ((q_R_l - c_l) - α_pos * b0_l), m_r * ((c_r - q_L_r) - α_neg * b0_r)
+end
+
 # ---- PPM x-face flux (periodic) -----------------------------------------
 
 """
@@ -670,18 +731,20 @@ Tracer mass flux through x-face `face_i` for PPM advection.
     c_p  = rm[i_p,  j, k] / max(m[i_p,  j, k], m_floor)
     c_pp = rm[i_pp, j, k] / max(m[i_pp, j, k], m_floor)
 
-    e_left  = _ppm_edge_value(c_3, c_2, c_1, c_0)
-    e_face  = _ppm_edge_value(c_2, c_1, c_0, c_p)
-    e_right = _ppm_edge_value(c_1, c_0, c_p, c_pp)
+    e_left  = _ppm_edge_value(c_3, c_2, c_1, c_0, limiter)
+    e_face  = _ppm_edge_value(c_2, c_1, c_0, c_p, limiter)
+    e_right = _ppm_edge_value(c_1, c_0, c_p, c_pp, limiter)
 
     q_L_l, q_R_l = _ppm_limit_profile(e_left, c_1, e_face, limiter)
     q_L_r, q_R_r = _ppm_limit_profile(e_face, c_0, e_right, limiter)
 
-    sx_l = _limited_moment(max(m[i_1, j, k], m_floor) * (q_R_l - c_1), rm[i_1, j, k], limiter)
-    sx_r = _limited_moment(max(m[i_0, j, k], m_floor) * (c_0 - q_L_r), rm[i_0, j, k], limiter)
+    m_l = max(m[i_1, j, k], m_floor)
+    m_r = max(m[i_0, j, k], m_floor)
+    sx_l, sx_r = _ppm_raw_moments(F, m_l, c_1, q_L_l, q_R_l, m_r, c_0, q_L_r, q_R_r, limiter)
+    sx_l = _limited_moment(sx_l, rm[i_1, j, k], limiter)
+    sx_r = _limited_moment(sx_r, rm[i_0, j, k], limiter)
 
-    return _slopes_face_flux(F, max(m[i_1, j, k], m_floor), rm[i_1, j, k], sx_l,
-                                max(m[i_0, j, k], m_floor), rm[i_0, j, k], sx_r)
+    return _slopes_face_flux(F, m_l, rm[i_1, j, k], sx_l, m_r, rm[i_0, j, k], sx_r)
 end
 
 # ---- PPM y-face flux (closed boundaries) --------------------------------
@@ -718,23 +781,24 @@ Tracer mass flux through y-face `face_j` for PPM advection.
     c_rr = rm[i, jrr, k] / max(m[i, jrr, k], m_floor)
     c_3r = rm[i, j3r, k] / max(m[i, j3r, k], m_floor)
 
-    e_left  = _ppm_edge_value(c_3l, c_ll, c_l, c_r)
-    e_face  = _ppm_edge_value(c_ll, c_l, c_r, c_rr)
-    e_right = _ppm_edge_value(c_l, c_r, c_rr, c_3r)
+    e_left  = _ppm_edge_value(c_3l, c_ll, c_l, c_r, limiter)
+    e_face  = _ppm_edge_value(c_ll, c_l, c_r, c_rr, limiter)
+    e_right = _ppm_edge_value(c_l, c_r, c_rr, c_3r, limiter)
 
     q_L_l, q_R_l = _ppm_limit_profile(e_left, c_l, e_face, limiter)
     q_L_r, q_R_r = _ppm_limit_profile(e_face, c_r, e_right, limiter)
 
+    m_l = max(m[i, jl, k], m_floor)
+    m_r = max(m[i, jr, k], m_floor)
+    sx_l, sx_r = _ppm_raw_moments(F, m_l, c_l, q_L_l, q_R_l, m_r, c_r, q_L_r, q_R_r, limiter)
+
     interior_l = (jl > Int32(2)) & (jl < Ny - Int32(1))
-    sx_l = _limited_moment(max(m[i, jl, k], m_floor) * (q_R_l - c_l), rm[i, jl, k], limiter)
-    sx_l = ifelse(interior_l, sx_l, zero(FT))
+    sx_l = ifelse(interior_l, _limited_moment(sx_l, rm[i, jl, k], limiter), zero(FT))
 
     interior_r = (jr > Int32(2)) & (jr < Ny - Int32(1))
-    sx_r = _limited_moment(max(m[i, jr, k], m_floor) * (c_r - q_L_r), rm[i, jr, k], limiter)
-    sx_r = ifelse(interior_r, sx_r, zero(FT))
+    sx_r = ifelse(interior_r, _limited_moment(sx_r, rm[i, jr, k], limiter), zero(FT))
 
-    flux = _slopes_face_flux(F, max(m[i, jl, k], m_floor), rm[i, jl, k], sx_l,
-                                max(m[i, jr, k], m_floor), rm[i, jr, k], sx_r)
+    flux = _slopes_face_flux(F, m_l, rm[i, jl, k], sx_l, m_r, rm[i, jr, k], sx_r)
     return ifelse(at_boundary, zero(FT), flux)
 end
 
@@ -772,22 +836,23 @@ in the thin uppermost model levels.
     c_rr = rm[i, j, krr] / max(m[i, j, krr], m_floor)
     c_3r = rm[i, j, k3r] / max(m[i, j, k3r], m_floor)
 
-    e_left  = _ppm_edge_value(c_3l, c_ll, c_l, c_r)
-    e_face  = _ppm_edge_value(c_ll, c_l, c_r, c_rr)
-    e_right = _ppm_edge_value(c_l, c_r, c_rr, c_3r)
+    e_left  = _ppm_edge_value(c_3l, c_ll, c_l, c_r, limiter)
+    e_face  = _ppm_edge_value(c_ll, c_l, c_r, c_rr, limiter)
+    e_right = _ppm_edge_value(c_l, c_r, c_rr, c_3r, limiter)
 
     q_L_l, q_R_l = _ppm_limit_profile(e_left, c_l, e_face, limiter)
     q_L_r, q_R_r = _ppm_limit_profile(e_face, c_r, e_right, limiter)
 
+    m_l = max(m[i, j, kl], m_floor)
+    m_r = max(m[i, j, kr], m_floor)
+    sx_l, sx_r = _ppm_raw_moments(F, m_l, c_l, q_L_l, q_R_l, m_r, c_r, q_L_r, q_R_r, limiter)
+
     interior_l = (kl > Int32(2)) & (kl < Nz - Int32(1))
-    sx_l = _limited_moment(max(m[i, j, kl], m_floor) * (q_R_l - c_l), rm[i, j, kl], limiter)
-    sx_l = ifelse(interior_l, sx_l, zero(FT))
+    sx_l = ifelse(interior_l, _limited_moment(sx_l, rm[i, j, kl], limiter), zero(FT))
 
     interior_r = (kr > Int32(2)) & (kr < Nz - Int32(1))
-    sx_r = _limited_moment(max(m[i, j, kr], m_floor) * (c_r - q_L_r), rm[i, j, kr], limiter)
-    sx_r = ifelse(interior_r, sx_r, zero(FT))
+    sx_r = ifelse(interior_r, _limited_moment(sx_r, rm[i, j, kr], limiter), zero(FT))
 
-    flux = _slopes_face_flux(F, max(m[i, j, kl], m_floor), rm[i, j, kl], sx_l,
-                                max(m[i, j, kr], m_floor), rm[i, j, kr], sx_r)
+    flux = _slopes_face_flux(F, m_l, rm[i, j, kl], sx_l, m_r, rm[i, j, kr], sx_r)
     return ifelse(at_boundary, zero(FT), flux)
 end

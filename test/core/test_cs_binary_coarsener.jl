@@ -25,7 +25,7 @@ using .AtmosTransport.Preprocessing: coarsen_nested_cs_transport_binary
         source_path = joinpath(dir, "source_c6.bin")
         output_path = joinpath(dir, "output_c2.bin")
         writer = AtmosTransport.MetDrivers.open_streaming_cs_transport_binary(
-            source_path, source_Nc, np, Nz, 1, vc;
+            source_path, source_Nc, np, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
             FT, steps_per_window = 3,
             include_flux_delta = true,
             include_surface = true,

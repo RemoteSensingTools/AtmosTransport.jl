@@ -47,12 +47,24 @@
 @kernel function _vertical_diffusion_kernel_mass_flux!(q, @Const(air_mass),
                                                        kz_field,
                                                        @Const(dz),
-                                                       w_scratch,
+                                                       w_scratch, reference_scratch,
                                                        dt, Nz::Int, Nt::Int)
     i, j = @index(Global, NTuple)
     FT = eltype(q)
     @inbounds begin
         dt_ft = FT(dt)
+
+        # Anomaly diffusion (F32 conservation fix), as in the cubed-sphere
+        # kernels: solve for the departure from the column minimum of each
+        # tracer and add the minimum back (the operator keeps a uniform column).
+        for t in 1:Nt
+            cref = q[i, j, 1, t]
+            for k in 2:Nz
+                v = q[i, j, k, t]
+                cref = v < cref ? v : cref
+            end
+            reference_scratch[i, j, t] = cref
+        end
 
         Kz_prev = zero(FT)
         dz_prev = zero(FT)
@@ -99,7 +111,7 @@
 
             w_scratch[i, j, k] = w_k
             for t in 1:Nt
-                d_k = q[i, j, k, t]
+                d_k = q[i, j, k, t] - reference_scratch[i, j, t]
                 g_k = k == 1 ? d_k / denom :
                       (d_k - a_k * q[i, j, k - 1, t]) / denom
                 q[i, j, k, t] = g_k
@@ -118,6 +130,11 @@
 
         for k in (Nz - 1):-1:1, t in 1:Nt
             q[i, j, k, t] -= w_scratch[i, j, k] * q[i, j, k + 1, t]
+        end
+
+        # restore the per-column reference removed before the solve
+        for k in 1:Nz, t in 1:Nt
+            q[i, j, k, t] += reference_scratch[i, j, t]
         end
     end
 end
@@ -495,12 +512,22 @@ end
 @kernel function _vertical_diffusion_face_kernel_mass_flux!(q, @Const(air_mass),
                                                              kz_field,
                                                              @Const(dz),
-                                                             w_scratch,
+                                                             w_scratch, reference_scratch,
                                                              dt, Nz::Int, Nt::Int)
     c = @index(Global, Linear)
     FT = eltype(q)
     @inbounds begin
         dt_ft = FT(dt)
+
+        # Anomaly diffusion (F32 conservation fix): per-tracer column minimum.
+        for t in 1:Nt
+            cref = q[c, 1, t]
+            for k in 2:Nz
+                v = q[c, k, t]
+                cref = v < cref ? v : cref
+            end
+            reference_scratch[c, t] = cref
+        end
 
         Kz_prev = zero(FT)
         dz_prev = zero(FT)
@@ -547,7 +574,7 @@ end
 
             w_scratch[c, k] = w_k
             for t in 1:Nt
-                d_k = q[c, k, t]
+                d_k = q[c, k, t] - reference_scratch[c, t]
                 g_k = k == 1 ? d_k / denom :
                       (d_k - a_k * q[c, k - 1, t]) / denom
                 q[c, k, t] = g_k
@@ -567,6 +594,11 @@ end
         for k in (Nz - 1):-1:1, t in 1:Nt
             q[c, k, t] -= w_scratch[c, k] * q[c, k + 1, t]
         end
+
+        # restore the per-column reference removed before the solve
+        for k in 1:Nz, t in 1:Nt
+            q[c, k, t] += reference_scratch[c, t]
+        end
     end
 end
 
@@ -579,6 +611,13 @@ end
     FT = eltype(q)
     @inbounds begin
         dt_ft = FT(dt)
+
+        # Anomaly diffusion (F32 conservation fix): column minimum, kept in a register.
+        cref = q[c, 1]
+        for k in 2:Nz
+            v = q[c, k]
+            cref = v < cref ? v : cref
+        end
 
         Kz_prev = zero(FT)
         dz_prev = zero(FT)
@@ -616,7 +655,7 @@ end
             a_k = (k > 1)  ? -dt_ft * dkg_above * inv_m_k : zero(FT)
             c_k = (k < Nz) ? -dt_ft * dkg_below * inv_m_k : zero(FT)
             b_k = one(FT) + dt_ft * (dkg_above + dkg_below) * inv_m_k
-            d_k = q[c, k]
+            d_k = q[c, k] - cref
 
             if k == 1
                 denom = b_k
@@ -645,6 +684,11 @@ end
 
         for k in (Nz - 1):-1:1
             q[c, k] = q[c, k] - w_scratch[c, k] * q[c, k + 1]
+        end
+
+        # restore the column reference removed before the solve
+        for k in 1:Nz
+            q[c, k] += cref
         end
     end
 end

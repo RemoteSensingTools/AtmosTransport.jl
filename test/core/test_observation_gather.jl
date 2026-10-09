@@ -145,7 +145,7 @@ end
     z_half = zeros(nlevel + 1)
     layer_heights_agl!(z_half, p_half, ConstantLayerTemperature(T), g)
     @test z_half[end] == 0
-    @test z_half ≈ O.OBSERVATION_R_DRY * T / g .* log.(ps ./ p_half) rtol = 1e-12
+    @test z_half ≈ AtmosTransport.Parameters.R_DRY_AIR * T / g .* log.(ps ./ p_half) rtol = 1e-12
     @test issorted(z_half; rev = true)
     # Zero top pressure → infinite top height, finite elsewhere; non-monotone or NaN
     # pressures poison everything above them.

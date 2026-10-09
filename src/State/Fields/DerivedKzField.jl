@@ -26,8 +26,8 @@ Base.@kwdef struct PBLPhysicsParameters{FT <: AbstractFloat}
     Kz_min   :: FT = FT(0.01)
     Kz_max   :: FT = FT(500.0)
     kappa_vk :: FT = FT(0.41)
-    gravity  :: FT = FT(9.80665)
-    cp_dry   :: FT = FT(1004.64)
+    gravity  :: FT = FT(STANDARD_GRAVITY)
+    cp_dry   :: FT = FT(CP_DRY_AIR)
     rho_ref  :: FT = FT(1.225)
 end
 
@@ -254,7 +254,7 @@ integration locally, so adapted fields refresh without host scalar indexing.
     i, j = @index(Global, NTuple)
     Nz = size(cache, 3)
     FT = eltype(cache)
-    R_dry = p.cp_dry / FT(3.5)
+    R_dry = p.cp_dry / FT(CP_OVER_R_DIATOMIC)
 
     h_pbl = max(field_value(surface.pblh,  (i, j)), FT(100))
     us    = max(field_value(surface.ustar, (i, j)), FT(0.01))

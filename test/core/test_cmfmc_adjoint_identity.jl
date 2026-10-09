@@ -4,13 +4,11 @@ Adjoint-identity verification for the CMFMC convection operator.
 
 Confirms `⟨y, L·x⟩ = ⟨Lᵀ·y, x⟩` to machine precision (Float64) and
 single-precision tolerance (Float32). The forward `L` is the
-single-substep `_cmfmc_cs_panel_column_single_kernel!` in
-`src/Adjoints/ConvectionAdjoint.jl`; its transpose is the matching
-`_cmfmc_cs_panel_column_single_adjoint_kernel!` in the same file.
-Both were rewritten on 2026-05-24 to match the production forward
-operator (GG1 surface-up cloud-base scan, CC1 kg/m² well-mix with
-cloud-base closure, C3 entrn≥0 guard), so this test is the
-regression that pins their consistency forever.
+production CMFMC kernel (`_cmfmc_cs_panel_column_kernel!`), which the adjoint
+path replays; its transpose is `_cmfmc_cs_panel_column_single_adjoint_kernel!`
+in `src/Adjoints/ConvectionAdjoint.jl` (GG1 surface-up cloud-base scan, CC1
+kg/m² well-mix with cloud-base closure, C3 entrn≥0 guard). A second testset
+pins the replay to the production `apply_convection!` bit for bit.
 """
 
 using Test
@@ -19,7 +17,7 @@ using LinearAlgebra: dot
 
 using AtmosTransport
 using .AtmosTransport.Operators: CMFMCWorkspace, CMFMCConvection,
-                                  invalidate_cmfmc_cache!
+                                  invalidate_cmfmc_cache!, apply_convection!
 using .AtmosTransport.MetDrivers: ConvectionForcing
 using .AtmosTransport.Adjoints: _apply_cs_convection_forward!,
                                 _apply_cs_convection_adjoint!
@@ -157,5 +155,85 @@ end
         # within a few ULPs (≪ rtol = 1e-12 is fine even at m_k=1e15).
         @test all(isapprox(lambda[p], lambda_before[p];
                             rtol = 1e-12, atol = 0) for p in 1:6)
+    end
+end
+
+# A deep convective column over uneven air masses: cloud base at layer 18 of 24,
+# so the sub-cloud mean sums seven layers, and DTRAIN distinct from the
+# detrainment derived from CMFMC (or missing).
+function _deep_cmfmc_case(::Type{FT}, Nc, Hp, Nz, with_dtrain) where FT
+    N = Nc + 2Hp
+    rng = MersenneTwister(11)
+    panels_m = ntuple(_ -> [FT(1e15) * (1 + FT(0.3) * rand(rng, FT)) for _ in 1:N, _ in 1:N, _ in 1:Nz], 6)
+    cmfmc = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), 6)
+    dtrain = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
+    for p in 1:6
+        cmfmc[p][:, :, 6:18] .= FT(0.02)            # updraft between the cloud base (layer 18) and layer 5
+        cmfmc[p][:, :, 10:12] .= FT(0.03)           # entrainment, then detrainment aloft
+        dtrain[p][:, :, 5] .= FT(0.015)
+        dtrain[p][:, :, 9] .= FT(0.005)
+    end
+    return panels_m, ConvectionForcing(cmfmc, with_dtrain ? dtrain : nothing, nothing)
+end
+
+@testset "CMFMC adjoint identity: deep column, several substeps" begin
+    for FT in (Float64, Float32), with_dtrain in (true, false)
+        Nc, Hp, Nz = 3, 1, 24
+        N = Nc + 2Hp
+        mesh = CubedSphereMesh(; Nc = Nc, Hp = Hp, FT = FT)
+        cell_areas = ntuple(_ -> fill(FT(1e12), Nc, Nc), 6)
+        panels_m, forcing = _deep_cmfmc_case(FT, Nc, Hp, Nz, with_dtrain)
+        rng = MersenneTwister(29)
+        x = ntuple(_ -> zeros(FT, N, N, Nz), 6)
+        y = ntuple(_ -> zeros(FT, N, N, Nz), 6)
+        for p in 1:6, k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
+            x[p][i, j, k] = randn(rng, FT)
+            y[p][i, j, k] = randn(rng, FT)
+        end
+        dt = FT(120_000)                            # CMFMC CFL > 1: several substeps
+        Lx = ntuple(p -> copy(x[p]), 6)
+        ws = CMFMCWorkspace(Lx; cell_metrics = cell_areas)
+        _apply_cs_convection_forward!(Lx, panels_m, forcing, CMFMCConvection(), dt, ws, mesh)
+        @test ws.cached_n_sub[] > 1
+        LTy = ntuple(p -> copy(y[p]), 6)
+        _apply_cs_convection_adjoint!(LTy, panels_m, forcing, CMFMCConvection(), dt,
+                                      CMFMCWorkspace(LTy; cell_metrics = cell_areas), mesh)
+        lhs, rhs = _inner_interior(y, Lx, Nc, Hp), _inner_interior(LTy, x, Nc, Hp)
+        tol = FT === Float64 ? 1e-10 : 1f-4
+        @test isapprox(lhs, rhs; rtol = tol, atol = tol * abs(lhs))
+    end
+end
+
+@testset "CMFMC adjoint replay equals the production forward" begin
+    # The forward the adjoint path replays is the production operator: same
+    # kernel, substeps, detrainment (DTRAIN, or derived from CMFMC without it)
+    # and compensated sums, so the replayed trajectory is the run's. A deep
+    # sub-cloud layer with uneven air masses exercises the compensated
+    # sub-cloud mean.
+    for FT in (Float64, Float32), with_dtrain in (true, false)
+        Nc, Hp, Nz = 4, 1, 24
+        N = Nc + 2Hp
+        mesh = CubedSphereMesh(; Nc = Nc, Hp = Hp, FT = FT)
+        vc = AtmosTransport.HybridSigmaPressure(zeros(Nz + 1), collect(range(0.0, 1.0; length = Nz + 1)))
+        grid = AtmosTransport.AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT = FT)
+        rng = MersenneTwister(7)
+        panels_m = ntuple(_ -> [FT(1e15) * (1 + FT(0.3) * rand(rng, FT)) for _ in 1:N, _ in 1:N, _ in 1:Nz], 6)
+        cell_areas = ntuple(_ -> fill(FT(1e12), Nc, Nc), 6)
+        cmfmc = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), 6)     # updraft from the cloud base (layer 8) to layer 3
+        dtrain = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
+        for p in 1:6
+            cmfmc[p][:, :, 4:9] .= FT(0.02)
+            dtrain[p][:, :, 3] .= FT(0.02)
+        end
+        forcing = ConvectionForcing(cmfmc, with_dtrain ? dtrain : nothing, nothing)
+        rm = ntuple(p -> panels_m[p] .* FT(4e-4) .* (1 .+ FT(0.1) .* randn(rng, FT, N, N, Nz)), 6)
+        replay = ntuple(p -> copy(rm[p]), 6)
+        _apply_cs_convection_forward!(replay, panels_m, forcing, CMFMCConvection(), FT(600),
+                                      CMFMCWorkspace(replay; cell_metrics = cell_areas), mesh)
+        production = ntuple(p -> reshape(copy(rm[p]), N, N, Nz, 1), 6)
+        apply_convection!(production, panels_m, forcing, CMFMCConvection(), FT(600),
+                          CMFMCWorkspace(production; cell_metrics = cell_areas), grid)
+        @test all(p -> replay[p] == dropdims(production[p]; dims = 4), 1:6)
+        @test replay != rm                                     # convection did act
     end
 end

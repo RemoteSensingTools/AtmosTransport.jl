@@ -10,7 +10,7 @@ Provides:
 - `SlopesScheme <: AbstractLinearScheme`   — van Leer slopes (limiter-dispatched)
 - `PPMScheme <: AbstractQuadraticScheme`   — structured-grid PPM (not yet an official real-data reference path)
 - `LinRoodPPMScheme <: AbstractAdvectionScheme` — cubed-sphere FV3/Lin-Rood PPM path
-- `AbstractLimiter` subtypes: `NoLimiter`, `MonotoneLimiter`, `PositivityLimiter`
+- `AbstractLimiter` subtypes: `NoLimiter`, `MonotoneLimiter`, `PositivityLimiter`, `CW84Limiter` (PPM only)
 
 **Multi-tracer optimization**:
 - `TracerView` — zero-cost 3D slice adapter for 4D tracer arrays
@@ -33,14 +33,14 @@ using ...SectionTimer
 # concretions. `NoDiffusion`'s `apply_vertical_diffusion_vmr!` method is
 # `= nothing`, keeping the default path bit-exact with the no-op behavior.
 using ..Diffusion: AbstractDiffusion, DiffusionWorkspace, NoDiffusion,
-                   apply_vertical_diffusion_vmr!,
+                   apply_vertical_diffusion_vmr!, _packed_references,
                    uses_diffusive_surface_flux_boundary
 # SurfaceFlux is loaded before Advection in Operators.jl so the palindrome
 # center can dispatch on `AbstractSurfaceFluxOperator`.
 # `NoSurfaceFlux`'s `apply_surface_flux!` method returns `nothing`, keeping
 # the default path bit-exact with the no-op behavior.
 using ..SurfaceFlux: AbstractSurfaceFluxOperator, NoSurfaceFlux,
-                     apply_surface_flux!
+                     apply_surface_flux!, emission_deposit
 using ...State: CellState, CubedSphereState,
     AbstractStructuredFaceFluxState, AbstractFaceFluxState,
     StructuredFaceFluxState, AbstractUnstructuredFaceFluxState,
@@ -63,8 +63,15 @@ include("multitracer_kernels.jl")
 
 # Cubed-sphere halo exchange and Strang splitting
 include("HaloExchange.jl")
+include("cs_sweep_common.jl")
+include("cs_sweep_x.jl")
+include("cs_sweep_y.jl")
+include("cs_sweep_z.jl")
+include("cs_workspace.jl")
+include("cs_subcycling.jl")
 include("CubedSphereStrang.jl")
 include("CubedSphereSeams.jl")
+include("vertical_fv3_profile.jl")
 
 # PPM subgrid distributions (shared by CS PPM kernels and LinRood)
 include("ppm_subgrid_distributions.jl")
@@ -72,8 +79,16 @@ include("ppm_subgrid_distributions.jl")
 # Lin-Rood cross-term advection for cubed-sphere grids (FV3 fv_tp_2d)
 include("LinRoodSeams.jl")
 include("LinRood.jl")
+include("linrood_horizontal.jl")
 include("linrood_adjoint_kernels.jl")
+include("linrood_adjoint_rm_faces.jl")
+include("linrood_adjoint_panel.jl")
 
+include("workspace.jl")
+include("sweeps.jl")
+include("subcycling.jl")
 include("StrangSplitting.jl")
+include("strang_apply.jl")
+include("multitracer_strang.jl")
 
 end # module Advection

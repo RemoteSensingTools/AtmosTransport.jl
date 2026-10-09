@@ -46,7 +46,7 @@
 #  (e) Extended scoring: global continuity (whole-globe C1), full-SH roughness
 #      (all levels), and the SH-UTLS r_vdiv metric.
 #
-# UNITS (match iau_signature_M.jl / moist_budget_IT_vs_FP.jl):
+# UNITS (match scripts/completed_experiments/iau_signature_M.jl / moist_budget_IT_vs_FP.jl):
 #   am = MFXC/(2g), bm = MFYC/(2g)    [flux_scale = 1/(2g)]
 #   div_h[k] = (am[i,j,k]-am[i+1,j,k]) + (bm[i,j,k]-bm[i,j+1,k])
 #   dm[k]    = (DELP_next-DELP_cur)[k]*area/g/(2*steps)         steps=DT_MET/MFDT=8

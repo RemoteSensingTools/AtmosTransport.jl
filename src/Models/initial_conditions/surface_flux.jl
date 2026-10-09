@@ -7,29 +7,26 @@
 # second. File inventories are physical kg species/s; the builders convert
 # them to dry-air-equivalent storage for the dry-VMR transport state.
 #
-# Hoisted verbatim (modulo renames for dependency consolidation) from the
-# historical LL/RG runner:
-#   FileSurfaceFluxField, SECONDS_PER_MONTH, _surface_flux_kind,
-#   _resolve_surface_flux_file, _normalize_units_string,
-#   _load_file_surface_flux_field, _renormalize_surface_flux_rate!,
-#   _REGRID_CACHE_DIR, _conservative_surface_flux_rate,
-#   _regridding_method, build_surface_flux_source (LL + RG),
-#   build_surface_flux_sources.
-#
-# `_build_emission_source_mesh` is dropped in favour of the shared
-# `_build_source_latlon_mesh` introduced for the IC path.
+# Contents:
+#   - static fields: `FileSurfaceFluxField`, loaded by
+#     `_load_file_surface_flux_field`;
+#   - time-varying series: `TimeVaryingFileSurfaceFluxField`, loaded by
+#     `_load_timevarying_surface_flux_field` (CS runs only);
+#   - builders: `build_surface_flux_source` (LL, RG, CS) and
+#     `build_surface_flux_sources`.
+# Regridding helpers live in `surface_flux_regridding.jl` (LL source meshes
+# come from the shared `_build_source_latlon_mesh` in `cubed_sphere.jl`); the
+# GEOS-native CS series loader lives in `surface_flux_native.jl`.
 # ===========================================================================
 
-const SECONDS_PER_MONTH = 365.25 * 86400 / 12
 const _DAYS_PER_MONTH_COMMON = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
-const _DRY_AIR_MOLAR_MASS_KG_MOL = 28.96546e-3
 const _KNOWN_TRACER_MOLAR_MASS_KG_MOL = Dict{Symbol, Float64}(
-    :co2         => 44.0095e-3,
-    :co2_natural => 44.0095e-3,
-    :co2_fossil  => 44.0095e-3,
-    :fossil_co2  => 44.0095e-3,
-    :sf6         => 146.055e-3,
-    :rn222       => 222.0e-3,
+    :co2         => SPECIES_MOLAR_MASS.co2,
+    :co2_natural => SPECIES_MOLAR_MASS.co2,
+    :co2_fossil  => SPECIES_MOLAR_MASS.co2,
+    :fossil_co2  => SPECIES_MOLAR_MASS.co2,
+    :sf6         => SPECIES_MOLAR_MASS.sf6,
+    :rn222       => SPECIES_MOLAR_MASS.rn222,
 )
 
 _is_leap_year(year::Integer) =
@@ -83,7 +80,19 @@ function _gridfed_month_seconds(cfg, file::AbstractString, ds, month::Integer)
     return Float64(_days_in_month(year, month)) * 86400.0
 end
 
-const _REGRID_CACHE_DIR = expanduser("~/.cache/AtmosTransport/cr_regridding")
+"""
+    _regrid_cache_dir() -> String
+
+Directory of the cached conservative-regridding weights of runtime surface
+fluxes: `ATMOSTR_REGRID_CACHE_DIR` if set and not empty (the golden-output
+harness points it into each case, so weights are recomputed), else
+`~/.cache/AtmosTransport/cr_regridding`. Read when a source is built, so the
+precompiled package carries no home directory.
+"""
+function _regrid_cache_dir()
+    dir = get(ENV, "ATMOSTR_REGRID_CACHE_DIR", "")
+    return expanduser(isempty(dir) ? "~/.cache/AtmosTransport/cr_regridding" : dir)
+end
 
 """
     FileSurfaceFluxField{FT}
@@ -139,22 +148,22 @@ function _surface_flux_storage_scale(tracer_name::Symbol, cfg)
     # Surface inventories are physical kg species/s. The prognostic tracer
     # storage is dry VMR * dry-air mass, so source rates must be converted to
     # dry-air-equivalent storage before being applied by the surface kernels.
-    return _DRY_AIR_MOLAR_MASS_KG_MOL / _tracer_molar_mass_kg_mol(tracer_name, cfg)
+    return DRY_AIR_MOLAR_MASS / _tracer_molar_mass_kg_mol(tracer_name, cfg)
 end
 
 # Derive per-cell area `(Nx, Ny)` on a regular lat/lon grid from the
 # coordinate vectors. Uses the spherical-cap formula
-# `R² · Δlon · |sin(φ + Δlat/2) - sin(φ - Δlat/2)|` with R = 6.371e6 m.
+# `R² · Δlon · |sin(φ + Δlat/2) - sin(φ - Δlat/2)|`.
 # Used by the EDGAR-Tonnes branch when the source file does not carry
 # a `cell_area` or `area` variable.
-function _lonlat_cell_areas_m2(lon::AbstractVector, lat::AbstractVector)
+function _lonlat_cell_areas_m2(lon::AbstractVector, lat::AbstractVector; radius::Real = EARTH_RADIUS)
     Nx, Ny = length(lon), length(lat)
-    R = 6.371e6
-    # Cell width in radians (assume uniform spacing; first-differences
-    # the coordinate vectors). For periodic lon at the wrap, use the
-    # mean spacing as a stand-in.
-    dlon = Nx > 1 ? deg2rad(abs(lon[2] - lon[1])) : deg2rad(360.0 / Nx)
-    dlat_half = Ny > 1 ? deg2rad(abs(lat[2] - lat[1])) / 2 : deg2rad(180.0 / Ny) / 2
+    R = Float64(radius)
+    # Cell width in radians, assuming uniform spacing. Take it from the full
+    # span: coordinates stored in Float32 make the first difference err by
+    # ~1e-4 relative, a bias of every cell area.
+    dlon = Nx > 1 ? deg2rad(abs(lon[end] - lon[1]) / (Nx - 1)) : deg2rad(360.0 / Nx)
+    dlat_half = Ny > 1 ? deg2rad(abs(lat[end] - lat[1]) / (Ny - 1)) / 2 : deg2rad(180.0 / Ny) / 2
     out = Array{Float64, 2}(undef, Nx, Ny)
     @inbounds for j in 1:Ny
         ϕ = deg2rad(lat[j])
@@ -244,7 +253,7 @@ function _normalize_units_string(units)
     return lowercase(replace(strip(units_str), " " => "", "^" => "", "²" => "2"))
 end
 
-function _load_file_surface_flux_field(cfg, ::Type{FT}) where FT
+function _load_file_surface_flux_field(cfg, ::Type{FT}; radius::Real = EARTH_RADIUS) where FT
     kind = _surface_flux_kind(cfg)
     kind === :none && return nothing
     file, variable, time_index = _resolve_surface_flux_file(cfg, kind)
@@ -265,11 +274,10 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}) where FT
         raw = if ndims(raw_var) == 3
             if kind === :lmdz_co2
                 # CAMS LMDZ files store 3-hourly fluxes (`time = 248`
-                # for a 31-day month). For a one-month forward run we
-                # use the monthly mean: average over the time axis so
-                # the surface-flux pipeline (which carries a single
-                # 2D field) sees a representative constant rate.
-                # Sub-monthly variability is a follow-up.
+                # for a 31-day month). The static path carries a single
+                # 2D field, so average over the time axis to get the
+                # monthly-mean rate. Sub-monthly variability uses the
+                # `time_varying = true` path (cubed-sphere runs only).
                 ntime = size(raw_var, 3)
                 acc = zeros(Float64, size(raw_var, 1), size(raw_var, 2))
                 @inbounds for t in 1:ntime
@@ -321,7 +329,9 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}) where FT
             # in the file OR derivable from the lat/lon grid.
             cell_area_for_norm = cell_area_src
             if cell_area_for_norm === nothing
-                cell_area_for_norm = _lonlat_cell_areas_m2(lon_src, lat_src)
+                # On the destination mesh's sphere, so the per-cell totals
+                # survive regridding whatever its radius.
+                cell_area_for_norm = _lonlat_cell_areas_m2(lon_src, lat_src; radius)
             end
             seconds_per_year = 365.25 * 86400
             @inbounds for j in 1:size(raw, 2), i in 1:size(raw, 1)
@@ -557,8 +567,8 @@ include("surface_flux_native.jl")
 # build_surface_flux_source — LL / RG / CS
 # ---------------------------------------------------------------------------
 
-# Opt-in flag for the time-varying surface-flux path (default false →
-# byte-identical static monthly-mean behavior).
+# Opt-in flag for the time-varying surface-flux path (default false → one
+# static field: the configured time slice, or the time mean for `lmdz_co2`).
 @inline _surface_flux_time_varying(cfg) =
     _config_bool(cfg, "time_varying", false, "surface-flux time_varying")
 
@@ -574,9 +584,9 @@ function build_surface_flux_source(grid::AtmosGrid{<:LatLonMesh},
     kind === :cs_native && throw(ArgumentError(
         "surface_flux kind = \"cs_native\" is only available on cubed-sphere runs"))
     _surface_flux_time_varying(cfg) && throw(ArgumentError(
-        "time-varying surface flux is CS-only (LatLon support is a follow-up)"))
+        "time-varying surface flux is supported on cubed-sphere grids only"))
 
-    source = _load_file_surface_flux_field(cfg, FT)
+    source = _load_file_surface_flux_field(cfg, FT; radius = grid.horizontal.radius)
     method = _regridding_method(cfg)
     mesh = grid.horizontal
 
@@ -611,9 +621,9 @@ function build_surface_flux_source(grid::AtmosGrid{<:ReducedGaussianMesh},
     kind === :cs_native && throw(ArgumentError(
         "surface_flux kind = \"cs_native\" is only available on cubed-sphere runs"))
     _surface_flux_time_varying(cfg) && throw(ArgumentError(
-        "time-varying surface flux is CS-only (ReducedGaussian support is a follow-up)"))
+        "time-varying surface flux is supported on cubed-sphere grids only"))
 
-    source = _load_file_surface_flux_field(cfg, FT)
+    source = _load_file_surface_flux_field(cfg, FT; radius = grid.horizontal.radius)
     method = _regridding_method(cfg)
     mesh = grid.horizontal
 
@@ -666,7 +676,7 @@ time slice, builds the LL→CS regridder ONCE, applies it per slice, and
 returns a [`TimeVaryingSurfaceFluxSource`](@ref) whose
 `cell_mass_rate_series` is an `NTuple{6}` of `(Nc, Nc, ntime)` panels
 plus a `times` vector (seconds since `reference_time`). The default
-(`time_varying` absent/false) path is byte-identical to before.
+(`time_varying` absent/false) path returns a static `SurfaceFluxSource`.
 """
 function build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
                                    tracer_name::Symbol, cfg, ::Type{FT};
@@ -692,7 +702,7 @@ function build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
         return _build_timevarying_cs_surface_flux_source(mesh, tracer_name, cfg, FT, reference_time)
     end
 
-    source = _load_file_surface_flux_field(cfg, FT)
+    source = _load_file_surface_flux_field(cfg, FT; radius = grid.horizontal.radius)
 
     # _conservative_surface_flux_rate already returns kg/s per cell
     # (regridder.dst_areas × regridded flux density), so the panel unpack
@@ -718,7 +728,7 @@ function _build_timevarying_cs_surface_flux_source(mesh, tracer_name::Symbol, cf
     ntime = length(field.times_sec)
     storage_scale = FT(_surface_flux_storage_scale(tracer_name, cfg))
 
-    regridder = _build_surface_flux_regridder(field.lon, field.lat, mesh, FT)
+    regridder = _build_surface_flux_regridder(field.lon, field.lat, mesh)
     panels_series = ntuple(_ -> Array{FT, 3}(undef, Nc, Nc, ntime), CS_PANEL_COUNT)
 
     slice_panels = ntuple(_ -> Matrix{FT}(undef, Nc, Nc), CS_PANEL_COUNT)

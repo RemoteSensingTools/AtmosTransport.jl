@@ -12,17 +12,17 @@ _regridding_method(cfg, default::AbstractString = "bilinear") =
     Symbol(lowercase(String(get(cfg, "regridding", default))))
 
 """
-    _build_surface_flux_regridder(lon, lat, dst_mesh, FT) -> regridder
+    _build_surface_flux_regridder(lon, lat, dst_mesh) -> regridder
 
 Build the conservative LL→`dst_mesh` regridder for a source flux grid
-defined by `lon`/`lat`. Factored out so the time-varying path can build
-the regridder once and reuse it across every time slice instead of
-rebuilding it per slice.
+defined by `lon`/`lat`, with Float64 geometry for every run precision.
+Factored out so the time-varying path can build the regridder once and
+reuse it across every time slice instead of rebuilding it per slice.
 """
 function _build_surface_flux_regridder(lon::Vector{Float64}, lat::Vector{Float64},
-                                       dst_mesh::AbstractHorizontalMesh, ::Type{FT}) where FT
-    src_mesh = _build_source_latlon_mesh(lon, lat, FT)
-    return build_regridder(src_mesh, dst_mesh; cache_dir = _REGRID_CACHE_DIR)
+                                       dst_mesh::AbstractHorizontalMesh)
+    src_mesh = _build_source_latlon_mesh(lon, lat; radius = dst_mesh.radius)
+    return build_regridder(src_mesh, dst_mesh; cache_dir = _regrid_cache_dir())
 end
 
 """
@@ -68,6 +68,6 @@ Callers reshape/wrap per topology.
 function _conservative_surface_flux_rate(source::FileSurfaceFluxField,
                                          dst_mesh::AbstractHorizontalMesh,
                                          ::Type{FT}) where FT
-    regridder = _build_surface_flux_regridder(source.lon, source.lat, dst_mesh, FT)
+    regridder = _build_surface_flux_regridder(source.lon, source.lat, dst_mesh)
     return _apply_surface_flux_regridder(regridder, source.raw, FT)
 end

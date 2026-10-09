@@ -8,9 +8,9 @@ Preallocated storage for implicit vertical diffusion.
 - `layer_thickness` stores geometric layer thickness [m] used to convert
   cell-centered Kz [m² s⁻¹] into interface mass exchange [kg s⁻¹].
 - `references` stores one cancellation-reducing column reference per packed
-  cubed-sphere tracer for VMR solves. The conservative Dkg mass path keeps its
-  reference and compensated transfer in registers. This field is `nothing`
-  for LL and reduced-Gaussian layouts.
+  tracer for VMR solves (`(Nx, Ny, Nt)` per cubed-sphere panel and for
+  lat-lon, `(ncells, Nt)` for reduced-Gaussian). Single-tracer solves and the
+  conservative Dkg mass path keep their reference in registers.
 
 The workspace owns only diffusion data. Advection and convection buffers live
 in their respective workspace types.
@@ -21,10 +21,14 @@ struct DiffusionWorkspace{F, D, R}
     references      :: R
 end
 
-function DiffusionWorkspace(air_mass::AbstractArray{FT, N}) where {FT, N}
+function DiffusionWorkspace(air_mass::AbstractArray{FT, N}, n_tracers::Integer = 0) where {FT, N}
     N in (2, 3) || throw(ArgumentError(
         "DiffusionWorkspace requires rank-2 or rank-3 air mass; got rank $N"))
-    return DiffusionWorkspace(similar(air_mass), similar(air_mass), nothing)
+    Nt = Int(n_tracers)
+    Nt >= 0 || throw(ArgumentError("n_tracers must be nonnegative"))
+    columns = size(air_mass)[1:N-1]                    # (Nx, Ny) or (ncells,)
+    references = similar(air_mass, FT, columns..., Nt)
+    return DiffusionWorkspace(similar(air_mass), similar(air_mass), references)
 end
 
 function DiffusionWorkspace(air_mass::NTuple{6, A}, halo_width::Integer,
@@ -45,7 +49,7 @@ function DiffusionWorkspace(air_mass::NTuple{6, A}, halo_width::Integer,
     return DiffusionWorkspace(factors, layer_thickness, references)
 end
 
-DiffusionWorkspace(state::CellState) = DiffusionWorkspace(state.air_mass)
+DiffusionWorkspace(state::CellState) = DiffusionWorkspace(state.air_mass, ntracers(state))
 DiffusionWorkspace(state::CubedSphereState) =
     DiffusionWorkspace(state.air_mass, state.halo_width, ntracers(state))
 

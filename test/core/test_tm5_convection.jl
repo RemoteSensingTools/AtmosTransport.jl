@@ -1028,11 +1028,10 @@ end
 end
 
 @testset "plan 23 Commit 2: column-major loop-order audit" begin
-    # Principle 9: matrix assembly loops leftmost-innermost.
-    # Back-substitute a minimal case in both orders and confirm the
-    # shipped version is not catastrophically slow. This is a sanity
-    # guard, not a benchmark; the 3× multiplier from Invariant 8 is
-    # orders of magnitude above noise on any machine.
+    # Matrix assembly loops run leftmost-innermost (Julia is column-major).
+    # Time the shipped column solve on a minimal case and confirm it is not
+    # catastrophically slow. This is a sanity guard, not a benchmark; the
+    # 1 s gate is orders of magnitude above the expected time.
     using .AtmosTransport.Operators.Convection: _tm5_solve_column!
 
     T = Float64

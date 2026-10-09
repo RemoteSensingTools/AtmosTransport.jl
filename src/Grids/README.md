@@ -53,7 +53,12 @@ make that decision possible.
 - [`PanelConnectivity.jl`](PanelConnectivity.jl) — cubed-sphere edge
   graph and reciprocal-edge helpers
 - [`CubedSphereMesh.jl`](CubedSphereMesh.jl) — cubed-sphere mesh,
-  GMAO/equiangular definitions, panel conventions, cell/corner lon-lat helpers
+  GMAO/equiangular definitions, panel conventions
+- [`cs_mesh_coordinates.jl`](cs_mesh_coordinates.jl) — forward geometry:
+  panel → xyz/lon-lat projection, cell centers and corners, face edge lengths,
+  local tangent bases (used by the constructor)
+- [`cs_mesh_locate.jl`](cs_mesh_locate.jl) — inverse projection
+  (lon, lat) → (panel, s, t)
 
 ## Common Tasks
 

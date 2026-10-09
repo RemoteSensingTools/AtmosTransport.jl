@@ -10,14 +10,14 @@
 # to 1 deg lat-lon for clean global map visualization.
 #
 # Usage:
-#   julia --project=. scripts/visualization/animate_catrine_comparison.jl
+#   julia --project=. scripts/completed_experiments/animate_catrine_comparison.jl
 # ===========================================================================
 
 using CairoMakie
 using GeoMakie
 using Dates
 
-include(joinpath(@__DIR__, "cs_regrid_utils.jl"))
+include(joinpath(@__DIR__, "..", "visualization", "cs_regrid_utils.jl"))
 
 # ---------------------------------------------------------------------------
 # Configuration

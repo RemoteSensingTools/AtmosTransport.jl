@@ -8,7 +8,7 @@
 #   Row 2: ~750 hPa CO2  (GEOS-Chem | AtmosTransport GCHP | Difference AT-GC)
 #
 # Usage:
-#   julia --project=. scripts/visualization/animate_gchp_vs_geoschem.jl
+#   julia --project=. scripts/completed_experiments/animate_gchp_vs_geoschem.jl
 # ===========================================================================
 
 using CairoMakie
@@ -16,7 +16,7 @@ using GeoMakie
 using Dates
 using Statistics
 
-include(joinpath(@__DIR__, "cs_regrid_utils.jl"))
+include(joinpath(@__DIR__, "..", "visualization", "cs_regrid_utils.jl"))
 
 # ---------------------------------------------------------------------------
 # Configuration

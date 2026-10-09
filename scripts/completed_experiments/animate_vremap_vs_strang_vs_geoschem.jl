@@ -7,7 +7,7 @@
 #   Row 2: CO2 VMR at ~750 hPa    (GEOS-Chem | Strang | VRemap)
 #
 # Usage:
-#   julia --project=. scripts/visualization/animate_vremap_vs_strang_vs_geoschem.jl
+#   julia --project=. scripts/completed_experiments/animate_vremap_vs_strang_vs_geoschem.jl
 #
 # Environment variables:
 #   AT_DIR       — AT output directory (default: /temp2/catrine-runs/output)
@@ -21,7 +21,7 @@ using CairoMakie
 using GeoMakie
 using Dates
 
-include(joinpath(@__DIR__, "cs_regrid_utils.jl"))
+include(joinpath(@__DIR__, "..", "visualization", "cs_regrid_utils.jl"))
 
 # ---------------------------------------------------------------------------
 # Configuration

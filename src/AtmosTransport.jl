@@ -98,6 +98,48 @@ expand_data_path(p) = expand_data_path(String(p))
 
 export expand_data_path
 
+# ---------------------------------------------------------------------------
+# Source revision, recorded in output files and transport binaries.
+#
+# A git checkout reports `git rev-parse HEAD` and whether it has local
+# changes. A tree exported with `git archive` (the code snapshots that long
+# runs and preprocessing batches use) has no `.git`; git writes the commit
+# into `src/REVISION` on export (`export-subst` in `.gitattributes`).
+# ---------------------------------------------------------------------------
+const _SOURCE_REVISION = Ref{Union{Nothing, @NamedTuple{commit::String, dirty::String}}}(nothing)
+
+"""
+    source_revision() -> (; commit, dirty)
+
+Commit of the AtmosTransport source tree in use and its state: `"clean"`,
+`"dirty"` (local changes) or `"unknown"`. A checkout asks git; an exported tree
+reads `src/REVISION` and reports `"clean"`, since edits after the export
+cannot be detected; anything else gives `commit = "unknown"`. Evaluated once
+per process.
+"""
+function source_revision()
+    rev = _SOURCE_REVISION[]
+    rev === nothing || return rev
+    _SOURCE_REVISION[] = _read_source_revision()      # converts to String
+    return _SOURCE_REVISION[]
+end
+
+function _read_source_revision()
+    root = normpath(joinpath(@__DIR__, ".."))
+    if ispath(joinpath(root, ".git"))                  # checkout or worktree
+        git(args...) = readchomp(pipeline(`git -C $root $args`; stderr = devnull))
+        try
+            return (commit = git("rev-parse", "HEAD"),
+                    dirty = isempty(git("status", "--porcelain")) ? "clean" : "dirty")
+        catch
+        end
+    end
+    file = joinpath(@__DIR__, "REVISION")
+    rev = isfile(file) ? strip(read(file, String)) : ""
+    exported = occursin(r"^[0-9a-f]{40}$", rev)        # "\$Format:%H\$" until exported
+    return exported ? (commit = String(rev), dirty = "clean") : (commit = "unknown", dirty = "unknown")
+end
+
 # ---- Architecture and planetary constants ----
 include("Architectures.jl")
 using .Architectures
@@ -105,15 +147,15 @@ const AbstractArchitecture = Architectures.AbstractArchitecture
 const CPU = Architectures.CPU
 const GPU = Architectures.GPU
 
-# ---- Section timer (host-side wall-clock; off unless ATMOSTR_TIMERS=1) ----
+# ---- Section timer (host-side wall-clock; off unless ATMOSTR_TIMERS=1/true/on/yes) ----
 include("Diagnostics/SectionTimer.jl")
 using .SectionTimer
 
 # ---- Quantity-kind dispatch traits ----
-# Tiny trait module loaded early so any downstream module (Preprocessing,
-# Operators, Output) can dispatch on extensive vs intensive vs vector vs flux
-# field semantics without circular dependencies. See Quantities.jl for the
-# four-type taxonomy and their regrid-handling contracts.
+# Tiny trait module with no dependencies, loaded early so later modules can
+# dispatch on extensive vs intensive vs vector vs flux field semantics.
+# Only Preprocessing uses it (the CS regrid helpers). See
+# Quantities.jl for the four-type taxonomy and their regrid-handling contracts.
 include("Quantities/Quantities.jl")
 using .Quantities
 
@@ -174,10 +216,10 @@ include("Operators/Operators.jl")
 using .Operators
 
 # ---- Adjoint tape storage + records ----
-# Loaded BEFORE `Adjoints/` so the kernels module can `using ..Tape: ...`
-# for the relocated storage policies and record types. The reverse-loop
-# driver that DISPATCHES on these record types still lives in Adjoints
-# (eventual move to `Footprint/`).
+# Loaded BEFORE `Adjoints/` so that module can `using ..Tape: ...` for the
+# storage policies and record types. The reverse-loop driver that
+# dispatches on these record types is `Footprint/ReverseLoop.jl`, a file
+# included into the `Adjoints` module.
 include("Tape/Tape.jl")
 using .Tape
 
@@ -249,7 +291,8 @@ export NoSurfaceFlux, SurfaceFluxOperator, SurfaceFluxSource,
        AbstractFluxTemporalScheme, StepwiseFlux, LinearInterpFlux, ConservativeMeanFlux,
        flux_temporal_scheme, PerTracerFluxMap, flux_for
 export AbstractConvection, NoConvection, CMFMCConvection, TM5Convection,
-       CMFMCMatrixConvection, CMFMCWorkspace
+       CMFMCMatrixConvection, CMFMCWorkspace,
+       AbstractCloudBase, CMFMCEdgeCloudBase, ArchivedCloudBase
 export ConvectionForcing, apply_convection!, has_convection_forcing
 export AbstractMetDriver, TransportWindow, current_time
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry

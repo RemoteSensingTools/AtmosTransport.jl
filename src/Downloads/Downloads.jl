@@ -48,7 +48,7 @@ include("types.jl")
 # Python subprocess interop (CDS/MARS API calls)
 include("python_interop.jl")
 
-# Content-Length verified downloads (ported from download_utils.jl)
+# Content-Length verified downloads (originally scripts/downloads/download_utils.jl, removed)
 include("verification.jl")
 
 # TOML configuration parsing

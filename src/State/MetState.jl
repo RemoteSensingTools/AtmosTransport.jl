@@ -19,6 +19,10 @@ Container for meteorological fields upstream of the transport core.
 
 Transport operators never receive `MetState` directly; preprocessing converts
 source meteorology into the current dry-basis transport-binary contract.
+
+!!! warning "Deprecated"
+    No part of AtmosTransport uses `MetState`; it will be removed in the next
+    minor release.
 """
 struct MetState{PA <: AbstractArray, QA <: AbstractArray, M <: NamedTuple}
     ps      :: PA
@@ -27,6 +31,7 @@ struct MetState{PA <: AbstractArray, QA <: AbstractArray, M <: NamedTuple}
 
     function MetState(ps::PA, q::QA, metvars::M) where
             {PA <: AbstractArray, QA <: AbstractArray, M <: NamedTuple}
+        Base.depwarn("`MetState` is deprecated: no part of AtmosTransport uses it. It will be removed in the next minor release.", :MetState)
         ndims(q) == ndims(ps) + 1 || throw(DimensionMismatch(
             "MetState q must have exactly one more dimension than ps; got ndims(ps)=$(ndims(ps)), ndims(q)=$(ndims(q))"))
         size(q)[1:ndims(ps)] == size(ps) || throw(DimensionMismatch(

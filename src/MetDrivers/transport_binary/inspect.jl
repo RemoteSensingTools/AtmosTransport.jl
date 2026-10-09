@@ -1,4 +1,15 @@
 # Read-only capability inspection for every version-4 geometry.
+#
+# `binary_capabilities(reader)` returns a NamedTuple describing what
+# operators this binary can drive, so the CLI + physics-recipe validator
+# can give precise errors ("config requested `tm5` but binary lacks
+# entu/detu/entd/detd") instead of silently failing at the first step.
+#
+# `inspect_binary(path)` opens a `TransportBinaryReader` (header-contract and
+# file-size checks), prints a report, and returns the capability summary. It
+# does not run the load-time replay gate; `TransportBinaryDriver` does.
+# `scripts/diagnostics/inspect_transport_binary.jl` calls it and then
+# constructs a `TransportBinaryDriver` to probe runtime compatibility.
 
 _required_advection_sections(::LatLonBinaryGeometry) = (:m, :am, :bm, :cm)
 _required_advection_sections(::ReducedGaussianBinaryGeometry) = (:m, :hflux, :cm)
@@ -8,6 +19,9 @@ _supports_pbl_diffusion(::TransportBinaryReader) = false
 _supports_pbl_diffusion(
     reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
 ) = has_surface(reader)
+
+_supports_gchp_nonlocal_vdiff(reader::TransportBinaryReader) =
+    _supports_gchp_vdiff(reader) && has_pbl_eflux(reader)
 
 _supports_gchp_vdiff(::TransportBinaryReader) = false
 _supports_gchp_vdiff(
@@ -20,17 +34,25 @@ _supports_gchp_vdiff(
 Summarise what operators this binary can drive. Geometry-specific advection
 requirements are selected through the reader's geometry type. Fields:
 
-- `advection :: Bool` — always `true` (m, am, bm, cm are required).
-- `replay_gate :: Bool` — dam/dbm/dcm/dm present.
+- `advection :: Bool` — all geometry-required advection sections present
+  (`m, am, bm, cm` on LL/CS; `m, hflux, cm` on RG).
+- `replay_gate :: Bool` — any flux-delta section (dam/dbm/dcm/dm/dhflux) present.
 - `tm5_convection :: Bool` — entu/detu/entd/detd all present.
 - `cmfmc_convection :: Bool` — cmfmc present (CS only; LL/RG returns false).
 - `pbl_diffusion :: Bool` — complete runnable PBL forcing (CS only).
 - `gchp_vdiff :: Bool` — complete runnable GCHP VDIFF forcing (CS only).
+- `gchp_nonlocal_vdiff :: Bool` — GCHP VDIFF forcing plus latent heat flux
+  `pbl_eflux`, as GEOS-Chem's non-local PBL scheme needs (CS only).
+- `cmfmc_cloud_base :: Bool` — convective cloud base present.
 - `surface_pressure :: Bool` — ps present.
 - `humidity :: Bool` — qv_start/qv_end present.
 - `mass_basis :: Symbol` — `:dry` or `:moist`.
 - `grid_type :: Symbol` — `:latlon` / `:reduced_gaussian` / `:cubed_sphere`.
+- `nlevel`, `steps_per_window` — header values.
+- `variable_step_schedule :: Bool` — per-window substep counts differ.
 - `flux_kind :: Symbol` — stored mass-flux normalization contract.
+- `preprocessor_contract`, `vertical_Nz_output`, `adaptive_substeps` — raw
+  header values, `nothing` when absent.
 - `payload_sections :: Vector{Symbol}` — raw set for debugging.
 """
 function binary_capabilities(reader::TransportBinaryReader)
@@ -44,6 +66,8 @@ function binary_capabilities(reader::TransportBinaryReader)
         cmfmc_convection = has_cmfmc(reader),
         pbl_diffusion    = _supports_pbl_diffusion(reader),
         gchp_vdiff       = _supports_gchp_vdiff(reader),
+        gchp_nonlocal_vdiff = _supports_gchp_nonlocal_vdiff(reader),
+        cmfmc_cloud_base = has_cmfmc_cloud_base(reader),
         surface_pressure = :ps in hdr.payload_sections,
         humidity         = has_qv_endpoints(reader),
         mass_basis       = hdr.mass_basis,
@@ -91,7 +115,9 @@ function _print_capability_rows(io::IO, reader)
     _print_cap(io, caps.replay_gate,      "replay gate",      "(dam, dbm, dcm, dm)")
     _print_cap(io, caps.tm5_convection,   "TM5 convection",   "(entu, detu, entd, detd)")
     _print_cap(io, caps.cmfmc_convection, "CMFMC convection", "(cmfmc)")
+    _print_cap(io, caps.cmfmc_cloud_base, "conv. cloud base", "(cmfmc_cloud_base)")
     _print_cap(io, caps.pbl_diffusion,    "PBL diffusion",    "(pblh, ustar, pbl_hflux, t2m)")
+    _print_cap(io, caps.gchp_nonlocal_vdiff, "GCHP non-local VDIFF", "(+ vdiff_u/v/t/qv, pbl_eflux)")
     _print_cap(io, caps.surface_pressure, "surface pressure", "(ps)")
     _print_cap(io, caps.humidity,         "humidity",         "(qv_start, qv_end)")
     println(io, "  mass_basis       = ", caps.mass_basis)

@@ -12,6 +12,7 @@ include other tiers.
 | **Orphan** | [`orphan/`](orphan/) | `--orphan` only | Promotion candidates — tests that exist but were not in the CI roster as of 2026-05-29. Each should be reviewed and either promoted to `core/` (with a short note here) or moved to `archived/`. |
 | **Archived** | [`archived/`](archived/) | Never (kept for reference) | Tests against deleted preprocessing wrappers and one-off plan-decision "studies". See [`archived/legacy_README.md`](archived/legacy_README.md). |
 | **Regridding** | [`regridding/`](regridding/) | Default (CI green-bar) | Conservative-remapping geometry, conservation, direction, and persistence checks. Its `runtests.jl` is included as one isolated suite by the top-level orchestrator. |
+| **Golden** | [`golden/`](golden/) | By hand, before committing a refactor | End-to-end preprocessing and runtime cases compared bit for bit with a recorded reference (`golden/run_goldens.jl`); needs the group's data and a GPU. Not run by `runtests.jl`. |
 
 ## Usage
 

@@ -18,45 +18,8 @@ end
 # Section element counts
 # ---------------------------------------------------------------------------
 
-function _cs_section_elements(h::TransportBinaryHeader{CubedSphereBinaryGeometry},
-                              section::Symbol)
-    g = h.geometry
-    Nc, Nz, np = g.Nc, h.nlevel, g.npanel
-    if section === :m
-        return np * Nc * Nc * Nz
-    elseif section === :am
-        return np * (Nc + 1) * Nc * Nz
-    elseif section === :bm
-        return np * Nc * (Nc + 1) * Nz
-    elseif section === :cm
-        return np * Nc * Nc * (Nz + 1)
-    elseif section === :ps
-        return np * Nc * Nc
-    elseif _is_pbl_surface_payload_section(section)
-        return np * Nc * Nc
-    elseif _is_gchp_vdiff_payload_section(section)
-        return np * Nc * Nc * Nz
-    elseif section === :dkg
-        return np * Nc * Nc * Nz
-    elseif section === :cmfmc
-        return np * Nc * Nc * (Nz + 1)
-    elseif section === :dtrain
-        return np * Nc * Nc * Nz
-    # TM5 convection — four layer-center fields.
-    elseif section in (:entu, :detu, :entd, :detd)
-        return np * Nc * Nc * Nz
-    elseif section === :dm
-        return np * Nc * Nc * Nz
-    elseif section in (:dam,)
-        return np * (Nc + 1) * Nc * Nz
-    elseif section in (:dbm,)
-        return np * Nc * (Nc + 1) * Nz
-    elseif section in (:dcm,)
-        return np * Nc * Nc * (Nz + 1)
-    else
-        error("Unknown CS binary section: $section")
-    end
-end
+_cs_section_elements(h::TransportBinaryHeader{CubedSphereBinaryGeometry}, section::Symbol) =
+    _cs_section_elements(h.geometry.Nc, h.geometry.npanel, h.nlevel, section)
 
 # ---------------------------------------------------------------------------
 # Window loading
@@ -108,6 +71,8 @@ function load_window!(reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinar
 
     dkg_present = :dkg in h.payload_sections
     panels_dkg = dkg_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
+    optional_2d = Dict(s => ntuple(_ -> Array{FT}(undef, Nc, Nc), np)
+                       for s in _CS_OPTIONAL_2D_SECTIONS if s in h.payload_sections)
 
     # TM5 convection fields — all four must be present together or
     # all four absent. The runtime `_validate_convection_window!`
@@ -240,6 +205,11 @@ function load_window!(reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinar
                 copyto!(panels_dkg[p], 1, reader.data, o + 1, n)
                 o += n
             end
+        elseif haskey(optional_2d, section)
+            for p in 1:np
+                copyto!(optional_2d[section][p], 1, reader.data, o + 1, Nc * Nc)
+                o += Nc * Nc
+            end
         else
             # Skip unknown sections
             n = _cs_section_elements(h, section)
@@ -255,7 +225,8 @@ function load_window!(reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinar
          entd = panels_entd, detd = panels_detd) :
         nothing
     surface = surface_present ?
-        PBLSurfaceForcing(panels_pblh, panels_ustar, panels_hflux, panels_t2m) :
+        PBLSurfaceForcing(panels_pblh, panels_ustar, panels_hflux, panels_t2m,
+                          get(optional_2d, :pbl_eflux, nothing)) :
         nothing
     vdiff = vdiff_present ?
         (u = panels_vdiff_u, v = panels_vdiff_v,
@@ -274,6 +245,7 @@ function load_window!(reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinar
         tm5_fields = tm5_fields,
         vdiff = vdiff,
         dkg = dkg_present ? panels_dkg : nothing,
+        cmfmc_cloud_base = get(optional_2d, :cmfmc_cloud_base, nothing),
     )
 end
 
@@ -366,8 +338,9 @@ function load_grid(
     h = reader.header
     g = h.geometry
     vertical = HybridSigmaPressure(FT.(h.A_ifc), FT.(h.B_ifc))
-    mesh = CubedSphereMesh(; FT, Nc=g.Nc, Hp, definition=mesh_definition(reader))
-    return AtmosGrid(mesh, vertical, arch; FT)
+    mesh = CubedSphereMesh(; FT, Nc=g.Nc, Hp, definition=mesh_definition(reader),
+                           radius=FT(h.planet_radius_m))
+    return AtmosGrid(mesh, vertical, arch; FT, radius=h.planet_radius_m)
 end
 
 export load_surface_window!, mesh_convention, mesh_definition

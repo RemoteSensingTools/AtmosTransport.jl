@@ -1,0 +1,160 @@
+# CATRINE protocol run, MERRA-2 C90 L72, 2021-12-01 to 2023-12-31.
+#
+# Benchmark companion of catrine_c90_era5_v3_protocol.toml on the met that
+# drives the GEOS-Chem (GCHP) CATRINE C90 standard run: MERRA-2 from the
+# GEOS-Chem archive, wind-derived mass fluxes with the Cameron-Smith column
+# pressure fix, all 72 native levels, hourly windows, GEOS-Chem's physics
+# (CMFMC/DTRAIN convection with the DQRCU cloud base, non-local VDIFF PBL
+# mixing with counter-gradient transport of fresh emissions). Tracers, fluxes and
+# initial states follow the protocol run; co2_fossil_from_dec2021 adds GridFED
+# from 2021-12-01 without the 2022-01-01 reset, as in the GEOS-Chem run.
+#
+# Transport choices aligned with GCHP (a benchmark, not the truth; the other
+# options remain for transport-uncertainty estimates). Binaries use the
+# GCHP-like flux construction (config/preprocessing/merra2_geoschem_c90_l72_f32_hm_gchp.toml);
+# advection is PPM horizontally with FV3's kord = 8 vertical profile. In the
+# December 2021 - March 2022 comparison with GCHP (Float32, GCHP initial state;
+# docs/memos/2026-10-09_refactor_log.md), this combination had the smallest
+# fossil CO2 and Rn-222 RMSE between the surface and 910 hPa, and was within
+# 0.2 RMSE percentage points of the best between 910 and 400 hPa, among:
+# default PPM, CW84 PPM, PPM + FV3 vertical, CW84 + FV3 vertical, and Lin-Rood
+# ORD 7 + FV3 vertical.
+# Alternatives: `limiter = "cw84"` nearly removes negative values (negative
+# mass below 1e-22 of the positive mass on 2022-01-15 and 2022-03-31, every
+# tracer) at +0.06 to +0.13 RMSE percentage points below 910 hPa; Lin-Rood
+# ORD 7 matches GCHP best above 100 hPa but has the largest fossil RMSE near
+# the surface. Column means agree within 0.05 % for all of them.
+
+[input]
+folder       = "~/data/AtmosTransport/met/merra2/c90/transport_binary_v4_l72_f32_physics_hm_gchp"
+start_date   = "2021-12-01"
+end_date     = "2023-12-31"
+file_pattern = "merra2_transport_{YYYYMMDD}_float32.bin"
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+# Float64: global tracer budgets close to machine precision. In Float32 the
+# tracers lose 1.4e-8 of their background mass per hour to rounding (December
+# 2021 no-flux control: -1.03e-5 per month, about -0.1 ppm CO2 over two years);
+# a Float64 no-flux control conserves to 2e-16. Costs about 2x runtime.
+float_type = "Float64"
+
+[advection]
+scheme = "ppm"
+vertical = "fv3_kord8"               # FV3 scalar_profile, kord = 8 (GCHP's tracer profile)
+
+[tracers.co2_natural]
+  [tracers.co2_natural.init]
+  kind = "catrine_co2"
+  [tracers.co2_natural.surface_flux]
+  kind = "lmdz_co2"
+  files = [
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202112_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202201_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202202_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202203_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202204_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202205_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202206_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202207_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202208_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202209_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202210_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202211_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202212_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202301_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202302_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202303_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202304_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202305_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202306_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202307_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202308_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202309_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202310_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202311_FT24r2_ra_sfc_3h_co2_flux.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202312_FT24r2_ra_sfc_3h_co2_flux.nc",
+  ]
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_fossil]
+  [tracers.co2_fossil.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.co2_fossil.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/catrine_protocol/fluxes_c90/catrine_fossil_co2_c90.nc"
+  variable = "fossil_co2"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_fossil_from_dec2021]
+  [tracers.co2_fossil_from_dec2021.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.co2_fossil_from_dec2021.surface_flux]
+  kind = "gridfed_fossil_co2"
+  files = [
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2022.short.nc",
+    "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2023.short.nc",
+  ]
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+  [tracers.sf6.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/catrine_protocol/fluxes_c90/catrine_sf6_c90.nc"
+  variable = "sf6"
+  molar_mass_kg_mol = 0.146055
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.rn222]
+  [tracers.rn222.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.rn222.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/catrine_protocol/fluxes_c90/catrine_rn222_c90.nc"
+  variable = "rn222"
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[diffusion]
+kind = "geoschem_nonlocal_vdiff"     # GEOS-Chem VDIFF: non-local PBL, hourly A1 forcing
+
+[convection]
+kind = "cmfmc"
+cloud_base = "dqrcu"                 # GEOS-Chem RAS cloud base (lowest DQRCU > 0)
+
+[chemistry]
+kind = "decay"
+  [chemistry.half_lives_seconds]
+  rn222 = 330350.4
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 3          # protocol: 3-hourly instantaneous
+path = "/temp1/cfranken/catrine_protocol/output/merra2_full/catrine_c90_merra2_{YYYYMMDD}.nc"
+
+  [output.fields]
+  layers = "full"                    # 3-D dry mole fractions
+  column_mean = true
+  column_mass_per_area = false
+  air_mass = false
+  air_mass_layers = "full"
+  air_mass_per_area = true           # dry pressure grid: p_half from cumulative g * m / area
+  column_air_mass_per_area = true    # dry surface pressure

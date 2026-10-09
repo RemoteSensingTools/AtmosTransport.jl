@@ -98,7 +98,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     vc_merged = vertical.merged_vc
     A_ifc = Float64.(vc_merged.A)
     B_ifc = Float64.(vc_merged.B)
-    gravity = FT(GRAV)
+    gravity = FT(STANDARD_GRAVITY)
     steps_per_met = exact_steps_per_window(settings.met_interval, settings.dt)
     dt_factor = FT(settings.met_interval / (2 * steps_per_met))
     Δx = grid.mesh.Δx
@@ -316,25 +316,14 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
         end
         diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
 
-        contract_diag = if ctx.write_replay_on
-            t_replay = time()
-            diag = verify_window!((m_cur = cur_m,
-                                   am = cur_am,
-                                   bm = cur_bm,
-                                   cm = cur_cm,
-                                   m_next = cs_ws.m_next_panels),
-                                  contract, win)
-            ctx.total_replay += time() - t_replay
-            diag
-        else
-            positivity = verify_substep_positivity_cs!(
-                cur_m, cur_am, cur_bm, cur_cm;
-                cfl_limit = contract.positivity_cfl_limit,
-                m_next = cs_ws.m_next_panels)
-            (replay = (max_rel_err = 0.0, max_abs_err = 0.0,
-                       worst_idx = (0, 0, 0, 0)),
-             positivity = positivity)
-        end
+        t_replay = time()
+        contract_diag = verify_window!((m_cur = cur_m,
+                                        am = cur_am,
+                                        bm = cur_bm,
+                                        cm = cur_cm,
+                                        m_next = cs_ws.m_next_panels),
+                                       contract, win; write_replay_on = ctx.write_replay_on)
+        ctx.write_replay_on && (ctx.total_replay += time() - t_replay)
 
         next_steps = next_substeps(ctx.substep_policy, steps,
                                    contract_diag.positivity.ratio)
@@ -392,7 +381,7 @@ function driver_flush_final_windows!(workspace::CubedSphereSpectralWindowWorkspa
         _copy_cs_spectral_panels!(workspace.cs_ws.m_next_panels,
                                   workspace.cur_m)
     end
-    return (_cs_spectral_contract_diag!(workspace, contract, ctx, Nt, 5000),)
+    return (_cs_spectral_contract_diag!(workspace, contract, ctx, Nt, 20000),)
 end
 
 function driver_after_write_window!(workspace::CubedSphereSpectralWindowWorkspace,
@@ -487,6 +476,7 @@ function process_day(date::Date,
     write_replay_on = get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
     write_replay_on || @info "  Write-time CS replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
     replay_tol = replay_tolerance(FT)
+    balance = effective_horizontal_balance(get(settings, :horizontal_balance, nothing), ColumnBalance())
 
         writer = nothing
         driver_started = false
@@ -504,6 +494,7 @@ function process_day(date::Date,
                 cs_coordinate_law=_cs_coordinate_law_tag(grid),
                 cs_center_law=_cs_center_law_tag(grid),
                 longitude_offset_deg=longitude_offset_deg(cs_definition(grid.mesh)),
+                planet_radius=grid.mesh.radius,
                 extra_header=Dict{String, Any}(
                     "preprocessor"     => "preprocess_transport_binary.jl",
                     "preprocessor_contract" => "plan41_variable_substeps",
@@ -513,6 +504,7 @@ function process_day(date::Date,
                     "adaptive_substeps" => substep_policy.adaptive_substeps,
                     "source_type"      => "era5_spectral",
                     "target_type"      => "cubed_sphere",
+                    "horizontal_balance" => balance_tag(balance),
                     "staging_nlon"     => Nx_stg,
                     "staging_nlat"     => Ny_stg,
                     "regrid_method"    => "conservative",
@@ -537,7 +529,7 @@ function process_day(date::Date,
                 require_substep_positivity = require_substep_positivity,
                 steps_per_window = steps_per_met,
             )
-            apply_horizontal_balance = horizontal_poisson_balance_enabled()
+            apply_horizontal_balance = balance isa LayerBalance
             if apply_horizontal_balance
                 @info "  Applying per-layer CS Poisson mass-flux balance (legacy opt-in)..."
             else

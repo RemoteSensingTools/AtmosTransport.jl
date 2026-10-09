@@ -214,7 +214,7 @@ function main(argv)
         target_grid = MD.load_grid(reader; FT = Float64, Hp = 0)
         source_mesh = AtmosTransport.LatLonMesh(
             ; FT = Float64, size = (360, 180), longitude = (-180, 180),
-              latitude = (-90, 90))
+              latitude = (-90, 90), radius = target_grid.horizontal.radius)
         regridder = RG.build_regridder(
             source_mesh, target_grid.horizontal; normalize = false,
             cache_dir = abspath(args["cache_dir"]))
@@ -256,7 +256,7 @@ function main(argv)
         vc = AtmosTransport.HybridSigmaPressure(Float32.(h.A_ifc), Float32.(h.B_ifc))
         writer = MD.open_streaming_cs_transport_binary(
             output, Nc, np, Nz, h.nwindow, vc;
-            FT = Float32, dt_met_seconds = h.dt_met_seconds,
+            FT = Float32, planet_radius = h.planet_radius_m, dt_met_seconds = h.dt_met_seconds,
             half_dt_seconds = h.half_dt_seconds, steps_per_window = 1,
             source_flux_sampling = h.source_flux_sampling,
             air_mass_sampling = h.air_mass_sampling,

@@ -8,12 +8,13 @@ Provides:
 - `AbstractFaceFluxState` hierarchy — face mass fluxes
   - `AbstractStructuredFaceFluxState` → `StructuredFaceFluxState` (am, bm, cm)
   - `AbstractUnstructuredFaceFluxState` → `FaceIndexedFluxState`
-- `MetState` — upstream meteorological fields (consumed by flux builders, not transport)
+- `MetState` — upstream meteorological fields (deprecated: no caller; removed in the next minor release)
 - Tracer allocation and mixing-ratio utilities
 """
 module State
 
 using Adapt
+using ..Architectures: _compensated_total
 using ..Grids: AbstractHorizontalMesh, AbstractStructuredMesh, CubedSphereMesh,
     StructuredFluxTopology, FaceIndexedFluxTopology,
     flux_topology, ncells, nfaces, nx, ny
@@ -30,7 +31,8 @@ using .Fields: AbstractTimeVaryingField, AbstractCubedSphereField,
                ConstantField, ProfileKzField, PreComputedKzField,
                CubedSphereField, DerivedKzField, WindowPBLKzField,
                LocalHoltslagBovilleKzField,
-               PrecomputedCSDkgField,
+               AbstractCSDkgField, PrecomputedCSDkgField,
+               GCHPNonlocalPBLField, GCHPVdiffParameters, refresh_gchp_nonlocal_pbl!,
                PBLPhysicsParameters, StepwiseField,
                field_value, update_field!, refresh_pbl_kz_cache!,
                refresh_local_holtslag_boville_kz_cache!,
@@ -40,7 +42,8 @@ export AbstractTimeVaryingField, AbstractCubedSphereField,
        ConstantField, ProfileKzField, PreComputedKzField,
        CubedSphereField, DerivedKzField, WindowPBLKzField,
        LocalHoltslagBovilleKzField,
-       PrecomputedCSDkgField,
+       AbstractCSDkgField, PrecomputedCSDkgField,
+       GCHPNonlocalPBLField, GCHPVdiffParameters, refresh_gchp_nonlocal_pbl!,
        PBLPhysicsParameters, StepwiseField,
        field_value, update_field!, refresh_pbl_kz_cache!,
        refresh_local_holtslag_boville_kz_cache!,

@@ -31,7 +31,8 @@ operator.
 - [`convection_workspace.jl`](convection_workspace.jl) — reusable CMFMC and TM5
   scratch storage.
 - [`CMFMCConvection.jl`](CMFMCConvection.jl) — direct CMFMC operator,
-  validation, and topology dispatch.
+  validation, and topology dispatch; the cloud-base rule is a type parameter
+  (`CMFMCEdgeCloudBase`, or GEOS-Chem's DQRCU base via `ArchivedCloudBase`).
 - [`cmfmc_kernels.jl`](cmfmc_kernels.jl) — direct CMFMC kernels.
 - [`TM5Convection.jl`](TM5Convection.jl) — four-field TM5 operator and dispatch.
 - [`tm5_column_solve.jl`](tm5_column_solve.jl) — backend-agnostic column-matrix
@@ -47,7 +48,7 @@ operator.
 
 1. [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl) owns the
    convection placement in `step!`.
-2. [`../../Models/DrivenSimulation.jl`](../../Models/DrivenSimulation.jl)
+2. [`../../Models/driven_physics_refresh.jl`](../../Models/driven_physics_refresh.jl)
    refreshes the forcing carrier.
 3. The operator's `apply!` method validates the fields and launches the
    topology-specific kernel.

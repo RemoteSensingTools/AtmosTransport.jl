@@ -52,8 +52,8 @@ time-varying field contracts consumed by operators.
   cubed-sphere prognostic state
 - [`FaceFluxState.jl`](FaceFluxState.jl) — flux-state hierarchy,
   directional/face-indexed/panel-native storage, allocators
-- [`MetState.jl`](MetState.jl) — upstream meteorological snapshot
-  container used by flux-building paths
+- [`MetState.jl`](MetState.jl) — legacy container for upstream meteorological
+  fields; deprecated, no caller in the package
 - [`Tracers.jl`](Tracers.jl) — tracer allocation, lookup, iteration, and
   mutation helpers
 - [`Fields/`](Fields/README.md) — time-varying field abstraction and

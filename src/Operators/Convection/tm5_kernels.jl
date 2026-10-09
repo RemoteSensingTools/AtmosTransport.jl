@@ -211,34 +211,6 @@ choice that must cover the forcing's active depth; batching requires neither.
 @inline _tm5_collab_supports(L::Integer, Nt::Integer, ::Type{FT}, backend) where FT =
     0 < L <= _tm5_collab_max_depth(FT, backend) && Nt > 0
 
-# A thread owns one complete shared-memory RHS. There are no workgroup
-# operations here, so KA can inline this helper in each topology kernel.
-@inline function _tm5_solve_shared_tracer!(q, A, pivots, n, lo, slot)
-    @inbounds begin
-        for k in lo:n
-            p = Int(pivots[k])
-            if p != k
-                q[k, slot], q[p, slot] = q[p, slot], q[k, slot]
-            end
-        end
-        for k in lo:n
-            value = q[k, slot]
-            for j in lo:(k - 1)
-                value -= A[k, j] * q[j, slot]
-            end
-            q[k, slot] = value
-        end
-        for k in n:-1:lo
-            value = q[k, slot]
-            for j in (k + 1):n
-                value -= A[k, j] * q[j, slot]
-            end
-            q[k, slot] = value / A[k, k]
-        end
-    end
-    return nothing
-end
-
 # The collaborative-solve body is inlined verbatim into all three
 # topology kernels below. We tried sharing it via a Julia macro and a
 # `@inline` helper, but KA's `@kernel` only recognises `@synchronize`
@@ -500,11 +472,8 @@ end
         # back solve need no barriers between them or between tracers.
         if !no_conv
             for slot in t:_TM5_COLLAB_WG_SIZE:n_batch
-                if bidiagonal_lower
-                    _tm5_solve_bidiagonal_tracer!(q_loc, A_loc, LMAX_CONV, k_lo, slot)
-                else
-                    _tm5_solve_shared_tracer!(q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot)
-                end
+                _tm5_conserving_solve_tracer!(q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot,
+                                              bidiagonal_lower)
             end
         end
         @synchronize
@@ -742,11 +711,8 @@ end
         # back solve need no barriers between them or between tracers.
         if !no_conv
             for slot in t:_TM5_COLLAB_WG_SIZE:n_batch
-                if bidiagonal_lower
-                    _tm5_solve_bidiagonal_tracer!(q_loc, A_loc, LMAX_CONV, k_lo, slot)
-                else
-                    _tm5_solve_shared_tracer!(q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot)
-                end
+                _tm5_conserving_solve_tracer!(q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot,
+                                              bidiagonal_lower)
             end
         end
         @synchronize
@@ -986,11 +952,8 @@ end
         # back solve need no barriers between them or between tracers.
         if !no_conv
             for slot in t:_TM5_COLLAB_WG_SIZE:n_batch
-                if bidiagonal_lower
-                    _tm5_solve_bidiagonal_tracer!(q_loc, A_loc, LMAX_CONV, k_lo, slot)
-                else
-                    _tm5_solve_shared_tracer!(q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot)
-                end
+                _tm5_conserving_solve_tracer!(q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot,
+                                              bidiagonal_lower)
             end
         end
         @synchronize

@@ -50,9 +50,9 @@ function check_conservative_dkg(FT, Nc, Nz, Nt, strength; array_type=Array)
             @test all(isfinite, value)
             @test norm(Float64.(value) - expected) <= tol * norm(expected)
             for t in 1:Nt
-                scale = sum(abs, Float64.(source[:,t]))
-                @test abs(sum(Float64, value[:,t]) - sum(Float64, source[:,t])) <=
-                    (FT == Float32 ? 3e-7 : 2e-15) * scale
+                # Column mass ledger: exact up to rounding the residual into one layer.
+                @test abs(sum(big, value[:,t]) - sum(big, source[:,t])) <=
+                    eps(FT) * maximum(abs, value[:,t])
                 t % 5 != 2 && @test minimum(value[:,t]) >= 0
                 t % 5 == 0 && @test all(iszero, value[:,t])
                 t % 5 == 3 && @test maximum(abs, value[:,t] ./ m[p][i+1,j+1,:] .- FT(4e-4)) <=

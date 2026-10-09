@@ -1,9 +1,9 @@
 module SectionTimer
 
-# Hand-rolled host-side section timer. Off by default; enabled when
-# `ENV["ATMOSTR_TIMERS"] == "1"` at run-start. Set
-# `ATMOSTR_ALLOC_TIMERS=1` as well to collect CPU allocation bytes for
-# the same sections. Measures wall-clock at named host call boundaries;
+# Hand-rolled host-side section timer. Off by default; at run-start
+# `maybe_enable_from_env!` turns timing on when `ATMOSTR_TIMERS` is `1`,
+# `true`, `on` or `yes` (case-insensitive). Set `ATMOSTR_ALLOC_TIMERS`
+# the same way to also collect CPU allocation bytes for the same sections. Measures wall-clock at named host call boundaries;
 # relies on the existing `synchronize(backend)` calls inside operator
 # applys to make host time ≈ GPU time per section.
 # Per-phase decomposition inside a single kernel launch (build / LU / solve
@@ -204,9 +204,10 @@ end
 """
     report(io = stderr)
 Print a per-section summary table. Columns: section, n_calls, total_s,
-mean_ms, p50_ms, p95_ms, max_ms, fraction_of_total. Fraction is over the sum
-of section totals (not over wall-clock — a section can overlap none, so coverage
-is reported separately).
+mean_ms, p50_ms, p95_ms, max_ms, frac%, plus alloc_MiB and mean_KiB when
+allocation samples exist. `frac%` is over the sum of section totals, not over
+wall-clock; the header line reports wall-clock time and the time covered by
+sections separately.
 """
 function report(io::IO = stderr)
     snapshot = _timer_snapshot()
@@ -251,7 +252,9 @@ end
 """
     write_csv(path)
 Emit the same summary as `report` to a CSV at `path`. Header:
-`section,n_calls,total_s,mean_ms,p50_ms,p95_ms,max_ms,fraction_of_total`.
+`section,n_calls,total_s,mean_ms,p50_ms,p95_ms,max_ms,fraction_of_total,allocated_bytes,mean_alloc_bytes`.
+`fraction_of_total` is a fraction (0–1), not a percentage; the allocation
+columns are 0 unless allocation timing was enabled.
 Returns the path on success, or `nothing` if there are no samples.
 """
 function write_csv(path::AbstractString)

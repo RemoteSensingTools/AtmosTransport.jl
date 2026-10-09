@@ -41,9 +41,6 @@ end
 @inline poisson_balance_target_scale(steps_per_window::Integer, ::Type{FT}=Float64) where FT =
     FT(inv(2 * max(Int(steps_per_window), 1)))
 
-@inline horizontal_poisson_balance_enabled() =
-    get(ENV, "ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE", "0") == "1"
-
 """
     script_provenance(; caller_file=nothing) -> NamedTuple
 
@@ -54,16 +51,8 @@ function script_provenance(; caller_file::Union{String, Nothing}=nothing)
     preprocess_src_dir = dirname(@__DIR__)
     script_path = caller_file !== nothing ? abspath(caller_file) : preprocess_src_dir
     script_mtime = isfile(script_path) ? mtime(script_path) : 0.0
-    git_commit = try
-        readchomp(pipeline(`git -C $(preprocess_src_dir) rev-parse HEAD`; stderr=devnull))
-    catch
-        "unknown"
-    end
-    git_dirty = try
-        !isempty(readchomp(pipeline(`git -C $(preprocess_src_dir) status --porcelain`; stderr=devnull)))
-    catch
-        false
-    end
+    git_commit, state = source_revision()
+    git_dirty = state != "clean"       # an unidentified tree never reuses a binary
 
     return (
         script_path = script_path,
@@ -224,6 +213,7 @@ function build_v4_header(date::Date,
         "poisson_balance_target_scale"     => contract.poisson_balance_target_scale,
         "poisson_balance_target_semantics" => contract.poisson_balance_target_semantics,
         "poisson_balance_target_scale_by_window" => poisson_scale_schedule,
+        "horizontal_balance" => balance_tag(effective_horizontal_balance(get(settings, :horizontal_balance, nothing), ColumnBalance())),
         "script_path" => provenance.script_path,
         "script_mtime_unix" => provenance.script_mtime,
         "git_commit" => provenance.git_commit,
@@ -388,7 +378,7 @@ end
 
 const _OUTPUT_REUSE_CONTRACT_KEYS = (
     "format_version", "float_type", "float_bytes", "mass_basis",
-    "grid_type", "horizontal_topology", "Nx", "Ny", "nlevel", "nwindow",
+    "grid_type", "horizontal_topology", "planet_radius_m", "Nx", "Ny", "nlevel", "nwindow",
     "payload_sections", "elems_per_window", "A_ifc", "B_ifc", "merge_map",
     "merge_min_thickness_Pa", "vertical_mapping_method", "target_vertical_name",
     "target_coefficients", "dt_met_seconds", "dt_seconds", "half_dt_seconds",

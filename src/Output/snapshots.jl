@@ -44,39 +44,8 @@ function _require_cpu_snapshot_storage(panels::NTuple{6, <:AbstractArray}, label
     return nothing
 end
 
-@inline function _compensated_add_f64(sum::Float64, correction::Float64, raw)
-    x = Float64(raw)
-    total = sum + x
-    correction += abs(sum) >= abs(x) ? (sum - total) + x : (x - total) + sum
-    return total, correction
-end
-
-function _tracer_total_mass_f64(field::AbstractArray)
-    sum = 0.0
-    correction = 0.0
-    @inbounds for value in field
-        sum, correction = _compensated_add_f64(sum, correction, value)
-    end
-    total = sum + correction
-    isfinite(total) || throw(ArgumentError(
-        "snapshot tracer total is not finite; check the captured tracer state"))
-    return total
-end
-
-function _tracer_total_mass_f64(panels::NTuple{6, <:AbstractArray})
-    sum = 0.0
-    correction = 0.0
-    @inbounds for panel in panels, value in panel
-        sum, correction = _compensated_add_f64(sum, correction, value)
-    end
-    total = sum + correction
-    isfinite(total) || throw(ArgumentError(
-        "snapshot tracer total is not finite; check the captured tracer state"))
-    return total
-end
-
 function _snapshot_tracer_totals(tracers)
-    return Dict(name => _tracer_total_mass_f64(tracer)
+    return Dict(name => _backend_tracer_total(tracer)
                 for (name, tracer) in tracers)
 end
 

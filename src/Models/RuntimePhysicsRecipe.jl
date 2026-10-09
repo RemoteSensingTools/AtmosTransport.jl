@@ -38,7 +38,7 @@ end
 function _advection_section(cfg)
     run = get(cfg, "run", Dict{String,Any}())
     if haskey(cfg, "advection")
-        for key in ("scheme", "ppm_order")
+        for key in ("scheme", "ppm_order", "vertical", "limiter")
             haskey(run, key) && throw(ArgumentError(
                 "Advection option `[run].$(key)` is ambiguous because `[advection]` " *
                 "is present. Move `$(key)` into `[advection]`; legacy `[run].$(key)` " *
@@ -140,6 +140,12 @@ _runtime_has_gchp_vdiff(
 _runtime_has_gchp_vdiff(driver::TransportBinaryDriver) =
     _runtime_has_gchp_vdiff(driver.reader)
 
+_runtime_has_gchp_nonlocal_vdiff(context) =
+    _runtime_has_gchp_vdiff(context) && _runtime_has_pbl_eflux(context)
+_runtime_has_pbl_eflux(_context) = false
+_runtime_has_pbl_eflux(reader::TransportBinaryReader) = MetDrivers.has_pbl_eflux(reader)
+_runtime_has_pbl_eflux(driver::TransportBinaryDriver) = _runtime_has_pbl_eflux(driver.reader)
+
 _runtime_has_precomputed_dkg(_context) = false
 _runtime_has_precomputed_dkg(
     reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
@@ -201,6 +207,11 @@ end
 @inline _runtime_has_tm5_convection(driver::TransportBinaryDriver) = MetDrivers.has_tm5_convection(driver.reader)
 @inline _runtime_has_cmfmc(reader::TransportBinaryReader) = MetDrivers.has_cmfmc(reader)
 @inline _runtime_has_cmfmc(driver::TransportBinaryDriver) = MetDrivers.has_cmfmc(driver.reader)
+@inline _runtime_has_cmfmc_cloud_base(_context) = false
+@inline _runtime_has_cmfmc_cloud_base(reader::TransportBinaryReader) =
+    MetDrivers.has_cmfmc_cloud_base(reader)
+@inline _runtime_has_cmfmc_cloud_base(driver::TransportBinaryDriver) =
+    _runtime_has_cmfmc_cloud_base(driver.reader)
 
 function validate_runtime_convection(::AbstractRuntimeRecipeStyle,
                                      ::TM5Convection,
@@ -252,6 +263,18 @@ function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
 end
 
 function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
+                                    op::ImplicitVerticalDiffusion{FT, <:GCHPNonlocalPBLField},
+                                    context) where FT
+    _runtime_has_gchp_nonlocal_vdiff(context) || throw(ArgumentError(
+        "[diffusion] kind = \"geoschem_nonlocal_vdiff\" requires the GCHP VDIFF sections " *
+        "and pbl_eflux in every cubed-sphere transport binary."))
+    op.surface_flux_coupling isa DiffusiveSurfaceFluxBoundary || throw(ArgumentError(
+        "GEOS-Chem non-local VDIFF spreads fresh emissions before one full diffusion solve; " *
+        "it needs DiffusiveSurfaceFluxBoundary coupling."))
+    return nothing
+end
+
+function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
                                     ::ImplicitVerticalDiffusion{FT, <:PrecomputedCSDkgField},
                                     context) where FT
     _runtime_has_precomputed_dkg(context) || throw(ArgumentError(
@@ -260,12 +283,16 @@ function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
 end
 
 function validate_runtime_convection(::AbstractRuntimeRecipeStyle,
-                                     ::CMFMCConvection,
+                                     op::CMFMCConvection,
                                      context)
     _runtime_has_cmfmc(context) ||
         throw(ArgumentError(
             "[convection] kind = \"cmfmc\" requires CMFMC convection forcing " *
             "in the runtime forcing source."))
+    op.cloud_base isa ArchivedCloudBase && !_runtime_has_cmfmc_cloud_base(context) &&
+        throw(ArgumentError(
+            "[convection] cloud_base = \"dqrcu\" requires a cmfmc_cloud_base section in " *
+            "the cubed-sphere transport binary."))
     return nothing
 end
 

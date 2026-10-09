@@ -595,12 +595,13 @@ end
               finite_difference rtol=5e-5 atol=1e-10
     end
 
-    @testset "Limited PPM footprint replays nonlinear branch tape" begin
+    @testset "Limited PPM footprint replays nonlinear branch tape ($(nameof(typeof(limiter))))" for limiter in
+            (AT.MonotoneLimiter(), AT.CW84Limiter())
         mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
             _transport_cs_problem(Nc=4, Nz=6, nsteps=2)
         _fill_smooth_tracer!(panels_rm, panels_m, mesh)
         dt = 1.5
-        scheme = AT.PPMScheme()
+        scheme = AT.PPMScheme(limiter)
         obj = AT.CSColumnMeanObjective(1, 2, 2)
 
         result = AT.cs_surface_emission_footprint(

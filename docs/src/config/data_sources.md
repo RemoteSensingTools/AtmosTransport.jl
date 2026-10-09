@@ -187,11 +187,87 @@ pre-regridded CS equivalents) and the preprocessor embeds `PBLH`,
 
 **MERRA-2.** `MERRA2Settings` and the wind-derived CS writer are implemented.
 They read native 0.5° × 0.625° PS/QV/U/V fields, derive mass fluxes, and write
-CS transport binaries through the canonical preprocessing CLI; see
-`config/preprocessing/merra2_c180_dec2021_f32.toml`. MERRA-2 has no native
-MFXC/MFYC, so this is deliberately separate from `AbstractGEOSSettings`.
-The unified `OPeNDAPProtocol.execute!` downloader is still unavailable, so
-raw files must currently be staged separately with NASA Earthdata credentials.
+CS transport binaries through the canonical preprocessing CLI. MERRA-2 has no
+native MFXC/MFYC, so this is deliberately separate from `AbstractGEOSSettings`.
+Two archive layouts are supported (`[preprocessing] layout`):
+
+- `"nasa"` (default) — GES DISC `M2I3NVASM` / `M2T3NVASM` files under
+  `root_dir/{M2I3NVASM,M2T3NVASM}/YYYY/MM/`; mass fluxes only. See
+  `config/preprocessing/merra2_c180_dec2021_f32.toml`. The unified
+  `OPeNDAPProtocol.execute!` downloader is still unavailable, so these files
+  must be staged separately with NASA Earthdata credentials.
+- `"geoschem"` — the GEOS-Chem-processed files that GEOS-Chem and GCHP read,
+  `root_dir/YYYY/MM/MERRA2.YYYYMMDD.{I3,A3dyn,A3mstE,A1}.05x0625.nc4`,
+  publicly mirrored at `s3://gcgrid/GEOS_0.5x0.625/MERRA2/`
+  (`aws s3 sync --no-sign-request`). Same values as the GES DISC files, with
+  levels stored surface first. This layout can also write dry `cmfmc`/`dtrain`
+  (`include_convection`), GEOS-Chem's convective cloud base from A3mstC DQRCU
+  (`include_convective_cloud_base`), the A1 PBL surface fields
+  (`include_surface`), and the VDIFF fields plus the latent heat flux
+  (`include_vdiff_fields`). See `config/met_sources/merra2_geoschem.toml` and
+  `config/preprocessing/merra2_geoschem_c90_l72_f32.toml`; run with
+  `[convection] kind = "cmfmc", cloud_base = "dqrcu"` and
+  `[diffusion] kind = "geoschem_nonlocal_vdiff"` for GEOS-Chem's physics.
+
+`[preprocessing] column_balance_weights` (MERRA-2 and ERA5 N320) spreads the column
+mass-budget correction of the horizontal fluxes over the levels:
+- `"mass"` (default): by layer air mass;
+- `"hybrid_b"`: by `ΔB`, as in TM5;
+- `"hybrid_mass"`: by air mass in hybrid layers only.
+
+The hybrid options leave the pure-pressure stratospheric layers untouched.
+See [Vertical transport](../theory/vertical_transport.md) section 2 and
+`config/met_sources/merra2_geoschem_hybrid{b,mass}.toml`.
+
+Face-flux construction (MERRA-2 and ERA5 N320; see
+[Vertical transport](../theory/vertical_transport.md) section 1):
+- `face_fluxes`:
+  - `"panel_average"` (default): averages panel-local wind components, with
+    one-sided panel seams;
+  - `"vector"`: combines the winds as 3-D vectors, projects them onto the true
+    face normals with true face lengths, and interpolates along the edge at
+    panel seams.
+  - `"line_integral"` (ERA5 N320 only): integrates `(V · N) Δp` along each face
+    from the N320 winds and surface pressure (bilinear interpolation of the
+    Cartesian wind components, 16 midpoints per face). TM5 integrates the
+    spectral winds along its cell edges in the same spirit. Each cube cell's
+    convergence is then that of the source flow; the cell-centre methods
+    smooth it at the cube grid scale.
+- `face_lengths = "cell_centerline"` (default) or `"edge"`: the length used by
+  `panel_average`.
+- `face_interpolation` (`vector` only): `"linear"` (default, the two adjacent
+  cells), `"cubic"` (FV3's fourth-order stencil across interior faces) or
+  `"fv3"` (`"cubic"` plus the filter along the face of GCHP's A → D → C
+  restaggering).
+- `flux_thickness = "moist"` (default) or `"dry_mass"` (MERRA-2 only): the
+  layer thickness in the fluxes.
+- `wind_regrid = "scalar"` (default) or `"cartesian"`: regrid `u` and `v` as
+  two scalars, or the wind as a vector, as GCHP does. The scalar regrid is
+  off by about 5% poleward of 88°.
+- `flux_time_sampling` (ERA5 N320 only): `"window_start"` (default) holds the
+  instantaneous winds of each hour over the following hourly window;
+  `"window_mean"` uses the mean of the face fluxes at the start and end of the
+  window, the trapezoidal rule for `∫ u Δp dt`, so the fluxes are centred in
+  time. The binary header records it as `source_flux_sampling`.
+
+The GEOS sources reject these keys. `config/met_sources/merra2_geoschem_hm_gchp.toml`
+and `config/met_sources/era5_n320_arco_diffusion_hb_gchp.toml` select GCHP's
+construction; the ERA5 one uses `hybrid_b`, because its 66-level grid has
+hybrid layers up to 82 hPa.
+`config/met_sources/era5_n320_arco_diffusion_li.toml` selects `hybrid_b`,
+`line_integral` and `window_mean`; with
+`config/preprocessing/era5_n320_arco_diffusion_to_c90_l117_li.toml` it keeps
+ERA5's native levels below about 8 hPa and merges the 27 thinner ones above into
+7 (`[vertical] transform = "merge_layers_thinner_than"`, 100 Pa), 117 levels in
+all.
+
+`[numerics] dt_met_seconds = 3600` splits every 3-hour MERRA-2 block into three
+hourly windows (endpoint mass, PS, QV and T linear in time, 3-hour mean winds),
+so the hourly A1 boundary-layer fields are used as archived; `10800` writes one
+window per block with A1 averaged over it.
+
+Neither layout carries DELP, so the level order of each day's files is
+detected from the inst3 QV profile (moist end = surface).
 
 ## Try the runtime without external data
 

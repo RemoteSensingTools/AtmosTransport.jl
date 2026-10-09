@@ -3,13 +3,11 @@
 #
 # `CSFootprintResult` is the user-facing return value of the CS reverse-mode
 # surface-emission footprint API; `CSTapeByteEstimate` is the diagnostic
-# returned by `cs_surface_emission_footprint(..., dry_run=true)` to size
+# returned by `cs_tape_byte_estimate` (TapeRecording.jl) to size
 # in-memory or on-disk tape allocations.
 #
-# Relocated unchanged from `src/Adjoints/Adjoints.jl` lines 73-114;
-# no semantic change. Loaded into the `Adjoints` module
-# via an `include` from `src/Adjoints/Adjoints.jl` — the names remain
-# accessible at the same call sites with no import changes.
+# Loaded into the `Adjoints` module via an `include` from
+# `src/Adjoints/Adjoints.jl`.
 # ---------------------------------------------------------------------------
 
 """

@@ -56,8 +56,9 @@ export TracerView
 # Advection scheme hierarchy
 export AbstractAdvectionScheme
 export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
-export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter
+export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter, CW84Limiter
 export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme, NoAdvection
+export AbstractVerticalReconstruction, SameAsHorizontal, FV3ScalarProfile
 export reconstruction_order, required_halo_width
 
 # Chemistry
@@ -80,7 +81,7 @@ export apply_surface_flux!
 
 # Convection operator hierarchy.
 export AbstractConvection, NoConvection
-export CMFMCConvection
+export CMFMCConvection, AbstractCloudBase, CMFMCEdgeCloudBase, ArchivedCloudBase
 export CMFMCWorkspace, invalidate_cmfmc_cache!
 export TM5Convection
 export TM5Workspace

@@ -29,12 +29,10 @@ end
     @inbounds out[c] = total
 end
 
-_snapshot_accumulator_type(backend) = Float64
-
 function _backend_column_sum(values::AbstractArray)
     backend = get_backend(values)
     backend isa KA_CPU && return _column_sum(values)
-    return _backend_column_sum(values, _snapshot_accumulator_type(backend))
+    return _backend_column_sum(values, _total_accumulator_type(backend))
 end
 
 function _backend_column_sum(values::AbstractArray, ::Type{Float64})

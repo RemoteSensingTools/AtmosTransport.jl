@@ -69,13 +69,13 @@ Scheme parameters (Holtslag & Boville constants)
   * `pblh_min`    — floor on the diagnosed PBL height (m)
 """
 Base.@kwdef struct BLDiffConstants{FT <: AbstractFloat}
-    grav        :: FT = 9.80665
-    cp_air      :: FT = 1004.0
-    r_air       :: FT = 287.307    # = Rgas·1000 / M_air = 8.3144·1000 / 28.94 (TM5 binas)
-    r_vap       :: FT = 461.51
-    l_vap       :: FT = 2.5e6
-    vkarman     :: FT = 0.4
-    p_ref       :: FT = 1.0e5
+    grav        :: FT = TM5_CONSTANTS.gravity
+    cp_air      :: FT = TM5_CONSTANTS.cp_air
+    r_air       :: FT = TM5_CONSTANTS.r_air      # = Rgas·1000 / M_air = 8.3144·1000 / 28.94 (TM5 binas)
+    r_vap       :: FT = TM5_CONSTANTS.r_vap
+    l_vap       :: FT = TM5_CONSTANTS.l_vap
+    vkarman     :: FT = TM5_CONSTANTS.karman
+    p_ref       :: FT = TM5_CONSTANTS.p_ref
     ri_crit     :: FT = 0.3
     sf_frac     :: FT = 0.1
     beta_m      :: FT = 15.0

@@ -15,7 +15,7 @@ module Grids
 
 using ..Architectures: CPU
 import ..Architectures: architecture  # extended with a method on AtmosGrid below
-using ..Parameters: PlanetParameters, earth_parameters
+using ..Parameters: PlanetParameters, earth_parameters, EARTH_RADIUS
 
 include("AbstractMeshes.jl")
 include("VerticalCoordinates.jl")
@@ -23,6 +23,8 @@ include("GeometryOps.jl")
 include("LatLonMesh.jl")
 include("PanelConnectivity.jl")
 include("CubedSphereMesh.jl")
+include("cs_mesh_coordinates.jl")
+include("cs_mesh_locate.jl")
 include("ReducedGaussianMesh.jl")
 
 end # module Grids

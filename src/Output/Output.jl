@@ -36,6 +36,7 @@ using Printf
 using Statistics: median!
 using TOML
 using KernelAbstractions: @kernel, @index, get_backend, synchronize, CPU as KA_CPU
+using ..Architectures: _compensated_total, _total_accumulator_type
 
 function _config_bool(value, path::AbstractString)
     value isa Bool || throw(ArgumentError("$(path) must be true or false; got $(repr(value))"))
@@ -57,7 +58,9 @@ background task.
 """
 with_netcdf_lock(f) = lock(f, _NETCDF_IO_LOCK)
 
+using ..Parameters: R_DRY_AIR
 import ..expand_data_path
+import ..source_revision
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                GnomonicPanelConvention, GEOSNativePanelConvention,
                nx, ny, nrings, ring_longitudes, cell_index, ncells,

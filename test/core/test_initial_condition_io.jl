@@ -573,7 +573,7 @@ end
 
             vertical = HybridSigmaPressure(Float64[0, 0], Float64[1, 0])
             native_total = 7.0
-            storage_scale = 28.96546e-3 / 44.0095e-3
+            storage_scale = AtmosTransport.Parameters.DRY_AIR_MOLAR_MASS / 44.0095e-3
 
             latlon_mesh = LatLonMesh(; FT = Float64, Nx = 4, Ny = 2)
             latlon_grid = AtmosGrid(latlon_mesh, vertical, CPU(); FT = Float64)
@@ -699,7 +699,7 @@ end
         # Global integral check: uniform 1 kg/m²/s over the full sphere,
         # converted to dry-air-equivalent storage for CO2.
         R = Float64(cs_mesh.radius)
-        storage_scale = 28.96546e-3 / 44.0095e-3
+        storage_scale = AtmosTransport.Parameters.DRY_AIR_MOLAR_MASS / 44.0095e-3
         expected_total = 4π * R^2 * storage_scale
         actual_total = sum(sum(panel) for panel in src.cell_mass_rate)
         @test isapprox(Float64(actual_total), expected_total; rtol = 1e-3)
@@ -741,7 +741,7 @@ end
         @test src.times == [0.0, 3600.0]
         @test src.scheme isa AtmosTransport.StepwiseFlux
 
-        storage_scale = 28.96546e-3 / 44.0095e-3
+        storage_scale = AtmosTransport.Parameters.DRY_AIR_MOLAR_MASS / 44.0095e-3
         for p in 1:6, t in 1:ntime
             expected = (p + 10t) .* mesh.cell_areas .* storage_scale
             @test src.cell_mass_rate_series[p][:, :, t] ≈ expected

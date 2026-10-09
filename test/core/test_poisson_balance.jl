@@ -328,3 +328,103 @@ end
         @test true  # skip if CS balance not available
     end
 end
+
+# ---------------------------------------------------------------------------
+# Column-balance weights: how the column correction is spread over levels
+# ---------------------------------------------------------------------------
+
+@testset "CS column-balance weights" begin
+    using Random
+    using .AtmosTransport.Grids: GnomonicPanelConvention, panel_connectivity_for
+    Nc, Nz, steps = 8, 6, 4
+    B = [0.0, 0.0, 0.0, 0.2, 0.5, 0.8, 1.0]   # layers 1–2 pure pressure (ΔB = 0)
+    pure, hybrid = 1:2, 3:Nz
+    ft = Prep.build_cs_global_face_table(Nc, panel_connectivity_for(GnomonicPanelConvention()))
+    degree = Prep.cs_cell_face_degree(ft)
+    rng = MersenneTwister(2)
+    m      = ntuple(_ -> 1 .+ 0.1 .* rand(rng, Nc, Nc, Nz), 6)
+    m_next = ntuple(_ -> 1 .+ 0.1 .* rand(rng, Nc, Nc, Nz), 6)
+    am0 = ntuple(_ -> 0.01 .* rand(rng, Nc + 1, Nc, Nz), 6)
+    bm0 = ntuple(_ -> 0.01 .* rand(rng, Nc, Nc + 1, Nz), 6)
+    Prep._sync_cs_mirrors!(am0, bm0, ft, Nz)          # consistent shared faces
+
+    function balanced(; kwargs...)
+        am, bm = map(copy, am0), map(copy, bm0)
+        diag = Prep.balance_cs_column_mass_fluxes!(am, bm, m, m_next, ft, degree, steps,
+                                                   Prep.CSPoissonScratch(ft.nc); kwargs...)
+        return am, bm, diag
+    end
+    am_def, bm_def, _ = balanced()
+    am_mass, bm_mass, diag_mass = balanced(; weights = Prep.column_weights(:mass, B))
+    @test am_def == am_mass && bm_def == bm_mass          # default is mass weighting
+
+    for kind in (:hybrid_b, :hybrid_mass)
+        am, bm, diag = balanced(; weights = Prep.column_weights(kind, B))
+        # the column budget closes as well as with mass weights
+        @test diag.final_column_projected_residual <= 10 * max(diag_mass.final_column_projected_residual, 1e-12)
+        # pure-pressure layers receive no correction
+        @test all(p -> am[p][:, :, pure] == am0[p][:, :, pure], 1:6)
+        @test all(p -> bm[p][:, :, pure] == bm0[p][:, :, pure], 1:6)
+        @test any(p -> am[p][:, :, hybrid] != am0[p][:, :, hybrid], 1:6)
+    end
+
+    # hybrid_b spreads the correction in proportion to ΔB
+    am_hb, _, _ = balanced(; weights = Prep.column_weights(:hybrid_b, B))
+    inc_b = am_hb[1][4, 3, hybrid[1:end-1]] .- am0[1][4, 3, hybrid[1:end-1]]
+    dB = diff(B)[hybrid[1:end-1]]
+    @test inc_b ./ dB ≈ fill(inc_b[1] / dB[1], length(dB)) rtol = 1e-10
+
+    # hybrid_mass spreads the correction like mass weights within hybrid layers
+    am_hm, _, _ = balanced(; weights = Prep.column_weights(:hybrid_mass, B))
+    p, i, j = 1, 4, 3
+    inc = am_hm[p][i, j, hybrid[1:end-1]] .- am0[p][i, j, hybrid[1:end-1]]
+    w = m[p][i - 1, j, hybrid[1:end-1]] .+ m[p][i, j, hybrid[1:end-1]]
+    @test inc ./ w ≈ fill(inc[1] / w[1], length(w)) rtol = 1e-10
+
+    # cm diagnosis: the bottom residual is spread over hybrid layers only
+    dm = ntuple(p -> (m_next[p] .- m[p]) ./ (2steps), 6)
+    cm_mass, cm_hyb = ntuple(_ -> ntuple(_ -> zeros(Nc, Nc, Nz + 1), 6), 2)
+    Prep.diagnose_cs_cm!(cm_mass, am0, bm0, dm, m, Nc, Nz)
+    Prep.diagnose_cs_cm!(cm_hyb, am0, bm0, dm, m, Nc, Nz, Prep.column_weights(:hybrid_mass, B))
+    raw = ntuple(6) do p
+        c = zeros(Nc, Nc, Nz + 1)
+        for k in 1:Nz, j in 1:Nc, i in 1:Nc
+            div_h = (am0[p][i, j, k] - am0[p][i + 1, j, k]) + (bm0[p][i, j, k] - bm0[p][i, j + 1, k])
+            c[i, j, k + 1] = c[i, j, k] + div_h - dm[p][i, j, k]
+        end
+        c
+    end
+    @test all(p -> cm_hyb[p][:, :, 1:3] == raw[p][:, :, 1:3], 1:6)    # top and pure-pressure interfaces
+    @test any(p -> cm_mass[p][:, :, 2:3] != raw[p][:, :, 2:3], 1:6)   # mass weights reach them
+    @test maximum(p -> maximum(abs, cm_hyb[p][:, :, Nz + 1]), 1:6) < 1e-12
+
+    # ΔB weights are layer thicknesses in B, normalized, for any vector type
+    for Bv in (B, Float32.(B), collect(B))
+        w = Prep.column_weights(:hybrid_b, Bv)
+        @test length(w.dB) == Nz && isapprox(w.dB, diff(B) ./ (B[end] - B[1]); rtol = 1e-6)
+    end
+    @test Prep.column_weights(:hybrid_mass, B).hybrid == (diff(B) .> 0)
+
+    # weights for a different number of layers are rejected
+    @test_throws DimensionMismatch balanced(; weights = Prep.column_weights(:hybrid_b, B[2:end]))
+    @test_throws DimensionMismatch Prep.diagnose_cs_cm!(cm_hyb, am0, bm0, dm, m, Nc, Nz,
+                                                        Prep.column_weights(:hybrid_mass, B[2:end]))
+
+    # TOML wiring: MERRA-2 and ERA5 N320 read the key, the GEOS sources reject it
+    mktempdir() do dir
+        merra2 = Prep.load_met_settings(joinpath(pkgdir(AtmosTransport), "config", "met_sources",
+                                                 "merra2_geoschem_hybridmass.toml"); root_dir = dir)
+        @test merra2.column_balance_weights === :hybrid_mass
+        toml = joinpath(dir, "era5.toml")
+        write(toml, "[source]\nname = \"ERA5-N320\"\n[preprocessing]\ncolumn_balance_weights = \"hybrid_b\"\n")
+        @test Prep.load_met_settings(toml; root_dir = dir).column_balance_weights === :hybrid_b
+        geos = read(joinpath(pkgdir(AtmosTransport), "config", "met_sources", "geosit.toml"), String)
+        geos_toml = joinpath(dir, "geos.toml")
+        write(geos_toml, replace(geos, r"\[preprocessing\]" => "[preprocessing]\ncolumn_balance_weights = \"hybrid_b\"", count = 1))
+        @test_throws ArgumentError Prep.load_met_settings(geos_toml; root_dir = dir)
+    end
+
+    @test_throws ArgumentError Prep.column_weights(:pressure, B)
+    @test_throws ArgumentError Prep.HybridBWeightedColumn(reverse(B))
+    @test_throws ArgumentError Prep.HybridMassWeightedColumn(reverse(B))
+end

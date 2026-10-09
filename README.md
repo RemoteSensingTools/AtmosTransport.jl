@@ -59,7 +59,8 @@ The reading order:
   coordinate.
 - **Multi-source:** ERA5 spectral preprocessing (LL / RG / CS targets) and
   native cubed-sphere preprocessing for GEOS-IT C180 and GEOS-FP C720,
-  plus a preview MERRA-2 wind-derived CS path. MERRA-2 data must currently
+  plus a preview MERRA-2 wind-derived CS path (with convection and PBL
+  inputs from the GEOS-Chem MERRA-2 archive). MERRA-2 data must currently
   be staged outside the unified downloader.
 - **Multi-backend:** Single codebase for CPU and GPU via
   [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl).
@@ -183,7 +184,7 @@ documented validation run.
 | ERA5 spectral → LL / RG / CS | ✅ | CDS API; `pin_global_mean_ps!` enabled |
 | GEOS-IT native → CS (C180) | ✅ | Adaptive substep schedule per window |
 | GEOS-FP native → CS (C720) | 🟡 | Native hourly reader and unified preprocessor ship; production validation remains limited |
-| MERRA-2 native → CS | 🟡 | Wind-derived C180 preprocessor ships; unified OPeNDAP download execution remains unavailable |
+| MERRA-2 native → CS | 🟡 | Wind-derived CS preprocessor ships (any Nc, L72); CMFMC/DTRAIN and PBL/VDIFF fields from the GEOS-Chem MERRA-2 archive; unified OPeNDAP download execution remains unavailable |
 | LL → CS conservative regrid | 🟡 | Works; separate regrid entry point |
 | Compressed binaries at rest (zstd) | ✅ | User-side; runtime always reads uncompressed |
 

@@ -1,0 +1,61 @@
+# ===========================================================================
+# MERRA-2 (GEOS-Chem archive) -> C90 L72 cubed-sphere transport binaries with
+# convection and boundary-layer inputs, for the CATRINE GCHP C90 benchmark
+# (GCHP's CATRINE C90 run is driven by these MERRA-2 fields).
+#
+#   julia -t 8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
+#       config/preprocessing/merra2_geoschem_c90_l72_f32.toml \
+#       --start 2021-12-01 --end 2023-12-31
+#
+# Per window (8 x 3-hourly): conservative regrid of PS/QV (I3) and U/V (A3dyn)
+# to C90, dry mass, panel-local winds, face fluxes, Cameron-Smith column
+# balance, cm; plus dry CMFMC/DTRAIN (A3mstE/A3dyn), window-mean A1 PBL
+# fields and the Holtslag-Boville VDIFF fields. All 72 native levels.
+# Archive: s3://gcgrid/GEOS_0.5x0.625/MERRA2/ (public, aws s3 --no-sign-request).
+# ===========================================================================
+
+[source]
+toml     = "config/met_sources/merra2_geoschem_hm_vs.toml"
+root_dir = "~/data/AtmosTransport/met/merra2/geoschem_0.5x0.625"
+
+[vertical]
+coefficients = "config/geos_L72_coefficients.toml"
+transform    = "identity"        # full native L72 — no top merge
+
+[output]
+directory  = "~/data/AtmosTransport/met/merra2/c90/transport_binary_v4_l72_f32_physics_hm_vs"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 90
+panel_convention    = "geos_native"
+definition          = "gmao_equal_distance"
+regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"
+
+[numerics]
+float_type     = "Float32"
+dt_met_seconds = 3600.0           # hourly windows: each 3-h MERRA-2 block split in 3 (hourly A1 PBL)
+# MERRA-2 days are independent — the final-window look-ahead reads next-day
+# inst3 slice-1 directly, and process_day returns no seed (final_m=nothing),
+# so no cross-day mass chaining occurs. chain_mass=false is correct here AND
+# is what lets the unified driver day-thread (the threading gate requires
+# !chain_mass).
+chain_mass     = false
+
+positivity_cfl_limit       = 0.95
+require_substep_positivity = true
+substep_schedule           = "adaptive_cfl"
+substep_cfl_target         = 0.95
+min_steps_per_window       = 1
+max_steps_per_window       = 512   # headroom for the unmerged mesospheric top
+geos_balance_mode          = "column"
+
+[mass_fix]
+# Global dry-air mass pin — mirror of the GEOS-CS / ERA5 N320 path. Removes the
+# residual global-mean dry-mass drift, pinning the MEASURED C180 dry mass to a
+# fixed absolute target shared with the GEOS path so the driver families share
+# one dry-air baseline. See docs/src/theory/mass_conservation.md.
+enable           = true
+mode             = "target_ps_dry"
+target_ps_dry_pa = 98726.0

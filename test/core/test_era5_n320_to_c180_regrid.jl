@@ -40,11 +40,11 @@ using .AtmosTransport.Preprocessing: ERA5N320Settings, ERA5GRIBDayHandles,
                                       CubedSphereTargetGeometry
 using .AtmosTransport.Grids: ncells, nrings, cell_area
 
-function _tiny_source_grid(::Type{FT} = Float64) where FT
+function _tiny_source_grid(::Type{FT} = Float64; nlon_mode = "regular") where FT
     cfg = Dict{String, Any}(
         "type"            => "synthetic_reduced_gaussian",
         "gaussian_number" => 8,
-        "nlon_mode"       => "regular",
+        "nlon_mode"       => nlon_mode,
     )
     return build_target_geometry(Val(:synthetic_reduced_gaussian), cfg, FT)
 end
@@ -94,13 +94,25 @@ end
         end
     end
 
-    @testset "Uniform PS regrid recovers the source value" begin
-        src = _tiny_source_grid(Float64)
+    @testset "Uniform PS regrid recovers the source value ($nlon_mode)" for nlon_mode in ("regular", "octahedral")
+        # Octahedral rings change length from ring to ring, which leaves uncovered
+        # slivers between the chord-edged source cells; the coverage division undoes them.
+        src = _tiny_source_grid(Float64; nlon_mode)
         dst = _tiny_cs_target(Float64; Nc = 8)
         Nz = 2
 
         ws  = allocate_era5_c180_regrid_workspace(src, dst, Nz)
         fields = allocate_era5_c180_regrid_fields(dst, Nz)
+
+        # The coverage division must not hide a broken regridder: every source
+        # polygon is intersected in full, and only the octahedral rings leave gaps.
+        R = ws.regridder
+        @test sum(R.dst_areas .* ws.coverage) ≈ sum(R.src_areas) rtol = 1e-12
+        if nlon_mode == "regular"
+            @test all(c -> abs(c - 1) < 1e-6, ws.coverage)
+        else
+            @test 0.99 < minimum(ws.coverage) < 0.999 && maximum(ws.coverage) < 1.01
+        end
 
         # Build a synthetic source window with PS = 101325 Pa everywhere
         # and zero 3D fields; U/V/T/Q being identically zero exercises the

@@ -1,17 +1,18 @@
 """
     Tape
 
-Tape storage policies, tape record types, and on-disk checkpointing for the
-AtmosTransport.jl cubed-sphere adjoint pipeline.
+Tape storage policies (device, pinned-host, mmap on disk), tape record types,
+and checkpoint schedules for the AtmosTransport.jl cubed-sphere adjoint
+pipeline.
 
-This is a focused sibling module to `src/Adjoints/Adjoints.jl`; on-disk-tape
-utilities (NetCDF tape, sliding-window replay) live here rather than growing
-`Adjoints.jl` further.
+`Tape` imports nothing from other AtmosTransport modules.
+`src/AtmosTransport.jl` loads it before `Adjoints`, which imports these names
+with `using ..Tape: ...`. The forward recorder, reverse loop and checkpoint
+drivers (`src/Footprint/`) and the 4D-Var code (`src/Inversion/`) are files
+included into the `Adjoints` module, not separate modules.
 
 Module dependency order:
-    Adjoints  →  Tape  →  Footprint  →  Inversion
-                  ↑
-                  this module
+    Tape  →  Adjoints (includes Footprint/ and Inversion/ files)
 """
 module Tape
 

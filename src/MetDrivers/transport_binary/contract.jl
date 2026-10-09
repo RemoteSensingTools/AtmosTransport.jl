@@ -155,7 +155,7 @@ const _CS_WRITER_CONTRACT_KEYS = ("runtime_substep_contract",
 
 const _TRANSPORT_STRUCTURAL_HEADER_KEYS = Set((
     "magic", "format_version", "header_bytes", "float_type", "float_bytes",
-    "grid_type", "horizontal_topology", "ncell", "nface_h", "nlevel",
+    "grid_type", "horizontal_topology", "planet_radius_m", "ncell", "nface_h", "nlevel",
     "nwindow", "A_ifc", "B_ifc", "mass_basis", "payload_sections",
     "elems_per_window", "n_geometry_elems", "Nx", "Ny", "Nc", "npanel",
     "lons", "lats", "longitude_interval", "latitude_interval",
@@ -258,6 +258,10 @@ function _validate_transport_layout!(header::AbstractDict)
     surface = map(s -> s in sections, _PBL_SURFACE_PAYLOAD_SECTIONS)
     all(surface) || !any(surface) || throw(ArgumentError(
         "Transport-binary contract violation — surface payload sections must be complete"))
+    (:pbl_eflux in sections && !all(surface)) && throw(ArgumentError(
+        "Transport-binary contract violation — pbl_eflux requires the PBL surface sections"))
+    (:cmfmc_cloud_base in sections && !(:cmfmc in sections)) && throw(ArgumentError(
+        "Transport-binary contract violation — cmfmc_cloud_base requires cmfmc"))
     vdiff = map(s -> s in sections, _GCHP_VDIFF_PAYLOAD_SECTIONS)
     all(vdiff) || !any(vdiff) || throw(ArgumentError(
         "Transport-binary contract violation — GCHP VDIFF payload sections must be complete"))
@@ -468,6 +472,11 @@ function validate_transport_contract!(header::AbstractDict)
         "Obsolete transport binary format_version=$(format_version); current runtime requires " *
         "format_version=$(TRANSPORT_BINARY_FORMAT_VERSION). Regenerate this file with the current " *
         "preprocessor so the header carries the per-window substep schedule and runtime contract."))
+
+    radius = get(header, "planet_radius_m", nothing)       # absent in older binaries
+    radius === nothing || (radius isa Real && !(radius isa Bool) && isfinite(radius) && radius > 0) ||
+        throw(ArgumentError("Transport-binary contract violation — planet_radius_m must be a positive " *
+                            "length in m; got $(repr(radius))"))
 
     runtime_contract = get(header, "runtime_substep_contract", nothing)
     if runtime_contract !== nothing

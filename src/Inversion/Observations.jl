@@ -18,9 +18,8 @@
 # specifiers (Integer / iterable) for the `CSSurfaceFluxWindow`
 # constructor.
 #
-# Relocated unchanged from `src/Adjoints/Adjoints.jl` lines 77-217;
-# no semantic change. Loaded into the `Adjoints` module
-# via an `include` from `src/Adjoints/Adjoints.jl`.
+# Loaded into the `Adjoints` module via an `include` from
+# `src/Adjoints/Adjoints.jl`.
 # ---------------------------------------------------------------------------
 
 """

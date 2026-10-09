@@ -97,13 +97,13 @@ distribution by `O(10⁻⁶)`.
 | Test | Asserts |
 |---|---|
 | `test/regridding/test_conservation.jl` | `sum(m_dest) ≈ sum(m_source)` under LL↔CS conservative regrid. |
-| `test/core/test_ll_to_cs_regrid_script.jl` | End-to-end LL → CS regrid pipeline produces a binary whose stored `m`, summed globally, matches the LL source's stored `m` to `1e-6` relative — the script-level acceptance gate, deliberately looser than the kernel-level `1e-13` to absorb the per-level mass-consistency redistribution. |
+| `test/core/test_ll_to_cs_regrid_script.jl` | End-to-end LL → CS regrid pipeline produces a binary whose stored `m`, summed globally, matches the LL source's stored `m` to `1e-6` relative — the script-level acceptance gate, looser than the kernel-level `1e-13`. |
 
-The per-level mass-consistency correction in
-`cs_transport_helpers.jl::_enforce_perlevel_mass_consistency!` is
-what closes the per-level distribution; tested implicitly via the
-Poisson balance convergence requirement (would not converge to the
-current dry-basis replay tolerance without the correction).
+`m` is regridded with `regrid_3d_to_cs_panels!(..., ExtensiveCellField())`
+(`cs_transport_helpers.jl`), which converts to density on the source mesh and
+back to cell mass on the target, so each level's global integral is conserved
+to the regridder's tolerance. The Poisson balance then closes continuity and
+the write-time replay gate verifies it.
 
 ## Initial-condition mass conservation
 

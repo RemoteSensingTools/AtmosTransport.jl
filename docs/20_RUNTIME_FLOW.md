@@ -48,7 +48,7 @@ step!(sim)
 └── invoke callbacks
 ```
 
-The implementation lives in `src/Models/DrivenSimulation.jl`. In simplified
+The implementation lives in `src/Models/driven_stepping.jl`. In simplified
 form:
 
 ```julia
@@ -62,8 +62,8 @@ else
     step!(sim.model, sim.Δt; meteo = sim)
 end
 
-sim.time += sim.Δt
 sim.iteration += 1
+sim.time = _clock_time(sim)     # Float64, from window and step counters
 
 if _uses_binary_transport_schedule(sim) &&
    sim.iteration == sim.current_window_end_iteration

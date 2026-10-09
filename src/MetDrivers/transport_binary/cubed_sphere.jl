@@ -3,47 +3,44 @@
 """
     _cs_section_elements(Nc, npanel, nlevel, section) -> Int
 
-Return the number of float elements for a given section in a CS binary.
-Panels are stored sequentially within each section.
+Number of float elements of a section in a cubed-sphere binary, the one table
+the writer and the reader share. Panels are stored sequentially within each
+section: cell fields are `Nc × Nc` per level, x faces `(Nc + 1) × Nc`, y faces
+`Nc × (Nc + 1)`, and vertical fluxes and CMFMC sit on the `nlevel + 1`
+interfaces.
 """
 function _cs_section_elements(Nc::Int, npanel::Int, nlevel::Int, section::Symbol)
-    if section === :m
-        return npanel * Nc * Nc * nlevel
-    elseif section === :dm
-        return npanel * Nc * Nc * nlevel
-    elseif section === :am
+    cells = npanel * Nc * Nc
+    if section in (:m, :dm, :dkg, :dtrain, :entu, :detu, :entd, :detd) ||
+       _is_gchp_vdiff_payload_section(section)
+        return cells * nlevel
+    elseif section in (:am, :dam)
         return npanel * (Nc + 1) * Nc * nlevel
-    elseif section === :bm
+    elseif section in (:bm, :dbm)
         return npanel * Nc * (Nc + 1) * nlevel
-    elseif section === :cm
-        return npanel * Nc * Nc * (nlevel + 1)
-    elseif section === :ps
-        return npanel * Nc * Nc
-    elseif _is_pbl_surface_payload_section(section)
-        return npanel * Nc * Nc
-    elseif _is_gchp_vdiff_payload_section(section)
-        return npanel * Nc * Nc * nlevel
-    elseif section === :dkg
-        return npanel * Nc * Nc * nlevel
-    elseif section === :cmfmc
-        return npanel * Nc * Nc * (nlevel + 1)
-    elseif section === :dtrain
-        return npanel * Nc * Nc * nlevel
-    elseif section === :entu || section === :detu ||
-           section === :entd || section === :detd
-        return npanel * Nc * Nc * nlevel
-    else
-        error("Unsupported CS section: $section")
+    elseif section in (:cm, :dcm, :cmfmc)
+        return cells * (nlevel + 1)
+    elseif _is_cs_2d_section(section)
+        return cells
     end
+    error("Unsupported CS section: $section")
 end
 
-"""
-    _pack_cs_window!(dest, offset, window, payload_sections, Nc, npanel)
+# The latent heat flux travels with the other PBL surface fields.
+@inline _cs_window_has_pbl_eflux(window) =
+    _transport_window_has_surface(window) && haskey(window, :surface) &&
+    hasproperty(window.surface, :eflux) && window.surface.eflux !== nothing
 
-Pack a CS window (with NTuple-of-panels fields) into a flat buffer.
-Each section's panels are stored sequentially: [P1][P2]...[P6].
+"""
+    _cs_window_section(window, section) -> NTuple of panels
+
+Return the per-panel arrays that a CS window NamedTuple stores for payload
+`section`, resolving PBL surface fields (`window.surface` or top-level
+fields), TM5 convection (`window.tm5_fields`), and GCHP VDIFF
+(`window.vdiff`) sub-tables.
 """
 @inline function _cs_window_section(window, section::Symbol)
+    section === :pbl_eflux && return window.surface.eflux
     if _is_pbl_surface_payload_section(section)
         if haskey(window, :surface) && window.surface !== nothing
             return getfield(window.surface, _pbl_surface_field_name(section))
@@ -68,6 +65,12 @@ Each section's panels are stored sequentially: [P1][P2]...[P6].
     return getfield(window, section)
 end
 
+"""
+    _pack_cs_window!(dest, offset, window, payload_sections, Nc, npanel)
+
+Pack a CS window (with NTuple-of-panels fields) into a flat buffer.
+Each section's panels are stored sequentially: [P1][P2]...[P6].
+"""
 function _pack_cs_window!(dest::Vector{FT}, offset::Int,
                            window, payload_sections::Vector{Symbol},
                            Nc::Int, npanel::Int) where FT
@@ -96,7 +99,7 @@ function _cs_section_panel_shape(Nc::Int, nlevel::Int, section::Symbol)
         return [Nc, Nc + 1, nlevel]
     elseif section in (:cm, :cmfmc)
         return [Nc, Nc, nlevel + 1]
-    elseif section === :ps || _is_pbl_surface_payload_section(section)
+    elseif _is_cs_2d_section(section)
         return [Nc, Nc]
     end
     throw(ArgumentError("unsupported CS section $(section)"))
@@ -129,6 +132,8 @@ function _validate_streaming_cs_window(writer::StreamingTransportBinaryWriter,
     _transport_window_has_vdiff_fields(window) &&
         append!(actual_sections, _GCHP_VDIFF_PAYLOAD_SECTIONS)
     _transport_window_has_value(window, :dkg) && push!(actual_sections, :dkg)
+    _cs_window_has_pbl_eflux(window) && push!(actual_sections, :pbl_eflux)
+    _transport_window_has_value(window, :cmfmc_cloud_base) && push!(actual_sections, :cmfmc_cloud_base)
     actual_sections == writer.payload_sections || throw(ArgumentError(
         "CS transport-binary window payload sections $(actual_sections) do not match " *
         "the writer contract $(writer.payload_sections)"))
@@ -147,17 +152,6 @@ function _validate_streaming_cs_window(writer::StreamingTransportBinaryWriter,
     return nothing
 end
 
-"""
-    open_streaming_cs_transport_binary(path, Nc, npanel, nlevel, nwindow, vc;
-                                       kwargs...) -> StreamingTransportBinaryWriter
-
-Open a CS transport binary for streaming per-window writes.
-
-`vc` is a `HybridSigmaPressure` vertical coordinate. The CS binary uses
-per-panel structured arrays with `StructuredDirectional` topology.
-`panel_convention` must be `"gnomonic"` or `"geos_native"` and is written to
-the header so runtime readers and output tools reconstruct the same mesh.
-"""
 function _normalize_cs_panel_convention(raw)
     norm = lowercase(String(raw))
     norm in ("gnomonic", "geos_native") && return norm
@@ -184,12 +178,16 @@ function _cs_default_geometry_tags(panel_convention)
 end
 
 """
-    open_streaming_cs_transport_binary(path, Nc, npanel, nlevel, nwindow, vc; kwargs...)
+    open_streaming_cs_transport_binary(path, Nc, npanel, nlevel, nwindow, vc;
+                                       kwargs...) -> StreamingTransportBinaryWriter
 
-Open a canonical v4 cubed-sphere binary for streaming window writes. The
-header records the complete panel convention and geometry law so readers
-reconstruct the same mesh. Each subsequent window must match the registered
-panel shapes and payload sections exactly.
+Open a canonical v4 cubed-sphere binary for streaming window writes. `vc` is a
+`HybridSigmaPressure` vertical coordinate; the payload is per-panel structured
+arrays with `StructuredDirectional` topology. The header records the panel
+convention (`"gnomonic"` or `"geos_native"`), the geometry law and
+`planet_radius` (the radius of the mesh on which the air masses were computed),
+so readers reconstruct the same mesh. Each subsequent window must match the
+registered panel shapes and payload sections exactly.
 """
 function open_streaming_cs_transport_binary(
         path::AbstractString,
@@ -215,14 +213,21 @@ function open_streaming_cs_transport_binary(
         include_tm5conv::Bool = false,
         include_gchp_vdiff::Bool = false,
         include_precomputed_dkg::Bool = false,
+        include_pbl_eflux::Bool = false,
+        include_cmfmc_cloud_base::Bool = false,
         panel_convention = "gnomonic",
         cs_definition = nothing,
         cs_coordinate_law = nothing,
         cs_center_law = nothing,
         longitude_offset_deg = nothing,
+        planet_radius::Real,
         extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}())
     include_dtrain && !include_cmfmc &&
         throw(ArgumentError("CS transport binaries cannot include dtrain without cmfmc"))
+    include_cmfmc_cloud_base && !include_cmfmc &&
+        throw(ArgumentError("CS transport binaries cannot include cmfmc_cloud_base without cmfmc"))
+    include_pbl_eflux && !include_surface &&
+        throw(ArgumentError("CS transport binaries cannot include pbl_eflux without the PBL surface sections"))
     include_precomputed_dkg && mass_basis !== :dry && throw(ArgumentError(
         "exact TM5 `:dkg` is defined on the runtime dry-air mass basis; " *
         "include_precomputed_dkg=true requires mass_basis=:dry"))
@@ -241,6 +246,8 @@ function open_streaming_cs_transport_binary(
     end
     include_gchp_vdiff && append!(payload_sections, _GCHP_VDIFF_PAYLOAD_SECTIONS)
     include_precomputed_dkg && push!(payload_sections, :dkg)
+    include_pbl_eflux && push!(payload_sections, :pbl_eflux)
+    include_cmfmc_cloud_base && push!(payload_sections, :cmfmc_cloud_base)
 
     elems_per_window = sum(_cs_section_elements(Nc, npanel, nlevel, s)
                            for s in payload_sections)
@@ -249,6 +256,7 @@ function open_streaming_cs_transport_binary(
                                       ncell, nface_h, nlevel, nwindow, vc,
                                       payload_sections, elems_per_window;
                                       FT=FT,
+                                      planet_radius=planet_radius,
                                       header_bytes=header_bytes,
                                       dt_met_seconds=dt_met_seconds,
                                       half_dt_seconds=half_dt_seconds,
@@ -265,6 +273,7 @@ function open_streaming_cs_transport_binary(
     panel_convention_norm = _normalize_cs_panel_convention(panel_convention)
     default_geometry = _cs_default_geometry_tags(panel_convention_norm)
 
+    revision = source_revision()
     merge!(header, Dict{String, Any}(
         # --- Runtime CS contract keys (single source of truth) ---
         # Emitted HERE, at the one choke point every CS writer funnels through,
@@ -277,6 +286,8 @@ function open_streaming_cs_transport_binary(
         # `validate_cs_writer_contract!`. See the 2026-05-31 contract audit.
         "runtime_substep_contract" => "binary_schedule",
         "preprocessor_contract" => "streaming_cs_v4",
+        "git_commit" => revision.commit,                # code that wrote the binary
+        "git_dirty" => revision.dirty != "clean",       # Bool, as in the lat-lon header
         "adaptive_substeps" => false,
         "Nc" => Nc,
         "npanel" => npanel,
@@ -320,6 +331,10 @@ function open_streaming_cs_transport_binary(
         "n_vdiff_v" => include_gchp_vdiff ? _cs_section_elements(Nc, npanel, nlevel, :vdiff_v) : 0,
         "n_vdiff_t" => include_gchp_vdiff ? _cs_section_elements(Nc, npanel, nlevel, :vdiff_t) : 0,
         "n_vdiff_qv" => include_gchp_vdiff ? _cs_section_elements(Nc, npanel, nlevel, :vdiff_qv) : 0,
+        "n_pbl_eflux" => include_pbl_eflux ? _cs_section_elements(Nc, npanel, nlevel, :pbl_eflux) : 0,
+        "n_cmfmc_cloud_base" => include_cmfmc_cloud_base ?
+            _cs_section_elements(Nc, npanel, nlevel, :cmfmc_cloud_base) : 0,
+        "cmfmc_cloud_base_payload" => include_cmfmc_cloud_base ? "top_down_layer_index_v1" : "none",
     ))
     isempty(extra_header) || _merge_transport_extra_header!(header, extra_header)
     header["panel_convention"] = _normalize_cs_panel_convention(header["panel_convention"])

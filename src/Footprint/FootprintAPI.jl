@@ -4,14 +4,15 @@
 #   * `run_cs_footprint_forward` — forward-only entry returning the
 #     scalar value of an objective at final time.
 #   * `cs_surface_emission_footprint` — main reverse-mode entry point.
-#     Builds the tape via `_record_cs_adjoint_tape`, seeds the adjoint
-#     from the objective, walks `_collect_surface_footprints`.
+#     Under `FullCheckpoint` it builds the tape via
+#     `_record_cs_adjoint_tape`, seeds the adjoint from the objective and
+#     walks `_collect_surface_footprints`; `StrideCheckpoint` and
+#     `RevolveCheckpoint` dispatch to `_collect_surface_footprints_stride`
+#     / `_collect_surface_footprints_revolve`.
 #   * `cs_surface_emission_footprint_from_seed` — variant that takes an
 #     explicit final-time adjoint seed (`dJ/drm_final`) instead of
-#     constructing it from one of the built-in objectives.
-#
-# Relocated unchanged from `src/Adjoints/Adjoints.jl` lines 867-1046;
-# no semantic change.
+#     constructing it from one of the built-in objectives; same schedule
+#     dispatch.
 # ---------------------------------------------------------------------------
 
 """
@@ -72,17 +73,19 @@ Generate reverse-mode footprints for a scalar final-time objective with
 respect to surface-emission rates at each prior model step.
 
 This is a kernelized prototype VJP generator for tests and diagnostics.
-Supported CS split-sweep schemes are `UpwindScheme()`,
-`SlopesScheme(NoLimiter())`, `PPMScheme(NoLimiter())`, and monotone
-`PPMScheme()`. The limited PPM path stores tracer branch states from the
+Supported CS schemes are the split-sweep `UpwindScheme()`,
+`SlopesScheme(NoLimiter())`, `PPMScheme(NoLimiter())` and monotone
+`PPMScheme()`, and `LinRoodPPMScheme` (ORD 5 or 7) with upwind vertical
+transport. The limited PPM path stores tracer branch states from the
 base trajectory; pass `base_emission_rates` when differentiating around
 nonzero surface emissions.
 Optional `ImplicitVerticalDiffusion` support transposes the Backward-Euler
 column solve in kernels on CPU/GPU and uses the same midpoint placement as
 surface-flux runtime transport. Optional `CMFMCConvection` support transposes
 the well-mixed sub-cloud, updraft, and tendency passes; optional
-`TM5Convection` support replays the same column matrix and applies the
-transposed LU solve after each reverse transport step.
+`TM5Convection` and `CMFMCMatrixConvection` support replays the same
+column matrix and applies the transposed LU solve after each reverse
+transport step.
 
 `tape_storage` selects the per-tape-slot storage policy (`:device`,
 `:pinned_host`, or `:mmap`). When `tape_storage = :mmap`, the optional
@@ -331,7 +334,7 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
             # pass needs an initial rm state; the from-seed flow uses
             # `base_panels_rm0` for the base trajectory, falling back
             # to zero when unspecified (matching the FullCheckpoint
-            # from-seed contract above).
+            # from-seed contract below).
             tape_rm0 = base_panels_rm0 === nothing ?
                 _zero_panel_tuple_like(panels_m0) :
                 base_panels_rm0

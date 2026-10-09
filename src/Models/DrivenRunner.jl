@@ -44,7 +44,7 @@ is:
    wraps chemistry and surface sources into the model with `with_chemistry`
    and `with_emissions`.
 4. The runtime loop below calls `run_window!(sim)` for LL/RG or `step!(sim)`
-   for CS. Those functions live in `DrivenSimulation.jl`.
+   for CS. Those functions live in `driven_stepping.jl`.
 5. `DrivenSimulation.step!` refreshes time-varying forcing from the driver,
    then calls `TransportModel.step!` or, for binary-scheduled substeps,
    `transport_step!` plus an end-of-window `convection_chemistry_step!`.
@@ -77,7 +77,7 @@ using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 CubedSphereState, total_air_mass, total_mass, tracer_names,
                 tracer_index, get_tracer
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, nlevels
-using ..Operators: LinRoodPPMScheme, PPMScheme, SlopesScheme, UpwindScheme,
+using ..Operators: LinRoodPPMScheme, PPMScheme, CW84Limiter, FV3ScalarProfile, SlopesScheme, UpwindScheme,
                   ImplicitVerticalDiffusion,
                   uses_diffusive_surface_flux_boundary,
                   AbstractConvection,
@@ -204,7 +204,7 @@ function _run_driven_simulation(cfg::AbstractDict, arch::AbstractArchitecture)
     binary_paths = expand_binary_paths(input_cfg)
     isempty(binary_paths) &&
         throw(ArgumentError("[input] resolved to an empty binary list"))
-    # Section timing instrumentation, off unless ATMOSTR_TIMERS=1.
+    # Section timing instrumentation, off unless ATMOSTR_TIMERS is 1/true/on/yes.
     # Enabled here so every section accumulator covers the whole driven
     # loop including snapshot capture / write.
     timers_on = SectionTimer.maybe_enable_from_env!()
@@ -231,10 +231,10 @@ end
 
 function _run_driven_simulation_inputs(cfg, input_cfg, binary_paths, arch::AbstractArchitecture)
     # Dispatch on the first binary's grid_type — the ownership boundary
-    # (binary header owns topology, TOML owns physics kinds). The
-    # capability probe also runs the load-time
-    # gates (stale-binary, cm-continuity) as a side effect of opening
-    # the reader in `inspect_binary`.
+    # (binary header owns topology, TOML owns physics kinds). Opening the
+    # reader in `inspect_binary` runs the header-contract and file-size
+    # checks; the cm-continuity replay gate runs later, when
+    # `TransportBinaryDriver` opens each binary.
     binary_caps = [(path = path, caps = inspect_binary(path; io = devnull))
                    for path in binary_paths]
     for item in binary_caps
@@ -570,7 +570,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     @info @sprintf("Final air-mass change vs initial state:  %.3e", (m1 - m0) / m0)
     for name in tracer_names(model.state)
         rm0 = Float64(tracer_masses0[name])
-        rm1 = Float64(total_mass(model.state, name))
+        rm1 = total_mass(model.state, name)
         if name in source_tracers
             @info @sprintf("Final model storage for %s (with source): %.12e carrier-air kg",
                            String(name), rm1)
@@ -660,10 +660,10 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                 error("CS binary has unsupported mass_basis $(basis_sym); expected :dry or :moist")
 
     # CS tracers flow through the unified IC pipeline.
-    # DryBasis is the default per invariant 14; MoistBasis
-    # requires qv from window1 (feedback_vmr_to_mass_basis_aware), which
-    # CS windows do not carry today — so moist binaries error explicitly
-    # here rather than producing silently wrong tracer mass.
+    # DryBasis is the default runtime basis; MoistBasis requires qv from
+    # window 1 to convert the dry IC VMR, which CS windows do not carry —
+    # so moist binaries error explicitly here rather than producing
+    # silently wrong tracer mass.
     basis_sym === :moist &&
         error("CS driven runner does not yet support moist-basis binaries: " *
               "`pack_initial_tracer_mass` needs qv, which canonical CS v4 " *
@@ -884,7 +884,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                    time() - t0, snapshot_count[], total_hour)
 
     for name in keys(tracer_init)
-        rm1 = Float64(total_mass(state, name))
+        rm1 = total_mass(state, name)
         if name in source_tracers
             @info @sprintf("  %s total mass (with source): %.6e kg", name, rm1)
         else
@@ -893,9 +893,9 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     end
 
     if do_snapshots
-        # BasisT was bound at model construction (dry by default on CS per
-        # invariant 14); reuse it so the NetCDF records the same basis the
-        # `air_mass` arrays were stored under.
+        # BasisT was bound at model construction (dry by default on CS);
+        # reuse it so the NetCDF records the same basis the `air_mass`
+        # arrays were stored under.
         _flush_single_output!(output_spec.partition, timer, output_spec,
                               snapshots, grid;
                               mass_basis = BasisT === DryBasis ? :dry : :moist)

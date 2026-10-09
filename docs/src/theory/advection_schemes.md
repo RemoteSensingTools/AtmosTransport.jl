@@ -4,14 +4,15 @@ The runtime ships **four** flux-form advection schemes, each behind the
 abstract type `AbstractAdvectionScheme` declared in
 `src/Operators/Advection/schemes.jl`. Upwind, slopes, and standard PPM use
 directional sweeps. Lin–Rood couples the two horizontal directions and uses
-upwind vertically. The model-facing operator interface dispatches to the
+upwind vertically by default. On the cubed sphere, PPM and Lin–Rood can
+instead use FV3's vertical tracer profile (`vertical = "fv3_kord8"`). The model-facing operator interface dispatches to the
 appropriate transport path.
 
 | Scheme | Smooth-flow accuracy | Monotone? | Positive? | LL | CS | RG |
 |---|---|---|---|---|---|---|
 | `UpwindScheme` | 1st order (donor cell) | yes (trivially) | preserves a non-negative input under its CFL contract; also supports signed tracers | yes | yes | **yes — RG's only option today** |
 | `SlopesScheme{L}` | 2nd order in smooth regions (van Leer / Russell-Lerner) | yes if `L = MonotoneLimiter` (default) | no zero clamp in the default signed path; `PositivityLimiter` is explicit opt-in | yes | yes | no (the face-indexed Strang path restricts to `AbstractConstantScheme`) |
-| `PPMScheme{L}` | 3rd order in smooth regions (Colella-Woodward 1984) | profile-limited with `MonotoneLimiter`; full CS update can undershoot | signed; small negative column means observed in CS runs | yes | yes — covered by `test/core/test_cubed_sphere_advection.jl` | no (same rejection) |
+| `PPMScheme{L,V}` | 2nd order: limited Colella–Woodward (1984) edges set a Russell–Lerner slope. With `L = CW84Limiter` the flux integrates the limited parabola (the complete CW84 scheme). With `V = FV3ScalarProfile` the vertical sweep integrates FV3's `kord = 8` parabola (3rd order or better in smooth regions) | profile-limited with `MonotoneLimiter`, but the 1-D update over- and undershoots; with `CW84Limiter` monotone in uniform 1-D flow (Courant number ≤ 1) | signed; small negative column means observed in CS runs with `MonotoneLimiter`. `CW84Limiter` keeps a non-negative tracer non-negative in every sweep in which no cell exports more than its air mass. The FV3 vertical profile is positive definite | yes (default vertical only) | yes — covered by `test/core/test_cubed_sphere_advection.jl` and `test/core/test_fv3_vertical_profile.jl` | no (same rejection) |
 | `LinRoodPPMScheme{ORD}` | piecewise-parabolic; `ORD ∈ {5, 7}` selects the boundary stencil | profile-limited, but the full split update can undershoot | signed; not positivity-preserving | n/a | yes — uses FV3 cross-term advection (`fv_tp_2d_cs!`) | n/a |
 
 The accuracy column describes the **per-face
@@ -31,13 +32,19 @@ Choose the algorithm explicitly when comparing runs:
 |---|---|---|
 | `scheme = "upwind"` | `UpwindScheme()` | upwind |
 | `scheme = "slopes"` | `SlopesScheme(MonotoneLimiter())` | slopes |
-| `scheme = "ppm"` | `PPMScheme(MonotoneLimiter())` | PPM |
+| `scheme = "ppm"` | `PPMScheme(MonotoneLimiter())` | PPM-informed slopes, as horizontally |
+| `scheme = "ppm", limiter = "cw84"` | `PPMScheme(CW84Limiter())` | complete CW84 PPM, as horizontally |
+| `scheme = "ppm", vertical = "fv3_kord8"` | `PPMScheme(MonotoneLimiter(), FV3ScalarProfile())` (CS only) | FV3 `scalar_profile`, `kord = 8`, positive definite |
+| `scheme = "ppm", vertical = "fv3_kord8_signed"` | `PPMScheme(MonotoneLimiter(), FV3ScalarProfile(; positive_definite = false))` (CS only) | FV3 `scalar_profile`, `kord = 8`, for signed tracers |
 | `scheme = "linrood", ppm_order = 5` | `LinRoodPPMScheme(5)` (CS only) | upwind |
 | `scheme = "linrood", ppm_order = 7` | `LinRoodPPMScheme(7)` (CS only) | upwind |
+| `scheme = "linrood", ppm_order = 7, vertical = "fv3_kord8"` | `LinRoodPPMScheme(7; vertical = PPMScheme(; vertical = FV3ScalarProfile()))` (CS only) | FV3 `scalar_profile`, `kord = 8` |
 
 Omitting `ppm_order` for Lin–Rood selects 5. Setting it with `scheme = "ppm"`
-is an error: standard split PPM has no order selector. Alternative limiter
-objects are selected through the Julia constructors, not a TOML limiter key.
+is an error: standard split PPM has no order selector. `vertical` is only
+accepted with `scheme = "ppm"` or `"linrood"`, and `limiter` (`"monotone"`, the
+default, or `"cw84"`) only with `scheme = "ppm"`. `NoLimiter` and
+`PositivityLimiter` are selected through the Julia constructors.
 Packed tracer arrays, GPU workgroup sizes, and copy-back or ping-pong execution
 are implementation choices within a scheme, not additional algorithms.
 
@@ -80,28 +87,97 @@ formula derivation in that function's docstring.
   argument (see [Mass conservation](@ref) for the precise statement
   and round-off bounds).
 
-## Putman-Lin PPM (`PPMScheme`)
+## PPM-informed slopes (`PPMScheme`)
 
-Piecewise-parabolic reconstruction (Colella & Woodward 1984) with a
-parabolic-edge profile:
+`PPMScheme` builds the piecewise parabola of Colella & Woodward (1984) in each
+cell,
 
 ```math
-χ_c(x) \;\approx\; \chi^L_c \;+\; \xi(\Delta\chi_c \;+\; \chi^{(6)}_c (1 - \xi))
+χ_c(ξ) \;=\; χ^L_c + ξ\bigl(Δχ_c + χ^{(6)}_c (1 - ξ)\bigr), \qquad 0 \le ξ \le 1,
 ```
 
-where `ξ = (x - x_{c-1/2})/Δx_c`, `Δχ_c = χ^R_c − χ^L_c`, and
-`χ^{(6)}_c = 6(χ_c − ½(χ^L_c + χ^R_c))` is the curvature parameter.
-The face flux is the integral of this parabola over the swept region
-`[x_face − u Δt, x_face]`.
+with `Δχ_c = χ^R_c − χ^L_c` and `χ^{(6)}_c = 6(χ_c − ½(χ^L_c + χ^R_c))`. The
+edge values come from the uniform-index fourth-order formula
+`χ_{c+½} = 7/12 (χ_c + χ_{c+1}) − 1/12 (χ_{c−1} + χ_{c+2})` and are limited with
+the Colella–Woodward monotonicity conditions (`_ppm_limit_profile`).
+
+The face flux does not integrate the parabola. Only the limited edge on the
+outflow side is used: it sets the edge offset `s_x = m_c (χ^R_c − χ_c)` (outflow
+to the right) of the Russell–Lerner flux above (`_slopes_face_flux`). The update
+is therefore second order, with a PPM-informed slope. Donor layers within two
+layers of the model top or surface have no slope (upwind flux).
+
+This default is not monotone: the unlimited fourth-order edge can lie outside
+the range of its neighbouring cell means, and the linear flux ignores the
+parabola's curvature. A box or spike advected 100 steps around a 40-cell ring
+undershoots to −0.16 (box, Courant number 0.7) and overshoots to 1.015 (box,
+0.3) on a [0, 1] field (`test/core/test_ppm_cw84_limiter.jl`).
+
+**Complete CW84 PPM (`limiter = "cw84"`, `PPMScheme(CW84Limiter())`).** Three
+changes give the scheme of Colella & Woodward (1984):
+
+1. Edges use van Leer-limited slopes (CW84 eqs. 1.7–1.8),
+   ```math
+   χ_{c+1/2} = \tfrac12 (χ_c + χ_{c+1}) - \tfrac16 (δχ_{c+1} - δχ_c), \qquad
+   δχ_c = \operatorname{minmod}\bigl(\tfrac12 (χ_{c+1} - χ_{c-1}),\, 2(χ_{c+1} - χ_c),\, 2(χ_c - χ_{c-1})\bigr),
+   ```
+   so each edge lies between its two neighbouring cell means. Where neither
+   slope is limited this equals the fourth-order edge above.
+2. The profile is limited with the same monotonicity conditions.
+3. The flux is the mass flux times the parabola's mean over the swept
+   fraction `α = |F|/m` of the donor cell (CW84 eq. 1.12). For outflow to the
+   right this is `χ_c + (1 − α)(b_R − α b_0)` with `b_R = χ^R_c − χ_c` and the
+   curvature `b_0 = (χ^L_c − χ_c) + (χ^R_c − χ_c)`; it enters
+   `_slopes_face_flux` as the moment `s_x = m_c (b_R − α b_0)`
+   (`_ppm_raw_moments`).
+
+The stencil is the same six cells, so halo widths do not change. In uniform
+one-dimensional flow with Courant numbers up to 1 the update is monotone; on the ring
+above it stays in [0, 1] in Float32 and Float64. Every limited parabola is
+bounded by the neighbouring cell means, so within one sweep a cell's tracer
+mass stays non-negative as long as the fractions of the cell swept out through
+its two faces sum to at most 1. The runtime outflow budgets aim at this but
+are computed from the air mass at the start of the step
+(`_cs_static_palindrome_subcycle_count`), so positivity of complete runs is
+measured, not proven. Advecting one period of a sine at Courant number 0.4, the L2 error falls
+by 4.05 from 80 to 160 cells (3.46 for the default) and is 18% lower at 160
+cells; at 20 cells it is 29% higher, because the profile limiter flattens the
+sine's extrema. The cubed-sphere adjoint supports both the monotone and CW84
+limiters (`_ppm_face_coeffs`); the run log labels the option `PPM, CW84`.
+
+**Vertical reconstruction.** On the cubed sphere,
+`PPMScheme(; vertical = FV3ScalarProfile())` (TOML `vertical = "fv3_kord8"`)
+replaces the vertical face flux with the profile GEOS-Chem High Performance
+uses for tracers: FV3's `scalar_profile` with `kord = 8`. Its edges solve a
+compact tridiagonal system weighted by layer air mass. They are limited with
+large-scale constraints, Huynh's second constraint and a positive-definite
+limiter. The flux integrates the donor layer's parabola over the swept
+fraction. The positive-definite profile flattens layers whose mean is not
+positive, so tracers that become negative (flux anomalies, for example) need
+`vertical = "fv3_kord8_signed"` (FV3's `iv = 1`). Equations, limiter details and tests are in
+[Vertical transport](vertical_transport.md), section 4.
+
+**Measured accuracy.** A Gaussian bump is translated 30 layers on a uniform
+grid; `test/core/test_fv3_vertical_profile.jl` holds a version of this as a
+test. Doubling the bump width from 6 to 12 to 24 layers cuts the RMS error:
+- 4× for `slopes` and the default PPM (second order);
+- 11–23× for the FV3 vertical profile (third order or better);
+- 2× for upwind.
+
+The FV3 profile is 4–900 times more accurate than the default for widths of
+3–24 layers and Courant numbers of 0.01–0.3 (output:
+`/temp1/cfranken/scratch/fv3_vertical/translation_probe.txt`).
 
 **Properties:**
-- 3rd order in smooth regions (one above Slopes); local accuracy
-  drops to first order at limiter saturation.
+- Second order in smooth regions (horizontal sweeps and default vertical);
+  local accuracy drops to first order at limiter saturation.
 - Monotonicity controlled by the limiter parameter; without a
   limiter PPM is **not monotone** and can produce small oscillations
-  near discontinuities.
+  near discontinuities. The FV3 vertical profile is positive definite but
+  not monotone.
 - Shipped on lat-lon AND cubed-sphere structured layouts (the CS
   case is exercised by `test/core/test_cubed_sphere_advection.jl`).
+  The FV3 vertical profile is cubed-sphere only.
   Face-connected PPM for the **reduced-Gaussian** topology is not
   currently wired — and neither is `SlopesScheme` on RG. The
   face-indexed Strang path restricts to `AbstractConstantScheme`, so
@@ -119,7 +195,7 @@ the higher-order scheme's bounds on the intended workload.
 
 The cubed-sphere variant. Extends PPM with the **two-step Lin-Rood
 splitting** (`fv_tp_2d_cs!` in
-`src/Operators/Advection/LinRood.jl`) so the X and Y sweeps see each
+`src/Operators/Advection/linrood_horizontal.jl`) so the X and Y sweeps see each
 other's intermediate fluxes via the inner-edge flux-and-slope rotation
 that FV3 uses internally. The runtime pairs this horizontal update with
 vertical upwind. Two edge-value families are selectable:
@@ -143,13 +219,15 @@ small numerical noise that survives at the panel boundaries.
 
 ## Limiters
 
-Three selectable limiter types are declared in `schemes.jl`; their formulas
-live in `src/Operators/Advection/limiters.jl`:
+Four selectable limiter types are declared in `schemes.jl`; their formulas
+live in `src/Operators/Advection/limiters.jl` and, for the PPM edges and
+moments, `reconstruction.jl`:
 
 | Limiter | What it enforces | Use case |
 |---|---|---|
 | `NoLimiter()` | unlimited centered slope / parabola | smooth-flow benchmarks where you want the order-N error rate without limiter clipping |
 | `MonotoneLimiter()` (default) | van Leer minmod slope: `minmod(central, 2forward, 2backward)`, where `central = (forward + backward)/2`. Bounds the reconstructed profile relative to neighboring values and supports signed tracers. | production runs, including anomaly tracers |
+| `CW84Limiter()` (`PPMScheme` only) | the complete Colella–Woodward PPM: van Leer-limited edges, the monotone profile limiter, and the swept-parabola flux. Monotone in uniform 1-D flow; non-negative in every sweep in which no cell exports more than its air mass. | tracers that must stay non-negative under PPM (fossil and other emission tracers) |
 | `PositivityLimiter()` | one-sided clip that drops the slope where the reconstruction would go negative at a face. **Weaker than `MonotoneLimiter`**: positivity-only, may still create new local maxima from large gradients. | tracers that must stay non-negative (mole fractions, water vapor, aerosol concentrations) AND tolerate occasional new maxima |
 
 Limiter primitives are written branchless (`ifelse(a*b > 0, ..., 0)`)
@@ -185,13 +263,12 @@ Strang palindrome use the same per-direction count to preserve time
 symmetry.
 
 `_subcycling_pass_count` in
-`src/Operators/Advection/StrangSplitting.jl` is the per-direction
+`src/Operators/Advection/subcycling.jl` is the per-direction
 counter; the structured per-direction max-α helpers are
 `_x_subcycling_pass_count` / `_y_subcycling_pass_count` /
-`_z_subcycling_pass_count` in the same file. The CS analogue is
-`_cs_static_subcycle_count` plus the palindrome-aware
-`_cs_static_palindrome_subcycle_count` in
-`src/Operators/Advection/CubedSphereStrang.jl`. The CS palindrome
+`_z_subcycling_pass_count` in the same file. The CS analogue is the
+palindrome-aware `_cs_static_palindrome_subcycle_count` in
+`src/Operators/Advection/cs_subcycling.jl`. The CS palindrome
 budget sums all six legs and uses
 `2·(out_x + out_y + out_z) / m_start` — see
 [Operators on top of the binary](../for_tm5_gchp_users/operators_on_binaries.md#cubed-sphere-palindrome-and-the-positivity-budget)
@@ -312,18 +389,19 @@ between them. Performance-tuning notes live beside the implementation.
 | Concept | File / function |
 | --- | --- |
 | Scheme abstract root | `src/Operators/Advection/schemes.jl::AbstractAdvectionScheme` |
-| `UpwindScheme`, `SlopesScheme{L}`, `PPMScheme{L}`, `LinRoodPPMScheme{ORD}` | `src/Operators/Advection/schemes.jl` |
+| `UpwindScheme`, `SlopesScheme{L}`, `PPMScheme{L,V}`, `LinRoodPPMScheme{ORD,Z}` | `src/Operators/Advection/schemes.jl` |
+| FV3 vertical profile (`FV3ScalarProfile`) | `src/Operators/Advection/vertical_fv3_profile.jl` |
 | Limiter primitives (branchless, GPU-safe) | `src/Operators/Advection/limiters.jl` |
 | Slopes face flux (Russell-Lerner formula) | `src/Operators/Advection/reconstruction.jl::_slopes_face_flux` |
 | Structured-grid Strang palindrome | `src/Operators/Advection/StrangSplitting.jl::strang_split!` |
 | Cubed-sphere Strang palindrome | `src/Operators/Advection/CubedSphereStrang.jl::strang_split_cs!` |
-| CFL subcycle counters (structured) | `StrangSplitting.jl::_subcycling_pass_count`, `_static_*_subcycle_count` |
-| CFL subcycle counters (CS) | `CubedSphereStrang.jl::_cs_static_subcycle_count`, `_cs_static_palindrome_subcycle_count` |
+| CFL subcycle counters (structured) | `subcycling.jl::_subcycling_pass_count`, `_x/_y/_z_subcycling_pass_count` |
+| CFL subcycle counters (CS) | `cs_subcycling.jl::_cs_static_palindrome_subcycle_count` |
 | CS multi-tracer fused kernels (X / Y / Z) | `src/Operators/Advection/multitracer_kernels.jl` |
 | CS paired split seam exchange | `src/Operators/Advection/CubedSphereSeams.jl` |
 | CS paired split seam adjoint | `src/Adjoints/CubedSphereSeams.jl` |
-| CS panel-edge halo sync | `src/Grids/PanelConnectivity.jl` + `cs_transport_helpers.jl::_propagate_cs_outflow_to_halo!` |
-| Lin-Rood cross-term + del-2 damping | `src/Operators/Advection/LinRood.jl` |
+| CS panel-edge halo sync | `src/Grids/PanelConnectivity.jl` + `cs_native_fluxes.jl::_propagate_cs_outflow_to_halo!` |
+| Lin-Rood cross-term + del-2 damping | `src/Operators/Advection/linrood_horizontal.jl` (driver), `LinRood.jl` (kernels, damping) |
 
 ## What's next
 

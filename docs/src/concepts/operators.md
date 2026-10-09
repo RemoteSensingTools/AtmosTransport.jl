@@ -85,7 +85,7 @@ specialized kernels via Julia's multiple dispatch on the grid type.
 | --- | --- | --- |
 | `UpwindScheme` | First order | Donor-cell; cheap, very diffusive. |
 | `SlopesScheme{L}` | Second order | Russell-Lerner slopes (TM5 `sl_advection` port). Limiter parameter `L`. |
-| `PPMScheme{L}` | Third order | Putman-Lin Piecewise Parabolic. Limiter parameter `L`. Supported on LL and CS split-sweep, including vertical PPM; RG supports upwind only. |
+| `PPMScheme{L,V}` | Second order | Limited piecewise-parabolic edges set a Russell–Lerner slope. Limiter parameter `L`. `V = FV3ScalarProfile` (CS only) integrates FV3's `kord = 8` parabola in the vertical sweep. Supported on LL and CS split-sweep; RG supports upwind only. |
 | `LinRoodPPMScheme` | Piecewise parabolic | FV3 horizontal cross terms (CS only), paired with vertical upwind. `ppm_order=5` or `7` selects the edge-value family; both share the same interior reconstruction. |
 
 Reconstruction order does not establish the temporal order or positivity of
@@ -93,9 +93,11 @@ the complete transport update. See [Advection schemes](@ref) for the boundary
 treatment and [Validation status](@ref) for measured scheme coverage.
 
 Limiter parameter `L` ranges over `NoLimiter`, `MonotoneLimiter`,
-`PositivityLimiter` — declared in the same file. `PPMScheme()` defaults
-to `MonotoneLimiter()`. The default limiter is signed and constant-offset
-equivariant; only `PositivityLimiter` uses tracer zero as a bound.
+`PositivityLimiter` and, for `PPMScheme` only, `CW84Limiter` (the complete
+Colella–Woodward PPM) — declared in the same file. `PPMScheme()` defaults
+to `MonotoneLimiter()`. The monotone and CW84 limiters are signed and
+constant-offset equivariant; only `PositivityLimiter` uses tracer zero as a
+bound.
 
 **TOML config** (preferred form):
 

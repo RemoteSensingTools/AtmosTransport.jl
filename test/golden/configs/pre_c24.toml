@@ -1,0 +1,33 @@
+# ERA5 spectral (December 2021) → cubed sphere C24 through a 96 × 48 staging grid,
+# ml137_tropo34 levels, Float64. From config/preprocessing/era5_cs_c24_transport_binary.toml.
+
+[input]
+spectral_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/spectral_hourly"
+thermo_dir   = "~/data/AtmosTransport/met/era5/0.5x0.5/physics"
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory  = "@OUTPUT@"
+include_qv = false
+mass_basis = "dry"
+
+[grid]
+type = "cubed_sphere"
+Nc = 24
+regridder_cache_dir = "@OUTPUT@/_regrid_cache"
+staging_nlon = 96
+staging_nlat = 48
+echlevs = "ml137_tropo34"
+level_top = 1
+level_bot = 137
+merge_min_thickness_Pa = 1000.0
+
+[numerics]
+float_type   = "Float64"
+dt           = 900.0
+met_interval = 3600.0
+
+[mass_fix]
+enable                = true
+target_ps_dry_pa      = 98726.0
+qv_global_climatology = 0.00247
