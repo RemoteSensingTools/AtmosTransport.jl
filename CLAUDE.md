@@ -40,12 +40,21 @@ mass basis, supported operators, and load-time consistency gates.
 - Entry point: `scripts/run_transport.jl` ->
   `run_driven_simulation(cfg)` in `src/Models/DrivenRunner.jl`
 - Top-level include order follows `src/AtmosTransport.jl`:
-  `Architectures -> Quantities -> Parameters -> Grids -> State -> Output ->`
-  `MetDrivers -> Operators -> Tape -> Adjoints -> Regridding -> Preprocessing ->`
-  `Visualization -> Models -> Downloads`.
+  `Architectures -> SectionTimer -> Quantities -> Parameters -> Grids -> State ->`
+  `Output -> MetDrivers -> Operators -> Tape -> Adjoints -> Regridding ->`
+  `Preprocessing -> Visualization -> Models -> Downloads`. `Footprint/` and
+  `Inversion/` are not modules: `Adjoints.jl` includes their files.
 - Later modules may depend on earlier ones, never the reverse.
+- Each `src/` folder has a `README.md` (purpose, entry points, file map,
+  common tasks, invariants; `Downloads/sources/` is covered by its parent's);
+  read it before editing the folder.
+- Physical constants live in `src/Parameters/PhysicalConstants.jl`; import
+  them by name instead of writing literals.
 - Active code lives in `src/`, tests in `test/`, tools in `scripts/`, configs
   in `config/`, and the maintained manual in `docs/src/`.
+- File to focused test: `grep -rl <function> test/core`. Golden outputs of
+  whole preprocessing and runtime cases are in `test/golden/` (see its README);
+  check them before and after refactors.
 - Physics should dispatch on types, not on ad-hoc grid or scheme conditionals.
 - GPU extensions load when `using CUDA` or `using Metal` happens before
   `using AtmosTransport`; `scripts/run_transport.jl` preloads the requested

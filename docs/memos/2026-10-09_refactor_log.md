@@ -310,3 +310,57 @@ the RG contract header (the positivity gate is wired into `process_day`).
   species mass with the old dry-air molar mass (step 2 changed the runtime's);
   it now uses `DRY_AIR_MOLAR_MASS`, `SPECIES_MOLAR_MASS`, `STANDARD_GRAVITY`.
 - The `cs_surface_flux_jacobian` docstring was attached to the helper above it.
+
+### Step 2 — folder READMEs, CLAUDE.md code map
+
+Every `src/` folder now has a README (purpose, entry points, file map, common
+tasks, invariants, focused tests): new for Adjoints, Diagnostics, Downloads,
+Footprint, Inversion, MetDrivers/transport_binary, Models/initial_conditions,
+Models/runner, Output/observations, Parameters, Preprocessing (and its
+`sources/`, `transport_binary/`), Quantities, Regridding, Tape, Visualization.
+They were written from the code and fact-checked by Codex. `CLAUDE.md` gains
+`SectionTimer` in the include order, that `Footprint/` and `Inversion/` are
+included into `Adjoints`, the READMEs, the constants rule, and the file → test
+and golden-harness pointers.
+
+### Findings from writing the READMEs (code reading, not yet acted on)
+
+Behavior worth a decision:
+- Visualization rebuilds cubed-sphere meshes from `Nc` and the panel
+  convention only, ignoring the recorded definition and laws: snapshots on a
+  non-default definition would be rasterized on the wrong geometry.
+- ERA5 N320 source traits `has_surface`/`has_convection` return `false` even
+  when the N320 writer emits those sections; its `surface_path` is checked
+  when a day is opened but never read.
+- `[mass_fix] mode = "initial_endpoint"` silently skips the pin for ERA5 N320
+  and MERRA-2 (target NaN); GEOS initializes the target from the first window.
+- The GEOS path ignores `ATMOSTR_NO_WRITE_REPLAY_CHECK`; the RG path writes
+  to the final file name instead of a staged `.tmp`.
+- The positivity gates differ: CS checks `2(out_x + out_y + out_z)` against
+  `min(m, m_next)`, lat-lon and RG each direction against `m`, so one
+  `positivity_cfl_limit` means different things.
+- `cs_tape_byte_estimate` counts the split-sweep tape layout also for Lin-Rood,
+  whose records are larger.
+- Downloads: OPeNDAP is not implemented (the MERRA-2 recipe's default),
+  `max_concurrent` is unused, HTTP/GCS ignore `retry_wait`, the default daily
+  ERA5 file name repeats within a month when no template is set, and
+  `data_root` does not expand `$ATMOSTRANSPORT_DATA_ROOT`.
+- Lat-lon and RG surface fluxes default to bilinear sampling, CS to
+  conservative regridding; streaming writers default to `mass_basis = :moist`,
+  `write_transport_binary` to `:dry` (all in-tree callers pass it).
+
+Public API with no production caller: `State.MetState`,
+`diagnose_cm_from_continuity_vc!`/`_ka!`, `reset_workspace!` (exported, no
+methods), `ERA5SpectralReader`/`end_of_day_seed` (tests only),
+`SurfaceLapseTemperature` (tests only), the single-surface perturbation
+helpers in `Adjoints`.
+
+Duplication for Phase 6: the block-sum coarsening helpers exist in both
+`cubed_sphere_geos.jl` and `cubed_sphere_coarsen.jl`; the ERA5 lat-lon header
+is built in `core.jl` beside `_transport_common_header`; the static and
+time-varying surface-flux loaders repeat reorientation and unit conversion;
+the own-loop CS writers repeat balance → cm → verify → promote.
+
+Stale documentation (module docstrings, history comments, citations of
+removed files and "invariant N" numbers) is listed in the README reports and
+goes with Phase 7.
