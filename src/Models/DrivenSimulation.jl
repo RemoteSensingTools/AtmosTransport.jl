@@ -89,6 +89,7 @@ mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, PT}
     use_midpoint_forcing        :: Bool
     interpolate_fluxes_within_window :: Bool
     air_mass_reset_mode         :: Symbol
+    physics_every_substep       :: Bool
 end
 
 @inline _basis_symbol(::DryBasis) = :dry

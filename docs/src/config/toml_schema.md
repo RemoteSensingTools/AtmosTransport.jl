@@ -132,6 +132,8 @@ does not recover precision already lost in the stored forcing.
 start_window = 1              # default: 1 — first window to process
 stop_window  = 24             # default: nothing — uses the binary's full range
 air_mass_reset_mode = "preserve_tracer_mass"
+# physics_cadence = "window"  # default; "substep" runs convection and chemistry
+                              # every advection substep (cadence comparisons)
 ```
 
 `stop_window` is the inclusive last window; setting it lets you

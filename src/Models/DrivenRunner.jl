@@ -317,6 +317,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                             "run.air_mass_reset_mode = \"none\", " *
                             "\"preserve_vmr\", or \"preserve_tracer_mass\""))
     air_mass_reset_mode = get(run_cfg, "air_mass_reset_mode", "preserve_tracer_mass")
+    physics_cadence = get(run_cfg, "physics_cadence", nothing)
 
     init_cfg = get(cfg, "init", Dict{String, Any}())
     tracer_specs = something(_parse_tracer_specs(cfg),
@@ -448,6 +449,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                     stop_window = stop_window,
                                     initialize_air_mass = initialize_air_mass,
                                     air_mass_reset_mode = air_mass_reset_mode,
+                                    physics_cadence = physics_cadence,
                                     surface_sources = surface_sources,
                                     chemistry = recipe.chemistry,
                                     # seconds since RUN start — see the CS loop
@@ -608,6 +610,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                             "run.air_mass_reset_mode = \"none\", " *
                             "\"preserve_vmr\", or \"preserve_tracer_mass\""))
     air_mass_reset_mode = get(run_cfg, "air_mass_reset_mode", "preserve_tracer_mass")
+    physics_cadence = get(run_cfg, "physics_cadence", nothing)
 
     tracers_cfg = get(cfg, "tracers", Dict{String, Any}())
     isempty(tracers_cfg) && error("[tracers] must define at least one tracer")
@@ -795,6 +798,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                     start_window = 1, stop_window = stop_window,
                                     initialize_air_mass = initialize_air_mass,
                                     air_mass_reset_mode = air_mass_reset_mode,
+                                    physics_cadence = physics_cadence,
                                     surface_sources = surface_sources,
                                     # accumulated run time: time-varying surface
                                     # sources index emission slices in seconds

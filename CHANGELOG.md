@@ -133,6 +133,14 @@
   undershoots (−0.16 on a [0, 1] box in a 1-D test). Lat-lon and cubed
   sphere, CPU and GPU, with the cubed-sphere adjoint. The default
   `scheme = "ppm"` is unchanged.
+- `[run] physics_cadence = "window" | "substep"` selects whether, on binaries
+  with a per-window physics contract, convection and chemistry run once per
+  met window (default) or every advection substep. It replaces the
+  environment variable `ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS`, which was read on
+  every time step and is still honored, with a deprecation warning, when the
+  key is absent. Unlike the variable, `"substep"` keeps the window-end reset to
+  the binary's endpoint air mass, so a cadence comparison changes only where
+  convection and chemistry run.
 - Deprecated, for removal in the next minor release: `State.MetState`,
   `diagnose_cm_from_continuity_vc!` and `diagnose_cm_from_continuity_ka!`. No
   part of the package uses them. Removed: the exported generic function

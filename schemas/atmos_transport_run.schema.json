@@ -85,6 +85,12 @@
           "enum": ["none", "preserve_vmr", "preserve_tracer_mass"],
           "default": "preserve_tracer_mass"
         },
+        "physics_cadence": {
+          "type": "string",
+          "enum": ["window", "substep"],
+          "default": "window",
+          "description": "On binaries with a per-window physics contract: convection and chemistry once per met window, or every advection substep."
+        },
         "halo_padding": {
           "type": "integer",
           "minimum": 0,
@@ -114,6 +120,17 @@
           "type": "integer",
           "enum": [5, 7],
           "description": "Cubed-sphere Lin-Rood reconstruction order; valid only with scheme = \"linrood\"."
+        },
+        "vertical": {
+          "type": "string",
+          "enum": ["same_as_horizontal", "fv3_kord8", "fv3_kord8_signed", "upwind"],
+          "description": "PPM: same_as_horizontal (default), fv3_kord8 or fv3_kord8_signed (cubed sphere). Lin-Rood: upwind (default), fv3_kord8 or fv3_kord8_signed."
+        },
+        "limiter": {
+          "type": "string",
+          "enum": ["monotone", "cw84"],
+          "default": "monotone",
+          "description": "PPM only: monotone, or cw84 for the complete Colella-Woodward scheme."
         }
       }
     },

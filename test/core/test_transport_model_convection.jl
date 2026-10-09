@@ -287,6 +287,34 @@ end
 
     @test chem_window.calls[] == 1
     @test chem_window.total_dt[] == 1800.0
+
+    # `[run] physics_cadence = "substep"` runs chemistry every advection substep on
+    # the same binary-contract driver (cadence A/B comparisons).
+    state_sub = CellState(fill(FT(_REALISTIC_AIR_MASS_KG), 4, 3, 5);
+                          CO2 = fill(FT(1e-6 * _REALISTIC_AIR_MASS_KG), 4, 3, 5))
+    fluxes_sub = allocate_face_fluxes(driver_window.grid.horizontal, 5; FT = FT, basis = DryBasis)
+    model_sub = TransportModel(state_sub, fluxes_sub, driver_window.grid, UpwindScheme())
+    chem_sub = _CountingChemistry(Ref(0), Ref(0.0))
+    sim_sub = DrivenSimulation(model_sub, driver_window; start_window = 1, stop_window = 1,
+                               chemistry = chem_sub, physics_cadence = "substep")
+    run!(sim_sub)
+    @test chem_sub.calls[] == 4
+    @test chem_sub.total_dt[] == 1800.0
+    # Both cadences keep the binary's window-end air-mass reset.
+    @test AtmosTransport.Models._binary_window_contract(sim_sub)
+    @test !AtmosTransport.Models._uses_binary_transport_schedule(sim_sub)
+    @test AtmosTransport.Models._uses_binary_transport_schedule(sim_window)
+
+    resolve = AtmosTransport.Models._resolve_physics_cadence
+    withenv("ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS" => nothing) do
+        @test resolve(nothing) === :window
+        @test resolve(:substep) === :substep
+        @test_throws ArgumentError resolve("hourly")
+    end
+    withenv("ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS" => "1") do
+        @test (@test_logs (:warn, r"deprecated") resolve(nothing)) === :substep
+        @test_throws ArgumentError resolve(:window)
+    end
 end
 
 @testset "DrivenSimulation keeps convection runtime on model FT" begin
