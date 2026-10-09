@@ -6,7 +6,7 @@
 #
 # Composes the six kernel adjoints (linrood_adjoint_kernels.jl,
 # linrood_adjoint_rm_faces.jl) into a single-step
-# reverse pass that mirrors the forward `fv_tp_2d_cs!` (LinRood.jl:695)
+# reverse pass that mirrors the forward `fv_tp_2d_cs!` (linrood_horizontal.jl)
 # for ONE panel with all halos held at zero. Cross-panel halo / corner
 # adjoint (`_adjoint_fill_panel_halos!`, `copy_corners` reverse) is
 # deferred to the full tape integration.

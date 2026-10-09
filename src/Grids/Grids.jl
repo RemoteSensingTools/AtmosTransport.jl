@@ -23,6 +23,8 @@ include("GeometryOps.jl")
 include("LatLonMesh.jl")
 include("PanelConnectivity.jl")
 include("CubedSphereMesh.jl")
+include("cs_mesh_coordinates.jl")
+include("cs_mesh_locate.jl")
 include("ReducedGaussianMesh.jl")
 
 end # module Grids

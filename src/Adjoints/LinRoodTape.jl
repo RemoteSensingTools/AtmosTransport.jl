@@ -103,7 +103,7 @@ _scale_linrood_flux_panels(panels::NTuple{6}, flux_scale) =
     ntuple(p -> flux_scale .* panels[p], Val(6))
 
 # Run one LinRood horizontal substep across all six panels, replicating
-# the forward `fv_tp_2d_cs!` (LinRood.jl:695-779). Updates `panels_rm`,
+# the forward `fv_tp_2d_cs!` (linrood_horizontal.jl). Updates `panels_rm`,
 # `panels_m` in place. With `record_ops = true` (default) captures
 # per-phase snapshots and returns a `_CSLinRoodHorizRecord` for the
 # reverse pass; with `record_ops = false` (used by the strided
@@ -418,7 +418,7 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
         panels_bm = panels_bm_steps[step]
         panels_cm = panels_cm_steps[step]
 
-        # Production LinRood Strang palindrome (LinRood.jl:921-935,
+        # Production LinRood Strang palindrome (linrood_horizontal.jl,
         # `_strang_split_linrood_ppm_cs!`):
         #     H → Z_half → midpoint/diffusion/emissions → Z_half → H
         # The tape mirrors this exactly so that the FD-reference forward

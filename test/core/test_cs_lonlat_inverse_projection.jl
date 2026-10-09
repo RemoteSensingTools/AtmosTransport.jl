@@ -3,7 +3,7 @@
 # Tests for the cubed-sphere inverse projection `lonlat_to_panel_xy`.
 #
 # The inverse must be the bit-level analytic inverse of the forward
-# chain documented in `CubedSphereMesh.jl`:
+# chain in `cs_mesh_coordinates.jl` (the inverse is in `cs_mesh_locate.jl`):
 #
 #   (panel, s, t) -> (ξ, η) via _edge_tangent_coordinate
 #                  -> (x, y, z) via _panel_xyz (convention-aware)

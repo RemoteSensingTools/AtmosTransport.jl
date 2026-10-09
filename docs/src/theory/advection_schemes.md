@@ -155,7 +155,7 @@ the higher-order scheme's bounds on the intended workload.
 
 The cubed-sphere variant. Extends PPM with the **two-step Lin-Rood
 splitting** (`fv_tp_2d_cs!` in
-`src/Operators/Advection/LinRood.jl`) so the X and Y sweeps see each
+`src/Operators/Advection/linrood_horizontal.jl`) so the X and Y sweeps see each
 other's intermediate fluxes via the inner-edge flux-and-slope rotation
 that FV3 uses internally. The runtime pairs this horizontal update with
 vertical upwind. Two edge-value families are selectable:
@@ -359,7 +359,7 @@ between them. Performance-tuning notes live beside the implementation.
 | CS paired split seam exchange | `src/Operators/Advection/CubedSphereSeams.jl` |
 | CS paired split seam adjoint | `src/Adjoints/CubedSphereSeams.jl` |
 | CS panel-edge halo sync | `src/Grids/PanelConnectivity.jl` + `cs_native_fluxes.jl::_propagate_cs_outflow_to_halo!` |
-| Lin-Rood cross-term + del-2 damping | `src/Operators/Advection/LinRood.jl` |
+| Lin-Rood cross-term + del-2 damping | `src/Operators/Advection/linrood_horizontal.jl` (driver), `LinRood.jl` (kernels, damping) |
 
 ## What's next
 

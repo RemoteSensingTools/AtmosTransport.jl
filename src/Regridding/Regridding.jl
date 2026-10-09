@@ -46,7 +46,7 @@ required by CR.jl's spherical dual-DFS intersection search.
 ## Known limitations
 
 - `CubedSphereMesh` uses analytical coordinates from
-  `src/Grids/CubedSphereMesh.jl`. `GEOSNativePanelConvention` includes the
+  `src/Grids/cs_mesh_coordinates.jl`. `GEOSNativePanelConvention` includes the
   GEOS-FP/GEOS-IT panel order, native orientation, and global `-10°`
   longitude offset used by GEOS grid files. Left-handed GEOS panels are
   wound correctly for tree traversal while preserving file-order indices.

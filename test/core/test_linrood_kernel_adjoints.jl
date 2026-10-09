@@ -887,7 +887,7 @@ end
 # Run one panel of the forward `fv_tp_2d_cs!` chain by hand, with all
 # cross-panel halo / corner copies skipped (halos held at the user-
 # supplied values for the duration). Captures the intermediate q_buf
-# states needed by the reverse pass. Mirrors LinRood.jl:715-779.
+# states needed by the reverse pass. Mirrors `fv_tp_2d_cs!` (linrood_horizontal.jl).
 function _linrood_single_panel_forward(rm0, m0, am, bm,
                                         mesh::AT.CubedSphereMesh{FT}) where {FT}
     Nc = mesh.Nc; Hp = mesh.Hp

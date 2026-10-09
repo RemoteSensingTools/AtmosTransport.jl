@@ -437,3 +437,19 @@ error message and its test) name the new files.
   claims the PPM and Lin-Rood drivers are missing.
 - A theory page credited a removed per-level mass correction with closing the
   regridded mass distribution; it now names the extensive-field regrid.
+
+### Step 6 — cubed-sphere mesh, Lin-Rood forward
+
+- `Grids/CubedSphereMesh.jl` (1014 lines) → `CubedSphereMesh.jl`,
+  `cs_mesh_coordinates.jl` (forward geometry: projection, centers and corners,
+  edge lengths, tangent bases), `cs_mesh_locate.jl` (inverse projection).
+- `Advection/LinRood.jl` (839 lines) → `LinRood.jl` (workspace, damping,
+  kernels), `linrood_horizontal.jl` (`fv_tp_2d_cs!`, q-space variant, Lin-Rood
+  Strang split).
+
+Phase 4 stops here: no `src/` file is above 1000 lines (the largest are now
+`tm5_kernels.jl` 996, `era5_n320_regrid.jl` 990, `DrivenRunner.jl` 907). Some
+800–1000-line files still mix responsibilities (`latlon_contracts.jl`,
+`mass_support.jl`); they belong with the Phase 6 consolidation. Export lists
+stayed where they were, so some now sit in a later piece than the code they
+export.

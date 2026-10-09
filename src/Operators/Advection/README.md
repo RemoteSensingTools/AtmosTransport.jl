@@ -22,8 +22,8 @@ the model-facing `apply!` entrypoints that the transport block calls.
   and `strang_split_cs_mt!`; [`cs_workspace.jl`](cs_workspace.jl)
   `CSAdvectionWorkspace`
 - Lin–Rood horizontal transport:
-  [`LinRood.jl`](LinRood.jl) provides `fv_tp_2d_cs!` and
-  `CSLinRoodAdvectionWorkspace`; the runtime pairs it with vertical upwind
+  [`linrood_horizontal.jl`](linrood_horizontal.jl) provides `fv_tp_2d_cs!`,
+  [`LinRood.jl`](LinRood.jl) `CSLinRoodAdvectionWorkspace`; the runtime pairs it with vertical upwind
 - Cubed-sphere halo support:
   [`HaloExchange.jl`](HaloExchange.jl)
   provides `fill_panel_halos!` and `copy_corners!`
@@ -97,8 +97,10 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
   subcell distributions shared by CS-specific code
 - [`LinRoodSeams.jl`](LinRoodSeams.jl) — shared final seam estimates and
   their transpose for conservative Lin–Rood panel exchange
-- [`LinRood.jl`](LinRood.jl) — Lin-Rood style cubed-sphere horizontal
-  transport utilities
+- [`LinRood.jl`](LinRood.jl) — Lin-Rood workspace, divergence damping, PPM
+  face, pre-advection and update kernels
+- [`linrood_horizontal.jl`](linrood_horizontal.jl) — Lin-Rood horizontal
+  advection drivers (`fv_tp_2d_cs!`, q-space variant) and the Lin-Rood Strang split
 - [`linrood_adjoint_kernels.jl`](linrood_adjoint_kernels.jl),
   [`linrood_adjoint_rm_faces.jl`](linrood_adjoint_rm_faces.jl),
   [`linrood_adjoint_panel.jl`](linrood_adjoint_panel.jl) — Lin-Rood adjoint
