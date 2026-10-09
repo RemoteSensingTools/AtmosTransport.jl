@@ -463,7 +463,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             contract.positivity
         else
             verify_substep_positivity_cs!(cur_m, cur_am, cur_bm, cur_cm;
-                                         cfl_limit = positivity_cfl_limit)
+                                         cfl_limit = positivity_cfl_limit,
+                                         m_next = cs_ws.m_next_panels)
         end
         worst_positivity = update_cs_positivity_accumulator(worst_positivity, pos_diag, win - 1)
         convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
@@ -567,7 +568,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         contract.positivity
     else
         verify_substep_positivity_cs!(cur_m, cur_am, cur_bm, cur_cm;
-                                     cfl_limit = positivity_cfl_limit)
+                                     cfl_limit = positivity_cfl_limit,
+                                     m_next = cs_ws.m_next_panels)
     end
     worst_positivity = update_cs_positivity_accumulator(worst_positivity, pos_diag, Nt)
     convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)

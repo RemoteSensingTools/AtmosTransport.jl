@@ -316,25 +316,14 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
         end
         diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
 
-        contract_diag = if ctx.write_replay_on
-            t_replay = time()
-            diag = verify_window!((m_cur = cur_m,
-                                   am = cur_am,
-                                   bm = cur_bm,
-                                   cm = cur_cm,
-                                   m_next = cs_ws.m_next_panels),
-                                  contract, win)
-            ctx.total_replay += time() - t_replay
-            diag
-        else
-            positivity = verify_substep_positivity_cs!(
-                cur_m, cur_am, cur_bm, cur_cm;
-                cfl_limit = contract.positivity_cfl_limit,
-                m_next = cs_ws.m_next_panels)
-            (replay = (max_rel_err = 0.0, max_abs_err = 0.0,
-                       worst_idx = (0, 0, 0, 0)),
-             positivity = positivity)
-        end
+        t_replay = time()
+        contract_diag = verify_window!((m_cur = cur_m,
+                                        am = cur_am,
+                                        bm = cur_bm,
+                                        cm = cur_cm,
+                                        m_next = cs_ws.m_next_panels),
+                                       contract, win; write_replay_on = ctx.write_replay_on)
+        ctx.write_replay_on && (ctx.total_replay += time() - t_replay)
 
         next_steps = next_substeps(ctx.substep_policy, steps,
                                    contract_diag.positivity.ratio)

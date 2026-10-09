@@ -758,7 +758,8 @@ function process_era5_n320_to_cs_day(date::Date,
                 contract.positivity
             else
                 verify_substep_positivity_cs!(cur_m_dry, cur_am, cur_bm, cur_cm;
-                                              cfl_limit = positivity_cfl_limit)
+                                              cfl_limit = positivity_cfl_limit,
+                                              m_next = nxt_m_dry)
             end
             worst_positivity = update_cs_positivity_accumulator(worst_positivity, pos_diag, win - 1)
 
@@ -876,7 +877,8 @@ function process_era5_n320_to_cs_day(date::Date,
             contract.positivity
         else
             verify_substep_positivity_cs!(cur_m_dry, cur_am, cur_bm, cur_cm;
-                                          cfl_limit = positivity_cfl_limit)
+                                          cfl_limit = positivity_cfl_limit,
+                                          m_next = nxt_m_dry)
         end
         worst_positivity = update_cs_positivity_accumulator(worst_positivity, final_pos_diag, nwindow)
         _fill_cs_mass_delta_payload!(cur_dm_dry, cur_m_dry, nxt_m_dry)

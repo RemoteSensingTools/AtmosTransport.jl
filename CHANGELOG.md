@@ -47,6 +47,13 @@
   target, and this mode passes none. Only the GEOS native path implements it
   (`supports_initial_endpoint_mass_pin`); other sources now refuse the mode.
   No shipped configuration used it.
+- `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` did not skip the write-time replay gate
+  of the GEOS cubed-sphere writer. It does now, through
+  `verify_window!(…; write_replay_on)`, and its log no longer reports a worst
+  replay window when the gate was skipped. With the gate skipped, the
+  cubed-sphere regrid, ERA5 N320 and MERRA-2 writers ran the positivity gate
+  against the window's start mass only; they now also pass the end mass, as
+  with the gate on (only runs with the variable set are affected).
 
 ### Numerical changes
 

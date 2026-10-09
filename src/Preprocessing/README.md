@@ -145,7 +145,7 @@ Files directly in this folder; the subfolders have their own READMEs
   Float64). Check that `cm` was diagnosed after the last change to the
   horizontal fluxes, that balance and replay use the same `m_next`, and the
   final window's next-day endpoint. `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` skips
-  write-time replay on every path except GEOS; positivity still runs. Inspect
+  write-time replay on every path; positivity still runs. Inspect
   outputs with [`../../scripts/diagnostics/inspect_transport_binary.jl`](../../scripts/diagnostics/inspect_transport_binary.jl).
 - Debugging a positivity failure ("Per-substep positivity contract violated"):
   the message recommends a substep count. Use `[numerics].substep_schedule =
@@ -167,9 +167,9 @@ Files directly in this folder; the subfolders have their own READMEs
   `dm`. The GEOS diagnostic closures `pressure_fixer` and `pfix_corrected`
   skip the balance; every non-default closure logs a warning.
 - A kept binary passed the write-time replay gate (unless
-  `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` skipped it; the GEOS path ignores that
-  variable) and the per-substep positivity gate against `positivity_cfl_limit` (default `0.95`,
-  in `(0, 1]`). CS checks `2 * (out_x + out_y + out_z)` against
+  `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` skipped it) and the per-substep
+  positivity gate against `positivity_cfl_limit` (default `0.95`, in
+  `(0, 1]`). CS checks `2 * (out_x + out_y + out_z)` against
   `min(m, m_next)`; LL and RG check each direction's outflow against `m`. With
   `require_substep_positivity = true` (default) a violation errors and deletes
   the staged file; with `false` it is kept with a warning.

@@ -622,7 +622,8 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
                               win::Int,
                               grid::CubedSphereTargetGeometry,
                               settings::AbstractGEOSSettings,
-                              steps_per_met::Int) where FT
+                              steps_per_met::Int;
+                              write_replay_on::Bool = true) where FT
     steps = workspace.steps_current
     contract.steps_per_window = steps
     contract_diag = verify_window!((m_cur = workspace.m_cur,
@@ -630,7 +631,7 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
                                      bm = workspace.bm_v4,
                                      cm = workspace.cm_v4,
                                      m_next = workspace.m_next_target),
-                                    contract, win)
+                                    contract, win; write_replay_on)
 
     for p in 1:CS_PANEL_COUNT
         copyto!(workspace.dm_v4[p], workspace.m_next_target[p])

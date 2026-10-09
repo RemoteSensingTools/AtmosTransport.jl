@@ -122,7 +122,7 @@ header (LL does it when `LatLonDeferredBinaryWriter` opens). GEOS uses
 - Debugging a replay failure: the error names the window and cell
   (`(panel, i, j, k)` on CS). A failure only in the last window points at the
   next-day endpoint. `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` keeps a binary for
-  inspection on every path except GEOS.
+  inspection.
 - Comparing balance modes: `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1`
   switches LL, CS spectral, LL-to-CS, N320, and MERRA-2 from column to
   per-layer balance; GEOS uses `[numerics].geos_balance_mode`.

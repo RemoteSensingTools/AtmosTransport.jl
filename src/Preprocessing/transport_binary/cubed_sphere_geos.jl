@@ -61,14 +61,16 @@ struct GEOSCSUnifiedDriverContext{G, S, V}
     settings         :: S
     vertical         :: V
     steps_per_met    :: Int
+    write_replay_on  :: Bool
     replay_stats     :: Base.RefValue{GEOSReplayStats}
     split_stats      :: Base.RefValue{GEOSSplitSubstepStats}
 end
 
-GEOSCSUnifiedDriverContext(grid, settings, vertical, steps_per_met::Integer) =
+GEOSCSUnifiedDriverContext(grid, settings, vertical, steps_per_met::Integer;
+                           write_replay_on::Bool = true) =
     GEOSCSUnifiedDriverContext{typeof(grid), typeof(settings), typeof(vertical)}(
-        grid, settings, vertical, Int(steps_per_met), Ref(GEOSReplayStats()),
-        Ref(GEOSSplitSubstepStats()))
+        grid, settings, vertical, Int(steps_per_met), write_replay_on,
+        Ref(GEOSReplayStats()), Ref(GEOSSplitSubstepStats()))
 
 function _geos_required_split_steps(workspace::GEOSCubedSphereWindowWorkspace,
                                     current_steps::Integer,
@@ -97,10 +99,12 @@ function driver_drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{F
                                      win::Int,
                                      ctx::GEOSCSUnifiedDriverContext) where FT
     ready_diag = drain_ready_windows!(workspace, contract, win, ctx.grid,
-                                      ctx.settings, ctx.steps_per_met)
+                                      ctx.settings, ctx.steps_per_met;
+                                      write_replay_on = ctx.write_replay_on)
     replay = ready_diag.contract.replay
     stats = ctx.replay_stats[]
-    if stats.worst_replay_win == 0 || replay.max_rel_err > stats.worst_replay_rel
+    if ctx.write_replay_on &&
+            (stats.worst_replay_win == 0 || replay.max_rel_err > stats.worst_replay_rel)
         ctx.replay_stats[] = GEOSReplayStats(replay.max_rel_err,
                                              replay.max_abs_err,
                                              win)
@@ -315,7 +319,10 @@ function _process_day_geos_cs_unified(date::Date,
             require_substep_positivity = require_substep_positivity,
             steps_per_window = steps_per_met,
         )
-        ctx = GEOSCSUnifiedDriverContext(grid, settings, vertical, steps_per_met)
+        write_replay_on = get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
+        write_replay_on || @info "  Write-time CS replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
+        ctx = GEOSCSUnifiedDriverContext(grid, settings, vertical, steps_per_met;
+                                         write_replay_on)
 
         t_start = time()
         driver_started = true
@@ -324,9 +331,11 @@ function _process_day_geos_cs_unified(date::Date,
                                    context = ctx))
         elapsed = time() - t_start
         stats = ctx.replay_stats[]
-        @info @sprintf("  Done in %.1fs (%.2fs/window). Worst replay: rel=%.2e abs=%.2e at win=%d",
-                       elapsed, elapsed / nw, stats.worst_replay_rel,
-                       stats.worst_replay_abs, stats.worst_replay_win)
+        @info write_replay_on ?
+            @sprintf("  Done in %.1fs (%.2fs/window). Worst replay: rel=%.2e abs=%.2e at win=%d",
+                     elapsed, elapsed / nw, stats.worst_replay_rel,
+                     stats.worst_replay_abs, stats.worst_replay_win) :
+            @sprintf("  Done in %.1fs (%.2fs/window). Replay gate skipped.", elapsed, elapsed / nw)
         split_stats = ctx.split_stats[]
         @info @sprintf("  Substep diagnostic: stored=%d..%d; hypothetical split max xy=%d at win=%d (ratio=%.3f), z=%d at win=%d (ratio=%.3f)",
                        minimum(workspace.steps_schedule),

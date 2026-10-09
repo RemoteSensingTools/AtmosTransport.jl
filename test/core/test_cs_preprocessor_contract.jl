@@ -699,4 +699,24 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         AtmosTransport.Preprocessing.verify_window!(window, contract, 2)
         @test contract._div_scratch === ds
     end
+
+    @testset "CubedSphereContract: write_replay_on = false runs only the positivity gate" begin
+        # `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` keeps a binary that fails replay for
+        # inspection; the positivity gate still uses the window's end mass.
+        w = build_clean_cs_window(Float64)
+        contract = CubedSphereContract{Float64}(replay_tol = 1e-12,
+                                                 positivity_cfl_limit = 0.95,
+                                                 steps_per_window = w.steps)
+        # Half the end mass: breaks continuity, and the gate's min(m, m_next) is m_next.
+        bad_next = map(m -> 0.5 .* m, w.m_next)
+        window = (m_cur = w.m_cur, am = w.am, bm = w.bm, cm = w.cm, m_next = bad_next)
+        verify = AtmosTransport.Preprocessing.verify_window!
+        @test_throws ErrorException verify(window, contract, 1)
+        diag = verify(window, contract, 1; write_replay_on = false)
+        @test diag.replay.max_rel_err == 0
+        @test diag.positivity == verify_substep_positivity_cs!(w.m_cur, w.am, w.bm, w.cm;
+                                                                cfl_limit = 0.95, m_next = bad_next)
+        @test diag.positivity.ratio > verify_substep_positivity_cs!(w.m_cur, w.am, w.bm, w.cm;
+                                                                     cfl_limit = 0.95).ratio
+    end
 end

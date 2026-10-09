@@ -567,7 +567,8 @@ function _record_window!(diag::MERRA2DayDiagnostics, d::MERRA2DayDriver, m_a, m_
         end
         contract.positivity
     else
-        verify_substep_positivity_cs!(m_a, x.am, x.bm, x.cm; cfl_limit = d.positivity_limit)
+        verify_substep_positivity_cs!(m_a, x.am, x.bm, x.cm; cfl_limit = d.positivity_limit,
+                                      m_next = m_b)
     end
     diag.positivity = update_cs_positivity_accumulator(diag.positivity, positivity, win)
     return diag
