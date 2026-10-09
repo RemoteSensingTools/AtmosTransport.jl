@@ -1,0 +1,93 @@
+# One day (2022-01-15) of the CATRINE MERRA-2 configuration with GEOS-Chem's physics on the
+# binary of case pre_merra2_c90: PPM with FV3 kord-8 vertical (or Lin-Rood per case), CMFMC
+# convection with the DQRCU cloud base, non-local VDIFF; CO₂ and SF₆ from GCHP's own C90 L72
+# field; CAMS CO₂, GridFED (time-varying, stepwise) and native-C90 SF₆ and Rn-222 sources; decay.
+
+[input]
+binary_paths = ["@CASE:pre_merra2_c90@/merra2_transport_20220115_float32.bin"]
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[advection]
+scheme   = "ppm"
+vertical = "fv3_kord8"
+
+[tracers.uniform]
+  [tracers.uniform.init]
+  kind = "uniform"
+  background = 4.0e-4
+
+[tracers.co2]
+  [tracers.co2.init]
+  kind = "cs_native"
+  file = "~/data/AtmosTransport/catrine-geoschem-runs/C90/2021/12/GEOSChem.CATRINE_inst.20211201_0300z.nc4"
+  variable = "SpeciesConcVV_CO2"
+  [tracers.co2.surface_flux]
+  kind = "lmdz_co2"
+  files = ["$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202201_FT24r2_ra_sfc_3h_co2_flux.nc"]
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.fossil]
+  [tracers.fossil.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.fossil.surface_flux]
+  kind = "gridfed_fossil_co2"
+  files = ["$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2022.short.nc"]
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "cs_native"
+  file = "~/data/AtmosTransport/catrine-geoschem-runs/C90/2021/12/GEOSChem.CATRINE_inst.20211201_0300z.nc4"
+  variable = "SpeciesConcVV_SF6"
+  [tracers.sf6.surface_flux]
+  kind = "cs_native"
+  file = "~/data/AtmosTransport/catrine/fluxes_c90/catrine_sf6_c90.nc"
+  variable = "sf6"
+  molar_mass_kg_mol = 0.146055
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.rn222]
+  [tracers.rn222.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.rn222.surface_flux]
+  kind = "cs_native"
+  file = "~/data/AtmosTransport/catrine/fluxes_c90/catrine_rn222_c90.nc"
+  variable = "rn222"
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[diffusion]
+kind = "geoschem_nonlocal_vdiff"
+
+[convection]
+kind = "cmfmc"
+cloud_base = "dqrcu"
+
+[chemistry]
+kind = "decay"
+  [chemistry.half_lives_seconds]
+  rn222 = 330350.4
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 3
+path = "@OUTPUT@/out_{YYYYMMDD}.nc"
+
+  [output.fields]
+  layers = "full"
+  column_mean = true
+  air_mass_per_area = true
+  column_air_mass_per_area = true

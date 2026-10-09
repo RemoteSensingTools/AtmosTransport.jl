@@ -1,0 +1,38 @@
+# MERRA-2 (GEOS-Chem archive) → C90 L72, GCHP-matched flux construction, Float32.
+# From config/preprocessing/merra2_geoschem_c90_l72_f32_hm_gchp.toml.
+
+[source]
+toml     = "config/met_sources/merra2_geoschem_hm_gchp.toml"
+root_dir = "~/data/AtmosTransport/met/merra2/geoschem_0.5x0.625"
+
+[vertical]
+coefficients = "config/geos_L72_coefficients.toml"
+transform    = "identity"
+
+[output]
+directory  = "@OUTPUT@"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 90
+panel_convention    = "geos_native"
+definition          = "gmao_equal_distance"
+regridder_cache_dir = "@OUTPUT@/_regrid_cache"
+
+[numerics]
+float_type                 = "Float32"
+dt_met_seconds             = 3600.0
+chain_mass                 = false
+positivity_cfl_limit       = 0.95
+require_substep_positivity = true
+substep_schedule           = "adaptive_cfl"
+substep_cfl_target         = 0.95
+min_steps_per_window       = 1
+max_steps_per_window       = 512
+geos_balance_mode          = "column"
+
+[mass_fix]
+enable           = true
+mode             = "target_ps_dry"
+target_ps_dry_pa = 98726.0

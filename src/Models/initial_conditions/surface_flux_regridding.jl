@@ -22,7 +22,7 @@ reuse it across every time slice instead of rebuilding it per slice.
 function _build_surface_flux_regridder(lon::Vector{Float64}, lat::Vector{Float64},
                                        dst_mesh::AbstractHorizontalMesh)
     src_mesh = _build_source_latlon_mesh(lon, lat)
-    return build_regridder(src_mesh, dst_mesh; cache_dir = _REGRID_CACHE_DIR)
+    return build_regridder(src_mesh, dst_mesh; cache_dir = _regrid_cache_dir())
 end
 
 """

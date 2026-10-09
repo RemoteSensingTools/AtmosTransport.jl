@@ -1,0 +1,29 @@
+# ERA5 spectral (December 2021) → synthetic octahedral reduced-Gaussian O24, ml137_tropo34
+# levels, Float64, no mass fix. From config/preprocessing/era5_synthetic_o24_transport_binary_v2.toml.
+
+[input]
+spectral_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/spectral_hourly"
+thermo_dir   = "~/data/AtmosTransport/met/era5/0.5x0.5/physics"
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory  = "@OUTPUT@"
+include_qv = false
+mass_basis = "dry"
+
+[grid]
+type = "synthetic_reduced_gaussian"
+gaussian_number = 24
+nlon_mode = "octahedral"
+echlevs = "ml137_tropo34"
+level_top = 1
+level_bot = 137
+merge_min_thickness_Pa = 1000.0
+
+[numerics]
+float_type   = "Float64"
+dt           = 900.0
+met_interval = 3600.0
+
+[mass_fix]
+enable = false

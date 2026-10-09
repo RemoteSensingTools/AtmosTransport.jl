@@ -1,0 +1,90 @@
+# One day (2022-01-15) of the CATRINE ERA5 configuration: ERA5 N320 → C90 L66 (GCHP-like flux
+# construction) with TM5 convection attached (production v3 set; attachment is not part of the
+# preprocessor, so the input is a frozen copy of the production binary in
+# /temp1/cfranken/goldens/inputs, with the next day for multi-day cases), PPM, TM5 convection and dkg diffusion with
+# the diffusive surface-flux boundary; protocol initial states; CAMS CO₂ and native-C90
+# fossil and Rn-222 sources; decay.
+
+[input]
+binary_paths = ["/temp1/cfranken/goldens/inputs/era5_n320_transport_20220115_float32.bin"]
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float32"
+
+[advection]
+scheme = "ppm"
+
+[tracers.uniform]
+  [tracers.uniform.init]
+  kind = "uniform"
+  background = 4.0e-4
+
+[tracers.co2]
+  [tracers.co2.init]
+  kind = "catrine_co2"
+  [tracers.co2.surface_flux]
+  kind = "lmdz_co2"
+  files = ["$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/LMDZ_fluxes/z_cams_l_cams55_202201_FT24r2_ra_sfc_3h_co2_flux.nc"]
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.fossil]
+  [tracers.fossil.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.fossil.surface_flux]
+  kind = "cs_native"
+  file = "~/data/AtmosTransport/catrine/fluxes_c90/catrine_fossil_co2_c90.nc"
+  variable = "fossil_co2"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.sf6]
+  [tracers.sf6.init]
+  kind = "file"
+  file = "~/data/AtmosTransport/catrine/InitialConditions/startSF6_202112010000.nc"
+  variable = "SF6"
+
+[tracers.rn222]
+  [tracers.rn222.init]
+  kind = "uniform"
+  background = 0.0
+  [tracers.rn222.surface_flux]
+  kind = "cs_native"
+  file = "~/data/AtmosTransport/catrine/fluxes_c90/catrine_rn222_c90.nc"
+  variable = "rn222"
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[diffusion]
+kind = "tm5_dkg"
+surface_flux_boundary = true
+
+[convection]
+kind = "tm5"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 66
+n_merge = 1
+
+[chemistry]
+kind = "decay"
+  [chemistry.half_lives_seconds]
+  rn222 = 330350.4
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 3
+path = "@OUTPUT@/out_{YYYYMMDD}.nc"
+
+  [output.fields]
+  layers = "full"
+  column_mean = true
+  air_mass_per_area = true
+  column_air_mass_per_area = true

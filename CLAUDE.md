@@ -112,6 +112,8 @@ mass basis, supported operators, and load-time consistency gates.
   `state.tracers.name`, not through input arrays cached before construction.
 - Prefer focused test files around the touched module before running full
   `Pkg.test()`.
+- Refactors must reproduce the golden outputs bit for bit: `julia --project=. test/golden/run_goldens.jl check <ref> <new>`
+  (see `test/golden/README.md`); a change that alters results states its deltas.
 - Do not add `Real -> FT` outer constructors unless there is a real ambiguity;
   Julia already converts through synthesized constructors.
 - Parametric kwarg defaults like `Foo{FT}()` inside a `where FT` signature fail

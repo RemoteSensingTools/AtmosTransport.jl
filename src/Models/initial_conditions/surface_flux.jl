@@ -12,7 +12,7 @@
 #   FileSurfaceFluxField, SECONDS_PER_MONTH, _surface_flux_kind,
 #   _resolve_surface_flux_file, _normalize_units_string,
 #   _load_file_surface_flux_field, _renormalize_surface_flux_rate!,
-#   _REGRID_CACHE_DIR, _conservative_surface_flux_rate,
+#   _regrid_cache_dir, _conservative_surface_flux_rate,
 #   _regridding_method, build_surface_flux_source (LL + RG),
 #   build_surface_flux_sources.
 #
@@ -83,7 +83,19 @@ function _gridfed_month_seconds(cfg, file::AbstractString, ds, month::Integer)
     return Float64(_days_in_month(year, month)) * 86400.0
 end
 
-const _REGRID_CACHE_DIR = expanduser("~/.cache/AtmosTransport/cr_regridding")
+"""
+    _regrid_cache_dir() -> String
+
+Directory of the cached conservative-regridding weights of runtime surface
+fluxes: `ATMOSTR_REGRID_CACHE_DIR` if set and not empty (the golden-output
+harness points it into each case, so weights are recomputed), else
+`~/.cache/AtmosTransport/cr_regridding`. Read when a source is built, so the
+precompiled package carries no home directory.
+"""
+function _regrid_cache_dir()
+    dir = get(ENV, "ATMOSTR_REGRID_CACHE_DIR", "")
+    return expanduser(isempty(dir) ? "~/.cache/AtmosTransport/cr_regridding" : dir)
+end
 
 """
     FileSurfaceFluxField{FT}

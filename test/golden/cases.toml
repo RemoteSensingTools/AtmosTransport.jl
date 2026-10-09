@@ -1,0 +1,185 @@
+# Golden cases of run_goldens.jl (see README.md), run in this order.
+#
+#   kind = "preprocess"  scripts/preprocessing/preprocess_transport_binary.jl <config> --day <day>
+#   kind = "run"         scripts/run_transport.jl <config>
+#
+# Config templates (configs/) may use @OUTPUT@ (this case's directory),
+# @CASE:<name>@ (the directory of case <name>; in a check, the reference's) and
+# @REPO@; `set` overrides "section.key" entries of the template.
+# Tags: "preprocess" or "run"; the grid (latlon, reduced_gaussian, cubed_sphere); the
+# backend (cpu, gpu); the met source (merra2, era5); "multiday"; "slow" (several
+# minutes or more); and "known_failure" (skipped by default; see README.md).
+
+# --- preprocessing ------------------------------------------------------------------
+
+[[case]]
+name   = "pre_ll72"
+kind   = "preprocess"
+config = "configs/pre_ll72.toml"
+day    = "2021-12-01"
+tags   = ["preprocess", "latlon", "cpu"]
+
+[[case]]
+name   = "pre_o24"
+kind   = "preprocess"
+config = "configs/pre_o24.toml"
+day    = "2021-12-01"
+tags   = ["preprocess", "reduced_gaussian", "cpu", "known_failure"]
+
+[[case]]
+name   = "pre_c24"
+kind   = "preprocess"
+config = "configs/pre_c24.toml"
+day    = "2021-12-01"
+tags   = ["preprocess", "cubed_sphere", "cpu"]
+
+[[case]]
+name   = "pre_merra2_c90"
+kind   = "preprocess"
+config = "configs/pre_merra2_c90.toml"
+day    = "2022-01-15"
+tags   = ["preprocess", "cubed_sphere", "cpu", "merra2"]
+
+[[case]]
+name   = "pre_era5_n320_c90_l117"
+kind   = "preprocess"
+config = "configs/pre_era5_n320_c90_l117.toml"
+day    = "2022-01-15"
+tags   = ["preprocess", "cubed_sphere", "cpu", "era5", "slow"]
+
+# --- runtime: small grids from spectral ERA5 ------------------------------------------
+
+[[case]]
+name   = "run_ll72_ppm_cpu_f64"
+kind   = "run"
+config = "configs/run_spectral_grid.toml"
+tags   = ["run", "latlon", "cpu"]
+set    = {"input.binary_paths" = ["@CASE:pre_ll72@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "ppm"}
+
+[[case]]
+name   = "run_ll72_slopes_gpu_f32"
+kind   = "run"
+config = "configs/run_spectral_grid.toml"
+tags   = ["run", "latlon", "gpu"]
+set    = {"input.binary_paths" = ["@CASE:pre_ll72@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "slopes", "architecture.use_gpu" = true, "architecture.backend" = "cuda", "numerics.float_type" = "Float32"}
+
+[[case]]
+name   = "run_o24_upwind_cpu_f64"
+kind   = "run"
+config = "configs/run_spectral_grid.toml"
+tags   = ["run", "reduced_gaussian", "cpu", "known_failure"]
+set    = {"input.binary_paths" = ["@CASE:pre_o24@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "upwind"}
+
+[[case]]
+name   = "run_c24_ppm_cpu_f64"
+kind   = "run"
+config = "configs/run_spectral_grid.toml"
+tags   = ["run", "cubed_sphere", "cpu"]
+set    = {"input.binary_paths" = ["@CASE:pre_c24@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "ppm"}
+
+[[case]]
+name   = "run_c24_linrood_cpu_f32"
+kind   = "run"
+config = "configs/run_spectral_grid.toml"
+tags   = ["run", "cubed_sphere", "cpu"]
+set    = {"input.binary_paths" = ["@CASE:pre_c24@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "linrood", "numerics.float_type" = "Float32"}
+
+# --- runtime: C90 production configurations ------------------------------------------
+
+[[case]]
+name   = "run_c90_merra2_gpu_f32"
+kind   = "run"
+config = "configs/run_c90_merra2.toml"
+tags   = ["run", "cubed_sphere", "gpu", "merra2"]
+
+[[case]]
+name   = "run_c90_merra2_linrood_gpu_f32"
+kind   = "run"
+config = "configs/run_c90_merra2.toml"
+tags   = ["run", "cubed_sphere", "gpu", "merra2"]
+set    = {"advection.scheme" = "linrood"}
+
+[[case]]
+name   = "run_c90_merra2_cpu_f64"
+kind   = "run"
+config = "configs/run_c90_merra2.toml"
+tags   = ["run", "cubed_sphere", "cpu", "merra2", "slow"]
+set    = {"architecture.use_gpu" = false, "architecture.backend" = "cpu", "numerics.float_type" = "Float64"}
+
+[[case]]
+name   = "run_c90_era5_tm5_gpu_f32"
+kind   = "run"
+config = "configs/run_c90_era5_tm5.toml"
+tags   = ["run", "cubed_sphere", "gpu", "era5"]
+
+[[case]]
+name   = "run_c90_era5_tm5_cpu_f64"
+kind   = "run"
+config = "configs/run_c90_era5_tm5.toml"
+tags   = ["run", "cubed_sphere", "cpu", "era5", "slow"]
+set    = {"architecture.use_gpu" = false, "architecture.backend" = "cpu", "numerics.float_type" = "Float64"}
+
+[[case]]
+name   = "run_c90_era5_l117_gpu_f32"
+kind   = "run"
+config = "configs/run_c90_era5_tm5.toml"
+tags   = ["run", "cubed_sphere", "gpu", "era5", "slow"]
+set    = {"input.binary_paths" = ["@CASE:pre_era5_n320_c90_l117@/era5_n320_transport_20220115_float32.bin"], "convection.kind" = "none"}
+
+# --- runtime: variants (one switch each on the binaries above) -----------------------
+
+[[case]]
+name   = "run_ll72_upwind_cpu_f32"
+kind   = "run"
+config = "configs/run_spectral_grid.toml"
+tags   = ["run", "latlon", "cpu"]
+set    = {"input.binary_paths" = ["@CASE:pre_ll72@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "upwind", "numerics.float_type" = "Float32"}
+
+[[case]]
+name   = "run_c24_upwind_cpu_f32"
+kind   = "run"
+config = "configs/run_spectral_grid.toml"
+tags   = ["run", "cubed_sphere", "cpu"]
+set    = {"input.binary_paths" = ["@CASE:pre_c24@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "upwind", "numerics.float_type" = "Float32"}
+
+[[case]]
+name   = "run_c24_slopes_gpu_f32"
+kind   = "run"
+config = "configs/run_spectral_grid.toml"
+tags   = ["run", "cubed_sphere", "gpu"]
+set    = {"input.binary_paths" = ["@CASE:pre_c24@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "slopes", "architecture.use_gpu" = true, "architecture.backend" = "cuda", "numerics.float_type" = "Float32"}
+
+[[case]]
+name   = "run_c90_merra2_linrood_upwindz_gpu_f32"
+kind   = "run"
+config = "configs/run_c90_merra2.toml"
+tags   = ["run", "cubed_sphere", "gpu", "merra2"]
+set    = {"advection.scheme" = "linrood", "advection.vertical" = "upwind"}
+
+[[case]]
+name   = "run_c90_merra2_hbvdiff_gpu_f32"
+kind   = "run"
+config = "configs/run_c90_merra2.toml"
+tags   = ["run", "cubed_sphere", "gpu", "merra2"]
+set    = {"diffusion.kind" = "geoschem_holtslag_boville_vdiff"}
+
+[[case]]
+name   = "run_c90_era5_tm5_2day_gpu_f32"
+kind   = "run"
+config = "configs/run_c90_era5_tm5.toml"
+tags   = ["run", "cubed_sphere", "gpu", "era5", "multiday"]
+set    = {"input.binary_paths" = ["/temp1/cfranken/goldens/inputs/era5_n320_transport_20220115_float32.bin", "/temp1/cfranken/goldens/inputs/era5_n320_transport_20220116_float32.bin"]}
+
+[[case]]
+name   = "run_c90_era5_tm5_nmerge2_gpu_f32"
+kind   = "run"
+config = "configs/run_c90_era5_tm5.toml"
+tags   = ["run", "cubed_sphere", "gpu", "era5"]
+set    = {"convection.n_merge" = 2, "convection.lmax_conv" = 50}
+
+[[case]]
+name   = "run_c90_era5_localkz_gpu_f32"
+kind   = "run"
+config = "configs/run_c90_era5_tm5.toml"
+tags   = ["run", "cubed_sphere", "gpu", "era5"]
+set    = {"diffusion.kind" = "tm5_beljaars_viterbo_local_kz"}

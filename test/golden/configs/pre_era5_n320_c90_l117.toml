@@ -1,0 +1,36 @@
+# ERA5 N320 (ARCO) → C90 L117, line-integral face fluxes, window-mean sampling, TM5 diffusion
+# fields, Float32. From config/preprocessing/era5_n320_arco_diffusion_to_c90_l117_li.toml.
+
+[source]
+toml     = "config/met_sources/era5_n320_arco_diffusion_li.toml"
+root_dir = "~/data/AtmosTransport/met/era5/N320/hourly/raw"
+
+[vertical]
+coefficients_file = "config/era5_L137_coefficients.toml"
+transform         = "merge_layers_thinner_than"
+min_thickness_Pa  = 100.0
+
+[output]
+directory  = "@OUTPUT@"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 90
+panel_convention    = "geos_native"
+definition          = "gmao_equal_distance"
+regridder_cache_dir = "@OUTPUT@/_regrid_cache"
+
+[numerics]
+float_type                 = "Float32"
+dt_met_seconds             = 3600.0
+chain_mass                 = false
+substep_schedule           = "adaptive_cfl"
+substep_cfl_target         = 0.90
+positivity_cfl_limit       = 0.95
+require_substep_positivity = true
+
+[mass_fix]
+enable           = true
+mode             = "target_ps_dry"
+target_ps_dry_pa = 98726.0
