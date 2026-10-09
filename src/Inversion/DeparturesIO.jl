@@ -335,7 +335,7 @@ function build_departure_set(set::CSObservationSet,
     # the kept observations before calling `build_departure_set`.
     t_start_dt = _parse_iso_datetime(t_start)
     dt_f = float(dt)
-    cell_cache = _build_cs_cell_center_cache(mesh)
+    locator = cell_locator(mesh)
 
     records = Vector{CSDepartureRecord}(undef, n)
     @inbounds for k in 1:n
@@ -361,7 +361,7 @@ function build_departure_set(set::CSObservationSet,
 
         # Re-derive expected (panel, i, j) from the record's lat/lon.
         expected_p, expected_i, expected_j = _locate_cs_cell(
-            Float64(rec.lat), Float64(rec.lon), cell_cache)
+            Float64(rec.lat), Float64(rec.lon), locator)
         obs.objective.panel == expected_p || throw(ArgumentError(
             "build_departure_set alignment check failed at row $k: " *
             "observations[$k].objective.panel = $(obs.objective.panel) " *

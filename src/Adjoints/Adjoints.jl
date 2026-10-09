@@ -52,6 +52,7 @@ using ..State: AbstractCubedSphereField,
     LocalHoltslagBovilleKzField, AbstractCSDkgField, PrecomputedCSDkgField, GCHPNonlocalPBLField,
     field_value, panel_field, update_field!
 using ..MetDrivers: ConvectionForcing, current_time
+using ..Output: cell_locator, locate                   # observation binding (Inversion/)
 
 # Tape storage policies + record types live in src/Tape/
 # (loaded before Adjoints in src/AtmosTransport.jl). Re-imported here so

@@ -88,3 +88,15 @@ Golden deltas: lat-lon Float32 runs, uniform-tracer mass drift +1.37e-6 → +5e-
 per day (blob +1.3e-6 → +7e-7, the level of the cubed-sphere runs); lat-lon
 Float64 at rounding level (2e-14 relative); cubed-sphere runs identical.
 Unit test: Float32 column-mass change over a day 8.0e-7 → 4.9e-8.
+
+### A9 — inversion binds observations to the containing cell
+
+`bind_to_mesh` and the alignment check of `build_departure_set` used the nearest
+cell centre (a brute-force search), while the forward observation sampler uses
+the containing cell (`Output.cell_locator`/`locate`); on C6 the two disagree for
+905 of 20,000 random points. Both now use the locator (longitudes of any wrap
+reduced to [0, 360)), and the nearest-centre cache is deleted. Tests: binding
+equals `locate` for 2000 random points, wrapped longitudes, the departure check
+accepts the bound observations and rejects a shifted cell. Open: records store
+Float32 coordinates, so a point within Float32 rounding of an edge can bind to
+the other side than the Float64 coordinate the forward run sampled.
