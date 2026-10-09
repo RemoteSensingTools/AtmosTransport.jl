@@ -658,6 +658,30 @@ end
 # explicitly and dispatch to the topology-specific kernel variants.
 # ---------------------------------------------------------------------------
 
+"""
+    _packed_references(workspace, columns, n_tracers, FT, backend)
+    _packed_references(workspace, q_raw)
+
+Per-tracer column references of a packed lat-lon or reduced-Gaussian solve (the
+anomaly shift of the Float32 conservation fix): the workspace's array, checked
+against the columns `(Nx, Ny)` or `(ncells,)`, the tracer count, the element type
+and the backend of the state, so a mismatch fails before any tracer is touched.
+"""
+function _packed_references(workspace::DiffusionWorkspace, columns::Tuple, n_tracers::Integer,
+                            ::Type{FT}, backend) where FT
+    references = workspace.references
+    shape = (columns..., Int(n_tracers))
+    references isa AbstractArray && size(references) == shape && eltype(references) === FT &&
+        typeof(get_backend(references)) === typeof(backend) && return references
+    throw(DimensionMismatch(
+        "packed diffusion needs per-tracer column references of shape $shape, element type $FT " *
+        "and the state's backend; build the workspace with DiffusionWorkspace(state) or " *
+        "DiffusionWorkspace(air_mass, n_tracers)"))
+end
+_packed_references(workspace::DiffusionWorkspace, q_raw::AbstractArray) =
+    _packed_references(workspace, size(q_raw)[1:end-2], size(q_raw, ndims(q_raw)), eltype(q_raw),
+                       get_backend(q_raw))
+
 function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 4},
                                    air_mass::AbstractArray{FT, 3},
                                    op::ImplicitVerticalDiffusion{FT, KzF},
@@ -671,10 +695,11 @@ function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 4},
     size(air_mass) == (Nx, Ny, Nz) || throw(DimensionMismatch(
         "LL mass-flux diffusion: air_mass shape $(size(air_mass)) does not " *
         "match q_raw spatial shape $((Nx, Ny, Nz))"))
+    references = _packed_references(workspace, q_raw)
     update_field!(op.kz_field, current_time(meteo))
     backend = get_backend(q_raw)
     kernel = _vertical_diffusion_kernel_mass_flux!(backend, (8, 8))
-    kernel(q_raw, air_mass, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz, Nt;
+    kernel(q_raw, air_mass, op.kz_field, dz_scratch, w_scratch, references, FT(dt), Nz, Nt;
            ndrange = (Nx, Ny))
     synchronize(backend)
     return nothing
@@ -693,10 +718,11 @@ function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 3},
     size(air_mass) == (ncells, Nz) || throw(DimensionMismatch(
         "RG mass-flux diffusion: air_mass shape $(size(air_mass)) does not " *
         "match q_raw spatial shape $((ncells, Nz))"))
+    references = _packed_references(workspace, q_raw)
     update_field!(op.kz_field, current_time(meteo))
     backend = get_backend(q_raw)
     kernel = _vertical_diffusion_face_kernel_mass_flux!(backend, 256)
-    kernel(q_raw, air_mass, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz, Nt;
+    kernel(q_raw, air_mass, op.kz_field, dz_scratch, w_scratch, references, FT(dt), Nz, Nt;
            ndrange = ncells)
     synchronize(backend)
     return nothing
@@ -793,6 +819,8 @@ function apply_vertical_diffusion_vmr!(q_raw::AbstractArray{FT, 4},
                                        op::ImplicitVerticalDiffusion{FT, KzF},
                                        workspace::DiffusionWorkspace, dt,
                                        meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 3}}
+    size(q_raw, ndims(q_raw)) == 0 && return nothing
+    _packed_references(workspace, q_raw)               # check before the state is rescaled
     _ll_scale_tracer_mass_to_vmr!(q_raw, air_mass)
     apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt, meteo)
     _ll_scale_vmr_to_tracer_mass!(q_raw, air_mass)
@@ -805,6 +833,8 @@ function apply_vertical_diffusion_vmr!(q_raw::AbstractArray{FT, 3},
                                        op::ImplicitVerticalDiffusion{FT, KzF},
                                        workspace::DiffusionWorkspace, dt,
                                        meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 2}}
+    size(q_raw, ndims(q_raw)) == 0 && return nothing
+    _packed_references(workspace, q_raw)               # check before the state is rescaled
     _face_scale_tracer_mass_to_vmr!(q_raw, air_mass)
     apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt, meteo)
     _face_scale_vmr_to_tracer_mass!(q_raw, air_mass)

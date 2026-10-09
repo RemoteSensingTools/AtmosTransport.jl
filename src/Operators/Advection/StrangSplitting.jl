@@ -1314,7 +1314,7 @@ end
 @inline _preflight_diffusion(::NoDiffusion, _, _, ::NTuple{6}, ::Integer, ::Integer) = nothing
 
 function _preflight_diffusion(op::AbstractDiffusion, workspace, dt,
-                              air_mass::AbstractArray, _...)
+                              air_mass::AbstractArray, n_tracers::Integer)
     workspace isa DiffusionWorkspace || throw(ArgumentError(
         "$(typeof(op)) requires `diffusion_workspace = DiffusionWorkspace(state)`; " *
         "got $(typeof(workspace))."))
@@ -1330,6 +1330,7 @@ function _preflight_diffusion(op::AbstractDiffusion, workspace, dt,
     typeof(get_backend(workspace.factors)) === typeof(get_backend(air_mass)) &&
         typeof(get_backend(workspace.layer_thickness)) === typeof(get_backend(air_mass)) ||
         throw(ArgumentError("diffusion workspace and state must use the same backend"))
+    _packed_references(workspace, expected[1:end-1], n_tracers, eltype(air_mass), get_backend(air_mass))
     return nothing
 end
 

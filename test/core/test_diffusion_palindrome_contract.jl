@@ -21,7 +21,7 @@ function _ll_diffusion_fixture(::Type{FT}; Nx=2, Ny=2, Nz=6, Nt=1) where FT
     bm = zeros(FT, Nx, Ny + 1, Nz)
     cm = zeros(FT, Nx, Ny, Nz + 1)
     advection = AdvectionWorkspace(m; n_tracers=Nt)
-    diffusion = DiffusionWorkspace(m)
+    diffusion = DiffusionWorkspace(m, Nt)
     fill!(diffusion.layer_thickness, FT(100))
     return rm, m, am, bm, cm, advection, diffusion
 end
@@ -46,7 +46,7 @@ end
     function split_error(dt)
         full, m, _, _, _, _, full_ws = _ll_diffusion_fixture(FT)
         half = copy(full)
-        half_ws = DiffusionWorkspace(m)
+        half_ws = DiffusionWorkspace(m, size(full, 4))
         fill!(half_ws.layer_thickness, FT(100))
         op = ImplicitVerticalDiffusion(; kz_field=ConstantField{FT, 3}(FT(1.5)))
         apply_vertical_diffusion_vmr!(full, m, op, full_ws, FT(dt))

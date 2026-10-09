@@ -258,7 +258,7 @@ using .AtmosTransport.State: ConstantField
     sum_pre = dropdims(sum(rm; dims = 3); dims = 3)   # (Nx, Ny, Nt)
 
     op = ImplicitVerticalDiffusion(; kz_field = kz_field)
-    workspace = DiffusionWorkspace(w_scratch, dz_scratch, nothing)
+    workspace = DiffusionWorkspace(w_scratch, dz_scratch, zeros(FT, Nx, Ny, Nt))
     apply_vertical_diffusion_vmr!(rm, air_mass, op, workspace, FT(450.0))
 
     sum_post = dropdims(sum(rm; dims = 3); dims = 3)
@@ -293,7 +293,7 @@ end
     sum_pre = dropdims(sum(rm; dims = 2); dims = 2)   # (ncells, Nt)
 
     op = ImplicitVerticalDiffusion(; kz_field = kz_field)
-    workspace = DiffusionWorkspace(w_scratch, dz_scratch, nothing)
+    workspace = DiffusionWorkspace(w_scratch, dz_scratch, zeros(FT, ncells, Nt))
     apply_vertical_diffusion_vmr!(rm, air_mass, op, workspace, FT(450.0))
 
     sum_post = dropdims(sum(rm; dims = 2); dims = 2)

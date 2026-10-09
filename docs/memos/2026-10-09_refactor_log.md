@@ -76,3 +76,15 @@ the forward clamps it. `_courant_fraction(F, m)` (LinRood.jl) now returns the cl
 its dual numbers and the copy is gone. New tests: finite differences at Courant
 numbers > 1 (ORD 5 and 7, Float64; the old adjoint gave −11.7 against 0.33) and
 Float32 against Float64. Forward goldens (three Lin-Rood cases) identical.
+
+### A2 — anomaly diffusion for lat-lon and reduced-Gaussian columns
+
+The lat-lon packed and reduced-Gaussian packed and single diffusion kernels now
+solve for the departure from each column's minimum, as the cubed-sphere kernels
+do (the backward-Euler operator keeps a uniform column). Lat-lon and
+reduced-Gaussian `DiffusionWorkspace`s carry per-tracer references; the packed
+wrappers and the Strang preflight check them before touching the state.
+Golden deltas: lat-lon Float32 runs, uniform-tracer mass drift +1.37e-6 → +5e-9
+per day (blob +1.3e-6 → +7e-7, the level of the cubed-sphere runs); lat-lon
+Float64 at rounding level (2e-14 relative); cubed-sphere runs identical.
+Unit test: Float32 column-mass change over a day 8.0e-7 → 4.9e-8.
