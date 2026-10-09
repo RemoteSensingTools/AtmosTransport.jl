@@ -68,7 +68,7 @@ using ..Grids: AbstractHorizontalMesh, AbstractStructuredMesh,
                AbstractCubedSpherePanelConvention,
                GnomonicPanelConvention, GEOSNativePanelConvention,
                nrings, nboundaries, ring_cell_count, cell_index,
-               nx, ny, ncells, panel_cell_corner_lonlat,
+               nx, ny, ncells, cell_area, panel_cell_corner_lonlat,
                cs_definition, coordinate_law, center_law, longitude_offset_deg,
                cs_definition_tag, coordinate_law_tag, center_law_tag
 

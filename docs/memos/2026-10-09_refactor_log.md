@@ -297,3 +297,16 @@ Left for the owner (public API, used only by tests): `State.MetState`, and the
 exported `diagnose_cm_from_continuity_vc!` / `diagnose_cm_from_continuity_ka!`
 (no caller; `diagnose_cm_from_continuity!` is tested). Stale comments fixed:
 the RG contract header (the positivity gate is wired into `process_day`).
+
+### Fixes found while writing the READMEs
+
+- `IdentityRegrid` (returned by `build_regridder` for equivalent meshes) had
+  no `src_areas`/`dst_areas`, which the surface-flux and preprocessing
+  density conversions read from every regridder: a surface-flux file on
+  exactly the run's lat-lon grid (as the loader orients it, longitudes in
+  [0, 360)) would have thrown. It now carries the mesh cell areas in the
+  regridders' flat cell order. Test in `test_identity_regrid.jl`.
+- The Makie extension converted the runtime's logged storage rate back to
+  species mass with the old dry-air molar mass (step 2 changed the runtime's);
+  it now uses `DRY_AIR_MOLAR_MASS`, `SPECIES_MOLAR_MASS`, `STANDARD_GRAVITY`.
+- The `cs_surface_flux_jacobian` docstring was attached to the helper above it.

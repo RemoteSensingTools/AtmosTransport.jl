@@ -62,6 +62,15 @@ end
 # Public Jacobian entry
 # ---------------------------------------------------------------------------
 
+_objective_vector(obj::AbstractCSFootprintObjective) =
+    AbstractCSFootprintObjective[obj]
+_objective_vector(objectives) =
+    AbstractCSFootprintObjective[objectives...]
+_window_vector(window::CSSurfaceFluxWindow) =
+    CSSurfaceFluxWindow[window]
+_window_vector(windows) =
+    CSSurfaceFluxWindow[windows...]
+
 """
     cs_surface_flux_jacobian(..., objectives, windows; kwargs...)
 
@@ -72,15 +81,6 @@ per-step emission-rate footprints; use `CSSurfaceFluxWindow(...;
 normalize=true)` for average-rate controls or explicit `weights` for a
 custom temporal basis.
 """
-_objective_vector(obj::AbstractCSFootprintObjective) =
-    AbstractCSFootprintObjective[obj]
-_objective_vector(objectives) =
-    AbstractCSFootprintObjective[objectives...]
-_window_vector(window::CSSurfaceFluxWindow) =
-    CSSurfaceFluxWindow[window]
-_window_vector(windows) =
-    CSSurfaceFluxWindow[windows...]
-
 function cs_surface_flux_jacobian(panels_rm0, panels_m0,
                                   panels_am_steps,
                                   panels_bm_steps,

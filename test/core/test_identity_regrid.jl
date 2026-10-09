@@ -16,7 +16,7 @@
 using Test
 
 import AtmosTransport
-using .AtmosTransport.Grids: LatLonMesh, CubedSphereMesh, ReducedGaussianMesh,
+using .AtmosTransport.Grids: LatLonMesh, CubedSphereMesh, ReducedGaussianMesh, cell_area,
                               GnomonicPanelConvention, GEOSNativePanelConvention
 using .AtmosTransport.Regridding: build_regridder, apply_regridder!,
                                    IdentityRegrid, meshes_equivalent
@@ -84,5 +84,28 @@ using .AtmosTransport.Regridding: build_regridder, apply_regridder!,
         apply_regridder!(dst, r, src)
         @test dst == src                     # bitwise equality
         @test dst !== src                    # but distinct buffers (copyto!, not aliasing)
+    end
+
+    # Callers convert densities to cell totals with any regridder's areas.
+    @testset "IdentityRegrid carries the mesh cell areas" begin
+        cs = CubedSphereMesh(Nc=4)
+        r = build_regridder(cs, CubedSphereMesh(Nc=4))
+        @test r.dst_areas ≈ build_regridder(CubedSphereMesh(Nc=2), cs).dst_areas rtol = 1e-12
+        @test r.src_areas == r.dst_areas
+        ll = LatLonMesh(Nx=8, Ny=4)
+        rll = build_regridder(ll, LatLonMesh(Nx=8, Ny=4))
+        @test sum(rll.dst_areas) ≈ 4π * ll.radius^2 rtol = 1e-12
+        density = [1e-9 * (i + j) for i in 1:8, j in 1:4]
+        ICIO = AtmosTransport.Models.InitialConditionIO
+        rate = ICIO._apply_surface_flux_regridder(rll, density, Float64; report = false)
+        @test rate ≈ vec([density[i, j] * cell_area(ll, i, j) for i in 1:8, j in 1:4]) rtol = 1e-14
+        rg = ReducedGaussianMesh(Float64[-45, 45], [4, 8]; FT=Float64)
+        rrg = build_regridder(rg, ReducedGaussianMesh(Float64[-45, 45], [4, 8]; FT=Float64))
+        @test rrg.dst_areas == [cell_area(rg, c) for c in 1:12]
+        # Cell totals → densities → identity → cell totals.
+        totals = rand(12)
+        dst = similar(totals)
+        apply_regridder!(dst, rrg, totals ./ rrg.src_areas)
+        @test dst .* rrg.dst_areas ≈ totals rtol = 1e-14
     end
 end
