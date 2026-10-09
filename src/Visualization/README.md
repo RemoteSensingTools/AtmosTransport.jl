@@ -44,7 +44,9 @@ All in [`Visualization.jl`](Visualization.jl):
   - lat-lon and reduced-Gaussian values pass through unchanged
   - cubed-sphere fields are conservatively regridded to lon-lat. The
     regridder is kept in `SnapshotRegridCache`, keyed on
-    `(Nc, resolution, panel_convention)`.
+    `(Nc, resolution, definition)`; the definition (coordinate and center
+    laws, panel convention, longitude offset) comes from the snapshot's
+    `cs_*` attributes, or the convention's default for older files.
 - `robust_colorrange(fields; trim=(0.01, 0.99))` returns a color range from
   quantiles of the finite values
 - `PlotSpec(variable; transform, level, title, unit)` describes one panel of

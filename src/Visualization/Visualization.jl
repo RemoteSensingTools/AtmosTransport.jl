@@ -15,7 +15,10 @@ using Printf
 using Statistics: quantile
 
 using ..Grids: LatLonMesh, CubedSphereMesh,
-               GnomonicPanelConvention, GEOSNativePanelConvention
+               GnomonicPanelConvention, GEOSNativePanelConvention,
+               AbstractCubedSphereDefinition, CubedSphereDefinition, _default_cs_definition,
+               EquiangularGnomonic, GMAOEqualDistanceGnomonic,
+               AngularMidpointCenter, FourCornerNormalizedCenter
 using ..Regridding: build_regridder, apply_regridder!
 using ..Parameters: IFS_EARTH_RADIUS
 
@@ -47,16 +50,23 @@ struct ReducedGaussianSnapshotTopology <: AbstractSnapshotTopology
 end
 
 """
-    CubedSphereSnapshotTopology(Nc, nlevel, panel_convention)
+    CubedSphereSnapshotTopology(Nc, nlevel, panel_convention[, definition])
 
 Cubed-sphere snapshot geometry. Values are stored as `(Xdim, Ydim, nf)` for a
-single horizontal field, with `nf == 6`.
+single horizontal field, with `nf == 6`. `definition` is the mesh the snapshot
+was written on (coordinate and center laws, panel convention, longitude
+offset); it defaults to the panel convention's standard definition.
 """
-struct CubedSphereSnapshotTopology <: AbstractSnapshotTopology
+struct CubedSphereSnapshotTopology{D <: AbstractCubedSphereDefinition} <: AbstractSnapshotTopology
     Nc::Int
     nlevel::Int
     panel_convention::Symbol
+    definition::D
 end
+
+CubedSphereSnapshotTopology(Nc, nlevel, panel_convention::Symbol) =
+    CubedSphereSnapshotTopology(Nc, nlevel, panel_convention,
+                                _default_cs_definition(_cs_panel_convention(panel_convention)))
 
 """
     SnapshotDataset
@@ -209,7 +219,7 @@ function open_snapshot(path::AbstractString)
             Nc = haskey(attrs, "Nc") ? Int(attrs["Nc"]) : length(ds.dim["Xdim"])
             nlevel = haskey(ds, "lev") ? size(ds["lev"], 1) : size(ds["air_mass"], 4)
             conv = Symbol(get(attrs, "panel_convention", "gnomonic"))
-            CubedSphereSnapshotTopology(Nc, nlevel, conv)
+            CubedSphereSnapshotTopology(Nc, nlevel, conv, _cs_snapshot_definition(attrs, conv))
         elseif _is_lonlat_snapshot(ds)
             lons = Float64.(collect(ds["lon"][:]))
             lats = Float64.(collect(ds["lat"][:]))
@@ -411,17 +421,36 @@ function _cs_panel_convention(sym::Symbol)
     throw(ArgumentError("unsupported CS panel_convention=$(sym); expected :gnomonic or :geos_native"))
 end
 
+const _CS_COORDINATE_LAWS = Dict("equiangular_gnomonic" => EquiangularGnomonic(),
+                                 "gmao_equal_distance_gnomonic" => GMAOEqualDistanceGnomonic())
+const _CS_CENTER_LAWS = Dict("angular_midpoint" => AngularMidpointCenter(),
+                             "four_corner_normalized" => FourCornerNormalizedCenter())
+
+# The mesh definition recorded by the snapshot writer (`_define_cs_geometry!`);
+# files written before those attributes get the panel convention's default.
+function _cs_snapshot_definition(attrs, convention::Symbol)
+    conv = _cs_panel_convention(convention)
+    haskey(attrs, "cs_coordinate_law") || return _default_cs_definition(conv)
+    law = get(_CS_COORDINATE_LAWS, String(attrs["cs_coordinate_law"]), nothing)
+    center = get(_CS_CENTER_LAWS, String(get(attrs, "cs_center_law", "")), nothing)
+    (law === nothing || center === nothing) && throw(ArgumentError(
+        "unsupported CS geometry attributes cs_coordinate_law=$(repr(attrs["cs_coordinate_law"])), " *
+        "cs_center_law=$(repr(get(attrs, "cs_center_law", nothing)))"))
+    return CubedSphereDefinition(law, center, conv;
+                                 longitude_offset_deg = Float64(attrs["longitude_of_central_meridian"]),
+                                 tag = Symbol(get(attrs, "cs_definition", "custom")))
+end
+
 function _cs_to_ll_cache!(cache::SnapshotRegridCache,
                           topology::CubedSphereSnapshotTopology,
                           resolution::Tuple{Int, Int})
-    key = (:cs_to_ll, topology.Nc, resolution, topology.panel_convention)
+    key = (:cs_to_ll, topology.Nc, resolution, topology.definition)
     if !haskey(cache.entries, key)
         ll_mesh, lons, lats = _target_lonlat_mesh(resolution)
-        convention = _cs_panel_convention(topology.panel_convention)
         cs_mesh = CubedSphereMesh(; FT=Float64,
                                   Nc=topology.Nc,
                                   radius=IFS_EARTH_RADIUS,
-                                  convention=convention)
+                                  definition=topology.definition)
         regridder = build_regridder(cs_mesh, ll_mesh; normalize=false)
         cache.entries[key] = (; regridder, lons, lats)
     end

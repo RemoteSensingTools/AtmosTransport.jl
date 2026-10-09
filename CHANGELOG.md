@@ -57,6 +57,10 @@
 - The reduced-Gaussian spectral writer wrote straight to the final file, so a
   day that failed a gate deleted an existing binary of that day. It now
   stages to `<out>.tmp` like the other writers.
+- Visualization regridded cubed-sphere snapshots on the panel convention's
+  default mesh, ignoring the recorded coordinate law, center law and
+  longitude offset (`cs_*` and `longitude_of_central_meridian` attributes).
+  `CubedSphereSnapshotTopology` now carries the snapshot's definition.
 
 ### Numerical changes
 
