@@ -402,3 +402,22 @@ error message and its test) name the new files.
   (driver context, hooks, `process_day`).
 - `sources/era5.jl` (1718 lines) → `era5.jl` (settings, paths, day handles),
   `era5_n320_window.jl`, `era5_n320_mass_convection.jl`, `era5_n320_to_cs.jl`.
+
+### Step 3 — Lin-Rood adjoint kernels, reduced-Gaussian preprocessing
+
+- `Advection/linrood_adjoint_kernels.jl` (1736 lines) →
+  `linrood_adjoint_kernels.jl` (update, pre-advection, q-input faces),
+  `linrood_adjoint_rm_faces.jl` (rm-input faces, ORD 5 and 7),
+  `linrood_adjoint_panel.jl` (one-panel horizontal adjoint).
+- `Preprocessing/reduced_transport_helpers.jl` (1321 lines) →
+  `reduced_transport_helpers.jl` (workspaces, synthesis, fluxes, merge),
+  `reduced_window_buffer.jl` (two-slot buffer, ingest/drain/flush),
+  `reduced_spectral_day.jl` (window synthesis and pin, balance, driver hooks,
+  `process_day`).
+
+### Step 4 — DrivenSimulation
+
+- `Models/DrivenSimulation.jl` (1050 lines) → `DrivenSimulation.jl` (type,
+  compatibility checks, flux storage scaling), `driven_window_state.jl`,
+  `driven_physics_refresh.jl`, `driven_stepping.jl`. The source-scanning
+  guard in `test_architectures.jl` reads all four.

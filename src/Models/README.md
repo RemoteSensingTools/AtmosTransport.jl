@@ -18,9 +18,10 @@ read.
   [`Simulation.jl`](Simulation.jl)
   defines `Simulation` and `run!`
 - Window-driven production-style harness:
-  [`DrivenSimulation.jl`](DrivenSimulation.jl)
-  defines `DrivenSimulation`, window progression, forcing refresh, and
-  runtime validation
+  [`DrivenSimulation.jl`](DrivenSimulation.jl) defines `DrivenSimulation`
+  and its compatibility checks; window progression and stepping are in
+  [`driven_stepping.jl`](driven_stepping.jl), forcing refresh in
+  [`driven_physics_refresh.jl`](driven_physics_refresh.jl)
 
 ## Runtime Composition Today
 
@@ -37,8 +38,14 @@ read.
   constructors, operator installers, runtime block order
 - [`Simulation.jl`](Simulation.jl) — simple fixed-step loop for direct
   model runs
-- [`DrivenSimulation.jl`](DrivenSimulation.jl) — met-window-driven loop,
-  forcing interpolation, air-mass refresh, and runtime compatibility checks
+- [`DrivenSimulation.jl`](DrivenSimulation.jl) — the `DrivenSimulation`
+  type, runtime compatibility checks, flux storage scaling
+- [`driven_window_state.jl`](driven_window_state.jl) — state halos, air-mass
+  reset at window ends, window payload copies and prefetch
+- [`driven_physics_refresh.jl`](driven_physics_refresh.jl) — per-window
+  physics refresh (diffusion dz and Kz, convection forcing), midpoint forcing
+- [`driven_stepping.jl`](driven_stepping.jl) — window advance, the
+  constructor, `step!`, `run_window!`, `run!`
 - [`RuntimeRecipeStyles.jl`](RuntimeRecipeStyles.jl) — runtime-style traits
   (`AbstractRuntimeRecipeStyle` + LatLon/ReducedGaussian/CubedSphere) the
   physics-spec `materialize` methods dispatch on
@@ -114,7 +121,7 @@ To follow a TOML physics option from input to execution:
 | Build an operator | `materialize` methods in the same file | Apply topology gates and construct the scheme; diffusion also needs driver context and tracer precision. |
 | Check the forcing | [`RuntimePhysicsRecipe.jl`](RuntimePhysicsRecipe.jl) | Assemble operators and check required binary capabilities. |
 | Allocate state and workspaces | [`runner/model_setup.jl`](runner/model_setup.jl) | Initialize tracer storage and build workspaces on its backend. |
-| Advance the model | [`TransportModel.jl`](TransportModel.jl), [`DrivenSimulation.jl`](DrivenSimulation.jl) | Execute operator blocks and refresh forcing across meteorological windows. |
+| Advance the model | [`TransportModel.jl`](TransportModel.jl), [`driven_stepping.jl`](driven_stepping.jl) | Execute operator blocks and refresh forcing across meteorological windows. |
 
 The public runner calls `validate_config` before the startup handoff into its
 runtime implementation. Its checks live in

@@ -15,7 +15,7 @@ Tests for the virtual-temperature `dz` helper (D6 fix). Three checks:
      whole point of D6.
 
 NOTE: the runtime fallback `_fill_dz_for_diffusion!` in
-`src/Models/DrivenSimulation.jl` (which warns + reverts to constT when
+`src/Models/driven_physics_refresh.jl` (which warns + reverts to constT when
 the window lacks `vdiff`) is exercised indirectly by the regression
 test suite when LocalHoltslagBovilleKzField runs are loaded. We don't
 unit-test it here because it requires constructing a mock

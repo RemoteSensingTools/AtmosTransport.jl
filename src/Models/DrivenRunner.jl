@@ -44,7 +44,7 @@ is:
    wraps chemistry and surface sources into the model with `with_chemistry`
    and `with_emissions`.
 4. The runtime loop below calls `run_window!(sim)` for LL/RG or `step!(sim)`
-   for CS. Those functions live in `DrivenSimulation.jl`.
+   for CS. Those functions live in `driven_stepping.jl`.
 5. `DrivenSimulation.step!` refreshes time-varying forcing from the driver,
    then calls `TransportModel.step!` or, for binary-scheduled substeps,
    `transport_step!` plus an end-of-window `convection_chemistry_step!`.

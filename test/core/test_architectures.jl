@@ -40,7 +40,9 @@ struct MockMetalArray end
     @test_throws ArgumentError Arch.architecture_from_config(Dict("backend" => "rocm"))
 
     architecture_source = read(joinpath(@__DIR__, "..", "..", "src", "Architectures.jl"), String)
-    driven_source = read(joinpath(@__DIR__, "..", "..", "src", "Models", "DrivenSimulation.jl"), String)
+    driven_source = join((read(joinpath(@__DIR__, "..", "..", "src", "Models", f), String)
+                          for f in ("DrivenSimulation.jl", "driven_window_state.jl",
+                                    "driven_physics_refresh.jl", "driven_stepping.jl")))
     @test !occursin(r"\bisdefined\(Main|\bgetproperty\(Main|Core\.eval\(Main", architecture_source)
     @test !occursin(r"\bisdefined\(Main|\bgetproperty\(Main|Core\.eval\(Main", driven_source)
 end

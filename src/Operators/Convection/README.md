@@ -48,7 +48,7 @@ operator.
 
 1. [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl) owns the
    convection placement in `step!`.
-2. [`../../Models/DrivenSimulation.jl`](../../Models/DrivenSimulation.jl)
+2. [`../../Models/driven_physics_refresh.jl`](../../Models/driven_physics_refresh.jl)
    refreshes the forcing carrier.
 3. The operator's `apply!` method validates the fields and launches the
    topology-specific kernel.

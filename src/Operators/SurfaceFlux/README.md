@@ -59,7 +59,8 @@ the topology-specific kernels that inject mass into the surface layer.
   verify that panel rates are interior-only `(Nc, Nc)` arrays and not
   halo-padded copies
 - Tracing runtime installation:
-  start from [`../../Models/DrivenSimulation.jl`](../../Models/DrivenSimulation.jl),
+  start from the `DrivenSimulation` constructor in
+  [`../../Models/driven_stepping.jl`](../../Models/driven_stepping.jl),
   which turns `surface_sources` into a `SurfaceFluxOperator`
 
 ## Cross-Dependencies
@@ -69,8 +70,8 @@ the topology-specific kernels that inject mass into the surface layer.
   [`../Advection/multitracer_strang.jl`](../Advection/multitracer_strang.jl) and
   [`../Advection/strang_apply.jl`](../Advection/strang_apply.jl)
   embed surface flux at the transport midpoint
-- [`../../Models/DrivenSimulation.jl`](../../Models/DrivenSimulation.jl)
-  validates and installs sim-level surface sources
+- [`../../Models/driven_stepping.jl`](../../Models/driven_stepping.jl) (the
+  `DrivenSimulation` constructor) validates and installs sim-level surface sources
 - [`../../Grids/`](../../Grids/) determines the active topology and
   source-shape expectations
 

@@ -101,7 +101,7 @@ and passes the resulting scalar to each `update_field!(f, t)`.
 
 - **Production**: `meteo = sim::DrivenSimulation`; returns `sim.time`
   (Float64), set from the window and step counters after each `step!(sim)`.
-  See `src/Models/DrivenSimulation.jl`.
+  See `src/Models/driven_stepping.jl`.
 - **Unit tests without a sim**: `meteo = nothing`; returns `0.0`.
 """
 current_time(::Nothing) = 0.0

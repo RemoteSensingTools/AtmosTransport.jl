@@ -48,7 +48,7 @@ step!(sim)
 └── invoke callbacks
 ```
 
-The implementation lives in `src/Models/DrivenSimulation.jl`. In simplified
+The implementation lives in `src/Models/driven_stepping.jl`. In simplified
 form:
 
 ```julia
