@@ -533,13 +533,13 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
             cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
             cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
-            max_iter=5000, project_every=Int(cs_balance_project_every))
+            max_iter=20000, project_every=Int(cs_balance_project_every))
     else
         balance_cs_column_mass_fluxes!(
             cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
             cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
             cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
-            max_iter=5000, project_every=Int(cs_balance_project_every))
+            max_iter=20000, project_every=Int(cs_balance_project_every))
     end
     t_bal = time() - t_bal
 

@@ -161,6 +161,14 @@ replay error is 4.2e-15 with the pin alone; `pre_o24` and
 `test/core/test_global_ps_pin.jl` (both pins hit their targets, the two layouts
 agree bit for bit, the flux rescale).
 
+Plan item A11 also lists differing guards of the preprocessing adaptive-substep
+loops. The final windows of the ERA5 spectral → cubed-sphere path and of the
+lat-lon → cubed-sphere regrid used a CG limit of 5,000 where every other window
+uses 20,000; they use 20,000 now (no change while the solve converges within
+5,000 iterations). Column weights
+missing from three cubed-sphere loops would change results and are left for
+the owner.
+
 ### A10 — structured PPM: analysis and proposed fix (not applied; decision for the owner)
 
 The structured `PPMScheme` (lat-lon, and per panel on the cubed sphere, i.e. the
@@ -477,3 +485,40 @@ Advection README had never listed `vertical_fv3_profile.jl` (added at
 a2c99ed6), and a failing file ends the runner loop. The README lists it now;
 the freshness test also covers every folder that gained a README (and the
 Output README now lists `Output.jl`, `runtime_output.jl`, `binary_writer.jl`).
+
+Golden check after Phase 4 (3ca56c55, all 20 non-slow cases): identical.
+The full test suite (`Pkg.test()`, default tiers) passes at 903cba5b.
+
+## Status (2026-10-09, morning)
+
+Branch `refactor/structure-2026-10` (fast-forwarded from `refactor/wip`), 24
+commits on `3684b71a`, not pushed. Every commit was reviewed by Codex; every
+results-changing commit is in the golden reference `ref_current` with the
+deltas stated above (`/temp1/cfranken/goldens/ref_current/ACCEPTED.txt`).
+
+Done:
+- Phase 0: golden harness (24 cases, 20 of them not tagged `slow`).
+- Phase 1: A1, A2, A3, A4, A8, A9 fixed; A5 for the reader and writer tables
+  (the script copies go with Phase 7); A11 for the reduced-Gaussian path and
+  the regrid CG limit (column weights in three cubed-sphere loops remain). The
+  reduced-Gaussian O24 goldens pass. A6 was folded into Phase 2; A7 is Phase 2.
+- Phase 2: constants in `PhysicalConstants.jl`; one dry-air set (relative
+  result changes: diffusion dz +3.4e-4, emissions −3.7e-5; dz of future TM5
+  convection attachments); binaries record their mesh radius (new binaries
+  only: runtime cell areas +7.2e-5 relative).
+- Phase 3: about 800 lines of dead code removed; a README in every `src/`
+  folder except `Downloads/sources/` (covered by `Downloads/README.md`);
+  `test_readme_current.jl` checks that each lists its folder's files;
+  `CLAUDE.md` code map; stale comments, docstrings and messages corrected.
+- Phase 4: 13 large files split move-only; no `src/` file is above 1000
+  lines except `era5_n320_regrid.jl` (1004, after the comment corrections).
+
+For the owner to decide:
+- A10, structured PPM positivity (analysis and partial patch above): every
+  production PPM run would change.
+- Public API with no production caller (listed above): remove or keep.
+- The behavior findings from the README work (listed above).
+
+Not started: Phase 5 (types for Symbol/ENV switches), Phase 6 (duplication,
+e.g. the two block-coarsening helper sets, whose area-weighted versions differ
+in accumulation precision), Phase 7 (scripts, tests mirroring `src/`).

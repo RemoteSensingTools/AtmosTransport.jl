@@ -392,7 +392,7 @@ function driver_flush_final_windows!(workspace::CubedSphereSpectralWindowWorkspa
         _copy_cs_spectral_panels!(workspace.cs_ws.m_next_panels,
                                   workspace.cur_m)
     end
-    return (_cs_spectral_contract_diag!(workspace, contract, ctx, Nt, 5000),)
+    return (_cs_spectral_contract_diag!(workspace, contract, ctx, Nt, 20000),)
 end
 
 function driver_after_write_window!(workspace::CubedSphereSpectralWindowWorkspace,
