@@ -129,3 +129,31 @@ The reduced-Gaussian Strang palindrome couples emissions only as
 V(dt/2) → S(dt) → V(dt/2); given a `DiffusiveSurfaceFluxBoundary` it silently
 used that split (only the config validator rejected it). `apply!` now throws
 before touching the state; test in `test_no_advection.jl`.
+
+### A10 — structured PPM: analysis and proposed fix (not applied; decision for the owner)
+
+The structured `PPMScheme` (lat-lon, and per panel on the cubed sphere, i.e. the
+production CATRINE "ppm" runs) is not positivity-preserving, for two reasons:
+
+1. **Edge values are not monotonized.** `_ppm_edge_value` is the plain
+   fourth-order CW84 interpolation `7/12 (c_i + c_{i+1}) − 1/12 (c_{i−1} + c_{i+2})`,
+   without CW84's monotonized slopes (Colella & Woodward 1984, eqs. 1.7–1.8), so
+   next to a spike it returns −1/12 of the spike. `_ppm_limit_profile`
+   (`MonotoneLimiter`) only removes overshoots of the parabola inside the cell;
+   an edge outside the range of its two neighbours survives.
+2. **The flux drops the curvature term** of the swept-region mean
+   (`c + (1 − α)(q_R − c)` instead of FV3's `c + (1 − α)(br − α·b0)`).
+
+Measured on a periodic 1-D ring (spike and box on a zero background, 100 steps,
+Courant 0.3/0.7/1.0, `PPMScheme()`): minimum −0.013 / −0.038 now; with the
+curvature term alone −0.010 / −0.026. Both fixes are needed for a monotone
+scheme. The curvature term with matching forward and adjoint changes
+(`_ppm_swept_moments`, one 6-point dual-number coefficient function for both
+limiters replacing the 4-point NoLimiter coefficients) passes every existing
+adjoint test (footprint 91/91, model-space 17/17, preconditioned 21/21) and is
+saved as `/temp1/cfranken/goldens/patches/a10_ppm_curvature_partial.patch`
+(+ `test_ppm_positivity.jl`). Still to do: monotonized edge slopes for
+`MonotoneLimiter` (forward and dual-number adjoint), then golden deltas and a
+CATRINE comparison against GCHP (which uses FV3's limited PPM, so the fix
+should bring us closer). Every production PPM run changes, hence left for the
+owner's decision.
