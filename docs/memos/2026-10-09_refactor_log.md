@@ -114,3 +114,11 @@ it from CMFMC, so there was no operator mismatch there.) Tests: replay equals
 the production `apply_convection!` bit for bit on a deep uneven column (fails on
 the old code), and the adjoint identity on that column with and without DTRAIN
 and several substeps. Forward results unchanged.
+
+### A5 — one cubed-sphere section table
+
+The writer and the reader had separate section-size tables (the writer's lacked
+the flux-delta sections `dam/dbm/dcm`); the reader's method now delegates to the
+writer's function, which covers every section. Goldens identical (C24 and C90
+preprocessing, three runtime cases); new table-driven test. The script copies of
+the table (nine scripts, some without `dkg`) go with the scripts cleanup.

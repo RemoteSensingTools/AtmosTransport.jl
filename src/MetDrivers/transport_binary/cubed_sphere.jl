@@ -3,36 +3,27 @@
 """
     _cs_section_elements(Nc, npanel, nlevel, section) -> Int
 
-Return the number of float elements for a given section in a CS binary.
-Panels are stored sequentially within each section.
+Number of float elements of a section in a cubed-sphere binary, the one table
+the writer and the reader share. Panels are stored sequentially within each
+section: cell fields are `Nc × Nc` per level, x faces `(Nc + 1) × Nc`, y faces
+`Nc × (Nc + 1)`, and vertical fluxes and CMFMC sit on the `nlevel + 1`
+interfaces.
 """
 function _cs_section_elements(Nc::Int, npanel::Int, nlevel::Int, section::Symbol)
-    if section === :m
-        return npanel * Nc * Nc * nlevel
-    elseif section === :dm
-        return npanel * Nc * Nc * nlevel
-    elseif section === :am
+    cells = npanel * Nc * Nc
+    if section in (:m, :dm, :dkg, :dtrain, :entu, :detu, :entd, :detd) ||
+       _is_gchp_vdiff_payload_section(section)
+        return cells * nlevel
+    elseif section in (:am, :dam)
         return npanel * (Nc + 1) * Nc * nlevel
-    elseif section === :bm
+    elseif section in (:bm, :dbm)
         return npanel * Nc * (Nc + 1) * nlevel
-    elseif section === :cm
-        return npanel * Nc * Nc * (nlevel + 1)
+    elseif section in (:cm, :dcm, :cmfmc)
+        return cells * (nlevel + 1)
     elseif _is_cs_2d_section(section)
-        return npanel * Nc * Nc
-    elseif _is_gchp_vdiff_payload_section(section)
-        return npanel * Nc * Nc * nlevel
-    elseif section === :dkg
-        return npanel * Nc * Nc * nlevel
-    elseif section === :cmfmc
-        return npanel * Nc * Nc * (nlevel + 1)
-    elseif section === :dtrain
-        return npanel * Nc * Nc * nlevel
-    elseif section === :entu || section === :detu ||
-           section === :entd || section === :detd
-        return npanel * Nc * Nc * nlevel
-    else
-        error("Unsupported CS section: $section")
+        return cells
     end
+    error("Unsupported CS section: $section")
 end
 
 # The latent heat flux travels with the other PBL surface fields.
