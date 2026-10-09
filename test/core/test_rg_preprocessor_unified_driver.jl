@@ -111,6 +111,7 @@ end
 
         @test isfile(first_path)
         @test isfile(second_path)
+        @test !isfile(first_path * ".tmp")              # staged, then renamed
         @test filesize(first_path) == filesize(second_path)
         first_header, first_payload = _stable_binary_parts(first_path)
         second_header, second_payload = _stable_binary_parts(second_path)
@@ -127,5 +128,18 @@ end
         @test header[:mass_fix_qv_mode] == "global_qv_climatology"
         @test all(≈(98726.0 - 100000.0), header[:ps_offsets_pa_per_window])
         @test header[:ps_offsets_next_day_hour0_pa] ≈ 98726.0 - 101000.0
+
+        # A failed day keeps an existing binary and removes its staging file. Without
+        # the pin, the last window's global mass change cannot be closed by horizontal
+        # fluxes, so the replay gate fails after the earlier windows were written.
+        failing = _rg_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "failing"))
+        final = Pre.output_binary_path(date, failing.out_dir, failing.min_dp, FT)
+        mkpath(dirname(final))
+        write(final, "existing binary")
+        @test_throws ErrorException process_day(date, grid, failing, vertical;
+                                                positivity_cfl_limit = 0.95,
+                                                next_day_hour0 = next_day)
+        @test read(final, String) == "existing binary"
+        @test !isfile(final * ".tmp")
     end
 end

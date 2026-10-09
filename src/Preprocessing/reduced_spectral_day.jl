@@ -464,8 +464,12 @@ function process_day(date::Date,
         include_flux_delta   = false,
     )
 
+    # Stage to `.tmp`; the driver renames it to `bin_path` after every gate
+    # passed and deletes it on failure, so a failed day never touches `bin_path`.
+    tmp_path = bin_path * ".tmp"
+    rm(tmp_path; force = true)
     writer = open_streaming_transport_binary(
-        bin_path, transport_grid, Nt, sample_window;
+        tmp_path, transport_grid, Nt, sample_window;
         FT = FT,
         dt_met_seconds       = settings.met_interval,
         half_dt_seconds      = settings.half_dt,

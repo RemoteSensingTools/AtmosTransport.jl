@@ -54,6 +54,9 @@
   cubed-sphere regrid, ERA5 N320 and MERRA-2 writers ran the positivity gate
   against the window's start mass only; they now also pass the end mass, as
   with the gate on (only runs with the variable set are affected).
+- The reduced-Gaussian spectral writer wrote straight to the final file, so a
+  day that failed a gate deleted an existing binary of that day. It now
+  stages to `<out>.tmp` like the other writers.
 
 ### Numerical changes
 

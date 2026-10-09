@@ -173,8 +173,7 @@ Files directly in this folder; the subfolders have their own READMEs
   `min(m, m_next)`; LL and RG check each direction's outflow against `m`. With
   `require_substep_positivity = true` (default) a violation errors and deletes
   the staged file; with `false` it is kept with a warning.
-- Outputs are staged as `<out>.tmp` and renamed after the gates; the RG path
-  writes to the final name and deletes it on failure.
+- Outputs are staged as `<out>.tmp` and renamed after the gates.
 - GEOS `mass_flux_dt` defaults to `450` s (`[preprocessing].mass_flux_dt_seconds`
   must be 100–3600, warns outside 400–500); the GEOS writer uses
   `round(dt_met_seconds / mass_flux_dt)` source substeps per window.
