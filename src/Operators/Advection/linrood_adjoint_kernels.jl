@@ -373,31 +373,9 @@ end
     return (q_L, q_R)
 end
 
-# `_ppm_face_value` (LinRood.jl:215) with the donor-mass denominator held
-# constant. For the LinRood adjoint the velocity tape supplies
-# fixed `(F, m_lo, m_hi)`; the d6 tangent only propagates the q-stencil
-# sensitivities.
-@inline function _ppm_face_value_d6(
-    F::FT, m_lo::FT, m_hi::FT,
-    c_lo::D6{FT}, c_hi::D6{FT},
-    q_L_lo::D6{FT}, q_R_lo::D6{FT},
-    q_L_hi::D6{FT}, q_R_hi::D6{FT},
-) where {FT}
-    m_floor = FT(100) * eps(FT)
-    if F >= zero(FT)
-        alpha = m_lo > m_floor ? F / m_lo : zero(FT)
-        bl = q_L_lo - c_lo
-        br = q_R_lo - c_lo
-        b0 = bl + br
-        return c_lo + (one(FT) - alpha) * (br - alpha * b0)
-    else
-        alpha = m_hi > m_floor ? F / m_hi : zero(FT)
-        bl = q_L_hi - c_hi
-        br = q_R_hi - c_hi
-        b0 = bl + br
-        return c_hi + (one(FT) + alpha) * (bl + alpha * b0)
-    end
-end
+# The face value itself is the forward `_ppm_face_value` (LinRood.jl), generic in
+# the mixing-ratio type: for the LinRood adjoint the velocity tape supplies fixed
+# `(F, m_lo, m_hi)`, and the D6 arithmetic propagates the q-stencil sensitivities.
 
 # Full chain on a 6-cell stencil of q values. Returns the 6-component
 # gradient `∂face/∂q_n` for n = -3, -2, -1, 0, +1, +2.
@@ -417,7 +395,7 @@ end
     q_L_m, q_R_m = _apply_monotonicity_d6(q_L_m, q_R_m, c_m1)
     q_L_0, q_R_0 = _apply_monotonicity_d6(q_L_0, q_R_0, c_0)
 
-    face = _ppm_face_value_d6(F, m_l, m_r, c_m1, c_0,
+    face = _ppm_face_value(F, m_l, m_r, c_m1, c_0,
                               q_L_m, q_R_m, q_L_0, q_R_0)
     return face.g  # NTuple{6, FT} = (∂f/∂q_m3, ..., ∂f/∂q_p2)
 end
@@ -485,7 +463,7 @@ end
     q_L_m, q_R_m = _apply_monotonicity_d6(q_L_m, q_R_m, c_m1)
     q_L_0, q_R_0 = _apply_monotonicity_d6(q_L_0, q_R_0, c_0)
 
-    face = _ppm_face_value_d6(F, m_l, m_r, c_m1, c_0,
+    face = _ppm_face_value(F, m_l, m_r, c_m1, c_0,
                               q_L_m, q_R_m, q_L_0, q_R_0)
     return face.g
 end
@@ -725,7 +703,7 @@ end
 # Adjoints of the rm-input PPM face kernels (ORD=5)
 #
 # Forward kernels `_ppm_x_face_kernel!` and `_ppm_y_face_kernel!`
-# (LinRood.jl:241, 270) at ORD=5 fold `_safe_mixing_ratio` into the
+# (LinRood.jl) at ORD=5 fold `_safe_mixing_ratio` into the
 # face computation: `c_n = rm_n / m_n` (zero below the
 # `100·eps(FT)` threshold) feeds the same downstream
 # `_ppm_edge_values_ord5 → _apply_monotonicity → _ppm_face_value`
@@ -739,8 +717,9 @@ end
 # `dc_n = -rm_n / m_n² · e_n`. The first run returns `∂f/∂rm_n`; the
 # second returns the chain-rule part of `∂f/∂m_n` (i.e., the
 # `c = rm/m` coupling). The donor-cell m_donor additionally
-# contributes `∂α/∂m_donor = -F / m_donor²` (when above threshold)
-# which we add analytically.
+# contributes `∂α/∂m_donor = -F / m_donor²` (for a donor above the mass
+# floor and |F| < m_donor; zero where α is clamped to ±1), which we add
+# analytically via `_courant_fraction`.
 # ===========================================================================
 
 # d6-AD safe-mixing-ratio: returns the D6{FT} value `rm_n / m_n` with the
@@ -777,7 +756,7 @@ end
     q_L_0, q_R_0 = _ppm_edge_values_ord5_d6(c_m2, c_m1, c_0, c_p1, c_p2)
     q_L_m, q_R_m = _apply_monotonicity_d6(q_L_m, q_R_m, c_m1)
     q_L_0, q_R_0 = _apply_monotonicity_d6(q_L_0, q_R_0, c_0)
-    face = _ppm_face_value_d6(F, m_l, m_r, c_m1, c_0,
+    face = _ppm_face_value(F, m_l, m_r, c_m1, c_0,
                               q_L_m, q_R_m, q_L_0, q_R_0)
     return face.g
 end
@@ -833,7 +812,7 @@ end
         tan_m_m3, tan_m_m2, tan_m_m1, tan_m_0, tan_m_p1, tan_m_p2)
 
     # Donor-mass alpha contribution. Forward `_ppm_face_value` uses
-    #   α = F / m_donor   (above threshold; else 0)
+    #   α = clamp(F / m_donor, -1, 1)   (above the mass floor; else 0)
     # where m_donor = m_l when F ≥ 0 (donor is the cell to the "lo"
     # side of the face, i.e. stencil position 3 = c_m1) and m_donor =
     # m_r when F < 0 (donor = stencil position 4 = c_0). The chain
@@ -853,12 +832,11 @@ end
                 F, rm_m3, rm_m2, rm_m1, rm_0, rm_p1, rm_p2,
                 m_m3, m_m2, m_m1, m_0, m_p1, m_p2)
             _ = bl_lo  # forward chain reads bl, br, b0; ∂face/∂α only uses br and b0
-            alpha = F / m_m1
+            alpha, dalpha_dm = _courant_fraction(F, m_m1)
             # face = c_lo + (1 - α)(br_lo - α·b0_lo)
             #       ∂face/∂α = -(br_lo - α·b0_lo) + (1 - α)·(-b0_lo)
             #                = -br_lo + (2α - 1)·b0_lo
             dface_dalpha = -br_lo + (FT(2) * alpha - one(FT)) * b0_lo
-            dalpha_dm   = -F / (m_m1 * m_m1)
             extra_m_m1 = dface_dalpha * dalpha_dm
         end
     else
@@ -866,12 +844,11 @@ end
             bl_hi, _, b0_hi, _ = _ppm_face_value_donor_state_hi(
                 F, rm_m3, rm_m2, rm_m1, rm_0, rm_p1, rm_p2,
                 m_m3, m_m2, m_m1, m_0, m_p1, m_p2)
-            alpha = F / m_0
+            alpha, dalpha_dm = _courant_fraction(F, m_0)
             # face = c_hi + (1 + α)(bl_hi + α·b0_hi)
             #       ∂face/∂α = (bl_hi + α·b0_hi) + (1 + α)·b0_hi
             #                = bl_hi + b0_hi + 2·α·b0_hi
             dface_dalpha = bl_hi + b0_hi + FT(2) * alpha * b0_hi
-            dalpha_dm   = -F / (m_0 * m_0)
             extra_m_0 = dface_dalpha * dalpha_dm
         end
     end
@@ -1018,7 +995,7 @@ end
         q_L_m, q_R_m, q_L_0, q_R_0, c_m1, c_m2, c_0, c_p1, face_idx, Nc)
     q_L_m, q_R_m = _apply_monotonicity_d6(q_L_m, q_R_m, c_m1)
     q_L_0, q_R_0 = _apply_monotonicity_d6(q_L_0, q_R_0, c_0)
-    face = _ppm_face_value_d6(F, m_l, m_r, c_m1, c_0,
+    face = _ppm_face_value(F, m_l, m_r, c_m1, c_0,
                               q_L_m, q_R_m, q_L_0, q_R_0)
     return face.g
 end
@@ -1089,9 +1066,8 @@ end
                 F, rm_m3, rm_m2, rm_m1, rm_0, rm_p1, rm_p2,
                 m_m3, m_m2, m_m1, m_0, m_p1, m_p2, face_idx, Nc)
             _ = bl_lo
-            alpha = F / m_m1
+            alpha, dalpha_dm = _courant_fraction(F, m_m1)
             dface_dalpha = -br_lo + (FT(2) * alpha - one(FT)) * b0_lo
-            dalpha_dm   = -F / (m_m1 * m_m1)
             extra_m_m1 = dface_dalpha * dalpha_dm
         end
     else
@@ -1099,9 +1075,8 @@ end
             bl_hi, _, b0_hi, _ = _ppm_face_value_donor_state_hi_ord7(
                 F, rm_m3, rm_m2, rm_m1, rm_0, rm_p1, rm_p2,
                 m_m3, m_m2, m_m1, m_0, m_p1, m_p2, face_idx, Nc)
-            alpha = F / m_0
+            alpha, dalpha_dm = _courant_fraction(F, m_0)
             dface_dalpha = bl_hi + b0_hi + FT(2) * alpha * b0_hi
-            dalpha_dm   = -F / (m_0 * m_0)
             extra_m_0 = dface_dalpha * dalpha_dm
         end
     end

@@ -59,3 +59,20 @@ continuity target (it failed with a residual of twice the target before the fix)
 On the O24 golden day the replay error drops from 6.0e-3 to 2.0e-7; the remainder is
 item A11 (no humidity-aware dry-mass pin in the reduced-Gaussian path), so the O24
 goldens stay known failures. No other golden is affected (reduced-Gaussian only).
+
+### Phase 0 accepted
+
+Full repeat run of the 14 reference cases (`det_3684b71a`): every case identical,
+including the runtime cases, which now recompute their regridding weights (the
+reference used `~/.cache`). The 8 variant cases were recorded into the reference.
+
+### A4 — Lin-Rood adjoint Courant-fraction clamp
+
+The adjoint evaluated its own copy of the forward PPM face value without the
+forward's clamp `|α| ≤ 1` and differentiated `α = F/m` through the donor mass where
+the forward clamps it. `_courant_fraction(F, m)` (LinRood.jl) now returns the clamped
+`α` (as `clamp`, so NaN stays NaN) and `∂α/∂m` (zero where clamped); the forward
+`_ppm_face_value` is generic in the mixing-ratio type, so the adjoint evaluates it on
+its dual numbers and the copy is gone. New tests: finite differences at Courant
+numbers > 1 (ORD 5 and 7, Float64; the old adjoint gave −11.7 against 0.33) and
+Float32 against Float64. Forward goldens (three Lin-Rood cases) identical.

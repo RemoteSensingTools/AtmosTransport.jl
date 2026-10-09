@@ -717,6 +717,58 @@ end
         @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-6)
     end
 
+    @testset "X face (rm-input) VJP vs FD JVP, Courant number > 1 ($FT, ORD=$ORD)" for
+            (FT, ORD, eps_fd, tol) in ((Float64, 5, 1e-6, 1e-6), (Float64, 7, 1e-6, 1e-6))
+        # Half the faces carry more than the donor mass (|F| > m): the forward
+        # clamps the Courant fraction to ±1, so the face value no longer depends
+        # on α and the adjoint must not differentiate through it.
+        Nc = 4; Hp = 3; Nz = 2
+        mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+        N = Nc + 2Hp
+
+        rng = MersenneTwister(302)
+        rm = FT.([sin(0.13i + 0.21j + 0.07k) for i in 1:N, j in 1:N, k in 1:Nz])
+        m  = FT(3) .+ rand(rng, FT, N, N, Nz)                       # 3 ≤ m < 4
+        am = [isodd(i + j + k) ? FT(12) * sign(randn(rng, FT)) : FT(0.02) * randn(rng, FT)
+              for i in 1:Nc + 1, j in 1:Nc, k in 1:Nz]               # |α| ≥ 3 or ≪ 1, never near the clamp
+
+        lambda_fx_face = randn(rng, FT, Nc + 1, Nc, Nz)
+        lambda_rm = zeros(FT, N, N, Nz)
+        lambda_m  = zeros(FT, N, N, Nz)
+        Adv.apply_ppm_x_face_adjoint!(
+            lambda_rm, lambda_m, lambda_fx_face, rm, m, am, mesh, Val(ORD),
+        )
+
+        drm = randn(rng, FT, N, N, Nz)
+        dm  = randn(rng, FT, N, N, Nz)
+        fd_jvp = _ppm_x_face_fd_jvp(rm, m, am, drm, dm, mesh; eps_fd, ord=Val(ORD))
+
+        lhs = _inner_full(lambda_fx_face, fd_jvp)
+        rhs = sum(lambda_rm .* drm) + sum(lambda_m .* dm)
+
+        @test isapprox(lhs, rhs; atol=tol, rtol=tol)
+    end
+
+    @testset "X face (rm-input) adjoint, Courant number > 1: Float32 agrees with Float64" begin
+        # Finite differences in Float32 cross limiter kinks; compare with the Float64 adjoint instead.
+        Nc = 4; Hp = 3; Nz = 2
+        N = Nc + 2Hp
+        rng = MersenneTwister(303)
+        rm = [sin(0.13i + 0.21j + 0.07k) for i in 1:N, j in 1:N, k in 1:Nz]
+        m  = 3 .+ rand(rng, N, N, Nz)
+        am = [isodd(i + j + k) ? 12 * sign(randn(rng)) : 0.02 * randn(rng) for i in 1:Nc + 1, j in 1:Nc, k in 1:Nz]
+        seed = randn(rng, Nc + 1, Nc, Nz)
+        adjoint(FT) = begin
+            mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
+            lambda_rm, lambda_m = zeros(FT, N, N, Nz), zeros(FT, N, N, Nz)
+            Adv.apply_ppm_x_face_adjoint!(lambda_rm, lambda_m, FT.(seed), FT.(rm), FT.(m), FT.(am), mesh, Val(5))
+            (lambda_rm, lambda_m)
+        end
+        (rm32, m32), (rm64, m64) = adjoint(Float32), adjoint(Float64)
+        @test isapprox(Float64.(rm32), rm64; rtol = 1e-5)
+        @test isapprox(Float64.(m32), m64; rtol = 1e-5)
+    end
+
     @testset "Y face (rm-input) VJP vs FD JVP" begin
         FT = Float64
         Nc = 4; Hp = 3; Nz = 2

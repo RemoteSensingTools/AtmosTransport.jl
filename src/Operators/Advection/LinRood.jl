@@ -227,24 +227,45 @@ end
     return q_L, q_R
 end
 
-"""Compute upwind PPM face value given mass flux, donor mass, and PPM edges.
-
-Uses the full parabolic integral (FV3 xppm/yppm formula):
-  Positive flow: face = c + (1-α)(br - α·b0)
-  Negative flow: face = c + (1+α)(bl + α·b0)
-where bl = q_L - c, br = q_R - c, b0 = bl + br (curvature).
 """
-@inline function _ppm_face_value(flux, m_lo, m_hi, c_lo, c_hi,
-                                  q_L_lo, q_R_lo, q_L_hi, q_R_hi)
-    FT = typeof(c_lo)
+    _courant_fraction(F, m_donor) -> (α, ∂α/∂m_donor)
+
+Fraction of the donor cell that crosses a face in one sweep, `α = F / m_donor`,
+clamped to the donor cell (`|α| ≤ 1`) as in FV3's `xppm`/`yppm`; zero for an
+empty donor (mass below `100 eps`). The derivative `∂α/∂m_donor = −F / m_donor²`
+(used by the adjoint) applies for `|F| < m_donor`; where `α` is clamped to ±1 it
+no longer depends on the donor mass and the derivative is zero.
+"""
+@inline function _courant_fraction(F::FT, m_donor::FT) where FT
+    m_donor > 100 * eps(FT) || return (zero(FT), zero(FT))
+    alpha = F / m_donor
+    dalpha_dm = abs(alpha) < one(FT) ? -F / (m_donor * m_donor) : zero(FT)
+    return (clamp(alpha, -one(FT), one(FT)), dalpha_dm)     # clamp keeps a NaN a NaN
+end
+
+"""
+    _ppm_face_value(flux, m_lo, m_hi, c_lo, c_hi, q_L_lo, q_R_lo, q_L_hi, q_R_hi)
+
+Upwind PPM face value: the mean mixing ratio of the donor-cell part that crosses
+the face, the full parabolic integral of FV3's `xppm`/`yppm`,
+
+    flux ≥ 0:  face = c + (1 − α)(br − α·b0)        (donor = lo cell)
+    flux < 0:  face = c + (1 + α)(bl + α·b0)        (donor = hi cell)
+
+with `bl = q_L − c`, `br = q_R − c`, `b0 = bl + br` and the clamped Courant
+fraction `α` of [`_courant_fraction`](@ref). Generic in the type of the mixing
+ratios, so the Lin-Rood adjoint evaluates the same function on its dual numbers.
+"""
+@inline function _ppm_face_value(flux::FT, m_lo::FT, m_hi::FT, c_lo, c_hi,
+                                 q_L_lo, q_R_lo, q_L_hi, q_R_hi) where FT
     if flux >= zero(FT)
-        alpha = m_lo > 100 * eps(FT) ? clamp(flux / m_lo, zero(FT), one(FT)) : zero(FT)
+        alpha = first(_courant_fraction(flux, m_lo))
         bl = q_L_lo - c_lo
         br = q_R_lo - c_lo
         b0 = bl + br
         return c_lo + (one(FT) - alpha) * (br - alpha * b0)
     else
-        alpha = m_hi > 100 * eps(FT) ? clamp(flux / m_hi, -one(FT), zero(FT)) : zero(FT)
+        alpha = first(_courant_fraction(flux, m_hi))
         bl = q_L_hi - c_hi
         br = q_R_hi - c_hi
         b0 = bl + br
