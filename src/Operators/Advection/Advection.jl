@@ -63,6 +63,12 @@ include("multitracer_kernels.jl")
 
 # Cubed-sphere halo exchange and Strang splitting
 include("HaloExchange.jl")
+include("cs_sweep_common.jl")
+include("cs_sweep_x.jl")
+include("cs_sweep_y.jl")
+include("cs_sweep_z.jl")
+include("cs_workspace.jl")
+include("cs_subcycling.jl")
 include("CubedSphereStrang.jl")
 include("CubedSphereSeams.jl")
 include("vertical_fv3_profile.jl")
@@ -75,6 +81,11 @@ include("LinRoodSeams.jl")
 include("LinRood.jl")
 include("linrood_adjoint_kernels.jl")
 
+include("workspace.jl")
+include("sweeps.jl")
+include("subcycling.jl")
 include("StrangSplitting.jl")
+include("strang_apply.jl")
+include("multitracer_strang.jl")
 
 end # module Advection

@@ -364,3 +364,30 @@ the own-loop CS writers repeat balance → cm → verify → promote.
 Stale documentation (module docstrings, history comments, citations of
 removed files and "invariant N" numbers) is listed in the README reports and
 goes with Phase 7.
+
+Golden check at d50870d9 (all 20 non-slow cases): preprocessing and the
+frozen-input ERA5 runs identical; the 11 runs that read the recorded
+preprocessing binaries change only through the radius (step 2c): cell areas
++7.19e-5, emissions of density inventories +7.2e-5 (Rn-222; fossil CO₂ on
+C90), unchanged where the total is renormalized (lat-lon GridFED) or given per
+cell (EDGAR SF₆), mixing ratios at rounding level. Accepted into `ref_current`.
+
+## Phase 4: move-only file splits
+
+Each split cuts a file at its section boundaries into files included in the
+original order; a check confirms that the code lines of the pieces, in include
+order, equal the original's and that no comment is lost. Only the file-level
+`using` line moves to the first piece.
+
+### Step 1 — structured and cubed-sphere Strang files
+
+- `StrangSplitting.jl` (1635 lines) → `workspace.jl`, `sweeps.jl`,
+  `subcycling.jl`, `StrangSplitting.jl` (`strang_split!`),
+  `strang_apply.jl` (`apply!` entry points), `multitracer_strang.jl`.
+- `CubedSphereStrang.jl` (1559 lines) → `cs_sweep_common.jl`,
+  `cs_sweep_x.jl`, `cs_sweep_y.jl`, `cs_sweep_z.jl`, `cs_workspace.jl`,
+  `cs_subcycling.jl`, `CubedSphereStrang.jl` (`strang_split_cs!`,
+  `strang_split_cs_mt!`).
+
+References to the moved code (READMEs, theory pages, the RG boundary-stub
+error message and its test) name the new files.

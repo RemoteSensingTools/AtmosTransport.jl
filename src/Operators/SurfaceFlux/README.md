@@ -65,8 +65,10 @@ the topology-specific kernels that inject mass into the surface layer.
 ## Cross-Dependencies
 
 - [`../../State/`](../../State/) provides tracer access and `eachtracer`
-- [`../Advection/StrangSplitting.jl`](../Advection/StrangSplitting.jl)
-  embeds surface flux at the transport midpoint
+- [`../Advection/StrangSplitting.jl`](../Advection/StrangSplitting.jl),
+  [`../Advection/multitracer_strang.jl`](../Advection/multitracer_strang.jl) and
+  [`../Advection/strang_apply.jl`](../Advection/strang_apply.jl)
+  embed surface flux at the transport midpoint
 - [`../../Models/DrivenSimulation.jl`](../../Models/DrivenSimulation.jl)
   validates and installs sim-level surface sources
 - [`../../Grids/`](../../Grids/) determines the active topology and

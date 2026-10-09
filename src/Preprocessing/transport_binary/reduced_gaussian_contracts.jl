@@ -27,7 +27,7 @@
 # Boundary stubs (`face_left[f] ≤ 0` or `face_right[f] ≤ 0`) — the
 # south/north pole singularities of the RG mesh — are SKIPPED entirely.
 # This matches the runtime face-indexed advection in
-# `src/Operators/Advection/StrangSplitting.jl`:
+# `src/Operators/Advection/sweeps.jl`:
 #
 #     if left > 0 && right > 0
 #         # accumulate flux to both cells
@@ -80,7 +80,7 @@ For every cell `(c, k)`:
   1. `m > 0`. A non-positive cell mass is reported with `ratio = Inf`.
   2. Horizontal outgoing mass per substep ≤ `cfl_limit * m`. Only
      interior faces (`face_left > 0 && face_right > 0`) contribute,
-     matching the runtime advection in `StrangSplitting.jl:279`.
+     matching the runtime advection in `Advection/sweeps.jl`.
      Boundary stubs are not counted as outflow here — see
      `verify_boundary_stub_flux_rg` for the separate "non-zero flux on
      a boundary stub" invariant.
@@ -233,7 +233,7 @@ end
 Explicit-invariant scan: any non-zero `hflux` value on a boundary stub
 (`face_left ≤ 0` or `face_right ≤ 0`) is a contract violation. The
 runtime advection silently discards such fluxes
-(`StrangSplitting.jl:279`), so a writer that produces them is emitting
+(`Advection/sweeps.jl`), so a writer that produces them is emitting
 data the runtime cannot apply — almost always a sign-flip or boundary-
 masking bug in preprocessing.
 
@@ -311,7 +311,7 @@ in order:
      (`face_left ≤ 0` / `face_right ≤ 0`) carries non-zero `hflux`
      above `boundary_stub_tol`. No `require_*` escape hatch: such
      fluxes are silently discarded by the runtime
-     (`StrangSplitting.jl:279`), so emitting them is always a writer
+     (`Advection/sweeps.jl`), so emitting them is always a writer
      bug.
   2. **Replay gate** — `verify_window_continuity_rg`; errors on
      failure.
@@ -359,7 +359,7 @@ function verify_rg_window_contract!(m_cur::AbstractMatrix{FT},
               "hflux=$(stub.worst_flux) on face=$(stub.worst_face) " *
               "level=$(stub.worst_level) where face_left=$(face_left[stub.worst_face]) " *
               "face_right=$(face_right[stub.worst_face]); runtime advection " *
-              "(`StrangSplitting.jl:279`) will silently discard this flux. " *
+              "(`Advection/sweeps.jl`) will silently discard this flux. " *
               "Either the writer's boundary-masking logic dropped a zero, " *
               "or `face_left`/`face_right` connectivity has the wrong sign.")
     if div_scratch === nothing

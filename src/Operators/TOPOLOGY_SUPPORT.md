@@ -39,7 +39,8 @@ For each ✅ combination, the authoritative dispatch method:
 
 - **LatLon** — rank-4 Strang palindrome `X→Y→Z→V(dt)→Z→Y→X` in
   [`Advection/StrangSplitting.jl`](Advection/StrangSplitting.jl)
-- **RG** — face-indexed `H→V(dt)→H` with `UpwindScheme` in the same file;
+- **RG** — face-indexed `H→V(dt)→H` with `UpwindScheme` in
+  [`Advection/strang_apply.jl`](Advection/strang_apply.jl);
   higher-order schemes are rejected
 - **CS** — panel-oriented packed-tracer
   [`strang_split_cs_mt!`](Advection/CubedSphereStrang.jl) for split-sweep

@@ -41,8 +41,9 @@ All in [`SectionTimer.jl`](SectionTimer.jl):
   4. If the run config has an output path, calls `write_csv` with that path,
      `.nc` removed, plus `.timings.csv`.
 - Timed sections are placed in `../Models/TransportModel.jl`,
-  `../Models/DrivenSimulation.jl`, `../Operators/Advection/StrangSplitting.jl`,
-  and `../Operators/Advection/CubedSphereStrang.jl`.
+  `../Models/DrivenSimulation.jl`, and in `../Operators/Advection/`:
+  `StrangSplitting.jl`, `strang_apply.jl`, `CubedSphereStrang.jl` and
+  `cs_sweep_common.jl` (the profiled kernel launches).
 - NVTX ranges come from
   [`../../ext/AtmosTransportNVTXExt.jl`](../../ext/AtmosTransportNVTXExt.jl).
   It adds `_nvtx_start(::AbstractString)` and `_nvtx_end(::NVTX.RangeId)`

@@ -178,7 +178,7 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
     # ------------------------------------------------------------------
     # Boundary-stub handling (codex review of `3796526` round-1).
     #
-    # Runtime advection in `StrangSplitting.jl:279` skips any face
+    # Runtime face-indexed advection (`Advection/sweeps.jl`) skips any face
     # where `face_left == 0` OR `face_right == 0`; the cell on the
     # "real" side sees ZERO mass change from that face. So the
     # positivity gate must also skip boundary stubs — otherwise a
@@ -342,7 +342,7 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         end
         @test err isa ErrorException
         @test occursin("Boundary-stub flux gate FAILED", err.msg)
-        @test occursin("StrangSplitting.jl", err.msg)
+        @test occursin("Advection/sweeps.jl", err.msg)
     end
 
     # ------------------------------------------------------------------

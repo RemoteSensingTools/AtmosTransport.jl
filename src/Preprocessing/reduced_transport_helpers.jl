@@ -1004,7 +1004,7 @@ function _verify_rg_balanced_window!(window_contract,
                   "level=$(stub.worst_level) where " *
                   "face_left=$(window_contract.face_left[stub.worst_face]) " *
                   "face_right=$(window_contract.face_right[stub.worst_face]); " *
-                  "runtime advection (`StrangSplitting.jl:279`) will silently " *
+                  "runtime face-indexed advection (`Advection/sweeps.jl`) will silently " *
                   "discard this flux.")
 
         m_shape = size(m_cur_work)
