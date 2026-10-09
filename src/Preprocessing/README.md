@@ -81,7 +81,7 @@ GEOS-IT / GEOS-FP to CS:
    plan, seed `m_cur` (previous endpoint when chaining) and the target from the
    raw dry endpoint, and pin both when `[mass_fix].enable`.
 3. Default `geos_cm_closure = "endpoint_balanced"`: `balance_cs_column_mass_fluxes!`
-   (per layer with `geos_balance_mode = "per_layer"`), then `diagnose_cs_cm!`.
+   (per layer with `balance_mode = "per_layer"`), then `diagnose_cs_cm!`.
 4. Adaptive substeps, contract, write with `flux_kind = :full_window_mass_amount`.
 
 ERA5 N320 and MERRA-2 to CS:

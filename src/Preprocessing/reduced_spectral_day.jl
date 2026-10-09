@@ -400,6 +400,9 @@ function process_day(date::Date,
                              substep_cfl_target = positivity_cfl_limit),
                      run_cache = nothing)
     FT = settings.output_float_type
+    get(settings, :horizontal_balance, nothing) isa ColumnBalance && throw(ArgumentError(
+        "reduced-Gaussian preprocessing balances each layer (ring Poisson CG); " *
+        "[numerics] balance_mode = \"column\" is not implemented for it"))
     settings.include_qv && throw(ArgumentError(
         "reduced-Gaussian preprocessing does not support output.include_qv=true; " *
         "set include_qv=false (humidity may still be used internally for dry-basis conversion)"))
@@ -487,6 +490,7 @@ function process_day(date::Date,
             "target_type"      => "reduced_gaussian",
             "gaussian_number"  => grid.gaussian_number,
             "poisson_balanced" => true,
+            "horizontal_balance" => balance_tag(LayerBalance()),
             "mass_fix_enabled" => settings.mass_fix_enable,
             "mass_fix_target_ps_dry_pa" => settings.target_ps_dry_pa,
             "mass_fix_qv_global_climatology" => settings.qv_global_climatology,

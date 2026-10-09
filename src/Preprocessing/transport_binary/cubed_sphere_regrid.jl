@@ -99,6 +99,9 @@ face fluxes are reconstructed with the output scaling.
   for legacy LL sources that do not carry `dm`. Production-safe regrids should
   leave this at `false` so the final CS window is closed against an explicit
   endpoint target instead of an inferred zero-tendency fallback.
+- `horizontal_balance = nothing` — `ColumnBalance()` (the default for
+  `nothing`) or `LayerBalance()`; see [`effective_horizontal_balance`](@ref)
+  for the deprecated environment fallback. Recorded in the header.
 - `run_cache = nothing` — optional `PreprocessorRunCache` used to reuse the
   LL→CS conservative regridder across calls in the same preprocessing run.
 """
@@ -113,9 +116,11 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 steps_per_window::Union{Nothing, Integer} = nothing,
                                 cs_balance_tol::Real = 1e-14,
                                 cs_balance_project_every::Integer = 50,
+                                horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
                                 run_cache = nothing)
     t_start = time()
     Nc = cs_grid.Nc
+    balance = effective_horizontal_balance(horizontal_balance, ColumnBalance())
 
     # --- Open LL binary reader ---
     reader = TransportBinaryReader(ll_binary_path; FT=FT)
@@ -277,6 +282,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             "target_type"       => "cubed_sphere",
             "regrid_method"     => "conservative",
             "poisson_balanced"  => true,
+            "horizontal_balance" => balance_tag(balance),
         ))
     writer = CubedSphereBinaryWriter(inner_writer, mass_basis_from_symbol(output_basis);
                                      Nc = Nc,
@@ -388,7 +394,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     worst_replay_win = 0
     worst_replay_idx = (0, 0, 0, 0)
     worst_positivity = init_cs_positivity_accumulator()
-    apply_horizontal_balance = horizontal_poisson_balance_enabled()
+    apply_horizontal_balance = balance isa LayerBalance
     if apply_horizontal_balance
         @info "  Applying per-layer CS Poisson mass-flux balance (legacy opt-in)..."
     else

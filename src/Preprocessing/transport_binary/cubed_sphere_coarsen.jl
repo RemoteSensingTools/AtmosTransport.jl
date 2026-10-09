@@ -179,7 +179,8 @@ function _experimental_coarsen_metadata(reader, output_Nc::Int, ratio::Int)
     for key in ("date", "mass_fix_enabled", "mass_fix_target_ps_dry_pa",
                 "global_mass_pin_enabled", "global_mass_pin_target_kg",
                 "vertical_mapping_method", "target_vertical_name",
-                "target_coefficients", "merge_map", "merge_min_thickness_Pa")
+                "target_coefficients", "merge_map", "merge_min_thickness_Pa",
+                "horizontal_balance")    # block sums keep the source's balance
         haskey(raw, key) && (metadata[key] = raw[key])
     end
     return metadata

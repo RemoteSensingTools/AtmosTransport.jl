@@ -123,9 +123,10 @@ header (LL does it when `LatLonDeferredBinaryWriter` opens). GEOS uses
   (`(panel, i, j, k)` on CS). A failure only in the last window points at the
   next-day endpoint. `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` keeps a binary for
   inspection.
-- Comparing balance modes: `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1`
-  switches LL, CS spectral, LL-to-CS, N320, and MERRA-2 from column to
-  per-layer balance; GEOS uses `[numerics].geos_balance_mode`.
+- Comparing balance modes: `[numerics] balance_mode = "per_layer"` (or
+  `--balance-mode per_layer` for the LL-to-CS regrid script) switches every
+  lat-lon and cubed-sphere path from column to per-layer balance; the header
+  key `horizontal_balance` records the mode.
   `ATMOS_OMEGA_TIMING=1` logs GEOS OMEGA reconstruction timings.
 
 ## Invariants

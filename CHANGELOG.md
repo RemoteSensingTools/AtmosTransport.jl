@@ -66,6 +66,15 @@
   with a message naming a script that no longer exists. `download_data!` now
   refuses such recipes before doing anything unless `--dry-run` or
   `--verify` is given (`protocol_can_download`).
+- `[numerics] geos_balance_mode` was ignored by the MERRA-2 and ERA5 N320
+  writers, which balanced per layer only with the environment variable
+  `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1`; no header recorded the
+  mode. `[numerics] balance_mode = "column" | "per_layer"` (old name
+  accepted) now selects it on every path, the LL-to-CS regrid script takes
+  `--balance-mode`, and every transport-binary header records
+  `horizontal_balance`. The environment variable still works where it did
+  (every path except GEOS) when the key is absent, with a deprecation
+  warning. Default results are unchanged.
 
 ### Numerical changes
 

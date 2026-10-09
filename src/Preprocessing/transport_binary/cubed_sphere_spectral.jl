@@ -476,6 +476,7 @@ function process_day(date::Date,
     write_replay_on = get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
     write_replay_on || @info "  Write-time CS replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
     replay_tol = replay_tolerance(FT)
+    balance = effective_horizontal_balance(get(settings, :horizontal_balance, nothing), ColumnBalance())
 
         writer = nothing
         driver_started = false
@@ -503,6 +504,7 @@ function process_day(date::Date,
                     "adaptive_substeps" => substep_policy.adaptive_substeps,
                     "source_type"      => "era5_spectral",
                     "target_type"      => "cubed_sphere",
+                    "horizontal_balance" => balance_tag(balance),
                     "staging_nlon"     => Nx_stg,
                     "staging_nlat"     => Ny_stg,
                     "regrid_method"    => "conservative",
@@ -527,7 +529,7 @@ function process_day(date::Date,
                 require_substep_positivity = require_substep_positivity,
                 steps_per_window = steps_per_met,
             )
-            apply_horizontal_balance = horizontal_poisson_balance_enabled()
+            apply_horizontal_balance = balance isa LayerBalance
             if apply_horizontal_balance
                 @info "  Applying per-layer CS Poisson mass-flux balance (legacy opt-in)..."
             else

@@ -314,14 +314,7 @@ function _process_day_native(cfg::AbstractDict;
     require_substep_positivity = _resolve_require_substep_positivity(cfg)
     substep_policy = _resolve_substep_schedule_policy(cfg, positivity_cfl_limit)
     numerics_cfg = get(cfg, "numerics", Dict{String, Any}())
-    balance_mode_raw = lowercase(String(get(numerics_cfg, "geos_balance_mode", "column")))
-    balance_mode = if balance_mode_raw in ("column", "column_poisson")
-        :column
-    elseif balance_mode_raw in ("per_layer", "layer", "layer_local", "global")
-        :per_layer
-    else
-        error("[numerics].geos_balance_mode must be \"column\" or \"per_layer\"; got $(repr(balance_mode_raw))")
-    end
+    horizontal_balance = resolve_horizontal_balance(numerics_cfg)
     cm_closure_raw = lowercase(String(get(numerics_cfg, "geos_cm_closure", "endpoint_balanced")))
     cm_closure = if cm_closure_raw in ("endpoint_balanced", "endpoint", "diagnose", "balanced")
         :endpoint_balanced
@@ -438,7 +431,7 @@ function _process_day_native(cfg::AbstractDict;
             seed_m          = seed_m_in,
             global_mass_pin = global_mass_pin,
             global_mass_target_kg = configured_global_mass_target_kg,
-            balance_mode = balance_mode,
+            horizontal_balance = horizontal_balance,
             cm_closure = cm_closure,
             smooth_iters = smooth_iters,
             omega_regularization = omega_regularization,
@@ -492,7 +485,7 @@ function _process_day_native(cfg::AbstractDict;
                 seed_m          = seed_m,
                 global_mass_pin = global_mass_pin,
                 global_mass_target_kg = global_mass_target_kg,
-                balance_mode = balance_mode,
+                horizontal_balance = horizontal_balance,
                 cm_closure = cm_closure,
                 smooth_iters = smooth_iters,
                 omega_regularization = omega_regularization,

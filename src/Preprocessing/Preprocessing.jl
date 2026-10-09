@@ -38,14 +38,14 @@ and on the source settings type. Each supported pair has a `process_day` method:
 3. Merge native 137L → transport levels — `vertical_coordinates.jl`
 4. Pin global mean ps (mass fix) — `pin_global_mean_ps!` /
    `pin_global_mean_ps_using_qv!` in `mass_support.jl`
-5. Topology-specific horizontal mass-flux balance:
+5. Topology-specific horizontal mass-flux balance (`[numerics] balance_mode`,
+   `AbstractHorizontalBalance`, recorded as the header key `horizontal_balance`):
    - LL: column-integrated FFT Poisson correction distributed over layers by
      air mass (`balance_column_mass_fluxes!`, `mass_support.jl`); the
-     per-layer FFT Poisson solve runs only with
-     `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1`
+     per-layer FFT Poisson solve with `balance_mode = "per_layer"`
    - RG: per-layer compressed-Laplacian CG — `ring_poisson_balance.jl`
    - CS: column-integrated correction by default, per-layer global 6-panel
-     graph-Laplacian CG with the same environment flag — `cs_poisson_balance.jl`
+     graph-Laplacian CG with `balance_mode = "per_layer"` — `cs_poisson_balance.jl`
 6. Diagnose `cm` from explicit endpoint mass targets — replay continuity
 7. Write transport binary with declared payload semantics and replay checks
 

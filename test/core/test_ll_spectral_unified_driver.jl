@@ -51,8 +51,10 @@ function _ll_test_vertical(::Type{FT}) where FT
     )
 end
 
-function _ll_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir) where FT
+function _ll_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir;
+                           horizontal_balance = nothing) where FT
     return ERA5SpectralSettings((
+        horizontal_balance = horizontal_balance,
         output_float_type = FT,
         spectral_dir = spectral_dir,
         spectral_cache_dir = cache_dir,
@@ -118,5 +120,12 @@ end
         @test second_last.m == first_last.m
         @test second_last.am == first_last.am
         @test second_last.bm == first_last.bm
+
+        # The balance mode is recorded in the header (column by default).
+        @test _header_without_creation_time(first_path)[:horizontal_balance] == "column"
+        layer = _ll_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "layer");
+                                  horizontal_balance = AtmosTransport.Preprocessing.LayerBalance())
+        layer_path, _ = process_day(date, grid, layer, vertical; positivity_cfl_limit = 0.95)
+        @test _header_without_creation_time(layer_path)[:horizontal_balance] == "per_layer"
     end
 end

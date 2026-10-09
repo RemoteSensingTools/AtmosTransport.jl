@@ -217,19 +217,20 @@ diagnoses the vertical mass flux from the explicit endpoint mass tendency. This
 keeps the ERA layer winds anchored to the spectral U/V fields while satisfying
 the zero top/bottom `cm` replay contract.
 
-Set `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1` to restore the older
-horizontal Poisson correction mode for controlled comparisons.
+`balance = LayerBalance()` (`[numerics] balance_mode = "per_layer"`) restores
+the older per-layer Poisson correction for controlled comparisons.
 """
 function apply_poisson_balance!(storage::WindowStorage{FT},
                                 last_hour_next,
                                 steps_per_window::Int,
-                                contract = nothing) where FT
+                                contract = nothing;
+                                balance::Union{Nothing, AbstractHorizontalBalance} = nothing) where FT
     Nx, Ny, Nz = size(storage.all_m[1])
     dm_dt_buf = Array{FT}(undef, Nx, Ny, Nz)
     div_scratch = Array{Float64}(undef, Nx, Ny, Nz)
     replay_layout = structured_replay_layout()
 
-    apply_horizontal_balance = horizontal_poisson_balance_enabled()
+    apply_horizontal_balance = effective_horizontal_balance(balance, ColumnBalance()) isa LayerBalance
     poisson_ws = LLPoissonWorkspace(Nx, Ny)
     if apply_horizontal_balance
         @info "  Applying horizontal Poisson mass-flux balance (legacy opt-in)..."
@@ -294,7 +295,8 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
                                 last_hour_next,
                                 steps_schedule::Vector{Int},
                                 contract,
-                                substep_policy::SubstepSchedulePolicy) where FT
+                                substep_policy::SubstepSchedulePolicy;
+                                balance::Union{Nothing, AbstractHorizontalBalance} = nothing) where FT
     contract === nothing &&
         throw(ArgumentError("adaptive LL Poisson balance requires a LatLonContract"))
     Nt = length(storage.all_m)
@@ -305,7 +307,7 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
     div_scratch = Array{Float64}(undef, Nx, Ny, Nz)
     replay_layout = structured_replay_layout()
 
-    apply_horizontal_balance = horizontal_poisson_balance_enabled()
+    apply_horizontal_balance = effective_horizontal_balance(balance, ColumnBalance()) isa LayerBalance
     poisson_ws = LLPoissonWorkspace(Nx, Ny)
     if apply_horizontal_balance
         @info "  Applying horizontal Poisson mass-flux balance (legacy opt-in)..."

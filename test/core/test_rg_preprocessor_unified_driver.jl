@@ -62,8 +62,10 @@ function _rg_test_vertical(::Type{FT}) where FT
 end
 
 function _rg_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir;
-                           include_qv::Bool = false, mass_fix::Bool = false) where FT
+                           include_qv::Bool = false, mass_fix::Bool = false,
+                           horizontal_balance = nothing) where FT
     return ERA5SpectralSettings((
+        horizontal_balance = horizontal_balance,
         output_float_type = FT,
         spectral_dir = spectral_dir,
         spectral_cache_dir = cache_dir,
@@ -126,8 +128,15 @@ end
                                                      positivity_cfl_limit = 0.95,
                                                      next_day_hour0 = next_day))
         @test header[:mass_fix_qv_mode] == "global_qv_climatology"
+        @test header[:horizontal_balance] == "per_layer"
         @test all(≈(98726.0 - 100000.0), header[:ps_offsets_pa_per_window])
         @test header[:ps_offsets_next_day_hour0_pa] ≈ 98726.0 - 101000.0
+
+        # The ring solver balances each layer; a column balance request is refused.
+        column = _rg_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "column");
+                                   horizontal_balance = Pre.ColumnBalance())
+        @test_throws ArgumentError process_day(date, grid, column, vertical;
+                                               positivity_cfl_limit = 0.95)
 
         # A failed day keeps an existing binary and removes its staging file. Without
         # the pin, the last window's global mass change cannot be closed by horizontal

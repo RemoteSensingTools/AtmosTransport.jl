@@ -37,6 +37,18 @@
 #       write window, m_cur ← m_next_target when chaining
 # ===========================================================================
 
+# The balance a GEOS closure applies: the pressure-fixer closures keep the
+# native fluxes; the moisture-filtered and OMEGA closures always balance the
+# column (their constructions need column closure, `geos_cs_window.jl`).
+function _geos_effective_balance(cm_closure::Symbol, balance_mode::Symbol)
+    cm_closure in (:pressure_fixer, :pfix_corrected) && return "none"
+    (cm_closure === :moisture_filtered || _uses_omega(cm_closure)) && return "column"
+    return String(balance_mode)
+end
+
+_geos_balance_description(balance::AbstractString) =
+    balance == "none" ? "none_native_unbalanced" : balance * "_poisson_to_endpoint"
+
 struct GEOSReplayStats
     worst_replay_rel :: Float64
     worst_replay_abs :: Float64
@@ -253,12 +265,12 @@ function _process_day_geos_cs_unified(date::Date,
                 "cfl_definition" => "palindrome_outgoing_sum_over_min_endpoint_mass",
                 "geos_mass_endpoint" => global_mass_pin ?
                     "dry_endpoint_global_mean_pinned" : "raw_dry_endpoint",
-                "geos_horizontal_balance" => workspace.cm_closure === :pressure_fixer ?
-                    "none_native_unbalanced" :
-                    (workspace.balance_mode === :per_layer ?
-                        "per_layer_poisson_to_endpoint" : "column_poisson_to_endpoint"),
-                "geos_horizontal_balance_mode" => workspace.cm_closure === :pressure_fixer ?
-                    "none" : String(workspace.balance_mode),
+                "geos_horizontal_balance" => _geos_balance_description(
+                    _geos_effective_balance(workspace.cm_closure, workspace.balance_mode)),
+                "geos_horizontal_balance_mode" => _geos_effective_balance(workspace.cm_closure,
+                                                                          workspace.balance_mode),
+                "horizontal_balance" => _geos_effective_balance(workspace.cm_closure,
+                                                                workspace.balance_mode),
                 "geos_cm_closure" => String(workspace.cm_closure),
                 "geos_vertical_flux" =>
                     workspace.cm_closure === :pressure_fixer ?
@@ -393,10 +405,11 @@ target `Nc`); coarsening sums masses and face fluxes over each block and
 area-weights the physics fields.
 
 Stored mass targets the raw GEOS dry endpoint (`DELP_dry`) transformed to the
-output vertical grid. With the default `balance_mode = :column` and
-`cm_closure = :endpoint_balanced`, the horizontal fluxes are column-balanced to
-that endpoint, then `cm` is diagnosed so the replay and positivity contracts
-are checked against the same endpoint the runtime will see.
+output vertical grid. With the default column balance (`[numerics]
+balance_mode`) and `cm_closure = :endpoint_balanced`, the horizontal fluxes are
+column-balanced to that endpoint, then `cm` is diagnosed so the replay and
+positivity contracts are checked against the same endpoint the runtime will
+see.
 
 For multi-day preprocessing with `chain_mass = true`, `seed_m` carries the
 raw endpoint from the previous day so adjacent daily binaries share a boundary
@@ -432,7 +445,8 @@ function process_day(date::Date,
                      seed_m::Union{Nothing, NTuple{6, <:AbstractArray}} = nothing,
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
-                     balance_mode::Symbol = :column,
+                     horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
+                     balance_mode::Union{Nothing, Symbol} = nothing,
                      cm_closure::Symbol = :endpoint_balanced,
                      smooth_iters::Integer = 8,
                      omega_regularization::OmegaRegularization = OmegaRegularization(),
@@ -442,6 +456,17 @@ function process_day(date::Date,
         error("GEOS-CS passthrough only supports mass_basis=:dry; got $(mass_basis). " *
               "GEOS MFXC/MFYC are already dry; the chained pressure-fixer is dry-basis.")
     _validate_geos_native_panel_convention(grid.mesh.convention)
+    if balance_mode !== nothing        # deprecated keyword: `:column` or `:per_layer`
+        Base.depwarn("process_day(...; balance_mode) for GEOS is deprecated; " *
+                     "pass horizontal_balance = ColumnBalance() or LayerBalance()", :process_day)
+        from_symbol = resolve_horizontal_balance(Dict("balance_mode" => String(balance_mode)))
+        horizontal_balance === nothing || horizontal_balance === from_symbol || throw(ArgumentError(
+            "balance_mode = $(repr(balance_mode)) conflicts with horizontal_balance = $(horizontal_balance)"))
+        horizontal_balance = from_symbol
+    end
+    horizontal_balance isa LayerBalance && cm_closure !== :endpoint_balanced &&
+        @warn "balance_mode = \"per_layer\" has no effect with geos_cm_closure = " *
+              "$(repr(cm_closure)); the header records the balance the closure applies" maxlog = 1
     return _process_day_geos_cs_unified(
         date, grid, settings, vertical;
         out_path = out_path,
@@ -459,7 +484,8 @@ function process_day(date::Date,
         seed_m = seed_m,
         global_mass_pin = global_mass_pin,
         global_mass_target_kg = global_mass_target_kg,
-        balance_mode = balance_mode,
+        balance_mode = effective_horizontal_balance(horizontal_balance, ColumnBalance();
+                                                    env = false) isa LayerBalance ? :per_layer : :column,
         cm_closure = cm_closure,
         smooth_iters = smooth_iters,
         omega_regularization = omega_regularization,

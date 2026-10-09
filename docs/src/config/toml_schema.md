@@ -657,6 +657,30 @@ dt_met_seconds = 3600.0      # window cadence (s); 1 hour for GEOS-IT
 default `450.0` — the FV3 dynamics step); there is **no per-run
 `[numerics].mass_flux_dt` override** today.
 
+#### `balance_mode` — horizontal mass-flux balance
+
+Every path closes a window's horizontal mass fluxes against its endpoint mass
+tendency before diagnosing `cm`:
+
+```toml
+[numerics]
+balance_mode = "column"      # default on lat-lon and cubed-sphere paths
+```
+
+- `"column"` — one Poisson solve for the column-integrated divergence; the
+  correction is distributed over the layers (by air mass, or by the source's
+  `column_balance_weights`), so layer winds keep their vertical structure.
+- `"per_layer"` — one Poisson solve per layer (the older mode). The
+  reduced-Gaussian path always balances per layer and rejects `"column"`.
+
+The mode is recorded in every transport-binary header as
+`horizontal_balance` (for GEOS, the balance its `geos_cm_closure` applies:
+`"none"` for the pressure-fixer closures, `"column"` for the moisture-filtered
+and OMEGA closures). `geos_balance_mode` is accepted as an older name. The
+environment variable `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1`, which used
+to select per-layer balance on every path except GEOS, still does so on those
+paths when the key is absent, with a deprecation warning.
+
 #### `geos_cm_closure` — GEOS native CS vertical-flux closure
 
 How the vertical mass flux `cm` is diagnosed when regridding GEOS native fields

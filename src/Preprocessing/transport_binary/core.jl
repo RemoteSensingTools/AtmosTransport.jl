@@ -41,9 +41,6 @@ end
 @inline poisson_balance_target_scale(steps_per_window::Integer, ::Type{FT}=Float64) where FT =
     FT(inv(2 * max(Int(steps_per_window), 1)))
 
-@inline horizontal_poisson_balance_enabled() =
-    get(ENV, "ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE", "0") == "1"
-
 """
     script_provenance(; caller_file=nothing) -> NamedTuple
 
@@ -216,6 +213,7 @@ function build_v4_header(date::Date,
         "poisson_balance_target_scale"     => contract.poisson_balance_target_scale,
         "poisson_balance_target_semantics" => contract.poisson_balance_target_semantics,
         "poisson_balance_target_scale_by_window" => poisson_scale_schedule,
+        "horizontal_balance" => balance_tag(effective_horizontal_balance(get(settings, :horizontal_balance, nothing), ColumnBalance())),
         "script_path" => provenance.script_path,
         "script_mtime_unix" => provenance.script_mtime,
         "git_commit" => provenance.git_commit,

@@ -27,6 +27,7 @@
 #       [--convention gnomonic|geos_native]
 #       [--definition equiangular_gnomonic|gmao_equal_distance]
 #       [--steps-per-window 12]          # override source's substep count
+#       [--balance-mode column|per_layer] # Poisson balance (default column)
 #                                         # (smaller per-substep flux; needed
 #                                         # for high-res CS output that
 #                                         # otherwise fails the positivity gate)
@@ -52,6 +53,7 @@ Usage: julia --project=. scripts/preprocessing/regrid_ll_transport_binary_to_cs.
            [--definition equiangular_gnomonic|gmao_equal_distance]
            [--cache-dir <dir>]
            [--steps-per-window <int>] [--allow-positivity-violation]
+           [--balance-mode column|per_layer]
 """
 
 function _parse_args(argv)
@@ -65,6 +67,7 @@ function _parse_args(argv)
     cache_dir = nothing
     steps_per_window = nothing  # nothing = match source header
     require_substep_positivity = true
+    balance_mode = nothing      # nothing = column (the preprocessing default)
 
     i = 1
     while i <= length(argv)
@@ -87,6 +90,8 @@ function _parse_args(argv)
             cache_dir = expanduser(argv[i + 1]); i += 2
         elseif arg == "--steps-per-window" && i + 1 <= length(argv)
             steps_per_window = parse(Int, argv[i + 1]); i += 2
+        elseif arg == "--balance-mode" && i + 1 <= length(argv)
+            balance_mode = lowercase(argv[i + 1]); i += 2
         elseif arg == "--allow-positivity-violation"
             require_substep_positivity = false; i += 1
         elseif arg in ("-h", "--help")
@@ -117,10 +122,12 @@ function _parse_args(argv)
 
     steps_per_window === nothing || steps_per_window >= 1 ||
         error("--steps-per-window must be ≥ 1, got $(steps_per_window)")
+    balance_mode === nothing || balance_mode in ("column", "per_layer") ||
+        error("--balance-mode must be column or per_layer, got $(balance_mode)")
 
     return (; input, output, Nc, float_type, mass_basis, convention, definition,
               cache_dir,
-              steps_per_window, require_substep_positivity)
+              steps_per_window, require_substep_positivity, balance_mode)
 end
 
 function main()
@@ -154,7 +161,10 @@ function main()
                             FT         = FT,
                             mass_basis = basis_sym,
                             steps_per_window = opts.steps_per_window,
-                            require_substep_positivity = opts.require_substep_positivity)
+                            require_substep_positivity = opts.require_substep_positivity,
+                            horizontal_balance = opts.balance_mode === nothing ? nothing :
+                                AtmosTransport.Preprocessing.resolve_horizontal_balance(
+                                    Dict("balance_mode" => opts.balance_mode)))
 
     return opts.output
 end

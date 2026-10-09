@@ -633,7 +633,8 @@ function _merra2_provenance(settings::MERRA2Settings, handles, nsub)
 end
 
 function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{FT}, vc, out_path,
-                             nwindow, nsub, dt_window, steps, policy, mass_target) where FT
+                             nwindow, nsub, dt_window, steps, policy, mass_target,
+                             balance::AbstractHorizontalBalance) where FT
     mkpath(dirname(out_path))
     tmp_path = out_path * ".tmp"
     isfile(tmp_path) && rm(tmp_path)
@@ -647,12 +648,14 @@ function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{
         "target_type" => "cubed_sphere",
         "regrid_method" => "conservative",
         "poisson_balanced" => true,
+        "horizontal_balance" => balance_tag(balance),
         # The column Poisson balance plays the role of the Cameron-Smith
         # pressure fix (`pjc_pfix_mod.F90`, GEOS-Chem Classic): it forces the
         # column flux convergence to match the analyzed dry-mass tendency.
         # GCHP applies no pressure fix; FV3 remaps to its advected surface
         # pressure instead.
-        "wind_flux_pressure_fix" => "cameron_smith_column_balance",
+        "wind_flux_pressure_fix" => balance isa ColumnBalance ?
+            "cameron_smith_column_balance" : "per_layer_poisson_balance",
         "global_mass_pin_enabled" => mass_target !== nothing,
         "global_mass_pin_target_kg" => mass_target))
     inner = open_streaming_cs_transport_binary(
@@ -702,9 +705,11 @@ function process_merra2_to_cs_day(date::Date,
                                   require_substep_positivity::Bool = true,
                                   cache_dir::Union{Nothing, AbstractString} = nothing,
                                   global_mass_pin::Bool = false,
-                                  global_mass_target_kg::Real = NaN) where FT
+                                  global_mass_target_kg::Real = NaN,
+                                  horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing) where FT
     mass_basis === :dry ||
         throw(ArgumentError("MERRA-2 → CS writer only supports mass_basis=:dry; got $(mass_basis)"))
+    horizontal_balance = effective_horizontal_balance(horizontal_balance, ColumnBalance())
     steps_per_window >= 1 || throw(ArgumentError("steps_per_window must be ≥ 1; got $(steps_per_window)"))
     nsub = merra2_windows_per_block(dt_met_seconds)
     vc = load_hybrid_coefficients(expand_data_path(settings.coefficients_file))
@@ -722,10 +727,10 @@ function process_merra2_to_cs_day(date::Date,
         @info @sprintf("  Global dry-mass pin ON: target=%.9e kg (%.3f Pa dry ⟨ps⟩)", mass_target,
                        mass_target * STANDARD_GRAVITY / (6 * sum(Float64, target_grid.mesh.cell_areas)))
 
-    global_solve = horizontal_poisson_balance_enabled()
+    global_solve = horizontal_balance isa LayerBalance
     global_solve && settings.column_balance_weights !== :mass && throw(ArgumentError(
         "column_balance_weights = $(settings.column_balance_weights) applies to the column " *
-        "Poisson balance; it cannot be combined with ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1"))
+        "Poisson balance; it cannot be combined with [numerics] balance_mode = \"per_layer\""))
     handles = open_merra2_day(settings, date; next_day_handle = true)
     try
         new_block() = MERRA2BlockState(allocate_merra2_to_c180_pipeline(target_grid; Nz, cache_dir, settings))
@@ -733,7 +738,8 @@ function process_merra2_to_cs_day(date::Date,
         nblock = windows_per_day(settings, date)
         nwindow = nblock * nsub
         writer = _open_merra2_writer(settings, handles, target_grid, vc, out_path, nwindow, nsub,
-                                     Float64(dt_met_seconds), Int(steps_per_window), policy, mass_target)
+                                     Float64(dt_met_seconds), Int(steps_per_window), policy, mass_target,
+                                     horizontal_balance)
         @info @sprintf("  Output: %s (Nc=%d, Nz=%d, FT=%s)", basename(out_path), target_grid.Nc, Nz, string(FT))
         d = MERRA2DayDriver(
             settings, handles, target_grid, vc, writer, nsub, Float64(dt_met_seconds), policy,
@@ -790,10 +796,10 @@ end
 
 Adapter that the unified preprocessor CLI calls into. Forwards to
 [`process_merra2_to_cs_day`](@ref) with the kwargs the underlying function
-accepts; the rest of the unified-CLI day-kwargs (e.g. `chain_mass`,
-`seed_m`, `balance_mode`, `cm_closure`) are absorbed by the trailing
-`kwargs...` and ignored — MERRA-2 has no day-to-day mass-chain state and the
-flux balance is the fixed Cameron-Smith column pressure-fix.
+accepts, including `horizontal_balance` (column by default: the
+Cameron-Smith column pressure fix); the rest of the unified-CLI day-kwargs
+(e.g. `chain_mass`, `seed_m`, `cm_closure`) are absorbed by the trailing
+`kwargs...` and ignored — MERRA-2 has no day-to-day mass-chain state.
 
 Returns `(; final_m = nothing, global_mass_target_kg)` so the unified CLI's
 `seed_m`/`global_mass_target_kg` chain remains a no-op.
@@ -813,6 +819,7 @@ function process_day(date::Date,
                      require_substep_positivity::Bool = true,
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
+                     horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
                      kwargs...)
     steps_floor = min_steps_per_window === nothing ? 1 : Int(min_steps_per_window)
     process_merra2_to_cs_day(date, settings, grid;
@@ -828,7 +835,8 @@ function process_day(date::Date,
         require_substep_positivity = require_substep_positivity,
         cache_dir             = grid.cache_dir,
         global_mass_pin       = global_mass_pin,
-        global_mass_target_kg = global_mass_target_kg)
+        global_mass_target_kg = global_mass_target_kg,
+        horizontal_balance    = horizontal_balance)
     return (; final_m = nothing,
             global_mass_target_kg = global_mass_target_kg)
 end

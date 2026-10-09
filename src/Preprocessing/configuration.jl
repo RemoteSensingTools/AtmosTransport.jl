@@ -160,7 +160,84 @@ function resolve_balance_settings(cfg)
     return (
         cs_balance_tol = Float64(get(numerics, "cs_balance_tol", 1e-14)),
         cs_balance_project_every = Int(get(numerics, "cs_balance_project_every", 50)),
+        horizontal_balance = resolve_horizontal_balance(numerics),
     )
+end
+
+"""
+    AbstractHorizontalBalance
+
+How preprocessing closes a window's horizontal mass fluxes against its endpoint
+mass tendency before `cm` is diagnosed from that tendency:
+
+- [`ColumnBalance`](@ref): one Poisson solve for the column-integrated
+  divergence, with the correction distributed over the layers (by air mass,
+  or by the source's `column_balance_weights`), so the layer winds keep their
+  vertical structure. Default of the lat-lon and cubed-sphere paths.
+- [`LayerBalance`](@ref): one Poisson solve per layer. The reduced-Gaussian
+  path always balances per layer.
+
+Selected by `[numerics] balance_mode = "column" | "per_layer"` and recorded in
+the transport-binary header as `horizontal_balance`.
+"""
+abstract type AbstractHorizontalBalance end
+
+"Column-integrated Poisson balance; see [`AbstractHorizontalBalance`](@ref)."
+struct ColumnBalance <: AbstractHorizontalBalance end
+
+"Per-layer Poisson balance; see [`AbstractHorizontalBalance`](@ref)."
+struct LayerBalance <: AbstractHorizontalBalance end
+
+balance_tag(::ColumnBalance) = "column"
+balance_tag(::LayerBalance) = "per_layer"
+
+const _BALANCE_MODES = Dict(
+    "column" => ColumnBalance(), "column_poisson" => ColumnBalance(),
+    "per_layer" => LayerBalance(), "layer" => LayerBalance(),
+    "layer_local" => LayerBalance(), "global" => LayerBalance())
+
+"""
+    resolve_horizontal_balance(numerics) -> Union{Nothing, AbstractHorizontalBalance}
+
+`[numerics] balance_mode` (`geos_balance_mode` is accepted as its older name),
+or `nothing` when neither is set, so that each preprocessing path applies its
+own default through [`effective_horizontal_balance`](@ref).
+"""
+function resolve_horizontal_balance(numerics::AbstractDict)
+    set = [k for k in ("balance_mode", "geos_balance_mode") if haskey(numerics, k)]
+    modes = Dict(k => lowercase(String(numerics[k])) for k in set)
+    for (k, raw) in modes
+        haskey(_BALANCE_MODES, raw) || error(
+            "[numerics].$(k) must be \"column\" or \"per_layer\"; got $(repr(raw))")
+    end
+    length(set) == 2 && _BALANCE_MODES[modes["balance_mode"]] !== _BALANCE_MODES[modes["geos_balance_mode"]] &&
+        error("[numerics] sets balance_mode = $(repr(modes["balance_mode"])) and " *
+              "geos_balance_mode = $(repr(modes["geos_balance_mode"])); keep balance_mode")
+    return isempty(set) ? nothing : _BALANCE_MODES[modes[first(set)]]
+end
+
+"""
+    effective_horizontal_balance(balance, default; env = true) -> AbstractHorizontalBalance
+
+The balance a preprocessing path applies: `balance` when given, else `default`.
+With `env = true` and `balance === nothing`, the deprecated
+`ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1` still selects `LayerBalance()`,
+with a warning; an explicit `balance` always wins. The GEOS path never read the
+variable and passes `env = false`.
+"""
+function effective_horizontal_balance(balance::Union{Nothing, AbstractHorizontalBalance},
+                                      default::AbstractHorizontalBalance; env::Bool = true)
+    from_env = env && get(ENV, "ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE", "0") == "1"
+    if balance !== nothing
+        from_env && !(balance isa LayerBalance) &&
+            @warn "ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1 is ignored: balance_mode = " *
+                  "\"$(balance_tag(balance))\" is set explicitly." maxlog = 1
+        return balance
+    end
+    from_env || return default
+    @warn "ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1 is deprecated and will be removed; " *
+          "set [numerics] balance_mode = \"per_layer\"." maxlog = 1
+    return LayerBalance()
 end
 
 """
