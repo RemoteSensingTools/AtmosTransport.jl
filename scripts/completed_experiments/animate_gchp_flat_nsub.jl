@@ -7,7 +7,7 @@
 #   Row 2: ~500 hPa CO2 deviation from 400 ppm (n_sub | 1-step | difference)
 #
 # Usage:
-#   julia --project=. scripts/visualization/animate_gchp_flat_nsub.jl
+#   julia --project=. scripts/completed_experiments/animate_gchp_flat_nsub.jl
 # ===========================================================================
 
 using CairoMakie
@@ -15,7 +15,7 @@ using GeoMakie
 using Dates
 using Statistics
 
-include(joinpath(@__DIR__, "cs_regrid_utils.jl"))
+include(joinpath(@__DIR__, "..", "visualization", "cs_regrid_utils.jl"))
 
 # ---------------------------------------------------------------------------
 # Configuration

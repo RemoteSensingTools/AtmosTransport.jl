@@ -8,7 +8,7 @@
 #   Row 3: Surface Rn222  (1-remap/hr | 8-remaps/hr | Difference)
 #
 # Usage:
-#   julia --project=. scripts/visualization/animate_perremap_comparison.jl
+#   julia --project=. scripts/completed_experiments/animate_perremap_comparison.jl
 # ===========================================================================
 
 using CairoMakie
@@ -17,7 +17,7 @@ using NCDatasets
 using Dates
 using Statistics
 
-include(joinpath(@__DIR__, "cs_regrid_utils.jl"))
+include(joinpath(@__DIR__, "..", "visualization", "cs_regrid_utils.jl"))
 
 const AT_DIR       = get(ENV, "AT_DIR", "/temp1/catrine/output")
 const PAT_NOREMAP  = get(ENV, "PAT_NOREMAP",  "catrine_gchp_v4_7d")

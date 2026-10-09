@@ -9,7 +9,7 @@
 #   Footer: per-frame stats
 #
 # Usage:
-#   julia --project=. scripts/visualization/animate_fixer_vs_nofixer.jl
+#   julia --project=. scripts/completed_experiments/animate_fixer_vs_nofixer.jl
 # ===========================================================================
 
 using CairoMakie
@@ -19,7 +19,7 @@ using Dates
 using Statistics
 using Printf
 
-include(joinpath(@__DIR__, "cs_regrid_utils.jl"))
+include(joinpath(@__DIR__, "..", "visualization", "cs_regrid_utils.jl"))
 
 # ---------------------------------------------------------------------------
 # Configuration

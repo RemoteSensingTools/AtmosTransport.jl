@@ -9,7 +9,7 @@
 #   Row 4: Surface Rn222        (GEOS-Chem | AtmosTransport)
 #
 # Usage:
-#   julia --project=. scripts/visualization/animate_hybrid_pe_vs_geoschem.jl
+#   julia --project=. scripts/completed_experiments/animate_hybrid_pe_vs_geoschem.jl
 # ===========================================================================
 
 using CairoMakie
@@ -18,7 +18,7 @@ using Dates
 using Printf
 using Statistics
 
-include(joinpath(@__DIR__, "cs_regrid_utils.jl"))
+include(joinpath(@__DIR__, "..", "visualization", "cs_regrid_utils.jl"))
 
 # ---------------------------------------------------------------------------
 # Configuration
