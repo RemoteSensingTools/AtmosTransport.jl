@@ -19,6 +19,7 @@ export autodetect_gpu_architecture, is_gpu, ensure_runtime!, array_adapter
 export architecture_label, device_name, backend_name, synchronize_architecture!
 export array_adapter_for, assert_residency!, assert_float_type!
 export reclaim_backend_pool!, _kahan_add
+export launch!
 
 abstract type AbstractArchitecture end
 
@@ -302,6 +303,24 @@ function assert_float_type!(::GPU{:metal}, ::Type{FT}) where {FT <: AbstractFloa
     FT === Float32 || throw(ArgumentError(
         "Metal backend requires [numerics] float_type = \"Float32\"; got $(FT). " *
         "Apple Metal does not support Float64 kernels for this runtime."))
+    return nothing
+end
+
+"""
+    launch!(kernel, backend, workgroup, ndrange, args...; sync = true)
+
+Run the KernelAbstractions `kernel` (a `@kernel` function) on `backend` with
+`workgroup` over `ndrange`, then `synchronize(backend)` unless `sync = false`
+(several launches on one backend can share one synchronization). Kernel
+launches are being moved onto this helper module by module, so that workgroup
+choices and synchronization are explicit at each call site; the cubed-sphere
+advection sweeps keep their own profiled launch, which skips the host
+synchronization on GPU.
+"""
+@inline function launch!(kernel::F, backend, workgroup, ndrange, args...;
+                         sync::Bool = true) where {F}
+    kernel(backend, workgroup)(args...; ndrange)
+    sync && KA.synchronize(backend)
     return nothing
 end
 

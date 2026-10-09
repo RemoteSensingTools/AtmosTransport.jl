@@ -88,3 +88,23 @@ end
     @test occursin(r"(?m)^using AtmosTransport$", cli_source)
     @test !occursin(r"include\(.*src.*AtmosTransport\.jl", cli_source)
 end
+
+# `launch!` instantiates the kernel for the backend and workgroup, runs it over
+# `ndrange` with the arguments in order, and synchronizes unless `sync = false`.
+import KernelAbstractions
+struct _CountingBackend <: KernelAbstractions.Backend
+    syncs :: Base.RefValue{Int}
+end
+KernelAbstractions.synchronize(b::_CountingBackend) = (b.syncs[] += 1; nothing)
+
+@testset "launch! runs the kernel and synchronizes by default" begin
+    calls = Any[]
+    fake_kernel(backend, workgroup) = (args...; ndrange) -> push!(calls, (workgroup, ndrange, args))
+    backend = _CountingBackend(Ref(0))
+    AtmosTransport.Architectures.launch!(fake_kernel, backend, (8, 8), (4, 3), :a, 2)
+    @test calls == [((8, 8), (4, 3), (:a, 2))]
+    @test backend.syncs[] == 1
+    AtmosTransport.Architectures.launch!(fake_kernel, backend, 256, 10, :b; sync = false)
+    @test calls[end] == (256, 10, (:b,))
+    @test backend.syncs[] == 1
+end

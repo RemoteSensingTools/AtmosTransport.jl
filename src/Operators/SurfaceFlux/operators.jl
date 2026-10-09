@@ -163,9 +163,8 @@ function apply_surface_flux!(q_raw::AbstractArray{FT, 4},
         t_idx = findfirst(==(src.tracer_name), tracer_names)
         t_idx === nothing && continue   # tracer not in this state; skip
         _check_surface_flux_rate_shape(src, (Nx, Ny), size(q_raw))
-        kernel = _surface_flux_kernel!(backend, (16, 16))
-        kernel(q_raw, src.cell_mass_rate, src.compensation, dt_FT, t_idx, Nz;
-               ndrange = (Nx, Ny))
+        launch!(_surface_flux_kernel!, backend, (16, 16), (Nx, Ny), q_raw, src.cell_mass_rate,
+                src.compensation, dt_FT, t_idx, Nz; sync = false)
     end
 
     synchronize(backend)
@@ -187,9 +186,8 @@ function apply_surface_flux!(q_raw::AbstractArray{FT, 3},
         t_idx = findfirst(==(src.tracer_name), tracer_names)
         t_idx === nothing && continue
         _check_surface_flux_rate_shape(src, (ncells,), size(q_raw))
-        kernel = _surface_flux_face_kernel!(backend, 256)
-        kernel(q_raw, src.cell_mass_rate, src.compensation, dt_FT, t_idx, Nz;
-               ndrange = ncells)
+        launch!(_surface_flux_face_kernel!, backend, 256, ncells, q_raw, src.cell_mass_rate,
+                src.compensation, dt_FT, t_idx, Nz; sync = false)
     end
 
     synchronize(backend)
@@ -214,9 +212,8 @@ function apply_surface_flux!(q_raw::AbstractArray{FT, 2},
     _check_surface_flux_rate_shape(src, (ncells,), size(q_raw))
 
     backend = get_backend(q_raw)
-    kernel = _surface_flux_face_single_kernel!(backend, 256)
-    kernel(q_raw, src.cell_mass_rate, src.compensation, FT(dt), Nz; ndrange = ncells)
-    synchronize(backend)
+    launch!(_surface_flux_face_single_kernel!, backend, 256, ncells, q_raw, src.cell_mass_rate,
+            src.compensation, FT(dt), Nz)
     return nothing
 end
 
