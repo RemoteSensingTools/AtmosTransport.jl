@@ -100,3 +100,17 @@ equals `locate` for 2000 random points, wrapped longitudes, the departure check
 accepts the bound observations and rejects a shifted cell. Open: records store
 Float32 coordinates, so a point within Float32 rounding of an edge can bind to
 the other side than the Float64 coordinate the forward run sampled.
+
+### A3 — CMFMC adjoint replays the production forward
+
+The cubed-sphere CMFMC adjoint replayed the forward with its own copy of the
+production kernel, which lacked the Kahan-compensated sub-cloud sums (so the
+replayed trajectory differed from the run's at rounding level), and kept its own
+copies of the `tiny` threshold, the cloud-base search and the derived
+detrainment. The replay now calls the production kernel on a one-tracer view;
+the adjoint kernel uses the production helpers, the detrainment array of
+`_cmfmc_dtrain_array` and compensated sums. (Without DTRAIN both sides derive
+it from CMFMC, so there was no operator mismatch there.) Tests: replay equals
+the production `apply_convection!` bit for bit on a deep uneven column (fails on
+the old code), and the adjoint identity on that column with and without DTRAIN
+and several substeps. Forward results unchanged.

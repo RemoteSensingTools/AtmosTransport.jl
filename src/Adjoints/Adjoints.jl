@@ -47,11 +47,13 @@ using ..Operators.Convection: CMFMCConvection, _require_edge_cloud_base, CMFMCWo
     _get_or_compute_n_sub!, _ensure_tm5_scratch!,
     _tm5_diagnose_cloud_dims, _tm5_build_conv1!, _tm5_lu!, _tm5_factorize!,
     _tm5_identity_pivots, _tm5_column_sum, _tm5_restore_column_mass!,
-    _launch_cmfmc_matrix_derivation!
+    _launch_cmfmc_matrix_derivation!,
+    _cmfmc_cs_panel_column_kernel!, _cmfmc_tiny, _cmfmc_cloud_base, _cmfmc_dtrain_array
 using ..State: AbstractCubedSphereField,
     LocalHoltslagBovilleKzField, AbstractCSDkgField, PrecomputedCSDkgField, GCHPNonlocalPBLField,
     field_value, panel_field, update_field!
 using ..MetDrivers: ConvectionForcing, current_time
+using ..Architectures: _kahan_add
 using ..Output: cell_locator, locate                   # observation binding (Inversion/)
 
 # Tape storage policies + record types live in src/Tape/
