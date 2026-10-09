@@ -67,7 +67,7 @@ function write_driven_cs_binary(path::AbstractString;
             FT.(collect(range(0, stop = 1, length = Nz + 1))))
     end
     writer = AtmosTransport.MetDrivers.open_streaming_cs_transport_binary(
-        path, Nc, 6, Nz, length(window_mass_scales), vc;
+        path, Nc, 6, Nz, length(window_mass_scales), vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
         FT = FT,
         dt_met_seconds = 3600.0,
         steps_per_window = steps_per_window,

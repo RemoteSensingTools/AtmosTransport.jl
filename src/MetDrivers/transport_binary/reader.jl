@@ -158,8 +158,9 @@ function load_grid(reader::TransportBinaryReader{<:Any, <:Any, LatLonBinaryGeome
         let interval = _transport_interval_from_centers(g.latitudes, 180.0 / g.Ny)
             (FT(interval[1]), FT(interval[2]))
         end
-    mesh = LatLonMesh(; FT=FT, size=(g.Nx, g.Ny), longitude=longitude, latitude=latitude)
-    return AtmosGrid(mesh, vc, arch; FT=FT)
+    mesh = LatLonMesh(; FT=FT, size=(g.Nx, g.Ny), longitude=longitude, latitude=latitude,
+                      radius=FT(h.planet_radius_m))
+    return AtmosGrid(mesh, vc, arch; FT=FT, radius=h.planet_radius_m)
 end
 
 function load_grid(reader::TransportBinaryReader{<:Any, <:Any, ReducedGaussianBinaryGeometry};
@@ -167,8 +168,8 @@ function load_grid(reader::TransportBinaryReader{<:Any, <:Any, ReducedGaussianBi
     h = reader.header
     g = h.geometry
     vc = HybridSigmaPressure(FT.(h.A_ifc), FT.(h.B_ifc))
-    mesh = ReducedGaussianMesh(g.latitudes, g.nlon_per_ring; FT=FT)
-    return AtmosGrid(mesh, vc, arch; FT=FT)
+    mesh = ReducedGaussianMesh(g.latitudes, g.nlon_per_ring; FT=FT, radius=FT(h.planet_radius_m))
+    return AtmosGrid(mesh, vc, arch; FT=FT, radius=h.planet_radius_m)
 end
 
 _transport_allocate_mass(reader::TransportBinaryReader{FT}) where FT =

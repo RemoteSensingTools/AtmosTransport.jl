@@ -68,7 +68,7 @@ const P = AtmosTransport.Preprocessing
             panel = zeros(Float64, Nc, Nc, Nz)
             for k in 1:Nz, j in 1:Nc, i in 1:Nc
                 panel[i, j, k] = dp_hpa[k] * 100.0 *
-                                 grid.mesh.cell_areas[i, j] / P.GRAV
+                                 grid.mesh.cell_areas[i, j] / AtmosTransport.Parameters.STANDARD_GRAVITY
             end
             panel
         end, 6)
@@ -80,7 +80,7 @@ const P = AtmosTransport.Preprocessing
         )
         options = P.OmegaRegularization()
         P._regularize_omega_target!(target, native_cm, omega_vdiv, m, m, grid,
-                                    P.GRAV, 1.0, options, scratch)
+                                    AtmosTransport.Parameters.STANDARD_GRAVITY, 1.0, options, scratch)
         @test scratch.active_levels == Bool[false, true, true, true, false]
 
         for p in 1:6

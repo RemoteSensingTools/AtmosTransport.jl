@@ -661,7 +661,7 @@ function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{
         panel_convention = _cs_panel_convention_tag(grid), cs_definition = _cs_definition_tag(grid),
         cs_coordinate_law = _cs_coordinate_law_tag(grid), cs_center_law = _cs_center_law_tag(grid),
         longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
-        extra_header = header)
+        planet_radius = grid.mesh.radius, extra_header = header)
     return CubedSphereBinaryWriter(inner, mass_basis_from_symbol(:dry); Nc = grid.Nc, npanel = 6,
                                    final_path = String(out_path))
 end

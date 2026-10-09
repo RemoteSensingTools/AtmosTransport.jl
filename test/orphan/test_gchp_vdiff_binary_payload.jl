@@ -16,7 +16,7 @@ using .AtmosTransport
     mktemp() do path, io
         close(io)
         writer = AtmosTransport.MetDrivers.open_streaming_cs_transport_binary(
-            path, Nc, np, Nz, 1, vc;
+            path, Nc, np, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
             FT = FT,
             dt_met_seconds = 3600,
             steps_per_window = 4,

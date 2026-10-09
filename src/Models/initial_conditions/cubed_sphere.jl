@@ -18,11 +18,14 @@
 # regridder misses a sliver of the sphere (GridFED: 1.5e-5° of longitude,
 # 2.1e-6 of the global flux). The mesh is Float64 for every run precision:
 # the geometry is evaluated once, and Float32 and Float64 runs share weights.
+# It takes the destination mesh's radius, so the conservative weights compare
+# areas on one sphere.
 # ---------------------------------------------------------------------------
 
 const _GLOBAL_EXTENT_SNAP = 1e-3      # fraction of a cell
 
-function _build_source_latlon_mesh(lon_src::Vector{Float64}, lat_src::Vector{Float64})
+function _build_source_latlon_mesh(lon_src::Vector{Float64}, lat_src::Vector{Float64};
+                                   radius::Real = EARTH_RADIUS)
     Nx_src = length(lon_src)
     Ny_src = length(lat_src)
     min(Nx_src, Ny_src) >= 2 || throw(ArgumentError(
@@ -39,7 +42,8 @@ function _build_source_latlon_mesh(lon_src::Vector{Float64}, lat_src::Vector{Flo
     lon_east - lon_west > 360 - snap * dlon && (lon_east = lon_west + 360)
     return LatLonMesh(; FT = Float64, Nx = Nx_src, Ny = Ny_src,
                       longitude = (lon_west, lon_east),
-                      latitude  = (lat_south, lat_north))
+                      latitude  = (lat_south, lat_north),
+                      radius    = Float64(radius))
 end
 
 # ---------------------------------------------------------------------------
@@ -159,7 +163,7 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
     B_tgt = grid.vertical.B
 
     source = _load_file_initial_condition_source(cfg, FT, Nz)
-    src_mesh = _build_source_latlon_mesh(source.lon, source.lat)
+    src_mesh = _build_source_latlon_mesh(source.lon, source.lat; radius = mesh.radius)
     regridder = build_regridder(src_mesh, mesh)
 
     # 3D VMR: (Nx_src, Ny_src, Nlev_src) → 6 × (Nc, Nc, Nlev_src)

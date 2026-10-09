@@ -74,8 +74,10 @@ function _rebuild_cs_mesh(header::Dict{String, Any})
     # (cell_area, lat/lon corner positions, etc.) round-trip bit-exact.
     FT = _float_from_dtype_tag(String(header["float_dtype"]))
     # Hp = 0: the binary stores only interior cells. Downstream output paths
-    # don't need halos for write-only consumers.
-    return CubedSphereMesh(; FT = FT, Nc = Nc, Hp = 0, definition = def)
+    # don't need halos for write-only consumers. Snapshots written before the
+    # radius was recorded come from meshes of radius EARTH_RADIUS.
+    radius = Float64(get(g, "planet_radius_m", AtmosTransport.Parameters.EARTH_RADIUS))
+    return CubedSphereMesh(; FT = FT, Nc = Nc, Hp = 0, definition = def, radius = FT(radius))
 end
 
 function _read_frames(header::Dict{String, Any}, path::AbstractString)
@@ -131,7 +133,7 @@ function _build_grid(header::Dict{String, Any}, mesh::CubedSphereMesh)
     A = zeros(Float64, Nz + 1)
     B = collect(range(1.0, stop = 0.0, length = Nz + 1))
     vertical = HybridSigmaPressure(A, B)
-    return AtmosGrid(mesh, vertical, CPU())
+    return AtmosGrid(mesh, vertical, CPU(); radius = mesh.radius)
 end
 
 function _default_output_path(input::AbstractString)

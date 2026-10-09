@@ -530,6 +530,7 @@ function process_era5_n320_to_cs_day(date::Date,
             cs_coordinate_law = _cs_coordinate_law_tag(target_grid),
             cs_center_law = _cs_center_law_tag(target_grid),
             longitude_offset_deg = longitude_offset_deg(cs_definition(mesh)),
+            planet_radius = mesh.radius,
             extra_header = Dict{String, Any}(
                 "preprocessor" => "process_era5_n320_to_cs_day",
                 # Declare the per-window advection substep contract so the

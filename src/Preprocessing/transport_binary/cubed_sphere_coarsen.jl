@@ -258,7 +258,7 @@ function coarsen_nested_cs_transport_binary(
             throw(ArgumentError("source contains an incomplete surface payload"))
         include_dkg = :dkg in h.payload_sections
         mesh = CubedSphereMesh(; Nc = source_Nc, Hp = 0, FT = DiskFT,
-                               definition = mesh_definition(reader))
+                               definition = mesh_definition(reader), radius = DiskFT(h.planet_radius_m))
         source_area = mesh.cell_areas
         buffers = _allocate_nested_cs_coarsen_buffers(
             DiskFT, target, h.nlevel, npanel;
@@ -286,6 +286,7 @@ function coarsen_nested_cs_transport_binary(
             cs_coordinate_law = String(geometry.coordinate_law),
             cs_center_law = String(geometry.center_law),
             longitude_offset_deg = geometry.longitude_offset_deg,
+            planet_radius = h.planet_radius_m,
             extra_header = metadata)
 
         schedule = Vector{Int}(undef, h.nwindow)

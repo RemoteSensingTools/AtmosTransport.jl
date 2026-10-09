@@ -22,7 +22,7 @@ const MD = AtmosTransport.MetDrivers
     eflux = ntuple(p -> FT[100p + 10i + j for i in 1:Nc, j in 1:Nc], np)
     cloud_base = ntuple(p -> FT[Nz - mod(p + i + j, 3) for i in 1:Nc, j in 1:Nc], np)
     open_writer(path; kw...) = MD.open_streaming_cs_transport_binary(
-        path, Nc, np, Nz, 1, vc; FT, mass_basis = :dry, kw...)
+        path, Nc, np, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS, FT, mass_basis = :dry, kw...)
 
     mktemp() do path, io
         close(io)

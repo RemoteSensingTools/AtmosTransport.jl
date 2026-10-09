@@ -155,12 +155,12 @@ end
 
 # Derive per-cell area `(Nx, Ny)` on a regular lat/lon grid from the
 # coordinate vectors. Uses the spherical-cap formula
-# `R² · Δlon · |sin(φ + Δlat/2) - sin(φ - Δlat/2)|` with R = EARTH_RADIUS.
+# `R² · Δlon · |sin(φ + Δlat/2) - sin(φ - Δlat/2)|`.
 # Used by the EDGAR-Tonnes branch when the source file does not carry
 # a `cell_area` or `area` variable.
-function _lonlat_cell_areas_m2(lon::AbstractVector, lat::AbstractVector)
+function _lonlat_cell_areas_m2(lon::AbstractVector, lat::AbstractVector; radius::Real = EARTH_RADIUS)
     Nx, Ny = length(lon), length(lat)
-    R = EARTH_RADIUS
+    R = Float64(radius)
     # Cell width in radians, assuming uniform spacing. Take it from the full
     # span: coordinates stored in Float32 make the first difference err by
     # ~1e-4 relative, a bias of every cell area.
@@ -255,7 +255,7 @@ function _normalize_units_string(units)
     return lowercase(replace(strip(units_str), " " => "", "^" => "", "²" => "2"))
 end
 
-function _load_file_surface_flux_field(cfg, ::Type{FT}) where FT
+function _load_file_surface_flux_field(cfg, ::Type{FT}; radius::Real = EARTH_RADIUS) where FT
     kind = _surface_flux_kind(cfg)
     kind === :none && return nothing
     file, variable, time_index = _resolve_surface_flux_file(cfg, kind)
@@ -332,7 +332,9 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}) where FT
             # in the file OR derivable from the lat/lon grid.
             cell_area_for_norm = cell_area_src
             if cell_area_for_norm === nothing
-                cell_area_for_norm = _lonlat_cell_areas_m2(lon_src, lat_src)
+                # On the destination mesh's sphere, so the per-cell totals
+                # survive regridding whatever its radius.
+                cell_area_for_norm = _lonlat_cell_areas_m2(lon_src, lat_src; radius)
             end
             seconds_per_year = 365.25 * 86400
             @inbounds for j in 1:size(raw, 2), i in 1:size(raw, 1)
@@ -587,7 +589,7 @@ function build_surface_flux_source(grid::AtmosGrid{<:LatLonMesh},
     _surface_flux_time_varying(cfg) && throw(ArgumentError(
         "time-varying surface flux is CS-only (LatLon support is a follow-up)"))
 
-    source = _load_file_surface_flux_field(cfg, FT)
+    source = _load_file_surface_flux_field(cfg, FT; radius = grid.horizontal.radius)
     method = _regridding_method(cfg)
     mesh = grid.horizontal
 
@@ -624,7 +626,7 @@ function build_surface_flux_source(grid::AtmosGrid{<:ReducedGaussianMesh},
     _surface_flux_time_varying(cfg) && throw(ArgumentError(
         "time-varying surface flux is CS-only (ReducedGaussian support is a follow-up)"))
 
-    source = _load_file_surface_flux_field(cfg, FT)
+    source = _load_file_surface_flux_field(cfg, FT; radius = grid.horizontal.radius)
     method = _regridding_method(cfg)
     mesh = grid.horizontal
 
@@ -703,7 +705,7 @@ function build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
         return _build_timevarying_cs_surface_flux_source(mesh, tracer_name, cfg, FT, reference_time)
     end
 
-    source = _load_file_surface_flux_field(cfg, FT)
+    source = _load_file_surface_flux_field(cfg, FT; radius = grid.horizontal.radius)
 
     # _conservative_surface_flux_rate already returns kg/s per cell
     # (regridder.dst_areas × regridded flux density), so the panel unpack

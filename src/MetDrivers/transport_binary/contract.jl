@@ -155,7 +155,7 @@ const _CS_WRITER_CONTRACT_KEYS = ("runtime_substep_contract",
 
 const _TRANSPORT_STRUCTURAL_HEADER_KEYS = Set((
     "magic", "format_version", "header_bytes", "float_type", "float_bytes",
-    "grid_type", "horizontal_topology", "ncell", "nface_h", "nlevel",
+    "grid_type", "horizontal_topology", "planet_radius_m", "ncell", "nface_h", "nlevel",
     "nwindow", "A_ifc", "B_ifc", "mass_basis", "payload_sections",
     "elems_per_window", "n_geometry_elems", "Nx", "Ny", "Nc", "npanel",
     "lons", "lats", "longitude_interval", "latitude_interval",
@@ -472,6 +472,11 @@ function validate_transport_contract!(header::AbstractDict)
         "Obsolete transport binary format_version=$(format_version); current runtime requires " *
         "format_version=$(TRANSPORT_BINARY_FORMAT_VERSION). Regenerate this file with the current " *
         "preprocessor so the header carries the per-window substep schedule and runtime contract."))
+
+    radius = get(header, "planet_radius_m", nothing)       # absent in older binaries
+    radius === nothing || (radius isa Real && !(radius isa Bool) && isfinite(radius) && radius > 0) ||
+        throw(ArgumentError("Transport-binary contract violation — planet_radius_m must be a positive " *
+                            "length in m; got $(repr(radius))"))
 
     runtime_contract = get(header, "runtime_substep_contract", nothing)
     if runtime_contract !== nothing

@@ -15,6 +15,7 @@ using Printf: @sprintf
 using ..Architectures: array_adapter_for
 using ..State
 using ..Grids
+using ..Parameters: EARTH_RADIUS
 import ..source_revision
 
 include("AbstractMetDriver.jl")

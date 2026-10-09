@@ -110,6 +110,7 @@ function open_streaming_transport_binary(
                                       ncell, nface_h, nlevel, nwindow, vc,
                                       payload_sections, elems_per_window;
                                       FT=FT,
+                                      planet_radius=mesh.radius,
                                       header_bytes=header_bytes,
                                       dt_met_seconds=dt_met_seconds,
                                       half_dt_seconds=half_dt_seconds,

@@ -129,7 +129,7 @@ end
 
             cs_path = joinpath(dir,"cs.bin")
             vc = HybridSigmaPressure([0.0,0.0,0.0],[0.0,0.5,1.0])
-            writer = MD.open_streaming_cs_transport_binary(cs_path,2,6,2,1,vc;
+            writer = MD.open_streaming_cs_transport_binary(cs_path,2,6,2,1,vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
                 FT=Float64,dt_met_seconds=3600.0,steps_per_window=2,mass_basis=:dry)
             window = (;m=ntuple(_->ones(2,2,2),6),am=ntuple(_->zeros(3,2,2),6),
                        bm=ntuple(_->zeros(2,3,2),6),cm=ntuple(_->zeros(2,2,3),6),

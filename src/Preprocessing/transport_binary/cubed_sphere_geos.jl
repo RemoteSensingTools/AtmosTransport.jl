@@ -2085,6 +2085,7 @@ function _process_day_geos_cs_unified(date::Date,
             cs_coordinate_law  = _cs_coordinate_law_tag(grid),
             cs_center_law      = _cs_center_law_tag(grid),
             longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
+            planet_radius      = grid.mesh.radius,
             extra_header = Dict{String, Any}(
                 "preprocessor" => "geos_native_to_cs",
                 "preprocessor_contract" => "plan41_variable_substeps",

@@ -761,7 +761,7 @@ function main()
 
     rng = MersenneTwister(0)
     q_cpu = randn(rng, FT, Nc, Nc, Nz, nt) .* FT(1e-3) .+ FT(1.0)
-    area = _panel_cell_areas(FT, Nc)
+    area = _panel_cell_areas(FT, Nc; radius = FT(h.planet_radius_m))
     entu_d = CuArray(entu); detu_d = CuArray(detu)
     entd_d = CuArray(entd); detd_d = CuArray(detd)
     m_d    = CuArray(m);    q_d    = CuArray(q_cpu)

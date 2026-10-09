@@ -192,12 +192,17 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     @info @sprintf("  CS target: C%d (%d panels, %d levels)", Nc, CS_PANEL_COUNT, Nz)
 
     # --- Build LL source mesh for regridder ---
-    # Reconstruct the LL mesh from the binary header metadata
+    # Reconstruct the LL mesh from the binary header metadata. Binaries written
+    # before `planet_radius_m` was recorded were all preprocessed on the IFS
+    # sphere. Source and target must share one sphere.
+    src_radius = haskey(h.raw_header, "planet_radius_m") ? h.planet_radius_m : IFS_EARTH_RADIUS
+    FT(src_radius) == cs_grid.mesh.radius || (close(reader); throw(ArgumentError(
+        "LL source radius $(src_radius) m differs from the CS target radius $(cs_grid.mesh.radius) m")))
     ll_mesh = LatLonMesh(; FT=FT,
                           size=(Nx_ll, Ny_ll),
                           longitude=(-180, 180),
                           latitude=(-90, 90),
-                          radius=FT(IFS_EARTH_RADIUS))
+                          radius=FT(src_radius))
     ll_lats = FT.(ll_mesh.φᶜ)
     Δy_ll = FT(ll_mesh.radius * deg2rad(ll_mesh.Δφ))
     Δlon_ll = FT(deg2rad(ll_mesh.Δλ))
@@ -264,6 +269,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         cs_coordinate_law=_cs_coordinate_law_tag(cs_grid),
         cs_center_law=_cs_center_law_tag(cs_grid),
         longitude_offset_deg=longitude_offset_deg(cs_definition(cs_grid.mesh)),
+        planet_radius=cs_grid.mesh.radius,
         extra_header=Dict{String, Any}(
             "preprocessor"      => "regrid_ll_binary_to_cs",
             "source_type"       => "ll_transport_binary",

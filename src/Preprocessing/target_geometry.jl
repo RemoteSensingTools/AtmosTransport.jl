@@ -57,6 +57,7 @@ target_header_metadata(grid::LatLonTargetGeometry) = Dict{String, Any}(
     "horizontal_topology" => "StructuredDirectional",
     "grid_type" => "latlon",
     "grid_convention" => "TM5",
+    "planet_radius_m" => Float64(grid.mesh.radius),
     "lons" => Float64.(grid.lons),
     "lats" => Float64.(grid.lats),
     "longitude_interval" => Float64[first(grid.mesh.λᶠ), last(grid.mesh.λᶠ)],
@@ -71,6 +72,7 @@ target_header_metadata(grid::ReducedGaussianTargetGeometry) = Dict{String, Any}(
     "horizontal_topology" => "FaceIndexed",
     "grid_type" => "reduced_gaussian",
     "grid_convention" => "ERA5 native reduced Gaussian",
+    "planet_radius_m" => Float64(grid.mesh.radius),
     "gaussian_number" => grid.gaussian_number,
     "latitudes" => Float64.(grid.lats),
     "nlon_per_ring" => copy(grid.nlon_per_ring),
@@ -315,6 +317,7 @@ function target_header_metadata(grid::CubedSphereTargetGeometry)
     return Dict{String, Any}(
         "horizontal_topology" => "StructuredDirectional",
         "grid_type" => "cubed_sphere",
+        "planet_radius_m" => Float64(grid.mesh.radius),
         "Nc" => grid.Nc,
         "npanel" => 6,
         "cs_definition" => _cs_definition_tag(grid),

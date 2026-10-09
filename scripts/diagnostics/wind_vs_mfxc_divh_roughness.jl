@@ -70,7 +70,7 @@ function main()
     bm = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz), 6)
     dp_scr = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
     P.reconstruct_cs_fluxes!(am, bm, u_loc, v_loc, dp_scr, ps, Aifc, Bifc,
-                             Δx, Δy, FT(P.GRAV), one(FT), Nc, Nz)
+                             Δx, Δy, FT(AtmosTransport.Parameters.STANDARD_GRAVITY), one(FT), Nc, Nz)
 
     # convergence (in − out) per cell, both conventions identical interior form
     div_wind = ntuple(p -> begin

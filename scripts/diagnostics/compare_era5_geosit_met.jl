@@ -237,7 +237,7 @@ function main()
     # Since we don't have per-cell areas for C180, approximate:
     # total mass ≈ sum(DELP_all_cells) × avg_cell_area / g
     # Better: M_atm ≈ 4π R² × <ps> / g
-    era5_M = 4π * R_EARTH^2 * era5_ps_mean / GRAV
+    era5_M = 4π * era5.header.planet_radius_m^2 * era5_ps_mean / GRAV
     geos_M = 4π * R_EARTH^2 * geos_ps_mean / GRAV
     @info @sprintf("  ERA5 Σm (from binary)     = %.6e kg", era5_total_m)
     @info @sprintf("  ERA5 M (from <ps>)        = %.6e kg", era5_M)

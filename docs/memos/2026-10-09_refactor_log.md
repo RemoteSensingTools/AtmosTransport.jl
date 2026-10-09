@@ -189,3 +189,46 @@ share one core `_potential_temperature(T, p, κ, p_ref)`; the GEOS-Chem and
 local Holtslag-Boville fields call it through `_gchp_theta` and
 `_local_hb_theta` (bit-identical). Tests: constant values and coherence, the
 diffusion dz and TM5 dz against their formulas in both precisions.
+
+Golden check of step 1 (`chk_p2a`, all 18 non-slow cases): identical.
+
+### Step 2c — binaries record their mesh radius
+
+Every preprocessor builds its target mesh with the IFS radius 6 371 229 m and
+computes air masses `m = Δp A / g` on it, but the runtime rebuilt the mesh from
+the binary with the default 6 371 000 m, so runtime cell areas were 7.2e-5 too
+small for the air masses: emissions from flux densities (`density × area`), the
+pressure thickness of the GEOS-Chem non-local PBL and local Holtslag-Boville
+fields (`m g / A`), observation-sampler pressures, `cs_native` fluxes and the
+per-area outputs were off by that factor. Binaries now record
+`planet_radius_m`; `load_grid` builds the mesh and `AtmosGrid` with it, and the
+runtime IC and surface-flux regridders put the source lat-lon mesh on the same
+sphere. Binaries without the key read as 6 371 000 m, so existing binaries give
+identical results; new binaries change the quantities above by 7.2e-5.
+
+- Writers: the lat-lon and reduced-Gaussian writers take the radius from the
+  grid; the cubed-sphere writer requires `planet_radius` (the six preprocessing
+  paths pass their target mesh's, the coarsener and the TM5 attachment script
+  keep the source binary's). The key is structural (`extra_header` cannot change
+  it) and part of the output-reuse contract.
+- The contract validator rejects a recorded radius that is not a positive length.
+- Inventories given as per-cell totals (EDGAR tonnes without an area variable)
+  are converted to densities on the destination mesh's sphere, so their global
+  total does not depend on the radius. Inventories given as densities keep the
+  density, so their totals scale with the sphere (+7.2e-5 on new binaries; the
+  ECCO-Darwin regridding script bins on 6 371 000 m and is unchanged).
+- The lat-lon → cubed-sphere binary regridder uses the source binary's radius
+  (binaries without the key: the IFS radius they were all built with) and
+  requires the target to share it.
+- ATMSNAP snapshots record the radius; `binary_to_netcdf.jl`,
+  `extract_cs_column_means.jl`, `extract_cs_xco2*.jl` and
+  `ocean_xco2_monthly_range.jl` rebuild the mesh with it (older snapshots:
+  6 371 000 m).
+- Scripts: the TM5 benchmarks and the ERA5/GEOS-IT met comparison use the
+  binary's radius. Other diagnostics that rebuild meshes are radius-invariant or
+  assume the IFS radius; they go with the scripts cleanup. Leftover from step 1:
+  one test and two diagnostics still used the removed `Preprocessing.GRAV`.
+- Test `test/core/test_binary_planet_radius.jl`: lat-lon, reduced-Gaussian and
+  cubed-sphere round trips in both precisions, headers rewritten without the
+  key, the structural guard, ATMSNAP, the regridding source mesh, and an EDGAR
+  total on two spheres.

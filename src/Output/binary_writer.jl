@@ -21,7 +21,8 @@
 #     "float_dtype": "Float32",
 #     "grid": { "Nc": int, "Nz": int, "n_panels": 6,
 #               "definition": str, "panel_convention": str,
-#               "coordinate_law": str, "center_law": str },
+#               "coordinate_law": str, "center_law": str,
+#               "planet_radius_m": float },     # absent in older files: EARTH_RADIUS
 #     "fields": [ "air_mass", tracer_name_1, ... ],   # air_mass is always first
 #     "times_hours": [ float, ... ],
 #     "tracer_total_mass": { tracer_name_1: [float64, ...], ... },
@@ -88,6 +89,7 @@ function write_snapshot_binary(path::AbstractString,
             "panel_convention" => _panel_convention_tag(mesh),
             "coordinate_law" => String(coordinate_law_tag(coordinate_law(mesh))),
             "center_law" => String(center_law_tag(center_law(mesh))),
+            "planet_radius_m" => Float64(mesh.radius),
         ),
         "fields" => field_names,
         "times_hours" => [frame.time_hours for frame in frames],

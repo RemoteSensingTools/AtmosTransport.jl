@@ -338,8 +338,9 @@ function load_grid(
     h = reader.header
     g = h.geometry
     vertical = HybridSigmaPressure(FT.(h.A_ifc), FT.(h.B_ifc))
-    mesh = CubedSphereMesh(; FT, Nc=g.Nc, Hp, definition=mesh_definition(reader))
-    return AtmosGrid(mesh, vertical, arch; FT)
+    mesh = CubedSphereMesh(; FT, Nc=g.Nc, Hp, definition=mesh_definition(reader),
+                           radius=FT(h.planet_radius_m))
+    return AtmosGrid(mesh, vertical, arch; FT, radius=h.planet_radius_m)
 end
 
 export load_surface_window!, mesh_convention, mesh_definition
