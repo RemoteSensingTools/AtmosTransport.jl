@@ -150,8 +150,6 @@ end
     end
 end
 
-@inline _active_substep(iteration::Int, steps_per_window::Int) = mod(iteration, steps_per_window) + 1
-
 function _driver_step_schedule(driver::AbstractMetDriver)
     schedule = Int.(steps_per_window_schedule(driver))
     length(schedule) == total_windows(driver) ||

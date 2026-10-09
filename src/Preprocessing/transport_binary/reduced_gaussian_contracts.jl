@@ -2,16 +2,13 @@
 # Per-window RG transport-binary contract surface.
 #
 # Mirrors `cubed_sphere_contracts.jl` and `latlon_contracts.jl` for the
-# face-indexed reduced-Gaussian topology. Today the RG preprocessor calls
-# only `verify_window_continuity_rg` (the replay gate); there is no
-# analogue of `verify_substep_positivity_cs!` for RG fluxes. This surface
-# closes that asymmetry: RG gets the same per-substep positivity gate, the
-# same worst-window accumulator, and the same `require_substep_positivity`
-# escape-hatch policy as CS. The gate is intentionally NOT yet wired into
-# the RG `process_day` path.
+# face-indexed reduced-Gaussian topology: the replay gate
+# (`verify_window_continuity_rg`), the per-substep positivity gate, the
+# worst-window accumulator and the `require_substep_positivity` policy, as for
+# CS. The RG `process_day` checks every balanced window through
+# `_verify_rg_balanced_window!`.
 #
-# RG array shapes (confirmed against `ReducedWindowStorage` and
-# `verify_window_continuity_rg`):
+# RG array shapes (as in `SlidingWindowBuffer` and `verify_window_continuity_rg`):
 #
 #     m_cur      :: (nc, Nz)             # cell-centered mass
 #     hflux      :: (nf, Nz)             # face mass-flux per substep
@@ -29,8 +26,8 @@
 #
 # Boundary stubs (`face_left[f] ≤ 0` or `face_right[f] ≤ 0`) — the
 # south/north pole singularities of the RG mesh — are SKIPPED entirely.
-# This matches the runtime advection in
-# `src/Operators/Advection/StrangSplitting.jl:279`:
+# This matches the runtime face-indexed advection in
+# `src/Operators/Advection/StrangSplitting.jl`:
 #
 #     if left > 0 && right > 0
 #         # accumulate flux to both cells
@@ -55,10 +52,9 @@
 #
 # Direction reported in the diagnostic is `:h` (horizontal) or `:z`
 # (vertical); RG faces aren't axis-aligned, so there is no separate `:x`/
-# `:y` decomposition. The CFL contract is per-direction in CS because
-# each direction runs its own substep schedule, and the same coarsening
-# applies to RG: the horizontal pass is one substep direction (mixed x/y)
-# and the vertical pass is the second.
+# `:y` decomposition. The RG runtime subcycles its horizontal pass (mixed
+# x/y) and its vertical pass independently, so the contract is checked per
+# pass (CS instead shares one palindrome count across X, Y and Z).
 # ===========================================================================
 
 """

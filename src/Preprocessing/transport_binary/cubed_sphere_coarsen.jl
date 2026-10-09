@@ -18,7 +18,6 @@ _load_cs_coarsen_window(reader, win::Int) = load_window!(reader, win)
 
 @inline _cs_coarsen_geometry(header) = binary_geometry(header)
 @inline _cs_coarsen_Nc(header) = _cs_coarsen_geometry(header).Nc
-@inline _cs_coarsen_npanel(header) = _cs_coarsen_geometry(header).npanel
 @inline _cs_coarsen_definition(geometry::CubedSphereBinaryGeometry) = geometry.definition
 
 @inline function _coarsen_sum_cells3!(dst::AbstractArray{FT, 3},

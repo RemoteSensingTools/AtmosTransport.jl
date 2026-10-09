@@ -120,7 +120,7 @@ end
 
 Solve the singular system `L · psi = rhs` via Jacobi-Preconditioned CG
 using the compressed Laplacian. Mathematically identical to
-`solve_graph_poisson_pcg!` but ~16-27× faster due to compressed MatVec.
+the face-indexed graph-Laplacian solver but ~16-27× faster due to compressed MatVec.
 
 The compressed Laplacian has the same 1-D constant null space as the
 face-indexed version, so the same mean-zero projection is applied.
@@ -199,9 +199,10 @@ cubed-sphere balance (`cs_poisson_balance.jl`).
                                           steps_per_window, scratch;
                                           tol, max_iter)
 
-Drop-in replacement for `balance_reduced_horizontal_fluxes!` that uses
-the compressed Laplacian for the CG solver while still applying flux
-corrections to the full face-indexed `hflux` array.
+Poisson-balance the face-indexed horizontal fluxes of a reduced-Gaussian
+window so that every cell's outflow equals its forward mass tendency per
+substep. The CG solve uses the compressed Laplacian; the corrections are
+applied to the full face-indexed `hflux` array.
 
 The compressed Laplacian is mathematically equivalent to the face-indexed
 graph Laplacian — the flux corrections `hflux[f] += ψ[right] - ψ[left]`

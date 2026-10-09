@@ -116,27 +116,6 @@ function unpack_flat_to_panels_2d!(panels::NTuple{CS_PANEL_COUNT, Matrix{FT}},
     return panels
 end
 
-"""
-    pack_panels_3d_to_flat!(flat, panels, Nc, Nz)
-
-Pack 6 panel arrays `(Nc, Nc, Nz)` into flat `(6Nc², Nz)`.
-Inverse of `unpack_flat_to_panels_3d!`.
-"""
-function pack_panels_3d_to_flat!(flat::AbstractMatrix{FT},
-                                  panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                  Nc::Int, Nz::Int) where FT
-    for p in 1:CS_PANEL_COUNT
-        r = _cs_panel_flat_range(p, Nc)
-        for k in 1:Nz
-            @inbounds for (linear, flat_idx) in enumerate(r)
-                j, i = fldmod1(linear, Nc)  # (div, mod) = (j, i) for column-major (j-1)*Nc+i
-                flat[flat_idx, k] = panels[p][i, j, k]
-            end
-        end
-    end
-    return flat
-end
-
 # ---------------------------------------------------------------------------
 # Conservative LL → CS regridding
 # ---------------------------------------------------------------------------
@@ -1074,9 +1053,3 @@ function compute_cs_cm_pressure_fixer!(cm_panels::NTuple{CS_PANEL_COUNT, Array{F
     end
     return nothing
 end
-
-# ---------------------------------------------------------------------------
-# Utility: copy panel tuple (for snapshot storage)
-# ---------------------------------------------------------------------------
-
-@inline copy_panel_tuple(panels) = ntuple(p -> copy(panels[p]), CS_PANEL_COUNT)

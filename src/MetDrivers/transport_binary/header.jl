@@ -218,7 +218,6 @@ end
 
 _transport_is_structured(h::TransportBinaryHeader) = h.geometry isa LatLonBinaryGeometry
 _transport_is_faceindexed(h::TransportBinaryHeader) = h.geometry isa ReducedGaussianBinaryGeometry
-_transport_is_cubed_sphere(h::TransportBinaryHeader) = h.geometry isa CubedSphereBinaryGeometry
 
 function _transport_disk_float_type(sym::Symbol)
     sym === :Float64 ? Float64 : Float32

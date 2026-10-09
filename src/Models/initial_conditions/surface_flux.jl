@@ -9,7 +9,7 @@
 #
 # Hoisted verbatim (modulo renames for dependency consolidation) from the
 # historical LL/RG runner:
-#   FileSurfaceFluxField, SECONDS_PER_MONTH, _surface_flux_kind,
+#   FileSurfaceFluxField, _surface_flux_kind,
 #   _resolve_surface_flux_file, _normalize_units_string,
 #   _load_file_surface_flux_field, _renormalize_surface_flux_rate!,
 #   _regrid_cache_dir, _conservative_surface_flux_rate,
@@ -20,7 +20,6 @@
 # `_build_source_latlon_mesh` introduced for the IC path.
 # ===========================================================================
 
-const SECONDS_PER_MONTH = 365.25 * 86400 / 12
 const _DAYS_PER_MONTH_COMMON = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
 const _KNOWN_TRACER_MOLAR_MASS_KG_MOL = Dict{Symbol, Float64}(
     :co2         => SPECIES_MOLAR_MASS.co2,

@@ -116,12 +116,12 @@ end
                                   halo_width = 0, m_next = nothing)
 
 Verify the per-substep horizontal+vertical positivity contract that the runtime's
-`_cs_static_subcycle_count` depends on. For every interior cell on every panel:
+`_cs_static_palindrome_subcycle_count` depends on. For every interior cell on every panel:
 
-  1. The cell air mass itself must be positive (`m > 0`). A non-positive cell
-     mass is an immediate contract violation — the runtime divides by `m` and
-     would produce `Inf` or `NaN` in the CFL scan. Such a cell is reported with
-     `ratio = Inf` regardless of flux magnitude.
+  1. The cell air mass itself must be positive (`m > 0`), a preprocessing
+     invariant enforced here (the runtime CFL scan skips such cells). A
+     non-positive cell mass is reported with `ratio = Inf` regardless of flux
+     magnitude.
   2. The combined Strang-palindrome outgoing budget
      `2 * (out_x + out_y + out_z)` must not exceed `cfl_limit * m_ref`, where
      `m_ref = min(m, m_next)` when `m_next` is supplied by a caller that wants

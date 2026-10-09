@@ -263,3 +263,37 @@ identical results; new binaries change the quantities above by 7.2e-5.
   cubed-sphere round trips in both precisions, headers rewritten without the
   key, the structural guard, ATMSNAP, the regridding source mesh, and an EDGAR
   total on two spheres.
+
+## Phase 3: dead code, navigation
+
+### Step 1 — dead code (no numerical change)
+
+Definitions with no caller in `src/`, `test/`, `scripts/` or `ext/` (found by a
+token scan that ignores comments and docstrings, repeated until nothing new
+appeared), about 800 lines:
+
+- reduced-Gaussian whole-day balance chain, superseded by the streaming
+  two-window buffer: `ReducedWindowStorage`, `allocate_reduced_window_storage`,
+  `store_reduced_window!`, `apply_reduced_poisson_balance!`,
+  `verify_storage_continuity_rg!`, the face-indexed graph-Laplacian CG
+  (`balance_reduced_horizontal_fluxes!`, `solve_graph_poisson_pcg!`,
+  `_graph_laplacian_mul!`, `cell_face_degree` and the workspace's
+  `face_degree`); the compressed-Laplacian solver is the one in use, and the
+  A1 test keeps only it;
+- lat-lon subcycled sweeps (`_sweep_{x,y,z}_subcycled!`,
+  `_sweep_{x,y,z}_pp_subcycled!`);
+- q-space Lin-Rood helpers (`rm_to_q_panels!`, `q_to_rm_panels!`,
+  `compute_dp_from_m_panels!`, `set_m_from_dp_panels!` and their kernels);
+- the per-direction CS CFL counter `_cs_static_subcycle_count` (the runtime
+  uses `_cs_static_palindrome_subcycle_count`; its outflow formula moved into
+  that docstring, and the comments and theory page that named the dead one
+  now name the live one);
+- small leftovers: `_CSTapeCounts`, `pack_panels_3d_to_flat!`,
+  `copy_panel_tuple`, `_transport_is_cubed_sphere`, `_active_substep`,
+  `_cs_coarsen_npanel`, `_date_range_from_str`, `SECONDS_PER_MONTH`, the
+  unused ERA5 GRIB parameter-id constants.
+
+Left for the owner (public API, used only by tests): `State.MetState`, and the
+exported `diagnose_cm_from_continuity_vc!` / `diagnose_cm_from_continuity_ka!`
+(no caller; `diagnose_cm_from_continuity!` is tested). Stale comments fixed:
+the RG contract header (the positivity gate is wired into `process_day`).

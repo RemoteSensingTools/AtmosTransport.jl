@@ -323,13 +323,6 @@ has_vdiff_fields(::AbstractERA5GRIBSettings) = false
 
 const ERA5_NATIVE_LEVEL_COUNT = 137
 
-# ECMWF parameter ids for the ERA5 model-level analyses we consume.
-const _ERA5_PARAM_T    = 130
-const _ERA5_PARAM_Q    = 133
-const _ERA5_PARAM_VO   = 138
-const _ERA5_PARAM_LNSP = 152
-const _ERA5_PARAM_D    = 155
-
 """
     discover_era5_n320_source_grid(core_path; FT=Float64) -> ReducedGaussianTargetGeometry
 

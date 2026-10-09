@@ -297,7 +297,7 @@ is bit-identical to the pre-clamp behavior.
     #       mass over the window (e.g. C180 panel-4 south edge cell at
     #       lat 44°N has window-CFL ≈ 1.6 after balance).
     #   (2) Future coarser grids or different met sources where per-substep
-    #       CFL exceeds 1 before the runtime's `_cs_static_subcycle_count`
+    #       CFL exceeds 1 before the runtime's `_cs_static_palindrome_subcycle_count`
     #       can subdivide.
     # Without the clamp, `α = F/eps` blows up and the polynomial overflows.
     # With the clamp, α saturates at ±1 → degrades to upwind locally,

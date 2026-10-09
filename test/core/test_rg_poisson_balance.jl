@@ -6,15 +6,12 @@
 #
 # the continuity the write-time replay gate checks (the palindrome applies each
 # window flux twice per substep); the replay checker itself must then close
-# without vertical flux. Both balance implementations (compressed
-# Laplacian and face-indexed graph Laplacian) are tested. Regression test for
-# the sign of the balance target, section A item 1 of
+# without vertical flux. Regression test for the sign of the balance target, section A item 1 of
 # docs/memos/2026-10-08_code_structure_and_duplication_plan.md.
 
 using Test
 using AtmosTransport
-using .AtmosTransport.Preprocessing: build_compressed_laplacian, balance_compressed_horizontal_fluxes!,
-                                     balance_reduced_horizontal_fluxes!
+using .AtmosTransport.Preprocessing: build_compressed_laplacian, balance_compressed_horizontal_fluxes!
 using .AtmosTransport.MetDrivers: verify_window_continuity_rg
 
 # Outflow divergence of each cell at every level (face f carries hflux[f, k] from left to right).
@@ -54,15 +51,6 @@ end
         residual = outflow_divergence(hflux, face_left, face_right, nc) .- tendency
         @test maximum(abs, residual) <= 1e-9 * maximum(abs, tendency)
         @test diag.max_post_raw_residual <= 1e-9 * maximum(abs, tendency)   # the solver's own diagnostic agrees
-        @test replay_error(hflux, m_cur, m_next, face_left, face_right, steps) <= 1e-12
-    end
-    @testset "face-indexed graph Laplacian" begin
-        (; face_left, face_right, nc, steps, m_cur, m_next, tendency, hflux, scratch) = balance_problem()
-        degree = [count(==(c), face_left) + count(==(c), face_right) for c in 1:nc]
-        diag = balance_reduced_horizontal_fluxes!(hflux, m_cur, m_next, face_left, face_right, degree, steps, scratch)
-        residual = outflow_divergence(hflux, face_left, face_right, nc) .- tendency
-        @test maximum(abs, residual) <= 1e-9 * maximum(abs, tendency)
-        @test diag.max_post_raw_residual <= 1e-9 * maximum(abs, tendency)
         @test replay_error(hflux, m_cur, m_next, face_left, face_right, steps) <= 1e-12
     end
 end

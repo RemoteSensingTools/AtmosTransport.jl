@@ -224,9 +224,8 @@ symmetry.
 `src/Operators/Advection/StrangSplitting.jl` is the per-direction
 counter; the structured per-direction max-α helpers are
 `_x_subcycling_pass_count` / `_y_subcycling_pass_count` /
-`_z_subcycling_pass_count` in the same file. The CS analogue is
-`_cs_static_subcycle_count` plus the palindrome-aware
-`_cs_static_palindrome_subcycle_count` in
+`_z_subcycling_pass_count` in the same file. The CS analogue is the
+palindrome-aware `_cs_static_palindrome_subcycle_count` in
 `src/Operators/Advection/CubedSphereStrang.jl`. The CS palindrome
 budget sums all six legs and uses
 `2·(out_x + out_y + out_z) / m_start` — see
@@ -354,8 +353,8 @@ between them. Performance-tuning notes live beside the implementation.
 | Slopes face flux (Russell-Lerner formula) | `src/Operators/Advection/reconstruction.jl::_slopes_face_flux` |
 | Structured-grid Strang palindrome | `src/Operators/Advection/StrangSplitting.jl::strang_split!` |
 | Cubed-sphere Strang palindrome | `src/Operators/Advection/CubedSphereStrang.jl::strang_split_cs!` |
-| CFL subcycle counters (structured) | `StrangSplitting.jl::_subcycling_pass_count`, `_static_*_subcycle_count` |
-| CFL subcycle counters (CS) | `CubedSphereStrang.jl::_cs_static_subcycle_count`, `_cs_static_palindrome_subcycle_count` |
+| CFL subcycle counters (structured) | `StrangSplitting.jl::_subcycling_pass_count`, `_x/_y/_z_subcycling_pass_count` |
+| CFL subcycle counters (CS) | `CubedSphereStrang.jl::_cs_static_palindrome_subcycle_count` |
 | CS multi-tracer fused kernels (X / Y / Z) | `src/Operators/Advection/multitracer_kernels.jl` |
 | CS paired split seam exchange | `src/Operators/Advection/CubedSphereSeams.jl` |
 | CS paired split seam adjoint | `src/Adjoints/CubedSphereSeams.jl` |

@@ -382,9 +382,9 @@ function _sweep_vertical_face_backend!(backend,
     _sweep_vertical_face_gpu!(backend, rm, m, cm, scheme, ws, flux_scale)
 end
 
-# Additional structured sweep overloads with explicit flux scaling.
-# These are used by the CFL-based subcycling wrappers to reapply the same
-# directional forcing in smaller conservative pieces. Same ping-pong
+# Additional structured sweep overloads with explicit flux scaling: apply a
+# fraction of the directional forcing, so a sweep can be split into smaller
+# conservative pieces. Same ping-pong
 # contract as the one(FT) variants above: the 8-arg form does the kernel
 # launch only (no `copyto!`); the 6-argument form is the in-place entry point.
 for (sweep_fn, kernel_fn, dim) in (
@@ -803,130 +803,7 @@ function _z_subcycling_pass_count(cm::AbstractArray{FT,3}, m::AbstractArray{FT,3
     return n_sub
 end
 
-@inline function _sweep_x_subcycled!(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
-                                     am::AbstractArray{FT,3},
-                                     scheme::AbstractAdvectionScheme,
-                                     ws::AdvectionWorkspace{FT},
-                                     cfl_limit::FT) where FT
-    n_sub = _x_subcycling_pass_count(am, m, ws, cfl_limit)
-    if n_sub == 1
-        sweep_x!(rm, m, am, scheme, ws)
-        return 1
-    end
-    flux_scale = inv(FT(n_sub))
-    for _ in 1:n_sub
-        sweep_x!(rm, m, am, scheme, ws, flux_scale)
-    end
-    return n_sub
-end
 
-@inline function _sweep_y_subcycled!(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
-                                     bm::AbstractArray{FT,3},
-                                     scheme::AbstractAdvectionScheme,
-                                     ws::AdvectionWorkspace{FT},
-                                     cfl_limit::FT) where FT
-    n_sub = _y_subcycling_pass_count(bm, m, ws, cfl_limit)
-    if n_sub == 1
-        sweep_y!(rm, m, bm, scheme, ws)
-        return 1
-    end
-    flux_scale = inv(FT(n_sub))
-    for _ in 1:n_sub
-        sweep_y!(rm, m, bm, scheme, ws, flux_scale)
-    end
-    return n_sub
-end
-
-@inline function _sweep_z_subcycled!(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
-                                     cm::AbstractArray{FT,3},
-                                     scheme::AbstractAdvectionScheme,
-                                     ws::AdvectionWorkspace{FT},
-                                     cfl_limit::FT) where FT
-    n_sub = _z_subcycling_pass_count(cm, m, ws, cfl_limit)
-    if n_sub == 1
-        sweep_z!(rm, m, cm, scheme, ws)
-        return 1
-    end
-    flux_scale = inv(FT(n_sub))
-    for _ in 1:n_sub
-        sweep_z!(rm, m, cm, scheme, ws, flux_scale)
-    end
-    return n_sub
-end
-
-# -------------------------------------------------------------------------
-# Ping-pong subcycled sweeps — used by strang_split! to eliminate the
-# per-sweep copyto!. Each helper reads from (rm_in, m_in) and — after
-# n_sub internal passes — leaves the result either in (rm_out, m_out)
-# when n_sub is odd, or back in (rm_in, m_in) when n_sub is even.
-# The caller rebinds `cur` / `alt` locally based on `isodd(n_sub)`.
-# -------------------------------------------------------------------------
-
-@inline function _sweep_x_pp_subcycled!(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
-                                        m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
-                                        am::AbstractArray{FT,3},
-                                        scheme::AbstractAdvectionScheme,
-                                        ws::AdvectionWorkspace{FT},
-                                        cfl_limit::FT) where FT
-    n_sub = _x_subcycling_pass_count(am, m_in, ws, cfl_limit)
-    if n_sub == 1
-        sweep_x!(rm_in, rm_out, m_in, m_out, am, scheme, ws)
-        return n_sub
-    end
-    flux_scale = inv(FT(n_sub))
-    @inbounds for pass in 1:n_sub
-        if isodd(pass)
-            sweep_x!(rm_in,  rm_out, m_in,  m_out, am, scheme, ws, flux_scale)
-        else
-            sweep_x!(rm_out, rm_in,  m_out, m_in,  am, scheme, ws, flux_scale)
-        end
-    end
-    return n_sub
-end
-
-@inline function _sweep_y_pp_subcycled!(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
-                                        m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
-                                        bm::AbstractArray{FT,3},
-                                        scheme::AbstractAdvectionScheme,
-                                        ws::AdvectionWorkspace{FT},
-                                        cfl_limit::FT) where FT
-    n_sub = _y_subcycling_pass_count(bm, m_in, ws, cfl_limit)
-    if n_sub == 1
-        sweep_y!(rm_in, rm_out, m_in, m_out, bm, scheme, ws)
-        return n_sub
-    end
-    flux_scale = inv(FT(n_sub))
-    @inbounds for pass in 1:n_sub
-        if isodd(pass)
-            sweep_y!(rm_in,  rm_out, m_in,  m_out, bm, scheme, ws, flux_scale)
-        else
-            sweep_y!(rm_out, rm_in,  m_out, m_in,  bm, scheme, ws, flux_scale)
-        end
-    end
-    return n_sub
-end
-
-@inline function _sweep_z_pp_subcycled!(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
-                                        m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
-                                        cm::AbstractArray{FT,3},
-                                        scheme::AbstractAdvectionScheme,
-                                        ws::AdvectionWorkspace{FT},
-                                        cfl_limit::FT) where FT
-    n_sub = _z_subcycling_pass_count(cm, m_in, ws, cfl_limit)
-    if n_sub == 1
-        sweep_z!(rm_in, rm_out, m_in, m_out, cm, scheme, ws)
-        return n_sub
-    end
-    flux_scale = inv(FT(n_sub))
-    @inbounds for pass in 1:n_sub
-        if isodd(pass)
-            sweep_z!(rm_in,  rm_out, m_in,  m_out, cm, scheme, ws, flux_scale)
-        else
-            sweep_z!(rm_out, rm_in,  m_out, m_in,  cm, scheme, ws, flux_scale)
-        end
-    end
-    return n_sub
-end
 
 # =========================================================================
 # Strang splitting: X → Y → Z → Z → Y → X

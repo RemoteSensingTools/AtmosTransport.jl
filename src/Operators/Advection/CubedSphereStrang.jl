@@ -995,94 +995,26 @@ end
 end
 
 # =========================================================================
-# Public API: strang_split_cs!
-# =========================================================================
-
-# =========================================================================
 # CFL-based subcycle count
 # =========================================================================
 
-"""Static CFL subcycle count from initial mass (no evolving-mass pilot).
-
-The per-cell positivity bound for one Strang half-sweep is
-
-    outgoing_mass_per_substep = max(0, −F_lo) + max(0, F_hi)
-    cfl                       = outgoing_mass_per_substep / m
-
-Both faces can carry mass *out of* the cell simultaneously at a
-divergent stagnation point; the previous formulation
-`max(|F_lo|, |F_hi|) / m` only measured the larger of the two and
-under-estimated by up to 2× at exactly the cells where positivity
-fails (both faces outgoing).  The new formula is a *correctness
-refinement* — Lin-Rood 1996's positivity criterion — and is what the
-runtime actually needs to subcycle on; it is not a strict tightening
-in every direction (e.g. a pure-inflow cell with `F_lo > 0, F_hi < 0`
-gets `outgoing = 0` here vs. `max(|F_lo|, |F_hi|)` under the old
-formula — but that's exactly right: a cell receiving on both faces
-loses no mass and needs no subcycling).
-
-Sign convention for each face `F_lo` (lower-index face) and `F_hi`
-(higher-index face): positive flux means mass flows in the +index
-direction, so the cell loses mass when `F_lo < 0` (out the low side)
-or `F_hi > 0` (out the high side). The same convention holds for
-all three directions in this code path.
-
-Implementation runs every `step!`, so we use a backend-portable
-broadcast + `mapreduce(max, …)` formulation:
-
-- on `Array` it lowers to vectorised SIMD reductions (no allocation),
-- on `CuArray` it dispatches to CUDA's parallel reduction (no host
-  round-trip).
-
-The `m <= 0` guard from the original scalar loop is preserved via
-`ifelse`; in practice `m > 0` always holds and the guard is
-defensive.
-"""
-function _cs_static_subcycle_count(panels_flux::NTuple{6}, panels_m::NTuple{6},
-                                    Nc::Int, Hp::Int, Nz::Int, cfl_limit::Real,
-                                    direction::Symbol;
-                                    flux_scale = one(eltype(panels_m[1])))
-    FT = eltype(panels_m[1])
-    fs = convert(FT, flux_scale)
-    iL = Hp + 1
-    iH = Hp + Nc
-    max_cfl = zero(FT)
-    @inbounds for p in 1:6
-        m_p = panels_m[p]
-        F_p = panels_flux[p]
-        m_int = view(m_p, iL:iH, iL:iH, 1:Nz)
-        F_lo, F_hi = if direction === :x
-            (view(F_p, iL    :iH,     iL:iH,     1:Nz),
-             view(F_p, iL + 1:iH + 1, iL:iH,     1:Nz))
-        elseif direction === :y
-            (view(F_p, iL:iH,     iL    :iH,     1:Nz),
-             view(F_p, iL:iH,     iL + 1:iH + 1, 1:Nz))
-        else  # :z
-            (view(F_p, iL:iH, iL:iH, 1    :Nz),
-             view(F_p, iL:iH, iL:iH, 2:Nz + 1))
-        end
-        zero_FT = zero(FT)
-        cfl_panel = mapreduce(max, m_int, F_lo, F_hi; init = zero_FT) do mi, fl, fh
-            fls = fs * fl
-            fhs = fs * fh
-            outgoing = max(zero_FT, -fls) + max(zero_FT, fhs)
-            ifelse(mi > zero_FT, outgoing / mi, zero_FT)
-        end
-        max_cfl = max(max_cfl, cfl_panel)
-    end
-    max_cfl <= cfl_limit && return 1
-    return ceil(Int, max_cfl / cfl_limit)
-end
-
 """Static palindrome CFL subcycle count from initial mass.
+
+A cell loses mass through a face when the flux points out of it: with `F_lo`,
+`F_hi` its lower- and higher-index faces (positive = toward higher index),
+
+    outgoing = max(0, −F_lo) + max(0, F_hi)
+
+per direction, so both faces count at a divergent point (Lin & Rood 1996).
 
 This is the runtime-side second line of defense for the CS Strang sequence.
 The actual sequence applies each direction twice (`X-Y-Z-Z-Y-X`), so a
 per-direction CFL pilot can under-estimate cells where moderate outgoing flux
 exists in several directions at once. This budget is still a static proxy, not
 an evolving-mass proof, but it is conservative with respect to the old
-direction-isolated metric and matches the preprocessor's adaptive schedule
-gate.
+direction-isolated metric and uses the same palindrome-outflow numerator as the
+preprocessor's adaptive schedule gate (which can also divide by the smaller of
+the two window-end masses).
 """
 function _cs_static_palindrome_subcycle_count(panels_am::NTuple{6},
                                               panels_bm::NTuple{6},
@@ -1130,6 +1062,10 @@ end
 # palindrome budget above).
 # The static pilot is sufficient because the gamma-clamped sweep handles CFL > 1
 # safely. If evolving-mass pilots are needed in the future, see git history.
+
+# =========================================================================
+# Public API: strang_split_cs!
+# =========================================================================
 
 """
     strang_split_cs!(panels_rm, panels_m, panels_am, panels_bm, panels_cm,

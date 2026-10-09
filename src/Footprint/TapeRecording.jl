@@ -3,7 +3,7 @@
 #
 # Collects the per-op records the forward pass appends to the tape:
 #
-#   * `_CSTapeCounts` / `_tape_byte_estimate` — diagnostic sizing.
+#   * `_tape_byte_estimate` — diagnostic sizing.
 #   * `_record_sweep!` — pushes a `_CSSweepRecord` for one per-direction
 #     advection sweep (linear or monotone-PPM dispatch).
 #   * `_record_cs_mass_tape` — air-mass tape only (linear schemes).
@@ -17,14 +17,6 @@
 # use the same paired physical-seam groups as the production forward pass;
 # their stored inputs also supply the shared reconstruction's reverse pass.
 # ---------------------------------------------------------------------------
-
-struct _CSTapeCounts
-    sweep_records::Int
-    halo_records::Int
-    midpoint_records::Int
-    diffusion_records::Int
-    convection_records::Int
-end
 
 function _tape_byte_estimate(panels_m0,
                              panels_am_steps,

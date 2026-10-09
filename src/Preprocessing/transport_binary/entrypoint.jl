@@ -93,7 +93,7 @@ _resolve_chain_mass(cfg::AbstractDict) =
 # recommendation) AFTER a contract violation has been recorded — by then the
 # preprocessor has already paid the cost of the loop, so we'd rather refuse
 # to start than throw an `InexactError` at the end. Values > 1.0 are also
-# nonsensical (the runtime's `_cs_static_subcycle_count` only protects
+# nonsensical (the runtime's `_cs_static_palindrome_subcycle_count` only protects
 # against outgoing < cell mass).
 function _resolve_positivity_cfl_limit(cfg::AbstractDict)
     raw = get(get(cfg, "numerics", Dict()), "positivity_cfl_limit", 0.95)
