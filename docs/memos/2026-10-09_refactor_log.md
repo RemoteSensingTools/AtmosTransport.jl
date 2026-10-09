@@ -157,3 +157,35 @@ saved as `/temp1/cfranken/goldens/patches/a10_ppm_curvature_partial.patch`
 CATRINE comparison against GCHP (which uses FV3's limited PPM, so the fix
 should bring us closer). Every production PPM run changes, hence left for the
 owner's decision.
+
+## Phase 2: constants
+
+### Step 1 — physical constants in one place (ab32a2bb)
+
+`src/Parameters/PhysicalConstants.jl` holds the constants of nature with their
+sources (Earth radii of the meshes and of the IFS, standard gravity and pressure,
+dry-air heat capacity, Avogadro, virtual-temperature factor, species molar
+masses) and the constant sets of the schemes that reproduce other models
+(`TM5_CONSTANTS`, `GEOSCHEM_CONSTANTS`). `Preprocessing/constants.jl` is gone.
+Every call site kept its value.
+
+### Step 2 — one dry-air constant set (GEOS/MAPL)
+
+`R_DRY_AIR = 287.04`, `CP_DRY_AIR = 1004.64` (= 3.5 × 287.04),
+`DRY_AIR_MOLAR_MASS = 28.9644e-3`, `CP_OVER_R_DIATOMIC = 3.5`,
+`THETA_REFERENCE_PRESSURE = 1e5` replace the module-local copies. Results
+change where the copies disagreed:
+
+| site | before | after | effect |
+|---|---|---|---|
+| diffusion layer thickness (`dz_helpers.jl`) | g = 9.81 | 9.80665 | dz +3.4e-4 (relative) in every Kz-diffusion run |
+| surface-flux storage scale (`surface_flux.jl`) | M_air = 28.96546e-3 | 28.9644e-3 | emitted tracer −3.7e-5 (relative) |
+| TM5 convection conversion (preprocessing) | R = 287.058, ε = 0.608 | 287.04, 0.61 | dz of future TM5 attachments −6e-5, +2e-3·q |
+
+The cubed-sphere pressure-layer IC, the observation sampler, the Kz fields
+(`cp_dry / 3.5`) and the GEOS-Chem θ reference pressure keep their values. The
+two `_potential_temperature` methods with different semantics (plan A6) now
+share one core `_potential_temperature(T, p, κ, p_ref)`; the GEOS-Chem and
+local Holtslag-Boville fields call it through `_gchp_theta` and
+`_local_hb_theta` (bit-identical). Tests: constant values and coherence, the
+diffusion dz and TM5 dz against their formulas in both precisions.

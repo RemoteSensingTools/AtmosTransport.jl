@@ -82,8 +82,8 @@ Adapt.adapt_structure(to, f::GCHPNonlocalPBLField) =
                          Adapt.adapt(to, f.p_mid), Adapt.adapt(to, f.z_mid), f.params,
                          Adapt.adapt(to, f.cell_areas))
 
-# Potential temperature of a layer.
-@inline _potential_temperature(T, p, prm) = T * (prm.p_ref / p)^(prm.R_dry / prm.cp_dry)
+# Potential temperature of a layer with GEOS-Chem's constants.
+@inline _gchp_theta(T, p, prm) = _potential_temperature(T, p, prm.R_dry / prm.cp_dry, prm.p_ref)
 
 # Free troposphere: Richardson-number closure K = ℓ² |∂v/∂z| f(Ri) (vdiff_mod.F90).
 @inline function _free_troposphere_kz(Δu, Δv, Δz, θv_above, θv_below, ℓ², prm)
@@ -137,7 +137,7 @@ end
     A = FT(area[i, j])
     g, R = prm.g, prm.R_dry
     moist_Δp(k) = g * air_mass[i + Hp, j + Hp, k] / (A * (1 - qv[i, j, k]))
-    θv(k, ε) = _potential_temperature(t[i, j, k], p_mid[i, j, k], prm) * (1 + ε * qv[i, j, k])
+    θv(k, ε) = _gchp_theta(t[i, j, k], p_mid[i, j, k], prm) * (1 + ε * qv[i, j, k])
 
     @inbounds begin
         # Moist mid-layer pressure from the dry air mass and humidity.
@@ -159,7 +159,7 @@ end
 
         # Surface fluxes as kinematic fluxes at the lowest layer.
         ρ_s = p_mid[i, j, Nz] / (R * t[i, j, Nz])
-        θ_s = _potential_temperature(t[i, j, Nz], p_mid[i, j, Nz], prm)
+        θ_s = _gchp_theta(t[i, j, Nz], p_mid[i, j, Nz], prm)
         w_θ = hflux[i, j] / (ρ_s * prm.cp_dry)
         w_q = eflux[i, j] / (prm.L_vap * ρ_s)
         w_θv = w_θ + prm.ε_virtual_pbl * θ_s * w_q

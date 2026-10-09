@@ -27,9 +27,10 @@ using Test
 import AtmosTransport
 using .AtmosTransport.Operators.Diffusion: fill_dz_hydrostatic_virtualT!,
                                             fill_dz_hydrostatic_constT!
+using .AtmosTransport.Parameters: R_DRY_AIR, STANDARD_GRAVITY
 
-const _R_DRY  = 287.04
-const _G_REF  = 9.81
+const _R_DRY  = R_DRY_AIR
+const _G_REF  = STANDARD_GRAVITY
 
 @testset "fill_dz_hydrostatic_virtualT! — single 3D array matches hand formula" begin
     FT = Float64

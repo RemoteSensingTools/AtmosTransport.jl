@@ -23,8 +23,20 @@ const STANDARD_GRAVITY = 9.80665
 "Standard sea-level pressure [Pa]."
 const STANDARD_PRESSURE = 101325.0
 
-"Heat capacity of dry air at constant pressure [J kg⁻¹ K⁻¹] (GEOS value)."
+"Gas constant of dry air [J kg⁻¹ K⁻¹] (GEOS, MAPL `MAPL_RDRY`)."
+const R_DRY_AIR = 287.04
+
+"Ratio of the heat capacity at constant pressure to the gas constant of an ideal diatomic gas, 7/2."
+const CP_OVER_R_DIATOMIC = 3.5
+
+"Heat capacity of dry air at constant pressure [J kg⁻¹ K⁻¹] (GEOS; the decimal product 3.5 × 287.04)."
 const CP_DRY_AIR = 1004.64
+
+"Molar mass of dry air [kg mol⁻¹] (U.S. Standard Atmosphere 1976; GEOS-Chem `AIRMW`)."
+const DRY_AIR_MOLAR_MASS = 28.9644e-3
+
+"Reference pressure of the potential temperature, θ = T (p₀/p)^κ [Pa]."
+const THETA_REFERENCE_PRESSURE = 1.0e5
 
 "Avogadro constant [mol⁻¹] (SI 2019, exact)."
 const AVOGADRO = 6.02214076e23
@@ -60,7 +72,8 @@ Kármán constant from `Headers/physconstants.F90`; dry-air heat capacity
 this model's convention.
 """
 const GEOSCHEM_CONSTANTS = (gravity = 9.80665, r_dry = 287.0, cp_dry = 1004.64, r_vap = 461.0,
-                            l_vap = 2.5104e6, karman = 0.4, p_ref = 1e5)
+                            l_vap = 2.5104e6, karman = 0.4, p_ref = THETA_REFERENCE_PRESSURE)
 
-export EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_PRESSURE, CP_DRY_AIR, AVOGADRO,
+export EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_PRESSURE, R_DRY_AIR, CP_OVER_R_DIATOMIC,
+       CP_DRY_AIR, DRY_AIR_MOLAR_MASS, THETA_REFERENCE_PRESSURE, AVOGADRO,
        VIRTUAL_TEMPERATURE_FACTOR, SPECIES_MOLAR_MASS, TM5_CONSTANTS, GEOSCHEM_CONSTANTS

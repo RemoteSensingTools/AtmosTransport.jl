@@ -600,16 +600,13 @@ end
 # temperature:
 #
 #     dz = R · T_v / g · dp / p_mid
-#     T_v = T · (1 + 0.608 · Q)
+#     T_v = T · (1 + 0.61 · Q)        (VIRTUAL_TEMPERATURE_FACTOR; R = R_DRY_AIR)
 #
 # This is one step closer to TM5's real-geopotential approach than
 # main's Julia port (which uses `T_ref = 260 K` everywhere — ~10-20%
 # dz bias).  The T_v correction is cheap (one FMA per layer) and
 # fixes tropical moisture bias where Q can reach 0.02.
 # ---------------------------------------------------------------------------
-
-const _R_DRY_AIR    = 287.058  # J / (kg · K)
-const _EPSILON_MV   = 0.608    # (Mv - Md) / Md
 
 """
     dz_hydrostatic_virtual!(dz, T_col, Q_col, ps, ak, bk, Nz) -> dz
@@ -626,7 +623,7 @@ p_top[k] = ak[k]   + bk[k]   * ps        (Pa, higher-altitude side)
 p_bot[k] = ak[k+1] + bk[k+1] * ps        (Pa, lower-altitude side)
 dp[k]    = p_bot[k] - p_top[k]           (> 0 in AtmosTransport orientation)
 p_mid[k] = 0.5 · (p_top[k] + p_bot[k])
-T_v[k]   = T_col[k] · (1 + 0.608 · Q_col[k])
+T_v[k]   = T_col[k] · (1 + 0.61 · Q_col[k])
 dz[k]    = R · T_v[k] / g · dp[k] / p_mid[k]
 ```
 
@@ -652,8 +649,8 @@ function dz_hydrostatic_virtual!(dz::AbstractVector{FT},
     length(bk) == Nz + 1 || throw(ArgumentError("bk length $(length(bk)) != Nz+1=$(Nz+1)"))
 
     ps_ft = FT(ps)
-    R_over_g = FT(_R_DRY_AIR / STANDARD_GRAVITY)
-    eps_mv   = FT(_EPSILON_MV)
+    R_over_g = FT(R_DRY_AIR / STANDARD_GRAVITY)
+    eps_mv   = FT(VIRTUAL_TEMPERATURE_FACTOR)
 
     @inbounds for k in 1:Nz
         p_top = FT(ak[k])     + FT(bk[k])     * ps_ft
@@ -691,7 +688,7 @@ function dz_hydrostatic_constT!(dz::AbstractVector{FT},
     length(bk) == Nz + 1 || throw(ArgumentError("bk length $(length(bk)) != Nz+1=$(Nz+1)"))
 
     ps_ft    = FT(ps)
-    R_over_g = FT(_R_DRY_AIR / STANDARD_GRAVITY)
+    R_over_g = FT(R_DRY_AIR / STANDARD_GRAVITY)
     T_ft     = FT(T_ref)
 
     @inbounds for k in 1:Nz

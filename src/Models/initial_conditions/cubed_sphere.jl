@@ -311,8 +311,6 @@ end
 # tracer redistribution can be compared directly.
 # ---------------------------------------------------------------------------
 
-const _MOLAR_MASS_AIR_KG_PER_MOL = 0.0289644
-
 function _build_cs_pressure_layer_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                                       grid::AtmosGrid{<:CubedSphereMesh},
                                       cfg, ::Type{FT},
@@ -386,7 +384,7 @@ function _build_cs_pressure_layer_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}}
     # VMR (mol_co2 / mol_air) chosen so Σ molecules = total_molecules.
     #   molecules_per_cell = VMR × N_A × dry_mass_per_cell / M_air
     #   total_molecules    = VMR × N_A × Σ dry_mass / M_air
-    vmr_value = FT(total_molecules * _MOLAR_MASS_AIR_KG_PER_MOL /
+    vmr_value = FT(total_molecules * DRY_AIR_MOLAR_MASS /
                    (AVOGADRO * total_dry_mass))
 
     # Build the VMR panels (interior-shaped `(Nc, Nc, Nz)`): zero except

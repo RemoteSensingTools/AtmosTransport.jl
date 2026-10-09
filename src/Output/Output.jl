@@ -58,6 +58,7 @@ background task.
 """
 with_netcdf_lock(f) = lock(f, _NETCDF_IO_LOCK)
 
+using ..Parameters: R_DRY_AIR
 import ..expand_data_path
 import ..source_revision
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,

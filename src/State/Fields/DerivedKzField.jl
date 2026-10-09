@@ -254,7 +254,7 @@ integration locally, so adapted fields refresh without host scalar indexing.
     i, j = @index(Global, NTuple)
     Nz = size(cache, 3)
     FT = eltype(cache)
-    R_dry = p.cp_dry / FT(3.5)
+    R_dry = p.cp_dry / FT(CP_OVER_R_DIATOMIC)
 
     h_pbl = max(field_value(surface.pblh,  (i, j)), FT(100))
     us    = max(field_value(surface.ustar, (i, j)), FT(0.01))

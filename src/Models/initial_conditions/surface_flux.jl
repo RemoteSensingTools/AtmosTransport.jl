@@ -22,7 +22,6 @@
 
 const SECONDS_PER_MONTH = 365.25 * 86400 / 12
 const _DAYS_PER_MONTH_COMMON = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
-const _DRY_AIR_MOLAR_MASS_KG_MOL = 28.96546e-3
 const _KNOWN_TRACER_MOLAR_MASS_KG_MOL = Dict{Symbol, Float64}(
     :co2         => SPECIES_MOLAR_MASS.co2,
     :co2_natural => SPECIES_MOLAR_MASS.co2,
@@ -151,7 +150,7 @@ function _surface_flux_storage_scale(tracer_name::Symbol, cfg)
     # Surface inventories are physical kg species/s. The prognostic tracer
     # storage is dry VMR * dry-air mass, so source rates must be converted to
     # dry-air-equivalent storage before being applied by the surface kernels.
-    return _DRY_AIR_MOLAR_MASS_KG_MOL / _tracer_molar_mass_kg_mol(tracer_name, cfg)
+    return DRY_AIR_MOLAR_MASS / _tracer_molar_mass_kg_mol(tracer_name, cfg)
 end
 
 # Derive per-cell area `(Nx, Ny)` on a regular lat/lon grid from the

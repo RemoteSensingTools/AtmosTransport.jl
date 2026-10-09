@@ -58,7 +58,7 @@ const TRACER_MAP = (
 )
 
 # Used only for global species-mass diagnostics from dry VMR and dry-air mass.
-const M_DRY_AIR_KG_MOL = 28.96546e-3
+const M_DRY_AIR_KG_MOL = AtmosTransport.Parameters.DRY_AIR_MOLAR_MASS
 const TRACER_MOLAR_MASS_KG_MOL = (
     co2_natural = 44.0095e-3,
     co2_fossil  = 44.0095e-3,
