@@ -263,6 +263,20 @@ end
     @test_throws ArgumentError apply!(rg_state, rg_fluxes, rg_grid, NoAdvection(),
                                       FT(1800); emissions_op=rg_em)
 
+    # The reduced-Gaussian palindrome has no diffusive surface-flux boundary:
+    # asking for it is an error before the state is touched.
+    rg_diff_boundary = ImplicitVerticalDiffusion(; kz_field=rg_kz,
+                                                 surface_flux_coupling=AtmosTransport.Operators.Diffusion.DiffusiveSurfaceFluxBoundary())
+    # Nonzero fluxes and a nonuniform tracer, so a sweep before the check would show.
+    rg_fluxes.horizontal_flux .= FT(1e-3) .* (1:size(rg_fluxes.horizontal_flux, 1))
+    rg_state.tracers_raw[:, :, 1] .*= (1:ncells(rg_mesh)) .+ FT(1)
+    tracers_before, mass_before = copy(rg_state.tracers_raw), copy(rg_state.air_mass)
+    @test_throws ArgumentError apply!(rg_state, rg_fluxes, rg_grid, UpwindScheme(), FT(1800);
+                                      workspace=rg_ws, diffusion_workspace=rg_diffusion_ws,
+                                      diffusion_op=rg_diff_boundary, emissions_op=rg_em)
+    @test rg_state.tracers_raw == tracers_before
+    @test rg_state.air_mass == mass_before
+
     # CS
     cs_Nc, cs_Hp, cs_Nz = 4, 1, 2
     cs_N = cs_Nc + 2cs_Hp

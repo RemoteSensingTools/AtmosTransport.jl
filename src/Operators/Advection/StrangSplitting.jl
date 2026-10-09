@@ -1495,6 +1495,10 @@ for (scheme_type, h_sweep, v_sweep) in (
                           meteo = nothing) where {B <: AbstractMassBasis}
         _preflight_diffusion(diffusion_op, diffusion_workspace, dt,
                              state.air_mass, ntracers(state))
+        # The palindrome below couples emissions as V(dt/2) → S(dt) → V(dt/2) only.
+        uses_diffusive_surface_flux_boundary(diffusion_op) && throw(ArgumentError(
+            "DiffusiveSurfaceFluxBoundary is not implemented for reduced-Gaussian runs; " *
+            "use SplitSurfaceFluxCoupling."))
         m = state.air_mass
         hflux, cm = fluxes.horizontal_flux, fluxes.cm
         cfl_limit_ft = convert(eltype(m), cfl_limit)

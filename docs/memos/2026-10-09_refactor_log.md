@@ -122,3 +122,10 @@ the flux-delta sections `dam/dbm/dcm`); the reader's method now delegates to the
 writer's function, which covers every section. Goldens identical (C24 and C90
 preprocessing, three runtime cases); new table-driven test. The script copies of
 the table (nine scripts, some without `dkg`) go with the scripts cleanup.
+
+### A8 — reduced-Gaussian runs reject the diffusive surface-flux boundary
+
+The reduced-Gaussian Strang palindrome couples emissions only as
+V(dt/2) → S(dt) → V(dt/2); given a `DiffusiveSurfaceFluxBoundary` it silently
+used that split (only the config validator rejected it). `apply!` now throws
+before touching the state; test in `test_no_advection.jl`.
