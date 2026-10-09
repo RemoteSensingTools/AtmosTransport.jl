@@ -162,7 +162,7 @@ four are present. The runtime's `[diffusion].kind =
 
 For each of the 24 hourly windows:
 
-1. **Read** (`src/Preprocessing/sources/geos.jl::read_window!`):
+1. **Read** (`src/Preprocessing/sources/geos_read_window.jl::read_window!`):
     - Open `CTM_A1` for hourly `MFXC`, `MFYC`, `DELP` (window-constant).
     - Open `CTM_I1` for instantaneous `PS`, `QV` at hour `n` and `n+1`.
     - Expose `MFXC` / `MFYC` as a rate-like diagnostic by dividing by

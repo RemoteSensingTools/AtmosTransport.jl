@@ -196,6 +196,8 @@ include("vertical_transforms.jl")
 
 # Global 6-panel Poisson balance for cubed-sphere grids
 # (must precede target_geometry.jl which uses CSGlobalFaceTable)
+include("cs_face_table.jl")
+include("cs_poisson_solver.jl")
 include("cs_poisson_balance.jl")
 
 # Target grid geometry (LL, RG, and CS)
@@ -221,6 +223,9 @@ include("reduced_spectral_synthesis.jl")
 
 # Cubed-sphere transport helpers (regrid, wind recovery, flux reconstruction)
 include("cs_transport_helpers.jl")
+include("cs_flux_reconstruction.jl")
+include("cs_wind_rotation.jl")
+include("cs_native_fluxes.jl")
 # Flux construction options shared by the wind-derived paths (MERRA-2, ERA5 N320).
 include("face_line_integrals.jl")
 include("flux_construction.jl")
@@ -250,6 +255,8 @@ include("binary_pipeline.jl")
 
 # Native GEOS NetCDF reader
 include("sources/geos.jl")
+include("sources/geos_panels.jl")
+include("sources/geos_read_window.jl")
 
 # ERA5 native-GRIB reader: N320 settings + day handles, spectral synthesis
 # (VO+D → U/V, LNSP → PS, reduced_gg Q reader), dry-basis layer-mass

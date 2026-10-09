@@ -17,7 +17,8 @@ It also runs the strided and bisection checkpoint schedules.
 block. Include order:
 `FootprintResult.jl` (early, right after `ObjectiveSeeding.jl`), then, after
 all `Adjoints` kernel files and `LinRoodTape.jl`: `TapeRecording.jl` ->
-`ReverseLoop.jl` -> `StrideCheckpoint.jl` -> `FootprintAPI.jl`. Storage types,
+`ReverseLoop.jl` -> `StrideCheckpoint.jl` -> `stride_checkpoint_ppm.jl` ->
+`stride_checkpoint_linrood.jl` -> `revolve_checkpoint.jl` -> `FootprintAPI.jl`. Storage types,
 record types, and schedules come from [`../Tape/`](../Tape/).
 
 ## Entry Points
@@ -54,8 +55,11 @@ record types, and schedules come from [`../Tape/`](../Tape/).
   `_walk_window_reverse!` (dispatch on record type), and the tape-free
   forward replays `_run_cs_footprint_forward` and
   `_run_cs_observations_forward`
-- [`StrideCheckpoint.jl`](StrideCheckpoint.jl) — `StrideCheckpoint` and
-  `RevolveCheckpoint` drivers for the mass, tracer, and Lin-Rood tapes
+- [`StrideCheckpoint.jl`](StrideCheckpoint.jl) (linear mass tape and the
+  shared helpers), [`stride_checkpoint_ppm.jl`](stride_checkpoint_ppm.jl)
+  (monotone-PPM tracer tape), [`stride_checkpoint_linrood.jl`](stride_checkpoint_linrood.jl)
+  (Lin-Rood tape), [`revolve_checkpoint.jl`](revolve_checkpoint.jl) — the
+  `StrideCheckpoint` and `RevolveCheckpoint` drivers for the mass, tracer, and Lin-Rood tapes
   (`_collect_surface_footprints_stride`,
   `_collect_surface_footprints_revolve`, `_propagate_*_checkpoints`), plus
   the `_require_checkpoint_supported` and `_require_tape_path_supported`
@@ -71,7 +75,8 @@ record types, and schedules come from [`../Tape/`](../Tape/).
   forward replay in [`ReverseLoop.jl`](ReverseLoop.jl) consistent with it.
 - Adding a tape record type: add the record in `../Tape/TapeRecords.jl`,
   then add a branch in `_walk_window_reverse!`.
-- Changing schedule behaviour: [`StrideCheckpoint.jl`](StrideCheckpoint.jl).
+- Changing schedule behaviour: [`StrideCheckpoint.jl`](StrideCheckpoint.jl) and the
+  scheme-specific `stride_checkpoint_*.jl`, `revolve_checkpoint.jl`.
   The forward propagation passes call the same recorders with
   `record_ops = false`, and `step_offset` shifts midpoint indices for each
   window.

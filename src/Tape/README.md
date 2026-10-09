@@ -80,7 +80,8 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
 - Changing GPU staging: edit `../../ext/AtmosTransportCUDAExt.jl`, which
   overrides the pinned-host and mmap hooks for `CuArray` panels.
 - The driver code that uses `StrideCheckpoint` / `RevolveCheckpoint` is in
-  `../Footprint/StrideCheckpoint.jl`, not here.
+  `../Footprint/` (`StrideCheckpoint.jl`, `stride_checkpoint_*.jl`,
+  `revolve_checkpoint.jl`), not here.
 
 ## Invariants
 

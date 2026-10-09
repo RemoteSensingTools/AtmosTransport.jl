@@ -358,7 +358,7 @@ between them. Performance-tuning notes live beside the implementation.
 | CS multi-tracer fused kernels (X / Y / Z) | `src/Operators/Advection/multitracer_kernels.jl` |
 | CS paired split seam exchange | `src/Operators/Advection/CubedSphereSeams.jl` |
 | CS paired split seam adjoint | `src/Adjoints/CubedSphereSeams.jl` |
-| CS panel-edge halo sync | `src/Grids/PanelConnectivity.jl` + `cs_transport_helpers.jl::_propagate_cs_outflow_to_halo!` |
+| CS panel-edge halo sync | `src/Grids/PanelConnectivity.jl` + `cs_native_fluxes.jl::_propagate_cs_outflow_to_halo!` |
 | Lin-Rood cross-term + del-2 damping | `src/Operators/Advection/LinRood.jl` |
 
 ## What's next

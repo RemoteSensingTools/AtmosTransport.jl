@@ -317,6 +317,9 @@ include("../Footprint/ReverseLoop.jl")
 # the existing `_collect_surface_footprints` path (FullCheckpoint, no
 # behaviour change) and `_collect_surface_footprints_stride`.
 include("../Footprint/StrideCheckpoint.jl")
+include("../Footprint/stride_checkpoint_ppm.jl")
+include("../Footprint/stride_checkpoint_linrood.jl")
+include("../Footprint/revolve_checkpoint.jl")
 
 
 # User-facing footprint API.

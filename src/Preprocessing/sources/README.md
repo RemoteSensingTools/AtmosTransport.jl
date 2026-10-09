@@ -21,7 +21,7 @@ writers that turn these fields into transport binaries live in
   `[preprocessing]`. Keyword arguments override TOML values; the entry point
   passes `root_dir`, `include_*` flags, `physics_dir`, `physics_layout`, and
   `coefficients_file` from the run config.
-- GEOS ([`geos.jl`](geos.jl)): `GEOSITSettings`, `GEOSFPSettings`,
+- GEOS ([`geos.jl`](geos.jl), [`geos_panels.jl`](geos_panels.jl), [`geos_read_window.jl`](geos_read_window.jl)): `GEOSITSettings`, `GEOSFPSettings`,
   `open_day` (`open_geos_day` / `open_geosfp_native_day`),
   `read_window!(raw::RawWindow, settings, handles, date, win)`,
   `endpoint_dry_mass!`, `detect_level_orientation`.
@@ -51,8 +51,11 @@ writers that turn these fields into transport binaries live in
 
 - [`geos.jl`](geos.jl) — `GEOSSettings`, GEOS-IT and GEOS-FP path resolution,
   GEOS-FP physics fallback (`physics_dir`, `physics_layout`), day handles,
-  `detect_level_orientation`, `endpoint_dry_mass!`, `read_window!` with
-  optional surface, VDIFF, and convection fields, `_native_output_filename`
+  `detect_level_orientation`, `_native_output_filename`
+- [`geos_panels.jl`](geos_panels.jl) — per-panel slicers, `endpoint_dry_mass!`,
+  mass-flux scaling, settings traits
+- [`geos_read_window.jl`](geos_read_window.jl) — `read_window!` with optional
+  surface, VDIFF, and convection fields (3-hourly convection binding)
 - [`era5.jl`](era5.jl) — `ERA5GRIBSettings`, stream paths (`era5_grib_path`,
   `era5_arco_sp_path`), `ERA5GRIBDayHandles`, source traits
 - [`era5_n320_window.jl`](era5_n320_window.jl) — N320 grid discovery, synthesis

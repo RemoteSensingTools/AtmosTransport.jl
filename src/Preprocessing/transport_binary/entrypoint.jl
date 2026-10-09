@@ -50,7 +50,7 @@ end
     _native_output_filename(settings, date, FT) -> String
 
 Per-source output filename for native-source preprocessing. Concrete
-sources override this in their own files (e.g. `sources/geos.jl`); the
+sources override this in their own files (e.g. `sources/geos_panels.jl`); the
 default is a source-agnostic prefix.
 """
 _native_output_filename(::AbstractMetSettings, date::Date, FT::Type) =

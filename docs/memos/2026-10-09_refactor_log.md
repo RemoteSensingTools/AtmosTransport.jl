@@ -421,3 +421,19 @@ error message and its test) name the new files.
   compatibility checks, flux storage scaling), `driven_window_state.jl`,
   `driven_physics_refresh.jl`, `driven_stepping.jl`. The source-scanning
   guard in `test_architectures.jl` reads all four.
+
+### Step 5 — GEOS reader, CS Poisson balance and helpers, checkpoint drivers
+
+- `sources/geos.jl` (1320 lines) → `geos.jl` (settings, paths, handles,
+  level orientation), `geos_panels.jl`, `geos_read_window.jl`.
+- `cs_poisson_balance.jl` (1233 lines) → `cs_face_table.jl`,
+  `cs_poisson_solver.jl`, `cs_poisson_balance.jl` (entry points, cm diagnosis;
+  keeps the file header).
+- `cs_transport_helpers.jl` (1059 lines) → `cs_transport_helpers.jl`,
+  `cs_flux_reconstruction.jl`, `cs_wind_rotation.jl`, `cs_native_fluxes.jl`.
+- `Footprint/StrideCheckpoint.jl` (1140 lines) → `StrideCheckpoint.jl`
+  (linear tape, shared helpers), `stride_checkpoint_ppm.jl`,
+  `stride_checkpoint_linrood.jl`, `revolve_checkpoint.jl`; its header no longer
+  claims the PPM and Lin-Rood drivers are missing.
+- A theory page credited a removed per-level mass correction with closing the
+  regridded mass distribution; it now names the extensive-field regrid.

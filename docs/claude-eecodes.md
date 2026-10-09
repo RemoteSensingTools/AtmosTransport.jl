@@ -211,7 +211,7 @@ What happens to a single ERA5 spectral message:
 
 ### 4.1 CS path
 
-[`_synth_and_regrid_to_cs!`](../src/Preprocessing/transport_binary/cubed_sphere_spectral.jl) synthesises to a regular LL **staging** mesh (default `staging_nlon × staging_nlat`), regrids to CS panels, then reconstructs CS face fluxes from the regridded *cell-center winds* ([cs_transport_helpers.jl:305-356](../src/Preprocessing/cs_transport_helpers.jl#L305-L356) `reconstruct_cs_fluxes!`). The Poisson balance ([cs_poisson_balance.jl](../src/Preprocessing/cs_poisson_balance.jl)) projects the divergence to be exactly consistent with `m_next - m_cur`, which **wipes out** small pointwise spectral synthesis error at the cost of redistributing it as a small uniform offset on each face. So on the CS target the dominant error is **regrid + Poisson balance**, not point-evaluation in spectral synthesis.
+[`_synth_and_regrid_to_cs!`](../src/Preprocessing/transport_binary/cubed_sphere_spectral.jl) synthesises to a regular LL **staging** mesh (default `staging_nlon × staging_nlat`), regrids to CS panels, then reconstructs CS face fluxes from the regridded *cell-center winds* ([cs_flux_reconstruction.jl](../src/Preprocessing/cs_flux_reconstruction.jl) `reconstruct_cs_fluxes!`). The Poisson balance ([cs_poisson_balance.jl](../src/Preprocessing/cs_poisson_balance.jl)) projects the divergence to be exactly consistent with `m_next - m_cur`, which **wipes out** small pointwise spectral synthesis error at the cost of redistributing it as a small uniform offset on each face. So on the CS target the dominant error is **regrid + Poisson balance**, not point-evaluation in spectral synthesis.
 
 ### 4.2 Bug-hunt summary
 
@@ -222,7 +222,7 @@ What happens to a single ERA5 spectral message:
 | [vod2uv!](../src/Preprocessing/spectral_synthesis.jl#L108-L135) bound `n=T` | One extra mode vs TM5 EMOS-truncation; matches ecTrans | Tiny, top-of-spectrum only | negligible |
 | [spectral_io.jl:11-19](../src/Preprocessing/spectral_io.jl#L11-L19) | ccall return-code discarded; no `J/K/M`, `JS/KS/MS`, `laplacianOperator` guard | Silent on malformed GRIB | low (latent) |
 | [stagger_winds!](../src/Preprocessing/spectral_synthesis.jl#L248-L249) pole | Closed pole; matches Julia stagger contract | n/a | n/a |
-| [reconstruct_cs_fluxes!](../src/Preprocessing/cs_transport_helpers.jl#L305-L356) | Face flux from 2-cell-center average + cell-center `dp` | Sub-percent on fine staging mesh; absorbed by Poisson balance | low |
+| [reconstruct_cs_fluxes!](../src/Preprocessing/cs_flux_reconstruction.jl) | Face flux from 2-cell-center average + cell-center `dp` | Sub-percent on fine staging mesh; absorbed by Poisson balance | low |
 
 ## 5. TM5-4DVar reference points
 
@@ -311,8 +311,8 @@ Julia preprocessor:
 - [src/Preprocessing/spectral_synthesis.jl:423-497](../src/Preprocessing/spectral_synthesis.jl#L423-L497) — `spectral_to_native_fields!`; the day-loop driver.
 - [src/Preprocessing/transport_binary/latlon_spectral.jl:33-149](../src/Preprocessing/transport_binary/latlon_spectral.jl#L33-L149) — LL day-process pipeline.
 - [src/Preprocessing/transport_binary/cubed_sphere_spectral.jl:133-185](../src/Preprocessing/transport_binary/cubed_sphere_spectral.jl#L133-L185) — `_synth_and_regrid_to_cs!`; staging LL → CS regrid + flux reconstruct.
-- [src/Preprocessing/cs_transport_helpers.jl:246-282](../src/Preprocessing/cs_transport_helpers.jl#L246-L282) — `recover_ll_cell_center_winds!`; flux→wind on staging LL.
-- [src/Preprocessing/cs_transport_helpers.jl:305-356](../src/Preprocessing/cs_transport_helpers.jl#L305-L356) — `reconstruct_cs_fluxes!`; wind→flux on CS panels.
+- [src/Preprocessing/cs_transport_helpers.jl](../src/Preprocessing/cs_transport_helpers.jl) — `recover_ll_cell_center_winds!`; flux→wind on staging LL.
+- [src/Preprocessing/cs_flux_reconstruction.jl](../src/Preprocessing/cs_flux_reconstruction.jl) — `reconstruct_cs_fluxes!`; wind→flux on CS panels.
 
 TM5 cy3-4DVar:
 - [deps/tm5-cy3-4dvar/base/src/grid_type_sh.F90](../deps/tm5-cy3-4dvar/base/src/grid_type_sh.F90) lines 753-833 — `sh_Pnm`; Belousov recurrence (matches Julia).

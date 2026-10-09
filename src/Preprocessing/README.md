@@ -115,8 +115,13 @@ Files directly in this folder; the subfolders have their own READMEs
 - [`reduced_spectral_day.jl`](reduced_spectral_day.jl) — RG window synthesis, pin/dry/merge and next-day end point, `balance_window!`, driver hooks, RG `process_day`
 - [`mass_support.jl`](mass_support.jl) — LL merge/remap, LL Poisson and column balance, qv readers, `apply_dry_basis_native!`, `pin_global_mean_ps!`, `pin_global_mean_ps_using_qv!`
 - [`ring_poisson_balance.jl`](ring_poisson_balance.jl) — RG `CompressedLaplacian`, `balance_compressed_horizontal_fluxes!`
-- [`cs_poisson_balance.jl`](cs_poisson_balance.jl) — CS face table, PCG solver, `balance_cs_global_mass_fluxes!`, `balance_cs_column_mass_fluxes!`, column weights, `diagnose_cs_cm!`
-- [`cs_transport_helpers.jl`](cs_transport_helpers.jl) — CS regrid helpers, wind recovery and rotation, face-flux builders, `geos_native_to_face_flux!`, `compute_cs_cm_pressure_fixer!`
+- [`cs_face_table.jl`](cs_face_table.jl) — CS global cell and face indexing (the face table)
+- [`cs_poisson_solver.jl`](cs_poisson_solver.jl) — CS graph Laplacian, PCG solver, correction mapping, mirror synchronization
+- [`cs_poisson_balance.jl`](cs_poisson_balance.jl) — `balance_cs_global_mass_fluxes!`, `balance_cs_column_mass_fluxes!`, column weights, `diagnose_cs_cm!`
+- [`cs_transport_helpers.jl`](cs_transport_helpers.jl) — CS workspace, panel packing, LL → CS regrid helpers, wind recovery from LL fluxes
+- [`cs_flux_reconstruction.jl`](cs_flux_reconstruction.jl) — CS face fluxes from cell-center winds (`cs_face_fluxes!`)
+- [`cs_wind_rotation.jl`](cs_wind_rotation.jl) — east/north ↔ panel-local wind rotation, CS face fluxes → cell-center winds
+- [`cs_native_fluxes.jl`](cs_native_fluxes.jl) — `geos_native_to_face_flux!` with panel halo sync, `compute_cs_cm_pressure_fixer!`
 - [`face_line_integrals.jl`](face_line_integrals.jl) — `LineIntegralFaceFluxes` (cube-face fluxes integrated from N320 winds)
 - [`flux_construction.jl`](flux_construction.jl) — `[preprocessing]` flux options (`face_fluxes`, `face_lengths`, `face_interpolation`, `wind_regrid`) for MERRA-2 and ERA5 N320
 - [`era5_physics_binary.jl`](era5_physics_binary.jl) — ERA5 physics NetCDF to flat BIN converter and reader
