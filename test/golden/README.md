@@ -92,12 +92,12 @@ a change.
 | Case | Exercises |
 |---|---|
 | `pre_ll72` | ERA5 spectral synthesis → 5° lat-lon, merged levels, dry-mass fix, Float64 |
-| `pre_o24` | ERA5 spectral → octahedral reduced-Gaussian O24, no mass fix (known failure, below) |
+| `pre_o24` | ERA5 spectral → octahedral reduced-Gaussian O24, humidity-aware dry-mass pin, Float64 |
 | `pre_c24` | ERA5 spectral → C24 through a staging grid, Float64 |
 | `pre_merra2_c90` | MERRA-2 → C90 L72 with GCHP's flux construction (vector fluxes, Cartesian regrid, FV3 filter), adaptive substeps, Float32 |
 | `pre_era5_n320_c90_l117` | ERA5 N320 → C90 L117, line-integral window-mean fluxes, TM5 diffusion fields (`slow`: about 10 min, 35 GB) |
 | `run_ll72_*` | lat-lon PPM (CPU Float64), slopes (GPU Float32), upwind (CPU Float32) |
-| `run_o24_upwind_cpu_f64` | reduced-Gaussian upwind (known failure, below) |
+| `run_o24_upwind_cpu_f64` | reduced-Gaussian upwind (CPU Float64) |
 | `run_c24_*` | cubed-sphere PPM (CPU Float64), Lin-Rood and upwind (CPU Float32), slopes (GPU Float32) |
 | `run_c90_merra2_gpu_f32` | the CATRINE MERRA-2 configuration: PPM with FV3 kord-8 vertical, CMFMC with the DQRCU cloud base, non-local VDIFF, time-varying stepwise sources, native-C90 initial states |
 | `run_c90_merra2_*` | the same with Lin-Rood (FV3 or upwind vertical), Holtslag–Boville VDIFF, and on CPU in Float64 (`slow`) |
@@ -130,19 +130,10 @@ input appears as a note in `check`.
 ## Known failures
 
 Cases tagged `known_failure` are skipped, and absent from the comparison,
-unless `--tags` or `--cases` names them:
-
-- `pre_o24` (and `run_o24_upwind_cpu_f64`, which needs its binary): the
-  reduced-Gaussian preprocessor fails its own write-time replay gate. The
-  Poisson balance target had the opposite sign to the cubed-sphere one
-  (relative continuity error 6.0e-3; fixed, section A item 1 of
-  `docs/memos/2026-10-08_code_structure_and_duplication_plan.md`). It still
-  fails at 2e-7 (gate 1e-10): the `cm` closure can only absorb a zero global
-  dry-mass change between window ends, and the reduced-Gaussian path does not
-  apply the humidity-aware dry-mass pin of the lat-lon and cubed-sphere paths
-  (item 11). The fix of item 11 records the two cases and drops the tag (the
-  reduced-Gaussian upwind kernel accumulates with atomics; check that the run
-  case is reproducible first).
+unless `--tags` or `--cases` names them. No case carries the tag at present.
+The two reduced-Gaussian cases carried it until the preprocessor passed its own
+write-time replay gate (Poisson balance sign, then the humidity-aware dry-mass
+pin; items A1 and A11 of `docs/memos/2026-10-09_refactor_log.md`).
 
 ## Adding a case
 

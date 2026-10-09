@@ -1,5 +1,6 @@
 # ERA5 spectral (December 2021) → synthetic octahedral reduced-Gaussian O24, ml137_tropo34
-# levels, Float64, no mass fix. From config/preprocessing/era5_synthetic_o24_transport_binary_v2.toml.
+# levels, Float64, humidity-aware dry-mass fix. From
+# config/preprocessing/era5_synthetic_o24_transport_binary_v2.toml.
 
 [input]
 spectral_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/spectral_hourly"
@@ -26,4 +27,5 @@ dt           = 900.0
 met_interval = 3600.0
 
 [mass_fix]
-enable = false
+enable           = true
+target_ps_dry_pa = 98726.0

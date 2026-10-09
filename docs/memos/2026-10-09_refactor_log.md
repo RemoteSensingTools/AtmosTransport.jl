@@ -130,6 +130,37 @@ V(dt/2) → S(dt) → V(dt/2); given a `DiffusiveSurfaceFluxBoundary` it silentl
 used that split (only the config validator rejected it). `apply!` now throws
 before touching the state; test in `test_no_advection.jl`.
 
+### A11 — reduced-Gaussian window ends: dry-mass pin, fluxes, next-day end point
+
+The vertical-flux closure can absorb only a zero change of the global dry mass
+between the two ends of a window. The lat-lon and cubed-sphere preprocessors
+pin the global dry surface pressure with the native humidity; the
+reduced-Gaussian path pinned the total surface pressure with the climatological
+humidity (or, in its v2 configs, not at all), so the dry mass changed from
+window to window and the write-time replay gate failed at 2e-7 (gate 1e-10)
+after A1. Three more differences from the lat-lon path turned up on review:
+
+- the pin moved the surface pressure but not the horizontal fluxes computed
+  from it (lat-lon recomputes them); the fluxes, wind × Δp at the face, are now
+  rescaled by Δp_new / Δp_old;
+- the day's last window ended at its own mass instead of the next day's
+  00 UTC state, so it carried zero mass tendency; the next day's state is now
+  synthesized, pinned, converted and merged like every window (as in lat-lon);
+- the synthesis indexed the hybrid coefficients by native level instead of
+  selected level (only correct when `level_top = 1`, as in every current config).
+
+The window synthesis now loads the humidity first; `pin_convert_merge_window!`
+finishes every window and the next-day end point. `pin_global_mean_ps!` and
+`pin_global_mean_ps_using_qv!` take any column layout (lat-lon `(Nx, Ny)`,
+reduced-Gaussian `(ncell,)`), bit-identical for lat-lon; the reduced-Gaussian
+copy of the climatological pin and the dead reduced-Gaussian `process_window!`
+are gone. The three reduced-Gaussian v2 configs that disabled the mass fix ("not
+yet wired through the RG preprocessor") enable it. On the O24 golden day the
+replay error is 4.2e-15 with the pin alone; `pre_o24` and
+`run_o24_upwind_cpu_f64` are recorded and lose the `known_failure` tag. Tests:
+`test/core/test_global_ps_pin.jl` (both pins hit their targets, the two layouts
+agree bit for bit, the flux rescale).
+
 ### A10 — structured PPM: analysis and proposed fix (not applied; decision for the owner)
 
 The structured `PPMScheme` (lat-lon, and per panel on the cubed sphere, i.e. the

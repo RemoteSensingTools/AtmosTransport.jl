@@ -982,8 +982,8 @@ function spectral_to_native_fields!(work::ReducedTransformWorkspace,
                                            cache.u_spec,
                                            cache.v_spec,
                                            T,
-                                           Float64(ab.dA[level]),
-                                           Float64(ab.dB[level]),
+                                           Float64(ab.dA[kk]),
+                                           Float64(ab.dB[kk]),
                                            grid,
                                            half_dt,
                                            cache)
@@ -1135,7 +1135,7 @@ function allocate_window_workspace(grid::ReducedGaussianTargetGeometry,
     work = allocate_reduced_transform_workspace(grid, spec.T, Nz_native)
     merged = allocate_reduced_merge_workspace(grid, Nz_native, Nz, FT)
     buf = allocate_sliding_window_buffer(nc, nf, Nz, FT)
-    ps_offsets = zeros(Float64, spec.n_times)
+    ps_offsets = zeros(Float64, spec.n_times + 1)   # the last entry: the next day's 00 UTC
 
     thermo_path = ""
     qv_ws = nothing
@@ -1236,7 +1236,8 @@ function flush_final_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
                               win_idx::Int,
                               steps_per_window::Int;
                               write_replay_on::Bool,
-                              substep_policy) where FT
+                              substep_policy,
+                              m_next = workspace.buf.m[workspace.cur]) where FT
     _ = steps_per_window
     steps = initial_substeps(substep_policy, workspace.steps_schedule[win_idx])
     old_steps = workspace.steps_schedule[win_idx]
@@ -1252,8 +1253,7 @@ function flush_final_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
         diag = balance_window!(workspace.hflux_work, workspace.m_cur_work,
                                workspace.m_next_work, workspace.cm_work,
                                workspace.div_scratch, workspace.dm_target_work,
-                               workspace.buf, workspace.cur,
-                               workspace.buf.m[workspace.cur],
+                               workspace.buf, workspace.cur, m_next,
                                workspace.work, workspace.cL, steps)
         contract_diag = _verify_rg_balanced_window!(
             contract, workspace.m_cur_work, workspace.hflux_work, workspace.cm_work,
@@ -1275,55 +1275,8 @@ function flush_final_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
 end
 
 # =========================================================================
-# RG process_window! and process_day — mirrors the LL path in binary_pipeline.jl
+# RG window synthesis and process_day — mirrors the LL path
 # =========================================================================
-
-"""
-    process_window!(win_idx, hour, spec, grid::ReducedGaussianTargetGeometry,
-                    vertical, settings, work, merged, storage, ps_offsets)
-
-Process one analysis window on a reduced-Gaussian target grid.
-Spectral synthesis → mass fluxes → level merge → store.
-"""
-function process_window!(win_idx::Int,
-                         hour::Int,
-                         spec,
-                         grid::ReducedGaussianTargetGeometry,
-                         vertical,
-                         settings,
-                         work::ReducedTransformWorkspace,
-                         merged::ReducedMergeWorkspace{FT},
-                         storage::ReducedWindowStorage{FT},
-                         ps_offsets::Vector{Float64}) where FT
-    t0 = time()
-
-    spectral_to_native_fields!(work,
-        spec.lnsp_all[hour], spec.vo_by_hour[hour], spec.d_by_hour[hour],
-        spec.T, vertical.level_range, vertical.ab, grid, settings.half_dt)
-
-    # Mass fix: pin global mean total ps (same formula as LL path)
-    if settings.mass_fix_enable
-        target_ps = settings.target_ps_dry_pa / (1.0 - settings.qv_global_climatology)
-        area_sum = sum(work.cell_areas)
-        mean_ps = dot(work.sp, work.cell_areas) / area_sum
-        offset = target_ps - mean_ps
-        work.sp .+= offset
-        ps_offsets[win_idx] = offset
-        # Recompute mass with fixed ps
-        compute_reduced_dp_and_mass!(work.dp, work.m_arr, work.sp, work.cell_areas,
-                                     vertical.ab.dA, vertical.ab.dB)
-    end
-
-    merge_reduced_window!(merged, work, vertical)
-    store_reduced_window!(storage, merged, work.sp, win_idx)
-
-    elapsed = round(time() - t0, digits=2)
-    should_log_window(win_idx, length(storage.all_m)) &&
-        @info(@sprintf("    Window %d/%d (hour %02d): %.2fs  ps_offset=%+.3f Pa",
-                       win_idx, length(storage.all_m), hour, elapsed, ps_offsets[win_idx]))
-
-    return nothing
-end
 
 """
     synthesize_and_merge_window!(work, merged, hour, spec, grid, vertical,
@@ -1335,8 +1288,8 @@ for one window. Results are left in `merged.m_merged`, `merged.hflux_merged`,
 `merged.cm_merged` and `work.sp` (surface pressure). No allocation.
 
 When `qv_ws` is provided and `settings.mass_basis == :dry`, loads QV from the
-thermo file, interpolates to RG cells, and converts m/hflux to dry basis before
-the vertical merge (Invariant 14).
+thermo file and interpolates it to RG cells; the window is then finished by
+[`pin_convert_merge_window!`](@ref).
 """
 function synthesize_and_merge_window!(work::ReducedTransformWorkspace,
                                       merged::ReducedMergeWorkspace{FT},
@@ -1352,27 +1305,110 @@ function synthesize_and_merge_window!(work::ReducedTransformWorkspace,
     spectral_to_native_fields!(work,
         spec.lnsp_all[hour], spec.vo_by_hour[hour], spec.d_by_hour[hour],
         spec.T, vertical.level_range, vertical.ab, grid, settings.half_dt)
+    dry = settings.mass_basis == :dry && qv_ws !== nothing
+    dry && load_rg_qv!(qv_ws, thermo_path, win_idx, vertical.Nz_native)
+    pin_convert_merge_window!(work, merged, vertical, settings, ps_offsets, win_idx, dry ? qv_ws : nothing)
+    return nothing
+end
 
+"""
+    synthesize_next_day_hour0!(work, merged, next_day_hour0, date, grid, vertical,
+                               settings, ps_offsets; qv_ws=nothing)
+
+The next day's 00 UTC state, the end point of the day's last window, through
+the same synthesis, pin (offset stored in `ps_offsets[end]`), dry conversion
+(the next day's thermo file, time index 1) and merge as every window.
+"""
+function synthesize_next_day_hour0!(work::ReducedTransformWorkspace,
+                                    merged::ReducedMergeWorkspace,
+                                    next_day_hour0,
+                                    date::Date,
+                                    grid::ReducedGaussianTargetGeometry,
+                                    vertical,
+                                    settings,
+                                    ps_offsets::Vector{Float64};
+                                    qv_ws::Union{ReducedQVWorkspace, Nothing}=nothing)
+    spectral_to_native_fields!(work, next_day_hour0.lnsp, next_day_hour0.vo, next_day_hour0.d,
+                               next_day_hour0.T, vertical.level_range, vertical.ab, grid,
+                               settings.half_dt)
+    dry = settings.mass_basis == :dry && qv_ws !== nothing
+    if dry
+        path = joinpath(settings.thermo_dir,
+                        "era5_thermo_ml_$(Dates.format(date + Day(1), "yyyymmdd")).nc")
+        isfile(path) || error("Thermo file not found for the next-day endpoint: $path")
+        qv_ws.qv_ll .= read_qv_from_thermo(path, 1, qv_ws.Nx_ll, qv_ws.Ny_ll, vertical.Nz_native;
+                                           FT = Float64)
+        _interpolate_ll_to_rg!(qv_ws)
+    end
+    pin_convert_merge_window!(work, merged, vertical, settings, ps_offsets, length(ps_offsets),
+                              dry ? qv_ws : nothing)
+    return nothing
+end
+
+"""
+    pin_convert_merge_window!(work, merged, vertical, settings, ps_offsets, slot, qv_ws)
+
+Finish a synthesized window: the global mass fix (offset stored in
+`ps_offsets[slot]`), the dry-basis conversion when `qv_ws` holds the window's
+humidity, and the level merge.
+
+With humidity the fix pins the global dry surface pressure, as the lat-lon and
+cubed-sphere paths do: the vertical-flux closure needs the same global dry
+mass at both ends of a window. Without humidity it pins the total surface
+pressure with the climatological `qv_global_climatology`. The horizontal
+fluxes follow the pinned pressure: each is wind × Δp at the face, so it scales
+by the ratio of the face Δp after and before the pin.
+"""
+function pin_convert_merge_window!(work::ReducedTransformWorkspace,
+                                   merged::ReducedMergeWorkspace,
+                                   vertical,
+                                   settings,
+                                   ps_offsets::Vector{Float64},
+                                   slot::Int,
+                                   qv_ws::Union{ReducedQVWorkspace, Nothing})
     if settings.mass_fix_enable
-        target_ps = settings.target_ps_dry_pa / (1.0 - settings.qv_global_climatology)
-        area_sum = sum(work.cell_areas)
-        mean_ps = dot(work.sp, work.cell_areas) / area_sum
-        offset = target_ps - mean_ps
-        work.sp .+= offset
-        ps_offsets[win_idx] = offset
-        compute_reduced_dp_and_mass!(work.dp, work.m_arr, work.sp, work.cell_areas,
-                                     vertical.ab.dA, vertical.ab.dB)
+        ab = vertical.ab
+        ps_offsets[slot] = qv_ws === nothing ?
+            pin_global_mean_ps!(work.sp, work.cell_areas; target_ps_dry_pa = settings.target_ps_dry_pa,
+                                qv_global = settings.qv_global_climatology) :
+            pin_global_mean_ps_using_qv!(work.sp, work.cell_areas, ab.dA, ab.dB, qv_ws.qv_cell;
+                                         target_ps_dry_pa = settings.target_ps_dry_pa)
+        compute_reduced_dp_and_mass!(work.dp, work.m_arr, work.sp, work.cell_areas, ab.dA, ab.dB)
+        rescale_reduced_fluxes_to_ps!(work.hflux_arr, work.lnsp, work.sp, work.face_left,
+                                      work.face_right, ab.dA, ab.dB)
+        @. work.lnsp = log(work.sp)
     end
-
-    # Dry-basis conversion: load QV, interpolate to RG cells, scale m and hflux
-    if settings.mass_basis == :dry && qv_ws !== nothing
-        load_rg_qv!(qv_ws, thermo_path, win_idx,
-                     vertical.Nz_native)
-        apply_dry_basis_reduced!(work, qv_ws.qv_cell)
-    end
-
+    qv_ws === nothing || apply_dry_basis_reduced!(work, qv_ws.qv_cell)
     merge_reduced_window!(merged, work, vertical)
     return nothing
+end
+
+"""
+    rescale_reduced_fluxes_to_ps!(hflux, lnsp_old, sp_new, face_left, face_right, dA, dB)
+
+Scale the face mass fluxes `hflux[f, k]` (wind × Δp at the face) from the
+surface pressure `exp.(lnsp_old)` to `sp_new`: the face pressure is the
+geometric mean of the two cells' (as in `compute_reduced_horizontal_fluxes!`)
+and Δp = |dA_k + dB_k p|. Polar stub faces (a zero neighbour) are set to zero.
+"""
+function rescale_reduced_fluxes_to_ps!(hflux::AbstractMatrix{Float64},
+                                       lnsp_old::AbstractVector{Float64},
+                                       sp_new::AbstractVector{Float64},
+                                       face_left::AbstractVector{<:Integer},
+                                       face_right::AbstractVector{<:Integer},
+                                       dA::AbstractVector, dB::AbstractVector)
+    @inbounds for k in axes(hflux, 2), f in axes(hflux, 1)
+        left, right = face_left[f], face_right[f]
+        if left == 0 || right == 0
+            hflux[f, k] = 0.0
+            continue
+        end
+        p_old = exp((lnsp_old[left] + lnsp_old[right]) / 2)
+        p_new = sqrt(sp_new[left] * sp_new[right])
+        dp_old = abs(dA[k] + dB[k] * p_old)
+        dp_old > 0 && (hflux[f, k] *= abs(dA[k] + dB[k] * p_new) / dp_old)
+    end
+    return hflux
 end
 
 """
@@ -1485,12 +1521,14 @@ function _verify_rg_balanced_window!(window_contract,
     return diag
 end
 
-mutable struct RGSpectralUnifiedDriverContext{G, S, V, SP, P}
+mutable struct RGSpectralUnifiedDriverContext{G, S, V, SP, P, N}
     grid              :: G
     settings          :: S
     vertical          :: V
     spec              :: SP
     substep_policy    :: P
+    date              :: Date
+    next_day_hour0    :: N          # next day's 00 UTC spectral state, or nothing
     steps_per_window  :: Int
     write_replay_on   :: Bool
     worst_pre_raw     :: Float64
@@ -1567,11 +1605,22 @@ function driver_flush_final_windows!(workspace::ReducedGaussianSpectralWindowWor
                                      contract,
                                      ctx::RGSpectralUnifiedDriverContext)
     Nt = ctx.spec.n_times
+    # The last window ends at the next day's 00 UTC; without it the window keeps
+    # its own mass at both ends (zero tendency).
+    m_next = workspace.buf.m[workspace.cur]
+    if ctx.next_day_hour0 !== nothing
+        synthesize_next_day_hour0!(workspace.work, workspace.merged, ctx.next_day_hour0, ctx.date,
+                                   ctx.grid, ctx.vertical, ctx.settings, workspace.ps_offsets;
+                                   qv_ws = workspace.qv_ws)
+        fill_buffer_slot!(workspace.buf, workspace.nxt, workspace.merged, workspace.work.sp)
+        m_next = workspace.buf.m[workspace.nxt]
+    end
     t_bal = time()
     ready_diag = flush_final_windows!(workspace, contract, Nt,
                                       ctx.steps_per_window;
                                       write_replay_on = ctx.write_replay_on,
-                                      substep_policy = ctx.substep_policy)
+                                      substep_policy = ctx.substep_policy,
+                                      m_next)
     t_bal = time() - t_bal
     _rg_unified_record_diag!(ctx, ready_diag, Nt)
     diag = ready_diag.balance
@@ -1588,6 +1637,8 @@ function driver_before_close_writer!(workspace::ReducedGaussianSpectralWindowWor
                                      writer,
                                      ::RGSpectralUnifiedDriverContext)
     set_streaming_steps_per_window_schedule!(writer.inner, workspace.steps_schedule)
+    writer.inner.header["ps_offsets_pa_per_window"] = workspace.ps_offsets[1:end - 1]
+    writer.inner.header["ps_offsets_next_day_hour0_pa"] = workspace.ps_offsets[end]
     set_contract_steps_schedule!(contract, workspace.steps_schedule)
     return nothing
 end
@@ -1705,6 +1756,9 @@ function process_day(date::Date,
             "gaussian_number"  => grid.gaussian_number,
             "poisson_balanced" => true,
             "mass_fix_enabled" => settings.mass_fix_enable,
+            "mass_fix_target_ps_dry_pa" => settings.target_ps_dry_pa,
+            "mass_fix_qv_global_climatology" => settings.qv_global_climatology,
+            "mass_fix_qv_mode" => settings.mass_basis == :dry ? "native_hourly_qv" : "global_qv_climatology",
             # Poisson fields via extra_header — _transport_common_header
             # doesn't accept these directly. Single source
             # of truth: the contract.
@@ -1725,7 +1779,7 @@ function process_day(date::Date,
         mass_basis_from_symbol(Symbol(settings.mass_basis));
         final_path = bin_path)
     ctx = RGSpectralUnifiedDriverContext(
-        grid, settings, vertical, spec, substep_policy,
+        grid, settings, vertical, spec, substep_policy, date, next_day_hour0,
         steps_per_met, write_replay_on,
         0.0, 0.0, 0.0, 0, 0.0, 0.0, 0, (0, 0))
     run_unified_preprocessor_day!(
@@ -1734,9 +1788,9 @@ function process_day(date::Date,
         close_reader = false)
 
     if settings.mass_fix_enable
+        day_offsets = @view ps_offsets[1:Nt]
         @info @sprintf("  Mass-fix offsets (Pa) min/max/mean: %+.3f / %+.3f / %+.3f",
-                       minimum(ps_offsets), maximum(ps_offsets),
-                       sum(ps_offsets) / Nt)
+                       minimum(day_offsets), maximum(day_offsets), sum(day_offsets) / Nt)
     end
 
     if write_replay_on

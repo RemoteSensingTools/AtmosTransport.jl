@@ -24,7 +24,7 @@ name   = "pre_o24"
 kind   = "preprocess"
 config = "configs/pre_o24.toml"
 day    = "2021-12-01"
-tags   = ["preprocess", "reduced_gaussian", "cpu", "known_failure"]
+tags   = ["preprocess", "reduced_gaussian", "cpu"]
 
 [[case]]
 name   = "pre_c24"
@@ -67,7 +67,7 @@ set    = {"input.binary_paths" = ["@CASE:pre_ll72@/era5_transport_20211201_merge
 name   = "run_o24_upwind_cpu_f64"
 kind   = "run"
 config = "configs/run_spectral_grid.toml"
-tags   = ["run", "reduced_gaussian", "cpu", "known_failure"]
+tags   = ["run", "reduced_gaussian", "cpu"]
 set    = {"input.binary_paths" = ["@CASE:pre_o24@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "upwind"}
 
 [[case]]

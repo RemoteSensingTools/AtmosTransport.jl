@@ -62,7 +62,7 @@ function _rg_test_vertical(::Type{FT}) where FT
 end
 
 function _rg_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir;
-                           include_qv::Bool = false) where FT
+                           include_qv::Bool = false, mass_fix::Bool = false) where FT
     return ERA5SpectralSettings((
         output_float_type = FT,
         spectral_dir = spectral_dir,
@@ -71,7 +71,7 @@ function _rg_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir;
         min_dp = 0.0,
         include_qv = include_qv,
         mass_basis = :moist,
-        mass_fix_enable = false,
+        mass_fix_enable = mass_fix,
         target_ps_dry_pa = 98726.0,
         qv_global_climatology = 0.0,
         thermo_dir = dirname(out_dir),
@@ -116,5 +116,16 @@ end
         second_header, second_payload = _stable_binary_parts(second_path)
         @test second_header == first_header
         @test second_payload == first_payload
+
+        # The last window ends at the next day's 00 UTC state, pinned like every window.
+        pinned = _rg_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "pinned"); mass_fix = true)
+        next_day = (lnsp = fill(complex(log(101000.0), 0.0), 1, 1), vo = zeros(ComplexF64, 1, 1, 137),
+                    d = zeros(ComplexF64, 1, 1, 137), T = 0)
+        header, _ = _stable_binary_parts(process_day(date, grid, pinned, vertical;
+                                                     positivity_cfl_limit = 0.95,
+                                                     next_day_hour0 = next_day))
+        @test header[:mass_fix_qv_mode] == "global_qv_climatology"
+        @test all(≈(98726.0 - 100000.0), header[:ps_offsets_pa_per_window])
+        @test header[:ps_offsets_next_day_hour0_pa] ≈ 98726.0 - 101000.0
     end
 end
