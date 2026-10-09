@@ -710,6 +710,10 @@ function process_merra2_to_cs_day(date::Date,
     mass_basis === :dry ||
         throw(ArgumentError("MERRA-2 → CS writer only supports mass_basis=:dry; got $(mass_basis)"))
     horizontal_balance = effective_horizontal_balance(horizontal_balance, ColumnBalance())
+    global_solve = horizontal_balance isa LayerBalance
+    global_solve && settings.column_balance_weights !== :mass && throw(ArgumentError(
+        "column_balance_weights = $(settings.column_balance_weights) applies to the column " *
+        "Poisson balance; it cannot be combined with [numerics] balance_mode = \"per_layer\""))
     steps_per_window >= 1 || throw(ArgumentError("steps_per_window must be ≥ 1; got $(steps_per_window)"))
     nsub = merra2_windows_per_block(dt_met_seconds)
     vc = load_hybrid_coefficients(expand_data_path(settings.coefficients_file))
@@ -727,10 +731,6 @@ function process_merra2_to_cs_day(date::Date,
         @info @sprintf("  Global dry-mass pin ON: target=%.9e kg (%.3f Pa dry ⟨ps⟩)", mass_target,
                        mass_target * STANDARD_GRAVITY / (6 * sum(Float64, target_grid.mesh.cell_areas)))
 
-    global_solve = horizontal_balance isa LayerBalance
-    global_solve && settings.column_balance_weights !== :mass && throw(ArgumentError(
-        "column_balance_weights = $(settings.column_balance_weights) applies to the column " *
-        "Poisson balance; it cannot be combined with [numerics] balance_mode = \"per_layer\""))
     handles = open_merra2_day(settings, date; next_day_handle = true)
     try
         new_block() = MERRA2BlockState(allocate_merra2_to_c180_pipeline(target_grid; Nz, cache_dir, settings))

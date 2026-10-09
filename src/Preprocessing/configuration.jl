@@ -201,7 +201,7 @@ const _BALANCE_MODES = Dict(
 
 `[numerics] balance_mode` (`geos_balance_mode` is accepted as its older name),
 or `nothing` when neither is set, so that each preprocessing path applies its
-own default through [`effective_horizontal_balance`](@ref).
+own default through `effective_horizontal_balance`.
 """
 function resolve_horizontal_balance(numerics::AbstractDict)
     set = [k for k in ("balance_mode", "geos_balance_mode") if haskey(numerics, k)]

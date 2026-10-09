@@ -100,7 +100,7 @@ face fluxes are reconstructed with the output scaling.
   leave this at `false` so the final CS window is closed against an explicit
   endpoint target instead of an inferred zero-tendency fallback.
 - `horizontal_balance = nothing` — `ColumnBalance()` (the default for
-  `nothing`) or `LayerBalance()`; see [`effective_horizontal_balance`](@ref)
+  `nothing`) or `LayerBalance()`; see `effective_horizontal_balance`
   for the deprecated environment fallback. Recorded in the header.
 - `run_cache = nothing` — optional `PreprocessorRunCache` used to reuse the
   LL→CS conservative regridder across calls in the same preprocessing run.
