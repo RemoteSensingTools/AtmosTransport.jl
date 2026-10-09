@@ -291,14 +291,14 @@ close_day!(handles::ERA5GRIBDayHandles) = close_era5_day!(handles)
 
 windows_per_day(::AbstractERA5GRIBSettings, ::Date) = 24
 
-# Trait predicates report whether the source can populate the optional
-# `RawWindow` fields (`surface`, `cmfmc`/`dtrain`, `vdiff`). On this branch
-# the ERA5 N320 source has its own per-window output containers
-# (`ERA5N320ConvectionFields`, etc.) but is *not* wired into `read_window!`,
-# so none of the `RawWindow` optional payloads are populated. Returning the
-# raw `include_*` flags here would lie to any generic downstream code that
-# trusts the trait to allocate / write physics sections. Each predicate
-# flips to `s.include_*` when its corresponding `RawWindow` writer lands.
+# Trait predicates report whether the source populates the optional
+# `RawWindow` fields (`surface`, `cmfmc`/`dtrain`, `vdiff`). The ERA5 GRIB
+# source has no `read_window!` method and never fills a `RawWindow`, so all
+# three report `false` regardless of the `include_*` flags. The ERA5 N320
+# writer (`process_era5_n320_to_cs_day`) reads the `include_*` settings
+# directly and emits the surface, TM5 `dkg`, and TM5 convection sections
+# itself, using its own per-window containers (`ERA5N320ConvectionFields`,
+# etc.); it never writes CMFMC/DTRAIN or GCHP VDIFF fields.
 has_surface(::AbstractERA5GRIBSettings)      = false
 has_convection(::AbstractERA5GRIBSettings)   = false
 has_vdiff_fields(::AbstractERA5GRIBSettings) = false

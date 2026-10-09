@@ -257,7 +257,3 @@ function close_streaming_transport_binary!(writer::StreamingTransportBinaryWrite
     end
     return writer.path
 end
-
-# =========================================================================
-# CS streaming writer
-# =========================================================================

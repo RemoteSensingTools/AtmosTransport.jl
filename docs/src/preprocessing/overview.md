@@ -1,7 +1,8 @@
 # [Preprocessing overview](@id Preprocessing-overview)
 
 The preprocessor turns **raw meteorological input** (ERA5 spectral GRIB,
-GEOS-IT / GEOS-FP native NetCDF, …) into the **transport binary**
+ERA5 N320 native GRIB, GEOS-IT / GEOS-FP native NetCDF, MERRA-2 NetCDF) into
+the **transport binary**
 (`format_version = 4`) the runtime consumes. It runs offline, once per
 day per (source, target) combination; the runtime then memory-maps the
 result.
@@ -12,12 +13,21 @@ result.
     self-describing file with fixed-stride windows. Measure a representative
     day on the intended storage and thread count before estimating a campaign.
 
-## One unified driver, three dispatch axes
+## The unified driver and its dispatch axes
 
-Every preprocessing path goes through one entry point — the unified
-driver `run_unified_preprocessor_day!` in
-`src/Preprocessing/transport_binary/driver.jl`. The driver dispatches
-on three orthogonal axes, each a typed abstraction:
+Each meteorological (source, target) pair is implemented by a
+`process_day(date, grid, settings, vertical; ...)` method; regridding an
+existing lat-lon binary to the cubed sphere is the separate entry point
+`regrid_transport_binary` / `regrid_ll_binary_to_cs`. The ERA5 spectral
+paths (LL, RG, CS) and the GEOS native CS path run through one shared driver,
+`run_unified_preprocessor_day!` in
+`src/Preprocessing/transport_binary/driver.jl`. The ERA5 N320 → CS
+(`era5_n320_regrid.jl`), MERRA-2 → CS (`merra2_latlon_regrid.jl`), and
+LL-binary → CS (`cubed_sphere_regrid.jl`) paths run their own per-day loops
+and call the same CS write-time replay and positivity gates.
+
+The unified driver dispatches on three orthogonal axes, each a typed
+abstraction:
 
 | Axis | Abstract type | Concrete examples |
 | --- | --- | --- |
@@ -60,14 +70,15 @@ flowchart LR
 | **Spectral ERA5** | ✅ unified driver | ✅ unified driver | ✅ unified driver |
 | **GEOS-IT native** | — | — | ✅ unified driver (production) |
 | **GEOS-FP native** | — | — | ✅ unified driver |
+| **ERA5 N320 native GRIB** | — | — | ✅ dedicated per-day loop; optional TM5 convection, surface PBL, and TM5 `dkg` sections |
 | **MERRA-2 native LL winds** | — | — | 🟡 wind-derived CS writer; convection/PBL fields from the GEOS-Chem archive; files staged externally |
 | **LL transport binary → CS** (regrid passthrough) | — | — | 🟡 `regrid_ll_binary_to_cs` (functional; not yet on the unified driver) |
 
-The source-target implementations share the typed preprocessing contract and
-canonical CLI. The MERRA-2 path uses its dedicated wind-derived CS writer;
-its unified OPeNDAP download execution is not yet wired.
-`regrid_ll_binary_to_cs` still owns its own loop and is the remaining
-migration item.
+The source-target implementations share the typed preprocessing contract.
+The ERA5 N320 and MERRA-2 paths use dedicated wind-derived CS writers run
+through the canonical CLI; the MERRA-2 unified OPeNDAP download execution is
+not yet wired. `regrid_ll_binary_to_cs` owns its own loop and is run with
+`scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl`.
 
 ## Run from the CLI
 
@@ -85,15 +96,18 @@ julia --project=. -t8 scripts/preprocessing/preprocess_transport_binary.jl \
 The CLI accepts:
 
 - **`--day YYYY-MM-DD`** on every source path.
-- **`--start YYYY-MM-DD --end YYYY-MM-DD`** on the native GEOS-source
-  paths. The spectral path can also take `--day`; if neither flag is
-  given, the spectral path processes every day for which spectral
-  input is on disk.
+- **`--start YYYY-MM-DD --end YYYY-MM-DD`** on every source path; the
+  spectral path keeps only days for which spectral input is on disk.
+
+If neither flag is given, the spectral path processes every day for which
+spectral input is on disk, and native-source paths use
+`[input].start_date` / `[input].end_date` from the TOML (and error without
+them).
 
 `-t8` enables 8 Julia threads — the spectral synthesis path
 parallelizes naturally per latitude row, so threads pay off. The
 script reads the TOML, picks the source / vertical / target based on
-the configuration, and dispatches into `run_unified_preprocessor_day!`.
+the configuration, and dispatches into the matching `process_day` method.
 
 ## What a preprocessing config contains
 
@@ -163,7 +177,9 @@ those keys into a spectral configuration and expect the same selection. See
 
 ## What the unified driver does, conceptually
 
-For every date in the requested range:
+The ERA5 N320, MERRA-2, and LL-binary regrid loops follow the same
+read → balance → `cm` → gate → write sequence inline. For every date in the
+requested range, the unified driver runs:
 
 1. **Build the run-level cache** (`PreprocessorRunCache`) — once per
    run, not once per day. The LL→CS regridder and the RG compressed

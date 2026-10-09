@@ -131,7 +131,7 @@ function allocate_era5_c180_regrid_workspace(source_grid::ReducedGaussianTargetG
     n_src == ncells(source_grid.mesh) ||
         throw(DimensionMismatch("regridder src_areas length $n_src ≠ N320 cells $(ncells(source_grid.mesh))"))
     n_dst == ncells(target_grid.mesh) ||
-        throw(DimensionMismatch("regridder dst_areas length $n_dst ≠ C180 cells $(ncells(target_grid.mesh))"))
+        throw(DimensionMismatch("regridder dst_areas length $n_dst ≠ target cells $(ncells(target_grid.mesh))"))
     coverage = apply_regridder!(zeros(n_dst), regridder, ones(n_src))   # regridded constant 1
     all(c -> 0.9 < c < 1.1, coverage) ||
         error("N320 → cubed-sphere regridder covers target cells by $(extrema(coverage)) " *

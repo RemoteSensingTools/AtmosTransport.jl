@@ -576,8 +576,10 @@ Top-level TOML-driven preprocessor entry. Detects source type from `cfg`:
 
 * `[source].toml = "config/met_sources/<source>.toml"` → typed
   `AbstractMetSettings` path, supports cross-day state carry (e.g. GEOS
-  pressure-fixer chained mass) and `--start/--end` date ranges.
+  pressure-fixer chained mass).
 * otherwise → typed ERA5 spectral config path (`[input].spectral_dir`).
+
+Both paths accept a single `day_override` or a `start_date`/`end_date` range.
 
 Both paths converge on `process_day(date, grid::AbstractTargetGeometry,
 settings, vertical; ...)` for the per-day work. There is no parallel

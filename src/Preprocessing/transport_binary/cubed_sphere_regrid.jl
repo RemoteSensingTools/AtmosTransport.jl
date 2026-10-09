@@ -132,7 +132,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
 
     # Refuse silent basis relabeling. The function reads raw `m/am/bm/ps`
     # from the source and never touches `qv`, so mismatched basis produces
-    # a mislabeled binary (invariant 14 violation). Matching or unset is OK.
+    # a mislabeled binary. Matching or unset is OK.
     source_basis = Symbol(h.mass_basis)
     output_basis = mass_basis === nothing ? source_basis : Symbol(mass_basis)
     output_basis === source_basis || throw(ArgumentError(

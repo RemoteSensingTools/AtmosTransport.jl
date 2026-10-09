@@ -4,11 +4,13 @@
 Offline conservative regridding between mesh types, built on
 [ConservativeRegridding.jl](https://github.com/JuliaGeo/ConservativeRegridding.jl).
 
-Designed for the preprocessing stage: build a sparse weights matrix once per
-`(source_mesh, target_mesh)` pair, cache it to disk, and reuse at every
-subsequent run. The runtime transport core never calls into this module —
-`TransportBinaryReader` consumes binaries that are
-already on the target grid.
+Build a sparse weights matrix once per `(source_mesh, target_mesh)` pair,
+optionally cache it to disk, and reuse it. Callers are `Preprocessing` (met
+data to target grids), `Models.InitialConditionIO` (initial conditions and
+surface-flux inventories at run setup) and `Visualization` (cubed-sphere to
+lon-lat rasters). The operators and the stepping loop never call into this
+module — `TransportBinaryReader` consumes binaries that are already on the
+target grid.
 
 ## Workflow
 
@@ -58,8 +60,9 @@ required by CR.jl's spherical dual-DFS intersection search.
 
 ## Architecture reference
 
-See `docs/CONSERVATIVE_REGRIDDING.md` for a full write-up of the algorithm,
-conventions, and verification results.
+See `docs/src/preprocessing/regridding.md` for the public API, the weights
+cache, and the mass-consistency correction applied after regridding, and
+`src/Regridding/README.md` for the file map and invariants.
 """
 module Regridding
 

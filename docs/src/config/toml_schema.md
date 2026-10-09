@@ -161,7 +161,8 @@ enhancement = 1.0e-4          # extra dry VMR in lowest n_layers (LL only)
 n_layers    = 3
 ```
 
-Initial-condition kinds (declared in `src/Models/InitialConditionIO.jl`):
+Initial-condition kinds (LL/RG builders in `src/Models/InitialConditionIO.jl`,
+CS builder in `src/Models/initial_conditions/cubed_sphere.jl`):
 
 | Kind | LL | RG | CS | Required keys |
 |---|---|---|---|---|
@@ -199,7 +200,7 @@ kind = "edgar_sf6"
 ```
 
 Registered surface-flux source kinds (full list in
-`src/Models/InitialConditionIO.jl`): `lmdz_co2`, `gridfed_fossil_co2`,
+`src/Models/initial_conditions/surface_flux.jl`): `lmdz_co2`, `gridfed_fossil_co2`,
 `edgar_sf6`, `zhang_rn222`, plus a generic `file` for arbitrary
 NetCDF sources and `cs_native` for time-varying fluxes already on the native
 cubed-sphere grid. There is no `edgar_co2` kind — use

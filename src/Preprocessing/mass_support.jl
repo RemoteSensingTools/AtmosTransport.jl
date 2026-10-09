@@ -281,7 +281,8 @@ the periodic lat-lon grid via FFT division by the discrete Laplacian eigenvalues
 The `ws::LLPoissonWorkspace` provides pre-computed eigenvalues, scratch arrays,
 and cached in-place FFT plans for zero-allocation operation.
 
-See CLAUDE.md invariant #13 for details on the balance requirement.
+Horizontal fluxes must be balanced this way before `cm` is diagnosed from
+the explicit endpoint mass tendency.
 """
 function balance_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
                               dm_dt::Array{FT, 3},

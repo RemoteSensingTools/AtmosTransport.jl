@@ -7,17 +7,16 @@
 # second. File inventories are physical kg species/s; the builders convert
 # them to dry-air-equivalent storage for the dry-VMR transport state.
 #
-# Hoisted verbatim (modulo renames for dependency consolidation) from the
-# historical LL/RG runner:
-#   FileSurfaceFluxField, _surface_flux_kind,
-#   _resolve_surface_flux_file, _normalize_units_string,
-#   _load_file_surface_flux_field, _renormalize_surface_flux_rate!,
-#   _regrid_cache_dir, _conservative_surface_flux_rate,
-#   _regridding_method, build_surface_flux_source (LL + RG),
-#   build_surface_flux_sources.
-#
-# `_build_emission_source_mesh` is dropped in favour of the shared
-# `_build_source_latlon_mesh` introduced for the IC path.
+# Contents:
+#   - static fields: `FileSurfaceFluxField`, loaded by
+#     `_load_file_surface_flux_field`;
+#   - time-varying series: `TimeVaryingFileSurfaceFluxField`, loaded by
+#     `_load_timevarying_surface_flux_field` (CS runs only);
+#   - builders: `build_surface_flux_source` (LL, RG, CS) and
+#     `build_surface_flux_sources`.
+# Regridding helpers live in `surface_flux_regridding.jl` (LL source meshes
+# come from the shared `_build_source_latlon_mesh` in `cubed_sphere.jl`); the
+# GEOS-native CS series loader lives in `surface_flux_native.jl`.
 # ===========================================================================
 
 const _DAYS_PER_MONTH_COMMON = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
@@ -275,11 +274,10 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}; radius::Real = EARTH_RAD
         raw = if ndims(raw_var) == 3
             if kind === :lmdz_co2
                 # CAMS LMDZ files store 3-hourly fluxes (`time = 248`
-                # for a 31-day month). For a one-month forward run we
-                # use the monthly mean: average over the time axis so
-                # the surface-flux pipeline (which carries a single
-                # 2D field) sees a representative constant rate.
-                # Sub-monthly variability is a follow-up.
+                # for a 31-day month). The static path carries a single
+                # 2D field, so average over the time axis to get the
+                # monthly-mean rate. Sub-monthly variability uses the
+                # `time_varying = true` path (cubed-sphere runs only).
                 ntime = size(raw_var, 3)
                 acc = zeros(Float64, size(raw_var, 1), size(raw_var, 2))
                 @inbounds for t in 1:ntime
@@ -569,8 +567,8 @@ include("surface_flux_native.jl")
 # build_surface_flux_source — LL / RG / CS
 # ---------------------------------------------------------------------------
 
-# Opt-in flag for the time-varying surface-flux path (default false →
-# byte-identical static monthly-mean behavior).
+# Opt-in flag for the time-varying surface-flux path (default false → one
+# static field: the configured time slice, or the time mean for `lmdz_co2`).
 @inline _surface_flux_time_varying(cfg) =
     _config_bool(cfg, "time_varying", false, "surface-flux time_varying")
 
@@ -586,7 +584,7 @@ function build_surface_flux_source(grid::AtmosGrid{<:LatLonMesh},
     kind === :cs_native && throw(ArgumentError(
         "surface_flux kind = \"cs_native\" is only available on cubed-sphere runs"))
     _surface_flux_time_varying(cfg) && throw(ArgumentError(
-        "time-varying surface flux is CS-only (LatLon support is a follow-up)"))
+        "time-varying surface flux is supported on cubed-sphere grids only"))
 
     source = _load_file_surface_flux_field(cfg, FT; radius = grid.horizontal.radius)
     method = _regridding_method(cfg)
@@ -623,7 +621,7 @@ function build_surface_flux_source(grid::AtmosGrid{<:ReducedGaussianMesh},
     kind === :cs_native && throw(ArgumentError(
         "surface_flux kind = \"cs_native\" is only available on cubed-sphere runs"))
     _surface_flux_time_varying(cfg) && throw(ArgumentError(
-        "time-varying surface flux is CS-only (ReducedGaussian support is a follow-up)"))
+        "time-varying surface flux is supported on cubed-sphere grids only"))
 
     source = _load_file_surface_flux_field(cfg, FT; radius = grid.horizontal.radius)
     method = _regridding_method(cfg)
@@ -678,7 +676,7 @@ time slice, builds the LL→CS regridder ONCE, applies it per slice, and
 returns a [`TimeVaryingSurfaceFluxSource`](@ref) whose
 `cell_mass_rate_series` is an `NTuple{6}` of `(Nc, Nc, ntime)` panels
 plus a `times` vector (seconds since `reference_time`). The default
-(`time_varying` absent/false) path is byte-identical to before.
+(`time_varying` absent/false) path returns a static `SurfaceFluxSource`.
 """
 function build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
                                    tracer_name::Symbol, cfg, ::Type{FT};

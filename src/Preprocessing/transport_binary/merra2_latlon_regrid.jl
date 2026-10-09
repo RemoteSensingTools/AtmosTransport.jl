@@ -1,10 +1,12 @@
 # ===========================================================================
-# MERRA-2 wind-derived → C180 cubed-sphere transport-binary writer.
+# MERRA-2 wind-derived → cubed-sphere transport-binary writer. The target may
+# be any `Nc`; helpers and buffers named `c180` work for every target
+# resolution.
 #
 # Reproduces the validated GEOS-Chem CO₂ transport input path: derive the
 # horizontal mass fluxes from MERRA-2 WINDS (U/V) + a Cameron-Smith column
 # pressure-fix (the Poisson balance), instead of GEOS native cubed-sphere
-# MFXC. Purely additive — the GEOS-native and ERA5 paths are untouched.
+# MFXC.
 #
 # This is a near-clone of `process_era5_n320_to_cs_day`
 # (transport_binary/era5_n320_regrid.jl): identical mass-derivation, global
@@ -12,16 +14,18 @@
 # (= the pressure-fixer), cm diagnosis, adaptive substep policy, contract
 # verification, and streaming writer. The ONLY substantive change is replacing
 # the ERA5 spectral pipeline with a direct MERRA-2 NetCDF read + conservative
-# regrid to C180, and `nwindow = 8` instead of 24.
+# regrid to the CS target, and 3-hourly source blocks instead of hourly
+# windows.
 #
 # Drives one UTC day end-to-end:
 #
 #   per window (8 × 3-hourly):
 #     1. Read native MERRA-2 LL fields (PS/QV from inst3 slice `win`, U/V from
 #        tavg3 slice `win` = the 3-hr time-average advecting winds) and
-#        conservatively regrid PS / U / V / QV to the C180 target.
-#     2. Re-derive dry-mass on C180 from the regridded moist PS + QV so the
-#        target-side column closure Σ_k DELP_dry = PS_dry holds to roundoff.
+#        conservatively regrid PS / U / V / QV to the CS target.
+#     2. Re-derive dry mass on the target from the regridded moist PS + QV so
+#        the target-side column closure Σ_k DELP_dry = PS_dry holds to
+#        roundoff.
 #     3. Rotate cell-centre winds geographic → panel-local using the CS
 #        tangent basis.
 #     4. Reconstruct Arakawa-C face mass fluxes (am, bm) from rotated U/V
@@ -71,9 +75,9 @@ const _MERRA2_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS = 8
 """
     MERRA2ToC180Pipeline{FT, R, P, E, W}
 
-Per-day MERRA-2 → C180 preprocessing workspace. Owns the conservative LL→CS
-regridder, the CS preprocess scratch, and the per-window regridded C180
-scalar fields (`c180_fields.{ps, qv, u, v}`), laid out as `NTuple{6, …}`
+Per-day MERRA-2 → CS preprocessing workspace. Owns the conservative LL→CS
+regridder, the CS preprocess scratch, and the per-window regridded target-grid
+scalar fields (`c180_fields.{ps, qv, u, v}`, any `Nc`), laid out as `NTuple{6, …}`
 panels so the shared CS helpers (`derive_c180_dry_mass!`,
 `rotate_winds_to_panel_local!`, `reconstruct_cs_fluxes!`) work unchanged.
 
@@ -134,7 +138,7 @@ end
 """
     allocate_merra2_to_c180_pipeline(target_grid; Nz, cache_dir, settings) -> MERRA2ToC180Pipeline
 
-Build (or JLD2-load from `cache_dir`) the MERRA-2 LL → C180 conservative
+Build (or JLD2-load from `cache_dir`) the MERRA-2 LL → CS conservative
 regridder and allocate every per-window buffer, including the physics panels
 `settings` requests. The source LL mesh is built with the TARGET mesh radius
 so the two manifolds match (`build_regridder` rejects a radius mismatch).
@@ -155,7 +159,7 @@ function allocate_merra2_to_c180_pipeline(target_grid::CubedSphereTargetGeometry
     n_src == MERRA2_NX * MERRA2_NY ||
         throw(DimensionMismatch("regridder src_areas length $n_src ≠ MERRA-2 cells $(MERRA2_NX * MERRA2_NY)"))
     n_dst == ncells(target_grid.mesh) ||
-        throw(DimensionMismatch("regridder dst_areas length $n_dst ≠ C180 cells $(ncells(target_grid.mesh))"))
+        throw(DimensionMismatch("regridder dst_areas length $n_dst ≠ target cells $(ncells(target_grid.mesh))"))
 
     ws = allocate_cs_preprocess_workspace(Nc, MERRA2_NX, MERRA2_NY, Nz_int,
                                           n_src, n_dst, FT)
@@ -189,7 +193,7 @@ end
 
 Read native MERRA-2 LL fields for window `win` (PS/QV from inst3 slice `win`,
 U/V from tavg3 slice `win`) and conservatively regrid PS (2D intensive) and
-QV/U/V (3D intensive) onto the C180 panels. U/V/QV are intensive → default
+QV/U/V (3D intensive) onto the CS target panels. U/V/QV are intensive → default
 field type, as in the ERA5 path. The readers return top-down levels whatever
 the file order; requested physics fields are regridded into `pipe.phys`.
 """

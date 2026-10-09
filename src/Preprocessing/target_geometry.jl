@@ -20,9 +20,9 @@ end
 """
     ReducedGaussianTargetGeometry
 
-Geometry descriptor for native ERA5 reduced-Gaussian grids. The target-geometry
-plumbing is in place, but the spectral mass-flux preprocessing path is not yet
-implemented for this target.
+Geometry descriptor for native ERA5 reduced-Gaussian grids. Target of the
+ERA5 spectral preprocessing path in `reduced_spectral_day.jl`, which writes
+face-indexed reduced-Gaussian transport binaries.
 """
 struct ReducedGaussianTargetGeometry{FT, M <: ReducedGaussianMesh{FT}} <: AbstractTargetGeometry
     mesh                 :: M

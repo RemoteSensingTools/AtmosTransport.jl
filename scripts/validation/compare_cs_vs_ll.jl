@@ -145,12 +145,12 @@ function _require_dry_mass_basis(ds, path::AbstractString)
         basis = String(ds.attrib["mass_basis"])
         basis == "dry" || error(
             "$(path): mass_basis=$(basis) — compare_cs_vs_ll.jl requires " *
-            "dry-basis snapshots (invariant 14). Regenerate the run with " *
+            "dry-basis snapshots (dry VMR is the transport contract). Regenerate the run with " *
             "a dry binary, or extend this script to convert moist→dry " *
             "via qv before computing column means.")
     else
         @warn "$(path) has no `mass_basis` attribute — assuming dry per " *
-              "invariant 14. Regenerate with a current runner to get the " *
+              "the dry-basis contract. Regenerate with a current runner to get the " *
               "attribute set. If this is a moist-basis run, the column " *
               "means below are physically wrong."
     end
@@ -195,9 +195,9 @@ end
 # The CS NetCDF `{tracer}` variable already stores per-level VMR
 # (`_write_snapshot_cs!` at DrivenRunner.jl writes `rm_p ./ m_p`), and
 # `air_mass` stores the carrier-mass array the runtime held. Both are
-# **dry** on any binary conforming to invariant 14 (which the writer
-# now asserts by emitting `ds.attrib["mass_basis"] = "dry"`; the caller
-# of this function is responsible for verifying that attribute first).
+# **dry** on dry-basis runs, the default (the writer records this as
+# `ds.attrib["mass_basis"] = "dry"`; the caller of this function is
+# responsible for verifying that attribute first).
 #
 # Do NOT divide by Σm without first weighting by m — `Σ vmr_k / Σ m_k`
 # has units of 1/kg and is physically meaningless. This bug was caught

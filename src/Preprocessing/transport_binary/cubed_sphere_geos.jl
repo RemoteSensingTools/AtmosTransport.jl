@@ -378,12 +378,16 @@ end
                 chain_mass = true) -> NamedTuple
 
 Build a v4 cubed-sphere transport binary at `out_path` from one UTC day of
-native GEOS data. Source mesh and target mesh must match (CS passthrough).
+native GEOS data. The target mesh is either the native mesh (CS passthrough)
+or a nested block coarsening of it (native `Nc` an integer multiple of the
+target `Nc`); coarsening sums masses and face fluxes over each block and
+area-weights the physics fields.
 
 Stored mass targets the raw GEOS dry endpoint (`DELP_dry`) transformed to the
-output vertical grid. The native horizontal fluxes are column-balanced to that
-endpoint, then `cm` is diagnosed so the replay and positivity contracts are
-checked against the same endpoint the runtime will see.
+output vertical grid. With the default `balance_mode = :column` and
+`cm_closure = :endpoint_balanced`, the horizontal fluxes are column-balanced to
+that endpoint, then `cm` is diagnosed so the replay and positivity contracts
+are checked against the same endpoint the runtime will see.
 
 For multi-day preprocessing with `chain_mass = true`, `seed_m` carries the
 raw endpoint from the previous day so adjacent daily binaries share a boundary

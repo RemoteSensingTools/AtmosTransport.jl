@@ -428,7 +428,7 @@ function _pack_tracer_mass(grid::AtmosGrid{<:CubedSphereMesh},
                            qv)
     qv === nothing && throw(ArgumentError(
         "pack_initial_tracer_mass on MoistBasis requires qv (specific humidity) " *
-        "from the first transport window; got qv=nothing. See CLAUDE.md invariant 9."))
+        "from the first transport window to convert dry VMR to moist storage; got qv=nothing."))
     qv isa NTuple{6} || throw(ArgumentError(
         "CS pack_initial_tracer_mass on MoistBasis requires qv::NTuple{6}; " *
         "got $(typeof(qv))"))

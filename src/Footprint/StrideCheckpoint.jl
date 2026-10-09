@@ -272,11 +272,12 @@ function _collect_surface_footprints_stride(panels_m0,
         objective, footprints, lag_steps, FT(dt), zero(FT), FT(NaN))
 end
 
-# Schedule dispatcher used by `cs_surface_emission_footprint` and
-# `cs_surface_emission_footprint_from_seed`. A.3a (linear-mass),
-# A.3b (nonlinear-PPM tracer), and A.3c (LinRood horizontal) are all
-# wired up. The `_from_seed` entry still rejects non-Full schedules
-# pending its own follow-up commit (separate seed-driven driver).
+# Schedule guard used by `cs_surface_emission_footprint` and
+# `cs_surface_emission_footprint_from_seed`. Both entry points accept
+# `StrideCheckpoint` and `RevolveCheckpoint` for every adjoint scheme
+# family (linear mass tape, monotone-PPM tracer tape, LinRood horizontal
+# tape); the from-seed path threads `final_adjoint_seed` into the same
+# drivers. Any other scheme is rejected for non-Full schedules.
 function _require_checkpoint_supported(scheme, schedule::AbstractCheckpointSchedule)
     schedule isa FullCheckpoint && return nothing
     scheme isa CSAdjointLinearScheme && return nothing

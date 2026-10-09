@@ -22,7 +22,7 @@ Parse humidity-related runtime choices from the TOML configuration.
 - `mass_basis` is `:moist` or `:dry` and determines whether native fields are
   converted to dry basis before vertical merging.
 
-Dry-basis is the default (Invariant 14). All transport binaries should use dry
+Dry basis is the default runtime contract. All transport binaries should use dry
 basis so that Poisson balance and cm diagnosis operate on dry mass. Moist basis
 is available as an explicit opt-out for diagnostic purposes only.
 

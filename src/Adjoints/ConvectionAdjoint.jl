@@ -1,8 +1,10 @@
 # ---------------------------------------------------------------------------
-# Adjoint of CS convection (CMFMC + TM5).
+# Adjoint of CS convection (CMFMC, TM5, CMFMC-matrix).
 #
-# Reverse-mode of `CMFMCConvection` and `TM5Convection` column operators.
-# Contains:
+# Reverse-mode of `CMFMCConvection`, `TM5Convection` and
+# `CMFMCMatrixConvection` column operators. `CMFMCMatrixConvection`
+# derives TM5 `(entu, detu)` rates from `cmfmc` + `dtrain` and delegates
+# to the TM5 forward/adjoint kernels. Contains:
 #   * TM5 forward Thomas/LU solves (`_tm5_solve_vector!`,
 #     `_tm5_solve_column_vector!`) used by the reverse-mode forward
 #     replay path.
@@ -11,7 +13,8 @@
 #   * Per-panel column kernels for both TM5 and CMFMC (forward + adjoint).
 #   * Workspace + forcing validation helpers.
 #   * `_apply_cs_convection_forward!` and `_apply_cs_convection_adjoint!`
-#     dispatch arms for `NoConvection` / `CMFMCConvection` / `TM5Convection`.
+#     dispatch arms for `NoConvection` / `CMFMCConvection` / `TM5Convection`
+#     / `CMFMCMatrixConvection`.
 # ---------------------------------------------------------------------------
 
 function _tm5_solve_vector!(rm_col, conv1, pivots, Nz::Integer;
@@ -542,9 +545,10 @@ end
     # Reason: these helpers are called from `Footprint/ReverseLoop.jl` with a
     # per-step forcing slice that can differ step-to-step. Production
     # `DrivenSimulation` invalidates the cache on met-window advance, but the
-    # footprint path bypasses that hook. Mirrors the CMFMC pattern at
-    # `:622` / `:708` where `invalidate_cmfmc_cache!(workspace)` is called
-    # before every kernel launch for the same reason.
+    # footprint path bypasses that hook. Mirrors the `CMFMCConvection`
+    # methods of `_apply_cs_convection_forward!` / `_apply_cs_convection_adjoint!`
+    # below, which call `invalidate_cmfmc_cache!(workspace)` before every
+    # kernel launch for the same reason.
     invalidate_cmfmc_matrix_cache!(workspace)
     if !workspace.derived_valid[]
         _launch_cmfmc_matrix_derivation!(workspace.derived_entu, workspace.derived_detu,

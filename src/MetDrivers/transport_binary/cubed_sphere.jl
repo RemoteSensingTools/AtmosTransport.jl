@@ -32,10 +32,12 @@ end
     hasproperty(window.surface, :eflux) && window.surface.eflux !== nothing
 
 """
-    _pack_cs_window!(dest, offset, window, payload_sections, Nc, npanel)
+    _cs_window_section(window, section) -> NTuple of panels
 
-Pack a CS window (with NTuple-of-panels fields) into a flat buffer.
-Each section's panels are stored sequentially: [P1][P2]...[P6].
+Return the per-panel arrays that a CS window NamedTuple stores for payload
+`section`, resolving PBL surface fields (`window.surface` or top-level
+fields), TM5 convection (`window.tm5_fields`), and GCHP VDIFF
+(`window.vdiff`) sub-tables.
 """
 @inline function _cs_window_section(window, section::Symbol)
     section === :pbl_eflux && return window.surface.eflux
@@ -63,6 +65,12 @@ Each section's panels are stored sequentially: [P1][P2]...[P6].
     return getfield(window, section)
 end
 
+"""
+    _pack_cs_window!(dest, offset, window, payload_sections, Nc, npanel)
+
+Pack a CS window (with NTuple-of-panels fields) into a flat buffer.
+Each section's panels are stored sequentially: [P1][P2]...[P6].
+"""
 function _pack_cs_window!(dest::Vector{FT}, offset::Int,
                            window, payload_sections::Vector{Symbol},
                            Nc::Int, npanel::Int) where FT

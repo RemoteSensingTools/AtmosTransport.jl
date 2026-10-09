@@ -19,9 +19,6 @@
 #     before the end of the full run (`_truncate_steps`,
 #     `_truncate_convection_forcing`, `_truncate_stepwise_arg`).
 #   * `cs_surface_flux_4dvar` — the main cost/gradient entry point.
-#
-# Relocated unchanged from `src/Adjoints/Adjoints.jl` lines 243-422 and
-# 534-673; no semantic change.
 # ---------------------------------------------------------------------------
 
 function _validate_control_windows(controls, nsteps::Int)

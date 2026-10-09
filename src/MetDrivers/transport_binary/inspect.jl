@@ -1,4 +1,15 @@
 # Read-only capability inspection for every version-4 geometry.
+#
+# `binary_capabilities(reader)` returns a NamedTuple describing what
+# operators this binary can drive, so the CLI + physics-recipe validator
+# can give precise errors ("config requested `tm5` but binary lacks
+# entu/detu/entd/detd") instead of silently failing at the first step.
+#
+# `inspect_binary(path)` opens a `TransportBinaryReader` (header-contract and
+# file-size checks), prints a report, and returns the capability summary. It
+# does not run the load-time replay gate; `TransportBinaryDriver` does.
+# `scripts/diagnostics/inspect_transport_binary.jl` calls it and then
+# constructs a `TransportBinaryDriver` to probe runtime compatibility.
 
 _required_advection_sections(::LatLonBinaryGeometry) = (:m, :am, :bm, :cm)
 _required_advection_sections(::ReducedGaussianBinaryGeometry) = (:m, :hflux, :cm)
@@ -23,8 +34,9 @@ _supports_gchp_vdiff(
 Summarise what operators this binary can drive. Geometry-specific advection
 requirements are selected through the reader's geometry type. Fields:
 
-- `advection :: Bool` — always `true` (m, am, bm, cm are required).
-- `replay_gate :: Bool` — dam/dbm/dcm/dm present.
+- `advection :: Bool` — all geometry-required advection sections present
+  (`m, am, bm, cm` on LL/CS; `m, hflux, cm` on RG).
+- `replay_gate :: Bool` — any flux-delta section (dam/dbm/dcm/dm/dhflux) present.
 - `tm5_convection :: Bool` — entu/detu/entd/detd all present.
 - `cmfmc_convection :: Bool` — cmfmc present (CS only; LL/RG returns false).
 - `pbl_diffusion :: Bool` — complete runnable PBL forcing (CS only).
@@ -36,7 +48,11 @@ requirements are selected through the reader's geometry type. Fields:
 - `humidity :: Bool` — qv_start/qv_end present.
 - `mass_basis :: Symbol` — `:dry` or `:moist`.
 - `grid_type :: Symbol` — `:latlon` / `:reduced_gaussian` / `:cubed_sphere`.
+- `nlevel`, `steps_per_window` — header values.
+- `variable_step_schedule :: Bool` — per-window substep counts differ.
 - `flux_kind :: Symbol` — stored mass-flux normalization contract.
+- `preprocessor_contract`, `vertical_Nz_output`, `adaptive_substeps` — raw
+  header values, `nothing` when absent.
 - `payload_sections :: Vector{Symbol}` — raw set for debugging.
 """
 function binary_capabilities(reader::TransportBinaryReader)

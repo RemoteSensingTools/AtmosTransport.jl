@@ -1,5 +1,5 @@
 # Strided checkpoint driver for the nonlinear (monotone) PPM tape.
-# Split from StrideCheckpoint.jl (refactor phase 4); included by Adjoints.jl in this order.
+# Included by Adjoints.jl after StrideCheckpoint.jl, whose shared helpers it uses.
 
 # ---------------------------------------------------------------------------
 # Strided checkpoint driver for the nonlinear PPM

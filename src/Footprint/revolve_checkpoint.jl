@@ -1,5 +1,5 @@
 # RevolveCheckpoint driver (recursive bisection) of the footprint reverse pass.
-# Split from StrideCheckpoint.jl (refactor phase 4); included by Adjoints.jl in this order.
+# Included by Adjoints.jl after StrideCheckpoint.jl, whose shared helpers it uses.
 
 # ---------------------------------------------------------------------------
 # RevolveCheckpoint driver.
@@ -23,9 +23,8 @@
 # that frame's local `state` binding without an explicit save/restore
 # step.
 #
-# Scope (this commit): bisection only. Optimal binomial splits
-# (Griewank-Walther Algorithm 799) are a future promotion behind the
-# same `RevolveCheckpoint` API.
+# Bisection only; this is not the optimal binomial schedule of
+# Griewank-Walther Algorithm 799.
 # ---------------------------------------------------------------------------
 
 function _collect_surface_footprints_revolve(panels_m0,

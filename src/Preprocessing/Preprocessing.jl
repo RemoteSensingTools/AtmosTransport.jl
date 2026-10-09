@@ -1,10 +1,17 @@
 """
     Preprocessing
 
-Transport binary generation from ERA5 spectral meteorological data.
+Transport binary generation from meteorological input.
 
-Provides the complete pipeline from raw spectral GRIB (VO, D, LNSP) to
-Poisson-balanced transport binaries ready for the runtime `TransportBinaryDriver`.
+Converts raw meteorology into mass-balanced transport binaries ready for the
+runtime `TransportBinaryDriver`. Supported sources and targets:
+
+- ERA5 spectral GRIB (VO, D, LNSP) → lat-lon, reduced-Gaussian, or cubed sphere
+- GEOS native cubed-sphere NetCDF (GEOS-IT, GEOS-FP) → cubed sphere (same
+  resolution or nested block coarsening)
+- ERA5 N320 native GRIB → cubed sphere (conservative regrid)
+- MERRA-2 lat-lon NetCDF → cubed sphere (conservative regrid)
+- an existing lat-lon transport binary → cubed sphere (`regrid_transport_binary`)
 
 ## Architecture
 
@@ -15,27 +22,41 @@ The pipeline dispatches on `AbstractTargetGeometry` subtypes:
     ├── ReducedGaussianTargetGeometry     — native ERA5 RG (O90, O160, N320, …)
     └── CubedSphereTargetGeometry         — convention-aware CS (C24, C90, C180, …)
 
-Each target geometry has a dedicated `process_day` method:
+and on the source settings type. Each supported pair has a `process_day` method:
 
-    process_day(date, grid::LatLonTargetGeometry, settings, vertical; …)
-    process_day(date, grid::ReducedGaussianTargetGeometry, settings, vertical; …)
-    process_day(date, grid::CubedSphereTargetGeometry, settings, vertical; …)
+    process_day(date, grid::LatLonTargetGeometry,          settings::ERA5SpectralSettings,     vertical; …)
+    process_day(date, grid::ReducedGaussianTargetGeometry, settings::ERA5SpectralSettings,     vertical; …)
+    process_day(date, grid::CubedSphereTargetGeometry,     settings::ERA5SpectralSettings,     vertical; …)
+    process_day(date, grid::CubedSphereTargetGeometry,     settings::AbstractGEOSSettings,     vertical; …)
+    process_day(date, grid::CubedSphereTargetGeometry,     settings::AbstractERA5GRIBSettings, vertical; …)
+    process_day(date, grid::CubedSphereTargetGeometry,     settings::MERRA2Settings,           vertical; …)
 
-## Pipeline (per day)
+## ERA5 spectral pipeline (per day)
 
 1. Read ERA5 spectral GRIB (VO, D, LNSP) — `spectral_io.jl`
 2. Spectral synthesis (Legendre + FFT → gridpoint) — `spectral_synthesis.jl`
 3. Merge native 137L → transport levels — `vertical_coordinates.jl`
-4. Pin global mean ps (mass fix) — `transport_binary/latlon_workspaces.jl`
-5. Topology-specific transport-binary workflow:
-   - LL: FFT on circulant Laplacian — `mass_support.jl`
-   - RG: compressed-Laplacian CG — `ring_poisson_balance.jl`
-   - CS: global 6-panel graph-Laplacian CG — `cs_poisson_balance.jl`
+4. Pin global mean ps (mass fix) — `pin_global_mean_ps!` /
+   `pin_global_mean_ps_using_qv!` in `mass_support.jl`
+5. Topology-specific horizontal mass-flux balance:
+   - LL: column-integrated FFT Poisson correction distributed over layers by
+     air mass (`balance_column_mass_fluxes!`, `mass_support.jl`); the
+     per-layer FFT Poisson solve runs only with
+     `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1`
+   - RG: per-layer compressed-Laplacian CG — `ring_poisson_balance.jl`
+   - CS: column-integrated correction by default, per-layer global 6-panel
+     graph-Laplacian CG with the same environment flag — `cs_poisson_balance.jl`
 6. Diagnose `cm` from explicit endpoint mass targets — replay continuity
 7. Write transport binary with declared payload semantics and replay checks
 
+The GEOS, ERA5 N320, MERRA-2, and binary-regrid paths implement their own
+mass construction or regridding, flux balancing, and `cm` diagnosis (with an
+optional dry-mass pin where the source has one); every path ends in the same
+write-time replay and positivity gates.
+
 The high-level transport-binary workflows are split under
-`transport_binary/`. Each topology owns a small `process_day` method while
+`transport_binary/`. Each meteorological source/target pair owns a
+`process_day` method (binary regridding has its own entry point) while
 shared binary metadata, endpoint-delta, and replay helpers stay in common
 files.
 
@@ -297,16 +318,17 @@ include("transport_binary/cubed_sphere_coarsen.jl")
 
 # ERA5 N320 → CS transport-binary writer. Drives one UTC day end-to-end
 # through the per-window pipeline in `sources/era5*.jl` plus the
-# C180 dry-mass re-derivation, wind rotation, face flux reconstruction,
+# target-grid dry-mass re-derivation, wind rotation, face flux reconstruction,
 # Poisson balance, and v4 writer.
 include("transport_binary/era5_n320_regrid.jl")
 
 # MERRA-2 wind-derived → CS transport-binary writer. Near-clone of the ERA5
-# N320 writer: direct MERRA-2 NetCDF read + conservative regrid to C180,
-# wind-derived flux reconstruction + Cameron-Smith column pressure-fix
-# (Poisson balance), 8 windows/day. Reproduces the validated GEOS-Chem CO₂
-# transport input path; purely additive. Included after the ERA5 N320 writer
-# so `_fill_cs_mass_delta_payload!` is in scope.
+# N320 writer: direct MERRA-2 NetCDF read + conservative regrid to the CS
+# target, wind-derived flux reconstruction + Cameron-Smith column
+# pressure-fix (Poisson balance), 3-hourly source blocks written as 8 or 24
+# windows/day. Reproduces the validated GEOS-Chem CO₂ transport input path.
+# Included after the ERA5 N320 writer so `_fill_cs_mass_delta_payload!` is in
+# scope.
 include("transport_binary/merra2_latlon_regrid.jl")
 
 # Met source abstraction

@@ -20,7 +20,6 @@
 #     fall on either side of it.
 #
 # Altitude is dropped: v1 always projects to a column-mean objective.
-# Layer-stratified handling for satellite verticality can come later.
 # ---------------------------------------------------------------------------
 
 import Dates
@@ -114,13 +113,11 @@ end
 # ---------------------------------------------------------------------------
 # Per-record fail-fast validation
 #
-# `CSObservationRecord` built via the keyword constructor (and therefore
-# every record loaded by `read_observations`) is already finite-checked.
-# We re-validate here so a record constructed directly via the positional
-# inner constructor — which bypasses the keyword guard — cannot slip a
-# NaN/Inf coordinate or payload into the 4D-Var pipeline. The
-# per-record error message names the offending `record.id`, which is
-# more useful at debug time than the constructor's generic message.
+# Every `CSObservationRecord` is already checked by its inner constructor,
+# which the positional form, the keyword wrapper and `read_observations`
+# all go through. The repeat check here is defensive; its error messages
+# name the offending `record.id`, which is more useful at debug time than
+# the constructor's generic message.
 # ---------------------------------------------------------------------------
 
 @inline function _validate_bind_record(record::CSObservationRecord)

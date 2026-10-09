@@ -178,6 +178,6 @@ end
 function _validate_convection_capability(op::AbstractConvection, _caps)
     throw(ArgumentError(
         "no _validate_convection_capability method for $(typeof(op)); " *
-        "add a dispatch in DrivenRunner.jl when introducing a new convection " *
+        "add a method in src/Models/runner/model_setup.jl when introducing a new convection " *
         "operator type."))
 end

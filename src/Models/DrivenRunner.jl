@@ -204,7 +204,7 @@ function _run_driven_simulation(cfg::AbstractDict, arch::AbstractArchitecture)
     binary_paths = expand_binary_paths(input_cfg)
     isempty(binary_paths) &&
         throw(ArgumentError("[input] resolved to an empty binary list"))
-    # Section timing instrumentation, off unless ATMOSTR_TIMERS=1.
+    # Section timing instrumentation, off unless ATMOSTR_TIMERS is 1/true/on/yes.
     # Enabled here so every section accumulator covers the whole driven
     # loop including snapshot capture / write.
     timers_on = SectionTimer.maybe_enable_from_env!()
@@ -231,10 +231,10 @@ end
 
 function _run_driven_simulation_inputs(cfg, input_cfg, binary_paths, arch::AbstractArchitecture)
     # Dispatch on the first binary's grid_type — the ownership boundary
-    # (binary header owns topology, TOML owns physics kinds). The
-    # capability probe also runs the load-time
-    # gates (stale-binary, cm-continuity) as a side effect of opening
-    # the reader in `inspect_binary`.
+    # (binary header owns topology, TOML owns physics kinds). Opening the
+    # reader in `inspect_binary` runs the header-contract and file-size
+    # checks; the cm-continuity replay gate runs later, when
+    # `TransportBinaryDriver` opens each binary.
     binary_caps = [(path = path, caps = inspect_binary(path; io = devnull))
                    for path in binary_paths]
     for item in binary_caps
@@ -660,10 +660,10 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                 error("CS binary has unsupported mass_basis $(basis_sym); expected :dry or :moist")
 
     # CS tracers flow through the unified IC pipeline.
-    # DryBasis is the default per invariant 14; MoistBasis
-    # requires qv from window1 (feedback_vmr_to_mass_basis_aware), which
-    # CS windows do not carry today — so moist binaries error explicitly
-    # here rather than producing silently wrong tracer mass.
+    # DryBasis is the default runtime basis; MoistBasis requires qv from
+    # window 1 to convert the dry IC VMR, which CS windows do not carry —
+    # so moist binaries error explicitly here rather than producing
+    # silently wrong tracer mass.
     basis_sym === :moist &&
         error("CS driven runner does not yet support moist-basis binaries: " *
               "`pack_initial_tracer_mass` needs qv, which canonical CS v4 " *
@@ -893,9 +893,9 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     end
 
     if do_snapshots
-        # BasisT was bound at model construction (dry by default on CS per
-        # invariant 14); reuse it so the NetCDF records the same basis the
-        # `air_mass` arrays were stored under.
+        # BasisT was bound at model construction (dry by default on CS);
+        # reuse it so the NetCDF records the same basis the `air_mass`
+        # arrays were stored under.
         _flush_single_output!(output_spec.partition, timer, output_spec,
                               snapshots, grid;
                               mass_basis = BasisT === DryBasis ? :dry : :moist)

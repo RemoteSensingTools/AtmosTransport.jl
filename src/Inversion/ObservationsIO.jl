@@ -15,7 +15,8 @@
 #   * `write_observations(path, set)` — emit a v1-compliant NetCDF file.
 #
 # Bridge to the 4D-Var path (`bind_to_mesh`, `CSObservation` mapping) lives
-# in a separate module. This file is the pure IO layer.
+# in `ObservationBinding.jl`, also included into the `Adjoints` module.
+# This file is the pure IO layer.
 # ---------------------------------------------------------------------------
 
 const _CS_OBSERVATIONS_SCHEMA_VERSION = "v1"

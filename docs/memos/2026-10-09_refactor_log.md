@@ -453,3 +453,27 @@ Phase 4 stops here: no `src/` file is above 1000 lines (the largest are now
 `mass_support.jl`); they belong with the Phase 6 consolidation. Export lists
 stayed where they were, so some now sit in a later piece than the code they
 export.
+
+## Phase 3, step 3 — stale comments and docstrings
+
+The README findings that were documentation errors are fixed, each checked
+against the code: module docstrings (Tape, Adjoints, Preprocessing,
+Quantities, Regridding), file headers that described missing drivers or
+history ("relocated unchanged", "follow-up", "subsequent breakpoints"),
+citations of removed files and of numbered invariants that no longer exist,
+misattached docstrings (`next_day_merged_fields`, `_pack_cs_window!`), the
+SectionTimer column list and switch values, `docs/src/preprocessing/overview.md`
+(which paths use the unified driver; ERA5 N320 added) and
+`docs/src/config/toml_schema.md`. A script confirms that only comments and
+docstrings changed, apart from seven error/warning messages that cited
+removed invariants, named the wrong file, called non-C180 targets "C180", or
+promised a "follow-up".
+
+Golden check after Phase 4 step 2 (31a819f4, all 20 non-slow cases):
+identical.
+
+The full test suite (after Phase 4) stopped at `test_readme_current.jl`: the
+Advection README had never listed `vertical_fv3_profile.jl` (added at
+a2c99ed6), and a failing file ends the runner loop. The README lists it now;
+the freshness test also covers every folder that gained a README (and the
+Output README now lists `Output.jl`, `runtime_output.jl`, `binary_writer.jl`).

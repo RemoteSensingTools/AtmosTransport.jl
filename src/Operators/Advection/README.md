@@ -91,6 +91,8 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
 - [`cs_subcycling.jl`](cs_subcycling.jl) — static palindrome CFL subcycle count
 - [`CubedSphereStrang.jl`](CubedSphereStrang.jl) — panel-native
   cubed-sphere palindrome (`strang_split_cs!`, `strang_split_cs_mt!`)
+- [`vertical_fv3_profile.jl`](vertical_fv3_profile.jl) — vertical sweep with
+  FV3's `scalar_profile` (kord 8) piecewise-parabolic tracer profile
 - [`CubedSphereSeams.jl`](CubedSphereSeams.jl) — canonical physical seam
   transfers paired across panels within each directional group
 - [`ppm_subgrid_distributions.jl`](ppm_subgrid_distributions.jl) — PPM

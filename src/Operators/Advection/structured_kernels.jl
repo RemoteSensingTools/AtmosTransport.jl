@@ -38,8 +38,7 @@
 # (sweep_x!/y!/z! in sweeps.jl) copies the output back to the
 # input arrays after synchronization.  This double-buffer pattern is
 # ESSENTIAL for correctness: in-place updates would violate the stencil
-# read-before-write contract and break mass conservation by ~10% per step
-# (see CLAUDE.md invariant 4).
+# read-before-write contract and break mass conservation by ~10% per step.
 #
 # Workgroup size
 # ──────────────

@@ -15,8 +15,9 @@
 #   - Q on N320 cell centers (direct reduced_gg gridpoint reorder; the GRIB
 #     stores rings north→south but the mesh stores them south→north)
 #
-# Hybrid pressure → layer mass, regrid to C180, convection conversion all
-# land in subsequent breakpoints on this branch.
+# Layer-mass derivation and the convection reader live in
+# era5_n320_mass_convection.jl; the regrid to a cubed-sphere target in
+# era5_n320_to_cs.jl.
 # ===========================================================================
 
 const ERA5_NATIVE_LEVEL_COUNT = 137

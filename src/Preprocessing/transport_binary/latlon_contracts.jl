@@ -11,6 +11,18 @@ calls inside the accumulator/summarizer chain stay statically typed.
 const LLWorst = @NamedTuple{ratio::Float64, direction::Symbol, win::Int,
                               location::NTuple{3, Int}}
 
+"""
+    next_day_merged_fields(next_day_hour0, date, grid, vertical, settings,
+                           transform, merged, qv, ps_offsets)
+
+Process the next day's hour-0 spectral and humidity fields so the current day's
+final window can form forward deltas and carry a consistent mass-fix offset.
+Returns copies of the merged `(m, am, bm, cm, qv)` fields (`qv` is `nothing`
+unless `settings.include_qv`).
+
+Returns `nothing` early when `next_day_hour0 === nothing` (no next-day data
+was loaded, e.g. at the end of the processed range).
+"""
 function next_day_merged_fields(next_day_hour0,
                                 date::Date,
                                 grid::LatLonTargetGeometry,

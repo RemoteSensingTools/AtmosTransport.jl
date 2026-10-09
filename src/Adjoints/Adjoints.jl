@@ -8,15 +8,15 @@ mass with fixed meteorology/air-mass evolution. It accumulates
 surface-emission footprints from an adjoint seed without perturbing each
 surface cell. The optional vertical-diffusion slot mirrors the runtime
 surface-source palindrome: half diffusion, midpoint emissions, half diffusion.
-The optional convection slot transposes the CS `CMFMCConvection` and
-`TM5Convection` column operators.
+The optional convection slot transposes the CS `CMFMCConvection`,
+`TM5Convection` and `CMFMCMatrixConvection` column operators.
 """
 module Adjoints
 
 using KernelAbstractions: @Const, @atomic, @index, @kernel, get_backend, synchronize
 # NCDatasets is loaded here (not inside ObservationsIO.jl) so the
-# observation IO can share the dependency with any
-# future read/write helpers under `src/Inversion/`.
+# NetCDF readers/writers under `src/Inversion/` (ObservationsIO.jl,
+# DeparturesIO.jl) share one import.
 import NCDatasets
 
 using ..Grids: CubedSphereMesh, reciprocal_edge,
@@ -82,13 +82,13 @@ using ..Tape: AbstractCSTapeStorage,
 const CSAdjointLinearScheme = Union{UpwindScheme, SlopesScheme{NoLimiter},
                                     PPMScheme{NoLimiter, SameAsHorizontal}}
 const CSAdjointNonlinearScheme = Union{PPMScheme{MonotoneLimiter, SameAsHorizontal}}
-# LinRoodPPMScheme is supported via its own
-# horizontal tape record (`_CSLinRoodHorizRecord`) and the kernel
-# adjoints shipped in `src/Operators/Advection/linrood_adjoint_*.jl`.
-# The reverse-loop dispatch arm in `_collect_surface_footprints`
-# handles the new record type alongside the existing
+# LinRoodPPMScheme (ORD 5 and 7) is supported via its own horizontal
+# tape record (`_CSLinRoodHorizRecord`, LinRoodTape.jl) and the kernel
+# adjoints in `src/Operators/Advection/linrood_adjoint_*.jl`. The
+# reverse loop (`_walk_window_reverse!` in `src/Footprint/ReverseLoop.jl`)
+# handles that record in its own branch alongside the
 # `_CSSweepRecord`, `_CSHaloRecord`, `_CSDiffusionRecord`,
-# `_CSConvectionRecord`, and `_CSMidpointRecord` cases. ORD=5 only.
+# `_CSConvectionRecord`, and `_CSMidpointRecord` cases.
 const CSAdjointLinRoodScheme = LinRoodPPMScheme{<:Any, UpwindScheme}   # upwind vertical only
 const CSAdjointSupportedScheme = Union{CSAdjointLinearScheme,
                                         CSAdjointNonlinearScheme,
@@ -267,7 +267,7 @@ include("HaloAdjoint.jl")
 # Vertical-diffusion adjoint kernels.
 include("DiffusionAdjoint.jl")
 
-# CMFMC + TM5 convection adjoint kernels.
+# CMFMC, TM5 and CMFMC-matrix convection adjoint kernels.
 include("ConvectionAdjoint.jl")
 
 
@@ -311,11 +311,12 @@ include("../Footprint/TapeRecording.jl")
 include("../Footprint/ReverseLoop.jl")
 
 
-# Strided checkpoint driver. Depends on the linear-scheme
-# `_record_cs_mass_tape` + `_walk_window_reverse!` defined above; the
-# FootprintAPI below dispatches on the `checkpoint` kwarg to choose between
-# the existing `_collect_surface_footprints` path (FullCheckpoint, no
-# behaviour change) and `_collect_surface_footprints_stride`.
+# Stride and Revolve checkpoint drivers for the linear mass, monotone-PPM
+# tracer and LinRood tapes. They reuse the tape recorders and
+# `_walk_window_reverse!` defined above; the FootprintAPI below dispatches
+# on the `checkpoint` kwarg between `_collect_surface_footprints`
+# (FullCheckpoint), `_collect_surface_footprints_stride` and
+# `_collect_surface_footprints_revolve`.
 include("../Footprint/StrideCheckpoint.jl")
 include("../Footprint/stride_checkpoint_ppm.jl")
 include("../Footprint/stride_checkpoint_linrood.jl")
@@ -331,7 +332,8 @@ include("../Inversion/Jacobian.jl")
 # 4D-Var cost + gradient evaluation.
 include("../Inversion/CostGradient.jl")
 
-# Prototype gradient-descent optimizer shim.
+# 4D-Var optimizer backends (`CSGradientDescent`, `CSLBFGS` via Optim.jl)
+# and the `cs_surface_flux_4dvar_optimize` entry point.
 include("../Inversion/Optimizer.jl")
 
 

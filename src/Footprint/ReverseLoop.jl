@@ -1,19 +1,17 @@
 # ---------------------------------------------------------------------------
 # Reverse-loop driver + paired forward replay helpers.
 #
-# `_collect_surface_footprints` walks the recorded tape in reverse,
-# dispatching on each `_CSTapeOp` record type to call the appropriate
-# per-physics adjoint kernel (advection, halo, diffusion, convection,
-# LinRood horizontal) and accumulating per-step surface footprints.
+# `_collect_surface_footprints` allocates the per-step footprints and
+# calls `_walk_window_reverse!`, which walks the recorded tape in reverse,
+# dispatching on each record type to call the appropriate per-physics
+# adjoint kernel (advection, halo, diffusion, convection, LinRood
+# horizontal) and accumulating per-step surface footprints.
 #
 # `_run_cs_footprint_forward` and `_run_cs_observations_forward` are the
 # forward-replay helpers used by FD identity tests, 4D-Var simulation
 # evaluation, and Jacobian aggregation. They share the same Strang-
 # palindrome-with-emissions structure as the production runtime, but
 # without writing to a tape.
-#
-# Relocated unchanged from `src/Adjoints/Adjoints.jl` lines 606-865;
-# no semantic change.
 # ---------------------------------------------------------------------------
 
 function _collect_surface_footprints(lambda_panels, ops, panels_m0,

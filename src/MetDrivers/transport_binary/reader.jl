@@ -88,17 +88,8 @@ has_pbl_eflux(r::TransportBinaryReader) = :pbl_eflux in r.header.payload_section
 has_cmfmc_cloud_base(r::TransportBinaryReader) = :cmfmc_cloud_base in r.header.payload_sections
 
 # ---------------------------------------------------------------------------
-# Capability summary + `inspect_binary`
-#
-# `binary_capabilities(reader)` returns a NamedTuple describing what
-# operators this binary can drive, so the CLI + physics-recipe validator
-# can give precise errors ("config requested `tm5` but binary lacks
-# entu/detu/entd/detd") instead of silently failing at the first step.
-#
-# `inspect_binary(path)` is the library-level entry point that opens a
-# `TransportBinaryReader`, runs all load-time gates, prints a rich report, and returns the
-# capability summary. `scripts/diagnostics/inspect_transport_binary.jl`
-# is a thin CLI over this function.
+# Reader construction. Capability summaries and `inspect_binary` live in
+# `inspect.jl`.
 # ---------------------------------------------------------------------------
 
 function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Float32)

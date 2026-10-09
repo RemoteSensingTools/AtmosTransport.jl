@@ -244,7 +244,3 @@ function write_transport_binary(path::AbstractString,
 
     return path
 end
-
-# =========================================================================
-# Streaming (per-window) binary writer
-# =========================================================================

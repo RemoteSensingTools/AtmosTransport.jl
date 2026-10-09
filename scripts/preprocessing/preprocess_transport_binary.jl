@@ -15,12 +15,12 @@
 #   julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
 #       <config.toml> --day 2021-12-01
 #
-#   # Date range (native sources only)
+#   # Date range
 #   julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
 #       <config.toml> --start 2021-12-01 --end 2021-12-03
 #
 # Configs:
-# - ERA5 spectral:   `[input].spectral_dir = "..."` — legacy NamedTuple path.
+# - ERA5 spectral:   `[input].spectral_dir = "..."` — `ERA5SpectralSettings`.
 # - Native sources:  `[source].toml = "config/met_sources/<src>.toml"` plus
 #                    `[source].root_dir = "..."` — typed dispatch.
 # ===========================================================================

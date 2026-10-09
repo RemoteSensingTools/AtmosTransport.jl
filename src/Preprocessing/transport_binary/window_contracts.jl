@@ -5,7 +5,7 @@
 # `AbstractBinaryWriter{G, FT, Basis<:AbstractMassBasis}` are the typed
 # nominals that close the kwarg-drift and mass-basis-runtime-check gaps.
 #
-# What this file defines (additive only; no behavior changes):
+# What this file defines:
 #
 #   - `AbstractWindowContract{G, FT}` — typed nominal owning a
 #       topology's per-window gate policy (replay tolerance, positivity
@@ -14,20 +14,24 @@
 #       `update_accumulator!`, `summarize_status!`.
 #
 #   - `AbstractWindowWorkspace{G, FT}` — typed nominal for the per-day
-#       target-shape buffers. Only the abstract type exists today;
-#       concrete subtypes land alongside the unified-driver cutover.
+#       target-shape buffers used by the unified driver.
 #
 #   - `AbstractBinaryWriter{G, FT, Basis}` — typed nominal for the
-#       topology's streaming binary writer. Same: abstract type only for
-#       now; concretes land later. The third type parameter is a subtype of
-#       the existing `State.AbstractMassBasis` (`DryBasis`/`MoistBasis`)
-#       so a writer↔reader pairing mismatch is a compile-time
-#       `MethodError` rather than a post-load runtime header check.
+#       topology's streaming binary writer. The third type parameter is a
+#       subtype of the existing `State.AbstractMassBasis`
+#       (`DryBasis`/`MoistBasis`) so a writer↔reader pairing mismatch is a
+#       compile-time `MethodError` rather than a post-load runtime header
+#       check.
 #
-# The concrete per-topology contracts ship in:
-#   * `cubed_sphere_contracts.jl`         (CubedSphereContract{FT})
-#   * `latlon_contracts.jl`               (LatLonContract{FT})
-#   * `reduced_gaussian_contracts.jl`     (ReducedGaussianContract{FT})
+# Concrete subtypes:
+#   * contracts — `CubedSphereContract{FT}` (`cubed_sphere_contracts.jl`),
+#     `LatLonContract{FT}` (`latlon_contracts.jl`),
+#     `ReducedGaussianContract{FT}` (`reduced_gaussian_contracts.jl`)
+#   * workspaces — `LatLonSpectralWindowWorkspace` (`latlon_spectral.jl`),
+#     `CubedSphereSpectralWindowWorkspace` (`cubed_sphere_spectral.jl`),
+#     `GEOSCubedSphereWindowWorkspace` (`geos_cs_window.jl`)
+#   * writers — `LatLonBinaryWriter`, `ReducedGaussianBinaryWriter`,
+#     `CubedSphereBinaryWriter` (`writer_adapters.jl`)
 #
 # Mass basis: this file deliberately does NOT redefine `AbstractMassBasis`
 # / `DryBasis` / `MoistBasis`. Those tags live in `src/State/Basis.jl`
@@ -61,9 +65,9 @@ Construct the matching basis singleton from a header `Symbol`. Throws
 end
 
 # ---------------------------------------------------------------------------
-# Abstract trait surface. Every topology that produces a transport-binary
-# must register a concrete subtype of each of the three abstracts below
-# (the LL/RG/CS triple is registered in this file's siblings).
+# Abstract trait surface. Concrete subtypes are listed in the header above.
+# The reduced-Gaussian workspace (`ReducedGaussianSpectralWindowWorkspace`,
+# `reduced_window_buffer.jl`) is not an `AbstractWindowWorkspace` subtype.
 # ---------------------------------------------------------------------------
 
 """
@@ -86,8 +90,8 @@ update_accumulator!(contract, positivity_diag, win_idx) -> nothing
 summarize_status!(contract; quarantine_path) -> nothing
 ```
 
-`window` is the topology-specific window payload (NamedTuple of typed
-buffers today, a typed `ReadyWindow{G, FT}` later).
+`window` is the topology-specific window payload: a NamedTuple of typed
+buffers or a `ReadyWindow{G, FT}` wrapping one.
 
 Keeps contract knobs from being drift-prone kwargs — each topology
 constructs its own contract once from config, with whatever fields IT
@@ -98,10 +102,9 @@ abstract type AbstractWindowContract{G <: AbstractTargetGeometry, FT} end
 """
     AbstractWindowWorkspace{G <: AbstractTargetGeometry, FT}
 
-Typed nominal for the per-day target-shape workspace buffers. Only the
-abstract type exists today; concrete subtypes land alongside the unified
-driver cutover (today's workspaces are NamedTuples constructed
-inside each topology's `process_day` orchestrator).
+Typed nominal for the per-day target-shape workspace buffers. Concrete
+subtypes: `LatLonSpectralWindowWorkspace`, `CubedSphereSpectralWindowWorkspace`,
+and `GEOSCubedSphereWindowWorkspace`.
 """
 abstract type AbstractWindowWorkspace{G <: AbstractTargetGeometry, FT} end
 
@@ -115,7 +118,8 @@ type parameter encodes the on-disk mass-basis convention (reusing
 reader path) so a writer↔reader pairing mismatch is a compile-time
 `MethodError`.
 
-Only the abstract type exists today; concrete subtypes land later.
+Concrete subtypes (`writer_adapters.jl`): `LatLonBinaryWriter`,
+`ReducedGaussianBinaryWriter`, `CubedSphereBinaryWriter`.
 """
 abstract type AbstractBinaryWriter{G <: AbstractTargetGeometry, FT,
                                     Basis <: AbstractMassBasis} end
@@ -289,8 +293,8 @@ end
 
 Small typed cache for artifacts that should be built once per preprocessing run
 instead of once per day/window (for example spectral LL->CS regridders or RG
-compressed Laplacians). P2b only introduces the nominal and storage; concrete
-drivers decide which keys they own as they migrate.
+compressed Laplacians). The ERA5 spectral entry point builds one per run and
+passes it to every day's `process_day`; each driver owns its own keys.
 """
 mutable struct PreprocessorRunCache{G <: AbstractTargetGeometry, FT}
     entries :: Dict{Symbol, Any}
@@ -381,8 +385,9 @@ function contract_require_positivity end
 """
     allocate_window_workspace(args...; kwargs...)
 
-Construct the topology-specific `AbstractWindowWorkspace{G, FT}` for one
-preprocessing day. Concrete methods land as production drivers migrate.
+Construct the topology-specific window workspace for one preprocessing day.
+Methods exist for the LL spectral, RG spectral, CS spectral, and GEOS CS
+paths.
 """
 function allocate_window_workspace end
 

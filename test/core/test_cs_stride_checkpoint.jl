@@ -8,22 +8,24 @@ const Adv = AtmosTransport.Operators.Advection
 const TapeMod = AtmosTransport.Tape
 
 # ---------------------------------------------------------------------------
-# Plan 26 Phase A.3 — StrideCheckpoint{K} parity vs FullCheckpoint.
+# StrideCheckpoint / RevolveCheckpoint parity vs FullCheckpoint.
 #
 # Verifies:
-#   * `FullCheckpoint()` (explicit) is bit-exact with the no-kwarg default.
-#   * `StrideCheckpoint(K)` produces bit-identical footprints to
-#     `FullCheckpoint()` on the linear-scheme mass-tape paths, over
-#     K = 1, 2, 3 and K > nsteps. Same forward kernels, same reverse
-#     records, same order — deterministic by construction on CPU
-#     Float64.
-#   * `(tape_storage, schedule)` is a clean cross-product: `:device`
-#     and `:mmap` agree under both `FullCheckpoint()` and
-#     `StrideCheckpoint(K)`.
-#   * Stride co-exists with `ImplicitVerticalDiffusion`.
-#   * Argument validation: stride with nonlinear PPM / LinRood and
-#     `cs_surface_emission_footprint_from_seed` reject with
-#     ArgumentError; `StrideCheckpoint(0)` rejects with ArgumentError.
+#   * `FullCheckpoint()` (explicit) matches the no-kwarg default.
+#   * `StrideCheckpoint(K)` footprints match `FullCheckpoint()` (to the
+#     `_footprints_equal` tolerance below) for all three tape drivers:
+#     the linear mass tape, the monotone-PPM tracer tape, and the
+#     LinRood horizontal tape (ORD 5 and 7). Covers K = 1 up to
+#     K > nsteps, `:device` and `:mmap` storage (LinRood: `:device`
+#     only), `ImplicitVerticalDiffusion`, CMFMC convection and
+#     `base_emission_rates`.
+#   * `cs_surface_emission_footprint_from_seed` parity under Stride and
+#     Revolve.
+#   * `RevolveCheckpoint()` parity for the same tapes (FD-grade tolerance
+#     for monotone PPM + implicit diffusion), including nsteps == 1.
+#   * Argument validation: LinRood with non-`:device` storage, a
+#     pre-constructed tape storage under Stride/Revolve, and
+#     `StrideCheckpoint(0)` reject with ArgumentError.
 #   * `checkpoint_window_count` / `checkpoint_window_range` math.
 # ---------------------------------------------------------------------------
 
