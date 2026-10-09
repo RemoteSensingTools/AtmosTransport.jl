@@ -99,8 +99,17 @@
   `framework_commit = "unknown"` before. Cubed-sphere transport binaries now
   carry `git_commit` and `git_dirty` in their header.
 - `scripts/diagnostics/catrine_benchmark_page.py` writes the CATRINE benchmark
-  web page (agreement tables, monthly stratospheric bias, code versions,
-  figures and animations) from a `catrine_compare_vs_geoschem.py` output.
+  web page from a `catrine_compare_vs_geoschem.py` output: Chart.js charts with
+  run check boxes and tracer, band and statistic selectors (daily and monthly
+  agreement statistics, period table, global burdens, true mass balance), code
+  versions, maps and animations. The page is self-contained (data embedded,
+  Chart.js copied next to it) and keeps the selection in the URL.
+- `scripts/diagnostics/catrine_true_mass_balance.jl` and
+  `catrine_true_mass_balance_gc.py` compute the true global mass balance of a
+  run (burden change minus the run's own applied emissions and decay) for
+  AtmosTransport, from the run's output and its sources rebuilt by the model,
+  and for GEOS-Chem, from its `SpeciesConcVV`, `Met_AD` and `Emis*` output;
+  the benchmark page plots them.
 - New `[output.observations]` contract for sampling tracer profiles at
   observation points (OCO-2 Lite soundings, NOAA ObsPack sites, generic point
   tables) from the containing model cell at met-window ends. The table is
