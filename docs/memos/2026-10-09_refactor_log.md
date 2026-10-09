@@ -391,3 +391,14 @@ order, equal the original's and that no comment is lost. Only the file-level
 
 References to the moved code (READMEs, theory pages, the RG boundary-stub
 error message and its test) name the new files.
+
+### Step 2 — GEOS native and ERA5 N320 preprocessing files
+
+- `transport_binary/cubed_sphere_geos.jl` (2299 lines) →
+  `geos_cs_mass_helpers.jl` (DELP ↔ mass, pressure fixer, smoothing),
+  `geos_cs_omega.jl` (OMEGA-consistent `cm` target), `geos_cs_resolution.jl`
+  (global pin, resolution strategies, payloads), `geos_cs_window.jl` (window
+  workspace, preparation, `cm` closures, substeps), `cubed_sphere_geos.jl`
+  (driver context, hooks, `process_day`).
+- `sources/era5.jl` (1718 lines) → `era5.jl` (settings, paths, day handles),
+  `era5_n320_window.jl`, `era5_n320_mass_convection.jl`, `era5_n320_to_cs.jl`.

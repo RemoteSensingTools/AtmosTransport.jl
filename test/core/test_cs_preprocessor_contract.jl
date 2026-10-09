@@ -621,7 +621,7 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
     # ------------------------------------------------------------------
     # Direct-wrapper policy validation (codex review round 3 of f5224a6).
     # The CS production paths in `cubed_sphere_spectral.jl`,
-    # `cubed_sphere_geos.jl`, and `cubed_sphere_regrid.jl` call
+    # the GEOS workflow, and `cubed_sphere_regrid.jl` call
     # `verify_cs_window_contract!` / `verify_substep_positivity_cs!` /
     # `verify_write_replay_cs!` directly without going through
     # `CubedSphereContract`. Codex reproduced a bypass where

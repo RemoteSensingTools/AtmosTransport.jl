@@ -25,7 +25,7 @@ writers that turn these fields into transport binaries live in
   `open_day` (`open_geos_day` / `open_geosfp_native_day`),
   `read_window!(raw::RawWindow, settings, handles, date, win)`,
   `endpoint_dry_mass!`, `detect_level_orientation`.
-- ERA5 N320 ([`era5.jl`](era5.jl)): `ERA5N320Settings`, `open_era5_day`,
+- ERA5 N320 ([`era5.jl`](era5.jl) and the `era5_n320_*.jl` files): `ERA5N320Settings`, `open_era5_day`,
   `read_era5_n320_window_fields!`, `derive_n320_dry_mass!`,
   `derive_c180_dry_mass!`, `regrid_n320_to_c180!`,
   `read_era5_n320_convection_window!`, and the per-window bundle
@@ -54,9 +54,13 @@ writers that turn these fields into transport binaries live in
   `detect_level_orientation`, `endpoint_dry_mass!`, `read_window!` with
   optional surface, VDIFF, and convection fields, `_native_output_filename`
 - [`era5.jl`](era5.jl) — `ERA5GRIBSettings`, stream paths (`era5_grib_path`,
-  `era5_arco_sp_path`), `ERA5GRIBDayHandles`, N320 grid discovery, synthesis
-  of U/V/T/PS plus reduced-Gaussian Q, dry mass on N320 and CS, convection
-  forecast reader, N320-to-CS regrid, TM5 convection derivation, the per-window pipeline
+  `era5_arco_sp_path`), `ERA5GRIBDayHandles`, source traits
+- [`era5_n320_window.jl`](era5_n320_window.jl) — N320 grid discovery, synthesis
+  of U/V/T/PS plus reduced-Gaussian Q, the window field reader
+- [`era5_n320_mass_convection.jl`](era5_n320_mass_convection.jl) — dry mass on
+  N320 and CS, convection forecast reader
+- [`era5_n320_to_cs.jl`](era5_n320_to_cs.jl) — N320-to-CS regrid, TM5 convection
+  derivation, the per-window pipeline
 - [`merra2.jl`](merra2.jl) — archive types, `MERRA2Settings`, path resolution,
   `MERRA2DayHandles`, level-order detection, window, physics, and next-day readers
 - [`loader.jl`](loader.jl) — `load_met_settings`, `_settings_constructor`,

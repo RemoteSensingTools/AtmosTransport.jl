@@ -4,7 +4,7 @@
 # Google ARCO-ERA5 (gs://gcp-public-data-arco-era5) is a public, no-auth,
 # queue-free mirror of the native ECMWF GRIB. Model-level dynamics are kept as
 # spectral harmonic coefficients (T639) and moisture on the reduced-Gaussian
-# N320 grid — exactly the form the N320 preprocessor (`sources/era5.jl`)
+# N320 grid — exactly the form the N320 preprocessor (`sources/era5*.jl`)
 # consumes. Unlike CDS (MARS-backed, hours-to-days queue), ARCO serves
 # pre-staged objects over HTTPS at network speed (~78 MB/s parallel measured).
 #

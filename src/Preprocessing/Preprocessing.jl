@@ -255,6 +255,9 @@ include("sources/geos.jl")
 # regrid to a cubed-sphere target, and the per-window pipeline that
 # wires them all together.
 include("sources/era5.jl")
+include("sources/era5_n320_window.jl")
+include("sources/era5_n320_mass_convection.jl")
+include("sources/era5_n320_to_cs.jl")
 
 # Native MERRA-2 reader: MERRA2Settings + day handles + per-window LL field
 # reader (PS/QV from inst3, U/V from tavg3). Drives the wind-derived → CS
@@ -273,6 +276,10 @@ include("sources/loader.jl")
 include("met_readers.jl")
 
 # GEOS → CS passthrough orchestrator
+include("transport_binary/geos_cs_mass_helpers.jl")
+include("transport_binary/geos_cs_omega.jl")
+include("transport_binary/geos_cs_resolution.jl")
+include("transport_binary/geos_cs_window.jl")
 include("transport_binary/cubed_sphere_geos.jl")
 
 # Experimental nested CS-binary operator restriction (for example C90 → C30).
@@ -280,7 +287,7 @@ include("transport_binary/cubed_sphere_geos.jl")
 include("transport_binary/cubed_sphere_coarsen.jl")
 
 # ERA5 N320 → CS transport-binary writer. Drives one UTC day end-to-end
-# through the per-window pipeline shipped in `sources/era5.jl` plus the
+# through the per-window pipeline in `sources/era5*.jl` plus the
 # C180 dry-mass re-derivation, wind rotation, face flux reconstruction,
 # Poisson balance, and v4 writer.
 include("transport_binary/era5_n320_regrid.jl")

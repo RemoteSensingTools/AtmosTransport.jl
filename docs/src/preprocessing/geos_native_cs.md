@@ -33,7 +33,8 @@ The preprocessor then diagnoses vertical mass flux with `diagnose_cs_cm!`
 from the corrected horizontal divergence and explicit layer mass tendency.
 The implementation and its correction policy live in
 `src/Preprocessing/cs_poisson_balance.jl` and the native-source driver
-`src/Preprocessing/transport_binary/cubed_sphere_geos.jl`.
+`src/Preprocessing/transport_binary/cubed_sphere_geos.jl` (the per-window
+closures in `geos_cs_window.jl` and `geos_cs_omega.jl` beside it).
 
 The endpoint convention is the **raw dry endpoint** rather than the
 endpoint implied by an FV3-style pressure fixer. The pressure-fixer

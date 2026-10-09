@@ -98,7 +98,12 @@ header (LL does it when `LatLonDeferredBinaryWriter` opens). GEOS uses
 - [`latlon_spectral.jl`](latlon_spectral.jl) — ERA5 spectral to LL `process_day`, `LatLonDeferredBinaryWriter`, LL hooks, TM5 LL regridding
 - [`cubed_sphere_spectral.jl`](cubed_sphere_spectral.jl) — ERA5 spectral to CS `process_day` through an LL staging grid, CS hooks
 - [`cubed_sphere_regrid.jl`](cubed_sphere_regrid.jl) — `regrid_transport_binary`, `regrid_ll_binary_to_cs` (fixed substeps, own loop)
-- [`cubed_sphere_geos.jl`](cubed_sphere_geos.jl) — GEOS-IT/FP to CS `process_day`, `cm` closures, OMEGA regularization, global mass pin, block coarsening, GEOS hooks
+- GEOS-IT/FP to CS, in include order:
+  [`geos_cs_mass_helpers.jl`](geos_cs_mass_helpers.jl) — DELP ↔ air mass, surface pressure, pressure-fixer mass evolution, residual smoothing;
+  [`geos_cs_omega.jl`](geos_cs_omega.jl) — OMEGA-consistent `cm` target (PCHIP time interpolation, regularization, reconstruction);
+  [`geos_cs_resolution.jl`](geos_cs_resolution.jl) — global dry-mass pin, panel-convention check, identity and block-coarsening strategies, native → target payloads;
+  [`geos_cs_window.jl`](geos_cs_window.jl) — window workspace, per-window preparation with the `cm` closures and substep selection, ingest/drain/advance;
+  [`cubed_sphere_geos.jl`](cubed_sphere_geos.jl) — driver context, GEOS hooks and `process_day`
 - [`cubed_sphere_coarsen.jl`](cubed_sphere_coarsen.jl) — experimental nested CS binary coarsener (`coarsen_nested_cs_transport_binary`)
 - [`era5_n320_regrid.jl`](era5_n320_regrid.jl) — `process_era5_n320_to_cs_day` and its `process_day` adapter; TM5 convection, surface, `dkg` payloads
 - [`merra2_latlon_regrid.jl`](merra2_latlon_regrid.jl) — `process_merra2_to_cs_day` and adapter; 3-hour blocks split into hourly windows when `dt_met_seconds = 3600`

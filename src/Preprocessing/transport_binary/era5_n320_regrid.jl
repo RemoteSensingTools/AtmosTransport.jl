@@ -4,7 +4,7 @@
 # Drives one UTC day end-to-end:
 #
 #   per window (24 hourly):
-#     1. Run the ERA5 per-window pipeline (B/C/D/E from sources/era5.jl):
+#     1. Run the ERA5 per-window pipeline (B/C/D/E from sources/era5*.jl):
 #        synthesise U/V/T/Q/PS on N320, derive dry-basis mass on the source
 #        mesh, read UDMF/DDMF/UDRF/DDRF convection (optional), and
 #        conservatively regrid PS / U / V / T / Q to the C180 target.
