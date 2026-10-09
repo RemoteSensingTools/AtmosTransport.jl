@@ -42,6 +42,11 @@
 - The EDGAR tonnes-to-flux normalisation (`_lonlat_cell_areas_m2`) took the
   grid spacing from the first coordinate difference, which errs by ~1e-4 for
   coordinates stored in `Float32`. It now uses the full span.
+- `[mass_fix] mode = "initial_endpoint"` silently skipped the global dry-mass
+  pin for MERRA-2 and ERA5 N320 sources: their writers pin only to a finite
+  target, and this mode passes none. Only the GEOS native path implements it
+  (`supports_initial_endpoint_mass_pin`); other sources now refuse the mode.
+  No shipped configuration used it.
 
 ### Numerical changes
 

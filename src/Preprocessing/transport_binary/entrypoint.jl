@@ -221,7 +221,9 @@ end
 # carry (e.g. GEOS pressure-fixer chained mass).
 # ---------------------------------------------------------------------------
 
-function _native_mass_fix_target_kg(cfg::AbstractDict, grid)
+# Global dry-mass target of the native-source pin: `NaN` when the pin is off or
+# when it pins to the first window start (`mode = "initial_endpoint"`).
+function _native_mass_fix_target_kg(cfg::AbstractDict, grid, settings)
     mass_fix_cfg = get(cfg, "mass_fix", Dict{String, Any}())
     _config_bool(mass_fix_cfg, "enable", false, "[mass_fix].enable") || return NaN
     haskey(mass_fix_cfg, "target_total_kg") &&
@@ -236,6 +238,9 @@ function _native_mass_fix_target_kg(cfg::AbstractDict, grid)
         total_area = 6.0 * sum(Float64, grid.mesh.cell_areas)
         return target_ps_dry_pa * total_area / STANDARD_GRAVITY
     elseif mode === :initial_endpoint
+        supports_initial_endpoint_mass_pin(settings) || error(
+            "[mass_fix].mode=\"initial_endpoint\" is implemented for GEOS native sources " *
+            "only; $(nameof(typeof(settings))) needs mode=\"target_ps_dry\" or target_total_kg")
         return NaN
     else
         error("native-source [mass_fix].mode must be \"target_ps_dry\" or " *
@@ -395,7 +400,7 @@ function _process_day_native(cfg::AbstractDict;
     _uses_omega(cm_closure) && !global_mass_pin &&
         error("OMEGA-based GEOS cm closures require [mass_fix].enable=true so " *
               "the per-level Poisson targets have zero global column tendency")
-    configured_global_mass_target_kg = _native_mass_fix_target_kg(cfg, grid)
+    configured_global_mass_target_kg = _native_mass_fix_target_kg(cfg, grid, settings)
     ensure_preprocessor_pair_supported(grid, settings; context = "native-source")
 
     dates = _resolve_dates_native(cfg; day_override, start_date, end_date)

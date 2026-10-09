@@ -705,7 +705,9 @@ OMEGA modes also require `[mass_fix].enable = true`; without global endpoint
 mass closure, a per-level horizontal Poisson solve cannot realize the global
 column tendency.
 
-### `[mass_fix]` — global PS pinning (spectral path only)
+### `[mass_fix]` — global dry-mass pin
+
+ERA5 spectral path:
 
 ```toml
 [mass_fix]
@@ -714,9 +716,23 @@ target_ps_dry_pa      = 98726.0
 qv_global_climatology = 0.00247
 ```
 
-The GEOS native CS path doesn't apply mass fix (the FV3 dynamical
-core's mass flux is already conservative). LL spectral runs without
-it drift by tens of Pa per window.
+pins the global-mean surface pressure so that the dry air mass stays at
+`target_ps_dry_pa`. LL spectral runs without it drift by tens of Pa per window.
+
+Native sources (GEOS, MERRA-2 and ERA5 N320 to the cubed sphere):
+
+```toml
+[mass_fix]
+enable           = true
+mode             = "target_ps_dry"  # or "initial_endpoint" (GEOS only)
+target_ps_dry_pa = 98726.0          # target_total_kg = … takes precedence
+```
+
+`target_ps_dry` (the default) pins the global dry air mass of every window
+endpoint to `target_ps_dry_pa` times the sphere's area divided by `g`.
+`initial_endpoint` pins to the dry mass at the start of the first window
+instead, carried across the days of one preprocessing run; only the GEOS native
+path implements it, and the other sources reject it.
 
 ## Where to read next
 
