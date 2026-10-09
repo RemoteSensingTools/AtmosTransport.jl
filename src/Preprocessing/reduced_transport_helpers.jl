@@ -371,7 +371,7 @@ function compute_reduced_dp_and_mass!(dp::Matrix{Float64},
                                       dB)
     nc = length(sp)
     Nz = length(dA)
-    inv_g = 1.0 / GRAV
+    inv_g = 1.0 / STANDARD_GRAVITY
     @inbounds for k in 1:Nz, c in 1:nc
         dp_face = abs(dA[k] + dB[k] * sp[c])
         dp[c, k] = dp_face
@@ -391,7 +391,7 @@ function compute_reduced_horizontal_fluxes!(hflux::AbstractVector{Float64},
                                             half_dt::Float64,
                                             cache::ReducedSpectralThreadCache)
     mesh = grid.mesh
-    R_g = mesh.radius / GRAV
+    R_g = mesh.radius / STANDARD_GRAVITY
     fill!(hflux, 0.0)
 
     @inbounds for j in 1:nrings(mesh)

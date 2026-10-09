@@ -26,8 +26,8 @@ Base.@kwdef struct PBLPhysicsParameters{FT <: AbstractFloat}
     Kz_min   :: FT = FT(0.01)
     Kz_max   :: FT = FT(500.0)
     kappa_vk :: FT = FT(0.41)
-    gravity  :: FT = FT(9.80665)
-    cp_dry   :: FT = FT(1004.64)
+    gravity  :: FT = FT(STANDARD_GRAVITY)
+    cp_dry   :: FT = FT(CP_DRY_AIR)
     rho_ref  :: FT = FT(1.225)
 end
 

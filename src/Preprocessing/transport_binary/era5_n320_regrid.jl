@@ -376,7 +376,7 @@ function process_era5_n320_to_cs_day(date::Date,
         tm5_merged = include_convection ?
             allocate_era5_c180_tm5_convection_fields(target_grid, Nz_int) : nothing
 
-        gravity = FT(GRAV)
+        gravity = FT(STANDARD_GRAVITY)
         # Flux construction (`[preprocessing]` keys; defaults reproduce the
         # historical panel-average fluxes and mass-weighted column balance).
         flux_method = _face_flux_method(settings, target_grid; source = cur_pipe.source_grid.mesh)

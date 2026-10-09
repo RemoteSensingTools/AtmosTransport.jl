@@ -342,7 +342,7 @@ function discover_era5_n320_source_grid(core_path::AbstractString;
                                          FT::Type{<:AbstractFloat} = Float64)
     geom = read_era5_reduced_gaussian_geometry(core_path; FT = FT)
     mesh = ReducedGaussianMesh(geom.latitudes, geom.nlon_per_ring;
-                                FT = FT, radius = FT(R_EARTH))
+                                FT = FT, radius = FT(IFS_EARTH_RADIUS))
     lons_by_ring = [FT.(ring_longitudes(mesh, j)) for j in 1:nrings(mesh)]
     return ReducedGaussianTargetGeometry{FT, typeof(mesh)}(
         mesh,
@@ -882,7 +882,7 @@ end
 
 """
     derive_c180_dry_mass!(m_dry, delp_dry, ps_dry, ps_dry_acc,
-                           ps_panels, qv_panels, vc, cell_areas; grav=GRAV) -> nothing
+                           ps_panels, qv_panels, vc, cell_areas; grav=STANDARD_GRAVITY) -> nothing
 
 Cubed-sphere variant of [`derive_n320_dry_mass!`](@ref). Builds the dry-air
 layer mass, dry pressure thickness, and dry surface pressure for each of
@@ -903,7 +903,7 @@ function derive_c180_dry_mass!(m_dry::NTuple{6, AbstractArray{<:Real, 3}},
                                  qv_panels::NTuple{6, AbstractArray{<:Real, 3}},
                                  vc::HybridSigmaPressure,
                                  cell_areas::AbstractMatrix{<:Real};
-                                 grav::Real = GRAV)
+                                 grav::Real = STANDARD_GRAVITY)
     Nc, _, Nz = size(m_dry[1])
     length(vc.A) == length(vc.B) == Nz + 1 ||
         throw(DimensionMismatch("hybrid A/B length $(length(vc.A))/$(length(vc.B)) ≠ Nz+1 = $(Nz + 1)"))
@@ -954,7 +954,7 @@ function n320_cell_areas(source_grid::ReducedGaussianTargetGeometry)
 end
 
 """
-    derive_n320_dry_mass!(dry, window, vc, cell_areas; grav=GRAV) -> dry
+    derive_n320_dry_mass!(dry, window, vc, cell_areas; grav=STANDARD_GRAVITY) -> dry
 
 Reconstruct dry-air mass per layer, dry pressure thickness, and dry surface
 pressure from a populated `window::ERA5N320WindowFields` (moist PS, Q) using
@@ -971,7 +971,7 @@ function derive_n320_dry_mass!(dry::ERA5N320DryMassFields{FT},
                                 window::ERA5N320WindowFields,
                                 vc::HybridSigmaPressure,
                                 cell_areas::AbstractVector{<:Real};
-                                grav::Real = GRAV) where FT
+                                grav::Real = STANDARD_GRAVITY) where FT
     nc, Nz = size(dry.m_dry)
     size(window.qv) == (nc, Nz) ||
         throw(DimensionMismatch("window.qv $(size(window.qv)) ≠ ($nc, $Nz)"))

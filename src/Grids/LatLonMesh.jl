@@ -108,7 +108,7 @@ function LatLonMesh(;
         size = nothing,
         longitude = (-180, 180),   # [degrees] — determines λᶜ and λᶠ
         latitude  = (-90, 90),     # [degrees] — determines φᶜ and φᶠ
-        radius    = FT(6.371e6))   # [m] — planet radius
+        radius    = FT(EARTH_RADIUS))   # [m] — planet radius
 
     Nx, Ny = _validate_latlon_size(Nx, Ny, size)
     λ_west, λ_east = _validate_interval("longitude", longitude, FT; max_extent=360)

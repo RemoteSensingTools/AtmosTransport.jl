@@ -144,7 +144,7 @@ end
 function ReducedGaussianMesh(latitudes_in::AbstractVector{<:Real},
                              nlon_in::AbstractVector{<:Integer};
                              FT::Type{<:AbstractFloat} = Float64,
-                             radius = FT(6.371e6))
+                             radius = FT(EARTH_RADIUS))
     latitudes, nlon_per_ring = _validate_reduced_gaussian_rings(latitudes_in, nlon_in, FT)
     lat_faces = _latitude_faces(latitudes)
     ring_offsets = _ring_offsets(nlon_per_ring)

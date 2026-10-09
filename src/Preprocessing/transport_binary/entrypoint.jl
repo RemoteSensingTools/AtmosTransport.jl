@@ -185,7 +185,7 @@ function _build_native_vertical_setup(cfg_vertical::AbstractDict,
                 _vertical_float(get(cfg_vertical, "target_min_thickness_Pa", Inf),
                                 "target_min_thickness_Pa"),
             reference_surface_pressure_Pa =
-                _vertical_float(get(cfg_vertical, "reference_surface_pressure_Pa", 101325.0),
+                _vertical_float(get(cfg_vertical, "reference_surface_pressure_Pa", STANDARD_PRESSURE),
                                 "reference_surface_pressure_Pa"))
     elseif transform_name in ("merge_layers_thinner_than", "thin_level_merge")
         MergeLayersThinnerThan(
@@ -194,7 +194,7 @@ function _build_native_vertical_setup(cfg_vertical::AbstractDict,
                                     get(cfg_vertical, "target_min_thickness_Pa", 50.0)),
                                 "min_thickness_Pa"),
             reference_surface_pressure_Pa =
-                _vertical_float(get(cfg_vertical, "reference_surface_pressure_Pa", 101325.0),
+                _vertical_float(get(cfg_vertical, "reference_surface_pressure_Pa", STANDARD_PRESSURE),
                                 "reference_surface_pressure_Pa"))
     else
         error("Unsupported native `[vertical].transform = $(repr(transform_name))`. " *
@@ -234,7 +234,7 @@ function _native_mass_fix_target_kg(cfg::AbstractDict, grid)
             error("native-source [mass_fix].mode=\"target_ps_dry\" requires a grid with cell_areas")
         target_ps_dry_pa = Float64(get(mass_fix_cfg, "target_ps_dry_pa", 98726.0))
         total_area = 6.0 * sum(Float64, grid.mesh.cell_areas)
-        return target_ps_dry_pa * total_area / GRAV
+        return target_ps_dry_pa * total_area / STANDARD_GRAVITY
     elseif mode === :initial_endpoint
         return NaN
     else

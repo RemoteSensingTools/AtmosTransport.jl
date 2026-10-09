@@ -30,6 +30,7 @@ module Fields
 
 using Adapt
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
+using ...Parameters: STANDARD_GRAVITY, CP_DRY_AIR, GEOSCHEM_CONSTANTS, VIRTUAL_TEMPERATURE_FACTOR
 
 export AbstractTimeVaryingField, AbstractCubedSphereField
 export ConstantField, ProfileKzField, PreComputedKzField, CubedSphereField

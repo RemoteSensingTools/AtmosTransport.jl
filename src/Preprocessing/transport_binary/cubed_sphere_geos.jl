@@ -1313,7 +1313,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
                                            Nz_native, Nz)
     npanel = CS_PANEL_COUNT
 
-    g = FT(GRAV)
+    g = FT(STANDARD_GRAVITY)
     inv_g = inv(g)
     cell_areas = grid.mesh.cell_areas
     steps_per_met = round(Int, FT(dt_met_seconds) / FT(settings.mass_flux_dt))

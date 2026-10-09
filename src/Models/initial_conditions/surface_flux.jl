@@ -24,12 +24,12 @@ const SECONDS_PER_MONTH = 365.25 * 86400 / 12
 const _DAYS_PER_MONTH_COMMON = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
 const _DRY_AIR_MOLAR_MASS_KG_MOL = 28.96546e-3
 const _KNOWN_TRACER_MOLAR_MASS_KG_MOL = Dict{Symbol, Float64}(
-    :co2         => 44.0095e-3,
-    :co2_natural => 44.0095e-3,
-    :co2_fossil  => 44.0095e-3,
-    :fossil_co2  => 44.0095e-3,
-    :sf6         => 146.055e-3,
-    :rn222       => 222.0e-3,
+    :co2         => SPECIES_MOLAR_MASS.co2,
+    :co2_natural => SPECIES_MOLAR_MASS.co2,
+    :co2_fossil  => SPECIES_MOLAR_MASS.co2,
+    :fossil_co2  => SPECIES_MOLAR_MASS.co2,
+    :sf6         => SPECIES_MOLAR_MASS.sf6,
+    :rn222       => SPECIES_MOLAR_MASS.rn222,
 )
 
 _is_leap_year(year::Integer) =
@@ -156,12 +156,12 @@ end
 
 # Derive per-cell area `(Nx, Ny)` on a regular lat/lon grid from the
 # coordinate vectors. Uses the spherical-cap formula
-# `R² · Δlon · |sin(φ + Δlat/2) - sin(φ - Δlat/2)|` with R = 6.371e6 m.
+# `R² · Δlon · |sin(φ + Δlat/2) - sin(φ - Δlat/2)|` with R = EARTH_RADIUS.
 # Used by the EDGAR-Tonnes branch when the source file does not carry
 # a `cell_area` or `area` variable.
 function _lonlat_cell_areas_m2(lon::AbstractVector, lat::AbstractVector)
     Nx, Ny = length(lon), length(lat)
-    R = 6.371e6
+    R = EARTH_RADIUS
     # Cell width in radians, assuming uniform spacing. Take it from the full
     # span: coordinates stored in Float32 make the first difference err by
     # ~1e-4 relative, a bias of every cell area.

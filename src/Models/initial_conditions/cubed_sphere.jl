@@ -312,7 +312,6 @@ end
 # ---------------------------------------------------------------------------
 
 const _MOLAR_MASS_AIR_KG_PER_MOL = 0.0289644
-const _AVOGADRO                  = 6.02214076e23
 
 function _build_cs_pressure_layer_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                                       grid::AtmosGrid{<:CubedSphereMesh},
@@ -388,7 +387,7 @@ function _build_cs_pressure_layer_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}}
     #   molecules_per_cell = VMR × N_A × dry_mass_per_cell / M_air
     #   total_molecules    = VMR × N_A × Σ dry_mass / M_air
     vmr_value = FT(total_molecules * _MOLAR_MASS_AIR_KG_PER_MOL /
-                   (_AVOGADRO * total_dry_mass))
+                   (AVOGADRO * total_dry_mass))
 
     # Build the VMR panels (interior-shaped `(Nc, Nc, Nz)`): zero except
     # in the chosen layer per column.

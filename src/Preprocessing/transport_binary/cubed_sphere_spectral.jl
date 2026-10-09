@@ -98,7 +98,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     vc_merged = vertical.merged_vc
     A_ifc = Float64.(vc_merged.A)
     B_ifc = Float64.(vc_merged.B)
-    gravity = FT(GRAV)
+    gravity = FT(STANDARD_GRAVITY)
     steps_per_met = exact_steps_per_window(settings.met_interval, settings.dt)
     dt_factor = FT(settings.met_interval / (2 * steps_per_met))
     Δx = grid.mesh.Δx

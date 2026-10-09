@@ -131,7 +131,7 @@ function build_target_geometry(::Val{:latlon}, cfg_grid, ::Type{FT}) where FT <:
                       size=(Int(cfg_grid["nlon"]), Int(cfg_grid["nlat"])),
                       longitude=get(cfg_grid, "longitude", (-180, 180)),
                       latitude=get(cfg_grid, "latitude", (-90, 90)),
-                      radius=FT(R_EARTH))
+                      radius=FT(IFS_EARTH_RADIUS))
     return LatLonTargetGeometry{FT, typeof(mesh)}(
         mesh,
         copy(mesh.λᶜ),
@@ -168,7 +168,7 @@ function build_target_geometry(::Val{:era5_native_reduced_gaussian}, cfg_grid, :
                                                date=date,
                                                time=time)
     mesh = read_era5_reduced_gaussian_mesh(geometry_source; FT=FT,
-                                           radius=FT(R_EARTH),
+                                           radius=FT(IFS_EARTH_RADIUS),
                                            param_id=param_id,
                                            level=level,
                                            date=date,
@@ -230,7 +230,7 @@ function build_target_geometry(::Val{:synthetic_reduced_gaussian},
               "(use \"regular\" or \"octahedral\")")
     end
 
-    mesh = ReducedGaussianMesh(lat_deg, nlon_per_ring; FT=FT, radius=FT(R_EARTH))
+    mesh = ReducedGaussianMesh(lat_deg, nlon_per_ring; FT=FT, radius=FT(IFS_EARTH_RADIUS))
     lons_by_ring = [FT.(ring_longitudes(mesh, j)) for j in 1:nrings(mesh)]
 
     return ReducedGaussianTargetGeometry{FT, typeof(mesh)}(
@@ -367,7 +367,7 @@ function build_target_geometry(::Val{:cubed_sphere}, cfg_grid, ::Type{FT}) where
     definition = haskey(cfg_grid, "definition") ?
         _parse_cs_definition(cfg_grid["definition"], convention) :
         nothing
-    mesh = CubedSphereMesh(; Nc=Nc, FT=FT, radius=FT(R_EARTH),
+    mesh = CubedSphereMesh(; Nc=Nc, FT=FT, radius=FT(IFS_EARTH_RADIUS),
                             convention=convention, definition=definition)
 
     conn = mesh.connectivity

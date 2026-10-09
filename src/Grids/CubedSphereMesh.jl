@@ -207,8 +207,8 @@ GMAOCubedSphereDefinition(;
                            tag = :gmao_equal_distance)
 
 """
-    GEOSIT_C180(; FT=Float64, Hp=1, radius=6.371e6)
-    GEOSFP_C720(; FT=Float64, Hp=1, radius=6.371e6)
+    GEOSIT_C180(; FT=Float64, Hp=1, radius=EARTH_RADIUS)
+    GEOSFP_C720(; FT=Float64, Hp=1, radius=EARTH_RADIUS)
 
 Convenience constructors for the two native GMAO cubed-sphere targets used for
 GEOS-IT and GEOS-FP comparisons.
@@ -384,7 +384,7 @@ function _validate_cubed_sphere_size(Nc::Integer)
 end
 
 """
-    CubedSphereMesh(; Nc, FT=Float64, Hp=1, radius=6.371e6,
+    CubedSphereMesh(; Nc, FT=Float64, Hp=1, radius=EARTH_RADIUS,
                       convention=nothing, definition=nothing)
 
 Construct a cubed-sphere mesh with `Nc` cells per panel edge.
@@ -410,7 +410,7 @@ the GEOS-native panel convention is requested.
 function CubedSphereMesh(; FT::Type{<:AbstractFloat} = Float64,
                            Nc::Int,
                            Hp::Int = 1,
-                           radius = FT(6.371e6),
+                           radius = FT(EARTH_RADIUS),
                            convention = nothing,
                            definition = nothing)
     Nc = _validate_cubed_sphere_size(Nc)

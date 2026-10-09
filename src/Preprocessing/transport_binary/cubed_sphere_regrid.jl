@@ -185,7 +185,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     end
     src_dt_factor = FT(met_interval / (2 * src_steps_per_met))
     out_dt_factor = FT(met_interval / (2 * steps_per_met))
-    gravity = FT(GRAV)
+    gravity = FT(STANDARD_GRAVITY)
 
     @info @sprintf("  LL source: %s (%d×%d×%d, %d windows)",
                    basename(ll_binary_path), Nx_ll, Ny_ll, Nz, Nt)
@@ -197,7 +197,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                           size=(Nx_ll, Ny_ll),
                           longitude=(-180, 180),
                           latitude=(-90, 90),
-                          radius=FT(R_EARTH))
+                          radius=FT(IFS_EARTH_RADIUS))
     ll_lats = FT.(ll_mesh.φᶜ)
     Δy_ll = FT(ll_mesh.radius * deg2rad(ll_mesh.Δφ))
     Δlon_ll = FT(deg2rad(ll_mesh.Δλ))

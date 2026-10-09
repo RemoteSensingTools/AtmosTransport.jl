@@ -139,7 +139,7 @@ end
 # stratospheric T < 180 K is fine: `dz` just gets a little smaller, which
 # is the correct hydrostatic answer at that altitude.
 @inline _virtual_T_factor(qv::T) where {T<:Real} =
-    one(T) + T(0.61) * max(qv, zero(T))
+    one(T) + T(VIRTUAL_TEMPERATURE_FACTOR) * max(qv, zero(T))
 
 @kernel function _dz_hydrostatic_virtualT_3d_kernel!(dz, @Const(t_lyr),
                                                      @Const(qv_lyr),

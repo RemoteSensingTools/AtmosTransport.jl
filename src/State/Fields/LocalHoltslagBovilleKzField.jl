@@ -104,7 +104,7 @@ end
 @inline _local_hb_eltype(::LocalHoltslagBovilleKzField{FT}) where FT = FT
 
 @inline function _virtual_temperature(t, qv, ::Type{FT}) where FT
-    return max(FT(t), FT(180)) * (one(FT) + FT(0.61) * max(FT(qv), zero(FT)))
+    return max(FT(t), FT(180)) * (one(FT) + FT(VIRTUAL_TEMPERATURE_FACTOR) * max(FT(qv), zero(FT)))
 end
 
 @inline function _potential_temperature(tv, p_mid, ::PBLPhysicsParameters{FT}) where FT

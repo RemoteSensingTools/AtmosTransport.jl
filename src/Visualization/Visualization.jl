@@ -17,8 +17,8 @@ using Statistics: quantile
 using ..Grids: LatLonMesh, CubedSphereMesh,
                GnomonicPanelConvention, GEOSNativePanelConvention
 using ..Regridding: build_regridder, apply_regridder!
+using ..Parameters: IFS_EARTH_RADIUS
 
-const R_EARTH_M = 6.371229e6
 
 abstract type AbstractSnapshotTopology end
 
@@ -401,7 +401,7 @@ function _target_lonlat_mesh(resolution::Tuple{Int, Int})
     mesh = LatLonMesh(; FT=Float64, Nx=Nx, Ny=Ny,
                       longitude=(-180.0, 180.0),
                       latitude=(-90.0, 90.0),
-                      radius=R_EARTH_M)
+                      radius=IFS_EARTH_RADIUS)
     return mesh, Float64.(mesh.λᶜ), Float64.(mesh.φᶜ)
 end
 
@@ -420,7 +420,7 @@ function _cs_to_ll_cache!(cache::SnapshotRegridCache,
         convention = _cs_panel_convention(topology.panel_convention)
         cs_mesh = CubedSphereMesh(; FT=Float64,
                                   Nc=topology.Nc,
-                                  radius=R_EARTH_M,
+                                  radius=IFS_EARTH_RADIUS,
                                   convention=convention)
         regridder = build_regridder(cs_mesh, ll_mesh; normalize=false)
         cache.entries[key] = (; regridder, lons, lats)

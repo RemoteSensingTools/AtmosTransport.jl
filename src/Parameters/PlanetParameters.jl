@@ -27,9 +27,9 @@ function PlanetParameters(radius::Real, gravity::Real, reference_pressure::Real)
 end
 
 function PlanetParameters(; FT::Type{<:AbstractFloat} = Float64,
-                          radius = FT(6.371e6),
-                          gravity = FT(9.80665),
-                          reference_pressure = FT(101325.0))
+                          radius = FT(EARTH_RADIUS),
+                          gravity = FT(STANDARD_GRAVITY),
+                          reference_pressure = FT(STANDARD_PRESSURE))
     return PlanetParameters{FT}(FT(radius), FT(gravity), FT(reference_pressure))
 end
 

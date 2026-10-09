@@ -45,6 +45,7 @@ using Dates
 using ..Models: _config_bool
 
 import ...expand_data_path
+using ...Parameters: AVOGADRO, EARTH_RADIUS, SPECIES_MOLAR_MASS, STANDARD_PRESSURE
 using ..State: AbstractMassBasis, DryBasis, MoistBasis
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                 nrings, ring_longitudes, cell_index, cell_area,
@@ -301,7 +302,7 @@ function _load_file_initial_condition_source(cfg, ::Type{FT}, Nz_target::Integer
         has_hybrid = haskey(ds, "ap") && haskey(ds, "bp") && haskey(ds, "Psurf")
         ap = has_hybrid ? Float64.(ds["ap"][:]) : Float64[]
         bp = has_hybrid ? Float64.(ds["bp"][:]) : Float64[]
-        psurf = has_hybrid ? Float64.(nomissing(ds["Psurf"][:, :], 101325.0)) : zeros(Float64, 0, 0)
+        psurf = has_hybrid ? Float64.(nomissing(ds["Psurf"][:, :], STANDARD_PRESSURE)) : zeros(Float64, 0, 0)
 
         if length(lat_src) > 1 && lat_src[1] > lat_src[end]
             raw = raw[:, end:-1:1, :]

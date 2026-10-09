@@ -350,12 +350,12 @@ windows_per_day(::MERRA2Settings, ::Date) = 8
 
 The native MERRA-2 source mesh (576 × 361, -180..180 lon, -90..90 lat). The
 preprocessor builds its own regridder against the *target* mesh radius; this
-descriptor uses `R_EARTH` and is provided for the canonical trait surface.
+descriptor uses `IFS_EARTH_RADIUS` and is provided for the canonical trait surface.
 """
 source_grid(::MERRA2Settings; FT::Type{<:AbstractFloat} = Float64) =
     LatLonMesh(; FT = FT, Nx = MERRA2_NX, Ny = MERRA2_NY,
                 longitude = (-180, 180), latitude = (-90, 90),
-                radius = FT(R_EARTH))
+                radius = FT(IFS_EARTH_RADIUS))
 
 # VDIFF output needs the PBL surface fields too (the Holtslag-Boville closure
 # reads PBLH/USTAR/HFLUX/T2M), so it implies the surface sections.

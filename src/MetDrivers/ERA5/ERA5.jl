@@ -7,6 +7,7 @@ module ERA5
 
 using ...Grids: ReducedGaussianMesh, b_diff
 using ...Architectures: _kahan_add
+using ...Parameters: EARTH_RADIUS
 
 include("NativeGRIBGeometry.jl")
 include("VerticalClosure.jl")

@@ -609,7 +609,6 @@ end
 # ---------------------------------------------------------------------------
 
 const _R_DRY_AIR    = 287.058  # J / (kg · K)
-const _G_GRAVITY    = 9.80665  # m / s²
 const _EPSILON_MV   = 0.608    # (Mv - Md) / Md
 
 """
@@ -653,7 +652,7 @@ function dz_hydrostatic_virtual!(dz::AbstractVector{FT},
     length(bk) == Nz + 1 || throw(ArgumentError("bk length $(length(bk)) != Nz+1=$(Nz+1)"))
 
     ps_ft = FT(ps)
-    R_over_g = FT(_R_DRY_AIR / _G_GRAVITY)
+    R_over_g = FT(_R_DRY_AIR / STANDARD_GRAVITY)
     eps_mv   = FT(_EPSILON_MV)
 
     @inbounds for k in 1:Nz
@@ -692,7 +691,7 @@ function dz_hydrostatic_constT!(dz::AbstractVector{FT},
     length(bk) == Nz + 1 || throw(ArgumentError("bk length $(length(bk)) != Nz+1=$(Nz+1)"))
 
     ps_ft    = FT(ps)
-    R_over_g = FT(_R_DRY_AIR / _G_GRAVITY)
+    R_over_g = FT(_R_DRY_AIR / STANDARD_GRAVITY)
     T_ft     = FT(T_ref)
 
     @inbounds for k in 1:Nz

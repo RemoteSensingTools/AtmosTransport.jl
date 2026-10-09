@@ -435,7 +435,7 @@ end
 _pin_endpoint_mass!(::Nothing, _grid, _m_dry, _ps_dry) = nothing
 function _pin_endpoint_mass!(target::Float64, grid, m_dry, ps_dry)
     areas = grid.mesh.cell_areas
-    g = eltype(areas)(GRAV)
+    g = eltype(areas)(STANDARD_GRAVITY)
     _pin_cs_global_air_mass!(m_dry, areas, g, target)
     for p in 1:6
         _ps_from_air_mass!(ps_dry[p], m_dry[p], areas, g, size(areas, 1), size(m_dry[p], 3))
@@ -492,7 +492,7 @@ _flux_thickness(kind::Symbol) = (moist = MoistFluxThickness(), dry_mass = DryMas
 _fill_flux_thickness!(::MoistFluxThickness, x, ps_moist, m_a, vc, mesh, Nc, Nz) =
     fill_cs_layer_thickness!(x.dp, ps_moist, vc.A, vc.B, Nc, Nz)
 function _fill_flux_thickness!(::DryMassFluxThickness, x, ps_moist, m_a, vc, mesh, Nc, Nz)
-    g, areas = eltype(x.dp[1])(GRAV), mesh.cell_areas
+    g, areas = eltype(x.dp[1])(STANDARD_GRAVITY), mesh.cell_areas
     @inbounds for p in 1:6, k in 1:Nz, j in 1:Nc, i in 1:Nc
         x.dp[p][i, j, k] = g * m_a[p][i, j, k] / areas[i, j]
     end
@@ -511,7 +511,7 @@ function _balance_window!(d::MERRA2DayDriver, ps_moist, m_a, m_b, steps)
     FT = eltype(m_a[1])
     Nc, Nz = d.grid.Nc, size(m_a[1], 3)
     _reconstruct_window_fluxes!(d.flux, x, ps_moist, m_a, vc, mesh,
-                                FT(GRAV), FT(d.dt_window / (2 * steps)), Nc, Nz)
+                                FT(STANDARD_GRAVITY), FT(d.dt_window / (2 * steps)), Nc, Nz)
     g, tol, project_every = d.grid, d.balance.tol, d.balance.project_every
     diag = if d.balance.global_solve     # per-level solve (diagnostic option)
         balance_cs_global_mass_fluxes!(x.am, x.bm, m_a, m_b, g.face_table, g.cell_degree,
@@ -715,7 +715,7 @@ function process_merra2_to_cs_day(date::Date,
                    string(date), target_grid.Nc, Nz, string(FT), String(settings.winds_collection), nsub)
     mass_target === nothing ||
         @info @sprintf("  Global dry-mass pin ON: target=%.9e kg (%.3f Pa dry ⟨ps⟩)", mass_target,
-                       mass_target * GRAV / (6 * sum(Float64, target_grid.mesh.cell_areas)))
+                       mass_target * STANDARD_GRAVITY / (6 * sum(Float64, target_grid.mesh.cell_areas)))
 
     global_solve = horizontal_poisson_balance_enabled()
     global_solve && settings.column_balance_weights !== :mass && throw(ArgumentError(
