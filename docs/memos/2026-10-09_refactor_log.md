@@ -629,6 +629,41 @@ default PPM 21.3 and 22.8 s in two runs, while its other two took 51 and
 66 s (a cold start and a load spike). CW84 costs roughly 5–10 % of transport
 time.
 
+### MERRA-2 default: five advection variants against GCHP
+
+The owner asked for a MERRA-2 default (advection, diffusion, convection) that
+best aligns with GCHP, keeping the other options for transport-uncertainty
+estimates (GCHP is a benchmark, not the truth). All five runs use the
+GCHP-like flux construction (`hm_gchp` binaries), GEOS-Chem's VDIFF and
+CMFMC/DQRCU physics, Float32 and the GCHP initial state, December 2021 to
+March 2022 (`/temp1/cfranken/catrine_protocol/compare_c90_merra2_advection5`).
+Bias / RMSE in % of the GCHP mean:
+
+| band | default PPM | CW84 | PPM + FV3 vertical | CW84 + FV3 vertical | Lin–Rood 7 + FV3 vertical |
+|---|---|---|---|---|---|
+| fossil, surface–910 hPa | −0.43 / 2.72 | −0.56 / 2.88 | −0.31 / 2.66 | −0.37 / 2.72 | −0.30 / 3.52 |
+| fossil, 910–400 hPa | −0.81 / 1.85 | −0.84 / 1.84 | −0.71 / 1.77 | −0.68 / 1.72 | −0.69 / 1.82 |
+| fossil, 400–100 hPa | +0.09 / 0.74 | +0.17 / 1.01 | −0.26 / 0.98 | −0.30 / 1.06 | −0.38 / 1.28 |
+| fossil, above 100 hPa | +0.41 / 1.87 | +4.44 / 5.80 | −1.53 / 1.98 | −2.10 / 2.60 | +0.67 / 1.27 |
+| Rn-222, surface–910 hPa | +0.02 / 4.21 | −0.57 / 4.39 | −0.11 / 3.94 | −0.28 / 4.07 | +0.04 / 4.34 |
+| Rn-222, 910–400 hPa | −1.77 / 5.13 | −1.41 / 4.81 | −1.67 / 4.98 | −1.53 / 4.89 | −1.91 / 5.26 |
+| Rn-222, above 100 hPa | −10.7 / 38.4 | +18.1 / 21.3 | −4.8 / 9.8 | −6.0 / 11.9 | −1.3 / 4.6 |
+| negative `co2_fossil_from_dec2021` cells, 2022-03-31 | 18 % | 0 % | 5 % | 0 % | 22 % |
+
+Columns, CO₂ and SF₆ agree within 0.05 % for all five. PPM with the FV3
+vertical profile has the smallest RMSE between the surface and 910 hPa and is
+within 0.2 RMSE percentage points of the best between 910 and 400 hPa; it is
+the configuration of the two-year production runs. CW84 with the FV3
+vertical profile costs 0.06–0.13 RMSE points near the surface and nearly
+removes negative values: 10 % of `co2_fossil_from_dec2021` cells are slightly
+negative after one week (minimum −5e-9, negative mass −4e-8 of the positive
+mass), 0.6 % in mid-January (negative mass below 1e-25), none at the end of
+March. Lin–Rood ORD 7 (GCHP's horizontal scheme family) matches the
+stratosphere best but has the largest fossil RMSE near the surface.
+`config/runs/catrine_protocol/catrine_c90_merra2_l72_protocol.toml`, which
+still used the older binaries and default PPM, now uses the `hm_gchp`
+binaries and the FV3 vertical profile, with these numbers in its header.
+
 ### Quick fixes (one commit each, Codex-reviewed in two rounds)
 
 - `[mass_fix] mode = "initial_endpoint"` is refused outside the GEOS native

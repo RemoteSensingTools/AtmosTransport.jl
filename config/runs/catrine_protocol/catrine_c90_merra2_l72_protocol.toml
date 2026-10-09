@@ -8,10 +8,25 @@
 # mixing with counter-gradient transport of fresh emissions). Tracers, fluxes and
 # initial states follow the protocol run; co2_fossil_from_dec2021 adds GridFED
 # from 2021-12-01 without the 2022-01-01 reset, as in the GEOS-Chem run.
-# Binaries: config/preprocessing/merra2_geoschem_c90_l72_f32.toml.
+#
+# Transport choices aligned with GCHP (a benchmark, not the truth; the other
+# options remain for transport-uncertainty estimates). Binaries use the
+# GCHP-like flux construction (config/preprocessing/merra2_geoschem_c90_l72_f32_hm_gchp.toml);
+# advection is PPM horizontally with FV3's kord = 8 vertical profile. In the
+# December 2021 - March 2022 comparison with GCHP (Float32, GCHP initial state;
+# docs/memos/2026-10-09_refactor_log.md), this combination had the smallest
+# fossil CO2 and Rn-222 RMSE between the surface and 910 hPa, and was within
+# 0.2 RMSE percentage points of the best between 910 and 400 hPa, among:
+# default PPM, CW84 PPM, PPM + FV3 vertical, CW84 + FV3 vertical, and Lin-Rood
+# ORD 7 + FV3 vertical.
+# Alternatives: `limiter = "cw84"` nearly removes negative values (negative
+# mass below 1e-22 of the positive mass on 2022-01-15 and 2022-03-31, every
+# tracer) at +0.06 to +0.13 RMSE percentage points below 910 hPa; Lin-Rood
+# ORD 7 matches GCHP best above 100 hPa but has the largest fossil RMSE near
+# the surface. Column means agree within 0.05 % for all of them.
 
 [input]
-folder       = "~/data/AtmosTransport/met/merra2/c90/transport_binary_v4_l72_f32_physics"
+folder       = "~/data/AtmosTransport/met/merra2/c90/transport_binary_v4_l72_f32_physics_hm_gchp"
 start_date   = "2021-12-01"
 end_date     = "2023-12-31"
 file_pattern = "merra2_transport_{YYYYMMDD}_float32.bin"
@@ -29,6 +44,7 @@ float_type = "Float64"
 
 [advection]
 scheme = "ppm"
+vertical = "fv3_kord8"               # FV3 scalar_profile, kord = 8 (GCHP's tracer profile)
 
 [tracers.co2_natural]
   [tracers.co2_natural.init]
