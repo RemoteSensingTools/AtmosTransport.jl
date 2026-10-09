@@ -267,6 +267,10 @@ ppm_order = 7                   # cubed-sphere LinRoodPPM only; ∈ {5, 7}.
                                 # positive definite, the GCHP tracer profile)
                                 # | "fv3_kord8_signed" (for tracers that go
                                 # negative); FV3 options are cubed sphere only
+# limiter = "cw84"              # scheme = "ppm" only: "monotone" (default) |
+                                # "cw84" (complete Colella–Woodward PPM; keeps
+                                # tracers non-negative in sweeps where no cell
+                                # exports more than its air mass)
 
 [diffusion]
 kind  = "constant"              # "none" | "constant" |

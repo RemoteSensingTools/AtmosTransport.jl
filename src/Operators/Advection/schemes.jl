@@ -122,6 +122,7 @@ Available limiters:
 - [`NoLimiter`](@ref): unlimited centered slopes (second-order, may oscillate)
 - [`MonotoneLimiter`](@ref): van Leer minmod (monotone, TVD)
 - [`PositivityLimiter`](@ref): ensures non-negative face values
+- [`CW84Limiter`](@ref): the complete Colella–Woodward PPM (`PPMScheme` only)
 
 See `limiters.jl` for the `@inline` implementations.
 """
@@ -164,6 +165,31 @@ Weaker than `MonotoneLimiter` but sufficient for species that must
 remain positive (e.g., tracer mixing ratios).
 """
 struct PositivityLimiter <: AbstractLimiter end
+
+"""
+    CW84Limiter <: AbstractLimiter
+
+The complete Colella & Woodward (1984) PPM, for [`PPMScheme`](@ref) only.
+
+Three changes from `PPMScheme(MonotoneLimiter())`:
+
+1. Edge values use van Leer-limited slopes (CW84 eqs. 1.7–1.8),
+   ``χ_{i+1/2} = (χ_i + χ_{i+1})/2 - (δχ_{i+1} - δχ_i)/6`` with
+   ``δχ_i = \\text{minmod}((χ_{i+1} - χ_{i-1})/2, 2(χ_{i+1} - χ_i), 2(χ_i - χ_{i-1}))``,
+   so each edge lies between its two neighbouring cell means. In smooth
+   regions this is the fourth-order edge of the default.
+2. The profile is limited with the same monotonicity conditions (eq. 1.10).
+3. The face flux integrates the donor parabola over the swept fraction
+   (eq. 1.12) instead of using the outflow edge as a linear slope.
+
+Every limited parabola lies between neighbouring cell means, so a sweep keeps
+a non-negative tracer non-negative as long as no cell exports more than its
+air mass (the fractions swept out through its two faces sum to at most 1). In
+uniform one-dimensional flow with Courant number up to 1 the scheme is
+monotone. The stencil is the same six cells as the default, so halo widths do
+not change.
+"""
+struct CW84Limiter <: AbstractLimiter end
 
 # ---- Concrete schemes ----------------------------------------------------
 
@@ -266,6 +292,8 @@ struct SlopesScheme{L <: AbstractLimiter} <: AbstractLinearScheme
     limiter::L
 end
 SlopesScheme() = SlopesScheme(MonotoneLimiter())
+SlopesScheme(::CW84Limiter) = throw(ArgumentError(
+    "CW84Limiter selects the complete Colella–Woodward PPM; use PPMScheme(CW84Limiter())."))
 
 # ---- Vertical reconstruction of the PPM scheme ---------------------------
 
@@ -329,21 +357,26 @@ FV3ScalarProfile(; positive_definite::Bool = true) = FV3ScalarProfile{positive_d
 Piecewise Parabolic Method (Colella & Woodward 1984; Putman & Lin 2007).
 
 Reconstructs a parabolic subcell profile constrained by the cell mean and
-limited edge values. In every sweep that uses the shared face flux, the limited
-edge only sets a linear slope toward the outflow face (Russell–Lerner form), so
-the update is second order with a PPM-informed slope.
+limited edge values. With the default limiter, in every sweep that uses the
+shared face flux, the limited edge only sets a linear slope toward the outflow
+face (Russell–Lerner form), so the update is second order with a PPM-informed
+slope; it is not monotone. With [`CW84Limiter`](@ref) the edges are van
+Leer-limited and the flux integrates the parabola over the swept fraction: the
+complete Colella–Woodward scheme, which keeps non-negative tracers
+non-negative in every sweep in which no cell exports more than its air mass.
 
 Implemented for structured latitude-longitude and cubed-sphere grids. The TOML
-runner selects the monotone variant with `scheme = "ppm"`; it does not accept
-`ppm_order` for this scheme. Reduced-Gaussian face-indexed transport does not
-support PPM.
+runner selects the monotone variant with `scheme = "ppm"` and the complete
+CW84 scheme with `limiter = "cw84"`; it does not accept `ppm_order` for this
+scheme. Reduced-Gaussian face-indexed transport does not support PPM.
 
 Kernel tests and real-input V100 conservation/performance experiments cover
 this path. These do not establish full-model TM5/GCHP parity or positivity of
 the complete cubed-sphere update: small negative column means have been observed.
 
 # Fields
-- `limiter::L` — parabolic profile limiting policy (default: `MonotoneLimiter()`)
+- `limiter::L` — parabolic profile limiting policy (default: `MonotoneLimiter()`;
+  `CW84Limiter()` for the complete Colella–Woodward scheme)
 - `vertical::V` — vertical reconstruction: [`SameAsHorizontal`](@ref) (default)
   or [`FV3ScalarProfile`](@ref) (cubed sphere; TOML `vertical = "fv3_kord8"`, or
   `"fv3_kord8_signed"` for signed tracers)
@@ -351,6 +384,7 @@ the complete cubed-sphere update: small negative column means have been observed
 # Example
 ```julia
 PPMScheme()                                    # monotone-limited PPM
+PPMScheme(CW84Limiter())                       # complete CW84 PPM
 PPMScheme(NoLimiter())                         # unlimited (may oscillate)
 PPMScheme(; vertical = FV3ScalarProfile())     # FV3 kord = 8 vertical profile
 ```
@@ -457,7 +491,7 @@ multi-tracer kernel fusion.
 
 export AbstractAdvectionScheme
 export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
-export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter
+export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter, CW84Limiter
 export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme, NoAdvection
 export AbstractVerticalReconstruction, SameAsHorizontal, FV3ScalarProfile
 export reconstruction_order, required_halo_width

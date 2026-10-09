@@ -139,6 +139,6 @@ pin; items A1 and A11 of `docs/memos/2026-10-09_refactor_log.md`).
 
 Add a `[[case]]` to `cases.toml` with a config template in `configs/`
 (`@OUTPUT@`, `@CASE:<name>@` and `@REPO@` are filled; each `set` key must
-exist in the template), record it into the reference with
+exist in the template, each `add` key must not), record it into the reference with
 `record <ref> --cases=<name>`, and run `check <ref> <new> --cases=<name>` to
 confirm it is reproducible.

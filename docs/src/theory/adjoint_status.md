@@ -44,7 +44,7 @@ The adjoint supports the following advection schemes (full union in
 - `UpwindScheme()`
 - `SlopesScheme(NoLimiter())`
 - `PPMScheme(NoLimiter())`
-- `PPMScheme(MonotoneLimiter())` — via a stored tracer-branch tape around the base trajectory
+- `PPMScheme(MonotoneLimiter())` and `PPMScheme(CW84Limiter())` — via a stored tracer-branch tape around the base trajectory
 - `LinRoodPPMScheme(; ppm_order = 5)`
 - `LinRoodPPMScheme(; ppm_order = 7)`
 

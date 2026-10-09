@@ -92,6 +92,14 @@
 
 ### Runtime and output
 
+- New PPM option `[advection] limiter = "cw84"` (`PPMScheme(CW84Limiter())`):
+  the complete Colella–Woodward (1984) PPM, with van Leer-limited edge values
+  and a flux that integrates the limited parabola over the swept fraction.
+  Every sweep in which no cell exports more than its air mass keeps
+  non-negative tracers such as fossil CO₂ non-negative, where the default PPM
+  undershoots (−0.16 on a [0, 1] box in a 1-D test). Lat-lon and cubed
+  sphere, CPU and GPU, with the cubed-sphere adjoint. The default
+  `scheme = "ppm"` is unchanged.
 - Runs and preprocessing from `git archive` code snapshots record their commit:
   git writes it into `src/REVISION` on export (`export-subst`), and
   `source_revision()` reports it when the tree has no `.git`; edits made after

@@ -5,7 +5,8 @@
 #
 # Config templates (configs/) may use @OUTPUT@ (this case's directory),
 # @CASE:<name>@ (the directory of case <name>; in a check, the reference's) and
-# @REPO@; `set` overrides "section.key" entries of the template.
+# @REPO@; `set` overrides "section.key" entries of the template and `add` adds
+# entries the template does not have (in an existing section).
 # Tags: "preprocess" or "run"; the grid (latlon, reduced_gaussian, cubed_sphere); the
 # backend (cpu, gpu); the met source (merra2, era5); "multiday"; "slow" (several
 # minutes or more); and "known_failure" (skipped by default; see README.md).
@@ -183,3 +184,26 @@ kind   = "run"
 config = "configs/run_c90_era5_tm5.toml"
 tags   = ["run", "cubed_sphere", "gpu", "era5"]
 set    = {"diffusion.kind" = "tm5_beljaars_viterbo_local_kz"}
+
+[[case]]
+name   = "run_ll72_ppm_cw84_cpu_f64"
+kind   = "run"
+config = "configs/run_spectral_grid.toml"
+tags   = ["run", "latlon", "cpu"]
+set    = {"input.binary_paths" = ["@CASE:pre_ll72@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "ppm"}
+add    = {"advection.limiter" = "cw84"}
+
+[[case]]
+name   = "run_c24_ppm_cw84_cpu_f64"
+kind   = "run"
+config = "configs/run_spectral_grid.toml"
+tags   = ["run", "cubed_sphere", "cpu"]
+set    = {"input.binary_paths" = ["@CASE:pre_c24@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "ppm"}
+add    = {"advection.limiter" = "cw84"}
+
+[[case]]
+name   = "run_c90_merra2_cw84_gpu_f32"
+kind   = "run"
+config = "configs/run_c90_merra2.toml"
+tags   = ["run", "cubed_sphere", "gpu", "merra2"]
+add    = {"advection.limiter" = "cw84"}

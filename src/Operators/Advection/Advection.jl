@@ -10,7 +10,7 @@ Provides:
 - `SlopesScheme <: AbstractLinearScheme`   — van Leer slopes (limiter-dispatched)
 - `PPMScheme <: AbstractQuadraticScheme`   — structured-grid PPM (not yet an official real-data reference path)
 - `LinRoodPPMScheme <: AbstractAdvectionScheme` — cubed-sphere FV3/Lin-Rood PPM path
-- `AbstractLimiter` subtypes: `NoLimiter`, `MonotoneLimiter`, `PositivityLimiter`
+- `AbstractLimiter` subtypes: `NoLimiter`, `MonotoneLimiter`, `PositivityLimiter`, `CW84Limiter` (PPM only)
 
 **Multi-tracer optimization**:
 - `TracerView` — zero-cost 3D slice adapter for 4D tracer arrays

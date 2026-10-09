@@ -31,7 +31,8 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
 - Scheme support unions in [`Adjoints.jl`](Adjoints.jl):
   `CSAdjointLinearScheme` (`UpwindScheme`, `SlopesScheme{NoLimiter}`,
   `PPMScheme{NoLimiter, SameAsHorizontal}`), `CSAdjointNonlinearScheme`
-  (`PPMScheme{MonotoneLimiter, SameAsHorizontal}`), `CSAdjointLinRoodScheme`
+  (`PPMScheme{MonotoneLimiter}` and `PPMScheme{CW84Limiter}`, both with
+  `SameAsHorizontal`), `CSAdjointLinRoodScheme`
   (`LinRoodPPMScheme{<:Any, UpwindScheme}`), and their union
   `CSAdjointSupportedScheme`. The FV3 vertical profile is not supported.
 - `CSAdjointWorkspace(mesh, prototype)` in [`Adjoints.jl`](Adjoints.jl):

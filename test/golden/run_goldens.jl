@@ -51,10 +51,11 @@ function case_config(case, out, inputs)
     subst(v::AbstractVector) = map(subst, v)
     subst(x) = x
     cfg = TOML.parse(subst(read(joinpath(@__DIR__, case["config"]), String)))
-    for (path, value) in get(case, "set", Dict())
+    for (field, present) in (("set", true), ("add", false)), (path, value) in get(case, field, Dict())
         sections..., key = split(path, ".")
         table = foldl((t, s) -> t[s], sections; init = cfg)
-        haskey(table, key) || error("case $(case["name"]): `set` key $path is not in $(case["config"])")
+        haskey(table, key) == present || error("case $(case["name"]): `$field` key $path is " *
+                                               (present ? "not" : "already") * " in $(case["config"])")
         table[key] = subst(value)
     end
     text = sprint(TOML.print, cfg)

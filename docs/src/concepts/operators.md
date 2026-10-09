@@ -93,9 +93,11 @@ the complete transport update. See [Advection schemes](@ref) for the boundary
 treatment and [Validation status](@ref) for measured scheme coverage.
 
 Limiter parameter `L` ranges over `NoLimiter`, `MonotoneLimiter`,
-`PositivityLimiter` — declared in the same file. `PPMScheme()` defaults
-to `MonotoneLimiter()`. The default limiter is signed and constant-offset
-equivariant; only `PositivityLimiter` uses tracer zero as a bound.
+`PositivityLimiter` and, for `PPMScheme` only, `CW84Limiter` (the complete
+Colella–Woodward PPM) — declared in the same file. `PPMScheme()` defaults
+to `MonotoneLimiter()`. The monotone and CW84 limiters are signed and
+constant-offset equivariant; only `PositivityLimiter` uses tracer zero as a
+bound.
 
 **TOML config** (preferred form):
 

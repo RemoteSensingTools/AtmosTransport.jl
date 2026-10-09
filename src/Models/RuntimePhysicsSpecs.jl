@@ -174,10 +174,12 @@ abstract type AbstractAdvectionSpec end
 
 struct UpwindAdvectionSpec <: AbstractAdvectionSpec end
 struct SlopesAdvectionSpec <: AbstractAdvectionSpec end
-struct PPMAdvectionSpec{V <: AbstractVerticalReconstruction} <: AbstractAdvectionSpec
+struct PPMAdvectionSpec{L <: AbstractLimiter, V <: AbstractVerticalReconstruction} <: AbstractAdvectionSpec
+    limiter  :: L
     vertical :: V
 end
-PPMAdvectionSpec() = PPMAdvectionSpec(SameAsHorizontal())
+PPMAdvectionSpec(vertical::AbstractVerticalReconstruction = SameAsHorizontal()) =
+    PPMAdvectionSpec(MonotoneLimiter(), vertical)
 struct NoAdvectionSpec     <: AbstractAdvectionSpec end
 
 # Lin–Rood is cubed-sphere only. `order` selects its PPM edge-value family,
@@ -214,6 +216,19 @@ function _parse_vertical_reconstruction(section)
     return _VERTICAL_RECONSTRUCTIONS[key]
 end
 
+# `[advection] limiter` selects the PPM limiter: the default monotone PPM, or
+# the complete Colella–Woodward scheme (`CW84Limiter`).
+const _PPM_LIMITERS = Dict("monotone" => MonotoneLimiter(), "cw84" => CW84Limiter())
+
+function _parse_ppm_limiter(section)
+    raw = get(section, "limiter", "monotone")
+    key = raw isa AbstractString ? lowercase(raw) : ""
+    haskey(_PPM_LIMITERS, key) || throw(ArgumentError(
+        "Unknown [advection] limiter: $(repr(raw)). Supported: " *
+        join(sort!(collect(keys(_PPM_LIMITERS))), " | ")))
+    return _PPM_LIMITERS[key]
+end
+
 # Lin–Rood's vertical sweeps: "upwind" (default) or an FV3 profile.
 function _parse_linrood_vertical(section)
     raw = get(section, "vertical", "upwind")
@@ -231,13 +246,16 @@ end
 Parse an `[advection]` section into a typed spec. `ppm_order` is only meaningful
 for `scheme = "linrood"`; pairing it with `scheme = "ppm"` is rejected (the split
 PPM path takes no order knob). `vertical` applies to `scheme = "ppm"` (default
-`same_as_horizontal`) and `scheme = "linrood"` (default `upwind`). An omitted
+`same_as_horizontal`) and `scheme = "linrood"` (default `upwind`). `limiter`
+applies to `scheme = "ppm"` only (`monotone`, the default, or `cw84`). An omitted
 selector defaults to upwind; an omitted Lin–Rood `ppm_order` defaults to 5.
 """
 function advection_spec(section)
     kind = _parse_advection_scheme(section)
     kind in (:ppm, :linrood) || !haskey(section, "vertical") || throw(ArgumentError(
         "[advection] `vertical` is only valid with `scheme = \"ppm\"` or `\"linrood\"`."))
+    kind === :ppm || !haskey(section, "limiter") || throw(ArgumentError(
+        "[advection] `limiter` is only valid with `scheme = \"ppm\"`."))
     kind === :upwind && return UpwindAdvectionSpec()
     kind === :slopes && return SlopesAdvectionSpec()
     kind === :none   && return NoAdvectionSpec()
@@ -245,7 +263,8 @@ function advection_spec(section)
         haskey(section, "ppm_order") && throw(ArgumentError(
             "[advection] `ppm_order` is only valid with `scheme = \"linrood\"`; " *
             "`scheme = \"ppm\"` selects the standard split `PPMScheme()` path."))
-        return PPMAdvectionSpec(_parse_vertical_reconstruction(section))
+        return PPMAdvectionSpec(_parse_ppm_limiter(section),
+                                _parse_vertical_reconstruction(section))
     end
     return LinRoodAdvectionSpec(_spec_int(section, "ppm_order", 5, "[advection]"),  # :linrood
                                 _parse_linrood_vertical(section))
@@ -255,8 +274,9 @@ end
 # only Upwind/NoAdvection, while LinRood is cubed-sphere only.
 materialize(::UpwindAdvectionSpec, ::AbstractRuntimeRecipeStyle) = UpwindScheme()
 materialize(::SlopesAdvectionSpec, ::AbstractRuntimeRecipeStyle) = SlopesScheme()
-materialize(s::PPMAdvectionSpec,   ::AbstractRuntimeRecipeStyle) = PPMScheme(; vertical = s.vertical)
-materialize(::PPMAdvectionSpec{<:FV3ScalarProfile}, ::LatLonRuntimeRecipeStyle) =
+materialize(s::PPMAdvectionSpec,   ::AbstractRuntimeRecipeStyle) =
+    PPMScheme(s.limiter; vertical = s.vertical)
+materialize(::PPMAdvectionSpec{<:AbstractLimiter, <:FV3ScalarProfile}, ::LatLonRuntimeRecipeStyle) =
     throw(ArgumentError(
         "[advection] `vertical = \"fv3_kord8\"` (FV3 profile) is only available on cubed-sphere runs."))
 materialize(::SlopesAdvectionSpec, ::ReducedGaussianRuntimeRecipeStyle) =

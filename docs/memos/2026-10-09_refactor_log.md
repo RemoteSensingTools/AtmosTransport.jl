@@ -499,6 +499,136 @@ cubed-sphere binaries cannot contain: `qv`, `qv_start`, `qv_end` (all copies)
 and `hflux` (two copies). Most copies lacked `dkg`, `dam`/`dbm`/`dcm`, the VDIFF
 sections, `pbl_eflux` and `cmfmc_cloud_base`.
 
+## After the owner's review (2026-10-09, day)
+
+The owner answered the open decisions: slight negatives of fossil CO₂ are
+acceptable numerical noise, but a positivity-preserving PPM should exist as an
+option; the public API without callers is removed or deprecated; the quick
+fixes, the experiments and Phases 5–7 follow.
+
+### Slow golden cases
+
+The four `slow` cases were still at their pre-Phase-2 reference. At 602472fb:
+
+- `run_c90_merra2_cpu_f64`, `run_c90_era5_tm5_cpu_f64`: the Phase 2 deltas
+  (constants; for MERRA-2 also the radius key, cell areas +7.2e-5).
+- `pre_era5_n320_c90_l117`: the header gains `planet_radius_m = 6371229`. Every
+  payload section is bit-identical except the TM5 boundary-layer exchange
+  `dkg`: median +3.1e-4, 99.9 % of values within +5.0e-4 (gravity and dry-air
+  constants); 155 of 1.35e8 values change by more than 1 %, threshold cells of
+  the diffusion diagnosis (the entrainment-fallback counts are identical in
+  every window).
+- `run_c90_era5_l117_gpu_f32`, rerun against the new N320 binary: cell areas
+  +7.2e-5 from the key, tracers from the `dkg` change (column means within
+  1.3e-5 relative).
+
+All four are accepted into `ref_current`.
+
+### A10 option — complete Colella–Woodward PPM (`limiter = "cw84"`)
+
+`PPMScheme(CW84Limiter())`, TOML `[advection] limiter = "cw84"`, makes three
+changes to the structured PPM face flux (lat-lon and cubed sphere, CPU and
+GPU):
+
+1. edges from van Leer-limited slopes (CW84 eqs. 1.7–1.8; the minmod of
+   `_limited_slope`), so each edge lies between its neighbouring cell means;
+2. the same monotone profile limiter as before;
+3. the flux integrates the limited parabola over the swept fraction (CW84
+   eq. 1.12), entering `_slopes_face_flux` as the moment
+   `s_x = m (b_R − α b_0)` with the curvature `b_0 = (q_L − c) + (q_R − c)`.
+
+The stencil is unchanged (six cells), so halos are unchanged. The default
+`PPMScheme()` and the other limiters are bit-identical: the new code is
+reached only through dispatch on `CW84Limiter`. The cubed-sphere adjoint
+covers it: `_ppm_face_coeffs` (formerly `_ppm_monotone_face_coeffs`) takes the
+limiter and differentiates the CW84 edge (minmod branch) and the curvature
+term; `CSAdjointNonlinearScheme` includes it.
+
+Tests (`test/core/test_ppm_cw84_limiter.jl`, plus CW84 in the lat-lon kernel,
+cubed-sphere seam/offset, footprint and GPU-adjoint loops):
+- 1-D ring, spike and box on zero, 100 steps, Courant 0.3/0.7/1.0/−0.45,
+  Float32 and Float64: stays in [0, 1] and conserves mass; the default PPM
+  reaches −0.16 (box, 0.7) and 1.015 (box, 0.3).
+- One sweep with random divergent and convergent fluxes, outflow at most the
+  cell mass: tracer mass stays non-negative (200 trials).
+- Sine, one revolution at Courant 0.4: error ratio per doubling 4.05 (default
+  3.46); 18 % lower error at 160 cells, 29 % higher at 20 cells (extremum
+  clipping).
+- Edge between neighbours (1000 random stencils); fourth-order edge where
+  unlimited; uniform mixing ratio kept on non-uniform mass (x, y, z).
+- Face adjoint against central differences of the forward, x/y/z, both
+  limiters, 40 random stencils each (a mutant without the curvature
+  derivative fails); footprint FD replay; GPU (L40S) footprint gradients.
+- CPU/GPU agreement of the lat-lon kernels within 0.008 ulp.
+
+Codex review findings addressed: the one-argument `PPMAdvectionSpec(vertical)`
+constructor kept; positivity stated as a per-sweep condition (no cell exports
+more than its mass) instead of "monotone for Courant ≤ 1"; CW84 in the GPU
+adjoint test; the run log labels the option `PPM, CW84`; adjoint docs.
+
+The golden harness gains an `add` field (a key the template lacks) and three
+cases: `run_ll72_ppm_cw84_cpu_f64`, `run_c24_ppm_cw84_cpu_f64`,
+`run_c90_merra2_cw84_gpu_f32`. Golden check of the change: all 16 existing
+non-slow runtime cases identical; the three new cases are accepted. In them
+the blob and Rn-222 (non-negative sources) have no negative cell, against
+27–38 % with the default PPM. Fossil CO₂ keeps negative cells because GridFED
+has negative cells: the negative mass is −3.9e-4 of the positive mass with
+CW84, −4.0e-4 with slopes and −3.4e-4 with upwind on the lat-lon golden. At
+its last snapshot the negative fossil cells are 23 % (upwind), 29 % (slopes),
+42 % (default PPM) and 12 % (CW84); cells below −1e-6 of the maximum are
+0.03 % for upwind, slopes and CW84 and 0.88 % for the default PPM. (The cell
+percentages of the A10 table above are not reproduced from the current
+references.)
+
+C90 evaluation: the production MERRA-2 configuration
+(`merra2_hm_gchp_ppm.toml`: GCHP-like flux construction, CMFMC convection,
+VDIFF, Float32; GCHP initial state), 2021-12-01 to 2022-03-31, with
+`limiter = "cw84"` (`/temp1/cfranken/jobs/cw84_eval/`; outputs in
+`~/data/AtmosTransport/catrine_protocol_output_2026_10/merra2_hm_gchp_ppm_cw84_dec2021_mar2022`).
+The default-PPM run used for comparison predates the Phase 2 constants
+(emissions −3.7e-5, diffusion dz +3.4e-4 relative), which are small next to
+the differences below.
+
+| last snapshot of | default PPM: negative cells (fossil from Dec / Rn-222) | CW84 |
+|---|---|---|
+| 2021-12-01 | 22.5 % / 2.6 % | 0.1 % / 0.0 % |
+| 2021-12-08 | 33.3 % / 13.0 % | 0.0 % / 0.0 % |
+| 2022-01-15 | 26.5 % / 28.0 % | 0.0 % / 0.0 % |
+| 2022-03-31 | 18.2 % / 4.0 % | 0.0 % / 0.0 % |
+
+On the first day CW84 leaves 0.1 % slightly negative fossil cells (negative
+mass −7e-6 of the positive mass) from the first emissions; from day 8 the
+minima are positive.
+
+Against GCHP (`catrine_compare_vs_geoschem.py`, period means, bias and RMSE
+relative to the GCHP mean; output in
+`/temp1/cfranken/catrine_protocol/compare_c90_cw84`), with the FV3 vertical
+profile run (`hm_gchp_fv3`) for reference:
+
+| tracer, band | default PPM | CW84 | FV3 vertical |
+|---|---|---|---|
+| fossil, column | −0.55 %, 1.49 % | −0.55 %, 1.51 % | −0.55 %, 1.50 % |
+| fossil, surface–910 hPa | −0.43 %, 2.72 % | −0.56 %, 2.88 % | −0.31 %, 2.66 % |
+| fossil, above 100 hPa | +0.41 %, 1.87 % | +4.44 %, 5.80 % | −1.53 %, 1.98 % |
+| Rn-222, surface–910 hPa | +0.02 %, 4.21 % | −0.57 %, 4.39 % | −0.11 %, 3.94 % |
+| Rn-222, 910–400 hPa | −1.77 %, 5.13 % | −1.41 %, 4.81 % | −1.67 %, 4.98 % |
+| Rn-222, above 100 hPa | −10.7 %, 38.4 % | +18.1 %, 21.3 % | −4.8 %, 9.8 % |
+
+CO₂ and SF₆ agree to 0.01–0.05 % in every band for all three. Columns are
+unchanged. Near the surface CW84 is slightly further from GCHP; in the
+stratosphere, where these tracers are small, its means are higher (the
+default's stratospheric means include its negative cells). The FV3 vertical
+profile, which GCHP uses, matches best there. CW84 horizontal sweeps with the
+FV3 vertical profile (`limiter = "cw84"`, `vertical = "fv3_kord8"`) are
+supported; a C90 run of that combination is the next evaluation.
+
+Cost: three C90 days of the same configuration on one L40S, alternating the
+two schemes (`/temp1/cfranken/jobs/cw84_eval/run_ab*.sh`), with other jobs
+loading the machine. Transport time: CW84 22.5–24.7 s in all four runs;
+default PPM 21.3 and 22.8 s in two runs, while its other two took 51 and
+66 s (a cold start and a load spike). CW84 costs roughly 5–10 % of transport
+time.
+
 ## Status (2026-10-09, morning)
 
 Branch `refactor/structure-2026-10` (fast-forwarded from `refactor/wip`), 25

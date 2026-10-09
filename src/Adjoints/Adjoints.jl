@@ -24,7 +24,7 @@ using ..Grids: CubedSphereMesh, reciprocal_edge,
     panel_cell_center_lonlat,
     panel_convention, cs_definition, cs_definition_tag
 using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
-    MonotoneLimiter, PPMScheme, SameAsHorizontal, SlopesScheme, UpwindScheme,
+    MonotoneLimiter, CW84Limiter, PPMScheme, SameAsHorizontal, SlopesScheme, UpwindScheme,
     LinRoodPPMScheme,
     fill_panel_halos!, strang_split_cs!, copy_corners!,
     _cs_static_palindrome_subcycle_count,
@@ -81,7 +81,9 @@ using ..Tape: AbstractCSTapeStorage,
 # vertical profile (`FV3ScalarProfile`) has no adjoint yet.
 const CSAdjointLinearScheme = Union{UpwindScheme, SlopesScheme{NoLimiter},
                                     PPMScheme{NoLimiter, SameAsHorizontal}}
-const CSAdjointNonlinearScheme = Union{PPMScheme{MonotoneLimiter, SameAsHorizontal}}
+# Limiters whose PPM adjoint replays the forward branches from taped tracer masses.
+const _PPMTapedLimiter = Union{MonotoneLimiter, CW84Limiter}
+const CSAdjointNonlinearScheme = PPMScheme{<:_PPMTapedLimiter, SameAsHorizontal}
 # LinRoodPPMScheme (ORD 5 and 7) is supported via its own horizontal
 # tape record (`_CSLinRoodHorizRecord`, LinRoodTape.jl) and the kernel
 # adjoints in `src/Operators/Advection/linrood_adjoint_*.jl`. The

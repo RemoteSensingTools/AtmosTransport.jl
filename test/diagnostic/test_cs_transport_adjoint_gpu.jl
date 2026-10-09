@@ -20,7 +20,7 @@ else
     # gradient against perturbations of the GPU forward model.
     @testset "CUDA transporting footprint gradients" begin
         for FT in (Float64, Float32), scheme in (
-                AT.PPMScheme(AT.NoLimiter()), AT.PPMScheme(),
+                AT.PPMScheme(AT.NoLimiter()), AT.PPMScheme(), AT.PPMScheme(AT.CW84Limiter()),
                 AT.LinRoodPPMScheme(5), AT.LinRoodPPMScheme(7))
             @testset "$FT $scheme" begin
                 mesh, m, rm, am, bm, cm = _transport_cs_problem(; Nc=4, Nz=4, nsteps=3, FT)

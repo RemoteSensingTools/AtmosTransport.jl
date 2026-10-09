@@ -32,7 +32,8 @@ the model-facing `apply!` entrypoints that the transport block calls.
 
 ## Runtime Shape
 
-`scheme="ppm"` selects standard split PPM with its default monotone limiter.
+`scheme="ppm"` selects standard split PPM with its default monotone limiter;
+`limiter="cw84"` selects the complete Colella–Woodward PPM (`CW84Limiter`).
 `scheme="linrood"` selects the CS cross-term path; `ppm_order=5` (default) or
 `7` chooses its edge-value family. ORD=7 retains the order-5 interior and adds
 special panel-edge treatment. It does not select a seventh-order transport
