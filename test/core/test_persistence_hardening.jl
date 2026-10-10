@@ -135,6 +135,23 @@ end
             @test isfile(empty_path)
         end
 
+        @testset "published binaries honour the umask" begin
+            path = joinpath(dir, "rg-mode.bin")
+            # A known umask (restored afterwards): 0o666 & ~0o022 = 0o644, while
+            # a `mktemp`-staged file would be published as 0o600.
+            old_umask = Sys.iswindows() ? nothing : ccall(:umask, Cuint, (Cuint,), 0o022)
+            try
+                writer, window = _open_rg(path)
+                MD.write_streaming_window!(writer, window)
+                MD.close_streaming_transport_binary!(writer)
+            finally
+                old_umask === nothing || ccall(:umask, Cuint, (Cuint,), old_umask)
+            end
+            @test isfile(path)
+            Sys.iswindows() || @test filemode(path) & 0o777 == 0o644
+            @test isempty(filter(f -> occursin("jl_", f), readdir(dir)))   # no staging leftovers
+        end
+
         @testset "CS validates arguments, panel count, and every panel shape" begin
             path = joinpath(dir, "cs-shape.bin")
             Nc, npanel, Nz = 2, 6, 1

@@ -29,7 +29,31 @@ function _open_streaming_staging(path::AbstractString)
     parent = dirname(abspath(path))
     isdir(parent) || throw(ArgumentError(
         "streaming binary parent directory does not exist: $(parent)"))
-    return mktemp(parent; cleanup=false)
+    # Not `mktemp` (except on Windows, where POSIX modes do not apply): it
+    # creates 0600 files, and `mv` would publish the binary owner-only. The
+    # staging file is created exclusively (no other process can own the name)
+    # with mode 0o666, so the umask applies as for every other writer, and the
+    # new descriptor itself becomes the `IOStream`; the path is never reopened.
+    Sys.iswindows() && return mktemp(parent; cleanup = false)
+    flags = Base.Filesystem.JL_O_CREAT | Base.Filesystem.JL_O_EXCL | Base.Filesystem.JL_O_RDWR |
+            Base.Filesystem.JL_O_CLOEXEC
+    for _ in 1:100
+        staging_path = tempname(parent; cleanup = false)
+        fd = ccall(:open, Cint, (Cstring, Cint, Cuint...), staging_path, flags, 0o666)
+        if fd >= 0
+            try
+                return staging_path, fdio(staging_path, fd, true)
+            catch
+                ccall(:close, Cint, (Cint,), fd)
+                rm(staging_path; force = true)
+                rethrow()
+            end
+        end
+        errno = Libc.errno()
+        errno == Libc.EEXIST ||
+            throw(SystemError("creating streaming staging file $(staging_path)", errno))
+    end
+    throw(ErrorException("could not create a unique staging file in $(parent)"))
 end
 
 function _streaming_section_shapes(window, payload_sections::Vector{Symbol})
