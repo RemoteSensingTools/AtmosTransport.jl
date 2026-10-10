@@ -455,7 +455,7 @@ Run the per-window CS contract on a NamedTuple `window` with fields
 `m_cur`, `am`, `bm`, `cm`, `m_next` (each a 6-tuple of panel arrays).
 Delegates to `verify_cs_window_contract!`; the replay gate throws on
 violation, the positivity gate is non-fatal here. With
-`write_replay_on = false` (`ATMOSTR_NO_WRITE_REPLAY_CHECK=1`) only the
+`write_replay_on = false` (`[numerics] write_replay_check = false`) only the
 positivity gate runs and the replay diagnostic is zero.
 """
 function verify_window!(window, contract::CubedSphereContract, win_idx::Integer;

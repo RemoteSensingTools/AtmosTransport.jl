@@ -51,40 +51,41 @@ function check_prefetch_startup(adapter; enabled=true, stop_window=2, device_win
     if device_windows
         driver = CountedWindowDriver(driver.grid,Adapt.adapt.(Ref(adapter),driver.windows),Int[])
     end
-    withenv("ATMOSTR_DISABLE_PREFETCH"=>(enabled ? "0" : "1")) do
-        sim = DrivenSimulation(model,driver;stop_window)
-        prefetching = M._prefetch_enabled(model.state.air_mass) && stop_window > 1
-        try
-            prefetching && wait(sim.prefetch_task)
-            @test driver.reads == (prefetching ? [1,2] : [1])
-            active = payload_arrays(sim.window)
-            expected = payload_arrays(driver.windows[1])
-            @test !isempty(active)
-            @test length(active) == length(expected)
+    sim = DrivenSimulation(model,driver;stop_window,prefetch_windows=enabled)
+    # `prefetch_windows = false` always loads synchronously; CPU runs never prefetch.
+    @test sim.prefetch_enabled == (enabled && M._window_backend_adapter(model.state.air_mass) !== Array &&
+                                   Threads.nthreads() > 1)
+    prefetching = sim.prefetch_enabled && stop_window > 1
+    try
+        prefetching && wait(sim.prefetch_task)
+        @test driver.reads == (prefetching ? [1,2] : [1])
+        active = payload_arrays(sim.window)
+        expected = payload_arrays(driver.windows[1])
+        @test !isempty(active)
+        @test length(active) == length(expected)
+        for (a,b) in zip(active,expected)
+            @test Array(a) == Array(b)
+        end
+        if prefetching
+            pending = payload_arrays(sim.prefetch_window)
+            for (a,b) in zip(pending,payload_arrays(driver.windows[2]))
+                @test Array(a) == Array(b)
+            end
+            # Mutating every prefetched payload must leave active forcing intact.
+            foreach(a -> fill!(a,zero(eltype(a))),pending)
             for (a,b) in zip(active,expected)
                 @test Array(a) == Array(b)
             end
-            if prefetching
-                pending = payload_arrays(sim.prefetch_window)
-                for (a,b) in zip(pending,payload_arrays(driver.windows[2]))
-                    @test Array(a) == Array(b)
-                end
-                # Mutating every prefetched payload must leave active forcing intact.
-                foreach(a -> fill!(a,zero(eltype(a))),pending)
-                for (a,b) in zip(active,expected)
-                    @test Array(a) == Array(b)
-                end
-                old_current,old_prefetch = sim.window,sim.prefetch_window
-                M._take_prefetched_window!(sim,2)
-                @test sim.window === old_prefetch
-                @test sim.prefetch_window === old_current
-                @test sim.prefetch_window_index == 0
-            else
-                @test sim.prefetch_window === sim.window
-            end
-        finally
-            M._finish_window_prefetch!(sim)
+            old_current,old_prefetch = sim.window,sim.prefetch_window
+            M._take_prefetched_window!(sim,2)
+            @test sim.window === old_prefetch
+            @test sim.prefetch_window === old_current
+            @test sim.prefetch_window_index == 0
+        else
+            @test sim.prefetch_window === sim.window
         end
+    finally
+        M._finish_window_prefetch!(sim)
     end
 end
 

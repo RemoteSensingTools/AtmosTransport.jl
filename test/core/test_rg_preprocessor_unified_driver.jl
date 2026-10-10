@@ -120,6 +120,15 @@ end
         @test second_header == first_header
         @test second_payload == first_payload
 
+        # `write_replay_check = false` skips the gate and is recorded; same payload.
+        off = _rg_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "off"))
+        off_path = @test_logs (:info, r"replay gate SKIPPED") match_mode = :any process_day(
+            date, grid, off, vertical; positivity_cfl_limit = 0.95, write_replay_check = false)
+        off_header, off_payload = _stable_binary_parts(off_path)
+        @test off_header[:write_replay_check] === false
+        @test !haskey(first_header, :write_replay_check)
+        @test off_payload == first_payload
+
         # The last window ends at the next day's 00 UTC state, pinned like every window.
         pinned = _rg_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "pinned"); mass_fix = true)
         next_day = (lnsp = fill(complex(log(101000.0), 0.0), 1, 1), vo = zeros(ComplexF64, 1, 1, 137),

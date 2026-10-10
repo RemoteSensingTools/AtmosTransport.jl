@@ -188,8 +188,8 @@ The synthetic-RG variant uses
   JLD2 cache (under `~/.cache/AtmosTransport/cr_regridding/`) makes
   the regridder persist across batch invocations.
 - **Replay-gate verification** doubles the window's compute (one
-  forward step per window). It is on by default; set the env var
-  `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` to skip (not recommended for
+  forward step per window). It is on by default; set
+  `[numerics] write_replay_check = false` to skip it (not recommended for
   production binaries; the binary then records `write_replay_check = false`
   and the runtime warns about it).
 - All three target topologies (LL, RG, CS) run on F32 in production.

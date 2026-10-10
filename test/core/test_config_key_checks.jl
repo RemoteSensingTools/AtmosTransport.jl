@@ -32,6 +32,7 @@ end
     has(ws, parts...) = any(w -> all(p -> occursin(p, w), parts), ws)
     @test isempty(Runner._config_key_warnings(Dict(
         "input" => Dict("folder" => "/x", "start_date" => "2021-12-01", "end_date" => "2021-12-02"),
+        "run" => Dict("prefetch_windows" => false),
         "advection" => Dict("scheme" => "linrood", "ppm_order" => 7),
         "diffusion" => Dict("kind" => "constant", "value" => 2.0),
         "tracers" => Dict("co2" => Dict("init" => Dict("kind" => "uniform", "background" => 4e-4))),
@@ -113,6 +114,12 @@ end
         @test any(contains("reset_air_mass_each_window"),
                   bad(c -> c["run"] = Dict("reset_air_mass_each_window" => true)))
         @test any(contains("physics_cadence"), bad(c -> c["run"] = Dict("physics_cadence" => "step")))
+        @test any(contains("[run].prefetch_windows"), bad(c -> c["run"] = Dict("prefetch_windows" => "no")))
+        @test isempty(bad(c -> c["run"] = Dict("prefetch_windows" => false)))
+        @test any(contains("check_binary_cfl"),
+                  bad(c -> c["advection"] = Dict("scheme" => "linrood", "check_binary_cfl" => true)))
+        @test any(contains("belongs in [advection]"), bad(c -> c["run"] = Dict("check_binary_cfl" => true)))
+        @test isempty(bad(c -> c["advection"] = Dict("scheme" => "ppm", "check_binary_cfl" => true)))
         @test any(contains("no snapshot times"), bad(c -> c["output"] = Dict("path" => "/o.nc")))
         @test any(contains("no `path`"), bad(c -> c["output"] = Dict("hours" => [6, 12])))
         @test isempty(bad(c -> c["output"] = Dict("path" => "/o.nc", "enabled" => false)))

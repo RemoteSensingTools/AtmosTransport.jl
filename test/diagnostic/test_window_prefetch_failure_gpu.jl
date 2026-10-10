@@ -14,9 +14,9 @@ else
     const R = M.DrivenRunner
     Base.close(::WindowPrefetchFixtures.CountedWindowDriver) = nothing
     @testset "Failed prefetch is consumed once before resource cleanup" begin
-        withenv("ATMOSTR_DISABLE_PREFETCH"=>"0") do
+        let
             model,driver = WindowPrefetchFixtures.prefetch_fixture()
-            sim = M.DrivenSimulation(Adapt.adapt(CuArray,model),driver)
+            sim = M.DrivenSimulation(Adapt.adapt(CuArray,model),driver;prefetch_windows=true)
             M._finish_window_prefetch!(sim)
             active = sim.window
             sim.prefetch_window_index = 2

@@ -2,11 +2,43 @@
 # Split from CubedSphereStrang.jl (refactor phase 4); included by Advection.jl in this order.
 
 # =========================================================================
+# Binary substep check
+# =========================================================================
+
+"""
+    AbstractBinaryCFLCheck
+
+Whether a cubed-sphere split-sweep step that takes its subcycle count from the
+transport binary's substep schedule recomputes the runtime CFL budget and
+compares. Set from `[advection] check_binary_cfl`; carried by
+`CSAdvectionWorkspace`.
+"""
+abstract type AbstractBinaryCFLCheck end
+
+"""
+    NoBinaryCFLCheck()
+
+Trust the binary's substep schedule (the default). The preprocessor already
+checks it when it writes the binary.
+"""
+struct NoBinaryCFLCheck <: AbstractBinaryCFLCheck end
+
+"""
+    BinaryCFLCheck()
+
+Recompute the palindrome CFL subcycle count at every step and throw an
+`ArgumentError` when the binary's schedule asks for fewer subcycles. One extra
+reduction over all panels per step; a diagnostic for binaries of unknown
+origin.
+"""
+struct BinaryCFLCheck <: AbstractBinaryCFLCheck end
+
+# =========================================================================
 # CS workspace — pre-allocated buffers for one panel
 # =========================================================================
 
 """
-    CSAdvectionWorkspace{FT, A, P3, A4, P4}
+    CSAdvectionWorkspace{FT, A, P3, A4, P4, C}
 
 Pre-allocated cubed-sphere transport workspace.
 
@@ -26,11 +58,15 @@ Pre-allocated cubed-sphere transport workspace.
   unless the workspace is built with `column_scratch=true`.
 - `max_subcycles` tracks this workspace's high-water mark for CFL diagnostics;
   keeping it with the workspace prevents unrelated simulations sharing state.
+- `binary_cfl_check` (`NoBinaryCFLCheck()` by default, or `BinaryCFLCheck()`)
+  decides whether a subcycle count from the binary is checked against the
+  runtime CFL budget.
 """
 struct CSAdvectionWorkspace{FT, A <: AbstractArray{FT, 3},
                             P3 <: NTuple{6, <:AbstractArray{FT, 3}},
                             A4 <: AbstractArray{FT, 4},
-                            P4 <: NTuple{6, <:AbstractArray{FT, 4}}}
+                            P4 <: NTuple{6, <:AbstractArray{FT, 4}},
+                            C <: AbstractBinaryCFLCheck}
     rm_A       :: A
     m_A        :: A
     rm_4d_A    :: A4
@@ -39,6 +75,7 @@ struct CSAdvectionWorkspace{FT, A <: AbstractArray{FT, 3},
     seam_flux  :: A4
     column_scratch :: A4
     max_subcycles :: Base.RefValue{NTuple{3, Int}}
+    binary_cfl_check :: C
 end
 
 function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
@@ -47,7 +84,8 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
                               n_tracers::Integer = 0,
                               seam_transport::Bool = true,
                               column_scratch::Bool = false,
-                              column_scratch_tracers::Integer = n_tracers)
+                              column_scratch_tracers::Integer = n_tracers,
+                              binary_cfl_check::AbstractBinaryCFLCheck = NoBinaryCFLCheck())
     N = mesh.Nc + 2 * mesh.Hp
     Nt = Int(n_tracers)
     Nt >= 0 || throw(ArgumentError("CSAdvectionWorkspace: n_tracers must be non-negative, got $n_tracers"))
@@ -62,9 +100,9 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
     scratch = _column_scratch(rm_4d_A, mesh.Nc, Nz, Int(column_scratch_tracers), column_scratch)
     return CSAdvectionWorkspace{FT, typeof(rm_A),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
-                                typeof(rm_4d_pp_buf)}(
+                                typeof(rm_4d_pp_buf), typeof(binary_cfl_check)}(
         rm_A, m_A, rm_4d_A, m_pp_buf, rm_4d_pp_buf, seam_flux, scratch,
-        Ref((1, 1, 1)))
+        Ref((1, 1, 1)), binary_cfl_check)
 end
 
 function CSAdvectionWorkspace(mesh::CubedSphereMesh,
@@ -72,7 +110,8 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh,
                               n_tracers::Integer = 0,
                               seam_transport::Bool = true,
                               column_scratch::Bool = false,
-                              column_scratch_tracers::Integer = n_tracers) where {FT <: AbstractFloat}
+                              column_scratch_tracers::Integer = n_tracers,
+                              binary_cfl_check::AbstractBinaryCFLCheck = NoBinaryCFLCheck()) where {FT <: AbstractFloat}
     N = mesh.Nc + 2 * mesh.Hp
     Nz = size(prototype, 3)
     Nt = Int(n_tracers)
@@ -88,9 +127,9 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh,
     scratch = _column_scratch(rm_4d_A, mesh.Nc, Nz, Int(column_scratch_tracers), column_scratch)
     return CSAdvectionWorkspace{FT, typeof(rm_A),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
-                                typeof(rm_4d_pp_buf)}(
+                                typeof(rm_4d_pp_buf), typeof(binary_cfl_check)}(
         rm_A, m_A, rm_4d_A, m_pp_buf, rm_4d_pp_buf, seam_flux, scratch,
-        Ref((1, 1, 1)))
+        Ref((1, 1, 1)), binary_cfl_check)
 end
 
 # Per-column, per-tracer working storage of the FV3 vertical profile
@@ -108,9 +147,9 @@ function Adapt.adapt_structure(to, ws::CSAdvectionWorkspace{FT}) where FT
     column_scratch = Adapt.adapt(to, ws.column_scratch)
     return CSAdvectionWorkspace{FT, typeof(rm_A),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
-                                typeof(rm_4d_pp_buf)}(
+                                typeof(rm_4d_pp_buf), typeof(ws.binary_cfl_check)}(
         rm_A, m_A, rm_4d_A, m_pp_buf, rm_4d_pp_buf, seam_flux, column_scratch,
-        Ref(ws.max_subcycles[]))
+        Ref(ws.max_subcycles[]), ws.binary_cfl_check)
 end
 
 @inline function _record_cs_subcycle_growth!(workspace::CSAdvectionWorkspace,

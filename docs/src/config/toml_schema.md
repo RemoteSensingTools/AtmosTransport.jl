@@ -22,11 +22,11 @@ ignored.
 `validate_config(cfg)` checks runtime table shapes, input path existence,
 precision/backend compatibility, and window bounds without opening binary
 readers or allocating model state. It also parses the physics sections,
-`air_mass_reset_mode`, `physics_cadence` and `[output]` as the run does, so
-their errors are reported together; decay half-lives must name a tracer, and
-an enabled `[output]` needs both a path and snapshot times (`hours = []` means
-deliberately none). Nested tracer `init` and `surface_flux` values must be
-tables. Shape errors are returned before value checks; a successful result is
+`air_mass_reset_mode`, `physics_cadence`, `prefetch_windows` and `[output]` as
+the run does, so their errors are reported together; decay half-lives must name
+a tracer, and an enabled `[output]` needs both a path and snapshot times
+(`hours = []` means deliberately none). Nested tracer `init` and `surface_flux`
+values must be tables. Shape errors are returned before value checks; a successful result is
 not a full physics or binary validation. See
 [Run with real meteorology](@ref Run-with-real-meteorology) for an example.
 
@@ -77,8 +77,7 @@ not sort entries or validate date continuity; provide them chronologically.
   opened: the stored fluxes must carry each window's air mass to the next
   within `replay_tolerance` (1e-10 relative in Float64, 1e-4 in Float32). Off
   by default (it doubles binary load time); the preprocessor already checks
-  every binary it writes. Use it for binaries of unknown origin. It replaces
-  the environment variable `ATMOSTR_REPLAY_CHECK`.
+  every binary it writes. Use it for binaries of unknown origin.
 - `expected_nlevel`, `required_preprocessor_contract` and
   `require_adaptive_substeps` reject a first binary whose header differs.
 
@@ -163,6 +162,7 @@ stop_window  = 24             # default: nothing — uses the binary's full rang
 air_mass_reset_mode = "preserve_tracer_mass"
 # physics_cadence = "window"  # default; "substep" runs convection and chemistry
                               # every advection substep (cadence comparisons)
+# prefetch_windows = true     # default; false loads each met window when needed
 ```
 
 `stop_window` is the inclusive last window; setting it lets you
@@ -175,8 +175,10 @@ Both indices must be integers: Boolean and floating-point values are rejected.
 `start_window` must be at least 1, and `stop_window` must not precede it.
 Cubed-sphere runs currently require `start_window = 1`.
 `air_mass_reset_mode` is one of
-`"none"`, `"preserve_vmr"`, or `"preserve_tracer_mass"`. Advection belongs
-in the separate `[advection]` table.
+`"none"`, `"preserve_vmr"`, or `"preserve_tracer_mass"`. GPU runs with at
+least two Julia threads load the next met window on a second thread while the
+current one runs; `prefetch_windows = false` turns that off (for debugging; the
+results are the same). Advection belongs in the separate `[advection]` table.
 
 ### `[tracers.<name>]` — per-tracer setup
 
@@ -311,6 +313,10 @@ ppm_order = 7                   # cubed-sphere LinRoodPPM only; ∈ {5, 7}.
                                 # "cw84" (complete Colella–Woodward PPM; keeps
                                 # tracers non-negative in sweeps where no cell
                                 # exports more than its air mass)
+# check_binary_cfl = true       # cubed sphere, upwind | slopes | ppm: recompute
+                                # the CFL subcycle count each step and stop if
+                                # the binary's substep schedule asks for fewer
+                                # (default false; slower)
 
 [diffusion]
 kind  = "constant"              # "none" | "constant" |
@@ -560,7 +566,7 @@ julia --threads=2 --project=. scripts/run_transport.jl <cfg.toml>
 Some preprocessing kernels (spectral synthesis, regridding) and
 some host-side workspace operations parallelize across threads.
 GPU runs also prefetch the next meteorological window when ≥2 Julia threads
-are available. Startup reads the first window once and creates two independent
+are available, unless `[run] prefetch_windows = false`. Startup reads the first window once and creates two independent
 device buffers, so loading the next window cannot overwrite active forcing.
 Daily snapshot writes run on an owned background task and overlap the next
 day's transport. The runner drains both tasks before closing their resources,
@@ -697,6 +703,15 @@ dt_met_seconds = 3600.0      # window cadence (s); 1 hour for GEOS-IT
 default `450.0` — the FV3 dynamics step); there is **no per-run
 `[numerics].mass_flux_dt` override** today.
 
+#### `write_replay_check` — write-time replay gate
+
+Every writer replays each window's stored fluxes and refuses to keep a binary
+whose air mass does not reach the next window's (the write-time gate in
+[Binary format](@ref)). `write_replay_check = false` skips that gate for
+diagnostic binaries; the binary records `write_replay_check = false` in its
+header, the inspector marks it, and the runtime warns when it opens it. The
+positivity gate still runs. Default `true`.
+
 #### `balance_mode` — horizontal mass-flux balance
 
 Every path closes a window's horizontal mass fluxes against its endpoint mass
@@ -716,10 +731,7 @@ balance_mode = "column"      # default on lat-lon and cubed-sphere paths
 The mode is recorded in every transport-binary header as
 `horizontal_balance` (for GEOS, the balance its `geos_cm_closure` applies:
 `"none"` for the pressure-fixer closures, `"column"` for the moisture-filtered
-and OMEGA closures). `geos_balance_mode` is accepted as an older name. The
-environment variable `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1`, which used
-to select per-layer balance on every path except GEOS, still does so on those
-paths when the key is absent, with a deprecation warning.
+and OMEGA closures). `geos_balance_mode` is accepted as an older name.
 
 #### `geos_cm_closure` — GEOS native CS vertical-flux closure
 

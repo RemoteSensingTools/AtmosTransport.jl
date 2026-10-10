@@ -169,8 +169,8 @@ When a window is requested, the loader:
 4. for a GPU run, copies the window into persistent backend buffers.
 
 With multiple Julia threads, GPU runs can prefetch the next host window while
-the current one is being computed. Set `ATMOSTR_DISABLE_PREFETCH=1` to disable
-that overlap when debugging. Linux runs can release already-used mmap pages
+the current one is being computed. Set `[run] prefetch_windows = false` to
+disable that overlap when debugging. Linux runs can release already-used mmap pages
 between files through the driver's `release_payload!` path.
 
 ```mermaid

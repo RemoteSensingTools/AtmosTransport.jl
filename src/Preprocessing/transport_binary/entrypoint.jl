@@ -109,6 +109,12 @@ _resolve_require_substep_positivity(cfg::AbstractDict) =
     _config_bool(get(cfg, "numerics", Dict()), "require_substep_positivity", true,
                  "[numerics].require_substep_positivity")
 
+# `[numerics] write_replay_check = false` skips the write-time replay-continuity
+# gate (diagnostic only); the binary then records `write_replay_check = false`.
+_resolve_write_replay_check(cfg::AbstractDict) =
+    _config_bool(get(cfg, "numerics", Dict()), "write_replay_check", true,
+                 "[numerics].write_replay_check")
+
 function _resolve_substep_schedule_policy(cfg::AbstractDict,
                                           positivity_cfl_limit::Real)
     numerics = get(cfg, "numerics", Dict())
@@ -312,6 +318,7 @@ function _process_day_native(cfg::AbstractDict;
     chain_mass     = _resolve_chain_mass(cfg)
     positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
     require_substep_positivity = _resolve_require_substep_positivity(cfg)
+    write_replay_check         = _resolve_write_replay_check(cfg)
     substep_policy = _resolve_substep_schedule_policy(cfg, positivity_cfl_limit)
     numerics_cfg = get(cfg, "numerics", Dict{String, Any}())
     horizontal_balance = resolve_horizontal_balance(numerics_cfg)
@@ -424,6 +431,7 @@ function _process_day_native(cfg::AbstractDict;
             chain_mass      = chain_mass,
             positivity_cfl_limit       = positivity_cfl_limit,
             require_substep_positivity = require_substep_positivity,
+            write_replay_check         = write_replay_check,
             adaptive_substeps          = substep_policy.adaptive_substeps,
             substep_cfl_target         = substep_policy.substep_cfl_target,
             min_steps_per_window       = substep_policy.min_steps_per_window,
@@ -478,6 +486,7 @@ function _process_day_native(cfg::AbstractDict;
                 chain_mass      = chain_mass,
                 positivity_cfl_limit       = positivity_cfl_limit,
                 require_substep_positivity = require_substep_positivity,
+                write_replay_check         = write_replay_check,
                 adaptive_substeps          = substep_policy.adaptive_substeps,
                 substep_cfl_target         = substep_policy.substep_cfl_target,
                 min_steps_per_window       = substep_policy.min_steps_per_window,
@@ -536,6 +545,7 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
 
     positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
     require_substep_positivity = _resolve_require_substep_positivity(cfg)
+    write_replay_check         = _resolve_write_replay_check(cfg)
     substep_policy             = _resolve_substep_schedule_policy(cfg, positivity_cfl_limit)
     ensure_preprocessor_pair_supported(grid, settings; context = "ERA5 spectral")
 
@@ -551,6 +561,7 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
         day_kwargs = (
             positivity_cfl_limit       = positivity_cfl_limit,
             require_substep_positivity = require_substep_positivity,
+            write_replay_check         = write_replay_check,
             substep_policy             = substep_policy,
             next_day_hour0             = next_day_h0,
             run_cache                  = run_cache,

@@ -374,7 +374,7 @@ end
 """
     process_day(date, grid::ReducedGaussianTargetGeometry, settings, vertical;
                 next_day_hour0=nothing, positivity_cfl_limit=0.95,
-                require_substep_positivity=true)
+                require_substep_positivity=true, write_replay_check=true)
 
 Streaming one-day preprocessing for reduced-Gaussian targets.
 
@@ -394,6 +394,7 @@ function process_day(date::Date,
                      next_day_hour0=nothing,
                      positivity_cfl_limit::Real = 0.95,
                      require_substep_positivity::Bool = true,
+                     write_replay_check::Bool = true,
                      substep_policy =
                          SubstepSchedulePolicy(
                              adaptive_substeps = false,
@@ -438,9 +439,9 @@ function process_day(date::Date,
     work = workspace.work
     buf = workspace.buf
     ps_offsets = workspace.ps_offsets
-    write_replay_on = write_replay_check_enabled()
+    write_replay_on = write_replay_check
     write_replay_on ||
-        @info "  Write-time replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
+        @info "  Write-time replay gate SKIPPED ([numerics] write_replay_check = false)"
     window_contract = ReducedGaussianContract{FT}(
         replay_tol = replay_tolerance(FT),
         positivity_cfl_limit = positivity_cfl_limit,

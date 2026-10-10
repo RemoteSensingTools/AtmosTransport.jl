@@ -306,14 +306,13 @@ end
     @test AtmosTransport.Models._uses_binary_transport_schedule(sim_window)
 
     resolve = AtmosTransport.Models._resolve_physics_cadence
-    withenv("ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS" => nothing) do
-        @test resolve(nothing) === :window
-        @test resolve(:substep) === :substep
-        @test_throws ArgumentError resolve("hourly")
-    end
+    @test resolve(nothing) === :window
+    @test resolve(:substep) === :substep
+    @test resolve("window") === :window
+    @test_throws ArgumentError resolve("hourly")
+    # The removed environment switch no longer changes the cadence.
     withenv("ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS" => "1") do
-        @test (@test_logs (:warn, r"deprecated") resolve(nothing)) === :substep
-        @test_throws ArgumentError resolve(:window)
+        @test resolve(nothing) === :window
     end
 end
 

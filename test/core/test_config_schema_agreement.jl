@@ -78,7 +78,8 @@ end
     @test property_keys(p.architecture) == Set(RunnerKeys._ARCHITECTURE_KEYS)
     @test property_keys(p.numerics) == Set(RunnerKeys._NUMERICS_KEYS)
     @test property_keys(p.run) == Set(RunnerKeys._RUN_KEYS)
-    @test property_keys(p.advection) == Set(RunnerKeys._ADVECTION_KEYS)
+    @test property_keys(p.advection) ==
+          Set((RunnerKeys._ADVECTION_KEYS..., RunnerKeys._ADVECTION_ONLY_KEYS...))
     @test property_keys(p.diffusion) == Set(RunnerKeys._DIFFUSION_KEYS)
     @test property_keys(p.convection) == Set(RunnerKeys._CONVECTION_KEYS)
     @test property_keys(p.chemistry) == Set(RunnerKeys._CHEMISTRY_KEYS)

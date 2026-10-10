@@ -105,6 +105,6 @@ end
 @testset "RuntimePhysicsRecipe stores explicit chemistry" begin
     chem = AT.Operators.Chemistry.ExponentialDecay(; rn222 = 330350.4)
     rec4 = AT.Models.RuntimePhysicsRecipe(
-        AT.UpwindScheme(), AT.NoDiffusion(), AT.NoConvection(), chem)
+        AT.UpwindScheme(), AT.NoDiffusion(), AT.NoConvection(), chem, AT.NoBinaryCFLCheck())
     @test rec4.chemistry === chem
 end

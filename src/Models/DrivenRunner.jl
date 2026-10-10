@@ -126,7 +126,7 @@ using ..Models: build_runtime_physics_recipe, validate_runtime_physics_recipe,
 using ..Models: advection_spec, diffusion_spec, convection_spec, chemistry_spec,
                  _advection_section, _diffusion_section, _convection_section,
                  _chemistry_section, _normalize_air_mass_reset_mode,
-                 _resolve_physics_cadence
+                 _resolve_physics_cadence, binary_cfl_check
 
 export run_driven_simulation, validate_config, TransportTracerSpec
 
@@ -371,6 +371,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                             "\"preserve_vmr\", or \"preserve_tracer_mass\""))
     air_mass_reset_mode = get(run_cfg, "air_mass_reset_mode", "preserve_tracer_mass")
     physics_cadence = get(run_cfg, "physics_cadence", nothing)
+    prefetch_windows = _config_bool(run_cfg, "prefetch_windows", true, "[run].prefetch_windows")
 
     init_cfg = get(cfg, "init", Dict{String, Any}())
     tracer_specs = something(_parse_tracer_specs(cfg),
@@ -518,6 +519,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                         initialize_air_mass = initialize_air_mass,
                                         air_mass_reset_mode = air_mass_reset_mode,
                                         physics_cadence = physics_cadence,
+                                        prefetch_windows = prefetch_windows,
                                         surface_sources = surface_sources,
                                         chemistry = recipe.chemistry,
                                         # seconds since RUN start — see the CS loop
@@ -684,6 +686,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                             "\"preserve_vmr\", or \"preserve_tracer_mass\""))
     air_mass_reset_mode = get(run_cfg, "air_mass_reset_mode", "preserve_tracer_mass")
     physics_cadence = get(run_cfg, "physics_cadence", nothing)
+    prefetch_windows = _config_bool(run_cfg, "prefetch_windows", true, "[run].prefetch_windows")
 
     tracers_cfg = get(cfg, "tracers", Dict{String, Any}())
     isempty(tracers_cfg) && error("[tracers] must define at least one tracer")
@@ -767,6 +770,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     # on the model here; the kernels start running later in the `step!(sim)`
     # loop after `DrivenSimulation` has loaded/refreshed each forcing window.
     model = TransportModel(state, fluxes, grid, recipe.advection;
+                            binary_cfl_check = recipe.binary_cfl_check,
                             diffusion  = recipe.diffusion,
                             convection = recipe.convection)
     # Adapt remaining operator and geometry metadata. Device state and scratch
@@ -882,6 +886,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                         initialize_air_mass = initialize_air_mass,
                                         air_mass_reset_mode = air_mass_reset_mode,
                                         physics_cadence = physics_cadence,
+                                        prefetch_windows = prefetch_windows,
                                         surface_sources = surface_sources,
                                         # accumulated run time: time-varying surface
                                         # sources index emission slices in seconds

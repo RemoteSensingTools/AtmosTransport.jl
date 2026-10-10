@@ -55,7 +55,7 @@ function _validate_replay_consistency_cs(
             "integrate to the stored mass target under palindrome continuity. " *
             "Regenerate the binary with the CS replay-safe preprocessor, or skip this " *
             "load-time check (remove [input] validate_replay = true, or the " *
-            "`validate_replay` keyword, or unset ATMOSTR_REPLAY_CHECK)."
+            "`validate_replay` keyword)."
         ))
 
     @info "Replay continuity gate passed: $(basename(reader.path)) " *

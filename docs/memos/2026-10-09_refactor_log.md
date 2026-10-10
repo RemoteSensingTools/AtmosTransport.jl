@@ -956,6 +956,32 @@ guard); M1 has no end-to-end runner test for mixed window lengths (helpers
 are tested); unknown-key warnings become errors after one release (decision
 1).
 
+## 2026-10-10: environment switches become config keys
+
+Owner (2026-10-10): run settings follow Oceananigans — typed configuration,
+environment variables only for paths, metadata and profiling — and, in
+internal development, replaced forms are removed without a transition period.
+
+- `ccca8817` removes the three deprecated variables that config keys had
+  already replaced (`ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS`, `ATMOSTR_REPLAY_CHECK`,
+  `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE`).
+- The next commit replaces the last three run switches:
+  `ATMOSTR_DISABLE_PREFETCH` by `[run] prefetch_windows` (fixed per
+  simulation; the variable was read every window),
+  `ATMOSTR_ASSERT_CS_BINARY_CFL` by `[advection] check_binary_cfl`
+  (`NoBinaryCFLCheck`/`BinaryCFLCheck` as a type parameter of
+  `CSAdvectionWorkspace`; the three operator copies of the check became one
+  dispatched helper; no legacy `[run]` form), and
+  `ATMOSTR_NO_WRITE_REPLAY_CHECK` by the preprocessing key
+  `[numerics] write_replay_check`, passed to every writer as a keyword.
+- Codex (Sol, highest effort) needed three rounds; findings that changed the
+  change: `[run].check_binary_cfl` was silently accepted through the legacy
+  advection fallback, and the writer tests only checked that each writer
+  declares the keyword (now the LL, RG, CS spectral and GEOS writers run with
+  the gate off and assert the skip, the header record and an unchanged
+  payload). On an L40S the CFL check survives `Adapt` and a checked packed
+  step matches the CPU (F32 and F64); the GPU prefetch tests pass.
+
 ## Status (2026-10-09, afternoon)
 
 `refactor/structure-2026-10` is pushed as PR #21 (25 commits on `3684b71a`,

@@ -63,8 +63,9 @@ before halo exchange supplies neighboring values for the next reconstruction.
 
 All six legs use one count from the initial-mass palindrome budget
 `2 * (out_x + out_y + out_z) / m_start`, with flux divided by that count.
-A supplied `subcycle_count` uses the binary's schedule; setting
-`ATMOSTR_ASSERT_CS_BINARY_CFL=1` checks it against the runtime budget.
+A supplied `subcycle_count` uses the binary's schedule; a workspace built with
+`binary_cfl_check = BinaryCFLCheck()` (`[advection] check_binary_cfl = true`)
+checks it against the runtime budget.
 
 ## Panel array layout
 
@@ -107,27 +108,11 @@ function strang_split_cs!(panels_rm::NTuple{6},
     fs = convert(FT, flux_scale)
     cfl_ft = convert(FT, cfl_limit)
 
-    n_pal = if subcycle_count === nothing
-        # Budget all six legs against initial carrier mass. Face-local tracer
-        # clamping does not replace a safe total-outflow budget.
-        SectionTimer.@section :cs_cfl_x _cs_static_palindrome_subcycle_count(
-            panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
-            flux_scale = fs)
-    else
-        n = Int(subcycle_count)
-        n >= 1 || throw(ArgumentError("strang_split_cs!: subcycle_count must be ≥ 1, got $(subcycle_count)"))
-        if get(ENV, "ATMOSTR_ASSERT_CS_BINARY_CFL", "0") == "1"
-            required = SectionTimer.@section :cs_cfl_x _cs_static_palindrome_subcycle_count(
-                panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
-                flux_scale = fs)
-            required <= n || throw(ArgumentError(
-                "strang_split_cs!: binary substep contract requested " *
-                "subcycle_count=$n, but runtime CFL assertion requires " *
-                "$required. Regenerate the binary or disable " *
-                "ATMOSTR_ASSERT_CS_BINARY_CFL for diagnostic runs."))
-        end
-        n
-    end
+    # Budget all six legs against initial carrier mass. Face-local tracer
+    # clamping does not replace a safe total-outflow budget.
+    n_pal = _cs_palindrome_subcycles(workspace.binary_cfl_check, "strang_split_cs!",
+                                     subcycle_count, panels_am, panels_bm, panels_cm,
+                                     panels_m, Nc, Hp, Nz, cfl_ft; flux_scale = fs)
     n_x = n_pal
     n_y = n_pal
     n_z = n_pal
@@ -235,23 +220,9 @@ function _strang_split_cs_mt_copyback!(panels_rm_4d::NTuple{6},
     fs = convert(FT, flux_scale)
     cfl_ft = convert(FT, cfl_limit)
 
-    n_pal = if subcycle_count === nothing
-        SectionTimer.@section :cs_cfl_x _cs_static_palindrome_subcycle_count(
-            panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
-            flux_scale = fs)
-    else
-        n = Int(subcycle_count)
-        n >= 1 || throw(ArgumentError("strang_split_cs_mt!: subcycle_count must be ≥ 1, got $(subcycle_count)"))
-        if get(ENV, "ATMOSTR_ASSERT_CS_BINARY_CFL", "0") == "1"
-            required = SectionTimer.@section :cs_cfl_x _cs_static_palindrome_subcycle_count(
-                panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
-                flux_scale = fs)
-            required <= n || throw(ArgumentError(
-                "strang_split_cs_mt!: binary substep contract requested " *
-                "subcycle_count=$n, but runtime CFL assertion requires $required."))
-        end
-        n
-    end
+    n_pal = _cs_palindrome_subcycles(workspace.binary_cfl_check, "strang_split_cs_mt!",
+                                     subcycle_count, panels_am, panels_bm, panels_cm,
+                                     panels_m, Nc, Hp, Nz, cfl_ft; flux_scale = fs)
     n_x = n_pal
     n_y = n_pal
     n_z = n_pal
@@ -364,23 +335,9 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
     fs = convert(FT, flux_scale)
     cfl_ft = convert(FT, cfl_limit)
 
-    n_pal = if subcycle_count === nothing
-        SectionTimer.@section :cs_cfl_x _cs_static_palindrome_subcycle_count(
-            panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
-            flux_scale = fs)
-    else
-        n = Int(subcycle_count)
-        n >= 1 || throw(ArgumentError("strang_split_cs_mt_pingpong!: subcycle_count must be ≥ 1, got $(subcycle_count)"))
-        if get(ENV, "ATMOSTR_ASSERT_CS_BINARY_CFL", "0") == "1"
-            required = SectionTimer.@section :cs_cfl_x _cs_static_palindrome_subcycle_count(
-                panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
-                flux_scale = fs)
-            required <= n || throw(ArgumentError(
-                "strang_split_cs_mt_pingpong!: binary substep contract requested " *
-                "subcycle_count=$n, but runtime CFL assertion requires $required."))
-        end
-        n
-    end
+    n_pal = _cs_palindrome_subcycles(workspace.binary_cfl_check, "strang_split_cs_mt_pingpong!",
+                                     subcycle_count, panels_am, panels_bm, panels_cm,
+                                     panels_m, Nc, Hp, Nz, cfl_ft; flux_scale = fs)
     n_x = n_pal
     n_y = n_pal
     n_z = n_pal
@@ -525,3 +482,4 @@ function _sweep_z!(rm_panels, m_panels, cm_panels,
 end
 
 export strang_split_cs!, strang_split_cs_mt!, CSAdvectionWorkspace
+export AbstractBinaryCFLCheck, NoBinaryCFLCheck, BinaryCFLCheck

@@ -92,6 +92,7 @@ export apply_convection!
 # Cubed-sphere advection
 export fill_panel_halos!, copy_corners!, strang_split_cs!, strang_split_cs_mt!,
        CSAdvectionWorkspace
+export AbstractBinaryCFLCheck, NoBinaryCFLCheck, BinaryCFLCheck
 
 # Lin-Rood cross-term advection (FV3 fv_tp_2d)
 export LinRoodWorkspace, CSLinRoodAdvectionWorkspace

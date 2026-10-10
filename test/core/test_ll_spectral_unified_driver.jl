@@ -127,5 +127,14 @@ end
                                   horizontal_balance = AtmosTransport.Preprocessing.LayerBalance())
         layer_path, _ = process_day(date, grid, layer, vertical; positivity_cfl_limit = 0.95)
         @test _header_without_creation_time(layer_path)[:horizontal_balance] == "per_layer"
+
+        # `write_replay_check = false` reaches the gate and the header; the payload
+        # is the same. A binary that passed the gate records nothing.
+        off = _ll_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "off"))
+        off_path, _ = @test_logs (:info, r"replay gate SKIPPED") match_mode = :any process_day(
+            date, grid, off, vertical; positivity_cfl_limit = 0.95, write_replay_check = false)
+        @test _header_without_creation_time(off_path)[:write_replay_check] === false
+        @test !haskey(_header_without_creation_time(first_path), :write_replay_check)
+        @test read(off_path)[HEADER_SIZE + 1:end] == read(first_path)[HEADER_SIZE + 1:end]
     end
 end

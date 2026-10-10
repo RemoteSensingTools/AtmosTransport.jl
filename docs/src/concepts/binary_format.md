@@ -265,7 +265,8 @@ with `tol = replay_tolerance(FT)` from
 for Float32. A binary that fails this gate is **rejected at write
 time**; the preprocessor errors out rather than producing a
 known-bad file. Diagnostic runs can explicitly bypass this gate with
-`ATMOSTR_NO_WRITE_REPLAY_CHECK=1` (or `--no-write-replay-check` for
+`[numerics] write_replay_check = false` in the preprocessing config (or
+`--no-write-replay-check` for
 `scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl`); production
 preprocessing should not. Such a binary records `write_replay_check = false` in
 its header, the inspector marks it, and the runtime warns when it opens it.
@@ -287,9 +288,7 @@ driver = TransportBinaryDriver(path; validate_replay = true)
 
 The write-time gate (above) is on by default. A failure throws an
 `ArgumentError` with the worst-cell location and tolerance margin, pointing
-the user at binary regeneration. (`ATMOSTR_REPLAY_CHECK=1` still enables the
-check for one release, with a deprecation warning;
-`ATMOSTR_NO_REPLAY_CHECK` is gone.)
+the user at binary regeneration.
 
 The load-time gate is **off by default** because it doubles binary
 load time; it is the recommended sanity check for any new binary

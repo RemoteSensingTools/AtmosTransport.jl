@@ -701,7 +701,7 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
     end
 
     @testset "CubedSphereContract: write_replay_on = false runs only the positivity gate" begin
-        # `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` keeps a binary that fails replay for
+        # `[numerics] write_replay_check = false` keeps a binary that fails replay for
         # inspection; the positivity gate still uses the window's end mass.
         w = build_clean_cs_window(Float64)
         contract = CubedSphereContract{Float64}(replay_tol = 1e-12,

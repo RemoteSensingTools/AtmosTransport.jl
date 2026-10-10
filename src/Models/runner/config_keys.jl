@@ -24,8 +24,10 @@ const _NUMERICS_KEYS = ("float_type",)                   # `_cfg_float_type`
 # `[run]`. `reset_air_mass_each_window` is read only to reject it. The
 # advection keys are the legacy location of `[advection]` (`_advection_section`).
 const _RUN_KEYS = ("start_window", "stop_window", "air_mass_reset_mode", "physics_cadence",
-                   "Hp", "halo_padding", "tracer_name", "reset_air_mass_each_window")
+                   "prefetch_windows", "Hp", "halo_padding", "tracer_name",
+                   "reset_air_mass_each_window")
 const _ADVECTION_KEYS = ("scheme", "ppm_order", "vertical", "limiter")   # `advection_spec`
+const _ADVECTION_ONLY_KEYS = ("check_binary_cfl",)  # `binary_cfl_check`; no legacy `[run]` form
 const _DIFFUSION_KEYS = ("kind", "value", "surface_flux_boundary", "type")  # `diffusion_spec`
 const _COLLAB_LU_KEYS = ("tile_workspace_gib", "use_collab_lu", "lmax_conv", "n_merge")
 const _CONVECTION_KEYS = ("kind", "clamp", "cloud_base", _COLLAB_LU_KEYS...)  # `convection_spec`
@@ -173,10 +175,13 @@ end
 
 function _advection_key_warnings!(w, section, label)
     section isa AbstractDict || return w
-    label == "[advection]" && _warn_unknown!(w, section, _ADVECTION_KEYS, label)
+    label == "[advection]" &&
+        _warn_unknown!(w, section, (_ADVECTION_KEYS..., _ADVECTION_ONLY_KEYS...), label)
     scheme = _lower(get(section, "scheme", "upwind"))
     scheme in ("upwind", "slopes", "none") &&
         _warn_unread!(w, section, ("ppm_order",), label, "with scheme = \"$(scheme)\"")
+    scheme in ("linrood", "none") &&
+        _warn_unread!(w, section, ("check_binary_cfl",), label, "with scheme = \"$(scheme)\"")
     return w
 end
 
