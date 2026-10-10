@@ -8,7 +8,6 @@
 using Test
 using AtmosTransport
 using JSON3
-using InteractiveUtils: subtypes
 
 const RunnerKeys = AtmosTransport.Models.DrivenRunner
 const Specs = AtmosTransport.Models
@@ -16,6 +15,11 @@ const SCHEMA = JSON3.read(read(joinpath(@__DIR__, "..", "..", "schemas",
                                         "atmos_transport_run.schema.json"), String))
 
 enum_of(node) = Set(string.(node.enum))
+# The concrete subtypes of `T` defined in module `mod` (InteractiveUtils is not
+# a test dependency).
+concrete_subtypes(T, mod) =
+    Set(t for t in (getfield(mod, n) for n in names(mod; all = true) if isdefined(mod, n))
+        if t isa DataType && t !== T && t <: T && !isabstracttype(t))
 property_keys(node) = Set(String.(keys(node.properties)))
 
 @testset "schema choices equal the parsers' choices" begin
@@ -45,16 +49,17 @@ property_keys(node) = Set(String.(keys(node.properties)))
     schemes = [AtmosTransport.Operators.SurfaceFlux.flux_temporal_scheme(s)
                for s in enum_of(d.surface_flux.properties.temporal_scheme)]
     @test Set(typeof.(schemes)) ==
-          Set(subtypes(AtmosTransport.Operators.SurfaceFlux.AbstractFluxTemporalScheme))
+          concrete_subtypes(AtmosTransport.Operators.SurfaceFlux.AbstractFluxTemporalScheme,
+                            AtmosTransport.Operators.SurfaceFlux)
     @test Set(AtmosTransport.Output._parse_output_format(f)
               for f in enum_of(d.output.properties.format)) == Set([:netcdf, :binary_mmap])
     @test Set(typeof(AtmosTransport.Output._parse_layer_selection(l, "x"))
               for l in enum_of(d.layer_selection)) ==
-          Set(subtypes(AtmosTransport.Output.AbstractLayerSelection))
+          concrete_subtypes(AtmosTransport.Output.AbstractLayerSelection, AtmosTransport.Output)
     @test Set(c.const for c in d.output.properties.split.oneOf) == Set(["single", "daily"])
     @test Set(typeof(AtmosTransport.Output._output_partition(Dict("split" => c.const)))
               for c in d.output.properties.split.oneOf) ==
-          Set(subtypes(AtmosTransport.Output.AbstractOutputPartition))
+          concrete_subtypes(AtmosTransport.Output.AbstractOutputPartition, AtmosTransport.Output)
     for backend in enum_of(p.architecture.properties.backend)
         @test AtmosTransport.Architectures._architecture_symbol(backend) === Symbol(backend)
     end
