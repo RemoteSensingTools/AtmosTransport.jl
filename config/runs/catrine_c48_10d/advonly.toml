@@ -35,7 +35,7 @@ use_gpu = false         # C48 is tiny; CPU is fine. Set true on wurst/curry for 
 [numerics]
 float_type = "Float32"
 
-[run]
+[advection]
 scheme = "slopes"       # "upwind" | "slopes" | "ppm" (MonotoneLimiter by default)
 
 # Catrine natural-state CO2 from LSCE inversion at 2021-12-01 00:00.

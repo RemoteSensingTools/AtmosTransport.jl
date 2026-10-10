@@ -21,7 +21,7 @@ backend = "cuda"
 [numerics]
 float_type = "Float32"
 
-[run]
+[advection]
 scheme = "ppm"
 
 [tracers.co2_natural]

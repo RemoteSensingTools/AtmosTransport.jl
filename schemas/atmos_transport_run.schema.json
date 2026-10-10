@@ -144,26 +144,10 @@
           "deprecated": true,
           "description": "Removed; use run.air_mass_reset_mode."
         },
-        "scheme": {
-          "allOf": [{"$ref": "#/properties/advection/properties/scheme"}],
-          "deprecated": true,
-          "description": "Legacy location of [advection] scheme, read only when [advection] is absent (an error next to it)."
-        },
-        "ppm_order": {
-          "allOf": [{"$ref": "#/properties/advection/properties/ppm_order"}],
-          "deprecated": true,
-          "description": "Legacy location of [advection] ppm_order, read only when [advection] is absent (an error next to it)."
-        },
-        "vertical": {
-          "allOf": [{"$ref": "#/properties/advection/properties/vertical"}],
-          "deprecated": true,
-          "description": "Legacy location of [advection] vertical, read only when [advection] is absent (an error next to it)."
-        },
-        "limiter": {
-          "allOf": [{"$ref": "#/properties/advection/properties/limiter"}],
-          "deprecated": true,
-          "description": "Legacy location of [advection] limiter, read only when [advection] is absent (an error next to it)."
-        }
+        "scheme": {"not": {}, "deprecated": true, "description": "Moved to [advection] scheme."},
+        "ppm_order": {"not": {}, "deprecated": true, "description": "Moved to [advection] ppm_order."},
+        "vertical": {"not": {}, "deprecated": true, "description": "Moved to [advection] vertical."},
+        "limiter": {"not": {}, "deprecated": true, "description": "Moved to [advection] limiter."}
       }
     },
     "advection": {
@@ -198,7 +182,7 @@
           "description": "Cubed sphere, scheme = upwind, slopes or ppm: recompute the CFL subcycle count at every step and stop if the binary's substep schedule asks for fewer (slower; for binaries of unknown origin)."
         }
       },
-      "description": "Advection scheme and its options. Without this table the legacy [run] keys scheme, ppm_order, vertical and limiter are read; next to it they are an error."
+      "description": "Advection scheme and its options (without the table: upwind). These keys are no longer read from [run]."
     },
     "diffusion": {
       "type": "object",

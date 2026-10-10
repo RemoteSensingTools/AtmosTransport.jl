@@ -305,11 +305,10 @@ Base.summary(s::LinRoodAdvectionSpec) =
 """
     binary_cfl_check(cfg[, style]) -> AbstractBinaryCFLCheck
 
-Parse `[advection] check_binary_cfl` of a run config (default `false`; the key
-has no legacy `[run]` form). `true` gives `BinaryCFLCheck()`, which only the
-cubed-sphere split-sweep schemes (`upwind`, `slopes`, `ppm`) can honor, because
-only they take a subcycle count from the binary; other schemes and, given
-`style`, other grids reject it.
+Parse `[advection] check_binary_cfl` of a run config (default `false`). `true`
+gives `BinaryCFLCheck()`, which only the cubed-sphere split-sweep schemes
+(`upwind`, `slopes`, `ppm`) can honor, because only they take a subcycle count
+from the binary; other schemes and, given `style`, other grids reject it.
 """
 function binary_cfl_check(cfg)
     haskey(get(cfg, "run", Dict{String, Any}()), "check_binary_cfl") && throw(ArgumentError(

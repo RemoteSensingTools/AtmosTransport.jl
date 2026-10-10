@@ -34,7 +34,7 @@ use_gpu = true          # wurst L40S F32. Set false for local CPU dev.
 [numerics]
 float_type = "Float32"
 
-[run]
+[advection]
 scheme = "slopes"       # "upwind" | "slopes" | "ppm" (MonotoneLimiter default)
 
 [tracers.co2_natural]

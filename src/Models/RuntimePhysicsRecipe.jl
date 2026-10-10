@@ -36,18 +36,18 @@ end
 # the CS grid. Historical flat-411 behaviour is now expressed as
 # `kind = "uniform" background = 4.11e-4`.
 
+# The `[advection]` table. Its keys used to be accepted in `[run]` as well; that
+# location is gone, and an error names the new one.
 function _advection_section(cfg)
     run = get(cfg, "run", Dict{String,Any}())
-    if haskey(cfg, "advection")
+    if run isa AbstractDict
         for key in ("scheme", "ppm_order", "vertical", "limiter")
             haskey(run, key) && throw(ArgumentError(
-                "Advection option `[run].$(key)` is ambiguous because `[advection]` " *
-                "is present. Move `$(key)` into `[advection]`; legacy `[run].$(key)` " *
-                "is only accepted when `[advection]` is absent."))
+                "`[run].$(key)` moved to the [advection] table; write `$(key) = ...` under " *
+                "[advection]."))
         end
-        return cfg["advection"]
     end
-    return run
+    return get(cfg, "advection", Dict{String,Any}())
 end
 @inline _diffusion_section(cfg) = get(cfg, "diffusion", Dict{String,Any}())
 @inline _convection_section(cfg) = get(cfg, "convection", Dict{String,Any}())

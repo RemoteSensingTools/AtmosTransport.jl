@@ -111,9 +111,11 @@ end
                   bad(c -> c["advection"] = Dict("scheme" => "ppm", "ppm_order" => 7)))
         @test any(contains("must be 5 or 7"),
                   bad(c -> c["advection"] = Dict("scheme" => "linrood", "ppm_order" => 3)))
-        @test any(contains("ambiguous"),
+        @test any(contains("moved to the [advection] table"),
+                  bad(c -> c["run"] = Dict("scheme" => "linrood")))
+        @test any(contains("moved to the [advection] table"),
                   bad(c -> (c["advection"] = Dict("scheme" => "ppm");
-                            c["run"] = Dict("scheme" => "linrood"))))
+                            c["run"] = Dict("vertical" => "fv3_kord8"))))
         @test any(contains("Unknown [diffusion] kind"), bad(c -> c["diffusion"] = Dict("kind" => "pbl")))
         @test any(contains("names no tracer"),
                   bad(c -> c["chemistry"] = Dict("kind" => "decay",

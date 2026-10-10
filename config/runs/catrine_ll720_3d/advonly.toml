@@ -28,7 +28,7 @@ use_gpu = true          # LL720×361 @ F32 fits comfortably on L40S.
 [numerics]
 float_type = "Float32"
 
-[run]
+[advection]
 scheme = "slopes"
 
 [tracers.co2_natural]

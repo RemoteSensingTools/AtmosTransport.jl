@@ -35,7 +35,7 @@ use_gpu = true
 [numerics]
 float_type = "Float32"
 
-[run]
+[advection]
 scheme = "slopes"
 
 [tracers.co2_natural]

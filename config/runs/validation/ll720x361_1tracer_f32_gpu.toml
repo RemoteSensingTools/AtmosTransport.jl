@@ -18,8 +18,10 @@ use_gpu = true
 float_type = "Float32"
 
 [run]
-scheme = "slopes"
 air_mass_reset_mode = "none"
+
+[advection]
+scheme = "slopes"
 
 [tracers.co2]
 [tracers.co2.init]

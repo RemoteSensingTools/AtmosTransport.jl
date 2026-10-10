@@ -46,6 +46,13 @@
   `process_day(...; balance_mode)` keyword is removed; pass
   `horizontal_balance = ColumnBalance()` or `LayerBalance()`.
 
+- The advection keys `scheme`, `ppm_order`, `vertical` and `limiter` are read
+  only from `[advection]`; in `[run]`, their old location, they are an error
+  that names the new table. The 121 shipped run configs that used `[run]`
+  moved them to `[advection]` (checked by parsing each file before and after);
+  two of them, which set `[run] scheme` next to an `[advection]` table and
+  were therefore rejected before, now run.
+
 ### Fixes
 
 - ERA5 N320 preprocessing had two registration errors. The GRIB

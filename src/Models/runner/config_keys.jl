@@ -22,8 +22,8 @@ const _INPUT_STAGING_KEYS = ("enabled", "dir", "lookahead_days", "keep_behind_da
 const _ARCHITECTURE_KEYS = ("use_gpu", "backend")        # `architecture_from_config`
 const _NUMERICS_KEYS = ("float_type",)                   # `_cfg_float_type`
 
-# `[run]`. `reset_air_mass_each_window` is read only to reject it. The
-# advection keys are the legacy location of `[advection]` (`_advection_section`).
+# `[run]`. `reset_air_mass_each_window` and the advection keys, which moved to
+# `[advection]`, are read only to reject them (`_advection_section`).
 const _RUN_KEYS = ("start_window", "stop_window", "air_mass_reset_mode", "physics_cadence",
                    "prefetch_windows", "Hp", "halo_padding", "tracer_name",
                    "reset_air_mass_each_window")
@@ -152,17 +152,15 @@ function _config_key_findings(cfg::AbstractDict)
     _report_unknown!(w, get(cfg, "numerics", nothing), _NUMERICS_KEYS, "[numerics]")
 
     run = get(cfg, "run", nothing)
-    has_advection = haskey(cfg, "advection")
     tracers = get(cfg, "tracers", nothing)
     if run isa AbstractDict
-        # The advection keys are legacy [run] keys without [advection]; next to it
-        # they are an error (`_advection_section`), reported by `validate_config`.
+        # The advection keys moved to [advection]; `_advection_section` names the
+        # new place, so they are not reported as unknown here as well.
         _report_unknown!(w, run, (_RUN_KEYS..., _ADVECTION_KEYS...), "[run]")
         tracers isa AbstractDict &&
             _report_unread!(w, run, ("tracer_name",), "[run]", "because [tracers] defines the tracers")
     end
-    _advection_key_findings!(w, has_advection ? cfg["advection"] : run,
-                             has_advection ? "[advection]" : "[run]")
+    _advection_key_findings!(w, get(cfg, "advection", nothing), "[advection]")
     _diffusion_key_findings!(w, get(cfg, "diffusion", nothing))
     _convection_key_findings!(w, get(cfg, "convection", nothing))
     _chemistry_key_findings!(w, get(cfg, "chemistry", nothing))
@@ -188,8 +186,7 @@ end
 
 function _advection_key_findings!(w, section, label)
     section isa AbstractDict || return w
-    label == "[advection]" &&
-        _report_unknown!(w, section, (_ADVECTION_KEYS..., _ADVECTION_ONLY_KEYS...), label)
+    _report_unknown!(w, section, (_ADVECTION_KEYS..., _ADVECTION_ONLY_KEYS...), label)
     scheme = _lower(get(section, "scheme", "upwind"))
     scheme in ("upwind", "slopes", "none") &&
         _report_unread!(w, section, ("ppm_order",), label, "with scheme = \"$(scheme)\"")

@@ -15,10 +15,12 @@ float_type = "Float32"
 use_gpu = true
 
 [run]
-scheme = "upwind"
 tracer_name = "CO2"
 air_mass_reset_mode = "none"
 stop_window = 48
+
+[advection]
+scheme = "upwind"
 
 [init]
 kind = "catrine_co2"

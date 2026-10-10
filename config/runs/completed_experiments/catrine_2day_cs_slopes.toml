@@ -14,11 +14,13 @@ use_gpu = true
 float_type = "Float32"
 
 [run]
-scheme = "slopes"
 start_window = 1
 stop_window = 24
 air_mass_reset_mode = "none"
 halo_padding = 2
+
+[advection]
+scheme = "slopes"
 
 [tracers.natural_co2.init]
 kind = "catrine_co2"
