@@ -11,7 +11,7 @@ runtime validation, so grid metadata cannot diverge from model storage.
 module Architectures
 
 using DocStringExtensions
-using KernelAbstractions: KernelAbstractions as KA
+using KernelAbstractions: KernelAbstractions as KA, @kernel, @index
 
 export AbstractArchitecture, CPU, GPU
 export array_type, device, architecture, architecture_from_config
@@ -20,6 +20,8 @@ export architecture_label, device_name, backend_name, synchronize_architecture!
 export array_adapter_for, assert_residency!, assert_float_type!
 export reclaim_backend_pool!, _kahan_add
 export launch!
+export AbstractPointOp, index_space, apply_point!, Fused, Sequence
+export FusionPolicy, FuseLaunches, SeparateLaunches, fusion_policy
 
 abstract type AbstractArchitecture end
 
@@ -323,6 +325,240 @@ synchronization on GPU.
     sync && KA.synchronize(backend)
     return nothing
 end
+
+# ---------------------------------------------------------------------------
+# Point operations: a kernel body written once, launched or fused by dispatch
+# ---------------------------------------------------------------------------
+
+"""
+    AbstractPointOp
+
+A unit of work applied independently at every index of its index space. A
+concrete operation is a small isbits struct of integers and flags; the arrays
+it reads and writes travel in a shared context `ctx` (usually a `NamedTuple`).
+It defines two methods:
+
+    index_space(op, ctx) -> NTuple{N, Int}
+    apply_point!(op, ctx, I::Vararg{Int, N})   # @inline; one index, no return value
+
+`launch!(op, ctx, backend)` runs it as one kernel on a device and as a loop
+over the same body on the host, where `bound_context(op, ctx)` may first
+resolve loop-invariant lookups. Operations compose by type:
+
+- `Fused(ops...)`: independent operations in one launch. A trailing slot index
+  selects the operation; indices outside an operation's own space are skipped.
+  The operations run concurrently on a device and one after the other on the
+  host, so they must write pairwise-disjoint cells, and no operation may read
+  a cell that another one writes.
+- `Sequence(ops...)`: dependent operations, launched in order (stream order on
+  a device) with one synchronization at the end.
+
+Fusing changes only the launch structure. For operations that satisfy the
+`Fused` contract, every index runs the same arithmetic on the same inputs, so
+results equal those of separate launches bit for bit.
+"""
+abstract type AbstractPointOp end
+
+"""
+    index_space(op, ctx) -> NTuple{N, Int}
+
+Extent of the indices at which `apply_point!(op, ctx, I...)` runs.
+"""
+function index_space end
+
+"""
+    apply_point!(op, ctx, I...)
+
+The work of `op` at one index; methods should be `@inline`.
+"""
+function apply_point! end
+
+"""
+    bound_context(op, ctx) -> ctx′
+
+Context for running `op` by itself (host loops, a single device launch, or a
+separate launch under `SeparateLaunches`), with loop-invariant lookups such as
+which panel arrays `op` reads and writes resolved once. `launch!` binds exactly
+once and takes the index space from the unbound `ctx`. The default returns
+`ctx`; inside a fused device launch the unbound `ctx` is used.
+"""
+bound_context(op, ctx) = ctx
+
+"""
+    FusionPolicy
+
+How a backend launches a [`Fused`](@ref) set of point operations, chosen by
+`fusion_policy(backend)`: `FuseLaunches()` (the default) runs them as one
+kernel; `SeparateLaunches()` launches each operation over its own index space
+on its `bound_context` (operations that define one, such as the halo fills,
+then see their arrays directly), one after another, with one synchronization
+at the end. Results are the same either way (fused operations write disjoint cells
+and read none that another writes); which is faster depends on the backend.
+"""
+abstract type FusionPolicy end
+struct FuseLaunches <: FusionPolicy end
+struct SeparateLaunches <: FusionPolicy end
+
+"""
+    fusion_policy(backend) -> FusionPolicy
+
+`FuseLaunches()` unless a backend extension says otherwise (Metal launches
+separately: measured on an M5 Pro, a C90 packed-tracer halo exchange takes
+1.1–1.3 ms with separate launches of bound arrays and 1.7–2.0 ms fused, while
+on CUDA the fused launch is 3–9× faster).
+"""
+fusion_policy(backend) = FuseLaunches()
+
+@kernel function _point_op_kernel!(op, ctx)
+    I = @index(Global, NTuple)
+    apply_point!(op, ctx, I...)
+end
+
+"""
+    launch!(op::AbstractPointOp, ctx, backend; workgroup = 256, sync = true)
+
+Run `op` at every index of `index_space(op, ctx)`: one kernel launch on a
+device backend (then `synchronize` unless `sync = false`), and a loop calling
+the same `apply_point!` on the host backend.
+"""
+function launch!(op::AbstractPointOp, ctx, backend; workgroup::Int = 256, sync::Bool = true)
+    if backend isa KA.CPU
+        _host_apply!(op, ctx)
+    else
+        # A single operation runs on its bound context; its index space comes
+        # from the original one.
+        space = index_space(op, ctx)
+        _point_op_kernel!(backend, workgroup)(op, bound_context(op, ctx); ndrange = space)
+        sync && KA.synchronize(backend)
+    end
+    return nothing
+end
+
+# Host execution needs no slot dispatch: a fused operation runs its parts one
+# after the other, each over its own index space, as plain nested loops with
+# the first index innermost.
+_host_apply!(op::AbstractPointOp, ctx) = _host_loops!(op, bound_context(op, ctx), index_space(op, ctx))
+
+@generated function _host_loops!(op, ctx, space::NTuple{N, Int}) where N
+    return quote
+        Base.Cartesian.@nloops $N i d -> 1:space[d] begin
+            apply_point!(op, ctx, (Base.Cartesian.@ntuple $N i)...)
+        end
+        return nothing
+    end
+end
+
+"""
+    Fused(ops::AbstractPointOp...)
+    Fused(ops::Tuple)
+
+Independent point operations of equal index rank in one launch, over the
+elementwise-largest index space plus a trailing slot index. At least one
+operation is required.
+
+On a device the operations run concurrently; on the host they run one after
+the other. The operations must therefore write pairwise-disjoint cells, and no
+operation may read a cell that another fused operation writes. Under this
+contract both paths give the results of separate launches bit for bit.
+"""
+struct Fused{Ops <: Tuple{Vararg{AbstractPointOp}}} <: AbstractPointOp
+    ops::Ops
+    function Fused{Ops}(ops::Ops) where {Ops <: Tuple{Vararg{AbstractPointOp}}}
+        isempty(ops) && throw(ArgumentError("Fused needs at least one point operation"))
+        return new{Ops}(ops)
+    end
+end
+Fused(ops::Tuple{Vararg{AbstractPointOp}}) = Fused{typeof(ops)}(ops)
+Fused(ops::AbstractPointOp...) = Fused(ops)
+
+function index_space(f::Fused, ctx)
+    spaces = map(op -> index_space(op, ctx), f.ops)
+    allequal(map(length, spaces)) || throw(ArgumentError(
+        "Fused operations must share one index rank; got index spaces $(spaces)"))
+    return (reduce((a, b) -> max.(a, b), spaces)..., length(f.ops))
+end
+
+@inline apply_point!(f::Fused, ctx, I...) =
+    _apply_slot(f.ops, ctx, last(I), Base.front(I))
+
+function _host_apply!(f::Fused, ctx)
+    index_space(f, ctx)     # the same equal-rank check as on a device
+    foreach(op -> _host_apply!(op, ctx), f.ops)
+    return nothing
+end
+
+function launch!(f::Fused, ctx, backend; workgroup::Int = 256, sync::Bool = true)
+    if backend isa KA.CPU
+        _host_apply!(f, ctx)
+    else
+        _launch_fused!(fusion_policy(backend), f, ctx, backend, workgroup)
+        sync && KA.synchronize(backend)
+    end
+    return nothing
+end
+
+_launch_fused!(::FuseLaunches, f::Fused, ctx, backend, workgroup) =
+    _point_op_kernel!(backend, workgroup)(f, ctx; ndrange = index_space(f, ctx))
+
+function _launch_fused!(::SeparateLaunches, f::Fused, ctx, backend, workgroup)
+    index_space(f, ctx)     # the same equal-rank check as a fused launch
+    foreach(op -> launch!(op, ctx, backend; workgroup, sync = false), f.ops)   # each binds its context
+    return nothing
+end
+
+# The slot selects an operation through a balanced tree of comparisons with
+# constant tuple indices. Indexing a tuple with a run-time value inside a GPU
+# kernel copies it to per-thread local memory; on CUDA that made a C90 halo
+# exchange 20-200x slower.
+function _slot_tree(lo::Int, hi::Int)
+    lo == hi && return :(_apply_inside(ops[$lo], ctx, I))
+    mid = (lo + hi) >>> 1
+    return :(slot <= $mid ? $(_slot_tree(lo, mid)) : $(_slot_tree(mid + 1, hi)))
+end
+
+@generated function _apply_slot(ops::Tuple{Vararg{Any, N}}, ctx, slot, I) where N
+    return quote
+        $(Expr(:meta, :inline))
+        $(_slot_tree(1, N))
+        return nothing
+    end
+end
+
+@inline function _apply_inside(op, ctx, I)
+    all(map(<=, I, index_space(op, ctx))) || return nothing
+    apply_point!(op, ctx, I...)
+    return nothing
+end
+
+"""
+    Sequence(ops::AbstractPointOp...)
+
+Point operations where later ones read what earlier ones wrote: launched in
+order, with one synchronization after the last.
+"""
+struct Sequence{Ops <: Tuple{Vararg{AbstractPointOp}}}
+    ops::Ops
+end
+Sequence(ops::AbstractPointOp...) = Sequence(ops)
+
+function launch!(s::Sequence, ctx, backend; workgroup::Int = 256, sync::Bool = true)
+    foreach(op -> launch!(op, ctx, backend; workgroup, sync = false), s.ops)
+    sync && !(backend isa KA.CPU) && KA.synchronize(backend)
+    return nothing
+end
+
+"""
+    select_panel(t::NTuple{6}, p)
+
+Element `p` of a six-panel tuple selected with constant indices, so a run-time
+panel number costs no local-memory copy of the tuple inside a kernel.
+
+Requires `p ∈ 1:6`. The function runs inside device kernels and does not check
+this (any other `p` returns `t[6]`); panel numbers are validated where the
+operations that carry them are built.
+"""
+@inline select_panel(t::NTuple{6}, p) =
+    p == 1 ? t[1] : p == 2 ? t[2] : p == 3 ? t[3] : p == 4 ? t[4] : p == 5 ? t[5] : t[6]
 
 @inline function _kahan_add(s::T, c::T, x::T) where {T <: Union{Float16, Float32}}
     y = x - c

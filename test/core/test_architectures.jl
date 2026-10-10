@@ -108,3 +108,91 @@ KernelAbstractions.synchronize(b::_CountingBackend) = (b.syncs[] += 1; nothing)
     @test calls[end] == (256, 10, (:b,))
     @test backend.syncs[] == 1
 end
+
+# Point operations: one body, run as a host loop or as a (fused) kernel.
+module _PointOpTests
+using AtmosTransport.Architectures: AbstractPointOp
+import AtmosTransport.Architectures: index_space, apply_point!
+# Writes `value` into `ctx.out[slot]` over an n × m block.
+struct Mark <: AbstractPointOp
+    slot::Int; n::Int; m::Int; value::Float64
+end
+index_space(op::Mark, ctx) = (op.n, op.m)
+@inline apply_point!(op::Mark, ctx, i, j) = (ctx.out[i, j, op.slot] = op.value; nothing)
+# Adds 1 to whatever `Mark` slot 1 wrote: only correct after it (a dependency).
+struct Increment <: AbstractPointOp end
+index_space(::Increment, ctx) = size(ctx.out)[1:2]
+@inline apply_point!(::Increment, ctx, i, j) = (ctx.out[i, j, 1] += 1; nothing)
+# Binding replaces the context with a different shape and counts the bindings:
+# the index space must come from the unbound context, binding must happen once.
+struct Rebind <: AbstractPointOp end
+const REBINDS = Ref(0)
+index_space(::Rebind, ctx) = size(ctx.out)[1:2]
+import AtmosTransport.Architectures: bound_context
+bound_context(::Rebind, ctx) = (REBINDS[] += 1; (; target = ctx.out))
+@inline apply_point!(::Rebind, ctx, i, j) = (ctx.target[i, j, 1] = 7.0; nothing)
+# A rank-1 operation, which cannot be fused with the rank-2 ones above.
+struct Line <: AbstractPointOp
+    n::Int
+end
+index_space(op::Line, ctx) = (op.n,)
+@inline apply_point!(::Line, ctx, i) = nothing
+end
+using ._PointOpTests: Mark, Increment, Line, Rebind, REBINDS
+
+@testset "Point operations: host loop, fused kernel, sequence" begin
+    Arch = AtmosTransport.Architectures
+    ops = (Mark(1, 4, 3, 1.0), Mark(2, 2, 3, 2.0), Mark(3, 4, 1, 3.0))
+    expected = zeros(4, 3, 3)
+    expected[:, :, 1] .= 1; expected[1:2, :, 2] .= 2; expected[:, 1, 3] .= 3
+    fused = Arch.Fused(ops...)
+    @test Arch.index_space(fused, nothing) == (4, 3, 3)
+    @test only(Base.return_types(Arch.Fused, Tuple{Mark, Mark, Mark})) === typeof(fused)
+    @test isbits(fused)
+    @test Arch.Fused(ops) === fused
+    # A fused launch needs at least one operation.
+    @test_throws ArgumentError Arch.Fused()
+    @test_throws ArgumentError Arch.Fused(())
+    # Members must be point operations, and fused operations must share one rank.
+    @test_throws MethodError Arch.Fused((Mark(1, 4, 3, 1.0), 2))
+    @test_throws MethodError Arch.Sequence((Mark(1, 4, 3, 1.0), 2))
+    @test_throws ArgumentError Arch.index_space(Arch.Fused(Mark(1, 4, 3, 1.0), Line(5)), nothing)
+    @test_throws ArgumentError Arch.launch!(Arch.Fused(Mark(1, 4, 3, 1.0), Line(5)),
+                                            (; out = zeros(4, 3, 3)), KernelAbstractions.CPU())
+
+    # The separate-launch policy (Metal) launches each operation with its bound
+    # context and gives the fused result.
+    @test Arch.fusion_policy(KernelAbstractions.CPU()) === Arch.FuseLaunches()
+    separate = (; out = zeros(4, 3, 3))
+    Arch._launch_fused!(Arch.SeparateLaunches(), fused, separate, KernelAbstractions.CPU(), 4)
+    @test separate.out == expected
+    for launch in ((op, ctx) -> Arch.launch!(op, ctx, KernelAbstractions.CPU()),
+                   (op, ctx) -> Arch._launch_fused!(Arch.SeparateLaunches(), Arch.Fused(op),
+                                                    ctx, KernelAbstractions.CPU(), 4))
+        REBINDS[] = 0
+        rebound = (; out = zeros(4, 3, 1))
+        launch(Rebind(), rebound)
+        @test REBINDS[] == 1 && all(==(7.0), rebound.out)
+    end
+
+    host = (; out = zeros(4, 3, 3))
+    Arch.launch!(fused, host, KernelAbstractions.CPU())
+    @test host.out == expected
+
+    # The device path (one kernel, slot dispatch, masking) on the CPU backend.
+    kernel = (; out = zeros(4, 3, 3))
+    Arch._point_op_kernel!(KernelAbstractions.CPU(), 4)(fused, kernel; ndrange = (4, 3, 3))
+    KernelAbstractions.synchronize(KernelAbstractions.CPU())
+    @test kernel.out == expected
+
+    seq = (; out = zeros(4, 3, 3))
+    Arch.launch!(Arch.Sequence(Mark(1, 4, 3, 1.0), Increment()), seq, KernelAbstractions.CPU())
+    @test all(==(2.0), seq.out[:, :, 1])
+end
+
+@testset "select_panel returns panel p for p in 1:6" begin
+    panels = ntuple(p -> fill(p, 2), 6)
+    for p in 1:6
+        @test AtmosTransport.Architectures.select_panel(panels, p) === panels[p]
+    end
+end

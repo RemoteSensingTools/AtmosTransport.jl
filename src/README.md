@@ -38,7 +38,9 @@ Geometry and topology decisions come from
 - `Output/` — topology-dispatched snapshot capture, NetCDF schema, and
   derived diagnostics for LL, RG, and CS runs
 - `Parameters/` — physical constants and planetary parameters
-- `Architectures.jl` — unified CPU/vendor-specific GPU execution policies
+- `Architectures.jl` — unified CPU/vendor-specific GPU execution policies,
+  kernel launching (`launch!`) and point operations (`AbstractPointOp`,
+  `Fused`, `Sequence`: a kernel body written once, fused by dispatch)
 - `Quantities/` — intensive/extensive/vector/flux traits used by regridding
 - `Diagnostics/` — lightweight runtime instrumentation
 - `Regridding/` — conservative regridding and weight application
