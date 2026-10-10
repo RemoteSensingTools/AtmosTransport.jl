@@ -38,7 +38,8 @@ how a TOML option reaches an operator, is [`../README.md`](../README.md).
     by `validate_config`.
 - Progress in [`progress.jl`](progress.jl): `RunProgressTimer`,
   `timed_io_read!`, `timed_transport!`, `timed_io_write!`, `tick_window!`,
-  `set_progress_status!`, `summarize_progress!`
+  `set_progress_status!`, `summarize_progress!`, `stop_compile_timing!` (the
+  runners call it in `finally`, so compile timing is released on errors)
 - Startup log in [`summary.jl`](summary.jl): `_log_runtime_summary`
 
 ## File Map
@@ -59,7 +60,8 @@ how a TOML option reaches an operator, is [`../README.md`](../README.md).
 - [`resources.jl`](resources.jl) — `_with_run_resource`, `RunInputResources`
   (drains window prefetch, closes the driver, calls `release_payload!`)
 - [`progress.jl`](progress.jl) — progress bar with io_read / transport /
-  io_write wall-clock accumulators
+  io_write wall-clock accumulators; the end-of-run summary adds GC time, JIT
+  compilation time and allocated memory over the run
 - [`summary.jl`](summary.jl) — diffusion and schedule labels, multi-line runtime
   summary
 

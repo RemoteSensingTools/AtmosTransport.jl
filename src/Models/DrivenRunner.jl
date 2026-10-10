@@ -403,170 +403,175 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                  total_windows(first_driver) - start_window + 1 :
                  Int(stop_window_override) - start_window + 1
     timer = RunProgressTimer(per_binary * length(binary_paths))
-
-    function capture_structured!(hour_total)
-        timed_io_write!(timer, () -> begin
-            frame = capture_snapshot(model; time_hours = hour_total,
-                                     fields=output_spec.format === :netcdf ? output_spec.fields : nothing)
-            _record_snapshot!(stream, output_spec.partition, snapshots,
-                                  day_snapshots, frame)
-        end)
-        snapshot_count[] += 1
-        return nothing
-    end
-
-    if do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
-       abs(snapshot_schedule_hours[snap_idx]) < 0.5
-        capture_structured!(0.0)
-        set_progress_status!(timer;
-                             detail = @sprintf("snapshot %d at t=%.0fh",
-                                               snap_idx, 0.0),
-                             redraw = true)
-        snap_idx += 1
-    end
-
-    run_time_seconds = 0.0   # accumulated across binaries (sim clock origin)
-    # Observation times are absolute: a single-file run starting at a later
-    # window begins `start_window - 1` windows after the run origin.
-    observation_offset_seconds = (start_window - 1) * Float64(window_dt(first_driver))
-    for (idx, path) in enumerate(binary_paths)
-        # `path` (NAS) is kept for date labels/logging; the driver opens the
-        # staged local copy when staging is enabled (idx==1 already staged above).
-        driver = idx == 1 ? first_driver :
-                 timed_io_read!(timer,
-                     () -> TransportBinaryDriver(staged_path_for!(stager, idx);
-                                                 FT = FT, arch = arch))
-        input_resources.driver = driver
-        validate_runtime_physics_recipe(recipe, driver)
-        _check_multifile_window_range(driver, start_window, stop_window_override,
-                                      length(binary_paths))
-        stop_window = stop_window_override === nothing ?
-                      total_windows(driver) : Int(stop_window_override)
-        initialize_air_mass = idx == 1
-        sim = timed_io_read!(timer,
-            () -> DrivenSimulation(model, driver;
-                                    start_window = start_window,
-                                    stop_window = stop_window,
-                                    initialize_air_mass = initialize_air_mass,
-                                    air_mass_reset_mode = air_mass_reset_mode,
-                                    physics_cadence = physics_cadence,
-                                    surface_sources = surface_sources,
-                                    chemistry = recipe.chemistry,
-                                    # seconds since RUN start — see the CS loop
-                                    # note: per-binary clock restarts replay
-                                    # day-1 time-varying fluxes
-                                    start_time = run_time_seconds))
-        input_resources.simulation = sim
-        model = sim.model
-        if !initialize_air_mass
-            boundary_rel = maximum(abs.(model.state.air_mass .- sim.window.air_mass)) /
-                           max(maximum(abs.(sim.window.air_mass)), eps(FT))
-            set_progress_status!(timer;
-                                 detail = @sprintf("boundary air-mass mismatch before %s: %.3e",
-                                                   basename(path), boundary_rel),
-                                 redraw = true)
+    # The timer holds process-wide compile timing until `stop_compile_timing!`;
+    # release it on every exit path, including a run that throws.
+    try
+        function capture_structured!(hour_total)
+            timed_io_write!(timer, () -> begin
+                frame = capture_snapshot(model; time_hours = hour_total,
+                                         fields=output_spec.format === :netcdf ? output_spec.fields : nothing)
+                _record_snapshot!(stream, output_spec.partition, snapshots,
+                                      day_snapshots, frame)
+            end)
+            snapshot_count[] += 1
+            return nothing
         end
-        window_hours = Float64(window_dt(driver)) / 3600.0
-        n_windows = stop_window - start_window + 1
-        day_start_seconds = run_time_seconds + observation_offset_seconds
-        windows_done = 0
-        _begin_observation_binary!(timer, sampler, sim, path, idx, day_start_seconds)
-        set_progress_status!(timer;
-                             status = @sprintf("running %s with %s on %s (%d windows)",
-                                               basename(path),
-                                               nameof(typeof(recipe.advection)),
-                                               summary(driver_grid(driver).horizontal),
-                                               n_windows),
-                             detail = "loading first window",
-                             redraw = true)
-        synchronize_architecture!(arch)
-        t0 = time()
 
-        if do_windows
-            for _ in 1:n_windows
-                # Physics handoff for LL/RG: `run_window!` advances through all
-                # substeps in the current met window. Each substep refreshes
-                # forcing in `DrivenSimulation.step!` and then calls the
-                # operator order documented in `TransportModel.step!`.
-                timed_transport!(timer, () -> run_window!(sim))
-                tick_window!(timer;
-                             status = @sprintf("%s window %d/%d  steps/window=%d",
-                                               basename(path),
-                                               sim.current_window_index,
-                                               stop_window,
-                                               sim.steps_per_window),
-                             detail = @sprintf("snapshots=%d  output=%s",
-                                               snapshot_count[],
-                                               _output_basename(output_spec)))
-                total_elapsed_hours += window_hours
-                windows_done += 1
-                _observe_window_end!(timer, sampler, sim,
-                                     day_start_seconds + windows_done * Float64(window_dt(driver)))
-                while do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
-                      abs(total_elapsed_hours - snapshot_schedule_hours[snap_idx]) < 0.5
-                    capture_structured!(total_elapsed_hours)
-                    set_progress_status!(timer;
-                                         detail = @sprintf("snapshot %d at t=%.0fh  output=%s",
-                                                           snap_idx,
-                                                           total_elapsed_hours,
-                                                           _output_basename(output_spec)),
-                                         redraw = true)
-                    snap_idx += 1
+        if do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
+           abs(snapshot_schedule_hours[snap_idx]) < 0.5
+            capture_structured!(0.0)
+            set_progress_status!(timer;
+                                 detail = @sprintf("snapshot %d at t=%.0fh",
+                                                   snap_idx, 0.0),
+                                 redraw = true)
+            snap_idx += 1
+        end
+
+        run_time_seconds = 0.0   # accumulated across binaries (sim clock origin)
+        # Observation times are absolute: a single-file run starting at a later
+        # window begins `start_window - 1` windows after the run origin.
+        observation_offset_seconds = (start_window - 1) * Float64(window_dt(first_driver))
+        for (idx, path) in enumerate(binary_paths)
+            # `path` (NAS) is kept for date labels/logging; the driver opens the
+            # staged local copy when staging is enabled (idx==1 already staged above).
+            driver = idx == 1 ? first_driver :
+                     timed_io_read!(timer,
+                         () -> TransportBinaryDriver(staged_path_for!(stager, idx);
+                                                     FT = FT, arch = arch))
+            input_resources.driver = driver
+            validate_runtime_physics_recipe(recipe, driver)
+            _check_multifile_window_range(driver, start_window, stop_window_override,
+                                          length(binary_paths))
+            stop_window = stop_window_override === nothing ?
+                          total_windows(driver) : Int(stop_window_override)
+            initialize_air_mass = idx == 1
+            sim = timed_io_read!(timer,
+                () -> DrivenSimulation(model, driver;
+                                        start_window = start_window,
+                                        stop_window = stop_window,
+                                        initialize_air_mass = initialize_air_mass,
+                                        air_mass_reset_mode = air_mass_reset_mode,
+                                        physics_cadence = physics_cadence,
+                                        surface_sources = surface_sources,
+                                        chemistry = recipe.chemistry,
+                                        # seconds since RUN start — see the CS loop
+                                        # note: per-binary clock restarts replay
+                                        # day-1 time-varying fluxes
+                                        start_time = run_time_seconds))
+            input_resources.simulation = sim
+            model = sim.model
+            if !initialize_air_mass
+                boundary_rel = maximum(abs.(model.state.air_mass .- sim.window.air_mass)) /
+                               max(maximum(abs.(sim.window.air_mass)), eps(FT))
+                set_progress_status!(timer;
+                                     detail = @sprintf("boundary air-mass mismatch before %s: %.3e",
+                                                       basename(path), boundary_rel),
+                                     redraw = true)
+            end
+            window_hours = Float64(window_dt(driver)) / 3600.0
+            n_windows = stop_window - start_window + 1
+            day_start_seconds = run_time_seconds + observation_offset_seconds
+            windows_done = 0
+            _begin_observation_binary!(timer, sampler, sim, path, idx, day_start_seconds)
+            set_progress_status!(timer;
+                                 status = @sprintf("running %s with %s on %s (%d windows)",
+                                                   basename(path),
+                                                   nameof(typeof(recipe.advection)),
+                                                   summary(driver_grid(driver).horizontal),
+                                                   n_windows),
+                                 detail = "loading first window",
+                                 redraw = true)
+            synchronize_architecture!(arch)
+            t0 = time()
+
+            if do_windows
+                for _ in 1:n_windows
+                    # Physics handoff for LL/RG: `run_window!` advances through all
+                    # substeps in the current met window. Each substep refreshes
+                    # forcing in `DrivenSimulation.step!` and then calls the
+                    # operator order documented in `TransportModel.step!`.
+                    timed_transport!(timer, () -> run_window!(sim))
+                    tick_window!(timer;
+                                 status = @sprintf("%s window %d/%d  steps/window=%d",
+                                                   basename(path),
+                                                   sim.current_window_index,
+                                                   stop_window,
+                                                   sim.steps_per_window),
+                                 detail = @sprintf("snapshots=%d  output=%s",
+                                                   snapshot_count[],
+                                                   _output_basename(output_spec)))
+                    total_elapsed_hours += window_hours
+                    windows_done += 1
+                    _observe_window_end!(timer, sampler, sim,
+                                         day_start_seconds + windows_done * Float64(window_dt(driver)))
+                    while do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
+                          abs(total_elapsed_hours - snapshot_schedule_hours[snap_idx]) < 0.5
+                        capture_structured!(total_elapsed_hours)
+                        set_progress_status!(timer;
+                                             detail = @sprintf("snapshot %d at t=%.0fh  output=%s",
+                                                               snap_idx,
+                                                               total_elapsed_hours,
+                                                               _output_basename(output_spec)),
+                                             redraw = true)
+                        snap_idx += 1
+                    end
+                end
+            else
+                # Same physics path as above, but without per-window snapshot
+                # interrupts. `run!` repeatedly calls `DrivenSimulation.step!`.
+                timed_transport!(timer, () -> run!(sim))
+                total_elapsed_hours += n_windows * window_hours
+                # `run!` doesn't tick per window; advance the bar to the
+                # binary's window count in one shot.
+                for local_win in start_window:stop_window
+                    tick_window!(timer;
+                                 status = @sprintf("%s window %d/%d  steps/window=%d",
+                                                   basename(path), local_win,
+                                                   stop_window,
+                                                   sim.steps_per_window_schedule[local_win]),
+                                 detail = "batch window accounting after run!()")
                 end
             end
-        else
-            # Same physics path as above, but without per-window snapshot
-            # interrupts. `run!` repeatedly calls `DrivenSimulation.step!`.
-            timed_transport!(timer, () -> run!(sim))
-            total_elapsed_hours += n_windows * window_hours
-            # `run!` doesn't tick per window; advance the bar to the
-            # binary's window count in one shot.
-            for local_win in start_window:stop_window
-                tick_window!(timer;
-                             status = @sprintf("%s window %d/%d  steps/window=%d",
-                                               basename(path), local_win,
-                                               stop_window,
-                                               sim.steps_per_window_schedule[local_win]),
-                             detail = "batch window accounting after run!()")
-            end
-        end
 
-        run_time_seconds += (stop_window - start_window + 1) * Float64(window_dt(driver))
-        synchronize_architecture!(arch)
-        set_progress_status!(timer;
-                             status = @sprintf("finished %s", basename(path)),
-                             detail = @sprintf("file wall %.2fs", time() - t0),
-                             redraw = true)
-        if do_snapshots && output_spec.partition isa DailyOutputFiles &&
-           output_enabled(output_spec) && !isempty(day_snapshots)
-            out_path = _output_path_for_partition(output_spec, output_spec.partition,
-                                                   _binary_date_label(path), idx)
-            grid_ref = driver_grid(first_driver)
-            mb = air_mass_basis(first_driver)
-            _start_daily_output!(output_resources, output_spec, out_path,
-                                  day_snapshots, grid_ref, mb)
+            run_time_seconds += (stop_window - start_window + 1) * Float64(window_dt(driver))
+            synchronize_architecture!(arch)
             set_progress_status!(timer;
-                                 detail = @sprintf("async write %s", basename(out_path)),
+                                 status = @sprintf("finished %s", basename(path)),
+                                 detail = @sprintf("file wall %.2fs", time() - t0),
                                  redraw = true)
+            if do_snapshots && output_spec.partition isa DailyOutputFiles &&
+               output_enabled(output_spec) && !isempty(day_snapshots)
+                out_path = _output_path_for_partition(output_spec, output_spec.partition,
+                                                       _binary_date_label(path), idx)
+                grid_ref = driver_grid(first_driver)
+                mb = air_mass_basis(first_driver)
+                _start_daily_output!(output_resources, output_spec, out_path,
+                                      day_snapshots, grid_ref, mb)
+                set_progress_status!(timer;
+                                     detail = @sprintf("async write %s", basename(out_path)),
+                                     redraw = true)
+            end
+            close(input_resources)
         end
-        close(input_resources)
+
+        finish_observations!(sampler)
+        # Drain the last in-flight async daily write before the final flush / mass
+        # accounting, so the run never returns with a write still pending.
+        _wait_pending_output!(output_resources)
+
+        if do_snapshots
+            # `air_mass_basis(driver)` already returns the Symbol and has been
+            # validated to match `model.state`'s basis by
+            # `_check_basis_compatibility` before any step!.
+            _flush_single_output!(output_spec.partition, timer, output_spec,
+                                  snapshots, driver_grid(first_driver);
+                                  mass_basis = air_mass_basis(first_driver))
+        end
+
+        summarize_progress!(timer)
+    finally
+        stop_compile_timing!(timer)
     end
-
-    finish_observations!(sampler)
-    # Drain the last in-flight async daily write before the final flush / mass
-    # accounting, so the run never returns with a write still pending.
-    _wait_pending_output!(output_resources)
-
-    if do_snapshots
-        # `air_mass_basis(driver)` already returns the Symbol and has been
-        # validated to match `model.state`'s basis by
-        # `_check_basis_compatibility` before any step!.
-        _flush_single_output!(output_spec.partition, timer, output_spec,
-                              snapshots, driver_grid(first_driver);
-                              mass_basis = air_mass_basis(first_driver))
-    end
-
-    summarize_progress!(timer)
 
     m1 = total_air_mass(model.state)
     @info @sprintf("Final air-mass change vs initial state:  %.3e", (m1 - m0) / m0)
@@ -748,163 +753,168 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                           total_windows(driver1) :
                           min(Int(stop_window_override), total_windows(driver1))
     timer = RunProgressTimer(per_binary_estimate * length(binary_paths))
+    # The timer holds process-wide compile timing until `stop_compile_timing!`;
+    # release it on every exit path, including a run that throws.
+    try
+        function capture_cs!(hour_total)
+            timed_io_write!(timer, () -> begin
+                frame = capture_snapshot(model; time_hours = hour_total,
+                                         halo_width = Hp,
+                                         fields=output_spec.format === :netcdf ? output_spec.fields : nothing)
+                _record_snapshot!(stream, output_spec.partition, snapshots,
+                                      day_snapshots, frame)
+            end)
+            snapshot_count[] += 1
+            return nothing
+        end
 
-    function capture_cs!(hour_total)
-        timed_io_write!(timer, () -> begin
-            frame = capture_snapshot(model; time_hours = hour_total,
-                                     halo_width = Hp,
-                                     fields=output_spec.format === :netcdf ? output_spec.fields : nothing)
-            _record_snapshot!(stream, output_spec.partition, snapshots,
-                                  day_snapshots, frame)
-        end)
-        snapshot_count[] += 1
-        return nothing
-    end
+        snap_idx = 1
+        total_hour = 0.0
+        if do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
+           abs(snapshot_schedule_hours[snap_idx]) < 0.5
+            capture_cs!(0.0)
+            set_progress_status!(timer;
+                                 detail = @sprintf("snapshot %d at t=%.1fh",
+                                                   snap_idx, 0.0),
+                                 redraw = true)
+            snap_idx += 1
+        end
 
-    snap_idx = 1
-    total_hour = 0.0
-    if do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
-       abs(snapshot_schedule_hours[snap_idx]) < 0.5
-        capture_cs!(0.0)
-        set_progress_status!(timer;
-                             detail = @sprintf("snapshot %d at t=%.1fh",
-                                               snap_idx, 0.0),
-                             redraw = true)
-        snap_idx += 1
-    end
+        t0 = time()
+        for (driver_idx, path) in enumerate(binary_paths)
+            # `path` (NAS) kept for labels/logging; driver opens the staged local
+            # copy when staging is enabled (driver_idx==1 already staged above).
+            driver = driver_idx == 1 ? driver1 :
+                     timed_io_read!(timer,
+                         () -> TransportBinaryDriver(staged_path_for!(stager, driver_idx);
+                                                      FT = FT, arch = arch, Hp = Hp))
+            input_resources.driver = driver
+            validate_runtime_physics_recipe(recipe, driver; halo_width = Hp)
+            _check_multifile_window_range(driver, 1, stop_window_override,
+                                          length(binary_paths))
+            stop_window = stop_window_override === nothing ?
+                          total_windows(driver) :
+                          min(Int(stop_window_override), total_windows(driver))
+            window_hours = window_dt(driver) / 3600.0
 
-    t0 = time()
-    for (driver_idx, path) in enumerate(binary_paths)
-        # `path` (NAS) kept for labels/logging; driver opens the staged local
-        # copy when staging is enabled (driver_idx==1 already staged above).
-        driver = driver_idx == 1 ? driver1 :
-                 timed_io_read!(timer,
-                     () -> TransportBinaryDriver(staged_path_for!(stager, driver_idx);
-                                                  FT = FT, arch = arch, Hp = Hp))
-        input_resources.driver = driver
-        validate_runtime_physics_recipe(recipe, driver; halo_width = Hp)
-        _check_multifile_window_range(driver, 1, stop_window_override,
-                                      length(binary_paths))
-        stop_window = stop_window_override === nothing ?
-                      total_windows(driver) :
-                      min(Int(stop_window_override), total_windows(driver))
-        window_hours = window_dt(driver) / 3600.0
+            # Keep state, flux arrays, and numerical workspaces across files.
+            # The new simulation refreshes forcing, diffusion geometry, and caches.
+            initialize_air_mass = driver_idx == 1
+            sim = timed_io_read!(timer,
+                () -> DrivenSimulation(model, driver;
+                                        start_window = 1, stop_window = stop_window,
+                                        initialize_air_mass = initialize_air_mass,
+                                        air_mass_reset_mode = air_mass_reset_mode,
+                                        physics_cadence = physics_cadence,
+                                        surface_sources = surface_sources,
+                                        # accumulated run time: time-varying surface
+                                        # sources index emission slices in seconds
+                                        # since RUN start; restarting at 0 per day
+                                        # replays day-1 fluxes (the +1 Pg/month
+                                        # co2_natural surplus). (`callbacks` /
+                                        # reference-cadence is an anomaly-ref feature
+                                        # not on this branch, so omitted here.)
+                                        chemistry = recipe.chemistry,
+                                        start_time = total_hour * 3600.0))
+            # `DrivenSimulation` may wrap `model` with a surface-flux operator;
+            # keep snapshots and the return value aligned with the stepped model.
+            input_resources.simulation = sim
+            model = sim.model
+            day_start_seconds = observation_clock_seconds
+            windows_done = 0
+            _begin_observation_binary!(timer, sampler, sim, path, driver_idx, day_start_seconds)
 
-        # Keep state, flux arrays, and numerical workspaces across files.
-        # The new simulation refreshes forcing, diffusion geometry, and caches.
-        initialize_air_mass = driver_idx == 1
-        sim = timed_io_read!(timer,
-            () -> DrivenSimulation(model, driver;
-                                    start_window = 1, stop_window = stop_window,
-                                    initialize_air_mass = initialize_air_mass,
-                                    air_mass_reset_mode = air_mass_reset_mode,
-                                    physics_cadence = physics_cadence,
-                                    surface_sources = surface_sources,
-                                    # accumulated run time: time-varying surface
-                                    # sources index emission slices in seconds
-                                    # since RUN start; restarting at 0 per day
-                                    # replays day-1 fluxes (the +1 Pg/month
-                                    # co2_natural surplus). (`callbacks` /
-                                    # reference-cadence is an anomaly-ref feature
-                                    # not on this branch, so omitted here.)
-                                    chemistry = recipe.chemistry,
-                                    start_time = total_hour * 3600.0))
-        # `DrivenSimulation` may wrap `model` with a surface-flux operator;
-        # keep snapshots and the return value aligned with the stepped model.
-        input_resources.simulation = sim
-        model = sim.model
-        day_start_seconds = observation_clock_seconds
-        windows_done = 0
-        _begin_observation_binary!(timer, sampler, sim, path, driver_idx, day_start_seconds)
-
-        day_t0 = time()
-        set_progress_status!(timer;
-                             status = @sprintf("running %s (%d windows)",
-                                               basename(path), stop_window),
-                             detail = @sprintf("schedule max=%d current=%d",
-                                               maximum(sim.steps_per_window_schedule),
-                                               sim.steps_per_window),
-                             redraw = true)
-        while sim.iteration < sim.final_iteration
-            # Physics handoff for CS: one `step!(sim)` is one runtime substep.
-            # `DrivenSimulation.step!` refreshes window forcing, then delegates
-            # to `TransportModel.step!` or to the binary-scheduled
-            # `transport_step!` + end-of-window `convection_chemistry_step!`
-            # split. See those functions for the actual operator order.
-            timed_transport!(timer, () -> step!(sim))
-            if sim.iteration == sim.current_window_end_iteration
-                tick_window!(timer;
-                             status = @sprintf("%s window %d/%d  steps/window=%d",
-                                               basename(path),
-                                               sim.current_window_index,
-                                               stop_window,
-                                               sim.steps_per_window),
-                             detail = @sprintf("snapshots=%d  output=%s",
-                                               snapshot_count[],
-                                               _output_basename(output_spec)))
-                total_hour += window_hours
-                windows_done += 1
-                _observe_window_end!(timer, sampler, sim,
-                                     day_start_seconds + windows_done * Float64(window_dt(driver)))
-                while do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
-                      abs(total_hour - snapshot_schedule_hours[snap_idx]) < 0.5
-                    capture_cs!(total_hour)
-                    set_progress_status!(timer;
-                                         detail = @sprintf("snapshot %d at t=%.1fh  output=%s",
-                                                           snap_idx,
-                                                           total_hour,
-                                                           _output_basename(output_spec)),
-                                         redraw = true)
-                    snap_idx += 1
+            day_t0 = time()
+            set_progress_status!(timer;
+                                 status = @sprintf("running %s (%d windows)",
+                                                   basename(path), stop_window),
+                                 detail = @sprintf("schedule max=%d current=%d",
+                                                   maximum(sim.steps_per_window_schedule),
+                                                   sim.steps_per_window),
+                                 redraw = true)
+            while sim.iteration < sim.final_iteration
+                # Physics handoff for CS: one `step!(sim)` is one runtime substep.
+                # `DrivenSimulation.step!` refreshes window forcing, then delegates
+                # to `TransportModel.step!` or to the binary-scheduled
+                # `transport_step!` + end-of-window `convection_chemistry_step!`
+                # split. See those functions for the actual operator order.
+                timed_transport!(timer, () -> step!(sim))
+                if sim.iteration == sim.current_window_end_iteration
+                    tick_window!(timer;
+                                 status = @sprintf("%s window %d/%d  steps/window=%d",
+                                                   basename(path),
+                                                   sim.current_window_index,
+                                                   stop_window,
+                                                   sim.steps_per_window),
+                                 detail = @sprintf("snapshots=%d  output=%s",
+                                                   snapshot_count[],
+                                                   _output_basename(output_spec)))
+                    total_hour += window_hours
+                    windows_done += 1
+                    _observe_window_end!(timer, sampler, sim,
+                                         day_start_seconds + windows_done * Float64(window_dt(driver)))
+                    while do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
+                          abs(total_hour - snapshot_schedule_hours[snap_idx]) < 0.5
+                        capture_cs!(total_hour)
+                        set_progress_status!(timer;
+                                             detail = @sprintf("snapshot %d at t=%.1fh  output=%s",
+                                                               snap_idx,
+                                                               total_hour,
+                                                               _output_basename(output_spec)),
+                                             redraw = true)
+                        snap_idx += 1
+                    end
                 end
             end
-        end
-        set_progress_status!(timer;
-                             status = @sprintf("finished %s", basename(path)),
-                             detail = @sprintf("file wall %.1fs", time() - day_t0),
-                             redraw = true)
-        observation_clock_seconds += windows_done * Float64(window_dt(driver))
-        if do_snapshots && output_spec.partition isa DailyOutputFiles &&
-           output_enabled(output_spec) && !isempty(day_snapshots)
-            out_path = _output_path_for_partition(output_spec, output_spec.partition,
-                                                   _binary_date_label(path), driver_idx)
-            grid_ref = grid
-            mb = BasisT === DryBasis ? :dry : :moist
-            _start_daily_output!(output_resources, output_spec, out_path,
-                                  day_snapshots, grid_ref, mb)
             set_progress_status!(timer;
-                                 detail = @sprintf("async write %s", basename(out_path)),
+                                 status = @sprintf("finished %s", basename(path)),
+                                 detail = @sprintf("file wall %.1fs", time() - day_t0),
                                  redraw = true)
+            observation_clock_seconds += windows_done * Float64(window_dt(driver))
+            if do_snapshots && output_spec.partition isa DailyOutputFiles &&
+               output_enabled(output_spec) && !isempty(day_snapshots)
+                out_path = _output_path_for_partition(output_spec, output_spec.partition,
+                                                       _binary_date_label(path), driver_idx)
+                grid_ref = grid
+                mb = BasisT === DryBasis ? :dry : :moist
+                _start_daily_output!(output_resources, output_spec, out_path,
+                                      day_snapshots, grid_ref, mb)
+                set_progress_status!(timer;
+                                     detail = @sprintf("async write %s", basename(out_path)),
+                                     redraw = true)
+            end
+            close(input_resources)
         end
-        close(input_resources)
-    end
 
-    finish_observations!(sampler)
-    # Drain the last in-flight async daily write before the final mass accounting,
-    # so the run never returns with a write still pending.
-    _wait_pending_output!(output_resources)
+        finish_observations!(sampler)
+        # Drain the last in-flight async daily write before the final mass accounting,
+        # so the run never returns with a write still pending.
+        _wait_pending_output!(output_resources)
 
-    @info @sprintf("Done: %.1fs  (%d snapshots, final t=%.1fh)",
-                   time() - t0, snapshot_count[], total_hour)
+        @info @sprintf("Done: %.1fs  (%d snapshots, final t=%.1fh)",
+                       time() - t0, snapshot_count[], total_hour)
 
-    for name in keys(tracer_init)
-        rm1 = total_mass(state, name)
-        if name in source_tracers
-            @info @sprintf("  %s total mass (with source): %.6e kg", name, rm1)
-        else
-            @info @sprintf("  %s total mass:               %.6e kg", name, rm1)
+        for name in keys(tracer_init)
+            rm1 = total_mass(state, name)
+            if name in source_tracers
+                @info @sprintf("  %s total mass (with source): %.6e kg", name, rm1)
+            else
+                @info @sprintf("  %s total mass:               %.6e kg", name, rm1)
+            end
         end
-    end
 
-    if do_snapshots
-        # BasisT was bound at model construction (dry by default on CS);
-        # reuse it so the NetCDF records the same basis the `air_mass`
-        # arrays were stored under.
-        _flush_single_output!(output_spec.partition, timer, output_spec,
-                              snapshots, grid;
-                              mass_basis = BasisT === DryBasis ? :dry : :moist)
+        if do_snapshots
+            # BasisT was bound at model construction (dry by default on CS);
+            # reuse it so the NetCDF records the same basis the `air_mass`
+            # arrays were stored under.
+            _flush_single_output!(output_spec.partition, timer, output_spec,
+                                  snapshots, grid;
+                                  mass_basis = BasisT === DryBasis ? :dry : :moist)
+        end
+        summarize_progress!(timer)
+    finally
+        stop_compile_timing!(timer)
     end
-    summarize_progress!(timer)
     return model
 end
 

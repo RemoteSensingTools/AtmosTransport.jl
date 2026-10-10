@@ -16,14 +16,45 @@ mutable struct RunProgressTimer
     windows_total   :: Int
     status_line     :: String
     detail_line     :: String
+    gc_ns_start     :: UInt64    # Base.gc_time_ns() at start
+    compile_ns_start :: UInt64   # Base.cumulative_compile_time_ns()[1] at start
+    bytes_start     :: Int64     # total allocated bytes (Base.gc_bytes) at start
+    compile_timing  :: Bool      # true while this timer holds compile timing enabled
 end
 
-RunProgressTimer(total_windows::Integer; label::AbstractString = "Forward run ") =
-    RunProgressTimer(
-        Progress(max(Int(total_windows), 1);
-                  desc = label, showspeed = true, barlen = 40),
-        time(), 0.0, 0.0, 0.0, Int(total_windows),
-        "initializing", "transport 0.0s | io_read 0.0s | io_write 0.0s")
+# Wall clock, cumulative GC time, cumulative compile time, and total allocated
+# bytes, sampled back to back so start and end values cover the same interval.
+# `Base.gc_bytes(::Ref{Int64})` overwrites the Ref with the process total.
+function _sample_run_counters()
+    bytes = Ref{Int64}(0)
+    Base.gc_bytes(bytes)
+    return (wall = time(), gc_ns = Base.gc_time_ns(),
+            compile_ns = first(Base.cumulative_compile_time_ns()), bytes = bytes[])
+end
+
+function RunProgressTimer(total_windows::Integer; label::AbstractString = "Forward run ")
+    prog = Progress(max(Int(total_windows), 1);
+                    desc = label, showspeed = true, barlen = 40)
+    # Compile time is only accumulated while timing is enabled (as in `@time`).
+    # The enable is a process-wide reference count; `stop_compile_timing!`
+    # releases this timer's hold exactly once.
+    Base.cumulative_compile_timing(true)
+    start = _sample_run_counters()
+    return RunProgressTimer(
+        prog, start.wall, 0.0, 0.0, 0.0, Int(total_windows),
+        "initializing", "transport 0.0s | io_read 0.0s | io_write 0.0s",
+        start.gc_ns, start.compile_ns, start.bytes, true)
+end
+
+# Release the compile-timing hold taken by the constructor. Idempotent:
+# `summarize_progress!` calls it on success, and the runners call it again in
+# `finally` so a run that throws does not leave compile timing enabled.
+function stop_compile_timing!(timer::RunProgressTimer)
+    timer.compile_timing || return timer
+    timer.compile_timing = false
+    Base.cumulative_compile_timing(false)
+    return timer
+end
 
 @inline function _timed!(field::Symbol, timer::RunProgressTimer, f)
     t0 = time()
@@ -83,11 +114,20 @@ end
 
 function summarize_progress!(timer::RunProgressTimer)
     finish!(timer.prog)
-    wall = time() - timer.t_start
+    stop = _sample_run_counters()
+    stop_compile_timing!(timer)
+    wall = stop.wall - timer.t_start
     accounted = timer.t_io_read + timer.t_transport + timer.t_io_write
     other = max(wall - accounted, 0.0)
     w = max(wall, eps())
     msg = @sprintf("Forward run wall %.1fs   transport %.1fs (%.1f%%)   io_read %.1fs (%.1f%%)   io_write %.1fs (%.1f%%)   other %.1fs (%.1f%%)", wall, timer.t_transport, 100*timer.t_transport/w, timer.t_io_read, 100*timer.t_io_read/w, timer.t_io_write, 100*timer.t_io_write/w, other, 100*other/w)
+    # Overlapping wall-clock shares: GC pauses and JIT compilation fall inside
+    # the sections above. Compile time dominates short runs in a fresh process.
+    gc_s = (stop.gc_ns - timer.gc_ns_start) / 1e9
+    compile_s = (stop.compile_ns - timer.compile_ns_start) / 1e9
+    alloc_gib = (stop.bytes - timer.bytes_start) / 2^30
+    msg *= @sprintf("\n  of which GC %.1fs (%.1f%%), compilation %.1fs (%.1f%%); allocated %.1f GiB",
+                    gc_s, 100*gc_s/w, compile_s, 100*compile_s/w, alloc_gib)
     @info msg
     return timer
 end
