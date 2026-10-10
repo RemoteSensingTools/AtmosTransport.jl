@@ -8,9 +8,6 @@ _supports_runtime_diffusion(
 function _validate_replay_consistency_cs(
     reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinaryGeometry},
 ) where {FT, DiskFT}
-    if get(ENV, "ATMOSTR_NO_REPLAY_CHECK", "0") == "1"
-        return nothing
-    end
     tol_rel = replay_tolerance(FT)
     Nt = window_count(reader)
     Nt >= 1 || return nothing
@@ -56,8 +53,9 @@ function _validate_replay_consistency_cs(
             "$(basename(reader.path)): rel=$(worst_rel) > tol=$(tol_rel) at window " *
             "$worst_win cell $worst_idx (abs=$worst_abs kg). Stored CS fluxes do not " *
             "integrate to the stored mass target under palindrome continuity. " *
-            "Regenerate the binary with the CS replay-safe preprocessor or bypass " *
-            "with ENV[\"ATMOSTR_NO_REPLAY_CHECK\"]=\"1\" for diagnostic runs."
+            "Regenerate the binary with the CS replay-safe preprocessor, or skip this " *
+            "load-time check (remove [input] validate_replay = true, or the " *
+            "`validate_replay` keyword, or unset ATMOSTR_REPLAY_CHECK)."
         ))
 
     @info "Replay continuity gate passed: $(basename(reader.path)) " *

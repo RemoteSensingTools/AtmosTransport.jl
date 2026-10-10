@@ -15,7 +15,7 @@ const _TOP_LEVEL_TABLES = ("input", "architecture", "numerics", "run", "advectio
 # `expand_binary_paths`, `_validate_input_binary_expectations`, `InputStager`.
 const _INPUT_KEYS = ("binary_paths", "folder", "start_date", "end_date", "file_pattern",
                      "expected_nlevel", "required_preprocessor_contract",
-                     "require_adaptive_substeps", "staging")
+                     "require_adaptive_substeps", "validate_replay", "staging")
 const _INPUT_STAGING_KEYS = ("enabled", "dir", "lookahead_days", "keep_behind_days",
                              "cleanup_on_exit")
 const _ARCHITECTURE_KEYS = ("use_gpu", "backend")        # `architecture_from_config`

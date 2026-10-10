@@ -71,6 +71,17 @@ sequence; gaps fail at expansion time, not at first window-load.
 Shape A preserves the explicit list's order after expanding paths. It does
 not sort entries or validate date continuity; provide them chronologically.
 
+#### `[input]` checks of the binaries
+
+- `validate_replay = true` replays every binary's continuity when it is
+  opened: the stored fluxes must carry each window's air mass to the next
+  within `replay_tolerance` (1e-10 relative in Float64, 1e-4 in Float32). Off
+  by default (it doubles binary load time); the preprocessor already checks
+  every binary it writes. Use it for binaries of unknown origin. It replaces
+  the environment variable `ATMOSTR_REPLAY_CHECK`.
+- `expected_nlevel`, `required_preprocessor_contract` and
+  `require_adaptive_substeps` reject a first binary whose header differs.
+
 #### `[input.staging]` — rolling NVMe staging (opt-in)
 
 This value must be a TOML table even when staging is disabled. A scalar such

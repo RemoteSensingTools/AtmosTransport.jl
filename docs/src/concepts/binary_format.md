@@ -268,11 +268,12 @@ known-bad file. Diagnostic runs can explicitly bypass this gate with
 
 ### Load-time gate (opt-in)
 
-The runtime can re-run the same replay check at binary open. Enable
-either via the env var or as a driver kwarg:
+The runtime can re-run the same replay check when it opens each binary.
+Enable it in the run config, or as a driver keyword:
 
-```bash
-ATMOSTR_REPLAY_CHECK=1 julia --project=. scripts/run_transport.jl <cfg.toml>
+```toml
+[input]
+validate_replay = true
 ```
 
 ```julia
@@ -280,17 +281,11 @@ ATMOSTR_REPLAY_CHECK=1 julia --project=. scripts/run_transport.jl <cfg.toml>
 driver = TransportBinaryDriver(path; validate_replay = true)
 ```
 
-There is no TOML key for the load-time gate today; use the env var
-when running from the CLI. The write-time gate (above) is on by default.
-
-```bash
-ATMOSTR_REPLAY_CHECK=1 julia --project=. scripts/run_transport.jl <cfg.toml>
-```
-
-(Conversely, `ATMOSTR_NO_REPLAY_CHECK=1` silences the check even if
-`validate_replay = true`.) Failure throws an `ArgumentError` with the
-worst-cell location and tolerance margin, pointing the user at binary
-regeneration or at the bypass env var for diagnostic runs.
+The write-time gate (above) is on by default. A failure throws an
+`ArgumentError` with the worst-cell location and tolerance margin, pointing
+the user at binary regeneration. (`ATMOSTR_REPLAY_CHECK=1` still enables the
+check for one release, with a deprecation warning;
+`ATMOSTR_NO_REPLAY_CHECK` is gone.)
 
 The load-time gate is **off by default** because it doubles binary
 load time; it is the recommended sanity check for any new binary

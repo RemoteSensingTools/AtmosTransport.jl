@@ -136,9 +136,8 @@ The gate fires twice in the lifecycle of a binary:
    is rejected at write time — the preprocessor errors out rather than
    producing a known-bad file. `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` is an explicit
    diagnostic escape hatch; do not use it for production binaries.
-2. **Load-time** (opt-in, in the runtime). Set
-   `ATMOSTR_REPLAY_CHECK=1` in the environment (no TOML key today;
-   the load-time gate is a driver kwarg or env-var setting). Off by
+2. **Load-time** (opt-in, in the runtime). Set `[input] validate_replay =
+   true` (the `validate_replay` keyword of `TransportBinaryDriver`). Off by
    default because it doubles binary load time; recommended for any
    new binary configuration before a long production simulation.
 

@@ -101,12 +101,10 @@ write-time gate but fires at driver construction so a
 binary produced by an older preprocessor (with the dry-basis Δb×pit cm
 closure bug) is rejected before any runtime integration.
 
-Bypass with env var `ATMOSTR_NO_REPLAY_CHECK=1`.
+Runs only when the driver is built with `validate_replay = true`
+(`[input] validate_replay`).
 """
 function _validate_replay_consistency_ll(reader::TransportBinaryReader{FT}) where FT
-    if get(ENV, "ATMOSTR_NO_REPLAY_CHECK", "0") == "1"
-        return nothing
-    end
     tol_rel = replay_tolerance(FT)
     Nt = window_count(reader)
     Nt >= 2 || return nothing
@@ -139,8 +137,9 @@ function _validate_replay_consistency_ll(reader::TransportBinaryReader{FT}) wher
             "$(basename(reader.path)): rel=$(worst_rel) > tol=$(tol_rel) at window " *
             "$worst_win cell $worst_idx (abs=$worst_abs kg). Stored fluxes do not " *
             "integrate to stored m_next under palindrome continuity. Regenerate the " *
-            "binary with explicit mass-delta continuity closure or " *
-            "bypass with ENV[\"ATMOSTR_NO_REPLAY_CHECK\"]=\"1\" for diagnostic runs."
+            "binary with explicit mass-delta continuity closure, or skip this " *
+            "load-time check (remove [input] validate_replay = true, or the " *
+            "`validate_replay` keyword, or unset ATMOSTR_REPLAY_CHECK)."
         ))
 
     @info "Replay continuity gate passed: $(basename(reader.path)) " *
@@ -185,13 +184,10 @@ connectivity, then walks consecutive window pairs and asserts
 
     m[k] − 2·steps·(div_face_flux + ∂_k cm) ≈ m[k+1]
 
-to within `tol_rel = 1e-10` (Float64) / `1e-4` (Float32). Bypass with
-`ENV["ATMOSTR_NO_REPLAY_CHECK"]="1"`.
+to within `tol_rel = 1e-10` (Float64) / `1e-4` (Float32). Runs only when the
+driver is built with `validate_replay = true` (`[input] validate_replay`).
 """
 function _validate_replay_consistency_rg(reader::TransportBinaryReader{FT}, grid) where FT
-    if get(ENV, "ATMOSTR_NO_REPLAY_CHECK", "0") == "1"
-        return nothing
-    end
     tol_rel = replay_tolerance(FT)
     Nt = window_count(reader)
     Nt >= 2 || return nothing
@@ -226,8 +222,9 @@ function _validate_replay_consistency_rg(reader::TransportBinaryReader{FT}, grid
             "$(basename(reader.path)): rel=$(worst_rel) > tol=$(tol_rel) at window " *
             "$worst_win cell $worst_idx (abs=$worst_abs kg). Stored fluxes do not " *
             "integrate to stored m_next under palindrome continuity. Regenerate the " *
-            "binary with explicit mass-delta continuity closure or " *
-            "bypass with ENV[\"ATMOSTR_NO_REPLAY_CHECK\"]=\"1\" for diagnostic runs."
+            "binary with explicit mass-delta continuity closure, or skip this " *
+            "load-time check (remove [input] validate_replay = true, or the " *
+            "`validate_replay` keyword, or unset ATMOSTR_REPLAY_CHECK)."
         ))
 
     @info "Replay continuity gate passed: $(basename(reader.path)) " *
@@ -367,6 +364,15 @@ function Base.show(io::IO, driver::TransportBinaryDriver)
           "└── windows:       ", total_windows(driver))
 end
 
+# HACK: `ATMOSTR_REPLAY_CHECK=1` still enables the load-time check for one
+# release. TODO: remove it; `[input] validate_replay` replaces it.
+function _deprecated_replay_check_env()
+    get(ENV, "ATMOSTR_REPLAY_CHECK", "0") == "1" || return false
+    @warn "ATMOSTR_REPLAY_CHECK=1 is deprecated and will be removed; set " *
+          "[input] validate_replay = true." maxlog = 1
+    return true
+end
+
 """
     TransportBinaryDriver(reader; arch=CPU(), Hp=1,
                           validate_windows=true, validate_replay=false)
@@ -393,10 +399,9 @@ function TransportBinaryDriver(reader::TransportBinaryReader{FT};
     # gate already guarantees continuity for
     # binaries we produce; the load-time gate is for suspect binaries
     # (manual imports, file corruption, older preprocessor versions).
-    # Set `validate_replay=true` or `ENV["ATMOSTR_REPLAY_CHECK"]="1"` to
-    # enable; disable the in-flight check with `ATMOSTR_NO_REPLAY_CHECK=1`.
-    replay_on = validate_replay || get(ENV, "ATMOSTR_REPLAY_CHECK", "0") == "1"
-    replay_on && _validate_driver_replay(reader, geometry, grid)
+    # Enabled by `validate_replay = true` (`[input] validate_replay`).
+    (validate_replay || _deprecated_replay_check_env()) &&
+        _validate_driver_replay(reader, geometry, grid)
     return TransportBinaryDriver{FT, typeof(reader), typeof(grid)}(reader, grid)
 end
 

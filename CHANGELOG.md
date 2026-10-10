@@ -272,6 +272,16 @@
   and surface-flux tables without `kind` (no flux is emitted). Of the 246 run
   configs with an `[input]` table in `config/runs` and `config/examples`, only
   four that already failed at run time differ: they now fail at the check.
+- `[input] validate_replay = true` replays every binary's continuity when the
+  run opens it (the stored fluxes must carry each window's air mass to the
+  next). It replaces the environment variable `ATMOSTR_REPLAY_CHECK`, which
+  still works for one release with a deprecation warning;
+  `ATMOSTR_NO_REPLAY_CHECK` is removed (the check runs only when asked for).
+  The replay error messages now name the key.
+- `docs/src/config/environment.md` lists every environment variable the
+  package reads, and `test/core/test_environment_variables.jl` fails when
+  `src/` reads one that is not listed there (or from outside the folder that
+  owns it).
 - Breaking: a surface-flux `kind` that is not a known source
   (`none`, `file`, `cs_native`, `lmdz_co2`, `gridfed_fossil_co2`, `edgar_sf6`,
   `zhang_rn222`) is an error, with a suggestion for a close name; it used to

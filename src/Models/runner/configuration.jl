@@ -300,8 +300,8 @@ function _check_input_expectations!(input, errors)
         !(input["required_preprocessor_contract"] isa AbstractString) && push!(errors,
             "[input].required_preprocessor_contract must be a string; got " *
             "$(repr(input["required_preprocessor_contract"]))")
-    _capture_config_error!(errors) do
-        _config_bool(input, "require_adaptive_substeps", false, "[input].require_adaptive_substeps")
+    for key in ("require_adaptive_substeps", "validate_replay")
+        _capture_config_error!(() -> _config_bool(input, key, false, "[input].$(key)"), errors)
     end
     return errors
 end

@@ -384,9 +384,11 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     # `stager` (rolling NVMe input staging) is created + torn down by the caller
     # `run_driven_simulation`; here we just route driver opens through it.
     # Open first driver, build recipe, validate capability, build model
+    validate_replay = _config_bool(get(cfg, "input", Dict{String, Any}()), "validate_replay",
+                                   false, "[input].validate_replay")
     first_driver = input_resources.driver = TransportBinaryDriver(staged_path_for!(stager, 1);
                                           FT = FT,
-                                          arch = arch)
+                                          arch = arch, validate_replay)
     _check_multifile_window_range(first_driver, start_window, stop_window_override,
                                   length(binary_paths))
     # Windows of every binary: the run length and the window ends of the schedule.
@@ -500,7 +502,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
             driver = idx == 1 ? first_driver :
                      timed_io_read!(timer,
                          () -> TransportBinaryDriver(staged_path_for!(stager, idx);
-                                                     FT = FT, arch = arch))
+                                                     FT = FT, arch = arch, validate_replay))
             input_resources.driver = driver
             validate_runtime_physics_recipe(recipe, driver)
             _check_multifile_window_range(driver, start_window, stop_window_override,
@@ -700,8 +702,10 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     # `stager` (rolling NVMe input staging) is created + torn down by the caller
     # `run_driven_simulation`; here we just route driver opens through it.
     # First driver + model (reuses air_mass from window 1)
+    validate_replay = _config_bool(get(cfg, "input", Dict{String, Any}()), "validate_replay",
+                                   false, "[input].validate_replay")
     driver1 = input_resources.driver = TransportBinaryDriver(staged_path_for!(stager, 1);
-                                    FT = FT, arch = arch, Hp = Hp)
+                                    FT = FT, arch = arch, Hp = Hp, validate_replay)
     layout = something(window_layout, _uniform_window_layout(driver1, binary_paths))
     run_hours = _layout_run_hours(layout; stop_window_override)
     output_cfg = get(cfg, "output", Dict{String, Any}())
@@ -858,7 +862,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
             driver = driver_idx == 1 ? driver1 :
                      timed_io_read!(timer,
                          () -> TransportBinaryDriver(staged_path_for!(stager, driver_idx);
-                                                      FT = FT, arch = arch, Hp = Hp))
+                                                      FT = FT, arch = arch, Hp = Hp, validate_replay))
             input_resources.driver = driver
             validate_runtime_physics_recipe(recipe, driver; halo_width = Hp)
             _check_multifile_window_range(driver, 1, stop_window_override,

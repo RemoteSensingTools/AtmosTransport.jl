@@ -42,6 +42,11 @@
           "default": false,
           "description": "Reject binaries that do not carry a per-window adaptive substep schedule."
         },
+        "validate_replay": {
+          "type": "boolean",
+          "default": false,
+          "description": "Replay every binary's continuity (stored fluxes reproduce the next window's air mass) when it is opened; for binaries of unknown origin."
+        },
         "expected_nlevel": {
           "type": "integer",
           "minimum": 1,
