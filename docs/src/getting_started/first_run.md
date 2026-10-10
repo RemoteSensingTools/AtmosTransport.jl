@@ -159,7 +159,8 @@ foreach(println, errors)
 ```
 
 This reports malformed tables, missing input paths, incompatible precision and
-backend settings, and invalid window indices. For example, `co2 = 0.0004`
+backend settings, invalid window indices, and invalid physics or output
+settings; keys the run would ignore (often typos) are logged as warnings. For example, `co2 = 0.0004`
 directly inside `[tracers]` is rejected: use the `[tracers.co2.init]` table shown
 above. Window indices must be integers; `start_window = true` and
 `start_window = 1.0` are errors. Shape errors are reported first, before the

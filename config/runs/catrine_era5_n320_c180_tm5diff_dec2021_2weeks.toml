@@ -75,7 +75,8 @@ surface_flux_boundary = true
 # TM5 four-field convection from the binary's entu/detu/entd/detd sections.
 #
 # `lmax_conv` caps the column LU to the bottom N layers. The deepest convective
-# reach measured on this L137 binary (per_column_depth_histogram.jl over all 24
+# reach measured on this L137 binary
+# (scripts/diagnostics/heritage/per_column_depth_histogram.jl over all 24
 # windows × 6 panels) is 84 layers from the surface, so `lmax_conv = 85` (84 + 1
 # margin) is LOSS-FREE — it drops only the top 52 layers, which carry zero
 # convection. (The legacy `75` was tuned for L85 binaries and would truncate

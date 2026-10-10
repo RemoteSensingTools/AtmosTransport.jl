@@ -438,7 +438,7 @@ function process_day(date::Date,
     work = workspace.work
     buf = workspace.buf
     ps_offsets = workspace.ps_offsets
-    write_replay_on = get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
+    write_replay_on = write_replay_check_enabled()
     write_replay_on ||
         @info "  Write-time replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
     window_contract = ReducedGaussianContract{FT}(
@@ -484,7 +484,7 @@ function process_day(date::Date,
         humidity_sampling    = rg_contract.humidity_sampling,
         delta_semantics      = rg_contract.delta_semantics,
         mass_basis           = Symbol(settings.mass_basis),
-        extra_header = Dict{String, Any}(
+        extra_header = _with_replay_record(Dict{String, Any}(
             "preprocessor"     => "preprocess_transport_binary.jl",
             "source_type"      => "era5_spectral",
             "target_type"      => "reduced_gaussian",
@@ -500,7 +500,7 @@ function process_day(date::Date,
             # of truth: the contract.
             "poisson_balance_target_scale"     => rg_contract.poisson_balance_target_scale,
             "poisson_balance_target_semantics" => rg_contract.poisson_balance_target_semantics,
-        ))
+        ), write_replay_on))
 
     bytes_per_window = writer.elems_per_window * sizeof(eltype(writer.pack_buffer))
     expected_total = writer.header_bytes + Nt * bytes_per_window

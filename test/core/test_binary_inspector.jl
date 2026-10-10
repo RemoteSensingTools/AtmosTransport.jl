@@ -95,6 +95,7 @@ end
             @test caps.surface_pressure === true
             @test caps.mass_basis === :dry
             @test caps.grid_type === :latlon
+            @test caps.nwindow == 1 && caps.window_seconds == 3600.0
             @test binary_geometry(reader) isa LatLonBinaryGeometry
             @test caps.flux_kind === :substep_mass_amount
             @test :m in caps.payload_sections

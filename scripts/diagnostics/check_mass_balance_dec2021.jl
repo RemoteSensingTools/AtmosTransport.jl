@@ -47,7 +47,7 @@ function _parse_cli(args::Vector{String})
 end
 
 # Section-size helpers — mirrored from
-# `scripts/completed_experiments/compare_c180_binary_mass_fluxes.jl` so the layout walk
+# `scripts/diagnostics/heritage/compare_c180_binary_mass_fluxes.jl` so the layout walk
 # is self-contained.
 # Elements of one CS payload section (the library's table, which knows every section).
 _cs_section_elements(h, section::Symbol) = AtmosTransport.MetDrivers._cs_section_elements(h, section)

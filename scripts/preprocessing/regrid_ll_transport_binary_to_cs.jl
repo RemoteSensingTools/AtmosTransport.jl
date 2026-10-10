@@ -27,10 +27,12 @@
 #       [--convention gnomonic|geos_native]
 #       [--definition equiangular_gnomonic|gmao_equal_distance]
 #       [--steps-per-window 12]          # override source's substep count
-#       [--balance-mode column|per_layer] # Poisson balance (default column)
 #                                         # (smaller per-substep flux; needed
 #                                         # for high-res CS output that
 #                                         # otherwise fails the positivity gate)
+#       [--balance-mode column|per_layer] # Poisson balance (default column)
+#       [--no-write-replay-check]        # skip the write-time replay gate (diagnostic;
+#                                         # recorded in the header)
 #
 # Regridder weights are auto-cached by ConservativeRegridding.jl at
 # `~/.cache/AtmosTransport/cr_regridding/regridder_<hash>.jld2` keyed
@@ -53,7 +55,7 @@ Usage: julia --project=. scripts/preprocessing/regrid_ll_transport_binary_to_cs.
            [--definition equiangular_gnomonic|gmao_equal_distance]
            [--cache-dir <dir>]
            [--steps-per-window <int>] [--allow-positivity-violation]
-           [--balance-mode column|per_layer]
+           [--balance-mode column|per_layer] [--no-write-replay-check]
 """
 
 function _parse_args(argv)
@@ -68,6 +70,7 @@ function _parse_args(argv)
     steps_per_window = nothing  # nothing = match source header
     require_substep_positivity = true
     balance_mode = nothing      # nothing = column (the preprocessing default)
+    write_replay_check = AtmosTransport.Preprocessing.write_replay_check_enabled()
 
     i = 1
     while i <= length(argv)
@@ -94,6 +97,8 @@ function _parse_args(argv)
             balance_mode = lowercase(argv[i + 1]); i += 2
         elseif arg == "--allow-positivity-violation"
             require_substep_positivity = false; i += 1
+        elseif arg == "--no-write-replay-check"
+            write_replay_check = false; i += 1
         elseif arg in ("-h", "--help")
             println(USAGE); exit(0)
         else
@@ -127,7 +132,8 @@ function _parse_args(argv)
 
     return (; input, output, Nc, float_type, mass_basis, convention, definition,
               cache_dir,
-              steps_per_window, require_substep_positivity, balance_mode)
+              steps_per_window, require_substep_positivity, balance_mode,
+              write_replay_check)
 end
 
 function main()
@@ -162,6 +168,7 @@ function main()
                             mass_basis = basis_sym,
                             steps_per_window = opts.steps_per_window,
                             require_substep_positivity = opts.require_substep_positivity,
+                            write_replay_check = opts.write_replay_check,
                             horizontal_balance = opts.balance_mode === nothing ? nothing :
                                 AtmosTransport.Preprocessing.resolve_horizontal_balance(
                                     Dict("balance_mode" => opts.balance_mode)))

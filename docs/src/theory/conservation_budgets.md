@@ -82,8 +82,7 @@ in `test/core/test_replay_consistency.jl`:
 | Final-window inconsistent `cm` | The LL storage replay-gate test deliberately injects an inconsistent final-window `cm` and asserts `@test_throws ErrorException` — i.e. the gate **does** detect inconsistency at the day boundary, not silently pass it as zero-tendency. |
 
 The same gate runs at preprocessing write time (always) and at
-runtime load time (opt-in via `[met_data] validate_replay = true` or
-`ATMOSTR_REPLAY_CHECK = 1`). The test exercises the function
+runtime load time (opt-in via `[input] validate_replay = true`). The test exercises the function
 directly so the contract is validated independently of the
 preprocessor / runtime drivers.
 

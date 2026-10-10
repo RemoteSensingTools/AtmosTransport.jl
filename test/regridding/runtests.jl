@@ -7,8 +7,7 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.Grids: GEOSNativePanelConvention, GnomonicPanelConvention
 using .AtmosTransport.Regridding
 

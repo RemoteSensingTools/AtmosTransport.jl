@@ -81,11 +81,8 @@ function fill_dz_hydrostatic_constT!(dz::AbstractArray{<:AbstractFloat, 3},
     bk_dev = similar(dz, FT, Nz + 1)
     copyto!(ak_dev, FT.(ak_ifc))
     copyto!(bk_dev, FT.(bk_ifc))
-    kernel = _dz_hydrostatic_constT_kernel!(backend, (8, 8, 1))
-    kernel(dz, ps, ak_dev, bk_dev,
-           FT(T_ref), FT(R), FT(gravity), Nz;
-           ndrange = (Nx, Ny, Nz))
-    synchronize(backend)
+    launch!(_dz_hydrostatic_constT_kernel!, backend, (8, 8, 1), (Nx, Ny, Nz), dz, ps, ak_dev,
+            bk_dev, FT(T_ref), FT(R), FT(gravity), Nz)
     return dz
 end
 
@@ -195,11 +192,8 @@ function fill_dz_hydrostatic_virtualT!(dz::AbstractArray{<:AbstractFloat, 3},
     bk_dev = similar(dz, FT, Nz + 1)
     copyto!(ak_dev, FT.(ak_ifc))
     copyto!(bk_dev, FT.(bk_ifc))
-    kernel = _dz_hydrostatic_virtualT_3d_kernel!(backend, (8, 8, 1))
-    kernel(dz, t_lyr, qv_lyr, ps, ak_dev, bk_dev,
-           FT(R), FT(gravity), Nz;
-           ndrange = (Nx, Ny, Nz))
-    synchronize(backend)
+    launch!(_dz_hydrostatic_virtualT_3d_kernel!, backend, (8, 8, 1), (Nx, Ny, Nz), dz, t_lyr,
+            qv_lyr, ps, ak_dev, bk_dev, FT(R), FT(gravity), Nz)
     return dz
 end
 
@@ -272,10 +266,7 @@ function fill_dz_hydrostatic_constT!(dz::AbstractArray{<:AbstractFloat, 2},
     bk_dev = similar(dz, FT, Nz + 1)
     copyto!(ak_dev, FT.(ak_ifc))
     copyto!(bk_dev, FT.(bk_ifc))
-    kernel = _dz_hydrostatic_constT_face_kernel!(backend, (256, 1))
-    kernel(dz, ps, ak_dev, bk_dev,
-           FT(T_ref), FT(R), FT(gravity), Nz;
-           ndrange = (ncells, Nz))
-    synchronize(backend)
+    launch!(_dz_hydrostatic_constT_face_kernel!, backend, (256, 1), (ncells, Nz), dz, ps,
+            ak_dev, bk_dev, FT(T_ref), FT(R), FT(gravity), Nz)
     return dz
 end

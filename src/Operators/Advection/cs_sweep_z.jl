@@ -209,8 +209,8 @@ The shared `src` workspace buffer (e.g. `rm_A` / `m_A`) is reused for the next
 panel's sweep, so panel p's copy-back must precede panel p+1's sweep. On GPU
 that ordering is guaranteed by the single issue-ordered stream, so no host
 barrier is needed — the periodic GPU sync lands at the `fill_panel_halos!`
-boundary. On the CPU backend we synchronize defensively, mirroring
-HaloExchange.jl's `KA_CPU` gate. The per-panel host `synchronize` previously
+boundary. On the CPU backend kernels already run synchronously (the
+`synchronize` there is a no-op kept for symmetry). The per-panel host `synchronize` previously
 here was the dominant launch-bound bubble (GPU profiling 2026-06-13).
 """
 function _copy_interior!(dst, src, Nc, Hp, Nz)

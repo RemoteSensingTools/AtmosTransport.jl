@@ -119,13 +119,23 @@ Float64 on GPU and Metal.
 ## Inputs
 
 The cases read data on the group's servers (`~/data/AtmosTransport`): ERA5
-spectral and physics fields of December 2021 (`met/era5/0.5x0.5/`), ERA5 N320
-raw fields, the GEOS-Chem MERRA-2 archive, the CATRINE emissions, initial
+N320 raw fields, the GEOS-Chem MERRA-2 archive, the CATRINE emissions, initial
 states and native-C90 fluxes, and GCHP's 2021-12-01 03 UTC output (initial
-state). The ERA5 C90 L66 binaries with TM5 convection attached (2022-01-15 and
-16) are frozen copies of production files in `/temp1/cfranken/goldens/inputs`,
-because convection attachment is not part of the preprocessor. A changed
-input appears as a note in `check`.
+state). Two inputs are frozen copies in `/temp1/cfranken/goldens/inputs`:
+
+- `era5_0.5x0.5/` holds the ERA5 fields of `pre_ll72`, `pre_o24` and
+  `pre_c24`, which read the spectral `lnsp` and `vo_d` files
+  (`spectral_hourly/`) and the model-level thermodynamics
+  (`physics/era5_thermo_ml_*.nc`) of 2021-12-01 and 02. The 2021-11-30
+  thermodynamics and the convection files of the three days are kept but not
+  read. No maintained tool downloads these files any more. `SHA256SUMS` in
+  that folder lists their checksums; `check` does not fingerprint input
+  directories, so verify them with
+  `cd /temp1/cfranken/goldens/inputs/era5_0.5x0.5 && sha256sum -c SHA256SUMS`.
+- The ERA5 C90 L66 binaries with TM5 convection attached (2022-01-15 and 16),
+  because convection attachment is not part of the preprocessor.
+
+A changed input file named in a config appears as a note in `check`.
 
 ## Known failures
 

@@ -1,5 +1,7 @@
 # Float64 packed PPM launch geometry on V100
 
+> The reproducer scripts `check_outputs.jl`, `profile.jl`, `summarize.jl` and `sweep_tiles.jl` were retired from the tree; recover with `git show 7c515038:scripts/benchmarks/results/main_f64_ppm_tiles_v100_20260906/<file>`.
+
 Cubed-sphere CUDA Float64 PPM sweeps now use a 32-thread row. Each thread
 still evaluates the same reconstruction, limiter, mass update, and tracer loop.
 The change adds only a precision-specific launch-policy method; it adds no

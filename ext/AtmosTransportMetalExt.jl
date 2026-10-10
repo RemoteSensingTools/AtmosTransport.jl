@@ -23,4 +23,8 @@ end
 
 AtmosTransport.Architectures._total_accumulator_type(::MetalBackend) = Float32
 
+# Fused point operations run faster on Metal as separate launches with their
+# arrays bound directly (see `Architectures.fusion_policy`).
+AtmosTransport.Architectures.fusion_policy(::MetalBackend) = AtmosTransport.Architectures.SeparateLaunches()
+
 end # module AtmosTransportMetalExt

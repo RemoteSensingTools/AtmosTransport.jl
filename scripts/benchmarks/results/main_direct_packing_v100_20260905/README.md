@@ -1,5 +1,7 @@
 # Direct packing of cubed-sphere initial tracer state
 
+> The reproducer scripts `compare.jl`, `halo_probe.jl`, `initialization.jl` and `profile.jl` were retired from the tree; recover with `git show 7c515038:scripts/benchmarks/results/main_direct_packing_v100_20260905/<file>`.
+
 The runner now allocates final packed storage once and converts each tracer's
 interior VMR directly into its slot. It avoids retaining six temporary mass
 panels per tracer and then copying them into state. The shared conversion keeps

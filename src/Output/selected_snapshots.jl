@@ -142,6 +142,9 @@ function _stored_indices(frame::SelectedSnapshotFrame, levels)
         throw(ArgumentError("writer requested levels that were not captured"))
     return idx
 end
+# Positions of the requested model `levels` along the frame's stored layer axis.
+_layer_positions(::SnapshotFrame, levels) = levels
+_layer_positions(frame::SelectedSnapshotFrame, levels) = _stored_indices(frame, levels)
 _air_layers(frame::SnapshotFrame, levels) = _select_levels(frame.air_mass, levels)
 _air_layers(frame::SelectedSnapshotFrame, levels) =
     _select_levels(frame.air_mass, _stored_indices(frame, levels))

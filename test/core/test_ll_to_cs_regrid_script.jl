@@ -394,6 +394,100 @@ end
         end
     end
 
+    @testset "a skipped write-time replay gate is recorded and reported" begin
+        Pre = AtmosTransport.Preprocessing
+        @test Pre._with_replay_record(Dict{String, Any}(), true) == Dict{String, Any}()
+        @test Pre._with_replay_record(Dict{String, Any}(), false) ==
+              Dict{String, Any}("write_replay_check" => false)
+        withenv("ATMOSTR_NO_WRITE_REPLAY_CHECK" => "1") do
+            @test !Pre.write_replay_check_enabled()
+        end
+        withenv("ATMOSTR_NO_WRITE_REPLAY_CHECK" => nothing) do
+            @test Pre.write_replay_check_enabled()
+        end
+        mktempdir() do dir
+            cfg_grid = Dict{String, Any}("Nc" => 4, "regridder_cache_dir" => joinpath(dir, "cr_cache"))
+            cs_grid = build_target_geometry(Val(:cubed_sphere), cfg_grid, Float64)
+            ll_path = joinpath(dir, "ll.bin")
+            _ll_fixture_binary(ll_path)
+            header_of(path) = (r = AtmosTransport.MetDrivers.TransportBinaryReader(path; FT = Float64);
+                               h = r.header.raw_header; close(r); h)
+
+            # Default: the gate ran, nothing is recorded (headers unchanged).
+            on_path = joinpath(dir, "cs_on.bin")
+            withenv("ATMOSTR_NO_WRITE_REPLAY_CHECK" => nothing) do
+                regrid_ll_binary_to_cs(ll_path, cs_grid, on_path; FT = Float64)
+            end
+            @test !haskey(header_of(on_path), "write_replay_check")
+            @test inspect_binary(on_path; io = devnull).write_replay_check
+
+            # Gate off (cubed sphere): recorded, reported, and warned about.
+            off_path = joinpath(dir, "cs_off.bin")
+            regrid_ll_binary_to_cs(ll_path, cs_grid, off_path; FT = Float64,
+                                   write_replay_check = false)
+            @test header_of(off_path)["write_replay_check"] === false
+            report = IOBuffer()
+            @test !inspect_binary(off_path; io = report).write_replay_check
+            @test occursin("write-time replay check disabled", String(take!(report)))
+            @test_logs (:warn, r"write-time replay check disabled") match_mode = :any begin
+                close(TransportBinaryDriver(off_path; FT = Float64, arch = CPU(), Hp = 1))
+            end
+
+            # The script flag reaches the options.
+            script_mod = Module()
+            Base.include(script_mod, joinpath(@__DIR__, "..", "..", "scripts", "preprocessing",
+                                              "regrid_ll_transport_binary_to_cs.jl"))
+            args = ["--input", ll_path, "--output", joinpath(dir, "x.bin"), "--Nc", "4"]
+            withenv("ATMOSTR_NO_WRITE_REPLAY_CHECK" => nothing) do
+                @test Base.invokelatest(script_mod._parse_args, args).write_replay_check
+            end
+            @test !Base.invokelatest(script_mod._parse_args,
+                                     vcat(args, "--no-write-replay-check")).write_replay_check
+
+            # Output reuse: an existing binary is reused only when its replay
+            # record matches the run's (an absent key means the gate ran).
+            reuse_path = joinpath(dir, "reuse.bin")
+            _ll_fixture_binary(reuse_path)
+            r = AtmosTransport.MetDrivers.TransportBinaryReader(reuse_path; FT = Float64)
+            nb = r.header.header_bytes
+            close(r)
+            function patch_header!(path, f)
+                raw = open(io -> read(io, nb), path)
+                h = JSON3.read(String(raw[1:findfirst(==(0x00), raw) - 1]), Dict{String, Any})
+                f(h)
+                json = Vector{UInt8}(JSON3.write(h))
+                open(io -> write(io, json, zeros(UInt8, nb - length(json))), path, "r+")
+                return h
+            end
+            # The reuse contract keys must exist in the header to compare.
+            disk = patch_header!(reuse_path, h -> foreach(k -> get!(h, k, 0), Pre._OUTPUT_REUSE_CONTRACT_KEYS))
+            sections = disk["payload_sections"]
+            bytes = filesize(reuse_path)
+            matches(expected) = first(Pre.existing_output_schema_matches(reuse_path, bytes, sections, expected))
+            @test matches(copy(disk))                                              # absent / absent
+            @test !matches(merge(copy(disk), Dict("write_replay_check" => false)))   # absent / false
+            patch_header!(reuse_path, h -> h["write_replay_check"] = false)
+            @test matches(merge(copy(disk), Dict("write_replay_check" => false)))    # false / false
+            @test !matches(copy(disk))                                             # false / absent
+
+            # A lat-lon binary with the record is reported the same way.
+            ll_off = joinpath(dir, "ll_off.bin")
+            _ll_fixture_binary(ll_off)
+            reader = AtmosTransport.MetDrivers.TransportBinaryReader(ll_off; FT = Float64)
+            nbytes = reader.header.header_bytes
+            close(reader)
+            raw = open(io -> read(io, nbytes), ll_off)
+            header = JSON3.read(String(raw[1:findfirst(==(0x00), raw) - 1]), Dict{String, Any})
+            header["write_replay_check"] = false
+            json = Vector{UInt8}(JSON3.write(header))
+            open(io -> write(io, json, zeros(UInt8, nbytes - length(json))), ll_off, "r+")
+            @test !inspect_binary(ll_off; io = devnull).write_replay_check
+            @test_logs (:warn, r"write-time replay check disabled") match_mode = :any begin
+                close(TransportBinaryDriver(ll_off; FT = Float64, arch = CPU()))
+            end
+        end
+    end
+
     @testset "source and target share one sphere" begin
         mktempdir() do dir
             cfg_grid = Dict{String, Any}("Nc" => 4, "regridder_cache_dir" => joinpath(dir, "cr_cache"))

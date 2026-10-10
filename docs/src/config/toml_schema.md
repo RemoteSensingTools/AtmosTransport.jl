@@ -21,10 +21,28 @@ ignored.
 
 `validate_config(cfg)` checks runtime table shapes, input path existence,
 precision/backend compatibility, and window bounds without opening binary
-readers or allocating model state. Nested tracer `init` and `surface_flux`
-values must be tables. Shape errors are returned before value checks; a
-successful result is not a full physics or binary validation. See
+readers or allocating model state. It also parses the physics sections,
+`air_mass_reset_mode`, `physics_cadence` and `[output]` as the run does, so
+their errors are reported together; decay half-lives must name a tracer, and
+an enabled `[output]` needs both a path and snapshot times (`hours = []` means
+deliberately none). Nested tracer `init` and `surface_flux` values must be
+tables. Shape errors are returned before value checks; a successful result is
+not a full physics or binary validation. See
 [Run with real meteorology](@ref Run-with-real-meteorology) for an example.
+
+Keys the run would ignore are logged as warnings when the config is checked
+(also at the start of every run): unknown tables and keys, with a suggestion
+when a known key is close (`[diffussion]` → `[diffusion]`, `order` →
+`ppm_order`), and known keys that the chosen kind or another setting leaves
+unread, such as `value` without `[diffusion] kind = "constant"`, flat
+`[tracers.<name>]` keys next to an `init` table, a `surface_flux` table
+without `kind`, or `start_hour` without an interval key. A surface-flux kind
+that is not one of the named sources is an error; use `kind = "file"` for a
+generic NetCDF file. When the run starts and has read every binary's header,
+snapshot hours that do not fall on a met-window end are an error (such an
+hour would never be written, and every later snapshot would be lost with it),
+and `format = "binary_mmap"` is rejected on lat-lon and reduced-Gaussian
+grids.
 
 ### `[input]` — which transport binaries to load
 
@@ -52,6 +70,17 @@ Shape B asserts that the resolved binaries form a contiguous date
 sequence; gaps fail at expansion time, not at first window-load.
 Shape A preserves the explicit list's order after expanding paths. It does
 not sort entries or validate date continuity; provide them chronologically.
+
+#### `[input]` checks of the binaries
+
+- `validate_replay = true` replays every binary's continuity when it is
+  opened: the stored fluxes must carry each window's air mass to the next
+  within `replay_tolerance` (1e-10 relative in Float64, 1e-4 in Float32). Off
+  by default (it doubles binary load time); the preprocessor already checks
+  every binary it writes. Use it for binaries of unknown origin. It replaces
+  the environment variable `ATMOSTR_REPLAY_CHECK`.
+- `expected_nlevel`, `required_preprocessor_contract` and
+  `require_adaptive_substeps` reject a first binary whose header differs.
 
 #### `[input.staging]` — rolling NVMe staging (opt-in)
 
@@ -132,6 +161,8 @@ does not recover precision already lost in the stored forcing.
 start_window = 1              # default: 1 — first window to process
 stop_window  = 24             # default: nothing — uses the binary's full range
 air_mass_reset_mode = "preserve_tracer_mass"
+# physics_cadence = "window"  # default; "substep" runs convection and chemistry
+                              # every advection substep (cadence comparisons)
 ```
 
 `stop_window` is the inclusive last window; setting it lets you
@@ -199,11 +230,11 @@ scale      = 1.0                    # optional multiplicative scaling
 kind = "edgar_sf6"
 ```
 
-Registered surface-flux source kinds (full list in
+Registered surface-flux source kinds (`_SURFACE_FLUX_KINDS` in
 `src/Models/initial_conditions/surface_flux.jl`): `lmdz_co2`, `gridfed_fossil_co2`,
 `edgar_sf6`, `zhang_rn222`, plus a generic `file` for arbitrary
 NetCDF sources and `cs_native` for time-varying fluxes already on the native
-cubed-sphere grid. There is no `edgar_co2` kind — use
+cubed-sphere grid. Any other kind is an error. There is no `edgar_co2` kind — use
 `gridfed_fossil_co2` for the GridFED-derived fossil CO₂ inventory.
 Known tracer names carry built-in molar masses; for a custom tracer, set
 `molar_mass_kg_mol` inside its `surface_flux` table.
@@ -240,6 +271,15 @@ Slices are indexed by **absolute** time since the run's `start_date`, so a
 multi-day run advances through the inventory correctly (a per-day clock would
 replay the first day's slices — the cause of the historical co2_natural
 +1 Pg/month surplus, now fixed).
+
+When `[input]` gives `start_date`, only the slices the run can use are read:
+from the last slice at or before the run start to the first slice at or after
+the run end. The run end is the end of the binaries' windows (read from every
+binary's header) or, if later, the end of `end_date`. Every listed file's time axis is
+read, but flux data only for those slices. Every temporal scheme blends only
+the two slices around a time, so results are unchanged. A binary that runs past
+that end stops the run with an error before it starts. Without `start_date`
+every slice is read.
 
 For an already aligned GEOS-native cubed-sphere inventory, use
 `kind = "cs_native"`, `time_varying = true`, `file`, and `variable`.

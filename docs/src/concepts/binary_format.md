@@ -148,6 +148,9 @@ returns a `NamedTuple`:
 | `grid_type :: Symbol` | `:latlon` / `:reduced_gaussian` / `:cubed_sphere` |
 | `flux_kind :: Symbol` | `:substep_mass_amount` or `:full_window_mass_amount` |
 | `nlevel :: Int` | vertical levels |
+| `nwindow :: Int` | met windows in the file |
+| `window_seconds :: Float64` | length of one met window (`dt_met_seconds`) |
+| `write_replay_check :: Bool` | `false` only when the binary was written with the write-time replay gate skipped (header `write_replay_check = false`) |
 | `steps_per_window :: Int` | scalar substep count (`maximum(steps_per_window_by_window)`) |
 | `variable_step_schedule :: Bool` | `true` iff per-window step counts are not all equal |
 | `adaptive_substeps :: Union{Nothing, Bool}` | explicit `adaptive_substeps` header value for CS; `nothing` when not recorded |
@@ -262,15 +265,19 @@ with `tol = replay_tolerance(FT)` from
 for Float32. A binary that fails this gate is **rejected at write
 time**; the preprocessor errors out rather than producing a
 known-bad file. Diagnostic runs can explicitly bypass this gate with
-`ATMOSTR_NO_WRITE_REPLAY_CHECK=1`; production preprocessing should not.
+`ATMOSTR_NO_WRITE_REPLAY_CHECK=1` (or `--no-write-replay-check` for
+`scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl`); production
+preprocessing should not. Such a binary records `write_replay_check = false` in
+its header, the inspector marks it, and the runtime warns when it opens it.
 
 ### Load-time gate (opt-in)
 
-The runtime can re-run the same replay check at binary open. Enable
-either via the env var or as a driver kwarg:
+The runtime can re-run the same replay check when it opens each binary.
+Enable it in the run config, or as a driver keyword:
 
-```bash
-ATMOSTR_REPLAY_CHECK=1 julia --project=. scripts/run_transport.jl <cfg.toml>
+```toml
+[input]
+validate_replay = true
 ```
 
 ```julia
@@ -278,17 +285,11 @@ ATMOSTR_REPLAY_CHECK=1 julia --project=. scripts/run_transport.jl <cfg.toml>
 driver = TransportBinaryDriver(path; validate_replay = true)
 ```
 
-There is no TOML key for the load-time gate today; use the env var
-when running from the CLI. The write-time gate (above) is on by default.
-
-```bash
-ATMOSTR_REPLAY_CHECK=1 julia --project=. scripts/run_transport.jl <cfg.toml>
-```
-
-(Conversely, `ATMOSTR_NO_REPLAY_CHECK=1` silences the check even if
-`validate_replay = true`.) Failure throws an `ArgumentError` with the
-worst-cell location and tolerance margin, pointing the user at binary
-regeneration or at the bypass env var for diagnostic runs.
+The write-time gate (above) is on by default. A failure throws an
+`ArgumentError` with the worst-cell location and tolerance margin, pointing
+the user at binary regeneration. (`ATMOSTR_REPLAY_CHECK=1` still enables the
+check for one release, with a deprecation warning;
+`ATMOSTR_NO_REPLAY_CHECK` is gone.)
 
 The load-time gate is **off by default** because it doubles binary
 load time; it is the recommended sanity check for any new binary

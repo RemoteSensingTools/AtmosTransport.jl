@@ -185,8 +185,10 @@ Dimensions:
 | `nf` | `6` (panel face index, ordered by the active `panel_convention`) |
 | `lev`, `time` | as for LL |
 
-The per-panel arrays are stacked into the `nf` dimension at write time by
-`_cs_stack3` / `_cs_stack2` in `src/Output/netcdf_writer.jl`.
+The per-panel interior arrays are stacked into the `nf` dimension at write
+time (`src/Output/netcdf_writer.jl`): cell `(i, j)` of panel `p` at output
+level `k` is stored at `[i, j, p, k]`, so layer fields have storage order
+`(Xdim, Ydim, nf, lev)` and column fields `(Xdim, Ydim, nf)`.
 
 Per-topology fields:
 

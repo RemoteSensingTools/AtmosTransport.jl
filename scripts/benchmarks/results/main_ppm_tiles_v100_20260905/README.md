@@ -1,5 +1,7 @@
 # CUDA PPM launch tiles on V100
 
+> The reproducer scripts `compare.jl`, `profile.jl`, `sweep_blocks.jl`, `sweep_tiles.jl`, `sweep_trial.jl` and `trial_kernels.jl` were retired from the tree; recover with `git show 7c515038:scripts/benchmarks/results/main_ppm_tiles_v100_20260905/<file>`.
+
 The cubed-sphere packed Float32 PPM sweeps now use a `(32, 2)` CUDA workgroup.
 The per-cell kernel, tracer loop, air-mass update, reconstruction, and limiter
 are unchanged. CPU, Metal, Float64 CUDA, and other schemes retain their launch

@@ -5,8 +5,8 @@ capability checks, output and observation glue, resource ownership, and progress
 reporting.
 
 These files are not a module. [`../DrivenRunner.jl`](../DrivenRunner.jl) includes
-them in this order: `progress`, `configuration`, `summary`, `resources`, `output`,
-`observations`, `model_setup`. `DrivenRunner.jl` keeps the public entry point and
+them in this order: `progress`, `configuration`, `config_keys`, `summary`,
+`resources`, `output`, `observations`, `model_setup`. `DrivenRunner.jl` keeps the public entry point and
 the two transport loops: `_run_driven_simulation_structured` for lat-lon and
 reduced Gaussian, and `_run_driven_simulation_cs`. The parent overview, including
 how a TOML option reaches an operator, is [`../README.md`](../README.md).
@@ -38,28 +38,34 @@ how a TOML option reaches an operator, is [`../README.md`](../README.md).
     by `validate_config`.
 - Progress in [`progress.jl`](progress.jl): `RunProgressTimer`,
   `timed_io_read!`, `timed_transport!`, `timed_io_write!`, `tick_window!`,
-  `set_progress_status!`, `summarize_progress!`
+  `set_progress_status!`, `summarize_progress!`, `stop_compile_timing!` (the
+  runners call it in `finally`, so compile timing is released on errors)
 - Startup log in [`summary.jl`](summary.jl): `_log_runtime_summary`
 
 ## File Map
 
 - [`configuration.jl`](configuration.jl) — tracer specs, `[numerics] float_type`,
   architecture, table-shape and window-bound checks, `validate_config`,
-  multi-file window-range guard. It also holds the ANSI and advection-label
-  helpers used by the summary.
+  multi-file window-range guard; `validate_config` also parses the physics,
+  run and output settings. It also holds the ANSI and advection-label helpers
+  used by the summary.
+- [`config_keys.jl`](config_keys.jl) — the keys each runtime table may hold
+  and `_config_key_warnings`: unknown keys (with suggestions) and keys the
+  chosen kind leaves unread, logged by `validate_config`
 - [`model_setup.jl`](model_setup.jl) — GPU residency assertion, flux allocation,
   LL/RG model build, per-tracer CS dry-state packing, convection-capability
   dispatch
 - [`output.jl`](output.jl) — binary date labels, default output span, duplicate
-  daily-path guard, `RunSnapshotOutput`, single-file stream, background daily
-  writes
+  daily-path guard, output path/schedule checks (snapshot hours on window
+  ends), `RunSnapshotOutput`, single-file stream, background daily writes
 - [`observations.jl`](observations.jl) — run origin, sampler construction and
   ownership, per-binary day switch, window-end sampling with optional VDIFF
   temperature
 - [`resources.jl`](resources.jl) — `_with_run_resource`, `RunInputResources`
   (drains window prefetch, closes the driver, calls `release_payload!`)
 - [`progress.jl`](progress.jl) — progress bar with io_read / transport /
-  io_write wall-clock accumulators
+  io_write wall-clock accumulators; the end-of-run summary adds GC time, JIT
+  compilation time and allocated memory over the run
 - [`summary.jl`](summary.jl) — diffusion and schedule labels, multi-line runtime
   summary
 

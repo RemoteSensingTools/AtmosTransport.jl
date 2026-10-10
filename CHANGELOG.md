@@ -125,6 +125,59 @@
 
 ### Runtime and output
 
+- Faster cubed-sphere GPU runs, with unchanged results (runtime golden cases
+  bit-identical): on CUDA the halo exchange fills all 24 panel edges in one
+  kernel launch and the corners in a second, instead of 24 edge launches (6 for
+  packed tracer fields) plus 6 corner launches, one per panel (C90 L72 on an
+  L40S: 120 → 25 µs per air-mass exchange); the CMFMC convection CFL scan runs
+  on the device instead of copying three fields to the host once per window;
+  NetCDF output stacks the layer-resolved cubed-sphere fields into staging buffers of the output
+  type, one per requested layer count, reused across the fields and snapshots
+  of one write. Two-day warm runs on C90: transport time −7 % (MERRA-2) and
+  −9 % (ERA5) from the kernel changes; with 3-hourly 3-D NetCDF output, the
+  stacking change together with a type-stable tuple of the 24 edge operations
+  cuts the MERRA-2 run-loop wall time by a further 16 % (11.6 → 9.7 s; run-loop
+  host allocations 26.8 → 15.0 GiB per two days; end to end including setup
+  29.9 → 27.3 s). The GPU paths were tested on CUDA (L40S:
+  `test/diagnostic/test_cmfmc_cfl_gpu.jl`, `test_cs_halo_fill_gpu.jl`,
+  `test_point_ops_gpu.jl` and the seam, Lin–Rood and PPM GPU diagnostics) and
+  on Metal (Apple M5 Pro, Float32, `test/diagnostic/test_metal_kernels.jl`:
+  point operations, halo exchange and CFL scan
+  exact; a one-day C24 run agrees with the CPU to rounding and is about 10 %
+  faster than before, with laptop timings varying by up to 40 %). On Metal,
+  fused point operations are launched one after another, each on its
+  `bound_context` (`fusion_policy`; the halo fills bind their panel arrays); a C90 halo
+  exchange then takes 1.12–1.34 ms instead of 1.29–1.67 ms for packed tracers
+  and 0.45 instead of 0.58 ms for a 3-D field with corners.
+- Cubed-sphere GPU runs refill one host window in place for every met window
+  they load (`load_transport_window!`) instead of allocating a new one and its
+  padded copies; the window is then copied to the device as before. Results
+  are unchanged (runtime golden cases bit-identical). Two-day warm MERRA-2 C90
+  runs on an L40S (six runs each): run-loop host allocations 15.0 → 4.9 GiB,
+  run-loop wall time 10.2 → 8.7 s, of which transport 7.2 → 5.3 s (less
+  garbage collection during transport).
+- Time-varying surface fluxes (cubed sphere) are read only for the run period
+  when `[input]` gives `start_date`: from the last slice at or before the run
+  start to the first slice at or after the run end. Every temporal scheme uses
+  only the two slices around a time, so results are unchanged (two-day
+  MERRA-2 C90 run with LMDZ, GridFED and three native-C90 sources:
+  bit-identical NetCDF output). That run reads 10 instead of 6088 LMDZ slices
+  and 2 instead of 36 GridFED slices, and takes 12.4 s instead of 25.9 s end to
+  end (warm, L40S, six runs each; garbage collection 6.0 → 2.3 s). The
+  loaded period ends with the binaries' windows (from every binary's header)
+  or the end of `end_date`, whichever is later.
+- New in `Architectures`: point operations (`AbstractPointOp`, `Fused`,
+  `Sequence`, `launch!(op, ctx, backend)`), with a per-backend
+  `fusion_policy` (one fused kernel by default, separate launches on Metal). A kernel body is written once as
+  `apply_point!(op, ctx, I...)` and runs as one GPU kernel or as CPU loops;
+  independent operations fuse into one launch by type.
+- The end-of-run summary also reports garbage-collection time, JIT
+  compilation time and allocated memory.
+- `fill_panel_halos!` and `copy_corners!` reject a halo wider than the panel
+  (`Hp > Nc`) and panels of unequal size. CMFMC convection stops with an
+  explicit error when its CFL scan finds a non-finite ratio, such as NaN or Inf
+  in `cmfmc` (previously an `InexactError`); layers with NaN or non-positive
+  air mass are skipped by the scan, as before.
 - New PPM option `[advection] limiter = "cw84"` (`PPMScheme(CW84Limiter())`):
   the complete Colella–Woodward (1984) PPM, with van Leer-limited edge values
   and a flux that integrates the limited parabola over the swept fraction.
@@ -133,6 +186,14 @@
   undershoots (−0.16 on a [0, 1] box in a 1-D test). Lat-lon and cubed
   sphere, CPU and GPU, with the cubed-sphere adjoint. The default
   `scheme = "ppm"` is unchanged.
+- `[run] physics_cadence = "window" | "substep"` selects whether, on binaries
+  with a per-window physics contract, convection and chemistry run once per
+  met window (default) or every advection substep. It replaces the
+  environment variable `ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS`, which was read on
+  every time step and is still honored, with a deprecation warning, when the
+  key is absent. Unlike the variable, `"substep"` keeps the window-end reset to
+  the binary's endpoint air mass, so a cadence comparison changes only where
+  convection and chemistry run.
 - Deprecated, for removal in the next minor release: `State.MetState`,
   `diagnose_cm_from_continuity_vc!` and `diagnose_cm_from_continuity_ka!`. No
   part of the package uses them. Removed: the exported generic function
@@ -186,6 +247,75 @@
   Two binaries that still resolve to one daily file fail before transport.
 - `[output.fields].tracers = "name"` (a single string) no longer throws a
   `MethodError`; it selects that one tracer as documented.
+
+- Scripts cleanup: 161 stale scripts were removed (git history keeps them;
+  recover one with `git show 7c515038:<path>`) and 58 were moved into a
+  `heritage/` subfolder of their folder, kept for reference but not
+  maintained or tested. The deprecated runner shims
+  `scripts/deprecated/run_cs_driven.jl`, `run_transport_binary.jl` and
+  `run_cs_transport.jl` are gone; use `scripts/run_transport.jl`.
+  `scripts/completed_experiments/` and `scripts/deprecated/` no longer exist.
+  `scripts/README.md` lists every removed script with its purpose, and each
+  `heritage/README.md` says why its scripts are kept.
+- Run configs are checked before any binary is opened. `validate_config`
+  (run at the start of every run) now also parses `[advection]`,
+  `[diffusion]`, `[convection]`, `[chemistry]`, `air_mass_reset_mode`,
+  `physics_cadence` and `[output]`, so these errors no longer appear only after
+  the binaries are inspected. New errors: a decay half-life for a tracer the run
+  does not carry (it failed at the first chemistry step), an enabled `[output]`
+  with a path but no snapshot-schedule key or with snapshot times but no path
+  (nothing was written; `hours = []` still means deliberately none), Lin–Rood
+  `ppm_order` other than 5 or 7. Keys the run would ignore are logged as
+  warnings: unknown tables and keys with a "did you mean" suggestion, known
+  keys the chosen kind leaves unread (including flat `[tracers.<name>]` keys),
+  and surface-flux tables without `kind` (no flux is emitted). Of the 246 run
+  configs with an `[input]` table in `config/runs` and `config/examples`, only
+  four that already failed at run time differ: they now fail at the check.
+- `[input] validate_replay = true` replays every binary's continuity when the
+  run opens it (the stored fluxes must carry each window's air mass to the
+  next). It replaces the environment variable `ATMOSTR_REPLAY_CHECK`, which
+  still works for one release with a deprecation warning;
+  `ATMOSTR_NO_REPLAY_CHECK` is removed (the check runs only when asked for).
+  The replay error messages now name the key.
+- A transport binary written with the write-time replay gate skipped
+  (`ATMOSTR_NO_WRITE_REPLAY_CHECK=1`, or the new `--no-write-replay-check` of
+  `regrid_ll_transport_binary_to_cs.jl`) records `write_replay_check = false`
+  in its header; `binary_capabilities` reports it, `inspect_binary` marks it
+  and `TransportBinaryDriver` warns when it opens such a binary. Binaries
+  written with the gate on are unchanged. Every writer asks one resolver,
+  `write_replay_check_enabled`, instead of reading the variable itself.
+- `docs/src/config/environment.md` lists every environment variable the
+  package reads, and `test/core/test_environment_variables.jl` fails when
+  `src/` reads one that is not listed there (or from outside the folder that
+  owns it).
+- Breaking: a surface-flux `kind` that is not a known source
+  (`none`, `file`, `cs_native`, `lmdz_co2`, `gridfed_fossil_co2`, `edgar_sf6`,
+  `zhang_rn222`) is an error, with a suggestion for a close name; it used to
+  be read silently as a generic file, so a typo such as `gridfed` lost the
+  GridFED unit conversion. Use `kind = "file"` for a generic NetCDF file. The
+  two ocean-flux configs now say `kind = "file"` instead of
+  `"eccodarwin_ocean_co2"` (same source, results unchanged).
+- The two binary-format A/B configs `config/runs/binary_format_ab/c45_*` are
+  retired: they set `[advection] order = 7`, which was never read, so they
+  ran Lin–Rood PPM5 instead of the intended PPM7.
+- Snapshot hours are checked against the met-window ends of every binary
+  (now recorded by `binary_capabilities` as `nwindow` and `window_seconds`)
+  when the run starts: an hour that is not a window end was never matched, and
+  every later snapshot was lost with it. Snapshots are matched to window ends
+  within half a window (at most half an hour, as before), so runs with
+  sub-hour windows no longer take a snapshot one window early. The default
+  snapshot span and the observation span count the windows of every binary,
+  not the first binary's times the binary count. `format = "binary_mmap"` is
+  rejected on lat-lon and reduced-Gaussian grids before the run instead of at
+  the first write.
+- The editor schema lists every key the runtime reads (new:
+  `expected_nlevel`, `required_preprocessor_contract`, `convection.cloud_base`,
+  surface-flux `regridding`, `init.clamp_negative`, top-level legacy `[init]`,
+  and the deprecated aliases) and accepts `diffusion.kind =
+  "geoschem_nonlocal_vdiff"`. A new test compares every schema choice with the
+  parser's accepted values and every schema table with the known-key tables,
+  both ways. New module `ConfigChecks` holds the strict Boolean and known-key
+  helpers that `Output`, `Preprocessing` and `Models` each had a copy of.
 
 ### Surface fluxes and preprocessing
 

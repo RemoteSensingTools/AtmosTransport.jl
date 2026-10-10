@@ -38,6 +38,10 @@ julia --project=test test/runtests.jl --orphan       # default + orphan watchlis
 julia --project=test test/runtests.jl --tiers=core,orphan # only listed tiers
 ```
 
+A failing file does not stop the run: every selected file runs (an interrupt
+still stops it), and at the end the runner prints the 15 slowest files and then
+fails with the list of failed files, if any.
+
 ## Adding a new test
 
 1. Decide which tier the test belongs in. Default to `core/` if the test

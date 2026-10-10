@@ -7,9 +7,17 @@ function _renormalize_surface_flux_rate!(rate::AbstractArray{FT}, source::FileSu
     return rate
 end
 
-"""Parse regridding method from config, with a caller-owned default."""
-_regridding_method(cfg, default::AbstractString = "bilinear") =
-    Symbol(lowercase(String(get(cfg, "regridding", default))))
+const _SURFACE_FLUX_REGRIDDINGS = (:bilinear, :conservative)
+
+"""Parse the `surface_flux.regridding` method, with a caller-owned default."""
+function _regridding_method(cfg, default::AbstractString = "bilinear")
+    raw = get(cfg, "regridding", default)
+    method = raw isa AbstractString ? Symbol(lowercase(raw)) : nothing
+    method in _SURFACE_FLUX_REGRIDDINGS || throw(ArgumentError(
+        "surface_flux.regridding must be one of $(join(_SURFACE_FLUX_REGRIDDINGS, ", ")); " *
+        "got $(repr(raw))"))
+    return method
+end
 
 """
     _build_surface_flux_regridder(lon, lat, dst_mesh) -> regridder

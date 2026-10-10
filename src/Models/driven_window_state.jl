@@ -63,9 +63,11 @@ function _reset_air_mass_preserve_tracer_mass!(state::CubedSphereState,
     return _refresh_state_halos!(state, mesh)
 end
 
+const _AIR_MASS_RESET_MODES = (:none, :preserve_vmr, :preserve_tracer_mass)
+
 function _normalize_air_mass_reset_mode(air_mass_reset_mode)
     mode = air_mass_reset_mode === nothing ? :none : Symbol(air_mass_reset_mode)
-    mode in (:none, :preserve_vmr, :preserve_tracer_mass) ||
+    mode in _AIR_MASS_RESET_MODES ||
         throw(ArgumentError("air_mass_reset_mode must be one of :none, " *
                             ":preserve_vmr, or :preserve_tracer_mass; got $(repr(mode))"))
     return mode
@@ -198,14 +200,27 @@ function _copy_window_payload!(dest::TransportWindow{B},
     return dest
 end
 
+# The first host window becomes the staging buffer of a device-resident run when
+# the driver can refill it in place; CPU runs use each loaded window directly
+# (it becomes the simulation's window), so they keep loading fresh ones.
+function _host_staging_window(loaded_window, driver, model_air_mass)
+    _window_backend_adapter(model_air_mass) === Array && return nothing
+    _window_backend_adapter(loaded_window.air_mass) === Array || return nothing
+    hasmethod(load_transport_window!, Tuple{typeof(loaded_window), typeof(driver), Int}) ||
+        return nothing
+    return loaded_window
+end
+
 function _load_window_into_existing_backend!(existing_window,
                                              driver::AbstractMetDriver,
                                              win::Int,
-                                             model_air_mass)
-    loaded = SectionTimer.time_section(:window_load_host) do
-        _load_window(driver, win)
-    end
+                                             model_air_mass,
+                                             host_staging = nothing)
     adaptor = _window_backend_adapter(model_air_mass)
+    loaded = SectionTimer.time_section(:window_load_host) do
+        host_staging === nothing || adaptor === Array ? _load_window(driver, win) :
+            load_transport_window!(host_staging, driver, win)
+    end
     if adaptor === Array
         return loaded
     end
@@ -228,10 +243,11 @@ function _start_window_prefetch!(sim::DrivenSimulation, target_window::Int)
     target_slot = sim.prefetch_window
     driver = sim.driver
     model_air_mass = sim.model.state.air_mass
+    host_staging = sim.host_staging
     sim.prefetch_window_index = target_window
     sim.prefetch_task = Threads.@spawn SectionTimer.time_section(:prefetch_task_total) do
         _load_window_into_existing_backend!(
-            target_slot, driver, target_window, model_air_mass)
+            target_slot, driver, target_window, model_air_mass, host_staging)
     end
     return nothing
 end
@@ -250,8 +266,8 @@ function _finish_window_prefetch!(sim::DrivenSimulation)
 end
 
 function _take_prefetched_window!(sim::DrivenSimulation, next_window::Int)
-    if _prefetch_enabled(sim.model.state.air_mass) &&
-       sim.prefetch_window_index == next_window
+    # A nonzero index means a prefetch was started, whatever the current setting.
+    if sim.prefetch_window_index == next_window
         task = sim.prefetch_task
         fetched = try
             SectionTimer.time_section(:prefetch_fetch_wait) do
@@ -272,10 +288,14 @@ function _take_prefetched_window!(sim::DrivenSimulation, next_window::Int)
         sim.prefetch_window = old_current
         return nothing
     end
+    # A prefetch of another window may still be reading the shared host staging
+    # window; it stays available for a later take.
+    sim.host_staging === nothing || sim.prefetch_window_index == 0 || wait(sim.prefetch_task)
     sim.window = SectionTimer.time_section(:window_sync_load_total) do
         _load_window_into_existing_backend!(sim.window, sim.driver,
                                            next_window,
-                                           sim.model.state.air_mass)
+                                           sim.model.state.air_mass,
+                                           sim.host_staging)
     end
     return nothing
 end

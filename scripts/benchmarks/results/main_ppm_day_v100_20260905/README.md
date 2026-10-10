@@ -1,5 +1,7 @@
 # Full-day PPM launch comparison and initialization profile
 
+> The reproducer scripts `compare.jl`, `initialization_phases.jl` and `profile.jl` were retired from the tree; recover with `git show 7c515038:scripts/benchmarks/results/main_ppm_day_v100_20260905/<file>`.
+
 This follow-up extends the [two-hour V100 experiment](../main_ppm_tiles_v100_20260905/README.md)
 to all 24 windows of the same C90 L66 Float32 ERA5 format-4 archive, with
 32 pressure-layer tracers, PPM advection, full-column TM5 matrix convection,

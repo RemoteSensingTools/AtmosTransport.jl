@@ -38,7 +38,7 @@ function _maybe_advance_window!(sim::DrivenSimulation)
 end
 
 function _maybe_reset_to_window_endpoint!(sim::DrivenSimulation)
-    (sim.air_mass_reset_mode !== :none && _uses_binary_transport_schedule(sim)) ||
+    (sim.air_mass_reset_mode !== :none && _binary_window_contract(sim)) ||
         return nothing
     expected_air_mass!(sim.expected_air_mass, sim.window, one(typeof(sim.Δt)))
     _reset_air_mass!(sim.model.state, sim.expected_air_mass,
@@ -64,6 +64,13 @@ Keyword arguments:
   binary-scheduled runs, the same endpoint reset is applied before the
   once-per-window convection/chemistry block so physics sees the binary's
   authoritative window-end mass.
+- `physics_cadence=nothing` — `:window` (the default for `nothing`) or
+  `:substep`. On a binary with a per-window physics contract, `:window` runs
+  convection and chemistry once per met window after the stored advection
+  substeps; `:substep` runs them every advection substep (the cadence before
+  2026-05-31), for cadence-sensitivity comparisons on the same binary. The
+  window-end air-mass reset is the same for both. Other binaries run the full
+  operator suite every substep either way.
 - `surface_sources=()`
 - `chemistry=NoChemistry()` — applied after advection + surface sources each step
 - `callbacks=NamedTuple()`
@@ -83,6 +90,7 @@ function DrivenSimulation(model::TransportModel,
                           use_midpoint_forcing::Bool = true,
                           interpolate_fluxes_within_window = nothing,
                           air_mass_reset_mode = :preserve_tracer_mass,
+                          physics_cadence = nothing,
                           surface_sources = (),
                           chemistry::AbstractChemistryOperator = NoChemistry(),
                           callbacks = NamedTuple(),
@@ -147,10 +155,13 @@ function DrivenSimulation(model::TransportModel,
     flux_interp = interpolate_fluxes_within_window === nothing ?
                   (flux_interpolation_mode(driver) === :interpolate) : Bool(interpolate_fluxes_within_window)
     reset_mode = _normalize_air_mass_reset_mode(air_mass_reset_mode)
+    every_substep = _resolve_physics_cadence(physics_cadence) === :substep
+    host_staging = _host_staging_window(loaded_window, driver, model.state.air_mass)
 
     sim = DrivenSimulation{typeof(model), typeof(driver), typeof(window),
                            typeof(expected_air_mass), typeof(qv_buffer), FT,
-                           typeof(callbacks), typeof(prefetch_task)}(
+                           typeof(callbacks), typeof(prefetch_task),
+                           typeof(host_staging)}(
         model,
         driver,
         window,
@@ -177,6 +188,8 @@ function DrivenSimulation(model::TransportModel,
         use_midpoint_forcing,
         flux_interp,
         reset_mode,
+        every_substep,
+        host_staging,
     )
 
     if initialize_air_mass
@@ -243,14 +256,36 @@ _clock_time(sim::DrivenSimulation) = sim.start_time + Float64(sim.window_dt) *
     ((sim.current_window_index - sim.start_window) +
      (sim.iteration - sim.current_window_start_iteration) / sim.steps_per_window)
 
-# Diagnostic override for convection-cadence sensitivity studies. Setting
-# ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS=1 forces convection + chemistry to run every
-# advection substep (the pre-2026-05-31 behaviour) even on a binary that declares
-# the per-window contract, so the two cadences can be A/B-compared on the SAME
-# binary. Default off — never affects production runs.
+# A binary with a per-window contract makes its endpoint mass authoritative at
+# window ends. Convection and chemistry run once per window there, unless
+# `physics_cadence = :substep` (`[run] physics_cadence`) asks for every advection
+# substep; the window-end mass reset is the same for both cadences, so an A/B
+# comparison on one binary changes only where physics runs.
+@inline _binary_window_contract(sim::DrivenSimulation) = uses_binary_substep_contract(sim.driver)
 @inline _uses_binary_transport_schedule(sim::DrivenSimulation) =
-    uses_binary_substep_contract(sim.driver) &&
-    get(ENV, "ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS", "0") != "1"
+    _binary_window_contract(sim) && !sim.physics_every_substep
+
+# `physics_cadence` (`:window`, `:substep` or `nothing`), resolved once. Without
+# a value, the deprecated `ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS=1` still selects
+# `:substep`, with a warning.
+const _PHYSICS_CADENCES = (:window, :substep)
+
+function _resolve_physics_cadence(physics_cadence)
+    from_env = get(ENV, "ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS", "0") == "1"
+    if physics_cadence === nothing
+        from_env || return :window
+        @warn "ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS=1 is deprecated and will be removed; " *
+              "set [run] physics_cadence = \"substep\"." maxlog = 1
+        return :substep
+    end
+    cadence = Symbol(physics_cadence)
+    cadence in _PHYSICS_CADENCES || throw(ArgumentError(
+        "physics_cadence must be :window or :substep; got $(repr(physics_cadence))"))
+    from_env && cadence === :window && throw(ArgumentError(
+        "ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS=1 conflicts with physics_cadence = :window; " *
+        "remove the environment variable"))
+    return cadence
+end
 
 function step!(sim::DrivenSimulation)
     sim.iteration < sim.final_iteration ||
@@ -272,10 +307,10 @@ function step!(sim::DrivenSimulation)
     end
     sim.iteration += 1
     sim.time = _clock_time(sim)
-    if _uses_binary_transport_schedule(sim) &&
-       sim.iteration == sim.current_window_end_iteration
+    if _binary_window_contract(sim) && sim.iteration == sim.current_window_end_iteration
         _maybe_reset_to_window_endpoint!(sim)
-        convection_chemistry_step!(sim.model, sim.window_dt; meteo = sim)
+        sim.physics_every_substep ||
+            convection_chemistry_step!(sim.model, sim.window_dt; meteo = sim)
     end
     for callback in values(sim.callbacks)
         callback(sim)

@@ -473,7 +473,7 @@ function process_day(date::Date,
 
     log_mass_fix_configuration(settings)
     @info "  Streaming: spectral → LL staging → CS regrid → balance → write..."
-    write_replay_on = get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
+    write_replay_on = write_replay_check_enabled()
     write_replay_on || @info "  Write-time CS replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
     replay_tol = replay_tolerance(FT)
     balance = effective_horizontal_balance(get(settings, :horizontal_balance, nothing), ColumnBalance())
@@ -495,7 +495,7 @@ function process_day(date::Date,
                 cs_center_law=_cs_center_law_tag(grid),
                 longitude_offset_deg=longitude_offset_deg(cs_definition(grid.mesh)),
                 planet_radius=grid.mesh.radius,
-                extra_header=Dict{String, Any}(
+                extra_header=_with_replay_record(Dict{String, Any}(
                     "preprocessor"     => "preprocess_transport_binary.jl",
                     "preprocessor_contract" => "plan41_variable_substeps",
                     "runtime_substep_contract" => "binary_schedule",
@@ -516,7 +516,7 @@ function process_day(date::Date,
                     "merge_map" => vertical.merge_map,
                     "poisson_balanced" => true,
                     "mass_fix_enabled" => settings.mass_fix_enable,
-                ))
+                ), write_replay_on))
 
             bytes_per_window = writer.elems_per_window * sizeof(FT)
             expected_total = writer.header_bytes + Nt * bytes_per_window

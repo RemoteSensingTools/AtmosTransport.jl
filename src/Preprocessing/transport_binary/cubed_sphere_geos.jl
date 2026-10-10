@@ -239,6 +239,8 @@ function _process_day_geos_cs_unified(date::Date,
         mkpath(dirname(out_path))
         isfile(tmp_path) && rm(tmp_path; force = true)
 
+        # Resolved once: the header records it and the gate uses it.
+        write_replay_on = write_replay_check_enabled()
         inner_writer = open_streaming_cs_transport_binary(
             tmp_path, Nc, npanel, Nz, nw, vc;
             FT = FT,
@@ -257,7 +259,7 @@ function _process_day_geos_cs_unified(date::Date,
             cs_center_law      = _cs_center_law_tag(grid),
             longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
             planet_radius      = grid.mesh.radius,
-            extra_header = Dict{String, Any}(
+            extra_header = _with_replay_record(Dict{String, Any}(
                 "preprocessor" => "geos_native_to_cs",
                 "preprocessor_contract" => "plan41_variable_substeps",
                 "runtime_substep_contract" => "binary_schedule",
@@ -320,7 +322,7 @@ function _process_day_geos_cs_unified(date::Date,
                      "geos_omega_max_bottom_flux_correction" =>
                          workspace.omega_regularization.max_bottom_flux_correction) :
                     ())...,
-            ),
+            ), write_replay_on),
         )
         writer = CubedSphereBinaryWriter(inner_writer, DryBasis();
                                          Nc = Nc, npanel = npanel,
@@ -331,8 +333,7 @@ function _process_day_geos_cs_unified(date::Date,
             require_substep_positivity = require_substep_positivity,
             steps_per_window = steps_per_met,
         )
-        write_replay_on = get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
-        write_replay_on || @info "  Write-time CS replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
+        write_replay_on || @info "  Write-time CS replay gate SKIPPED (disabled for this run)"
         ctx = GEOSCSUnifiedDriverContext(grid, settings, vertical, steps_per_met;
                                          write_replay_on)
 

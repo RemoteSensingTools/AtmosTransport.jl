@@ -1,5 +1,7 @@
 # Input and file-handoff validation on current main
 
+> The reproducer scripts `compare.jl` and `profile.jl` were retired from the tree; recover with `git show 7c515038:scripts/benchmarks/results/main_input_v100_20260905/<file>`.
+
 Julia 1.12.6, four threads; CUDA.jl 5.11.3 / runtime 12.6 on tofu GPU 0,
 Tesla V100-PCIE-16GB. Only the explicitly selected V100 was used.
 

@@ -56,6 +56,7 @@ const PAGES = [
             "config/toml_schema.md",
             "config/output_schema.md",
             "config/data_sources.md",
+            "config/environment.md",
         ],
         "Meteorology preprocessing" => [
             "preprocessing/overview.md",

@@ -96,6 +96,37 @@ concrete operator, grid, state, numeric type, and architecture. The result is
 one user-facing workflow without a chain of topology strings or backend
 conditionals in every kernel.
 
+## Kernels written once, fused by dispatch
+
+Work that runs independently at every index of a block can be written as a
+*point operation*: a small struct (`<: AbstractPointOp` in `Architectures`)
+with an `index_space` and an `apply_point!` body for one index. The same body
+runs as one GPU kernel or as a loop on the CPU. Operations compose by type:
+
+- `Fused(ops...)` combines independent operations (disjoint writes, no
+  cross reads; for example the 24 panel edges of a cubed-sphere halo
+  exchange). How it runs depends on the backend (below);
+- `Sequence(ops...)` launches dependent operations in order with one
+  synchronization (the corner fill, which reads the filled edges).
+
+How a backend launches a `Fused` set is its `fusion_policy`: one kernel with a
+trailing slot index by default (fastest on CUDA, where these kernels are bound
+by launch latency), or one launch per operation on that operation's
+`bound_context` (Metal, where that is faster; the halo operations bind their
+panel arrays there).
+
+Fusing changes only how work is launched; every index performs the same
+arithmetic, so results do not change. The cubed-sphere halo exchange is built
+this way. With the default policy (CUDA) that is one launch for all 24 panel
+edges, a second for the corners when a sweep direction asks for them, and one
+synchronization; on Metal, 24 edge and 6 corner launches with bound arrays and
+one synchronization. Before, a 3-D field took 24 edge launches and 6 corner
+launches (one per panel, filling its four corners), and a packed tracer field
+6 edge launches (one per panel) and 6 corner launches, with a synchronization
+after the edges and after the corners. Measured on an NVIDIA L40S for a C90
+field with 72 levels in Float32 (edges, corners and synchronization), one
+exchange takes about 25 µs instead of 120 µs.
+
 ## One transport window
 
 At a high level, each meteorological window follows this sequence:

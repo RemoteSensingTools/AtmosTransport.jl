@@ -1,5 +1,7 @@
 # Split advection: paired seam transfers
 
+> The reproducer scripts `check_outputs.jl`, `check_profile_outputs.jl`, `check_totals.jl`, `full_day.jl` and `profile.jl` were retired from the tree; recover with `git show 7c515038:scripts/benchmarks/results/main_split_mass_seams_v100_20260905/<file>`.
+
 The paired physical-seam update removes the split schemes' Float64 tracer
 imbalance and reduces full-day Float32 drift without normalizing totals.
 The [implementation report](../../../../docs/memos/2026-09-05_main_split_mass_seams.md)

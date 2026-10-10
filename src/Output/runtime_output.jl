@@ -243,6 +243,13 @@ function _output_partition(output_cfg::AbstractDict)
     end
 end
 
+# Snapshot-schedule keys in precedence order: an explicit hour list wins over an
+# interval, and within each group the first key present wins.
+const _SNAPSHOT_HOURS_KEYS = ("snapshot_hours", "hours")
+const _SNAPSHOT_INTERVAL_KEYS = ("snapshot_interval_hours", "cadence_hours", "interval_hours",
+                                 "cadence_seconds", "interval_seconds")
+const _SNAPSHOT_SCHEDULE_KEYS = (_SNAPSHOT_HOURS_KEYS..., _SNAPSHOT_INTERVAL_KEYS...)
+
 function _output_schedule(output_cfg::AbstractDict;
                           default_cap_hours::Real,
                           fallback_hours::AbstractVector{<:Real})

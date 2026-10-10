@@ -9,8 +9,8 @@
 # Snapshot output is 3-hourly to align directly with the GeosChem
 # Catrine reference in `~/data/AtmosTransport/catrine-geoschem-runs/`.
 #
-# Comparison entrypoint: `scripts/diagnostics/compare_at_vs_geoschem_c180.jl`
-# (shipped alongside this config).
+# Comparison entrypoint: `scripts/diagnostics/catrine_compare_vs_geoschem.py`
+# (GEOS-Chem reference under `catrine-geoschem-runs/C180`).
 #
 # Runner:
 #   julia --project=. scripts/run_transport.jl \

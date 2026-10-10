@@ -2,8 +2,8 @@
 # ml137_tropo34 levels, Float64. From config/preprocessing/era5_cs_c24_transport_binary.toml.
 
 [input]
-spectral_dir = "~/data/AtmosTransport/met/era5/0.5x0.5/spectral_hourly"
-thermo_dir   = "~/data/AtmosTransport/met/era5/0.5x0.5/physics"
+spectral_dir = "/temp1/cfranken/goldens/inputs/era5_0.5x0.5/spectral_hourly"
+thermo_dir   = "/temp1/cfranken/goldens/inputs/era5_0.5x0.5/physics"
 coefficients = "config/era5_L137_coefficients.toml"
 
 [output]

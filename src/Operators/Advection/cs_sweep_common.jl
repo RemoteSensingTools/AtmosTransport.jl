@@ -220,8 +220,9 @@ end
         # ordered GPU stream, so no host barrier is needed on GPU — the periodic
         # sync lands at the `fill_panel_halos!` boundary. The per-kernel host
         # `synchronize` here was the dominant launch-bound bubble (GPU profiling
-        # 2026-06-13: ~3 host barriers per panel per sweep). Keep it on the CPU
-        # backend defensively, mirroring HaloExchange.jl's `KA_CPU` gate.
+        # 2026-06-13: ~3 host barriers per panel per sweep). On the CPU backend
+        # kernels already run synchronously and this call is a no-op; it is kept
+        # so the loop reads the same on every backend.
         backend isa KA_CPU && synchronize(backend)
     end
     return nothing

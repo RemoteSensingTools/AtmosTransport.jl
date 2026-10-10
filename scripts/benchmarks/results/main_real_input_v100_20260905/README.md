@@ -1,5 +1,7 @@
 # First real-input profile after integration onto main
 
+> The reproducer scripts `profile.jl` and `verify.jl` were retired from the tree; recover with `git show 7c515038:scripts/benchmarks/results/main_real_input_v100_20260905/<file>`.
+
 Source: main `a0698dde` plus the matrix ports through `63904499`, exported to
 `/tmp/atmos-revamp-main` on tofu. GPU 0 is a Tesla V100-PCIE-16GB; Julia 1.12.6,
 CUDA.jl 5.11.3, CUDA runtime 12.6, four Julia threads, scalar GPU indexing off.

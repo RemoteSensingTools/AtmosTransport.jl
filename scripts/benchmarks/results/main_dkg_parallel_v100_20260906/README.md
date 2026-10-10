@@ -1,5 +1,7 @@
 # Parallel CUDA tracer solves for conservative Dkg
 
+> The reproducer scripts `check_outputs.jl`, `launch_layout.jl`, `parallel_tracers.jl`, `profile.jl` and `small_batches.jl` were retired from the tree; recover with `git show 7c515038:scripts/benchmarks/results/main_dkg_parallel_v100_20260906/<file>`.
+
 CUDA now factors each column once, then distributes independent tracer solves
 across threads. The arithmetic and factor storage are unchanged. The original
 32-tracer full-day workload improves from 38.635 to 29.543 s median (23.5%),

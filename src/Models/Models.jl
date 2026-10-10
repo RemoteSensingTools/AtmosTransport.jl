@@ -22,13 +22,7 @@ using ..Preprocessing
 # so the nested DrivenRunner submodule can `using ..Output: …`.
 using ..Output
 
-function _config_bool(value, path::AbstractString)
-    value isa Bool || throw(ArgumentError("$(path) must be true or false; got $(repr(value))"))
-    return value
-end
-
-_config_bool(cfg::AbstractDict, key::AbstractString, default::Bool, path::AbstractString) =
-    _config_bool(get(cfg, key, default), path)
+using ..ConfigChecks: config_bool as _config_bool
 
 include("TransportModel.jl")
 include("RuntimeRecipeStyles.jl")    # runtime-style traits (dispatched on by specs)

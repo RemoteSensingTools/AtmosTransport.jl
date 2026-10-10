@@ -228,11 +228,15 @@ end
 # (surface-first lev, like GEOS-Chem SpeciesConcVV_*). NCDatasets reads it
 # in reversed (Julia column-major) order as `(Xdim, Ydim, nf, lev[, time])`,
 # so panel axis-1 == Xdim and axis-2 == Ydim — IDENTICAL to the model's own
-# CS writer (`_cs_stack3`: `out[:, :, p, :] = panels[p]`). We therefore map
+# CS writer, which stores panel `p` cell `(i, j)` level `k` at `[i, j, p, k]`
+# in `(Xdim, Ydim, nf, lev)` order. We therefore map
 # `src[i, j, p, k_src]` directly onto interior panel `p` cell `(i, j)`, and
 # flip the vertical (source SURFACE-first → model TOA-first) via
 # `k = Nz - k_src + 1`. Requires `size(lev) == Nz` (same vertical grid).
 # ---------------------------------------------------------------------------
+
+# `init.vertical_order` of a native cubed-sphere file.
+const _CS_NATIVE_VERTICAL_ORDERS = (:surface_first, :toa_first)
 
 function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
                              air_mass::NTuple{6, <:AbstractArray{FT, 3}},
@@ -250,7 +254,7 @@ function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
     # Source vertical convention: "surface_first" (GEOS-Chem default) flips to
     # the model's TOA-first ordering; "toa_first" copies straight through.
     vertical_order = Symbol(lowercase(String(get(cfg, "vertical_order", "surface_first"))))
-    vertical_order in (:surface_first, :toa_first) || throw(ArgumentError(
+    vertical_order in _CS_NATIVE_VERTICAL_ORDERS || throw(ArgumentError(
         "init.kind=cs_native: vertical_order=$(vertical_order) must be " *
         "\"surface_first\" (GEOS-Chem, flips to TOA-first) or \"toa_first\""))
     flip_vertical = vertical_order === :surface_first

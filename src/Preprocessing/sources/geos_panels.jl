@@ -350,7 +350,8 @@ end
 # Mass-flux scaling.
 #
 # MFXC and MFYC in GEOS-IT and GEOS-FP CTM files are ALREADY dry mass fluxes
-# (per the in-tree diagnostic `compare_era5_geosit_met.jl` and GMAO docs:
+# (per the in-tree diagnostic
+# `scripts/diagnostics/heritage/compare_era5_geosit_met.jl` and GMAO docs:
 # "GEOS am_moist = MFXC / (g × dt_dyn) / (1 − qv)"; getting MOIST from
 # native MFXC requires *dividing* by `(1 − qv)`, so multiplying by it would
 # double-dry). The reader therefore only divides by `mass_flux_dt` to convert

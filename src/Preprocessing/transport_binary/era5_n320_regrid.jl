@@ -529,6 +529,8 @@ function process_era5_n320_to_cs_day(date::Date,
         isfile(tmp_path) && rm(tmp_path)
         @info @sprintf("  Output: %s (Nc=%d, Nz=%d, FT=%s)",
                        basename(out_path), Nc, Nz_int, string(FT))
+        # Resolved once: the header records it and the gate uses it.
+        write_replay_on = write_replay_check_enabled()
         inner_writer = open_streaming_cs_transport_binary(
             tmp_path, Nc, 6, Nz_int, nwindow, vc;
             FT = FT,
@@ -547,7 +549,7 @@ function process_era5_n320_to_cs_day(date::Date,
             cs_center_law = _cs_center_law_tag(target_grid),
             longitude_offset_deg = longitude_offset_deg(cs_definition(mesh)),
             planet_radius = mesh.radius,
-            extra_header = Dict{String, Any}(
+            extra_header = _with_replay_record(Dict{String, Any}(
                 "preprocessor" => "process_era5_n320_to_cs_day",
                 # Declare the per-window advection substep contract so the
                 # runtime applies advection at the baked substep cadence but
@@ -588,14 +590,13 @@ function process_era5_n320_to_cs_day(date::Date,
                 "global_mass_pin_enabled" => do_mass_pin,
                 "global_mass_pin_target_kg" => do_mass_pin ?
                     Float64(global_mass_target_kg) : nothing,
-            ))
+            ), write_replay_on))
         writer = CubedSphereBinaryWriter(inner_writer,
                                           mass_basis_from_symbol(mass_basis);
                                           Nc = Nc,
                                           npanel = 6,
                                           final_path = String(out_path))
 
-        write_replay_on = get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
         replay_tol = replay_tolerance(FT)
 
         # Drive the native-L137 pipeline, derive native target-grid mass, then

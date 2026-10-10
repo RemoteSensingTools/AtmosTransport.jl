@@ -34,7 +34,7 @@ using ...State: CellState, CubedSphereState, get_tracer, tracer_index, eachtrace
                 GCHPNonlocalPBLField
 using ..Diffusion: ImplicitVerticalDiffusion
 using ...MetDrivers: current_time
-using ...Architectures: _two_sum
+using ...Architectures: _two_sum, launch!
 import ..AbstractOperator, ..apply!
 
 export SurfaceFluxSource, AbstractSurfaceFluxSource, TimeVaryingSurfaceFluxSource

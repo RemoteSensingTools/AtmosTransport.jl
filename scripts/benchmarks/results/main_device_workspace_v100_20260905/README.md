@@ -1,5 +1,7 @@
 # Construct cubed-sphere workspaces on the V100
 
+> The reproducer scripts `compare.jl`, `construction.jl` and `profile.jl` were retired from the tree; recover with `git show 7c515038:scripts/benchmarks/results/main_device_workspace_v100_20260905/<file>`.
+
 The runner transfers state and fluxes before constructing `TransportModel`.
 Workspace constructors follow the state backend through `similar`, so they no
 longer allocate temporary host scratch and then copy its unused contents to

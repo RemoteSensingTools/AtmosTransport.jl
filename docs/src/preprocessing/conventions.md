@@ -120,10 +120,10 @@ Defined in `src/MetDrivers/ReplayContinuity.jl`. Used by:
 - **Write-time gate** in every preprocessing path
   (`verify_storage_continuity_*!`, `verify_write_replay_cs!`).
   Failures abort the run.
-- **Opt-in load-time gate** at runtime. Enable via the env var
-  `ATMOSTR_REPLAY_CHECK=1` or by constructing the driver with
-  `validate_replay = true` (driver kwarg, not a TOML key). Failures
-  throw an `ArgumentError` pointing at the worst-cell location.
+- **Opt-in load-time gate** at runtime. Enable with `[input]
+  validate_replay = true`, or by constructing the driver with
+  `validate_replay = true`. Failures throw an `ArgumentError` pointing at
+  the worst-cell location.
 
 The asymmetry between F64 and F32 reflects the noise floor: F32
 arithmetic at production resolutions accumulates rounding to ~`1e-5`

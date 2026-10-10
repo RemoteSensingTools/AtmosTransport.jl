@@ -287,6 +287,34 @@ end
 
     @test chem_window.calls[] == 1
     @test chem_window.total_dt[] == 1800.0
+
+    # `[run] physics_cadence = "substep"` runs chemistry every advection substep on
+    # the same binary-contract driver (cadence A/B comparisons).
+    state_sub = CellState(fill(FT(_REALISTIC_AIR_MASS_KG), 4, 3, 5);
+                          CO2 = fill(FT(1e-6 * _REALISTIC_AIR_MASS_KG), 4, 3, 5))
+    fluxes_sub = allocate_face_fluxes(driver_window.grid.horizontal, 5; FT = FT, basis = DryBasis)
+    model_sub = TransportModel(state_sub, fluxes_sub, driver_window.grid, UpwindScheme())
+    chem_sub = _CountingChemistry(Ref(0), Ref(0.0))
+    sim_sub = DrivenSimulation(model_sub, driver_window; start_window = 1, stop_window = 1,
+                               chemistry = chem_sub, physics_cadence = "substep")
+    run!(sim_sub)
+    @test chem_sub.calls[] == 4
+    @test chem_sub.total_dt[] == 1800.0
+    # Both cadences keep the binary's window-end air-mass reset.
+    @test AtmosTransport.Models._binary_window_contract(sim_sub)
+    @test !AtmosTransport.Models._uses_binary_transport_schedule(sim_sub)
+    @test AtmosTransport.Models._uses_binary_transport_schedule(sim_window)
+
+    resolve = AtmosTransport.Models._resolve_physics_cadence
+    withenv("ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS" => nothing) do
+        @test resolve(nothing) === :window
+        @test resolve(:substep) === :substep
+        @test_throws ArgumentError resolve("hourly")
+    end
+    withenv("ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS" => "1") do
+        @test (@test_logs (:warn, r"deprecated") resolve(nothing)) === :substep
+        @test_throws ArgumentError resolve(:window)
+    end
 end
 
 @testset "DrivenSimulation keeps convection runtime on model FT" begin
@@ -336,6 +364,108 @@ end
         else
             @test workspace.derived_entu == continuous.model.workspace.convection_ws.derived_entu
             @test workspace.derived_detu == continuous.model.workspace.convection_ws.derived_detu
+        end
+    end
+end
+
+using OffsetArrays
+include(joinpath(@__DIR__, "..", "helpers", "cmfmc_cfl.jl"))
+
+@testset "CMFMC CFL scan equals the per-interface definition" begin
+    for FT in (Float32, Float64)
+        f = cmfmc_cfl_fixture(FT)
+        ref = reference_cmfmc_max_cfl(f)
+        got = scan_cmfmc_max_cfl(f, identity, ref.dt)
+        @test got.ll === ref.ll
+        @test got.fi === ref.fi
+        @test got.cs === ref.cs
+        @test all(x -> x isa FT && x > 0, (got.ll, got.fi, got.cs))
+        @test all(check_single_hot(f, identity))
+        @test all(check_nan_mass_skips_interfaces(f, identity))
+
+        # A NaN layer mass skips its interfaces; a NaN flux makes the scan NaN.
+        f.ll.air_mass[5, 4, 3] = FT(NaN)
+        f.cs.air_mass[2][f.Hp + 1, f.Hp + 3, 2] = FT(NaN)
+        ref = reference_cmfmc_max_cfl(f)
+        got = scan_cmfmc_max_cfl(f, identity, ref.dt)
+        @test got.ll === ref.ll && isfinite(got.ll)
+        @test got.cs === ref.cs && isfinite(got.cs)
+        f.fi.cmfmc[3, 2] = FT(NaN)
+        @test isnan(scan_cmfmc_max_cfl(f, identity, ref.dt).fi)
+    end
+end
+
+# A one-based host array type with no KernelAbstractions backend method.
+struct _PlainHostArray{T, N} <: AbstractArray{T, N}
+    data::Array{T, N}
+end
+Base.size(a::_PlainHostArray) = size(a.data)
+Base.getindex(a::_PlainHostArray, i::Int...) = a.data[i...]
+
+@testset "CMFMC CFL scan copies non-Array CPU inputs to host Arrays" begin
+    # Same values in reversed memory layout: indexing differs from parent indexing.
+    reversed(a) = (p = ntuple(d -> ndims(a) + 1 - d, ndims(a));
+                   PermutedDimsArray(permutedims(a, p), p))
+    one_based(a) = OffsetArray(a, ntuple(_ -> 0, ndims(a)))
+    shifted(a) = OffsetArray(a, ntuple(_ -> -1, ndims(a)))
+    for FT in (Float32, Float64)
+        f = cmfmc_cfl_fixture(FT)
+        ref = reference_cmfmc_max_cfl(f)
+        for wrap in (reversed, one_based, _PlainHostArray)
+            got = scan_cmfmc_max_cfl(f, wrap, ref.dt)
+            @test got.ll === ref.ll
+            @test got.fi === ref.fi
+            @test got.cs === ref.cs
+        end
+        # Non-one-based axes are rejected instead of read with shifted indices.
+        @test_throws DimensionMismatch CMFMCConv._cmfmc_max_cfl(
+            shifted(f.ll.cmfmc), f.ll.air_mass, f.ll.areas, ref.dt)
+        @test_throws DimensionMismatch CMFMCConv._cmfmc_max_cfl(
+            f.fi.cmfmc, shifted(f.fi.air_mass), f.fi.areas, ref.dt)
+        @test_throws DimensionMismatch CMFMCConv._cmfmc_max_cfl(
+            f.cs.cmfmc, f.cs.air_mass, map(shifted, f.cs.areas), ref.dt)
+    end
+end
+
+@testset "CMFMC CFL sub-step count" begin
+    for FT in (Float32, Float64)
+        # Powers of two keep the ratio exact: bmass = 2^30 kg / 2^20 m² = 2^10 kg/m²
+        # and dt = 2^10 s, so cmfmc·dt/bmass equals the cmfmc value.
+        Nx, Ny, Nz = 3, 2, 4
+        air_mass = fill(FT(2)^30, Nx, Ny, Nz)
+        ws = CMFMCConv.CMFMCWorkspace(air_mass; cell_metrics = fill(FT(2)^20, Ny))
+        function n_sub(worst; allow_clamp = false)
+            cmfmc = zeros(FT, Nx, Ny, Nz + 1)
+            cmfmc[2, 1, 3] = worst
+            CMFMCConv.invalidate_cmfmc_cache!(ws)
+            return CMFMCConv._get_or_compute_n_sub!(ws, cmfmc, air_mass, ws.cell_metrics,
+                                                    1024; allow_clamp)
+        end
+
+        # n_sub = max(1, ceil(worst / 0.5)).
+        @test n_sub(zero(FT)) == 1
+        for k in (1, 2, 7, 48)
+            @test n_sub(prevfloat(FT(k) / 2)) == k
+            @test n_sub(FT(k) / 2) == k
+            @test n_sub(nextfloat(FT(k) / 2)) == k + 1
+        end
+
+        # Unclamped, the safety ceiling is inclusive and one more sub-step throws;
+        # clamped, the count is capped instead.
+        n_max = CMFMCConv._CMFMC_N_SUB_MAX
+        cap = CMFMCConv._CMFMC_CLAMP_N_SUB_CAP
+        @test n_sub(FT(n_max) / 2) == n_max
+        @test_throws ArgumentError n_sub(nextfloat(FT(n_max) / 2))
+        @test n_sub(FT(cap) / 2; allow_clamp = true) == cap
+        @test n_sub(nextfloat(FT(cap) / 2); allow_clamp = true) == cap
+        @test n_sub(nextfloat(FT(n_max) / 2); allow_clamp = true) == cap
+        # A huge finite ratio (beyond `Int`) hits the ceiling or the cap, not an InexactError.
+        @test_throws ArgumentError n_sub(FT(1e19))
+        @test n_sub(FT(1e19); allow_clamp = true) == cap
+
+        # Non-finite fluxes are rejected in both modes.
+        for bad in (FT(NaN), FT(Inf), FT(-Inf)), allow_clamp in (false, true)
+            @test_throws ArgumentError n_sub(bad; allow_clamp)
         end
     end
 end

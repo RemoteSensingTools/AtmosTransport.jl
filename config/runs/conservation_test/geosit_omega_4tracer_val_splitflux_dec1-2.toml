@@ -1,7 +1,7 @@
 # ===========================================================================
 # ARCHIVED FAILED VALIDATION — full OMEGA replacement corrupts PBL transport.
 # Pre-campaign gate: run Dec 1-2 2021, then R^2 + slope of the full 3D fields
-# vs GEOS-Chem per timestep (scripts/diagnostics/r2_slope_3d_vs_geoschem.py).
+# vs GEOS-Chem per timestep (scripts/diagnostics/heritage/r2_slope_3d_vs_geoschem.py).
 # Identical physics/tracer setup to the Dec 2021-Feb 2022 campaign config
 # (geosit_omega_4tracer_fullphys.toml); only the date range + output cadence
 # (hourly here, for the diurnal-resolving R^2 check) differ.

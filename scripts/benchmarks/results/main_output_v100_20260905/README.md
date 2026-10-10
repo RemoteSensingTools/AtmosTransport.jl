@@ -1,5 +1,7 @@
 # Selected and streaming output on current main: V100
 
+> The reproducer scripts `compare.jl` and `profile.jl` were retired from the tree; recover with `git show 7c515038:scripts/benchmarks/results/main_output_v100_20260905/<file>`.
+
 This compares `77f36bbe` (the previous main-based runtime) with its selected
 capture and streaming NetCDF port. The same C90 L66 Float32 ERA5 workload,
 CUDA.jl 5.11.3 / CUDA runtime 12.6, Julia 1.12.6, four threads, and tofu GPU 0

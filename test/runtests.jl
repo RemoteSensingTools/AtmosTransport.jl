@@ -19,6 +19,9 @@
 #
 # Each test file runs in its own module to isolate helpers and constants.
 # Core tests import the cached package rather than compiling a new copy per file.
+# A failing file does not stop the suite (an interrupt does): every file runs,
+# then the failed files and the slowest files are listed and the suite fails if
+# any file failed.
 
 const TIER_FOLDERS = (
     core       = "core",
@@ -77,7 +80,28 @@ function run_test_file_isolated(test_file::AbstractString)
     return Base.include(mod, joinpath(@__DIR__, test_file))
 end
 
+# `include` wraps an error thrown by the file, Ctrl-C included, in a `LoadError`.
+_is_interrupt(err) = err isa InterruptException || (err isa LoadError && _is_interrupt(err.error))
+
+# Run one file; return its wall time in seconds and the error it threw, if any.
+function run_test_file_timed(test_file::AbstractString)
+    t0 = time()
+    failure = try
+        run_test_file_isolated(test_file)
+        nothing
+    catch err
+        _is_interrupt(err) && rethrow()
+        @error "Test file failed: $(test_file)" exception = (err, catch_backtrace())
+        err
+    end
+    return time() - t0, failure
+end
+
+const N_SLOWEST = 15
+
 selected = _selected_tiers(ARGS)
+timings = Pair{String, Float64}[]
+failed = String[]
 for tier in (:core, :regridding, :real_data, :diagnostic, :orphan)
     tier in selected || continue
     files = _tier_files(tier)
@@ -88,10 +112,17 @@ for tier in (:core, :regridding, :real_data, :diagnostic, :orphan)
     @info "── Tier $(tier) — $(length(files)) files ──"
     for f in files
         @info "Running $f"
-        run_test_file_isolated(f)
+        seconds, failure = run_test_file_timed(f)
+        push!(timings, f => seconds)
+        failure === nothing || push!(failed, f)
     end
 end
 
 skipped = setdiff(Set(keys(TIER_FOLDERS)), selected)
 isempty(skipped) || @info "Skipped tiers: $(sort(collect(skipped))) (opt-in flags: --real-data --diagnostic --orphan --all)"
-@info "Test suite complete."
+slowest = first(sort(timings; by = last, rev = true), N_SLOWEST)
+@info "Slowest $(length(slowest)) of $(length(timings)) test files:\n" *
+      join((string(lpad(round(t; digits = 1), 8), " s  ", f) for (f, t) in slowest), "\n")
+isempty(failed) || error("$(length(failed)) of $(length(timings)) test files failed:\n  " *
+                         join(failed, "\n  "))
+@info "Test suite complete: $(length(timings)) files passed."

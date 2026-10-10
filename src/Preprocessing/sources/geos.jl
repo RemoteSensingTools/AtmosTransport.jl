@@ -26,7 +26,8 @@
 #
 #   * DELP and PS in the GEOS archive are MOIST (total atmosphere). MFXC and
 #     MFYC are ALREADY DRY mass fluxes per GMAO and the in-tree diagnostic
-#     `compare_era5_geosit_met.jl` (`am_moist = MFXC / (g·dt_dyn) / (1−qv)`).
+#     `scripts/diagnostics/heritage/compare_era5_geosit_met.jl`
+#     (`am_moist = MFXC / (g·dt_dyn) / (1−qv)`).
 #     The reader converts DELP and PS to dry via the hybrid coordinate plus
 #     QV; MFXC and MFYC pass through unchanged apart from the RawWindow
 #     rate normalization described above.

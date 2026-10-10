@@ -16,15 +16,26 @@ end
 
 _copy_cfg_dict(cfg) = Dict{String, Any}(String(k) => v for (k, v) in pairs(cfg))
 
+# Flat `[tracers.<name>]` keys read when the tracer has no `init` table, and
+# the flat surface-flux keys (with their `surface_flux` names) read when it has
+# no `surface_flux` table.
+const _TRACER_FLAT_INIT_KEYS = ("kind", "background", "lon0_deg", "lat0_deg", "sigma_lon_deg",
+                                "sigma_lat_deg", "amplitude", "south_value", "north_value",
+                                "south", "north", "split_lat_deg", "file", "variable",
+                                "time_index")
+const _TRACER_FLAT_SURFACE_FLUX_KEYS = (("surface_flux_kind", "kind"),
+                                        ("surface_flux_file", "file"),
+                                        ("surface_flux_variable", "variable"),
+                                        ("surface_flux_time_index", "time_index"),
+                                        ("surface_flux_month", "month"),
+                                        ("surface_flux_scale", "scale"))
+
 function _tracer_init_cfg(tracer_cfg)
     if haskey(tracer_cfg, "init")
         return _copy_cfg_dict(tracer_cfg["init"])
     end
     cfg = Dict{String, Any}()
-    for key in ("kind", "background", "lon0_deg", "lat0_deg", "sigma_lon_deg",
-                "sigma_lat_deg", "amplitude", "south_value", "north_value",
-                "south", "north", "split_lat_deg", "file", "variable",
-                "time_index")
+    for key in _TRACER_FLAT_INIT_KEYS
         haskey(tracer_cfg, key) && (cfg[key] = tracer_cfg[key])
     end
     isempty(cfg) && return Dict{String, Any}("kind" => "uniform", "background" => 0.0)
@@ -36,12 +47,7 @@ function _tracer_surface_flux_cfg(tracer_cfg)
         return _copy_cfg_dict(tracer_cfg["surface_flux"])
     end
     cfg = Dict{String, Any}()
-    for (src_key, dst_key) in (("surface_flux_kind", "kind"),
-                               ("surface_flux_file", "file"),
-                               ("surface_flux_variable", "variable"),
-                               ("surface_flux_time_index", "time_index"),
-                               ("surface_flux_month", "month"),
-                               ("surface_flux_scale", "scale"))
+    for (src_key, dst_key) in _TRACER_FLAT_SURFACE_FLUX_KEYS
         haskey(tracer_cfg, src_key) && (cfg[dst_key] = tracer_cfg[src_key])
     end
     return cfg
@@ -95,7 +101,7 @@ end
 # particular, malformed tracer subtables must not survive until initialization.
 function _check_config_table_shapes!(cfg, errors)
     for name in ("input", "architecture", "numerics", "run", "advection",
-                 "diffusion", "convection", "chemistry", "output", "tracers")
+                 "diffusion", "convection", "chemistry", "output", "tracers", "init")
         haskey(cfg, name) || continue
         _check_config_table!(cfg[name], "[$name]", errors)
     end
@@ -163,12 +169,22 @@ or allocating model state. Checks cover runtime table shapes (including
 `input.staging`, tracer `init` and `surface_flux` subtables, and
 `output.observations` with its `sources` array), resolved binary paths,
 numeric type, backend/float compatibility, the `[output.observations]`
-contract, and integer run-window bounds. Shape errors are
+contract, and integer run-window bounds. The `[advection]`, `[diffusion]`,
+`[convection]` and `[chemistry]` sections, `air_mass_reset_mode`,
+`physics_cadence` and `[output]` are parsed as the run parses them; decay
+half-lives must name a tracer, and an enabled `[output]` needs both a path and
+snapshot times (an explicit `hours = []` means none). Shape errors are
 reported before value checks. Window indices accept integers, not Booleans or
 floating-point values.
 
+Keys the run would ignore are logged as warnings, not returned as errors:
+unknown keys and tables (with a suggestion when a known key is close, e.g.
+`order` → `ppm_order`), and known keys that the chosen kind or another setting
+leaves unread (e.g. `value` unless `[diffusion] kind = "constant"`).
+
 This is not a complete physics or binary validation. Topology and payload
-capability checks run when `run_driven_simulation` inspects the first binary.
+capability checks run when `run_driven_simulation` inspects the first binary,
+which also checks that snapshot hours fall on met-window ends.
 GPU backend auto-detection can load and probe optional runtime packages.
 """
 function validate_config(cfg::AbstractDict)
@@ -227,7 +243,104 @@ function validate_config(cfg::AbstractDict)
     end
 
     _check_run_window_bounds!(cfg, errors)
+    _check_physics_and_output_settings!(cfg, ft_ref[], errors)
+
+    for warning in _config_key_warnings(cfg)
+        @warn "Run config: $(warning)"
+    end
     return isempty(errors), errors
+end
+
+# The physics, run and output settings, parsed as the run would parse them so
+# that their errors appear with the others, before any binary is opened.
+function _check_physics_and_output_settings!(cfg, FT, errors)
+    _check_input_expectations!(get(cfg, "input", nothing), errors)
+    _check_surface_flux_sources!(get(cfg, "tracers", nothing), errors)
+    _capture_config_error!(() -> advection_spec(_advection_section(cfg)), errors)
+    _capture_config_error!(() -> diffusion_spec(_diffusion_section(cfg)), errors)
+    _capture_config_error!(() -> convection_spec(_convection_section(cfg)), errors)
+    _capture_config_error!(() -> chemistry_spec(_chemistry_section(cfg)), errors)
+    _check_decay_tracers!(cfg, errors)
+
+    run_cfg = get(cfg, "run", Dict{String, Any}())
+    if run_cfg isa AbstractDict
+        haskey(run_cfg, "reset_air_mass_each_window") && push!(errors,
+            "run.reset_air_mass_each_window was replaced by run.air_mass_reset_mode = " *
+            "\"none\", \"preserve_vmr\", or \"preserve_tracer_mass\"")
+        _capture_config_error!(errors) do
+            _normalize_air_mass_reset_mode(get(run_cfg, "air_mass_reset_mode",
+                                               "preserve_tracer_mass"))
+        end
+        _capture_config_error!(() -> _resolve_physics_cadence(get(run_cfg, "physics_cadence", nothing)),
+                               errors)
+    end
+
+    output_cfg = get(cfg, "output", nothing)
+    if output_cfg isa AbstractDict && FT !== nothing
+        # The run end comes from the binaries; without it an omitted stop_hour
+        # must not be capped (the runner applies the binaries' length).
+        _capture_config_error!(errors) do
+            spec = runtime_output_spec(output_cfg, FT; default_cap_hours = floatmax(Float64))
+            _check_output_targets(spec, output_cfg)
+        end
+    end
+    return errors
+end
+
+# The `[input]` expectations compared with the first binary's header: their
+# types are checked here, the comparison when the binary is open.
+function _check_input_expectations!(input, errors)
+    input isa AbstractDict || return errors
+    if haskey(input, "expected_nlevel")
+        n = input["expected_nlevel"]
+        n isa Integer && !(n isa Bool) && n >= 1 || push!(errors,
+            "[input].expected_nlevel must be a positive integer; got $(repr(n))")
+    end
+    haskey(input, "required_preprocessor_contract") &&
+        !(input["required_preprocessor_contract"] isa AbstractString) && push!(errors,
+            "[input].required_preprocessor_contract must be a string; got " *
+            "$(repr(input["required_preprocessor_contract"]))")
+    for key in ("require_adaptive_substeps", "validate_replay")
+        _capture_config_error!(() -> _config_bool(input, key, false, "[input].$(key)"), errors)
+    end
+    return errors
+end
+
+# Surface-flux kind and regridding method of every tracer (nested or flat).
+function _check_surface_flux_sources!(tracers, errors)
+    tracers isa AbstractDict || return errors
+    for (name, tracer) in pairs(tracers)
+        tracer isa AbstractDict || continue
+        sf = get(tracer, "surface_flux", nothing)
+        sf = sf === nothing ? _tracer_surface_flux_cfg(tracer) : sf
+        sf isa AbstractDict || continue
+        _capture_config_error!(() -> _surface_flux_kind(sf), errors)
+        haskey(sf, "regridding") && _capture_config_error!(() -> _regridding_method(sf), errors)
+    end
+    return errors
+end
+
+# A decay half-life for a tracer the run does not carry fails at the first
+# chemistry step; report it here instead. Without [tracers] the run carries
+# the single legacy tracer `[run].tracer_name` (lat-lon and reduced Gaussian).
+function _check_decay_tracers!(cfg, errors)
+    chemistry = _chemistry_section(cfg)
+    chemistry isa AbstractDict || return errors
+    kind = get(chemistry, "kind", "none")
+    kind isa AbstractString && lowercase(kind) == "decay" || return errors
+    half_lives = get(chemistry, "half_lives_seconds", nothing)
+    half_lives isa AbstractDict || return errors
+    tracers = get(cfg, "tracers", nothing)
+    run_cfg = get(cfg, "run", Dict{String, Any}())
+    carried = tracers isa AbstractDict ? sort!([String(k) for k in keys(tracers)]) :
+              run_cfg isa AbstractDict ? [String(get(run_cfg, "tracer_name", "CO2"))] :
+              return errors
+    for name in sort!([String(k) for k in keys(half_lives)])
+        name in carried || push!(errors,
+            "[chemistry.half_lives_seconds].$(name) names no tracer of the run " *
+            "($(join(carried, ", ")))")
+    end
+    return errors
 end
 
 @inline _ansi_enabled() =

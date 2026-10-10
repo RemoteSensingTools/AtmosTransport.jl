@@ -77,7 +77,7 @@ AtmosTransport.Models._runtime_recipe_style(::StubStructuredReader) =
 AtmosTransport.Models._runtime_has_tm5_convection(r::StubStructuredReader) = r.has_tm5
 AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
 
-@testset "run_cs_driven builders" begin
+@testset "runtime operator builders" begin
 
     latlon_grid = AtmosGrid(
         LatLonMesh(; FT = Float64, Nx = 2, Ny = 2),

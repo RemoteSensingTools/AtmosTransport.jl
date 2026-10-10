@@ -57,11 +57,15 @@ struct CMFMCConvectionSpec{CB <: AbstractCloudBase} <: AbstractConvectionSpec
     cloud_base :: CB
 end
 
+# `[convection] cloud_base` choices (kind = "cmfmc").
+const _CLOUD_BASE_RULES = (cmfmc = CMFMCEdgeCloudBase(), dqrcu = ArchivedCloudBase())
+
 function _cloud_base_rule(section)
     raw = lowercase(String(get(section, "cloud_base", "cmfmc")))
-    raw == "cmfmc" && return CMFMCEdgeCloudBase()
-    raw == "dqrcu" && return ArchivedCloudBase()
-    throw(ArgumentError("Unknown [convection] cloud_base: $(repr(raw)). Supported: cmfmc | dqrcu"))
+    key = Symbol(raw)
+    haskey(_CLOUD_BASE_RULES, key) && return _CLOUD_BASE_RULES[key]
+    throw(ArgumentError("Unknown [convection] cloud_base: $(repr(raw)). Supported: " *
+                        join(keys(_CLOUD_BASE_RULES), " | ")))
 end
 
 # Configuration scalars are independent of tracer precision. In particular,
@@ -94,14 +98,13 @@ struct CMFMCMatrixConvectionSpec <: AbstractCollabLUConvectionSpec
     n_merge            :: Int
 end
 
+const _CONVECTION_KINDS = (:none, :tm5, :cmfmc, :cmfmc_matrix)
+
 function _parse_convection_kind(section)
     raw = lowercase(String(get(section, "kind", "none")))
-    raw == "none"         && return :none
-    raw == "tm5"          && return :tm5
-    raw == "cmfmc"        && return :cmfmc
-    raw == "cmfmc_matrix" && return :cmfmc_matrix
+    Symbol(raw) in _CONVECTION_KINDS && return Symbol(raw)
     throw(ArgumentError(
-        "Unknown [convection] kind: $(repr(raw)). Supported: none | tm5 | cmfmc | cmfmc_matrix"))
+        "Unknown [convection] kind: $(repr(raw)). Supported: $(join(_CONVECTION_KINDS, " | "))"))
 end
 
 # Shared knob extraction + validation for the collaborative-LU kinds.
@@ -190,15 +193,15 @@ struct LinRoodAdvectionSpec{Z <: AbstractAdvectionScheme} <: AbstractAdvectionSp
 end
 LinRoodAdvectionSpec(order::Integer) = LinRoodAdvectionSpec(Int(order), UpwindScheme())
 
+const _ADVECTION_SCHEMES = (:upwind, :slopes, :ppm, :linrood, :none)
+const _LINROOD_PPM_ORDERS = (5, 7)
+const _LINROOD_VERTICALS = ("upwind", "fv3_kord8", "fv3_kord8_signed")
+
 function _parse_advection_scheme(section)
     raw = lowercase(String(get(section, "scheme", "upwind")))
-    raw == "upwind" && return :upwind
-    raw == "slopes" && return :slopes
-    raw == "ppm"    && return :ppm
-    raw == "none"   && return :none
-    raw == "linrood" && return :linrood
+    Symbol(raw) in _ADVECTION_SCHEMES && return Symbol(raw)
     throw(ArgumentError(
-        "Unknown [advection] scheme: $(repr(raw)). Supported: upwind | slopes | ppm | linrood | none"))
+        "Unknown [advection] scheme: $(repr(raw)). Supported: $(join(_ADVECTION_SCHEMES, " | "))"))
 end
 
 # `[advection] vertical` selects the PPM vertical reconstruction.
@@ -234,9 +237,9 @@ function _parse_linrood_vertical(section)
     raw = get(section, "vertical", "upwind")
     key = raw isa AbstractString ? lowercase(raw) : ""
     key == "upwind" && return UpwindScheme()
-    key in ("fv3_kord8", "fv3_kord8_signed") || throw(ArgumentError(
-        "[advection] `scheme = \"linrood\"` supports vertical = upwind | fv3_kord8 | " *
-        "fv3_kord8_signed; got $(repr(raw))."))
+    key in _LINROOD_VERTICALS || throw(ArgumentError(
+        "[advection] `scheme = \"linrood\"` supports vertical = " *
+        "$(join(_LINROOD_VERTICALS, " | ")); got $(repr(raw))."))
     return PPMScheme(; vertical = _VERTICAL_RECONSTRUCTIONS[key])
 end
 
@@ -266,8 +269,10 @@ function advection_spec(section)
         return PPMAdvectionSpec(_parse_ppm_limiter(section),
                                 _parse_vertical_reconstruction(section))
     end
-    return LinRoodAdvectionSpec(_spec_int(section, "ppm_order", 5, "[advection]"),  # :linrood
-                                _parse_linrood_vertical(section))
+    order = _spec_int(section, "ppm_order", 5, "[advection]")                    # :linrood
+    order in _LINROOD_PPM_ORDERS || throw(ArgumentError(
+        "[advection] `ppm_order` must be 5 or 7 for `scheme = \"linrood\"`; got $(order)."))
+    return LinRoodAdvectionSpec(order, _parse_linrood_vertical(section))
 end
 
 # Materialize with topology gates close to construction: RG currently accepts
@@ -315,12 +320,13 @@ struct DecayChemistrySpec{NT <: NamedTuple} <: AbstractChemistrySpec
     half_lives :: NT
 end
 
+const _CHEMISTRY_KINDS = (:none, :decay)
+
 function _parse_chemistry_kind(section)
     raw = lowercase(String(get(section, "kind", "none")))
-    raw == "none"  && return :none
-    raw == "decay" && return :decay
+    Symbol(raw) in _CHEMISTRY_KINDS && return Symbol(raw)
     throw(ArgumentError(
-        "Unknown [chemistry] kind: $(repr(raw)). Supported: none | decay"))
+        "Unknown [chemistry] kind: $(repr(raw)). Supported: $(join(_CHEMISTRY_KINDS, " | "))"))
 end
 
 # A single half-life must be a positive number. The TOML parser normally hands us
@@ -419,18 +425,19 @@ end
 # GEOS-Chem's non-local VDIFF always adds emissions before one full solve.
 struct GCHPNonlocalVdiffDiffusionSpec <: AbstractDiffusionSpec end
 
+# `[diffusion] kind` names and the spec each selects.
+const _DIFFUSION_KINDS = (none = :none, constant = :constant,
+                          tm5_beljaars_viterbo_local_kz = :pbl,
+                          geoschem_holtslag_boville_vdiff = :vdiff,
+                          geoschem_nonlocal_vdiff = :nonlocal_vdiff,
+                          tm5_dkg = :tm5_dkg)
+const _DIFFUSION_KIND_LIST = join(("\"$(k)\"" for k in keys(_DIFFUSION_KINDS)), ", ")
+
 function _parse_diffusion_kind(section)
     raw = lowercase(String(get(section, "kind", "none")))
-    raw == "none"     && return :none
-    raw == "constant" && return :constant
-    raw == "tm5_beljaars_viterbo_local_kz" && return :pbl
-    raw == "geoschem_holtslag_boville_vdiff" && return :vdiff
-    raw == "tm5_dkg" && return :tm5_dkg
-    raw == "geoschem_nonlocal_vdiff" && return :nonlocal_vdiff
+    haskey(_DIFFUSION_KINDS, Symbol(raw)) && return _DIFFUSION_KINDS[Symbol(raw)]
     throw(ArgumentError(
-        "Unknown [diffusion] kind: $(repr(raw)). Supported: none | constant | " *
-        "tm5_beljaars_viterbo_local_kz | geoschem_holtslag_boville_vdiff | " *
-        "geoschem_nonlocal_vdiff | tm5_dkg"))
+        "Unknown [diffusion] kind: $(repr(raw)). Supported: $(join(keys(_DIFFUSION_KINDS), " | "))"))
 end
 
 """
@@ -452,16 +459,11 @@ function diffusion_spec(section)
     haskey(section, "type") && !haskey(section, "kind") &&
         throw(ArgumentError(
             "[diffusion] uses unsupported `type = \"$(section["type"])\"`; use " *
-            "`kind = \"...\"`. Supported kinds: \"none\", \"constant\", " *
-            "\"tm5_beljaars_viterbo_local_kz\", " *
-            "\"geoschem_holtslag_boville_vdiff\", \"tm5_dkg\"."))
+            "`kind = \"...\"`. Supported kinds: $(_DIFFUSION_KIND_LIST)."))
     haskey(section, "kind") ||
         throw(ArgumentError(
             "[diffusion] section is present but has no `kind` key. " *
-            "Set `kind = \"none\"`, `kind = \"constant\"`, " *
-            "`kind = \"tm5_beljaars_viterbo_local_kz\"`, " *
-            "`kind = \"geoschem_holtslag_boville_vdiff\"`, or " *
-            "`kind = \"tm5_dkg\"`."))
+            "Set `kind` to one of $(_DIFFUSION_KIND_LIST)."))
     kind = _parse_diffusion_kind(section)
     kind === :none && return NoDiffusionSpec()
     if kind === :nonlocal_vdiff

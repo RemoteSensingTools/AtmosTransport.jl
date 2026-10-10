@@ -134,7 +134,7 @@ end
 #
 # Validated at the binary level (r_vdiv 0.197 ≈ MERRA-2 CLEAN 0.227, continuity
 # 4e-10, cor(cm,OMEGA)=+1.00). See
-# scripts/diagnostics/fingerfix_proto_omega-consistent-flux-reconstruction.jl.
+# scripts/diagnostics/heritage/fingerfix_proto_omega-consistent-flux-reconstruction.jl.
 # ---------------------------------------------------------------------------
 
 # --- Monotone-cubic (PCHIP / Fritsch-Carlson) 3-hourly→hourly time interp -----

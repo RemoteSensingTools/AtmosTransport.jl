@@ -316,10 +316,8 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
             "cubed-sphere dkg workspace panel $p has shape $(size(w_scratch[p])); expected $((Nc, Ny, Nz))"))
         panel_dkg = panel_field(op.kz_field, p)
         backend = get_backend(panel_q)
-        kernel = _vertical_diffusion_cs_single_dkg_kernel!(backend, (8, 8))
-        kernel(panel_q, panel_m, panel_dkg, w_scratch[p], FT(dt), Nz, Hp;
-               ndrange = (Nc, Ny))
-        synchronize(backend)
+        launch!(_vertical_diffusion_cs_single_dkg_kernel!, backend, (8, 8), (Nc, Ny), panel_q,
+                panel_m, panel_dkg, w_scratch[p], FT(dt), Nz, Hp)
     end
     return nothing
 end
@@ -351,10 +349,8 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
             "cubed-sphere dkg reference panel $p has shape $(size(reference_scratch[p])); expected $((Nc, Ny, Nt))"))
         panel_dkg = panel_field(op.kz_field, p)
         backend = get_backend(panel_q)
-        kernel = _vertical_diffusion_cs_dkg_kernel!(backend, (8, 8))
-        kernel(panel_q, panel_m, panel_dkg, w_scratch[p], reference_scratch[p],
-               FT(dt), Nz, Nt, Hp; ndrange = (Nc, Ny))
-        synchronize(backend)
+        launch!(_vertical_diffusion_cs_dkg_kernel!, backend, (8, 8), (Nc, Ny), panel_q, panel_m,
+                panel_dkg, w_scratch[p], reference_scratch[p], FT(dt), Nz, Nt, Hp)
     end
     return nothing
 end
@@ -392,11 +388,8 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
         _check_cs_diffusion_workspace_shape(dz_scratch[p], w_scratch[p], (Nc, Ny, Nz), p)
         panel_kz = panel_field(op.kz_field, p)
         backend = get_backend(panel_q)
-        kernel = _vertical_diffusion_cs_single_kernel!(backend, (8, 8))
-        kernel(panel_q, panel_m, panel_kz, dz_scratch[p], w_scratch[p],
-               FT(dt), Nz, Hp;
-               ndrange = (Nc, Ny))
-        synchronize(backend)
+        launch!(_vertical_diffusion_cs_single_kernel!, backend, (8, 8), (Nc, Ny), panel_q,
+                panel_m, panel_kz, dz_scratch[p], w_scratch[p], FT(dt), Nz, Hp)
     end
     return nothing
 end
@@ -439,11 +432,8 @@ function apply_vertical_diffusion!(q_raw::NTuple{6, A},
             "cubed-sphere diffusion reference panel $p has shape $(size(reference_scratch[p])); expected $((Nc, Ny, Nt))"))
         panel_kz = panel_field(op.kz_field, p)
         backend = get_backend(panel_q)
-        kernel = _vertical_diffusion_cs_kernel!(backend, (8, 8))
-        kernel(panel_q, panel_m, panel_kz, dz_scratch[p], w_scratch[p],
-               reference_scratch[p], FT(dt), Nz, Nt, Hp;
-               ndrange = (Nc, Ny))
-        synchronize(backend)
+        launch!(_vertical_diffusion_cs_kernel!, backend, (8, 8), (Nc, Ny), panel_q, panel_m,
+                panel_kz, dz_scratch[p], w_scratch[p], reference_scratch[p], FT(dt), Nz, Nt, Hp)
     end
     return nothing
 end
@@ -470,8 +460,8 @@ function _cs_scale_tracer_mass_to_vmr!(q_raw::NTuple{6, A},
         Nc > 0 && Ny > 0 || throw(DimensionMismatch(
             "cubed-sphere panel $p shape $(size(panel_q)) cannot provide an " *
             "interior with halo_width=$Hp"))
-        kernel = _cs_tracer_mass_to_vmr_kernel!(backend, (8, 8, 1))
-        kernel(panel_q, panel_m, Hp; ndrange = (Nc, Ny, Nz))
+        launch!(_cs_tracer_mass_to_vmr_kernel!, backend, (8, 8, 1), (Nc, Ny, Nz), panel_q,
+                panel_m, Hp; sync = false)
     end
     synchronize(backend)
     return q_raw
@@ -495,8 +485,8 @@ function _cs_scale_tracer_mass_to_vmr!(q_raw::NTuple{6, A},
         Nc > 0 && Ny > 0 || throw(DimensionMismatch(
             "cubed-sphere panel $p shape $(size(panel_q)) cannot provide an " *
             "interior with halo_width=$Hp"))
-        kernel = _cs_tracer_mass_to_vmr_4d_kernel!(backend, (8, 8, 1))
-        kernel(panel_q, panel_m, Hp; ndrange = (Nc, Ny, Nz, Nt))
+        launch!(_cs_tracer_mass_to_vmr_4d_kernel!, backend, (8, 8, 1), (Nc, Ny, Nz, Nt),
+                panel_q, panel_m, Hp; sync = false)
     end
     synchronize(backend)
     return q_raw
@@ -519,8 +509,8 @@ function _cs_scale_vmr_to_tracer_mass!(q_raw::NTuple{6, A},
         Nc > 0 && Ny > 0 || throw(DimensionMismatch(
             "cubed-sphere panel $p shape $(size(panel_q)) cannot provide an " *
             "interior with halo_width=$Hp"))
-        kernel = _cs_vmr_to_tracer_mass_kernel!(backend, (8, 8, 1))
-        kernel(panel_q, panel_m, Hp; ndrange = (Nc, Ny, Nz))
+        launch!(_cs_vmr_to_tracer_mass_kernel!, backend, (8, 8, 1), (Nc, Ny, Nz), panel_q,
+                panel_m, Hp; sync = false)
     end
     synchronize(backend)
     return q_raw
@@ -544,8 +534,8 @@ function _cs_scale_vmr_to_tracer_mass!(q_raw::NTuple{6, A},
         Nc > 0 && Ny > 0 || throw(DimensionMismatch(
             "cubed-sphere panel $p shape $(size(panel_q)) cannot provide an " *
             "interior with halo_width=$Hp"))
-        kernel = _cs_vmr_to_tracer_mass_4d_kernel!(backend, (8, 8, 1))
-        kernel(panel_q, panel_m, Hp; ndrange = (Nc, Ny, Nz, Nt))
+        launch!(_cs_vmr_to_tracer_mass_4d_kernel!, backend, (8, 8, 1), (Nc, Ny, Nz, Nt),
+                panel_q, panel_m, Hp; sync = false)
     end
     synchronize(backend)
     return q_raw
@@ -602,21 +592,20 @@ function _apply_cs_dkg_mass!(rm::NTuple{6}, air_mass::NTuple{6}, op,
         column_tile = _cs_dkg_mass_workgroupsize(backend, FT)
         tracer_tile = _cs_dkg_tracer_workgroupsize(backend, FT)
         if packed && Nt > 1 && tracer_tile !== nothing
-            factor! = _vertical_diffusion_cs_dkg_factors_kernel!(backend, column_tile)
-            solve! = _vertical_diffusion_cs_mass_dkg_tracers_kernel!(backend, tracer_tile)
             # Queue the read-only tracer solves after factor construction on
             # the same backend stream. The panel synchronization completes both.
-            factor!(workspace.factors[p], air_mass[p], dkg, FT(dt), Nz, Hp;
-                    ndrange=(Nc, Ny))
-            solve!(rm[p], air_mass[p], dkg, workspace.factors[p], FT(dt), Nz, Hp;
-                   ndrange=(Nc, Ny, Nt))
+            launch!(_vertical_diffusion_cs_dkg_factors_kernel!, backend, column_tile, (Nc, Ny),
+                    workspace.factors[p], air_mass[p], dkg, FT(dt), Nz, Hp; sync = false)
+            launch!(_vertical_diffusion_cs_mass_dkg_tracers_kernel!, backend, tracer_tile,
+                    (Nc, Ny, Nt), rm[p], air_mass[p], dkg, workspace.factors[p], FT(dt), Nz, Hp;
+                    sync = false)
         elseif packed
-            kernel! = _vertical_diffusion_cs_mass_dkg_packed_kernel!(backend, column_tile)
-            kernel!(rm[p], air_mass[p], dkg, workspace.factors[p], FT(dt), Nz, Nt, Hp; ndrange=(Nc, Ny))
+            launch!(_vertical_diffusion_cs_mass_dkg_packed_kernel!, backend, column_tile,
+                    (Nc, Ny), rm[p], air_mass[p], dkg, workspace.factors[p], FT(dt), Nz, Nt, Hp;
+                    sync = false)
         else
-            kernel! = _vertical_diffusion_cs_mass_dkg_kernel!(backend, column_tile)
-            kernel!(rm[p], air_mass[p], dkg, workspace.factors[p], FT(dt), Nz, Hp;
-                    ndrange=(Nc, Ny))
+            launch!(_vertical_diffusion_cs_mass_dkg_kernel!, backend, column_tile, (Nc, Ny),
+                    rm[p], air_mass[p], dkg, workspace.factors[p], FT(dt), Nz, Hp; sync = false)
         end
         synchronize(backend)
     end
@@ -698,10 +687,8 @@ function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 4},
     references = _packed_references(workspace, q_raw)
     update_field!(op.kz_field, current_time(meteo))
     backend = get_backend(q_raw)
-    kernel = _vertical_diffusion_kernel_mass_flux!(backend, (8, 8))
-    kernel(q_raw, air_mass, op.kz_field, dz_scratch, w_scratch, references, FT(dt), Nz, Nt;
-           ndrange = (Nx, Ny))
-    synchronize(backend)
+    launch!(_vertical_diffusion_kernel_mass_flux!, backend, (8, 8), (Nx, Ny), q_raw, air_mass,
+            op.kz_field, dz_scratch, w_scratch, references, FT(dt), Nz, Nt)
     return nothing
 end
 
@@ -721,10 +708,8 @@ function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 3},
     references = _packed_references(workspace, q_raw)
     update_field!(op.kz_field, current_time(meteo))
     backend = get_backend(q_raw)
-    kernel = _vertical_diffusion_face_kernel_mass_flux!(backend, 256)
-    kernel(q_raw, air_mass, op.kz_field, dz_scratch, w_scratch, references, FT(dt), Nz, Nt;
-           ndrange = ncells)
-    synchronize(backend)
+    launch!(_vertical_diffusion_face_kernel_mass_flux!, backend, 256, ncells, q_raw, air_mass,
+            op.kz_field, dz_scratch, w_scratch, references, FT(dt), Nz, Nt)
     return nothing
 end
 
@@ -743,10 +728,8 @@ function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 2},
         "match q_raw shape $((ncells, Nz))"))
     update_field!(op.kz_field, current_time(meteo))
     backend = get_backend(q_raw)
-    kernel = _vertical_diffusion_face_single_kernel_mass_flux!(backend, 256)
-    kernel(q_raw, air_mass, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz;
-           ndrange = ncells)
-    synchronize(backend)
+    launch!(_vertical_diffusion_face_single_kernel_mass_flux!, backend, 256, ncells, q_raw,
+            air_mass, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz)
     return nothing
 end
 
@@ -756,9 +739,8 @@ function _ll_scale_tracer_mass_to_vmr!(q_raw::AbstractArray{FT, 4},
                                        air_mass::AbstractArray{FT, 3}) where {FT}
     Nx, Ny, Nz, Nt = size(q_raw)
     backend = get_backend(q_raw)
-    kernel = _ll_tracer_mass_to_vmr_kernel!(backend, (8, 8, 1, 1))
-    kernel(q_raw, air_mass; ndrange = (Nx, Ny, Nz, Nt))
-    synchronize(backend)
+    launch!(_ll_tracer_mass_to_vmr_kernel!, backend, (8, 8, 1, 1), (Nx, Ny, Nz, Nt), q_raw,
+            air_mass)
     return q_raw
 end
 
@@ -766,9 +748,8 @@ function _ll_scale_vmr_to_tracer_mass!(q_raw::AbstractArray{FT, 4},
                                        air_mass::AbstractArray{FT, 3}) where {FT}
     Nx, Ny, Nz, Nt = size(q_raw)
     backend = get_backend(q_raw)
-    kernel = _ll_vmr_to_tracer_mass_kernel!(backend, (8, 8, 1, 1))
-    kernel(q_raw, air_mass; ndrange = (Nx, Ny, Nz, Nt))
-    synchronize(backend)
+    launch!(_ll_vmr_to_tracer_mass_kernel!, backend, (8, 8, 1, 1), (Nx, Ny, Nz, Nt), q_raw,
+            air_mass)
     return q_raw
 end
 
@@ -776,9 +757,8 @@ function _face_scale_tracer_mass_to_vmr!(q_raw::AbstractArray{FT, 3},
                                          air_mass::AbstractArray{FT, 2}) where {FT}
     ncells, Nz, Nt = size(q_raw)
     backend = get_backend(q_raw)
-    kernel = _face_tracer_mass_to_vmr_kernel!(backend, (256, 1, 1))
-    kernel(q_raw, air_mass; ndrange = (ncells, Nz, Nt))
-    synchronize(backend)
+    launch!(_face_tracer_mass_to_vmr_kernel!, backend, (256, 1, 1), (ncells, Nz, Nt), q_raw,
+            air_mass)
     return q_raw
 end
 
@@ -786,9 +766,8 @@ function _face_scale_vmr_to_tracer_mass!(q_raw::AbstractArray{FT, 3},
                                          air_mass::AbstractArray{FT, 2}) where {FT}
     ncells, Nz, Nt = size(q_raw)
     backend = get_backend(q_raw)
-    kernel = _face_vmr_to_tracer_mass_kernel!(backend, (256, 1, 1))
-    kernel(q_raw, air_mass; ndrange = (ncells, Nz, Nt))
-    synchronize(backend)
+    launch!(_face_vmr_to_tracer_mass_kernel!, backend, (256, 1, 1), (ncells, Nz, Nt), q_raw,
+            air_mass)
     return q_raw
 end
 
@@ -796,9 +775,8 @@ function _face_scale_tracer_mass_to_vmr!(q_raw::AbstractArray{FT, 2},
                                          air_mass::AbstractArray{FT, 2}) where {FT}
     ncells, Nz = size(q_raw)
     backend = get_backend(q_raw)
-    kernel = _face_single_tracer_mass_to_vmr_kernel!(backend, (256, 1))
-    kernel(q_raw, air_mass; ndrange = (ncells, Nz))
-    synchronize(backend)
+    launch!(_face_single_tracer_mass_to_vmr_kernel!, backend, (256, 1), (ncells, Nz), q_raw,
+            air_mass)
     return q_raw
 end
 
@@ -806,9 +784,8 @@ function _face_scale_vmr_to_tracer_mass!(q_raw::AbstractArray{FT, 2},
                                          air_mass::AbstractArray{FT, 2}) where {FT}
     ncells, Nz = size(q_raw)
     backend = get_backend(q_raw)
-    kernel = _face_single_vmr_to_tracer_mass_kernel!(backend, (256, 1))
-    kernel(q_raw, air_mass; ndrange = (ncells, Nz))
-    synchronize(backend)
+    launch!(_face_single_vmr_to_tracer_mass_kernel!, backend, (256, 1), (ncells, Nz), q_raw,
+            air_mass)
     return q_raw
 end
 
