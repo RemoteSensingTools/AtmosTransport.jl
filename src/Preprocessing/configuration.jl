@@ -217,42 +217,19 @@ function resolve_horizontal_balance(numerics::AbstractDict)
 end
 
 """
-    effective_horizontal_balance(balance, default; env = true) -> AbstractHorizontalBalance
+    effective_horizontal_balance(balance, default) -> AbstractHorizontalBalance
 
-The balance a preprocessing path applies: `balance` when given, else `default`.
-With `env = true` and `balance === nothing`, the deprecated
-`ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1` still selects `LayerBalance()`,
-with a warning; an explicit `balance` always wins. The GEOS path never read the
-variable and passes `env = false`.
+The balance a preprocessing path applies: `balance` (from `[numerics]
+balance_mode`) when given, else the path's `default`.
 """
-function effective_horizontal_balance(balance::Union{Nothing, AbstractHorizontalBalance},
-                                      default::AbstractHorizontalBalance; env::Bool = true)
-    from_env = env && get(ENV, "ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE", "0") == "1"
-    if balance !== nothing
-        from_env && !(balance isa LayerBalance) &&
-            @warn "ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1 is ignored: balance_mode = " *
-                  "\"$(balance_tag(balance))\" is set explicitly." maxlog = 1
-        return balance
-    end
-    from_env || return default
-    @warn "ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1 is deprecated and will be removed; " *
-          "set [numerics] balance_mode = \"per_layer\"." maxlog = 1
-    return LayerBalance()
-end
+effective_horizontal_balance(balance::Union{Nothing, AbstractHorizontalBalance},
+                             default::AbstractHorizontalBalance) =
+    something(balance, default)
 
-"""
-    write_replay_check_enabled() -> Bool
-
-Whether the preprocessor runs its write-time replay-continuity gate: on unless
-`ATMOSTR_NO_WRITE_REPLAY_CHECK=1` (a diagnostic escape hatch). Every writer
-asks this one function; a binary written with the gate off records
-`write_replay_check = false` in its header (`_with_replay_record`).
-"""
-write_replay_check_enabled() = get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
-
-# Record a skipped write-time replay gate in a binary header. A binary that
-# passed the gate records nothing, so default headers are unchanged.
-function _with_replay_record(header::AbstractDict, write_replay_on::Bool = write_replay_check_enabled())
+# Record a skipped write-time replay gate (`[numerics] write_replay_check =
+# false`) in a binary header. A binary that passed the gate records nothing, so
+# default headers are unchanged.
+function _with_replay_record(header::AbstractDict, write_replay_on::Bool)
     write_replay_on || (header["write_replay_check"] = false)
     return header
 end

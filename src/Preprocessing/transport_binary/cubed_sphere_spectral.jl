@@ -420,6 +420,7 @@ function process_day(date::Date,
                      vertical;
                      positivity_cfl_limit::Real = 0.95,
                      require_substep_positivity::Bool = true,
+                     write_replay_check::Bool = true,
                      substep_policy::SubstepSchedulePolicy =
                          SubstepSchedulePolicy(
                              adaptive_substeps = false,
@@ -473,8 +474,8 @@ function process_day(date::Date,
 
     log_mass_fix_configuration(settings)
     @info "  Streaming: spectral → LL staging → CS regrid → balance → write..."
-    write_replay_on = write_replay_check_enabled()
-    write_replay_on || @info "  Write-time CS replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
+    write_replay_on = write_replay_check
+    write_replay_on || @info "  Write-time CS replay gate SKIPPED ([numerics] write_replay_check = false)"
     replay_tol = replay_tolerance(FT)
     balance = effective_horizontal_balance(get(settings, :horizontal_balance, nothing), ColumnBalance())
 

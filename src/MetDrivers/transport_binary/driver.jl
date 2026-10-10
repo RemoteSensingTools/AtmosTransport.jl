@@ -139,7 +139,7 @@ function _validate_replay_consistency_ll(reader::TransportBinaryReader{FT}) wher
             "integrate to stored m_next under palindrome continuity. Regenerate the " *
             "binary with explicit mass-delta continuity closure, or skip this " *
             "load-time check (remove [input] validate_replay = true, or the " *
-            "`validate_replay` keyword, or unset ATMOSTR_REPLAY_CHECK)."
+            "`validate_replay` keyword)."
         ))
 
     @info "Replay continuity gate passed: $(basename(reader.path)) " *
@@ -224,7 +224,7 @@ function _validate_replay_consistency_rg(reader::TransportBinaryReader{FT}, grid
             "integrate to stored m_next under palindrome continuity. Regenerate the " *
             "binary with explicit mass-delta continuity closure, or skip this " *
             "load-time check (remove [input] validate_replay = true, or the " *
-            "`validate_replay` keyword, or unset ATMOSTR_REPLAY_CHECK)."
+            "`validate_replay` keyword)."
         ))
 
     @info "Replay continuity gate passed: $(basename(reader.path)) " *
@@ -364,15 +364,6 @@ function Base.show(io::IO, driver::TransportBinaryDriver)
           "└── windows:       ", total_windows(driver))
 end
 
-# HACK: `ATMOSTR_REPLAY_CHECK=1` still enables the load-time check for one
-# release. TODO: remove it; `[input] validate_replay` replaces it.
-function _deprecated_replay_check_env()
-    get(ENV, "ATMOSTR_REPLAY_CHECK", "0") == "1" || return false
-    @warn "ATMOSTR_REPLAY_CHECK=1 is deprecated and will be removed; set " *
-          "[input] validate_replay = true." maxlog = 1
-    return true
-end
-
 """
     TransportBinaryDriver(reader; arch=CPU(), Hp=1,
                           validate_windows=true, validate_replay=false)
@@ -394,7 +385,7 @@ function TransportBinaryDriver(reader::TransportBinaryReader{FT};
     _validate_runtime_semantics(reader, geometry)
     get(reader.header.raw_header, "write_replay_check", true) === false &&
         @warn "$(basename(reader.path)) was written with the write-time replay check disabled " *
-              "(ATMOSTR_NO_WRITE_REPLAY_CHECK=1 or --no-write-replay-check). Regenerate it for " *
+              "([numerics] write_replay_check = false or --no-write-replay-check). Regenerate it for " *
               "production runs, or replay " *
               "it when it is opened with [input] validate_replay = true."
     validate_windows &&
@@ -405,8 +396,7 @@ function TransportBinaryDriver(reader::TransportBinaryReader{FT};
     # binaries we produce; the load-time gate is for suspect binaries
     # (manual imports, file corruption, older preprocessor versions).
     # Enabled by `validate_replay = true` (`[input] validate_replay`).
-    (validate_replay || _deprecated_replay_check_env()) &&
-        _validate_driver_replay(reader, geometry, grid)
+    validate_replay && _validate_driver_replay(reader, geometry, grid)
     return TransportBinaryDriver{FT, typeof(reader), typeof(grid)}(reader, grid)
 end
 

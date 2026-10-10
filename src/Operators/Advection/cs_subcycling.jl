@@ -69,3 +69,39 @@ end
 # palindrome budget above).
 # The static pilot is sufficient because the gamma-clamped sweep handles CFL > 1
 # safely. If evolving-mass pilots are needed in the future, see git history.
+
+"""
+    _cs_palindrome_subcycles(check, caller, subcycle_count, panels_am, panels_bm,
+                             panels_cm, panels_m, Nc, Hp, Nz, cfl_limit; flux_scale)
+
+Subcycle count of one cubed-sphere palindrome: the runtime CFL budget
+(`_cs_static_palindrome_subcycle_count`) when `subcycle_count === nothing`,
+else the binary's count, which `check::BinaryCFLCheck` compares with that
+budget. `caller` names the operator in error messages.
+"""
+_cs_palindrome_subcycles(::AbstractBinaryCFLCheck, caller, ::Nothing,
+                         am, bm, cm, m, Nc, Hp, Nz, cfl_limit; flux_scale) =
+    SectionTimer.@section :cs_cfl_x _cs_static_palindrome_subcycle_count(
+        am, bm, cm, m, Nc, Hp, Nz, cfl_limit; flux_scale)
+
+function _cs_palindrome_subcycles(check::AbstractBinaryCFLCheck, caller, subcycle_count::Integer,
+                                  am, bm, cm, m, Nc, Hp, Nz, cfl_limit; flux_scale)
+    n = Int(subcycle_count)
+    n >= 1 || throw(ArgumentError("$(caller): subcycle_count must be ≥ 1, got $(subcycle_count)"))
+    _check_binary_subcycles(check, caller, n, am, bm, cm, m, Nc, Hp, Nz, cfl_limit; flux_scale)
+    return n
+end
+
+_check_binary_subcycles(::NoBinaryCFLCheck, caller, n, am, bm, cm, m, Nc, Hp, Nz, cfl_limit;
+                        flux_scale) = nothing
+
+function _check_binary_subcycles(::BinaryCFLCheck, caller, n, am, bm, cm, m, Nc, Hp, Nz, cfl_limit;
+                                 flux_scale)
+    required = SectionTimer.@section :cs_cfl_x _cs_static_palindrome_subcycle_count(
+        am, bm, cm, m, Nc, Hp, Nz, cfl_limit; flux_scale)
+    required <= n || throw(ArgumentError(
+        "$(caller): the binary's substep schedule requests subcycle_count=$n, but the " *
+        "runtime CFL budget requires $required ([advection] check_binary_cfl = true). " *
+        "Regenerate the binary."))
+    return nothing
+end

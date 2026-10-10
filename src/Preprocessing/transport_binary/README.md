@@ -121,8 +121,8 @@ header (LL does it when `LatLonDeferredBinaryWriter` opens). GEOS uses
   (reader-backed) or `cubed_sphere_spectral.jl` (one-window lag).
 - Debugging a replay failure: the error names the window and cell
   (`(panel, i, j, k)` on CS). A failure only in the last window points at the
-  next-day endpoint. `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` keeps a binary for
-  inspection.
+  next-day endpoint. `[numerics] write_replay_check = false` keeps a binary
+  for inspection.
 - Comparing balance modes: `[numerics] balance_mode = "per_layer"` (or
   `--balance-mode per_layer` for the LL-to-CS regrid script) switches every
   lat-lon and cubed-sphere path from column to per-layer balance; the header

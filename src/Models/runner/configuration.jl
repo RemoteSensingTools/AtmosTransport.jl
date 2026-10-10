@@ -171,7 +171,8 @@ or allocating model state. Checks cover runtime table shapes (including
 numeric type, backend/float compatibility, the `[output.observations]`
 contract, and integer run-window bounds. The `[advection]`, `[diffusion]`,
 `[convection]` and `[chemistry]` sections, `air_mass_reset_mode`,
-`physics_cadence` and `[output]` are parsed as the run parses them; decay
+`physics_cadence`, `prefetch_windows` and `[output]` are parsed as the run
+parses them; decay
 half-lives must name a tracer, and an enabled `[output]` needs both a path and
 snapshot times (an explicit `hours = []` means none). Shape errors are
 reported before value checks. Window indices accept integers, not Booleans or
@@ -257,6 +258,7 @@ function _check_physics_and_output_settings!(cfg, FT, errors)
     _check_input_expectations!(get(cfg, "input", nothing), errors)
     _check_surface_flux_sources!(get(cfg, "tracers", nothing), errors)
     _capture_config_error!(() -> advection_spec(_advection_section(cfg)), errors)
+    _capture_config_error!(() -> binary_cfl_check(cfg), errors)
     _capture_config_error!(() -> diffusion_spec(_diffusion_section(cfg)), errors)
     _capture_config_error!(() -> convection_spec(_convection_section(cfg)), errors)
     _capture_config_error!(() -> chemistry_spec(_chemistry_section(cfg)), errors)
@@ -273,6 +275,8 @@ function _check_physics_and_output_settings!(cfg, FT, errors)
         end
         _capture_config_error!(() -> _resolve_physics_cadence(get(run_cfg, "physics_cadence", nothing)),
                                errors)
+        _capture_config_error!(() -> _config_bool(run_cfg, "prefetch_windows", true,
+                                                  "[run].prefetch_windows"), errors)
     end
 
     output_cfg = get(cfg, "output", nothing)

@@ -105,6 +105,11 @@
           "default": "window",
           "description": "On binaries with a per-window physics contract: convection and chemistry once per met window, or every advection substep."
         },
+        "prefetch_windows": {
+          "type": "boolean",
+          "default": true,
+          "description": "GPU runs with more than one Julia thread: load the next met window on a second thread while the current one runs. false loads each window when it is needed (one device window buffer fewer). Results are identical."
+        },
         "halo_padding": {
           "type": "integer",
           "minimum": 0,
@@ -150,6 +155,11 @@
           "enum": ["monotone", "cw84"],
           "default": "monotone",
           "description": "PPM only: monotone, or cw84 for the complete Colella-Woodward scheme."
+        },
+        "check_binary_cfl": {
+          "type": "boolean",
+          "default": false,
+          "description": "Cubed sphere, scheme = upwind, slopes or ppm: recompute the CFL subcycle count at every step and stop if the binary's substep schedule asks for fewer (slower; for binaries of unknown origin)."
         }
       }
     },

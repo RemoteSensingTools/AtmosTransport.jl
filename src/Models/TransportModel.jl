@@ -71,23 +71,43 @@ _convection_workspace_for(::NoConvection, state, grid) = nothing
 
 _cs_advection_workspace_for(scheme::AbstractAdvectionScheme,
                             state::CubedSphereState,
-                            grid::AtmosGrid{<:CubedSphereMesh}) =
+                            grid::AtmosGrid{<:CubedSphereMesh};
+                            binary_cfl_check::AbstractBinaryCFLCheck = NoBinaryCFLCheck()) =
     CSAdvectionWorkspace(grid.horizontal, state.air_mass[1];
                          n_tracers = ntracers(state),
-                         column_scratch = Operators.Advection.needs_column_scratch(scheme))
+                         column_scratch = Operators.Advection.needs_column_scratch(scheme),
+                         binary_cfl_check)
 
-_cs_advection_workspace_for(scheme::LinRoodPPMScheme,
-                            state::CubedSphereState,
-                            grid::AtmosGrid{<:CubedSphereMesh}) =
-    CSLinRoodAdvectionWorkspace(grid.horizontal, state.air_mass[1];
-                                n_tracers = ntracers(state),
-                                column_scratch = Operators.Advection.needs_column_scratch(scheme))
+# Lin-Rood and no advection take no subcycle count from the binary, so they
+# cannot honor `BinaryCFLCheck()`.
+function _cs_advection_workspace_for(scheme::LinRoodPPMScheme,
+                                     state::CubedSphereState,
+                                     grid::AtmosGrid{<:CubedSphereMesh};
+                                     binary_cfl_check::AbstractBinaryCFLCheck = NoBinaryCFLCheck())
+    _reject_binary_cfl_check(binary_cfl_check, scheme)
+    return CSLinRoodAdvectionWorkspace(grid.horizontal, state.air_mass[1];
+                                       n_tracers = ntracers(state),
+                                       column_scratch = Operators.Advection.needs_column_scratch(scheme))
+end
 
 # No advection means no advection buffers. Diffusion has an independent
 # workspace and therefore does not affect this dispatch.
-_cs_advection_workspace_for(::NoAdvection,
-                            state::CubedSphereState,
-                            grid::AtmosGrid{<:CubedSphereMesh}) = nothing
+function _cs_advection_workspace_for(scheme::NoAdvection,
+                                     state::CubedSphereState,
+                                     grid::AtmosGrid{<:CubedSphereMesh};
+                                     binary_cfl_check::AbstractBinaryCFLCheck = NoBinaryCFLCheck())
+    _reject_binary_cfl_check(binary_cfl_check, scheme)
+    return nothing
+end
+
+_reject_binary_cfl_check(::NoBinaryCFLCheck, scheme) = nothing
+_reject_binary_cfl_check(::BinaryCFLCheck, scheme) = throw(ArgumentError(
+    "BinaryCFLCheck() needs a split-sweep advection scheme; $(nameof(typeof(scheme))) " *
+    "takes no subcycle count from the binary."))
+
+# The check a workspace carries (`NoBinaryCFLCheck()` for workspaces without one).
+_workspace_binary_cfl_check(ws::CSAdvectionWorkspace) = ws.binary_cfl_check
+_workspace_binary_cfl_check(ws) = NoBinaryCFLCheck()
 
 _cmfmc_cell_metrics(mesh::LatLonMesh) = cell_areas_by_latitude(mesh)
 _cmfmc_cell_metrics(mesh::ReducedGaussianMesh) = [cell_area(mesh, c) for c in 1:ncells(mesh)]
@@ -275,13 +295,19 @@ function TransportModel(state::CubedSphereState{B},
                         fluxes::CubedSphereFaceFluxState{B},
                         grid::AtmosGrid{<:CubedSphereMesh},
                         advection::AbstractAdvectionScheme;
-                        advection_workspace = _cs_advection_workspace_for(advection, state, grid),
+                        binary_cfl_check::AbstractBinaryCFLCheck = NoBinaryCFLCheck(),
+                        advection_workspace = _cs_advection_workspace_for(advection, state, grid;
+                                                                          binary_cfl_check),
                         chemistry::AbstractChemistryOperator = NoChemistry(),
                         diffusion::AbstractDiffusion = NoDiffusion(),
                         diffusion_workspace = _diffusion_workspace_for(diffusion, state),
                         emissions::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                         convection::AbstractConvection = NoConvection(),
                         convection_forcing::ConvectionForcing = ConvectionForcing()) where {B <: AbstractMassBasis}
+    binary_cfl_check isa NoBinaryCFLCheck ||
+        _workspace_binary_cfl_check(advection_workspace) === binary_cfl_check ||
+        throw(ArgumentError("binary_cfl_check = $(binary_cfl_check), but the supplied " *
+                            "advection_workspace was built without it"))
     workspace_model = TransportModelWorkspace(
         advection_workspace, diffusion_workspace;
         convection_ws = _convection_workspace_for(convection, state, grid))

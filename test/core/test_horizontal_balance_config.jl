@@ -1,9 +1,8 @@
 #!/usr/bin/env julia
 #
 # `[numerics] balance_mode` selects the horizontal mass-flux balance of the
-# preprocessors (column or per layer). The older key `geos_balance_mode` and,
-# where it used to apply, the deprecated environment switch still work; every
-# writer receives the typed mode and records it in the header.
+# preprocessors (column or per layer). The older key `geos_balance_mode` still
+# works; every writer receives the typed mode and records it in the header.
 
 using Test
 using Dates
@@ -13,7 +12,6 @@ using .AtmosTransport.Preprocessing: resolve_horizontal_balance, effective_horiz
     process_day
 
 const REPO = pkgdir(AtmosTransport)
-const ENV_SWITCH = "ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE"
 
 @testset "[numerics] balance_mode" begin
     @test resolve_horizontal_balance(Dict{String, Any}()) === nothing   # path default
@@ -29,21 +27,13 @@ const ENV_SWITCH = "ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE"
     @test balance_tag(LayerBalance()) == "per_layer"
 end
 
-@testset "effective balance and the deprecated environment switch" begin
-    withenv(ENV_SWITCH => nothing) do
+@testset "effective balance" begin
+    @test effective_horizontal_balance(nothing, ColumnBalance()) === ColumnBalance()
+    @test effective_horizontal_balance(nothing, LayerBalance()) === LayerBalance()
+    @test effective_horizontal_balance(LayerBalance(), ColumnBalance()) === LayerBalance()
+    # The removed environment switch no longer changes the balance.
+    withenv("ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE" => "1") do
         @test effective_horizontal_balance(nothing, ColumnBalance()) === ColumnBalance()
-        @test effective_horizontal_balance(nothing, LayerBalance()) === LayerBalance()
-        @test effective_horizontal_balance(LayerBalance(), ColumnBalance()) === LayerBalance()
-    end
-    withenv(ENV_SWITCH => "1") do
-        @test (@test_logs (:warn, r"deprecated") effective_horizontal_balance(nothing, ColumnBalance())) ===
-              LayerBalance()
-        @test effective_horizontal_balance(LayerBalance(), ColumnBalance()) === LayerBalance()
-        @test (@test_logs (:warn, r"ignored") effective_horizontal_balance(ColumnBalance(), ColumnBalance())) ===
-              ColumnBalance()                                   # explicit configuration wins
-        # GEOS never read the switch
-        @test effective_horizontal_balance(nothing, ColumnBalance(); env = false) === ColumnBalance()
-        @test effective_horizontal_balance(ColumnBalance(), ColumnBalance(); env = false) === ColumnBalance()
     end
 end
 
@@ -73,10 +63,9 @@ end
         for (toml, vertical) in cases
             settings = load_met_settings(toml; root_dir = tmp)
             @test settings.column_balance_weights !== :mass
-            run(balance) = withenv(ENV_SWITCH => nothing) do
-                process_day(Date(2021, 12, 1), grid, settings, vertical;
-                            out_path = joinpath(tmp, "out.bin"), horizontal_balance = balance)
-            end
+            run(balance) = process_day(Date(2021, 12, 1), grid, settings, vertical;
+                                       out_path = joinpath(tmp, "out.bin"),
+                                       horizontal_balance = balance)
             err = try run(LayerBalance()); nothing catch e; e end
             @test err isa ArgumentError && occursin("balance_mode = \"per_layer\"", err.msg)
             # The column default passes this check and fails later, on the missing inputs.

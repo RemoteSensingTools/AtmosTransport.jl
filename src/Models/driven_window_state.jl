@@ -230,12 +230,12 @@ function _load_window_into_existing_backend!(existing_window,
     return existing_window
 end
 
-@inline _prefetch_enabled(model_air_mass) =
-    get(ENV, "ATMOSTR_DISABLE_PREFETCH", "0") != "1" &&
-    _window_backend_adapter(model_air_mass) !== Array && Threads.nthreads() > 1
+# Prefetch needs the request, a device backend and a second Julia thread.
+@inline _prefetch_enabled(requested::Bool, model_air_mass) =
+    requested && _window_backend_adapter(model_air_mass) !== Array && Threads.nthreads() > 1
 
 function _start_window_prefetch!(sim::DrivenSimulation, target_window::Int)
-    if target_window > sim.stop_window || !_prefetch_enabled(sim.model.state.air_mass)
+    if target_window > sim.stop_window || !sim.prefetch_enabled
         sim.prefetch_window_index = 0
         sim.prefetch_task = _empty_prefetch_task()
         return nothing
@@ -266,7 +266,7 @@ function _finish_window_prefetch!(sim::DrivenSimulation)
 end
 
 function _take_prefetched_window!(sim::DrivenSimulation, next_window::Int)
-    # A nonzero index means a prefetch was started, whatever the current setting.
+    # A nonzero index means a prefetch was started.
     if sim.prefetch_window_index == next_window
         task = sim.prefetch_task
         fetched = try

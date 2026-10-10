@@ -70,7 +70,7 @@ function _parse_args(argv)
     steps_per_window = nothing  # nothing = match source header
     require_substep_positivity = true
     balance_mode = nothing      # nothing = column (the preprocessing default)
-    write_replay_check = AtmosTransport.Preprocessing.write_replay_check_enabled()
+    write_replay_check = true
 
     i = 1
     while i <= length(argv)

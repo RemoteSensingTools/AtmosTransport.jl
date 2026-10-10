@@ -704,6 +704,7 @@ function process_merra2_to_cs_day(date::Date,
                                   cs_balance_project_every::Integer = 50,
                                   positivity_cfl_limit::Real = 0.95,
                                   require_substep_positivity::Bool = true,
+                                  write_replay_check::Bool = true,
                                   cache_dir::Union{Nothing, AbstractString} = nothing,
                                   global_mass_pin::Bool = false,
                                   global_mass_target_kg::Real = NaN,
@@ -738,8 +739,8 @@ function process_merra2_to_cs_day(date::Date,
         cur, nxt = new_block(), new_block()
         nblock = windows_per_day(settings, date)
         nwindow = nblock * nsub
-        # Resolved once: the header records it and the gate uses it.
-        write_replay_on = write_replay_check_enabled()
+        # The header records it and the gate uses it.
+        write_replay_on = write_replay_check
         writer = _open_merra2_writer(settings, handles, target_grid, vc, out_path, nwindow, nsub,
                                      Float64(dt_met_seconds), Int(steps_per_window), policy, mass_target,
                                      horizontal_balance, write_replay_on)
@@ -820,6 +821,7 @@ function process_day(date::Date,
                      substep_cfl_target::Real = 0.95,
                      max_steps_per_window::Integer = typemax(Int),
                      require_substep_positivity::Bool = true,
+                     write_replay_check::Bool = true,
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
                      horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
@@ -836,6 +838,7 @@ function process_day(date::Date,
         max_steps_per_window  = max_steps_per_window,
         positivity_cfl_limit  = positivity_cfl_limit,
         require_substep_positivity = require_substep_positivity,
+        write_replay_check    = write_replay_check,
         cache_dir             = grid.cache_dir,
         global_mass_pin       = global_mass_pin,
         global_mass_target_kg = global_mass_target_kg,

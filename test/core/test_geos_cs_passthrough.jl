@@ -316,6 +316,27 @@ end
         for p in 1:6
             @test second.final_m[p] == first.final_m[p]
         end
+
+        # `write_replay_check = false` skips the gate (no worst replay window)
+        # and is recorded; the transported mass is the same.
+        off_path = joinpath(tmpdir, "out_cs_off.bin")
+        off = process_day(Date(2021, 12, 1), grid, settings, vertical;
+                          out_path = off_path, dt_met_seconds = 3600.0, FT = FT_TEST,
+                          mass_basis = :dry, replay_tol = 1e-12, write_replay_check = false)
+        @test off.worst_replay_win == 0
+        @test all(p -> off.final_m[p] == first.final_m[p], 1:6)
+        reader = TransportBinaryReader(off_path; FT = FT_TEST)
+        try
+            @test reader.header.raw_header["write_replay_check"] === false
+        finally
+            close(reader)
+        end
+        reader = TransportBinaryReader(out_path; FT = FT_TEST)
+        try
+            @test !haskey(reader.header.raw_header, "write_replay_check")
+        finally
+            close(reader)
+        end
     end
 
     @testset "process_day supports GEOS native vertical merge above pressure" begin

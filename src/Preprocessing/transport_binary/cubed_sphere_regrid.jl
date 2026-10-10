@@ -100,11 +100,9 @@ face fluxes are reconstructed with the output scaling.
   leave this at `false` so the final CS window is closed against an explicit
   endpoint target instead of an inferred zero-tendency fallback.
 - `horizontal_balance = nothing` — `ColumnBalance()` (the default for
-  `nothing`) or `LayerBalance()`; see `effective_horizontal_balance`
-  for the deprecated environment fallback. Recorded in the header.
-- `write_replay_check::Bool = write_replay_check_enabled()` — run the write-time
-  replay-continuity gate (default on unless `ATMOSTR_NO_WRITE_REPLAY_CHECK=1`).
-  `false` is a diagnostic escape hatch; the output header then records
+  `nothing`) or `LayerBalance()`. Recorded in the header.
+- `write_replay_check::Bool = true` — run the write-time replay-continuity
+  gate. `false` is a diagnostic escape hatch; the output header then records
   `write_replay_check = false`.
 - `run_cache = nothing` — optional `PreprocessorRunCache` used to reuse the
   LL→CS conservative regridder across calls in the same preprocessing run.
@@ -121,7 +119,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 cs_balance_tol::Real = 1e-14,
                                 cs_balance_project_every::Integer = 50,
                                 horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
-                                write_replay_check::Bool = write_replay_check_enabled(),
+                                write_replay_check::Bool = true,
                                 run_cache = nothing)
     t_start = time()
     Nc = cs_grid.Nc

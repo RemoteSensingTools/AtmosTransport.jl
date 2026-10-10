@@ -170,6 +170,7 @@ function _process_day_geos_cs_unified(date::Date,
                                       FT::Type{<:AbstractFloat},
                                       mass_basis::Symbol,
                                       replay_tol::Real,
+                                      write_replay_check::Bool,
                                       positivity_cfl_limit::Real,
                                       require_substep_positivity::Bool,
                                       adaptive_substeps::Bool,
@@ -239,8 +240,8 @@ function _process_day_geos_cs_unified(date::Date,
         mkpath(dirname(out_path))
         isfile(tmp_path) && rm(tmp_path; force = true)
 
-        # Resolved once: the header records it and the gate uses it.
-        write_replay_on = write_replay_check_enabled()
+        # The header records it and the gate uses it.
+        write_replay_on = write_replay_check
         inner_writer = open_streaming_cs_transport_binary(
             tmp_path, Nc, npanel, Nz, nw, vc;
             FT = FT,
@@ -395,6 +396,7 @@ end
                 FT = Float64,
                 mass_basis = :dry,
                 replay_tol = replay_tolerance(FT),
+                write_replay_check = true,
                 seed_m = nothing,
                 next_day_hour0 = nothing,
                 chain_mass = true) -> NamedTuple
@@ -436,6 +438,7 @@ function process_day(date::Date,
                      FT::Type{<:AbstractFloat} = Float64,
                      mass_basis::Symbol = :dry,
                      replay_tol::Real = replay_tolerance(FT),
+                     write_replay_check::Bool = true,
                      positivity_cfl_limit::Real = 0.95,
                      require_substep_positivity::Bool = true,
                      adaptive_substeps::Bool = false,
@@ -475,6 +478,7 @@ function process_day(date::Date,
         FT = FT,
         mass_basis = mass_basis,
         replay_tol = replay_tol,
+        write_replay_check = write_replay_check,
         positivity_cfl_limit = positivity_cfl_limit,
         require_substep_positivity = require_substep_positivity,
         adaptive_substeps = adaptive_substeps,
@@ -485,8 +489,8 @@ function process_day(date::Date,
         seed_m = seed_m,
         global_mass_pin = global_mass_pin,
         global_mass_target_kg = global_mass_target_kg,
-        balance_mode = effective_horizontal_balance(horizontal_balance, ColumnBalance();
-                                                    env = false) isa LayerBalance ? :per_layer : :column,
+        balance_mode = effective_horizontal_balance(horizontal_balance, ColumnBalance()) isa
+                       LayerBalance ? :per_layer : :column,
         cm_closure = cm_closure,
         smooth_iters = smooth_iters,
         omega_regularization = omega_regularization,

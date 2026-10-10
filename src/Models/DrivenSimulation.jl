@@ -69,6 +69,7 @@ mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, PT, HS
     prefetch_window       :: WindowT
     prefetch_task         :: PT
     prefetch_window_index :: Int
+    prefetch_enabled      :: Bool   # `prefetch_windows`, a device backend and >1 thread
     expected_air_mass     :: AT
     qv_buffer             :: QT
     Δt                    :: FT

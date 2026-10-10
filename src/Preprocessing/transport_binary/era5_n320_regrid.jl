@@ -291,6 +291,7 @@ function process_era5_n320_to_cs_day(date::Date,
                                        cs_balance_project_every::Integer = 50,
                                        positivity_cfl_limit::Real = 0.95,
                                        require_substep_positivity::Bool = true,
+                                       write_replay_check::Bool = true,
                                        cache_dir::Union{Nothing, AbstractString} = nothing,
                                        include_convection::Bool = false,
                                        global_mass_pin::Bool = false,
@@ -529,8 +530,8 @@ function process_era5_n320_to_cs_day(date::Date,
         isfile(tmp_path) && rm(tmp_path)
         @info @sprintf("  Output: %s (Nc=%d, Nz=%d, FT=%s)",
                        basename(out_path), Nc, Nz_int, string(FT))
-        # Resolved once: the header records it and the gate uses it.
-        write_replay_on = write_replay_check_enabled()
+        # The header records it and the gate uses it.
+        write_replay_on = write_replay_check
         inner_writer = open_streaming_cs_transport_binary(
             tmp_path, Nc, 6, Nz_int, nwindow, vc;
             FT = FT,
@@ -952,7 +953,8 @@ end
 Adapter that the unified preprocessor CLI calls into. Forwards to
 `process_era5_n320_to_cs_day` the substep policy (`min_steps_per_window` as
 the floor, `adaptive_substeps`, `substep_cfl_target`, `max_steps_per_window`),
-the positivity settings, and the global dry-mass pin. The remaining
+the positivity settings, `write_replay_check`, and the global dry-mass pin.
+The remaining
 unified-CLI day-kwargs (e.g. `chain_mass`, `seed_m`) are absorbed by the
 trailing `kwargs...` and ignored — ERA5 N320 has no day-to-day mass-chain
 state.
@@ -969,6 +971,7 @@ function process_day(date::Date,
                      dt_met_seconds::Real = 3600.0,
                      positivity_cfl_limit::Real = 0.95,
                      require_substep_positivity::Bool = true,
+                     write_replay_check::Bool = true,
                      min_steps_per_window::Union{Integer, Nothing} = nothing,
                      adaptive_substeps::Bool = true,
                      substep_cfl_target::Real = 0.85,
@@ -993,6 +996,7 @@ function process_day(date::Date,
         max_steps_per_window      = max_steps_per_window,
         positivity_cfl_limit      = positivity_cfl_limit,
         require_substep_positivity = require_substep_positivity,
+        write_replay_check        = write_replay_check,
         cache_dir                 = grid.cache_dir,
         include_convection        = settings.include_convection,
         global_mass_pin           = global_mass_pin,

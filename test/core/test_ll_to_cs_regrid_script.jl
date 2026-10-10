@@ -20,6 +20,7 @@
 
 using Test
 using JSON3
+using Dates: Date
 
 using AtmosTransport
 using .AtmosTransport.Preprocessing: regrid_ll_binary_to_cs, build_target_geometry,
@@ -399,11 +400,25 @@ end
         @test Pre._with_replay_record(Dict{String, Any}(), true) == Dict{String, Any}()
         @test Pre._with_replay_record(Dict{String, Any}(), false) ==
               Dict{String, Any}("write_replay_check" => false)
-        withenv("ATMOSTR_NO_WRITE_REPLAY_CHECK" => "1") do
-            @test !Pre.write_replay_check_enabled()
+        # `[numerics] write_replay_check` of a preprocessing config (default on).
+        resolve(numerics) = Pre._resolve_write_replay_check(Dict{String, Any}("numerics" => numerics))
+        @test Pre._resolve_write_replay_check(Dict{String, Any}())
+        @test resolve(Dict{String, Any}("write_replay_check" => true))
+        @test !resolve(Dict{String, Any}("write_replay_check" => false))
+        err = try resolve(Dict{String, Any}("write_replay_check" => "no")); nothing catch e; e end
+        @test err isa ArgumentError && contains(err.msg, "[numerics].write_replay_check")
+        # Every writer takes the keyword; the MERRA-2 and ERA5 N320 adapters end in
+        # `kwargs...` and must name it, or it would be silently dropped.
+        # (The unsupported-pair fallback takes untyped settings.)
+        writers = [m for m in methods(Pre.process_day) if length(m.sig.parameters) == 5 &&
+                   m.sig.parameters[2] === Date && m.sig.parameters[4] !== Any]
+        @test length(writers) == 6
+        for m in writers
+            @test :write_replay_check in Base.kwarg_decl(m)
         end
-        withenv("ATMOSTR_NO_WRITE_REPLAY_CHECK" => nothing) do
-            @test Pre.write_replay_check_enabled()
+        for f in (Pre.process_merra2_to_cs_day, Pre.process_era5_n320_to_cs_day,
+                  regrid_ll_binary_to_cs)
+            @test all(m -> :write_replay_check in Base.kwarg_decl(m), methods(f))
         end
         mktempdir() do dir
             cfg_grid = Dict{String, Any}("Nc" => 4, "regridder_cache_dir" => joinpath(dir, "cr_cache"))
@@ -415,9 +430,7 @@ end
 
             # Default: the gate ran, nothing is recorded (headers unchanged).
             on_path = joinpath(dir, "cs_on.bin")
-            withenv("ATMOSTR_NO_WRITE_REPLAY_CHECK" => nothing) do
-                regrid_ll_binary_to_cs(ll_path, cs_grid, on_path; FT = Float64)
-            end
+            regrid_ll_binary_to_cs(ll_path, cs_grid, on_path; FT = Float64)
             @test !haskey(header_of(on_path), "write_replay_check")
             @test inspect_binary(on_path; io = devnull).write_replay_check
 
@@ -438,11 +451,9 @@ end
             Base.include(script_mod, joinpath(@__DIR__, "..", "..", "scripts", "preprocessing",
                                               "regrid_ll_transport_binary_to_cs.jl"))
             args = ["--input", ll_path, "--output", joinpath(dir, "x.bin"), "--Nc", "4"]
-            withenv("ATMOSTR_NO_WRITE_REPLAY_CHECK" => nothing) do
-                @test Base.invokelatest(script_mod._parse_args, args).write_replay_check
-            end
-            @test !Base.invokelatest(script_mod._parse_args,
-                                     vcat(args, "--no-write-replay-check")).write_replay_check
+            parse_args = Base.invokelatest(getproperty, script_mod, :_parse_args)
+            @test Base.invokelatest(parse_args, args).write_replay_check
+            @test !Base.invokelatest(parse_args, vcat(args, "--no-write-replay-check")).write_replay_check
 
             # Output reuse: an existing binary is reused only when its replay
             # record matches the run's (an absent key means the gate ran).

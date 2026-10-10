@@ -88,7 +88,8 @@ function fill_window_mass_tendency!(dm_dt_buf::Array{FT, 3},
 end
 
 """
-    verify_storage_continuity_ll!(storage, last_hour_next, steps_per_window, ::Type{FT})
+    verify_storage_continuity_ll!(storage, last_hour_next, steps_per_window, ::Type{FT};
+                                  write_replay_on = true)
 
 Write-time replay gate for structured LL storage.
 Iterates every window k and asserts
@@ -102,14 +103,16 @@ to within a Poisson-balance tolerance floor derived from `FT` (roughly
 diagnostic if the contract is violated — this was the gate that would have
 caught the dry-basis Δb×pit closure bug before it reached the runtime.
 
-Bypass with env var `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` for diagnostic runs.
+`write_replay_on = false` (`[numerics] write_replay_check = false`) skips it,
+for diagnostic runs.
 """
 function verify_storage_continuity_ll!(storage::WindowStorage{FT},
                                         last_hour_next,
                                         steps_per_window::Int,
-                                        ::Type{FT}) where FT
-    if !write_replay_check_enabled()
-        @info "  Write-time replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
+                                        ::Type{FT};
+                                        write_replay_on::Bool = true) where FT
+    if !write_replay_on
+        @info "  Write-time replay gate SKIPPED ([numerics] write_replay_check = false)"
         return nothing
     end
     Nt = length(storage.all_m)
@@ -139,26 +142,26 @@ function verify_storage_continuity_ll!(storage::WindowStorage{FT},
 end
 
 """
-    verify_storage_contract_ll!(storage, last_hour_next, contract)
+    verify_storage_contract_ll!(storage, last_hour_next, contract; write_replay_on = true)
 
 Run the typed LL window contract across balanced per-day storage. This is the
 P2a production bridge: the legacy `apply_poisson_balance!` loop still owns the
 numerics, but the post-balance write gate now uses `LatLonContract`'s typed
 policy and accumulator state.
 
-If `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` is set, only the replay gate is skipped;
-the positivity scan still runs so diagnostic binaries cannot silently bypass
-the runtime CFL contract.
+With `write_replay_on = false` (`[numerics] write_replay_check = false`) only
+the replay gate is skipped; the positivity scan still runs so diagnostic
+binaries cannot silently bypass the runtime CFL contract.
 """
 function verify_storage_contract_ll!(storage::WindowStorage{FT},
                                       last_hour_next,
-                                      contract) where FT
+                                      contract;
+                                      write_replay_on::Bool = true) where FT
     Nt = length(storage.all_m)
     Nt == 0 && return contract
 
-    write_replay_on = write_replay_check_enabled()
     write_replay_on ||
-        @info "  Write-time replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
+        @info "  Write-time replay gate SKIPPED ([numerics] write_replay_check = false)"
 
     worst_rel = 0.0
     worst_abs = 0.0
@@ -208,7 +211,8 @@ function verify_storage_contract_ll!(storage::WindowStorage{FT},
 end
 
 """
-    apply_poisson_balance!(storage, last_hour_next, steps_per_window, contract=nothing)
+    apply_poisson_balance!(storage, last_hour_next, steps_per_window, contract=nothing;
+                           balance=nothing, write_replay_on=true)
 
 Close each stored window against its forward mass endpoint.
 
@@ -219,12 +223,15 @@ the zero top/bottom `cm` replay contract.
 
 `balance = LayerBalance()` (`[numerics] balance_mode = "per_layer"`) restores
 the older per-layer Poisson correction for controlled comparisons.
+`write_replay_on = false` (`[numerics] write_replay_check = false`) skips the
+write-time replay gate; the typed contract's positivity gate still runs.
 """
 function apply_poisson_balance!(storage::WindowStorage{FT},
                                 last_hour_next,
                                 steps_per_window::Int,
                                 contract = nothing;
-                                balance::Union{Nothing, AbstractHorizontalBalance} = nothing) where FT
+                                balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
+                                write_replay_on::Bool = true) where FT
     Nx, Ny, Nz = size(storage.all_m[1])
     dm_dt_buf = Array{FT}(undef, Nx, Ny, Nz)
     div_scratch = Array{Float64}(undef, Nx, Ny, Nz)
@@ -282,9 +289,10 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
     # typed contract so the positivity gate and run-level policy are active
     # too; the legacy helper remains for direct/debug callers.
     if contract === nothing
-        verify_storage_continuity_ll!(storage, last_hour_next, steps_per_window, FT)
+        verify_storage_continuity_ll!(storage, last_hour_next, steps_per_window, FT;
+                                      write_replay_on)
     else
-        verify_storage_contract_ll!(storage, last_hour_next, contract)
+        verify_storage_contract_ll!(storage, last_hour_next, contract; write_replay_on)
     end
     @info "  Continuity closure complete for $(length(storage.all_m)) windows"
 
@@ -297,7 +305,7 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
                                 contract,
                                 substep_policy::SubstepSchedulePolicy;
                                 balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
-                                write_replay_on::Bool = write_replay_check_enabled()) where FT
+                                write_replay_on::Bool = true) where FT
     contract === nothing &&
         throw(ArgumentError("adaptive LL Poisson balance requires a LatLonContract"))
     Nt = length(storage.all_m)
