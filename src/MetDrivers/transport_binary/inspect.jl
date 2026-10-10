@@ -81,6 +81,8 @@ function binary_capabilities(reader::TransportBinaryReader)
         preprocessor_contract = get(raw, "preprocessor_contract", nothing),
         vertical_Nz_output = get(raw, "vertical_Nz_output", nothing),
         adaptive_substeps = get(raw, "adaptive_substeps", nothing),
+        # false only for binaries written with the write-time replay gate off
+        write_replay_check = get(raw, "write_replay_check", true) !== false,
         payload_sections = hdr.payload_sections,
     )
 end
@@ -124,6 +126,8 @@ function _print_capability_rows(io::IO, reader)
     _print_cap(io, caps.humidity,         "humidity",         "(qv_start, qv_end)")
     println(io, "  mass_basis       = ", caps.mass_basis)
     println(io, "  grid_type        = ", caps.grid_type)
+    caps.write_replay_check || println(io, "  ⚠ written with the write-time replay check disabled; " *
+                                           "not for production runs")
 end
 
 @inline function _print_cap(io::IO, present::Bool, label::AbstractString, ingredients::AbstractString)

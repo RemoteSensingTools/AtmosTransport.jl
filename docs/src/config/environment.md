@@ -32,7 +32,7 @@ package reads no others.
 
 | Variable | Effect | Read in |
 |---|---|---|
-| `ATMOSTR_NO_WRITE_REPLAY_CHECK` | `1`: skip the write-time replay-continuity gate of the preprocessor (diagnostic only; such binaries are not production quality). | the preprocessing writers in `src/Preprocessing/` |
+| `ATMOSTR_NO_WRITE_REPLAY_CHECK` | `1`: skip the write-time replay-continuity gate of the preprocessor (diagnostic only). The binary records `write_replay_check = false`; the inspector marks it and the runtime warns when it opens it. | `write_replay_check_enabled` (`src/Preprocessing/configuration.jl`) |
 
 ## Deprecated
 

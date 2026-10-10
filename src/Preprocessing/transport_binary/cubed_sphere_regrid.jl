@@ -102,6 +102,10 @@ face fluxes are reconstructed with the output scaling.
 - `horizontal_balance = nothing` — `ColumnBalance()` (the default for
   `nothing`) or `LayerBalance()`; see `effective_horizontal_balance`
   for the deprecated environment fallback. Recorded in the header.
+- `write_replay_check::Bool = write_replay_check_enabled()` — run the write-time
+  replay-continuity gate (default on unless `ATMOSTR_NO_WRITE_REPLAY_CHECK=1`).
+  `false` is a diagnostic escape hatch; the output header then records
+  `write_replay_check = false`.
 - `run_cache = nothing` — optional `PreprocessorRunCache` used to reuse the
   LL→CS conservative regridder across calls in the same preprocessing run.
 """
@@ -117,6 +121,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 cs_balance_tol::Real = 1e-14,
                                 cs_balance_project_every::Integer = 50,
                                 horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
+                                write_replay_check::Bool = write_replay_check_enabled(),
                                 run_cache = nothing)
     t_start = time()
     Nc = cs_grid.Nc
@@ -275,7 +280,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         cs_center_law=_cs_center_law_tag(cs_grid),
         longitude_offset_deg=longitude_offset_deg(cs_definition(cs_grid.mesh)),
         planet_radius=cs_grid.mesh.radius,
-        extra_header=Dict{String, Any}(
+        extra_header=_with_replay_record(Dict{String, Any}(
             "preprocessor"      => "regrid_ll_binary_to_cs",
             "source_type"       => "ll_transport_binary",
             "source_path"       => ll_binary_path,
@@ -283,7 +288,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             "regrid_method"     => "conservative",
             "poisson_balanced"  => true,
             "horizontal_balance" => balance_tag(balance),
-        ))
+        ), write_replay_check))
     writer = CubedSphereBinaryWriter(inner_writer, mass_basis_from_symbol(output_basis);
                                      Nc = Nc,
                                      npanel = CS_PANEL_COUNT,
@@ -294,8 +299,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     @info @sprintf("  Output: %s (%.2f GB, %d windows)", basename(out_path),
                    expected_total / 1e9, Nt)
     @info "  Streaming: LL binary → CS regrid → balance → write..."
-    write_replay_on = get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
-    write_replay_on || @info "  Write-time CS replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
+    write_replay_on = write_replay_check
+    write_replay_on || @info "  Write-time CS replay gate SKIPPED (disabled for this run)"
     replay_tol = replay_tolerance(FT)
 
     # --- Helper: read one LL window and regrid to CS ---

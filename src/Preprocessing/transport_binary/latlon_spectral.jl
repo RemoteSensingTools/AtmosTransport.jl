@@ -17,6 +17,7 @@ mutable struct LatLonSpectralWindowWorkspace{FT, TW, MW, SW, QW} <:
     ps_offsets     :: Vector{Float64}
     last_hour_next :: Union{Nothing, LLNextDayFields{FT}}
     steps_schedule :: Vector{Int}
+    write_replay_on :: Bool        # resolved once per output: header record and gate
 
     function LatLonSpectralWindowWorkspace{FT, TW, MW, SW, QW}(
             transform::TW,
@@ -25,7 +26,8 @@ mutable struct LatLonSpectralWindowWorkspace{FT, TW, MW, SW, QW} <:
             qv::QW,
             ps_offsets::Vector{Float64},
             last_hour_next,
-            steps_schedule::Vector{Int}) where {FT, TW, MW, SW, QW}
+            steps_schedule::Vector{Int},
+            write_replay_on::Bool) where {FT, TW, MW, SW, QW}
         if last_hour_next !== nothing && !(last_hour_next isa LLNextDayFields{FT})
             throw(ArgumentError(
                 "last_hour_next must be `nothing` or LLNextDayFields{$FT}; " *
@@ -33,7 +35,7 @@ mutable struct LatLonSpectralWindowWorkspace{FT, TW, MW, SW, QW} <:
         end
         return new{FT, TW, MW, SW, QW}(
             transform, merged, storage, qv, ps_offsets, last_hour_next,
-            steps_schedule)
+            steps_schedule, write_replay_on)
     end
 end
 
@@ -150,7 +152,8 @@ function allocate_window_workspace(grid::LatLonTargetGeometry,
                                    date::Date,
                                    ::Type{FT};
                                    cache = nothing,
-                                   source_steps_per_window::Integer = 1) where FT
+                                   source_steps_per_window::Integer = 1,
+                                   write_replay_on::Bool = write_replay_check_enabled()) where FT
     Nz_native = vertical.Nz_native
     Nz = vertical.Nz
     Nt = spec.n_times
@@ -165,7 +168,7 @@ function allocate_window_workspace(grid::LatLonTargetGeometry,
     steps_schedule = fill(Int(source_steps_per_window), Nt)
     return LatLonSpectralWindowWorkspace{FT, typeof(transform), typeof(merged),
                                          typeof(storage), typeof(qv)}(
-        transform, merged, storage, qv, ps_offsets, nothing, steps_schedule)
+        transform, merged, storage, qv, ps_offsets, nothing, steps_schedule, write_replay_on)
 end
 
 function ingest_window!(workspace::LatLonSpectralWindowWorkspace,
@@ -267,7 +270,8 @@ function flush_final_windows!(workspace::LatLonSpectralWindowWorkspace{FT},
         workspace.ps_offsets)
     apply_poisson_balance!(workspace.storage, workspace.last_hour_next,
                            workspace.steps_schedule, contract, substep_policy;
-                           balance = get(settings, :horizontal_balance, nothing))
+                           balance = get(settings, :horizontal_balance, nothing),
+                           write_replay_on = workspace.write_replay_on)
     fill_qv_endpoints!(workspace.storage, workspace.last_hour_next)
     return (ReadyWindow{LatLonTargetGeometry, FT}(
                 win_idx,
@@ -420,6 +424,11 @@ function process_day(date::Date,
         provenance=provenance,
     )
 
+    # Resolved once: the header records it (before the reuse check, so a binary
+    # written with the gate off is not reused by a run with it on) and the
+    # workspace carries it to the gate.
+    write_replay_on = write_replay_check_enabled()
+    _with_replay_record(header, write_replay_on)
     expected_sections = expected_payload_sections(settings)
     skip, reason = existing_output_schema_matches(
         bin_path, byte_sizes.total_bytes, expected_sections, header)
@@ -438,7 +447,8 @@ function process_day(date::Date,
 
     workspace = allocate_window_workspace(grid, settings, vertical, spec, date, FT;
                                           cache = run_cache,
-                                          source_steps_per_window = steps_per_met)
+                                          source_steps_per_window = steps_per_met,
+                                          write_replay_on)
     storage = workspace.storage
     ps_offsets = workspace.ps_offsets
     window_contract = LatLonContract{FT}(

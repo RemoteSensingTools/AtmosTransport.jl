@@ -108,7 +108,7 @@ function verify_storage_continuity_ll!(storage::WindowStorage{FT},
                                         last_hour_next,
                                         steps_per_window::Int,
                                         ::Type{FT}) where FT
-    if get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") == "1"
+    if !write_replay_check_enabled()
         @info "  Write-time replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
         return nothing
     end
@@ -156,7 +156,7 @@ function verify_storage_contract_ll!(storage::WindowStorage{FT},
     Nt = length(storage.all_m)
     Nt == 0 && return contract
 
-    write_replay_on = get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
+    write_replay_on = write_replay_check_enabled()
     write_replay_on ||
         @info "  Write-time replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
 
@@ -296,7 +296,8 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
                                 steps_schedule::Vector{Int},
                                 contract,
                                 substep_policy::SubstepSchedulePolicy;
-                                balance::Union{Nothing, AbstractHorizontalBalance} = nothing) where FT
+                                balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
+                                write_replay_on::Bool = write_replay_check_enabled()) where FT
     contract === nothing &&
         throw(ArgumentError("adaptive LL Poisson balance requires a LatLonContract"))
     Nt = length(storage.all_m)
@@ -316,9 +317,7 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
         @info "  Applying column mass-balance correction with $(mode) substep schedule..."
     end
 
-    write_replay_on = get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1"
-    write_replay_on ||
-        @info "  Write-time replay gate SKIPPED (ATMOSTR_NO_WRITE_REPLAY_CHECK=1)"
+    write_replay_on || @info "  Write-time replay gate SKIPPED (disabled for this run)"
 
     worst_column_pre = 0.0
     worst_column_post = 0.0

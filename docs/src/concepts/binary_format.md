@@ -150,6 +150,7 @@ returns a `NamedTuple`:
 | `nlevel :: Int` | vertical levels |
 | `nwindow :: Int` | met windows in the file |
 | `window_seconds :: Float64` | length of one met window (`dt_met_seconds`) |
+| `write_replay_check :: Bool` | `false` only when the binary was written with the write-time replay gate skipped (header `write_replay_check = false`) |
 | `steps_per_window :: Int` | scalar substep count (`maximum(steps_per_window_by_window)`) |
 | `variable_step_schedule :: Bool` | `true` iff per-window step counts are not all equal |
 | `adaptive_substeps :: Union{Nothing, Bool}` | explicit `adaptive_substeps` header value for CS; `nothing` when not recorded |
@@ -264,7 +265,10 @@ with `tol = replay_tolerance(FT)` from
 for Float32. A binary that fails this gate is **rejected at write
 time**; the preprocessor errors out rather than producing a
 known-bad file. Diagnostic runs can explicitly bypass this gate with
-`ATMOSTR_NO_WRITE_REPLAY_CHECK=1`; production preprocessing should not.
+`ATMOSTR_NO_WRITE_REPLAY_CHECK=1` (or `--no-write-replay-check` for
+`scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl`); production
+preprocessing should not. Such a binary records `write_replay_check = false` in
+its header, the inspector marks it, and the runtime warns when it opens it.
 
 ### Load-time gate (opt-in)
 

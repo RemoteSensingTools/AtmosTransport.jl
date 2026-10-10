@@ -278,6 +278,13 @@
   still works for one release with a deprecation warning;
   `ATMOSTR_NO_REPLAY_CHECK` is removed (the check runs only when asked for).
   The replay error messages now name the key.
+- A transport binary written with the write-time replay gate skipped
+  (`ATMOSTR_NO_WRITE_REPLAY_CHECK=1`, or the new `--no-write-replay-check` of
+  `regrid_ll_transport_binary_to_cs.jl`) records `write_replay_check = false`
+  in its header; `binary_capabilities` reports it, `inspect_binary` marks it
+  and `TransportBinaryDriver` warns when it opens such a binary. Binaries
+  written with the gate on are unchanged. Every writer asks one resolver,
+  `write_replay_check_enabled`, instead of reading the variable itself.
 - `docs/src/config/environment.md` lists every environment variable the
   package reads, and `test/core/test_environment_variables.jl` fails when
   `src/` reads one that is not listed there (or from outside the folder that

@@ -392,6 +392,11 @@ function TransportBinaryDriver(reader::TransportBinaryReader{FT};
                                max_rel_cm::Real = 1.0) where FT
     geometry = binary_geometry(reader)
     _validate_runtime_semantics(reader, geometry)
+    get(reader.header.raw_header, "write_replay_check", true) === false &&
+        @warn "$(basename(reader.path)) was written with the write-time replay check disabled " *
+              "(ATMOSTR_NO_WRITE_REPLAY_CHECK=1 or --no-write-replay-check). Regenerate it for " *
+              "production runs, or replay " *
+              "it when it is opened with [input] validate_replay = true."
     validate_windows &&
         _validate_transport_windows(reader, geometry; max_rel_cm)
     grid = _transport_driver_grid(reader, geometry; FT, arch, Hp)

@@ -634,7 +634,8 @@ end
 
 function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{FT}, vc, out_path,
                              nwindow, nsub, dt_window, steps, policy, mass_target,
-                             balance::AbstractHorizontalBalance) where FT
+                             balance::AbstractHorizontalBalance,
+                             write_replay_on::Bool) where FT
     mkpath(dirname(out_path))
     tmp_path = out_path * ".tmp"
     isfile(tmp_path) && rm(tmp_path)
@@ -669,7 +670,7 @@ function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{
         panel_convention = _cs_panel_convention_tag(grid), cs_definition = _cs_definition_tag(grid),
         cs_coordinate_law = _cs_coordinate_law_tag(grid), cs_center_law = _cs_center_law_tag(grid),
         longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
-        planet_radius = grid.mesh.radius, extra_header = header)
+        planet_radius = grid.mesh.radius, extra_header = _with_replay_record(header, write_replay_on))
     return CubedSphereBinaryWriter(inner, mass_basis_from_symbol(:dry); Nc = grid.Nc, npanel = 6,
                                    final_path = String(out_path))
 end
@@ -737,9 +738,11 @@ function process_merra2_to_cs_day(date::Date,
         cur, nxt = new_block(), new_block()
         nblock = windows_per_day(settings, date)
         nwindow = nblock * nsub
+        # Resolved once: the header records it and the gate uses it.
+        write_replay_on = write_replay_check_enabled()
         writer = _open_merra2_writer(settings, handles, target_grid, vc, out_path, nwindow, nsub,
                                      Float64(dt_met_seconds), Int(steps_per_window), policy, mass_target,
-                                     horizontal_balance)
+                                     horizontal_balance, write_replay_on)
         @info @sprintf("  Output: %s (Nc=%d, Nz=%d, FT=%s)", basename(out_path), target_grid.Nc, Nz, string(FT))
         d = MERRA2DayDriver(
             settings, handles, target_grid, vc, writer, nsub, Float64(dt_met_seconds), policy,
@@ -749,7 +752,7 @@ function process_merra2_to_cs_day(date::Date,
             (method = _face_flux_method(settings, target_grid),
              thickness = _flux_thickness(settings.flux_thickness)),
             Float64(positivity_cfl_limit), replay_tolerance(FT),
-            get(ENV, "ATMOSTR_NO_WRITE_REPLAY_CHECK", "0") != "1", mass_target,
+            write_replay_on, mass_target,
             _merra2_window_scratch(FT, target_grid.Nc, Nz),
             allocate_merra2_window_physics(settings, target_grid.Nc, Nz, FT))
         diag = MERRA2DayDiagnostics(nwindow, Int(steps_per_window))
