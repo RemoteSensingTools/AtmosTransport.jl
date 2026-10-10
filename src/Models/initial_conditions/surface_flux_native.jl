@@ -77,7 +77,7 @@ function _build_native_timevarying_cs_surface_flux_source(
     end
 end
 
-# kg m⁻² s⁻¹ of the tracer species, or of carbon (converted to CO2 by 44/12);
+# kg m⁻² s⁻¹ of the tracer species, or of carbon (converted to CO2 by M(CO2)/M(C));
 # molar, gram and missing units are rejected (`_per_second_flux_scale`).
 _native_flux_species_scale(units_norm::AbstractString, file) = _per_second_flux_scale(units_norm, file)
 

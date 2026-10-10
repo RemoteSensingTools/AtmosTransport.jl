@@ -42,7 +42,7 @@
 #     exact same window-conservative integral the surface operator applies,
 #     so the post-hoc integral matches the run's accumulated mass.
 #
-# The +3h CAMS interval-start phase shift, the 44/12 kgC→kgCO2 factor, the
+# The +3h CAMS interval-start phase shift, the M(CO2)/M(C) kgC→kgCO2 factor, the
 # `scale` key, the conservative LL→CS regrid, and the storage scale are all
 # applied inside `build_surface_flux_sources` — we inherit them for free.
 #
@@ -247,7 +247,7 @@ function main(nc_path::AbstractString, cfg_path::AbstractString)
     @info "Reference time (run start; flux slice-time origin)" reference_time
 
     # Build the model's EXACT surface-flux sources (inherits +3h shift,
-    # 44/12, scale, conservative regrid, storage scale).
+    # M(CO2)/M(C), scale, conservative regrid, storage scale).
     sources = _ICIO.build_surface_flux_sources(grid, tracer_specs, FT;
                                                reference_time = reference_time)
     src_by_tracer = Dict(s.tracer_name => s for s in sources)

@@ -211,7 +211,7 @@ def main():
                         blk = blk.filled(0.0)
                     blk = np.asarray(blk, np.float64)
                     daily_pgc[s0:s1] = -(blk * area[None]).sum(axis=(1, 2, 3)) \
-                        * 86400.0 * (12.0 / 44.0) / 1e12
+                        * 86400.0 * (12.0107 / 44.0095) / 1e12
                 pred = -np.cumsum(daily_pgc) / 2.124        # ppm, well-mixed
                 obs = gm[t]
                 resid = obs - pred

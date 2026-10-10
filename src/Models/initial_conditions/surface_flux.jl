@@ -270,8 +270,9 @@ end
 const _KG_PER_M2_S = r"^kg(\(?[a-z][a-z0-9]*\)?)?(/m2/s|m-2s-1|/m2s|/s/m2|s-1m-2)$"
 _is_kg_per_m2_s(units_norm::AbstractString) = occursin(_KG_PER_M2_S, units_norm)
 
-# Species factor of a per-second flux: 1 for kg of the species, 44/12 for kg of
-# carbon (`kgC m-2 s-1`, CAMS/LMDZ) to kg of CO2. Anything else is an error.
+# Species factor of a per-second flux: 1 for kg of the species, and for kg of
+# carbon (`kgC m-2 s-1`, CAMS/LMDZ) the molar-mass ratio M(CO2)/M(C) ≈ 3.66419,
+# which conserves carbon atoms (`CARBON_MOLAR_MASS`). Anything else is an error.
 # Time-varying fluxes place their slices on the run clock, which needs the run's
 # first day (`[input].start_date`).
 _require_reference_time(reference_time) = reference_time === nothing && throw(ArgumentError(
@@ -284,7 +285,7 @@ function _per_second_flux_scale(units_norm::AbstractString, file)
         "m-2 s-1 or kgC m-2 s-1 (or, for named sources, kgCO2/month/m2 or Tonnes); convert " *
         "molar, gram or missing units first"))
     species = m.captures[1] === nothing ? "" : strip(m.captures[1], ['(', ')'])
-    return species == "c" ? 44.0 / 12.0 : 1.0
+    return species == "c" ? SPECIES_MOLAR_MASS.co2 / CARBON_MOLAR_MASS : 1.0
 end
 
 function _normalize_units_string(units)

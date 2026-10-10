@@ -6,7 +6,7 @@ NEE tracers, which carry Ra + Rh - GPP only and no fire at all. Output matches
 the TRENDY driver's format exactly (same grid, same units, same daily
 construction), so the tracers add linearly:
 
-  FIRE_CO2_FLUX   +C * 44/12   (>= 0, emission)   kg CO2 m-2 s-1
+  FIRE_CO2_FLUX   +C * M(CO2)/M(C)   (>= 0, emission)   kg CO2 m-2 s-1
 
 Source (spandey's snapshot, the series behind the Nature manuscript):
   1997-2022  GFED5.1 finalized, annual containers of 12 monthly grids, `C`
@@ -139,7 +139,7 @@ def main() -> None:
     for Y in sorted(set(yrs)):
         sel = yrs == Y
         got = float((flux[sel].astype(np.float64) * area[None, :]).sum()) \
-            * SECONDS_PER_DAY * (12.0 / 44.0) / 1e12
+            * SECONDS_PER_DAY / T.KG_CO2_PER_KG_C / 1e12
         want = sum(native_pgc[lookup[(Y, m)]] for m in range(1, 13))
         print(f"  {Y}   {got:10.3f}   {want:14.3f}   ({got / want - 1:+.2%})")
 
@@ -171,7 +171,7 @@ def main() -> None:
                      "reprocessed 2023-2025 (variable EM summed over lct)")
         ds.method = ("conservative remap of monthly g C per cell to the cubed "
                      "sphere; daily by monthly-midpoint interpolation with exact "
-                     "per-month renormalization; C -> CO2 with 44/12 to match the "
+                     "per-month renormalization; C -> CO2 with M(CO2)/M(C) to match the "
                      "TRENDY drivers")
         ds.history = f"created {dt.datetime.now(dt.timezone.utc).isoformat()} by " \
                      "scripts/preprocessing/prepare_gfed5_fire_flux.py"

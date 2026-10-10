@@ -523,7 +523,7 @@
         },
         "variable": {
           "type": "string",
-          "description": "Flux variable. Required for kind = \"file\" and \"cs_native\"; named kinds default to their inventory variable. Per-second densities are read as kg species m^-2 s^-1; kgC m^-2 s^-1 (times 44/12), kgCO2/month/m2 and annual Tonnes per cell are converted."
+          "description": "Flux variable. Required for kind = \"file\" and \"cs_native\"; named kinds default to their inventory variable. Per-second densities are read as kg species m^-2 s^-1; kgC m^-2 s^-1 (times M(CO2)/M(C) = 3.66419), kgCO2/month/m2 and annual Tonnes per cell are converted."
         },
         "time_index": {
           "type": "integer",

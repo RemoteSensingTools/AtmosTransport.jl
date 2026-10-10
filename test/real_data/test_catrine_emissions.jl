@@ -76,7 +76,7 @@ else
         # CO2 land flux can be either sign (net source or sink).
         @test minimum(f.raw) < 0    # at least one sink cell
         @test maximum(f.raw) > 0    # at least one source cell
-        # Peak ~1.4 µg/m²/s after the kgC→kgCO2 (×44/12) conversion;
+        # Peak ~1.4 µg/m²/s after the kgC→kgCO2 (× M(CO2)/M(C)) conversion;
         # plausible for tropical biome cells.
         @test maximum(abs, f.raw) < 1e-5
         # Total net rate should be smaller than gross CO2 cycle.

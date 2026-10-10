@@ -59,7 +59,7 @@ these files reuse. The parent overview is [`../README.md`](../README.md).
 | `gridfed_fossil_co2` | GridFED `TOTAL`; needs `time_index` or `month` | kgCO2/month/m2 ÷ month length; year from `year`, time units, or file name | CS, 12 monthly slices |
 | `edgar_sf6` | EDGAR v8 `emissions` | tonnes per cell per year ÷ cell area ÷ 365.25 d | no |
 | `zhang_rn222` | Zhang `rnemis`; `month` (default 1) | per-second units | no |
-| `lmdz_co2` | CAMS `flux_apos` | kgC ×44/12; static path averages all time slices | CS |
+| `lmdz_co2` | CAMS `flux_apos` | kgC × M(CO2)/M(C) ≈ 3.66419; static path averages all time slices | CS |
 | `cs_native` | none; needs `file`, `variable` | kg species or kgC m⁻² s⁻¹ on the runtime cube | CS, required |
 | `file` | none; needs `file`, `variable` | units must be per second, or one of the forms above | no |
 

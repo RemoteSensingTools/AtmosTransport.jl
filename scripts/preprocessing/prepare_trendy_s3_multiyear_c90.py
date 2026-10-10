@@ -7,8 +7,8 @@ daily-mean file per model spanning 2018-01-01 to 2024-12-31 (TRENDY v14 ends
 2024-12), matching the SIF-GPP experiment's format: variables on the GEOS
 native C90 cubed sphere, kg CO2 m-2 s-1 per total cell area, negative = uptake.
 
-  GPP_CO2_FLUX   -gpp * 44/12            (<= 0)
-  TER_CO2_FLUX   +(ra + rh) * 44/12      (>= 0, emission)
+  GPP_CO2_FLUX   -gpp * M(CO2)/M(C)            (<= 0)
+  TER_CO2_FLUX   +(ra + rh) * M(CO2)/M(C)      (>= 0, emission)
   NEE_CO2_FLUX   TER + GPP               (annually near-balanced net flux)
 
 Daily means come from linear interpolation between monthly midpoints followed
@@ -155,7 +155,7 @@ def main():
 
         def pgc(f, m):
             return float((f[m].astype(np.float64) * area[None, :]).sum()) \
-                * 86400.0 * (12.0 / 44.0) / 1e12
+                * 86400.0 / T.KG_CO2_PER_KG_C / 1e12
 
         print(f"[{model}]  year    GPP      TER      NEE   (PgC; NEE<0 = net uptake"
               " in atmospheric sign: value shown is carbon removed)")

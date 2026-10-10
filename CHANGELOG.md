@@ -158,6 +158,13 @@
 
 ### Numerical changes
 
+- Carbon-mass fluxes (`kgC m-2 s-1`, the CAMS/LMDZ inventories) become CO₂ by
+  the molar-mass ratio `M(CO2)/M(C)` = 44.0095/12.0107 ≈ 3.66419
+  (`CARBON_MOLAR_MASS`, the IUPAC value consistent with `SPECIES_MOLAR_MASS.co2`),
+  which conserves carbon atoms, instead of 44/12. These fluxes are 0.068 % lower
+  than before; GEOS-Chem's HEMCO uses `CTOCO2 = 3.6667` (44/12).
+  The Python flux preprocessors (TRENDY, FLUXCOM-X, SIF-GPP, GFED5) use the
+  same ratio; drivers they wrote before are 0.068 % higher until regenerated.
 - Lat-lon preprocessing uses the cubed-sphere positivity gate (owner's
   decision, 2026-10-10): the palindrome outflow `2 (out_x + out_y + out_z)`
   against `min(m, m_next)`, one shared implementation, instead of each
@@ -490,7 +497,7 @@
   `GCP-GridFEDv2024.0_2021.short.nc` was read as 2024, a leap year; it is now
   2021, so static February GridFED rates rise by 29/28.
 - `cs_native` fluxes accept only kg m-2 s-1 units (of the species, or kgC
-  converted by 44/12), reject fill values, and must match the runtime mesh
+  converted by M(CO2)/M(C)), reject fill values, and must match the runtime mesh
   when the file carries `cell_area`.
 - `[vertical].level_selection` presets are rejected on sources without 137
   native levels, and `[vertical].coefficients_file` is honoured as an alias of

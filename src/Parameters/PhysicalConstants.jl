@@ -54,6 +54,15 @@ mixing ratios to and from mass: CO₂ (IUPAC atomic weights), SF₆ and ²²²Rn
 const SPECIES_MOLAR_MASS = (co2 = 44.0095e-3, sf6 = 146.055e-3, rn222 = 222.0e-3)
 
 """
+Molar mass of carbon [kg mol⁻¹] (IUPAC 2007 standard atomic weight, the value
+behind `SPECIES_MOLAR_MASS.co2 = 12.0107 + 2 × 15.9994`). Carbon-mass fluxes
+(kgC) become CO₂-mass fluxes by `SPECIES_MOLAR_MASS.co2 / CARBON_MOLAR_MASS`
+≈ 3.66419, which conserves carbon atoms; GEOS-Chem's HEMCO uses the scale factor
+`CTOCO2 = 3.6667` (44/12), 0.068 % more.
+"""
+const CARBON_MOLAR_MASS = 12.0107e-3
+
+"""
 TM5's physical constants, used by the port of TM5's boundary-layer diffusion
 (`tm5_bldiff.jl`): gravity [m s⁻²], dry-air heat capacity and gas constant
 (`Rgas · 1000 / 28.94`, TM5 `binas.F90`) and water-vapour gas constant
@@ -76,4 +85,5 @@ const GEOSCHEM_CONSTANTS = (gravity = 9.80665, r_dry = 287.0, cp_dry = 1004.64, 
 
 export EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_PRESSURE, R_DRY_AIR, CP_OVER_R_DIATOMIC,
        CP_DRY_AIR, DRY_AIR_MOLAR_MASS, THETA_REFERENCE_PRESSURE, AVOGADRO,
-       VIRTUAL_TEMPERATURE_FACTOR, SPECIES_MOLAR_MASS, TM5_CONSTANTS, GEOSCHEM_CONSTANTS
+       VIRTUAL_TEMPERATURE_FACTOR, SPECIES_MOLAR_MASS, CARBON_MOLAR_MASS, TM5_CONSTANTS,
+       GEOSCHEM_CONSTANTS

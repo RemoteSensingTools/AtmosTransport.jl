@@ -34,7 +34,9 @@ from scipy.spatial import cKDTree
 
 
 R_EARTH = 6_371_000.0
-KG_CO2_PER_KG_C = 44.0 / 12.0
+# M(CO2)/M(C) from IUPAC 2007 atomic weights, as AtmosTransport.Parameters
+# (SPECIES_MOLAR_MASS.co2 / CARBON_MOLAR_MASS): conserves carbon atoms.
+KG_CO2_PER_KG_C = 44.0095 / 12.0107
 SECONDS_PER_DAY = 86_400.0
 DEFAULT_ROOT = Path("/kiwi-data/Data/model/TRENDYv14/S3")
 DEFAULT_GEOMETRY = Path(

@@ -25,7 +25,8 @@ from scipy.spatial import cKDTree
 
 
 R_EARTH = 6_371_000.0
-KG_CO2_PER_G_C = 1.0e-3 * 44.0 / 12.0
+# M(CO2)/M(C) from IUPAC 2007 atomic weights, as AtmosTransport.Parameters.
+KG_CO2_PER_G_C = 1.0e-3 * 44.0095 / 12.0107
 
 
 def xyz(lat_deg: np.ndarray, lon_deg: np.ndarray) -> np.ndarray:
