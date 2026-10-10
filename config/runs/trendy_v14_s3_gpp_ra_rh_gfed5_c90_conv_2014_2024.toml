@@ -1,0 +1,257 @@
+# TRENDYv14 S3 GPP/Ra/Rh/NEE plus GFED5 fire, GEOS C90 with TM5 convection,
+# 2014-09-01 .. 2024-12-31 (OCO-2 record starts 2014-09-06; TRENDY ends 2024-12).
+#
+# Same 12 TRENDY tracers as trendy_v14_s3_gpp_ra_rh_c90_2014_2024.toml (CLM,
+# JULES-ES, ORCHIDEE x GPP/Ra/Rh/NEE) plus one GFED5 fire tracer, now driven by
+# the C90/L66 ERA5 archive with the TM5 convection mass fluxes attached
+# (`_v3`, correct level order). Guide: docs/memos/2026-10-05_trendy_rerun_guide.md.
+#
+# Every tracer starts from a uniform carrier; subtract it before analysis:
+#   GPP 1300 ppm (draws down up to ~770 ppm), Ra/Rh 10 ppm (only rise),
+#   NEE 200 ppm (drifts -30..-60 ppm), fire 10 ppm (~+16 ppm over the window).
+# NEE = TER + GPP is transported directly instead of differencing the large
+# GPP carrier (limited PPM is not exactly linear, so component sums are only
+# approximate). TRENDY NEE has no fire; land response including fire is
+# approximately (NEE - 200) + (fire - 10) ppm.
+#
+# Fluxes (kg CO2 m-2 s-1, positive to the atmosphere, daily, same C90 grid):
+#   TRENDY: scripts/preprocessing/prepare_trendy_s3_multiyear_c90.py
+#   GFED5:  scripts/preprocessing/prepare_gfed5_fire_flux.py --tag c90
+#
+# Output goes to $ATMOSTRANSPORT_DATA_ROOT/output/ (default ~/data/AtmosTransport).
+# Measured 3-day smoke on one L40S (2026-10-05): ~39 s per simulated day and
+# ~42 GB of GPU memory in Float64, so the full run takes ~40 h and needs a
+# whole 46 GB card (measured when every flux slice from 2014-01-01 was loaded).
+# Each cs_native tracer keeps its flux variable's series for the run period on
+# the GPU (1.5 GB in Float64 for the full run); add tracers only in Float32 or
+# as a separate job.
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+# Float64 closes tracer budgets. Float32 is 2.5x faster but loses 1.4e-8 of
+# each carrier per hour (~1.6 ppm of the GPP carrier over this window).
+float_type = "Float64"
+
+[input]
+folder = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour_v3"
+start_date = "2014-09-01"
+end_date = "2024-12-31"
+file_pattern = "era5_n320_transport_{YYYYMMDD}_float32.bin"
+
+[advection]
+scheme = "ppm"
+
+[diffusion]
+kind = "tm5_dkg"
+surface_flux_boundary = true
+
+[convection]
+kind = "tm5"
+tile_workspace_gib = 0.25
+use_collab_lu = true
+lmax_conv = 66
+n_merge = 1
+
+[tracers.co2_clm_gpp]
+  [tracers.co2_clm_gpp.init]
+  kind = "uniform"
+  background = 1.3e-3
+
+  [tracers.co2_clm_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_clm_ra]
+  [tracers.co2_clm_ra.init]
+  kind = "uniform"
+  background = 1.0e-5
+
+  [tracers.co2_clm_ra.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
+  variable = "RA_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_clm_rh]
+  [tracers.co2_clm_rh.init]
+  kind = "uniform"
+  background = 1.0e-5
+
+  [tracers.co2_clm_rh.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
+  variable = "RH_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_clm_nee]
+  [tracers.co2_clm_nee.init]
+  kind = "uniform"
+  background = 2.0e-4
+
+  [tracers.co2_clm_nee.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
+  variable = "NEE_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_jules_es_gpp]
+  [tracers.co2_jules_es_gpp.init]
+  kind = "uniform"
+  background = 1.3e-3
+
+  [tracers.co2_jules_es_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_JULES-ES_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_jules_es_ra]
+  [tracers.co2_jules_es_ra.init]
+  kind = "uniform"
+  background = 1.0e-5
+
+  [tracers.co2_jules_es_ra.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_JULES-ES_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
+  variable = "RA_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_jules_es_rh]
+  [tracers.co2_jules_es_rh.init]
+  kind = "uniform"
+  background = 1.0e-5
+
+  [tracers.co2_jules_es_rh.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_JULES-ES_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
+  variable = "RH_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_jules_es_nee]
+  [tracers.co2_jules_es_nee.init]
+  kind = "uniform"
+  background = 2.0e-4
+
+  [tracers.co2_jules_es_nee.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_JULES-ES_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
+  variable = "NEE_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_orchidee_gpp]
+  [tracers.co2_orchidee_gpp.init]
+  kind = "uniform"
+  background = 1.3e-3
+
+  [tracers.co2_orchidee_gpp.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_ORCHIDEE_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
+  variable = "GPP_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_orchidee_ra]
+  [tracers.co2_orchidee_ra.init]
+  kind = "uniform"
+  background = 1.0e-5
+
+  [tracers.co2_orchidee_ra.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_ORCHIDEE_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
+  variable = "RA_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_orchidee_rh]
+  [tracers.co2_orchidee_rh.init]
+  kind = "uniform"
+  background = 1.0e-5
+
+  [tracers.co2_orchidee_rh.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_ORCHIDEE_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
+  variable = "RH_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_orchidee_nee]
+  [tracers.co2_orchidee_nee.init]
+  kind = "uniform"
+  background = 2.0e-4
+
+  [tracers.co2_orchidee_nee.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_ORCHIDEE_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
+  variable = "NEE_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[tracers.co2_gfed5_fire]
+  [tracers.co2_gfed5_fire.init]
+  kind = "uniform"
+  background = 1.0e-5
+
+  [tracers.co2_gfed5_fire.surface_flux]
+  kind = "cs_native"
+  file = "/temp1/cfranken/sif_gpp_iav/fluxes/gfed5/GFED5_fire_daily_co2flux_c90_2014_2024.nc"
+  variable = "FIRE_CO2_FLUX"
+  molar_mass_kg_mol = 0.0440095
+  time_varying = true
+  temporal_scheme = "stepwise"
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 24
+path = "$ATMOSTRANSPORT_DATA_ROOT/output/trendy_gfed5_c90_conv/trendy_gfed5_c90_conv_{YYYYMMDD}.nc"
+deflate_level = 1
+shuffle = true
+
+[output.fields]
+tracers = [
+  "co2_clm_gpp",
+  "co2_clm_ra",
+  "co2_clm_rh",
+  "co2_clm_nee",
+  "co2_jules_es_gpp",
+  "co2_jules_es_ra",
+  "co2_jules_es_rh",
+  "co2_jules_es_nee",
+  "co2_orchidee_gpp",
+  "co2_orchidee_ra",
+  "co2_orchidee_rh",
+  "co2_orchidee_nee",
+  "co2_gfed5_fire",
+]
+layers = "none"
+column_mean = true
+column_mass_per_area = false
+air_mass_layers = "none"
+air_mass = false
+air_mass_per_area = false
+column_air_mass_per_area = false
