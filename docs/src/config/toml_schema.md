@@ -298,11 +298,11 @@ replay the first day's slices — the cause of the historical co2_natural
 When `[input]` gives `start_date`, only the slices the run can use are read:
 from the last slice at or before the run start to the first slice at or after
 the run end. The run end is the end of the binaries' windows (read from every
-binary's header) or, if later, the end of `end_date`. Every listed file's time axis is
+binary's header). Every listed file's time axis is
 read, but flux data only for those slices. Every temporal scheme blends only
 the two slices around a time, so results are unchanged. A binary that runs past
-that end stops the run with an error before it starts. Without `start_date`
-every slice is read.
+that end stops the run with an error before it starts. Time-varying sources
+require `start_date`.
 
 For an already aligned GEOS-native cubed-sphere inventory, use
 `kind = "cs_native"`, `time_varying = true`, `file`, and `variable`.

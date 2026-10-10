@@ -55,6 +55,21 @@
 
 ### Fixes
 
+- Time-varying surface fluxes without `[input].start_date` took their time
+  origin from the file: the first slice for decoded dates, the CF units origin
+  for raw numbers. A run on a mid-month binary then read the month's first
+  days. They now require `start_date` (`validate_config` reports its absence).
+  All 61 shipped configs with time-varying fluxes set it; the two golden cases
+  that did not (`run_c90_merra2`, `run_c90_era5_tm5`, on 2022-01-15) now set
+  it, so their 3-hourly LMDZ fluxes come from January 15 instead of January 1.
+- Surface-flux files in per-second units must be in kg of the species per m²
+  per second (`kg m-2 s-1`, `kg/m2/s`, `kgCO2/m2/s`, ...); other per-second
+  units such as `mol m-2 s-1`, and files without units, were read unconverted
+  and are now rejected. Every shipped flux file passes.
+- With `binary_paths`, `[input] end_date` was reported as unread but still
+  widened the span of loaded time-varying flux slices; the span is now the
+  run's windows, also with `folder` (where every day through `end_date` has a
+  binary, so nothing changes there).
 - File-based initial conditions took their vertical order from the values
   of the level coordinate and copied levels one to one when the counts
   matched. A surface-first file with hybrid coefficients and the model's

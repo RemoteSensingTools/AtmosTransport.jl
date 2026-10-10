@@ -32,7 +32,7 @@
         },
         "end_date": {
           "allOf": [{"$ref": "#/definitions/date"}],
-          "description": "Last day of the run (inclusive). Time-varying surface fluxes are loaded through the end of this day or the last binary window, whichever is later."
+          "description": "Last day of the run (inclusive), with folder: every day from start_date through end_date needs one binary."
         },
         "file_pattern": {
           "type": "string",
@@ -548,7 +548,7 @@
         "time_varying": {
           "type": "boolean",
           "default": false,
-          "description": "Cubed sphere only: step through the inventory's time slices, counted from [input].start_date at 00:00 UTC; set start_date (without it the origin depends on how the file's time axis decodes). Supported by lmdz_co2, gridfed_fossil_co2 and cs_native (required there); false uses one static field."
+          "description": "Cubed sphere only: step through the inventory's time slices, counted from [input].start_date at 00:00 UTC (required). Supported by lmdz_co2, gridfed_fossil_co2 and cs_native (required there); false uses one static field."
         },
         "temporal_scheme": {
           "type": "string",

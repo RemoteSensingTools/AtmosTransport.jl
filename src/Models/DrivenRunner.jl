@@ -311,7 +311,7 @@ end
 # Parse the run start as a `DateTime` (at 00:00) from `[input].start_date`,
 # used as the `reference_time` for time-varying surface fluxes so their slice
 # times align to the simulation clock. Returns `nothing` if no start_date is
-# present (the time-varying loader then assumes the file origin == run start).
+# present (`validate_config` then rejects time-varying surface fluxes).
 function _run_reference_time(cfg)
     input_cfg = get(cfg, "input", nothing)
     input_cfg isa AbstractDict || return nothing
@@ -321,25 +321,16 @@ end
 
 # Run interval `(0, t_end)` in seconds since the run start; time-varying flux
 # files are read only where the run can use them. `t_end` is the end of the
-# run's windows (`run_hours`, from every binary's header) or, when `[input]`
-# gives both dates, the inclusive `end_date` if that is later, plus 1 s for
-# rounding in the accumulated Float64 run clock. `_check_flux_run_span` guards
-# against a binary that ends later anyway. Without `start_date`
-# (`_flux_run_span` returns `nothing`) the loaders read every slice and
-# nothing is checked.
-function _run_time_span(cfg, run_hours::Real)
-    t_end = 3600 * Float64(run_hours)
-    input_cfg = get(cfg, "input", nothing)
-    if input_cfg isa AbstractDict && haskey(input_cfg, "start_date") && haskey(input_cfg, "end_date")
-        t0 = DateTime(Date(String(input_cfg["start_date"])))
-        t1 = DateTime(Date(String(input_cfg["end_date"]))) + Day(1)
-        t_end = max(t_end, Dates.value(t1 - t0) / 1000.0)
-    end
-    return (0.0, t_end + 1.0)
-end
+# run's windows (`run_hours`, from every binary's header) plus 1 s for rounding
+# in the accumulated Float64 run clock; `_check_flux_run_span` guards against a
+# binary that ends later anyway. `[input] end_date` adds nothing: with `folder`
+# every day through it has a binary, and with `binary_paths` it is not read.
+# Without `start_date` (`_flux_run_span` returns `nothing`) there are no
+# time-varying fluxes to check: `validate_config` requires the date for them.
+_run_time_span(run_hours::Real) = (0.0, 3600 * Float64(run_hours) + 1.0)
 
 _flux_run_span(cfg, run_hours::Real) =
-    _run_reference_time(cfg) === nothing ? nothing : _run_time_span(cfg, run_hours)
+    _run_reference_time(cfg) === nothing ? nothing : _run_time_span(run_hours)
 
 # A binary whose windows end after the loaded flux interval would silently hold
 # the last loaded slice; fail before it runs.
@@ -349,7 +340,7 @@ function _check_flux_run_span(run_span, binary_end_s::Real, surface_sources, pat
     binary_end_s <= run_span[2] || throw(ArgumentError(
         "$(basename(path)) runs to $(binary_end_s) s after the run start, past the " *
         "$(run_span[2]) s for which time-varying surface fluxes were loaded " *
-        "(the binaries' windows or [input].end_date)."))
+        "(the binaries' windows)."))
     return nothing
 end
 

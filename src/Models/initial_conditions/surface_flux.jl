@@ -263,6 +263,30 @@ function _resolve_timevarying_surface_flux_files(
     return files, variable
 end
 
+# Per-second flux units taken as kg of the species per m² per second (after
+# `_normalize_units_string`): "kg m-2 s-1", "kg/m2/s", "kgCO2/m2/s",
+# "kg(CO2) m^-2 s^-1", ... Molar, missing and other units are rejected rather
+# than read unconverted.
+const _KG_PER_M2_S = r"^kg(\(?[a-z][a-z0-9]*\)?)?(/m2/s|m-2s-1|/m2s|/s/m2|s-1m-2)$"
+_is_kg_per_m2_s(units_norm::AbstractString) = occursin(_KG_PER_M2_S, units_norm)
+
+# Species factor of a per-second flux: 1 for kg of the species, 44/12 for kg of
+# carbon (`kgC m-2 s-1`, CAMS/LMDZ) to kg of CO2. Anything else is an error.
+# Time-varying fluxes place their slices on the run clock, which needs the run's
+# first day (`[input].start_date`).
+_require_reference_time(reference_time) = reference_time === nothing && throw(ArgumentError(
+    "time-varying surface fluxes need the run start: set [input].start_date"))
+
+function _per_second_flux_scale(units_norm::AbstractString, file)
+    m = match(_KG_PER_M2_S, units_norm)
+    m === nothing && throw(ArgumentError(
+        "unsupported surface-flux units '$(units_norm)' in $(file); expected kg (of the species) " *
+        "m-2 s-1 or kgC m-2 s-1 (or, for named sources, kgCO2/month/m2 or Tonnes); convert " *
+        "molar, gram or missing units first"))
+    species = m.captures[1] === nothing ? "" : strip(m.captures[1], ['(', ')'])
+    return species == "c" ? 44.0 / 12.0 : 1.0
+end
+
 function _normalize_units_string(units)
     units_str = String(units)
     return lowercase(replace(strip(units_str), " " => "", "^" => "", "²" => "2"))
@@ -354,12 +378,9 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}; radius::Real = EARTH_RAD
                 raw[i, j] = a > 0 ? FT(1000 * Float64(raw[i, j]) /
                                        (a * seconds_per_year)) : zero(FT)
             end
-        elseif kind === :lmdz_co2 || units_norm in ("kgcm-2s-1", "kgc/m2/s", "kgcm2s-1")
-            # CAMS / LMDZ flux is reported in kg of CARBON per m² per s.
-            # Multiply by 44/12 = M(CO2)/M(C) to convert to kg of CO2.
-            raw .*= FT(44.0 / 12.0)
-        elseif !(isempty(units_norm) || occursin("/s", units_norm) || occursin("s-1", units_norm))
-            throw(ArgumentError("unsupported surface-flux units '$units_norm' in $file; expected kgCO2/month/m2, Tonnes, kgC/m2/s, or per-second flux units"))
+        else
+            # Per-second fluxes by their units (CAMS/LMDZ: kgC, converted to CO2).
+            raw .*= FT(_per_second_flux_scale(units_norm, file))
         end
 
         raw .*= FT(get(cfg, "scale", 1.0))
@@ -376,6 +397,7 @@ end
 # cases. Returns a `Vector{Float64}` (ascending after the caller sorts).
 function _surface_flux_times_seconds(time_vals, units::AbstractString,
                                      reference_time::Union{DateTime, Nothing})
+    _require_reference_time(reference_time)
     n = length(time_vals)
     times_sec = Vector{Float64}(undef, n)
 
@@ -395,20 +417,14 @@ function _surface_flux_times_seconds(time_vals, units::AbstractString,
                        unit_word in ("day", "days", "d")                ? 86400.0 :
                        throw(ArgumentError("time-varying surface flux: unsupported time unit '$(unit_word)'"))
         origin = _parse_cf_time_origin(strip(m.captures[2]))
-        ref = reference_time === nothing ? origin : reference_time
-        ref_offset_sec = Dates.value(origin - ref) / 1000.0   # ms → s
+        ref_offset_sec = Dates.value(origin - reference_time) / 1000.0   # ms → s
         for k in 1:n
             times_sec[k] = ref_offset_sec + Float64(time_vals[k]) * per_unit_sec
         end
     else
         # Date-like (DateTime / CFTime). Convert each to a DateTime and diff.
-        if reference_time === nothing
-            ref = DateTime(sample)   # assume file origin == run start (first slice)
-        else
-            ref = reference_time
-        end
         for k in 1:n
-            times_sec[k] = Dates.value(DateTime(time_vals[k]) - ref) / 1000.0
+            times_sec[k] = Dates.value(DateTime(time_vals[k]) - reference_time) / 1000.0
         end
     end
     return times_sec
@@ -483,12 +499,8 @@ function _load_single_timevarying_surface_flux_field(
             @inbounds for (out, month) in enumerate(keep)
                 raw[:, :, out] ./= FT(_days_in_month(source_year, month) * 86400.0)
             end
-        elseif kind === :lmdz_co2 || units_norm in ("kgcm-2s-1", "kgc/m2/s", "kgcm2s-1")
-            raw .*= FT(44.0 / 12.0)   # kgC → kgCO2
-        elseif !(isempty(units_norm) || occursin("/s", units_norm) || occursin("s-1", units_norm))
-            throw(ArgumentError(
-                "time-varying surface flux: unsupported units '$units_norm' in $file; " *
-                "expected kgC/m2/s or per-second flux units"))
+        else
+            raw .*= FT(_per_second_flux_scale(units_norm, file))   # kgC → kgCO2 by units
         end
         raw .*= FT(get(cfg, "scale", 1.0))
 
@@ -528,9 +540,9 @@ _timevarying_slice_seconds(time_var::AbstractString, ds, cfg, kind::Symbol, file
                                 reference_time)
 function _timevarying_slice_seconds(::Nothing, ds, cfg, kind::Symbol, file, reference_time)
     kind === :gridfed_fossil_co2 || throw(ArgumentError("could not find time coordinate in $file"))
+    _require_reference_time(reference_time)
     source_year = _surface_flux_year(cfg, file, ds)
-    ref = reference_time === nothing ? DateTime(source_year, 1, 1) : reference_time
-    return [Dates.value(DateTime(source_year, month, 1) - ref) / 1000.0 for month in 1:12]
+    return [Dates.value(DateTime(source_year, month, 1) - reference_time) / 1000.0 for month in 1:12]
 end
 
 # Slice times of one file, read from its time axis without its data.
@@ -570,8 +582,7 @@ files (`file_pattern` with `{YYYYMM}`, for `year` or the run-start year).
 Slices from all files are concatenated and sorted by time; timestamps must be
 unique and every file must share one lon/lat grid. Units are converted per
 slice to kg species m⁻² s⁻¹ (GridFED monthly totals use each month's length).
-When `reference_time === nothing`, each file's own time origin is taken as
-the run start and a warning is emitted. With `run_span = (t_start, t_end)`
+A `reference_time` (the run start) is required. With `run_span = (t_start, t_end)`
 (seconds since the run start) and a `reference_time`, every file's time axis
 is read but flux data only for the slices in
 `_needed_slice_window(times, run_span)`, which are returned; otherwise every
@@ -582,11 +593,9 @@ function _load_timevarying_surface_flux_field(cfg, ::Type{FT},
                                               run_span = nothing) where FT
     kind = _surface_flux_kind(cfg)
     kind === :none && return nothing
-    reference_time === nothing && @warn(
-        "time-varying surface flux: no reference_time supplied; assuming the file's " *
-        "time origin equals the run start (first slice → t=0).")
+    _require_reference_time(reference_time)
     all_files, variable = _resolve_timevarying_surface_flux_files(cfg, kind, reference_time)
-    files, slices = if run_span === nothing || reference_time === nothing
+    files, slices = if run_span === nothing
         all_files, fill(nothing, length(all_files))
     else
         file_times = [_timevarying_file_seconds(cfg, reference_time, f) for f in all_files]

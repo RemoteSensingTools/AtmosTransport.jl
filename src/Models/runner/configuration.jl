@@ -260,6 +260,7 @@ end
 function _check_physics_and_output_settings!(cfg, FT, errors)
     _check_input_expectations!(get(cfg, "input", nothing), errors)
     _check_surface_flux_sources!(get(cfg, "tracers", nothing), errors)
+    _check_time_varying_flux_origin!(cfg, errors)
     _capture_config_error!(() -> advection_spec(_advection_section(cfg)), errors)
     _capture_config_error!(() -> binary_cfl_check(cfg), errors)
     _capture_config_error!(() -> run_logging(cfg), errors)
@@ -325,6 +326,24 @@ function _check_surface_flux_sources!(tracers, errors)
         sf isa AbstractDict || continue
         _capture_config_error!(() -> _surface_flux_kind(sf), errors)
         haskey(sf, "regridding") && _capture_config_error!(() -> _regridding_method(sf), errors)
+    end
+    return errors
+end
+
+# Time-varying surface fluxes place their slices on the run clock, which needs
+# the run's first day: without `[input].start_date` there is no calendar anchor.
+function _check_time_varying_flux_origin!(cfg, errors)
+    tracers = get(cfg, "tracers", nothing)
+    tracers isa AbstractDict || return errors
+    input = get(cfg, "input", nothing)
+    input isa AbstractDict && haskey(input, "start_date") && return errors
+    for (name, tracer) in pairs(tracers)
+        tracer isa AbstractDict || continue
+        sf = get(tracer, "surface_flux", nothing)
+        sf = sf === nothing ? _tracer_surface_flux_cfg(tracer) : sf
+        sf isa AbstractDict && get(sf, "time_varying", false) === true &&
+            push!(errors, "tracers.$(name): a time-varying surface flux needs [input].start_date " *
+                          "(the run's first day) to place its time slices")
     end
     return errors
 end

@@ -131,6 +131,11 @@ end
                   bad(c -> c["advection"] = Dict("scheme" => "linrood", "check_binary_cfl" => true)))
         @test any(contains("belongs in [advection]"), bad(c -> c["run"] = Dict("check_binary_cfl" => true)))
         @test isempty(bad(c -> c["advection"] = Dict("scheme" => "ppm", "check_binary_cfl" => true)))
+        varying = Dict{String, Any}("co2" => Dict{String, Any}(
+            "init" => Dict("kind" => "uniform"),
+            "surface_flux" => Dict{String, Any}("kind" => "lmdz_co2", "time_varying" => true)))
+        @test any(contains("needs [input].start_date"), bad(c -> c["tracers"] = varying))
+        @test isempty(bad(c -> (c["tracers"] = varying; c["input"]["start_date"] = "2021-12-01")))
         @test any(contains("[logging] must be a TOML table"), bad(c -> c["logging"] = "quiet"))
         @test any(contains("[checks] must be a TOML table"), bad(c -> c["checks"] = true))
         @test any(contains("[logging].level"), bad(c -> c["logging"] = Dict("level" => "loud")))

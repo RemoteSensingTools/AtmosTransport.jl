@@ -7,6 +7,7 @@
 
 [input]
 binary_paths = ["/temp1/cfranken/goldens/inputs/era5_n320_transport_20220115_float32.bin"]
+start_date = "2022-01-15"                # run origin of the time-varying fluxes
 
 [architecture]
 use_gpu = true
