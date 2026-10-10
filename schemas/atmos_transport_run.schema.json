@@ -243,6 +243,38 @@
     "init": {
       "$ref": "#/definitions/initial_condition",
       "description": "Legacy single-tracer initial condition, used only when [tracers] is absent on structured grids."
+    },
+    "logging": {
+      "type": "object",
+      "description": "How much the run reports.",
+      "additionalProperties": true,
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["debug", "info", "warn", "error"],
+          "description": "Minimum log level of the run, validation included: warn is concise, debug verbose. Omitted: the current logger's level applies (info for scripts/run_transport.jl)."
+        },
+        "progress": {
+          "type": "string",
+          "enum": ["bar", "lines", "none"],
+          "default": "bar",
+          "description": "Progress over met windows: a redrawn bar (terminals), one log line every progress_interval_windows windows (batch logs), or none."
+        },
+        "progress_interval_windows": {"type": "integer", "minimum": 1, "default": 24}
+      }
+    },
+    "checks": {
+      "type": "object",
+      "description": "Runtime checks of the model state.",
+      "additionalProperties": true,
+      "properties": {
+        "nan_check": {
+          "type": "boolean",
+          "default": true,
+          "description": "Stop the run with an error when the air mass or a tracer holds a NaN or Inf."
+        },
+        "nan_check_interval_windows": {"type": "integer", "minimum": 1, "default": 1}
+      }
     }
   },
   "definitions": {

@@ -36,10 +36,14 @@ how a TOML option reaches an operator, is [`../README.md`](../README.md).
     `_observe_window_end!` drive the sampler.
   - `_check_observation_time_origin` and `_check_observation_tracers` are used
     by `validate_config`.
-- Progress in [`progress.jl`](progress.jl): `RunProgressTimer`,
-  `timed_io_read!`, `timed_transport!`, `timed_io_write!`, `tick_window!`,
+- Progress in [`progress.jl`](progress.jl): `RunProgressTimer` with its
+  reporter (`ProgressBar`, `ProgressLines`, `NoProgress`), `timed_io_read!`,
+  `timed_transport!`, `timed_io_write!`, `tick_window!`,
   `set_progress_status!`, `summarize_progress!`, `stop_compile_timing!` (the
   runners call it in `finally`, so compile timing is released on errors)
+- Logging and checks in [`logging.jl`](logging.jl): `run_logging` (`[logging]`
+  → `RunLogging`) and `run_checks` (`[checks]` → callbacks); the log level
+  itself is applied by `LogLevels.with_log_level` around the whole run
 - Startup log in [`summary.jl`](summary.jl): `_log_runtime_summary`
 
 ## File Map
@@ -63,9 +67,11 @@ how a TOML option reaches an operator, is [`../README.md`](../README.md).
   temperature
 - [`resources.jl`](resources.jl) — `_with_run_resource`, `RunInputResources`
   (drains window prefetch, closes the driver, calls `release_payload!`)
-- [`progress.jl`](progress.jl) — progress bar with io_read / transport /
-  io_write wall-clock accumulators; the end-of-run summary adds GC time, JIT
-  compilation time and allocated memory over the run
+- [`progress.jl`](progress.jl) — progress reporters (bar, log lines or none)
+  with io_read / transport / io_write wall-clock accumulators; the end-of-run
+  summary adds GC time, JIT compilation time and allocated memory over the run
+- [`logging.jl`](logging.jl) — `[logging]` (log level, progress reporter) and
+  `[checks]` (the NaN checker callback)
 - [`summary.jl`](summary.jl) — diffusion and schedule labels, multi-line runtime
   summary
 

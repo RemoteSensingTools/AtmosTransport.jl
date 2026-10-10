@@ -64,10 +64,11 @@ aborts the run with a precise error message.
 module DrivenRunner
 
 using Adapt
-using ..Models: _config_bool
+using ..Models: _config_bool, _spec_int, Callback, NaNChecker, WindowInterval
 using Dates: Dates, Date, DateTime, Day, Millisecond, Time, @dateformat_str
 using Printf: @sprintf, @printf
 using Logging
+using ...LogLevels: log_level, with_log_level
 using ProgressMeter: Progress, next!, finish!, update!
 
 import ...expand_data_path
@@ -131,6 +132,7 @@ using ..Models: advection_spec, diffusion_spec, convection_spec, chemistry_spec,
 export run_driven_simulation, validate_config, TransportTracerSpec
 
 include("runner/progress.jl")
+include("runner/logging.jl")
 include("runner/configuration.jl")
 include("runner/config_keys.jl")
 include("runner/summary.jl")
@@ -194,17 +196,27 @@ directly. The handoff to physics happens inside the structured loop at
 `TransportModel.step!` / `transport_step!` / `convection_chemistry_step!`.
 """
 function run_driven_simulation(cfg::AbstractDict)
-    ok, errors = validate_config(cfg)
-    ok || throw(ArgumentError(
-        "Invalid AtmosTransport run config:\n  - " * join(errors, "\n  - ")))
-    arch = _cfg_architecture(cfg)
-    ensure_runtime!(arch)
-    # Loading an optional GPU package adds its array and Adapt methods in a new
-    # Julia world. Enter the complete run implementation through `invokelatest`
-    # once, after that load, so every subsequent GPU operation sees those
-    # methods. This single startup trampoline keeps the hot loop on normal
-    # dispatch while making the library entry point safe without CLI preloading.
-    return Base.invokelatest(_run_driven_simulation, cfg, arch)
+    # The whole run, validation included, logs at `[logging] level`. An invalid
+    # level is reported by `validate_config`, which then runs at the default.
+    level = try
+        log_level(cfg)
+    catch err
+        err isa ArgumentError || rethrow()
+        nothing
+    end
+    return with_log_level(level) do
+        ok, errors = validate_config(cfg)
+        ok || throw(ArgumentError(
+            "Invalid AtmosTransport run config:\n  - " * join(errors, "\n  - ")))
+        arch = _cfg_architecture(cfg)
+        ensure_runtime!(arch)
+        # Loading an optional GPU package adds its array and Adapt methods in a new
+        # Julia world. Enter the complete run implementation through `invokelatest`
+        # once, after that load, so every subsequent GPU operation sees those
+        # methods. This single startup trampoline keeps the hot loop on normal
+        # dispatch while making the library entry point safe without CLI preloading.
+        Base.invokelatest(_run_driven_simulation, cfg, arch)
+    end
 end
 
 function _run_driven_simulation(cfg::AbstractDict, arch::AbstractArchitecture)
@@ -372,6 +384,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     air_mass_reset_mode = get(run_cfg, "air_mass_reset_mode", "preserve_tracer_mass")
     physics_cadence = get(run_cfg, "physics_cadence", nothing)
     prefetch_windows = _config_bool(run_cfg, "prefetch_windows", true, "[run].prefetch_windows")
+    callbacks = run_checks(cfg)
 
     init_cfg = get(cfg, "init", Dict{String, Any}())
     tracer_specs = something(_parse_tracer_specs(cfg),
@@ -423,7 +436,9 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                             offset_seconds = (start_window - 1) * Float64(window_dt(first_driver)),
                                             span_seconds = 3600 * run_hours)
     # Observation sampling needs the per-window loop even without snapshots.
-    do_windows = do_snapshots || samples_observations(sampler)
+    # Progress lines need the windows as they finish, so step window by window.
+    do_windows = do_snapshots || samples_observations(sampler) ||
+                 run_logging(cfg).progress isa ProgressLines
     flux_run_span = _flux_run_span(cfg, run_hours)
     surface_sources = build_surface_flux_sources(grid_of_first, tracer_specs, FT;
                                                  reference_time = _run_reference_time(cfg),
@@ -458,13 +473,9 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     snap_idx = 1
     total_elapsed_hours = 0.0
 
-    # Estimate total windows for the progress bar. Each daily binary has
-    # the same window count for a homogeneous run; multiplying gives a
-    # close-enough total. Use min(stop_window_override, ...) when set.
-    per_binary = stop_window_override === nothing ?
-                 total_windows(first_driver) - start_window + 1 :
-                 Int(stop_window_override) - start_window + 1
-    timer = RunProgressTimer(per_binary * length(binary_paths))
+    # The run's window count, from every binary's layout.
+    timer = RunProgressTimer(length(_window_end_hours(layout; start_window, stop_window_override));
+                             reporter = run_logging(cfg).progress)
     # The timer holds process-wide compile timing until `stop_compile_timing!`;
     # release it on every exit path, including a run that throws.
     try
@@ -520,6 +531,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                         air_mass_reset_mode = air_mass_reset_mode,
                                         physics_cadence = physics_cadence,
                                         prefetch_windows = prefetch_windows,
+                                        callbacks = callbacks,
                                         surface_sources = surface_sources,
                                         chemistry = recipe.chemistry,
                                         # seconds since RUN start — see the CS loop
@@ -687,6 +699,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     air_mass_reset_mode = get(run_cfg, "air_mass_reset_mode", "preserve_tracer_mass")
     physics_cadence = get(run_cfg, "physics_cadence", nothing)
     prefetch_windows = _config_bool(run_cfg, "prefetch_windows", true, "[run].prefetch_windows")
+    callbacks = run_checks(cfg)
 
     tracers_cfg = get(cfg, "tracers", Dict{String, Any}())
     isempty(tracers_cfg) && error("[tracers] must define at least one tracer")
@@ -824,12 +837,9 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     day_snapshots = AbstractSnapshotFrame[]
     snapshot_count = Ref(0)
 
-    # Progress + IO/Transport timer. Estimate total windows from the
-    # first driver; closes to the truth on homogeneous daily runs.
-    per_binary_estimate = stop_window_override === nothing ?
-                          total_windows(driver1) :
-                          min(Int(stop_window_override), total_windows(driver1))
-    timer = RunProgressTimer(per_binary_estimate * length(binary_paths))
+    # Progress + IO/Transport timer over the run's windows, from every binary's layout.
+    timer = RunProgressTimer(length(_window_end_hours(layout; stop_window_override));
+                             reporter = run_logging(cfg).progress)
     # The timer holds process-wide compile timing until `stop_compile_timing!`;
     # release it on every exit path, including a run that throws.
     try
@@ -887,14 +897,13 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                         air_mass_reset_mode = air_mass_reset_mode,
                                         physics_cadence = physics_cadence,
                                         prefetch_windows = prefetch_windows,
+                                        callbacks = callbacks,
                                         surface_sources = surface_sources,
                                         # accumulated run time: time-varying surface
                                         # sources index emission slices in seconds
                                         # since RUN start; restarting at 0 per day
                                         # replays day-1 fluxes (the +1 Pg/month
-                                        # co2_natural surplus). (`callbacks` /
-                                        # reference-cadence is an anomaly-ref feature
-                                        # not on this branch, so omitted here.)
+                                        # co2_natural surplus).
                                         chemistry = recipe.chemistry,
                                         start_time = total_hour * 3600.0))
             # `DrivenSimulation` may wrap `model` with a surface-flux operator;

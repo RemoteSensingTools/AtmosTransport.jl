@@ -28,7 +28,8 @@ function _spec_bool(section, key::AbstractString, default::Bool, label::Abstract
 end
 function _spec_int(section, key::AbstractString, default::Int, label::AbstractString)
     v = get(section, key, default)
-    v isa Integer || throw(ArgumentError("$(label).$(key) must be an integer; got $(repr(v))"))
+    v isa Integer && !(v isa Bool) ||
+        throw(ArgumentError("$(label).$(key) must be an integer; got $(repr(v))"))
     return Int(v)
 end
 function _spec_float64(section, key::AbstractString, default::Float64, label::AbstractString)

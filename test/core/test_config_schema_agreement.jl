@@ -36,6 +36,9 @@ property_keys(node) = Set(String.(keys(node.properties)))
     @test enum_of(p.chemistry.properties.kind) == Set(string.(Specs._CHEMISTRY_KINDS))
     @test enum_of(p.run.properties.air_mass_reset_mode) == Set(string.(Specs._AIR_MASS_RESET_MODES))
     @test enum_of(p.run.properties.physics_cadence) == Set(string.(Specs._PHYSICS_CADENCES))
+    @test enum_of(p.logging.properties.level) == Set(keys(AtmosTransport.LogLevels.LOG_LEVELS))
+    @test all(k -> RunnerKeys.run_logging(Dict("logging" => Dict("progress" => k))) isa
+                   RunnerKeys.RunLogging, enum_of(p.logging.properties.progress))
     @test enum_of(d.initial_condition.properties.kind) == Set(keys(RunnerKeys._INIT_KINDS))
     @test enum_of(d.initial_condition.properties.vertical_order) ==
           Set(string.(AtmosTransport.Models.InitialConditionIO._CS_NATIVE_VERTICAL_ORDERS))
@@ -83,6 +86,8 @@ end
     @test property_keys(p.diffusion) == Set(RunnerKeys._DIFFUSION_KEYS)
     @test property_keys(p.convection) == Set(RunnerKeys._CONVECTION_KEYS)
     @test property_keys(p.chemistry) == Set(RunnerKeys._CHEMISTRY_KEYS)
+    @test property_keys(p.logging) == Set(RunnerKeys._LOGGING_KEYS)
+    @test property_keys(p.checks) == Set(RunnerKeys._CHECKS_KEYS)
     @test property_keys(d.initial_condition) == Set(RunnerKeys._INIT_KEYS)
     @test property_keys(d.surface_flux) == Set(RunnerKeys._SURFACE_FLUX_KEYS)
     @test property_keys(d.output) == Set(RunnerKeys._OUTPUT_KEYS)

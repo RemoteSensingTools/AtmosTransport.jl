@@ -38,6 +38,9 @@ read.
   constructors, operator installers, runtime block order
 - [`Simulation.jl`](Simulation.jl) — simple fixed-step loop for direct
   model runs
+- [`Callbacks.jl`](Callbacks.jl) — schedules (`IterationInterval`,
+  `WindowInterval`, `WallTimeInterval`), `Callback` and `NaNChecker` for
+  `DrivenSimulation(...; callbacks)`, after Oceananigans
 - [`DrivenSimulation.jl`](DrivenSimulation.jl) — the `DrivenSimulation`
   type, runtime compatibility checks, flux storage scaling
 - [`driven_window_state.jl`](driven_window_state.jl) — state halos, air-mass

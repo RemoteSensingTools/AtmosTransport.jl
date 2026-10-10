@@ -131,6 +131,27 @@ The constructor validates grid and mass-basis compatibility before stepping.
 `DrivenSimulation.step!` then refreshes forcing from the driver and delegates
 the actual operator ordering to `TransportModel.step!`.
 
+### Callbacks and runtime checks
+
+As in Oceananigans, a [`Callback`](@ref) pairs a function of the simulation
+with a schedule that decides after which steps it runs:
+[`IterationInterval`](@ref)`(n)` (every n-th step), [`WindowInterval`](@ref)`(n)`
+(the end of every n-th met window) or [`WallTimeInterval`](@ref)`(seconds)`.
+[`NaNChecker`](@ref) stops the run with an error when the air mass or a tracer
+holds a NaN or Inf; the configured runner installs it from `[checks]`.
+
+```julia
+callbacks = (nan_checker = Callback(NaNChecker(), WindowInterval(1)),
+             daily = Callback(sim -> @info("window $(sim.current_window_index) done"),
+                              WindowInterval(24)))
+sim = DrivenSimulation(model, driver; callbacks)
+run!(sim)
+```
+
+Callbacks run in the order given, after the step and, at a window end, after
+the window's convection and chemistry. A plain function in `callbacks` runs
+after every step.
+
 ## Output, regridding, and visualization
 
 | Symbol | Use |

@@ -178,6 +178,18 @@
 
 ### Runtime and output
 
+- Logging and runtime checks after Oceananigans. `[logging]` sets the run's
+  minimum log level (`"warn"` concise, `"info"`, `"debug"` verbose; without it
+  the current logger's level applies, info for the command-line runner)
+  and its progress output (`progress = "bar"` as before, `"lines"` for one
+  log line every `progress_interval_windows` windows in batch logs, or
+  `"none"`). `[checks] nan_check` (on by default) stops the run with an error
+  naming the field, window and model time when the air mass or a tracer holds
+  a NaN or Inf, checked after every `nan_check_interval_windows` windows.
+  In Julia, `DrivenSimulation(...; callbacks)` takes `Callback(func,
+  schedule)` with the schedules `IterationInterval`, `WindowInterval` and
+  `WallTimeInterval`; `NaNChecker` is one such callback function. Results are
+  unchanged.
 - Faster cubed-sphere GPU runs, with unchanged results (runtime golden cases
   bit-identical): on CUDA the halo exchange fills all 24 panel edges in one
   kernel launch and the corners in a second, instead of 24 edge launches (6 for

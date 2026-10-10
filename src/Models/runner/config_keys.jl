@@ -11,7 +11,7 @@
 
 const _TOP_LEVEL_TABLES = ("input", "architecture", "numerics", "run", "advection",
                            "diffusion", "convection", "chemistry", "tracers", "output",
-                           "init")
+                           "init", "logging", "checks")
 
 # `expand_binary_paths`, `_validate_input_binary_expectations`, `InputStager`.
 const _INPUT_KEYS = ("binary_paths", "folder", "start_date", "end_date", "file_pattern",
@@ -33,6 +33,8 @@ const _DIFFUSION_KEYS = ("kind", "value", "surface_flux_boundary", "type")  # `d
 const _COLLAB_LU_KEYS = ("tile_workspace_gib", "use_collab_lu", "lmax_conv", "n_merge")
 const _CONVECTION_KEYS = ("kind", "clamp", "cloud_base", _COLLAB_LU_KEYS...)  # `convection_spec`
 const _CHEMISTRY_KEYS = ("kind", "half_lives_seconds")                   # `chemistry_spec`
+const _LOGGING_KEYS = ("level", "progress", "progress_interval_windows")  # `run_logging`
+const _CHECKS_KEYS = ("nan_check", "nan_check_interval_windows")          # `run_checks`
 
 # Initial conditions (`InitialConditionIO`), by the kinds that read them
 # (`kind` applies to every kind; `background` is the south value of a
@@ -164,6 +166,8 @@ function _config_key_findings(cfg::AbstractDict)
     _diffusion_key_findings!(w, get(cfg, "diffusion", nothing))
     _convection_key_findings!(w, get(cfg, "convection", nothing))
     _chemistry_key_findings!(w, get(cfg, "chemistry", nothing))
+    _logging_key_findings!(w, get(cfg, "logging", nothing))
+    _checks_key_findings!(w, get(cfg, "checks", nothing))
 
     if haskey(cfg, "init")
         tracers isa AbstractDict ?
@@ -226,6 +230,24 @@ function _chemistry_key_findings!(w, section)
     _report_unknown!(w, section, _CHEMISTRY_KEYS, "[chemistry]")
     _kind_string(section, "none") == "none" &&
         _report_unread!(w, section, ("half_lives_seconds",), "[chemistry]", "with kind = \"none\"")
+    return w
+end
+
+function _logging_key_findings!(w, section)
+    section isa AbstractDict || return w
+    _report_unknown!(w, section, _LOGGING_KEYS, "[logging]")
+    _lower(get(section, "progress", "bar")) == "lines" ||
+        _report_unread!(w, section, ("progress_interval_windows",), "[logging]",
+                        "unless progress = \"lines\"")
+    return w
+end
+
+function _checks_key_findings!(w, section)
+    section isa AbstractDict || return w
+    _report_unknown!(w, section, _CHECKS_KEYS, "[checks]")
+    get(section, "nan_check", true) === false &&
+        _report_unread!(w, section, ("nan_check_interval_windows",), "[checks]",
+                        "with nan_check = false")
     return w
 end
 

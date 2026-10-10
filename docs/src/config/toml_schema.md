@@ -22,12 +22,13 @@ ignored.
 `validate_config(cfg)` checks runtime table shapes, input path existence,
 precision/backend compatibility, and window bounds without opening binary
 readers or allocating model state. It also parses the physics sections,
-`air_mass_reset_mode`, `physics_cadence`, `prefetch_windows` and `[output]` as
-the run does, so their errors are reported together; decay half-lives must name
-a tracer, and an enabled `[output]` needs both a path and snapshot times
-(`hours = []` means deliberately none). Nested tracer `init` and `surface_flux`
-values must be tables. Shape errors are returned before value checks; a successful result is
-not a full physics or binary validation. See
+`air_mass_reset_mode`, `physics_cadence`, `prefetch_windows`, `[logging]`,
+`[checks]` and `[output]` as the run does, so their errors are reported
+together; decay half-lives must name a tracer, and an enabled `[output]` needs
+both a path and snapshot times (`hours = []` means deliberately none). Nested
+tracer `init` and `surface_flux` values must be tables. Shape errors are
+returned before value checks; a successful result is not a full physics or
+binary validation. See
 [Run with real meteorology](@ref Run-with-real-meteorology) for an example.
 
 Unknown tables and keys are errors when the config is checked (also at the
@@ -558,6 +559,48 @@ transport: the transported state and gridded snapshot output are unchanged
 with or without it (tested on lat-lon runs; on lat-lon and reduced-Gaussian
 runs it makes the runner step window by window, as snapshots do).
 
+### `[logging]` — how much the run reports
+
+```toml
+[logging]
+level = "info"        # "warn" (concise) | "info" | "debug" (verbose) | "error";
+                      # omitted: the current logger's level (info on the command line)
+progress = "bar"      # "bar" (default) | "lines" | "none"
+progress_interval_windows = 24   # with progress = "lines": one line per 24 windows
+```
+
+`level` is the minimum level of the run's log messages, validation included.
+`"warn"` keeps warnings and errors only (the end-of-run timing summary is an
+info message); `"debug"` adds the debug messages. The run keeps the current
+logger and only sets its level; without `level` the logger is left as it is
+(info for the default console logger). `progress = "bar"` redraws a progress bar with status and
+timing lines, for interactive terminals. `"lines"` writes one log line every
+`progress_interval_windows` met windows and at the end (window count, elapsed
+time, ETA, the current status and the time split), for batch jobs whose log
+files would otherwise fill with bar redraws; lat-lon and reduced-Gaussian runs
+then step window by window. `"none"` writes no progress.
+The table is optional; the defaults reproduce the earlier output.
+
+### `[checks]` — runtime checks of the model state
+
+```toml
+[checks]
+nan_check = true                 # default
+nan_check_interval_windows = 1   # default: after every met window
+```
+
+With `nan_check` (on by default), the run stops with an error naming the
+field, the met window, the iteration and the model time as soon as the air
+mass or a tracer holds a NaN or Inf (interior cells). The check runs
+reductions on the run's backend without copying fields to the host: two per
+check on lat-lon and reduced-Gaussian grids, one per panel for the air mass
+and for the tracers on the cubed sphere (about 0.1 ms each on an L40S). The
+window count runs over the whole run, across input files.
+`nan_check_interval_windows` checks after every n-th window instead. In Julia
+the check is `Callback(NaNChecker(), WindowInterval(n))`, passed to
+`DrivenSimulation(...; callbacks)` with any other callbacks (see
+[Callbacks and runtime checks](@ref)).
+
 ### Multi-threaded execution
 
 ```bash
@@ -781,6 +824,13 @@ The largest local edge increment is also reported as a diagnostic, using
 OMEGA modes also require `[mass_fix].enable = true`; without global endpoint
 mass closure, a per-level horizontal Poisson solve cannot realize the global
 column tendency.
+
+### `[logging]` — preprocessing log level
+
+A preprocessing config may set `[logging] level` like a run config: `"warn"`
+keeps the per-window log of the writers quiet, `"debug"` adds debug messages.
+Without it the current logger's level applies (info for the command-line
+scripts).
 
 ### `[mass_fix]` — global dry-mass pin
 

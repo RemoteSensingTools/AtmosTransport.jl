@@ -26,3 +26,11 @@ Modules = [AtmosTransport.ConfigChecks]
 Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```
+
+## Log levels
+
+```@autodocs
+Modules = [AtmosTransport.LogLevels]
+Order   = [:module, :constant, :type, :function, :macro]
+Private = false
+```

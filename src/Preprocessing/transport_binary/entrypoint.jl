@@ -599,15 +599,18 @@ function process_day(cfg::Dict{String, Any};
                      day_override::Union{String, Nothing} = nothing,
                      start_date::Union{String, Date, Nothing} = nothing,
                      end_date::Union{String, Date, Nothing} = nothing)
-    if _is_native_source_cfg(cfg)
-        # Native path resolves FT first, then builds grid internally so
-        # mesh element type matches reader/state buffers.
-        return _process_day_native(cfg; day_override, start_date, end_date)
-    else
-        # Spectral path: keep the historical Float64 mesh build at the entry
-        # (the spectral preprocessor casts to settings.output_float_type later).
-        grid = build_target_geometry(cfg["grid"], Float64)
-        ensure_supported_target(grid)
-        return _process_day_spectral(cfg, grid; day_override, start_date, end_date)
+    # `[logging] level` ("warn" keeps the per-window log quiet).
+    return with_log_level(log_level(cfg)) do
+        if _is_native_source_cfg(cfg)
+            # Native path resolves FT first, then builds grid internally so
+            # mesh element type matches reader/state buffers.
+            _process_day_native(cfg; day_override, start_date, end_date)
+        else
+            # Spectral path: keep the historical Float64 mesh build at the entry
+            # (the spectral preprocessor casts to settings.output_float_type later).
+            grid = build_target_geometry(cfg["grid"], Float64)
+            ensure_supported_target(grid)
+            _process_day_spectral(cfg, grid; day_override, start_date, end_date)
+        end
     end
 end

@@ -101,7 +101,8 @@ end
 # particular, malformed tracer subtables must not survive until initialization.
 function _check_config_table_shapes!(cfg, errors)
     for name in ("input", "architecture", "numerics", "run", "advection",
-                 "diffusion", "convection", "chemistry", "output", "tracers", "init")
+                 "diffusion", "convection", "chemistry", "output", "tracers", "init",
+                 "logging", "checks")
         haskey(cfg, name) || continue
         _check_config_table!(cfg[name], "[$name]", errors)
     end
@@ -170,9 +171,9 @@ or allocating model state. Checks cover runtime table shapes (including
 `output.observations` with its `sources` array), resolved binary paths,
 numeric type, backend/float compatibility, the `[output.observations]`
 contract, and integer run-window bounds. The `[advection]`, `[diffusion]`,
-`[convection]` and `[chemistry]` sections, `air_mass_reset_mode`,
-`physics_cadence`, `prefetch_windows` and `[output]` are parsed as the run
-parses them; decay
+`[convection]`, `[chemistry]`, `[logging]` and `[checks]` sections,
+`air_mass_reset_mode`, `physics_cadence`, `prefetch_windows` and `[output]` are
+parsed as the run parses them; decay
 half-lives must name a tracer, and an enabled `[output]` needs both a path and
 snapshot times (an explicit `hours = []` means none). Shape errors are
 reported before value checks. Window indices accept integers, not Booleans or
@@ -261,6 +262,8 @@ function _check_physics_and_output_settings!(cfg, FT, errors)
     _check_surface_flux_sources!(get(cfg, "tracers", nothing), errors)
     _capture_config_error!(() -> advection_spec(_advection_section(cfg)), errors)
     _capture_config_error!(() -> binary_cfl_check(cfg), errors)
+    _capture_config_error!(() -> run_logging(cfg), errors)
+    _capture_config_error!(() -> run_checks(cfg), errors)
     _capture_config_error!(() -> diffusion_spec(_diffusion_section(cfg)), errors)
     _capture_config_error!(() -> convection_spec(_convection_section(cfg)), errors)
     _capture_config_error!(() -> chemistry_spec(_chemistry_section(cfg)), errors)
