@@ -64,6 +64,59 @@ end
     end
 end
 
+@testset "Cubed-sphere writer ignores air layers absent from selected capture" begin
+    # With both air-mass outputs disabled, selected capture stores only the
+    # tracer layers, so the configured air-layer selection is not captured.
+    for FT in (Float32, Float64)
+        Nz, Nc, Hp = 4, 4, 3
+        mesh = CubedSphereMesh(; Nc, Hp, FT)
+        vc = HybridSigmaPressure(zeros(FT,Nz+1), collect(range(zero(FT),one(FT);length=Nz+1)))
+        grid = AtmosGrid(mesh, vc, CPU(); FT)
+        shape = (Nc+2Hp, Nc+2Hp, Nz)
+        a = reshape(FT.(1:prod(shape)), shape)
+        q = reshape(FT.(range(0.0003,0.0006;length=prod(shape))), shape)
+        air = ntuple(p -> a .* FT(p),6)
+        state = CubedSphereState(DryBasis,air; co2=map(m -> m .* q,air),halo_width=Hp)
+        model = (; state, grid)
+        full = capture_snapshot(model; halo_width=Hp)
+        for (air_layers, tracer_layers) in (("full","selected"), ("selected","none"))
+            fields = output_field_spec(Dict{String,Any}(
+                "tracers"=>["co2"], "layers"=>tracer_layers, "levels"=>[1,3],
+                "air_mass_layers"=>air_layers, "air_mass"=>false,
+                "air_mass_per_area"=>false, "column_air_mass_per_area"=>true,
+                "column_mean"=>true, "column_mass_per_area"=>true))
+            captured = capture_snapshot(model; halo_width=Hp, fields)
+            @test captured.levels == (tracer_layers == "selected" ? [1,3] : Int[])
+            mktempdir() do dir
+                options = SnapshotWriteOptions(;float_type=Float64)
+                pfull = write_snapshot_netcdf(joinpath(dir,"full.nc"),[full],grid;fields,options)
+                psel = write_snapshot_netcdf(joinpath(dir,"selected.nc"),[captured],grid;fields,options)
+                NCDataset(pfull) do x
+                    NCDataset(psel) do y
+                        @test !haskey(y,"air_mass") && !haskey(y,"air_mass_per_area")
+                        @test Set(keys(x)) == Set(keys(y))
+                        for name in keys(x)
+                            @test isequal(x[name][:], y[name][:])
+                        end
+                        if tracer_layers == "selected"
+                            # Tracer mass is air × q, so the written VMR is q on
+                            # the panel interior at the selected levels.
+                            r = Hp+1:Hp+Nc
+                            expected = Array{Float64}(undef, Nc, Nc, 6, 2)
+                            for panel in 1:6
+                                expected[:, :, panel, :] = Float64.(q[r, r, [1,3]])
+                            end
+                            @test y["co2"].var[:, :, :, :, 1] ≈ expected rtol=4eps(FT)
+                        else
+                            @test !haskey(y,"co2")
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
 @testset "Selected signed totals survive omitted layers and diagnostics" begin
     mesh = LatLonMesh(;Nx=4,Ny=2,FT=Float64)
     grid = AtmosGrid(mesh,HybridSigmaPressure(zeros(3),[0.0,0.5,1.0]),CPU())

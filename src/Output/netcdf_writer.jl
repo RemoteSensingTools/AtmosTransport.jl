@@ -62,13 +62,48 @@ function _def_payload_var(ds, name::AbstractString, ::Type{T}, dims;
                   shuffle = _payload_shuffle(options))
 end
 
-function _cs_stack3(panels::NTuple{6, <:AbstractArray})
-    Nc1, Nc2, Nz = size(panels[1])
-    out = Array{Float64}(undef, Nc1, Nc2, 6, Nz)
-    @inbounds for p in 1:6
-        out[:, :, p, :] = Float64.(panels[p])
+# Cubed-sphere layer fields are stacked as (Xdim, Ydim, nf, lev) straight into
+# a reused buffer of the output type `T`, reading only the requested stored
+# layers. Values match converting to Float64 first and then to `T`, since that
+# intermediate is exact for Float32/Float64 input.
+_cs_layer_buffer!(buffers::Dict{Int, Array{T, 4}}, Nc::Int, nlayer::Int) where T =
+    get!(() -> Array{T}(undef, Nc, Nc, 6, nlayer), buffers, nlayer)
+
+function _check_cs_interior(buf, panels::NTuple{6})
+    all(q -> size(q, 1) == size(buf, 1) && size(q, 2) == size(buf, 2), panels) ||
+        throw(DimensionMismatch("snapshot panels $(size(panels[1])) are not the " *
+                                "$(size(buf, 1)) × $(size(buf, 2)) panel interior"))
+    return nothing
+end
+
+function _cs_stack_layers!(buf::Array{T, 4}, panels::NTuple{6}, positions) where T
+    _check_cs_interior(buf, panels)
+    @inbounds for (kk, k) in enumerate(positions), p in 1:6, j in axes(buf, 2), i in axes(buf, 1)
+        buf[i, j, p, kk] = T(panels[p][i, j, k])
     end
-    return out
+    return buf
+end
+
+# Layer mass per area, as `layer_mass_per_area`.
+function _cs_stack_mass_per_area!(buf::Array{T, 4}, panels::NTuple{6}, positions,
+                                  mesh::CubedSphereMesh) where T
+    _check_cs_interior(buf, panels)
+    @inbounds for (kk, k) in enumerate(positions), p in 1:6, j in axes(buf, 2), i in axes(buf, 1)
+        buf[i, j, p, kk] = T(Float64(panels[p][i, j, k]) / Float64(cell_area(mesh, i, j)))
+    end
+    return buf
+end
+
+# Mixing ratio, as `mixing_ratio_field`: Float64 quotient, NaN where the air
+# mass is not positive, rounded once to `T`.
+function _cs_stack_vmr!(buf::Array{T, 4}, air::NTuple{6}, tracer::NTuple{6}, positions) where T
+    _check_cs_interior(buf, air)
+    _check_cs_interior(buf, tracer)
+    @inbounds for (kk, k) in enumerate(positions), p in 1:6, j in axes(buf, 2), i in axes(buf, 1)
+        m = Float64(air[p][i, j, k])
+        buf[i, j, p, kk] = T(m > 0 ? Float64(tracer[p][i, j, k]) / m : NaN)
+    end
+    return buf
 end
 
 function _cs_stack2(panels::NTuple{6, <:AbstractArray})
@@ -530,17 +565,27 @@ function _write_snapshot_payload!(ds, mesh::CubedSphereMesh, frames, tracer_keys
         end
     end
 
+    buffers = Dict{Int, Array{T, 4}}()
     for (index, frame) in enumerate(frames)
         t = time_offset + index
-        air === nothing || (air[:, :, :, :, t] = T.(_cs_stack3(_air_layers(frame, air_idx))))
-        air_area === nothing || (air_area[:, :, :, :, t] =
-            T.(_cs_stack3(layer_mass_per_area(_air_layers(frame, air_idx), mesh))))
+        # Selected capture stores the configured air-output layers only when an
+        # air output is enabled (tracer layers are always stored, for the mixing
+        # ratios), so the air positions are looked up only in that case.
+        if air !== nothing || air_area !== nothing
+            air_pos = _layer_positions(frame, air_idx)
+            air === nothing || (air[:, :, :, :, t] = _cs_stack_layers!(
+                _cs_layer_buffer!(buffers, mesh.Nc, length(air_idx)), frame.air_mass, air_pos))
+            air_area === nothing || (air_area[:, :, :, :, t] = _cs_stack_mass_per_area!(
+                _cs_layer_buffer!(buffers, mesh.Nc, length(air_idx)), frame.air_mass, air_pos, mesh))
+        end
         col_air === nothing || (col_air[:, :, :, t] =
             T.(_cs_stack2(_horizontal_per_area(_frame_column_air(frame), mesh))))
         for name in tracer_keys
             if haskey(tracer_vars, name)
-                tracer_vars[name][:, :, :, :, t] =
-                    T.(_cs_stack3(_frame_vmr(frame, name, tracer_layer_idx[name])))
+                idx = tracer_layer_idx[name]
+                tracer_vars[name][:, :, :, :, t] = _cs_stack_vmr!(
+                    _cs_layer_buffer!(buffers, mesh.Nc, length(idx)), frame.air_mass,
+                    frame.tracers[name], _layer_positions(frame, idx))
             end
             haskey(tracer_cm_vars, name) &&
                 (tracer_cm_vars[name][:, :, :, t] =

@@ -228,7 +228,8 @@ end
 # (surface-first lev, like GEOS-Chem SpeciesConcVV_*). NCDatasets reads it
 # in reversed (Julia column-major) order as `(Xdim, Ydim, nf, lev[, time])`,
 # so panel axis-1 == Xdim and axis-2 == Ydim — IDENTICAL to the model's own
-# CS writer (`_cs_stack3`: `out[:, :, p, :] = panels[p]`). We therefore map
+# CS writer, which stores panel `p` cell `(i, j)` level `k` at `[i, j, p, k]`
+# in `(Xdim, Ydim, nf, lev)` order. We therefore map
 # `src[i, j, p, k_src]` directly onto interior panel `p` cell `(i, j)`, and
 # flip the vertical (source SURFACE-first → model TOA-first) via
 # `k = Nz - k_src + 1`. Requires `size(lev) == Nz` (same vertical grid).
