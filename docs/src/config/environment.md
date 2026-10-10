@@ -23,16 +23,8 @@ package reads no others.
 |---|---|---|
 | `ATMOSTR_TIMERS`, `ATMOSTR_NVTX`, `ATMOSTR_ALLOC_TIMERS` | Section timers, NVTX ranges, and allocation counts within the timers (`1`, `true`, `on` or `yes`; `ATMOSTR_ALLOC_TIMERS` only together with `ATMOSTR_TIMERS`). | `src/Diagnostics/SectionTimer.jl` |
 | `ATMOSTR_PROFILE_GPU` | With timers on (`1`, `true`, `on` or `yes`): synchronize after each cubed-sphere sweep kernel and time the launch and the wait separately (slower). | `src/Operators/Advection/cs_sweep_common.jl` |
-| `ATMOSTR_ASSERT_CS_BINARY_CFL` | `1`: recompute the cubed-sphere CFL subcycle count and stop if the binary's substep schedule asks for fewer (slower). | `src/Operators/Advection/CubedSphereStrang.jl` |
-| `ATMOSTR_DISABLE_PREFETCH` | `1`: load each met window synchronously instead of prefetching the next one on a second thread. | `src/Models/driven_window_state.jl` |
 | `ATMOS_OMEGA_TIMING` | Timing output of the GEOS OMEGA-consistent `cm` closure in the preprocessor. | `src/Preprocessing/transport_binary/cubed_sphere_geos.jl` |
 | `ERA5_N320_PROFILE` | `1`: per-window timing of the ERA5 N320 preprocessor. | `src/Preprocessing/sources/era5_n320_window.jl`, `era5_n320_to_cs.jl` |
-
-## Preprocessing switches
-
-| Variable | Effect | Read in |
-|---|---|---|
-| `ATMOSTR_NO_WRITE_REPLAY_CHECK` | `1`: skip the write-time replay-continuity gate of the preprocessor (diagnostic only). The binary records `write_replay_check = false`; the inspector marks it and the runtime warns when it opens it. | `write_replay_check_enabled` (`src/Preprocessing/configuration.jl`) |
 
 ## Removed
 
@@ -44,6 +36,9 @@ These were replaced by configuration keys and are now ignored.
 | `ATMOSTR_REPLAY_CHECK` | `[input] validate_replay = true` |
 | `ATMOSTR_NO_REPLAY_CHECK` | none: the load-time replay check runs only when requested |
 | `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE` | `[numerics] balance_mode = "per_layer"` |
+| `ATMOSTR_DISABLE_PREFETCH` | `[run] prefetch_windows = false` |
+| `ATMOSTR_ASSERT_CS_BINARY_CFL` | `[advection] check_binary_cfl = true` |
+| `ATMOSTR_NO_WRITE_REPLAY_CHECK` | `[numerics] write_replay_check = false` in the preprocessing config |
 
 ## Command-line runner
 

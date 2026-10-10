@@ -13,9 +13,31 @@
   | `ATMOSTR_REPLAY_CHECK` | `[input] validate_replay = true` |
   | `ATMOSTR_NO_REPLAY_CHECK` | nothing (the load-time check runs only when asked for) |
   | `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE` | `[numerics] balance_mode = "per_layer"` |
+  | `ATMOSTR_DISABLE_PREFETCH` | `[run] prefetch_windows = false` (new) |
+  | `ATMOSTR_ASSERT_CS_BINARY_CFL` | `[advection] check_binary_cfl = true` (new) |
+  | `ATMOSTR_NO_WRITE_REPLAY_CHECK` | `[numerics] write_replay_check = false` in the preprocessing config (new) |
 
   Environment variables now set only paths, metadata, profiling and
-  diagnostics (see `docs/src/config/environment.md`).
+  diagnostics (see `docs/src/config/environment.md`). Julia code that calls a
+  preprocessing writer directly (`process_day(date, grid, settings, vertical)`,
+  `regrid_ll_binary_to_cs`, `process_merra2_to_cs_day`,
+  `process_era5_n320_to_cs_day`) passes `write_replay_check = false` instead
+  of setting the variable; `write_replay_check_enabled` is removed. The three
+  new keys:
+
+  - `[run] prefetch_windows` (default `true`): GPU runs with at least two
+    Julia threads load the next met window on a second thread. The
+    `DrivenSimulation` keyword of the same name fixes the choice for the whole
+    simulation; the variable was read every window.
+  - `[advection] check_binary_cfl` (default `false`): a cubed-sphere
+    split-sweep step (`upwind`, `slopes`, `ppm`) that takes its subcycle count
+    from the binary recomputes the CFL budget and stops if the binary asks for
+    fewer. Typed as `BinaryCFLCheck()`/`NoBinaryCFLCheck()` on
+    `CSAdvectionWorkspace` (the `binary_cfl_check` keyword of
+    `TransportModel`); other schemes and grids reject `true`. The three
+    operator copies of the check are now one dispatched helper.
+  - `[numerics] write_replay_check` (default `true`) of a preprocessing config
+    reaches every writer as the `write_replay_check` keyword.
 
 ### Fixes
 
@@ -62,13 +84,14 @@
   target, and this mode passes none. Only the GEOS native path implements it
   (`supports_initial_endpoint_mass_pin`); other sources now refuse the mode.
   No shipped configuration used it.
-- `ATMOSTR_NO_WRITE_REPLAY_CHECK=1` did not skip the write-time replay gate
-  of the GEOS cubed-sphere writer. It does now, through
+- Skipping the write-time replay gate (then `ATMOSTR_NO_WRITE_REPLAY_CHECK=1`,
+  now `[numerics] write_replay_check = false`) did not skip it in the GEOS
+  cubed-sphere writer. It does now, through
   `verify_window!(…; write_replay_on)`, and its log no longer reports a worst
   replay window when the gate was skipped. With the gate skipped, the
   cubed-sphere regrid, ERA5 N320 and MERRA-2 writers ran the positivity gate
   against the window's start mass only; they now also pass the end mass, as
-  with the gate on (only runs with the variable set are affected).
+  with the gate on (only runs with the gate skipped are affected).
 - The reduced-Gaussian spectral writer wrote straight to the final file, so a
   day that failed a gate deleted an existing binary of that day. It now
   stages to `<out>.tmp` like the other writers.
@@ -291,12 +314,11 @@
   for).
   The replay error messages now name the key.
 - A transport binary written with the write-time replay gate skipped
-  (`ATMOSTR_NO_WRITE_REPLAY_CHECK=1`, or the new `--no-write-replay-check` of
-  `regrid_ll_transport_binary_to_cs.jl`) records `write_replay_check = false`
-  in its header; `binary_capabilities` reports it, `inspect_binary` marks it
-  and `TransportBinaryDriver` warns when it opens such a binary. Binaries
-  written with the gate on are unchanged. Every writer asks one resolver,
-  `write_replay_check_enabled`, instead of reading the variable itself.
+  (`[numerics] write_replay_check = false`, or the new
+  `--no-write-replay-check` of `regrid_ll_transport_binary_to_cs.jl`) records
+  `write_replay_check = false` in its header; `binary_capabilities` reports
+  it, `inspect_binary` marks it and `TransportBinaryDriver` warns when it
+  opens such a binary. Binaries written with the gate on are unchanged.
 - `docs/src/config/environment.md` lists every environment variable the
   package reads, and `test/core/test_environment_variables.jl` fails when
   `src/` reads one that is not listed there (or from outside the folder that

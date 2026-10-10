@@ -153,7 +153,7 @@ function allocate_window_workspace(grid::LatLonTargetGeometry,
                                    ::Type{FT};
                                    cache = nothing,
                                    source_steps_per_window::Integer = 1,
-                                   write_replay_on::Bool = write_replay_check_enabled()) where FT
+                                   write_replay_on::Bool = true) where FT
     Nz_native = vertical.Nz_native
     Nz = vertical.Nz
     Nt = spec.n_times
@@ -344,7 +344,7 @@ end
 """
     process_day(date, grid::LatLonTargetGeometry, settings, vertical;
                 next_day_hour0=nothing, positivity_cfl_limit=0.95,
-                require_substep_positivity=true)
+                require_substep_positivity=true, write_replay_check=true)
 
 Run the full one-day preprocessing workflow for the structured lat-lon target:
 read spectral input, process all windows, close continuity against forward mass
@@ -357,6 +357,7 @@ function process_day(date::Date,
                      next_day_hour0=nothing,
                      positivity_cfl_limit::Real = 0.95,
                      require_substep_positivity::Bool = true,
+                     write_replay_check::Bool = true,
                      substep_policy::SubstepSchedulePolicy =
                          SubstepSchedulePolicy(
                              adaptive_substeps = false,
@@ -427,7 +428,7 @@ function process_day(date::Date,
     # Resolved once: the header records it (before the reuse check, so a binary
     # written with the gate off is not reused by a run with it on) and the
     # workspace carries it to the gate.
-    write_replay_on = write_replay_check_enabled()
+    write_replay_on = write_replay_check
     _with_replay_record(header, write_replay_on)
     expected_sections = expected_payload_sections(settings)
     skip, reason = existing_output_schema_matches(

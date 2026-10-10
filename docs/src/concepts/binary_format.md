@@ -265,7 +265,8 @@ with `tol = replay_tolerance(FT)` from
 for Float32. A binary that fails this gate is **rejected at write
 time**; the preprocessor errors out rather than producing a
 known-bad file. Diagnostic runs can explicitly bypass this gate with
-`ATMOSTR_NO_WRITE_REPLAY_CHECK=1` (or `--no-write-replay-check` for
+`[numerics] write_replay_check = false` in the preprocessing config (or
+`--no-write-replay-check` for
 `scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl`); production
 preprocessing should not. Such a binary records `write_replay_check = false` in
 its header, the inspector marks it, and the runtime warns when it opens it.

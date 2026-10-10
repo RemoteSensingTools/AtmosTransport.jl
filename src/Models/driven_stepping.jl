@@ -71,6 +71,10 @@ Keyword arguments:
   2026-05-31), for cadence-sensitivity comparisons on the same binary. The
   window-end air-mass reset is the same for both. Other binaries run the full
   operator suite every substep either way.
+- `prefetch_windows=true` — on a device backend with more than one Julia
+  thread, load the next met window on a second thread while the current one
+  runs. `false` loads each window when it is needed and keeps one device
+  window buffer instead of two. Window contents are the same either way.
 - `surface_sources=()`
 - `chemistry=NoChemistry()` — applied after advection + surface sources each step
 - `callbacks=NamedTuple()`
@@ -91,6 +95,7 @@ function DrivenSimulation(model::TransportModel,
                           interpolate_fluxes_within_window = nothing,
                           air_mass_reset_mode = :preserve_tracer_mass,
                           physics_cadence = nothing,
+                          prefetch_windows::Bool = true,
                           surface_sources = (),
                           chemistry::AbstractChemistryOperator = NoChemistry(),
                           callbacks = NamedTuple(),
@@ -109,7 +114,8 @@ function DrivenSimulation(model::TransportModel,
     # when prefetching so the two device buffers remain independently writable.
     loaded_window = _load_window(driver, start_window)
     window = _adapt_window_to_model_backend(loaded_window, model.state.air_mass)
-    prefetch_window = if _prefetch_enabled(model.state.air_mass) && start_window < stop_window
+    prefetch_enabled = _prefetch_enabled(prefetch_windows, model.state.air_mass)
+    prefetch_window = if prefetch_enabled && start_window < stop_window
         # A custom driver may already supply device arrays; adapting those to
         # the same backend can alias, so copy that window explicitly instead.
         _window_backend_adapter(loaded_window.air_mass) === Array ?
@@ -168,6 +174,7 @@ function DrivenSimulation(model::TransportModel,
         prefetch_window,
         prefetch_task,
         0,
+        prefetch_enabled,
         expected_air_mass,
         qv_buffer,
         Δt,

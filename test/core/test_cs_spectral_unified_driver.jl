@@ -117,5 +117,14 @@ end
         second_header, second_payload = _stable_binary_parts(second_path)
         @test second_header == first_header
         @test second_payload == first_payload
+
+        # `write_replay_check = false` skips the gate and is recorded; same payload.
+        off = _cs_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "off"))
+        off_path = @test_logs (:info, r"replay gate SKIPPED") match_mode = :any process_day(
+            date, grid, off, vertical; positivity_cfl_limit = 0.95, write_replay_check = false)
+        off_header, off_payload = _stable_binary_parts(off_path)
+        @test off_header[:write_replay_check] === false
+        @test !haskey(first_header, :write_replay_check)
+        @test off_payload == first_payload
     end
 end

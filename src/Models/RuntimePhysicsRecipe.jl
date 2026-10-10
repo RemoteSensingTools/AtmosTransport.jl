@@ -21,11 +21,12 @@ This keeps the CLI scripts thin and prevents topology-specific
 # `RuntimePhysicsSpecs.jl` `materialize` methods dispatch on them). The
 # `_runtime_recipe_style(grid/driver/reader)` resolvers stay below.
 
-struct RuntimePhysicsRecipe{AdvT, DiffT, ConvT, ChemT}
+struct RuntimePhysicsRecipe{AdvT, DiffT, ConvT, ChemT, CheckT <: AbstractBinaryCFLCheck}
     advection  :: AdvT
     diffusion  :: DiffT
     convection :: ConvT
     chemistry  :: ChemT
+    binary_cfl_check :: CheckT   # `[advection] check_binary_cfl`
 end
 
 # The flat-411 `catrine_co2` stub is gone. CS tracers
@@ -362,8 +363,8 @@ end
     build_runtime_physics_recipe(cfg, context, FT; halo_width=nothing)
 
 Parse typed advection, diffusion, convection, and chemistry specifications
-from cfg, materialize them for context and floating-point type FT, then run
-the complete runtime compatibility validation.
+and the binary CFL check from cfg, materialize them for context and
+floating-point type FT, then run the complete runtime compatibility validation.
 """
 function build_runtime_physics_recipe(cfg,
                                       context,
@@ -374,6 +375,7 @@ function build_runtime_physics_recipe(cfg,
         build_runtime_diffusion(cfg, context, FT),
         build_runtime_convection(cfg, context),
         build_runtime_chemistry(cfg, FT),
+        binary_cfl_check(cfg, _runtime_recipe_style(context)),
     )
     return validate_runtime_physics_recipe(recipe, context; halo_width = halo_width)
 end

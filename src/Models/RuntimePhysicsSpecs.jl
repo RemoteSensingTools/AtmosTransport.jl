@@ -301,6 +301,36 @@ materialize(::LinRoodAdvectionSpec, ::AbstractStructuredRuntimeRecipeStyle) = th
 Base.summary(s::LinRoodAdvectionSpec) =
     "LinRoodAdvectionSpec(order=$(s.order), vertical=$(nameof(typeof(s.vertical))))"
 
+"""
+    binary_cfl_check(cfg[, style]) -> AbstractBinaryCFLCheck
+
+Parse `[advection] check_binary_cfl` of a run config (default `false`; the key
+has no legacy `[run]` form). `true` gives `BinaryCFLCheck()`, which only the
+cubed-sphere split-sweep schemes (`upwind`, `slopes`, `ppm`) can honor, because
+only they take a subcycle count from the binary; other schemes and, given
+`style`, other grids reject it.
+"""
+function binary_cfl_check(cfg)
+    haskey(get(cfg, "run", Dict{String, Any}()), "check_binary_cfl") && throw(ArgumentError(
+        "`check_binary_cfl` belongs in [advection], not [run]."))
+    advection = get(cfg, "advection", Dict{String, Any}())
+    _spec_bool(advection, "check_binary_cfl", false, "[advection]") || return NoBinaryCFLCheck()
+    scheme = _parse_advection_scheme(advection)
+    scheme in (:upwind, :slopes, :ppm) || throw(ArgumentError(
+        "[advection] `check_binary_cfl` applies to the split-sweep schemes (upwind, " *
+        "slopes, ppm); scheme = \"$(scheme)\" takes no subcycle count from the binary."))
+    return BinaryCFLCheck()
+end
+
+binary_cfl_check(cfg, ::CubedSphereRuntimeRecipeStyle) = binary_cfl_check(cfg)
+
+function binary_cfl_check(cfg, ::AbstractStructuredRuntimeRecipeStyle)
+    binary_cfl_check(cfg) isa NoBinaryCFLCheck || throw(ArgumentError(
+        "[advection] `check_binary_cfl` applies to cubed-sphere runs only; lat-lon and " *
+        "reduced-Gaussian advection computes its own CFL subcycles."))
+    return NoBinaryCFLCheck()
+end
+
 # =========================================================================
 # Chemistry
 # =========================================================================

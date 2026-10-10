@@ -148,6 +148,7 @@ substep_schedule  = "adaptive_cfl"   # "constant" | "adaptive_cfl"
 substep_cfl_target = 0.95            # palindrome-budget CFL target
 min_steps_per_window = 2
 max_steps_per_window = 16
+# write_replay_check = false         # diagnostic only: skip the write-time replay gate
 
 # Optional: pin global-mean dry surface pressure (recommended for ERA5)
 [mass_fix]
