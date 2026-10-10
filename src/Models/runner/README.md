@@ -5,8 +5,8 @@ capability checks, output and observation glue, resource ownership, and progress
 reporting.
 
 These files are not a module. [`../DrivenRunner.jl`](../DrivenRunner.jl) includes
-them in this order: `progress`, `configuration`, `summary`, `resources`, `output`,
-`observations`, `model_setup`. `DrivenRunner.jl` keeps the public entry point and
+them in this order: `progress`, `configuration`, `config_keys`, `summary`,
+`resources`, `output`, `observations`, `model_setup`. `DrivenRunner.jl` keeps the public entry point and
 the two transport loops: `_run_driven_simulation_structured` for lat-lon and
 reduced Gaussian, and `_run_driven_simulation_cs`. The parent overview, including
 how a TOML option reaches an operator, is [`../README.md`](../README.md).
@@ -46,14 +46,18 @@ how a TOML option reaches an operator, is [`../README.md`](../README.md).
 
 - [`configuration.jl`](configuration.jl) — tracer specs, `[numerics] float_type`,
   architecture, table-shape and window-bound checks, `validate_config`,
-  multi-file window-range guard. It also holds the ANSI and advection-label
-  helpers used by the summary.
+  multi-file window-range guard; `validate_config` also parses the physics,
+  run and output settings. It also holds the ANSI and advection-label helpers
+  used by the summary.
+- [`config_keys.jl`](config_keys.jl) — the keys each runtime table may hold
+  and `_config_key_warnings`: unknown keys (with suggestions) and keys the
+  chosen kind leaves unread, logged by `validate_config`
 - [`model_setup.jl`](model_setup.jl) — GPU residency assertion, flux allocation,
   LL/RG model build, per-tracer CS dry-state packing, convection-capability
   dispatch
 - [`output.jl`](output.jl) — binary date labels, default output span, duplicate
-  daily-path guard, `RunSnapshotOutput`, single-file stream, background daily
-  writes
+  daily-path guard, output path/schedule checks (snapshot hours on window
+  ends), `RunSnapshotOutput`, single-file stream, background daily writes
 - [`observations.jl`](observations.jl) — run origin, sampler construction and
   ownership, per-binary day switch, window-end sampling with optional VDIFF
   temperature

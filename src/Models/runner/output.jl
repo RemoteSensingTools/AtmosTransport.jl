@@ -22,6 +22,99 @@ function _output_default_cap_hours(driver, binary_count::Integer;
 end
 
 """
+    _check_output_targets(spec, output_cfg)
+
+Reject snapshot settings that would silently write nothing while
+`[output].enabled` is true: a path without any snapshot-schedule key, or
+snapshot times without a path. An explicitly empty list (`hours = []`) is a
+deliberate "no snapshots" (the path then only names the timing CSV of
+`ATMOSTR_TIMERS` runs).
+"""
+function _check_output_targets(spec::RuntimeOutputSpec, output_cfg::AbstractDict)
+    spec.enabled || return nothing
+    has_path = !isempty(output_path(spec))
+    has_times = _schedule_has_times(spec.schedule)
+    has_path && !any(k -> haskey(output_cfg, k), _SNAPSHOT_SCHEDULE_KEYS) && throw(ArgumentError(
+        "[output] sets a path but no snapshot times, so no snapshot would be written; " *
+        "add `hours = [...]` or `cadence_hours`, set `hours = []` for none, or set " *
+        "`enabled = false`"))
+    has_times && !has_path && throw(ArgumentError(
+        "[output] sets snapshot times but no `path`, so no snapshot would be written; " *
+        "add `path` or set `enabled = false`"))
+    return nothing
+end
+
+"""
+    _snapshot_due(elapsed_hours, hour, window_hours) -> Bool
+
+Whether the snapshot requested at `hour` is taken at the window end reached
+after `elapsed_hours`: within half a window, and at most half an hour, of it.
+"""
+@inline _snapshot_due(elapsed_hours, hour, window_hours) =
+    abs(elapsed_hours - hour) < min(0.5, window_hours / 2)
+
+# Hours since the run start of every met-window end, accumulated as the run
+# loops accumulate them. `layout` holds `(window_seconds, windows)` per binary.
+function _window_end_hours(layout; start_window::Integer = 1, stop_window_override = nothing)
+    ends = Float64[]
+    elapsed = 0.0
+    for (window_seconds, nwindow) in layout
+        stop = stop_window_override === nothing ? nwindow : min(Int(stop_window_override), nwindow)
+        for _ in start_window:stop
+            elapsed += Float64(window_seconds) / 3600
+            push!(ends, elapsed)
+        end
+    end
+    return ends
+end
+
+# Hours covered by the run: the selected windows of every binary (`layout`).
+function _layout_run_hours(layout; start_window::Integer = 1, stop_window_override = nothing)
+    seconds = 0.0
+    for (window_seconds, nwindow) in layout
+        stop = stop_window_override === nothing ? nwindow : min(Int(stop_window_override), nwindow)
+        seconds += max(stop - start_window + 1, 0) * Float64(window_seconds)
+    end
+    return seconds / 3600
+end
+
+# Layout of `binary_paths` when only the first driver is known: every binary
+# like the first.
+_uniform_window_layout(driver, binary_paths) =
+    fill((Float64(window_dt(driver)), total_windows(driver)), length(binary_paths))
+
+"""
+    _check_snapshot_schedule(spec, window_end_hours)
+
+Snapshots are taken at met-window ends (`window_end_hours`, counted from the
+run start) and at hour 0, once each. Reject other and repeated hours: such an
+hour is never matched, and every later snapshot is lost with it. Warn about hours after the last
+window end, which are never written.
+"""
+function _check_snapshot_schedule(spec::RuntimeOutputSpec, window_end_hours::AbstractVector)
+    output_enabled(spec) || return nothing
+    hours = snapshot_hours(spec)
+    # Each hour is taken once; a repeated hour (within the matching tolerance
+    # below) blocks every later snapshot. `hours` is sorted.
+    repeated = unique(hours[[i for i in 2:length(hours) if hours[i] - hours[i - 1] <= 1e-6]])
+    isempty(repeated) || throw(ArgumentError(
+        "[output] snapshot hour(s) $(join(repeated, ", ")) are listed more than once"))
+    last_end = isempty(window_end_hours) ? 0.0 : last(window_end_hours)
+    on_end(h) = (i = searchsortedfirst(window_end_hours, h - 1e-6);
+                 i <= length(window_end_hours) && window_end_hours[i] <= h + 1e-6)
+    off_grid = [h for h in hours if h < 0 || (h <= last_end + 1e-6 && h != 0 && !on_end(h))]
+    isempty(off_grid) || throw(ArgumentError(
+        "[output] snapshot hour(s) $(join(first(off_grid, 5), ", "))" *
+        "$(length(off_grid) > 5 ? ", ..." : "") do not fall on a met-window end; " *
+        "snapshots are taken at hour 0 and at window ends only (counted from the run " *
+        "start), and a missed hour also loses every later snapshot"))
+    late = count(>(last_end + 1e-6), hours)
+    late > 0 && @warn "[output]: $(late) snapshot hour(s) fall after the end of the run " *
+                      "($(last_end) h) and will not be written."
+    return nothing
+end
+
+"""
     _check_unique_day_paths(partition, path_for, binary_paths, key)
 
 Fail before any transport when two input binaries resolve to the same daily

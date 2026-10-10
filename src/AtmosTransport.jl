@@ -151,6 +151,9 @@ const GPU = Architectures.GPU
 include("Diagnostics/SectionTimer.jl")
 using .SectionTimer
 
+# Strict Boolean and known-key checks for TOML tables (Output, Preprocessing, Models).
+include("ConfigChecks.jl")
+
 # ---- Quantity-kind dispatch traits ----
 # Tiny trait module with no dependencies, loaded early so later modules can
 # dispatch on extensive vs intensive vs vector vs flux field semantics.

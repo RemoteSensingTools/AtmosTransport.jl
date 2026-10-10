@@ -168,14 +168,6 @@ const _QUALITY_FILTER_KEYS = ("quality_variable", "quality_flag_max", "quality_f
 
 _is_plain_int(x) = x isa Integer && !(x isa Bool)
 
-function _check_known_keys(cfg::AbstractDict, allowed, label::AbstractString)
-    unknown = sort!([String(k) for k in keys(cfg) if !(String(k) in allowed)])
-    isempty(unknown) || throw(ArgumentError(
-        "Unknown $(label) option(s): $(join(unknown, ", ")). " *
-        "Supported: $(join(allowed, ", "))."))
-    return nothing
-end
-
 # Map a config string onto one of the singleton choices in `choices`.
 function _parse_choice(value, choices::NamedTuple, label::AbstractString)
     value isa AbstractString ||

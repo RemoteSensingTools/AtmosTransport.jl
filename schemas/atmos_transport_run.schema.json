@@ -42,6 +42,15 @@
           "default": false,
           "description": "Reject binaries that do not carry a per-window adaptive substep schedule."
         },
+        "expected_nlevel": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Reject a first binary with a different number of levels."
+        },
+        "required_preprocessor_contract": {
+          "type": "string",
+          "description": "Reject a first binary whose header preprocessor_contract differs."
+        },
         "staging": {"$ref": "#/definitions/staging"}
       }
     },
@@ -104,6 +113,11 @@
         "tracer_name": {
           "type": "string",
           "description": "Legacy single-tracer name used only when [tracers] is absent on structured grids."
+        },
+        "reset_air_mass_each_window": {
+          "not": {},
+          "deprecated": true,
+          "description": "Removed; use run.air_mass_reset_mode."
         }
       }
     },
@@ -145,6 +159,7 @@
             "constant",
             "tm5_beljaars_viterbo_local_kz",
             "geoschem_holtslag_boville_vdiff",
+            "geoschem_nonlocal_vdiff",
             "tm5_dkg"
           ],
           "default": "none"
@@ -157,6 +172,11 @@
           "type": "boolean",
           "default": false,
           "description": "Couple the surface source directly to the diffusion boundary condition."
+        },
+        "type": {
+          "type": "string",
+          "deprecated": true,
+          "description": "Legacy selector: rejected without kind, ignored next to it. Use kind."
         }
       }
     },
@@ -173,6 +193,12 @@
           "type": "boolean",
           "default": false,
           "description": "Enable the positivity clamp for the explicit CMFMC scheme."
+        },
+        "cloud_base": {
+          "type": "string",
+          "enum": ["cmfmc", "dqrcu"],
+          "default": "cmfmc",
+          "description": "Convective cloud base of kind = \"cmfmc\": the CMFMC edge, or the archived DQRCU level."
         },
         "tile_workspace_gib": {"type": "number", "exclusiveMinimum": 0, "default": 1.0},
         "use_collab_lu": {"type": "boolean", "default": false},
@@ -198,7 +224,11 @@
       "minProperties": 1,
       "additionalProperties": {"$ref": "#/definitions/tracer"}
     },
-    "output": {"$ref": "#/definitions/output"}
+    "output": {"$ref": "#/definitions/output"},
+    "init": {
+      "$ref": "#/definitions/initial_condition",
+      "description": "Legacy single-tracer initial condition, used only when [tracers] is absent on structured grids."
+    }
   },
   "definitions": {
     "date": {
@@ -251,6 +281,8 @@
         "n_layers": {"type": "integer", "minimum": 1},
         "south_value": {"type": "number"},
         "north_value": {"type": "number"},
+        "south": {"type": "number", "deprecated": true, "description": "Alias for south_value."},
+        "north": {"type": "number", "deprecated": true, "description": "Alias for north_value."},
         "split_lat_deg": {"type": "number", "minimum": -90, "maximum": 90},
         "lon0_deg": {"type": "number"},
         "lat0_deg": {"type": "number", "minimum": -90, "maximum": 90},
@@ -261,6 +293,7 @@
         "variable": {"type": "string"},
         "time_index": {"type": "integer", "minimum": 1},
         "vertical_order": {"type": "string", "enum": ["surface_first", "toa_first"]},
+        "clamp_negative": {"type": "boolean", "default": false, "description": "cs_native: set negative values to zero."},
         "lowest_layer": {"type": "boolean", "default": false},
         "psurf_fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
         "total_molecules": {"type": "number", "exclusiveMinimum": 0}
@@ -271,8 +304,11 @@
       "additionalProperties": true,
       "properties": {
         "kind": {
-          "type": "string",
-          "enum": ["none", "file", "cs_native", "lmdz_co2", "gridfed_fossil_co2", "edgar_sf6", "zhang_rn222"]
+          "description": "A named source, or any other name for a generic file source (read like kind = \"file\").",
+          "anyOf": [
+            {"enum": ["none", "file", "cs_native", "lmdz_co2", "gridfed_fossil_co2", "edgar_sf6", "zhang_rn222"]},
+            {"type": "string"}
+          ]
         },
         "file": {"type": "string"},
         "files": {"type": "array", "minItems": 1, "items": {"type": "string"}},
@@ -287,6 +323,11 @@
         "temporal_scheme": {
           "type": "string",
           "enum": ["stepwise", "linear", "conservative"]
+        },
+        "regridding": {
+          "type": "string",
+          "enum": ["bilinear", "conservative"],
+          "description": "Lat-lon and reduced-Gaussian targets: conservative or bilinear (default). Cubed-sphere targets always regrid conservatively."
         }
       }
     },
@@ -321,6 +362,10 @@
         "snapshot_file": {"type": "string", "description": "Legacy alias for output.path."},
         "snapshot_hours": {"$ref": "#/definitions/hours"},
         "snapshot_interval_hours": {"type": "number", "exclusiveMinimum": 0},
+        "filename": {"type": "string", "deprecated": true, "description": "Alias for output.path."},
+        "interval_hours": {"type": "number", "exclusiveMinimum": 0, "deprecated": true, "description": "Alias for cadence_hours."},
+        "cadence_seconds": {"type": "number", "exclusiveMinimum": 0, "deprecated": true, "description": "Cadence in seconds; prefer cadence_hours."},
+        "interval_seconds": {"type": "number", "exclusiveMinimum": 0, "deprecated": true, "description": "Cadence in seconds; prefer cadence_hours."},
         "fields": {"$ref": "#/definitions/output_fields"},
         "observations": {"$ref": "#/definitions/observation_output"}
       }
@@ -589,6 +634,7 @@
     },
     "hours": {
       "type": "array",
+      "uniqueItems": true,
       "items": {"type": "number", "minimum": 0}
     },
     "output_fields": {
@@ -615,6 +661,13 @@
         "per_tracer": {
           "type": "object",
           "additionalProperties": {"$ref": "#/definitions/tracer_output_fields"}
+        },
+        "column_mass": {"type": "boolean", "deprecated": true, "description": "Alias for column_mass_per_area."},
+        "tracer_fields": {
+          "type": "object",
+          "deprecated": true,
+          "description": "Alias for per_tracer.",
+          "additionalProperties": {"$ref": "#/definitions/tracer_output_fields"}
         }
       }
     },
@@ -624,7 +677,8 @@
       "properties": {
         "layers": {"$ref": "#/definitions/layer_selection"},
         "column_mean": {"type": "boolean"},
-        "column_mass_per_area": {"type": "boolean"}
+        "column_mass_per_area": {"type": "boolean"},
+        "column_mass": {"type": "boolean", "deprecated": true, "description": "Alias for column_mass_per_area."}
       }
     },
     "layer_selection": {

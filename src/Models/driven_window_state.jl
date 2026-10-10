@@ -63,9 +63,11 @@ function _reset_air_mass_preserve_tracer_mass!(state::CubedSphereState,
     return _refresh_state_halos!(state, mesh)
 end
 
+const _AIR_MASS_RESET_MODES = (:none, :preserve_vmr, :preserve_tracer_mass)
+
 function _normalize_air_mass_reset_mode(air_mass_reset_mode)
     mode = air_mass_reset_mode === nothing ? :none : Symbol(air_mass_reset_mode)
-    mode in (:none, :preserve_vmr, :preserve_tracer_mass) ||
+    mode in _AIR_MASS_RESET_MODES ||
         throw(ArgumentError("air_mass_reset_mode must be one of :none, " *
                             ":preserve_vmr, or :preserve_tracer_mass; got $(repr(mode))"))
     return mode

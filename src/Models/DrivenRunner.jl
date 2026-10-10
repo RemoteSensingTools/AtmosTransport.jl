@@ -72,6 +72,7 @@ using ProgressMeter: Progress, next!, finish!, update!
 
 import ...expand_data_path
 using ...SectionTimer
+using ...ConfigChecks: unknown_key_messages, key_suggestion
 using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 CubedSphereState, total_air_mass, total_mass, tracer_names,
                 tracer_index, get_tracer
@@ -92,6 +93,7 @@ using ..MetDrivers: AbstractMetDriver, TransportBinaryDriver,
                      total_windows, window_dt, binary_capabilities,
                      inspect_binary, steps_per_window,
                      steps_per_window_schedule, release_payload!
+using ..InitialConditionIO: _regridding_method
 using ..InitialConditionIO: build_initial_mixing_ratio, _build_cs_initial_mixing_ratio,
                              pack_initial_tracer_mass, _cs_pack_interior_into_halo!,
                              build_surface_flux_sources
@@ -106,7 +108,8 @@ using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, S
                 AbstractObservationSampler, NoObservationSampler, build_observation_sampler,
                 samples_observations, begin_observation_day!, observe_window_boundary!,
                 finish_observations!, check_observation_tracer_names,
-                observation_output_path, SoundingMode, SiteMode
+                observation_output_path, SoundingMode, SiteMode,
+                _SNAPSHOT_SCHEDULE_KEYS, _SNAPSHOT_INTERVAL_KEYS, _schedule_has_times
 # TransportModel + DrivenSimulation live alongside us in the Models module;
 # reach up to the parent and pull them in.
 using ..Models: TransportModel
@@ -119,11 +122,17 @@ import ..Models: DrivenSimulation, run_window!, run!, step!, allocate_face_fluxe
 using ..Models: build_runtime_physics_recipe, validate_runtime_physics_recipe,
                  build_runtime_advection, configured_halo_width,
                  CubedSphereRuntimeRecipeStyle
+# Config-only parsers, run by `validate_config` before any binary is opened.
+using ..Models: advection_spec, diffusion_spec, convection_spec, chemistry_spec,
+                 _advection_section, _diffusion_section, _convection_section,
+                 _chemistry_section, _normalize_air_mass_reset_mode,
+                 _resolve_physics_cadence
 
 export run_driven_simulation, validate_config, TransportTracerSpec
 
 include("runner/progress.jl")
 include("runner/configuration.jl")
+include("runner/config_keys.jl")
 include("runner/summary.jl")
 include("runner/resources.jl")
 include("runner/output.jl")
@@ -241,6 +250,8 @@ function _run_driven_simulation_inputs(cfg, input_cfg, binary_paths, arch::Abstr
     end
     caps = first(binary_caps).caps
     _validate_input_binary_expectations(caps, input_cfg, first(binary_paths))
+    # (window length, window count) of every binary, for the snapshot schedule.
+    window_layout = [(item.caps.window_seconds, item.caps.nwindow) for item in binary_caps]
     # Rolling NVMe input staging (opt-in via [input.staging]; default off ⇒
     # `staged_path_for!` returns the NAS path, bit-identical to today). Created
     # here and torn down in `finally` so staged multi-GB files are always
@@ -252,7 +263,8 @@ function _run_driven_simulation_inputs(cfg, input_cfg, binary_paths, arch::Abstr
         _with_run_resource(output_resources) do
             _with_run_resource(input_resources) do
                 _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg,
-                                           stager, arch, output_resources, input_resources)
+                                           stager, arch, output_resources, input_resources,
+                                           window_layout)
             end
         end
     finally
@@ -262,18 +274,25 @@ end
 
 _run_driven_simulation_for(::Val{:latlon}, binary_paths::Vector{String}, cfg,
                            stager::InputStager, arch::AbstractArchitecture,
-                           output_resources::RunSnapshotOutput, input_resources::RunInputResources) =
-    _run_driven_simulation_structured(binary_paths, cfg, stager, arch, output_resources, input_resources)
+                           output_resources::RunSnapshotOutput, input_resources::RunInputResources,
+                           window_layout) =
+    _run_driven_simulation_structured(binary_paths, cfg, stager, arch, output_resources,
+                                      input_resources, window_layout)
 _run_driven_simulation_for(::Val{:reduced_gaussian}, binary_paths::Vector{String}, cfg,
                            stager::InputStager, arch::AbstractArchitecture,
-                           output_resources::RunSnapshotOutput, input_resources::RunInputResources) =
-    _run_driven_simulation_structured(binary_paths, cfg, stager, arch, output_resources, input_resources)
+                           output_resources::RunSnapshotOutput, input_resources::RunInputResources,
+                           window_layout) =
+    _run_driven_simulation_structured(binary_paths, cfg, stager, arch, output_resources,
+                                      input_resources, window_layout)
 _run_driven_simulation_for(::Val{:cubed_sphere}, binary_paths::Vector{String}, cfg,
                            stager::InputStager, arch::AbstractArchitecture,
-                           output_resources::RunSnapshotOutput, input_resources::RunInputResources) =
-    _run_driven_simulation_cs(binary_paths, cfg, stager, arch, output_resources, input_resources)
+                           output_resources::RunSnapshotOutput, input_resources::RunInputResources,
+                           window_layout) =
+    _run_driven_simulation_cs(binary_paths, cfg, stager, arch, output_resources,
+                              input_resources, window_layout)
 function _run_driven_simulation_for(::Val{grid_type}, _binary_paths::Vector{String},
-                                    _cfg, _stager::InputStager, _arch, _output_resources::RunSnapshotOutput, _input_resources::RunInputResources) where grid_type
+                                    _cfg, _stager::InputStager, _arch, _output_resources::RunSnapshotOutput, _input_resources::RunInputResources,
+                                    _window_layout) where grid_type
     throw(ArgumentError("Unsupported transport-binary grid_type=$(grid_type)."))
 end
 
@@ -342,7 +361,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                            stager::InputStager,
                                            arch::AbstractArchitecture,
                                            output_resources::RunSnapshotOutput,
-                                           input_resources::RunInputResources)
+                                           input_resources::RunInputResources,
+                                           window_layout = nothing)
     FT = _cfg_float_type(cfg)
     assert_float_type!(arch, FT)
     run_cfg = get(cfg, "run", Dict{String, Any}())
@@ -369,15 +389,20 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                           arch = arch)
     _check_multifile_window_range(first_driver, start_window, stop_window_override,
                                   length(binary_paths))
+    # Windows of every binary: the run length and the window ends of the schedule.
+    layout = something(window_layout, _uniform_window_layout(first_driver, binary_paths))
+    run_hours = _layout_run_hours(layout; start_window, stop_window_override)
     output_cfg = get(cfg, "output", Dict{String, Any}())
-    output_spec = runtime_output_spec(output_cfg, FT;
-                                      default_cap_hours = _output_default_cap_hours(
-                                          first_driver, length(binary_paths);
-                                          start_window = start_window,
-                                          stop_window_override = stop_window_override))
+    output_spec = runtime_output_spec(output_cfg, FT; default_cap_hours = run_hours)
     snapshot_schedule_hours = snapshot_hours(output_spec)
     do_snapshots = output_enabled(output_spec)
     _check_snapshot_day_paths(output_spec, binary_paths)
+    _check_output_targets(output_spec, output_cfg)
+    _check_snapshot_schedule(output_spec,
+                             _window_end_hours(layout; start_window, stop_window_override))
+    do_snapshots && output_spec.format === :binary_mmap && throw(ArgumentError(
+        "[output] format = \"binary_mmap\" (ATMSNAP) is written for cubed-sphere runs " *
+        "only; use format = \"netcdf\" on lat-lon and reduced-Gaussian grids"))
     recipe = build_runtime_physics_recipe(cfg, first_driver, FT)
     _validate_capability_match(first_driver, recipe)
 
@@ -395,9 +420,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                             model.state, grid_of_first;
                                             cfg, binary_paths, halo_width = 0,
                                             offset_seconds = (start_window - 1) * Float64(window_dt(first_driver)),
-                                            span_seconds = 3600 * _output_default_cap_hours(
-                                                first_driver, length(binary_paths);
-                                                start_window, stop_window_override))
+                                            span_seconds = 3600 * run_hours)
     # Observation sampling needs the per-window loop even without snapshots.
     do_windows = do_snapshots || samples_observations(sampler)
     flux_run_span = _flux_run_span(cfg, first_driver, length(binary_paths);
@@ -457,7 +480,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
         end
 
         if do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
-           abs(snapshot_schedule_hours[snap_idx]) < 0.5
+           _snapshot_due(0.0, snapshot_schedule_hours[snap_idx],
+                         Float64(window_dt(first_driver)) / 3600)
             capture_structured!(0.0)
             set_progress_status!(timer;
                                  detail = @sprintf("snapshot %d at t=%.0fh",
@@ -548,7 +572,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                     _observe_window_end!(timer, sampler, sim,
                                          day_start_seconds + windows_done * Float64(window_dt(driver)))
                     while do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
-                          abs(total_elapsed_hours - snapshot_schedule_hours[snap_idx]) < 0.5
+                          _snapshot_due(total_elapsed_hours, snapshot_schedule_hours[snap_idx],
+                                        window_hours)
                         capture_structured!(total_elapsed_hours)
                         set_progress_status!(timer;
                                              detail = @sprintf("snapshot %d at t=%.0fh  output=%s",
@@ -643,7 +668,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                    stager::InputStager,
                                    arch::AbstractArchitecture,
                                    output_resources::RunSnapshotOutput,
-                                   input_resources::RunInputResources)
+                                   input_resources::RunInputResources,
+                                   window_layout = nothing)
     FT   = _cfg_float_type(cfg)
     assert_float_type!(arch, FT)
 
@@ -676,14 +702,15 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     # First driver + model (reuses air_mass from window 1)
     driver1 = input_resources.driver = TransportBinaryDriver(staged_path_for!(stager, 1);
                                     FT = FT, arch = arch, Hp = Hp)
+    layout = something(window_layout, _uniform_window_layout(driver1, binary_paths))
+    run_hours = _layout_run_hours(layout; stop_window_override)
     output_cfg = get(cfg, "output", Dict{String, Any}())
-    output_spec = runtime_output_spec(output_cfg, FT;
-                                      default_cap_hours = _output_default_cap_hours(
-                                          driver1, length(binary_paths);
-                                          stop_window_override = stop_window_override))
+    output_spec = runtime_output_spec(output_cfg, FT; default_cap_hours = run_hours)
     snapshot_schedule_hours = snapshot_hours(output_spec)
     do_snapshots = output_enabled(output_spec)
     _check_snapshot_day_paths(output_spec, binary_paths)
+    _check_output_targets(output_spec, output_cfg)
+    _check_snapshot_schedule(output_spec, _window_end_hours(layout; stop_window_override))
     if stop_window_override !== nothing && length(binary_paths) > 1 &&
        Int(stop_window_override) < total_windows(driver1)
         throw(ArgumentError(
@@ -751,8 +778,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     sampler = _install_observation_sampler!(output_resources, output_cfg, output_spec.partition,
                                             model.state, grid;
                                             cfg, binary_paths, halo_width = Hp,
-                                            span_seconds = 3600 * _output_default_cap_hours(
-                                                driver1, length(binary_paths); stop_window_override))
+                                            span_seconds = 3600 * run_hours)
     observation_clock_seconds = 0.0   # exact Float64 run clock for observation times
 
     # Build surface-flux sources from the parsed tracer specs and log per-source
@@ -816,7 +842,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
         snap_idx = 1
         total_hour = 0.0
         if do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
-           abs(snapshot_schedule_hours[snap_idx]) < 0.5
+           _snapshot_due(0.0, snapshot_schedule_hours[snap_idx], Float64(window_dt(driver1)) / 3600)
             capture_cs!(0.0)
             set_progress_status!(timer;
                                  detail = @sprintf("snapshot %d at t=%.1fh",
@@ -902,7 +928,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                     _observe_window_end!(timer, sampler, sim,
                                          day_start_seconds + windows_done * Float64(window_dt(driver)))
                     while do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
-                          abs(total_hour - snapshot_schedule_hours[snap_idx]) < 0.5
+                          _snapshot_due(total_hour, snapshot_schedule_hours[snap_idx], window_hours)
                         capture_cs!(total_hour)
                         set_progress_status!(timer;
                                              detail = @sprintf("snapshot %d at t=%.1fh  output=%s",

@@ -182,14 +182,7 @@ end
     @test hasproperty(properties, :advection)
     @test !hasproperty(properties.run.properties, :scheme)
 
-    @test Set(String.(properties.advection.properties.scheme.enum)) ==
-          Set(["upwind", "slopes", "ppm", "linrood", "none"])
-    @test Set(String.(properties.convection.properties.kind.enum)) ==
-          Set(["none", "tm5", "cmfmc", "cmfmc_matrix"])
-    @test Set(String.(properties.diffusion.properties.kind.enum)) == Set([
-        "none", "constant", "tm5_beljaars_viterbo_local_kz",
-        "geoschem_holtslag_boville_vdiff", "tm5_dkg",
-    ])
+    # Every choice and key is compared with the parsers in test_config_schema_agreement.jl.
 
     output = schema.definitions.output.properties
     for key in (:enabled, :format, :path, :hours, :cadence_hours, :split,
@@ -204,8 +197,6 @@ end
     for retired in (:mode, :path_template, :frequency, :provenance)
         @test !hasproperty(output, retired)
     end
-    temporal_schemes = schema.definitions.surface_flux.properties.temporal_scheme.enum
-    @test Set(String.(temporal_schemes)) == Set(["stepwise", "linear", "conservative"])
 
     for example in ("atmos_transport_schema_demo.toml", "minimal_template.toml")
         cfg = TOML.parsefile(joinpath(REPO_ROOT, "config", "examples", example))

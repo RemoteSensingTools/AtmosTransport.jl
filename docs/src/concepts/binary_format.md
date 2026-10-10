@@ -148,6 +148,8 @@ returns a `NamedTuple`:
 | `grid_type :: Symbol` | `:latlon` / `:reduced_gaussian` / `:cubed_sphere` |
 | `flux_kind :: Symbol` | `:substep_mass_amount` or `:full_window_mass_amount` |
 | `nlevel :: Int` | vertical levels |
+| `nwindow :: Int` | met windows in the file |
+| `window_seconds :: Float64` | length of one met window (`dt_met_seconds`) |
 | `steps_per_window :: Int` | scalar substep count (`maximum(steps_per_window_by_window)`) |
 | `variable_step_schedule :: Bool` | `true` iff per-window step counts are not all equal |
 | `adaptive_substeps :: Union{Nothing, Bool}` | explicit `adaptive_substeps` header value for CS; `nothing` when not recorded |

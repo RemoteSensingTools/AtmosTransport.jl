@@ -258,6 +258,43 @@
   `scripts/completed_experiments/` and `scripts/deprecated/` no longer exist.
   `scripts/README.md` lists every removed script with its purpose, and each
   `heritage/README.md` says why its scripts are kept.
+- Run configs are checked before any binary is opened. `validate_config`
+  (run at the start of every run) now also parses `[advection]`,
+  `[diffusion]`, `[convection]`, `[chemistry]`, `air_mass_reset_mode`,
+  `physics_cadence` and `[output]`, so these errors no longer appear only after
+  the binaries are inspected. New errors: a decay half-life for a tracer the run
+  does not carry (it failed at the first chemistry step), an enabled `[output]`
+  with a path but no snapshot-schedule key or with snapshot times but no path
+  (nothing was written; `hours = []` still means deliberately none), Lin–Rood
+  `ppm_order` other than 5 or 7. Keys the run would ignore are logged as
+  warnings: unknown tables and keys with a "did you mean" suggestion, known
+  keys the chosen kind leaves unread (including flat `[tracers.<name>]` keys),
+  surface-flux tables without `kind` (no flux is emitted), and surface-flux
+  kinds that are not a named source (read as a generic file). Of the 247
+  shipped run configs, four get warnings: `config/runs/binary_format_ab/c45_*`
+  set `[advection] order = 7`, which is not read, so they run Lin–Rood PPM5
+  (the intended key is `ppm_order`), and two ocean-flux configs use
+  `kind = "eccodarwin_ocean_co2"`, a generic file source; the configs are
+  unchanged pending the owner's decision. Four that already failed at run time
+  now fail at the check.
+- Snapshot hours are checked against the met-window ends of every binary
+  (now recorded by `binary_capabilities` as `nwindow` and `window_seconds`)
+  when the run starts: an hour that is not a window end was never matched, and
+  every later snapshot was lost with it. Snapshots are matched to window ends
+  within half a window (at most half an hour, as before), so runs with
+  sub-hour windows no longer take a snapshot one window early. The default
+  snapshot span and the observation span count the windows of every binary,
+  not the first binary's times the binary count. `format = "binary_mmap"` is
+  rejected on lat-lon and reduced-Gaussian grids before the run instead of at
+  the first write.
+- The editor schema lists every key the runtime reads (new:
+  `expected_nlevel`, `required_preprocessor_contract`, `convection.cloud_base`,
+  surface-flux `regridding`, `init.clamp_negative`, top-level legacy `[init]`,
+  and the deprecated aliases) and accepts `diffusion.kind =
+  "geoschem_nonlocal_vdiff"`. A new test compares every schema choice with the
+  parser's accepted values and every schema table with the known-key tables,
+  both ways. New module `ConfigChecks` holds the strict Boolean and known-key
+  helpers that `Output`, `Preprocessing` and `Models` each had a copy of.
 
 ### Surface fluxes and preprocessing
 

@@ -235,6 +235,9 @@ end
 # `k = Nz - k_src + 1`. Requires `size(lev) == Nz` (same vertical grid).
 # ---------------------------------------------------------------------------
 
+# `init.vertical_order` of a native cubed-sphere file.
+const _CS_NATIVE_VERTICAL_ORDERS = (:surface_first, :toa_first)
+
 function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
                              air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                              cfg, ::Type{FT}) where FT
@@ -251,7 +254,7 @@ function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
     # Source vertical convention: "surface_first" (GEOS-Chem default) flips to
     # the model's TOA-first ordering; "toa_first" copies straight through.
     vertical_order = Symbol(lowercase(String(get(cfg, "vertical_order", "surface_first"))))
-    vertical_order in (:surface_first, :toa_first) || throw(ArgumentError(
+    vertical_order in _CS_NATIVE_VERTICAL_ORDERS || throw(ArgumentError(
         "init.kind=cs_native: vertical_order=$(vertical_order) must be " *
         "\"surface_first\" (GEOS-Chem, flips to TOA-first) or \"toa_first\""))
     flip_vertical = vertical_order === :surface_first

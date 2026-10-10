@@ -21,10 +21,28 @@ ignored.
 
 `validate_config(cfg)` checks runtime table shapes, input path existence,
 precision/backend compatibility, and window bounds without opening binary
-readers or allocating model state. Nested tracer `init` and `surface_flux`
-values must be tables. Shape errors are returned before value checks; a
-successful result is not a full physics or binary validation. See
+readers or allocating model state. It also parses the physics sections,
+`air_mass_reset_mode`, `physics_cadence` and `[output]` as the run does, so
+their errors are reported together; decay half-lives must name a tracer, and
+an enabled `[output]` needs both a path and snapshot times (`hours = []` means
+deliberately none). Nested tracer `init` and `surface_flux` values must be
+tables. Shape errors are returned before value checks; a successful result is
+not a full physics or binary validation. See
 [Run with real meteorology](@ref Run-with-real-meteorology) for an example.
+
+Keys the run would ignore are logged as warnings when the config is checked
+(also at the start of every run): unknown tables and keys, with a suggestion
+when a known key is close (`[diffussion]` → `[diffusion]`, `order` →
+`ppm_order`), and known keys that the chosen kind or another setting leaves
+unread, such as `value` without `[diffusion] kind = "constant"`, flat
+`[tracers.<name>]` keys next to an `init` table, a `surface_flux` table
+without `kind`, or `start_hour` without an interval key. A surface-flux kind
+that is not one of the named sources is read as a generic `file` source and
+is reported too. When the run starts and has read every binary's header,
+snapshot hours that do not fall on a met-window end are an error (such an
+hour would never be written, and every later snapshot would be lost with it),
+and `format = "binary_mmap"` is rejected on lat-lon and reduced-Gaussian
+grids.
 
 ### `[input]` — which transport binaries to load
 

@@ -38,10 +38,7 @@ using TOML
 using KernelAbstractions: @kernel, @index, get_backend, synchronize, CPU as KA_CPU
 using ..Architectures: _compensated_total, _total_accumulator_type
 
-function _config_bool(value, path::AbstractString)
-    value isa Bool || throw(ArgumentError("$(path) must be true or false; got $(repr(value))"))
-    return value
-end
+using ..ConfigChecks: config_bool as _config_bool, check_known_keys as _check_known_keys
 
 # netcdf-c is not thread-safe, even across files. Daily snapshot files are
 # written on a spawned task while observation and single-file snapshot appends

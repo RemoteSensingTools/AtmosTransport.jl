@@ -268,6 +268,8 @@ _clock_time(sim::DrivenSimulation) = sim.start_time + Float64(sim.window_dt) *
 # `physics_cadence` (`:window`, `:substep` or `nothing`), resolved once. Without
 # a value, the deprecated `ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS=1` still selects
 # `:substep`, with a warning.
+const _PHYSICS_CADENCES = (:window, :substep)
+
 function _resolve_physics_cadence(physics_cadence)
     from_env = get(ENV, "ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS", "0") == "1"
     if physics_cadence === nothing
@@ -277,7 +279,7 @@ function _resolve_physics_cadence(physics_cadence)
         return :substep
     end
     cadence = Symbol(physics_cadence)
-    cadence in (:window, :substep) || throw(ArgumentError(
+    cadence in _PHYSICS_CADENCES || throw(ArgumentError(
         "physics_cadence must be :window or :substep; got $(repr(physics_cadence))"))
     from_env && cadence === :window && throw(ArgumentError(
         "ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS=1 conflicts with physics_cadence = :window; " *

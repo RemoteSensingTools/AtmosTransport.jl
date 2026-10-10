@@ -41,6 +41,8 @@ Geometry and topology decisions come from
 - `Architectures.jl` — unified CPU/vendor-specific GPU execution policies,
   kernel launching (`launch!`) and point operations (`AbstractPointOp`,
   `Fused`, `Sequence`: a kernel body written once, fused by dispatch)
+- `ConfigChecks.jl` — strict TOML Booleans and known-key checks with
+  "did you mean" suggestions, shared by `Output`, `Preprocessing` and `Models`
 - `Quantities/` — intensive/extensive/vector/flux traits used by regridding
 - `Diagnostics/` — lightweight runtime instrumentation
 - `Regridding/` — conservative regridding and weight application

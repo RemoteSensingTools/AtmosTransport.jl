@@ -236,10 +236,12 @@ end
     ok, errors = validate_config(Dict{String, Any}("input" => input, "output" => entry))
     @test any(e -> occursin("[[output.observations.sources]] entry 1 must be a TOML table", e), errors)
 
-    # Disabled observations add no errors, and `[output].split` is not parsed on their behalf.
+    # Disabled observations add no errors. `[output].split` is not parsed on their
+    # behalf; the snapshot settings parse it (and reject it) on their own.
     off = _obs_cfg(; enabled = false); off["split"] = "bogus"
     ok, errors = validate_config(Dict{String, Any}("input" => input, "output" => off))
-    @test !any(e -> occursin("observations", e) || occursin("split", e), errors)
+    @test !any(e -> occursin("observations", e), errors)
+    @test count(e -> occursin("split", e), errors) == 1
 
     # Enabled: an explicit binary list needs start_time.
     ok, errors = validate_config(Dict{String, Any}("input" => input, "output" => _obs_cfg()))
