@@ -128,6 +128,109 @@ function expected_air_mass!(dest::NTuple{6}, window::TransportWindow, λ::Real)
     return dest
 end
 
+# ---------------------------------------------------------------------------
+# In-place window loading into an existing host window
+#
+# GPU runs copy every loaded window to the device, so the host window is only
+# a staging buffer. `load_transport_window!` refills one such window instead
+# of allocating new panel arrays (and their padded copies) for every window:
+# each payload section is copied straight into its destination, padded fields
+# into their interior. Halo cells are never written, so they keep the zeros of
+# the first load and the result equals `load_transport_window`.
+# ---------------------------------------------------------------------------
+
+# Destination of every payload section in an existing cubed-sphere window:
+# padded fields receive their interior, the others the whole panel.
+function _cs_section_targets(w::TransportWindow, Hp::Int)
+    interior(a) = view(a, (Hp + 1):(size(a, 1) - Hp), (Hp + 1):(size(a, 2) - Hp), :)
+    targets = Dict{Symbol, Any}(:m  => map(interior, w.air_mass),
+                                :ps => w.surface_pressure,
+                                :am => map(interior, w.fluxes.am),
+                                :bm => map(interior, w.fluxes.bm),
+                                :cm => map(interior, w.fluxes.cm))
+    w.deltas === nothing || (targets[:dm] = map(interior, w.deltas.dm))
+    c = w.convection
+    if c !== nothing
+        c.cmfmc === nothing || (targets[:cmfmc] = c.cmfmc)
+        c.dtrain === nothing || (targets[:dtrain] = c.dtrain)
+        c.cloud_base === nothing || (targets[:cmfmc_cloud_base] = c.cloud_base)
+        if c.tm5_fields !== nothing
+            for name in (:entu, :detu, :entd, :detd)
+                targets[name] = getfield(c.tm5_fields, name)
+            end
+        end
+    end
+    sf = w.surface
+    if sf !== nothing
+        targets[:pblh] = sf.pblh
+        targets[:ustar] = sf.ustar
+        targets[:pbl_hflux] = sf.hflux
+        targets[:t2m] = sf.t2m
+        sf.eflux === nothing || (targets[:pbl_eflux] = sf.eflux)
+    end
+    v = w.vdiff
+    if v !== nothing
+        targets[:vdiff_u] = v.u
+        targets[:vdiff_v] = v.v
+        targets[:vdiff_t] = v.t
+        targets[:vdiff_qv] = v.qv
+    end
+    w.dkg === nothing || (targets[:dkg] = w.dkg)
+    return targets
+end
+
+# One panel of `n` elements starting after offset `o` of the mmap'd payload.
+@inline _copy_cs_panel!(dst::Array, data, o::Int, n::Int) = copyto!(dst, 1, data, o + 1, n)
+
+# Interior of a padded 3-D panel: one contiguous row (the fastest index) at a time.
+function _copy_cs_panel!(dst::SubArray{<:Any, 3, <:Array}, data, o::Int, n::Int)
+    a = parent(dst)
+    i0, j0 = first(dst.indices[1]), first(dst.indices[2])
+    nx, ny, nz = size(dst)
+    nx * ny * nz == n || throw(DimensionMismatch(
+        "cubed-sphere panel section has $(n) elements; the window interior holds $(nx * ny * nz)"))
+    li = LinearIndices(a)
+    src = o
+    @inbounds for k in 1:nz, j in 1:ny
+        copyto!(a, li[i0, j0 + j - 1, k], data, src + 1, nx)
+        src += nx
+    end
+    return dst
+end
+
+"""
+    load_transport_window!(window, driver, win) -> window
+
+Refill an existing host-resident cubed-sphere `window` (from
+`load_transport_window` on the same binary) with window `win`, without
+allocating new field arrays. Equal to `load_transport_window(driver, win)`
+provided the halos of `window`'s padded fields still hold the zeros of that
+first load: only interiors are written.
+"""
+function load_transport_window!(
+    w::TransportWindow,
+    driver::TransportBinaryDriver{FT, ReaderT, <:AtmosGrid{<:CubedSphereMesh}},
+    win::Int,
+) where {FT, ReaderT}
+    reader = driver.reader
+    h = reader.header
+    np = h.geometry.npanel
+    targets = _cs_section_targets(w, driver.grid.horizontal.Hp)
+    o = _transport_window_offset(reader, win)
+    for section in h.payload_sections
+        n = _cs_section_elements(h, section)
+        dest = get(targets, section, nothing)
+        if dest !== nothing
+            per_panel = n ÷ np
+            for p in 1:np
+                _copy_cs_panel!(dest[p], reader.data, o + (p - 1) * per_panel, per_panel)
+            end
+        end
+        o += n
+    end
+    return w
+end
+
 function load_transport_window(
     driver::TransportBinaryDriver{FT, ReaderT, <:AtmosGrid{<:CubedSphereMesh}},
     win::Int,

@@ -600,5 +600,5 @@ end
 
 export StructuredFluxDeltas, FaceIndexedFluxDeltas, CubedSphereFluxDeltas
 export TransportWindow
-export TransportBinaryDriver, driver_grid, air_mass_basis, load_transport_window
+export TransportBinaryDriver, driver_grid, air_mass_basis, load_transport_window, load_transport_window!
 export has_humidity_endpoints, interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!

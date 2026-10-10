@@ -156,10 +156,12 @@ function DrivenSimulation(model::TransportModel,
                   (flux_interpolation_mode(driver) === :interpolate) : Bool(interpolate_fluxes_within_window)
     reset_mode = _normalize_air_mass_reset_mode(air_mass_reset_mode)
     every_substep = _resolve_physics_cadence(physics_cadence) === :substep
+    host_staging = _host_staging_window(loaded_window, driver, model.state.air_mass)
 
     sim = DrivenSimulation{typeof(model), typeof(driver), typeof(window),
                            typeof(expected_air_mass), typeof(qv_buffer), FT,
-                           typeof(callbacks), typeof(prefetch_task)}(
+                           typeof(callbacks), typeof(prefetch_task),
+                           typeof(host_staging)}(
         model,
         driver,
         window,
@@ -187,6 +189,7 @@ function DrivenSimulation(model::TransportModel,
         flux_interp,
         reset_mode,
         every_substep,
+        host_staging,
     )
 
     if initialize_air_mass

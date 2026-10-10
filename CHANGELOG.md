@@ -149,6 +149,13 @@
   `bound_context` (`fusion_policy`; the halo fills bind their panel arrays); a C90 halo
   exchange then takes 1.12–1.34 ms instead of 1.29–1.67 ms for packed tracers
   and 0.45 instead of 0.58 ms for a 3-D field with corners.
+- Cubed-sphere GPU runs refill one host window in place for every met window
+  they load (`load_transport_window!`) instead of allocating a new one and its
+  padded copies; the window is then copied to the device as before. Results
+  are unchanged (runtime golden cases bit-identical). Two-day warm MERRA-2 C90
+  runs on an L40S (six runs each): run-loop host allocations 15.0 → 4.9 GiB,
+  run-loop wall time 10.2 → 8.7 s, of which transport 7.2 → 5.3 s (less
+  garbage collection during transport).
 - New in `Architectures`: point operations (`AbstractPointOp`, `Fused`,
   `Sequence`, `launch!(op, ctx, backend)`), with a per-backend
   `fusion_policy` (one fused kernel by default, separate launches on Metal). A kernel body is written once as
