@@ -39,6 +39,13 @@
   - `[numerics] write_replay_check` (default `true`) of a preprocessing config
     reaches every writer as the `write_replay_check` keyword.
 
+- `[numerics] geos_balance_mode` is renamed `balance_mode` (an error names the
+  new key), and `balance_mode` accepts only `"column"` and `"per_layer"` (the
+  aliases `column_poisson`, `layer`, `layer_local` and `global` are gone). The
+  shipped preprocessing configs use the new key. The GEOS writer's deprecated
+  `process_day(...; balance_mode)` keyword is removed; pass
+  `horizontal_balance = ColumnBalance()` or `LayerBalance()`.
+
 ### Fixes
 
 - ERA5 N320 preprocessing had two registration errors. The GRIB
@@ -107,8 +114,9 @@
 - `[numerics] geos_balance_mode` was ignored by the MERRA-2 and ERA5 N320
   writers, which balanced per layer only with the environment variable
   `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1`; no header recorded the
-  mode. `[numerics] balance_mode = "column" | "per_layer"` (old name
-  accepted) now selects it on every path, the LL-to-CS regrid script takes
+  mode. `[numerics] balance_mode = "column" | "per_layer"` now selects it on
+  every path (the old name was later removed; see Breaking changes), the
+  LL-to-CS regrid script takes
   `--balance-mode`, and every transport-binary header records
   `horizontal_balance`. The environment variable is removed (see Breaking
   changes). Default results are unchanged.

@@ -30,11 +30,12 @@ values must be tables. Shape errors are returned before value checks; a successf
 not a full physics or binary validation. See
 [Run with real meteorology](@ref Run-with-real-meteorology) for an example.
 
-Keys the run would ignore are logged as warnings when the config is checked
-(also at the start of every run): unknown tables and keys, with a suggestion
-when a known key is close (`[diffussion]` → `[diffusion]`, `order` →
-`ppm_order`), and known keys that the chosen kind or another setting leaves
-unread, such as `value` without `[diffusion] kind = "constant"`, flat
+Unknown tables and keys are errors when the config is checked (also at the
+start of every run), with a suggestion when a known key is close
+(`[diffussion]` → `[diffusion]`, `order` → `ppm_order`); so is a
+`[output.fields.per_tracer.<name>]` table for a tracer the run does not carry.
+Known keys that the chosen kind or another setting leaves unread are logged as
+warnings, such as `value` without `[diffusion] kind = "constant"`, flat
 `[tracers.<name>]` keys next to an `init` table, a `surface_flux` table
 without `kind`, or `start_hour` without an interval key. A surface-flux kind
 that is not one of the named sources is an error; use `kind = "file"` for a
@@ -731,7 +732,7 @@ balance_mode = "column"      # default on lat-lon and cubed-sphere paths
 The mode is recorded in every transport-binary header as
 `horizontal_balance` (for GEOS, the balance its `geos_cm_closure` applies:
 `"none"` for the pressure-fixer closures, `"column"` for the moisture-filtered
-and OMEGA closures). `geos_balance_mode` is accepted as an older name.
+and OMEGA closures).
 
 #### `geos_cm_closure` — GEOS native CS vertical-flux closure
 

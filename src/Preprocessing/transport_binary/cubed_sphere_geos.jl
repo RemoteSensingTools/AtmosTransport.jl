@@ -450,7 +450,6 @@ function process_day(date::Date,
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
                      horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
-                     balance_mode::Union{Nothing, Symbol} = nothing,
                      cm_closure::Symbol = :endpoint_balanced,
                      smooth_iters::Integer = 8,
                      omega_regularization::OmegaRegularization = OmegaRegularization(),
@@ -460,14 +459,6 @@ function process_day(date::Date,
         error("GEOS-CS passthrough only supports mass_basis=:dry; got $(mass_basis). " *
               "GEOS MFXC/MFYC are already dry; the chained pressure-fixer is dry-basis.")
     _validate_geos_native_panel_convention(grid.mesh.convention)
-    if balance_mode !== nothing        # deprecated keyword: `:column` or `:per_layer`
-        Base.depwarn("process_day(...; balance_mode) for GEOS is deprecated; " *
-                     "pass horizontal_balance = ColumnBalance() or LayerBalance()", :process_day)
-        from_symbol = resolve_horizontal_balance(Dict("balance_mode" => String(balance_mode)))
-        horizontal_balance === nothing || horizontal_balance === from_symbol || throw(ArgumentError(
-            "balance_mode = $(repr(balance_mode)) conflicts with horizontal_balance = $(horizontal_balance)"))
-        horizontal_balance = from_symbol
-    end
     horizontal_balance isa LayerBalance && cm_closure !== :endpoint_balanced &&
         @warn "balance_mode = \"per_layer\" has no effect with geos_cm_closure = " *
               "$(repr(cm_closure)); the header records the balance the closure applies" maxlog = 1

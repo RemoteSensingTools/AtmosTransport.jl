@@ -1,10 +1,11 @@
 # ===========================================================================
 # Known run-configuration keys
 #
-# Every key the runtime reads, per table, so that `validate_config` can warn
-# about keys a run would ignore: unknown (usually misspelled) keys, and known
-# keys that the chosen kind or another setting leaves unread. Each list names
-# the parser it mirrors; a parser that starts reading a new key adds it here.
+# Every key the runtime reads, per table, so that `validate_config` can report
+# keys a run would ignore: unknown (usually misspelled) keys are errors, known
+# keys that the chosen kind or another setting leaves unread are warnings. Each
+# list names the parser it mirrors; a parser that starts reading a new key adds
+# it here.
 # `[output.observations]` is not listed: its parser rejects unknown keys itself.
 # ===========================================================================
 
@@ -84,61 +85,69 @@ const _TRACER_OUTPUT_FIELDS_KEYS = ("layers", "column_mean", "column_mass_per_ar
 _lower(value) = value isa AbstractString ? lowercase(value) : nothing
 _kind_string(section, default) = _lower(get(section, "kind", default))
 
-# Append a warning for each key of `table` not in `allowed`.
-function _warn_unknown!(warnings, table, allowed, label)
-    table isa AbstractDict || return warnings
+# What the key checks found: unknown keys and names are errors (the run stops
+# before opening a binary); known keys that a setting leaves unread are warnings.
+struct ConfigKeyFindings
+    errors   :: Vector{String}
+    warnings :: Vector{String}
+end
+ConfigKeyFindings() = ConfigKeyFindings(String[], String[])
+
+# An error for the keys of `table` that are not in `allowed`.
+function _report_unknown!(f::ConfigKeyFindings, table, allowed, label)
+    table isa AbstractDict || return f
     unknown = unknown_key_messages(table, allowed)
-    isempty(unknown) ||
-        push!(warnings, "$(label): unknown option(s) $(join(unknown, ", ")); the run ignores them.")
-    return warnings
+    isempty(unknown) || push!(f.errors, "$(label): unknown option(s) $(join(unknown, ", ")).")
+    return f
 end
 
-# Append a warning for each key of `table` in `keys` that the run leaves unread.
-function _warn_unread!(warnings, table, keys, label, reason)
-    table isa AbstractDict || return warnings
+# A warning for each key of `table` in `keys` that the run leaves unread.
+function _report_unread!(f::ConfigKeyFindings, table, keys, label, reason)
+    table isa AbstractDict || return f
     present = [k for k in keys if haskey(table, k)]
     isempty(present) ||
-        push!(warnings, "$(label): $(join(present, ", ")) $(length(present) == 1 ? "is" : "are") " *
-                        "ignored $(reason).")
-    return warnings
+        push!(f.warnings, "$(label): $(join(present, ", ")) $(length(present) == 1 ? "is" : "are") " *
+                          "ignored $(reason).")
+    return f
 end
 
 # All but the first present key of an alias group are ignored.
-function _warn_shadowed!(warnings, table, group, label)
+function _report_shadowed!(f::ConfigKeyFindings, table, group, label)
     present = [k for k in group if haskey(table, k)]
     length(present) > 1 &&
-        push!(warnings, "$(label): $(join(present[2:end], ", ")) $(length(present) == 2 ? "is" : "are") " *
-                        "ignored because `$(present[1])` is set.")
-    return warnings
+        push!(f.warnings, "$(label): $(join(present[2:end], ", ")) $(length(present) == 2 ? "is" : "are") " *
+                          "ignored because `$(present[1])` is set.")
+    return f
 end
 
 """
-    _config_key_warnings(cfg) -> Vector{String}
+    _config_key_findings(cfg) -> ConfigKeyFindings
 
-Keys of a run config that the run would ignore: unknown keys (with a
-suggestion when one is close) and known keys that the chosen kind or another
-setting leaves unread. Tables of the wrong type are left to
+Keys of a run config that the run would ignore. Unknown keys (with a
+suggestion when one is close) and per-tracer output settings for tracers the
+run does not carry are errors; known keys that the chosen kind or another
+setting leaves unread are warnings. Tables of the wrong type are left to
 `_check_config_table_shapes!`.
 """
-function _config_key_warnings(cfg::AbstractDict)
-    w = String[]
+function _config_key_findings(cfg::AbstractDict)
+    w = ConfigKeyFindings()
     unknown_tables = unknown_key_messages(cfg, _TOP_LEVEL_TABLES)
     isempty(unknown_tables) ||
-        push!(w, "unknown top-level table(s) or key(s) $(join(unknown_tables, ", ")); the run ignores them.")
+        push!(w.errors, "unknown top-level table(s) or key(s) $(join(unknown_tables, ", ")).")
 
     input = get(cfg, "input", nothing)
-    _warn_unknown!(w, input, _INPUT_KEYS, "[input]")
+    _report_unknown!(w, input, _INPUT_KEYS, "[input]")
     if input isa AbstractDict
         haskey(input, "binary_paths") &&
-            _warn_unread!(w, input, ("end_date", "file_pattern"), "[input]", "with `binary_paths`")
+            _report_unread!(w, input, ("end_date", "file_pattern"), "[input]", "with `binary_paths`")
         staging = get(input, "staging", nothing)
-        _warn_unknown!(w, staging, _INPUT_STAGING_KEYS, "[input.staging]")
+        _report_unknown!(w, staging, _INPUT_STAGING_KEYS, "[input.staging]")
         staging isa AbstractDict && get(staging, "enabled", false) === false &&
-            _warn_unread!(w, staging, ("dir", "lookahead_days", "keep_behind_days", "cleanup_on_exit"),
+            _report_unread!(w, staging, ("dir", "lookahead_days", "keep_behind_days", "cleanup_on_exit"),
                           "[input.staging]", "while staging is disabled")
     end
-    _warn_unknown!(w, get(cfg, "architecture", nothing), _ARCHITECTURE_KEYS, "[architecture]")
-    _warn_unknown!(w, get(cfg, "numerics", nothing), _NUMERICS_KEYS, "[numerics]")
+    _report_unknown!(w, get(cfg, "architecture", nothing), _ARCHITECTURE_KEYS, "[architecture]")
+    _report_unknown!(w, get(cfg, "numerics", nothing), _NUMERICS_KEYS, "[numerics]")
 
     run = get(cfg, "run", nothing)
     has_advection = haskey(cfg, "advection")
@@ -146,172 +155,172 @@ function _config_key_warnings(cfg::AbstractDict)
     if run isa AbstractDict
         # The advection keys are legacy [run] keys without [advection]; next to it
         # they are an error (`_advection_section`), reported by `validate_config`.
-        _warn_unknown!(w, run, (_RUN_KEYS..., _ADVECTION_KEYS...), "[run]")
+        _report_unknown!(w, run, (_RUN_KEYS..., _ADVECTION_KEYS...), "[run]")
         tracers isa AbstractDict &&
-            _warn_unread!(w, run, ("tracer_name",), "[run]", "because [tracers] defines the tracers")
+            _report_unread!(w, run, ("tracer_name",), "[run]", "because [tracers] defines the tracers")
     end
-    _advection_key_warnings!(w, has_advection ? cfg["advection"] : run,
+    _advection_key_findings!(w, has_advection ? cfg["advection"] : run,
                              has_advection ? "[advection]" : "[run]")
-    _diffusion_key_warnings!(w, get(cfg, "diffusion", nothing))
-    _convection_key_warnings!(w, get(cfg, "convection", nothing))
-    _chemistry_key_warnings!(w, get(cfg, "chemistry", nothing))
+    _diffusion_key_findings!(w, get(cfg, "diffusion", nothing))
+    _convection_key_findings!(w, get(cfg, "convection", nothing))
+    _chemistry_key_findings!(w, get(cfg, "chemistry", nothing))
 
     if haskey(cfg, "init")
         tracers isa AbstractDict ?
-            push!(w, "top-level [init] is ignored because [tracers] defines the tracers.") :
-            _init_key_warnings!(w, cfg["init"], "[init]")
+            push!(w.warnings, "top-level [init] is ignored because [tracers] defines the tracers.") :
+            _init_key_findings!(w, cfg["init"], "[init]")
     end
     if tracers isa AbstractDict
         for (name, tracer) in pairs(tracers)
-            tracer isa AbstractDict && _tracer_key_warnings!(w, tracer, "tracers.$(name)")
+            tracer isa AbstractDict && _tracer_key_findings!(w, tracer, "tracers.$(name)")
         end
     end
     run_tracer = run isa AbstractDict ? get(run, "tracer_name", "CO2") : "CO2"
     carried = tracers isa AbstractDict ? Set(String.(keys(tracers))) :
               run_tracer isa AbstractString ? Set([run_tracer]) : nothing
-    _output_key_warnings!(w, get(cfg, "output", nothing), carried)
+    _output_key_findings!(w, get(cfg, "output", nothing), carried)
     return w
 end
 
-function _advection_key_warnings!(w, section, label)
+function _advection_key_findings!(w, section, label)
     section isa AbstractDict || return w
     label == "[advection]" &&
-        _warn_unknown!(w, section, (_ADVECTION_KEYS..., _ADVECTION_ONLY_KEYS...), label)
+        _report_unknown!(w, section, (_ADVECTION_KEYS..., _ADVECTION_ONLY_KEYS...), label)
     scheme = _lower(get(section, "scheme", "upwind"))
     scheme in ("upwind", "slopes", "none") &&
-        _warn_unread!(w, section, ("ppm_order",), label, "with scheme = \"$(scheme)\"")
+        _report_unread!(w, section, ("ppm_order",), label, "with scheme = \"$(scheme)\"")
     scheme in ("linrood", "none") &&
-        _warn_unread!(w, section, ("check_binary_cfl",), label, "with scheme = \"$(scheme)\"")
+        _report_unread!(w, section, ("check_binary_cfl",), label, "with scheme = \"$(scheme)\"")
     return w
 end
 
-function _diffusion_key_warnings!(w, section)
+function _diffusion_key_findings!(w, section)
     section isa AbstractDict || return w
-    _warn_unknown!(w, section, _DIFFUSION_KEYS, "[diffusion]")
+    _report_unknown!(w, section, _DIFFUSION_KEYS, "[diffusion]")
     haskey(section, "kind") &&
-        _warn_unread!(w, section, ("type",), "[diffusion]", "next to `kind` (legacy key)")
+        _report_unread!(w, section, ("type",), "[diffusion]", "next to `kind` (legacy key)")
     kind = _kind_string(section, "none")
     kind === nothing && return w
     kind == "constant" ||
-        _warn_unread!(w, section, ("value",), "[diffusion]", "unless kind = \"constant\"")
+        _report_unread!(w, section, ("value",), "[diffusion]", "unless kind = \"constant\"")
     kind == "none" &&
-        _warn_unread!(w, section, ("surface_flux_boundary",), "[diffusion]", "with kind = \"none\"")
+        _report_unread!(w, section, ("surface_flux_boundary",), "[diffusion]", "with kind = \"none\"")
     return w
 end
 
-function _convection_key_warnings!(w, section)
+function _convection_key_findings!(w, section)
     section isa AbstractDict || return w
-    _warn_unknown!(w, section, _CONVECTION_KEYS, "[convection]")
+    _report_unknown!(w, section, _CONVECTION_KEYS, "[convection]")
     kind = _kind_string(section, "none")
     kind === nothing && return w
-    kind == "cmfmc" || _warn_unread!(w, section, ("clamp",), "[convection]",
+    kind == "cmfmc" || _report_unread!(w, section, ("clamp",), "[convection]",
                                      "unless kind = \"cmfmc\"")
     kind in ("tm5", "cmfmc_matrix") ||
-        _warn_unread!(w, section, _COLLAB_LU_KEYS, "[convection]",
+        _report_unread!(w, section, _COLLAB_LU_KEYS, "[convection]",
                       "unless kind = \"tm5\" or \"cmfmc_matrix\"")
     return w
 end
 
-function _chemistry_key_warnings!(w, section)
+function _chemistry_key_findings!(w, section)
     section isa AbstractDict || return w
-    _warn_unknown!(w, section, _CHEMISTRY_KEYS, "[chemistry]")
+    _report_unknown!(w, section, _CHEMISTRY_KEYS, "[chemistry]")
     _kind_string(section, "none") == "none" &&
-        _warn_unread!(w, section, ("half_lives_seconds",), "[chemistry]", "with kind = \"none\"")
+        _report_unread!(w, section, ("half_lives_seconds",), "[chemistry]", "with kind = \"none\"")
     return w
 end
 
-function _init_key_warnings!(w, init, label)
+function _init_key_findings!(w, init, label)
     init isa AbstractDict || return w
-    _warn_unknown!(w, init, _INIT_KEYS, label)
+    _report_unknown!(w, init, _INIT_KEYS, label)
     kind = _kind_string(init, "uniform")
     group = kind === nothing ? nothing : _init_kind_group(kind)
     group === nothing && return w
     read = ("kind", _INIT_KIND_KEYS[group]...)
     unread = [k for k in _INIT_KEYS if !(k in read)]
-    _warn_unread!(w, init, unread, label, "with kind = \"$(kind)\"")
-    _warn_shadowed!(w, init, ("south_value", "south"), label)
-    return _warn_shadowed!(w, init, ("north_value", "north"), label)
+    _report_unread!(w, init, unread, label, "with kind = \"$(kind)\"")
+    _report_shadowed!(w, init, ("south_value", "south"), label)
+    return _report_shadowed!(w, init, ("north_value", "north"), label)
 end
 
-function _surface_flux_key_warnings!(w, sf, label)
+function _surface_flux_key_findings!(w, sf, label)
     sf isa AbstractDict || return w
-    _warn_unknown!(w, sf, _SURFACE_FLUX_KEYS, label)
+    _report_unknown!(w, sf, _SURFACE_FLUX_KEYS, label)
     kind = _kind_string(sf, "none")
     # No source: nothing but `kind` is read (an omitted kind means "none").
-    kind == "none" && return _warn_unread!(w, sf, filter(!=("kind"), _SURFACE_FLUX_KEYS), label,
+    kind == "none" && return _report_unread!(w, sf, filter(!=("kind"), _SURFACE_FLUX_KEYS), label,
                                            "with kind = \"none\" (the default); no flux is emitted")
     kind === nothing || kind in _SURFACE_FLUX_MONTH_KINDS ||
-        _warn_unread!(w, sf, ("month",), label, "unless kind = \"gridfed_fossil_co2\" or \"zhang_rn222\"")
+        _report_unread!(w, sf, ("month",), label, "unless kind = \"gridfed_fossil_co2\" or \"zhang_rn222\"")
     if get(sf, "time_varying", false) === true
         # A regular-grid series reads `files`, else the twelve months of
         # `file_pattern`, else `file`; a native cubed-sphere series reads
         # `file`. Both read every slice: never `time_index` or `month`.
         if kind in ("lmdz_co2", "gridfed_fossil_co2")
-            _warn_shadowed!(w, sf, ("files", "file_pattern", "file"), label)
+            _report_shadowed!(w, sf, ("files", "file_pattern", "file"), label)
         elseif kind == "cs_native"
-            _warn_unread!(w, sf, ("files", "file_pattern"), label, "by a cs_native series")
+            _report_unread!(w, sf, ("files", "file_pattern"), label, "by a cs_native series")
         end
-        _warn_unread!(w, sf, ("time_index", "month"), label, "with time_varying = true")
+        _report_unread!(w, sf, ("time_index", "month"), label, "with time_varying = true")
     else
-        _warn_unread!(w, sf, _SURFACE_FLUX_SERIES_KEYS, label, "unless time_varying = true")
+        _report_unread!(w, sf, _SURFACE_FLUX_SERIES_KEYS, label, "unless time_varying = true")
         kind == "lmdz_co2" &&
-            _warn_unread!(w, sf, ("time_index",), label, "by a static lmdz_co2 source (time mean)")
+            _report_unread!(w, sf, ("time_index",), label, "by a static lmdz_co2 source (time mean)")
     end
     return w
 end
 
 # `table` is the tracer's TOML path, e.g. "tracers.co2".
-function _tracer_key_warnings!(w, tracer, table)
+function _tracer_key_findings!(w, tracer, table)
     flat_init = _TRACER_FLAT_INIT_KEYS
     flat_flux = first.(_TRACER_FLAT_SURFACE_FLUX_KEYS)
     label = "[$(table)]"
-    _warn_unknown!(w, tracer, ("init", "surface_flux", flat_init..., flat_flux...), label)
+    _report_unknown!(w, tracer, ("init", "surface_flux", flat_init..., flat_flux...), label)
     haskey(tracer, "init") &&
-        _warn_unread!(w, tracer, flat_init, label, "because [$(table).init] exists")
+        _report_unread!(w, tracer, flat_init, label, "because [$(table).init] exists")
     haskey(tracer, "surface_flux") &&
-        _warn_unread!(w, tracer, flat_flux, label, "because [$(table).surface_flux] exists")
+        _report_unread!(w, tracer, flat_flux, label, "because [$(table).surface_flux] exists")
     if haskey(tracer, "init")
-        _init_key_warnings!(w, tracer["init"], "[$(table).init]")
+        _init_key_findings!(w, tracer["init"], "[$(table).init]")
     else    # flat init keys keep their names
-        _init_key_warnings!(w, _tracer_init_cfg(tracer), label)
+        _init_key_findings!(w, _tracer_init_cfg(tracer), label)
     end
     if haskey(tracer, "surface_flux")
-        _surface_flux_key_warnings!(w, tracer["surface_flux"], "[$(table).surface_flux]")
+        _surface_flux_key_findings!(w, tracer["surface_flux"], "[$(table).surface_flux]")
     elseif any(k -> haskey(tracer, k), flat_flux)
         # Flat keys, checked under their `surface_flux` names.
-        _surface_flux_key_warnings!(w, _tracer_surface_flux_cfg(tracer),
+        _surface_flux_key_findings!(w, _tracer_surface_flux_cfg(tracer),
                                     "$(label) (flat surface_flux_* keys)")
     end
     return w
 end
 
 # `carried`: the run's tracer names, or `nothing` when they cannot be known.
-function _output_key_warnings!(w, output, carried)
+function _output_key_findings!(w, output, carried)
     output isa AbstractDict || return w
-    _warn_unknown!(w, output, _OUTPUT_KEYS, "[output]")
-    _warn_shadowed!(w, output, _OUTPUT_PATH_KEYS, "[output]")
-    _warn_shadowed!(w, output, _SNAPSHOT_SCHEDULE_KEYS, "[output]")
+    _report_unknown!(w, output, _OUTPUT_KEYS, "[output]")
+    _report_shadowed!(w, output, _OUTPUT_PATH_KEYS, "[output]")
+    _report_shadowed!(w, output, _SNAPSHOT_SCHEDULE_KEYS, "[output]")
     any(k -> haskey(output, k), _SNAPSHOT_INTERVAL_KEYS) ||
-        _warn_unread!(w, output, ("start_hour", "stop_hour"), "[output]",
+        _report_unread!(w, output, ("start_hour", "stop_hour"), "[output]",
                       "without an interval key ($(join(_SNAPSHOT_INTERVAL_KEYS, ", ")))")
     format = get(output, "format", "netcdf")
     format isa AbstractString && lowercase(format) in ("binary_mmap", "binary", "mmap", "atmsnap") &&
-        _warn_unread!(w, output, ("fields", "deflate_level", "shuffle"), "[output]",
+        _report_unread!(w, output, ("fields", "deflate_level", "shuffle"), "[output]",
                       "with format = \"binary_mmap\" (snapshots carry every field, uncompressed)")
     fields = get(output, "fields", nothing)
     fields isa AbstractDict || return w
-    _warn_unknown!(w, fields, _OUTPUT_FIELDS_KEYS, "[output.fields]")
-    _warn_shadowed!(w, fields, ("per_tracer", "tracer_fields"), "[output.fields]")
-    _warn_shadowed!(w, fields, ("column_mass_per_area", "column_mass"), "[output.fields]")
+    _report_unknown!(w, fields, _OUTPUT_FIELDS_KEYS, "[output.fields]")
+    _report_shadowed!(w, fields, ("per_tracer", "tracer_fields"), "[output.fields]")
+    _report_shadowed!(w, fields, ("column_mass_per_area", "column_mass"), "[output.fields]")
     per_tracer = get(fields, "per_tracer", get(fields, "tracer_fields", nothing))
     per_tracer isa AbstractDict || return w
     for (name, entry) in pairs(per_tracer)
         label = "[output.fields.per_tracer.$(name)]"
         carried === nothing || String(name) in carried ||
-            push!(w, "$(label): `$(name)` is not a tracer of the run; the setting is ignored.")
+            push!(w.errors, "$(label): `$(name)` is not a tracer of the run.")
         entry isa AbstractDict || continue
-        _warn_unknown!(w, entry, _TRACER_OUTPUT_FIELDS_KEYS, label)
-        _warn_shadowed!(w, entry, ("column_mass_per_area", "column_mass"), label)
+        _report_unknown!(w, entry, _TRACER_OUTPUT_FIELDS_KEYS, label)
+        _report_shadowed!(w, entry, ("column_mass_per_area", "column_mass"), label)
     end
     return w
 end

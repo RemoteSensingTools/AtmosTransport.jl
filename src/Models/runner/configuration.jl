@@ -178,10 +178,10 @@ snapshot times (an explicit `hours = []` means none). Shape errors are
 reported before value checks. Window indices accept integers, not Booleans or
 floating-point values.
 
-Keys the run would ignore are logged as warnings, not returned as errors:
-unknown keys and tables (with a suggestion when a known key is close, e.g.
-`order` → `ppm_order`), and known keys that the chosen kind or another setting
-leaves unread (e.g. `value` unless `[diffusion] kind = "constant"`).
+Unknown keys and tables are returned as errors (with a suggestion when a known
+key is close, e.g. `order` → `ppm_order`); known keys that the chosen kind or
+another setting leaves unread are logged as warnings (e.g. `value` unless
+`[diffusion] kind = "constant"`).
 
 This is not a complete physics or binary validation. Topology and payload
 capability checks run when `run_driven_simulation` inspects the first binary,
@@ -246,7 +246,9 @@ function validate_config(cfg::AbstractDict)
     _check_run_window_bounds!(cfg, errors)
     _check_physics_and_output_settings!(cfg, ft_ref[], errors)
 
-    for warning in _config_key_warnings(cfg)
+    findings = _config_key_findings(cfg)
+    append!(errors, findings.errors)
+    for warning in findings.warnings
         @warn "Run config: $(warning)"
     end
     return isempty(errors), errors

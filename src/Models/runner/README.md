@@ -50,8 +50,8 @@ how a TOML option reaches an operator, is [`../README.md`](../README.md).
   run and output settings. It also holds the ANSI and advection-label helpers
   used by the summary.
 - [`config_keys.jl`](config_keys.jl) — the keys each runtime table may hold
-  and `_config_key_warnings`: unknown keys (with suggestions) and keys the
-  chosen kind leaves unread, logged by `validate_config`
+  and `_config_key_findings`: unknown keys (with suggestions) are errors of
+  `validate_config`, keys the chosen kind leaves unread are its warnings
 - [`model_setup.jl`](model_setup.jl) — GPU residency assertion, flux allocation,
   LL/RG model build, per-tracer CS dry-state packing, convection-capability
   dispatch

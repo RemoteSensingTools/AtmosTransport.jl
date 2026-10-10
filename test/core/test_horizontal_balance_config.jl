@@ -1,8 +1,8 @@
 #!/usr/bin/env julia
 #
 # `[numerics] balance_mode` selects the horizontal mass-flux balance of the
-# preprocessors (column or per layer). The older key `geos_balance_mode` still
-# works; every writer receives the typed mode and records it in the header.
+# preprocessors (column or per layer); every writer receives the typed mode and
+# records it in the header.
 
 using Test
 using Dates
@@ -17,12 +17,12 @@ const REPO = pkgdir(AtmosTransport)
     @test resolve_horizontal_balance(Dict{String, Any}()) === nothing   # path default
     @test resolve_horizontal_balance(Dict("balance_mode" => "column")) === ColumnBalance()
     @test resolve_horizontal_balance(Dict("balance_mode" => "Per_Layer")) === LayerBalance()
-    @test resolve_horizontal_balance(Dict("geos_balance_mode" => "per_layer")) === LayerBalance()
-    @test resolve_horizontal_balance(Dict("balance_mode" => "column",
-                                          "geos_balance_mode" => "column_poisson")) === ColumnBalance()
-    @test_throws ErrorException resolve_horizontal_balance(Dict("balance_mode" => "column",
-                                                                "geos_balance_mode" => "per_layer"))
-    @test_throws ErrorException resolve_horizontal_balance(Dict("balance_mode" => "spectral"))
+    # The old key name and the old value aliases are gone.
+    err = try resolve_horizontal_balance(Dict("geos_balance_mode" => "column")); nothing catch e; e end
+    @test err isa ArgumentError && contains(err.msg, "renamed balance_mode")
+    for raw in ("column_poisson", "layer", "layer_local", "global", "spectral", 1)
+        @test_throws ArgumentError resolve_horizontal_balance(Dict("balance_mode" => raw))
+    end
     @test balance_tag(ColumnBalance()) == "column"
     @test balance_tag(LayerBalance()) == "per_layer"
 end

@@ -191,29 +191,24 @@ struct LayerBalance <: AbstractHorizontalBalance end
 balance_tag(::ColumnBalance) = "column"
 balance_tag(::LayerBalance) = "per_layer"
 
-const _BALANCE_MODES = Dict(
-    "column" => ColumnBalance(), "column_poisson" => ColumnBalance(),
-    "per_layer" => LayerBalance(), "layer" => LayerBalance(),
-    "layer_local" => LayerBalance(), "global" => LayerBalance())
+const _BALANCE_MODES = Dict("column" => ColumnBalance(), "per_layer" => LayerBalance())
 
 """
     resolve_horizontal_balance(numerics) -> Union{Nothing, AbstractHorizontalBalance}
 
-`[numerics] balance_mode` (`geos_balance_mode` is accepted as its older name),
-or `nothing` when neither is set, so that each preprocessing path applies its
-own default through `effective_horizontal_balance`.
+`[numerics] balance_mode` (`"column"` or `"per_layer"`), or `nothing` when it
+is not set, so that each preprocessing path applies its own default through
+`effective_horizontal_balance`.
 """
 function resolve_horizontal_balance(numerics::AbstractDict)
-    set = [k for k in ("balance_mode", "geos_balance_mode") if haskey(numerics, k)]
-    modes = Dict(k => lowercase(String(numerics[k])) for k in set)
-    for (k, raw) in modes
-        haskey(_BALANCE_MODES, raw) || error(
-            "[numerics].$(k) must be \"column\" or \"per_layer\"; got $(repr(raw))")
-    end
-    length(set) == 2 && _BALANCE_MODES[modes["balance_mode"]] !== _BALANCE_MODES[modes["geos_balance_mode"]] &&
-        error("[numerics] sets balance_mode = $(repr(modes["balance_mode"])) and " *
-              "geos_balance_mode = $(repr(modes["geos_balance_mode"])); keep balance_mode")
-    return isempty(set) ? nothing : _BALANCE_MODES[modes[first(set)]]
+    haskey(numerics, "geos_balance_mode") && throw(ArgumentError(
+        "[numerics].geos_balance_mode was renamed balance_mode"))
+    haskey(numerics, "balance_mode") || return nothing
+    raw = numerics["balance_mode"]
+    mode = raw isa AbstractString ? get(_BALANCE_MODES, lowercase(raw), nothing) : nothing
+    mode === nothing && throw(ArgumentError(
+        "[numerics].balance_mode must be \"column\" or \"per_layer\"; got $(repr(raw))"))
+    return mode
 end
 
 """
