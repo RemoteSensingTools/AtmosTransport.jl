@@ -9,7 +9,7 @@ provenance only; migrate one back to `config/runs/` only after updating it to
 the current schema.
 
 The nine `era5_*_catrine_48h_*.toml` files were moved here during the 0.4 review.
-They use legacy `[run].scheme`, `[run].tracer_name`, top-level `[init]` and
+They use legacy `[run].tracer_name`, top-level `[init]` and
 `stop_window=48` for two daily files. Their referenced binaries are unavailable
 on the review host, so no real-input acceptance is claimed. Start a current
 two-day run from `config/examples/minimal_template.toml`, supply consecutive

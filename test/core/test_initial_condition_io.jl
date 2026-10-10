@@ -613,8 +613,10 @@ end
             @test lmdz.times_sec[1:2] == [0.0, 3 * 3600.0]
             @test lmdz.times_sec[end] ==
                   Dates.value(DateTime(2022, 12, 1, 3) - DateTime(2022, 1, 1)) / 1000.0
-            @test all(lmdz.raw_series[:, :, 1] .== Float32(44 / 12))
-            @test all(lmdz.raw_series[:, :, 3] .== Float32(2 * 44 / 12))
+            c_to_co2 = AtmosTransport.Parameters.SPECIES_MOLAR_MASS.co2 /
+                       AtmosTransport.Parameters.CARBON_MOLAR_MASS
+            @test all(lmdz.raw_series[:, :, 1] .== Float32(c_to_co2))
+            @test all(lmdz.raw_series[:, :, 3] .== Float32(2 * c_to_co2))
 
             gridfed_path = joinpath(dir, "gridfed_2022.nc")
             _write_synthetic_monthly_gridfed_file(gridfed_path, 2022)
@@ -833,18 +835,15 @@ end
         @test Runner._check_flux_run_span((0.0, 7201.0), 10800.0, (), "a.bin") === nothing
     end
 
-    @testset "run span from the binaries and the input dates" begin
+    @testset "run span from the binaries" begin
         Runner = AtmosTransport.Models.DrivenRunner
         listed = Dict("input" => Dict("binary_paths" => ["a.bin"]))
-        # The binaries' windows (run_hours) set the span.
-        @test Runner._run_time_span(listed, 6.0) == (0.0, 6 * 3600.0 + 1)
-        # Dates: the inclusive end date when it is later than the binaries.
         dated = Dict("input" => Dict("start_date" => "2021-12-01", "end_date" => "2021-12-02"))
-        @test Runner._run_time_span(dated, 6.0) == (0.0, 2 * 86400.0 + 1)
-        @test Runner._run_time_span(dated, 60.0) == (0.0, 60 * 3600.0 + 1)
-        # Without a start date every slice is loaded, so there is nothing to check.
+        # The binaries' windows (run_hours) set the span; end_date adds nothing.
+        @test Runner._run_time_span(6.0) == (0.0, 6 * 3600.0 + 1)
+        @test Runner._flux_run_span(dated, 6.0) == (0.0, 6 * 3600.0 + 1)
+        # Without a start date there are no time-varying fluxes (validate_config requires it).
         @test Runner._flux_run_span(listed, 6.0) === nothing
-        @test Runner._flux_run_span(dated, 6.0) == (0.0, 2 * 86400.0 + 1)
         # Mixed window lengths: the layout gives the run end exactly.
         @test Runner._layout_run_hours([(3600.0, 24), (10800.0, 8)]) == 48.0
         # Window lengths as the run clock sees them (Float32 runs round them).
@@ -882,4 +881,25 @@ end
                                                             qv = qv_flat)
     end
 
+end
+
+@testset "surface-flux per-second units" begin
+    ok = ICIO._is_kg_per_m2_s
+    norm = ICIO._normalize_units_string
+    for u in ("kg m-2 s-1", "kg/m2/s", "kgCO2/m2/s", "kg(CO2) m^-2 s^-1", "kg m-2 s-1", "kg/m²/s")
+        @test ok(norm(u))
+    end
+    # Molar, missing and other units are rejected, not read as kg m-2 s-1.
+    for u in ("mol m-2 s-1", "", "umol/m2/s", "g m-2 s-1", "kg m-2", "kg/s", "Tg/yr")
+        @test !ok(norm(u))
+    end
+    # One parser for every loader: kg of the species, or kgC converted to CO2.
+    scale = ICIO._per_second_flux_scale
+    @test scale(norm("kg m-2 s-1"), "f.nc") == 1.0
+    @test scale(norm("kgCO2/m2/s"), "f.nc") == 1.0
+    @test scale(norm("kgC m-2 s-1"), "f.nc") ≈ 44.0095 / 12.0107        # carbon conserved
+    @test_throws ArgumentError scale(norm(""), "f.nc")
+    @test_throws ArgumentError scale(norm("mol m-2 s-1"), "f.nc")
+    @test_throws ArgumentError ICIO._native_flux_species_scale("", "f.nc")
+    @test_throws ArgumentError ICIO._require_reference_time(nothing)
 end

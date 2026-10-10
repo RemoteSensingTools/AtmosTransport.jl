@@ -58,8 +58,9 @@ LAT_EDGES = np.array([-90, -60, -40, -20, 0, 20, 40, 60, 90])
 # TROPOMI -> OCO-2 QF0 harmonization on the length-of-day-corrected scale
 # (analysis_summary.json: tropomi_to_oco2_daylength_corrected).
 HARM_A, HARM_B = 0.04077697321225716, 0.8778927542020224
-# gC -> kgCO2 and per-day -> per-second. 44/12 matches the 2021 pilot exactly.
-GC_TO_KGCO2 = (44.0 / 12.0) * 1e-3
+# gC -> kgCO2 by M(CO2)/M(C) (IUPAC 2007, as AtmosTransport.Parameters) and
+# per-day -> per-second. The 2021 pilot used 44/12, 0.068 % more.
+GC_TO_KGCO2 = (44.0095 / 12.0107) * 1e-3
 SEC_PER_DAY = 86400.0
 
 DEF_SIF = ("/kiwi-data/Data/satellite/TROPOMI/TROPOMI_SIF_S5P-PAL/regridded/interpolated/"
@@ -252,7 +253,7 @@ def main():
     def carbon_pgc(f):
         """Carbon removed from the atmosphere by flux block `f`, in Pg C."""
         return -float((np.asarray(f, np.float64) * area[None, :]).sum()) \
-            * SEC_PER_DAY * (12.0 / 44.0) / 1e12
+            * SEC_PER_DAY * 1e-3 / GC_TO_KGCO2 / 1e12
 
     print("\n Positive anomaly = carbon removed in EXCESS of climatology (strong")
     print(" uptake); its XCO2 effect has the OPPOSITE sign (XCO2 falls).")
@@ -288,7 +289,7 @@ def main():
     assert reco_cell.min() >= 0.0, "flat Reco must be non-negative"
     assert flux.max() <= 0.0, "full flux must be non-positive"
     reco_pg = float((reco_cell.astype(np.float64) * area).sum()) \
-        * 86400.0 * 365.25 * (12.0 / 44.0) / 1e12
+        * 86400.0 * 365.25 * 1e-3 / GC_TO_KGCO2 / 1e12
     print(f"\n flat-Reco emission: {reco_pg:.2f} Pg C/yr "
           "(must equal the climatology-mean GPP)")
     net_by_year = [carbon_pgc(net[years == Y]) for Y in sorted(set(years))

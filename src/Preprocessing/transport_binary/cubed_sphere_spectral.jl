@@ -195,7 +195,7 @@ end
     return nothing
 end
 
-mutable struct CSSpectralUnifiedDriverContext{G, S, V, SP, N}
+mutable struct CSSpectralUnifiedDriverContext{G, S, V, SP, N, W}
     grid                       :: G
     settings                   :: S
     vertical                   :: V
@@ -208,6 +208,7 @@ mutable struct CSSpectralUnifiedDriverContext{G, S, V, SP, N}
     cs_balance_project_every   :: Int
     write_replay_on            :: Bool
     apply_horizontal_balance   :: Bool
+    balance_weights            :: W     # column-balance level weights (`[numerics] column_balance_weights`)
     worst_pre                  :: Float64
     worst_post                 :: Float64
     worst_iter                 :: Int
@@ -229,14 +230,15 @@ function CSSpectralUnifiedDriverContext(grid, settings, vertical, spec,
                                         cs_balance_tol::Real,
                                         cs_balance_project_every::Integer,
                                         write_replay_on::Bool,
-                                        apply_horizontal_balance::Bool)
+                                        apply_horizontal_balance::Bool,
+                                        balance_weights::AbstractColumnWeights)
     return CSSpectralUnifiedDriverContext{
         typeof(grid), typeof(settings), typeof(vertical), typeof(spec),
-            typeof(next_day_hour0)}(
+            typeof(next_day_hour0), typeof(balance_weights)}(
             grid, settings, vertical, spec, next_day_hour0,
             date, substep_policy, Int(steps_per_met), Float64(cs_balance_tol),
             Int(cs_balance_project_every), write_replay_on,
-            apply_horizontal_balance, 0.0, 0.0, 0, 0.0, 0.0, 0,
+            apply_horizontal_balance, balance_weights, 0.0, 0.0, 0, 0.0, 0.0, 0,
             (0, 0, 0, 0), 0.0, 0.0, 0.0, 0.0)
 end
 
@@ -300,7 +302,7 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
                 cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
                 grid.face_table, grid.cell_degree, steps,
                 grid.poisson_scratch; tol=ctx.cs_balance_tol, max_iter=max_iter,
-                project_every=ctx.cs_balance_project_every)
+                project_every=ctx.cs_balance_project_every, weights=ctx.balance_weights)
         end
         ctx.total_balance += time() - t_bal
         ctx.worst_pre  = max(ctx.worst_pre,  bal_diag.max_pre_residual)
@@ -314,7 +316,8 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
         for p in 1:CS_PANEL_COUNT
             fill!(cur_cm[p], zero(FT))
         end
-        diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
+        diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz,
+                        ctx.balance_weights)
 
         t_replay = time()
         contract_diag = verify_window!((m_cur = cur_m,
@@ -433,6 +436,10 @@ function process_day(date::Date,
     steps_per_met = exact_steps_per_window(settings.met_interval, settings.dt)
     cs_balance_tol = Float64(get(settings, :cs_balance_tol, 1e-14))
     cs_balance_project_every = Int(get(settings, :cs_balance_project_every, 50))
+    # Balance mode and column weights, checked before any input is read.
+    balance = effective_horizontal_balance(get(settings, :horizontal_balance, nothing), ColumnBalance())
+    weights_kind = _check_spectral_column_weights(grid, settings)
+    balance_weights = column_weights(weights_kind, vertical.merged_vc.B)
     date_str = Dates.format(date, "yyyymmdd")
 
     vo_d_path = joinpath(settings.spectral_dir, "era5_spectral_$(date_str)_vo_d.gb")
@@ -477,7 +484,6 @@ function process_day(date::Date,
     write_replay_on = write_replay_check
     write_replay_on || @info "  Write-time CS replay gate SKIPPED ([numerics] write_replay_check = false)"
     replay_tol = replay_tolerance(FT)
-    balance = effective_horizontal_balance(get(settings, :horizontal_balance, nothing), ColumnBalance())
 
         writer = nothing
         driver_started = false
@@ -496,7 +502,7 @@ function process_day(date::Date,
                 cs_center_law=_cs_center_law_tag(grid),
                 longitude_offset_deg=longitude_offset_deg(cs_definition(grid.mesh)),
                 planet_radius=grid.mesh.radius,
-                extra_header=_with_replay_record(Dict{String, Any}(
+                extra_header=_with_replay_record(_with_column_weights_record(Dict{String, Any}(
                     "preprocessor"     => "preprocess_transport_binary.jl",
                     "preprocessor_contract" => "plan41_variable_substeps",
                     "runtime_substep_contract" => "binary_schedule",
@@ -517,7 +523,7 @@ function process_day(date::Date,
                     "merge_map" => vertical.merge_map,
                     "poisson_balanced" => true,
                     "mass_fix_enabled" => settings.mass_fix_enable,
-                ), write_replay_on))
+                ), weights_kind), write_replay_on))
 
             bytes_per_window = writer.elems_per_window * sizeof(FT)
             expected_total = writer.header_bytes + Nt * bytes_per_window
@@ -545,7 +551,7 @@ function process_day(date::Date,
             ctx = CSSpectralUnifiedDriverContext(
                 grid, settings, vertical, spec, next_day_hour0, date,
                 substep_policy, steps_per_met, cs_balance_tol, cs_balance_project_every,
-                write_replay_on, apply_horizontal_balance)
+                write_replay_on, apply_horizontal_balance, balance_weights)
 
             driver_started = true
             driver_result = run_unified_preprocessor_day!(

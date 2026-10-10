@@ -31,6 +31,9 @@
 #                                         # for high-res CS output that
 #                                         # otherwise fails the positivity gate)
 #       [--balance-mode column|per_layer] # Poisson balance (default column)
+#       [--column-balance-weights mass|hybrid_b|hybrid_mass]
+#                                         # how the column balance spreads its
+#                                         # correction over the levels (default mass)
 #       [--no-write-replay-check]        # skip the write-time replay gate (diagnostic;
 #                                         # recorded in the header)
 #
@@ -55,7 +58,8 @@ Usage: julia --project=. scripts/preprocessing/regrid_ll_transport_binary_to_cs.
            [--definition equiangular_gnomonic|gmao_equal_distance]
            [--cache-dir <dir>]
            [--steps-per-window <int>] [--allow-positivity-violation]
-           [--balance-mode column|per_layer] [--no-write-replay-check]
+           [--balance-mode column|per_layer]
+           [--column-balance-weights mass|hybrid_b|hybrid_mass] [--no-write-replay-check]
 """
 
 function _parse_args(argv)
@@ -70,6 +74,7 @@ function _parse_args(argv)
     steps_per_window = nothing  # nothing = match source header
     require_substep_positivity = true
     balance_mode = nothing      # nothing = column (the preprocessing default)
+    column_balance_weights = "mass"
     write_replay_check = true
 
     i = 1
@@ -95,6 +100,8 @@ function _parse_args(argv)
             steps_per_window = parse(Int, argv[i + 1]); i += 2
         elseif arg == "--balance-mode" && i + 1 <= length(argv)
             balance_mode = lowercase(argv[i + 1]); i += 2
+        elseif arg == "--column-balance-weights" && i + 1 <= length(argv)
+            column_balance_weights = lowercase(argv[i + 1]); i += 2
         elseif arg == "--allow-positivity-violation"
             require_substep_positivity = false; i += 1
         elseif arg == "--no-write-replay-check"
@@ -129,11 +136,14 @@ function _parse_args(argv)
         error("--steps-per-window must be ≥ 1, got $(steps_per_window)")
     balance_mode === nothing || balance_mode in ("column", "per_layer") ||
         error("--balance-mode must be column or per_layer, got $(balance_mode)")
+    weight_kinds = String.(keys(AtmosTransport.Preprocessing.COLUMN_WEIGHT_KINDS))
+    column_balance_weights in weight_kinds ||
+        error("--column-balance-weights must be $(join(weight_kinds, ", ")), got $(column_balance_weights)")
 
     return (; input, output, Nc, float_type, mass_basis, convention, definition,
               cache_dir,
               steps_per_window, require_substep_positivity, balance_mode,
-              write_replay_check)
+              column_balance_weights, write_replay_check)
 end
 
 function main()
@@ -171,7 +181,8 @@ function main()
                             write_replay_check = opts.write_replay_check,
                             horizontal_balance = opts.balance_mode === nothing ? nothing :
                                 AtmosTransport.Preprocessing.resolve_horizontal_balance(
-                                    Dict("balance_mode" => opts.balance_mode)))
+                                    Dict("balance_mode" => opts.balance_mode)),
+                            column_balance_weights = Symbol(opts.column_balance_weights))
 
     return opts.output
 end

@@ -177,7 +177,7 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
     vmr_src_levels = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nlev_src), CS_PANEL_COUNT)
     unpack_flat_to_panels_3d!(vmr_src_levels, dst_flat, Nc, Nlev_src)
 
-    # 2D source surface pressure (only if source levels differ from target).
+    # 2D source surface pressure (files with hybrid coefficients, always remapped).
     # NOTE: this is the SOURCE psurf (Catrine), used to build source p-half
     # levels. The TARGET ps comes from `ps_tgt_panels` passed in by the caller
     # — the binary's own ps. Mixing the two cleanly is what fixes the
@@ -235,9 +235,6 @@ end
 # `k = Nz - k_src + 1`. Requires `size(lev) == Nz` (same vertical grid).
 # ---------------------------------------------------------------------------
 
-# `init.vertical_order` of a native cubed-sphere file.
-const _CS_NATIVE_VERTICAL_ORDERS = (:surface_first, :toa_first)
-
 function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
                              air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                              cfg, ::Type{FT}) where FT
@@ -253,11 +250,7 @@ function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
     time_index = Int(get(cfg, "time_index", 1))
     # Source vertical convention: "surface_first" (GEOS-Chem default) flips to
     # the model's TOA-first ordering; "toa_first" copies straight through.
-    vertical_order = Symbol(lowercase(String(get(cfg, "vertical_order", "surface_first"))))
-    vertical_order in _CS_NATIVE_VERTICAL_ORDERS || throw(ArgumentError(
-        "init.kind=cs_native: vertical_order=$(vertical_order) must be " *
-        "\"surface_first\" (GEOS-Chem, flips to TOA-first) or \"toa_first\""))
-    flip_vertical = vertical_order === :surface_first
+    flip_vertical = _parse_vertical_order(get(cfg, "vertical_order", "surface_first")) === :surface_first
 
     ds = NCDataset(file)
     raw = try

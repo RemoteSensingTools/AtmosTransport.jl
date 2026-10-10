@@ -22,8 +22,10 @@ end_date     = "2021-12-01"
 file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
 
 [run]
-scheme = "upwind"
 stop_window = 6
+
+[advection]
+scheme = "upwind"
 
 [tracers.co2_natural]
   [tracers.co2_natural.init]

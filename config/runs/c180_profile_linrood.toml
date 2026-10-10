@@ -20,10 +20,10 @@ end_date     = "2021-12-01"
 file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
 
 [run]
-scheme = "linrood"
 stop_window = 6
 
 [advection]
+scheme = "linrood"
 ppm_order = 5
 
 [tracers.co2_natural]

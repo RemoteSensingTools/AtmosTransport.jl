@@ -61,7 +61,7 @@ def main() -> None:
                 total += block.reshape(len(idx), -1).mean(axis=0)
             clim[month - 1] = total / (CLIM_YEARS[1] - CLIM_YEARS[0] + 1)
             print(f"  month {month:2d}: {sel.size} days, global mean "
-                  f"{(clim[month - 1] * area3.ravel()).sum() * 86400 * 365.25 / 1e12 * 12.011 / 44.0095:+7.2f} "
+                  f"{(clim[month - 1] * area3.ravel()).sum() * 86400 * 365.25 / 1e12 * 12.0107 / 44.0095:+7.2f} "
                   "Pg C/yr equivalent", flush=True)
 
     mkeys, mcent = month_centres(args.start_year - 1, 12, args.end_year + 1, 1)
@@ -81,7 +81,7 @@ def main() -> None:
     for Y in sorted(set(yrs))[:3] + sorted(set(yrs))[-2:]:
         sel = yrs == Y
         pgc = float((daily[sel].astype(np.float64) * area3.ravel()[None, :]).sum()) \
-            * 86400.0 * (12.011 / 44.0095) / 1e12
+            * 86400.0 * (12.0107 / 44.0095) / 1e12
         print(f"  {Y} net {pgc:+7.3f} Pg C   (must be identical across years "
               "apart from leap days)")
 

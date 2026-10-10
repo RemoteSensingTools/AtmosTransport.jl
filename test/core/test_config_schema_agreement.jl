@@ -36,9 +36,12 @@ property_keys(node) = Set(String.(keys(node.properties)))
     @test enum_of(p.chemistry.properties.kind) == Set(string.(Specs._CHEMISTRY_KINDS))
     @test enum_of(p.run.properties.air_mass_reset_mode) == Set(string.(Specs._AIR_MASS_RESET_MODES))
     @test enum_of(p.run.properties.physics_cadence) == Set(string.(Specs._PHYSICS_CADENCES))
+    @test enum_of(p.logging.properties.level) == Set(keys(AtmosTransport.LogLevels.LOG_LEVELS))
+    @test all(k -> RunnerKeys.run_logging(Dict("logging" => Dict("progress" => k))) isa
+                   RunnerKeys.RunLogging, enum_of(p.logging.properties.progress))
     @test enum_of(d.initial_condition.properties.kind) == Set(keys(RunnerKeys._INIT_KINDS))
     @test enum_of(d.initial_condition.properties.vertical_order) ==
-          Set(string.(AtmosTransport.Models.InitialConditionIO._CS_NATIVE_VERTICAL_ORDERS))
+          Set(string.(AtmosTransport.Models.InitialConditionIO._VERTICAL_ORDERS))
     @test enum_of(d.surface_flux.properties.kind) ==
           Set(string.(AtmosTransport.Models.InitialConditionIO._SURFACE_FLUX_KINDS))
     @test enum_of(d.surface_flux.properties.regridding) ==
@@ -72,17 +75,21 @@ end
 @testset "schema properties equal the known-key tables" begin
     p = SCHEMA.properties
     d = SCHEMA.definitions
-    input_keys = union(property_keys(p.input), (property_keys(b) for b in p.input.oneOf)...)
-    @test input_keys == Set(RunnerKeys._INPUT_KEYS)
+    # The [input] branches (list or folder) only say which keys are required.
+    @test property_keys(p.input) == Set(RunnerKeys._INPUT_KEYS)
+    @test all(b -> !haskey(b, :properties), p.input.oneOf)
     @test property_keys(d.staging) == Set(RunnerKeys._INPUT_STAGING_KEYS)
     @test property_keys(p.architecture) == Set(RunnerKeys._ARCHITECTURE_KEYS)
     @test property_keys(p.numerics) == Set(RunnerKeys._NUMERICS_KEYS)
-    @test property_keys(p.run) == Set(RunnerKeys._RUN_KEYS)
+    # [run] also lists the legacy location of the advection keys.
+    @test property_keys(p.run) == Set((RunnerKeys._RUN_KEYS..., RunnerKeys._ADVECTION_KEYS...))
     @test property_keys(p.advection) ==
           Set((RunnerKeys._ADVECTION_KEYS..., RunnerKeys._ADVECTION_ONLY_KEYS...))
     @test property_keys(p.diffusion) == Set(RunnerKeys._DIFFUSION_KEYS)
     @test property_keys(p.convection) == Set(RunnerKeys._CONVECTION_KEYS)
     @test property_keys(p.chemistry) == Set(RunnerKeys._CHEMISTRY_KEYS)
+    @test property_keys(p.logging) == Set(RunnerKeys._LOGGING_KEYS)
+    @test property_keys(p.checks) == Set(RunnerKeys._CHECKS_KEYS)
     @test property_keys(d.initial_condition) == Set(RunnerKeys._INIT_KEYS)
     @test property_keys(d.surface_flux) == Set(RunnerKeys._SURFACE_FLUX_KEYS)
     @test property_keys(d.output) == Set(RunnerKeys._OUTPUT_KEYS)
@@ -92,3 +99,36 @@ end
     # Flat [tracers.<name>] keys are accepted for old configs but not offered.
     @test property_keys(d.tracer) == Set(["init", "surface_flux"])
 end
+
+# Every key the editor offers carries a description (shown on hover), either
+# its own or that of the definition it refers to; every table rejects keys it
+# does not list, as `validate_config` does.
+@testset "schema keys are described and tables are closed" begin
+    described(node) = haskey(node, :description) ||
+        (haskey(node, Symbol("\$ref")) &&
+         haskey(SCHEMA.definitions, Symbol(last(split(node[Symbol("\$ref")], "/")))) &&
+         haskey(SCHEMA.definitions[Symbol(last(split(node[Symbol("\$ref")], "/")))], :description))
+    undescribed = String[]
+    open_tables = String[]
+    # Tables are the object schemas with keys; conditional fragments inside
+    # oneOf/allOf/if (which also use `properties`) only constrain values.
+    function walk(node, path)
+        if node isa AbstractVector
+            foreach(((i, child),) -> walk(child, "$(path)[$i]"), enumerate(node))
+            return
+        end
+        node isa AbstractDict || return
+        if get(node, :type, nothing) == "object" && haskey(node, :properties)
+            haskey(node, :additionalProperties) && node.additionalProperties === false ||
+                push!(open_tables, path)
+            for (key, child) in pairs(node.properties)
+                described(child) || push!(undescribed, "$(path).$(key)")
+            end
+        end
+        foreach(((key, child),) -> walk(child, "$(path).$(key)"), pairs(node))
+    end
+    walk(SCHEMA, "schema")
+    @test isempty(undescribed)
+    @test isempty(open_tables)
+end
+

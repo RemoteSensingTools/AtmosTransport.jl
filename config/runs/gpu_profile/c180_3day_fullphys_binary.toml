@@ -16,8 +16,10 @@ use_gpu = true
 float_type = "Float32"
 
 [run]
-scheme = "ppm"
 air_mass_reset_mode = "preserve_tracer_mass"
+
+[advection]
+scheme = "ppm"
 
 [tracers.co2_natural]
 [tracers.co2_natural.init]

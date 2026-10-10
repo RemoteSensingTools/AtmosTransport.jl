@@ -17,8 +17,10 @@ use_gpu = true
 float_type = "Float64"
 
 [run]
-scheme = "upwind"
 air_mass_reset_mode = "none"
+
+[advection]
+scheme = "upwind"
 
 [tracers.co2]
 [tracers.co2.init]

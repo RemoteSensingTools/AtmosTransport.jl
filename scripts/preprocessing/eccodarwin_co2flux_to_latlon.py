@@ -117,7 +117,7 @@ def main():
     print(f"  native area-wtd mean  : {native_mean:+.4e} mmol CO2/m2/s (+into ocean)")
     print(f"  net to-atm flux       : {global_kg_s:+.4e} kgCO2/s "
           f"= {global_kg_s*3.15576e7/1e12:+.3f} PgCO2/yr "
-          f"({global_kg_s*3.15576e7/1e12/3.664:+.3f} PgC/yr)")
+          f"({global_kg_s*3.15576e7/1e12*12.0107/44.0095:+.3f} PgC/yr)")
 
     # --- conservative binning to a regular lat-lon grid ---
     dlon, dlat = args.dlon, args.dlat

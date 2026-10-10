@@ -44,6 +44,8 @@ include("InputStaging.jl")        # rolling NVMe staging of the daily binaries
 using .InputStaging: InputStager, staged_path_for!, cleanup_staging!
 export InputStager, staged_path_for!, cleanup_staging!
 include("Simulation.jl")
+include("Callbacks.jl")          # schedules, Callback, NaNChecker (Oceananigans-style)
+export AbstractSchedule, IterationInterval, WindowInterval, WallTimeInterval, Callback, NaNChecker
 include("DrivenSimulation.jl")
 include("driven_window_state.jl")
 include("driven_physics_refresh.jl")

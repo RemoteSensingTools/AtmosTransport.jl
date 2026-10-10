@@ -258,6 +258,10 @@ function _process_day_native(cfg::AbstractDict;
                              day_override = nothing,
                              start_date   = nothing,
                              end_date     = nothing)
+    # Native sources take their column weights from the met-source file.
+    haskey(get(cfg, "numerics", Dict()), "column_balance_weights") && throw(ArgumentError(
+        "[numerics] column_balance_weights applies to ERA5 spectral configs; native sources " *
+        "set column_balance_weights in their met-source [preprocessing] table"))
     src_cfg = cfg["source"]
     toml_relpath = String(src_cfg["toml"])
     toml_path = isabspath(toml_relpath) ? toml_relpath :
@@ -524,6 +528,7 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
     settings_nt = resolve_runtime_settings(cfg)
     settings = ERA5SpectralSettings(
         merge(settings_nt, (T_target = target_spectral_truncation(grid),)))
+    _check_spectral_column_weights(grid, settings)     # before any file is read
     vertical = build_vertical_setup(settings.coeff_path, settings.level_range,
                                     settings.min_dp, cfg["grid"])
 
@@ -599,15 +604,18 @@ function process_day(cfg::Dict{String, Any};
                      day_override::Union{String, Nothing} = nothing,
                      start_date::Union{String, Date, Nothing} = nothing,
                      end_date::Union{String, Date, Nothing} = nothing)
-    if _is_native_source_cfg(cfg)
-        # Native path resolves FT first, then builds grid internally so
-        # mesh element type matches reader/state buffers.
-        return _process_day_native(cfg; day_override, start_date, end_date)
-    else
-        # Spectral path: keep the historical Float64 mesh build at the entry
-        # (the spectral preprocessor casts to settings.output_float_type later).
-        grid = build_target_geometry(cfg["grid"], Float64)
-        ensure_supported_target(grid)
-        return _process_day_spectral(cfg, grid; day_override, start_date, end_date)
+    # `[logging] level` ("warn" keeps the per-window log quiet).
+    return with_log_level(log_level(cfg)) do
+        if _is_native_source_cfg(cfg)
+            # Native path resolves FT first, then builds grid internally so
+            # mesh element type matches reader/state buffers.
+            _process_day_native(cfg; day_override, start_date, end_date)
+        else
+            # Spectral path: keep the historical Float64 mesh build at the entry
+            # (the spectral preprocessor casts to settings.output_float_type later).
+            grid = build_target_geometry(cfg["grid"], Float64)
+            ensure_supported_target(grid)
+            _process_day_spectral(cfg, grid; day_override, start_date, end_date)
+        end
     end
 end

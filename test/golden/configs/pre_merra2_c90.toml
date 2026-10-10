@@ -30,7 +30,7 @@ substep_schedule           = "adaptive_cfl"
 substep_cfl_target         = 0.95
 min_steps_per_window       = 1
 max_steps_per_window       = 512
-geos_balance_mode          = "column"
+balance_mode               = "column"
 
 [mass_fix]
 enable           = true

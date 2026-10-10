@@ -42,6 +42,8 @@ surface_pressure_var = "surface_pressure"
 format               = "netcdf_native_hourly"
 level_orientation    = "auto"
 mass_flux_dt_seconds = 450.0
+# column_balance_weights = "mass"    # "mass" (default) | "hybrid_b" | "hybrid_mass": how the
+#                                    # column balance spreads its correction over the levels
 include_surface      = false  # surface physics comes from the typed 0.25° fallback path
 include_convection   = false  # convection physics comes from the typed 0.25° fallback path
 physics_dir          = ""     # set by preprocessing TOML when include_surface/convection=true

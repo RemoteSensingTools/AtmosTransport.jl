@@ -363,6 +363,7 @@ function process_day(date::Date,
                              adaptive_substeps = false,
                              substep_cfl_target = positivity_cfl_limit),
                      run_cache = nothing)
+    _check_spectral_column_weights(grid, settings)
     FT = settings.output_float_type
     Nz_native = vertical.Nz_native
     Nz = vertical.Nz

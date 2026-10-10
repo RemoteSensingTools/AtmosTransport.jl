@@ -104,7 +104,9 @@ n_sub = ceil(ratio / safety_factor)
 
 with `out_d = max(0,-a_lo) + max(0,a_hi)` (the Lin-Rood 1996
 refinement, not `max(|a_lo|, |a_hi|)`). The factor of 2 is because
-the palindrome traverses each direction twice. For binaries written
+the palindrome traverses each direction twice. The preprocessor's positivity
+gate uses the same budget against `min(m, m_next)`, for cubed-sphere and
+lat-lon binaries alike. For binaries written
 with adaptive substeps, the preprocessor bakes the verified count into
 `steps_per_window_by_window[k]`. The binary-scheduled runtime executes exactly
 that many transport substeps and fixes the inner directional subcycle count at

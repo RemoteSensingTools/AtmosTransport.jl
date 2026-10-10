@@ -154,6 +154,9 @@ using .SectionTimer
 # Strict Boolean and known-key checks for TOML tables (Output, Preprocessing, Models).
 include("ConfigChecks.jl")
 
+# `[logging] level` of run and preprocessing configs (Preprocessing, Models).
+include("LogLevels.jl")
+
 # ---- Quantity-kind dispatch traits ----
 # Tiny trait module with no dependencies, loaded early so later modules can
 # dispatch on extensive vs intensive vs vector vs flux field semantics.
@@ -305,6 +308,7 @@ export apply!
 # Low-level model hooks for custom loops
 export TransportModel, Simulation, DrivenSimulation
 export step!, run!, run_window!, window_index
+export Callback, IterationInterval, WindowInterval, WallTimeInterval, NaNChecker
 export with_chemistry, with_diffusion, with_emissions, with_convection, with_convection_forcing
 export build_runtime_physics_recipe, validate_runtime_physics_recipe
 export build_initial_mixing_ratio, pack_initial_tracer_mass

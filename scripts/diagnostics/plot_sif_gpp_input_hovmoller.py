@@ -46,7 +46,7 @@ SEQUENTIAL = LinearSegmentedColormap.from_list("blue_seq", [
     "#256abf", "#1c5cab", "#184f95", "#104281", "#0d366b",
 ])
 
-KGCO2_M2_S_TO_GC_M2_DAY = 86400.0 * (12.0 / 44.0) * 1e3
+KGCO2_M2_S_TO_GC_M2_DAY = 86400.0 * (12.0107 / 44.0095) * 1e3
 DAYS_PER_YEAR = 365.25
 
 

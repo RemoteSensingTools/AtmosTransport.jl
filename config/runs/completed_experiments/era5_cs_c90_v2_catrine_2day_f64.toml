@@ -18,10 +18,12 @@ binary_paths = [
 float_type = "Float64"
 
 [run]
-scheme = "slopes"
 tracer_name = "natural_co2"
 start_window = 1
 air_mass_reset_mode = "none"
+
+[advection]
+scheme = "slopes"
 
 [init]
 kind = "catrine_co2"

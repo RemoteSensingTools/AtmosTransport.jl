@@ -46,6 +46,20 @@ function _geos_effective_balance(cm_closure::Symbol, balance_mode::Symbol)
     return String(balance_mode)
 end
 
+# Non-mass column weights need a closure that balances the column: the
+# pressure-fixer closures keep the native fluxes, and a per-layer balance has
+# no column correction to spread.
+function _check_geos_column_weights(kind::Symbol, cm_closure::Symbol, balance_mode::Symbol)
+    _validate_column_balance_weights(kind, "GEOS")
+    kind === :mass && return nothing
+    cm_closure in (:pressure_fixer, :pfix_corrected) && throw(ArgumentError(
+        "column_balance_weights = $(kind) needs a column balance; geos_cm_closure = " *
+        "$(repr(cm_closure)) keeps the native horizontal fluxes"))
+    _geos_effective_balance(cm_closure, balance_mode) == "per_layer" &&
+        _reject_layer_balance_weights(LayerBalance(), kind)
+    return nothing
+end
+
 _geos_balance_description(balance::AbstractString) =
     balance == "none" ? "none_native_unbalanced" : balance * "_poisson_to_endpoint"
 
@@ -260,7 +274,7 @@ function _process_day_geos_cs_unified(date::Date,
             cs_center_law      = _cs_center_law_tag(grid),
             longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
             planet_radius      = grid.mesh.radius,
-            extra_header = _with_replay_record(Dict{String, Any}(
+            extra_header = _with_replay_record(_with_column_weights_record(Dict{String, Any}(
                 "preprocessor" => "geos_native_to_cs",
                 "preprocessor_contract" => "plan41_variable_substeps",
                 "runtime_substep_contract" => "binary_schedule",
@@ -323,7 +337,7 @@ function _process_day_geos_cs_unified(date::Date,
                      "geos_omega_max_bottom_flux_correction" =>
                          workspace.omega_regularization.max_bottom_flux_correction) :
                     ())...,
-            ), write_replay_on),
+            ), settings.column_balance_weights), write_replay_on),
         )
         writer = CubedSphereBinaryWriter(inner_writer, DryBasis();
                                          Nc = Nc, npanel = npanel,
@@ -450,7 +464,6 @@ function process_day(date::Date,
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
                      horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
-                     balance_mode::Union{Nothing, Symbol} = nothing,
                      cm_closure::Symbol = :endpoint_balanced,
                      smooth_iters::Integer = 8,
                      omega_regularization::OmegaRegularization = OmegaRegularization(),
@@ -460,17 +473,12 @@ function process_day(date::Date,
         error("GEOS-CS passthrough only supports mass_basis=:dry; got $(mass_basis). " *
               "GEOS MFXC/MFYC are already dry; the chained pressure-fixer is dry-basis.")
     _validate_geos_native_panel_convention(grid.mesh.convention)
-    if balance_mode !== nothing        # deprecated keyword: `:column` or `:per_layer`
-        Base.depwarn("process_day(...; balance_mode) for GEOS is deprecated; " *
-                     "pass horizontal_balance = ColumnBalance() or LayerBalance()", :process_day)
-        from_symbol = resolve_horizontal_balance(Dict("balance_mode" => String(balance_mode)))
-        horizontal_balance === nothing || horizontal_balance === from_symbol || throw(ArgumentError(
-            "balance_mode = $(repr(balance_mode)) conflicts with horizontal_balance = $(horizontal_balance)"))
-        horizontal_balance = from_symbol
-    end
     horizontal_balance isa LayerBalance && cm_closure !== :endpoint_balanced &&
         @warn "balance_mode = \"per_layer\" has no effect with geos_cm_closure = " *
               "$(repr(cm_closure)); the header records the balance the closure applies" maxlog = 1
+    balance_mode = effective_horizontal_balance(horizontal_balance, ColumnBalance()) isa
+                   LayerBalance ? :per_layer : :column
+    _check_geos_column_weights(settings.column_balance_weights, cm_closure, balance_mode)
     return _process_day_geos_cs_unified(
         date, grid, settings, vertical;
         out_path = out_path,
@@ -489,8 +497,7 @@ function process_day(date::Date,
         seed_m = seed_m,
         global_mass_pin = global_mass_pin,
         global_mass_target_kg = global_mass_target_kg,
-        balance_mode = effective_horizontal_balance(horizontal_balance, ColumnBalance()) isa
-                       LayerBalance ? :per_layer : :column,
+        balance_mode = balance_mode,
         cm_closure = cm_closure,
         smooth_iters = smooth_iters,
         omega_regularization = omega_regularization,

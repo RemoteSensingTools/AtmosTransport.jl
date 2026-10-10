@@ -2,13 +2,38 @@
 # Forward-run progress timer — Transport vs IO wall-clock breakdown.
 #
 # Three accumulators (driver-open + window loads / transport / snapshot
-# capture+write) plus a `ProgressMeter.Progress` bar over windows. Always
-# on — no env var gating, no SectionTimer dep. End-of-run summary lands
-# via `@info` so it surfaces alongside the existing run-completion logs.
+# capture+write) and a progress reporter over windows (`[logging] progress`):
+# a `ProgressMeter` bar, one log line every few windows, or nothing. The
+# end-of-run summary lands via `@info` with the other run-completion logs.
 # ===========================================================================
 
-mutable struct RunProgressTimer
-    prog            :: Progress
+"""
+    AbstractProgressReporter
+
+How a run shows its progress over met windows (`[logging] progress`):
+`ProgressBar()`, `ProgressLines(interval)` or `NoProgress()`.
+"""
+abstract type AbstractProgressReporter end
+
+"A redrawn progress bar with status and timing lines (interactive terminals)."
+struct ProgressBar <: AbstractProgressReporter end
+
+"One `@info` line every `interval` windows and at the end (batch logs)."
+struct ProgressLines <: AbstractProgressReporter
+    interval :: Int
+    function ProgressLines(interval::Integer)
+        interval >= 1 || throw(ArgumentError("ProgressLines needs interval ≥ 1; got $(interval)"))
+        return new(Int(interval))
+    end
+end
+
+"No progress output; the end-of-run summary is still logged."
+struct NoProgress <: AbstractProgressReporter end
+
+mutable struct RunProgressTimer{R <: AbstractProgressReporter}
+    reporter        :: R
+    prog            :: Union{Nothing, Progress}   # the bar of `ProgressBar`
+    windows_done    :: Int
     t_start         :: Float64
     t_io_read       :: Float64   # TransportBinaryDriver open + window loads
     t_transport     :: Float64   # advection + diffusion + convection + emissions
@@ -32,16 +57,19 @@ function _sample_run_counters()
             compile_ns = first(Base.cumulative_compile_time_ns()), bytes = bytes[])
 end
 
-function RunProgressTimer(total_windows::Integer; label::AbstractString = "Forward run ")
-    prog = Progress(max(Int(total_windows), 1);
-                    desc = label, showspeed = true, barlen = 40)
+function RunProgressTimer(total_windows::Integer;
+                          reporter::AbstractProgressReporter = ProgressBar(),
+                          label::AbstractString = "Forward run ")
+    prog = reporter isa ProgressBar ?
+           Progress(max(Int(total_windows), 1); desc = label, showspeed = true, barlen = 40) :
+           nothing
     # Compile time is only accumulated while timing is enabled (as in `@time`).
     # The enable is a process-wide reference count; `stop_compile_timing!`
     # releases this timer's hold exactly once.
     Base.cumulative_compile_timing(true)
     start = _sample_run_counters()
     return RunProgressTimer(
-        prog, start.wall, 0.0, 0.0, 0.0, Int(total_windows),
+        reporter, prog, 0, start.wall, 0.0, 0.0, 0.0, Int(total_windows),
         "initializing", "transport 0.0s | io_read 0.0s | io_write 0.0s",
         start.gc_ns, start.compile_ns, start.bytes, true)
 end
@@ -93,27 +121,48 @@ function set_progress_status!(timer::RunProgressTimer;
                               redraw::Bool = false)
     status === nothing || (timer.status_line = String(status))
     detail === nothing || (timer.detail_line = String(detail))
-    redraw && update!(timer.prog, timer.prog.counter;
-                      showvalues = _progress_showvalues(timer))
+    redraw && timer.prog !== nothing &&
+        update!(timer.prog, timer.prog.counter; showvalues = _progress_showvalues(timer))
     return timer
 end
 
-# Tick the progress bar after one window has advanced. Keep routine runtime
-# status in the two redrawable lines below the bar so `@info` output does not
-# interrupt ETA/progress rendering during long runs.
+# Report one advanced window. With the bar, routine runtime status lives in
+# the two redrawable lines below it so `@info` output does not interrupt the
+# ETA rendering during long runs.
 @inline function tick_window!(timer::RunProgressTimer;
                               status::Union{Nothing, AbstractString} = nothing,
                               detail::Union{Nothing, AbstractString} = nothing)
     status === nothing || (timer.status_line = String(status))
     detail === nothing || (timer.detail_line = String(detail))
-    next!(timer.prog; showvalues = [
-        (:status, timer.status_line),
-        (:timing, string(_progress_detail_line(timer), " | ", timer.detail_line)),
-    ])
+    timer.windows_done += 1
+    _report_window!(timer.reporter, timer)
+    return timer
+end
+
+_report_window!(::ProgressBar, timer) = next!(timer.prog; showvalues = [
+    (:status, timer.status_line),
+    (:timing, string(_progress_detail_line(timer), " | ", timer.detail_line)),
+])
+_report_window!(::NoProgress, timer) = nothing
+
+function _report_window!(reporter::ProgressLines, timer)
+    n, total = timer.windows_done, max(timer.windows_total, timer.windows_done)
+    n % reporter.interval == 0 || n == total || return nothing
+    elapsed = time() - timer.t_start
+    @info @sprintf("Window %d/%d (%.0f%%), elapsed %s, ETA %s | %s | %s", n, total, 100n / total,
+                   _clock_string(elapsed), _clock_string(elapsed / n * (total - n)),
+                   timer.status_line, _progress_detail_line(timer))
+    return nothing
+end
+
+# Seconds as h:mm:ss.
+function _clock_string(seconds::Real)
+    s = round(Int, max(seconds, 0))
+    return @sprintf("%d:%02d:%02d", s ÷ 3600, (s % 3600) ÷ 60, s % 60)
 end
 
 function summarize_progress!(timer::RunProgressTimer)
-    finish!(timer.prog)
+    timer.prog === nothing || finish!(timer.prog)
     stop = _sample_run_counters()
     stop_compile_timing!(timer)
     wall = stop.wall - timer.t_start

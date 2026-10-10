@@ -16,8 +16,10 @@ use_gpu = true
 float_type = "Float32"
 
 [run]
-scheme = "slopes"
 stop_window = 1
+
+[advection]
+scheme = "slopes"
 
 [tracers.co2_natural]
 [tracers.co2_natural.init]

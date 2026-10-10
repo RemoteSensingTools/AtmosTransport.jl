@@ -401,6 +401,7 @@ function process_day(date::Date,
                              substep_cfl_target = positivity_cfl_limit),
                      run_cache = nothing)
     FT = settings.output_float_type
+    _check_spectral_column_weights(grid, settings)
     get(settings, :horizontal_balance, nothing) isa ColumnBalance && throw(ArgumentError(
         "reduced-Gaussian preprocessing balances each layer (ring Poisson CG); " *
         "[numerics] balance_mode = \"column\" is not implemented for it"))

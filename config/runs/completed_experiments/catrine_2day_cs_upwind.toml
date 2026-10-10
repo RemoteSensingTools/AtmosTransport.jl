@@ -11,10 +11,12 @@ binary_paths = [
 float_type = "Float64"
 
 [run]
-scheme = "upwind"
 start_window = 1
 stop_window = 24
 air_mass_reset_mode = "none"
+
+[advection]
+scheme = "upwind"
 
 [tracers.natural_co2.init]
 kind = "catrine_co2"

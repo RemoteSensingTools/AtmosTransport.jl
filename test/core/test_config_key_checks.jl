@@ -1,12 +1,15 @@
-# Run-config checks before any binary is opened: unknown and unread keys
-# (warnings with "did you mean" suggestions), physics/run/output settings
-# parsed by `validate_config`, and the snapshot-schedule checks at setup.
+# Run-config checks before any binary is opened: unknown keys (errors with
+# "did you mean" suggestions) and unread keys (warnings), physics/run/output
+# settings parsed by `validate_config`, and the snapshot-schedule checks at setup.
 using Test
 using AtmosTransport
 using Logging
 
 const CC = AtmosTransport.ConfigChecks
 const Runner = AtmosTransport.Models.DrivenRunner
+
+# Every key finding (errors and warnings) of a run config.
+key_messages(cfg) = (f = Runner._config_key_findings(cfg); vcat(f.errors, f.warnings))
 
 @testset "ConfigChecks helpers" begin
     @test CC.key_suggestion("diffussion", ("advection", "diffusion")) == "diffusion"
@@ -30,7 +33,7 @@ end
 
 @testset "unknown and unread keys" begin
     has(ws, parts...) = any(w -> all(p -> occursin(p, w), parts), ws)
-    @test isempty(Runner._config_key_warnings(Dict(
+    @test isempty(key_messages(Dict(
         "input" => Dict("folder" => "/x", "start_date" => "2021-12-01", "end_date" => "2021-12-02"),
         "run" => Dict("prefetch_windows" => false),
         "advection" => Dict("scheme" => "linrood", "ppm_order" => 7),
@@ -38,7 +41,7 @@ end
         "tracers" => Dict("co2" => Dict("init" => Dict("kind" => "uniform", "background" => 4e-4))),
         "output" => Dict("path" => "/o.nc", "cadence_hours" => 3, "start_hour" => 3))))
 
-    w = Runner._config_key_warnings(Dict(
+    w = key_messages(Dict(
         "diffussion" => Dict("kind" => "constant"),
         "input" => Dict("binary_paths" => ["a.bin"], "end_date" => "2021-12-02"),
         "run" => Dict("tracer_name" => "co2", "Hp" => 3),
@@ -72,15 +75,21 @@ end
     @test has(w, "[output]", "snapshot_file", "because `path` is set")
     @test has(w, "[output]", "stop_hour", "without an interval key")
     @test has(w, "[output]", "deflate_level", "binary_mmap")
+    # Unknown keys are errors; known keys a setting leaves unread are warnings.
+    f = Runner._config_key_findings(Dict(
+        "diffussion" => Dict("kind" => "constant"),
+        "advection" => Dict("scheme" => "upwind", "order" => 7, "ppm_order" => 7)))
+    @test has(f.errors, "diffussion") && has(f.errors, "order (did you mean `ppm_order`?)")
+    @test !has(f.errors, "ppm_order", "scheme") && has(f.warnings, "ppm_order", "scheme = \"upwind\"")
 
-    w = Runner._config_key_warnings(Dict(
+    w = key_messages(Dict(
         "tracers" => Dict("co2" => Dict("init" => Dict("kind" => "uniform"))),
         "output" => Dict("fields" => Dict("per_tracer" => Dict("c02" => Dict("layers" => "none",
                                                                              "colum_mean" => true))))))
     @test has(w, "[output.fields.per_tracer.c02]", "not a tracer")
     @test has(w, "[output.fields.per_tracer.c02]", "colum_mean (did you mean `column_mean`?)")
     # Without [tracers] the run carries [run].tracer_name.
-    w = Runner._config_key_warnings(Dict("run" => Dict("tracer_name" => "CO2"),
+    w = key_messages(Dict("run" => Dict("tracer_name" => "CO2"),
         "output" => Dict("fields" => Dict("per_tracer" => Dict("C02" => Dict("layers" => "none"))))))
     @test has(w, "[output.fields.per_tracer.C02]", "not a tracer")
 end
@@ -102,9 +111,11 @@ end
                   bad(c -> c["advection"] = Dict("scheme" => "ppm", "ppm_order" => 7)))
         @test any(contains("must be 5 or 7"),
                   bad(c -> c["advection"] = Dict("scheme" => "linrood", "ppm_order" => 3)))
-        @test any(contains("ambiguous"),
+        @test any(contains("moved to the [advection] table"),
+                  bad(c -> c["run"] = Dict("scheme" => "linrood")))
+        @test any(contains("moved to the [advection] table"),
                   bad(c -> (c["advection"] = Dict("scheme" => "ppm");
-                            c["run"] = Dict("scheme" => "linrood"))))
+                            c["run"] = Dict("vertical" => "fv3_kord8"))))
         @test any(contains("Unknown [diffusion] kind"), bad(c -> c["diffusion"] = Dict("kind" => "pbl")))
         @test any(contains("names no tracer"),
                   bad(c -> c["chemistry"] = Dict("kind" => "decay",
@@ -120,19 +131,30 @@ end
                   bad(c -> c["advection"] = Dict("scheme" => "linrood", "check_binary_cfl" => true)))
         @test any(contains("belongs in [advection]"), bad(c -> c["run"] = Dict("check_binary_cfl" => true)))
         @test isempty(bad(c -> c["advection"] = Dict("scheme" => "ppm", "check_binary_cfl" => true)))
+        varying = Dict{String, Any}("co2" => Dict{String, Any}(
+            "init" => Dict("kind" => "uniform"),
+            "surface_flux" => Dict{String, Any}("kind" => "lmdz_co2", "time_varying" => true)))
+        @test any(contains("needs [input].start_date"), bad(c -> c["tracers"] = varying))
+        @test isempty(bad(c -> (c["tracers"] = varying; c["input"]["start_date"] = "2021-12-01")))
+        @test any(contains("[logging] must be a TOML table"), bad(c -> c["logging"] = "quiet"))
+        @test any(contains("[checks] must be a TOML table"), bad(c -> c["checks"] = true))
+        @test any(contains("[logging].level"), bad(c -> c["logging"] = Dict("level" => "loud")))
         @test any(contains("no snapshot times"), bad(c -> c["output"] = Dict("path" => "/o.nc")))
         @test any(contains("no `path`"), bad(c -> c["output"] = Dict("hours" => [6, 12])))
         @test isempty(bad(c -> c["output"] = Dict("path" => "/o.nc", "enabled" => false)))
         @test isempty(bad(c -> c["output"] = Dict("snapshot_file" => "/o.nc", "snapshot_hours" => [])))
         @test isempty(bad(c -> c["output"] = Dict("path" => "/o.nc", "cadence_hours" => 6)))
 
-        # Unknown keys are warnings, not errors.
+        # Unknown keys are errors; unread keys are warnings.
         cfg = base(); cfg["diffussion"] = Dict("kind" => "constant")
+        ok, errors = with_logger(() -> validate_config(cfg), NullLogger())
+        @test !ok && any(contains("diffussion (did you mean `diffusion`?)"), errors)
+        cfg = base(); cfg["diffusion"] = Dict("kind" => "none", "value" => 1.0)
         logs, (ok, errors) = Test.collect_test_logs() do
             validate_config(cfg)
         end
         @test ok && isempty(errors)
-        @test any(l -> l.level == Logging.Warn && occursin("diffussion", string(l.message)), logs)
+        @test any(l -> l.level == Logging.Warn && occursin("value", string(l.message)), logs)
     end
 end
 
@@ -212,22 +234,22 @@ end
                       "init" => Dict("kind" => "uniform"),
                       "surface_flux" => Dict("kind" => "file", "regridding" => "conservativ"))))))
     end
-    w = Runner._config_key_warnings(Dict("tracers" => Dict("co2" => Dict(
+    w = key_messages(Dict("tracers" => Dict("co2" => Dict(
         "init" => Dict("kind" => "uniform"),
         "surface_flux" => Dict("file" => "f.nc", "variable" => "FLUX", "scale" => 2.0)))))
     @test any(x -> occursin("[tracers.co2.surface_flux]", x) && occursin("no flux is emitted", x), w)
     # Flat tracer keys go through the same checks.
-    w = Runner._config_key_warnings(Dict("tracers" => Dict("co2" => Dict(
+    w = key_messages(Dict("tracers" => Dict("co2" => Dict(
         "kind" => "uniform", "lon0_deg" => 3.0, "surface_flux_file" => "f.nc"))))
     @test any(x -> occursin("[tracers.co2]", x) && occursin("lon0_deg", x) &&
                    occursin("kind = \"uniform\"", x), w)
     @test any(x -> occursin("[tracers.co2] (flat surface_flux_* keys)", x) &&
                    occursin("no flux is emitted", x), w)
 
-    @test isempty(Runner._config_key_warnings(Dict("tracers" => Dict("co2" => Dict(
+    @test isempty(key_messages(Dict("tracers" => Dict("co2" => Dict(
         "kind" => "gaussian_blob", "lon0_deg" => 3.0, "surface_flux_kind" => "edgar_sf6")))))
     # Keys a kind or mode leaves unread, and shadowed aliases.
-    w = Runner._config_key_warnings(Dict("tracers" => Dict(
+    w = key_messages(Dict("tracers" => Dict(
         "a" => Dict("init" => Dict("kind" => "file", "file" => "f.nc", "variable" => "v",
                                    "background" => 4e-4)),
         "b" => Dict("init" => Dict("kind" => "latitude_step", "south" => 1.0, "south_value" => 2.0)),

@@ -132,7 +132,7 @@ def main():
         for year in range(2014, 2025):
             i = (dt.datetime(year, 1, 1)-day0).days
             j = (dt.datetime(year+1, 1, 1)-day0).days
-            budget = {name: float((f[i:j].astype('f8')*area).sum()*86400*12/44/1e12)
+            budget = {name: float((f[i:j].astype('f8')*area).sum()*86400/T.KG_CO2_PER_KG_C/1e12)
                       for name, f in fluxes.items()}
             audit['annual_PgC'][str(year)] = budget
             print(f'[{model}] {year}: {budget} PgC', flush=True)

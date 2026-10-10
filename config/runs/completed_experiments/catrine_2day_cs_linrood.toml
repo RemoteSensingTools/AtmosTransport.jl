@@ -15,11 +15,13 @@ binary_paths = [
 float_type = "Float64"
 
 [run]
-scheme = "linrood"
 start_window = 1
 stop_window = 24
 air_mass_reset_mode = "none"
 halo_padding = 3
+
+[advection]
+scheme = "linrood"
 ppm_order = 5
 
 [tracers.natural_co2.init]

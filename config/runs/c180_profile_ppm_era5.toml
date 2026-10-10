@@ -22,8 +22,10 @@ end_date     = "2021-12-02"
 file_pattern = "era5_transport_{YYYYMMDD}_merged1000Pa_float32.bin"
 
 [run]
-scheme = "ppm"
 stop_window = 6
+
+[advection]
+scheme = "ppm"
 
 [tracers.co2]
   [tracers.co2.init]

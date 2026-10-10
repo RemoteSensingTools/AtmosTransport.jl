@@ -5,6 +5,7 @@
 
 [input]
 binary_paths = ["@CASE:pre_merra2_c90@/merra2_transport_20220115_float32.bin"]
+start_date = "2022-01-15"                # run origin of the time-varying fluxes
 
 [architecture]
 use_gpu = true

@@ -79,7 +79,7 @@ using AtmosTransport.Models.InitialConditionIO: build_surface_flux_source
         mktempdir() do dir
             kgc = build(write_native(joinpath(dir, "kgc.nc"); units = "kgC m-2 s-1"))
             kgco2 = build(write_native(joinpath(dir, "kgco2.nc")))
-            @test kgc.cell_mass_rate_series[1] ≈ kgco2.cell_mass_rate_series[1] .* (44 / 12)
+            @test kgc.cell_mass_rate_series[1] ≈ kgco2.cell_mass_rate_series[1] .* (44.0095 / 12.0107)
             for bad in ("mol m-2 s-1", "g C m-2 s-1", "umol m-2 s-1")
                 @test_throws ArgumentError build(write_native(joinpath(dir, "u$(hash(bad)).nc"); units = bad))
             end

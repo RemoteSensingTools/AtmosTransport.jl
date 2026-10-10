@@ -1,7 +1,7 @@
 # GEOS native CS preprocessing: window workspace, per-window preparation and substep selection, ingest/drain/advance.
 # Split from cubed_sphere_geos.jl (refactor phase 4); included by Preprocessing.jl in this order.
 
-mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, VD, VO, OR} <:
+mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, VD, VO, OR, CW} <:
                AbstractWindowWorkspace{CubedSphereTargetGeometry, FT}
     strategy    :: ST
     strategy_ws :: SW
@@ -64,6 +64,9 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, V
     vdiv_target :: VO
     omega_regularization :: OmegaRegularization
     omega_regularization_scratch :: OR
+    # How the column balance spreads its correction over the levels
+    # (`settings.column_balance_weights`; `MassWeightedColumn()` by default).
+    balance_weights :: CW
 end
 
 const _GEOS_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS = 8
@@ -152,6 +155,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     length(Bifc) == Nz + 1 ||
         error("GEOS-CS ΔB needs $(Nz+1) interface B coefficients, got $(length(Bifc))")
     ΔB = FT[FT(Bifc[k + 1] - Bifc[k]) for k in 1:Nz]
+    balance_weights = column_weights(settings.column_balance_weights, Bifc)
 
     am_native_v4 = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz_native), npanel)
     bm_native_v4 = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz_native), npanel)
@@ -199,7 +203,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     return GEOSCubedSphereWindowWorkspace{
         FT, typeof(strategy), typeof(strategy_ws), typeof(raw), typeof(cell_areas),
         typeof(plan), typeof(cmfmc_v4), typeof(dtrain_v4), typeof(vdiff_v4),
-        typeof(vdiv_om), typeof(omega_regularization_scratch)}(
+        typeof(vdiv_om), typeof(omega_regularization_scratch), typeof(balance_weights)}(
             strategy, strategy_ws, raw, plan,
             am_native_v4, bm_native_v4, m_native_kg,
             am_v4, bm_v4, cm_v4, dm_v4,
@@ -211,7 +215,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             Bool(global_mass_pin), Float64(global_mass_target_kg),
             balance_mode, cm_closure, ΔB, m_next_delp, Int(smooth_iters),
             omega_buf, qv_buf, vdiv_om, vdiv_target,
-            omega_regularization, omega_regularization_scratch)
+            omega_regularization, omega_regularization_scratch, balance_weights)
 end
 
 function _geos_pin_global_mass_if_needed!(workspace::GEOSCubedSphereWindowWorkspace{FT},
@@ -360,7 +364,7 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         bal_diag = balance_cs_column_mass_fluxes!(
             workspace.am_v4, workspace.bm_v4, workspace.m_cur,
             workspace.m_next_delp, grid.face_table, grid.cell_degree, steps,
-            grid.poisson_scratch)
+            grid.poisson_scratch; weights = workspace.balance_weights)
         # dm_dry = (m_next_delp − m_cur) / (2·steps)
         fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
                                       workspace.m_next_delp, steps)
@@ -400,7 +404,8 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
             end
         end
         diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,
-                        workspace.dm_v4, workspace.m_cur, Nc, Nz)
+                        workspace.dm_v4, workspace.m_cur, Nc, Nz,
+                        workspace.balance_weights)
         return bal_diag
     end
 
@@ -415,7 +420,7 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         bal_diag = balance_cs_column_mass_fluxes!(
             workspace.am_v4, workspace.bm_v4, workspace.m_cur,
             workspace.m_next_target, grid.face_table, grid.cell_degree, steps,
-            grid.poisson_scratch)
+            grid.poisson_scratch; weights = workspace.balance_weights)
         fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
                                       workspace.m_next_target, steps)
         global_dm = sum(sum(Float64, panel) for panel in workspace.dm_v4)
@@ -436,7 +441,8 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
             # Preserve endpoint-balanced transport as the resolved-scale reference.
             # OMEGA only supplies a capped, UTLS-local grid-scale correction.
             diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,
-                            workspace.dm_v4, workspace.m_cur, Nc, Nz)
+                            workspace.dm_v4, workspace.m_cur, Nc, Nz,
+                        workspace.balance_weights)
             _regularize_omega_target!(
                 workspace.vdiv_target, workspace.cm_v4, workspace.vdiv_om,
                 workspace.m_cur, workspace.m_next_target, grid, workspace.g,
@@ -466,7 +472,8 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         end
         _OMEGA_TIMING[] && (_OMEGA_TIMING_STATE.recon_time += time() - _t_recon)
         diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,
-                        workspace.dm_v4, workspace.m_cur, Nc, Nz)
+                        workspace.dm_v4, workspace.m_cur, Nc, Nz,
+                        workspace.balance_weights)
         return (bal_diag..., omega_max_increment = recon.max_increment,
                 omega_max_post_residual = recon.max_post_residual,
                 omega_max_relative_correction = recon.max_relative_correction,
@@ -486,12 +493,13 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         balance_cs_column_mass_fluxes!(
             workspace.am_v4, workspace.bm_v4, workspace.m_cur,
             workspace.m_next_target, grid.face_table, grid.cell_degree, steps,
-            grid.poisson_scratch)
+            grid.poisson_scratch; weights = workspace.balance_weights)
     end
     fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
                                   workspace.m_next_target, steps)
     diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,
-                    workspace.dm_v4, workspace.m_cur, Nc, Nz)
+                    workspace.dm_v4, workspace.m_cur, Nc, Nz,
+                        workspace.balance_weights)
     return bal_diag
 end
 

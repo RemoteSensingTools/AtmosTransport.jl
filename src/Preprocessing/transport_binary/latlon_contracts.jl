@@ -196,8 +196,8 @@ function verify_storage_contract_ll!(storage::WindowStorage{FT},
                                                         storage.all_am[win_idx],
                                                         storage.all_bm[win_idx],
                                                         storage.all_cm[win_idx];
-                                                        cfl_limit =
-                                                            contract.positivity_cfl_limit)
+                                                        cfl_limit = contract.positivity_cfl_limit,
+                                                        m_next)
             update_accumulator!(contract, positivity, win_idx)
         end
     end
@@ -391,7 +391,7 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
                 positivity = verify_substep_positivity_ll!(
                     storage.all_m[win_idx], storage.all_am[win_idx],
                     storage.all_bm[win_idx], storage.all_cm[win_idx];
-                    cfl_limit = contract.positivity_cfl_limit)
+                    cfl_limit = contract.positivity_cfl_limit, m_next)
                 (replay = nothing, positivity = positivity)
             end
 
@@ -528,69 +528,52 @@ function write_window!(io::IO,
 end
 
 # ===========================================================================
-# Per-window LL transport-binary contract surface.
+# Per-window LL transport-binary contract surface (mirrors
+# `cubed_sphere_contracts.jl`): the replay gate and the per-substep positivity
+# gate, with the same worst-window accumulator and `require_substep_positivity`
+# policy as cubed sphere.
 #
-# Mirrors `cubed_sphere_contracts.jl` for the structured lat-lon
-# topology. Today the LL preprocessor calls only `verify_window_continuity_ll`
-# (the replay gate); there is no analogue of `verify_substep_positivity_cs!`
-# for LL fluxes, so an LL binary that drives a cell mass negative mid-sweep
-# can pass replay and only break later inside the runtime CFL scan. This
-# surface closes that asymmetry: LL gets the same per-substep positivity
-# gate, the same worst-window accumulator, and the same
-# `require_substep_positivity` escape-hatch policy as CS. The gate is
-# intentionally NOT yet wired into the LL `process_day` orchestrator.
-#
-# LL array shapes (confirmed from `mass_support.jl` and the storage struct
-# in `latlon_workspaces.jl`):
+# LL array shapes (`latlon_workspaces.jl`):
 #
 #     m  :: (Nx, Ny, Nz)
 #     am :: (Nx + 1, Ny, Nz)     # periodic in x: am[1,j,k] == am[Nx+1,j,k]
 #     bm :: (Nx, Ny + 1, Nz)     # bm[:, 1, :] = bm[:, Ny+1, :] = 0 at poles
 #     cm :: (Nx, Ny, Nz + 1)     # cm[:, :, 1] = cm[:, :, Nz+1] = 0 (TOA/sfc)
 #
-# So the positivity kernel is identical to a single CS panel modulo the
-# missing panel loop. The diagnostic NamedTuple uses `(i, j, k)` instead
-# of `(panel, i, j, k)`.
-#
-# LL/RG positivity probe note (DESIGN.md "Open design questions"):
-# the design asks for an explicit yes-with-gate or no-with-stub answer to
-# "do LL fluxes have a substep-positivity contract?". The gate IS shipped
-# here because (a) the kernel is essentially free to implement once the CS
-# kernel exists and (b) running it on a representative ERA5 day is the
-# cheapest way to answer the question once-and-for-all when the
-# unified driver wires the call into `process_day`. Until then, the gate
-# exists as a contract type with full test coverage but is not invoked by
-# the production orchestrator, so it cannot regress any current path.
+# so an LL window is one cubed-sphere panel block without the panel axis, and
+# the positivity gate is the cubed-sphere one.
 # ===========================================================================
 
 """
-    verify_substep_positivity_ll!(m, am, bm, cm; cfl_limit = 0.95)
+    verify_substep_positivity_ll!(m, am, bm, cm; cfl_limit = 0.95, m_next = nothing)
 
-Per-substep horizontal+vertical positivity scan for a structured LL
-window. Mirrors `verify_substep_positivity_cs!` but operates on a single
-LL window (no panel dimension).
+Per-substep positivity contract of a structured lat-lon window, the same as
+the cubed-sphere one (`verify_substep_positivity_cs!`, here on one block). One
+stored flux amount is one application in the runtime palindrome
+`X-Y-Z-Z-Y-X`, so each direction acts twice per substep. For every cell
+`(i, j, k)`:
 
-For every cell `(i, j, k)`:
-  1. `m > 0`. A non-positive cell mass is reported with `ratio = Inf`
-     and short-circuits this cell's CFL ratios; the runtime divides by
-     `m` and would `Inf`/`NaN` otherwise.
-  2. Outgoing mass per substep, per direction, ≤ `cfl_limit * m`.
+  1. `m > 0` (and `m_next > 0` when given); non-finite masses or fluxes and
+     non-positive masses are reported with `ratio = Inf`.
+  2. The palindrome outflow `2 (out_x + out_y + out_z)` must not exceed
+     `cfl_limit * m_ref`, with `m_ref = min(m, m_next)` when `m_next` is given
+     and `m` otherwise. `out_d` is the cell's outflow through its two `d` faces
+     for one application.
 
-`NaN`/`Inf` cell mass and `NaN`/`Inf` fluxes are flagged as `ratio = Inf`
-(see CS round-2 fix in `cubed_sphere_contracts.jl`).
+This bounds the outflow of a whole substep by the mass the cell has at either
+end of the window. The earlier lat-lon gate checked each direction's single
+application against `m` alone, so it admitted substeps the cubed-sphere gate
+rejects.
 
-Returns `(direction, ratio, location, ok)` with:
-  - `direction :: Union{Symbol, Nothing}` — `:x` / `:y` / `:z` /
-    `nothing` (no inspection).
-  - `ratio :: Float64` — worst `outgoing / m`.
-  - `location :: NTuple{3, Int}` — `(i, j, k)`.
-  - `ok :: Bool` — `ratio ≤ cfl_limit`.
+Returns `(direction, ratio, ratio_xy, ratio_z, location, ok)` as the
+cubed-sphere gate does, with `location = (i, j, k)`.
 """
 function verify_substep_positivity_ll!(m::AbstractArray{FT, 3},
                                         am::AbstractArray,
                                         bm::AbstractArray,
                                         cm::AbstractArray;
-                                        cfl_limit::Real = 0.95) where FT
+                                        cfl_limit::Real = 0.95,
+                                        m_next::Union{Nothing, AbstractArray} = nothing) where FT
     _validate_cfl_limit(cfl_limit, "verify_substep_positivity_ll!")
     Nx, Ny, Nz = size(m)
     size(am) == (Nx + 1, Ny, Nz) ||
@@ -602,46 +585,12 @@ function verify_substep_positivity_ll!(m::AbstractArray{FT, 3},
     size(cm) == (Nx, Ny, Nz + 1) ||
         error("verify_substep_positivity_ll!: cm shape $(size(cm)) " *
               "incompatible with m $(size(m)); expected ($(Nx), $(Ny), $(Nz + 1)).")
-
-    worst_dir = nothing
-    worst_ratio = 0.0
-    worst_loc = (0, 0, 0)
-    for (dir, F_lo_view, F_hi_view) in (
-        (:x, view(am, 1:Nx,     1:Ny,     1:Nz),
-             view(am, 2:Nx + 1, 1:Ny,     1:Nz)),
-        (:y, view(bm, 1:Nx,     1:Ny,     1:Nz),
-             view(bm, 1:Nx,     2:Ny + 1, 1:Nz)),
-        (:z, view(cm, 1:Nx,     1:Ny,     1:Nz),
-             view(cm, 1:Nx,     1:Ny,     2:Nz + 1)),
-    )
-        for k in 1:Nz, j in 1:Ny, i in 1:Nx
-            mi = m[i, j, k]
-            fl = F_lo_view[i, j, k]
-            fh = F_hi_view[i, j, k]
-            # NaN-aware short-circuit: matches the CS round-2 fix so
-            # `NaN`-mass cells, `NaN`/`Inf` fluxes, and `m ≤ 0` are all
-            # surfaced consistently. NaN comparisons return `false`, so
-            # `mi <= 0` alone would let `NaN`-mass cells slip through.
-            if !isfinite(mi) || mi <= zero(FT) ||
-               !isfinite(fl) || !isfinite(fh)
-                if !isinf(worst_ratio)
-                    worst_ratio = Inf
-                    worst_dir = dir
-                    worst_loc = (i, j, k)
-                end
-                continue
-            end
-            outgoing = max(zero(FT), -fl) + max(zero(FT), fh)
-            ratio = outgoing / mi
-            if ratio > worst_ratio
-                worst_ratio = ratio
-                worst_dir = dir
-                worst_loc = (i, j, k)
-            end
-        end
-    end
-    return (direction = worst_dir, ratio = Float64(worst_ratio),
-            location = worst_loc, ok = worst_ratio <= cfl_limit)
+    m_next === nothing || size(m_next) == size(m) ||
+        error("verify_substep_positivity_ll!: m_next shape $(size(m_next)) != m shape $(size(m)).")
+    d = verify_substep_positivity_cs!((m,), (am,), (bm,), (cm,); cfl_limit,
+                                      m_next = m_next === nothing ? nothing : (m_next,))
+    return (direction = d.direction, ratio = d.ratio, ratio_xy = d.ratio_xy,
+            ratio_z = d.ratio_z, location = Base.tail(d.location), ok = d.ok)
 end
 
 """
@@ -692,7 +641,7 @@ function verify_ll_window_contract!(m_cur::AbstractArray{FT, 3},
               "fluxes do not integrate to the target mass endpoint under " *
               "palindrome continuity.")
     positivity = verify_substep_positivity_ll!(m_cur, am, bm, cm;
-                                                cfl_limit = positivity_cfl_limit)
+                                                cfl_limit = positivity_cfl_limit, m_next)
     return (replay = replay, positivity = positivity)
 end
 
@@ -739,7 +688,7 @@ function summarize_ll_positivity_status(worst::LLWorst;
                                           steps_per_window::Integer,
                                           require_substep_positivity::Bool = true,
                                           quarantine_path::Union{Nothing, AbstractString} = nothing)
-    msg = @sprintf("max outgoing/m=%.3f dir=%s win=%d cell=%s (limit=%.2f)",
+    msg = @sprintf("max palindrome outgoing/m_ref=%.3f dir=%s win=%d cell=%s (limit=%.2f)",
                    worst.ratio, worst.direction, worst.win,
                    worst.location, cfl_limit)
     if worst.ratio <= cfl_limit

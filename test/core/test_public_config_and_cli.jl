@@ -173,6 +173,8 @@ end
     end
 end
 
+tryparse_toml(path) = try TOML.parsefile(path) catch; nothing end
+
 @testset "runtime editor schema follows public config contract" begin
     schema_path = joinpath(REPO_ROOT, "schemas", "atmos_transport_run.schema.json")
     schema = JSON3.read(read(schema_path, String))
@@ -180,7 +182,9 @@ end
 
     properties = schema.properties
     @test hasproperty(properties, :advection)
-    @test !hasproperty(properties.run.properties, :scheme)
+    # The advection keys moved from [run] to [advection]; [run] lists them only
+    # to reject any value, with a pointer to [advection].
+    @test haskey(properties.run.properties.scheme, :not)
 
     # Every choice and key is compared with the parsers in test_config_schema_agreement.jl.
 
@@ -197,6 +201,20 @@ end
     for retired in (:mode, :path_template, :frequency, :provenance)
         @test !hasproperty(output, retired)
     end
+
+    # The advection keys moved from [run]: the schema rejects any value there,
+    # and no TOML in the repository still sets them under [run].
+    for key in (:scheme, :ppm_order, :vertical, :limiter)
+        @test isempty(properties.run.properties[key].not)
+    end
+    legacy = String[]
+    for (dir, _, files) in walkdir(REPO_ROOT), f in files
+        endswith(f, ".toml") && !occursin("/.git", dir) || continue
+        run = get(something(tryparse_toml(joinpath(dir, f)), Dict()), "run", nothing)
+        run isa AbstractDict && any(k -> haskey(run, k), ("scheme", "ppm_order", "vertical", "limiter")) &&
+            push!(legacy, relpath(joinpath(dir, f), REPO_ROOT))
+    end
+    @test isempty(legacy)
 
     for example in ("atmos_transport_schema_demo.toml", "minimal_template.toml")
         cfg = TOML.parsefile(joinpath(REPO_ROOT, "config", "examples", example))

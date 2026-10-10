@@ -101,7 +101,8 @@ end
 # particular, malformed tracer subtables must not survive until initialization.
 function _check_config_table_shapes!(cfg, errors)
     for name in ("input", "architecture", "numerics", "run", "advection",
-                 "diffusion", "convection", "chemistry", "output", "tracers", "init")
+                 "diffusion", "convection", "chemistry", "output", "tracers", "init",
+                 "logging", "checks")
         haskey(cfg, name) || continue
         _check_config_table!(cfg[name], "[$name]", errors)
     end
@@ -170,18 +171,18 @@ or allocating model state. Checks cover runtime table shapes (including
 `output.observations` with its `sources` array), resolved binary paths,
 numeric type, backend/float compatibility, the `[output.observations]`
 contract, and integer run-window bounds. The `[advection]`, `[diffusion]`,
-`[convection]` and `[chemistry]` sections, `air_mass_reset_mode`,
-`physics_cadence`, `prefetch_windows` and `[output]` are parsed as the run
-parses them; decay
+`[convection]`, `[chemistry]`, `[logging]` and `[checks]` sections,
+`air_mass_reset_mode`, `physics_cadence`, `prefetch_windows` and `[output]` are
+parsed as the run parses them; decay
 half-lives must name a tracer, and an enabled `[output]` needs both a path and
 snapshot times (an explicit `hours = []` means none). Shape errors are
 reported before value checks. Window indices accept integers, not Booleans or
 floating-point values.
 
-Keys the run would ignore are logged as warnings, not returned as errors:
-unknown keys and tables (with a suggestion when a known key is close, e.g.
-`order` → `ppm_order`), and known keys that the chosen kind or another setting
-leaves unread (e.g. `value` unless `[diffusion] kind = "constant"`).
+Unknown keys and tables are returned as errors (with a suggestion when a known
+key is close, e.g. `order` → `ppm_order`); known keys that the chosen kind or
+another setting leaves unread are logged as warnings (e.g. `value` unless
+`[diffusion] kind = "constant"`).
 
 This is not a complete physics or binary validation. Topology and payload
 capability checks run when `run_driven_simulation` inspects the first binary,
@@ -246,7 +247,9 @@ function validate_config(cfg::AbstractDict)
     _check_run_window_bounds!(cfg, errors)
     _check_physics_and_output_settings!(cfg, ft_ref[], errors)
 
-    for warning in _config_key_warnings(cfg)
+    findings = _config_key_findings(cfg)
+    append!(errors, findings.errors)
+    for warning in findings.warnings
         @warn "Run config: $(warning)"
     end
     return isempty(errors), errors
@@ -257,8 +260,11 @@ end
 function _check_physics_and_output_settings!(cfg, FT, errors)
     _check_input_expectations!(get(cfg, "input", nothing), errors)
     _check_surface_flux_sources!(get(cfg, "tracers", nothing), errors)
+    _check_time_varying_flux_origin!(cfg, errors)
     _capture_config_error!(() -> advection_spec(_advection_section(cfg)), errors)
     _capture_config_error!(() -> binary_cfl_check(cfg), errors)
+    _capture_config_error!(() -> run_logging(cfg), errors)
+    _capture_config_error!(() -> run_checks(cfg), errors)
     _capture_config_error!(() -> diffusion_spec(_diffusion_section(cfg)), errors)
     _capture_config_error!(() -> convection_spec(_convection_section(cfg)), errors)
     _capture_config_error!(() -> chemistry_spec(_chemistry_section(cfg)), errors)
@@ -320,6 +326,24 @@ function _check_surface_flux_sources!(tracers, errors)
         sf isa AbstractDict || continue
         _capture_config_error!(() -> _surface_flux_kind(sf), errors)
         haskey(sf, "regridding") && _capture_config_error!(() -> _regridding_method(sf), errors)
+    end
+    return errors
+end
+
+# Time-varying surface fluxes place their slices on the run clock, which needs
+# the run's first day: without `[input].start_date` there is no calendar anchor.
+function _check_time_varying_flux_origin!(cfg, errors)
+    tracers = get(cfg, "tracers", nothing)
+    tracers isa AbstractDict || return errors
+    input = get(cfg, "input", nothing)
+    input isa AbstractDict && haskey(input, "start_date") && return errors
+    for (name, tracer) in pairs(tracers)
+        tracer isa AbstractDict || continue
+        sf = get(tracer, "surface_flux", nothing)
+        sf = sf === nothing ? _tracer_surface_flux_cfg(tracer) : sf
+        sf isa AbstractDict && get(sf, "time_varying", false) === true &&
+            push!(errors, "tracers.$(name): a time-varying surface flux needs [input].start_date " *
+                          "(the run's first day) to place its time slices")
     end
     return errors
 end

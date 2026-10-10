@@ -23,7 +23,7 @@ start_date   = "2021-12-01"
 end_date     = "2021-12-03"
 file_pattern = "geos_transport_{YYYYMMDD}_float32.bin"
 
-[run]
+[advection]
 scheme = "ppm"
 
 [tracers.co2_natural]

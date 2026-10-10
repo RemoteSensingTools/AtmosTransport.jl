@@ -247,8 +247,9 @@ about 0.1–0.2 Pa/s RMS before correction. AtmosTransport closes each column:
 2. Spread each face's column correction `δF` over the levels with weights
    `w_k`: `δF_k = w_k δF / Σ_j w_j`.
 
-The weights are selectable (`[preprocessing] column_balance_weights`, MERRA-2
-and ERA5 N320 paths):
+The weights are selectable (`column_balance_weights`, on every cubed-sphere
+path; [Data sources](../config/data_sources.md) lists where each path sets
+it):
 
 | Option | Weights `w_k` | Consequence |
 |---|---|---|

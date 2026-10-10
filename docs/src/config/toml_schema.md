@@ -11,6 +11,13 @@ keeps them separate.
 
 ## Run config (`config/runs/*.toml`)
 
+Editors with Taplo (Even Better TOML in VS Code) check run configs in
+`config/runs` and `config/examples` against
+`schemas/atmos_transport_run.schema.json` (`.taplo.toml`): every key has a
+description on hover, and unknown keys are marked, as `validate_config`
+rejects them. The archived directories `config/runs/completed_experiments`
+and `config/runs/likely_legacy` are not checked.
+
 Consumed by `scripts/run_transport.jl`, which parses the TOML and forwards
 the resulting Julia dictionary to `run_driven_simulation(cfg)`.
 
@@ -22,19 +29,21 @@ ignored.
 `validate_config(cfg)` checks runtime table shapes, input path existence,
 precision/backend compatibility, and window bounds without opening binary
 readers or allocating model state. It also parses the physics sections,
-`air_mass_reset_mode`, `physics_cadence`, `prefetch_windows` and `[output]` as
-the run does, so their errors are reported together; decay half-lives must name
-a tracer, and an enabled `[output]` needs both a path and snapshot times
-(`hours = []` means deliberately none). Nested tracer `init` and `surface_flux`
-values must be tables. Shape errors are returned before value checks; a successful result is
-not a full physics or binary validation. See
+`air_mass_reset_mode`, `physics_cadence`, `prefetch_windows`, `[logging]`,
+`[checks]` and `[output]` as the run does, so their errors are reported
+together; decay half-lives must name a tracer, and an enabled `[output]` needs
+both a path and snapshot times (`hours = []` means deliberately none). Nested
+tracer `init` and `surface_flux` values must be tables. Shape errors are
+returned before value checks; a successful result is not a full physics or
+binary validation. See
 [Run with real meteorology](@ref Run-with-real-meteorology) for an example.
 
-Keys the run would ignore are logged as warnings when the config is checked
-(also at the start of every run): unknown tables and keys, with a suggestion
-when a known key is close (`[diffussion]` → `[diffusion]`, `order` →
-`ppm_order`), and known keys that the chosen kind or another setting leaves
-unread, such as `value` without `[diffusion] kind = "constant"`, flat
+Unknown tables and keys are errors when the config is checked (also at the
+start of every run), with a suggestion when a known key is close
+(`[diffussion]` → `[diffusion]`, `order` → `ppm_order`); so is a
+`[output.fields.per_tracer.<name>]` table for a tracer the run does not carry.
+Known keys that the chosen kind or another setting leaves unread are logged as
+warnings, such as `value` without `[diffusion] kind = "constant"`, flat
 `[tracers.<name>]` keys next to an `init` table, a `surface_flux` table
 without `kind`, or `start_hour` without an interval key. A surface-flux kind
 that is not one of the named sources is an error; use `kind = "file"` for a
@@ -203,11 +212,21 @@ CS builder in `src/Models/initial_conditions/cubed_sphere.jl`):
 | `"latitude_step"` | yes | yes | yes | optional `south_value`, `north_value`, `split_lat_deg` |
 | `"bl_enhanced"` | yes | **no** | **no** | `background`, `enhancement`, `n_layers` (LL-only; RG/CS path errors at IC build) |
 | `"gaussian_blob"` | yes | yes | yes | `background`, `lon0_deg`, `lat0_deg`, `sigma_lon_deg`, `sigma_lat_deg`, `amplitude` |
-| `"file"` / `"netcdf"` | yes | yes | yes | `file`, `variable`, optional `time_index` |
-| `"file_field"` | yes | yes | yes | `file`, `variable` |
+| `"file"` / `"netcdf"` | yes | yes | yes | `file`, `variable`, optional `time_index`, `vertical_order` |
+| `"file_field"` | yes | yes | yes | `file`, `variable`, optional `time_index`, `vertical_order` |
 | `"catrine_co2"` | yes | yes | yes | optional `file`, `variable`, `time_index` overrides for the built-in defaults |
 | `"pressure_layer"` | no | no | yes | `lowest_layer = true` or `psurf_fraction`; optional `total_molecules` |
 | `"cs_native"` | no | no | yes | `file`, `variable`; optional `time_index`, `vertical_order`, `clamp_negative` (default `false`) |
+
+The file kinds (`file`, `netcdf`, `file_field`, `catrine_co2`) read a
+lon-lat-level field of dry VMR. A file with hybrid coefficients (`ap`, `bp`
+and `Psurf`, like the CATRINE start files) is oriented by its interface
+pressures and remapped onto the model levels in log pressure, whatever its
+level count. A file without them is copied level by level, so it must have the
+model's level count, and its vertical coordinate must say which end is the
+top: pressure units or CF `positive = "down"` (values grow toward the
+surface), height units or `positive = "up"`; otherwise set
+`vertical_order = "toa_first"` or `"surface_first"`.
 
 `pressure_layer` places tracer in one level per column. With
 `lowest_layer = true`, it uses the bottom level and ignores `psurf_fraction`.
@@ -265,9 +284,11 @@ monthly totals are converted using the actual number of days in each month.
 - `"stepwise"` — hold each slice piecewise-constant until the next sample.
   This matches GEOS-Chem/HEMCO's exact CAMS treatment (verified against
   `EmisCO2_Total`), so use it to reproduce GC.
-- `"linear"` — linearly interpolate between adjacent slices.
-- `"conservative"` — window-mean each interval (mass-conserving over the
-  window, but smears the diurnal cycle).
+- `"linear"` — linearly interpolate between the two bracketing slices,
+  evaluated at the start of each step.
+- `"conservative"` — integrate that linear interpolation exactly over each
+  step, so the emitted mass matches the source's own time integral for any
+  number of substeps.
 
 Slices are indexed by **absolute** time since the run's `start_date`, so a
 multi-day run advances through the inventory correctly (a per-day clock would
@@ -277,11 +298,11 @@ replay the first day's slices — the cause of the historical co2_natural
 When `[input]` gives `start_date`, only the slices the run can use are read:
 from the last slice at or before the run start to the first slice at or after
 the run end. The run end is the end of the binaries' windows (read from every
-binary's header) or, if later, the end of `end_date`. Every listed file's time axis is
+binary's header). Every listed file's time axis is
 read, but flux data only for those slices. Every temporal scheme blends only
 the two slices around a time, so results are unchanged. A binary that runs past
-that end stops the run with an error before it starts. Without `start_date`
-every slice is read.
+that end stops the run with an error before it starts. Time-varying sources
+require `start_date`.
 
 For an already aligned GEOS-native cubed-sphere inventory, use
 `kind = "cs_native"`, `time_varying = true`, `file`, and `variable`.
@@ -320,7 +341,9 @@ ppm_order = 7                   # cubed-sphere LinRoodPPM only; ∈ {5, 7}.
 
 [diffusion]
 kind  = "constant"              # "none" | "constant" |
-                                # "tm5_beljaars_viterbo_local_kz" |
+                                # "tm5_beljaars_viterbo_local_kz" (CS-only;
+                                #   local Kz from the binary's pblh, ustar,
+                                #   pbl_hflux and t2m) |
                                 # "geoschem_holtslag_boville_vdiff" (CS-only;
                                 #   local Kz; requires include_gchp_vdiff=true binary) |
                                 # "geoschem_nonlocal_vdiff" (CS-only; GEOS-Chem's
@@ -557,6 +580,48 @@ transport: the transported state and gridded snapshot output are unchanged
 with or without it (tested on lat-lon runs; on lat-lon and reduced-Gaussian
 runs it makes the runner step window by window, as snapshots do).
 
+### `[logging]` — how much the run reports
+
+```toml
+[logging]
+level = "info"        # "warn" (concise) | "info" | "debug" (verbose) | "error";
+                      # omitted: the current logger's level (info on the command line)
+progress = "bar"      # "bar" (default) | "lines" | "none"
+progress_interval_windows = 24   # with progress = "lines": one line per 24 windows
+```
+
+`level` is the minimum level of the run's log messages, validation included.
+`"warn"` keeps warnings and errors only (the end-of-run timing summary is an
+info message); `"debug"` adds the debug messages. The run keeps the current
+logger and only sets its level; without `level` the logger is left as it is
+(info for the default console logger). `progress = "bar"` redraws a progress bar with status and
+timing lines, for interactive terminals. `"lines"` writes one log line every
+`progress_interval_windows` met windows and at the end (window count, elapsed
+time, ETA, the current status and the time split), for batch jobs whose log
+files would otherwise fill with bar redraws; lat-lon and reduced-Gaussian runs
+then step window by window. `"none"` writes no progress.
+The table is optional; the defaults reproduce the earlier output.
+
+### `[checks]` — runtime checks of the model state
+
+```toml
+[checks]
+nan_check = true                 # default
+nan_check_interval_windows = 1   # default: after every met window
+```
+
+With `nan_check` (on by default), the run stops with an error naming the
+field, the met window, the iteration and the model time as soon as the air
+mass or a tracer holds a NaN or Inf (interior cells). The check runs
+reductions on the run's backend without copying fields to the host: two per
+check on lat-lon and reduced-Gaussian grids, one per panel for the air mass
+and for the tracers on the cubed sphere (about 0.1 ms each on an L40S). The
+window count runs over the whole run, across input files.
+`nan_check_interval_windows` checks after every n-th window instead. In Julia
+the check is `Callback(NaNChecker(), WindowInterval(n))`, passed to
+`DrivenSimulation(...; callbacks)` with any other callbacks (see
+[Callbacks and runtime checks](@ref)).
+
 ### Multi-threaded execution
 
 ```bash
@@ -584,8 +649,9 @@ calls the unified `process_day` preprocessing entry point. Source-specific
 `[preprocessing]` keys live in the met-source descriptor
 (`config/met_sources/*.toml`); the flux-construction keys of the MERRA-2 and
 ERA5 N320 sources (`column_balance_weights`, `face_fluxes`, `face_lengths`,
-`face_interpolation`, `wind_regrid`, and for MERRA-2 `flux_thickness`) are
-described in [Data sources](data_sources.md).
+`face_interpolation`, `wind_regrid`, and for MERRA-2 `flux_thickness`) and the
+`column_balance_weights` of the GEOS sources are described in
+[Data sources](data_sources.md).
 
 The preprocessing config has a different shape from the run config:
 the **target topology IS specified here** because that's the act of
@@ -723,15 +789,17 @@ balance_mode = "column"      # default on lat-lon and cubed-sphere paths
 ```
 
 - `"column"` — one Poisson solve for the column-integrated divergence; the
-  correction is distributed over the layers (by air mass, or by the source's
-  `column_balance_weights`), so layer winds keep their vertical structure.
+  correction is distributed over the layers by `column_balance_weights`
+  (`"mass"` by default; [Data sources](data_sources.md) lists where each path
+  sets it), so layer winds keep their vertical structure. ERA5 spectral configs
+  set it here, as `[numerics] column_balance_weights` (cubed-sphere targets).
 - `"per_layer"` — one Poisson solve per layer (the older mode). The
   reduced-Gaussian path always balances per layer and rejects `"column"`.
 
 The mode is recorded in every transport-binary header as
 `horizontal_balance` (for GEOS, the balance its `geos_cm_closure` applies:
 `"none"` for the pressure-fixer closures, `"column"` for the moisture-filtered
-and OMEGA closures). `geos_balance_mode` is accepted as an older name.
+and OMEGA closures).
 
 #### `geos_cm_closure` — GEOS native CS vertical-flux closure
 
@@ -780,6 +848,13 @@ The largest local edge increment is also reported as a diagnostic, using
 OMEGA modes also require `[mass_fix].enable = true`; without global endpoint
 mass closure, a per-level horizontal Poisson solve cannot realize the global
 column tendency.
+
+### `[logging]` — preprocessing log level
+
+A preprocessing config may set `[logging] level` like a run config: `"warn"`
+keeps the per-window log of the writers quiet, `"debug"` adds debug messages.
+Without it the current logger's level applies (info for the command-line
+scripts).
 
 ### `[mass_fix]` — global dry-mass pin
 

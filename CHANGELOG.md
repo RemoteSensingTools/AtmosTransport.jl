@@ -39,8 +39,50 @@
   - `[numerics] write_replay_check` (default `true`) of a preprocessing config
     reaches every writer as the `write_replay_check` keyword.
 
+- `[numerics] geos_balance_mode` is renamed `balance_mode` (an error names the
+  new key), and `balance_mode` accepts only `"column"` and `"per_layer"` (the
+  aliases `column_poisson`, `layer`, `layer_local` and `global` are gone). The
+  shipped preprocessing configs use the new key. The GEOS writer's deprecated
+  `process_day(...; balance_mode)` keyword is removed; pass
+  `horizontal_balance = ColumnBalance()` or `LayerBalance()`.
+
+- The advection keys `scheme`, `ppm_order`, `vertical` and `limiter` are read
+  only from `[advection]`; in `[run]`, their old location, they are an error
+  that names the new table. The 121 shipped run configs that used `[run]`
+  moved them to `[advection]` (checked by parsing each file before and after);
+  two of them, which set `[run] scheme` next to an `[advection]` table and
+  were therefore rejected before, now run.
+
 ### Fixes
 
+- Time-varying surface fluxes without `[input].start_date` took their time
+  origin from the file: the first slice for decoded dates, the CF units origin
+  for raw numbers. A run on a mid-month binary then read the month's first
+  days. They now require `start_date` (`validate_config` reports its absence).
+  All 61 shipped configs with time-varying fluxes set it; the two golden cases
+  that did not (`run_c90_merra2`, `run_c90_era5_tm5`, on 2022-01-15) now set
+  it, so their 3-hourly LMDZ fluxes come from January 15 instead of January 1.
+- Surface-flux files in per-second units must be in kg of the species per m²
+  per second (`kg m-2 s-1`, `kg/m2/s`, `kgCO2/m2/s`, ...); other per-second
+  units such as `mol m-2 s-1`, and files without units, were read unconverted
+  and are now rejected. Every shipped flux file passes.
+- With `binary_paths`, `[input] end_date` was reported as unread but still
+  widened the span of loaded time-varying flux slices; the span is now the
+  run's windows, also with `folder` (where every day through `end_date` has a
+  binary, so nothing changes there).
+- File-based initial conditions took their vertical order from the values
+  of the level coordinate and copied levels one to one when the counts
+  matched. A surface-first file with hybrid coefficients and the model's
+  level count (the CATRINE start files have 79 levels) would have started
+  upside down, a top-first file with hybrid coefficients would have been
+  remapped wrongly, and a file without them but with another level count was
+  zero-filled. Files with hybrid coefficients are now oriented by their
+  interface pressures and always remapped in log pressure; files without
+  them must match the model's level count and state their order (pressure
+  or height units, a CF `positive` attribute, or `init.vertical_order`).
+  No shipped configuration was affected: all use the CATRINE files on 34,
+  72, 117 or 137 levels, which took the correct path, and their initial
+  conditions are unchanged.
 - ERA5 N320 preprocessing had two registration errors. The GRIB
   `reduced_gg` fields (specific humidity and the convective mass fluxes)
   were placed half a cell east: their first point is at 0°, while the mesh
@@ -107,14 +149,30 @@
 - `[numerics] geos_balance_mode` was ignored by the MERRA-2 and ERA5 N320
   writers, which balanced per layer only with the environment variable
   `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1`; no header recorded the
-  mode. `[numerics] balance_mode = "column" | "per_layer"` (old name
-  accepted) now selects it on every path, the LL-to-CS regrid script takes
+  mode. `[numerics] balance_mode = "column" | "per_layer"` now selects it on
+  every path (the old name was later removed; see Breaking changes), the
+  LL-to-CS regrid script takes
   `--balance-mode`, and every transport-binary header records
   `horizontal_balance`. The environment variable is removed (see Breaking
   changes). Default results are unchanged.
 
 ### Numerical changes
 
+- Carbon-mass fluxes (`kgC m-2 s-1`, the CAMS/LMDZ inventories) become CO₂ by
+  the molar-mass ratio `M(CO2)/M(C)` = 44.0095/12.0107 ≈ 3.66419
+  (`CARBON_MOLAR_MASS`, the IUPAC value consistent with `SPECIES_MOLAR_MASS.co2`),
+  which conserves carbon atoms, instead of 44/12. These fluxes are 0.068 % lower
+  than before; GEOS-Chem's HEMCO uses `CTOCO2 = 3.6667` (44/12).
+  The Python flux preprocessors (TRENDY, FLUXCOM-X, SIF-GPP, GFED5) use the
+  same ratio; drivers they wrote before are 0.068 % higher until regenerated.
+- Lat-lon preprocessing uses the cubed-sphere positivity gate (owner's
+  decision, 2026-10-10): the palindrome outflow `2 (out_x + out_y + out_z)`
+  against `min(m, m_next)`, one shared implementation, instead of each
+  direction's single application against `m`. Adaptive schedules (the
+  default) choose more substeps on lat-lon binaries: on the ERA5 72×37
+  lat-lon golden day (2021-12-01) two of 24 windows go from 4 to 5 substeps. A fixed
+  schedule that passed the old gate can now fail it. Reduced-Gaussian
+  binaries keep their per-direction gate.
 - New cubed-sphere option `[advection] scheme = "ppm"`, `vertical = "fv3_kord8"`.
   The vertical sweep integrates FV3's `scalar_profile` parabola (`kord = 8`,
   positive definite; GCHP's tracer profile) over the swept fraction of the
@@ -162,6 +220,18 @@
 
 ### Runtime and output
 
+- Logging and runtime checks after Oceananigans. `[logging]` sets the run's
+  minimum log level (`"warn"` concise, `"info"`, `"debug"` verbose; without it
+  the current logger's level applies, info for the command-line runner)
+  and its progress output (`progress = "bar"` as before, `"lines"` for one
+  log line every `progress_interval_windows` windows in batch logs, or
+  `"none"`). `[checks] nan_check` (on by default) stops the run with an error
+  naming the field, window and model time when the air mass or a tracer holds
+  a NaN or Inf, checked after every `nan_check_interval_windows` windows.
+  In Julia, `DrivenSimulation(...; callbacks)` takes `Callback(func,
+  schedule)` with the schedules `IterationInterval`, `WindowInterval` and
+  `WallTimeInterval`; `NaNChecker` is one such callback function. Results are
+  unchanged.
 - Faster cubed-sphere GPU runs, with unchanged results (runtime golden cases
   bit-identical): on CUDA the halo exchange fills all 24 panel edges in one
   kernel launch and the corners in a second, instead of 24 edge launches (6 for
@@ -398,8 +468,14 @@
   pure-pressure layers. In a four-month C90 run against GCHP, `"hybrid_mass"`
   cut the growth of the bias above 100 hPa by about two thirds. Near-surface
   RMSE changed by +0.4 % to −5 % depending on the tracer
-  (`docs/src/theory/vertical_transport.md`). Other met
-  sources reject the key.
+  (`docs/src/theory/vertical_transport.md`). The ERA5 N320 source reads the
+  same key, and the ERA5 spectral (`[numerics] column_balance_weights`),
+  lat-lon → cubed-sphere (`--column-balance-weights`) and GEOS
+  (`[preprocessing] column_balance_weights`) paths offer it too, with `"mass"`
+  as the default; those three record it in the header only when it is not
+  `"mass"`, so their default binaries are unchanged. Per-layer balance and
+  the GEOS pressure-fixer closures reject other weights; lat-lon and
+  reduced-Gaussian spectral targets accept only `"mass"`.
 
 - Time-varying surface fluxes can span several files: `files = [...]` or a
   `file_pattern` with `{YYYYMM}` plus `year`. `gridfed_fossil_co2` joins the
@@ -421,7 +497,7 @@
   `GCP-GridFEDv2024.0_2021.short.nc` was read as 2024, a leap year; it is now
   2021, so static February GridFED rates rise by 29/28.
 - `cs_native` fluxes accept only kg m-2 s-1 units (of the species, or kgC
-  converted by 44/12), reject fill values, and must match the runtime mesh
+  converted by M(CO2)/M(C)), reject fill values, and must match the runtime mesh
   when the file carries `cell_area`.
 - `[vertical].level_selection` presets are rejected on sources without 137
   native levels, and `[vertical].coefficients_file` is honoured as an alias of

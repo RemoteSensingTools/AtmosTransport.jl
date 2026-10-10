@@ -138,9 +138,10 @@ end
 
 @testset "run configuration" begin
     has(ws, parts...) = any(w -> all(p -> occursin(p, w), parts), ws)
-    warnings(cfg) = M.DrivenRunner._config_key_warnings(Dict{String, Any}(cfg))
-    @test isempty(warnings("advection" => Dict("scheme" => "ppm", "check_binary_cfl" => true)))
-    @test has(warnings("advection" => Dict("scheme" => "linrood", "check_binary_cfl" => false)),
+    findings(cfg) = M.DrivenRunner._config_key_findings(Dict{String, Any}(cfg))
+    f = findings("advection" => Dict("scheme" => "ppm", "check_binary_cfl" => true))
+    @test isempty(f.errors) && isempty(f.warnings)
+    @test has(findings("advection" => Dict("scheme" => "linrood", "check_binary_cfl" => false)).warnings,
               "check_binary_cfl", "linrood")
-    @test has(warnings("run" => Dict("check_binary_cfl" => true)), "check_binary_cfl")
+    @test has(findings("run" => Dict("check_binary_cfl" => true)).errors, "check_binary_cfl")
 end

@@ -106,7 +106,9 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
     end
 
     @testset "cs_advection dispatch" begin
-        @test cs_advection(Dict("run" => Dict("scheme" => "upwind"))) isa UpwindScheme
+        # The advection keys moved from [run] to [advection].
+        err = try cs_advection(Dict("run" => Dict("scheme" => "upwind"))); nothing catch e; e end
+        @test err isa ArgumentError && contains(err.msg, "moved to the [advection] table")
         @test cs_advection(Dict("advection" => Dict("scheme" => "slopes"))) isa SlopesScheme
         @test cs_advection(Dict("advection" => Dict("scheme" => "ppm"))) isa PPMScheme
         @test cs_advection(Dict("advection" => Dict("scheme" => "linrood"))) isa LinRoodPPMScheme
@@ -117,7 +119,7 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test_throws ArgumentError cs_advection(Dict("advection" => Dict("scheme" => "xyz")))
         @test_throws ArgumentError cs_advection(
             Dict("run" => Dict("scheme" => "linrood"),
-                 "advection" => Dict("ppm_order" => 7)))
+                 "advection" => Dict("ppm_order" => 7)))      # moved, also next to [advection]
     end
 
     @testset "AdvectionSpec parse + materialize" begin
@@ -146,7 +148,7 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test advection_spec(Dict("scheme" => "ppm", "vertical" => "fv3_kord8_signed")).vertical ==
               FV3ScalarProfile(; positive_definite = false)
         @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "vertical" => 8))
-        # `[run].vertical` next to an `[advection]` table is ambiguous
+        # `[run].vertical` moved to [advection]
         @test_throws ArgumentError cs_advection(Dict("run" => Dict("vertical" => "fv3_kord8"),
                                                      "advection" => Dict("scheme" => "ppm")))
         @test cs_advection(Dict("advection" => Dict("scheme" => "ppm", "vertical" => "fv3_kord8"))) isa

@@ -499,6 +499,37 @@ end
         end
     end
 
+    @testset "column balance weights" begin
+        mktempdir() do dir
+            cs_grid = build_target_geometry(Val(:cubed_sphere), Dict{String, Any}(
+                "Nc" => 4, "regridder_cache_dir" => joinpath(dir, "cr_cache")), Float64)
+            ll_path = joinpath(dir, "ll.bin")
+            # The fixture's layer mass is not proportional to ΔB (A ≠ 0), and the
+            # last window has a column mismatch for the balance to spread.
+            _ll_fixture_binary(ll_path; final_dm_fraction = 1e-3)
+            regrid(name; kwargs...) = (out = joinpath(dir, name);
+                                       regrid_ll_binary_to_cs(ll_path, cs_grid, out; FT = Float64, kwargs...);
+                                       out)
+            parts(path) = (r = AtmosTransport.MetDrivers.TransportBinaryReader(path; FT = Float64);
+                           h = r.header.raw_header; nb = r.header.header_bytes; close(r);
+                           (h, read(path)[nb + 1:end]))
+            default_header, default_payload = parts(regrid("default.bin"))
+            explicit_header, explicit_payload = parts(regrid("mass.bin"; column_balance_weights = :mass))
+            hyb_path = regrid("hyb.bin"; column_balance_weights = :hybrid_b)
+            hyb_header, hyb_payload = parts(hyb_path)
+            @test !haskey(default_header, "column_balance_weights")      # default headers unchanged
+            @test explicit_payload == default_payload
+            @test hyb_header["column_balance_weights"] == "hybrid_b"
+            @test hyb_payload != default_payload                          # the spread differs
+            # Replay still closes with the other weights.
+            close(TransportBinaryDriver(hyb_path; FT = Float64, arch = CPU(), Hp = 1,
+                                        validate_replay = true))
+            @test_throws ArgumentError regrid("layer.bin"; column_balance_weights = :hybrid_b,
+                horizontal_balance = AtmosTransport.Preprocessing.LayerBalance())
+            @test_throws ArgumentError regrid("bad.bin"; column_balance_weights = :pressure)
+        end
+    end
+
     @testset "source and target share one sphere" begin
         mktempdir() do dir
             cfg_grid = Dict{String, Any}("Nc" => 4, "regridder_cache_dir" => joinpath(dir, "cr_cache"))
