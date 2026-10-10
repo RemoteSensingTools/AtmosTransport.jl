@@ -35,9 +35,8 @@ property_keys(node) = Set(String.(keys(node.properties)))
     @test enum_of(d.initial_condition.properties.kind) == Set(keys(RunnerKeys._INIT_KINDS))
     @test enum_of(d.initial_condition.properties.vertical_order) ==
           Set(string.(AtmosTransport.Models.InitialConditionIO._CS_NATIVE_VERTICAL_ORDERS))
-    # Named kinds are offered; any other string is a generic file source.
-    @test enum_of(d.surface_flux.properties.kind.anyOf[1]) == Set(RunnerKeys._SURFACE_FLUX_KINDS)
-    @test d.surface_flux.properties.kind.anyOf[2].type == "string"
+    @test enum_of(d.surface_flux.properties.kind) ==
+          Set(string.(AtmosTransport.Models.InitialConditionIO._SURFACE_FLUX_KINDS))
     @test enum_of(d.surface_flux.properties.regridding) ==
           Set(string.(AtmosTransport.Models.InitialConditionIO._SURFACE_FLUX_REGRIDDINGS))
 

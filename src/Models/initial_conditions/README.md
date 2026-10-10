@@ -61,20 +61,24 @@ these files reuse. The parent overview is [`../README.md`](../README.md).
 | `zhang_rn222` | Zhang `rnemis`; `month` (default 1) | per-second units | no |
 | `lmdz_co2` | CAMS `flux_apos` | kgC ×44/12; static path averages all time slices | CS |
 | `cs_native` | none; needs `file`, `variable` | kg species or kgC m⁻² s⁻¹ on the runtime cube | CS, required |
-| any other | none; needs `file`, `variable` | units must be per second, or one of the forms above | no |
+| `file` | none; needs `file`, `variable` | units must be per second, or one of the forms above | no |
+
+Any other `kind` is an error (`_surface_flux_kind`); `none` (the default)
+emits nothing.
 
 ## Common Tasks
 
 - To add a surface-flux dataset kind:
-  1. Give it defaults in `_resolve_surface_flux_file` (optional). Without
+  1. Add it to `_SURFACE_FLUX_KINDS` in `surface_flux.jl`.
+  2. Give it defaults in `_resolve_surface_flux_file` (optional). Without
      defaults, the kind requires `file` and `variable`.
-  2. Add a unit branch to `_load_file_surface_flux_field`. For time-varying
+  3. Add a unit branch to `_load_file_surface_flux_field`. For time-varying
      support, also add one to `_load_single_timevarying_surface_flux_field`, list
      the kind in `_surface_flux_supports_time_varying`, and set its default scheme
      in `_build_timevarying_cs_surface_flux_source`.
-  3. Add the tracer molar mass to `_KNOWN_TRACER_MOLAR_MASS_KG_MOL`, or document
+  4. Add the tracer molar mass to `_KNOWN_TRACER_MOLAR_MASS_KG_MOL`, or document
      that users must set `molar_mass_kg_mol`.
-  4. Add the kind to the `surface_flux.kind` enum in
+  5. Add the kind to the `surface_flux.kind` enum in
      [`../../../schemas/atmos_transport_run.schema.json`](../../../schemas/atmos_transport_run.schema.json)
      and to [`../../../docs/src/config/toml_schema.md`](../../../docs/src/config/toml_schema.md).
 - To add a CS initial-condition kind, add a branch to

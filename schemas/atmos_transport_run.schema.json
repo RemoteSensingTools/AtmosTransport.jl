@@ -304,11 +304,9 @@
       "additionalProperties": true,
       "properties": {
         "kind": {
-          "description": "A named source, or any other name for a generic file source (read like kind = \"file\").",
-          "anyOf": [
-            {"enum": ["none", "file", "cs_native", "lmdz_co2", "gridfed_fossil_co2", "edgar_sf6", "zhang_rn222"]},
-            {"type": "string"}
-          ]
+          "type": "string",
+          "enum": ["none", "file", "cs_native", "lmdz_co2", "gridfed_fossil_co2", "edgar_sf6", "zhang_rn222"],
+          "description": "A named source, or \"file\" for a generic NetCDF file."
         },
         "file": {"type": "string"},
         "files": {"type": "array", "minItems": 1, "items": {"type": "string"}},

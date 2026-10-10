@@ -126,7 +126,22 @@ struct TimeVaryingFileSurfaceFluxField{FT}
     times_sec  :: Vector{Float64}
 end
 
-@inline _surface_flux_kind(cfg) = Symbol(lowercase(String(get(cfg, "kind", "none"))))
+# Surface-flux sources; `file` is a generic NetCDF source.
+const _SURFACE_FLUX_KINDS = (:none, :file, :cs_native, :lmdz_co2, :gridfed_fossil_co2,
+                             :edgar_sf6, :zhang_rn222)
+
+function _surface_flux_kind(cfg)
+    kind = Symbol(lowercase(String(get(cfg, "kind", "none"))))
+    if !(kind in _SURFACE_FLUX_KINDS)
+        suggestion = key_suggestion(String(kind), string.(_SURFACE_FLUX_KINDS))
+        throw(ArgumentError(
+            "surface_flux.kind = \"$(kind)\" is not a known source " *
+            "($(join(_SURFACE_FLUX_KINDS, ", "))" *
+            (suggestion === nothing ? "" : "; did you mean `$(suggestion)`?") *
+            "); use kind = \"file\" for a generic NetCDF file"))
+    end
+    return kind
+end
 
 function _tracer_molar_mass_kg_mol(tracer_name::Symbol, cfg)
     if haskey(cfg, "molar_mass_kg_mol")

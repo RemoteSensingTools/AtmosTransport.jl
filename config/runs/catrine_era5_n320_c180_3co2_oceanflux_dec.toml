@@ -65,7 +65,7 @@ scheme = "ppm"
   kind = "uniform"
   background = 4.0e-4
   [tracers.co2_ocean.surface_flux]
-  kind = "eccodarwin_ocean_co2"
+  kind = "file"   # ECCO-Darwin air-sea CO2 flux (generic NetCDF)
   file = "~/data/AtmosTransport/catrine/Emissions/ECCO_Darwin/eccodarwin_ocean_co2_december_05deg.nc"
   variable = "co2_flux_ocean"
   # generic file kind isn't in the known-tracer molar-mass map; declare CO2's

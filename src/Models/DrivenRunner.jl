@@ -72,7 +72,7 @@ using ProgressMeter: Progress, next!, finish!, update!
 
 import ...expand_data_path
 using ...SectionTimer
-using ...ConfigChecks: unknown_key_messages, key_suggestion
+using ...ConfigChecks: unknown_key_messages
 using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 CubedSphereState, total_air_mass, total_mass, tracer_names,
                 tracer_index, get_tracer
@@ -93,7 +93,7 @@ using ..MetDrivers: AbstractMetDriver, TransportBinaryDriver,
                      total_windows, window_dt, binary_capabilities,
                      inspect_binary, steps_per_window,
                      steps_per_window_schedule, release_payload!
-using ..InitialConditionIO: _regridding_method
+using ..InitialConditionIO: _regridding_method, _surface_flux_kind
 using ..InitialConditionIO: build_initial_mixing_ratio, _build_cs_initial_mixing_ratio,
                              pack_initial_tracer_mass, _cs_pack_interior_into_halo!,
                              build_surface_flux_sources

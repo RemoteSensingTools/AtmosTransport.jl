@@ -269,14 +269,19 @@
   `ppm_order` other than 5 or 7. Keys the run would ignore are logged as
   warnings: unknown tables and keys with a "did you mean" suggestion, known
   keys the chosen kind leaves unread (including flat `[tracers.<name>]` keys),
-  surface-flux tables without `kind` (no flux is emitted), and surface-flux
-  kinds that are not a named source (read as a generic file). Of the 247
-  shipped run configs, four get warnings: `config/runs/binary_format_ab/c45_*`
-  set `[advection] order = 7`, which is not read, so they run Lin–Rood PPM5
-  (the intended key is `ppm_order`), and two ocean-flux configs use
-  `kind = "eccodarwin_ocean_co2"`, a generic file source; the configs are
-  unchanged pending the owner's decision. Four that already failed at run time
-  now fail at the check.
+  and surface-flux tables without `kind` (no flux is emitted). Of the 246 run
+  configs with an `[input]` table in `config/runs` and `config/examples`, only
+  four that already failed at run time differ: they now fail at the check.
+- Breaking: a surface-flux `kind` that is not a known source
+  (`none`, `file`, `cs_native`, `lmdz_co2`, `gridfed_fossil_co2`, `edgar_sf6`,
+  `zhang_rn222`) is an error, with a suggestion for a close name; it used to
+  be read silently as a generic file, so a typo such as `gridfed` lost the
+  GridFED unit conversion. Use `kind = "file"` for a generic NetCDF file. The
+  two ocean-flux configs now say `kind = "file"` instead of
+  `"eccodarwin_ocean_co2"` (same source, results unchanged).
+- The two binary-format A/B configs `config/runs/binary_format_ab/c45_*` are
+  retired: they set `[advection] order = 7`, which was never read, so they
+  ran Lin–Rood PPM5 instead of the intended PPM7.
 - Snapshot hours are checked against the met-window ends of every binary
   (now recorded by `binary_capabilities` as `nwindow` and `window_seconds`)
   when the run starts: an hour that is not a window end was never matched, and

@@ -192,6 +192,14 @@ end
                   errors_of(Dict{String, Any}("input" => merge(input, Dict("require_adaptive_substeps" => "yes")))))
         @test any(contains("[init] must be a TOML table"),
                   errors_of(Dict{String, Any}("input" => input, "init" => 4e-4)))
+        # Surface-flux kinds must be known sources, nested or flat.
+        @test any(e -> contains(e, "is not a known source") && contains(e, "did you mean `gridfed_fossil_co2`"),
+                  errors_of(Dict{String, Any}("input" => input, "tracers" => Dict("co2" => Dict(
+                      "init" => Dict("kind" => "uniform"),
+                      "surface_flux" => Dict("kind" => "gridfed", "file" => "f.nc", "variable" => "TOTAL"))))))
+        @test any(contains("is not a known source"),
+                  errors_of(Dict{String, Any}("input" => input, "tracers" => Dict("co2" => Dict(
+                      "surface_flux_kind" => "eccodarwin_ocean_co2", "surface_flux_file" => "f.nc")))))
         @test any(contains("surface_flux.regridding must be one of"),
                   errors_of(Dict{String, Any}("input" => input, "tracers" => Dict("co2" => Dict(
                       "init" => Dict("kind" => "uniform"),
@@ -208,16 +216,9 @@ end
                    occursin("kind = \"uniform\"", x), w)
     @test any(x -> occursin("[tracers.co2] (flat surface_flux_* keys)", x) &&
                    occursin("no flux is emitted", x), w)
-    w = Runner._config_key_warnings(Dict("tracers" => Dict("co2" => Dict(
-        "surface_flux_kind" => "eccodarwin_ocean_co2", "surface_flux_file" => "f.nc"))))
-    @test any(x -> occursin("(flat surface_flux_* keys)", x) && occursin("generic", x), w)
+
     @test isempty(Runner._config_key_warnings(Dict("tracers" => Dict("co2" => Dict(
         "kind" => "gaussian_blob", "lon0_deg" => 3.0, "surface_flux_kind" => "edgar_sf6")))))
-    # A surface-flux kind that is not a named source is read as a generic file.
-    w = Runner._config_key_warnings(Dict("tracers" => Dict("co2" => Dict(
-        "init" => Dict("kind" => "uniform"),
-        "surface_flux" => Dict("kind" => "gridfed", "file" => "f.nc", "variable" => "TOTAL")))))
-    @test any(x -> occursin("generic", x) && occursin("did you mean `gridfed_fossil_co2`", x), w)
     # Keys a kind or mode leaves unread, and shadowed aliases.
     w = Runner._config_key_warnings(Dict("tracers" => Dict(
         "a" => Dict("init" => Dict("kind" => "file", "file" => "f.nc", "variable" => "v",

@@ -37,8 +37,8 @@ when a known key is close (`[diffussion]` → `[diffusion]`, `order` →
 unread, such as `value` without `[diffusion] kind = "constant"`, flat
 `[tracers.<name>]` keys next to an `init` table, a `surface_flux` table
 without `kind`, or `start_hour` without an interval key. A surface-flux kind
-that is not one of the named sources is read as a generic `file` source and
-is reported too. When the run starts and has read every binary's header,
+that is not one of the named sources is an error; use `kind = "file"` for a
+generic NetCDF file. When the run starts and has read every binary's header,
 snapshot hours that do not fall on a met-window end are an error (such an
 hour would never be written, and every later snapshot would be lost with it),
 and `format = "binary_mmap"` is rejected on lat-lon and reduced-Gaussian
@@ -219,11 +219,11 @@ scale      = 1.0                    # optional multiplicative scaling
 kind = "edgar_sf6"
 ```
 
-Registered surface-flux source kinds (full list in
+Registered surface-flux source kinds (`_SURFACE_FLUX_KINDS` in
 `src/Models/initial_conditions/surface_flux.jl`): `lmdz_co2`, `gridfed_fossil_co2`,
 `edgar_sf6`, `zhang_rn222`, plus a generic `file` for arbitrary
 NetCDF sources and `cs_native` for time-varying fluxes already on the native
-cubed-sphere grid. There is no `edgar_co2` kind — use
+cubed-sphere grid. Any other kind is an error. There is no `edgar_co2` kind — use
 `gridfed_fossil_co2` for the GridFED-derived fossil CO₂ inventory.
 Known tracer names carry built-in molar masses; for a custom tracer, set
 `molar_mass_kg_mol` inside its `surface_flux` table.

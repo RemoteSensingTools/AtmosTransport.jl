@@ -255,7 +255,7 @@ end
 # that their errors appear with the others, before any binary is opened.
 function _check_physics_and_output_settings!(cfg, FT, errors)
     _check_input_expectations!(get(cfg, "input", nothing), errors)
-    _check_surface_flux_regridding!(get(cfg, "tracers", nothing), errors)
+    _check_surface_flux_sources!(get(cfg, "tracers", nothing), errors)
     _capture_config_error!(() -> advection_spec(_advection_section(cfg)), errors)
     _capture_config_error!(() -> diffusion_spec(_diffusion_section(cfg)), errors)
     _capture_config_error!(() -> convection_spec(_convection_section(cfg)), errors)
@@ -306,12 +306,16 @@ function _check_input_expectations!(input, errors)
     return errors
 end
 
-function _check_surface_flux_regridding!(tracers, errors)
+# Surface-flux kind and regridding method of every tracer (nested or flat).
+function _check_surface_flux_sources!(tracers, errors)
     tracers isa AbstractDict || return errors
     for (name, tracer) in pairs(tracers)
-        sf = tracer isa AbstractDict ? get(tracer, "surface_flux", nothing) : nothing
-        sf isa AbstractDict && haskey(sf, "regridding") || continue
-        _capture_config_error!(() -> _regridding_method(sf), errors)
+        tracer isa AbstractDict || continue
+        sf = get(tracer, "surface_flux", nothing)
+        sf = sf === nothing ? _tracer_surface_flux_cfg(tracer) : sf
+        sf isa AbstractDict || continue
+        _capture_config_error!(() -> _surface_flux_kind(sf), errors)
+        haskey(sf, "regridding") && _capture_config_error!(() -> _regridding_method(sf), errors)
     end
     return errors
 end

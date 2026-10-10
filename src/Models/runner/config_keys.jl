@@ -65,9 +65,6 @@ const _SURFACE_FLUX_KEYS = ("kind", "file", "variable", "time_index", "month", "
                             "files", "file_pattern", "scale", "molar_mass_kg_mol",
                             "time_varying", "temporal_scheme", "regridding")
 const _SURFACE_FLUX_MONTH_KINDS = ("gridfed_fossil_co2", "zhang_rn222")
-# Named surface-flux kinds; any other kind is read as a generic `file` source.
-const _SURFACE_FLUX_KINDS = ("none", "file", "cs_native", "lmdz_co2", "gridfed_fossil_co2",
-                             "edgar_sf6", "zhang_rn222")
 const _SURFACE_FLUX_SERIES_KEYS = ("files", "file_pattern", "temporal_scheme")
 
 # `[output]` (`runtime_output_spec`), in precedence order within each alias group.
@@ -84,10 +81,6 @@ const _TRACER_OUTPUT_FIELDS_KEYS = ("layers", "column_mean", "column_mass_per_ar
 
 _lower(value) = value isa AbstractString ? lowercase(value) : nothing
 _kind_string(section, default) = _lower(get(section, "kind", default))
-
-# " (did you mean `x`?)" for a value close to one of `choices`, else nothing.
-_suggestion_note(value, choices) =
-    (s = key_suggestion(value, choices); s === nothing ? nothing : " (did you mean `$(s)`?)")
 
 # Append a warning for each key of `table` not in `allowed`.
 function _warn_unknown!(warnings, table, allowed, label)
@@ -242,12 +235,6 @@ function _surface_flux_key_warnings!(w, sf, label)
     # No source: nothing but `kind` is read (an omitted kind means "none").
     kind == "none" && return _warn_unread!(w, sf, filter(!=("kind"), _SURFACE_FLUX_KEYS), label,
                                            "with kind = \"none\" (the default); no flux is emitted")
-    kind === nothing || kind in _SURFACE_FLUX_KINDS ||
-        push!(w, "$(label): kind = \"$(kind)\" is not a named source " *
-                 "($(join(_SURFACE_FLUX_KINDS[2:end], ", "))); it is read as a generic " *
-                 "`file` source (needs `file` and `variable`)" *
-                 something(_suggestion_note(kind, _SURFACE_FLUX_KINDS), "") *
-                 "; set kind = \"file\" if that is intended.")
     kind === nothing || kind in _SURFACE_FLUX_MONTH_KINDS ||
         _warn_unread!(w, sf, ("month",), label, "unless kind = \"gridfed_fossil_co2\" or \"zhang_rn222\"")
     if get(sf, "time_varying", false) === true
