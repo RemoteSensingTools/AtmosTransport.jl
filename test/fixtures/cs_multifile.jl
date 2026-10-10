@@ -4,7 +4,7 @@ using AtmosTransport, Logging
 const MD = AtmosTransport.MetDrivers
 
 function cs_handoff_fixture(path, strengths; FT=Float64)
-    Nc, Nz = 2, 5
+    Nc, Nz = 3, 5          # Nc ≥ 3: the PPM runs use a 3-cell halo, which must not exceed the panel
     vc = HybridSigmaPressure(fill(FT(100),Nz+1),FT.(range(0,1;length=Nz+1)))
     writer = MD.open_streaming_cs_transport_binary(path,Nc,6,Nz,length(strengths),vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
         FT,dt_met_seconds=3600.0,steps_per_window=2,mass_basis=:dry,
