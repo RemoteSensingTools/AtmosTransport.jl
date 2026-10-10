@@ -258,6 +258,10 @@ function _process_day_native(cfg::AbstractDict;
                              day_override = nothing,
                              start_date   = nothing,
                              end_date     = nothing)
+    # Native sources take their column weights from the met-source file.
+    haskey(get(cfg, "numerics", Dict()), "column_balance_weights") && throw(ArgumentError(
+        "[numerics] column_balance_weights applies to ERA5 spectral configs; native sources " *
+        "set column_balance_weights in their met-source [preprocessing] table"))
     src_cfg = cfg["source"]
     toml_relpath = String(src_cfg["toml"])
     toml_path = isabspath(toml_relpath) ? toml_relpath :
@@ -524,6 +528,7 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
     settings_nt = resolve_runtime_settings(cfg)
     settings = ERA5SpectralSettings(
         merge(settings_nt, (T_target = target_spectral_truncation(grid),)))
+    _check_spectral_column_weights(grid, settings)     # before any file is read
     vertical = build_vertical_setup(settings.coeff_path, settings.level_range,
                                     settings.min_dp, cfg["grid"])
 

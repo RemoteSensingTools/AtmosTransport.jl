@@ -52,9 +52,10 @@ function _ll_test_vertical(::Type{FT}) where FT
 end
 
 function _ll_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir;
-                           horizontal_balance = nothing) where FT
+                           horizontal_balance = nothing, column_balance_weights = :mass) where FT
     return ERA5SpectralSettings((
         horizontal_balance = horizontal_balance,
+        column_balance_weights = column_balance_weights,
         output_float_type = FT,
         spectral_dir = spectral_dir,
         spectral_cache_dir = cache_dir,
@@ -136,5 +137,11 @@ end
         @test _header_without_creation_time(off_path)[:write_replay_check] === false
         @test !haskey(_header_without_creation_time(first_path), :write_replay_check)
         @test read(off_path)[HEADER_SIZE + 1:end] == read(first_path)[HEADER_SIZE + 1:end]
+
+        # The lat-lon column balance spreads its correction by layer mass only.
+        hyb = _ll_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "hyb");
+                                column_balance_weights = :hybrid_b)
+        err = try process_day(date, grid, hyb, vertical; positivity_cfl_limit = 0.95); nothing catch e; e end
+        @test err isa ArgumentError && contains(err.msg, "cubed-sphere targets only")
     end
 end

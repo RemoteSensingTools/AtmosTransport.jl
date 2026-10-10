@@ -209,14 +209,29 @@ Two archive layouts are supported (`[preprocessing] layout`):
   `[convection] kind = "cmfmc", cloud_base = "dqrcu"` and
   `[diffusion] kind = "geoschem_nonlocal_vdiff"` for GEOS-Chem's physics.
 
-`[preprocessing] column_balance_weights` (MERRA-2 and ERA5 N320) spreads the column
-mass-budget correction of the horizontal fluxes over the levels:
+`column_balance_weights` spreads the column mass-budget correction of the
+horizontal fluxes over the levels, on every cubed-sphere path:
 - `"mass"` (default): by layer air mass;
 - `"hybrid_b"`: by `ΔB`, as in TM5;
 - `"hybrid_mass"`: by air mass in hybrid layers only.
 
-The hybrid options leave the pure-pressure stratospheric layers untouched.
-See [Vertical transport](../theory/vertical_transport.md) section 2 and
+The hybrid options leave the pure-pressure stratospheric layers untouched. Where
+it is set:
+- MERRA-2, ERA5 N320 and GEOS (native fluxes): `[preprocessing]
+  column_balance_weights` in the met-source file;
+- ERA5 spectral: `[numerics] column_balance_weights` in the preprocessing
+  config (cubed-sphere targets; lat-lon and reduced-Gaussian targets reject
+  other weights than `"mass"`);
+- lat-lon → cubed-sphere regrid: `--column-balance-weights` of
+  `scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl`.
+
+The weights need the column balance: an effective per-layer balance
+(`balance_mode = "per_layer"` where it applies; the GEOS moisture-filtered and
+OMEGA closures always balance the column) and the GEOS closures that keep the
+native fluxes (`pressure_fixer`, `pfix_corrected`) reject other weights than
+`"mass"`. MERRA-2 and ERA5 N320 headers always
+record the choice; the other paths record it when it is not `"mass"`. See
+[Vertical transport](../theory/vertical_transport.md) section 2 and
 `config/met_sources/merra2_geoschem_hybrid{b,mass}.toml`.
 
 Face-flux construction (MERRA-2 and ERA5 N320; see

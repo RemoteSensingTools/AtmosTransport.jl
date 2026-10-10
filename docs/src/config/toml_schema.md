@@ -639,8 +639,9 @@ calls the unified `process_day` preprocessing entry point. Source-specific
 `[preprocessing]` keys live in the met-source descriptor
 (`config/met_sources/*.toml`); the flux-construction keys of the MERRA-2 and
 ERA5 N320 sources (`column_balance_weights`, `face_fluxes`, `face_lengths`,
-`face_interpolation`, `wind_regrid`, and for MERRA-2 `flux_thickness`) are
-described in [Data sources](data_sources.md).
+`face_interpolation`, `wind_regrid`, and for MERRA-2 `flux_thickness`) and the
+`column_balance_weights` of the GEOS sources are described in
+[Data sources](data_sources.md).
 
 The preprocessing config has a different shape from the run config:
 the **target topology IS specified here** because that's the act of
@@ -778,8 +779,10 @@ balance_mode = "column"      # default on lat-lon and cubed-sphere paths
 ```
 
 - `"column"` — one Poisson solve for the column-integrated divergence; the
-  correction is distributed over the layers (by air mass, or by the source's
-  `column_balance_weights`), so layer winds keep their vertical structure.
+  correction is distributed over the layers by `column_balance_weights`
+  (`"mass"` by default; [Data sources](data_sources.md) lists where each path
+  sets it), so layer winds keep their vertical structure. ERA5 spectral configs
+  set it here, as `[numerics] column_balance_weights` (cubed-sphere targets).
 - `"per_layer"` — one Poisson solve per layer (the older mode). The
   reduced-Gaussian path always balances per layer and rejects `"column"`.
 

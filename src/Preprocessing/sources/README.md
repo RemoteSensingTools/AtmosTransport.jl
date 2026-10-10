@@ -106,7 +106,8 @@ writers that turn these fields into transport binaries live in
 - The loader rejects options a source does not implement, for example
   `arco_surface_pressure` on GEOS, `include_vdiff_fields` on ERA5 N320, and
   `include_tm5_diffusion` on MERRA-2. ERA5 `include_tm5_diffusion` requires
-  `include_surface`.
+  `include_surface`. Of the flux-construction keys, GEOS takes only
+  `column_balance_weights` (it keeps the native face fluxes).
 
 ## Tests
 

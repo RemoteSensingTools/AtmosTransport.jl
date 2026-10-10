@@ -334,9 +334,36 @@ end
         reader = TransportBinaryReader(out_path; FT = FT_TEST)
         try
             @test !haskey(reader.header.raw_header, "write_replay_check")
+            @test !haskey(reader.header.raw_header, "column_balance_weights")
         finally
             close(reader)
         end
+
+        # Column weights from the met source: recorded when not mass (this
+        # fixture has no column mismatch, so the transported mass is the same),
+        # and refused by closures that keep the native fluxes.
+        hyb_settings = GEOSITSettings(root_dir = tmpdir, Nc = NC, mass_flux_dt = 450.0,
+                                      coefficients_file = coef_path,
+                                      column_balance_weights = :hybrid_b)
+        hyb_path = joinpath(tmpdir, "out_cs_hyb.bin")
+        hyb = process_day(Date(2021, 12, 1), grid, hyb_settings, vertical;
+                          out_path = hyb_path, dt_met_seconds = 3600.0, FT = FT_TEST,
+                          mass_basis = :dry, replay_tol = 1e-12)
+        @test hyb.worst_replay_rel < 1e-12
+        @test all(p -> hyb.final_m[p] == first.final_m[p], 1:6)
+        reader = TransportBinaryReader(hyb_path; FT = FT_TEST)
+        try
+            @test reader.header.raw_header["column_balance_weights"] == "hybrid_b"
+        finally
+            close(reader)
+        end
+        @test_throws ArgumentError process_day(Date(2021, 12, 1), grid, hyb_settings, vertical;
+            out_path = joinpath(tmpdir, "out_cs_pfix.bin"), dt_met_seconds = 3600.0,
+            FT = FT_TEST, mass_basis = :dry, cm_closure = :pressure_fixer)
+        @test_throws ArgumentError process_day(Date(2021, 12, 1), grid, hyb_settings, vertical;
+            out_path = joinpath(tmpdir, "out_cs_layer.bin"), dt_met_seconds = 3600.0,
+            FT = FT_TEST, mass_basis = :dry,
+            horizontal_balance = AtmosTransport.Preprocessing.LayerBalance())
     end
 
     @testset "process_day supports GEOS native vertical merge above pressure" begin

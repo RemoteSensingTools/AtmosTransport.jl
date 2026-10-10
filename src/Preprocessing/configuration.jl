@@ -161,6 +161,7 @@ function resolve_balance_settings(cfg)
         cs_balance_tol = Float64(get(numerics, "cs_balance_tol", 1e-14)),
         cs_balance_project_every = Int(get(numerics, "cs_balance_project_every", 50)),
         horizontal_balance = resolve_horizontal_balance(numerics),
+        column_balance_weights = resolve_column_balance_weights(numerics),
     )
 end
 
@@ -220,6 +221,73 @@ balance_mode`) when given, else the path's `default`.
 effective_horizontal_balance(balance::Union{Nothing, AbstractHorizontalBalance},
                              default::AbstractHorizontalBalance) =
     something(balance, default)
+
+"""
+    resolve_column_balance_weights(numerics) -> Symbol
+
+`[numerics] column_balance_weights` of an ERA5 spectral preprocessing config:
+how the column balance spreads its correction over the levels, `:mass`
+(default), `:hybrid_b` or `:hybrid_mass` (see `AbstractColumnWeights`). Native
+sources set it in their met-source `[preprocessing]` table instead.
+"""
+function resolve_column_balance_weights(numerics::AbstractDict)
+    raw = get(numerics, "column_balance_weights", "mass")
+    raw isa AbstractString || throw(ArgumentError(
+        "[numerics].column_balance_weights must be a string; got $(repr(raw))"))
+    return _validate_column_balance_weights(Symbol(lowercase(raw)), "[numerics]")
+end
+
+# `kind` must name an entry of `COLUMN_WEIGHT_KINDS`; `source` names the met
+# source or table in the error.
+function _validate_column_balance_weights(kind::Symbol, source::AbstractString)
+    haskey(COLUMN_WEIGHT_KINDS, kind) || throw(ArgumentError(
+        "$source column_balance_weights must be one of " *
+        join(keys(COLUMN_WEIGHT_KINDS), ", ") * "; got :$(kind)"))
+    return kind
+end
+
+# Column weights spread the column balance's correction over the levels; a
+# per-layer balance has no column correction to spread.
+function _reject_layer_balance_weights(balance::AbstractHorizontalBalance, kind::Symbol)
+    balance isa LayerBalance && kind !== :mass && throw(ArgumentError(
+        "column_balance_weights = $(kind) applies to the column Poisson balance; it cannot be " *
+        "combined with [numerics] balance_mode = \"per_layer\""))
+    return nothing
+end
+
+# Spectral targets whose balance spreads the column correction by mass only
+# (lat-lon) or that balance each layer (reduced Gaussian) reject other weights.
+function _require_mass_column_weights(settings, reason::AbstractString)
+    kind = get(settings, :column_balance_weights, :mass)
+    kind === :mass || throw(ArgumentError(
+        "[numerics] column_balance_weights = $(kind) is implemented for cubed-sphere targets " *
+        "only; $(reason)"))
+    return nothing
+end
+
+# Whether the spectral preprocessing of a target can honor the configured
+# column weights; checked by the entry point before any input is read, and by
+# each writer for direct callers.
+function _check_spectral_column_weights(::CubedSphereTargetGeometry, settings)
+    kind = _validate_column_balance_weights(get(settings, :column_balance_weights, :mass),
+                                            "[numerics]")
+    balance = effective_horizontal_balance(get(settings, :horizontal_balance, nothing),
+                                           ColumnBalance())
+    _reject_layer_balance_weights(balance, kind)
+    return kind
+end
+_check_spectral_column_weights(::LatLonTargetGeometry, settings) =
+    _require_mass_column_weights(settings, "the lat-lon column balance spreads its correction by layer mass")
+_check_spectral_column_weights(::ReducedGaussianTargetGeometry, settings) =
+    _require_mass_column_weights(settings, "the reduced-Gaussian path balances each layer")
+
+# Record non-default column weights in a binary header. Binaries of the ERA5
+# spectral, lat-lon → cubed-sphere and GEOS paths written with the default
+# mass weights record nothing, so their headers are unchanged.
+function _with_column_weights_record(header::AbstractDict, kind::Symbol)
+    kind === :mass || (header["column_balance_weights"] = String(kind))
+    return header
+end
 
 # Record a skipped write-time replay gate (`[numerics] write_replay_check =
 # false`) in a binary header. A binary that passed the gate records nothing, so

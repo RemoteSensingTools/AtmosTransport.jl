@@ -101,6 +101,11 @@ face fluxes are reconstructed with the output scaling.
   endpoint target instead of an inferred zero-tendency fallback.
 - `horizontal_balance = nothing` — `ColumnBalance()` (the default for
   `nothing`) or `LayerBalance()`. Recorded in the header.
+- `column_balance_weights::Symbol = :mass` — how the column balance spreads its
+  correction over the levels (`:mass`, `:hybrid_b` or `:hybrid_mass`; see
+  `AbstractColumnWeights`), from the source binary's hybrid `B` interfaces.
+  Other weights than `:mass` are recorded in the header and need the column
+  balance.
 - `write_replay_check::Bool = true` — run the write-time replay-continuity
   gate. `false` is a diagnostic escape hatch; the output header then records
   `write_replay_check = false`.
@@ -119,11 +124,14 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 cs_balance_tol::Real = 1e-14,
                                 cs_balance_project_every::Integer = 50,
                                 horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
+                                column_balance_weights::Symbol = :mass,
                                 write_replay_check::Bool = true,
                                 run_cache = nothing)
     t_start = time()
     Nc = cs_grid.Nc
     balance = effective_horizontal_balance(horizontal_balance, ColumnBalance())
+    _validate_column_balance_weights(column_balance_weights, "regrid_ll_binary_to_cs")
+    _reject_layer_balance_weights(balance, column_balance_weights)
 
     # --- Open LL binary reader ---
     reader = TransportBinaryReader(ll_binary_path; FT=FT)
@@ -137,6 +145,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     Nt = h.nwindow
     A_ifc = Float64.(h.A_ifc)
     B_ifc = Float64.(h.B_ifc)
+    # The regrid keeps the source levels, so these are the output interfaces.
+    balance_weights = column_weights(column_balance_weights, B_ifc)
 
     # Refuse silent basis relabeling. The function reads raw `m/am/bm/ps`
     # from the source and never touches `qv`, so mismatched basis produces
@@ -278,7 +288,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         cs_center_law=_cs_center_law_tag(cs_grid),
         longitude_offset_deg=longitude_offset_deg(cs_definition(cs_grid.mesh)),
         planet_radius=cs_grid.mesh.radius,
-        extra_header=_with_replay_record(Dict{String, Any}(
+        extra_header=_with_replay_record(_with_column_weights_record(Dict{String, Any}(
             "preprocessor"      => "regrid_ll_binary_to_cs",
             "source_type"       => "ll_transport_binary",
             "source_path"       => ll_binary_path,
@@ -286,7 +296,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             "regrid_method"     => "conservative",
             "poisson_balanced"  => true,
             "horizontal_balance" => balance_tag(balance),
-        ), write_replay_check))
+        ), column_balance_weights), write_replay_check))
     writer = CubedSphereBinaryWriter(inner_writer, mass_basis_from_symbol(output_basis);
                                      Nc = Nc,
                                      npanel = CS_PANEL_COUNT,
@@ -444,7 +454,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                 cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
                 cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
                 cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
-                max_iter=20000, project_every=Int(cs_balance_project_every))
+                max_iter=20000, project_every=Int(cs_balance_project_every),
+                weights=balance_weights)
         end
         t_bal = time() - t_bal
 
@@ -456,7 +467,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
 
         fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, steps_per_met)
         for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
-        diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
+        diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz, balance_weights)
         pos_diag = if write_replay_on
             contract = verify_cs_window_contract!(cur_m, cur_am, cur_bm, cur_cm,
                                                   cs_ws.m_next_panels,
@@ -549,7 +560,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
             cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
             cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
-            max_iter=20000, project_every=Int(cs_balance_project_every))
+            max_iter=20000, project_every=Int(cs_balance_project_every),
+            weights=balance_weights)
     end
     t_bal = time() - t_bal
 
@@ -561,7 +573,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
 
     fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, steps_per_met)
     for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
-    diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz)
+    diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz, balance_weights)
     pos_diag = if write_replay_on
         contract = verify_cs_window_contract!(cur_m, cur_am, cur_bm, cur_cm,
                                               cs_ws.m_next_panels,

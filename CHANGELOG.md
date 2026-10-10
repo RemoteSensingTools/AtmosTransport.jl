@@ -426,8 +426,14 @@
   pure-pressure layers. In a four-month C90 run against GCHP, `"hybrid_mass"`
   cut the growth of the bias above 100 hPa by about two thirds. Near-surface
   RMSE changed by +0.4 % to −5 % depending on the tracer
-  (`docs/src/theory/vertical_transport.md`). Other met
-  sources reject the key.
+  (`docs/src/theory/vertical_transport.md`). The ERA5 N320 source reads the
+  same key, and the ERA5 spectral (`[numerics] column_balance_weights`),
+  lat-lon → cubed-sphere (`--column-balance-weights`) and GEOS
+  (`[preprocessing] column_balance_weights`) paths offer it too, with `"mass"`
+  as the default; those three record it in the header only when it is not
+  `"mass"`, so their default binaries are unchanged. Per-layer balance and
+  the GEOS pressure-fixer closures reject other weights; lat-lon and
+  reduced-Gaussian spectral targets accept only `"mass"`.
 
 - Time-varying surface fluxes can span several files: `files = [...]` or a
   `file_pattern` with `{YYYYMM}` plus `year`. `gridfed_fossil_co2` joins the

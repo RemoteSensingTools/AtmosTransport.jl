@@ -55,6 +55,7 @@ const _FLUX_CONSTRUCTION_KEYS = ("column_balance_weights", "face_lengths", "face
 const _ALL_FLUX_KEYS = (_FLUX_CONSTRUCTION_KEYS..., "flux_thickness", "flux_time_sampling")
 _supported_flux_keys(::Type{MERRA2Settings}) = (_FLUX_CONSTRUCTION_KEYS..., "flux_thickness")
 _supported_flux_keys(::Type{<:ERA5GRIBSettings}) = (_FLUX_CONSTRUCTION_KEYS..., "flux_time_sampling")
+_supported_flux_keys(::Type{<:GEOSSettings}) = ("column_balance_weights",)   # native fluxes, column balance
 _supported_flux_keys(::Type) = ()
 function _reject_unsupported_flux_keys(ctor::Type, cfg)
     pre_cfg = get(cfg, "preprocessing", Dict{String,Any}())
@@ -65,6 +66,14 @@ function _reject_unsupported_flux_keys(ctor::Type, cfg)
     return nothing
 end
 
+# `[preprocessing] column_balance_weights` of a met source (default `:mass`).
+function _column_balance_weights_option(pre_cfg)
+    raw = get(pre_cfg, "column_balance_weights", "mass")
+    raw isa AbstractString || throw(ArgumentError(
+        "[preprocessing].column_balance_weights must be a string; got $(repr(raw))"))
+    return Symbol(lowercase(raw))
+end
+
 # The shared flux-construction keys as settings keyword arguments.
 function _flux_construction_kwargs(pre_cfg)
     option(key, default) = Symbol(lowercase(String(get(pre_cfg, key, default))))
@@ -73,7 +82,7 @@ function _flux_construction_kwargs(pre_cfg)
     face_fluxes === :vector && face_lengths === :cell_centerline && haskey(pre_cfg, "face_lengths") &&
         throw(ArgumentError("[preprocessing] face_fluxes = \"vector\" always uses face edge lengths; " *
                             "remove face_lengths = \"cell_centerline\""))
-    return (column_balance_weights = option("column_balance_weights", "mass"), face_lengths, face_fluxes,
+    return (column_balance_weights = _column_balance_weights_option(pre_cfg), face_lengths, face_fluxes,
             face_interpolation = option("face_interpolation", "linear"),
             wind_regrid = option("wind_regrid", "scalar"))
 end
@@ -106,11 +115,14 @@ function _build_met_settings(ctor::Type{<:GEOSSettings}, cfg::AbstractDict,
     physics_dir          = String(get(pre_cfg, "physics_dir", ""))
     physics_layout       = Symbol(get(pre_cfg, "physics_layout", "auto"))
 
-    return ctor(; root_dir,
-                  Nc, mass_flux_dt, level_orientation,
-                  include_surface, include_convection, include_vdiff_fields,
-                  physics_dir, physics_layout,
-                  coefficients_file = coefs, kwargs...)
+    settings = ctor(; root_dir,
+                      Nc, mass_flux_dt, level_orientation,
+                      include_surface, include_convection, include_vdiff_fields,
+                      physics_dir, physics_layout,
+                      column_balance_weights = _column_balance_weights_option(pre_cfg),
+                      coefficients_file = coefs, kwargs...)
+    _validate_column_balance_weights(settings.column_balance_weights, "GEOS")
+    return settings
 end
 
 # ---------------------------------------------------------------------------

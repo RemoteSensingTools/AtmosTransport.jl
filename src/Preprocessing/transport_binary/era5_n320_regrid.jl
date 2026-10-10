@@ -301,9 +301,7 @@ function process_era5_n320_to_cs_day(date::Date,
         throw(ArgumentError("ERA5 N320 → CS writer only supports mass_basis=:dry; got $(mass_basis)"))
     _validate_flux_construction(settings, "ERA5")
     horizontal_balance = effective_horizontal_balance(horizontal_balance, ColumnBalance())
-    horizontal_balance isa LayerBalance && settings.column_balance_weights !== :mass && throw(ArgumentError(
-        "column_balance_weights = $(settings.column_balance_weights) applies to the column " *
-        "Poisson balance; it cannot be combined with [numerics] balance_mode = \"per_layer\""))
+    _reject_layer_balance_weights(horizontal_balance, settings.column_balance_weights)
     native_vc_cfg = load_hybrid_coefficients(settings.coefficients_file)
     native_vc_ft = HybridSigmaPressure(FT.(native_vc_cfg.A), FT.(native_vc_cfg.B))
     plan = if vertical_plan === nothing
