@@ -11,16 +11,6 @@ function _binary_date_label(path::AbstractString)
     return m === nothing ? "" : String(something(m.captures[1], ""))
 end
 
-function _output_default_cap_hours(driver, binary_count::Integer;
-                                   start_window::Integer = 1,
-                                   stop_window_override = nothing)
-    stop_window = stop_window_override === nothing ?
-                  total_windows(driver) :
-                  min(Int(stop_window_override), total_windows(driver))
-    nw = max(stop_window - start_window + 1, 0)
-    return Float64(nw * Int(binary_count)) * Float64(window_dt(driver)) / 3600.0
-end
-
 """
     _check_output_targets(spec, output_cfg)
 
@@ -77,6 +67,12 @@ function _layout_run_hours(layout; start_window::Integer = 1, stop_window_overri
     end
     return seconds / 3600
 end
+
+# The window lengths as the run loops see them (`window_dt(driver)` is the
+# header value in the run's float type), so the window ends, the run length and
+# the flux span match the run clock exactly.
+_runtime_window_layout(layout, ::Type{FT}) where {FT} =
+    [(Float64(FT(window_seconds)), nwindow) for (window_seconds, nwindow) in layout]
 
 # Layout of `binary_paths` when only the first driver is known: every binary
 # like the first.

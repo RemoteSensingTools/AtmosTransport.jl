@@ -308,16 +308,15 @@ function _run_reference_time(cfg)
 end
 
 # Run interval `(0, t_end)` in seconds since the run start; time-varying flux
-# files are read only where the run can use them. `t_end` is the first binary's
-# length times the binary count or, when `[input]` gives both dates, the
-# inclusive `end_date` if that is later, plus 1 s for rounding in the
-# accumulated Float64 run clock. `_check_flux_run_span` stops a run whose
-# binaries outlast it. Without `start_date` (`_flux_run_span` returns `nothing`)
-# the loaders read every slice and nothing is checked.
-function _run_time_span(cfg, first_driver, binary_count::Integer;
-                        start_window::Integer = 1, stop_window_override = nothing)
-    t_end = 3600 * _output_default_cap_hours(first_driver, binary_count;
-                                             start_window, stop_window_override)
+# files are read only where the run can use them. `t_end` is the end of the
+# run's windows (`run_hours`, from every binary's header) or, when `[input]`
+# gives both dates, the inclusive `end_date` if that is later, plus 1 s for
+# rounding in the accumulated Float64 run clock. `_check_flux_run_span` guards
+# against a binary that ends later anyway. Without `start_date`
+# (`_flux_run_span` returns `nothing`) the loaders read every slice and
+# nothing is checked.
+function _run_time_span(cfg, run_hours::Real)
+    t_end = 3600 * Float64(run_hours)
     input_cfg = get(cfg, "input", nothing)
     if input_cfg isa AbstractDict && haskey(input_cfg, "start_date") && haskey(input_cfg, "end_date")
         t0 = DateTime(Date(String(input_cfg["start_date"])))
@@ -327,9 +326,8 @@ function _run_time_span(cfg, first_driver, binary_count::Integer;
     return (0.0, t_end + 1.0)
 end
 
-_flux_run_span(cfg, first_driver, binary_count::Integer; kwargs...) =
-    _run_reference_time(cfg) === nothing ? nothing :
-    _run_time_span(cfg, first_driver, binary_count; kwargs...)
+_flux_run_span(cfg, run_hours::Real) =
+    _run_reference_time(cfg) === nothing ? nothing : _run_time_span(cfg, run_hours)
 
 # A binary whose windows end after the loaded flux interval would silently hold
 # the last loaded slice; fail before it runs.
@@ -339,8 +337,7 @@ function _check_flux_run_span(run_span, binary_end_s::Real, surface_sources, pat
     binary_end_s <= run_span[2] || throw(ArgumentError(
         "$(basename(path)) runs to $(binary_end_s) s after the run start, past the " *
         "$(run_span[2]) s for which time-varying surface fluxes were loaded " *
-        "(the first binary's length times the binary count, or [input].end_date). " *
-        "Use binaries of equal length or set [input].end_date to cover the run."))
+        "(the binaries' windows or [input].end_date)."))
     return nothing
 end
 
@@ -392,7 +389,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     _check_multifile_window_range(first_driver, start_window, stop_window_override,
                                   length(binary_paths))
     # Windows of every binary: the run length and the window ends of the schedule.
-    layout = something(window_layout, _uniform_window_layout(first_driver, binary_paths))
+    layout = _runtime_window_layout(something(window_layout,
+                                              _uniform_window_layout(first_driver, binary_paths)), FT)
     run_hours = _layout_run_hours(layout; start_window, stop_window_override)
     output_cfg = get(cfg, "output", Dict{String, Any}())
     output_spec = runtime_output_spec(output_cfg, FT; default_cap_hours = run_hours)
@@ -425,8 +423,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                             span_seconds = 3600 * run_hours)
     # Observation sampling needs the per-window loop even without snapshots.
     do_windows = do_snapshots || samples_observations(sampler)
-    flux_run_span = _flux_run_span(cfg, first_driver, length(binary_paths);
-                                   start_window, stop_window_override)
+    flux_run_span = _flux_run_span(cfg, run_hours)
     surface_sources = build_surface_flux_sources(grid_of_first, tracer_specs, FT;
                                                  reference_time = _run_reference_time(cfg),
                                                  run_span = flux_run_span)
@@ -706,7 +703,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                    false, "[input].validate_replay")
     driver1 = input_resources.driver = TransportBinaryDriver(staged_path_for!(stager, 1);
                                     FT = FT, arch = arch, Hp = Hp, validate_replay)
-    layout = something(window_layout, _uniform_window_layout(driver1, binary_paths))
+    layout = _runtime_window_layout(something(window_layout,
+                                              _uniform_window_layout(driver1, binary_paths)), FT)
     run_hours = _layout_run_hours(layout; stop_window_override)
     output_cfg = get(cfg, "output", Dict{String, Any}())
     output_spec = runtime_output_spec(output_cfg, FT; default_cap_hours = run_hours)
@@ -789,7 +787,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     # mass rates. Matches the LL/RG path; `DrivenSimulation`'s constructor
     # adapts these to the model backend (CPU Array or GPU array) via
     # `_adapt_sources_to_model_backend`, so no manual adapt step here.
-    flux_run_span = _flux_run_span(cfg, driver1, length(binary_paths); stop_window_override)
+    flux_run_span = _flux_run_span(cfg, run_hours)
     surface_sources = build_surface_flux_sources(grid, tracer_specs, FT;
                                                  reference_time = _run_reference_time(cfg),
                                                  run_span = flux_run_span)

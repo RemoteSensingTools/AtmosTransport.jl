@@ -29,8 +29,6 @@ using .AtmosTransport.Models.InitialConditionIO: build_surface_flux_source,
 
 const FT = Float64
 const ICIO = AtmosTransport.Models.InitialConditionIO
-include(joinpath(@__DIR__, "..", "fixtures", "cs_multifile.jl"))
-using .CSDriverHandoffFixtures
 const _SYNTHETIC_SECONDS_JAN_2021 = 31 * 86400
 
 _synthetic_file_ic_value(lon_deg, lat_deg) =
@@ -837,27 +835,22 @@ end
 
     @testset "run span from the binaries and the input dates" begin
         Runner = AtmosTransport.Models.DrivenRunner
-        mktempdir() do dir
-            path = joinpath(dir, "three_hours.bin")
-            CSDriverHandoffFixtures.cs_handoff_fixture(path, [1.0, 2.0, 3.0])  # 3 hourly windows
-            driver = TransportBinaryDriver(path; FT = Float64, arch = CPU(), Hp = 1)
-            # Explicit binary list without dates: the binaries' length.
-            @test Runner._run_time_span(Dict("input" => Dict("binary_paths" => [path])),
-                                        driver, 2) == (0.0, 2 * 3 * 3600.0 + 1)
-            @test Runner._run_time_span(Dict{String, Any}(), driver, 1;
-                                        start_window = 2) == (0.0, 2 * 3600.0 + 1)
-            @test Runner._run_time_span(Dict{String, Any}(), driver, 1;
-                                        stop_window_override = 1) == (0.0, 3600.0 + 1)
-            # Dates: the inclusive end date when it is later than the binaries.
-            dated = Dict("input" => Dict("start_date" => "2021-12-01", "end_date" => "2021-12-02"))
-            @test Runner._run_time_span(dated, driver, 2) == (0.0, 2 * 86400.0 + 1)
-            @test Runner._run_time_span(dated, driver, 20) == (0.0, 20 * 3 * 3600.0 + 1)
-            # Without a start date every slice is loaded, so there is nothing to check.
-            @test Runner._flux_run_span(Dict("input" => Dict("binary_paths" => [path])),
-                                        driver, 2) === nothing
-            @test Runner._flux_run_span(dated, driver, 2) == (0.0, 2 * 86400.0 + 1)
-            close(driver)
-        end
+        listed = Dict("input" => Dict("binary_paths" => ["a.bin"]))
+        # The binaries' windows (run_hours) set the span.
+        @test Runner._run_time_span(listed, 6.0) == (0.0, 6 * 3600.0 + 1)
+        # Dates: the inclusive end date when it is later than the binaries.
+        dated = Dict("input" => Dict("start_date" => "2021-12-01", "end_date" => "2021-12-02"))
+        @test Runner._run_time_span(dated, 6.0) == (0.0, 2 * 86400.0 + 1)
+        @test Runner._run_time_span(dated, 60.0) == (0.0, 60 * 3600.0 + 1)
+        # Without a start date every slice is loaded, so there is nothing to check.
+        @test Runner._flux_run_span(listed, 6.0) === nothing
+        @test Runner._flux_run_span(dated, 6.0) == (0.0, 2 * 86400.0 + 1)
+        # Mixed window lengths: the layout gives the run end exactly.
+        @test Runner._layout_run_hours([(3600.0, 24), (10800.0, 8)]) == 48.0
+        # Window lengths as the run clock sees them (Float32 runs round them).
+        @test Runner._runtime_window_layout([(3599.99988, 2)], Float32) ==
+              [(Float64(Float32(3599.99988)), 2)]
+        @test Runner._runtime_window_layout([(3600.0, 2)], Float32) == [(3600.0, 2)]
     end
 
     @testset "pack_initial_tracer_mass — CubedSphereMesh (MoistBasis)" begin
