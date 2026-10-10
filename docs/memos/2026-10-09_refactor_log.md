@@ -908,6 +908,54 @@ tracers are independent and could share one launch; the segments of one
 source update the same cells and their Kahan compensation in order, so they
 cannot.
 
+## Overnight 2026-10-09/10: cleanup, M0, M1
+
+Owner's decisions before the night: push `refactor/wip` and open a PR after
+Codex and the goldens (not merged); retire stale scripts and move the rest to
+`heritage/`; scope = window-buffer reuse, run-period flux loading, roadmap M0
+and M1. Each commit was reviewed by Codex (Sol, highest effort) until no
+serious finding remained, and checked against the runtime goldens.
+
+- Scripts cleanup (`15e307cb`): 161 retired, 58 moved to `heritage/`;
+  `compare_preprocessors.jl` and `check_mass_balance_dec2021.jl` stay
+  maintained (roadmap M5). The branch is not rebased onto `main`, so 7c515038,
+  named in the recovery instructions, stays reachable.
+- M0 (`35735215`, `85c4642e`): the test runner reports every failing file and
+  the 15 slowest; the ERA5 0.5-degree golden inputs are frozen
+  (`/temp1/cfranken/goldens/inputs/era5_0.5x0.5`, SHA256SUMS verified). With
+  the frozen inputs `pre_o24` and `pre_c24` are identical to `ref_current` and
+  `pre_ll72` differs only in the header key `qv_source_directory`, so the
+  reference has to be re-recorded at the head of this branch (pending when
+  this was written).
+- TRENDY re-run guide and the 2014–2024 C90 convection config (`d2f20bf3`),
+  checked by Codex against the scripts and the code (it fixed a sign error in
+  the C90 NPP recipe: NPP = RA_CO2_FLUX + GPP_CO2_FLUX).
+- Window buffers (`bef27f53`) and run-period flux loading (`7dfdb3b2`): see
+  "Done afterwards" above. The golden configs list their binaries without
+  `start_date`, so only the warm A/B (folder + dates) exercises run-period
+  loading; its NetCDF output is bit-identical.
+- M1 (`e368fd71`): `validate_config` parses the physics, run and output
+  settings; keys the run ignores are warnings (close misspellings get a
+  suggestion); snapshot hours are checked against every binary's window ends;
+  the editor schema agrees with the parsers (new test).
+- Owner decisions 3 and 7 of the roadmap (`c753afd8`): the two `c45`
+  configs are retired, and an unregistered surface-flux kind is an error (the
+  two ocean-flux configs say `kind = "file"`). On the 246 shipped run configs
+  M1 and this commit change only four configs, which already failed at run
+  time and now fail at the check. Codex needed six rounds; the findings
+  that changed code: sub-hour snapshots matched one window early (fixed with
+  `_snapshot_due`), mixed window lengths, an invented 8760 h run end in
+  preflight, repeated snapshot hours, regridding typos meaning bilinear.
+- Found on the way: Julia's one-argument `occursin(x)` fixes the haystack, not
+  the needle (`any(occursin("a"), xs)` asks whether each `x` occurs in `"a"`);
+  use `contains("a")`. No other test in the repository used it.
+
+Follow-ups: the run-period flux span could use the exact window layout that
+M1 collects (today it uses the first binary's length times the count, with a
+guard); M1 has no end-to-end runner test for mixed window lengths (helpers
+are tested); unknown-key warnings become errors after one release (decision
+1).
+
 ## Status (2026-10-09, afternoon)
 
 `refactor/structure-2026-10` is pushed as PR #21 (25 commits on `3684b71a`,
