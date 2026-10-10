@@ -14,8 +14,6 @@ const ENV_ALLOWLIST = Dict(
     "ATMOSTR_PROFILE_GPU"           => r"src/Operators/Advection/",
     "ATMOSTR_ASSERT_CS_BINARY_CFL"  => r"src/Operators/Advection/",
     "ATMOSTR_DISABLE_PREFETCH"      => r"src/Models/",
-    "ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS" => r"src/Models/",
-    "ATMOSTR_REPLAY_CHECK"          => r"src/MetDrivers/",
     "ATMOSTR_REGRID_CACHE_DIR"      => r"src/Models/initial_conditions/",
     "NO_COLOR"                      => r"src/Models/runner/",
     "TERM"                          => r"src/Models/runner/",
@@ -24,7 +22,6 @@ const ENV_ALLOWLIST = Dict(
     "USERNAME"                      => r"src/Output/",
     "ATMOSTR_SPECTRAL_CACHE_DIR"    => r"src/Preprocessing/",
     "ATMOSTR_NO_WRITE_REPLAY_CHECK" => r"src/Preprocessing/",
-    "ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE" => r"src/Preprocessing/",
     "ATMOS_OMEGA_TIMING"            => r"src/Preprocessing/",
     "ERA5_N320_PROFILE"             => r"src/Preprocessing/",
 )

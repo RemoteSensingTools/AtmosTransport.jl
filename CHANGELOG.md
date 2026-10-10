@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- Run settings no longer come from environment variables. These are removed
+  without a transition period; the package ignores them:
+
+  | Removed variable | Use instead |
+  |---|---|
+  | `ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS` | `[run] physics_cadence = "substep"` |
+  | `ATMOSTR_REPLAY_CHECK` | `[input] validate_replay = true` |
+  | `ATMOSTR_NO_REPLAY_CHECK` | nothing (the load-time check runs only when asked for) |
+  | `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE` | `[numerics] balance_mode = "per_layer"` |
+
+  Environment variables now set only paths, metadata, profiling and
+  diagnostics (see `docs/src/config/environment.md`).
+
 ### Fixes
 
 - ERA5 N320 preprocessing had two registration errors. The GRIB
@@ -72,9 +87,8 @@
   mode. `[numerics] balance_mode = "column" | "per_layer"` (old name
   accepted) now selects it on every path, the LL-to-CS regrid script takes
   `--balance-mode`, and every transport-binary header records
-  `horizontal_balance`. The environment variable still works where it did
-  (every path except GEOS) when the key is absent, with a deprecation
-  warning. Default results are unchanged.
+  `horizontal_balance`. The environment variable is removed (see Breaking
+  changes). Default results are unchanged.
 
 ### Numerical changes
 
@@ -190,8 +204,7 @@
   with a per-window physics contract, convection and chemistry run once per
   met window (default) or every advection substep. It replaces the
   environment variable `ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS`, which was read on
-  every time step and is still honored, with a deprecation warning, when the
-  key is absent. Unlike the variable, `"substep"` keeps the window-end reset to
+  every time step and is removed. Unlike the variable, `"substep"` keeps the window-end reset to
   the binary's endpoint air mass, so a cadence comparison changes only where
   convection and chemistry run.
 - Deprecated, for removal in the next minor release: `State.MetState`,
@@ -273,9 +286,9 @@
   four that already failed at run time differ: they now fail at the check.
 - `[input] validate_replay = true` replays every binary's continuity when the
   run opens it (the stored fluxes must carry each window's air mass to the
-  next). It replaces the environment variable `ATMOSTR_REPLAY_CHECK`, which
-  still works for one release with a deprecation warning;
-  `ATMOSTR_NO_REPLAY_CHECK` is removed (the check runs only when asked for).
+  next). It replaces the environment variable `ATMOSTR_REPLAY_CHECK`; both it
+  and `ATMOSTR_NO_REPLAY_CHECK` are removed (the check runs only when asked
+  for).
   The replay error messages now name the key.
 - A transport binary written with the write-time replay gate skipped
   (`ATMOSTR_NO_WRITE_REPLAY_CHECK=1`, or the new `--no-write-replay-check` of

@@ -34,19 +34,16 @@ package reads no others.
 |---|---|---|
 | `ATMOSTR_NO_WRITE_REPLAY_CHECK` | `1`: skip the write-time replay-continuity gate of the preprocessor (diagnostic only). The binary records `write_replay_check = false`; the inspector marks it and the runtime warns when it opens it. | `write_replay_check_enabled` (`src/Preprocessing/configuration.jl`) |
 
-## Deprecated
+## Removed
 
-These still work for one release and warn when used.
+These were replaced by configuration keys and are now ignored.
 
 | Variable | Replacement |
 |---|---|
-| `ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS` (**changes results**) | `[run] physics_cadence = "substep"` |
+| `ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS` | `[run] physics_cadence = "substep"` |
 | `ATMOSTR_REPLAY_CHECK` | `[input] validate_replay = true` |
-| `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE` (preprocessor, **changes results**) | `[numerics] balance_mode = "per_layer"` |
-
-`ATMOSTR_NO_REPLAY_CHECK` was removed: it can no longer suppress a load-time
-replay check requested by `[input] validate_replay`, the driver's
-`validate_replay` keyword or the deprecated `ATMOSTR_REPLAY_CHECK`.
+| `ATMOSTR_NO_REPLAY_CHECK` | none: the load-time replay check runs only when requested |
+| `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE` | `[numerics] balance_mode = "per_layer"` |
 
 ## Command-line runner
 

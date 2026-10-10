@@ -77,8 +77,7 @@ not sort entries or validate date continuity; provide them chronologically.
   opened: the stored fluxes must carry each window's air mass to the next
   within `replay_tolerance` (1e-10 relative in Float64, 1e-4 in Float32). Off
   by default (it doubles binary load time); the preprocessor already checks
-  every binary it writes. Use it for binaries of unknown origin. It replaces
-  the environment variable `ATMOSTR_REPLAY_CHECK`.
+  every binary it writes. Use it for binaries of unknown origin.
 - `expected_nlevel`, `required_preprocessor_contract` and
   `require_adaptive_substeps` reject a first binary whose header differs.
 
@@ -716,10 +715,7 @@ balance_mode = "column"      # default on lat-lon and cubed-sphere paths
 The mode is recorded in every transport-binary header as
 `horizontal_balance` (for GEOS, the balance its `geos_cm_closure` applies:
 `"none"` for the pressure-fixer closures, `"column"` for the moisture-filtered
-and OMEGA closures). `geos_balance_mode` is accepted as an older name. The
-environment variable `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1`, which used
-to select per-layer balance on every path except GEOS, still does so on those
-paths when the key is absent, with a deprecation warning.
+and OMEGA closures). `geos_balance_mode` is accepted as an older name.
 
 #### `geos_cm_closure` — GEOS native CS vertical-flux closure
 

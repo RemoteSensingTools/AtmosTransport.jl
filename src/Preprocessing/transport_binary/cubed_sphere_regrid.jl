@@ -100,8 +100,7 @@ face fluxes are reconstructed with the output scaling.
   leave this at `false` so the final CS window is closed against an explicit
   endpoint target instead of an inferred zero-tendency fallback.
 - `horizontal_balance = nothing` — `ColumnBalance()` (the default for
-  `nothing`) or `LayerBalance()`; see `effective_horizontal_balance`
-  for the deprecated environment fallback. Recorded in the header.
+  `nothing`) or `LayerBalance()`. Recorded in the header.
 - `write_replay_check::Bool = write_replay_check_enabled()` — run the write-time
   replay-continuity gate (default on unless `ATMOSTR_NO_WRITE_REPLAY_CHECK=1`).
   `false` is a diagnostic escape hatch; the output header then records

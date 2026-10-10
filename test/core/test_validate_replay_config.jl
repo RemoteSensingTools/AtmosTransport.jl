@@ -1,5 +1,5 @@
 # `[input] validate_replay = true` replays every binary's continuity when the
-# run opens it; it replaces the environment variable ATMOSTR_REPLAY_CHECK.
+# run opens it (the removed environment variables no longer act).
 using Test
 using AtmosTransport
 using Logging
@@ -79,17 +79,14 @@ end
             validate_config(config(Dict{String, Any}("validate_replay" => "yes")))
         end
         @test !ok && any(contains("[input].validate_replay"), errors)
-        # The deprecated environment variable still enables the check, with a warning.
+        # The removed environment variable no longer enables the check.
         withenv("ATMOSTR_REPLAY_CHECK" => "1") do
-            @test_logs (:warn, r"ATMOSTR_REPLAY_CHECK=1 is deprecated") match_mode = :any begin
-                @test_throws ArgumentError TransportBinaryDriver(path; FT = Float64, arch = CPU(), Hp = 1)
+            driver = TransportBinaryDriver(path; FT = Float64, arch = CPU(), Hp = 1)
+            try
+                @test driver isa TransportBinaryDriver
+            finally
+                close(driver)
             end
-        end
-        driver = TransportBinaryDriver(path; FT = Float64, arch = CPU(), Hp = 1)
-        try
-            @test driver isa TransportBinaryDriver
-        finally
-            close(driver)
         end
         # The removed ATMOSTR_NO_REPLAY_CHECK no longer bypasses a requested check.
         withenv("ATMOSTR_NO_REPLAY_CHECK" => "1") do

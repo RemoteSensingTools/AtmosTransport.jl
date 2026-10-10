@@ -265,25 +265,14 @@ _clock_time(sim::DrivenSimulation) = sim.start_time + Float64(sim.window_dt) *
 @inline _uses_binary_transport_schedule(sim::DrivenSimulation) =
     _binary_window_contract(sim) && !sim.physics_every_substep
 
-# `physics_cadence` (`:window`, `:substep` or `nothing`), resolved once. Without
-# a value, the deprecated `ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS=1` still selects
-# `:substep`, with a warning.
+# `physics_cadence` (`:window`, `:substep` or `nothing` for `:window`).
 const _PHYSICS_CADENCES = (:window, :substep)
 
 function _resolve_physics_cadence(physics_cadence)
-    from_env = get(ENV, "ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS", "0") == "1"
-    if physics_cadence === nothing
-        from_env || return :window
-        @warn "ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS=1 is deprecated and will be removed; " *
-              "set [run] physics_cadence = \"substep\"." maxlog = 1
-        return :substep
-    end
+    physics_cadence === nothing && return :window
     cadence = Symbol(physics_cadence)
     cadence in _PHYSICS_CADENCES || throw(ArgumentError(
         "physics_cadence must be :window or :substep; got $(repr(physics_cadence))"))
-    from_env && cadence === :window && throw(ArgumentError(
-        "ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS=1 conflicts with physics_cadence = :window; " *
-        "remove the environment variable"))
     return cadence
 end
 

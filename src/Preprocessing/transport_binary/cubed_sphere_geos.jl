@@ -485,8 +485,8 @@ function process_day(date::Date,
         seed_m = seed_m,
         global_mass_pin = global_mass_pin,
         global_mass_target_kg = global_mass_target_kg,
-        balance_mode = effective_horizontal_balance(horizontal_balance, ColumnBalance();
-                                                    env = false) isa LayerBalance ? :per_layer : :column,
+        balance_mode = effective_horizontal_balance(horizontal_balance, ColumnBalance()) isa
+                       LayerBalance ? :per_layer : :column,
         cm_closure = cm_closure,
         smooth_iters = smooth_iters,
         omega_regularization = omega_regularization,
