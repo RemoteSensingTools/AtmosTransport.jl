@@ -231,6 +231,16 @@
 - `[output.fields].tracers = "name"` (a single string) no longer throws a
   `MethodError`; it selects that one tracer as documented.
 
+- Scripts cleanup: 161 stale scripts were removed (git history keeps them;
+  recover one with `git show 7c515038:<path>`) and 58 were moved into a
+  `heritage/` subfolder of their folder, kept for reference but not
+  maintained or tested. The deprecated runner shims
+  `scripts/deprecated/run_cs_driven.jl`, `run_transport_binary.jl` and
+  `run_cs_transport.jl` are gone; use `scripts/run_transport.jl`.
+  `scripts/completed_experiments/` and `scripts/deprecated/` no longer exist.
+  `scripts/README.md` lists every removed script with its purpose, and each
+  `heritage/README.md` says why its scripts are kept.
+
 ### Surface fluxes and preprocessing
 
 - ERA5 N320 preprocessing is about five times faster: a C90 day takes about 7

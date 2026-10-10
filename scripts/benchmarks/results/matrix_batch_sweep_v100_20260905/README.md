@@ -18,7 +18,7 @@ CUDA_VISIBLE_DEVICES=0 ATMOSTR_MATRIX_GPU_NAME=V100 \
 ATMOSTR_MATRIX_BENCH_LEVELS=60,66,85 \
 ATMOSTR_MATRIX_BENCH_TRACERS=6,16,24,31,32,33,48,65 \
 ATMOSTR_MATRIX_BENCH_COLUMNS=4096 \
-julia --project=. scripts/benchmarks/bench_matrix_convection_gpu.jl results.toml native
+julia --project=. scripts/benchmarks/heritage/bench_matrix_convection_gpu.jl results.toml native
 ```
 
 Choose a separate output path for each variant and set

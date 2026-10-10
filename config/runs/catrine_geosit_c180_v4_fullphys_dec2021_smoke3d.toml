@@ -12,11 +12,11 @@
 #       config/runs/catrine_geosit_c180_v4_fullphys_dec2021_smoke3d.toml
 #
 # Comparison:
-#   julia --project=. scripts/diagnostics/compare_at_vs_geoschem_c180.jl \
-#       --at ~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_dec2021_smoke3d.nc \
-#       --gc ~/data/AtmosTransport/catrine-geoschem-runs \
-#       --out ~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_dec2021_smoke3d_metrics.nc \
-#       --plots ~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_dec2021_smoke3d_plots
+#   python3 scripts/diagnostics/catrine_compare_vs_geoschem.py \
+#       --gc-dir ~/data/AtmosTransport/catrine-geoschem-runs/C180 \
+#       --dataset 'smoke3d=~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_gchp_dec2021_smoke3d.nc' \
+#       --start 2021-12-01T03:00 --end 2021-12-03T21:00 \
+#       --out ~/data/AtmosTransport/output/catrine_geosit_c180_v4_fullphys_dec2021_smoke3d_compare
 # ===========================================================================
 
 [architecture]

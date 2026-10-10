@@ -2,7 +2,8 @@
 # CATRINE D7.1 — 8-day validation run for GeosChem comparison
 #
 # Same physics as catrine_geosit_c180.toml but limited to Dec 1-8, 2021.
-# Output pattern matches animate_catrine_vs_geoschem.jl expectations.
+# Output pattern matched animate_catrine_vs_geoschem.jl, which has been retired
+# (recover it from commit 7c515038).
 # ===========================================================================
 
 [architecture]

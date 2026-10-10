@@ -1,5 +1,7 @@
 # Reuse private cubed-sphere initialization buffers
 
+> The reproducer scripts `check_outputs.jl`, `initialization.jl` and `profile.jl` were retired from the tree; recover with `git show 7c515038:scripts/benchmarks/results/main_initial_reuse_20260906/<file>`.
+
 The driven runner now reuses one tuple of interior VMR arrays between analytic
 initializers, then copies each result into its independent packed state slot.
 The public allocating builder still owns fresh arrays. Native/file builders

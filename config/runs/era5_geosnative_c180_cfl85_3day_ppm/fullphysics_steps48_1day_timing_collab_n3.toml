@@ -49,7 +49,7 @@ use_collab_lu = true
 n_merge = 3
 # `lmax_conv = 75` on this L85 binary preserves every observed
 # convective column bit-exact (scan in
-# scripts/diagnostics/per_column_depth_histogram.jl shows the
+# scripts/diagnostics/heritage/per_column_depth_histogram.jl shows the
 # deepest reach is k = 11 of 85 across all 24 windows; lmax_conv =
 # Nz − 11 + 1 = 75 keeps even the rare stratospheric overshoots).
 # Drops only the top 10 layers, which are guaranteed identity.

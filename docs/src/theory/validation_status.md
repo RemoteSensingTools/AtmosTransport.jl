@@ -141,7 +141,7 @@ The following work is on the roadmap but **not yet done**:
 
 | Gap | Why it matters | Status |
 |---|---|---|
-| **GCHP parity for full-physics CS runs** | The CMFMC convection and ImplicitVerticalDiffusion operators are independently unit-tested but a full multi-day GCHP-vs-AtmosTransport intercomparison on identical met forcing has not been published. | run scripts exist (`scripts/diagnostics/compare_*` family) but no committed parity report |
+| **GCHP parity for full-physics CS runs** | The CMFMC convection and ImplicitVerticalDiffusion operators are independently unit-tested but a full multi-day GCHP-vs-AtmosTransport intercomparison on identical met forcing has not been published. | comparison script exists (`scripts/diagnostics/catrine_compare_vs_geoschem.py`) but no committed parity report |
 | **CATRINE D7.1 intercomparison** | The European CATRINE protocol is the natural validation target (4 tracers: CO2, fossil CO2, SF6, 222Rn; full-physics; multi-month). The configs (`config/runs/catrine_*.toml`) exist and the runtime can produce the output, but no maintained end-to-end CATRINE smoke test, full multi-month regression, or published comparison memo exists. | protocol configs only; end-to-end regression not wired |
 | **Observational closure** | Comparison of model output (column CO2, surface SF6 etc.) against an observational network (NOAA in-situ + TCCON / OCO satellite) | not started |
 | **Multi-month GPU production runs** | The V100 experiment above covers 31 days of one forcing archive with standard PPM; CI has no multi-week real-data GPU regression. | multi-month and controlled A100 scheme comparisons deferred |
@@ -175,8 +175,8 @@ If you are doing:
 - **CO2 intercomparison studies that need GCHP-equivalent fidelity** →
   the underlying operators are TM5-faithful or GCHP-style; the
   end-to-end intercomparison report has not been written. Run a
-  side-by-side and compare yourself; the run scripts in
-  `scripts/diagnostics/compare_*` are the starting point.
+  side-by-side and compare yourself;
+  `scripts/diagnostics/catrine_compare_vs_geoschem.py` is the starting point.
 - **Inverse modelling that needs an adjoint** → the adjoint and
   4D-Var stack ship on CS. See [Adjoint status](@ref) for the supported
   scheme matrix and the remaining gaps (optimized/clamped convection

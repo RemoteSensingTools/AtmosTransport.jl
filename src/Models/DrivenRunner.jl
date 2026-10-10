@@ -6,8 +6,7 @@ Library-level entry point for the driven transport runtime.
 The canonical CLI, `scripts/run_transport.jl`, is a thin wrapper over
 `run_driven_simulation(cfg)`. The library function handles LL/RG and CS
 runtime flows with dispatch driven by the first binary's header
-(`inspect_binary(first_path).grid_type`). Historical runner names live under
-`scripts/deprecated/` only for reference.
+(`inspect_binary(first_path).grid_type`).
 
 ## Ownership boundary
 

@@ -1,5 +1,7 @@
 # Release review follow-up, 2026-09-06
 
+> The reproducer scripts `benchmark-smoke.jl` and `hdf5-compat.jl` were retired from the tree; recover with `git show 7c515038:scripts/benchmarks/results/main_release_output_review_20260906/<file>`.
+
 This follows commit `74ae835a36d4d09f8f55afbdf0ee97be1c988a4e`, which repaired
 Lin-Rood GPU recording and reverse propagation. The prior
 [adjoint evidence](../main_release_adjoint_v100_20260906/README.md) retains the

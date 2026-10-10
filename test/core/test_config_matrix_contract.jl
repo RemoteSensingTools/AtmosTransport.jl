@@ -4,7 +4,8 @@
 # The active config tree is part of the source/topology dispatch surface. Files
 # under `likely_legacy/` or `completed_experiments/` may preserve historical
 # schemas, but active configs must point at the canonical preprocessing/runtime
-# entrypoints and carry enough TOML structure for the unified drivers.
+# entrypoints, carry enough TOML structure for the unified drivers, and cite
+# only scripts that exist.
 
 using Test
 using TOML
@@ -46,6 +47,8 @@ const STALE_ACTIVE_SCRIPT_REFS = (
     "scripts/run.jl",
     "scripts/run_transport_binary.jl",
     "scripts/run_cs_driven.jl",
+    "scripts/deprecated/",              # retired runner shims
+    "scripts/completed_experiments/",   # dissolved; scripts retired or under heritage/
     "scripts/preprocess_spectral_massflux.jl",
     "scripts/preprocessing/preprocess_spectral_massflux.jl",
     "scripts/preprocessing/preprocess_geos_transport_binary.jl",
@@ -104,6 +107,24 @@ end
         text = read(joinpath(REPO_ROOT, rel), String)
         stale = [ref for ref in STALE_ACTIVE_SCRIPT_REFS if occursin(ref, text)]
         isempty(stale) || push!(bad, "$(rel): stale script refs $(join(stale, ", "))")
+    end
+    @test isempty(bad)
+end
+
+# Script paths cited in active configs (recipes, provenance, comparison
+# commands) must resolve, so moving or retiring a script also updates the
+# configs that name it.
+@testset "active configs cite existing scripts" begin
+    script_ref = r"scripts/[A-Za-z0-9_./-]+\.(?:jl|py|sh)"
+    bad = String[]
+    for rel in vcat(_active_tomls("config/preprocessing"),
+                    _active_tomls("config/runs"; skip_completed = true))
+        for line in eachline(joinpath(REPO_ROOT, rel))
+            for m in eachmatch(script_ref, line)
+                isfile(joinpath(REPO_ROOT, m.match)) ||
+                    push!(bad, "$(rel): missing $(m.match)")
+            end
+        end
     end
     @test isempty(bad)
 end

@@ -50,7 +50,7 @@ julia --project=. scripts/downloads/download_data.jl \
     config/downloads/geosit_c180.toml --verify
 ```
 
-## Legacy scripts
+## Heritage scripts
 
-Individual download scripts have been moved to `legacy/` and are retained
-for reference only. They will eventually be removed.
+`download_era5_surface_netcdf.py` (monthly CDS surface NetCDF) is kept for
+reference in [`heritage/`](heritage/README.md); it is not maintained.

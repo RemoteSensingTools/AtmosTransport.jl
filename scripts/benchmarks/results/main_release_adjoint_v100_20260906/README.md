@@ -1,5 +1,7 @@
 # Release adjoint checks, 2026-09-06
 
+> The reproducer scripts `fresh-resolve.jl`, `gpu-checks.jl` and `gpu-transport.jl` were retired from the tree; recover with `git show 7c515038:scripts/benchmarks/results/main_release_adjoint_v100_20260906/<file>`.
+
 The resumed release check starts from source commit
 `1a89772e970d7df04394832669b32c28f9f0c283` (AtmosTransport 0.3.0).
 The local release fix changes `test/Project.toml`'s AtmosTransport compatibility

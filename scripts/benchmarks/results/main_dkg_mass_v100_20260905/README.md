@@ -1,5 +1,7 @@
 # Conservative precomputed Dkg diffusion
 
+> The reproducer scripts `ablation.jl`, `check_outputs.jl`, `check_profile_outputs.jl`, `check_totals.jl`, `column_probe.jl`, `factorization_probe.jl`, `full_day.jl`, `production_columns.jl`, `profile.jl` and `weak_exchange.jl` were retired from the tree; recover with `git show 7c515038:scripts/benchmarks/results/main_dkg_mass_v100_20260905/<file>`.
+
 Solving the implicit diffusion equation directly in tracer mass reduces the
 remaining Float32 drift after paired advection seams. It preserves weak physical
 transfers and uses no normalization of column or global totals. The

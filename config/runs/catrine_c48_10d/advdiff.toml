@@ -42,11 +42,8 @@ kind = "catrine_co2"
 kind = "uniform"
 background = 0.0
 
-# Kz schema supported by run_cs_driven.jl today:
-#   kind = "constant" | "none"
-# Future kinds (ProfileKzField / PreComputedKzField / DerivedKzField /
-# StepwiseField) will need their own per-kind TOML blocks — see
-# src/State/Fields/ for the field hierarchy.
+# Constant background Kz. The other `[diffusion] kind` values are listed in
+# docs/src/config/toml_schema.md.
 [diffusion]
 kind  = "constant"
 value = 1.0             # m² s⁻¹ — uniform background Kz

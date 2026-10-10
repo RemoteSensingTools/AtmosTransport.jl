@@ -1,5 +1,7 @@
 # Pressure-layer initialization: concrete configuration scalars
 
+> The reproducer scripts `compare.jl`, `equivalence.jl`, `initialization_probe.jl` and `profile.jl` were retired from the tree; recover with `git show 7c515038:scripts/benchmarks/results/main_pressure_init_v100_20260905/<file>`.
+
 The pressure-layer initializer now asserts the types of the already converted
 `psurf_fraction` and `total_molecules` before its column loops. Julia 1.12.6
 previously inferred both as `Any` when loaded from `Dict{String,Any}`. That also
