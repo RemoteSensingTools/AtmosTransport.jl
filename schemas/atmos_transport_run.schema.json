@@ -1,42 +1,43 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "AtmosTransport runtime configuration",
-  "description": "Editor schema for TOML files consumed by scripts/run_transport.jl. Topology- and binary-capability checks are performed by the Julia runtime.",
+  "description": "Editor schema (Taplo, see .taplo.toml) for the run configs read by scripts/run_transport.jl (config/runs, config/examples). Unknown keys are errors, as in validate_config; topology and binary-capability checks happen in the Julia runtime. test/core/test_config_schema_agreement.jl keeps the keys and choices equal to the parsers'.",
   "type": "object",
   "required": ["input"],
-  "additionalProperties": true,
+  "additionalProperties": false,
   "properties": {
     "input": {
       "description": "Transport binaries to replay. Choose an explicit list or a folder with an inclusive date range.",
       "oneOf": [
+        {"required": ["binary_paths"], "not": {"required": ["folder"]}},
         {
-          "type": "object",
-          "required": ["binary_paths"],
-          "properties": {
-            "binary_paths": {
-              "type": "array",
-              "minItems": 1,
-              "items": {"type": "string"}
-            }
-          },
-          "not": {"required": ["folder"]}
-        },
-        {
-          "type": "object",
           "required": ["folder", "start_date", "end_date"],
-          "properties": {
-            "folder": {"type": "string"},
-            "start_date": {"$ref": "#/definitions/date"},
-            "end_date": {"$ref": "#/definitions/date"},
-            "file_pattern": {
-              "type": "string",
-              "description": "Optional filename pattern containing exactly one {YYYYMMDD} placeholder."
-            }
-          },
           "not": {"required": ["binary_paths"]}
         }
       ],
       "properties": {
+        "binary_paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string"},
+          "description": "Transport binaries in run order; ~ and $VAR are expanded. The list is not sorted or checked for date gaps, so give it chronologically."
+        },
+        "folder": {
+          "type": "string",
+          "description": "Directory scanned for transport binaries: a file is used when its name carries an 8-digit YYYYMMDD date (or matches file_pattern) within [start_date, end_date]. Every day in the range needs exactly one file; files are read in date order."
+        },
+        "start_date": {
+          "allOf": [{"$ref": "#/definitions/date"}],
+          "description": "First day of the run (inclusive). 00:00 UTC of this day is taken as the start of window 1 and is the time origin of time-varying surface fluxes and observation sampling."
+        },
+        "end_date": {
+          "allOf": [{"$ref": "#/definitions/date"}],
+          "description": "Last day of the run (inclusive). Time-varying surface fluxes are loaded through the end of this day or the last binary window, whichever is later."
+        },
+        "file_pattern": {
+          "type": "string",
+          "description": "Optional filename pattern containing exactly one {YYYYMMDD} placeholder."
+        },
         "require_adaptive_substeps": {
           "type": "boolean",
           "default": false,
@@ -57,11 +58,13 @@
           "description": "Reject a first binary whose header preprocessor_contract differs."
         },
         "staging": {"$ref": "#/definitions/staging"}
-      }
+      },
+      "type": "object",
+      "additionalProperties": false
     },
     "architecture": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "use_gpu": {
           "type": "boolean",
@@ -73,11 +76,12 @@
           "enum": ["cpu", "auto", "cuda", "metal"],
           "description": "Compute backend. Metal requires Float32 numerics."
         }
-      }
+      },
+      "description": "Compute backend. scripts/run_transport.jl loads the matching GPU package before AtmosTransport."
     },
     "numerics": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "float_type": {
           "type": "string",
@@ -85,19 +89,30 @@
           "default": "Float64",
           "description": "Floating-point type used by the runtime state."
         }
-      }
+      },
+      "description": "Floating-point precision of the runtime state."
     },
     "run": {
       "type": "object",
       "description": "Window bounds and state-reanchoring controls. Put advection options in [advection].",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
-        "start_window": {"type": "integer", "minimum": 1, "default": 1},
-        "stop_window": {"type": "integer", "minimum": 1},
+        "start_window": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "First met window to run, a 1-based index within each binary. Runs over several binaries and cubed-sphere runs require 1."
+        },
+        "stop_window": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Last met window to run (inclusive), indexed within each binary; default the binary's last window. Runs over several binaries must cover every window, so set it only for single-binary tests."
+        },
         "air_mass_reset_mode": {
           "type": "string",
           "enum": ["none", "preserve_vmr", "preserve_tracer_mass"],
-          "default": "preserve_tracer_mass"
+          "default": "preserve_tracer_mass",
+          "description": "At each new met window, replace the model air mass with the binary's: preserve_tracer_mass keeps tracer masses (exact tracer conservation), preserve_vmr rescales tracer masses to keep mixing ratios, none lets the air mass evolve from the stored fluxes alone."
         },
         "physics_cadence": {
           "type": "string",
@@ -128,22 +143,43 @@
           "not": {},
           "deprecated": true,
           "description": "Removed; use run.air_mass_reset_mode."
+        },
+        "scheme": {
+          "allOf": [{"$ref": "#/properties/advection/properties/scheme"}],
+          "deprecated": true,
+          "description": "Legacy location of [advection] scheme, read only when [advection] is absent (an error next to it)."
+        },
+        "ppm_order": {
+          "allOf": [{"$ref": "#/properties/advection/properties/ppm_order"}],
+          "deprecated": true,
+          "description": "Legacy location of [advection] ppm_order, read only when [advection] is absent (an error next to it)."
+        },
+        "vertical": {
+          "allOf": [{"$ref": "#/properties/advection/properties/vertical"}],
+          "deprecated": true,
+          "description": "Legacy location of [advection] vertical, read only when [advection] is absent (an error next to it)."
+        },
+        "limiter": {
+          "allOf": [{"$ref": "#/properties/advection/properties/limiter"}],
+          "deprecated": true,
+          "description": "Legacy location of [advection] limiter, read only when [advection] is absent (an error next to it)."
         }
       }
     },
     "advection": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "scheme": {
           "type": "string",
           "enum": ["upwind", "slopes", "ppm", "linrood", "none"],
-          "default": "upwind"
+          "default": "upwind",
+          "description": "upwind: first-order donor cell (the only scheme besides none on reduced-Gaussian grids); slopes: second-order Russell-Lerner slopes; ppm: limited Colella-Woodward (PPM) edges set a second-order Russell-Lerner slope, and with limiter = \"cw84\" the flux integrates the limited parabola (the complete Colella-Woodward scheme); linrood: cubed-sphere Lin-Rood PPM with FV3 cross terms; none: no advection (surface fluxes are then rejected)."
         },
         "ppm_order": {
           "type": "integer",
           "enum": [5, 7],
-          "description": "Cubed-sphere Lin-Rood reconstruction order; valid only with scheme = \"linrood\"."
+          "description": "scheme = \"linrood\" only (cubed sphere): 5 (default) or 7 selects the boundary stencil of the PPM reconstruction at cross-panel faces; the in-panel reconstruction is the same FV3 PPM. An error with other schemes."
         },
         "vertical": {
           "type": "string",
@@ -161,23 +197,18 @@
           "default": false,
           "description": "Cubed sphere, scheme = upwind, slopes or ppm: recompute the CFL subcycle count at every step and stop if the binary's substep schedule asks for fewer (slower; for binaries of unknown origin)."
         }
-      }
+      },
+      "description": "Advection scheme and its options. Without this table the legacy [run] keys scheme, ppm_order, vertical and limiter are read; next to it they are an error."
     },
     "diffusion": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "kind": {
           "type": "string",
-          "enum": [
-            "none",
-            "constant",
-            "tm5_beljaars_viterbo_local_kz",
-            "geoschem_holtslag_boville_vdiff",
-            "geoschem_nonlocal_vdiff",
-            "tm5_dkg"
-          ],
-          "default": "none"
+          "enum": ["none", "constant", "tm5_beljaars_viterbo_local_kz", "geoschem_holtslag_boville_vdiff", "geoschem_nonlocal_vdiff", "tm5_dkg"],
+          "default": "none",
+          "description": "none; constant (uniform Kz from value); tm5_beljaars_viterbo_local_kz (TM5 local Kz from the binary's pblh, ustar, pbl_hflux, t2m); geoschem_holtslag_boville_vdiff (GEOS-Chem local Kz, also needs the VDIFF sections); geoschem_nonlocal_vdiff (GEOS-Chem non-local PBL mixing with counter-gradient transport, also needs pbl_eflux); tm5_dkg (TM5 interface exchange stored as :dkg). All kinds except none and constant are cubed-sphere only and need those binary sections."
         },
         "value": {
           "type": "number",
@@ -193,16 +224,18 @@
           "deprecated": true,
           "description": "Legacy selector: rejected without kind, ignored next to it. Use kind."
         }
-      }
+      },
+      "description": "Vertical (boundary-layer) diffusion. An absent or empty table means no diffusion; otherwise kind is required."
     },
     "convection": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "kind": {
           "type": "string",
           "enum": ["none", "tm5", "cmfmc", "cmfmc_matrix"],
-          "default": "none"
+          "default": "none",
+          "description": "none; cmfmc: GEOS-Chem-style explicit mass-flux scheme from the binary's CMFMC and optional DTRAIN; cmfmc_matrix: the same GEOS rates through the TM5 implicit LU solver; tm5: TM5 (Tiedtke 1989) entrainment/detrainment fields entu, detu, entd, detd with an implicit column solve."
         },
         "clamp": {
           "type": "boolean",
@@ -215,39 +248,68 @@
           "default": "cmfmc",
           "description": "Convective cloud base of kind = \"cmfmc\": the CMFMC edge, or the archived DQRCU level."
         },
-        "tile_workspace_gib": {"type": "number", "exclusiveMinimum": 0, "default": 1.0},
-        "use_collab_lu": {"type": "boolean", "default": false},
-        "lmax_conv": {"type": "integer", "minimum": 0, "default": 0},
-        "n_merge": {"type": "integer", "minimum": 1, "default": 1}
-      }
+        "tile_workspace_gib": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 1.0,
+          "description": "kind = \"tm5\" or \"cmfmc_matrix\": memory budget in GiB of the legacy column-tile workspace; a larger budget means fewer kernel launches. The collaborative GPU solver allocates it only when it falls back to the legacy solver."
+        },
+        "use_collab_lu": {
+          "type": "boolean",
+          "default": false,
+          "description": "kind = \"tm5\" or \"cmfmc_matrix\": request the GPU solver with one workgroup per column and the LU factors in shared memory. CPU runs and unsupported Float64 configurations fall back to the legacy full-column solver with a warning; cubed-sphere adjoint runs require false."
+        },
+        "lmax_conv": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "kind = \"tm5\" or \"cmfmc_matrix\" with use_collab_lu = true: 0 solves the full column; a positive value restricts the convective solve to that many lowest levels. Check the retained depth against the forcing's cloud tops."
+        },
+        "n_merge": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "kind = \"tm5\" or \"cmfmc_matrix\" with use_collab_lu = true: 1 solves on model levels; a larger value merges that many adjacent layers per super-layer, an approximation that changes vertical mixing and drops up to n_merge-1 top layers of the active depth."
+        }
+      },
+      "description": "Convective transport, applied after advection and diffusion (cadence: run.physics_cadence). The binary must carry the forcing the chosen kind reads."
     },
     "chemistry": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
-        "kind": {"type": "string", "enum": ["none", "decay"], "default": "none"},
+        "kind": {
+          "type": "string",
+          "enum": ["none", "decay"],
+          "default": "none",
+          "description": "none, or decay: first-order exponential decay of each tracer listed in half_lives_seconds (for example Rn-222). decay without half-lives does nothing."
+        },
         "half_lives_seconds": {
           "type": "object",
           "description": "Positive first-order half-life keyed by tracer name.",
           "additionalProperties": {"type": "number", "exclusiveMinimum": 0}
         }
-      }
+      },
+      "description": "Chemistry, applied after advection, diffusion and convection."
     },
     "tracers": {
       "type": "object",
-      "description": "Tracer definitions keyed by the output tracer name.",
+      "description": "Tracer definitions keyed by the output tracer name. Write the initial condition and the surface flux as [tracers.<name>.init] and [tracers.<name>.surface_flux] tables.",
       "minProperties": 1,
       "additionalProperties": {"$ref": "#/definitions/tracer"}
     },
-    "output": {"$ref": "#/definitions/output"},
+    "output": {
+      "allOf": [{"$ref": "#/definitions/output"}],
+      "description": "Gridded snapshot output (NetCDF or ATMSNAP binaries) and observation sampling."
+    },
     "init": {
-      "$ref": "#/definitions/initial_condition",
+      "allOf": [{"$ref": "#/definitions/initial_condition"}],
       "description": "Legacy single-tracer initial condition, used only when [tracers] is absent on structured grids."
     },
     "logging": {
       "type": "object",
       "description": "How much the run reports.",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "level": {
           "type": "string",
@@ -260,134 +322,303 @@
           "default": "bar",
           "description": "Progress over met windows: a redrawn bar (terminals), one log line every progress_interval_windows windows (batch logs), or none."
         },
-        "progress_interval_windows": {"type": "integer", "minimum": 1, "default": 24}
+        "progress_interval_windows": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 24,
+          "description": "progress = \"lines\" only: met windows between progress log lines, counted over the whole run; a line is also written after the last window."
+        }
       }
     },
     "checks": {
       "type": "object",
       "description": "Runtime checks of the model state.",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "nan_check": {
           "type": "boolean",
           "default": true,
           "description": "Stop the run with an error when the air mass or a tracer holds a NaN or Inf."
         },
-        "nan_check_interval_windows": {"type": "integer", "minimum": 1, "default": 1}
+        "nan_check_interval_windows": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "Check the air mass and tracers for NaN or Inf after every n-th met window, counted over the whole run (across input files); 1 checks every window."
+        }
       }
     }
   },
   "definitions": {
     "date": {
       "type": "string",
-      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "Calendar date, YYYY-MM-DD."
     },
     "staging": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
-        "enabled": {"type": "boolean", "default": false},
-        "dir": {"type": "string", "description": "Local staging directory; required when staging is enabled."},
-        "lookahead_days": {"type": "integer", "minimum": 0, "default": 2},
-        "keep_behind_days": {"type": "integer", "minimum": 0, "default": 0},
-        "cleanup_on_exit": {"type": "boolean", "default": true}
-      }
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Copy upcoming binaries into dir on a background task and read the copies. A failed copy, or a directory owned by another run, falls back to the source path; false reads the source paths directly."
+        },
+        "dir": {
+          "type": "string",
+          "description": "Local staging directory; required when staging is enabled."
+        },
+        "lookahead_days": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 2,
+          "description": "Number of binaries after the current one to copy in advance."
+        },
+        "keep_behind_days": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Number of already processed binaries kept in dir before they are removed."
+        },
+        "cleanup_on_exit": {
+          "type": "boolean",
+          "default": true,
+          "description": "Remove this run's staged copies when the run ends. With false, a later run reuses a copy whose recorded source path, size, timestamps and inode still match."
+        }
+      },
+      "description": "Rolling copy of upcoming input binaries to fast local disk while the run reads them, bounding local use to lookahead_days + 1 + keep_behind_days files. Must be a table even when disabled."
     },
     "tracer": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
-        "init": {"$ref": "#/definitions/initial_condition"},
-        "surface_flux": {"$ref": "#/definitions/surface_flux"}
-      }
+        "init": {
+          "allOf": [{"$ref": "#/definitions/initial_condition"}],
+          "description": "Initial condition. Without an init table (or flat init keys in this table) the tracer starts at zero."
+        },
+        "surface_flux": {
+          "allOf": [{"$ref": "#/definitions/surface_flux"}],
+          "description": "Surface emission or uptake, added to the lowest model layer. Omit it, or set kind = \"none\", for no flux."
+        }
+      },
+      "description": "One transported tracer; the table name is the tracer name in the output (for example co2 writes co2, co2_column_mean, ...)."
     },
     "initial_condition": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "kind": {
           "type": "string",
-          "enum": [
-            "uniform",
-            "latitude_step",
-            "lat_step",
-            "hemisphere_step",
-            "bl_enhanced",
-            "gaussian_blob",
-            "file",
-            "netcdf",
-            "file_field",
-            "catrine_co2",
-            "pressure_layer",
-            "cs_native"
-          ],
-          "default": "uniform"
+          "enum": ["uniform", "latitude_step", "lat_step", "hemisphere_step", "bl_enhanced", "gaussian_blob", "file", "netcdf", "file_field", "catrine_co2", "pressure_layer", "cs_native"],
+          "default": "uniform",
+          "description": "uniform: background everywhere; latitude_step (alias lat_step, hemisphere_step): south_value and north_value split at split_lat_deg; bl_enhanced: background plus enhancement in the lowest n_layers (lat-lon only); gaussian_blob: background plus a horizontal Gaussian, equal at all levels; file (alias netcdf, file_field): a lon-lat NetCDF field interpolated to the grid; catrine_co2: file with the CATRINE startCO2 defaults; pressure_layer: one layer per column normalised to total_molecules (cubed sphere); cs_native: a field already on the binary's cube and levels (cubed sphere)."
         },
-        "background": {"type": "number"},
-        "enhancement": {"type": "number"},
-        "n_layers": {"type": "integer", "minimum": 1},
-        "south_value": {"type": "number"},
-        "north_value": {"type": "number"},
+        "background": {
+          "type": "number",
+          "description": "Dry VMR (mol/mol), default 4.0e-4: the value of uniform, the base of bl_enhanced and gaussian_blob, and the south value of latitude_step when south_value is absent."
+        },
+        "enhancement": {
+          "type": "number",
+          "description": "bl_enhanced: dry VMR (mol/mol) added to background in the lowest n_layers model layers; default 1.0e-4."
+        },
+        "n_layers": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "bl_enhanced: number of lowest model layers that receive enhancement; default 3, at most the number of levels."
+        },
+        "south_value": {
+          "type": "number",
+          "description": "latitude_step: dry VMR (mol/mol) of cells south of split_lat_deg; default background, else 4.0e-4."
+        },
+        "north_value": {
+          "type": "number",
+          "description": "latitude_step: dry VMR (mol/mol) of cells at or north of split_lat_deg; default 4.4e-4."
+        },
         "south": {"type": "number", "deprecated": true, "description": "Alias for south_value."},
         "north": {"type": "number", "deprecated": true, "description": "Alias for north_value."},
-        "split_lat_deg": {"type": "number", "minimum": -90, "maximum": 90},
-        "lon0_deg": {"type": "number"},
-        "lat0_deg": {"type": "number", "minimum": -90, "maximum": 90},
-        "sigma_lon_deg": {"type": "number", "exclusiveMinimum": 0},
-        "sigma_lat_deg": {"type": "number", "exclusiveMinimum": 0},
-        "amplitude": {"type": "number"},
-        "file": {"type": "string"},
-        "variable": {"type": "string"},
-        "time_index": {"type": "integer", "minimum": 1},
-        "vertical_order": {"type": "string", "enum": ["surface_first", "toa_first"]},
-        "clamp_negative": {"type": "boolean", "default": false, "description": "cs_native: set negative values to zero."},
-        "lowest_layer": {"type": "boolean", "default": false},
-        "psurf_fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
-        "total_molecules": {"type": "number", "exclusiveMinimum": 0}
-      }
+        "split_lat_deg": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90,
+          "description": "latitude_step: latitude in degrees north where the step lies; cells whose centre is at or north of it get north_value. Default 0."
+        },
+        "lon0_deg": {
+          "type": "number",
+          "description": "gaussian_blob: centre longitude in degrees east; default 0."
+        },
+        "lat0_deg": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90,
+          "description": "gaussian_blob: centre latitude in degrees north; default 0."
+        },
+        "sigma_lon_deg": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "gaussian_blob: standard deviation in degrees of longitude (not scaled by cos(latitude)); default 10."
+        },
+        "sigma_lat_deg": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "gaussian_blob: standard deviation in degrees of latitude; default 10."
+        },
+        "amplitude": {
+          "type": "number",
+          "description": "gaussian_blob: dry VMR (mol/mol) added to background at the centre; default background."
+        },
+        "file": {
+          "type": "string",
+          "description": "NetCDF file of the file kinds (file, netcdf, file_field, catrine_co2) and cs_native; ~ and $VAR are expanded. catrine_co2 defaults to ~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc."
+        },
+        "variable": {
+          "type": "string",
+          "description": "Variable read as dry VMR (mol/mol), without unit conversion. File kinds: a lon-lat-level field, interpolated bilinearly (lat-lon, reduced Gaussian) or conservatively (cubed sphere) and in log pressure when the file has ap, bp and Psurf and another level count; cs_native: (time,) lev, nf, Ydim, Xdim on the binary's cube and levels. catrine_co2 defaults to CO2."
+        },
+        "time_index": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "File kinds and cs_native: 1-based index along the variable's time dimension, used when it has one; default 1."
+        },
+        "vertical_order": {
+          "type": "string",
+          "enum": ["surface_first", "toa_first"],
+          "description": "cs_native: level order in the file. surface_first (default, GEOS-Chem) is flipped to the model's top-first order; toa_first is copied as is."
+        },
+        "clamp_negative": {
+          "type": "boolean",
+          "default": false,
+          "description": "cs_native: set negative values to zero."
+        },
+        "lowest_layer": {
+          "type": "boolean",
+          "default": false,
+          "description": "pressure_layer: true places the tracer in the lowest model layer of every column and ignores psurf_fraction."
+        },
+        "psurf_fraction": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "description": "pressure_layer: each column's tracer goes into the layer whose log-pressure midpoint is nearest psurf_fraction times its surface pressure; default 0.5."
+        },
+        "total_molecules": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "pressure_layer: total number of tracer molecules in the selected layers, reached with one uniform dry VMR; default 1e22. Other layers start at zero."
+        }
+      },
+      "description": "Initial dry volume mixing ratio (mol/mol) of a tracer, built by kind on the binary's grid and converted to tracer mass with the first window's air mass."
     },
     "surface_flux": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "kind": {
           "type": "string",
           "enum": ["none", "file", "cs_native", "lmdz_co2", "gridfed_fossil_co2", "edgar_sf6", "zhang_rn222"],
           "description": "A named source, or \"file\" for a generic NetCDF file."
         },
-        "file": {"type": "string"},
-        "files": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-        "file_pattern": {"type": "string"},
-        "year": {"type": "integer", "minimum": 1900, "maximum": 3000},
-        "variable": {"type": "string"},
-        "time_index": {"type": "integer", "minimum": 1},
-        "month": {"type": "integer", "minimum": 1, "maximum": 12},
-        "scale": {"type": "number"},
-        "molar_mass_kg_mol": {"type": "number", "exclusiveMinimum": 0},
-        "time_varying": {"type": "boolean", "default": false},
+        "file": {
+          "type": "string",
+          "description": "NetCDF file on a regular lon-lat grid (cs_native: on the binary's cube). Required for kind = \"file\" and \"cs_native\"; the named kinds default to their CATRINE inventory under $ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions."
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string"},
+          "description": "Time-varying lmdz_co2 and gridfed_fossil_co2: files whose time slices are joined into one series, for spans across calendar years. Takes precedence over file_pattern and file; all files must share one grid."
+        },
+        "file_pattern": {
+          "type": "string",
+          "description": "Time-varying lmdz_co2 and gridfed_fossil_co2: path containing {YYYYMM}, expanded to the twelve months of year (default the run-start year). Used when files is absent."
+        },
+        "year": {
+          "type": "integer",
+          "minimum": 1900,
+          "maximum": 3000,
+          "description": "Calendar year. For gridfed_fossil_co2 (and kgCO2/month/m2 files) it sets the month lengths that convert monthly totals to rates, otherwise read from the time units or file name; with file_pattern it is the year expanded. Not allowed with several files."
+        },
+        "variable": {
+          "type": "string",
+          "description": "Flux variable. Required for kind = \"file\" and \"cs_native\"; named kinds default to their inventory variable. Per-second densities are read as kg species m^-2 s^-1; kgC m^-2 s^-1 (times 44/12), kgCO2/month/m2 and annual Tonnes per cell are converted."
+        },
+        "time_index": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Static sources: 1-based slice along the variable's time dimension; default 1, or month for gridfed_fossil_co2 and zhang_rn222. Static lmdz_co2 uses the time mean instead; time-varying sources read every slice."
+        },
+        "month": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12,
+          "description": "Static gridfed_fossil_co2 and zhang_rn222: month (1-12) read when time_index is absent. gridfed_fossil_co2 needs month or time_index; zhang_rn222 defaults to 1."
+        },
+        "scale": {
+          "type": "number",
+          "description": "Factor applied to the flux after unit conversion; default 1.0."
+        },
+        "molar_mass_kg_mol": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Molar mass of the species in kg mol^-1, used to convert kg of species to model storage units. Required unless the tracer is named co2, co2_natural, co2_fossil, fossil_co2, sf6 or rn222."
+        },
+        "time_varying": {
+          "type": "boolean",
+          "default": false,
+          "description": "Cubed sphere only: step through the inventory's time slices, counted from [input].start_date at 00:00 UTC; set start_date (without it the origin depends on how the file's time axis decodes). Supported by lmdz_co2, gridfed_fossil_co2 and cs_native (required there); false uses one static field."
+        },
         "temporal_scheme": {
           "type": "string",
-          "enum": ["stepwise", "linear", "conservative"]
+          "enum": ["stepwise", "linear", "conservative"],
+          "description": "time_varying = true: stepwise (default) holds each slice from its time stamp to the next, as GEOS-Chem/HEMCO does for CAMS fluxes; linear interpolates between the two bracketing slices at the start of each step; conservative applies the exact time integral of that linear interpolation over each step."
         },
         "regridding": {
           "type": "string",
           "enum": ["bilinear", "conservative"],
           "description": "Lat-lon and reduced-Gaussian targets: conservative or bilinear (default). Cubed-sphere targets always regrid conservatively."
         }
-      }
+      },
+      "description": "Surface emission or uptake of one tracer, added to the lowest model layer. Physical fluxes (kg of the species) are converted to model storage units with the tracer's molar mass."
     },
     "output": {
       "type": "object",
       "description": "Runtime snapshot output. Preferred keys are path, hours or cadence_hours, split, and format.",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
-        "enabled": {"type": "boolean", "default": true},
-        "format": {"type": "string", "enum": ["netcdf", "binary_mmap"], "default": "netcdf"},
-        "path": {"type": "string"},
-        "hours": {"$ref": "#/definitions/hours"},
-        "cadence_hours": {"type": "number", "exclusiveMinimum": 0},
-        "start_hour": {"type": "number", "minimum": 0, "default": 0},
-        "stop_hour": {"type": "number", "minimum": 0},
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "false turns off gridded snapshots; path and snapshot times are then not required. [output.observations] has its own enabled."
+        },
+        "format": {
+          "type": "string",
+          "enum": ["netcdf", "binary_mmap"],
+          "default": "netcdf",
+          "description": "netcdf: NetCDF4 at the run's float type. binary_mmap: ATMSNAP binaries (Float32, every field) converted offline with scripts/postprocess/binary_to_netcdf.jl; cubed sphere only, and fields, deflate_level and shuffle are ignored."
+        },
+        "path": {
+          "type": "string",
+          "description": "Snapshot file; ~ and $VAR are expanded. With split = \"daily\", {date}, {YYYYMMDD} or {day} are substituted, else _<date> is inserted before the extension. A path needs snapshot times (hours = [] for none)."
+        },
+        "hours": {
+          "allOf": [{"$ref": "#/definitions/hours"}],
+          "description": "Explicit snapshot times in hours since the run start: 0 writes the initial state, other times must be met-window ends. hours = [] writes no snapshots; takes precedence over cadence_hours."
+        },
+        "cadence_hours": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Snapshot interval in hours, from start_hour to stop_hour inclusive: 0 writes the initial state and every positive time must fall on a met-window end. Ignored when hours is set."
+        },
+        "start_hour": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0,
+          "description": "Cadence schedule: first snapshot time in hours since the run start; default 0. Read only with an interval key."
+        },
+        "stop_hour": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Cadence schedule: last snapshot time in hours since the run start (inclusive); default the end of the run."
+        },
         "split": {
           "description": "AbstractOutputPartition for snapshot and observation files.",
           "default": "single",
@@ -402,15 +633,51 @@
             }
           ]
         },
-        "deflate_level": {"type": "integer", "minimum": 0, "maximum": 9, "default": 0},
-        "shuffle": {"type": "boolean", "default": true},
+        "deflate_level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9,
+          "default": 0,
+          "description": "NetCDF4 deflate compression level, 0 (none) to 9."
+        },
+        "shuffle": {
+          "type": "boolean",
+          "default": true,
+          "description": "Apply the NetCDF shuffle filter; effective only when deflate_level > 0."
+        },
         "snapshot_file": {"type": "string", "description": "Legacy alias for output.path."},
-        "snapshot_hours": {"$ref": "#/definitions/hours"},
-        "snapshot_interval_hours": {"type": "number", "exclusiveMinimum": 0},
-        "filename": {"type": "string", "deprecated": true, "description": "Alias for output.path."},
-        "interval_hours": {"type": "number", "exclusiveMinimum": 0, "deprecated": true, "description": "Alias for cadence_hours."},
-        "cadence_seconds": {"type": "number", "exclusiveMinimum": 0, "deprecated": true, "description": "Cadence in seconds; prefer cadence_hours."},
-        "interval_seconds": {"type": "number", "exclusiveMinimum": 0, "deprecated": true, "description": "Cadence in seconds; prefer cadence_hours."},
+        "snapshot_hours": {
+          "allOf": [{"$ref": "#/definitions/hours"}],
+          "description": "Legacy alias for output.hours; takes precedence when both are set."
+        },
+        "snapshot_interval_hours": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Legacy alias for output.cadence_hours; takes precedence when both are set."
+        },
+        "filename": {
+          "type": "string",
+          "deprecated": true,
+          "description": "Alias for output.path."
+        },
+        "interval_hours": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "deprecated": true,
+          "description": "Alias for cadence_hours."
+        },
+        "cadence_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "deprecated": true,
+          "description": "Cadence in seconds; prefer cadence_hours."
+        },
+        "interval_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "deprecated": true,
+          "description": "Cadence in seconds; prefer cadence_hours."
+        },
         "fields": {"$ref": "#/definitions/output_fields"},
         "observations": {"$ref": "#/definitions/observation_output"}
       }
@@ -446,14 +713,8 @@
         "tracers": {
           "description": "Tracers to sample (Union{Nothing, Vector{Symbol}}); omit or \"all\" for every model tracer (nothing). Must exist in [tracers].",
           "anyOf": [
-            {
-              "const": "all",
-              "description": "nothing: every model tracer."
-            },
-            {
-              "type": "string",
-              "description": "One tracer name."
-            },
+            {"const": "all", "description": "nothing: every model tracer."},
+            {"type": "string", "description": "One tracer name."},
             {
               "type": "array",
               "minItems": 1,
@@ -476,7 +737,13 @@
         "start_time": {
           "description": "Run origin, ISO-8601 UTC string or TOML date-time; only used (and then required) when [input].start_date is absent. Must equal start_date at 00:00 when both are given."
         },
-        "deflate_level": {"type": "integer", "minimum": 0, "maximum": 9, "default": 0},
+        "deflate_level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9,
+          "default": 0,
+          "description": "NetCDF4 deflate level, 0 (none) to 9, of the _soundings and _sites files; compressed variables also get the shuffle filter."
+        },
         "sources": {
           "type": "array",
           "minItems": 1,
@@ -492,6 +759,7 @@
       "additionalProperties": false,
       "properties": {
         "kind": {
+          "description": "Reader of the requests: oco2_lite (OCO-2/OCO-3 Lite or MIP files), obspack (NOAA ObsPack) or table (your own CSV, TOML or NetCDF list).",
           "oneOf": [
             {
               "const": "oco2_lite",
@@ -655,7 +923,10 @@
             "properties": {"quality_filter": {"const": "flag_values"}},
             "required": ["quality_filter"]
           },
-          "then": {"required": ["quality_flag_values"], "not": {"required": ["quality_flag_max"]}}
+          "then": {
+            "required": ["quality_flag_values"],
+            "not": {"required": ["quality_flag_max"]}
+          }
         },
         {
           "if": {"not": {"required": ["quality_filter"]}},
@@ -680,55 +951,102 @@
     "hours": {
       "type": "array",
       "uniqueItems": true,
-      "items": {"type": "number", "minimum": 0}
+      "items": {"type": "number", "minimum": 0},
+      "description": "Snapshot times in hours since the run start. 0 writes the initial state; every other time must be a met-window end. Repeated times are an error and times after the run end are skipped with a warning."
     },
     "output_fields": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "tracers": {
-          "oneOf": [
-            {"type": "string"},
-            {"type": "array", "items": {"type": "string"}}
-          ]
+          "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
+          "description": "Tracers whose fields are written: one name, a list, \"all\" (default) or \"none\"; each name must be a tracer of the run."
         },
-        "layers": {"$ref": "#/definitions/layer_selection"},
+        "layers": {
+          "allOf": [{"$ref": "#/definitions/layer_selection"}],
+          "description": "Per-level tracer mixing ratio (<tracer>) for all tracers: full (default), selected (levels only) or none (column fields only). Also the default of air_mass_layers."
+        },
         "levels": {
           "type": "array",
-          "items": {"type": "integer", "minimum": 1}
+          "items": {"type": "integer", "minimum": 1},
+          "description": "1-based model levels (1 = top of the atmosphere) written when layers or air_mass_layers is \"selected\"; required there."
         },
-        "column_mean": {"type": "boolean", "default": true},
-        "column_mass_per_area": {"type": "boolean", "default": true},
-        "air_mass_layers": {"$ref": "#/definitions/layer_selection"},
-        "air_mass": {"type": "boolean", "default": true},
-        "air_mass_per_area": {"type": "boolean", "default": true},
-        "column_air_mass_per_area": {"type": "boolean", "default": true},
+        "column_mean": {
+          "type": "boolean",
+          "default": true,
+          "description": "Write <tracer>_column_mean, the air-mass-weighted column mean of the dry VMR."
+        },
+        "column_mass_per_area": {
+          "type": "boolean",
+          "default": true,
+          "description": "Write <tracer>_column_mass_per_area, the column sum of tracer storage (dry VMR times dry-air mass) per cell area in kg m^-2; model storage units, not kg of the species."
+        },
+        "air_mass_layers": {
+          "allOf": [{"$ref": "#/definitions/layer_selection"}],
+          "description": "Levels of air_mass and air_mass_per_area: full, selected (levels) or none; defaults to layers."
+        },
+        "air_mass": {
+          "type": "boolean",
+          "default": true,
+          "description": "Write air_mass, the layer air mass per cell in kg on the binary's mass basis (dry by default)."
+        },
+        "air_mass_per_area": {
+          "type": "boolean",
+          "default": true,
+          "description": "Write air_mass_per_area, the layer air mass divided by cell area (kg m^-2)."
+        },
+        "column_air_mass_per_area": {
+          "type": "boolean",
+          "default": true,
+          "description": "Write column_air_mass_per_area, the column air mass divided by cell area (kg m^-2)."
+        },
         "per_tracer": {
           "type": "object",
-          "additionalProperties": {"$ref": "#/definitions/tracer_output_fields"}
+          "additionalProperties": {"$ref": "#/definitions/tracer_output_fields"},
+          "description": "Overrides of layers, column_mean and column_mass_per_area keyed by tracer name; each must be a tracer of the run, and unset keys inherit [output.fields]."
         },
-        "column_mass": {"type": "boolean", "deprecated": true, "description": "Alias for column_mass_per_area."},
+        "column_mass": {
+          "type": "boolean",
+          "deprecated": true,
+          "description": "Alias for column_mass_per_area."
+        },
         "tracer_fields": {
           "type": "object",
           "deprecated": true,
           "description": "Alias for per_tracer.",
           "additionalProperties": {"$ref": "#/definitions/tracer_output_fields"}
         }
-      }
+      },
+      "description": "Variables written to NetCDF snapshots; the defaults write every field for every tracer. Ignored with format = \"binary_mmap\"."
     },
     "tracer_output_fields": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
-        "layers": {"$ref": "#/definitions/layer_selection"},
-        "column_mean": {"type": "boolean"},
-        "column_mass_per_area": {"type": "boolean"},
-        "column_mass": {"type": "boolean", "deprecated": true, "description": "Alias for column_mass_per_area."}
-      }
+        "layers": {
+          "allOf": [{"$ref": "#/definitions/layer_selection"}],
+          "description": "This tracer's per-level mixing ratio: full, selected or none; default [output.fields].layers."
+        },
+        "column_mean": {
+          "type": "boolean",
+          "description": "Write this tracer's air-mass-weighted column-mean dry VMR; default [output.fields].column_mean."
+        },
+        "column_mass_per_area": {
+          "type": "boolean",
+          "description": "Write this tracer's column storage mass per area (kg m^-2); default [output.fields].column_mass_per_area."
+        },
+        "column_mass": {
+          "type": "boolean",
+          "deprecated": true,
+          "description": "Alias for column_mass_per_area."
+        }
+      },
+      "description": "Output overrides for one tracer; unset keys inherit the [output.fields] values."
     },
     "layer_selection": {
       "type": "string",
-      "enum": ["full", "selected", "none"]
+      "enum": ["full", "selected", "none"],
+      "description": "Levels a field is written at: full (every model level), selected ([output.fields].levels, on a lev_selected dimension) or none (no per-level field)."
     }
   }
 }

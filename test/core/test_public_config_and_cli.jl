@@ -180,7 +180,9 @@ end
 
     properties = schema.properties
     @test hasproperty(properties, :advection)
-    @test !hasproperty(properties.run.properties, :scheme)
+    # [run] lists the legacy location of the advection keys only as deprecated
+    # (the runtime still reads them when [advection] is absent).
+    @test properties.run.properties.scheme.deprecated == true
 
     # Every choice and key is compared with the parsers in test_config_schema_agreement.jl.
 

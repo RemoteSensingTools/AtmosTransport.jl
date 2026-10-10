@@ -11,6 +11,13 @@ keeps them separate.
 
 ## Run config (`config/runs/*.toml`)
 
+Editors with Taplo (Even Better TOML in VS Code) check run configs in
+`config/runs` and `config/examples` against
+`schemas/atmos_transport_run.schema.json` (`.taplo.toml`): every key has a
+description on hover, and unknown keys are marked, as `validate_config`
+rejects them. The archived directories `config/runs/completed_experiments`
+and `config/runs/likely_legacy` are not checked.
+
 Consumed by `scripts/run_transport.jl`, which parses the TOML and forwards
 the resulting Julia dictionary to `run_driven_simulation(cfg)`.
 
@@ -267,9 +274,11 @@ monthly totals are converted using the actual number of days in each month.
 - `"stepwise"` — hold each slice piecewise-constant until the next sample.
   This matches GEOS-Chem/HEMCO's exact CAMS treatment (verified against
   `EmisCO2_Total`), so use it to reproduce GC.
-- `"linear"` — linearly interpolate between adjacent slices.
-- `"conservative"` — window-mean each interval (mass-conserving over the
-  window, but smears the diurnal cycle).
+- `"linear"` — linearly interpolate between the two bracketing slices,
+  evaluated at the start of each step.
+- `"conservative"` — integrate that linear interpolation exactly over each
+  step, so the emitted mass matches the source's own time integral for any
+  number of substeps.
 
 Slices are indexed by **absolute** time since the run's `start_date`, so a
 multi-day run advances through the inventory correctly (a per-day clock would
@@ -322,7 +331,9 @@ ppm_order = 7                   # cubed-sphere LinRoodPPM only; ∈ {5, 7}.
 
 [diffusion]
 kind  = "constant"              # "none" | "constant" |
-                                # "tm5_beljaars_viterbo_local_kz" |
+                                # "tm5_beljaars_viterbo_local_kz" (CS-only;
+                                #   local Kz from the binary's pblh, ustar,
+                                #   pbl_hflux and t2m) |
                                 # "geoschem_holtslag_boville_vdiff" (CS-only;
                                 #   local Kz; requires include_gchp_vdiff=true binary) |
                                 # "geoschem_nonlocal_vdiff" (CS-only; GEOS-Chem's

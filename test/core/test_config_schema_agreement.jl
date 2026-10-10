@@ -75,12 +75,14 @@ end
 @testset "schema properties equal the known-key tables" begin
     p = SCHEMA.properties
     d = SCHEMA.definitions
-    input_keys = union(property_keys(p.input), (property_keys(b) for b in p.input.oneOf)...)
-    @test input_keys == Set(RunnerKeys._INPUT_KEYS)
+    # The [input] branches (list or folder) only say which keys are required.
+    @test property_keys(p.input) == Set(RunnerKeys._INPUT_KEYS)
+    @test all(b -> !haskey(b, :properties), p.input.oneOf)
     @test property_keys(d.staging) == Set(RunnerKeys._INPUT_STAGING_KEYS)
     @test property_keys(p.architecture) == Set(RunnerKeys._ARCHITECTURE_KEYS)
     @test property_keys(p.numerics) == Set(RunnerKeys._NUMERICS_KEYS)
-    @test property_keys(p.run) == Set(RunnerKeys._RUN_KEYS)
+    # [run] also lists the legacy location of the advection keys.
+    @test property_keys(p.run) == Set((RunnerKeys._RUN_KEYS..., RunnerKeys._ADVECTION_KEYS...))
     @test property_keys(p.advection) ==
           Set((RunnerKeys._ADVECTION_KEYS..., RunnerKeys._ADVECTION_ONLY_KEYS...))
     @test property_keys(p.diffusion) == Set(RunnerKeys._DIFFUSION_KEYS)
@@ -97,3 +99,36 @@ end
     # Flat [tracers.<name>] keys are accepted for old configs but not offered.
     @test property_keys(d.tracer) == Set(["init", "surface_flux"])
 end
+
+# Every key the editor offers carries a description (shown on hover), either
+# its own or that of the definition it refers to; every table rejects keys it
+# does not list, as `validate_config` does.
+@testset "schema keys are described and tables are closed" begin
+    described(node) = haskey(node, :description) ||
+        (haskey(node, Symbol("\$ref")) &&
+         haskey(SCHEMA.definitions, Symbol(last(split(node[Symbol("\$ref")], "/")))) &&
+         haskey(SCHEMA.definitions[Symbol(last(split(node[Symbol("\$ref")], "/")))], :description))
+    undescribed = String[]
+    open_tables = String[]
+    # Tables are the object schemas with keys; conditional fragments inside
+    # oneOf/allOf/if (which also use `properties`) only constrain values.
+    function walk(node, path)
+        if node isa AbstractVector
+            foreach(((i, child),) -> walk(child, "$(path)[$i]"), enumerate(node))
+            return
+        end
+        node isa AbstractDict || return
+        if get(node, :type, nothing) == "object" && haskey(node, :properties)
+            haskey(node, :additionalProperties) && node.additionalProperties === false ||
+                push!(open_tables, path)
+            for (key, child) in pairs(node.properties)
+                described(child) || push!(undescribed, "$(path).$(key)")
+            end
+        end
+        foreach(((key, child),) -> walk(child, "$(path).$(key)"), pairs(node))
+    end
+    walk(SCHEMA, "schema")
+    @test isempty(undescribed)
+    @test isempty(open_tables)
+end
+

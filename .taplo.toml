@@ -1,6 +1,16 @@
+# Taplo (Even Better TOML) configuration: the JSON schemas the editor checks
+# TOML files against. Keys missing from a schema are marked, matching the
+# runtime, which rejects unknown keys (validate_config).
+
+# Run configs read by scripts/run_transport.jl. The archived directories hold
+# older formats that the current runtime no longer reads.
 [[rule]]
-include = ["config/examples/*.toml"]
-exclude = ["config/examples/observation_sites_demo.toml"]
+include = ["config/examples/*.toml", "config/runs/**/*.toml"]
+exclude = [
+  "config/examples/observation_sites_demo.toml",
+  "config/runs/completed_experiments/**",
+  "config/runs/likely_legacy/**",
+]
 
 [rule.schema]
 path = "./schemas/atmos_transport_run.schema.json"
