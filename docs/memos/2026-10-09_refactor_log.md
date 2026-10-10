@@ -760,6 +760,147 @@ operator names, adaptive time steps (fixed by the binary contract), global
 mutable defaults, and the KernelAbstractions internals behind their mapped
 kernels.
 
+## GPU performance and point operations (2026-10-09, evening)
+
+Measured on wurst (NVIDIA L40S, Float32), MERRA-2 C90 L72 GCHP-aligned protocol
+configuration and the golden ERA5 C90 TM5 configuration, two days each. "Wall"
+below is the runner's forward-run wall time (the run loop, after model and
+surface-source setup) unless called end to end.
+
+How to time: a fresh Julia process spends most of a two-day run compiling
+(MERRA-2, `perf_launch/merra2_base_rep1.log`: end-of-run wall 50.6 s, of which
+transport 17.5 s and NetCDF writes 15.2 s; the same run warm,
+`perf_launch/prof_cpu/gc_a.log`: wall 12.3 s, transport 7.4 s, writes 0.5 s).
+Timings therefore use warm runs:
+`/temp1/cfranken/jobs/perf_launch/warm_ab/run_warm_ab.sh` starts one process
+per variant, runs one warm-up day and three timed two-day runs, and alternates
+base and candidate twice on the same GPU.
+
+Profiles of the MERRA-2 run before these changes. Fresh processes, one
+`run_transport.jl` run each (`perf_launch/run_profile.sh`: nsys timeline of
+`merra2_nsys.toml`, section timers in `merra2_timers.log`):
+- GPU kernels take 4.8 s of the 19.3 s transport time of the nsys run;
+  188 000 launches, mean 25 µs (ERA5 profile: 215 000 launches, mean 18 µs).
+  A microbenchmark of a trivial kernel on the L40S gives 3–4 µs of host time
+  per KernelAbstractions launch, 9 µs with a synchronization after each.
+- Halo-exchange kernels were 129 000 of the 188 000 launches (about 310 of
+  450 per advection step; 416 steps). An exchange of a 3-D field took 24 edge
+  launches plus 6 corner launches (one per panel, each filling all four
+  corners), an exchange of packed 4-D tracers 6 panel-level edge launches plus
+  6 corner launches; both synchronized after the edges and after the corners.
+- `forcing_refresh` takes 0.26 ms per substep (median; p95 1.4 ms) on the
+  host (section timers; the 2.8 ms mean includes a first, compiling call of
+  0.4 s); its device work is negligible (nsys).
+
+Warm processes, after a warm-up day (Julia CPU and allocation profiles in
+`perf_launch/prof_cpu/`):
+- Convection's CFL scan copied `cmfmc`, air mass and areas (30 MB) to the
+  host every window and looped there: 1111 CPU-profile samples at 0.5 ms
+  intervals over 48 windows, about 12 ms per window, and 1.4 GiB of
+  allocations per two days.
+- Host allocations: 28 GiB per two-day run loop, 3.3 s of garbage collection
+  (26 % of wall time). NetCDF output allocated 15 GiB, about 12.7 GiB of it
+  in cubed-sphere panel stacking, layer selection and type conversion (three
+  Float64/`T` copies per field and snapshot; the rest is snapshot capture), window loads
+  9.5 GiB (fresh arrays plus padded copies per window), the CFL scan 1.4 GiB.
+  Setup loads every listed time-varying flux file: 29 GiB for the 25 LMDZ
+  months of the protocol configuration, also in a two-day run.
+- In the warm CPU profile, `forcing_refresh` time sits in CUDA.jl copy calls
+  stopped at allocation points, i.e. waiting for garbage collection.
+
+Changes (all results bit-identical):
+- `Architectures.AbstractPointOp`: a kernel body written once as
+  `apply_point!(op, ctx, I...)` over `index_space(op, ctx)`; `launch!(op, ctx,
+  backend)` runs it as one kernel or as host loops. `Fused(ops...)` combines
+  independent operations; with the default fusion policy (CUDA) they run in one
+  launch (trailing slot index, balanced tree of constant tuple indices), on
+  Metal as separate launches on their bound contexts (see below);
+  `Sequence(ops...)` launches dependent ones in order with one
+  synchronization.
+- The cubed-sphere halo exchange is built from `EdgeHaloFill` and
+  `CornerHaloFill`. With the default fusion policy (CUDA): one launch for the
+  edges, a second for the corners when the sweep direction asks for them
+  (`dir = 1` or `2`); on Metal 24 edge launches and, when asked, 6 corner
+  launches with bound panel arrays; one synchronization either way. On CUDA, C90,
+  72 levels: 120 → 25 µs (air mass), 99 → 72 µs (five packed tracers). The
+  host loops are within 2 % (tracers) and 17 % (air mass) of the deleted
+  hand-written loops.
+- The CMFMC CFL scan runs as column kernels on GPUs (a level-by-level loop
+  on the CPU, as fast as before), with
+  explicit NaN handling (Metal's `fmin`/`fmax` drop NaN); a non-finite ratio
+  is an error.
+- NetCDF cubed-sphere stacking of layer-resolved fields writes the output type into staging buffers,
+  one per requested layer count, reused across the fields and snapshots of one
+  payload write (one buffer in the benchmark configuration, where every layer-resolved field
+  writes all layers).
+- The run summary reports GC time, compilation time and allocated memory.
+
+Checks: the runtime goldens are bit-identical. The GPU checks ran on CUDA
+(L40S): `test/diagnostic/test_cmfmc_cfl_gpu.jl`, `test_cs_halo_fill_gpu.jl`,
+`test_point_ops_gpu.jl` and the existing seam, Lin-Rood and PPM GPU
+diagnostics (`test_cs_seam_exchange_gpu.jl`, `test_linrood_seams_gpu.jl`,
+`test_cs_ppm_launch_gpu.jl`).
+
+Metal (Apple M5 Pro, macOS 26.6, Julia 1.12.6, Float32; a self-contained
+bundle run on the owner's laptop over SSH, `/temp1/cfranken/metal_bundle`;
+the kernel checks are repeatable with the opt-in
+`test/diagnostic/test_metal_kernels.jl`):
+point operations (single, fused, sequence) equal the host loops; the halo
+exchange matches the frozen reference in all 32 Float32 cases; the CFL scan
+equals the host reference exactly, including NaN handling (Metal division gives
+the same values here). A one-day C24 run (PPM, constant Kz, uniform tracer and
+Gaussian blob) on Metal agrees with the same run on the CPU to rounding: blob
+difference at most 2.3e-13 against a peak of 1e-6, 29 % of cells identical;
+the maximum relative deviation of the uniform tracer from 4e-4 is 7.9e-6 on both. Warm run time 2.10 → 1.85 s (old
+→ new code, best of 6, interleaved). Halo exchange on Metal, old → new (best
+of 3 interleaved rounds): 3-D fields with corners 549 → 391 µs (C24) and
+581 → 446 µs (C90); five packed tracers, `dir = 0` and `1`, 1198 → 1538 and
+1563 → 1851 µs (C24), 1314 → 1894 and 1695 → 2402 µs (C90), i.e. 18–44 %
+slower. Two alternative designs were tried
+and rejected: selecting the operation's fields instead of inlining one body
+per slot (40–80 % slower on Metal, unchanged on CUDA), and operations that
+carry their own panel arrays instead of selecting panels (3–12 × slower on
+Metal, 8–9 µs slower per exchange on CUDA). The packed-tracer halo on Metal is
+an open item at that point: the old code launched one kernel per panel with the
+panel arrays as direct arguments.
+
+Resolved with a backend fusion policy (`Architectures.fusion_policy`, set to
+`SeparateLaunches()` for Metal in the Metal extension): on Metal a `Fused` set
+of operations is launched one operation at a time, each with its
+`bound_context` (its panel arrays bound directly), and one synchronization at
+the end; CUDA keeps the single fused launch, where separate launches are 3–9×
+slower (C90: 174–223 µs instead of 19–73 µs per exchange). Measured on the M5
+Pro at C90 (interleaved with the old code): one launch per edge takes
+1.11–1.32 ms for packed tracers against 1.69–1.97 ms fused; old → new code
+388 → 397 µs (3-D, dir 0), 575 → 448 µs (3-D, dir 1), 1291 → 1119 µs and
+1661 → 1331 µs (packed tracers, dir 0 and 1). One launch per panel was in
+between (1.36–1.64 ms). The one-day C24 run is about 10 % faster than with the
+old code (best of 6; laptop timings vary by up to 40 %).
+
+Lessons: indexing a tuple with a run-time value inside a CUDA kernel copies it
+to local memory (a C90 halo exchange took 2–11 ms instead of 25–72 µs); a
+`@generated` dispatcher must be inlined (`Base.@_inline_meta`) or it costs as
+much; `ntuple(f, n)` with `n > 10` is not type-stable (use `Val(n)`).
+
+Warm A/B of the first three changes (6 timed runs per variant,
+`warm_ab/perf3`): MERRA-2 transport 8.35 → 7.77 s (−7.0 %), wall 12.5 →
+12.1 s; ERA5 transport 7.75 → 7.08 s (−8.6 %), wall 11.9 → 11.25 s. On top, the
+NetCDF stacking change and the type-stable `Val(24)` tuple of edge operations,
+measured together (`warm_ab/perf4`), MERRA-2 with 3-hourly 3-D output: wall
+11.6 → 9.7 s (−16 %), transport 7.6 → 7.15 s, run-loop allocations 26.8 →
+15.0 GiB, garbage collection 3.4 → 2.2 s; end to end including setup
+29.9 → 27.3 s (−8.5 %).
+
+Still open: window loads allocate fresh and padded host arrays every window
+(9.5 GiB per two days); time-varying flux files are loaded whole regardless of
+the run period; the cubed-sphere surface-flux interpolation launches one kernel
+per source, panel and temporal segment, 30 per substep in the benchmark
+configuration (5 sources × 6 panels × 1 segment; 12 480 launches in the nsys
+run). Within one temporal segment the launches for different panels and
+tracers are independent and could share one launch; the segments of one
+source update the same cells and their Kahan compensation in order, so they
+cannot.
+
 ## Status (2026-10-09, afternoon)
 
 `refactor/structure-2026-10` is pushed as PR #21 (25 commits on `3684b71a`,
