@@ -169,8 +169,9 @@ Files directly in this folder; the subfolders have their own READMEs
 - A kept binary passed the write-time replay gate (unless
   `[numerics] write_replay_check = false` skipped it) and the per-substep
   positivity gate against `positivity_cfl_limit` (default `0.95`, in
-  `(0, 1]`). CS checks `2 * (out_x + out_y + out_z)` against
-  `min(m, m_next)`; LL and RG check each direction's outflow against `m`. With
+  `(0, 1]`). CS and LL check the palindrome outflow `2 * (out_x + out_y +
+  out_z)` against `min(m, m_next)` (one shared check); RG checks each
+  direction's outflow against `m`. With
   `require_substep_positivity = true` (default) a violation errors and deletes
   the staged file; with `false` it is kept with a warning.
 - Outputs are staged as `<out>.tmp` and renamed after the gates.

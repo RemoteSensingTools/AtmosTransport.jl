@@ -116,7 +116,9 @@ end
                                   halo_width = 0, m_next = nothing)
 
 Verify the per-substep horizontal+vertical positivity contract that the runtime's
-`_cs_static_palindrome_subcycle_count` depends on. For every interior cell on every panel:
+`_cs_static_palindrome_subcycle_count` depends on. For every interior cell on every panel
+(any rectangular block; the lat-lon gate `verify_substep_positivity_ll!` passes
+its window as one block):
 
   1. The cell air mass itself must be positive (`m > 0`), a preprocessing
      invariant enforced here (the runtime CFL scan skips such cells). A
@@ -158,11 +160,12 @@ function verify_substep_positivity_cs!(m::NTuple{NP, <:AbstractArray{FT, 3}},
                                        m_next::Union{Nothing, NTuple{NP, <:AbstractArray}} = nothing) where {FT, NP}
     _validate_cfl_limit(cfl_limit, "verify_substep_positivity_cs!")
     Hp = Int(halo_width)
-    # All buffers share the same interior extent `(Nc, Nc, Nz)`; derive from m.
-    Nc = size(m[1], 1) - 2Hp
+    # All buffers share the same interior extent `(Ni, Nj, Nz)`; derive from m.
+    Ni = size(m[1], 1) - 2Hp
+    Nj = size(m[1], 2) - 2Hp
     Nz = size(m[1], 3)
-    iL = Hp + 1
-    iH = Hp + Nc
+    iL, jL = Hp + 1, Hp + 1
+    iH, jH = Hp + Ni, Hp + Nj
     worst_dir = nothing
     worst_ratio = 0.0
     worst_ratio_xy = 0.0
@@ -171,16 +174,16 @@ function verify_substep_positivity_cs!(m::NTuple{NP, <:AbstractArray{FT, 3}},
     for p in 1:NP
         m_p = m[p]
         m_next_p = m_next === nothing ? nothing : m_next[p]
-        m_int = view(m_p, iL:iH, iL:iH, 1:Nz)
+        m_int = view(m_p, iL:iH, jL:jH, 1:Nz)
         m_next_int = m_next_p === nothing ? nothing :
-                     view(m_next_p, iL:iH, iL:iH, 1:Nz)
-        am_lo = view(am[p], iL    :iH,     iL:iH,     1:Nz)
-        am_hi = view(am[p], iL + 1:iH + 1, iL:iH,     1:Nz)
-        bm_lo = view(bm[p], iL:iH,     iL    :iH,     1:Nz)
-        bm_hi = view(bm[p], iL:iH,     iL + 1:iH + 1, 1:Nz)
-        cm_lo = view(cm[p], iL:iH, iL:iH, 1    :Nz)
-        cm_hi = view(cm[p], iL:iH, iL:iH, 2:Nz + 1)
-        for k in 1:Nz, j in 1:Nc, i in 1:Nc
+                     view(m_next_p, iL:iH, jL:jH, 1:Nz)
+        am_lo = view(am[p], iL    :iH,     jL:jH,     1:Nz)
+        am_hi = view(am[p], iL + 1:iH + 1, jL:jH,     1:Nz)
+        bm_lo = view(bm[p], iL:iH,     jL    :jH,     1:Nz)
+        bm_hi = view(bm[p], iL:iH,     jL + 1:jH + 1, 1:Nz)
+        cm_lo = view(cm[p], iL:iH, jL:jH, 1    :Nz)
+        cm_hi = view(cm[p], iL:iH, jL:jH, 2:Nz + 1)
+        for k in 1:Nz, j in 1:Nj, i in 1:Ni
             mi = m_int[i, j, k]
             mi_next = m_next_int === nothing ? mi : m_next_int[i, j, k]
             ax_l = am_lo[i, j, k]

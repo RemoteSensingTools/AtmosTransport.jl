@@ -79,40 +79,64 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         end
     end
 
+    # The palindrome budget: each direction acts twice per substep, so one
+    # application's outflow counts twice (the clean window's `cm` adds < 1e-4).
     @testset "positivity: x-face CFL violation reported with direction and location" begin
         w = build_clean_ll_window(Float64)
         am = copy(w.am)
-        am[3, 2, 1] = 0.99e9            # right face of cell (2, 2, 1)
+        am[3, 2, 1] = 0.49e9            # right face of cell (2, 2, 1)
         diag = verify_substep_positivity_ll!(w.m_cur, am, w.bm, w.cm;
                                               cfl_limit = 0.95)
         @test !diag.ok
         @test diag.direction === :x
-        @test diag.ratio ≈ 0.99 atol = 1e-12
+        @test diag.ratio ≈ 0.98 atol = 1e-4
         @test diag.location == (2, 2, 1)
     end
 
     @testset "positivity: y-face CFL violation reported with direction and location" begin
         w = build_clean_ll_window(Float64)
         bm = copy(w.bm)
-        bm[2, 3, 2] = 0.97e9            # top face of cell (2, 2, 2)
+        bm[2, 3, 2] = 0.485e9           # top face of cell (2, 2, 2)
         diag = verify_substep_positivity_ll!(w.m_cur, w.am, bm, w.cm;
                                               cfl_limit = 0.95)
         @test !diag.ok
         @test diag.direction === :y
-        @test diag.ratio ≈ 0.97 atol = 1e-12
+        @test diag.ratio ≈ 0.97 atol = 1e-4
         @test diag.location == (2, 2, 2)
     end
 
     @testset "positivity: z-face violation is included in the scan" begin
         w = build_clean_ll_window(Float64)
         cm = copy(w.cm)
-        cm[1, 1, 3] = 0.98e9            # interface k=3 of cell (1, 1, 2)
+        cm[1, 1, 3] = 0.49e9            # interface k=3 of cell (1, 1, 2)
         diag = verify_substep_positivity_ll!(w.m_cur, w.am, w.bm, cm;
                                               cfl_limit = 0.95)
         @test !diag.ok
         @test diag.direction === :z
         @test diag.ratio ≈ 0.98 atol = 1e-3
         @test diag.location == (1, 1, 2)
+    end
+
+    @testset "positivity: directions add up, and the end mass tightens the budget" begin
+        w = build_clean_ll_window(Float64)
+        am, bm = copy(w.am), copy(w.bm)
+        am[3, 2, 1] = 0.3e9             # x and y outflow of cell (2, 2, 1), each
+        bm[2, 3, 1] = 0.3e9             # 0.3 m: fine alone, 1.2 m per palindrome
+        diag = verify_substep_positivity_ll!(w.m_cur, am, bm, w.cm; cfl_limit = 0.95)
+        @test !diag.ok
+        @test diag.ratio ≈ 1.2 atol = 1e-4
+        @test diag.ratio_xy ≈ 1.2 atol = 1e-4
+        @test diag.location == (2, 2, 1)
+        am[3, 2, 1] = 0.2e9
+        bm[2, 3, 1] = 0.2e9             # 0.8 m: passes against m ...
+        @test verify_substep_positivity_ll!(w.m_cur, am, bm, w.cm; cfl_limit = 0.95).ok
+        m_next = copy(w.m_cur)
+        m_next[2, 2, 1] *= 0.5          # ... but not against a halved end mass
+        diag = verify_substep_positivity_ll!(w.m_cur, am, bm, w.cm; cfl_limit = 0.95, m_next)
+        @test !diag.ok
+        @test diag.ratio ≈ 1.6 atol = 1e-3
+        @test_throws ErrorException verify_substep_positivity_ll!(
+            w.m_cur, am, bm, w.cm; m_next = m_next[:, :, 1:2])
     end
 
     @testset "positivity: m <= 0 is flagged Inf regardless of flux magnitude" begin
@@ -191,13 +215,13 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
 
     @testset "wrapper: positivity failure with passing replay is non-fatal" begin
         # Closed-loop uniform shift on one (j, k) row preserves per-cell
-        # divergence on the perturbed row but drives outgoing/m up to 0.99.
+        # divergence on the perturbed row but drives the palindrome outflow to 0.98 m.
         # `verify_ll_window_contract!` must return both diagnostics so the
         # caller — not the wrapper — decides whether to error or warn after
         # aggregating across windows.
         w = build_clean_ll_window(Float64)
         am = copy(w.am)
-        am[:, 1, 1] .= 0.99e9
+        am[:, 1, 1] .= 0.49e9
         result = verify_ll_window_contract!(w.m_cur, am, w.bm, w.cm,
                                              w.m_next, w.steps, 3;
                                              replay_tol = 1e-12,
@@ -205,8 +229,8 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         @test result.replay.max_rel_err <= 1e-12
         @test !result.positivity.ok
         @test result.positivity.direction === :x
-        @test result.positivity.ratio ≈ 0.99 atol = 1e-12
-        @test result.positivity.location == (1, 1, 1)
+        @test result.positivity.ratio ≈ 0.98 atol = 1e-3
+        @test Base.tail(result.positivity.location) == (1, 1)    # the shifted row
     end
 
     # ------------------------------------------------------------------

@@ -58,9 +58,10 @@ header (LL does it when `LatLonDeferredBinaryWriter` opens). GEOS uses
 - Replay: `verify_window_continuity` (from `MetDrivers`) integrates the
   stored fluxes from `m_cur` over the palindrome substeps and compares with
   `m_next`; it errors when the relative error exceeds `replay_tolerance(FT)`.
-- Positivity: CS compares `2 * (out_x + out_y + out_z)` with
-  `positivity_cfl_limit * min(m, m_next)`; LL and RG compare each direction's
-  outflow with `positivity_cfl_limit * m`. RG skips pole stub faces and
+- Positivity: CS and LL compare the palindrome outflow `2 * (out_x + out_y +
+  out_z)` with `positivity_cfl_limit * min(m, m_next)` (one shared check); RG
+  compares each direction's outflow with `positivity_cfl_limit * m`, skips pole
+  stub faces and
   errors on non-zero flux through them (`verify_boundary_stub_flux_rg`).
   Non-positive or non-finite mass yields `ratio = Inf`.
 - `summarize_status!` errors and deletes `quarantine_path` when the worst ratio

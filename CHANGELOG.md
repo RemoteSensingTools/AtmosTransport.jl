@@ -123,6 +123,14 @@
 
 ### Numerical changes
 
+- Lat-lon preprocessing uses the cubed-sphere positivity gate (owner's
+  decision, 2026-10-10): the palindrome outflow `2 (out_x + out_y + out_z)`
+  against `min(m, m_next)`, one shared implementation, instead of each
+  direction's single application against `m`. Adaptive schedules (the
+  default) choose more substeps on lat-lon binaries: on the ERA5 72×37
+  lat-lon golden day (2021-12-01) two of 24 windows go from 4 to 5 substeps. A fixed
+  schedule that passed the old gate can now fail it. Reduced-Gaussian
+  binaries keep their per-direction gate.
 - New cubed-sphere option `[advection] scheme = "ppm"`, `vertical = "fv3_kord8"`.
   The vertical sweep integrates FV3's `scalar_profile` parabola (`kord = 8`,
   positive definite; GCHP's tracer profile) over the swept fraction of the
