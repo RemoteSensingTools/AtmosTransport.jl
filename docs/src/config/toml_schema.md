@@ -243,6 +243,15 @@ multi-day run advances through the inventory correctly (a per-day clock would
 replay the first day's slices — the cause of the historical co2_natural
 +1 Pg/month surplus, now fixed).
 
+When `[input]` gives `start_date`, only the slices the run can use are read:
+from the last slice at or before the run start to the first slice at or after
+the run end. The run end is the first binary's length times the number of
+binaries or, if later, the end of `end_date`. Every listed file's time axis is
+read, but flux data only for those slices. Every temporal scheme blends only
+the two slices around a time, so results are unchanged. A binary that runs past
+that end stops the run with an error before it starts. Without `start_date`
+every slice is read.
+
 For an already aligned GEOS-native cubed-sphere inventory, use
 `kind = "cs_native"`, `time_varying = true`, `file`, and `variable`.
 The NetCDF variable must have dimensions `(time,nf,Ydim,Xdim)` and contain

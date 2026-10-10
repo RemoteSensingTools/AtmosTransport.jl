@@ -156,6 +156,17 @@
   runs on an L40S (six runs each): run-loop host allocations 15.0 → 4.9 GiB,
   run-loop wall time 10.2 → 8.7 s, of which transport 7.2 → 5.3 s (less
   garbage collection during transport).
+- Time-varying surface fluxes (cubed sphere) are read only for the run period
+  when `[input]` gives `start_date`: from the last slice at or before the run
+  start to the first slice at or after the run end. Every temporal scheme uses
+  only the two slices around a time, so results are unchanged (two-day
+  MERRA-2 C90 run with LMDZ, GridFED and three native-C90 sources:
+  bit-identical NetCDF output). That run reads 10 instead of 6088 LMDZ slices
+  and 2 instead of 36 GridFED slices, and takes 12.4 s instead of 25.9 s end to
+  end (warm, L40S, six runs each; garbage collection 6.0 → 2.3 s). A binary
+  that would run past the loaded period (the first binary's length times the
+  binary count, or the end of `end_date` if later) stops the run before it
+  starts.
 - New in `Architectures`: point operations (`AbstractPointOp`, `Fused`,
   `Sequence`, `launch!(op, ctx, backend)`), with a per-backend
   `fusion_policy` (one fused kernel by default, separate launches on Metal). A kernel body is written once as

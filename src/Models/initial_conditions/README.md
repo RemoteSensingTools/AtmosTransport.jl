@@ -44,7 +44,9 @@ these files reuse. The parent overview is [`../README.md`](../README.md).
   CS dry/moist halo packing
 - [`surface_flux.jl`](surface_flux.jl) — kind and default-file resolution, NetCDF
   load and unit conversion, GridFED calendar-year inference, time-varying series
-  loader, topology builders; includes the two files below
+  loader (with a run start, reads flux data only for the slices of the run
+  period), topology builders; includes
+  the two files below
 - [`surface_flux_regridding.jl`](surface_flux_regridding.jl) — bilinear
   renormalisation, `_regridding_method`, cached conservative regridder build/apply
 - [`surface_flux_native.jl`](surface_flux_native.jl) — `cs_native` time-varying

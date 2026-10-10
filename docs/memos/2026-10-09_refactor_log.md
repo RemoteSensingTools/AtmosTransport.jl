@@ -891,9 +891,16 @@ measured together (`warm_ab/perf4`), MERRA-2 with 3-hourly 3-D output: wall
 15.0 GiB, garbage collection 3.4 → 2.2 s; end to end including setup
 29.9 → 27.3 s (−8.5 %).
 
-Still open: window loads allocate fresh and padded host arrays every window
-(9.5 GiB per two days); time-varying flux files are loaded whole regardless of
-the run period; the cubed-sphere surface-flux interpolation launches one kernel
+Done afterwards (warm A/B, six timed runs each, `warm_ab/wbuf` and
+`warm_ab/rspan`): GPU runs refill one host staging window in place
+(`load_transport_window!`): run-loop allocations 15.0 → 4.9 GiB, run-loop wall
+10.2 → 8.7 s, transport 7.2 → 5.3 s; Metal C24 output identical. Time-varying
+flux files are read only for the run period: end to end 25.9 → 12.4 s for the
+two-day run (10 instead of 6088 LMDZ slices), NetCDF output bit-identical.
+The golden configs list their binaries without `start_date`, so only the A/B
+comparison exercises the run-period path.
+
+Still open: the cubed-sphere surface-flux interpolation launches one kernel
 per source, panel and temporal segment, 30 per substep in the benchmark
 configuration (5 sources × 6 panels × 1 segment; 12 480 launches in the nsys
 run). Within one temporal segment the launches for different panels and

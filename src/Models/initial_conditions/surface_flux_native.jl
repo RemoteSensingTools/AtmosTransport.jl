@@ -10,7 +10,7 @@ No horizontal interpolation is performed.
 """
 function _build_native_timevarying_cs_surface_flux_source(
         mesh::CubedSphereMesh, tracer_name::Symbol, cfg, ::Type{FT},
-        reference_time::Union{DateTime, Nothing}) where FT
+        reference_time::Union{DateTime, Nothing}; run_span = nothing) where FT
     file, variable, _ = _resolve_surface_flux_file(cfg, :cs_native)
     isfile(file) || throw(ArgumentError("surface-flux file not found: $file"))
 
@@ -35,6 +35,22 @@ function _build_native_timevarying_cs_surface_flux_source(
         ntime = size(raw_var, 4)
         ntime > 0 || throw(ArgumentError("native cubed-sphere flux has no time slices"))
 
+        reference_time === nothing && @warn(
+            "native cubed-sphere surface flux: no reference_time supplied; assuming " *
+            "the file's time origin equals the run start (first slice → t=0).")
+        time_units = String(get(ds[time_var].attrib, "units", ""))
+        times_all = _surface_flux_times_seconds(ds[time_var][:], time_units, reference_time)
+        issorted(times_all) || throw(ArgumentError(
+            "native cubed-sphere surface-flux times must be ascending"))
+        # Only the slices the run can use (a contiguous range of the ascending axis).
+        kr = if run_span === nothing || reference_time === nothing
+            1:ntime
+        else
+            t_lo, t_hi = _needed_slice_window(times_all, run_span)
+            searchsortedfirst(times_all, t_lo):searchsortedlast(times_all, t_hi)
+        end
+        times_sec = times_all[kr]
+
         units_norm = _normalize_units_string(get(raw_var.attrib, "units", ""))
         species_scale = FT(_native_flux_species_scale(units_norm, file))
         scale = species_scale * FT(get(cfg, "scale", 1.0)) *
@@ -43,7 +59,7 @@ function _build_native_timevarying_cs_surface_flux_source(
         _check_native_flux_cell_area(ds, mesh, file)
         area = reshape(FT.(mesh.cell_areas), Nc, Nc, 1)
         panels_series = ntuple(p -> begin
-            panel = raw_var[:, :, p, :]
+            panel = raw_var[:, :, p, kr]
             any(ismissing, panel) && throw(ArgumentError(
                 "native cubed-sphere flux has fill values on panel $p of $file"))
             density = FT.(panel)
@@ -51,14 +67,6 @@ function _build_native_timevarying_cs_surface_flux_source(
                 "native cubed-sphere flux contains non-finite values on panel $p"))
             density .* area .* scale
         end, CS_PANEL_COUNT)
-
-        reference_time === nothing && @warn(
-            "native cubed-sphere surface flux: no reference_time supplied; assuming " *
-            "the file's time origin equals the run start (first slice → t=0).")
-        time_units = String(get(ds[time_var].attrib, "units", ""))
-        times_sec = _surface_flux_times_seconds(ds[time_var][:], time_units, reference_time)
-        issorted(times_sec) || throw(ArgumentError(
-            "native cubed-sphere surface-flux times must be ascending"))
 
         # Hourly flux fields represent interval means and are held constant
         # over their stamped hour unless the config explicitly requests a

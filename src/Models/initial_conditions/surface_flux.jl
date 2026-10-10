@@ -412,12 +412,14 @@ function _parse_cf_time_origin(s::AbstractString)
     throw(ArgumentError("time-varying surface flux: cannot parse time origin '$(s)'"))
 end
 
-# One file of a time-varying series: all slices (no monthly averaging), the
-# static loader's lat-flip / lon-roll reorientation and unit conversion, and
-# slice times in seconds since `reference_time`.
+# One file of a time-varying series: all slices, or the file's slice indices
+# `slices` (no monthly averaging), the static loader's lat-flip / lon-roll
+# reorientation and unit conversion, and slice times in seconds since
+# `reference_time`.
 function _load_single_timevarying_surface_flux_field(
         cfg, ::Type{FT}, reference_time::Union{DateTime, Nothing},
-        file::AbstractString, variable::AbstractString) where FT
+        file::AbstractString, variable::AbstractString;
+        slices::Union{Nothing, AbstractVector{<:Integer}} = nothing) where FT
     kind = _surface_flux_kind(cfg)
     isfile(file) || throw(ArgumentError("surface-flux file not found: $file"))
 
@@ -437,9 +439,10 @@ function _load_single_timevarying_surface_flux_field(
         ndims(raw_var) == 3 || throw(ArgumentError(
             "time-varying surface-flux variable '$variable' must be 3D (lon,lat,time), got ndims=$(ndims(raw_var))"))
         Nx, Ny, ntime = size(raw_var)
-        raw = Array{FT, 3}(undef, Nx, Ny, ntime)
-        @inbounds for t in 1:ntime
-            raw[:, :, t] .= FT.(nomissing(raw_var[:, :, t], zero(FT)))
+        keep = slices === nothing ? (1:ntime) : slices
+        raw = Array{FT, 3}(undef, Nx, Ny, length(keep))
+        @inbounds for (out, t) in enumerate(keep)
+            raw[:, :, out] .= FT.(nomissing(raw_var[:, :, t], zero(FT)))
         end
 
         # --- reorientation (identical to the static loader, per slice) ---
@@ -462,8 +465,8 @@ function _load_single_timevarying_surface_flux_field(
             ntime == 12 || throw(ArgumentError(
                 "time-varying GridFED source must contain 12 monthly slices, got $ntime in $file"))
             source_year = _surface_flux_year(cfg, file, ds)
-            @inbounds for month in 1:12
-                raw[:, :, month] ./= FT(_days_in_month(source_year, month) * 86400.0)
+            @inbounds for (out, month) in enumerate(keep)
+                raw[:, :, out] ./= FT(_days_in_month(source_year, month) * 86400.0)
             end
         elseif kind === :lmdz_co2 || units_norm in ("kgcm-2s-1", "kgc/m2/s", "kgcm2s-1")
             raw .*= FT(44.0 / 12.0)   # kgC → kgCO2
@@ -474,7 +477,7 @@ function _load_single_timevarying_surface_flux_field(
         end
         raw .*= FT(get(cfg, "scale", 1.0))
 
-        times_sec = _timevarying_slice_seconds(time_var, ds, cfg, kind, file, reference_time)
+        times_sec = _timevarying_slice_seconds(time_var, ds, cfg, kind, file, reference_time)[keep]
 
         # --- emission temporal-stamp convention (CAMS / LMDZ natural CO2) ---
         # The CAMS file (`flux_apos`, 3-hourly, "hours since 2021-12-01") uses
@@ -515,8 +518,36 @@ function _timevarying_slice_seconds(::Nothing, ds, cfg, kind::Symbol, file, refe
     return [Dates.value(DateTime(source_year, month, 1) - ref) / 1000.0 for month in 1:12]
 end
 
+# Slice times of one file, read from its time axis without its data.
+function _timevarying_file_seconds(cfg, reference_time, file::AbstractString)
+    isfile(file) || throw(ArgumentError("surface-flux file not found: $file"))
+    return NCDataset(file) do ds
+        _timevarying_slice_seconds(_ic_find_coord(ds, ["time", "t"]), ds, cfg,
+                                   _surface_flux_kind(cfg), file, reference_time)
+    end
+end
+
 """
-    _load_timevarying_surface_flux_field(cfg, FT, reference_time)
+    _needed_slice_window(times, run_span) -> (t_lo, t_hi)
+
+Slice times that bound the run `run_span = (t_start, t_end)` (seconds since
+the run start): the latest slice at or before `t_start` and the earliest at or
+after `t_end` (the first or last slice when none exists). Slices outside
+`[t_lo, t_hi]` cannot affect the run under any temporal scheme, which only
+uses the slices bracketing a time.
+"""
+function _needed_slice_window(times::AbstractVector{<:Real}, run_span::Tuple{<:Real, <:Real})
+    isempty(times) && throw(ArgumentError("time-varying surface flux has no time slices"))
+    t0, t1 = run_span
+    t0 <= t1 || throw(ArgumentError("run span must be ordered; got $(run_span)"))
+    sorted = sort(times)
+    i_lo = searchsortedlast(sorted, t0)
+    i_hi = searchsortedfirst(sorted, t1)
+    return sorted[max(i_lo, 1)], sorted[min(i_hi, length(sorted))]
+end
+
+"""
+    _load_timevarying_surface_flux_field(cfg, FT, reference_time; run_span = nothing)
 
 Load a regular lon/lat `(lon, lat, time)` surface-flux series from one file
 (`file`), an explicit list (`files = [...]`, chronological), or twelve monthly
@@ -525,18 +556,33 @@ Slices from all files are concatenated and sorted by time; timestamps must be
 unique and every file must share one lon/lat grid. Units are converted per
 slice to kg species m⁻² s⁻¹ (GridFED monthly totals use each month's length).
 When `reference_time === nothing`, each file's own time origin is taken as
-the run start and a warning is emitted.
+the run start and a warning is emitted. With `run_span = (t_start, t_end)`
+(seconds since the run start) and a `reference_time`, every file's time axis
+is read but flux data only for the slices in
+`_needed_slice_window(times, run_span)`, which are returned; otherwise every
+slice is read.
 """
 function _load_timevarying_surface_flux_field(cfg, ::Type{FT},
-                                              reference_time::Union{DateTime, Nothing}) where FT
+                                              reference_time::Union{DateTime, Nothing};
+                                              run_span = nothing) where FT
     kind = _surface_flux_kind(cfg)
     kind === :none && return nothing
     reference_time === nothing && @warn(
         "time-varying surface flux: no reference_time supplied; assuming the file's " *
         "time origin equals the run start (first slice → t=0).")
-    files, variable = _resolve_timevarying_surface_flux_files(cfg, kind, reference_time)
+    all_files, variable = _resolve_timevarying_surface_flux_files(cfg, kind, reference_time)
+    files, slices = if run_span === nothing || reference_time === nothing
+        all_files, fill(nothing, length(all_files))
+    else
+        file_times = [_timevarying_file_seconds(cfg, reference_time, f) for f in all_files]
+        t_lo, t_hi = _needed_slice_window(reduce(vcat, file_times), run_span)
+        keep = [findall(t -> t_lo <= t <= t_hi, ts) for ts in file_times]
+        used = findall(!isempty, keep)
+        all_files[used], keep[used]
+    end
     fields = [_load_single_timevarying_surface_flux_field(
-                  cfg, FT, reference_time, file, variable) for file in files]
+                  cfg, FT, reference_time, file, variable; slices = s)
+              for (file, s) in zip(files, slices)]
 
     lon = first(fields).lon
     lat = first(fields).lat
@@ -556,9 +602,16 @@ function _load_timevarying_surface_flux_field(cfg, ::Type{FT},
     issorted(times_sec; lt = <=) || throw(ArgumentError(
         "time-varying surface-flux timestamps must be unique and strictly increasing"))
 
-    @info "Loaded time-varying surface flux" kind files=length(files) slices=length(times_sec) first_time_seconds=first(times_sec) last_time_seconds=last(times_sec)
+    @info "Loaded time-varying surface flux" kind files=length(files) listed_files=length(all_files) slices=length(times_sec) first_time_seconds=first(times_sec) last_time_seconds=last(times_sec)
     return TimeVaryingFileSurfaceFluxField{FT}(raw, lon, lat, times_sec)
 end
+
+# Only the cubed-sphere builder takes a run span (time-varying sources are CS only).
+_build_surface_flux_source_spanned(grid::AtmosGrid{<:CubedSphereMesh}, name, cfg, ::Type{FT},
+                                   reference_time, run_span) where FT =
+    build_surface_flux_source(grid, name, cfg, FT; reference_time, run_span)
+_build_surface_flux_source_spanned(grid, name, cfg, ::Type{FT}, reference_time, _run_span) where FT =
+    build_surface_flux_source(grid, name, cfg, FT; reference_time)
 
 include("surface_flux_regridding.jl")
 include("surface_flux_native.jl")
@@ -680,7 +733,8 @@ plus a `times` vector (seconds since `reference_time`). The default
 """
 function build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
                                    tracer_name::Symbol, cfg, ::Type{FT};
-                                   reference_time::Union{DateTime, Nothing} = nothing) where FT
+                                   reference_time::Union{DateTime, Nothing} = nothing,
+                                   run_span = nothing) where FT
     kind = _surface_flux_kind(cfg)
     kind === :none && return nothing
     kind === :cs_native && !_surface_flux_time_varying(cfg) && throw(ArgumentError(
@@ -698,8 +752,9 @@ function build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
             "time-varying surface flux not supported for kind=$(kind); " *
             "supported: :lmdz_co2, :gridfed_fossil_co2, :cs_native"))
         kind === :cs_native && return _build_native_timevarying_cs_surface_flux_source(
-            mesh, tracer_name, cfg, FT, reference_time)
-        return _build_timevarying_cs_surface_flux_source(mesh, tracer_name, cfg, FT, reference_time)
+            mesh, tracer_name, cfg, FT, reference_time; run_span)
+        return _build_timevarying_cs_surface_flux_source(mesh, tracer_name, cfg, FT, reference_time;
+                                                         run_span)
     end
 
     source = _load_file_surface_flux_field(cfg, FT; radius = grid.horizontal.radius)
@@ -722,9 +777,10 @@ end
 # stacked `(Nc, Nc, ntime)` panel series.
 function _build_timevarying_cs_surface_flux_source(mesh, tracer_name::Symbol, cfg,
                                                    ::Type{FT},
-                                                   reference_time::Union{DateTime, Nothing}) where FT
+                                                   reference_time::Union{DateTime, Nothing};
+                                                   run_span = nothing) where FT
     Nc = mesh.Nc
-    field = _load_timevarying_surface_flux_field(cfg, FT, reference_time)
+    field = _load_timevarying_surface_flux_field(cfg, FT, reference_time; run_span)
     ntime = length(field.times_sec)
     storage_scale = FT(_surface_flux_storage_scale(tracer_name, cfg))
 
@@ -758,7 +814,7 @@ function _build_timevarying_cs_surface_flux_source(mesh, tracer_name::Symbol, cf
 end
 
 """
-    build_surface_flux_sources(grid, tracer_specs, ::Type{FT}; reference_time=nothing)
+    build_surface_flux_sources(grid, tracer_specs, ::Type{FT}; reference_time=nothing, run_span=nothing)
 
 Build surface-flux source instances for every tracer spec that requests
 one. Returns a tuple (possibly empty) suitable for the
@@ -766,14 +822,17 @@ one. Returns a tuple (possibly empty) suitable for the
 
 `reference_time` (the run start `DateTime`) is threaded to each
 per-tracer builder so the time-varying CS path can align its slice times
-to the simulation clock. It is ignored by static sources.
+to the simulation clock. `run_span = (t_start, t_end)` (seconds since the run
+start) lets the time-varying CS path read only the slices the run can use.
+Both are ignored by static sources.
 """
 function build_surface_flux_sources(grid, tracer_specs, ::Type{FT};
-                                    reference_time::Union{DateTime, Nothing} = nothing) where FT
+                                    reference_time::Union{DateTime, Nothing} = nothing,
+                                    run_span = nothing) where FT
     sources = Any[]
     for spec in tracer_specs
-        source = build_surface_flux_source(grid, spec.name, spec.surface_flux_cfg, FT;
-                                           reference_time = reference_time)
+        source = _build_surface_flux_source_spanned(grid, spec.name, spec.surface_flux_cfg, FT,
+                                                    reference_time, run_span)
         source === nothing || push!(sources, source)
     end
     return Tuple(sources)

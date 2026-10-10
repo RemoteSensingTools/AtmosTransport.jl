@@ -29,6 +29,8 @@ using .AtmosTransport.Models.InitialConditionIO: build_surface_flux_source,
 
 const FT = Float64
 const ICIO = AtmosTransport.Models.InitialConditionIO
+include(joinpath(@__DIR__, "..", "fixtures", "cs_multifile.jl"))
+using .CSDriverHandoffFixtures
 const _SYNTHETIC_SECONDS_JAN_2021 = 31 * 86400
 
 _synthetic_file_ic_value(lon_deg, lat_deg) =
@@ -635,6 +637,76 @@ end
         end
     end
 
+    @testset "time-varying loaders read only the run period" begin
+        times = [0.0, 10.0, 20.0, 30.0]
+        @test ICIO._needed_slice_window(times, (12.0, 18.0)) == (10.0, 20.0)
+        @test ICIO._needed_slice_window(times, (10.0, 20.0)) == (10.0, 20.0)
+        @test ICIO._needed_slice_window(times, (-5.0, 3.0)) == (0.0, 10.0)
+        @test ICIO._needed_slice_window(times, (25.0, 99.0)) == (20.0, 30.0)
+        @test ICIO._needed_slice_window([30.0, 0.0, 10.0], (12.0, 18.0)) == (10.0, 30.0)
+        @test_throws ArgumentError ICIO._needed_slice_window(Float64[], (0.0, 1.0))
+        @test_throws ArgumentError ICIO._needed_slice_window(times, (5.0, 1.0))
+
+        mktempdir() do dir
+            for month in 1:12
+                _write_synthetic_lmdz_flux_file(
+                    joinpath(dir, @sprintf("lmdz_%04d%02d.nc", 2022, month)), 2022, month)
+            end
+            cfg = Dict{String, Any}("kind" => "lmdz_co2",
+                                    "file_pattern" => joinpath(dir, "lmdz_{YYYYMM}.nc"),
+                                    "year" => 2022, "time_varying" => true)
+            ref = DateTime(2022, 1, 1)
+            full = ICIO._load_timevarying_surface_flux_field(cfg, Float32, ref)
+            sec(d) = Dates.value(d - ref) / 1000.0
+            # Mar 1 03:00 + 1 h to Apr 1 00:00: Mar 03:00 slice through the Apr 00:00 slice.
+            span = (sec(DateTime(2022, 3, 1, 4)), sec(DateTime(2022, 4, 1)))
+            sub = ICIO._load_timevarying_surface_flux_field(cfg, Float32, ref; run_span = span)
+            idx = findall(t -> sec(DateTime(2022, 3, 1, 3)) <= t <= sec(DateTime(2022, 4, 1)),
+                          full.times_sec)
+            @test length(idx) == 2
+            @test sub.times_sec == full.times_sec[idx]
+            @test sub.raw_series == full.raw_series[:, :, idx]
+            @test sub.lon == full.lon && sub.lat == full.lat
+            # Every scheme gives the same emitted increment from the subset: steps
+            # starting on and between knots, crossing knots, and at the run ends.
+            SF = AtmosTransport.Operators.SurfaceFlux
+            increment(field, segs) = sum(f * (w0 .* field.raw_series[:, :, i0] .+
+                                              w1 .* field.raw_series[:, :, i1])
+                                         for (i0, i1, w0, w1, f) in segs)
+            # Feb 1 01:00 to Mar 1 02:00 has knots inside (Feb 1 03:00, Mar 1 00:00).
+            span2 = (sec(DateTime(2022, 2, 1, 1)), sec(DateTime(2022, 3, 1, 2)))
+            sub2 = ICIO._load_timevarying_surface_flux_field(cfg, Float32, ref; run_span = span2)
+            @test length(sub2.times_sec) == 4
+            n_steps = 0
+            for (sp, field) in ((span, sub), (span2, sub2))
+                knots = filter(t -> sp[1] <= t <= sp[2], full.times_sec)
+                starts = sort(unique(vcat(knots, knots .- 1800, sp[1],
+                                          range(sp...; length = 9)[1:end-1])))
+                for scheme in (AtmosTransport.StepwiseFlux(), AtmosTransport.LinearInterpFlux(),
+                               AtmosTransport.ConservativeMeanFlux()),
+                    t in starts, dt in (900.0, 4 * 3600.0, 3 * 86400.0)
+                    sp[1] <= t && t + dt <= sp[2] || continue
+                    n_steps += 1
+                    @test increment(field, SF._flux_temporal_segments(scheme, field.times_sec, t, dt)) ==
+                          increment(full, SF._flux_temporal_segments(scheme, full.times_sec, t, dt))
+                end
+            end
+            @test n_steps > 60
+
+            gridfed_path = joinpath(dir, "gridfed_2022.nc")
+            _write_synthetic_monthly_gridfed_file(gridfed_path, 2022)
+            gcfg = Dict{String, Any}("kind" => "gridfed_fossil_co2", "file" => gridfed_path,
+                                     "year" => 2022, "time_varying" => true)
+            g = ICIO._load_timevarying_surface_flux_field(
+                gcfg, Float64, ref; run_span = (sec(DateTime(2022, 6, 10)), sec(DateTime(2022, 7, 2))))
+            @test g.times_sec == [sec(DateTime(2022, m, 1)) for m in 6:8]
+            # Monthly totals divided by each slice's own month length.
+            for (k, month) in enumerate(6:8)
+                @test all(g.raw_series[:, :, k] .== month)
+            end
+        end
+    end
+
     @testset "build_surface_flux_source — `kind = none` returns nothing" begin
         mesh = LatLonMesh(; Nx = 4, Ny = 3,
                           longitude = (0.0, 360.0),
@@ -745,6 +817,46 @@ end
         for p in 1:6, t in 1:ntime
             expected = (p + 10t) .* mesh.cell_areas .* storage_scale
             @test src.cell_mass_rate_series[p][:, :, t] ≈ expected
+        end
+
+        # A run span inside the second hour keeps only the bracketing slice.
+        spanned = build_surface_flux_source(
+            grid, :co2_test, cfg, FT; reference_time = DateTime(2021, 12, 1),
+            run_span = (3600.0, 5400.0))
+        @test spanned.times == [3600.0]
+        for p in 1:6
+            @test spanned.cell_mass_rate_series[p][:, :, 1] ≈ src.cell_mass_rate_series[p][:, :, 2]
+        end
+        Runner = AtmosTransport.Models.DrivenRunner
+        @test Runner._check_flux_run_span((0.0, 7201.0), 7201.0, (spanned,), "a.bin") === nothing
+        @test_throws ArgumentError Runner._check_flux_run_span(
+            (0.0, 7201.0), 7201.5, (spanned,), "a.bin")
+        @test Runner._check_flux_run_span(nothing, 10800.0, (spanned,), "a.bin") === nothing
+        @test Runner._check_flux_run_span((0.0, 7201.0), 10800.0, (), "a.bin") === nothing
+    end
+
+    @testset "run span from the binaries and the input dates" begin
+        Runner = AtmosTransport.Models.DrivenRunner
+        mktempdir() do dir
+            path = joinpath(dir, "three_hours.bin")
+            CSDriverHandoffFixtures.cs_handoff_fixture(path, [1.0, 2.0, 3.0])  # 3 hourly windows
+            driver = TransportBinaryDriver(path; FT = Float64, arch = CPU(), Hp = 1)
+            # Explicit binary list without dates: the binaries' length.
+            @test Runner._run_time_span(Dict("input" => Dict("binary_paths" => [path])),
+                                        driver, 2) == (0.0, 2 * 3 * 3600.0 + 1)
+            @test Runner._run_time_span(Dict{String, Any}(), driver, 1;
+                                        start_window = 2) == (0.0, 2 * 3600.0 + 1)
+            @test Runner._run_time_span(Dict{String, Any}(), driver, 1;
+                                        stop_window_override = 1) == (0.0, 3600.0 + 1)
+            # Dates: the inclusive end date when it is later than the binaries.
+            dated = Dict("input" => Dict("start_date" => "2021-12-01", "end_date" => "2021-12-02"))
+            @test Runner._run_time_span(dated, driver, 2) == (0.0, 2 * 86400.0 + 1)
+            @test Runner._run_time_span(dated, driver, 20) == (0.0, 20 * 3 * 3600.0 + 1)
+            # Without a start date every slice is loaded, so there is nothing to check.
+            @test Runner._flux_run_span(Dict("input" => Dict("binary_paths" => [path])),
+                                        driver, 2) === nothing
+            @test Runner._flux_run_span(dated, driver, 2) == (0.0, 2 * 86400.0 + 1)
+            close(driver)
         end
     end
 
