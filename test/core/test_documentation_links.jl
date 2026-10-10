@@ -4,6 +4,7 @@ const REPOSITORY_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 const MAINTAINED_DOCUMENTS = let
     documents = [
         joinpath(REPOSITORY_ROOT, "README.md"),
+        joinpath(REPOSITORY_ROOT, "CONTRIBUTING.md"),
         joinpath(REPOSITORY_ROOT, "benchmarking", "README.md"),
         joinpath(REPOSITORY_ROOT, "config", "preprocessing", "README.md"),
         joinpath(REPOSITORY_ROOT, "config", "runs", "README.md"),

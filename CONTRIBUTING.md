@@ -9,13 +9,14 @@ for contributing to AtmosTransport.jl.
 
 - Julia 1.10 or later (install via [juliaup](https://github.com/JuliaLang/juliaup))
 - Git
-- (Optional) NVIDIA GPU with CUDA 12+ drivers for GPU testing
+- (Optional) an NVIDIA GPU with CUDA 12+ drivers, or an Apple-silicon Mac
+  (Metal, Float32 only), for GPU testing
 
 ### Development Setup
 
 ```bash
 git clone https://github.com/RemoteSensingTools/AtmosTransport.jl.git
-cd AtmosTransport
+cd AtmosTransport.jl
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
 ```
 
@@ -25,71 +26,81 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'
 julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 
+The test tiers, opt-in flags, and how to add a test file are described in
+[`test/README.md`](test/README.md).
+
 ### Building Documentation Locally
 
 ```bash
-julia --project=docs -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
-julia --project=docs docs/make.jl
-# Open docs/build/index.html in your browser
+ATMOSTR_DOCS_BUILD_ONLY=true julia docs/build.jl
 ```
+
+This runs the same checks as the CI docs build (doctests, exported docstrings,
+cross-references) without deploying; [`docs/README.md`](docs/README.md)
+explains the docs layout and how to preview the site.
 
 ## Code Style
 
 - Follow standard Julia conventions: `snake_case` for functions and variables,
   `CamelCase` for types
-- Use multiple dispatch rather than if-else chains on type tags
+- Use multiple dispatch rather than if-else chains on type tags or grid kinds
 - Keep functions short and focused; prefer composing small functions
-- Add docstrings (using `DocStringExtensions`) to all exported functions and types
+- Add docstrings to all exported functions and types
+- Kernels use KernelAbstractions so one implementation runs on CPU, CUDA, and
+  Metal; keep array fields of GPU-aware structs parametric
 
 ## Architecture Overview
 
-AtmosTransport uses an Oceananigans.jl-inspired design with abstract type
-hierarchies and multiple dispatch:
+The model is built from abstract type hierarchies and multiple dispatch,
+inspired by Oceananigans.jl. The main operator families (all subtypes of
+`AbstractOperator` in `src/Operators/`):
 
 ```
-AbstractAdvection        →  SlopesAdvection, PPMAdvection, UpwindAdvection, ...
-AbstractConvection       →  TiedtkeConvection, NoConvection, ...
-AbstractDiffusion        →  BoundaryLayerDiffusion, NoDiffusion, ...
-AbstractChemistry        →  NoChemistry, RadioactiveDecay, CompositeChemistry, ...
-AbstractGrid             →  LatitudeLongitudeGrid, CubedSphereGrid
+AbstractAdvectionScheme      →  UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme
+AbstractConvection           →  NoConvection, CMFMCConvection, CMFMCMatrixConvection, TM5Convection
+AbstractDiffusion            →  NoDiffusion, ImplicitVerticalDiffusion
+AbstractSurfaceFluxOperator  →  NoSurfaceFlux, SurfaceFluxOperator
+AbstractChemistryOperator    →  NoChemistry, ExponentialDecay, CompositeChemistry
 ```
+
+Grids are `AtmosGrid`s that combine a horizontal mesh (`LatLonMesh`,
+`ReducedGaussianMesh`, or `CubedSphereMesh`, all subtypes of
+`AbstractHorizontalMesh`) with a vertical coordinate and an architecture.
+Meteorology enters through an `AbstractMetDriver`, normally the
+`TransportBinaryDriver` that reads preprocessed transport binaries. See
+[`docs/src/concepts/architecture.md`](docs/src/concepts/architecture.md) for
+the full picture.
 
 ## Adding a New Physics Operator
 
-To add a new advection scheme (for example):
+- **New advection scheme:** add the type in
+  `src/Operators/Advection/schemes.jl`, wire its reconstruction in
+  `reconstruction.jl`, and follow the sweep path from the `apply!` methods in
+  `strang_apply.jl`; [`src/Operators/Advection/README.md`](src/Operators/Advection/README.md)
+  maps the files.
+- **New operator family member** (convection, diffusion, surface flux,
+  chemistry): subtype the family's abstract type and implement
+  `apply!(state, forcing, grid, op, dt; workspace)`, where the forcing
+  argument is family-specific (for example `ConvectionForcing` for
+  convection). A new family ships a `No<Operator>` default and is wired
+  through `TransportModel`.
+- **Adjoint** (for 4D-Var and footprints): the per-operator reverse kernels
+  live in `src/Adjoints/`; see [`src/Adjoints/README.md`](src/Adjoints/README.md).
 
-1. **Define your type** in `src/Advection/`:
-   ```julia
-   struct MyAdvection <: AbstractAdvection end
-   ```
-
-2. **Implement the interface** — dispatch on your type:
-   ```julia
-   function advect!(tracers, grid, adv::MyAdvection, mass_fluxes, dt)
-       # your implementation
-   end
-   ```
-
-3. **Add the adjoint** (if supporting 4D-Var):
-   ```julia
-   function adjoint_advect!(adj_tracers, grid, adv::MyAdvection, mass_fluxes, dt)
-       # adjoint of your implementation
-   end
-   ```
-
-4. **Export** your type from the submodule.
-
-5. **Add tests** in `test/` and verify with `Pkg.test()`.
-
-The same pattern applies to convection (`AbstractConvection`), diffusion
-(`AbstractDiffusion`), and chemistry (`AbstractChemistry`) operators.
+Test what applies to the operator: transport operators keep a uniform mixing
+ratio uniform and conserve mass; sources and sinks (emissions, decay) match
+their analytic budget; operators with a reverse kernel pass the adjoint
+identity test; and CPU and GPU results agree. For a new family, also test
+that the default path is bit-identical to the explicit no-op path.
 
 ## Submitting Changes
 
 1. Fork the repository and create a feature branch
 2. Make your changes with clear, focused commits
 3. Ensure all tests pass: `julia --project=. -e 'using Pkg; Pkg.test()'`
-4. Open a pull request with a clear description of what changed and why
+4. Update the relevant `README.md` or reference docs when the change affects
+   public behavior, scripts, configuration, or setup
+5. Open a pull request with a clear description of what changed and why
 
 ## Reporting Issues
 
