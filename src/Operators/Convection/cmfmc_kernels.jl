@@ -110,128 +110,235 @@ end
 # CFL sub-cycling
 # =========================================================================
 
-@inline _cmfmc_host_scan_array(a::Array) = a
-@inline _cmfmc_host_scan_array(a) = Array(a)
+# The scan runs where the fields live. On a GPU one work item per column
+# computes the column maximum of `|cmfmc| · dt / bmass` over its Nz + 1
+# interfaces and a single reduction combines the per-column values, which
+# avoids copying three full fields to the host once per window. On the CPU a
+# level-by-level loop reads the fields contiguously. The maximum adds no
+# rounding and is order-independent; each ratio uses the same IEEE operations
+# everywhere (`bmass = m / area`, then one multiply and one divide), and
+# identity with the host value is checked by the CPU, CUDA and Metal tests.
+#
+# NaN handling is explicit because device `min`/`max` differ by backend (Metal's
+# fmin/fmax return the non-NaN argument): as with Julia's `min`/`max` on the
+# host, a NaN layer mass skips its interface and a NaN ratio makes the result
+# NaN, which `_get_or_compute_n_sub!` rejects.
+@inline _nan_min(a, b) = (isnan(b) | (b < a)) ? b : a
+@inline _nan_max(a, b) = (isnan(b) | (b > a)) ? b : a
+
+# `|c| · dt / bmass` at one interface, pessimized against the thinner adjacent
+# layer (smaller bmass → larger CFL); `m_above`/`m_below` are the adjacent layer
+# masses (the same layer at the top and bottom interfaces). Zero, which leaves a
+# running maximum unchanged, when that mass is not positive or NaN. `bmass` has
+# units kg/m² and CMFMC kg/m²/s, so the ratio is dimensionless.
+@inline function _cmfmc_interface_cfl(c, m_above, m_below, area::FT, dt::FT) where FT
+    bmass = _nan_min(m_above, m_below) / area
+    return bmass > zero(FT) ? abs(c) * dt / bmass : zero(FT)
+end
+
+# Layers adjacent to interface `k` (1 = model top, Nz + 1 = surface).
+@inline _cmfmc_interface_layers(k, Nz) = (max(k - 1, 1), min(k, Nz))
+
+# Column maximum over the Nz + 1 interfaces; `m(k)` is the layer air mass and
+# `f(k)` the interface mass flux.
+@inline function _cmfmc_column_max_cfl(f::F, m::M, area::FT, dt::FT, Nz::Int) where {F, M, FT}
+    worst = zero(FT)
+    for k in 1:(Nz + 1)
+        ka, kb = _cmfmc_interface_layers(k, Nz)
+        worst = _nan_max(worst, _cmfmc_interface_cfl(f(k), m(ka), m(kb), area, dt))
+    end
+    return worst
+end
+
+# Host scans, level by level so the inner loop reads contiguous memory. They use
+# Julia's `min`/`max`, which propagate NaN exactly like `_nan_min`/`_nan_max`
+# (same results) and keep the reduction vectorizable on the CPU.
+@inline function _cmfmc_host_interface_cfl(c, m_above, m_below, area::FT, dt::FT) where FT
+    bmass = min(m_above, m_below) / area
+    return ifelse(bmass > zero(FT), abs(c) * dt / bmass, zero(FT))
+end
+
+function _cmfmc_host_max_cfl(cmfmc::Array{FT, 3}, air_mass::Array{FT, 3},
+                             cell_areas_y::Array, dt::FT) where FT
+    Nx, Ny, Nz = size(air_mass)
+    worst = zero(FT)
+    @inbounds for k in 1:(Nz + 1)
+        ka, kb = _cmfmc_interface_layers(k, Nz)
+        for j in 1:Ny
+            area = FT(cell_areas_y[j])
+            for i in 1:Nx
+                worst = max(worst, _cmfmc_host_interface_cfl(cmfmc[i, j, k], air_mass[i, j, ka],
+                                                             air_mass[i, j, kb], area, dt))
+            end
+        end
+    end
+    return worst
+end
+
+function _cmfmc_host_max_cfl(cmfmc::Array{FT, 2}, air_mass::Array{FT, 2},
+                             cell_areas::Array, dt::FT) where FT
+    ncell, Nz = size(air_mass)
+    worst = zero(FT)
+    @inbounds for k in 1:(Nz + 1)
+        ka, kb = _cmfmc_interface_layers(k, Nz)
+        for c in 1:ncell
+            worst = max(worst, _cmfmc_host_interface_cfl(cmfmc[c, k], air_mass[c, ka],
+                                                         air_mass[c, kb], FT(cell_areas[c]), dt))
+        end
+    end
+    return worst
+end
+
+# One cubed-sphere panel; `air_mass` carries `Hp` halo cells.
+function _cmfmc_host_max_cfl(cmfmc::Array{FT, 3}, air_mass::Array{FT, 3},
+                             cell_areas::Array{<:Any, 2}, dt::FT, Hp::Int) where FT
+    Nc_x, Nc_y = size(cell_areas)
+    Nz = size(air_mass, 3)
+    worst = zero(FT)
+    @inbounds for k in 1:(Nz + 1)
+        ka, kb = _cmfmc_interface_layers(k, Nz)
+        for j in 1:Nc_y, i in 1:Nc_x
+            worst = max(worst, _cmfmc_host_interface_cfl(cmfmc[i, j, k], air_mass[i + Hp, j + Hp, ka],
+                                                         air_mass[i + Hp, j + Hp, kb],
+                                                         FT(cell_areas[i, j]), dt))
+        end
+    end
+    return worst
+end
+
+# Structured lat-lon: air_mass (Nx, Ny, Nz), cmfmc (Nx, Ny, Nz + 1), areas by latitude.
+@kernel function _cmfmc_ll_column_cfl_kernel!(worst, @Const(cmfmc), @Const(air_mass),
+                                              @Const(cell_areas_y), dt, Nz)
+    i, j = @index(Global, NTuple)
+    FT = eltype(worst)
+    @inbounds worst[i, j] = _cmfmc_column_max_cfl(k -> @inbounds(cmfmc[i, j, k]),
+                                                  k -> @inbounds(air_mass[i, j, k]),
+                                                  FT(cell_areas_y[j]), dt, Nz)
+end
+
+# Face-indexed: air_mass (ncell, Nz), cmfmc (ncell, Nz + 1), per-cell areas.
+@kernel function _cmfmc_faceindexed_column_cfl_kernel!(worst, @Const(cmfmc), @Const(air_mass),
+                                                       @Const(cell_areas), dt, Nz)
+    c = @index(Global)
+    FT = eltype(worst)
+    @inbounds worst[c] = _cmfmc_column_max_cfl(k -> @inbounds(cmfmc[c, k]),
+                                               k -> @inbounds(air_mass[c, k]),
+                                               FT(cell_areas[c]), dt, Nz)
+end
+
+# Cubed-sphere panel: air_mass carries Hp halo cells; cmfmc and areas are interior-only.
+@kernel function _cmfmc_cs_column_cfl_kernel!(worst, @Const(cmfmc), @Const(air_mass),
+                                              @Const(cell_areas), dt, Hp, Nz, p)
+    i, j = @index(Global, NTuple)
+    FT = eltype(worst)
+    @inbounds worst[i, j, p] = _cmfmc_column_max_cfl(k -> @inbounds(cmfmc[i, j, k]),
+                                                     k -> @inbounds(air_mass[i + Hp, j + Hp, k]),
+                                                     FT(cell_areas[i, j]), dt, Nz)
+end
+
+# Run on the fields' common backend. Fields split across backends, and CPU
+# fields that are not `Array`s (views, wrappers, `OffsetArray`s), are scanned as
+# host `Array`s: the scans index from 1 under `@inbounds`, and `Array` rejects
+# non-one-based axes with a `DimensionMismatch`. Inputs that already are
+# `Array`s are not copied.
+_cmfmc_host_array(a::Array) = a
+_cmfmc_host_array(a) = Array(a)
+
+# An array type without a KernelAbstractions backend (a custom host array, for
+# which `get_backend` throws an `ArgumentError`) is scanned as a host `Array`.
+function _cmfmc_backend_or_nothing(a)
+    try
+        return get_backend(a)
+    catch err
+        err isa ArgumentError || rethrow()
+        return nothing
+    end
+end
+
+function _cmfmc_cfl_scan_backend(arrays)
+    backend = _cmfmc_backend_or_nothing(first(arrays))
+    if backend !== nothing && all(a -> _cmfmc_backend_or_nothing(a) == backend, arrays) &&
+       (!(backend isa KernelAbstractions.CPU) || all(a -> a isa Array, arrays))
+        return backend, arrays
+    end
+    return KernelAbstractions.CPU(), map(_cmfmc_host_array, arrays)
+end
 
 """
-    _cmfmc_max_cfl(cmfmc, air_mass, cell_areas_y, dt) -> FT
+    _cmfmc_max_cfl(cmfmc, air_mass, cell_areas, dt) -> FT
 
 Scan one window's CMFMC field and return the grid-maximum
-`|cmfmc| · dt / bmass` ratio. `bmass = air_mass[i,j,k] / cell_area_y[j]`
-has units kg/m², and CMFMC has units kg/m²/s, so the ratio is
-dimensionless.
+`|cmfmc| · dt / bmass` ratio, where `bmass = air_mass / cell_area` (kg/m²)
+of the thinner layer adjacent to each interface.
 
-Returns the same floating-point type as the state (`FT`). The
-convection path stays type-stable end to end; if `Float32` needs
-better accumulation behavior, that should be handled explicitly in the
-relevant reduction rather than by promoting the whole CFL scan.
+Returns the state's floating-point type `FT`, or NaN when a ratio is NaN.
+Runs on the fields' common backend (column kernels on GPUs, a level-by-level
+loop on the CPU); CPU inputs that are not `Array`s and fields split across
+backends are scanned as host `Array`s. The maximum adds no rounding and each
+ratio uses the same IEEE operations on every backend; equality with the host
+value is tested on CPU, CUDA and Metal.
 """
 function _cmfmc_max_cfl(cmfmc::AbstractArray{FT, 3},
                         air_mass::AbstractArray{FT, 3},
                         cell_areas_y::AbstractVector,
                         dt::Real) where FT
-    if !(cmfmc isa Array) || !(air_mass isa Array) || !(cell_areas_y isa Array)
-        return _cmfmc_max_cfl(_cmfmc_host_scan_array(cmfmc),
-                              _cmfmc_host_scan_array(air_mass),
-                              _cmfmc_host_scan_array(cell_areas_y),
-                              dt)
-    end
-    dt_ft = FT(dt)
-    worst = zero(FT)
+    backend, (cmfmc, air_mass, cell_areas_y) =
+        _cmfmc_cfl_scan_backend((cmfmc, air_mass, cell_areas_y))
+    backend isa KernelAbstractions.CPU &&
+        return _cmfmc_host_max_cfl(cmfmc, air_mass, cell_areas_y, FT(dt))
     Nx, Ny, Nz = size(air_mass)
-    # cmfmc is (Nx, Ny, Nz+1) at interfaces
-    @inbounds for k_iface in 1:Nz + 1, j in 1:Ny, i in 1:Nx
-        # The relevant bmass for the interface sits adjacent to it.
-        # For an interface with layers on both sides, we pessimize
-        # against the thinner layer (smaller bmass → larger CFL).
-        if k_iface == 1
-            m_cell = air_mass[i, j, 1]
-        elseif k_iface > Nz
-            m_cell = air_mass[i, j, Nz]
-        else
-            m_cell = min(air_mass[i, j, k_iface - 1], air_mass[i, j, k_iface])
-        end
-        bmass = m_cell / FT(cell_areas_y[j])
-        bmass > zero(FT) || continue
-        ratio = abs(cmfmc[i, j, k_iface]) * dt_ft / bmass
-        worst = max(worst, ratio)
-    end
-    return worst
+    worst = KernelAbstractions.allocate(backend, FT, Nx, Ny)
+    _cmfmc_ll_column_cfl_kernel!(backend, (16, 16))(worst, cmfmc, air_mass, cell_areas_y,
+                                                    FT(dt), Nz; ndrange = (Nx, Ny))
+    return mapreduce(identity, _nan_max, worst; init = zero(FT))
 end
 
 function _cmfmc_max_cfl(cmfmc::AbstractArray{FT, 2},
                         air_mass::AbstractMatrix{FT},
                         cell_areas::AbstractVector,
                         dt::Real) where FT
-    if !(cmfmc isa Array) || !(air_mass isa Array) || !(cell_areas isa Array)
-        return _cmfmc_max_cfl(_cmfmc_host_scan_array(cmfmc),
-                              _cmfmc_host_scan_array(air_mass),
-                              _cmfmc_host_scan_array(cell_areas),
-                              dt)
-    end
-    dt_ft = FT(dt)
-    worst = zero(FT)
+    backend, (cmfmc, air_mass, cell_areas) =
+        _cmfmc_cfl_scan_backend((cmfmc, air_mass, cell_areas))
+    backend isa KernelAbstractions.CPU &&
+        return _cmfmc_host_max_cfl(cmfmc, air_mass, cell_areas, FT(dt))
     ncell, Nz = size(air_mass)
-    @inbounds for k_iface in 1:(Nz + 1), c in 1:ncell
-        if k_iface == 1
-            m_cell = air_mass[c, 1]
-        elseif k_iface > Nz
-            m_cell = air_mass[c, Nz]
-        else
-            m_cell = min(air_mass[c, k_iface - 1], air_mass[c, k_iface])
-        end
-        bmass = m_cell / FT(cell_areas[c])
-        bmass > zero(FT) || continue
-        ratio = abs(cmfmc[c, k_iface]) * dt_ft / bmass
-        worst = max(worst, ratio)
-    end
-    return worst
+    worst = KernelAbstractions.allocate(backend, FT, ncell)
+    _cmfmc_faceindexed_column_cfl_kernel!(backend, 256)(worst, cmfmc, air_mass, cell_areas,
+                                                        FT(dt), Nz; ndrange = ncell)
+    return mapreduce(identity, _nan_max, worst; init = zero(FT))
 end
 
 function _cmfmc_max_cfl(cmfmc::NTuple{6, <:AbstractArray{FT, 3}},
                         air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                         cell_areas::NTuple{6, <:AbstractMatrix},
                         dt::Real) where FT
-    if any(p -> !(cmfmc[p] isa Array), 1:6) ||
-       any(p -> !(air_mass[p] isa Array), 1:6) ||
-       any(p -> !(cell_areas[p] isa Array), 1:6)
-        return _cmfmc_max_cfl(map(_cmfmc_host_scan_array, cmfmc),
-                              map(_cmfmc_host_scan_array, air_mass),
-                              map(_cmfmc_host_scan_array, cell_areas),
-                              dt)
-    end
-    dt_ft = FT(dt)
-    worst = zero(FT)
-
-    @inbounds for p in 1:6
-        cmfmc_panel = cmfmc[p]
-        air_panel = air_mass[p]
-        area_panel = cell_areas[p]
-        Nc_x, Nc_y = size(area_panel)
-        Hp_x = div(size(air_panel, 1) - Nc_x, 2)
-        Hp_y = div(size(air_panel, 2) - Nc_y, 2)
+    backend, arrays = _cmfmc_cfl_scan_backend((cmfmc..., air_mass..., cell_areas...))
+    cmfmc = ntuple(p -> arrays[p], 6)
+    air_mass = ntuple(p -> arrays[6 + p], 6)
+    cell_areas = ntuple(p -> arrays[12 + p], 6)
+    Nc_x, Nc_y = size(cell_areas[1])
+    halos = ntuple(6) do p
+        size(cell_areas[p]) == (Nc_x, Nc_y) || throw(DimensionMismatch(
+            "Cubed-sphere CMFMC panels must share one interior shape; got $(size(cell_areas[p])) " *
+            "for panel $p and $((Nc_x, Nc_y)) for panel 1"))
+        Hp_x = div(size(air_mass[p], 1) - Nc_x, 2)
+        Hp_y = div(size(air_mass[p], 2) - Nc_y, 2)
         Hp_x == Hp_y || throw(ArgumentError(
             "Cubed-sphere CMFMC air-mass halos must be symmetric; got ($(Hp_x), $(Hp_y))"))
-        Nz = size(air_panel, 3)
-
-        for k_iface in 1:(Nz + 1), j in 1:Nc_y, i in 1:Nc_x
-            ii = i + Hp_x
-            jj = j + Hp_y
-            if k_iface == 1
-                m_cell = air_panel[ii, jj, 1]
-            elseif k_iface > Nz
-                m_cell = air_panel[ii, jj, Nz]
-            else
-                m_cell = min(air_panel[ii, jj, k_iface - 1], air_panel[ii, jj, k_iface])
-            end
-            bmass = m_cell / FT(area_panel[i, j])
-            bmass > zero(FT) || continue
-            ratio = abs(cmfmc_panel[i, j, k_iface]) * dt_ft / bmass
-            worst = max(worst, ratio)
-        end
+        Hp_x
     end
-
-    return worst
+    if backend isa KernelAbstractions.CPU
+        return reduce(max, ntuple(p -> _cmfmc_host_max_cfl(cmfmc[p], air_mass[p],
+                                                            cell_areas[p], FT(dt), halos[p]), 6);
+                      init = zero(FT))
+    end
+    worst = KernelAbstractions.allocate(backend, FT, Nc_x, Nc_y, 6)
+    kernel = _cmfmc_cs_column_cfl_kernel!(backend, (16, 16))
+    for p in 1:6
+        kernel(worst, cmfmc[p], air_mass[p], cell_areas[p], FT(dt), halos[p],
+               size(air_mass[p], 3), p; ndrange = (Nc_x, Nc_y))
+    end
+    return mapreduce(identity, _nan_max, worst; init = zero(FT))
 end
 
 """
@@ -275,13 +382,19 @@ function _get_or_compute_n_sub!(ws::CMFMCWorkspace,
     # the CFL ceiling/throw, so the two must not share a cached n_sub.
     if !ws.cache_valid[] || ws.cached_clamp[] != allow_clamp
         worst = _cmfmc_max_cfl(cmfmc, air_mass, cell_metrics, dt)
+        isfinite(worst) || throw(ArgumentError(
+            "CMFMCConvection CFL scan found a non-finite cmfmc·dt/bmass ratio ($(worst)); " *
+            "the window's `cmfmc` likely contains NaN or Inf. Check the transport binary."))
         cfl_safety = typeof(worst)(0.5)
-        n_sub = max(1, ceil(Int, worst / cfl_safety))
+        # Compare in floating point before converting: a huge finite ratio
+        # would overflow `Int`.
+        n_float = worst / cfl_safety
         if allow_clamp
-            n_sub = min(n_sub, _CMFMC_CLAMP_N_SUB_CAP)
-        elseif n_sub > _CMFMC_N_SUB_MAX
+            n_sub = n_float > _CMFMC_CLAMP_N_SUB_CAP ? _CMFMC_CLAMP_N_SUB_CAP :
+                    max(1, ceil(Int, n_float))
+        elseif n_float > _CMFMC_N_SUB_MAX
             throw(ArgumentError(
-                "CMFMCConvection CFL sub-step count $(n_sub) exceeds " *
+                "CMFMCConvection CFL sub-step count $(ceil(n_float)) exceeds " *
                 "safety ceiling $(_CMFMC_N_SUB_MAX). Worst local " *
                 "cmfmc·dt/bmass ratio = $(worst). Check that " *
                 "`forcing.cmfmc` is in kg/m²/s on the same basis as " *
@@ -290,6 +403,8 @@ function _get_or_compute_n_sub!(ws::CMFMCWorkspace,
                 "is physically realistic (sustained CFL > $(cfl_safety * _CMFMC_N_SUB_MAX) is unusual), " *
                 "or enable the positivity clamp via `CMFMCConvection(clamp=true)`."
             ))
+        else
+            n_sub = max(1, ceil(Int, n_float))
         end
         ws.cached_n_sub[] = n_sub
         ws.cached_clamp[] = allow_clamp
