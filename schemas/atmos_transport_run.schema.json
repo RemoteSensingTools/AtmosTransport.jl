@@ -456,7 +456,7 @@
         },
         "variable": {
           "type": "string",
-          "description": "Variable read as dry VMR (mol/mol), without unit conversion. File kinds: a lon-lat-level field, interpolated bilinearly (lat-lon, reduced Gaussian) or conservatively (cubed sphere) and in log pressure when the file has ap, bp and Psurf and another level count; cs_native: (time,) lev, nf, Ydim, Xdim on the binary's cube and levels. catrine_co2 defaults to CO2."
+          "description": "Variable read as dry VMR (mol/mol), without unit conversion. File kinds: a lon-lat-level field, interpolated bilinearly (lat-lon, reduced Gaussian) or conservatively (cubed sphere) and in log pressure when the file has ap, bp and Psurf (otherwise level by level); cs_native: (time,) lev, nf, Ydim, Xdim on the binary's cube and levels. catrine_co2 defaults to CO2."
         },
         "time_index": {
           "type": "integer",
@@ -466,7 +466,7 @@
         "vertical_order": {
           "type": "string",
           "enum": ["surface_first", "toa_first"],
-          "description": "cs_native: level order in the file. surface_first (default, GEOS-Chem) is flipped to the model's top-first order; toa_first is copied as is."
+          "description": "Which end of the file's levels comes first. cs_native: surface_first (default, GEOS-Chem) is flipped to the model's top-first order, toa_first is copied as is. File kinds: needed only for a file without hybrid coefficients whose level coordinate has neither pressure or height units nor a CF positive attribute; files with hybrid coefficients are oriented by their interface pressures (a contradicting value is an error)."
         },
         "clamp_negative": {
           "type": "boolean",

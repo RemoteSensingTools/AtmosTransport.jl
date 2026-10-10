@@ -55,6 +55,19 @@
 
 ### Fixes
 
+- File-based initial conditions took their vertical order from the values
+  of the level coordinate and copied levels one to one when the counts
+  matched. A surface-first file with hybrid coefficients and the model's
+  level count (the CATRINE start files have 79 levels) would have started
+  upside down, a top-first file with hybrid coefficients would have been
+  remapped wrongly, and a file without them but with another level count was
+  zero-filled. Files with hybrid coefficients are now oriented by their
+  interface pressures and always remapped in log pressure; files without
+  them must match the model's level count and state their order (pressure
+  or height units, a CF `positive` attribute, or `init.vertical_order`).
+  No shipped configuration was affected: all use the CATRINE files on 34,
+  72, 117 or 137 levels, which took the correct path, and their initial
+  conditions are unchanged.
 - ERA5 N320 preprocessing had two registration errors. The GRIB
   `reduced_gg` fields (specific humidity and the convective mass fluxes)
   were placed half a cell east: their first point is at 0°, while the mesh

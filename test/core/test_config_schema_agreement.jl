@@ -41,7 +41,7 @@ property_keys(node) = Set(String.(keys(node.properties)))
                    RunnerKeys.RunLogging, enum_of(p.logging.properties.progress))
     @test enum_of(d.initial_condition.properties.kind) == Set(keys(RunnerKeys._INIT_KINDS))
     @test enum_of(d.initial_condition.properties.vertical_order) ==
-          Set(string.(AtmosTransport.Models.InitialConditionIO._CS_NATIVE_VERTICAL_ORDERS))
+          Set(string.(AtmosTransport.Models.InitialConditionIO._VERTICAL_ORDERS))
     @test enum_of(d.surface_flux.properties.kind) ==
           Set(string.(AtmosTransport.Models.InitialConditionIO._SURFACE_FLUX_KINDS))
     @test enum_of(d.surface_flux.properties.regridding) ==

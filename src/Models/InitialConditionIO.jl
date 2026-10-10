@@ -113,8 +113,10 @@ Container for a file-based initial condition (e.g. Catrine startCO2).
 
 # Fields
 - `raw`            — 3D mixing ratio field `(nlon_src, nlat_src, nlevel_src)`.
-                     Level ordering follows the source file (Catrine: k=1 is
-                     SURFACE, k=end is TOA — verify via `ap[1]+bp[1]*ps ≈ ps`).
+                     With hybrid coefficients, surface first (`k = 1` is the
+                     surface, decided from the interface pressures, the order
+                     of `_interpolate_log_pressure_profile!`); without them,
+                     top first like the model levels.
 - `lon`, `lat`     — source coordinate vectors [degrees]. May be in [-180,180)
                      or [0,360); the bilinear sampler wraps to [0,360)
                      internally via `wrapped_longitude_360`.
@@ -122,9 +124,11 @@ Container for a file-based initial condition (e.g. Catrine startCO2).
                      `p_half[k] = ap[k] + bp[k] × ps_src`. Units: `ap` [Pa],
                      `bp` [dimensionless].
 - `psurf`          — surface pressure `(nlon_src, nlat_src)` [Pa].
-- `needs_vinterp`  — `true` if source levels ≠ target levels (triggers
-                     log-pressure vertical interpolation in
-                     `_interpolate_log_pressure_profile!`).
+- `needs_vinterp`  — `true` for files with hybrid coefficients, which are
+                     always remapped in log pressure
+                     (`_interpolate_log_pressure_profile!`); files without
+                     them are copied level by level and must have the target's
+                     level count.
 """
 struct FileInitialConditionSource{FT}
     raw           :: Array{FT, 3}
@@ -327,20 +331,77 @@ function _load_file_initial_condition_source(cfg, ::Type{FT}, Nz_target::Integer
             end
         end
 
-        if length(lev_src) > 1 && lev_src[1] > lev_src[end]
-            raw = raw[:, :, end:-1:1]
-            lev_src = reverse(lev_src)
-            if has_hybrid
+        # Vertical order. Hybrid files are oriented by their interface
+        # pressures (surface first, as the log-pressure remap expects) and
+        # always remapped; the values of the level coordinate do not matter.
+        # Files without hybrid coefficients are copied level by level onto the
+        # top-first model levels, so they must say which end is the top.
+        if has_hybrid
+            surface_first = _hybrid_surface_first(ap, bp)
+            haskey(cfg, "vertical_order") &&
+                _parse_vertical_order(cfg["vertical_order"]) !== (surface_first ? :surface_first : :toa_first) &&
+                throw(ArgumentError("init.vertical_order = $(repr(cfg["vertical_order"])) contradicts " *
+                                    "the hybrid coefficients of $(file)"))
+            if !surface_first
+                raw = raw[:, :, end:-1:1]
                 ap = reverse(ap)
                 bp = reverse(bp)
             end
+        else
+            _file_vertical_order(cfg, ds[lev_var], lev_src, file) === :surface_first &&
+                (raw = raw[:, :, end:-1:1])
+            size(raw, 3) == Nz_target || throw(ArgumentError(
+                "$(file) has $(size(raw, 3)) levels and no hybrid coefficients (ap, bp, Psurf) " *
+                "to remap them onto the $(Nz_target) model levels"))
         end
-
-        needs_vinterp = has_hybrid && size(raw, 3) != Nz_target
-        return FileInitialConditionSource{FT}(raw, lon_src, lat_src, ap, bp, psurf, needs_vinterp)
+        return FileInitialConditionSource{FT}(raw, lon_src, lat_src, ap, bp, psurf, has_hybrid)
     finally
         close(ds)
     end
+end
+
+# Whether hybrid interface coefficients run from the surface to the top
+# (pressure decreasing with index), checked at standard surface pressure.
+function _hybrid_surface_first(ap, bp)
+    p_first = ap[1] + bp[1] * STANDARD_PRESSURE
+    p_last = ap[end] + bp[end] * STANDARD_PRESSURE
+    p_first == p_last && throw(ArgumentError(
+        "hybrid coefficients give the same pressure at both ends of the column"))
+    return p_first > p_last
+end
+
+# `init.vertical_order` of a file: which end of its levels comes first.
+const _VERTICAL_ORDERS = (:surface_first, :toa_first)
+
+function _parse_vertical_order(raw)
+    order = raw isa AbstractString ? Symbol(lowercase(raw)) : nothing
+    order in _VERTICAL_ORDERS || throw(ArgumentError(
+        "init.vertical_order must be \"surface_first\" or \"toa_first\"; got $(repr(raw))"))
+    return order
+end
+
+const _PRESSURE_UNITS = ("pa", "hpa", "kpa", "mb", "mbar", "millibar", "millibars", "bar",
+                         "pascal", "pascals", "hectopascal", "hectopascals")
+const _HEIGHT_UNITS = ("m", "km", "cm", "meter", "meters", "metre", "metres",
+                       "kilometer", "kilometers", "kilometre", "kilometres")
+
+# Level order of a file without hybrid coefficients: `init.vertical_order` when
+# given, else from the vertical coordinate. Pressure units or CF `positive =
+# "down"` mean the values grow toward the surface, height units or `positive =
+# "up"` that they grow toward the top; a coordinate that says neither needs
+# `vertical_order`.
+function _file_vertical_order(cfg, lev_var, lev_values, file)
+    haskey(cfg, "vertical_order") && return _parse_vertical_order(cfg["vertical_order"])
+    positive = lowercase(strip(string(get(lev_var.attrib, "positive", ""))))
+    units = lowercase(strip(string(get(lev_var.attrib, "units", ""))))
+    grows_down = positive == "down" || (isempty(positive) && units in _PRESSURE_UNITS)
+    grows_up = positive == "up" || (isempty(positive) && units in _HEIGHT_UNITS)
+    grows_down || grows_up || throw(ArgumentError(
+        "cannot tell which end of the levels of $(file) is the top: its vertical coordinate " *
+        "has neither pressure or height units nor a CF positive attribute, and the file " *
+        "has no hybrid coefficients; set init.vertical_order = \"toa_first\" or \"surface_first\""))
+    increasing = length(lev_values) < 2 || lev_values[end] > lev_values[1]
+    return increasing == grows_down ? :toa_first : :surface_first
 end
 
 # ---------------------------------------------------------------------------
@@ -469,10 +530,11 @@ function _interpolate_log_pressure_profile!(dest::AbstractVector{FT},
     return nothing
 end
 
+# Level-by-level copy of a top-first source profile (the loader checks the counts).
 function _copy_profile!(dest::AbstractVector{FT}, src_q::AbstractVector{FT}) where FT
-    fill!(dest, zero(FT))
-    Nz_use = min(length(dest), length(src_q))
-    @views copyto!(dest[1:Nz_use], src_q[1:Nz_use])
+    length(dest) == length(src_q) || throw(DimensionMismatch(
+        "source profile has $(length(src_q)) levels, the model $(length(dest))"))
+    copyto!(dest, src_q)
     return nothing
 end
 

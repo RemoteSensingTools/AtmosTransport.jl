@@ -45,7 +45,7 @@ const _INIT_KIND_KEYS = (
     gaussian_blob  = ("background", "lon0_deg", "lat0_deg", "sigma_lon_deg", "sigma_lat_deg",
                       "amplitude"),
     bl_enhanced    = ("background", "n_layers", "enhancement"),
-    file           = ("file", "variable", "time_index"),
+    file           = ("file", "variable", "time_index", "vertical_order"),
     cs_native      = ("file", "variable", "time_index", "vertical_order", "clamp_negative"),
     pressure_layer = ("lowest_layer", "psurf_fraction", "total_molecules"),
     uniform        = ("background",),
