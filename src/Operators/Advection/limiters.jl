@@ -118,8 +118,8 @@ This ensures the reconstruction is TVD (total variation diminishing):
 the reconstructed face values ``c_i \\pm s/2`` lie between the
 neighboring cell means, preventing new extrema.
 
-This is the limiter used by TM5's `advectx__slopes` and
-`advecty__slopes` routines (Russell & Lerner 1981).
+TM5 does not use this limiter: its slopes advection carries the slope as a
+prognostic moment and only clamps it to ``|r_{xm}| \\le r_m``.
 """
 @inline function _limited_slope(c_left, c_center, c_right, ::MonotoneLimiter)
     sc = (c_right - c_left) / 2

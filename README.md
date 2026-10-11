@@ -78,15 +78,18 @@ The reading order:
   Metal weakdep extension exists.
 - **Mass-conserving:** Dry-basis air-mass bookkeeping, with **write-time
   replay gates** enabled by default in the preprocessor and **opt-in load-time
-  replay validation** at runtime. Tolerances `1e-10` (F64) / `1e-4` (F32).
+  replay validation** at runtime. Tolerances `1e-10` (F64) / `1e-4` (F32) of
+  the largest cell mass. The gates certify that the stored fluxes and air
+  masses are consistent, not that the winds are right.
 - **Operator-modular:** Every physics operator is behind an abstract type
   with a `No<Operator>` no-op default; swap schemes via type dispatch
   without modifying core code.
 - **Advection schemes:** `UpwindScheme` (1st order), `SlopesScheme`
-  (Russell-Lerner, 2nd order in smooth regions), `PPMScheme` (Putman-Lin,
-  3rd order in smooth regions), `LinRoodPPMScheme{ORD}` for cubed-sphere
-  with FV3 cross-term advection (`ORD ∈ {5, 7}` selects the boundary
-  stencil).
+  (Russell-Lerner flux with van Leer slopes re-diagnosed every sweep, 2nd
+  order in smooth regions; not TM5's prognostic-moment scheme),
+  `PPMScheme` (Putman-Lin, 3rd order in smooth regions),
+  `LinRoodPPMScheme{ORD}` for cubed-sphere with FV3 cross-term advection
+  (`ORD ∈ {5, 7}` selects the boundary stencil).
 - **Convection:** `CMFMCConvection` (GCHP-style RAS / Grell-Freitas, for
   GEOS sources) and `TM5Convection` (TM5 four-field entrainment /
   detrainment, for ERA5 sources) — different physics, identical
@@ -96,7 +99,9 @@ The reading order:
 > surface-flux 4D-Var stack ship for the supported advection/operator matrix,
 > with checkpointing, covariance preconditioning, and optimization drivers.
 > Coverage is not universal: the optimized/clamped convection variants and
-> TM5-4DVAR cross-validation remain open. See
+> TM5-4DVAR cross-validation remain open, the 4D-Var gradient costs one
+> adjoint run per observation, and observations are bound to column means
+> whatever their altitude. See
 > [Adjoint status](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/theory/adjoint_status)
 > for details.
 
@@ -152,9 +157,10 @@ delta-pressure weighted) in Robinson projection.
 vorticity / divergence / log-PS spectral fields following TM5's continuity-
 consistent approach (Holton synthesis): horizontal mass fluxes are derived
 from the spectral fields, and vertical fluxes are diagnosed from horizontal
-convergence to guarantee column mass conservation. Transport uses TM5-faithful
-mass-flux advection (Russell-Lerner slopes scheme with Strang splitting) and
-boundary-layer diffusion (implicit Thomas solver). Transport, diffusion, source
+convergence to guarantee column mass conservation. Transport uses Strang-split
+mass-flux slopes advection (the Russell-Lerner flux with minmod slopes
+re-diagnosed every sweep, not TM5's prognostic slopes) and boundary-layer
+diffusion (implicit Thomas solver). Transport, diffusion, source
 injection and air-mass bookkeeping run on a single NVIDIA L40S GPU via
 [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl)
 in Float32 arithmetic. The current output path uses Float64 accumulation for
@@ -203,10 +209,15 @@ documented validation run.
 | Scheme | LL | RG | CS split-sweep | CS Lin-Rood | Multi-tracer fused |
 | --- | :---: | :---: | :---: | :---: | :---: |
 | `UpwindScheme` (1st order) | ✅ | ✅ | ✅ | — | ✅ |
-| `SlopesScheme` (Russell-Lerner) | ✅ | ❌ | ✅ | — | ✅ |
+| `SlopesScheme` (van Leer, diagnosed slopes) | ✅ | ❌ | ✅ | — | ✅ |
 | `PPMScheme` (Putman-Lin) | ✅ | ❌ | ✅ | — | ✅ |
 | `LinRoodPPMScheme{5}` | — | — | — | ✅ | ❌ (per-tracer loop) |
 | `LinRoodPPMScheme{7}` | — | — | — | 🟡 | ❌ (per-tracer loop) |
+
+No scheme reproduces TM5's slopes advection, which carries the tracer-mass
+slopes as prognostic state; `SlopesScheme` shares only its face flux. A
+prognostic-moment scheme is postponed (see
+[Advection schemes](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/theory/advection_schemes)).
 
 ### Diffusion (vertical)
 
@@ -251,7 +262,7 @@ documented validation run.
 | CS edge and corner halo reverse | ✅ | `_adjoint_fill_panel_halos!` includes directional corner copying |
 | Covariance B^{1/2} | ✅ | B1 shipped (`src/Inversion/Covariance.jl`) |
 | Preconditioning + log-normal bijection | 🟡 | Linear/log-normal transforms and covariance inverse are gradient-tested |
-| End-to-end CS surface-flux 4D-Var | 🟡 | Cost/gradient plus gradient-descent and L-BFGS drivers ship; campaign validation remains open |
+| End-to-end CS surface-flux 4D-Var | 🟡 | Cost/gradient plus gradient-descent and L-BFGS drivers ship; one adjoint run per observation and column-mean observation binding only; campaign validation remains open |
 
 ### Backends and IO
 
@@ -263,7 +274,7 @@ documented validation run.
 | AMD ROCm | 📐 | Backend axis in place; not wired |
 | mmap binary reader | ✅ | Read-only mmap with typed host-window copies |
 | NetCDF snapshot writer | ✅ | Typed `SingleOutputFile` / `DailyOutputFiles` |
-| Replay-gate (write-time) | ✅ | On by default; explicit diagnostic escape hatch available |
+| Replay-gate (write-time) | ✅ | On by default; explicit diagnostic escape hatch available. Checks flux/mass self-consistency, not wind fidelity |
 | Adaptive-schedule gate (load-time, opt-in) | ✅ | `[input].require_adaptive_substeps = true` |
 
 ### Documentation
@@ -287,11 +298,13 @@ documented validation run.
 ## Design principles
 
 - **Julian:** Multiple dispatch, parametric types, no OOP inheritance chains.
-- **TM5-faithful where it matters:** Russell-Lerner slopes (`SlopesScheme`)
-  and TM5 four-field convection (`TM5Convection`) implement the same
-  numerics as the corresponding TM5 routines (`advectx__slopes` /
-  `advecty__slopes` for slopes; `entu / detu / entd / detd` for
-  convection), verified by parity tests in `test/core/test_tm5_*.jl`.
+- **TM5-faithful where it matters:** TM5 four-field convection
+  (`TM5Convection`) implements the same numerics as TM5's
+  `entu / detu / entd / detd` convection, verified by parity tests in
+  `test/core/test_tm5_*.jl`. `SlopesScheme` uses TM5's Russell-Lerner face
+  flux but re-diagnoses the slopes every sweep instead of carrying TM5's
+  prognostic moments, so it is more diffusive than TM5's advection
+  (`test/core/test_slopes_tm5_reference.jl`).
 - **GCHP-style for GEOS sources:** `CMFMCConvection` consumes GEOS cloud-mass
   flux forcing through the same typed `ConvectionForcing` interface as the
   other convection paths.

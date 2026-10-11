@@ -48,7 +48,7 @@ default, or `"cw84"`) only with `scheme = "ppm"`. `NoLimiter` and
 Packed tracer arrays, GPU workgroup sizes, and copy-back or ping-pong execution
 are implementation choices within a scheme, not additional algorithms.
 
-## Russell-Lerner slopes (`SlopesScheme`)
+## Diagnosed slopes with the Russell–Lerner flux (`SlopesScheme`)
 
 Per-cell linear reconstruction with a monotone limiter by default:
 
@@ -66,12 +66,13 @@ F^{n+1/2}_{c+1/2} \;=\; F^n_{c+1/2}\,(\chi^n_c + s^n_c \cdot (1 - \alpha_{c+1/2}
 with `α = F / m` the local Courant fraction (`F` is the per-substep
 mass amount stored in the binary, so the `Δt` factor is already
 absorbed into `F` — see [Mass conservation](@ref) for the
-`flux_kind = :substep_mass_amount` convention). This is implemented
-unchanged from TM5's `advectx__slopes` / `advecty__slopes` routines;
-the production kernel is
-`_slopes_face_flux` in
-`src/Operators/Advection/reconstruction.jl`, with the canonical
-formula derivation in that function's docstring.
+`flux_kind = :substep_mass_amount` convention). The slope `s_c` is
+re-diagnosed from the neighbouring cell means at every sweep (van Leer 1977;
+`MonotoneLimiter` takes the minmod of the centred and twice the one-sided
+differences), so the scheme carries no slope state between sweeps. The
+production kernel is `_slopes_face_flux` in
+`src/Operators/Advection/reconstruction.jl`, with the canonical formula
+derivation in that function's docstring.
 
 **Properties:**
 - 2nd order in smooth regions even with `NoLimiter` (the centered
@@ -86,6 +87,42 @@ formula derivation in that function's docstring.
 - Mass-conservative to floating-point via the flux-form telescoping
   argument (see [Mass conservation](@ref) for the precise statement
   and round-off bounds).
+
+### Relation to TM5's slopes advection
+
+`SlopesScheme` is not TM5's slopes scheme, although it uses the same face
+flux. TM5 (`dynamu`, `dynamv`, `dynamw` in `advectx.F90`, `advecty.F90`,
+`advectz.F90`) carries the first moments `rxm`, `rym`, `rzm` of every tracer
+as prognostic state. Each sweep transports them with their own flux and
+update equation, and the moments are also updated by TM5's convection and
+emissions. TM5 limits a moment only for positivity, `|rxm| ≤ rm`, and does
+not use a minmod limiter.
+
+`test/core/test_slopes_tm5_reference.jl` checks the relation against an
+independent transcription of TM5's `dynamu` on a periodic row
+(`test/helpers/tm5_dynamu_reference.jl`):
+
+- With `rxm` re-diagnosed by the minmod rule at the start of every sweep, the
+  TM5 update reproduces `SlopesScheme()` to rounding, and with `rxm := 0` it
+  reproduces `UpwindScheme()`. The flux formula is shared; the moment
+  equation is what is missing.
+- With the prognostic moment, TM5 is much less diffusive. A Gaussian of
+  half-width 6 cells on a 120-cell ring keeps 0.952 of its peak after 10
+  revolutions at Courant number 0.5 in TM5, against 0.719 with `SlopesScheme`
+  (0.830 with `PPMScheme`). After 10 revolutions the `SlopesScheme` L2 error
+  is 4.6 to 6.8 times TM5's at Courant numbers 0.05 to 0.75.
+- TM5's positivity clamp refers to zero, so TM5 is not equivariant under a
+  constant offset (transporting `c − 1/2` is not transporting `c` and
+  subtracting `1/2`). `SlopesScheme` limits against neighbouring values and is
+  offset-equivariant, which signed anomaly tracers require.
+
+!!! warning "Known limitation: no prognostic-moment (TM5) slopes scheme"
+    No advection option reproduces TM5's slopes advection. A
+    prognostic-moment scheme is postponed: it would need moment state for
+    every tracer carried through emissions, convection and diffusion, moment
+    rotation at cubed-sphere panel seams, an adjoint, and a limiter that is
+    safe for signed tracers. Runs made with `scheme = "slopes"` are
+    diagnosed-slope (van Leer) results, not TM5-equivalent ones.
 
 ## PPM-informed slopes (`PPMScheme`)
 

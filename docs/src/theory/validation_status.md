@@ -130,10 +130,12 @@ difference must be attributed to the complete configured algorithm. See
 | What | Tests | Status |
 |---|---|---|
 | TM5 four-field convection (`entu/detu/entd/detd`) parity with the TM5 F90 reference | `test/core/test_tm5_preprocessing.jl`, `test/core/test_tm5_preprocessing_rates.jl`, `test/core/test_tm5_vs_cmfmc_parity.jl`, `test/core/test_tm5_driven_simulation.jl`, `test/core/test_tm5_process_day.jl`, `test/core/test_tm5_vertical_remap.jl` | green |
-| Russell-Lerner slopes vs TM5's `advectx__slopes` / `advecty__slopes` | line-for-line port; derivation lives beside `_slopes_face_flux` in `src/Operators/Advection/reconstruction.jl` | green by construction (port verified via uniform-invariance + mass-budget tests) |
+| `SlopesScheme` vs TM5's slopes advection (`dynamu` in `advectx.F90`) | `test/core/test_slopes_tm5_reference.jl` against an independent transcription of `dynamu` | **differs**: same Russell–Lerner face flux (TM5 with its moment re-diagnosed by minmod reproduces `SlopesScheme` to rounding), but TM5 carries prognostic moments and `SlopesScheme` does not; `SlopesScheme` is markedly more diffusive (L2 error 4.6–6.8 times TM5's after 10 revolutions of a 1-D Gaussian at Courant numbers 0.05–0.75) |
 
-The TM5 parity work is the most thoroughly validated cross-model
-comparison the runtime currently has.
+The TM5 convection parity work is the most thoroughly validated cross-model
+comparison the runtime currently has. No advection option reproduces TM5's
+slopes advection; a prognostic-moment scheme is postponed (see
+[Advection schemes](@ref)).
 
 ## What HAS NOT been validated end-to-end
 
@@ -145,7 +147,7 @@ The following work is on the roadmap but **not yet done**:
 | **CATRINE D7.1 intercomparison** | The European CATRINE protocol is the natural validation target (4 tracers: CO2, fossil CO2, SF6, 222Rn; full-physics; multi-month). The configs (`config/runs/catrine_*.toml`) exist and the runtime can produce the output, but no maintained end-to-end CATRINE smoke test, full multi-month regression, or published comparison memo exists. | protocol configs only; end-to-end regression not wired |
 | **Observational closure** | Comparison of model output (column CO2, surface SF6 etc.) against an observational network (NOAA in-situ + TCCON / OCO satellite) | not started |
 | **Multi-month GPU production runs** | The V100 experiment above covers 31 days of one forcing archive with standard PPM; CI has no multi-week real-data GPU regression. | multi-month and controlled A100 scheme comparisons deferred |
-| **Adjoint kernels** | See [Adjoint status](@ref). Tape + checkpoint + revolve (bisection variant), the supported advection/convection and halo reverse paths, and the 4D-Var driver are on CI. Gaps: optimized/clamped convection variants, optimal binomial Revolve, and TM5-4DVAR cross-validation. | partial (shipped) |
+| **Adjoint kernels** | See [Adjoint status](@ref). Tape + checkpoint + revolve (bisection variant), the supported advection/convection and halo reverse paths, and the 4D-Var driver are on CI. Gaps: optimized/clamped convection variants, optimal binomial Revolve, a single-sweep 4D-Var gradient (today one adjoint run per observation), vertical observation binding, and TM5-4DVAR cross-validation. | partial (shipped) |
 
 ## Floating-point tolerance practice
 
@@ -173,14 +175,16 @@ If you are doing:
 - **Advection algorithm research** → verification is solid, F32 / F64
   noise-floor agreement is well-tested. Proceed.
 - **CO2 intercomparison studies that need GCHP-equivalent fidelity** →
-  the underlying operators are TM5-faithful or GCHP-style; the
+  the underlying operators are TM5-faithful or GCHP-style, except that no
+  advection option reproduces TM5's prognostic-slopes scheme. The
   end-to-end intercomparison report has not been written. Run a
   side-by-side and compare yourself;
   `scripts/diagnostics/catrine_compare_vs_geoschem.py` is the starting point.
 - **Inverse modelling that needs an adjoint** → the adjoint and
   4D-Var stack ship on CS. See [Adjoint status](@ref) for the supported
   scheme matrix and the remaining gaps (optimized/clamped convection
-  variants and TM5-4DVAR cross-validation).
+  variants, one adjoint run per observation in the 4D-Var gradient,
+  column-mean observation binding, and TM5-4DVAR cross-validation).
 - **Validation against observations** → not in scope today; the
   forward model has the fidelity, but the observation-comparison
   diagnostics are external.

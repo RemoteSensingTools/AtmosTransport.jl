@@ -19,8 +19,9 @@
 # ----------
 # - Godunov (1959): piecewise-constant upwind (first-order donor cell)
 # - van Leer (1977): MUSCL — piecewise-linear with slope limiters
-# - Russell & Lerner (1981): slopes advection for atmospheric tracers
-#   (TM5 advectx__slopes / advecty__slopes)
+# - Russell & Lerner (1981): slopes advection for atmospheric tracers. TM5
+#   carries the slopes as prognostic moments; `SlopesScheme` re-diagnoses them
+#   every sweep (see its docstring)
 # - Colella & Woodward (1984): piecewise parabolic method (PPM)
 # - Putman & Lin (2007): PPM on cubed-sphere grids (FV3 / GCHP)
 # ---------------------------------------------------------------------------
@@ -151,7 +152,8 @@ s = \\text{minmod}\\bigl(\\tfrac{c_{i+1} - c_{i-1}}{2},\\;
 ```
 
 This is TVD (total variation diminishing) and preserves monotonicity.
-The TM5 `advectx__slopes` / `advecty__slopes` routines use this limiter.
+TM5 does not use this limiter: its slopes advection carries the slope as a
+prognostic moment and only clamps it to ``|r_{xm}| \\le r_m``.
 """
 struct MonotoneLimiter  <: AbstractLimiter end
 
@@ -255,14 +257,22 @@ struct NoAdvection <: AbstractAdvectionScheme end
 """
     SlopesScheme{L <: AbstractLimiter} <: AbstractLinearScheme
 
-Van Leer / Russell–Lerner slopes advection (Russell & Lerner 1981).
+Van Leer slopes advection with the Russell–Lerner face flux (van Leer 1977;
+Russell & Lerner 1981).
 
 Reconstructs a piecewise-linear subcell profile in each cell using a
 limited slope, then integrates the Courant-fraction swept volume to
-compute the face flux.  Second-order accurate with `MonotoneLimiter`.
+compute the face flux.  Second-order accurate in smooth regions.
 
-This is the method used by TM5 (`advectx__slopes`, `advecty__slopes`)
-for horizontal transport of atmospheric tracers.
+The slope is re-diagnosed from the neighbouring cell means at every sweep;
+the scheme carries no moment state. This is **not** TM5's slopes scheme. TM5
+uses the same face flux, but carries the first moments (`rxm`, `rym`, `rzm`)
+as prognostic tracer state with their own update equations and limits them
+only for positivity (``|r_{xm}| \\le r_m``). With its moment re-diagnosed by
+the [`MonotoneLimiter`](@ref) minmod rule, the TM5 update reproduces `SlopesScheme()` to rounding
+(`test/core/test_slopes_tm5_reference.jl`); with the prognostic moment, TM5 is
+markedly less diffusive. A prognostic-moment scheme is not implemented (see
+[Advection schemes](@ref)).
 
 The face tracer flux for positive mass flux ``F > 0`` (left donor):
 
@@ -283,7 +293,7 @@ limiter implementations.
 
 # Examples
 ```julia
-SlopesScheme()                       # monotone-limited (default, matches TM5)
+SlopesScheme()                       # monotone-limited (default)
 SlopesScheme(NoLimiter())            # unlimited (2nd order, may oscillate)
 SlopesScheme(PositivityLimiter())    # positivity-preserving
 ```

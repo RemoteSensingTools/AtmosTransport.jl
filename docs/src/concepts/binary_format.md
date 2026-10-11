@@ -253,16 +253,22 @@ Mass conservation is enforced by a **two-stage replay gate**:
 
 ### Write-time gate (on by default)
 
-After every window write, the preprocessor evolves `m_n` forward one
-window using the just-written flux fields and asserts:
+Before each window is written, the preprocessor evolves the stored air mass
+`m_n` forward one window with the window's flux fields, under the runtime's
+palindrome continuity, and compares the result with the stored endpoint
+`m_{n+1}` (`verify_window_continuity` in
+`src/MetDrivers/ReplayContinuity.jl`):
 
 ```
-‖m_evolved − m_stored_n+1‖ / ‖m_stored_n+1‖ ≤ tol
+m_evolved[c] = m_n[c] − 2N · (div_h[c] + cm[c, k+1] − cm[c, k])
+max_c |m_evolved[c] − m_{n+1}[c]|  /  max_c |m_{n+1}[c]|  ≤  tol
 ```
 
-with `tol = replay_tolerance(FT)` from
-`src/MetDrivers/ReplayContinuity.jl` — `1e-10` for Float64 and `1e-4`
-for Float32. A binary that fails this gate is **rejected at write
+Here `N` is the window's substep count, `div_h` the horizontal divergence of
+the per-substep face mass amounts and `c` runs over all cells of the grid (of
+one panel on the cubed sphere). The denominator is the largest cell mass, not
+each cell's own mass. `tol = replay_tolerance(FT)` is `1e-10` for Float64 and
+`1e-4` for Float32. A binary that fails this gate is **rejected at write
 time**; the preprocessor errors out rather than producing a
 known-bad file. Diagnostic runs can explicitly bypass this gate with
 `[numerics] write_replay_check = false` in the preprocessing config (or
@@ -293,6 +299,66 @@ the user at binary regeneration.
 The load-time gate is **off by default** because it doubles binary
 load time; it is the recommended sanity check for any new binary
 configuration before running a long production simulation.
+
+### What the replay gate certifies
+
+Every preprocessor that builds a binary from meteorological data (lat-lon,
+reduced Gaussian, and every cubed-sphere source) derives `cm` from the
+window's horizontal fluxes immediately before the gate: from the endpoint
+tendency `dm = (m_{n+1} − m_n) / 2N` (`recompute_cm_from_dm_target!`, or
+`diagnose_cs_cm!` on the cubed sphere), or, in the diagnostic-only GEOS
+pressure-fixer closures, by FV3's `ΔB` rule with the endpoint mass itself
+chained from the same fluxes. The replay error therefore reduces to each
+column's mass budget, the mismatch between the column-integrated horizontal
+convergence and the column mass change, which the horizontal balance has
+just enforced (or which holds by construction). The experimental cubed-sphere
+coarsener (`coarsen_nested_cs_transport_binary`) is different: it block-sums
+the source binary's `am`, `bm` and `cm`, so its gate checks that the coarsened
+fields still fit together, while the fidelity of the fluxes is inherited from
+the source binary. A passing binary is self-consistent:
+
+- the balance converged, so every column's budget closes;
+- the stored `cm` closes the explicit-`dm` budget layer by layer;
+- rounding to the storage precision keeps the closure. The lat-lon and
+  cubed-sphere write-time gates check the stored arrays; the reduced-Gaussian
+  write-time gate checks the Float64 work arrays before they are rounded, so
+  only its load-time gate sees the stored values;
+- the substep count used to diagnose `cm` matches the one in the replay, and
+  consecutive windows chain (the last window of a day closes against the
+  first mass of the next day when it is available);
+- at load time, the file as the runtime reads it (flux kind, per-window
+  substep counts) still integrates to its stored endpoints, which also
+  catches stale or damaged binaries.
+
+The gate does **not** validate the winds. Because `cm` is re-diagnosed from
+the same fluxes it checks, it cannot detect:
+
+- horizontal flux errors that leave every column's budget intact: a
+  non-divergent (rotational) error, `am`/`bm` with their levels flipped, or
+  horizontal transport moved between levels of a column. On a synthetic
+  72 × 36 × 10 window all three pass at about `1e-16`, while one column with
+  a broken budget fails at `0.38`;
+- a wrong vertical distribution of the mass tendency, including a `cm` that
+  is close to zero: a horizontal balance that closes every layer on its own
+  leaves no vertical mass flux and still passes;
+- a nonzero `cm` at the model top and the surface that is the same at every
+  interface of a column (mass entering at the top and leaving at the
+  surface): only the differences `cm[k+1] − cm[k]` enter the replay. The
+  `cm` diagnosis sets both boundary values to zero, but the gate does not
+  check them;
+- errors that are large compared with a thin cell's own mass. Since the
+  error is divided by the largest cell mass, a cell's own relative error can
+  exceed `tol` by the ratio of the largest cell mass to its mass. In the
+  72 × 37 × 34 lat-lon golden-test binary the lightest top-level cell holds
+  `1.85e-5` of the largest cell's mass, so the Float32 tolerance admits a
+  540 % error in that cell and the Float64 tolerance a `5.4e-6` error.
+
+`test/core/test_replay_consistency.jl` ("Replay gate scope") checks these
+statements. Flux errors of the kind listed above must be found by comparing
+the fluxes with their source, for example by re-deriving a sample of face
+fluxes from the source winds and pressure thickness, or by comparing the
+diagnosed `cm` with the source's vertical velocity; the preprocessors do
+not run such checks today.
 
 ## What's next
 

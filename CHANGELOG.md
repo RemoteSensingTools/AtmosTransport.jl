@@ -698,6 +698,41 @@
 
 ### Coverage, benchmarks, and documentation
 
+- Documentation corrections from an external review against the TM5 Fortran
+  by pera-noaa (NOAA GML), GitHub issues #12, #15 and #20. Thank you.
+  - `SlopesScheme` is no longer described as a port of TM5's slopes
+    advection (#12). It uses TM5's Russell-Lerner face flux but re-diagnoses
+    a minmod slope from the neighbouring cell means every sweep, while TM5
+    carries the first moments `rxm`, `rym`, `rzm` as prognostic state and
+    clamps them only to `|rxm| <= rm`. The README, *Validation status* (the
+    row moves from parity to "differs"), *Advection schemes*, the operator
+    pages, and the `SlopesScheme`, `MonotoneLimiter` and limiter docstrings
+    are corrected, and the README no longer cites the `test_tm5_*` convection
+    tests for advection. *Advection schemes* gives the measured difference
+    (after 10 revolutions of a 1-D Gaussian the `SlopesScheme` L2 error is
+    4.6 to 6.8 times TM5's at Courant numbers 0.05 to 0.75) and lists the
+    missing prognostic-moment scheme as a known limitation; building one is
+    postponed. Runs with `scheme = "slopes"`, including the README showcase,
+    are diagnosed-slope (van Leer) results.
+  - The replay gate is described by what it certifies (#15, part 1).
+    *Binary format* has a new section, *What the replay gate certifies*:
+    every preprocessor that builds binaries from meteorological data derives
+    `cm` from the stored horizontal fluxes just before the gate, so the gate
+    checks column budgets, the `cm` closure, storage rounding, substep counts
+    and window chaining, but cannot detect rotational flux errors,
+    level-flipped fluxes, a wrong vertical split (including `cm` close to
+    zero), a flux through the model top and surface that is the same at
+    every interface of a column, or large relative errors in thin cells. The gate's metric is the largest cell
+    error divided by the largest cell mass; *Binary format*, *Mass
+    conservation*, the ERA5 preprocessing page and the TM5/GCHP pages
+    showed a norm ratio, and *Philosophy* claimed bit-level closure.
+  - The adjoint pages list the current 4D-Var limits (#20):
+    `cs_surface_flux_4dvar` runs one taped forward and reverse run per
+    observation, so a gradient's cost grows linearly with the number of
+    observations, and `bind_to_mesh` binds every observation to a column
+    mean whatever its altitude (the schema's `alt` is above sea level and
+    binaries carry no surface elevation). Both were documented only in
+    `src/Inversion/README.md`.
 - The Julia 1 CI job uploads line coverage of `src/` and `ext/` to Codecov.
   The upload authenticates with GitHub OIDC, so the repository holds no
   Codecov secret, and a failed upload does not fail CI. `codecov.yml` sets
@@ -777,6 +812,21 @@
 
 ### Verification and remaining limits
 
+- `test/core/test_slopes_tm5_reference.jl` checks `SlopesScheme` against an
+  independent transcription of TM5's `dynamu` (`advectx.F90`) in
+  `test/helpers/tm5_dynamu_reference.jl`: with the moment re-diagnosed by
+  minmod the TM5 update equals `SlopesScheme()`, and with the moment set to
+  zero `UpwindScheme()`, to rounding (non-negative and signed fields,
+  eastward, westward and divergent flow). With the prognostic moment, TM5
+  keeps 0.990 of a Gaussian's peak after one revolution against 0.892, and
+  TM5's positivity clamp is not offset-equivariant while `SlopesScheme` is.
+  The transcription itself keeps a uniform field exact, conserves mass and
+  converges at second order.
+- `test/core/test_replay_consistency.jl` has a *Replay gate scope* testset
+  for the statements in *What the replay gate certifies*: the normalization
+  by the largest cell mass, and that with `cm` re-diagnosed as the
+  preprocessors do it a rotational flux error, an `am`/`bm` level flip and a
+  column-uniform `cm` offset pass while a broken column budget fails.
 - The golden-output harness (`test/golden/run_goldens.jl`) runs its cases in
   worker sessions instead of one Julia process per case: one process
   (`golden_worker.jl`) per group of cases with the same entry point,

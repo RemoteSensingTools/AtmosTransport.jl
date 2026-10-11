@@ -86,7 +86,7 @@ The inversion layer composes the reverse pass rather than reimplementing it:
 | `cs_surface_flux_jacobian` | Batch objectives and aggregate steps into named control windows. |
 | `cs_surface_flux_4dvar` | Evaluate observation/background cost and its control gradient. |
 | `cs_surface_flux_4dvar_optimize` | Optimize with `CSGradientDescent` or `CSLBFGS`. |
-| `read_observations`, `bind_to_mesh` | Read point observations and bind them to CS column objectives. |
+| `read_observations`, `bind_to_mesh` | Read point observations and bind them to CS column-mean objectives (altitude is ignored; see Current limits). |
 | `read_departures`, `write_departures` | Exchange modeled-minus-observed diagnostics. |
 
 Controls are `CSSurfaceFluxControl` values associated with
@@ -143,6 +143,28 @@ roundoff level after recursive replay.
 
 ## Current limits
 
+- One adjoint run per observation. `cs_surface_flux_4dvar` runs the forward
+  model once for the simulated values, then for every observation re-runs it
+  with a tape up to the observation's step and runs a separate reverse pass.
+  The cost of one cost-and-gradient evaluation therefore grows linearly with
+  the number of observations, where TM5-4DVAR injects all weighted
+  departures into a single adjoint sweep. This is practical for small
+  synthetic experiments, not for ObsPack (about `10⁵` records) or OCO-2
+  (about `10⁶` soundings) volumes, where one gradient would need that many
+  adjoint runs.
+- Observations lose their altitude. `bind_to_mesh` turns every record into
+  an air-mass-weighted column mean (`CSColumnMeanObjective`) of its cell and
+  ignores `alt`, so a surface site and an aircraft sample in the same cell
+  and step get the same observation operator. That is wrong for surface
+  in-situ and aircraft data. Layer binding needs an above-ground intake
+  height or a pressure: the observation schema stores `alt` above sea level
+  and transport binaries carry no surface elevation. The forward
+  observation sampler (`[output.observations]`) already places intake
+  heights in layers. There is no averaging-kernel column operator for
+  satellite or TCCON columns either: `cs_surface_flux_4dvar` evaluates only
+  `CSLayerMeanObjective` and `CSColumnMeanObjective`, and
+  `cs_surface_emission_footprint_from_seed` gives footprints for other
+  operators but no cost.
 - CMFMC requires `clamp = false` in the footprint path.
 - TM5 and CMFMC-matrix convection require the full, unmerged,
   non-collaborative solve (`use_collab_lu = false`, `lmax_conv = 0`,
