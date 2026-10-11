@@ -63,6 +63,19 @@ function _parse_tracer_specs(cfg)
                                      _tracer_surface_flux_cfg(tracers_cfg[name])) for name in names)
 end
 
+# Tracer specs of a structured (lat-lon, reduced-Gaussian) run: `[tracers]`,
+# or without it the legacy single tracer `[run].tracer_name` (default CO2)
+# initialised from `[init]`, without a surface flux. Cubed-sphere runs require
+# `[tracers]`. `Analysis.RunContext` reads a run's tracers with this function.
+function _structured_tracer_specs(cfg)
+    specs = _parse_tracer_specs(cfg)
+    specs === nothing || return specs
+    run_cfg = get(cfg, "run", Dict{String, Any}())
+    return (TransportTracerSpec(Symbol(get(run_cfg, "tracer_name", "CO2")),
+                                _copy_cfg_dict(get(cfg, "init", Dict{String, Any}())),
+                                Dict{String, Any}()),)
+end
+
 # ===========================================================================
 # Execution architecture
 # ===========================================================================
@@ -405,9 +418,13 @@ _diffusion_label(op) = String(nameof(typeof(op)))
 
 # A partial window range across files skips forcing between handoffs while
 # carrying tracer state forward. Restrict these ranges to single-file debugging.
-function _check_multifile_window_range(driver, start_window, stop_window, file_count)
+_check_multifile_window_range(driver, start_window, stop_window, file_count) =
+    _check_multifile_window_count(total_windows(driver), start_window, stop_window, file_count)
+
+# The same check for a binary of `last_window` windows (`Analysis.RunContext`
+# applies it to every binary's header).
+function _check_multifile_window_count(last_window::Integer, start_window, stop_window, file_count)
     file_count <= 1 && return nothing
-    last_window = total_windows(driver)
     if start_window != 1 || (stop_window !== nothing && Int(stop_window) < last_window)
         throw(ArgumentError(
             "Partial window ranges with multiple input files would skip forcing " *

@@ -366,11 +366,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     prefetch_windows = _config_bool(run_cfg, "prefetch_windows", true, "[run].prefetch_windows")
     callbacks = run_checks(cfg)
 
-    init_cfg = get(cfg, "init", Dict{String, Any}())
-    tracer_specs = something(_parse_tracer_specs(cfg),
-                             (TransportTracerSpec(Symbol(get(run_cfg, "tracer_name", "CO2")),
-                                                  _copy_cfg_dict(init_cfg),
-                                                  Dict{String, Any}()),))
+    tracer_specs = _structured_tracer_specs(cfg)
 
     # `stager` (rolling NVMe input staging) is created + torn down by the caller
     # `run_driven_simulation`; here we just route driver opens through it.

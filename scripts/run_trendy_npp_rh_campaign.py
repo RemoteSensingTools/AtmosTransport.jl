@@ -11,7 +11,6 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import sys
 
 
 def main():
@@ -61,14 +60,14 @@ def main():
         (root/'smoke.toml').write_text(config.replace('end_date = "2024-12-31"', 'end_date = "2014-09-03"')
                                      .replace('/output/', '/smoke_output/'))
         julia = [args.julia, '--project=.', '--threads=4', 'scripts/run_transport.jl']
-        checker = [sys.executable, 'scripts/diagnostics/check_trendy_npp_rh_run.py', '--run-root', str(root)]
+        checker = [args.julia, '--project=.', 'scripts/diagnostics/tracer_budget_closure.jl', 'series']
         if not args.reuse_smoke:
             run('smoke', julia+[str(root/'smoke.toml')], 'smoke.log')
-        run('smoke_validation', checker+['--output-dir', str(root/'smoke_output'),
-            '--end-date', '2014-09-03', '--report', str(root/'smoke_validation.json')], 'smoke_validation.log')
+        run('smoke_validation', checker+[str(root/'smoke.toml'), '--report', str(root/'smoke_validation.json')],
+            'smoke_validation.log')
         run('transport', julia+[str(root/'run.toml')], 'transport.log')
-        run('final_validation', checker+['--output-dir', str(root/'output'),
-            '--end-date', '2024-12-31', '--report', str(root/'validation.json')], 'validation.log')
+        run('final_validation', checker+[str(root/'run.toml'), '--report', str(root/'validation.json')],
+            'validation.log')
         save('complete', child_pid=None)
     except Exception as exc:
         save('failed', error=str(exc), child_pid=None)

@@ -309,7 +309,7 @@ Scripts on `main`:
 
 | Script | Purpose |
 |---|---|
-| `scripts/diagnostics/check_trendy_npp_rh_run.py` | Checks completeness, finite values and each tracer's global budget against the flux integral. Written for the 23-model C30 run folder (expects `fluxes/manifest.json`, `co2_<model>_<npp\|rh>` names, start 2014-09-01); adapt it for other layouts. |
+| `scripts/diagnostics/tracer_budget_closure.jl series <run.toml> --report <json>` | Checks completeness, finite values, carrier positivity and each tracer's global budget against the integral of the run's own sources (`Analysis.budget_closure`). Tracers, carriers and output files come from the run config, so it works for any layout. It replaced `check_trendy_npp_rh_run.py` (2026-10-11). |
 | `scripts/diagnostics/rank_trendy_hovmoller.py` | Ranks TRENDY + GFED5 runs against OCO-2 seasonal and interannual Hovmöllers. |
 | `scripts/diagnostics/heritage/plot_c30_trendy_hovmoller.py` | Hovmöller and zonal growth-rate plots for the 12-tracer C30 run. |
 | `scripts/diagnostics/heritage/plot_trendy_allmodels_nee_decomposition.py` | Splits each model's NEE anomaly into NPP, Rh and fire; scores it against the OCO-2 growth-rate anomaly. |

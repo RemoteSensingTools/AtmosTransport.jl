@@ -3,6 +3,31 @@
 # tracer_budget_closure.jl — global tracer mass-budget closure diagnostic
 # =============================================================================
 #
+# Two modes:
+#
+# * `series` (daily-series mode): the budget of every tracer of a finished run
+#   over all of its snapshot files, from `<tracer>_total_mass` and the run's
+#   own surface sources, through `AtmosTransport.Analysis.budget_closure`.
+#   Tracers, carriers, output files and the run start come from the run
+#   config. A tracer passes when |Δburden − emission| ≤ ρ·|emission| +
+#   k·eps(Float32(carrier))·air_mass (strict: ρ = 1e-4, k = 1; operational:
+#   ρ = 1e-3, k = 4), its totals and column means are finite and its carrier
+#   is never exhausted. Writes a JSON report and exits 1 when the gated level
+#   fails, so campaign controllers can gate on it. This mode replaces
+#   `check_trendy_npp_rh_run.py`.
+#
+#       julia --project=. scripts/diagnostics/tracer_budget_closure.jl series <run.toml> \
+#           [--output-glob GLOB] [--report report.json] [--gate strict|operational] \
+#           [--strict REL] [--operational REL] [--tracers a,b] [--allow-incomplete]
+#
+# * single-file mode (below): the hourly budget of one output file, with the
+#   decay sink of rn222 and extra diagnostics (first-window injection ratio,
+#   linear-fit burden rate).
+#
+#       julia --project=. scripts/diagnostics/tracer_budget_closure.jl [<output.nc> <config.toml>]
+#
+# The rest of this header describes the single-file mode.
+#
 # Verifies, per tracer, the fundamental conservation law of the offline
 # transport model:
 #
@@ -65,18 +90,24 @@
 
 using AtmosTransport
 using AtmosTransport: TransportTracerSpec
+using AtmosTransport.Analysis: RunContext, BudgetTolerance, budget_closure, report_dict
+using AtmosTransport.AtomicFiles: atomic_publish
+using ArgParse
+using JSON3
 using NCDatasets
 using TOML
 using Dates
 using Printf
 
-# Reach the (un-exported) internals the model uses to resolve binary paths,
-# build flux sources and set the reference time. These are the SAME code paths
-# `run_driven_simulation` takes. Emission totals come from the operator's
-# public `total_emission_rate` / `integrated_emission`.
+# The run's grid, tracer specs and reference time come from `Analysis.RunContext`,
+# which builds them with the code paths `run_driven_simulation` takes; the
+# sources from the runtime's `build_surface_flux_sources`. Emission totals come
+# from the operator's public `total_emission_rate` / `integrated_emission`.
 const _ATM = AtmosTransport
 const _DR  = _ATM.Models.DrivenRunner          # _parse_tracer_specs, _run_reference_time
 const _ICIO = _ATM.Models.InitialConditionIO   # build_surface_flux_sources, surface_flux_species
+
+const _ICIO = _ATM.Models.InitialConditionIO   # _tracer_molar_mass_kg_mol
 const _OPS = _ATM.Operators                     # source types, emission totals
 using AtmosTransport.Operators: total_emission_rate, integrated_emission
 
@@ -145,6 +176,24 @@ function burden_series(ds, tracer::AbstractString, cell_area::Array{Float64})
     return out
 end
 
+"""
+    output_seconds(ds) -> Vector{Float64}
+
+Output times in seconds since the run start (the origin of the flux slice
+times). AtmosTransport snapshots store `time` as hours since the run start:
+current files with the bare units `"hours"`, older ones labelled
+`"hours since 2000-01-01 00:00:00"` (a fixed label; the values still count
+from the run start, 0 at the initial state). Both are read as stored; other
+units are an error.
+"""
+function output_seconds(ds)
+    tvar = ds["time"]
+    units = strip(String(get(tvar.attrib, "units", "")))
+    (units == "hours" || startswith(units, "hours since")) || error(
+        "output `time` has units \"$(units)\"; expected AtmosTransport snapshot hours since the run start")
+    return 3600 .* Float64.(collect(tvar.var[:]))
+end
+
 # Least-squares slope of `b` vs `t_sec` (kg-storage / s), with the residual
 # scatter (the noise floor). For a constant-rate / clean-linear burden this
 # slope is robust to per-snapshot Float32 quantization; the residual std
@@ -183,40 +232,27 @@ function main(nc_path::AbstractString, cfg_path::AbstractString)
 
     @info "Tracer mass-budget closure diagnostic" nc_path cfg_path
 
-    cfg = TOML.parsefile(cfg_path)
-    FT  = _ATM.Models.DrivenRunner._cfg_float_type(cfg)
-
-    input_cfg     = cfg["input"]
-    binary_paths  = _ATM.expand_binary_paths(input_cfg)
-    isempty(binary_paths) && error("could not resolve any binary path from [input]")
-    binpath = first(binary_paths)
-    @info "Using transport binary for grid + flux regrid" binpath FT
-
-    # Build the SAME grid the run used (CPU driver — we only need the mesh).
-    # Cubed-sphere binaries use the CS-specific driver/reader; the generic
-    # TransportBinaryDriver is for lat/lon + reduced-Gaussian. We mirror the
-    # CS run path (`_run_driven_simulation_cs`) here.
-    driver = _ATM.MetDrivers.TransportBinaryDriver(binpath; FT = FT,
-                                                        arch = _ATM.CPU(), Hp = 1)
-    grid   = _ATM.MetDrivers.driver_grid(driver)
-
-    # Parse the SAME tracer specs and reference time the run used.
-    tracer_specs   = _DR._parse_tracer_specs(cfg)
-    reference_time = _DR._run_reference_time(cfg)
+    # The SAME grid (first binary, CPU), float type, tracer specs and reference
+    # time the run used.
+    ctx = RunContext(cfg_path)
+    cfg = ctx.config
+    FT = _ATM.floattype(ctx)
+    grid = ctx.grid
+    tracer_specs = ctx.tracer_specs
+    reference_time = ctx.reference_time
+    @info "Using transport binary for grid + flux regrid" first(ctx.binary_paths) FT
     @info "Reference time (run start; flux slice-time origin)" reference_time
 
     # Build the model's EXACT surface-flux sources (inherits +3h shift,
     # M(CO2)/M(C), scale, conservative regrid, storage scale).
-    sources = _ICIO.build_surface_flux_sources(grid, tracer_specs, FT;
-                                               reference_time = reference_time)
+    sources = _ATM.build_surface_flux_sources(grid, tracer_specs, FT;
+                                              reference_time = reference_time)
     src_by_tracer = Dict(s.tracer_name => s for s in sources)
 
-    # Output time axis (seconds since the first snapshot = run start t0=0).
+    # Output time axis in seconds since the run start (`output_seconds`).
     ds = NCDataset(nc_path)
     cell_area = Float64.(ds["cell_area"][:, :, :])    # (Xdim, Ydim, nf), m²
-    tvar = ds["time"][:]
-    t0_dt = DateTime(first(tvar))
-    t_sec = Float64[Dates.value(DateTime(x) - t0_dt) / 1000.0 for x in tvar]
+    t_sec = output_seconds(ds)
     t0, tend = first(t_sec), last(t_sec)
     tend > t0 || error("the budget needs at least two output times; $nc_path has $(length(t_sec))")
     @info "Run window" t0_sec=t0 tend_sec=tend hours=(tend - t0) / 3600 nsnapshots=length(t_sec)
@@ -362,7 +398,83 @@ function main(nc_path::AbstractString, cfg_path::AbstractString)
     return results
 end
 
+# ---------------------------------------------------------------------------
+# Daily-series mode
+# ---------------------------------------------------------------------------
+function _series_settings()
+    s = ArgParseSettings(prog = "tracer_budget_closure.jl series",
+        description = "Global budget of every tracer of a finished run over its snapshot files " *
+                      "(Analysis.budget_closure). Exit status 1 when the gated level fails.")
+    @add_arg_table! s begin
+        "config"
+            help = "run config TOML (as passed to scripts/run_transport.jl)"
+            required = true
+        "--output-glob"
+            help = "snapshot files to read (wildcards in the file name), instead of the files [output].path names"
+        "--report"
+            help = "write the JSON report here"
+        "--gate"
+            help = "level that sets the exit status: strict or operational"
+            default = "strict"
+        "--strict"
+            help = "strict relative tolerance (plus 1 Float32 ULP of each carrier)"
+            arg_type = Float64
+            default = 1e-4
+        "--operational"
+            help = "operational relative tolerance (plus 4 Float32 ULPs of each carrier)"
+            arg_type = Float64
+            default = 1e-3
+        "--tracers"
+            help = "comma-separated tracer names (default: every tracer of the run)"
+        "--allow-incomplete"
+            help = "check the frames present instead of requiring the run's full snapshot schedule"
+            action = :store_true
+    end
+    return s
+end
+
+function main_series(args)
+    opts = parse_args(args, _series_settings())
+    gate = opts["gate"]
+    gate in ("strict", "operational") || error("--gate must be strict or operational, got $(gate)")
+    tracers = opts["tracers"] === nothing ? nothing : Symbol.(strip.(split(opts["tracers"], ',')))
+    report = budget_closure(expanduser(opts["config"]);
+                            output_glob = opts["output-glob"],
+                            tolerance = BudgetTolerance(strict = opts["strict"], operational = opts["operational"]),
+                            tracers, require_complete = !opts["allow-incomplete"])
+
+    println("="^112)
+    @printf("%-24s %16s %16s %12s %11s %9s %7s %7s\n", "tracer", "expected [kg]", "actual [kg]",
+            "rel. error", "error [ppm]", "min col", "strict", "operat.")
+    println("-"^112)
+    for b in report.tracers
+        @printf("%-24s %16.8e %16.8e %12.4e %11.3e %9.3g %7s %7s\n", b.tracer, b.expected_change,
+                b.actual_change, b.relative_error, 1e6 * b.error_vmr, b.minimum_column_mean,
+                b.strict_passed ? "pass" : "FAIL", b.operational_passed ? "pass" : "FAIL")
+    end
+    println("="^112)
+    for (tracer, reason) in report.skipped
+        println("skipped ", tracer, ": ", reason)
+    end
+    @printf("%d tracers, %s to %s (%d frames in %d files); max relative error %.6g\n",
+            length(report.tracers), report.start, report.stop, report.frames, length(report.files),
+            report.max_relative_error)
+    println("strict ", report.passed ? "passed" : "FAILED", "; operational ",
+            report.operational_passed ? "passed" : "FAILED", "; gate: ", gate)
+    if opts["report"] !== nothing
+        path = abspath(expanduser(opts["report"]))
+        atomic_publish(path) do tmp
+            open(io -> (JSON3.pretty(io, report_dict(report)); println(io)), tmp, "w")
+        end
+        println("report: ", path)
+    end
+    return gate == "strict" ? report.passed : report.operational_passed
+end
+
 if abspath(PROGRAM_FILE) == @__FILE__
+    if !isempty(ARGS) && ARGS[1] == "series"
+        exit(main_series(ARGS[2:end]) ? 0 : 1)
+    end
     nc_path  = length(ARGS) >= 1 ? expanduser(ARGS[1]) : DEFAULT_NC
     cfg_path = length(ARGS) >= 2 ? expanduser(ARGS[2]) : DEFAULT_CFG
     main(nc_path, cfg_path)

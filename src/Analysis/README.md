@@ -9,8 +9,12 @@ Float64 in a fixed order, so results do not depend on threading or on the
 element type of the input.
 
 `src/AtmosTransport.jl` loads this folder after `Models` and before
-`Downloads`. The functions so far need only NCDatasets, Dates, LinearAlgebra
-and Statistics; no earlier module depends on `Analysis`. The names are
+`Downloads`. The functions so far need NCDatasets, Dates, LinearAlgebra and
+Statistics; the budget closure also builds on the runtime's config parsing,
+grids, output naming and surface-flux sources (`Models`, `MetDrivers`,
+`Output`, `Operators`), the compensated sum of `Architectures` and the
+constants of `Parameters`. No earlier module depends on `Analysis`. The names
+are
 exported from `AtmosTransport.Analysis`, not from the top level:
 
 ```julia
@@ -52,6 +56,28 @@ computed by that routine.
   outside = NaN)` (and `!`) in [`column_profiles.jl`](column_profiles.jl):
   per-layer air mass inside bands of column-mass fraction counted from the
   surface, and linear interpolation in ln p with no extrapolation.
+- `budget_closure(run; output_glob, tolerance, emission, tracers,
+  require_complete)` in [`budget_closure.jl`](budget_closure.jl): the global
+  budget of every tracer of a finished run, `ΔS = S(t₁) − S(t₀)` from
+  `<tracer>_total_mass` of the run's snapshot files against the storage `E`
+  its runtime sources added (`Operators.integrated_emission`), with the
+  tolerance `ρ|E| + k·eps(Float32(χ₀))·M` (`BudgetTolerance`: strict 1e-4 and
+  1 ulp, operational 1e-3 and 4 ulps), finite values and a carrier that is
+  never exhausted. Returns a `BudgetReport` of `TracerBudget`s;
+  `report_dict` gives its JSON form. `carrier_drawdown(run)` is the largest
+  cumulative loss of global mixing ratio that each tracer's sources cause over
+  the run (a carrier must exceed it). The expected change is pluggable:
+  `AbstractExpectedEmission` with `expected_storage_change(method, ctx, spec,
+  t0, t1)`; the default is `RuntimeSurfaceSources()`.
+- `RunContext(run_config)` and `run_snapshot_paths(ctx)` in
+  [`run_context.jl`](run_context.jl): a run seen as the runner sees it, built
+  with the runner's own functions (tracer specs, including the legacy
+  single-tracer form of lat-lon runs, grid of the first binary,
+  float type, run start, every met window with its step count and the
+  float-type step length the runtime applies, run length, the initial air
+  mass of window 1, decaying tracers; window ranges the runner rejects are
+  errors), and the snapshot files it writes (a daily file only for binaries
+  that take a snapshot).
 
 ## File Map
 
@@ -65,6 +91,11 @@ computed by that routine.
 - [`skill.jl`](skill.jl): `skill_metrics`, `weighted_fit_stats`.
 - [`column_profiles.jl`](column_profiles.jl): `column_band_weights`,
   `logp_interpolate`.
+- [`run_context.jl`](run_context.jl): `RunContext`, `run_snapshot_paths`.
+- [`budget_closure.jl`](budget_closure.jl): `BudgetTolerance`,
+  `TracerBudget`, `BudgetReport`, `budget_closure`, `report_dict`,
+  `carrier_drawdown`, `AbstractExpectedEmission`, `RuntimeSurfaceSources`,
+  `expected_storage_change`.
 
 ## Python Routines Replaced
 
@@ -77,9 +108,12 @@ computed by that routine.
 | `weighted_fit_stats` | `wstats` of `catrine_compare_vs_geoschem.py` |
 | `column_band_weights` | `band_sums` of `catrine_compare_vs_geoschem.py` |
 | `logp_interpolate` | the interpolation in `zonal_on_pressure` of `catrine_compare_vs_geoschem.py` |
+| `budget_closure`, `report_dict` | `check_trendy_npp_rh_run.py` (retired; now the `series` mode of `scripts/diagnostics/tracer_budget_closure.jl`) |
+| `carrier_drawdown` | the `npp_max_global_drawdown_ppm` audit of `prepare_trendy_s3_npp_rh.py` |
 
-The Python scripts stay until their Julia command lines replace them (steps
-B3 and B4 of the design).
+A Python script is deleted in the commit whose Julia command line replaces
+it and is listed under "Retired scripts" in `scripts/README.md`; the scripts
+above not marked retired follow in steps B3 and B4 of the design.
 
 ## Invariants
 
@@ -103,6 +137,28 @@ B3 and B4 of the design).
 - `logp_interpolate` treats both end mid levels as inside the column. The
   Python `zonal_on_pressure` returned NaN for a target exactly equal to the
   top mid pressure; elsewhere the two agree.
+- `budget_closure` works in tracer storage (mixing ratio × carrier air mass),
+  so molar masses cancel, and takes the expected change from the run's own
+  sources: cell areas, unit factors, storage scale `DRY_AIR_MOLAR_MASS / M`
+  and slice times are the runtime's. `check_trendy_npp_rh_run.py` used the
+  flux file's `cell_area`, whole-day sums and `M_air = 0.02896546`; on the
+  TRENDY C30 run its expected changes are 3.66e-5 larger (the constant) and
+  differ by ≤ 6e-8 otherwise. A run made before commit `d552d3e0` applied the
+  old constant, so its runtime-consistent budget is off by that 3.66e-5.
+- The carrier term uses the run's initial air mass from the first window of
+  the binary; the Python script used `total_mass(t₀) / carrier` (2.4e-9
+  relative apart on the TRENDY run). The carrier is the `background` of a
+  `uniform` initial condition, otherwise the initial mean `S(t₀)/M`.
+- A linearly interpolated source is sampled at every step start, so its
+  integral is summed window by window with each window's step count (real
+  binaries vary it, e.g. 4 to 6 steps per hour); stepwise, conservative-mean
+  and static sources are integrated exactly in one step.
+- A tracer with a positive carrier fails when its snapshots have no
+  `<tracer>_column_mean`: carrier exhaustion cannot be ruled out (the Python
+  script required the variable too).
+- Snapshot `time` is hours since `[input].start_date`. A daily total cannot
+  resolve a decay sink, so tracers with a `[chemistry]` half-life are skipped
+  (the single-file mode of `tracer_budget_closure.jl` handles rn222).
 
 ## Common Tasks
 
@@ -113,6 +169,11 @@ B3 and B4 of the design).
 - Score a model against observations on the same months: stack the band
   series as `(nband, nmonth, nseries)`, call `seasonal_trend_decomposition`
   with the observation mask, then `skill_metrics(model, obs)` on each output.
+- Gate a campaign on its budgets: `report = budget_closure("run.toml")`,
+  then `report.passed` (strict) or `report.operational_passed`, and write
+  `report_dict(report)` as JSON
+  (`scripts/diagnostics/tracer_budget_closure.jl series <run.toml>`).
+  Before the run, compare `carrier_drawdown("run.toml")` with each carrier.
 - Add a band set: subtype `AbstractLatitudeBands` and implement `nbands`,
   `band_edges` and `band_index` (returning 0 for latitudes in no band, for
   example the cells at exactly 90° of `np.digitize` latitude bins).

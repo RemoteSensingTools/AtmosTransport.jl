@@ -857,6 +857,40 @@
   `compare_cs_flux_files.jl` takes its sin-latitude bands from `Analysis`
   (the same assignment as before on C4, C8, C30, C90, C180, C360 and C720 in
   both panel conventions).
+- Budget closure in Julia. `Analysis.budget_closure(run)` checks every
+  tracer of a finished run: the change of `<tracer>_total_mass` between the
+  first and last snapshot against the storage the run's own surface sources
+  add (`build_surface_flux_sources` + `integrated_emission`, over the run's
+  own steps: each window's step count and the float-type step
+  `FT(L)/FT(n)` from the run clock's step starts, so a Float32 window of
+  3600 s in 7 steps adds 3599.99994 s), within
+  ρ|E| + k·eps(Float32(carrier))·air mass (`BudgetTolerance`: strict 1e-4 and
+  1 ulp, operational 1e-3 and 4 ulps), with finite values and, for a positive
+  carrier, positive column means. `RunContext` builds the run's view with the
+  runner's own functions (tracer specs, including the legacy single tracer of
+  lat-lon runs, now read by the structured runner and `RunContext` through one
+  function `_structured_tracer_specs`; grid; every binary's window layout; run
+  start; the air mass of window 1 that the initial state is packed on; output
+  file names; window ranges and tracer tables the runner rejects are errors,
+  with the runner's multi-file range check shared as
+  `_check_multifile_window_count`), and `carrier_drawdown`
+  gives the largest cumulative loss of global mixing ratio before a run.
+  `scripts/diagnostics/tracer_budget_closure.jl series <run.toml>` replaces
+  `check_trendy_npp_rh_run.py` (JSON report, exit 1 when the gated level
+  fails); `scripts/run_trendy_npp_rh_campaign.py` calls it. On the 23-model
+  TRENDY C30 run (3775 days) the harness emulator of the Python arithmetic
+  (`scripts/validation/flux_port_parity/budget_closure_parity.jl`) reproduces
+  `validation.json` (expected changes to 7e-16, actual changes identical, TEM
+  NPP failing at 1.2714e-4, 45 of 46 passing) and `smoke_validation.json`
+  (max 1.96e-4). With the current `DRY_AIR_MOLAR_MASS` (the run used the
+  pre-`d552d3e0` 0.02896546) every expected change is 3.66e-5 smaller and 43
+  of 46 pass (TEM, CLM-FATES and ELM NPP fail); at the run's constant the
+  runtime sources differ from the Python sums by at most 5.5e-8, so cell
+  areas and integration explain none of the TEM excess. The NPP drawdowns
+  equal the Python audits times DRY_AIR_MOLAR_MASS/0.02896546 to 5.5e-8. The
+  single-file mode of `tracer_budget_closure.jl` read the bare-hours time axis
+  of current snapshots as years and reported a gap of about −1; it now reads
+  hours since the run start.
 
 ### Verification and remaining limits
 

@@ -16,6 +16,8 @@ The port's design is `/temp1/cfranken/flux_port_parity/design_final.md`
 |---|---|
 | `run_parity.jl` | Runner. The TOML layout is in its header; `--only NAME` selects comparisons; `--json` and `--markdown` write the reports; exit status 1 when any comparison fails or errors |
 | `s0_bitwise_pairs.toml` | Example: the two S0 pairs that the P0 review found bitwise identical (hourly→daily C90 2021, refine C180 2021-12-31) |
+| `budget_closure_parity.jl` | Diagnostics port (B2): `Analysis.budget_closure` against a report of the retired `check_trendy_npp_rh_run.py`, three ways (legacy arithmetic, runtime sources, runtime sources at the run's old constant); one JSON report; exit 1 unless the legacy run reproduces the report |
+| `emulators/legacy_budget_emission.jl` | Harness-only expected emissions for `budget_closure`: `LegacyDailyFluxFileEmission` (the Python sums: file `cell_area`, whole days, M_air 0.02896546), `ScaledEmission`, `TabulatedEmission` |
 | `README.md` | This file |
 
 The comparator, `scripts/validation/compare_cs_flux_files.jl`, lives one
@@ -143,6 +145,49 @@ product written with 44/12, on 365 common days:
   - `cell_area` bitwise identical.
 - As stored: max 11327 ulp and a year-total difference of 6.752e-4 (= 1 − factor).
 - Wall time 30.0 s, peak RSS 1.21 GB.
+
+## Budget closure (diagnostics port, B2)
+
+`budget_closure_parity.jl` runs `Analysis.budget_closure` on one run three
+times and compares the first with the Python report (design §4.3):
+
+```bash
+julia --project=. scripts/validation/flux_port_parity/budget_closure_parity.jl \
+    --config /temp1/cfranken/trendy_allmodels_c30_20260908/run.toml \
+    --reference /temp1/cfranken/trendy_allmodels_c30_20260908/validation.json \
+    --json /temp1/cfranken/diag_port/budget_closure/full_parity.json
+```
+
+- `legacy`: `LegacyDailyFluxFileEmission`, the Python arithmetic (flux-file
+  `cell_area`, whole-day sums, `M_air = 0.02896546`).
+- `runtime`: the library default, the run's own sources with the current
+  `DRY_AIR_MOLAR_MASS = 0.0289644`.
+- `run_constant`: the runtime changes times 0.02896546 / `DRY_AIR_MOLAR_MASS`,
+  the storage scale a run made before commit `d552d3e0` applied.
+
+Measured on 2026-10-11 (wurst, Julia 1.12.6, `--project=<port>/test`), on the
+23-model TRENDY C30 run of 2026-09-08 (46 tracers, 3775 daily files):
+
+| Run | Variant | Pass (strict) | Max relative error | Against the Python report |
+|---|---|---|---|---|
+| full | legacy | 45/46 (TEM NPP fails) | 1.27141e-4 | expected ≤ 7.1e-16, actual identical, tolerance 1.9e-11, same flags |
+| full | runtime | 43/46 (TEM, CLM-FATES, ELM NPP fail) | 1.63756e-4 | expected changes 3.66e-5 smaller (the constant) |
+| full | run_constant | 45/46 (TEM NPP fails) | 1.27155e-4 | expected changes ≤ 5.48e-8 from the legacy ones |
+| smoke (3 days) | legacy | 46/46 | 1.96004e-4 | expected ≤ 3.8e-16, actual identical, tolerance 2.4e-9, same flags |
+| smoke | runtime | 46/46 | 1.59392e-4 | |
+| smoke | run_constant | 46/46 | 1.95981e-4 | expected changes ≤ 6.2e-8 from the legacy ones |
+
+The tolerance differs from the Python value only in the carrier term: the
+Julia air mass is the binary's first window, the Python one
+`total_mass(t₀) / carrier`. Reports and logs:
+`/temp1/cfranken/diag_port/budget_closure/v2/{full,smoke}_parity.{json,log}`
+(17:45 wall, 1.6 GB peak RSS for the full run). The run is Float32 with
+3600 s windows of 3 to 8 steps; integrating its 7-step windows with the
+Float32 step `Float32(3600)/Float32(7)` (3599.99994 s per window) instead of
+3600 s moves the runtime expected changes by at most 1.3e-10 and none of the
+numbers above. `scripts/diagnostics/tracer_budget_closure.jl series run.toml`
+on the same run reports the runtime row (43/46 strict, all 46 operational) and
+exits 1.
 
 ## Coastal masks per grid
 
