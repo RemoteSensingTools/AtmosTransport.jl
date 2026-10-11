@@ -19,6 +19,13 @@
 #   julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \
 #       <config.toml> --start 2021-12-01 --end 2021-12-03
 #
+#   # Usage and options
+#   julia --project=. scripts/preprocessing/preprocess_transport_binary.jl --help
+#
+# From Julia, include this file and call `main(args)` with the same arguments:
+# it preprocesses in the current session and throws on error (the golden
+# harness, test/golden/golden_worker.jl, runs several cases in one session).
+#
 # Configs:
 # - ERA5 spectral:   `[input].spectral_dir = "..."` — `ERA5SpectralSettings`.
 # - Native sources:  `[source].toml = "config/met_sources/<src>.toml"` plus
@@ -32,9 +39,31 @@ using Dates
 using AtmosTransport
 using AtmosTransport.Preprocessing
 
+const _USAGE = "Usage: preprocess_transport_binary.jl <config.toml> " *
+               "[--day YYYY-MM-DD | --start YYYY-MM-DD --end YYYY-MM-DD]"
+
+function _print_help(io::IO = stdout)
+    println(io, _USAGE)
+    println(io)
+    println(io, "Builds transport binaries from the met source and target grid of the config,")
+    println(io, "for one day (--day), a range of days (--start/--end) or, without either, the")
+    println(io, "days the config selects ([input] start_date/end_date, or every available day")
+    println(io, "of the ERA5 spectral input).")
+    println(io)
+    println(io, "Example:")
+    println(io, "  julia -t8 --project=. scripts/preprocessing/preprocess_transport_binary.jl \\")
+    println(io, "      <config.toml> --day 2021-12-01")
+    return nothing
+end
+
+"""
+    _parse_cli(args) -> (cfg_path, day, start_date, end_date) or nothing
+
+The config and day options of `args`; `nothing` for `-h` or `--help`.
+"""
 function _parse_cli(args::Vector{String})
-    usage = "Usage: preprocess_transport_binary.jl <config.toml> " *
-            "[--day YYYY-MM-DD | --start YYYY-MM-DD --end YYYY-MM-DD]"
+    (args == ["-h"] || args == ["--help"]) && return nothing
+    usage = _USAGE
     isempty(args) && throw(ArgumentError(usage))
     cfg_path = expanduser(args[1])
     startswith(args[1], "-") && throw(ArgumentError("missing <config.toml>; $usage"))
@@ -68,18 +97,30 @@ function _parse_cli(args::Vector{String})
     return cfg_path, day_override, start_date, end_date
 end
 
-function main()
-    base_logger = ConsoleLogger(stderr, Logging.Info; show_limited = false)
-    global_logger(AtmosTransport.Preprocessing._FlushingLogger(base_logger))
+"""
+    main(args = ARGS)
 
-    cfg_path, day_override, start_date, end_date = _parse_cli(ARGS)
+Preprocess the config and days named in `args` (or print the help for
+`-h`/`--help`) with console logging to the current `stderr` (flushed after
+every message); throw on error. The logger is scoped to the call, so a session
+that runs several cases keeps its own.
+"""
+function main(args::Vector{String} = ARGS)
+    parsed = _parse_cli(args)
+    if parsed === nothing
+        _print_help(stdout)
+        return nothing
+    end
+    cfg_path, day_override, start_date, end_date = parsed
     cfg = TOML.parsefile(cfg_path)
-
-    process_day(cfg; day_override = day_override,
-                     start_date   = start_date,
-                     end_date     = end_date)
+    base_logger = ConsoleLogger(stderr, Logging.Info; show_limited = false)
+    return with_logger(AtmosTransport.Preprocessing._FlushingLogger(base_logger)) do
+        process_day(cfg; day_override = day_override,
+                         start_date   = start_date,
+                         end_date     = end_date)
+    end
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    main()
+    main(ARGS)
 end

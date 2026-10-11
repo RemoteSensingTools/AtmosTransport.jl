@@ -683,6 +683,40 @@
 
 ### Verification and remaining limits
 
+- The golden-output harness (`test/golden/run_goldens.jl`) runs its cases in
+  worker sessions instead of one Julia process per case: one process
+  (`golden_worker.jl`) per group of cases with the same entry point,
+  `[architecture]` table and threads, which includes the entry scripts once
+  and calls their `main(args)` for each case, with the case's output and log
+  messages in its `log.txt` and the logger, working directory and environment
+  restored after it. A full check of the 27 cases takes 41 minutes instead of
+  68 on an L40S (preprocessing 16 instead of 18, CPU runs 16 instead of 23,
+  GPU runs 8 instead of 27), with outputs bitwise identical to the
+  per-process reference. The harness watches each worker: it writes a
+  case's `status.toml` as soon as the case finishes (an interrupted run
+  keeps them), continues the remaining cases in a new worker when one
+  crashes, stops a worker whose case runs longer than `--timeout` minutes
+  (default 45) and fails that case, and starts a new worker when one reports
+  a poisoned session (a CUDA `synchronize` or `reclaim` that fails after a
+  case, the mark of a sticky device error). `status.toml` records the case's
+  session and position (`[session]`, with `poisoned` when it applies) and
+  the `error` of a failure; `check` prints wall times as `(own process)`,
+  `(session case k of n)` or `failed` and does not compare them.
+  `scripts/run_transport.jl` and
+  `scripts/preprocessing/preprocess_transport_binary.jl` define
+  `main(args)`, which runs in the calling Julia session with a logger scoped
+  to the call (the scripts set the global logger before) and throws on error;
+  the thread re-execution and GPU preload of `run_transport.jl` happen only
+  when it runs as a script. `ATMOSTR_PROFILE_MODE` now follows the config's
+  `[architecture]` instead of whether CUDA happens to be loaded: a CUDA run
+  is profiled also on the first call of a session that included the script
+  (CUDA is loaded for it), and a CPU or Metal run warns and runs without a
+  profile. `preprocess_transport_binary.jl` accepts `-h`/`--help`.
+  `test/core/test_golden_sessions.jl` tests the grouping, the worker's
+  isolation, crashes before and between cases (also with exit status 0), a
+  poisoned session, timeouts while loading, in a case and in the cleanup
+  after a case, SIGKILL after an ignored SIGTERM, and `main(["--help"])` of
+  both entry scripts as a session includes them.
 - New core tests cover config parsing, cell location on every topology
   against independent references, source readers (including a real OCO-2
   Lite file check), the device gather, pressure and height

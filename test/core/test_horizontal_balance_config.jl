@@ -132,9 +132,7 @@ end
 @testset "LL → CS regrid script option --balance-mode" begin
     mod = Module(:RegridScriptBalanceTest)
     Core.eval(mod, :(include(path::AbstractString) = Base.include($mod, path)))
-    withenv("ATMOSTR_NO_AUTO_THREADS" => "1") do
-        Base.include(mod, joinpath(REPO, "scripts", "preprocessing", "regrid_ll_transport_binary_to_cs.jl"))
-    end
+    Base.include(mod, joinpath(REPO, "scripts", "preprocessing", "regrid_ll_transport_binary_to_cs.jl"))
     parse = getfield(mod, :_parse_args)
     mktemp() do input, _
         base = ["--input", input, "--output", input * ".cs", "--Nc", "8"]
