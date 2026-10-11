@@ -4,8 +4,9 @@
 Shared numerics for post-run diagnostics: reading daily snapshot series,
 equal-area latitude-band means, seasonal and interannual decompositions,
 skill statistics, column profile tools (column-mass band weights,
-log-pressure interpolation), and the global budget closure of a finished run
-(`budget_closure`, `carrier_drawdown`).
+log-pressure interpolation), a reader for the output of the GEOS-Chem CATRINE
+reference run (`GEOSChemCATRINEArchive`), and the global budget closure of a
+finished run (`budget_closure`, `carrier_drawdown`).
 
 Diagnostic command lines in `scripts/diagnostics/` take these numerics from
 here instead of carrying their own copies, and plotting scripts read the
@@ -16,18 +17,21 @@ depend on threading or on the element type of the input.
 `src/AtmosTransport.jl` loads this module after `Models` and before
 `Downloads`, so that diagnostics can build on the runtime's own types; no
 runtime module depends on it. The functions here use NCDatasets, Dates,
-LinearAlgebra and Statistics; the budget closure builds its view of a run
-(`RunContext`) and the expected emissions with the runner's own config
-parsing, grids, output naming and surface-flux sources.
+LinearAlgebra and Statistics, the constants of `Parameters` and the NetCDF
+lock of `Output`; the budget closure builds its view of a run (`RunContext`)
+and the expected emissions with the runner's own config parsing, grids,
+output naming and surface-flux sources.
 See `src/Analysis/README.md` for the file map and `docs/src/api/analysis.md`
 for the reference.
 """
 module Analysis
 
-using Dates: Dates, DateTime, TimeType, Millisecond, year, month, day
+using Dates: Dates, DateTime, TimeType, Millisecond, Hour, @dateformat_str, year, month, day
 using LinearAlgebra: pinv
-using NCDatasets: NCDataset, nomissing, dimnames
+using NCDatasets: NCDataset, NetCDFError, nomissing, dimnames
 using Statistics: mean, std, cor
+using ..Parameters: DRY_AIR_MOLAR_MASS, GEOSCHEM_SPECIES_MOLAR_MASS, RN222_HALF_LIFE
+using ..Output: with_netcdf_lock
 
 # Budget closure (`run_context.jl`, `budget_closure.jl`) builds on the runtime's own
 # config parsing, grid, output naming and surface-flux sources.
@@ -54,6 +58,7 @@ include("latitude_bands.jl")
 include("decomposition.jl")
 include("skill.jl")
 include("column_profiles.jl")
+include("geoschem_archive.jl")
 include("run_context.jl")
 include("budget_closure.jl")
 
@@ -63,6 +68,8 @@ export nbands, band_edges, band_index, band_means, band_means!
 export doy_linear_detrend, seasonal_trend_decomposition
 export skill_metrics, weighted_fit_stats
 export column_band_weights, column_band_weights!, logp_interpolate, logp_interpolate!
+export GEOSChemTracer, CATRINE_GEOSCHEM_TRACERS, GEOSChemCATRINEArchive
+export gc_path, gc_times, with_gc_file, global_totals, unreadable_files
 
 export RunContext, run_snapshot_paths
 export BudgetTolerance, TracerBudget, BudgetReport, budget_closure, carrier_drawdown, report_dict

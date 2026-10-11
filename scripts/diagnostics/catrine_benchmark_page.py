@@ -2,7 +2,7 @@
 """Write the interactive CATRINE benchmark web page from a catrine_compare_vs_geoschem.py output.
 
 Reads <compare-dir>/summary.json and timeseries.npz (and, optionally, the csv files of
-catrine_true_mass_balance*.{jl,py}) and writes a self-contained web directory --out:
+catrine_true_mass_balance.jl, either model) and writes a self-contained web directory --out:
   * index.html - Chart.js charts with check boxes for the runs and selectors for tracer, band
                  and statistic (the selection is kept in the URL, so a view can be linked):
                  daily means of the 3-hourly agreement statistics with GEOS-Chem (R^2, OLS
@@ -101,8 +101,9 @@ def rounded(values, digits=5):
 def mass_balance(path, origin, gc):
     """First time and daily residual per tracer of a true-mass-balance csv (GEOS-Chem's if `gc`).
 
-    The residual is a global-mean dry mole fraction, residual / dry-air mass (both csv writers store
-    kg dry-air equivalent), and for Rn-222 a percentage of its burden at the same time."""
+    The residual is a global-mean dry mole fraction, residual / dry-air mass (both models of
+    catrine_true_mass_balance.jl store kg dry-air equivalent), and for Rn-222 a percentage of its
+    burden at the same time."""
     with open(path, encoding="utf-8") as fh:
         rows = list(csv.DictReader(fh))
     if not rows:
@@ -129,7 +130,8 @@ def main():
     ap.add_argument("--code", action="append", default=[],
                     help="key=code versions of a run (met preprocessing and transport)")
     ap.add_argument("--mass-balance", action="append", default=[],
-                    help="key=csv[,csv...] of catrine_true_mass_balance*.{jl,py} (tracers merged); key 'gc' for GEOS-Chem")
+                    help="key=csv[,csv...] of catrine_true_mass_balance.jl (tracers merged); key 'gc' for "
+                         "the GEOS-Chem csv (--model geoschem)")
     ap.add_argument("--mass-balance-note", default="", help="HTML after the mass-balance chart")
     ap.add_argument("--origin", default="2021-12-01T00:00", help="time origin of the mass-balance csv hours")
     ap.add_argument("--title", default="CATRINE C90 benchmark: AtmosTransport vs GEOS-Chem (GCHP)")
@@ -315,7 +317,7 @@ radioactive decay), as a global-mean dry mole fraction (Rn-222: % of its burden)
 stays at zero. AtmosTransport: the run's compensated Float64 tracer totals and its sources rebuilt by the model
 (<code>scripts/diagnostics/catrine_true_mass_balance.jl</code>); its Rn-222 reference follows the model's own
 emit-then-decay order per met window. GEOS-Chem (black): <code>SpeciesConcVV × Met_AD</code> and its own
-<code>Emis*</code> diagnostics (<code>catrine_true_mass_balance_gc.py</code>); its Rn-222 reference is the exact
+<code>Emis*</code> diagnostics (<code>catrine_true_mass_balance.jl --model geoschem</code>); its Rn-222 reference is the exact
 solution of B' = E − λB, so GEOS-Chem's Rn-222 residual includes its own emission/decay splitting.</p>
 <div class="chart"><canvas id="massbal"></canvas></div>{{MB_NOTE}}
 </section>

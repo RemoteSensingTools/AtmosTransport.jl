@@ -29,6 +29,20 @@ A typical Hovmöller comparison reads the daily column means with
 `BandAssignment`, averages them to months, and passes the stacked model and
 observation series to `seasonal_trend_decomposition` and `skill_metrics`.
 
+`GEOSChemCATRINEArchive` reads the output of the GEOS-Chem (GCHP) CATRINE
+reference run, one `GEOSChem.CATRINE_inst.YYYYMMDD_HHMMz.nc4` file per 3-hourly
+output time, flat or under `YYYY/MM/`. `global_totals` turns a file into global
+sums in GEOS-Chem's dry-air-equivalent storage units: the dry-air mass
+``\sum \mathrm{Met\_AD}``, the burden ``\sum \chi \, \mathrm{Met\_AD}`` of each
+tracer and its emission rate
+``\left(\sum E \, \mathrm{Met\_AREAM2}\right) M_\mathrm{air} / M``, with
+GEOS-Chem's molar masses (`Parameters.GEOSCHEM_SPECIES_MOLAR_MASS`,
+`Parameters.DRY_AIR_MOLAR_MASS`). A missing, truncated or incomplete file
+reads as `nothing` and is listed by `unreadable_files`. Files are read into
+memory on all threads and decoded under the package's NetCDF lock.
+`scripts/diagnostics/catrine_true_mass_balance.jl --model geoschem` builds
+GEOS-Chem's true mass balance on it.
+
 `budget_closure` checks the global budget of every tracer of a finished run.
 The runtime conserves tracer storage ``S = \sum_c \chi_c m_c`` (dry mixing
 ratio times carrier air mass, the unit of `<tracer>_total_mass`), and

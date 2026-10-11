@@ -395,7 +395,10 @@ Supported `kind` values:
       [chemistry]
       kind = "decay"
       [chemistry.half_lives_seconds]
-      rn222 = 330350.4   # 3.8235 days
+      rn222 = 330350.4   # RN222_HALF_LIFE, 3.8235 days
+
+  `Parameters.RN222_HALF_LIFE` is this ²²²Rn value (`3.8235 * 86400.0` equals
+  the literal `330350.4` in Float64).
 
   The keyword name must match the corresponding `[tracers.<name>]`
   symbol that the run is carrying (case-insensitive — the builder

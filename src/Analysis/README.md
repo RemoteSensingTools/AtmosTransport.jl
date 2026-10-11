@@ -10,11 +10,11 @@ element type of the input.
 
 `src/AtmosTransport.jl` loads this folder after `Models` and before
 `Downloads`. The functions so far need NCDatasets, Dates, LinearAlgebra and
-Statistics; the budget closure also builds on the runtime's config parsing,
-grids, output naming and surface-flux sources (`Models`, `MetDrivers`,
-`Output`, `Operators`), the compensated sum of `Architectures` and the
-constants of `Parameters`. No earlier module depends on `Analysis`. The names
-are
+Statistics, the constants of `Parameters` and the NetCDF lock of `Output`;
+the budget closure also builds on the runtime's config parsing, grids, output
+naming and surface-flux sources (`Models`, `MetDrivers`, `Output`,
+`Operators`) and the compensated sum of `Architectures`. No earlier module
+depends on `Analysis`. The names are
 exported from `AtmosTransport.Analysis`, not from the top level:
 
 ```julia
@@ -56,6 +56,18 @@ computed by that routine.
   outside = NaN)` (and `!`) in [`column_profiles.jl`](column_profiles.jl):
   per-layer air mass inside bands of column-mass fraction counted from the
   surface, and linear interpolation in ln p with no extrapolation.
+- `GEOSChemCATRINEArchive(dir; tracers, interval)` in
+  [`geoschem_archive.jl`](geoschem_archive.jl): the output of the GEOS-Chem
+  CATRINE reference run, `GEOSChem.CATRINE_inst.YYYYMMDD_HHMMz.nc4` every 3 h,
+  flat or under `YYYY/MM/`. `gc_path(a, t)` resolves a file, `gc_times(a,
+  start, stop)` lists the output times, `with_gc_file(f, a, t)` opens one
+  file (read into memory, decoded under the NetCDF lock) and returns `f(ds)`
+  or `nothing` when the file is unreadable, `global_totals(a, t)` (or a vector
+  of times, on all threads) returns Σ Met_AD and, per tracer, Σ χ·Met_AD and
+  the emission rate (Σ E·Met_AREAM2)·M_air/M in dry-air-equivalent kg, and
+  `unreadable_files(a)` lists the files that could not be read.
+  `GEOSChemTracer` names a tracer's variables, GEOS-Chem molar mass and
+  half-life; `CATRINE_GEOSCHEM_TRACERS` holds the four CATRINE tracers.
 - `budget_closure(run; output_glob, tolerance, emission, tracers,
   require_complete)` in [`budget_closure.jl`](budget_closure.jl): the global
   budget of every tracer of a finished run, `ΔS = S(t₁) − S(t₀)` from
@@ -91,6 +103,9 @@ computed by that routine.
 - [`skill.jl`](skill.jl): `skill_metrics`, `weighted_fit_stats`.
 - [`column_profiles.jl`](column_profiles.jl): `column_band_weights`,
   `logp_interpolate`.
+- [`geoschem_archive.jl`](geoschem_archive.jl): `GEOSChemTracer`,
+  `CATRINE_GEOSCHEM_TRACERS`, `GEOSChemCATRINEArchive`, `gc_path`, `gc_times`,
+  `with_gc_file`, `global_totals`, `unreadable_files`.
 - [`run_context.jl`](run_context.jl): `RunContext`, `run_snapshot_paths`.
 - [`budget_closure.jl`](budget_closure.jl): `BudgetTolerance`,
   `TracerBudget`, `BudgetReport`, `budget_closure`, `report_dict`,
@@ -108,6 +123,7 @@ computed by that routine.
 | `weighted_fit_stats` | `wstats` of `catrine_compare_vs_geoschem.py` |
 | `column_band_weights` | `band_sums` of `catrine_compare_vs_geoschem.py` |
 | `logp_interpolate` | the interpolation in `zonal_on_pressure` of `catrine_compare_vs_geoschem.py` |
+| `GEOSChemCATRINEArchive`, `gc_path`, `global_totals` | `gc_path` and `one` of `catrine_true_mass_balance_gc.py` (retired; its mass balance is `catrine_true_mass_balance.jl --model geoschem`); `gc_path` of `catrine_compare_vs_geoschem.py` |
 | `budget_closure`, `report_dict` | `check_trendy_npp_rh_run.py` (retired; now the `series` mode of `scripts/diagnostics/tracer_budget_closure.jl`) |
 | `carrier_drawdown` | the `npp_max_global_drawdown_ppm` audit of `prepare_trendy_s3_npp_rh.py` |
 
@@ -137,6 +153,17 @@ above not marked retired follow in steps B3 and B4 of the design.
 - `logp_interpolate` treats both end mid levels as inside the column. The
   Python `zonal_on_pressure` returned NaN for a target exactly equal to the
   top mid pressure; elsewhere the two agree.
+- `global_totals` reads the same Float32 values as the Python script (fill
+  values as zero), forms the same Float64 products and converts emissions in
+  the same order, `Σ · M_air / M`; it sums pairwise in linear-index order,
+  where NumPy sums pairwise within blocks of 8192 elements. On the first day
+  of the CATRINE C90 archive, re-summing in NumPy's order reproduces all 44
+  Python values bit for bit; over all 6088 files the Julia dry-air masses and
+  burdens differ from the Python ones by at most 5e-15 relative. `valid_range`
+  is not applied (NCDatasets does not; GEOS-Chem writes no value outside it).
+- netcdf-c is not thread-safe: `with_gc_file` decodes under
+  `Output.with_netcdf_lock`, but reads the file bytes outside it, so threads
+  overlap their (network) reads.
 - `budget_closure` works in tracer storage (mixing ratio × carrier air mass),
   so molar masses cancel, and takes the expected change from the run's own
   sources: cell areas, unit factors, storage scale `DRY_AIR_MOLAR_MASS / M`

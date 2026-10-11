@@ -7,7 +7,8 @@ using AtmosTransport
 using AtmosTransport.Parameters: EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_PRESSURE,
                                  R_DRY_AIR, CP_OVER_R_DIATOMIC, CP_DRY_AIR, DRY_AIR_MOLAR_MASS,
                                  VON_KARMAN, STANDARD_SEA_LEVEL_AIR_DENSITY,
-                                 GLOBAL_MEAN_DRY_SURFACE_PRESSURE, SPECIES_MOLAR_MASS, CARBON_MOLAR_MASS
+                                 GLOBAL_MEAN_DRY_SURFACE_PRESSURE, SPECIES_MOLAR_MASS, CARBON_MOLAR_MASS,
+                                 GEOSCHEM_SPECIES_MOLAR_MASS, RN222_HALF_LIFE
 
 # Every exported constant of `Parameters`, with its value. The test compares with
 # `===`, which pins the type as well: counts stay `Int`, everything else stays
@@ -35,6 +36,8 @@ const PINNED_PARAMETERS = (
     GLOBAL_MEAN_DRY_SURFACE_PRESSURE = 98726.0,
     GLOBAL_MEAN_SPECIFIC_HUMIDITY = 0.00247,
     SPECIES_MOLAR_MASS = (co2 = 44.0095e-3, sf6 = 146.055e-3, rn222 = 222.0e-3),
+    GEOSCHEM_SPECIES_MOLAR_MASS = (co2 = 44.01e-3, sf6 = 146.06e-3, rn222 = 222.0e-3),
+    RN222_HALF_LIFE = 330350.4,
     CARBON_MOLAR_MASS = 12.0107e-3,
     TM5_CONSTANTS = (gravity = 9.80665, cp_air = 1004.0, r_air = 287.307, r_vap = 461.51,
                      l_vap = 2.5e6, karman = 0.4, p_ref = 1.0e5),
@@ -85,6 +88,12 @@ end
     @test SPECIES_MOLAR_MASS.co2 ≈ CARBON_MOLAR_MASS + 2 * 15.9994e-3   # IUPAC 2007 C and O
     # The dry surface-pressure target is the Trenberth and Smith (2005) dry-air mass.
     @test GLOBAL_MEAN_DRY_SURFACE_PRESSURE * 4π * IFS_EARTH_RADIUS^2 / STANDARD_GRAVITY ≈ 5.1353e18 rtol = 1e-5
+    # 3.8235 days in Float64 is the 330350.4 s of the run configs, bit for bit.
+    @test RN222_HALF_LIFE === 3.8235 * 86400.0
+    # GEOS-Chem's species molar masses differ from the model's by the amounts its docstring states.
+    @test GEOSCHEM_SPECIES_MOLAR_MASS.co2 / SPECIES_MOLAR_MASS.co2 - 1 ≈ 1.14e-5 rtol = 0.01
+    @test GEOSCHEM_SPECIES_MOLAR_MASS.sf6 / SPECIES_MOLAR_MASS.sf6 - 1 ≈ 3.42e-5 rtol = 0.01
+    @test GEOSCHEM_SPECIES_MOLAR_MASS.rn222 === SPECIES_MOLAR_MASS.rn222
 end
 
 @testset "defaults take the constants in their own precision" begin

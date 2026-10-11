@@ -9,6 +9,7 @@
 using Test, Random, LinearAlgebra
 using AtmosTransport
 using AtmosTransport.Architectures: _two_sum, _neumaier_add, _compensated_total
+using AtmosTransport.Parameters: RN222_HALF_LIFE
 using AtmosTransport.Grids: CubedSphereMesh, GEOSNativePanelConvention, LatLonMesh
 using AtmosTransport.Operators.SurfaceFlux: SurfaceFluxSource, SurfaceFluxOperator,
                                             ProfileDeposit, apply_surface_flux!
@@ -79,7 +80,7 @@ end
 end
 
 @testset "Decay decrement" begin
-    λ = Float32(log(2) / (3.8235 * 86400))                    # Rn-222
+    λ = Float32(log(2) / RN222_HALF_LIFE)
     for dt in (400.0, 450.0, 900.0)
         d = Chem.decay_decrement(Float32, λ, dt)
         @test d isa Float32

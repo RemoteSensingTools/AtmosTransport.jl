@@ -21,7 +21,7 @@ depend on later ones:
 | [MetDrivers](@ref MetDrivers-API) | `TransportBinaryDriver`, `inspect_binary`, the binary I/O. |
 | [Operators](@ref Operators-API) | Advection / Convection / Diffusion / SurfaceFlux. |
 | [Models](@ref Models-API) | `TransportModel`, `DrivenSimulation`, the runtime stepper. |
-| [Analysis](@ref Analysis-API) | Post-run diagnostics numerics: snapshot series, equal-area band means, seasonal/interannual decompositions, skill statistics, column profiles, the budget closure of a run. |
+| [Analysis](@ref Analysis-API) | Post-run diagnostics numerics: snapshot series, equal-area band means, seasonal/interannual decompositions, skill statistics, column profiles, the budget closure of a run, the GEOS-Chem CATRINE archive reader. |
 | [Preprocessing](@ref Preprocessing-API) | `process_day` and the source/target dispatch. |
 | [DataDownloads](@ref DataDownloads-API) | Verified source/protocol download pipeline. |
 | [Regridding](@ref Regridding-API) | Conservative offline regridding and persistence. |

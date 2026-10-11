@@ -249,3 +249,4 @@ commit that contains the file; recover it with `git show <commit>:<path>`.
 |---|---|---|
 | `test/diagnostics/test_trendy_hovmoller.py` | `test/core/test_analysis_decomposition.jl` (`Analysis.seasonal_trend_decomposition`, `Analysis.skill_metrics`) | `a5df02ae` |
 | `scripts/diagnostics/check_trendy_npp_rh_run.py` | `scripts/diagnostics/tracer_budget_closure.jl series <run.toml>` (`Analysis.budget_closure`); `scripts/run_trendy_npp_rh_campaign.py` calls it | `a5df02ae` |
+| `scripts/diagnostics/catrine_true_mass_balance_gc.py` | `scripts/diagnostics/catrine_true_mass_balance.jl --model geoschem` (`Analysis.GEOSChemCATRINEArchive`, `Analysis.global_totals`) | `a5df02ae` |

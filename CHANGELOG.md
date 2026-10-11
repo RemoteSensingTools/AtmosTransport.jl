@@ -393,12 +393,11 @@
   agreement statistics, period table, global burdens, true mass balance), code
   versions, maps and animations. The page is self-contained (data embedded,
   Chart.js copied next to it) and keeps the selection in the URL.
-- `scripts/diagnostics/catrine_true_mass_balance.jl` and
-  `catrine_true_mass_balance_gc.py` compute the true global mass balance of a
-  run (burden change minus the run's own applied emissions and decay) for
-  AtmosTransport, from the run's output and its sources rebuilt by the model,
-  and for GEOS-Chem, from its `SpeciesConcVV`, `Met_AD` and `Emis*` output;
-  the benchmark page plots them.
+- `scripts/diagnostics/catrine_true_mass_balance.jl` computes the true global
+  mass balance of a run (burden change minus the run's own applied emissions
+  and decay) for AtmosTransport, from the run's output and its sources rebuilt
+  by the model, and with `--model geoschem` for GEOS-Chem, from its
+  `SpeciesConcVV`, `Met_AD` and `Emis*` output; the benchmark page plots them.
 - New `[output.observations]` contract for sampling tracer profiles at
   observation points (OCO-2 Lite soundings, NOAA ObsPack sites, generic point
   tables) from the containing model cell at met-window ends. The table is
@@ -891,6 +890,25 @@
   single-file mode of `tracer_budget_closure.jl` read the bare-hours time axis
   of current snapshots as years and reported a gap of about −1; it now reads
   hours since the run start.
+- `scripts/diagnostics/catrine_true_mass_balance_gc.py` is replaced by
+  `catrine_true_mass_balance.jl --model geoschem`, which writes the same csv
+  columns as the Python script and the AtmosTransport mode. The GEOS-Chem
+  CATRINE output is read through `Analysis.GEOSChemCATRINEArchive`
+  (`gc_path`, flat or `YYYY/MM/`; `gc_times`; `with_gc_file`;
+  `global_totals`; `unreadable_files`): files are read into memory on all
+  threads and decoded under the NetCDF lock, and an unreadable file is
+  listed, its row skipped and its interval given the next readable rate, as
+  before. New constants `GEOSCHEM_SPECIES_MOLAR_MASS` (GEOS-Chem species
+  database) and `RN222_HALF_LIFE` (3.8235 d, exactly the `330350.4` s of the
+  run configs). On the C90 archive (6088 files, 2021-12-01 03Z to
+  2024-01-01 00Z) the hours equal the Python csv, dry-air masses and burdens
+  agree to 5e-15 and cumulative sources to 1e-15 relative (co2_natural, whose
+  cumulative source crosses zero, to 6e-16 of its largest value), residuals to
+  8e-15 of the burden, and the four summary lines to every printed digit; on
+  a C180 window with a truncated file the unreadable-file handling gives the
+  same rows and summary. The AtmosTransport mode is unchanged (bit-identical
+  csv and log on the 25-month ERA5 fossil CO₂ run) and is now tested on a
+  tiny run, where a stable and a decaying tracer close to 1e-12.
 
 ### Verification and remaining limits
 

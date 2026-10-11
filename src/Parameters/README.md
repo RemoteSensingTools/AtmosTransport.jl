@@ -29,6 +29,7 @@ other AtmosTransport modules; every later module may import from it.
     `VIRTUAL_TEMPERATURE_FACTOR`, `AVOGADRO`
   - `SPECIES_MOLAR_MASS`, the named tuple `(co2, sf6, rn222)` in kg mol⁻¹,
     and `CARBON_MOLAR_MASS` (kgC → kgCO₂ by `SPECIES_MOLAR_MASS.co2 / CARBON_MOLAR_MASS`)
+  - `RN222_HALF_LIFE` (3.8235 d = 330350.4 s)
   - `VON_KARMAN` (0.41) of the model's own boundary-layer schemes (the TM5
     and GEOS-Chem ports use their models' 0.4)
   - U.S. Standard Atmosphere 1976 values: `STANDARD_SEA_LEVEL_AIR_DENSITY`
@@ -93,6 +94,10 @@ other AtmosTransport modules; every later module may import from it.
   - `GEOSCHEM_CONSTANTS`: GEOS-Chem `physconstants.F90` / `vdiff_mod.F90`
     values, used as the defaults of `GCHPVdiffParameters` in
     `../State/Fields/GCHPNonlocalPBLField.jl`
+  - `GEOSCHEM_SPECIES_MOLAR_MASS`: GEOS-Chem species-database molar masses
+    `(co2, sf6, rn222)` = (44.01, 146.06, 222.0) × 10⁻³ kg mol⁻¹, used by
+    `Analysis.GEOSChemCATRINEArchive` to convert GEOS-Chem emission fluxes to
+    dry-air-equivalent mass as GEOS-Chem does
 - Planet object, in [`PlanetParameters.jl`](PlanetParameters.jl):
   - `PlanetParameters{FT}(radius, gravity, reference_pressure)` throws
     `ArgumentError` unless all three are finite and positive
@@ -131,7 +136,8 @@ other AtmosTransport modules; every later module may import from it.
   settings takes the constant as its default (`cfl_limit::Real = DEFAULT_CFL_LIMIT`),
   so the paths cannot drift apart.
 - A scheme that reproduces another model's code takes that model's set
-  (`TM5_CONSTANTS`, `GEOSCHEM_CONSTANTS`) so it matches the reference model.
+  (`TM5_CONSTANTS`, `GEOSCHEM_CONSTANTS`, `GEOSCHEM_SPECIES_MOLAR_MASS`) so it
+  matches the reference model.
   Everything else uses the model's own values.
 - Scheme tuning parameters, such as stability-function slopes, critical
   Richardson numbers and the floors of the PBL diagnostics, stay with their
