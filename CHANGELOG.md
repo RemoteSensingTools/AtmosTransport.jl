@@ -602,6 +602,62 @@
 - SIF-GPP, FLUXCOM, TRENDY v14, TRANSCOM, GFED, and CATRINE campaign
   preprocessing, run configs, visualization scripts, and ATBD memos.
 
+### Coverage, benchmarks, and documentation
+
+- The Julia 1 CI job uploads line coverage of `src/` and `ext/` to Codecov.
+  The upload authenticates with GitHub OIDC, so the repository holds no
+  Codecov secret, and a failed upload does not fail CI. `codecov.yml` sets
+  the status thresholds (project coverage may fall 2 percentage points below
+  the base commit, coverage of the changed lines up to 20 points below it)
+  and excludes tests, scripts, documentation, benchmarks, examples, and
+  heritage folders. The hosted job runs only the
+  CPU tiers, so the CUDA and Metal extensions count as uncovered.
+- GPU benchmarks of the NVIDIA L40S (`Float32`), NVIDIA A100 (`Float32` and
+  `Float64`), and Apple M5 Pro (Metal, `Float32`) lab machines reach the
+  performance dashboard only through a lab lane started by hand on wurst
+  (`benchmarking/lab/run_lab_benchmarks.jl`). Each lab machine's exact Julia
+  version is pinned in `benchmarking/lab/machines.toml` (`julia_version`,
+  1.12.6 on all three) and checked before anything runs. Every benchmark
+  record carries an environment fingerprint (Julia version and sha256 of the
+  resolved benchmark Manifest) in its raw `metadata` and its dashboard
+  `extra`; the lab lane and the publish workflow refuse a lab run whose
+  machines disagree on it, and the grouped dashboard shows it per point. A
+  machine whose run fails still has its (partial) result files copied back
+  before the failure is reported. The optional self-hosted CUDA and Metal jobs of the `Benchmarks`
+  workflow, its `run_cuda`, `run_metal`, and `gpu_float_types` inputs, and
+  `benchmarking/RUNNERS.md` are removed: self-hosted runners would run
+  pull-request code on lab hardware of a public repository. The workflow's
+  CPU job, which runs pull-request code, now has a read-only token; only the
+  publish job writes (`contents`, `deployments`; no `pull-requests`).
+- Benchmark harness: `--preset` loads a case matrix from
+  `benchmarking/presets/` (the `lab` preset runs C90 and C180, L72 and L137,
+  1 and 12 tracers: 44 cases per float type), and `--convection-depth`,
+  `--device-label`, and `--commit` are new. GPU series names carry the
+  device (`GPU-CUDA L40S`); CPU series names are unchanged. The `io` case
+  now serializes every requested tracer; it moved one tracer whatever its
+  name said. `adjoint` runs at one tracer only (the footprint of one scalar
+  objective), so the `adjoint 4tr` CI series ends, and operators that ignore
+  `--scheme` run once under the default `ppm`. `Operator Breakdown` series
+  are named `Operator Breakdown / <case name> / <phase>` (the old names
+  merged tracer counts, groups, and schemes), so those series start a new
+  history, and the `io` and `adjoint` phase values are now per step: the
+  adjoint value was divided by the repeat count twice, and the io value by
+  `--steps` although a repeat is one round trip. The dashboard `extra` field
+  is written as a JSON string; it was published as `[object Object]`. A
+  case that throws is kept as `failed` in the raw JSON, and the run exits
+  with an error after writing both files. The grouped dashboard draws one
+  line per group, grid, levels, scheme, and device; lines of renamed groups
+  no longer merge.
+- The README opens with badges for CI, the stable and development manuals,
+  the license, the Julia compatibility bound (read from `Project.toml`),
+  Aqua, Codecov, and the performance dashboard.
+- New manual page *Performance benchmarks* (section *Development*): what the
+  synthetic cubed-sphere benchmarks measure, the metric definitions
+  (time per step, cell-tracer updates per second), the lab machines and their
+  roles, how results reach the dashboard, how to run a benchmark locally, and
+  how to read the dashboard. `CONTRIBUTING.md` explains the benchmarks and
+  coverage.
+
 ### Verification and remaining limits
 
 - New core tests cover config parsing, cell location on every topology

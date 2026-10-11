@@ -81,6 +81,7 @@ for the objects and source directories behind this flow.
 | Understand mass, grids, and physics choices | [Architecture tour](@ref Architecture-tour) → [State & basis](@ref) → [Operators](@ref Operator-concepts) |
 | Map familiar TM5/GCHP concepts onto this code | [Design philosophy](@ref Design-philosophy) |
 | Extend or call the library directly | [Curated public API](@ref) and the generated API pages |
+| Check speed on CPUs and GPUs | [Performance benchmarks](@ref performance-benchmarks) |
 
 ## Core capabilities
 

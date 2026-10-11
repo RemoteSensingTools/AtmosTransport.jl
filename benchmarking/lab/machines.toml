@@ -1,0 +1,86 @@
+# Lab machines benchmarked by the lab lane (run_lab_benchmarks.jl, run from
+# wurst). One table per machine; unknown keys are errors.
+#
+#   description     free text shown in logs
+#   access          "local" (run on this host) or "ssh" (needs ssh_host)
+#   ssh_host        ssh destination; key authentication, no prompts (BatchMode)
+#   julia           Julia executable on the machine; "~/" is that machine's home.
+#                   Use an absolute or "~/" path: ssh shells do not load the
+#                   interactive PATH.
+#   julia_version   exact Julia version that executable must be (1.11 or later),
+#                   checked on the machine before anything is instantiated or
+#                   benchmarked. Pinned so that a Julia upgrade never shows up as
+#                   a performance change; update it deliberately, on all machines
+#                   together. Every record carries the Julia version and the
+#                   sha256 of the resolved benchmarking/Manifest.toml, so the
+#                   dashboard shows where the environment changed.
+#   backend         "cpu", "cuda", or "metal" (passed to run_benchmarks.jl)
+#   float_types     float types to benchmark; Metal supports Float32 only
+#   threads         Julia threads (--threads)
+#   heap_size_hint  optional --heap-size-hint, e.g. "64G"
+#   tmpdir          optional TMPDIR for the io case (created if missing)
+#   caffeinate      wrap long commands in `caffeinate -i` (macOS sleep guard)
+#   device_label    optional --device-label override of the normalised GPU name
+#   [code]          how the benchmarked commit reaches the machine:
+#     delivery = "shared"  `git archive <commit>` is extracted on this host into
+#                          <root>/<commit>, a path the machine sees identically
+#                          (NFS home); "~/" expands on this host.
+#     delivery = "copy"    `git archive <commit>` is streamed over ssh into
+#                          <root>/<commit> on the machine; "~/" is its home.
+#     root                 last path component must start with "atmostr_"
+#   [env]           extra environment variables (strings), e.g. CUDA_VISIBLE_DEVICES
+
+[machines.wurst]
+description = "wurst: 2x NVIDIA L40S 48 GB (lab lane host); Float32 only"
+access = "local"
+julia = "~/.juliaup/bin/julia"
+julia_version = "1.12.6"
+backend = "cuda"
+float_types = ["Float32"]
+threads = 2
+heap_size_hint = "64G"
+# /tmp is a small partition on wurst; the io case writes files of up to
+# ~1.8 GB (C180 L137, 12 tracers, Float32).
+tmpdir = "/temp1/cfranken/atmostr_bench_tmp"
+caffeinate = false
+code = { delivery = "shared", root = "~/atmostr_bench" }
+env = { CUDA_VISIBLE_DEVICES = "0" }
+
+[machines.curry]
+description = "curry: 2x NVIDIA A100-PCIE-40GB; Float32 and Float64; 256 GB per-user memory cgroup"
+access = "ssh"
+ssh_host = "curry"
+julia = "~/.juliaup/bin/julia"
+julia_version = "1.12.6"
+backend = "cuda"
+float_types = ["Float32", "Float64"]
+threads = 2
+# Keeps the Julia GC well inside the per-user memory cgroup.
+heap_size_hint = "64G"
+caffeinate = false
+# No tmpdir: the io case uses the local default TMPDIR, not the NFS home; it
+# needs ~3.6 GB free there (C180 L137, 12 tracers, Float64).
+# ~ is NFS-shared with wurst, so the archive extracted on wurst is visible here.
+code = { delivery = "shared", root = "~/atmostr_bench" }
+env = { CUDA_VISIBLE_DEVICES = "0" }
+
+[machines.mac]
+description = "Owner MacBook: Apple M5 Pro (Metal); Float32 only"
+access = "ssh"
+# An ssh alias on wurst (~/.ssh/config: Host atmostr-mac, HostName <the Mac>),
+# so the machine's network name stays out of the repository.
+ssh_host = "atmostr-mac"
+julia = "~/.juliaup/bin/julia"
+julia_version = "1.12.6"
+backend = "metal"
+float_types = ["Float32"]
+threads = 2
+caffeinate = true
+# No NFS: the commit is copied, and all work (including the io case's
+# temporary files) stays under ~/atmostr_* there.
+tmpdir = "~/atmostr_bench/tmp"
+code = { delivery = "copy", root = "~/atmostr_bench" }
+# Packages, registries, and compile caches go to a depot under ~/atmostr_bench
+# instead of ~/.julia. Julia expands the "~"; the trailing ":" appends only the
+# bundled stdlib depots, never the user depot.
+env = { JULIA_DEPOT_PATH = "~/atmostr_bench/julia_depot:" }

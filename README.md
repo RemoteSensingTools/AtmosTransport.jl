@@ -1,13 +1,23 @@
 # AtmosTransport.jl
 
+<!-- Build, documentation, and package information -->
+[![CI](https://img.shields.io/github/actions/workflow/status/RemoteSensingTools/AtmosTransport.jl/CI.yml?branch=main&label=CI&logo=github&style=flat-square)](https://github.com/RemoteSensingTools/AtmosTransport.jl/actions/workflows/CI.yml?query=branch%3Amain)
+[![Stable documentation](https://img.shields.io/badge/docs-stable-blue?style=flat-square)](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/)
+[![Development documentation](https://img.shields.io/badge/docs-dev-orange?style=flat-square)](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/)
+[![License](https://img.shields.io/github/license/RemoteSensingTools/AtmosTransport.jl?style=flat-square)](LICENSE)
+[![Julia compat](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2FRemoteSensingTools%2FAtmosTransport.jl%2Fmain%2FProject.toml&query=%24.compat.julia&label=julia%20compat&logo=julia&color=9558B2&style=flat-square)](Project.toml)
+
+<!-- Testing, coverage, and performance -->
+[![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
+[![codecov](https://img.shields.io/codecov/c/github/RemoteSensingTools/AtmosTransport.jl/main?label=codecov&logo=codecov&style=flat-square)](https://codecov.io/gh/RemoteSensingTools/AtmosTransport.jl)
+[![Performance dashboard](https://img.shields.io/badge/performance-dashboard-informational?style=flat-square&logo=github)](https://remotesensingtools.github.io/AtmosTransport.jl/benchmarks/)
+
 > **Actively developed research software.** Supported CPU and NVIDIA CUDA
 > workflows have regression tests and documented numerical checks. Interfaces
 > and numerical results can change between releases; pin a version for
 > reproducible experiments and read the [release notes](CHANGELOG.md) before
 > upgrading. Broader Metal coverage and some inversion workflows still have
 > validation gaps, described in the status tables below.
-
-[![Documentation](https://img.shields.io/badge/docs-stable-blue.svg)](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/)
 
 A Julia-based, GPU-portable atmospheric tracer transport model for offline
 chemistry / chemical-transport applications. Designed for **mass-conserving**
@@ -299,6 +309,16 @@ documented validation run.
   current Julia release. It covers uniform-tracer invariance, mass budgets and
   cross-window replay. CUDA comparisons and the ten maintained GPU diagnostics
   run separately on GPU hardware; they are not exercised by the hosted CPU jobs.
+  The Julia 1 job uploads line coverage of `src/` and `ext/` to
+  [Codecov](https://codecov.io/gh/RemoteSensingTools/AtmosTransport.jl), where
+  the CUDA and Metal extensions therefore appear uncovered.
+- **Performance:** synthetic cubed-sphere benchmarks of each operator are
+  timed on three lab machines (NVIDIA L40S, NVIDIA A100, Apple M5 Pro) and as
+  small CPU smokes in CI. The
+  [performance dashboard](https://remotesensingtools.github.io/AtmosTransport.jl/benchmarks/)
+  shows them per commit; the
+  [benchmarks page](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/development/benchmarks)
+  of the manual explains what is measured.
 - **Real-data preprocessing:** opt-in ERA5 and GEOS workflows exercise the
   write-time replay contract; these are not a substitute for a full
   cross-model validation campaign.

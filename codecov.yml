@@ -1,0 +1,44 @@
+# Codecov settings (https://docs.codecov.com/docs/codecov-yaml).
+#
+# The report comes from the Julia 1 / ubuntu-latest job of
+# .github/workflows/CI.yml, which processes coverage for src/ and ext/.
+# That job runs the CPU test tiers only, so the CUDA and Metal extensions and
+# the real-data preprocessing paths count as uncovered there.
+
+coverage:
+  range: 50..90
+  round: down
+  precision: 2
+
+  status:
+    # Whole-project coverage may drop by up to 2 percentage points relative
+    # to the base commit before the status turns red.
+    project:
+      default:
+        target: auto
+        threshold: 2%
+    # New and changed lines: lenient, because much GPU and real-data code
+    # cannot run on a hosted CPU runner.
+    patch:
+      default:
+        target: auto
+        threshold: 20%
+
+comment:
+  layout: "diff, flags, files"
+  require_changes: true
+
+github_checks:
+  annotations: false
+
+ignore:
+  - "test/**"
+  - "scripts/**"
+  - "docs/**"
+  - "benchmarking/**"
+  - "examples/**"
+  - "config/**"
+  - "tools/**"
+  - "**/heritage/**"
+  - "**/archived/**"
+  - "**/likely_legacy/**"
