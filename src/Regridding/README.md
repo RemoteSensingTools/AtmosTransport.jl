@@ -6,27 +6,56 @@ Conservative regridding between `LatLonMesh`, `CubedSphereMesh`, and
 A regridder is a sparse matrix of spherical polygon intersection areas, with
 the source and destination cell areas. It is built once per mesh pair, can be
 cached on disk, and is applied to fields whose first axis is the flattened
-horizontal index.
+horizontal index. Equivalent meshes get an `IdentityRegrid` and nested cubed
+spheres a `NestedCubedSphereRegrid`, which need no intersection matrix.
+Fields are regridded by quantity kind: intensive fields directly, per-cell
+totals through their density. The folder also holds the one copy of the
+cubed-sphere block kernels used by the transport-binary coarseners.
 
 `src/AtmosTransport.jl` loads this folder after `Adjoints` and before
-`Preprocessing`, `Visualization`, and `Models`. It imports only `Grids`: mesh
-types, panel conventions, cubed-sphere definition accessors, and
-`panel_cell_corner_lonlat`. Its consumers are `Preprocessing` (met data to
-target grids), `Models.InitialConditionIO` (initial conditions and surface-flux
-inventories at run setup), and `Visualization` (cubed-sphere to lon-lat
-rasters). Operators and the stepping loop do not call it.
+`Preprocessing`, `Visualization`, and `Models`. It imports `Grids` (mesh
+types, panel conventions, cubed-sphere definition accessors,
+`panel_cell_corner_lonlat`, `cs_corner_xyz`), `Quantities` (the quantity-kind
+traits) and `AtomicFiles` (`atomic_publish` for cached weights). Its consumers
+are `Preprocessing` (met data to target grids, block coarsening),
+`Models.InitialConditionIO` (initial conditions and surface-flux inventories at
+run setup), and `Visualization` (cubed-sphere to lon-lat rasters). Operators
+and the stepping loop do not call it.
 
 ## Entry Points
 
 - `build_regridder(src, dst; normalize=false, cache_dir=nothing, kwargs...)`
-  in [`weights_io.jl`](weights_io.jl). It returns an `IdentityRegrid` when the
-  meshes are equivalent. Otherwise it returns a `ConservativeRegridding.Regridder`,
-  loaded from or saved to `cache_dir` when one is given. Exported at the top
-  level.
-- `apply_regridder!(dst, regridder, src)` in [`weights_io.jl`](weights_io.jl)
-  and [`identity_regrid.jl`](identity_regrid.jl). Axis 1 is the flat
-  horizontal index; trailing axes are looped column by column. Exported at the
-  top level.
+  in [`weights_io.jl`](weights_io.jl), in this order:
+  1. `IdentityRegrid` when `meshes_equivalent(src, dst)`;
+  2. `NestedCubedSphereRegrid` when `meshes_nested(src, dst)`;
+  3. a `ConservativeRegridding.Regridder`, loaded from or saved to
+     `cache_dir` when one is given.
+
+  Exported at the top level.
+- `apply_regridder!(dst, regridder, src)` in [`weights_io.jl`](weights_io.jl),
+  [`identity_regrid.jl`](identity_regrid.jl) and
+  [`cs_nesting.jl`](cs_nesting.jl): an intensive field (value per area or per
+  point). Axis 1 is the flat horizontal index; trailing axes are looped column
+  by column. Exported at the top level.
+- `apply_regridder!(dst, regridder, src, kind::QuantityKind)` in
+  [`quantity_regrid.jl`](quantity_regrid.jl), for any regridder:
+  - `IntensiveCellField()`: the three-argument call;
+  - `ExtensiveCellField()`: `src ./ src_areas` (formed per column in the
+    element type of `src`, in the keyword `scratch` or a vector allocated per
+    call), regrid, `× dst_areas`;
+  - `HorizontalVectorField()`, `HorizontalFluxField()`: `ArgumentError`.
+- `regrid_conservation_report(r, src, dst, kind)` in
+  [`quantity_regrid.jl`](quantity_regrid.jl): `(; src_total, dst_total,
+  rel_error)`, Float64 sums (extensive: `Σx`; intensive: `Σ x·area`); a
+  leading dimension that differs from `length(r.src_areas)` /
+  `length(r.dst_areas)` throws `DimensionMismatch`.
+- `default_regrid_cache_dir()` in [`weights_io.jl`](weights_io.jl):
+  `ATMOSTR_REGRID_CACHE_DIR` if set and not empty, else
+  `~/.cache/AtmosTransport/cr_regridding`.
+- `meshes_nested(a, b)`, `NestedCubedSphereRegrid{Restriction|Prolongation}`
+  (`AbstractNestingDirection`), `coarsen_sum!(dst, src, ratio)` and
+  `coarsen_area_weighted!(dst, src, area, ratio)` in
+  [`cs_nesting.jl`](cs_nesting.jl).
 - `save_regridder(path, r)` and `load_regridder(path)` round-trip a regridder
   through JLD2.
 - `save_esmf_weights(path, r; src_shape, dst_shape, src_grid_name, dst_grid_name)`
@@ -47,11 +76,17 @@ rasters). Operators and the stepping loop do not call it.
   `YReversedCellBasedGrid` for left-handed panels. Reduced Gaussian uses one
   tree per ring sector.
 - [`identity_regrid.jl`](identity_regrid.jl): `IdentityRegrid`,
-  `meshes_equivalent`, `identity_regrid_or_nothing`, and a `copyto!`
-  `apply_regridder!`
+  `meshes_equivalent`, `_same_cs_definition` (shared with `meshes_nested`),
+  `identity_regrid_or_nothing`, and a `copyto!` `apply_regridder!`
+- [`cs_nesting.jl`](cs_nesting.jl): the block kernels `coarsen_sum!` and
+  `coarsen_area_weighted!`, `meshes_nested` (with the corner check),
+  the nesting directions, `NestedCubedSphereRegrid` and its
+  `apply_regridder!`, `nested_regrid_or_nothing`
 - [`weights_io.jl`](weights_io.jl): cache key (`_hash_mesh!`,
-  `_regridder_cache_key`), `build_regridder`, JLD2 save/load, ESMF export,
-  and `apply_regridder!` for `Regridder`
+  `_regridder_cache_key`), `default_regrid_cache_dir`, `build_regridder`,
+  JLD2 save/load, ESMF export, and `apply_regridder!` for `Regridder`
+- [`quantity_regrid.jl`](quantity_regrid.jl): `apply_regridder!` by quantity
+  kind and `regrid_conservation_report`
 
 ## Invariants
 
@@ -73,13 +108,44 @@ rasters). Operators and the stepping loop do not call it.
 - `meshes_equivalent` compares the same fields `_hash_mesh!` writes; meshes of
   different types are never equivalent. `build_regridder` checks it before the
   cache, so identical meshes cost one `copyto!`.
+- `meshes_nested` requires the same cubed-sphere definition and radius
+  (`_same_cs_definition`), different `Nc` with an integer ratio `R`, and
+  evaluates the nesting: coarse corner `(i, j)` of every panel must be fine
+  corner `((i − 1)R + 1, (j − 1)R + 1)` to `1e-12` on the unit sphere. Fine
+  cell `((i − 1)R + ii, (j − 1)R + jj)` then lies in coarse cell `(i, j)` in
+  file order, for both panel conventions.
+- `NestedCubedSphereRegrid` remaps an intensive field as a conservative
+  regridder with intersections `W` does, `d = W s ./ dst_areas`, with
+  `W_cf = A_f` for restriction and `W_fc = A_c A_f / Σ_{f'∈c} A_f'` for
+  prolongation. Both give `Σ_t W_ts = src_areas[s]`, so the extensive path is
+  an exact block sum (restriction) or split by area fraction (prolongation).
+  Its areas are Float64 (`CubedSphereMesh(FT = Float64)` areas) for every mesh
+  precision. Built in O(Nc²), never cached; `normalize` and CR.jl `kwargs` do
+  not apply to it, and it has no `intersections`.
+- Nothing is cached for nested pairs, and the cached content of every other
+  pair is unchanged, so `_REGRIDDER_CACHE_VERSION` stays 3; v3 files of nested
+  pairs are no longer read.
+- Block kernels (`coarsen_sum!`, `coarsen_area_weighted!`) take 2-D `(Nc, Nc)`
+  or 3-D `(Nc, Nc, Nz)` panel arrays and an `Int` ratio; blocks are summed
+  `ii` fastest. Sums accumulate in the array element type (bit-identical to
+  the two earlier copies); area-weighted means accumulate numerator and
+  denominator in Float64, divide by the block sum of fine areas (constants
+  stay exact) and round once. Float64 areas are accepted with Float32 data.
+- `apply_regridder!(…, ExtensiveCellField())` never modifies `src`. Its
+  density buffer is the keyword `scratch` (length `n_src`, element type
+  `eltype(src)`, not aliasing `src` or `dst`); without one it allocates one
+  horizontal column per call (`similar(src, n_src)`). The preprocessing
+  workspace passes `density_scratch`, and matrices are not reshaped, so warm
+  `regrid_2d/3d_to_cs_panels!` calls allocate nothing.
 - `IdentityRegrid` stores `mesh` and its cell areas as `src_areas` and
   `dst_areas` (flat cell order of `apply_regridder!`), so density ↔ cell-total
   conversions work as with a `Regridder`. It has no `intersections`: it cannot
   be saved as weights, and `normalize` does not scale its areas.
 - Extra CR.jl `kwargs` together with `cache_dir` throw `ArgumentError`.
   `load_regridder` errors on a `format_version` mismatch, and `save_regridder`
-  writes a temp file and then `mv`s it into place.
+  publishes through `AtomicFiles.atomic_publish` (sibling staging file, mode
+  `0o666 & ~umask`, one replacing rename when complete), so a shared cache is
+  not owner-only and readers never see it missing.
 - `normalize=false` (the default) stores raw intersection areas in m², and
   CR.jl `regrid!` divides by the destination area (the xESMF convention).
 - Flat index: lat-lon `i + (j-1)Nx`; cubed sphere `(p-1)Nc² + i + (j-1)Nc`
@@ -98,15 +164,18 @@ rasters). Operators and the stepping loop do not call it.
   `meshes_equivalent` method over the same fields.
 - Geometry change that invalidates old caches: bump
   `_REGRIDDER_CACHE_VERSION` in [`weights_io.jl`](weights_io.jl).
-- Cache directory: this module has no default.
-  - Preprocessing reads `regridder_cache_dir`
-    (`../Preprocessing/target_geometry.jl`).
-  - Runtime surface fluxes use `_regrid_cache_dir()`
-    (`../Models/initial_conditions/surface_flux.jl`, overridable with
-    `ATMOSTR_REGRID_CACHE_DIR`).
-  - Both default to `~/.cache/AtmosTransport/cr_regridding`.
+- Cache directory: `build_regridder` caches only when given `cache_dir`.
+  - `default_regrid_cache_dir()` ([`weights_io.jl`](weights_io.jl)) is the
+    shared default: `ATMOSTR_REGRID_CACHE_DIR` if set and not empty, else
+    `~/.cache/AtmosTransport/cr_regridding`. Runtime surface fluxes use it
+    (`../Models/initial_conditions/surface_flux_regridding.jl`).
+  - Preprocessing reads `regridder_cache_dir` from its config
+    (`../Preprocessing/target_geometry.jl`), with the same default path.
   - The cubed-sphere initial-condition path and `Visualization` use no disk
     cache.
+- New nested-mesh pair: `meshes_nested` and the regridder handle cubed
+  spheres only; another topology would add its own `meshes_nested` method and
+  regridder type, checked in `build_regridder` before CR.jl.
 
 ## Tests And Docs
 
@@ -116,8 +185,15 @@ rasters). Operators and the stepping loop do not call it.
   Float32 meshes give Float64 corners and manifold
 - [`../../test/core/test_binary_planet_radius.jl`](../../test/core/test_binary_planet_radius.jl):
   the runtime source mesh shares the destination radius
+- [`../../test/core/test_regrid_cache_dir.jl`](../../test/core/test_regrid_cache_dir.jl):
+  `default_regrid_cache_dir`
 - The `test/regridding/` tier is part of the default `test/runtests.jl`
   selection: `test_conservation.jl`, `test_cubed_sphere_corners.jl`,
-  `test_serialization.jl` (cache hit), `test_transpose.jl`,
-  `test_reduced_gaussian_stub.jl`
+  `test_serialization.jl` (cache hit; cache files published with mode
+  `0o666 & ~umask`), `test_transpose.jl`,
+  `test_reduced_gaussian_stub.jl`,
+  `test_quantity_regrid.jl` (extensive totals to 1e-13; the CS regrid helpers
+  bit-identical to the pre-move code), `test_nested_cs_regrid.jl` (nesting
+  test; C4 ↔ C8 conservation to 1e-13 and agreement with CR.jl to 1e-12; the
+  block kernels against verbatim copies of the two earlier kernel sets)
 - API page: [`../../docs/src/api/regridding.md`](../../docs/src/api/regridding.md)

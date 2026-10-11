@@ -17,4 +17,6 @@ using .AtmosTransport.Regridding
     include("test_transpose.jl")
     include("test_serialization.jl")
     include("test_reduced_gaussian_stub.jl")
+    include("test_quantity_regrid.jl")
+    include("test_nested_cs_regrid.jl")
 end

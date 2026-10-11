@@ -50,7 +50,7 @@ Geometry and topology decisions come from
   day cache and the regridder cache)
 - `Quantities/` — intensive/extensive/vector/flux traits used by regridding
 - `Diagnostics/` — lightweight runtime instrumentation
-- `Regridding/` — conservative regridding and weight application
+- `Regridding/` — conservative regridding, weight application by quantity kind, nested cubed-sphere remapping and the CS block kernels
 - `Preprocessing/` — transport-binary and met-data preparation
 - `Downloads/` — data acquisition helpers
 - `Visualization/` — topology-aware snapshot views and optional Makie methods

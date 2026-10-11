@@ -58,7 +58,7 @@ using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
 # Regridding + Preprocessing are loaded before Models (AtmosTransport.jl)
 # so we can pull in the LL→CS conservative regridder + panel unpacking
 # helpers for the CS file-based IC path.
-using ..Regridding: build_regridder, apply_regridder!
+using ..Regridding: build_regridder, apply_regridder!, default_regrid_cache_dir
 using ..Preprocessing: unpack_flat_to_panels_3d!, unpack_flat_to_panels_2d!,
                        CS_PANEL_COUNT
 using ..Operators.SurfaceFlux: SurfaceFluxSource, TimeVaryingSurfaceFluxSource,

@@ -1,11 +1,12 @@
 """
     Quantities
 
-Dispatch traits that classify a meteorological field by its
-*regrid-and-conservation semantics*. Only `Preprocessing` uses them: the CS
-regrid helpers (`regrid_2d_to_cs_panels!`, `regrid_3d_to_cs_panels!`, which
-call `apply_regridder!`) take a kind argument so extensive/intensive
-distinctions stay explicit at the type level.
+Dispatch traits that classify a field by its *regrid-and-conservation
+semantics*. `Regridding.apply_regridder!(dst, r, src, kind)` implements the
+rule of each kind for every regridder, and the Preprocessing CS regrid helpers
+(`regrid_2d_to_cs_panels!`, `regrid_3d_to_cs_panels!`) take a kind argument
+and pass it on, so extensive/intensive distinctions stay explicit at the type
+level.
 
 The four kinds are not interchangeable. Confusing one for another is the
 exact mistake that produced ~12× polar mass deficits in C180 ERA5
@@ -20,7 +21,7 @@ the spatial distribution proportional to source-cell area variation).
 | `HorizontalFluxField` | window-summed `am`, `bm`, accumulated face-flux integrals | Directed integrals across faces; correct handling needs face-aware regridding (MAPL `CONSERVE_HFLUX`-style) or reconstruction from regridded winds + pressure. The pipeline reconstructs from winds (`reconstruct_cs_fluxes!`). |
 
 `IntensiveCellField` and `ExtensiveCellField` cover all scalar cell fields
-and are the only kinds the regrid helpers accept. Passing
+and are the only kinds `apply_regridder!` accepts. Passing
 `HorizontalVectorField` or `HorizontalFluxField` makes them throw an
 `ArgumentError`, because those fields need richer handling than scalar
 regridding can give.

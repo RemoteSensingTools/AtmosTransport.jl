@@ -1,11 +1,13 @@
 # ---------------------------------------------------------------------------
 # Weight construction, caching, and serialization
 #
-# - build_regridder      : CR.jl Regridder + SHA-1 cache key + JLD2 cache
-# - save_regridder       : JLD2 round-trip
-# - load_regridder       : JLD2 round-trip
-# - save_esmf_weights    : ESMF offline-weights NetCDF (S, row, col, frac_*)
-# - apply_regridder!     : n-D array wrapper around CR.jl regrid!
+# - build_regridder          : identity → nested → CR.jl Regridder (SHA-1 cache
+#                              key + JLD2 cache for the last)
+# - default_regrid_cache_dir : the shared weight cache of runtime and builders
+# - save_regridder           : JLD2 round-trip, published atomically
+# - load_regridder           : JLD2 round-trip
+# - save_esmf_weights        : ESMF offline-weights NetCDF (S, row, col, frac_*)
+# - apply_regridder!         : n-D array wrapper around CR.jl regrid!
 # ---------------------------------------------------------------------------
 
 # --- cache key ----------------------------------------------------------------
@@ -49,7 +51,26 @@ end
 
 # v3: cubed-sphere corners in Float64 for every mesh precision; v2 caches
 # could hold weights from Float32 corners under a precision-free key.
+# Nested cubed-sphere pairs return a `NestedCubedSphereRegrid` before the cache
+# is consulted, so nothing is cached for them; the cached content of every
+# other pair is unchanged, so the version stays 3 (v3 files of nested pairs are
+# simply no longer read).
 const _REGRIDDER_CACHE_VERSION = 3
+
+"""
+    default_regrid_cache_dir() -> String
+
+Directory of the shared conservative-regridding weight cache: the value of
+`ATMOSTR_REGRID_CACHE_DIR` if set and not empty (the golden-output harness
+points it into each case, so weights are recomputed), else
+`~/.cache/AtmosTransport/cr_regridding`, with `~` expanded. Read at each call,
+so the precompiled package carries no home directory. Runtime surface fluxes
+pass it as `cache_dir` to [`build_regridder`](@ref).
+"""
+function default_regrid_cache_dir()
+    dir = get(ENV, "ATMOSTR_REGRID_CACHE_DIR", "")
+    return expanduser(isempty(dir) ? joinpath("~", ".cache", "AtmosTransport", "cr_regridding") : dir)
+end
 
 function _regridder_cache_key(src, dst; normalize::Bool)
     io = IOBuffer()
@@ -64,14 +85,24 @@ end
 # --- build_regridder ----------------------------------------------------------
 
 """
-    build_regridder(src_mesh, dst_mesh; normalize=false, cache_dir=nothing, kwargs...) -> Regridder
+    build_regridder(src_mesh, dst_mesh; normalize=false, cache_dir=nothing, kwargs...)
+        -> IdentityRegrid | NestedCubedSphereRegrid | Regridder
 
-Construct a `ConservativeRegridding.Regridder` that maps source-mesh fields to
-destination-mesh fields by true spherical polygon intersection.
+Construct the regridder that maps source-mesh fields to destination-mesh
+fields, choosing in this order:
 
-If `cache_dir` is supplied, the regridder is cached on disk using a SHA-1
-fingerprint of the `(src_mesh, dst_mesh)` pair. Subsequent calls with
-identical meshes load the cached weights instead of recomputing them.
+1. [`IdentityRegrid`](@ref) when [`meshes_equivalent`](@ref)`(src, dst)`;
+2. [`NestedCubedSphereRegrid`](@ref) when [`meshes_nested`](@ref)`(src, dst)`
+   (cubed spheres of one definition whose `Nc` differ by an integer factor):
+   exact block remapping, no polygon intersection;
+3. otherwise a `ConservativeRegridding.Regridder` built by true spherical
+   polygon intersection.
+
+The first two take no weights from or to disk and ignore `normalize` and
+`kwargs`. If `cache_dir` is supplied, a conservative `Regridder` is cached on
+disk using a SHA-1 fingerprint of the `(src_mesh, dst_mesh)` pair (see
+[`default_regrid_cache_dir`](@ref) for the shared default). Subsequent calls
+with identical meshes load the cached weights instead of recomputing them.
 Custom construction `kwargs` cannot be combined with `cache_dir`, because
 arbitrary operators do not have a stable, portable cache fingerprint.
 
@@ -92,6 +123,8 @@ function build_regridder(src, dst;
         "omit cache_dir or call build_regridder without extra kwargs"))
     ir = identity_regrid_or_nothing(src, dst)
     ir === nothing || return ir
+    nr = nested_regrid_or_nothing(src, dst)
+    nr === nothing || return nr
     if cache_dir !== nothing
         mkpath(cache_dir)
         key = _regridder_cache_key(src, dst; normalize)
@@ -115,24 +148,21 @@ end
 
 Write the regridder's intersection matrix and area vectors to `path` as a
 JLD2 file. Temporary work arrays are not serialized (they're rebuilt on
-load).
+load). The file is published with `AtomicFiles.atomic_publish`: a reader sees
+the previous file or the complete new one, and the file gets mode
+`0o666 & ~umask` like any file the user creates, so a shared cache stays
+readable by the group.
 """
 function save_regridder(path::AbstractString, r::Regridder)
-    mkpath(dirname(path))
-    temp_path, temp_io = mktemp(dirname(path))
-    close(temp_io)
-    try
-        JLD2.jldsave(temp_path;
+    mkpath(dirname(abspath(path)))
+    return atomic_publish(path) do tmp
+        JLD2.jldsave(tmp;
             intersections = r.intersections,
             dst_areas     = r.dst_areas,
             src_areas     = r.src_areas,
             format_version = _REGRIDDER_CACHE_VERSION,
         )
-        mv(temp_path, path; force = true)
-    finally
-        isfile(temp_path) && rm(temp_path; force = true)
     end
-    return path
 end
 
 """
@@ -274,10 +304,21 @@ trailing dimensions (levels, time windows, tracers, etc).
 
 For the multi-dim case the horizontal regridding is applied column-by-column
 using CR.jl's temporary work arrays — no extra allocations per column.
+
+The field is treated as intensive (a value per area or per point). Per-cell
+totals go through `apply_regridder!(dst, r, src, ExtensiveCellField())`
+(`quantity_regrid.jl`). `IdentityRegrid` and `NestedCubedSphereRegrid` have
+their own three-argument methods with the same contract.
 """
 function apply_regridder!(dst::AbstractVector, r::Regridder, src::AbstractVector)
     return ConservativeRegridding.regrid!(dst, r, src)
 end
+
+# `x` as a matrix of horizontal columns (leading length `n`, checked by the
+# caller). A matrix is used as it is: `reshape` would allocate a new array
+# header on every call (Julia ≥ 1.11).
+_flat_columns(x::AbstractMatrix, n::Int) = x
+_flat_columns(x::AbstractArray, n::Int) = reshape(x, n, :)
 
 function apply_regridder!(dst::AbstractArray, r::Regridder, src::AbstractArray)
     n_dst = length(r.dst_areas)
@@ -287,8 +328,8 @@ function apply_regridder!(dst::AbstractArray, r::Regridder, src::AbstractArray)
     size(src, 1) == n_src ||
         error("src leading dim $(size(src,1)) ≠ regridder n_src $n_src")
 
-    dst_flat = reshape(dst, n_dst, :)
-    src_flat = reshape(src, n_src, :)
+    dst_flat = _flat_columns(dst, n_dst)
+    src_flat = _flat_columns(src, n_src)
     size(dst_flat, 2) == size(src_flat, 2) ||
         error("trailing shape mismatch: dst $(size(dst_flat,2)) ≠ src $(size(src_flat,2))")
 

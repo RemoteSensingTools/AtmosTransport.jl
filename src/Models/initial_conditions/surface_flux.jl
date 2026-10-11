@@ -81,20 +81,6 @@ function _gridfed_month_seconds(cfg, file::AbstractString, ds, month::Integer)
 end
 
 """
-    _regrid_cache_dir() -> String
-
-Directory of the cached conservative-regridding weights of runtime surface
-fluxes: `ATMOSTR_REGRID_CACHE_DIR` if set and not empty (the golden-output
-harness points it into each case, so weights are recomputed), else
-`~/.cache/AtmosTransport/cr_regridding`. Read when a source is built, so the
-precompiled package carries no home directory.
-"""
-function _regrid_cache_dir()
-    dir = get(ENV, "ATMOSTR_REGRID_CACHE_DIR", "")
-    return expanduser(isempty(dir) ? "~/.cache/AtmosTransport/cr_regridding" : dir)
-end
-
-"""
     FileSurfaceFluxField{FT}
 
 2-D flux density `(Nx_src, Ny_src)` loaded from a NetCDF emission file.

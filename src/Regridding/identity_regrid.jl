@@ -59,7 +59,13 @@ meshes_equivalent(a::LatLonMesh, b::LatLonMesh) =
     a.radius == b.radius
 
 meshes_equivalent(a::CubedSphereMesh, b::CubedSphereMesh) =
-    a.Nc == b.Nc &&
+    a.Nc == b.Nc && _same_cs_definition(a, b)
+
+# Same cubed-sphere definition (tag, coordinate law, centre law, panel
+# convention, longitude offset) and radius: the fields `_hash_mesh!` writes,
+# except `Nc`. `meshes_equivalent` adds equal `Nc`; `meshes_nested`
+# (`cs_nesting.jl`) an integer `Nc` ratio and coinciding corners.
+_same_cs_definition(a::CubedSphereMesh, b::CubedSphereMesh) =
     cs_definition_tag(cs_definition(a)) === cs_definition_tag(cs_definition(b)) &&
     typeof(coordinate_law(a)) === typeof(coordinate_law(b)) &&
     typeof(center_law(a)) === typeof(center_law(b)) &&

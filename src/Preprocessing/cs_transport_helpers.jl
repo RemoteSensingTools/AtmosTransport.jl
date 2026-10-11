@@ -51,6 +51,8 @@ struct CubedSpherePreprocessWorkspace{FT}
     dst_flat_3d   :: Matrix{FT}     # (n_dst, Nz)
     src_flat_2d   :: Vector{FT}     # (n_src,)
     dst_flat_2d   :: Vector{FT}     # (n_dst,)
+    # Density of one source column for extensive regrids (`apply_regridder!` scratch)
+    density_scratch :: Vector{FT}   # (n_src,)
 end
 
 function allocate_cs_preprocess_workspace(Nc::Int, Nx_stg::Int, Ny_stg::Int,
@@ -73,6 +75,7 @@ function allocate_cs_preprocess_workspace(Nc::Int, Nx_stg::Int, Ny_stg::Int,
         zeros(FT, n_dst, Nz),
         zeros(FT, n_src),
         zeros(FT, n_dst),
+        zeros(FT, n_src),
     )
 end
 
@@ -122,59 +125,30 @@ end
 # Conservative LL → CS regridding
 # ---------------------------------------------------------------------------
 
-# Per-kind density correction. `Intensive` is a no-op so the hot loop
-# elides entirely under @inline. `Extensive` applies the supplied `op`
-# (`/` before regrid, `*` after) elementwise across the spatial axis.
-# `Vector` / `Flux` kinds throw immediately — those paths don't go through
-# scalar regridding.
-@inline _density_correct!(buf, ::Any, ::Any, ::IntensiveCellField) = buf
-
-@inline function _density_correct!(buf::AbstractMatrix, areas, op::F,
-                                    ::ExtensiveCellField) where F
-    @inbounds for k in axes(buf, 2), i in eachindex(areas)
-        buf[i, k] = op(buf[i, k], areas[i])
-    end
-    return buf
-end
-
-@inline function _density_correct!(buf::AbstractVector, areas, op::F,
-                                    ::ExtensiveCellField) where F
-    @inbounds for i in eachindex(areas)
-        buf[i] = op(buf[i], areas[i])
-    end
-    return buf
-end
-
-_density_correct!(::Any, ::Any, ::Any, ::HorizontalVectorField) =
-    throw(ArgumentError("HorizontalVectorField is not a scalar regrid; \
-use component-wise IntensiveCellField regrid + rotate_winds_to_panel_local!"))
-
-_density_correct!(::Any, ::Any, ::Any, ::HorizontalFluxField) =
-    throw(ArgumentError("HorizontalFluxField is not a scalar regrid; \
-fluxes are reconstructed from regridded winds via reconstruct_cs_fluxes!"))
-
 """
     regrid_3d_to_cs_panels!(panels, regridder, src_3d, ws, Nc,
                              kind::QuantityKind = IntensiveCellField())
 
 Conservatively regrid a 3D LL field `(Nx, Ny, Nz)` to 6 CS panels `(Nc, Nc, Nz)`.
 
-`kind` declares the field's regrid semantics; dispatch goes through
-[`_density_correct!`](@ref):
+`kind` declares the field's regrid semantics and is passed to
+`Regridding.apply_regridder!(dst, regridder, src, kind)`:
 
-- [`IntensiveCellField`](@ref) (default): pass-through to `apply_regridder!`.
+- `IntensiveCellField` (default): regridded as given.
   Use for `ps`, `qv`, `T`, cell-center wind components, mixing ratios.
-- [`ExtensiveCellField`](@ref): density-convert with
-  `regridder.src_areas` / `regridder.dst_areas`. Required for `m` (kg/cell)
-  and any per-cell integral; without it the LL polar cells (230× smaller
-  area than equator) drag CS polar mass to ~8% of physical and trigger
-  runtime CFL inflation.
-- [`HorizontalVectorField`](@ref) / [`HorizontalFluxField`](@ref): not
-  handled here. Winds need component-wise intensive regrid plus rotation
-  (`rotate_winds_to_panel_local!`); face fluxes are reconstructed from
-  regridded winds. Calling those kinds errors out.
+- `ExtensiveCellField`: regridded as the density `src ./ regridder.src_areas`,
+  then multiplied by `regridder.dst_areas`. Required for `m` (kg/cell) and any
+  per-cell integral; without it the LL polar cells (230× smaller area than
+  equator) drag CS polar mass to ~8% of physical and trigger runtime CFL
+  inflation.
+- `HorizontalVectorField` / `HorizontalFluxField`: not scalar regrids; they
+  throw an `ArgumentError`. Winds need component-wise intensive regrid plus
+  rotation (`rotate_winds_to_panel_local!`); face fluxes are reconstructed
+  from regridded winds.
 
-Uses `ws.src_flat_3d` and `ws.dst_flat_3d` as scratch buffers.
+Uses `ws.src_flat_3d` and `ws.dst_flat_3d` as I/O buffers and
+`ws.density_scratch` for the density of extensive fields, so repeated calls
+allocate nothing.
 """
 function regrid_3d_to_cs_panels!(panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                   regridder,
@@ -183,10 +157,8 @@ function regrid_3d_to_cs_panels!(panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                   Nc::Int,
                                   kind::QuantityKind = IntensiveCellField()) where FT
     Nz = size(src_3d, 3)
-    copyto!(ws.src_flat_3d, reshape(src_3d, size(ws.src_flat_3d)...))
-    _density_correct!(ws.src_flat_3d, regridder.src_areas, /, kind)
-    apply_regridder!(ws.dst_flat_3d, regridder, ws.src_flat_3d)
-    _density_correct!(ws.dst_flat_3d, regridder.dst_areas, *, kind)
+    _copy_flat!(ws.src_flat_3d, src_3d)
+    apply_regridder!(ws.dst_flat_3d, regridder, ws.src_flat_3d, kind; scratch = ws.density_scratch)
     return unpack_flat_to_panels_3d!(panels, ws.dst_flat_3d, Nc, Nz)
 end
 
@@ -202,11 +174,19 @@ function regrid_2d_to_cs_panels!(panels::NTuple{CS_PANEL_COUNT, Matrix{FT}},
                                   ws::CubedSpherePreprocessWorkspace{FT},
                                   Nc::Int,
                                   kind::QuantityKind = IntensiveCellField()) where FT
-    copyto!(ws.src_flat_2d, reshape(src_2d, size(ws.src_flat_2d)...))
-    _density_correct!(ws.src_flat_2d, regridder.src_areas, /, kind)
-    apply_regridder!(ws.dst_flat_2d, regridder, ws.src_flat_2d)
-    _density_correct!(ws.dst_flat_2d, regridder.dst_areas, *, kind)
+    _copy_flat!(ws.src_flat_2d, src_2d)
+    apply_regridder!(ws.dst_flat_2d, regridder, ws.src_flat_2d, kind; scratch = ws.density_scratch)
     return unpack_flat_to_panels_2d!(panels, ws.dst_flat_2d, Nc)
+end
+
+# Copy a staging-grid field into a flat regridder buffer in column-major order
+# (the flat horizontal index is `i + (j - 1)Nx`). `copyto!` copies linearly, so
+# no reshaped view is needed; `reshape` allocates an array header per call on
+# Julia 1.10.
+function _copy_flat!(flat::AbstractArray, field::AbstractArray)
+    length(field) == length(flat) || throw(DimensionMismatch(
+        "field of size $(size(field)) does not fill the regridder buffer of size $(size(flat))"))
+    return copyto!(flat, field)
 end
 
 # ---------------------------------------------------------------------------

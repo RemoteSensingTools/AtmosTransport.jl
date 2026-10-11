@@ -2,7 +2,8 @@
 # test_serialization.jl
 #
 # Serialization round-trip tests for:
-#   1. JLD2 save/load (strict identity of intersections + areas)
+#   1. JLD2 save/load (strict identity of intersections + areas); the file
+#      is published atomically with mode 0o666 & ~umask (not mktemp's 0o600)
 #   2. On-disk cache (build_regridder hits the cached path on 2nd call)
 #   3. ESMF offline-weights NetCDF export (schema presence, attribute
 #      tags, frac_a / frac_b ≈ 1 for a full-sphere pair)
@@ -29,6 +30,32 @@ using NCDatasets
             # Temp arrays are rebuilt fresh, not persisted.
             @test length(r2.dst_temp) == length(r.dst_areas)
             @test length(r2.src_temp) == length(r.src_areas)
+        end
+    end
+
+    @testset "save_regridder publishes atomically, with the umask mode on POSIX" begin
+        # `mktemp` would publish 0o600 files; AtomicFiles creates 0o666 & ~umask.
+        # POSIX modes and `umask` do not apply on Windows.
+        function check_publication()
+            mktempdir() do tmp
+                path = joinpath(tmp, "cache", "regridder.jld2")
+                @test save_regridder(path, r) == path
+                Sys.iswindows() || @test filemode(path) & 0o777 == 0o644
+                @test readdir(dirname(path)) == ["regridder.jld2"]   # no staging file left
+                save_regridder(path, r)                             # replace in place
+                @test load_regridder(path).intersections == r.intersections
+                @test readdir(dirname(path)) == ["regridder.jld2"]
+            end
+        end
+        if Sys.iswindows()
+            check_publication()
+        else
+            old_umask = ccall(:umask, UInt32, (UInt32,), 0o022)
+            try
+                check_publication()
+            finally
+                ccall(:umask, UInt32, (UInt32,), old_umask)
+            end
         end
     end
 

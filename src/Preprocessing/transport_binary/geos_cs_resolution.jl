@@ -93,89 +93,11 @@ _geos_cs_strategy_name(::GEOSCSIdentityStrategy) = "identity"
 _geos_cs_strategy_name(::GEOSCSBlockCoarsenStrategy{R}) where {R} =
     "nested_block_coarsen_$(R)x$(R)"
 
-function _coarsen_sum3!(dst::AbstractArray{FT, 3},
-                        src::AbstractArray{FT, 3},
-                        ::Val{R}) where {FT, R}
-    Nc = size(dst, 1)
-    Nz = size(dst, 3)
-    @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
-        s = zero(FT)
-        for jj in ((j - 1) * R + 1):(j * R), ii in ((i - 1) * R + 1):(i * R)
-            s += src[ii, jj, k]
-        end
-        dst[i, j, k] = s
-    end
-    return dst
-end
-
-function _coarsen_area_weighted2!(dst::AbstractMatrix{FT},
-                                  src::AbstractMatrix{FT},
-                                  src_area::AbstractMatrix{FT},
-                                  ::Val{R}) where {FT, R}
-    Nc = size(dst, 1)
-    @inbounds for j in 1:Nc, i in 1:Nc
-        num = zero(FT)
-        den = zero(FT)
-        for jj in ((j - 1) * R + 1):(j * R), ii in ((i - 1) * R + 1):(i * R)
-            a = src_area[ii, jj]
-            num += src[ii, jj] * a
-            den += a
-        end
-        dst[i, j] = num / den
-    end
-    return dst
-end
-
-function _coarsen_area_weighted3!(dst::AbstractArray{FT, 3},
-                                  src::AbstractArray{FT, 3},
-                                  src_area::AbstractMatrix{FT},
-                                  ::Val{R}) where {FT, R}
-    Nc = size(dst, 1)
-    Nz = size(dst, 3)
-    @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
-        num = zero(FT)
-        den = zero(FT)
-        for jj in ((j - 1) * R + 1):(j * R), ii in ((i - 1) * R + 1):(i * R)
-            a = src_area[ii, jj]
-            num += src[ii, jj, k] * a
-            den += a
-        end
-        dst[i, j, k] = num / den
-    end
-    return dst
-end
-
-function _coarsen_xface_sum!(dst::AbstractArray{FT, 3},
-                             src::AbstractArray{FT, 3},
-                             ::Val{R}) where {FT, R}
-    Nc = size(dst, 2)
-    Nz = size(dst, 3)
-    @inbounds for k in 1:Nz, j in 1:Nc, i in 1:(Nc + 1)
-        fi = (i - 1) * R + 1
-        s = zero(FT)
-        for fj in ((j - 1) * R + 1):(j * R)
-            s += src[fi, fj, k]
-        end
-        dst[i, j, k] = s
-    end
-    return dst
-end
-
-function _coarsen_yface_sum!(dst::AbstractArray{FT, 3},
-                             src::AbstractArray{FT, 3},
-                             ::Val{R}) where {FT, R}
-    Nc = size(dst, 1)
-    Nz = size(dst, 3)
-    @inbounds for k in 1:Nz, j in 1:(Nc + 1), i in 1:Nc
-        fj = (j - 1) * R + 1
-        s = zero(FT)
-        for fi in ((i - 1) * R + 1):(i * R)
-            s += src[fi, fj, k]
-        end
-        dst[i, j, k] = s
-    end
-    return dst
-end
+# Block kernels of the coarsen strategy: cell sums and area-weighted means are
+# `Regridding.coarsen_sum!` / `coarsen_area_weighted!` (Float64 accumulation and
+# one rounding for the means), face sums `_coarsen_xface_sum!` /
+# `_coarsen_yface_sum!` (`cubed_sphere_coarsen.jl`). The ratio `R` of the
+# strategy type is passed as an `Int`.
 
 function _geos_strategy_workspace(::GEOSCSIdentityStrategy,
                                   settings::AbstractGEOSSettings,
@@ -238,8 +160,8 @@ function _geos_fluxes_to_target!(::GEOSCSBlockCoarsenStrategy{R}, ws,
     geos_native_to_face_flux!(ws.fine_am_v4, ws.fine_bm_v4, raw.am, raw.bm,
                               ws.source_mesh.connectivity, Nsrc, Nz, flux_scale)
     for p in 1:CS_PANEL_COUNT
-        _coarsen_xface_sum!(am_v4[p], ws.fine_am_v4[p], Val(R))
-        _coarsen_yface_sum!(bm_v4[p], ws.fine_bm_v4[p], Val(R))
+        _coarsen_xface_sum!(am_v4[p], ws.fine_am_v4[p], R)
+        _coarsen_yface_sum!(bm_v4[p], ws.fine_bm_v4[p], R)
     end
     return nothing
 end
@@ -256,7 +178,7 @@ function _geos_seed_mass!(::GEOSCSBlockCoarsenStrategy{R}, ws, m_cur, raw,
                           _cell_areas, inv_g, _Nc::Int, _Nz::Int) where R
     for p in 1:CS_PANEL_COUNT
         _delp_pa_to_air_mass_kg!(ws.fine_m_kg[p], raw.m[p], ws.source_cell_areas, inv_g)
-        _coarsen_sum3!(m_cur[p], ws.fine_m_kg[p], Val(R))
+        coarsen_sum!(m_cur[p], ws.fine_m_kg[p], R)
     end
     return nothing
 end
@@ -273,7 +195,7 @@ function _geos_target_mass!(::GEOSCSBlockCoarsenStrategy{R}, ws, m_next, raw,
                             _cell_areas, inv_g, _Nc::Int, _Nz::Int) where R
     for p in 1:CS_PANEL_COUNT
         _delp_pa_to_air_mass_kg!(ws.fine_m_kg[p], raw.m_next[p], ws.source_cell_areas, inv_g)
-        _coarsen_sum3!(m_next[p], ws.fine_m_kg[p], Val(R))
+        coarsen_sum!(m_next[p], ws.fine_m_kg[p], R)
     end
     return nothing
 end
@@ -283,10 +205,10 @@ _geos_surface_payload!(::GEOSCSIdentityStrategy, _ws, raw) = raw.surface
 function _geos_surface_payload!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw) where R
     raw.surface === nothing && return nothing
     for p in 1:CS_PANEL_COUNT
-        _coarsen_area_weighted2!(ws.surface.pblh[p], raw.surface.pblh[p], ws.source_cell_areas, Val(R))
-        _coarsen_area_weighted2!(ws.surface.ustar[p], raw.surface.ustar[p], ws.source_cell_areas, Val(R))
-        _coarsen_area_weighted2!(ws.surface.hflux[p], raw.surface.hflux[p], ws.source_cell_areas, Val(R))
-        _coarsen_area_weighted2!(ws.surface.t2m[p], raw.surface.t2m[p], ws.source_cell_areas, Val(R))
+        coarsen_area_weighted!(ws.surface.pblh[p], raw.surface.pblh[p], ws.source_cell_areas, R)
+        coarsen_area_weighted!(ws.surface.ustar[p], raw.surface.ustar[p], ws.source_cell_areas, R)
+        coarsen_area_weighted!(ws.surface.hflux[p], raw.surface.hflux[p], ws.source_cell_areas, R)
+        coarsen_area_weighted!(ws.surface.t2m[p], raw.surface.t2m[p], ws.source_cell_areas, R)
     end
     return ws.surface
 end
@@ -298,14 +220,14 @@ _geos_vdiff_native_weights!(::GEOSCSIdentityStrategy, _ws, raw,
 function _geos_vdiff_native_target!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw) where R
     raw.vdiff === nothing && return nothing
     for p in 1:CS_PANEL_COUNT
-        _coarsen_area_weighted3!(ws.vdiff_native.u[p], raw.vdiff.u[p],
-                                 ws.source_cell_areas, Val(R))
-        _coarsen_area_weighted3!(ws.vdiff_native.v[p], raw.vdiff.v[p],
-                                 ws.source_cell_areas, Val(R))
-        _coarsen_area_weighted3!(ws.vdiff_native.t[p], raw.vdiff.t[p],
-                                 ws.source_cell_areas, Val(R))
-        _coarsen_area_weighted3!(ws.vdiff_native.qv[p], raw.vdiff.qv[p],
-                                 ws.source_cell_areas, Val(R))
+        coarsen_area_weighted!(ws.vdiff_native.u[p], raw.vdiff.u[p],
+                               ws.source_cell_areas, R)
+        coarsen_area_weighted!(ws.vdiff_native.v[p], raw.vdiff.v[p],
+                               ws.source_cell_areas, R)
+        coarsen_area_weighted!(ws.vdiff_native.t[p], raw.vdiff.t[p],
+                               ws.source_cell_areas, R)
+        coarsen_area_weighted!(ws.vdiff_native.qv[p], raw.vdiff.qv[p],
+                               ws.source_cell_areas, R)
     end
     return ws.vdiff_native
 end
@@ -315,7 +237,7 @@ function _geos_vdiff_native_weights!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw,
     for p in 1:CS_PANEL_COUNT
         _delp_pa_to_air_mass_kg!(ws.fine_m_kg[p], raw.m[p],
                                   ws.source_cell_areas, inv_g)
-        _coarsen_sum3!(ws.vdiff_weights_native[p], ws.fine_m_kg[p], Val(R))
+        coarsen_sum!(ws.vdiff_weights_native[p], ws.fine_m_kg[p], R)
     end
     return ws.vdiff_weights_native
 end
@@ -326,8 +248,8 @@ _geos_dtrain_native_target!(::GEOSCSIdentityStrategy, _ws, raw) = raw.dtrain
 function _geos_cmfmc_native_target!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw) where R
     raw.cmfmc === nothing && return nothing
     for p in 1:CS_PANEL_COUNT
-        _coarsen_area_weighted3!(ws.cmfmc_native[p], raw.cmfmc[p],
-                                 ws.source_cell_areas, Val(R))
+        coarsen_area_weighted!(ws.cmfmc_native[p], raw.cmfmc[p],
+                               ws.source_cell_areas, R)
     end
     return ws.cmfmc_native
 end
@@ -335,8 +257,8 @@ end
 function _geos_dtrain_native_target!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw) where R
     raw.dtrain === nothing && return nothing
     for p in 1:CS_PANEL_COUNT
-        _coarsen_area_weighted3!(ws.dtrain_native[p], raw.dtrain[p],
-                                 ws.source_cell_areas, Val(R))
+        coarsen_area_weighted!(ws.dtrain_native[p], raw.dtrain[p],
+                               ws.source_cell_areas, R)
     end
     return ws.dtrain_native
 end

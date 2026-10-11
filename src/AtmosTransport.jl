@@ -164,8 +164,9 @@ include("AtomicFiles.jl")
 # ---- Quantity-kind dispatch traits ----
 # Tiny trait module with no dependencies, loaded early so later modules can
 # dispatch on extensive vs intensive vs vector vs flux field semantics.
-# Only Preprocessing uses it (the CS regrid helpers). See
-# Quantities.jl for the four-type taxonomy and their regrid-handling contracts.
+# Regridding implements the per-kind rule (`apply_regridder!(dst, r, src, kind)`)
+# and Preprocessing passes the kinds. See Quantities.jl for the four-type
+# taxonomy and their regrid-handling contracts.
 include("Quantities/Quantities.jl")
 using .Quantities
 

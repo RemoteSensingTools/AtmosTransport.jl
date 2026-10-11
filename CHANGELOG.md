@@ -224,6 +224,20 @@
   `Float32` global totals change at the 1e-6 level. `Float64` global totals
   change by about 1e-11, except GridFED emissions (+2.1e-6). See
   `docs/src/theory/float32_conservation.md`.
+- The two copies of the cubed-sphere block kernels (nested binary coarsener
+  and GEOS block coarsening) are one, `Regridding.coarsen_sum!` and
+  `coarsen_area_weighted!`. Area-weighted means now accumulate numerator and
+  denominator in `Float64` and round once (the coarsener's semantics); the
+  GEOS path accumulated them in the data precision. Float32 GEOS-native
+  builds whose target `Nc` is a divisor of the source `Nc`
+  (`geosit_c90_dec2021_catrine_f32_fullL72.toml`,
+  `geosit_c45_dec2021_catrine_f32_fullL72.toml`,
+  `geosfp_c720_native_to_cs180.toml`) change in `pblh`, `ustar`, `hflux`,
+  `t2m`, the vdiff `u/v/t/qv`, `cmfmc` and `dtrain` before vertical
+  remapping: 1–5 Float32 ulp in about half the cells of positive fields,
+  more on near-cancelling signed fields (the old result could be thousands of
+  ulp from the correctly rounded mean). Cell sums, face sums, Float64 builds
+  and same-`Nc` builds are bit-identical.
 
 ### Runtime and output
 
@@ -528,6 +542,30 @@
   transport binary to a coarser nested grid (for example C90 to C30) by
   block-summing the transport operator; not yet validated as a replacement
   for preprocessing at the target resolution.
+- `apply_regridder!(dst, r, src, kind)` regrids by quantity kind for every
+  regridder: `IntensiveCellField()` as given, `ExtensiveCellField()` (per-cell
+  totals) through the density, so totals are kept whatever polygon areas the
+  regridder uses. It replaces Preprocessing's private `_density_correct!`;
+  `regrid_2d_to_cs_panels!` / `regrid_3d_to_cs_panels!` give the same bits.
+  The density buffer is the keyword `scratch` (one column, `eltype(src)`),
+  allocated per call when not given; the cubed-sphere preprocessing workspace
+  passes its own, and warm `regrid_2d/3d_to_cs_panels!` calls allocate
+  nothing. `regrid_conservation_report(r, src, dst, kind)` returns both totals
+  and the relative error and checks both leading dimensions against the
+  regridder.
+- `build_regridder` returns a `NestedCubedSphereRegrid{Restriction}` or
+  `{Prolongation}` for cubed spheres of one definition and radius whose `Nc`
+  differ by an integer factor (corners checked): exact block remapping in
+  O(Nc²), equal to the polygon regridder to 1e-12, with nothing cached. Code
+  that read `intersections` from such a pair's regridder must use
+  `src_areas`/`dst_areas` and `apply_regridder!` instead.
+- `Regridding.default_regrid_cache_dir()` is the one definition of the weight
+  cache directory (`ATMOSTR_REGRID_CACHE_DIR`, else
+  `~/.cache/AtmosTransport/cr_regridding`); the runtime's private
+  `_regrid_cache_dir` is removed, and preprocessing targets without
+  `[grid] regridder_cache_dir` use it too (before, a second hard-coded copy
+  of the path that ignored `ATMOSTR_REGRID_CACHE_DIR`). Cached regridders are now published with
+  mode `0o666 & ~umask` instead of `mktemp`'s owner-only `0o600`.
 - `LatLonMesh(λᶠ, φᶠ; FT, radius)` builds a lat-lon mesh from explicit cell
   faces (the source grids of input files); `radius` is required. Longitude
   spacing must be uniform but may start at any face, and a sequence that wraps
