@@ -99,6 +99,7 @@ const PAGES = [
         "api/preprocessing.md",
         "api/downloads.md",
         "api/regridding.md",
+        "api/gridded_io.md",
         "api/output_visualization.md",
         "api/adjoints.md",
         "api/infrastructure.md",

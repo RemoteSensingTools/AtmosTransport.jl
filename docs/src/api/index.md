@@ -24,6 +24,7 @@ depend on later ones:
 | [Preprocessing](@ref Preprocessing-API) | `process_day` and the source/target dispatch. |
 | [DataDownloads](@ref DataDownloads-API) | Verified source/protocol download pipeline. |
 | [Regridding](@ref Regridding-API) | Conservative offline regridding and persistence. |
+| [GriddedIO](@ref GriddedIO-API) | Conventions of gridded input files: coordinates, fill values, source meshes, time axes, staging, flux units. |
 | [Output and visualization](@ref Output-and-visualization-API) | Snapshot output, field views, and plotting. |
 | [Adjoints and checkpointing](@ref Adjoints-and-checkpointing-API) | Footprints, 4D-Var, tape storage, and schedules. |
 | [Infrastructure](@ref Infrastructure-API) | Quantity traits, opt-in section timing, config checks, log levels, atomic file publication. |

@@ -169,6 +169,7 @@ src/
 ├── Preprocessing/   source readers, transforms, balancing, verification, writers
 ├── Output/          snapshot capture and NetCDF/ATMSNAP persistence
 ├── Regridding/      conservative offline remapping
+├── GriddedIO/       conventions of gridded input files (coordinates, time axes, flux units, flux-file schemas)
 ├── Adjoints/        reverse operators and objective seeding
 ├── Tape/            checkpoint schedules and tape storage
 ├── Footprint/       forward-record/reverse-loop footprint workflows
@@ -188,8 +189,8 @@ modules included before it:
 ```text
 Architectures → SectionTimer → ConfigChecks → LogLevels → AtomicFiles
 → Quantities → Parameters → Grids → State → Output → MetDrivers → Operators
-→ Tape → Adjoints → Regridding → Preprocessing → Visualization → Models
-→ Downloads
+→ Tape → Adjoints → Regridding → GriddedIO → Preprocessing → Visualization
+→ Models → Downloads
 ```
 
 Three single-file modules depend on Base and the standard library only:
@@ -198,6 +199,15 @@ Three single-file modules depend on Base and the standard library only:
 complete (a sibling staging file, renamed onto the target on success); the
 transport-binary writers and the spectral and regridder caches write through
 it.
+
+`GriddedIO` is the single owner of the conventions of native gridded input
+files: coordinate discovery by name, fill policy, lat-lon orientation, source
+lat-lon meshes, CF time decoding, the surface-flux unit grammar, staging of
+compressed inputs, and the `cs_native` and lat-lon flux-file schemas (reader
+and writer). It sits below both of its consumers, so the runtime
+initial-condition and surface-flux loaders in `Models` and the preprocessing
+code read and write these files through the same functions. See
+[GriddedIO](@ref GriddedIO-API) for the API.
 
 ## Public workflow versus extension points
 

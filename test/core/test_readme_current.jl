@@ -55,7 +55,7 @@ const README_DIRS = [
     "src/Models/initial_conditions", "src/Models/runner", "src/Output",
     "src/Output/observations", "src/Parameters", "src/Preprocessing",
     "src/Preprocessing/sources", "src/Preprocessing/transport_binary",
-    "src/Quantities", "src/Regridding", "src/Tape", "src/Visualization",
+    "src/Quantities", "src/Regridding", "src/GriddedIO", "src/Tape", "src/Visualization",
 ]
 
 # Per-directory exclusions — keep this empty by default. Populate only

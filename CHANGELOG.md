@@ -613,6 +613,29 @@
   Float64, gets its totals too. `tracer_budget_closure.jl` and
   `catrine_true_mass_balance.jl` use these functions instead of the private
   `_flux_temporal_segments`.
+- New module `GriddedIO` (after `Regridding`, before `Preprocessing`): the one
+  owner of the conventions of native gridded input files, measured on the
+  TRENDY v14 S3 models, GFED5, FLUXCOM-X, CAMS, GridFED and EDGAR
+  (`docs/memos/2026-10-10_python_flux_port_p0_facts.md`). `find_coordinate`
+  finds coordinates by variable name only and checks their length;
+  `latlon_orientation`/`orient`/`orient_coordinates` give ascending latitude
+  and longitudes from the first value `≥ 0`; `read_raw` reads with the fill
+  policies `MaskedAsZero`, `MaskedAsNaN` or `FillValueOnly`, converting each
+  value once to the caller's element type (default Float64);
+  `source_latlon_mesh` derives a file's cell faces (`SnappedFaces`: snapped
+  regular axes, pole-centred, truncated and Gaussian latitudes, on
+  `LatLonMesh(λᶠ, φᶠ; radius)`; bounds variables are never used);
+  `decode_time` classifies a time axis by its units before any CFTime call
+  (`CFDecoder`, `MonthsSince`, `DecimalYears`, `AuxiliaryTimeVariable`) and
+  refuses invalid origins instead of normalising them (`months since
+  2000-13-01`, `days since 2000-02-30` in the standard calendar);
+  `decode_month_keys` gives the months of an axis in its own calendar, also
+  where `DateTime` cannot hold a stamp (30 February of `360_day`);
+  `stage_input` decompresses `.nc.gz` and single-member `.nc.tar.gz` inputs
+  into a cache with atomic publication; `parse_flux_units` reads every units
+  string in use into `FluxUnits`, converted by `kg_per_unit`,
+  `period_seconds` and `mass_rate_factor` with the molar masses of
+  `Parameters`.
 - SIF-GPP, FLUXCOM, TRENDY v14, TRANSCOM, GFED, and CATRINE campaign
   preprocessing, run configs, visualization scripts, and ATBD memos.
 

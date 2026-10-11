@@ -246,6 +246,13 @@ using .Adjoints
 include("Regridding/Regridding.jl")
 using .Regridding
 
+# ---- Conventions of native gridded input files ----
+# Coordinates, fill policies, lat-lon orientation, source meshes, time axes,
+# staging of compressed inputs and flux units, shared by initial conditions,
+# the runtime flux loaders and the surface-flux builder.
+include("GriddedIO/GriddedIO.jl")
+using .GriddedIO
+
 # ---- Preprocessing pipeline (spectral/gridded → transport binary) ----
 include("Preprocessing/Preprocessing.jl")
 using .Preprocessing
