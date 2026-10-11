@@ -1,0 +1,45 @@
+# S0 reruns of two Python preprocessors at commit 71a08395 against the products
+# the same scripts wrote earlier. Both pairs were found bitwise identical in the
+# P0 review (/temp1/cfranken/flux_port_parity/p0_reports.md, REVIEW section 1);
+# this file reruns those two checks through the harness:
+#
+#   julia --project=. scripts/validation/flux_port_parity/run_parity.jl \
+#       scripts/validation/flux_port_parity/s0_bitwise_pairs.toml \
+#       --json <out>/s0_bitwise_pairs.json --markdown <out>/s0_bitwise_pairs.md
+#
+# The paths are machine paths of the S0 capture (MANIFEST.json in
+# /temp1/cfranken/flux_port_parity/python_ref_71a08395/) and of the pilot
+# products; on another machine the comparisons end with status `error`.
+
+title = "S0: Python reruns at 71a08395 reproduce the existing products bitwise"
+
+[[comparison]]
+name = "hourly_to_daily_c90_2021"
+level = "S0"
+description = """\
+hourly_c90_flux_to_daily.py rerun on the 2021 pilot hourly file (MANIFEST.json \
+driver hourly_to_daily_c90_2021, 365 days) against the existing pilot daily file. \
+Neither file has a calendar attribute ("hours since 2021-01-01 00:00:00 UTC", \
+decoded with the CF default calendar)."""
+reference = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_daily_co2flux_c90_2021.nc"
+candidate = "/temp1/cfranken/flux_port_parity/python_ref_71a08395/hourly_to_daily_c90_2021/sif_gpp_daily_co2flux_c90_2021.nc"
+nc = 90
+variables = ["GPP_CO2_FLUX"]
+# The recommended C90 coastal mask (README, "Coastal masks per grid").
+mask = { var = "land_fraction", file = "/temp1/cfranken/sif_gpp_iav/fluxes/sif_gpp_daily_co2flux_c90_2018_2025_v3.nc", threshold = 0.05 }
+tolerances = { bitwise_fraction = 1.0, year_total = 0.0, cell_max.coastal = 0.0 }
+
+[[comparison]]
+name = "refine_c180_20211231"
+level = "S0"
+description = """\
+refine_cs_surface_flux.py rerun for 2021-12-31 (with --end 2022-01-01, the \
+"end one step after the last stamp" branch; MANIFEST.json driver \
+refine_c180_dec2021) against the last 24 records of the existing December C180 \
+file."""
+reference = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021.nc"
+candidate = "/temp1/cfranken/flux_port_parity/python_ref_71a08395/refine_c180_dec2021/sif_gpp_hourly_co2flux_c180_20211231.nc"
+nc = 180
+common_times = true
+variables = ["CO2_FLUX"]
+tolerances = { bitwise_fraction = 1.0 }
