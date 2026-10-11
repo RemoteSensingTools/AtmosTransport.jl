@@ -39,7 +39,7 @@ using JSON3
 using NCDatasets
 using AtmosTransport: validate_config
 using AtmosTransport.Analysis: daily_snapshot_series, weighted_difference_stats
-using AtmosTransport.Parameters: SPECIES_MOLAR_MASS, DEFAULT_BACKGROUND_VMR
+using AtmosTransport.Parameters: DEFAULT_BACKGROUND_VMR
 
 const SCRIPTS = joinpath(@__DIR__, "..", "..", "scripts", "diagnostics")
 const ATT = Module()
@@ -148,7 +148,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "ROOT/catrine/fluxes_c90/catrine_sf6_c90.nc"
   variable = "sf6"
-  molar_mass_kg_mol = 0.146055
+  species = "sf6"
   time_varying = true
   temporal_scheme = "stepwise"
 [tracers.fossil]
@@ -158,7 +158,7 @@ scheme = "ppm"
   [tracers.fossil.surface_flux]
   kind = "gridfed_fossil_co2"
   files = ["ROOT/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc"]
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 [diffusion]
@@ -241,8 +241,8 @@ end
     @test att(:attribution_config, ATT.ERA5Attribution(), "adv_tm5conv", Float64;
               data_root = root, out, tag = "era5_adv_tm5conv_float64", prefix = "attribution") ==
           python(PYTHON_ERA5_TM5CONV_F64)
-    @test cfg["tracers"]["sf6"]["surface_flux"]["molar_mass_kg_mol"] === SPECIES_MOLAR_MASS.sf6
-    @test cfg["tracers"]["fossil"]["surface_flux"]["molar_mass_kg_mol"] === SPECIES_MOLAR_MASS.co2
+    @test cfg["tracers"]["sf6"]["surface_flux"]["species"] == "sf6"
+    @test cfg["tracers"]["fossil"]["surface_flux"]["species"] == "co2"
     @test cfg["tracers"]["background"]["init"]["background"] === DEFAULT_BACKGROUND_VMR
     adv = att(:attribution_config, ATT.MERRA2Attribution(), "adv", Float64; data_root = root, out,
               tag = "t", prefix = "p")

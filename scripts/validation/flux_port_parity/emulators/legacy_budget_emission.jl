@@ -11,9 +11,9 @@
 #   For a `cs_native` tracer with daily slices stamped at 00 UTC, the change
 #   over [t0, t1] is
 #       E = Σ_d [Σ_c F_{c,d} A_c^file] · 86400 · M_air^legacy / M_tracer ,
-#   with the flux file's `cell_area` A^file, the config's `molar_mass_kg_mol`
-#   and the retired dry-air molar mass 0.02896546 (the runtime constant
-#   `DRY_AIR_MOLAR_MASS` is 0.0289644 since d552d3e0). Days are summed in
+#   with the flux file's `cell_area` A^file, the molar mass selected by the
+#   config's `species`, and the retired dry-air molar mass 0.02896546 (the
+#   runtime constant `DRY_AIR_MOLAR_MASS` is 0.0289644 since d552d3e0). Days are summed in
 #   blocks of 64 in Float64, left to right as `x*86400*M_air/M`, the order of
 #   the Python script.
 # - `ScaledEmission(inner, factor)`: `factor` times the change of `inner`, for
@@ -31,6 +31,8 @@ using Dates: DateTime, Millisecond
 using NCDatasets: NCDataset
 using AtmosTransport: TransportTracerSpec
 using AtmosTransport.Analysis: Analysis, AbstractExpectedEmission, RunContext
+using AtmosTransport.Models.InitialConditionIO: surface_flux_species
+using AtmosTransport.Parameters: SPECIES_MOLAR_MASS
 
 export LegacyDailyFluxFileEmission, ScaledEmission, TabulatedEmission
 
@@ -50,7 +52,8 @@ function Analysis.expected_storage_change(m::LegacyDailyFluxFileEmission, ctx::R
     cfg = spec.surface_flux_cfg
     isempty(cfg) && return 0.0
     file, variable = String(cfg["file"]), String(cfg["variable"])
-    molar_mass = Float64(cfg["molar_mass_kg_mol"])
+    species = surface_flux_species(spec.name, cfg)
+    molar_mass = Float64(getproperty(SPECIES_MOLAR_MASS, species))
     days = (Float64(t1) - Float64(t0)) / _SECONDS_PER_DAY
     isinteger(days) || throw(ArgumentError("legacy budget: [$(t0), $(t1)] s is not a whole number of days"))
     NCDataset(file, "r") do ds

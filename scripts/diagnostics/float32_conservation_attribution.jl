@@ -82,7 +82,7 @@ using TOML
 using AtmosTransport: validate_config
 using AtmosTransport.AtomicFiles: atomic_publish
 using AtmosTransport.Analysis: daily_snapshot_series, drift_statistics, twin_relative_difference
-using AtmosTransport.Parameters: SPECIES_MOLAR_MASS, DEFAULT_BACKGROUND_VMR
+using AtmosTransport.Parameters: DEFAULT_BACKGROUND_VMR
 
 const START_DATE = Date(2021, 12, 1)
 const SNAPSHOT_INTERVAL_HOURS = 3
@@ -158,8 +158,6 @@ sf6_initial_state(root) = Dict{String, Any}(
     "kind" => "file", "file" => "$(root)/catrine/InitialConditions/startSF6_202112010000.nc",
     "variable" => "SF6")
 
-# `molar_mass_kg_mol` is the current surface-flux key; step P2c of the port
-# replaces it with `species` (design memo 2026-10-10, Section 0).
 tracers_table(::ERA5Attribution, root) = Dict{String, Any}(
     "background" => background_tracer(),
     "sf6" => Dict{String, Any}("init" => sf6_initial_state(root)))
@@ -175,14 +173,14 @@ tracers_table(::MERRA2Attribution, root) = Dict{String, Any}(
         "init" => sf6_initial_state(root),
         "surface_flux" => Dict{String, Any}(
             "kind" => "cs_native", "file" => "$(root)/catrine/fluxes_c90/catrine_sf6_c90.nc",
-            "variable" => "sf6", "molar_mass_kg_mol" => SPECIES_MOLAR_MASS.sf6,
+            "variable" => "sf6", "species" => "sf6",
             "time_varying" => true, "temporal_scheme" => "stepwise")),
     "fossil" => Dict{String, Any}(
         "init" => Dict{String, Any}("kind" => "uniform", "background" => 0.0),
         "surface_flux" => Dict{String, Any}(
             "kind" => "gridfed_fossil_co2",
             "files" => ["$(root)/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc"],
-            "molar_mass_kg_mol" => SPECIES_MOLAR_MASS.co2,
+            "species" => "co2",
             "time_varying" => true, "temporal_scheme" => "stepwise")))
 
 # ---------------------------------------------------------------------------

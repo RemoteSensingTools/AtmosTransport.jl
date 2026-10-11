@@ -135,7 +135,7 @@ end
 
 flux_cfg(file, variable; scheme = "stepwise") =
     Dict{String, Any}("kind" => "cs_native", "file" => file, "variable" => variable,
-                      "molar_mass_kg_mol" => SPECIES_MOLAR_MASS.co2,
+                      "species" => "co2",
                       "time_varying" => true, "temporal_scheme" => scheme)
 
 function run_config(dir, binaries, flux)

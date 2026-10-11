@@ -152,9 +152,9 @@ function write_run_flux(path, areas)
 end
 
 function run_config(dir, binaries, flux)
-    surface(variable, molar_mass) = Dict{String, Any}("kind" => "cs_native", "file" => flux, "variable" => variable,
-                                                      "molar_mass_kg_mol" => molar_mass, "time_varying" => true,
-                                                      "temporal_scheme" => "stepwise")
+    surface(variable, species) = Dict{String, Any}("kind" => "cs_native", "file" => flux, "variable" => variable,
+                                                   "species" => species, "time_varying" => true,
+                                                   "temporal_scheme" => "stepwise")
     return Dict{String, Any}(
         "input" => Dict{String, Any}("binary_paths" => binaries, "start_date" => "2021-01-01"),
         "architecture" => Dict{String, Any}("use_gpu" => false),
@@ -166,9 +166,9 @@ function run_config(dir, binaries, flux)
                                          "half_lives_seconds" => Dict{String, Any}("rn222" => RN222_HALF_LIFE)),
         "tracers" => Dict{String, Any}(
             "co2" => Dict{String, Any}("init" => Dict{String, Any}("kind" => "uniform", "background" => 4e-4),
-                                       "surface_flux" => surface("CO2_FLUX", SPECIES_MOLAR_MASS.co2)),
+                                       "surface_flux" => surface("CO2_FLUX", "co2")),
             "rn222" => Dict{String, Any}("init" => Dict{String, Any}("kind" => "uniform", "background" => 0.0),
-                                         "surface_flux" => surface("RN_FLUX", SPECIES_MOLAR_MASS.rn222))),
+                                         "surface_flux" => surface("RN_FLUX", "rn222"))),
         "output" => Dict{String, Any}("format" => "netcdf", "split" => "daily",
                                       "snapshot_interval_hours" => 6,
                                       "path" => joinpath(dir, "output", "tiny_{YYYYMMDD}.nc")))
