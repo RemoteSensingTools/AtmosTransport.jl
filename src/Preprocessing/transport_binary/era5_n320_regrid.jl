@@ -950,7 +950,8 @@ the positivity settings, `write_replay_check`, and the global dry-mass pin.
 The remaining
 unified-CLI day-kwargs (e.g. `chain_mass`, `seed_m`) are absorbed by the
 trailing `kwargs...` and ignored — ERA5 N320 has no day-to-day mass-chain
-state.
+state. The removed `horizontal_balance` writer keyword is rejected rather than
+silently absorbed.
 
 Returns `(; final_m = nothing)` so the unified CLI's `seed_m = get(result,
 :final_m, nothing)` chain remains a no-op.
@@ -972,6 +973,7 @@ function process_day(date::Date,
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
                      kwargs...)
+    reject_removed_horizontal_balance_keyword(kwargs)
     # The substep floor is the policy's min_steps_per_window (the entrypoint
     # resolves it from [numerics]); adaptive scheduling raises it per window to
     # satisfy CFL. Default floor 1 when the CLI passes nothing.

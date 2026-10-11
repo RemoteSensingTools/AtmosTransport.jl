@@ -76,13 +76,14 @@ const DEFAULT_POISSON_PROJECT_EVERY = 50
 Value of the transport-binary header key `horizontal_balance` written by every
 preprocessing path that Poisson-balances its horizontal mass fluxes: `"column"`.
 
-Every path closes a window's horizontal fluxes against its endpoint mass
-tendency with one Poisson solve for the column-integrated divergence and
-spreads each face's correction over the layers, so the layer winds keep their
-vertical structure and the vertical mass flux diagnosed from the explicit
-tendency carries the vertical motion. A per-layer balance would leave almost
-nothing for that vertical flux because preprocessing has no independent
-vertical-flux input (issue #11).
+Every path that applies a Poisson balance closes a window's horizontal fluxes
+against its endpoint mass tendency with one solve for the column-integrated
+divergence and spreads each face's correction over the layers, so the layer
+winds keep their vertical structure and the vertical mass flux diagnosed from
+the explicit tendency carries the vertical motion. GEOS `pressure_fixer` and
+`pfix_corrected` keep their native horizontal fluxes and record `"none"`. A
+per-layer balance would leave almost nothing for the vertical flux because
+preprocessing has no independent vertical-flux input (issue #11).
 """
 const HORIZONTAL_BALANCE_TAG = "column"
 

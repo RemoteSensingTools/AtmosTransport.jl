@@ -787,7 +787,9 @@ Adapter that the unified preprocessor CLI calls into. Forwards to
 [`process_merra2_to_cs_day`](@ref) with the kwargs the underlying function
 accepts; the rest of the unified-CLI day-kwargs
 (e.g. `chain_mass`, `seed_m`, `cm_closure`) are absorbed by the trailing
-`kwargs...` and ignored — MERRA-2 has no day-to-day mass-chain state.
+`kwargs...` and ignored — MERRA-2 has no day-to-day mass-chain state. The
+removed `horizontal_balance` writer keyword is rejected rather than silently
+absorbed.
 
 Returns `(; final_m = nothing, global_mass_target_kg)` so the unified CLI's
 `seed_m`/`global_mass_target_kg` chain remains a no-op.
@@ -809,6 +811,7 @@ function process_day(date::Date,
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
                      kwargs...)
+    reject_removed_horizontal_balance_keyword(kwargs)
     steps_floor = min_steps_per_window === nothing ? 1 : Int(min_steps_per_window)
     process_merra2_to_cs_day(date, settings, grid;
         out_path              = out_path,

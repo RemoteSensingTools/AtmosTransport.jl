@@ -42,7 +42,9 @@
 - The per-layer Poisson balance is removed from every preprocessing path
   (issue #11): balancing each layer to its own mass change leaves almost no
   vertical mass flux, because no path has an independent vertical flux (see
-  Numerical changes). Every path applies the column balance. Removed with it:
+  Numerical changes). Every path that applies a Poisson balance uses the
+  column balance; GEOS `pressure_fixer` and `pfix_corrected` keep their native
+  horizontal fluxes and record `"none"`. Removed with it:
   the `[numerics]` keys `balance_mode` and `geos_balance_mode` (a config that
   sets either is an error; the 19 shipped preprocessing configs and the
   `pre_merra2_c90` golden config that set `balance_mode = "column"` no longer

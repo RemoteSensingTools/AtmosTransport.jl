@@ -1,16 +1,17 @@
 #!/usr/bin/env julia
 #
-# Every preprocessing path applies the column Poisson balance and records
-# `horizontal_balance = "column"` (GEOS closures that keep the native fluxes:
-# "none"). The per-layer balance left no vertical mass flux (issue #11) and was
-# removed with its `[numerics] balance_mode` key. `column_balance_weights`
-# chooses how the column balance spreads its correction over the levels.
+# Every preprocessing path that applies a Poisson balance uses the column
+# balance and records `horizontal_balance = "column"`. GEOS closures that keep
+# the native fluxes record `"none"`. The per-layer balance left no vertical mass
+# flux (issue #11) and was removed with its `[numerics] balance_mode` key.
+# `column_balance_weights` chooses how the correction is spread over the levels.
 
 using Test
 using Dates
 using AtmosTransport
 using .AtmosTransport.Preprocessing: HORIZONTAL_BALANCE_TAG, reject_removed_balance_mode,
-    resolve_balance_settings, process_day
+    resolve_balance_settings, process_day, build_target_geometry,
+    ERA5N320Settings, MERRA2Settings
 
 const REPO = pkgdir(AtmosTransport)
 
@@ -34,6 +35,28 @@ const REPO = pkgdir(AtmosTransport)
         e
     end
     @test err isa ArgumentError && contains(err.msg, "balance_mode is removed")
+end
+
+@testset "removed writer keyword is not swallowed by native-source adapters" begin
+    mktempdir() do tmp
+        grid = build_target_geometry(Val(:cubed_sphere), Dict{String, Any}(
+            "Nc" => 1, "staging_nlon" => 4, "staging_nlat" => 3,
+            "regridder_cache_dir" => tmp), Float64)
+        date = Date(2021, 12, 1)
+        for settings in (ERA5N320Settings(root_dir = tmp),
+                         MERRA2Settings(root_dir = tmp))
+            err = try
+                process_day(date, grid, settings, nothing;
+                            out_path = joinpath(tmp, "unused.bin"),
+                            horizontal_balance = :column)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ArgumentError
+            @test contains(err.msg, "horizontal_balance is removed")
+        end
+    end
 end
 
 @testset "column balance weights" begin

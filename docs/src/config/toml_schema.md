@@ -838,12 +838,14 @@ positivity gate still runs. Default `true`.
 
 #### `column_balance_weights` — horizontal mass-flux balance
 
-Every path closes a window's horizontal mass fluxes against its endpoint mass
-tendency before diagnosing `cm`, with one Poisson solve for the
-column-integrated divergence; the correction is distributed over the layers by
-`column_balance_weights` (`"mass"` by default; [Data sources](data_sources.md)
-lists where each path sets it), so layer winds keep their vertical structure
-and `cm` carries the vertical motion. ERA5 spectral configs set the weights
+Every path that applies a Poisson balance closes a window's horizontal mass
+fluxes against its endpoint mass tendency before diagnosing `cm`, with one
+solve for the column-integrated divergence; the correction is distributed over
+the layers by `column_balance_weights` (`"mass"` by default;
+[Data sources](data_sources.md) lists where each path sets it), so layer winds
+keep their vertical structure and `cm` carries the vertical motion. GEOS
+`pressure_fixer` and `pfix_corrected` keep the native horizontal fluxes and
+record `horizontal_balance = "none"`. ERA5 spectral configs set the weights
 here (cubed-sphere targets; lat-lon and reduced-Gaussian targets use `"mass"`):
 
 ```toml

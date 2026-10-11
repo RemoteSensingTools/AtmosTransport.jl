@@ -174,15 +174,31 @@ end
 
 Throw if a preprocessing `[numerics]` table sets `balance_mode` (or its older
 name `geos_balance_mode`): the per-layer balance it selected was removed, and
-every path applies the column balance (`HORIZONTAL_BALANCE_TAG`).
+every path that applies a Poisson balance uses the column balance
+(`HORIZONTAL_BALANCE_TAG`). GEOS `pressure_fixer` and `pfix_corrected` keep
+their native horizontal fluxes and record `horizontal_balance = "none"`.
 """
 function reject_removed_balance_mode(numerics::AbstractDict)
     for key in ("balance_mode", "geos_balance_mode")
         haskey(numerics, key) && throw(ArgumentError(
-            "[numerics].$key is removed: every preprocessing path applies the column " *
-            "Poisson balance (the per-layer balance left no vertical mass flux); " *
+            "[numerics].$key is removed: every preprocessing path that applies a " *
+            "Poisson balance uses the column balance (the per-layer balance left no " *
+            "vertical mass flux; GEOS pressure_fixer and pfix_corrected keep native fluxes); " *
             "delete the key"))
     end
+    return nothing
+end
+
+"""
+    reject_removed_horizontal_balance_keyword(kwargs)
+
+Reject the removed writer keyword when a source-specific `process_day` adapter
+otherwise absorbs unified-driver keywords through `kwargs...`.
+"""
+function reject_removed_horizontal_balance_keyword(kwargs)
+    haskey(kwargs, :horizontal_balance) && throw(ArgumentError(
+        "horizontal_balance is removed: every preprocessing path that applies a " *
+        "Poisson balance uses the column balance; delete the keyword"))
     return nothing
 end
 
