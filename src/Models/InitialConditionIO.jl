@@ -826,5 +826,6 @@ export build_initial_mixing_ratio
 export pack_initial_tracer_mass
 export FileSurfaceFluxField, TimeVaryingFileSurfaceFluxField
 export build_surface_flux_source, build_surface_flux_sources
+export surface_flux_species
 
 end # module InitialConditionIO

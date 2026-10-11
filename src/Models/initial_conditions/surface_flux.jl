@@ -13,21 +13,58 @@
 #   - time-varying series: `TimeVaryingFileSurfaceFluxField`, loaded by
 #     `_load_timevarying_surface_flux_field` (CS runs only);
 #   - builders: `build_surface_flux_source` (LL, RG, CS) and
-#     `build_surface_flux_sources`.
+#     `build_surface_flux_sources`;
+#   - the species of a tracer's flux: `surface_flux_species`.
 # Regridding helpers live in `surface_flux_regridding.jl` (LL source meshes
 # come from the shared `_build_source_latlon_mesh` in `cubed_sphere.jl`); the
 # GEOS-native CS series loader lives in `surface_flux_native.jl`.
 # ===========================================================================
 
 const _DAYS_PER_MONTH_COMMON = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
-const _KNOWN_TRACER_MOLAR_MASS_KG_MOL = Dict{Symbol, Float64}(
-    :co2         => SPECIES_MOLAR_MASS.co2,
-    :co2_natural => SPECIES_MOLAR_MASS.co2,
-    :co2_fossil  => SPECIES_MOLAR_MASS.co2,
-    :fossil_co2  => SPECIES_MOLAR_MASS.co2,
-    :sf6         => SPECIES_MOLAR_MASS.sf6,
-    :rn222       => SPECIES_MOLAR_MASS.rn222,
-)
+
+# Tracer names that imply the species of their surface flux, so that
+# `surface_flux.species` may be omitted.
+const _TRACER_NAME_SPECIES = (co2 = :co2, co2_natural = :co2, co2_fossil = :co2,
+                              fossil_co2 = :co2, sf6 = :sf6, rn222 = :rn222)
+
+_known_species_list() = join(("\"$(s)\"" for s in propertynames(SPECIES_MOLAR_MASS)), ", ")
+
+"""
+    surface_flux_species(tracer_name::Symbol, cfg) -> Symbol
+
+The species whose kilograms the surface flux `cfg` of tracer `tracer_name`
+counts: `cfg["species"]` (`"co2"`, `"sf6"` or `"rn222"`, the entries of
+`Parameters.SPECIES_MOLAR_MASS`), or, when the key is absent, the species the
+tracer name implies (`co2`, `co2_natural`, `co2_fossil`, `fossil_co2` → `:co2`;
+`sf6` → `:sf6`; `rn222` → `:rn222`). An unknown species, or a tracer with
+another name and no `species`, is an `ArgumentError` that names the known
+species.
+
+The species sets the conversion of physical kg species s⁻¹ to the model's
+storage units, `DRY_AIR_MOLAR_MASS / SPECIES_MOLAR_MASS[species]` (storage is
+dry VMR × dry-air mass).
+"""
+function surface_flux_species(tracer_name::Symbol, cfg)
+    haskey(cfg, "molar_mass_kg_mol") && throw(ArgumentError(
+        "surface flux of tracer $(tracer_name): molar_mass_kg_mol was replaced by " *
+        "species = $(_known_species_list()); the molar mass comes from SPECIES_MOLAR_MASS"))
+    if haskey(cfg, "species")
+        raw = cfg["species"]
+        species = raw isa AbstractString ? Symbol(raw) : nothing
+        species !== nothing && hasproperty(SPECIES_MOLAR_MASS, species) && return species
+        throw(ArgumentError(
+            "surface flux of tracer $(tracer_name): species = $(repr(raw)) is not a known " *
+            "species; known species: $(_known_species_list())"))
+    end
+    hasproperty(_TRACER_NAME_SPECIES, tracer_name) &&
+        return getproperty(_TRACER_NAME_SPECIES, tracer_name)
+    throw(ArgumentError(
+        "surface flux for tracer $(tracer_name) is in physical kg species/s, but the " *
+        "transport state stores dry VMR times dry-air mass. Set surface_flux.species to " *
+        "one of $(_known_species_list()) so the source can be converted to model storage " *
+        "units (only tracers named $(join(propertynames(_TRACER_NAME_SPECIES), ", ")) " *
+        "may omit it)."))
+end
 
 _is_leap_year(year::Integer) =
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
@@ -129,27 +166,12 @@ function _surface_flux_kind(cfg)
     return kind
 end
 
-function _tracer_molar_mass_kg_mol(tracer_name::Symbol, cfg)
-    if haskey(cfg, "molar_mass_kg_mol")
-        molar_mass = Float64(cfg["molar_mass_kg_mol"])
-        molar_mass > 0 || throw(ArgumentError(
-            "surface_flux.molar_mass_kg_mol for $(tracer_name) must be positive"))
-        return molar_mass
-    end
-    haskey(_KNOWN_TRACER_MOLAR_MASS_KG_MOL, tracer_name) &&
-        return _KNOWN_TRACER_MOLAR_MASS_KG_MOL[tracer_name]
-    throw(ArgumentError(
-        "surface flux for tracer $(tracer_name) is in physical kg species/s, " *
-        "but the transport state stores dry VMR times dry-air mass. Set " *
-        "surface_flux.molar_mass_kg_mol so the source can be converted to " *
-        "model storage units."))
-end
-
 function _surface_flux_storage_scale(tracer_name::Symbol, cfg)
     # Surface inventories are physical kg species/s. The prognostic tracer
     # storage is dry VMR * dry-air mass, so source rates must be converted to
     # dry-air-equivalent storage before being applied by the surface kernels.
-    return DRY_AIR_MOLAR_MASS / _tracer_molar_mass_kg_mol(tracer_name, cfg)
+    species = surface_flux_species(tracer_name, cfg)
+    return DRY_AIR_MOLAR_MASS / getproperty(SPECIES_MOLAR_MASS, species)
 end
 
 # Derive per-cell area `(Nx, Ny)` on a regular lat/lon grid from the

@@ -26,7 +26,7 @@ using AtmosTransport.Models.InitialConditionIO: build_surface_flux_source
             vertical = HybridSigmaPressure(FT[0,50000,0], FT[1,0.5,0])
             grid = AtmosGrid(mesh, vertical, CPU(); FT)
             cfg = Dict{String,Any}("kind"=>"cs_native", "file"=>path, "variable"=>"NPP",
-                "time_varying"=>true, "molar_mass_kg_mol"=>0.0440095, "scale"=>2.0)
+                "time_varying"=>true, "species"=>"co2", "scale"=>2.0)
             source = build_surface_flux_source(grid, :custom_npp, cfg, FT;
                                                reference_time=DateTime(2014,1,2))
             @test source isa TimeVaryingSurfaceFluxSource
@@ -73,7 +73,7 @@ using AtmosTransport.Models.InitialConditionIO: build_surface_flux_source
             return path
         end
         cfg(path) = Dict{String,Any}("kind"=>"cs_native", "file"=>path, "variable"=>"F",
-                                     "time_varying"=>true, "molar_mass_kg_mol"=>0.0440095)
+                                     "time_varying"=>true, "species"=>"co2")
         build(path) = build_surface_flux_source(grid, :co2, cfg(path), FT;
                                                 reference_time = DateTime(2014, 1, 1))
         mktempdir() do dir

@@ -53,6 +53,20 @@
   two of them, which set `[run] scheme` next to an `[advection]` table and
   were therefore rejected before, now run.
 
+- `surface_flux.molar_mass_kg_mol` is replaced by `surface_flux.species`
+  (`"co2"`, `"sf6"` or `"rn222"`); the molar mass comes from
+  `Parameters.SPECIES_MOLAR_MASS`. The old key is an error that names the new
+  one. Tracers named `co2`, `co2_natural`, `co2_fossil`, `fossil_co2`, `sf6` or
+  `rn222` may still omit it; any other tracer with a flux must set it, and an
+  unknown species is an error listing the known ones (also reported by
+  `validate_config`). The 250 occurrences in the shipped run configs (245 in
+  `config/runs/`, 5 in the golden-output configs) moved to `species`; every
+  migrated tracer resolves the same molar mass, and so the same storage factor
+  bit for bit (checked on all 461 tracer fluxes of those configs).
+  `Models.InitialConditionIO.surface_flux_species` gives the resolution to
+  scripts (`tracer_budget_closure.jl` uses it); the private
+  `_tracer_molar_mass_kg_mol` and `_KNOWN_TRACER_MOLAR_MASS_KG_MOL` are removed.
+
 ### Fixes
 
 - Transport binaries (eager and streaming writers), the spectral day cache and

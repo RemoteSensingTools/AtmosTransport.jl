@@ -186,7 +186,7 @@ Each tracer is one model component:
   kind = "cs_native"
   file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
   variable = "GPP_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 ```

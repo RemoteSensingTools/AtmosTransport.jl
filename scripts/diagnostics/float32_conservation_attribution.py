@@ -68,7 +68,7 @@ def tracers(root, with_sources):
   kind = "cs_native"
   file = "{root}/catrine/fluxes_c90/catrine_sf6_c90.nc"
   variable = "sf6"
-  molar_mass_kg_mol = 0.146055
+  species = "sf6"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -79,7 +79,7 @@ def tracers(root, with_sources):
   [tracers.fossil.surface_flux]
   kind = "gridfed_fossil_co2"
   files = ["{root}/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2021.short.nc"]
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 '''

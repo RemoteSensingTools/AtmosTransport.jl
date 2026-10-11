@@ -27,7 +27,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CABLE-POP_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
   variable = "GPP_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -39,7 +39,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CABLE-POP_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
   variable = "TER_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -51,7 +51,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CARDAMOM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
   variable = "GPP_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -63,7 +63,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CARDAMOM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
   variable = "TER_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -75,7 +75,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CLASSIC_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
   variable = "GPP_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -87,7 +87,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CLASSIC_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
   variable = "TER_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -99,7 +99,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CLM-FATES_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
   variable = "GPP_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -111,7 +111,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CLM-FATES_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
   variable = "TER_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -123,7 +123,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CLM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
   variable = "GPP_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -135,7 +135,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_CLM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
   variable = "TER_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -147,7 +147,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_DLEM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
   variable = "GPP_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -159,7 +159,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "/kiwi-data/Data/groupMembers/cfranken/AtmosTransport/fluxes/TRENDYv14/S3/C90/2021/TRENDYv14_S3_DLEM_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
   variable = "TER_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 

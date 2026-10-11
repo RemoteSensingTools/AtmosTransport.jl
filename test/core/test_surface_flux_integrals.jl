@@ -273,9 +273,9 @@ end
                 v[:, :, :, :] = [density(i, j, p, t) for i in 1:NC, j in 1:NC, p in 1:6, t in 1:3]
             end
             grid = cs_grid(FT)
-            M = 0.0440095
+            M = AtmosTransport.Parameters.SPECIES_MOLAR_MASS.co2     # species = "co2"
             cfg = Dict{String, Any}("kind" => "cs_native", "file" => path, "variable" => "F",
-                                    "time_varying" => true, "molar_mass_kg_mol" => M, "scale" => 2.0)
+                                    "time_varying" => true, "species" => "co2", "scale" => 2.0)
             # The runner passes the run span; the series then starts at the slice
             # in effect at the run start (2014-01-02 00 UTC = file hour 24).
             src = build_surface_flux_source(grid, :co2, cfg, FT;

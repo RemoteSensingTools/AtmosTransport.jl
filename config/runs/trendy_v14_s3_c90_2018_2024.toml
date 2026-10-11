@@ -37,7 +37,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c90_2018_2024.nc"
   variable = "GPP_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -50,7 +50,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c90_2018_2024.nc"
   variable = "TER_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -63,7 +63,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c90_2018_2024.nc"
   variable = "NEE_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -76,7 +76,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy/TRENDYv14_S3_JULES-ES_gpp_ter_nee_daily_co2flux_c90_2018_2024.nc"
   variable = "GPP_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -89,7 +89,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy/TRENDYv14_S3_JULES-ES_gpp_ter_nee_daily_co2flux_c90_2018_2024.nc"
   variable = "TER_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -102,7 +102,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy/TRENDYv14_S3_JULES-ES_gpp_ter_nee_daily_co2flux_c90_2018_2024.nc"
   variable = "NEE_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -115,7 +115,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy/TRENDYv14_S3_ORCHIDEE_gpp_ter_nee_daily_co2flux_c90_2018_2024.nc"
   variable = "GPP_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -128,7 +128,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy/TRENDYv14_S3_ORCHIDEE_gpp_ter_nee_daily_co2flux_c90_2018_2024.nc"
   variable = "TER_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -141,7 +141,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/trendy/TRENDYv14_S3_ORCHIDEE_gpp_ter_nee_daily_co2flux_c90_2018_2024.nc"
   variable = "NEE_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 

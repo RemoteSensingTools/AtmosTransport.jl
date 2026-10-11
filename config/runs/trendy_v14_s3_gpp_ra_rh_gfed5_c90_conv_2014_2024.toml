@@ -64,7 +64,7 @@ n_merge = 1
   kind = "cs_native"
   file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
   variable = "GPP_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -77,7 +77,7 @@ n_merge = 1
   kind = "cs_native"
   file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
   variable = "RA_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -90,7 +90,7 @@ n_merge = 1
   kind = "cs_native"
   file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
   variable = "RH_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -103,7 +103,7 @@ n_merge = 1
   kind = "cs_native"
   file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_CLM_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
   variable = "NEE_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -116,7 +116,7 @@ n_merge = 1
   kind = "cs_native"
   file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_JULES-ES_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
   variable = "GPP_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -129,7 +129,7 @@ n_merge = 1
   kind = "cs_native"
   file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_JULES-ES_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
   variable = "RA_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -142,7 +142,7 @@ n_merge = 1
   kind = "cs_native"
   file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_JULES-ES_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
   variable = "RH_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -155,7 +155,7 @@ n_merge = 1
   kind = "cs_native"
   file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_JULES-ES_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
   variable = "NEE_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -168,7 +168,7 @@ n_merge = 1
   kind = "cs_native"
   file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_ORCHIDEE_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
   variable = "GPP_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -181,7 +181,7 @@ n_merge = 1
   kind = "cs_native"
   file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_ORCHIDEE_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
   variable = "RA_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -194,7 +194,7 @@ n_merge = 1
   kind = "cs_native"
   file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_ORCHIDEE_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
   variable = "RH_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -207,7 +207,7 @@ n_merge = 1
   kind = "cs_native"
   file = "/temp1/cfranken/sif_gpp_iav/fluxes/trendy_v2/TRENDYv14_S3_ORCHIDEE_gpp_ter_nee_daily_co2flux_c90_2014_2024.nc"
   variable = "NEE_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -220,7 +220,7 @@ n_merge = 1
   kind = "cs_native"
   file = "/temp1/cfranken/sif_gpp_iav/fluxes/gfed5/GFED5_fire_daily_co2flux_c90_2014_2024.nc"
   variable = "FIRE_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 

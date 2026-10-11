@@ -53,7 +53,7 @@ background = {s['carrier']}
 kind = "cs_native"
 file = {json.dumps(s['file'])}
 variable = "{s['variable']}"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 '''

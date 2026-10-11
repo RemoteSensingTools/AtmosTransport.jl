@@ -35,7 +35,7 @@ scheme = "upwind"
   [tracers.fossil.surface_flux]
   kind = "gridfed_fossil_co2"
   time_index = 12
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
 
 [tracers.rn222]
   [tracers.rn222.init]
@@ -44,7 +44,7 @@ scheme = "upwind"
   [tracers.rn222.surface_flux]
   kind = "zhang_rn222"
   month = 12
-  molar_mass_kg_mol = 0.222
+  species = "rn222"
 
 [tracers.blob]
   [tracers.blob.init]

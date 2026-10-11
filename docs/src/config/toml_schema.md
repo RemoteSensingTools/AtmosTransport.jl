@@ -249,6 +249,12 @@ scale      = 1.0                    # optional multiplicative scaling
 
 [tracers.sf6.surface_flux]
 kind = "edgar_sf6"
+
+[tracers.ocean.surface_flux]
+kind     = "file"
+file     = "/path/to/air_sea_flux.nc"
+variable = "co2_flux_ocean"
+species  = "co2"                    # required: the name "ocean" implies no species
 ```
 
 Registered surface-flux source kinds (`_SURFACE_FLUX_KINDS` in
@@ -257,8 +263,13 @@ Registered surface-flux source kinds (`_SURFACE_FLUX_KINDS` in
 NetCDF sources and `cs_native` for time-varying fluxes already on the native
 cubed-sphere grid. Any other kind is an error. There is no `edgar_co2` kind — use
 `gridfed_fossil_co2` for the GridFED-derived fossil CO₂ inventory.
-Known tracer names carry built-in molar masses; for a custom tracer, set
-`molar_mass_kg_mol` inside its `surface_flux` table.
+`species` names the species whose kilograms the flux counts: `"co2"`, `"sf6"`
+or `"rn222"`, the entries of `Parameters.SPECIES_MOLAR_MASS`. Its molar mass
+converts physical kg species s⁻¹ to the model's storage units (dry VMR × dry-air
+mass: × `DRY_AIR_MOLAR_MASS / M_species`). Tracers named `co2`, `co2_natural`,
+`co2_fossil` or `fossil_co2` (CO₂), `sf6` or `rn222` may omit it; any other
+tracer with a flux must set it, and another value is an error that lists the
+known species.
 
 **Time-varying emission** (cubed-sphere). A source whose inventory has
 sub-monthly time slices (e.g. the LMDZ/CAMS biospheric flux) can drive the

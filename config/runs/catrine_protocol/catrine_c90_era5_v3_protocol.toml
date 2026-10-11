@@ -77,7 +77,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "/temp1/cfranken/catrine_protocol/fluxes_c90/catrine_fossil_co2_c90.nc"
   variable = "fossil_co2"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -90,7 +90,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "/temp1/cfranken/catrine_protocol/fluxes_c90/catrine_sf6_c90.nc"
   variable = "sf6"
-  molar_mass_kg_mol = 0.146055
+  species = "sf6"
   time_varying = true
   temporal_scheme = "stepwise"
 

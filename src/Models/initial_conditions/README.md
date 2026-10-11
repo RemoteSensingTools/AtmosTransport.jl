@@ -33,6 +33,8 @@ these files reuse. The parent overview is [`../README.md`](../README.md).
   [`../../Operators/SurfaceFlux/`](../../Operators/SurfaceFlux/), or `nothing` for
   `kind = "none"`.
 - Loaded-field containers: `FileSurfaceFluxField`, `TimeVaryingFileSurfaceFluxField`
+- `surface_flux_species(tracer_name, cfg)`: the species of a tracer's flux
+  (`surface_flux.species`, or the species its name implies).
 - Shared source mesh: `_build_source_latlon_mesh(lon, lat; radius)` builds the
   Float64 `LatLonMesh` used as the conservative-regridding source for both CS file
   ICs and surface fluxes.
@@ -42,8 +44,8 @@ these files reuse. The parent overview is [`../README.md`](../README.md).
 - [`cubed_sphere.jl`](cubed_sphere.jl) — source lat-lon mesh construction, CS
   `build_initial_mixing_ratio` (analytic, file, `cs_native`, `pressure_layer`),
   CS dry/moist halo packing
-- [`surface_flux.jl`](surface_flux.jl) — kind and default-file resolution, NetCDF
-  load and unit conversion, GridFED calendar-year inference, time-varying series
+- [`surface_flux.jl`](surface_flux.jl) — kind and default-file resolution,
+  `surface_flux_species` and the storage factor, NetCDF load and unit conversion, GridFED calendar-year inference, time-varying series
   loader (with a run start, reads flux data only for the slices of the run
   period), topology builders; includes
   the two files below
@@ -76,8 +78,9 @@ emits nothing.
      support, also add one to `_load_single_timevarying_surface_flux_field`, list
      the kind in `_surface_flux_supports_time_varying`, and set its default scheme
      in `_build_timevarying_cs_surface_flux_source`.
-  4. Add the tracer molar mass to `_KNOWN_TRACER_MOLAR_MASS_KG_MOL`, or document
-     that users must set `molar_mass_kg_mol`.
+  4. A new species needs an entry in `Parameters.SPECIES_MOLAR_MASS` (and, to
+     let tracers omit `species`, a tracer name in `_TRACER_NAME_SPECIES`); the
+     run schema's `surface_flux.species` enum lists the species.
   5. Add the kind to the `surface_flux.kind` enum in
      [`../../../schemas/atmos_transport_run.schema.json`](../../../schemas/atmos_transport_run.schema.json)
      and to [`../../../docs/src/config/toml_schema.md`](../../../docs/src/config/toml_schema.md).
@@ -104,9 +107,12 @@ emits nothing.
   (1 − qv) on `MoistBasis`. The moist case requires `qv`, which canonical CS
   windows do not carry.
 - Surface sources are model-storage rates per cell. They equal the physical
-  kg species s⁻¹ times `DRY_AIR_MOLAR_MASS / M_species`
-  (`_surface_flux_storage_scale`). An unknown tracer without `molar_mass_kg_mol` is
-  an error.
+  kg species s⁻¹ times `DRY_AIR_MOLAR_MASS / SPECIES_MOLAR_MASS[species]`
+  (`_surface_flux_storage_scale`), with the species of
+  `surface_flux_species`: `surface_flux.species` (`co2`, `sf6`, `rn222`), or
+  the species of a tracer named `co2`, `co2_natural`, `co2_fossil`,
+  `fossil_co2`, `sf6` or `rn222`. Any other tracer without `species` is an
+  error.
 - `k = 1` is the top of the atmosphere:
   - `cs_native` ICs default to `vertical_order = "surface_first"` and are flipped.
   - `pressure_layer` with `lowest_layer = true` selects `k = Nz`.
@@ -132,4 +138,5 @@ Under [`../../../test/core/`](../../../test/core/): `test_initial_condition_io.j
 `test_cs_initial_state_packing.jl`, `test_cs_pressure_layer_initialization.jl`,
 `test_native_cs_surface_flux.jl`, `test_cs_driven_builders.jl`,
 `test_binary_planet_radius.jl` (source-mesh radius, inventory totals),
-`test_regrid_cache_dir.jl`, `test_float32_conservation.jl` (source-mesh extents).
+`test_regrid_cache_dir.jl`, `test_float32_conservation.jl` (source-mesh extents),
+`test_config_matrix_contract.jl` (every shipped config's fluxes have a species).

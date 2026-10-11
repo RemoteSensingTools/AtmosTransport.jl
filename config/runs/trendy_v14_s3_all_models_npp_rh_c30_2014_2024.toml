@@ -42,7 +42,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CABLE-POP_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -54,7 +54,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CABLE-POP_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -66,7 +66,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CARDAMOM_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -78,7 +78,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CARDAMOM_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -90,7 +90,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CLASSIC_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -102,7 +102,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CLASSIC_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -114,7 +114,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CLM_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -126,7 +126,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CLM_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -138,7 +138,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CLM-FATES_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -150,7 +150,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_CLM-FATES_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -162,7 +162,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_DLEM_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -174,7 +174,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_DLEM_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -186,7 +186,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ED_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -198,7 +198,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ED_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -210,7 +210,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ELM_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -222,7 +222,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ELM_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -234,7 +234,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ELM-FATES_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -246,7 +246,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ELM-FATES_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -258,7 +258,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_IBIS_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -270,7 +270,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_IBIS_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -282,7 +282,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ISAM_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -294,7 +294,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ISAM_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -306,7 +306,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_JSBACH_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -318,7 +318,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_JSBACH_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -330,7 +330,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_JULES-ES_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -342,7 +342,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_JULES-ES_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -354,7 +354,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_LPJ-GUESS_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -366,7 +366,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_LPJ-GUESS_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -378,7 +378,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_LPJml_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -390,7 +390,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_LPJml_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -402,7 +402,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_LPJwsl_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -414,7 +414,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_LPJwsl_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -426,7 +426,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_LPX-Bern_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -438,7 +438,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_LPX-Bern_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -450,7 +450,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ORCHIDEE_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -462,7 +462,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_ORCHIDEE_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -474,7 +474,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_SDGVM_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -486,7 +486,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_SDGVM_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -498,7 +498,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_TEM_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -510,7 +510,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_TEM_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -522,7 +522,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_VISIT_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -534,7 +534,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_VISIT_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -546,7 +546,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_VISIT-UT_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -558,7 +558,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_VISIT-UT_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -570,7 +570,7 @@ background = 0.0013
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_iMAPLE_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "NPP_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 
@@ -582,7 +582,7 @@ background = 1e-05
 kind = "cs_native"
 file = "$TRENDY_RUN_ROOT/fluxes/TRENDYv14_S3_iMAPLE_npp_rh_daily_co2flux_c30_2014_2024.nc"
 variable = "RH_CO2_FLUX"
-molar_mass_kg_mol = 0.0440095
+species = "co2"
 time_varying = true
 temporal_scheme = "stepwise"
 

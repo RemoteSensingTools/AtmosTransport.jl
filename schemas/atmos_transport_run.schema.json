@@ -540,10 +540,10 @@
           "type": "number",
           "description": "Factor applied to the flux after unit conversion; default 1.0."
         },
-        "molar_mass_kg_mol": {
-          "type": "number",
-          "exclusiveMinimum": 0,
-          "description": "Molar mass of the species in kg mol^-1, used to convert kg of species to model storage units. Required unless the tracer is named co2, co2_natural, co2_fossil, fossil_co2, sf6 or rn222."
+        "species": {
+          "type": "string",
+          "enum": ["co2", "sf6", "rn222"],
+          "description": "Species whose kilograms the flux counts. Its molar mass (Parameters.SPECIES_MOLAR_MASS) converts kg of species to model storage units. Required unless the tracer is named co2, co2_natural, co2_fossil, fossil_co2 (co2), sf6 or rn222."
         },
         "time_varying": {
           "type": "boolean",
@@ -561,7 +561,7 @@
           "description": "Lat-lon and reduced-Gaussian targets: conservative or bilinear (default). Cubed-sphere targets always regrid conservatively."
         }
       },
-      "description": "Surface emission or uptake of one tracer, added to the lowest model layer. Physical fluxes (kg of the species) are converted to model storage units with the tracer's molar mass."
+      "description": "Surface emission or uptake of one tracer, added to the lowest model layer. Physical fluxes (kg of the species) are converted to model storage units with the molar mass of the tracer's species."
     },
     "output": {
       "type": "object",

@@ -41,7 +41,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "~/data/AtmosTransport/catrine/fluxes_c90/catrine_fossil_co2_c90.nc"
   variable = "fossil_co2"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 

@@ -316,7 +316,9 @@ function _check_input_expectations!(input, errors)
     return errors
 end
 
-# Surface-flux kind and regridding method of every tracer (nested or flat).
+# Surface-flux kind, regridding method and species of every tracer (nested or
+# flat). A source (kind other than "none") needs a species: `species` or a
+# tracer name that implies one.
 function _check_surface_flux_sources!(tracers, errors)
     tracers isa AbstractDict || return errors
     for (name, tracer) in pairs(tracers)
@@ -324,8 +326,11 @@ function _check_surface_flux_sources!(tracers, errors)
         sf = get(tracer, "surface_flux", nothing)
         sf = sf === nothing ? _tracer_surface_flux_cfg(tracer) : sf
         sf isa AbstractDict || continue
-        _capture_config_error!(() -> _surface_flux_kind(sf), errors)
+        kind = nothing
+        _capture_config_error!(() -> (kind = _surface_flux_kind(sf)), errors)
         haskey(sf, "regridding") && _capture_config_error!(() -> _regridding_method(sf), errors)
+        kind === nothing || kind === :none ||
+            _capture_config_error!(() -> surface_flux_species(Symbol(name), sf), errors)
     end
     return errors
 end

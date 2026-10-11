@@ -805,7 +805,7 @@ end
             "file" => path,
             "variable" => "CO2_FLUX",
             "time_varying" => true,
-            "molar_mass_kg_mol" => 0.0440095,
+            "species" => "co2",
         )
         src = build_surface_flux_source(
             grid, :co2_test, cfg, FT; reference_time = DateTime(2021, 12, 1))
@@ -902,4 +902,50 @@ end
     @test_throws ArgumentError scale(norm("mol m-2 s-1"), "f.nc")
     @test_throws ArgumentError ICIO._native_flux_species_scale("", "f.nc")
     @test_throws ArgumentError ICIO._require_reference_time(nothing)
+end
+
+@testset "species of a surface flux" begin
+    M = AtmosTransport.Parameters.SPECIES_MOLAR_MASS
+    MD = AtmosTransport.Parameters.DRY_AIR_MOLAR_MASS
+    species = AtmosTransport.Models.InitialConditionIO.surface_flux_species
+    # `species` names an entry of SPECIES_MOLAR_MASS ...
+    @test species(:fossil, Dict("species" => "co2")) === :co2
+    @test species(:anything, Dict("species" => "sf6")) === :sf6
+    @test species(:co2, Dict("species" => "rn222")) === :rn222          # explicit wins
+    # ... or the tracer name implies it.
+    for (name, s) in ((:co2, :co2), (:co2_natural, :co2), (:co2_fossil, :co2),
+                      (:fossil_co2, :co2), (:sf6, :sf6), (:rn222, :rn222))
+        @test species(name, Dict{String, Any}()) === s
+    end
+    # Unknown species, unknown tracer names without `species`, and the removed
+    # molar_mass_kg_mol are errors naming the known species.
+    for (name, cfg) in ((:fossil, Dict("species" => "n2o")), (:fossil, Dict("species" => "CO2")),
+                        (:fossil, Dict("species" => 44.0)), (:fossil, Dict{String, Any}()),
+                        (:co2, Dict("molar_mass_kg_mol" => 0.0440095)))
+        err = try species(name, cfg); nothing catch e; e end
+        @test err isa ArgumentError && occursin("\"co2\", \"sf6\", \"rn222\"", err.msg)
+    end
+    # The storage factor is DRY_AIR_MOLAR_MASS / M(species), bit for bit.
+    @test ICIO._surface_flux_storage_scale(:fossil, Dict("species" => "co2")) === MD / M.co2
+    @test ICIO._surface_flux_storage_scale(:sf6, Dict{String, Any}()) === MD / M.sf6
+    @test ICIO._surface_flux_storage_scale(:x, Dict("species" => "rn222")) === MD / M.rn222
+
+    # validate_config reports a missing or unknown species, and the old key.
+    base = Dict{String, Any}("input" => Dict{String, Any}("binary_paths" => ["a.bin"]))
+    check(tracers) = AtmosTransport.validate_config(merge(base, Dict{String, Any}("tracers" => tracers)))
+    sf(extra...) = Dict{String, Any}("kind" => "edgar_sf6", extra...)
+    tracer(flux) = Dict{String, Any}("init" => Dict{String, Any}("kind" => "uniform"),
+                                     "surface_flux" => flux)
+    ok, errors = check(Dict("fossil" => tracer(sf("species" => "sf6"))))
+    @test !any(e -> occursin("species", e), errors)
+    ok, errors = check(Dict("fossil" => tracer(sf())))
+    @test any(e -> occursin("Set surface_flux.species", e), errors)
+    ok, errors = check(Dict("fossil" => tracer(sf("species" => "ch4"))))
+    @test any(e -> occursin("\"ch4\" is not a known species", e), errors)
+    ok, errors = check(Dict("sf6" => tracer(sf("molar_mass_kg_mol" => 0.146055))))
+    @test any(e -> occursin("molar_mass_kg_mol was replaced by species", e), errors)
+    @test any(e -> occursin("unknown option", e) && occursin("molar_mass_kg_mol", e), errors)
+    # No source, no species needed.
+    ok, errors = check(Dict("blob" => tracer(Dict{String, Any}("kind" => "none"))))
+    @test !any(e -> occursin("species", e), errors)
 end
