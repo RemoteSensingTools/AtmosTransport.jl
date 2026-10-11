@@ -6,6 +6,7 @@ using Dates
 using JSON3
 
 using AtmosTransport
+using .AtmosTransport.Parameters: GLOBAL_MEAN_DRY_SURFACE_PRESSURE
 using .AtmosTransport.Preprocessing: build_target_geometry, process_day,
                                       ERA5SpectralSettings
 
@@ -73,7 +74,7 @@ function _cs_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir;
         include_qv = false,
         mass_basis = :moist,
         mass_fix_enable = false,
-        target_ps_dry_pa = 98726.0,
+        target_ps_dry_pa = GLOBAL_MEAN_DRY_SURFACE_PRESSURE,
         qv_global_climatology = 0.0,
         thermo_dir = dirname(out_dir),
         half_dt = 450.0,
@@ -119,6 +120,10 @@ end
         second_header, second_payload = _stable_binary_parts(second_path)
         @test second_header == first_header
         @test second_payload == first_payload
+        @test first_header[:mass_fix_target_ps_dry_pa] ==
+              GLOBAL_MEAN_DRY_SURFACE_PRESSURE
+        @test length(first_header[:ps_offsets_pa_per_window]) == 24
+        @test first_header[:ps_offsets_next_day_hour0_pa] isa Real
 
         # `write_replay_check = false` skips the gate and is recorded; same payload.
         off = _cs_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "off"))

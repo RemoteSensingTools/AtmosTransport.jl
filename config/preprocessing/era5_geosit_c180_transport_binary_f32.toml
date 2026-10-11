@@ -46,5 +46,4 @@ cs_balance_project_every = 50
 
 [mass_fix]
 enable = true
-target_ps_dry_pa = 98726.0
 qv_global_climatology = 0.00247

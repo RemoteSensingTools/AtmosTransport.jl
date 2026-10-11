@@ -121,7 +121,9 @@ For each of the day's 24 hourly windows:
 3. **Mass-fix** (`mass_support.jl::pin_global_mean_ps_using_qv!`)
     - Optional, gated by `[mass_fix] enable = true`.
     - Computes a **uniform PS offset per window** so the global-mean
-      dry surface pressure equals `target_ps_dry_pa`.
+      dry surface pressure equals
+      `Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE` (98,325 Pa for every
+      meteorological source).
         - LL and CS targets use the **hourly QV field** for the
           offset.
         - RG targets use the constant **`qv_global_climatology`**
@@ -206,9 +208,12 @@ met_interval = 3600.0
 
 [mass_fix]
 enable                = true
-target_ps_dry_pa      = 98726.0
 qv_global_climatology = 0.00247
 ```
+
+The target is deliberately not configurable per dataset. A stale
+`target_ps_dry_pa` or `target_total_kg` key is an error naming the shared
+constant.
 
 The CS variant adds two `[grid]` keys (`Nc`, `regridder_cache_dir`,
 optionally `staging_nlon` / `staging_nlat`) and a different

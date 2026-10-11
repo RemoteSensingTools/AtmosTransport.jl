@@ -6,7 +6,7 @@
 
 using Test
 using AtmosTransport
-using .AtmosTransport.Parameters: STANDARD_GRAVITY
+using .AtmosTransport.Parameters: STANDARD_GRAVITY, GLOBAL_MEAN_DRY_SURFACE_PRESSURE
 using .AtmosTransport.Preprocessing: AbstractMetSettings, AbstractGEOSSettings,
     _native_mass_fix_target_kg
 
@@ -26,6 +26,16 @@ struct GEOSLikeSource <: AbstractGEOSSettings end
     @test err isa ErrorException && occursin("GEOS native sources only", err.msg)
 
     @test _native_mass_fix_target_kg(pin("target_ps_dry"), grid, NonGEOSSource()) ≈
-          98726.0 * 6 * 4e10 / STANDARD_GRAVITY
+          GLOBAL_MEAN_DRY_SURFACE_PRESSURE * 6 * 4e10 / STANDARD_GRAVITY
     @test isnan(_native_mass_fix_target_kg(Dict{String, Any}(), grid, NonGEOSSource()))   # pin off
+
+    stale = Dict("mass_fix" => Dict("enable" => true, "target_ps_dry_pa" => 98325.0))
+    stale_err = try
+        _native_mass_fix_target_kg(stale, grid, NonGEOSSource())
+    catch e
+        e
+    end
+    @test stale_err isa ArgumentError
+    @test occursin("target_ps_dry_pa", sprint(showerror, stale_err))
+    @test occursin("GLOBAL_MEAN_DRY_SURFACE_PRESSURE", sprint(showerror, stale_err))
 end

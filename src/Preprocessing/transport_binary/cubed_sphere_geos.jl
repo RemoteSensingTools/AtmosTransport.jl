@@ -158,6 +158,11 @@ function driver_before_close_writer!(workspace::GEOSCubedSphereWindowWorkspace,
                                      writer::CubedSphereBinaryWriter,
                                      _ctx::GEOSCSUnifiedDriverContext)
     set_streaming_steps_per_window_schedule!(writer.inner, workspace.steps_schedule)
+    if workspace.global_mass_pin_enabled && isfinite(workspace.global_mass_target_kg)
+        writer.inner.header["mass_fix_target_ps_dry_pa"] =
+            workspace.global_mass_target_kg * Float64(workspace.g) /
+            _cs_total_area(workspace.cell_areas)
+    end
     return nothing
 end
 
@@ -293,6 +298,10 @@ function _process_day_geos_cs_unified(date::Date,
                 "geos_global_mass_pin_enabled" => global_mass_pin,
                 "geos_global_mass_pin_target_kg" => isfinite(workspace.global_mass_target_kg) ?
                     workspace.global_mass_target_kg : "first_window_start",
+                "mass_fix_target_ps_dry_pa" =>
+                    global_mass_pin && isfinite(workspace.global_mass_target_kg) ?
+                    workspace.global_mass_target_kg * STANDARD_GRAVITY /
+                    (6.0 * sum(Float64, grid.mesh.cell_areas)) : nothing,
                 "source_Nc" => settings.Nc,
                 "geos_cs_resolution_strategy" => _geos_cs_strategy_name(workspace.strategy),
                 "source_steps_per_window" => steps_per_met,

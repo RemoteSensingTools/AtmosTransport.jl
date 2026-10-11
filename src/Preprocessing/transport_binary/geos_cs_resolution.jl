@@ -14,41 +14,51 @@ function _cs_total_area(cell_areas::AbstractMatrix)
 end
 
 """
-    _pin_cs_global_air_mass!(panels_m, cell_areas, g, target_kg)
+    _pin_cs_global_air_mass!(panels_m, panels_qv, cell_areas, g, target_kg, dB)
 
-Apply a uniform dry-surface-pressure offset to a cubed-sphere dry-air mass
-state so its global mass equals `target_kg`. The column offset is distributed
-vertically in proportion to each column's existing dry layer mass, preserving
-the endpoint's vertical shape while removing the nonphysical global mean.
+Apply a uniform moist-surface-pressure offset to a cubed-sphere dry-air mass
+state so its global mass equals `target_kg`. For layer `k`, the correction is
+
+```math
+\\Delta m_k = \\Delta B_k\\,\\Delta p_s\\,(1-q_k)\\,A/g.
+```
+
+This is the same hybrid-coordinate correction as the spectral path: layers
+with `\\Delta B_k = 0` are unchanged. `panels_qv` and `dB` are on the same
+target vertical grid as `panels_m`.
 """
 function _pin_cs_global_air_mass!(panels_m::NTuple{CS_PANEL_COUNT, <:AbstractArray{FT, 3}},
+                                  panels_qv::NTuple{CS_PANEL_COUNT, <:AbstractArray{<:Real, 3}},
                                   cell_areas::AbstractMatrix,
                                   g::FT,
-                                  target_kg::Real) where FT
+                                  target_kg::Real,
+                                  dB::AbstractVector) where FT
     current = _cs_total_air_mass(panels_m)
-    area_total = _cs_total_area(cell_areas)
-    delta_kg = Float64(target_kg) - current
-    delta_ps = delta_kg * Float64(g) / area_total
     Nz = size(panels_m[1], 3)
+    length(dB) == Nz || throw(DimensionMismatch(
+        "native dry-mass pin dB length $(length(dB)) does not match Nz=$Nz"))
+    sensitivity_kg_per_pa = 0.0
+    @inbounds for p in 1:CS_PANEL_COUNT
+        m = panels_m[p]
+        qv = panels_qv[p]
+        size(qv) == size(m) || throw(DimensionMismatch(
+            "native dry-mass pin qv panel $p shape $(size(qv)) does not match mass $(size(m))"))
+        for k in 1:Nz, j in axes(m, 2), i in axes(m, 1)
+            q = clamp(Float64(qv[i, j, k]), 0.0, 0.999999)
+            sensitivity_kg_per_pa += Float64(dB[k]) * (1.0 - q) *
+                                     Float64(cell_areas[i, j]) / Float64(g)
+        end
+    end
+    delta_ps = _mass_target_offset(target_kg, current, sensitivity_kg_per_pa)
 
     @inbounds for p in 1:CS_PANEL_COUNT
         m = panels_m[p]
-        for j in axes(m, 2), i in axes(m, 1)
-            delta_col = delta_ps * Float64(cell_areas[i, j]) / Float64(g)
-            col = 0.0
-            for k in 1:Nz
-                col += Float64(m[i, j, k])
-            end
-            if col > 0.0
-                for k in 1:Nz
-                    m[i, j, k] = FT(Float64(m[i, j, k]) + delta_col * Float64(m[i, j, k]) / col)
-                end
-            else
-                per_layer = delta_col / Nz
-                for k in 1:Nz
-                    m[i, j, k] = FT(Float64(m[i, j, k]) + per_layer)
-                end
-            end
+        qv = panels_qv[p]
+        for k in 1:Nz, j in axes(m, 2), i in axes(m, 1)
+            q = clamp(Float64(qv[i, j, k]), 0.0, 0.999999)
+            delta_m = Float64(dB[k]) * delta_ps * (1.0 - q) *
+                      Float64(cell_areas[i, j]) / Float64(g)
+            m[i, j, k] = FT(Float64(m[i, j, k]) + delta_m)
         end
     end
 
@@ -198,6 +208,40 @@ function _geos_target_mass!(::GEOSCSBlockCoarsenStrategy{R}, ws, m_next, raw,
         coarsen_sum!(m_next[p], ws.fine_m_kg[p], R)
     end
     return nothing
+end
+
+# Dry-mass sensitivity to a uniform moist surface-pressure shift. It is built
+# on the source grid as ΔB(1-q)A/g [kg Pa⁻¹], then conservatively coarsened.
+# The caller subsequently applies the vertical plan by summing layers.
+function _geos_pin_sensitivity_native!(::GEOSCSIdentityStrategy, _ws,
+                                       sensitivity_native, qv, dB,
+                                       cell_areas, inv_g)
+    for p in 1:CS_PANEL_COUNT
+        s = sensitivity_native[p]
+        q = qv[p]
+        @inbounds for k in axes(s, 3), j in axes(s, 2), i in axes(s, 1)
+            s[i, j, k] = eltype(s)(Float64(dB[k]) *
+                (1.0 - clamp(Float64(q[i, j, k]), 0.0, 0.999999)) *
+                Float64(cell_areas[i, j]) * Float64(inv_g))
+        end
+    end
+    return sensitivity_native
+end
+
+function _geos_pin_sensitivity_native!(::GEOSCSBlockCoarsenStrategy{R}, ws,
+                                       sensitivity_native, qv, dB,
+                                       _cell_areas, inv_g) where R
+    for p in 1:CS_PANEL_COUNT
+        fine = ws.fine_m_kg[p]
+        q = qv[p]
+        @inbounds for k in axes(fine, 3), j in axes(fine, 2), i in axes(fine, 1)
+            fine[i, j, k] = eltype(fine)(Float64(dB[k]) *
+                (1.0 - clamp(Float64(q[i, j, k]), 0.0, 0.999999)) *
+                Float64(ws.source_cell_areas[i, j]) * Float64(inv_g))
+        end
+        coarsen_sum!(sensitivity_native[p], fine, R)
+    end
+    return sensitivity_native
 end
 
 _geos_surface_payload!(::GEOSCSIdentityStrategy, _ws, raw) = raw.surface

@@ -44,4 +44,3 @@ met_interval = 3600.0
 # the same global dry mass at both ends of every window.
 [mass_fix]
 enable = true
-target_ps_dry_pa = 98726.0

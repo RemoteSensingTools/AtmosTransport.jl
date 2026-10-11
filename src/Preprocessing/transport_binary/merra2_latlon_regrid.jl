@@ -429,14 +429,16 @@ function _merra2_window_scratch(::Type{FT}, Nc, Nz) where FT
             ps_dry = panels(Nc, Nc), ps_moist = panels(Nc, Nc))
 end
 
-# Global dry-air mass pin, mirroring the GEOS-CS / N320 paths: rescale the
-# endpoint mass to a fixed target and recompute `ps` from it, so every day of a
-# day-threaded archive shares one dry-air baseline.
-_pin_endpoint_mass!(::Nothing, _grid, _m_dry, _ps_dry) = nothing
-function _pin_endpoint_mass!(target::Float64, grid, m_dry, ps_dry)
+# Global dry-air mass pin, mirroring the GEOS-CS / N320 paths: apply the
+# hybrid-coordinate ΔB(1-q) correction and recompute dry `ps` from it, so every
+# day of a day-threaded archive shares one dry-air baseline without changing
+# pure-pressure layers.
+_pin_endpoint_mass!(::Nothing, _grid, _m_dry, _ps_dry, _qv, _vc) = nothing
+function _pin_endpoint_mass!(target::Float64, grid, m_dry, ps_dry, qv, vc)
     areas = grid.mesh.cell_areas
     g = eltype(areas)(STANDARD_GRAVITY)
-    _pin_cs_global_air_mass!(m_dry, areas, g, target)
+    dB = diff(vc.B)
+    _pin_cs_global_air_mass!(m_dry, qv, areas, g, target, dB)
     for p in 1:6
         _ps_from_air_mass!(ps_dry[p], m_dry[p], areas, g, size(areas, 1), size(m_dry[p], 3))
     end
@@ -446,7 +448,8 @@ end
 function _derive_endpoint_mass!(d::MERRA2DayDriver, s::MERRA2BlockState)
     derive_c180_dry_mass!(s.m_dry, s.delp_dry, s.ps_dry, s.ps_dry_acc,
                           s.pipe.c180_fields.ps, s.pipe.c180_fields.qv, d.vc, d.grid.mesh.cell_areas)
-    _pin_endpoint_mass!(d.mass_target, d.grid, s.m_dry, s.ps_dry)
+    _pin_endpoint_mass!(d.mass_target, d.grid, s.m_dry, s.ps_dry,
+                        s.pipe.c180_fields.qv, d.vc)
     return s
 end
 
@@ -648,7 +651,10 @@ function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{
         # pressure instead.
         "wind_flux_pressure_fix" => "cameron_smith_column_balance",
         "global_mass_pin_enabled" => mass_target !== nothing,
-        "global_mass_pin_target_kg" => mass_target))
+        "global_mass_pin_target_kg" => mass_target,
+        "mass_fix_target_ps_dry_pa" => mass_target === nothing ? nothing :
+            Float64(mass_target) * STANDARD_GRAVITY /
+            (6.0 * sum(Float64, grid.mesh.cell_areas))))
     inner = open_streaming_cs_transport_binary(
         tmp_path, grid.Nc, 6, length(vc.A) - 1, nwindow, vc;
         FT, dt_met_seconds = dt_window, half_dt_seconds = dt_window / 2,

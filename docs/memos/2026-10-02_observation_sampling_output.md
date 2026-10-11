@@ -71,11 +71,12 @@ instead of writing full hourly 3-D fields and sampling them offline.
   (the window end is inclusive).
 - The transported span is estimated from the first binary's window count
   times the number of binaries.
-- Dry surface pressure of the 2021 ERA5 C90 binaries equals OCO-2 retrieved
-  total surface pressure over ocean (ratio 1.000; expected ~0.996): the
-  binaries' global mean dry pressure (98,733 Pa) is the 5.135e18 kg dry-mass
-  pin converted with R = 6.371e6 m and g = 9.80665. Mixing ratios are
-  unaffected; map profiles to retrieval levels in normalised pressure (p/ps).
+- Binaries regenerated after 2026-10-11 carry the shared 98,325 Pa dry target;
+  older 2021 ERA5 C90 binaries carry about 98,733 Pa and must not be mixed with
+  them. The runtime checks `mass_fix_target_ps_dry_pa`, falling back to the
+  window-1 mass and header radius for legacy binaries, and errors on a mixed
+  run. Retrieved OCO-2 `psurf` is total pressure; profile comparisons still
+  need an explicit dry/total convention.
 
 ## Not in scope
 

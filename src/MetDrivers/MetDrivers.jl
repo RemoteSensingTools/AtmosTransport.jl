@@ -15,7 +15,9 @@ using Printf: @sprintf
 using ..Architectures: array_adapter_for
 using ..State
 using ..Grids
-using ..Parameters: EARTH_RADIUS, DEFAULT_MET_INTERVAL_SECONDS, GMAO_CS_LONGITUDE_OFFSET_DEG,
+using ..Parameters: EARTH_RADIUS, STANDARD_GRAVITY,
+                    GLOBAL_MEAN_DRY_SURFACE_PRESSURE,
+                    DEFAULT_MET_INTERVAL_SECONDS, GMAO_CS_LONGITUDE_OFFSET_DEG,
                     REPLAY_TOLERANCE_FLOAT64, REPLAY_TOLERANCE_FLOAT32,
                     TM5_CONVECTION_MASS_BASIS_KEY
 import ..source_revision
@@ -56,6 +58,7 @@ export PBLSurfaceForcing, has_pbl_surface_forcing
 export window_count, has_qv_endpoints, has_flux_delta, has_cmfmc
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule
 export binary_capabilities, inspect_binary
+export binary_dry_mass_target
 export has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base
 export mass_basis, grid_type, horizontal_topology, A_ifc, B_ifc
 export uses_binary_substep_contract

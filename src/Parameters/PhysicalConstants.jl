@@ -74,12 +74,23 @@ const HYDROSTATIC_REFERENCE_TEMPERATURE = 260.0
 const DAYS_PER_JULIAN_YEAR = 365.25
 
 """
-Global-mean dry-air surface pressure that the preprocessing dry-mass fix holds
-[Pa]: over the IFS sphere (`IFS_EARTH_RADIUS`) with `STANDARD_GRAVITY` it is a dry
-air mass of 5.1353 × 10¹⁸ kg, the value of Trenberth and Smith (2005, J. Climate
-18, 864–875).
+Global-mean dry surface pressure the preprocessing dry-mass pin holds, for every
+meteorological source [Pa]. The pin holds the dry column below the model top,
+`<sum_k m_k> g / A`; the at-most 1 Pa above the model top is negligible.
+
+The value is the dry mean shared by modern reanalyses: MERRA-2 is 98,324.7 Pa
+(constant under its dry-mass constraint and equal to GEOS-Chem
+`Met_PSC2DRY`), while ERA5 is 98,329 Pa over 2014–2025 (annual means
+98,320–98,339 Pa). Trenberth and Smith (2005, J. Climate 18, 864–875) give
+98,305 Pa (`985.50 hPa × 5.1352/5.1480`), 0.02 % lower.
+
+With constant `g` on a sphere, as in IFS, GEOS, TM5 and this model, the implied
+dry air mass is 5.114 × 10¹⁸ kg. That is 0.41 % below Trenberth and Smith's
+5.1352 × 10¹⁸ kg because their mass-pressure conversion includes Earth's shape
+and the variation of `g` with latitude and height. A thin-shell constant-`g`
+model cannot match both values; this constant matches the observed pressure.
 """
-const GLOBAL_MEAN_DRY_SURFACE_PRESSURE = 98726.0
+const GLOBAL_MEAN_DRY_SURFACE_PRESSURE = 98325.0
 
 """
 Global-mean specific humidity [kg kg⁻¹] that turns the dry surface-pressure

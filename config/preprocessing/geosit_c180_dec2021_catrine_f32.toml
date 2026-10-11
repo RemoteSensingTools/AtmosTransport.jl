@@ -58,4 +58,3 @@ enable = true
 # Match the ERA spectral path's global dry-air target so the absolute dry mass
 # is independent of the first processed date/window.
 mode = "target_ps_dry"
-target_ps_dry_pa = 98726.0

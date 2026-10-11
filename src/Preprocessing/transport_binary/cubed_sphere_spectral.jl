@@ -395,9 +395,14 @@ function driver_before_close_writer!(workspace::CubedSphereSpectralWindowWorkspa
                                      ::Nothing,
                                      contract::CubedSphereContract,
                                      writer::CubedSphereBinaryWriter,
-                                     ::CSSpectralUnifiedDriverContext)
+                                     ctx::CSSpectralUnifiedDriverContext)
     set_streaming_steps_per_window_schedule!(writer.inner, workspace.steps_schedule)
     set_contract_steps_schedule!(contract, workspace.steps_schedule)
+    writer.inner.header["mass_fix_target_ps_dry_pa"] = ctx.settings.target_ps_dry_pa
+    writer.inner.header["ps_offsets_pa_per_window"] =
+        copy(@view workspace.ps_offsets[1:ctx.spec.n_times])
+    writer.inner.header["ps_offsets_next_day_hour0_pa"] =
+        workspace.ps_offsets[ctx.spec.n_times + 1]
     return nothing
 end
 

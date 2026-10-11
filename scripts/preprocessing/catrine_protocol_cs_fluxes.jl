@@ -32,10 +32,9 @@ const ICIO = AtmosTransport.Models.InitialConditionIO
 
 const CATRINE = joinpath(homedir(), "data", "AtmosTransport", "catrine", "Emissions")
 const M_SF6 = AtmosTransport.Parameters.SPECIES_MOLAR_MASS.sf6   # kg/mol
-# ppt -> kg conversion for the NOAA growth rates: the dry-air molar mass and the
-# 5.135e18 kg global dry-air mass pin of the preprocessing give 25.89 kt/ppt.
+# ppt -> kg conversion for the NOAA growth rates uses the preprocessing dry-air
+# pressure target on the binary's own sphere.
 const M_DRY_AIR = AtmosTransport.Parameters.DRY_AIR_MOLAR_MASS   # kg/mol
-const DRY_AIR_MASS = 5.135e18     # kg
 
 function settings()
     s = ArgParseSettings(description = "CATRINE protocol cs_native flux series")
@@ -111,6 +110,8 @@ function main(argv)
     reader = MD.TransportBinaryReader(args["binary"]; FT = Float32)
     mesh = MD.load_grid(reader; FT = Float64, Hp = 0).horizontal
     close(reader)
+    dry_air_mass = AtmosTransport.Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE *
+                   (4π * mesh.radius^2) / AtmosTransport.Parameters.STANDARD_GRAVITY
     months = month_starts(Date(2021, 12, 1), last_month)
     series_end = DateTime(last_month + Month(1))
     @info "Target mesh C$(mesh.Nc); $(length(months)) monthly slices from $(first(months)) to $(last(months))"
@@ -149,7 +150,7 @@ function main(argv)
 
     # -- SF6: EDGAR 2022 map, yearly totals from NOAA growth rates.
     growth = noaa_sf6_growth()
-    kg_per_ppt = DRY_AIR_MASS / M_DRY_AIR * 1e-12 * M_SF6
+    kg_per_ppt = dry_air_mass / M_DRY_AIR * 1e-12 * M_SF6
     base, _ = cs_density(Dict{String, Any}("kind" => "edgar_sf6"), mesh; species = :sf6)
     base_kg_per_year = global_rate(base, mesh) * AtmosTransport.Parameters.DAYS_PER_JULIAN_YEAR * 86400
     sf6_starts = DateTime[DateTime(2021, 12, 1)]

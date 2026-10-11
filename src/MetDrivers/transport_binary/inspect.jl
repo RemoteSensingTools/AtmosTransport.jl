@@ -28,6 +28,36 @@ _supports_gchp_vdiff(
     reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
 ) = has_surface(reader) && has_vdiff_fields(reader)
 
+_total_window_air_mass(m::AbstractArray) = sum(Float64, m)
+_total_window_air_mass(m::NTuple{6}) = sum(sum(Float64, panel) for panel in m)
+
+"""
+    binary_dry_mass_target(reader) -> NamedTuple
+
+Return the binary's global-mean dry-mass target in pascals and its provenance.
+Current binaries record `mass_fix_target_ps_dry_pa` in the header. For legacy
+binaries, infer the target from window 1 as
+`sum(m_k) g / (4 pi R_header^2)`, using the radius recorded by that binary.
+This fallback deliberately describes the actual carried dry mass, so a run
+cannot silently cross a legacy/current day boundary with different targets.
+"""
+function binary_dry_mass_target(reader::TransportBinaryReader)
+    recorded = get(reader.header.raw_header, "mass_fix_target_ps_dry_pa", nothing)
+    if recorded isa Real
+        target = Float64(recorded)
+        isfinite(target) && target > 0.0 || throw(ArgumentError(
+            "$(basename(reader.path)) has invalid mass_fix_target_ps_dry_pa=$(recorded)"))
+        return (ps_dry_pa = target, source = :header)
+    end
+
+    m, _ps, _fluxes = load_window!(reader, 1)
+    area = 4pi * reader.header.planet_radius_m^2
+    target = _total_window_air_mass(m) * STANDARD_GRAVITY / area
+    isfinite(target) && target > 0.0 || throw(ArgumentError(
+        "could not infer a positive legacy dry-mass target from window 1 of $(reader.path)"))
+    return (ps_dry_pa = target, source = :legacy_window1)
+end
+
 """
     binary_capabilities(reader) -> NamedTuple
 
@@ -63,6 +93,7 @@ function binary_capabilities(reader::TransportBinaryReader)
     hdr = reader.header
     raw = hdr.raw_header
     required_advection = _required_advection_sections(hdr.geometry)
+    dry_target = binary_dry_mass_target(reader)
     return (
         advection        = all(s in hdr.payload_sections for s in required_advection),
         replay_gate      = has_flux_delta(reader),
@@ -86,6 +117,11 @@ function binary_capabilities(reader::TransportBinaryReader)
         preprocessor_contract = get(raw, "preprocessor_contract", nothing),
         vertical_Nz_output = get(raw, "vertical_Nz_output", nothing),
         adaptive_substeps = get(raw, "adaptive_substeps", nothing),
+        dry_mass_target_ps_pa = dry_target.ps_dry_pa,
+        dry_mass_target_source = dry_target.source,
+        dry_mass_target_is_current = isapprox(dry_target.ps_dry_pa,
+                                              GLOBAL_MEAN_DRY_SURFACE_PRESSURE;
+                                              atol = 0.1, rtol = 1e-7),
         # false only for binaries written with the write-time replay gate off
         write_replay_check = get(raw, "write_replay_check", true) !== false,
         payload_sections = hdr.payload_sections,
@@ -139,6 +175,11 @@ function _print_capability_rows(io::IO, reader)
                         "on dry air mass, convective rates about 1 % too large")
     end
     println(io, "  grid_type        = ", caps.grid_type)
+    source_note = caps.dry_mass_target_source === :header ? "header" : "legacy window-1 fallback"
+    @printf(io, "  dry-mass target  = %.6f Pa (%s)%s\n",
+            caps.dry_mass_target_ps_pa, source_note,
+            caps.dry_mass_target_is_current ? "" :
+                @sprintf("  ⚠ current constant is %.1f Pa", GLOBAL_MEAN_DRY_SURFACE_PRESSURE))
     caps.write_replay_check || println(io, "  ⚠ written with the write-time replay check disabled; " *
                                            "not for production runs")
 end

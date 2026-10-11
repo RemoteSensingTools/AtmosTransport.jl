@@ -14,11 +14,22 @@ import datetime as dt
 import hashlib
 import json
 from pathlib import Path
+import re
 
 import netCDF4
 import numpy as np
 
 import prepare_trendy_s3_gpp_ter_c90 as T
+
+
+def atmos_transport_parameter(name):
+    """Read a numeric constant from the package's sole constants source."""
+    path = Path(__file__).resolve().parents[2] / 'src' / 'Parameters' / 'PhysicalConstants.jl'
+    match = re.search(rf'^const {re.escape(name)} = ([0-9.eE+-]+)\s*$',
+                      path.read_text(), re.MULTILINE)
+    if match is None:
+        raise RuntimeError(f'cannot read {name} from {path}')
+    return float(match.group(1))
 
 
 def daily_from_monthly(monthly, keys, centres, day0, nday):
@@ -139,7 +150,10 @@ def main():
         # Integrated drawdown used to assess the positive carrier margin.
         first = (dt.datetime(2014, 9, 1)-day0).days
         uptake = fluxes['NPP_CO2_FLUX'][first:].astype('f8')
-        cumulative_ppm = np.cumsum((uptake*area).sum(axis=1)*86400*0.02896546/0.0440095/5.13531539605612e18*1e6)
+        dry_air_mass = (atmos_transport_parameter('GLOBAL_MEAN_DRY_SURFACE_PRESSURE') *
+                        4*np.pi*atmos_transport_parameter('IFS_EARTH_RADIUS')**2 /
+                        atmos_transport_parameter('STANDARD_GRAVITY'))
+        cumulative_ppm = np.cumsum((uptake*area).sum(axis=1)*86400*0.02896546/0.0440095/dry_air_mass*1e6)
         audit['npp_max_global_drawdown_ppm'] = float(-min(0, cumulative_ppm.min()))
         assert audit['npp_max_global_drawdown_ppm'] < 1000, audit
         tmp = out.with_suffix('.partial.nc')

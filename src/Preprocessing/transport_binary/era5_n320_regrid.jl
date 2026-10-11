@@ -509,9 +509,11 @@ function process_era5_n320_to_cs_day(date::Date,
                                       Float64(global_mass_target_kg),
                                       Float64(global_mass_target_kg) * Float64(gravity) /
                                       (6 * sum(Float64, cs_cell_areas)))
-        pin_endpoint_mass! = function (m_dry, ps_dry)
+        dB_merged = diff(plan.merged_vc.B)
+        pin_endpoint_mass! = function (m_dry, ps_dry, qv)
             do_mass_pin || return nothing
-            _pin_cs_global_air_mass!(m_dry, cs_cell_areas, gravity, global_mass_target_kg)
+            _pin_cs_global_air_mass!(m_dry, qv, cs_cell_areas, gravity,
+                                     global_mass_target_kg, dB_merged)
             for p in 1:6
                 _ps_from_air_mass!(ps_dry[p], m_dry[p], cs_cell_areas, gravity, Nc, Nz_int)
             end
@@ -589,8 +591,10 @@ function process_era5_n320_to_cs_day(date::Date,
                 "global_mass_pin_enabled" => do_mass_pin,
                 "global_mass_pin_target_kg" => do_mass_pin ?
                     Float64(global_mass_target_kg) : nothing,
-            ),
-            write_replay_on))
+                "mass_fix_target_ps_dry_pa" => do_mass_pin ?
+                    Float64(global_mass_target_kg) * STANDARD_GRAVITY /
+                    (6.0 * sum(Float64, cs_cell_areas)) : nothing,
+            ), write_replay_on))
         writer = CubedSphereBinaryWriter(inner_writer,
                                           mass_basis_from_symbol(mass_basis);
                                           Nc = Nc,
@@ -630,7 +634,7 @@ function process_era5_n320_to_cs_day(date::Date,
                 copyto!(ps_dry[p], native_ps_dry[p])
                 copyto!(ps_dry_acc[p], native_ps_acc[p])
             end
-            pin_endpoint_mass!(m_dry, ps_dry)
+            pin_endpoint_mass!(m_dry, ps_dry, merged_fields.qv)
             return nothing
         end
 
@@ -839,7 +843,7 @@ function process_era5_n320_to_cs_day(date::Date,
                 copyto!(nxt_ps_dry[p], native_ps_dry[p])
                 copyto!(nxt_ps_dry_acc[p], native_ps_acc[p])
             end
-            pin_endpoint_mass!(nxt_m_dry, nxt_ps_dry)
+            pin_endpoint_mass!(nxt_m_dry, nxt_ps_dry, nxt_fields.qv)
         else
             # HACK: zero-tendency fallback for the final day of the archive
             # (no next_core_path on disk). The positivity gate will likely

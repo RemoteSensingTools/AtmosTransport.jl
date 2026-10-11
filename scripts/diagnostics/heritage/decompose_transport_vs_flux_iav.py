@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import re
 
 import matplotlib
 matplotlib.use("Agg")
@@ -34,7 +35,20 @@ import numpy as np
 YEARS = (2015, 2024)
 INK, INK2, GRID = "#1f2933", "#52606d", "#d9e2ec"
 M_AIR, M_CO2 = 0.02896546, 0.0440095
-DRY_AIR = 5.135e18
+
+
+def atmos_transport_parameter(name):
+    path = Path(__file__).resolve().parents[3] / 'src' / 'Parameters' / 'PhysicalConstants.jl'
+    match = re.search(rf'^const {re.escape(name)} = ([0-9.eE+-]+)\s*$',
+                      path.read_text(), re.MULTILINE)
+    if match is None:
+        raise RuntimeError(f'cannot read {name} from {path}')
+    return float(match.group(1))
+
+
+DRY_AIR = (atmos_transport_parameter('GLOBAL_MEAN_DRY_SURFACE_PRESSURE') *
+           4*np.pi*atmos_transport_parameter('IFS_EARTH_RADIUS')**2 /
+           atmos_transport_parameter('STANDARD_GRAVITY'))
 
 
 def monthly_mean(dates, x):

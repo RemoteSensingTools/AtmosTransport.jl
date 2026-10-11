@@ -14,6 +14,13 @@
   model top, `137` the surface). The ambiguous development aliases
   `ml137_94L` and `ml137_85L` are removed; use `ml137_cfl94` and
   `ml137_cfl85`.
+- The preprocessing dry-mass target is now the single
+  `Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE = 98325.0` Pa constant for
+  every meteorological source. `[mass_fix].target_ps_dry_pa` and
+  `target_total_kg` are removed and rejected. Transport binaries record
+  `mass_fix_target_ps_dry_pa`; multi-file runs reject mixed targets, using the
+  window-1 mass and header radius as a legacy-binary fallback. Existing
+  production binaries pinned near 98,726–98,733 Pa must be regenerated.
 
 - Run settings no longer come from environment variables. These are removed
   without a transition period; the package ignores them:
@@ -190,6 +197,10 @@
   limit `min(T, (N - 1) ÷ 2)` is shared by the lat-lon, reduced-Gaussian and
   batched ERA5 N320 synthesis paths, with single-harmonic coverage for even
   and odd rings. Reported by pera-noaa (NOAA GML) in issue #13.
+- Native MERRA-2, GEOS and ERA5-N320 dry-mass pins now distribute a uniform
+  surface-pressure correction by `Delta B_k (1-q_k)`, matching the spectral
+  path and leaving pure-pressure layers unchanged. Native target mass uses the
+  binary header sphere, removing the older approximately 7 Pa radius mismatch.
 - Transport binaries (eager and streaming writers), the spectral day cache and
   cached regridders are published through `AtomicFiles`: a sibling staging
   file moved onto the target by one replacing rename (`rename(2)` on POSIX

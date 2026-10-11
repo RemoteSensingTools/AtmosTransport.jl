@@ -30,5 +30,4 @@ met_interval = 3600.0
 # See era5_spectral_v4_tropo34_dec2021.toml for full notes.
 [mass_fix]
 enable = true
-target_ps_dry_pa = 98726.0
 qv_global_climatology = 0.00247

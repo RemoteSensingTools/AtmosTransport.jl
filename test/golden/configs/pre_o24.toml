@@ -28,4 +28,3 @@ met_interval = 3600.0
 
 [mass_fix]
 enable           = true
-target_ps_dry_pa = 98726.0

@@ -97,6 +97,11 @@ The full list lives in `src/MetDrivers/TransportBinary.jl`.
   by 1 along the vertical axis.
 - `:ps` — surface pressure per cell, in Pa.
 
+The JSON header records the common dry-mass baseline as
+`mass_fix_target_ps_dry_pa`. For a legacy binary without that key, inspection
+infers `sum(m) g / (4 pi R_header^2)` from window 1. A multi-file run rejects
+targets that differ, preventing a day-boundary VMR jump.
+
 ### Optional sections (each enables a runtime capability)
 
 | Section(s) | Capability unlocked |
@@ -156,6 +161,9 @@ returns a `NamedTuple`:
 | `adaptive_substeps :: Union{Nothing, Bool}` | explicit `adaptive_substeps` header value for CS; `nothing` when not recorded |
 | `preprocessor_contract :: Union{Nothing, String}` | preprocessor contract tag (CS only); e.g. `"plan41_variable_substeps"` |
 | `vertical_Nz_output :: Union{Nothing, Int}` | preprocessor-recorded output level count for CS; `nothing` otherwise |
+| `dry_mass_target_ps_pa :: Float64` | recorded target, or window-1/header-radius fallback for a legacy binary |
+| `dry_mass_target_source :: Symbol` | `:header` or `:legacy_window1` |
+| `dry_mass_target_is_current :: Bool` | agrees with `Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE` |
 | `payload_sections :: Vector{Symbol}` | the raw list, for advanced filtering |
 
 The CLI tool `scripts/diagnostics/inspect_transport_binary.jl` is a

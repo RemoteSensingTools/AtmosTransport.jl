@@ -4,6 +4,7 @@
 using Test
 
 using AtmosTransport
+using .AtmosTransport.Parameters: GLOBAL_MEAN_DRY_SURFACE_PRESSURE
 
 const _INSPECTOR_AIR_MASS = 1e16
 
@@ -52,6 +53,8 @@ function _inspector_fixture_binary(path::AbstractString;
                            half_dt_seconds = 1800.0,
                            steps_per_window = 1,
                            mass_basis = :dry,
+                           extra_header = Dict("mass_fix_target_ps_dry_pa" =>
+                                               GLOBAL_MEAN_DRY_SURFACE_PRESSURE),
                            source_flux_sampling = :window_start_endpoint,
                            flux_sampling = :window_constant,
                            flux_kind)
@@ -98,6 +101,9 @@ end
             @test caps.nwindow == 1 && caps.window_seconds == 3600.0
             @test binary_geometry(reader) isa LatLonBinaryGeometry
             @test caps.flux_kind === :substep_mass_amount
+            @test caps.dry_mass_target_ps_pa == GLOBAL_MEAN_DRY_SURFACE_PRESSURE
+            @test caps.dry_mass_target_source === :header
+            @test caps.dry_mass_target_is_current
             @test :m in caps.payload_sections
             @test :am in caps.payload_sections
             close(reader)
@@ -159,7 +165,23 @@ end
             @test occursin("✓ surface pressure", report)
             @test occursin("mass_basis       = dry", report)
             @test occursin("grid_type        = latlon", report)
+            @test occursin("dry-mass target  = 98325.000000 Pa (header)", report)
         end
+    end
+
+    @testset "multi-file target guard rejects a mismatch" begin
+        caps(target, source) = (dry_mass_target_ps_pa = target,
+                                dry_mass_target_source = source)
+        files = [(path = "/tmp/day1.bin", caps = caps(98325.0, :header)),
+                 (path = "/tmp/day2.bin", caps = caps(98733.0, :legacy_window1))]
+        err = try
+            AtmosTransport.Models.DrivenRunner._check_run_dry_mass_targets(files)
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("must share one dry-mass target", sprint(showerror, err))
+        @test occursin("GLOBAL_MEAN_DRY_SURFACE_PRESSURE=98325.0 Pa", sprint(showerror, err))
     end
 
     @testset "inspect_binary errors on missing file" begin

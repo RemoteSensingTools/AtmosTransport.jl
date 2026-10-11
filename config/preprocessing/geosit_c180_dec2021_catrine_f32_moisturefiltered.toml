@@ -64,4 +64,3 @@ geos_moisture_filter_smooth_iters = 8
 [mass_fix]
 enable = true
 mode = "target_ps_dry"
-target_ps_dry_pa = 98726.0

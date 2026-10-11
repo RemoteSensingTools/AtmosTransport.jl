@@ -75,6 +75,7 @@ using ProgressMeter: Progress, next!, finish!, update!
 import ...expand_data_path
 using ...SectionTimer
 using ...ConfigChecks: unknown_key_messages
+using ...Parameters: GLOBAL_MEAN_DRY_SURFACE_PRESSURE
 using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 CubedSphereState, total_air_mass, total_mass, tracer_names,
                 tracer_index, get_tracer
@@ -264,6 +265,7 @@ function _run_driven_simulation_inputs(cfg, input_cfg, binary_paths, arch::Abstr
     for item in binary_caps
         _log_binary_summary(item.path, item.caps)
     end
+    _check_run_dry_mass_targets(binary_caps)
     caps = first(binary_caps).caps
     _validate_input_binary_expectations(caps, input_cfg, first(binary_paths))
     # (window length, window count) of every binary, for the snapshot schedule.
@@ -290,6 +292,24 @@ function _run_driven_simulation_inputs(cfg, input_cfg, binary_paths, arch::Abstr
     finally
         cleanup_staging!(stager)
     end
+end
+
+function _check_run_dry_mass_targets(binary_caps)
+    isempty(binary_caps) && return nothing
+    reference = first(binary_caps)
+    target_ref = Float64(reference.caps.dry_mass_target_ps_pa)
+    for item in Iterators.drop(binary_caps, 1)
+        target = Float64(item.caps.dry_mass_target_ps_pa)
+        isapprox(target, target_ref; atol = 0.1, rtol = 1e-7) && continue
+        throw(ArgumentError(
+            "transport binaries in one run must share one dry-mass target: " *
+            "$(basename(reference.path)) has $(target_ref) Pa " *
+            "($(reference.caps.dry_mass_target_source)), but " *
+            "$(basename(item.path)) has $(target) Pa " *
+            "($(item.caps.dry_mass_target_source)). Regenerate the mismatched binary " *
+            "with GLOBAL_MEAN_DRY_SURFACE_PRESSURE=$(GLOBAL_MEAN_DRY_SURFACE_PRESSURE) Pa."))
+    end
+    return target_ref
 end
 
 _run_driven_simulation_for(::Val{:latlon}, binary_paths::Vector{String}, cfg,

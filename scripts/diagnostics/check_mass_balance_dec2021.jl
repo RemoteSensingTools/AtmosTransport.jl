@@ -11,15 +11,13 @@
 # Across days reports min/max/mean of the per-window totals and the
 # largest day-to-day jump.
 #
-# Pinned target convention: 5.135313897e18 kg corresponds to a
-# global-mean dry surface pressure of 98726.0 Pa
-# (`GLOBAL_MEAN_DRY_SURFACE_PRESSURE`, the default of the
-# `[mass_fix].target_ps_dry_pa` knob in the preprocessing TOMLs).
+# The default target is derived from `GLOBAL_MEAN_DRY_SURFACE_PRESSURE` on the
+# IFS preprocessing sphere.
 #
 # Usage:
 #   julia --project=. scripts/diagnostics/check_mass_balance_dec2021.jl \
 #       ~/data/AtmosTransport/met/geosit/C180/transport_binary_dec2021_catrine_f32 \
-#       [--target-kg 5.135313897e18]
+#       [--target-kg <override>]
 # ---------------------------------------------------------------------------
 
 using Printf
@@ -27,8 +25,11 @@ using Statistics
 
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport.MetDrivers: TransportBinaryReader
+using .AtmosTransport.Parameters: GLOBAL_MEAN_DRY_SURFACE_PRESSURE,
+                                      IFS_EARTH_RADIUS, STANDARD_GRAVITY
 
-const DEFAULT_TARGET_KG = 5.135313897e18
+const DEFAULT_TARGET_KG = GLOBAL_MEAN_DRY_SURFACE_PRESSURE *
+                          (4π * IFS_EARTH_RADIUS^2) / STANDARD_GRAVITY
 
 function _parse_cli(args::Vector{String})
     isempty(args) &&
