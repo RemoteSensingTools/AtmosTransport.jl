@@ -10,11 +10,13 @@
 # with `Core.println` (src/compiler/execution.jl); `Metal.synchronize` does
 # not rethrow it, so a kernel that never ran would otherwise leave an "ok"
 # record. While a Metal case runs, the harness therefore captures the
-# process's standard output (`capture_stdout`) and classifies these lines
-# (`command_buffer_outcome`). An out-of-memory buffer
+# process's standard output (`capture_stdout`), waits at a completion barrier
+# until every handler of the case's command buffers has run
+# (`completion_barrier`), and classifies these lines
+# (`command_buffer_outcome`). When every failed buffer ran out of memory
 # (MTLCommandBufferErrorOutOfMemory, described as "Insufficient Memory
-# (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)") makes the case
-# `skipped_memory`; any other failed buffer makes it `failed`.
+# (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)"), the case is
+# `skipped_memory`; any other failure makes it `failed`.
 
 "Line prefix of Metal.jl's report of a failed command buffer."
 const COMMAND_BUFFER_FAILURE_PREFIX = "ERROR: Failed to submit command buffer:"
@@ -41,14 +43,43 @@ is_out_of_memory_description(description::AbstractString) =
     command_buffer_outcome(failures) -> (status, message)
 
 `("ok", "")` without failed command buffers; `("skipped_memory", reason)`
-when one of them ran out of memory; otherwise `("failed", message)`.
+when every failure is out of memory; otherwise `("failed", message)`. The
+message lists each distinct description with its count.
 """
 function command_buffer_outcome(failures::AbstractVector{<:AbstractString})
     isempty(failures) && return ("ok", "")
-    summary = "$(length(failures)) Metal command buffer(s) failed, first: $(first(failures))"
-    any(is_out_of_memory_description, failures) &&
+    descriptions = unique(failures)
+    listed = join(("$(count(==(d), failures)) x $(d)" for d in descriptions), "; ")
+    summary = "$(length(failures)) Metal command buffer(s) failed: $(listed)"
+    all(is_out_of_memory_description, failures) &&
         return ("skipped_memory", "ran out of device memory: " * summary)
     return ("failed", summary)
+end
+
+"""
+    completion_barrier(commit_sentinel; timeout, poll = 0.001)
+
+Wait until the device's completion handlers of all work committed so far
+have run. `commit_sentinel(signal)` must commit a sentinel command buffer on
+the queue that ran the work, with a completion handler that calls
+`signal()`. A queue completes its command buffers in commit order, and Metal
+runs a queue's completion handlers one at a time in that order, so when the
+sentinel's handler runs, every earlier handler has returned (and printed).
+`signal` only sets an atomic flag: completion handlers run on a Metal thread
+that must not switch Julia tasks. Throws when the signal does not arrive
+within `timeout` seconds.
+"""
+function completion_barrier(commit_sentinel; timeout::Real, poll::Real = 0.001)
+    done = Threads.Atomic{Bool}(false)
+    commit_sentinel(() -> (done[] = true; nothing))
+    deadline = time() + timeout
+    while !done[]
+        time() > deadline && error(
+            "device completion handlers did not finish within $(timeout) s; the case's " *
+            "command-buffer errors cannot be checked")
+        sleep(poll)
+    end
+    return nothing
 end
 
 "An exception `capture_stdout` caught, with its backtrace."

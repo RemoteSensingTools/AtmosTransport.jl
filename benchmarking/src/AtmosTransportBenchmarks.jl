@@ -823,14 +823,33 @@ function _run_case(case::BenchmarkCase)
     return outcome
 end
 
+"Seconds the Metal completion barrier waits before it fails the case."
+const METAL_BARRIER_TIMEOUT = 600.0
+
 """
-Wait for the case's Metal work and give the completion handlers of its last
-command buffers time to report (they run on a Metal thread after the buffer
-completes, not before `synchronize` returns).
+    _drain_metal_command_buffers()
+
+Completion barrier (`completion_barrier`) after a Metal case: commit an
+empty sentinel command buffer on the queue the case's kernels used (Metal.jl's
+task-local `global_queue(device())`, so this runs on the case's task) with a
+completion handler (`MTL.on_completed`) that signals the barrier. When it
+returns, every completion handler of the case has run, so its error reports
+are in the captured output and cannot reach the next case.
 """
 function _drain_metal_command_buffers()
-    Base.invokelatest(getproperty(_main_module(:Metal), :synchronize))
-    sleep(0.25)
+    metal = _main_module(:Metal)
+    completion_barrier(timeout = METAL_BARRIER_TIMEOUT) do signal
+        Base.invokelatest() do
+            mtl = getproperty(metal, :MTL)
+            # Like Metal.synchronize: create and commit inside an autorelease pool.
+            metal.NSAutoreleasePool() do
+                queue = metal.global_queue(metal.device())
+                sentinel = mtl.MTLCommandBuffer(queue)
+                mtl.on_completed(_ -> signal(), sentinel)
+                mtl.commit!(sentinel)
+            end
+        end
+    end
     return nothing
 end
 

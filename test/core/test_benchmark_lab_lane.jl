@@ -467,8 +467,14 @@ code = { delivery = "shared", root = "~/atmostr_bench" }
         @test BR.command_buffer_outcome(BR.command_buffer_failures(noise)) == ("ok", "")
         status, reason = BR.command_buffer_outcome(BR.command_buffer_failures(oom * "\n" * oom))
         @test status == "skipped_memory" && occursin("ran out of device memory: 2 Metal command buffer(s)", reason)
+        @test occursin("2 x Insufficient Memory", reason)
         @test first(BR.command_buffer_outcome(BR.command_buffer_failures(timeout))) == "failed"
-        @test first(BR.command_buffer_outcome(BR.command_buffer_failures(timeout * "\n" * oom))) == "skipped_memory"
+        # Only all-out-of-memory failures skip; a hard failure next to an
+        # out-of-memory one fails the case, and the reason lists both.
+        status, reason = BR.command_buffer_outcome(BR.command_buffer_failures(join([timeout, oom, oom], "\n")))
+        @test status == "failed"
+        @test occursin("3 Metal command buffer(s) failed", reason) && occursin("1 x Caused GPU Timeout", reason) &&
+              occursin("2 x Insufficient Memory", reason)
 
         # The capture sees Core.println from another task, as Metal.jl's
         # completion handlers print, and restores standard output.
@@ -483,6 +489,25 @@ code = { delivery = "shared", root = "~/atmostr_bench" }
         outcome, text = BR.capture_stdout(() -> error("case failed"))
         @test outcome isa BR.CaughtError && outcome.exception == ErrorException("case failed")
         @test stdout === original && isempty(text)
+
+        # Completion barrier: a stand-in queue runs its completion handlers
+        # one at a time on another thread, the case's buffer reporting its
+        # failure 0.6 s late (longer than the old fixed 250 ms wait), then the
+        # sentinel. The barrier returns only after the late report, so the
+        # capture holds it.
+        outcome, text = BR.capture_stdout() do
+            BR.completion_barrier(timeout = 30) do signal
+                Threads.@spawn begin
+                    sleep(0.6)
+                    Core.println(oom)        # the case's late completion handler
+                    signal()                 # the sentinel's handler runs after it
+                end
+            end
+            :done
+        end
+        @test outcome === :done && length(BR.command_buffer_failures(text)) == 1
+        # A sentinel that never signals fails loudly instead of hanging.
+        @test_throws ErrorException BR.completion_barrier(_ -> nothing; timeout = 0.2)
     end
 
     @testset "record validation" begin

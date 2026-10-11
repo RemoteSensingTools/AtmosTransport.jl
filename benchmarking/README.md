@@ -165,10 +165,21 @@ reports a failed buffer only by printing `ERROR: Failed to submit command
 buffer: <description>` from the buffer's completion handler. Nothing is
 thrown, so a kernel that never ran would leave an `ok` record. While a Metal
 case runs, the harness therefore redirects standard output to a temporary
-file, waits for the last completion handlers, and forwards the text
-([`src/device_errors.jl`](src/device_errors.jl)). An out-of-memory buffer
-(`Insufficient Memory (...ErrorOutOfMemory)`) records the case as
-`skipped_memory`; any other failed buffer records it as `failed`.
+file ([`src/device_errors.jl`](src/device_errors.jl)). After the case it
+commits an empty sentinel command buffer on the queue the case's kernels used,
+with a completion handler (`MTL.on_completed`) that sets a flag, and waits for
+the flag. The wait times out after 600 s and then fails the case. Then it
+reads and forwards the text. If every failed buffer ran out of memory
+(`Insufficient Memory (...ErrorOutOfMemory)`), the case is recorded as
+`skipped_memory`; any other failure records it as `failed`, with all the
+reported errors and their counts.
+
+The barrier relies on Metal behaviour that Apple does not document
+explicitly: a queue completes its command buffers in commit order and runs
+their completion handlers one at a time in that order. When the sentinel's
+handler runs, the handlers of the case's buffers have therefore returned.
+Work committed on another queue or from another task would not be covered;
+the benchmark cases launch all their kernels from the harness task.
 
 The estimate is a linear model of the arrays a case allocates, fitted on CPU:
 the summed size of every array reachable from the model after construction
