@@ -38,8 +38,9 @@ repeats = 5
 convection_depth = 85
 
 # Largest grid an operator runs on; its cases on larger grids are not in the
-# case matrix. io would serialize about 8 GB per repeat at C720, and the
-# adjoint tape grows with the grid.
+# case matrix. At C180 L137 the io case serializes 0.68 GB (Float32) or
+# 1.37 GB (Float64) per repeat; at C720 L137 it would be 10.4 or 20.8 GB.
+# The adjoint tape grows with the grid.
 [limits.io]
 max_grid = "C180"
 

@@ -662,7 +662,12 @@
   runs out of memory, is recorded as `skipped_memory` with the required and
   available GiB instead of failing the run; skipped cases are not published,
   and the lab lane accepts and lists them. `--device-memory-gib` overrides
-  the device query. The grouped dashboard draws one
+  the device query. Metal.jl 1.9 only prints a failed command buffer, so
+  the harness captures standard output while a Metal case runs. An
+  out-of-memory buffer makes the case `skipped_memory` and any other failed
+  buffer makes it `failed`, so a kernel that never ran cannot be published
+  as ok. The CPU `io` case no longer copies its host payload to serialize
+  it; on the CPU its estimate counts the read-back copy. The grouped dashboard draws one
   line per group, grid, levels, scheme, and device; lines of renamed groups
   no longer merge.
 - The README opens with badges for CI, the stable and development manuals,

@@ -130,18 +130,19 @@ model operators × 4 grids × 2 level counts + (`io` + `adjoint`) × 2 grids ×
 
 The preset's `[limits]` table sets the largest grid an operator runs on
 (`[limits.io] max_grid = "C180"`); `case_matrix` leaves that operator's cases
-on larger grids out, so the case list is fixed by the preset. `io` would
-serialize about 8 GB per repeat at C720, and the adjoint tape grows with the
-grid. Limits are typed: an unknown operator, an unknown key, or an invalid
-grid is an error.
+on larger grids out, so the case list is fixed by the preset. At C720 L137
+`io` would serialize 10.4 GB (Float32) or 20.8 GB (Float64) per repeat, and
+the adjoint tape grows with the grid. Limits are typed: an unknown operator,
+an unknown key, or an invalid grid is an error.
 
 Changing the grids, levels, tracers, operators, or limits adds or ends
 series. Changing steps, repeats, scheme, or convection depth changes what an
 existing series measures; do that together with a new `group`.
 
 The `io` case serializes the air mass, every tracer, and the three face-flux
-arrays into `TMPDIR` once per repeat: up to 0.7 GB in Float32 and 1.4 GB in
-Float64 (C180 L137, 2 tracers), removed after each repeat.
+arrays into `TMPDIR` once per repeat: up to 0.68 GB in Float32 and 1.37 GB in
+Float64 (C180 L137, 2 tracers), removed after each repeat. Host arrays are
+serialized in place; device arrays are first copied to the host.
 
 ### Device memory
 
@@ -157,6 +158,17 @@ the run continues. An out-of-memory error while a case is built or run
 failure) frees the memory (`GC.gc`, `CUDA.reclaim`) and records the case as
 `skipped_memory` too, so one large case cannot end the run. Skipped cases are
 never published; the lab lane accepts and lists them.
+
+Metal reports a failed kernel differently. Metal.jl 1.9 (the version in the
+benchmark Manifest) runs each kernel launch in its own command buffer and
+reports a failed buffer only by printing `ERROR: Failed to submit command
+buffer: <description>` from the buffer's completion handler. Nothing is
+thrown, so a kernel that never ran would leave an `ok` record. While a Metal
+case runs, the harness therefore redirects standard output to a temporary
+file, waits for the last completion handlers, and forwards the text
+([`src/device_errors.jl`](src/device_errors.jl)). An out-of-memory buffer
+(`Insufficient Memory (...ErrorOutOfMemory)`) records the case as
+`skipped_memory`; any other failed buffer records it as `failed`.
 
 The estimate is a linear model of the arrays a case allocates, fitted on CPU:
 the summed size of every array reachable from the model after construction
@@ -176,7 +188,9 @@ The coefficients are the fitted values rounded up, and they are the same in
 Float32 and Float64. Convection and full add the TM5 column tile (at most
 1 GiB, `tm5_legacy_tile_bytes`) when the collaborative GPU solve does not
 engage: on the CPU and for Float64 deeper than 73 levels. `io` needs exactly
-its payload; `adjoint` needs its payload plus `(3 + 8.5 × steps) V` elements,
+its payload on a GPU. On the CPU, where the device is the host, it needs the
+payload twice, because the read-back copy is allocated while the payload is
+live. `adjoint` needs its payload plus `(3 + 8.5 × steps) V` elements,
 which bounds its measured allocations. Every case adds 16 MiB. Checked against
 the measured sizes, the estimate is never lower and is 1-17 % higher at C90 and
 C180 L72 (2 tracers). A case is skipped when `1.05 × estimate + 0.5 GiB`
@@ -194,10 +208,10 @@ expected outcome:
 | C720 L137 convection | 17.4 | 35.3 (TM5 tile included) |
 | C720 L137 full | 27.0 | 54.5 (TM5 tile included) |
 
-With about 44 GiB free on the L40S, 39 GiB on the A100 40 GB, and Metal's
-recommended working set on the 64 GB M5 Pro (about 48 GiB), every Float32
-case fits. On curry, Float64 C720 L137 `full` is skipped, so 79 of 80 cases
-run. Float64 C720 L137 `advection` and `convection` are within 4 GiB of
+The first lab run (commit `2c56189e`) found 44.0 GiB free on the L40S,
+38.6 GiB on the A100 40 GB, and 51.8 GiB of Metal working set on the 64 GB
+M5 Pro, so every Float32 case fits. On curry, Float64 C720 L137 `full` was
+skipped, so 79 of 80 cases ran, as the estimate predicted. Float64 C720 L137 `advection` and `convection` are within 4 GiB of
 the A100's free memory. The harness builds a case's fields on the host and
 then copies them to the device. On the Mac's unified memory that host copy
 (about 10 GB for C720 L137 Float32) shares the 64 GB with the device arrays.

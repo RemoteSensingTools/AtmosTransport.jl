@@ -31,6 +31,7 @@ include("case_options.jl")
 include("records.jl")
 include("synthetic_fields.jl")
 include("memory_model.jl")
+include("device_errors.jl")
 
 const _HALO = BENCHMARK_HALO
 
@@ -348,6 +349,9 @@ function _build_cs_payload(case::BenchmarkCase)
             panels_cm = Adapt.adapt(adapter, cm_cpu))
 end
 
+# Device arrays are copied to the host for serialization; host arrays are
+# serialized in place (no second copy of the payload).
+_hostify(x::Array) = x
 _hostify(x::AbstractArray) = Array(x)
 _hostify(x::Tuple) = map(_hostify, x)
 _hostify(x::NamedTuple) = map(_hostify, x)
@@ -786,7 +790,49 @@ end
 _required_device_bytes(case::BenchmarkCase) =
     required_device_bytes(estimate_case_bytes(case.operator, sizeof(case.float_type), case.grid_nc,
                                               case.levels, case.tracers; steps = case.steps,
-                                              tm5_legacy_tile = !_tm5_collaborative(case)))
+                                              tm5_legacy_tile = !_tm5_collaborative(case),
+                                              device_is_host = case.backend === :cpu))
+
+"""
+    _run_case(case) -> Dict
+
+`_time_case`, checked for device errors that do not raise. On Metal the
+case's standard output is captured (`capture_stdout`, `device_errors.jl`)
+and the command buffers Metal.jl reports as failed decide the outcome: an
+out-of-memory buffer gives a `skipped_memory` record, any other failure a
+`failed` one. Exceptions propagate to the caller as before.
+"""
+function _run_case(case::BenchmarkCase)
+    case.backend === :metal || return _time_case(case)
+    outcome, text = capture_stdout() do
+        try
+            _time_case(case)
+        finally
+            _drain_metal_command_buffers()
+        end
+    end
+    status, message = command_buffer_outcome(command_buffer_failures(text))
+    if status == "skipped_memory"
+        @warn "Metal command buffer ran out of memory; case recorded as skipped" case=_case_name(case) reason=message
+        return _skipped_result(case, message)
+    elseif status == "failed"
+        @error "Metal command buffer failed; case recorded as failed" case=_case_name(case) reason=message
+        return _failed_result(case, ErrorException(message))
+    end
+    outcome isa CaughtError && throw(CapturedException(outcome.exception, outcome.backtrace))
+    return outcome
+end
+
+"""
+Wait for the case's Metal work and give the completion handlers of its last
+command buffers time to report (they run on a Metal thread after the buffer
+completes, not before `synchronize` returns).
+"""
+function _drain_metal_command_buffers()
+    Base.invokelatest(getproperty(_main_module(:Metal), :synchronize))
+    sleep(0.25)
+    return nothing
+end
 
 "Raw record of a case that was not run because it does not fit in device memory."
 function _skipped_result(case::BenchmarkCase, reason::AbstractString)
@@ -821,7 +867,7 @@ function run_benchmarks(args = ARGS)
             _skipped_result(case, skip)
         else
             try
-                _time_case(case)
+                _run_case(case)
             catch err
                 err isa InterruptException && rethrow()
                 if is_out_of_memory(err)

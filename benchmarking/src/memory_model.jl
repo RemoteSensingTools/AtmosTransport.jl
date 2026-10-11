@@ -76,19 +76,21 @@ function io_payload_bytes(float_bytes::Integer, Nc::Integer, Nz::Integer, Nt::In
 end
 
 """
-    estimate_case_bytes(operator, float_bytes, Nc, Nz, Nt; steps, tm5_legacy_tile) -> Int
+    estimate_case_bytes(operator, float_bytes, Nc, Nz, Nt; steps, tm5_legacy_tile, device_is_host) -> Int
 
 Estimated device memory of one benchmark case: the fitted model-memory
 estimate (`MODEL_MEMORY_COEFFICIENTS`), plus the TM5 column tile for
 `convection` and `full` when `tm5_legacy_tile` (the collaborative solve does
-not engage); the exact payload for `io`; the payload plus the adjoint's tape
-allowance for `adjoint`. `MEMORY_FIXED_BYTES` is added to every case.
+not engage); for `io` the payload, twice when `device_is_host` (CPU runs:
+the read-back copy is allocated while the payload is live; a GPU's read-back
+copy is in host memory); the payload plus the adjoint's tape allowance for
+`adjoint`. `MEMORY_FIXED_BYTES` is added to every case.
 """
 function estimate_case_bytes(operator::Symbol, float_bytes::Integer, Nc::Integer, Nz::Integer,
-                             Nt::Integer; steps::Integer, tm5_legacy_tile::Bool)
+                             Nt::Integer; steps::Integer, tm5_legacy_tile::Bool, device_is_host::Bool)
     V = _haloed_volume(Nc, Nz)
     bytes = if operator === :io
-        io_payload_bytes(float_bytes, Nc, Nz, Nt)
+        (device_is_host ? 2 : 1) * io_payload_bytes(float_bytes, Nc, Nz, Nt)
     elseif operator === :adjoint
         io_payload_bytes(float_bytes, Nc, Nz, 1) +
             float_bytes * V * (ADJOINT_MEMORY_ELEMENTS.base + ADJOINT_MEMORY_ELEMENTS.per_step * steps)

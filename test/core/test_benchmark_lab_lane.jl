@@ -1,6 +1,7 @@
 using Test
 using Dates
 using JSON3
+using Serialization
 using TOML
 
 # The lab lane and the shared naming/preset logic use Base, TOML, JSON3, and
@@ -18,6 +19,7 @@ include(joinpath(SRC, "case_options.jl"))
 include(joinpath(SRC, "records.jl"))
 include(joinpath(SRC, "synthetic_fields.jl"))
 include(joinpath(SRC, "memory_model.jl"))
+include(joinpath(SRC, "device_errors.jl"))
 end
 const BR = BenchmarkRecords
 
@@ -392,31 +394,51 @@ code = { delivery = "shared", root = "~/atmostr_bench" }
                     (:convection, 90, 72, 354403472), (:convection, 180, 72, 1343629472),
                     (:full, 90, 72, 442113936), (:full, 180, 72, 1678227936)]
         for (op, Nc, Nz, bytes) in measured
-            estimate = BR.estimate_case_bytes(op, 4, Nc, Nz, 2; steps = 1, tm5_legacy_tile = true)
+            estimate = BR.estimate_case_bytes(op, 4, Nc, Nz, 2; steps = 1, tm5_legacy_tile = true, device_is_host = false)
             @test bytes <= estimate <= 1.2 * bytes
         end
         # Float64, 3 tracers (coefficients are in elements of the float type).
-        @test 33543568 <= BR.estimate_case_bytes(:advection, 8, 32, 40, 3; steps = 1, tm5_legacy_tile = false)
-        @test 65467280 <= BR.estimate_case_bytes(:full, 8, 32, 40, 3; steps = 1, tm5_legacy_tile = true)
+        @test 33543568 <= BR.estimate_case_bytes(:advection, 8, 32, 40, 3; steps = 1, tm5_legacy_tile = false, device_is_host = false)
+        @test 65467280 <= BR.estimate_case_bytes(:full, 8, 32, 40, 3; steps = 1, tm5_legacy_tile = true, device_is_host = false)
         # The TM5 tile: measured 758344568 B at C180 L72 Float32, capped at about 1 GiB.
         @test abs(BR.tm5_legacy_tile_bytes(4, 180, 72) - 758344568) < 1024
         @test BR.tm5_legacy_tile_bytes(4, 720, 137) <= 2^30
-        @test BR.estimate_case_bytes(:full, 4, 720, 137, 2; steps = 5, tm5_legacy_tile = true) -
-              BR.estimate_case_bytes(:full, 4, 720, 137, 2; steps = 5, tm5_legacy_tile = false) ==
+        @test BR.estimate_case_bytes(:full, 4, 720, 137, 2; steps = 5, tm5_legacy_tile = true, device_is_host = false) -
+              BR.estimate_case_bytes(:full, 4, 720, 137, 2; steps = 5, tm5_legacy_tile = false, device_is_host = false) ==
               BR.tm5_legacy_tile_bytes(4, 720, 137)
         # io: exactly the payload arrays.
         Hp, Nc, Nz, Nt = 3, 24, 32, 2
         N = Nc + 2Hp
         payload = 6 * sizeof(Float32) * ((1 + Nt) * N * N * Nz + 2 * (N + 1) * N * Nz + N * N * (Nz + 1))
         @test BR.io_payload_bytes(4, Nc, Nz, Nt) == payload
-        @test BR.estimate_case_bytes(:io, 4, Nc, Nz, Nt; steps = 5, tm5_legacy_tile = false) ==
+        @test BR.estimate_case_bytes(:io, 4, Nc, Nz, Nt; steps = 5, tm5_legacy_tile = false, device_is_host = false) ==
               payload + BR.MEMORY_FIXED_BYTES
-        @test BR.estimate_case_bytes(:adjoint, 8, 180, 137, 1; steps = 5, tm5_legacy_tile = false) >
-              BR.estimate_case_bytes(:adjoint, 8, 180, 137, 1; steps = 1, tm5_legacy_tile = false)
+        # On the CPU the device is the host: the io case serializes the payload
+        # in place and reads a second copy back while the first is live.
+        # Measured: live payload plus everything one round trip allocates.
+        let FT = Float64
+            panel(dims...) = ntuple(_ -> rand(FT, dims...), 6)
+            payload = (panels_m = panel(N, N, Nz), tracers = ntuple(_ -> panel(N, N, Nz), Nt),
+                       panels_am = panel(N + 1, N, Nz), panels_bm = panel(N, N + 1, Nz),
+                       panels_cm = panel(N, N, Nz + 1))
+            path = tempname()
+            round_trip() = (open(io -> serialize(io, payload), path, "w"); open(deserialize, path))
+            round_trip()
+            allocated = @allocated round_trip()
+            rm(path; force = true)
+            live = BR.io_payload_bytes(8, Nc, Nz, Nt)
+            @test Base.summarysize(payload) >= live      # the formula counts every payload array
+            host_estimate = BR.estimate_case_bytes(:io, 8, Nc, Nz, Nt; steps = 5, tm5_legacy_tile = false,
+                                                   device_is_host = true)
+            @test live + allocated <= host_estimate
+            @test host_estimate == 2 * live + BR.MEMORY_FIXED_BYTES
+        end
+        @test BR.estimate_case_bytes(:adjoint, 8, 180, 137, 1; steps = 5, tm5_legacy_tile = false, device_is_host = false) >
+              BR.estimate_case_bytes(:adjoint, 8, 180, 137, 1; steps = 1, tm5_legacy_tile = false, device_is_host = false)
 
         # Skip decision against a device's available memory.
         required(op, fb, Nc, Nz, legacy) =
-            BR.required_device_bytes(BR.estimate_case_bytes(op, fb, Nc, Nz, 2; steps = 5, tm5_legacy_tile = legacy))
+            BR.required_device_bytes(BR.estimate_case_bytes(op, fb, Nc, Nz, 2; steps = 5, tm5_legacy_tile = legacy, device_is_host = false))
         a100 = round(Int, 38.9 * 2^30)
         @test BR.memory_skip_reason(required(:full, 4, 720, 137, false), a100) === nothing
         reason = BR.memory_skip_reason(required(:full, 8, 720, 137, true), a100)
@@ -432,6 +454,35 @@ code = { delivery = "shared", root = "~/atmostr_bench" }
         @test BR.is_out_of_memory(CompositeException([ErrorException("x"), OutOfMemoryError()]))
         @test !BR.is_out_of_memory(ErrorException("cubed-sphere palindrome subcycling exceeded max_n_sub=4096"))
         @test !BR.is_out_of_memory(ArgumentError("bad"))
+    end
+
+    @testset "Metal command-buffer failures" begin
+        # Metal.jl 1.9 only prints failed command buffers; stand-in output.
+        oom = "ERROR: Failed to submit command buffer: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)"
+        timeout = "ERROR: Failed to submit command buffer: Caused GPU Timeout Error (00000002:kIOAccelCommandBufferCallbackErrorTimeout)"
+        noise = "Lab Synthetic CS Sweep / C720 L137 full 2tr / GPU-Metal M5 Pro / Float32   22.1 s/step"
+        @test BR.command_buffer_failures(join([noise, oom, noise, timeout], "\n")) ==
+              ["Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)",
+               "Caused GPU Timeout Error (00000002:kIOAccelCommandBufferCallbackErrorTimeout)"]
+        @test BR.command_buffer_outcome(BR.command_buffer_failures(noise)) == ("ok", "")
+        status, reason = BR.command_buffer_outcome(BR.command_buffer_failures(oom * "\n" * oom))
+        @test status == "skipped_memory" && occursin("ran out of device memory: 2 Metal command buffer(s)", reason)
+        @test first(BR.command_buffer_outcome(BR.command_buffer_failures(timeout))) == "failed"
+        @test first(BR.command_buffer_outcome(BR.command_buffer_failures(timeout * "\n" * oom))) == "skipped_memory"
+
+        # The capture sees Core.println from another task, as Metal.jl's
+        # completion handlers print, and restores standard output.
+        original = stdout
+        outcome, text = BR.capture_stdout() do
+            println("case output")
+            wait(Threads.@spawn Core.println(oom))
+            :result
+        end
+        @test outcome === :result && stdout === original
+        @test occursin("case output", text) && BR.command_buffer_failures(text) == [oom[(length(BR.COMMAND_BUFFER_FAILURE_PREFIX) + 2):end]]
+        outcome, text = BR.capture_stdout(() -> error("case failed"))
+        @test outcome isa BR.CaughtError && outcome.exception == ErrorException("case failed")
+        @test stdout === original && isempty(text)
     end
 
     @testset "record validation" begin
