@@ -19,7 +19,9 @@ make that decision possible.
 - Generic geometry accessors:
   [`GeometryOps.jl`](GeometryOps.jl)
 - Structured lat-lon mesh:
-  [`LatLonMesh.jl`](LatLonMesh.jl)
+  [`LatLonMesh.jl`](LatLonMesh.jl); `LatLonMesh(; Nx, Ny, longitude, latitude)`
+  for the regular transport mesh and `LatLonMesh(λᶠ, φᶠ; FT, radius)` for
+  meshes from explicit cell faces (source grids of input files)
 - Reduced-Gaussian face-connected mesh:
   [`ReducedGaussianMesh.jl`](ReducedGaussianMesh.jl)
 - Cubed-sphere mesh definitions and panel conventions:
@@ -47,7 +49,8 @@ make that decision possible.
 - [`VerticalCoordinates.jl`](VerticalCoordinates.jl) — hybrid-sigma
   vertical coordinate and pressure helpers
 - [`GeometryOps.jl`](GeometryOps.jl) — generic geometry accessor API
-- [`LatLonMesh.jl`](LatLonMesh.jl) — logically rectangular lat-lon mesh
+- [`LatLonMesh.jl`](LatLonMesh.jl) — logically rectangular lat-lon mesh,
+  regular or from explicit faces, and `latitude_row_order`
 - [`ReducedGaussianMesh.jl`](ReducedGaussianMesh.jl) — face-connected
   reduced-Gaussian mesh with ring-aware metadata
 - [`PanelConnectivity.jl`](PanelConnectivity.jl) — cubed-sphere edge
@@ -59,6 +62,36 @@ make that decision possible.
   local tangent bases (used by the constructor)
 - [`cs_mesh_locate.jl`](cs_mesh_locate.jl) — inverse projection
   (lon, lat) → (panel, s, t)
+
+## Lat-lon meshes from explicit faces
+
+`LatLonMesh(λᶠ, φᶠ; FT, radius)` is the one construction path of the type; the
+regular keyword constructor builds its faces with `range` and calls it, so a
+regular mesh is reproduced bit for bit. `radius` is required: a source mesh
+must sit on the sphere of the mesh it is regridded to. The contract:
+
+- Longitude faces are uniform (relative tolerance `1e-10`, plus two units of
+  roundoff of the input precision) and span at most 360°. The first face may be
+  any value (TRENDY grids start at -180.5°, -0.625°, -1.25°, -180.625° or
+  -180.9375°; 0…360 grids are kept as they are). A sequence that wraps by -360°
+  is unwrapped, not rolled: every face after a negative step is shifted by
+  +360°, so the stored faces increase and mesh column `i` is input column `i`.
+- Latitude faces are strictly monotone in `[-90, 90]`. The mesh always stores
+  them ascending (south to north), which the transport code, the conservative
+  regridder's cell polygons, the observation locator and the output writers
+  expect. For descending input (files stored north to south),
+  `latitude_row_order(φᶠ)` returns the row permutation: mesh row `j` is input
+  row `latitude_row_order(φᶠ)[j]`.
+- Uniform latitude faces give a finite `Δφ`. Non-uniform faces (pole-centred
+  rows with half-width polar caps, a truncated first row, Gaussian latitudes)
+  give `Δφ = NaN`; `dx`, `dy` and the x-face lengths then throw an
+  `ArgumentError`, so such a mesh cannot reach Δφ-based metrics silently. The
+  lat-lon `write_transport_binary` refuses it too, because the binary header
+  records only the latitude interval.
+- Cell areas always come from the faces,
+  `A_ij = R² Δλ (sin φᶠ[j+1] - sin φᶠ[j])` (Δλ in radians), and sum to `4πR²`
+  for a global mesh. Centres are face midpoints; for pole-centred and Gaussian
+  rows they differ from the file's coordinate, which only labels the cell.
 
 ## Common Tasks
 
@@ -93,6 +126,7 @@ make that decision possible.
   - [`../../docs/src/preprocessing/conventions.md`](../../docs/src/preprocessing/conventions.md)
 - Tests:
   - [`../../test/core/test_structured_mesh_metadata.jl`](../../test/core/test_structured_mesh_metadata.jl)
+  - [`../../test/core/test_latlon_explicit_faces.jl`](../../test/core/test_latlon_explicit_faces.jl)
   - [`../../test/core/test_reduced_gaussian_mesh.jl`](../../test/core/test_reduced_gaussian_mesh.jl)
   - [`../../test/core/test_basis_explicit_core.jl`](../../test/core/test_basis_explicit_core.jl)
   - [`../../test/orphan/test_cubed_sphere_runtime.jl`](../../test/orphan/test_cubed_sphere_runtime.jl)

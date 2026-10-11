@@ -62,7 +62,9 @@ AtmosGrid and an ordered vector of forcing windows. Window payloads must match
 the grid topology and declared mass basis. The file is written through
 [`AtomicFiles.atomic_publish`](@ref AtmosTransport.AtomicFiles.atomic_publish):
 it replaces `path` only after the header and all payloads succeed, with mode
-`0o666 & ~umask`.
+`0o666 & ~umask`. A lat-lon mesh must have uniform latitude faces: the header
+records only the latitude interval, so a mesh built from non-uniform faces
+(`Δφ = NaN`) is refused with an `ArgumentError`.
 """
 function write_transport_binary(path::AbstractString,
                                 grid::AtmosGrid{<:LatLonMesh},
@@ -83,6 +85,11 @@ function write_transport_binary(path::AbstractString,
                                 threaded::Bool = Threads.nthreads() > 1)
     flux_kind === :substep_mass_amount || throw(ArgumentError(
         "lat-lon transport binaries require flux_kind=:substep_mass_amount"))
+    # The header records only the latitude interval, and the reader rebuilds a
+    # uniform mesh from it; non-uniform faces (Δφ = NaN) would come back wrong.
+    isnan(grid.horizontal.Δφ) && throw(ArgumentError(
+        "lat-lon transport binaries need uniform latitude faces; this mesh has " *
+        "non-uniform latitude faces (Δφ = NaN)"))
     isempty(windows) && throw(ArgumentError("write_transport_binary requires at least one window"))
 
     mesh = grid.horizontal

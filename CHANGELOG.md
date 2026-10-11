@@ -528,6 +528,17 @@
   transport binary to a coarser nested grid (for example C90 to C30) by
   block-summing the transport operator; not yet validated as a replacement
   for preprocessing at the target resolution.
+- `LatLonMesh(λᶠ, φᶠ; FT, radius)` builds a lat-lon mesh from explicit cell
+  faces (the source grids of input files); `radius` is required. Longitude
+  spacing must be uniform but may start at any face, and a sequence that wraps
+  by −360° is unwrapped so data columns keep their order. Latitude faces may be
+  descending (stored ascending; `Grids.latitude_row_order(φᶠ)` gives the row
+  permutation) and non-uniform (pole-centred, truncated, Gaussian), in which
+  case `Δφ = NaN` and `dx`, `dy` and the x-face lengths throw, and the lat-lon
+  `write_transport_binary` refuses the mesh (its header records only the
+  latitude interval). Areas come from the faces. The regular keyword
+  constructor now builds its faces and calls this one; regular meshes are
+  bit-identical.
 - SIF-GPP, FLUXCOM, TRENDY v14, TRANSCOM, GFED, and CATRINE campaign
   preprocessing, run configs, visualization scripts, and ATBD memos.
 
