@@ -201,6 +201,20 @@
   surface-pressure correction by `Delta B_k (1-q_k)`, matching the spectral
   path and leaving pure-pressure layers unchanged. Native target mass uses the
   binary header sphere, removing the older approximately 7 Pa radius mismatch.
+- File initial conditions with hybrid coefficients are now remapped as layer
+  integrals in the surface-anchored hybrid coordinate: source interfaces use
+  `ap + bp * ps_target`, with the binary's own column surface pressure. The
+  file's `Psurf` is no longer read or required, and
+  `FileInitialConditionSource.psurf` is removed. This conserves column
+  integrals to round-off, makes terrain-following ICs insensitive to uniform
+  dry-mass-pin shifts, and handles pressure-level (`bp = 0`) files by extending
+  the nearest end layer when their coverage stops above or below the target
+  surface. For the CATRINE C90 CO₂ file, the measured bottom-10%-of-column
+  difference from the file on its own levels is −0.000153 ppm for a uniform
+  400 Pa shift; the replaced absolute-pressure point interpolation produced
+  1.2–1.5 ppm RMS local errors. Runtime goldens using file ICs change in their
+  file-initialized tracers (`co2` and `sf6`); analytic and `cs_native` tracers
+  are unchanged.
 - Transport binaries (eager and streaming writers), the spectral day cache and
   cached regridders are published through `AtomicFiles`: a sibling staging
   file moved onto the target by one replacing rename (`rename(2)` on POSIX
@@ -230,12 +244,12 @@
   upside down, a top-first file with hybrid coefficients would have been
   remapped wrongly, and a file without them but with another level count was
   zero-filled. Files with hybrid coefficients are now oriented by their
-  interface pressures and always remapped in log pressure; files without
-  them must match the model's level count and state their order (pressure
-  or height units, a CF `positive` attribute, or `init.vertical_order`).
-  No shipped configuration was affected: all use the CATRINE files on 34,
-  72, 117 or 137 levels, which took the correct path, and their initial
-  conditions are unchanged.
+  interface pressures and always remapped; files without them must match the
+  model's level count and state their order (pressure or height units, a CF
+  `positive` attribute, or `init.vertical_order`). No shipped configuration
+  was affected by the ordering fix: all use the CATRINE files on 34, 72, 117
+  or 137 levels, which already took the correctly oriented path. Their values
+  now change for the separate conservative-remap fix above.
 - ERA5 N320 preprocessing had two registration errors. The GRIB
   `reduced_gg` fields (specific humidity and the convective mass fluxes)
   were placed half a cell east: their first point is at 0°, while the mesh

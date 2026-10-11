@@ -78,3 +78,26 @@ December 2021 – March 2022 (`compare_c90_gcic_test/`):
 
 Transport comparisons with the GCHP CATRINE C90 run should therefore start
 from GCHP's own first output, or allow for this offset.
+
+## Addendum: near-surface state (2026-10-11)
+
+The half-layer placement does not explain most of GCHP's near-surface excess.
+GCHP's 00z state, estimated as its archived 03z state minus AtmosTransport's
+own three-hour tendency, is about **+0.25 ppm** above the protocol file in the
+bottom 10% of column air mass. Placing file values at layer tops accounts for
+only +0.032 ppm globally (about +0.082 ppm at 30–60°N and +0.139 ppm at
+60–90°N). Of the tested reconstructions, top-interface values on GCHP's
+moist-pressure levels are closest, but still leave about +0.09 ppm unexplained;
+the moist-pressure interpretation is therefore suggestive, not established.
+
+A separate AtmosTransport error had obscured this comparison. File ICs were
+point-interpolated in absolute pressure using the file's `Psurf` for source
+levels and the binary's pressure for target levels. Changing the dry-mass pin
+therefore moved the initialized near-surface CO₂ by −0.11 ppm. The corrected
+mapping rebuilds source interfaces as `ap + bp * ps_target` and conservatively
+remaps layer integrals. Against the protocol state on its own levels, its C90
+bottom-band global error is within 0.001 ppm (0.007 ppm columnwise RMS), and it
+is insensitive to the uniform pin shift. This strengthens the recommendation
+above: comparisons intended to isolate transport should start from GCHP's own
+03z state, because matching GCHP's near-surface protocol-file reconstruction
+is not a valid initialization criterion.

@@ -222,10 +222,20 @@ CS builder in `src/Models/initial_conditions/cubed_sphere.jl`):
 | `"cs_native"` | no | no | yes | `file`, `variable`; optional `time_index`, `vertical_order`, `clamp_negative` (default `false`) |
 
 The file kinds (`file`, `netcdf`, `file_field`, `catrine_co2`) read a
-lon-lat-level field of dry VMR. A file with hybrid coefficients (`ap`, `bp`
-and `Psurf`, like the CATRINE start files) is oriented by its interface
-pressures and remapped onto the model levels in log pressure, whatever its
-level count. A file without them is copied level by level, so it must have the
+lon-lat-level field of layer-mean dry VMR. A file with hybrid coefficients
+`ap` and `bp` is oriented by its interface pressures and conservatively
+remapped, whatever its level count; `Psurf` is not needed or read. In each
+column the source interfaces are `ap + bp * ps_target`, using the transport
+binary's surface pressure, and the target interfaces are
+`A_target + B_target * ps_target`. The remap preserves layer pressure
+integrals. It is terrain-following near the surface, becomes absolute-pressure
+mapping where `bp = 0`, and extends the nearest end layer if a pressure-level
+source does not span the target top or surface. This avoids making an initial
+VMR depend on topographic differences or the preprocessing dry-mass pin; see
+the equations and CATRINE measurements in
+[`src/Models/initial_conditions/README.md`](https://github.com/RemoteSensingTools/AtmosTransport/blob/main/src/Models/initial_conditions/README.md).
+
+A file without `ap` and `bp` is copied level by level, so it must have the
 model's level count, and its vertical coordinate must say which end is the
 top: pressure units or CF `positive = "down"` (values grow toward the
 surface), height units or `positive = "up"`; otherwise set

@@ -134,23 +134,6 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
     vmr_src_levels = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nlev_src), CS_PANEL_COUNT)
     unpack_flat_to_panels_3d!(vmr_src_levels, dst_flat, Nc, Nlev_src)
 
-    # 2D source surface pressure (files with hybrid coefficients, always remapped).
-    # NOTE: this is the SOURCE psurf (Catrine), used to build source p-half
-    # levels. The TARGET ps comes from `ps_tgt_panels` passed in by the caller
-    # — the binary's own ps. Mixing the two cleanly is what fixes the
-    # area-mismatch artifact.
-    src_ps_panels = if source.needs_vinterp
-        src_ps_flat = Vector{Float64}(undef, n_src)
-        dst_ps_flat = Vector{Float64}(undef, n_dst)
-        copyto!(src_ps_flat, reshape(source.psurf, n_src))
-        apply_regridder!(dst_ps_flat, regridder, src_ps_flat)
-        panels_ps = ntuple(_ -> Matrix{Float64}(undef, Nc, Nc), CS_PANEL_COUNT)
-        unpack_flat_to_panels_2d!(panels_ps, dst_ps_flat, Nc)
-        panels_ps
-    else
-        nothing
-    end
-
     # Vertical remap column-by-column into interior `(Nc, Nc, Nz)` tuple.
     vmr = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), CS_PANEL_COUNT)
     src_q = Vector{FT}(undef, Nlev_src)
@@ -159,12 +142,10 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
         for j in 1:Nc, i in 1:Nc
             @views copyto!(src_q, vmr_src_levels[p][i, j, :])
             if source.needs_vinterp
-                ps_src = Float64(src_ps_panels[p][i, j])
                 ps_tgt = Float64(ps_tgt_panels[p][i, j])
-                _interpolate_log_pressure_profile!(@view(vmr[p][i, j, :]),
-                                                   src_q,
-                                                   source.ap, source.bp, ps_src,
-                                                   A_tgt, B_tgt, ps_tgt)
+                _remap_hybrid_profile!(@view(vmr[p][i, j, :]), src_q,
+                                       source.ap, source.bp,
+                                       A_tgt, B_tgt, ps_tgt)
             else
                 _copy_profile!(@view(vmr[p][i, j, :]), src_q)
             end

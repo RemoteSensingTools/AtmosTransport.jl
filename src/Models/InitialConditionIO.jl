@@ -17,7 +17,7 @@ topology-dispatched VMR builders for the unified runtime.
   - `MoistBasis`: `rm = vmr .* air_mass .* (1 .- qv)`, because IC VMRs are
     dry and `air_mass` is moist; `qv` must be supplied.
 - [`FileInitialConditionSource`](@ref) — container for a loaded IC
-  NetCDF (3D VMR + hybrid coefficients + surface pressure).
+  NetCDF (3D VMR + optional hybrid coefficients).
 
 ## Contents
 
@@ -155,20 +155,20 @@ Container for a file-based initial condition (e.g. Catrine startCO2).
 - `raw`            — 3D mixing ratio field `(nlon_src, nlat_src, nlevel_src)`.
                      With hybrid coefficients, surface first (`k = 1` is the
                      surface, decided from the interface pressures, the order
-                     of `_interpolate_log_pressure_profile!`); without them,
+                     of `_remap_hybrid_profile!`); without them,
                      top first like the model levels.
 - `lon`, `lat`     — source coordinate vectors [degrees]. May be in [-180,180)
                      or [0,360); the bilinear sampler wraps to [0,360)
                      internally via `wrapped_longitude_360`.
 - `ap`, `bp`       — hybrid half-level coefficients `(nlevel_src + 1)`:
-                     `p_half[k] = ap[k] + bp[k] × ps_src`. Units: `ap` [Pa],
-                     `bp` [dimensionless].
-- `psurf`          — surface pressure `(nlon_src, nlat_src)` [Pa].
+                     `p_half[k] = ap[k] + bp[k] × ps_tgt`. The model
+                     column's surface pressure anchors the source coordinate;
+                     a file surface-pressure field is neither needed nor read.
+                     Units: `ap` [Pa], `bp` [dimensionless].
 - `needs_vinterp`  — `true` for files with hybrid coefficients, which are
-                     always remapped in log pressure
-                     (`_interpolate_log_pressure_profile!`); files without
-                     them are copied level by level and must have the target's
-                     level count.
+                     always conservatively remapped in pressure
+                     (`_remap_hybrid_profile!`); files without them are copied
+                     level by level and must have the target's level count.
 """
 struct FileInitialConditionSource{FT}
     raw           :: Array{FT, 3}
@@ -176,7 +176,6 @@ struct FileInitialConditionSource{FT}
     lat           :: Vector{Float64}
     ap            :: Vector{Float64}
     bp            :: Vector{Float64}
-    psurf         :: Matrix{Float64}
     needs_vinterp :: Bool
 end
 
@@ -295,7 +294,8 @@ function _sample_bilinear_scalar(raw::AbstractMatrix{T},
                                  lat_src::Vector{Float64},
                                  lon::Real,
                                  lat::Real) where T
-    ilo, ihi, jlo, jhi, w00, w10, w01, w11 = _horizontal_interp_weights(lon, lat, lon_src, lat_src)
+    ilo, ihi, jlo, jhi, w00, w10, w01, w11 =
+        _horizontal_interp_weights(lon, lat, lon_src, lat_src)
     return w00 * raw[ilo, jlo] +
            w10 * raw[ihi, jlo] +
            w01 * raw[ilo, jhi] +
@@ -340,19 +340,17 @@ function _load_file_initial_condition_source(cfg, ::Type{FT}, Nz_target::Integer
               read_raw(FT, ds, variable, MaskedAsZero(), :, :, :, time_index) :
               read_raw(FT, ds, variable, MaskedAsZero())
 
-        has_hybrid = haskey(ds, "ap") && haskey(ds, "bp") && haskey(ds, "Psurf")
+        has_hybrid = haskey(ds, "ap") && haskey(ds, "bp")
         ap = has_hybrid ? Float64.(ds["ap"][:]) : Float64[]
         bp = has_hybrid ? Float64.(ds["bp"][:]) : Float64[]
-        psurf = has_hybrid ? Float64.(nomissing(ds["Psurf"][:, :], STANDARD_PRESSURE)) : zeros(Float64, 0, 0)
 
         # Latitude ascending, longitude from the first value ≥ 0 (GriddedIO).
         orientation = latlon_orientation(lon_src, lat_src)
         raw = orient(raw, orientation)
-        has_hybrid && (psurf = orient(psurf, orientation))
         lon_src, lat_src = orient_coordinates(lon_src, lat_src, orientation)
 
         # Vertical order. Hybrid files are oriented by their interface
-        # pressures (surface first, as the log-pressure remap expects) and
+        # pressures (surface first, as the conservative remap expects) and
         # always remapped; the values of the level coordinate do not matter.
         # Files without hybrid coefficients are copied level by level onto the
         # top-first model levels, so they must say which end is the top.
@@ -371,10 +369,10 @@ function _load_file_initial_condition_source(cfg, ::Type{FT}, Nz_target::Integer
             _file_vertical_order(cfg, ds[lev_var], lev_src, file) === :surface_first &&
                 (raw = raw[:, :, end:-1:1])
             size(raw, 3) == Nz_target || throw(ArgumentError(
-                "$(file) has $(size(raw, 3)) levels and no hybrid coefficients (ap, bp, Psurf) " *
+                "$(file) has $(size(raw, 3)) levels and no hybrid coefficients (ap, bp) " *
                 "to remap them onto the $(Nz_target) model levels"))
         end
-        return FileInitialConditionSource{FT}(raw, lon_src, lat_src, ap, bp, psurf, has_hybrid)
+        return FileInitialConditionSource{FT}(raw, lon_src, lat_src, ap, bp, has_hybrid)
     finally
         close(ds)
     end
@@ -425,62 +423,51 @@ function _file_vertical_order(cfg, lev_var, lev_values, file)
 end
 
 # ---------------------------------------------------------------------------
-# Vertical log-pressure interpolation
+# Conservative hybrid-coordinate remapping
 # ---------------------------------------------------------------------------
 
 """
-    _interpolate_log_pressure_profile!(dest, src_q, ap, bp, ps_src, A_tgt, B_tgt, ps_tgt)
+    _remap_hybrid_profile!(dest, src_q, ap, bp, A_tgt, B_tgt, ps_tgt)
 
-Vertically interpolate a source profile `src_q[1:Nsrc]` onto target model
-levels `dest[1:Nz]` using log-pressure linear interpolation.
+Conservatively remap source layer means `src_q[1:Nsrc]` onto target model
+layers `dest[1:Nz]` in a surface-anchored hybrid coordinate.
 
-## Source pressure levels
+The source is surface first and the target is top first. Both coordinates use
+the target model column's surface pressure:
 
-Source half-level pressures from the IC file's hybrid coordinates:
+```math
+p^s_{i+1/2} = a^s_{i+1/2} + b^s_{i+1/2}p_{s,t}, \\qquad
+p^t_{k+1/2} = A^t_{k+1/2} + B^t_{k+1/2}p_{s,t}.
+```
 
-    src_p_half[k] = ap[k] + bp[k] × ps_src     k = 1..Nsrc+1
+Thus terrain-following source layers remain attached to the model surface,
+while pure-pressure source layers (`bp = 0`) retain their absolute pressures.
+The IC file's own surface pressure does not enter the mapping.
 
-**Ordering convention** (Catrine startCO2): `ap[1] = 0, bp[1] = 1.0` →
-`src_p_half[1] = ps_src` (SURFACE). `ap[end] = 0, bp[end] = 0` →
-`src_p_half[end] = 0` (TOA). So `src_p_mid` is **decreasing** from
-surface to TOA (k=1 is surface, k=Nsrc is TOA).
+For piecewise-constant source layer means, form the cumulative layer integral
 
-## Target pressure levels
+```math
+C(p) = \\int_{p^s_{top}}^p q^s(p')\\,dp', \\qquad
+q^t_k = \\frac{C(p^t_{k+1/2}) - C(p^t_{k-1/2})}
+                 {p^t_{k+1/2} - p^t_{k-1/2}}.
+```
 
-Target half-level pressures from the transport binary's hybrid coordinates and
-stored surface pressure:
-
-    tgt_p_half[k] = A_tgt[k] + B_tgt[k] × ps_tgt
-
-So `tgt_p_mid` is **increasing** from TOA to surface (k=1 small, k=Nz large).
-
-## Interpolation
-
-For each target level `k`, find the bracket in `src_p_mid` where
-`src_p_mid[ks] > p_tgt ≥ src_p_mid[ks+1]`. Then linear interpolation in
-log-pressure:
-
-    w = (log p_tgt − log p_src[ks]) / (log p_src[ks+1] − log p_src[ks])
-    dest[k] = src_q[ks] + w × (src_q[ks+1] − src_q[ks])
-
-Clamps: if `p_tgt > src_p_mid[1]` (below source surface), use `src_q[1]`.
-If `p_tgt < src_p_mid[end]` (above source TOA), use `src_q[end]`.
-
-**NOTE**: source pressure decreases with level index while target pressure
-increases with level index. The source bracket must therefore be found
-independently for each target level; a persistent monotone source index would
-move in the wrong direction after the first interior target level.
+`C` is piecewise linear. If the target extends above or below the source
+(notably for a pressure-level source whose bottom is above the model surface),
+the nearest end source layer is extended to the target interface. Consequently
+the layer integral is conserved whenever source and target cover the same
+pressure column, and constant profiles remain constant for any coverage.
 """
-function _interpolate_log_pressure_profile!(dest::AbstractVector{FT},
-                                            src_q::AbstractVector{FT},
-                                            ap::Vector{Float64},
-                                            bp::Vector{Float64},
-                                            ps_src::Float64,
-                                            A_tgt::AbstractVector{<:Real},
-                                            B_tgt::AbstractVector{<:Real},
-                                            ps_tgt::Real) where FT
+function _remap_hybrid_profile!(dest::AbstractVector{FT},
+                                src_q::AbstractVector{FT},
+                                ap::AbstractVector{<:Real},
+                                bp::AbstractVector{<:Real},
+                                A_tgt::AbstractVector{<:Real},
+                                B_tgt::AbstractVector{<:Real},
+                                ps_tgt::Real) where FT
     Nsrc = length(src_q)
     Nz = length(dest)
+    Nsrc > 0 || throw(ArgumentError("source profile must contain at least one layer"))
     length(A_tgt) == Nz + 1 || throw(DimensionMismatch(
         "A_tgt has length $(length(A_tgt)), expected Nz+1 = $(Nz + 1)"))
     length(B_tgt) == Nz + 1 || throw(DimensionMismatch(
@@ -490,62 +477,60 @@ function _interpolate_log_pressure_profile!(dest::AbstractVector{FT},
     length(bp) == Nsrc + 1 || throw(DimensionMismatch(
         "bp has length $(length(bp)), expected Nsrc+1 = $(Nsrc + 1)"))
 
-    # Source half-level pressures: src_p_half[1] = ps (surface), src_p_half[end] = 0 (TOA)
-    src_p_half = Vector{Float64}(undef, Nsrc + 1)
-    @inbounds for k in 1:(Nsrc + 1)
-        src_p_half[k] = ap[k] + bp[k] * ps_src
+    ps = Float64(ps_tgt)
+    isfinite(ps) || throw(ArgumentError("target surface pressure must be finite; got $ps_tgt"))
+
+    # Source interfaces and cumulative integral use the file's surface-first
+    # order. `cumulative[k]` is the integral from the source top (index end)
+    # down to interface k. This makes the conservative calculation independent
+    # of any point-value interpretation of the layer means.
+    src_p = Vector{Float64}(undef, Nsrc + 1)
+    @inbounds for k in eachindex(src_p)
+        src_p[k] = Float64(ap[k]) + Float64(bp[k]) * ps
     end
-    # Source mid-level pressures (decreasing: surface → TOA)
-    src_p_mid = Vector{Float64}(undef, Nsrc)
     @inbounds for k in 1:Nsrc
-        src_p_mid[k] = 0.5 * (src_p_half[k] + src_p_half[k + 1])
+        src_p[k] > src_p[k + 1] || throw(ArgumentError(
+            "source hybrid interfaces must be strictly surface-to-TOA decreasing; " *
+            "interfaces $k and $(k + 1) are $(src_p[k]) and $(src_p[k + 1]) Pa"))
     end
 
-    # Target half-level pressures from the binary's own hybrid coefficients
-    # and surface pressure: `p_half[k] = A[k] + B[k] * ps_tgt`. This is
-    # *exact* and decouples vertical remap from `air_mass × g / area`,
-    # which can be off by 9-22% on gnomonic CS when `mesh.cell_areas[i, j]`
-    # differs from the area the preprocessor used when writing `m` (seen as
-    # cube panel-outline structure in a C48 column-mean IC).
-    ps_tgt_f = Float64(ps_tgt)
-    tgt_p_half = Vector{Float64}(undef, Nz + 1)
-    @inbounds for k in 1:(Nz + 1)
-        tgt_p_half[k] = Float64(A_tgt[k]) + Float64(B_tgt[k]) * ps_tgt_f
+    cumulative = Vector{Float64}(undef, Nsrc + 1)
+    cumulative[end] = 0.0
+    @inbounds for k in Nsrc:-1:1
+        cumulative[k] = cumulative[k + 1] +
+                        Float64(src_q[k]) * (src_p[k] - src_p[k + 1])
     end
 
-    @inbounds for k in 1:Nz
-        p_tgt = 0.5 * (tgt_p_half[k] + tgt_p_half[k + 1])  # target mid-level [Pa]
-        if p_tgt >= src_p_mid[1]
-            # Below source surface → clamp to surface-level value
-            dest[k] = src_q[1]
-        elseif p_tgt <= src_p_mid[end]
-            # Above source TOA → clamp to TOA-level value
-            dest[k] = src_q[end]
-        else
-            # Find bracket: src_p_mid[ks] > p_tgt ≥ src_p_mid[ks+1]
-            # Source levels are ordered surface → TOA (decreasing pressure),
-            # while target levels are ordered TOA → surface (increasing
-            # pressure). Search independently per target level; carrying a
-            # monotone source index across the loop would move in the wrong
-            # direction after the first interior level.
-            lo = 1
-            hi = Nsrc
-            while hi - lo > 1
-                mid = (lo + hi) >>> 1
-                if src_p_mid[mid] >= p_tgt
-                    lo = mid
-                else
-                    hi = mid
-                end
-            end
-            ks = lo
-            # Log-pressure linear interpolation
-            lp1 = log(max(src_p_mid[ks], floatmin(Float64)))
-            lp2 = log(max(src_p_mid[ks + 1], floatmin(Float64)))
-            lpt = log(max(p_tgt, floatmin(Float64)))
-            w = (lpt - lp1) / (lp2 - lp1)
-            dest[k] = FT(src_q[ks] + w * (src_q[ks + 1] - src_q[ks]))
+    # Integral from the source top to p, extending the nearest end layer when
+    # p lies outside the source coverage. Search the decreasing interfaces for
+    # the source layer containing p.
+    function cumulative_at(p::Float64)
+        if p <= src_p[end]
+            return Float64(src_q[end]) * (p - src_p[end])
+        elseif p >= src_p[1]
+            return cumulative[1] + Float64(src_q[1]) * (p - src_p[1])
         end
+        lo = 1
+        hi = Nsrc + 1
+        while hi - lo > 1
+            mid = (lo + hi) >>> 1
+            if src_p[mid] >= p
+                lo = mid
+            else
+                hi = mid
+            end
+        end
+        return cumulative[lo + 1] + Float64(src_q[lo]) * (p - src_p[lo + 1])
+    end
+
+    p_lo = Float64(A_tgt[1]) + Float64(B_tgt[1]) * ps
+    @inbounds for k in 1:Nz
+        p_hi = Float64(A_tgt[k + 1]) + Float64(B_tgt[k + 1]) * ps
+        p_hi > p_lo || throw(ArgumentError(
+            "target hybrid interfaces must be strictly TOA-to-surface increasing; " *
+            "interfaces $k and $(k + 1) are $p_lo and $p_hi Pa"))
+        dest[k] = FT((cumulative_at(p_hi) - cumulative_at(p_lo)) / (p_hi - p_lo))
+        p_lo = p_hi
     end
     return nothing
 end
@@ -579,7 +564,7 @@ Bare lat-lon and reduced-Gaussian meshes support the analytic `uniform`,
 `latitude_step`, and `gaussian_blob` modes; `bl_enhanced` is lat-lon only.
 Passing an `AtmosGrid` additionally enables file-backed modes (`file`,
 `netcdf`, `file_field`, and `catrine_co2`) with topology-aware horizontal
-mapping and log-pressure vertical interpolation. Cubed-sphere construction
+mapping and conservative hybrid-coordinate vertical remapping. Cubed-sphere construction
 requires an `AtmosGrid` and also supports `pressure_layer` and `cs_native`.
 File-backed and pressure-layer construction require the transport window's
 `surface_pressure` where indicated by the selected mode. Each public call owns
@@ -703,11 +688,10 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
             lon = mesh.λᶜ[i]
             _sample_bilinear_profile!(src_q, source.raw, source.lon, source.lat, lon, lat)
             if source.needs_vinterp
-                ps_src = _sample_bilinear_scalar(source.psurf, source.lon, source.lat, lon, lat)
                 ps_tgt = Float64(surface_pressure[i, j])
-                _interpolate_log_pressure_profile!(@view(q[i, j, :]), src_q,
-                                                   source.ap, source.bp, ps_src,
-                                                   A_tgt, B_tgt, ps_tgt)
+                _remap_hybrid_profile!(@view(q[i, j, :]), src_q,
+                                       source.ap, source.bp,
+                                       A_tgt, B_tgt, ps_tgt)
             else
                 _copy_profile!(@view(q[i, j, :]), src_q)
             end
@@ -747,11 +731,10 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
             lon = lons[i]
             _sample_bilinear_profile!(src_q, source.raw, source.lon, source.lat, lon, lat)
             if source.needs_vinterp
-                ps_src = _sample_bilinear_scalar(source.psurf, source.lon, source.lat, lon, lat)
                 ps_tgt = Float64(surface_pressure[c])
-                _interpolate_log_pressure_profile!(@view(q[c, :]), src_q,
-                                                   source.ap, source.bp, ps_src,
-                                                   A_tgt, B_tgt, ps_tgt)
+                _remap_hybrid_profile!(@view(q[c, :]), src_q,
+                                       source.ap, source.bp,
+                                       A_tgt, B_tgt, ps_tgt)
             else
                 _copy_profile!(@view(q[c, :]), src_q)
             end
