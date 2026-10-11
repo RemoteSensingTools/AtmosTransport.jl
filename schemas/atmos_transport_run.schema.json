@@ -523,7 +523,7 @@
         },
         "variable": {
           "type": "string",
-          "description": "Flux variable. Required for kind = \"file\" and \"cs_native\"; named kinds default to their inventory variable. Per-second densities are read as kg species m^-2 s^-1; kgC m^-2 s^-1 (times M(CO2)/M(C) = 3.66419), kgCO2/month/m2 and annual Tonnes per cell are converted."
+          "description": "Flux variable. Required for kind = \"file\" and \"cs_native\"; named kinds default to their inventory variable. Its units attribute is parsed by GriddedIO.parse_flux_units: kg, g, tonnes or mol of the species (or unnamed) or of carbon (times M(species)/M(C), 3.66419 for CO2), per m^2 or per cell, per second, day, calendar month or year; for example kg m-2 s-1, kgC m-2 s-1, kgCO2/month/m2 or Tonnes (per cell and year). cs_native files must be kg (of the species or carbon) m^-2 s^-1; time-varying lat-lon files must be per m^2."
         },
         "time_index": {
           "type": "integer",
@@ -543,7 +543,7 @@
         "species": {
           "type": "string",
           "enum": ["co2", "sf6", "rn222"],
-          "description": "Species whose kilograms the flux counts. Its molar mass (Parameters.SPECIES_MOLAR_MASS) converts kg of species to model storage units. Required unless the tracer is named co2, co2_natural, co2_fossil, fossil_co2 (co2), sf6 or rn222."
+          "description": "Species whose kilograms the flux counts. Its molar mass (Parameters.SPECIES_MOLAR_MASS) converts kg of species to model storage units, kg of carbon converts to it by M(species)/M(C), and flux units naming another species are an error. Required unless the tracer is named co2, co2_natural, co2_fossil, fossil_co2 (co2), sf6 or rn222."
         },
         "time_varying": {
           "type": "boolean",

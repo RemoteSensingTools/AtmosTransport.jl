@@ -52,10 +52,10 @@ function settings()
     return s
 end
 
-# Per-cell density (kg m-2 s-1) on the cubed sphere, (Nc, Nc, 6), from one
-# static surface-flux configuration of a built-in kind.
-function cs_density(cfg::Dict{String, Any}, mesh)
-    source = ICIO._load_file_surface_flux_field(cfg, Float64)
+# Per-cell density (kg `species` m-2 s-1) on the cubed sphere, (Nc, Nc, 6), from
+# one static surface-flux configuration of a built-in kind.
+function cs_density(cfg::Dict{String, Any}, mesh; species::Symbol)
+    source = ICIO._load_file_surface_flux_field(cfg, Float64; species)
     rate = ICIO._conservative_surface_flux_rate(source, mesh, Float64)   # kg/s per cell
     Nc = mesh.Nc
     panels = ntuple(_ -> Matrix{Float64}(undef, Nc, Nc), 6)
@@ -125,7 +125,7 @@ function main(argv)
         file = joinpath(CATRINE, "gridfed", "GCP-GridFEDv2024.0_$(year(t)).short.nc")
         isfile(file) || error("no GridFED file for $(year(t)): $file")
         density, native = cs_density(Dict{String, Any}("kind" => "gridfed_fossil_co2", "file" => file,
-                                                       "time_index" => month(t)), mesh)
+                                                       "time_index" => month(t)), mesh; species = :co2)
         push!(fossil, density)
         @printf("fossil %s  %.6e kg/s (native %.6e)\n", Dates.format(t, "yyyy-mm"), global_rate(density, mesh), native)
     end
@@ -137,7 +137,8 @@ function main(argv)
     # -- Rn-222: monthly climatology for every month.
     rn = Array{Float64, 3}[]
     for t in months
-        density, native = cs_density(Dict{String, Any}("kind" => "zhang_rn222", "time_index" => month(t)), mesh)
+        density, native = cs_density(Dict{String, Any}("kind" => "zhang_rn222", "time_index" => month(t)), mesh;
+                                     species = :rn222)
         push!(rn, density)
         @printf("rn222  %s  %.6e kg/s (native %.6e)\n", Dates.format(t, "yyyy-mm"), global_rate(density, mesh), native)
     end
@@ -149,7 +150,7 @@ function main(argv)
     # -- SF6: EDGAR 2022 map, yearly totals from NOAA growth rates.
     growth = noaa_sf6_growth()
     kg_per_ppt = DRY_AIR_MASS / M_DRY_AIR * 1e-12 * M_SF6
-    base, _ = cs_density(Dict{String, Any}("kind" => "edgar_sf6"), mesh)
+    base, _ = cs_density(Dict{String, Any}("kind" => "edgar_sf6"), mesh; species = :sf6)
     base_kg_per_year = global_rate(base, mesh) * AtmosTransport.Parameters.DAYS_PER_JULIAN_YEAR * 86400
     sf6_starts = DateTime[DateTime(2021, 12, 1)]
     scale_years = [2021]

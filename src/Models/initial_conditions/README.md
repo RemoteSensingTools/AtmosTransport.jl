@@ -35,20 +35,25 @@ these files reuse. The parent overview is [`../README.md`](../README.md).
 - Loaded-field containers: `FileSurfaceFluxField`, `TimeVaryingFileSurfaceFluxField`
 - `surface_flux_species(tracer_name, cfg)`: the species of a tracer's flux
   (`surface_flux.species`, or the species its name implies).
-- Shared source mesh: `_build_source_latlon_mesh(lon, lat; radius)` builds the
-  Float64 `LatLonMesh` used as the conservative-regridding source for both CS file
-  ICs and surface fluxes.
+- File conventions come from [`../../GriddedIO/`](../../GriddedIO/): coordinates
+  by name (`find_coordinate`, with the field's dimension lengths), orientation
+  (`latlon_orientation`, `orient`), fill values as 0 (`read_raw(FT, …)` with
+  `MaskedAsZero`, straight into the run's float type), time axes (`decode_time`, classified by their units before any
+  CFTime call), flux units (`parse_flux_units`), and the Float64 source mesh of
+  conservative regridding for CS file ICs and surface fluxes
+  (`source_latlon_mesh(lon, lat, UniformSpanFaces(); radius)` on the
+  destination's sphere).
 
 ## File Map
 
-- [`cubed_sphere.jl`](cubed_sphere.jl) — source lat-lon mesh construction, CS
-  `build_initial_mixing_ratio` (analytic, file, `cs_native`, `pressure_layer`),
-  CS dry/moist halo packing
+- [`cubed_sphere.jl`](cubed_sphere.jl) — CS `build_initial_mixing_ratio`
+  (analytic, file, `cs_native`, `pressure_layer`), CS dry/moist halo packing
 - [`surface_flux.jl`](surface_flux.jl) — kind and default-file resolution,
-  `surface_flux_species` and the storage factor, NetCDF load and unit conversion, GridFED calendar-year inference, time-varying series
-  loader (with a run start, reads flux data only for the slices of the run
-  period), topology builders; includes
-  the two files below
+  `surface_flux_species` and the storage factor, NetCDF load and unit
+  conversion (`_to_flux_density!`, dispatched on the parsed units' area basis),
+  GridFED calendar-year inference, EDGAR band areas, time-varying series loader
+  (with a run start, reads flux data only for the slices of the run period),
+  topology builders; includes the two files below
 - [`surface_flux_regridding.jl`](surface_flux_regridding.jl) — bilinear
   renormalisation, `_regridding_method`, cached conservative regridder build/apply
 - [`surface_flux_native.jl`](surface_flux_native.jl) — `cs_native` time-varying
@@ -60,17 +65,23 @@ these files reuse. The parent overview is [`../README.md`](../README.md).
 
 ## Surface-Flux Kinds
 
-| `kind` | Defaults in `_resolve_surface_flux_file` | Conversion to kg species m⁻² s⁻¹ | `time_varying` |
+| `kind` | Defaults in `_resolve_surface_flux_file` | Units of the default file → kg species m⁻² s⁻¹ | `time_varying` |
 |---|---|---|---|
 | `gridfed_fossil_co2` | GridFED `TOTAL`; needs `time_index` or `month` | kgCO2/month/m2 ÷ month length; year from `year`, time units, or file name | CS, 12 monthly slices |
-| `edgar_sf6` | EDGAR v8 `emissions` | tonnes per cell per year ÷ cell area ÷ 365.25 d | no |
-| `zhang_rn222` | Zhang `rnemis`; `month` (default 1) | per-second units | no |
-| `lmdz_co2` | CAMS `flux_apos` | kgC × M(CO2)/M(C) ≈ 3.66419; static path averages all time slices | CS |
+| `edgar_sf6` | EDGAR v8 `emissions` | Tonnes (per cell and year) × 1000 ÷ cell area ÷ 365.25 d | no |
+| `zhang_rn222` | Zhang `rnemis`; `month` (default 1) | kg/m2/s | no |
+| `lmdz_co2` | CAMS `flux_apos` | kgC m-2 s-1 × M(CO2)/M(C) ≈ 3.66419; static path averages all time slices | CS |
 | `cs_native` | none; needs `file`, `variable` | kg species or kgC m⁻² s⁻¹ on the runtime cube (`GriddedIO.read_cs_native_flux!`) | CS, required |
-| `file` | none; needs `file`, `variable` | units must be per second, or one of the forms above | no |
+| `file` | none; needs `file`, `variable` | any units `GriddedIO.parse_flux_units` reads (`GriddedIO.write_latlon_flux` writes static files) | no |
 
-Any other `kind` is an error (`_surface_flux_kind`); `none` (the default)
-emits nothing.
+The conversion follows the units attribute of the variable, not the kind: the
+loaders parse it with `GriddedIO.parse_flux_units` and divide by the cell area
+for per-cell units (the file's `cell_area`/`area`, else the band areas of the
+grid on the destination sphere), multiply by `GriddedIO.kg_per_unit` (kg of the
+tracer's species per unit; kg of another species is an error) and divide by
+`GriddedIO.period_seconds` (per-month units: the calendar month of the slice).
+Time-varying lat-lon sources need densities (per m²). Any other `kind` is an
+error (`_surface_flux_kind`); `none` (the default) emits nothing.
 
 ## Common Tasks
 
@@ -78,10 +89,10 @@ emits nothing.
   1. Add it to `_SURFACE_FLUX_KINDS` in `surface_flux.jl`.
   2. Give it defaults in `_resolve_surface_flux_file` (optional). Without
      defaults, the kind requires `file` and `variable`.
-  3. Add a unit branch to `_load_file_surface_flux_field`. For time-varying
-     support, also add one to `_load_single_timevarying_surface_flux_field`, list
-     the kind in `_surface_flux_supports_time_varying`, and set its default scheme
-     in `_build_timevarying_cs_surface_flux_source`.
+  3. New units belong in the grammar of `GriddedIO.parse_flux_units`
+     (`src/GriddedIO/flux_units.jl`), not in a kind branch. For time-varying
+     support, list the kind in `_surface_flux_supports_time_varying` and set its
+     default scheme in `_build_timevarying_cs_surface_flux_source`.
   4. A new species needs an entry in `Parameters.SPECIES_MOLAR_MASS` (and, to
      let tracers omit `species`, a tracer name in `_TRACER_NAME_SPECIES`); the
      run schema's `surface_flux.species` enum lists the species.
@@ -124,13 +135,19 @@ emits nothing.
   Target half levels come from the grid's hybrid coefficients and that pressure.
 - `pressure_layer` indexes `air_mass` as halo-padded panels (`[Hp + i, Hp + j, k]`).
 - The source lat-lon mesh and the EDGAR fallback cell areas use the destination
-  mesh radius, so regridding weights compare areas on one sphere.
+  mesh radius, so regridding weights compare areas on one sphere. Both are
+  uniform in the span of the centres (`UniformSpanFaces`); pole-centred files
+  (CATRINE SF6 initial state) get faces shifted from their cells.
 - CS surface fluxes are regridded conservatively, except `cs_native` sources,
   which are read on the run's panels. LL and RG default to
   `regridding = "bilinear"`, renormalised to the native total only when the file
   carries `cell_area` or `area`.
 - Time-varying sources are cubed-sphere only (LL/RG builders throw):
-  - Slice times are seconds since `reference_time`.
+  - Slice times are seconds since `reference_time`, from the file's time axis
+    as `GriddedIO.decode_time` decodes it (`days`/`hours`/`minutes`/`seconds
+    since` through CFTime with any CF calendar, `months since` as month starts;
+    other axes are refused), or, for GridFED files without one, the first day
+    of each month of the source year.
   - `lmdz_co2`, `gridfed_fossil_co2`, and `cs_native` default to
     `temporal_scheme = "stepwise"`.
   - `cs_native` files follow the schema of `GriddedIO` (`CS_NATIVE_FLUX_DIMS`,
@@ -149,3 +166,5 @@ loader against a frozen copy of the pre-GriddedIO loader, bit for bit),
 `test_binary_planet_radius.jl` (source-mesh radius, inventory totals),
 `test_regrid_cache_dir.jl`, `test_float32_conservation.jl` (source-mesh extents),
 `test_config_matrix_contract.jl` (every shipped config's fluxes have a species).
+The file conventions are tested under `test_gridded_io_*.jl` and
+`test_flux_units.jl`.

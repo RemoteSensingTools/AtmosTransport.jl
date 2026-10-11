@@ -1,52 +1,4 @@
 # ---------------------------------------------------------------------------
-# CS file-based IC source mesh construction
-#
-# Build a LatLonMesh matching the source NetCDF's lon/lat grid so the
-# conservative regridder in `src/Regridding/` can LL→CS the 3D VMR field
-# (and the 2D surface-pressure field, when vertical interpolation is
-# needed).
-#
-# The source arrays (after `_load_file_initial_condition_source`) are
-# guaranteed to be in [0, 360) longitude + ascending latitude because the
-# loader already rolls/reverses them. We infer face boundaries from cell
-# centres, assuming uniform spacing (standard for all ERA5 / Catrine /
-# GridFED products).
-#
-# Products often store centres in Float32 (GridFED: -179.95f0 ...), so the
-# spacing comes from the full span, not the first difference, and extents
-# within 1e-3 of a cell of ±90° or a 360° span snap to them. Otherwise the
-# regridder misses a sliver of the sphere (GridFED: 1.5e-5° of longitude,
-# 2.1e-6 of the global flux). The mesh is Float64 for every run precision:
-# the geometry is evaluated once, and Float32 and Float64 runs share weights.
-# It takes the destination mesh's radius, so the conservative weights compare
-# areas on one sphere.
-# ---------------------------------------------------------------------------
-
-const _GLOBAL_EXTENT_SNAP = 1e-3      # fraction of a cell
-
-function _build_source_latlon_mesh(lon_src::Vector{Float64}, lat_src::Vector{Float64};
-                                   radius::Real = EARTH_RADIUS)
-    Nx_src = length(lon_src)
-    Ny_src = length(lat_src)
-    min(Nx_src, Ny_src) >= 2 || throw(ArgumentError(
-        "source grid needs at least two longitudes and latitudes, got $(Nx_src)×$(Ny_src)"))
-    dlon = (lon_src[end] - lon_src[1]) / (Nx_src - 1)
-    dlat = (lat_src[end] - lat_src[1]) / (Ny_src - 1)
-    lon_west  = lon_src[1]   - dlon / 2
-    lon_east  = lon_src[end] + dlon / 2
-    lat_south = lat_src[1]   - dlat / 2
-    lat_north = lat_src[end] + dlat / 2
-    snap = _GLOBAL_EXTENT_SNAP
-    lat_south < -90 + snap * dlat && (lat_south = -90.0)
-    lat_north >  90 - snap * dlat && (lat_north =  90.0)
-    lon_east - lon_west > 360 - snap * dlon && (lon_east = lon_west + 360)
-    return LatLonMesh(; FT = Float64, Nx = Nx_src, Ny = Ny_src,
-                      longitude = (lon_west, lon_east),
-                      latitude  = (lat_south, lat_north),
-                      radius    = Float64(radius))
-end
-
-# ---------------------------------------------------------------------------
 # CS build_initial_mixing_ratio
 #
 # Returns a 6-tuple of interior `(Nc, Nc, Nz)` VMR arrays. The tuple is
@@ -163,7 +115,12 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
     B_tgt = grid.vertical.B
 
     source = _load_file_initial_condition_source(cfg, FT, Nz)
-    src_mesh = _build_source_latlon_mesh(source.lon, source.lat; radius = mesh.radius)
+    # The loader rolled and flipped the source to [0, 360) longitude and
+    # ascending latitude. The source mesh is Float64 for every run precision
+    # (Float32 and Float64 runs share weights) and sits on the destination
+    # sphere, so the conservative weights compare areas on one sphere.
+    # TODO(P2b): pole-centred faces (`SnappedFaces`) for pole-centred files.
+    src_mesh = source_latlon_mesh(source.lon, source.lat, UniformSpanFaces(); radius = mesh.radius)
     regridder = build_regridder(src_mesh, mesh)
 
     # 3D VMR: (Nx_src, Ny_src, Nlev_src) → 6 × (Nc, Nc, Nlev_src)
@@ -258,10 +215,11 @@ function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
         rv = ds[variable]
         nd = ndims(rv)
         # NCDatasets reverses CF dim order: (Xdim, Ydim, nf, lev[, time]).
+        # Fill values become 0 (GriddedIO.MaskedAsZero), read straight into FT.
         if nd == 5
-            FT.(nomissing(rv[:, :, :, :, time_index], zero(FT)))
+            read_raw(FT, ds, variable, MaskedAsZero(), :, :, :, :, time_index)
         elseif nd == 4
-            FT.(nomissing(rv[:, :, :, :], zero(FT)))
+            read_raw(FT, ds, variable, MaskedAsZero())
         else
             throw(ArgumentError("init.kind=cs_native: variable '$variable' must be " *
                                 "4D (Xdim,Ydim,nf,lev) or 5D (…,time), got ndims=$nd"))

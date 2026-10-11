@@ -660,6 +660,38 @@
   `cs_native` writer: the same data, now with `time_bnds`, the geometry block
   and units `kg CO2|Rn222|SF6 m-2 s-1`; `compare_cs_flux_files.jl` takes the
   layout from `GriddedIO`.
+- The runtime surface-flux and initial-condition loaders read their files
+  through `GriddedIO`: coordinates by name with a check against the field's
+  dimensions, orientation, fill values (read straight into the run's float
+  type), the conservative-regridding source mesh
+  (`source_latlon_mesh(…, UniformSpanFaces(); radius)`, the former uniform mesh),
+  time axes and flux units. For every file the shipped configs read (102
+  inventories: CAMS/LMDZ, GridFED, EDGAR, Zhang Rn-222, ECCO-Darwin, CATRINE and
+  TRENDY `cs_native` series), the loaded fields, source meshes, slice times and
+  storage factors are bit-identical to the former loaders. What changes:
+  - Units go through one grammar (`GriddedIO.parse_flux_units`): grams, days,
+    molar units with a named species and per-cell units with any time unit now
+    convert; the conversion follows the units, not the kind (a
+    `gridfed_fossil_co2` file is divided by the month length only if its units
+    are per month, an `edgar_sf6` file by the cell area only if they are per
+    cell). Molar units without a species, missing and unknown units
+    remain errors, now naming the variable and file. Units in kg of another
+    named species than the tracer's (`surface_flux.species`) are an error;
+    they were read with factor 1. Time-varying lat-lon sources need densities
+    (per m²).
+  - Time axes are classified by their units before any CFTime call
+    (`GriddedIO.decode_time`): `months since` axes decode to month starts
+    (CFTime used a fixed 30.44-day month), `noleap`/`365_day`,
+    `all_leap`/`366_day` and `360_day` calendars are accepted (a stamp on a
+    date the run's proleptic Gregorian clock lacks, such as 30 February, is an
+    error), invalid origins are errors, `years since` and unlabelled axes are
+    refused, and abbreviated units (`h since`, …) are decoded through
+    `DateTime` (millisecond resolution).
+  - The private helpers `_ic_find_coord`, `_build_source_latlon_mesh`,
+    `_surface_flux_times_seconds`, `_parse_cf_time_origin`,
+    `_normalize_units_string`, `_per_second_flux_scale`, `_days_in_month` and
+    `_is_leap_year` are removed; the loaders `_load_file_surface_flux_field`
+    and `_load_timevarying_surface_flux_field` take the `species` keyword.
 - SIF-GPP, FLUXCOM, TRENDY v14, TRANSCOM, GFED, and CATRINE campaign
   preprocessing, run configs, visualization scripts, and ATBD memos.
 

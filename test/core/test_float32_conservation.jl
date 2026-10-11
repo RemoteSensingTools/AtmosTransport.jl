@@ -91,13 +91,16 @@ end
     # GridFED stores its 0.1° centres in Float32.
     lon = Float64.(Float32.(range(-179.95, 179.95; length = 3600)))
     lat = Float64.(Float32.(range(-89.95, 89.95; length = 1800)))
-    mesh = ICIO._build_source_latlon_mesh(lon, lat)
+    GIO = AtmosTransport.GriddedIO
+    R = AtmosTransport.Parameters.EARTH_RADIUS
+    mesh = GIO.source_latlon_mesh(lon, lat, GIO.UniformSpanFaces(); radius = R)
     @test mesh isa LatLonMesh{Float64}
     @test (first(mesh.φᶠ), last(mesh.φᶠ)) == (-90.0, 90.0)
     @test last(mesh.λᶠ) - first(mesh.λᶠ) ≈ 360 atol = 1e-9
     @test RG._latlon_full_sphere(mesh)
 
-    regional = ICIO._build_source_latlon_mesh(collect(0.5:1.0:29.5), collect(-9.5:1.0:9.5))
+    regional = GIO.source_latlon_mesh(collect(0.5:1.0:29.5), collect(-9.5:1.0:9.5),
+                                      GIO.UniformSpanFaces(); radius = R)
     @test (first(regional.φᶠ), last(regional.φᶠ)) == (-10.0, 10.0)
     @test !RG._latlon_full_sphere(regional)
 end
