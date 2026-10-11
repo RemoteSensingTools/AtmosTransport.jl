@@ -138,6 +138,7 @@ The CS surface-emission footprint and 4D-Var stack are anchored by:
 | --- | --- |
 | `test_cs_ppm_adjoint_footprint.jl` | Kernel-level transposition + finite-difference VJPs for split-sweep schemes. |
 | `test_linrood_kernel_adjoints.jl` | Kernel-level transposition for the LinRood adjoint kernels (ORD=5 and ORD=7). |
+| `test_cs_linrood_footprint_fd.jl` | Full LinRood footprint (horizontal record plus Upwind Z half-sweeps) against central differences, with upward vertical flux and surface-layer and column-mean objectives, to `1e-9` relative. |
 | `test_cs_inversion_truth_recovery.jl` | Synthetic-truth-recovery end-to-end through `cs_surface_flux_4dvar_solve` + L-BFGS. |
 | `test_cs_4dvar_preconditioned.jl`, `test_cs_lbfgs.jl`, `test_cs_optimizer_dispatch.jl` | Preconditioning, optimizer dispatch, and gradient identities. |
 | `test_cs_covariance.jl`, `test_cs_preconditioning.jl` | `apply_B_half!` / `apply_B_half_adjoint!` / `apply_B_half_inverse!` identities. |

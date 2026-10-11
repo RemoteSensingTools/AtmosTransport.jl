@@ -6,6 +6,9 @@
 #   * `_tape_byte_estimate` — diagnostic sizing.
 #   * `_record_sweep!` — pushes a `_CSSweepRecord` for one per-direction
 #     advection sweep (linear or monotone-PPM dispatch).
+#   * `_record_and_sweep_z!` — records, then applies, one vertical sweep;
+#     shared by all three tapes (including Lin-Rood) so the record always
+#     holds the state entering the sweep.
 #   * `_record_cs_mass_tape` — air-mass tape only (linear schemes).
 #   * `_record_cs_tracer_tape` — air-mass + tracer-mass tape
 #     (monotone PPM and other nonlinear schemes).
@@ -193,6 +196,40 @@ function _record_sweep!(ops, direction::Symbol, scheme::CSAdjointNonlinearScheme
     return nothing
 end
 
+# A linear sweep's reverse needs only the air mass. This method accepts and
+# ignores the tracer mass so code that carries `rm` can use one signature for
+# every scheme family.
+_record_sweep!(ops, direction::Symbol, scheme::CSAdjointLinearScheme,
+               panels_m, panels_rm, panels_flux, flux_scale, tape_storage) =
+    _record_sweep!(ops, direction, scheme, panels_m, panels_flux, flux_scale,
+                   tape_storage)
+
+# Record one vertical (Z) sweep, then apply it to all six panels. The mass,
+# tracer and Lin-Rood tapes all run their Z sweeps through this function, so the
+# record always comes before the sweep.
+#
+# The order matters. The reverse Z kernel (`_cs_zsweep_adjoint_kernel!`)
+# rebuilds each face coefficient from the donor air mass that the forward kernel
+# divided by, e.g. alpha = F / m_donor for upwind (`_upwind_face_coeffs`). That
+# is the mass entering the sweep. A record taken after the sweep holds the
+# updated mass m + F[k] - F[k+1] (F = flux_scale * cm) instead, which puts an
+# O(C_z) relative error in every coefficient (issue #10). `panels_rm` is always
+# swept; it is staged only for the taped-limiter PPM schemes (see the
+# `_record_sweep!` methods above).
+function _record_and_sweep_z!(ops, scheme, panels_rm, panels_m, panels_cm, ws,
+                              mesh::CubedSphereMesh, flux_scale, tape_storage;
+                              record_ops::Bool)
+    record_ops && _record_sweep!(ops, :z, scheme, panels_m, panels_rm, panels_cm,
+                                 flux_scale, tape_storage)
+    Nc, Hp = mesh.Nc, mesh.Hp
+    Nz = size(panels_m[1], 3)
+    for p in 1:6
+        _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p], scheme,
+                        ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale)
+    end
+    return nothing
+end
+
 function _record_cs_mass_tape(panels_m0,
                               panels_am_steps,
                               panels_bm_steps,
@@ -268,11 +305,8 @@ function _record_cs_mass_tape(panels_m0,
         end
 
         for _ in 1:n_z
-            record_ops && _record_sweep!(ops, :z, scheme, panels_m, panels_cm, fs_z, storage)
-            for p in 1:6
-                _sweep_z_panel!(dummy_rm[p], panels_m[p], panels_cm[p], scheme,
-                                ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_z)
-            end
+            _record_and_sweep_z!(ops, scheme, dummy_rm, panels_m, panels_cm, ws, mesh,
+                                 fs_z, storage; record_ops)
         end
 
         # Diffusion + midpoint records are pure scheduling metadata for
@@ -301,11 +335,8 @@ function _record_cs_mass_tape(panels_m0,
         end
 
         for _ in 1:n_z
-            record_ops && _record_sweep!(ops, :z, scheme, panels_m, panels_cm, fs_z, storage)
-            for p in 1:6
-                _sweep_z_panel!(dummy_rm[p], panels_m[p], panels_cm[p], scheme,
-                                ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_z)
-            end
+            _record_and_sweep_z!(ops, scheme, dummy_rm, panels_m, panels_cm, ws, mesh,
+                                 fs_z, storage; record_ops)
         end
 
         fill_panel_halos!(panels_m, mesh; dir=2)
@@ -428,11 +459,8 @@ function _record_cs_tracer_tape(panels_rm0,
         end
 
         for _ in 1:n_z
-            record_ops && _record_sweep!(ops, :z, scheme, panels_m, panels_rm, panels_cm, fs_z, storage)
-            for p in 1:6
-                _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],
-                                scheme, ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_z)
-            end
+            _record_and_sweep_z!(ops, scheme, panels_rm, panels_m, panels_cm, ws, mesh,
+                                 fs_z, storage; record_ops)
         end
 
         diffusion_op_step = _diffusion_sequence_at(diffusion_op, step, nsteps,
@@ -468,11 +496,8 @@ function _record_cs_tracer_tape(panels_rm0,
         end
 
         for _ in 1:n_z
-            record_ops && _record_sweep!(ops, :z, scheme, panels_m, panels_rm, panels_cm, fs_z, storage)
-            for p in 1:6
-                _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],
-                                scheme, ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_z)
-            end
+            _record_and_sweep_z!(ops, scheme, panels_rm, panels_m, panels_cm, ws, mesh,
+                                 fs_z, storage; record_ops)
         end
 
         fill_panel_halos!(panels_rm, mesh; dir=2)

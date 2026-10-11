@@ -95,8 +95,8 @@ _column_mean_objective(mesh::AT.CubedSphereMesh) =
 #     by O(1e-13) absolute when a window boundary falls between two
 #     steps.
 # `atol = 1e-12` (~10⁴ × Float64 epsilon) is well below the
-# FD-identity threshold the suite cares about (≥ 1e-8 for these
-# schemes), and lets stride parity tests be robust to both effects.
+# FD-identity tolerances in this suite (1e-9 relative or looser), and
+# lets stride parity tests be robust to both effects.
 function _footprints_equal(a, b)
     length(a.footprints) == length(b.footprints) || return false
     for step in eachindex(a.footprints)
@@ -612,7 +612,10 @@ end
             scheme, dt = 1.0, flux_scale,
             emission_rates = _scaled_rates(rates, -epsilon))
         finite_difference = (j_plus - j_minus) / (2epsilon)
-        @test _dot_footprint(full, rates) ≈ finite_difference rtol = 3e-4 atol = 1e-9
+        # Smooth base field, so the Lin-Rood limiter keeps its branch and the
+        # identity holds to ~3e-11. Before issue #10 was fixed the Z sweeps
+        # staged post-sweep air mass and this case was off by 7.1e-8.
+        @test _dot_footprint(full, rates) ≈ finite_difference rtol = 1e-9
 
         stride = AT.cs_surface_emission_footprint(
             panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;

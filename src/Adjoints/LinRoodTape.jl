@@ -39,9 +39,17 @@
 #       record_ops=false, vs `fv_tp_2d_cs!` on identical stripped fluxes) and
 #       the full-step comparator (vs `_linrood_run_forward_step!`) both give 0.0.
 #     * The single-substep VJP matches central FD to 1e-7 (incl. m-coupling).
-#     * The full footprint identity matches FD to ~1e-8 for BOTH ORD=5 and
-#       ORD=7, at every nsteps, on a SMOOTH or CONSTANT base field. Only the
-#       non-smooth zero-IC case shows the ~1.4e-3 kink artifact.
+#     * On a SMOOTH base field the full footprint identity matches central FD
+#       to ~1e-11 for BOTH ORD=5 and ORD=7, the same as the linear PPM control,
+#       including upward vertical flux with a surface-layer objective
+#       (test/core/test_cs_linrood_footprint_fd.jl). Only the non-smooth
+#       zero-IC case shows the ~1.4e-3 kink artifact.
+#     * Issue #10 (fixed): the Z half-sweep records used to stage the air mass
+#       AFTER the sweep. The upwind reverse needs the pre-sweep donor mass, so
+#       the identity held only to ~1e-8 for column means and ~1e-4 for a
+#       surface layer at vertical Courant 0.08 (error ~C_z^2, zero for purely
+#       downward flux). The ~1e-8 had been read as FD noise. Z sweeps now go
+#       through `_record_and_sweep_z!` (TapeRecording.jl), which records first.
 #   The split-sweep (PPM/Upwind/Slopes) footprint test validates at a zero IC
 #   precisely because those schemes are NoLimiter (linear). The LinRood adjoint
 #   is production-ready for 4D-Var; FD validation must use a smooth base field
@@ -365,7 +373,7 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
     # indices into absolute step numbers for window invocations;
     # `record_ops = false` is the propagation pass that runs every
     # forward kernel (horizontal substep, Z half-sweeps, diffusion,
-    # emissions, convection) but elides each `_stage_panels_strict` /
+    # emissions, convection) but elides each `_stage_panels` /
     # `push!(ops, ...)` site. Default 0 / true keeps the FullCheckpoint
     # path bit-exact.
 
@@ -378,17 +386,16 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
         "LinRoodPPMScheme adjoint tape supports ORD ∈ {5, 7}; got " *
         "ORD=$(ORD)."))
 
-    # LinRoodPPMScheme stages its forward state through
-    # `_stage_panels_strict` (which hardcodes `DeviceCSTapeStorage()`)
-    # — the `_CSLinRoodHorizRecord` struct holds raw `NTuple{6, P}`
-    # references rather than per-policy slots. Until the LinRood tape
-    # is refactored to plumb the storage policy through, any
-    # non-`:device` storage request would be silently
+    # The `_CSLinRoodHorizRecord` struct holds raw `NTuple{6, P}`
+    # references rather than per-policy slots, so the LinRood tape is
+    # device-resident. Until the storage policy is plumbed through that
+    # record, any non-`:device` storage request would be silently
     # ignored, leaving the mmap tape with `cursor=0, records=0` and
     # the LinRood tape entirely device-resident — a latent OOM trap
     # for large LinRood footprints. Reject explicitly so the failure
     # mode is loud. Skipped in propagation mode (no tape needed).
     record_ops && _linrood_validate_tape_storage(tape_storage)
+    storage = record_ops ? _tape_storage(tape_storage) : nothing
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
     dt_ft = FT(dt)
 
@@ -399,8 +406,6 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
 
     ops = Any[]
     ws = CSAdvectionWorkspace(mesh, panels_rm[1])
-    Nc, Hp = mesh.Nc, mesh.Hp
-    Nz = size(panels_rm[1], 3)
 
     # The Z (vertical) sweep MUST match the production LinRood forward: both
     # `_strang_split_linrood_ppm_cs!` and the FD reference `_linrood_run_forward_step!`
@@ -411,6 +416,8 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
     # stayed vertically uniform, where Upwind and PPM Z agree), but a ~0.14%
     # footprint-vs-FD error once real horizontal transport develops vertical
     # structure. Use Upwind so the tape, the FD reference, and production agree.
+    # `UpwindScheme ∈ CSAdjointLinearScheme`, so its Z records stage only the air
+    # mass (`panels_rm = nothing`, the linear reverse path).
     z_scheme = UpwindScheme()
 
     @inbounds for step in 1:nsteps
@@ -433,22 +440,10 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
             record_ops = record_ops)
         record_ops && push!(ops, record_a)
 
-        # Z half-sweep.
-        for p in 1:6
-            _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],
-                            z_scheme, ws.rm_A, ws.m_A, Nc, Hp, Nz;
-                            flux_scale = FT(flux_scale))
-        end
-        if record_ops
-            # `UpwindScheme ∈ CSAdjointLinearScheme`: its Z adjoint is linear, so
-            # record `nothing` for rm (the 4-arg linear reverse path). Storing rm
-            # would route to the `PPMScheme{MonotoneLimiter}` 5-arg reverse, which
-            # rejects Upwind.
-            push!(ops, _CSSweepRecord(:z, z_scheme,
-                                      _stage_panels_strict(panels_m),
-                                      nothing,
-                                      panels_cm, FT(flux_scale)))
-        end
+        # Z half-sweep. The record holds the air mass entering the sweep, which
+        # is what the reverse upwind coefficients F / m_donor need (issue #10).
+        _record_and_sweep_z!(ops, z_scheme, panels_rm, panels_m, panels_cm, ws, mesh,
+                             FT(flux_scale), storage; record_ops)
 
         # Diffusion + midpoint + emissions (between the two Z halves).
         diffusion_op_step = _diffusion_sequence_at(diffusion_op, step, nsteps,
@@ -463,7 +458,7 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
                                                        "diffusion_workspace")
             half_dt = dt_ft / FT(2)
             if record_ops
-                panels_m_midpoint = _stage_panels_strict(panels_m)
+                panels_m_midpoint = _stage_panels(storage, panels_m)
                 push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
                                               panels_m_midpoint, half_dt))
             end
@@ -482,22 +477,9 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
                 half_dt, diffusion_meteo; halo_width = mesh.Hp)
         end
 
-        # Z half-sweep (second half).
-        for p in 1:6
-            _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p],
-                            z_scheme, ws.rm_A, ws.m_A, Nc, Hp, Nz;
-                            flux_scale = FT(flux_scale))
-        end
-        if record_ops
-            # `UpwindScheme ∈ CSAdjointLinearScheme`: its Z adjoint is linear, so
-            # record `nothing` for rm (the 4-arg linear reverse path). Storing rm
-            # would route to the `PPMScheme{MonotoneLimiter}` 5-arg reverse, which
-            # rejects Upwind.
-            push!(ops, _CSSweepRecord(:z, z_scheme,
-                                      _stage_panels_strict(panels_m),
-                                      nothing,
-                                      panels_cm, FT(flux_scale)))
-        end
+        # Z half-sweep (second half), recorded before it is applied.
+        _record_and_sweep_z!(ops, z_scheme, panels_rm, panels_m, panels_cm, ws, mesh,
+                             FT(flux_scale), storage; record_ops)
 
         # LinRood horizontal substep (second half of the palindrome).
         record_b = _record_linrood_horizontal_substep!(
@@ -512,7 +494,7 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
                 "convection_op=$(typeof(convection_op)) requires `convection_forcing`"))
             if record_ops
                 push!(ops, _CSConvectionRecord(convection_op, forcing_step,
-                                               _stage_panels_strict(panels_m),
+                                               _stage_panels(storage, panels_m),
                                                dt_ft))
             end
             _apply_cs_convection_forward!(panels_rm, panels_m, forcing_step,
@@ -522,15 +504,6 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
     end
 
     return ops, panels_rm, panels_m
-end
-
-# Internal helper: build a DeviceCSTapeStorage-staged version of
-# panels for the tape. The existing `_stage_panels(storage, panels)`
-# requires a `storage` argument; we don't have one in scope for the
-# LinRood path because the standalone API doesn't expose it. Stage
-# strictly: just copy in-place onto the same backend.
-function _stage_panels_strict(panels::NTuple{6})
-    return _stage_panels(DeviceCSTapeStorage(), panels)
 end
 
 # ---------------------------------------------------------------------------
