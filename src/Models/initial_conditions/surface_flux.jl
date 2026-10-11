@@ -295,8 +295,13 @@ function _in_flux_file_context(f, variable, file)
     end
 end
 
-_flux_units(raw_var, variable, file) = _in_flux_file_context(variable, file) do
-    parse_flux_units(String(string(get(raw_var.attrib, "units", ""))))
+# A molar flux that names no substance (`mmol m-2 s-1`) is of the tracer's own
+# species; a substance named in the string (`mol C m-2 s-1`) wins.
+function _flux_units(raw_var, variable, file, species::Symbol)
+    units = String(string(get(raw_var.attrib, "units", "")))
+    return _in_flux_file_context(variable, file) do
+        parse_flux_units(units; molar_default = species)
+    end
 end
 
 # The time interval whose length converts slice `month` of per-month units: that
@@ -390,7 +395,7 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}; species::Symbol,
         # by the file's cell areas or, without them, the band areas of the grid
         # on the destination mesh's sphere, so the per-cell totals survive
         # regridding whatever its radius.
-        units = _flux_units(raw_var, variable, file)
+        units = _flux_units(raw_var, variable, file, species)
         _in_flux_file_context(variable, file) do
             iv = _slice_interval(units.time, cfg, file, ds, time_index)
             area = !(units.area isa PerCell) ? nothing :
@@ -441,7 +446,7 @@ function _load_single_timevarying_surface_flux_field(
         # Per-slice unit conversion (as the static loader). Per-month values
         # (GridFED) are twelve monthly slices: slice k is month k of the source
         # year.
-        units = _flux_units(raw_var, variable, file)
+        units = _flux_units(raw_var, variable, file, species)
         units.time isa PerMonth && ntime != 12 && throw(ArgumentError(
             "time-varying source with per-month units must contain 12 monthly slices, got $ntime in $file"))
         _in_flux_file_context(variable, file) do

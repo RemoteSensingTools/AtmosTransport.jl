@@ -209,7 +209,7 @@ _substance_from_keyword(s::Union{Symbol, AbstractString}) =
     lowercase(String(s)) in ("c", "carbon") ? Carbon() : Species(Symbol(s))
 
 """
-    parse_flux_units(s; substance = nothing) -> FluxUnits
+    parse_flux_units(s; substance = nothing, molar_default = nothing) -> FluxUnits
 
 Parse the flux units string `s`. Case, whitespace, `.`/`*` separators and LaTeX
 exponent markup (`m\$^{-2}\$`) are ignored. The grammar is
@@ -230,7 +230,9 @@ exponent markup (`m\$^{-2}\$`) are ignored. The grammar is
 `mmol m-2 s-1` of CO₂: `substance = :co2`). `:c`/`:carbon` give
 [`Carbon`](@ref), other names a [`Species`](@ref). A substance named both in
 the string and by the keyword must agree. Without either, mass units are of
-the [`TargetSpecies`](@ref); molar units without a substance throw.
+the [`TargetSpecies`](@ref); molar units without a substance take
+`molar_default` (the runtime loaders pass the tracer's species, so
+`mmol m-2 s-1` is moles of that species) and throw when it is `nothing`.
 
 Examples: `"kg m-2 s-1"`, `"kg  m-2 s-1"`, `"kg.m-2.s-1"`,
 `"kg m\$^{-2}\$ s\$^{-1}\$"`, `"kgC m-2 s-1"`, `"gC m-2 d-1"`,
@@ -239,7 +241,7 @@ Examples: `"kg m-2 s-1"`, `"kg  m-2 s-1"`, `"kg.m-2.s-1"`,
 `"kg/m2/s"`, `"kg(CO2) m^-2 s^-1"`, `"kg/m²/s"`. Anything else throws an
 `ArgumentError`.
 """
-function parse_flux_units(s::AbstractString; substance = nothing)
+function parse_flux_units(s::AbstractString; substance = nothing, molar_default = nothing)
     text = String(s)
     norm = _normalized_units(text)
     isempty(norm) && throw(ArgumentError("flux units are empty; the units of the source must be given"))
@@ -269,6 +271,8 @@ function parse_flux_units(s::AbstractString; substance = nothing)
         throw(ArgumentError("flux units $(repr(text)) name $(_describe(from_string)), but the " *
                             "source declares $(_describe(from_keyword))"))
     resolved = something(from_string, from_keyword, TargetSpecies())
+    molar && resolved isa TargetSpecies && molar_default !== nothing &&
+        (resolved = _substance_from_keyword(molar_default))
     molar && resolved isa TargetSpecies && throw(ArgumentError(
         "molar flux units $(repr(text)) need a substance; give the species " *
         "(parse_flux_units(s; substance = :co2))"))

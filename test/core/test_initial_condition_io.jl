@@ -889,9 +889,9 @@ end
 @testset "surface-flux units (GriddedIO grammar)" begin
     # The loaders parse the units attribute with GriddedIO.parse_flux_units and
     # convert a slice to kg species m⁻² s⁻¹ by kg_per_unit and period_seconds.
-    units(u) = ICIO._flux_units((; attrib = Dict("units" => u)), "F", "f.nc")
+    units(u, species = :co2) = ICIO._flux_units((; attrib = Dict("units" => u)), "F", "f.nc", species)
     density(u, species; iv = nothing, area = nothing, v = 2.0) =
-        only(ICIO._to_flux_density!(fill(v, 1, 1), units(u), species, iv, area))
+        only(ICIO._to_flux_density!(fill(v, 1, 1), units(u, species), species, iv, area))
     # kg of the species (or unnamed kg) per m² per second: unchanged, bit for bit.
     for u in ("kg m-2 s-1", "kg/m2/s", "kgCO2/m2/s", "kg(CO2) m^-2 s^-1", "kg/m²/s", "kg CO2 m-2 s-1")
         @test density(u, :co2) === 2.0
@@ -912,11 +912,23 @@ end
     @test density("Tonnes", :sf6; v = 1.0, area = fill(2.0, 1, 1)) ===
           1000.0 / (2.0 * AtmosTransport.Parameters.DAYS_PER_JULIAN_YEAR * 86400)
     @test_throws ArgumentError density("kg/s", :co2)
-    # Units of another species than the tracer's, molar units without a species,
-    # missing and unknown units are errors that name the variable and file.
+    # A molar flux that names no substance is of the tracer's species
+    # (ECCO-Darwin writes mmol m-2 s-1 of CO2).
+    M = AtmosTransport.Parameters.SPECIES_MOLAR_MASS
+    @test density("mmol m-2 s-1", :co2; v = 1.0) ≈ 1e-3 * M.co2 rtol = 1e-15
+    @test density("mol m-2 s-1", :sf6; v = 1.0) ≈ M.sf6 rtol = 1e-15
+    @test density("umol/m2/s", :co2; v = 1.0) ≈ 1e-6 * M.co2 rtol = 1e-15
+    # A substance named in the string wins over the tracer's species, with or
+    # without a space or parentheses.
+    K = AtmosTransport.Parameters.SPECIES_MOLAR_MASS.co2 / AtmosTransport.Parameters.CARBON_MOLAR_MASS
+    for u in ("mol C m-2 s-1", "molC m-2 s-1", "mol (C) m-2 s-1")
+        @test density(u, :co2; v = 1.0) ≈ AtmosTransport.Parameters.CARBON_MOLAR_MASS * K rtol = 1e-15
+    end
+    # Units of another species than the tracer's, missing and unknown units
+    # are errors that name the variable and file.
     @test_throws ArgumentError density("kgCO2/m2/s", :sf6)
     @test_throws ArgumentError density("kgC m-2 s-1", :rn222)
-    for u in ("mol m-2 s-1", "", "umol/m2/s", "kg m-2", "Tg/yr")
+    for u in ("", "kg m-2", "Tg/yr")
         err = try units(u); nothing catch e; e end
         @test err isa ArgumentError && occursin("'F' in f.nc", err.msg)
     end

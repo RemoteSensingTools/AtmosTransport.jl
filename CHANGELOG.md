@@ -674,8 +674,9 @@
     convert; the conversion follows the units, not the kind (a
     `gridfed_fossil_co2` file is divided by the month length only if its units
     are per month, an `edgar_sf6` file by the cell area only if they are per
-    cell). Molar units without a species, missing and unknown units
-    remain errors, now naming the variable and file. Units in kg of another
+    cell). Molar units that name no species are moles of the tracer's
+    species; missing and unknown units remain errors, now naming the variable
+    and file. Units in kg of another
     named species than the tracer's (`surface_flux.species`) are an error;
     they were read with factor 1. Time-varying lat-lon sources need densities
     (per m²).
