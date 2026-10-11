@@ -13,6 +13,10 @@ jobs:
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      actions: write   # julia-actions/cache deletes superseded caches
+      contents: read
+      id-token: write  # Codecov upload authenticates with GitHub OIDC, no secret
     strategy:
       fail-fast: false
       matrix:
@@ -25,4 +29,21 @@ jobs:
           version: ${{ matrix.version }}
       - uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@v1
+      # julia-runtest records coverage by default (input `coverage: true`).
       - uses: julia-actions/julia-runtest@v1
+      # One coverage report per run: the current Julia release on Linux.
+      - uses: julia-actions/julia-processcoverage@v1
+        if: matrix.version == '1' && matrix.os == 'ubuntu-latest'
+        with:
+          directories: src,ext
+      - uses: codecov/codecov-action@v5
+        if: matrix.version == '1' && matrix.os == 'ubuntu-latest'
+        with:
+          files: lcov.info
+          disable_search: true
+          # Pull requests from forks get no OIDC token; Codecov accepts their
+          # uploads tokenless for a public repository.
+          use_oidc: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) }}
+          # Codecov must not fail CI (for example before the Codecov app is
+          # enabled for the repository).
+          fail_ci_if_error: false

@@ -83,6 +83,9 @@ const PAGES = [
         "theory/validation_status.md",
         "theory/adjoint_status.md",
     ],
+    "Development" => [
+        "development/benchmarks.md",
+    ],
     "API" => [
         "api/public_api.md",
         "api/index.md",

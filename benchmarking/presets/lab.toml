@@ -1,0 +1,55 @@
+# Lab preset: production-scale synthetic cubed-sphere cases measured by the
+# lab lane (benchmarking/lab/run_lab_benchmarks.jl) on the lab machines. The
+# machine table in benchmarking/lab/machines.toml supplies the backend and the
+# float types; this file fixes everything else so lab results stay comparable
+# over time.
+#
+# Every value is part of the dashboard history. Adding or removing grids,
+# levels, tracer counts, or operators adds or ends series. Changing steps,
+# repeats, scheme, convection_depth, or the limits changes what an existing
+# series measures or which series exist: do that together with a new `group`
+# name.
+
+description = "Production-scale C90-C720 L72/L137 cases with 2 tracers for the lab GPUs"
+group = "Lab Synthetic CS Sweep"
+
+# C90 and C180 are the production cubed-sphere resolutions, C360 and C720 the
+# high-resolution targets; L72 is the GEOS/MERRA-2 column and L137 the ERA5
+# column.
+grid = ["C90", "C180", "C360", "C720"]
+levels = [72, 137]
+
+# Two tracers on every grid: enough to exercise the multi-tracer kernels while
+# Float32 C720 L137 still fits the 40 GB A100. `adjoint` runs at one tracer
+# (case_matrix in benchmarking/src/case_options.jl).
+tracers = [2]
+
+operator = ["advection", "diffusion", "convection", "full", "io", "adjoint"]
+scheme = ["ppm"]
+
+steps = 5
+warmup_steps = 2
+repeats = 5
+
+# Bottom levels in the TM5 convection matrix (0 = full column), clipped to
+# each case's level count. 85 matches the production ERA5 L137 run
+# (config/runs/catrine_era5_n320_c180_linrood7_dec2021_2weeks.toml: deepest
+# measured convective reach 84 levels); L72 cases keep the full column.
+convection_depth = 85
+
+# Largest grid an operator runs on; its cases on larger grids are not in the
+# case matrix. At C180 L137 the io case serializes 0.68 GB (Float32) or
+# 1.37 GB (Float64) per repeat; at C720 L137 it would be 10.4 or 20.8 GB.
+# The adjoint tape grows with the grid.
+[limits.io]
+max_grid = "C180"
+
+[limits.adjoint]
+max_grid = "C180"
+
+# Case count per float type: 4 operators x 4 grids x 2 levels + (io + adjoint)
+# x 2 grids x 2 levels = 40, so 40 on wurst (Float32) and the Mac (Float32)
+# and 80 on curry (Float32 and Float64). Cases whose estimated device memory
+# exceeds the device's are recorded as skipped_memory, not run (see
+# benchmarking/README.md, "Device memory"); with the current estimate that is
+# expected for Float64 C720 L137 full on the 40 GB A100.

@@ -29,6 +29,52 @@ julia --project=. -e 'using Pkg; Pkg.test()'
 The test tiers, opt-in flags, and how to add a test file are described in
 [`test/README.md`](test/README.md).
 
+### Coverage
+
+CI records line coverage on every pull request and push to `main`; the
+Julia 1 job uploads the report for `src/` and `ext/` to
+[Codecov](https://codecov.io/gh/RemoteSensingTools/AtmosTransport.jl), which
+comments on pull requests and sets a status check. The thresholds and the
+excluded folders are in [`codecov.yml`](codecov.yml). The hosted job runs the
+CPU tiers only, so code in the CUDA and Metal extensions shows as uncovered
+there; the GPU diagnostics in [`test/README.md`](test/README.md) exercise it
+on GPU hardware.
+
+To see coverage locally, run the tests with coverage on, summarize the `.cov`
+files they leave next to the source files, and delete them:
+
+```bash
+julia --project=. -e 'using Pkg; Pkg.test(coverage=true)'
+julia -e 'using Pkg; Pkg.activate(temp=true); Pkg.add("Coverage"); using Coverage
+          covered, total = get_summary(process_folder("src"))
+          println(covered, " of ", total, " lines in src/ covered")
+          foreach(clean_folder, ("src", "ext", "test"))'
+```
+
+### Running Benchmarks
+
+The synthetic cubed-sphere benchmarks live in
+[`benchmarking/`](benchmarking/README.md). Prepare the benchmark environment
+once, then time the operators on the CPU:
+
+```bash
+julia --project=benchmarking -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
+julia --threads=2 --project=benchmarking benchmarking/run_benchmarks.jl \
+  --backend=cpu --float-type=Float32 --grid=C24 --levels=32 --tracers=1,4 \
+  --operator=advection,diffusion,convection,full --output=benchmark_results.json
+```
+
+Use `--backend=cuda`, or `--backend=metal` with `Float32`, on a GPU. To
+measure a change, run the same command on the base and on the changed
+checkout, on the same idle machine, and compare `time_per_step_seconds`
+against `mad_seconds` in the JSON output. Pull requests run tiny CPU
+benchmark smokes in CI on GitHub-hosted runners; the GPU results on the
+[performance dashboard](https://remotesensingtools.github.io/AtmosTransport.jl/benchmarks/)
+come only from the maintainers' lab machines through the lab lane (the
+repository deliberately has no self-hosted runners). The
+[benchmarks page](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/development/benchmarks)
+of the manual defines the metrics and explains the dashboard.
+
 ### Building Documentation Locally
 
 ```bash

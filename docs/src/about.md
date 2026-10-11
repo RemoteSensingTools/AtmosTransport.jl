@@ -22,6 +22,8 @@ which produces a VitePress static site with native Mermaid rendering.
   schemes, conservation budgets, validation status, adjoint status.
 - **Configuration & Runtime** — TOML schema, NetCDF output schema,
   data sources.
+- **Development** — the performance benchmarks, the lab machines that run
+  them, and how to read the performance dashboard.
 - **API Reference** — auto-generated docstrings per submodule.
 
 ## Source of truth

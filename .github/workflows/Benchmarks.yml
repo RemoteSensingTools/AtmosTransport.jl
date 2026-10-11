@@ -9,6 +9,17 @@ on:
         default: "false"
         type: choice
         options: ["false", "true"]
+      run_cpu:
+        description: "Run the CPU benchmark job (false for a lab-only publish)"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+      lab_results:
+        description: "Lab lane results to publish: lab/<commit>-<utc>.json on the benchmark-inbox branch (set by benchmarking/lab/run_lab_benchmarks.jl)"
+        required: false
+        default: ""
+        type: string
       grid:
         description: "Comma-separated CS grids"
         required: true
@@ -21,22 +32,6 @@ on:
         description: "Comma-separated CPU float types"
         required: true
         default: "Float32,Float64"
-      gpu_float_types:
-        description: "Comma-separated GPU float types"
-        required: true
-        default: "Float32"
-      run_cuda:
-        description: "Run GPU-CUDA benchmarks on a self-hosted runner labeled gpu-cuda"
-        required: true
-        default: "false"
-        type: choice
-        options: ["false", "true"]
-      run_metal:
-        description: "Run GPU-Metal benchmarks on a self-hosted runner labeled gpu-metal"
-        required: true
-        default: "false"
-        type: choice
-        options: ["false", "true"]
   push:
     branches: [main]
   pull_request:
@@ -45,14 +40,21 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
+# GPU numbers come from the lab lane (benchmarking/lab/run_lab_benchmarks.jl),
+# which publishes through the `lab_results` input. This public repository
+# deliberately has no self-hosted runners: a pull request can change the
+# workflow it runs.
+permissions:
+  contents: read
+
 jobs:
   cpu:
     name: CPU benchmark smoke
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.run_cpu == 'true'
     runs-on: ubuntu-latest
+    # Runs pull-request code: read-only token.
     permissions:
-      contents: write
-      deployments: write
-      pull-requests: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -111,127 +113,103 @@ jobs:
             benchmark_results.json
             benchmark_results.github-action-benchmark.json
 
-  cuda:
-    name: GPU-CUDA benchmarks
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_cuda == 'true'
-    runs-on: [self-hosted, linux, gpu-cuda, benchmark]
-    env:
-      TMPDIR: /temp1
-    permissions:
-      contents: write
-      deployments: write
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: '1'
-
-      - uses: julia-actions/cache@v2
-
-      - name: Probe CUDA device
-        run: nvidia-smi
-
-      - name: Instantiate benchmark environment
-        shell: julia --color=yes --project=benchmarking {0}
-        run: |
-          using Pkg
-          Pkg.instantiate()
-
-      - name: Run GPU-CUDA benchmarks
-        shell: bash
-        run: |
-          set -euo pipefail
-          julia --color=yes --threads=2 --project=benchmarking benchmarking/run_benchmarks.jl \
-            --backend=cuda \
-            --float-type="${{ github.event.inputs.gpu_float_types }}" \
-            --grid="${{ github.event.inputs.grid }}" \
-            --levels=32 \
-            --tracers=1,4 \
-            --operator="${{ github.event.inputs.operators }}" \
-            --steps=3 \
-            --warmup-steps=1 \
-            --repeats=5 \
-            --group="CUDA Synthetic CS Sweep" \
-            --output=benchmark_results_cuda.json
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: cuda-benchmark-results
-          path: |
-            benchmark_results_cuda.json
-            benchmark_results_cuda.github-action-benchmark.json
-
-  metal:
-    name: GPU-Metal benchmarks
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_metal == 'true'
-    runs-on: [self-hosted, macOS, gpu-metal, benchmark]
-    permissions:
-      contents: write
-      deployments: write
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: '1'
-
-      - uses: julia-actions/cache@v2
-
-      - name: Probe Metal device
-        shell: bash
-        run: |
-          system_profiler SPDisplaysDataType
-
-      - name: Instantiate benchmark environment
-        shell: julia --color=yes --project=benchmarking {0}
-        run: |
-          using Pkg
-          Pkg.add(name="Metal", version="1")
-          Pkg.instantiate()
-
-      - name: Run GPU-Metal benchmarks
-        shell: bash
-        run: |
-          set -euo pipefail
-          julia --color=yes --threads=2 --project=benchmarking benchmarking/run_benchmarks.jl \
-            --backend=metal \
-            --float-type="${{ github.event.inputs.gpu_float_types }}" \
-            --grid="${{ github.event.inputs.grid }}" \
-            --levels=32 \
-            --tracers=1,4 \
-            --operator="${{ github.event.inputs.operators }}" \
-            --steps=3 \
-            --warmup-steps=1 \
-            --repeats=5 \
-            --group="Metal Synthetic CS Sweep" \
-            --output=benchmark_results_metal.json
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: metal-benchmark-results
-          path: |
-            benchmark_results_metal.json
-            benchmark_results_metal.github-action-benchmark.json
-
   publish:
     name: Publish benchmark dashboard
-    if: always() && (github.event_name == 'push' || github.event.inputs.publish == 'true')
-    needs: [cpu, cuda, metal]
+    # Never runs on pull requests. `!cancelled()` keeps a lab-only publish
+    # (run_cpu=false skips the cpu job) running.
+    if: ${{ !cancelled() && (github.event_name == 'push' || github.event.inputs.publish == 'true') }}
+    needs: [cpu]
     runs-on: ubuntu-latest
+    # contents: write pushes the dashboard data to gh-pages and lets
+    # comment-on-alert leave its commit comment (it comments on commits, not
+    # pull requests, so no pull-requests permission); deployments: write is
+    # what github-action-benchmark documents for the gh-pages deployment.
     permissions:
       contents: write
       deployments: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v4
+      - name: Download benchmark artifacts
+        if: needs.cpu.result == 'success'
+        uses: actions/download-artifact@v4
         with:
           path: benchmark-artifacts
           merge-multiple: true
+
+      # Lab lane (benchmarking/lab/run_lab_benchmarks.jl): GPU results measured
+      # on the lab machines arrive through the benchmark-inbox branch and are
+      # published by the same github-action-benchmark step as CI results.
+      - name: Fetch lab results
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.lab_results != ''
+        shell: bash
+        env:
+          LAB_RESULTS: ${{ github.event.inputs.lab_results }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "::error::lab results are published from main only (dispatched on ${GITHUB_REF})"
+            exit 1
+          fi
+          if [[ ! "${LAB_RESULTS}" =~ ^lab/[0-9a-f]{40}-[0-9]{8}T[0-9]{6}Z\.json$ ]]; then
+            echo "::error::lab_results must look like lab/<40-hex commit>-<yyyymmddTHHMMSS>Z.json"
+            exit 1
+          fi
+          git fetch --no-tags --depth=1 origin benchmark-inbox
+          mkdir -p benchmark-artifacts
+          git show "FETCH_HEAD:${LAB_RESULTS}" > benchmark-artifacts/lab.github-action-benchmark.json
+
+      # The dashboard entry is attributed to github.sha, so every lab record
+      # must have been measured on exactly that commit, and in one environment
+      # (Julia version and Manifest sha256), as the lab lane checked.
+      - name: Check lab results commit
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.lab_results != ''
+        shell: python
+        env:
+          LAB_RESULTS: ${{ github.event.inputs.lab_results }}
+        run: |
+          import json, math, os, re
+          sha = os.environ["GITHUB_SHA"]
+          problems = []
+          environments = set()
+          file_commit = os.environ["LAB_RESULTS"].split("/", 1)[1].split("-", 1)[0]
+          if file_commit != sha:
+              problems.append(f"{os.environ['LAB_RESULTS']} names commit {file_commit}, workflow runs on {sha}")
+          with open("benchmark-artifacts/lab.github-action-benchmark.json") as handle:
+              records = json.load(handle)
+          if not isinstance(records, list) or not records:
+              raise SystemExit("::error::lab results must be a non-empty JSON array")
+          names = set()
+          for record in records:
+              name = record.get("name") if isinstance(record, dict) else None
+              if not isinstance(name, str):
+                  problems.append(f"record without a name: {record!r}"[:200])
+                  continue
+              if name in names:
+                  problems.append(f"duplicate series {name}")
+              names.add(name)
+              value = record.get("value")
+              if record.get("unit") != "s/step" or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                  problems.append(f"{name}: expected a positive s/step value")
+              try:
+                  extra = json.loads(record.get("extra", ""))
+                  extra = extra if isinstance(extra, dict) else {}
+              except (TypeError, ValueError):
+                  extra = {}
+              commit = extra.get("commit")
+              if commit != sha:
+                  problems.append(f"{name}: measured on {commit}, workflow runs on {sha}")
+              julia, manifest = str(extra.get("julia_version", "")), str(extra.get("manifest_sha256", ""))
+              if not re.match(r"^[0-9]+\.[0-9]+\.[0-9]+", julia) or not re.fullmatch(r"[0-9a-f]{64}", manifest):
+                  problems.append(f"{name}: no environment fingerprint (julia_version, manifest_sha256)")
+              environments.add((julia, manifest))
+          if len(environments) > 1:
+              problems.append(f"lab records come from {len(environments)} environments: {sorted(environments)}")
+          if problems:
+              for problem in problems[:50]:
+                  print(f"::error::{problem}")
+              raise SystemExit(f"{len(problems)} lab record problem(s); nothing published")
+          print(f"{len(records)} lab records for {sha} accepted")
 
       - name: Merge benchmark records
         shell: python
@@ -255,6 +233,11 @@ jobs:
           output-file-path: benchmark_results_all.github-action-benchmark.json
           benchmark-data-dir-path: "benchmarks"
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          # A dispatch payload has no head commit, so the action would look up
+          # the branch head at publish time; pin the entry to the commit the
+          # records were measured (and the lab check verified) on. Pushes use
+          # their payload's head commit and are unaffected.
+          ref: ${{ github.sha }}
           auto-push: true
           alert-threshold: "120%"
           fail-on-alert: false
