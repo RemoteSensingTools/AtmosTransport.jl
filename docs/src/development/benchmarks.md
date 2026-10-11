@@ -249,37 +249,42 @@ of the latest value per case and device. The raw history is in
 
 ## Latest lab results
 
-Validation run of the lab lane on commit `2c56189e`, not yet published to the
-dashboard. The values are median milliseconds per step with 2 tracers
-(`time_per_step_seconds` in the raw `benchmark_results.json` files). wurst ran
-alongside other jobs during this run, so its numbers are indicative. On curry,
-`Float64` C720 L137 `full` did not fit in the A100's 40 GB and was skipped, as
-the memory estimate predicted.
+Validation runs of the lab lane, not yet published to the dashboard. The
+values are median milliseconds per step with 2 tracers
+(`time_per_step_seconds` in the raw `benchmark_results.json` files).
+
+1. L40S and A100 columns: commit `2c56189e`. wurst ran alongside other jobs
+   during this run, so its numbers are indicative. On curry, `Float64` C720
+   L137 `full` did not fit in the A100's 40 GB and was skipped, as the
+   memory estimate predicted.
+2. M5 Pro column: commit `0810f1d6`, measured with Metal command-buffer
+   failure detection (captured completion-handler reports behind a sentinel
+   barrier); no command buffer failed.
 
 Full step (advection, vertical diffusion, and convection), ms per step:
 
-| Case | L40S `Float32` | A100 `Float32` | M5 Pro `Float32` | A100 `Float64` |
+| Case | L40S `Float32` ¹ | A100 `Float32` ¹ | M5 Pro `Float32` ² | A100 `Float64` ¹ |
 |---|---|---|---|---|
 | C90 L72 | 19.3 | 29.2 | 220 | 55.8 |
 | C90 L137 | 30.7 | 43.7 | 372 | 329 |
-| C180 L72 | 69.3 | 107 | 808 | 216 |
-| C180 L137 | 113 | 163 | 1,388 | 987 |
-| C360 L72 | 271 | 413 | 3,209 | 854 |
-| C360 L137 | 456 | 632 | 5,493 | 3,908 |
-| C720 L72 | 1,085 | 1,644 | 12,614 | 3,414 |
-| C720 L137 | 1,816 | 2,519 | 22,114 | skipped (needs 54.5 GiB, 38.6 free) |
+| C180 L72 | 69.3 | 107 | 807 | 216 |
+| C180 L137 | 113 | 163 | 1,382 | 987 |
+| C360 L72 | 271 | 413 | 3,200 | 854 |
+| C360 L137 | 456 | 632 | 5,487 | 3,908 |
+| C720 L72 | 1,085 | 1,644 | 12,589 | 3,414 |
+| C720 L137 | 1,816 | 2,519 | 22,038 | skipped (needs 54.5 GiB, 38.6 free) |
 
 Advection only, ms per step:
 
-| Case | L40S `Float32` | A100 `Float32` | M5 Pro `Float32` | A100 `Float64` |
+| Case | L40S `Float32` ¹ | A100 `Float32` ¹ | M5 Pro `Float32` ² | A100 `Float64` ¹ |
 |---|---|---|---|---|
 | C90 L72 | 5.0 | 10.4 | 43.8 | 11.1 |
-| C90 L137 | 7.7 | 11.5 | 73.7 | 15.1 |
-| C180 L72 | 11.6 | 20.4 | 104 | 28.1 |
-| C180 L137 | 20.4 | 36.8 | 192 | 52.0 |
-| C360 L72 | 38.3 | 73.2 | 394 | 106 |
-| C360 L137 | 73.9 | 138 | 814 | 202 |
-| C720 L72 | 145 | 287 | 1,330 | 417 |
-| C720 L137 | 282 | 546 | 2,597 | 796 |
+| C90 L137 | 7.7 | 11.5 | 73.5 | 15.1 |
+| C180 L72 | 11.6 | 20.4 | 105 | 28.1 |
+| C180 L137 | 20.4 | 36.8 | 188 | 52.0 |
+| C360 L72 | 38.3 | 73.2 | 389 | 106 |
+| C360 L137 | 73.9 | 138 | 734 | 202 |
+| C720 L72 | 145 | 287 | 1,389 | 417 |
+| C720 L137 | 282 | 546 | 2,622 | 796 |
 
 The dashboard has the full history once results are published.
