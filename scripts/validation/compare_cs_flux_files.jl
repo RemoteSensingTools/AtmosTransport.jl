@@ -91,7 +91,7 @@
 #                  order; `panel_labels` of the mesh convention);
 #       interior - all other cells;
 #     plus `all`. Without a mask there are no coastal cells.
-#   * 60 equal-area latitude bands, uniform in sin(latitude) of the mesh cell
+#   * 60 equal-area latitude bands (`Analysis.EqualAreaBands`), uniform in sin(latitude) of the mesh cell
 #     centres: duration-weighted time-mean rate per band, and the largest
 #     per-slice relative difference per band (time-dependent variables only).
 #   * Float32 ulp distance between a and b (values stored in another type are
@@ -172,6 +172,7 @@ using AtmosTransport.Grids: CubedSphereMesh, GEOSNativePanelConvention, panel_la
                             panel_cell_center_lonlat
 using AtmosTransport.Parameters: EARTH_RADIUS, SPECIES_MOLAR_MASS, CARBON_MOLAR_MASS
 using AtmosTransport.MetDrivers: TransportBinaryReader, load_grid
+using AtmosTransport.Analysis: EqualAreaBands, band_index
 using AtmosTransport.Preprocessing: build_cs_global_face_table
 # The runtime's `cs_native` series layout (Julia order), defined once in GriddedIO.
 using AtmosTransport.GriddedIO: CS_NATIVE_FLUX_DIMS
@@ -542,17 +543,17 @@ end
 """
     sin_latitude_bands(mesh, nbands = 60) -> Array{Int, 3}
 
-Band index of every cell: band `b` holds the cell centres with
-`-1 + 2(b - 1)/nbands <= sin(latitude) < -1 + 2b/nbands` (equal-area bands).
+Band index of every cell centre in `Analysis.EqualAreaBands(nbands)`: band `b`
+holds the centres with `s_{b-1} <= sin(latitude) < s_b`, `s_k = (k / nbands) * 2 - 1`
+(equal-area bands, band 1 at the south pole).
 """
 function sin_latitude_bands(mesh::CubedSphereMesh, nbands::Int = N_SIN_LAT_BANDS)
     Nc = mesh.Nc
+    bands = EqualAreaBands(nbands)
     band = Array{Int}(undef, Nc, Nc, CS_PANELS)
     for p in 1:CS_PANELS
         _, lat = panel_cell_center_lonlat(mesh, p)
-        for j in 1:Nc, i in 1:Nc
-            band[i, j, p] = clamp(floor(Int, (sind(lat[i, j]) + 1) / 2 * nbands) + 1, 1, nbands)
-        end
+        band[:, :, p] .= band_index.(Ref(bands), lat)
     end
     return band
 end

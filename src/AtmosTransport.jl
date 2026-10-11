@@ -265,6 +265,12 @@ using .Visualization
 include("Models/Models.jl")
 using .Models
 
+# ---- Post-run analysis numerics (band means, decompositions, skill statistics) ----
+# Numerics for the diagnostic command lines in scripts/diagnostics/. Reachable as
+# `AtmosTransport.Analysis`; its names are not re-exported at the top level.
+include("Analysis/Analysis.jl")
+using .Analysis
+
 # ---- Download pipeline (TOML-driven met/emissions data download) ----
 include("Downloads/Downloads.jl")
 using .DataDownloads

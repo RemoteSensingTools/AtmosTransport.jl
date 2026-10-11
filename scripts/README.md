@@ -238,3 +238,13 @@ fits their purpose (for example `diagnostics/heritage/`;
 | `animate_gchp_v4_fullphys.jl` | GEOS-Chem vs AT GCHP v4 full-physics animation |
 | `cs_regrid_utils.jl` | Nearest-neighbour CS to lat-lon map and loaders for older animations |
 | `plot_snapshot_grid.jl` | Multi-panel snapshot PNG; replaced by `atmos_viz.jl --kind grid` |
+
+### Python → Julia port
+
+Files retired by the port of the Python flux preprocessing and diagnostics
+(`docs/memos/2026-10-10_python_flux_port_design.md`). Each row names the last
+commit that contains the file; recover it with `git show <commit>:<path>`.
+
+| Path | Replaced by | Last commit |
+|---|---|---|
+| `test/diagnostics/test_trendy_hovmoller.py` | `test/core/test_analysis_decomposition.jl` (`Analysis.seasonal_trend_decomposition`, `Analysis.skill_metrics`) | `a5df02ae` |

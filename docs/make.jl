@@ -96,6 +96,7 @@ const PAGES = [
         "api/met_drivers.md",
         "api/operators.md",
         "api/models.md",
+        "api/analysis.md",
         "api/preprocessing.md",
         "api/downloads.md",
         "api/regridding.md",

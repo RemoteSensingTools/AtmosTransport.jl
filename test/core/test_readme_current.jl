@@ -50,7 +50,7 @@ const README_DIRS = [
     # Grids
     "src/Grids",
     # Remaining modules and subfolders with READMEs
-    "src/Adjoints", "src/Diagnostics", "src/Downloads", "src/Footprint",
+    "src/Adjoints", "src/Analysis", "src/Diagnostics", "src/Downloads", "src/Footprint",
     "src/Inversion", "src/MetDrivers/transport_binary",
     "src/Models/initial_conditions", "src/Models/runner", "src/Output",
     "src/Output/observations", "src/Parameters", "src/Preprocessing",

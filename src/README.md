@@ -59,6 +59,9 @@ Geometry and topology decisions come from
 - `Preprocessing/` — transport-binary and met-data preparation
 - `Downloads/` — data acquisition helpers
 - `Visualization/` — topology-aware snapshot views and optional Makie methods
+- [`Analysis/`](Analysis/README.md) — post-run diagnostics numerics: snapshot
+  time series, equal-area band means, seasonal/interannual decompositions,
+  skill statistics and column profile tools (loaded after `Models`)
 - `Tape/` — checkpoint schedules and device/pinned-host/mmap tape storage
 - `Adjoints/` — reverse operators and objective seeding
 - `Footprint/` — forward-record/reverse-loop footprint workflows included by

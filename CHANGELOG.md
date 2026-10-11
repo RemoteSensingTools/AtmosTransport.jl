@@ -837,6 +837,27 @@
   how to read the dashboard. `CONTRIBUTING.md` explains the benchmarks and
   coverage.
 
+### Post-run diagnostics
+
+- New module `AtmosTransport.Analysis` (loaded after `Models`): the shared
+  numerics of post-run diagnostics. `daily_snapshot_series` concatenates the
+  frames of snapshot files (explicit run origin; a repeated hour is read once);
+  `EqualAreaBands` and `band_means` form area-weighted means on bands equally
+  spaced in sin φ, leaving NaN cells out of numerator and denominator;
+  `doy_linear_detrend` removes a per-calendar-day line across years (29
+  February folded onto 28 February); `seasonal_trend_decomposition` fits 12
+  calendar-month intercepts and a trend on the observed months (minimum norm);
+  `skill_metrics`, `weighted_fit_stats`, `column_band_weights` and
+  `logp_interpolate` complete it. On the TRENDY C30 ranking inputs the monthly
+  band means equal the Python ones bit for bit and the decomposition agrees to
+  6e-14 ppm with the same ranks; on the SIF-GPP control the printed statistics
+  agree to every digit. `test/diagnostics/test_trendy_hovmoller.py` is ported
+  to `test/core/test_analysis_decomposition.jl`;
+  `scripts/diagnostics/catrine_station_timeseries.py` moves to `heritage/`;
+  `compare_cs_flux_files.jl` takes its sin-latitude bands from `Analysis`
+  (the same assignment as before on C4, C8, C30, C90, C180, C360 and C720 in
+  both panel conventions).
+
 ### Verification and remaining limits
 
 - `test/core/test_slopes_tm5_reference.jl` checks `SlopesScheme` against an

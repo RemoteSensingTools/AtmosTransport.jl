@@ -50,6 +50,9 @@ mass basis, supported operators, and load-time consistency gates.
   names, fill policy, lat-lon orientation, source meshes, time decoding, flux
   units, `cs_native` and lat-lon flux-file schemas); initial-condition and
   surface-flux loaders read files through it, never with private helpers.
+
+  `Regridding -> Preprocessing -> Visualization -> Models -> Analysis -> Downloads`. `Footprint/` and
+  `Inversion/` are not modules: `Adjoints.jl` includes their files.
 - Later modules may depend on earlier ones, never the reverse.
 - Each `src/` folder has a `README.md` (purpose, entry points, file map,
   common tasks, invariants; `Downloads/sources/` is covered by its parent's);

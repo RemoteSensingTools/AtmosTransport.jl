@@ -7,7 +7,7 @@ station's pressure level. Mountain stations sit far above their cell's mean
 surface (Mauna Loa: station ~680 hPa, model surfaces ~910-960 hPa), so the
 lowest model layer would sample the marine boundary layer instead.
 
-  python3 scripts/diagnostics/catrine_station_timeseries.py \
+  python3 scripts/diagnostics/heritage/catrine_station_timeseries.py \
       --dataset 'AtmosTransport C90=/temp1/.../catrine_c90_*.nc' \
       --fossil 'AtmosTransport C90=co2_fossil_from_dec2021' \
       --station 'Mauna Loa,19.536,-155.576,680' --out mlo.png
