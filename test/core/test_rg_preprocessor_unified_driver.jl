@@ -175,7 +175,6 @@ end
 
                 replay = AtmosTransport.MetDrivers.verify_window_continuity_rg(
                     m_cur, hflux, cm, m_next, face_left, face_right,
-                    zeros(Float64, size(m_cur)),
                     reader.header.steps_per_window_by_window[1])
                 @test replay.max_rel_err <= AtmosTransport.MetDrivers.replay_tolerance(FT)
             finally
