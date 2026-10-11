@@ -123,20 +123,21 @@
       <div class="toolbar">
         <label>Operator <select id="operator-select"></select></label>
         <label>Tracers <select id="tracer-select"></select></label>
+        <label>Float type <select id="float-select"></select></label>
         <label>Metric <select id="metric-select">
           <option value="time">Time per step</option>
           <option value="throughput">Cell-tracer updates/s</option>
         </select></label>
       </div>
       <section>
-        <div class="row-title">C24, C90, C180</div>
+        <div class="row-title">Up to C180</div>
         <div class="grid-row">
           <div class="panel"><h3>CPU</h3><div class="chart-wrap"><canvas id="small-cpu"></canvas></div><table class="summary" id="small-cpu-table"></table></div>
           <div class="panel"><h3>GPU</h3><div class="chart-wrap"><canvas id="small-gpu"></canvas></div><table class="summary" id="small-gpu-table"></table></div>
         </div>
       </section>
       <section>
-        <div class="row-title">C360, C720</div>
+        <div class="row-title">Above C180</div>
         <div class="grid-row">
           <div class="panel"><h3>CPU</h3><div class="chart-wrap"><canvas id="large-cpu"></canvas></div><table class="summary" id="large-cpu-table"></table></div>
           <div class="panel"><h3>GPU</h3><div class="chart-wrap"><canvas id="large-gpu"></canvas></div><table class="summary" id="large-gpu-table"></table></div>
@@ -155,13 +156,28 @@
         C360: "#8250df",
         C720: "#cf222e",
       };
+      const fallbackColors = ["#57606a", "#0550ae", "#116329", "#953800", "#6639ba", "#a40e26"];
+      const dashes = [[], [6, 4], [2, 3], [10, 3, 2, 3]];
+      const pointStyles = ["circle", "triangle", "rect", "rectRot", "star", "cross"];
+      const smallGridMax = 180;
       const charts = {};
-      const mainCaseRe = /^(CPU|CUDA|Metal) Synthetic CS Sweep \/ (C\d+) L\d+ ([^ ]+) (\d+)tr \/ (CPU-[^/]+|GPU-[^/]+) \/ ([^/]+)$/;
+      // Series name written by benchmarking/src/labels.jl (case_series_name):
+      // "<group> / C<N> L<levels> <operator> <tracers>tr[ <scheme>] / <backend label> / <float type>",
+      // where GPU backend labels carry the device ("GPU-CUDA L40S") and the
+      // scheme is omitted for the default "ppm".
+      const mainCaseRe = /^(?!Operator Breakdown)([^/]+?) \/ (C(\d+)) L(\d+) ([^ ]+) (\d+)tr(?: ([^ /]+))? \/ (CPU-[^/]+|GPU-[^/]+) \/ ([^/]+)$/;
 
       function parseExtra(extra) {
         if (!extra || extra === "[object Object]") return {};
         if (typeof extra === "object") return extra;
         try { return JSON.parse(extra); } catch (_) { return {}; }
+      }
+
+      // Environment fingerprint written by benchmarking/src/records.jl: a
+      // change of Julia version or resolved Manifest marks a discontinuity.
+      function environmentText(extra) {
+        if (!extra.julia_version && !extra.manifest_sha256) return "environment not recorded";
+        return `Julia ${extra.julia_version || "?"}, Manifest ${String(extra.manifest_sha256 || "?").slice(0, 12)}`;
       }
 
       function records() {
@@ -171,23 +187,32 @@
             for (const bench of entry.benches) {
               const m = bench.name.match(mainCaseRe);
               if (!m) continue;
-              const backendClass = m[5];
-              const backendGroup = backendClass.startsWith("CPU-") ? "CPU" : "GPU";
+              const backendLabel = m[8].trim();
               const extra = parseExtra(bench.extra);
+              const levels = m[4];
+              const scheme = m[7] || "";
               out.push({
                 commit: entry.commit.id.slice(0, 7),
                 commitUrl: entry.commit.url,
                 date: entry.date,
                 name: bench.name,
-                backendGroup,
-                backendClass,
+                group: m[1],
+                backendGroup: backendLabel.startsWith("CPU-") ? "CPU" : "GPU",
+                backendLabel,
                 grid: m[2],
-                operator: m[3],
-                tracers: m[4],
-                floatType: m[6].trim(),
+                gridN: Number(m[3]),
+                levels,
+                operator: m[5],
+                tracers: m[6],
+                scheme,
+                floatType: m[9].trim(),
+                // A chart line: every case field except the ones the toolbar
+                // selects (operator, tracers, float type).
+                seriesKey: [m[1], m[2], levels, scheme, backendLabel].join("|"),
                 time: Number(bench.value),
                 throughput: Number(extra.updates_per_second || extra.updatesPerSecond || NaN),
-                device: extra.device || backendClass,
+                device: extra.device || backendLabel,
+                environment: environmentText(extra),
               });
             }
           }
@@ -198,7 +223,7 @@
       function latestByCase(rows) {
         const map = new Map();
         for (const row of rows) {
-          const key = [row.backendGroup, row.grid, row.operator, row.tracers, row.floatType].join("|");
+          const key = [row.seriesKey, row.operator, row.tracers, row.floatType].join("|");
           const old = map.get(key);
           if (!old || row.date > old.date) map.set(key, row);
         }
@@ -212,7 +237,25 @@
         });
       }
 
+      function bySeries(a, b) {
+        return a.gridN - b.gridN || Number(a.levels) - Number(b.levels) ||
+               a.backendLabel.localeCompare(b.backendLabel) || a.scheme.localeCompare(b.scheme) ||
+               a.group.localeCompare(b.group);
+      }
+
+      // Case text of a row: grid, levels, and a non-default scheme, plus the
+      // group when the panel shows more than one group.
+      function caseLabel(row, showGroup) {
+        const text = [row.grid, "L" + row.levels, row.scheme].filter(Boolean).join(" ");
+        return showGroup ? `${row.group}: ${text}` : text;
+      }
+
+      function hasSeveralGroups(rows) {
+        return new Set(rows.map(row => row.group)).size > 1;
+      }
+
       function fillSelect(select, values) {
+        const previous = select.value;
         select.innerHTML = "";
         for (const value of values) {
           const option = document.createElement("option");
@@ -220,6 +263,11 @@
           option.textContent = value;
           select.appendChild(option);
         }
+        if (values.includes(previous)) select.value = previous;
+      }
+
+      function escapeHtml(text) {
+        return String(text).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
       }
 
       function renderTable(id, rows, metric) {
@@ -229,28 +277,56 @@
           return;
         }
         const valueLabel = metric === "time" ? "s/step" : "updates/s";
+        const showGroup = hasSeveralGroups(rows);
         const body = rows.map(row => {
           const value = metric === "time" ? row.time : row.throughput;
           const formatted = metric === "time" ? value.toFixed(4) : value.toExponential(3);
-          return `<tr><td>${row.grid}</td><td>${row.device}</td><td>${formatted}</td></tr>`;
+          return `<tr><td>${escapeHtml(caseLabel(row, showGroup))}</td>` +
+                 `<td title="${escapeHtml(row.device)}">${escapeHtml(row.backendLabel)}</td>` +
+                 `<td title="${escapeHtml(row.environment)}"><a href="${escapeHtml(row.commitUrl)}">${escapeHtml(row.commit)}</a></td><td>${formatted}</td></tr>`;
         }).join("");
-        table.innerHTML = `<thead><tr><th>Grid</th><th>Device</th><th>${valueLabel}</th></tr></thead><tbody>${body}</tbody>`;
+        table.innerHTML = `<thead><tr><th>Case</th><th>Device</th><th>Commit</th><th>${valueLabel}</th></tr></thead><tbody>${body}</tbody>`;
       }
 
+      // History per series (group, grid, levels, scheme, device); commits in
+      // date order. Colour follows the grid, dash the device, and point style
+      // the group and scheme, so series sharing a grid and device stay apart.
       function renderChart(id, rows, metric) {
         const ctx = document.getElementById(id).getContext("2d");
         if (charts[id]) charts[id].destroy();
-        const labels = unique(rows.map(row => row.commit));
-        const datasets = unique(rows.map(row => row.grid)).map(grid => {
-          const byCommit = new Map(rows.filter(row => row.grid === grid).map(row => [row.commit, row]));
+        const firstSeen = new Map();
+        for (const row of rows) {
+          const old = firstSeen.get(row.commit);
+          if (old === undefined || row.date < old) firstSeen.set(row.commit, row.date);
+        }
+        const labels = Array.from(firstSeen.keys()).sort((a, b) => firstSeen.get(a) - firstSeen.get(b));
+        const seriesRows = new Map();
+        for (const row of rows.slice().sort(bySeries)) {
+          if (!seriesRows.has(row.seriesKey)) seriesRows.set(row.seriesKey, []);
+          seriesRows.get(row.seriesKey).push(row);
+        }
+        const devices = unique(rows.map(row => row.backendLabel));
+        const variants = unique(rows.map(row => row.group + "|" + row.scheme));
+        const showGroup = hasSeveralGroups(rows);
+        const datasets = Array.from(seriesRows.values()).map((list, i) => {
+          const byCommit = new Map();
+          for (const row of list) {
+            const old = byCommit.get(row.commit);
+            if (!old || row.date > old.date) byCommit.set(row.commit, row);
+          }
+          const first = list[0];
+          const color = colors[first.grid] || fallbackColors[i % fallbackColors.length];
           return {
-            label: grid,
+            label: `${caseLabel(first, showGroup)} ${first.backendLabel}`,
             data: labels.map(label => {
               const row = byCommit.get(label);
               return row ? (metric === "time" ? row.time : row.throughput) : null;
             }),
-            borderColor: colors[grid] || "#57606a",
-            backgroundColor: (colors[grid] || "#57606a") + "33",
+            environments: labels.map(label => (byCommit.get(label) || {}).environment || ""),
+            borderColor: color,
+            backgroundColor: color + "33",
+            borderDash: dashes[devices.indexOf(first.backendLabel) % dashes.length],
+            pointStyle: pointStyles[variants.indexOf(first.group + "|" + first.scheme) % pointStyles.length],
             fill: false,
             spanGaps: true,
           };
@@ -274,9 +350,9 @@
             tooltips: {
               callbacks: {
                 label: (item, data) => {
-                  const value = item.yLabel;
+                  const dataset = data.datasets[item.datasetIndex];
                   const unit = metric === "time" ? "s/step" : "updates/s";
-                  return `${data.datasets[item.datasetIndex].label}: ${value} ${unit}`;
+                  return `${dataset.label}: ${item.yLabel} ${unit} (${dataset.environments[item.index]})`;
                 },
               },
             },
@@ -287,20 +363,20 @@
       function render() {
         const operator = document.getElementById("operator-select").value;
         const tracers = document.getElementById("tracer-select").value;
+        const floatType = document.getElementById("float-select").value;
         const metric = document.getElementById("metric-select").value;
-        const rows = latestByCase(records()).filter(row => row.operator === operator && row.tracers === tracers);
+        const rows = records().filter(row => row.operator === operator && row.tracers === tracers &&
+                                             row.floatType === floatType);
         const groups = [
-          ["small-cpu", ["C24", "C90", "C180"], "CPU"],
-          ["small-gpu", ["C24", "C90", "C180"], "GPU"],
-          ["large-cpu", ["C360", "C720"], "CPU"],
-          ["large-gpu", ["C360", "C720"], "GPU"],
+          ["small-cpu", row => row.gridN <= smallGridMax, "CPU"],
+          ["small-gpu", row => row.gridN <= smallGridMax, "GPU"],
+          ["large-cpu", row => row.gridN > smallGridMax, "CPU"],
+          ["large-gpu", row => row.gridN > smallGridMax, "GPU"],
         ];
-        for (const [id, grids, backend] of groups) {
-          const panelRows = rows
-            .filter(row => row.backendGroup === backend && grids.includes(row.grid))
-            .sort((a, b) => grids.indexOf(a.grid) - grids.indexOf(b.grid));
+        for (const [id, inPanel, backend] of groups) {
+          const panelRows = rows.filter(row => row.backendGroup === backend && inPanel(row));
           renderChart(id, panelRows, metric);
-          renderTable(id + "-table", panelRows, metric);
+          renderTable(id + "-table", latestByCase(panelRows).sort(bySeries), metric);
         }
       }
 
@@ -311,8 +387,10 @@
       repo.textContent = window.BENCHMARK_DATA.repoUrl;
       fillSelect(document.getElementById("operator-select"), unique(all.map(row => row.operator)));
       fillSelect(document.getElementById("tracer-select"), unique(all.map(row => row.tracers)));
+      fillSelect(document.getElementById("float-select"), unique(all.map(row => row.floatType)));
       document.getElementById("operator-select").onchange = render;
       document.getElementById("tracer-select").onchange = render;
+      document.getElementById("float-select").onchange = render;
       document.getElementById("metric-select").onchange = render;
       render();
     </script>
