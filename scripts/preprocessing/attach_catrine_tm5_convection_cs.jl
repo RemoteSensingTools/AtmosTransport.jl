@@ -262,6 +262,26 @@ function file_fields_to_basis!(out, slot, basis::AtmosTransport.DryBasis,
     return out
 end
 
+function open_attachment_writer(output, Nc, np, Nz, h, g, vc, metadata)
+    return MD.open_streaming_cs_transport_binary(
+        output, Nc, np, Nz, h.nwindow, vc;
+        FT = Float32, planet_radius = h.planet_radius_m, dt_met_seconds = h.dt_met_seconds,
+        half_dt_seconds = h.half_dt_seconds, steps_per_window = 1,
+        source_flux_sampling = h.source_flux_sampling,
+        air_mass_sampling = h.air_mass_sampling,
+        flux_sampling = h.flux_sampling, flux_kind = h.flux_kind,
+        include_flux_delta = true, mass_basis = h.mass_basis,
+        tm5_convection_mass_basis = h.mass_basis,
+        include_surface = true, include_tm5conv = true,
+        include_precomputed_dkg = true,
+        panel_convention = String(g.panel_convention),
+        cs_definition = String(g.definition),
+        cs_coordinate_law = String(g.coordinate_law),
+        cs_center_law = String(g.center_law),
+        longitude_offset_deg = g.longitude_offset_deg,
+        extra_header = metadata)
+end
+
 function main(argv)
     args = parse_args(argv, settings())
     input = abspath(args["input"])
@@ -336,7 +356,6 @@ function main(argv)
             "experimental_caveat" => "Legacy 1-degree, 3-hourly CATRINE TM5 convection conservatively remapped to the target cubed sphere; native ERA5-N320 hourly convection comparison remains required.",
             # v4: fluxes put on the binary's air-mass basis (v3: level order fixed).
             "convection_attachment" => "legacy_catrine_1deg_3hour_tm5_to_cs_v4",
-            MD.TM5_CONVECTION_MASS_BASIS_KEY => String(h.mass_basis),
             "convection_humidity_source" => humidity_source_label(humidity),
             "convection_source_level_order" => level_order,
             "convection_attach_git_revision" => _git_revision(),
@@ -354,22 +373,7 @@ function main(argv)
             haskey(raw, key) && (metadata[key] = raw[key])
         end
         vc = AtmosTransport.HybridSigmaPressure(Float32.(h.A_ifc), Float32.(h.B_ifc))
-        writer = MD.open_streaming_cs_transport_binary(
-            output, Nc, np, Nz, h.nwindow, vc;
-            FT = Float32, planet_radius = h.planet_radius_m, dt_met_seconds = h.dt_met_seconds,
-            half_dt_seconds = h.half_dt_seconds, steps_per_window = 1,
-            source_flux_sampling = h.source_flux_sampling,
-            air_mass_sampling = h.air_mass_sampling,
-            flux_sampling = h.flux_sampling, flux_kind = h.flux_kind,
-            include_flux_delta = true, mass_basis = h.mass_basis,
-            include_surface = true, include_tm5conv = true,
-            include_precomputed_dkg = true,
-            panel_convention = String(g.panel_convention),
-            cs_definition = String(g.definition),
-            cs_coordinate_law = String(g.coordinate_law),
-            cs_center_law = String(g.center_law),
-            longitude_offset_deg = g.longitude_offset_deg,
-            extra_header = metadata)
+        writer = open_attachment_writer(output, Nc, np, Nz, h, g, vc, metadata)
 
         worst_closure = 0.0
         NCDataset(conv_path, "r") do ds

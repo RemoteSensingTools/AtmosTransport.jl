@@ -10,6 +10,7 @@ include(joinpath(@__DIR__, "..", "..", "scripts", "preprocessing",
 end
 
 const PP = AtmosTransport.Preprocessing
+const MD = AtmosTransport.MetDrivers
 
 @testset "legacy TM5 convection level order" begin
     vc = PP.load_hybrid_coefficients(AttachScript.ERA5_L137_COEFFICIENTS)
@@ -67,6 +68,52 @@ end
     @test sum(out.eu) < sum(slot.eu)              # the unfixed attach route fails here
     @test sum(out.eu) ≈ sum(out.du) rtol = 1e-14
     @test sum(out.ed) ≈ sum(out.dd) rtol = 1e-14
+end
+
+@testset "legacy TM5 attachment records its converted basis" begin
+    mktempdir() do dir
+        Nc, np, Nz = 1, 6, 1
+        panels3(value, nz = Nz) = ntuple(_ -> fill(Float32(value), Nc, Nc, nz), np)
+        panels2(value) = ntuple(_ -> fill(Float32(value), Nc, Nc), np)
+        surface = (pblh = panels2(900), ustar = panels2(0.3),
+                   hflux = panels2(20), t2m = panels2(285))
+        tm5 = (entu = panels3(0.01), detu = panels3(0.01),
+               entd = panels3(0.002), detd = panels3(0.002))
+        window = (
+            m = panels3(1e15),
+            am = ntuple(_ -> zeros(Float32, Nc + 1, Nc, Nz), np),
+            bm = ntuple(_ -> zeros(Float32, Nc, Nc + 1, Nz), np),
+            cm = panels3(0, Nz + 1), ps = panels2(95_000), dm = panels3(0),
+            surface, tm5_fields = tm5, dkg = panels3(0),
+        )
+        header = (
+            nwindow = 1, planet_radius_m = AtmosTransport.Parameters.EARTH_RADIUS,
+            dt_met_seconds = 3600.0, half_dt_seconds = 1800.0,
+            source_flux_sampling = :window_start_endpoint,
+            air_mass_sampling = :window_start_endpoint,
+            flux_sampling = :window_constant, flux_kind = :substep_mass_amount,
+            mass_basis = :dry,
+        )
+        geometry = (
+            panel_convention = "gnomonic", definition = "equiangular_gnomonic",
+            coordinate_law = "equiangular_gnomonic", center_law = "angular_midpoint",
+            longitude_offset_deg = 0.0,
+        )
+        metadata = Dict{String, Any}(
+            "convection_attachment" => "legacy_catrine_1deg_3hour_tm5_to_cs_v4")
+        path = joinpath(dir, "attached.bin")
+        writer = AttachScript.open_attachment_writer(
+            path, Nc, np, Nz, header, geometry,
+            HybridSigmaPressure(Float32[0, 2000], Float32[0, 1]), metadata)
+        MD.write_streaming_cs_window!(writer, window, Nc, np)
+        MD.close_streaming_transport_binary!(writer)
+
+        @test !haskey(metadata, MD.TM5_CONVECTION_MASS_BASIS_KEY)
+        reader = MD.TransportBinaryReader(path)
+        @test MD.tm5_convection_mass_basis(reader) === :dry
+        @test reader.header.raw_header[MD.TM5_CONVECTION_MASS_BASIS_KEY] == "dry"
+        close(reader)
+    end
 end
 
 @testset "legacy TM5 convection file checks" begin

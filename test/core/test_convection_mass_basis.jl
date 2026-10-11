@@ -10,6 +10,7 @@
 
 using Test
 using Random
+using JSON3
 
 using AtmosTransport
 using .AtmosTransport.State: CellState
@@ -205,37 +206,126 @@ end
 end
 
 @testset "TM5 convection basis in the binary header" begin
-    function fixture(path; mass_basis = :dry, tm5_basis = :default)
-        Nx, Ny, Nz = 4, 3, 5
+    MD = AtmosTransport.MetDrivers
+    basis_kw(tm5_basis) = tm5_basis === :default ? (;) :
+                           (; tm5_convection_mass_basis = tm5_basis)
+    add_tm5(window, field) = merge(window, (;
+        tm5_fields = (entu = field(), detu = field(), entd = field(), detd = field())))
+
+    function ll_fixture(include_tm5)
+        Nx, Ny, Nz = 4, 3, 2
         grid = AtmosGrid(LatLonMesh(; FT = Float64, Nx, Ny),
-                         HybridSigmaPressure([0.0, 100, 300, 600, 1000, 2000],
-                                             [0.0, 0, 0.1, 0.3, 0.7, 1]),
+                         HybridSigmaPressure([0.0, 1000, 2000], [0.0, 0.2, 1.0]),
                          CPU(); FT = Float64)
-        zero3 = () -> zeros(Nx, Ny, Nz)
         window = (m = fill(1e16, Nx, Ny, Nz), am = zeros(Nx + 1, Ny, Nz),
                   bm = zeros(Nx, Ny + 1, Nz), cm = zeros(Nx, Ny, Nz + 1),
-                  ps = fill(95_000.0, Nx, Ny),
-                  tm5_fields = (entu = zero3(), detu = zero3(), entd = zero3(), detd = zero3()))
-        basis_kw = tm5_basis === :default ? (;) :
-                   (; tm5_convection_mass_basis = tm5_basis)
-        write_transport_binary(path, grid, [window]; FT = Float64, dt_met_seconds = 3600.0,
-                               half_dt_seconds = 1800.0, steps_per_window = 1, mass_basis,
-                               source_flux_sampling = :window_start_endpoint,
-                               flux_sampling = :window_constant, basis_kw...)
+                  ps = fill(95_000.0, Nx, Ny))
+        return grid, include_tm5 ? add_tm5(window, () -> zeros(Nx, Ny, Nz)) : window
+    end
+
+    function rg_fixture(include_tm5)
+        Nz = 2
+        mesh = ReducedGaussianMesh([-45.0, 45.0], [4, 4]; FT = Float64)
+        grid = AtmosGrid(mesh, HybridSigmaPressure([0.0, 1000, 2000], [0.0, 0.2, 1.0]),
+                         CPU(); FT = Float64)
+        window = (m = fill(1e16, ncells(mesh), Nz),
+                  hflux = zeros(nfaces(mesh), Nz),
+                  cm = zeros(ncells(mesh), Nz + 1), ps = fill(95_000.0, ncells(mesh)))
+        return grid, include_tm5 ? add_tm5(window, () -> zeros(ncells(mesh), Nz)) : window
+    end
+
+    function write_eager_ll(path; include_tm5, tm5_basis)
+        grid, window = ll_fixture(include_tm5)
+        write_transport_binary(path, grid, [window]; FT = Float64,
+            dt_met_seconds = 3600.0, half_dt_seconds = 1800.0, steps_per_window = 1,
+            mass_basis = :dry, source_flux_sampling = :window_start_endpoint,
+            flux_sampling = :window_constant, basis_kw(tm5_basis)...)
+    end
+
+    function write_eager_rg(path; include_tm5, tm5_basis)
+        grid, window = rg_fixture(include_tm5)
+        write_transport_binary(path, grid, [window]; FT = Float64,
+            dt_met_seconds = 3600.0, half_dt_seconds = 1800.0, steps_per_window = 1,
+            mass_basis = :dry, source_flux_sampling = :window_start_endpoint,
+            flux_sampling = :window_constant, basis_kw(tm5_basis)...)
+    end
+
+    function write_streaming_rg(path; include_tm5, tm5_basis)
+        grid, window = rg_fixture(include_tm5)
+        writer = MD.open_streaming_transport_binary(
+            path, grid, 1, window; FT = Float64, steps_per_window = 1,
+            mass_basis = :dry, source_flux_sampling = :window_start_endpoint,
+            flux_sampling = :window_constant, basis_kw(tm5_basis)...)
+        MD.write_streaming_window!(writer, window)
+        MD.close_streaming_transport_binary!(writer)
+    end
+
+    function write_streaming_cs(path; include_tm5, tm5_basis)
+        Nc, np, Nz = 2, 6, 2
+        panels3() = ntuple(_ -> zeros(Float64, Nc, Nc, Nz), np)
+        window = (m = ntuple(_ -> fill(1e15, Nc, Nc, Nz), np),
+                  am = ntuple(_ -> zeros(Nc + 1, Nc, Nz), np),
+                  bm = ntuple(_ -> zeros(Nc, Nc + 1, Nz), np),
+                  cm = ntuple(_ -> zeros(Nc, Nc, Nz + 1), np),
+                  ps = ntuple(_ -> fill(95_000.0, Nc, Nc), np))
+        include_tm5 && (window = add_tm5(window, panels3))
+        writer = MD.open_streaming_cs_transport_binary(
+            path, Nc, np, Nz, 1,
+            HybridSigmaPressure([0.0, 1000, 2000], [0.0, 0.2, 1.0]);
+            planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
+            steps_per_window = 1, include_tm5conv = include_tm5,
+            mass_basis = :dry, basis_kw(tm5_basis)...)
+        MD.write_streaming_cs_window!(writer, window, Nc, np)
+        MD.close_streaming_transport_binary!(writer)
+    end
+
+    function raw_header(path)
+        raw = open(io -> MD._read_transport_header_json(io; source = path), path)
+        return JSON3.read(String(raw), Dict{String, Any})
+    end
+
+    function rewrite_tm5_basis!(path, basis)
+        header = raw_header(path)
+        header[TM5_CONVECTION_MASS_BASIS_KEY] = String(basis)
+        header_bytes = Int(header["header_bytes"])
+        encoded = Vector{UInt8}(codeunits(JSON3.write(header)))
+        length(encoded) < header_bytes || error("test header no longer fits")
+        open(path, "r+") do io
+            write(io, encoded)
+            write(io, zeros(UInt8, header_bytes - length(encoded)))
+        end
         return path
     end
+
     mktempdir() do dir
-        recorded = fixture(joinpath(dir, "dry.bin"))
-        reader = TransportBinaryReader(recorded)
+        writers = (("eager LL", write_eager_ll), ("eager RG", write_eager_rg),
+                   ("streaming RG", write_streaming_rg), ("streaming CS", write_streaming_cs))
+        cases = (("inferred TM5 basis", true, :default, "dry"),
+                 ("explicit keyless TM5", true, nothing, nothing),
+                 ("non-TM5 payload", false, :default, nothing))
+        @testset "$writer_name: $case_name" for (writer_name, write_fixture) in writers,
+                                                  (case_name, include_tm5, tm5_basis, expected) in cases
+            path = joinpath(dir, replace(lowercase("$writer_name-$case_name"), ' ' => '_') * ".bin")
+            write_fixture(path; include_tm5, tm5_basis)
+            header = raw_header(path)
+            if expected === nothing
+                @test !haskey(header, TM5_CONVECTION_MASS_BASIS_KEY)
+            else
+                @test header[TM5_CONVECTION_MASS_BASIS_KEY] == expected
+            end
+        end
+
+        recorded = joinpath(dir, "eager_ll-inferred_tm5_basis.bin")
+        reader = TransportBinaryReader(recorded; FT = Float64)
         @test tm5_convection_mass_basis(reader) === :dry
         @test binary_capabilities(reader).tm5_convection_mass_basis === :dry
         close(reader)
         @test_logs min_level = Base.CoreLogging.Warn close(TransportBinaryDriver(recorded))
 
-        legacy = fixture(joinpath(dir, "legacy.bin"); tm5_basis = nothing)
+        legacy = joinpath(dir, "eager_ll-explicit_keyless_tm5.bin")
         reader = nothing
         @test_logs (:warn, r"tm5_convection_mass_basis.*1/\(1-q\)") begin
-            reader = TransportBinaryReader(legacy)
+            reader = TransportBinaryReader(legacy; FT = Float64)
         end
         @test tm5_convection_mass_basis(reader) === nothing
         report = nothing
@@ -246,39 +336,29 @@ end
         close(reader)
 
         # A moist binary without the record is consistent (fluxes and mass moist).
-        legacy_moist = fixture(joinpath(dir, "legacy_moist.bin");
-                               mass_basis = :moist, tm5_basis = nothing)
+        grid, window = ll_fixture(true)
+        legacy_moist = joinpath(dir, "legacy_moist.bin")
+        write_transport_binary(legacy_moist, grid, [window]; FT = Float64,
+            steps_per_window = 1, mass_basis = :moist,
+            source_flux_sampling = :window_start_endpoint,
+            tm5_convection_mass_basis = nothing)
         @test_logs min_level = Base.CoreLogging.Warn close(TransportBinaryReader(legacy_moist))
 
-        @test_throws ArgumentError fixture(joinpath(dir, "mismatch.bin"); tm5_basis = :moist)
-    end
+        @test_throws ArgumentError write_eager_ll(
+            joinpath(dir, "writer_mismatch.bin"); include_tm5 = true, tm5_basis = :moist)
 
-    @testset "streaming CS writer records the inferred basis" begin
-        mktempdir() do dir
-            Nc, npanel, Nz = 2, 6, 2
-            panels3(value, nz = Nz) = ntuple(_ -> fill(Float64(value), Nc, Nc, nz), npanel)
-            tm5 = (entu = panels3(0.01), detu = panels3(0.01),
-                   entd = panels3(0.002), detd = panels3(0.002))
-            window = (
-                m = panels3(1e15),
-                am = ntuple(_ -> zeros(Nc + 1, Nc, Nz), npanel),
-                bm = ntuple(_ -> zeros(Nc, Nc + 1, Nz), npanel),
-                cm = panels3(0, Nz + 1),
-                ps = ntuple(_ -> fill(95_000.0, Nc, Nc), npanel),
-                tm5_fields = tm5,
-            )
-            path = joinpath(dir, "streaming.bin")
-            writer = AtmosTransport.MetDrivers.open_streaming_cs_transport_binary(
-                path, Nc, npanel, Nz, 1,
-                HybridSigmaPressure([0.0, 1000, 2000], [0.0, 0.2, 1.0]);
-                planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
-                steps_per_window = 1, include_tm5conv = true, mass_basis = :dry)
-            AtmosTransport.MetDrivers.write_streaming_cs_window!(writer, window, Nc, npanel)
-            AtmosTransport.MetDrivers.close_streaming_transport_binary!(writer)
-
-            reader = TransportBinaryReader(path)
-            @test tm5_convection_mass_basis(reader) === :dry
-            close(reader)
+        # Simulate an externally generated binary. This bypasses every writer
+        # guard so the reader's independent basis check must reject it.
+        mismatch = joinpath(dir, "external_mismatch.bin")
+        cp(recorded, mismatch)
+        rewrite_tm5_basis!(mismatch, :moist)
+        reader_error = try
+            TransportBinaryReader(mismatch; FT = Float64)
+            nothing
+        catch err
+            err
         end
+        @test reader_error isa ArgumentError
+        @test occursin("TM5 convection fluxes are on a moist basis", sprint(showerror, reader_error))
     end
 end
