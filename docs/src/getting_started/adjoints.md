@@ -85,6 +85,7 @@ preconditioner writes ``x=x_b+B^{1/2}\chi``, so the optimizer works with
 | Config section | Role in the example |
 |---|---|
 | `[mesh]`, `[time]`, `[meteo]` | C3 grid, two steps and synthetic constant meteorology. |
+| `[advection]` | The scheme whose adjoint gives the gradient, parsed as in a forward run. The example uses unlimited PPM (`limiter = "none"`, accepted only by the inversion driver), which keeps the cost exactly quadratic; with zero fluxes the choice does not change the result. |
 | `[[observations.entries]]` | Receptor indices, step, observed value and uncertainty. |
 | `[control]` | One spatial field shared by named emission steps. `normalize=true` divides its contribution across those steps. |
 | `[covariance]` | Prior-error scale and spatial correlation. |
@@ -113,7 +114,9 @@ for recomputation using `StrideCheckpoint(k)` or the bisection-based
 choices and the exact supported combinations belong in [Adjoint status](@ref).
 
 The forward and inversion TOML files are **different interfaces**. Adding
-`[adjoint]` to a forward run does not create an inversion. The shipped inversion
+`[adjoint]` to a forward run does not create an inversion, and the inversion
+driver rejects forward-run tables such as `[diffusion]` or `[convection]`
+that it does not read. The shipped inversion
 CLI only assembles synthetic constant meteorology and inline observations;
 real transport binaries and observation files require programmatic assembly.
 `config/inversions/example_c48.toml` is a future-driver sketch, not a working

@@ -20,6 +20,15 @@ dt_seconds = 2.0
 [meteo]
 source = "synthetic_constant"
 
+# The gradient is the adjoint of this scheme. Unlimited PPM is linear, so
+# the cost is exactly quadratic in the emissions; `limiter = "none"` is
+# accepted only by the inversion driver, not by forward runs. With the
+# zero mass fluxes of `synthetic_constant` every scheme gives the same
+# result here.
+[advection]
+scheme = "ppm"
+limiter = "none"
+
 [[observations.entries]]
 step = 2
 objective = "layer_mean"

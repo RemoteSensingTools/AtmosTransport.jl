@@ -41,7 +41,7 @@ end
 function _advection_section(cfg)
     run = get(cfg, "run", Dict{String,Any}())
     if run isa AbstractDict
-        for key in ("scheme", "ppm_order", "vertical", "limiter")
+        for key in _ADVECTION_SPEC_KEYS
             haskey(run, key) && throw(ArgumentError(
                 "`[run].$(key)` moved to the [advection] table; write `$(key) = ...` under " *
                 "[advection]."))

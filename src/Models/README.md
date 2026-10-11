@@ -55,7 +55,9 @@ read.
 - [`RuntimePhysicsSpecs.jl`](RuntimePhysicsSpecs.jl) — typed config specs parsed
   once from TOML + `materialize` (Oceananigans-style); convection family
   (`convection_spec`, the `lmax_conv`/`n_merge`-needs-`use_collab_lu` guard) +
-  advection family (`advection_spec`, LinRood is cubed-sphere only) +
+  advection family (`advection_spec`, LinRood is cubed-sphere only; an
+  `AbstractAdvectionContext` argument lets the 4D-Var inversion driver share
+  the parser with its own scheme default and limiter set) +
   chemistry family (`chemistry_spec`, `materialize` dispatches on run `FT`) +
   diffusion family (`diffusion_spec`; `materialize(spec, style, FT, context)`
   threads all three — topology/capability helpers stay in `RuntimePhysicsRecipe.jl`)

@@ -109,6 +109,10 @@ lookup as the forward observation sampler.
   `DiagonalCSCovariance` uses broadcasts only. The isotropic covariance and
   `CSSurfaceFluxPreconditioner` reuse internal scratch buffers, so they are
   not thread-safe.
+- Evaluation count: `CSLBFGS` gives Optim one objective whose value, gradient
+  and combined methods share a cache of the last evaluation (`_CSCostCache`),
+  so `cost_fn` (forward plus adjoint) runs once per point Optim visits. The
+  initial point and the returned result reuse those evaluations.
 - Covariance limitation: there is no correlation across panels; each panel
   is smoothed as if it were periodic.
 

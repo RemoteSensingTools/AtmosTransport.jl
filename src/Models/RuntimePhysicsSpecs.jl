@@ -194,12 +194,56 @@ struct LinRoodAdvectionSpec{Z <: AbstractAdvectionScheme} <: AbstractAdvectionSp
 end
 LinRoodAdvectionSpec(order::Integer) = LinRoodAdvectionSpec(Int(order), UpwindScheme())
 
+"""
+    AbstractAdvectionContext
+
+The program that reads an `[advection]` table. Forward transport runs and the
+4D-Var inversion driver parse it with the same [`advection_spec`](@ref) and
+`materialize`; the context changes only the scheme default and the accepted
+PPM limiters:
+
+- [`ForwardAdvectionContext`](@ref) (`scripts/run_transport.jl`): an omitted
+  `scheme` means upwind; `limiter` is `monotone` or `cw84`.
+- [`InversionAdvectionContext`](@ref) (`scripts/inversions/cs_4dvar.jl`):
+  `scheme` is required, and `limiter` also accepts `none`.
+"""
+abstract type AbstractAdvectionContext end
+
+"""
+    ForwardAdvectionContext()
+
+`[advection]` of a forward transport run. See [`AbstractAdvectionContext`](@ref).
+"""
+struct ForwardAdvectionContext <: AbstractAdvectionContext end
+
+"""
+    InversionAdvectionContext()
+
+`[advection]` of the 4D-Var inversion driver, whose gradient is the adjoint of
+the selected scheme. `scheme` must be given explicitly, and `limiter = "none"`
+selects the unlimited PPM (`PPMScheme(NoLimiter())`). Unlimited PPM is linear
+in the tracer, so the modeled observations are linear in the emissions and the
+observation cost is exactly quadratic in them (a limiter makes this map only
+piecewise linear). Its fields can overshoot and go negative, and forward runs
+do not offer it. See [`AbstractAdvectionContext`](@ref).
+"""
+struct InversionAdvectionContext <: AbstractAdvectionContext end
+
+# The keys `advection_spec` reads: the forward-run key checks
+# (`runner/config_keys.jl`) and the inversion driver's validation use this list.
+const _ADVECTION_SPEC_KEYS = ("scheme", "ppm_order", "vertical", "limiter")
 const _ADVECTION_SCHEMES = (:upwind, :slopes, :ppm, :linrood, :none)
 const _LINROOD_PPM_ORDERS = (5, 7)
 const _LINROOD_VERTICALS = ("upwind", "fv3_kord8", "fv3_kord8_signed")
 
-function _parse_advection_scheme(section)
-    raw = lowercase(String(get(section, "scheme", "upwind")))
+# The scheme an omitted `scheme` key selects.
+_default_advection_scheme(::ForwardAdvectionContext) = "upwind"
+_default_advection_scheme(::InversionAdvectionContext) = throw(ArgumentError(
+    "[advection] `scheme` is required for an inversion: the gradient is the adjoint of " *
+    "the selected scheme. Supported: $(join(_ADVECTION_SCHEMES, " | "))."))
+
+function _parse_advection_scheme(section, context::AbstractAdvectionContext = ForwardAdvectionContext())
+    raw = lowercase(String(get(() -> _default_advection_scheme(context), section, "scheme")))
     Symbol(raw) in _ADVECTION_SCHEMES && return Symbol(raw)
     throw(ArgumentError(
         "Unknown [advection] scheme: $(repr(raw)). Supported: $(join(_ADVECTION_SCHEMES, " | "))"))
@@ -221,16 +265,26 @@ function _parse_vertical_reconstruction(section)
 end
 
 # `[advection] limiter` selects the PPM limiter: the default monotone PPM, or
-# the complete Colella–Woodward scheme (`CW84Limiter`).
+# the complete Colella–Woodward scheme (`CW84Limiter`). The inversion driver
+# also accepts the unlimited PPM (see `InversionAdvectionContext`).
 const _PPM_LIMITERS = Dict("monotone" => MonotoneLimiter(), "cw84" => CW84Limiter())
+const _INVERSION_PPM_LIMITERS = merge(_PPM_LIMITERS, Dict("none" => NoLimiter()))
 
-function _parse_ppm_limiter(section)
+_ppm_limiters(::ForwardAdvectionContext) = _PPM_LIMITERS
+_ppm_limiters(::InversionAdvectionContext) = _INVERSION_PPM_LIMITERS
+
+_ppm_limiter_note(::ForwardAdvectionContext) =
+    " (`none`, the unlimited PPM, is accepted only by the 4D-Var inversion driver)"
+_ppm_limiter_note(::InversionAdvectionContext) = ""
+
+function _parse_ppm_limiter(section, context::AbstractAdvectionContext)
     raw = get(section, "limiter", "monotone")
     key = raw isa AbstractString ? lowercase(raw) : ""
-    haskey(_PPM_LIMITERS, key) || throw(ArgumentError(
+    limiters = _ppm_limiters(context)
+    haskey(limiters, key) || throw(ArgumentError(
         "Unknown [advection] limiter: $(repr(raw)). Supported: " *
-        join(sort!(collect(keys(_PPM_LIMITERS))), " | ")))
-    return _PPM_LIMITERS[key]
+        join(sort!(collect(keys(limiters))), " | ") * _ppm_limiter_note(context) * "."))
+    return limiters[key]
 end
 
 # Lin–Rood's vertical sweeps: "upwind" (default) or an FV3 profile.
@@ -245,17 +299,20 @@ function _parse_linrood_vertical(section)
 end
 
 """
-    advection_spec(section) -> AbstractAdvectionSpec
+    advection_spec(section[, context = ForwardAdvectionContext()]) -> AbstractAdvectionSpec
 
 Parse an `[advection]` section into a typed spec. `ppm_order` is only meaningful
 for `scheme = "linrood"`; pairing it with `scheme = "ppm"` is rejected (the split
 PPM path takes no order knob). `vertical` applies to `scheme = "ppm"` (default
 `same_as_horizontal`) and `scheme = "linrood"` (default `upwind`). `limiter`
-applies to `scheme = "ppm"` only (`monotone`, the default, or `cw84`). An omitted
-selector defaults to upwind; an omitted Lin–Rood `ppm_order` defaults to `DEFAULT_LINROOD_PPM_ORDER` (5).
+applies to `scheme = "ppm"` only (`monotone`, the default, or `cw84`; the
+inversion driver also accepts `none`). In a forward run an omitted selector
+defaults to upwind; the inversion driver requires it. An omitted Lin–Rood
+`ppm_order` defaults to `DEFAULT_LINROOD_PPM_ORDER` (5). `context` names the
+program reading the table; see [`AbstractAdvectionContext`](@ref).
 """
-function advection_spec(section)
-    kind = _parse_advection_scheme(section)
+function advection_spec(section, context::AbstractAdvectionContext = ForwardAdvectionContext())
+    kind = _parse_advection_scheme(section, context)
     kind in (:ppm, :linrood) || !haskey(section, "vertical") || throw(ArgumentError(
         "[advection] `vertical` is only valid with `scheme = \"ppm\"` or `\"linrood\"`."))
     kind === :ppm || !haskey(section, "limiter") || throw(ArgumentError(
@@ -267,7 +324,7 @@ function advection_spec(section)
         haskey(section, "ppm_order") && throw(ArgumentError(
             "[advection] `ppm_order` is only valid with `scheme = \"linrood\"`; " *
             "`scheme = \"ppm\"` selects the standard split `PPMScheme()` path."))
-        return PPMAdvectionSpec(_parse_ppm_limiter(section),
+        return PPMAdvectionSpec(_parse_ppm_limiter(section, context),
                                 _parse_vertical_reconstruction(section))
     end
     order = _spec_int(section, "ppm_order", DEFAULT_LINROOD_PPM_ORDER, "[advection]")                    # :linrood
@@ -614,6 +671,7 @@ export AbstractConvectionSpec, AbstractCollabLUConvectionSpec, NoConvectionSpec,
        TM5ConvectionSpec, CMFMCConvectionSpec, CMFMCMatrixConvectionSpec
 export AbstractAdvectionSpec, UpwindAdvectionSpec, SlopesAdvectionSpec,
        PPMAdvectionSpec, NoAdvectionSpec, LinRoodAdvectionSpec
+export AbstractAdvectionContext, ForwardAdvectionContext, InversionAdvectionContext
 export AbstractChemistrySpec, NoChemistrySpec, DecayChemistrySpec
 export AbstractDiffusionSpec, NoDiffusionSpec, ConstantDiffusionSpec,
        WindowPBLKzDiffusionSpec, HoltslagBovilleVdiffDiffusionSpec,

@@ -198,23 +198,29 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    CSLBFGS(; iterations, gradient_tolerance, m, line_search,
-              show_trace)
+    CSLBFGS(; iterations, gradient_tolerance, m, show_trace, log)
 
 Limited-memory BFGS (L-BFGS) optimizer backed by
 [`Optim.jl`](https://github.com/JuliaNLSolvers/Optim.jl). `m` is the
-history length; the line-search default (`Optim.HagerZhang()` /
-`Optim.BackTracking()` via `Optim.LBFGS`) is provided by Optim
-itself. `iterations` is the max outer iteration count;
+history length; the line search is Optim's `LBFGS` default
+(Hager–Zhang). `iterations` is the max outer iteration count;
 `gradient_tolerance` is the L∞ stopping threshold on the
 χ-space / x-space gradient. `show_trace = true` forwards verbose
-progress to Optim's logger.
+progress to Optim's logger. `log = true` records one
+[`CSIterationLogEntry`](@ref) for the initial state (iteration 0) and
+one per accepted iterate.
 
 Used by the polymorphic dispatch surface
 [`cs_surface_flux_4dvar_solve`](@ref). The cost closure
-`cost_fn(controls) -> CS4DVarResult` is converted to Optim's
-`(f, g!)` API by flattening each control's `NTuple{6, Matrix}`
-to a `Vector{FT}` and back.
+`cost_fn(controls) -> CS4DVarResult` is handed to Optim as one
+objective with value, gradient and combined value-and-gradient methods,
+flattening each control's `NTuple{6, Matrix}` to a `Vector{FT}` and
+back. Each `cost_fn` call is a forward run plus the adjoint, so all
+three methods share a cache of the last evaluation: `cost_fn` runs
+once per point Optim visits, and the initial point and the returned
+result reuse those evaluations. (The result costs one more evaluation
+only when Optim returns an earlier iterate, after a failed line search
+or a cost increase.)
 """
 struct CSLBFGS{FT <: AbstractFloat} <: AbstractCSOptimizer
     iterations::Int
@@ -309,6 +315,38 @@ function _flatten_gradients_into!(flat::AbstractVector{FT},
     return flat
 end
 
+# ---------- single-point evaluation cache -------------------------------------
+
+# One `cost_fn` call returns the cost AND its gradient (a forward run plus the
+# adjoint footprints), so a value-only or gradient-only request costs as much
+# as a combined one. `_CSCostCache` remembers the most recent evaluation keyed
+# on the flat control vector: Optim's `f`, `g!` and `fg!` callbacks, the
+# iteration-log callback and the final result all read from it, and
+# `cost_fn` runs only when the requested point differs from the cached one.
+# One entry suffices: `NLSolversBase` requests value and gradient at the same
+# point back to back, and Optim evaluates each accepted iterate last, just
+# before its iteration callback.
+#
+# `working_controls` is the scratch control vector `cost_fn` reads. The
+# cached result's `controls` alias its matrices, and they always hold `x`,
+# the cached point, because the cache only moves when `cost_fn` runs.
+mutable struct _CSCostCache{FT, R, C, F}
+    const cost_fn :: F
+    const working_controls :: C
+    const x :: Vector{FT}
+    result :: R
+end
+
+# The `CS4DVarResult` at the flat control `x`, evaluating `cost_fn` only on a
+# cache miss. `==` matches `NLSolversBase`'s own cache test (a NaN never hits).
+function _evaluate!(cache::_CSCostCache, x::AbstractVector)
+    x == cache.x && return cache.result
+    _unflatten_into_controls!(cache.working_controls, x)
+    cache.result = cache.cost_fn(cache.working_controls)
+    copyto!(cache.x, x)
+    return cache.result
+end
+
 # ---------- backend method ----------------------------------------------------
 
 function cs_surface_flux_4dvar_solve(optimizer::CSLBFGS, cost_fn, controls)
@@ -325,7 +363,8 @@ function cs_surface_flux_4dvar_solve(optimizer::CSLBFGS, cost_fn, controls)
         for c in initial_controls
     ]
 
-    # Derive numerical type from the cost result, not the optimizer.
+    # The first evaluation fixes the numerical type and seeds the cache, so
+    # Optim's own evaluation at `x0` reuses it.
     probe = cost_fn(working_controls)
     isempty(probe.gradients) && throw(ArgumentError(
         "cost_fn returned a CS4DVarResult with no gradients; " *
@@ -335,41 +374,27 @@ function cs_surface_flux_4dvar_solve(optimizer::CSLBFGS, cost_fn, controls)
     n_total = _control_flat_length(working_controls)
     x0 = Vector{FT}(undef, n_total)
     _flatten_controls_into!(x0, initial_controls)
+    cache = _CSCostCache(cost_fn, working_controls, copy(x0), probe)
 
-    # Optim's `(f, g!)` callbacks. We cache the most recent
-    # `CS4DVarResult` in `last_result` so the optional per-iteration
-    # log can recover the cost decomposition (observation vs
-    # background) without an extra cost_fn call. Optim re-runs `g!`
-    # at every accepted iterate before firing its iteration
-    # callback, so `last_result[]` is the accepted-iterate result
-    # at callback time.
-    last_result = Ref(probe)
-
-    f = function (x::AbstractVector)
-        _unflatten_into_controls!(working_controls, x)
-        result = cost_fn(working_controls)
-        last_result[] = result
-        return FT(result.cost)
-    end
-
-    g! = function (G::AbstractVector, x::AbstractVector)
-        _unflatten_into_controls!(working_controls, x)
-        result = cost_fn(working_controls)
-        last_result[] = result
-        _flatten_gradients_into!(G, result.gradients)
+    # Value, gradient and value-and-gradient all come from one cached
+    # evaluation per distinct point.
+    f = x -> FT(_evaluate!(cache, x).cost)
+    g! = function (G, x)
+        _flatten_gradients_into!(G, _evaluate!(cache, x).gradients)
         return G
     end
+    fg! = function (G, x)
+        result = _evaluate!(cache, x)
+        _flatten_gradients_into!(G, result.gradients)
+        return FT(result.cost)
+    end
+    objective = Optim.OnceDifferentiable(f, g!, fg!, x0, zero(FT))
 
-    # Optional per-iteration log populated via Optim's callback hook.
+    # Optional per-iteration log populated via Optim's callback hook. Optim
+    # calls it once for the initial state (iteration 0) and once after each
+    # accepted iterate, so the log rows line up with `opt_result.trace`.
     log = optimizer.log ? CSIterationLog{FT}() : nothing
     t0 = time()
-    if log !== nothing
-        push!(log.entries, CSIterationLogEntry{FT}(
-            0, FT(probe.cost), FT(probe.observation_cost),
-            FT(probe.background_cost),
-            FT(_control_gradient_norm(probe.gradients)),
-            zero(FT), time() - t0))
-    end
     callback = log === nothing ? nothing : function (state)
         # Optim's `OptimizationState` for L-BFGS exposes
         # `pseudo_iteration`, `f_x`, `g_x` etc. — different field
@@ -377,27 +402,26 @@ function cs_surface_flux_4dvar_solve(optimizer::CSLBFGS, cost_fn, controls)
         # `opt_result.trace[k]`. We project to the same shape as
         # CSGradientDescent's log entries.
         #
-        # `g_norm` is the L2 norm to match the
-        # `CSIterationLogEntry` docstring ("gradient L2 norm")
-        # and the initial iteration-0 row (which uses
-        # `_control_gradient_norm`, also L2). Optim's own
-        # `state.g_norm` would be L∞ for L-BFGS; we compute L2 by
-        # hand from the flat gradient vector.
-        r = last_result[]
-        iter_count = state.pseudo_iteration
+        # The accepted iterate is the cached point, so this lookup does
+        # not run `cost_fn`; it recovers the observation/background split
+        # that Optim's state does not carry.
+        #
+        # `g_norm` is the L2 norm to match the `CSIterationLogEntry`
+        # docstring ("gradient L2 norm"). Optim's own `state.g_norm`
+        # would be L∞ for L-BFGS; we compute L2 by hand from the flat
+        # gradient vector.
+        r = _evaluate!(cache, state.x)
         g_norm = FT(sqrt(sum(abs2, state.g_x)))
         push!(log.entries, CSIterationLogEntry{FT}(
-            iter_count, FT(r.cost),
+            state.pseudo_iteration, FT(r.cost),
             FT(r.observation_cost), FT(r.background_cost),
             g_norm, zero(FT), time() - t0))
         return false
     end
 
     # `Optim.LBFGS(m = ...)` selects the L-BFGS algorithm with `m`
-    # history terms. The default line search is Hager–Zhang. The
-    # iteration `callback` (when log is enabled) appends one
-    # `CSIterationLogEntry` per accepted iterate; `store_trace`
-    # still powers `cost_history` / `gradient_norm_history`.
+    # history terms. The default line search is Hager–Zhang.
+    # `store_trace` powers `cost_history` / `gradient_norm_history`.
     options = callback === nothing ?
         Optim.Options(iterations = optimizer.iterations,
                        g_abstol = optimizer.gradient_tolerance,
@@ -408,16 +432,14 @@ function cs_surface_flux_4dvar_solve(optimizer::CSLBFGS, cost_fn, controls)
                        show_trace = optimizer.show_trace,
                        store_trace = true,
                        callback = callback)
-    opt_result = Optim.optimize(f, g!, x0,
-                                 Optim.LBFGS(m = optimizer.m),
-                                 options)
+    opt_result = Optim.optimize(objective, x0, Optim.LBFGS(m = optimizer.m), options)
 
-    # Re-evaluate at the minimizer so the returned `last` result is
-    # consistent with the final controls (Optim may have left
-    # `working_controls` at an intermediate iterate after the
-    # last callback).
-    _unflatten_into_controls!(working_controls, Optim.minimizer(opt_result))
-    final = cost_fn(working_controls)
+    # The result at the minimizer, normally the cached last evaluation (the
+    # accepted iterate). If Optim stops on a failed line search, or returns
+    # the previous iterate because the last step increased the cost, this
+    # costs one more evaluation. Either way `working_controls` then holds
+    # the minimizer.
+    final = _evaluate!(cache, Optim.minimizer(opt_result))
 
     # Pull per-iteration cost + gradient-norm history out of the Optim
     # trace. Optim doesn't separately track step size for L-BFGS, so

@@ -126,6 +126,7 @@ using ..Models: build_runtime_physics_recipe, validate_runtime_physics_recipe,
                  CubedSphereRuntimeRecipeStyle
 # Config-only parsers, run by `validate_config` before any binary is opened.
 using ..Models: advection_spec, diffusion_spec, convection_spec, chemistry_spec,
+                 _ADVECTION_SPEC_KEYS,
                  _advection_section, _diffusion_section, _convection_section,
                  _chemistry_section, _normalize_air_mass_reset_mode,
                  _resolve_physics_cadence, binary_cfl_check

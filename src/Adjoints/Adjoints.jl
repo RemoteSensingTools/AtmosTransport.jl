@@ -25,7 +25,7 @@ using ..Grids: CubedSphereMesh, reciprocal_edge,
     panel_convention, cs_definition, cs_definition_tag
 using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
     MonotoneLimiter, CW84Limiter, PPMScheme, SameAsHorizontal, SlopesScheme, UpwindScheme,
-    LinRoodPPMScheme,
+    LinRoodPPMScheme, NoAdvection, FV3ScalarProfile, AbstractLimiter,
     fill_panel_halos!, strang_split_cs!, copy_corners!,
     _cs_static_palindrome_subcycle_count,
     _sweep_z_panel!, _sweep_cs_horizontal!,
@@ -97,6 +97,43 @@ const CSAdjointLinRoodScheme = LinRoodPPMScheme{<:Any, UpwindScheme}   # upwind 
 const CSAdjointSupportedScheme = Union{CSAdjointLinearScheme,
                                         CSAdjointNonlinearScheme,
                                         CSAdjointLinRoodScheme}
+
+"""
+    require_adjoint_support(scheme) -> scheme
+
+Return the advection `scheme` if the cubed-sphere reverse pass has an adjoint
+for it, otherwise throw an `ArgumentError` that names the missing piece and
+lists the supported choices. Dispatches on the union of supported schemes that
+the footprint and 4D-Var entry points also accept, so a configuration is
+rejected with an explanation before any tape is recorded.
+
+Supported: `UpwindScheme()`, `SlopesScheme(NoLimiter())`, `PPMScheme` with
+`NoLimiter`, `MonotoneLimiter` or `CW84Limiter` and the default vertical
+reconstruction, and `LinRoodPPMScheme` (ORD 5 or 7) with upwind vertical
+sweeps. Unsupported: limited `SlopesScheme`, the FV3 vertical profile
+(`FV3ScalarProfile`, either for `PPMScheme` or for Lin–Rood's vertical
+sweeps), `NoAdvection`, and every other scheme or limiter.
+"""
+require_adjoint_support(scheme::CSAdjointSupportedScheme) = scheme
+require_adjoint_support(scheme) = throw(ArgumentError(
+    _adjoint_gap(scheme) * " Advection with a cubed-sphere adjoint: " *
+    "UpwindScheme(), SlopesScheme(NoLimiter()), PPMScheme with NoLimiter, " *
+    "MonotoneLimiter or CW84Limiter and the default vertical, or " *
+    "LinRoodPPMScheme(5 or 7) with upwind vertical sweeps."))
+
+# The part of `scheme` that has no adjoint, for `require_adjoint_support`.
+_adjoint_gap(s::SlopesScheme) =
+    "SlopesScheme with $(nameof(typeof(s.limiter))) has no adjoint; only the unlimited " *
+    "SlopesScheme(NoLimiter()) does."
+_adjoint_gap(::PPMScheme{<:AbstractLimiter, <:FV3ScalarProfile}) =
+    "PPMScheme with the FV3 vertical profile (vertical = \"fv3_kord8\" or " *
+    "\"fv3_kord8_signed\") has no adjoint."
+_adjoint_gap(s::PPMScheme) = "PPMScheme with $(nameof(typeof(s.limiter))) has no adjoint."
+_adjoint_gap(::LinRoodPPMScheme) =
+    "LinRoodPPMScheme with FV3-profile vertical sweeps has no adjoint; use vertical = \"upwind\"."
+_adjoint_gap(::NoAdvection) =
+    "NoAdvection (scheme = \"none\") has no record in the cubed-sphere tape."
+_adjoint_gap(s) = "$(nameof(typeof(s))) has no cubed-sphere adjoint."
 
 # Footprint-objective types + seeding/eval kernels.
 include("ObjectiveSeeding.jl")
@@ -372,6 +409,7 @@ export cs_tape_byte_estimate
 export cs_surface_flux_jacobian
 export cs_surface_flux_4dvar, cs_surface_flux_4dvar_optimize
 export AbstractCSOptimizer, CSGradientDescent, CSLBFGS, cs_surface_flux_4dvar_solve
+export require_adjoint_support
 export CSIterationLog, CSIterationLogEntry
 
 end # module Adjoints

@@ -67,8 +67,35 @@
   scripts (`tracer_budget_closure.jl` uses it); the private
   `_tracer_molar_mass_kg_mol` and `_KNOWN_TRACER_MOLAR_MASS_KG_MOL` are removed.
 
+- The 4D-Var inversion driver (`scripts/inversions/cs_4dvar.jl`) reads a
+  required `[advection]` table (#16). It hard-coded unlimited PPM and ignored
+  any `[advection]` table, even an invalid one, so the gradient was always
+  that of `PPMScheme(NoLimiter())`. The table now goes through the forward
+  run's `advection_spec` and `materialize`, with an `InversionAdvectionContext`
+  that requires `scheme` and also accepts `limiter = "none"` (unlimited PPM);
+  forward runs are unchanged and still reject `none`. Schemes without a
+  cubed-sphere adjoint (limited slopes, the FV3 vertical profile, `none`) are
+  rejected by the new `require_adjoint_support`. Unknown tables and keys are
+  errors, including `[diffusion]` and `[convection]`, which the driver does
+  not wire into the cost, and the documented but never written `[output]`
+  path; keys the selected kind does not read are warnings. The shipped
+  `example_synthetic.toml` states `scheme = "ppm"`, `limiter = "none"` and
+  gives bit-identical results. `SyntheticExperimentConfig` of
+  `scripts/inversions/synthetic_experiment.jl` gains a `scheme` field
+  (default unchanged).
+
 ### Fixes
 
+- `CSLBFGS` evaluated every control point at least twice (#17): Optim
+  received separate value and gradient closures that each ran the full
+  `cost_fn` (a forward run plus the adjoint footprints), and the initial
+  probe and the final result were recomputed. Optim now gets one
+  `OnceDifferentiable` whose value, gradient and combined methods share a
+  cache of the last evaluation, so each point Optim visits costs one
+  `cost_fn` call: 26 calls became 12 over an 11-iteration test inversion, with
+  bitwise-identical costs, gradients and minimizer (single-threaded). The
+  iteration log no longer records iteration 0 twice; its rows now match
+  `cost_history`.
 - Transport binaries (eager and streaming writers), the spectral day cache and
   cached regridders are published through `AtomicFiles`: a sibling staging
   file moved onto the target by one replacing rename (`rename(2)` on POSIX

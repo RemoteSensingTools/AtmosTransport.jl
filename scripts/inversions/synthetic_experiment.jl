@@ -45,8 +45,14 @@ const Adv = AtmosTransport.Operators.Advection
 Parameters of the synthetic inversion experiment. Defaults are tuned
 for a 1–2 s smoke run that exercises every Phase B + C component;
 crank `Nc`, `nsteps`, or `nobs` for a heavier demonstration.
+
+`scheme` is the advection scheme of both the truth run and the
+inversion; it must have a cubed-sphere adjoint
+(`AT.require_adjoint_support`). The default unlimited PPM is linear.
+The experiment's meteorology has zero mass fluxes, so the scheme does
+not change its result.
 """
-struct SyntheticExperimentConfig{FT <: AbstractFloat}
+struct SyntheticExperimentConfig{FT <: AbstractFloat, S}
     Nc::Int                # cubed-sphere panel side length
     Hp::Int                # halo width
     Nz::Int                # vertical levels
@@ -64,6 +70,7 @@ struct SyntheticExperimentConfig{FT <: AbstractFloat}
                             # (cells)
     iterations::Int        # L-BFGS max iterations
     seed::UInt64           # deterministic RNG seed for noise
+    scheme::S              # advection scheme (truth run and inversion)
 end
 
 function SyntheticExperimentConfig(; Nc = 6, Hp = 3, Nz = 3,
@@ -77,13 +84,15 @@ function SyntheticExperimentConfig(; Nc = 6, Hp = 3, Nz = 3,
                                      prior_sigma = 0.05,
                                      correlation_length = 1.0,
                                      iterations = 15,
-                                     seed = 0xC0FFEE)
+                                     seed = 0xC0FFEE,
+                                     scheme = AT.PPMScheme(AT.NoLimiter()))
     FT = typeof(float(blob_peak))
-    return SyntheticExperimentConfig{FT}(
+    AT.require_adjoint_support(scheme)
+    return SyntheticExperimentConfig{FT, typeof(scheme)}(
         Nc, Hp, Nz, nsteps, FT(dt), obs_panel, blob_center,
         FT(blob_sigma_cells), FT(blob_peak),
         obs_half_window, FT(obs_noise_frac), FT(prior_sigma),
-        FT(correlation_length), iterations, UInt64(seed))
+        FT(correlation_length), iterations, UInt64(seed), scheme)
 end
 
 # ---------------------------------------------------------------------------
@@ -182,7 +191,7 @@ function _generate_observations(cfg::SyntheticExperimentConfig{FT},
     forward = AT.cs_surface_flux_4dvar(
         panels_rm, panels_m, panels_am, panels_bm, panels_cm,
         mesh, probe_obs, truth_control;
-        scheme = AT.PPMScheme(AT.NoLimiter()), dt = cfg.dt)
+        scheme = cfg.scheme, dt = cfg.dt)
     clean = forward.simulated  # one Float per observation
 
     peak_signal = maximum(abs, clean)
@@ -241,7 +250,7 @@ function _run_inversion(cfg::SyntheticExperimentConfig{FT},
     return AT.cs_surface_flux_4dvar_optimize(
         panels_rm, panels_m, panels_am, panels_bm, panels_cm,
         mesh, observations, initial;
-        scheme = AT.PPMScheme(AT.NoLimiter()),
+        scheme = cfg.scheme,
         dt = cfg.dt,
         preconditioner = prec,
         optimizer = optimizer)

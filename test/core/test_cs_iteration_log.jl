@@ -6,8 +6,8 @@
 #   * Default behavior: `log = false` keeps `solve.log === nothing`
 #     (pre-C3 baseline).
 #   * `log = true`: `solve.log isa CSIterationLog` and contains one
-#     `CSIterationLogEntry` per iteration (plus the iteration-0
-#     initial-probe row).
+#     `CSIterationLogEntry` per iteration plus one iteration-0 row for
+#     the initial point.
 #   * Consistency: log entries' `cost` field matches `cost_history`;
 #     `gradient_norm` matches `gradient_norm_history`; `step_size`
 #     matches `step_history` (GD only — L-BFGS leaves step at 0).
@@ -133,18 +133,15 @@ end
     @test solve.log isa AT.CSIterationLog
     log = solve.log
 
-    # Iteration-0 initial probe row is present.
+    # Exactly one iteration-0 row (the initial point), then one row per
+    # accepted iterate, aligned with the Optim trace (#17: the initial
+    # point used to be logged twice).
     @test !isempty(log)
-    @test log[1].iteration == 0
+    @test [entry.iteration for entry in log] == collect(0:solve.iterations)
+    @test [entry.cost for entry in log] == solve.cost_history
 
-    # All log iterations are non-negative and monotone.
-    iters = [entry.iteration for entry in log]
-    @test issorted(iters)
-    @test all(iters .>= 0)
-
-    # Cost-decomposition invariant — Optim's callback fires after
-    # `g!` is called at the new iterate, so the cached cost result
-    # is at the same iterate as `state.value`.
+    # Cost-decomposition invariant — each row reads the cached result
+    # at the accepted iterate.
     for entry in log
         @test entry.cost ≈ entry.observation_cost + entry.background_cost atol = 1e-10
     end
@@ -236,16 +233,12 @@ end
     # which is also L2 (populated from `state.g_norm` … but L-BFGS's
     # `state.g_norm` is L∞; the log uses L2 directly). Cross-check
     # the log row against an explicit L2 recomputation.
+    # The returned result is the evaluation at the minimizer, the last
+    # accepted iterate, so the last row's norm is its gradient's L2 norm
+    # (up to summation order).
     final = solve.last
     expected_l2 = sqrt(sum(p -> sum(abs2, final.gradients[1][p]), 1:6))
-    # Optim may have completed an extra `g!` call after the last
-    # accepted iterate (e.g. for the post-solve final re-eval), so
-    # the log's last entry need not equal `expected_l2` exactly; we
-    # only require it to be on the same order of magnitude.
-    if expected_l2 > 0
-        @test norms_l2[end] / expected_l2 > 1e-6
-        @test norms_l2[end] / expected_l2 < 1e6
-    end
+    @test norms_l2[end] ≈ expected_l2 rtol = 1e-12
 end
 
 @testset "cs_surface_flux_4dvar_optimize — log via explicit optimizer" begin

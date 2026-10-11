@@ -11,6 +11,8 @@
 #     small unconditioned 4D-Var problem.
 #   * L-BFGS works through the preconditioned cost path (B3) — drives
 #     χ-space cost to a lower value than GD with the same budget.
+#   * Each control point costs one `cost_fn` call (forward + adjoint),
+#     including the initial point and the returned minimizer (#17).
 # ---------------------------------------------------------------------------
 
 using Test
@@ -172,4 +174,43 @@ end
         optimizer = AT.CSLBFGS(iterations = 6))
     @test solve isa AT.CS4DVarSolveResult
     @test solve.iterations >= 1
+end
+
+# ---------------------------------------------------------------------------
+# Issue #17: Optim used to receive separate `f` and `g!` closures that each
+# ran `cost_fn` (forward + adjoint), so every point was evaluated twice, and
+# the initial probe and the final result were recomputed on top.
+# ---------------------------------------------------------------------------
+
+@testset "CSLBFGS — one cost_fn call per distinct control point (#17)" begin
+    s = _unconditioned_scenario()
+    # An observation far from the prior so L-BFGS takes several steps.
+    observations = [AT.CSObservation(2, AT.CSLayerMeanObjective(1, 2, 2, 3), 5.0, 0.2)]
+    points = Vector{Vector{Float64}}()
+    cost_fn = function (controls)
+        push!(points, reduce(vcat, [vec(c.value[p]) for c in controls for p in 1:6]))
+        return AT.cs_surface_flux_4dvar(
+            s.panels_rm, s.panels_m, s.panels_am, s.panels_bm, s.panels_cm,
+            s.mesh, observations, controls;
+            scheme = AT.PPMScheme(AT.NoLimiter()), dt = s.dt)
+    end
+
+    solve = AT.cs_surface_flux_4dvar_solve(
+        AT.CSLBFGS(iterations = 10, gradient_tolerance = 0.0, m = 5), cost_fn, s.control)
+    @test solve.iterations >= 2
+    # Every evaluated point is distinct: no point is evaluated twice.
+    @test length(points) == length(unique(points))
+    # The minimizer is the last point evaluated (the final result reuses it).
+    xmin = reduce(vcat, [vec(solve.controls[1].value[p]) for p in 1:6])
+    @test xmin == points[end]
+    # The returned result is the evaluation at the returned controls.
+    @test solve.last.cost == solve.cost_history[end]
+    @test solve.last.controls[1].value == solve.controls[1].value
+
+    # No iterations: only the initial point is evaluated.
+    empty!(points)
+    solve0 = AT.cs_surface_flux_4dvar_solve(AT.CSLBFGS(iterations = 0), cost_fn, s.control)
+    @test length(points) == 1
+    @test solve0.iterations == 0
+    @test solve0.last.cost == solve0.cost_history[1]
 end

@@ -13,6 +13,7 @@ using .AtmosTransport.Models:
     convection_spec, TM5ConvectionSpec, CMFMCMatrixConvectionSpec,
     advection_spec, UpwindAdvectionSpec, SlopesAdvectionSpec, PPMAdvectionSpec,
     NoAdvectionSpec, LinRoodAdvectionSpec,
+    ForwardAdvectionContext, InversionAdvectionContext,
     diffusion_spec, NoDiffusionSpec, ConstantDiffusionSpec,
     WindowPBLKzDiffusionSpec, HoltslagBovilleVdiffDiffusionSpec,
     TM5DkgDiffusionSpec, materialize
@@ -21,7 +22,8 @@ using .AtmosTransport.State.Fields:
     PrecomputedCSDkgField, field_value, panel_field
 using .AtmosTransport.Operators.Diffusion:
     uses_diffusive_surface_flux_boundary
-using .AtmosTransport.Operators: MonotoneLimiter, SameAsHorizontal, FV3ScalarProfile
+using .AtmosTransport.Operators: MonotoneLimiter, SameAsHorizontal, FV3ScalarProfile,
+    NoLimiter, CW84Limiter
 
 const CS_STYLE = CubedSphereRuntimeRecipeStyle()
 cs_advection(cfg) = build_runtime_advection(cfg, CS_STYLE)
@@ -164,6 +166,27 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test_throws ArgumentError advection_spec(Dict("scheme" => "linrood",
                                                        "vertical" => "same_as_horizontal"))
         @test_throws ArgumentError advection_spec(Dict("scheme" => "slopes", "vertical" => "upwind"))
+    end
+
+    @testset "AdvectionSpec context: forward run vs inversion driver" begin
+        # Forward runs (the default context) keep their limiter vocabulary and
+        # upwind default; the unlimited PPM is accepted only by the inversion.
+        forward, inversion = ForwardAdvectionContext(), InversionAdvectionContext()
+        @test advection_spec(Dict{String,Any}(), forward) isa UpwindAdvectionSpec
+        @test advection_spec(Dict("scheme" => "ppm", "limiter" => "cw84"), forward).limiter isa CW84Limiter
+        @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "limiter" => "none"))
+        @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "limiter" => "none"), forward)
+        err = try advection_spec(Dict("scheme" => "ppm", "limiter" => "none")) catch e; e end
+        @test occursin("only by the 4D-Var inversion driver", err.msg)
+        # The inversion driver: same parser, `none` accepted, `scheme` required.
+        @test advection_spec(Dict("scheme" => "ppm", "limiter" => "none"), inversion).limiter isa NoLimiter
+        @test materialize(advection_spec(Dict("scheme" => "ppm", "limiter" => "none"), inversion),
+                          CS_STYLE) == PPMScheme(NoLimiter())
+        @test advection_spec(Dict("scheme" => "ppm"), inversion).limiter isa MonotoneLimiter
+        @test advection_spec(Dict("scheme" => "linrood"), inversion) isa LinRoodAdvectionSpec
+        @test_throws ArgumentError advection_spec(Dict{String,Any}(), inversion)
+        @test_throws ArgumentError advection_spec(Dict("scheme" => "upwind", "limiter" => "none"), inversion)
+        @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "limiter" => "nope"), inversion)
     end
 
     @testset "cs_halo_width dispatch" begin
