@@ -52,7 +52,11 @@ these files reuse. The parent overview is [`../README.md`](../README.md).
 - [`surface_flux_regridding.jl`](surface_flux_regridding.jl) — bilinear
   renormalisation, `_regridding_method`, cached conservative regridder build/apply
 - [`surface_flux_native.jl`](surface_flux_native.jl) — `cs_native` time-varying
-  loader, unit regex, `cell_area` agreement check
+  source: checks the file with `GriddedIO.cs_native_flux_info` (layout, units,
+  `cell_area` gate, time checks live there) and reads it panel by panel with
+  `GriddedIO.read_cs_native_flux!` straight into the source's `FT` arrays (fill
+  and non-finite checks), then slice times on the run clock and, in place, cell
+  areas and the units and storage factors, and the temporal scheme
 
 ## Surface-Flux Kinds
 
@@ -62,7 +66,7 @@ these files reuse. The parent overview is [`../README.md`](../README.md).
 | `edgar_sf6` | EDGAR v8 `emissions` | tonnes per cell per year ÷ cell area ÷ 365.25 d | no |
 | `zhang_rn222` | Zhang `rnemis`; `month` (default 1) | per-second units | no |
 | `lmdz_co2` | CAMS `flux_apos` | kgC × M(CO2)/M(C) ≈ 3.66419; static path averages all time slices | CS |
-| `cs_native` | none; needs `file`, `variable` | kg species or kgC m⁻² s⁻¹ on the runtime cube | CS, required |
+| `cs_native` | none; needs `file`, `variable` | kg species or kgC m⁻² s⁻¹ on the runtime cube (`GriddedIO.read_cs_native_flux!`) | CS, required |
 | `file` | none; needs `file`, `variable` | units must be per second, or one of the forms above | no |
 
 Any other `kind` is an error (`_surface_flux_kind`); `none` (the default)
@@ -129,14 +133,19 @@ emits nothing.
   - Slice times are seconds since `reference_time`.
   - `lmdz_co2`, `gridfed_fossil_co2`, and `cs_native` default to
     `temporal_scheme = "stepwise"`.
-  - `cs_native` checks a file `cell_area` against the runtime mesh (`rtol = 1e-4`).
+  - `cs_native` files follow the schema of `GriddedIO` (`CS_NATIVE_FLUX_DIMS`,
+    kg species or kgC m⁻² s⁻¹, no fill values); `GriddedIO.check_cell_area`
+    compares a file `cell_area` with the runtime mesh (norm-based, `rtol = 1e-4`
+    per panel). New files come from `GriddedIO.open_cs_native_writer`.
 - `cs_native` ICs keep negative values unless `clamp_negative = true`.
 
 ## Related Tests
 
 Under [`../../../test/core/`](../../../test/core/): `test_initial_condition_io.jl`,
 `test_cs_initial_state_packing.jl`, `test_cs_pressure_layer_initialization.jl`,
-`test_native_cs_surface_flux.jl`, `test_cs_driven_builders.jl`,
+`test_native_cs_surface_flux.jl`, `test_cs_native_flux_schema.jl` (the `cs_native`
+loader against a frozen copy of the pre-GriddedIO loader, bit for bit),
+`test_cs_driven_builders.jl`,
 `test_binary_planet_radius.jl` (source-mesh radius, inventory totals),
 `test_regrid_cache_dir.jl`, `test_float32_conservation.jl` (source-mesh extents),
 `test_config_matrix_contract.jl` (every shipped config's fluxes have a species).

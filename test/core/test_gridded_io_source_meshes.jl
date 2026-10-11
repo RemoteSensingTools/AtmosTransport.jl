@@ -13,7 +13,9 @@
 # The runtime's former source mesh (`_build_source_latlon_mesh`) is frozen
 # below: the snapped faces equal it bit for bit on exactly stored regular grids
 # and regional grids; on Float32-stored centres (GridFED 0.1°) the old west face
-# carried the coordinate round-off (7.45e-10°), the snapped one does not.
+# carried the coordinate round-off (7.45e-10°), the snapped one does not. The
+# face rule `UniformSpanFaces`, which the runtime loaders use, reproduces it
+# bit for bit everywhere.
 
 using Test
 using NCDatasets
@@ -22,7 +24,7 @@ using FastGaussQuadrature: gausslegendre
 using AtmosTransport
 using AtmosTransport.Grids: LatLonMesh, cell_areas_by_latitude, latitude_row_order
 using AtmosTransport.GriddedIO: source_latlon_mesh, latlon_orientation, orient_coordinates,
-                                SnappedFaces
+                                SnappedFaces, UniformSpanFaces
 using AtmosTransport.Parameters: EARTH_RADIUS, IFS_EARTH_RADIUS
 
 const Gr = AtmosTransport.Grids
@@ -242,4 +244,47 @@ end
     @test_throws ArgumentError source_latlon_mesh([0.0, 1.0, 3.0, 4.0], lat; radius = R)  # non-uniform
     @test_throws ArgumentError source_latlon_mesh(collect(0.0:2.0:720.0), lat; radius = R) # > 360°
     @test_throws ArgumentError source_latlon_mesh(lon, [NaN, 1.0]; radius = R)
+end
+
+@testset "UniformSpanFaces: the runtime loaders' mesh, bit for bit" begin
+    oriented(lon, lat) = orient_coordinates(lon, lat, latlon_orientation(lon, lat))
+    gridfed = oriented(Float64.(Float32.(centres(3600, -180, 360))),
+                       Float64.(Float32.(centres(1800, -90, 180))))
+    cases = [
+        ("CAMS 1°, oriented", collect(0.5:1.0:359.5), collect(-89.5:1.0:89.5)),
+        ("GridFED Float32 0.1°, oriented", gridfed...),
+        ("Zhang 0.5°, oriented", oriented(Float64.(Float32.(collect(-179.75:0.5:179.75))),
+                                          Float64.(Float32.(collect(-89.75:0.5:89.75))))...),
+        # Pole-centred LMDZ rows (CATRINE SF6 initial state, 144 × 143): the
+        # uniform faces are shifted from the cells, as the runtime has them.
+        ("LMDZ pole-centred", collect(0.0:2.5:357.5), collect(range(-90.0, 90.0; length = 143))),
+        ("regional", collect(0.5:1.0:29.5), collect(-9.5:1.0:9.5)),
+        ("regional, negative lon", collect(-99.5:1.0:-50.5), collect(20.5:1.0:49.5)),
+    ]
+    for (name, lon, lat) in cases, radius in (EARTH_RADIUS, IFS_EARTH_RADIUS)
+        @testset "$name, R = $radius" begin
+            @test same_mesh(source_latlon_mesh(lon, lat, UniformSpanFaces(); radius),
+                            frozen_build_source_latlon_mesh(lon, lat; radius))
+        end
+    end
+    lon, lat = gridfed
+    @test 7e-10 < source_latlon_mesh(lon, lat, UniformSpanFaces(); radius = R).λᶠ[1] < 8e-10
+    @test source_latlon_mesh(lon, lat, SnappedFaces(); radius = R).λᶠ[1] === 0.0
+    @test same_mesh(source_latlon_mesh(lon, lat, SnappedFaces(); radius = R),
+                    source_latlon_mesh(lon, lat; radius = R))          # the default rule
+    # Float32 centre vectors give the same mesh as their Float64 values.
+    @test same_mesh(source_latlon_mesh(Float32.(lon), Float32.(lat), UniformSpanFaces(); radius = R),
+                    source_latlon_mesh(Float64.(Float32.(lon)), Float64.(Float32.(lat)),
+                                       UniformSpanFaces(); radius = R))
+    # The dataset form reads the coordinates by name.
+    path = joinpath(mktempdir(), "cams_like.nc")
+    NCDataset(path, "c") do ds
+        defDim(ds, "longitude", 360); defDim(ds, "latitude", 180)
+        defVar(ds, "longitude", Float64, ("longitude",))[:] = collect(0.5:1.0:359.5)
+        defVar(ds, "latitude", Float64, ("latitude",))[:] = collect(-89.5:1.0:89.5)
+    end
+    @test same_mesh(NCDataset(ds -> source_latlon_mesh(ds, UniformSpanFaces(); radius = R), path),
+                    frozen_build_source_latlon_mesh(collect(0.5:1.0:359.5), collect(-89.5:1.0:89.5)))
+    @test_throws ArgumentError source_latlon_mesh([0.5], collect(-89.5:1.0:89.5), UniformSpanFaces(); radius = R)
+    @test_throws UndefKeywordError source_latlon_mesh(lon, lat, UniformSpanFaces())
 end

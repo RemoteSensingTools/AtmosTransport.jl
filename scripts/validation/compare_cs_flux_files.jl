@@ -173,10 +173,11 @@ using AtmosTransport.Grids: CubedSphereMesh, GEOSNativePanelConvention, panel_la
 using AtmosTransport.Parameters: EARTH_RADIUS, SPECIES_MOLAR_MASS, CARBON_MOLAR_MASS
 using AtmosTransport.MetDrivers: TransportBinaryReader, load_grid
 using AtmosTransport.Preprocessing: build_cs_global_face_table
+# The runtime's `cs_native` series layout (Julia order), defined once in GriddedIO.
+using AtmosTransport.GriddedIO: CS_NATIVE_FLUX_DIMS
 
-# The runtime's `cs_native` layout (Julia order); P2 moves it to `GriddedIO`.
-const CS_NATIVE_FLUX_DIMS = ("Xdim", "Ydim", "nf", "time")
-const CS_NATIVE_STATIC_DIMS = ("Xdim", "Ydim", "nf")
+# (Xdim, Ydim, nf) fields of a cs_native file, such as `land_fraction`.
+const CS_NATIVE_STATIC_DIMS = CS_NATIVE_FLUX_DIMS[1:3]
 const CS_PANELS = 6
 const N_SIN_LAT_BANDS = 60
 const POLAR_PANEL_LABELS = (:north_pole, :south_pole)

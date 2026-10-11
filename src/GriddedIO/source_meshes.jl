@@ -198,7 +198,7 @@ end
     AbstractFaceRule
 
 How [`source_latlon_mesh`](@ref) derives cell faces from a file's cell
-centres: [`SnappedFaces`](@ref) (the default).
+centres: [`SnappedFaces`](@ref) (the default) or [`UniformSpanFaces`](@ref).
 """
 abstract type AbstractFaceRule end
 
@@ -212,6 +212,54 @@ with the pole and truncation rules of the `source_latlon_mesh` docstring.
 """
 struct SnappedFaces <: AbstractFaceRule end
 
+"""
+    UniformSpanFaces()
+
+Face rule of [`source_latlon_mesh`](@ref) that gives the uniform mesh of the
+runtime surface-flux and initial-condition loaders (`Models.InitialConditionIO`),
+bit for bit. The mesh is uniform:
+for `n` centres `x`, the spacing is the mean spacing `(x[n] − x[1]) / (n − 1)`
+and the faces lie half a spacing outside the first and last centres. A
+latitude extent within `1e-3` of a cell of ±90° becomes ±90°; a longitude
+span within `1e-3` of a cell of 360° becomes exactly 360°, measured from the
+west face.
+
+Taking the spacing from the whole span, not the first difference, keeps
+Float32-stored centres from biasing every cell (GridFED stores its 0.1°
+centres in Float32; their first difference errs by about 1e-4 relative), and
+the extent snapping keeps the regridder from missing a sliver of the sphere
+(GridFED: 1.5e-5° of longitude, 2.1e-6 of the global flux). The faces still
+follow the centres' round-off: GridFED's west face is 7.45e-10°, where
+[`SnappedFaces`](@ref) gives 0. The rule assumes uniform, cell-centred
+centres; pole-centred rows (the 143 LMDZ latitudes of the CATRINE SF6 initial
+state, CLM, ELM, iMAPLE), truncated and Gaussian latitudes get uniform faces
+that do not bound their cells.
+"""
+struct UniformSpanFaces <: AbstractFaceRule end
+
+"Fraction of a cell within which [`UniformSpanFaces`](@ref) snaps an extent to ±90° or a 360° span."
+const UNIFORM_SPAN_EXTENT_SNAP = 1e-3
+
+function _uniform_span_mesh(lon::AbstractVector{<:Real}, lat::AbstractVector{<:Real}, radius::Real)
+    λ = Float64.(lon)
+    φ = Float64.(lat)
+    Nx, Ny = length(λ), length(φ)
+    min(Nx, Ny) >= 2 || throw(ArgumentError(
+        "source grid needs at least two longitudes and latitudes, got $(Nx)×$(Ny)"))
+    dlon = (λ[end] - λ[1]) / (Nx - 1)
+    dlat = (φ[end] - φ[1]) / (Ny - 1)
+    lon_west  = λ[1]   - dlon / 2
+    lon_east  = λ[end] + dlon / 2
+    lat_south = φ[1]   - dlat / 2
+    lat_north = φ[end] + dlat / 2
+    snap = UNIFORM_SPAN_EXTENT_SNAP
+    lat_south < -90 + snap * dlat && (lat_south = -90.0)
+    lat_north >  90 - snap * dlat && (lat_north =  90.0)
+    lon_east - lon_west > 360 - snap * dlon && (lon_east = lon_west + 360)
+    return LatLonMesh(; FT = Float64, Nx, Ny, longitude = (lon_west, lon_east),
+                      latitude = (lat_south, lat_north), radius = Float64(radius))
+end
+
 # ---- Public constructor ----
 
 """
@@ -220,7 +268,7 @@ struct SnappedFaces <: AbstractFaceRule end
 
 The latitude-longitude mesh of a gridded input file whose cell centres are
 `lon` and `lat` [degrees], with faces derived by the face rule `rule`
-([`SnappedFaces`](@ref), described below). The
+([`SnappedFaces`](@ref), described below, or [`UniformSpanFaces`](@ref)). The
 second form reads the centres of the dataset's coordinates
 ([`find_coordinate`](@ref)). `radius` [m] has no default: the source mesh must
 sit on the sphere of the mesh it is regridded to.
@@ -284,3 +332,4 @@ end
 
 _source_latlon_mesh(::SnappedFaces, lon, lat, radius) =
     LatLonMesh(_longitude_faces(lon), _latitude_faces(lat); FT = Float64, radius)
+_source_latlon_mesh(::UniformSpanFaces, lon, lat, radius) = _uniform_span_mesh(lon, lat, radius)

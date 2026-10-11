@@ -636,6 +636,30 @@
   string in use into `FluxUnits`, converted by `kg_per_unit`,
   `period_seconds` and `mass_rate_factor` with the molar masses of
   `Parameters`.
+- The `cs_native` flux file is defined once, in `GriddedIO`: the layout
+  `CS_NATIVE_FLUX_DIMS`, the writer `open_cs_native_writer` / `write_slices!` /
+  `publish!` / `abandon!` (contiguous start-stamped intervals with
+  `time_bnds` in `hours since <first day>`, the mesh geometry and
+  `cell_area`, units `canonical_units_string(species)`, chunks
+  `(Nc, Nc, 1, chunk_time)`, no `_FillValue`, non-finite values refused,
+  atomic publication), the streaming reader `cs_native_flux_info` /
+  `read_cs_native_flux!`, which is now the runtime's `cs_native` loader (panel
+  by panel into the source's own arrays, one panel-slab read buffer, as the
+  former loader), and the whole-file reader `read_cs_native_flux`
+  (`check_cell_area` is the former per-panel area gate, unchanged). Sources
+  built from every `cs_native` file tested are bit-identical to the former
+  loader. The reader is stricter: the NetCDF
+  dimensions must be exactly `(time, nf, Ydim, Xdim)`, times must strictly
+  increase, time axes are decoded by `decode_time`, and units in kg of
+  another named species than the tracer's are an error (they were read with
+  factor 1). `write_latlon_flux` writes static CF `(lon, lat)` flux files for
+  `kind = "file"` (not a time-varying kind) and, until step P2b, refuses a mesh
+  whose faces the runtime would not rebuild bit for bit from the written
+  centres by its uniform face rule, now `GriddedIO.UniformSpanFaces`
+  (pole-centred, snapped, truncated, Gaussian rows). `catrine_protocol_cs_fluxes.jl` writes through the
+  `cs_native` writer: the same data, now with `time_bnds`, the geometry block
+  and units `kg CO2|Rn222|SF6 m-2 s-1`; `compare_cs_flux_files.jl` takes the
+  layout from `GriddedIO`.
 - SIF-GPP, FLUXCOM, TRENDY v14, TRANSCOM, GFED, and CATRINE campaign
   preprocessing, run configs, visualization scripts, and ATBD memos.
 

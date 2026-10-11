@@ -54,7 +54,8 @@ Geometry and topology decisions come from
 - [`GriddedIO/`](GriddedIO/README.md) — conventions of native gridded input
   files: coordinate discovery by name, fill policies, lat-lon orientation,
   source lat-lon meshes, time decoding by units class, staging of compressed
-  inputs, flux-unit grammar
+  inputs, flux-unit grammar; the `cs_native` and lat-lon surface-flux file
+  schemas with their writers and the runtime's `cs_native` reader
 - `Preprocessing/` — transport-binary and met-data preparation
 - `Downloads/` — data acquisition helpers
 - `Visualization/` — topology-aware snapshot views and optional Makie methods

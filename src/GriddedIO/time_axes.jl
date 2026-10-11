@@ -530,3 +530,72 @@ function _decode(d::AuxiliaryTimeVariable, ::UnlabelledUnits, ds, name::String)
                         t0 + Dates.Millisecond(round(Int64, v * ms_per_unit)), d.stamp)))
                     for v in vals]
 end
+
+# ---------------------------------------------------------------------------
+# CF encoding of contiguous intervals (the flux writers)
+# ---------------------------------------------------------------------------
+
+# Calendar of every time axis the flux writers produce: the runtime's clock is
+# the proleptic Gregorian calendar of `DateTime`.
+const _WRITER_CALENDAR = "proleptic_gregorian"
+
+# Milliseconds per hour, from `Dates`.
+const _MS_PER_HOUR = Dates.value(Dates.Millisecond(Dates.Hour(1)))
+
+# The intervals of a written series must be non-empty, start-ordered and
+# contiguous: slice k holds on [start_k, stop_k) and stop_k = start_{k+1}, so a
+# start-stamped stepwise reading (the runtime's `StepwiseFlux`) holds each slice
+# for exactly its interval.
+function _check_contiguous(intervals::AbstractVector{TimeInterval})
+    isempty(intervals) && throw(ArgumentError("a flux series needs at least one time interval"))
+    for k in 1:(length(intervals) - 1)
+        a, b = intervals[k], intervals[k + 1]
+        a.stop == b.start || throw(ArgumentError(
+            "flux intervals must be contiguous: interval $(k) ends at $(a.stop), interval " *
+            "$(k + 1) starts at $(b.start) ($(a.stop < b.start ? "a gap" : "an overlap"))"))
+    end
+    return intervals
+end
+
+# "hours since <first day of the first interval> 00:00:00".
+_interval_time_units(intervals::AbstractVector{TimeInterval}) =
+    "hours since " * Dates.format(Date(first(intervals).start), dateformat"yyyy-mm-dd") * " 00:00:00"
+
+_hours_since(t::DateTime, origin::DateTime) = Dates.value(t - origin) / _MS_PER_HOUR
+
+"""
+    _define_interval_time_axis!(ds, intervals)
+
+Define the time axis of a flux file written from contiguous `intervals`:
+dimensions `time` (one per interval) and `nv` (2); `time` (Float64) holds each
+interval's start, `time_bnds` `(nv, time)` its start and stop, both in
+`"hours since <first day> 00:00:00"` (the first interval's day at midnight) with
+`calendar = "proleptic_gregorian"`; `time` names `time_bnds` as its `bounds`.
+Whole-hour stamps are stored exactly. The stored values are decoded back
+through CFTime, and a stamp that does not round-trip to its `DateTime` is an
+error.
+"""
+function _define_interval_time_axis!(ds, intervals::AbstractVector{TimeInterval})
+    _check_contiguous(intervals)
+    units = _interval_time_units(intervals)
+    origin = DateTime(Date(first(intervals).start))
+    starts = Float64[_hours_since(iv.start, origin) for iv in intervals]
+    stops = Float64[_hours_since(iv.stop, origin) for iv in intervals]
+    decoded = CFTime.timedecode(vcat(starts, stops), units, _WRITER_CALENDAR)
+    expected = vcat([iv.start for iv in intervals], [iv.stop for iv in intervals])
+    all(DateTime.(decoded) .== expected) || throw(ArgumentError(
+        "time stamps of the intervals do not round-trip through $(repr(units))"))
+    n = length(intervals)
+    defDim(ds, "time", n)
+    haskey(ds.dim, "nv") || defDim(ds, "nv", 2)
+    defVar(ds, "time", Float64, ("time",);
+           attrib = Dict("units" => units, "calendar" => _WRITER_CALENDAR,
+                         "standard_name" => "time", "axis" => "T",
+                         "long_name" => "start of the interval each slice holds for",
+                         "bounds" => "time_bnds"))[:] = starts
+    defVar(ds, "time_bnds", Float64, ("nv", "time");
+           attrib = Dict("units" => units, "calendar" => _WRITER_CALENDAR,
+                         "long_name" => "start and end of the interval each slice holds for"))[:, :] =
+        permutedims(hcat(starts, stops))
+    return nothing
+end

@@ -900,7 +900,6 @@ end
     @test scale(norm("kgC m-2 s-1"), "f.nc") ≈ 44.0095 / 12.0107        # carbon conserved
     @test_throws ArgumentError scale(norm(""), "f.nc")
     @test_throws ArgumentError scale(norm("mol m-2 s-1"), "f.nc")
-    @test_throws ArgumentError ICIO._native_flux_species_scale("", "f.nc")
     @test_throws ArgumentError ICIO._require_reference_time(nothing)
 end
 

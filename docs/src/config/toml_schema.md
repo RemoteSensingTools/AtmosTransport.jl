@@ -317,12 +317,27 @@ require `start_date`.
 
 For an already aligned GEOS-native cubed-sphere inventory, use
 `kind = "cs_native"`, `time_varying = true`, `file`, and `variable`.
-The NetCDF variable must have dimensions `(time,nf,Ydim,Xdim)` and contain
-mass flux density in kg species m⁻² s⁻¹. Grid resolution and panel order must
-match the meteorology. The loader multiplies by native mesh cell areas and
-converts to model storage units using the tracer molar mass. It defaults to
-`temporal_scheme = "stepwise"`; signed uptake is retained. The TRENDY ensemble
-example is `config/runs/trendy_v14_s3_all_models_npp_rh_c30_2014_2024.toml`.
+The file follows the `cs_native` schema of `AtmosTransport.GriddedIO`
+(`GriddedIO.cs_native_flux_info` and `GriddedIO.read_cs_native_flux!` are the
+loader; new files come from `GriddedIO.open_cs_native_writer`):
+
+- the variable has NetCDF dimensions `(time, nf, Ydim, Xdim)`; grid resolution
+  and panel order must match the meteorology;
+- its `units` are kg of the species or of carbon per m² per second
+  (`kg CO2 m-2 s-1`, `kg m-2 s-1`, `kgC m-2 s-1`; carbon is converted to CO₂
+  by `SPECIES_MOLAR_MASS.co2 / CARBON_MOLAR_MASS`); gram, molar, per-cell and
+  missing units are errors;
+- values are start-stamped slices on a strictly increasing time axis (decoded
+  by `GriddedIO.decode_time`), with no fill or non-finite values; they are read
+  panel by panel into the run's own arrays (`GriddedIO.read_cs_native_flux!`);
+- a stored `cell_area` must agree with the runtime mesh areas
+  (`isapprox(…; rtol = 1e-4)` per panel), so a file built on another cube
+  geometry is refused.
+
+The loader multiplies by native mesh cell areas and converts to model storage
+units with the tracer's species. It defaults to `temporal_scheme = "stepwise"`;
+signed uptake is retained. The TRENDY ensemble example is
+`config/runs/trendy_v14_s3_all_models_npp_rh_c30_2014_2024.toml`.
 
 ### `[advection]`, `[diffusion]`, `[convection]`, `[chemistry]`
 

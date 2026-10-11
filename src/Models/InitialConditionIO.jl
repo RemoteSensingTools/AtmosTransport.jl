@@ -63,6 +63,8 @@ using ..Preprocessing: unpack_flat_to_panels_3d!, unpack_flat_to_panels_2d!,
                        CS_PANEL_COUNT
 using ..Operators.SurfaceFlux: SurfaceFluxSource, TimeVaryingSurfaceFluxSource,
                                flux_temporal_scheme
+# The `cs_native` flux file (reader, cell-area gate, units) is owned by GriddedIO.
+using ...GriddedIO: cs_native_flux_info, read_cs_native_flux!, seconds_since, mass_rate_factor
 # Grid accessors used by both LL/RG and CS surface-flux builders
 using ..Grids: AbstractHorizontalMesh, nx, ny, ncells
 

@@ -1,8 +1,12 @@
 #!/usr/bin/env julia
 
 # Build CATRINE-protocol (D7.1) surface-flux series on a cubed-sphere transport
-# grid, as `kind = "cs_native"` time-varying inputs (NetCDF (time, nf, Ydim,
-# Xdim), kg species m-2 s-1, one slice per calendar period, held stepwise).
+# grid, as `kind = "cs_native"` time-varying inputs, one slice per calendar
+# period, held stepwise. The files are written by the one cs_native writer,
+# `GriddedIO.open_cs_native_writer`: NetCDF (time, nf, Ydim, Xdim), kg species
+# m-2 s-1 (units "kg CO2 m-2 s-1", "kg Rn222 m-2 s-1", "kg SF6 m-2 s-1"),
+# start-stamped `time` with `time_bnds`, the mesh geometry and cell areas,
+# published atomically.
 #
 # Protocol choices that the built-in flux kinds cannot express:
 #   * fossil CO2 starts on 2022-01-01 (null state then), so its December 2021
@@ -19,14 +23,14 @@
 #   julia --project=. scripts/preprocessing/catrine_protocol_cs_fluxes.jl \
 #       --binary <any C90 transport binary> --outdir <dir>
 
-using ArgParse, Dates, NCDatasets, Printf
+using ArgParse, Dates, Printf
 using AtmosTransport
+using AtmosTransport.GriddedIO: TimeInterval, open_cs_native_writer, write_slices!
 
 const MD = AtmosTransport.MetDrivers
 const ICIO = AtmosTransport.Models.InitialConditionIO
 
 const CATRINE = joinpath(homedir(), "data", "AtmosTransport", "catrine", "Emissions")
-const ORIGIN = DateTime(2021, 12, 1)
 const M_SF6 = AtmosTransport.Parameters.SPECIES_MOLAR_MASS.sf6   # kg/mol
 # ppt -> kg conversion for the NOAA growth rates: the dry-air molar mass and the
 # 5.135e18 kg global dry-air mass pin of the preprocessing give 25.89 kt/ppt.
@@ -66,34 +70,24 @@ end
 
 global_rate(density, mesh) = sum(density[:, :, p] .* mesh.cell_areas for p in 1:6) |> sum
 
-function write_series(path, mesh, starts::Vector{DateTime}, slices::Vector{Array{Float64, 3}};
-                      name, long_name, attributes = Dict{String, Any}())
+# Slice k holds from starts[k] until starts[k + 1], the last slice until the
+# end of the series.
+series_intervals(starts::Vector{DateTime}, series_end::DateTime) =
+    [TimeInterval(a, b) for (a, b) in zip(starts, vcat(starts[2:end], series_end))]
+
+function write_series(path, mesh, intervals::Vector{TimeInterval}, slices::Vector{Array{Float64, 3}};
+                      name, long_name, species::Symbol, attributes = Dict{String, Any}())
     Nc = mesh.Nc
-    isfile(path) && rm(path)
-    NCDataset(path, "c") do ds
-        defDim(ds, "Xdim", Nc); defDim(ds, "Ydim", Nc); defDim(ds, "nf", 6); defDim(ds, "time", length(starts))
-        defVar(ds, "time", Float64, ("time",);
-               attrib = Dict("units" => "seconds since 2021-12-01 00:00:00",
-                             "calendar" => "proleptic_gregorian",
-                             "long_name" => "start of the period each slice is held for"))[:] =
-            [Dates.value(t - ORIGIN) / 1000 for t in starts]
-        area = defVar(ds, "cell_area", Float64, ("Xdim", "Ydim", "nf"); attrib = Dict("units" => "m2"))
-        for p in 1:6
-            area[:, :, p] = Float64.(mesh.cell_areas)
-        end
-        v = defVar(ds, name, Float32, ("Xdim", "Ydim", "nf", "time");
-                   attrib = Dict("units" => "kg m-2 s-1", "long_name" => long_name))
+    globals = merge(Dict{String, Any}(
+        "protocol" => "CATRINE D7.1 (2024-05-20)",
+        "grid" => "C$(Nc) $(mesh.convention) panels, cell areas from the runtime mesh",
+        "temporal_scheme" => "stepwise: each slice holds from its time until the next"), attributes)
+    return open_cs_native_writer(path, mesh, intervals, [name => Dict("long_name" => long_name)];
+                                 species, chunk_time = 1, attributes = globals) do w
         for (k, slice) in enumerate(slices)
-            v[:, :, :, k] = Float32.(slice)
-        end
-        ds.attrib["protocol"] = "CATRINE D7.1 (2024-05-20)"
-        ds.attrib["grid"] = "C$(Nc) $(mesh.convention) panels, cell areas from the runtime mesh"
-        ds.attrib["temporal_scheme"] = "stepwise: each slice holds from its time until the next"
-        for (key, value) in attributes
-            ds.attrib[key] = value
+            write_slices!(w, name, k:k, reshape(Float32.(slice), Nc, Nc, 6, 1))
         end
     end
-    return path
 end
 
 month_starts(first::Date, last::Date) = [DateTime(d) for d in first:Month(1):last]
@@ -118,6 +112,7 @@ function main(argv)
     mesh = MD.load_grid(reader; FT = Float64, Hp = 0).horizontal
     close(reader)
     months = month_starts(Date(2021, 12, 1), last_month)
+    series_end = DateTime(last_month + Month(1))
     @info "Target mesh C$(mesh.Nc); $(length(months)) monthly slices from $(first(months)) to $(last(months))"
 
     # -- fossil CO2: zero in the December 2021 spin-up, GridFED monthly after.
@@ -134,7 +129,8 @@ function main(argv)
         push!(fossil, density)
         @printf("fossil %s  %.6e kg/s (native %.6e)\n", Dates.format(t, "yyyy-mm"), global_rate(density, mesh), native)
     end
-    write_series(joinpath(outdir, "catrine_fossil_co2_c$(mesh.Nc).nc"), mesh, months, fossil;
+    write_series(joinpath(outdir, "catrine_fossil_co2_c$(mesh.Nc).nc"), mesh,
+                 series_intervals(months, series_end), fossil; species = :co2,
                  name = "fossil_co2", long_name = "GridFEDv2024.0 TOTAL CO2; zero before 2022-01-01",
                  attributes = Dict("source" => "GCP-GridFEDv2024.0_{2022,2023}.short.nc"))
 
@@ -145,7 +141,8 @@ function main(argv)
         push!(rn, density)
         @printf("rn222  %s  %.6e kg/s (native %.6e)\n", Dates.format(t, "yyyy-mm"), global_rate(density, mesh), native)
     end
-    write_series(joinpath(outdir, "catrine_rn222_c$(mesh.Nc).nc"), mesh, months, rn;
+    write_series(joinpath(outdir, "catrine_rn222_c$(mesh.Nc).nc"), mesh,
+                 series_intervals(months, series_end), rn; species = :rn222,
                  name = "rn222", long_name = "Zhang et al. (2021) monthly Rn-222 climatology",
                  attributes = Dict("source" => "Rn222_Emis_Zhang_Liu_et_al_05x05_mass.nc"))
 
@@ -169,7 +166,8 @@ function main(argv)
         @printf("sf6    %d  growth %.2f ppt/yr -> %.3f kt/yr (EDGAR 2022 %.3f kt/yr, scale %.6f)\n",
                 y, growth[y], target / 1e6, base_kg_per_year / 1e6, last(scales))
     end
-    write_series(joinpath(outdir, "catrine_sf6_c$(mesh.Nc).nc"), mesh, sf6_starts, sf6;
+    write_series(joinpath(outdir, "catrine_sf6_c$(mesh.Nc).nc"), mesh,
+                 series_intervals(sf6_starts, series_end), sf6; species = :sf6,
                  name = "sf6", long_name = "EDGARv8.0 2022 SF6 TOTALS scaled to NOAA global growth",
                  attributes = Dict("source" => "v8.0_FT2022_GHG_SF6_2022_TOTALS_emi.nc",
                                    "scale_years" => scale_years, "scale_factors" => scales,

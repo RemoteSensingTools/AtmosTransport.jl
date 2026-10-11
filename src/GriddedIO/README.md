@@ -5,6 +5,9 @@ inventories, land fractions and initial-condition fields. It decides how a
 file's coordinates are found, which values are fill, how a latitude-longitude
 field is oriented, which cell faces its coordinates imply, how its time axis is
 decoded, how a compressed input is staged, and how its flux units are read.
+It also owns the schema of the surface-flux files the model writes and the
+runtime reads (`cs_native` on the cubed sphere, lat-lon for `kind = "file"`),
+with the one writer and the one reader of each.
 
 Every rule was measured on the files the model reads (TRENDY v14 S3, GFED5,
 FLUXCOM-X, CAMS/LMDZ, GridFED, EDGAR); the measurements are in
@@ -15,9 +18,10 @@ and the methods dispatch on it.
 
 `src/AtmosTransport.jl` loads this folder after `Regridding` and before
 `Preprocessing`. It imports `Parameters` (`SPECIES_MOLAR_MASS`,
-`CARBON_MOLAR_MASS`, `DAYS_PER_JULIAN_YEAR`), `Grids` (`LatLonMesh`) and
-`AtomicFiles` (`atomic_publish`), plus NCDatasets (and its CFTime), Dates and
-SHA. It never imports `Preprocessing` or `Models`, so the runtime loaders
+`CARBON_MOLAR_MASS`, `DAYS_PER_JULIAN_YEAR`), `Grids` (`LatLonMesh`,
+`CubedSphereMesh`, `cell_area`), `Output` (`define_cs_horizontal_geometry!`,
+`define_provenance_attributes!`) and `AtomicFiles`, plus NCDatasets (and its
+CFTime), Dates and SHA. It never imports `Preprocessing` or `Models`, so the runtime loaders
 (`Models.InitialConditionIO`) and the surface-flux builder can both use it.
 
 ## File Map
@@ -26,10 +30,12 @@ SHA. It never imports `Preprocessing` or `Models`, so the runtime loaders
 |---|---|
 | [`GriddedIO.jl`](GriddedIO.jl) | Module, imports, exports, includes. |
 | [`coordinates.jl`](coordinates.jl) | `AbstractAxis` (`LongitudeAxis`, `LatitudeAxis`, `TimeAxis`, `VerticalAxis`) and `find_coordinate`; `LatLonOrientation`, `latlon_orientation`, `orient`, `orient_coordinates`; `AbstractFillPolicy` (`MaskedAsZero`, `MaskedAsNaN`, `FillValueOnly`) and `read_raw([T,] ds, name, policy, idx...)`. |
-| [`source_meshes.jl`](source_meshes.jl) | `source_latlon_mesh(lon, lat, rule; radius)` and `source_latlon_mesh(ds, rule; radius)` with the face rule `AbstractFaceRule` (`SnappedFaces`: snapping rule, centre-on-0/180 rule, midpoint and pole rules on `LatLonMesh(λᶠ, φᶠ; radius)`). |
-| [`time_axes.jl`](time_axes.jl) | `TimeInterval`, `MonthKey`, `interval`, `month_keys`, `seconds_since`, `check_last_month`; `AbstractTimeDecoder` (`CFDecoder`, `MonthsSince`, `DecimalYears`, `AuxiliaryTimeVariable`) with the stamp positions `MonthStart`, `MidMonth`, `MonthEnd`; `DEFAULT_TIME_DECODERS`, `decode_time` and `decode_month_keys`. |
+| [`source_meshes.jl`](source_meshes.jl) | `source_latlon_mesh(lon, lat, rule; radius)` and `source_latlon_mesh(ds, rule; radius)` with the face rules `AbstractFaceRule` (`SnappedFaces`: snapping rule, centre-on-0/180 rule, midpoint and pole rules on `LatLonMesh(λᶠ, φᶠ; radius)`; `UniformSpanFaces`: the runtime loaders' uniform mesh). |
+| [`time_axes.jl`](time_axes.jl) | `TimeInterval`, `MonthKey`, `interval`, `month_keys`, `seconds_since`, `check_last_month`; `AbstractTimeDecoder` (`CFDecoder`, `MonthsSince`, `DecimalYears`, `AuxiliaryTimeVariable`) with the stamp positions `MonthStart`, `MidMonth`, `MonthEnd`; `DEFAULT_TIME_DECODERS`, `decode_time` and `decode_month_keys`; the flux writers' time axis (contiguous intervals → `time`, `time_bnds`). |
 | [`staging.jl`](staging.jl) | `stage_input(path; staging_dir)`: `.nc.gz` and single-member `.nc.tar.gz` decompressed through the system `gzip`/`tar`, cached, published atomically. |
 | [`flux_units.jl`](flux_units.jl) | `FluxUnits{S,A,T}` with `AbstractSubstance` (`TargetSpecies`, `Carbon`, `Species`), `AbstractAreaBasis` (`PerSquareMetre`, `PerCell`), `AbstractTimeBasis` (`PerSecond`, `PerDay`, `PerMonth`, `PerYear`); `parse_flux_units`, `kg_per_unit`, `period_seconds`, `mass_rate_factor`, `canonical_units_string`. |
+| [`cs_native_flux.jl`](cs_native_flux.jl) | The `cs_native` flux file, the runtime contract: `CS_NATIVE_FLUX_DIMS`; the writer `CSNativeFluxWriter` (`open_cs_native_writer`, `write_slices!`, `publish!`, `abandon!`); the streaming reader `cs_native_flux_info` / `read_cs_native_flux!` (the runtime's `kind = "cs_native"` loader, panel by panel into the caller's arrays); the whole-file reader `read_cs_native_flux` (the builder's readback); the cell-area gate `check_cell_area`. |
+| [`latlon_flux.jl`](latlon_flux.jl) | `write_latlon_flux`: static CF lat-lon flux files for `kind = "file"`, on meshes the runtime rebuilds exactly (until P2b). |
 
 ## Invariants
 
@@ -63,7 +69,14 @@ bit.
 ### Source meshes
 
 `source_latlon_mesh(lon, lat, rule; radius)` takes a face rule
-(`AbstractFaceRule`); `SnappedFaces()`, the default, applies these rules:
+(`AbstractFaceRule`): `SnappedFaces()` (the default, the rules below) or
+`UniformSpanFaces()`, the uniform mesh of the runtime loaders
+(`Models.InitialConditionIO`: surface fluxes and file initial conditions). `UniformSpanFaces`
+builds a uniform mesh whose spacing is the mean spacing of the centres, with
+faces half a spacing outside the first and last centre and extents within
+`1e-3` of a cell of ±90° or a 360° span snapped to them; its faces carry the
+round-off of Float32-stored centres, and it does not bound pole-centred,
+truncated or Gaussian rows. `SnappedFaces`:
 
 - **Regular global axes (snapping rule).** `res = 180/n` or `360/n`, origin
   `-90`/`+90` (ascending/descending latitude), `-180` (a negative longitude) or
@@ -84,8 +97,7 @@ bit.
   plus half the mean spacing.
 - `lat_bnds`/`lon_bnds` are never read.
 - On exactly stored regular grids and regional grids the faces equal those of
-  the runtime loaders' uniform mesh (`Models.InitialConditionIO`'s
-  `_build_source_latlon_mesh`) bit for bit. On Float32 centres that mesh takes
+  `UniformSpanFaces` bit for bit. On Float32 centres `UniformSpanFaces` takes
   its faces from the centres' span and carries their round-off (GridFED 0.1°:
   west face 7.45e-10° instead of 0).
 
@@ -159,10 +171,77 @@ bit.
 - `canonical_units_string(:co2) == "kg CO2 m-2 s-1"` parses back to kg of
   `Species(:co2)` per m² per second.
 
+### `cs_native` flux files
+
+- Layout: each series has Julia dimensions `CS_NATIVE_FLUX_DIMS = ("Xdim",
+  "Ydim", "nf", "time")` (NetCDF `(time, nf, Ydim, Xdim)`), `Xdim = Ydim = Nc`,
+  six panels in the mesh's panel convention. Every live input (the TRENDY,
+  GFED5, FLUXCOM-X, SIF and CATRINE files of `config/runs`) uses it.
+- Values: kg of a species or of carbon per m² per second, positive into the
+  atmosphere. The reader accepts exactly the units the runtime always accepted
+  (`kg CO2 m-2 s-1`, `kg m-2 s-1`, `kgC m-2 s-1`, `kg/m2/s`, …): kg (not g or
+  mol), per m², per second. Fill values (`_FillValue`, `missing_value`) and
+  non-finite values are errors; the writer stores no `_FillValue` and refuses
+  non-finite values.
+- Time: start-stamped slices, strictly increasing, decoded with `decode_time`
+  (default decoders). The writer takes contiguous `TimeInterval`s and stores
+  `time` (interval starts) and `time_bnds` (start, stop) as Float64
+  `"hours since <first day> 00:00:00"`, `calendar = "proleptic_gregorian"`;
+  the stamps are decoded back and must round-trip.
+- Geometry: the writer calls `Output.define_cs_horizontal_geometry!`
+  (`lons`/`lats`, corners, `cell_area = mesh.cell_areas`, the `cubed_sphere`
+  mapping with `semi_major_axis = mesh.radius`).
+- Cell-area gate (`check_cell_area`): a stored `cell_area`, `(Nc, Nc)` or
+  `(Nc, Nc, 6)`, must satisfy `isapprox(panel, mesh.cell_areas; rtol = 1e-4)`
+  for every panel (norm-based), the runtime's gate since `cs_native` exists.
+  The element-wise gate of the design (error above 1e-3, warning above 1e-9,
+  `semi_major_axis` check) is scheduled for P11.
+- Chunks `(Nc, Nc, 1, chunk_time)`, deflate with shuffle: `chunk_time = 1`
+  for daily and `24` for hourly files (P0 read benchmarks).
+- Publication is atomic: the writer works on an `AtomicFiles` staging file and
+  `publish!` renames it onto the path only when every slice of every series has
+  been written; any failure removes the staging file and leaves a previous
+  file in place. The global attributes carry the provenance block, the species
+  and, when given, the build configuration text and its SHA-1.
+- Reading: `cs_native_flux_info` applies the checks that need no values
+  (layout, time axis, units, cell area) and selects the slices;
+  `read_cs_native_flux!` reads them panel by panel (the chunk layout) straight
+  into the caller's arrays, converting each value once to their element type,
+  with one panel-slab read buffer as its only array allocation (tested with
+  `@allocated`), so the runtime holds a series once. `read_cs_native_flux`
+  returns the whole series in one array (the builder's readback).
+- The runtime (`Models.InitialConditionIO`) adds only the slice times in
+  seconds since the run start, the products density × `mesh.cell_areas` ×
+  `mass_rate_factor(units, species)` × `scale` × the storage factor (in place,
+  in the run's float type), and the temporal scheme.
+
+### Lat-lon flux files
+
+- `write_latlon_flux` writes static CF `(lon, lat)` Float32 densities (kg of
+  the species per m² per second, positive into the atmosphere, no
+  `_FillValue`), `lon`/`lat` centres from the mesh (the source-mesh rule
+  rebuilds the mesh faces from them), `lon_bnds`/`lat_bnds` and the mesh
+  `cell_area`, atomically. There is no time axis: `kind = "file"` reads one
+  static field per tracer and is not a time-varying kind.
+- Until step P2b the runtime rebuilds the faces of a `kind = "file"` source
+  from the oriented centres with `UniformSpanFaces`, not from the file. The
+  writer therefore refuses (`ArgumentError` naming P2b) a mesh whose faces that
+  rule does not reproduce bit for bit, cell by cell up to the 360° shift of the
+  orientation: pole-centred, truncated and Gaussian rows, snapped Float32 grids
+  (GridFED 0.1°), a regional axis across 0°, and also uniform grids whose
+  rebuilt faces differ by round-off (a 0.1° mesh: 6.9e-18° at 0°). Uniform
+  1°, 0.5°, 0.25° and 2.5° × 2° meshes and regional meshes on one side of 0°
+  are written.
+
 ## Tests
 
 `test/core/test_gridded_io_coordinates.jl`, `test_gridded_io_source_meshes.jl`,
 `test_gridded_io_time_axes.jl`, `test_gridded_io_staging.jl`,
-`test_flux_units.jl`. Each freezes
+`test_flux_units.jl`, `test_cs_native_flux_schema.jl` (writer → reader round
+trip, atomic publication, reader checks, the cell-area gate against a frozen
+copy of the runtime gate, the streaming reader and its one-slab allocation
+bound, and the migrated `cs_native` loader against a frozen copy of the old
+one, bit for bit), `test_latlon_flux_writer.jl` (static files, the runtime
+reading them, and the face gate). Each freezes
 the runtime code it replaces and compares bit for bit where the behaviour is
 preserved.
