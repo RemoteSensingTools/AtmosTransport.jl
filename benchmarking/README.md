@@ -49,9 +49,9 @@ julia --project=benchmarking benchmarking/run_benchmarks.jl \
 ```
 
 The run measures every combination of float type, grid, levels, tracers,
-operator, and advection scheme on synthetic cubed-sphere fields (smooth mass,
-tracer, and face-flux fields at a fixed CFL; no meteorology input), with two
-exceptions so that every series name says what it measured
+operator, and advection scheme on synthetic cubed-sphere fields (no
+meteorology input), with two exceptions so that every series name says what
+it measured
 (`case_matrix` in [`src/case_options.jl`](src/case_options.jl)):
 
 - `adjoint` runs at one tracer whatever `--tracers` lists: it times the
@@ -63,6 +63,19 @@ exceptions so that every series name says what it measured
 
 The `io` payload carries every requested tracer. Any grid `C<N>` and level
 count are accepted, including the production sizes C90/C180 with L72/L137.
+
+The synthetic fields ([`src/synthetic_fields.jl`](src/synthetic_fields.jl))
+are smooth air-mass and tracer fields and static face mass fluxes that leave
+every cell's air mass unchanged by a step: on each panel a closed circulation
+(the discrete curl of a stream function that vanishes on the panel edges, up
+to 5 % of a cell's mass per sweep) plus a weaker divergent part that changes
+sign with height, with vertical fluxes that close continuity. Every step of a
+case therefore does the same work at the same palindrome Courant number,
+about 0.1 on every grid (0.10 to 0.12 from C4 to C180, L32 to L137), and no
+case subcycles. The harness checks this: a case whose Courant number exceeds
+0.5 (`MAX_SYNTHETIC_COURANT`) when built, after the warmup, or after the timed
+steps, or whose air mass drifts by more than 0.1 %, fails with a message
+naming the case.
 
 | Option | Meaning |
 |---|---|

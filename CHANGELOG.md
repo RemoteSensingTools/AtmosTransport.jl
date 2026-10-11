@@ -645,7 +645,15 @@
   `--steps` although a repeat is one round trip. The dashboard `extra` field
   is written as a JSON string; it was published as `[object Object]`. A
   case that throws is kept as `failed` in the raw JSON, and the run exits
-  with an error after writing both files. The grouped dashboard draws one
+  with an error after writing both files. The synthetic face mass fluxes
+  are now steady (`benchmarking/src/synthetic_fields.jl`): the old fields
+  disagreed at panel seams and had unbalanced top and bottom layers, so
+  repeated steps drained edge cells by up to 11 % of their mass per step
+  until the Courant number exploded (the first lab case, C180 L72, stopped
+  at the 4096-subcycle limit). The new fields leave the air mass unchanged
+  at a palindrome Courant number of about 0.1 on every grid, and the
+  harness fails a case whose Courant number exceeds 0.5 or whose air mass
+  drifts. The grouped dashboard draws one
   line per group, grid, levels, scheme, and device; lines of renamed groups
   no longer merge.
 - The README opens with badges for CI, the stable and development manuals,

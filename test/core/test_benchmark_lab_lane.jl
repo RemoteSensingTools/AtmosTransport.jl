@@ -9,13 +9,14 @@ include(joinpath(@__DIR__, "..", "..", "benchmarking", "lab", "LabLane.jl"))
 using .AtmosTransportLabLane
 const LL = AtmosTransportLabLane
 
-# Dashboard record construction of the harness (Base + JSON3), loaded by path
-# with the naming and case-option files it builds on.
+# The harness's Base + JSON3 parts (dashboard records, synthetic fields),
+# loaded by path with the naming and case-option files they build on.
 module BenchmarkRecords
 const SRC = joinpath(@__DIR__, "..", "..", "benchmarking", "src")
 include(joinpath(SRC, "labels.jl"))
 include(joinpath(SRC, "case_options.jl"))
 include(joinpath(SRC, "records.jl"))
+include(joinpath(SRC, "synthetic_fields.jl"))
 end
 const BR = BenchmarkRecords
 
@@ -288,6 +289,49 @@ code = { delivery = "shared", root = "~/atmostr_bench" }
         @test !any(r -> occursin(" full ", r["name"]), records)
         @test all(r -> r["unit"] == "s/step" && r["extra"] isa String, records)
         @test LL.validate_publishable_records(records, COMMIT) === nothing
+    end
+
+    @testset "synthetic fields: steady air mass, sane Courant number" begin
+        Hp = 3
+        for (Nc, Nz) in ((4, 8), (24, 32), (48, 72), (24, 137), (90, 72)), FT in (Float32, Float64)
+            N = Nc + 2Hp
+            m = ntuple(_ -> zeros(FT, N, N, Nz), 6)
+            am = ntuple(_ -> zeros(FT, N + 1, N, Nz), 6)
+            bm = ntuple(_ -> zeros(FT, N, N + 1, Nz), 6)
+            cm = ntuple(_ -> zeros(FT, N, N, Nz + 1), 6)
+            BR.fill_synthetic_mass!(m, Nc, Hp)
+            BR.fill_synthetic_fluxes!(am, bm, cm, m, Nc, Hp)
+            I = (Hp + 1):(Hp + Nc)
+            # A full step's mass change of every cell (x, y, and z faces) is
+            # zero to rounding, so the Courant number cannot drift over steps.
+            change = maximum(maximum(abs.((am[p][I, I, :] .- am[p][I .+ 1, I, :]) .+
+                                          (bm[p][I, I, :] .- bm[p][I, I .+ 1, :]) .+
+                                          (cm[p][I, I, 1:Nz] .- cm[p][I, I, 2:(Nz + 1)])) ./
+                                     m[p][I, I, :]) for p in 1:6)
+            @test change < (FT === Float32 ? 1e-6 : 1e-12)
+            # No flux crosses a panel edge, the model top, or the surface; halos stay zero.
+            for p in 1:6
+                @test all(iszero, am[p][Hp + 1, :, :]) && all(iszero, am[p][Hp + Nc + 1, :, :])
+                @test all(iszero, bm[p][:, Hp + 1, :]) && all(iszero, bm[p][:, Hp + Nc + 1, :])
+                @test all(iszero, cm[p][:, :, 1]) && all(iszero, cm[p][:, :, Nz + 1])
+                @test all(iszero, am[p][1:Hp, :, :]) && all(iszero, bm[p][:, 1:Hp, :])
+                @test all(iszero, cm[p][1:Hp, :, :])
+            end
+            # Every direction moves mass, at a Courant number that needs no subcycling.
+            @test maximum(abs, am[1]) > 0 && maximum(abs, bm[1]) > 0 && maximum(abs, cm[1]) > 0
+            courant = BR.synthetic_courant(m, am, bm, cm, Nc, Hp)
+            @test 0.05 < courant <= BR.MAX_SYNTHETIC_COURANT
+        end
+        @test BR.check_synthetic_courant(0.2, "case"; stage = "initially") === nothing
+        msg = try
+            BR.check_synthetic_courant(0.7, "Lab / C180 L72 advection 1tr / GPU-CUDA L40S / Float32";
+                                       stage = "after 2 warmup step(s)")
+            ""
+        catch err
+            sprint(showerror, err)
+        end
+        @test occursin("C180 L72 advection", msg) && occursin("after 2 warmup step(s)", msg) &&
+              occursin("exceeds $(BR.MAX_SYNTHETIC_COURANT)", msg)
     end
 
     @testset "record validation" begin

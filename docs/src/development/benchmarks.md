@@ -22,8 +22,16 @@ files are read, so the timings isolate the operators from data loading:
   panel convention at resolution `C<N>` (`--grid`, comma-separated), with
   uniform sigma levels (`--levels`).
 - **State and fluxes.** Dry-basis air mass and `--tracers` tracers with smooth
-  analytic patterns, and face mass fluxes that move a few percent of a cell's
-  mass per sweep.
+  analytic patterns, and static face mass fluxes that leave every cell's air
+  mass unchanged by a step, so every step of a case does the same work at the
+  same Courant number. On each panel the horizontal fluxes are a closed
+  circulation (the discrete curl of a stream function that vanishes on the
+  panel edges, moving up to 5 % of a cell's mass per sweep) plus a weaker
+  divergent part that changes sign with height; the vertical fluxes close
+  continuity with it. The resulting palindrome Courant number is about 0.1 on
+  every grid, so no case subcycles. The harness refuses a case whose Courant
+  number exceeds 0.5 or whose air mass drifts by more than 0.1 % over its
+  steps.
 - **Backend and precision.** `--backend=cpu`, `cuda`, or `metal`, and
   `--float-type=Float32,Float64`. Metal runs only `Float32`.
 

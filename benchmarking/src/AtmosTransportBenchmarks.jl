@@ -29,6 +29,10 @@ export main, run_benchmarks
 include("labels.jl")
 include("case_options.jl")
 include("records.jl")
+include("synthetic_fields.jl")
+
+"Halo width of the synthetic cubed-sphere meshes."
+const _HALO = 3
 
 """
     BenchmarkRun
@@ -183,25 +187,6 @@ function _haloed_panel(::Type{FT}, Nc::Int, Hp::Int, Nz::Int) where {FT}
     return zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz)
 end
 
-function _fill_mass!(panels_m, mesh::CubedSphereMesh, ::Type{FT}) where {FT}
-    Nc, Hp = mesh.Nc, mesh.Hp
-    @inbounds for p in 1:6
-        m = panels_m[p]
-        for k in axes(m, 3), j in 1:Nc, i in 1:Nc
-            ii = Hp + i
-            jj = Hp + j
-            x = FT(i - 1) / max(FT(Nc - 1), one(FT))
-            y = FT(j - 1) / max(FT(Nc - 1), one(FT))
-            z = FT(k - 1) / max(FT(size(m, 3) - 1), one(FT))
-            m[ii, jj, k] = FT(1e9) * (FT(1) + FT(0.05) * sinpi(FT(2) * x) +
-                           FT(0.04) * cospi(FT(2) * y) + FT(0.02) * z +
-                           FT(0.001) * p)
-        end
-    end
-    fill_panel_halos!(panels_m, mesh; dir = 0)
-    return panels_m
-end
-
 function _make_tracer(panels_m, mesh::CubedSphereMesh, ::Type{FT}, tracer_idx::Int) where {FT}
     Nc, Hp = mesh.Nc, mesh.Hp
     panels_rm = ntuple(_ -> similar(panels_m[1]), 6)
@@ -225,42 +210,52 @@ function _make_tracer(panels_m, mesh::CubedSphereMesh, ::Type{FT}, tracer_idx::I
     return panels_rm
 end
 
-function _fill_fluxes!(am, bm, cm, panels_m, mesh::CubedSphereMesh,
-                       ::Type{FT}; cfl::Real = 0.35) where {FT}
+"""
+    _synthetic_fields(FT, mesh, Nz, case_name) -> (panels_m, am, bm, cm)
+
+Host arrays of the synthetic air mass (halos filled) and the steady face mass
+fluxes (`synthetic_fields.jl`). Throws when their palindrome Courant number
+exceeds `MAX_SYNTHETIC_COURANT`.
+"""
+function _synthetic_fields(::Type{FT}, mesh::CubedSphereMesh, Nz::Int,
+                           case_name::AbstractString) where {FT}
     Nc, Hp = mesh.Nc, mesh.Hp
-    cf = FT(cfl)
-    @inbounds for p in 1:6
-        m = panels_m[p]
-        ax = am[p]
-        by = bm[p]
-        cz = cm[p]
-        fill!(ax, zero(FT))
-        fill!(by, zero(FT))
-        fill!(cz, zero(FT))
-        for k in axes(m, 3), j in 1:Nc, i in 1:(Nc + 1)
-            ii_l = Hp + max(i - 1, 1)
-            ii_r = Hp + min(i, Nc)
-            jj = Hp + j
-            donor = min(m[ii_l, jj, k], m[ii_r, jj, k])
-            ax[Hp + i, jj, k] = cf * FT(0.08) * donor *
-                                sin(FT(2pi) * FT(j + p) / FT(Nc + 6))
-        end
-        for k in axes(m, 3), j in 1:(Nc + 1), i in 1:Nc
-            ii = Hp + i
-            jj_l = Hp + max(j - 1, 1)
-            jj_r = Hp + min(j, Nc)
-            donor = min(m[ii, jj_l, k], m[ii, jj_r, k])
-            by[ii, Hp + j, k] = cf * FT(0.06) * donor *
-                                cos(FT(2pi) * FT(i + 2p) / FT(Nc + 12))
-        end
-        for k in 2:size(m, 3), j in 1:Nc, i in 1:Nc
-            ii = Hp + i
-            jj = Hp + j
-            donor = min(m[ii, jj, k - 1], m[ii, jj, k])
-            cz[ii, jj, k] = cf * FT(0.03) * donor *
-                            sin(FT(2pi) * FT(i + j + p) / FT(2Nc + 6))
-        end
-    end
+    panels_m = ntuple(_ -> _haloed_panel(FT, Nc, Hp, Nz), 6)
+    fill_synthetic_mass!(panels_m, Nc, Hp)
+    fill_panel_halos!(panels_m, mesh; dir = 0)
+    N = Nc + 2Hp
+    am = ntuple(_ -> zeros(FT, N + 1, N, Nz), 6)
+    bm = ntuple(_ -> zeros(FT, N, N + 1, Nz), 6)
+    cm = ntuple(_ -> zeros(FT, N, N, Nz + 1), 6)
+    fill_synthetic_fluxes!(am, bm, cm, panels_m, Nc, Hp)
+    check_synthetic_courant(synthetic_courant(panels_m, am, bm, cm, Nc, Hp), case_name;
+                            stage = "of the initial fields")
+    return panels_m, am, bm, cm
+end
+
+"""
+    _check_steady_case(model, case, m0; stage)
+
+The synthetic fluxes leave the air mass unchanged, so a case keeps its
+initial Courant number. Throws, naming the case and `stage`, when the model's
+air mass drifted from `m0` by more than `MAX_SYNTHETIC_MASS_DRIFT` or its
+Courant number exceeds `MAX_SYNTHETIC_COURANT`. Copies to the host; call it
+outside the timed region.
+"""
+function _check_steady_case(model, case::BenchmarkCase, m0; stage::AbstractString)
+    Nc, Hp = case.grid_nc, _HALO
+    interior = (Hp + 1):(Hp + Nc)
+    m = map(Array, model.state.air_mass)
+    drift = maximum(maximum(abs.(m[p][interior, interior, :] .- m0[p][interior, interior, :]) ./
+                            m0[p][interior, interior, :]) for p in 1:6)
+    fluxes = model.fluxes
+    courant = synthetic_courant(m, map(Array, fluxes.am), map(Array, fluxes.bm),
+                                map(Array, fluxes.cm), Nc, Hp)
+    check_synthetic_courant(courant, _case_name(case); stage)
+    drift <= MAX_SYNTHETIC_MASS_DRIFT || error(
+        "synthetic case $(_case_name(case)): air mass drifted by $(round(drift; sigdigits = 3)) " *
+        "(relative) $(stage), more than $(MAX_SYNTHETIC_MASS_DRIFT); the steps did not run the " *
+        "steady workload the case is named after")
     return nothing
 end
 
@@ -276,20 +271,12 @@ function _build_model(case::BenchmarkCase)
         throw(ArgumentError("Metal benchmark runs require Float32"))
 
     Nc, Nz, Nt = case.grid_nc, case.levels, case.tracers
-    Hp = 3
-    mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = Hp,
+    mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = _HALO,
                            convention = GEOSNativePanelConvention())
     grid = AtmosGrid(mesh, _vertical_grid(FT, Nz), _architecture(case.backend); FT = FT)
 
-    panels_m_cpu = ntuple(_ -> _haloed_panel(FT, Nc, Hp, Nz), 6)
-    _fill_mass!(panels_m_cpu, mesh, FT)
+    panels_m_cpu, am_cpu, bm_cpu, cm_cpu = _synthetic_fields(FT, mesh, Nz, _case_name(case))
     tracers_cpu = ntuple(t -> _make_tracer(panels_m_cpu, mesh, FT, t), Nt)
-
-    N = Nc + 2Hp
-    am_cpu = ntuple(_ -> zeros(FT, N + 1, N, Nz), 6)
-    bm_cpu = ntuple(_ -> zeros(FT, N, N + 1, Nz), 6)
-    cm_cpu = ntuple(_ -> zeros(FT, N, N, Nz + 1), 6)
-    _fill_fluxes!(am_cpu, bm_cpu, cm_cpu, panels_m_cpu, mesh, FT)
 
     adapter = _adapter(case.backend)
     panels_m = Adapt.adapt(adapter, panels_m_cpu)
@@ -339,27 +326,20 @@ function _build_model(case::BenchmarkCase)
 end
 
 """
-    _build_cs_payload(FT, Nc, Nz, Nt, backend)
+    _build_cs_payload(case)
 
-Fields of the `io` and `adjoint` cases on `backend`: the mesh, the air mass,
-`Nt` tracer masses (`tracers`, one six-panel tuple per tracer), and the three
-face-flux arrays.
+Fields of the `io` and `adjoint` cases on the case's backend: the mesh, the
+air mass, `case.tracers` tracer masses (`tracers`, one six-panel tuple per
+tracer), and the three face-flux arrays.
 """
-function _build_cs_payload(::Type{FT}, Nc::Int, Nz::Int, Nt::Int, backend::Symbol) where {FT}
-    Hp = 3
-    mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = Hp,
+function _build_cs_payload(case::BenchmarkCase)
+    FT, Nc, Nz, Nt = case.float_type, case.grid_nc, case.levels, case.tracers
+    mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = _HALO,
                            convention = GEOSNativePanelConvention())
-    panels_m_cpu = ntuple(_ -> _haloed_panel(FT, Nc, Hp, Nz), 6)
-    _fill_mass!(panels_m_cpu, mesh, FT)
+    panels_m_cpu, am_cpu, bm_cpu, cm_cpu = _synthetic_fields(FT, mesh, Nz, _case_name(case))
     tracers_cpu = ntuple(t -> _make_tracer(panels_m_cpu, mesh, FT, t), Nt)
 
-    N = Nc + 2Hp
-    am_cpu = ntuple(_ -> zeros(FT, N + 1, N, Nz), 6)
-    bm_cpu = ntuple(_ -> zeros(FT, N, N + 1, Nz), 6)
-    cm_cpu = ntuple(_ -> zeros(FT, N, N, Nz + 1), 6)
-    _fill_fluxes!(am_cpu, bm_cpu, cm_cpu, panels_m_cpu, mesh, FT)
-
-    adapter = _adapter(backend)
+    adapter = _adapter(case.backend)
     return (mesh = mesh,
             panels_m = Adapt.adapt(adapter, panels_m_cpu),
             tracers = Adapt.adapt(adapter, tracers_cpu),
@@ -412,8 +392,7 @@ function _phase_summary_from_csv(path)
 end
 
 function _time_io_case(case::BenchmarkCase)
-    payload = _build_cs_payload(case.float_type, case.grid_nc, case.levels,
-                                case.tracers, case.backend)
+    payload = _build_cs_payload(case)
     times = Float64[]
     bytes = 0
     tmpdir = mktempdir(; prefix = "at_bench_io_")
@@ -450,8 +429,7 @@ end
 # The footprint of one scalar objective of one tracer; `case_matrix` runs
 # `adjoint` at one tracer only (`SINGLE_TRACER_OPERATORS`).
 function _time_adjoint_case(case::BenchmarkCase)
-    payload = _build_cs_payload(case.float_type, case.grid_nc, case.levels,
-                                case.tracers, case.backend)
+    payload = _build_cs_payload(case)
     panels_rm = only(payload.tracers)
     nsteps = timed_steps_per_repeat(case.operator, case.steps)
     panels_am_steps = [payload.panels_am for _ in 1:nsteps]
@@ -497,11 +475,13 @@ function _time_case(case::BenchmarkCase)
     case.operator === :adjoint && return _time_adjoint_case(case)
 
     model = _build_model(case)
+    m0 = map(Array, model.state.air_mass)
     dt = case.float_type(600)
     for _ in 1:case.warmup_steps
         step!(model, dt)
     end
     _sync(case.backend)
+    _check_steady_case(model, case, m0; stage = "after $(case.warmup_steps) warmup step(s)")
 
     SectionTimer.enable!()
     times = Float64[]
@@ -518,6 +498,8 @@ function _time_case(case::BenchmarkCase)
     finally
         SectionTimer.disable!()
     end
+    _check_steady_case(model, case, m0;
+                       stage = "after $(case.warmup_steps + case.steps * case.repeats) step(s)")
     csv_path = tempname() * ".csv"
     SectionTimer.write_csv(csv_path)
     phase_totals = _phase_summary_from_csv(csv_path)
