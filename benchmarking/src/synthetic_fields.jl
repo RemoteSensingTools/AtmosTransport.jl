@@ -44,57 +44,76 @@ function fill_synthetic_mass!(panels_m, Nc::Integer, Hp::Integer)
     return panels_m
 end
 
-# Unit-amplitude flux patterns of one panel, in Float64, interior only:
-#  - `am_s`, `bm_s`: discrete curl of a stream function ψ on cell corners that
-#    vanishes on the panel boundary (one closed gyre per panel and level), so
-#    every cell's horizontal divergence is exactly zero and no flux crosses a
-#    panel edge;
-#  - `am_d`, `bm_d`: a divergent pattern that vanishes on the panel edges,
-#    times g(k) with Σₖ g(k) = 0;
-#  - `cm_d`: vertical fluxes closing continuity for the divergent part,
-#    cm[1] = 0, cm[k+1] = cm[k] − div_h(k); cm[Nz+1] = 0 because the column
-#    sum of the divergence is zero.
-function _unit_panel_fluxes(p::Integer, Nc::Integer, Nz::Integer)
+# Unit-amplitude flux patterns of one panel, in Float64, evaluated per face
+# from 1-D factors, so building the fields needs O(Nc + Nz) extra memory:
+#  - gyre part `_am_s`, `_bm_s`: discrete curl of a stream function ψ on cell
+#    corners that vanishes on the panel boundary (one closed gyre per panel
+#    and level), so every cell's horizontal divergence is exactly zero and no
+#    flux crosses a panel edge;
+#  - divergent part `_am_d`, `_bm_d`: a pattern that vanishes on the panel
+#    edges, times g(k) with Σₖ g(k) = 0;
+#  - vertical part: cm[1] = 0, cm[k+1] = cm[k] − div_h(k) of the divergent
+#    part (continuity); cm[Nz+1] = 0 because the column sum of the divergence
+#    is zero, so the rounding residual there is dropped.
+# Indices are 1-based within the panel interior: corners and faces 1:Nc+1,
+# cells 1:Nc.
+struct _PanelPattern
+    amplitude::Float64
+    edge_sine::Vector{Float64}     # sinpi((i - 1) / Nc) at corners and faces, zero on the edges
+    gyre_level::Vector{Float64}    # stream-function amplitude by level
+    g::Vector{Float64}             # divergent-part level factor, zero column sum
+    x_wave::Vector{Float64}        # cross-face factor of the x-face divergent part
+    y_wave::Vector{Float64}        # cross-face factor of the y-face divergent part
+end
+
+function _PanelPattern(p::Integer, Nc::Integer, Nz::Integer)
     corner = [(i - 1) / Nc for i in 1:(Nc + 1)]
     centre = [(i - 0.5) / Nc for i in 1:Nc]
     level = [(k - 0.5) / Nz for k in 1:Nz]
-    gyre_level = [1 + 0.5 * cospi(z) for z in level]
     g = [cospi(z) for z in level]
     g .-= sum(g) / Nz
-    amplitude = (isodd(p) ? 1.0 : -1.0) * (1 + 0.1 * (p - 1))
-    ψ(i, j, k) = amplitude * gyre_level[k] * sinpi(corner[i]) * sinpi(corner[j])
-    am_s = [ψ(i, j + 1, k) - ψ(i, j, k) for i in 1:(Nc + 1), j in 1:Nc, k in 1:Nz]
-    bm_s = [ψ(i, j, k) - ψ(i + 1, j, k) for i in 1:Nc, j in 1:(Nc + 1), k in 1:Nz]
-    am_d = [g[k] * sinpi(corner[i]) * cospi(2 * centre[j] + 0.1 * p)
-            for i in 1:(Nc + 1), j in 1:Nc, k in 1:Nz]
-    bm_d = [0.5 * g[k] * sinpi(corner[j]) * cospi(2 * centre[i] - 0.1 * p)
-            for i in 1:Nc, j in 1:(Nc + 1), k in 1:Nz]
-    cm_d = zeros(Nc, Nc, Nz + 1)
-    @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
-        divergence = am_d[i + 1, j, k] - am_d[i, j, k] + bm_d[i, j + 1, k] - bm_d[i, j, k]
-        cm_d[i, j, k + 1] = cm_d[i, j, k] - divergence
-    end
-    cm_d[:, :, Nz + 1] .= 0
-    return am_s, bm_s, am_d, bm_d, cm_d
+    return _PanelPattern((isodd(p) ? 1.0 : -1.0) * (1 + 0.1 * (p - 1)),
+                         [sinpi(c) for c in corner],
+                         [1 + 0.5 * cospi(z) for z in level], g,
+                         [cospi(2 * c + 0.1 * p) for c in centre],
+                         [cospi(2 * c - 0.1 * p) for c in centre])
 end
 
-# Largest |flux| / (smaller adjacent cell mass) of the interior faces.
-function _max_face_fraction(am, bm, cm, m, Nc, Hp, Nz)
-    r = 0.0
+@inline _ψ(P::_PanelPattern, i, j, k) = P.amplitude * P.gyre_level[k] * P.edge_sine[i] * P.edge_sine[j]
+@inline _am_s(P::_PanelPattern, i, j, k) = _ψ(P, i, j + 1, k) - _ψ(P, i, j, k)
+@inline _bm_s(P::_PanelPattern, i, j, k) = _ψ(P, i, j, k) - _ψ(P, i + 1, j, k)
+@inline _am_d(P::_PanelPattern, i, j, k) = P.g[k] * P.edge_sine[i] * P.x_wave[j]
+@inline _bm_d(P::_PanelPattern, i, j, k) = 0.5 * P.g[k] * P.edge_sine[j] * P.y_wave[i]
+@inline _divergence_d(P::_PanelPattern, i, j, k) =
+    _am_d(P, i + 1, j, k) - _am_d(P, i, j, k) + _bm_d(P, i, j + 1, k) - _bm_d(P, i, j, k)
+
+# Smaller mass of the two cells sharing an interior x face, y face, or level interface.
+@inline _x_donor(m, Hp, Nc, i, j, k) = min(m[Hp + max(i - 1, 1), Hp + j, k], m[Hp + min(i, Nc), Hp + j, k])
+@inline _y_donor(m, Hp, Nc, i, j, k) = min(m[Hp + i, Hp + max(j - 1, 1), k], m[Hp + i, Hp + min(j, Nc), k])
+@inline _z_donor(m, Hp, i, j, k) = min(m[Hp + i, Hp + j, k - 1], m[Hp + i, Hp + j, k])
+
+# Largest |flux| / donor mass of one panel's gyre faces, divergent faces, and
+# vertical interfaces (unit amplitudes), streamed without storing a field.
+function _panel_fractions(P::_PanelPattern, m, Nc, Hp, Nz)
+    gyre = divergent = vertical = 0.0
     @inbounds for k in 1:Nz, j in 1:Nc, i in 1:(Nc + 1)
-        donor = min(m[Hp + max(i - 1, 1), Hp + j, k], m[Hp + min(i, Nc), Hp + j, k])
-        r = max(r, abs(am[i, j, k]) / donor)
+        donor = _x_donor(m, Hp, Nc, i, j, k)
+        gyre = max(gyre, abs(_am_s(P, i, j, k)) / donor)
+        divergent = max(divergent, abs(_am_d(P, i, j, k)) / donor)
     end
     @inbounds for k in 1:Nz, j in 1:(Nc + 1), i in 1:Nc
-        donor = min(m[Hp + i, Hp + max(j - 1, 1), k], m[Hp + i, Hp + min(j, Nc), k])
-        r = max(r, abs(bm[i, j, k]) / donor)
+        donor = _y_donor(m, Hp, Nc, i, j, k)
+        gyre = max(gyre, abs(_bm_s(P, i, j, k)) / donor)
+        divergent = max(divergent, abs(_bm_d(P, i, j, k)) / donor)
     end
-    cmax = 0.0
-    @inbounds for k in 2:Nz, j in 1:Nc, i in 1:Nc
-        donor = min(m[Hp + i, Hp + j, k - 1], m[Hp + i, Hp + j, k])
-        cmax = max(cmax, abs(cm[i, j, k]) / donor)
+    @inbounds for j in 1:Nc, i in 1:Nc
+        c = 0.0
+        for k in 1:(Nz - 1)
+            c -= _divergence_d(P, i, j, k)                 # cm at interface k + 1
+            vertical = max(vertical, abs(c) / _z_donor(m, Hp, i, j, k + 1))
+        end
     end
-    return r, cmax
+    return gyre, divergent, vertical
 end
 
 """
@@ -115,34 +134,50 @@ number:
 
 The divergent part is scaled so that neither its face fluxes nor `cm` exceed
 `SYNTHETIC_DIVERGENT_FLUX_FRACTION` of the adjacent mass. The resulting
-Courant numbers do not depend on the grid size beyond those bounds.
+Courant numbers do not depend on the grid size beyond those bounds. A single
+level has no divergent part and no vertical flux. `Nc >= 2` is required: a
+`C1` panel has no interior corner, so its circulation would be zero.
+
+The fields are evaluated face by face from 1-D factors (two streaming
+passes: normalisation, then filling), so the extra memory is O(Nc + Nz).
 """
 function fill_synthetic_fluxes!(am, bm, cm, panels_m, Nc::Integer, Hp::Integer)
+    Nc >= 2 || throw(ArgumentError(
+        "synthetic fluxes need Nc >= 2 (C2 or larger); a C$(Nc) panel has no interior corner, " *
+        "so its closed circulation would be zero"))
     Nz = size(panels_m[1], 3)
-    gyre_fraction = 0.0
-    divergent_fraction = 0.0
-    vertical_fraction = 0.0
+    gyre_fraction = divergent_fraction = vertical_fraction = 0.0
     for p in 1:6
-        am_s, bm_s, am_d, bm_d, cm_d = _unit_panel_fluxes(p, Nc, Nz)
-        m = panels_m[p]
-        gyre_fraction = max(gyre_fraction, first(_max_face_fraction(am_s, bm_s, cm_d, m, Nc, Hp, Nz)))
-        rd, rc = _max_face_fraction(am_d, bm_d, cm_d, m, Nc, Hp, Nz)
-        divergent_fraction = max(divergent_fraction, rd)
-        vertical_fraction = max(vertical_fraction, rc)
+        gyre, divergent, vertical = _panel_fractions(_PanelPattern(p, Nc, Nz), panels_m[p], Nc, Hp, Nz)
+        gyre_fraction = max(gyre_fraction, gyre)
+        divergent_fraction = max(divergent_fraction, divergent)
+        vertical_fraction = max(vertical_fraction, vertical)
     end
-    gyre_scale = SYNTHETIC_GYRE_FLUX_FRACTION / gyre_fraction
-    divergent_scale = SYNTHETIC_DIVERGENT_FLUX_FRACTION / max(divergent_fraction, vertical_fraction)
-    interior = (Hp + 1):(Hp + Nc)
-    faces = (Hp + 1):(Hp + Nc + 1)
+    # A component that is identically zero (the divergent part on one level)
+    # keeps a zero scale instead of dividing by zero.
+    divergent_max = max(divergent_fraction, vertical_fraction)
+    gyre_scale = gyre_fraction > 0 ? SYNTHETIC_GYRE_FLUX_FRACTION / gyre_fraction : 0.0
+    divergent_scale = divergent_max > 0 ? SYNTHETIC_DIVERGENT_FLUX_FRACTION / divergent_max : 0.0
     for p in 1:6
-        am_s, bm_s, am_d, bm_d, cm_d = _unit_panel_fluxes(p, Nc, Nz)
-        FT = eltype(am[p])
-        fill!(am[p], zero(FT))
-        fill!(bm[p], zero(FT))
-        fill!(cm[p], zero(FT))
-        am[p][faces, interior, :] .= FT.(gyre_scale .* am_s .+ divergent_scale .* am_d)
-        bm[p][interior, faces, :] .= FT.(gyre_scale .* bm_s .+ divergent_scale .* bm_d)
-        cm[p][interior, interior, :] .= FT.(divergent_scale .* cm_d)
+        P = _PanelPattern(p, Nc, Nz)
+        a, b, c = am[p], bm[p], cm[p]
+        FT = eltype(a)
+        fill!(a, zero(FT))
+        fill!(b, zero(FT))
+        fill!(c, zero(FT))
+        @inbounds for k in 1:Nz, j in 1:Nc, i in 1:(Nc + 1)
+            a[Hp + i, Hp + j, k] = FT(gyre_scale * _am_s(P, i, j, k) + divergent_scale * _am_d(P, i, j, k))
+        end
+        @inbounds for k in 1:Nz, j in 1:(Nc + 1), i in 1:Nc
+            b[Hp + i, Hp + j, k] = FT(gyre_scale * _bm_s(P, i, j, k) + divergent_scale * _bm_d(P, i, j, k))
+        end
+        @inbounds for j in 1:Nc, i in 1:Nc
+            column = 0.0
+            for k in 1:(Nz - 1)
+                column -= _divergence_d(P, i, j, k)
+                c[Hp + i, Hp + j, k + 1] = FT(divergent_scale * column)
+            end
+        end
     end
     return nothing
 end

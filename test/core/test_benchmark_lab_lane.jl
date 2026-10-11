@@ -322,6 +322,30 @@ code = { delivery = "shared", root = "~/atmostr_bench" }
             courant = BR.synthetic_courant(m, am, bm, cm, Nc, Hp)
             @test 0.05 < courant <= BR.MAX_SYNTHETIC_COURANT
         end
+        # Degenerate sizes: one level has a gyre but no divergent part or
+        # vertical flux (zero scale, never NaN); C2 is the smallest grid.
+        function synthetic(FT, Nc, Nz)
+            N = Nc + 2Hp
+            m = ntuple(_ -> zeros(FT, N, N, Nz), 6)
+            am = ntuple(_ -> zeros(FT, N + 1, N, Nz), 6)
+            bm = ntuple(_ -> zeros(FT, N, N + 1, Nz), 6)
+            cm = ntuple(_ -> zeros(FT, N, N, Nz + 1), 6)
+            BR.fill_synthetic_mass!(m, Nc, Hp)
+            BR.fill_synthetic_fluxes!(am, bm, cm, m, Nc, Hp)
+            return m, am, bm, cm
+        end
+        for (Nc, Nz) in ((4, 1), (2, 1), (2, 2), (24, 1)), FT in (Float32, Float64)
+            m, am, bm, cm = synthetic(FT, Nc, Nz)
+            @test all(f -> all(a -> all(isfinite, a), f), (am, bm, cm))
+            @test maximum(abs, am[1]) > 0
+            Nz == 1 && @test all(c -> all(iszero, c), cm)
+            courant = BR.synthetic_courant(m, am, bm, cm, Nc, Hp)
+            @test 0 < courant <= BR.MAX_SYNTHETIC_COURANT
+        end
+        @test_throws ArgumentError synthetic(Float32, 1, 8)
+        @test_throws ArgumentError LL.resolve_case_options(Dict{String, Any}("grid" => "C1"), nothing)
+        @test LL.resolve_case_options(Dict{String, Any}("grid" => "C2", "levels" => "1"), nothing).grids == [2]
+
         @test BR.check_synthetic_courant(0.2, "case"; stage = "initially") === nothing
         msg = try
             BR.check_synthetic_courant(0.7, "Lab / C180 L72 advection 1tr / GPU-CUDA L40S / Float32";

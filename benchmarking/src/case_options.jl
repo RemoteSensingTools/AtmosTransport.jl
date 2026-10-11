@@ -139,6 +139,14 @@ end
 _scalar_int(x::Integer) = Int(x)
 _scalar_int(x::AbstractString) = parse(Int, strip(x))
 
+# The synthetic fields need an interior cell corner on each panel (C2 or larger).
+function _grid_size(x)
+    Nc = _positive("grid", _parse_grid(x))
+    Nc >= 2 || throw(ArgumentError(
+        "grid C$(Nc) is too small: the synthetic benchmark fields need C2 or larger"))
+    return Nc
+end
+
 # The group is the first field of every series name.
 function _parse_group(x)
     group = String(strip(string(x)))
@@ -171,7 +179,7 @@ function resolve_case_options(overrides::AbstractDict, preset::Union{Nothing, Ab
     return CaseOptions(
         _parse_group(pick("group")),
         nonempty("float_type", unique!(_parse_float_name.(_option_list(pick("float_type"))))),
-        nonempty("grid", [_positive("grid", _parse_grid(x)) for x in _option_list(pick("grid"))]),
+        nonempty("grid", [_grid_size(x) for x in _option_list(pick("grid"))]),
         nonempty("levels", [_positive("levels", _parse_count(x)) for x in _option_list(pick("levels"))]),
         nonempty("tracers", [_positive("tracers", _parse_count(x)) for x in _option_list(pick("tracers"))]),
         nonempty("operator", [_parse_member(x, SUPPORTED_OPERATORS, "operator")

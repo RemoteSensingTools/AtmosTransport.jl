@@ -61,8 +61,9 @@ it measured
   advection scheme, so they run once, under the default `ppm`, whatever
   `--scheme` lists (`SCHEME_FREE_OPERATORS`).
 
-The `io` payload carries every requested tracer. Any grid `C<N>` and level
-count are accepted, including the production sizes C90/C180 with L72/L137.
+The `io` payload carries every requested tracer. Any grid `C<N>` with
+`N >= 2` and any level count are accepted, including the production sizes
+C90/C180 with L72/L137; a single level has no vertical flux.
 
 The synthetic fields ([`src/synthetic_fields.jl`](src/synthetic_fields.jl))
 are smooth air-mass and tracer fields and static face mass fluxes that leave
@@ -75,7 +76,8 @@ about 0.1 on every grid (0.10 to 0.12 from C4 to C180, L32 to L137), and no
 case subcycles. The harness checks this: a case whose Courant number exceeds
 0.5 (`MAX_SYNTHETIC_COURANT`) when built, after the warmup, or after the timed
 steps, or whose air mass drifts by more than 0.1 %, fails with a message
-naming the case.
+naming the case. The fields are evaluated face by face from 1-D factors, so
+building them needs no memory beyond the field arrays themselves.
 
 | Option | Meaning |
 |---|---|
