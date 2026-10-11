@@ -126,6 +126,15 @@ select_levels_echlevs(vc_native::HybridSigmaPressure,
                       echlevs::Tuple{Vararg{Integer}}) =
     select_levels_echlevs(vc_native, collect(Int, echlevs))
 
+# Keep the exported, pinned recipes as immutable tuples, but put a concrete
+# type boundary in front of dynamic name lookup.  Looking up a runtime Symbol
+# in ERA5_L137_ECHLEVS_PRESETS directly makes inference consider every tuple
+# length (35 through 138); all fields here instead have the same Vector{Int}
+# type.  echlevs_preset returns a copy, so these private vectors cannot be
+# mutated through the public accessor.
+const _ERA5_L137_ECHLEVS_PRESET_VECTORS =
+    map(echlevs -> collect(Int, echlevs), ERA5_L137_ECHLEVS_PRESETS)
+
 """
     echlevs_preset(name) -> Vector{Int}
 
@@ -141,10 +150,10 @@ to retain their grids from before the selector's TM5-numbering correction.
 """
 function echlevs_preset(name::AbstractString)
     key = Symbol(name)
-    hasproperty(ERA5_L137_ECHLEVS_PRESETS, key) ||
+    hasproperty(_ERA5_L137_ECHLEVS_PRESET_VECTORS, key) ||
         error("Unknown echlevs config: $(String(name)). Available: " *
               join(sort(collect(string.(propertynames(ERA5_L137_ECHLEVS_PRESETS)))), ", "))
-    return collect(Int, getproperty(ERA5_L137_ECHLEVS_PRESETS, key))
+    return copy(getproperty(_ERA5_L137_ECHLEVS_PRESET_VECTORS, key))
 end
 
 function load_era5_vertical_coordinate(coeff_path::String, level_top::Int, level_bot::Int)
