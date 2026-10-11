@@ -19,7 +19,10 @@ how a TOML option reaches an operator, is [`../README.md`](../README.md).
 - `TransportTracerSpec` and `_parse_tracer_specs(cfg)` in
   [`configuration.jl`](configuration.jl) turn `[tracers.<name>]` into name,
   `init`, and `surface_flux` dicts. Legacy flat keys are mapped into those
-  subtables.
+  subtables. `_structured_tracer_specs(cfg)` adds the lat-lon and
+  reduced-Gaussian fallback without `[tracers]` (one tracer
+  `[run].tracer_name`, default `CO2`, initialised from `[init]`); the
+  structured runner and `Analysis.RunContext` read tracers with it.
 - Model construction in [`model_setup.jl`](model_setup.jl):
   - `_make_structured_model` builds the lat-lon and reduced-Gaussian model.
   - `_initialize_cs_dry_state` builds the cubed-sphere state.

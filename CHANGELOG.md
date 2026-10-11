@@ -431,12 +431,11 @@
   agreement statistics, period table, global burdens, true mass balance), code
   versions, maps and animations. The page is self-contained (data embedded,
   Chart.js copied next to it) and keeps the selection in the URL.
-- `scripts/diagnostics/catrine_true_mass_balance.jl` and
-  `catrine_true_mass_balance_gc.py` compute the true global mass balance of a
-  run (burden change minus the run's own applied emissions and decay) for
-  AtmosTransport, from the run's output and its sources rebuilt by the model,
-  and for GEOS-Chem, from its `SpeciesConcVV`, `Met_AD` and `Emis*` output;
-  the benchmark page plots them.
+- `scripts/diagnostics/catrine_true_mass_balance.jl` computes the true global
+  mass balance of a run (burden change minus the run's own applied emissions
+  and decay) for AtmosTransport, from the run's output and its sources rebuilt
+  by the model, and with `--model geoschem` for GEOS-Chem, from its
+  `SpeciesConcVV`, `Met_AD` and `Emis*` output; the benchmark page plots them.
 - New `[output.observations]` contract for sampling tracer profiles at
   observation points (OCO-2 Lite soundings, NOAA ObsPack sites, generic point
   tables) from the containing model cell at met-window ends. The table is
@@ -874,6 +873,102 @@
   roles, how results reach the dashboard, how to run a benchmark locally, and
   how to read the dashboard. `CONTRIBUTING.md` explains the benchmarks and
   coverage.
+
+### Post-run diagnostics
+
+- New module `AtmosTransport.Analysis` (loaded after `Models`): the shared
+  numerics of post-run diagnostics. `daily_snapshot_series` concatenates the
+  frames of snapshot files (explicit run origin; a repeated hour is read once);
+  `EqualAreaBands` and `band_means` form area-weighted means on bands equally
+  spaced in sin φ, leaving NaN cells out of numerator and denominator;
+  `doy_linear_detrend` removes a per-calendar-day line across years (29
+  February folded onto 28 February); `seasonal_trend_decomposition` fits 12
+  calendar-month intercepts and a trend on the observed months (minimum norm);
+  `skill_metrics`, `weighted_fit_stats`, `column_band_weights` and
+  `logp_interpolate` complete it. On the TRENDY C30 ranking inputs the monthly
+  band means equal the Python ones bit for bit and the decomposition agrees to
+  6e-14 ppm with the same ranks; on the SIF-GPP control the printed statistics
+  agree to every digit. `test/diagnostics/test_trendy_hovmoller.py` is ported
+  to `test/core/test_analysis_decomposition.jl`;
+  `scripts/diagnostics/catrine_station_timeseries.py` moves to `heritage/`;
+  `compare_cs_flux_files.jl` takes its sin-latitude bands from `Analysis`
+  (the same assignment as before on C4, C8, C30, C90, C180, C360 and C720 in
+  both panel conventions).
+- Budget closure in Julia. `Analysis.budget_closure(run)` checks every
+  tracer of a finished run: the change of `<tracer>_total_mass` between the
+  first and last snapshot against the storage the run's own surface sources
+  add (`build_surface_flux_sources` + `integrated_emission`, over the run's
+  own steps: each window's step count and the float-type step
+  `FT(L)/FT(n)` from the run clock's step starts, so a Float32 window of
+  3600 s in 7 steps adds 3599.99994 s), within
+  ρ|E| + k·eps(Float32(carrier))·air mass (`BudgetTolerance`: strict 1e-4 and
+  1 ulp, operational 1e-3 and 4 ulps), with finite values and, for a positive
+  carrier, positive column means. `RunContext` builds the run's view with the
+  runner's own functions (tracer specs, including the legacy single tracer of
+  lat-lon runs, now read by the structured runner and `RunContext` through one
+  function `_structured_tracer_specs`; grid; every binary's window layout; run
+  start; the air mass of window 1 that the initial state is packed on; output
+  file names; window ranges and tracer tables the runner rejects are errors,
+  with the runner's multi-file range check shared as
+  `_check_multifile_window_count`), and `carrier_drawdown`
+  gives the largest cumulative loss of global mixing ratio before a run.
+  `scripts/diagnostics/tracer_budget_closure.jl series <run.toml>` replaces
+  `check_trendy_npp_rh_run.py` (JSON report, exit 1 when the gated level
+  fails); `scripts/run_trendy_npp_rh_campaign.py` calls it. On the 23-model
+  TRENDY C30 run (3775 days) the harness emulator of the Python arithmetic
+  (`scripts/validation/flux_port_parity/budget_closure_parity.jl`) reproduces
+  `validation.json` (expected changes to 7e-16, actual changes identical, TEM
+  NPP failing at 1.2714e-4, 45 of 46 passing) and `smoke_validation.json`
+  (max 1.96e-4). With the current `DRY_AIR_MOLAR_MASS` (the run used the
+  pre-`d552d3e0` 0.02896546) every expected change is 3.66e-5 smaller and 43
+  of 46 pass (TEM, CLM-FATES and ELM NPP fail); at the run's constant the
+  runtime sources differ from the Python sums by at most 5.5e-8, so cell
+  areas and integration explain none of the TEM excess. The NPP drawdowns
+  equal the Python audits times DRY_AIR_MOLAR_MASS/0.02896546 to 5.5e-8. The
+  single-file mode of `tracer_budget_closure.jl` read the bare-hours time axis
+  of current snapshots as years and reported a gap of about −1; it now reads
+  hours since the run start.
+- `scripts/diagnostics/catrine_true_mass_balance_gc.py` is replaced by
+  `catrine_true_mass_balance.jl --model geoschem`, which writes the same csv
+  columns as the Python script and the AtmosTransport mode. The GEOS-Chem
+  CATRINE output is read through `Analysis.GEOSChemCATRINEArchive`
+  (`gc_path`, flat or `YYYY/MM/`; `gc_times`; `with_gc_file`;
+  `global_totals`; `unreadable_files`): files are read into memory on all
+  threads and decoded under the NetCDF lock, and an unreadable file is
+  listed, its row skipped and its interval given the next readable rate, as
+  before. New constants `GEOSCHEM_SPECIES_MOLAR_MASS` (GEOS-Chem species
+  database) and `RN222_HALF_LIFE` (3.8235 d, exactly the `330350.4` s of the
+  run configs). On the C90 archive (6088 files, 2021-12-01 03Z to
+  2024-01-01 00Z) the hours equal the Python csv, dry-air masses and burdens
+  agree to 5e-15 and cumulative sources to 1e-15 relative (co2_natural, whose
+  cumulative source crosses zero, to 6e-16 of its largest value), residuals to
+  8e-15 of the burden, and the four summary lines to every printed digit; on
+  a C180 window with a truncated file the unreadable-file handling gives the
+  same rows and summary. The AtmosTransport mode is unchanged (bit-identical
+  csv and log on the 25-month ERA5 fossil CO₂ run) and is now tested on a
+  tiny run, where a stable and a decaying tracer close to 1e-12.
+- Float32 diagnostics in Julia. `scripts/diagnostics/float32_conservation_attribution.jl`
+  replaces the Python script: `write-configs` builds the 16 attribution
+  configs as Dicts, checks them with `validate_config` and writes them with
+  `TOML.print` (equal, as parsed Dicts, to the Python ones); `budget` prints
+  the same tables as the Python script, character for character, on the runs
+  behind `docs/src/theory/float32_conservation.md`, with the run tag templates
+  (per archive and precision) and snapshot file prefix as arguments. That
+  page's Reproducing section now gives the command that prints its "after"
+  rows (`full_final2` against `full_final`), and the SF₆ entry of the MERRA-2
+  row "all operators, after" is corrected to −3.7e-9 (it was −3.747e-9 rounded
+  twice).
+  `scripts/diagnostics/compare_float32_float64_runs.jl` replaces the numbers of
+  the Python comparison and writes `float32_vs_float64.json` (same keys; the
+  16 values agree to 1e-14 on the December 2021 and the 761-day MERRA-2 twins)
+  and `float32_vs_float64.nc`; the figures moved to
+  `scripts/visualization/plot_float32_vs_float64.py`, which reads that file.
+  New in `Analysis`: `drift_statistics`, `twin_relative_difference`,
+  `weighted_difference_stats` (compensated sums), and `keep_frame` for
+  `daily_snapshot_series`. Column means are now sampled at every snapshot of
+  the requested UTC hour (the Python script took one frame per file, the
+  initial state from the first file, and so skipped 00 UTC of the second day),
+  and cells with fill values are left out of the daily statistics and counted.
 
 ### Verification and remaining limits
 

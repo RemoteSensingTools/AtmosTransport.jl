@@ -166,6 +166,7 @@ src/
 ├── Operators/       advection, diffusion, convection, surface flux, chemistry
 ├── MetDrivers/      version-4 binary reader, driver, and window carriers
 ├── Models/          typed model, runtime recipes, driven runner, initial conditions
+├── Analysis/        post-run diagnostics numerics: band means, decompositions, skill statistics
 ├── Preprocessing/   source readers, transforms, balancing, verification, writers
 ├── Output/          snapshot capture and NetCDF/ATMSNAP persistence
 ├── Regridding/      conservative offline remapping
@@ -190,8 +191,12 @@ modules included before it:
 Architectures → SectionTimer → ConfigChecks → LogLevels → AtomicFiles
 → Quantities → Parameters → Grids → State → Output → MetDrivers → Operators
 → Tape → Adjoints → Regridding → GriddedIO → Preprocessing → Visualization
-→ Models → Downloads
+→ Models → Analysis → Downloads
 ```
+
+`Analysis` holds the numerics of post-run diagnostics. It is loaded after
+`Models` so that diagnostics can build on the runtime's own types, and no
+runtime module depends on it.
 
 Three single-file modules depend on Base and the standard library only:
 `ConfigChecks.jl` checks TOML tables, `LogLevels.jl` applies the

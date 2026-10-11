@@ -104,6 +104,13 @@ behind `SPECIES_MOLAR_MASS.co2 = 12.0107 + 2 × 15.9994`). Carbon-mass fluxes
 const CARBON_MOLAR_MASS = 12.0107e-3
 
 """
+Half-life of ²²²Rn [s]: 3.8235 days (ENSDF evaluation, NNDC; the value of the
+CATRINE protocol). In Float64, `3.8235 * 86400.0` is exactly the `330350.4` s
+that run configs give in `[chemistry.half_lives_seconds]`.
+"""
+const RN222_HALF_LIFE = 3.8235 * 86400.0
+
+"""
 TM5's physical constants, used by the port of TM5's boundary-layer diffusion
 (`tm5_bldiff.jl`): gravity [m s⁻²], dry-air heat capacity and gas constant
 (`Rgas · 1000 / 28.94`, TM5 `binas.F90`) and water-vapour gas constant
@@ -124,9 +131,21 @@ this model's convention.
 const GEOSCHEM_CONSTANTS = (gravity = 9.80665, r_dry = 287.0, cp_dry = 1004.64, r_vap = 461.0,
                             l_vap = 2.5104e6, karman = 0.4, p_ref = THETA_REFERENCE_PRESSURE)
 
+"""
+Molar masses of GEOS-Chem's species [kg mol⁻¹]: the `MW_g` entries of the
+GEOS-Chem species database (`species_database.yml`), CO₂ 44.01, SF₆ 146.06 and
+²²²Rn 222.0 g mol⁻¹. GEOS-Chem converts between emitted mass and dry mole
+fraction with these and `AIRMW` (`DRY_AIR_MOLAR_MASS`), so a diagnostic that
+turns GEOS-Chem emission fluxes into dry-air-equivalent storage mass uses them,
+not the model's `SPECIES_MOLAR_MASS` (smaller by 1.1e-5 for CO₂ and 3.4e-5 for
+SF₆). The CATRINE diagnostics use the CO₂ value for the fossil CO₂ tracer too.
+"""
+const GEOSCHEM_SPECIES_MOLAR_MASS = (co2 = 44.01e-3, sf6 = 146.06e-3, rn222 = 222.0e-3)
+
 export EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_PRESSURE, R_DRY_AIR, CP_OVER_R_DIATOMIC,
        CP_DRY_AIR, DRY_AIR_MOLAR_MASS, THETA_REFERENCE_PRESSURE, AVOGADRO,
        VIRTUAL_TEMPERATURE_FACTOR, VON_KARMAN, STANDARD_SEA_LEVEL_AIR_DENSITY, STANDARD_LAPSE_RATE,
        STANDARD_TROPOPAUSE_TEMPERATURE, HYDROSTATIC_REFERENCE_TEMPERATURE, DAYS_PER_JULIAN_YEAR,
        GLOBAL_MEAN_DRY_SURFACE_PRESSURE, GLOBAL_MEAN_SPECIFIC_HUMIDITY,
-       SPECIES_MOLAR_MASS, CARBON_MOLAR_MASS, TM5_CONSTANTS, GEOSCHEM_CONSTANTS
+       SPECIES_MOLAR_MASS, GEOSCHEM_SPECIES_MOLAR_MASS, RN222_HALF_LIFE, CARBON_MOLAR_MASS,
+       TM5_CONSTANTS, GEOSCHEM_CONSTANTS

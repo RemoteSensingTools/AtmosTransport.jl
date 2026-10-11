@@ -227,9 +227,10 @@ or piecewise-linear reconstruction exactly, so their ``E`` does not depend on
 is a Riemann sum that depends on ``dt``.
 
 The runner logs `total_emission_rate(source, 0.0)`, the rate at the run start,
-for every source. `scripts/diagnostics/tracer_budget_closure.jl` and
-`scripts/diagnostics/catrine_true_mass_balance.jl` rebuild a run's sources and
-integrate them with these functions.
+for every source. `Analysis.budget_closure` (the `series` mode of
+`scripts/diagnostics/tracer_budget_closure.jl`), `Analysis.carrier_drawdown`
+and `scripts/diagnostics/catrine_true_mass_balance.jl` rebuild a run's sources
+and integrate them with these functions.
 
 ## Chemistry
 

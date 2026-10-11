@@ -238,3 +238,17 @@ fits their purpose (for example `diagnostics/heritage/`;
 | `animate_gchp_v4_fullphys.jl` | GEOS-Chem vs AT GCHP v4 full-physics animation |
 | `cs_regrid_utils.jl` | Nearest-neighbour CS to lat-lon map and loaders for older animations |
 | `plot_snapshot_grid.jl` | Multi-panel snapshot PNG; replaced by `atmos_viz.jl --kind grid` |
+
+### Python → Julia port
+
+Files retired by the port of the Python flux preprocessing and diagnostics
+(`docs/memos/2026-10-10_python_flux_port_design.md`). Each row names the last
+commit that contains the file; recover it with `git show <commit>:<path>`.
+
+| Path | Replaced by | Last commit |
+|---|---|---|
+| `test/diagnostics/test_trendy_hovmoller.py` | `test/core/test_analysis_decomposition.jl` (`Analysis.seasonal_trend_decomposition`, `Analysis.skill_metrics`) | `a5df02ae` |
+| `scripts/diagnostics/check_trendy_npp_rh_run.py` | `scripts/diagnostics/tracer_budget_closure.jl series <run.toml>` (`Analysis.budget_closure`); `scripts/run_trendy_npp_rh_campaign.py` calls it | `a5df02ae` |
+| `scripts/diagnostics/catrine_true_mass_balance_gc.py` | `scripts/diagnostics/catrine_true_mass_balance.jl --model geoschem` (`Analysis.GEOSChemCATRINEArchive`, `Analysis.global_totals`) | `a5df02ae` |
+| `scripts/diagnostics/float32_conservation_attribution.py` | `scripts/diagnostics/float32_conservation_attribution.jl` (`write-configs`, `budget`; `Analysis.drift_statistics`, `Analysis.twin_relative_difference`) | `a5df02ae` |
+| `scripts/diagnostics/compare_float32_float64_runs.py` | numbers: `scripts/diagnostics/compare_float32_float64_runs.jl` (JSON and NetCDF; `Analysis.twin_relative_difference`, `Analysis.weighted_difference_stats`); figures: `scripts/visualization/plot_float32_vs_float64.py` | `a5df02ae` |
