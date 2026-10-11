@@ -13,9 +13,7 @@ function _script_module(name::Symbol, relative_path::AbstractString)
     mod = Module(name)
     Core.eval(mod, :(include(path::AbstractString) = Base.include($mod, path)))
     Core.eval(mod, :(eval(expr) = Core.eval($mod, expr)))
-    withenv("ATMOSTR_NO_AUTO_THREADS" => "1") do
-        Base.include(mod, joinpath(REPO_ROOT, relative_path))
-    end
+    Base.include(mod, joinpath(REPO_ROOT, relative_path))
     return mod
 end
 
@@ -236,11 +234,29 @@ end
     @test_throws ArgumentError run_parse([cfg, "unexpected"])
     @test_throws ArgumentError run_parse(["--unknown"])
 
+    # ATMOSTR_PROFILE_MODE follows the config's [architecture], not whether
+    # CUDA is loaded yet: the first GPU run of a session that included the
+    # script (no preload) is profiled like any later one.
+    configured = getfield(run_cli, :_configured_backend)
+    action = (mode, backend) -> Base.invokelatest(getfield(run_cli, :_profile_action), mode, backend)
+    gpu_cfg = Dict{String, Any}("architecture" => Dict{String, Any}("use_gpu" => true, "backend" => "cuda"))
+    @test Base.invokelatest(configured, gpu_cfg) === :cuda          # resolved without loading CUDA
+    @test Base.invokelatest(configured, Dict{String, Any}()) === :cpu
+    @test Base.invokelatest(configured, Dict{String, Any}("architecture" => Dict{String, Any}("backend" => "metal"))) === :metal
+    @test action("full", :cuda) === :full
+    @test action("Window", :cuda) === :window
+    @test action("", :cuda) === :none
+    @test action("full", :cpu) === :needs_cuda
+    @test action("window", :metal) === :needs_cuda
+    @test action("sampling", :cuda) === :unknown
+
     preprocess_cli = _script_module(
         :PreprocessTransportCLITest,
         "scripts/preprocessing/preprocess_transport_binary.jl",
     )
     preprocess_parse = getfield(preprocess_cli, :_parse_cli)
+    @test preprocess_parse(["--help"]) === nothing
+    @test preprocess_parse(["-h"]) === nothing
     @test preprocess_parse([cfg, "--day", "2021-12-01"])[2] == "2021-12-01"
     @test preprocess_parse([
         cfg, "--start", "2021-12-01", "--end", "2021-12-03",

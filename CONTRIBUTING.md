@@ -75,6 +75,25 @@ repository deliberately has no self-hosted runners). The
 [benchmarks page](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/development/benchmarks)
 of the manual defines the metrics and explains the dashboard.
 
+### Golden Outputs
+
+A refactor must leave every result unchanged. The golden harness reruns 27
+end-to-end cases (5 preprocessing one day each, 22 runtime simulating one day,
+one of them two) and compares their outputs bit for bit with a reference
+recorded on the same machine; it needs the group's data and a GPU:
+
+```bash
+julia --project=. test/golden/run_goldens.jl check <ref> <new>
+```
+
+The cases run in three worker sessions (preprocessing, CPU runs, GPU runs), so
+package loading and compilation happen once per session; a full check takes
+about 41 minutes on an L40S (about 70 with one process per case). A case that
+crashes or hangs (stopped after `--timeout` minutes, default 45) fails, and
+the other cases continue in a new worker. See
+[`test/golden/README.md`](test/golden/README.md) for selecting cases,
+recording a reference and what is compared.
+
 ### Building Documentation Locally
 
 ```bash

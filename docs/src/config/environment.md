@@ -42,11 +42,13 @@ These were replaced by configuration keys and are now ignored.
 
 ## Command-line runner
 
-`scripts/run_transport.jl` reads these before the package loads:
+`scripts/run_transport.jl` reads these; the thread variables only when it runs
+as a script, before the package loads (not when a Julia session includes it and
+calls `main(args)`, as the golden harness does):
 
 | Variable | Effect |
 |---|---|
 | `JULIA_NUM_THREADS` | Thread count. When it is unset and Julia runs one thread, the runner restarts itself with two threads (also after an explicit `--threads=1`). |
 | `ATMOSTR_NO_AUTO_THREADS` | `1`: do not restart with two threads (needed to run with one thread). |
-| `ATMOSTR_PROFILE_MODE` | `full`: CUDA activity profile of the whole run. `window`: profile a window of the run and then **end the process**, so the run does not finish. |
+| `ATMOSTR_PROFILE_MODE` | `full`: CUDA activity profile of the whole run. `window`: profile a window of the run and then **end the process**, so the run does not finish. Applies when the config's `[architecture]` selects CUDA (whether or not CUDA is already loaded); other runs warn and run without a profile. |
 | `ATMOSTR_PROFILE_WARMUP_SEC`, `ATMOSTR_PROFILE_DUR_SEC` | Start (default 120 s) and length (default 60 s) of the `window` profile. |
