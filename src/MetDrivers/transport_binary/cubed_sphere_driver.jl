@@ -16,6 +16,8 @@ function _validate_replay_consistency_cs(
     worst_abs = 0.0
     worst_win = 0
     worst_idx = (0, 0, 0, 0)
+    Nc = reader.header.geometry.Nc
+    scratch = ReplayScratch((Nc, Nc, reader.header.nlevel))
 
     for k in 1:Nt
         cur = load_window!(reader, k)
@@ -38,7 +40,8 @@ function _validate_replay_consistency_cs(
         else
             cur.m
         end
-        diag = verify_window_continuity_cs(cur.m, cur.am, cur.bm, cur.cm, m_target, steps)
+        diag = verify_window_continuity_cs(cur.m, cur.am, cur.bm, cur.cm, m_target, steps;
+                                           scratch)
         if diag.max_rel_err > worst_rel
             worst_rel = diag.max_rel_err
             worst_abs = diag.max_abs_err

@@ -94,11 +94,25 @@ end
 Populate `div_h` with the per-cell horizontal divergence implied by the
 topology-specific flux payload.
 """
+function horizontal_divergence! end
+
+# Structured fills index `am[i + 1, j, k]` and `bm[i, j + 1, k]` under
+# `@inbounds`; check the extents once so a mismatched caller scratch errors.
+function _check_structured_flux_bounds(out::AbstractArray{Float64, 3},
+                                       am::AbstractArray, bm::AbstractArray)
+    Nx, Ny, Nz = size(out)
+    checkbounds(Bool, am, Nx + 1, Ny, Nz) && checkbounds(Bool, bm, Nx, Ny + 1, Nz) ||
+        throw(DimensionMismatch("replay scratch $(size(out)) does not fit fluxes " *
+                                "am $(size(am)), bm $(size(bm))"))
+    return nothing
+end
+
 function horizontal_divergence!(div_h::AbstractArray{Float64, 3},
                                 ::StructuredDirectionalReplayLayout,
                                 am::AbstractArray,
                                 bm::AbstractArray)
     Nx, Ny, Nz = size(div_h)
+    _check_structured_flux_bounds(div_h, am, bm)
     @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
         div_h[i, j, k] = (Float64(am[i + 1, j, k]) - Float64(am[i, j, k])) +
                          (Float64(bm[i, j + 1, k]) - Float64(bm[i, j, k]))
@@ -131,6 +145,7 @@ function horizontal_flux_magnitude!(mag_h::AbstractArray{Float64, 3},
                                     am::AbstractArray,
                                     bm::AbstractArray)
     Nx, Ny, Nz = size(mag_h)
+    _check_structured_flux_bounds(mag_h, am, bm)
     @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
         mag_h[i, j, k] = (abs(Float64(am[i + 1, j, k])) + abs(Float64(am[i, j, k]))) +
                          (abs(Float64(bm[i, j + 1, k])) + abs(Float64(bm[i, j, k])))
@@ -294,6 +309,7 @@ function verify_window_continuity(layout::AbstractReplayLayout,
                                   m_next::AbstractArray{<:Any, N},
                                   steps_per_window::Integer,
                                   flux_args...) where {N}
+    _check_continuity_shapes("verify_window_continuity", scratch.div, m_cur, cm, m_next)
     horizontal_divergence!(scratch.div, layout, flux_args...)
     horizontal_flux_magnitude!(scratch.mag, layout, flux_args...)
     return verify_window_continuity(scratch, m_cur, cm, m_next, steps_per_window)
@@ -336,21 +352,25 @@ function verify_window_continuity_rg(m_cur::AbstractMatrix{FT},
 end
 
 """
-    verify_window_continuity_cs(m_cur, am, bm, cm, m_next, steps_per_window)
+    verify_window_continuity_cs(m_cur, am, bm, cm, m_next, steps_per_window;
+                                scratch = ReplayScratch(size(m_cur[1])))
 
 Cubed-sphere convenience wrapper for the shared replay kernel. The caller must
 provide panel-local arrays with synchronized boundary mirrors so each panel's
-structured divergence matches the closed-sphere flux field.
+structured divergence matches the closed-sphere flux field. Callers that check
+many windows should allocate one panel-sized `scratch` and pass it to every
+call; all panels reuse it.
 """
 function verify_window_continuity_cs(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
                                      am::NTuple{NP, <:AbstractArray},
                                      bm::NTuple{NP, <:AbstractArray},
                                      cm::NTuple{NP, <:AbstractArray},
                                      m_next::NTuple{NP, <:AbstractArray},
-                                     steps_per_window::Integer) where {FT, NP}
+                                     steps_per_window::Integer;
+                                     scratch::ReplayScratch =
+                                         ReplayScratch(size(m_cur[1]))) where {FT, NP}
     NP >= 1 || error("verify_window_continuity_cs requires at least one panel")
     layout = structured_replay_layout()
-    scratch = ReplayScratch(size(m_cur[1]))
     worst_rel = 0.0
     worst_abs = 0.0
     worst_idx = (0, 0, 0, 0)

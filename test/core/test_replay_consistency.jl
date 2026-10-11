@@ -16,7 +16,7 @@ using .AtmosTransport.Preprocessing: verify_window_continuity_ll,
                                        verify_window_continuity_cs,
                                        verify_storage_continuity_ll!,
                                        allocate_window_storage
-using .AtmosTransport.MetDrivers: replay_tolerance
+using .AtmosTransport.MetDrivers: replay_tolerance, ReplayScratch
 using .AtmosTransport.Parameters: REPLAY_TOLERANCE_FLOAT64, REPLAY_TOLERANCE_FLOAT32
 
 # ----------------------------------------------------------------------------
@@ -299,6 +299,20 @@ end
         diag = verify_window_continuity_cs(w.m_cur, w.am, w.bm, cm_broken, w.m_next, w.steps)
         @test diag.max_rel_err > replay_tolerance(Float64)
         @test diag.worst_idx[1] == 4
+    end
+
+    @testset "verify_window_continuity_cs: caller scratch is reused" begin
+        w = build_continuity_consistent_window_cs(Float64; Nc = 16, Nz = 8)
+        scratch = ReplayScratch(size(w.m_cur[1]))
+        check(w, scratch) = verify_window_continuity_cs(w.m_cur, w.am, w.bm, w.cm,
+                                                        w.m_next, w.steps; scratch)
+        reference = verify_window_continuity_cs(w.m_cur, w.am, w.bm, w.cm,
+                                                w.m_next, w.steps)
+        @test check(w, scratch) === reference
+        # One panel-sized Float64 array; a shared scratch must allocate far less.
+        @test @allocated(check(w, scratch)) < sizeof(scratch.div) ÷ 2
+        Nx, Ny, Nz = size(w.m_cur[1])
+        @test_throws ErrorException check(w, ReplayScratch((Nx + 1, Ny, Nz)))
     end
 end
 

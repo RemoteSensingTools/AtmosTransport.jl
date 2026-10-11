@@ -11,7 +11,8 @@ using Printf
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport.MetDrivers: TransportBinaryReader, load_window!,
-    load_flux_delta_window!, verify_window_continuity_cs, replay_tolerance
+    load_flux_delta_window!, verify_window_continuity_cs, replay_tolerance,
+    ReplayScratch
 
 const USAGE = """
 Usage: julia --project=. scripts/validation/verify_cs_binary_continuity.jl \\
@@ -115,6 +116,7 @@ function main(argv = ARGS)
 
         dm_worst = nothing
         cur = load_window!(reader, 1)
+        scratch = nothing   # allocated at the first checkable window
         for win in 1:Nt
             target_source = ""
             m_next = nothing
@@ -143,8 +145,9 @@ function main(argv = ARGS)
             end
 
             steps = steps_schedule[win]
+            scratch === nothing && (scratch = ReplayScratch(size(cur.m[1])))
             diag = verify_window_continuity_cs(cur.m, cur.am, cur.bm, cur.cm,
-                                               m_next, steps)
+                                               m_next, steps; scratch)
             row = (window = win, max_abs_err = diag.max_abs_err,
                    max_rel_err = diag.max_rel_err, worst_idx = diag.worst_idx,
                    target_source = target_source)
