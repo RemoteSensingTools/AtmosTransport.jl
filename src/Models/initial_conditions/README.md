@@ -92,8 +92,9 @@ emits nothing.
     `rel_err = 1e-6`.
   - The runner logs each source's total model-storage rate.
 - To use a different regrid-weight cache, set `ATMOSTR_REGRID_CACHE_DIR`. Without
-  it, `_regrid_cache_dir()` uses `~/.cache/AtmosTransport/cr_regridding`. CS file
-  ICs call `build_regridder` without a cache directory.
+  it, `Regridding.default_regrid_cache_dir()` (the cache shared with the
+  builders) uses `~/.cache/AtmosTransport/cr_regridding`. CS file ICs call
+  `build_regridder` without a cache directory.
 
 ## Invariants
 

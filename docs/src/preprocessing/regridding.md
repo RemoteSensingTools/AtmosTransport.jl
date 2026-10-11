@@ -13,23 +13,44 @@ regrid.
 regridder = build_regridder(src_mesh, dst_mesh;
                              normalize = false,
                              cache_dir = nothing)   # opt-in caching
-apply_regridder!(dst, regridder, src)
+apply_regridder!(dst, regridder, src)                         # intensive field
+apply_regridder!(dst, regridder, src, ExtensiveCellField())   # per-cell totals
+regrid_conservation_report(regridder, src, dst, ExtensiveCellField())
 ```
 
-- **`build_regridder`** returns a wrapped `ConservativeRegridding.Regridder`
-  carrying `(intersections, dst_areas, src_areas)`.
-- **`apply_regridder!`** does an in-place column-by-column regrid for
-  any n-D source where the leading dimension is the horizontal one
-  (3-D `(ncell_src, Nz)` → `(ncell_dst, Nz)`, 2-D `(ncell_src,)` →
-  `(ncell_dst,)`).
+- **`build_regridder`** chooses, in this order: `IdentityRegrid` for
+  equivalent meshes, `NestedCubedSphereRegrid` for nested cubed spheres
+  (below), else a `ConservativeRegridding.Regridder` carrying
+  `(intersections, dst_areas, src_areas)`.
+- **`apply_regridder!(dst, r, src)`** does an in-place column-by-column regrid
+  of an intensive field (a value per area or per point,
+  ``d_t = \sum_s W_{ts} s_s / A^{\rm dst}_t``) for any n-D source where the
+  leading dimension is the horizontal one (3-D `(ncell_src, Nz)` →
+  `(ncell_dst, Nz)`, 2-D `(ncell_src,)` → `(ncell_dst,)`).
+- **`apply_regridder!(dst, r, src, kind)`** takes the quantity kind from
+  `Quantities`. `IntensiveCellField()` is the call above.
+  `ExtensiveCellField()` regrids a per-cell total `m` through its density,
+  ``d_t = A^{\rm dst}_t \, \mathcal{R}(m / A^{\rm src})_t = \sum_s W_{ts} m_s / A^{\rm src}_s``,
+  so ``\sum_t d_t = \sum_s m_s`` whatever polygon areas the regridder uses.
+  The density of one column is formed in a vector of length `ncell_src`,
+  allocated per call unless the caller passes a reusable one as
+  `scratch = buf` (the cubed-sphere preprocessing workspace does, so its
+  regrids allocate nothing after the first call). Vector and face-flux kinds
+  throw.
+- **`regrid_conservation_report`** returns `(; src_total, dst_total,
+  rel_error)` with Float64 sums; the leading dimensions of `src` and `dst`
+  must match the regridder's cell counts.
 - `normalize = true` scales weights so the largest intersection gets
   weight 1 — useful for diagnostic plots, **never** for mass fields.
 - `cache_dir = nothing` (the default) skips the JLD2 cache and
-  rebuilds the weights every call. Pass an absolute path
-  (e.g. `~/.cache/AtmosTransport/cr_regridding`) to opt in. The
-  preprocessing TOMLs set this via `[grid] regridder_cache_dir`.
+  rebuilds the weights every call. Pass a directory to opt in;
+  `default_regrid_cache_dir()` gives the shared default
+  (`ATMOSTR_REGRID_CACHE_DIR`, else `~/.cache/AtmosTransport/cr_regridding`).
+  The preprocessing TOMLs set it via `[grid] regridder_cache_dir`.
 
-Both functions live in `src/Regridding/weights_io.jl`.
+`build_regridder` and the cache live in `src/Regridding/weights_io.jl`, the
+quantity kinds in `src/Regridding/quantity_regrid.jl`, and the nested
+cubed-sphere pieces in `src/Regridding/cs_nesting.jl`.
 
 ## Supported topology pairs
 
@@ -66,6 +87,33 @@ allocation, no `if` branch in the hot loop. Any future grid type
 that defines `meshes_equivalent` for itself plugs into
 `IdentityRegrid` without code changes.
 
+## Nested cubed spheres
+
+Two cubed spheres with the same definition (coordinate law, centre law, panel
+convention, longitude offset) and radius whose edge sizes differ by an integer
+factor ``R`` are nested: coarse cell ``(i, j)`` of a panel is the union of
+the fine cells ``((i-1)R + ii, (j-1)R + jj)``, ``1 \le ii, jj \le R``.
+`meshes_nested(a, b)` checks the definitions and evaluates the corners
+(coarse corner ``(i, j)`` = fine corner ``((i-1)R+1, (j-1)R+1)`` to 1e-12 on
+the unit sphere). For such a pair `build_regridder` returns a
+`NestedCubedSphereRegrid` with the implicit intersection matrix
+
+- restriction (fine → coarse): ``W_{cf} = A_f``, so
+  ``d_c = \sum_{f \in c} A_f s_f / A_c``;
+- prolongation (coarse → fine): ``W_{fc} = A_c A_f / \sum_{f' \in c} A_{f'}``, so
+  ``d_f = s_c A_c / \sum_{f' \in c} A_{f'}``.
+
+Both satisfy ``\sum_t W_{ts} = A^{\rm src}_s``: per-cell totals are block-summed
+or split by area fraction exactly, and the result equals the polygon
+regridder to about 1e-12. Areas are the Float64 mesh areas. Nothing is cached
+on disk.
+
+The same module holds the block kernels of the transport-binary coarseners:
+`coarsen_sum!` (extensive amounts, summed in the data precision) and
+`coarsen_area_weighted!` (intensive fields,
+``\mathrm{fl}\big(\sum A_f s_f / \sum A_f\big)`` with Float64 sums and one
+rounding).
+
 ## The JLD2 weights cache
 
 Building the conservative-regridder weights for a real grid pair is
@@ -77,8 +125,9 @@ makes day 2 onward effectively free.
   `build_regridder` (the preprocessing TOMLs set
   `[grid] regridder_cache_dir = "~/.cache/AtmosTransport/cr_regridding"`).
   Runtime surface-flux sources regridded from lat-lon files always use the
-  cache, in `ATMOSTR_REGRID_CACHE_DIR` if set, else
-  `~/.cache/AtmosTransport/cr_regridding`.
+  cache, in `default_regrid_cache_dir()`: `ATMOSTR_REGRID_CACHE_DIR` if set,
+  else `~/.cache/AtmosTransport/cr_regridding`. Cache files are published
+  atomically with mode `0o666 & ~umask`.
 - **Cache key:** SHA-1 of a tuple containing:
   - source and destination mesh **type** + shape parameters
     (`(Nx, Ny)`, `Nc`, `nlon_per_ring`, panel convention, …),

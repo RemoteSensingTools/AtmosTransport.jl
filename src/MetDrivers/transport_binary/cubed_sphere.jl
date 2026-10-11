@@ -356,13 +356,13 @@ function open_streaming_cs_transport_binary(
     pack_buffer = Vector{FT}(undef, elems_per_window)
     section_shapes = [[copy(_cs_section_panel_shape(Nc, nlevel, section))
                        for _ in 1:npanel] for section in payload_sections]
-    staging_path, io = _open_streaming_staging(path)
+    staging_path, io = open_atomic_staging(path)
     try
         write(io, header_json)
         write(io, zeros(UInt8, pad))
     catch
         close(io)
-        rm(staging_path; force=true)
+        abandon_atomic_staging(staging_path)
         rethrow()
     end
 

@@ -39,6 +39,10 @@ Private = false
 
 ## SurfaceFlux
 
+Source containers, the surface-flux operator, and the emission totals
+(`total_emission_rate`, `emission_segments`, `integrated_emission`) used by
+logs and budget diagnostics. [Emission totals](@ref) gives the equations.
+
 ```@autodocs
 Modules = [AtmosTransport.Operators.SurfaceFlux]
 Order   = [:module, :constant, :type, :function, :macro]

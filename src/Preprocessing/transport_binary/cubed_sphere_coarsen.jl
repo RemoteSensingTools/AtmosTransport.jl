@@ -9,10 +9,11 @@
 
 # HACK: `scripts/preprocessing/coarsen_cs_transport_binary.jl` also `Base.include`s
 # this file into the format-v4 tree's Preprocessing module, which lacks these names
-# in its shared import list (`Preprocessing.jl`). TODO: drop this line together
+# in its shared import list (`Preprocessing.jl`). TODO: drop these lines together
 # with that script's HACK block once the C90 campaign leaves the format-v4 tree.
 using ..Parameters: COARSEN_SUBSTEP_CFL_TARGET, DEFAULT_POSITIVITY_CFL_LIMIT,
                     DEFAULT_MAX_STEPS_PER_WINDOW
+using ..Regridding: coarsen_sum!, coarsen_area_weighted!
 
 const _EXPERIMENTAL_CS_COARSEN_SECTIONS = Set((
     :m, :am, :bm, :cm, :ps, :dm,
@@ -27,46 +28,30 @@ _load_cs_coarsen_window(reader, win::Int) = load_window!(reader, win)
 @inline _cs_coarsen_Nc(header) = _cs_coarsen_geometry(header).Nc
 @inline _cs_coarsen_definition(geometry::CubedSphereBinaryGeometry) = geometry.definition
 
-@inline function _coarsen_sum_cells3!(dst::AbstractArray{FT, 3},
-                                      src::AbstractArray{FT, 3},
-                                      ratio::Int) where FT
-    Nc, Nz = size(dst, 1), size(dst, 3)
-    @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
-        total = zero(FT)
-        i0 = (i - 1) * ratio
-        j0 = (j - 1) * ratio
-        for jj in 1:ratio, ii in 1:ratio
-            total += src[i0 + ii, j0 + jj, k]
-        end
-        dst[i, j, k] = total
-    end
-    return dst
-end
+# Face restriction between nested cubed-sphere panels: the one copy, used here
+# and by the GEOS block coarsener (`geos_cs_resolution.jl`). Cell sums and
+# area-weighted means are `Regridding.coarsen_sum!` / `coarsen_area_weighted!`.
+#
+# A coarse face lies on every R-th fine face line and is the union of R fine
+# faces, so a face-integrated amount (kg per substep through the face) is
+#
+#     am_c[i, j, k] = Σ_{jj=1}^{R} am_f[(i − 1)R + 1, (j − 1)R + jj, k],   i = 1 … Nc + 1,
+#     bm_c[i, j, k] = Σ_{ii=1}^{R} bm_f[(i − 1)R + ii, (j − 1)R + 1, k],   j = 1 … Nc + 1;
+#
+# fine faces inside a coarse cell are dropped (their fluxes are internal to
+# the block). Sums accumulate in FT in the order shown.
 
-@inline function _coarsen_weighted_cells2!(dst::AbstractMatrix{FT},
-                                            src::AbstractMatrix{FT},
-                                            source_area::AbstractMatrix,
-                                            ratio::Int) where FT
-    Nc = size(dst, 1)
-    @inbounds for j in 1:Nc, i in 1:Nc
-        numerator = 0.0
-        denominator = 0.0
-        i0 = (i - 1) * ratio
-        j0 = (j - 1) * ratio
-        for jj in 1:ratio, ii in 1:ratio
-            area = Float64(source_area[i0 + ii, j0 + jj])
-            numerator += Float64(src[i0 + ii, j0 + jj]) * area
-            denominator += area
-        end
-        dst[i, j] = FT(numerator / denominator)
-    end
-    return dst
-end
+"""
+    _coarsen_xface_sum!(dst, src, ratio) -> dst
 
-@inline function _coarsen_xfaces!(dst::AbstractArray{FT, 3},
-                                  src::AbstractArray{FT, 3},
-                                  ratio::Int) where FT
+Restrict x-face amounts `(R·Nc + 1, R·Nc, Nz)` to `(Nc + 1, Nc, Nz)` by
+summing the `R` fine faces on each coarse face (see the comment above).
+"""
+function _coarsen_xface_sum!(dst::AbstractArray{FT, 3}, src::AbstractArray{FT, 3},
+                             ratio::Int) where FT
     Nc, Nz = size(dst, 2), size(dst, 3)
+    size(src) == (ratio * Nc + 1, ratio * Nc, Nz) && size(dst, 1) == Nc + 1 ||
+        throw(DimensionMismatch("x faces $(size(src)) are not a $(ratio)× refinement of $(size(dst))"))
     @inbounds for k in 1:Nz, j in 1:Nc, i in 1:(Nc + 1)
         fine_i = (i - 1) * ratio + 1
         j0 = (j - 1) * ratio
@@ -79,10 +64,17 @@ end
     return dst
 end
 
-@inline function _coarsen_yfaces!(dst::AbstractArray{FT, 3},
-                                  src::AbstractArray{FT, 3},
-                                  ratio::Int) where FT
+"""
+    _coarsen_yface_sum!(dst, src, ratio) -> dst
+
+Restrict y-face amounts `(R·Nc, R·Nc + 1, Nz)` to `(Nc, Nc + 1, Nz)` by
+summing the `R` fine faces on each coarse face (see the comment above).
+"""
+function _coarsen_yface_sum!(dst::AbstractArray{FT, 3}, src::AbstractArray{FT, 3},
+                             ratio::Int) where FT
     Nc, Nz = size(dst, 1), size(dst, 3)
+    size(src) == (ratio * Nc, ratio * Nc + 1, Nz) && size(dst, 2) == Nc + 1 ||
+        throw(DimensionMismatch("y faces $(size(src)) are not a $(ratio)× refinement of $(size(dst))"))
     @inbounds for k in 1:Nz, j in 1:(Nc + 1), i in 1:Nc
         fine_j = (j - 1) * ratio + 1
         i0 = (i - 1) * ratio
@@ -122,19 +114,19 @@ function _coarsen_nested_cs_window!(dst, src, source_dm,
                                     ratio::Int, source_steps::Int)
     npanel = length(src.m)
     Threads.@threads for p in 1:npanel
-        _coarsen_sum_cells3!(dst.m[p], src.m[p], ratio)
-        _coarsen_sum_cells3!(dst.dm[p], source_dm[p], ratio)
-        _coarsen_xfaces!(dst.am[p], src.am[p], ratio)
-        _coarsen_yfaces!(dst.bm[p], src.bm[p], ratio)
-        _coarsen_sum_cells3!(dst.cm[p], src.cm[p], ratio)
-        _coarsen_weighted_cells2!(dst.ps[p], src.ps[p], source_area, ratio)
+        coarsen_sum!(dst.m[p], src.m[p], ratio)
+        coarsen_sum!(dst.dm[p], source_dm[p], ratio)
+        _coarsen_xface_sum!(dst.am[p], src.am[p], ratio)
+        _coarsen_yface_sum!(dst.bm[p], src.bm[p], ratio)
+        coarsen_sum!(dst.cm[p], src.cm[p], ratio)
+        coarsen_area_weighted!(dst.ps[p], src.ps[p], source_area, ratio)
         if dst.surface !== nothing
-            _coarsen_weighted_cells2!(dst.surface.pblh[p], src.surface.pblh[p], source_area, ratio)
-            _coarsen_weighted_cells2!(dst.surface.ustar[p], src.surface.ustar[p], source_area, ratio)
-            _coarsen_weighted_cells2!(dst.surface.hflux[p], src.surface.hflux[p], source_area, ratio)
-            _coarsen_weighted_cells2!(dst.surface.t2m[p], src.surface.t2m[p], source_area, ratio)
+            coarsen_area_weighted!(dst.surface.pblh[p], src.surface.pblh[p], source_area, ratio)
+            coarsen_area_weighted!(dst.surface.ustar[p], src.surface.ustar[p], source_area, ratio)
+            coarsen_area_weighted!(dst.surface.hflux[p], src.surface.hflux[p], source_area, ratio)
+            coarsen_area_weighted!(dst.surface.t2m[p], src.surface.t2m[p], source_area, ratio)
         end
-        dst.dkg === nothing || _coarsen_sum_cells3!(dst.dkg[p], src.dkg[p], ratio)
+        dst.dkg === nothing || coarsen_sum!(dst.dkg[p], src.dkg[p], ratio)
         @inbounds for idx in eachindex(dst.m[p])
             dst.m_next[p][idx] = dst.m[p][idx] + dst.dm[p][idx]
         end

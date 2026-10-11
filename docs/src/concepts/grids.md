@@ -105,6 +105,26 @@ User-touched fields: `Nx`, `Ny`, `Δλ`, `Δφ`, `λᶜ` (cell-center
 longitudes), `λᶠ` (face longitudes), `φᶜ`, `φᶠ`, `radius`. Cell-area
 helpers: `cell_area(mesh, i, j)`, `cell_areas_by_latitude(mesh)`.
 
+Source grids of input files are built from their explicit cell faces:
+
+```julia
+mesh = LatLonMesh(λᶠ, φᶠ; FT = Float64, radius = target_mesh.radius)
+```
+
+Longitude spacing must be uniform, but the first face may be any value and a
+sequence that wraps by −360° is unwrapped (mesh column `i` stays file column
+`i`). Latitude faces may be ascending or descending (the mesh stores them
+south to north;
+[`latitude_row_order`](@ref AtmosTransport.Grids.latitude_row_order) gives
+the row permutation for the data) and may be non-uniform: pole-centred rows
+with half-width polar caps,
+a truncated first row, or Gaussian latitudes. A non-uniform mesh has
+`Δφ = NaN`, and the `Δφ`-based metrics (`dx`, `dy`, x-face lengths) throw.
+Cell areas always come from the faces,
+`A = R² Δλ (sin φ_north − sin φ_south)`, so a global mesh sums to `4πR²`.
+The regular constructor builds its faces and calls this one, so both paths
+give bit-identical regular meshes.
+
 ```@raw html
 <figure>
 <img src="../assets/grids/latlon.png" alt="LatLonMesh schematic" width="640">

@@ -27,15 +27,20 @@ All four traits are defined in [`Quantities.jl`](Quantities.jl) as subtypes of
 
 ## Where It Is Used
 
-Only `Preprocessing` dispatches on these traits:
+`Regridding` implements the per-trait rule and `Preprocessing` passes the
+traits:
 
-- `_density_correct!` in
-  [`../Preprocessing/cs_transport_helpers.jl`](../Preprocessing/cs_transport_helpers.jl)
-  implements the per-trait rule. `regrid_3d_to_cs_panels!` and
-  `regrid_2d_to_cs_panels!` take `kind::QuantityKind = IntensiveCellField()`.
+- `apply_regridder!(dst, r, src, kind)` in
+  [`../Regridding/quantity_regrid.jl`](../Regridding/quantity_regrid.jl)
+  implements it for every regridder (`ConservativeRegridding.Regridder`,
+  `IdentityRegrid`, `NestedCubedSphereRegrid`), and
+  `regrid_conservation_report(r, src, dst, kind)` totals a field by its kind.
   `HorizontalVectorField` and `HorizontalFluxField` throw `ArgumentError`
   there. Winds go through `rotate_winds_to_panel_local!`, and face fluxes
   through `reconstruct_cs_fluxes!`.
+- `regrid_3d_to_cs_panels!` and `regrid_2d_to_cs_panels!` in
+  [`../Preprocessing/cs_transport_helpers.jl`](../Preprocessing/cs_transport_helpers.jl)
+  take `kind::QuantityKind = IntensiveCellField()` and pass it on.
 - The call sites in `../Preprocessing/transport_binary/`
   (`cubed_sphere_regrid.jl`, `cubed_sphere_spectral.jl`,
   `era5_n320_regrid.jl`, `merra2_latlon_regrid.jl`) tag `m` with
@@ -49,7 +54,8 @@ Only `Preprocessing` dispatches on these traits:
   in proportion to the variation of source-cell area, which is largest at the
   lat-lon poles. Always tag `m` and other per-cell totals.
 - `ExtensiveCellField` reads `regridder.src_areas` and `regridder.dst_areas`;
-  both a `ConservativeRegridding.Regridder` and an `IdentityRegrid` carry them.
+  a `ConservativeRegridding.Regridder`, an `IdentityRegrid` and a
+  `NestedCubedSphereRegrid` all carry them.
 - Vertical layer-merging uses a separate trait family:
   `AbstractFieldKind` (`MassField`, `IntensiveCenterField`, `PressureFluxField`,
   ...) in
@@ -58,7 +64,10 @@ Only `Preprocessing` dispatches on these traits:
 
 ## Tests And Docs
 
-- No test targets these traits directly.
+- [`../../test/regridding/test_quantity_regrid.jl`](../../test/regridding/test_quantity_regrid.jl)
+  tests every trait through `apply_regridder!` and
+  `regrid_conservation_report`, and that the CS regrid helpers give the same
+  bits as before the rule moved to `Regridding`.
   [`../../test/core/test_cs_face_fluxes.jl`](../../test/core/test_cs_face_fluxes.jl)
   calls `regrid_3d_to_cs_panels!` with the default trait.
   [`../../test/core/test_vertical_transforms.jl`](../../test/core/test_vertical_transforms.jl)

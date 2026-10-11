@@ -5,7 +5,13 @@ Offline conservative regridding between mesh types, built on
 [ConservativeRegridding.jl](https://github.com/JuliaGeo/ConservativeRegridding.jl).
 
 Build a sparse weights matrix once per `(source_mesh, target_mesh)` pair,
-optionally cache it to disk, and reuse it. Callers are `Preprocessing` (met
+optionally cache it to disk, and reuse it. Equivalent meshes get an
+`IdentityRegrid` and nested cubed spheres (one definition, integer `Nc` ratio)
+an exact `NestedCubedSphereRegrid`, neither of which needs weights. Fields are
+regridded by quantity kind (`apply_regridder!(dst, r, src, kind)`): intensive
+fields directly, per-cell totals through their density. The module also owns
+the cubed-sphere block kernels (`coarsen_sum!`, `coarsen_area_weighted!`) that
+the transport-binary coarseners use. Callers are `Preprocessing` (met
 data to target grids), `Models.InitialConditionIO` (initial conditions and
 surface-flux inventories at run setup) and `Visualization` (cubed-sphere to
 lon-lat rasters). The operators and the stepping loop never call into this
@@ -16,6 +22,7 @@ target grid.
 
 ```julia
 using AtmosTransport: LatLonMesh, CubedSphereMesh
+using AtmosTransport.Quantities: ExtensiveCellField
 using AtmosTransport.Regridding
 
 src = LatLonMesh(Nx=1440, Ny=721)
@@ -24,10 +31,14 @@ dst = CubedSphereMesh(Nc=90)
 # Build weights (expensive — minutes for C90, cached to disk)
 r = build_regridder(src, dst; cache_dir="/tmp/atmos_regrid_cache")
 
-# Apply to a 2D field
+# Apply to a 2D field (intensive: a value per area)
 src_field = zeros(src.Nx * src.Ny)
 dst_field = zeros(6 * dst.Nc * dst.Nc)
 apply_regridder!(dst_field, r, src_field)
+
+# Per-cell totals (kg per cell) are regridded through their density
+apply_regridder!(dst_field, r, src_field, ExtensiveCellField())
+regrid_conservation_report(r, src_field, dst_field, ExtensiveCellField())
 
 # Persist / export
 save_regridder("weights.jld2", r)
@@ -73,7 +84,10 @@ using ..Grids: AbstractHorizontalMesh, AbstractStructuredMesh,
                nrings, nboundaries, ring_cell_count, cell_index,
                nx, ny, ncells, cell_area, panel_cell_corner_lonlat,
                cs_definition, coordinate_law, center_law, longitude_offset_deg,
-               cs_definition_tag, coordinate_law_tag, center_law_tag
+               cs_definition_tag, coordinate_law_tag, center_law_tag, cs_corner_xyz
+using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField,
+                    HorizontalVectorField, HorizontalFluxField
+using ..AtomicFiles: atomic_publish
 
 using ConservativeRegridding
 using ConservativeRegridding: Regridder
@@ -93,13 +107,18 @@ using Dates
 using SHA
 using StaticArrays: SA
 
-export build_regridder, save_regridder, load_regridder
-export save_esmf_weights, apply_regridder!
+export build_regridder, save_regridder, load_regridder, default_regrid_cache_dir
+export save_esmf_weights, apply_regridder!, regrid_conservation_report
 export cubed_sphere_face_corners
 export IdentityRegrid, meshes_equivalent
+export meshes_nested, AbstractNestingDirection, Restriction, Prolongation,
+       NestedCubedSphereRegrid
+export coarsen_sum!, coarsen_area_weighted!
 
 include("treeify_meshes.jl")
 include("identity_regrid.jl")
+include("cs_nesting.jl")
 include("weights_io.jl")
+include("quantity_regrid.jl")
 
 end # module Regridding

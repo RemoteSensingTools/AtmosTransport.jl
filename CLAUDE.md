@@ -40,7 +40,8 @@ mass basis, supported operators, and load-time consistency gates.
 - Entry point: `scripts/run_transport.jl` ->
   `run_driven_simulation(cfg)` in `src/Models/DrivenRunner.jl`
 - Top-level include order follows `src/AtmosTransport.jl`:
-  `Architectures -> SectionTimer -> ConfigChecks -> Quantities -> Parameters ->`
+  `Architectures -> SectionTimer -> ConfigChecks -> LogLevels -> AtomicFiles ->`
+  `Quantities -> Parameters ->`
   `Grids -> State -> Output -> MetDrivers -> Operators -> Tape -> Adjoints ->`
   `Regridding -> Preprocessing -> Visualization -> Models -> Downloads`. `Footprint/` and
   `Inversion/` are not modules: `Adjoints.jl` includes their files.

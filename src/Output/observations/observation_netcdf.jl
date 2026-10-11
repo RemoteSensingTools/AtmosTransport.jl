@@ -159,7 +159,7 @@ function _observation_common_attributes!(ds, mesh, mass_basis::AbstractMassBasis
         "p_half[1] = A_ifc[1]; p_half[k+1] = p_half[k] + g * air_mass[k] / cell_area " *
         "(" * _basis_word(mass_basis) * "air)"
     ds.attrib["height_method_codes"] = height_method_codes_description()
-    _define_provenance_attributes!(ds)
+    define_provenance_attributes!(ds)
     for (key, value) in pairs(attributes)
         ds.attrib[String(key)] = value
     end

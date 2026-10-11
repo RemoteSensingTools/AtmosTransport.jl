@@ -19,6 +19,11 @@ The `AbstractSurfaceFluxOperator` hierarchy (`NoSurfaceFlux`,
 `apply!` / `apply_surface_flux!` entry points live alongside these data
 types.
 
+Emission totals for logs and budgets come from the operator's own temporal
+reconstruction: `total_emission_rate(src, t)` (global storage rate at an
+instant), `emission_segments(src, t, dt)` (the pieces one step applies) and
+`integrated_emission(src, t0, t1, dt)` (the mass added over a run's steps).
+
 # Surface layer convention
 
 All kernels here assume `k = Nz` is the surface.
@@ -29,12 +34,12 @@ refactor can generalise this.
 module SurfaceFlux
 
 using Adapt
-using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
+using KernelAbstractions: KernelAbstractions as KA, @kernel, @index, @Const, get_backend, synchronize
 using ...State: CellState, CubedSphereState, get_tracer, tracer_index, eachtracer,
                 GCHPNonlocalPBLField
 using ..Diffusion: ImplicitVerticalDiffusion
 using ...MetDrivers: current_time
-using ...Architectures: _two_sum, launch!
+using ...Architectures: _two_sum, _neumaier_add, launch!
 import ..AbstractOperator, ..apply!
 
 export SurfaceFluxSource, AbstractSurfaceFluxSource, TimeVaryingSurfaceFluxSource
@@ -44,10 +49,12 @@ export PerTracerFluxMap, flux_for
 export AbstractSurfaceFluxOperator, NoSurfaceFlux, SurfaceFluxOperator
 export apply_surface_flux!, emitting_tracer_indices
 export SurfaceLayerDeposit, ProfileDeposit, emission_deposit
+export total_emission_rate, emission_segments, integrated_emission
 
 include("sources.jl")
 include("PerTracerFluxMap.jl")
 include("surface_flux_kernels.jl")
 include("operators.jl")
+include("integrals.jl")
 
 end # module SurfaceFlux

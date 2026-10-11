@@ -24,6 +24,17 @@ writing topology-specific NetCDF files directly.
   snapshots. Its owner must close the stream on every exit.
 - `diagnostics.jl` derives VMR, column means, and mass-per-area fields.
 - `netcdf_schema.jl` defines topology-specific dimensions, coordinates, and metadata.
+  Two pieces are public so that other NetCDF writers (generated `cs_native`
+  input files) share them instead of copying them:
+  `define_cs_horizontal_geometry!(ds, mesh)` writes the cubed-sphere horizontal
+  block (`Xdim`/`Ydim`/`Xcorner`/`Ycorner`/`nf`, `lons`, `lats`, corners,
+  `cell_area`, the `cubed_sphere` mapping with `semi_major_axis = mesh.radius`,
+  and the matching global definition attributes) without any level or time
+  axis, and `define_provenance_attributes!(ds)` writes the automated provenance
+  attributes (`creation_date`, `framework_commit`, `framework_dirty`, runtime,
+  host, user) and returns `(; creation_date, git_commit, git_dirty)`. The
+  snapshot writer builds its CS layout from the former and then adds `lev` and
+  `time`; snapshot and observation files take their provenance from the latter.
 - `netcdf_writer.jl` writes topology-specific payload variables through one public API.
 - `observations/observation_sources.jl` defines the typed `[[output.observations.sources]]`
   descriptors (`OCO2LiteSource`, `ObsPackSource`, `TableSource`), the singleton
@@ -75,7 +86,9 @@ snapshot files are written on a background task.
 - LL writes CF lon/lat coordinates, bounds, cell areas, full per-level fields, and column diagnostics.
 - RG writes authoritative native `cell` variables, quadrilateral cell bounds,
   plus a diagnostic lon/lat raster for quick plots.
-- CS writes native `(Xdim, Ydim, nf, lev, time)` fields with `lons`, `lats`, corners, cell area, and a `cubed_sphere` mapping variable.
+- CS writes native `(Xdim, Ydim, nf, lev, time)` fields with `lons`, `lats`,
+  corners, cell area, and a `cubed_sphere` mapping variable, all from
+  `define_cs_horizontal_geometry!`.
 
 Every selected tracer also writes `<tracer>_total_mass(time)` as Float64. The
 value is captured before spatial output conversion and is the authoritative

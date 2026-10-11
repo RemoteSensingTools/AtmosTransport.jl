@@ -198,6 +198,39 @@ error**, not a silent fallback.
 inventories (EDGAR, GFED, GridFED, LMDz, …). See the worked CATRINE configs
 (`config/runs/catrine_*.toml`) for examples.
 
+### Emission totals
+
+Sources hold per-cell model-storage rates ``r_c`` (kg dry-air equivalent
+s⁻¹). Logs and budget diagnostics use global totals that the surface-flux
+module computes from the operator's own temporal reconstruction:
+
+- `total_emission_rate(src, t)`: the global rate ``R(t) = \sum_c r_c(t)`` at
+  the instant `t` (seconds since the run start).
+- `emission_segments(src, t, dt)`: the pieces ``(R_s, \tau_s)`` in which one
+  step ``[t, t + dt]`` adds the source, with ``\sum_s \tau_s = dt``.
+- `integrated_emission(src, t0, t1, dt)`: the mass added over the steps
+  ``t_n = t_0 + n\,dt``, with ``N = (t_1 - t_0)/dt`` steps:
+
+```math
+E = \sum_{n=0}^{N-1} \sum_s R_s^{(n)}\,\tau_s^{(n)} .
+```
+
+A time-varying source stores slices with totals ``R_k = \sum_c r_{c,k}``.
+Every temporal scheme blends at most two slices,
+``R = w_0 R_{i_0} + w_1 R_{i_1}``, so these totals equal the sum of the
+operator's per-cell increments up to summation order
+(`test/core/test_surface_flux_integrals.jl` checks this to 1e-14 relative).
+`StepwiseFlux` and `ConservativeMeanFlux` split each step at every slice time
+and evaluate each piece at its midpoint. This integrates the piecewise-constant
+or piecewise-linear reconstruction exactly, so their ``E`` does not depend on
+``dt``. `LinearInterpFlux` evaluates the rate at the step start, so its ``E``
+is a Riemann sum that depends on ``dt``.
+
+The runner logs `total_emission_rate(source, 0.0)`, the rate at the run start,
+for every source. `scripts/diagnostics/tracer_budget_closure.jl` and
+`scripts/diagnostics/catrine_true_mass_balance.jl` rebuild a run's sources and
+integrate them with these functions.
+
 ## Chemistry
 
 `AbstractChemistryOperator` is the root; concrete subtypes:

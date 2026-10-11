@@ -47,11 +47,27 @@ function _options_string(options)
                     options.float_type, options.deflate_level, options.shuffle)
 end
 
-# Automated provenance shared by snapshot and observation files: timestamp,
-# source-tree state, runtime, host, and user. Each value is best-effort and
-# falls back to `"unknown"` rather than throwing, so non-git checkouts still
-# produce a complete metadata block.
-function _define_provenance_attributes!(ds)
+"""
+    define_provenance_attributes!(ds) -> (; creation_date, git_commit, git_dirty)
+
+Write the automated provenance block shared by every NetCDF file AtmosTransport
+writes (snapshots, observation files, and generated input files) as global
+attributes of the open dataset `ds`:
+
+| Attribute | Value |
+|---|---|
+| `creation_date` | write time, ISO 8601 UTC with a `Z` suffix |
+| `framework` | `"AtmosTransport.jl"` |
+| `framework_commit` | commit of the source tree (`AtmosTransport.source_revision()`) |
+| `framework_dirty` | `"clean"`, `"dirty"` or `"unknown"` |
+| `runtime` | Julia version, machine triple and operating system |
+| `hostname`, `user` | host name and `USER` (or `USERNAME`) |
+
+Every value is best-effort and falls back to `"unknown"` instead of throwing,
+so a tree without git still produces a complete block. Returns the creation
+date and the source-tree state so the caller can compose its `history` line.
+"""
+function define_provenance_attributes!(ds)
     creation_date = _iso8601_utc_now()
     git_commit, git_dirty = source_revision()
     hostname      = try
@@ -66,7 +82,7 @@ function _define_provenance_attributes!(ds)
     ds.attrib["runtime"]          = _runtime_environment_string()
     ds.attrib["hostname"]         = hostname
     ds.attrib["user"]             = get(ENV, "USER", get(ENV, "USERNAME", "unknown"))
-    return creation_date, git_commit, git_dirty
+    return (; creation_date, git_commit, git_dirty)
 end
 
 function _define_common_attributes!(ds, mesh, frames, mass_basis_sym::Symbol;
@@ -81,7 +97,7 @@ function _define_common_attributes!(ds, mesh, frames, mass_basis_sym::Symbol;
     ds.attrib["mass_basis"]      = String(mass_basis_sym)
     ds.attrib["output_contract"] = _OUTPUT_CONTRACT
 
-    creation_date, git_commit, git_dirty = _define_provenance_attributes!(ds)
+    (; creation_date, git_commit, git_dirty) = define_provenance_attributes!(ds)
     options === nothing ||
         (ds.attrib["output_options"] = _options_string(options))
 
@@ -312,15 +328,44 @@ function _cs_panel_corner_arrays(mesh::CubedSphereMesh)
     return lons, lats
 end
 
-function _define_cs_geometry!(ds, mesh::CubedSphereMesh, Nz::Integer, times)
+"""
+    define_cs_horizontal_geometry!(ds, mesh::CubedSphereMesh) -> nothing
+
+Define the horizontal geometry of a panel-native cubed-sphere NetCDF file in
+the open dataset `ds`: the GEOS-style layout shared by runtime snapshots and
+`cs_native` input files. Vertical and time axes are not defined here; each
+writer owns those.
+
+Dimensions `Xdim`, `Ydim` (`Nc`), `Xcorner`, `Ycorner` (`Nc + 1`) and `nf` (6).
+Variables (coordinates and geometry in Float64 whatever the mesh precision):
+
+- `Xdim`, `Ydim`: panel indices `1:Nc`, tagged `degrees_east`/`degrees_north`
+  ("Fake Longitude/Latitude for GrADS Compatibility", the GEOS-Chem convention)
+  so Panoply and GrADS render a per-panel map; `nf` (Int32): panel `1:6`.
+- `lons`, `lats` `(Xdim, Ydim, nf)`: cell-centre longitude and latitude
+  [degrees], from `panel_cell_center_lonlat` in the mesh's panel convention.
+- `corner_lons`, `corner_lats` `(Xcorner, Ycorner, nf)`: cell corners
+  [degrees], from `panel_cell_corner_lonlat`.
+- `cell_area` `(Xdim, Ydim, nf)` [m²]: the mesh's own cell areas (the areas the
+  runtime multiplies fluxes by), with `coordinates = "lons lats"`.
+- `cubed_sphere` (scalar Int32): grid mapping with `grid_mapping_name`,
+  `cs_definition`, `cs_coordinate_law`, `cs_center_law`, `panel_convention`,
+  `longitude_of_central_meridian`, `semi_major_axis = mesh.radius` [m] and
+  `inverse_flattening = 0`. Panel data variables point at it with
+  `grid_mapping = "cubed_sphere"` and `coordinates = "lons lats"`.
+
+The same definition tags are also written as global attributes (`Nc`,
+`cs_definition`, `cs_coordinate_law`, `cs_center_law`, `panel_convention`,
+`grid_mapping_name`, `longitude_of_central_meridian`); readers rebuild the mesh
+from them.
+"""
+function define_cs_horizontal_geometry!(ds, mesh::CubedSphereMesh)
     Nc = mesh.Nc
     defDim(ds, "Xdim", Nc)
     defDim(ds, "Ydim", Nc)
     defDim(ds, "Xcorner", Nc + 1)
     defDim(ds, "Ycorner", Nc + 1)
     defDim(ds, "nf", 6)
-    _define_lev!(ds, Nz)
-    _define_time!(ds, times)
 
     convention_tag = _cs_convention_tag(mesh)
     central_meridian = _cs_central_meridian(mesh)
@@ -393,7 +438,7 @@ function _define_cs_geometry!(ds, mesh::CubedSphereMesh, Nz::Integer, times)
                               "inverse_flattening" => 0.0,
                               "comment" => "Use lons/lats and corner_lons/corner_lats as authoritative native-cell coordinates."))
     gm[] = Int32(0)
-    return (;)
+    return nothing
 end
 
 function _define_geometry!(ds, mesh::LatLonMesh, Nz::Integer, times)
@@ -404,6 +449,12 @@ function _define_geometry!(ds, mesh::ReducedGaussianMesh, Nz::Integer, times)
     return _define_rg_geometry!(ds, mesh, Nz, times)
 end
 
+# The shared horizontal geometry, then the snapshot's level and time axes.
+# Defining `lev` and `time` after the horizontal block keeps the dimension order
+# Xdim, Ydim, Xcorner, Ycorner, nf, lev, time.
 function _define_geometry!(ds, mesh::CubedSphereMesh, Nz::Integer, times)
-    return _define_cs_geometry!(ds, mesh, Nz, times)
+    define_cs_horizontal_geometry!(ds, mesh)
+    _define_lev!(ds, Nz)
+    _define_time!(ds, times)
+    return (;)
 end

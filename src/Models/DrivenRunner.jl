@@ -80,6 +80,7 @@ using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, nlevels
 using ..Operators: LinRoodPPMScheme, PPMScheme, CW84Limiter, FV3ScalarProfile, SlopesScheme, UpwindScheme,
                   ImplicitVerticalDiffusion, TimeVaryingSurfaceFluxSource,
+                  total_emission_rate,
                   uses_diffusive_surface_flux_boundary,
                   AbstractConvection,
                   NoConvection, TM5Convection, CMFMCConvection,
@@ -344,19 +345,6 @@ function _check_flux_run_span(run_span, binary_end_s::Real, surface_sources, pat
     return nothing
 end
 
-# Reduce a surface source's per-cell rate to a scalar total for logging,
-# handling both static (`cell_mass_rate`) and time-varying
-# (`cell_mass_rate_series`, summed over the first slice) sources.
-function _surface_source_total_rate(source)
-    if hasproperty(source, :cell_mass_rate)
-        r = source.cell_mass_rate
-        return r isa Tuple ? Float64(sum(sum, r)) : Float64(sum(r))
-    else
-        series = source.cell_mass_rate_series   # NTuple{6} of (Nc,Nc,ntime)
-        return Float64(sum(p -> sum(@view p[:, :, 1]), series))
-    end
-end
-
 function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                            stager::InputStager,
                                            arch::AbstractArchitecture,
@@ -452,8 +440,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                          snapshot_file = _output_display_path(output_spec))
     for source in surface_sources
         @info @sprintf("Surface source %s total model-storage rate: %.12e kg_air_equiv/s",
-                       String(source.tracer_name),
-                       _surface_source_total_rate(source))
+                       String(source.tracer_name), total_emission_rate(source, 0.0))
     end
 
     stream = _single_netcdf_stream(output_resources, output_spec, model.grid;
@@ -801,11 +788,9 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                                  run_span = flux_run_span)
     source_tracers = Set(source.tracer_name for source in surface_sources)
     for source in surface_sources
-        # Reduce the topology-shaped per-cell rate to a scalar for the log;
-        # `_surface_source_total_rate` handles static (2D / 6-tuple) and
-        # time-varying (first-slice) sources alike.
+        # Global storage rate at the run start, by dispatch on the source type.
         @info @sprintf("Surface source %s total model-storage rate: %.12e kg_air_equiv/s",
-                       String(source.tracer_name), _surface_source_total_rate(source))
+                       String(source.tracer_name), total_emission_rate(source, 0.0))
     end
 
     _log_runtime_summary(topology = :CubedSphere,

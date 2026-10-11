@@ -65,10 +65,14 @@ methods report configured source support without reading meteorological files.
     window-loading specializations for the same reader type
   - `transport_binary/payload_sections.jl` — per-section element counts,
     window-field accessors, optional-section validators
-  - `transport_binary/writer.jl` — eager `write_transport_binary` + packers
+  - `transport_binary/writer.jl` — eager `write_transport_binary` + packers;
+    the file is published with `AtomicFiles.atomic_publish`
   - `transport_binary/streaming_writer.jl` — `StreamingTransportBinaryWriter`
-    (structured / reduced-Gaussian)
-  - `transport_binary/cubed_sphere.jl` — cubed-sphere streaming writer
+    (structured / reduced-Gaussian); windows go to an
+    `AtomicFiles.open_atomic_staging` file next to the target, which
+    `close_streaming_transport_binary!` renames onto it only when complete
+  - `transport_binary/cubed_sphere.jl` — cubed-sphere streaming writer (same
+    staging file and close)
   - `transport_binary/inspect.jl` — `binary_capabilities`, `inspect_binary`,
     and capability reporting
 - [`transport_binary/window.jl`](transport_binary/window.jl) — decoded forcing
@@ -116,6 +120,9 @@ methods report configured source support without reading meteorological files.
   - [`../../test/real_data/test_transport_binary_reader.jl`](../../test/real_data/test_transport_binary_reader.jl)
   - [`../../test/orphan/test_run_transport_binary_recipe.jl`](../../test/orphan/test_run_transport_binary_recipe.jl)
   - [`../../test/core/test_binary_path_expander.jl`](../../test/core/test_binary_path_expander.jl)
+  - [`../../test/core/test_atomic_files.jl`](../../test/core/test_atomic_files.jl) and
+    [`../../test/core/test_persistence_hardening.jl`](../../test/core/test_persistence_hardening.jl)
+    (writers publish only complete files, with mode `0o666 & ~umask`)
   - [`../../test/real_data/test_dry_flux_interface.jl`](../../test/real_data/test_dry_flux_interface.jl)
   - [`../../test/orphan/test_current_time.jl`](../../test/orphan/test_current_time.jl)
   - [`../../test/orphan/test_cubed_sphere_runtime.jl`](../../test/orphan/test_cubed_sphere_runtime.jl)

@@ -107,7 +107,7 @@ Files directly in this folder; the subfolders have their own READMEs
 - [`configuration.jl`](configuration.jl) — ERA5 spectral TOML parsing (`resolve_runtime_settings`, `build_vertical_setup`, dates, `next_day_hour0`)
 - [`vertical_coordinates.jl`](vertical_coordinates.jl) — `merge_thin_levels`, `select_levels_echlevs`, echlevs presets, coefficient loaders
 - [`vertical_transforms.jl`](vertical_transforms.jl) — `AbstractVerticalTransform` types, `VerticalPlan`, `plan_vertical`, `apply_vertical!`
-- [`spectral_io.jl`](spectral_io.jl) — spectral GRIB reading, day cache, `read_day_spectral`, `read_hour0_spectral`
+- [`spectral_io.jl`](spectral_io.jl) — spectral GRIB reading, day cache (published with `AtomicFiles.atomic_publish`), `read_day_spectral`, `read_hour0_spectral`
 - [`spectral_synthesis.jl`](spectral_synthesis.jl) — Legendre/FFT synthesis to LL, `spectral_to_native_fields!`, native mass and fluxes
 - [`reduced_spectral_synthesis.jl`](reduced_spectral_synthesis.jl) — batched spectral synthesis on reduced-Gaussian rings (`synthesize_reduced!`)
 - [`reduced_transport_helpers.jl`](reduced_transport_helpers.jl) — RG workspaces, humidity, spectral synthesis, fluxes, level merge
@@ -118,7 +118,7 @@ Files directly in this folder; the subfolders have their own READMEs
 - [`cs_face_table.jl`](cs_face_table.jl) — CS global cell and face indexing (the face table)
 - [`cs_poisson_solver.jl`](cs_poisson_solver.jl) — CS graph Laplacian, PCG solver, correction mapping, mirror synchronization
 - [`cs_poisson_balance.jl`](cs_poisson_balance.jl) — `balance_cs_global_mass_fluxes!`, `balance_cs_column_mass_fluxes!`, column weights, `diagnose_cs_cm!`
-- [`cs_transport_helpers.jl`](cs_transport_helpers.jl) — CS workspace, panel packing, LL → CS regrid helpers, wind recovery from LL fluxes
+- [`cs_transport_helpers.jl`](cs_transport_helpers.jl) — CS workspace, panel packing, LL → CS regrid helpers (`regrid_2d_to_cs_panels!` / `regrid_3d_to_cs_panels!` pass the quantity kind to `Regridding.apply_regridder!`), wind recovery from LL fluxes
 - [`cs_flux_reconstruction.jl`](cs_flux_reconstruction.jl) — CS face fluxes from cell-center winds (`cs_face_fluxes!`)
 - [`cs_wind_rotation.jl`](cs_wind_rotation.jl) — east/north ↔ panel-local wind rotation, CS face fluxes → cell-center winds
 - [`cs_native_fluxes.jl`](cs_native_fluxes.jl) — `geos_native_to_face_flux!` with panel halo sync, `compute_cs_cm_pressure_fixer!`

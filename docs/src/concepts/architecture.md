@@ -182,6 +182,23 @@ Most major directories own a module; `Footprint/` and `Inversion/` are
 assembled by `Adjoints`. Module-level READMEs provide implementation maps for
 the core runtime directories.
 
+Modules are included in dependency order, and a module may use only the
+modules included before it:
+
+```text
+Architectures → SectionTimer → ConfigChecks → LogLevels → AtomicFiles
+→ Quantities → Parameters → Grids → State → Output → MetDrivers → Operators
+→ Tape → Adjoints → Regridding → Preprocessing → Visualization → Models
+→ Downloads
+```
+
+Three single-file modules depend on Base and the standard library only:
+`ConfigChecks.jl` checks TOML tables, `LogLevels.jl` applies the
+`[logging] level`, and `AtomicFiles.jl` publishes a file only when it is
+complete (a sibling staging file, renamed onto the target on success); the
+transport-binary writers and the spectral and regridder caches write through
+it.
+
 ## Public workflow versus extension points
 
 The stable path for a model user is deliberately small:

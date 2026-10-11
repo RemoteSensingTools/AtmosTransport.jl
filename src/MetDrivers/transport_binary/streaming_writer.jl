@@ -10,6 +10,12 @@ finalised by [`close_streaming_transport_binary!`](@ref).
 
 Memory footprint: one `elems_per_window`-length pack buffer (`Vector{FT}`)
 plus the open `IOStream`.  All other per-window data is owned by the caller.
+
+The windows go to `staging_path`, a staging file next to `path` from
+[`AtomicFiles.open_atomic_staging`](@ref AtmosTransport.AtomicFiles.open_atomic_staging)
+(`O_EXCL`, mode `0o666 & ~umask`). Closing a complete stream renames it onto
+`path`; an incomplete or failed stream is removed and a previous `path` is left
+untouched.
 """
 mutable struct StreamingTransportBinaryWriter{FT}
     io::IOStream
@@ -23,37 +29,6 @@ mutable struct StreamingTransportBinaryWriter{FT}
     written_windows::Int
     pack_buffer::Vector{FT}
     section_shapes::Vector{Vector{Vector{Int}}}
-end
-
-function _open_streaming_staging(path::AbstractString)
-    parent = dirname(abspath(path))
-    isdir(parent) || throw(ArgumentError(
-        "streaming binary parent directory does not exist: $(parent)"))
-    # Not `mktemp` (except on Windows, where POSIX modes do not apply): it
-    # creates 0600 files, and `mv` would publish the binary owner-only. The
-    # staging file is created exclusively (no other process can own the name)
-    # with mode 0o666, so the umask applies as for every other writer, and the
-    # new descriptor itself becomes the `IOStream`; the path is never reopened.
-    Sys.iswindows() && return mktemp(parent; cleanup = false)
-    flags = Base.Filesystem.JL_O_CREAT | Base.Filesystem.JL_O_EXCL | Base.Filesystem.JL_O_RDWR |
-            Base.Filesystem.JL_O_CLOEXEC
-    for _ in 1:100
-        staging_path = tempname(parent; cleanup = false)
-        fd = ccall(:open, Cint, (Cstring, Cint, Cuint...), staging_path, flags, 0o666)
-        if fd >= 0
-            try
-                return staging_path, fdio(staging_path, fd, true)
-            catch
-                ccall(:close, Cint, (Cint,), fd)
-                rm(staging_path; force = true)
-                rethrow()
-            end
-        end
-        errno = Libc.errno()
-        errno == Libc.EEXIST ||
-            throw(SystemError("creating streaming staging file $(staging_path)", errno))
-    end
-    throw(ErrorException("could not create a unique staging file in $(parent)"))
 end
 
 function _streaming_section_shapes(window, payload_sections::Vector{Symbol})
@@ -166,13 +141,13 @@ function open_streaming_transport_binary(
 
     pack_buffer = Vector{FT}(undef, elems_per_window)
     section_shapes = _streaming_section_shapes(sample_window, payload_sections)
-    staging_path, io = _open_streaming_staging(path)
+    staging_path, io = open_atomic_staging(path)
     try
         write(io, header_json)
         write(io, zeros(UInt8, pad))
     catch
         close(io)
-        rm(staging_path; force=true)
+        abandon_atomic_staging(staging_path)
         rethrow()
     end
 
@@ -260,24 +235,18 @@ incomplete stream is closed and rejected without publishing a final header.
 function close_streaming_transport_binary!(writer::StreamingTransportBinaryWriter)
     if writer.written_windows != writer.expected_windows
         isopen(writer.io) && close(writer.io)
-        rm(writer.staging_path; force = true)
+        abandon_atomic_staging(writer.staging_path)
         throw(ArgumentError(
             "Streaming binary is incomplete: expected $(writer.expected_windows) windows, " *
             "wrote $(writer.written_windows); refusing to finalise $(writer.path)"))
     end
     try
         _rewrite_streaming_header!(writer)
+        close(writer.io)
     catch
         isopen(writer.io) && close(writer.io)
-        rm(writer.staging_path; force = true)
+        abandon_atomic_staging(writer.staging_path)
         rethrow()
     end
-    isopen(writer.io) && close(writer.io)
-    try
-        mv(writer.staging_path, writer.path; force=true)
-    catch
-        rm(writer.staging_path; force=true)
-        rethrow()
-    end
-    return writer.path
+    return commit_atomic_staging(writer.staging_path, writer.path)
 end

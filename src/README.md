@@ -43,9 +43,14 @@ Geometry and topology decisions come from
   `Fused`, `Sequence`: a kernel body written once, fused by dispatch)
 - `ConfigChecks.jl` — strict TOML Booleans and known-key checks with
   "did you mean" suggestions, shared by `Output`, `Preprocessing` and `Models`
+- `AtomicFiles.jl` — publish a file only when it is complete: a sibling
+  staging file created with `O_EXCL` and mode `0o666 & ~umask`, moved onto
+  the target by one replacing rename on success, removed on error or when the
+  rename fails (Base only; used by the transport-binary writers, the spectral
+  day cache and the regridder cache)
 - `Quantities/` — intensive/extensive/vector/flux traits used by regridding
 - `Diagnostics/` — lightweight runtime instrumentation
-- `Regridding/` — conservative regridding and weight application
+- `Regridding/` — conservative regridding, weight application by quantity kind, nested cubed-sphere remapping and the CS block kernels
 - `Preprocessing/` — transport-binary and met-data preparation
 - `Downloads/` — data acquisition helpers
 - `Visualization/` — topology-aware snapshot views and optional Makie methods

@@ -426,7 +426,7 @@ const _CS_COORDINATE_LAWS = Dict("equiangular_gnomonic" => EquiangularGnomonic()
 const _CS_CENTER_LAWS = Dict("angular_midpoint" => AngularMidpointCenter(),
                              "four_corner_normalized" => FourCornerNormalizedCenter())
 
-# The mesh definition recorded by the snapshot writer (`_define_cs_geometry!`);
+# The mesh definition recorded by the snapshot writer (`define_cs_horizontal_geometry!`);
 # files written before those attributes get the panel convention's default.
 function _cs_snapshot_definition(attrs, convention::Symbol)
     conv = _cs_panel_convention(convention)

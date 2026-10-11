@@ -234,10 +234,10 @@ end
     end
 
     @testset "nested GEOS CS block coarsening helpers" begin
-        R = Val(2)
+        R = 2
         src3 = reshape(collect(FT_TEST, 1:16), 4, 4, 1)
         dst3 = zeros(FT_TEST, 2, 2, 1)
-        AtmosTransport.Preprocessing._coarsen_sum3!(dst3, src3, R)
+        AtmosTransport.Regridding.coarsen_sum!(dst3, src3, R)
         @test dst3[:, :, 1] == [
             sum(src3[1:2, 1:2, 1]) sum(src3[1:2, 3:4, 1]);
             sum(src3[3:4, 1:2, 1]) sum(src3[3:4, 3:4, 1])
@@ -246,7 +246,7 @@ end
         src_area = fill(FT_TEST(1), 4, 4)
         src2 = reshape(collect(FT_TEST, 1:16), 4, 4)
         dst2 = zeros(FT_TEST, 2, 2)
-        AtmosTransport.Preprocessing._coarsen_area_weighted2!(dst2, src2, src_area, R)
+        AtmosTransport.Regridding.coarsen_area_weighted!(dst2, src2, src_area, R)
         @test dst2 ≈ [
             sum(src2[1:2, 1:2]) / 4 sum(src2[1:2, 3:4]) / 4;
             sum(src2[3:4, 1:2]) / 4 sum(src2[3:4, 3:4]) / 4

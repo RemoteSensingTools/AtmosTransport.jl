@@ -149,7 +149,7 @@ end
             end
             @test isfile(path)
             Sys.iswindows() || @test filemode(path) & 0o777 == 0o644
-            @test isempty(filter(f -> occursin("jl_", f), readdir(dir)))   # no staging leftovers
+            @test isempty(filter(f -> occursin(".tmp-", f), readdir(dir)))   # no staging leftovers
         end
 
         @testset "CS validates arguments, panel count, and every panel shape" begin
@@ -333,7 +333,7 @@ end
                 mass_basis=:dry,
             )
             @test read(path) == sentinel
-            @test !ispath(path * ".tmp")
+            @test isempty(filter(f -> startswith(f, "atomic-eager.bin.tmp"), readdir(dir)))
         end
     end
 end

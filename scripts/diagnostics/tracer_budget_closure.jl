@@ -36,11 +36,11 @@
 #   * `SurfaceFluxSource` (static): per-cell kg-storage/s rate (constant in
 #     time) — emission = total_rate · (t_end - t_0); or
 #   * `TimeVaryingSurfaceFluxSource` (co2_natural): a per-cell rate SERIES +
-#     slice times + temporal scheme. We reduce it to a GLOBAL scalar rate
-#     series R(t_k) and integrate it over [t_0, t_end] using the MODEL's own
-#     `_flux_temporal_segments(scheme, times, t, dt)` knot-split — i.e. the
-#     exact same window-conservative integral the surface operator applies,
-#     so the post-hoc integral matches the run's accumulated mass.
+#     slice times + temporal scheme. `integrated_emission(source, t0, tend,
+#     tend - t0)` integrates it with the operator's own temporal
+#     reconstruction (one step split at every slice time, which is exact for
+#     the stepwise and conservative schemes), so the post-hoc integral matches
+#     the run's accumulated mass.
 #
 # The +3h CAMS interval-start phase shift, the M(CO2)/M(C) kgC→kgCO2 factor, the
 # `scale` key, the conservative LL→CS regrid, and the storage scale are all
@@ -71,13 +71,14 @@ using Dates
 using Printf
 
 # Reach the (un-exported) internals the model uses to resolve binary paths,
-# build flux sources, set the reference time, and integrate the temporal
-# scheme. These are the SAME code paths `run_driven_simulation` takes.
+# build flux sources and set the reference time. These are the SAME code paths
+# `run_driven_simulation` takes. Emission totals come from the operator's
+# public `total_emission_rate` / `integrated_emission`.
 const _ATM = AtmosTransport
 const _DR  = _ATM.Models.DrivenRunner          # _parse_tracer_specs, _run_reference_time
 const _ICIO = _ATM.Models.InitialConditionIO   # build_surface_flux_sources
-const _OPS = _ATM.Operators                     # exported scheme/source types
-const _SF  = _ATM.Operators.SurfaceFlux         # _flux_temporal_segments (un-exported)
+const _OPS = _ATM.Operators                     # source types, emission totals
+using AtmosTransport.Operators: total_emission_rate, integrated_emission
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -89,7 +90,21 @@ const DEFAULT_CFG = abspath(joinpath(@__DIR__, "..", "..",
 # Model molar masses (for physical-kg reporting only; the dimensionless
 # closure is computed in storage units and is independent of these).
 const M_DRYAIR = _ATM.Parameters.DRY_AIR_MOLAR_MASS          # kg/mol
-const M_TRACER = _ICIO._KNOWN_TRACER_MOLAR_MASS_KG_MOL     # Symbol => kg/mol
+
+# Molar mass the source loader used for a tracer (its `surface_flux`
+# `molar_mass_kg_mol`, else the loader's default for the tracer name); NaN when
+# it has none, in which case no physical-kg line is printed.
+# HACK: private loader call. TODO(P2c): read `surface_flux.species` and take
+# `Parameters.SPECIES_MOLAR_MASS[species]` once `species` replaces
+# `molar_mass_kg_mol` (design memo 2026-10-10, section 2.2).
+function tracer_molar_mass(spec)
+    try
+        return _ICIO._tracer_molar_mass_kg_mol(spec.name, spec.surface_flux_cfg)
+    catch err
+        err isa ArgumentError || rethrow()
+        return NaN
+    end
+end
 
 # ---------------------------------------------------------------------------
 # Burden time series from the output NetCDF (model storage units = Σ VMR·air_mass)
@@ -145,61 +160,6 @@ function linfit_rate(b::Vector{Float64}, t_sec::Vector{Float64})
     res = b .- (intercept .+ slope .* t_sec)
     resid_std = sqrt(sum(res .^ 2) / max(n - 2, 1))
     return slope, intercept, resid_std
-end
-
-# ---------------------------------------------------------------------------
-# Emission integral (storage units), reusing the model's loaders + scheme
-# ---------------------------------------------------------------------------
-"""
-    static_emission(source, t0, tend) -> kg_storage
-
-Constant-rate source: total per-cell storage rate × window length.
-"""
-function static_emission(source, t0::Float64, tend::Float64)
-    r = source.cell_mass_rate
-    total_rate = r isa Tuple ? sum(sum, r) : sum(r)   # kg-storage / s
-    return Float64(total_rate) * (tend - t0), Float64(total_rate)
-end
-
-"""
-    timevarying_emission(source, t0, tend) -> kg_storage
-
-Time-varying source integrated with the MODEL's own temporal scheme. We
-build the global scalar rate series R_k = Σ_cells series[:,:,k] (kg-storage/s)
-and integrate the scheme's reconstruction exactly over [t0, tend] using the
-model's `_flux_temporal_segments` knot-split (the same routine the surface
-operator calls). For ConservativeMeanFlux this is the exact integral of the
-piecewise-LINEAR flux reconstruction with constant extrapolation outside the
-slice range — i.e. the window-conservative integral the run accumulated.
-"""
-function timevarying_emission(source, t0::Float64, tend::Float64)
-    series = source.cell_mass_rate_series          # NTuple{6} of (Nc,Nc,ntime)
-    times  = Float64.(source.times)                # seconds since run start
-    scheme = source.scheme
-    ntime  = length(times)
-
-    # Global scalar rate per slice (kg-storage / s).
-    R = zeros(Float64, ntime)
-    for p in eachindex(series)
-        sp = series[p]
-        for k in 1:ntime
-            R[k] += sum(@view sp[:, :, k])
-        end
-    end
-
-    # Integrate over [t0, tend] using the model's segment splitter as ONE
-    # step of length (tend - t0). Each segment carries (i0,i1,w0,w1,dt_frac);
-    # the per-segment rate is w0·R[i0] + w1·R[i1] and the segment length is
-    # (tend-t0)·dt_frac, so the emitted mass = Σ rate·length — bit-identical
-    # to summing the operator's per-substep applications over the window.
-    dt = tend - t0
-    segs = _SF._flux_temporal_segments(scheme, times, t0, dt)
-    emit = 0.0
-    for (i0, i1, w0, w1, dt_frac) in segs
-        rate = w0 * R[i0] + w1 * R[i1]
-        emit += rate * (dt * dt_frac)
-    end
-    return emit, R
 end
 
 # ---------------------------------------------------------------------------
@@ -259,21 +219,8 @@ function main(nc_path::AbstractString, cfg_path::AbstractString)
     t0_dt = DateTime(first(tvar))
     t_sec = Float64[Dates.value(DateTime(x) - t0_dt) / 1000.0 for x in tvar]
     t0, tend = first(t_sec), last(t_sec)
+    tend > t0 || error("the budget needs at least two output times; $nc_path has $(length(t_sec))")
     @info "Run window" t0_sec=t0 tend_sec=tend hours=(tend - t0) / 3600 nsnapshots=length(t_sec)
-
-    # Instantaneous global source rate per tracer (kg-storage/s) for the
-    # first-window injection check (static + the time-varying scheme value at t0).
-    function instantaneous_rate(src)
-        if src isa _OPS.SurfaceFluxSource
-            r = src.cell_mass_rate
-            return Float64(r isa Tuple ? sum(sum, r) : sum(r))
-        elseif src isa _OPS.TimeVaryingSurfaceFluxSource
-            _, R = timevarying_emission(src, t0, tend)
-            i0, i1, w0, w1 = _SF._time_interp_bracket(src.times, t0)
-            return w0 * R[i0] + w1 * R[i1]
-        end
-        return NaN
-    end
 
     # Decay constants (rn222) from [chemistry].
     decay_lambda = Dict{Symbol, Float64}()
@@ -286,6 +233,7 @@ function main(nc_path::AbstractString, cfg_path::AbstractString)
 
     # Iterate tracers in config order.
     tracer_order = [spec.name for spec in tracer_specs]
+    spec_by_tracer = Dict(spec.name => spec for spec in tracer_specs)
 
     println()
     println("="^118)
@@ -308,15 +256,18 @@ function main(nc_path::AbstractString, cfg_path::AbstractString)
         rate_info = ""
         if src === nothing
             @warn "no surface source for $skey; emission = 0"
-        elseif src isa _OPS.TimeVaryingSurfaceFluxSource
-            emit, R = timevarying_emission(src, t0, tend)
-            rate_info = @sprintf("time-varying %s; mean global rate %.6e kg-stor/s (%d slices)",
-                                 typeof(src.scheme).name.name, sum(R) / length(R), length(R))
-        elseif src isa _OPS.SurfaceFluxSource
-            emit, rate = static_emission(src, t0, tend)
-            rate_info = @sprintf("static; global rate %.6e kg-stor/s", rate)
         else
-            @warn "unhandled source type for $skey" typeof(src)
+            # One step over [t0, tend]: equal to the run's substep sum for static,
+            # stepwise and conservative-mean sources (the step is split at every
+            # slice time); only approximate for LinearInterpFlux, which samples
+            # its rate at every substep start.
+            emit = integrated_emission(src, t0, tend, tend - t0)
+            rate_info = if src isa _OPS.TimeVaryingSurfaceFluxSource
+                @sprintf("time-varying %s; mean global rate over the run %.6e kg-stor/s (%d slices)",
+                         typeof(src.scheme).name.name, emit / (tend - t0), length(src.times))
+            else
+                @sprintf("static; global rate %.6e kg-stor/s", total_emission_rate(src, t0))
+            end
         end
 
         decay = 0.0
@@ -340,7 +291,7 @@ function main(nc_path::AbstractString, cfg_path::AbstractString)
         rel = abs(emit) > 0 ? (Δb - expected) / abs(emit) : (Δb - expected)
 
         # Physical kg via the model's own molar masses (storage_scale = M_dry/M_tracer).
-        Mt = get(M_TRACER, name, NaN)
+        Mt = tracer_molar_mass(spec_by_tracer[name])
         phys_scale = isnan(Mt) ? NaN : Mt / M_DRYAIR     # storage → physical kg
 
         # Robust diagnostics that separate a REAL gap from Float32 noise:
@@ -350,7 +301,7 @@ function main(nc_path::AbstractString, cfg_path::AbstractString)
         #    slope is robust to per-snapshot quantization (resid_std reports it).
         inj_ratio = NaN
         if src !== nothing && length(b) >= 2
-            inst = instantaneous_rate(src)
+            inst = total_emission_rate(src, t0)    # the scheme's global rate at t0
             dtfh = t_sec[2] - t_sec[1]
             inj_ratio = (b[2] - b[1]) / (inst * dtfh)
         end

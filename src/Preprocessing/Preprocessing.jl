@@ -84,6 +84,7 @@ using NCDatasets
 
 using ..ConfigChecks: config_bool as _config_bool
 using ..LogLevels: log_level, with_log_level
+using ..AtomicFiles: atomic_publish
 using GRIB
 using SHA
 using FastGaussQuadrature: gausslegendre
@@ -126,9 +127,9 @@ using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cs_face_edge_le
                GnomonicPanelConvention, GEOSNativePanelConvention,
                EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
 using ..State: AbstractMassBasis, DryBasis, MoistBasis
-using ..Regridding: build_regridder, apply_regridder!
-using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField,
-                    HorizontalVectorField, HorizontalFluxField
+using ..Regridding: build_regridder, apply_regridder!, coarsen_sum!, coarsen_area_weighted!,
+                    default_regrid_cache_dir
+using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField
 using ..MetDrivers: LatLonBinaryGeometry, CubedSphereBinaryGeometry, TransportBinaryReader,
                     mesh_definition,
                     TransportBinaryHeader, binary_geometry, grid_type,

@@ -78,6 +78,7 @@ export runtime_output_spec, snapshot_hours, output_enabled, output_path
 export output_fields, output_field_spec, output_path_for_day
 export tracer_fields, layer_selection, layer_selection_label, air_mass_layer_selection
 export capture_snapshot, write_snapshot_netcdf, write_snapshot_binary
+export define_cs_horizontal_geometry!, define_provenance_attributes!
 export column_mean_mixing_ratio, layer_mass_per_area, column_mass_per_area
 export AbstractObservationSource, OCO2LiteSource, ObsPackSource, TableSource
 export AbstractObservationMode, SoundingMode, SiteMode

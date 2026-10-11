@@ -26,7 +26,7 @@ depend on later ones:
 | [Regridding](@ref Regridding-API) | Conservative offline regridding and persistence. |
 | [Output and visualization](@ref Output-and-visualization-API) | Snapshot output, field views, and plotting. |
 | [Adjoints and checkpointing](@ref Adjoints-and-checkpointing-API) | Footprints, 4D-Var, tape storage, and schedules. |
-| [Infrastructure](@ref Infrastructure-API) | Quantity traits and opt-in section timing. |
+| [Infrastructure](@ref Infrastructure-API) | Quantity traits, opt-in section timing, config checks, log levels, atomic file publication. |
 
 ### A note on the public surface
 

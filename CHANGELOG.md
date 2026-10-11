@@ -55,6 +55,13 @@
 
 ### Fixes
 
+- Transport binaries (eager and streaming writers), the spectral day cache and
+  cached regridders are published through `AtomicFiles`: a sibling staging
+  file moved onto the target by one replacing rename (`rename(2)` on POSIX
+  systems) on every Julia version. Before, `mv(…; force = true)` deleted the
+  previous file before renaming on Julia 1.10, so a reader could find no
+  file, and on every Julia version deleted it when the rename failed. A failed
+  rename now leaves the previous file in place and removes the staging file.
 - Time-varying surface fluxes without `[input].start_date` took their time
   origin from the file: the first slice for decoded dates, the CF units origin
   for raw numbers. A run on a mid-month binary then read the month's first
@@ -217,6 +224,20 @@
   `Float32` global totals change at the 1e-6 level. `Float64` global totals
   change by about 1e-11, except GridFED emissions (+2.1e-6). See
   `docs/src/theory/float32_conservation.md`.
+- The two copies of the cubed-sphere block kernels (nested binary coarsener
+  and GEOS block coarsening) are one, `Regridding.coarsen_sum!` and
+  `coarsen_area_weighted!`. Area-weighted means now accumulate numerator and
+  denominator in `Float64` and round once (the coarsener's semantics); the
+  GEOS path accumulated them in the data precision. Float32 GEOS-native
+  builds whose target `Nc` is a divisor of the source `Nc`
+  (`geosit_c90_dec2021_catrine_f32_fullL72.toml`,
+  `geosit_c45_dec2021_catrine_f32_fullL72.toml`,
+  `geosfp_c720_native_to_cs180.toml`) change in `pblh`, `ustar`, `hflux`,
+  `t2m`, the vdiff `u/v/t/qv`, `cmfmc` and `dtrain` before vertical
+  remapping: 1–5 Float32 ulp in about half the cells of positive fields,
+  more on near-cancelling signed fields (the old result could be thousands of
+  ulp from the correctly rounded mean). Cell sums, face sums, Float64 builds
+  and same-`Nc` builds are bit-identical.
 
 ### Runtime and output
 
@@ -521,6 +542,63 @@
   transport binary to a coarser nested grid (for example C90 to C30) by
   block-summing the transport operator; not yet validated as a replacement
   for preprocessing at the target resolution.
+- `apply_regridder!(dst, r, src, kind)` regrids by quantity kind for every
+  regridder: `IntensiveCellField()` as given, `ExtensiveCellField()` (per-cell
+  totals) through the density, so totals are kept whatever polygon areas the
+  regridder uses. It replaces Preprocessing's private `_density_correct!`;
+  `regrid_2d_to_cs_panels!` / `regrid_3d_to_cs_panels!` give the same bits.
+  The density buffer is the keyword `scratch` (one column, `eltype(src)`),
+  allocated per call when not given; the cubed-sphere preprocessing workspace
+  passes its own, and warm `regrid_2d/3d_to_cs_panels!` calls allocate
+  nothing. `regrid_conservation_report(r, src, dst, kind)` returns both totals
+  and the relative error and checks both leading dimensions against the
+  regridder.
+- `build_regridder` returns a `NestedCubedSphereRegrid{Restriction}` or
+  `{Prolongation}` for cubed spheres of one definition and radius whose `Nc`
+  differ by an integer factor (corners checked): exact block remapping in
+  O(Nc²), equal to the polygon regridder to 1e-12, with nothing cached. Code
+  that read `intersections` from such a pair's regridder must use
+  `src_areas`/`dst_areas` and `apply_regridder!` instead.
+- `Regridding.default_regrid_cache_dir()` is the one definition of the weight
+  cache directory (`ATMOSTR_REGRID_CACHE_DIR`, else
+  `~/.cache/AtmosTransport/cr_regridding`); the runtime's private
+  `_regrid_cache_dir` is removed, and preprocessing targets without
+  `[grid] regridder_cache_dir` use it too (before, a second hard-coded copy
+  of the path that ignored `ATMOSTR_REGRID_CACHE_DIR`). Cached regridders are now published with
+  mode `0o666 & ~umask` instead of `mktemp`'s owner-only `0o600`.
+- `LatLonMesh(λᶠ, φᶠ; FT, radius)` builds a lat-lon mesh from explicit cell
+  faces (the source grids of input files); `radius` is required. Longitude
+  spacing must be uniform but may start at any face, and a sequence that wraps
+  by −360° is unwrapped so data columns keep their order. Latitude faces may be
+  descending (stored ascending; `Grids.latitude_row_order(φᶠ)` gives the row
+  permutation) and non-uniform (pole-centred, truncated, Gaussian), in which
+  case `Δφ = NaN` and `dx`, `dy` and the x-face lengths throw, and the lat-lon
+  `write_transport_binary` refuses the mesh (its header records only the
+  latitude interval). Areas come from the faces. The regular keyword
+  constructor now builds its faces and calls this one; regular meshes are
+  bit-identical.
+- `Output.define_cs_horizontal_geometry!(ds, mesh)` (cubed-sphere `Xdim`/`Ydim`/`nf`,
+  centres, corners, `cell_area`, `cubed_sphere` mapping with
+  `semi_major_axis = mesh.radius`) and `Output.define_provenance_attributes!(ds)`
+  are public, split from the snapshot writer's private blocks so other NetCDF
+  writers share them. Snapshot files keep the same dimensions, data and
+  attributes; the `lev` and `time` variables are now defined after the
+  horizontal geometry variables.
+- `Operators.total_emission_rate(src, t)`, `emission_segments(src, t, dt)` and
+  `integrated_emission(src, t0, t1, dt)` give a surface source's global
+  storage rate at an instant, the pieces one operator step applies, and the
+  mass the operator adds over a run's steps, from the operator's own temporal
+  reconstruction (equal to a stepped application to 1e-14 for every scheme).
+  The runner's start-up line "Surface source … total model-storage rate" now
+  prints `total_emission_rate(source, 0.0)`: the same number for `Float64`
+  runs; for `Float32` runs the sum is accumulated in `Float64` (it differed by
+  up to 5e-8 on the CATRINE C90 sources), and a linear or conservative series
+  without a slice at the run start reports the interpolated run-start rate
+  instead of its first slice. The sums run on the host: a source adapted to a
+  device (CUDA, Metal) is copied to host memory first, so Metal, which has no
+  Float64, gets its totals too. `tracer_budget_closure.jl` and
+  `catrine_true_mass_balance.jl` use these functions instead of the private
+  `_flux_temporal_segments`.
 - SIF-GPP, FLUXCOM, TRENDY v14, TRANSCOM, GFED, and CATRINE campaign
   preprocessing, run configs, visualization scripts, and ATBD memos.
 

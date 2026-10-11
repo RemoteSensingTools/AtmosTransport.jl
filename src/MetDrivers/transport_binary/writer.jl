@@ -54,28 +54,17 @@ function _write_transport_payload!(io::IO,
     return nothing
 end
 
-function _write_transport_binary_atomically(write_file::Function, path::AbstractString)
-    staging = String(path) * ".tmp"
-    rm(staging; force=true)
-    try
-        open(staging, "w") do io
-            write_file(io)
-        end
-        mv(staging, path; force=true)
-    catch
-        rm(staging; force=true)
-        rethrow()
-    end
-    return path
-end
-
 """
     write_transport_binary(path, grid, windows; kwargs...) -> path
 
 Write a canonical v4 lat-lon or reduced-Gaussian transport binary from an
 AtmosGrid and an ordered vector of forcing windows. Window payloads must match
-the grid topology and declared mass basis. The file is written atomically and
-replaces path only after the header and all payloads succeed.
+the grid topology and declared mass basis. The file is written through
+[`AtomicFiles.atomic_publish`](@ref AtmosTransport.AtomicFiles.atomic_publish):
+it replaces `path` only after the header and all payloads succeed, with mode
+`0o666 & ~umask`. A lat-lon mesh must have uniform latitude faces: the header
+records only the latitude interval, so a mesh built from non-uniform faces
+(`Δφ = NaN`) is refused with an `ArgumentError`.
 """
 function write_transport_binary(path::AbstractString,
                                 grid::AtmosGrid{<:LatLonMesh},
@@ -96,6 +85,11 @@ function write_transport_binary(path::AbstractString,
                                 threaded::Bool = Threads.nthreads() > 1)
     flux_kind === :substep_mass_amount || throw(ArgumentError(
         "lat-lon transport binaries require flux_kind=:substep_mass_amount"))
+    # The header records only the latitude interval, and the reader rebuilds a
+    # uniform mesh from it; non-uniform faces (Δφ = NaN) would come back wrong.
+    isnan(grid.horizontal.Δφ) && throw(ArgumentError(
+        "lat-lon transport binaries need uniform latitude faces; this mesh has " *
+        "non-uniform latitude faces (Δφ = NaN)"))
     isempty(windows) && throw(ArgumentError("write_transport_binary requires at least one window"))
 
     mesh = grid.horizontal
@@ -158,10 +152,12 @@ function write_transport_binary(path::AbstractString,
     pad = header_bytes - ncodeunits(header_json)
     pad > 0 || error("transport binary header must leave room for a null terminator within header_bytes=$(header_bytes)")
 
-    _write_transport_binary_atomically(path) do io
-        write(io, header_json)
-        write(io, zeros(UInt8, pad))
-        _write_transport_payload!(io, windows, payload_sections, elems_per_window, FT; threaded=threaded)
+    atomic_publish(path) do staging
+        open(staging, "w") do io
+            write(io, header_json)
+            write(io, zeros(UInt8, pad))
+            _write_transport_payload!(io, windows, payload_sections, elems_per_window, FT; threaded=threaded)
+        end
     end
 
     return path
@@ -236,10 +232,12 @@ function write_transport_binary(path::AbstractString,
     pad = header_bytes - ncodeunits(header_json)
     pad > 0 || error("transport binary header must leave room for a null terminator within header_bytes=$(header_bytes)")
 
-    _write_transport_binary_atomically(path) do io
-        write(io, header_json)
-        write(io, zeros(UInt8, pad))
-        _write_transport_payload!(io, windows, payload_sections, elems_per_window, FT; threaded=threaded)
+    atomic_publish(path) do staging
+        open(staging, "w") do io
+            write(io, header_json)
+            write(io, zeros(UInt8, pad))
+            _write_transport_payload!(io, windows, payload_sections, elems_per_window, FT; threaded=threaded)
+        end
     end
 
     return path

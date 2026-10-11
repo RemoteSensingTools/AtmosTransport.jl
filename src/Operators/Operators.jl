@@ -78,6 +78,7 @@ export AbstractFluxTemporalScheme, StepwiseFlux, LinearInterpFlux, ConservativeM
        flux_temporal_scheme
 export AbstractSurfaceFluxOperator, NoSurfaceFlux, SurfaceFluxOperator
 export apply_surface_flux!
+export total_emission_rate, emission_segments, integrated_emission
 
 # Convection operator hierarchy.
 export AbstractConvection, NoConvection

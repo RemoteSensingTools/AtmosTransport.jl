@@ -157,11 +157,16 @@ include("ConfigChecks.jl")
 # `[logging] level` of run and preprocessing configs (Preprocessing, Models).
 include("LogLevels.jl")
 
+# Publish files only when complete: sibling staging file, O_EXCL, mode
+# 0o666 & ~umask, rename on success (MetDrivers, Regridding, Preprocessing).
+include("AtomicFiles.jl")
+
 # ---- Quantity-kind dispatch traits ----
 # Tiny trait module with no dependencies, loaded early so later modules can
 # dispatch on extensive vs intensive vs vector vs flux field semantics.
-# Only Preprocessing uses it (the CS regrid helpers). See
-# Quantities.jl for the four-type taxonomy and their regrid-handling contracts.
+# Regridding implements the per-kind rule (`apply_regridder!(dst, r, src, kind)`)
+# and Preprocessing passes the kinds. See Quantities.jl for the four-type
+# taxonomy and their regrid-handling contracts.
 include("Quantities/Quantities.jl")
 using .Quantities
 

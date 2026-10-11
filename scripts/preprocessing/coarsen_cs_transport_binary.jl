@@ -17,6 +17,11 @@ if !isdefined(AtmosTransport.Preprocessing, :coarsen_nested_cs_transport_binary)
     isdefined(AtmosTransport.Parameters, :DEFAULT_MAX_STEPS_PER_WINDOW) ||
         Base.include(AtmosTransport.Parameters,
                      joinpath(@__DIR__, "..", "..", "src", "Parameters", "NumericalDefaults.jl"))
+    # It also predates the shared cubed-sphere block kernels (`coarsen_sum!`,
+    # `coarsen_area_weighted!`), which the coarsener imports from Regridding.
+    isdefined(AtmosTransport.Regridding, :coarsen_sum!) ||
+        Base.include(AtmosTransport.Regridding,
+                     joinpath(@__DIR__, "..", "..", "src", "Regridding", "cs_nesting.jl"))
     Base.include(
         AtmosTransport.Preprocessing,
         joinpath(@__DIR__, "..", "..", "src", "Preprocessing",

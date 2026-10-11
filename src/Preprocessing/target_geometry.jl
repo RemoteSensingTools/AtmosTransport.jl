@@ -349,7 +349,8 @@ Optional keys:
 - `panel_convention` — `"gnomonic"` (default) or `"geos_native"`.
   If `definition` is omitted, `"geos_native"` selects `"gmao_equal_distance"` and
   `"gnomonic"` selects `"equiangular_gnomonic"`.
-- `regridder_cache_dir` — directory for CR.jl weight cache (default `~/.cache/AtmosTransport/cr_regridding`)
+- `regridder_cache_dir` — directory for CR.jl weight cache (default `Regridding.default_regrid_cache_dir()`,
+  the cache the runtime uses too)
 - `staging_nlon`, `staging_nlat` — override the internal LL staging grid size
   (defaults: `max(4Nc, 360)` × `max(2Nc+1, 181)`)
 """
@@ -359,8 +360,8 @@ function build_target_geometry(::Val{:cubed_sphere}, cfg_grid, ::Type{FT}) where
     Nc = Int(cfg_grid["Nc"])
     Nc > 0 || error("cubed_sphere: Nc must be positive, got $Nc")
 
-    cache_dir = expanduser(String(get(cfg_grid, "regridder_cache_dir",
-                                      "~/.cache/AtmosTransport/cr_regridding")))
+    cache_dir = haskey(cfg_grid, "regridder_cache_dir") ?
+                expanduser(String(cfg_grid["regridder_cache_dir"])) : default_regrid_cache_dir()
 
     staging_nlon = Int(get(cfg_grid, "staging_nlon", max(4 * Nc, 360)))
     staging_nlat = Int(get(cfg_grid, "staging_nlat", max(2 * Nc + 1, 181)))
