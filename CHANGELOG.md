@@ -169,6 +169,11 @@
   legacy dry TM5 binaries until the production archive is regenerated. All
   three ERA5 routes are covered: spectral ec2tm, N320 to cubed sphere, and the
   CATRINE TM5 attachment. Reported by pera-noaa (NOAA GML).
+- Spectral synthesis now drops the top zonal wavenumber `m = N/2` on
+  even-length latitude rings instead of giving it half weight. The per-ring
+  limit `min(T, (N - 1) ÷ 2)` is shared by the lat-lon, reduced-Gaussian and
+  batched ERA5 N320 synthesis paths, with single-harmonic coverage for even
+  and odd rings. Reported by pera-noaa (NOAA GML) in issue #13.
 - Transport binaries (eager and streaming writers), the spectral day cache and
   cached regridders are published through `AtomicFiles`: a sibling staging
   file moved onto the target by one replacing rename (`rename(2)` on POSIX

@@ -62,6 +62,82 @@ function compute_legendre_column!(P::AbstractMatrix{<:Real}, T::Int, sin_lat::Re
 end
 
 """
+    ring_max_wavenumber(T, nlon) -> Int
+
+Highest zonal wavenumber synthesised on a latitude ring of `nlon` equally
+spaced points from a field of triangular truncation `T`:
+
+    M = min(T, ⌊(nlon − 1) / 2⌋).
+
+Every spectral synthesizer uses this limit (`spectral_to_grid!`,
+`spectral_to_ring!` and `synthesize_reduced!`, through
+[`fill_ring_spectrum!`](@ref) for the first two).
+
+On a ring of `N` points `λ_k = λ_0 + 2πk/N` (k = 0, …, N − 1) the real field
+
+    f(λ_k) = G_0 + 2 Re Σ_{m=1}^{M} G_m e^{i m λ_k}
+
+is the unnormalised inverse DFT of bins `m` and `N − m` holding `G_m e^{i m λ_0}`
+and its conjugate, which are distinct bins for every `m < N/2`. For `m = N/2`
+on an even ring they are one bin: the samples are
+`e^{i N λ_k / 2} = e^{i N λ_0 / 2} (−1)^k`, so the term `2 Re(G e^{i m λ_k})`
+samples as `2 Re(G e^{i N λ_0 / 2}) (−1)^k`. That depends on the ring's
+origin: `2 Re G` at the faces (`λ_0 = 0`) and `−2 Im G` at the cell centres
+(`λ_0 = π/N`), so one coefficient cannot be represented consistently on the
+staggered points of a ring. The term is dropped, and every `1 ≤ m ≤ M` enters
+with its mirror (weight 2).
+
+This matches ECMWF ecTrans's rule for linear reduced grids,
+`NMEN = MIN(NSMAX, INT((NLOEN − 1)/2))` (`setup_geom_mod.F90`), including
+ERA5's linear N320 grid at T639. On lat-lon and cubed-sphere staging targets
+`target_spectral_truncation` sets `T = nlon ÷ 2 − 1`, so `M = T` there. On a
+reduced Gaussian target `T` is set by the widest ring, and each narrower ring
+drops its wavenumbers above `M`.
+"""
+ring_max_wavenumber(T::Integer, nlon::Integer) = min(Int(T), (Int(nlon) - 1) ÷ 2)
+
+"""
+    fill_ring_spectrum!(buf, spec, P, T, lon_shift_rad) -> buf
+
+Fill `buf` (length `N`, the ring's number of points) with the zonal Fourier
+coefficients of one latitude ring, in the layout of an unnormalised inverse FFT
+(FFTW `bfft`):
+
+    G_m       = e^{i m λ_0} Σ_{n=m}^{T} f̂_n^m P̃_n^m(sin φ),   0 ≤ m ≤ M,
+    buf[1]     = G_0,
+    buf[m + 1] = G_m,  buf[N − m + 1] = conj(G_m)              (1 ≤ m ≤ M),
+
+and zero in every other bin, with `M = ring_max_wavenumber(T, N)`. Then
+`bfft(buf)[k + 1] = G_0 + 2 Re Σ_{m=1}^{M} G_m e^{2πimk/N} = f(λ_0 + 2πk/N, φ)`.
+`spec[n + 1, m + 1] = f̂_n^m` are the spectral coefficients, `P[n + 1, m + 1]`
+the Legendre column `P̃_n^m(sin φ)` of the ring's latitude
+([`compute_legendre_column!`](@ref)) and `λ_0 = lon_shift_rad` the longitude of
+the first point (radians), applied in its own precision.
+"""
+function fill_ring_spectrum!(buf::AbstractVector{ComplexF64},
+                             spec::AbstractMatrix{ComplexF64},
+                             P::AbstractMatrix{<:Real},
+                             T::Int,
+                             lon_shift_rad::Real)
+    N = length(buf)
+    fill!(buf, zero(ComplexF64))
+    for m in 0:ring_max_wavenumber(T, N)
+        Gm = zero(ComplexF64)
+        @inbounds for n in m:T
+            Gm += spec[n + 1, m + 1] * P[n + 1, m + 1]
+        end
+        if lon_shift_rad != 0 && m > 0
+            Gm *= exp(im * m * lon_shift_rad)
+        end
+        @inbounds buf[m + 1] = Gm
+        if m > 0
+            @inbounds buf[N - m + 1] = conj(Gm)
+        end
+    end
+    return buf
+end
+
+"""
     _delta(m, n)
 
 IFS/TM5 helper coefficient used in the vorticity/divergence to wind transform.
@@ -150,12 +226,18 @@ For each latitude `φ ∈ lats`:
 4. Fill negative-frequency bins via conjugate symmetry (real-valued output).
 5. Inverse FFT → gridpoint values along the longitude ring.
 
+Steps 2–4 are [`fill_ring_spectrum!`](@ref), shared with the reduced Gaussian
+ring synthesis `spectral_to_ring!`.
+
 **Longitude convention**: the FFT's natural origin is lon=0°. Without a
 shift, `field[1, j]` is at lon=0°. With `lon_shift_rad = deg2rad(-178.125)`,
 `field[1, j]` is at lon=-178.125° (first cell center of a `[-180, 180)` mesh).
 
-**Truncation**: only wavenumbers `m ∈ [0, min(T, Nlon/2)]` are retained to
-avoid aliasing above the Nyquist frequency.
+**Truncation**: wavenumbers `0 ≤ m ≤ ring_max_wavenumber(T, Nlon) =
+min(T, (Nlon − 1) ÷ 2)` are synthesised, each `m > 0` with full weight; the
+term `m = Nlon/2` of an even `Nlon` is dropped (see
+[`ring_max_wavenumber`](@ref)). Lat-lon targets use `T = Nlon ÷ 2 − 1`, so
+nothing is dropped there.
 """
 function spectral_to_grid!(field::AbstractMatrix{<:Real},
                            spec::AbstractMatrix{ComplexF64},
@@ -167,35 +249,16 @@ function spectral_to_grid!(field::AbstractMatrix{<:Real},
                            fft_out::Union{Nothing, AbstractVector{ComplexF64}}=nothing,
                            bfft_plan=nothing,
                            lon_shift_rad::Real=0.0)
-    Nfft = Nlon  # FFT length = number of longitude grid points
+    length(fft_buf) == Nlon ||
+        throw(DimensionMismatch("FFT buffer length $(length(fft_buf)) ≠ Nlon = $Nlon"))
 
     for j in eachindex(lats)
         sin_lat = sind(lats[j])
         compute_legendre_column!(P_buf, T, sin_lat)
 
-        # Step 1: Sum over total wavenumber n for each zonal wavenumber m
-        # to get the latitude-dependent harmonic coefficient G_m(φ).
-        # Only m ∈ [0, Nlon/2] is retained (Nyquist truncation).
-        fill!(fft_buf, zero(ComplexF64))
-        for m in 0:min(T, div(Nfft, 2))
-            Gm = zero(ComplexF64)
-            @inbounds for n in m:T
-                # G_m += Ŝ_n^m · P̃_n^m(sin φ)
-                Gm += spec[n + 1, m + 1] * P_buf[n + 1, m + 1]
-            end
-            # Step 2: Apply longitude phase shift. Multiplying by exp(i·m·Δλ)
-            # shifts the output grid so index 1 represents lon = lon_shift_rad.
-            if lon_shift_rad != 0.0 && m > 0
-                Gm *= exp(im * m * lon_shift_rad)
-            end
-            fft_buf[m + 1] = Gm   # 1-indexed: fft_buf[1] = m=0 (DC)
-        end
-
-        # Step 3: Fill negative-frequency bins via conjugate symmetry
-        # (real-valued field ⇒ G_{−m} = conj(G_m)).
-        for m in 1:min(T, div(Nfft, 2) - 1)
-            fft_buf[Nfft - m + 1] = conj(fft_buf[m + 1])
-        end
+        # Steps 1–3: G_m(φ) = Σ_n Ŝ_n^m P̃_n^m(sin φ), phase-shifted to
+        # lon_shift_rad, in bins m and Nlon − m for 0 ≤ m ≤ ring_max_wavenumber.
+        fill_ring_spectrum!(fft_buf, spec, P_buf, T, lon_shift_rad)
 
         # Step 4: Backward (unnormalised) FFT → gridpoint values along ring.
         # FFTW `bfft` computes Σ_m G_m · exp(2πi·m·k/N) for k=0..N-1, which

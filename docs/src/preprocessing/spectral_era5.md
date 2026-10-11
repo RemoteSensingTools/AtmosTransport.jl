@@ -61,6 +61,39 @@ resolution is configurable via `staging_nlon`, `staging_nlat` in the
 `[grid]` block; the defaults `max(4·Nc, 360)` × `max(2·Nc + 1, 181)`
 are what the LL bundle binaries use.
 
+## Zonal truncation on each latitude ring
+
+Every synthesis of a spectral field ``\hat f_n^m`` (triangular truncation
+`T`, ECMWF's fully normalised ``\tilde P_n^m``) onto a latitude ring of `N`
+equally spaced points ``λ_k = λ_0 + 2πk/N`` evaluates
+
+```math
+f(λ_k, φ) = G_0(φ) + 2\,\mathrm{Re} \sum_{m=1}^{M} G_m(φ)\, e^{i m λ_k},
+\qquad
+G_m(φ) = \sum_{n=m}^{T} \hat f_n^m\, \tilde P_n^m(\sin φ),
+\qquad
+M = \min\!\left(T, \left\lfloor \frac{N-1}{2} \right\rfloor\right),
+```
+
+as one unnormalised inverse FFT of length `N`. The limit `M` is
+`ring_max_wavenumber` in `src/Preprocessing/spectral_synthesis.jl`; the
+lat-lon `spectral_to_grid!`, the reduced Gaussian `spectral_to_ring!` and the
+batched ERA5 N320 `synthesize_reduced!` all use it. Each wavenumber
+`1 ≤ m ≤ M` occupies the two FFT bins `m` and `N − m`. On an even ring the
+term `m = N/2` would occupy a single bin, and its samples
+``e^{i N λ_k / 2} = e^{i N λ_0 / 2} (−1)^k`` make it depend on where the ring
+starts: it is ``2\,\mathrm{Re}\,G`` at the cell faces (``λ_0 = 0``, where `u`
+is synthesised) and ``−2\,\mathrm{Im}\,G`` at the cell centres
+(``λ_0 = π/N``, where `lnsp` is synthesised). The term is therefore dropped.
+This matches ecTrans's rule for linear reduced grids,
+`NMEN = MIN(NSMAX, INT((NLOEN − 1)/2))` (`setup_geom_mod.F90`).
+
+On lat-lon targets and the cubed-sphere staging grid `T = N/2 − 1`, so the
+limit never binds. On a reduced Gaussian target `T` is set by the widest ring
+(`max(nlon)/2 − 1`, 55 for O24), and each narrower ring drops its
+wavenumbers above `M`. The ERA5 N320 reader synthesises at the file
+truncation, T639, on rings of 18 to 1280 points.
+
 ## Per-window pipeline
 
 For each of the day's 24 hourly windows:
