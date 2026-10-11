@@ -89,6 +89,27 @@ struct CaughtError
 end
 
 """
+    metal_case_decision(outcome, status) -> Symbol
+
+What a Metal case's result decides, given `outcome` (the case's result or a
+`CaughtError`) and `status`, the verdict of its captured command-buffer
+reports (`command_buffer_outcome`): `:rethrow`, `:skipped_memory`, `:failed`
+or `:ok`. A thrown error (from the case, or from a completion barrier that
+never signalled) outranks the reports, because without the barrier they may be
+incomplete; only an out-of-memory exception next to out-of-memory reports
+keeps the case `:skipped_memory`.
+"""
+function metal_case_decision(outcome, status::AbstractString)
+    if outcome isa CaughtError
+        status == "skipped_memory" && is_out_of_memory(outcome.exception) && return :skipped_memory
+        return :rethrow
+    end
+    status == "skipped_memory" && return :skipped_memory
+    status == "failed" && return :failed
+    return :ok
+end
+
+"""
     capture_stdout(f) -> (outcome, text)
 
 Run `f()` with the process's standard output redirected to a temporary

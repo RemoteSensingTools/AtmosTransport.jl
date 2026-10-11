@@ -508,6 +508,18 @@ code = { delivery = "shared", root = "~/atmostr_bench" }
         @test outcome === :done && length(BR.command_buffer_failures(text)) == 1
         # A sentinel that never signals fails loudly instead of hanging.
         @test_throws ErrorException BR.completion_barrier(_ -> nothing; timeout = 0.2)
+        # A barrier timeout (or any exception) outranks captured out-of-memory
+        # reports; only an out-of-memory exception next to them keeps the skip.
+        barrier_timeout = BR.CaughtError(ErrorException("Metal completion barrier did not signal"), Any[])
+        oom_error = BR.CaughtError(OutOfMemoryError(), Any[])
+        @test BR.metal_case_decision(barrier_timeout, "skipped_memory") === :rethrow
+        @test BR.metal_case_decision(barrier_timeout, "failed") === :rethrow
+        @test BR.metal_case_decision(barrier_timeout, "ok") === :rethrow
+        @test BR.metal_case_decision(oom_error, "skipped_memory") === :skipped_memory
+        @test BR.metal_case_decision(oom_error, "ok") === :rethrow
+        @test BR.metal_case_decision(Dict("status" => "ok"), "skipped_memory") === :skipped_memory
+        @test BR.metal_case_decision(Dict("status" => "ok"), "failed") === :failed
+        @test BR.metal_case_decision(Dict("status" => "ok"), "ok") === :ok
     end
 
     @testset "record validation" begin

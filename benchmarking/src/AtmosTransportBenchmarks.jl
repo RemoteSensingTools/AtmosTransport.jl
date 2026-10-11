@@ -800,7 +800,9 @@ _required_device_bytes(case::BenchmarkCase) =
 case's standard output is captured (`capture_stdout`, `device_errors.jl`)
 and the command buffers Metal.jl reports as failed decide the outcome: an
 out-of-memory buffer gives a `skipped_memory` record, any other failure a
-`failed` one. Exceptions propagate to the caller as before.
+`failed` one. An exception (from the case, or from a completion barrier that
+never signalled) propagates to the caller ahead of any captured report, unless
+it is itself an out-of-memory error next to out-of-memory reports.
 """
 function _run_case(case::BenchmarkCase)
     case.backend === :metal || return _time_case(case)
@@ -812,14 +814,17 @@ function _run_case(case::BenchmarkCase)
         end
     end
     status, message = command_buffer_outcome(command_buffer_failures(text))
-    if status == "skipped_memory"
+    decision = metal_case_decision(outcome, status)
+    if decision === :rethrow
+        status == "ok" || @error "Metal command buffer reports alongside an exception" case=_case_name(case) reports=message
+        throw(CapturedException(outcome.exception, outcome.backtrace))
+    elseif decision === :skipped_memory
         @warn "Metal command buffer ran out of memory; case recorded as skipped" case=_case_name(case) reason=message
         return _skipped_result(case, message)
-    elseif status == "failed"
+    elseif decision === :failed
         @error "Metal command buffer failed; case recorded as failed" case=_case_name(case) reason=message
         return _failed_result(case, ErrorException(message))
     end
-    outcome isa CaughtError && throw(CapturedException(outcome.exception, outcome.backtrace))
     return outcome
 end
 
