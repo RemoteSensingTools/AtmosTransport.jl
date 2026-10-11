@@ -18,8 +18,9 @@
 #   * E is the run's own applied source: the sources are rebuilt with the
 #     model's `build_surface_flux_sources` from the run's config (same files,
 #     regridding, unit and storage scaling) and integrated between output
-#     times with the model's own `_flux_temporal_segments`. In storage units
-#     the molar masses cancel, so no inventory rate or unit factor enters.
+#     times with the surface operator's own `emission_segments` (one step per
+#     interval, split at every source slice time). In storage units the molar
+#     masses cancel, so no inventory rate or unit factor enters.
 #   * Decaying tracers (Rn-222): the model emits at every advection substep
 #     and applies the decay e^{−λT} once at the end of each met window T. The
 #     reference follows that order, B̂ ← (B̂ + ∫_window E dt) e^{−λT}, so r is
@@ -42,34 +43,26 @@
 # =============================================================================
 
 using AtmosTransport, NCDatasets, TOML, Printf
+using AtmosTransport.Operators: emission_segments
 
 const AT   = AtmosTransport
 const DR   = AT.Models.DrivenRunner
 const ICIO = AT.Models.InitialConditionIO
-const SF   = AT.Operators.SurfaceFlux
 
-# Global source rate (kg-storage/s): per time slice (time-varying) or constant (static); 0 without a source.
-function global_rates(s::AT.Operators.TimeVaryingSurfaceFluxSource)
-    s.cell_mass_rate_series isa Tuple ||
-        error("$(s.tracer_name): only cubed-sphere (per-panel) source series are supported")
-    s.scheme isa SF.LinearInterpFlux &&
+# One integral per output interval (or met window) equals the run's substep sum
+# when the step integral is exact (static, stepwise, conservative-mean sources).
+# LinearInterpFlux samples its rate at every substep start instead.
+function check_interval_integrable(s::AT.TimeVaryingSurfaceFluxSource)
+    s.scheme isa AT.LinearInterpFlux &&
         error("$(s.tracer_name): LinearInterpFlux samples per substep; one integral per output interval would not match")
-    return [sum(p -> sum(Float64, @view p[:, :, k]), s.cell_mass_rate_series) for k in eachindex(s.times)]
+    return nothing
 end
-function global_rates(s::AT.Operators.SurfaceFluxSource)
-    s.cell_mass_rate isa Tuple || error("$(s.tracer_name): only cubed-sphere (per-panel) sources are supported")
-    return sum(p -> sum(Float64, p), s.cell_mass_rate)
-end
-global_rates(::Nothing) = 0.0
+check_interval_integrable(_) = nothing
 
-# (rate, length) segments of the source over [t, t + Δ], as the surface operator applies them.
-segments(s::AT.Operators.TimeVaryingSurfaceFluxSource, (R, times), t, Δ) =
-    [(w0 * R[i0] + w1 * R[i1], Δ * f) for (i0, i1, w0, w1, f) in SF._flux_temporal_segments(s.scheme, times, t, Δ)]
-segments(::AT.Operators.SurfaceFluxSource, (R, _), t, Δ) = ((R, Δ),)
-segments(::Nothing, _, t, Δ) = ((0.0, Δ),)
-
-source_times(s::AT.Operators.TimeVaryingSurfaceFluxSource) = Float64.(s.times)
-source_times(_) = nothing
+# (global storage rate kg/s, length s) pieces of the source over [t, t + Δ], as
+# the surface operator applies them; a tracer without a source adds nothing.
+segments(src, t, Δ) = emission_segments(src, t, Δ)
+segments(::Nothing, t, Δ) = ((0.0, Δ),)
 
 emitted(segs) = sum(r * ℓ for (r, ℓ) in segs; init = 0.0)
 
@@ -118,7 +111,7 @@ function main(cfg_path, pattern, out_csv, start_hours = 3.0)
     cum = Dict{Symbol, Vector{Float64}}(); res = Dict{Symbol, Vector{Float64}}(); bias = Dict{Symbol, Float64}()
     for n in tracers
         src = get(source, n, nothing)
-        rates = (global_rates(src), source_times(src))
+        check_interval_integrable(src)
         l = get(λ, n, 0.0)
         c, ref, exact = 0.0, B[n][1], B[n][1]
         cum[n], res[n] = zeros(length(t)), zeros(length(t))
@@ -128,7 +121,7 @@ function main(cfg_path, pattern, out_csv, start_hours = 3.0)
                 nw * window ≈ t[k] - t[k - 1] ||
                     error("output interval $(t[k] - t[k - 1]) s is not a multiple of the met window $window s")
                 for a in t[k - 1] .+ window .* (0:nw - 1)
-                    segs = segments(src, rates, a, window)
+                    segs = segments(src, a, window)
                     e = emitted(segs)
                     c += e
                     ref = (ref + e) * exp(-l * window)
@@ -137,7 +130,7 @@ function main(cfg_path, pattern, out_csv, start_hours = 3.0)
                     end
                 end
             else
-                e = emitted(segments(src, rates, t[k - 1], t[k] - t[k - 1]))
+                e = emitted(segments(src, t[k - 1], t[k] - t[k - 1]))
                 c += e; ref += e
             end
             cum[n][k], res[n][k] = c, B[n][k] - ref

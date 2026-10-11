@@ -584,6 +584,21 @@
   writers share them. Snapshot files keep the same dimensions, data and
   attributes; the `lev` and `time` variables are now defined after the
   horizontal geometry variables.
+- `Operators.total_emission_rate(src, t)`, `emission_segments(src, t, dt)` and
+  `integrated_emission(src, t0, t1, dt)` give a surface source's global
+  storage rate at an instant, the pieces one operator step applies, and the
+  mass the operator adds over a run's steps, from the operator's own temporal
+  reconstruction (equal to a stepped application to 1e-14 for every scheme).
+  The runner's start-up line "Surface source … total model-storage rate" now
+  prints `total_emission_rate(source, 0.0)`: the same number for `Float64`
+  runs; for `Float32` runs the sum is accumulated in `Float64` (it differed by
+  up to 5e-8 on the CATRINE C90 sources), and a linear or conservative series
+  without a slice at the run start reports the interpolated run-start rate
+  instead of its first slice. The sums run on the host: a source adapted to a
+  device (CUDA, Metal) is copied to host memory first, so Metal, which has no
+  Float64, gets its totals too. `tracer_budget_closure.jl` and
+  `catrine_true_mass_balance.jl` use these functions instead of the private
+  `_flux_temporal_segments`.
 - SIF-GPP, FLUXCOM, TRENDY v14, TRANSCOM, GFED, and CATRINE campaign
   preprocessing, run configs, visualization scripts, and ATBD memos.
 

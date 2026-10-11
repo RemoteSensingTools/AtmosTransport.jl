@@ -23,6 +23,10 @@ the topology-specific kernels that inject mass into the surface layer.
 - Array-level runtime entrypoint:
   [`operators.jl`](operators.jl)
   provides `apply_surface_flux!`
+- Emission totals for logs and budgets:
+  [`integrals.jl`](integrals.jl)
+  provides `total_emission_rate(src, t)`, `emission_segments(src, t, dt)` and
+  `integrated_emission(src, t0, t1, dt)`
 
 ## Layout Conventions
 
@@ -35,7 +39,9 @@ the topology-specific kernels that inject mass into the surface layer.
 ## File Map
 
 - [`SurfaceFlux.jl`](SurfaceFlux.jl) — submodule assembly and public exports
-- [`sources.jl`](sources.jl) — `SurfaceFluxSource`, compatibility checks,
+- [`sources.jl`](sources.jl) — `SurfaceFluxSource`,
+  `TimeVaryingSurfaceFluxSource`, the temporal schemes
+  (`_flux_temporal_weights`, `_flux_temporal_segments`), compatibility checks,
   and low-level source helpers
 - [`PerTracerFluxMap.jl`](PerTracerFluxMap.jl) — tuple-backed source map
   keyed by tracer name
@@ -45,6 +51,9 @@ the topology-specific kernels that inject mass into the surface layer.
   non-local VDIFF spreads fresh emissions over the PBL, see `emission_deposit`)
 - [`operators.jl`](operators.jl) — operator hierarchy, source-to-tracer
   lookup, state-level `apply!`, array-level `apply_surface_flux!`
+- [`integrals.jl`](integrals.jl) — global emission totals from the same
+  temporal reconstruction the operator applies: the rate at an instant, the
+  pieces of one step, and the integral over a run's steps (Float64 sums)
 
 ## Common Tasks
 
@@ -58,6 +67,11 @@ the topology-specific kernels that inject mass into the surface layer.
 - Debugging cubed-sphere sources:
   verify that panel rates are interior-only `(Nc, Nc)` arrays and not
   halo-padded copies
+- Checking an emission budget:
+  `integrated_emission(src, t0, t1, dt)` is the mass the operator adds over
+  the run's steps; for stepwise and conservative-mean sources it does not
+  depend on `dt`. Scripts call these functions instead of
+  `_flux_temporal_segments`
 - Tracing runtime installation:
   start from the `DrivenSimulation` constructor in
   [`../../Models/driven_stepping.jl`](../../Models/driven_stepping.jl),
@@ -88,3 +102,5 @@ the topology-specific kernels that inject mass into the surface layer.
   - [`../../../test/orphan/test_emissions_palindrome.jl`](../../../test/orphan/test_emissions_palindrome.jl)
   - [`../../../test/core/test_driven_simulation.jl`](../../../test/core/test_driven_simulation.jl)
   - [`../../../test/orphan/test_cubed_sphere_runtime.jl`](../../../test/orphan/test_cubed_sphere_runtime.jl)
+  - [`../../../test/core/test_timevarying_surface_flux.jl`](../../../test/core/test_timevarying_surface_flux.jl)
+  - [`../../../test/core/test_surface_flux_integrals.jl`](../../../test/core/test_surface_flux_integrals.jl)
