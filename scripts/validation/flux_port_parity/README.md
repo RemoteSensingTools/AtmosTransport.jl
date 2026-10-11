@@ -151,9 +151,16 @@ product written with 44/12, on 365 common days:
 `budget_closure_parity.jl` runs `Analysis.budget_closure` on one run three
 times and compares the first with the Python report (design §4.3):
 
+The run's `run.toml` predates port step P2 and still sets
+`molar_mass_kg_mol = 0.0440095` on its 46 surface fluxes, which the current
+config validation rejects. Run on a migrated copy (all 46 are CO2 fluxes):
+
 ```bash
+sed 's/molar_mass_kg_mol = 0.0440095/species = "co2"/' \
+    /temp1/cfranken/trendy_allmodels_c30_20260908/run.toml \
+    > /temp1/cfranken/diag_port/budget_closure/run_species.toml
 julia --project=. scripts/validation/flux_port_parity/budget_closure_parity.jl \
-    --config /temp1/cfranken/trendy_allmodels_c30_20260908/run.toml \
+    --config /temp1/cfranken/diag_port/budget_closure/run_species.toml \
     --reference /temp1/cfranken/trendy_allmodels_c30_20260908/validation.json \
     --json /temp1/cfranken/diag_port/budget_closure/full_parity.json
 ```
