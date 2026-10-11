@@ -55,6 +55,13 @@
 
 ### Fixes
 
+- Transport binaries (eager and streaming writers), the spectral day cache and
+  cached regridders are published through `AtomicFiles`: a sibling staging
+  file moved onto the target by one replacing rename (`rename(2)` on POSIX
+  systems) on every Julia version. Before, `mv(…; force = true)` deleted the
+  previous file before renaming on Julia 1.10, so a reader could find no
+  file, and on every Julia version deleted it when the rename failed. A failed
+  rename now leaves the previous file in place and removes the staging file.
 - Time-varying surface fluxes without `[input].start_date` took their time
   origin from the file: the first slice for decoded dates, the CF units origin
   for raw numbers. A run on a mid-month binary then read the month's first

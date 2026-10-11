@@ -84,6 +84,7 @@ using NCDatasets
 
 using ..ConfigChecks: config_bool as _config_bool
 using ..LogLevels: log_level, with_log_level
+using ..AtomicFiles: atomic_publish
 using GRIB
 using SHA
 using FastGaussQuadrature: gausslegendre

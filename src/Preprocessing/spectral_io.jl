@@ -183,9 +183,7 @@ end
 
 function _write_spectral_day_cache(path::AbstractString, spec)
     mkpath(dirname(path))
-    tmp = path * ".tmp-$(getpid())"
-    isfile(tmp) && rm(tmp; force=true)
-    try
+    return atomic_publish(path) do tmp
         JLD2.jldsave(tmp;
             format_version = SPECTRAL_DAY_CACHE_VERSION,
             hours = spec.hours,
@@ -194,12 +192,7 @@ function _write_spectral_day_cache(path::AbstractString, spec)
             d_by_hour = spec.d_by_hour,
             T = spec.T,
             n_times = spec.n_times)
-        mv(tmp, path; force=true)
-    catch
-        isfile(tmp) && rm(tmp; force=true)
-        rethrow()
     end
-    return path
 end
 
 """

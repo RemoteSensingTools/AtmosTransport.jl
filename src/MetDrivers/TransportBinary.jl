@@ -14,6 +14,8 @@ using JSON3
 using Printf: @printf
 using Base.Threads
 using ..Architectures: CPU
+using ..AtomicFiles: atomic_publish, open_atomic_staging, commit_atomic_staging,
+                     abandon_atomic_staging
 import ..State: mass_basis
 
 include("transport_binary/header.jl")
