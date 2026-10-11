@@ -577,6 +577,13 @@
   latitude interval). Areas come from the faces. The regular keyword
   constructor now builds its faces and calls this one; regular meshes are
   bit-identical.
+- `Output.define_cs_horizontal_geometry!(ds, mesh)` (cubed-sphere `Xdim`/`Ydim`/`nf`,
+  centres, corners, `cell_area`, `cubed_sphere` mapping with
+  `semi_major_axis = mesh.radius`) and `Output.define_provenance_attributes!(ds)`
+  are public, split from the snapshot writer's private blocks so other NetCDF
+  writers share them. Snapshot files keep the same dimensions, data and
+  attributes; the `lev` and `time` variables are now defined after the
+  horizontal geometry variables.
 - SIF-GPP, FLUXCOM, TRENDY v14, TRANSCOM, GFED, and CATRINE campaign
   preprocessing, run configs, visualization scripts, and ATBD memos.
 
