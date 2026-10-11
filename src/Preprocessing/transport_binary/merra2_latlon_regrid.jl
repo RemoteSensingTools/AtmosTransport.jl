@@ -394,7 +394,7 @@ struct MERRA2DayDriver{S, H, G, V, W, B, F, X, Q}
     policy       :: SubstepSchedulePolicy
     steps_min    :: Int
     cfl_target   :: Float64
-    balance      :: B          # (; tol, project_every, global_solve, weights)
+    balance      :: B          # (; tol, project_every, weights)
     flux         :: F          # (; method, thickness) of the flux reconstruction
     positivity_limit :: Float64
     replay_tol   :: Float64
@@ -513,17 +513,11 @@ function _balance_window!(d::MERRA2DayDriver, ps_moist, m_a, m_b, steps)
     _reconstruct_window_fluxes!(d.flux, x, ps_moist, m_a, vc, mesh,
                                 FT(STANDARD_GRAVITY), FT(d.dt_window / (2 * steps)), Nc, Nz)
     g, tol, project_every = d.grid, d.balance.tol, d.balance.project_every
-    diag = if d.balance.global_solve     # per-level solve (diagnostic option)
-        balance_cs_global_mass_fluxes!(x.am, x.bm, m_a, m_b, g.face_table, g.cell_degree,
-                                       steps, g.poisson_scratch; tol,
-                                       max_iter = DEFAULT_POISSON_BALANCE_MAX_ITER,
-                                       project_every)
-    else                                 # column solve, correction spread by `weights`
-        balance_cs_column_mass_fluxes!(x.am, x.bm, m_a, m_b, g.face_table, g.cell_degree,
-                                       steps, g.poisson_scratch; tol,
-                                       max_iter = DEFAULT_POISSON_BALANCE_MAX_ITER,
-                                       project_every, weights = d.balance.weights)
-    end
+    # Column solve, the correction spread over the levels by `weights`.
+    diag = balance_cs_column_mass_fluxes!(x.am, x.bm, m_a, m_b, g.face_table, g.cell_degree,
+                                          steps, g.poisson_scratch; tol,
+                                          max_iter = DEFAULT_POISSON_BALANCE_MAX_ITER,
+                                          project_every, weights = d.balance.weights)
     sync_all_cs_boundary_mirrors!(x.am, x.bm, mesh.connectivity, Nc, Nz)
     fill_cs_window_mass_tendency!(x.dm, m_a, m_b, steps)
     foreach(c -> fill!(c, zero(FT)), x.cm)
@@ -632,7 +626,6 @@ end
 
 function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{FT}, vc, out_path,
                              nwindow, nsub, dt_window, steps, policy, mass_target,
-                             balance::AbstractHorizontalBalance,
                              write_replay_on::Bool) where FT
     mkpath(dirname(out_path))
     tmp_path = out_path * ".tmp"
@@ -647,14 +640,13 @@ function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{
         "target_type" => "cubed_sphere",
         "regrid_method" => "conservative",
         "poisson_balanced" => true,
-        "horizontal_balance" => balance_tag(balance),
+        "horizontal_balance" => HORIZONTAL_BALANCE_TAG,
         # The column Poisson balance plays the role of the Cameron-Smith
         # pressure fix (`pjc_pfix_mod.F90`, GEOS-Chem Classic): it forces the
         # column flux convergence to match the analyzed dry-mass tendency.
         # GCHP applies no pressure fix; FV3 remaps to its advected surface
         # pressure instead.
-        "wind_flux_pressure_fix" => balance isa ColumnBalance ?
-            "cameron_smith_column_balance" : "per_layer_poisson_balance",
+        "wind_flux_pressure_fix" => "cameron_smith_column_balance",
         "global_mass_pin_enabled" => mass_target !== nothing,
         "global_mass_pin_target_kg" => mass_target))
     inner = open_streaming_cs_transport_binary(
@@ -706,13 +698,9 @@ function process_merra2_to_cs_day(date::Date,
                                   write_replay_check::Bool = true,
                                   cache_dir::Union{Nothing, AbstractString} = nothing,
                                   global_mass_pin::Bool = false,
-                                  global_mass_target_kg::Real = NaN,
-                                  horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing) where FT
+                                  global_mass_target_kg::Real = NaN) where FT
     mass_basis === :dry ||
         throw(ArgumentError("MERRA-2 → CS writer only supports mass_basis=:dry; got $(mass_basis)"))
-    horizontal_balance = effective_horizontal_balance(horizontal_balance, ColumnBalance())
-    global_solve = horizontal_balance isa LayerBalance
-    _reject_layer_balance_weights(horizontal_balance, settings.column_balance_weights)
     steps_per_window >= 1 || throw(ArgumentError("steps_per_window must be ≥ 1; got $(steps_per_window)"))
     nsub = merra2_windows_per_block(dt_met_seconds)
     vc = load_hybrid_coefficients(expand_data_path(settings.coefficients_file))
@@ -740,13 +728,13 @@ function process_merra2_to_cs_day(date::Date,
         write_replay_on = write_replay_check
         writer = _open_merra2_writer(settings, handles, target_grid, vc, out_path, nwindow, nsub,
                                      Float64(dt_met_seconds), Int(steps_per_window), policy, mass_target,
-                                     horizontal_balance, write_replay_on)
+                                     write_replay_on)
         @info @sprintf("  Output: %s (Nc=%d, Nz=%d, FT=%s)", basename(out_path), target_grid.Nc, Nz, string(FT))
         d = MERRA2DayDriver(
             settings, handles, target_grid, vc, writer, nsub, Float64(dt_met_seconds), policy,
             Int(steps_per_window), Float64(substep_cfl_target),
             (tol = Float64(cs_balance_tol), project_every = Int(cs_balance_project_every),
-             global_solve, weights = column_weights(settings.column_balance_weights, vc.B)),
+             weights = column_weights(settings.column_balance_weights, vc.B)),
             (method = _face_flux_method(settings, target_grid),
              thickness = _flux_thickness(settings.flux_thickness)),
             Float64(positivity_cfl_limit), replay_tolerance(FT),
@@ -797,8 +785,7 @@ end
 
 Adapter that the unified preprocessor CLI calls into. Forwards to
 [`process_merra2_to_cs_day`](@ref) with the kwargs the underlying function
-accepts, including `horizontal_balance` (column by default: the
-Cameron-Smith column pressure fix); the rest of the unified-CLI day-kwargs
+accepts; the rest of the unified-CLI day-kwargs
 (e.g. `chain_mass`, `seed_m`, `cm_closure`) are absorbed by the trailing
 `kwargs...` and ignored — MERRA-2 has no day-to-day mass-chain state.
 
@@ -821,7 +808,6 @@ function process_day(date::Date,
                      write_replay_check::Bool = true,
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
-                     horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
                      kwargs...)
     steps_floor = min_steps_per_window === nothing ? 1 : Int(min_steps_per_window)
     process_merra2_to_cs_day(date, settings, grid;
@@ -838,8 +824,7 @@ function process_day(date::Date,
         write_replay_check    = write_replay_check,
         cache_dir             = grid.cache_dir,
         global_mass_pin       = global_mass_pin,
-        global_mass_target_kg = global_mass_target_kg,
-        horizontal_balance    = horizontal_balance)
+        global_mass_target_kg = global_mass_target_kg)
     return (; final_m = nothing,
             global_mass_target_kg = global_mass_target_kg)
 end

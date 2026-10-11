@@ -35,7 +35,6 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, V
     chain_mass  :: Bool
     global_mass_pin_enabled :: Bool
     global_mass_target_kg :: Float64
-    balance_mode :: Symbol
     # Vertical-flux (cm) closure: `:endpoint_balanced` (default) closes cm from
     # the column-balanced horizontal fluxes against the raw GEOS DELP_dry
     # endpoint tendency (`diagnose_cs_cm!`); `:pressure_fixer` keeps the native
@@ -83,7 +82,6 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
                                    windows_per_day::Integer = 0,
                                    global_mass_pin::Bool = false,
                                    global_mass_target_kg::Real = NaN,
-                                   balance_mode::Symbol = :column,
                                    cm_closure::Symbol = :endpoint_balanced,
                                    smooth_iters::Integer = DEFAULT_GEOS_SMOOTHING_SWEEPS,
                                    omega_regularization::OmegaRegularization = OmegaRegularization()) where FT
@@ -120,8 +118,6 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     schedule_len = Int(windows_per_day)
     schedule_len >= 0 ||
         error("windows_per_day must be non-negative, got $(windows_per_day)")
-    balance_mode in (:column, :per_layer) ||
-        error("GEOS-CS balance_mode must be :column or :per_layer; got $(balance_mode)")
     cm_closure in (:endpoint_balanced, :pressure_fixer, :moisture_filtered,
                    :pfix_corrected, :omega_full_replacement, :omega_regularized) ||
         error("GEOS-CS cm_closure must be :endpoint_balanced, :pressure_fixer, " *
@@ -211,7 +207,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             fill(steps_per_met, schedule_len), Bool(adaptive_substeps),
             target, min_steps, max_steps, chain_mass,
             Bool(global_mass_pin), Float64(global_mass_target_kg),
-            balance_mode, cm_closure, ΔB, m_next_delp, Int(smooth_iters),
+            cm_closure, ΔB, m_next_delp, Int(smooth_iters),
             omega_buf, qv_buf, vdiv_om, vdiv_target,
             omega_regularization, omega_regularization_scratch, balance_weights)
 end
@@ -357,9 +353,7 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         # The zero-column-integral property REQUIRES the column balance: it pins
         # `Σ_k div_h == Σ_k dm_dry` per column, so the residual `dm_dry − ΔB·pit`
         # integrates to exactly zero and the per-level smoother conserves PS per
-        # column. The per-layer balance only closes the column up to a global
-        # constant, which would let the smoother shift column dry mass — so this
-        # closure forces the column balance regardless of `balance_mode`.
+        # column.
         bal_diag = balance_cs_column_mass_fluxes!(
             workspace.am_v4, workspace.bm_v4, workspace.m_cur,
             workspace.m_next_delp, grid.face_table, grid.cell_degree, steps,
@@ -483,17 +477,10 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
                 mode = workspace.cm_closure)
     end
 
-    bal_diag = if workspace.balance_mode === :per_layer
-        balance_cs_global_mass_fluxes!(
-            workspace.am_v4, workspace.bm_v4, workspace.m_cur,
-            workspace.m_next_target, grid.face_table, grid.cell_degree, steps,
-            grid.poisson_scratch)
-    else
-        balance_cs_column_mass_fluxes!(
-            workspace.am_v4, workspace.bm_v4, workspace.m_cur,
-            workspace.m_next_target, grid.face_table, grid.cell_degree, steps,
-            grid.poisson_scratch; weights = workspace.balance_weights)
-    end
+    bal_diag = balance_cs_column_mass_fluxes!(
+        workspace.am_v4, workspace.bm_v4, workspace.m_cur,
+        workspace.m_next_target, grid.face_table, grid.cell_degree, steps,
+        grid.poisson_scratch; weights = workspace.balance_weights)
     fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
                                   workspace.m_next_target, steps)
     diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,

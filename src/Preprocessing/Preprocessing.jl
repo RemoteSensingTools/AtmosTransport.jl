@@ -38,14 +38,16 @@ and on the source settings type. Each supported pair has a `process_day` method:
 3. Merge native 137L → transport levels — `vertical_coordinates.jl`
 4. Pin global mean ps (mass fix) — `pin_global_mean_ps!` /
    `pin_global_mean_ps_using_qv!` in `mass_support.jl`
-5. Topology-specific horizontal mass-flux balance (`[numerics] balance_mode`,
-   `AbstractHorizontalBalance`, recorded as the header key `horizontal_balance`):
-   - LL: column-integrated FFT Poisson correction distributed over layers by
-     air mass (`balance_column_mass_fluxes!`, `mass_support.jl`); the
-     per-layer FFT Poisson solve with `balance_mode = "per_layer"`
-   - RG: per-layer compressed-Laplacian CG — `ring_poisson_balance.jl`
-   - CS: column-integrated correction by default, per-layer global 6-panel
-     graph-Laplacian CG with `balance_mode = "per_layer"` — `cs_poisson_balance.jl`
+5. Column Poisson balance of the horizontal mass fluxes (header key
+   `horizontal_balance = "column"`): one Poisson solve for the
+   column-integrated divergence against the column mass tendency, each face's
+   correction spread over the layers by air mass (`spread_column_correction!`),
+   so `cm` keeps the vertical motion:
+   - LL: FFT Poisson solve — `balance_column_mass_fluxes!`, `mass_support.jl`
+   - RG: compressed-Laplacian CG — `balance_compressed_column_fluxes!`,
+     `ring_poisson_balance.jl`
+   - CS: global 6-panel graph-Laplacian CG — `balance_cs_column_mass_fluxes!`,
+     `cs_poisson_balance.jl`
 6. Diagnose `cm` from explicit endpoint mass targets — replay continuity
 7. Write transport binary with declared payload semantics and replay checks
 
@@ -105,7 +107,7 @@ using ..Parameters: IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_PRESSURE, TM5_C
                     DEFAULT_MAX_STEPS_PER_WINDOW, ADAPTIVE_SUBSTEP_MAX_REFINEMENTS,
                     DEFAULT_MET_INTERVAL_SECONDS,
                     DEFAULT_POISSON_BALANCE_TOL, DEFAULT_POISSON_BALANCE_MAX_ITER,
-                    DEFAULT_POISSON_PROJECT_EVERY,
+                    DEFAULT_POISSON_PROJECT_EVERY, HORIZONTAL_BALANCE_TAG,
                     DEFAULT_GEOS_SMOOTHING_SWEEPS, DEFAULT_GEOS_SMOOTHING_WEIGHT,
                     ERA5_NATIVE_LEVEL_COUNT, ERA5_MET_INTERVAL_SECONDS,
                     GEOS_MASS_FLUX_DT_SECONDS, GEOS_MET_INTERVAL_SECONDS,

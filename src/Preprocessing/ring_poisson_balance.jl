@@ -193,145 +193,144 @@ cubed-sphere balance (`cs_poisson_balance.jl`).
 """
 @inline _target_outflow(m_cur, m_next, c, k, inv_scale) = (m_cur[c, k] - m_next[c, k]) * inv_scale
 
-"""
-    balance_compressed_horizontal_fluxes!(hflux, m_cur, m_next,
-                                          face_left, face_right,
-                                          L::CompressedLaplacian,
-                                          steps_per_window, scratch;
-                                          tol, max_iter)
+# Column residual of the continuity target, `D_c(Σ_k F_k) − Σ_k T_{c,k}`, into
+# `res` (length `nc`). `D_c(F) = Σ_{left(f) = c} F_f − Σ_{right(f) = c} F_f` is
+# the outflow divergence; polar stub faces (a zero neighbour) count for their
+# real cell only, as in the runtime face-indexed sweep.
+function _column_balance_residual!(res::AbstractVector{Float64},
+                                   hflux::AbstractMatrix{Float64},
+                                   m_cur::AbstractMatrix{Float64},
+                                   m_next::AbstractMatrix{Float64},
+                                   face_left::Vector{Int32},
+                                   face_right::Vector{Int32},
+                                   inv_scale::Float64)
+    fill!(res, 0.0)
+    @inbounds for k in axes(hflux, 2), f in eachindex(face_left)
+        flux = hflux[f, k]
+        left  = Int(face_left[f])
+        right = Int(face_right[f])
+        left > 0 && (res[left]  += flux)
+        right > 0 && (res[right] -= flux)
+    end
+    @inbounds for k in axes(m_cur, 2), c in axes(m_cur, 1)
+        res[c] -= _target_outflow(m_cur, m_next, c, k, inv_scale)
+    end
+    return res
+end
 
-Poisson-balance the face-indexed horizontal fluxes of a reduced-Gaussian
-window so that every cell's outflow equals its forward mass tendency per
-substep. The CG solve uses the compressed Laplacian; the corrections are
-applied to the full face-indexed `hflux` array.
-
-The compressed Laplacian is mathematically equivalent to the face-indexed
-graph Laplacian — the flux corrections `hflux[f] += ψ[right] - ψ[left]`
-produce identical results because ψ is cell-valued.
 """
-function balance_compressed_horizontal_fluxes!(hflux::AbstractMatrix{Float64},
-                                               m_cur::AbstractMatrix{Float64},
-                                               m_next::AbstractMatrix{Float64},
-                                               face_left::Vector{Int32},
-                                               face_right::Vector{Int32},
-                                               L::CompressedLaplacian,
-                                               steps_per_window::Int,
-                                               scratch;
-                                               tol::Float64 = DEFAULT_POISSON_BALANCE_TOL,
-                                               max_iter::Int = DEFAULT_POISSON_BALANCE_MAX_ITER)
+    balance_compressed_column_fluxes!(hflux, m_cur, m_next, face_left, face_right,
+                                      L::CompressedLaplacian, steps_per_window, scratch;
+                                      weights = MassWeightedColumn(),
+                                      tol = DEFAULT_POISSON_BALANCE_TOL,
+                                      max_iter = DEFAULT_POISSON_BALANCE_MAX_ITER)
+
+Column Poisson balance of the face-indexed horizontal fluxes `hflux[f, k]` of
+a reduced-Gaussian window (kg per application, twice per substep; `m_cur` and
+`m_next` are the window's endpoint air masses, `(ncells, Nz)`, top first).
+
+One window of `n = steps_per_window` substeps, whose palindrome applies each
+window flux twice, must take `m_cur` to `m_next`:
+
+```math
+m^{\\mathrm{next}}_{c,k} = m^{\\mathrm{cur}}_{c,k}
+    - 2n \\left[ D_c(F_k) + C_{c,k+1} - C_{c,k} \\right],
+\\qquad
+D_c(F) = \\sum_{f:\\,\\mathrm{left}(f) = c} F_f - \\sum_{f:\\,\\mathrm{right}(f) = c} F_f ,
+```
+
+with the vertical mass flux `C` (`cm`) zero at the top and at the surface.
+Summed over a column the `C` terms cancel, so the horizontal fluxes must
+satisfy the column budget
+
+```math
+D_c\\Big(\\sum_k F_k\\Big) = T_c \\equiv \\sum_k \\frac{m^{\\mathrm{cur}}_{c,k} - m^{\\mathrm{next}}_{c,k}}{2n}.
+```
+
+One Jacobi-preconditioned CG solve of `L ψ = D(Σ_k F_k) − T` (`L` the graph
+Laplacian with face multiplicities, `CompressedLaplacian`; the right-hand side
+is projected to zero mean, the part no horizontal flux can change) gives every
+interior face the column correction `δ_f = ψ_{right(f)} − ψ_{left(f)}`, which
+changes the column divergence by `−Lψ`. Each `δ_f` is spread over the layers
+by `spread_column_correction!` (air mass of the two cells for
+`MassWeightedColumn()`). The vertical mass flux then follows from the explicit
+tendency, `recompute_cm_from_dm_target!`, and carries the vertical motion. The
+lat-lon (`balance_column_mass_fluxes!`) and cubed-sphere
+(`balance_cs_column_mass_fluxes!`) paths balance the same way.
+
+Balancing every level to its own tendency instead, `D_c(F_k) = T_{c,k}`,
+leaves `cm` only the column residual: about 1e-4 of the vertical mass flux on
+the O24 test day (issue #11). The CG works on the compressed Laplacian; the
+corrections go to every face-indexed flux, LCM duplicates included, which is
+equivalent because `ψ` is cell-valued.
+
+Returns the column residuals before and after (`max_pre_raw_residual`,
+`max_post_raw_residual`, kg per application), the residual mean the solve
+cannot remove (`max_rhs_mean`), the projected residuals (`max_pre_projected`,
+`max_post_projected`, the latter `|Lψ − rhs|` of the solve), the CG iterations
+and the largest face correction (`max_face_delta`).
+"""
+function balance_compressed_column_fluxes!(hflux::AbstractMatrix{Float64},
+                                           m_cur::AbstractMatrix{Float64},
+                                           m_next::AbstractMatrix{Float64},
+                                           face_left::Vector{Int32},
+                                           face_right::Vector{Int32},
+                                           L::CompressedLaplacian,
+                                           steps_per_window::Int,
+                                           scratch;
+                                           weights::AbstractColumnWeights = MassWeightedColumn(),
+                                           tol::Float64 = DEFAULT_POISSON_BALANCE_TOL,
+                                           max_iter::Int = DEFAULT_POISSON_BALANCE_MAX_ITER)
     nc, Nz = size(m_cur)
-    size(hflux, 2) == Nz || error("hflux Nz mismatch with m")
+    size(m_next) == size(m_cur) ||
+        throw(DimensionMismatch("m_next $(size(m_next)) ≠ m_cur $(size(m_cur))"))
+    size(hflux) == (length(face_left), Nz) ||
+        throw(DimensionMismatch("hflux $(size(hflux)) ≠ (nfaces, Nz) = $((length(face_left), Nz))"))
+    _check_weight_levels(weights, Nz)
     inv_scale = 1.0 / (2.0 * steps_per_window)
-
-    max_pre_raw = 0.0
-    max_rhs_mean = 0.0
-    max_pre_proj = 0.0
-    max_post_proj = 0.0
-    max_post_raw = 0.0
-    max_it = 0
-
     psi = scratch.psi
     rhs = scratch.rhs
-    div = scratch.r   # reuse CG residual buffer for divergence
 
-    for k in 1:Nz
-        # 1. Compute current horizontal divergence at level k.
-        fill!(div, 0.0)
-        @inbounds for f in eachindex(face_left)
-            flux = hflux[f, k]
-            left  = Int(face_left[f])
-            right = Int(face_right[f])
-            left > 0 && (div[left]  += flux)
-            right > 0 && (div[right] -= flux)
-        end
+    # 1. Column residual of the continuity target.
+    _column_balance_residual!(rhs, hflux, m_cur, m_next, face_left, face_right, inv_scale)
+    pre_raw = maximum(abs, rhs)
+    rhs_mean = sum(rhs) / nc
+    pre_proj = 0.0
+    @inbounds for c in 1:nc
+        pre_proj = max(pre_proj, abs(rhs[c] - rhs_mean))
+    end
+    pre_proj < tol && return (; max_pre_raw_residual = pre_raw, max_rhs_mean = abs(rhs_mean),
+                              max_pre_projected = pre_proj, max_post_projected = 0.0,
+                              max_post_raw_residual = pre_raw, max_cg_iter = 0,
+                              max_face_delta = 0.0)
 
-        # 2. Residual of the continuity target: outflow = mass loss per substep.
-        @inbounds for c in 1:nc
-            rhs[c] = div[c] - _target_outflow(m_cur, m_next, c, k, inv_scale)
-        end
-
-        # Diagnostics: pre-balance residual
-        rhs_sum = 0.0
-        rhs_raw_linf = 0.0
-        @inbounds for c in 1:nc
-            rhs_sum += rhs[c]
-            a = abs(rhs[c])
-            a > rhs_raw_linf && (rhs_raw_linf = a)
-        end
-        rhs_mean = rhs_sum / nc
-        rhs_raw_linf > max_pre_raw && (max_pre_raw = rhs_raw_linf)
-        a_mean = abs(rhs_mean)
-        a_mean > max_rhs_mean && (max_rhs_mean = a_mean)
-
-        pre_proj = 0.0
-        @inbounds for c in 1:nc
-            a = abs(rhs[c] - rhs_mean)
-            a > pre_proj && (pre_proj = a)
-        end
-        pre_proj > max_pre_proj && (max_pre_proj = pre_proj)
-
-        pre_proj < tol && continue
-
-        # 3. Solve L · ψ = rhs using compressed Laplacian CG.
-        _, it = solve_compressed_poisson_pcg!(psi, rhs, L, scratch;
-                                              tol=tol, max_iter=max_iter)
-        it > max_it && (max_it = it)
-
-        # 4. Post-solve residual check on range(L).
-        Lpsi = scratch.Ap
-        _compressed_laplacian_mul!(Lpsi, psi, L)
-        fill!(div, 0.0)
-        @inbounds for f in eachindex(face_left)
-            flux = hflux[f, k]
-            left  = Int(face_left[f])
-            right = Int(face_right[f])
-            left > 0 && (div[left]  += flux)
-            right > 0 && (div[right] -= flux)
-        end
-        @inbounds for c in 1:nc
-            rhs[c] = (div[c] - _target_outflow(m_cur, m_next, c, k, inv_scale)) - rhs_mean
-        end
-        post_proj = 0.0
-        @inbounds for c in 1:nc
-            a = abs(Lpsi[c] - rhs[c])
-            a > post_proj && (post_proj = a)
-        end
-        post_proj > max_post_proj && (max_post_proj = post_proj)
-
-        # 5. Apply flux correction to ALL faces (including LCM duplicates).
-        @inbounds for f in eachindex(face_left)
-            left  = Int(face_left[f])
-            right = Int(face_right[f])
-            if left > 0 && right > 0
-                hflux[f, k] += psi[right] - psi[left]
-            end
-        end
-
-        # 6. Post-balance raw residual.
-        fill!(div, 0.0)
-        @inbounds for f in eachindex(face_left)
-            flux = hflux[f, k]
-            left  = Int(face_left[f])
-            right = Int(face_right[f])
-            left > 0 && (div[left]  += flux)
-            right > 0 && (div[right] -= flux)
-        end
-        post_raw = 0.0
-        @inbounds for c in 1:nc
-            r = abs(div[c] - _target_outflow(m_cur, m_next, c, k, inv_scale))
-            r > post_raw && (post_raw = r)
-        end
-        post_raw > max_post_raw && (max_post_raw = post_raw)
+    # 2. Solve L ψ = rhs (the solver projects rhs to zero mean in place).
+    _, iter = solve_compressed_poisson_pcg!(psi, rhs, L, scratch; tol = tol, max_iter = max_iter)
+    Lpsi = scratch.Ap
+    _compressed_laplacian_mul!(Lpsi, psi, L)
+    post_proj = 0.0
+    @inbounds for c in 1:nc
+        post_proj = max(post_proj, abs(Lpsi[c] - rhs[c]))
     end
 
-    return (;
-        max_pre_raw_residual = max_pre_raw,
-        max_rhs_mean = max_rhs_mean,
-        max_pre_projected = max_pre_proj,
-        max_post_projected = max_post_proj,
-        max_post_raw_residual = max_post_raw,
-        max_cg_iter = max_it,
-        max_pre_residual = max_pre_raw,
-        max_post_residual = max_post_raw,
-    )
+    # 3. Spread each face's column correction over its layers.
+    max_face_delta = 0.0
+    @inbounds for f in eachindex(face_left)
+        left  = Int(face_left[f])
+        right = Int(face_right[f])
+        (left > 0 && right > 0) || continue
+        delta = psi[right] - psi[left]
+        max_face_delta = max(max_face_delta, abs(delta))
+        delta == 0.0 && continue
+        spread_column_correction!(view(hflux, f, :), delta, weights,
+                                  view(m_cur, left, :), view(m_cur, right, :))
+    end
+
+    # 4. Column residual after the correction (its mean stays).
+    post = _column_balance_residual!(scratch.r, hflux, m_cur, m_next, face_left, face_right,
+                                     inv_scale)
+    return (; max_pre_raw_residual = pre_raw, max_rhs_mean = abs(rhs_mean),
+            max_pre_projected = pre_proj, max_post_projected = post_proj,
+            max_post_raw_residual = maximum(abs, post), max_cg_iter = iter,
+            max_face_delta = max_face_delta)
 end

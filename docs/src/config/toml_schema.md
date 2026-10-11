@@ -836,28 +836,29 @@ diagnostic binaries; the binary records `write_replay_check = false` in its
 header, the inspector marks it, and the runtime warns when it opens it. The
 positivity gate still runs. Default `true`.
 
-#### `balance_mode` — horizontal mass-flux balance
+#### `column_balance_weights` — horizontal mass-flux balance
 
 Every path closes a window's horizontal mass fluxes against its endpoint mass
-tendency before diagnosing `cm`:
+tendency before diagnosing `cm`, with one Poisson solve for the
+column-integrated divergence; the correction is distributed over the layers by
+`column_balance_weights` (`"mass"` by default; [Data sources](data_sources.md)
+lists where each path sets it), so layer winds keep their vertical structure
+and `cm` carries the vertical motion. ERA5 spectral configs set the weights
+here (cubed-sphere targets; lat-lon and reduced-Gaussian targets use `"mass"`):
 
 ```toml
 [numerics]
-balance_mode = "column"      # default on lat-lon and cubed-sphere paths
+column_balance_weights = "mass"    # or "hybrid_b", "hybrid_mass"
 ```
 
-- `"column"` — one Poisson solve for the column-integrated divergence; the
-  correction is distributed over the layers by `column_balance_weights`
-  (`"mass"` by default; [Data sources](data_sources.md) lists where each path
-  sets it), so layer winds keep their vertical structure. ERA5 spectral configs
-  set it here, as `[numerics] column_balance_weights` (cubed-sphere targets).
-- `"per_layer"` — one Poisson solve per layer (the older mode). The
-  reduced-Gaussian path always balances per layer and rejects `"column"`.
-
-The mode is recorded in every transport-binary header as
-`horizontal_balance` (for GEOS, the balance its `geos_cm_closure` applies:
-`"none"` for the pressure-fixer closures, `"column"` for the moisture-filtered
-and OMEGA closures).
+Binary headers record the balance as `horizontal_balance = "column"` (GEOS:
+the balance its `geos_cm_closure` applies, `"none"` for the pressure-fixer
+closures). The per-layer balance and its key `balance_mode` were removed: with
+no independent vertical flux, balancing each layer to its own mass change left
+almost no vertical mass flux ([Vertical transport](../theory/vertical_transport.md)
+section 2). A config that sets `balance_mode` is an error. Older binaries
+balanced per layer record `horizontal_balance = "per_layer"`; every
+reduced-Gaussian binary written before this change is one of them.
 
 #### `geos_cm_closure` — GEOS native CS vertical-flux closure
 

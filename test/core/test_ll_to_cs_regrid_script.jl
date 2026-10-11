@@ -524,8 +524,6 @@ end
             # Replay still closes with the other weights.
             close(TransportBinaryDriver(hyb_path; FT = Float64, arch = CPU(), Hp = 1,
                                         validate_replay = true))
-            @test_throws ArgumentError regrid("layer.bin"; column_balance_weights = :hybrid_b,
-                horizontal_balance = AtmosTransport.Preprocessing.LayerBalance())
             @test_throws ArgumentError regrid("bad.bin"; column_balance_weights = :pressure)
         end
     end

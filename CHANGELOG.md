@@ -12,7 +12,7 @@
   | `ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS` | `[run] physics_cadence = "substep"` |
   | `ATMOSTR_REPLAY_CHECK` | `[input] validate_replay = true` |
   | `ATMOSTR_NO_REPLAY_CHECK` | nothing (the load-time check runs only when asked for) |
-  | `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE` | `[numerics] balance_mode = "per_layer"` |
+  | `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE` | nothing (the per-layer balance it selected is removed; see below) |
   | `ATMOSTR_DISABLE_PREFETCH` | `[run] prefetch_windows = false` (new) |
   | `ATMOSTR_ASSERT_CS_BINARY_CFL` | `[advection] check_binary_cfl = true` (new) |
   | `ATMOSTR_NO_WRITE_REPLAY_CHECK` | `[numerics] write_replay_check = false` in the preprocessing config (new) |
@@ -39,12 +39,27 @@
   - `[numerics] write_replay_check` (default `true`) of a preprocessing config
     reaches every writer as the `write_replay_check` keyword.
 
-- `[numerics] geos_balance_mode` is renamed `balance_mode` (an error names the
-  new key), and `balance_mode` accepts only `"column"` and `"per_layer"` (the
-  aliases `column_poisson`, `layer`, `layer_local` and `global` are gone). The
-  shipped preprocessing configs use the new key. The GEOS writer's deprecated
-  `process_day(...; balance_mode)` keyword is removed; pass
-  `horizontal_balance = ColumnBalance()` or `LayerBalance()`.
+- The per-layer Poisson balance is removed from every preprocessing path
+  (issue #11): balancing each layer to its own mass change leaves almost no
+  vertical mass flux, because no path has an independent vertical flux (see
+  Numerical changes). Every path applies the column balance. Removed with it:
+  the `[numerics]` keys `balance_mode` and `geos_balance_mode` (a config that
+  sets either is an error; the 19 shipped preprocessing configs and the
+  `pre_merra2_c90` golden config that set `balance_mode = "column"` no longer
+  do), the `--balance-mode` option of
+  `scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl`, the
+  `horizontal_balance` keyword of the writers (`process_day`,
+  `regrid_ll_binary_to_cs`, `process_merra2_to_cs_day`,
+  `process_era5_n320_to_cs_day`) and `balance` of `apply_poisson_balance!`,
+  the types `AbstractHorizontalBalance`, `ColumnBalance` and `LayerBalance`
+  with `balance_tag`, `resolve_horizontal_balance` and
+  `effective_horizontal_balance`, the GEOS writer's `process_day(...;
+  balance_mode)` keyword, and `config/preprocessing/geosit_c180_dec2021_catrine_f32_reclosed.toml`
+  (the per-layer twin of `..._pinned_column.toml`; its output directory was
+  empty) with its two diagnostic run configs
+  `catrine_geosit_c180_v4_fullphys_reclosed_1d{,_f64_curry}.toml`. Headers
+  keep `horizontal_balance` (`"column"`, or `"none"` for the GEOS closures that
+  keep the native fluxes, `HORIZONTAL_BALANCE_TAG`).
 
 - The advection keys `scheme`, `ppm_order`, `vertical` and `limiter` are read
   only from `[advection]`; in `[run]`, their old location, they are an error
@@ -197,12 +212,9 @@
 - `[numerics] geos_balance_mode` was ignored by the MERRA-2 and ERA5 N320
   writers, which balanced per layer only with the environment variable
   `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE=1`; no header recorded the
-  mode. `[numerics] balance_mode = "column" | "per_layer"` now selects it on
-  every path (the old name was later removed; see Breaking changes), the
-  LL-to-CS regrid script takes
-  `--balance-mode`, and every transport-binary header records
-  `horizontal_balance`. The environment variable is removed (see Breaking
-  changes). Default results are unchanged.
+  mode. The variable and the per-layer balance are removed (see Breaking
+  changes), and every transport-binary header records
+  `horizontal_balance`. The MERRA-2 and ERA5 N320 default results are unchanged.
 - The Lin-Rood (`LinRoodPPMScheme`) adjoint tape recorded the air mass for its
   two Upwind Z half-sweeps after the sweep had updated it. The upwind adjoint
   divides each face flux by the donor mass entering the sweep, so footprints
@@ -220,6 +232,15 @@
   tightened (`test_cs_stride_checkpoint.jl` from `3e-4` to `1e-9`).
 
 ### Numerical changes
+
+- Reduced-Gaussian preprocessing now uses the same column-integrated Poisson
+  balance as the lat-lon and cubed-sphere paths: one ring-graph solve per
+  column, with each face correction spread over the layers by air mass. On the
+  O24 golden day, equivalent omega at the 418 hPa interface is restored from
+  6.9e-6 to 0.146 Pa/s RMS while every stored air-mass value and the global
+  dry-air total remain bit-identical. Horizontal fluxes change by at most 6.7%
+  of the previous global maximum, as expected from the reviewed prototype.
+  Reported by pera-noaa (NOAA GML) in issue #11.
 
 - Carbon-mass fluxes (`kgC m-2 s-1`, the CAMS/LMDZ inventories) become CO₂ by
   the molar-mass ratio `M(CO2)/M(C)` = 44.0095/12.0107 ≈ 3.66419

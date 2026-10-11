@@ -157,9 +157,11 @@ Three checkpoints in this pipeline are load-bearing for TM5 users:
 - **Poisson balance.** Horizontal fluxes from spectral divergence have
   a non-zero divergence residual at the discrete grid level; we solve
   the topology-specific Poisson problem against the explicit mass tendency.
-  Current CS preprocessing corrects vertically integrated columns and then
-  distributes the correction over levels; do not assume every topology uses
-  independent per-layer corrections. Vertical flux diagnosis follows balance.
+  Every topology (LL, RG, CS) corrects the vertically integrated column and
+  distributes the correction over levels. TM5's `BalanceMassFluxes_m`
+  balances each level instead, but its target includes the IFS vertical flux;
+  without one, a per-level balance leaves no vertical mass flux. Vertical flux
+  diagnosis follows balance.
 - **`recompute_cm_from_dm_target!`** runs *after* balance, not before.
   Initializing `cm` from `divergence(am, bm)` before balance is the
   wrong dependency order because balance changes the horizontal divergence;

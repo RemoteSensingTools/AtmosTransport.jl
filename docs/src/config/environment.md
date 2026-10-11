@@ -35,7 +35,7 @@ These were replaced by configuration keys and are now ignored.
 | `ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS` | `[run] physics_cadence = "substep"` |
 | `ATMOSTR_REPLAY_CHECK` | `[input] validate_replay = true` |
 | `ATMOSTR_NO_REPLAY_CHECK` | none: the load-time replay check runs only when requested |
-| `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE` | `[numerics] balance_mode = "per_layer"` |
+| `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE` | none: the per-layer balance it selected was removed (every path balances the column) |
 | `ATMOSTR_DISABLE_PREFETCH` | `[run] prefetch_windows = false` |
 | `ATMOSTR_ASSERT_CS_BINARY_CFL` | `[advection] check_binary_cfl = true` |
 | `ATMOSTR_NO_WRITE_REPLAY_CHECK` | `[numerics] write_replay_check = false` in the preprocessing config |

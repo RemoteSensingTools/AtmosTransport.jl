@@ -212,17 +212,15 @@ end
 
 """
     apply_poisson_balance!(storage, last_hour_next, steps_per_window, contract=nothing;
-                           balance=nothing, write_replay_on=true)
+                           write_replay_on=true)
 
 Close each stored window against its forward mass endpoint.
 
-By default this applies only a column-integrated horizontal correction, then
+This applies the column Poisson balance (`balance_column_mass_fluxes!`), then
 diagnoses the vertical mass flux from the explicit endpoint mass tendency. This
 keeps the ERA layer winds anchored to the spectral U/V fields while satisfying
 the zero top/bottom `cm` replay contract.
 
-`balance = LayerBalance()` (`[numerics] balance_mode = "per_layer"`) restores
-the older per-layer Poisson correction for controlled comparisons.
 `write_replay_on = false` (`[numerics] write_replay_check = false`) skips the
 write-time replay gate; the typed contract's positivity gate still runs.
 """
@@ -230,39 +228,27 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
                                 last_hour_next,
                                 steps_per_window::Int,
                                 contract = nothing;
-                                balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
                                 write_replay_on::Bool = true) where FT
     Nx, Ny, Nz = size(storage.all_m[1])
     dm_dt_buf = Array{FT}(undef, Nx, Ny, Nz)
     div_scratch = Array{Float64}(undef, Nx, Ny, Nz)
     replay_layout = structured_replay_layout()
 
-    apply_horizontal_balance = effective_horizontal_balance(balance, ColumnBalance()) isa LayerBalance
     poisson_ws = LLPoissonWorkspace(Nx, Ny)
-    if apply_horizontal_balance
-        @info "  Applying horizontal Poisson mass-flux balance (legacy opt-in)..."
-    else
-        @info "  Applying column mass-balance correction; diagnosing cm from endpoint mass tendency..."
-    end
+    @info "  Applying column mass-balance correction; diagnosing cm from endpoint mass tendency..."
 
     worst_column_pre = 0.0
     worst_column_post = 0.0
     worst_column_delta = 0.0
     for win_idx in eachindex(storage.all_m)
         fill_window_mass_tendency!(dm_dt_buf, storage, last_hour_next, win_idx, steps_per_window)
-        if apply_horizontal_balance
-            balance_mass_fluxes!(storage.all_am[win_idx], storage.all_bm[win_idx], dm_dt_buf, poisson_ws)
-            @views storage.all_bm[win_idx][:, 1, :] .= zero(FT)
-            @views storage.all_bm[win_idx][:, Ny + 1, :] .= zero(FT)
-        else
-            col_diag = balance_column_mass_fluxes!(storage.all_am[win_idx],
-                                                   storage.all_bm[win_idx],
-                                                   storage.all_m[win_idx],
-                                                   dm_dt_buf, poisson_ws)
-            worst_column_pre = max(worst_column_pre, col_diag.max_pre_residual)
-            worst_column_post = max(worst_column_post, col_diag.max_post_residual)
-            worst_column_delta = max(worst_column_delta, col_diag.max_face_delta)
-        end
+        col_diag = balance_column_mass_fluxes!(storage.all_am[win_idx],
+                                               storage.all_bm[win_idx],
+                                               storage.all_m[win_idx],
+                                               dm_dt_buf, poisson_ws)
+        worst_column_pre = max(worst_column_pre, col_diag.max_pre_residual)
+        worst_column_post = max(worst_column_post, col_diag.max_post_residual)
+        worst_column_delta = max(worst_column_delta, col_diag.max_face_delta)
         # Dry-basis fix (2026-04-22): use explicit-dm closure, not
         # the hybrid Δb×pit one. The Δb×pit closure assumes
         # dm[k] = dB[k] × Σ_k dm[k], which holds under moist hybrid coords
@@ -276,10 +262,8 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
         @views storage.all_cm[win_idx][:, :, Nz + 1] .= zero(FT)
     end
 
-    if !apply_horizontal_balance
-        @info @sprintf("  Column balance summary: pre=%.3e post=%.3e max_face_delta=%.3e kg",
-                       worst_column_pre, worst_column_post, worst_column_delta)
-    end
+    @info @sprintf("  Column balance summary: pre=%.3e post=%.3e max_face_delta=%.3e kg",
+                   worst_column_pre, worst_column_post, worst_column_delta)
 
     # Write-time replay gate. Under the
     # `:window_constant` contract, starting from `storage.all_m[k]` and
@@ -304,7 +288,6 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
                                 steps_schedule::Vector{Int},
                                 contract,
                                 substep_policy::SubstepSchedulePolicy;
-                                balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
                                 write_replay_on::Bool = true) where FT
     contract === nothing &&
         throw(ArgumentError("adaptive LL Poisson balance requires a LatLonContract"))
@@ -316,14 +299,9 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
     div_scratch = Array{Float64}(undef, Nx, Ny, Nz)
     replay_layout = structured_replay_layout()
 
-    apply_horizontal_balance = effective_horizontal_balance(balance, ColumnBalance()) isa LayerBalance
     poisson_ws = LLPoissonWorkspace(Nx, Ny)
-    if apply_horizontal_balance
-        @info "  Applying horizontal Poisson mass-flux balance (legacy opt-in)..."
-    else
-        mode = substep_policy.adaptive_substeps ? "adaptive" : "fixed"
-        @info "  Applying column mass-balance correction with $(mode) substep schedule..."
-    end
+    mode = substep_policy.adaptive_substeps ? "adaptive" : "fixed"
+    @info "  Applying column mass-balance correction with $(mode) substep schedule..."
 
     write_replay_on || @info "  Write-time replay gate SKIPPED (disabled for this run)"
 
@@ -349,21 +327,13 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
 
             fill_window_mass_tendency!(dm_dt_buf, storage, last_hour_next,
                                        win_idx, steps)
-            if apply_horizontal_balance
-                balance_mass_fluxes!(storage.all_am[win_idx],
-                                     storage.all_bm[win_idx],
-                                     dm_dt_buf, poisson_ws)
-                @views storage.all_bm[win_idx][:, 1, :] .= zero(FT)
-                @views storage.all_bm[win_idx][:, Ny + 1, :] .= zero(FT)
-            else
-                col_diag = balance_column_mass_fluxes!(storage.all_am[win_idx],
-                                                       storage.all_bm[win_idx],
-                                                       storage.all_m[win_idx],
-                                                       dm_dt_buf, poisson_ws)
-                worst_column_pre = max(worst_column_pre, col_diag.max_pre_residual)
-                worst_column_post = max(worst_column_post, col_diag.max_post_residual)
-                worst_column_delta = max(worst_column_delta, col_diag.max_face_delta)
-            end
+            col_diag = balance_column_mass_fluxes!(storage.all_am[win_idx],
+                                                   storage.all_bm[win_idx],
+                                                   storage.all_m[win_idx],
+                                                   dm_dt_buf, poisson_ws)
+            worst_column_pre = max(worst_column_pre, col_diag.max_pre_residual)
+            worst_column_post = max(worst_column_post, col_diag.max_post_residual)
+            worst_column_delta = max(worst_column_delta, col_diag.max_face_delta)
             recompute_cm_from_dm_target!(replay_layout, div_scratch,
                                          storage.all_cm[win_idx],
                                          storage.all_m[win_idx], dm_dt_buf,
@@ -414,10 +384,8 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
     end
 
     set_contract_steps_schedule!(contract, steps_schedule)
-    if !apply_horizontal_balance
-        @info @sprintf("  Column balance summary: pre=%.3e post=%.3e max_face_delta=%.3e kg",
-                       worst_column_pre, worst_column_post, worst_column_delta)
-    end
+    @info @sprintf("  Column balance summary: pre=%.3e post=%.3e max_face_delta=%.3e kg",
+                   worst_column_pre, worst_column_post, worst_column_delta)
     if write_replay_on
         @info @sprintf("  Write-time LL replay gate: max rel=%.3e abs=%.3e win=%d cell=%s",
                        worst_replay_rel, worst_replay_abs, worst_replay_win,

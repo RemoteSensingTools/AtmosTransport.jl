@@ -143,13 +143,15 @@ end
                     dm_target_work, buf, slot, m_next, work, cL, steps_per_window;
                     tol, max_iter)
 
-Poisson-balance the horizontal fluxes in buffer `slot` using the
-compressed Laplacian `cL` for the CG solver.  Mathematically identical
-to the old face-indexed CG but ~16-27× faster because the compressed
-MatVec iterates over ~4×ncells entries instead of nfaces (millions).
+Close the window in buffer `slot` against its end point `m_next`: the column
+Poisson balance of its horizontal fluxes (`balance_compressed_column_fluxes!`,
+one CG solve on the compressed Laplacian `cL`, correction spread over the
+layers by air mass), then the vertical mass flux `cm` from the explicit
+endpoint tendency (`recompute_cm_from_dm_target!`). The balanced fluxes and
+`cm` are stored back into the buffer in its float type.
 
 All scratch arrays are preallocated Float64 buffers — no per-call allocation.
-Returns a diagnostics NamedTuple.
+Returns the balance diagnostics.
 """
 function balance_window!(hflux_work::Matrix{Float64},
                          m_cur_work::Matrix{Float64},
@@ -175,7 +177,7 @@ function balance_window!(hflux_work::Matrix{Float64},
                Ap = work.balance_Ap, z = work.balance_z)
     replay_layout = faceindexed_replay_layout(work.face_left, work.face_right)
 
-    diag = balance_compressed_horizontal_fluxes!(
+    diag = balance_compressed_column_fluxes!(
         hflux_work, m_cur_work, m_next_work,
         work.face_left, work.face_right, cL,
         steps_per_window, scratch; tol=tol, max_iter=max_iter)
@@ -385,7 +387,7 @@ memory from `O(Nt)` to `O(1)` and enables O160/O320 binary generation.
 
 Pipeline per window:
   spectral synthesis → mass fix → level merge → (wait for next window) →
-  Poisson balance using (m_cur, m_next) → cm recomputation → stream-write
+  column Poisson balance using (m_cur, m_next) → cm recomputation → stream-write
 """
 function process_day(date::Date,
                      grid::ReducedGaussianTargetGeometry,
@@ -402,9 +404,6 @@ function process_day(date::Date,
                      run_cache = nothing)
     FT = settings.output_float_type
     _check_spectral_column_weights(grid, settings)
-    get(settings, :horizontal_balance, nothing) isa ColumnBalance && throw(ArgumentError(
-        "reduced-Gaussian preprocessing balances each layer (ring Poisson CG); " *
-        "[numerics] balance_mode = \"column\" is not implemented for it"))
     settings.include_qv && throw(ArgumentError(
         "reduced-Gaussian preprocessing does not support output.include_qv=true; " *
         "set include_qv=false (humidity may still be used internally for dry-basis conversion)"))
@@ -492,7 +491,7 @@ function process_day(date::Date,
             "target_type"      => "reduced_gaussian",
             "gaussian_number"  => grid.gaussian_number,
             "poisson_balanced" => true,
-            "horizontal_balance" => balance_tag(LayerBalance()),
+            "horizontal_balance" => HORIZONTAL_BALANCE_TAG,
             "mass_fix_enabled" => settings.mass_fix_enable,
             "mass_fix_target_ps_dry_pa" => settings.target_ps_dry_pa,
             "mass_fix_qv_global_climatology" => settings.qv_global_climatology,

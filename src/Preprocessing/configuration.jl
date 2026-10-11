@@ -160,71 +160,31 @@ keeping roundoff bounded. Set it to `1` for the legacy every-iteration path.
 """
 function resolve_balance_settings(cfg)
     numerics = get(cfg, "numerics", Dict{String, Any}())
+    reject_removed_balance_mode(numerics)
     return (
         cs_balance_tol = Float64(get(numerics, "cs_balance_tol", DEFAULT_POISSON_BALANCE_TOL)),
         cs_balance_project_every = Int(get(numerics, "cs_balance_project_every",
                                            DEFAULT_POISSON_PROJECT_EVERY)),
-        horizontal_balance = resolve_horizontal_balance(numerics),
         column_balance_weights = resolve_column_balance_weights(numerics),
     )
 end
 
 """
-    AbstractHorizontalBalance
+    reject_removed_balance_mode(numerics)
 
-How preprocessing closes a window's horizontal mass fluxes against its endpoint
-mass tendency before `cm` is diagnosed from that tendency:
-
-- [`ColumnBalance`](@ref): one Poisson solve for the column-integrated
-  divergence, with the correction distributed over the layers (by air mass,
-  or by the source's `column_balance_weights`), so the layer winds keep their
-  vertical structure. Default of the lat-lon and cubed-sphere paths.
-- [`LayerBalance`](@ref): one Poisson solve per layer. The reduced-Gaussian
-  path always balances per layer.
-
-Selected by `[numerics] balance_mode = "column" | "per_layer"` and recorded in
-the transport-binary header as `horizontal_balance`.
+Throw if a preprocessing `[numerics]` table sets `balance_mode` (or its older
+name `geos_balance_mode`): the per-layer balance it selected was removed, and
+every path applies the column balance (`HORIZONTAL_BALANCE_TAG`).
 """
-abstract type AbstractHorizontalBalance end
-
-"Column-integrated Poisson balance; see [`AbstractHorizontalBalance`](@ref)."
-struct ColumnBalance <: AbstractHorizontalBalance end
-
-"Per-layer Poisson balance; see [`AbstractHorizontalBalance`](@ref)."
-struct LayerBalance <: AbstractHorizontalBalance end
-
-balance_tag(::ColumnBalance) = "column"
-balance_tag(::LayerBalance) = "per_layer"
-
-const _BALANCE_MODES = Dict("column" => ColumnBalance(), "per_layer" => LayerBalance())
-
-"""
-    resolve_horizontal_balance(numerics) -> Union{Nothing, AbstractHorizontalBalance}
-
-`[numerics] balance_mode` (`"column"` or `"per_layer"`), or `nothing` when it
-is not set, so that each preprocessing path applies its own default through
-`effective_horizontal_balance`.
-"""
-function resolve_horizontal_balance(numerics::AbstractDict)
-    haskey(numerics, "geos_balance_mode") && throw(ArgumentError(
-        "[numerics].geos_balance_mode was renamed balance_mode"))
-    haskey(numerics, "balance_mode") || return nothing
-    raw = numerics["balance_mode"]
-    mode = raw isa AbstractString ? get(_BALANCE_MODES, lowercase(raw), nothing) : nothing
-    mode === nothing && throw(ArgumentError(
-        "[numerics].balance_mode must be \"column\" or \"per_layer\"; got $(repr(raw))"))
-    return mode
+function reject_removed_balance_mode(numerics::AbstractDict)
+    for key in ("balance_mode", "geos_balance_mode")
+        haskey(numerics, key) && throw(ArgumentError(
+            "[numerics].$key is removed: every preprocessing path applies the column " *
+            "Poisson balance (the per-layer balance left no vertical mass flux); " *
+            "delete the key"))
+    end
+    return nothing
 end
-
-"""
-    effective_horizontal_balance(balance, default) -> AbstractHorizontalBalance
-
-The balance a preprocessing path applies: `balance` (from `[numerics]
-balance_mode`) when given, else the path's `default`.
-"""
-effective_horizontal_balance(balance::Union{Nothing, AbstractHorizontalBalance},
-                             default::AbstractHorizontalBalance) =
-    something(balance, default)
 
 """
     resolve_column_balance_weights(numerics) -> Symbol
@@ -250,17 +210,8 @@ function _validate_column_balance_weights(kind::Symbol, source::AbstractString)
     return kind
 end
 
-# Column weights spread the column balance's correction over the levels; a
-# per-layer balance has no column correction to spread.
-function _reject_layer_balance_weights(balance::AbstractHorizontalBalance, kind::Symbol)
-    balance isa LayerBalance && kind !== :mass && throw(ArgumentError(
-        "column_balance_weights = $(kind) applies to the column Poisson balance; it cannot be " *
-        "combined with [numerics] balance_mode = \"per_layer\""))
-    return nothing
-end
-
-# Spectral targets whose balance spreads the column correction by mass only
-# (lat-lon) or that balance each layer (reduced Gaussian) reject other weights.
+# Spectral targets whose column balance spreads its correction by mass only
+# (lat-lon, reduced Gaussian) reject other weights.
 function _require_mass_column_weights(settings, reason::AbstractString)
     kind = get(settings, :column_balance_weights, :mass)
     kind === :mass || throw(ArgumentError(
@@ -272,18 +223,12 @@ end
 # Whether the spectral preprocessing of a target can honor the configured
 # column weights; checked by the entry point before any input is read, and by
 # each writer for direct callers.
-function _check_spectral_column_weights(::CubedSphereTargetGeometry, settings)
-    kind = _validate_column_balance_weights(get(settings, :column_balance_weights, :mass),
-                                            "[numerics]")
-    balance = effective_horizontal_balance(get(settings, :horizontal_balance, nothing),
-                                           ColumnBalance())
-    _reject_layer_balance_weights(balance, kind)
-    return kind
-end
+_check_spectral_column_weights(::CubedSphereTargetGeometry, settings) =
+    _validate_column_balance_weights(get(settings, :column_balance_weights, :mass), "[numerics]")
 _check_spectral_column_weights(::LatLonTargetGeometry, settings) =
     _require_mass_column_weights(settings, "the lat-lon column balance spreads its correction by layer mass")
 _check_spectral_column_weights(::ReducedGaussianTargetGeometry, settings) =
-    _require_mass_column_weights(settings, "the reduced-Gaussian path balances each layer")
+    _require_mass_column_weights(settings, "the reduced-Gaussian column balance spreads its correction by layer mass")
 
 # Record non-default column weights in a binary header. Binaries of the ERA5
 # spectral, lat-lon → cubed-sphere and GEOS paths written with the default

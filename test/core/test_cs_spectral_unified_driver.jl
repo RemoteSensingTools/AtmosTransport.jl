@@ -62,10 +62,9 @@ function _cs_test_vertical(::Type{FT}) where FT
 end
 
 function _cs_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir;
-                           column_balance_weights = :mass, horizontal_balance = nothing) where FT
+                           column_balance_weights = :mass) where FT
     return ERA5SpectralSettings((
         column_balance_weights = column_balance_weights,
-        horizontal_balance = horizontal_balance,
         output_float_type = FT,
         spectral_dir = spectral_dir,
         spectral_cache_dir = cache_dir,
@@ -139,10 +138,5 @@ end
         @test hyb_header[:column_balance_weights] == "hybrid_b"
         @test !haskey(first_header, :column_balance_weights)
         @test hyb_payload == first_payload
-        # A per-layer balance has no column correction to weight; checked before any input is read.
-        layer = _cs_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "layer");
-                                  column_balance_weights = :hybrid_b,
-                                  horizontal_balance = AtmosTransport.Preprocessing.LayerBalance())
-        @test_throws ArgumentError process_day(date, grid, layer, vertical; positivity_cfl_limit = 0.95)
     end
 end

@@ -396,6 +396,56 @@ function column_weights(kind::Symbol, B)
     return COLUMN_WEIGHT_KINDS[kind](B)
 end
 
+"""
+    spread_column_correction!(flux, delta, weights, m_a, m_b)
+
+Add the column correction `delta` (kg per flux application) of one face to the
+face's layer fluxes `flux[k]`, `k = 1 … Nz` (top first), with `m_a[k]` and
+`m_b[k]` the air masses of the two cells that share the face:
+
+```math
+\\Delta F_k = \\delta \\, \\frac{w_k}{\\sum_{j=1}^{N_z} w_j},
+```
+
+where the layer weight `w_k` comes from `weights` (see `AbstractColumnWeights`):
+`w_k = m_{a,k} + m_{b,k}` for `MassWeightedColumn()`. Each increment is rounded
+to the flux type; the bottom layer takes `δ` minus the rounded increments of
+the layers above, so the increments sum to `δ` up to the rounding of that last
+addition. A face whose weights are all zero receives `δ / N_z` per layer.
+
+This is the vertical distribution step of every column Poisson balance (the
+lat-lon `balance_column_mass_fluxes!`, the reduced-Gaussian
+`balance_compressed_column_fluxes!` and the cubed-sphere
+`balance_cs_column_mass_fluxes!`).
+"""
+@inline function spread_column_correction!(flux::AbstractVector{FT}, delta::Float64,
+                                           weights::AbstractColumnWeights,
+                                           m_a::AbstractVector, m_b::AbstractVector) where FT
+    Nz = length(flux)
+    denom = 0.0
+    @inbounds for k in 1:Nz
+        denom += _layer_weight(weights, m_a[k], m_b[k], k)
+    end
+    applied = 0.0
+    if denom > 0.0
+        @inbounds for k in 1:Nz-1
+            w = _layer_weight(weights, m_a[k], m_b[k], k) / denom
+            inc = FT(delta * w)
+            flux[k] += inc
+            applied += Float64(inc)
+        end
+    else
+        even = delta / Nz
+        @inbounds for k in 1:Nz-1
+            inc = FT(even)
+            flux[k] += inc
+            applied += Float64(inc)
+        end
+    end
+    @inbounds flux[Nz] += FT(delta - applied)
+    return flux
+end
+
 function _distribute_cs_column_delta!(panels_am::NTuple{6, Array{FT, 3}},
                                       panels_bm::NTuple{6, Array{FT, 3}},
                                       panels_m::NTuple{6, Array{FT, 3}},
@@ -408,68 +458,21 @@ function _distribute_cs_column_delta!(panels_am::NTuple{6, Array{FT, 3}},
     _check_weight_levels(weights, Nz)
     max_face_delta = 0.0
     for p in 1:6
+        am, bm, m = panels_am[p], panels_bm[p], panels_m[p]
         @inbounds for j in 1:Nc, i in 1:Nc + 1
             delta = Float64(col_am[p][i, j, 1] - col_am_before[p][i, j, 1])
             max_face_delta = max(max_face_delta, abs(delta))
             delta == 0.0 && continue
-
-            i_l = max(i - 1, 1)
-            i_r = min(i, Nc)
-            denom = 0.0
-            for k in 1:Nz
-                denom += _layer_weight(weights, panels_m[p][i_l, j, k], panels_m[p][i_r, j, k], k)
-            end
-            if denom > 0.0
-                applied = 0.0
-                for k in 1:Nz-1
-                    w = _layer_weight(weights, panels_m[p][i_l, j, k], panels_m[p][i_r, j, k], k) / denom
-                    inc = FT(delta * w)
-                    panels_am[p][i, j, k] += inc
-                    applied += Float64(inc)
-                end
-                panels_am[p][i, j, Nz] += FT(delta - applied)
-            else
-                applied = 0.0
-                even = delta / Nz
-                for k in 1:Nz-1
-                    inc = FT(even)
-                    panels_am[p][i, j, k] += inc
-                    applied += Float64(inc)
-                end
-                panels_am[p][i, j, Nz] += FT(delta - applied)
-            end
+            spread_column_correction!(view(am, i, j, :), delta, weights,
+                                      view(m, max(i - 1, 1), j, :), view(m, min(i, Nc), j, :))
         end
 
         @inbounds for j in 1:Nc + 1, i in 1:Nc
             delta = Float64(col_bm[p][i, j, 1] - col_bm_before[p][i, j, 1])
             max_face_delta = max(max_face_delta, abs(delta))
             delta == 0.0 && continue
-
-            j_s = max(j - 1, 1)
-            j_n = min(j, Nc)
-            denom = 0.0
-            for k in 1:Nz
-                denom += _layer_weight(weights, panels_m[p][i, j_s, k], panels_m[p][i, j_n, k], k)
-            end
-            if denom > 0.0
-                applied = 0.0
-                for k in 1:Nz-1
-                    w = _layer_weight(weights, panels_m[p][i, j_s, k], panels_m[p][i, j_n, k], k) / denom
-                    inc = FT(delta * w)
-                    panels_bm[p][i, j, k] += inc
-                    applied += Float64(inc)
-                end
-                panels_bm[p][i, j, Nz] += FT(delta - applied)
-            else
-                applied = 0.0
-                even = delta / Nz
-                for k in 1:Nz-1
-                    inc = FT(even)
-                    panels_bm[p][i, j, k] += inc
-                    applied += Float64(inc)
-                end
-                panels_bm[p][i, j, Nz] += FT(delta - applied)
-            end
+            spread_column_correction!(view(bm, i, j, :), delta, weights,
+                                      view(m, i, max(j - 1, 1), :), view(m, i, min(j, Nc), :))
         end
     end
     return max_face_delta

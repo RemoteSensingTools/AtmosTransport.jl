@@ -188,7 +188,7 @@ documented validation run.
 | Capability | Status | Notes |
 | --- | :---: | --- |
 | Lat-Lon (structured) | ✅ | Full operator suite, multi-tracer fused kernels |
-| Reduced Gaussian (face-indexed) | ✅ | Spectral path + ring-aware Poisson balance |
+| Reduced Gaussian (face-indexed) | 🟡 | ERA5 spectral path with the column Poisson balance on the ring graph; CPU-tested, no production campaign. Binaries written before the column balance (header `horizontal_balance = "per_layer"`) carry almost no vertical mass flux: regenerate them |
 | Cubed-sphere (gnomonic) | ✅ | Six-panel split-sweep + Lin-Rood ORD=5/7 |
 | Cubed-sphere (GEOS-native) | ✅ | Panel-5 rotation, GEOS-IT C180 validated |
 | Hybrid σ-pressure vertical | ✅ | TOA at k=1, surface at k=Nz |

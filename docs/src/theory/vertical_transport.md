@@ -245,7 +245,18 @@ about 0.1–0.2 Pa/s RMS before correction. AtmosTransport closes each column:
    change of column air mass over the window (`balance_cs_column_mass_fluxes!`,
    `src/Preprocessing/cs_poisson_balance.jl`).
 2. Spread each face's column correction `δF` over the levels with weights
-   `w_k`: `δF_k = w_k δF / Σ_j w_j`.
+   `w_k`: `δF_k = w_k δF / Σ_j w_j` (`spread_column_correction!`).
+
+The lat-lon (`balance_column_mass_fluxes!`) and reduced-Gaussian
+(`balance_compressed_column_fluxes!`) spectral paths close their columns the
+same way, with `mass` weights. No path balances each level to its own mass
+change: with the column closed, the per-level imbalance that remains is the
+vertical mass flux of section 3, and a per-level balance would remove it.
+TM5's per-level balance (`BalanceMassFluxes_m`) keeps vertical motion only
+because its target includes the IFS vertical flux; our preprocessing has no
+independent vertical flux. The reduced-Gaussian path balanced per level until
+issue #11, which left its vertical mass flux at about 1e-4 of the lat-lon one
+on the same ERA5 day.
 
 The weights are selectable (`column_balance_weights`, on every cubed-sphere
 path; [Data sources](../config/data_sources.md) lists where each path sets

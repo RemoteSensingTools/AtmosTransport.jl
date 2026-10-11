@@ -225,11 +225,9 @@ it is set:
 - lat-lon → cubed-sphere regrid: `--column-balance-weights` of
   `scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl`.
 
-The weights need the column balance: an effective per-layer balance
-(`balance_mode = "per_layer"` where it applies; the GEOS moisture-filtered and
-OMEGA closures always balance the column) and the GEOS closures that keep the
-native fluxes (`pressure_fixer`, `pfix_corrected`) reject other weights than
-`"mass"`. MERRA-2 and ERA5 N320 headers always
+The GEOS closures that keep the native fluxes (`pressure_fixer`,
+`pfix_corrected`) have no column balance to weight and reject other weights
+than `"mass"`. MERRA-2 and ERA5 N320 headers always
 record the choice; the other paths record it when it is not `"mass"`. See
 [Vertical transport](../theory/vertical_transport.md) section 2 and
 `config/met_sources/merra2_geoschem_hybrid{b,mass}.toml`.

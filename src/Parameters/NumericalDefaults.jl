@@ -72,6 +72,20 @@ solve projects out the null-space (global-mean) component.
 """
 const DEFAULT_POISSON_PROJECT_EVERY = 50
 
+"""
+Value of the transport-binary header key `horizontal_balance` written by every
+preprocessing path that Poisson-balances its horizontal mass fluxes: `"column"`.
+
+Every path closes a window's horizontal fluxes against its endpoint mass
+tendency with one Poisson solve for the column-integrated divergence and
+spreads each face's correction over the layers, so the layer winds keep their
+vertical structure and the vertical mass flux diagnosed from the explicit
+tendency carries the vertical motion. A per-layer balance would leave almost
+nothing for that vertical flux because preprocessing has no independent
+vertical-flux input (issue #11).
+"""
+const HORIZONTAL_BALANCE_TAG = "column"
+
 "Weight of one GEOS moisture-filter / column-drift smoothing sweep (see `DEFAULT_GEOS_SMOOTHING_SWEEPS`)."
 const DEFAULT_GEOS_SMOOTHING_WEIGHT = 0.5
 
@@ -85,5 +99,6 @@ export DEFAULT_CFL_LIMIT, DEFAULT_POSITIVITY_CFL_LIMIT, DEFAULT_SUBSTEP_CFL_TARG
        ERA5_N320_SUBSTEP_CFL_TARGET, COARSEN_SUBSTEP_CFL_TARGET, DEFAULT_MET_INTERVAL_SECONDS,
        DEFAULT_BACKGROUND_VMR, DEFAULT_GEOS_SMOOTHING_SWEEPS, DEFAULT_MAX_SUBCYCLES,
        DEFAULT_MAX_STEPS_PER_WINDOW, ADAPTIVE_SUBSTEP_MAX_REFINEMENTS, DEFAULT_POISSON_BALANCE_TOL,
-       DEFAULT_POISSON_BALANCE_MAX_ITER, DEFAULT_POISSON_PROJECT_EVERY, DEFAULT_GEOS_SMOOTHING_WEIGHT,
+       DEFAULT_POISSON_BALANCE_MAX_ITER, DEFAULT_POISSON_PROJECT_EVERY, HORIZONTAL_BALANCE_TAG,
+       DEFAULT_GEOS_SMOOTHING_WEIGHT,
        DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG, DEFAULT_LINROOD_PPM_ORDER

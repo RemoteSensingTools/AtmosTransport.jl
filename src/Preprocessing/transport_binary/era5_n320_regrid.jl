@@ -21,9 +21,8 @@
 #   per window transition (windows 2..24):
 #     5. Read the next window's pipeline output so we can close continuity
 #        against the explicit endpoint-mass target.
-#     6. Poisson-balance the current window's horizontal fluxes against
-#        the next-window mass tendency (column balance by default; per-layer
-#        global balance with `[numerics] balance_mode = "per_layer"`).
+#     6. Column Poisson-balance the current window's horizontal fluxes
+#        against the next-window mass tendency.
 #     7. Diagnose cm from the balanced fluxes + endpoint mass tendency.
 #        With adaptive substeps, steps 6-7 repeat at a higher substep count
 #        until the per-substep CFL is under `substep_cfl_target`; the
@@ -255,8 +254,7 @@ end
                                  cache_dir = nothing,
                                  include_convection = false,
                                  global_mass_pin = false,
-                                 global_mass_target_kg = NaN,
-                                 horizontal_balance = nothing)
+                                 global_mass_target_kg = NaN)
 
 The float type is the target grid's (`target_grid::CubedSphereTargetGeometry{FT}`).
 
@@ -300,13 +298,10 @@ function process_era5_n320_to_cs_day(date::Date,
                                        cache_dir::Union{Nothing, AbstractString} = nothing,
                                        include_convection::Bool = false,
                                        global_mass_pin::Bool = false,
-                                       global_mass_target_kg::Real = NaN,
-                                       horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing) where FT
+                                       global_mass_target_kg::Real = NaN) where FT
     mass_basis === :dry ||
         throw(ArgumentError("ERA5 N320 → CS writer only supports mass_basis=:dry; got $(mass_basis)"))
     _validate_flux_construction(settings, "ERA5")
-    horizontal_balance = effective_horizontal_balance(horizontal_balance, ColumnBalance())
-    _reject_layer_balance_weights(horizontal_balance, settings.column_balance_weights)
     native_vc_cfg = load_hybrid_coefficients(settings.coefficients_file)
     native_vc_ft = HybridSigmaPressure(FT.(native_vc_cfg.A), FT.(native_vc_cfg.B))
     plan = if vertical_plan === nothing
@@ -582,7 +577,7 @@ function process_era5_n320_to_cs_day(date::Date,
                 "vertical_Nz_output" => Nz_int,
                 "merge_map" => plan.merge_map,
                 "poisson_balanced" => true,
-                "horizontal_balance" => balance_tag(horizontal_balance),
+                "horizontal_balance" => HORIZONTAL_BALANCE_TAG,
                 "column_balance_weights" => String(settings.column_balance_weights),
                 "face_fluxes" => String(settings.face_fluxes),
                 "flux_face_lengths" => settings.face_fluxes === :panel_average ? String(settings.face_lengths) : "edge",
@@ -641,7 +636,6 @@ function process_era5_n320_to_cs_day(date::Date,
         worst_pre = 0.0; worst_post = 0.0; worst_iter = 0
         worst_replay_rel = 0.0; worst_replay_abs = 0.0; worst_replay_win = 0
         worst_positivity = init_cs_positivity_accumulator()
-        apply_horizontal_balance = horizontal_balance isa LayerBalance
 
         # Reconstruct + Poisson-balance + diagnose `cm` for the CURRENT window
         # (`pipe` outputs, balanced against `m_next`) at a given substep count.
@@ -660,22 +654,13 @@ function process_era5_n320_to_cs_day(date::Date,
             end
             _merge_cs_center_extensive!(am, native_am, plan, MassFluxField())
             _merge_cs_center_extensive!(bm, native_bm, plan, MassFluxField())
-            bal_diag = if apply_horizontal_balance
-                balance_cs_global_mass_fluxes!(
-                    am, bm, m_dry, m_next,
-                    target_grid.face_table, target_grid.cell_degree, steps,
-                    target_grid.poisson_scratch; tol = Float64(cs_balance_tol),
-                    max_iter = DEFAULT_POISSON_BALANCE_MAX_ITER,
-                    project_every = Int(cs_balance_project_every))
-            else
-                balance_cs_column_mass_fluxes!(
-                    am, bm, m_dry, m_next,
-                    target_grid.face_table, target_grid.cell_degree, steps,
-                    target_grid.poisson_scratch; tol = Float64(cs_balance_tol),
-                    max_iter = DEFAULT_POISSON_BALANCE_MAX_ITER,
-                    project_every = Int(cs_balance_project_every),
-                    weights = balance_weights)
-            end
+            bal_diag = balance_cs_column_mass_fluxes!(
+                am, bm, m_dry, m_next,
+                target_grid.face_table, target_grid.cell_degree, steps,
+                target_grid.poisson_scratch; tol = Float64(cs_balance_tol),
+                max_iter = DEFAULT_POISSON_BALANCE_MAX_ITER,
+                project_every = Int(cs_balance_project_every),
+                weights = balance_weights)
             sync_all_cs_boundary_mirrors!(am, bm, mesh.connectivity, Nc, Nz_int)
             fill_cs_window_mass_tendency!(dm, m_dry, m_next, steps)
             for p in 1:6; fill!(cm[p], zero(FT)); end
@@ -986,7 +971,6 @@ function process_day(date::Date,
                      max_steps_per_window::Integer = typemax(Int),
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
-                     horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
                      kwargs...)
     # The substep floor is the policy's min_steps_per_window (the entrypoint
     # resolves it from [numerics]); adaptive scheduling raises it per window to
@@ -1008,8 +992,7 @@ function process_day(date::Date,
         cache_dir                 = grid.cache_dir,
         include_convection        = settings.include_convection,
         global_mass_pin           = global_mass_pin,
-        global_mass_target_kg     = global_mass_target_kg,
-        horizontal_balance        = horizontal_balance)
+        global_mass_target_kg     = global_mass_target_kg)
     # Surface the fixed target so the unified driver's serial path can echo it
     # across days (no-op for the threaded path, which uses the config target).
     return (; final_m = nothing,
