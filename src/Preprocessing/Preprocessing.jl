@@ -149,6 +149,7 @@ using ..MetDrivers: LatLonBinaryGeometry, CubedSphereBinaryGeometry, TransportBi
                     read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh,
                     load_window!, load_flux_delta_window!,
                     has_tm5_convection, load_tm5_convection_window!,
+                    TM5_CONVECTION_MASS_BASIS_KEY, tm5_convection_mass_basis,
                     load_surface_window!,
                     TransportBinaryContract, canonical_window_constant_contract,
                     validate_transport_contract!,
@@ -269,6 +270,9 @@ include("flux_construction.jl")
 # Configuration parsing
 include("configuration.jl")
 
+# Convective mass fluxes on the binary's air-mass basis (shared with GEOS).
+include("convection_mass_basis.jl")
+
 # TM5 convection ec2tm conversion
 # (Loaded before binary_pipeline so the LL process_day hook can
 # reference TM5PreprocessingWorkspace / TM5CleanupStats by type.)
@@ -367,7 +371,7 @@ export era5_grib_path
 export ERA5N320SpectralWorkspace, ERA5N320WindowFields
 export allocate_era5_n320_spectral_workspace, allocate_era5_n320_window_fields
 export discover_era5_n320_source_grid, discover_era5_spectral_truncation
-export read_era5_n320_window_fields!
+export read_era5_n320_window_fields!, read_era5_n320_humidity!
 export ERA5N320DryMassFields, allocate_era5_n320_dry_mass_fields,
        derive_n320_dry_mass!, derive_c180_dry_mass!, n320_cell_areas
 export ERA5C180RegridFields, ERA5C180RegridWorkspace,
@@ -378,6 +382,7 @@ export ERA5N320ConvectionFields, allocate_era5_n320_convection_fields,
 export ERA5C180RawConvectionFields, ERA5C180TM5ConvectionFields,
        allocate_era5_c180_raw_convection_fields,
        regrid_n320_raw_convection_to_c180!, derive_c180_tm5_convection!
+export ERA5HumidityRemap, open_era5_humidity_remap, remap_era5_humidity!
 export ERA5N320ToC180Pipeline, allocate_era5_n320_to_c180_pipeline,
        process_era5_n320_window!
 export process_era5_n320_to_cs_day
@@ -420,6 +425,7 @@ export build_target_geometry, target_summary
 export process_day, regrid_transport_binary, regrid_ll_binary_to_cs
 export ec2tm!
 export ec2tm_from_rates!, TM5CleanupStats
+export interface_specific_humidity, ecmwf_convection_to_basis!, tm5_convection_to_basis!
 export dz_hydrostatic_virtual!, dz_hydrostatic_constT!
 export convert_era5_physics_nc_to_bin
 export ERA5PhysicsBinaryReader, ERA5PhysicsBinaryHeader

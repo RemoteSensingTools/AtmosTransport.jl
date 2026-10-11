@@ -451,9 +451,11 @@ function _moist_to_dry_dtrain!(dtrain::NTuple{6, Array{FT,3}},
 end
 
 # CMFMC at interfaces (Nz+1): face k sits between centers k−1 (above)
-# and k (below) under TOA-first orientation. Use the four-corner mean
-# (two centers × two endpoints) for interior faces; collapse to the
-# single adjacent center at the model top (k=1) and surface (k=Nz+1).
+# and k (below) under TOA-first orientation. The face humidity is
+# `interface_specific_humidity` over both endpoints: the four-corner mean
+# (two centers × two endpoints) for interior faces, the single adjacent
+# center at the model top (k=1) and surface (k=Nz+1). ERA5 convection
+# (`ecmwf_convection_to_basis!`) uses the same rule.
 function _moist_to_dry_cmfmc!(cmfmc::NTuple{6, Array{FT,3}},
                               qv::NTuple{6, Array{FT,3}},
                               qv_next::NTuple{6, Array{FT,3}}) where {FT}
@@ -462,14 +464,7 @@ function _moist_to_dry_cmfmc!(cmfmc::NTuple{6, Array{FT,3}},
         Nc1, Nc2, Nz1 = size(c)
         Nz = Nz1 - 1
         for k in 1:Nz1, j in 1:Nc2, i in 1:Nc1
-            qv_face = if k == 1
-                (q1[i, j, 1] + q2[i, j, 1]) * FT(0.5)
-            elseif k == Nz1
-                (q1[i, j, Nz] + q2[i, j, Nz]) * FT(0.5)
-            else
-                (q1[i, j, k-1] + q1[i, j, k] +
-                 q2[i, j, k-1] + q2[i, j, k]) * FT(0.25)
-            end
+            qv_face = interface_specific_humidity(k, Nz, i, j, q1, q2)
             c[i, j, k] *= (one(FT) - qv_face)
         end
     end

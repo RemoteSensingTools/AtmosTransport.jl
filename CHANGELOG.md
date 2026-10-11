@@ -161,6 +161,14 @@
   cy3-4dvar/CAMS73 list verbatim. AtmosTransport's `ml137_66L`,
   `ml137_cfl94`, and `ml137_cfl85` recipes were transformed to keep their
   existing grids bit-identical; `ml137_tropo34` binaries must be regenerated.
+- ERA5 and legacy TM5-archive convection fluxes are now converted from their
+  total-air (moist) basis to the transport binary's air-mass basis before use.
+  This removes a 0.7–1.1% global high bias (up to about 2% in humid tropical
+  columns) in TM5 convective rates for dry-air binaries. New binaries record
+  `tm5_convection_mass_basis`; readers reject a recorded mismatch and warn for
+  legacy dry TM5 binaries until the production archive is regenerated. All
+  three ERA5 routes are covered: spectral ec2tm, N320 to cubed sphere, and the
+  CATRINE TM5 attachment. Reported by pera-noaa (NOAA GML).
 - Transport binaries (eager and streaming writers), the spectral day cache and
   cached regridders are published through `AtomicFiles`: a sibling staging
   file moved onto the target by one replacing rename (`rename(2)` on POSIX

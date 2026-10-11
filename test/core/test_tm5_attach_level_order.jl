@@ -41,6 +41,34 @@ const PP = AtmosTransport.Preprocessing
     @test isnan(AttachScript.updraft_mean_level(ntuple(_ -> zeros(Float32, 2, 2, 10), 6)))
 end
 
+@testset "legacy TM5 convection moist-to-dry attachment" begin
+    nlon, nlat, nlev = 2, 1, 4
+    era5_level = nlev:-1:1                         # archive is surface first
+    shape = (nlon, nlat, nlev)
+    # Two closed TM5 drafts in top-first order, then store them file-order.
+    top_first = (
+        eu = [0.0, 0.2, 0.1, 0.0], du = [0.0, 0.0, 0.1, 0.2],
+        ed = [0.0, 0.03, 0.02, 0.0], dd = [0.0, 0.0, 0.02, 0.03],
+    )
+    file_field(v) = repeat(reshape(reverse(v), 1, 1, nlev), nlon, nlat, 1)
+    slot = map(file_field, top_first)
+    out = map(x -> similar(x), slot)
+    qcol = [0.001, 0.004, 0.010, 0.018]
+    q = repeat(reshape(qcol, 1, 1, nlev), nlon, nlat, 1)
+    columns = ntuple(_ -> zeros(nlev), 5)
+
+    AttachScript.file_fields_to_basis!(out, slot, DryBasis(), q, era5_level, columns)
+    expected = map(copy, top_first)
+    PP.tm5_convection_to_basis!(DryBasis(), expected..., qcol)
+    for (actual, wanted) in zip(out, expected)
+        @test vec(actual[1, 1, :]) == reverse(wanted)
+        @test actual[2, 1, :] == actual[1, 1, :]
+    end
+    @test sum(out.eu) < sum(slot.eu)              # the unfixed attach route fails here
+    @test sum(out.eu) ≈ sum(out.du) rtol = 1e-14
+    @test sum(out.ed) ≈ sum(out.dd) rtol = 1e-14
+end
+
 @testset "legacy TM5 convection file checks" begin
     mktempdir() do dir
         vc = PP.load_hybrid_coefficients(AttachScript.ERA5_L137_COEFFICIENTS)

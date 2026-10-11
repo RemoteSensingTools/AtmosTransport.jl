@@ -81,6 +81,8 @@ other AtmosTransport modules; every later module may import from it.
   - immutable ERA5 L137 interface recipes `ECHLEVS_ML137_*`, including the
     verbatim TM5-MP r1112 `tropo34` and TM5 cy3-4dvar `tropo34a` lists, plus
     `ERA5_L137_ECHLEVS_PRESETS`, the named config library
+  - `TM5_CONVECTION_MASS_BASIS_KEY`, the transport-header key that records
+    whether TM5 convection sections carry dry- or moist-air fluxes
   - `ERA5_MET_INTERVAL_SECONDS` (3600 s), the ERA5 analysis interval and the
     accumulation period of its hourly accumulated fields
   - `GEOS_MASS_FLUX_DT_SECONDS` (450 s), the FV3 dynamics step over which

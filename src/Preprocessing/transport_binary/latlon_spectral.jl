@@ -479,6 +479,7 @@ function process_day(date::Date,
                            Nx, Ny, Nlon_src, Nlat_src, Nx, Ny)
         end
         tm5_ws    = allocate_tm5_workspace(Nlon_src, Nlat_src, Nz_native, Nz, FT;
+                                            basis = mass_basis_from_symbol(settings.mass_basis),
                                             regridder = tm5_regridder,
                                             target_nlon = Nx,
                                             target_nlat = Ny,

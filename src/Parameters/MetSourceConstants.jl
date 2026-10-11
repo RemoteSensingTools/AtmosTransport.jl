@@ -85,6 +85,12 @@ const ERA5_L137_ECHLEVS_PRESETS = (
 const ERA5_MET_INTERVAL_SECONDS = 3600.0
 
 """
+Transport-binary header key recording the air-mass basis (`"dry"` or
+`"moist"`) of the TM5 convection sections.
+"""
+const TM5_CONVECTION_MASS_BASIS_KEY = "tm5_convection_mass_basis"
+
+"""
 GEOS FV3 dynamics time step [s]. GEOS-FP and GEOS-IT accumulate the mass fluxes
 `MFXC`/`MFYC` over this step, not over the hourly met interval.
 """
@@ -109,7 +115,8 @@ const SURFACE_AIR_TEMPERATURE_RANGE = (150.0, 350.0)
 "Bound on the magnitude of the surface sensible or latent heat flux in met input; readers reject values at or above it [W m⁻²]."
 const SURFACE_HEAT_FLUX_MAX_ABS = 5000.0
 
-export ERA5_NATIVE_LEVEL_COUNT, ERA5_MET_INTERVAL_SECONDS, GEOS_MASS_FLUX_DT_SECONDS,
+export ERA5_NATIVE_LEVEL_COUNT, ERA5_MET_INTERVAL_SECONDS, TM5_CONVECTION_MASS_BASIS_KEY,
+       GEOS_MASS_FLUX_DT_SECONDS,
        GEOS_MET_INTERVAL_SECONDS, GEOS_3HOURLY_INTERVAL_SECONDS, GMAO_CS_LONGITUDE_OFFSET_DEG,
        SURFACE_AIR_TEMPERATURE_RANGE, SURFACE_HEAT_FLUX_MAX_ABS,
        ECHLEVS_ML137_TROPO34, ECHLEVS_ML137_TROPO34A, ECHLEVS_ML137_66L,

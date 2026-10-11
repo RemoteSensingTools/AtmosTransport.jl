@@ -132,10 +132,7 @@ function allocate_era5_c180_regrid_workspace(source_grid::ReducedGaussianTargetG
         throw(DimensionMismatch("regridder src_areas length $n_src ≠ N320 cells $(ncells(source_grid.mesh))"))
     n_dst == ncells(target_grid.mesh) ||
         throw(DimensionMismatch("regridder dst_areas length $n_dst ≠ target cells $(ncells(target_grid.mesh))"))
-    coverage = apply_regridder!(zeros(n_dst), regridder, ones(n_src))   # regridded constant 1
-    all(c -> 0.9 < c < 1.1, coverage) ||
-        error("N320 → cubed-sphere regridder covers target cells by $(extrema(coverage)) " *
-              "(expected ≈ 1); rebuild the regridder cache")
+    coverage = _n320_regrid_coverage(regridder, "cubed-sphere")
     return ERA5C180RegridWorkspace{FT, typeof(regridder)}(
         regridder,
         coverage,
@@ -206,12 +203,99 @@ function regrid_n320_raw_convection_to_c180!(
     return conv_c180
 end
 
+# Fraction of each target cell covered by the N320 source mesh: the regridded
+# constant 1 (see `_regrid_intensive!`).
+function _n320_regrid_coverage(regridder, target_label::AbstractString)
+    coverage = apply_regridder!(zeros(length(regridder.dst_areas)), regridder,
+                                ones(length(regridder.src_areas)))
+    all(c -> 0.9 < c < 1.1, coverage) ||
+        error("N320 → $target_label regridder covers target cells by $(extrema(coverage)) " *
+              "(expected ≈ 1); rebuild the regridder cache")
+    return coverage
+end
+
+"""
+    ERA5HumidityRemap
+
+Specific humidity of one ERA5 N320 day conservatively remapped to another
+horizontal mesh, for converting convective fluxes that live on that mesh to
+dry air. Open with [`open_era5_humidity_remap`](@ref), fill with
+[`remap_era5_humidity!`](@ref), release with `close`.
+"""
+struct ERA5HumidityRemap{H <: ERA5GRIBDayHandles, M <: ReducedGaussianMesh, R}
+    handles     :: H
+    date        :: Date
+    source_mesh :: M
+    regridder   :: R
+    coverage    :: Vector{Float64}
+    q_source    :: Matrix{Float64}     # (N320 cells, Nz)
+    src_scratch :: Matrix{Float64}
+    q_target    :: Matrix{Float64}     # (target cells, Nz)
+end
+
+"""
+    open_era5_humidity_remap(root_dir, date, target_mesh; Nz=ERA5_NATIVE_LEVEL_COUNT,
+                             cache_dir=nothing) -> ERA5HumidityRemap
+
+Prepare to read the ERA5 N320 specific humidity of `date` from the native
+GRIB archive under `root_dir` (`ml_an_native_core/era5_core_YYYYMMDD.grib`)
+and remap it conservatively, with the coverage normalisation of
+`_regrid_intensive!`, to `target_mesh`. The regridder weights are cached
+in `cache_dir`.
+"""
+function open_era5_humidity_remap(root_dir::AbstractString, date::Date, target_mesh;
+                                  Nz::Integer = ERA5_NATIVE_LEVEL_COUNT,
+                                  cache_dir::Union{Nothing, AbstractString} = nothing)
+    handles = open_era5_day(ERA5N320Settings(root_dir = String(root_dir)), date;
+                            next_day_handle = false)
+    try
+        source_mesh = discover_era5_n320_source_grid(handles.core_path; FT = Float64).mesh
+        regridder = build_regridder(source_mesh, target_mesh; normalize = false,
+                                    cache_dir = cache_dir)
+        coverage = _n320_regrid_coverage(regridder, string(nameof(typeof(target_mesh))))
+        n_src, n_dst = length(regridder.src_areas), length(regridder.dst_areas)
+        return ERA5HumidityRemap(handles, date, source_mesh, regridder, coverage,
+                                 zeros(n_src, Nz), zeros(n_src, Nz), zeros(n_dst, Nz))
+    catch
+        close_era5_day!(handles)
+        rethrow()
+    end
+end
+
+"""
+    remap_era5_humidity!(remap::ERA5HumidityRemap, hour) -> q_target
+
+Read the specific humidity of `hour` (0–23 UTC) on the N320 mesh
+([`read_era5_n320_humidity!`](@ref)) and remap it to the target mesh.
+Returns `remap.q_target`, `(target cells, Nz)` with top-first levels.
+"""
+function remap_era5_humidity!(remap::ERA5HumidityRemap, hour::Integer)
+    read_era5_n320_humidity!(remap.q_source, remap.handles, remap.source_mesh,
+                             remap.date, hour)
+    return _regrid_intensive!(remap.q_target, remap.src_scratch, remap.regridder,
+                              remap.coverage, remap.q_source)
+end
+
+Base.close(remap::ERA5HumidityRemap) = close_era5_day!(remap.handles)
+
+"""
+    derive_c180_tm5_convection!(tm5_fields, conv_fields, window_fields, vc, scratches;
+                                basis, stats=nothing) -> tm5_fields
+
+TM5 entrainment and detrainment on every target column from the raw ECMWF
+diagnostics already mapped to the target (`conv_fields`), following TM5's
+`tmm_Read_Convec_EC`: layer thickness from the target `T`, `q` and `ps`
+(`dz_hydrostatic_virtual!`), the fluxes put on the air-mass `basis` of the
+binary with [`ecmwf_convection_to_basis!`](@ref) (`DryBasis()` multiplies
+them by `1 − q`), then [`ec2tm_from_rates!`](@ref).
+"""
 function derive_c180_tm5_convection!(
         tm5_fields::ERA5C180TM5ConvectionFields{FT},
         conv_fields::ERA5C180RawConvectionFields{FT},
         window_fields::ERA5C180RegridFields{FT},
         vc::HybridSigmaPressure,
         scratches::Vector{TM5ConvectionColumnScratch{FT}};
+        basis::AbstractMassBasis,
         stats = nothing) where FT
     thread_stats = stats === nothing ? nothing :
         [TM5CleanupStats() for _ in 1:Threads.maxthreadid()]
@@ -233,6 +317,8 @@ function derive_c180_tm5_convection!(
             end
             dz_hydrostatic_virtual!(scratch.dz_col, scratch.t_col, scratch.q_col,
                                      window_fields.ps[p][i, j], vc.A, vc.B, Nz)
+            ecmwf_convection_to_basis!(basis, scratch.udmf_col, scratch.ddmf_col,
+                                       scratch.udrf_col, scratch.ddrf_col, scratch.q_col)
             ec2tm_from_rates!(scratch.entu_col, scratch.detu_col,
                               scratch.entd_col, scratch.detd_col,
                               scratch.udmf_col, scratch.ddmf_col,
@@ -467,8 +553,9 @@ Drive the per-window pipeline for `(date, hour)`:
   1. Synthesise PS / U / V / T / Q on the N320 source mesh (breakpoint B).
   2. Derive dry-air mass + DELP_dry + PS_dry on the source mesh (breakpoint C).
   3. Conservatively regrid PS / U / V / T / Q to the C-tier target.
-  4. Optionally read and regrid raw UDMF / DDMF / UDRF / DDRF, then perform
-     the nonlinear TM5 conversion and closure on the target columns.
+  4. Optionally read and regrid raw UDMF / DDMF / UDRF / DDRF, put them on
+     the dry basis, and perform the nonlinear TM5 conversion and closure on
+     the target columns.
 
 After the call, `pipeline.window_fields`, `pipeline.dry_fields`,
 `pipeline.convection_fields`, and `pipeline.c180_fields` carry the
@@ -502,11 +589,14 @@ function process_era5_n320_window!(pipeline::ERA5N320ToC180Pipeline,
                                              pipeline.convection_fields,
                                              pipeline.regrid_ws,
                                              pipeline.target_grid)
+        # This pipeline is dry by construction (step 2), and so are its
+        # convective fluxes; the writer accepts only `mass_basis = :dry`.
         derive_c180_tm5_convection!(pipeline.tm5_c180_fields,
                                      pipeline.convection_c180_fields,
                                      pipeline.c180_fields,
                                      pipeline.vc,
-                                     pipeline.tm5_derive_scratches)
+                                     pipeline.tm5_derive_scratches;
+                                     basis = DryBasis())
         _t_conv += time() - _t
     end
     if _prof
