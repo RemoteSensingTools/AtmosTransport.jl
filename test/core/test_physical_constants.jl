@@ -8,7 +8,8 @@ using AtmosTransport.Parameters: EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVIT
                                  R_DRY_AIR, CP_OVER_R_DIATOMIC, CP_DRY_AIR, DRY_AIR_MOLAR_MASS,
                                  VON_KARMAN, STANDARD_SEA_LEVEL_AIR_DENSITY,
                                  GLOBAL_MEAN_DRY_SURFACE_PRESSURE, SPECIES_MOLAR_MASS, CARBON_MOLAR_MASS,
-                                 GEOSCHEM_SPECIES_MOLAR_MASS, RN222_HALF_LIFE
+                                 GEOSCHEM_SPECIES_MOLAR_MASS, RN222_HALF_LIFE,
+                                 TM5_CONVECTION_MASS_BASIS_KEY
 
 # Every exported constant of `Parameters`, with its value. The test compares with
 # `===`, which pins the type as well: counts stay `Int`, everything else stays
@@ -67,6 +68,7 @@ const PINNED_PARAMETERS = (
     # MetSourceConstants.jl
     ERA5_NATIVE_LEVEL_COUNT = 137,
     ERA5_MET_INTERVAL_SECONDS = 3600.0,
+    TM5_CONVECTION_MASS_BASIS_KEY = "tm5_convection_mass_basis",
     GEOS_MASS_FLUX_DT_SECONDS = 450.0,
     GEOS_MET_INTERVAL_SECONDS = 3600.0,
     GEOS_3HOURLY_INTERVAL_SECONDS = 10800.0,

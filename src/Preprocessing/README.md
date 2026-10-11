@@ -106,6 +106,7 @@ Files directly in this folder; the subfolders have their own READMEs
 - [`met_readers.jl`](met_readers.jl) — `AbstractMetReader`, `NoChain`/`ChainedMass`, `GEOSNativeReader`, `ERA5SpectralReader`, `preprocessor_pair_supported`, `supports_day_threading`
 - [`target_geometry.jl`](target_geometry.jl) — `AbstractTargetGeometry`, LL/RG/CS target types, `build_target_geometry`, header metadata
 - [`configuration.jl`](configuration.jl) — ERA5 spectral TOML parsing (`resolve_runtime_settings`, `build_vertical_setup`, dates, `next_day_hour0`)
+- [`convection_mass_basis.jl`](convection_mass_basis.jl) — moist-to-dry conversion and binary basis metadata for TM5 convection fluxes
 - [`vertical_coordinates.jl`](vertical_coordinates.jl) — `merge_thin_levels`, `select_levels_echlevs`, echlevs presets, coefficient loaders
 - [`vertical_transforms.jl`](vertical_transforms.jl) — `AbstractVerticalTransform` types, `VerticalPlan`, `plan_vertical`, `apply_vertical!`
 - [`spectral_io.jl`](spectral_io.jl) — spectral GRIB reading, day cache (published with `AtomicFiles.atomic_publish`), `read_day_spectral`, `read_hour0_spectral`

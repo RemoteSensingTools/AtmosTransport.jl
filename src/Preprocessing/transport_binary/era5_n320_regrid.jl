@@ -548,7 +548,7 @@ function process_era5_n320_to_cs_day(date::Date,
             cs_center_law = _cs_center_law_tag(target_grid),
             longitude_offset_deg = longitude_offset_deg(cs_definition(mesh)),
             planet_radius = mesh.radius,
-            extra_header = _with_replay_record(_with_tm5_convection_basis(Dict{String, Any}(
+            extra_header = _with_replay_record(Dict{String, Any}(
                 "preprocessor" => "process_era5_n320_to_cs_day",
                 # Declare the per-window advection substep contract so the
                 # runtime applies advection at the baked substep cadence but
@@ -590,8 +590,6 @@ function process_era5_n320_to_cs_day(date::Date,
                 "global_mass_pin_target_kg" => do_mass_pin ?
                     Float64(global_mass_target_kg) : nothing,
             ),
-            # Fluxes put on the dry basis before ec2tm (`derive_c180_tm5_convection!`).
-            include_convection ? mass_basis_from_symbol(mass_basis) : nothing),
             write_replay_on))
         writer = CubedSphereBinaryWriter(inner_writer,
                                           mass_basis_from_symbol(mass_basis);

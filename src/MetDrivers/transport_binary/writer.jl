@@ -81,6 +81,9 @@ function write_transport_binary(path::AbstractString,
                                 humidity_sampling::Symbol = :auto,
                                 delta_semantics::Symbol = :auto,
                                 mass_basis::Symbol = :dry,
+                                tm5_convection_mass_basis::Union{_DefaultTM5ConvectionMassBasis,
+                                                                 Nothing, Symbol} =
+                                    _DEFAULT_TM5_CONVECTION_MASS_BASIS,
                                 extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}(),
                                 threaded::Bool = Threads.nthreads() > 1)
     flux_kind === :substep_mass_amount || throw(ArgumentError(
@@ -145,6 +148,8 @@ function write_transport_binary(path::AbstractString,
         "n_dcm" => (:dcm in payload_sections) ? _transport_structured_section_elements(Nx, Ny, ncell, nlevel, :dcm) : 0,
         "n_dm" => (:dm in payload_sections) ? _transport_structured_section_elements(Nx, Ny, ncell, nlevel, :dm) : 0,
     ))
+    _set_tm5_convection_mass_basis!(header, payload_sections, basis_sym,
+                                    tm5_convection_mass_basis)
     isempty(extra_header) || _merge_transport_extra_header!(header, extra_header)
 
     validate_transport_contract!(header)
@@ -178,6 +183,9 @@ function write_transport_binary(path::AbstractString,
                                 humidity_sampling::Symbol = :auto,
                                 delta_semantics::Symbol = :auto,
                                 mass_basis::Symbol = :dry,
+                                tm5_convection_mass_basis::Union{_DefaultTM5ConvectionMassBasis,
+                                                                 Nothing, Symbol} =
+                                    _DEFAULT_TM5_CONVECTION_MASS_BASIS,
                                 extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}(),
                                 threaded::Bool = Threads.nthreads() > 1)
     flux_kind === :substep_mass_amount || throw(ArgumentError(
@@ -225,6 +233,8 @@ function write_transport_binary(path::AbstractString,
         "n_dcm" => (:dcm in payload_sections) ? _transport_faceindexed_section_elements(ncell, nface_h, nlevel, :dcm) : 0,
         "n_dm" => (:dm in payload_sections) ? _transport_faceindexed_section_elements(ncell, nface_h, nlevel, :dm) : 0,
     ))
+    _set_tm5_convection_mass_basis!(header, payload_sections, basis_sym,
+                                    tm5_convection_mass_basis)
     isempty(extra_header) || _merge_transport_extra_header!(header, extra_header)
 
     validate_transport_contract!(header)

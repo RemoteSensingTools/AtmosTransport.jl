@@ -205,7 +205,7 @@ end
 end
 
 @testset "TM5 convection basis in the binary header" begin
-    function fixture(path; mass_basis = :dry, tm5_basis = nothing)
+    function fixture(path; mass_basis = :dry, tm5_basis = :default)
         Nx, Ny, Nz = 4, 3, 5
         grid = AtmosGrid(LatLonMesh(; FT = Float64, Nx, Ny),
                          HybridSigmaPressure([0.0, 100, 300, 600, 1000, 2000],
@@ -216,23 +216,23 @@ end
                   bm = zeros(Nx, Ny + 1, Nz), cm = zeros(Nx, Ny, Nz + 1),
                   ps = fill(95_000.0, Nx, Ny),
                   tm5_fields = (entu = zero3(), detu = zero3(), entd = zero3(), detd = zero3()))
-        extra = tm5_basis === nothing ? Dict{String, Any}() :
-                Dict{String, Any}(TM5_CONVECTION_MASS_BASIS_KEY => tm5_basis)
+        basis_kw = tm5_basis === :default ? (;) :
+                   (; tm5_convection_mass_basis = tm5_basis)
         write_transport_binary(path, grid, [window]; FT = Float64, dt_met_seconds = 3600.0,
                                half_dt_seconds = 1800.0, steps_per_window = 1, mass_basis,
                                source_flux_sampling = :window_start_endpoint,
-                               flux_sampling = :window_constant, extra_header = extra)
+                               flux_sampling = :window_constant, basis_kw...)
         return path
     end
     mktempdir() do dir
-        recorded = fixture(joinpath(dir, "dry.bin"); tm5_basis = "dry")
+        recorded = fixture(joinpath(dir, "dry.bin"))
         reader = TransportBinaryReader(recorded)
         @test tm5_convection_mass_basis(reader) === :dry
         @test binary_capabilities(reader).tm5_convection_mass_basis === :dry
         close(reader)
         @test_logs min_level = Base.CoreLogging.Warn close(TransportBinaryDriver(recorded))
 
-        legacy = fixture(joinpath(dir, "legacy.bin"))
+        legacy = fixture(joinpath(dir, "legacy.bin"); tm5_basis = nothing)
         reader = nothing
         @test_logs (:warn, r"tm5_convection_mass_basis.*1/\(1-q\)") begin
             reader = TransportBinaryReader(legacy)
@@ -246,10 +246,39 @@ end
         close(reader)
 
         # A moist binary without the record is consistent (fluxes and mass moist).
-        legacy_moist = fixture(joinpath(dir, "legacy_moist.bin"); mass_basis = :moist)
+        legacy_moist = fixture(joinpath(dir, "legacy_moist.bin");
+                               mass_basis = :moist, tm5_basis = nothing)
         @test_logs min_level = Base.CoreLogging.Warn close(TransportBinaryReader(legacy_moist))
 
-        mismatch = fixture(joinpath(dir, "mismatch.bin"); tm5_basis = "moist")
-        @test_throws ArgumentError TransportBinaryReader(mismatch)
+        @test_throws ArgumentError fixture(joinpath(dir, "mismatch.bin"); tm5_basis = :moist)
+    end
+
+    @testset "streaming CS writer records the inferred basis" begin
+        mktempdir() do dir
+            Nc, npanel, Nz = 2, 6, 2
+            panels3(value, nz = Nz) = ntuple(_ -> fill(Float64(value), Nc, Nc, nz), npanel)
+            tm5 = (entu = panels3(0.01), detu = panels3(0.01),
+                   entd = panels3(0.002), detd = panels3(0.002))
+            window = (
+                m = panels3(1e15),
+                am = ntuple(_ -> zeros(Nc + 1, Nc, Nz), npanel),
+                bm = ntuple(_ -> zeros(Nc, Nc + 1, Nz), npanel),
+                cm = panels3(0, Nz + 1),
+                ps = ntuple(_ -> fill(95_000.0, Nc, Nc), npanel),
+                tm5_fields = tm5,
+            )
+            path = joinpath(dir, "streaming.bin")
+            writer = AtmosTransport.MetDrivers.open_streaming_cs_transport_binary(
+                path, Nc, npanel, Nz, 1,
+                HybridSigmaPressure([0.0, 1000, 2000], [0.0, 0.2, 1.0]);
+                planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
+                steps_per_window = 1, include_tm5conv = true, mass_basis = :dry)
+            AtmosTransport.MetDrivers.write_streaming_cs_window!(writer, window, Nc, npanel)
+            AtmosTransport.MetDrivers.close_streaming_transport_binary!(writer)
+
+            reader = TransportBinaryReader(path)
+            @test tm5_convection_mass_basis(reader) === :dry
+            close(reader)
+        end
     end
 end

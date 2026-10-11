@@ -768,21 +768,16 @@ function tm5_native_fields_for_hour!(
     end
 
     @inbounds for j in 1:Nlat, i in 1:Nlon
-        # Half-level mass fluxes: ERA5 provides them on 137 levels;
-        # TM5's formula wants Nz+1 interfaces. Here we treat the
-        # ERA5 native dataset as having the interface at each
-        # level's *top*. The TOA half-level (index 1 in the Nz+1
-        # vector) is always 0 (no mass flux above TOA); the surface
-        # half-level (Nz_native+1) likewise reads 0 because the 137th
-        # layer has its bottom at the surface and the array doesn't
-        # include that boundary. Interfaces between layers 1..Nz_native
-        # come directly from the NC layer-center values — since ERA5
-        # defines these AS half-level fluxes at the layer top, the
-        # `udmf[k]` at layer k IS the interface above layer k. So:
-        #   udmf_col[1]     = 0   (TOA)
-        #   udmf_col[k+1]   = udmf_hour[i, j, k]  for k=1..Nz_native
-        # Shift-by-1 packs ERA5 Nlev half-level values into our
-        # (Nz_native+1)-length interface vector.
+        # ERA5 archives mass fluxes on half-levels 1:Nz_native, including
+        # half-level 137 at the surface. TM5's interface vector also includes
+        # half-level 0 at the model top. With Julia's one-based indexing,
+        # half-level 0 therefore occupies element 1 and archived half-level k
+        # occupies element k + 1:
+        #   udmf_col[1]     = 0   (half-level 0, TOA)
+        #   udmf_col[k + 1] = udmf_hour[i, j, k]  for k=1:Nz_native
+        # Thus the last archived value is stored at element Nz_native + 1,
+        # the surface interface; the +1 is an index shift, not an inferred
+        # missing boundary.
         udmf_col[1] = zero(FT)
         ddmf_col[1] = zero(FT)
         for k in 1:Nz_native

@@ -244,10 +244,3 @@ function _with_tm5_convection_basis(header::AbstractDict, basis::AbstractMassBas
     header[TM5_CONVECTION_MASS_BASIS_KEY] = String(mass_basis_symbol(basis))
     return header
 end
-
-# Recorded basis of a source binary's TM5 sections, as a basis singleton
-# (`nothing`: no TM5 sections, or none recorded).
-function _source_tm5_convection_basis(reader::TransportBinaryReader)
-    recorded = tm5_convection_mass_basis(reader)
-    return recorded === nothing ? nothing : mass_basis_from_symbol(recorded)
-end
