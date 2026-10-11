@@ -29,6 +29,18 @@ A typical Hovmöller comparison reads the daily column means with
 `BandAssignment`, averages them to months, and passes the stacked model and
 observation series to `seasonal_trend_decomposition` and `skill_metrics`.
 
+The global totals a run writes at every snapshot (`<tracer>_total_mass`, a
+compensated Float64 sum) feed two conservation diagnostics. `drift_statistics`
+measures the change of one run's total against its initial value and tests
+its per-snapshot increments for a mean (``t``); for a tracer without sources
+this is pure arithmetic error. `twin_relative_difference` compares a run with
+its twin in another precision frame by frame, net of the rounding of the
+initial state. `weighted_difference_stats` gives the area-weighted mean and RMS
+of a field difference, such as the column-mean difference of the two runs.
+`scripts/diagnostics/float32_conservation_attribution.jl` and
+`scripts/diagnostics/compare_float32_float64_runs.jl` are built on them; see
+[Tracer Conservation in Single Precision](@ref).
+
 `GEOSChemCATRINEArchive` reads the output of the GEOS-Chem (GCHP) CATRINE
 reference run, one `GEOSChem.CATRINE_inst.YYYYMMDD_HHMMz.nc4` file per 3-hourly
 output time, flat or under `YYYY/MM/`. `global_totals` turns a file into global

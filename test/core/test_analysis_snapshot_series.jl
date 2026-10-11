@@ -14,7 +14,11 @@ Asserts:
   last one read, a missing variable, a variable without a trailing `time`
   dimension, an integer variable and a shape change between files are errors;
 - a real runtime snapshot written by `write_snapshot_netcdf` reads back with
-  the same values and times.
+  the same values and times;
+- `keep_frame` reads only the frames it accepts (one per day from several
+  files, none from some files, none at all), still drops repeated hours and
+  still rejects a frame out of time order when that frame is not kept; a
+  predicate that does not return a `Bool` is an error.
 """
 
 using Test
@@ -121,4 +125,27 @@ end
     @test total isa Vector{Float64} && length(total) == 3
     @test total[2] / total[1] ≈ 401 / 400 rtol = 1e-12
     @test total[3] / total[1] ≈ 402 / 400 rtol = 1e-12
+end
+
+@testset "keep_frame" begin
+    dir = mktempdir()
+    origin = DateTime(2021, 12, 1)
+    f1 = write_fixture(joinpath(dir, "run_20211201.nc"), [0.0, 12.0, 24.0], h -> h)
+    f2 = write_fixture(joinpath(dir, "run_20211202.nc"), [24.0, 36.0, 48.0], h -> h == 24 ? -1.0f6 : h)
+    f3 = write_fixture(joinpath(dir, "run_20211203.nc"), [60.0], h -> h)
+    at_00 = t -> Dates.hour(t) == 0
+    s = daily_snapshot_series([f1, f2, f3], ["co2_column_mean", "co2"]; origin, keep_frame = at_00)
+    @test s.times == origin .+ Hour.([0, 24, 48])                     # f3 holds no 00 UTC frame
+    cm = s.values["co2_column_mean"]
+    @test size(cm) == (NX, NY, NF, 3)
+    @test cm[1, 1, 1, :] == Float32[0, 24, 48] .+ (1 + 10 + 100)      # hour 24 from f1, not the repeat
+    @test size(s.values["co2"]) == (NX, NY, NF, NL, 3)
+    early = daily_snapshot_series([f1, f2, f3], ["co2_column_mean"]; origin, keep_frame = t -> t < origin + Hour(20))
+    @test early.times == origin .+ Hour.([0, 12])
+    nothing_kept = daily_snapshot_series([f1, f2], ["co2_column_mean"]; origin, keep_frame = t -> false)
+    @test isempty(nothing_kept.times) && size(nothing_kept.values["co2_column_mean"]) == (NX, NY, NF, 0)
+    # The order check covers frames that are not kept.
+    back = write_fixture(joinpath(dir, "back.nc"), [18.0], h -> h)
+    @test_throws ArgumentError daily_snapshot_series([f1, back], ["co2"]; origin, keep_frame = at_00)
+    @test_throws TypeError daily_snapshot_series([f1], ["co2"]; origin, keep_frame = t -> 1)
 end

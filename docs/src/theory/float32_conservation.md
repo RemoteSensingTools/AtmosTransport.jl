@@ -78,7 +78,7 @@ relative to the emitted mass.
 | advection, before | +8.0e-9 | −5.5e-9 | −4.6e-9 | +8.2e-7 |
 | advection, after | +8.0e-9 | −4.2e-9 | −4.1e-9 | −4.0e-8 |
 | all operators, before | −9.6e-9 | −2.4e-7 | +1.1e-7 | +8.5e-7 |
-| all operators, after | −2.3e-9 | −2.0e-8 | −3.8e-9 | −1.9e-8 |
+| all operators, after | −2.3e-9 | −2.0e-8 | −3.7e-9 | −1.9e-8 |
 
 Over the week, the CO₂ burden changes by 3.0e-4 through net fluxes and the
 SF₆ burden by 6.9e-4. Before the fixes, `Float32` therefore lost 8e-4 of the
@@ -233,11 +233,57 @@ operator errors instead of removing them and are not used.
 
 ## Reproducing
 
-`scripts/diagnostics/float32_conservation_attribution.py write-configs --out
-DIR` writes the run configurations for both archives and precisions. After
-the runs, `... budget --out DIR` prints the tables above: drifts, `Float32` −
-`Float64` net of the initial offset (fossil relative to the emitted mass), and
-the 3-hourly increment statistics.
+The experiment is scripted in
+`scripts/diagnostics/float32_conservation_attribution.jl`:
+
+```bash
+julia --project=. scripts/diagnostics/float32_conservation_attribution.jl write-configs --out DIR
+julia --project=. scripts/run_transport.jl DIR/merra2_full_float32.toml    # each of the 16 configs, on a GPU
+julia --project=. scripts/diagnostics/float32_conservation_attribution.jl budget --out DIR
+```
+
+`write-configs` builds the 16 run configurations (two archives, four operator
+sets, two precisions), checks each with [`validate_config`](@ref) and writes
+`DIR/<tag>.toml`; the inputs are taken from `--data-root` (default
+`~/data/AtmosTransport`). `budget` reads the `<tracer>_total_mass` series of
+every run found and prints the tables above: the `Float32` drift, `Float32` −
+`Float64` at the last common snapshot net of the initial offset (fossil CO₂
+relative to the emitted mass), and the mean, standard deviation and `t` of the
+3-hourly increments of the source-free tracers
+([`twin_relative_difference`](@ref AtmosTransport.Analysis.twin_relative_difference),
+[`drift_statistics`](@ref AtmosTransport.Analysis.drift_statistics)).
+`--tag` and `--prefix` name the run folders and snapshot files: a template
+with the placeholders `{archive}`, `{set}`, `{float_type}` and `{ft}`, for all
+runs, for one archive (`merra2=...`) or for one archive and precision
+(`merra2:float32=...`). The runs behind this page (memo
+`docs/memos/2026-10-06_float32_conservation_attribution.md`; the "after" runs
+are its `era5_*_final` and `full_final2`, the latter compared with the
+`Float64` run `full_final`) are read with
+
+```bash
+julia --project=. scripts/diagnostics/float32_conservation_attribution.jl budget \
+    --out ~/data/AtmosTransport/output/precision_attribution --prefix precision \
+    --tag 'merra2:float32={set}_final2_f32' --tag 'merra2:float64={set}_final_f64' \
+    --tag 'era5=era5_{set}_final_{ft}'
+```
+
+which prints the "after" values of the ERA5 table and the row "all operators,
+after" of the MERRA-2 table. `merra2={set}_regridfix_{ft}` gives the row
+"advection, after", and the templates `{set}_{ft}` and `era5_{set}_{ft}` give
+the values "before".
+
+Longer twin runs are compared with
+`scripts/diagnostics/compare_float32_float64_runs.jl`: per tracer, the relative
+difference of the global totals at every snapshot and, once a day, the
+area-weighted mean and RMS of the column-mean difference
+([`weighted_difference_stats`](@ref AtmosTransport.Analysis.weighted_difference_stats)).
+It writes `float32_vs_float64.json` and `float32_vs_float64.nc`, from which
+`scripts/visualization/plot_float32_vs_float64.py` draws the figures. For the
+MERRA-2 C90 CATRINE configuration over 761 days (December 2021 to December
+2023), `Float32` − `Float64` of the global totals, net of the initial offset,
+is +9.0e-7 for CO₂, +1.6e-7 for fossil CO₂ (relative to the emitted mass),
++1.1e-6 for SF₆ and −3.6e-8 for Rn-222; the column-mean RMS difference on the
+last day is 0.015 ppm for CO₂ and 0.0009 ppt for SF₆.
 
 `test/core/test_float32_conservation.jl` checks the error-free and compensated
 sums, that the ledger leaves a leaking matrix visible, the geometry, the decay

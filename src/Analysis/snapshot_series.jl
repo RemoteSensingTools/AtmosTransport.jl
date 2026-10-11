@@ -11,7 +11,8 @@
 # ===========================================================================
 
 """
-    daily_snapshot_series(paths, variables; origin::DateTime) -> (; times, values)
+    daily_snapshot_series(paths, variables; origin::DateTime, keep_frame = nothing)
+        -> (; times, values)
 
 Concatenate the frames of runtime snapshot files into one series per variable.
 
@@ -28,11 +29,16 @@ Concatenate the frames of runtime snapshot files into one series per variable.
 
 Each frame is stamped `origin + hours`. A frame whose hour was already read is
 a duplicated boundary frame and is skipped: the first occurrence wins. A frame
-earlier than the last kept frame that is not such a duplicate means the paths
-are out of order or come from different runs, and is an error. The first
+earlier than the latest frame read that is not such a duplicate means the
+paths are out of order or come from different runs, and is an error. The first
 file of a run holds the initial state at hour 0 as well as its end-of-period
 frame; both are kept. Callers that want end-of-day states only drop the frame
 at `origin`.
+
+`keep_frame`, a function of the frame time returning a `Bool`, reads only the
+frames it accepts, for example `t -> Dates.hour(t) == 0` for one field per day
+from 3-hourly snapshots. Duplicates and the time order are checked on every
+frame, kept or not. Without it every frame is read.
 
 Returns `times::Vector{DateTime}`, strictly increasing, and
 `values::Dict{String, Array}`: for each variable an array with the variable's
@@ -42,28 +48,34 @@ equal to `_FillValue` or `missing_value` become NaN. Every file must hold each
 variable with the same non-time shape and element type.
 """
 function daily_snapshot_series(paths::AbstractVector{<:AbstractString}, variables;
-                               origin::DateTime)
+                               origin::DateTime, keep_frame = nothing)
     isempty(paths) && throw(ArgumentError("daily_snapshot_series: no snapshot paths given"))
     names = String[String(v) for v in variables]
     isempty(names) && throw(ArgumentError("daily_snapshot_series: no variables given"))
     allunique(names) || throw(ArgumentError("daily_snapshot_series: variables repeat: $(names)"))
 
+    ms_per_hour = Dates.toms(Dates.Hour(1))
+    stamp(h) = origin + Millisecond(round(Int64, h * ms_per_hour))
+
     # Pass 1: frame hours of every file and the frames to keep.
-    hours = Float64[]
-    kept = Set{Float64}()
+    hours = Float64[]          # kept frames
+    seen = Set{Float64}()      # every distinct frame read, kept or not
+    latest = -Inf
     plan = Vector{Vector{Int}}(undef, length(paths))
     for (f, path) in enumerate(paths)
         file_hours = NCDataset(ds -> _snapshot_hours(ds, path), path, "r")
         keep = Int[]
         for (k, h) in enumerate(file_hours)
-            h in kept && continue
-            if !isempty(hours) && h < hours[end]
+            h in seen && continue
+            if h < latest
                 throw(ArgumentError("$(path): frame $(k) at hour $(h) precedes hour " *
-                                    "$(hours[end]) read before it; pass the files of one run in time order"))
+                                    "$(latest) read before it; pass the files of one run in time order"))
             end
+            push!(seen, h)
+            latest = h
+            (keep_frame === nothing || keep_frame(stamp(h))::Bool) || continue
             push!(keep, k)
             push!(hours, h)
-            push!(kept, h)
         end
         plan[f] = keep
     end
@@ -84,9 +96,7 @@ function daily_snapshot_series(paths::AbstractVector{<:AbstractString}, variable
         column += length(plan[f])
     end
 
-    ms_per_hour = Dates.toms(Dates.Hour(1))
-    times = DateTime[origin + Millisecond(round(Int64, h * ms_per_hour)) for h in hours]
-    return (; times, values)
+    return (; times = DateTime[stamp(h) for h in hours], values)
 end
 
 function _snapshot_hours(ds, path)

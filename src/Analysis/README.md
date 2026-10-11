@@ -10,11 +10,11 @@ element type of the input.
 
 `src/AtmosTransport.jl` loads this folder after `Models` and before
 `Downloads`. The functions so far need NCDatasets, Dates, LinearAlgebra and
-Statistics, the constants of `Parameters` and the NetCDF lock of `Output`;
-the budget closure also builds on the runtime's config parsing, grids, output
-naming and surface-flux sources (`Models`, `MetDrivers`, `Output`,
-`Operators`) and the compensated sum of `Architectures`. No earlier module
-depends on `Analysis`. The names are
+Statistics, the compensated sum of `Architectures`, the constants of
+`Parameters` and the NetCDF lock of `Output`; the budget closure also builds
+on the runtime's config parsing, grids, output naming and surface-flux sources
+(`Models`, `MetDrivers`, `Output`, `Operators`). No earlier module depends on
+`Analysis`. The names are
 exported from `AtmosTransport.Analysis`, not from the top level:
 
 ```julia
@@ -34,6 +34,8 @@ computed by that routine.
   values::Dict{String, Array})` with time as the last dimension. `origin` is
   the simulation start (snapshots store `time` in bare `"hours"`); a repeated
   hour is dropped (first occurrence wins); fill values become NaN.
+  `keep_frame = t -> ...` reads only the frames whose time it accepts (one
+  field per day from 3-hourly snapshots).
 - `EqualAreaBands(n)`, `BandAssignment(bands, lat, area)`,
   `band_means(field, lat, area, bands)`, `band_means(field, assignment)` and
   `band_means!` in [`latitude_bands.jl`](latitude_bands.jl): area-weighted
@@ -48,10 +50,19 @@ computed by that routine.
   fit of 12 calendar-month intercepts plus a linear trend on the observed
   months, returning `(; anomaly, seasonal, detrended)`. Both solve through
   `pinv` (minimum norm).
-- `skill_metrics(model, reference)` and
-  `weighted_fit_stats(model, reference, weights)` in [`skill.jl`](skill.jl):
-  `(; r, rmse, bias, amplitude_ratio, n)` with population moments, and the
-  area-weighted `(; r2, slope, bias, rmse, ref_mean, ref_std)`.
+- `skill_metrics(model, reference)`,
+  `weighted_fit_stats(model, reference, weights)` and
+  `weighted_difference_stats(model, reference, weights)` in
+  [`skill.jl`](skill.jl): `(; r, rmse, bias, amplitude_ratio, n)` with
+  population moments, the area-weighted `(; r2, slope, bias, rmse, ref_mean,
+  ref_std)`, and the weighted `(; mean, rms, n)` of the per-cell difference
+  (compensated sums; a Float32 field against its Float64 twin).
+- `drift_statistics(series)` and `twin_relative_difference(candidate,
+  reference)` in [`mass_totals.jl`](mass_totals.jl): the drift of a global
+  total relative to its first value with the mean, sample standard deviation
+  and t-value of its increments (a source-free tracer's arithmetic error), and
+  the frame-by-frame `(; raw, net)` relative difference of a total from its
+  twin run, net of the first frame unless the reference starts at zero.
 - `column_band_weights(m, bands)` (and `!`) and `logp_interpolate(p, p_mid, q;
   outside = NaN)` (and `!`) in [`column_profiles.jl`](column_profiles.jl):
   per-layer air mass inside bands of column-mass fraction counted from the
@@ -100,9 +111,12 @@ computed by that routine.
 - [`latitude_bands.jl`](latitude_bands.jl): band sets and band means.
 - [`decomposition.jl`](decomposition.jl): `doy_linear_detrend`,
   `seasonal_trend_decomposition`.
-- [`skill.jl`](skill.jl): `skill_metrics`, `weighted_fit_stats`.
+- [`skill.jl`](skill.jl): `skill_metrics`, `weighted_fit_stats`,
+  `weighted_difference_stats`.
 - [`column_profiles.jl`](column_profiles.jl): `column_band_weights`,
   `logp_interpolate`.
+- [`mass_totals.jl`](mass_totals.jl): `drift_statistics`,
+  `twin_relative_difference`.
 - [`geoschem_archive.jl`](geoschem_archive.jl): `GEOSChemTracer`,
   `CATRINE_GEOSCHEM_TRACERS`, `GEOSChemCATRINEArchive`, `gc_path`, `gc_times`,
   `with_gc_file`, `global_totals`, `unreadable_files`.
@@ -123,6 +137,9 @@ computed by that routine.
 | `weighted_fit_stats` | `wstats` of `catrine_compare_vs_geoschem.py` |
 | `column_band_weights` | `band_sums` of `catrine_compare_vs_geoschem.py` |
 | `logp_interpolate` | the interpolation in `zonal_on_pressure` of `catrine_compare_vs_geoschem.py` |
+| `drift_statistics` | `increment_stats` and the drift column of `float32_conservation_attribution.py` (retired; now `float32_conservation_attribution.jl`) |
+| `twin_relative_difference` | `f32_minus_f64` of `float32_conservation_attribution.py` and the `rel`/`net` series of `compare_float32_float64_runs.py` (both retired; now `.jl`) |
+| `weighted_difference_stats` | the daily area-weighted mean and RMS of `compare_float32_float64_runs.py` |
 | `GEOSChemCATRINEArchive`, `gc_path`, `global_totals` | `gc_path` and `one` of `catrine_true_mass_balance_gc.py` (retired; its mass balance is `catrine_true_mass_balance.jl --model geoschem`); `gc_path` of `catrine_compare_vs_geoschem.py` |
 | `budget_closure`, `report_dict` | `check_trendy_npp_rh_run.py` (retired; now the `series` mode of `scripts/diagnostics/tracer_budget_closure.jl`) |
 | `carrier_drawdown` | the `npp_max_global_drawdown_ppm` audit of `prepare_trendy_s3_npp_rh.py` |
@@ -153,6 +170,16 @@ above not marked retired follow in steps B3 and B4 of the design.
 - `logp_interpolate` treats both end mid levels as inside the column. The
   Python `zonal_on_pressure` returned NaN for a target exactly equal to the
   top mid pressure; elsewhere the two agree.
+- `weighted_difference_stats` forms the difference per cell before any sum and
+  sums with Neumaier compensation, so a mean far below the spread of the
+  differences keeps its digits (the `bias` of `weighted_fit_stats`, a
+  difference of two means, does not). It leaves NaN cells out (the Python
+  comparison propagated NaN); on C90 fields without NaN it agrees with NumPy's
+  pairwise sums to ≤ 1.5e-14 relative.
+- `twin_relative_difference` and the drift of `drift_statistics` repeat the
+  Python Float64 operations, so they are bitwise equal to the Python values.
+  `drift_statistics` returns `t = ±Inf` for equal non-zero increments, where
+  the Python returned 0.
 - `global_totals` reads the same Float32 values as the Python script (fill
   values as zero), forms the same Float64 products and converts emissions in
   the same order, `Σ · M_air / M`; it sums pairwise in linear-index order,
@@ -196,6 +223,11 @@ above not marked retired follow in steps B3 and B4 of the design.
 - Score a model against observations on the same months: stack the band
   series as `(nband, nmonth, nseries)`, call `seasonal_trend_decomposition`
   with the observation mask, then `skill_metrics(model, obs)` on each output.
+- Compare a Float32 run with its Float64 twin: read `<tracer>_total_mass`
+  of both with `daily_snapshot_series`, match the times, and call
+  `twin_relative_difference`; read the column means with `keep_frame` and
+  call `weighted_difference_stats(f32, f64, cell_area)` per frame
+  (`scripts/diagnostics/compare_float32_float64_runs.jl`).
 - Gate a campaign on its budgets: `report = budget_closure("run.toml")`,
   then `report.passed` (strict) or `report.operational_passed`, and write
   `report_dict(report)` as JSON

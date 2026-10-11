@@ -909,6 +909,28 @@
   same rows and summary. The AtmosTransport mode is unchanged (bit-identical
   csv and log on the 25-month ERA5 fossil CO₂ run) and is now tested on a
   tiny run, where a stable and a decaying tracer close to 1e-12.
+- Float32 diagnostics in Julia. `scripts/diagnostics/float32_conservation_attribution.jl`
+  replaces the Python script: `write-configs` builds the 16 attribution
+  configs as Dicts, checks them with `validate_config` and writes them with
+  `TOML.print` (equal, as parsed Dicts, to the Python ones); `budget` prints
+  the same tables as the Python script, character for character, on the runs
+  behind `docs/src/theory/float32_conservation.md`, with the run tag templates
+  (per archive and precision) and snapshot file prefix as arguments. That
+  page's Reproducing section now gives the command that prints its "after"
+  rows (`full_final2` against `full_final`), and the SF₆ entry of the MERRA-2
+  row "all operators, after" is corrected to −3.7e-9 (it was −3.747e-9 rounded
+  twice).
+  `scripts/diagnostics/compare_float32_float64_runs.jl` replaces the numbers of
+  the Python comparison and writes `float32_vs_float64.json` (same keys; the
+  16 values agree to 1e-14 on the December 2021 and the 761-day MERRA-2 twins)
+  and `float32_vs_float64.nc`; the figures moved to
+  `scripts/visualization/plot_float32_vs_float64.py`, which reads that file.
+  New in `Analysis`: `drift_statistics`, `twin_relative_difference`,
+  `weighted_difference_stats` (compensated sums), and `keep_frame` for
+  `daily_snapshot_series`. Column means are now sampled at every snapshot of
+  the requested UTC hour (the Python script took one frame per file, the
+  initial state from the first file, and so skipped 00 UTC of the second day),
+  and cells with fill values are left out of the daily statistics and counted.
 
 ### Verification and remaining limits
 
