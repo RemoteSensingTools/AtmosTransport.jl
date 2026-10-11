@@ -80,11 +80,14 @@ in `test/core/test_replay_consistency.jl`:
 | `verify_window_continuity_ll` with continuity-consistent data | `tol_rel ≤ 1e-12` (F64) / `1e-6` (F32). Both pass on the synthetic fixture. |
 | Deliberately broken `cm` storage | The storage-level gate fires `@test_throws ErrorException` when the binary's stored `cm` violates the explicit-`dm` closure by more than `replay_tolerance(FT)`. A separate subtest checks the diagnostic residual against the same broken field. |
 | Final-window inconsistent `cm` | The LL storage replay-gate test deliberately injects an inconsistent final-window `cm` and asserts `@test_throws ErrorException` — i.e. the gate **does** detect inconsistency at the day boundary, not silently pass it as zero-tendency. |
+| Replay gate scope | The error is divided by the largest cell mass: a 1 % error in a thin cell holding `1e-4` of the largest mass scores `1e-6`. With `cm` re-diagnosed from the fluxes as the preprocessors do it, an added rotational flux, an `am`/`bm` level flip and the same `cm` offset at every interface of a column pass at rounding level, while a broken column budget fails. |
 
-The same gate runs at preprocessing write time (always) and at
+The same gate runs at preprocessing write time (on by default) and at
 runtime load time (opt-in via `[input] validate_replay = true`). The test exercises the function
 directly so the contract is validated independently of the
-preprocessor / runtime drivers.
+preprocessor / runtime drivers. The gate certifies that a binary is
+self-consistent, not that its winds are right; see
+[What the replay gate certifies](@ref).
 
 ## Cross-topology (regridding) conservation
 

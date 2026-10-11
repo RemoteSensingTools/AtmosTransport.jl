@@ -84,7 +84,7 @@ specialized kernels via Julia's multiple dispatch on the grid type.
 | Subtype | Smooth-region reconstruction | Notes |
 | --- | --- | --- |
 | `UpwindScheme` | First order | Donor-cell; cheap, very diffusive. |
-| `SlopesScheme{L}` | Second order | Russell-Lerner slopes (TM5 `sl_advection` port). Limiter parameter `L`. |
+| `SlopesScheme{L}` | Second order | Russell–Lerner face flux with the slope re-diagnosed from neighbouring means every sweep (van Leer). Not TM5's prognostic-moment slopes scheme. Limiter parameter `L`. |
 | `PPMScheme{L,V}` | Second order | Limited piecewise-parabolic edges set a Russell–Lerner slope. Limiter parameter `L`. `V = FV3ScalarProfile` (CS only) integrates FV3's `kord = 8` parabola in the vertical sweep. Supported on LL and CS split-sweep; RG supports upwind only. |
 | `LinRoodPPMScheme` | Piecewise parabolic | FV3 horizontal cross terms (CS only), paired with vertical upwind. `ppm_order=5` or `7` selects the edge-value family; both share the same interior reconstruction. |
 

@@ -109,8 +109,11 @@ The production GEOS-CS path does not use the separate FV3-style pressure-fixer
 Conservation in floating-point is verified per-window via:
 
 ```math
-\frac{\|m_{\text{evolved}} - m_{\text{stored}, n+1}\|}{\|m_{\text{stored}, n+1}\|} \;\le\; \tau(\text{FT})
+\frac{\max_c \bigl|m_{\text{evolved},c} - m_{\text{stored},n+1,c}\bigr|}{\max_c \bigl|m_{\text{stored},n+1,c}\bigr|} \;\le\; \tau(\text{FT})
 ```
+
+where `c` runs over the cells of the grid (of one panel on the cubed sphere),
+so each cell's error is divided by the largest cell mass.
 
 `replay_tolerance(FT)` is defined in
 `src/MetDrivers/ReplayContinuity.jl`:
@@ -128,7 +131,10 @@ relaxed to `1e-4` to absorb the per-window accumulation).
 
 These replay gates check carrier-air continuity. They do not bound tracer
 drift or establish consistency of reconstructed tracer fluxes at panel seams;
-tracer conservation needs its own tests.
+tracer conservation needs its own tests. Because `cm` is diagnosed from the
+same horizontal fluxes just before the check, the gate certifies that the
+stored payload is self-consistent, not that the winds are right: see
+[What the replay gate certifies](@ref).
 
 The gate fires twice in the lifecycle of a binary:
 

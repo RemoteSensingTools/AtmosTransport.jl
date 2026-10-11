@@ -346,7 +346,11 @@ Evaluate the prototype CS surface-flux 4D-Var cost and gradient. Controls are
 named `CSSurfaceFluxControl`s over `CSSurfaceFluxWindow`s. Observations are
 scalar `CSObservation`s sampled after model steps. The observation-gradient
 term is assembled from the same reverse-mode footprints used by
-`cs_surface_emission_footprint`.
+`cs_surface_emission_footprint`: after one shared forward run for the
+simulated values, every observation re-runs the forward model with a tape up
+to its step and then its own reverse pass, so one cost-and-gradient
+evaluation costs one taped forward and reverse run per observation (see
+[Adjoint status](@ref)).
 
 Two modes:
 

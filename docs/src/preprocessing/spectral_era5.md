@@ -125,14 +125,15 @@ For each of the day's 24 hourly windows:
       cubed-sphere Laplacian; cm is then derived via
       `diagnose_cs_cm!` rather than `recompute_cm_from_dm_target!`.
     - All three converge to the same current dry-basis tolerance and
-      satisfy `‖m_evolved − m_stored_{n+1}‖/‖m_{n+1}‖ ≤
-      replay_tolerance(FT)` at the write-time gate.
+      pass the write-time replay gate.
 
-6. **Write + replay gate** — `verify_storage_continuity_*!` re-runs the
-   forward stepper on the just-written window and checks
-   `‖m_evolved − m_stored_{n+1}‖ / ‖m_stored_{n+1}‖ ≤ replay_tolerance(FT)`
+6. **Write + replay gate** — before a window is written, the gate evolves
+   its stored air mass with the stored fluxes and checks
+   `max|m_evolved − m_stored_{n+1}| / max|m_stored_{n+1}| ≤ replay_tolerance(FT)`
    (`1e-10` for Float64, `1e-4` for Float32). Failures throw rather
-   than letting the bad binary land.
+   than letting the bad binary land. The gate checks that the payload is
+   self-consistent, not that the winds are right; see
+   [What the replay gate certifies](@ref).
 
 ## A worked LL preprocessing config
 

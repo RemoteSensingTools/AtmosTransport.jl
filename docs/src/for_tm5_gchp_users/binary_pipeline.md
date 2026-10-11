@@ -100,12 +100,18 @@ For every written window, the preprocessor evolves `m_n` forward with the
 stored flux fields and asserts
 
 ```
-‖m_evolved - m_stored[n+1]‖ / ‖m_stored[n+1]‖  ≤  tol
+max|m_evolved - m_stored[n+1]| / max|m_stored[n+1]|  ≤  tol
 ```
 
-with `tol = 1e-4` (Float32) or `1e-10` (Float64). Output is staged under a
-temporary name; a failed product is removed instead of being promoted to its
-canonical path.
+with `tol = 1e-4` (Float32) or `1e-10` (Float64); the maxima run over the
+cells of the grid (of one panel on the cubed sphere). Output is staged under a temporary name; a failed product is removed
+instead of being promoted to its canonical path.
+
+Since `cm` is diagnosed from the same horizontal fluxes just before the
+check, the gate reduces to the column mass budget that the balance has just
+closed. It certifies a self-consistent payload, not correct winds: a
+rotational flux error or a level flip of `am`/`bm` passes. See
+[What the replay gate certifies](@ref).
 
 ### Per-window adaptive substeps
 

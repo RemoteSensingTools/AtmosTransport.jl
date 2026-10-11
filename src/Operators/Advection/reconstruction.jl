@@ -38,7 +38,8 @@
 # ----------
 # - Russell & Lerner (1981), J. Appl. Meteor., 20:1483–1498.
 # - van Leer (1977), J. Comp. Phys., 23:276–299.
-# - TM5 source: advectx__slopes, advecty__slopes (deps/tm5/base/src/)
+# - TM5 source: dynamu / dynamv / dynamw in advectx.F90, advecty.F90,
+#   advectz.F90 (deps/tm5/base/src/); same face flux, prognostic moments
 # ---------------------------------------------------------------------------
 
 # =========================================================================
@@ -222,8 +223,11 @@ end
 #     F_q = α · (rm_R - (1 + α) · sx_R)    where α = F/m_R < 0  (4)
 #
 # Equations (3) and (4) are implemented in _slopes_face_flux below.
-# This is equivalent to TM5's advectx__slopes (Russell & Lerner 1981,
-# eqs. 8–12) and the van Leer MUSCL flux (van Leer 1977, eq. 40).
+# This is the face flux of TM5's slopes advection (`dynamu` in advectx.F90;
+# Russell & Lerner 1981, eqs. 8–12) and the van Leer MUSCL flux (van Leer
+# 1977, eq. 40). TM5 differs in where sx comes from: it carries sx (`rxm`) as
+# a prognostic moment, whereas SlopesScheme re-diagnoses it from the
+# neighbouring cell means every sweep (test/core/test_slopes_tm5_reference.jl).
 #
 # Stencil
 # -------

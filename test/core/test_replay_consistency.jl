@@ -235,3 +235,61 @@ end
         @test diag.worst_idx[1] == 4
     end
 end
+
+# What docs/src/concepts/binary_format.md ("What the replay gate certifies")
+# states about the gate. Tightening the gate (per-cell normalisation,
+# independent flux checks) must update this testset and that section together.
+@testset "Replay gate scope" begin
+    MD = AtmosTransport.MetDrivers
+    Nx, Ny, Nz, steps = 8, 6, 4, 2
+
+    # The error is divided by the largest cell mass: a 1 % error in a thin
+    # top-level cell holding 1e-4 of the largest mass scores 1e-6.
+    m = fill(1e9, Nx, Ny, Nz)
+    m[:, :, 1] .= 1e5
+    m_next = copy(m)
+    m_next[1, 1, 1] *= 1.01
+    diag = verify_window_continuity_ll(m, zeros(Nx + 1, Ny, Nz), zeros(Nx, Ny + 1, Nz),
+                                       zeros(Nx, Ny, Nz + 1), m_next, steps)
+    @test diag.max_rel_err ≈ 1e-6 rtol = 1e-9
+    @test diag.max_rel_err < MD.replay_tolerance(Float32)
+
+    # As the preprocessors wire it: cm is diagnosed from the stored horizontal
+    # fluxes and the endpoint tendency right before the gate.
+    function diagnosed_cm(m_cur, m_next, am, bm)
+        dm = (m_next .- m_cur) ./ (2steps)
+        cm = zeros(Nx, Ny, Nz + 1)
+        MD.recompute_cm_from_dm_target!(MD.structured_replay_layout(), zeros(Nx, Ny, Nz),
+                                        cm, m_cur, dm, am, bm)
+        return cm
+    end
+    gate_as_wired(m_cur, m_next, am, bm; cm = diagnosed_cm(m_cur, m_next, am, bm)) =
+        verify_window_continuity_ll(m_cur, am, bm, cm, m_next, steps).max_rel_err
+    m_cur = [1e9 * (1 + 0.1 * sinpi(i / 4 + j / 3) * k / Nz) for i in 1:Nx, j in 1:Ny, k in 1:Nz]
+    am = [3e5 * (1 + cospi(2(i - 1) / Nx)) * sinpi((j - 0.5) / Ny) * (1 + k / Nz)
+          for i in 1:Nx + 1, j in 1:Ny, k in 1:Nz]
+    am[Nx + 1, :, :] .= am[1, :, :]
+    bm = [j in (1, Ny + 1) ? 0.0 : 5e4 * sinpi(2i / Nx + 0.3k) for i in 1:Nx, j in 1:Ny + 1, k in 1:Nz]
+    div_h = zeros(Nx, Ny, Nz)
+    MD.horizontal_divergence!(div_h, MD.structured_replay_layout(), am, bm)
+    # Endpoint tendency that closes every column's budget; its vertical split
+    # differs from the horizontal divergence.
+    shift = [1e3 * cospi(i / 4 + j / 3 + k / 2) for i in 1:Nx, j in 1:Ny, k in 1:Nz]
+    shift .-= sum(shift; dims = 3) ./ Nz
+    m_next = m_cur .+ 2steps .* (shift .- div_h)
+    # A non-divergent flux from a streamfunction on cell corners.
+    ψ = [j in (1, Ny + 1) ? 0.0 : 2e5 * sinpi(2(i - 1) / Nx + 0.2j) for i in 1:Nx + 1, j in 1:Ny + 1]
+    ψ[Nx + 1, :] .= ψ[1, :]
+    am_rot = [ψ[i, j + 1] - ψ[i, j] for i in 1:Nx + 1, j in 1:Ny]
+    bm_rot = [ψ[i, j] - ψ[i + 1, j] for i in 1:Nx, j in 1:Ny + 1]
+    broken = copy(am)
+    broken[3, 3, :] .*= 2
+
+    @test gate_as_wired(m_cur, m_next, am, bm) < 1e-14
+    cm_through = diagnosed_cm(m_cur, m_next, am, bm)
+    cm_through[2, 2, :] .+= 1e6                       # same flux through top and surface
+    @test gate_as_wired(m_cur, m_next, am, bm; cm = cm_through) < 1e-14
+    @test gate_as_wired(m_cur, m_next, am .+ am_rot, bm .+ bm_rot) < 1e-14  # rotational error
+    @test gate_as_wired(m_cur, m_next, am[:, :, end:-1:1], bm[:, :, end:-1:1]) < 1e-14  # level flip
+    @test gate_as_wired(m_cur, m_next, broken, bm) > 1e-4                   # column budget broken
+end

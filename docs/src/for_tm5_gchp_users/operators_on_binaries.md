@@ -78,12 +78,18 @@ flowchart LR
 | Scheme | What TM5/GCHP user it maps to | Grids | Multi-tracer fusion |
 | --- | --- | --- | --- |
 | `UpwindScheme` | First-order upwind (debugging only) | LL, RG, CS | yes |
-| `SlopesScheme` | Russell-Lerner slopes / "TM5 sl_advection" | LL, CS | yes |
+| `SlopesScheme` | TM5's Russell–Lerner face flux, but with van Leer slopes re-diagnosed every sweep instead of TM5's prognostic moments | LL, CS | yes |
 | `PPMScheme` | PPM with Colella-Woodward monotonicity (GCHP PPM-NV5) | LL, CS split-sweep | yes |
 | `LinRoodPPMScheme{ORD}` (ORD ∈ {5,7}) | FV3 Lin-Rood PPM (GCHP dynamics) | CS only | **no** (per-tracer loop) |
 
 Reduced Gaussian currently supports `UpwindScheme` only; requesting a
 higher-order scheme on RG is rejected before transport begins.
+
+!!! note "No TM5 slopes advection"
+    TM5 carries the tracer-mass slopes `rxm`, `rym`, `rzm` as prognostic
+    state. `SlopesScheme` has no moment state: it shares TM5's face flux but
+    is markedly more diffusive. No option reproduces TM5's advection; see
+    [Advection schemes](@ref) for the measured differences.
 
 The TOML `[advection].scheme` key parses to a Julia type at config
 time; the runtime sees the typed value and dispatches at compile

@@ -164,6 +164,15 @@ end
 Replay one window's stored mass-flux data against the stored air-mass
 endpoints. The first form assumes `div_h` is already populated; the second
 builds it through the topology-specific `layout`.
+
+Returns `(max_abs_err, max_rel_err, worst_idx)`. `max_rel_err` is the largest
+cell error `|m_cur − 2·steps_per_window·(div_h + Δcm) − m_next|` divided by
+the largest `|m_next|` in the array, not by each cell's own mass. Only the
+differences `cm[k+1] − cm[k]` enter. When `cm` was diagnosed from the same
+fluxes and endpoints, as the preprocessors that build binaries from
+meteorological data do before their gates, this checks the column mass
+budgets and the payload's self-consistency, not the winds; see
+[What the replay gate certifies](@ref).
 """
 function verify_window_continuity(div_h::AbstractArray{Float64, N},
                                   m_cur::AbstractArray{<:Any, N},
