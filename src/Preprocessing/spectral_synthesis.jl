@@ -334,9 +334,9 @@ convergence. `cm[1] = 0` (TOA) and `cm[Nz+1] = 0` (surface) by construction.
 These raw `cm` values are only a staging estimate. Before writing a transport
 binary, the preprocessing path applies a column-integrated mass correction to
 the horizontal fluxes and diagnoses the stored `cm` from the explicit forward
-mass endpoint. The legacy per-layer horizontal Poisson correction is available
-only as an opt-in diagnostic mode because it can distort physical horizontal
-winds when no independent vertical mass flux is supplied.
+mass endpoint. The former per-layer horizontal Poisson correction was removed:
+without an independent vertical mass flux, it forced each layer's horizontal
+divergence to the complete mass tendency and left almost nothing for `cm`.
 """
 function compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps,
                               dA, dB, grid::LatLonTargetGeometry, half_dt, Nz)

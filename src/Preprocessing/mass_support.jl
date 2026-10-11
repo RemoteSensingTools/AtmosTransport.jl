@@ -269,7 +269,9 @@ end
 """
     balance_mass_fluxes!(am, bm, dm_dt, ws::LLPoissonWorkspace)
 
-TM5-style Poisson mass-flux balance (TM5 r1112 grid_type_ll.F90:2536-2653).
+FFT Poisson solve of the lat-lon balance (the solver of TM5 r1112
+`BalanceMassFluxes_m`, grid_type_ll.F90:2536-2653), applied to every level
+`k` of the arrays it is given.
 
 Adjusts `am` and `bm` in-place so that the discrete horizontal convergence
 at each cell `(i, j)` matches the prescribed mass tendency `dm_dt`:
@@ -281,8 +283,11 @@ the periodic lat-lon grid via FFT division by the discrete Laplacian eigenvalues
 The `ws::LLPoissonWorkspace` provides pre-computed eigenvalues, scratch arrays,
 and cached in-place FFT plans for zero-allocation operation.
 
-Horizontal fluxes must be balanced this way before `cm` is diagnosed from
-the explicit endpoint mass tendency.
+Preprocessing calls it on the column-integrated fluxes only (one level, from
+`balance_column_mass_fluxes!`). Balancing every model level to its
+own mass change would leave nothing for the vertical mass flux `cm`: TM5's
+per-level balance keeps vertical motion only because its target includes the
+IFS vertical flux, which our preprocessing does not have.
 """
 function balance_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
                               dm_dt::Array{FT, 3},
@@ -365,13 +370,14 @@ end
 """
     balance_column_mass_fluxes!(am, bm, m, dm_dt, ws::LLPoissonWorkspace)
 
-Apply the minimal horizontal correction needed by the column-integrated mass
-budget, then distribute the corrected face flux over vertical layers using
-local air-mass weights.
-
-This is the ERA default. It enforces the zero top/bottom `cm` replay contract
-without the old per-layer Poisson solve, which can overwrite real wind shear
-when no independent physical vertical mass flux is available.
+Column Poisson balance of a lat-lon window: one FFT Poisson solve
+(`balance_mass_fluxes!`) makes the convergence of the
+column-integrated fluxes `Σ_k am`, `Σ_k bm` equal the column mass tendency
+`Σ_k dm_dt` in every cell, and each face's column correction `δ` is spread
+over the layers by the air mass of the two cells that share it
+(`spread_column_correction!`). The layer winds keep their vertical
+structure, and `cm` diagnosed afterwards from the explicit tendency carries
+the vertical motion and closes at the top and the surface.
 """
 function balance_column_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
                                      m::Array{FT, 3}, dm_dt::Array{FT, 3},
@@ -414,72 +420,23 @@ function balance_column_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
     balance_mass_fluxes!(col_am, col_bm, col_dm, ws; log_summary=false)
 
     max_face_delta = 0.0
+    weights = MassWeightedColumn()
     @inbounds for j in 1:Ny, i in 1:Nx + 1
         delta = Float64(col_am[i, j, 1] - col_am_before[i, j, 1])
         max_face_delta = max(max_face_delta, abs(delta))
         delta == 0.0 && continue
-
-        i_w = i == 1 ? Nx : i - 1
+        i_w = i == 1 ? Nx : i - 1          # periodic in longitude
         i_e = i == Nx + 1 ? 1 : i
-        denom = 0.0
-        for k in 1:Nz
-            denom += max(0.0, Float64(m[i_w, j, k])) +
-                     max(0.0, Float64(m[i_e, j, k]))
-        end
-        if denom > 0.0
-            applied = 0.0
-            for k in 1:Nz-1
-                w = (max(0.0, Float64(m[i_w, j, k])) +
-                     max(0.0, Float64(m[i_e, j, k]))) / denom
-                inc = FT(delta * w)
-                am[i, j, k] += inc
-                applied += Float64(inc)
-            end
-            am[i, j, Nz] += FT(delta - applied)
-        else
-            applied = 0.0
-            even = delta / Nz
-            for k in 1:Nz-1
-                inc = FT(even)
-                am[i, j, k] += inc
-                applied += Float64(inc)
-            end
-            am[i, j, Nz] += FT(delta - applied)
-        end
+        spread_column_correction!(view(am, i, j, :), delta, weights,
+                                  view(m, i_w, j, :), view(m, i_e, j, :))
     end
 
     @inbounds for j in 1:Ny + 1, i in 1:Nx
         delta = Float64(col_bm[i, j, 1] - col_bm_before[i, j, 1])
         max_face_delta = max(max_face_delta, abs(delta))
         delta == 0.0 && continue
-
-        j_s = max(j - 1, 1)
-        j_n = min(j, Ny)
-        denom = 0.0
-        for k in 1:Nz
-            denom += max(0.0, Float64(m[i, j_s, k])) +
-                     max(0.0, Float64(m[i, j_n, k]))
-        end
-        if denom > 0.0
-            applied = 0.0
-            for k in 1:Nz-1
-                w = (max(0.0, Float64(m[i, j_s, k])) +
-                     max(0.0, Float64(m[i, j_n, k]))) / denom
-                inc = FT(delta * w)
-                bm[i, j, k] += inc
-                applied += Float64(inc)
-            end
-            bm[i, j, Nz] += FT(delta - applied)
-        else
-            applied = 0.0
-            even = delta / Nz
-            for k in 1:Nz-1
-                inc = FT(even)
-                bm[i, j, k] += inc
-                applied += Float64(inc)
-            end
-            bm[i, j, Nz] += FT(delta - applied)
-        end
+        spread_column_correction!(view(bm, i, j, :), delta, weights,
+                                  view(m, i, max(j - 1, 1), :), view(m, i, min(j, Ny), :))
     end
 
     post_residual = 0.0

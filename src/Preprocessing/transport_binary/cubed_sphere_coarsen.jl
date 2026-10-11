@@ -147,6 +147,21 @@ function _source_header_symbol(header::AbstractDict, key::AbstractString,
                           '-' => '_', ' ' => '_'))
 end
 
+function _validate_cs_coarsen_horizontal_balance(raw::AbstractDict)
+    # Binaries written before this provenance field was introduced remain
+    # readable elsewhere. Accept them without guessing a balance and preserve
+    # the missing field in the coarsened header.
+    haskey(raw, "horizontal_balance") || return nothing
+    balance = lowercase(String(raw["horizontal_balance"]))
+    balance == "per_layer" && throw(ArgumentError(
+        "cannot coarsen a source binary with horizontal_balance = \"per_layer\"; " *
+        "regenerate the source binary with the current preprocessor"))
+    balance in ("column", "none") || throw(ArgumentError(
+        "source binary has unsupported horizontal_balance = $(repr(balance)); " *
+        "expected \"column\" or \"none\""))
+    return nothing
+end
+
 function _experimental_coarsen_metadata(reader, output_Nc::Int, ratio::Int)
     raw = reader.header.raw_header
     metadata = Dict{String, Any}(
@@ -246,6 +261,7 @@ function coarsen_nested_cs_transport_binary(
         flux_kind = _source_header_symbol(h.raw_header, "flux_kind", :substep_mass_amount)
         flux_kind === :substep_mass_amount || throw(ArgumentError(
             "source flux_kind must be substep_mass_amount; got $(flux_kind)"))
+        _validate_cs_coarsen_horizontal_balance(h.raw_header)
         unsupported = setdiff(Set(h.payload_sections), _EXPERIMENTAL_CS_COARSEN_SECTIONS)
         isempty(unsupported) || throw(ArgumentError(
             "experimental coarsener does not yet define safe semantics for sections: " *

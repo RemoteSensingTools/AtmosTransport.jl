@@ -207,7 +207,6 @@ mutable struct CSSpectralUnifiedDriverContext{G, S, V, SP, N, W}
     cs_balance_tol             :: Float64
     cs_balance_project_every   :: Int
     write_replay_on            :: Bool
-    apply_horizontal_balance   :: Bool
     balance_weights            :: W     # column-balance level weights (`[numerics] column_balance_weights`)
     worst_pre                  :: Float64
     worst_post                 :: Float64
@@ -230,7 +229,6 @@ function CSSpectralUnifiedDriverContext(grid, settings, vertical, spec,
                                         cs_balance_tol::Real,
                                         cs_balance_project_every::Integer,
                                         write_replay_on::Bool,
-                                        apply_horizontal_balance::Bool,
                                         balance_weights::AbstractColumnWeights)
     return CSSpectralUnifiedDriverContext{
         typeof(grid), typeof(settings), typeof(vertical), typeof(spec),
@@ -238,7 +236,7 @@ function CSSpectralUnifiedDriverContext(grid, settings, vertical, spec,
             grid, settings, vertical, spec, next_day_hour0,
             date, substep_policy, Int(steps_per_met), Float64(cs_balance_tol),
             Int(cs_balance_project_every), write_replay_on,
-            apply_horizontal_balance, balance_weights, 0.0, 0.0, 0, 0.0, 0.0, 0,
+            balance_weights, 0.0, 0.0, 0, 0.0, 0.0, 0,
             (0, 0, 0, 0), 0.0, 0.0, 0.0, 0.0)
 end
 
@@ -291,19 +289,11 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
         contract.steps_per_window = steps
 
         t_bal = time()
-        bal_diag = if ctx.apply_horizontal_balance
-            balance_cs_global_mass_fluxes!(
-                cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
-                grid.face_table, grid.cell_degree, steps,
-                grid.poisson_scratch; tol=ctx.cs_balance_tol, max_iter=max_iter,
-                project_every=ctx.cs_balance_project_every)
-        else
-            balance_cs_column_mass_fluxes!(
-                cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
-                grid.face_table, grid.cell_degree, steps,
-                grid.poisson_scratch; tol=ctx.cs_balance_tol, max_iter=max_iter,
-                project_every=ctx.cs_balance_project_every, weights=ctx.balance_weights)
-        end
+        bal_diag = balance_cs_column_mass_fluxes!(
+            cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
+            grid.face_table, grid.cell_degree, steps,
+            grid.poisson_scratch; tol=ctx.cs_balance_tol, max_iter=max_iter,
+            project_every=ctx.cs_balance_project_every, weights=ctx.balance_weights)
         ctx.total_balance += time() - t_bal
         ctx.worst_pre  = max(ctx.worst_pre,  bal_diag.max_pre_residual)
         ctx.worst_post = max(ctx.worst_post, bal_diag.max_post_residual)
@@ -438,8 +428,7 @@ function process_day(date::Date,
     cs_balance_tol = Float64(get(settings, :cs_balance_tol, DEFAULT_POISSON_BALANCE_TOL))
     cs_balance_project_every = Int(get(settings, :cs_balance_project_every,
                                        DEFAULT_POISSON_PROJECT_EVERY))
-    # Balance mode and column weights, checked before any input is read.
-    balance = effective_horizontal_balance(get(settings, :horizontal_balance, nothing), ColumnBalance())
+    # Column weights, checked before any input is read.
     weights_kind = _check_spectral_column_weights(grid, settings)
     balance_weights = column_weights(weights_kind, vertical.merged_vc.B)
     date_str = Dates.format(date, "yyyymmdd")
@@ -513,7 +502,7 @@ function process_day(date::Date,
                     "adaptive_substeps" => substep_policy.adaptive_substeps,
                     "source_type"      => "era5_spectral",
                     "target_type"      => "cubed_sphere",
-                    "horizontal_balance" => balance_tag(balance),
+                    "horizontal_balance" => HORIZONTAL_BALANCE_TAG,
                     "staging_nlon"     => Nx_stg,
                     "staging_nlat"     => Ny_stg,
                     "regrid_method"    => "conservative",
@@ -538,12 +527,7 @@ function process_day(date::Date,
                 require_substep_positivity = require_substep_positivity,
                 steps_per_window = steps_per_met,
             )
-            apply_horizontal_balance = balance isa LayerBalance
-            if apply_horizontal_balance
-                @info "  Applying per-layer CS Poisson mass-flux balance (legacy opt-in)..."
-            else
-                @info "  Applying column CS mass-balance correction; diagnosing cm from endpoint mass tendency..."
-            end
+            @info "  Applying column CS mass-balance correction; diagnosing cm from endpoint mass tendency..."
             binary_writer = CubedSphereBinaryWriter(
                 writer,
                 mass_basis_from_symbol(Symbol(settings.mass_basis));
@@ -553,7 +537,7 @@ function process_day(date::Date,
             ctx = CSSpectralUnifiedDriverContext(
                 grid, settings, vertical, spec, next_day_hour0, date,
                 substep_policy, steps_per_met, cs_balance_tol, cs_balance_project_every,
-                write_replay_on, apply_horizontal_balance, balance_weights)
+                write_replay_on, balance_weights)
 
             driver_started = true
             driver_result = run_unified_preprocessor_day!(
@@ -568,13 +552,8 @@ function process_day(date::Date,
                                sum(ps_offsets_day) / Nt)
             end
 
-            if apply_horizontal_balance
-                @info @sprintf("  Poisson balance summary: pre=%.3e  post=%.3e  max_iter=%d",
-                               ctx.worst_pre, ctx.worst_post, ctx.worst_iter)
-            else
-                @info @sprintf("  Column balance summary: pre=%.3e  post=%.3e  max_iter=%d",
-                               ctx.worst_pre, ctx.worst_post, ctx.worst_iter)
-            end
+            @info @sprintf("  Column balance summary: pre=%.3e  post=%.3e  max_iter=%d",
+                           ctx.worst_pre, ctx.worst_post, ctx.worst_iter)
             if write_replay_on
                 replay_msg = ctx.worst_replay_win > 0 ?
                     @sprintf("max rel=%.3e abs=%.3e kg win=%d cell=%s",

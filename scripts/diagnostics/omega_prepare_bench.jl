@@ -81,7 +81,7 @@ function main()
             windows_per_day = nw,
             global_mass_pin = Bool(get(mass_fix, "enable", false)),
             global_mass_target_kg = target_kg,
-            balance_mode = :column, cm_closure = closure,
+            cm_closure = closure,
             smooth_iters = DEFAULT_GEOS_SMOOTHING_SWEEPS,
             omega_regularization = omega_regularization)
     P._OMEGA_TIMING[] = true

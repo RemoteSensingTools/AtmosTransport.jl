@@ -51,7 +51,6 @@ substep_schedule           = "adaptive_cfl"
 substep_cfl_target         = 0.95
 min_steps_per_window       = 1
 max_steps_per_window       = 64
-balance_mode               = "column"     # ignored when cm_closure=pressure_fixer
 geos_cm_closure            = "pressure_fixer"
 
 [mass_fix]

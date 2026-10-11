@@ -65,9 +65,10 @@ ERA5 spectral to LL, RG, or CS:
    to dry basis; merge to output levels.
 4. CS only: conservative regrid to panels, recover and rotate winds, rebuild
    face fluxes (`reconstruct_cs_fluxes!`).
-5. Balance against the forward endpoint mass (LL `balance_column_mass_fluxes!`,
-   CS `balance_cs_column_mass_fluxes!`, RG per-layer
-   `balance_compressed_horizontal_fluxes!`), then diagnose `cm`
+5. Column-balance against the forward endpoint mass (LL
+   `balance_column_mass_fluxes!`, CS `balance_cs_column_mass_fluxes!`, RG
+   `balance_compressed_column_fluxes!`; each spreads its face corrections over
+   the layers with `spread_column_correction!`), then diagnose `cm`
    (`recompute_cm_from_dm_target!`, `diagnose_cs_cm!`).
 6. Choose the substep count, run the window contract, write. LL stores all
    windows and balances them at flush; RG and CS emit window `n` after
@@ -80,8 +81,8 @@ GEOS-IT / GEOS-FP to CS:
 2. Stagger fluxes to faces (identity or block coarsening), apply the vertical
    plan, seed `m_cur` (previous endpoint when chaining) and the target from the
    raw dry endpoint, and pin both when `[mass_fix].enable`.
-3. Default `geos_cm_closure = "endpoint_balanced"`: `balance_cs_column_mass_fluxes!`
-   (per layer with `balance_mode = "per_layer"`), then `diagnose_cs_cm!`.
+3. Default `geos_cm_closure = "endpoint_balanced"`: `balance_cs_column_mass_fluxes!`,
+   then `diagnose_cs_cm!`.
 4. Adaptive substeps, contract, write with `flux_kind = :full_window_mass_amount`.
 
 ERA5 N320 and MERRA-2 to CS:
@@ -114,10 +115,10 @@ Files directly in this folder; the subfolders have their own READMEs
 - [`reduced_window_buffer.jl`](reduced_window_buffer.jl) — RG two-slot window buffer and workspace, ingest/drain/flush
 - [`reduced_spectral_day.jl`](reduced_spectral_day.jl) — RG window synthesis, pin/dry/merge and next-day end point, `balance_window!`, driver hooks, RG `process_day`
 - [`mass_support.jl`](mass_support.jl) — LL merge/remap, LL Poisson and column balance, qv readers, `apply_dry_basis_native!`, `pin_global_mean_ps!`, `pin_global_mean_ps_using_qv!`
-- [`ring_poisson_balance.jl`](ring_poisson_balance.jl) — RG `CompressedLaplacian`, `balance_compressed_horizontal_fluxes!`
+- [`ring_poisson_balance.jl`](ring_poisson_balance.jl) — RG `CompressedLaplacian`, `balance_compressed_column_fluxes!`
 - [`cs_face_table.jl`](cs_face_table.jl) — CS global cell and face indexing (the face table)
 - [`cs_poisson_solver.jl`](cs_poisson_solver.jl) — CS graph Laplacian, PCG solver, correction mapping, mirror synchronization
-- [`cs_poisson_balance.jl`](cs_poisson_balance.jl) — `balance_cs_global_mass_fluxes!`, `balance_cs_column_mass_fluxes!`, column weights, `diagnose_cs_cm!`
+- [`cs_poisson_balance.jl`](cs_poisson_balance.jl) — `balance_cs_global_mass_fluxes!` (the CG solve on the column), `balance_cs_column_mass_fluxes!`, column weights and `spread_column_correction!`, `diagnose_cs_cm!`
 - [`cs_transport_helpers.jl`](cs_transport_helpers.jl) — CS workspace, panel packing, LL → CS regrid helpers (`regrid_2d_to_cs_panels!` / `regrid_3d_to_cs_panels!` pass the quantity kind to `Regridding.apply_regridder!`), wind recovery from LL fluxes
 - [`cs_flux_reconstruction.jl`](cs_flux_reconstruction.jl) — CS face fluxes from cell-center winds (`cs_face_fluxes!`)
 - [`cs_wind_rotation.jl`](cs_wind_rotation.jl) — east/north ↔ panel-local wind rotation, CS face fluxes → cell-center winds

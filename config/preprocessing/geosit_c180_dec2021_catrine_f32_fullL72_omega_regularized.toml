@@ -41,7 +41,6 @@ substep_schedule           = "adaptive_cfl"
 substep_cfl_target         = 0.95
 min_steps_per_window       = 1
 max_steps_per_window       = 512
-balance_mode               = "column"
 geos_cm_closure            = "omega_regularized"
 
 [numerics.omega_regularization]

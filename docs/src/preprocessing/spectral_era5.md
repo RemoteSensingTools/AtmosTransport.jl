@@ -118,9 +118,14 @@ For each of the day's 24 hourly windows:
       the periodic-longitude grid; followed by
       `recompute_cm_from_dm_target!` so the explicit-`dm` closure
       holds at write-time replay.
-    - **RG**: a CG-based solve over the compressed face Laplacian,
-      streaming previous-window state forward; the per-day binary
-      is built window-by-window rather than accumulated.
+    - **RG**: `balance_compressed_column_fluxes!`, a CG-based solve of
+      the column budget over the compressed face Laplacian, streaming
+      previous-window state forward; the per-day binary is built
+      window-by-window rather than accumulated.
+    - Every target balances the column-integrated fluxes and spreads
+      each face's correction over the layers by air mass, so `cm`
+      keeps the vertical motion (see
+      [Vertical transport](../theory/vertical_transport.md) section 2).
     - **CS** (spectral source): a CG-based solve on the per-panel
       cubed-sphere Laplacian; cm is then derived via
       `diagnose_cs_cm!` rather than `recompute_cm_from_dm_target!`.

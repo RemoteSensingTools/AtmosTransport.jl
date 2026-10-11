@@ -270,7 +270,6 @@ function flush_final_windows!(workspace::LatLonSpectralWindowWorkspace{FT},
         workspace.ps_offsets)
     apply_poisson_balance!(workspace.storage, workspace.last_hour_next,
                            workspace.steps_schedule, contract, substep_policy;
-                           balance = get(settings, :horizontal_balance, nothing),
                            write_replay_on = workspace.write_replay_on)
     fill_qv_endpoints!(workspace.storage, workspace.last_hour_next)
     return (ReadyWindow{LatLonTargetGeometry, FT}(

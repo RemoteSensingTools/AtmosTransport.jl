@@ -263,6 +263,7 @@ function _process_day_native(cfg::AbstractDict;
     haskey(get(cfg, "numerics", Dict()), "column_balance_weights") && throw(ArgumentError(
         "[numerics] column_balance_weights applies to ERA5 spectral configs; native sources " *
         "set column_balance_weights in their met-source [preprocessing] table"))
+    reject_removed_balance_mode(get(cfg, "numerics", Dict{String, Any}()))
     src_cfg = cfg["source"]
     toml_relpath = String(src_cfg["toml"])
     toml_path = isabspath(toml_relpath) ? toml_relpath :
@@ -326,7 +327,6 @@ function _process_day_native(cfg::AbstractDict;
     write_replay_check         = _resolve_write_replay_check(cfg)
     substep_policy = _resolve_substep_schedule_policy(cfg, positivity_cfl_limit)
     numerics_cfg = get(cfg, "numerics", Dict{String, Any}())
-    horizontal_balance = resolve_horizontal_balance(numerics_cfg)
     cm_closure_raw = lowercase(String(get(numerics_cfg, "geos_cm_closure", "endpoint_balanced")))
     cm_closure = if cm_closure_raw in ("endpoint_balanced", "endpoint", "diagnose", "balanced")
         :endpoint_balanced
@@ -450,7 +450,6 @@ function _process_day_native(cfg::AbstractDict;
             seed_m          = seed_m_in,
             global_mass_pin = global_mass_pin,
             global_mass_target_kg = configured_global_mass_target_kg,
-            horizontal_balance = horizontal_balance,
             cm_closure = cm_closure,
             smooth_iters = smooth_iters,
             omega_regularization = omega_regularization,
@@ -505,7 +504,6 @@ function _process_day_native(cfg::AbstractDict;
                 seed_m          = seed_m,
                 global_mass_pin = global_mass_pin,
                 global_mass_target_kg = global_mass_target_kg,
-                horizontal_balance = horizontal_balance,
                 cm_closure = cm_closure,
                 smooth_iters = smooth_iters,
                 omega_regularization = omega_regularization,

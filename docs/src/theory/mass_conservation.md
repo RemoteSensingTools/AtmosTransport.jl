@@ -84,13 +84,13 @@ with the surface boundary `cm` at `k = N_z + 1` pinned to zero (no mass
 flux through the ground). All three production preprocessing paths
 produce `cm` via the **same diagnostic**:
 
-1. **LL spectral preprocessor.** Runs FFT-based Poisson balance over
-   the periodic-longitude grid, then calls
-   `recompute_cm_from_dm_target!` to diagnose `cm` from the explicit
-   `(am, bm, dm)` field.
-2. **RG spectral preprocessor.** Runs ring-aware Poisson balance via
-   the compressed Laplacian, then calls the same
-   `recompute_cm_from_dm_target!` diagnostic.
+1. **LL spectral preprocessor.** Runs the column FFT Poisson balance
+   over the periodic-longitude grid (`balance_column_mass_fluxes!`),
+   then calls `recompute_cm_from_dm_target!` to diagnose `cm` from the
+   explicit `(am, bm, dm)` field.
+2. **RG spectral preprocessor.** Runs the column Poisson balance on
+   the compressed ring Laplacian (`balance_compressed_column_fluxes!`),
+   then calls the same `recompute_cm_from_dm_target!` diagnostic.
 3. **GEOS native CS preprocessor.** Column-balances horizontal mass
    fluxes against the raw next-hour dry endpoint
    (`balance_cs_column_mass_fluxes!`), then calls `diagnose_cs_cm!`

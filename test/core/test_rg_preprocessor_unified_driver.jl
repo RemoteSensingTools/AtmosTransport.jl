@@ -39,6 +39,41 @@ function _write_fake_spectral_cache!(spectral_dir::String,
     return path
 end
 
+function _write_vertically_compensating_spectral_cache!(spectral_dir::String,
+                                                         cache_dir::String,
+                                                         date::Date)
+    mkpath(spectral_dir)
+    mkpath(cache_dir)
+    ds = Dates.format(date, "yyyymmdd")
+    vo_d_path = joinpath(spectral_dir, "era5_spectral_$(ds)_vo_d.gb")
+    lnsp_path = joinpath(spectral_dir, "era5_spectral_$(ds)_lnsp.gb")
+    touch(vo_d_path)
+    touch(lnsp_path)
+
+    lnsp = zeros(ComplexF64, 2, 2)
+    lnsp[1, 1] = complex(log(100000.0))
+    vo = zeros(ComplexF64, 2, 2, 137)
+    d = zeros(ComplexF64, 2, 2, 137)
+    # Equal-pressure layers with opposite D(1, 0) coefficients have equal and
+    # opposite horizontal mass tendencies. Their column tendency is zero, so
+    # a column balance preserves the level mismatch for cm to close.
+    d[2, 1, 1] = 1.0e-6
+    d[2, 1, 2] = -1.0e-6
+    hours = collect(0:23)
+    spec = (
+        hours,
+        lnsp_all = Dict(hour => copy(lnsp) for hour in hours),
+        vo_by_hour = Dict(hour => copy(vo) for hour in hours),
+        d_by_hour = Dict(hour => copy(d) for hour in hours),
+        T = 1,
+        n_times = length(hours),
+    )
+    path = Pre.spectral_day_cache_path(cache_dir, vo_d_path, lnsp_path;
+                                       T_target = 1)
+    Pre._write_spectral_day_cache(path, spec)
+    return path
+end
+
 function _stable_binary_parts(path)
     bytes = read(path)
     json_end = something(findfirst(==(0x00), bytes), length(bytes) + 1) - 1
@@ -61,16 +96,28 @@ function _rg_test_vertical(::Type{FT}) where FT
     )
 end
 
+function _rg_two_level_vertical(::Type{FT}) where FT
+    vc = AtmosTransport.HybridSigmaPressure(FT[0, 0, 0], FT[0, 0.5, 1])
+    return (
+        Nz_native = 2,
+        Nz = 2,
+        level_range = 1:2,
+        ab = (dA = FT[0, 0], dB = FT[0.5, 0.5], b_ifc = FT[0, 0.5, 1]),
+        merge_map = [1, 2],
+        merged_vc = vc,
+    )
+end
+
 function _rg_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir;
                            include_qv::Bool = false, mass_fix::Bool = false,
-                           horizontal_balance = nothing, column_balance_weights = :mass) where FT
+                           column_balance_weights = :mass,
+                           T_target::Int = 0) where FT
     return ERA5SpectralSettings((
-        horizontal_balance = horizontal_balance,
         column_balance_weights = column_balance_weights,
         output_float_type = FT,
         spectral_dir = spectral_dir,
         spectral_cache_dir = cache_dir,
-        T_target = 0,
+        T_target = T_target,
         min_dp = 0.0,
         include_qv = include_qv,
         mass_basis = :moist,
@@ -83,6 +130,59 @@ function _rg_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir;
         dt = 900.0,
         out_dir = out_dir,
     ))
+end
+
+@testset "RG end-to-end column balance retains vertical motion" begin
+    for FT in (Float64, Float32)
+        mktempdir() do tmp
+            date = Date(2021, 12, 1)
+            spectral_dir = joinpath(tmp, "spectral")
+            cache_dir = joinpath(tmp, "cache")
+            _write_vertically_compensating_spectral_cache!(spectral_dir, cache_dir, date)
+            grid = build_target_geometry(Val(:synthetic_reduced_gaussian),
+                                         Dict{String, Any}("gaussian_number" => 1), Float64)
+            vertical = _rg_two_level_vertical(Float64)
+            settings = _rg_test_settings(
+                FT, spectral_dir, cache_dir, joinpath(tmp, "out"); T_target = 1)
+            path = process_day(date, grid, settings, vertical;
+                               positivity_cfl_limit = 0.95)
+
+            reader = AtmosTransport.MetDrivers.TransportBinaryReader(path; FT)
+            try
+                m_cur, _, fluxes = AtmosTransport.MetDrivers.load_window!(reader, 1)
+                m_next, _, _ = AtmosTransport.MetDrivers.load_window!(reader, 2)
+                hflux, cm = fluxes.horizontal_flux, fluxes.cm
+                @test maximum(abs, cm[:, 2]) > zero(FT)
+
+                nf = AtmosTransport.Grids.nfaces(grid.mesh)
+                face_left = Vector{Int32}(undef, nf)
+                face_right = similar(face_left)
+                for f in 1:nf
+                    left, right = AtmosTransport.Grids.face_cells(grid.mesh, f)
+                    face_left[f] = left
+                    face_right[f] = right
+                end
+                div = zeros(Float64, size(m_cur))
+                for k in axes(hflux, 2), f in axes(hflux, 1)
+                    flux = Float64(hflux[f, k])
+                    face_left[f] > 0 && (div[face_left[f], k] += flux)
+                    face_right[f] > 0 && (div[face_right[f], k] -= flux)
+                end
+                level_scale = maximum(abs, div)
+                @test level_scale > 0
+                @test maximum(abs, vec(sum(div; dims = 2))) <=
+                      (FT === Float64 ? 1e-10 : 1e-5) * level_scale
+
+                replay = AtmosTransport.MetDrivers.verify_window_continuity_rg(
+                    m_cur, hflux, cm, m_next, face_left, face_right,
+                    zeros(Float64, size(m_cur)),
+                    reader.header.steps_per_window_by_window[1])
+                @test replay.max_rel_err <= AtmosTransport.MetDrivers.replay_tolerance(FT)
+            finally
+                close(reader)
+            end
+        end
+    end
 end
 
 @testset "RG spectral unified driver emits reproducible bytes" begin
@@ -130,7 +230,7 @@ end
         @test !haskey(first_header, :write_replay_check)
         @test off_payload == first_payload
 
-        # The reduced-Gaussian path balances each layer: no column weights.
+        # The reduced-Gaussian column balance spreads its correction by air mass only.
         hyb = _rg_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "hyb");
                                 column_balance_weights = :hybrid_b)
         @test_throws ArgumentError process_day(date, grid, hyb, vertical; positivity_cfl_limit = 0.95)
@@ -143,15 +243,9 @@ end
                                                      positivity_cfl_limit = 0.95,
                                                      next_day_hour0 = next_day))
         @test header[:mass_fix_qv_mode] == "global_qv_climatology"
-        @test header[:horizontal_balance] == "per_layer"
+        @test header[:horizontal_balance] == "column"
         @test all(≈(98726.0 - 100000.0), header[:ps_offsets_pa_per_window])
         @test header[:ps_offsets_next_day_hour0_pa] ≈ 98726.0 - 101000.0
-
-        # The ring solver balances each layer; a column balance request is refused.
-        column = _rg_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "column");
-                                   horizontal_balance = Pre.ColumnBalance())
-        @test_throws ArgumentError process_day(date, grid, column, vertical;
-                                               positivity_cfl_limit = 0.95)
 
         # A failed day keeps an existing binary and removes its staging file. Without
         # the pin, the last window's global mass change cannot be closed by horizontal

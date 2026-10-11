@@ -360,10 +360,6 @@ end
         @test_throws ArgumentError process_day(Date(2021, 12, 1), grid, hyb_settings, vertical;
             out_path = joinpath(tmpdir, "out_cs_pfix.bin"), dt_met_seconds = 3600.0,
             FT = FT_TEST, mass_basis = :dry, cm_closure = :pressure_fixer)
-        @test_throws ArgumentError process_day(Date(2021, 12, 1), grid, hyb_settings, vertical;
-            out_path = joinpath(tmpdir, "out_cs_layer.bin"), dt_met_seconds = 3600.0,
-            FT = FT_TEST, mass_basis = :dry,
-            horizontal_balance = AtmosTransport.Preprocessing.LayerBalance())
     end
 
     @testset "process_day supports GEOS native vertical merge above pressure" begin

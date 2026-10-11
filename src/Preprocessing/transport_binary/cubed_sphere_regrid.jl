@@ -99,13 +99,10 @@ face fluxes are reconstructed with the output scaling.
   for legacy LL sources that do not carry `dm`. Production-safe regrids should
   leave this at `false` so the final CS window is closed against an explicit
   endpoint target instead of an inferred zero-tendency fallback.
-- `horizontal_balance = nothing` — `ColumnBalance()` (the default for
-  `nothing`) or `LayerBalance()`. Recorded in the header.
-- `column_balance_weights::Symbol = :mass` — how the column balance spreads its
-  correction over the levels (`:mass`, `:hybrid_b` or `:hybrid_mass`; see
-  `AbstractColumnWeights`), from the source binary's hybrid `B` interfaces.
-  Other weights than `:mass` are recorded in the header and need the column
-  balance.
+- `column_balance_weights::Symbol = :mass` — how the column Poisson balance
+  spreads its correction over the levels (`:mass`, `:hybrid_b` or
+  `:hybrid_mass`; see `AbstractColumnWeights`), from the source binary's hybrid
+  `B` interfaces. Other weights than `:mass` are recorded in the header.
 - `write_replay_check::Bool = true` — run the write-time replay-continuity
   gate. `false` is a diagnostic escape hatch; the output header then records
   `write_replay_check = false`.
@@ -123,15 +120,12 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 steps_per_window::Union{Nothing, Integer} = nothing,
                                 cs_balance_tol::Real = DEFAULT_POISSON_BALANCE_TOL,
                                 cs_balance_project_every::Integer = DEFAULT_POISSON_PROJECT_EVERY,
-                                horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
                                 column_balance_weights::Symbol = :mass,
                                 write_replay_check::Bool = true,
                                 run_cache = nothing)
     t_start = time()
     Nc = cs_grid.Nc
-    balance = effective_horizontal_balance(horizontal_balance, ColumnBalance())
     _validate_column_balance_weights(column_balance_weights, "regrid_ll_binary_to_cs")
-    _reject_layer_balance_weights(balance, column_balance_weights)
 
     # --- Open LL binary reader ---
     reader = TransportBinaryReader(ll_binary_path; FT=FT)
@@ -295,7 +289,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             "target_type"       => "cubed_sphere",
             "regrid_method"     => "conservative",
             "poisson_balanced"  => true,
-            "horizontal_balance" => balance_tag(balance),
+            "horizontal_balance" => HORIZONTAL_BALANCE_TAG,
         ), column_balance_weights), write_replay_check))
     writer = CubedSphereBinaryWriter(inner_writer, mass_basis_from_symbol(output_basis);
                                      Nc = Nc,
@@ -407,12 +401,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     worst_replay_win = 0
     worst_replay_idx = (0, 0, 0, 0)
     worst_positivity = init_cs_positivity_accumulator()
-    apply_horizontal_balance = balance isa LayerBalance
-    if apply_horizontal_balance
-        @info "  Applying per-layer CS Poisson mass-flux balance (legacy opt-in)..."
-    else
-        @info "  Applying column CS mass-balance correction; diagnosing cm from endpoint mass tendency..."
-    end
+    @info "  Applying column CS mass-balance correction; diagnosing cm from endpoint mass tendency..."
 
     # --- Process first window ---
     t0 = time()
@@ -443,22 +432,13 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         _copy_panels_regrid!(cs_ws.m_next_panels, cs_ws.m_panels)
 
         t_bal = time()
-        bal_diag = if apply_horizontal_balance
-            balance_cs_global_mass_fluxes!(
-                cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
-                cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
-                cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
-                max_iter=DEFAULT_POISSON_BALANCE_MAX_ITER,
-                project_every=Int(cs_balance_project_every))
-        else
-            balance_cs_column_mass_fluxes!(
-                cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
-                cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
-                cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
-                max_iter=DEFAULT_POISSON_BALANCE_MAX_ITER,
-                project_every=Int(cs_balance_project_every),
-                weights=balance_weights)
-        end
+        bal_diag = balance_cs_column_mass_fluxes!(
+            cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
+            cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
+            cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
+            max_iter=DEFAULT_POISSON_BALANCE_MAX_ITER,
+            project_every=Int(cs_balance_project_every),
+            weights=balance_weights)
         t_bal = time() - t_bal
 
         worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
@@ -506,15 +486,9 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(win - 1, window_nt))
 
         if should_log_window(win - 1, Nt)
-            if apply_horizontal_balance
-                @info @sprintf("    Window %2d/%d: wrote (bal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
-                               win - 1, Nt, t_bal, bal_diag.max_pre_residual,
-                               bal_diag.max_post_residual, bal_diag.max_cg_iter, win, t_read)
-            else
-                @info @sprintf("    Window %2d/%d: wrote (colbal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
-                               win - 1, Nt, t_bal, bal_diag.max_pre_residual,
-                               bal_diag.max_post_residual, bal_diag.max_cg_iter, win, t_read)
-            end
+            @info @sprintf("    Window %2d/%d: wrote (colbal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
+                           win - 1, Nt, t_bal, bal_diag.max_pre_residual,
+                           bal_diag.max_post_residual, bal_diag.max_cg_iter, win, t_read)
         end
 
         _copy_panels_regrid!(cur_m,  cs_ws.m_panels)
@@ -551,22 +525,13 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         _copy_panels_regrid!(cs_ws.m_next_panels, cur_m)
     end
     t_bal = time()
-    bal_diag = if apply_horizontal_balance
-        balance_cs_global_mass_fluxes!(
-            cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
-            cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
-            cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
-            max_iter=DEFAULT_POISSON_BALANCE_MAX_ITER,
-            project_every=Int(cs_balance_project_every))
-    else
-        balance_cs_column_mass_fluxes!(
-            cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
-            cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
-            cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
-            max_iter=DEFAULT_POISSON_BALANCE_MAX_ITER,
-            project_every=Int(cs_balance_project_every),
-            weights=balance_weights)
-    end
+    bal_diag = balance_cs_column_mass_fluxes!(
+        cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
+        cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
+        cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
+        max_iter=DEFAULT_POISSON_BALANCE_MAX_ITER,
+        project_every=Int(cs_balance_project_every),
+        weights=balance_weights)
     t_bal = time() - t_bal
 
     worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
@@ -613,26 +578,15 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     end
     write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(Nt, window_nt))
 
-    if apply_horizontal_balance
-        @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre=%.2e post=%.2e iter=%d",
-                       Nt, Nt, t_bal, bal_diag.max_pre_residual,
-                       bal_diag.max_post_residual, bal_diag.max_cg_iter)
-    else
-        @info @sprintf("    Window %2d/%d (last): colbal %.2fs  pre=%.2e post=%.2e iter=%d",
-                       Nt, Nt, t_bal, bal_diag.max_pre_residual,
-                       bal_diag.max_post_residual, bal_diag.max_cg_iter)
-    end
+    @info @sprintf("    Window %2d/%d (last): colbal %.2fs  pre=%.2e post=%.2e iter=%d",
+                   Nt, Nt, t_bal, bal_diag.max_pre_residual,
+                   bal_diag.max_post_residual, bal_diag.max_cg_iter)
 
     close_streaming_binary!(writer)
     close(reader)
 
-    if apply_horizontal_balance
-        @info @sprintf("  Poisson balance summary: pre=%.3e  post=%.3e  max_iter=%d",
-                       worst_pre, worst_post, worst_iter)
-    else
-        @info @sprintf("  Column balance summary: pre=%.3e  post=%.3e  max_iter=%d",
-                       worst_pre, worst_post, worst_iter)
-    end
+    @info @sprintf("  Column balance summary: pre=%.3e  post=%.3e  max_iter=%d",
+                   worst_pre, worst_post, worst_iter)
     if write_replay_on
         replay_msg = worst_replay_win > 0 ?
             @sprintf("max rel=%.3e abs=%.3e kg win=%d cell=%s",

@@ -54,7 +54,6 @@ substep_schedule           = "adaptive_cfl"
 substep_cfl_target         = 0.95
 min_steps_per_window       = 1
 max_steps_per_window       = 512   # headroom for the unmerged mesospheric top
-balance_mode               = "column"
 
 [mass_fix]
 # Global dry-air mass pin — mirror of the GEOS-CS / ERA5 N320 path. Removes the
