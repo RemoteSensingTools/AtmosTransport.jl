@@ -40,7 +40,7 @@ float_types = ["Float32"]
 threads = 2
 heap_size_hint = "64G"
 # /tmp is a small partition on wurst; the io case writes files of up to
-# ~1.8 GB (C180 L137, 12 tracers, Float32).
+# ~0.7 GB (C180 L137, 2 tracers, Float32).
 tmpdir = "/temp1/cfranken/atmostr_bench_tmp"
 caffeinate = false
 code = { delivery = "shared", root = "~/atmostr_bench" }
@@ -59,7 +59,7 @@ threads = 2
 heap_size_hint = "64G"
 caffeinate = false
 # No tmpdir: the io case uses the local default TMPDIR, not the NFS home; it
-# needs ~3.6 GB free there (C180 L137, 12 tracers, Float64).
+# needs ~1.4 GB free there (C180 L137, 2 tracers, Float64).
 # ~ is NFS-shared with wurst, so the archive extracted on wurst is visible here.
 code = { delivery = "shared", root = "~/atmostr_bench" }
 env = { CUDA_VISIBLE_DEVICES = "0" }

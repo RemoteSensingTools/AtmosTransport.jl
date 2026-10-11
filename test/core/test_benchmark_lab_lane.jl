@@ -17,8 +17,12 @@ include(joinpath(SRC, "labels.jl"))
 include(joinpath(SRC, "case_options.jl"))
 include(joinpath(SRC, "records.jl"))
 include(joinpath(SRC, "synthetic_fields.jl"))
+include(joinpath(SRC, "memory_model.jl"))
 end
 const BR = BenchmarkRecords
+
+# Stands in for CUDA.jl's out-of-memory exception, recognised by type name.
+struct OutOfGPUMemoryError <: Exception end
 
 const REPO = normpath(joinpath(@__DIR__, "..", ".."))
 const COMMIT = "0123456789abcdef0123456789abcdef01234567"
@@ -174,21 +178,40 @@ code = { delivery = "shared", root = "~/atmostr_bench" }
     @testset "lab preset and case options" begin
         preset = LL.load_preset("lab")
         ms = LL.load_machines()
-        # Per float type: 2 grids x 2 level counts x (5 operators x 2 tracer
-        # counts + adjoint at one tracer) = 44 cases.
-        for (name, count) in ("wurst" => 44, "curry" => 88, "mac" => 44)
+        # Per float type: 4 operators x 4 grids x 2 levels + (io + adjoint),
+        # limited to C180, x 2 grids x 2 levels = 40 cases.
+        for (name, count) in ("wurst" => 40, "curry" => 80, "mac" => 40)
             options = LL.machine_case_options(preset, machine_named(ms, name))
             @test LL.expected_case_count(options) == count
         end
         options = LL.machine_case_options(preset, machine_named(ms, "curry"))
-        @test options.grids == [90, 180] && options.levels == [72, 137]
-        @test options.group == "Lab Synthetic CS Sweep"
+        @test options.grids == [90, 180, 360, 720] && options.levels == [72, 137]
+        @test options.tracers == [2] && options.group == "Lab Synthetic CS Sweep"
+        @test options.max_grid == Dict(:io => 180, :adjoint => 180)
         cases = LL.case_matrix(options)
         @test length(cases) == LL.expected_case_count(options) && allunique(cases)
         # io carries every requested tracer; the adjoint footprint is one tracer.
-        @test sort(unique(c.tracers for c in cases if c.operator === :io)) == [1, 12]
+        @test sort(unique(c.tracers for c in cases if c.operator === :io)) == [2]
         @test all(c -> c.tracers == 1, (c for c in cases if c.operator === :adjoint))
         @test count(c -> c.operator === :adjoint, cases) == 2 * 2 * 2   # float types x grids x levels
+        # io and adjoint stop at their C180 limit; the model operators run on every grid.
+        grids_of(op) = sort(unique(c.grid for c in cases if c.operator === op))
+        @test grids_of(:io) == grids_of(:adjoint) == [90, 180]
+        for op in (:advection, :diffusion, :convection, :full)
+            @test grids_of(op) == [90, 180, 360, 720]
+        end
+        # Limits are typed: known operators, the max_grid key, a valid grid.
+        limited(limits) = LL.resolve_case_options(Dict{String, Any}("grid" => "C24,C48",
+                                                                    "operator" => "advection,io",
+                                                                    "limits" => limits), nothing)
+        @test [(c.operator, c.grid) for c in LL.case_matrix(limited(Dict("io" => Dict("max_grid" => 24))))] ==
+              [(:advection, 24), (:io, 24), (:advection, 48)]
+        @test LL.expected_case_count(limited(Dict{String, Any}())) == 4
+        @test_throws ArgumentError limited(Dict("chemistry" => Dict("max_grid" => "C24")))
+        @test_throws ArgumentError limited(Dict("io" => Dict("max_grids" => "C24")))
+        @test_throws ArgumentError limited(Dict("io" => Dict("max_grid" => "C1")))
+        @test_throws ArgumentError limited(Dict("io" => "C24"))
+        @test_throws ArgumentError limited("C24")
 
         # Operators that ignore --scheme run once, under the default scheme;
         # single-tracer operators run at one tracer even if 1 is not listed.
@@ -358,6 +381,57 @@ code = { delivery = "shared", root = "~/atmostr_bench" }
               occursin("exceeds $(BR.MAX_SYNTHETIC_COURANT)", msg)
     end
 
+    @testset "device memory estimate and skip decision" begin
+        # Memory measured on CPU (Base.summarysize of the model after
+        # construction and one step, TM5 tile included), Float32, 2 tracers;
+        # the estimate must never fall below it and stay within 20 %.
+        measured = [(:advection, 90, 72, 155531816), (:advection, 180, 72, 581624216),
+                    (:diffusion, 90, 72, 124588504), (:diffusion, 180, 72, 474087304),
+                    (:convection, 90, 72, 354403472), (:convection, 180, 72, 1343629472),
+                    (:full, 90, 72, 442113936), (:full, 180, 72, 1678227936)]
+        for (op, Nc, Nz, bytes) in measured
+            estimate = BR.estimate_case_bytes(op, 4, Nc, Nz, 2; steps = 1, tm5_legacy_tile = true)
+            @test bytes <= estimate <= 1.2 * bytes
+        end
+        # Float64, 3 tracers (coefficients are in elements of the float type).
+        @test 33543568 <= BR.estimate_case_bytes(:advection, 8, 32, 40, 3; steps = 1, tm5_legacy_tile = false)
+        @test 65467280 <= BR.estimate_case_bytes(:full, 8, 32, 40, 3; steps = 1, tm5_legacy_tile = true)
+        # The TM5 tile: measured 758344568 B at C180 L72 Float32, capped at about 1 GiB.
+        @test abs(BR.tm5_legacy_tile_bytes(4, 180, 72) - 758344568) < 1024
+        @test BR.tm5_legacy_tile_bytes(4, 720, 137) <= 2^30
+        @test BR.estimate_case_bytes(:full, 4, 720, 137, 2; steps = 5, tm5_legacy_tile = true) -
+              BR.estimate_case_bytes(:full, 4, 720, 137, 2; steps = 5, tm5_legacy_tile = false) ==
+              BR.tm5_legacy_tile_bytes(4, 720, 137)
+        # io: exactly the payload arrays.
+        Hp, Nc, Nz, Nt = 3, 24, 32, 2
+        N = Nc + 2Hp
+        payload = 6 * sizeof(Float32) * ((1 + Nt) * N * N * Nz + 2 * (N + 1) * N * Nz + N * N * (Nz + 1))
+        @test BR.io_payload_bytes(4, Nc, Nz, Nt) == payload
+        @test BR.estimate_case_bytes(:io, 4, Nc, Nz, Nt; steps = 5, tm5_legacy_tile = false) ==
+              payload + BR.MEMORY_FIXED_BYTES
+        @test BR.estimate_case_bytes(:adjoint, 8, 180, 137, 1; steps = 5, tm5_legacy_tile = false) >
+              BR.estimate_case_bytes(:adjoint, 8, 180, 137, 1; steps = 1, tm5_legacy_tile = false)
+
+        # Skip decision against a device's available memory.
+        required(op, fb, Nc, Nz, legacy) =
+            BR.required_device_bytes(BR.estimate_case_bytes(op, fb, Nc, Nz, 2; steps = 5, tm5_legacy_tile = legacy))
+        a100 = round(Int, 38.9 * 2^30)
+        @test BR.memory_skip_reason(required(:full, 4, 720, 137, false), a100) === nothing
+        reason = BR.memory_skip_reason(required(:full, 8, 720, 137, true), a100)
+        @test reason isa String && occursin("GiB of device memory", reason) && occursin("38.9 GiB available", reason)
+        @test BR.memory_skip_reason(required(:advection, 4, 90, 72, false), 2^29) isa String   # fake 0.5 GiB device
+        @test BR.memory_skip_reason(10^12, nothing) === nothing      # unknown memory never skips
+        @test BR.required_device_bytes(2^30) == ceil(Int, 1.05 * 2^30) + 2^29
+
+        # Out-of-memory errors of Julia, CUDA (by type name), and Metal (by message).
+        @test BR.is_out_of_memory(OutOfMemoryError())
+        @test BR.is_out_of_memory(OutOfGPUMemoryError())
+        @test BR.is_out_of_memory(ErrorException("Metal: failed to allocate a buffer of 8 GiB"))
+        @test BR.is_out_of_memory(CompositeException([ErrorException("x"), OutOfMemoryError()]))
+        @test !BR.is_out_of_memory(ErrorException("cubed-sphere palindrome subcycling exceeded max_n_sub=4096"))
+        @test !BR.is_out_of_memory(ArgumentError("bad"))
+    end
+
     @testset "record validation" begin
         machine = machine_named(LL.load_machines(), "curry")
         group = "Lab Synthetic CS Sweep"
@@ -392,9 +466,9 @@ code = { delivery = "shared", root = "~/atmostr_bench" }
             sprint(showerror, err)
         end
 
-        @test validate(raw, dashboard_for(raw)) === nothing
+        @test validate(raw, dashboard_for(raw)) == String[]
         # JSON3 objects (Symbol keys), as read back from disk, validate the same way.
-        @test validate(JSON3.read(JSON3.write(raw)), JSON3.read(JSON3.write(dashboard_for(raw)))) === nothing
+        @test validate(JSON3.read(JSON3.write(raw)), JSON3.read(JSON3.write(dashboard_for(raw)))) == String[]
 
         mismatched = [raw[1:3]; record("Float64", "full"; commit = OTHER_COMMIT)]
         @test occursin("records commit", failure(() -> validate(mismatched, dashboard_for(raw))))
@@ -413,6 +487,23 @@ code = { delivery = "shared", root = "~/atmostr_bench" }
 
         f16 = [raw[1:3]; record("Float16", "full")]
         @test occursin("float type", failure(() -> validate(f16, dashboard_for(f16))))
+
+        # A case that did not fit in device memory is recorded, listed, and never published.
+        function skipped_record(ft, op; reason = "needs an estimated 54.5 GiB of device memory, 38.9 GiB available")
+            r = record(ft, op; status = "skipped_memory")
+            delete!(r, "error")
+            r["skip_reason"] = reason
+            r["required_device_gib"] = 54.5
+            r["available_device_gib"] = 38.9
+            return r
+        end
+        with_skip = [raw[1:3]; skipped_record("Float64", "full")]
+        @test validate(with_skip, dashboard_for(with_skip)) == [with_skip[4]["name"]]
+        no_reason = [raw[1:3]; skipped_record("Float64", "full"; reason = "")]
+        @test occursin("without a skip_reason", failure(() -> validate(no_reason, dashboard_for(no_reason))))
+        published_skip = dashboard_for(raw)       # contains the name of the skipped case
+        @test occursin("skipped case", failure(() -> validate(with_skip, published_skip)))
+        @test occursin("expected 5 cases", failure(() -> validate(with_skip, dashboard_for(with_skip); n = 5)))
 
         # Environment fingerprint: the pinned Julia, a Manifest hash, one per machine.
         upgraded = [record(ft, op; julia = "1.12.7") for ft in ("Float32", "Float64")

@@ -30,6 +30,7 @@ include("labels.jl")
 include("case_options.jl")
 include("records.jl")
 include("synthetic_fields.jl")
+include("memory_model.jl")
 
 "Halo width of the synthetic cubed-sphere meshes."
 const _HALO = 3
@@ -564,12 +565,12 @@ function _metadata(case::BenchmarkCase)
     )
 end
 
-"Raw record of a case that threw; it is kept in the raw JSON and never published."
+"Raw record of a case that threw (`err`) or was skipped (`err === nothing`); never published."
 function _failed_result(case::BenchmarkCase, err)
     return Dict(
         "name" => _case_name(case),
         "status" => "failed",
-        "error" => first(sprint(showerror, err), 2000),
+        "error" => err === nothing ? nothing : first(sprint(showerror, err), 2000),
         "group" => case.group,
         "backend_class" => case.run.backend_class,
         "backend_label" => case.run.backend_label,
@@ -660,6 +661,11 @@ function _settings()
         "--device-label"
             help = "GPU device label for series names, overriding the normalised device name " *
                    "(e.g. \"A100 80GB\"). Ignored for CPU runs."
+        "--device-memory-gib"
+            help = "Device memory available to each case, in GiB, instead of querying the device " *
+                   "(free CUDA memory; Metal's recommended working set minus its allocations; free " *
+                   "host memory on the CPU). Cases estimated to need more are recorded as skipped_memory."
+            arg_type = Float64
         "--commit"
             help = "Benchmarked commit recorded in each result (default: git rev-parse HEAD). " *
                    "Required when running from a git archive without .git."
@@ -702,37 +708,145 @@ function _cases(args)
                            options.warmup_steps, options.repeats, options.group,
                            options.convection_depth)
              for c in case_matrix(options)]
-    return cases, parsed["output"]
+    override = parsed["device-memory-gib"]
+    override === nothing || override > 0 ||
+        throw(ArgumentError("--device-memory-gib must be positive, got $(override)"))
+    memory_override = override === nothing ? nothing : round(Int, override * 2^30)
+    return cases, parsed["output"], memory_override
+end
+
+# =========================================================================
+# Device memory
+# =========================================================================
+
+# The backend modules are loaded into Main by run_benchmarks.jl before this
+# package, so they are reached through Main rather than as dependencies.
+_main_module(name::Symbol) = Base.invokelatest(getfield, Main, name)
+
+_query_available_bytes(::Val{:cpu}) = Int(Sys.free_memory())
+_query_available_bytes(::Val{:cuda}) =
+    Int(Base.invokelatest(getproperty(_main_module(:CUDA), :available_memory)))
+function _query_available_bytes(::Val{:metal})
+    device = Base.invokelatest(getproperty(_main_module(:Metal), :device))
+    budget = Base.invokelatest(getproperty, device, :recommendedMaxWorkingSetSize)
+    allocated = Base.invokelatest(getproperty, device, :currentAllocatedSize)
+    return Int(budget) - Int(allocated)
+end
+
+"""
+    _available_device_bytes(backend, override) -> Union{Int, Nothing}
+
+Memory the next case may use: `override` (`--device-memory-gib`) when given,
+else the device's free memory (`_query_available_bytes`). `nothing` when the
+query fails; the case then runs without the memory check, and an
+out-of-memory error still records it as skipped.
+"""
+function _available_device_bytes(backend::Symbol, override)
+    override === nothing || return override
+    try
+        return _query_available_bytes(Val(backend))
+    catch err
+        @warn "Could not query the device memory; cases run without the memory check" backend exception = err maxlog = 1
+        return nothing
+    end
+end
+
+"Return freed device memory to the driver after a case or an out-of-memory error."
+function _reclaim_device!(backend::Symbol)
+    GC.gc(true)
+    if backend === :cuda
+        try
+            Base.invokelatest(getproperty(_main_module(:CUDA), :reclaim))
+        catch err
+            @warn "CUDA.reclaim failed" exception = err maxlog = 1
+        end
+    end
+    return nothing
+end
+
+"""
+    _tm5_collaborative(case) -> Bool
+
+Whether the case's TM5 convection runs the collaborative GPU solve, which
+needs no column tile: a GPU backend and an effective convection depth within
+the backend's limit for the float type.
+"""
+function _tm5_collaborative(case::BenchmarkCase)
+    case.backend === :cpu && return false
+    depth = effective_convection_depth(case.convection_depth, case.levels)
+    depth = depth == 0 ? case.levels : depth
+    try
+        backend = AtmosTransport.Architectures.device(_architecture(case.backend))
+        return 0 < depth <= AtmosTransport.Operators.Convection._tm5_collab_max_depth(case.float_type, backend)
+    catch
+        return false   # unknown: count the tile (conservative)
+    end
+end
+
+"Device memory the case needs: the memory-model estimate with its safety margin."
+_required_device_bytes(case::BenchmarkCase) =
+    required_device_bytes(estimate_case_bytes(case.operator, sizeof(case.float_type), case.grid_nc,
+                                              case.levels, case.tracers; steps = case.steps,
+                                              tm5_legacy_tile = !_tm5_collaborative(case)))
+
+"Raw record of a case that was not run because it does not fit in device memory."
+function _skipped_result(case::BenchmarkCase, reason::AbstractString)
+    r = _failed_result(case, nothing)
+    delete!(r, "error")
+    r["status"] = "skipped_memory"
+    r["skip_reason"] = String(reason)
+    return r
 end
 
 """
     run_benchmarks(args = ARGS) -> Vector
 
-Run every case. A case that throws is logged, kept in the raw JSON with
-`"status" => "failed"`, left out of the dashboard JSON, and makes `main`
-fail after the outputs are written.
+Run every case. A case whose estimated device memory
+(`_required_device_bytes`) exceeds the available memory, or that runs out
+of memory, is recorded with `"status" => "skipped_memory"` and a
+`skip_reason`, and the run continues. A case that throws otherwise is
+logged and kept with `"status" => "failed"`, and makes `main` fail after the
+outputs are written. Only `"ok"` cases reach the dashboard JSON.
 """
 function run_benchmarks(args = ARGS)
-    cases, output = _cases(args)
+    cases, output, memory_override = _cases(args)
     isempty(cases) || @info "Benchmark run" backend=cases[1].backend series_label=cases[1].run.backend_label device=cases[1].run.device_name commit=cases[1].run.commit preset=cases[1].run.preset julia=cases[1].run.julia_version manifest_sha256=cases[1].run.manifest_sha256 ncases=length(cases)
     results = Any[]
     for (i, case) in enumerate(cases)
         @info "Running benchmark $(i)/$(length(cases))" backend=case.backend float_type=case.float_type grid=case.grid_nc levels=case.levels tracers=case.tracers operator=case.operator
-        r = try
-            _time_case(case)
-        catch err
-            err isa InterruptException && rethrow()
-            @error "Benchmark case failed" case=_case_name(case) exception=(err, catch_backtrace())
-            _failed_result(case, err)
+        required = _required_device_bytes(case)
+        available = _available_device_bytes(case.backend, memory_override)
+        skip = memory_skip_reason(required, available)
+        r = if skip !== nothing
+            @warn "Skipping benchmark case: it does not fit in device memory" case=_case_name(case) reason=skip
+            _skipped_result(case, skip)
+        else
+            try
+                _time_case(case)
+            catch err
+                err isa InterruptException && rethrow()
+                if is_out_of_memory(err)
+                    @warn "Benchmark case ran out of memory; recorded as skipped" case=_case_name(case) exception=err
+                    _reclaim_device!(case.backend)
+                    _skipped_result(case, "ran out of device memory: " * first(sprint(showerror, err), 500))
+                else
+                    @error "Benchmark case failed" case=_case_name(case) exception=(err, catch_backtrace())
+                    _failed_result(case, err)
+                end
+            end
         end
+        r["required_device_gib"] = gib(required)
+        r["available_device_gib"] = available === nothing ? nothing : gib(available)
         push!(results, r)
         if r["status"] == "ok"
             @printf("%-70s %10.6f s/step  %.3e cell-tracer/s\n",
                     r["name"], r["time_per_step_seconds"],
                     r["cell_tracer_updates_per_second"])
+        elseif r["status"] == "skipped_memory"
+            @printf("%-70s skipped: %s\n", r["name"], r["skip_reason"])
         end
         # Return the case's device buffers before the next (possibly larger) case.
-        GC.gc(true)
+        _reclaim_device!(case.backend)
     end
     raw, dashboard = _write_outputs(output, results)
     @info "Wrote benchmark results" raw dashboard
@@ -741,7 +855,10 @@ end
 
 function main(args = ARGS)
     results = run_benchmarks(args)
-    failed = [r["name"] for r in results if r["status"] != "ok"]
+    skipped = [r["name"] for r in results if r["status"] == "skipped_memory"]
+    isempty(skipped) ||
+        @warn "$(length(skipped)) benchmark case(s) skipped for device memory (not published)" cases = skipped
+    failed = [r["name"] for r in results if r["status"] == "failed"]
     isempty(failed) ||
         error("$(length(failed)) benchmark case(s) failed:\n  " * join(failed, "\n  "))
     return results

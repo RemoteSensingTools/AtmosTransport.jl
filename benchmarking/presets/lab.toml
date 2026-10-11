@@ -6,22 +6,23 @@
 #
 # Every value is part of the dashboard history. Adding or removing grids,
 # levels, tracer counts, or operators adds or ends series. Changing steps,
-# repeats, scheme, or convection_depth changes what an existing series
-# measures: do that together with a new `group` name.
+# repeats, scheme, convection_depth, or the limits changes what an existing
+# series measures or which series exist: do that together with a new `group`
+# name.
 
-description = "Production-scale C90/C180 L72/L137 cases for the lab GPUs"
+description = "Production-scale C90-C720 L72/L137 cases with 2 tracers for the lab GPUs"
 group = "Lab Synthetic CS Sweep"
 
-# C90 and C180 are the production cubed-sphere resolutions; L72 is the
-# GEOS/MERRA-2 column and L137 the ERA5 column.
-grid = ["C90", "C180"]
+# C90 and C180 are the production cubed-sphere resolutions, C360 and C720 the
+# high-resolution targets; L72 is the GEOS/MERRA-2 column and L137 the ERA5
+# column.
+grid = ["C90", "C180", "C360", "C720"]
 levels = [72, 137]
 
-# One tracer isolates per-field cost; twelve matches the multi-tracer
-# production runs (and spans two six-tracer convection batches). `adjoint`
-# runs at one tracer only (case_matrix in benchmarking/src/case_options.jl):
-# 44 cases per float type.
-tracers = [1, 12]
+# Two tracers on every grid: enough to exercise the multi-tracer kernels while
+# Float32 C720 L137 still fits the 40 GB A100. `adjoint` runs at one tracer
+# (case_matrix in benchmarking/src/case_options.jl).
+tracers = [2]
 
 operator = ["advection", "diffusion", "convection", "full", "io", "adjoint"]
 scheme = ["ppm"]
@@ -35,3 +36,19 @@ repeats = 5
 # (config/runs/catrine_era5_n320_c180_linrood7_dec2021_2weeks.toml: deepest
 # measured convective reach 84 levels); L72 cases keep the full column.
 convection_depth = 85
+
+# Largest grid an operator runs on; its cases on larger grids are not in the
+# case matrix. io would serialize about 8 GB per repeat at C720, and the
+# adjoint tape grows with the grid.
+[limits.io]
+max_grid = "C180"
+
+[limits.adjoint]
+max_grid = "C180"
+
+# Case count per float type: 4 operators x 4 grids x 2 levels + (io + adjoint)
+# x 2 grids x 2 levels = 40, so 40 on wurst (Float32) and the Mac (Float32)
+# and 80 on curry (Float32 and Float64). Cases whose estimated device memory
+# exceeds the device's are recorded as skipped_memory, not run (see
+# benchmarking/README.md, "Device memory"); with the current estimate that is
+# expected for Float64 C720 L137 full on the 40 GB A100.

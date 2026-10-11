@@ -653,7 +653,16 @@
   at the 4096-subcycle limit). The new fields leave the air mass unchanged
   at a palindrome Courant number of about 0.1 on every grid, and the
   harness fails a case whose Courant number exceeds 0.5 or whose air mass
-  drifts. The grouped dashboard draws one
+  drifts. The lab preset now runs C90, C180, C360, and C720 at L72 and
+  L137 with 2 tracers. A typed `[limits]` table keeps `io` and `adjoint` at
+  C180 and below, which gives 40 cases per float type.
+  Before building a case, the harness estimates its device memory from a
+  linear model of the model's arrays, fitted on CPU
+  (`benchmarking/src/memory_model.jl`). A case that does not fit, or that
+  runs out of memory, is recorded as `skipped_memory` with the required and
+  available GiB instead of failing the run; skipped cases are not published,
+  and the lab lane accepts and lists them. `--device-memory-gib` overrides
+  the device query. The grouped dashboard draws one
   line per group, grid, levels, scheme, and device; lines of renamed groups
   no longer merge.
 - The README opens with badges for CI, the stable and development manuals,

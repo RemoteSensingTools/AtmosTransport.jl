@@ -88,6 +88,7 @@ building them needs no memory beyond the field arrays themselves.
 | `--convection-depth` | bottom levels in the TM5 convection matrix (`lmax_conv`), clipped to each case's levels; `0` = full column |
 | `--group` | dashboard group, the first field of every series name |
 | `--device-label` | GPU device label for series names (overrides the normalised device name) |
+| `--device-memory-gib` | device memory available to each case, overriding the device query (see [Device memory](#device-memory)) |
 | `--commit` | commit recorded in each result; needed when running from a `git archive` without `.git` |
 | `--output` | raw JSON path; the dashboard JSON is written next to it |
 
@@ -110,10 +111,11 @@ A preset fixes a case matrix so runs stay comparable over time.
 
 | Setting | Value |
 |---|---|
-| grids | C90, C180 |
+| grids | C90, C180, C360, C720 |
 | levels | 72 (GEOS/MERRA-2), 137 (ERA5) |
-| tracers | 1, 12 |
+| tracers | 2 (the adjoint runs at 1) |
 | operators | advection, diffusion, convection, full, io, adjoint |
+| limits | io and adjoint up to C180 |
 | scheme | ppm |
 | timing | 5 steps × 5 repeats after 2 warmup steps |
 | convection depth | 85 bottom levels (L72 keeps the full column) |
@@ -121,21 +123,84 @@ A preset fixes a case matrix so runs stay comparable over time.
 
 The float types come from the machine (see
 [`lab/machines.toml`](lab/machines.toml)): Float32 on wurst (L40S) and the Mac
-(Metal), Float32 and Float64 on curry (A100). Per float type that is 2 grids ×
-2 level counts × (5 operators × 2 tracer counts + `adjoint` at one tracer) =
-44 cases: 44 on wurst and the Mac and 88 on curry.
+(Metal), Float32 and Float64 on curry (A100). Per float type that is 4
+model operators × 4 grids × 2 level counts + (`io` + `adjoint`) × 2 grids ×
+2 level counts = 40 cases: 40 on wurst and the Mac and 80 on curry.
 
-Changing the grids, levels, tracers, or operators adds or ends series. Changing
-steps, repeats, scheme, or convection depth changes what an existing series
-measures; do that together with a new `group`.
+The preset's `[limits]` table sets the largest grid an operator runs on
+(`[limits.io] max_grid = "C180"`); `case_matrix` leaves that operator's cases
+on larger grids out, so the case list is fixed by the preset. `io` would
+serialize about 8 GB per repeat at C720, and the adjoint tape grows with the
+grid. Limits are typed: an unknown operator, an unknown key, or an invalid
+grid is an error.
 
-Measured footprint of the largest lab case (`full`, 12 tracers, C180 L137,
-model state built on CPU and sized with `Base.summarysize`): 3.9 GiB in
-Float32 and 7.9 GiB in Float64; C90 L72 needs 0.55 / 1.1 GiB. This fits the
-40 GB A100, the 48 GB L40S, and the Mac's unified memory. The `io` case
-serializes the air mass, every tracer, and the three face-flux arrays into
-`TMPDIR` once per repeat: up to about 1.8 GB in Float32 and 3.6 GB in Float64
-(C180 L137, 12 tracers), removed after each repeat.
+Changing the grids, levels, tracers, operators, or limits adds or ends
+series. Changing steps, repeats, scheme, or convection depth changes what an
+existing series measures; do that together with a new `group`.
+
+The `io` case serializes the air mass, every tracer, and the three face-flux
+arrays into `TMPDIR` once per repeat: up to 0.7 GB in Float32 and 1.4 GB in
+Float64 (C180 L137, 2 tracers), removed after each repeat.
+
+### Device memory
+
+Before it builds a case, the harness estimates the case's device memory
+(`estimate_case_bytes` in [`src/memory_model.jl`](src/memory_model.jl)) and
+compares it with the memory the device has free: CUDA's available memory,
+Metal's recommended working set minus its current allocations, or free host
+memory on the CPU (`--device-memory-gib` overrides the query). A case that
+does not fit is not run: it is recorded with `status = "skipped_memory"`,
+a `skip_reason`, and `required_device_gib` and `available_device_gib`, and
+the run continues. An out-of-memory error while a case is built or run
+(Julia's `OutOfMemoryError`, CUDA's `OutOfGPUMemoryError`, a Metal allocation
+failure) frees the memory (`GC.gc`, `CUDA.reclaim`) and records the case as
+`skipped_memory` too, so one large case cannot end the run. Skipped cases are
+never published; the lab lane accepts and lists them.
+
+The estimate is a linear model of the arrays a case allocates, fitted on CPU:
+the summed size of every array reachable from the model after construction
+and one step (`Base.summarysize`), for C8-C64, L16 and L40, and 1 and 3
+tracers. Counted in elements of the float type, with `V = 6 (Nc+6)² Nz`
+haloed cells, `Vi = 6 Nc² Nz` interior cells, `A = 6 (Nc+6)²` haloed columns,
+and `Nt` tracers:
+
+| Operator | per `V` | per `V × Nt` | per `Vi` | per `A` |
+|---|---|---|---|---|
+| advection | 5.91 | 2.20 | 0 | 1.5 |
+| diffusion | 4.11 | 1.03 | 1.85 | 3.1 |
+| convection | 4.17 | 1.00 | 3.84 | 2.3 |
+| full | 5.82 | 2.22 | 5.43 | 4.0 |
+
+The coefficients are the fitted values rounded up, and they are the same in
+Float32 and Float64. Convection and full add the TM5 column tile (at most
+1 GiB, `tm5_legacy_tile_bytes`) when the collaborative GPU solve does not
+engage: on the CPU and for Float64 deeper than 73 levels. `io` needs exactly
+its payload; `adjoint` needs its payload plus `(3 + 8.5 × steps) V` elements,
+which bounds its measured allocations. Every case adds 16 MiB. Checked against
+the measured sizes, the estimate is never lower and is 1-17 % higher at C90 and
+C180 L72 (2 tracers). A case is skipped when `1.05 × estimate + 0.5 GiB`
+exceeds the free memory. The margin covers kernel temporaries and pool
+fragmentation. The model was fitted on CPU; the GPU allocations of the
+lab cases are not yet measured.
+
+Required memory of the largest lab cases (GiB, with the margin) and the
+expected outcome:
+
+| Case | Float32 | Float64 |
+|---|---|---|
+| C720 L72 full | 14.5 | 28.4 |
+| C720 L137 advection | 18.0 | 35.5 |
+| C720 L137 convection | 17.4 | 35.3 (TM5 tile included) |
+| C720 L137 full | 27.0 | 54.5 (TM5 tile included) |
+
+With about 44 GiB free on the L40S, 39 GiB on the A100 40 GB, and Metal's
+recommended working set on the 64 GB M5 Pro (about 48 GiB), every Float32
+case fits. On curry, Float64 C720 L137 `full` is skipped, so 79 of 80 cases
+run. Float64 C720 L137 `advection` and `convection` are within 4 GiB of
+the A100's free memory. The harness builds a case's fields on the host and
+then copies them to the device. On the Mac's unified memory that host copy
+(about 10 GB for C720 L137 Float32) shares the 64 GB with the device arrays.
+The copy is freed before the timed steps but is not part of the check.
 
 ## Series names
 
@@ -179,8 +244,10 @@ record's `device_name` and in the dashboard record's `extra.device`.
 
 `--output=benchmark_results.json` writes two files:
 
-- `benchmark_results.json`: one raw record per case with `status` (`ok`, or
-  `failed` with `error`), the case parameters, `backend_class`,
+- `benchmark_results.json`: one raw record per case with `status` (`ok`;
+  `failed` with `error`; or `skipped_memory` with `skip_reason`), the
+  estimated `required_device_gib` and the `available_device_gib`, the case
+  parameters, `backend_class`,
   `backend_label`, `device_name`, the effective `convection_depth`, timings
   (median `time_per_step_seconds`, `mad_seconds`, throughput), the timing
   protocol (`steps_per_repeat`, `repeats`, `warmup_steps`),
@@ -210,7 +277,9 @@ tooltip and in the latest-value table.
 
 A case that throws is logged, kept in the raw JSON as `failed`, left out of the
 dashboard JSON, and makes the run exit with an error after both files are
-written, so one out-of-memory case does not discard an hour of lab results.
+written, so one failed case does not discard an hour of lab results. A case
+that does not fit in device memory is `skipped_memory` and does not fail the
+run (see [Device memory](#device-memory)).
 
 ## Lab lane
 
@@ -262,10 +331,12 @@ What it does:
      happens when the run failed: the harness writes both files before it
      exits with an error for a failed case, so the partial results come back
      for inspection, and the run's failure is reported afterwards;
-   - validate them: the preset's case count, no failed case, every record and
-     dashboard entry attributed to the commit, the machine's backend and float
-     types, one device label of the right class, and one environment
-     fingerprint whose Julia version is the machine's pin.
+   - validate them: the preset's case count, each case `ok` or
+     `skipped_memory` with a reason (skipped cases are listed and must not be
+     in the dashboard JSON) and none failed, every record and dashboard entry
+     attributed to the commit, the machine's backend and float types, one
+     device label of the right class, and one environment fingerprint whose
+     Julia version is the machine's pin.
 
    A machine that fails (unreachable, failed case, invalid results) is
    reported and the remaining machines still run; nothing is published.

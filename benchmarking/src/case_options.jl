@@ -35,7 +35,8 @@ const SCHEME_FREE_OPERATORS = (:diffusion, :convection, :io, :adjoint)
 Resolved case matrix of one harness run; `case_matrix` lists its
 cases. `convection_depth` is the number of bottom levels in the TM5
 convection matrix (`TM5Convection.lmax_conv`); `0` means the full column, and
-positive values are clipped to each case's level count.
+positive values are clipped to each case's level count. `max_grid` maps an
+operator to the largest grid size `Nc` it runs on (preset `[limits]`).
 """
 struct CaseOptions
     group::String
@@ -49,6 +50,7 @@ struct CaseOptions
     warmup_steps::Int
     repeats::Int
     convection_depth::Int
+    max_grid::Dict{Symbol, Int}
 end
 
 # Built-in values used when neither the command line nor a preset sets an
@@ -65,6 +67,7 @@ const DEFAULT_CASE_OPTIONS = Dict{String, Any}(
     "warmup_steps" => 2,
     "repeats" => 5,
     "convection_depth" => 0,
+    "limits" => Dict{String, Any}(),
 )
 
 # Keys a preset file may set, in addition to its human-readable description.
@@ -147,6 +150,27 @@ function _grid_size(x)
     return Nc
 end
 
+# Preset `[limits]`: per operator, a table with the largest grid it runs on,
+#   [limits.io]
+#   max_grid = "C180"
+const LIMIT_KEYS = ("max_grid",)
+
+function _parse_limits(limits)
+    limits isa AbstractDict ||
+        throw(ArgumentError("limits must be a table of per-operator tables, got $(repr(limits))"))
+    max_grid = Dict{Symbol, Int}()
+    for (op, table) in limits
+        operator = _parse_member(op, SUPPORTED_OPERATORS, "operator in limits")
+        table isa AbstractDict ||
+            throw(ArgumentError("limits.$(op) must be a table such as { max_grid = \"C180\" }"))
+        unknown = sort!([String(k) for k in keys(table) if !(String(k) in LIMIT_KEYS)])
+        isempty(unknown) || throw(ArgumentError(
+            "limits.$(op): unknown key(s) $(join(unknown, ", ")); allowed: $(join(LIMIT_KEYS, ", "))"))
+        haskey(table, "max_grid") && (max_grid[operator] = _grid_size(table["max_grid"]))
+    end
+    return max_grid
+end
+
 # The group is the first field of every series name.
 function _parse_group(x)
     group = String(strip(string(x)))
@@ -190,6 +214,7 @@ function resolve_case_options(overrides::AbstractDict, preset::Union{Nothing, Ab
         _positive("warmup_steps", _scalar_int(pick("warmup_steps")); allow_zero = true),
         _positive("repeats", _scalar_int(pick("repeats"))),
         _positive("convection_depth", _scalar_int(pick("convection_depth")); allow_zero = true),
+        _parse_limits(pick("limits")),
     )
 end
 
@@ -204,13 +229,15 @@ The cases a run measures, in run order: every combination of float type,
 grid, levels, tracers, operator, and scheme, except that operators in
 `SINGLE_TRACER_OPERATORS` run at one tracer and operators in
 `SCHEME_FREE_OPERATORS` run under the default scheme only, so no two cases
-measure the same thing under different names. Repeated list entries give one
+measure the same thing under different names, and that an operator with a
+`max_grid` limit runs only on grids up to it. Repeated list entries give one
 case.
 """
 function case_matrix(o::CaseOptions)
     cases = CaseSpec[]
     default_scheme = Symbol(DEFAULT_SERIES_SCHEME)
     for float_type in o.float_types, grid in o.grids, levels in o.levels, operator in o.operators
+        grid <= get(o.max_grid, operator, typemax(Int)) || continue
         tracer_counts = operator in SINGLE_TRACER_OPERATORS ? [1] : o.tracers
         schemes = operator in SCHEME_FREE_OPERATORS ? [default_scheme] : o.schemes
         for tracers in tracer_counts, scheme in schemes

@@ -584,12 +584,15 @@ end
     validate_machine_results(raw, dashboard; machine, commit, expected_cases, group)
 
 Check one machine's copied-back results: the expected number of raw records,
-no failed case, every record attributed to `commit`, the machine's backend
+each `ok` or `skipped_memory` with a reason (a case that did not fit in device
+memory; never in the dashboard JSON) and none failed, every record attributed
+to `commit`, the machine's backend
 and float types, one device label of the right hardware class (equal to the
 machine's `device_label` override when set), and a dashboard JSON whose every
 record carries the commit and a positive time. Every record must carry one
 environment fingerprint, whose Julia version is the machine's
-`julia_version`. Throws `LabValidationError` listing every problem.
+`julia_version`. Throws `LabValidationError` listing every problem; returns
+the names of the skipped cases.
 """
 function validate_machine_results(raw, dashboard; machine::LabMachine, commit::AbstractString,
                                   expected_cases::Integer, group::AbstractString)
@@ -600,6 +603,7 @@ function validate_machine_results(raw, dashboard; machine::LabMachine, commit::A
     class = BACKEND_CLASSES[machine.backend]
     labels = Set{String}()
     fingerprints = Set{EnvironmentFingerprint}()
+    skipped = String[]
     for r in raw
         name = string(_get(r, "name", "<unnamed>"))
         fingerprint = _fingerprint(_get(r, "metadata"))
@@ -609,8 +613,16 @@ function validate_machine_results(raw, dashboard; machine::LabMachine, commit::A
                             "machines.toml pins $(machine.julia_version)")
         push!(fingerprints, fingerprint)
         status = _get(r, "status", "missing")
-        status == "ok" ||
+        if status == "skipped_memory"
+            reason = _get(r, "skip_reason")
+            (reason isa AbstractString && !isempty(reason)) ||
+                push!(problems, "case $(name) is skipped_memory without a skip_reason")
+            _get(r, "required_device_gib") isa Real ||
+                push!(problems, "case $(name) is skipped_memory without required_device_gib")
+            push!(skipped, name)
+        elseif status != "ok"
             push!(problems, "failed case $(name): $(_get(r, "error", "status $(status)"))")
+        end
         rc = string(something(_get(_get(r, "metadata", Dict()), "commit"), ""))
         rc == commit || push!(problems, "case $(name) records commit $(repr(rc)), expected $(commit)")
         _get(r, "backend") == String(machine.backend) ||
@@ -652,10 +664,13 @@ function validate_machine_results(raw, dashboard; machine::LabMachine, commit::A
             _get(r, "status") == "ok" && !(string(_get(r, "name", "")) in names) &&
                 push!(problems, "case $(_get(r, "name")) is missing from the dashboard JSON")
         end
+        for name in skipped
+            name in names && push!(problems, "skipped case $(name) is in the dashboard JSON")
+        end
     end
     isempty(problems) ||
         throw(LabValidationError("$(machine.name): " * join(problems, "\n  ")))
-    return nothing
+    return skipped
 end
 
 function _dashboard_problems(records, commit)
@@ -957,11 +972,13 @@ function run_lab(opts::LabOptions; repo::AbstractString = _git(@__DIR__, "rev-pa
                 dir = joinpath(results_dir, m.name)
                 raw = _read_json(joinpath(dir, RAW_RESULTS_FILE))
                 dashboard = _read_json(joinpath(dir, DASHBOARD_RESULTS_FILE))
-                validate_machine_results(raw, dashboard; machine = m, commit,
-                                         expected_cases = expected_case_count(options),
-                                         group = options.group)
+                skipped = validate_machine_results(raw, dashboard; machine = m, commit,
+                                                   expected_cases = expected_case_count(options),
+                                                   group = options.group)
                 push!(outcomes, m.name => dashboard)
-                @info "[$(m.name)] results valid" records = length(dashboard)
+                isempty(skipped) ||
+                    @warn "[$(m.name)] $(length(skipped)) case(s) skipped for device memory (not published)" cases = skipped
+                @info "[$(m.name)] results valid" records = length(dashboard) skipped = length(skipped)
             end
         catch err
             err isa InterruptException && rethrow()

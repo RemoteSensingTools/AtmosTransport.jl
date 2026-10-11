@@ -128,11 +128,21 @@ dashboard shows each point's fingerprint.
 Hosted CI runners have no GPUs, so GPU performance is measured on three lab
 machines. A benchmark case uses one GPU.
 
-| Machine | Hardware | Backend | Float types | Role |
-|---|---|---|---|---|
-| wurst | 2 × NVIDIA L40S | CUDA | `Float32` | Float32 gate. Production transport runs in `Float32` on this GPU class, which executes `Float64` at a small fraction of its `Float32` rate (see [Tracer Conservation in Single Precision](@ref)). |
-| curry | 2 × NVIDIA A100-PCIE-40GB | CUDA | `Float32`, `Float64` | Data-centre GPU with fast double precision: the `Float64` series and a second `Float32` device. |
-| MacBook | Apple M5 Pro | Metal | `Float32` | The Metal backend, a preview (see the status tables in the repository `README.md`). Metal has no `Float64`. |
+| Machine | Hardware | Device memory | Backend | Float types | Role |
+|---|---|---|---|---|---|
+| wurst | 2 × NVIDIA L40S | 48 GB per GPU | CUDA | `Float32` | Float32 gate. Production transport runs in `Float32` on this GPU class, which executes `Float64` at a small fraction of its `Float32` rate (see [Tracer Conservation in Single Precision](@ref)). |
+| curry | 2 × NVIDIA A100-PCIE-40GB | 40 GB per GPU | CUDA | `Float32`, `Float64` | Data-centre GPU with fast double precision: the `Float64` series and a second `Float32` device. |
+| MacBook | Apple M5 Pro | 64 GB unified | Metal | `Float32` | The Metal backend, a preview (see the status tables in the repository `README.md`). Metal has no `Float64`. |
+
+The lab preset runs C90, C180, C360, and C720 grids with 72 and 137 levels and
+two tracers. `io` and `adjoint` run only up to C180, which gives 40 cases per
+float type. Before a case is built, the harness estimates its device memory
+from a linear model of the model's arrays, fitted on CPU. A case that would
+not fit, or that runs out of memory, is recorded as skipped rather than
+failing the run, and is not published. With the current estimate, every
+`Float32` case fits on all three machines. On the A100, the `Float64` C720
+L137 `full` case (about 55 GiB) is skipped. The `benchmarking/README.md`
+section *Device memory* gives the model and the memory of the largest cases.
 
 ## How results reach the dashboard
 
