@@ -35,7 +35,7 @@ const _SYNTHETIC_SECONDS_JAN_2021 = 31 * 86400
 _synthetic_file_ic_value(lon_deg, lat_deg) =
     3.5e-4 + 1e-6 * mod(lon_deg, 360.0) + 2e-6 * lat_deg
 
-function _write_synthetic_ic_file(path::AbstractString)
+function _write_synthetic_ic_file(path::AbstractString; with_humidity::Bool = false)
     ds = NCDataset(path, "c")
     try
         defDim(ds, "longitude", 4)
@@ -50,6 +50,8 @@ function _write_synthetic_ic_file(path::AbstractString)
         vap = defVar(ds, "ap", Float64, ("hlevel",))
         vbp = defVar(ds, "bp", Float64, ("hlevel",))
         vco2 = defVar(ds, "CO2", Float64, ("longitude", "latitude", "level"))
+        vqv = with_humidity ?
+              defVar(ds, "QV", Float64, ("longitude", "latitude", "level")) : nothing
 
         lon = [-135.0, -45.0, 45.0, 135.0]
         lat = [45.0, -45.0]  # descending on purpose
@@ -65,6 +67,13 @@ function _write_synthetic_ic_file(path::AbstractString)
         end
         vco2[:, :, :] = raw
         vco2.attrib["units"] = "mol mol-1"
+        if vqv !== nothing
+            for k in 1:3
+                vqv[:, :, k] .= (0.35, 0.08, 0.001)[k]
+            end
+            vqv.attrib["standard_name"] = "specific_humidity"
+            vqv.attrib["units"] = "kg kg-1"
+        end
     finally
         close(ds)
     end
@@ -258,12 +267,18 @@ end
         mktempdir() do dir
             ic_path = joinpath(dir, "test_ic.nc")
             _write_synthetic_ic_file(ic_path)
+            humid_ic_path = joinpath(dir, "test_ic_humid.nc")
+            _write_synthetic_ic_file(humid_ic_path; with_humidity = true)
 
             init_cfg = Dict{String, Any}(
                 "kind" => "file",
                 "file" => ic_path,
                 "variable" => "CO2",
             )
+            humid_cfg = merge(init_cfg, Dict("file" => humid_ic_path))
+            humid_source = ICIO._load_file_initial_condition_source(humid_cfg, Float64, 2)
+            @test humid_source.qv !== nothing
+            @test humid_source.qv[1, 1, :] == [0.35, 0.08, 0.001]
 
             vertical = HybridSigmaPressure(Float64[0, 0, 0], Float64[0, 0.5, 1])
 
@@ -462,19 +477,44 @@ end
     @testset "surface-anchored conservative hybrid remap" begin
         f = ICIO._remap_hybrid_profile!
 
-        # Different source and target partitions of the same pressure column:
-        # the vertically integrated tracer is conserved to round-off.
+        # Different source and target partitions of the same pressure column,
+        # including a strongly humid source bottom layer. The tracer integral
+        # is conserved on dry pressure, not total pressure.
         src_q = Float64[9.0, 2.0, 5.0]                    # surface -> TOA
+        src_qv = Float64[0.35, 0.08, 0.001]               # strong humidity
         ap = zeros(Float64, 4)
         bp = Float64[1.0, 0.7, 0.2, 0.0]                 # surface -> TOA
         A_tgt = zeros(Float64, 5)
         B_tgt = Float64[0.0, 0.1, 0.4, 0.8, 1.0]         # TOA -> surface
         ps = 100_000.0
+        src_p = ap .+ bp .* ps
+        tgt_p = A_tgt .+ B_tgt .* ps
+        target_dp_dry = zeros(Float64, 4)
+        for k in eachindex(target_dp_dry), s in eachindex(src_qv)
+            overlap = max(0.0, min(tgt_p[k + 1], src_p[s]) -
+                               max(tgt_p[k], src_p[s + 1]))
+            target_dp_dry[k] += (1 - src_qv[s]) * overlap
+        end
         dest = zeros(Float64, 4)
-        f(dest, src_q, ap, bp, A_tgt, B_tgt, ps)
-        source_integral = sum(src_q .* (-diff(ap .+ bp .* ps)))
-        target_integral = sum(dest .* diff(A_tgt .+ B_tgt .* ps))
+        f(dest, src_q, src_qv, ap, bp, A_tgt, B_tgt, ps, target_dp_dry)
+        source_integral = sum(src_q .* (1 .- src_qv) .* (-diff(src_p)))
+        target_integral = sum(dest .* target_dp_dry)
         @test target_integral ≈ source_integral rtol = 16eps(Float64)
+        @test !isapprox(sum(dest .* diff(tgt_p)), sum(src_q .* (-diff(src_p))); rtol = 1e-3)
+
+        # Without source-file humidity, the target binary's dry carrier is
+        # extended onto source layers. A 40% humid target layer is included.
+        target_qv = Float64[0.0, 0.4, 0.12, 0.02]
+        binary_dp_dry = (1 .- target_qv) .* diff(tgt_p)
+        fallback = zeros(Float64, 4)
+        f(fallback, src_q, nothing, ap, bp, A_tgt, B_tgt, ps, binary_dp_dry)
+        expected_mass = 0.0
+        for k in eachindex(target_qv), s in eachindex(src_q)
+            overlap = max(0.0, min(tgt_p[k + 1], src_p[s]) -
+                               max(tgt_p[k], src_p[s + 1]))
+            expected_mass += src_q[s] * (1 - target_qv[k]) * overlap
+        end
+        @test sum(fallback .* binary_dp_dry) ≈ expected_mass rtol = 16eps(Float64)
 
         # A near-surface peak stays on the same sigma layers when every column
         # receives a uniform surface-pressure shift.
@@ -483,10 +523,10 @@ end
         shifted_1 = zeros(Float64, 5)
         shifted_2 = similar(shifted_1)
         target_bp = Float64[0.0, 0.1, 0.3, 0.6, 0.85, 1.0]
-        f(shifted_1, peaked_q, zeros(5), peaked_bp,
-          zeros(6), target_bp, 98_325.0)
-        f(shifted_2, peaked_q, zeros(5), peaked_bp,
-          zeros(6), target_bp, 98_725.0)
+        f(shifted_1, peaked_q, nothing, zeros(5), peaked_bp,
+          zeros(6), target_bp, 98_325.0, diff(target_bp .* 98_325.0))
+        f(shifted_2, peaked_q, nothing, zeros(5), peaked_bp,
+          zeros(6), target_bp, 98_725.0, diff(target_bp .* 98_725.0))
         @test shifted_1 ≈ shifted_2 rtol = 32eps(Float64)
 
         # A pure pressure-level source keeps its absolute levels. Its surface
@@ -499,17 +539,64 @@ end
         target_B = Float64[0.0, 0.0, 1.0]
         shallower = zeros(Float64, 2)
         deeper = similar(shallower)
-        f(shallower, pressure_q, pressure_ap, pressure_bp,
-          target_A, target_B, 700.0)
-        f(deeper, pressure_q, pressure_ap, pressure_bp,
-          target_A, target_B, 1_000.0)
+        f(shallower, pressure_q, nothing, pressure_ap, pressure_bp,
+          target_A, target_B, 700.0, diff(target_A .+ target_B .* 700.0))
+        f(deeper, pressure_q, nothing, pressure_ap, pressure_bp,
+          target_A, target_B, 1_000.0, diff(target_A .+ target_B .* 1_000.0))
         @test shallower ≈ [2.0, 4.0] rtol = 16eps(Float64)
         @test deeper ≈ [2.0, 4600 / 700] rtol = 16eps(Float64)
 
-        @test_throws DimensionMismatch f(zeros(Float64, 3), src_q,
+        @test_throws DimensionMismatch f(zeros(Float64, 3), src_q, nothing,
                                          ap[1:3], bp[1:3],
-                                         A_tgt, B_tgt, ps)
+                                         A_tgt, B_tgt, ps, ones(3))
         @test :psurf ∉ fieldnames(ICIO.FileInitialConditionSource{Float64})
+        @test :qv ∈ fieldnames(ICIO.FileInitialConditionSource{Float64})
+    end
+
+    @testset "LL, RG, and CS binary surface-pressure basis traits" begin
+        vertical = HybridSigmaPressure(zeros(3), [0.0, 0.5, 1.0])
+        ps_total = 100_000.0
+        dp_dry = [30_000.0, 45_000.0] # qv = [0.40, 0.10]
+
+        ll_mesh = LatLonMesh(; FT = Float64, Nx = 4, Ny = 2)
+        ll_grid = AtmosGrid(ll_mesh, vertical, CPU(); FT = Float64)
+        ll_air = Array{Float64}(undef, 4, 2, 2)
+        for j in 1:2, i in 1:4, k in 1:2
+            ll_air[i, j, k] = dp_dry[k] * cell_area(ll_mesh, i, j) /
+                              AtmosTransport.Grids.gravity(ll_grid)
+        end
+        @test ICIO._stored_surface_pressure_basis(
+            ll_grid, ll_air, fill(ps_total, 4, 2), DryBasis()) isa ICIO.TotalSurfacePressure
+
+        rg_mesh = ReducedGaussianMesh([-45.0, 45.0], [4, 4]; FT = Float64)
+        rg_grid = AtmosGrid(rg_mesh, vertical, CPU(); FT = Float64)
+        rg_air = Array{Float64}(undef, ncells(rg_mesh), 2)
+        for c in 1:ncells(rg_mesh), k in 1:2
+            rg_air[c, k] = dp_dry[k] * cell_area(rg_mesh, c) /
+                           AtmosTransport.Grids.gravity(rg_grid)
+        end
+        @test ICIO._stored_surface_pressure_basis(
+            rg_grid, rg_air, fill(ps_total, ncells(rg_mesh)), DryBasis()) isa
+            ICIO.TotalSurfacePressure
+
+        Nc, Hp = 2, 1
+        cs_mesh = CubedSphereMesh(; FT = Float64, Nc, Hp)
+        cs_grid = AtmosGrid(cs_mesh, vertical, CPU(); FT = Float64)
+        cs_air = ntuple(_ -> zeros(Float64, Nc + 2Hp, Nc + 2Hp, 2), 6)
+        for p in 1:6, j in 1:Nc, i in 1:Nc, k in 1:2
+            cs_air[p][i + Hp, j + Hp, k] =
+                dp_dry[k] * cell_area(cs_mesh, i, j) /
+                AtmosTransport.Grids.gravity(cs_grid)
+        end
+        cs_ps_total = ntuple(_ -> fill(ps_total, Nc, Nc), 6)
+        cs_ps_dry = ntuple(_ -> fill(sum(dp_dry), Nc, Nc), 6)
+        @test ICIO._stored_surface_pressure_basis(
+            cs_grid, cs_air, cs_ps_total, DryBasis()) isa ICIO.TotalSurfacePressure
+        @test ICIO._stored_surface_pressure_basis(
+            cs_grid, cs_air, cs_ps_dry, DryBasis()) isa ICIO.DrySurfacePressure
+        recovered = ICIO._total_surface_pressure(
+            ICIO.DrySurfacePressure(), sum(dp_dry), vertical.A, vertical.B, [0.4, 0.1])
+        @test recovered ≈ ps_total rtol = 16eps(Float64)
     end
 
     # --------- plan 40 Commit 2: catrine_co2 semantic unification -----

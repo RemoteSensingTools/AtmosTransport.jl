@@ -100,7 +100,8 @@ using ..MetDrivers: AbstractMetDriver, TransportBinaryDriver,
 using ..InitialConditionIO: _regridding_method, _surface_flux_kind, surface_flux_species
 using ..InitialConditionIO: build_initial_mixing_ratio, _build_cs_initial_mixing_ratio,
                              pack_initial_tracer_mass, _cs_pack_interior_into_halo!,
-                             build_surface_flux_sources
+                             build_surface_flux_sources,
+                             _stored_surface_pressure_basis, TotalSurfacePressure
 using ..BinaryPathExpander: expand_binary_paths
 using ..InputStaging: InputStager, staged_path_for!, cleanup_staging!
 using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, SnapshotFrame,
@@ -785,8 +786,12 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
               "(`regrid_ll_transport_binary_to_cs.jl --mass-basis dry`), " *
               "or extend the CS window + this runner to thread qv.")
 
-    state = _initialize_cs_dry_state(grid, air_mass, tracer_init;
-                                     surface_pressure = window1.surface_pressure)
+    qv_initial = _initial_condition_qv(window1)
+    pressure_basis = _stored_surface_pressure_basis(
+        grid, air_mass, window1.surface_pressure, DryBasis())
+    state = _initialize_cs_dry_state(
+        grid, air_mass, tracer_init;
+        surface_pressure = window1.surface_pressure, pressure_basis, qv = qv_initial)
     fluxes = _allocate_cs_runner_fluxes(mesh, Nz, FT, BasisT)
     # Workspace constructors allocate with `similar(state.air_mass[1])`.
     # Move prognostic storage first so scratch is created on the target backend,
