@@ -89,7 +89,7 @@ vertical = "fv3_kord8"               # FV3 scalar_profile, kord = 8 (GCHP's trac
   kind = "cs_native"
   file = "/temp1/cfranken/catrine_protocol/fluxes_c90/catrine_fossil_co2_c90.nc"
   variable = "fossil_co2"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -104,7 +104,7 @@ vertical = "fv3_kord8"               # FV3 scalar_profile, kord = 8 (GCHP's trac
     "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2022.short.nc",
     "$ATMOSTRANSPORT_DATA_ROOT/catrine/Emissions/gridfed/GCP-GridFEDv2024.0_2023.short.nc",
   ]
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -117,7 +117,7 @@ vertical = "fv3_kord8"               # FV3 scalar_profile, kord = 8 (GCHP's trac
   kind = "cs_native"
   file = "/temp1/cfranken/catrine_protocol/fluxes_c90/catrine_sf6_c90.nc"
   variable = "sf6"
-  molar_mass_kg_mol = 0.146055
+  species = "sf6"
   time_varying = true
   temporal_scheme = "stepwise"
 

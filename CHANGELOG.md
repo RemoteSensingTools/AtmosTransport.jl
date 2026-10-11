@@ -53,6 +53,20 @@
   two of them, which set `[run] scheme` next to an `[advection]` table and
   were therefore rejected before, now run.
 
+- `surface_flux.molar_mass_kg_mol` is replaced by `surface_flux.species`
+  (`"co2"`, `"sf6"` or `"rn222"`); the molar mass comes from
+  `Parameters.SPECIES_MOLAR_MASS`. The old key is an error that names the new
+  one. Tracers named `co2`, `co2_natural`, `co2_fossil`, `fossil_co2`, `sf6` or
+  `rn222` may still omit it; any other tracer with a flux must set it, and an
+  unknown species is an error listing the known ones (also reported by
+  `validate_config`). The 250 occurrences in the shipped run configs (245 in
+  `config/runs/`, 5 in the golden-output configs) moved to `species`; every
+  migrated tracer resolves the same molar mass, and so the same storage factor
+  bit for bit (checked on all 461 tracer fluxes of those configs).
+  `Models.InitialConditionIO.surface_flux_species` gives the resolution to
+  scripts (`tracer_budget_closure.jl` uses it); the private
+  `_tracer_molar_mass_kg_mol` and `_KNOWN_TRACER_MOLAR_MASS_KG_MOL` are removed.
+
 ### Fixes
 
 - Transport binaries (eager and streaming writers), the spectral day cache and
@@ -599,6 +613,86 @@
   Float64, gets its totals too. `tracer_budget_closure.jl` and
   `catrine_true_mass_balance.jl` use these functions instead of the private
   `_flux_temporal_segments`.
+- New module `GriddedIO` (after `Regridding`, before `Preprocessing`): the one
+  owner of the conventions of native gridded input files, measured on the
+  TRENDY v14 S3 models, GFED5, FLUXCOM-X, CAMS, GridFED and EDGAR
+  (`docs/memos/2026-10-10_python_flux_port_p0_facts.md`). `find_coordinate`
+  finds coordinates by variable name only and checks their length;
+  `latlon_orientation`/`orient`/`orient_coordinates` give ascending latitude
+  and longitudes from the first value `≥ 0`; `read_raw` reads with the fill
+  policies `MaskedAsZero`, `MaskedAsNaN` or `FillValueOnly`, converting each
+  value once to the caller's element type (default Float64);
+  `source_latlon_mesh` derives a file's cell faces (`SnappedFaces`: snapped
+  regular axes, pole-centred, truncated and Gaussian latitudes, on
+  `LatLonMesh(λᶠ, φᶠ; radius)`; bounds variables are never used);
+  `decode_time` classifies a time axis by its units before any CFTime call
+  (`CFDecoder`, `MonthsSince`, `DecimalYears`, `AuxiliaryTimeVariable`) and
+  refuses invalid origins instead of normalising them (`months since
+  2000-13-01`, `days since 2000-02-30` in the standard calendar);
+  `decode_month_keys` gives the months of an axis in its own calendar, also
+  where `DateTime` cannot hold a stamp (30 February of `360_day`);
+  `stage_input` decompresses `.nc.gz` and single-member `.nc.tar.gz` inputs
+  into a cache with atomic publication; `parse_flux_units` reads every units
+  string in use into `FluxUnits`, converted by `kg_per_unit`,
+  `period_seconds` and `mass_rate_factor` with the molar masses of
+  `Parameters`.
+- The `cs_native` flux file is defined once, in `GriddedIO`: the layout
+  `CS_NATIVE_FLUX_DIMS`, the writer `open_cs_native_writer` / `write_slices!` /
+  `publish!` / `abandon!` (contiguous start-stamped intervals with
+  `time_bnds` in `hours since <first day>`, the mesh geometry and
+  `cell_area`, units `canonical_units_string(species)`, chunks
+  `(Nc, Nc, 1, chunk_time)`, no `_FillValue`, non-finite values refused,
+  atomic publication), the streaming reader `cs_native_flux_info` /
+  `read_cs_native_flux!`, which is now the runtime's `cs_native` loader (panel
+  by panel into the source's own arrays, one panel-slab read buffer, as the
+  former loader), and the whole-file reader `read_cs_native_flux`
+  (`check_cell_area` is the former per-panel area gate, unchanged). Sources
+  built from every `cs_native` file tested are bit-identical to the former
+  loader. The reader is stricter: the NetCDF
+  dimensions must be exactly `(time, nf, Ydim, Xdim)`, times must strictly
+  increase, time axes are decoded by `decode_time`, and units in kg of
+  another named species than the tracer's are an error (they were read with
+  factor 1). `write_latlon_flux` writes static CF `(lon, lat)` flux files for
+  `kind = "file"` (not a time-varying kind) and, until step P2b, refuses a mesh
+  whose faces the runtime would not rebuild bit for bit from the written
+  centres by its uniform face rule, now `GriddedIO.UniformSpanFaces`
+  (pole-centred, snapped, truncated, Gaussian rows). `catrine_protocol_cs_fluxes.jl` writes through the
+  `cs_native` writer: the same data, now with `time_bnds`, the geometry block
+  and units `kg CO2|Rn222|SF6 m-2 s-1`; `compare_cs_flux_files.jl` takes the
+  layout from `GriddedIO`.
+- The runtime surface-flux and initial-condition loaders read their files
+  through `GriddedIO`: coordinates by name with a check against the field's
+  dimensions, orientation, fill values (read straight into the run's float
+  type), the conservative-regridding source mesh
+  (`source_latlon_mesh(…, UniformSpanFaces(); radius)`, the former uniform mesh),
+  time axes and flux units. For every file the shipped configs read (102
+  inventories: CAMS/LMDZ, GridFED, EDGAR, Zhang Rn-222, ECCO-Darwin, CATRINE and
+  TRENDY `cs_native` series), the loaded fields, source meshes, slice times and
+  storage factors are bit-identical to the former loaders. What changes:
+  - Units go through one grammar (`GriddedIO.parse_flux_units`): grams, days,
+    molar units with a named species and per-cell units with any time unit now
+    convert; the conversion follows the units, not the kind (a
+    `gridfed_fossil_co2` file is divided by the month length only if its units
+    are per month, an `edgar_sf6` file by the cell area only if they are per
+    cell). Molar units that name no species are moles of the tracer's
+    species; missing and unknown units remain errors, now naming the variable
+    and file. Units in kg of another
+    named species than the tracer's (`surface_flux.species`) are an error;
+    they were read with factor 1. Time-varying lat-lon sources need densities
+    (per m²).
+  - Time axes are classified by their units before any CFTime call
+    (`GriddedIO.decode_time`): `months since` axes decode to month starts
+    (CFTime used a fixed 30.44-day month), `noleap`/`365_day`,
+    `all_leap`/`366_day` and `360_day` calendars are accepted (a stamp on a
+    date the run's proleptic Gregorian clock lacks, such as 30 February, is an
+    error), invalid origins are errors, `years since` and unlabelled axes are
+    refused, and abbreviated units (`h since`, …) are decoded through
+    `DateTime` (millisecond resolution).
+  - The private helpers `_ic_find_coord`, `_build_source_latlon_mesh`,
+    `_surface_flux_times_seconds`, `_parse_cf_time_origin`,
+    `_normalize_units_string`, `_per_second_flux_scale`, `_days_in_month` and
+    `_is_leap_year` are removed; the loaders `_load_file_surface_flux_field`
+    and `_load_timevarying_surface_flux_field` take the `species` keyword.
 - SIF-GPP, FLUXCOM, TRENDY v14, TRANSCOM, GFED, and CATRINE campaign
   preprocessing, run configs, visualization scripts, and ATBD memos.
 

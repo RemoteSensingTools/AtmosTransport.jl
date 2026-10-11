@@ -41,7 +41,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "$ATMOSTRANSPORT_DATA_ROOT/fluxes/sif_gpp_daily_co2flux_c90_2018_2025_v2.nc"
   variable = "GPP_CO2_FLUX_SEAS"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 

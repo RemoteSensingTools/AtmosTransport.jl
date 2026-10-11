@@ -9,6 +9,7 @@
 
 using Test
 using TOML
+using AtmosTransport
 
 const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 
@@ -126,5 +127,34 @@ end
             end
         end
     end
+    @test isempty(bad)
+end
+
+# Every surface flux of an active run config (and of the golden-output cases)
+# has a species: `surface_flux.species` or a tracer name that implies one. The
+# replaced key `molar_mass_kg_mol` appears nowhere.
+@testset "active run configs give every surface flux a species" begin
+    species = AtmosTransport.Models.InitialConditionIO.surface_flux_species
+    bad = String[]
+    n = 0
+    for rel in vcat(_active_tomls("config/runs"), _active_tomls("test/golden/configs"))
+        cfg = TOML.parsefile(joinpath(REPO_ROOT, rel))
+        tracers = get(cfg, "tracers", nothing)
+        tracers isa AbstractDict || continue
+        for (name, tracer) in tracers
+            tracer isa AbstractDict || continue
+            sf = get(tracer, "surface_flux", nothing)
+            sf isa AbstractDict || continue
+            lowercase(string(get(sf, "kind", "none"))) == "none" && continue
+            n += 1
+            try
+                species(Symbol(name), sf)
+            catch err
+                err isa ArgumentError || rethrow()
+                push!(bad, "$(rel) [tracers.$(name).surface_flux]: $(err.msg)")
+            end
+        end
+    end
+    @test n > 400
     @test isempty(bad)
 end

@@ -68,9 +68,9 @@ scheme = "ppm"
   kind = "file"   # ECCO-Darwin air-sea CO2 flux (generic NetCDF)
   file = "~/data/AtmosTransport/catrine/Emissions/ECCO_Darwin/eccodarwin_ocean_co2_december_05deg.nc"
   variable = "co2_flux_ocean"
-  # generic file kind isn't in the known-tracer molar-mass map; declare CO2's
-  # so the kgCO2/m2/s flux converts to the dry-VMR storage basis.
-  molar_mass_kg_mol = 0.0440095
+  # the tracer name co2_ocean implies no species; declare CO2 so the kgCO2/m2/s
+  # flux converts to the dry-VMR storage basis.
+  species = "co2"
 
 [diffusion]
 kind = "tm5_dkg"

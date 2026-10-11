@@ -67,7 +67,7 @@ _init_kind_group(kind::AbstractString) = get(_INIT_KINDS, lowercase(kind), nothi
 # Surface fluxes (`build_surface_flux_source`). `month` is read by two kinds,
 # the series keys only by time-varying sources.
 const _SURFACE_FLUX_KEYS = ("kind", "file", "variable", "time_index", "month", "year",
-                            "files", "file_pattern", "scale", "molar_mass_kg_mol",
+                            "files", "file_pattern", "scale", "species",
                             "time_varying", "temporal_scheme", "regridding")
 const _SURFACE_FLUX_MONTH_KINDS = ("gridfed_fossil_co2", "zhang_rn222")
 const _SURFACE_FLUX_SERIES_KEYS = ("files", "file_pattern", "temporal_scheme")

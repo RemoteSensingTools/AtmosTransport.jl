@@ -159,7 +159,7 @@ function _write_synthetic_monthly_gridfed_file(path::AbstractString, year::Int)
         lon[:] = [-135.0, -45.0, 45.0, 135.0]
         lat[:] = [45.0, -45.0]
         for month in 1:12
-            month_seconds = ICIO._days_in_month(year, month) * 86400.0
+            month_seconds = Dates.daysinmonth(year, month) * 86400.0
             flux[:, :, month] .= month * month_seconds
         end
         flux.attrib["units"] = "kgCO2/month/m2"
@@ -608,7 +608,7 @@ end
                 "time_varying" => true,
             )
             lmdz = ICIO._load_timevarying_surface_flux_field(
-                lmdz_cfg, Float32, DateTime(2022, 1, 1))
+                lmdz_cfg, Float32, DateTime(2022, 1, 1); species = :co2)
             @test size(lmdz.raw_series) == (4, 2, 24)
             @test lmdz.times_sec[1:2] == [0.0, 3 * 3600.0]
             @test lmdz.times_sec[end] ==
@@ -627,7 +627,7 @@ end
                 "time_varying" => true,
             )
             gridfed = ICIO._load_timevarying_surface_flux_field(
-                gridfed_cfg, Float64, DateTime(2022, 1, 1))
+                gridfed_cfg, Float64, DateTime(2022, 1, 1); species = :co2)
             @test size(gridfed.raw_series) == (4, 2, 12)
             @test gridfed.times_sec[1] == 0.0
             @test gridfed.times_sec[2] == 31 * 86400.0
@@ -656,11 +656,12 @@ end
                                     "file_pattern" => joinpath(dir, "lmdz_{YYYYMM}.nc"),
                                     "year" => 2022, "time_varying" => true)
             ref = DateTime(2022, 1, 1)
-            full = ICIO._load_timevarying_surface_flux_field(cfg, Float32, ref)
+            full = ICIO._load_timevarying_surface_flux_field(cfg, Float32, ref; species = :co2)
             sec(d) = Dates.value(d - ref) / 1000.0
             # Mar 1 03:00 + 1 h to Apr 1 00:00: Mar 03:00 slice through the Apr 00:00 slice.
             span = (sec(DateTime(2022, 3, 1, 4)), sec(DateTime(2022, 4, 1)))
-            sub = ICIO._load_timevarying_surface_flux_field(cfg, Float32, ref; run_span = span)
+            sub = ICIO._load_timevarying_surface_flux_field(cfg, Float32, ref; species = :co2,
+                                                            run_span = span)
             idx = findall(t -> sec(DateTime(2022, 3, 1, 3)) <= t <= sec(DateTime(2022, 4, 1)),
                           full.times_sec)
             @test length(idx) == 2
@@ -675,7 +676,8 @@ end
                                          for (i0, i1, w0, w1, f) in segs)
             # Feb 1 01:00 to Mar 1 02:00 has knots inside (Feb 1 03:00, Mar 1 00:00).
             span2 = (sec(DateTime(2022, 2, 1, 1)), sec(DateTime(2022, 3, 1, 2)))
-            sub2 = ICIO._load_timevarying_surface_flux_field(cfg, Float32, ref; run_span = span2)
+            sub2 = ICIO._load_timevarying_surface_flux_field(cfg, Float32, ref; species = :co2,
+                                                             run_span = span2)
             @test length(sub2.times_sec) == 4
             n_steps = 0
             for (sp, field) in ((span, sub), (span2, sub2))
@@ -698,7 +700,8 @@ end
             gcfg = Dict{String, Any}("kind" => "gridfed_fossil_co2", "file" => gridfed_path,
                                      "year" => 2022, "time_varying" => true)
             g = ICIO._load_timevarying_surface_flux_field(
-                gcfg, Float64, ref; run_span = (sec(DateTime(2022, 6, 10)), sec(DateTime(2022, 7, 2))))
+                gcfg, Float64, ref; species = :co2,
+                run_span = (sec(DateTime(2022, 6, 10)), sec(DateTime(2022, 7, 2))))
             @test g.times_sec == [sec(DateTime(2022, m, 1)) for m in 6:8]
             # Monthly totals divided by each slice's own month length.
             for (k, month) in enumerate(6:8)
@@ -805,7 +808,7 @@ end
             "file" => path,
             "variable" => "CO2_FLUX",
             "time_varying" => true,
-            "molar_mass_kg_mol" => 0.0440095,
+            "species" => "co2",
         )
         src = build_surface_flux_source(
             grid, :co2_test, cfg, FT; reference_time = DateTime(2021, 12, 1))
@@ -883,23 +886,133 @@ end
 
 end
 
-@testset "surface-flux per-second units" begin
-    ok = ICIO._is_kg_per_m2_s
-    norm = ICIO._normalize_units_string
-    for u in ("kg m-2 s-1", "kg/m2/s", "kgCO2/m2/s", "kg(CO2) m^-2 s^-1", "kg m-2 s-1", "kg/m²/s")
-        @test ok(norm(u))
+@testset "surface-flux units (GriddedIO grammar)" begin
+    # The loaders parse the units attribute with GriddedIO.parse_flux_units and
+    # convert a slice to kg species m⁻² s⁻¹ by kg_per_unit and period_seconds.
+    units(u, species = :co2) = ICIO._flux_units((; attrib = Dict("units" => u)), "F", "f.nc", species)
+    density(u, species; iv = nothing, area = nothing, v = 2.0) =
+        only(ICIO._to_flux_density!(fill(v, 1, 1), units(u, species), species, iv, area))
+    # kg of the species (or unnamed kg) per m² per second: unchanged, bit for bit.
+    for u in ("kg m-2 s-1", "kg/m2/s", "kgCO2/m2/s", "kg(CO2) m^-2 s^-1", "kg/m²/s", "kg CO2 m-2 s-1")
+        @test density(u, :co2) === 2.0
     end
-    # Molar, missing and other units are rejected, not read as kg m-2 s-1.
-    for u in ("mol m-2 s-1", "", "umol/m2/s", "g m-2 s-1", "kg m-2", "kg/s", "Tg/yr")
-        @test !ok(norm(u))
+    @test density("kg m-2 s-1", :rn222) === 2.0
+    @test density("kg SF6 m-2 s-1", :sf6) === 2.0
+    # kg of carbon → CO2 conserves carbon atoms: M(CO2)/M(C).
+    K = AtmosTransport.Parameters.SPECIES_MOLAR_MASS.co2 / AtmosTransport.Parameters.CARBON_MOLAR_MASS
+    @test density("kgC m-2 s-1", :co2; v = 1.0) === K
+    # Grams and days convert (the former per-second-only parser refused them).
+    @test density("g m-2 s-1", :co2; v = 1.0) === 1e-3
+    @test density("gC m-2 d-1", :co2; v = 86400.0) ≈ 1e-3 * K
+    # Per-month values need their calendar month (GridFED); February 2024 has 29 days.
+    @test density("kgCO2/month/m2", :co2; v = 29 * 86400.0,
+                  iv = AtmosTransport.GriddedIO.interval(AtmosTransport.GriddedIO.MonthKey(2024, 2))) === 1.0
+    @test_throws ArgumentError density("kgCO2/month/m2", :co2)
+    # Per-cell amounts need the cell areas (time-varying loaders read densities).
+    @test density("Tonnes", :sf6; v = 1.0, area = fill(2.0, 1, 1)) ===
+          1000.0 / (2.0 * AtmosTransport.Parameters.DAYS_PER_JULIAN_YEAR * 86400)
+    @test_throws ArgumentError density("kg/s", :co2)
+    # A molar flux that names no substance is of the tracer's species
+    # (ECCO-Darwin writes mmol m-2 s-1 of CO2).
+    M = AtmosTransport.Parameters.SPECIES_MOLAR_MASS
+    @test density("mmol m-2 s-1", :co2; v = 1.0) ≈ 1e-3 * M.co2 rtol = 1e-15
+    @test density("mol m-2 s-1", :sf6; v = 1.0) ≈ M.sf6 rtol = 1e-15
+    @test density("umol/m2/s", :co2; v = 1.0) ≈ 1e-6 * M.co2 rtol = 1e-15
+    # A substance named in the string wins over the tracer's species, with or
+    # without a space or parentheses.
+    K = AtmosTransport.Parameters.SPECIES_MOLAR_MASS.co2 / AtmosTransport.Parameters.CARBON_MOLAR_MASS
+    for u in ("mol C m-2 s-1", "molC m-2 s-1", "mol (C) m-2 s-1")
+        @test density(u, :co2; v = 1.0) ≈ AtmosTransport.Parameters.CARBON_MOLAR_MASS * K rtol = 1e-15
     end
-    # One parser for every loader: kg of the species, or kgC converted to CO2.
-    scale = ICIO._per_second_flux_scale
-    @test scale(norm("kg m-2 s-1"), "f.nc") == 1.0
-    @test scale(norm("kgCO2/m2/s"), "f.nc") == 1.0
-    @test scale(norm("kgC m-2 s-1"), "f.nc") ≈ 44.0095 / 12.0107        # carbon conserved
-    @test_throws ArgumentError scale(norm(""), "f.nc")
-    @test_throws ArgumentError scale(norm("mol m-2 s-1"), "f.nc")
-    @test_throws ArgumentError ICIO._native_flux_species_scale("", "f.nc")
+    # Units of another species than the tracer's, missing and unknown units
+    # are errors that name the variable and file.
+    @test_throws ArgumentError density("kgCO2/m2/s", :sf6)
+    @test_throws ArgumentError density("kgC m-2 s-1", :rn222)
+    for u in ("", "kg m-2", "Tg/yr")
+        err = try units(u); nothing catch e; e end
+        @test err isa ArgumentError && occursin("'F' in f.nc", err.msg)
+    end
     @test_throws ArgumentError ICIO._require_reference_time(nothing)
+end
+
+@testset "species of a surface flux" begin
+    M = AtmosTransport.Parameters.SPECIES_MOLAR_MASS
+    MD = AtmosTransport.Parameters.DRY_AIR_MOLAR_MASS
+    species = AtmosTransport.Models.InitialConditionIO.surface_flux_species
+    # `species` names an entry of SPECIES_MOLAR_MASS ...
+    @test species(:fossil, Dict("species" => "co2")) === :co2
+    @test species(:anything, Dict("species" => "sf6")) === :sf6
+    @test species(:co2, Dict("species" => "rn222")) === :rn222          # explicit wins
+    # ... or the tracer name implies it.
+    for (name, s) in ((:co2, :co2), (:co2_natural, :co2), (:co2_fossil, :co2),
+                      (:fossil_co2, :co2), (:sf6, :sf6), (:rn222, :rn222))
+        @test species(name, Dict{String, Any}()) === s
+    end
+    # Unknown species, unknown tracer names without `species`, and the removed
+    # molar_mass_kg_mol are errors naming the known species.
+    for (name, cfg) in ((:fossil, Dict("species" => "n2o")), (:fossil, Dict("species" => "CO2")),
+                        (:fossil, Dict("species" => 44.0)), (:fossil, Dict{String, Any}()),
+                        (:co2, Dict("molar_mass_kg_mol" => 0.0440095)))
+        err = try species(name, cfg); nothing catch e; e end
+        @test err isa ArgumentError && occursin("\"co2\", \"sf6\", \"rn222\"", err.msg)
+    end
+    # The storage factor is DRY_AIR_MOLAR_MASS / M(species), bit for bit.
+    @test ICIO._surface_flux_storage_scale(:fossil, Dict("species" => "co2")) === MD / M.co2
+    @test ICIO._surface_flux_storage_scale(:sf6, Dict{String, Any}()) === MD / M.sf6
+    @test ICIO._surface_flux_storage_scale(:x, Dict("species" => "rn222")) === MD / M.rn222
+
+    # validate_config reports a missing or unknown species, and the old key.
+    base = Dict{String, Any}("input" => Dict{String, Any}("binary_paths" => ["a.bin"]))
+    check(tracers) = AtmosTransport.validate_config(merge(base, Dict{String, Any}("tracers" => tracers)))
+    sf(extra...) = Dict{String, Any}("kind" => "edgar_sf6", extra...)
+    tracer(flux) = Dict{String, Any}("init" => Dict{String, Any}("kind" => "uniform"),
+                                     "surface_flux" => flux)
+    ok, errors = check(Dict("fossil" => tracer(sf("species" => "sf6"))))
+    @test !any(e -> occursin("species", e), errors)
+    ok, errors = check(Dict("fossil" => tracer(sf())))
+    @test any(e -> occursin("Set surface_flux.species", e), errors)
+    ok, errors = check(Dict("fossil" => tracer(sf("species" => "ch4"))))
+    @test any(e -> occursin("\"ch4\" is not a known species", e), errors)
+    ok, errors = check(Dict("sf6" => tracer(sf("molar_mass_kg_mol" => 0.146055))))
+    @test any(e -> occursin("molar_mass_kg_mol was replaced by species", e), errors)
+    @test any(e -> occursin("unknown option", e) && occursin("molar_mass_kg_mol", e), errors)
+    # No source, no species needed.
+    ok, errors = check(Dict("blob" => tracer(Dict{String, Any}("kind" => "none"))))
+    @test !any(e -> occursin("species", e), errors)
+end
+
+@testset "time-varying loaders decode time axes through GriddedIO" begin
+    # Units are classified before any CFTime call: `months since` gives the
+    # first instant of each month (CFTime alone would use 30.44-day months),
+    # a noleap `days since` axis is accepted, `years since` is refused.
+    function write_series(path, units; calendar = nothing, times = [0.0, 1.0, 2.0])
+        NCDataset(path, "c") do ds
+            defDim(ds, "lon", 4); defDim(ds, "lat", 2); defDim(ds, "time", length(times))
+            defVar(ds, "lon", Float64, ("lon",))[:] = [45.0, 135.0, 225.0, 315.0]
+            defVar(ds, "lat", Float64, ("lat",))[:] = [-45.0, 45.0]
+            attrib = calendar === nothing ? Dict("units" => units) :
+                                            Dict("units" => units, "calendar" => calendar)
+            defVar(ds, "time", Float64, ("time",); attrib)[:] = times
+            v = defVar(ds, "flux_apos", Float64, ("lon", "lat", "time"),
+                       attrib = Dict("units" => "kg m-2 s-1"))
+            v[:, :, :] = ones(4, 2, length(times))
+        end
+        return path
+    end
+    ref = DateTime(2021, 1, 1)
+    load(path) = ICIO._load_timevarying_surface_flux_field(
+        Dict{String, Any}("kind" => "lmdz_co2", "time_varying" => true, "file" => path),
+        Float64, ref; species = :co2)
+    sec(t) = Dates.value(t - ref) / 1000.0
+    mktempdir() do dir
+        months = load(write_series(joinpath(dir, "months.nc"), "months since 2021-01-16 12:00:00";
+                                   calendar = "365_day"))
+        @test months.times_sec == sec.([DateTime(2021, 1, 1), DateTime(2021, 2, 1), DateTime(2021, 3, 1)])
+        noleap = load(write_series(joinpath(dir, "noleap.nc"), "days since 2021-02-27";
+                                   calendar = "noleap"))
+        @test noleap.times_sec == sec.([DateTime(2021, 2, 27), DateTime(2021, 2, 28), DateTime(2021, 3, 1)])
+        hours = load(write_series(joinpath(dir, "utc.nc"), "hours since 2021-01-01 00:00:00 UTC"))
+        @test hours.times_sec == [0.0, 3600.0, 7200.0]
+        @test_throws ArgumentError load(write_series(joinpath(dir, "years.nc"), "years since 2021-01-01"))
+    end
 end

@@ -39,7 +39,7 @@ if !HAS_ALL_DATA
     end
 else
     @testset "edgar_sf6 — Tonnes/cell/year → kg/m²/s" begin
-        f = _load_file_surface_flux_field(Dict("kind" => "edgar_sf6"), Float32)
+        f = _load_file_surface_flux_field(Dict("kind" => "edgar_sf6"), Float32; species = :sf6)
         @test f isa AT.Models.InitialConditionIO.FileSurfaceFluxField
         @test size(f.raw) == (3600, 1800)            # 0.1° × 0.1°
         @test minimum(f.lat) ≈ -89.95 atol = 0.1
@@ -56,7 +56,7 @@ else
 
     @testset "zhang_rn222 — kg/m²/s pass-through with monthly time index" begin
         f = _load_file_surface_flux_field(
-            Dict("kind" => "zhang_rn222", "time_index" => 6), Float32)
+            Dict("kind" => "zhang_rn222", "time_index" => 6), Float32; species = :rn222)
         @test f isa AT.Models.InitialConditionIO.FileSurfaceFluxField
         @test size(f.raw) == (720, 360)              # 0.5° × 0.5°
         @test minimum(f.raw) >= 0
@@ -65,12 +65,12 @@ else
         @test maximum(f.raw) < 1e-18
         # Monthly index switching produces a different field.
         f2 = _load_file_surface_flux_field(
-            Dict("kind" => "zhang_rn222", "time_index" => 1), Float32)
+            Dict("kind" => "zhang_rn222", "time_index" => 1), Float32; species = :rn222)
         @test sum(abs, f2.raw .- f.raw) > 0
     end
 
     @testset "lmdz_co2 — kgC m⁻² s⁻¹ → kgCO2 m⁻² s⁻¹ with monthly mean" begin
-        f = _load_file_surface_flux_field(Dict("kind" => "lmdz_co2"), Float32)
+        f = _load_file_surface_flux_field(Dict("kind" => "lmdz_co2"), Float32; species = :co2)
         @test f isa AT.Models.InitialConditionIO.FileSurfaceFluxField
         @test size(f.raw) == (360, 180)              # 1° × 1°
         # CO2 land flux can be either sign (net source or sink).
@@ -86,7 +86,7 @@ else
 
     @testset "gridfed_fossil_co2 — kgCO2/month/m² → calendar-month /s" begin
         f = _load_file_surface_flux_field(
-            Dict("kind" => "gridfed_fossil_co2", "time_index" => 12), Float32)
+            Dict("kind" => "gridfed_fossil_co2", "time_index" => 12), Float32; species = :co2)
         @test f isa AT.Models.InitialConditionIO.FileSurfaceFluxField
         # GridFED monthly averaging produces a handful of cells with
         # tiny negative values from numerical artifacts; reject only

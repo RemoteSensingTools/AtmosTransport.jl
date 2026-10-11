@@ -46,7 +46,7 @@ snapshot_file = "~/data/AtmosTransport/output/sif_gpp_transcom_c180_dec2021_dail
   kind = "cs_native"
   file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021_transcom_tags.nc"
   variable = "CO2_FLUX_NA_BOREAL"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -58,7 +58,7 @@ snapshot_file = "~/data/AtmosTransport/output/sif_gpp_transcom_c180_dec2021_dail
   kind = "cs_native"
   file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021_transcom_tags.nc"
   variable = "CO2_FLUX_NA_TEMPERATE"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -70,7 +70,7 @@ snapshot_file = "~/data/AtmosTransport/output/sif_gpp_transcom_c180_dec2021_dail
   kind = "cs_native"
   file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021_transcom_tags.nc"
   variable = "CO2_FLUX_SOUTH_AMERICA_TROPICAL"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -82,7 +82,7 @@ snapshot_file = "~/data/AtmosTransport/output/sif_gpp_transcom_c180_dec2021_dail
   kind = "cs_native"
   file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021_transcom_tags.nc"
   variable = "CO2_FLUX_SOUTH_AMERICA_TEMPERATE"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -94,7 +94,7 @@ snapshot_file = "~/data/AtmosTransport/output/sif_gpp_transcom_c180_dec2021_dail
   kind = "cs_native"
   file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021_transcom_tags.nc"
   variable = "CO2_FLUX_NORTHERN_AFRICA"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -106,7 +106,7 @@ snapshot_file = "~/data/AtmosTransport/output/sif_gpp_transcom_c180_dec2021_dail
   kind = "cs_native"
   file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021_transcom_tags.nc"
   variable = "CO2_FLUX_SOUTHERN_AFRICA"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -118,7 +118,7 @@ snapshot_file = "~/data/AtmosTransport/output/sif_gpp_transcom_c180_dec2021_dail
   kind = "cs_native"
   file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021_transcom_tags.nc"
   variable = "CO2_FLUX_EURASIA_BOREAL"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -130,7 +130,7 @@ snapshot_file = "~/data/AtmosTransport/output/sif_gpp_transcom_c180_dec2021_dail
   kind = "cs_native"
   file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021_transcom_tags.nc"
   variable = "CO2_FLUX_EURASIA_TEMPERATE"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -142,7 +142,7 @@ snapshot_file = "~/data/AtmosTransport/output/sif_gpp_transcom_c180_dec2021_dail
   kind = "cs_native"
   file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021_transcom_tags.nc"
   variable = "CO2_FLUX_TROPICAL_ASIA"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -154,7 +154,7 @@ snapshot_file = "~/data/AtmosTransport/output/sif_gpp_transcom_c180_dec2021_dail
   kind = "cs_native"
   file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021_transcom_tags.nc"
   variable = "CO2_FLUX_AUSTRALIA"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -166,7 +166,7 @@ snapshot_file = "~/data/AtmosTransport/output/sif_gpp_transcom_c180_dec2021_dail
   kind = "cs_native"
   file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021_transcom_tags.nc"
   variable = "CO2_FLUX_EUROPE"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -178,6 +178,6 @@ snapshot_file = "~/data/AtmosTransport/output/sif_gpp_transcom_c180_dec2021_dail
   kind = "cs_native"
   file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c180_dec2021_transcom_tags.nc"
   variable = "CO2_FLUX_UNASSIGNED"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"

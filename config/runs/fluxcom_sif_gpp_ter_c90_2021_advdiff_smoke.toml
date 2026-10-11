@@ -24,7 +24,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/pilot/sif_gpp_hourly_co2flux_c90_2021.nc"
   variable = "CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -36,7 +36,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/derived/fluxcom_x_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
   variable = "GPP_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 
@@ -48,7 +48,7 @@ scheme = "ppm"
   kind = "cs_native"
   file = "/kiwi-data/Data/satellite/FLUXCOM-X/X-BASE/2021/derived/fluxcom_x_gpp_diurnal_ter_daily_hourly_co2flux_c90_2021.nc"
   variable = "TER_CO2_FLUX"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
   time_varying = true
   temporal_scheme = "stepwise"
 

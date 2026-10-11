@@ -43,7 +43,7 @@ scheme = "ppm"
   kind = "file"   # ECCO-Darwin air-sea CO2 flux (generic NetCDF)
   file = "~/data/AtmosTransport/catrine/Emissions/ECCO_Darwin/eccodarwin_ocean_co2_december_05deg.nc"
   variable = "co2_flux_ocean"
-  molar_mass_kg_mol = 0.0440095
+  species = "co2"
 
 [diffusion]
 kind = "tm5_dkg"

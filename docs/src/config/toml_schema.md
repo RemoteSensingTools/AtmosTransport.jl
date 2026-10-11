@@ -249,6 +249,12 @@ scale      = 1.0                    # optional multiplicative scaling
 
 [tracers.sf6.surface_flux]
 kind = "edgar_sf6"
+
+[tracers.ocean.surface_flux]
+kind     = "file"
+file     = "/path/to/air_sea_flux.nc"
+variable = "co2_flux_ocean"
+species  = "co2"                    # required: the name "ocean" implies no species
 ```
 
 Registered surface-flux source kinds (`_SURFACE_FLUX_KINDS` in
@@ -257,8 +263,26 @@ Registered surface-flux source kinds (`_SURFACE_FLUX_KINDS` in
 NetCDF sources and `cs_native` for time-varying fluxes already on the native
 cubed-sphere grid. Any other kind is an error. There is no `edgar_co2` kind — use
 `gridfed_fossil_co2` for the GridFED-derived fossil CO₂ inventory.
-Known tracer names carry built-in molar masses; for a custom tracer, set
-`molar_mass_kg_mol` inside its `surface_flux` table.
+A `file` source is one static field (a 2-D variable, or slice `time_index` of a
+3-D one); it is not a time-varying kind. `GriddedIO.write_latlon_flux` writes
+such files.
+`species` names the species whose kilograms the flux counts: `"co2"`, `"sf6"`
+or `"rn222"`, the entries of `Parameters.SPECIES_MOLAR_MASS`. Its molar mass
+converts physical kg species s⁻¹ to the model's storage units (dry VMR × dry-air
+mass: × `DRY_AIR_MOLAR_MASS / M_species`). Tracers named `co2`, `co2_natural`,
+`co2_fossil` or `fossil_co2` (CO₂), `sf6` or `rn222` may omit it; any other
+tracer with a flux must set it, and another value is an error that lists the
+known species.
+
+The flux variable's `units` attribute decides the conversion to
+kg species m⁻² s⁻¹ (`GriddedIO.parse_flux_units`): kg, g, tonnes or mol; of
+the species, unnamed, or of carbon (× M(species)/M(C), 3.66419 for CO₂); per m²
+or per cell (÷ the cell area); per second, day, calendar month or Julian year.
+Units that name another species than `species` are an error. The shipped
+inventories use `kgC m-2 s-1` (CAMS/LMDZ), `kgCO2/month/m2` (GridFED, each
+month's length), `Tonnes` (EDGAR, per cell and year) and `kg/m2/s` (Zhang
+Rn-222). Time-varying lat-lon sources must be per m²; `cs_native` files must be
+kg (of the species or of carbon) m⁻² s⁻¹.
 
 **Time-varying emission** (cubed-sphere). A source whose inventory has
 sub-monthly time slices (e.g. the LMDZ/CAMS biospheric flux) can drive the
@@ -274,7 +298,24 @@ temporal_scheme = "stepwise"      # how slices are applied between sample times
 ```
 
 `file_pattern` expands `{YYYYMM}` to all twelve months of `year` (or the
-run-start year when `year` is omitted). For a span that crosses calendar
+run-start year when `year` is omitted). Each file's time axis is decoded by
+`GriddedIO.decode_time` into `DateTime` stamps on the run's proleptic
+Gregorian clock:
+
+- `days`, `hours`, `minutes` or `seconds since <origin>` in the calendars
+  `standard`/`gregorian`, `proleptic_gregorian` and `julian` (the instants
+  themselves), and `noleap`/`365_day`, `all_leap`/`366_day` and `360_day` (each
+  stamp's calendar date and time of day, carried over). Every `noleap` date
+  exists on the run's clock; an `all_leap` or `360_day` stamp on 29 February
+  of a common year or on 30 February does not, and is an error that names it.
+- `months since <origin>` as the first instant of each month.
+- The origin must be a valid instant: a month outside 1–12, a day outside
+  1–31 (for `days`…`seconds since`, beyond the month in the axis's calendar)
+  or an invalid time of day is an error, never rolled over
+  (`days since 2000-13-01` is not 2001-01-01).
+- Axes without such units are refused.
+
+For a span that crosses calendar
 years, use `files = ["/path/to/month1.nc", "/path/to/month2.nc", ...]` in
 chronological order. GridFED supports the same time-varying path; its twelve
 monthly totals are converted using the actual number of days in each month.
@@ -306,12 +347,27 @@ require `start_date`.
 
 For an already aligned GEOS-native cubed-sphere inventory, use
 `kind = "cs_native"`, `time_varying = true`, `file`, and `variable`.
-The NetCDF variable must have dimensions `(time,nf,Ydim,Xdim)` and contain
-mass flux density in kg species m⁻² s⁻¹. Grid resolution and panel order must
-match the meteorology. The loader multiplies by native mesh cell areas and
-converts to model storage units using the tracer molar mass. It defaults to
-`temporal_scheme = "stepwise"`; signed uptake is retained. The TRENDY ensemble
-example is `config/runs/trendy_v14_s3_all_models_npp_rh_c30_2014_2024.toml`.
+The file follows the `cs_native` schema of `AtmosTransport.GriddedIO`
+(`GriddedIO.cs_native_flux_info` and `GriddedIO.read_cs_native_flux!` are the
+loader; new files come from `GriddedIO.open_cs_native_writer`):
+
+- the variable has NetCDF dimensions `(time, nf, Ydim, Xdim)`; grid resolution
+  and panel order must match the meteorology;
+- its `units` are kg of the species or of carbon per m² per second
+  (`kg CO2 m-2 s-1`, `kg m-2 s-1`, `kgC m-2 s-1`; carbon is converted to CO₂
+  by `SPECIES_MOLAR_MASS.co2 / CARBON_MOLAR_MASS`); gram, molar, per-cell and
+  missing units are errors;
+- values are start-stamped slices on a strictly increasing time axis (decoded
+  by `GriddedIO.decode_time`), with no fill or non-finite values; they are read
+  panel by panel into the run's own arrays (`GriddedIO.read_cs_native_flux!`);
+- a stored `cell_area` must agree with the runtime mesh areas
+  (`isapprox(…; rtol = 1e-4)` per panel), so a file built on another cube
+  geometry is refused.
+
+The loader multiplies by native mesh cell areas and converts to model storage
+units with the tracer's species. It defaults to `temporal_scheme = "stepwise"`;
+signed uptake is retained. The TRENDY ensemble example is
+`config/runs/trendy_v14_s3_all_models_npp_rh_c30_2014_2024.toml`.
 
 ### `[advection]`, `[diffusion]`, `[convection]`, `[chemistry]`
 

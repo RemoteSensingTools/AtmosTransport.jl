@@ -145,8 +145,9 @@ mass-flux advection. The conversion happens at the boundaries:
 
 Physical surface inventories are different: a rate in kg species s⁻¹ is
 multiplied by ``M_{dry\ air} / M_{species}`` before entering model storage.
-Known tracer names provide molar masses; custom emitting tracers must set
-`molar_mass_kg_mol`. The output variable
+The species comes from `surface_flux.species` (`co2`, `sf6`, `rn222`, with the
+molar masses of `Parameters.SPECIES_MOLAR_MASS`); tracers named after a species
+may omit it. The output variable
 `<tracer>_column_mass_per_area` is the **model storage mass** per area and does
 not undo that molecular-weight scaling.
 

@@ -76,7 +76,7 @@ using Printf
 # public `total_emission_rate` / `integrated_emission`.
 const _ATM = AtmosTransport
 const _DR  = _ATM.Models.DrivenRunner          # _parse_tracer_specs, _run_reference_time
-const _ICIO = _ATM.Models.InitialConditionIO   # build_surface_flux_sources
+const _ICIO = _ATM.Models.InitialConditionIO   # build_surface_flux_sources, surface_flux_species
 const _OPS = _ATM.Operators                     # source types, emission totals
 using AtmosTransport.Operators: total_emission_rate, integrated_emission
 
@@ -91,19 +91,18 @@ const DEFAULT_CFG = abspath(joinpath(@__DIR__, "..", "..",
 # closure is computed in storage units and is independent of these).
 const M_DRYAIR = _ATM.Parameters.DRY_AIR_MOLAR_MASS          # kg/mol
 
-# Molar mass the source loader used for a tracer (its `surface_flux`
-# `molar_mass_kg_mol`, else the loader's default for the tracer name); NaN when
-# it has none, in which case no physical-kg line is printed.
-# HACK: private loader call. TODO(P2c): read `surface_flux.species` and take
-# `Parameters.SPECIES_MOLAR_MASS[species]` once `species` replaces
-# `molar_mass_kg_mol` (design memo 2026-10-10, section 2.2).
+# Molar mass of a tracer's surface-flux species, as the source loader resolves
+# it (`surface_flux.species`, else the species the tracer name implies), from
+# `Parameters.SPECIES_MOLAR_MASS`; NaN when it has none, in which case no
+# physical-kg line is printed.
 function tracer_molar_mass(spec)
-    try
-        return _ICIO._tracer_molar_mass_kg_mol(spec.name, spec.surface_flux_cfg)
+    species = try
+        _ICIO.surface_flux_species(spec.name, spec.surface_flux_cfg)
     catch err
         err isa ArgumentError || rethrow()
         return NaN
     end
+    return getproperty(_ATM.Parameters.SPECIES_MOLAR_MASS, species)
 end
 
 # ---------------------------------------------------------------------------

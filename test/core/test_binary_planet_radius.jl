@@ -126,10 +126,20 @@ end
 end
 
 @testset "runtime regridding source mesh shares the destination sphere" begin
-    ICIO = AtmosTransport.Models.InitialConditionIO
+    GIO = AtmosTransport.GriddedIO
     lon, lat = collect(0.5:1.0:359.5), collect(-89.5:1.0:89.5)
-    @test ICIO._build_source_latlon_mesh(lon, lat).radius == EARTH_RADIUS
-    @test ICIO._build_source_latlon_mesh(lon, lat; radius = IFS_EARTH_RADIUS).radius == IFS_EARTH_RADIUS
+    # The source mesh has no default radius: it takes the destination's.
+    @test_throws UndefKeywordError GIO.source_latlon_mesh(lon, lat, GIO.UniformSpanFaces())
+    for radius in (EARTH_RADIUS, IFS_EARTH_RADIUS)
+        @test GIO.source_latlon_mesh(lon, lat, GIO.UniformSpanFaces(); radius).radius == radius
+    end
+    # The runtime regridder builds it on the destination mesh's sphere.
+    ICIO = AtmosTransport.Models.InitialConditionIO
+    dst = CubedSphereMesh(; Nc = 4, radius = IFS_EARTH_RADIUS)
+    r = withenv("ATMOSTR_REGRID_CACHE_DIR" => mktempdir()) do
+        ICIO._build_surface_flux_regridder(lon, lat, dst)
+    end
+    @test sum(r.src_areas) ≈ 4π * IFS_EARTH_RADIUS^2 rtol = 1e-12
 end
 
 @testset "per-cell inventory totals do not depend on the destination radius" begin

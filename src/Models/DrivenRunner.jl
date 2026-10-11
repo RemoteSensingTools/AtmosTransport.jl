@@ -95,7 +95,7 @@ using ..MetDrivers: AbstractMetDriver, TransportBinaryDriver,
                      total_windows, window_dt, binary_capabilities,
                      inspect_binary, steps_per_window,
                      steps_per_window_schedule, release_payload!
-using ..InitialConditionIO: _regridding_method, _surface_flux_kind
+using ..InitialConditionIO: _regridding_method, _surface_flux_kind, surface_flux_species
 using ..InitialConditionIO: build_initial_mixing_ratio, _build_cs_initial_mixing_ratio,
                              pack_initial_tracer_mass, _cs_pack_interior_into_halo!,
                              build_surface_flux_sources

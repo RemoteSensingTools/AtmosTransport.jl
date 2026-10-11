@@ -46,6 +46,11 @@ property_keys(node) = Set(String.(keys(node.properties)))
           Set(string.(AtmosTransport.Models.InitialConditionIO._SURFACE_FLUX_KINDS))
     @test enum_of(d.surface_flux.properties.regridding) ==
           Set(string.(AtmosTransport.Models.InitialConditionIO._SURFACE_FLUX_REGRIDDINGS))
+    @test enum_of(d.surface_flux.properties.species) ==
+          Set(string.(propertynames(AtmosTransport.Parameters.SPECIES_MOLAR_MASS)))
+    @test all(s -> AtmosTransport.Models.InitialConditionIO.surface_flux_species(
+                       :tracer, Dict("species" => s)) === Symbol(s),
+              enum_of(d.surface_flux.properties.species))
 
     # Choices with aliases: each schema value parses, and together they reach
     # every outcome.

@@ -51,6 +51,11 @@ Geometry and topology decisions come from
 - `Quantities/` — intensive/extensive/vector/flux traits used by regridding
 - `Diagnostics/` — lightweight runtime instrumentation
 - `Regridding/` — conservative regridding, weight application by quantity kind, nested cubed-sphere remapping and the CS block kernels
+- [`GriddedIO/`](GriddedIO/README.md) — conventions of native gridded input
+  files: coordinate discovery by name, fill policies, lat-lon orientation,
+  source lat-lon meshes, time decoding by units class, staging of compressed
+  inputs, flux-unit grammar; the `cs_native` and lat-lon surface-flux file
+  schemas with their writers and the runtime's `cs_native` reader
 - `Preprocessing/` — transport-binary and met-data preparation
 - `Downloads/` — data acquisition helpers
 - `Visualization/` — topology-aware snapshot views and optional Makie methods

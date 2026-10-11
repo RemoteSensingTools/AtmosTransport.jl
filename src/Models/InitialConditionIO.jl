@@ -25,8 +25,12 @@ topology-dispatched VMR builders for the unified runtime.
   `pressure_layer` selects a level per column from the stored surface pressure
   and normalizes its dry VMR to the configured global molecule count.
 - Basis-aware `pack_initial_tracer_mass` (DryBasis + MoistBasis); CS
-  output is halo-padded with the halo zeroed. `_build_source_latlon_mesh`
-  helper for LL→CS conservative regridding.
+  output is halo-padded with the halo zeroed.
+- File conventions come from `GriddedIO`: coordinates (`find_coordinate`),
+  orientation (`latlon_orientation`, `orient`), fill values (`read_raw` with
+  `MaskedAsZero`), the source mesh of LL→CS conservative regridding
+  (`source_latlon_mesh(lon, lat, UniformSpanFaces(); radius)`), time axes
+  (`decode_time`) and flux units (`parse_flux_units`).
 - Surface-flux loaders and builders (`initial_conditions/surface_flux*.jl`):
   static `FileSurfaceFluxField` and time-varying series, and LL/RG/CS
   `build_surface_flux_source` methods. CS `build_surface_flux_source`
@@ -49,8 +53,7 @@ using ..Models: _config_bool
 import ...expand_data_path
 using ...ConfigChecks: key_suggestion
 using ...Parameters: AVOGADRO, EARTH_RADIUS, SPECIES_MOLAR_MASS, STANDARD_PRESSURE, DRY_AIR_MOLAR_MASS,
-                     CARBON_MOLAR_MASS, DEFAULT_BACKGROUND_VMR, DAYS_PER_JULIAN_YEAR,
-                     DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG
+                     DEFAULT_BACKGROUND_VMR, DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG
 using ..State: AbstractMassBasis, DryBasis, MoistBasis
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                 nrings, ring_longitudes, cell_index, cell_area,
@@ -63,6 +66,15 @@ using ..Preprocessing: unpack_flat_to_panels_3d!, unpack_flat_to_panels_2d!,
                        CS_PANEL_COUNT
 using ..Operators.SurfaceFlux: SurfaceFluxSource, TimeVaryingSurfaceFluxSource,
                                flux_temporal_scheme
+# The conventions of native gridded input files (coordinates, orientation,
+# fill values, source meshes, time axes, flux units) and the `cs_native` flux
+# file (reader, cell-area gate) are owned by GriddedIO.
+using ...GriddedIO: find_coordinate, LongitudeAxis, LatitudeAxis, TimeAxis, VerticalAxis,
+                    latlon_orientation, orient, orient_coordinates, read_raw, MaskedAsZero,
+                    source_latlon_mesh, UniformSpanFaces, decode_time, parse_flux_units,
+                    AbstractTimeBasis, PerSquareMetre, PerCell, PerMonth, TimeInterval,
+                    MonthKey, interval, FluxUnits, kg_per_unit, period_seconds, seconds_since,
+                    mass_rate_factor, cs_native_flux_info, read_cs_native_flux!
 # Grid accessors used by both LL/RG and CS surface-flux builders
 using ..Grids: AbstractHorizontalMesh, nx, ny, ncells
 
@@ -146,11 +158,13 @@ end
 # Bracket search + bilinear interpolation
 # ---------------------------------------------------------------------------
 
-function _ic_find_coord(ds, candidates::Vector{String})
-    for name in candidates
-        haskey(ds, name) && return name
-    end
-    return nothing
+# Longitude and latitude centres [degrees] of a field whose leading Julia
+# dimensions are (lon, lat): the coordinates `GriddedIO.find_coordinate` finds
+# by name, each as long as its dimension of the field.
+function _latlon_centres(ds, field_var)
+    lon = find_coordinate(ds, LongitudeAxis(); length = size(field_var, 1))
+    lat = find_coordinate(ds, LatitudeAxis(); length = size(field_var, 2))
+    return Float64.(ds[lon][:]), Float64.(ds[lat][:])
 end
 
 """
@@ -287,51 +301,29 @@ function _load_file_initial_condition_source(cfg, ::Type{FT}, Nz_target::Integer
 
     ds = NCDataset(file)
     try
-        lon_var = _ic_find_coord(ds, ["lon", "longitude", "x"])
-        lat_var = _ic_find_coord(ds, ["lat", "latitude", "y"])
-        lev_var = _ic_find_coord(ds, ["lev", "level", "plev", "z", "hybrid", "nhym"])
-        isnothing(lon_var) && throw(ArgumentError("could not find longitude coordinate in $file"))
-        isnothing(lat_var) && throw(ArgumentError("could not find latitude coordinate in $file"))
-        isnothing(lev_var) && throw(ArgumentError("could not find vertical coordinate in $file"))
         haskey(ds, variable) || throw(ArgumentError("variable '$variable' not found in $file"))
-
-        lon_src = Float64.(ds[lon_var][:])
-        lat_src = Float64.(ds[lat_var][:])
+        raw_var = ds[variable]
+        ndims(raw_var) in (3, 4) || throw(ArgumentError(
+            "variable '$variable' must be 3D or 4D, got ndims=$(ndims(raw_var))"))
+        lon_src, lat_src = _latlon_centres(ds, raw_var)
+        lev_var = find_coordinate(ds, VerticalAxis(); length = size(raw_var, 3))
         lev_src = Float64.(ds[lev_var][:])
 
-        raw_var = ds[variable]
-        raw = if ndims(raw_var) == 4
-            FT.(nomissing(raw_var[:, :, :, time_index], zero(FT)))
-        elseif ndims(raw_var) == 3
-            FT.(nomissing(raw_var[:, :, :], zero(FT)))
-        else
-            throw(ArgumentError("variable '$variable' must be 3D or 4D, got ndims=$(ndims(raw_var))"))
-        end
+        # Fill values become 0 (GriddedIO.MaskedAsZero), read straight into FT.
+        raw = ndims(raw_var) == 4 ?
+              read_raw(FT, ds, variable, MaskedAsZero(), :, :, :, time_index) :
+              read_raw(FT, ds, variable, MaskedAsZero())
 
         has_hybrid = haskey(ds, "ap") && haskey(ds, "bp") && haskey(ds, "Psurf")
         ap = has_hybrid ? Float64.(ds["ap"][:]) : Float64[]
         bp = has_hybrid ? Float64.(ds["bp"][:]) : Float64[]
         psurf = has_hybrid ? Float64.(nomissing(ds["Psurf"][:, :], STANDARD_PRESSURE)) : zeros(Float64, 0, 0)
 
-        if length(lat_src) > 1 && lat_src[1] > lat_src[end]
-            raw = raw[:, end:-1:1, :]
-            lat_src = reverse(lat_src)
-            if has_hybrid
-                psurf = psurf[:, end:-1:1]
-            end
-        end
-
-        if minimum(lon_src) < 0
-            split = findfirst(>=(0), lon_src)
-            if split !== nothing
-                idx = vcat(split:length(lon_src), 1:split-1)
-                lon_src = mod.(lon_src[idx], 360.0)
-                raw = raw[idx, :, :]
-                if has_hybrid
-                    psurf = psurf[idx, :]
-                end
-            end
-        end
+        # Latitude ascending, longitude from the first value ≥ 0 (GriddedIO).
+        orientation = latlon_orientation(lon_src, lat_src)
+        raw = orient(raw, orientation)
+        has_hybrid && (psurf = orient(psurf, orientation))
+        lon_src, lat_src = orient_coordinates(lon_src, lat_src, orientation)
 
         # Vertical order. Hybrid files are oriented by their interface
         # pressures (surface first, as the log-pressure remap expects) and
@@ -826,5 +818,6 @@ export build_initial_mixing_ratio
 export pack_initial_tracer_mass
 export FileSurfaceFluxField, TimeVaryingFileSurfaceFluxField
 export build_surface_flux_source, build_surface_flux_sources
+export surface_flux_species
 
 end # module InitialConditionIO
