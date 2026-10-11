@@ -50,7 +50,10 @@ else
                         scheme, dt, emission_rates=_scaled_rates(grates, -eps_dir))
                     fd = (jp - jm) / (2eps_dir)
                     @info "GPU directional gradient" scheme predicted fd relative_error=abs((predicted - fd) / fd)
-                    @test isapprox(predicted, fd; rtol=1e-6, atol=1e-9)
+                    # The same identity holds to <= 3e-11 for every scheme here
+                    # on CPU (Lin-Rood was 5.1e-8 before the issue #10 fix);
+                    # 1e-8 leaves room for GPU rounding.
+                    @test isapprox(predicted, fd; rtol=1e-8)
                 end
                 for checkpoint in (AT.StrideCheckpoint(2), AT.RevolveCheckpoint())
                     replay = AT.cs_surface_emission_footprint(grm, gm, gam, gbm, gcm, mesh, obj;

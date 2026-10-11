@@ -102,6 +102,10 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
   production `_cmfmc_cs_panel_column_kernel!`, and TM5 column solves are
   checked bit-for-bit. The Lin-Rood vertical sweep is `UpwindScheme()`
   because that is what `_sweep_z!` runs in production.
+- A sweep record holds the state entering the sweep: the reverse
+  coefficients divide by the pre-sweep donor mass. Every tape, including
+  Lin-Rood, runs its Z sweeps through `_record_and_sweep_z!`
+  (`../Footprint/TapeRecording.jl`), which records before it sweeps.
 - Forward settings that the adjoint cannot transpose are rejected:
   `CMFMCConvection(clamp = true)` or an archived cloud base; `TM5Convection`
   with `use_collab_lu`, `lmax_conv != 0`, or `n_merge != 1`; GEOS-Chem

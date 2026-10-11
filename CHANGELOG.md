@@ -203,6 +203,21 @@
   `--balance-mode`, and every transport-binary header records
   `horizontal_balance`. The environment variable is removed (see Breaking
   changes). Default results are unchanged.
+- The Lin-Rood (`LinRoodPPMScheme`) adjoint tape recorded the air mass for its
+  two Upwind Z half-sweeps after the sweep had updated it. The upwind adjoint
+  divides each face flux by the donor mass entering the sweep, so footprints
+  and 4D-Var gradients carried an error that grows with the square of the
+  vertical Courant number. At vertical Courant 0.08 and horizontal Courant
+  0.02 it was up to 8.6e-5 relative for a surface-layer objective and 5.7e-8
+  for a column mean; purely downward flux gave none. Every tape now records, then applies, its Z sweeps
+  through one helper (`_record_and_sweep_z!`), and the Lin-Rood footprint
+  matches central differences to about 1e-11. Lin-Rood footprints change by
+  the size of that error; forward transport, the split-sweep footprints and
+  transport binaries are bit-for-bit unchanged.
+  Reported by pera-noaa (NOAA GML) in #10. The new
+  `test/core/test_cs_linrood_footprint_fd.jl` covers the upward-flux case,
+  and the Lin-Rood finite-difference tolerances that hid the error are
+  tightened (`test_cs_stride_checkpoint.jl` from `3e-4` to `1e-9`).
 
 ### Numerical changes
 

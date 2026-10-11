@@ -47,7 +47,9 @@ record types, and schedules come from [`../Tape/`](../Tape/).
 
 - [`FootprintResult.jl`](FootprintResult.jl) — result and tape-size types
 - [`TapeRecording.jl`](TapeRecording.jl) — `_tape_byte_estimate`,
-  `_record_sweep!`, `_record_cs_mass_tape` (linear schemes: stages `m`
+  `_record_sweep!`, `_record_and_sweep_z!` (records, then applies, one Z
+  sweep; used by all three tapes, including Lin-Rood),
+  `_record_cs_mass_tape` (linear schemes: stages `m`
   only), `_record_cs_tracer_tape` (monotone PPM: stages `m` and `rm`), and
   the `_record_cs_adjoint_tape` dispatcher (Lin-Rood goes to
   `_record_cs_linrood_tape`)
@@ -127,6 +129,8 @@ record types, and schedules come from [`../Tape/`](../Tape/).
 - [`../../test/core/test_cs_ppm_adjoint_footprint.jl`](../../test/core/test_cs_ppm_adjoint_footprint.jl):
   footprint vs. finite differences for every scheme, diffusion, TM5, CMFMC,
   seed entry, GPU smoke test
+- [`../../test/core/test_cs_linrood_footprint_fd.jl`](../../test/core/test_cs_linrood_footprint_fd.jl):
+  Lin-Rood footprint vs. finite differences with upward vertical flux
 - [`../../test/core/test_cs_stride_checkpoint.jl`](../../test/core/test_cs_stride_checkpoint.jl),
   [`../../test/core/test_cs_tape_path.jl`](../../test/core/test_cs_tape_path.jl),
   [`../../test/core/test_cs_tape_mmap_roundtrip.jl`](../../test/core/test_cs_tape_mmap_roundtrip.jl)

@@ -58,7 +58,13 @@ The supporting kernel adjoints in
 `src/Operators/Advection/linrood_adjoint_*.jl` are
 transposition-tested (`test/core/test_linrood_kernel_adjoints.jl`) and
 finite-difference VJP-tested via single-panel and cross-panel halo
-compositions.
+compositions. The full LinRood footprint, including its two Upwind Z
+half-sweeps, matches central differences to about `1e-11` relative on a smooth
+base field. `test/core/test_cs_linrood_footprint_fd.jl` asserts `1e-9` with
+upward vertical flux and a surface-layer objective, the case most sensitive to
+which air mass the Z records hold. Every tape records the air mass entering a
+Z sweep, because the upwind adjoint coefficient `F / m_donor` uses the
+pre-sweep donor mass.
 
 The opt-in `test/diagnostic/test_cs_transport_adjoint_gpu.jl` also exercises
 transporting PPM and LinRood footprints on CUDA with scalar indexing disabled.

@@ -24,7 +24,7 @@ include(joinpath(@__DIR__, "..", "core", "test_cs_ppm_adjoint_footprint.jl"))
 # base value, and the active branch is propagated linearly. Validate that adjoint
 # against central finite differences on a SMOOTH nonzero base field, where the
 # limiter stays away from its switch points and central FD is a valid gradient
-# probe (matches to ~1e-8).
+# probe (matches to ~1e-11).
 #
 # Do NOT validate this scheme at a zero IC + localized emission (the
 # `_transport_cs_problem` default): that lands the forward trajectory ON limiter
@@ -33,9 +33,10 @@ include(joinpath(@__DIR__, "..", "core", "test_cs_ppm_adjoint_footprint.jl"))
 # That is a finite-difference artifact, NOT an adjoint error — proven 2026-06-02:
 # the recorded forward (`_record_linrood_horizontal_substep!`, record_ops=false)
 # is bit-identical to production `fv_tp_2d_cs!`; the single-substep VJP matches FD
-# to 1e-7; and this footprint identity matches to 1e-8 on smooth/constant fields
-# for both ORD=5 and ORD=7. (The split-sweep footprint test below validates at a
-# zero IC precisely because it uses NoLimiter / linear schemes.)
+# to 1e-7; and this footprint identity matches to ~1e-11 on smooth fields for both
+# ORD=5 and ORD=7. It was ~1e-8 until issue #10 was fixed: the Z half-sweeps
+# staged the post-sweep air mass. (The split-sweep footprint test below validates
+# at a zero IC precisely because it uses NoLimiter / linear schemes.)
 function _seed_smooth_cs_ic!(panels_rm, mesh)
     Hp = mesh.Hp
     N = mesh.Nc + 2Hp
@@ -82,10 +83,11 @@ end
     predicted = _dot_footprint(result, rates)
 
     # On a smooth base field the limiter is inactive, so the (correct) adjoint
-    # matches central FD to ~1e-8. (Resolved 2026-06-02: the former "~7.4e-4/
-    # substep WIP residual" was a finite-difference artifact at limiter kinks
-    # from the zero-IC default, not an adjoint bug — see _seed_smooth_cs_ic!.)
-    @test predicted ≈ fd rtol=1e-6 atol=1e-9
+    # matches central FD to ~1e-11 (6e-12 measured; 1.2e-8 before the issue #10
+    # fix). (Resolved 2026-06-02: the former "~7.4e-4/substep WIP residual" was a
+    # finite-difference artifact at limiter kinks from the zero-IC default, not
+    # an adjoint bug — see _seed_smooth_cs_ic!.)
+    @test predicted ≈ fd rtol=1e-9
 end
 
 @testset "Plan 25 Commit 3b — LinRoodPPMScheme(7) footprint vs FD" begin
@@ -125,6 +127,6 @@ end
     predicted = _dot_footprint(result, rates)
 
     # See the ORD=5 case above: on a smooth base field the limiter is inactive and
-    # the correct adjoint matches central FD to ~1e-8.
-    @test predicted ≈ fd rtol=1e-6 atol=1e-9
+    # the correct adjoint matches central FD to ~1e-11 (7e-11 measured).
+    @test predicted ≈ fd rtol=1e-9
 end
