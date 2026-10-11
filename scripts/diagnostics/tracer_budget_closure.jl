@@ -107,7 +107,6 @@ const _ATM = AtmosTransport
 const _DR  = _ATM.Models.DrivenRunner          # _parse_tracer_specs, _run_reference_time
 const _ICIO = _ATM.Models.InitialConditionIO   # build_surface_flux_sources, surface_flux_species
 
-const _ICIO = _ATM.Models.InitialConditionIO   # _tracer_molar_mass_kg_mol
 const _OPS = _ATM.Operators                     # source types, emission totals
 using AtmosTransport.Operators: total_emission_rate, integrated_emission
 

@@ -191,10 +191,7 @@ modules included before it:
 Architectures → SectionTimer → ConfigChecks → LogLevels → AtomicFiles
 → Quantities → Parameters → Grids → State → Output → MetDrivers → Operators
 → Tape → Adjoints → Regridding → GriddedIO → Preprocessing → Visualization
-→ Models → Downloads
-
-→ Tape → Adjoints → Regridding → Preprocessing → Visualization → Models
-→ Analysis → Downloads
+→ Models → Analysis → Downloads
 ```
 
 `Analysis` holds the numerics of post-run diagnostics. It is loaded after
