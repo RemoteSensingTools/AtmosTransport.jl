@@ -189,6 +189,14 @@ const _TM5_COLLAB_WG_SIZE = 32
 # L=85, B=6 uses 32,316 bytes; B=8 would exceed 32 KiB (32,996 bytes).
 const _TM5_COLLAB_TRACER_BATCH = 6
 
+# Largest effective convection depth (matrix dimension) of the collaborative
+# kernels in Float32: the portable 32 KiB shared-memory budget above.
+const _TM5_COLLAB_MAX_DEPTH_FLOAT32 = 85
+# Largest unmerged Float64 depth on CUDA: static shared storage for a six-tracer
+# batch is 8*(L^2 + 9L + 2) + 4*(L + 2) bytes; L=73 uses 48,204 bytes of the
+# 48 KiB budget. The CUDA extension returns it from `_tm5_collab_max_depth`.
+const _TM5_COLLAB_MAX_DEPTH_FLOAT64_CUDA = 73
+
 """
     _tm5_collab_supports(lmax_conv, Nt) -> Bool
 
@@ -196,18 +204,19 @@ Whether the effective matrix dimension fits the collaborative kernels and
 there is at least one tracer. Tracers are processed in fixed-capacity batches
 against one LU factorization, so there is no upper tracer-count limit here.
 
-The matrix dimension must be in 1..85 to fit the 32 KiB shared-memory budget.
+The matrix dimension must be in 1..`_TM5_COLLAB_MAX_DEPTH_FLOAT32` (85) to fit
+the 32 KiB shared-memory budget.
 This gate uses the effective convection depth after any vertical aggregation,
 not the full model Nz. Configured truncation/aggregation remains a scientific
 choice that must cover the forcing's active depth; batching requires neither.
 """
 @inline _tm5_collab_supports(lmax_conv::Integer, Nt::Integer) =
-    lmax_conv > 0 && lmax_conv <= 85 && Nt > 0
+    lmax_conv > 0 && lmax_conv <= _TM5_COLLAB_MAX_DEPTH_FLOAT32 && Nt > 0
 
 # Backends opt into additional precisions only within their static shared-memory
 # budget. Float32 retains the portable 32 KiB envelope; CUDA adds Float64.
 @inline _tm5_collab_max_depth(::Type, backend) = 0
-@inline _tm5_collab_max_depth(::Type{Float32}, backend) = 85
+@inline _tm5_collab_max_depth(::Type{Float32}, backend) = _TM5_COLLAB_MAX_DEPTH_FLOAT32
 @inline _tm5_collab_supports(L::Integer, Nt::Integer, ::Type{FT}, backend) where FT =
     0 < L <= _tm5_collab_max_depth(FT, backend) && Nt > 0
 

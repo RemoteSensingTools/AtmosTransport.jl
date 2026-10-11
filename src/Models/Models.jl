@@ -23,6 +23,7 @@ using ..Preprocessing
 using ..Output
 
 using ..ConfigChecks: config_bool as _config_bool
+using ..Parameters: DEFAULT_LINROOD_PPM_ORDER
 
 include("TransportModel.jl")
 include("RuntimeRecipeStyles.jl")    # runtime-style traits (dispatched on by specs)

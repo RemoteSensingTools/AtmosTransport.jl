@@ -15,7 +15,7 @@ using Printf: @sprintf
 using ..Architectures: array_adapter_for
 using ..State
 using ..Grids
-using ..Parameters: EARTH_RADIUS
+using ..Parameters: EARTH_RADIUS, DEFAULT_MET_INTERVAL_SECONDS, GMAO_CS_LONGITUDE_OFFSET_DEG
 import ..source_revision
 
 include("AbstractMetDriver.jl")

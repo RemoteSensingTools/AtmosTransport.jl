@@ -41,6 +41,7 @@ using Logging
 using Printf
 using SHA
 using TOML
+using ..Parameters: ERA5_NATIVE_LEVEL_COUNT, ERA5_MET_INTERVAL_SECONDS
 
 # Type hierarchy (sources, protocols, tasks, configs)
 include("types.jl")

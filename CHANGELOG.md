@@ -220,6 +220,21 @@
 
 ### Runtime and output
 
+- Every number that more than one place used, or that is a physical constant,
+  now lives in `src/Parameters` (owner's rule, 2026-10-10): physical and
+  reference values in `PhysicalConstants.jl` (new: `VON_KARMAN`, U.S. Standard
+  Atmosphere values, `HYDROSTATIC_REFERENCE_TEMPERATURE`, `DAYS_PER_JULIAN_YEAR`,
+  the dry-mass target `GLOBAL_MEAN_DRY_SURFACE_PRESSURE` and
+  `GLOBAL_MEAN_SPECIFIC_HUMIDITY`), shared defaults of numerical settings in the
+  new `NumericalDefaults.jl` (Courant limits and targets, Poisson-balance
+  tolerances, subcycle caps, met interval, background VMR, Lin–Rood PPM order,
+  …) and fixed properties of ERA5, GEOS and MERRA-2 in the new
+  `MetSourceConstants.jl`. Scheme parameters stay in their scheme's struct
+  (`PBLPhysicsParameters` gains the u*, PBL-height and 2 m temperature floors
+  and the entrainment fractions that five Kz kernels wrote inline). Forward and
+  adjoint advection share one mass-floor definition each. Every constant is
+  pinned by `test/core/test_physical_constants.jl`. Results are bit-identical
+  (all golden cases).
 - Logging and runtime checks after Oceananigans. `[logging]` sets the run's
   minimum log level (`"warn"` concise, `"info"`, `"debug"` verbose; without it
   the current logger's level applies, info for the command-line runner)

@@ -12,6 +12,7 @@ using ArgParse
 using Dates
 using NCDatasets
 using AtmosTransport
+using AtmosTransport.Parameters: ERA5_NATIVE_LEVEL_COUNT, ERA5_MET_INTERVAL_SECONDS
 
 const MD = AtmosTransport.MetDrivers
 const PP = AtmosTransport.Preprocessing
@@ -121,7 +122,7 @@ to the 1880s) and changes epoch in 2024.
 function check_convection_file(ds, conv_path, input)
     for name in ("eu", "du", "ed", "dd")
         haskey(ds, name) || error("convection NC missing $name")
-        size(ds[name]) == (360, 180, 137, 8) ||
+        size(ds[name]) == (360, 180, ERA5_NATIVE_LEVEL_COUNT, 8) ||
             error("unexpected $name shape $(size(ds[name]))")
     end
     ds["lon"][:] == collect(-179.5:1.0:179.5) ||
@@ -201,12 +202,14 @@ function main(argv)
         all(s in h.payload_sections for s in (:dm, :pblh, :ustar, :pbl_hflux, :t2m, :dkg)) ||
             error("input must contain dm, complete PBL surface fields, and dkg")
         merge_map = Int.(collect(get(h.raw_header, "merge_map", Int[])))
-        length(merge_map) == 137 || error("expected a 137-entry merge_map; found $(length(merge_map))")
+        length(merge_map) == ERA5_NATIVE_LEVEL_COUNT ||
+            error("expected a $(ERA5_NATIVE_LEVEL_COUNT)-entry merge_map; found $(length(merge_map))")
         maximum(merge_map) == h.nlevel || error("merge_map target does not match nlevel=$(h.nlevel)")
         issorted(merge_map) && first(merge_map) == 1 ||
             error("merge_map must run from target level 1 (top) to $(h.nlevel) (surface)")
-        h.nwindow == 24 && h.dt_met_seconds == 3600 ||
-            error("expected 24 hourly windows; found $(h.nwindow) x $(h.dt_met_seconds) s")
+        windows_per_day = round(Int, 86400 / ERA5_MET_INTERVAL_SECONDS)
+        h.nwindow == windows_per_day && h.dt_met_seconds == ERA5_MET_INTERVAL_SECONDS ||
+            error("expected $(windows_per_day) hourly windows; found $(h.nwindow) x $(h.dt_met_seconds) s")
         era5_level = NCDataset(ds -> check_convection_file(ds, conv_path, input), conv_path, "r")
         level_order = level_order_label(era5_level)
         @info "Convection file level order: $(level_order)"

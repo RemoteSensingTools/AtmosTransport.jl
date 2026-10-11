@@ -431,7 +431,7 @@ struct LinRoodPPMScheme{ORD, Z <: LinRoodVertical} <: AbstractAdvectionScheme
     vertical :: Z     # scheme of the vertical sweeps
 end
 
-function LinRoodPPMScheme(order::Integer = 5; vertical::LinRoodVertical = UpwindScheme())
+function LinRoodPPMScheme(order::Integer = DEFAULT_LINROOD_PPM_ORDER; vertical::LinRoodVertical = UpwindScheme())
     order in (5, 7) || throw(ArgumentError(
         "LinRoodPPMScheme supports ORD=5 or ORD=7, got ORD=$(order)"))
     return LinRoodPPMScheme{Int(order), typeof(vertical)}(vertical)

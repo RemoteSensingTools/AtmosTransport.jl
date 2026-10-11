@@ -101,7 +101,7 @@ function open_streaming_transport_binary(
         sample_window;
         FT::Type{<:AbstractFloat} = floattype(grid),
         header_bytes::Int = 131072,
-        dt_met_seconds::Real = 3600.0,
+        dt_met_seconds::Real = DEFAULT_MET_INTERVAL_SECONDS,
         half_dt_seconds::Real = dt_met_seconds / 2,
         steps_per_window::Integer = 2,
         source_flux_sampling::Symbol,

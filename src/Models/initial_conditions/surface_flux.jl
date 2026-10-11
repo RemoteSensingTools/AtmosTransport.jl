@@ -373,7 +373,7 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}; radius::Real = EARTH_RAD
                 # survive regridding whatever its radius.
                 cell_area_for_norm = _lonlat_cell_areas_m2(lon_src, lat_src; radius)
             end
-            seconds_per_year = 365.25 * 86400
+            seconds_per_year = DAYS_PER_JULIAN_YEAR * 86400
             @inbounds for j in 1:size(raw, 2), i in 1:size(raw, 1)
                 a = cell_area_for_norm[i, j]
                 raw[i, j] = a > 0 ? FT(1000 * Float64(raw[i, j]) /

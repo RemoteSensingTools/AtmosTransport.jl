@@ -62,8 +62,10 @@ function resolve_mass_fix_settings(cfg)
     mass_fix_cfg = get(cfg, "mass_fix", Dict{String, Any}())
     return (
         mass_fix_enable = _config_bool(mass_fix_cfg, "enable", true, "[mass_fix].enable"),
-        target_ps_dry_pa = Float64(get(mass_fix_cfg, "target_ps_dry_pa", 98726.0)),
-        qv_global_climatology = Float64(get(mass_fix_cfg, "qv_global_climatology", 0.00247)),
+        target_ps_dry_pa = Float64(get(mass_fix_cfg, "target_ps_dry_pa",
+                                       GLOBAL_MEAN_DRY_SURFACE_PRESSURE)),
+        qv_global_climatology = Float64(get(mass_fix_cfg, "qv_global_climatology",
+                                            GLOBAL_MEAN_SPECIFIC_HUMIDITY)),
     )
 end
 
@@ -149,7 +151,8 @@ end
 
 Parse optional solver controls for topology-specific mass-flux balancing.
 
-`cs_balance_tol` keeps the historical strict default. `cs_balance_project_every`
+`cs_balance_tol` keeps the historical strict default, `DEFAULT_POISSON_BALANCE_TOL`.
+`cs_balance_project_every` (default `DEFAULT_POISSON_PROJECT_EVERY`)
 controls how often the CS PCG solver reprojects residuals to the mean-zero
 subspace after the initial exact projection; the graph Laplacian preserves that
 subspace, so periodic projection removes redundant global reductions while
@@ -158,8 +161,9 @@ keeping roundoff bounded. Set it to `1` for the legacy every-iteration path.
 function resolve_balance_settings(cfg)
     numerics = get(cfg, "numerics", Dict{String, Any}())
     return (
-        cs_balance_tol = Float64(get(numerics, "cs_balance_tol", 1e-14)),
-        cs_balance_project_every = Int(get(numerics, "cs_balance_project_every", 50)),
+        cs_balance_tol = Float64(get(numerics, "cs_balance_tol", DEFAULT_POISSON_BALANCE_TOL)),
+        cs_balance_project_every = Int(get(numerics, "cs_balance_project_every",
+                                           DEFAULT_POISSON_PROJECT_EVERY)),
         horizontal_balance = resolve_horizontal_balance(numerics),
         column_balance_weights = resolve_column_balance_weights(numerics),
     )
@@ -310,7 +314,7 @@ function resolve_runtime_settings(cfg)
     thermo_dir, include_qv, mass_basis = resolve_mass_basis(cfg)
 
     level_top = Int(get(cfg["grid"], "level_top", 1))
-    level_bot = Int(get(cfg["grid"], "level_bot", 137))
+    level_bot = Int(get(cfg["grid"], "level_bot", ERA5_NATIVE_LEVEL_COUNT))
     min_dp = Float64(cfg["grid"]["merge_min_thickness_Pa"])
 
     dt = Float64(cfg["numerics"]["dt"])

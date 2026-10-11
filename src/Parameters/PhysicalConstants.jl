@@ -48,6 +48,47 @@ Coefficient of the specific humidity in the virtual temperature,
 const VIRTUAL_TEMPERATURE_FACTOR = 0.61
 
 """
+Von Kármán constant of the model's own boundary-layer schemes (0.41, the value of
+the legacy PBL diffusion they port). The TM5 and GEOS-Chem ports use their models'
+0.4 (`TM5_CONSTANTS.karman`, `GEOSCHEM_CONSTANTS.karman`).
+"""
+const VON_KARMAN = 0.41
+
+"Air density at sea level in the U.S. Standard Atmosphere 1976 [kg m⁻³]."
+const STANDARD_SEA_LEVEL_AIR_DENSITY = 1.225
+
+"Temperature lapse rate of the troposphere in the U.S. Standard Atmosphere 1976 [K m⁻¹]."
+const STANDARD_LAPSE_RATE = 0.0065
+
+"Tropopause temperature of the U.S. Standard Atmosphere 1976 [K]."
+const STANDARD_TROPOPAUSE_TEMPERATURE = 216.65
+
+"""
+Temperature of an isothermal atmosphere used for hydrostatic layer thicknesses
+when no temperature is available, `dz = R_dry T / g · Δp / p_mid` (layer pressure
+thickness over its midpoint pressure) [K].
+"""
+const HYDROSTATIC_REFERENCE_TEMPERATURE = 260.0
+
+"Days in a Julian year, for annual totals given as rates."
+const DAYS_PER_JULIAN_YEAR = 365.25
+
+"""
+Global-mean dry-air surface pressure that the preprocessing dry-mass fix holds
+[Pa]: over the IFS sphere (`IFS_EARTH_RADIUS`) with `STANDARD_GRAVITY` it is a dry
+air mass of 5.1353 × 10¹⁸ kg, the value of Trenberth and Smith (2005, J. Climate
+18, 864–875).
+"""
+const GLOBAL_MEAN_DRY_SURFACE_PRESSURE = 98726.0
+
+"""
+Global-mean specific humidity [kg kg⁻¹] that turns the dry surface-pressure
+target into a total one where only total pressure is available:
+`ps_total = GLOBAL_MEAN_DRY_SURFACE_PRESSURE / (1 − q)`.
+"""
+const GLOBAL_MEAN_SPECIFIC_HUMIDITY = 0.00247
+
+"""
 Molar masses of the transported species [kg mol⁻¹], for converting fluxes and
 mixing ratios to and from mass: CO₂ (IUPAC atomic weights), SF₆ and ²²²Rn.
 """
@@ -85,5 +126,7 @@ const GEOSCHEM_CONSTANTS = (gravity = 9.80665, r_dry = 287.0, cp_dry = 1004.64, 
 
 export EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_PRESSURE, R_DRY_AIR, CP_OVER_R_DIATOMIC,
        CP_DRY_AIR, DRY_AIR_MOLAR_MASS, THETA_REFERENCE_PRESSURE, AVOGADRO,
-       VIRTUAL_TEMPERATURE_FACTOR, SPECIES_MOLAR_MASS, CARBON_MOLAR_MASS, TM5_CONSTANTS,
-       GEOSCHEM_CONSTANTS
+       VIRTUAL_TEMPERATURE_FACTOR, VON_KARMAN, STANDARD_SEA_LEVEL_AIR_DENSITY, STANDARD_LAPSE_RATE,
+       STANDARD_TROPOPAUSE_TEMPERATURE, HYDROSTATIC_REFERENCE_TEMPERATURE, DAYS_PER_JULIAN_YEAR,
+       GLOBAL_MEAN_DRY_SURFACE_PRESSURE, GLOBAL_MEAN_SPECIFIC_HUMIDITY,
+       SPECIES_MOLAR_MASS, CARBON_MOLAR_MASS, TM5_CONSTANTS, GEOSCHEM_CONSTANTS

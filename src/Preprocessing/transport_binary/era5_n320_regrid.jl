@@ -239,16 +239,26 @@ end
 """
     process_era5_n320_to_cs_day(date, settings, target_grid;
                                  out_path,
-                                 FT = Float32,
-                                 mass_basis = :dry,
                                  Nz = ERA5_NATIVE_LEVEL_COUNT,
-                                 dt_met_seconds = 3600.0,
+                                 vertical_plan = nothing,
+                                 mass_basis = :dry,
+                                 dt_met_seconds = ERA5_MET_INTERVAL_SECONDS,
                                  steps_per_window = 8,
-                                 cs_balance_tol = 1e-14,
-                                 cs_balance_project_every = 50,
-                                 positivity_cfl_limit = 0.95,
+                                 adaptive_substeps = true,
+                                 substep_cfl_target = ERA5_N320_SUBSTEP_CFL_TARGET,
+                                 max_steps_per_window = typemax(Int),
+                                 cs_balance_tol = DEFAULT_POISSON_BALANCE_TOL,
+                                 cs_balance_project_every = DEFAULT_POISSON_PROJECT_EVERY,
+                                 positivity_cfl_limit = DEFAULT_POSITIVITY_CFL_LIMIT,
+                                 require_substep_positivity = true,
+                                 write_replay_check = true,
                                  cache_dir = nothing,
-                                 include_convection = false)
+                                 include_convection = false,
+                                 global_mass_pin = false,
+                                 global_mass_target_kg = NaN,
+                                 horizontal_balance = nothing)
+
+The float type is the target grid's (`target_grid::CubedSphereTargetGeometry{FT}`).
 
 Generate a v4 cubed-sphere transport binary for one UTC `date` from the
 ERA5 native-GRIB source described by `settings`, written to `out_path`.
@@ -270,11 +280,6 @@ outgoing x, y and z face fluxes over the palindrome and divides by its mass
 The function stages writes to `out_path.tmp` and promotes to `out_path`
 on success — a partial run leaves no usable file at the requested path.
 """
-# Cap on adaptive substep refinements per window. `required_substeps` jumps
-# directly to the count implied by the measured CFL ratio, so 1-2 iterations
-# converge; the cap only guards a pathological non-converging window.
-const _N320_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS = 8
-
 function process_era5_n320_to_cs_day(date::Date,
                                        settings::ERA5N320Settings,
                                        target_grid::CubedSphereTargetGeometry{FT};
@@ -282,14 +287,14 @@ function process_era5_n320_to_cs_day(date::Date,
                                        Nz::Integer = ERA5_NATIVE_LEVEL_COUNT,
                                        vertical_plan::Union{Nothing, VerticalPlan} = nothing,
                                        mass_basis::Symbol = :dry,
-                                       dt_met_seconds::Real = 3600.0,
+                                       dt_met_seconds::Real = ERA5_MET_INTERVAL_SECONDS,
                                        steps_per_window::Integer = 8,
                                        adaptive_substeps::Bool = true,
-                                       substep_cfl_target::Real = 0.85,
+                                       substep_cfl_target::Real = ERA5_N320_SUBSTEP_CFL_TARGET,
                                        max_steps_per_window::Integer = typemax(Int),
-                                       cs_balance_tol::Real = 1e-14,
-                                       cs_balance_project_every::Integer = 50,
-                                       positivity_cfl_limit::Real = 0.95,
+                                       cs_balance_tol::Real = DEFAULT_POISSON_BALANCE_TOL,
+                                       cs_balance_project_every::Integer = DEFAULT_POISSON_PROJECT_EVERY,
+                                       positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                                        require_substep_positivity::Bool = true,
                                        write_replay_check::Bool = true,
                                        cache_dir::Union{Nothing, AbstractString} = nothing,
@@ -519,7 +524,7 @@ function process_era5_n320_to_cs_day(date::Date,
         end
 
         # --- Open the streaming writer. ---
-        nwindow = 24
+        nwindow = windows_per_day(settings, date)
         # Per-window substep schedule, filled adaptively below and stamped onto
         # the binary header before close so the runtime executes it directly.
         steps_schedule = fill(steps_per_met, nwindow)
@@ -660,13 +665,15 @@ function process_era5_n320_to_cs_day(date::Date,
                     am, bm, m_dry, m_next,
                     target_grid.face_table, target_grid.cell_degree, steps,
                     target_grid.poisson_scratch; tol = Float64(cs_balance_tol),
-                    max_iter = 20000, project_every = Int(cs_balance_project_every))
+                    max_iter = DEFAULT_POISSON_BALANCE_MAX_ITER,
+                    project_every = Int(cs_balance_project_every))
             else
                 balance_cs_column_mass_fluxes!(
                     am, bm, m_dry, m_next,
                     target_grid.face_table, target_grid.cell_degree, steps,
                     target_grid.poisson_scratch; tol = Float64(cs_balance_tol),
-                    max_iter = 20000, project_every = Int(cs_balance_project_every),
+                    max_iter = DEFAULT_POISSON_BALANCE_MAX_ITER,
+                    project_every = Int(cs_balance_project_every),
                     weights = balance_weights)
             end
             sync_all_cs_boundary_mirrors!(am, bm, mesh.connectivity, Nc, Nz_int)
@@ -699,7 +706,10 @@ function process_era5_n320_to_cs_day(date::Date,
             steps = steps_per_met
             bal_diag = _balance_window_at_steps!(pipe, pipe_end, m_dry, m_next, am, bm, cm, dm, steps)
             if substep_policy.adaptive_substeps
-                for _ in 1:_N320_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS
+                # `required_substeps` jumps directly to the count implied by the measured
+                # CFL ratio, so 1-2 iterations converge; the cap only guards a
+                # pathological non-converging window.
+                for _ in 1:ADAPTIVE_SUBSTEP_MAX_REFINEMENTS
                     # Pass `m_next` so the refinement uses the SAME full-palindrome
                     # positivity ratio as the final `verify_cs_window_contract!`
                     # gate (the single-endpoint ratio without it undershoots →
@@ -966,13 +976,13 @@ function process_day(date::Date,
                      vertical;
                      out_path::AbstractString,
                      mass_basis::Symbol = :dry,
-                     dt_met_seconds::Real = 3600.0,
-                     positivity_cfl_limit::Real = 0.95,
+                     dt_met_seconds::Real = ERA5_MET_INTERVAL_SECONDS,
+                     positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                      require_substep_positivity::Bool = true,
                      write_replay_check::Bool = true,
                      min_steps_per_window::Union{Integer, Nothing} = nothing,
                      adaptive_substeps::Bool = true,
-                     substep_cfl_target::Real = 0.85,
+                     substep_cfl_target::Real = ERA5_N320_SUBSTEP_CFL_TARGET,
                      max_steps_per_window::Integer = typemax(Int),
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,

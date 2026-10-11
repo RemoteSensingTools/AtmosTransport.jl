@@ -159,14 +159,20 @@ end
 end
 
 # CTM_A1 window w (1..24) valid minute; A3dyn / I3 3-hourly node valid minutes.
+# Time-averaged collections (CTM_A1, A3dyn) are stamped at the centre of their
+# interval, instantaneous ones (I3) at its start.
 # The A3dyn / I3 node valid-minute formulas are GLOBAL: they extend to node
 # indices ≤ 0 (previous UTC day) and > n3 (next UTC day) at the same uniform
 # 180-min spacing, so `_a3_valid_min(0)` = −90 (prev-day 22:30) and
 # `_a3_valid_min(n3+1)` = next-day 01:30. This lets the day-edge PCHIP brackets
 # span midnight when the adjacent-day handles are open.
-@inline _ctm_valid_min(w::Int) = (w - 1) * 60 + 30
-@inline _a3_valid_min(a::Int) = (a - 1) * 180 + 90
-@inline _i3_valid_min(a::Int) = (a - 1) * 180
+const _GEOS_CTM_INTERVAL_MINUTES = round(Int, GEOS_MET_INTERVAL_SECONDS / 60)          # 60
+const _GEOS_3HOURLY_INTERVAL_MINUTES = round(Int, GEOS_3HOURLY_INTERVAL_SECONDS / 60)  # 180
+@inline _ctm_valid_min(w::Int) =
+    (w - 1) * _GEOS_CTM_INTERVAL_MINUTES + _GEOS_CTM_INTERVAL_MINUTES ÷ 2
+@inline _a3_valid_min(a::Int) =
+    (a - 1) * _GEOS_3HOURLY_INTERVAL_MINUTES + _GEOS_3HOURLY_INTERVAL_MINUTES ÷ 2
+@inline _i3_valid_min(a::Int) = (a - 1) * _GEOS_3HOURLY_INTERVAL_MINUTES
 
 # Map a GLOBAL node index `g` (may be ≤0 = prev day, or >n3 = next day) to the
 # dataset + 1-based local index that holds it. Returns `nothing` when the
@@ -484,7 +490,8 @@ the hard lower-layer fidelity gate.
             rhs[c] -= dh_mean
         end
         _, cg_iter = solve_cs_poisson_pcg!(psi, rhs, ft, degree, cg_scratch;
-                              tol = tol, max_iter = max_iter, project_every = 50)
+                              tol = tol, max_iter = max_iter,
+                              project_every = DEFAULT_POISSON_PROJECT_EVERY)
         correction2 = 0.0
         base2 = 0.0
         for f in 1:ft.nf

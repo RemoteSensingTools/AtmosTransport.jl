@@ -1,11 +1,17 @@
 # Parameters
 
-Physical constants and planetary parameters.
+Physical constants, numerical defaults, met-source constants and planetary
+parameters: every number that more than one place uses is defined here once.
 
 [`PhysicalConstants.jl`](PhysicalConstants.jl) is the one place for the
 constants of nature the model uses, in SI units, with their sources in the
-docstrings. [`PlanetParameters.jl`](PlanetParameters.jl) defines the immutable
-planet object (radius, gravity, reference pressure) that `AtmosGrid` carries.
+docstrings. [`NumericalDefaults.jl`](NumericalDefaults.jl) holds the one
+default of each numerical setting that several code paths offer (keyword
+argument, config key, command-line option). [`MetSourceConstants.jl`](MetSourceConstants.jl)
+holds the fixed properties of the external met datasets (level counts,
+archive cadences, accumulation periods, grid offsets).
+[`PlanetParameters.jl`](PlanetParameters.jl) defines the immutable planet
+object (radius, gravity, reference pressure) that `AtmosGrid` carries.
 
 `src/AtmosTransport.jl` loads this folder after `Architectures`,
 `SectionTimer`, and `Quantities`, and before `Grids`. It imports nothing from
@@ -21,7 +27,65 @@ other AtmosTransport modules; every later module may import from it.
   - `STANDARD_GRAVITY`, `STANDARD_PRESSURE`, `THETA_REFERENCE_PRESSURE`
   - `R_DRY_AIR`, `CP_DRY_AIR`, `CP_OVER_R_DIATOMIC`, `DRY_AIR_MOLAR_MASS`,
     `VIRTUAL_TEMPERATURE_FACTOR`, `AVOGADRO`
-  - `SPECIES_MOLAR_MASS`, the named tuple `(co2, sf6, rn222)` in kg mol⁻¹
+  - `SPECIES_MOLAR_MASS`, the named tuple `(co2, sf6, rn222)` in kg mol⁻¹,
+    and `CARBON_MOLAR_MASS` (kgC → kgCO₂ by `SPECIES_MOLAR_MASS.co2 / CARBON_MOLAR_MASS`)
+  - `VON_KARMAN` (0.41) of the model's own boundary-layer schemes (the TM5
+    and GEOS-Chem ports use their models' 0.4)
+  - U.S. Standard Atmosphere 1976 values: `STANDARD_SEA_LEVEL_AIR_DENSITY`
+    (1.225 kg m⁻³), `STANDARD_LAPSE_RATE` (0.0065 K m⁻¹),
+    `STANDARD_TROPOPAUSE_TEMPERATURE` (216.65 K)
+  - `HYDROSTATIC_REFERENCE_TEMPERATURE` (260 K), the isothermal temperature of
+    hydrostatic layer thicknesses when no temperature is available
+  - `DAYS_PER_JULIAN_YEAR` (365.25), for annual totals given as rates
+  - `GLOBAL_MEAN_DRY_SURFACE_PRESSURE` (98726 Pa), the dry-mass fix target,
+    and `GLOBAL_MEAN_SPECIFIC_HUMIDITY` (0.00247 kg kg⁻¹), which turns it into
+    a total-pressure target
+- Numerical defaults, in [`NumericalDefaults.jl`](NumericalDefaults.jl):
+  - `DEFAULT_CFL_LIMIT` (0.95), the Courant limit of one runtime advection
+    subcycle pass
+  - `DEFAULT_POSITIVITY_CFL_LIMIT` (0.95), the write-time substep positivity
+    limit of transport binaries
+  - adaptive write-time substep targets: `DEFAULT_SUBSTEP_CFL_TARGET` (0.95),
+    `ERA5_N320_SUBSTEP_CFL_TARGET` (0.85, ERA5 N320 → cubed sphere),
+    `COARSEN_SUBSTEP_CFL_TARGET` (0.90, cubed-sphere coarsener)
+  - `DEFAULT_MET_INTERVAL_SECONDS` (3600 s), the met-window length when the
+    source or config gives none
+  - `DEFAULT_BACKGROUND_VMR` (4.0e-4, 400 ppm dry), the VMR of tracers whose
+    initial condition sets none
+  - `DEFAULT_GEOS_SMOOTHING_SWEEPS` (8, an `Int`) and
+    `DEFAULT_GEOS_SMOOTHING_WEIGHT` (0.5), the sweeps of the GEOS moisture
+    filter and column-drift correction and the weight of one sweep
+  - `DEFAULT_MAX_SUBCYCLES` (4096, an `Int`), the most CFL subcycle passes one
+    advection step may need (one direction on structured grids, one Strang
+    palindrome on the cubed sphere) before the run stops
+  - `DEFAULT_MAX_STEPS_PER_WINDOW` (4096, an `Int`), the most write-time
+    substeps per window the cubed-sphere binary coarsener accepts
+  - `ADAPTIVE_SUBSTEP_MAX_REFINEMENTS` (8, an `Int`), how many times the
+    adaptive write-time substep schedule raises a window's substep count (to the
+    count the measured Courant ratio implies) before accepting it
+  - horizontal Poisson flux balance: `DEFAULT_POISSON_BALANCE_TOL` (1e-14,
+    the conjugate-gradient residual tolerance), `DEFAULT_POISSON_BALANCE_MAX_ITER`
+    (20000, an `Int`) and `DEFAULT_POISSON_PROJECT_EVERY` (50, an `Int`, the
+    iterations between null-space projections of the cubed-sphere solve)
+  - `DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG` (10°), the width of the Gaussian-blob
+    initial condition when the config sets none
+  - `DEFAULT_LINROOD_PPM_ORDER` (5, an `Int`), the Lin–Rood PPM edge
+    reconstruction order when the config sets none (5 or 7)
+- Met-source constants, in [`MetSourceConstants.jl`](MetSourceConstants.jl):
+  - `ERA5_NATIVE_LEVEL_COUNT` (137, an `Int`), the IFS L137 levels of ERA5
+  - `ERA5_MET_INTERVAL_SECONDS` (3600 s), the ERA5 analysis interval and the
+    accumulation period of its hourly accumulated fields
+  - `GEOS_MASS_FLUX_DT_SECONDS` (450 s), the FV3 dynamics step over which
+    GEOS-FP / GEOS-IT accumulate `MFXC`/`MFYC` (not the hourly met interval)
+  - `GEOS_MET_INTERVAL_SECONDS` (3600 s) and `GEOS_3HOURLY_INTERVAL_SECONDS`
+    (10800 s), the hourly CTM and three-hourly (A3, I3) GEOS / MERRA-2
+    collections
+  - `GMAO_CS_LONGITUDE_OFFSET_DEG` (−10°), the rotation of the GMAO cubed
+    sphere
+  - plausibility bounds of met input: `SURFACE_AIR_TEMPERATURE_RANGE`
+    ((150, 350) K) for 2 m air temperature and `SURFACE_HEAT_FLUX_MAX_ABS`
+    (5000 W m⁻²) for the surface sensible and latent heat fluxes; readers
+    reject values outside them as a wrong variable, unit or fill value
 - Constant sets for reproducing another model's scheme, in
   [`PhysicalConstants.jl`](PhysicalConstants.jl):
   - `TM5_CONSTANTS`: TM5 `binas.F90` values, used as the defaults of
@@ -44,23 +108,38 @@ other AtmosTransport modules; every later module may import from it.
 ## File Map
 
 - [`Parameters.jl`](Parameters.jl): module assembly
-- [`PhysicalConstants.jl`](PhysicalConstants.jl): all constants and the
+- [`PhysicalConstants.jl`](PhysicalConstants.jl): constants of nature and the
   scheme constant sets, with exports
+- [`NumericalDefaults.jl`](NumericalDefaults.jl): shared defaults of numerical
+  settings, with exports
+- [`MetSourceConstants.jl`](MetSourceConstants.jl): fixed properties of the
+  met datasets, with exports
 - [`PlanetParameters.jl`](PlanetParameters.jl): `PlanetParameters` and
   `earth_parameters`
 
 ## Conventions
 
-- Constants live here, not at call sites. A consumer imports constants by name
-  (`using ..Parameters: STANDARD_GRAVITY, R_DRY_AIR`). The current importers
-  are `Grids`, `State/Fields`, `Output`, `MetDrivers` (and `MetDrivers/ERA5`),
-  `Operators/Diffusion`, `Preprocessing`, `Models/InitialConditionIO`, and
-  `Visualization`.
+- Constants live here, not at call sites, and no module keeps a local copy of
+  one. A consumer imports constants by name
+  (`using ..Parameters: STANDARD_GRAVITY, R_DRY_AIR`; scripts use
+  `using AtmosTransport.Parameters: ...` or the qualified name).
+- A use site converts the constant to its own type: `FT(DEFAULT_CFL_LIMIT)` in
+  `FT` code, `Float32(DEFAULT_BACKGROUND_VMR)` in Float32 code; `Int` constants
+  stay `Int`. GPU kernels see only `FT`-typed values. A range constant is
+  used through its ends, `first(SURFACE_AIR_TEMPERATURE_RANGE) < T < last(SURFACE_AIR_TEMPERATURE_RANGE)`.
+- A keyword, config key or command-line option that offers one of these
+  settings takes the constant as its default (`cfl_limit::Real = DEFAULT_CFL_LIMIT`),
+  so the paths cannot drift apart.
 - A scheme that reproduces another model's code takes that model's set
   (`TM5_CONSTANTS`, `GEOSCHEM_CONSTANTS`) so it matches the reference model.
   Everything else uses the model's own values.
-- Scheme tuning parameters, such as stability-function slopes and critical
-  Richardson numbers, stay with their schemes, not here.
+- Scheme tuning parameters, such as stability-function slopes, critical
+  Richardson numbers and the floors of the PBL diagnostics, stay with their
+  schemes, as documented fields of the scheme's parameter struct (for example
+  `PBLPhysicsParameters`, `OmegaRegularization`). Struct defaults that are
+  physical constants reference this module (`kappa_vk = FT(VON_KARMAN)`), and
+  config fallbacks take the struct's own default
+  (`get(cfg, "smoothing_steps", OmegaRegularization().smoothing_steps)`).
 - Defaults are converted to the object's own precision. Tests require
   `PlanetParameters(; FT).radius === FT(EARTH_RADIUS)`, and the same holds for
   `CubedSphereMesh`, `BLDiffConstants`, `GCHPVdiffParameters`, and
@@ -71,9 +150,14 @@ other AtmosTransport modules; every later module may import from it.
 ## Common Tasks
 
 - Add a constant: add a documented `const` (units and source) and its
-  `export` in [`PhysicalConstants.jl`](PhysicalConstants.jl). Pin its value in
-  `test/core/test_physical_constants.jl` and import it by name where it is
-  used.
+  `export` to the file it belongs in: a constant of nature to
+  [`PhysicalConstants.jl`](PhysicalConstants.jl), a default that several code
+  paths share to [`NumericalDefaults.jl`](NumericalDefaults.jl), a property of
+  a met dataset to [`MetSourceConstants.jl`](MetSourceConstants.jl). Pin its
+  value in the `PINNED_PARAMETERS` table of
+  `test/core/test_physical_constants.jl` (the test fails for an exported
+  constant that is not pinned) and import it by name where it is used. The API
+  page picks up the docstring of every exported constant.
 - Run on a non-default sphere: build meshes and `AtmosGrid` with an explicit
   `radius`. Transport binaries record `planet_radius_m`, and the runtime
   builds its mesh on that radius (see `test/core/test_binary_planet_radius.jl`).
@@ -81,7 +165,9 @@ other AtmosTransport modules; every later module may import from it.
 ## Tests And Docs
 
 - [`../../test/core/test_physical_constants.jl`](../../test/core/test_physical_constants.jl):
-  pinned values, precision of defaults, one dry-air gas constant
+  the value and type of every exported constant, coherence of the physical
+  constants, precision of defaults (including the `PBLPhysicsParameters`
+  floors and `BLDiffConstants.ustar_min`), one dry-air gas constant
 - [`../../test/core/test_public_contracts.jl`](../../test/core/test_public_contracts.jl):
   `PlanetParameters` validation
 - [`../../test/core/test_basis_explicit_core.jl`](../../test/core/test_basis_explicit_core.jl):

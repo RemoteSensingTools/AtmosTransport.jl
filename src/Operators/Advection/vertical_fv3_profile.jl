@@ -27,7 +27,7 @@
 # equal (FV3 resolves those ties with its local-minimum branch).
 # ---------------------------------------------------------------------------
 
-@inline _layer_mass(m, i, j, k) = max(m[i, j, k], eps(eltype(m)))
+@inline _layer_mass(m, i, j, k) = max(m[i, j, k], _advection_mass_floor(eltype(m)))
 
 # The positive-definite steps of `iv = 0`; the signed profile skips them.
 @inline _nonnegative(::FV3ScalarProfile{true}, q) = max(zero(q), q)

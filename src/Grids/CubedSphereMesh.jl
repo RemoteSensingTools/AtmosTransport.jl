@@ -187,7 +187,7 @@ EquiangularCubedSphereDefinition(;
 
 """
     GMAOCubedSphereDefinition(; convention=GEOSNativePanelConvention(),
-                               longitude_offset_deg=-10)
+                               longitude_offset_deg=GMAO_CS_LONGITUDE_OFFSET_DEG)
 
 Native GMAO/GEOS cubed-sphere definition used by GEOS-IT C180 and GEOS-FP
 C720 files:
@@ -195,11 +195,12 @@ C720 files:
 - `GMAOEqualDistanceGnomonic` edge/corner law,
 - `FourCornerNormalizedCenter` (`cell_center2`) center law,
 - `GEOSNativePanelConvention` by default,
-- final `-10°` longitude shift away from the Japan corner.
+- final `-10°` longitude shift away from the Japan corner
+  (`GMAO_CS_LONGITUDE_OFFSET_DEG`).
 """
 GMAOCubedSphereDefinition(;
     convention::AbstractCubedSpherePanelConvention = GEOSNativePanelConvention(),
-    longitude_offset_deg::Real = -10,
+    longitude_offset_deg::Real = GMAO_CS_LONGITUDE_OFFSET_DEG,
 ) = CubedSphereDefinition(GMAOEqualDistanceGnomonic(),
                            FourCornerNormalizedCenter(),
                            convention;

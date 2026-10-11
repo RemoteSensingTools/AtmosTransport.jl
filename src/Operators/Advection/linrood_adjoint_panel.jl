@@ -29,13 +29,13 @@
 # contribution
 #     lambda_rm[h] += lambda_q[h] / m[h]
 #     lambda_m [h] += lambda_q[h] * (-rm[h]/m[h]²)
-# with the same `100·eps` threshold guard.
+# with the same `_linrood_mass_floor` (100·eps) threshold guard.
 @kernel function _safe_mixing_ratio_halo_adjoint_kernel!(
     lambda_rm, lambda_m, @Const(lambda_q), @Const(rm), @Const(m), Nc, Hp,
 )
     i, j, k = @index(Global, NTuple)
     FT = eltype(lambda_rm)
-    thresh = FT(100) * eps(FT)
+    thresh = _linrood_mass_floor(FT)
     @inbounds begin
         is_interior = (Hp + 1 <= i <= Hp + Nc) && (Hp + 1 <= j <= Hp + Nc)
         m_h = m[i, j, k]
@@ -130,7 +130,7 @@ function apply_linrood_horizontal_adjoint_single_panel!(
     q_buf_phase2, q_buf_phase3,
     fx_in, fx_out, fy_in,
     mesh::CubedSphereMesh,
-    ::Val{ORD}=Val(5);
+    ::Val{ORD}=Val(DEFAULT_LINROOD_PPM_ORDER);
     face_adjoints=nothing,
 ) where {ORD}
     (ORD == 5 || ORD == 7) || throw(ArgumentError(
@@ -269,7 +269,7 @@ at panel-edge faces.
 """
 function record_linrood_substep!(rm, m, am, bm,
                                   mesh::CubedSphereMesh{FT};
-                                  ord::Val{ORD}=Val(5)) where {FT, ORD}
+                                  ord::Val{ORD}=Val(DEFAULT_LINROOD_PPM_ORDER)) where {FT, ORD}
     Nc = mesh.Nc; Hp = mesh.Hp
     Nz = size(rm, 3)
     N = Nc + 2Hp

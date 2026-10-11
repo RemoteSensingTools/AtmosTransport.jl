@@ -9,7 +9,8 @@
 #
 # Two hydrostatic fills are provided:
 #
-#   * `fill_dz_hydrostatic_constT!` — constant `T_ref = 260 K`:
+#   * `fill_dz_hydrostatic_constT!` — constant
+#     `T_ref = HYDROSTATIC_REFERENCE_TEMPERATURE` (260 K):
 #         delp[i,j,k] = (ak[k+1] - ak[k]) + (bk[k+1] - bk[k]) * ps[i,j]
 #         p_ctr[i,j,k] = ½·((ak[k] + ak[k+1]) + (bk[k] + bk[k+1])·ps[i,j])
 #         dz[i,j,k]   = R · T_ref / g · delp / p_ctr
@@ -18,7 +19,7 @@
 #     configuration without VDIFF payload (legacy LL / RG / WindowPBLKzField).
 #
 #   * `fill_dz_hydrostatic_virtualT!` — virtual T from VDIFF:
-#         T_v[k]      = T[k] · (1 + 0.61 · qv[k])     (qv ≥ 0 clamped)
+#         T_v[k]      = T[k] · (1 + VIRTUAL_TEMPERATURE_FACTOR · qv[k])  (qv ≥ 0 clamped)
 #         dz[i,j,k]   = R · T_v[k] / g · delp / p_ctr
 #     Used by the `LocalHoltslagBovilleKzField` runtime path so the
 #     solver layer thickness shares the same column geometry the Kz cache
@@ -32,8 +33,6 @@
 # dispatches between the two variants via `_fill_dz_for_diffusion!` based
 # on the operator's Kz field type.
 # ---------------------------------------------------------------------------
-
-const _DZ_T_REF_DEFAULT = 260.0
 
 @kernel function _dz_hydrostatic_constT_kernel!(dz, @Const(ps),
                                                 @Const(ak_ifc), @Const(bk_ifc),
@@ -52,7 +51,8 @@ end
 
 """
     fill_dz_hydrostatic_constT!(dz, ps, ak_ifc, bk_ifc;
-                                 T_ref = 260, R = R_DRY_AIR, gravity = STANDARD_GRAVITY)
+                                 T_ref = HYDROSTATIC_REFERENCE_TEMPERATURE,
+                                 R = R_DRY_AIR, gravity = STANDARD_GRAVITY)
 
 Populate a 3D `(Nx, Ny, Nz)` `dz` array (host or device) from surface
 pressure `ps` and hybrid sigma-pressure interface coefficients
@@ -62,7 +62,7 @@ function fill_dz_hydrostatic_constT!(dz::AbstractArray{<:AbstractFloat, 3},
                                       ps::AbstractArray{<:AbstractFloat, 2},
                                       ak_ifc::AbstractVector,
                                       bk_ifc::AbstractVector;
-                                      T_ref::Real    = _DZ_T_REF_DEFAULT,
+                                      T_ref::Real    = HYDROSTATIC_REFERENCE_TEMPERATURE,
                                       R::Real        = R_DRY_AIR,
                                       gravity::Real  = STANDARD_GRAVITY)
     Nx, Ny, Nz = size(dz)
@@ -116,12 +116,13 @@ end
 # constant-T column while Kz had been computed on a layer-varying virtual-T
 # column. The two paths now share the same vertical scale.
 #
-#     T_v[k] = T[k] · (1 + 0.61 · qv[k])
+#     T_v[k] = T[k] · (1 + VIRTUAL_TEMPERATURE_FACTOR · qv[k])
 #     dz[k]  = R · T_v[k] / g · delp[k] / p_ctr[k]
 # ---------------------------------------------------------------------------
 
 # Convert specific humidity to mixing ratio for the virtual-T factor. We use
-# the standard 0.61 coefficient (`(1 - epsilon) / epsilon ≈ 0.61` with
+# the standard coefficient `VIRTUAL_TEMPERATURE_FACTOR` = 0.61
+# (`(1 - epsilon) / epsilon ≈ 0.61` with
 # epsilon = R_d / R_v); qv is clamped to non-negative to absorb tiny
 # post-regrid negative values.
 #
@@ -159,7 +160,8 @@ end
                                    R = R_DRY_AIR, gravity = STANDARD_GRAVITY)
 
 Populate a 3D `(Nx, Ny, Nz)` `dz` array using virtual temperature per
-layer: `T_v = T · (1 + 0.61 · qv)`. Matches the geometry the
+layer: `T_v = T · (1 + VIRTUAL_TEMPERATURE_FACTOR · qv)` (factor 0.61).
+Matches the geometry the
 [`LocalHoltslagBovilleKzField`](@ref AtmosTransport.State.Fields.LocalHoltslagBovilleKzField)
 uses for its column-mid heights, closing the inconsistency between
 solver `dz` and Kz-cache `dz`.
@@ -250,7 +252,7 @@ function fill_dz_hydrostatic_constT!(dz::AbstractArray{<:AbstractFloat, 2},
                                       ps::AbstractArray{<:AbstractFloat, 1},
                                       ak_ifc::AbstractVector,
                                       bk_ifc::AbstractVector;
-                                      T_ref::Real    = _DZ_T_REF_DEFAULT,
+                                      T_ref::Real    = HYDROSTATIC_REFERENCE_TEMPERATURE,
                                       R::Real        = R_DRY_AIR,
                                       gravity::Real  = STANDARD_GRAVITY)
     ncells, Nz = size(dz)

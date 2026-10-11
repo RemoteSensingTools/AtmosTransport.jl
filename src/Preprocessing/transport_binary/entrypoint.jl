@@ -73,7 +73,7 @@ function _resolve_float_type(cfg::AbstractDict)
 end
 
 _resolve_dt_met(cfg::AbstractDict) =
-    Float64(get(get(cfg, "numerics", Dict()), "dt_met_seconds", 3600.0))
+    Float64(get(get(cfg, "numerics", Dict()), "dt_met_seconds", DEFAULT_MET_INTERVAL_SECONDS))
 
 _resolve_mass_basis(cfg::AbstractDict) =
     Symbol(get(get(cfg, "output", Dict()), "mass_basis", "dry"))
@@ -96,11 +96,11 @@ _resolve_chain_mass(cfg::AbstractDict) =
 # nonsensical (the runtime's `_cs_static_palindrome_subcycle_count` only protects
 # against outgoing < cell mass).
 function _resolve_positivity_cfl_limit(cfg::AbstractDict)
-    raw = get(get(cfg, "numerics", Dict()), "positivity_cfl_limit", 0.95)
+    raw = get(get(cfg, "numerics", Dict()), "positivity_cfl_limit", DEFAULT_POSITIVITY_CFL_LIMIT)
     limit = Float64(raw)
     isfinite(limit) && 0 < limit <= 1 ||
         error("Invalid `[numerics].positivity_cfl_limit = $(raw)`: must be a " *
-              "finite value in (0, 1]. The default `0.95` is what the regrid " *
+              "finite value in (0, 1]. The default `$(DEFAULT_POSITIVITY_CFL_LIMIT)` is what the regrid " *
               "path has enforced since plan 39.")
     return limit
 end
@@ -172,9 +172,9 @@ function _build_native_vertical_setup(cfg_vertical::AbstractDict,
                   "`preset = \"ml137_…\"`.")
         # The presets index ERA5's L137 interfaces; on any other native column
         # they would select the wrong levels.
-        n_levels(vc) == 137 ||
+        n_levels(vc) == ERA5_NATIVE_LEVEL_COUNT ||
             error("`[vertical].transform = \"level_selection\"` presets are defined for " *
-                  "ERA5's 137 native levels; this source has $(n_levels(vc)).")
+                  "ERA5's $(ERA5_NATIVE_LEVEL_COUNT) native levels; this source has $(n_levels(vc)).")
         LevelSelection(echlevs_preset(preset))
     elseif transform_name in ("merge_above_pressure", "merge_above_pressure_pa")
         pressure_pa = if haskey(cfg_vertical, "pressure_Pa")
@@ -240,7 +240,8 @@ function _native_mass_fix_target_kg(cfg::AbstractDict, grid, settings)
     if mode in (:target_ps_dry, :target_dry_ps, :fixed_dry_ps)
         hasproperty(grid, :mesh) && hasproperty(grid.mesh, :cell_areas) ||
             error("native-source [mass_fix].mode=\"target_ps_dry\" requires a grid with cell_areas")
-        target_ps_dry_pa = Float64(get(mass_fix_cfg, "target_ps_dry_pa", 98726.0))
+        target_ps_dry_pa = Float64(get(mass_fix_cfg, "target_ps_dry_pa",
+                                       GLOBAL_MEAN_DRY_SURFACE_PRESSURE))
         total_area = 6.0 * sum(Float64, grid.mesh.cell_areas)
         return target_ps_dry_pa * total_area / STANDARD_GRAVITY
     elseif mode === :initial_endpoint
@@ -379,23 +380,29 @@ function _process_day_native(cfg::AbstractDict;
     end
     # Spatial low-pass sweeps: the `:moisture_filtered` residual smoother and the
     # `:pfix_corrected` column-drift smoother (ignored by the other closures).
-    smooth_iters = Int(get(numerics_cfg, "geos_moisture_filter_smooth_iters", 8))
+    smooth_iters = Int(get(numerics_cfg, "geos_moisture_filter_smooth_iters",
+                           DEFAULT_GEOS_SMOOTHING_SWEEPS))
     smooth_iters >= 0 ||
         error("[numerics].geos_moisture_filter_smooth_iters must be ≥ 0; got $(smooth_iters)")
     omega_cfg = get(numerics_cfg, "omega_regularization", Dict{String, Any}())
     omega_cfg isa AbstractDict ||
         error("[numerics.omega_regularization] must be a TOML table")
-    taper_raw = get(omega_cfg, "pressure_taper_hpa", [50.0, 80.0, 300.0, 350.0])
+    # Keys the table omits take the `OmegaRegularization` defaults.
+    omega_defaults = OmegaRegularization()
+    taper_raw = get(omega_cfg, "pressure_taper_hpa", collect(omega_defaults.pressure_taper_hpa))
     taper_raw isa AbstractVector && length(taper_raw) == 4 ||
         error("[numerics.omega_regularization].pressure_taper_hpa must contain four values")
     omega_regularization = OmegaRegularization(
         pressure_taper_hpa = ntuple(i -> Float64(taper_raw[i]), 4),
-        smoothing_steps = Int(get(omega_cfg, "smoothing_steps", 3)),
-        smoothing_fraction = Float64(get(omega_cfg, "smoothing_fraction", 0.10)),
+        smoothing_steps = Int(get(omega_cfg, "smoothing_steps", omega_defaults.smoothing_steps)),
+        smoothing_fraction = Float64(get(omega_cfg, "smoothing_fraction",
+                                         omega_defaults.smoothing_fraction)),
         max_relative_flux_correction = Float64(
-            get(omega_cfg, "max_relative_flux_correction", 0.10)),
+            get(omega_cfg, "max_relative_flux_correction",
+                omega_defaults.max_relative_flux_correction)),
         max_bottom_flux_correction = Float64(
-            get(omega_cfg, "max_bottom_flux_correction", 0.01)),
+            get(omega_cfg, "max_bottom_flux_correction",
+                omega_defaults.max_bottom_flux_correction)),
     )
     cm_closure === :omega_regularized &&
         _validate_omega_regularization(omega_regularization)

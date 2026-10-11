@@ -53,6 +53,7 @@ using ...Grids: AtmosGrid, AbstractHorizontalMesh, AbstractStructuredMesh,
     EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
 using ...MetDrivers: uses_binary_substep_contract
 using ...Architectures: _kahan_add
+using ...Parameters: DEFAULT_CFL_LIMIT, DEFAULT_MAX_SUBCYCLES, DEFAULT_LINROOD_PPM_ORDER
 
 # New scheme hierarchy (include before anything that references these types)
 include("schemes.jl")

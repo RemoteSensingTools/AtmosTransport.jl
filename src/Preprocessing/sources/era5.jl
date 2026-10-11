@@ -289,7 +289,7 @@ open_day(settings::AbstractERA5GRIBSettings, date::Date;
 
 close_day!(handles::ERA5GRIBDayHandles) = close_era5_day!(handles)
 
-windows_per_day(::AbstractERA5GRIBSettings, ::Date) = 24
+windows_per_day(::AbstractERA5GRIBSettings, ::Date) = round(Int, 86400 / ERA5_MET_INTERVAL_SECONDS)
 
 # Trait predicates report whether the source populates the optional
 # `RawWindow` fields (`surface`, `cmfmc`/`dtrain`, `vdiff`). The ERA5 GRIB

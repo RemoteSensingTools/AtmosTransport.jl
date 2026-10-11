@@ -15,6 +15,7 @@
 using AtmosTransport
 using AtmosTransport.Preprocessing
 const P = AtmosTransport.Preprocessing
+using AtmosTransport.Parameters: DEFAULT_SUBSTEP_CFL_TARGET, DEFAULT_GEOS_SMOOTHING_SWEEPS
 using Dates, Printf, JLD2, TOML
 
 function build_day_context(cfg_path::String, date::Date)
@@ -40,17 +41,22 @@ function build_day_context(cfg_path::String, date::Date)
     vertical = P._build_native_vertical_setup(cfg_vertical, vc, FT)
     numerics = get(cfg, "numerics", Dict{String, Any}())
     mass_fix = get(cfg, "mass_fix", Dict{String, Any}())
-    target_kg = P._native_mass_fix_target_kg(cfg, grid)
+    target_kg = P._native_mass_fix_target_kg(cfg, grid, settings)
     omega_cfg = get(numerics, "omega_regularization", Dict{String, Any}())
-    taper = get(omega_cfg, "pressure_taper_hpa", [50.0, 80.0, 300.0, 350.0])
+    # Keys the config leaves out take the `OmegaRegularization` defaults.
+    omega_defaults = P.OmegaRegularization()
+    taper = get(omega_cfg, "pressure_taper_hpa", omega_defaults.pressure_taper_hpa)
     omega_regularization = P.OmegaRegularization(
         pressure_taper_hpa = ntuple(i -> Float64(taper[i]), 4),
-        smoothing_steps = Int(get(omega_cfg, "smoothing_steps", 3)),
-        smoothing_fraction = Float64(get(omega_cfg, "smoothing_fraction", 0.10)),
+        smoothing_steps = Int(get(omega_cfg, "smoothing_steps", omega_defaults.smoothing_steps)),
+        smoothing_fraction = Float64(get(omega_cfg, "smoothing_fraction",
+                                         omega_defaults.smoothing_fraction)),
         max_relative_flux_correction = Float64(
-            get(omega_cfg, "max_relative_flux_correction", 0.10)),
+            get(omega_cfg, "max_relative_flux_correction",
+                omega_defaults.max_relative_flux_correction)),
         max_bottom_flux_correction = Float64(
-            get(omega_cfg, "max_bottom_flux_correction", 0.01)),
+            get(omega_cfg, "max_bottom_flux_correction",
+                omega_defaults.max_bottom_flux_correction)),
     )
     return (cfg, FT, grid, settings, vertical, numerics, mass_fix, target_kg,
             omega_regularization)
@@ -64,18 +70,19 @@ function main()
     (cfg, FT, grid, settings, vertical, numerics, mass_fix, target_kg,
      omega_regularization) =
         build_day_context(cfg_path, date)
-    dt_met = Float64(get(numerics, "dt_met_seconds", 3600.0))
+    dt_met = P._resolve_dt_met(cfg)
     reader = P.open_reader(settings, date, FT; seed = nothing,
                            chain_mass = false, next_day_handle = true)
     nw = P.windows_per_day(reader)
     ws = P.allocate_window_workspace(grid, settings, vertical, FT;
             dt_met_seconds = dt_met, chain_mass = false,
-            adaptive_substeps = false, substep_cfl_target = 0.95,
+            adaptive_substeps = false, substep_cfl_target = DEFAULT_SUBSTEP_CFL_TARGET,
             min_steps_per_window = 1, max_steps_per_window = 512,
             windows_per_day = nw,
             global_mass_pin = Bool(get(mass_fix, "enable", false)),
             global_mass_target_kg = target_kg,
-            balance_mode = :column, cm_closure = closure, smooth_iters = 8,
+            balance_mode = :column, cm_closure = closure,
+            smooth_iters = DEFAULT_GEOS_SMOOTHING_SWEEPS,
             omega_regularization = omega_regularization)
     P._OMEGA_TIMING[] = true
 

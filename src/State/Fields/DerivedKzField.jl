@@ -1,21 +1,28 @@
 """
     PBLPhysicsParameters{FT}(; kwargs...)
 
-Physical constants for the Beljaars-Viterbo (revised LTG) boundary-
-layer diffusivity parameterization, as implemented in TM5
-(`diffusion.F90`, `bldiff`). Defaults reproduce the values used in
-the legacy `PBLDiffusion`.
+Physical constants and scheme parameters for the Beljaars-Viterbo
+(revised LTG) boundary-layer diffusivity parameterization, as implemented
+in TM5 (`diffusion.F90`, `bldiff`). Defaults reproduce the values used in
+the legacy `PBLDiffusion`. `DerivedKzField`, `WindowPBLKzField` and
+`LocalHoltslagBovilleKzField` all read their constants, surface-input
+floors and profile shape from here.
 
-| Field      | Default   | Units       | Meaning                           |
-|------------|-----------|-------------|-----------------------------------|
-| `β_h`      | 15.0      | —           | Businger-Dyer stability parameter |
-| `Kz_bg`    | 0.1       | m²/s        | Free-tropospheric background Kz   |
-| `Kz_min`   | 0.01      | m²/s        | Safety floor inside the PBL       |
-| `Kz_max`   | 500.0     | m²/s        | Safety ceiling inside the PBL     |
-| `kappa_vk` | 0.41      | —           | von Kármán constant               |
-| `gravity`  | 9.80665   | m/s²        | Gravitational acceleration        |
-| `cp_dry`   | 1004.64   | J/(kg·K)    | Dry-air specific heat at const. p |
-| `rho_ref`  | 1.225     | kg/m³       | Reference density for H_kin       |
+| Field                       | Default   | Units       | Meaning                           |
+|-----------------------------|-----------|-------------|-----------------------------------|
+| `β_h`                       | 15.0      | —           | Businger-Dyer stability parameter |
+| `Kz_bg`                     | 0.1       | m²/s        | Free-tropospheric background Kz   |
+| `Kz_min`                    | 0.01      | m²/s        | Safety floor inside the PBL       |
+| `Kz_max`                    | 500.0     | m²/s        | Safety ceiling inside the PBL     |
+| `kappa_vk`                  | 0.41      | —           | von Kármán constant (`VON_KARMAN`) |
+| `gravity`                   | 9.80665   | m/s²        | Gravitational acceleration (`STANDARD_GRAVITY`) |
+| `cp_dry`                    | 1004.64   | J/(kg·K)    | Dry-air specific heat at const. p (`CP_DRY_AIR`) |
+| `rho_ref`                   | 1.225     | kg/m³       | Reference density for H_kin (`STANDARD_SEA_LEVEL_AIR_DENSITY`) |
+| `h_pbl_min`                 | 100.0     | m           | Floor on the input PBL height     |
+| `ustar_min`                 | 0.01      | m/s         | Floor on the input friction velocity |
+| `T_sfc_min`                 | 200.0     | K           | Floor on the input surface air temperature |
+| `surface_layer_fraction`    | 0.1       | —           | Surface layer as a fraction of the PBL (TM5 `sffrac`) |
+| `entrainment_zone_fraction` | 0.2       | —           | Entrainment-zone depth above the PBL top, as a fraction of the PBL height |
 
 `R_dry` is derived from `cp_dry` as `cp_dry / 3.5` (ideal diatomic,
 `cp = 7/2 R_dry`), matching the legacy convention.
@@ -25,10 +32,15 @@ Base.@kwdef struct PBLPhysicsParameters{FT <: AbstractFloat}
     Kz_bg    :: FT = FT(0.1)
     Kz_min   :: FT = FT(0.01)
     Kz_max   :: FT = FT(500.0)
-    kappa_vk :: FT = FT(0.41)
+    kappa_vk :: FT = FT(VON_KARMAN)
     gravity  :: FT = FT(STANDARD_GRAVITY)
     cp_dry   :: FT = FT(CP_DRY_AIR)
-    rho_ref  :: FT = FT(1.225)
+    rho_ref  :: FT = FT(STANDARD_SEA_LEVEL_AIR_DENSITY)
+    h_pbl_min                 :: FT = FT(100)
+    ustar_min                 :: FT = FT(0.01)
+    T_sfc_min                 :: FT = FT(200)
+    surface_layer_fraction    :: FT = FT(0.1)
+    entrainment_zone_fraction :: FT = FT(0.2)
 end
 
 @inline _pbl_cbrt(x::Float64) = cbrt(x)
@@ -55,7 +67,10 @@ Pure: no side effects, no allocation — safe to call inside a kernel.
 @inline function _beljaars_viterbo_kz(z, h_pbl, ustar, L_ob, Pr_inv,
                                       p::PBLPhysicsParameters{FT}) where FT
     κ = p.kappa_vk
-    h_taper = FT(1.2) * h_pbl
+    # Top of the entrainment zone. With the default fraction 0.2,
+    # `one(FT) + FT(0.2) == FT(1.2)` in Float32 and Float64, the float types
+    # the model runs in (wider types may round differently).
+    h_taper = (one(FT) + p.entrainment_zone_fraction) * h_pbl
 
     # Above the entrainment zone: background only
     if z >= h_taper
@@ -68,12 +83,12 @@ Pure: no side effects, no allocation — safe to call inside a kernel.
 
     if L_ob < zero(FT)
         # Unstable BL
-        if z_eff < FT(0.1) * h_pbl
-            # Surface layer (TM5 sffrac = 0.1)
+        if z_eff < p.surface_layer_fraction * h_pbl
+            # Surface layer (TM5 sffrac)
             Kz = ustar * κ * z_eff * zzh2 * _pbl_cbrt(FT(1) - p.β_h * z_eff / L_ob)
         else
             # Mixed layer
-            w_m = ustar * _pbl_cbrt(FT(1) - FT(0.1) * p.β_h * h_pbl / L_ob)
+            w_m = ustar * _pbl_cbrt(FT(1) - p.surface_layer_fraction * p.β_h * h_pbl / L_ob)
             Kz = w_m * κ * z_eff * zzh2
         end
         # Convective Prandtl correction (Kh ≥ Km)
@@ -85,9 +100,9 @@ Pure: no side effects, no allocation — safe to call inside a kernel.
 
     Kz = clamp(Kz, p.Kz_min, p.Kz_max)
 
-    # Entrainment-zone taper (h_pbl ≤ z < 1.2 h_pbl): linear blend to Kz_bg
+    # Entrainment-zone taper (h_pbl ≤ z < h_taper): linear blend to Kz_bg
     if z >= h_pbl
-        frac = (h_taper - z) / (FT(0.2) * h_pbl)
+        frac = (h_taper - z) / (p.entrainment_zone_fraction * h_pbl)
         Kz = p.Kz_bg + frac * (Kz - p.Kz_bg)
     end
 
@@ -256,10 +271,10 @@ integration locally, so adapted fields refresh without host scalar indexing.
     FT = eltype(cache)
     R_dry = p.cp_dry / FT(CP_OVER_R_DIATOMIC)
 
-    h_pbl = max(field_value(surface.pblh,  (i, j)), FT(100))
-    us    = max(field_value(surface.ustar, (i, j)), FT(0.01))
+    h_pbl = max(field_value(surface.pblh,  (i, j)), p.h_pbl_min)
+    us    = max(field_value(surface.ustar, (i, j)), p.ustar_min)
     H_sfc = field_value(surface.hflux, (i, j))
-    T_sfc = max(field_value(surface.t2m,   (i, j)), FT(200))
+    T_sfc = max(field_value(surface.t2m,   (i, j)), p.T_sfc_min)
 
     L_ob, H_kin = _obukhov_length(H_sfc, us, T_sfc, p)
     Pr_inv = _prandtl_inverse(h_pbl, us, H_kin, T_sfc, L_ob, p)

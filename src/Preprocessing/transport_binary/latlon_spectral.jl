@@ -343,7 +343,7 @@ end
 
 """
     process_day(date, grid::LatLonTargetGeometry, settings, vertical;
-                next_day_hour0=nothing, positivity_cfl_limit=0.95,
+                next_day_hour0=nothing, positivity_cfl_limit=DEFAULT_POSITIVITY_CFL_LIMIT,
                 require_substep_positivity=true, write_replay_check=true)
 
 Run the full one-day preprocessing workflow for the structured lat-lon target:
@@ -355,7 +355,7 @@ function process_day(date::Date,
                      settings::ERA5SpectralSettings,
                      vertical;
                      next_day_hour0=nothing,
-                     positivity_cfl_limit::Real = 0.95,
+                     positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                      require_substep_positivity::Bool = true,
                      write_replay_check::Bool = true,
                      substep_policy::SubstepSchedulePolicy =

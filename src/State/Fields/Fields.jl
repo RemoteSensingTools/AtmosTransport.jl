@@ -23,15 +23,17 @@ Concrete types:
 - `GCHPNonlocalPBLField{FT, ...}` — cubed-sphere GEOS-Chem non-local PBL exchange.
 - `StepwiseField{FT, N, A, B, W}` — piecewise-constant in time at any rank.
 
-`PBLPhysicsParameters{FT}` carries the physical constants for
-`DerivedKzField`.
+`PBLPhysicsParameters{FT}` carries the physical constants and scheme
+parameters of the Beljaars-Viterbo Kz closure shared by `DerivedKzField`,
+`WindowPBLKzField` and `LocalHoltslagBovilleKzField`.
 """
 module Fields
 
 using Adapt
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 using ...Parameters: STANDARD_GRAVITY, CP_DRY_AIR, CP_OVER_R_DIATOMIC, THETA_REFERENCE_PRESSURE,
-                     GEOSCHEM_CONSTANTS, VIRTUAL_TEMPERATURE_FACTOR
+                     GEOSCHEM_CONSTANTS, VIRTUAL_TEMPERATURE_FACTOR, VON_KARMAN,
+                     STANDARD_SEA_LEVEL_AIR_DENSITY
 
 export AbstractTimeVaryingField, AbstractCubedSphereField
 export ConstantField, ProfileKzField, PreComputedKzField, CubedSphereField

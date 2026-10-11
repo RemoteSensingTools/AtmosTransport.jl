@@ -11,6 +11,12 @@ using AtmosTransport
 # this development-tree CLI to supply the experimental coarsener to that
 # module without copying or modifying the production worktree.
 if !isdefined(AtmosTransport.Preprocessing, :coarsen_nested_cs_transport_binary)
+    # HACK: the format-v4 tree predates Parameters/NumericalDefaults.jl, whose
+    # defaults the coarsener imports. TODO: drop this block (and the include
+    # below) once the C90 campaign leaves the format-v4 tree.
+    isdefined(AtmosTransport.Parameters, :DEFAULT_MAX_STEPS_PER_WINDOW) ||
+        Base.include(AtmosTransport.Parameters,
+                     joinpath(@__DIR__, "..", "..", "src", "Parameters", "NumericalDefaults.jl"))
     Base.include(
         AtmosTransport.Preprocessing,
         joinpath(@__DIR__, "..", "..", "src", "Preprocessing",
@@ -30,25 +36,21 @@ function settings()
             help = "target coarsened transport binary"
             required = true
         "--target-nc"
-            help = "target cubed-sphere edge resolution"
+            help = "target cubed-sphere edge resolution (default: the coarsener's)"
             dest_name = "target_nc"
             arg_type = Int
-            default = 30
         "--substep-cfl-target"
-            help = "adaptive target below the hard positivity limit"
+            help = "adaptive target below the hard positivity limit (default: COARSEN_SUBSTEP_CFL_TARGET)"
             dest_name = "substep_cfl_target"
             arg_type = Float64
-            default = 0.90
         "--positivity-cfl-limit"
-            help = "hard write-time positivity limit"
+            help = "hard write-time positivity limit (default: DEFAULT_POSITIVITY_CFL_LIMIT)"
             dest_name = "positivity_cfl_limit"
             arg_type = Float64
-            default = 0.95
         "--max-steps-per-window"
-            help = "abort if a window requires more substeps"
+            help = "abort if a window requires more substeps (default: DEFAULT_MAX_STEPS_PER_WINDOW)"
             dest_name = "max_steps_per_window"
             arg_type = Int
-            default = 4096
         "--force"
             help = "replace an existing output"
             action = :store_true
@@ -63,14 +65,14 @@ end
 function main(args)
     parsed = parse_args(args, settings())
     @warn "EXPERIMENTAL C90-to-coarser-CS operator restriction: testing only; direct-target and tracer validation are still required"
+    # Options left out take the coarsener's own defaults.
+    given = (target_Nc = parsed["target_nc"], substep_cfl_target = parsed["substep_cfl_target"],
+             positivity_cfl_limit = parsed["positivity_cfl_limit"],
+             max_steps_per_window = parsed["max_steps_per_window"])
+    options = (; (k => v for (k, v) in pairs(given) if v !== nothing)...)
     result = coarsen_nested_cs_transport_binary(
-        parsed["input"], parsed["output"];
-        target_Nc = parsed["target_nc"],
-        substep_cfl_target = parsed["substep_cfl_target"],
-        positivity_cfl_limit = parsed["positivity_cfl_limit"],
-        max_steps_per_window = parsed["max_steps_per_window"],
-        force = parsed["force"],
-        mark_gated = parsed["mark_gated"])
+        parsed["input"], parsed["output"]; options...,
+        force = parsed["force"], mark_gated = parsed["mark_gated"])
     println("EXPERIMENTAL COARSEN COMPLETE")
     println("  input:  ", result.input)
     println("  output: ", result.output)

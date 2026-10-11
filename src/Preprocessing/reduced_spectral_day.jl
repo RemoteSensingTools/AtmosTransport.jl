@@ -163,8 +163,8 @@ function balance_window!(hflux_work::Matrix{Float64},
                          work::ReducedTransformWorkspace,
                          cL::CompressedLaplacian,
                          steps_per_window::Int;
-                         tol::Float64 = 1e-14,
-                         max_iter::Int = 20000) where FT
+                         tol::Float64 = DEFAULT_POISSON_BALANCE_TOL,
+                         max_iter::Int = DEFAULT_POISSON_BALANCE_MAX_ITER) where FT
 
     copyto!(hflux_work, buf.hflux[slot])
     copyto!(m_cur_work, buf.m[slot])
@@ -373,7 +373,7 @@ end
 
 """
     process_day(date, grid::ReducedGaussianTargetGeometry, settings, vertical;
-                next_day_hour0=nothing, positivity_cfl_limit=0.95,
+                next_day_hour0=nothing, positivity_cfl_limit=DEFAULT_POSITIVITY_CFL_LIMIT,
                 require_substep_positivity=true, write_replay_check=true)
 
 Streaming one-day preprocessing for reduced-Gaussian targets.
@@ -392,7 +392,7 @@ function process_day(date::Date,
                      settings::ERA5SpectralSettings,
                      vertical;
                      next_day_hour0=nothing,
-                     positivity_cfl_limit::Real = 0.95,
+                     positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                      require_substep_positivity::Bool = true,
                      write_replay_check::Bool = true,
                      substep_policy =

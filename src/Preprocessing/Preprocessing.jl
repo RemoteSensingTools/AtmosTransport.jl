@@ -94,8 +94,22 @@ import ..source_revision
 # Source settings and binary readers extend the same public capability queries.
 import ..MetDrivers: has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base
 using ..Architectures: CPU
+# Physical constants, numerical defaults and met-source constants
+# (`src/Parameters`) used by the files below.
 using ..Parameters: IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_PRESSURE, TM5_CONSTANTS, R_DRY_AIR,
-                    VIRTUAL_TEMPERATURE_FACTOR
+                    VIRTUAL_TEMPERATURE_FACTOR, HYDROSTATIC_REFERENCE_TEMPERATURE,
+                    GLOBAL_MEAN_DRY_SURFACE_PRESSURE, GLOBAL_MEAN_SPECIFIC_HUMIDITY,
+                    DEFAULT_POSITIVITY_CFL_LIMIT, DEFAULT_SUBSTEP_CFL_TARGET,
+                    ERA5_N320_SUBSTEP_CFL_TARGET, COARSEN_SUBSTEP_CFL_TARGET,
+                    DEFAULT_MAX_STEPS_PER_WINDOW, ADAPTIVE_SUBSTEP_MAX_REFINEMENTS,
+                    DEFAULT_MET_INTERVAL_SECONDS,
+                    DEFAULT_POISSON_BALANCE_TOL, DEFAULT_POISSON_BALANCE_MAX_ITER,
+                    DEFAULT_POISSON_PROJECT_EVERY,
+                    DEFAULT_GEOS_SMOOTHING_SWEEPS, DEFAULT_GEOS_SMOOTHING_WEIGHT,
+                    ERA5_NATIVE_LEVEL_COUNT, ERA5_MET_INTERVAL_SECONDS,
+                    GEOS_MASS_FLUX_DT_SECONDS, GEOS_MET_INTERVAL_SECONDS,
+                    GEOS_3HOURLY_INTERVAL_SECONDS,
+                    SURFACE_AIR_TEMPERATURE_RANGE, SURFACE_HEAT_FLUX_MAX_ABS
 using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cs_face_edge_lengths, cs_corner_xyz,
                HybridSigmaPressure, PanelConnectivity,
                AbstractCubedSpherePanelConvention,

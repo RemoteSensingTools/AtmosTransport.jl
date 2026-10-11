@@ -27,7 +27,7 @@ const FT = Float64
 const Nc = 24                 # cubed-sphere panel resolution
 const Hp = 3                  # LinRood PPM stencil halo
 const Nz = 6                  # vertical levels (toy)
-const dt_substep = 450.0      # seconds — production substep length
+const dt_substep = 450.0      # seconds — model time step of this synthetic problem (not the GEOS mass-flux dt)
 const six_hours_substeps = 48 # 48 × 450 s = 6.0 h
 
 # Locate LA: panel 4 in GnomonicPanelConvention is the Americas-

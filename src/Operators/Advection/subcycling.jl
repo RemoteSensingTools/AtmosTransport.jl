@@ -30,7 +30,7 @@ function _horizontal_face_outgoing_ratio(horizontal_flux::AbstractArray{FT,2},
                 end
             end
         end
-        max_ratio = max(max_ratio, maximum(outgoing ./ max.(m[:, k], eps(FT))))
+        max_ratio = max(max_ratio, maximum(outgoing ./ max.(m[:, k], _advection_mass_floor(FT))))
     end
 
     return max_ratio
@@ -48,7 +48,7 @@ function _vertical_face_outgoing_ratio(cm::AbstractArray{FT,2},
     # value in flows where inflow ≠ outflow).
     Nz = size(m, 2)
     out = max.(.- @view(cm[:, 1:Nz]), zero(FT)) .+ max.(@view(cm[:, 2:Nz+1]), zero(FT))
-    return maximum(out ./ max.(m, eps(FT)))
+    return maximum(out ./ max.(m, _advection_mass_floor(FT)))
 end
 
 # Face-indexed pilots — unified static algorithm.
@@ -64,7 +64,7 @@ function _horizontal_face_subcycling_pass_count(horizontal_flux::AbstractArray{F
                                                 m::AbstractArray{FT,2},
                                                 mesh::AbstractHorizontalMesh,
                                                 ws::AdvectionWorkspace{FT},
-                                                cfl_limit::FT; max_n_sub::Int = 4096) where FT
+                                                cfl_limit::FT; max_n_sub::Int = DEFAULT_MAX_SUBCYCLES) where FT
     isinf(cfl_limit) && return 1
     static_cfl = m isa Array ?
         _horizontal_face_outgoing_ratio(horizontal_flux, m, mesh) :
@@ -77,7 +77,7 @@ end
 function _vertical_face_subcycling_pass_count(cm::AbstractArray{FT,2},
                                               m::AbstractArray{FT,2},
                                               ws::AdvectionWorkspace{FT},
-                                              cfl_limit::FT; max_n_sub::Int = 4096) where FT
+                                              cfl_limit::FT; max_n_sub::Int = DEFAULT_MAX_SUBCYCLES) where FT
     isinf(cfl_limit) && return 1
     static_cfl = _vertical_face_outgoing_ratio(cm, m)
     n_sub = _subcycling_pass_count(static_cfl, cfl_limit)
@@ -140,11 +140,11 @@ end
 # summed inflow — a sign bug that under-estimated CFL on device).
 function _x_subcycling_pass_count(am::AbstractArray{FT,3}, m::AbstractArray{FT,3},
                                   ws::AdvectionWorkspace{FT},
-                                  cfl_limit::FT; max_n_sub::Int = 4096) where FT
+                                  cfl_limit::FT; max_n_sub::Int = DEFAULT_MAX_SUBCYCLES) where FT
     isinf(cfl_limit) && return 1
     Nx = size(m, 1)
     out = max.(.- @view(am[1:Nx, :, :]), zero(FT)) .+ max.(@view(am[2:Nx+1, :, :]), zero(FT))
-    static_cfl = maximum(out ./ max.(m, eps(FT)))
+    static_cfl = maximum(out ./ max.(m, _advection_mass_floor(FT)))
     n_sub = _subcycling_pass_count(static_cfl, cfl_limit)
     n_sub <= max_n_sub || throw(ArgumentError("x-direction subcycling exceeded max_n_sub=$(max_n_sub)"))
     return n_sub
@@ -152,11 +152,11 @@ end
 
 function _y_subcycling_pass_count(bm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
                                   ws::AdvectionWorkspace{FT},
-                                  cfl_limit::FT; max_n_sub::Int = 4096) where FT
+                                  cfl_limit::FT; max_n_sub::Int = DEFAULT_MAX_SUBCYCLES) where FT
     isinf(cfl_limit) && return 1
     Ny = size(m, 2)
     out = max.(.- @view(bm[:, 1:Ny, :]), zero(FT)) .+ max.(@view(bm[:, 2:Ny+1, :]), zero(FT))
-    static_cfl = maximum(out ./ max.(m, eps(FT)))
+    static_cfl = maximum(out ./ max.(m, _advection_mass_floor(FT)))
     n_sub = _subcycling_pass_count(static_cfl, cfl_limit)
     n_sub <= max_n_sub || throw(ArgumentError("y-direction subcycling exceeded max_n_sub=$(max_n_sub)"))
     return n_sub
@@ -164,11 +164,11 @@ end
 
 function _z_subcycling_pass_count(cm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
                                   ws::AdvectionWorkspace{FT},
-                                  cfl_limit::FT; max_n_sub::Int = 4096) where FT
+                                  cfl_limit::FT; max_n_sub::Int = DEFAULT_MAX_SUBCYCLES) where FT
     isinf(cfl_limit) && return 1
     Nz = size(m, 3)
     out = max.(.- @view(cm[:, :, 1:Nz]), zero(FT)) .+ max.(@view(cm[:, :, 2:Nz+1]), zero(FT))
-    static_cfl = maximum(out ./ max.(m, eps(FT)))
+    static_cfl = maximum(out ./ max.(m, _advection_mass_floor(FT)))
     n_sub = _subcycling_pass_count(static_cfl, cfl_limit)
     n_sub <= max_n_sub || throw(ArgumentError("z-direction subcycling exceeded max_n_sub=$(max_n_sub)"))
     return n_sub

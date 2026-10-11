@@ -116,7 +116,8 @@ end
 
 """
     solve_compressed_poisson_pcg!(psi, rhs, L::CompressedLaplacian, scratch;
-                                  tol=1e-14, max_iter=20000)
+                                  tol=DEFAULT_POISSON_BALANCE_TOL,
+                                  max_iter=DEFAULT_POISSON_BALANCE_MAX_ITER)
 
 Solve the singular system `L · psi = rhs` via Jacobi-Preconditioned CG
 using the compressed Laplacian. Mathematically identical to
@@ -129,8 +130,8 @@ function solve_compressed_poisson_pcg!(psi::AbstractVector{Float64},
                                        rhs::AbstractVector{Float64},
                                        L::CompressedLaplacian,
                                        scratch;
-                                       tol::Float64 = 1e-14,
-                                       max_iter::Int = 20000)
+                                       tol::Float64 = DEFAULT_POISSON_BALANCE_TOL,
+                                       max_iter::Int = DEFAULT_POISSON_BALANCE_MAX_ITER)
     r  = scratch.r
     p  = scratch.p
     Ap = scratch.Ap
@@ -216,8 +217,8 @@ function balance_compressed_horizontal_fluxes!(hflux::AbstractMatrix{Float64},
                                                L::CompressedLaplacian,
                                                steps_per_window::Int,
                                                scratch;
-                                               tol::Float64 = 1e-14,
-                                               max_iter::Int = 20000)
+                                               tol::Float64 = DEFAULT_POISSON_BALANCE_TOL,
+                                               max_iter::Int = DEFAULT_POISSON_BALANCE_MAX_ITER)
     nc, Nz = size(m_cur)
     size(hflux, 2) == Nz || error("hflux Nz mismatch with m")
     inv_scale = 1.0 / (2.0 * steps_per_window)

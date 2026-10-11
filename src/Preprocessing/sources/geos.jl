@@ -13,11 +13,12 @@
 # Critical conventions baked into this reader:
 #
 #   * CTM_A1 MFXC/MFYC are dry dynamics-step face masses in pressure-area
-#     units (`MFXC ≈ CX * DELP * cell_area`). `mass_flux_dt = 450 s` is still
-#     used because `read_window!` exposes a rate-like RawWindow
-#     (`MFXC / mass_flux_dt`) for diagnostics and legacy contracts. The v4
-#     writer converts each raw amount to one Strang half-sweep amount and
-#     reuses it for the 8 GEOS substeps inside the hourly CTM window.
+#     units (`MFXC ≈ CX * DELP * cell_area`). `mass_flux_dt = 450 s`
+#     (`GEOS_MASS_FLUX_DT_SECONDS`) is still used because `read_window!`
+#     exposes a rate-like RawWindow (`MFXC / mass_flux_dt`) for diagnostics
+#     and legacy contracts. The v4 writer converts each raw amount to one
+#     Strang half-sweep amount and reuses it for the 8 GEOS substeps inside
+#     the hourly CTM window.
 #
 #   * GEOS-IT stores levels bottom-to-top (k=1 = surface). GEOS-FP stores them
 #     top-to-bottom. Both are flipped (where needed) to AtmosTransport's
@@ -58,7 +59,7 @@ to skip the heuristic.
 Base.@kwdef struct GEOSSettings{flavor} <: AbstractGEOSSettings
     root_dir            :: String
     Nc                  :: Int
-    mass_flux_dt        :: Float64 = 450.0
+    mass_flux_dt        :: Float64 = GEOS_MASS_FLUX_DT_SECONDS
     level_orientation   :: Symbol  = :auto    # :auto, :bottom_up, :top_down
     include_surface     :: Bool    = false
     include_convection  :: Bool    = false

@@ -142,6 +142,9 @@ end
 const MERRA2_NATIVE_LEVEL_COUNT = 72
 const MERRA2_NX = 576
 const MERRA2_NY = 361
+# A MERRA-2 block is one I3/A3 interval, `GEOS_3HOURLY_INTERVAL_SECONDS`; it
+# spans this many hourly A1 records (3; the divisor is seconds per hour).
+const _MERRA2_HOURS_PER_BLOCK = round(Int, GEOS_3HOURLY_INTERVAL_SECONDS / 3600)
 const MERRA2_VALID_WINDS_COLLECTIONS = (:tavg3, :inst3)
 # Layer thickness in the face fluxes (MERRA-2 only; the other flux-construction
 # options are shared, see `cs_transport_helpers.jl`).
@@ -297,8 +300,10 @@ function open_merra2_day(settings::MERRA2Settings, date::Date;
         a3mste = has_convection(settings) ? open_required(:a3mste) : nothing
         a3mstc = has_cmfmc_cloud_base(settings) ? open_required(:a3mstc) : nothing
         a1 = has_surface(settings) ? open_required(:a1) : nothing
-        a1 === nothing || size(a1["PBLH"], 3) == 24 ||
-            error("MERRA-2 A1 for $(date) has $(size(a1["PBLH"], 3)) hourly records, expected 24")
+        # One hourly A1 record per hour of every 3-hour window.
+        n_a1 = windows_per_day(settings, date) * _MERRA2_HOURS_PER_BLOCK
+        a1 === nothing || size(a1["PBLH"], 3) == n_a1 ||
+            error("MERRA-2 A1 for $(date) has $(size(a1["PBLH"], 3)) hourly records, expected $(n_a1)")
 
         # A missing next-day file is the archive boundary (the writer warns and
         # falls back to a zero-tendency final window); an unreadable one is an
@@ -343,7 +348,7 @@ open_day(settings::MERRA2Settings, date::Date; next_day_handle::Bool = true) =
 
 close_day!(handles::MERRA2DayHandles) = close_merra2_day!(handles)
 
-windows_per_day(::MERRA2Settings, ::Date) = 8
+windows_per_day(::MERRA2Settings, ::Date) = round(Int, 86400 / GEOS_3HOURLY_INTERVAL_SECONDS)
 
 """
     source_grid(settings::MERRA2Settings; FT=Float64) -> LatLonMesh
@@ -492,11 +497,12 @@ function read_merra2_physics_window(handles::MERRA2DayHandles, win::Integer,
         out = merge(out, (; dqrcu = read_merra2_3d_slice(handles.a3mstc, "DQRCU", win, Nz, order; FT = FT)))
     end
     if has_surface(s)
-        hours = (3 * (Int(win) - 1) + 1):(3 * Int(win))
+        hours = (_MERRA2_HOURS_PER_BLOCK * (Int(win) - 1) + 1):(_MERRA2_HOURS_PER_BLOCK * Int(win))
         function hourly(name)
             x = Array{FT}(handles.a1[name][:, :, hours])
-            size(x) == (MERRA2_NX, MERRA2_NY, 3) ||
-                throw(DimensionMismatch("MERRA-2 A1 $(name) $(size(x)) ≠ ($(MERRA2_NX), $(MERRA2_NY), 3)"))
+            size(x) == (MERRA2_NX, MERRA2_NY, _MERRA2_HOURS_PER_BLOCK) ||
+                throw(DimensionMismatch("MERRA-2 A1 $(name) $(size(x)) ≠ " *
+                                       "($(MERRA2_NX), $(MERRA2_NY), $(_MERRA2_HOURS_PER_BLOCK))"))
             return x
         end
         out = merge(out, (; pblh = hourly("PBLH"), ustar = hourly("USTAR"),

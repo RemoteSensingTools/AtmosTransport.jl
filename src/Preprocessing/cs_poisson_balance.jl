@@ -160,7 +160,8 @@ end
 """
     balance_cs_global_mass_fluxes!(panels_am, panels_bm, panels_m, panels_m_next,
                                     ft, degree, steps_per_window, scratch;
-                                    tol=1e-14, max_iter=20000)
+                                    tol=DEFAULT_POISSON_BALANCE_TOL,
+                                    max_iter=DEFAULT_POISSON_BALANCE_MAX_ITER)
 
 TM5-style global Poisson mass-flux balance for a 6-panel cubed sphere.
 
@@ -180,9 +181,9 @@ function balance_cs_global_mass_fluxes!(
     degree::Vector{Int},
     steps_per_window::Int,
     scratch::CSPoissonScratch;
-    tol::Float64=1e-14,
-    max_iter::Int=20000,
-    project_every::Int=50,
+    tol::Float64=DEFAULT_POISSON_BALANCE_TOL,
+    max_iter::Int=DEFAULT_POISSON_BALANCE_MAX_ITER,
+    project_every::Int=DEFAULT_POISSON_PROJECT_EVERY,
 ) where FT
 
     Nc = ft.Nc
@@ -495,9 +496,9 @@ function balance_cs_column_mass_fluxes!(
     degree::Vector{Int},
     steps_per_window::Int,
     scratch::CSPoissonScratch;
-    tol::Float64=1e-14,
-    max_iter::Int=20000,
-    project_every::Int=50,
+    tol::Float64=DEFAULT_POISSON_BALANCE_TOL,
+    max_iter::Int=DEFAULT_POISSON_BALANCE_MAX_ITER,
+    project_every::Int=DEFAULT_POISSON_PROJECT_EVERY,
     closure_passes::Int=1,
     closure_tol::Float64=10.0,
     weights::AbstractColumnWeights=MassWeightedColumn(),

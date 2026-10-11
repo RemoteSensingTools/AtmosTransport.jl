@@ -20,8 +20,6 @@
 # era5_n320_to_cs.jl.
 # ===========================================================================
 
-const ERA5_NATIVE_LEVEL_COUNT = 137
-
 """
     discover_era5_n320_source_grid(core_path; FT=Float64) -> ReducedGaussianTargetGeometry
 
@@ -137,7 +135,8 @@ end
 Allocate a fresh workspace sized to `source_grid` (build via
 [`discover_era5_n320_source_grid`](@ref)), spectral truncation `T`
 (from [`discover_era5_spectral_truncation`](@ref)) and vertical level count
-`Nz` (defaults to 137 in callers, but the workspace itself stays generic).
+`Nz` (callers default to `ERA5_NATIVE_LEVEL_COUNT` = 137, but the workspace itself
+stays generic).
 """
 function allocate_era5_n320_spectral_workspace(source_grid::ReducedGaussianTargetGeometry{FT},
                                                 T::Integer, Nz::Integer;

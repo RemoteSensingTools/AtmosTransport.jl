@@ -12,8 +12,9 @@
 # largest day-to-day jump.
 #
 # Pinned target convention: 5.135313897e18 kg corresponds to a
-# global-mean dry surface pressure of 98726.0 Pa per the
-# `[mass_fix].target_ps_dry_pa` knob in the preprocessing TOMLs.
+# global-mean dry surface pressure of 98726.0 Pa
+# (`GLOBAL_MEAN_DRY_SURFACE_PRESSURE`, the default of the
+# `[mass_fix].target_ps_dry_pa` knob in the preprocessing TOMLs).
 #
 # Usage:
 #   julia --project=. scripts/diagnostics/check_mass_balance_dec2021.jl \

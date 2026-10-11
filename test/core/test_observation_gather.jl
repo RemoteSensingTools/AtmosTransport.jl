@@ -162,7 +162,8 @@ end
     lapse = SurfaceLapseTemperature(290.0)
     @test lapse.lapse_rate == 0.0065
     @test O.layer_temperature(lapse, 3, 1000.0) == 290.0 - 6.5
-    @test O.layer_temperature(lapse, 3, 50_000.0) == O.STANDARD_TROPOPAUSE_KELVIN   # floored aloft
+    @test O.layer_temperature(lapse, 3, 50_000.0) ==
+          AtmosTransport.Parameters.STANDARD_TROPOPAUSE_TEMPERATURE   # floored aloft
     profile = ProfileLayerTemperature(collect(220.0:10.0:270.0))
     @test_throws DimensionMismatch layer_heights_agl!(zeros(nlevel + 1), p_half, ProfileLayerTemperature([250.0]), g)
     @test O.layer_temperature(profile, 1, 0.0) == 220.0

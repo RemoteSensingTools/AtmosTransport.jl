@@ -37,7 +37,8 @@ using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
     _pre_advect_y_kernel!, _pre_advect_x_kernel!, _linrood_update_kernel!,
     _copy_interior!, _accumulate_linrood_halo_adjoint!,
     strang_split_linrood_ppm!, CSLinRoodAdvectionWorkspace, LinRoodWorkspace,
-    fv_tp_2d_cs!, _sweep_z!, _cs_flux_x_interior, _cs_flux_y_interior
+    fv_tp_2d_cs!, _sweep_z!, _cs_flux_x_interior, _cs_flux_y_interior,
+    _advection_mass_floor, _ppm_edge_weights   # shared with the forward fluxes (AdvectionAdjoint.jl)
 using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
     apply_vertical_diffusion_vmr!, _dkg_transfer_ratios
 using ..Operators.Convection: CMFMCConvection, _require_edge_cloud_base, CMFMCWorkspace,
@@ -54,6 +55,7 @@ using ..State: AbstractCubedSphereField,
     field_value, panel_field, update_field!
 using ..MetDrivers: ConvectionForcing, current_time
 using ..Architectures: _kahan_add
+using ..Parameters: DEFAULT_CFL_LIMIT, DEFAULT_LINROOD_PPM_ORDER
 using ..Output: cell_locator, locate                   # observation binding (Inversion/)
 
 # Tape storage policies + record types live in src/Tape/

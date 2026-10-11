@@ -2,7 +2,7 @@
 # are imported from ..Grids via the parent Preprocessing module.
 
 """
-    merge_thin_levels(vc; min_thickness_Pa=1000, p_surface=101325)
+    merge_thin_levels(vc; min_thickness_Pa=1000, p_surface=STANDARD_PRESSURE)
 
 Merge adjacent vertical levels that are thinner than `min_thickness_Pa` at
 the reference surface pressure. Returns `(merged_vc, merge_map)` where
@@ -135,7 +135,7 @@ const ECHLEVS_ML137_PRESETS = Dict(
     "ml137_cfl85"   => ECHLEVS_ML137_CFL85,
     "ml137_94L"     => ECHLEVS_ML137_CFL94,
     "ml137_85L"     => ECHLEVS_ML137_CFL85,
-    "ml137_full"    => collect(137:-1:0),
+    "ml137_full"    => collect(ERA5_NATIVE_LEVEL_COUNT:-1:0),
 )
 
 """

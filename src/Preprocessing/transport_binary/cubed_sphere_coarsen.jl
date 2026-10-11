@@ -7,6 +7,13 @@
 # C90 diffusion operator for block-uniform tracer concentrations; it is not a
 # fresh nonlinear TM5 bldiff calculation on C30 meteorology.
 
+# HACK: `scripts/preprocessing/coarsen_cs_transport_binary.jl` also `Base.include`s
+# this file into the format-v4 tree's Preprocessing module, which lacks these names
+# in its shared import list (`Preprocessing.jl`). TODO: drop this line together
+# with that script's HACK block once the C90 campaign leaves the format-v4 tree.
+using ..Parameters: COARSEN_SUBSTEP_CFL_TARGET, DEFAULT_POSITIVITY_CFL_LIMIT,
+                    DEFAULT_MAX_STEPS_PER_WINDOW
+
 const _EXPERIMENTAL_CS_COARSEN_SECTIONS = Set((
     :m, :am, :bm, :cm, :ps, :dm,
     :pblh, :ustar, :pbl_hflux, :t2m, :dkg,
@@ -203,9 +210,9 @@ function coarsen_nested_cs_transport_binary(
         input_path::AbstractString,
         output_path::AbstractString;
         target_Nc::Integer = 30,
-        substep_cfl_target::Real = 0.90,
-        positivity_cfl_limit::Real = 0.95,
-        max_steps_per_window::Integer = 4096,
+        substep_cfl_target::Real = COARSEN_SUBSTEP_CFL_TARGET,
+        positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
+        max_steps_per_window::Integer = DEFAULT_MAX_STEPS_PER_WINDOW,
         force::Bool = false,
         mark_gated::Bool = false)
     input_abs = abspath(input_path)

@@ -47,8 +47,8 @@ using .AtmosTransport.Grids: LatLonMesh, CubedSphereMesh,
                              GnomonicPanelConvention, GEOSNativePanelConvention
 using .AtmosTransport.Regridding: build_regridder, apply_regridder!
 
-# Earth radius [m] (ECMWF/TM5 convention; matches preprocessing constants).
-const R_EARTH_M = 6.371229e6
+# Earth radius [m] of the preprocessing target meshes (ECMWF IFS / TM5).
+const R_EARTH_M = AtmosTransport.Parameters.IFS_EARTH_RADIUS
 
 const USAGE = """
 Usage: julia --project=. scripts/validation/compare_cs_vs_ll.jl \\

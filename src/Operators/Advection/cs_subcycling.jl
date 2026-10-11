@@ -30,7 +30,7 @@ function _cs_static_palindrome_subcycle_count(panels_am::NTuple{6},
                                               Nc::Int, Hp::Int, Nz::Int,
                                               cfl_limit::Real;
                                               flux_scale = one(eltype(panels_m[1])),
-                                              max_n_sub::Int = 4096)
+                                              max_n_sub::Int = DEFAULT_MAX_SUBCYCLES)
     FT = eltype(panels_m[1])
     fs = convert(FT, flux_scale)
     iL = Hp + 1

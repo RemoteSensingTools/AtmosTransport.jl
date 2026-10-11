@@ -177,7 +177,7 @@ function apply!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},
                 scheme::AbstractAdvectionScheme, dt;
                 workspace,
                 diffusion_workspace = nothing,
-                cfl_limit::Real = 0.95,
+                cfl_limit::Real = DEFAULT_CFL_LIMIT,
                 diffusion_op::AbstractDiffusion = NoDiffusion(),
                 emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                 meteo = nothing) where {B <: AbstractMassBasis}
@@ -202,7 +202,7 @@ end
                          ::NoAdvection, dt;
                          workspace = nothing,
                          diffusion_workspace = nothing,
-                         cfl_limit::Real = 0.95,
+                         cfl_limit::Real = DEFAULT_CFL_LIMIT,
                          diffusion_op::AbstractDiffusion = NoDiffusion(),
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
