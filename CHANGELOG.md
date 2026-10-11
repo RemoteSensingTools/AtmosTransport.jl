@@ -101,6 +101,15 @@
   `scripts/inversions/synthetic_experiment.jl` gains a `scheme` field
   (default unchanged).
 
+- The replay-check API takes a `ReplayScratch` (per-cell divergence and
+  flux-magnitude arrays) instead of one divergence array:
+  `verify_window_continuity(layout, scratch, ...)`,
+  `verify_window_continuity_rg(m_cur, hflux, cm, m_next, face_left, face_right,
+  steps_per_window; scratch)` (the positional `div_scratch` is gone), and the
+  `replay_scratch` keyword of `verify_ll_window_contract!`,
+  `verify_rg_window_contract!`, `verify_cs_window_contract!` and
+  `verify_write_replay_cs!` (was `div_scratch`). See Fixes for the test itself.
+
 ### Fixes
 
 - `CSLBFGS` evaluated every control point at least twice (#17): Optim
@@ -113,6 +122,33 @@
   bitwise-identical costs, gradients and minimizer (single-threaded). The
   iteration log no longer records iteration 0 twice; its rows now match
   `cost_history`.
+
+- The transport-binary replay check (write time and `[input] validate_replay`)
+  is a per-cell test (#15, item 2). It divided each cell's budget residual by
+  the largest cell mass of the window, so in thin top-level cells (down to
+  1.85e-5 of the largest mass on the LL72 golden) it accepted relative errors
+  up to 5.4e-6 at the Float64 tolerance and 540 % at the Float32 one. Each
+  cell's residual is now measured against the summed magnitudes of its own
+  budget terms,
+  `|m_cur| + |m_next| + 2n Σ_faces |F|` (the scale that bounds its rounding
+  error), with tolerances `REPLAY_TOLERANCE_FLOAT64 = 1e-12` and
+  `REPLAY_TOLERANCE_FLOAT32 = 1e-5` (were 1e-10 and 1e-4) now in
+  `src/Parameters`. Stored binaries measure at most 6.5e-14 (Float64 goldens,
+  15× margin) and 1.0e-6 (Float32: the goldens and samples of the C90 ERA5
+  L117/L66 and MERRA-2 and the C180 GEOS-IT production binaries, 10× margin).
+  A residual normalised by the cell's mass alone would leave Float32 only
+  2.7× margin (3.7e-6 measured), because Float32 rounding grows with the
+  fluxes through the cell. Also: NaN or Inf in the stored data now fails the
+  check (it reported 0 before); the load-time check of a binary loaded in a
+  different float type than stored uses the less precise type's tolerance
+  (`replay_tolerance(FT, DiskFT)`; a Float32 binary opened in a Float64 run
+  failed it before); and the reduced-Gaussian write-time contract checks the
+  stored output-type arrays instead of the Float64 work arrays they are
+  rounded from, like the lat-lon and cubed-sphere paths.
+  `scripts/validation/verify_cs_binary_continuity.jl` defaults `--threshold`
+  to `replay_tolerance` of the binary's storage type (was 1e-10). Payloads
+  are unchanged; the check does not validate the winds themselves.
+
 - Transport binaries (eager and streaming writers), the spectral day cache and
   cached regridders are published through `AtomicFiles`: a sibling staging
   file moved onto the target by one replacing rename (`rename(2)` on POSIX
@@ -786,10 +822,10 @@
     and window chaining, but cannot detect rotational flux errors,
     level-flipped fluxes, a wrong vertical split (including `cm` close to
     zero), a flux through the model top and surface that is the same at
-    every interface of a column, or large relative errors in thin cells. The gate's metric is the largest cell
-    error divided by the largest cell mass; *Binary format*, *Mass
-    conservation*, the ERA5 preprocessing page and the TM5/GCHP pages
-    showed a norm ratio, and *Philosophy* claimed bit-level closure.
+    every interface of a column. *Binary format*, *Mass conservation*, the
+    ERA5 preprocessing page and the TM5/GCHP pages now show the per-cell
+    budget-term metric and current tolerances, and *Philosophy* no longer
+    claims bit-level closure.
   - The adjoint pages list the current 4D-Var limits (#20):
     `cs_surface_flux_4dvar` runs one taped forward and reverse run per
     observation, so a gradient's cost grows linearly with the number of
@@ -983,10 +1019,11 @@
   The transcription itself keeps a uniform field exact, conserves mass and
   converges at second order.
 - `test/core/test_replay_consistency.jl` has a *Replay gate scope* testset
-  for the statements in *What the replay gate certifies*: the normalization
-  by the largest cell mass, and that with `cm` re-diagnosed as the
-  preprocessors do it a rotational flux error, an `am`/`bm` level flip and a
-  column-uniform `cm` offset pass while a broken column budget fails.
+  for the statements in *What the replay gate certifies*: a thin cell's
+  residual is measured against that cell's own budget terms, and with `cm`
+  re-diagnosed as the preprocessors do it a rotational flux error, an
+  `am`/`bm` level flip and a column-uniform `cm` offset pass while a broken
+  column budget fails.
 - The golden-output harness (`test/golden/run_goldens.jl`) runs its cases in
   worker sessions instead of one Julia process per case: one process
   (`golden_worker.jl`) per group of cases with the same entry point,

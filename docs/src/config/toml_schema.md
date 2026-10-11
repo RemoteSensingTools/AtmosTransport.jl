@@ -84,7 +84,8 @@ not sort entries or validate date continuity; provide them chronologically.
 
 - `validate_replay = true` replays every binary's continuity when it is
   opened: the stored fluxes must carry each window's air mass to the next
-  within `replay_tolerance` (1e-10 relative in Float64, 1e-4 in Float32). Off
+  in every cell, within `replay_tolerance` (1e-12 in Float64, 1e-5 in
+  Float32, of the summed magnitudes of the cell's budget terms). Off
   by default (it doubles binary load time); the preprocessor already checks
   every binary it writes. Use it for binaries of unknown origin.
 - `expected_nlevel`, `required_preprocessor_contract` and

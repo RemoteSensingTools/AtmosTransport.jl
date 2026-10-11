@@ -158,6 +158,26 @@ function ingest_window!(workspace::ReducedGaussianSpectralWindowWorkspace,
     return time() - t0
 end
 
+"""
+    _verify_rg_stored_window!(contract, workspace, m_next, win_idx; write_replay_on, accumulate)
+
+Run the RG window contract on the arrays the writer stores: the current
+buffer slot's `m`, `hflux` and `cm` in the output float type and the `m_next`
+endpoint, not the Float64 balance work arrays they were rounded from.
+"""
+function _verify_rg_stored_window!(contract,
+                                   workspace::ReducedGaussianSpectralWindowWorkspace,
+                                   m_next::AbstractMatrix,
+                                   win_idx::Int;
+                                   write_replay_on::Bool,
+                                   accumulate::Bool)
+    slot = workspace.cur
+    return _verify_rg_balanced_window!(contract, workspace.buf.m[slot],
+                                       workspace.buf.hflux[slot], workspace.buf.cm[slot],
+                                       m_next, win_idx;
+                                       write_replay_on, accumulate)
+end
+
 function drain_ready_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{FT},
                               contract,
                               win_idx::Int,
@@ -182,10 +202,9 @@ function drain_ready_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
                                workspace.buf, workspace.cur,
                                workspace.buf.m[workspace.nxt],
                                workspace.work, workspace.cL, steps)
-        contract_diag = _verify_rg_balanced_window!(
-            contract, workspace.m_cur_work, workspace.hflux_work, workspace.cm_work,
-            workspace.m_next_work, win_idx; write_replay_on = write_replay_on,
-            accumulate = false)
+        contract_diag = _verify_rg_stored_window!(
+            contract, workspace, workspace.buf.m[workspace.nxt], win_idx;
+            write_replay_on = write_replay_on, accumulate = false)
         next_steps = next_substeps(substep_policy, steps,
                                    contract_diag.positivity.ratio)
         next_steps == steps && break
@@ -226,10 +245,9 @@ function flush_final_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
                                workspace.div_scratch, workspace.dm_target_work,
                                workspace.buf, workspace.cur, m_next,
                                workspace.work, workspace.cL, steps)
-        contract_diag = _verify_rg_balanced_window!(
-            contract, workspace.m_cur_work, workspace.hflux_work, workspace.cm_work,
-            workspace.m_next_work, win_idx; write_replay_on = write_replay_on,
-            accumulate = false)
+        contract_diag = _verify_rg_stored_window!(
+            contract, workspace, m_next, win_idx;
+            write_replay_on = write_replay_on, accumulate = false)
         next_steps = next_substeps(substep_policy, steps,
                                    contract_diag.positivity.ratio)
         next_steps == steps && break

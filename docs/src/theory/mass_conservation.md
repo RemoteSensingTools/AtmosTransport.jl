@@ -106,28 +106,35 @@ The production GEOS-CS path does not use the separate FV3-style pressure-fixer
 
 ## Replay-gate tolerance
 
-Conservation in floating-point is verified per-window via:
+Conservation in floating-point is verified per window and per cell. With
+`n` substeps per window, the stored per-substep face fluxes `F` of cell `c`
+must carry its mass from one window to the next:
 
 ```math
-\frac{\max_c \bigl|m_{\text{evolved},c} - m_{\text{stored},n+1,c}\bigr|}{\max_c \bigl|m_{\text{stored},n+1,c}\bigr|} \;\le\; \tau(\text{FT})
+\left| m_{c,n} - 2n \sum_{\text{faces}} F_{\text{out}} + 2n \sum_{\text{faces}} F_{\text{in}} - m_{c,n+1} \right|
+\;\le\; \tau(\text{FT}) \left( |m_{c,n}| + |m_{c,n+1}| + 2n \sum_{\text{faces}} |F| \right)
 ```
 
-where `c` runs over the cells of the grid (of one panel on the cubed sphere),
-so each cell's error is divided by the largest cell mass.
+The right-hand side is the sum of the magnitudes of the budget's terms,
+which bounds the rounding error of evaluating the sum (Higham, *Accuracy
+and Stability of Numerical Algorithms*, 2nd ed., SIAM 2002, ch. 4).
+Measuring each cell against its own budget keeps the test as strict in the
+thin top layers as in thick boundary-layer cells; a test normalised by the
+largest cell mass would be 10⁴–10⁵ times looser there.
 
-`replay_tolerance(FT)` is defined in
-`src/MetDrivers/ReplayContinuity.jl`:
+`replay_tolerance(FT)` (`src/MetDrivers/ReplayContinuity.jl`) returns the
+constants of `src/Parameters/NumericalDefaults.jl`:
 
-| FT | `τ(FT)` |
-|---|---|
-| `Float64` | `1e-10` |
-| `Float32` | `1e-4`  |
+| FT | `τ(FT)` | worst current binary |
+|---|---|---|
+| `Float64` | `1e-12` | `6.5e-14` |
+| `Float32` | `1e-5`  | `1.0e-6` |
 
-The Float32 tolerance reflects the noise floor of single-precision
-arithmetic at production resolutions (Float32's 23-bit mantissa,
-giving ~7 decimal digits of precision per operation, accumulates to
-roughly `1e-5` per substep on a 720×361 grid; the per-window gate is
-relaxed to `1e-4` to absorb the per-window accumulation).
+Float64 binaries are limited by the residual of the Poisson flux balance;
+Float32 binaries by Float32 rounding (about 9 `eps(Float32)`). The measured values cover the 2026-10 golden binaries
+and samples of the C90 ERA5, MERRA-2 and C180 GEOS-IT production
+binaries. A binary loaded in a different float type than it is stored in is
+checked at the tolerance of the less precise type.
 
 These replay gates check carrier-air continuity. They do not bound tracer
 drift or establish consistency of reconstructed tracer fluxes at panel seams;

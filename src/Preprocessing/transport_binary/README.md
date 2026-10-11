@@ -57,7 +57,9 @@ header (LL does it when `LatLonDeferredBinaryWriter` opens). GEOS uses
 
 - Replay: `verify_window_continuity` (from `MetDrivers`) integrates the
   stored fluxes from `m_cur` over the palindrome substeps and compares with
-  `m_next`; it errors when the relative error exceeds `replay_tolerance(FT)`.
+  `m_next` in every cell; it errors when a cell's residual exceeds
+  `replay_tolerance(FT)` times the summed magnitudes of its budget terms.
+  Every topology checks the arrays as stored (in the output float type).
 - Positivity: CS and LL compare the palindrome outflow `2 * (out_x + out_y +
   out_z)` with `positivity_cfl_limit * min(m, m_next)` (one shared check); RG
   compares each direction's outflow with `positivity_cfl_limit * m`, skips pole

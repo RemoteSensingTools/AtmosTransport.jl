@@ -78,12 +78,12 @@ function _validate_window_cm_sanity(reader::TransportBinaryReader; max_rel_cm::R
 end
 
 @inline function _replay_window_pair(::StructuredDirectionalReplayLayout,
-                                     div_scratch::AbstractArray{Float64, 3},
+                                     scratch::ReplayScratch,
                                      m_cur::AbstractArray{FT, 3},
                                      fluxes::StructuredFaceFluxState,
                                      m_next::AbstractArray{FT, 3},
                                      steps_per_window::Integer) where FT
-    return verify_window_continuity(structured_replay_layout(), div_scratch,
+    return verify_window_continuity(structured_replay_layout(), scratch,
                                     m_cur, fluxes.cm, m_next, steps_per_window,
                                     fluxes.am, fluxes.bm)
 end
@@ -92,11 +92,12 @@ end
     _validate_replay_consistency_ll(reader::TransportBinaryReader)
 
 Load-time replay gate for LL structured binaries.
-Walks every consecutive window pair (k, k+1) and asserts
+Walks every consecutive window pair (k, k+1) and asserts, cell by cell,
 
     m[k] − 2·steps·(∇·am + ∇·bm + ∂_k cm)  ≈  m[k+1]
 
-to within `tol_rel = 1e-10` (Float64) / `1e-4` (Float32). This mirrors the
+to within `replay_tolerance(FT, DiskFT)` of the summed magnitudes of the
+budget's terms (see `verify_window_continuity`). This mirrors the
 write-time gate but fires at driver construction so a
 binary produced by an older preprocessor (with the dry-basis Δb×pit cm
 closure bug) is rejected before any runtime integration.
@@ -104,13 +105,13 @@ closure bug) is rejected before any runtime integration.
 Runs only when the driver is built with `validate_replay = true`
 (`[input] validate_replay`).
 """
-function _validate_replay_consistency_ll(reader::TransportBinaryReader{FT}) where FT
-    tol_rel = replay_tolerance(FT)
+function _validate_replay_consistency_ll(reader::TransportBinaryReader{FT, DiskFT}) where {FT, DiskFT}
+    tol_rel = replay_tolerance(FT, DiskFT)
     Nt = window_count(reader)
     Nt >= 2 || return nothing
 
     m_cur, _ps_cur, fluxes = load_window!(reader, 1)
-    div_scratch = Array{Float64}(undef, size(m_cur))
+    scratch = ReplayScratch(size(m_cur))
     layout = structured_replay_layout()
     worst_rel = 0.0
     worst_abs = 0.0
@@ -119,7 +120,7 @@ function _validate_replay_consistency_ll(reader::TransportBinaryReader{FT}) wher
     for k in 1:(Nt - 1)
         m_next, _ps_next, fluxes_next = load_window!(reader, k + 1)
         steps = reader.header.steps_per_window_by_window[k]
-        diag = _replay_window_pair(layout, div_scratch, m_cur, fluxes, m_next, steps)
+        diag = _replay_window_pair(layout, scratch, m_cur, fluxes, m_next, steps)
         if diag.max_rel_err > worst_rel
             worst_rel = diag.max_rel_err
             worst_abs = diag.max_abs_err
@@ -165,12 +166,12 @@ _validate_replay_consistency_ll(::Any) = nothing
 end
 
 @inline function _replay_window_pair(layout::FaceIndexedReplayLayout,
-                                     div_scratch::AbstractMatrix{Float64},
+                                     scratch::ReplayScratch,
                                      m_cur::AbstractMatrix{FT},
                                      fluxes::FaceIndexedFluxState,
                                      m_next::AbstractMatrix{FT},
                                      steps_per_window::Integer) where FT
-    return verify_window_continuity(layout, div_scratch,
+    return verify_window_continuity(layout, scratch,
                                     m_cur, fluxes.cm, m_next, steps_per_window,
                                     fluxes.horizontal_flux)
 end
@@ -180,15 +181,17 @@ end
 
 Load-time replay gate for RG (`:faceindexed`) binaries.
 Uses the `ReducedGaussianMesh` from `grid.horizontal` to build face-cell
-connectivity, then walks consecutive window pairs and asserts
+connectivity, then walks consecutive window pairs and asserts, cell by cell,
 
     m[k] − 2·steps·(div_face_flux + ∂_k cm) ≈ m[k+1]
 
-to within `tol_rel = 1e-10` (Float64) / `1e-4` (Float32). Runs only when the
+to within `replay_tolerance(FT, DiskFT)` of the summed magnitudes of the
+budget's terms (see `verify_window_continuity`). Runs only when the
 driver is built with `validate_replay = true` (`[input] validate_replay`).
 """
-function _validate_replay_consistency_rg(reader::TransportBinaryReader{FT}, grid) where FT
-    tol_rel = replay_tolerance(FT)
+function _validate_replay_consistency_rg(reader::TransportBinaryReader{FT, DiskFT},
+                                         grid) where {FT, DiskFT}
+    tol_rel = replay_tolerance(FT, DiskFT)
     Nt = window_count(reader)
     Nt >= 2 || return nothing
 
@@ -196,8 +199,7 @@ function _validate_replay_consistency_rg(reader::TransportBinaryReader{FT}, grid
     layout = faceindexed_replay_layout(face_left, face_right)
 
     m_cur, _, fluxes = load_window!(reader, 1)
-    _, Nz = size(m_cur)
-    div_scratch = zeros(Float64, size(m_cur, 1), Nz)
+    scratch = ReplayScratch(size(m_cur))
     worst_rel = 0.0
     worst_abs = 0.0
     worst_win = 0
@@ -205,7 +207,7 @@ function _validate_replay_consistency_rg(reader::TransportBinaryReader{FT}, grid
     for k in 1:(Nt - 1)
         m_next, _, fluxes_next = load_window!(reader, k + 1)
         steps = reader.header.steps_per_window_by_window[k]
-        diag = _replay_window_pair(layout, div_scratch, m_cur, fluxes, m_next, steps)
+        diag = _replay_window_pair(layout, scratch, m_cur, fluxes, m_next, steps)
         if diag.max_rel_err > worst_rel
             worst_rel = diag.max_rel_err
             worst_abs = diag.max_abs_err

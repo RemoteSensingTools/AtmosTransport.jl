@@ -155,7 +155,7 @@ Tolerances vary by operation; the canonical sources:
 
 | Operation | F64 tolerance | F32 tolerance | Reference |
 |---|---|---|---|
-| Per-window replay gate | `1e-10` | `1e-4` | `src/MetDrivers/ReplayContinuity.jl::replay_tolerance(FT)` |
+| Per-window replay gate (per cell, relative to the summed budget-term magnitudes) | `1e-12` | `1e-5` | `src/MetDrivers/ReplayContinuity.jl::replay_tolerance(FT)` |
 | Window-continuity verification (test variant) | `1e-12` | `1e-6` | `test/core/test_replay_consistency.jl` |
 | Per-step uniform-tracer invariance (relative) | `1e-6` | `1e-6` | `test/core/test_advection_kernels.jl` |
 | 4-step total mass conservation (gradient IC, structured grid) | `1e-12` | `5e-5` | `test/core/test_advection_kernels.jl` |

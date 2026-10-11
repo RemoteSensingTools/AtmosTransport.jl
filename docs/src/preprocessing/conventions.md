@@ -110,12 +110,17 @@ multiplication by `dt` at apply time.
 
 ## Replay tolerances
 
-| FT | `replay_tolerance(FT)` |
-|---|---|
-| `Float64` | `1e-10` |
-| `Float32` | `1e-4` |
+The replay check tests every cell's window budget,
+`|m_evolved − m_next| ≤ τ (|m_cur| + |m_next| + 2 n Σ_faces |F|)` with `n`
+substeps per window (see `verify_window_continuity`):
 
-Defined in `src/MetDrivers/ReplayContinuity.jl`. Used by:
+| FT | `replay_tolerance(FT)` | worst current binary |
+|---|---|---|
+| `Float64` | `1e-12` (`REPLAY_TOLERANCE_FLOAT64`) | `6.5e-14` |
+| `Float32` | `1e-5` (`REPLAY_TOLERANCE_FLOAT32`) | `1.0e-6` |
+
+The values are defined in `src/Parameters/NumericalDefaults.jl`;
+`replay_tolerance` is in `src/MetDrivers/ReplayContinuity.jl`. Used by:
 
 - **Write-time gate** in every preprocessing path
   (`verify_storage_continuity_*!`, `verify_write_replay_cs!`).
@@ -125,10 +130,13 @@ Defined in `src/MetDrivers/ReplayContinuity.jl`. Used by:
   `validate_replay = true`. Failures throw an `ArgumentError` pointing at
   the worst-cell location.
 
-The asymmetry between F64 and F32 reflects the noise floor: F32
-arithmetic at production resolutions accumulates rounding to ~`1e-5`
-per substep, so a `1e-10` gate would false-positive on healthy F32
-binaries.
+The two tolerances follow the measured noise floors. Float64 binaries are
+limited by the residual of the Poisson flux balance (at most `6.5e-14` in
+the 2026-10 goldens); Float32 binaries by Float32 rounding (at most
+`1.0e-6`, about 9 `eps(Float32)`, in C90 and C180 binaries from ERA5,
+MERRA-2 and GEOS-IT). Because the residual is measured
+against each cell's own budget, the test is as strict in thin top-level
+cells as in thick ones.
 
 ## Per-source data layout cheat sheet
 

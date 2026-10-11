@@ -44,6 +44,35 @@ function write_inconsistent_ll_binary(path; Nx = 4, Ny = 3, Nz = 2)
     return path
 end
 
+# A two-window lat-lon binary whose window-1 fluxes carry window 1's air mass
+# to window 2 exactly in Float64 (cm from the explicit-dm closure), stored as
+# `FT`: only storage rounding is left in the replay residual.
+function write_consistent_ll_binary(path; FT = Float32, Nx = 4, Ny = 3, Nz = 2, steps = 2)
+    grid = AtmosGrid(LatLonMesh(; FT = Float64, Nx, Ny),
+                     HybridSigmaPressure([0.0, 5000.0, 0.0], [0.0, 0.5, 1.0]), CPU(); FT = Float64)
+    m1 = [1e16 * (1 + 0.1 * sinpi(i / Nx) + 0.05 * j + 0.02 * k) for i in 1:Nx, j in 1:Ny, k in 1:Nz]
+    am = [3e12 * cospi(0.7i + 0.3j + 0.5k) for i in 1:Nx + 1, j in 1:Ny, k in 1:Nz]
+    am[Nx + 1, :, :] .= am[1, :, :]                      # periodic in longitude
+    bm = [2e12 * sinpi(0.4i + 0.6j + 0.2k) for i in 1:Nx, j in 1:Ny + 1, k in 1:Nz]
+    bm[:, 1, :] .= 0; bm[:, Ny + 1, :] .= 0               # no flux through the poles
+    dm = [1e11 * cospi(0.9i + 0.4j) * (k == 1 ? 1 : -1) for i in 1:Nx, j in 1:Ny, k in 1:Nz]
+    cm = zeros(Nx, Ny, Nz + 1)
+    ReplayMD.recompute_cm_from_dm_target!(cm, am, bm, m1, dm)
+    m2 = similar(m1)                                         # the endpoint the fluxes reach
+    for k in 1:Nz, j in 1:Ny, i in 1:Nx
+        m2[i, j, k] = m1[i, j, k] - 2steps * ((am[i + 1, j, k] - am[i, j, k]) +
+                      (bm[i, j + 1, k] - bm[i, j, k]) + (cm[i, j, k + 1] - cm[i, j, k]))
+    end
+    windows = [(m = m1, am = am, bm = bm, cm = cm, ps = fill(1e5, Nx, Ny)),
+               (m = m2, am = zeros(Nx + 1, Ny, Nz), bm = zeros(Nx, Ny + 1, Nz),
+                cm = zeros(Nx, Ny, Nz + 1), ps = fill(1e5, Nx, Ny))]
+    write_transport_binary(path, grid, windows; FT, dt_met_seconds = 3600.0,
+                           half_dt_seconds = 1800.0, steps_per_window = steps, mass_basis = :dry,
+                           source_flux_sampling = :window_start_endpoint,
+                           flux_sampling = :window_constant)
+    return path
+end
+
 run_quietly(cfg) = with_logger(NullLogger()) do
     redirect_stdout(devnull) do
         redirect_stderr(devnull) do
@@ -109,6 +138,23 @@ end
         @test err isa ArgumentError && occursin("replay-consistency gate FAILED", err.msg)
         ll_cfg["input"]["validate_replay"] = false
         @test run_quietly(ll_cfg) !== nothing
+
+        # A Float32 binary opened in Float64 is checked at the Float32 tolerance:
+        # the loaded values carry Float32 rounding whatever the run's float type.
+        f32 = write_consistent_ll_binary(joinpath(dir, "consistent_f32.bin"); FT = Float32)
+        reader = ReplayMD.TransportBinaryReader(f32; FT = Float64)
+        m1, _, fl = ReplayMD.load_window!(reader, 1)
+        m2, _, _ = ReplayMD.load_window!(reader, 2)
+        rounding = ReplayMD.verify_window_continuity_ll(m1, fl.am, fl.bm, fl.cm, m2, 2).max_rel_err
+        close(reader)
+        @test ReplayMD.replay_tolerance(Float64) < rounding < ReplayMD.replay_tolerance(Float32)
+        for FT in (Float64, Float32)
+            driver = with_logger(NullLogger()) do
+                TransportBinaryDriver(f32; FT, arch = CPU(), validate_replay = true)
+            end
+            @test driver isa TransportBinaryDriver
+            close(driver)
+        end
     end
 end
 end

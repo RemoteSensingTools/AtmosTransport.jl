@@ -133,8 +133,9 @@ basis in the header; the runtime refuses to load a mismatched binary
 at construction time. The `cm` (vertical mass flux) field in every
 binary is closed against the explicit `dm` (per-substep mass delta)
 field at write time, with a write-time replay gate that evolves the
-mass forward one window and checks closure to `1e-10` (Float64) or `1e-4`
-(Float32) of the largest cell mass. A binary that fails the gate is not
+mass forward one window and checks each cell's residual against the summed
+magnitudes of its own budget terms, with tolerance `1e-12` (Float64) or
+`1e-5` (Float32). A binary that fails the gate is not
 written; one written with the gate switched off records that in its header,
 and the runtime warns when it opens it. The gate certifies a
 self-consistent payload, not correct winds (see

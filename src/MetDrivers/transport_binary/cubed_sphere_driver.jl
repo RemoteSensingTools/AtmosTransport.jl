@@ -8,7 +8,7 @@ _supports_runtime_diffusion(
 function _validate_replay_consistency_cs(
     reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinaryGeometry},
 ) where {FT, DiskFT}
-    tol_rel = replay_tolerance(FT)
+    tol_rel = replay_tolerance(FT, DiskFT)
     Nt = window_count(reader)
     Nt >= 1 || return nothing
 

@@ -22,8 +22,43 @@ const STRUCTURED_DIRECTIONAL_REPLAY = StructuredDirectionalReplayLayout()
                                   face_right::AbstractVector{<:Integer}) =
     FaceIndexedReplayLayout(face_left, face_right)
 
-@inline replay_tolerance(::Type{FT}) where {FT <: AbstractFloat} =
-    FT === Float32 ? 1e-4 : 1e-10
+"""
+    replay_tolerance(FT)
+    replay_tolerance(FT, DiskFT)
+
+Tolerance of the per-cell replay check (`verify_window_continuity`) for data of
+float type `FT`: `REPLAY_TOLERANCE_FLOAT64` or `REPLAY_TOLERANCE_FLOAT32` from
+`src/Parameters`. For a binary stored as `DiskFT` and loaded as `FT`, the less
+precise of the two sets it, because the loaded values carry that type's rounding.
+"""
+replay_tolerance(::Type{Float64}) = REPLAY_TOLERANCE_FLOAT64
+replay_tolerance(::Type{Float32}) = REPLAY_TOLERANCE_FLOAT32
+replay_tolerance(::Type{FT}, ::Type{DiskFT}) where {FT, DiskFT} =
+    max(replay_tolerance(FT), replay_tolerance(DiskFT))
+
+"""
+    ReplayScratch(dims)
+
+Per-cell work arrays of the replay check, of shape `dims` (the air-mass shape):
+`div`, the net horizontal outflow of each cell, and `mag`, the sum of the
+magnitudes of its horizontal face fluxes. Allocate one per grid and reuse it
+across windows.
+"""
+struct ReplayScratch{A <: AbstractArray{Float64}}
+    div :: A
+    mag :: A
+
+    function ReplayScratch(div::A, mag::A) where {A <: AbstractArray{Float64}}
+        size(div) == size(mag) ||
+            error("ReplayScratch: div shape $(size(div)) != mag shape $(size(mag))")
+        return new{A}(div, mag)
+    end
+end
+
+ReplayScratch(dims::Dims) =
+    ReplayScratch(Array{Float64}(undef, dims), Array{Float64}(undef, dims))
+
+Base.size(scratch::ReplayScratch) = size(scratch.div)
 
 @inline _continuity_cm_shape(sz::NTuple{N, Int}) where {N} =
     ntuple(d -> d < N ? sz[d] : sz[d] + 1, Val(N))
@@ -83,6 +118,38 @@ function horizontal_divergence!(div_h::AbstractMatrix{Float64},
         right > 0 && (div_h[right, k] -= flux)
     end
     return div_h
+end
+
+"""
+    horizontal_flux_magnitude!(mag_h, layout, flux_args...)
+
+Populate `mag_h` with the sum of `|F|` over each cell's horizontal faces, the
+horizontal part of the scale the replay residual is measured against.
+"""
+function horizontal_flux_magnitude!(mag_h::AbstractArray{Float64, 3},
+                                    ::StructuredDirectionalReplayLayout,
+                                    am::AbstractArray,
+                                    bm::AbstractArray)
+    Nx, Ny, Nz = size(mag_h)
+    @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
+        mag_h[i, j, k] = (abs(Float64(am[i + 1, j, k])) + abs(Float64(am[i, j, k]))) +
+                         (abs(Float64(bm[i, j + 1, k])) + abs(Float64(bm[i, j, k])))
+    end
+    return mag_h
+end
+
+function horizontal_flux_magnitude!(mag_h::AbstractMatrix{Float64},
+                                    layout::FaceIndexedReplayLayout,
+                                    hflux::AbstractMatrix)
+    fill!(mag_h, 0.0)
+    @inbounds for k in axes(mag_h, 2), f in eachindex(layout.face_left)
+        flux = abs(Float64(hflux[f, k]))
+        left  = Int(layout.face_left[f])
+        right = Int(layout.face_right[f])
+        left  > 0 && (mag_h[left,  k] += flux)
+        right > 0 && (mag_h[right, k] += flux)
+    end
+    return mag_h
 end
 
 """
@@ -158,33 +225,42 @@ function recompute_faceindexed_cm_from_dm_target!(cm::AbstractMatrix{FT},
 end
 
 """
-    verify_window_continuity(div_h, m_cur, cm, m_next, steps_per_window)
-    verify_window_continuity(layout, div_h, m_cur, cm, m_next, steps_per_window, flux_args...)
+    verify_window_continuity(scratch, m_cur, cm, m_next, steps_per_window)
+    verify_window_continuity(layout, scratch, m_cur, cm, m_next, steps_per_window, flux_args...)
 
-Replay one window's stored mass-flux data against the stored air-mass
-endpoints. The first form assumes `div_h` is already populated; the second
-builds it through the topology-specific `layout`.
+Replay one window's stored mass fluxes against the stored air-mass endpoints,
+cell by cell. With `n = steps_per_window`, each cell's budget residual is
 
-Returns `(max_abs_err, max_rel_err, worst_idx)`. `max_rel_err` is the largest
-cell error `|m_cur − 2·steps_per_window·(div_h + Δcm) − m_next|` divided by
-the largest `|m_next|` in the array, not by each cell's own mass. Only the
-differences `cm[k+1] − cm[k]` enter. When `cm` was diagnosed from the same
-fluxes and endpoints, as the preprocessors that build binaries from
-meteorological data do before their gates, this checks the column mass
-budgets and the payload's self-consistency, not the winds; see
-[What the replay gate certifies](@ref).
+    r = m_cur − 2n (div_h + cm[k+1] − cm[k]) − m_next
+
+(`div_h` the net horizontal outflow of one flux application) and its scale is
+
+    s = |m_cur| + |m_next| + 2n (Σ_faces |F_h| + |cm[k]| + |cm[k+1]|),
+
+the summed magnitudes of the budget's terms, which bounds the rounding error of
+the sum. The result's `max_rel_err` is the largest `|r| / s` of any cell, with
+`max_abs_err = |r|` and `worst_idx` at that cell. A non-finite residual counts
+as `Inf`, so NaN or Inf in the stored data fails every tolerance. Compare
+`max_rel_err` with `replay_tolerance(FT)`.
+
+The first form assumes `scratch.div` and `scratch.mag` (a `ReplayScratch`) are
+already populated; the second builds them through the topology-specific
+`layout`.
+
+This certifies that the stored fluxes carry `m_cur` to `m_next` under the
+runtime's palindrome continuity. It does not test the winds themselves:
+preprocessing diagnoses `cm` from the same horizontal fluxes and endpoints
+just before the check; see [What the replay gate certifies](@ref).
 """
-function verify_window_continuity(div_h::AbstractArray{Float64, N},
+function verify_window_continuity(scratch::ReplayScratch{<:AbstractArray{Float64, N}},
                                   m_cur::AbstractArray{<:Any, N},
                                   cm::AbstractArray{<:Any, N},
                                   m_next::AbstractArray{<:Any, N},
                                   steps_per_window::Integer) where {N}
+    div_h = scratch.div
+    mag_h = scratch.mag
     _check_continuity_shapes("verify_window_continuity", div_h, m_cur, cm, m_next)
     two_steps = Float64(2 * Int(steps_per_window))
-    denom_max = eps(Float64)
-    @inbounds for idx in CartesianIndices(m_next)
-        denom_max = max(denom_max, abs(Float64(m_next[idx])))
-    end
 
     max_abs = 0.0
     max_rel = 0.0
@@ -192,10 +268,16 @@ function verify_window_continuity(div_h::AbstractArray{Float64, N},
     @inbounds for idx in CartesianIndices(m_cur)
         coords = Tuple(idx)
         idx_next = CartesianIndex(Base.setindex(coords, coords[end] + 1, N))
-        net_div = Float64(div_h[idx]) + (Float64(cm[idx_next]) - Float64(cm[idx]))
-        m_evolved = Float64(m_cur[idx]) - two_steps * net_div
-        abs_err = abs(m_evolved - Float64(m_next[idx]))
-        rel_err = abs_err / denom_max
+        m0 = Float64(m_cur[idx])
+        m1 = Float64(m_next[idx])
+        cm_top = Float64(cm[idx])
+        cm_bot = Float64(cm[idx_next])
+        net_div = Float64(div_h[idx]) + (cm_bot - cm_top)
+        abs_err = abs(m0 - two_steps * net_div - m1)
+        scale = abs(m0) + abs(m1) +
+                two_steps * (Float64(mag_h[idx]) + abs(cm_top) + abs(cm_bot))
+        rel_err = abs_err == 0 ? 0.0 : abs_err / scale
+        isfinite(rel_err) || (rel_err = Inf)
         if rel_err > max_rel
             max_rel = rel_err
             max_abs = abs_err
@@ -206,14 +288,15 @@ function verify_window_continuity(div_h::AbstractArray{Float64, N},
 end
 
 function verify_window_continuity(layout::AbstractReplayLayout,
-                                  div_h::AbstractArray{Float64, N},
+                                  scratch::ReplayScratch{<:AbstractArray{Float64, N}},
                                   m_cur::AbstractArray{<:Any, N},
                                   cm::AbstractArray{<:Any, N},
                                   m_next::AbstractArray{<:Any, N},
                                   steps_per_window::Integer,
                                   flux_args...) where {N}
-    horizontal_divergence!(div_h, layout, flux_args...)
-    return verify_window_continuity(div_h, m_cur, cm, m_next, steps_per_window)
+    horizontal_divergence!(scratch.div, layout, flux_args...)
+    horizontal_flux_magnitude!(scratch.mag, layout, flux_args...)
+    return verify_window_continuity(scratch, m_cur, cm, m_next, steps_per_window)
 end
 
 """
@@ -227,16 +310,16 @@ function verify_window_continuity_ll(m_cur::AbstractArray{FT, 3},
                                      cm::AbstractArray,
                                      m_next::AbstractArray,
                                      steps_per_window::Integer) where {FT}
-    div_h = Array{Float64}(undef, size(m_cur))
-    return verify_window_continuity(structured_replay_layout(), div_h, m_cur, cm, m_next,
-                                    steps_per_window, am, bm)
+    return verify_window_continuity(structured_replay_layout(), ReplayScratch(size(m_cur)),
+                                    m_cur, cm, m_next, steps_per_window, am, bm)
 end
 
 """
     verify_window_continuity_rg(m_cur, hflux, cm, m_next, face_left, face_right,
-                                div_scratch, steps_per_window)
+                                steps_per_window; scratch = ReplayScratch(size(m_cur)))
 
-Face-indexed convenience wrapper for the shared replay kernel.
+Face-indexed convenience wrapper for the shared replay kernel. Pass a reused
+`scratch` to avoid allocating per window.
 """
 function verify_window_continuity_rg(m_cur::AbstractMatrix{FT},
                                      hflux::AbstractMatrix,
@@ -244,10 +327,11 @@ function verify_window_continuity_rg(m_cur::AbstractMatrix{FT},
                                      m_next::AbstractMatrix,
                                      face_left::AbstractVector{<:Integer},
                                      face_right::AbstractVector{<:Integer},
-                                     div_scratch::AbstractMatrix{Float64},
-                                     steps_per_window::Integer) where {FT}
+                                     steps_per_window::Integer;
+                                     scratch::ReplayScratch{<:AbstractMatrix{Float64}} =
+                                         ReplayScratch(size(m_cur))) where {FT}
     layout = faceindexed_replay_layout(face_left, face_right)
-    return verify_window_continuity(layout, div_scratch, m_cur, cm, m_next,
+    return verify_window_continuity(layout, scratch, m_cur, cm, m_next,
                                     steps_per_window, hflux)
 end
 
@@ -266,13 +350,13 @@ function verify_window_continuity_cs(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
                                      steps_per_window::Integer) where {FT, NP}
     NP >= 1 || error("verify_window_continuity_cs requires at least one panel")
     layout = structured_replay_layout()
-    div_h = Array{Float64}(undef, size(m_cur[1]))
+    scratch = ReplayScratch(size(m_cur[1]))
     worst_rel = 0.0
     worst_abs = 0.0
     worst_idx = (0, 0, 0, 0)
 
     for p in 1:NP
-        diag = verify_window_continuity(layout, div_h, m_cur[p], cm[p], m_next[p],
+        diag = verify_window_continuity(layout, scratch, m_cur[p], cm[p], m_next[p],
                                         steps_per_window, am[p], bm[p])
         if diag.max_rel_err > worst_rel
             worst_rel = diag.max_rel_err
@@ -288,7 +372,7 @@ end
                                         worst_abs::Real,
                                         worst_win::Integer,
                                         worst_idx)
-    return @sprintf("max|m_evolved−m_stored|/max|m| = %.3e  (abs=%.3e kg  win=%d  cell=%s)",
+    return @sprintf("max per-cell |residual|/scale = %.3e  (abs=%.3e kg  win=%d  cell=%s)",
                     worst_rel, worst_abs, worst_win, worst_idx)
 end
 

@@ -15,7 +15,8 @@ using Printf: @sprintf
 using ..Architectures: array_adapter_for
 using ..State
 using ..Grids
-using ..Parameters: EARTH_RADIUS, DEFAULT_MET_INTERVAL_SECONDS, GMAO_CS_LONGITUDE_OFFSET_DEG
+using ..Parameters: EARTH_RADIUS, DEFAULT_MET_INTERVAL_SECONDS, GMAO_CS_LONGITUDE_OFFSET_DEG,
+                    REPLAY_TOLERANCE_FLOAT64, REPLAY_TOLERANCE_FLOAT32
 import ..source_revision
 
 include("AbstractMetDriver.jl")
@@ -62,7 +63,7 @@ export diagnose_cm_from_continuity!, diagnose_cm_from_continuity_vc!
 export diagnose_cm_from_continuity_ka!
 export recompute_cm_from_dm_target!, recompute_faceindexed_cm_from_dm_target!
 export verify_window_continuity, verify_window_continuity_ll, verify_window_continuity_rg,
-       verify_window_continuity_cs
+       verify_window_continuity_cs, ReplayScratch
 export ERA5ReducedGaussianGeometry
 export read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh
 

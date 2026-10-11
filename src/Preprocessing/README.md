@@ -142,8 +142,9 @@ Files directly in this folder; the subfolders have their own READMEs
   `supports_spectral_massflux_preprocessing` (else `ensure_supported_target`
   rejects it), then a contract, writer, and hooks (see `transport_binary/`).
 - Debugging a replay-gate failure ("Write-time replay gate FAILED for ...
-  window N"): the tolerance is `replay_tolerance(FT)` (`1e-4` Float32, `1e-10`
-  Float64). Check that `cm` was diagnosed after the last change to the
+  window N"): every cell's residual must stay within `replay_tolerance(FT)`
+  (`1e-5` Float32, `1e-12` Float64) of the summed magnitudes of its budget
+  terms. Check that `cm` was diagnosed after the last change to the
   horizontal fluxes, that balance and replay use the same `m_next`, and the
   final window's next-day endpoint. `[numerics] write_replay_check = false`
   skips write-time replay on every path; positivity still runs. Inspect

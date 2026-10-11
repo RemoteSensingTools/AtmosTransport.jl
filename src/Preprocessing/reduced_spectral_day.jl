@@ -202,21 +202,21 @@ function balance_window!(hflux_work::Matrix{Float64},
 end
 
 function _verify_rg_balanced_window!(window_contract,
-                                     m_cur_work::Matrix{Float64},
-                                     hflux_work::Matrix{Float64},
-                                     cm_work::Matrix{Float64},
-                                     m_next_work::Matrix{Float64},
+                                     m_cur::AbstractMatrix,
+                                     hflux::AbstractMatrix,
+                                     cm::AbstractMatrix,
+                                     m_next::AbstractMatrix,
                                      win_idx::Int;
                                      write_replay_on::Bool,
                                      accumulate::Bool = true)
     if write_replay_on
-        diag = verify_window!((m_cur = m_cur_work,
-                               hflux = hflux_work,
-                               cm = cm_work,
-                               m_next = m_next_work),
+        diag = verify_window!((m_cur = m_cur,
+                               hflux = hflux,
+                               cm = cm,
+                               m_next = m_next),
                               window_contract, win_idx)
     else
-        stub = verify_boundary_stub_flux_rg(hflux_work,
+        stub = verify_boundary_stub_flux_rg(hflux,
                                              window_contract.face_left,
                                              window_contract.face_right;
                                              tol = window_contract.boundary_stub_tol)
@@ -229,13 +229,13 @@ function _verify_rg_balanced_window!(window_contract,
                   "runtime face-indexed advection (`Advection/sweeps.jl`) will silently " *
                   "discard this flux.")
 
-        m_shape = size(m_cur_work)
+        m_shape = size(m_cur)
         if window_contract._outgoing_h === nothing ||
            size(window_contract._outgoing_h) != m_shape
             window_contract._outgoing_h = Array{Float64}(undef, m_shape)
             window_contract._bad_h = Array{Bool}(undef, m_shape)
         end
-        positivity = verify_substep_positivity_rg!(m_cur_work, hflux_work, cm_work,
+        positivity = verify_substep_positivity_rg!(m_cur, hflux, cm,
                                                     window_contract.face_left,
                                                     window_contract.face_right;
                                                     cfl_limit =
