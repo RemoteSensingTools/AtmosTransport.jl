@@ -142,8 +142,9 @@ end
 end
 
 """
-    solve_cs_poisson_pcg!(psi, rhs, ft, degree, scratch; tol=1e-14, max_iter=20000,
-                           project_every=50)
+    solve_cs_poisson_pcg!(psi, rhs, ft, degree, scratch; tol=DEFAULT_POISSON_BALANCE_TOL,
+                           max_iter=DEFAULT_POISSON_BALANCE_MAX_ITER,
+                           project_every=DEFAULT_POISSON_PROJECT_EVERY)
 
 Jacobi-Preconditioned CG for the global CS graph Laplacian `L · psi = rhs`.
 
@@ -159,9 +160,9 @@ function solve_cs_poisson_pcg!(psi::AbstractVector{Float64},
                                 ft::CSGlobalFaceTable,
                                 degree::Vector{Int},
                                 scratch;
-                                tol::Float64=1e-14,
-                                max_iter::Int=20000,
-                                project_every::Int=50)
+                                tol::Float64=DEFAULT_POISSON_BALANCE_TOL,
+                                max_iter::Int=DEFAULT_POISSON_BALANCE_MAX_ITER,
+                                project_every::Int=DEFAULT_POISSON_PROJECT_EVERY)
     r  = scratch.r
     p  = scratch.p
     Ap = scratch.Ap

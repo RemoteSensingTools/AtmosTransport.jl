@@ -228,13 +228,14 @@ end
 
 """
     strang_split_linrood_ppm!(rm_panels, m_panels, am_panels, bm_panels, cm_panels,
-                               mesh, ::Val{ORD}, ws, ws_lr; cfl_limit=0.95, damp_coeff=0.0)
+                               mesh, ::Val{ORD}, ws, ws_lr; cfl_limit=DEFAULT_CFL_LIMIT,
+                               damp_coeff=0.0)
 
 Full 3D advection: Horizontal(LR) → Z → Z → Horizontal(LR).
 """
 function strang_split_linrood_ppm!(rm_panels, m_panels, am_panels, bm_panels, cm_panels,
                                     mesh::CubedSphereMesh, ::Val{ORD}, ws, ws_lr::LinRoodWorkspace;
-                                    cfl_limit=0.95, damp_coeff=0.0) where ORD
+                                    cfl_limit=DEFAULT_CFL_LIMIT, damp_coeff=0.0) where ORD
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                   mesh, Val(ORD), ws, ws_lr; damp_coeff)
     _sweep_z!(rm_panels, m_panels, cm_panels, mesh, ws)
@@ -247,7 +248,7 @@ end
 function _strang_split_linrood_ppm_cs!(rm_panels, m_panels, am_panels, bm_panels, cm_panels,
                                        mesh::CubedSphereMesh, ::Val{ORD},
                                        ws::CSLinRoodAdvectionWorkspace;
-                                       cfl_limit=0.95, midpoint! = nothing,
+                                       cfl_limit=DEFAULT_CFL_LIMIT, midpoint! = nothing,
                                        damp_coeff=0.0,
                                        vertical::AbstractAdvectionScheme = UpwindScheme()) where ORD
     _ = cfl_limit

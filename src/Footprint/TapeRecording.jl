@@ -24,7 +24,7 @@ function _tape_byte_estimate(panels_m0,
                              panels_cm_steps,
                              mesh::CubedSphereMesh,
                              scheme::CSAdjointSupportedScheme;
-                             cfl_limit = 0.95,
+                             cfl_limit = DEFAULT_CFL_LIMIT,
                              flux_scale = one(eltype(panels_m0[1])),
                              diffusion_op = NoDiffusion(),
                              convection_op = NoConvection())
@@ -138,7 +138,7 @@ end
 """
     cs_tape_byte_estimate(panels_m0, panels_am_steps, panels_bm_steps,
                           panels_cm_steps, mesh, scheme;
-                          cfl_limit = 0.95,
+                          cfl_limit = DEFAULT_CFL_LIMIT,
                           flux_scale = one(eltype(panels_m0[1])),
                           diffusion_op = NoDiffusion(),
                           convection_op = NoConvection())

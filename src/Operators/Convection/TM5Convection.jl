@@ -170,14 +170,15 @@ end
 
 # Preserve the existing contract: invalid Float32 GPU envelopes are errors;
 # CPU and unsupported precisions retain a warning and the legacy solve.
-# Float64 CUDA is opt-in within depth 1..73 with n_merge=1. Unsupported Float64
-# configurations keep their previous fallback rather than changing the grid.
+# Float64 CUDA is opt-in within depth 1..`_TM5_COLLAB_MAX_DEPTH_FLOAT64_CUDA` (73)
+# with n_merge=1. Unsupported Float64 configurations keep their previous
+# fallback rather than changing the grid.
 @noinline function _collab_contract_violation(op::TM5Convection, Nz::Integer,
                                               Nt::Integer, ::Type{FT}, backend) where {FT}
     L = _effective_lmax_conv(op, Nz)
     L_super, _, nm = _tm5_super_dims(op, Nz)
     if FT === Float64
-        @warn "TM5Convection: Float64 collaborative LU requires CUDA, depth 1..73 within Nz, n_merge=1, and positive Nt; got depth=$(L), Nz=$(Nz), n_merge=$(nm), Nt=$(Nt), backend=$(typeof(backend)). Using the per-thread path. Set use_collab_lu=false to silence this." maxlog=1
+        @warn "TM5Convection: Float64 collaborative LU requires CUDA, depth 1..$(_TM5_COLLAB_MAX_DEPTH_FLOAT64_CUDA) within Nz, n_merge=1, and positive Nt; got depth=$(L), Nz=$(Nz), n_merge=$(nm), Nt=$(Nt), backend=$(typeof(backend)). Using the per-thread path. Set use_collab_lu=false to silence this." maxlog=1
     elseif FT !== Float32
         @warn "TM5Convection: collaborative LU does not support FT=$(FT); using the per-thread path. Set use_collab_lu=false to silence this." maxlog=1
     elseif backend isa KernelAbstractions.CPU
@@ -186,7 +187,8 @@ end
         throw(ArgumentError(
             "TM5Convection: use_collab_lu=true requested but the collaborative LU path " *
             "cannot engage on this F32 GPU run — L_super=$(L_super) (lmax_conv=$(L), " *
-            "n_merge=$(nm)), Nz=$(Nz), Nt=$(Nt). The effective depth must fit 1..85 " *
+            "n_merge=$(nm)), Nz=$(Nz), Nt=$(Nt). The effective depth must fit " *
+            "1..$(_TM5_COLLAB_MAX_DEPTH_FLOAT32) " *
             "and the model's vertical extent, and Nt must be positive. Tracers are " *
             "processed in batches with no upper count limit. Choose a convection " *
             "depth/aggregation consistent with the forcing's active cloud depth. " *

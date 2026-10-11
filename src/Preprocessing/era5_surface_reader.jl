@@ -182,10 +182,11 @@ end
 function _surface_time_index(reader::ERA5SurfaceReader, ds::NCDataset, win_idx::Int)
     time_len = _surface_time_len(ds)
     time_len <= 1 && return 1
-    if time_len == 24
+    records_per_day = round(Int, 86400 / ERA5_MET_INTERVAL_SECONDS)
+    if time_len == records_per_day
         return win_idx
     end
-    idx = (day(reader.date) - 1) * 24 + win_idx
+    idx = (day(reader.date) - 1) * records_per_day + win_idx
     idx <= time_len || throw(ArgumentError(
         "ERA5 surface file $(reader.path) has $(time_len) time slots; " *
         "need index $(idx) for $(reader.date) window $(win_idx)."))
@@ -257,8 +258,8 @@ ERA5 reports `sshf` (sensible) and `slhf` (latent) as time-accumulated
 energy over the output interval (J m⁻², downward-positive). Two corrections
 recover an instantaneous, upward-positive flux:
 
-  * **divide by 3600** — the accumulation window is one hour, so J m⁻²
-    becomes W m⁻²;
+  * **divide by 3600** (`ERA5_MET_INTERVAL_SECONDS`) — the accumulation window
+    is one hour, so J m⁻² becomes W m⁻²;
   * **flip the sign** — ERA5 uses downward-positive, while the boundary-layer
     scheme (and atmospheric convention) treats an upward surface flux of heat
     into the atmosphere as positive.
@@ -274,7 +275,8 @@ function _surface_flux_to_upward_wm2(raw, ds::NCDataset, var_name::String, ::Typ
     accumulated = occursin("j", units) || lname in (
         "sshf", "surface_sensible_heat_flux",
         "slhf", "surface_latent_heat_flux")
-    return accumulated ? FT.(-raw ./ 3600) : FT.(raw)
+    # The Int divisor keeps Float32 data in Float32 before the FT conversion.
+    return accumulated ? FT.(-raw ./ round(Int, ERA5_MET_INTERVAL_SECONDS)) : FT.(raw)
 end
 
 # ERA5 surface slices occasionally carry a handful of `_FillValue`-masked cells
@@ -402,12 +404,13 @@ function _validate_era5_surface!(surface, path::String, win_idx::Int)
     all(isfinite, surface.t2m) || error("ERA5 surface T2M contains non-finite values in $(path) window $(win_idx)")
     minimum(surface.pblh) > 0 || error("ERA5 surface PBLH must be positive in $(path) window $(win_idx)")
     minimum(surface.ustar) >= 0 || error("ERA5 surface USTAR must be nonnegative in $(path) window $(win_idx)")
-    150 < minimum(surface.t2m) < 350 || error("ERA5 surface T2M minimum is out of range in $(path) window $(win_idx)")
-    150 < maximum(surface.t2m) < 350 || error("ERA5 surface T2M maximum is out of range in $(path) window $(win_idx)")
-    maximum(abs, surface.hflux) < 5000 || error("ERA5 surface HFLUX magnitude is out of range in $(path) window $(win_idx)")
+    t_lo, t_hi = SURFACE_AIR_TEMPERATURE_RANGE
+    t_lo < minimum(surface.t2m) < t_hi || error("ERA5 surface T2M minimum is out of range in $(path) window $(win_idx)")
+    t_lo < maximum(surface.t2m) < t_hi || error("ERA5 surface T2M maximum is out of range in $(path) window $(win_idx)")
+    maximum(abs, surface.hflux) < SURFACE_HEAT_FLUX_MAX_ABS || error("ERA5 surface HFLUX magnitude is out of range in $(path) window $(win_idx)")
     if haskey(surface, :lhflux)
         all(isfinite, surface.lhflux) || error("ERA5 surface LHFLUX contains non-finite values in $(path) window $(win_idx)")
-        maximum(abs, surface.lhflux) < 5000 || error("ERA5 surface LHFLUX magnitude is out of range in $(path) window $(win_idx)")
+        maximum(abs, surface.lhflux) < SURFACE_HEAT_FLUX_MAX_ABS || error("ERA5 surface LHFLUX magnitude is out of range in $(path) window $(win_idx)")
     end
     return nothing
 end

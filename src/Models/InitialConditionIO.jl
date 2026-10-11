@@ -49,7 +49,8 @@ using ..Models: _config_bool
 import ...expand_data_path
 using ...ConfigChecks: key_suggestion
 using ...Parameters: AVOGADRO, EARTH_RADIUS, SPECIES_MOLAR_MASS, STANDARD_PRESSURE, DRY_AIR_MOLAR_MASS,
-                     CARBON_MOLAR_MASS
+                     CARBON_MOLAR_MASS, DEFAULT_BACKGROUND_VMR, DAYS_PER_JULIAN_YEAR,
+                     DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG
 using ..State: AbstractMassBasis, DryBasis, MoistBasis
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                 nrings, ring_longitudes, cell_index, cell_area,
@@ -93,7 +94,7 @@ end
 
 function _latitude_step_values(cfg, ::Type{FT}) where FT
     south = FT(_cfg_get_alias(cfg, "south_value", "south",
-                              get(cfg, "background", 4.0e-4)))
+                              get(cfg, "background", DEFAULT_BACKGROUND_VMR)))
     north = FT(_cfg_get_alias(cfg, "north_value", "north", 4.4e-4))
     split = FT(get(cfg, "split_lat_deg", 0.0))
     return (; south, north, split)
@@ -573,7 +574,7 @@ or an `NTuple{6}` of interior `(Nc, Nc, Nz)` arrays for cubed-sphere grids.
 """
 function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::LatLonMesh{FT}, cfg) where FT
     kind = _init_kind(cfg)
-    background = FT(get(cfg, "background", 4.0e-4))
+    background = FT(get(cfg, "background", DEFAULT_BACKGROUND_VMR))
     if kind === :uniform
         return fill(background, size(air_mass))
     elseif _is_latitude_step_kind(kind)
@@ -599,8 +600,8 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::LatLonMes
     elseif kind === :gaussian_blob
         lon0 = FT(get(cfg, "lon0_deg", 0.0))
         lat0 = FT(get(cfg, "lat0_deg", 0.0))
-        sigma_lon = FT(get(cfg, "sigma_lon_deg", 10.0))
-        sigma_lat = FT(get(cfg, "sigma_lat_deg", 10.0))
+        sigma_lon = FT(get(cfg, "sigma_lon_deg", DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG))
+        sigma_lat = FT(get(cfg, "sigma_lat_deg", DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG))
         amplitude = FT(get(cfg, "amplitude", background))
         q = Array{FT}(undef, size(air_mass))
         for k in axes(q, 3), j in axes(q, 2), i in axes(q, 1)
@@ -616,7 +617,7 @@ end
 
 function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::ReducedGaussianMesh{FT}, cfg) where FT
     kind = _init_kind(cfg)
-    background = FT(get(cfg, "background", 4.0e-4))
+    background = FT(get(cfg, "background", DEFAULT_BACKGROUND_VMR))
     if kind === :uniform
         return fill(background, size(air_mass))
     elseif _is_latitude_step_kind(kind)
@@ -633,8 +634,8 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::ReducedGa
     elseif kind === :gaussian_blob
         lon0 = FT(get(cfg, "lon0_deg", 0.0))
         lat0 = FT(get(cfg, "lat0_deg", 0.0))
-        sigma_lon = FT(get(cfg, "sigma_lon_deg", 10.0))
-        sigma_lat = FT(get(cfg, "sigma_lat_deg", 10.0))
+        sigma_lon = FT(get(cfg, "sigma_lon_deg", DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG))
+        sigma_lat = FT(get(cfg, "sigma_lat_deg", DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG))
         amplitude = FT(get(cfg, "amplitude", background))
         q = Array{FT}(undef, size(air_mass))
         for j in 1:nrings(mesh)

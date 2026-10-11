@@ -93,9 +93,9 @@ function _time_index_for_geosfp_physics(ds::NCDataset, win_idx::Int)
     ntime = _geos_dim_length(ds, ("time",))
     ntime === nothing && return 1
     ntime <= 1 && return 1
-    if ntime == 24
+    if ntime == round(Int, 86400 / GEOS_MET_INTERVAL_SECONDS)          # hourly file
         return win_idx
-    elseif ntime == 8
+    elseif ntime == round(Int, 86400 / GEOS_3HOURLY_INTERVAL_SECONDS)  # 3-hourly A3 file
         return _a3_index_for_window(win_idx)
     end
     idx = min(win_idx, ntime)
@@ -223,7 +223,9 @@ function _hflux_to_upward_wm2(raw, ds::NCDataset, var_name::String, ::Type{FT}) 
     units = lowercase(String(get(ds[var_name].attrib, "units", "")))
     lname = lowercase(var_name)
     if occursin("j", units) || lname in ("sshf", "surface_sensible_heat_flux")
-        return FT.(-raw ./ 3600)
+        # J m⁻² accumulated over the ECMWF hourly window. The Int divisor keeps
+        # Float32 data in Float32 before the FT conversion.
+        return FT.(-raw ./ round(Int, ERA5_MET_INTERVAL_SECONDS))
     end
     return FT.(raw)
 end
@@ -237,9 +239,10 @@ function _validate_geos_surface_panels!(surface, path::String, win_idx::Int)
         error("GEOS surface PBLH must be positive in $(path) window $(win_idx)")
     minimum(minimum, surface.ustar) >= 0 ||
         error("GEOS surface USTAR must be nonnegative in $(path) window $(win_idx)")
-    minimum(minimum, surface.t2m) > 150 && maximum(maximum, surface.t2m) < 350 ||
+    t_lo, t_hi = SURFACE_AIR_TEMPERATURE_RANGE
+    minimum(minimum, surface.t2m) > t_lo && maximum(maximum, surface.t2m) < t_hi ||
         error("GEOS surface T2M is out of range in $(path) window $(win_idx)")
-    maximum(p -> maximum(abs, p), surface.hflux) < 5000 ||
+    maximum(p -> maximum(abs, p), surface.hflux) < SURFACE_HEAT_FLUX_MAX_ABS ||
         error("GEOS surface HFLUX magnitude is out of range in $(path) window $(win_idx)")
     return nothing
 end
@@ -251,15 +254,19 @@ function _validate_geos_convection_panels!(field, name::String, path::String, wi
     return nothing
 end
 
+# Bound on the magnitude of GEOS VDIFF horizontal winds [m s⁻¹]; larger values
+# mean a wrong variable or a fill value.
+const _VDIFF_WIND_MAX_ABS = 500
+
 function _validate_geos_vdiff_panels!(vdiff, win_idx::Int)
     for name in (:u, :v, :t, :qv)
         field = getfield(vdiff, name)
         all(p -> all(isfinite, p), field) ||
             error("GEOS GCHP VDIFF $(name) contains non-finite values in window $(win_idx)")
     end
-    maximum(p -> maximum(abs, p), vdiff.u) < 500 ||
+    maximum(p -> maximum(abs, p), vdiff.u) < _VDIFF_WIND_MAX_ABS ||
         error("GEOS GCHP VDIFF U wind magnitude is out of range in window $(win_idx)")
-    maximum(p -> maximum(abs, p), vdiff.v) < 500 ||
+    maximum(p -> maximum(abs, p), vdiff.v) < _VDIFF_WIND_MAX_ABS ||
         error("GEOS GCHP VDIFF V wind magnitude is out of range in window $(win_idx)")
     minimum(minimum, vdiff.t) > 100 && maximum(maximum, vdiff.t) < 400 ||
         error("GEOS GCHP VDIFF temperature is out of range in window $(win_idx)")
@@ -372,7 +379,7 @@ end
 # AbstractMetSettings interface.
 # ---------------------------------------------------------------------------
 
-windows_per_day(::GEOSSettings, ::Date) = 24
+windows_per_day(::GEOSSettings, ::Date) = round(Int, 86400 / GEOS_MET_INTERVAL_SECONDS)
 
 # Per-source output-filename override: GEOS gets a clearer prefix.
 _native_output_filename(::AbstractGEOSSettings, date::Date, FT::Type) =

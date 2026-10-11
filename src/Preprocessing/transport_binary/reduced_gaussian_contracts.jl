@@ -69,7 +69,7 @@ const RGWorst = @NamedTuple{ratio::Float64, direction::Symbol, win::Int,
 
 """
     verify_substep_positivity_rg!(m, hflux, cm, face_left, face_right;
-                                  cfl_limit = 0.95,
+                                  cfl_limit = DEFAULT_POSITIVITY_CFL_LIMIT,
                                   outgoing_h = nothing, bad_h = nothing)
 
 Per-substep horizontal+vertical positivity scan for a face-indexed RG
@@ -105,7 +105,7 @@ function verify_substep_positivity_rg!(m::AbstractMatrix{FT},
                                         cm::AbstractMatrix,
                                         face_left::AbstractVector{<:Integer},
                                         face_right::AbstractVector{<:Integer};
-                                        cfl_limit::Real = 0.95,
+                                        cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                                         outgoing_h::Union{Nothing, AbstractMatrix{Float64}} = nothing,
                                         bad_h::Union{Nothing, AbstractMatrix{Bool}} = nothing) where FT
     _validate_cfl_limit(cfl_limit, "verify_substep_positivity_rg!")
@@ -299,7 +299,7 @@ end
 """
     verify_rg_window_contract!(m_cur, hflux, cm, m_next, face_left, face_right,
                                steps_per_window, win_idx;
-                               replay_tol, positivity_cfl_limit = 0.95,
+                               replay_tol, positivity_cfl_limit = DEFAULT_POSITIVITY_CFL_LIMIT,
                                div_scratch = nothing,
                                outgoing_h = nothing, bad_h = nothing,
                                boundary_stub_tol = 0.0)
@@ -337,7 +337,7 @@ function verify_rg_window_contract!(m_cur::AbstractMatrix{FT},
                                      steps_per_window::Integer,
                                      win_idx::Integer;
                                      replay_tol::Real,
-                                     positivity_cfl_limit::Real = 0.95,
+                                     positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                                      div_scratch::Union{Nothing, AbstractMatrix{Float64}} = nothing,
                                      outgoing_h::Union{Nothing, AbstractMatrix{Float64}} = nothing,
                                      bad_h::Union{Nothing, AbstractMatrix{Bool}} = nothing,
@@ -514,7 +514,7 @@ mutable struct ReducedGaussianContract{FT} <:
 
     function ReducedGaussianContract{FT}(;
                                           replay_tol::Real,
-                                          positivity_cfl_limit::Real = 0.95,
+                                          positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                                           require_substep_positivity::Bool = true,
                                           steps_per_window::Integer,
                                           boundary_stub_tol::Real = 0.0,

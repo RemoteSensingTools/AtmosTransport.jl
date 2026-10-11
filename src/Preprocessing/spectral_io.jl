@@ -97,13 +97,12 @@ end
 
 const SPECTRAL_DAY_CACHE_VERSION = 2
 const _ERA5_SPECTRAL_DAY_HOURS = collect(0:23)
-const _ERA5_SPECTRAL_LEVEL_COUNT = 137
 
 function _validate_spectral_coverage(hours,
                                      vo_seen::AbstractDict,
                                      d_seen::AbstractDict;
                                      expected_hours = _ERA5_SPECTRAL_DAY_HOURS,
-                                     nlevels::Int = _ERA5_SPECTRAL_LEVEL_COUNT)
+                                     nlevels::Int = ERA5_NATIVE_LEVEL_COUNT)
     actual_hours = sort!(collect(hours))
     actual_hours == collect(expected_hours) || throw(ArgumentError(
         "incomplete ERA5 spectral day: LNSP hours=$(actual_hours), expected=$(collect(expected_hours))"))
@@ -127,7 +126,7 @@ function _validate_cached_spectral_day(spec)
         "cached spectral day has hours=$(spec.hours), expected=$(_ERA5_SPECTRAL_DAY_HOURS)"))
     spec.n_times == length(spec.hours) || throw(ArgumentError(
         "cached spectral day n_times=$(spec.n_times) does not match $(length(spec.hours)) hours"))
-    expected_shape = (spec.T + 1, spec.T + 1, _ERA5_SPECTRAL_LEVEL_COUNT)
+    expected_shape = (spec.T + 1, spec.T + 1, ERA5_NATIVE_LEVEL_COUNT)
     for hour in spec.hours
         haskey(spec.lnsp_all, hour) || throw(ArgumentError("cached spectral day is missing LNSP hour $hour"))
         haskey(spec.vo_by_hour, hour) || throw(ArgumentError("cached spectral day is missing vo hour $hour"))
@@ -255,7 +254,7 @@ function read_day_spectral_streaming(vo_d_path::String, lnsp_path::String;
         destroy(f)
     end
     T = T_target > 0 ? min(T_target, T_file) : T_file
-    Nlevels = _ERA5_SPECTRAL_LEVEL_COUNT
+    Nlevels = ERA5_NATIVE_LEVEL_COUNT
 
     # Read all LNSP hours
     lnsp_all = Dict{Int, Matrix{ComplexF64}}()
@@ -360,7 +359,7 @@ function read_hour0_spectral(spectral_dir::String, date::Date;
         destroy(f)
     end
     T = T_target > 0 ? min(T_target, T_file) : T_file
-    Nlevels = _ERA5_SPECTRAL_LEVEL_COUNT
+    Nlevels = ERA5_NATIVE_LEVEL_COUNT
 
     # Read hour-0 LNSP
     spec_buf = zeros(ComplexF64, T_file + 1, T_file + 1)

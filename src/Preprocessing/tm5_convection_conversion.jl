@@ -669,20 +669,21 @@ function dz_hydrostatic_virtual!(dz::AbstractVector{FT},
 end
 
 """
-    dz_hydrostatic_constT!(dz, ps, ak, bk, Nz; T_ref=260) -> dz
+    dz_hydrostatic_constT!(dz, ps, ak, bk, Nz; T_ref=HYDROSTATIC_REFERENCE_TEMPERATURE) -> dz
 
 Constant-temperature hydrostatic layer thickness — fallback for use
 when T and Q are unavailable. Matches main's Julia port's shortcut
-(`T_ref = 260 K`). Biases entu/detu magnitudes by ~10-20% vs the
-virtual-temperature version; `dz_hydrostatic_virtual!` is preferred
-when T + Q are downloaded together with the convection fields.
+(`T_ref = HYDROSTATIC_REFERENCE_TEMPERATURE = 260 K`). Biases entu/detu
+magnitudes by ~10-20% vs the virtual-temperature version;
+`dz_hydrostatic_virtual!` is preferred when T + Q are downloaded together
+with the convection fields.
 """
 function dz_hydrostatic_constT!(dz::AbstractVector{FT},
                                  ps::Real,
                                  ak::AbstractVector,
                                  bk::AbstractVector,
                                  Nz::Integer;
-                                 T_ref::Real = 260) where {FT <: AbstractFloat}
+                                 T_ref::Real = HYDROSTATIC_REFERENCE_TEMPERATURE) where {FT <: AbstractFloat}
     length(dz) == Nz     || throw(ArgumentError("dz length $(length(dz)) != Nz=$Nz"))
     length(ak) == Nz + 1 || throw(ArgumentError("ak length $(length(ak)) != Nz+1=$(Nz+1)"))
     length(bk) == Nz + 1 || throw(ArgumentError("bk length $(length(bk)) != Nz+1=$(Nz+1)"))

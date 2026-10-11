@@ -118,11 +118,11 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 FT::Type{<:AbstractFloat} = Float64,
                                 mass_basis::Union{Nothing, Symbol} = nothing,
                                 allow_terminal_zero_tendency::Bool = false,
-                                positivity_cfl_limit::Real = 0.95,
+                                positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                                 require_substep_positivity::Bool = true,
                                 steps_per_window::Union{Nothing, Integer} = nothing,
-                                cs_balance_tol::Real = 1e-14,
-                                cs_balance_project_every::Integer = 50,
+                                cs_balance_tol::Real = DEFAULT_POISSON_BALANCE_TOL,
+                                cs_balance_project_every::Integer = DEFAULT_POISSON_PROJECT_EVERY,
                                 horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
                                 column_balance_weights::Symbol = :mass,
                                 write_replay_check::Bool = true,
@@ -448,13 +448,15 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                 cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
                 cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
                 cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
-                max_iter=20000, project_every=Int(cs_balance_project_every))
+                max_iter=DEFAULT_POISSON_BALANCE_MAX_ITER,
+                project_every=Int(cs_balance_project_every))
         else
             balance_cs_column_mass_fluxes!(
                 cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
                 cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
                 cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
-                max_iter=20000, project_every=Int(cs_balance_project_every),
+                max_iter=DEFAULT_POISSON_BALANCE_MAX_ITER,
+                project_every=Int(cs_balance_project_every),
                 weights=balance_weights)
         end
         t_bal = time() - t_bal
@@ -554,13 +556,15 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
             cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
             cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
-            max_iter=20000, project_every=Int(cs_balance_project_every))
+            max_iter=DEFAULT_POISSON_BALANCE_MAX_ITER,
+            project_every=Int(cs_balance_project_every))
     else
         balance_cs_column_mass_fluxes!(
             cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
             cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
             cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
-            max_iter=20000, project_every=Int(cs_balance_project_every),
+            max_iter=DEFAULT_POISSON_BALANCE_MAX_ITER,
+            project_every=Int(cs_balance_project_every),
             weights=balance_weights)
     end
     t_bal = time() - t_bal

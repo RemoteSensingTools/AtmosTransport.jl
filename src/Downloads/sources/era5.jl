@@ -167,16 +167,17 @@ function _era5_estimate_size(req::Dict{String, Any}, dates::Vector{Date})
     # T639 spectral field ≈ 1.6 MB, N320 gridpoint ≈ 0.8 MB
     n_days = length(dates)
     name = get(req, "name", "")
+    n_hours = round(Int, 86400 / ERA5_MET_INTERVAL_SECONDS)   # 24 hourly fields per day
 
     if name == "core"
         # 5 params × 137 levels × 24 times × ~1.6 MB/field
-        return n_days * 5.0 * 137 * 24 * 1.6
+        return n_days * 5.0 * ERA5_NATIVE_LEVEL_COUNT * n_hours * 1.6
     elseif name == "convection"
         # 4 params × 137 levels × 24 steps (2 base × 12 steps) × ~1.6 MB
-        return n_days * 4.0 * 137 * 24 * 1.6
+        return n_days * 4.0 * ERA5_NATIVE_LEVEL_COUNT * n_hours * 1.6
     elseif name == "surface"
         # ~11 params × 1 level × 24 times × ~0.8 MB
-        return n_days * 11.0 * 24 * 0.8
+        return n_days * 11.0 * n_hours * 0.8
     else
         return 0.0
     end

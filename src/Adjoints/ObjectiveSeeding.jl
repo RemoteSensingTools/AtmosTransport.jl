@@ -75,11 +75,16 @@ function _validate_objective(::CSSeedObjective, mesh::CubedSphereMesh, Nz::Int)
         "use `cs_surface_emission_footprint_from_seed(final_adjoint_rm, ...)`"))
 end
 
+# Air-mass floor of the objectives, `eps(FT)`. The layer objective's evaluation
+# `rm / max(m, floor)` and its adjoint seed `1 / max(m, floor)` both read it here,
+# so the seed stays the derivative of the evaluated objective.
+@inline _objective_mass_floor(::Type{FT}) where {FT} = eps(FT)
+
 @kernel function _evaluate_layer_objective_kernel!(out, @Const(rm), @Const(m),
                                                    i, j, k)
     _ = @index(Global)
     FT = eltype(rm)
-    @inbounds out[1] = rm[i, j, k] / max(m[i, j, k], eps(FT))
+    @inbounds out[1] = rm[i, j, k] / max(m[i, j, k], _objective_mass_floor(FT))
 end
 
 @kernel function _evaluate_column_objective_kernel!(out, @Const(rm), @Const(m),
@@ -92,7 +97,7 @@ end
         num += rm[i, j, k]
         den += m[i, j, k]
     end
-    @inbounds out[1] = num / max(den, eps(FT))
+    @inbounds out[1] = num / max(den, _objective_mass_floor(FT))
 end
 
 _host_scalar(a) = Array(a)[1]
@@ -136,7 +141,7 @@ end
 
 @kernel function _seed_layer_objective_kernel!(lambda, @Const(m), value, i, j, k)
     _ = @index(Global)
-    @inbounds lambda[i, j, k] = value / max(m[i, j, k], eps(eltype(lambda)))
+    @inbounds lambda[i, j, k] = value / max(m[i, j, k], _objective_mass_floor(eltype(lambda)))
 end
 
 @kernel function _seed_column_objective_kernel!(lambda, @Const(m), denom, i, j, Hp)

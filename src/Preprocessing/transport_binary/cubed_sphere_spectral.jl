@@ -360,7 +360,7 @@ function driver_drain_ready_windows!(workspace::CubedSphereSpectralWindowWorkspa
     _copy_cs_spectral_panels!(workspace.cs_ws.m_next_panels,
                               workspace.cs_ws.m_panels)
     return (_cs_spectral_contract_diag!(workspace, contract, ctx, win - 1,
-                                        20000),)
+                                        DEFAULT_POISSON_BALANCE_MAX_ITER),)
 end
 
 function driver_flush_final_windows!(workspace::CubedSphereSpectralWindowWorkspace{FT},
@@ -384,7 +384,8 @@ function driver_flush_final_windows!(workspace::CubedSphereSpectralWindowWorkspa
         _copy_cs_spectral_panels!(workspace.cs_ws.m_next_panels,
                                   workspace.cur_m)
     end
-    return (_cs_spectral_contract_diag!(workspace, contract, ctx, Nt, 20000),)
+    return (_cs_spectral_contract_diag!(workspace, contract, ctx, Nt,
+                                        DEFAULT_POISSON_BALANCE_MAX_ITER),)
 end
 
 function driver_after_write_window!(workspace::CubedSphereSpectralWindowWorkspace,
@@ -421,7 +422,7 @@ function process_day(date::Date,
                      grid::CubedSphereTargetGeometry,
                      settings::ERA5SpectralSettings,
                      vertical;
-                     positivity_cfl_limit::Real = 0.95,
+                     positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                      require_substep_positivity::Bool = true,
                      write_replay_check::Bool = true,
                      substep_policy::SubstepSchedulePolicy =
@@ -434,8 +435,9 @@ function process_day(date::Date,
     Nc = grid.Nc
     Nz = vertical.Nz
     steps_per_met = exact_steps_per_window(settings.met_interval, settings.dt)
-    cs_balance_tol = Float64(get(settings, :cs_balance_tol, 1e-14))
-    cs_balance_project_every = Int(get(settings, :cs_balance_project_every, 50))
+    cs_balance_tol = Float64(get(settings, :cs_balance_tol, DEFAULT_POISSON_BALANCE_TOL))
+    cs_balance_project_every = Int(get(settings, :cs_balance_project_every,
+                                       DEFAULT_POISSON_PROJECT_EVERY))
     # Balance mode and column weights, checked before any input is read.
     balance = effective_horizontal_balance(get(settings, :horizontal_balance, nothing), ColumnBalance())
     weights_kind = _check_spectral_column_weights(grid, settings)

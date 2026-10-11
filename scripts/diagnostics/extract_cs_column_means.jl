@@ -15,7 +15,9 @@ using .AtmosTransport.Grids: CubedSphereMesh, EquiangularCubedSphereDefinition,
 using .AtmosTransport.Output: column_mean_mixing_ratio
 
 const MAGIC = "ATMSNAP1"
-const OCEAN_CARRIER_PPM = 400.0f0
+# Uniform carrier under the signed co2_ocean anomaly: the run configs initialise
+# co2_ocean with `background = 4.0e-4`, the default background VMR.
+const OCEAN_CARRIER_PPM = Float32(AtmosTransport.Parameters.DEFAULT_BACKGROUND_VMR * 1e6)
 _pc(t) = t == "gnomonic" ? GnomonicPanelConvention() : t == "geos_native" ? GEOSNativePanelConvention() : error("pc $t")
 _df(t, c) = t == "equiangular_gnomonic" ? EquiangularCubedSphereDefinition(convention = c) :
             t == "gmao_equal_distance" ? GMAOCubedSphereDefinition(convention = c) : error("def $t")
@@ -93,7 +95,7 @@ function main()
         v[:, :] = data[t]
     end
     ds.attrib["note"] = "column-mean dry VMR (XCO2) per CS cell; " *
-                        "co2_ocean has its 400 ppm transport carrier removed; " *
+                        "co2_ocean has its $(round(Int, OCEAN_CARRIER_PPM)) ppm transport carrier removed; " *
                         "run start 2021-12-01T00:00"
     close(ds)
     @info "wrote" out size_mb=round(filesize(out) / 1e6, digits = 1)

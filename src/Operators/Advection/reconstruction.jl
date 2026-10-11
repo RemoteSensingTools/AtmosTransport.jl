@@ -65,31 +65,40 @@ _wrap_periodic(38, 36)  # → 2   (two right of domain end)
 @inline _wrap_periodic(idx, N) = mod1(idx, N)
 
 """
+    _advection_mass_floor(FT) → FT
+
+Floor on a cell's air mass, `eps(FT)`, wherever the `UpwindScheme`,
+`SlopesScheme` and `PPMScheme` face fluxes divide by it, so a vanishingly small
+mass (e.g. the uppermost level near the TOA) cannot produce a NaN. The
+cubed-sphere sweep adjoints (`src/Adjoints/AdvectionAdjoint.jl`) use the same
+floor, so their coefficients stay the derivatives of these fluxes.
+"""
+@inline _advection_mass_floor(::Type{FT}) where {FT} = eps(FT)
+
+"""
     _mixing_ratio(rm, m, i, j, k) → FT
 
-Compute mixing ratio ``c = r_m / m`` with an `eps(FT)` floor on mass
-to prevent division by zero in cells with vanishingly small air mass
-(e.g., the uppermost model level near the TOA).
+Compute mixing ratio ``c = r_m / m`` with the `_advection_mass_floor`
+(`eps(FT)`) on mass to prevent division by zero in cells with vanishingly
+small air mass (e.g., the uppermost model level near the TOA).
 
-Used by `UpwindScheme` face flux functions.  The `SlopesScheme` functions
-use raw `rm/m` division (no floor) in the horizontal because air mass is
-always well above eps for horizontal cells, and use an explicit `eps` floor
-in the vertical direction where thin layers can occur.
+Used by `UpwindScheme` face flux functions. The `SlopesScheme` and
+`PPMScheme` face fluxes apply the same floor themselves.
 """
 @inline function _mixing_ratio(rm, m, i, j, k)
     FT = eltype(rm)
-    return rm[i, j, k] / max(m[i, j, k], eps(FT))
+    return rm[i, j, k] / max(m[i, j, k], _advection_mass_floor(FT))
 end
 
 """
     _mixing_ratio_2d(rm, m, c, k) → FT
 
 Safe mixing ratio for 2D `(cell, level)` arrays used by face-indexed
-(unstructured) grids.  Same eps floor as `_mixing_ratio`.
+(unstructured) grids.  Same floor as `_mixing_ratio`.
 """
 @inline function _mixing_ratio_2d(rm, m, c, k)
     FT = eltype(rm)
-    return rm[c, k] / max(m[c, k], eps(FT))
+    return rm[c, k] / max(m[c, k], _advection_mass_floor(FT))
 end
 
 
@@ -343,8 +352,8 @@ All indices wrapped via `mod1(·, Nx)` for periodic boundaries.
     i_r  = _wrap_periodic(face_i, Nx)
     i_rr = _wrap_periodic(face_i + Int32(1), Nx)
 
-    # Floor prevents NaN if cell mass → 0 (consistent with z-direction at line 399)
-    m_floor = eps(eltype(rm))
+    # Floor prevents NaN if cell mass → 0 (same floor as the y and z directions)
+    m_floor = _advection_mass_floor(eltype(rm))
     c_ll = rm[i_ll, j, k] / max(m[i_ll, j, k], m_floor)
     c_l  = rm[i_l,  j, k] / max(m[i_l,  j, k], m_floor)
     c_r  = rm[i_r,  j, k] / max(m[i_r,  j, k], m_floor)
@@ -390,7 +399,7 @@ Indices clamped: `jLL = max(face_j-2, 1)`, `jRR = min(face_j+1, Ny)`.
     jll = max(face_j - Int32(2), Int32(1))
     jrr = min(face_j + Int32(1), Ny)
 
-    m_floor = eps(FT)  # prevent NaN if cell mass → 0 (consistent with z-direction)
+    m_floor = _advection_mass_floor(FT)  # prevent NaN if cell mass → 0 (consistent with z-direction)
     c_ll = rm[i, jll, k] / max(m[i, jll, k], m_floor)
     c_l  = rm[i, jl,  k] / max(m[i, jl,  k], m_floor)
     c_r  = rm[i, jr,  k] / max(m[i, jr,  k], m_floor)
@@ -421,17 +430,17 @@ Same as y-direction: closed at `face_k ≤ 1` (TOA) and `face_k > Nz` (surface),
 slopes zeroed at boundary levels (`k = 1`, `k = Nz`).
 
 # Mass floor
-Unlike the horizontal directions, the z-direction uses an `eps(FT)` floor
-on mass in both the mixing ratio computation and the Courant-fraction
-formula.  This prevents NaN from division by zero in the uppermost model
-level where air mass can be extremely small (pressure thickness ~500 Pa
-at TOA vs ~50,000 Pa near the surface).
+Like the horizontal directions, the z-direction floors mass at
+`_advection_mass_floor` (`eps(FT)`) in both the mixing ratio computation and
+the Courant-fraction formula. This prevents NaN from division by zero in the
+uppermost model level where air mass can be extremely small (pressure
+thickness ~500 Pa at TOA vs ~50,000 Pa near the surface).
 
 Matches the convention in the legacy `_rl_z_kernel!` (RussellLerner.jl).
 """
 @inline function _zface_tracer_flux(i, j, face_k, rm, m, F, scheme::SlopesScheme, Nz)
     FT = eltype(rm)
-    m_floor = eps(FT)
+    m_floor = _advection_mass_floor(FT)
     limiter = scheme.limiter
     at_boundary = (face_k <= Int32(1)) | (face_k > Nz)
 
@@ -545,6 +554,16 @@ end
 # ---- PPM helper functions ------------------------------------------------
 
 """
+    _ppm_edge_weights(FT) → (7/12, 1/12)
+
+Weights of the fourth-order PPM edge interpolation (CW84 eq. 1.6),
+``e_{i+1/2} = \\frac{7}{12}(c_i + c_{i+1}) - \\frac{1}{12}(c_{i-1} + c_{i+2})``.
+The one definition behind the structured PPM edge (`_ppm_edge_value`), the
+Lin-Rood ORD=5/7 edges (`_ppm_edge_values_ord5`) and their adjoints.
+"""
+@inline _ppm_edge_weights(::Type{FT}) where {FT} = (FT(7) / FT(12), FT(1) / FT(12))
+
+"""
     _ppm_edge_value(c_ll, c_l, c_r, c_rr) → FT
 
 Compute the 4th-order accurate edge value at the interface between
@@ -555,11 +574,11 @@ e_{i+1/2} = \\frac{7}{12}(c_i + c_{i+1}) - \\frac{1}{12}(c_{i-1} + c_{i+2})
 ```
 
 Stencil: 4 cells `[c_ll, c_l | c_r, c_rr]` with the interface between `c_l` and `c_r`.
+The weights come from `_ppm_edge_weights`.
 """
 @inline function _ppm_edge_value(c_ll, c_l, c_r, c_rr)
     FT = typeof(c_ll)
-    seven_twelfths = FT(7) / FT(12)
-    one_twelfth    = FT(1) / FT(12)
+    seven_twelfths, one_twelfth = _ppm_edge_weights(FT)
     return seven_twelfths * (c_l + c_r) - one_twelfth * (c_ll + c_rr)
 end
 
@@ -723,7 +742,7 @@ Tracer mass flux through x-face `face_i` for PPM advection.
     i_pp = _wrap_periodic(face_i + Int32(2), Nx)
 
     # Floor prevents NaN if cell mass → 0 (consistent with all other schemes)
-    m_floor = eps(FT)
+    m_floor = _advection_mass_floor(FT)
     c_3  = rm[i_3,  j, k] / max(m[i_3,  j, k], m_floor)
     c_2  = rm[i_2,  j, k] / max(m[i_2,  j, k], m_floor)
     c_1  = rm[i_1,  j, k] / max(m[i_1,  j, k], m_floor)
@@ -773,7 +792,7 @@ Tracer mass flux through y-face `face_j` for PPM advection.
     jrr = min(face_j + Int32(1), Ny)
     j3r = min(face_j + Int32(2), Ny)
 
-    m_floor = eps(FT)  # prevent NaN if cell mass → 0 (consistent with z-direction)
+    m_floor = _advection_mass_floor(FT)  # prevent NaN if cell mass → 0 (consistent with z-direction)
     c_3l = rm[i, j3l, k] / max(m[i, j3l, k], m_floor)
     c_ll = rm[i, jll, k] / max(m[i, jll, k], m_floor)
     c_l  = rm[i, jl,  k] / max(m[i, jl,  k], m_floor)
@@ -813,12 +832,12 @@ Tracer mass flux through z-face `face_k` for PPM advection.
 Same as y-direction: closed at `face_k ≤ 1` (TOA) and `face_k > Nz`
 (surface), with PPM edge offsets zeroed at boundary levels.
 
-Uses `eps(FT)` floor on mass to prevent NaN from division by zero
-in the thin uppermost model levels.
+Floors mass at `_advection_mass_floor` (`eps(FT)`) to prevent NaN from
+division by zero in the thin uppermost model levels.
 """
 @inline function _zface_tracer_flux(i, j, face_k, rm, m, F, scheme::PPMScheme, Nz)
     FT = eltype(rm)
-    m_floor = eps(FT)
+    m_floor = _advection_mass_floor(FT)
     limiter = scheme.limiter
     at_boundary = (face_k <= Int32(1)) | (face_k > Nz)
 

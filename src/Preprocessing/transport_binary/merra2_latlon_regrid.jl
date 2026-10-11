@@ -69,9 +69,6 @@
 # TM5 convection / `:dkg` sections are not written.
 # ===========================================================================
 
-# Cap on adaptive substep refinements per window (mirror of the N320 path).
-const _MERRA2_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS = 8
-
 """
     MERRA2ToC180Pipeline{FT, R, P, E, W}
 
@@ -179,7 +176,8 @@ function allocate_merra2_to_c180_pipeline(target_grid::CubedSphereTargetGeometry
     surface_names = has_pbl_eflux(settings) ? (:pblh, :ustar, :hflux, :t2m, :eflux) :
                                               (:pblh, :ustar, :hflux, :t2m)
     has_surface(settings) && (phys = merge(phys, (; surface_hours = ntuple(
-        _ -> NamedTuple{surface_names}(ntuple(_ -> panels2(), length(surface_names))), 3))))
+        _ -> NamedTuple{surface_names}(ntuple(_ -> panels2(), length(surface_names))),
+        _MERRA2_HOURS_PER_BLOCK))))
     has_vdiff_fields(settings) && (phys = merge(phys, (; t = panels3(Nz_int))))
     edge_src = conv ? zeros(FT, n_src, Nz_int + 1) : nothing
     edge_dst = conv ? zeros(FT, n_dst, Nz_int + 1) : nothing
@@ -230,7 +228,7 @@ function _regrid_merra2_physics!(pipe::MERRA2ToC180Pipeline{FT},
         convective_cloud_base!(phys.cloud_base, phys.dqrcu)
     end
     if haskey(raw, :pblh)
-        for h in 1:3, name in keys(phys.surface_hours[h])
+        for h in eachindex(phys.surface_hours), name in keys(phys.surface_hours[h])
             regrid_2d_to_cs_panels!(getfield(phys.surface_hours[h], name), pipe.regridder,
                                     view(getfield(raw, name), :, :, h),
                                     pipe.ws, Nc, IntensiveCellField())
@@ -318,7 +316,7 @@ function merra2_window_physics!(out, settings::MERRA2Settings, cur, nxt, h::Inte
         cmfmc, dtrain = out.cmfmc, out.dtrain
     end
     if has_surface(settings)
-        hours = (3 * (h - 1) ÷ nsub + 1):(3 * h ÷ nsub)
+        hours = (_MERRA2_HOURS_PER_BLOCK * (h - 1) ÷ nsub + 1):(_MERRA2_HOURS_PER_BLOCK * h ÷ nsub)
         for name in keys(cur.phys.surface_hours[1]), p in 1:6
             dst = getfield(out, name)[p]
             fill!(dst, zero(eltype(dst)))
@@ -343,18 +341,16 @@ end
 # Day driver.
 # ---------------------------------------------------------------------------
 
-# Length of one MERRA-2 block (the I3/A3 cadence) [s].
-const MERRA2_BLOCK_SECONDS = 10800.0
-
 """
     merra2_windows_per_block(dt_met_seconds) -> Int
 
 Output windows per 3-hour MERRA-2 block: 1 for 3-hourly windows, 3 for hourly.
 """
 function merra2_windows_per_block(dt_met_seconds::Real)
-    nsub = round(Int, MERRA2_BLOCK_SECONDS / dt_met_seconds)
-    (nsub in (1, 3) && nsub * dt_met_seconds == MERRA2_BLOCK_SECONDS) ||
-        throw(ArgumentError("MERRA-2 dt_met_seconds must be 10800 (3-hourly) or 3600 " *
+    nsub = round(Int, GEOS_3HOURLY_INTERVAL_SECONDS / dt_met_seconds)
+    (nsub in (1, _MERRA2_HOURS_PER_BLOCK) && nsub * dt_met_seconds == GEOS_3HOURLY_INTERVAL_SECONDS) ||
+        throw(ArgumentError("MERRA-2 dt_met_seconds must be $(GEOS_3HOURLY_INTERVAL_SECONDS) " *
+                            "(3-hourly) or $(GEOS_3HOURLY_INTERVAL_SECONDS / _MERRA2_HOURS_PER_BLOCK) " *
                             "(hourly windows); got $(dt_met_seconds)"))
     return nsub
 end
@@ -519,11 +515,13 @@ function _balance_window!(d::MERRA2DayDriver, ps_moist, m_a, m_b, steps)
     g, tol, project_every = d.grid, d.balance.tol, d.balance.project_every
     diag = if d.balance.global_solve     # per-level solve (diagnostic option)
         balance_cs_global_mass_fluxes!(x.am, x.bm, m_a, m_b, g.face_table, g.cell_degree,
-                                       steps, g.poisson_scratch; tol, max_iter = 20000,
+                                       steps, g.poisson_scratch; tol,
+                                       max_iter = DEFAULT_POISSON_BALANCE_MAX_ITER,
                                        project_every)
     else                                 # column solve, correction spread by `weights`
         balance_cs_column_mass_fluxes!(x.am, x.bm, m_a, m_b, g.face_table, g.cell_degree,
-                                       steps, g.poisson_scratch; tol, max_iter = 20000,
+                                       steps, g.poisson_scratch; tol,
+                                       max_iter = DEFAULT_POISSON_BALANCE_MAX_ITER,
                                        project_every, weights = d.balance.weights)
     end
     sync_all_cs_boundary_mirrors!(x.am, x.bm, mesh.connectivity, Nc, Nz)
@@ -539,7 +537,7 @@ function _adapt_window!(d::MERRA2DayDriver, ps_moist, m_a, m_b)
     steps = d.steps_min
     diag = _balance_window!(d, ps_moist, m_a, m_b, steps)
     d.policy.adaptive_substeps || return steps, diag
-    for _ in 1:_MERRA2_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS
+    for _ in 1:ADAPTIVE_SUBSTEP_MAX_REFINEMENTS
         pos = verify_substep_positivity_cs!(m_a, x.am, x.bm, x.cm; cfl_limit = d.cfl_target,
                                             m_next = m_b)
         next = next_substeps(d.policy, steps, pos.ratio)
@@ -683,8 +681,9 @@ Write a v4 cubed-sphere transport binary for one UTC `date` from MERRA-2 to
 
 Horizontal mass fluxes come from the regridded 3-hour mean winds and are
 Poisson-balanced (a column pressure fix) against the dry-mass change between
-the 3-hourly inst3 endpoints. `dt_met_seconds = 10800` writes one window per
-3-hour block (8 per day); `3600` splits each block into three hourly windows
+the 3-hourly inst3 endpoints. `dt_met_seconds = 10800` (the default,
+`GEOS_3HOURLY_INTERVAL_SECONDS`) writes one window per 3-hour block (8 per
+day); `3600` splits each block into three hourly windows
 (24 per day) with endpoint mass, PS, QV and T linear in time, so the hourly A1
 boundary-layer fields reach the runtime unaveraged. Optional convection, PBL,
 VDIFF and cloud-base sections follow `settings`. Only `mass_basis = :dry`.
@@ -695,14 +694,14 @@ function process_merra2_to_cs_day(date::Date,
                                   out_path::AbstractString,
                                   Nz::Integer = MERRA2_NATIVE_LEVEL_COUNT,
                                   mass_basis::Symbol = :dry,
-                                  dt_met_seconds::Real = MERRA2_BLOCK_SECONDS,
+                                  dt_met_seconds::Real = GEOS_3HOURLY_INTERVAL_SECONDS,
                                   steps_per_window::Integer = 1,
                                   adaptive_substeps::Bool = true,
-                                  substep_cfl_target::Real = 0.95,
+                                  substep_cfl_target::Real = DEFAULT_SUBSTEP_CFL_TARGET,
                                   max_steps_per_window::Integer = typemax(Int),
-                                  cs_balance_tol::Real = 1e-14,
-                                  cs_balance_project_every::Integer = 50,
-                                  positivity_cfl_limit::Real = 0.95,
+                                  cs_balance_tol::Real = DEFAULT_POISSON_BALANCE_TOL,
+                                  cs_balance_project_every::Integer = DEFAULT_POISSON_PROJECT_EVERY,
+                                  positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                                   require_substep_positivity::Bool = true,
                                   write_replay_check::Bool = true,
                                   cache_dir::Union{Nothing, AbstractString} = nothing,
@@ -812,11 +811,11 @@ function process_day(date::Date,
                      vertical;
                      out_path::AbstractString,
                      mass_basis::Symbol = :dry,
-                     dt_met_seconds::Real = 10800.0,
-                     positivity_cfl_limit::Real = 0.95,
+                     dt_met_seconds::Real = GEOS_3HOURLY_INTERVAL_SECONDS,
+                     positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                      min_steps_per_window::Union{Integer, Nothing} = nothing,
                      adaptive_substeps::Bool = true,
-                     substep_cfl_target::Real = 0.95,
+                     substep_cfl_target::Real = DEFAULT_SUBSTEP_CFL_TARGET,
                      max_steps_per_window::Integer = typemax(Int),
                      require_substep_positivity::Bool = true,
                      write_replay_check::Bool = true,

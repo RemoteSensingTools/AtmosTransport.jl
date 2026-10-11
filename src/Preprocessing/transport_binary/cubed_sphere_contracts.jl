@@ -112,7 +112,7 @@ function verify_write_replay_cs!(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
 end
 
 """
-    verify_substep_positivity_cs!(m, am, bm, cm; cfl_limit = 0.95,
+    verify_substep_positivity_cs!(m, am, bm, cm; cfl_limit = DEFAULT_POSITIVITY_CFL_LIMIT,
                                   halo_width = 0, m_next = nothing)
 
 Verify the per-substep horizontal+vertical positivity contract that the runtime's
@@ -155,7 +155,7 @@ function verify_substep_positivity_cs!(m::NTuple{NP, <:AbstractArray{FT, 3}},
                                        am::NTuple{NP, <:AbstractArray},
                                        bm::NTuple{NP, <:AbstractArray},
                                        cm::NTuple{NP, <:AbstractArray};
-                                       cfl_limit::Real = 0.95,
+                                       cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                                        halo_width::Integer = 0,
                                        m_next::Union{Nothing, NTuple{NP, <:AbstractArray}} = nothing) where {FT, NP}
     _validate_cfl_limit(cfl_limit, "verify_substep_positivity_cs!")
@@ -234,7 +234,7 @@ end
 
 """
     verify_cs_window_contract!(m_cur, am, bm, cm, m_next, steps_per_window, win_idx;
-                               replay_tol, positivity_cfl_limit = 0.95, halo_width = 0)
+                               replay_tol, positivity_cfl_limit = DEFAULT_POSITIVITY_CFL_LIMIT, halo_width = 0)
 
 Single canonical per-window CS binary contract check. Runs the replay gate
 (`verify_write_replay_cs!`, errors on failure) followed by the per-substep
@@ -255,7 +255,7 @@ function verify_cs_window_contract!(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
                                     steps_per_window::Int,
                                     win_idx::Int;
                                     replay_tol::Real,
-                                    positivity_cfl_limit::Real = 0.95,
+                                    positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                                     halo_width::Integer = 0,
                                     div_scratch::Union{Nothing, AbstractArray{Float64, 3}} = nothing) where {FT, NP}
     _validate_replay_tol(replay_tol, "verify_cs_window_contract!")
@@ -418,7 +418,7 @@ mutable struct CubedSphereContract{FT} <:
 
     function CubedSphereContract{FT}(;
                                       replay_tol::Real,
-                                      positivity_cfl_limit::Real = 0.95,
+                                      positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                                       require_substep_positivity::Bool = true,
                                       steps_per_window::Integer,
                                       halo_width::Integer = 0) where FT

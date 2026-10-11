@@ -67,6 +67,8 @@ Scheme parameters (Holtslag & Boville constants)
   * `kvh_min`     — floor on the in-PBL diffusivity (m² s⁻¹)
   * `kv_free_min` — floor on the free-troposphere diffusivity (m² s⁻¹)
   * `pblh_min`    — floor on the diagnosed PBL height (m)
+  * `ustar_min`   — floor on the friction velocity u* entering the Obukhov
+                    length and the velocity scales (m s⁻¹)
 """
 Base.@kwdef struct BLDiffConstants{FT <: AbstractFloat}
     grav        :: FT = TM5_CONSTANTS.gravity
@@ -86,6 +88,7 @@ Base.@kwdef struct BLDiffConstants{FT <: AbstractFloat}
     kvh_min     :: FT = 0.1
     kv_free_min :: FT = 1.0e-15
     pblh_min    :: FT = 100.0
+    ustar_min   :: FT = 0.01
     # Validity bounds on the prescribed-entrainment override `K = 0.2·w_heatv/dθv`
     # at the PBL top. The formula assumes a STABLE cap (dθv/dz > 0); it is applied
     # only when dθv is meaningfully positive AND the resulting K is finite and
@@ -238,7 +241,7 @@ function tm5_bldiff_kvh_column!(kvh::AbstractVector{FT},
 
     θv_surf = θ[1] * (one(FT) + vt_coef * q[1])   # θ_v at the lowest level
     w_heatv = w_heat + vt_coef * θ[1] * w_qflx    # virtual (buoyancy) heat flux
-    us = max(ustar, FT(0.01))
+    us = max(ustar, c.ustar_min)
     L = -θv_surf * us^3 /
         (c.grav * c.vkarman * (w_heatv + copysign(FT(1e-10), w_heatv)))
 

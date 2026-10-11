@@ -27,7 +27,7 @@ const ICIO = AtmosTransport.Models.InitialConditionIO
 
 const CATRINE = joinpath(homedir(), "data", "AtmosTransport", "catrine", "Emissions")
 const ORIGIN = DateTime(2021, 12, 1)
-const M_SF6 = 0.146055            # kg/mol
+const M_SF6 = AtmosTransport.Parameters.SPECIES_MOLAR_MASS.sf6   # kg/mol
 # ppt -> kg conversion for the NOAA growth rates: the dry-air molar mass and the
 # 5.135e18 kg global dry-air mass pin of the preprocessing give 25.89 kt/ppt.
 const M_DRY_AIR = AtmosTransport.Parameters.DRY_AIR_MOLAR_MASS   # kg/mol
@@ -153,7 +153,7 @@ function main(argv)
     growth = noaa_sf6_growth()
     kg_per_ppt = DRY_AIR_MASS / M_DRY_AIR * 1e-12 * M_SF6
     base, _ = cs_density(Dict{String, Any}("kind" => "edgar_sf6"), mesh)
-    base_kg_per_year = global_rate(base, mesh) * 365.25 * 86400
+    base_kg_per_year = global_rate(base, mesh) * AtmosTransport.Parameters.DAYS_PER_JULIAN_YEAR * 86400
     sf6_starts = DateTime[DateTime(2021, 12, 1)]
     scale_years = [2021]
     for y in 2022:year(last_month)

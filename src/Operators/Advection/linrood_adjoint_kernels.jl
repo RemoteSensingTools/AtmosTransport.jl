@@ -145,10 +145,10 @@ end
 #   m_new  = m [ii, jj, k] + bm_s - bm_n
 #   q_i[ii, jj, k] = m_new > thresh ? rm_new / m_new : 0
 #
-# where `thresh = 100 · eps(FT)` mirrors `_safe_mixing_ratio`. For
-# `m_new > thresh` the operator is smooth in `(rm, m, fy_face)`; below
-# threshold the output is exactly zero, so all adjoint contributions are
-# zero. The adjoint then is:
+# where `thresh = _linrood_mass_floor(FT)` (100 · eps) is the floor of
+# `_safe_mixing_ratio`. For `m_new > thresh` the operator is smooth in
+# `(rm, m, fy_face)`; below threshold the output is exactly zero, so all
+# adjoint contributions are zero. The adjoint then is:
 #
 #   inv_m_new = 1 / m_new      (when m_new > thresh, else 0)
 #   lambda_rm     [ii, jj, k]   += lambda_q_i · inv_m_new
@@ -169,7 +169,7 @@ end
     @inbounds begin
         ii = Hp + i;  jj = Hp + j
         FT = eltype(lambda_q_i)
-        thresh = FT(100) * eps(FT)
+        thresh = _linrood_mass_floor(FT)
 
         bm_s = bm[i, j,     k]
         bm_n = bm[i, j + 1, k]
@@ -201,7 +201,7 @@ end
 Discrete transpose of `_pre_advect_y_kernel!` for one panel: accumulate
 `lambda_q_i` into the adjoint accumulators of `(rm, m, fy_face)` for
 fixed velocity `bm`. The small-`m_new` zeroing exactly mirrors
-`_safe_mixing_ratio` (LinRood-style 100·eps threshold).
+`_safe_mixing_ratio` (the `_linrood_mass_floor` threshold, 100·eps).
 
 All `lambda_*` accumulators are read-modified; callers initialise them
 to zero before the call. Face writes use `@atomic` for shared
@@ -238,7 +238,7 @@ end
     @inbounds begin
         ii = Hp + i;  jj = Hp + j
         FT = eltype(lambda_q_j)
-        thresh = FT(100) * eps(FT)
+        thresh = _linrood_mass_floor(FT)
 
         am_w = am[i,     j, k]
         am_e = am[i + 1, j, k]
@@ -344,9 +344,9 @@ end
 # d6-AD versions of the LinRood forward chain helpers.
 #
 # Each function below has the same name as its forward counterpart with
-# a `_d6` suffix and accepts `D6{FT}` arguments. Numerical thresholds
-# (`10·eps(FT)`, `100·eps(FT)`) come from the forward implementations
-# in `ppm_subgrid_distributions.jl` and `LinRood.jl`.
+# a `_d6` suffix and accepts `D6{FT}` arguments. The mass floor
+# (`_linrood_mass_floor`) and the PPM edge weights (`_ppm_edge_weights`)
+# are the forward definitions, not copies.
 # ---------------------------------------------------------------------------
 
 # d6 mirror of the forward `_ppm_edge_values_ord5` (the 4th-order PPM edge
@@ -355,8 +355,8 @@ end
 @inline function _ppm_edge_values_ord5_d6(
     q_imm::D6{FT}, q_im::D6{FT}, q_i::D6{FT}, q_ip::D6{FT}, q_ipp::D6{FT},
 ) where {FT}
-    p1 = FT(7) / FT(12)
-    p2 = -FT(1) / FT(12)
+    p1, one_twelfth = _ppm_edge_weights(FT)    # (7/12, 1/12), as in the forward
+    p2 = -one_twelfth
     q_L = (q_im + q_i) * p1 + (q_imm + q_ip) * p2
     q_R = (q_i + q_ip) * p1 + (q_im + q_ipp) * p2
     return (q_L, q_R)
@@ -574,7 +574,7 @@ are bit-equal to ORD=5.
 function apply_ppm_x_face_from_q_adjoint!(lambda_q, lambda_fx_face,
                                           q, am, m,
                                           mesh::CubedSphereMesh,
-                                          ::Val{ORD}=Val(5)) where {ORD}
+                                          ::Val{ORD}=Val(DEFAULT_LINROOD_PPM_ORDER)) where {ORD}
     (ORD == 5 || ORD == 7) || throw(ArgumentError(
         "LinRoodPPMScheme adjoint supports ORD ∈ {5, 7}; got ORD=$ORD."))
     Nc = mesh.Nc
@@ -683,7 +683,7 @@ the contract.
 function apply_ppm_y_face_from_q_adjoint!(lambda_q, lambda_fy_face,
                                           q, bm, m,
                                           mesh::CubedSphereMesh,
-                                          ::Val{ORD}=Val(5)) where {ORD}
+                                          ::Val{ORD}=Val(DEFAULT_LINROOD_PPM_ORDER)) where {ORD}
     (ORD == 5 || ORD == 7) || throw(ArgumentError(
         "LinRoodPPMScheme adjoint supports ORD ∈ {5, 7}; got ORD=$ORD."))
     Nc = mesh.Nc

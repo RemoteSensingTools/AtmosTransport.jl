@@ -232,12 +232,13 @@ end
 
 Fraction of the donor cell that crosses a face in one sweep, `α = F / m_donor`,
 clamped to the donor cell (`|α| ≤ 1`) as in FV3's `xppm`/`yppm`; zero for an
-empty donor (mass below `100 eps`). The derivative `∂α/∂m_donor = −F / m_donor²`
-(used by the adjoint) applies for `|F| < m_donor`; where `α` is clamped to ±1 it
-no longer depends on the donor mass and the derivative is zero.
+empty donor (mass at or below `_linrood_mass_floor`, `100 eps`). The derivative
+`∂α/∂m_donor = −F / m_donor²` (used by the adjoint) applies for `|F| < m_donor`;
+where `α` is clamped to ±1 it no longer depends on the donor mass and the
+derivative is zero.
 """
 @inline function _courant_fraction(F::FT, m_donor::FT) where FT
-    m_donor > 100 * eps(FT) || return (zero(FT), zero(FT))
+    m_donor > _linrood_mass_floor(FT) || return (zero(FT), zero(FT))
     alpha = F / m_donor
     dalpha_dm = abs(alpha) < one(FT) ? -F / (m_donor * m_donor) : zero(FT)
     return (clamp(alpha, -one(FT), one(FT)), dalpha_dm)     # clamp keeps a NaN a NaN
@@ -404,6 +405,15 @@ end
 # Pre-advection kernels (advective-form transport for cross-term)
 # ---------------------------------------------------------------------------
 
+"""
+Largest fraction of a cell's air mass that one Lin-Rood pre-advection or
+q-space update may remove. Where the mass-flux divergence would remove more,
+the kernel scales that cell's fluxes down to this fraction so its mass stays
+positive. The fallback is cell-local and not conservative: callers must supply
+CFL-safe fluxes, and it is no substitute for subcycling.
+"""
+const _LINROOD_MAX_OUTFLOW_FRACTION = 0.9
+
 @kernel function _pre_advect_y_kernel!(
     q_i, @Const(rm), @Const(m), @Const(bm), @Const(fy_face), Hp
 )
@@ -414,7 +424,7 @@ end
         bm_s = bm[i, j, k];  bm_n = bm[i, j + 1, k]
         m1 = m[ii, jj, k]
         mass_div = bm_s - bm_n
-        max_outflow = FT(0.9) * m1
+        max_outflow = FT(_LINROOD_MAX_OUTFLOW_FRACTION) * m1
         scale = mass_div < -max_outflow && m1 > zero(FT) ? max_outflow / (-mass_div) : one(FT)
         rm_new = rm[ii, jj, k] + scale * (bm_s * fy_face[i, j, k] - bm_n * fy_face[i, j + 1, k])
         m_new  = m1 + scale * mass_div
@@ -432,7 +442,7 @@ end
         am_w = am[i, j, k];  am_e = am[i + 1, j, k]
         m1 = m[ii, jj, k]
         mass_div = am_w - am_e
-        max_outflow = FT(0.9) * m1
+        max_outflow = FT(_LINROOD_MAX_OUTFLOW_FRACTION) * m1
         scale = mass_div < -max_outflow && m1 > zero(FT) ? max_outflow / (-mass_div) : one(FT)
         rm_new = rm[ii, jj, k] + scale * (am_w * fx_face[i, j, k] - am_e * fx_face[i + 1, j, k])
         m_new  = m1 + scale * mass_div
@@ -502,7 +512,7 @@ end
         # This cell-local fallback is not conservative when activated. Callers
         # must supply CFL-safe fluxes; it is not a substitute for subcycling.
         mass_div = (am_w - am_e) + (bm_s - bm_n)
-        max_outflow = FT(0.9) * m1
+        max_outflow = FT(_LINROOD_MAX_OUTFLOW_FRACTION) * m1
         scale = mass_div < -max_outflow && m1 > zero(FT) ? max_outflow / (-mass_div) : one(FT)
 
         m2 = m1 + scale * mass_div
@@ -513,7 +523,7 @@ end
                      (bm_s * avg_fy_s - bm_n * avg_fy_n)
         rm_new = rm_old + scale * tracer_div
 
-        q_new[ii, jj, k] = m2 > FT(100) * eps(FT) ? rm_new / m2 : zero(FT)
+        q_new[ii, jj, k] = m2 > _linrood_mass_floor(FT) ? rm_new / m2 : zero(FT)
         m_new[ii, jj, k] = m2
     end
 end
@@ -532,13 +542,13 @@ end
 
         # CFL guard (same as _linrood_update_q_kernel!)
         mass_div = bm_s - bm_n
-        max_outflow = FT(0.9) * m1
+        max_outflow = FT(_LINROOD_MAX_OUTFLOW_FRACTION) * m1
         scale = mass_div < -max_outflow && m1 > zero(FT) ? max_outflow / (-mass_div) : one(FT)
 
         m_new = m1 + scale * mass_div
         tracer_div = bm_s * fy_face[i, j, k] - bm_n * fy_face[i, j + 1, k]
         rm_new = q[ii, jj, k] * m1 + scale * tracer_div
-        q_i[ii, jj, k] = m_new > FT(100) * eps(FT) ? rm_new / m_new : zero(FT)
+        q_i[ii, jj, k] = m_new > _linrood_mass_floor(FT) ? rm_new / m_new : zero(FT)
     end
 end
 
@@ -554,12 +564,12 @@ end
 
         # CFL guard (same as _linrood_update_q_kernel!)
         mass_div = am_w - am_e
-        max_outflow = FT(0.9) * m1
+        max_outflow = FT(_LINROOD_MAX_OUTFLOW_FRACTION) * m1
         scale = mass_div < -max_outflow && m1 > zero(FT) ? max_outflow / (-mass_div) : one(FT)
 
         m_new = m1 + scale * mass_div
         tracer_div = am_w * fx_face[i, j, k] - am_e * fx_face[i + 1, j, k]
         rm_new = q[ii, jj, k] * m1 + scale * tracer_div
-        q_j[ii, jj, k] = m_new > FT(100) * eps(FT) ? rm_new / m_new : zero(FT)
+        q_j[ii, jj, k] = m_new > _linrood_mass_floor(FT) ? rm_new / m_new : zero(FT)
     end
 end

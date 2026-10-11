@@ -197,7 +197,7 @@ function _process_day_geos_cs_unified(date::Date,
                                       global_mass_target_kg::Real,
                                       balance_mode::Symbol,
                                       cm_closure::Symbol = :endpoint_balanced,
-                                      smooth_iters::Integer = 8,
+                                      smooth_iters::Integer = DEFAULT_GEOS_SMOOTHING_SWEEPS,
                                       omega_regularization::OmegaRegularization = OmegaRegularization())
     _OMEGA_TIMING[] = get(ENV, "ATMOS_OMEGA_TIMING", "0") in ("1", "true", "yes")
     Nc     = grid.Nc
@@ -406,7 +406,7 @@ end
     process_day(date, grid::CubedSphereTargetGeometry,
                 settings::AbstractGEOSSettings, vertical;
                 out_path,
-                dt_met_seconds = 3600.0,
+                dt_met_seconds = GEOS_MET_INTERVAL_SECONDS,
                 FT = Float64,
                 mass_basis = :dry,
                 replay_tol = replay_tolerance(FT),
@@ -448,12 +448,12 @@ function process_day(date::Date,
                      settings::AbstractGEOSSettings,
                      vertical;
                      out_path::AbstractString,
-                     dt_met_seconds::Real = 3600.0,
+                     dt_met_seconds::Real = GEOS_MET_INTERVAL_SECONDS,
                      FT::Type{<:AbstractFloat} = Float64,
                      mass_basis::Symbol = :dry,
                      replay_tol::Real = replay_tolerance(FT),
                      write_replay_check::Bool = true,
-                     positivity_cfl_limit::Real = 0.95,
+                     positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                      require_substep_positivity::Bool = true,
                      adaptive_substeps::Bool = false,
                      substep_cfl_target::Real = positivity_cfl_limit,
@@ -465,7 +465,7 @@ function process_day(date::Date,
                      global_mass_target_kg::Real = NaN,
                      horizontal_balance::Union{Nothing, AbstractHorizontalBalance} = nothing,
                      cm_closure::Symbol = :endpoint_balanced,
-                     smooth_iters::Integer = 8,
+                     smooth_iters::Integer = DEFAULT_GEOS_SMOOTHING_SWEEPS,
                      omega_regularization::OmegaRegularization = OmegaRegularization(),
                      next_day_hour0 = nothing)
     # Reject configurations the path cannot honor:

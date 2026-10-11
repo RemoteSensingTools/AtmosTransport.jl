@@ -6,8 +6,8 @@
 #
 # Forward kernels `_ppm_x_face_kernel!` and `_ppm_y_face_kernel!`
 # (LinRood.jl) at ORD=5 fold `_safe_mixing_ratio` into the
-# face computation: `c_n = rm_n / m_n` (zero below the
-# `100·eps(FT)` threshold) feeds the same downstream
+# face computation: `c_n = rm_n / m_n` (zero at or below the
+# `_linrood_mass_floor` threshold, 100·eps) feeds the same downstream
 # `_ppm_edge_values_ord5 → _apply_monotonicity → _ppm_face_value`
 # chain as the `_from_q` variants. The adjoint therefore needs to
 # distribute the face seed into BOTH `lambda_rm` and `lambda_m` at
@@ -26,11 +26,11 @@
 
 # d6-AD safe-mixing-ratio: returns the D6{FT} value `rm_n / m_n` with the
 # requested tangent. Mirrors the forward `_safe_mixing_ratio`
-# 100·eps threshold by returning a zero-gradient D6 when m_n is too
-# small.
+# `_linrood_mass_floor` threshold by returning a zero-gradient D6 when m_n
+# is too small.
 @inline function _safe_mixing_ratio_d6(rm_n::FT, m_n::FT,
                                         tangent::NTuple{6, FT}) where {FT}
-    if m_n > FT(100) * eps(FT)
+    if m_n > _linrood_mass_floor(FT)
         return _d6_pack(rm_n / m_n, tangent)
     else
         return _d6_const(FT, zero(FT))
@@ -70,7 +70,7 @@ end
     rm_m3::FT, rm_m2::FT, rm_m1::FT, rm_0::FT, rm_p1::FT, rm_p2::FT,
     m_m3::FT,  m_m2::FT,  m_m1::FT,  m_0::FT,  m_p1::FT,  m_p2::FT,
 ) where {FT}
-    floor_thresh = FT(100) * eps(FT)
+    floor_thresh = _linrood_mass_floor(FT)
     # rm pass: dc_n = (1/m_n) · e_n   (zero if m_n below threshold)
     inv_m_m3 = m_m3 > floor_thresh ? one(FT) / m_m3 : zero(FT)
     inv_m_m2 = m_m2 > floor_thresh ? one(FT) / m_m2 : zero(FT)
@@ -173,7 +173,7 @@ end
 ) where {FT}
     _ = F
     _ = (rm_p2, m_p2)  # not part of the q_L_m/q_R_m stencil
-    floor_thresh = FT(100) * eps(FT)
+    floor_thresh = _linrood_mass_floor(FT)
     c_m3v = m_m3 > floor_thresh ? rm_m3 / m_m3 : zero(FT)
     c_m2v = m_m2 > floor_thresh ? rm_m2 / m_m2 : zero(FT)
     c_m1v = m_m1 > floor_thresh ? rm_m1 / m_m1 : zero(FT)
@@ -194,7 +194,7 @@ end
 ) where {FT}
     _ = F
     _ = (rm_m3, m_m3)  # not part of the q_L_0/q_R_0 stencil
-    floor_thresh = FT(100) * eps(FT)
+    floor_thresh = _linrood_mass_floor(FT)
     c_m2v = m_m2 > floor_thresh ? rm_m2 / m_m2 : zero(FT)
     c_m1v = m_m1 > floor_thresh ? rm_m1 / m_m1 : zero(FT)
     c_0v  = m_0  > floor_thresh ? rm_0  / m_0  : zero(FT)
@@ -223,7 +223,7 @@ end
 ) where {FT}
     _ = F
     _ = (rm_p2, m_p2)
-    floor_thresh = FT(100) * eps(FT)
+    floor_thresh = _linrood_mass_floor(FT)
     c_m3v = m_m3 > floor_thresh ? rm_m3 / m_m3 : zero(FT)
     c_m2v = m_m2 > floor_thresh ? rm_m2 / m_m2 : zero(FT)
     c_m1v = m_m1 > floor_thresh ? rm_m1 / m_m1 : zero(FT)
@@ -253,7 +253,7 @@ end
 ) where {FT}
     _ = F
     _ = (rm_m3, m_m3)
-    floor_thresh = FT(100) * eps(FT)
+    floor_thresh = _linrood_mass_floor(FT)
     c_m2v = m_m2 > floor_thresh ? rm_m2 / m_m2 : zero(FT)
     c_m1v = m_m1 > floor_thresh ? rm_m1 / m_m1 : zero(FT)
     c_0v  = m_0  > floor_thresh ? rm_0  / m_0  : zero(FT)
@@ -312,7 +312,7 @@ end
     m_m3::FT,  m_m2::FT,  m_m1::FT,  m_0::FT,  m_p1::FT,  m_p2::FT,
     face_idx::Integer, Nc::Integer,
 ) where {FT}
-    floor_thresh = FT(100) * eps(FT)
+    floor_thresh = _linrood_mass_floor(FT)
     # rm pass: dc_n = (1/m_n) · e_n
     inv_m_m3 = m_m3 > floor_thresh ? one(FT) / m_m3 : zero(FT)
     inv_m_m2 = m_m2 > floor_thresh ? one(FT) / m_m2 : zero(FT)
@@ -501,7 +501,7 @@ faces are bit-equal to ORD=5.
 function apply_ppm_x_face_adjoint!(lambda_rm, lambda_m, lambda_fx_face,
                                    rm, m, am,
                                    mesh::CubedSphereMesh,
-                                   ::Val{ORD}=Val(5)) where {ORD}
+                                   ::Val{ORD}=Val(DEFAULT_LINROOD_PPM_ORDER)) where {ORD}
     (ORD == 5 || ORD == 7) || throw(ArgumentError(
         "LinRoodPPMScheme adjoint supports ORD ∈ {5, 7}; got ORD=$ORD."))
     Nc = mesh.Nc
@@ -612,7 +612,7 @@ or ORD=7. See `apply_ppm_x_face_adjoint!` for the contract.
 function apply_ppm_y_face_adjoint!(lambda_rm, lambda_m, lambda_fy_face,
                                    rm, m, bm,
                                    mesh::CubedSphereMesh,
-                                   ::Val{ORD}=Val(5)) where {ORD}
+                                   ::Val{ORD}=Val(DEFAULT_LINROOD_PPM_ORDER)) where {ORD}
     (ORD == 5 || ORD == 7) || throw(ArgumentError(
         "LinRoodPPMScheme adjoint supports ORD ∈ {5, 7}; got ORD=$ORD."))
     Nc = mesh.Nc

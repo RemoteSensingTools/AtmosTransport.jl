@@ -21,9 +21,21 @@
 # Safe mixing ratio (rm / m with zero guard)
 # ---------------------------------------------------------------------------
 
-"""Extract mixing ratio, returning zero if air mass too small."""
+"""
+    _linrood_mass_floor(FT) -> FT
+
+Air mass at or below which the Lin-Rood path treats a cell as empty, `100 eps(FT)`:
+its mixing ratio is zero (`_safe_mixing_ratio`, the q-space update and
+pre-advection kernels in `LinRood.jl`) and it donates no Courant fraction
+(`_courant_fraction`). The adjoint kernels (`linrood_adjoint_*.jl`) take their
+zero-gradient threshold from here too, so they branch exactly where the forward
+does.
+"""
+@inline _linrood_mass_floor(::Type{FT}) where {FT} = FT(100) * eps(FT)
+
+"""Extract mixing ratio, returning zero if the air mass is at or below `_linrood_mass_floor`."""
 @inline function _safe_mixing_ratio(rm::FT, m::FT) where FT
-    return m > 100 * eps(FT) ? rm / m : zero(FT)
+    return m > _linrood_mass_floor(FT) ? rm / m : zero(FT)
 end
 
 # ---------------------------------------------------------------------------
@@ -90,8 +102,8 @@ Quasi-monotone (Huynh-class) limiting is applied separately by
 for smooth data.
 """
 @inline function _ppm_edge_values_ord5(q_imm::FT, q_im::FT, q_i::FT, q_ip::FT, q_ipp::FT) where FT
-    p1 = FT(7) / FT(12)
-    p2 = -FT(1) / FT(12)
+    p1, one_twelfth = _ppm_edge_weights(FT)    # (7/12, 1/12)
+    p2 = -one_twelfth
     q_L = p1 * (q_im + q_i) + p2 * (q_imm + q_ip)
     q_R = p1 * (q_i + q_ip) + p2 * (q_im + q_ipp)
     return (q_L, q_R)

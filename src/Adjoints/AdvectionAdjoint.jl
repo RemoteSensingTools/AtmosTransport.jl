@@ -25,15 +25,15 @@
 @inline function _upwind_face_coeffs(F, m_l, m_r)
     FT = typeof(F)
     if F >= zero(FT)
-        return clamp(F / max(m_l, eps(FT)), zero(FT), one(FT)), zero(FT)
+        return clamp(F / max(m_l, _advection_mass_floor(FT)), zero(FT), one(FT)), zero(FT)
     else
-        return zero(FT), clamp(F / max(m_r, eps(FT)), -one(FT), zero(FT))
+        return zero(FT), clamp(F / max(m_r, _advection_mass_floor(FT)), -one(FT), zero(FT))
     end
 end
 
 @inline function _slopes_no_limiter_face_coeffs(F, m_ll, m_l, m_r, m_rr)
     FT = typeof(F)
-    m_floor = eps(FT)
+    m_floor = _advection_mass_floor(FT)
     mll = max(m_ll, m_floor)
     ml = max(m_l, m_floor)
     mr = max(m_r, m_floor)
@@ -51,8 +51,8 @@ end
 
 @inline function _ppm_no_limiter_face_coeffs(F, m_ll, m_l, m_r, m_rr)
     FT = typeof(F)
-    tw12 = FT(1) / FT(12)
-    m_floor = eps(FT)
+    tw12 = last(_ppm_edge_weights(FT))
+    m_floor = _advection_mass_floor(FT)
     mll = max(m_ll, m_floor)
     ml = max(m_l, m_floor)
     mr = max(m_r, m_floor)
@@ -101,8 +101,7 @@ end
 
 @inline function _ppm_edge_value_ad(c_ll, d_ll, c_l, d_l, c_r, d_r, c_rr, d_rr)
     FT = typeof(c_ll)
-    seven_twelfths = FT(7) / FT(12)
-    one_twelfth = FT(1) / FT(12)
+    seven_twelfths, one_twelfth = _ppm_edge_weights(FT)    # forward `_ppm_edge_value` weights
     value = seven_twelfths * (c_l + c_r) - one_twelfth * (c_ll + c_rr)
     deriv = _d6_sub(_d6_scale(_d6_add(d_l, d_r), seven_twelfths),
                     _d6_scale(_d6_add(d_ll, d_rr), one_twelfth))
@@ -197,7 +196,7 @@ of the forward at the taped tracer masses.
                                   rm_3, rm_2, rm_1, rm_0, rm_p, rm_pp,
                                   interior_l::Bool, interior_r::Bool, limiter)
     FT = typeof(F)
-    m_floor = eps(FT)
+    m_floor = _advection_mass_floor(FT)
     m3 = max(m_3, m_floor)
     m2 = max(m_2, m_floor)
     m1 = max(m_1, m_floor)
@@ -389,7 +388,7 @@ end
                 F, m[i, jll, k], m[i, jl, k], m[i, jr, k], m[i, jrr, k])
         else
             c_ll = zero(FT)
-            c_l = clamp(F / max(m[i, jl, k], eps(FT)), zero(FT), one(FT))
+            c_l = clamp(F / max(m[i, jl, k], _advection_mass_floor(FT)), zero(FT), one(FT))
             c_r = zero(FT)
             c_rr = zero(FT)
         end
@@ -400,7 +399,7 @@ end
         else
             c_ll = zero(FT)
             c_l = zero(FT)
-            c_r = clamp(F / max(m[i, jr, k], eps(FT)), -one(FT), zero(FT))
+            c_r = clamp(F / max(m[i, jr, k], _advection_mass_floor(FT)), -one(FT), zero(FT))
             c_rr = zero(FT)
         end
     end
@@ -508,7 +507,7 @@ end
                 F, m[i, j, kll], m[i, j, kl], m[i, j, kr], m[i, j, krr])
         else
             c_ll = zero(FT)
-            c_l = clamp(F / max(m[i, j, kl], eps(FT)), zero(FT), one(FT))
+            c_l = clamp(F / max(m[i, j, kl], _advection_mass_floor(FT)), zero(FT), one(FT))
             c_r = zero(FT)
             c_rr = zero(FT)
         end
@@ -519,7 +518,7 @@ end
         else
             c_ll = zero(FT)
             c_l = zero(FT)
-            c_r = clamp(F / max(m[i, j, kr], eps(FT)), -one(FT), zero(FT))
+            c_r = clamp(F / max(m[i, j, kr], _advection_mass_floor(FT)), -one(FT), zero(FT))
             c_rr = zero(FT)
         end
     end

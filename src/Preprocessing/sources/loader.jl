@@ -100,11 +100,14 @@ function _build_met_settings(ctor::Type{<:GEOSSettings}, cfg::AbstractDict,
     coefs = String(get(vertical_cfg, "coefficients_file",
                        "config/geos_L72_coefficients.toml"))
     Nc = Int(grid_cfg["Nc"])
-    mass_flux_dt = Float64(get(pre_cfg, "mass_flux_dt_seconds", 450.0))
-    100.0 <= mass_flux_dt <= 3600.0 || throw(ArgumentError(
-        "[preprocessing] mass_flux_dt_seconds must be between 100 and 3600; got $(mass_flux_dt)."))
-    if !(400.0 <= mass_flux_dt <= 500.0)
-        @warn "[preprocessing] mass_flux_dt_seconds=$(mass_flux_dt) is outside the usual GEOS 400-500 s range."
+    mass_flux_dt = Float64(get(pre_cfg, "mass_flux_dt_seconds", GEOS_MASS_FLUX_DT_SECONDS))
+    # The dynamics step must fit inside one hourly met window.
+    100.0 <= mass_flux_dt <= GEOS_MET_INTERVAL_SECONDS || throw(ArgumentError(
+        "[preprocessing] mass_flux_dt_seconds must be between 100 and " *
+        "$(round(Int, GEOS_MET_INTERVAL_SECONDS)); got $(mass_flux_dt)."))
+    if abs(mass_flux_dt - GEOS_MASS_FLUX_DT_SECONDS) > 50.0
+        @warn "[preprocessing] mass_flux_dt_seconds=$(mass_flux_dt) is more than 50 s from the " *
+              "GEOS FV3 dynamics step ($(GEOS_MASS_FLUX_DT_SECONDS) s)."
     end
     level_orientation    = Symbol(get(pre_cfg, "level_orientation", "auto"))
     include_surface      = _config_bool(pre_cfg, "include_surface", false, "[preprocessing].include_surface")

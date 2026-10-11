@@ -545,7 +545,7 @@ end
 # ===========================================================================
 
 """
-    verify_substep_positivity_ll!(m, am, bm, cm; cfl_limit = 0.95, m_next = nothing)
+    verify_substep_positivity_ll!(m, am, bm, cm; cfl_limit = DEFAULT_POSITIVITY_CFL_LIMIT, m_next = nothing)
 
 Per-substep positivity contract of a structured lat-lon window, the same as
 the cubed-sphere one (`verify_substep_positivity_cs!`, here on one block). One
@@ -572,7 +572,7 @@ function verify_substep_positivity_ll!(m::AbstractArray{FT, 3},
                                         am::AbstractArray,
                                         bm::AbstractArray,
                                         cm::AbstractArray;
-                                        cfl_limit::Real = 0.95,
+                                        cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                                         m_next::Union{Nothing, AbstractArray} = nothing) where FT
     _validate_cfl_limit(cfl_limit, "verify_substep_positivity_ll!")
     Nx, Ny, Nz = size(m)
@@ -595,7 +595,7 @@ end
 
 """
     verify_ll_window_contract!(m_cur, am, bm, cm, m_next, steps_per_window, win_idx;
-                               replay_tol, positivity_cfl_limit = 0.95,
+                               replay_tol, positivity_cfl_limit = DEFAULT_POSITIVITY_CFL_LIMIT,
                                div_scratch = nothing)
 
 Single canonical per-window LL binary contract check. Runs the replay
@@ -620,7 +620,7 @@ function verify_ll_window_contract!(m_cur::AbstractArray{FT, 3},
                                      steps_per_window::Integer,
                                      win_idx::Integer;
                                      replay_tol::Real,
-                                     positivity_cfl_limit::Real = 0.95,
+                                     positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                                      div_scratch::Union{Nothing, AbstractArray{Float64, 3}} = nothing) where FT
     _validate_replay_tol(replay_tol, "verify_ll_window_contract!")
     _validate_cfl_limit(positivity_cfl_limit, "verify_ll_window_contract!")
@@ -762,7 +762,7 @@ mutable struct LatLonContract{FT} <:
 
     function LatLonContract{FT}(;
                                  replay_tol::Real,
-                                 positivity_cfl_limit::Real = 0.95,
+                                 positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                                  require_substep_positivity::Bool = true,
                                  steps_per_window::Integer) where FT
         isfinite(replay_tol) && replay_tol > 0 ||

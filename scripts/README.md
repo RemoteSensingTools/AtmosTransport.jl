@@ -18,8 +18,10 @@ move the function there), not copy it.
 A `heritage/` subfolder (in `scripts/` itself and in `benchmarks/`,
 `diagnostics/`, `downloads/`, `preprocessing/`, `validation/` and
 `visualization/`) holds scripts that are not part of a maintained workflow.
-They are kept for reference until they are trimmed, may hard-code the paths
-and data of their study, and are not tested. Each `heritage/README.md` gives
+They are kept for reference until they are trimmed, may hard-code the paths,
+data and constants of their study, and are not tested. Maintained scripts take
+every physical constant and shared default from `src/Parameters`; heritage
+scripts are frozen records and are exempt. Each `heritage/README.md` gives
 the purpose of every script and why it is kept.
 
 The campaign launchers at the top level (`run_*_campaign.py`,

@@ -251,15 +251,14 @@ struct ConstantLayerTemperature <: AbstractLayerTemperature
     kelvin::Float64
 end
 """
-2 m temperature with a constant lapse rate (K m⁻¹) above the surface, floored
-at the standard-atmosphere tropopause temperature so tall columns stay physical.
+2 m temperature with a constant lapse rate (K m⁻¹) above the surface, by default
+`STANDARD_LAPSE_RATE`, floored at the standard-atmosphere tropopause temperature
+`STANDARD_TROPOPAUSE_TEMPERATURE` so tall columns stay physical.
 """
 struct SurfaceLapseTemperature <: AbstractLayerTemperature
     surface_kelvin::Float64
     lapse_rate::Float64
 end
-const STANDARD_LAPSE_RATE = 0.0065          # K m⁻¹
-const STANDARD_TROPOPAUSE_KELVIN = 216.65   # US standard atmosphere
 SurfaceLapseTemperature(surface_kelvin::Real) = SurfaceLapseTemperature(surface_kelvin, STANDARD_LAPSE_RATE)
 "Per-layer temperatures, `kelvin[k]` with k = 1 at the top."
 struct ProfileLayerTemperature{V <: AbstractVector} <: AbstractLayerTemperature
@@ -275,7 +274,7 @@ end
 
 layer_temperature(t::ConstantLayerTemperature, k, z_bottom) = t.kelvin
 layer_temperature(t::SurfaceLapseTemperature, k, z_bottom) =
-    max(t.surface_kelvin - t.lapse_rate * z_bottom, STANDARD_TROPOPAUSE_KELVIN)
+    max(t.surface_kelvin - t.lapse_rate * z_bottom, STANDARD_TROPOPAUSE_TEMPERATURE)
 layer_temperature(t::ProfileLayerTemperature, k, z_bottom) = Float64(t.kelvin[k])
 height_method_label(::ConstantLayerTemperature) = :constant
 height_method_label(::SurfaceLapseTemperature) = :surface_lapse

@@ -74,12 +74,19 @@ header (LL does it when `LatLonDeferredBinaryWriter` opens). GEOS uses
 - `[numerics]`: `substep_schedule = "adaptive_cfl"` (default) or `"fixed"`,
   `substep_cfl_target` (default `positivity_cfl_limit`), `min_steps_per_window`,
   `max_steps_per_window`.
+- Defaults come from `Parameters` (`src/Parameters/NumericalDefaults.jl`):
+  `positivity_cfl_limit` is `DEFAULT_POSITIVITY_CFL_LIMIT` on every path. Called
+  directly, the MERRA-2 workflow defaults `substep_cfl_target` to
+  `DEFAULT_SUBSTEP_CFL_TARGET`, N320 to `ERA5_N320_SUBSTEP_CFL_TARGET` and the
+  coarsener to `COARSEN_SUBSTEP_CFL_TARGET`; the spectral and GEOS `process_day`
+  methods default it to `positivity_cfl_limit`.
 - `next_substeps` returns `ceil(steps * ratio / substep_cfl_target)`, never
   below the current count and clamped to the bounds; fixed policies keep the count.
 - On a change the workflow rescales (`rescale_substep_amounts!`, spectral
   paths), re-prepares from native fluxes (GEOS), or rebuilds fluxes from winds
   (N320, MERRA-2), then repeats balance, `cm`, and the positivity check.
-  GEOS, N320, and MERRA-2 stop after 8 refinements.
+  GEOS, N320, and MERRA-2 stop after `ADAPTIVE_SUBSTEP_MAX_REFINEMENTS`
+  refinements.
 - Counts are written to `steps_per_window_by_window`
   (`set_streaming_steps_per_window_schedule!`,
   `set_transport_header_steps_per_window_schedule!`). CS binaries always carry

@@ -405,7 +405,8 @@ end
 # dry-air mass flux throughout the chain.
 # ---------------------------------------------------------------------------
 
-@inline _a3_index_for_window(win::Int) = (win - 1) ÷ 3 + 1
+@inline _a3_index_for_window(win::Int) =
+    (win - 1) ÷ round(Int, GEOS_3HOURLY_INTERVAL_SECONDS / GEOS_MET_INTERVAL_SECONDS) + 1
 
 function _read_geos_convection_window!(raw::RawWindow{FT},
                                        handles::GEOSDayHandles,

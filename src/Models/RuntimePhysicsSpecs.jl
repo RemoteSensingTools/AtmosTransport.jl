@@ -252,7 +252,7 @@ for `scheme = "linrood"`; pairing it with `scheme = "ppm"` is rejected (the spli
 PPM path takes no order knob). `vertical` applies to `scheme = "ppm"` (default
 `same_as_horizontal`) and `scheme = "linrood"` (default `upwind`). `limiter`
 applies to `scheme = "ppm"` only (`monotone`, the default, or `cw84`). An omitted
-selector defaults to upwind; an omitted Lin–Rood `ppm_order` defaults to 5.
+selector defaults to upwind; an omitted Lin–Rood `ppm_order` defaults to `DEFAULT_LINROOD_PPM_ORDER` (5).
 """
 function advection_spec(section)
     kind = _parse_advection_scheme(section)
@@ -270,7 +270,7 @@ function advection_spec(section)
         return PPMAdvectionSpec(_parse_ppm_limiter(section),
                                 _parse_vertical_reconstruction(section))
     end
-    order = _spec_int(section, "ppm_order", 5, "[advection]")                    # :linrood
+    order = _spec_int(section, "ppm_order", DEFAULT_LINROOD_PPM_ORDER, "[advection]")                    # :linrood
     order in _LINROOD_PPM_ORDERS || throw(ArgumentError(
         "[advection] `ppm_order` must be 5 or 7 for `scheme = \"linrood\"`; got $(order)."))
     return LinRoodAdvectionSpec(order, _parse_linrood_vertical(section))

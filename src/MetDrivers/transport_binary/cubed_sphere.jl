@@ -165,7 +165,7 @@ function _cs_default_geometry_tags(panel_convention)
             cs_definition = "gmao_equal_distance",
             cs_coordinate_law = "gmao_equal_distance_gnomonic",
             cs_center_law = "four_corner_normalized",
-            longitude_offset_deg = -10.0,
+            longitude_offset_deg = GMAO_CS_LONGITUDE_OFFSET_DEG,
         )
     else
         return (
@@ -198,7 +198,7 @@ function open_streaming_cs_transport_binary(
         vc;
         FT::Type{<:AbstractFloat} = Float64,
         header_bytes::Int = 131072,
-        dt_met_seconds::Real = 3600.0,
+        dt_met_seconds::Real = DEFAULT_MET_INTERVAL_SECONDS,
         half_dt_seconds::Real = dt_met_seconds / 2,
         steps_per_window::Integer = 4,
         source_flux_sampling::Symbol = :window_start_endpoint,

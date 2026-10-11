@@ -117,7 +117,7 @@ function _record_linrood_horizontal_substep!(
     panels_am, panels_bm,
     mesh::CubedSphereMesh{FT},
     flux_scale,
-    ord::Val{ORD} = Val(5);
+    ord::Val{ORD} = Val(DEFAULT_LINROOD_PPM_ORDER);
     record_ops::Bool = true,
 ) where {FT, ORD}
     Nc = mesh.Nc; Hp = mesh.Hp
@@ -347,7 +347,7 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
                                   scheme::LinRoodPPMScheme{ORD};
                                   flux_scale = one(FT),
                                   dt = one(FT),
-                                  cfl_limit = 0.95,
+                                  cfl_limit = DEFAULT_CFL_LIMIT,
                                   base_emission_rates = nothing,
                                   diffusion_op = NoDiffusion(),
                                   diffusion_workspace = nothing,

@@ -120,7 +120,7 @@ function _cs_transport_step!(::CSSplitSweepStyle,
                              mesh::CubedSphereMesh,
                              scheme::AbstractAdvectionScheme,
                              workspace::CSAdvectionWorkspace;
-                             cfl_limit::Real = 0.95,
+                             cfl_limit::Real = DEFAULT_CFL_LIMIT,
                              subcycle_count::Union{Nothing, Integer} = nothing,
                              midpoint! = nothing)
     strang_split_cs!(rm_tracer, m, fluxes.am, fluxes.bm, fluxes.cm,
@@ -138,7 +138,7 @@ function _cs_transport_step!(::CSSplitSweepStyle,
                              mesh::CubedSphereMesh,
                              scheme::AbstractAdvectionScheme,
                              workspace::CSAdvectionWorkspace;
-                             cfl_limit::Real = 0.95,
+                             cfl_limit::Real = DEFAULT_CFL_LIMIT,
                              subcycle_count::Union{Nothing, Integer} = nothing,
                              midpoint! = nothing)
     strang_split_cs_mt!(rm_4d, m, fluxes.am, fluxes.bm, fluxes.cm,
@@ -167,7 +167,7 @@ function _cs_transport_step!(::CSLinRoodStyle,
                              mesh::CubedSphereMesh,
                              scheme::LinRoodPPMScheme{ORD},
                              workspace::CSLinRoodAdvectionWorkspace;
-                             cfl_limit::Real = 0.95,
+                             cfl_limit::Real = DEFAULT_CFL_LIMIT,
                              subcycle_count::Union{Nothing, Integer} = nothing,
                              midpoint! = nothing) where ORD
     _ = subcycle_count
@@ -213,7 +213,7 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
                        scheme::AbstractAdvectionScheme;
                        workspace,
                        diffusion_workspace = nothing,
-                       cfl_limit::Real = 0.95,
+                       cfl_limit::Real = DEFAULT_CFL_LIMIT,
                        diffusion_op::AbstractDiffusion = NoDiffusion(),
                        emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                        meteo = nothing,

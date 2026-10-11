@@ -13,7 +13,9 @@ using Logging
 using TOML
 using Dates
 
-# Standalone module: downloading does not require the full AtmosTransport package.
+# Standalone modules: downloading does not require the full AtmosTransport
+# package, only its constants (Parameters) and the Downloads module.
+include(joinpath(@__DIR__, "..", "..", "src", "Parameters", "Parameters.jl"))
 include(joinpath(@__DIR__, "..", "..", "src", "Downloads", "Downloads.jl"))
 using .DataDownloads
 

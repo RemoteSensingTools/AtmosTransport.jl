@@ -36,7 +36,8 @@
 
 """
     strang_split_cs!(panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-                     mesh, scheme, workspace; flux_scale=1, cfl_limit=0.95)
+                     mesh, scheme, workspace; flux_scale=1,
+                     cfl_limit=DEFAULT_CFL_LIMIT)
 
 Perform one Strang-split advection step on a 6-panel cubed-sphere field
 with automatic CFL-based subcycling per direction.
@@ -88,7 +89,7 @@ kernels only update interior cells; halo regions are filled by
   require `mesh.Hp ≥ 2` (Slopes) or `mesh.Hp ≥ 3` (PPM).
 - `workspace`: pre-allocated `CSAdvectionWorkspace` buffers.
 - `flux_scale`: overall scaling applied to all fluxes (default 1.0).
-- `cfl_limit`: maximum CFL per subcycle pass (default 0.95).
+- `cfl_limit`: maximum CFL per subcycle pass (default `DEFAULT_CFL_LIMIT`, 0.95).
 """
 function strang_split_cs!(panels_rm::NTuple{6},
                           panels_m::NTuple{6},
@@ -99,7 +100,7 @@ function strang_split_cs!(panels_rm::NTuple{6},
                           scheme,
                           workspace::CSAdvectionWorkspace;
                           flux_scale = one(eltype(panels_m[1])),
-                          cfl_limit::Real = 0.95,
+                          cfl_limit::Real = DEFAULT_CFL_LIMIT,
                           subcycle_count::Union{Nothing, Integer} = nothing,
                           midpoint! = nothing)
     Nc, Hp = mesh.Nc, mesh.Hp
@@ -208,7 +209,7 @@ function _strang_split_cs_mt_copyback!(panels_rm_4d::NTuple{6},
                                        scheme::AbstractAdvectionScheme,
                                        workspace::CSAdvectionWorkspace;
                                        flux_scale = one(eltype(panels_m[1])),
-                                       cfl_limit::Real = 0.95,
+                                       cfl_limit::Real = DEFAULT_CFL_LIMIT,
                                        subcycle_count::Union{Nothing, Integer} = nothing,
                                        midpoint! = nothing)
     Nc, Hp = mesh.Nc, mesh.Hp
@@ -293,7 +294,7 @@ function strang_split_cs_mt!(panels_rm_4d::NTuple{6},
                              scheme::AbstractAdvectionScheme,
                              workspace::CSAdvectionWorkspace;
                              flux_scale = one(eltype(panels_m[1])),
-                             cfl_limit::Real = 0.95,
+                             cfl_limit::Real = DEFAULT_CFL_LIMIT,
                              subcycle_count::Union{Nothing, Integer} = nothing,
                              midpoint! = nothing)
     strang_split_cs_mt_pingpong!(panels_rm_4d, panels_m,
@@ -324,7 +325,7 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
                                       scheme::AbstractAdvectionScheme,
                                       workspace::CSAdvectionWorkspace;
                                       flux_scale = one(eltype(panels_m[1])),
-                                      cfl_limit::Real = 0.95,
+                                      cfl_limit::Real = DEFAULT_CFL_LIMIT,
                                       subcycle_count::Union{Nothing, Integer} = nothing,
                                       midpoint! = nothing)
     Nc, Hp = mesh.Nc, mesh.Hp

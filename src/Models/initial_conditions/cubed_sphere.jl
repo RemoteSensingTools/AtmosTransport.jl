@@ -85,7 +85,7 @@ function _build_cs_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 
     mesh = grid.horizontal
     Nc = mesh.Nc
     Nz = size(air_mass[1], 3)
-    background = FT(get(cfg, "background", 4.0e-4))
+    background = FT(get(cfg, "background", DEFAULT_BACKGROUND_VMR))
 
     if kind === :uniform
         vmr = _cs_initial_vmr_storage(vmr, FT, Nc, Nz)
@@ -106,8 +106,8 @@ function _build_cs_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 
     elseif kind === :gaussian_blob
         lon0 = FT(get(cfg, "lon0_deg", 0.0))
         lat0 = FT(get(cfg, "lat0_deg", 0.0))
-        sigma_lon = FT(get(cfg, "sigma_lon_deg", 10.0))
-        sigma_lat = FT(get(cfg, "sigma_lat_deg", 10.0))
+        sigma_lon = FT(get(cfg, "sigma_lon_deg", DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG))
+        sigma_lat = FT(get(cfg, "sigma_lat_deg", DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG))
         amplitude = FT(get(cfg, "amplitude", background))
         vmr = _cs_initial_vmr_storage(vmr, FT, Nc, Nz)
         for p in 1:CS_PANEL_COUNT

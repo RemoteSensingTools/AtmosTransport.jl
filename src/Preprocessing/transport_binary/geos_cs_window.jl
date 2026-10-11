@@ -69,8 +69,6 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, V
     balance_weights :: CW
 end
 
-const _GEOS_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS = 8
-
 function allocate_window_workspace(grid::CubedSphereTargetGeometry,
                                    settings::AbstractGEOSSettings,
                                    vertical,
@@ -79,7 +77,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
                                    chain_mass::Bool = true,
                                    cache = nothing,
                                    adaptive_substeps::Bool = false,
-                                   substep_cfl_target::Real = 0.95,
+                                   substep_cfl_target::Real = DEFAULT_SUBSTEP_CFL_TARGET,
                                    min_steps_per_window::Integer = 1,
                                    max_steps_per_window::Integer = typemax(Int),
                                    windows_per_day::Integer = 0,
@@ -87,7 +85,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
                                    global_mass_target_kg::Real = NaN,
                                    balance_mode::Symbol = :column,
                                    cm_closure::Symbol = :endpoint_balanced,
-                                   smooth_iters::Integer = 8,
+                                   smooth_iters::Integer = DEFAULT_GEOS_SMOOTHING_SWEEPS,
                                    omega_regularization::OmegaRegularization = OmegaRegularization()) where FT
     Nc = grid.Nc
     Nz = vertical.Nz
@@ -321,7 +319,8 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
                 δ[p][i, j]   = ana - (cur + two_steps * pp)   # column drift to analyzed
             end
         end
-        _smooth_cs_columns!(δ, workspace.smooth_iters, FT(0.5), Nc)   # large-scale, Σ-preserving
+        # large-scale, Σ-preserving
+        _smooth_cs_columns!(δ, workspace.smooth_iters, FT(DEFAULT_GEOS_SMOOTHING_WEIGHT), Nc)
         @inbounds for p in 1:CS_PANEL_COUNT
             am = workspace.am_v4[p]; bm = workspace.bm_v4[p]; cm = workspace.cm_v4[p]
             mc = workspace.m_cur[p]; mt = workspace.m_next_target[p]
@@ -384,7 +383,7 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
             end
         end
         _smooth_cs_residual_panels!(workspace.dm_v4, workspace.smooth_iters,
-                                    FT(0.5), Nc, Nz)
+                                    FT(DEFAULT_GEOS_SMOOTHING_WEIGHT), Nc, Nz)
         # dmc ← ΔB·pit + smooth(residual); filtered endpoint m_next_target.
         two_steps = FT(2 * steps)
         @inbounds for p in 1:CS_PANEL_COUNT
@@ -516,7 +515,7 @@ function _geos_select_steps_for_window!(workspace::GEOSCubedSphereWindowWorkspac
     positivity = nothing
     prepared_steps = 0
     if workspace.adaptive_substeps
-        for _ in 1:_GEOS_ADAPTIVE_SUBSTEP_MAX_REFINEMENTS
+        for _ in 1:ADAPTIVE_SUBSTEP_MAX_REFINEMENTS
             bal_diag = _geos_prepare_window_for_steps!(workspace, grid, steps)
             prepared_steps = steps
             positivity = verify_substep_positivity_cs!(

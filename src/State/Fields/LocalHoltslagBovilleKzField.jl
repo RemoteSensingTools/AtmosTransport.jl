@@ -145,10 +145,10 @@ end
     p = params
     R_dry = p.cp_dry / FT(CP_OVER_R_DIATOMIC)
 
-    h_pbl = max(FT(pblh[i, j]), FT(100))
-    us = max(FT(ustar[i, j]), FT(0.01))
+    h_pbl = max(FT(pblh[i, j]), p.h_pbl_min)
+    us = max(FT(ustar[i, j]), p.ustar_min)
     H_sfc = FT(hflux[i, j])
-    T_sfc = max(max(FT(t2m[i, j]), FT(t[i, j, Nz])), FT(200))
+    T_sfc = max(max(FT(t2m[i, j]), FT(t[i, j, Nz])), p.T_sfc_min)
 
     L_ob, H_kin = _obukhov_length(H_sfc, us, T_sfc, p)
     Pr_inv = _prandtl_inverse(h_pbl, us, H_kin, T_sfc, L_ob, p)
@@ -279,10 +279,10 @@ function refresh_local_holtslag_boville_kz_cache!(field::LocalHoltslagBovilleKzF
         Nc, Ny, Nz = size(cache)
 
         for j in 1:Ny, i in 1:Nc
-            h_pbl = max(FT(pblh[i, j]), FT(100))
-            us = max(FT(ustar[i, j]), FT(0.01))
+            h_pbl = max(FT(pblh[i, j]), p.h_pbl_min)
+            us = max(FT(ustar[i, j]), p.ustar_min)
             H_sfc = FT(hflux[i, j])
-            T_sfc = max(max(FT(t2m[i, j]), FT(t3[i, j, Nz])), FT(200))
+            T_sfc = max(max(FT(t2m[i, j]), FT(t3[i, j, Nz])), p.T_sfc_min)
             L_ob, H_kin = _obukhov_length(H_sfc, us, T_sfc, p)
             Pr_inv = _prandtl_inverse(h_pbl, us, H_kin, T_sfc, L_ob, p)
 

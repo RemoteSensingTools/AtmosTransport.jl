@@ -255,7 +255,7 @@ end
     reader.handles.vc
 
 @inline function window_metadata(reader::GEOSNativeReader{FT}) where FT
-    dt_met = 3600.0          # GEOS-IT / GEOS-FP archive cadence
+    dt_met = GEOS_MET_INTERVAL_SECONDS   # GEOS-IT / GEOS-FP archive cadence
     mass_flux_dt = reader.settings.mass_flux_dt
     substeps = round(Int, dt_met / mass_flux_dt)
     return (windows = windows_per_day(reader),
@@ -360,7 +360,7 @@ function open_reader(settings::ERA5SpectralSettings, date::Date, ::Type{FT};
     return ERA5SpectralReader{FT, typeof(settings)}(settings, date, nothing, false)
 end
 
-@inline windows_per_day(reader::ERA5SpectralReader) = 24
+@inline windows_per_day(reader::ERA5SpectralReader) = round(Int, 86400 / ERA5_MET_INTERVAL_SECONDS)
 
 @inline function native_vertical(reader::ERA5SpectralReader)
     error("native_vertical(::ERA5SpectralReader) is not implemented yet. " *
@@ -370,7 +370,7 @@ end
 end
 
 @inline window_metadata(reader::ERA5SpectralReader) =
-    (windows = windows_per_day(reader), substeps = 1, dt_substep = 3600.0)
+    (windows = windows_per_day(reader), substeps = 1, dt_substep = ERA5_MET_INTERVAL_SECONDS)
 
 @inline function read_window!(_dst, reader::ERA5SpectralReader, _w::Int)
     error("read_window!(::ERA5SpectralReader, …) is not implemented yet. " *

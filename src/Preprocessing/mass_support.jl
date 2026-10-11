@@ -663,7 +663,8 @@ function maybe_preload_qv_day(thermo_path::String,
                               Nz::Int,
                               settings)
     settings.qv_preload || return zeros(Float64, 0, 0, 0, 0)
-    bytes = Int64(Nx) * Int64(Ny) * Int64(Nz) * Int64(24) * Int64(sizeof(Float64))
+    records_per_day = round(Int, 86400 / ERA5_MET_INTERVAL_SECONDS)   # hourly thermo records
+    bytes = Int64(Nx) * Int64(Ny) * Int64(Nz) * Int64(records_per_day) * Int64(sizeof(Float64))
     if bytes > settings.qv_preload_max_bytes
         @info @sprintf("  QV daily preload skipped: %.1f GiB exceeds cap %.1f GiB",
                        bytes / 1024.0^3, settings.qv_preload_max_bytes / 1024.0^3)
@@ -769,12 +770,13 @@ end
 Apply a uniform additive offset to `sp` so that ⟨sp⟩_area corresponds to a
 prescribed dry-air mass target inferred from a global humidity climatology.
 `sp` and `area` hold one value per column: lat-lon `(Nx, Ny)` or
-reduced-Gaussian `(ncell,)`.
+reduced-Gaussian `(ncell,)`. The defaults are `GLOBAL_MEAN_DRY_SURFACE_PRESSURE`
+(98726 Pa) and `GLOBAL_MEAN_SPECIFIC_HUMIDITY` (0.00247 kg kg⁻¹).
 """
 function pin_global_mean_ps!(sp::AbstractArray{<:Real},
                              area::AbstractArray{<:Real};
-                             target_ps_dry_pa::Real = 98726.0,
-                             qv_global::Real = 0.00247)
+                             target_ps_dry_pa::Real = GLOBAL_MEAN_DRY_SURFACE_PRESSURE,
+                             qv_global::Real = GLOBAL_MEAN_SPECIFIC_HUMIDITY)
     size(area) == size(sp) || error("area shape $(size(area)) does not match sp shape $(size(sp))")
     target_ps_total = target_ps_dry_pa / (1.0 - qv_global)
     sum_ps_area = 0.0
@@ -800,14 +802,15 @@ the prescribed target.
 The correction is still spatially uniform in `ps`; only the global dry-mass
 targeting uses the instantaneous humidity pattern. `sp` and `area` hold one
 value per column and `qv` adds the level dimension last: lat-lon `(Nx, Ny)`
-and `(Nx, Ny, Nz)`, or reduced-Gaussian `(ncell,)` and `(ncell, Nz)`.
+and `(Nx, Ny, Nz)`, or reduced-Gaussian `(ncell,)` and `(ncell, Nz)`. The
+default target is `GLOBAL_MEAN_DRY_SURFACE_PRESSURE` (98726 Pa).
 """
 function pin_global_mean_ps_using_qv!(sp::AbstractArray{<:Real},
                                       area::AbstractArray{<:Real},
                                       dA::AbstractVector,
                                       dB::AbstractVector,
                                       qv::AbstractArray{<:Real};
-                                      target_ps_dry_pa::Real = 98726.0)
+                                      target_ps_dry_pa::Real = GLOBAL_MEAN_DRY_SURFACE_PRESSURE)
     Nz = size(qv, ndims(qv))
     length(dA) == Nz || error("length(dA)=$(length(dA)) does not match qv levels $Nz")
     length(dB) == Nz || error("length(dB)=$(length(dB)) does not match qv levels $Nz")
