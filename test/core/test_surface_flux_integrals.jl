@@ -56,6 +56,20 @@ function legacy_logged_rate(source)
     end
 end
 
+# The former log summed Float32 rates in Float32. Its rounding depends on the
+# summation order Base chooses (which changed between Julia 1.12 and 1.13), so
+# it is compared with the exact Float64 total within the worst-case bound of a
+# Float32 sum of n terms, (n - 1) eps(Float32), rather than a fixed tolerance.
+function legacy_float32_rtol(source)
+    n = if hasproperty(source, :cell_mass_rate)
+        r = source.cell_mass_rate
+        r isa Tuple ? sum(length, r) : length(r)
+    else
+        sum(p -> length(@view p[:, :, 1]), source.cell_mass_rate_series)
+    end
+    return (n - 1) * Float64(eps(Float32))
+end
+
 # Stand-in for a Metal array on the CPU: its backend is a device, and a Float64
 # reduction over it or over a view of it throws (Metal has no Float64).
 struct NoFloat64Backend <: KA.GPU end
@@ -214,7 +228,7 @@ end
             if FT === Float64
                 @test total_emission_rate(src, 0.0) === legacy_logged_rate(src)
             else   # the former log summed in Float32
-                @test total_emission_rate(src, 0.0) ≈ legacy_logged_rate(src) rtol = 1e-6
+                @test total_emission_rate(src, 0.0) ≈ legacy_logged_rate(src) rtol = legacy_float32_rtol(src)
             end
         end
     end
@@ -234,7 +248,7 @@ end
         series32 = random_series(Float32, 3)
         src32 = TimeVaryingSurfaceFluxSource(:CO2, series32, times, StepwiseFlux())
         @test total_emission_rate(src32, 0.0) === slice_totals(series32)[1]
-        @test total_emission_rate(src32, 0.0) ≈ legacy_logged_rate(src32) rtol = 1e-6
+        @test total_emission_rate(src32, 0.0) ≈ legacy_logged_rate(src32) rtol = legacy_float32_rtol(src32)
 
         # Without a slice at the run start, linear schemes report the
         # interpolated run-start rate; the former log showed the first slice.
@@ -277,7 +291,7 @@ end
                 @test rate === legacy_logged_rate(src)
                 @test rate ≈ from_file rtol = 1e-13
             else
-                @test rate ≈ legacy_logged_rate(src) rtol = 1e-6
+                @test rate ≈ legacy_logged_rate(src) rtol = legacy_float32_rtol(src)
                 @test rate ≈ from_file rtol = 1e-6
             end
             @test integrated_emission(src, 0.0, 86400.0, 450.0) ≈ rate * 86400 rtol = 1e-14
