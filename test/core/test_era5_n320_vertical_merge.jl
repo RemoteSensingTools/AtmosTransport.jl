@@ -13,6 +13,59 @@ function _fields(Nx, Ny, Nz; offset = 0.0)
         panels3(), panels3(), panels3(), panels3())
 end
 
+@testset "ERA5 native pin sensitivity is merged as an extensive field" begin
+    Nx = Ny = 1
+    native_vc = Pre.HybridSigmaPressure(
+        [0.0, 1000.0, 6000.0, 6000.0], [0.0, 0.2, 0.6, 1.0])
+    plan = Pre.plan_vertical(Pre.MergeByIndex([1:2, 3:3]), native_vc)
+    @test Pre._era5_pin_sensitivity_strategy(plan) isa Pre.NativeMergedPinSensitivity
+    area = fill(2.0e10, Nx, Ny)
+    qv = ntuple(p -> reshape([0.01p, 0.20 + 0.01p, 0.05p], Nx, Ny, 3), 6)
+    native_sensitivity = ntuple(_ -> zeros(Nx, Ny, 3), 6)
+    merged_sensitivity = ntuple(_ -> zeros(Nx, Ny, 2), 6)
+
+    Pre._fill_era5_pin_sensitivity!(native_sensitivity, qv,
+                                    diff(native_vc.B), area,
+                                    AtmosTransport.Parameters.STANDARD_GRAVITY)
+    Pre._merge_cs_center_extensive!(merged_sensitivity, native_sensitivity,
+                                    plan, Pre.MassField())
+    for p in 1:6
+        @test merged_sensitivity[p][1, 1, 1] ==
+              native_sensitivity[p][1, 1, 1] + native_sensitivity[p][1, 1, 2]
+        @test merged_sensitivity[p][1, 1, 2] == native_sensitivity[p][1, 1, 3]
+    end
+
+    m = ntuple(p -> reshape([1.0e12 + p, 2.0e12 + p], Nx, Ny, 2), 6)
+    before = ntuple(p -> copy(m[p]), 6)
+    delta_ps = 37.0
+    target = sum(sum(Float64, panel) for panel in m) +
+             delta_ps * sum(sum(Float64, panel) for panel in merged_sensitivity)
+    stats = Pre._pin_cs_global_air_mass_from_sensitivity!(m, merged_sensitivity, target)
+    @test stats.delta_ps_pa ≈ delta_ps rtol = 1e-12
+    for p in 1:6
+        @test m[p] ≈ before[p] .+ delta_ps .* merged_sensitivity[p] rtol = 2e-15
+    end
+
+    # A moist-dp-weighted merged q is not interchangeable when dA differs
+    # within a group: dB_merged*(1-qbar) loses the native covariance.
+    ps = 100_000.0
+    dp = diff(native_vc.A) .+ diff(native_vc.B) .* ps
+    p = 1
+    qbar = sum(qv[p][1, 1, k] * dp[k] for k in 1:2) / sum(dp[1:2])
+    old = diff(plan.merged_vc.B)[1] * (1 - qbar) * area[1, 1] /
+          AtmosTransport.Parameters.STANDARD_GRAVITY
+    @test old != merged_sensitivity[p][1, 1, 1]
+end
+
+
+@testset "pure-pressure-only merges retain compatibility strategy" begin
+    vc = Pre.HybridSigmaPressure([0.0, 100.0, 300.0, 300.0],
+                                 [0.0, 0.0, 0.0, 1.0])
+    plan = Pre.plan_vertical(Pre.MergeByIndex([1:2, 3:3]), vc)
+    @test Pre._era5_pin_sensitivity_strategy(plan) isa
+          Pre.PurePressureMergePinCompatibility
+end
+
 @testset "native ERA5 config resolves named L66 preset" begin
     coeff_path = joinpath(@__DIR__, "..", "..", "config",
                           "era5_L137_coefficients.toml")

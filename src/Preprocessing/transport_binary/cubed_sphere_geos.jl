@@ -298,10 +298,6 @@ function _process_day_geos_cs_unified(date::Date,
                 "geos_global_mass_pin_enabled" => global_mass_pin,
                 "geos_global_mass_pin_target_kg" => isfinite(workspace.global_mass_target_kg) ?
                     workspace.global_mass_target_kg : "first_window_start",
-                "mass_fix_target_ps_dry_pa" =>
-                    global_mass_pin && isfinite(workspace.global_mass_target_kg) ?
-                    workspace.global_mass_target_kg * STANDARD_GRAVITY /
-                    (6.0 * sum(Float64, grid.mesh.cell_areas)) : nothing,
                 "source_Nc" => settings.Nc,
                 "geos_cs_resolution_strategy" => _geos_cs_strategy_name(workspace.strategy),
                 "source_steps_per_window" => steps_per_met,

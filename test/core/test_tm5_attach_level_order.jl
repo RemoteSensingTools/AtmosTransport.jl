@@ -21,6 +21,19 @@ const MD = AtmosTransport.MetDrivers
     @test humidity_mesh.radius == AtmosTransport.Parameters.IFS_EARTH_RADIUS
 end
 
+@testset "attachment preserves dry-mass pin metadata" begin
+    raw = Dict{String, Any}(
+        "mass_fix_enabled" => true,
+        "mass_fix_target_ps_dry_pa" => 98_325.0,
+        "unrelated" => "drop",
+    )
+    metadata = AttachScript.copy_source_metadata!(Dict{String, Any}(), raw)
+    @test metadata == Dict{String, Any}(
+        "mass_fix_enabled" => true,
+        "mass_fix_target_ps_dry_pa" => 98_325.0,
+    )
+end
+
 @testset "legacy TM5 convection level order" begin
     vc = PP.load_hybrid_coefficients(AttachScript.ERA5_L137_COEFFICIENTS)
     A, B = Float64.(vc.A), Float64.(vc.B)

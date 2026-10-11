@@ -236,19 +236,8 @@ function _geos_pin_global_mass_if_needed!(workspace::GEOSCubedSphereWindowWorksp
         apply_vertical!(workspace.dm_v4[p], workspace.m_native_kg[p],
                         workspace.plan, MassField())
     end
-    current = _cs_total_air_mass(panels_m)
-    sensitivity_kg_per_pa = _cs_total_air_mass(workspace.dm_v4)
-    delta_ps = _mass_target_offset(workspace.global_mass_target_kg, current,
-                                   sensitivity_kg_per_pa)
-    for p in 1:CS_PANEL_COUNT
-        @. panels_m[p] += FT(delta_ps) * workspace.dm_v4[p]
-    end
-    final = _cs_total_air_mass(panels_m)
-    stats = (before_kg = current,
-             after_kg = final,
-             target_kg = workspace.global_mass_target_kg,
-             delta_ps_pa = delta_ps,
-             residual_kg = final - workspace.global_mass_target_kg)
+    stats = _pin_cs_global_air_mass_from_sensitivity!(
+        panels_m, workspace.dm_v4, workspace.global_mass_target_kg)
     abs(stats.delta_ps_pa) > 1e-10 &&
         @debug @sprintf("  GEOS global dry-mass pin %s: Δps=%+.6e Pa residual=%+.6e kg",
                         label, stats.delta_ps_pa, stats.residual_kg)

@@ -220,7 +220,6 @@ function build_v4_header(date::Date,
         "git_dirty" => provenance.git_dirty,
         "creation_time" => provenance.creation_time,
         "mass_fix_enabled" => settings.mass_fix_enable,
-        "mass_fix_target_ps_dry_pa" => settings.target_ps_dry_pa,
         "mass_fix_qv_global_climatology" => settings.qv_global_climatology,
         "mass_fix_qv_mode" => settings.include_qv || settings.mass_basis == :dry ?
             "native_hourly_qv" : "global_qv_climatology",
@@ -238,6 +237,8 @@ function build_v4_header(date::Date,
             "flip latitude to south-to-north if thermo file is stored north-to-south" : "",
     )
 
+    settings.mass_fix_enable &&
+        (header["mass_fix_target_ps_dry_pa"] = settings.target_ps_dry_pa)
     # ERA5 convective fluxes are put on the binary's basis before ec2tm.
     _with_tm5_convection_basis(header, settings.tm5_convection_enable ?
                                        mass_basis_from_symbol(settings.mass_basis) : nothing)

@@ -652,9 +652,10 @@ function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{
         "wind_flux_pressure_fix" => "cameron_smith_column_balance",
         "global_mass_pin_enabled" => mass_target !== nothing,
         "global_mass_pin_target_kg" => mass_target,
-        "mass_fix_target_ps_dry_pa" => mass_target === nothing ? nothing :
-            Float64(mass_target) * STANDARD_GRAVITY /
-            (6.0 * sum(Float64, grid.mesh.cell_areas))))
+    ))
+    mass_target === nothing ||
+        (header["mass_fix_target_ps_dry_pa"] = Float64(mass_target) * STANDARD_GRAVITY /
+            (6.0 * sum(Float64, grid.mesh.cell_areas)))
     inner = open_streaming_cs_transport_binary(
         tmp_path, grid.Nc, 6, length(vc.A) - 1, nwindow, vc;
         FT, dt_met_seconds = dt_window, half_dt_seconds = dt_window / 2,

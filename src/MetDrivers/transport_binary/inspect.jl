@@ -28,34 +28,48 @@ _supports_gchp_vdiff(
     reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
 ) = has_surface(reader) && has_vdiff_fields(reader)
 
-_total_window_air_mass(m::AbstractArray) = sum(Float64, m)
-_total_window_air_mass(m::NTuple{6}) = sum(sum(Float64, panel) for panel in m)
-
 """
     binary_dry_mass_target(reader) -> NamedTuple
 
 Return the binary's global-mean dry-mass target in pascals and its provenance.
-Current binaries record `mass_fix_target_ps_dry_pa` in the header. For legacy
-binaries, infer the target from window 1 as
+Pinned current binaries record `mass_fix_enabled=true` (or the native-source
+equivalent `global_mass_pin_enabled` / `geos_global_mass_pin_enabled`) together
+with `mass_fix_target_ps_dry_pa` in the header. Unpinned and legacy binaries
+infer the carried mass from window 1 as
 `sum(m_k) g / (4 pi R_header^2)`, using the radius recorded by that binary.
 This fallback deliberately describes the actual carried dry mass, so a run
 cannot silently cross a legacy/current day boundary with different targets.
 """
 function binary_dry_mass_target(reader::TransportBinaryReader)
-    recorded = get(reader.header.raw_header, "mass_fix_target_ps_dry_pa", nothing)
-    if recorded isa Real
+    raw = reader.header.raw_header
+    enabled = if haskey(raw, "mass_fix_enabled")
+        raw["mass_fix_enabled"]
+    elseif haskey(raw, "global_mass_pin_enabled")
+        raw["global_mass_pin_enabled"]
+    else
+        get(raw, "geos_global_mass_pin_enabled", nothing)
+    end
+    recorded = get(raw, "mass_fix_target_ps_dry_pa", nothing)
+    if enabled === true
+        recorded isa Real || throw(ArgumentError(
+            "$(basename(reader.path)) records mass_fix_enabled=true without a numeric " *
+            "mass_fix_target_ps_dry_pa"))
         target = Float64(recorded)
         isfinite(target) && target > 0.0 || throw(ArgumentError(
             "$(basename(reader.path)) has invalid mass_fix_target_ps_dry_pa=$(recorded)"))
-        return (ps_dry_pa = target, source = :header)
+        return (ps_dry_pa = target, source = :header, pinned = true)
+    elseif enabled !== nothing && enabled !== false
+        throw(ArgumentError(
+            "$(basename(reader.path)) has non-Boolean mass_fix_enabled=$(repr(enabled))"))
     end
 
-    m, _ps, _fluxes = load_window!(reader, 1)
+    m = _transport_section_view(reader, 1, :m)
     area = 4pi * reader.header.planet_radius_m^2
-    target = _total_window_air_mass(m) * STANDARD_GRAVITY / area
+    target = sum(Float64, m) * STANDARD_GRAVITY / area
     isfinite(target) && target > 0.0 || throw(ArgumentError(
         "could not infer a positive legacy dry-mass target from window 1 of $(reader.path)"))
-    return (ps_dry_pa = target, source = :legacy_window1)
+    source = enabled === false ? :unpinned_window1 : :legacy_window1
+    return (ps_dry_pa = target, source, pinned = enabled === false ? false : nothing)
 end
 
 """
@@ -87,6 +101,9 @@ requirements are selected through the reader's geometry type. Fields:
 - `flux_kind :: Symbol` — stored mass-flux normalization contract.
 - `preprocessor_contract`, `vertical_Nz_output`, `adaptive_substeps` — raw
   header values, `nothing` when absent.
+- `dry_mass_target_ps_pa`, `dry_mass_target_source`, `dry_mass_pinned` — the
+  pinned header target or carried window-1 mass, its provenance, and pin state
+  (`nothing` for legacy files whose state is not recorded).
 - `payload_sections :: Vector{Symbol}` — raw set for debugging.
 """
 function binary_capabilities(reader::TransportBinaryReader)
@@ -119,6 +136,7 @@ function binary_capabilities(reader::TransportBinaryReader)
         adaptive_substeps = get(raw, "adaptive_substeps", nothing),
         dry_mass_target_ps_pa = dry_target.ps_dry_pa,
         dry_mass_target_source = dry_target.source,
+        dry_mass_pinned = dry_target.pinned,
         dry_mass_target_is_current = isapprox(dry_target.ps_dry_pa,
                                               GLOBAL_MEAN_DRY_SURFACE_PRESSURE;
                                               atol = 0.1, rtol = 1e-7),
@@ -144,17 +162,17 @@ function inspect_binary(path::AbstractString; io::IO = stdout)
     isfile(path) || throw(ArgumentError("binary not found: $(path)"))
     reader = TransportBinaryReader(String(path); FT = Float64)
     try
+        caps = binary_capabilities(reader)
         println(io, reader)
         println(io)
-        _print_capability_rows(io, reader)
-        return binary_capabilities(reader)
+        _print_capability_rows(io, caps)
+        return caps
     finally
         close(reader)
     end
 end
 
-function _print_capability_rows(io::IO, reader)
-    caps = binary_capabilities(reader)
+function _print_capability_rows(io::IO, caps)
     println(io, "Capabilities:")
     _print_cap(io, caps.advection,        "advection",        "(m, am, bm, cm)")
     _print_cap(io, caps.replay_gate,      "replay gate",      "(dam, dbm, dcm, dm)")
@@ -175,7 +193,9 @@ function _print_capability_rows(io::IO, reader)
                         "on dry air mass, convective rates about 1 % too large")
     end
     println(io, "  grid_type        = ", caps.grid_type)
-    source_note = caps.dry_mass_target_source === :header ? "header" : "legacy window-1 fallback"
+    source_note = caps.dry_mass_target_source === :header ? "pinned header" :
+                  caps.dry_mass_target_source === :unpinned_window1 ? "unpinned window-1 mass" :
+                  "legacy window-1 fallback"
     @printf(io, "  dry-mass target  = %.6f Pa (%s)%s\n",
             caps.dry_mass_target_ps_pa, source_note,
             caps.dry_mass_target_is_current ? "" :

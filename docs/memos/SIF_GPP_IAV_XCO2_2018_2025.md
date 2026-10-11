@@ -1361,3 +1361,11 @@ consumes.
   read as an independent validation of it.
 - Float32 with a positive carrier: transport rounding scales with the carrier,
   which is why the anomaly tracer uses 100 ppm rather than 400 ppm.
+
+## 2026-10-11 correction
+
+The `5.135e18 kg` conversion in §4y is historical and corresponds to the old
+pinned dry-air mass. Current transport binaries use the single global-mean dry
+surface-pressure target **98,325 Pa**. Conversions should use the dry-air mass
+implied by that target and the binary header's `planet_radius_m`, rather than
+the old fixed mass quoted above.

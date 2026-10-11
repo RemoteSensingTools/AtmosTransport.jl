@@ -174,6 +174,10 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             ":forward_window_endpoint_difference when `dm` is present, got " *
             "$(delta_semantics(reader))."
         ))
+    source_mass_fix = Dict{String, Any}()
+    for key in ("mass_fix_enabled", "mass_fix_target_ps_dry_pa")
+        haskey(h.raw_header, key) && (source_mass_fix[key] = h.raw_header[key])
+    end
 
     # Timestep metadata comes from the source header. The stored `am/bm`
     # are per-substep mass (flux_kind = :substep_mass_amount) with the
@@ -285,7 +289,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         cs_center_law=_cs_center_law_tag(cs_grid),
         longitude_offset_deg=longitude_offset_deg(cs_definition(cs_grid.mesh)),
         planet_radius=cs_grid.mesh.radius,
-        extra_header=_with_replay_record(_with_column_weights_record(Dict{String, Any}(
+        extra_header=_with_replay_record(_with_column_weights_record(merge(Dict{String, Any}(
             "preprocessor"      => "regrid_ll_binary_to_cs",
             "source_type"       => "ll_transport_binary",
             "source_path"       => ll_binary_path,
@@ -293,7 +297,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             "regrid_method"     => "conservative",
             "poisson_balanced"  => true,
             "horizontal_balance" => HORIZONTAL_BALANCE_TAG,
-        ), column_balance_weights), write_replay_check))
+        ), source_mass_fix), column_balance_weights), write_replay_check))
     writer = CubedSphereBinaryWriter(inner_writer, mass_basis_from_symbol(output_basis);
                                      Nc = Nc,
                                      npanel = CS_PANEL_COUNT,

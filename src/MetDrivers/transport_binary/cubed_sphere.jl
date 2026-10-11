@@ -26,6 +26,10 @@ function _cs_section_elements(Nc::Int, npanel::Int, nlevel::Int, section::Symbol
     error("Unsupported CS section: $section")
 end
 
+_transport_section_elements(h::TransportBinaryHeader{CubedSphereBinaryGeometry},
+                            section::Symbol) =
+    _cs_section_elements(h.geometry.Nc, h.geometry.npanel, h.nlevel, section)
+
 # The latent heat flux travels with the other PBL surface fields.
 @inline _cs_window_has_pbl_eflux(window) =
     _transport_window_has_surface(window) && haskey(window, :surface) &&

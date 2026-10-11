@@ -596,3 +596,12 @@ will be zero. All other behavior is unchanged.
 
 *Document created 2026-04-07 alongside the implementation. Update this file
 in the same commit as any changes to `pin_global_mean_ps!` or its call sites.*
+
+## 2026-10-11 correction
+
+The `+400 Pa` diagnostic above describes the historical 98,726 Pa dry-mass
+target and is no longer the expected signature of an enabled fix. All current
+meteorological sources use the single dry-air target **98,325 Pa**; the applied
+offset is source- and time-dependent and may be small. Check
+`mass_fix_enabled` together with `mass_fix_target_ps_dry_pa = 98325.0` in the
+binary header rather than diagnosing the fix from the offset magnitude.

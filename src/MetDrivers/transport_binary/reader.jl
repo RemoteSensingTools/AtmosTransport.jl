@@ -175,6 +175,25 @@ Base.close(r::TransportBinaryReader) = close(r.io)
 @inline _transport_window_offset(r::TransportBinaryReader, win::Int) =
     r.header.n_geometry_elems + (win - 1) * r.header.elems_per_window
 
+"""
+    _transport_section_view(reader, win, section)
+
+Return a zero-copy view of one payload `section` in window `win`. This is the
+section-level reader primitive for metadata probes that do not need a complete
+transport window (and must not allocate all of its flux and physics arrays).
+"""
+function _transport_section_view(reader::TransportBinaryReader,
+                                 win::Int, wanted::Symbol)
+    1 <= win <= reader.header.nwindow || throw(BoundsError(reader, win))
+    o = _transport_window_offset(reader, win)
+    for section in reader.header.payload_sections
+        n = _transport_section_elements(reader.header, section)
+        section === wanted && return @view reader.data[(o + 1):(o + n)]
+        o += n
+    end
+    throw(ArgumentError("transport binary payload is missing section `$(wanted)`"))
+end
+
 function _transport_interval_from_centers(centers::Vector{Float64}, fallback_Δ::Float64)
     isempty(centers) && error("Cannot reconstruct interval from empty center array")
     Δ = length(centers) > 1 ? centers[2] - centers[1] : fallback_Δ

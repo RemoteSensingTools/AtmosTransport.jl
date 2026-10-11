@@ -116,6 +116,18 @@ catch
 end
 
 const ERA5_L137_COEFFICIENTS = joinpath(@__DIR__, "..", "..", "config", "era5_L137_coefficients.toml")
+function copy_source_metadata!(metadata::AbstractDict, raw::AbstractDict)
+    for key in ("adaptive_substeps", "preprocessor_contract", "runtime_substep_contract",
+                "poisson_balanced", "global_mass_pin_target_kg", "vertical_transform",
+                "target_coefficients", "vertical_mapping_method", "target_vertical_name",
+                "mass_fix_enabled", "mass_fix_target_ps_dry_pa", "global_mass_pin_enabled",
+                "coarsening_method", "coarsening_source_Nc", "coarsening_target_Nc",
+                "coarsening_ratio")
+        haskey(raw, key) && (metadata[key] = raw[key])
+    end
+    return metadata
+end
+
 # The YYYYMMDD field of `convec_YYYYMMDD_00p03.nc` / `..._transport_YYYYMMDD_float32.bin`.
 _date_label(path) = (m = match(r"_(\d{8})[_.]", basename(path)); m === nothing ? nothing : m.captures[1])
 
@@ -378,13 +390,7 @@ function main(argv)
             "source_binary" => input,
             "merge_map" => merge_map,
         )
-        for key in ("adaptive_substeps", "preprocessor_contract", "runtime_substep_contract",
-                    "poisson_balanced", "global_mass_pin_target_kg", "vertical_transform",
-                    "target_coefficients", "vertical_mapping_method", "target_vertical_name",
-                    "mass_fix_enabled", "global_mass_pin_enabled", "coarsening_method",
-                    "coarsening_source_Nc", "coarsening_target_Nc", "coarsening_ratio")
-            haskey(raw, key) && (metadata[key] = raw[key])
-        end
+        copy_source_metadata!(metadata, raw)
         vc = AtmosTransport.HybridSigmaPressure(Float32.(h.A_ifc), Float32.(h.B_ifc))
         writer = open_attachment_writer(output, Nc, np, Nz, h, g, vc, metadata)
 

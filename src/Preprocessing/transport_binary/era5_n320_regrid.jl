@@ -135,6 +135,58 @@ function _merge_cs_center_extensive!(out, native, plan::VerticalPlan,
     return out
 end
 
+function _fill_era5_pin_sensitivity!(out, qv, dB, cell_areas, gravity)
+    inv_g = inv(Float64(gravity))
+    for p in 1:6
+        s = out[p]
+        q = qv[p]
+        size(s) == size(q) || throw(DimensionMismatch(
+            "ERA5 pin sensitivity panel $p shape $(size(s)) does not match qv $(size(q))"))
+        @inbounds for k in axes(s, 3), j in axes(s, 2), i in axes(s, 1)
+            s[i, j, k] = eltype(s)(Float64(dB[k]) *
+                (1.0 - clamp(Float64(q[i, j, k]), 0.0, 0.999999)) *
+                Float64(cell_areas[i, j]) * inv_g)
+        end
+    end
+    return out
+end
+
+abstract type AbstractERA5PinSensitivityStrategy end
+struct NativeMergedPinSensitivity <: AbstractERA5PinSensitivityStrategy end
+struct PurePressureMergePinCompatibility <: AbstractERA5PinSensitivityStrategy end
+
+function _era5_pin_sensitivity_strategy(plan::VerticalPlan)
+    native_dB = diff(plan.native_vc.B)
+    merges_hybrid = any(plan.groups) do group
+        length(group) > 1 && any(k -> !iszero(native_dB[k]), group)
+    end
+    return merges_hybrid ? NativeMergedPinSensitivity() :
+                           PurePressureMergePinCompatibility()
+end
+
+function _pin_era5_endpoint_mass!(::NativeMergedPinSensitivity,
+                                  m_dry, native_qv, _merged_qv,
+                                  native_pin_sensitivity, merged_pin_sensitivity,
+                                  plan, cell_areas, gravity, target_kg)
+    _fill_era5_pin_sensitivity!(native_pin_sensitivity, native_qv,
+                                diff(plan.native_vc.B), cell_areas, gravity)
+    _merge_cs_center_extensive!(merged_pin_sensitivity,
+                                native_pin_sensitivity, plan, MassField())
+    return _pin_cs_global_air_mass_from_sensitivity!(
+        m_dry, merged_pin_sensitivity, target_kg)
+end
+
+function _pin_era5_endpoint_mass!(::PurePressureMergePinCompatibility,
+                                  m_dry, _native_qv, merged_qv,
+                                  _native_pin_sensitivity, _merged_pin_sensitivity,
+                                  plan, cell_areas, gravity, target_kg)
+    # The shipped L117 plan merges only dB=0 layers, for which the correction
+    # is identically zero. Retain the historical merged-q arithmetic on its
+    # singleton hybrid layers so existing golden payloads remain bit-identical.
+    return _pin_cs_global_air_mass!(m_dry, merged_qv, cell_areas, gravity,
+                                    target_kg, diff(plan.merged_vc.B))
+end
+
 function _merge_era5_tm5_fields!(out::ERA5C180TM5ConvectionFields,
                                   native::ERA5C180TM5ConvectionFields,
                                   plan::VerticalPlan)
@@ -370,6 +422,7 @@ function process_era5_n320_to_cs_day(date::Date,
         native_ps_dry   = ntuple(_ -> zeros(FT, Nc, Nc), 6)
         native_ps_acc   = ntuple(_ -> zeros(Float64, Nc, Nc), 6)
         native_dp       = ntuple(_ -> zeros(FT, Nc, Nc, Nz_native), 6)
+        native_pin_sensitivity = ntuple(_ -> zeros(FT, Nc, Nc, Nz_native), 6)
         native_u_local  = ntuple(_ -> zeros(FT, Nc, Nc, Nz_native), 6)
         native_v_local  = ntuple(_ -> zeros(FT, Nc, Nc, Nz_native), 6)
         native_am       = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz_native), 6)
@@ -388,6 +441,7 @@ function process_era5_n320_to_cs_day(date::Date,
         nxt_delp_dry   = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6)
         nxt_ps_dry     = ntuple(_ -> zeros(FT, Nc, Nc), 6)
         nxt_ps_dry_acc = ntuple(_ -> zeros(Float64, Nc, Nc), 6)
+        merged_pin_sensitivity = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6)
         tm5_merged = include_convection ?
             allocate_era5_c180_tm5_convection_fields(target_grid, Nz_int) : nothing
 
@@ -509,11 +563,13 @@ function process_era5_n320_to_cs_day(date::Date,
                                       Float64(global_mass_target_kg),
                                       Float64(global_mass_target_kg) * Float64(gravity) /
                                       (6 * sum(Float64, cs_cell_areas)))
-        dB_merged = diff(plan.merged_vc.B)
-        pin_endpoint_mass! = function (m_dry, ps_dry, qv)
+        pin_strategy = _era5_pin_sensitivity_strategy(plan)
+        pin_endpoint_mass! = function (m_dry, ps_dry, native_qv, merged_qv)
             do_mass_pin || return nothing
-            _pin_cs_global_air_mass!(m_dry, qv, cs_cell_areas, gravity,
-                                     global_mass_target_kg, dB_merged)
+            _pin_era5_endpoint_mass!(
+                pin_strategy, m_dry, native_qv, merged_qv,
+                native_pin_sensitivity, merged_pin_sensitivity,
+                plan, cs_cell_areas, gravity, global_mass_target_kg)
             for p in 1:6
                 _ps_from_air_mass!(ps_dry[p], m_dry[p], cs_cell_areas, gravity, Nc, Nz_int)
             end
@@ -591,10 +647,11 @@ function process_era5_n320_to_cs_day(date::Date,
                 "global_mass_pin_enabled" => do_mass_pin,
                 "global_mass_pin_target_kg" => do_mass_pin ?
                     Float64(global_mass_target_kg) : nothing,
-                "mass_fix_target_ps_dry_pa" => do_mass_pin ?
-                    Float64(global_mass_target_kg) * STANDARD_GRAVITY /
-                    (6.0 * sum(Float64, cs_cell_areas)) : nothing,
             ), write_replay_on))
+        do_mass_pin &&
+            (inner_writer.header["mass_fix_target_ps_dry_pa"] =
+                Float64(global_mass_target_kg) * STANDARD_GRAVITY /
+                (6.0 * sum(Float64, cs_cell_areas)))
         writer = CubedSphereBinaryWriter(inner_writer,
                                           mass_basis_from_symbol(mass_basis);
                                           Nc = Nc,
@@ -634,7 +691,7 @@ function process_era5_n320_to_cs_day(date::Date,
                 copyto!(ps_dry[p], native_ps_dry[p])
                 copyto!(ps_dry_acc[p], native_ps_acc[p])
             end
-            pin_endpoint_mass!(m_dry, ps_dry, merged_fields.qv)
+            pin_endpoint_mass!(m_dry, ps_dry, pipe.c180_fields.qv, merged_fields.qv)
             return nothing
         end
 
@@ -843,7 +900,8 @@ function process_era5_n320_to_cs_day(date::Date,
                 copyto!(nxt_ps_dry[p], native_ps_dry[p])
                 copyto!(nxt_ps_dry_acc[p], native_ps_acc[p])
             end
-            pin_endpoint_mass!(nxt_m_dry, nxt_ps_dry, nxt_fields.qv)
+            pin_endpoint_mass!(nxt_m_dry, nxt_ps_dry,
+                               nxt_pipe.c180_fields.qv, nxt_fields.qv)
         else
             # HACK: zero-tendency fallback for the final day of the archive
             # (no next_core_path on disk). The positivity gate will likely

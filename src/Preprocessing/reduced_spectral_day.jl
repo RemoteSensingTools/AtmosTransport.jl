@@ -472,6 +472,25 @@ function process_day(date::Date,
     # passed and deletes it on failure, so a failed day never touches `bin_path`.
     tmp_path = bin_path * ".tmp"
     rm(tmp_path; force = true)
+    metadata = Dict{String, Any}(
+        "preprocessor"     => "preprocess_transport_binary.jl",
+        "source_type"      => "era5_spectral",
+        "target_type"      => "reduced_gaussian",
+        "gaussian_number"  => grid.gaussian_number,
+        "poisson_balanced" => true,
+        "horizontal_balance" => HORIZONTAL_BALANCE_TAG,
+        "mass_fix_enabled" => settings.mass_fix_enable,
+        "mass_fix_qv_global_climatology" => settings.qv_global_climatology,
+        "mass_fix_qv_mode" => settings.mass_basis == :dry ? "native_hourly_qv" : "global_qv_climatology",
+        # Poisson fields via extra_header — _transport_common_header
+        # doesn't accept these directly. Single source
+        # of truth: the contract.
+        "poisson_balance_target_scale"     => rg_contract.poisson_balance_target_scale,
+        "poisson_balance_target_semantics" => rg_contract.poisson_balance_target_semantics,
+    )
+    settings.mass_fix_enable &&
+        (metadata["mass_fix_target_ps_dry_pa"] = settings.target_ps_dry_pa)
+
     writer = open_streaming_transport_binary(
         tmp_path, transport_grid, Nt, sample_window;
         FT = FT,
@@ -485,23 +504,7 @@ function process_day(date::Date,
         humidity_sampling    = rg_contract.humidity_sampling,
         delta_semantics      = rg_contract.delta_semantics,
         mass_basis           = Symbol(settings.mass_basis),
-        extra_header = _with_replay_record(Dict{String, Any}(
-            "preprocessor"     => "preprocess_transport_binary.jl",
-            "source_type"      => "era5_spectral",
-            "target_type"      => "reduced_gaussian",
-            "gaussian_number"  => grid.gaussian_number,
-            "poisson_balanced" => true,
-            "horizontal_balance" => HORIZONTAL_BALANCE_TAG,
-            "mass_fix_enabled" => settings.mass_fix_enable,
-            "mass_fix_target_ps_dry_pa" => settings.target_ps_dry_pa,
-            "mass_fix_qv_global_climatology" => settings.qv_global_climatology,
-            "mass_fix_qv_mode" => settings.mass_basis == :dry ? "native_hourly_qv" : "global_qv_climatology",
-            # Poisson fields via extra_header — _transport_common_header
-            # doesn't accept these directly. Single source
-            # of truth: the contract.
-            "poisson_balance_target_scale"     => rg_contract.poisson_balance_target_scale,
-            "poisson_balance_target_semantics" => rg_contract.poisson_balance_target_semantics,
-        ), write_replay_on))
+        extra_header = _with_replay_record(metadata, write_replay_on))
 
     bytes_per_window = writer.elems_per_window * sizeof(eltype(writer.pack_buffer))
     expected_total = writer.header_bytes + Nt * bytes_per_window

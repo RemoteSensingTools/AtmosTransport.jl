@@ -13,6 +13,8 @@ function _inspector_fixture_binary(path::AbstractString;
                                    with_tm5::Bool = false,
                                    with_surface::Bool = false,
                                    with_single_qv::Bool = false,
+                                   mass_fix_enabled = true,
+                                   recorded_target = GLOBAL_MEAN_DRY_SURFACE_PRESSURE,
                                    flux_kind::Symbol = :substep_mass_amount)
     Nx, Ny, Nz = 4, 3, 5
     mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny)
@@ -47,14 +49,18 @@ function _inspector_fixture_binary(path::AbstractString;
         (optional = merge(optional, (; qv = zeros(FT, Nx, Ny, Nz))))
     window = merge((; m, am, bm, cm, ps), optional)
 
+    mass_fix_header = Dict{String, Any}()
+    mass_fix_enabled === nothing ||
+        (mass_fix_header["mass_fix_enabled"] = mass_fix_enabled)
+    recorded_target === nothing ||
+        (mass_fix_header["mass_fix_target_ps_dry_pa"] = recorded_target)
     write_transport_binary(path, grid, [window];
                            FT = FT,
                            dt_met_seconds = 3600.0,
                            half_dt_seconds = 1800.0,
                            steps_per_window = 1,
                            mass_basis = :dry,
-                           extra_header = Dict("mass_fix_target_ps_dry_pa" =>
-                                               GLOBAL_MEAN_DRY_SURFACE_PRESSURE),
+                           extra_header = mass_fix_header,
                            source_flux_sampling = :window_start_endpoint,
                            flux_sampling = :window_constant,
                            flux_kind)
@@ -103,6 +109,7 @@ end
             @test caps.flux_kind === :substep_mass_amount
             @test caps.dry_mass_target_ps_pa == GLOBAL_MEAN_DRY_SURFACE_PRESSURE
             @test caps.dry_mass_target_source === :header
+            @test caps.dry_mass_pinned === true
             @test caps.dry_mass_target_is_current
             @test :m in caps.payload_sections
             @test :am in caps.payload_sections
@@ -165,23 +172,60 @@ end
             @test occursin("✓ surface pressure", report)
             @test occursin("mass_basis       = dry", report)
             @test occursin("grid_type        = latlon", report)
-            @test occursin("dry-mass target  = 98325.000000 Pa (header)", report)
+            @test occursin("dry-mass target  = 98325.000000 Pa (pinned header)", report)
         end
     end
 
-    @testset "multi-file target guard rejects a mismatch" begin
-        caps(target, source) = (dry_mass_target_ps_pa = target,
-                                dry_mass_target_source = source)
-        files = [(path = "/tmp/day1.bin", caps = caps(98325.0, :header)),
-                 (path = "/tmp/day2.bin", caps = caps(98733.0, :legacy_window1))]
-        err = try
-            AtmosTransport.Models.DrivenRunner._check_run_dry_mass_targets(files)
-        catch e
-            e
+    @testset "pinned, unpinned, mixed, and legacy target classification" begin
+        mktempdir() do dir
+            pinned_path = joinpath(dir, "pinned.bin")
+            unpinned_path = joinpath(dir, "unpinned.bin")
+            legacy_path = joinpath(dir, "legacy.bin")
+            _inspector_fixture_binary(pinned_path)
+            # A stale target must not classify an explicitly unpinned file.
+            _inspector_fixture_binary(unpinned_path; mass_fix_enabled = false,
+                                      recorded_target = GLOBAL_MEAN_DRY_SURFACE_PRESSURE)
+            _inspector_fixture_binary(legacy_path; mass_fix_enabled = nothing,
+                                      recorded_target = nothing)
+
+            pinned = inspect_binary(pinned_path; io = devnull)
+            unpinned = inspect_binary(unpinned_path; io = devnull)
+            legacy = inspect_binary(legacy_path; io = devnull)
+            carried = _INSPECTOR_AIR_MASS * 4 * 3 * 5 *
+                      AtmosTransport.Parameters.STANDARD_GRAVITY /
+                      (4π * AtmosTransport.Parameters.EARTH_RADIUS^2)
+            @test pinned.dry_mass_target_source === :header
+            @test pinned.dry_mass_pinned === true
+            @test unpinned.dry_mass_target_source === :unpinned_window1
+            @test unpinned.dry_mass_pinned === false
+            @test unpinned.dry_mass_target_ps_pa ≈ carried
+            @test legacy.dry_mass_target_source === :legacy_window1
+            @test legacy.dry_mass_pinned === nothing
+            @test legacy.dry_mass_target_ps_pa == unpinned.dry_mass_target_ps_pa
+
+            item(path, caps) = (; path, caps)
+            check(xs...) = AtmosTransport.Models.DrivenRunner._check_run_dry_mass_targets(
+                collect(xs))
+            @test check(item(unpinned_path, unpinned), item(legacy_path, legacy)) ≈ carried
+            @test check(item(pinned_path, pinned), item(pinned_path, pinned)) ==
+                  GLOBAL_MEAN_DRY_SURFACE_PRESSURE
+            err = try
+                check(item(pinned_path, pinned), item(unpinned_path, unpinned))
+            catch e
+                e
+            end
+            @test err isa ArgumentError
+            @test occursin("must share one dry-mass target", sprint(showerror, err))
+            @test occursin("GLOBAL_MEAN_DRY_SURFACE_PRESSURE=98325.0 Pa", sprint(showerror, err))
+
+            # Warm compilation before measuring. The fallback may allocate a
+            # tiny SubArray descriptor, but never any payload-sized arrays.
+            reader = TransportBinaryReader(legacy_path; FT = Float64)
+            AtmosTransport.MetDrivers.binary_dry_mass_target(reader)
+            bytes = @allocated AtmosTransport.MetDrivers.binary_dry_mass_target(reader)
+            @test bytes < 4096
+            close(reader)
         end
-        @test err isa ArgumentError
-        @test occursin("must share one dry-mass target", sprint(showerror, err))
-        @test occursin("GLOBAL_MEAN_DRY_SURFACE_PRESSURE=98325.0 Pa", sprint(showerror, err))
     end
 
     @testset "inspect_binary errors on missing file" begin

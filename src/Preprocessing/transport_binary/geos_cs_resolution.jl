@@ -70,6 +70,37 @@ function _pin_cs_global_air_mass!(panels_m::NTuple{CS_PANEL_COUNT, <:AbstractArr
             residual_kg = final - Float64(target_kg))
 end
 
+"""
+    _pin_cs_global_air_mass_from_sensitivity!(panels_m, sensitivity, target_kg)
+
+Apply the global pin using a precomputed extensive sensitivity
+`dm/dps = dB * (1-q) * area/g` in kg/Pa. Building this field on native levels
+and summing it through a vertical transform preserves humidity covariance
+inside merged hybrid layers.
+"""
+function _pin_cs_global_air_mass_from_sensitivity!(
+        panels_m::NTuple{CS_PANEL_COUNT, <:AbstractArray{FT, 3}},
+        sensitivity::NTuple{CS_PANEL_COUNT, <:AbstractArray{<:Real, 3}},
+        target_kg::Real) where FT
+    for p in 1:CS_PANEL_COUNT
+        size(sensitivity[p]) == size(panels_m[p]) || throw(DimensionMismatch(
+            "native dry-mass pin sensitivity panel $p shape $(size(sensitivity[p])) " *
+            "does not match mass $(size(panels_m[p]))"))
+    end
+    current = _cs_total_air_mass(panels_m)
+    sensitivity_kg_per_pa = _cs_total_air_mass(sensitivity)
+    delta_ps = _mass_target_offset(target_kg, current, sensitivity_kg_per_pa)
+    for p in 1:CS_PANEL_COUNT
+        @. panels_m[p] += FT(delta_ps) * sensitivity[p]
+    end
+    final = _cs_total_air_mass(panels_m)
+    return (before_kg = current,
+            after_kg = final,
+            target_kg = Float64(target_kg),
+            delta_ps_pa = delta_ps,
+            residual_kg = final - Float64(target_kg))
+end
+
 _validate_geos_native_panel_convention(::GEOSNativePanelConvention) = nothing
 function _validate_geos_native_panel_convention(conv)
     error("GEOS-CS passthrough requires panel_convention=`geos_native` on " *
