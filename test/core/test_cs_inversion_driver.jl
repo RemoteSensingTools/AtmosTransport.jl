@@ -17,6 +17,27 @@ include(joinpath(@__DIR__, "..", "..", "scripts", "inversions", "cs_4dvar.jl"))
 
 const CONFIG = joinpath(@__DIR__, "..", "..", "config", "inversions",
                          "example_synthetic.toml")
+const SHIPPED_ADVECTION = "[advection]\nscheme = \"ppm\"\nlimiter = \"none\"\n"
+
+# Run the driver on a config given as TOML text.
+function _run_config_text(text::AbstractString)
+    mktempdir() do dir
+        path = joinpath(dir, "config.toml")
+        write(path, text)
+        return run_inversion(path)
+    end
+end
+
+# The `ArgumentError` message a config raises ("" if it runs).
+function _config_error(text::AbstractString)
+    try
+        _run_config_text(text)
+        return ""
+    catch e
+        e isa ArgumentError || rethrow()
+        return e.msg
+    end
+end
 
 @testset "cs_4dvar.jl driver — synthetic smoke test" begin
     @test isfile(CONFIG)
@@ -141,6 +162,10 @@ end
     [meteo]
     source = "synthetic_constant"
 
+    [advection]
+    scheme = "ppm"
+    limiter = "none"
+
     [[observations.entries]]
     step = 2
     objective = "layer_mean"
@@ -166,10 +191,98 @@ end
     kind = "lbfgs"
     iterations = 2
     """
-    mktempdir() do dir
-        path = joinpath(dir, "no_cov.toml")
-        write(path, cfg)
-        @test_throws ArgumentError run_inversion(path)
+    @test occursin("requires a [covariance] section", _config_error(cfg))
+end
+
+# ---------------------------------------------------------------------------
+# Issue #16: `[advection]` used to be ignored (the driver hard-coded
+# `PPMScheme(NoLimiter())`). It now goes through the forward run's
+# `advection_spec` + `materialize` in the inversion context, and schemes
+# without a cubed-sphere adjoint are rejected.
+# ---------------------------------------------------------------------------
+
+@testset "cs_4dvar.jl driver — [advection] selects the scheme (#16)" begin
+    base = read(CONFIG, String)
+    @test occursin(SHIPPED_ADVECTION, base)
+    with_advection(block) = replace(base, SHIPPED_ADVECTION => block)
+    scheme_of(block) = _build_advection_scheme(TOML.parse(block)["advection"])
+
+    @test scheme_of(SHIPPED_ADVECTION) == AT.PPMScheme(AT.NoLimiter())
+    @test scheme_of("[advection]\nscheme = \"ppm\"\n") == AT.PPMScheme()
+    @test scheme_of("[advection]\nscheme = \"ppm\"\nlimiter = \"cw84\"\n") ==
+          AT.PPMScheme(AT.CW84Limiter())
+    @test scheme_of("[advection]\nscheme = \"upwind\"\n") == AT.UpwindScheme()
+    @test scheme_of("[advection]\nscheme = \"linrood\"\n") isa
+          AT.LinRoodPPMScheme{5, AT.UpwindScheme}
+    @test scheme_of("[advection]\nscheme = \"linrood\"\nppm_order = 7\n") isa
+          AT.LinRoodPPMScheme{7, AT.UpwindScheme}
+
+    # A Lin–Rood inversion runs end to end through the driver.
+    lr = _run_config_text(with_advection("[advection]\nscheme = \"linrood\"\n"))
+    @test lr isa AT.CS4DVarSolveResult
+    @test lr.last.cost < lr.cost_history[1]
+
+    # Invalid selections and schemes without an adjoint fail before any transport.
+    @test occursin("Unknown [advection] scheme",
+                   _config_error(with_advection("[advection]\nscheme = \"no_such_scheme\"\n")))
+    @test occursin("`scheme` is required", _config_error(with_advection("[advection]\n")))
+    @test occursin("[advection] table is required", _config_error(with_advection("")))
+    @test occursin("SlopesScheme with MonotoneLimiter has no adjoint",
+                   _config_error(with_advection("[advection]\nscheme = \"slopes\"\n")))
+    @test occursin("FV3 vertical profile", _config_error(with_advection(
+        "[advection]\nscheme = \"ppm\"\nvertical = \"fv3_kord8\"\n")))
+    @test occursin("FV3-profile vertical sweeps", _config_error(with_advection(
+        "[advection]\nscheme = \"linrood\"\nvertical = \"fv3_kord8\"\n")))
+    @test occursin("NoAdvection", _config_error(with_advection("[advection]\nscheme = \"none\"\n")))
+    @test occursin("Unknown [advection] limiter", _config_error(with_advection(
+        "[advection]\nscheme = \"ppm\"\nlimiter = \"minmod\"\n")))
+end
+
+@testset "require_adjoint_support — runtime [advection] choices (#16)" begin
+    style = AT.Models.CubedSphereRuntimeRecipeStyle()
+    context = AT.Models.InversionAdvectionContext()
+    scheme_of(section) = AT.Models.materialize(AT.Models.advection_spec(section, context), style)
+    for section in (Dict("scheme" => "upwind"),
+                    Dict("scheme" => "ppm"),
+                    Dict("scheme" => "ppm", "limiter" => "cw84"),
+                    Dict("scheme" => "ppm", "limiter" => "none"),
+                    Dict("scheme" => "linrood"),
+                    Dict("scheme" => "linrood", "ppm_order" => 7))
+        scheme = scheme_of(section)
+        @test AT.require_adjoint_support(scheme) === scheme
+    end
+    for section in (Dict("scheme" => "slopes"),
+                    Dict("scheme" => "ppm", "vertical" => "fv3_kord8"),
+                    Dict("scheme" => "ppm", "vertical" => "fv3_kord8_signed"),
+                    Dict("scheme" => "linrood", "vertical" => "fv3_kord8"),
+                    Dict("scheme" => "none"))
+        @test_throws ArgumentError AT.require_adjoint_support(scheme_of(section))
+    end
+    # Schemes outside the runtime vocabulary follow the same rule.
+    @test AT.require_adjoint_support(AT.SlopesScheme(AT.NoLimiter())) == AT.SlopesScheme(AT.NoLimiter())
+    @test_throws ArgumentError AT.require_adjoint_support(AT.PPMScheme(AT.Operators.PositivityLimiter()))
+end
+
+@testset "cs_4dvar.jl driver — unknown tables and keys are rejected (#16)" begin
+    base = read(CONFIG, String)
+    @test occursin("[diffusion] is not supported",
+                   _config_error(base * "\n[diffusion]\nkind = \"constant\"\nvalue = 1.0\n"))
+    @test occursin("[convection] is not supported",
+                   _config_error(base * "\n[convection]\nkind = \"tm5\"\n"))
+    @test occursin("Unknown top-level inversion config option(s): output",
+                   _config_error(base * "\n[output]\npath = \"result.toml\"\n"))
+    @test occursin("Unknown [mesh] option(s): Hpp",
+                   _config_error(replace(base, "Hp = 3" => "Hpp = 3")))
+    @test occursin("Unknown [advection] option(s): check_binary_cfl",
+                   _config_error(replace(base, SHIPPED_ADVECTION =>
+                                               SHIPPED_ADVECTION * "check_binary_cfl = true\n")))
+    @test occursin("Unknown [[observations.entries]] option(s): sigmaa",
+                   _config_error(replace(base, "sigma = 0.2" => "sigmaa = 0.2")))
+    @test occursin("Unknown [optimizer] option(s): iteration",
+                   _config_error(replace(base, "iterations = 8" => "iteration = 8")))
+    # Known keys that the selected kind does not read are warnings.
+    @test_logs (:warn, r"initial_step ignored with kind = \"lbfgs\"") match_mode = :any begin
+        _run_config_text(replace(base, "m = 5" => "m = 5\ninitial_step = 0.25"))
     end
 end
 

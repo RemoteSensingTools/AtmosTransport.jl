@@ -389,7 +389,9 @@ ppm_order = 7                   # cubed-sphere LinRoodPPM only; ∈ {5, 7}.
 # limiter = "cw84"              # scheme = "ppm" only: "monotone" (default) |
                                 # "cw84" (complete Colella–Woodward PPM; keeps
                                 # tracers non-negative in sweeps where no cell
-                                # exports more than its air mass)
+                                # exports more than its air mass). "none"
+                                # (unlimited PPM) is accepted only by the
+                                # 4D-Var inversion driver
 # check_binary_cfl = true       # cubed sphere, upwind | slopes | ppm: recompute
                                 # the CFL subcycle count each step and stop if
                                 # the binary's substep schedule asks for fewer

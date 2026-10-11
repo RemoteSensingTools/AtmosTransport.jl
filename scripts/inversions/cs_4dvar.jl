@@ -30,10 +30,20 @@
 #     [meteo]
 #     source = "synthetic_constant"   # only kind shipped in v1
 #
+#     [advection]                 # required; same parser as run_transport.jl
+#     scheme = "ppm"              # upwind | slopes | ppm | linrood | none
+#     limiter = "none"            # ppm only: monotone (default) | cw84 | none
+#     # vertical = "upwind"       # linrood only (fv3_kord8 has no adjoint)
+#     # ppm_order = 5             # linrood only: 5 or 7
+#     # The gradient is the adjoint of this scheme, so `scheme` has no
+#     # default here, and schemes without a cubed-sphere adjoint
+#     # (limited slopes, the FV3 vertical profile, none) are rejected.
+#     # `limiter = "none"` (unlimited, linear PPM) is accepted only here,
+#     # not in forward runs.
+#
 #     [observations]
-#     # Either an inline `entries` list with [[observations.entries]]
-#     # blocks, or `path = "..."` to load a v1 NetCDF observations
-#     # file. v1 uses inline entries for the synthetic smoke path.
+#     # Inline [[observations.entries]] blocks. Loading a v1 NetCDF
+#     # observations file is not wired into this driver yet.
 #     [[observations.entries]]
 #     step = 2
 #     objective = "layer_mean"    # or "column_mean"
@@ -69,10 +79,13 @@
 #     initial_step = 0.25
 #     # lbfgs-only:
 #     m = 5
+#     # both:
 #     gradient_tolerance = 1e-10
 #
-#     [output]
-#     path = "/tmp/inversion_result.toml"   # optional summary file
+# Any other table or key is an error, so nothing in the file is silently
+# ignored; diffusion and convection are not wired into this driver yet.
+# Keys that the selected kind does not read (e.g. `m` with gradient descent)
+# are reported as warnings.
 # ---------------------------------------------------------------------------
 
 using TOML
@@ -82,8 +95,95 @@ const AT = AtmosTransport
 const Adv = AtmosTransport.Operators.Advection
 
 # ---------------------------------------------------------------------------
+# Config validation. Every table and key the driver reads is listed here;
+# unknown tables and keys are errors, and known keys that the selected kind
+# leaves unread are warnings, as in the forward-run checks
+# (`src/Models/runner/config_keys.jl`).
+# ---------------------------------------------------------------------------
+
+const _GRADIENT_DESCENT_KEYS = ("initial_step", "min_step", "step_shrink", "line_search")
+const _LBFGS_KEYS = ("m", "show_trace")
+const _INVERSION_TABLE_KEYS = Dict(
+    "mesh"           => ("Nc", "Hp", "float_type"),
+    "time"           => ("nsteps", "dt_seconds"),
+    "meteo"          => ("source",),
+    "advection"      => AT.Models._ADVECTION_SPEC_KEYS,   # read by `advection_spec`
+    "observations"   => ("entries",),
+    "control"        => ("name", "steps", "normalize", "initial"),
+    "covariance"     => ("kind", "sigma_value", "correlation_length_cells"),
+    "preconditioner" => ("enabled", "optim_type", "background_value"),
+    "optimizer"      => ("kind", "iterations", "log", "gradient_tolerance",
+                         _GRADIENT_DESCENT_KEYS..., _LBFGS_KEYS...),
+)
+const _REQUIRED_TABLES = ("mesh", "time", "meteo", "advection", "observations",
+                          "control", "optimizer")
+const _OBSERVATION_ENTRY_KEYS = ("step", "objective", "panel", "i", "j", "level",
+                                 "value", "sigma")
+
+function _warn_unread(table, keys, label, reason)
+    present = [k for k in keys if haskey(table, k)]
+    isempty(present) || @warn "$(label): $(join(present, ", ")) ignored $(reason)."
+    return nothing
+end
+
+function _validate_inversion_config(cfg)
+    for name in ("diffusion", "convection")
+        haskey(cfg, name) && throw(ArgumentError(
+            "[$(name)] is not supported by the inversion driver yet; the 4D-Var cost " *
+            "runs without it, so the table would be ignored."))
+    end
+    AT.ConfigChecks.check_known_keys(cfg, sort!(collect(keys(_INVERSION_TABLE_KEYS))),
+                                     "top-level inversion config")
+    for name in _REQUIRED_TABLES
+        haskey(cfg, name) || throw(ArgumentError("the [$(name)] table is required"))
+    end
+    for (name, table) in cfg
+        table isa AbstractDict || throw(ArgumentError("`$(name)` must be a TOML table"))
+        AT.ConfigChecks.check_known_keys(table, _INVERSION_TABLE_KEYS[name], "[$(name)]")
+    end
+    for entry in get(cfg["observations"], "entries", ())
+        entry isa AbstractDict || throw(ArgumentError(
+            "observations.entries must be [[observations.entries]] tables"))
+        AT.ConfigChecks.check_known_keys(entry, _OBSERVATION_ENTRY_KEYS,
+                                         "[[observations.entries]]")
+        get(entry, "objective", nothing) == "column_mean" &&
+            _warn_unread(entry, ("level",), "[[observations.entries]]",
+                         "with objective = \"column_mean\"")
+    end
+
+    opt = cfg["optimizer"]
+    kind = get(opt, "kind", nothing)
+    kind == "lbfgs" &&
+        _warn_unread(opt, _GRADIENT_DESCENT_KEYS, "[optimizer]", "with kind = \"lbfgs\"")
+    kind == "gradient_descent" &&
+        _warn_unread(opt, _LBFGS_KEYS, "[optimizer]", "with kind = \"gradient_descent\"")
+    cov = get(cfg, "covariance", nothing)
+    cov !== nothing && get(cov, "kind", nothing) == "diagonal" &&
+        _warn_unread(cov, ("correlation_length_cells",), "[covariance]",
+                     "with kind = \"diagonal\"")
+    prec = get(cfg, "preconditioner", Dict{String, Any}())
+    if get(prec, "enabled", false) !== true
+        _warn_unread(prec, ("optim_type", "background_value"), "[preconditioner]",
+                     "while the preconditioner is disabled")
+        cov === nothing ||
+            @warn "[covariance] is ignored while the preconditioner is disabled."
+    end
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
 # TOML → Julia dispatch helpers
 # ---------------------------------------------------------------------------
+
+# `[advection]` goes through the forward run's parser and constructor
+# (`advection_spec` + `materialize`, as in `run_transport.jl`) in the
+# inversion context, then through the adjoint-support gate: the 4D-Var
+# gradient is the adjoint of this scheme, so a scheme without one is an error.
+function _build_advection_scheme(advection_cfg)
+    spec = AT.Models.advection_spec(advection_cfg, AT.Models.InversionAdvectionContext())
+    scheme = AT.Models.materialize(spec, AT.Models.CubedSphereRuntimeRecipeStyle())
+    return AT.require_adjoint_support(scheme)
+end
 
 _float_type(name) = name == "Float32" ? Float32 :
                     name == "Float64" ? Float64 :
@@ -255,6 +355,8 @@ function run_inversion(config_path::AbstractString)
     isfile(config_path) || throw(ArgumentError(
         "config not found at $(repr(config_path))"))
     cfg = TOML.parsefile(config_path)
+    _validate_inversion_config(cfg)
+    scheme = _build_advection_scheme(cfg["advection"])
 
     FT = _float_type(get(cfg["mesh"], "float_type", "Float64"))
     Nc = cfg["mesh"]["Nc"]
@@ -290,7 +392,7 @@ function run_inversion(config_path::AbstractString)
         meteo.panels_rm, meteo.panels_m,
         meteo.panels_am, meteo.panels_bm, meteo.panels_cm,
         mesh, observations, control;
-        scheme = AT.PPMScheme(AT.NoLimiter()),
+        scheme = scheme,
         dt = dt,
         optimizer = optimizer,
         preconditioner = prec)

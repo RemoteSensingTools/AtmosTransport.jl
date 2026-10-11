@@ -73,3 +73,13 @@ end
     # exceed the shorter-budget one).
     @test long.solve.last.cost <= quick.solve.last.cost
 end
+
+# Issue #16: the experiment used to hard-code `PPMScheme(NoLimiter())`; the
+# scheme is now a config field, checked for adjoint support.
+@testset "synthetic 4D-Var inversion — configurable advection scheme" begin
+    @test SyntheticExperimentConfig().scheme == AT.PPMScheme(AT.NoLimiter())
+    @test SyntheticExperimentConfig(scheme = AT.UpwindScheme()).scheme == AT.UpwindScheme()
+    @test_throws ArgumentError SyntheticExperimentConfig(scheme = AT.SlopesScheme())
+    @test_throws ArgumentError SyntheticExperimentConfig(
+        scheme = AT.PPMScheme(; vertical = AT.Operators.Advection.FV3ScalarProfile()))
+end

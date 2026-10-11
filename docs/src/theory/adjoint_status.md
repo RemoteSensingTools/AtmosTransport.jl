@@ -45,8 +45,14 @@ The adjoint supports the following advection schemes (full union in
 - `SlopesScheme(NoLimiter())`
 - `PPMScheme(NoLimiter())`
 - `PPMScheme(MonotoneLimiter())` and `PPMScheme(CW84Limiter())` — via a stored tracer-branch tape around the base trajectory
-- `LinRoodPPMScheme(; ppm_order = 5)`
-- `LinRoodPPMScheme(; ppm_order = 7)`
+- `LinRoodPPMScheme(5)` and `LinRoodPPMScheme(7)`, with the default upwind
+  vertical sweeps
+
+The FV3 vertical profile (`vertical = "fv3_kord8"` or `"fv3_kord8_signed"`)
+has no adjoint, for `PPMScheme` or for Lin–Rood's vertical sweeps; neither do
+limited `SlopesScheme` and `NoAdvection`. `require_adjoint_support(scheme)`
+returns a supported scheme and otherwise throws an error that names the
+missing piece. The inversion driver applies it to its `[advection]` table.
 
 The supporting kernel adjoints in
 `src/Operators/Advection/linrood_adjoint_*.jl` are
@@ -153,7 +159,10 @@ julia --project=. scripts/inversions/cs_4dvar.jl \
 ```
 
 That synthetic-only configuration owns observations, controls, covariance and
-optimizer choices. It does not expose checkpoint or real-binary settings.
+optimizer choices, and an `[advection]` table that is parsed like a forward
+run's (`limiter = "none"`, the unlimited PPM, is accepted only here). Unknown
+tables and keys are errors. It does not expose checkpoint, diffusion,
+convection or real-binary settings.
 For the lower-level Julia API, start with the
 [footprint tutorial](@ref First-emission-footprint), then
 `test/core/test_cs_inversion_truth_recovery.jl` for a larger inversion assembly.

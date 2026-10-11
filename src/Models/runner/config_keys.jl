@@ -27,7 +27,7 @@ const _NUMERICS_KEYS = ("float_type",)                   # `_cfg_float_type`
 const _RUN_KEYS = ("start_window", "stop_window", "air_mass_reset_mode", "physics_cadence",
                    "prefetch_windows", "Hp", "halo_padding", "tracer_name",
                    "reset_air_mass_each_window")
-const _ADVECTION_KEYS = ("scheme", "ppm_order", "vertical", "limiter")   # `advection_spec`
+const _ADVECTION_KEYS = _ADVECTION_SPEC_KEYS                              # `advection_spec`
 const _ADVECTION_ONLY_KEYS = ("check_binary_cfl",)  # `binary_cfl_check`; no legacy `[run]` form
 const _DIFFUSION_KEYS = ("kind", "value", "surface_flux_boundary", "type")  # `diffusion_spec`
 const _COLLAB_LU_KEYS = ("tile_workspace_gib", "use_collab_lu", "lmax_conv", "n_merge")

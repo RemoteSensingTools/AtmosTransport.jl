@@ -7,7 +7,8 @@
 # at 2026-05-13 and ships in a follow-up. Do not run this config
 # verbatim against the current driver — it documents the intended
 # parameter shape and serves as the template for the eventual
-# C48 14-day stretch run.
+# C48 14-day stretch run. The current driver rejects the sketched
+# `meteo.binary_path` and `observations.path` keys as unknown.
 
 [mesh]
 Nc = 48
@@ -21,6 +22,11 @@ dt_seconds = 3600.0
 [meteo]
 source = "geos_it_c48"        # NOT YET IMPLEMENTED in v1
 binary_path = "/data/preprocessed/c48_2024_jan.bin"
+
+# Monotone PPM, the scheme of the production cubed-sphere forward runs; its
+# adjoint replays the recorded limiter branches.
+[advection]
+scheme = "ppm"
 
 [observations]
 path = "data/observations/c48_co2_2024_jan.nc"   # v1 NetCDF schema
@@ -48,6 +54,3 @@ gradient_tolerance = 1.0e-8
 m = 15
 log = true
 show_trace = false
-
-[output]
-path = "/tmp/inversion_c48_jan2024.toml"

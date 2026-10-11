@@ -35,6 +35,9 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
   `SameAsHorizontal`), `CSAdjointLinRoodScheme`
   (`LinRoodPPMScheme{<:Any, UpwindScheme}`), and their union
   `CSAdjointSupportedScheme`. The FV3 vertical profile is not supported.
+  `require_adjoint_support(scheme)` is the dispatch-based gate on this union:
+  it returns a supported scheme and otherwise throws an error naming the
+  missing piece (used by the inversion driver for its `[advection]` table).
 - `CSAdjointWorkspace(mesh, prototype)` in [`Adjoints.jl`](Adjoints.jl):
   per-panel transpose scratch plus the 12-seam seed cache.
 - Objectives in [`ObjectiveSeeding.jl`](ObjectiveSeeding.jl):

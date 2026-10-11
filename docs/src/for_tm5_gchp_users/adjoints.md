@@ -29,16 +29,22 @@ julia --project=. scripts/inversions/cs_4dvar.jl \
     config/inversions/example_synthetic.toml
 ```
 
-It builds a C3 cubed sphere with zero transport fluxes, two model steps, one cell/layer observation,
-an isotropic covariance, a linear preconditioner, and an L-BFGS solve. It
-prints the initial and final cost. First-time compilation can take longer
+It builds a C3 cubed sphere with zero transport fluxes, two model steps,
+unlimited PPM advection, one cell/layer observation, an isotropic covariance,
+a linear preconditioner, and an L-BFGS solve. It prints the initial and final
+cost. First-time compilation can take longer
 than the small inversion itself.
 
 !!! note "Two config interfaces"
     `scripts/run_transport.jl` reads the forward-run schema documented in
     [TOML schema](@ref). The inversion script above reads its own
-    smaller schema. A forward config does **not** accept an `[adjoint]` block.
-    For programmatic work, call the APIs in `AtmosTransport.Adjoints` directly.
+    smaller schema. Its required `[advection]` table goes through the same
+    parser as a forward run's (`limiter = "none"`, the unlimited PPM, is
+    accepted only by the inversion), and a scheme without an adjoint is
+    rejected. Any table or key the script does not read, such as
+    `[diffusion]`, `[convection]` or `[output]`, is an error. A forward config
+    does **not** accept an `[adjoint]` block. For programmatic work, call the
+    APIs in `AtmosTransport.Adjoints` directly.
 
 The second example, `config/inversions/example_c48.toml`, is a schema sketch
 for a future real-meteorology driver. It is intentionally not runnable with
@@ -68,8 +74,13 @@ The API accepts the following advection families:
 - `UpwindScheme()`
 - `SlopesScheme(NoLimiter())`
 - `PPMScheme(NoLimiter())`
-- monotone `PPMScheme()` using recorded limiter branches
-- `LinRoodPPMScheme` with its dedicated horizontal tape
+- monotone `PPMScheme()` and `PPMScheme(CW84Limiter())` using recorded
+  limiter branches
+- `LinRoodPPMScheme` with upwind vertical sweeps and its dedicated
+  horizontal tape
+
+`require_adjoint_support(scheme)` checks a scheme against this list and names
+what is missing otherwise (for example the FV3 vertical profile).
 
 Optional vertical diffusion and supported convection operators can be passed
 with the corresponding operator, forcing, and workspace keywords. Unsupported
