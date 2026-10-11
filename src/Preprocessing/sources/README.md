@@ -42,7 +42,7 @@ writers that turn these fields into transport binaries live in
 | Native grid | CS (C180 IT, C720 FP), L72 | reduced Gaussian N320, L137 | lat-lon 576 x 361, L72 |
 | Files | IT: daily `GEOSIT.YYYYMMDD.<collection>.C<Nc>.nc`; FP: hourly `tavg_1hr_ctm` files | `<root>/ml_an_native_core/era5_core_YYYYMMDD.grib` (+ `ml_fc_convection/`, `sfc_an_native/`) | GES DISC `M2I3NVASM`/`M2T3NVASM`, or GEOS-Chem `MERRA2.YYYYMMDD.<tag>.05x0625.nc4` |
 | `windows_per_day` | 24 | 24 | 8 (3-hour blocks) |
-| Level order | detected from `DELP`, flipped to top-down | `level_orientation = :top_down` (default) | detected from `QV`, flipped to top-down |
+| Level order | detected from `DELP`, flipped to top-down | canonical GRIB order is top-down | detected from `QV`, flipped to top-down |
 | Horizontal flux | `MFXC`/`MFYC` divided by `mass_flux_dt` | built from winds by the writer | built from winds by the writer |
 | Fills `RawWindow` | yes (`read_window!`) | no | no |
 | `supports_day_threading` | `false` | `true` | `false` |

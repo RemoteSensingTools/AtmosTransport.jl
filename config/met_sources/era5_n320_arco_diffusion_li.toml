@@ -14,7 +14,6 @@ reference   = "https://github.com/google-research/arco-era5"
 coefficients_file = "config/era5_L137_coefficients.toml"
 
 [preprocessing]
-level_orientation = "top_down"
 arco_surface_pressure = true
 include_surface       = true
 include_convection    = false

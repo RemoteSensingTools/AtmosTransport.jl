@@ -160,8 +160,8 @@ Files directly in this folder; the subfolders have their own READMEs
   GEOS, ERA5 N320, and MERRA-2 writers reject other values; spectral dry basis
   requires `[input].thermo_dir`.
 - `k = 1` is the model top: GEOS files are flipped after
-  `detect_level_orientation`, MERRA-2 readers return top-down arrays, ERA5
-  N320 settings default to `level_orientation = :top_down`. `cm` is zero at
+  `detect_level_orientation`, MERRA-2 readers return top-down arrays, and
+  canonical ERA5 N320 GRIB fields are top-down. `cm` is zero at
   the top (`k = 1`) and surface (`k = Nz + 1`) interfaces.
 - Balance before `cm`: horizontal fluxes are balanced against the target
   `(m_next - m) / (2 * steps)` (each substep applies them twice; see

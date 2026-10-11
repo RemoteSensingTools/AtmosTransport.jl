@@ -155,12 +155,13 @@ function _build_met_settings(ctor::Type{<:ERA5GRIBSettings}, cfg::AbstractDict,
         throw(ArgumentError("[preprocessing] include_tm5_diffusion=true requires \
                              include_surface=true (needs sshf/slhf/ustar)."))
 
-    settings = ctor(; root_dir,
-                      include_surface, include_convection,
-                      include_tm5_diffusion, arco_surface_pressure, level_orientation,
-                      coefficients_file = coefs, _flux_construction_kwargs(pre_cfg)...,
-                      flux_time_sampling = Symbol(lowercase(String(get(pre_cfg, "flux_time_sampling", "window_start")))),
-                      kwargs...)
+    settings = _validate_era5_level_orientation(ctor(;
+        root_dir,
+        include_surface, include_convection,
+        include_tm5_diffusion, arco_surface_pressure, level_orientation,
+        coefficients_file = coefs, _flux_construction_kwargs(pre_cfg)...,
+        flux_time_sampling = Symbol(lowercase(String(get(pre_cfg, "flux_time_sampling", "window_start")))),
+        kwargs...))
     return _validate_flux_construction(settings, "ERA5")
 end
 

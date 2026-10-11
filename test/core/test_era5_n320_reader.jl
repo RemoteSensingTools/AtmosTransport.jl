@@ -193,12 +193,15 @@ end
         end
     end
 
-    @testset "open_era5_day — level_orientation is validated" begin
+    @testset "open_era5_day — only top-down levels are accepted" begin
         mktempdir() do root
             _materialise_placeholders(root, [Date(2021, 12, 1)], [:core])
-            s_bad = ERA5N320Settings(;
-                root_dir = root, level_orientation = :sideways)
-            @test_throws ArgumentError open_era5_day(s_bad, Date(2021, 12, 1))
+            for orientation in (:bottom_up, :sideways)
+                s_bad = ERA5N320Settings(;
+                    root_dir = root, level_orientation = orientation)
+                @test_throws "must be :top_down because canonical ERA5 GRIB model levels are top-first" open_era5_day(
+                    s_bad, Date(2021, 12, 1))
+            end
         end
     end
 
