@@ -367,7 +367,9 @@ code = { delivery = "shared", root = "~/atmostr_bench" }
         end
         @test_throws ArgumentError synthetic(Float32, 1, 8)
         @test_throws ArgumentError LL.resolve_case_options(Dict{String, Any}("grid" => "C1"), nothing)
-        @test LL.resolve_case_options(Dict{String, Any}("grid" => "C2", "levels" => "1"), nothing).grids == [2]
+        # The benchmark meshes have a 3-cell halo, so C3 is the smallest grid.
+        @test_throws ArgumentError LL.resolve_case_options(Dict{String, Any}("grid" => "C2"), nothing)
+        @test LL.resolve_case_options(Dict{String, Any}("grid" => "C3", "levels" => "1"), nothing).grids == [3]
 
         @test BR.check_synthetic_courant(0.2, "case"; stage = "initially") === nothing
         msg = try

@@ -62,8 +62,9 @@ it measured
   `--scheme` lists (`SCHEME_FREE_OPERATORS`).
 
 The `io` payload carries every requested tracer. Any grid `C<N>` with
-`N >= 2` and any level count are accepted, including the production sizes
-C90/C180 with L72/L137; a single level has no vertical flux.
+`N >= 3` (the meshes have a 3-cell halo) and any level count are accepted,
+including the production sizes C90 to C720 with L72/L137; a single level has
+no vertical flux.
 
 The synthetic fields ([`src/synthetic_fields.jl`](src/synthetic_fields.jl))
 are smooth air-mass and tracer fields and static face mass fluxes that leave

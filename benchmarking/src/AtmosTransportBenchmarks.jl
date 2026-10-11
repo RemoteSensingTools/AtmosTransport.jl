@@ -32,8 +32,7 @@ include("records.jl")
 include("synthetic_fields.jl")
 include("memory_model.jl")
 
-"Halo width of the synthetic cubed-sphere meshes."
-const _HALO = 3
+const _HALO = BENCHMARK_HALO
 
 """
     BenchmarkRun

@@ -58,8 +58,11 @@ threads = 2
 # Keeps the Julia GC well inside the per-user memory cgroup.
 heap_size_hint = "64G"
 caffeinate = false
-# No tmpdir: the io case uses the local default TMPDIR, not the NFS home; it
-# needs ~1.4 GB free there (C180 L137, 2 tracers, Float64).
+# The io case writes to the NFS home, where production output on curry goes
+# too: curry's local /tmp is a shared 10 GB partition (it filled up during the
+# first lab run on 2026-10-10) and curry has no local NVMe. Up to ~1.4 GB
+# (C180 L137, 2 tracers, Float64); the case removes its files after each repeat.
+tmpdir = "~/atmostr_bench/tmp/curry"
 # ~ is NFS-shared with wurst, so the archive extracted on wurst is visible here.
 code = { delivery = "shared", root = "~/atmostr_bench" }
 env = { CUDA_VISIBLE_DEVICES = "0" }

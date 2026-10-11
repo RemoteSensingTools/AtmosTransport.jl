@@ -142,11 +142,18 @@ end
 _scalar_int(x::Integer) = Int(x)
 _scalar_int(x::AbstractString) = parse(Int, strip(x))
 
-# The synthetic fields need an interior cell corner on each panel (C2 or larger).
+"Halo width of the synthetic cubed-sphere meshes (wide enough for every advection scheme)."
+const BENCHMARK_HALO = 3
+
+# The smallest grid: the halo must fit in a panel (`fill_panel_halos!` needs
+# Hp <= Nc), which also gives the synthetic fields an interior cell corner.
+const MIN_BENCHMARK_GRID_NC = BENCHMARK_HALO
+
 function _grid_size(x)
     Nc = _positive("grid", _parse_grid(x))
-    Nc >= 2 || throw(ArgumentError(
-        "grid C$(Nc) is too small: the synthetic benchmark fields need C2 or larger"))
+    Nc >= MIN_BENCHMARK_GRID_NC || throw(ArgumentError(
+        "grid C$(Nc) is too small: the benchmark meshes have a $(BENCHMARK_HALO)-cell halo, " *
+        "so the grid must be C$(MIN_BENCHMARK_GRID_NC) or larger"))
     return Nc
 end
 
