@@ -167,12 +167,15 @@ end
 
 Typed wrapper for the existing `select_levels_echlevs` algorithm.
 `echlevs` is a vector of native level INTERFACE indices (0-based,
-bottom-up); levels between selected interfaces are summed. See
+numbered from the model top as in TM5); levels between selected interfaces are summed. See
 `vertical_coordinates.jl:64` and the `ECHLEVS_ML137_*` constants.
 """
 struct LevelSelection <: AbstractVerticalTransform
     echlevs :: Vector{Int}
 end
+
+LevelSelection(echlevs::Tuple{Vararg{Integer}}) =
+    LevelSelection(collect(Int, echlevs))
 
 """
     PressureOverlap(target_coeff_path)

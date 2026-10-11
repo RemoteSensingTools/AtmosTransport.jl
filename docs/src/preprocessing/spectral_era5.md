@@ -75,12 +75,14 @@ For each of the day's 24 hourly windows:
 
 2. **Vertical level merging** (`vertical_coordinates.jl::merge_thin_levels`,
    `select_levels_echlevs`)
-    - The `[grid] echlevs` mode (e.g. `"ml137_tropo34"`) selects a
-      vertical-level recipe — typically a tropospheric subset merged
-      to ~34 layers via the TM5 r1112 echlevs scheme.
-    - `merge_min_thickness_Pa = 1000.0` floors the merged layer
-      thickness so no merged layer is thinner than ~1 km in the
-      tropopause region.
+    - `[grid] echlevs` names a TM5-style interface selection (see
+      [Vertical level presets](@ref era5-vertical-level-presets)). The
+      native layers between two selected interfaces are summed into one
+      output layer.
+    - Without `echlevs`, `merge_thin_levels` merges adjacent native
+      layers until each is at least `merge_min_thickness_Pa` thick at
+      standard surface pressure (1000 Pa = 10 hPa). With `echlevs` the
+      key is ignored.
 
 3. **Mass-fix** (`mass_support.jl::pin_global_mean_ps_using_qv!`)
     - Optional, gated by `[mass_fix] enable = true`.
