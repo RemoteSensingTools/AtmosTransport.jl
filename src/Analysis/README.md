@@ -84,7 +84,8 @@ computed by that routine.
   budget of every tracer of a finished run, `ΔS = S(t₁) − S(t₀)` from
   `<tracer>_total_mass` of the run's snapshot files against the storage `E`
   its runtime sources added (`Operators.integrated_emission`), with the
-  tolerance `ρ|E| + k·eps(Float32(χ₀))·M` (`BudgetTolerance`: strict 1e-4 and
+  tolerance `ρ|E| + k·eps(FT(χ₀))·M`, where `FT` is the run's float type
+  (`BudgetTolerance`: strict 1e-4 and
   1 ulp, operational 1e-3 and 4 ulps), finite values and a carrier that is
   never exhausted. Returns a `BudgetReport` of `TracerBudget`s;
   `report_dict` gives its JSON form. `carrier_drawdown(run)` is the largest

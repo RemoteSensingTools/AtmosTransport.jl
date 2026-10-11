@@ -11,8 +11,8 @@ Asserts:
   values: NaN spread); errors for short, non-finite or non-positive-start
   series;
 - `twin_relative_difference`: raw and net series by hand; the net value is
-  bitwise the Python `f32_minus_f64` expression for a positive start and for a
-  zero start (pinned values too); NaN where the reference is zero; errors,
+  bitwise the Python `f32_minus_f64` expression for positive, negative and
+  zero starts (pinned values too); NaN where the reference is zero; errors,
   including non-finite totals;
 - `weighted_difference_stats`: mean and RMS by hand, the difference formed per
   cell (Float32 against Float64), compensated sums (a cancellation a plain sum
@@ -75,6 +75,12 @@ end
     net = twin_relative_difference(a, b).net
     @test net[end] == (a[3] - b[3]) / b[3] - (a[1] - b[1]) / b[1]
     @test net[end] == 3.1000006896899347e-9                  # f32_minus_f64 (Python)
+
+    # A signed diagnostic may start below zero. Its net difference still
+    # removes the initial offset; only an exactly zero reference is special.
+    neg = twin_relative_difference([-99.0, -202.0, -396.0], [-100.0, -200.0, -400.0])
+    @test neg.net == neg.raw .- neg.raw[1]
+    @test neg.net == [0.0, 0.02, 0.0]
 
     # Zero start (a tracer emitted from zero): relative to the emitted mass,
     # the Python (a_k - b_k)/(b_k - b_0) with b_0 = 0; NaN where b is zero.

@@ -38,6 +38,7 @@ using TOML
 using JSON3
 using NCDatasets
 using AtmosTransport: validate_config
+using AtmosTransport.Analysis: daily_snapshot_series, weighted_difference_stats
 using AtmosTransport.Parameters: SPECIES_MOLAR_MASS, DEFAULT_BACKGROUND_VMR
 
 const SCRIPTS = joinpath(@__DIR__, "..", "..", "scripts", "diagnostics")
@@ -443,6 +444,30 @@ end
     @test cmp.times == origin .+ Hour.(Int.(hours))
     @test cmp.sample_times == origin .+ Hour.([0, 24, 48, 72])
     @test cmp.cell_area == AREA
+
+    # Regression against the former all-days-in-memory calculation. The
+    # production helper reads one common 3-D snapshot at a time, but its
+    # statistics and retained last field are bitwise identical on this fixture.
+    field_vars = ["$(n)_column_mean" for n in tracers]
+    at_midnight = t -> Time(t) == Time(0)
+    old32 = daily_snapshot_series(files32, field_vars; origin, keep_frame = at_midnight)
+    old64 = daily_snapshot_series(files64, field_vars; origin, keep_frame = at_midnight)
+    old_times, old_i32, old_i64 = twin(:common_frames, old32.times, old64.times)
+    streamed = twin(:_column_difference_series, files32, files64, field_vars, AREA;
+                    origin, keep_frame = at_midnight)
+    @test streamed.times == old_times
+    for name in field_vars
+        a, b = old32.values[name], old64.values[name]
+        stats = [weighted_difference_stats(view(a, :, :, :, j), view(b, :, :, :, k), AREA)
+                 for (j, k) in zip(old_i32, old_i64)]
+        expected_field = Float64.(view(a, :, :, :, last(old_i32))) .-
+                         Float64.(view(b, :, :, :, last(old_i64)))
+        got = streamed.values[name]
+        @test got.mean == [s.mean for s in stats]
+        @test got.rms == [s.rms for s in stats]
+        @test got.excluded == [length(AREA) - s.n for s in stats]
+        @test isequal(got.field, expected_field)
+    end
 
     w = AREA ./ sum(AREA)
     for n in tracers

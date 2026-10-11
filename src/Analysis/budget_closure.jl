@@ -21,10 +21,10 @@
 # runtime's own sources makes the cell areas, unit factors, storage scale and
 # slice timing those of the run.
 #
-# A Float32 run stores χ (or the per-cell storage) in Float32. A tracer that
-# starts from a uniform carrier χ₀ cannot resolve increments below one Float32
-# spacing of χ₀ per cell; summed over the air mass M this is the carrier term
-# ε₃₂(χ₀) M of the tolerance, with ε₃₂(x) = eps(Float32(x)).
+# A run stores χ (or the per-cell storage) in its configured float type FT. A
+# tracer that starts from a uniform carrier χ₀ cannot resolve increments below
+# one FT spacing of χ₀ per cell; summed over the air mass M this is the carrier
+# term εᶠᵀ(χ₀) M of the tolerance, with εᶠᵀ(x) = eps(FT(x)).
 # ===========================================================================
 
 """
@@ -37,8 +37,8 @@ Tolerances of [`budget_closure`](@ref). A tracer with expected storage change
 when
 
 ```math
-|\\Delta S - E| \\le \\rho\\,|E| + k\\,\\varepsilon_{32}(\\chi_0)\\,M,
-\\qquad \\varepsilon_{32}(x) = \\mathrm{eps}(\\mathrm{Float32}(x)).
+|\\Delta S - E| \\le \\rho\\,|E| + k\\,\\varepsilon_{FT}(\\chi_0)\\,M,
+\\qquad \\varepsilon_{FT}(x) = \\mathrm{eps}(\\mathrm{FT}(x)).
 ```
 
 The strict level (``10^{-4}`` plus one carrier ulp) is the check of the
@@ -84,8 +84,9 @@ kg (mixing ratio × carrier air mass, the unit of `<tracer>_total_mass`).
 - `expected_change` ``E`` and `actual_change` ``\\Delta S = S(t_1) - S(t_0)``;
 - `relative_error` ``= |\\Delta S - E| / \\max(|E|, 1\\,\\mathrm{kg})`` and
   `error_vmr` ``= (\\Delta S - E)/M``, the error as a mixing ratio;
-- `carrier_ulp` ``= \\varepsilon_{32}(\\chi_0)\\,M``, and the absolute
-  `strict_tolerance` and `operational_tolerance` of [`BudgetTolerance`](@ref);
+- `carrier_ulp` ``= \\varepsilon_{FT}(\\chi_0)\\,M`` for the run's float type,
+  and the absolute `strict_tolerance` and `operational_tolerance` of
+  [`BudgetTolerance`](@ref);
 - `minimum_column_mean`: the smallest column-mean mixing ratio in any snapshot
   (NaN when the files have no `<tracer>_column_mean`), `column_checked`:
   whether the files have it, and `finite`: whether every total and column
@@ -116,10 +117,11 @@ struct TracerBudget
 end
 
 function TracerBudget(tracer::Symbol, carrier::Real, air_mass::Real, initial::Real, final::Real,
-                      expected::Real, minimum_column::Real, finite::Bool, tolerance::BudgetTolerance)
+                      expected::Real, carrier_ulp::Real, minimum_column::Real, finite::Bool,
+                      tolerance::BudgetTolerance)
     actual = Float64(final) - Float64(initial)
     error = actual - Float64(expected)
-    ulp = Float64(eps(Float32(carrier))) * Float64(air_mass)
+    ulp = Float64(carrier_ulp)
     strict = tolerance.strict * abs(expected) + tolerance.strict_carrier_ulps * ulp
     operational = tolerance.operational * abs(expected) + tolerance.operational_carrier_ulps * ulp
     finite_all = finite && isfinite(initial) && isfinite(final) && isfinite(expected)
@@ -367,9 +369,9 @@ added over the same interval.
   `output_glob` (sorted), for a run whose output was moved;
 - the expected change ``E`` is
   [`expected_storage_change`](@ref)`(emission, ctx, spec, t0, t1)`;
-- the tolerance is ``\\rho |E| + k\\,\\varepsilon_{32}(\\chi_0)\\,M``
-  ([`BudgetTolerance`](@ref)), with ``\\chi_0`` the tracer's initial carrier
-  and ``M`` the run's initial air mass;
+- the tolerance is ``\\rho |E| + k\\,\\varepsilon_{FT}(\\chi_0)\\,M``
+  ([`BudgetTolerance`](@ref)), with ``FT`` the run's float type, ``\\chi_0``
+  the tracer's initial carrier and ``M`` the run's initial air mass;
 - every total and `<tracer>_column_mean` value must be finite, and a tracer
   with a positive carrier must keep every column mean positive (so its column
   means must be in the snapshots, as in `check_trendy_npp_rh_run.py`).
@@ -433,11 +435,13 @@ function budget_closure(run; output_glob::Union{Nothing, AbstractString} = nothi
     for spec in checked
         total = series.values[_total_name(spec.name)]
         initial, final = Float64(first(total)), Float64(last(total))
+        carrier = _initial_carrier(spec, initial, ctx.air_mass)
+        carrier_ulp = Float64(eps(floattype(ctx)(carrier))) * ctx.air_mass
         minimum_column, column_finite = get(columns, _column_name(spec.name), (NaN, true))
-        push!(budgets, TracerBudget(spec.name, _initial_carrier(spec, initial, ctx.air_mass),
-                                    ctx.air_mass, initial, final,
+        push!(budgets, TracerBudget(spec.name, carrier, ctx.air_mass, initial, final,
                                     expected_storage_change(emission, ctx, spec, t0, t1),
-                                    minimum_column, column_finite && all(isfinite, total), tolerance))
+                                    carrier_ulp, minimum_column,
+                                    column_finite && all(isfinite, total), tolerance))
     end
     return BudgetReport(ctx.config_path, paths, first(series.times), last(series.times),
                         length(hours), tolerance, repr(emission), budgets, skipped)
@@ -585,7 +589,7 @@ end
 _json_number(x::Real) = isfinite(x) ? Float64(x) : nothing
 
 _tolerance_text(tol::BudgetTolerance) =
-    "strict: $(tol.strict) relative plus $(_ulps(tol.strict_carrier_ulps)) Float32 ULP of each " *
+    "strict: $(tol.strict) relative plus $(_ulps(tol.strict_carrier_ulps)) run-precision ULP of each " *
     "initial carrier; operational: $(tol.operational) relative plus $(_ulps(tol.operational_carrier_ulps))"
 _ulps(k) = isinteger(k) ? string(Int(k)) : string(k)
 

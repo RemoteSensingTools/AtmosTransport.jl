@@ -39,8 +39,9 @@ Asserts:
   snapshot totals (1e-12); `lin` closes only with each window's own step
   (its step-start sum with the first window's step throughout differs);
   `passive` has zero expected change and closes;
-- the carrier term is eps(Float32(carrier)) × air mass and the tolerances
-  follow `BudgetTolerance`; `report_dict` keeps the keys of the retired
+- the carrier term is eps(FT(carrier)) × air mass for the run's float type;
+  a Float64 error between one and four ULPs fails strict and passes operational;
+  the tolerances follow `BudgetTolerance`; `report_dict` keeps the keys of the retired
   Python report and writes valid JSON;
 - `carrier_drawdown` is the day-1 loss of `npp` divided by the air mass
   (1e-12), with 0 for the tracers that only gain; for the same flux read as a
@@ -246,11 +247,22 @@ Analysis.expected_storage_change(m::FixedEmission, ::RunContext, spec, t0, t1) =
     @test b[:npp].initial_storage ≈ 1e-3 * air rtol = 1e-14
     @test b[:npp].carrier == 1e-3 && b[:rh].carrier == 1e-5 && b[:passive].carrier == 4e-4
     @test b[:npp].air_mass == air
-    @test b[:npp].carrier_ulp == Float64(eps(Float32(1e-3))) * air
+    @test b[:npp].carrier_ulp == eps(Float64(1e-3)) * air
     @test b[:npp].strict_tolerance == 1e-4 * abs(b[:npp].expected_change) + b[:npp].carrier_ulp
     @test b[:npp].operational_tolerance == 1e-3 * abs(b[:npp].expected_change) + 4 * b[:npp].carrier_ulp
     @test b[:npp].error_vmr == (b[:npp].actual_change - b[:npp].expected_change) / air
     @test 0 < b[:npp].minimum_column_mean < 1e-3 && b[:npp].finite
+
+    # The carrier allowance follows the Float64 run, not the much wider
+    # Float32 spacing. An error of two Float64 carrier ULPs is outside strict
+    # (one ULP) but inside operational (four ULPs).
+    ulp64 = eps(Float64(b[:npp].carrier)) * air
+    ulp_gate = BudgetTolerance(strict = 0, operational = 0)
+    f64_gate = quietly(() -> budget_closure(ctx; tracers = [:npp],
+        emission = FixedEmission(b[:npp].actual_change + 2ulp64), tolerance = ulp_gate))
+    gated = only(f64_gate.tracers)
+    @test gated.carrier_ulp == ulp64
+    @test !gated.strict_passed && gated.operational_passed
 
     # JSON report: the Python keys plus the operational level.
     d = report_dict(report)

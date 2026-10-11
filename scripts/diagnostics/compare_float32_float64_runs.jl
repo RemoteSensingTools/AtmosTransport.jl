@@ -136,6 +136,116 @@ function common_frames(t32::Vector{DateTime}, t64::Vector{DateTime})
     return common, indexin(common, t32), indexin(common, t64)
 end
 
+# A field sample is planned from the small time axes first. The corresponding
+# 3-D fields are read only after the two runs' sample times have been aligned.
+const _ColumnSample = @NamedTuple{time::DateTime, path::String, frame::Int}
+
+function _column_layout(ds, name, path)
+    haskey(ds, name) || throw(ArgumentError("$(path) has no variable `$(name)`"))
+    var = ds[name]
+    dims = dimnames(var)
+    (!isempty(dims) && last(dims) == "time") || throw(ArgumentError(
+        "$(path): `$(name)` has dimensions $(dims); its last dimension must be `time`"))
+    T = nonmissingtype(eltype(var))
+    T <: AbstractFloat || throw(ArgumentError(
+        "$(path): `$(name)` is stored as $(T); a series needs a floating-point type"))
+    return (; T, shape = size(var)[1:end-1])
+end
+
+function _comparison_hours(ds, path)
+    haskey(ds, "time") || throw(ArgumentError("$(path) has no `time` variable"))
+    var = ds["time"]
+    units = strip(String(get(var.attrib, "units", "")))
+    units == "hours" || throw(ArgumentError(
+        "$(path): `time` has units \"$(units)\"; expected the snapshot writer's \"hours\" " *
+        "(hours since the simulation start passed as `origin`)"))
+    hours = Float64.(collect(var.var[:]))
+    all(isfinite, hours) || throw(ArgumentError("$(path): `time` holds non-finite values"))
+    return hours
+end
+
+function _column_sample_plan(paths, names, origin, keep_frame)
+    layouts = NCDataset(first(paths), "r") do ds
+        Dict(name => _column_layout(ds, name, first(paths)) for name in names)
+    end
+    samples = _ColumnSample[]
+    seen = Set{Float64}()
+    latest = -Inf
+    ms_per_hour = Dates.toms(Dates.Hour(1))
+    stamp(h) = origin + Millisecond(round(Int64, h * ms_per_hour))
+    for path in paths
+        hours = NCDataset(ds -> _comparison_hours(ds, path), path, "r")
+        keep = Int[]
+        for (frame, h) in enumerate(hours)
+            h in seen && continue
+            h < latest && throw(ArgumentError(
+                "$(path): frame $(frame) at hour $(h) precedes hour $(latest) read before it; " *
+                "pass the files of one run in time order"))
+            push!(seen, h)
+            latest = h
+            keep_frame(stamp(h))::Bool || continue
+            push!(keep, frame)
+            push!(samples, (; time = stamp(h), path = String(path), frame))
+        end
+        isempty(keep) && continue
+        NCDataset(path, "r") do ds
+            for name in names
+                layout = _column_layout(ds, name, path)
+                layout == layouts[name] || throw(DimensionMismatch(
+                    "$(path): `$(name)` is $(layout.T) of size $(layout.shape); the first file has " *
+                    "$(layouts[name].T) of size $(layouts[name].shape)"))
+            end
+        end
+    end
+    return samples, layouts
+end
+
+function _read_column_frame(ds, name, path, frame, layout)
+    actual = _column_layout(ds, name, path)
+    actual == layout || throw(DimensionMismatch(
+        "$(path): `$(name)` is $(actual.T) of size $(actual.shape); expected " *
+        "$(layout.T) of size $(layout.shape)"))
+    space = ntuple(_ -> Colon(), length(layout.shape))
+    return Array{layout.T}(nomissing(ds[name][space..., frame], layout.T(NaN)))
+end
+
+# Compare daily column fields one common snapshot at a time.
+function _column_difference_series(paths32, paths64, names, cell_area; origin, keep_frame)
+    plan32, layouts32 = _column_sample_plan(paths32, names, origin, keep_frame)
+    plan64, layouts64 = _column_sample_plan(paths64, names, origin, keep_frame)
+    times, i32, i64 = common_frames(getproperty.(plan32, :time), getproperty.(plan64, :time))
+    for name in names
+        layouts32[name].shape == layouts64[name].shape == size(cell_area) || throw(DimensionMismatch(
+            "$(name) is $(layouts32[name].shape) (F32) and $(layouts64[name].shape) (F64); " *
+            "cell_area $(size(cell_area))"))
+    end
+
+    means = Dict(name => Float64[] for name in names)
+    rms = Dict(name => Float64[] for name in names)
+    excluded = Dict(name => Int[] for name in names)
+    fields = Dict{String, Array{Float64, 3}}()
+    for (sample, (j, k)) in enumerate(zip(i32, i64))
+        aplan, bplan = plan32[j], plan64[k]
+        NCDataset(aplan.path, "r") do ds32
+            NCDataset(bplan.path, "r") do ds64
+                for name in names
+                    a = _read_column_frame(ds32, name, aplan.path, aplan.frame, layouts32[name])
+                    b = _read_column_frame(ds64, name, bplan.path, bplan.frame, layouts64[name])
+                    stats = weighted_difference_stats(a, b, cell_area)
+                    push!(means[name], stats.mean)
+                    push!(rms[name], stats.rms)
+                    push!(excluded[name], length(cell_area) - stats.n)
+                    sample == length(times) &&
+                        (fields[name] = Float64.(a) .- Float64.(b))
+                end
+            end
+        end
+    end
+    values = Dict(name => (; mean = means[name], rms = rms[name], excluded = excluded[name],
+                           field = fields[name]) for name in names)
+    return (; times, values)
+end
+
 # ---------------------------------------------------------------------------
 # Comparison
 # ---------------------------------------------------------------------------
@@ -170,35 +280,28 @@ function compare_twin_runs(files32::AbstractVector{<:AbstractString}, files64::A
     at_hour = t -> Time(t) == Time(hour)
     tot32 = daily_snapshot_series(paths32, total_vars; origin)
     tot64 = daily_snapshot_series(paths64, total_vars; origin)
-    fld32 = daily_snapshot_series(paths32, field_vars; origin, keep_frame = at_hour)
-    fld64 = daily_snapshot_series(paths64, field_vars; origin, keep_frame = at_hour)
     first(tot32.times) == first(tot64.times) || throw(ArgumentError(
         "the runs start at different snapshots ($(first(tot32.times)) in Float32, $(first(tot64.times)) " *
         "in Float64); the net difference needs their common first snapshot"))
     times, i32, i64 = common_frames(tot32.times, tot64.times)
-    sample_times, j32, j64 = common_frames(fld32.times, fld64.times)
 
     lons, lats, cell_area = NCDataset(first(paths64), "r") do ds
         Tuple(Array{Float64}(nomissing(ds[name][:, :, :])) for name in ("lons", "lats", "cell_area"))
     end
+    columns = _column_difference_series(paths32, paths64, field_vars, cell_area;
+                                        origin, keep_frame = at_hour)
 
     results = Dict{String, Any}()
     for v in tracers
         m32 = Float64.(tot32.values["$(v)_total_mass"][i32])
         m64 = Float64.(tot64.values["$(v)_total_mass"][i64])
         rel = twin_relative_difference(m32, m64)
-        a = fld32.values["$(v)_column_mean"]
-        b = fld64.values["$(v)_column_mean"]
-        size(a)[1:3] == size(b)[1:3] == size(cell_area) || throw(DimensionMismatch(
-            "$(v)_column_mean is $(size(a)[1:3]) (F32) and $(size(b)[1:3]) (F64); cell_area $(size(cell_area))"))
-        stats = [weighted_difference_stats(view(a, :, :, :, j), view(b, :, :, :, k), cell_area)
-                 for (j, k) in zip(j32, j64)]
-        field = Float64.(view(a, :, :, :, last(j32))) .- Float64.(view(b, :, :, :, last(j64)))
+        column = columns.values["$(v)_column_mean"]
         results[v] = (; m32, m64, raw = rel.raw, net = rel.net,
-                      mean = [s.mean for s in stats], rms = [s.rms for s in stats],
-                      excluded = [length(cell_area) - s.n for s in stats], field)
+                      mean = column.mean, rms = column.rms,
+                      excluded = column.excluded, field = column.field)
     end
-    return (; days, origin, hour, times, sample_times, lons, lats, cell_area,
+    return (; days, origin, hour, times, sample_times = columns.times, lons, lats, cell_area,
             tracers = collect(String, tracers), results)
 end
 

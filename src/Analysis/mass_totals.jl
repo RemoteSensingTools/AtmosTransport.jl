@@ -68,12 +68,12 @@ Frame-by-frame relative difference of a global total from its twin:
 setting, typically a `Float32` run and its `Float64` twin.
 
 - `raw[k]` ``= (c_k - r_k) / r_k``, NaN where ``r_k = 0``;
-- `net[k]` ``=`` `raw[k] - raw[1]` when ``r_1 > 0``: the difference
+- `net[k]` ``=`` `raw[k] - raw[1]` when ``r_1 \\ne 0``: the difference
   accumulated after the first frame. The first frame carries the rounding of
   the initial state to the run precision (`Float32(400e-6)` is 2.53e-8 below
-  `400e-6`), a constant offset that is removed. When ``r_1 \\le 0``, for a
-  tracer that starts from zero mass, `net = raw`, relative to the reference
-  total, which is then the mass emitted since the first frame.
+  `400e-6`), a constant offset that is removed. When ``r_1 = 0``, for a tracer
+  that starts from zero mass, `net = raw`, relative to the reference total,
+  which is then the mass emitted since the first frame.
 
 Both series must start at the same frame, the start of the compared span:
 `net` is net of whatever difference that frame holds, so for the offset of the
@@ -93,6 +93,6 @@ function twin_relative_difference(candidate::AbstractVector{<:Real}, reference::
         throw(ArgumentError("twin_relative_difference: the series hold non-finite values"))
     raw = [r == 0 ? NaN : (Float64(c) - Float64(r)) / Float64(r)
            for (c, r) in zip(candidate, reference)]
-    net = first(reference) > 0 ? raw .- raw[1] : copy(raw)
+    net = !iszero(first(reference)) ? raw .- raw[1] : copy(raw)
     return (; raw, net)
 end

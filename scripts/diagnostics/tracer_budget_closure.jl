@@ -10,7 +10,7 @@
 #   own surface sources, through `AtmosTransport.Analysis.budget_closure`.
 #   Tracers, carriers, output files and the run start come from the run
 #   config. A tracer passes when |Δburden − emission| ≤ ρ·|emission| +
-#   k·eps(Float32(carrier))·air_mass (strict: ρ = 1e-4, k = 1; operational:
+#   k·eps(FT(carrier))·air_mass for the run float type FT (strict: ρ = 1e-4, k = 1; operational:
 #   ρ = 1e-3, k = 4), its totals and column means are finite and its carrier
 #   is never exhausted. Writes a JSON report and exits 1 when the gated level
 #   fails, so campaign controllers can gate on it. This mode replaces
@@ -417,11 +417,11 @@ function _series_settings()
             help = "level that sets the exit status: strict or operational"
             default = "strict"
         "--strict"
-            help = "strict relative tolerance (plus 1 Float32 ULP of each carrier)"
+            help = "strict relative tolerance (plus 1 run-precision ULP of each carrier)"
             arg_type = Float64
             default = 1e-4
         "--operational"
-            help = "operational relative tolerance (plus 4 Float32 ULPs of each carrier)"
+            help = "operational relative tolerance (plus 4 run-precision ULPs of each carrier)"
             arg_type = Float64
             default = 1e-3
         "--tracers"
