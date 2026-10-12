@@ -957,6 +957,9 @@
 - `scripts/dev/quick_gate.sh [<git-ref>]` runs `git diff --check`, the
   keyword-call check, and `--quick --changed=<ref>` in one Julia process, and
   exits non-zero on any failure.
+- CI adds a `Quick tests (Julia 1)` job that runs the quick set for early
+  feedback. The full-suite jobs on Julia 1.10 and 1 are unchanged and remain
+  the merge requirement.
 - Documentation corrections from an external review against the TM5 Fortran
   by pera-noaa (NOAA GML), GitHub issues #12, #15 and #20. Thank you.
   - `SlopesScheme` is no longer described as a port of TM5's slopes

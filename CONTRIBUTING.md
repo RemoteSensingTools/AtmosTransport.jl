@@ -42,8 +42,10 @@ The quick gate runs `git diff --check`, a check that every call passes the
 keywords its function requires (`scripts/checks/check_keyword_calls.jl`, which
 also covers scripts and the literate docs that no test runs), and
 `--quick --changed` in one Julia process; it exits non-zero on any failure.
-The test tiers, opt-in flags, topics (`test/groups.toml`), and how to add a
-test file are described in [`test/README.md`](test/README.md).
+CI runs the quick set as an early-feedback job, but a pull request merges only
+after the full suite passes on Julia 1.10 and the current release. The test
+tiers, opt-in flags, topics (`test/groups.toml`), and how to add a test file
+are described in [`test/README.md`](test/README.md).
 
 ### Coverage
 

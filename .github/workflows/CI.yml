@@ -10,6 +10,27 @@ concurrency:
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
 jobs:
+  # Early feedback: the quick set of test/groups.toml (metadata gates, Aqua,
+  # JET, physics smokes) reports in minutes. It does not replace the full suite
+  # below, which is the merge check.
+  quick:
+    name: Quick tests (Julia 1)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write   # julia-actions/cache deletes superseded caches
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v2
+      - uses: julia-actions/julia-buildpkg@v1
+      - uses: julia-actions/julia-runtest@v1
+        with:
+          coverage: false
+          test_args: '--quick'
+
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

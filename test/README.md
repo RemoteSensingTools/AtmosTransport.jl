@@ -107,6 +107,9 @@ writers), and then
 `--quick --changed=<ref>` in one Julia process. It prints a summary and exits
 non-zero if any step failed. `JULIA="julia +1.10"` selects another Julia.
 
+CI runs `--quick` as a separate fast job for early feedback; the full suite on
+Julia 1.10 and the current release stays the merge requirement.
+
 ## Adding a new test
 
 1. Decide which tier the test belongs in. Default to `core/` if the test
