@@ -518,6 +518,14 @@ end
             patch_header!(reuse_path, h -> h["write_replay_check"] = false)
             @test matches(merge(copy(disk), Dict("write_replay_check" => false)))    # false / false
             @test !matches(copy(disk))                                             # false / absent
+            # Column weights: absent means mass, so a mass binary is not reused
+            # for the hybrid_mass default (and the reverse).
+            patch_header!(reuse_path, h -> delete!(h, "write_replay_check"))
+            @test matches(merge(copy(disk), Dict("column_balance_weights" => "mass")))
+            @test !matches(merge(copy(disk), Dict("column_balance_weights" => "hybrid_mass")))
+            patch_header!(reuse_path, h -> h["column_balance_weights"] = "hybrid_mass")
+            @test matches(merge(copy(disk), Dict("column_balance_weights" => "hybrid_mass")))
+            @test !matches(copy(disk))
 
             # A lat-lon binary with the record is reported the same way.
             ll_off = joinpath(dir, "ll_off.bin")

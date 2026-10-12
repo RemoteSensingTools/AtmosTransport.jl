@@ -438,6 +438,11 @@ function existing_output_schema_matches(bin_path::AbstractString,
             # Optional key: absent means the write-time replay gate ran.
             get(disk_header, "write_replay_check", true) == get(expected_header, "write_replay_check", true) ||
                 push!(changed, "write_replay_check")
+            # Optional key: absent means mass column weights (keyless legacy
+            # binaries), so a binary balanced with other weights is regenerated.
+            get(disk_header, "column_balance_weights", "mass") ==
+                get(expected_header, "column_balance_weights", "mass") ||
+                push!(changed, "column_balance_weights")
             # Optional key: absent on binaries without TM5 sections and on
             # TM5 binaries written before the fluxes were put on the binary's basis.
             get(disk_header, TM5_CONVECTION_MASS_BASIS_KEY, nothing) ==
