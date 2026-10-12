@@ -127,7 +127,9 @@ mass basis, supported operators, and load-time consistency gates.
 - Tests should observe state through `get_tracer(state, name)` or
   `state.tracers.name`, not through input arrays cached before construction.
 - Prefer focused test files around the touched module before running full
-  `Pkg.test()`.
+  `Pkg.test()`. Before pushing, run `scripts/dev/quick_gate.sh` (about 5 min:
+  quick set, `--changed` topics, required-keyword call check); the full suite
+  remains the requirement for merging into main.
 - Refactors must reproduce the golden outputs bit for bit: `julia --project=. test/golden/run_goldens.jl check <ref> <new>`
   (see `test/golden/README.md`); a change that alters results states its deltas.
 - Do not add `Real -> FT` outer constructors unless there is a real ambiguity;

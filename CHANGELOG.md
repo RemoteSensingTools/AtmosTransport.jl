@@ -931,6 +931,38 @@
 
 ### Coverage, benchmarks, and documentation
 
+- Faster test runs while developing; the full suite stays the merge check.
+  `test/groups.toml` sorts every `test/core/` file and the regridding suite
+  into exactly one of 21 topics (for example `advection`, `convection`,
+  `metdrivers_binary`, `preprocessing`, `inversion`), each with the
+  repository paths it covers, and names a quick set. `test/runtests.jl`
+  gains selectors that run a subset of the default tiers: `--quick`,
+  `--topics=a,b`, and `--changed[=<git-ref>]` (default `origin/main`), which
+  maps the branch's and the uncommitted changes to topics and runs the full
+  default tiers when a changed `src/` file maps to no topic; `--list` prints
+  the selection. Selectors combine with each other and with the tier flags.
+  Without flags the runner runs `core/` and `regridding/` as before; an
+  unknown argument is now an error instead of being ignored.
+  `test/core/test_test_groups.jl` checks the groups file. The quick set
+  (Aqua, JET, the metadata gates, the groups and keyword-call checks, and
+  physics smokes) took 4 minutes in one process on a lab machine, where the
+  full default run took 32.
+- `scripts/checks/check_keyword_calls.jl` parses `src/` for methods with
+  required keywords (and `@kwdef` fields without defaults) and reports calls
+  in `src/`, `ext/`, `test/`, `scripts/`, `benchmarking/`, `examples/`,
+  `docs/literate/` and `docs/scripts/` that omit one, such as the
+  transport-binary writers' `surface_pressure_basis`; on the tree before
+  `5e00e94a` it reports the nine call sites that commit fixed. It runs in the
+  quick set as `test/core/test_keyword_calls.jl`.
+- `scripts/dev/quick_gate.sh [<git-ref>]` runs `git diff --check`, the
+  keyword-call check, and `--quick --changed=<ref>` in one Julia process, and
+  exits non-zero on any failure.
+- CI adds a `Quick tests (Julia 1)` job that runs the quick set for early
+  feedback. The full-suite jobs on Julia 1.10 and 1 are unchanged and remain
+  the merge requirement.
+- The `test/archived/` tests are deleted: they included preprocessing scripts
+  that `cc63b87f` removed and a configuration that `71ff14f9` removed, so they
+  could not load.
 - Documentation corrections from an external review against the TM5 Fortran
   by pera-noaa (NOAA GML), GitHub issues #12, #15 and #20. Thank you.
   - `SlopesScheme` is no longer described as a port of TM5's slopes
