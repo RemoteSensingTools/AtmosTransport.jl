@@ -17,6 +17,19 @@ layer is pure pressure, `ΔB_k = 0`.
 Preprocessing turns met winds into horizontal air-mass fluxes through the
 cell faces of the cubed sphere, for each layer and substep.
 
+At write time, the flux-fidelity gate independently checks deterministic face
+samples against the defining integral
+`F = (Δt/g) ∫face [(u eλ + v eφ) ⋅ n] Δp dl`. The check runs before column
+balance, whose deliberate correction is reported separately. Its
+line-integral evaluator independently rebuilds the 16 midpoint quadrature and
+four-cell interpolation weights from the meshes instead of applying the bulk
+sparse operator. Its
+precision-derived limits are
+`T_abs = 64 eps(FT) max(F_scale, 1 kg)` and `T_rel = 256 eps(FT)`; a sample
+fails only if both its absolute error and its relative error exceed those
+limits. See [Binary format](../concepts/binary_format.md#Flux-fidelity-gate-and-header-certificate)
+for sampling, normalization, and header details.
+
 **MERRA-2** (`src/Preprocessing/transport_binary/merra2_latlon_regrid.jl`).
 - Inputs: A3dyn 3-hour mean winds (0.5° × 0.625°); I3 instantaneous surface
   pressure and humidity.
@@ -359,6 +372,14 @@ binary stores `cm` for each window; it is constant within the window. GCHP
 has no stored vertical flux: its vertical motion is implicit in the remap.
 TM5 recomputes `cm` at every dynamics step from the time-interpolated
 fluxes.
+
+When source OMEGA is available, write-time certification additionally compares
+it with `ω_cm = g cm/(A_cell Δt_amount)` after matching dry `(1-q)` basis,
+time sampling, horizontal grid, and vertical levels. The header reports global
+and pressure-band errors against a named per-source baseline. This is a
+physical-fidelity diagnostic distinct from replay closure: replay asks whether
+the stored arrays conserve mass together, while OMEGA asks whether their
+vertical motion agrees with an independent meteorological field.
 
 ## 4. Vertical advection
 

@@ -79,6 +79,15 @@ the header. `header_bytes` and a few sampling-metadata fields
 `delta_semantics`, optional `runtime_substep_contract`) round out the header.
 The full list lives in `src/MetDrivers/TransportBinary.jl`.
 
+Every current writer also emits a schema-1 flux-fidelity certificate. The
+reader decodes its status and construction kind into nominal types
+(`FidelityPassed`, `FidelityFailed`, `FidelityNotApplicable`,
+`FidelityUnavailable`; and `WindRederivedFidelity`,
+`NativePassthroughFidelity`, or `NoFluxFidelityKind`). Downstream code therefore
+dispatches on types rather than switching on `Symbol` values. A pre-C6 v4 file
+remains readable but is represented as `FidelityUnavailable` with reason
+`legacy_header_missing`.
+
 ## Payload sections
 
 ### Required for any transport binary
@@ -375,7 +384,7 @@ the source binary. A passing binary is self-consistent:
   substep counts) still integrates to its stored endpoints, which also
   catches stale or damaged binaries.
 
-The gate does **not** validate the winds. Because `cm` is re-diagnosed from
+The replay gate alone does **not** validate the winds. Because `cm` is re-diagnosed from
 the same fluxes it checks, it cannot detect:
 
 - horizontal flux errors that leave every column's budget intact: a
@@ -392,11 +401,81 @@ the same fluxes it checks, it cannot detect:
   `cm` diagnosis sets both boundary values to zero, but the gate does not
   check them;
 `test/core/test_replay_consistency.jl` ("Replay gate scope") checks these
-statements. Flux errors of the kind listed above must be found by comparing
-the fluxes with their source, for example by re-deriving a sample of face
-fluxes from the source winds and pressure thickness, or by comparing the
-diagnosed `cm` with the source's vertical velocity; the preprocessors do
-not run such checks today.
+statements. The independent flux-fidelity gate below covers the corresponding
+source comparison for newly generated binaries.
+
+## Flux-fidelity gate and header certificate
+
+Before balance and before payload serialization, paths that have winds
+independently reconstruct deterministic sampled face amounts from source
+`u`, `v`, and layer pressure thickness `Δp`:
+
+```math
+F_f = \frac{\Delta t_{\mathrm{amount}}}{g}
+      \int_f [(u\,\mathbf e_\lambda+v\,\mathbf e_\phi)\cdot\mathbf n_f]
+      \,\Delta p\,dl.
+```
+
+The evaluator is scalar and separate from the bulk constructor. It implements
+the selected panel-average, vector/FV3, or line-integral definition directly.
+For line integrals it rebuilds all 16 midpoint locations and their four-cell
+source interpolation weights from the source and target meshes; it never reads
+the production sparse operator. The direct stencils for the selected faces are
+cached once per workspace and reused at subsequent endpoints.
+The fixed SplitMix64 seed and canonical face identifiers make the version-1
+map stable across processes and prevent counting panel-seam mirrors twice.
+All levels of each selected face are checked. Adaptive paths discard rejected
+schedules and certify only the accepted amount duration.
+
+For reference `F_r` and independently computed `F_c`, the recorded errors are
+
+```math
+e_{\rm abs}=|F_c-F_r|,\qquad
+e_{\rm rel}=\frac{e_{\rm abs}}
+ {\max(|F_c|,|F_r|,F_{\rm floor})},
+```
+
+where, for the file precision `FT` and the maximum sampled magnitude
+`F_scale`,
+
+```math
+F_{\rm floor}=\max(\operatorname{floatmin}(FT),
+                    \epsilon(FT)\max(F_{\rm scale},1\ {\rm kg})),
+```
+
+```math
+T_{\rm abs}=64\epsilon(FT)\max(F_{\rm scale},1\ {\rm kg}),\qquad
+T_{\rm rel}=256\epsilon(FT).
+```
+
+A sample passes when `e_abs ≤ T_abs` or `e_rel ≤ T_rel`; equivalently it fails
+only when both limits are exceeded. Failure occurs before that window's payload
+is written. The certificate records maximum/RMS absolute and relative errors,
+maximum ULP distance, both tolerances and the scale floor, sample coverage,
+the worst window/face/level, method and effective duration. Because column
+Poisson balance intentionally changes fluxes, its effect is separate:
+`|F_balanced-F_r|` plus maximum and RMS normalized correction ratios.
+
+Where source pressure velocity is available, the writer normalizes it to the
+same dry basis, time sampling, grid, and vertical coordinate and compares it
+with the stored downward interface amount through
+
+```math
+\omega_{cm}=\frac{g\,cm}{A_{cell}\Delta t_{amount}}.
+```
+
+The OMEGA certificate records bias, RMSE, normalized RMSE, maximum error,
+slope, correlation, bottom residual, and NRMSE in the surface–700, 700–300,
+300–100, 100–10, and below-10 hPa bands. Its acceptance limit is a named,
+versioned per-path baseline; an aggregate failure quarantines the staged file.
+When winds or OMEGA are not present, numeric metrics are omitted (never NaN)
+and a typed `not_applicable` or `unavailable` reason is recorded.
+
+The flat keys begin with `flux_fidelity_`, `omega_fidelity_`, and
+`balance_correction_`. `flux_fidelity_schema = 1` is part of the output-reuse
+contract, so an older uncertified binary is regenerated rather than skipped.
+The final aggregate header is patched at close time; the payload layout and
+bytes are unchanged.
 
 ## What's next
 

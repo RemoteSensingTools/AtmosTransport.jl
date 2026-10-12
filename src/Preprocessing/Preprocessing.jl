@@ -205,6 +205,11 @@ export SubstepSchedulePolicy, clamp_substeps, initial_substeps,
        required_substeps, next_substeps, rescale_substep_amounts!,
        contract_steps_for_window, set_contract_steps_schedule!
 export ReadyWindow, PreverifiedWindow, PreprocessorRunCache
+export AbstractFluxFidelityEvidence, AbstractOmegaFidelityEvidence,
+       WindDerivedFluxEvidence, NativeFluxEvidence, NoFluxFidelityEvidence,
+       SourceOmegaEvidence, NoSourceOmegaEvidence, FluxFidelityEvidenceBundle,
+       FluxFidelitySample, OmegaFidelitySample, FidelitySampleMap,
+       FluxFidelityAccumulator, verify_flux_fidelity!, flux_fidelity_header!
 export verify_window!, update_accumulator!, summarize_status!
 export contract_replay_tolerance, contract_cfl_limit, contract_require_positivity
 export allocate_window_workspace,

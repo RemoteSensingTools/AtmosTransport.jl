@@ -299,6 +299,36 @@ function _endpoint_face_fluxes!(method::LineIntegralFaceFluxes, ::DryMassFluxThi
     return nothing
 end
 
+function _capture_era5_endpoint_flux_fidelity(method::Union{PanelAverageFluxes,VectorFaceFluxes},
+                                              _thickness, x, pipe, ft, gravity,
+                                              dt_factor, Nc, Nz, smap, _rows)
+    return capture_cs_wind_flux_samples(method, x.am, x.bm, x.u_local, x.v_local,
+                                        x.dp, ft, gravity, dt_factor, Nc, Nz;
+                                        sample_map = smap)
+end
+function _capture_era5_endpoint_flux_fidelity(method::LineIntegralFaceFluxes,
+                                              ::MoistFluxThickness, x, pipe, ft,
+                                              gravity, dt_factor, Nc, Nz, smap, rows)
+    w = pipe.window_fields
+    dp = similar(w.u)
+    A, B = pipe.vc.A, pipe.vc.B
+    for k in 1:Nz, c in axes(dp, 1)
+        dp[c, k] = abs((A[k + 1] - A[k]) + (B[k + 1] - B[k]) * w.ps[c])
+    end
+    return capture_cs_wind_flux_samples(method, x.am, x.bm, w.u, w.v, dp,
+                                        ft, gravity, dt_factor, Nc, Nz;
+                                        sample_map = smap, line_rows = rows)
+end
+function _capture_era5_endpoint_flux_fidelity(method::LineIntegralFaceFluxes,
+                                              ::DryMassFluxThickness, x, pipe, ft,
+                                              gravity, dt_factor, Nc, Nz, smap, rows)
+    w = pipe.window_fields
+    return capture_cs_wind_flux_samples(method, x.am, x.bm, w.u, w.v,
+                                        pipe.dry_fields.delp_dry, ft, gravity,
+                                        dt_factor, Nc, Nz; sample_map = smap,
+                                        line_rows = rows)
+end
+
 """
     fill_tm5_dkg_payload!(dkg_c180, c180_fields, air_mass, hflux, lhflux,
                           ustar, A, B, Nc, constants, scratches)
@@ -512,6 +542,10 @@ function process_era5_n320_to_cs_day(date::Date,
         # cell-centre methods their own winds and Δp there.
         window_mean = settings.flux_time_sampling === :window_mean
         flux_x_end = window_mean ? map(x -> map(zero, x), flux_x) : nothing
+        fidelity_map = FidelitySampleMap(target_grid.face_table)
+        fidelity_rows = flux_method isa LineIntegralFaceFluxes ?
+            LineIntegralFidelityStencil(flux_method, fidelity_map) : nothing
+        fidelity_capture = Ref{Any}(nothing)
         balance_weights = column_weights(settings.column_balance_weights, vc.B)
         # Per-substep flux scaling for a window taking `steps` substeps. The
         # face flux is the substep-mass amount, so it scales as 1/steps; the
@@ -769,16 +803,29 @@ function process_era5_n320_to_cs_day(date::Date,
             dt = out_dt_factor_for(steps)
             _endpoint_face_fluxes!(flux_method, flux_thickness, flux_x, pipe,
                                    native_vc, gravity, dt, Nc, Nz_native)
+            start_capture = _capture_era5_endpoint_flux_fidelity(
+                flux_method, flux_thickness, flux_x, pipe,
+                target_grid.face_table, gravity, dt, Nc, Nz_native,
+                fidelity_map, fidelity_rows)
             if window_mean    # trapezoidal rule: mean of the start and end fluxes
                 _endpoint_face_fluxes!(flux_method, flux_thickness, flux_x_end, pipe_end,
                                        native_vc, gravity, dt, Nc, Nz_native)
+                end_capture = _capture_era5_endpoint_flux_fidelity(
+                    flux_method, flux_thickness, flux_x_end, pipe_end,
+                    target_grid.face_table, gravity, dt, Nc, Nz_native,
+                    fidelity_map, fidelity_rows)
                 for p in 1:6
                     native_am[p] .= (native_am[p] .+ flux_x_end.am[p]) ./ 2
                     native_bm[p] .= (native_bm[p] .+ flux_x_end.bm[p]) ./ 2
                 end
+                start_capture = combine_captured_flux_samples(
+                    start_capture, end_capture, native_am, native_bm,
+                    target_grid.face_table; mean_endpoints = true)
             end
             _merge_cs_center_extensive!(am, native_am, plan, MassFluxField())
             _merge_cs_center_extensive!(bm, native_bm, plan, MassFluxField())
+            fidelity_capture[] = merge_captured_flux_samples(
+                start_capture, plan, am, bm, target_grid.face_table)
             bal_diag = balance_cs_column_mass_fluxes!(
                 am, bm, m_dry, m_next,
                 target_grid.face_table, target_grid.cell_degree, steps,
@@ -904,7 +951,18 @@ function process_era5_n320_to_cs_day(date::Date,
             end
             payload = merge(payload,
                             surface_vdiff_payload(cur_fields, cur_m_dry, win - 1))
-            write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(win - 1, payload))
+            flux_evidence = wind_derived_evidence(
+                CubedSphereTargetGeometry, fidelity_capture[], cur_am, cur_bm,
+                target_grid.face_table;
+                method = flux_fidelity_method(flux_method),
+                samples_per_window = length(fidelity_map.faces),
+                time_sampling = String(settings.flux_time_sampling),
+                amount_seconds = dt_met_seconds / (2 * win_steps))
+            omega_evidence = NoSourceOmegaEvidence{
+                CubedSphereTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega())
+            fidelity = FluxFidelityEvidenceBundle(flux_evidence, omega_evidence)
+            write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(
+                win - 1, payload, fidelity))
 
             @info @sprintf("    Window %2d/%d: wrote (steps=%d bal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
                             win - 1, nwindow, win_steps, t_bal, bal_diag.max_pre_residual,
@@ -1030,7 +1088,18 @@ function process_era5_n320_to_cs_day(date::Date,
         end
         final_payload = merge(final_payload,
                               surface_vdiff_payload(cur_fields, cur_m_dry, nwindow))
-        write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(nwindow, final_payload))
+        flux_evidence = wind_derived_evidence(
+            CubedSphereTargetGeometry, fidelity_capture[], cur_am, cur_bm,
+            target_grid.face_table;
+            method = flux_fidelity_method(flux_method),
+            samples_per_window = length(fidelity_map.faces),
+            time_sampling = String(settings.flux_time_sampling),
+            amount_seconds = dt_met_seconds / (2 * final_steps))
+        omega_evidence = NoSourceOmegaEvidence{
+            CubedSphereTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega())
+        final_fidelity = FluxFidelityEvidenceBundle(flux_evidence, omega_evidence)
+        write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(
+            nwindow, final_payload, final_fidelity))
 
         worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
         worst_post = max(worst_post, bal_diag.max_post_residual)

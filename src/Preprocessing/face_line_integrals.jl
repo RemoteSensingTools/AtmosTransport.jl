@@ -41,13 +41,15 @@ components are smooth across the poles, unlike `u` and `v`.
 `LatLonMesh` (the spectral-to-cube staging grid). With 16 samples a C90 face
 (≤ 1.2°) is sampled every ≤ 0.08°, about four times per N320 cell.
 """
-struct LineIntegralFaceFluxes
+struct LineIntegralFaceFluxes{S,T}
     L          :: SparseMatrixCSC{Float64, Int}    # (n_faces, 3 n_source_cells): X, Y, Z blocks
     face_table :: CSGlobalFaceTable
     src_trig   :: NamedTuple{(:sinλ, :cosλ, :sinφ, :cosφ), NTuple{4, Vector{Float64}}}
     src_flux   :: Vector{Vector{Float64}}          # per thread: [X Δp; Y Δp; Z Δp] of one level
     face_flux  :: Vector{Vector{Float64}}          # per thread: F of one level
     samples_per_face :: Int
+    source_mesh :: S
+    target_mesh :: T
 end
 
 function LineIntegralFaceFluxes(source::Union{LatLonMesh, ReducedGaussianMesh}, target::CubedSphereMesh,
@@ -75,7 +77,7 @@ function LineIntegralFaceFluxes(source::Union{LatLonMesh, ReducedGaussianMesh}, 
     return LineIntegralFaceFluxes(sparse(I, J, V, ft.nf, 3nsrc),   # repeated (face, cell) pairs add up
                                   ft, _trig(deg2rad.(Float64.(lon)), deg2rad.(Float64.(lat))),
                                   [zeros(3nsrc) for _ in 1:nt], [zeros(ft.nf) for _ in 1:nt],
-                                  Int(samples_per_face))
+                                  Int(samples_per_face), source, target)
 end
 
 """

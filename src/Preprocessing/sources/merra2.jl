@@ -433,7 +433,7 @@ end
 
 """
     read_merra2_window_fields(handles, win, Nz; FT)
-        -> (; ps, qv, u, v)
+        -> (; ps, qv, u, v, omega)
 
 Read one window's worth of native MERRA-2 LL fields for 1-based window index
 `win` (1..8):
@@ -461,8 +461,10 @@ function read_merra2_window_fields(handles::MERRA2DayHandles, win::Integer,
         handles.inst3
     u = read_merra2_3d_slice(winds_ds, "U", win, Nz, order; FT = FT)
     v = read_merra2_3d_slice(winds_ds, "V", win, Nz, order; FT = FT)
+    omega = haskey(winds_ds, "OMEGA") ?
+        read_merra2_3d_slice(winds_ds, "OMEGA", win, Nz, order; FT = FT) : nothing
 
-    return (; ps = ps, qv = qv, u = u, v = v)
+    return (; ps = ps, qv = qv, u = u, v = v, omega = omega)
 end
 
 """

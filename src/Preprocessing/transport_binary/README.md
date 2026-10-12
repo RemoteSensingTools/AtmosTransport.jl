@@ -35,7 +35,9 @@ files are included from [`../Preprocessing.jl`](../Preprocessing.jl) after the s
    `driver_ingest_window!`, then handle every event from `driver_drain_ready_windows!`.
 2. A `ReadyWindow` event gets `verify_window!` and `update_accumulator!`; a
    `PreverifiedWindow` is accumulated unless `accumulated = true`. Then
-   `write_window!` and `driver_after_write_window!`.
+   `write_window!` verifies and accumulates the event's typed flux-fidelity
+   evidence before serializing its unchanged payload, then
+   `driver_after_write_window!`.
 3. Events from `driver_flush_final_windows!` are handled the same way.
 4. `driver_before_close_writer!`, `close_streaming_binary!`, `validate_staged_binary!`
    (file size), `summarize_status!(contract; quarantine_path)`, `promote_streaming_binary!`.
@@ -71,6 +73,30 @@ header (LL does it when `LatLonDeferredBinaryWriter` opens). GEOS uses
 - Contract constructors require a finite, positive `replay_tol` and
   `positivity_cfl_limit` in `(0, 1]`.
 
+## Flux-fidelity certificate
+
+`ReadyWindow.fidelity` carries typed evidence beside the payload. Wind-derived
+paths independently evaluate a deterministic set of canonical faces from
+`u`, `v`, and layer pressure thickness before Poisson balance. Native GEOS
+paths certify scaling/mapping, while binary-only regrid and coarsen paths state
+`not_applicable/source_payload_only`. Where source OMEGA is open, the writer
+also compares it with `g cm/(A_cell Δt)`. Algebraic sample failures throw before
+the window write; an aggregate OMEGA baseline failure throws while the file is
+still staged, so it is quarantined. `close_streaming_binary!` patches the
+aggregate flat header keys without touching payload bytes.
+
+For a sampled face, the independently reconstructed mass amount is
+
+`F = (Δt_amount/g) ∫face [(u eλ + v eφ) ⋅ n] Δp dl`.
+
+The gate records `e_abs = |F_candidate - F_reference|` and
+`e_rel = e_abs / max(|F_candidate|, |F_reference|, F_floor)`, with
+`F_floor = max(floatmin(FT), eps(FT) max(F_scale, 1 kg))`. It passes a sample
+when `e_abs ≤ 64 eps(FT) max(F_scale, 1 kg)` or
+`e_rel ≤ 256 eps(FT)`. The header records both tolerances, RMS/max errors, ULP
+distance, coverage, the worst face/level/window, and the separate raw-to-
+balanced correction. See the binary-format guide for the full schema.
+
 ## Adaptive Substep Schedules
 
 - `[numerics]`: `substep_schedule = "adaptive_cfl"` (default) or `"fixed"`,
@@ -97,6 +123,7 @@ header (LL does it when `LatLonDeferredBinaryWriter` opens). GEOS uses
 ## File Map
 
 - [`core.jl`](core.jl) — `HEADER_SIZE`, `exact_steps_per_window`, `poisson_balance_target_scale`, provenance and fingerprints, LL `build_v4_header`, payload sizing, `existing_output_schema_matches`
+- [`flux_fidelity.jl`](flux_fidelity.jl) — typed evidence/statuses, deterministic face maps, independent sampled evaluators, algebraic and OMEGA accumulators, final header certification
 - [`window_contracts.jl`](window_contracts.jl) — abstract contract/workspace/writer types, mass-basis symbols, `SubstepSchedulePolicy`, `ReadyWindow`, `PreverifiedWindow`, `PreprocessorRunCache`, trait generics
 - [`latlon_workspaces.jl`](latlon_workspaces.jl) — LL spectral workspaces and `WindowStorage`, qv loading, mass fix, dry basis, merge, `process_window!`
 - [`latlon_contracts.jl`](latlon_contracts.jl) — `next_day_merged_fields`, `apply_poisson_balance!`, LL window serializer, LL positivity gate, `LatLonContract`

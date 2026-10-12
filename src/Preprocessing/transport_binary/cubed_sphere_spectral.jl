@@ -24,6 +24,11 @@ mutable struct CubedSphereSpectralWindowWorkspace{FT, SG, R, TW, MW, QW, CSW, FM
     cur_bm       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     cur_cm       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     steps_schedule :: Vector{Int}
+    fidelity_map :: FidelitySampleMap
+    fidelity_rows :: Any
+    latest_fidelity_capture :: Ref{Any}
+    endpoint_fidelity_capture :: Ref{Any}
+    window_fidelity_capture :: Ref{Any}
     regridder_time :: Float64
     qv_time        :: Float64
 end
@@ -117,6 +122,10 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     cur_bm = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz), CS_PANEL_COUNT)
     cur_cm = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), CS_PANEL_COUNT)
 
+    fidelity_map = FidelitySampleMap(grid.face_table)
+    fidelity_rows = flux_method isa LineIntegralFaceFluxes ?
+        LineIntegralFidelityStencil(flux_method, fidelity_map) : nothing
+
     return CubedSphereSpectralWindowWorkspace{
         FT, typeof(staging_grid), typeof(regridder), typeof(transform),
         typeof(merged), typeof(qv), typeof(cs_ws), typeof(flux_method), typeof(wind_regrid)}(
@@ -125,6 +134,8 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             source_dp, cur_m, cur_ps, endpoint_am, endpoint_bm,
             cur_am, cur_bm, cur_cm,
             fill(steps_per_met, spec.n_times),
+            fidelity_map, fidelity_rows, Ref{Any}(nothing),
+            Ref{Any}(nothing), Ref{Any}(nothing),
             t_regridder, t_qv)
 end
 
@@ -176,6 +187,28 @@ function _spectral_endpoint_face_fluxes!(method::LineIntegralFaceFluxes,
         reshape(workspace.cs_ws.v_cc, :, Nz),
         reshape(workspace.source_dp, :, Nz),
         workspace.gravity, workspace.dt_factor, Nz)
+end
+
+function _capture_spectral_endpoint_fidelity!(workspace, grid, am_out, bm_out, Nz)
+    Nc = grid.Nc
+    if workspace.flux_method isa LineIntegralFaceFluxes
+        workspace.latest_fidelity_capture[] = capture_cs_wind_flux_samples(
+            workspace.flux_method, am_out, bm_out,
+            reshape(workspace.cs_ws.u_cc, :, Nz),
+            reshape(workspace.cs_ws.v_cc, :, Nz),
+            reshape(workspace.source_dp, :, Nz),
+            grid.face_table, workspace.gravity, workspace.dt_factor, Nc, Nz;
+            sample_map = workspace.fidelity_map,
+            line_rows = workspace.fidelity_rows)
+    else
+        workspace.latest_fidelity_capture[] = capture_cs_wind_flux_samples(
+            workspace.flux_method, am_out, bm_out,
+            workspace.cs_ws.u_cs_panels, workspace.cs_ws.v_cs_panels,
+            workspace.cs_ws.dp_panels,
+            grid.face_table, workspace.gravity, workspace.dt_factor, Nc, Nz;
+            sample_map = workspace.fidelity_map)
+    end
+    return nothing
 end
 
 function ingest_window!(workspace::CubedSphereSpectralWindowWorkspace{FT},
@@ -232,6 +265,7 @@ function ingest_window!(workspace::CubedSphereSpectralWindowWorkspace{FT},
 
     _spectral_endpoint_face_fluxes!(workspace.flux_method, workspace, grid,
                                     ps_out, am_out, bm_out, Nz)
+    _capture_spectral_endpoint_fidelity!(workspace, grid, am_out, bm_out, Nz)
     return time() - t0
 end
 
@@ -339,6 +373,7 @@ function driver_ingest_window!(workspace::CubedSphereSpectralWindowWorkspace,
         _copy_cs_spectral_panels!(workspace.cur_ps, cs_ws.ps_panels)
         _copy_cs_spectral_panels!(workspace.endpoint_am, cs_ws.am_panels)
         _copy_cs_spectral_panels!(workspace.endpoint_bm, cs_ws.bm_panels)
+        workspace.endpoint_fidelity_capture[] = workspace.latest_fidelity_capture[]
     end
     return nothing
 end
@@ -364,6 +399,11 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
                                          cs_ws.bm_panels,
                                          ctx.settings.flux_time_sampling,
                                          ctx.steps_per_met, steps)
+        workspace.window_fidelity_capture[] = combine_captured_flux_samples(
+            workspace.endpoint_fidelity_capture[], workspace.latest_fidelity_capture[],
+            workspace.cur_am, workspace.cur_bm, grid.face_table;
+            scale = ctx.steps_per_met / steps,
+            mean_endpoints = ctx.settings.flux_time_sampling === :window_mean)
         workspace.steps_schedule[win] = steps
         contract.steps_per_window = steps
 
@@ -418,7 +458,17 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
     convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
     payload = (m = cur_m, am = cur_am, bm = cur_bm, cm = cur_cm,
                ps = workspace.cur_ps, dm = cs_ws.m_next_panels)
-    ready = ReadyWindow{CubedSphereTargetGeometry, FT}(win, payload)
+    flux_evidence = wind_derived_evidence(
+        CubedSphereTargetGeometry, workspace.window_fidelity_capture[],
+        cur_am, cur_bm, grid.face_table;
+        method = flux_fidelity_method(workspace.flux_method),
+        samples_per_window = length(workspace.fidelity_map.faces),
+        time_sampling = String(ctx.settings.flux_time_sampling),
+        amount_seconds = ctx.settings.met_interval / (2 * workspace.steps_schedule[win]))
+    omega_evidence = NoSourceOmegaEvidence{
+        CubedSphereTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega())
+    ready = ReadyWindow{CubedSphereTargetGeometry, FT}(
+        win, payload, FluxFidelityEvidenceBundle(flux_evidence, omega_evidence))
     return PreverifiedWindow(ready, contract_diag; accumulated = true)
 end
 
@@ -463,6 +513,8 @@ function driver_flush_final_windows!(workspace::CubedSphereSpectralWindowWorkspa
         _spectral_endpoint_face_fluxes!(workspace.flux_method, workspace, grid,
             workspace.cs_ws.ps_panels, workspace.cs_ws.am_panels,
             workspace.cs_ws.bm_panels, ctx.vertical.Nz)
+        _capture_spectral_endpoint_fidelity!(workspace, grid,
+            workspace.cs_ws.am_panels, workspace.cs_ws.bm_panels, ctx.vertical.Nz)
     else
         _copy_cs_spectral_panels!(workspace.cs_ws.m_next_panels,
                                   workspace.cur_m)
@@ -473,6 +525,7 @@ function driver_flush_final_windows!(workspace::CubedSphereSpectralWindowWorkspa
                                   workspace.endpoint_am)
         _copy_cs_spectral_panels!(workspace.cs_ws.bm_panels,
                                   workspace.endpoint_bm)
+        workspace.latest_fidelity_capture[] = workspace.endpoint_fidelity_capture[]
     end
     return (_cs_spectral_contract_diag!(workspace, contract, ctx, Nt,
                                         DEFAULT_POISSON_BALANCE_MAX_ITER),)
@@ -488,6 +541,7 @@ function driver_after_write_window!(workspace::CubedSphereSpectralWindowWorkspac
     _copy_cs_spectral_panels!(workspace.cur_ps, cs_ws.ps_panels)
     _copy_cs_spectral_panels!(workspace.endpoint_am, cs_ws.am_panels)
     _copy_cs_spectral_panels!(workspace.endpoint_bm, cs_ws.bm_panels)
+    workspace.endpoint_fidelity_capture[] = workspace.latest_fidelity_capture[]
     return nothing
 end
 

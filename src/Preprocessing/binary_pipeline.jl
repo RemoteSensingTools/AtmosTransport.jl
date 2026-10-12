@@ -37,6 +37,7 @@ replay validation, declared payload semantics, and load-time replay coverage.
 """
 
 include("transport_binary/core.jl")
+include("transport_binary/flux_fidelity.jl")
 include("transport_binary/window_contracts.jl")
 include("transport_binary/latlon_workspaces.jl")
 include("transport_binary/latlon_contracts.jl")

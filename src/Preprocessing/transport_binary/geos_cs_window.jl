@@ -66,6 +66,8 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, V
     # How the column balance spreads its correction over the levels
     # (`settings.column_balance_weights`; `HybridMassWeightedColumn()` by default).
     balance_weights :: CW
+    fidelity_map :: FidelitySampleMap
+    fidelity_capture :: Ref{Any}
 end
 
 function allocate_window_workspace(grid::CubedSphereTargetGeometry,
@@ -209,7 +211,8 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             Bool(global_mass_pin), Float64(global_mass_target_kg),
             cm_closure, ΔB, m_next_delp, Int(smooth_iters),
             omega_buf, qv_buf, vdiv_om, vdiv_target,
-            omega_regularization, omega_regularization_scratch, balance_weights)
+            omega_regularization, omega_regularization_scratch, balance_weights,
+            FidelitySampleMap(grid.face_table), Ref{Any}(nothing))
 end
 
 function _geos_pin_global_mass_if_needed!(workspace::GEOSCubedSphereWindowWorkspace{FT},
@@ -269,6 +272,9 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
     end
     workspace.flux_scale = workspace.base_flux_scale *
                            (workspace.source_steps_per_met / steps)
+    workspace.fidelity_capture[] = capture_native_flux_samples(
+        workspace.am_v4, workspace.bm_v4, grid.face_table;
+        sample_map = workspace.fidelity_map)
 
     for p in 1:CS_PANEL_COUNT
         fill!(workspace.cm_v4[p], zero(FT))
@@ -654,6 +660,8 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
     _scale_cs_flux_panels!(workspace.am_v4, full_window_scale)
     _scale_cs_flux_panels!(workspace.bm_v4, full_window_scale)
     _scale_cs_flux_panels!(workspace.cm_v4, full_window_scale)
+    stored_fidelity_capture = scale_captured_flux_samples(
+        workspace.fidelity_capture[], full_window_scale)
 
     surface_payload = (settings.include_surface || settings.include_vdiff_fields) ?
         _geos_surface_payload!(workspace.strategy, workspace.strategy_ws,
@@ -668,7 +676,29 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
                  cmfmc = cmfmc_payload,
                  dtrain = dtrain_payload,
                  vdiff = vdiff_payload)
-    ready = ReadyWindow{CubedSphereTargetGeometry, FT}(win, window_nt)
+    flux_evidence = native_flux_evidence(
+        CubedSphereTargetGeometry, stored_fidelity_capture,
+        workspace.am_v4, workspace.bm_v4, grid.face_table;
+        method = "geos_native_scaling_vertical_map",
+        samples_per_window = length(workspace.fidelity_map.faces),
+        amount_seconds = 2 * steps * Float64(workspace.flux_scale) * Float64(workspace.g))
+    omega_evidence = if _uses_omega(workspace.cm_closure)
+        source_omega_evidence_cs(
+            CubedSphereTargetGeometry, workspace.cm_v4, workspace.omega_buf,
+            workspace.qv_buf, workspace.ps_cur,
+            workspace.plan.merged_vc.A, workspace.plan.merged_vc.B,
+            workspace.cell_areas, workspace.g,
+            2 * steps * Float64(workspace.flux_scale) * Float64(workspace.g);
+            source = "GEOS_A3dyn_OMEGA",
+            sampling = "pchip_to_ctm_window",
+            baseline_id = "geos_native_omega_v1",
+            nrmse_limit = 10.0)
+    else
+        NoSourceOmegaEvidence{
+            CubedSphereTargetGeometry,FT,SourceNotOpened}(SourceNotOpened())
+    end
+    ready = ReadyWindow{CubedSphereTargetGeometry, FT}(
+        win, window_nt, FluxFidelityEvidenceBundle(flux_evidence, omega_evidence))
     return PreverifiedWindow(ready, contract_diag)
 end
 

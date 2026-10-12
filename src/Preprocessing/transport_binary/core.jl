@@ -385,6 +385,7 @@ end
 const _OUTPUT_REUSE_CONTRACT_KEYS = (
     "format_version", "float_type", "float_bytes", "mass_basis",
     "surface_pressure_basis",
+    "flux_fidelity_schema",
     "grid_type", "horizontal_topology", "planet_radius_m", "Nx", "Ny", "nlevel", "nwindow",
     "payload_sections", "elems_per_window", "A_ifc", "B_ifc", "merge_map",
     "merge_min_thickness_Pa", "vertical_mapping_method", "target_vertical_name",

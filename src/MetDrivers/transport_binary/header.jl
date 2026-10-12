@@ -36,6 +36,82 @@ construction code dispatches on this type instead of branching on string tags.
 """
 abstract type AbstractTransportBinaryGeometry end
 
+# Write-time flux-fidelity certification is metadata, but it is deliberately
+# parsed into nominals rather than Symbols.  This keeps unknown/new spellings
+# fail-closed and lets downstream code dispatch on the result without string or
+# Symbol switches.
+abstract type AbstractFidelityStatus end
+struct FidelityPassed        <: AbstractFidelityStatus end
+struct FidelityFailed        <: AbstractFidelityStatus end
+struct FidelityNotApplicable <: AbstractFidelityStatus end
+struct FidelityUnavailable   <: AbstractFidelityStatus end
+
+abstract type AbstractFluxFidelityKind end
+struct WindRederivedFidelity  <: AbstractFluxFidelityKind end
+struct NativePassthroughFidelity <: AbstractFluxFidelityKind end
+struct NoFluxFidelityKind     <: AbstractFluxFidelityKind end
+
+struct FidelityReason
+    code::String
+    function FidelityReason(code::AbstractString)
+        isempty(code) && throw(ArgumentError("fidelity reason must not be empty"))
+        new(String(code))
+    end
+end
+
+"Typed horizontal-flux certificate decoded from the flat binary header."
+struct FluxFidelityHeader{S<:AbstractFidelityStatus,K<:AbstractFluxFidelityKind}
+    schema::Int
+    status::S
+    kind::K
+    reason::Union{Nothing,FidelityReason}
+    sample_rule::String
+    sample_seed::String
+    samples_per_window::Int
+    sample_count::Int
+    windows::Int
+    method::String
+    time_sampling::String
+    amount_seconds_min::Union{Nothing,Float64}
+    amount_seconds_max::Union{Nothing,Float64}
+    max_abs_kg::Union{Nothing,Float64}
+    rms_abs_kg::Union{Nothing,Float64}
+    max_rel::Union{Nothing,Float64}
+    rms_rel::Union{Nothing,Float64}
+    max_ulp::Union{Nothing,UInt64}
+    abs_tol_kg::Union{Nothing,Float64}
+    rel_tol::Union{Nothing,Float64}
+    scale_floor_kg::Union{Nothing,Float64}
+    worst_window::Union{Nothing,Int}
+    worst_face::Union{Nothing,Int}
+    worst_level::Union{Nothing,Int}
+    balance_correction_max_abs_kg::Union{Nothing,Float64}
+    balance_correction_max_ratio::Union{Nothing,Float64}
+    balance_correction_rms_ratio::Union{Nothing,Float64}
+end
+
+"Typed source-OMEGA certificate decoded from the flat binary header."
+struct OmegaFidelityHeader{S<:AbstractFidelityStatus}
+    status::S
+    reason::Union{Nothing,FidelityReason}
+    source::String
+    sampling::String
+    basis::String
+    sample_count::Int
+    bias_pa_s::Union{Nothing,Float64}
+    rmse_pa_s::Union{Nothing,Float64}
+    nrmse::Union{Nothing,Float64}
+    max_abs_pa_s::Union{Nothing,Float64}
+    slope::Union{Nothing,Float64}
+    correlation::Union{Nothing,Float64}
+    bottom_residual_pa_s::Union{Nothing,Float64}
+    pressure_bands_hpa::Vector{String}
+    band_nrmse::Vector{Float64}
+    baseline_id::String
+    limit::Union{Nothing,Float64}
+    passed::Union{Nothing,Bool}
+end
+
 """Geometry metadata for a regular longitude-latitude binary."""
 struct LatLonBinaryGeometry <: AbstractTransportBinaryGeometry
     Nx                 :: Int
@@ -120,6 +196,8 @@ struct TransportBinaryHeader{G <: AbstractTransportBinaryGeometry}
     payload_sections     :: Vector{Symbol}
     n_geometry_elems     :: Int
     elems_per_window     :: Int
+    flux_fidelity        :: FluxFidelityHeader
+    omega_fidelity       :: OmegaFidelityHeader
     raw_header           :: Dict{String, Any}
 end
 
@@ -127,6 +205,108 @@ binary_geometry(h::TransportBinaryHeader) = h.geometry
 surface_pressure_basis(h::TransportBinaryHeader) = h.surface_pressure_basis
 grid_type(h::TransportBinaryHeader) = grid_type(h.geometry)
 horizontal_topology(h::TransportBinaryHeader) = horizontal_topology(h.geometry)
+
+function _parse_fidelity_status(value)
+    text = lowercase(String(value))
+    text == "passed" && return FidelityPassed()
+    text == "failed" && return FidelityFailed()
+    text == "not_applicable" && return FidelityNotApplicable()
+    text == "unavailable" && return FidelityUnavailable()
+    throw(ArgumentError("unsupported fidelity status $(repr(text)); expected passed, failed, not_applicable, or unavailable"))
+end
+
+function _parse_flux_fidelity_kind(value)
+    text = lowercase(String(value))
+    text == "wind_rederived" && return WindRederivedFidelity()
+    text == "native_passthrough" && return NativePassthroughFidelity()
+    text == "none" && return NoFluxFidelityKind()
+    throw(ArgumentError("unsupported flux_fidelity_kind $(repr(text)); expected wind_rederived, native_passthrough, or none"))
+end
+
+@inline _optional_float(hdr, key) = haskey(hdr, key) ? Float64(getproperty(hdr, key)) : nothing
+@inline _optional_int(hdr, key) = haskey(hdr, key) ? Int(getproperty(hdr, key)) : nothing
+
+function _parse_flux_fidelity_header(hdr)
+    # Pre-C6 v4 files stay readable, but their lack of certification is made
+    # explicit in the typed result. Every current writer emits schema=1.
+    if !haskey(hdr, :flux_fidelity_schema)
+        return FluxFidelityHeader(0, FidelityUnavailable(), NoFluxFidelityKind(),
+            FidelityReason("legacy_header_missing"), "", "", 0, 0, 0, "", "",
+            nothing, nothing, nothing, nothing, nothing, nothing, nothing,
+            nothing, nothing, nothing, nothing, nothing, nothing, nothing,
+            nothing, nothing)
+    end
+    schema = Int(hdr.flux_fidelity_schema)
+    schema == 1 || throw(ArgumentError("unsupported flux_fidelity_schema=$(schema); expected 1"))
+    status = _parse_fidelity_status(hdr.flux_fidelity_status)
+    kind = _parse_flux_fidelity_kind(hdr.flux_fidelity_kind)
+    reason = haskey(hdr, :flux_fidelity_reason) ? FidelityReason(String(hdr.flux_fidelity_reason)) : nothing
+    status isa FidelityPassed && reason !== nothing && throw(ArgumentError(
+        "passed flux-fidelity certificate must not carry flux_fidelity_reason"))
+    !(status isa FidelityPassed) && reason === nothing && throw(ArgumentError(
+        "non-passed flux-fidelity certificate requires flux_fidelity_reason"))
+    max_ulp = haskey(hdr, :flux_fidelity_max_ulp) ? UInt64(hdr.flux_fidelity_max_ulp) : nothing
+    return FluxFidelityHeader(
+        schema, status, kind, reason,
+        String(get(hdr, :flux_fidelity_sample_rule, "")),
+        String(get(hdr, :flux_fidelity_sample_seed, "")),
+        Int(get(hdr, :flux_fidelity_samples_per_window, 0)),
+        Int(get(hdr, :flux_fidelity_sample_count, 0)),
+        Int(get(hdr, :flux_fidelity_windows, 0)),
+        String(get(hdr, :flux_fidelity_method, "")),
+        String(get(hdr, :flux_fidelity_time_sampling, "")),
+        _optional_float(hdr, :flux_fidelity_amount_seconds_min),
+        _optional_float(hdr, :flux_fidelity_amount_seconds_max),
+        _optional_float(hdr, :flux_fidelity_max_abs_kg),
+        _optional_float(hdr, :flux_fidelity_rms_abs_kg),
+        _optional_float(hdr, :flux_fidelity_max_rel),
+        _optional_float(hdr, :flux_fidelity_rms_rel), max_ulp,
+        _optional_float(hdr, :flux_fidelity_abs_tol_kg),
+        _optional_float(hdr, :flux_fidelity_rel_tol),
+        _optional_float(hdr, :flux_fidelity_scale_floor_kg),
+        _optional_int(hdr, :flux_fidelity_worst_window),
+        _optional_int(hdr, :flux_fidelity_worst_face),
+        _optional_int(hdr, :flux_fidelity_worst_level),
+        _optional_float(hdr, :balance_correction_max_abs_kg),
+        _optional_float(hdr, :balance_correction_max_ratio),
+        _optional_float(hdr, :balance_correction_rms_ratio))
+end
+
+function _parse_omega_fidelity_header(hdr)
+    if !haskey(hdr, :omega_fidelity_status)
+        return OmegaFidelityHeader(FidelityUnavailable(), FidelityReason("legacy_header_missing"),
+            "", "", "", 0, nothing, nothing, nothing, nothing, nothing, nothing,
+            nothing, String[], Float64[], "", nothing, nothing)
+    end
+    status = _parse_fidelity_status(hdr.omega_fidelity_status)
+    reason = haskey(hdr, :omega_fidelity_reason) ? FidelityReason(String(hdr.omega_fidelity_reason)) : nothing
+    status isa FidelityPassed && reason !== nothing && throw(ArgumentError(
+        "passed OMEGA-fidelity certificate must not carry omega_fidelity_reason"))
+    !(status isa FidelityPassed) && reason === nothing && throw(ArgumentError(
+        "non-passed OMEGA-fidelity certificate requires omega_fidelity_reason"))
+    bands = haskey(hdr, :omega_fidelity_pressure_bands_hpa) ?
+        String.(collect(hdr.omega_fidelity_pressure_bands_hpa)) : String[]
+    band_nrmse = haskey(hdr, :omega_fidelity_band_nrmse) ?
+        Float64.(collect(hdr.omega_fidelity_band_nrmse)) : Float64[]
+    length(bands) == length(band_nrmse) || throw(ArgumentError(
+        "omega_fidelity_pressure_bands_hpa and omega_fidelity_band_nrmse lengths differ"))
+    return OmegaFidelityHeader(
+        status, reason, String(get(hdr, :omega_fidelity_source, "")),
+        String(get(hdr, :omega_fidelity_sampling, "")),
+        String(get(hdr, :omega_fidelity_basis, "")),
+        Int(get(hdr, :omega_fidelity_sample_count, 0)),
+        _optional_float(hdr, :omega_fidelity_bias_pa_s),
+        _optional_float(hdr, :omega_fidelity_rmse_pa_s),
+        _optional_float(hdr, :omega_fidelity_nrmse),
+        _optional_float(hdr, :omega_fidelity_max_abs_pa_s),
+        _optional_float(hdr, :omega_fidelity_slope),
+        _optional_float(hdr, :omega_fidelity_correlation),
+        _optional_float(hdr, :omega_fidelity_bottom_residual_pa_s),
+        bands, band_nrmse,
+        String(get(hdr, :omega_fidelity_baseline_id, "")),
+        _optional_float(hdr, :omega_fidelity_limit),
+        haskey(hdr, :omega_fidelity_passed) ? Bool(hdr.omega_fidelity_passed) : nothing)
+end
 
 function _parse_steps_per_window_schedule(hdr, nwindow::Integer,
                                           steps_per_window::Integer)
@@ -422,6 +602,8 @@ function _parse_transport_header(raw_bytes::Vector{UInt8};
         hdr, nwindow, poisson_balance_target_scale)
     n_geometry_elems = Int(get(hdr, :n_geometry_elems, 0))
     elems_per_window = Int(hdr.elems_per_window)
+    flux_fidelity = _parse_flux_fidelity_header(hdr)
+    omega_fidelity = _parse_omega_fidelity_header(hdr)
     raw_header = Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr))
 
     return TransportBinaryHeader(
@@ -456,6 +638,8 @@ function _parse_transport_header(raw_bytes::Vector{UInt8};
         payload_sections,
         n_geometry_elems,
         elems_per_window,
+        flux_fidelity,
+        omega_fidelity,
         raw_header,
     )
 end
@@ -572,5 +756,20 @@ function _transport_common_header(grid_type::String,
         "n_vdiff_qv" => n_vdiff,
         "n_geometry_elems" => 0,
         "elems_per_window" => elems_per_window,
+        "flux_fidelity_schema" => 1,
+        "flux_fidelity_status" => "unavailable",
+        "flux_fidelity_kind" => "none",
+        "flux_fidelity_reason" => "evidence_not_attached",
+        "flux_fidelity_sample_rule" => "cs_stratified_faces_v1",
+        "flux_fidelity_sample_seed" => string(UInt64(0x6a09e667f3bcc909)),
+        "flux_fidelity_samples_per_window" => 0,
+        "flux_fidelity_sample_count" => 0,
+        "flux_fidelity_windows" => 0,
+        "omega_fidelity_status" => "unavailable",
+        "omega_fidelity_reason" => "source_not_opened",
+        "omega_fidelity_source" => "none",
+        "omega_fidelity_sampling" => "none",
+        "omega_fidelity_basis" => "none",
+        "omega_fidelity_sample_count" => 0,
     )
 end

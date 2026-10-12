@@ -16,6 +16,7 @@ struct ReducedTransformWorkspace
     dp             :: Matrix{Float64}
     m_arr          :: Matrix{Float64}
     hflux_arr      :: Matrix{Float64}
+    fidelity_hflux_arr :: Matrix{Float64}
     cm_arr         :: Matrix{Float64}
     cell_areas     :: Vector{Float64}
     face_left      :: Vector{Int32}
@@ -34,8 +35,10 @@ end
 struct ReducedMergeWorkspace{FT}
     m_native_ft     :: Matrix{FT}
     hflux_native_ft :: Matrix{FT}
+    fidelity_hflux_native_ft :: Matrix{FT}
     m_merged        :: Matrix{FT}
     hflux_merged    :: Matrix{FT}
+    fidelity_hflux_merged :: Matrix{FT}
     cm_merged       :: Matrix{FT}
     div_scratch     :: Matrix{Float64}
 end
@@ -245,6 +248,7 @@ function allocate_reduced_transform_workspace(grid::ReducedGaussianTargetGeometr
         zeros(Float64, nc, Nz_native),
         zeros(Float64, nc, Nz_native),
         zeros(Float64, nf, Nz_native),
+        zeros(Float64, nf, Nz_native),
         zeros(Float64, nc, Nz_native + 1),
         cell_areas,
         face_left,
@@ -270,7 +274,9 @@ function allocate_reduced_merge_workspace(grid::ReducedGaussianTargetGeometry,
     return ReducedMergeWorkspace{FT}(
         zeros(FT, nc, Nz_native),
         zeros(FT, nf, Nz_native),
+        zeros(FT, nf, Nz_native),
         zeros(FT, nc, Nz),
+        zeros(FT, nf, Nz),
         zeros(FT, nf, Nz),
         zeros(FT, nc, Nz + 1),
         zeros(Float64, nc, Nz),
@@ -414,6 +420,56 @@ function compute_reduced_horizontal_fluxes!(hflux::AbstractVector{Float64},
     return nothing
 end
 
+"Scalar re-evaluation of reduced-grid face amounts for write-time fidelity."
+function rederive_reduced_horizontal_fluxes!(hflux::AbstractVector{Float64},
+                                             lnsp_center::Vector{Float64},
+                                             u_spec::AbstractMatrix{ComplexF64},
+                                             v_spec::AbstractMatrix{ComplexF64},
+                                             T::Int, dA_k::Float64, dB_k::Float64,
+                                             grid::ReducedGaussianTargetGeometry,
+                                             half_dt::Float64,
+                                             cache::ReducedSpectralThreadCache)
+    mesh = grid.mesh
+    factor = Float64(mesh.radius) * half_dt / Float64(STANDARD_GRAVITY)
+    fill!(hflux, 0.0)
+    @inbounds for ring in 1:nrings(mesh)
+        count = mesh.nlon_per_ring[ring]
+        wind = _real_buffer!(cache, count)
+        spectral_to_ring!(wind, u_spec, T, grid.lats[ring], cache; lon_shift_rad=0.0)
+        first_cell = mesh.ring_offsets[ring]
+        edge = deg2rad(mesh.lat_faces[ring + 1] - mesh.lat_faces[ring])
+        for segment in 1:count
+            face = first_cell + segment - 1
+            west = first_cell + (segment == 1 ? count - 1 : segment - 2)
+            east = first_cell + segment - 1
+            ps_face = exp(0.5 * (lnsp_center[west] + lnsp_center[east]))
+            thickness = abs(dA_k + dB_k * ps_face)
+            hflux[face] = wind[segment] * thickness * factor * edge /
+                          cosd(grid.lats[ring])
+        end
+    end
+    @inbounds for boundary in 2:nrings(mesh)
+        count = mesh.boundary_counts[boundary]
+        wind = _real_buffer!(cache, count)
+        spectral_to_reduced_boundary!(wind, v_spec, T, mesh.lat_faces[boundary], cache)
+        south_ring, north_ring = boundary - 1, boundary
+        south_count = mesh.nlon_per_ring[south_ring]
+        north_count = mesh.nlon_per_ring[north_ring]
+        first_face = mesh._ncells + mesh.boundary_offsets[boundary] - 1
+        edge = 2pi / count
+        for segment in 1:count
+            south_i = ((segment - 1) * south_count) ÷ count + 1
+            north_i = ((segment - 1) * north_count) ÷ count + 1
+            south = mesh.ring_offsets[south_ring] + south_i - 1
+            north = mesh.ring_offsets[north_ring] + north_i - 1
+            ps_face = exp(0.5 * (lnsp_center[south] + lnsp_center[north]))
+            thickness = abs(dA_k + dB_k * ps_face)
+            hflux[first_face + segment] = wind[segment] * thickness * factor * edge
+        end
+    end
+    return hflux
+end
+
 """
     _project_mean_zero!(v)
 
@@ -503,6 +559,10 @@ function spectral_to_native_fields!(work::ReducedTransformWorkspace,
                                            grid,
                                            half_dt,
                                            cache)
+        rederive_reduced_horizontal_fluxes!(@view(work.fidelity_hflux_arr[:, kk]),
+                                            work.lnsp, cache.u_spec, cache.v_spec,
+                                            T, Float64(ab.dA[kk]), Float64(ab.dB[kk]),
+                                            grid, half_dt, cache)
     end
 
     recompute_faceindexed_cm_from_divergence!(work.cm_arr, work.hflux_arr,
@@ -524,8 +584,11 @@ function merge_reduced_window!(merged::ReducedMergeWorkspace{FT},
                                vertical) where FT
     @. merged.m_native_ft = FT(native.m_arr)
     @. merged.hflux_native_ft = FT(native.hflux_arr)
+    @. merged.fidelity_hflux_native_ft = FT(native.fidelity_hflux_arr)
     merge_field_2d!(merged.m_merged, merged.m_native_ft, vertical.merge_map)
     merge_field_2d!(merged.hflux_merged, merged.hflux_native_ft, vertical.merge_map)
+    merge_field_2d!(merged.fidelity_hflux_merged,
+                    merged.fidelity_hflux_native_ft, vertical.merge_map)
     recompute_faceindexed_cm_from_divergence!(merged.cm_merged,
                                               merged.hflux_merged,
                                               native.face_left,

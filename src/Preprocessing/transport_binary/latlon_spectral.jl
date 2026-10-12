@@ -17,6 +17,7 @@ mutable struct LatLonSpectralWindowWorkspace{FT, TW, MW, SW, QW} <:
     ps_offsets     :: Vector{Float64}
     last_hour_next :: Union{Nothing, LLNextDayFields{FT}}
     steps_schedule :: Vector{Int}
+    fidelity_captures :: Vector{Any}
     write_replay_on :: Bool        # resolved once per output: header record and gate
 
     function LatLonSpectralWindowWorkspace{FT, TW, MW, SW, QW}(
@@ -27,6 +28,7 @@ mutable struct LatLonSpectralWindowWorkspace{FT, TW, MW, SW, QW} <:
             ps_offsets::Vector{Float64},
             last_hour_next,
             steps_schedule::Vector{Int},
+            fidelity_captures::Vector{Any},
             write_replay_on::Bool) where {FT, TW, MW, SW, QW}
         if last_hour_next !== nothing && !(last_hour_next isa LLNextDayFields{FT})
             throw(ArgumentError(
@@ -35,7 +37,7 @@ mutable struct LatLonSpectralWindowWorkspace{FT, TW, MW, SW, QW} <:
         end
         return new{FT, TW, MW, SW, QW}(
             transform, merged, storage, qv, ps_offsets, last_hour_next,
-            steps_schedule, write_replay_on)
+            steps_schedule, fidelity_captures, write_replay_on)
     end
 end
 
@@ -171,7 +173,8 @@ function allocate_window_workspace(grid::LatLonTargetGeometry,
     steps_schedule = fill(Int(source_steps_per_window), Nt)
     return LatLonSpectralWindowWorkspace{FT, typeof(transform), typeof(merged),
                                          typeof(storage), typeof(qv)}(
-        transform, merged, storage, qv, ps_offsets, nothing, steps_schedule, write_replay_on)
+        transform, merged, storage, qv, ps_offsets, nothing, steps_schedule,
+        Vector{Any}(undef, Nt), write_replay_on)
 end
 
 function ingest_window!(workspace::LatLonSpectralWindowWorkspace,
@@ -194,6 +197,9 @@ function ingest_window!(workspace::LatLonSpectralWindowWorkspace,
                     tm5_source_ps = tm5_source_ps,
                     tm5_stats = tm5_stats,
                     surface_reader = surface_reader)
+    workspace.fidelity_captures[win_idx] = capture_structured_wind_flux_samples(
+        workspace.storage.all_am[win_idx], workspace.storage.all_bm[win_idx],
+        workspace.transform, workspace.qv, grid, vertical, settings)
     return nothing
 end
 
@@ -275,7 +281,19 @@ function flush_final_windows!(workspace::LatLonSpectralWindowWorkspace{FT},
                            workspace.steps_schedule, contract, substep_policy;
                            write_replay_on = workspace.write_replay_on)
     fill_qv_endpoints!(workspace.storage, workspace.last_hour_next)
-    return (ReadyWindow{LatLonTargetGeometry, FT}(
+    return (begin
+            amount_seconds = settings.met_interval / (2 * workspace.steps_schedule[win_idx])
+            accepted_capture = scale_captured_flux_samples(
+                workspace.fidelity_captures[win_idx], amount_seconds / settings.half_dt)
+            flux_evidence = structured_wind_evidence(
+                LatLonTargetGeometry, accepted_capture,
+                workspace.storage.all_am[win_idx], workspace.storage.all_bm[win_idx];
+                method = "structured_uv_dp",
+                time_sampling = "window_start_endpoint",
+                amount_seconds)
+            omega_evidence = NoSourceOmegaEvidence{
+                LatLonTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega())
+            ReadyWindow{LatLonTargetGeometry, FT}(
                 win_idx,
                 (m_cur = workspace.storage.all_m[win_idx],
                  am = workspace.storage.all_am[win_idx],
@@ -286,7 +304,9 @@ function flush_final_windows!(workspace::LatLonSpectralWindowWorkspace{FT},
                     workspace.storage.all_m[win_idx + 1] :
                     workspace.last_hour_next === nothing ?
                         workspace.storage.all_m[win_idx] :
-                        workspace.last_hour_next.m))
+                        workspace.last_hour_next.m),
+                FluxFidelityEvidenceBundle(flux_evidence, omega_evidence))
+            end
             for win_idx in eachindex(workspace.storage.all_m))
 end
 

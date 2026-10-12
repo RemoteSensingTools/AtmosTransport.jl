@@ -103,9 +103,24 @@ function pin_convert_merge_window!(work::ReducedTransformWorkspace,
         compute_reduced_dp_and_mass!(work.dp, work.m_arr, work.sp, work.cell_areas, ab.dA, ab.dB)
         rescale_reduced_fluxes_to_ps!(work.hflux_arr, work.lnsp, work.sp, work.face_left,
                                       work.face_right, ab.dA, ab.dB)
+        rescale_reduced_fluxes_to_ps!(work.fidelity_hflux_arr, work.lnsp, work.sp,
+                                      work.face_left, work.face_right, ab.dA, ab.dB)
         @. work.lnsp = log(work.sp)
     end
-    qv_ws === nothing || apply_dry_basis_reduced!(work, qv_ws.qv_cell)
+    if qv_ws !== nothing
+        apply_dry_basis_reduced!(work, qv_ws.qv_cell)
+        @inbounds for k in axes(work.fidelity_hflux_arr, 2),
+                      f in axes(work.fidelity_hflux_arr, 1)
+            left, right = work.face_left[f], work.face_right[f]
+            if left == 0 || right == 0
+                work.fidelity_hflux_arr[f, k] = 0.0
+            else
+                q_face = clamp(0.5 * (qv_ws.qv_cell[left, k] +
+                                      qv_ws.qv_cell[right, k]), 0.0, 0.999999)
+                work.fidelity_hflux_arr[f, k] *= 1 - q_face
+            end
+        end
+    end
     merge_reduced_window!(merged, work, vertical)
     return nothing
 end

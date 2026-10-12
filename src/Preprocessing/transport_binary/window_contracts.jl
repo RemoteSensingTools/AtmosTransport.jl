@@ -235,20 +235,25 @@ Unknown property access is forwarded to `payload`, so existing
 `verify_window!(window, contract, win_idx)` methods can accept either a raw
 NamedTuple or a `ReadyWindow`.
 """
-struct ReadyWindow{G <: AbstractTargetGeometry, FT, P <: NamedTuple}
+struct ReadyWindow{G <: AbstractTargetGeometry, FT, P <: NamedTuple, F}
     index   :: Int
     payload :: P
+    fidelity :: F
 
-    function ReadyWindow{G, FT, P}(index::Integer, payload::P) where
-            {G <: AbstractTargetGeometry, FT, P <: NamedTuple}
+    function ReadyWindow{G, FT, P, F}(index::Integer, payload::P, fidelity::F) where
+            {G <: AbstractTargetGeometry, FT, P <: NamedTuple, F}
         index >= 1 || throw(ArgumentError("ReadyWindow: index = $(index); must be >= 1."))
-        return new{G, FT, P}(Int(index), payload)
+        return new{G, FT, P, F}(Int(index), payload, fidelity)
     end
 end
 
 ReadyWindow{G, FT}(index::Integer, payload::P) where
     {G <: AbstractTargetGeometry, FT, P <: NamedTuple} =
-        ReadyWindow{G, FT, P}(index, payload)
+        ReadyWindow{G, FT}(index, payload, default_fidelity_evidence(G, FT))
+
+ReadyWindow{G, FT}(index::Integer, payload::P, fidelity::F) where
+    {G <: AbstractTargetGeometry, FT, P <: NamedTuple, F} =
+        ReadyWindow{G, FT,P,F}(index, payload, fidelity)
 
 """
     PreverifiedWindow(ready::ReadyWindow, contract_diag; accumulated=false)
@@ -259,24 +264,24 @@ Typed event wrapper for topology hooks that have already run
 positivity diagnostic into the contract accumulator.
 """
 struct PreverifiedWindow{G <: AbstractTargetGeometry, FT,
-                         P <: NamedTuple, D}
-    ready       :: ReadyWindow{G, FT, P}
+                         P <: NamedTuple, F, D}
+    ready       :: ReadyWindow{G, FT, P, F}
     contract    :: D
     accumulated :: Bool
 end
 
-function PreverifiedWindow(ready::ReadyWindow{G, FT, P},
+function PreverifiedWindow(ready::ReadyWindow{G, FT, P, F},
                            contract_diag;
                            accumulated::Bool=false) where
-        {G <: AbstractTargetGeometry, FT, P <: NamedTuple}
+        {G <: AbstractTargetGeometry, FT, P <: NamedTuple, F}
     hasproperty(contract_diag, :positivity) ||
         throw(ArgumentError("PreverifiedWindow contract diagnostic must expose `.positivity`."))
-    return PreverifiedWindow{G, FT, P, typeof(contract_diag)}(
+    return PreverifiedWindow{G, FT, P, F, typeof(contract_diag)}(
         ready, contract_diag, accumulated)
 end
 
 @inline function Base.getproperty(window::ReadyWindow, name::Symbol)
-    if name === :index || name === :payload
+    if name === :index || name === :payload || name === :fidelity
         return getfield(window, name)
     end
     return getproperty(getfield(window, :payload), name)
@@ -284,8 +289,8 @@ end
 
 function Base.propertynames(window::ReadyWindow, private::Bool = false)
     payload_names = propertynames(getfield(window, :payload), private)
-    return private ? (:index, :payload, payload_names...) :
-                     (:index, payload_names...)
+    return private ? (:index, :payload, :fidelity, payload_names...) :
+                     (:index, :fidelity, payload_names...)
 end
 
 """
