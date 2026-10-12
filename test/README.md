@@ -9,8 +9,7 @@ include other tiers.
 | **Core** | [`core/`](core/) | Default (CI green-bar) | API/health gates, kernel correctness, runtime composition, adjoint identity, preprocessor contracts, mesh / regridding / vertical-transform invariants, type and aliasing safety. Everything that catches regressions of the production code paths. |
 | **Real data** | [`real_data/`](real_data/) | `--all` or `--real-data` | Tests that need preprocessed transport binaries or ERA5 GRIB files on disk in `~/data/AtmosTransport/`. Skipped on CI runners. |
 | **Diagnostic** | [`diagnostic/`](diagnostic/) | `--all` or `--diagnostic` | Large numerical sweeps useful for adjoint / inversion debugging (Taylor-sweep, integration footprints). Run occasionally, not every PR. |
-| **Orphan** | [`orphan/`](orphan/) | `--orphan` only | Promotion candidates — tests that exist but were not in the CI roster as of 2026-05-29. Each should be reviewed and either promoted to `core/` (with a short note here) or moved to `archived/`. |
-| **Archived** | [`archived/`](archived/) | Never (kept for reference) | Tests against deleted preprocessing wrappers and one-off plan-decision "studies". See [`archived/legacy_README.md`](archived/legacy_README.md). |
+| **Orphan** | [`orphan/`](orphan/) | `--orphan` only | Promotion candidates — tests that exist but were not in the CI roster as of 2026-05-29. Each should be reviewed and either promoted to `core/` (with a short note here) or deleted. |
 | **Regridding** | [`regridding/`](regridding/) | Default (CI green-bar) | Conservative-remapping geometry, conservation, direction, and persistence checks. Its `runtests.jl` is included as one isolated suite by the top-level orchestrator. |
 | **Golden** | [`golden/`](golden/) | By hand, before committing a refactor | End-to-end preprocessing and runtime cases compared bit for bit with a recorded reference (`golden/run_goldens.jl`); needs the group's data and a GPU. Not run by `runtests.jl`. |
 
@@ -131,9 +130,10 @@ Julia 1.10 and the current release stays the merge requirement.
   current `src/`, asserts something the team wants to keep regressing,
   and is not redundant with an existing core test. Move it into `core/`
   in the same commit that fixes any path adjustments.
-- A `core/` file becomes archivable when the code path it tests is
-  deleted or has been fully subsumed by a newer test. Move it into
-  `archived/` with a note in `archived/legacy_README.md`.
+- A test file is deleted, not archived, when the code path it tests is
+  deleted or a newer test fully subsumes it; git history keeps it. Remove it
+  from `groups.toml` in the same commit. The former `archived/` folder (two
+  tests of preprocessing scripts deleted in `cc63b87f`) was removed this way.
 
 Core tests load the installed development package with `using AtmosTransport`
 or `import AtmosTransport`. The runner isolates each file's test helpers in its

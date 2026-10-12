@@ -6,7 +6,6 @@
 #   test/core/        — canonical CI baseline (no external data); must stay green
 #   test/real_data/   — needs preprocessed binaries / ERA5 GRIB; opt-in via --all
 #   test/diagnostic/  — large numerical sweeps; opt-in via --diagnostic or --all
-#   test/archived/    — never run; kept as reference (see archived/legacy_README.md)
 #   test/orphan/      — promotion candidates; CI-excluded; opt-in via --orphan
 #   test/regridding/  — conservative-remapping correctness; part of CI baseline
 #
