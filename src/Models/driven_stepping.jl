@@ -16,6 +16,7 @@ function _maybe_advance_window!(sim::DrivenSimulation)
         sim.current_window_end_iteration = sim.iteration + sim.steps_per_window
         sim.Δt = sim.window_dt / typeof(sim.Δt)(sim.steps_per_window)
         _take_prefetched_window!(sim, next_window)
+        _stage_surface_flux_window!(sim)
         if sim.air_mass_reset_mode !== :none
             _reset_air_mass!(sim.model.state, sim.window.air_mass,
                              sim.model.grid.horizontal,
@@ -216,6 +217,7 @@ function DrivenSimulation(model::TransportModel,
     end
     _refresh_dz_for_window!(sim)
     _refresh_pbl_kz_for_window!(sim.model.diffusion, sim)
+    _stage_surface_flux_window!(sim)
     _reclaim_backend_pool_after_startup!(sim.model.state.air_mass)
     _start_window_prefetch!(sim, Int(start_window) + 1)
     return sim
@@ -259,9 +261,33 @@ MetDrivers.current_time(sim::DrivenSimulation) = sim.time
 # The clock follows the counters instead of accumulating steps: a Float32
 # clock adding 3600/7 s steps is 3 h off after a year, and even a Float64 sum
 # misses window ends by an ulp.
-_clock_time(sim::DrivenSimulation) = sim.start_time + Float64(sim.window_dt) *
-    ((sim.current_window_index - sim.start_window) +
-     (sim.iteration - sim.current_window_start_iteration) / sim.steps_per_window)
+_clock_time(sim::DrivenSimulation) =
+    _window_clock(sim, sim.current_window_index - sim.start_window,
+                  (sim.iteration - sim.current_window_start_iteration) / sim.steps_per_window)
+
+# The run clock `fraction` of the way through the window `offset` windows after
+# `start_window`.
+_window_clock(sim::DrivenSimulation, offset::Integer, fraction::Float64) =
+    sim.start_time + Float64(sim.window_dt) * (offset + fraction)
+
+# Run-clock interval `[t0, t1]` of the current met window: `_clock_time` at the
+# window's first and last step boundary.
+function _window_time_span(sim::DrivenSimulation)
+    offset = sim.current_window_index - sim.start_window
+    return (_window_clock(sim, offset, 0.0), _window_clock(sim, offset, 1.0))
+end
+
+# Time-varying surface-flux series stay in host memory; copy the slices the
+# current window reads into their device buffers. This runs on the task that
+# launches the window's kernels, after the window's met data became current,
+# so the copies are ordered before the window's first surface-flux kernel
+# (CUDA.jl issues both on the task's stream; Metal.jl synchronizes the queue
+# before a host copy). The prefetch task never touches the buffers.
+function _stage_surface_flux_window!(sim::DrivenSimulation)
+    t0, t1 = _window_time_span(sim)
+    SectionTimer.@section :surface_flux_upload stage_surface_flux_window!(sim.model.emissions, t0, t1)
+    return nothing
+end
 
 # A binary with a per-window contract makes its endpoint mass authoritative at
 # window ends. Convection and chemistry run once per window there, unless

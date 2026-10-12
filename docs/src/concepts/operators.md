@@ -198,6 +198,35 @@ error**, not a silent fallback.
 inventories (EDGAR, GFED, GridFED, LMDz, …). See the worked CATRINE configs
 (`config/runs/catrine_*.toml`) for examples.
 
+### Time-varying sources on a GPU
+
+A `TimeVaryingSurfaceFluxSource` (cubed sphere; `time_varying = true`) stores
+its per-cell rates as slices ``r_{c,k}`` at times ``t_k``. The series stays in
+host memory on every backend. On the device each source holds a small window
+buffer with the slices that the current met window ``[t_0, t_1]`` reads, and
+the surface-flux kernels read the rates from it:
+
+- `StepwiseFlux` reads the slices in effect over the window, ``k`` from
+  ``\max\{k : t_k \le t_0\}`` to ``\max\{k : t_k \le t_1\}`` (clamped to the
+  series).
+- `LinearInterpFlux` and `ConservativeMeanFlux` read from the left bracket
+  slice at ``t_0`` to the right bracket slice at ``t_1``.
+
+``t_1`` is padded by
+``8\,\varepsilon_\text{Float32}\,(t_1 - t_0) + 4\,\mathrm{ulp}(t_1)``, because
+a Float32 step (for example 5400/7 s) can end slightly after the window. When a
+window becomes current, `DrivenSimulation` copies the slices of this range that
+the buffer does not hold yet, on the task that then launches the window's
+kernels. The buffer is a ring of slots (slice ``k`` in slot
+``\mathrm{mod1}(k, \text{capacity})``), so a slice that consecutive windows
+share is copied once, and its capacity is the largest window's slice count
+(two slices for stepwise, three for linear or conservative sources with daily
+or hourly series and hourly met windows), independent of the run length. The
+kernels see the same rates as with the
+whole series on the device, so results are bit-identical; a C90 2014–2024
+daily series (0.78 GB per tracer in Float32) now costs a few 0.19 MB slices of
+device memory per tracer. The emission totals below sum the host series.
+
 ### Emission totals
 
 Sources hold per-cell model-storage rates ``r_c`` (kg dry-air equivalent

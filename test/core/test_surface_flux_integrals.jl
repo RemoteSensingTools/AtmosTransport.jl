@@ -20,7 +20,8 @@ Asserts:
 - invalid step arguments are rejected;
 - a source adapted to a device array type whose Float64 reductions fail (the
   Metal case, emulated on the CPU) gives the host source's totals bit for bit:
-  the sums run on host copies.
+  static rates and series built on the device are summed on host copies, and
+  an adapted time-varying source keeps its series in host memory.
 """
 
 using Test
@@ -302,13 +303,32 @@ end
 @testset "device sources are summed on host copies" begin
     rng = MersenneTwister(11)
     times = [0.0, 3600.0, 7200.0]
-    hosts = (SurfaceFluxSource(:CO2, 1e-4 .* (1 .+ rand(rng, 36, 18))),
-             SurfaceFluxSource(:CO2, ntuple(p -> Float32.(1e-4 * p .* (1 .+ rand(rng, NC, NC))), 6)),
-             TimeVaryingSurfaceFluxSource(:CO2, random_series(Float64, 3)[2], times, StepwiseFlux()),
-             TimeVaryingSurfaceFluxSource(:CO2, random_series(Float32, 3), times, LinearInterpFlux()),
-             TimeVaryingSurfaceFluxSource(:CO2, random_series(Float64, 3), times, ConservativeMeanFlux()))
-    for host in hosts
+    statics = (SurfaceFluxSource(:CO2, 1e-4 .* (1 .+ rand(rng, 36, 18))),
+               SurfaceFluxSource(:CO2, ntuple(p -> Float32.(1e-4 * p .* (1 .+ rand(rng, NC, NC))), 6)))
+    series = (random_series(Float64, 3)[2], random_series(Float32, 3), random_series(Float64, 3))
+    schemes = (StepwiseFlux(), LinearInterpFlux(), ConservativeMeanFlux())
+    varying = map((s, scheme) -> TimeVaryingSurfaceFluxSource(:CO2, s, times, scheme), series, schemes)
+
+    # Adapting a time-varying source moves only its compensation and window
+    # buffer: the series stays in host memory and is summed in place.
+    for host in varying
         device = Adapt.adapt(ToNoFloat64Device(), host)
+        @test device.cell_mass_rate_series === host.cell_mass_rate_series
+        slots = device.window_buffer.slots
+        @test (slots isa Tuple ? first(slots) : slots) isa NoFloat64Array
+        for t in (0.0, 1800.0, 9000.0)
+            @test total_emission_rate(device, t) === total_emission_rate(host, t)
+        end
+        @test integrated_emission(device, 0.0, 7200.0, 450.0) === integrated_emission(host, 0.0, 7200.0, 450.0)
+    end
+
+    # Static rates adapted to the device, and a series built on the device,
+    # are copied to the host for their sums.
+    on_device = (map(host -> (host, Adapt.adapt(ToNoFloat64Device(), host)), statics)...,
+                 map((host, s) -> (host, TimeVaryingSurfaceFluxSource(:CO2, Adapt.adapt(ToNoFloat64Device(), s),
+                                                                       times, host.scheme)),
+                     varying, series)...)
+    for (host, device) in on_device
         rates = host isa SurfaceFluxSource ? device.cell_mass_rate : device.cell_mass_rate_series
         array = rates isa Tuple ? first(rates) : rates
         @test array isa NoFloat64Array

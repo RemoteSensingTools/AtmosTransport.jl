@@ -196,7 +196,9 @@ ATMOSTR_TIMERS=1 julia --project=. scripts/run_transport.jl my_run.toml
 The runner prints a timing breakdown and writes a sibling
 `*.timings.csv` when an output NetCDF path is configured. Useful sections
 include window loading, backend copying, forcing refresh, advection,
-diffusion, convection, and output. Allocation sampling can be added with
+diffusion, convection, and output; with time-varying surface fluxes,
+`surface_flux_upload` is the copy of each window's flux slices from host
+memory to the device. Allocation sampling can be added with
 `ATMOSTR_ALLOC_TIMERS=1`.
 
 Read these measurements with their scope in mind:

@@ -159,6 +159,8 @@ end
     _surface_flux_cs_interp_kernel!(q_raw, series, comp, w0, w1, i0, i1, dt, tracer_idx, Nz, Hp, deposit)
 
 Time-interpolated variant: the increment is `(w0·series[i0] + w1·series[i1])·dt`.
+`series` is one panel of a time-varying source's window buffer, `(Nc, Nc, capacity)`,
+and `i0`, `i1` are the buffer slots holding the two slices.
 """
 @kernel function _surface_flux_cs_interp_kernel!(q_raw, @Const(series), comp, w0, w1, i0, i1,
                                                   dt, tracer_idx, Nz, Hp, deposit)

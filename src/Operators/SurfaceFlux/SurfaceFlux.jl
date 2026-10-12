@@ -19,6 +19,11 @@ The `AbstractSurfaceFluxOperator` hierarchy (`NoSurfaceFlux`,
 `apply!` / `apply_surface_flux!` entry points live alongside these data
 types.
 
+A `TimeVaryingSurfaceFluxSource` keeps its rate series in host memory. Its
+device copy is a small window buffer (`FluxWindowBuffer`) holding only the
+slices that the current met window reads; `stage_surface_flux_window!` fills it
+when a window becomes current, and the kernels read the rates from it.
+
 Emission totals for logs and budgets come from the operator's own temporal
 reconstruction: `total_emission_rate(src, t)` (global storage rate at an
 instant), `emission_segments(src, t, dt)` (the pieces one step applies) and
