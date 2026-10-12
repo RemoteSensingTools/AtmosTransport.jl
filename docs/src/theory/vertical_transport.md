@@ -310,7 +310,27 @@ by at least 1 Pa when `p_s` changes by 1000 hPa. GEOS/MERRA-2 L72 layer 41
 3 % of every column correction at full mass weight although its thickness does
 not follow `p_s`. The smallest genuine hybrid increment of the shipped tables
 is ERA5 L137 layer 55 (`ΔB = 7 × 10⁻⁶`, 0.17 % of its thickness at 1000 hPa);
-the next GEOS layer has `ΔB = 7 × 10⁻³`.
+the next GEOS layer has `ΔB = 7 × 10⁻³`. On the GEOS-IT C45 golden day the
+threshold changes the layer-41 fluxes by 1.8–1.9 % RMS and `cm` at 177–288 hPa
+by 12 % to 5 % RMS; on MERRA-2 C90 by 0.25 % and 3.5 % to 1.4 %, and the
+MERRA-2 OMEGA NRMSE improves from 0.4725 to 0.4712.
+
+**Size of the default change.** `hybrid_mass` against `mass` on the golden
+days (2021-12-01 GEOS-IT and ERA5, 2022-01-15 MERRA-2; the cubed-sphere numbers
+were measured with the `ΔB > 0` mask, before the threshold above):
+- GEOS-IT native C180 → C45: stratospheric RMS `cm` falls by 25–43 % between
+  5 and 130 hPa (0.57× at 48 hPa). Horizontal fluxes on faces above 10 % of
+  the global maximum change by up to 17.8 % (99th percentile 2 %);
+  flux-weighted, by 1–2.7 % in the pure-pressure layers 1–40 and 0.25–0.7 % in
+  the hybrid layers. Tropospheric `cm` changes by less than 0.3 %. With `mass`
+  weights the column residual is pushed into the pure-pressure layers as
+  spurious stratospheric vertical flux (a young-air bias); `hybrid_mass` keeps
+  their native divergence, as GCHP's remap in fixed-pressure layers and TM5's
+  `ΔB` weighting do.
+- ERA5 spectral C24: stratospheric RMS `cm` 0.65–0.72×.
+- ERA5 lat-lon 72×37: stratospheric RMS `cm` 0.60–0.69× at 10–100 hPa and
+  0.72–0.93× at 100–200 hPa; reduced Gaussian O24: 0.70–0.83× and 0.83–0.96×.
+- Air masses, `ps` and `dm` are unchanged in every case.
 
 The vertical mass flux (section 3) inherits the correction as
 `Σ_{j ≤ k} (w_j/Σw − ΔB_j) · δ`, a mode that is coherent in the vertical.
