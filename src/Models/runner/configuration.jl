@@ -8,10 +8,17 @@
 Validated runtime tracer configuration: tracer name, initial-condition
 configuration, and optional surface-flux configuration.
 """
-struct TransportTracerSpec
+struct TransportTracerSpec{I <: AbstractInitialConditionSpec}
     name             :: Symbol
+    init_spec        :: I
     init_cfg         :: Dict{String, Any}
     surface_flux_cfg :: Dict{String, Any}
+end
+
+function TransportTracerSpec(name::Symbol, init_cfg::Dict{String, Any},
+                             surface_flux_cfg::Dict{String, Any})
+    return TransportTracerSpec(name, initial_condition_spec(init_cfg), init_cfg,
+                               surface_flux_cfg)
 end
 
 _copy_cfg_dict(cfg) = Dict{String, Any}(String(k) => v for (k, v) in pairs(cfg))

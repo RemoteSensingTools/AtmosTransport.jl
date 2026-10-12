@@ -212,9 +212,14 @@ function run_snapshot_paths(ctx::RunContext)
     spec = _output_spec(ctx)
     output_enabled(spec) || throw(ArgumentError(
         "the run writes no snapshots ([output] is disabled, has no path or no snapshot times)"))
-    spec.format === :netcdf || throw(ArgumentError(
-        "the run writes $(spec.format) snapshots; the diagnostics read NetCDF snapshots"))
-    return _partition_paths(ctx, spec, spec.partition)
+    return _run_snapshot_paths(ctx, spec, spec.format)
+end
+
+_run_snapshot_paths(ctx::RunContext, spec, ::NetCDFOutput) =
+    _partition_paths(ctx, spec, spec.partition)
+function _run_snapshot_paths(::RunContext, spec, format::AbstractOutputFormat)
+    throw(ArgumentError(
+        "the run writes $(output_format_label(format)) snapshots; the diagnostics read NetCDF snapshots"))
 end
 
 _partition_paths(ctx, spec, ::SingleOutputFile) = [output_path(spec)]

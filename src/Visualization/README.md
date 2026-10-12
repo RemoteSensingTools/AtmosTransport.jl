@@ -28,18 +28,18 @@ All in [`Visualization.jl`](Visualization.jl):
 
   The returned object holds no open file handle.
 - `available_variables`, `snapshot_times`, `snapshot_topology`, and
-  `frame_indices(snapshot, times=:all)` query an open snapshot
-- `fieldview(snapshot, variable; transform=:column_mean, time=1, level=nothing, unit=:native) -> HorizontalField`
+  `frame_indices(snapshot, times=AllFrames())` query an open snapshot
+- `fieldview(snapshot, variable; transform=ColumnMean(), time=1, level=nothing, unit=NativeUnit()) -> HorizontalField`
   - `time` is a frame index (integer) or a snapshot hour (the nearest frame is
     taken)
-  - `unit=:ppm` multiplies the values by 1e6
+  - `unit=PPMUnit()` multiplies the values by 1e6
   - Cubed-sphere transforms:
-    - `:column_mean` uses the stored `<var>_column_mean` if present; otherwise
+    - `ColumnMean()` uses the stored `<var>_column_mean` if present; otherwise
       it computes an air-mass-weighted mean from full levels
-    - `:column_sum`
-    - `:level_slice` (requires `level`)
-    - `:surface_slice` (defaults to level `nlevel`, the last level)
-  - Lat-lon and reduced-Gaussian files support `:column_mean` only
+    - `ColumnSum()`
+    - `LevelSlice()` (requires `level`)
+    - `SurfaceSlice()` (defaults to level `nlevel`, the last level)
+  - Lat-lon and reduced-Gaussian files support `ColumnMean()` only
 - `as_raster(field; resolution=(360, 181), cache=SnapshotRegridCache()) -> RasterField`
   - lat-lon and reduced-Gaussian values pass through unchanged
   - cubed-sphere fields are conservatively regridded to lon-lat. The
@@ -49,8 +49,8 @@ All in [`Visualization.jl`](Visualization.jl):
     `cs_*` attributes, or the convention's default for older files.
 - `robust_colorrange(fields; trim=(0.01, 0.99))` returns a color range from
   quantiles of the finite values
-- `PlotSpec(variable; transform, level, title, unit)` describes one panel of
-  `movie_grid`
+- `PlotSpec(variable; transform, level, title, unit)` parses canonical names
+  into typed transforms/units and describes one panel of `movie_grid`
 - Makie stubs that throw `ArgumentError` until a backend is loaded: `mapplot`,
   `mapplot!`, `snapshot_grid`, `movie`, `movie_grid`,
   `catrine_map_curtains`, `catrine_map_curtains_3way`

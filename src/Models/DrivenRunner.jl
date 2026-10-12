@@ -64,7 +64,8 @@ aborts the run with a precise error message.
 module DrivenRunner
 
 using Adapt
-using ..Models: _config_bool, _spec_int, Callback, NaNChecker, WindowInterval
+using ..Models: _config_bool, _spec_int, Callback, NaNChecker, WindowInterval,
+                AbstractInitialConditionSpec, initial_condition_spec
 using Dates: Dates, Date, DateTime, Day, Millisecond, Time, @dateformat_str
 using Printf: @sprintf, @printf
 using Logging
@@ -103,6 +104,7 @@ using ..BinaryPathExpander: expand_binary_paths
 using ..InputStaging: InputStager, staged_path_for!, cleanup_staging!
 using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, SnapshotFrame,
                 AbstractOutputPartition, SingleOutputFile, DailyOutputFiles,
+                AbstractOutputFormat, NetCDFOutput, BinaryMmapOutput,
                 RuntimeOutputSpec, runtime_output_spec, snapshot_hours,
                 output_enabled, output_path, output_path_for_day,
                 capture_snapshot, write_snapshot_netcdf, write_snapshot_binary,
@@ -390,9 +392,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     _check_output_targets(output_spec, output_cfg)
     _check_snapshot_schedule(output_spec,
                              _window_end_hours(layout; start_window, stop_window_override))
-    do_snapshots && output_spec.format === :binary_mmap && throw(ArgumentError(
-        "[output] format = \"binary_mmap\" (ATMSNAP) is written for cubed-sphere runs " *
-        "only; use format = \"netcdf\" on lat-lon and reduced-Gaussian grids"))
+    do_snapshots && _validate_structured_output_format(output_spec.format)
     recipe = build_runtime_physics_recipe(cfg, first_driver, FT)
     _validate_capability_match(first_driver, recipe)
 
@@ -457,7 +457,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
         function capture_structured!(hour_total)
             timed_io_write!(timer, () -> begin
                 frame = capture_snapshot(model; time_hours = hour_total,
-                                         fields=output_spec.format === :netcdf ? output_spec.fields : nothing)
+                                         fields=_snapshot_capture_fields(output_spec))
                 _record_snapshot!(stream, output_spec.partition, snapshots,
                                       day_snapshots, frame)
             end)
@@ -820,7 +820,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
             timed_io_write!(timer, () -> begin
                 frame = capture_snapshot(model; time_hours = hour_total,
                                          halo_width = Hp,
-                                         fields=output_spec.format === :netcdf ? output_spec.fields : nothing)
+                                         fields=_snapshot_capture_fields(output_spec))
                 _record_snapshot!(stream, output_spec.partition, snapshots,
                                       day_snapshots, frame)
             end)

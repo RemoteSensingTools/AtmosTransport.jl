@@ -81,13 +81,15 @@ const O = AtmosTransport.Output
             if topology === :cs
                 @test snap.topology.nlevel == Nz
                 if mode == "selected"
-                    layer = AtmosTransport.Visualization.fieldview(snap,:co2;
-                                                                  transform=:level_slice,level=3)
+                    layer = AtmosTransport.Visualization.fieldview(
+                        snap, :co2;
+                        transform=AtmosTransport.Visualization.LevelSlice(), level=3)
                     NCDataset(path) do ds
                         @test layer.values == ds["co2"][:,:,:,2,1]
                     end
-                    @test_throws ArgumentError AtmosTransport.Visualization.fieldview(snap,:co2;
-                                                                                      transform=:surface_slice)
+                    @test_throws ArgumentError AtmosTransport.Visualization.fieldview(
+                        snap, :co2;
+                        transform=AtmosTransport.Visualization.SurfaceSlice())
                 end
             end
         end

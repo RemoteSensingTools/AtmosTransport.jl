@@ -304,6 +304,7 @@ export get_tracer, mixing_ratio, total_mass, total_air_mass
 export tracer_names, ntracers
 export capture_snapshot, write_snapshot_netcdf, SnapshotFrame, SnapshotWriteOptions
 export runtime_output_spec, observation_output_spec
+export AbstractOutputFormat, NetCDFOutput, BinaryMmapOutput, output_format_label
 export GnomonicPanelConvention, GEOSNativePanelConvention
 
 # Common operator configuration
@@ -331,6 +332,11 @@ export with_chemistry, with_diffusion, with_emissions, with_convection, with_con
 export build_runtime_physics_recipe, validate_runtime_physics_recipe
 export build_initial_mixing_ratio, pack_initial_tracer_mass
 export TransportTracerSpec
+export AbstractInitialConditionSpec, UniformInitialConditionSpec
+export LatitudeStepInitialConditionSpec, BoundaryLayerEnhancedInitialConditionSpec
+export GaussianBlobInitialConditionSpec, FileInitialConditionSpec
+export CatrineCO2InitialConditionSpec, PressureLayerInitialConditionSpec
+export CSNativeInitialConditionSpec, initial_condition_spec
 
 # Transport binaries and met-driver summaries
 export write_transport_binary

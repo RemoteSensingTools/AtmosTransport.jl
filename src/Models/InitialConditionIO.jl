@@ -93,6 +93,32 @@ using Printf: @sprintf
 # Config-kind resolvers
 # ---------------------------------------------------------------------------
 
+abstract type AbstractInitialConditionSpec end
+
+struct UniformInitialConditionSpec <: AbstractInitialConditionSpec end
+struct LatitudeStepInitialConditionSpec <: AbstractInitialConditionSpec end
+struct BoundaryLayerEnhancedInitialConditionSpec <: AbstractInitialConditionSpec end
+struct GaussianBlobInitialConditionSpec <: AbstractInitialConditionSpec end
+struct FileInitialConditionSpec <: AbstractInitialConditionSpec end
+struct CatrineCO2InitialConditionSpec <: AbstractInitialConditionSpec end
+struct PressureLayerInitialConditionSpec <: AbstractInitialConditionSpec end
+struct CSNativeInitialConditionSpec <: AbstractInitialConditionSpec end
+
+"Parse an initial-condition kind once at the runtime configuration boundary."
+function initial_condition_spec(cfg::AbstractDict)
+    kind = lowercase(String(get(cfg, "kind", "uniform")))
+    kind == "uniform" && return UniformInitialConditionSpec()
+    kind in ("latitude_step", "lat_step", "hemisphere_step") &&
+        return LatitudeStepInitialConditionSpec()
+    kind == "bl_enhanced" && return BoundaryLayerEnhancedInitialConditionSpec()
+    kind == "gaussian_blob" && return GaussianBlobInitialConditionSpec()
+    kind in ("file", "netcdf", "file_field") && return FileInitialConditionSpec()
+    kind == "catrine_co2" && return CatrineCO2InitialConditionSpec()
+    kind == "pressure_layer" && return PressureLayerInitialConditionSpec()
+    kind == "cs_native" && return CSNativeInitialConditionSpec()
+    throw(ArgumentError("unsupported init.kind=$(repr(kind))"))
+end
+
 @inline _init_kind(cfg) = Symbol(lowercase(String(get(cfg, "kind", "uniform"))))
 @inline _is_file_init_kind(kind::Symbol) = kind in (:file, :netcdf, :file_field, :catrine_co2)
 @inline _is_latitude_step_kind(kind::Symbol) =
@@ -814,6 +840,11 @@ include("initial_conditions/surface_flux.jl")
 # ---------------------------------------------------------------------------
 
 export FileInitialConditionSource
+export AbstractInitialConditionSpec, UniformInitialConditionSpec
+export LatitudeStepInitialConditionSpec, BoundaryLayerEnhancedInitialConditionSpec
+export GaussianBlobInitialConditionSpec, FileInitialConditionSpec
+export CatrineCO2InitialConditionSpec, PressureLayerInitialConditionSpec
+export CSNativeInitialConditionSpec, initial_condition_spec
 export build_initial_mixing_ratio
 export pack_initial_tracer_mass
 export FileSurfaceFluxField, TimeVaryingFileSurfaceFluxField

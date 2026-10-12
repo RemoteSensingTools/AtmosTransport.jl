@@ -68,7 +68,7 @@ using .AtmosTransport.Output
                                                  "split" => "daily",
                                                  "format" => "binary_mmap"),
                                              Float64)
-            @test f64_binary.format === :binary_mmap
+            @test f64_binary.format isa BinaryMmapOutput
             @test f64_binary.options.float_type === Float32
             f64_netcdf = runtime_output_spec(Dict{String, Any}(
                                                  "path" => joinpath(dir, "run.nc"),
@@ -76,6 +76,7 @@ using .AtmosTransport.Output
                                                  "stop_hour" => 6,
                                                  "split" => "single"),
                                              Float64)
+            @test f64_netcdf.format isa NetCDFOutput
             @test f64_netcdf.options.float_type === Float64
 
             disabled = runtime_output_spec(Dict{String, Any}("enabled" => false,

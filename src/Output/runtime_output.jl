@@ -1,6 +1,7 @@
 abstract type AbstractOutputSchedule end
 abstract type AbstractOutputPartition end
 abstract type AbstractLayerSelection end
+abstract type AbstractOutputFormat end
 
 struct ExplicitSnapshotSchedule <: AbstractOutputSchedule
     hours::Vector{Float64}
@@ -14,6 +15,12 @@ end
 
 struct SingleOutputFile <: AbstractOutputPartition end
 struct DailyOutputFiles <: AbstractOutputPartition end
+
+struct NetCDFOutput <: AbstractOutputFormat end
+struct BinaryMmapOutput <: AbstractOutputFormat end
+
+output_format_label(::NetCDFOutput) = :netcdf
+output_format_label(::BinaryMmapOutput) = :binary_mmap
 
 struct FullLayerSelection <: AbstractLayerSelection end
 struct SelectedLayerSelection <: AbstractLayerSelection end
@@ -39,23 +46,15 @@ end
 struct RuntimeOutputSpec{S <: AbstractOutputSchedule,
                          P <: AbstractOutputPartition,
                          O <: SnapshotWriteOptions,
-                         F <: OutputFieldSpec}
+                         F <: OutputFieldSpec,
+                         M <: AbstractOutputFormat}
     path::String
     schedule::S
     partition::P
     options::O
     fields::F
     enabled::Bool
-    format::Symbol   # :netcdf (default) or :binary_mmap (offline NetCDF conversion)
-end
-
-# Backward-compatible 6-arg constructor: defaults format to :netcdf.
-function RuntimeOutputSpec(path::AbstractString, schedule::AbstractOutputSchedule,
-                            partition::AbstractOutputPartition,
-                            options::SnapshotWriteOptions,
-                            fields::OutputFieldSpec, enabled::Bool)
-    return RuntimeOutputSpec(String(path), schedule, partition, options, fields,
-                              enabled, :netcdf)
+    format::M
 end
 
 function ExplicitSnapshotSchedule(hours::AbstractVector{<:Real})
@@ -203,7 +202,7 @@ tracer_fields(fields::OutputFieldSpec, name::Symbol) =
     get(fields.tracer_overrides, name, fields.default_tracer)
 
 function _output_options(output_cfg::AbstractDict, ::Type{FT},
-                         format::Symbol = :netcdf) where FT <: AbstractFloat
+                         format::AbstractOutputFormat = NetCDFOutput()) where FT <: AbstractFloat
     # On-disk snapshot precision is independent of the model compute type FT.
     # NetCDF defaults to FT (back-compatible), but the binary/ATMSNAP payload is
     # Float32-only on disk (`binary_writer.jl`), so for that format the on-disk
@@ -213,16 +212,22 @@ function _output_options(output_cfg::AbstractDict, ::Type{FT},
     # SnapshotFrame also records a compensated Float64 global total per tracer;
     # ATMSNAP stores those totals in its JSON header even though its spatial
     # payload remains Float32.
-    on_disk = FT
-    if format === :binary_mmap && on_disk !== Float32
-        @info "Binary (ATMSNAP) output is Float32-only on disk; storing Float32 \
-               snapshots while the model integrates in $(FT)."
-        on_disk = Float32
-    end
+    on_disk = _output_float_type(format, FT)
+    _log_output_float_coercion(format, FT)
     return SnapshotWriteOptions(float_type = on_disk,
                                 deflate_level = Int(get(output_cfg, "deflate_level", 0)),
                                 shuffle = _config_bool(get(output_cfg, "shuffle", true),
                                                        "[output].shuffle"))
+end
+
+_output_float_type(::NetCDFOutput, ::Type{FT}) where FT <: AbstractFloat = FT
+_output_float_type(::BinaryMmapOutput, ::Type{<:AbstractFloat}) = Float32
+_log_output_float_coercion(::NetCDFOutput, ::Type{<:AbstractFloat}) = nothing
+_log_output_float_coercion(::BinaryMmapOutput, ::Type{Float32}) = nothing
+function _log_output_float_coercion(::BinaryMmapOutput, ::Type{FT}) where FT <: AbstractFloat
+    @info "Binary (ATMSNAP) output is Float32-only on disk; storing Float32 \
+           snapshots while the model integrates in $(FT)."
+    return nothing
 end
 
 function _output_path(output_cfg::AbstractDict, default_path::AbstractString)
@@ -310,8 +315,8 @@ end
 
 function _parse_output_format(value)
     s = lowercase(String(value))
-    s in ("netcdf", "nc") && return :netcdf
-    s in ("binary_mmap", "binary", "mmap", "atmsnap") && return :binary_mmap
+    s in ("netcdf", "nc") && return NetCDFOutput()
+    s in ("binary_mmap", "binary", "mmap", "atmsnap") && return BinaryMmapOutput()
     throw(ArgumentError(
         "[output].format must be \"netcdf\" or \"binary_mmap\", got \"$(value)\""))
 end

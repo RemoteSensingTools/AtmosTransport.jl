@@ -17,6 +17,8 @@ import AtmosTransport
 using AtmosTransport.Parameters: DRY_AIR_MOLAR_MASS, SPECIES_MOLAR_MASS, STANDARD_GRAVITY
 import AtmosTransport.Visualization:
     HorizontalField, RasterField, SnapshotDataset, SnapshotRegridCache, PlotSpec,
+    ColumnMean, LevelSlice, SurfaceSlice, NativeUnit, AllFrames,
+    field_transform_label,
     fieldview, frame_indices, as_raster, robust_colorrange,
     mapplot, mapplot!, snapshot_grid, movie, movie_grid, catrine_map_curtains,
     catrine_map_curtains_3way
@@ -33,7 +35,7 @@ end
 
 function _title(raster::RasterField; override=nothing)
     override !== nothing && return String(override)
-    return "$(raster.name) $(raster.transform), t=$(round(raster.time; digits=2)) h"
+    return "$(raster.name) $(field_transform_label(raster.transform)), t=$(round(raster.time; digits=2)) h"
 end
 
 function _colorrange(rasters, colorrange)
@@ -111,16 +113,16 @@ function _grid_size(n::Int, cols::Int)
 end
 
 """
-    snapshot_grid(snapshot, variable; times=:all, cols=4, kwargs...) -> Figure
+    snapshot_grid(snapshot, variable; times=AllFrames(), cols=4, kwargs...) -> Figure
 
 Render a multi-panel figure containing one variable at several snapshot times.
 """
 function snapshot_grid(snapshot::SnapshotDataset,
                        variable::Union{Symbol, AbstractString};
-                       transform::Symbol=:column_mean,
-                       times=:all,
+                       transform=ColumnMean(),
+                       times=AllFrames(),
                        level::Union{Nothing, Int}=nothing,
-                       unit::Symbol=:native,
+                       unit=NativeUnit(),
                        cols::Int=4,
                        resolution::Tuple{Int, Int}=(360, 181),
                        cache::SnapshotRegridCache=SnapshotRegridCache(),
@@ -128,11 +130,12 @@ function snapshot_grid(snapshot::SnapshotDataset,
                        colorrange=:auto,
                        size=nothing)
     indices = frame_indices(snapshot, times)
-    fields = [fieldview(snapshot, variable;
-                        transform=transform,
+    spec = PlotSpec(Symbol(variable); transform, level, unit)
+    fields = [fieldview(snapshot, spec.variable;
+                        transform=spec.transform,
                         time=i,
-                        level=level,
-                        unit=unit) for i in indices]
+                        level=spec.level,
+                        unit=spec.unit) for i in indices]
     rasters = [as_raster(f; resolution=resolution, cache=cache) for f in fields]
     cr = _colorrange(rasters, colorrange)
     rows, columns = _grid_size(length(rasters), cols)
@@ -157,12 +160,13 @@ end
 
 function _spec_title(spec::PlotSpec, raster::RasterField)
     spec.title === nothing || return spec.title
-    if spec.transform === :level_slice || spec.transform === :surface_slice
-        lev = spec.level === nothing ? "" : " level $(spec.level)"
-        return "$(spec.variable) $(spec.transform)$(lev)"
-    end
-    return "$(spec.variable) $(spec.transform)"
+    return "$(spec.variable) $(field_transform_label(spec.transform))" *
+           _level_title_suffix(spec.transform, spec.level)
 end
+
+_level_title_suffix(::Union{LevelSlice, SurfaceSlice}, level) =
+    level === nothing ? "" : " level $(level)"
+_level_title_suffix(transform, level) = ""
 
 function _spec_rasters(snapshot::SnapshotDataset, spec::PlotSpec, indices;
                        resolution, cache)
@@ -175,7 +179,7 @@ function _spec_rasters(snapshot::SnapshotDataset, spec::PlotSpec, indices;
 end
 
 """
-    movie_grid(snapshot, specs, out; times=:all, fps=8, kwargs...) -> String
+    movie_grid(snapshot, specs, out; times=AllFrames(), fps=8, kwargs...) -> String
 
 Record a multi-panel GIF/MP4 from snapshot fields. Each `PlotSpec` becomes one
 panel, and expensive topology geometry is cached across all frames.
@@ -183,7 +187,7 @@ panel, and expensive topology geometry is cached across all frames.
 function movie_grid(snapshot::SnapshotDataset,
                     specs::AbstractVector{PlotSpec},
                     out::AbstractString;
-                    times=:all,
+                    times=AllFrames(),
                     fps::Real=8,
                     cols::Int=max(1, length(specs)),
                     resolution::Tuple{Int, Int}=(360, 181),
@@ -245,9 +249,9 @@ Record a one-panel movie for one variable.
 function movie(snapshot::SnapshotDataset,
                variable::Union{Symbol, AbstractString},
                out::AbstractString;
-               transform::Symbol=:column_mean,
+               transform=ColumnMean(),
                level::Union{Nothing, Int}=nothing,
-               unit::Symbol=:native,
+               unit=NativeUnit(),
                kwargs...)
     spec = PlotSpec(Symbol(variable); transform=transform, level=level, unit=unit)
     return movie_grid(snapshot, [spec], out; kwargs...)
