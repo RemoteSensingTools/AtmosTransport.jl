@@ -30,6 +30,10 @@ end
                 a::Int
                 b::Int = 2
             end
+            Base.@kwdef mutable struct State
+                const c::Int
+                d::Int = 0
+            end
             """)
         write(joinpath(root, "test", "b.jl"), """
             writer("p", 2; mass_basis = :dry)
@@ -39,9 +43,10 @@ end
             @test_throws UndefKeywordError writer("p", 2)
             Cfg(; b = 3)
             Cfg(1, 2)
+            State(; d = 1)
             """)
         findings, _, _ = KeywordCallCheck.check_repository(root)
         @test [(f.line, f.name, f.missing_keywords) for f in findings] ==
-              [(1, :writer, [:surface_pressure_basis]), (6, :Cfg, [:a])]
+              [(1, :writer, [:surface_pressure_basis]), (6, :Cfg, [:a]), (8, :State, [:c])]
     end
 end

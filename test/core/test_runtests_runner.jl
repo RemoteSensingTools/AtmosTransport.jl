@@ -115,6 +115,13 @@ listed(log) = filter(l -> startswith(l, "core/") || startswith(l, "regridding/")
     @test length(listed(log)) == 6
     @test occursin("src/Unmapped.jl maps to no test topic", log)
 
+    # A moved file selects the topics of its old and its new path.
+    renamed = fake_grouped_repo()
+    run(`git -C $renamed mv src/Alpha/x.jl src/Beta.jl`)
+    code, log = run_runner(renamed, "--changed=HEAD", "--list")
+    @test listed(log) == ["core/test_a.jl", "core/test_b.jl", "core/test_c.jl",
+                          "regridding/runtests.jl"]
+
     # Selected files run; the others do not.
     code, log = run_runner(repo, "--topics=alpha")
     @test code == 0

@@ -106,12 +106,14 @@ end
 
 Repository-relative paths changed on this branch since its merge base with
 `ref` (`git diff --name-only ref...HEAD`), plus uncommitted changes to
-tracked files and untracked files that are not ignored.
+tracked files and untracked files that are not ignored. A renamed file
+contributes its old and its new path.
 """
 function changed_paths(repo_root::AbstractString, ref::AbstractString)
     paths = Set{String}()
-    union!(paths, _git_lines(repo_root, ["diff", "--name-only", "$(ref)...HEAD"]))
-    union!(paths, _git_lines(repo_root, ["diff", "--name-only", "HEAD"]))
+    # Without rename detection a moved file lists both its old and new path.
+    union!(paths, _git_lines(repo_root, ["diff", "--name-only", "--no-renames", "$(ref)...HEAD"]))
+    union!(paths, _git_lines(repo_root, ["diff", "--name-only", "--no-renames", "HEAD"]))
     union!(paths, _git_lines(repo_root, ["ls-files", "--others", "--exclude-standard"]))
     return sort!(collect(paths))
 end

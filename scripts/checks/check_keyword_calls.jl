@@ -136,6 +136,7 @@ function kwdef_signatures(st::Expr, file, line)
     nfields = 0
     for f in st.args[3].args
         f isa LineNumberNode && continue
+        f isa Expr && f.head === :const && (f = f.args[1])   # mutable struct `const` field
         if f isa Symbol || (f isa Expr && f.head === :(::))
             push!(required, keyword_name(f)); nfields += 1
         elseif f isa Expr && f.head === :(=) && signature_call(f.args[1]) === nothing
