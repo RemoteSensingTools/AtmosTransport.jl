@@ -1,0 +1,37 @@
+# GEOS-IT native C180 -> C45, full L72, minimal dynamics-only golden.
+# `column_balance_weights` is deliberately absent here and in the source
+# descriptor: this case protects the GEOS native path's effective default.
+
+[source]
+toml     = "config/met_sources/geosit.toml"
+root_dir = "/temp1/cfranken/goldens/inputs/geosit_c180_20211201"
+
+[output]
+directory  = "@OUTPUT@"
+mass_basis = "dry"
+
+[grid]
+type                = "cubed_sphere"
+Nc                  = 45
+panel_convention    = "geos_native"
+definition          = "gmao_equal_distance"
+regridder_cache_dir = "@OUTPUT@/_regrid_cache"
+
+[vertical]
+coefficients = "config/geos_L72_coefficients.toml"
+transform    = "identity"
+
+[numerics]
+float_type                 = "Float32"
+dt_met_seconds             = 3600.0
+chain_mass                 = false
+positivity_cfl_limit       = 0.95
+require_substep_positivity = true
+substep_schedule           = "adaptive_cfl"
+substep_cfl_target         = 0.95
+min_steps_per_window       = 1
+max_steps_per_window       = 512
+
+[mass_fix]
+enable = true
+mode   = "target_ps_dry"

@@ -32,8 +32,8 @@ difference.
 Select cases with `--cases=a,b` (whatever their tags), `--tags=run,gpu`
 (cases carrying all of these) or `--skip-tags=slow`. The cases run in three
 [worker sessions](#sessions) (preprocessing, CPU runs, GPU runs). On wurst
-(L40S) a full check of the 27 cases takes about 41 minutes (about 70 with one
-process per case): preprocessing 16, CPU runs 16 and GPU runs 8 minutes. The
+(L40S) a full check of the 28 cases takes about 42 minutes (about 71 with one
+process per case): preprocessing 17, CPU runs 16 and GPU runs 8 minutes. The
 preprocessing cases need 35 GB of memory (L117). GPU cases run on the visible
 CUDA device (`CUDA_VISIBLE_DEVICES`); `--threads=N` sets the Julia threads of
 each session (default 8) and `--timeout=MIN` the minutes after which a hung
@@ -212,6 +212,7 @@ a change.
 | `pre_o24` | ERA5 spectral → octahedral reduced-Gaussian O24, humidity-aware dry-mass pin, Float64 |
 | `pre_c24` | ERA5 spectral → C24 through a staging grid, Float64 |
 | `pre_merra2_c90` | MERRA-2 → C90 L72 with GCHP's flux construction (vector fluxes, Cartesian regrid, FV3 filter), adaptive substeps, Float32 |
+| `pre_geosit_c45` | GEOS-IT native C180 → C45 L72 block coarsening, GEOS panels, endpoint column balance with the source's default weights, adaptive substeps, Float32 |
 | `pre_era5_n320_c90_l117` | ERA5 N320 → C90 L117, line-integral window-mean fluxes, TM5 diffusion fields (`slow`: about 10 min, 35 GB) |
 | `run_ll72_*` | lat-lon PPM (CPU Float64), slopes (GPU Float32), upwind (CPU Float32) |
 | `run_o24_upwind_cpu_f64` | reduced-Gaussian upwind (CPU Float64) |
@@ -227,18 +228,19 @@ Rn-222 sources (time-varying sources are cubed-sphere only), constant Kz,
 decay, a Gaussian blob and a uniform 400 ppm tracer. The C90 cases run
 2022-01-15 from the 2021-12-01 initial states.
 
-Not covered yet: GEOS native cubed-sphere preprocessing (MFXC/MFYC, cm
-closures), the binary snapshot writer, observation sampling, TM5 convection
-attachment, adjoints and inversions (their kernels accumulate with atomics, so
-they need a tolerance or a dot-product test rather than bit identity),
-Float64 on GPU and Metal.
+Not covered yet: GEOS native identity-C180 and GEOS-FP C720 preprocessing,
+GEOS surface/PBL, convection, VDIFF, OMEGA regularization and chain-mass paths,
+the binary snapshot writer, observation sampling, TM5 convection attachment,
+adjoints and inversions (their kernels accumulate with atomics, so they need a
+tolerance or a dot-product test rather than bit identity), Float64 on GPU and
+Metal.
 
 ## Inputs
 
 The cases read data on the group's servers (`~/data/AtmosTransport`): ERA5
 N320 raw fields, the GEOS-Chem MERRA-2 archive, the CATRINE emissions, initial
 states and native-C90 fluxes, and GCHP's 2021-12-01 03 UTC output (initial
-state). Two inputs are frozen copies in `/temp1/cfranken/goldens/inputs`:
+state). Three input sets are frozen copies in `/temp1/cfranken/goldens/inputs`:
 
 - `era5_0.5x0.5/` holds the ERA5 fields of `pre_ll72`, `pre_o24` and
   `pre_c24`, which read the spectral `lnsp` and `vo_d` files
@@ -251,6 +253,11 @@ state). Two inputs are frozen copies in `/temp1/cfranken/goldens/inputs`:
   `cd /temp1/cfranken/goldens/inputs/era5_0.5x0.5 && sha256sum -c SHA256SUMS`.
 - The ERA5 C90 L66 binaries with TM5 convection attached (2022-01-15 and 16),
   because convection attachment is not part of the preprocessor.
+- `geosit_c180_20211201/` holds only the GEOS-IT native C180 collections used
+  by `pre_geosit_c45`: 2021-12-01 CTM_A1 and CTM_I1 plus the 2021-12-02 CTM_I1
+  endpoint. Surface, convection and VDIFF collections are deliberately absent.
+  Verify them with
+  `cd /temp1/cfranken/goldens/inputs/geosit_c180_20211201 && sha256sum -c SHA256SUMS`.
 
 A changed input file named in a config appears as a note in `check`.
 
