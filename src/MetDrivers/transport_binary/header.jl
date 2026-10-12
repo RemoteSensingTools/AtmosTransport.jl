@@ -182,6 +182,14 @@ cell's incident faces.
 """
 const COLUMN_CLOSURE_RULE = "per_cell_8eps_incident_flux_v1"
 
+"""
+Version of the flux-certificate key block (header `flux_fidelity_schema`).
+Schema 2 carries the flux-weighted `balance_correction_*_relative` metrics and
+the two-sided OMEGA slope bound; schema 1 headers came only from unreleased
+development builds and are rejected.
+"""
+const FLUX_FIDELITY_SCHEMA = 2
+
 const _COLUMN_CLOSURE_KEYS = (
     :column_closure_rule, :column_closure_windows,
     :column_closure_projected_residual_max_kg, :column_closure_residual_to_tolerance_max,
@@ -423,7 +431,7 @@ before the certificate existed read as `FidelityUnavailable`
 """
 function _parse_flux_fidelity_header(hdr, nwindow::Integer, nlevel::Integer)
     # Pre-C6 v4 files stay readable, but their lack of certification is made
-    # explicit in the typed result. Every current writer emits schema=1.
+    # explicit in the typed result. Every current writer emits FLUX_FIDELITY_SCHEMA.
     if !haskey(hdr, :flux_fidelity_schema)
         return FluxFidelityHeader(0, FidelityUnavailable(), NoFluxFidelityKind(),
             FidelityReason("legacy_header_missing"), "", "", 0, 0, 0, "", "", String[],
@@ -432,7 +440,9 @@ function _parse_flux_fidelity_header(hdr, nwindow::Integer, nlevel::Integer)
             nothing, nothing, nothing)
     end
     schema = Int(hdr.flux_fidelity_schema)
-    schema == 1 || throw(ArgumentError("unsupported flux_fidelity_schema=$(schema); expected 1"))
+    schema == FLUX_FIDELITY_SCHEMA || throw(ArgumentError(
+        "unsupported flux_fidelity_schema=$(schema); expected $(FLUX_FIDELITY_SCHEMA) — " *
+        "regenerate this binary with the current preprocessor"))
     status = _parse_fidelity_status(hdr.flux_fidelity_status)
     kind = _parse_flux_fidelity_kind(hdr.flux_fidelity_kind)
     reason = haskey(hdr, :flux_fidelity_reason) ? FidelityReason(String(hdr.flux_fidelity_reason)) : nothing
@@ -1049,7 +1059,7 @@ function _transport_common_header(grid_type::String,
         "n_vdiff_qv" => n_vdiff,
         "n_geometry_elems" => 0,
         "elems_per_window" => elems_per_window,
-        "flux_fidelity_schema" => 1,
+        "flux_fidelity_schema" => FLUX_FIDELITY_SCHEMA,
         "flux_fidelity_status" => "unavailable",
         "flux_fidelity_kind" => "none",
         "flux_fidelity_reason" => "evidence_not_attached",

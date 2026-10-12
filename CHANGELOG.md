@@ -212,7 +212,9 @@
   resolve in the working directory first and then in the package root
   (`Preprocessing.resolve_coefficients_path`), as `[source].toml` already did;
   the shipped configs failed from any other working directory, e.g. under
-  `Pkg.test`, which runs in `test/`. A missing table names both locations.
+  `Pkg.test`, which runs in `test/`. A missing table names both locations; a
+  working-directory table that differs from the shipped one is used with a
+  warning naming both files.
 - A run's absolute time origin is checked before any output or forcing is set
   up, whether or not the run writes output: `[input].start_date`, the first
   binary's `date` header and a `YYYYMMDD` (or `YYYY-MM-DD`) date in its
@@ -254,7 +256,9 @@
   (the flux payload is unchanged). No certificate can catch input errors
   (registration, level order, units): reference and candidate share the input
   fields, and the vector evaluator shares the production face geometry. See
-  `docs/src/concepts/binary_format.md`.
+  `docs/src/concepts/binary_format.md`. The block carries
+  `flux_fidelity_schema = 2`; the reader refuses any other schema with a
+  "regenerate this binary" error.
 
 - Cubed-sphere column balances close in Float64 with a bounded Float32
   closure loop; every production caller checks the closure, the `cm` residual

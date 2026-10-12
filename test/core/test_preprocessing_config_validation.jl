@@ -74,8 +74,13 @@ end
         # A table in the working directory takes precedence over the shipped one.
         mkpath("config")
         cp(shipped, joinpath("config", "era5_L137_coefficients.toml"))
-        @test Pre.resolve_coefficients_path("config/era5_L137_coefficients.toml") ==
+        # An identical copy is used silently; a differing one is used with a warning.
+        @test (@test_logs Pre.resolve_coefficients_path("config/era5_L137_coefficients.toml")) ==
               "config/era5_L137_coefficients.toml"
+        write(joinpath("config", "era5_L137_coefficients.toml"),
+              read(shipped, String) * "\n# local edit\n")
+        @test (@test_logs (:warn, r"differs from the shipped table") Pre.resolve_coefficients_path(
+                   "config/era5_L137_coefficients.toml")) == "config/era5_L137_coefficients.toml"
         @test Pre.n_levels(Pre.load_hybrid_coefficients("config/geos_L72_coefficients.toml")) == 72
         err = try
             Pre.resolve_coefficients_path("config/no_such_coefficients.toml")

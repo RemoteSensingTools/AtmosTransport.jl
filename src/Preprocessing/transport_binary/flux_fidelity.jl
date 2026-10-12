@@ -14,7 +14,6 @@
 # - Native GEOS fluxes have no independent source: their certificate is
 #   `not_applicable` and records only the balance correction.
 
-const FLUX_FIDELITY_SCHEMA = 1
 const FLUX_FIDELITY_SAMPLE_SEED = UInt64(0x6a09e667f3bcc909)
 const OMEGA_FIDELITY_PRESSURE_BANDS =
     ("surface-700", "700-300", "300-100", "100-10", "<10")

@@ -608,8 +608,9 @@ The flat keys begin with `flux_fidelity_`, `omega_fidelity_`,
 `balance_correction_` and `column_closure_`; they form one block, which a
 payload-preserving tool (the TM5 convection attachment) copies verbatim from
 its source and which replaces a writer's default block as a whole.
-`flux_fidelity_schema = 1` is part of the output-reuse
-contract, so an older uncertified binary is regenerated rather than skipped.
+`flux_fidelity_schema = 2` is part of the output-reuse
+contract, so an older uncertified binary is regenerated rather than skipped;
+the reader refuses any other schema with a "regenerate this binary" error.
 The final aggregate header is patched at close time; the payload layout and
 bytes are unchanged.
 

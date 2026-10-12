@@ -428,11 +428,14 @@ end
         @test_throws ArgumentError parse_flux(good; nwindow = 24)
         @test_throws ArgumentError parse_flux(good; nlevel = 72)
         not_applicable = Dict{String,Any}(
-            "flux_fidelity_schema" => 1, "flux_fidelity_status" => "not_applicable",
+            "flux_fidelity_schema" => MD.FLUX_FIDELITY_SCHEMA, "flux_fidelity_status" => "not_applicable",
             "flux_fidelity_kind" => "none", "flux_fidelity_reason" => "source_payload_only",
             "flux_fidelity_samples_per_window" => 0, "flux_fidelity_sample_count" => 0,
             "flux_fidelity_windows" => 0)
         @test parse_flux(not_applicable; nwindow = 24, nlevel = 72).kind isa MD.NoFluxFidelityKind
+        # Schema-1 headers (unreleased development builds) are refused, not misread.
+        @test_throws ArgumentError parse_flux(merge(not_applicable, Dict("flux_fidelity_schema" => 1));
+                                              nwindow = 24, nlevel = 72)
         @test_throws ArgumentError parse_flux(merge(not_applicable,
             Dict{String,Any}("flux_fidelity_max_abs_kg" => 0.0)); nwindow = 24, nlevel = 72)
         @test_throws ArgumentError parse_flux(merge(not_applicable,

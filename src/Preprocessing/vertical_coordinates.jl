@@ -164,13 +164,21 @@ an absolute path must exist as given. A relative path is looked up in the
 working directory first and then in the package root, where the shipped tables
 live (`config/era5_L137_coefficients.toml`, `config/geos_L72_coefficients.toml`),
 so a shipped config works from any working directory (`Pkg.test` runs in
-`test/`). A table found in neither place is an error naming both locations.
+`test/`). A working-directory table that differs from the shipped table of the
+same relative path is used, with a warning naming both files. A table found in
+neither place is an error naming both locations.
 """
 function resolve_coefficients_path(path::AbstractString)
     expanded = expand_data_path(path)
-    isfile(expanded) && return expanded
+    shipped = isabspath(expanded) ? expanded : _package_path(expanded)
+    if isfile(expanded)
+        if shipped != abspath(expanded) && isfile(shipped) && read(shipped) != read(expanded)
+            @warn "Hybrid coefficients: $(abspath(expanded)) (working directory) differs from " *
+                  "the shipped table $shipped; using the working-directory table"
+        end
+        return expanded
+    end
     isabspath(expanded) && error("Coefficients not found: $expanded")
-    shipped = _package_path(expanded)
     isfile(shipped) && return shipped
     error("Coefficients not found: $(repr(String(path))) is neither " *
           "$(abspath(expanded)) (relative to the working directory) nor $shipped " *
