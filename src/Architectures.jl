@@ -14,6 +14,8 @@ using DocStringExtensions
 using KernelAbstractions: KernelAbstractions as KA, @kernel, @index
 
 export AbstractArchitecture, CPU, GPU
+export AbstractArchitectureRequest, CPURequest, CUDARequest, MetalRequest,
+       AutoGPURequest
 export array_type, device, architecture, architecture_from_config
 export autodetect_gpu_architecture, is_gpu, ensure_runtime!, array_adapter
 export architecture_label, device_name, backend_name, synchronize_architecture!
@@ -24,6 +26,28 @@ export AbstractPointOp, index_space, apply_point!, Fused, Sequence
 export FusionPolicy, FuseLaunches, SeparateLaunches, fusion_policy
 
 abstract type AbstractArchitecture end
+
+"""
+$(TYPEDEF)
+
+A parsed request for an execution architecture. Configuration strings become
+one of the concrete request types at the configuration boundary; runtime
+selection then dispatches on the request instead of retaining a string or
+`Symbol` selector.
+"""
+abstract type AbstractArchitectureRequest end
+
+"""Request host CPU execution."""
+struct CPURequest <: AbstractArchitectureRequest end
+
+"""Request the NVIDIA CUDA runtime."""
+struct CUDARequest <: AbstractArchitectureRequest end
+
+"""Request the Apple Metal runtime."""
+struct MetalRequest <: AbstractArchitectureRequest end
+
+"""Request automatic detection of a supported GPU runtime."""
+struct AutoGPURequest <: AbstractArchitectureRequest end
 
 """
 $(TYPEDEF)
@@ -48,7 +72,7 @@ function GPU(backend::Symbol)
     return GPU{backend}()
 end
 
-GPU(backend::AbstractString) = GPU(_architecture_symbol(backend))
+GPU(backend::AbstractString) = _gpu_architecture(_architecture_request(backend))
 
 array_type(::CPU) = Array
 device(::CPU) = KA.CPU()
@@ -83,20 +107,51 @@ function _load_runtime_package!(name::Symbol)
     end
 end
 
-function _architecture_symbol(raw)
-    name = replace(lowercase(String(raw)), '-' => '_', ' ' => '_')
-    name in ("cpu", "host") && return :cpu
-    name in ("cuda", "nvidia") && return :cuda
-    name in ("metal", "apple", "apple_metal") && return :metal
-    name in ("auto", "gpu") && return :auto
+function _architecture_request(raw::AbstractString)
+    raw == "cpu" && return CPURequest()
+    raw == "cuda" && return CUDARequest()
+    raw == "metal" && return MetalRequest()
+    raw == "auto" && return AutoGPURequest()
+    canonical = _removed_architecture_spelling(raw)
+    if canonical !== nothing
+        throw(ArgumentError(
+            "architecture.backend spelling \"$(raw)\" was removed; use one " *
+            "of the canonical values \"cpu\", \"cuda\", \"metal\", or \"auto\" " *
+            "(\"$(canonical)\" for this backend)."))
+    end
     throw(ArgumentError(
         "unknown architecture.backend = \"$(raw)\"; supported values are " *
         "\"cpu\", \"cuda\", \"metal\", and \"auto\"."))
 end
 
-_architecture(::Val{:cpu}) = CPU()
-_architecture(::Val{:cuda}) = GPU(:cuda)
-_architecture(::Val{:metal}) = GPU(:metal)
+function _removed_architecture_spelling(raw::AbstractString)
+    normalized = replace(lowercase(String(raw)), '-' => '_', ' ' => '_')
+    normalized == "host" && return "cpu"
+    normalized == "nvidia" && return "cuda"
+    normalized in ("apple", "apple_metal") && return "metal"
+    normalized == "gpu" && return "auto"
+    normalized in ("cpu", "cuda", "metal", "auto") && return normalized
+    return nothing
+end
+
+_architecture_request(raw) = throw(ArgumentError(
+    "[architecture].backend must be one of the strings \"cpu\", \"cuda\", " *
+    "\"metal\", or \"auto\"; got $(repr(raw))."))
+
+_gpu_architecture(::CUDARequest) = GPU{:cuda}()
+_gpu_architecture(::MetalRequest) = GPU{:metal}()
+_gpu_architecture(request::AbstractArchitectureRequest) = throw(ArgumentError(
+    "GPU(string) requires \"cuda\" or \"metal\"; got a " *
+    "$(nameof(typeof(request))) request."))
+
+function _resolve_architecture(::CPURequest, use_gpu::Bool)
+    use_gpu && throw(ArgumentError(
+        "[architecture] use_gpu = true conflicts with backend = \"cpu\""))
+    return CPU()
+end
+_resolve_architecture(::CUDARequest, ::Bool) = GPU{:cuda}()
+_resolve_architecture(::MetalRequest, ::Bool) = GPU{:metal}()
+_resolve_architecture(::AutoGPURequest, ::Bool) = autodetect_gpu_architecture()
 
 """
     architecture_from_config(config) -> AbstractArchitecture
@@ -113,11 +168,8 @@ function architecture_from_config(config)
 
     raw_backend === nothing && return use_gpu ? autodetect_gpu_architecture() : CPU()
 
-    backend = _architecture_symbol(raw_backend)
-    backend === :cpu && use_gpu && throw(ArgumentError(
-        "[architecture] use_gpu = true conflicts with backend = \"cpu\""))
-    backend === :auto && return autodetect_gpu_architecture()
-    return _architecture(Val(backend))
+    request = _architecture_request(raw_backend)
+    return _resolve_architecture(request, use_gpu)
 end
 
 function _try_architecture!(arch::GPU)

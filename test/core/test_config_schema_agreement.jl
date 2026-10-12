@@ -3,7 +3,7 @@
 # every key the parsers read (the known-key tables of `validate_config`) is a
 # schema property, and the other way round. The schema offers canonical
 # spellings only; where a parser also accepts aliases (output format and split,
-# layer selection, temporal scheme, backend), the test checks that every schema
+# layer selection and temporal scheme), the test checks that every schema
 # value parses and that the schema values reach every outcome.
 using Test
 using AtmosTransport
@@ -68,9 +68,11 @@ property_keys(node) = Set(String.(keys(node.properties)))
     @test Set(typeof(AtmosTransport.Output._output_partition(Dict("split" => c.const)))
               for c in d.output.properties.split.oneOf) ==
           concrete_subtypes(AtmosTransport.Output.AbstractOutputPartition, AtmosTransport.Output)
-    for backend in enum_of(p.architecture.properties.backend)
-        @test AtmosTransport.Architectures._architecture_symbol(backend) === Symbol(backend)
-    end
+    architecture_requests = [AtmosTransport.Architectures._architecture_request(backend)
+                             for backend in enum_of(p.architecture.properties.backend)]
+    @test Set(typeof.(architecture_requests)) ==
+          concrete_subtypes(AtmosTransport.Architectures.AbstractArchitectureRequest,
+                            AtmosTransport.Architectures)
     for float_type in enum_of(p.numerics.properties.float_type)
         @test RunnerKeys._cfg_float_type(Dict("numerics" => Dict("float_type" => float_type))) <:
               AbstractFloat

@@ -330,8 +330,8 @@ function build_departure_set(set::CSObservationSet,
     # row identity, so a swap that happens to preserve `value` /
     # `value_sigma` (e.g. two distinct records that share a sigma) is
     # still caught. The check is stricter than the bind_to_mesh
-    # default — if you used `out_of_range_policy = :clamp` /
-    # `:skip` / `tracer_filter`, you must pre-filter `set` to match
+    # default — if you used `out_of_range_policy = ClampOutOfRange()` /
+    # `SkipOutOfRange()` / `tracer_filter`, you must pre-filter `set` to match
     # the kept observations before calling `build_departure_set`.
     t_start_dt = _parse_iso_datetime(t_start)
     dt_f = float(dt)
