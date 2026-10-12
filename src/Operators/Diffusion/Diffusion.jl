@@ -24,7 +24,7 @@ transposes live in `src/Adjoints/DiffusionAdjoint.jl`.
 module Diffusion
 
 using Adapt
-using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
+using KernelAbstractions: @kernel, @index, @Const, @atomic, get_backend, synchronize
 using ...State: CellState, CubedSphereState,
                 AbstractTimeVaryingField, AbstractCubedSphereField,
                 AbstractCSDkgField, PrecomputedCSDkgField,

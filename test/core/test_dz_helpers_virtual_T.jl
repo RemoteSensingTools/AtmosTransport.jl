@@ -73,6 +73,39 @@ end
     end
 end
 
+@testset "Float64 hybrid coefficients stage into Float32 workspaces" begin
+    FT = Float32
+    Nx, Ny, Nz = 2, 2, 3
+    A64 = Float64[125.125, 80.25, 20.5, 0.0]
+    B64 = Float64[0.0, 0.2, 0.625, 1.0]
+    A32, B32 = FT.(A64), FT.(B64)
+    ps_total = FT[95_000 + 100i + 50j for i in 1:Nx, j in 1:Ny]
+    qv = FT[0.002 + 0.001k for i in 1:Nx, j in 1:Ny, k in 1:Nz]
+    ps_dry = FT[sum((one(FT) - qv[i, j, k]) *
+                    ((A32[k + 1] - A32[k]) +
+                     (B32[k + 1] - B32[k]) * ps_total[i, j]) for k in 1:Nz)
+                for i in 1:Nx, j in 1:Ny]
+
+    workspace = DiffusionWorkspace(ones(FT, Nx, Ny, Nz))
+    staged = _stage_hybrid_coefficients!(workspace.hybrid_coefficients, A64, B64)
+    @test eltype(staged.A) === FT
+    @test eltype(staged.B) === FT
+    @test staged.A == A32
+    @test staged.B == B32
+
+    recovered64 = zeros(FT, Nx, Ny)
+    recovered32 = similar(recovered64)
+    recover_total_surface_pressure!(recovered64, ps_dry, qv, A64, B64)
+    recover_total_surface_pressure!(recovered32, ps_dry, qv, A32, B32)
+    @test recovered64 == recovered32
+
+    dz64 = zeros(FT, Nx, Ny, Nz)
+    dz32 = similar(dz64)
+    fill_dz_hydrostatic_constT!(dz64, recovered64, A64, B64)
+    fill_dz_hydrostatic_constT!(dz32, recovered32, A32, B32)
+    @test dz64 == dz32
+end
+
 @testset "dry-pressure recovery handles pure-pressure and unobservable coordinates" begin
     FT = Float64
 
@@ -111,6 +144,59 @@ end
         similar(ps_matrix), ps_matrix, ones(FT, 3, 2, 1), ak_sigma, bk_sigma)
     @test_throws ArgumentError recover_total_surface_pressure!(
         similar(ps_vector), ps_vector, ones(FT, 5, 1), ak_sigma, bk_sigma)
+
+    # Validation is performed on the actual accumulated slope inside the
+    # recovery kernel, including non-finite inputs and arithmetic overflow.
+    ps_one = fill(FT(90_000), 1, 1)
+    dest_one = similar(ps_one)
+    for bad_qv in (fill(FT(-Inf), 1, 1, 1), fill(FT(NaN), 1, 1, 1))
+        @test_throws ArgumentError recover_total_surface_pressure!(
+            dest_one, ps_one, bad_qv, ak_sigma, bk_sigma)
+    end
+    qv_overflow = fill(-floatmax(FT), 1, 1, 2)
+    @test_throws ArgumentError recover_total_surface_pressure!(
+        dest_one, ps_one, qv_overflow, FT[0, 0, 0], FT[0, 1, 2])
+
+    # One shared device-style status flag covers all six panel launches.
+    panel_ps = ntuple(_ -> fill(FT(90_000), 1, 1), 6)
+    panel_dest = ntuple(_ -> zeros(FT, 1, 1), 6)
+    panel_qv = ntuple(p -> p == 4 ? fill(FT(NaN), 1, 1, 1) : zeros(FT, 1, 1, 1), 6)
+    @test_throws ArgumentError recover_total_surface_pressure!(
+        panel_dest, panel_ps, panel_qv, ak_sigma, bk_sigma)
+
+    pure_panel_dest = ntuple(_ -> fill(FT(NaN), 1, 1), 6)
+    recover_total_surface_pressure!(pure_panel_dest, panel_ps,
+                                    ntuple(_ -> zeros(FT, 1, 1, 1), 6),
+                                    ak_pressure, bk_pressure)
+    @test all(pure_panel_dest[p] == panel_ps[p] for p in 1:6)
+end
+
+@testset "cubed-sphere dz helpers preflight every panel and coefficient length" begin
+    FT = Float64
+    Nc, Nz = 2, 2
+    A = FT[100, 50, 0]
+    B = FT[0, 0.5, 1]
+    ps = ntuple(_ -> fill(FT(95_000), Nc, Nc), 6)
+    qv = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
+
+    recovered = ntuple(_ -> fill(FT(-1), Nc, Nc), 6)
+    bad_ps = ntuple(p -> p == 6 ? zeros(FT, Nc + 1, Nc) : ps[p], 6)
+    @test_throws DimensionMismatch recover_total_surface_pressure!(recovered, bad_ps, qv, A, B)
+    @test all(all(==(-one(FT)), recovered[p]) for p in 1:6)
+    @test_throws DimensionMismatch recover_total_surface_pressure!(
+        recovered, ps, qv, A[1:end-1], B)
+
+    dz = ntuple(_ -> fill(FT(-1), Nc, Nc, Nz), 6)
+    @test_throws DimensionMismatch fill_dz_hydrostatic_constT!(dz, bad_ps, A, B)
+    @test all(all(==(-one(FT)), dz[p]) for p in 1:6)
+    @test_throws DimensionMismatch fill_dz_hydrostatic_constT!(dz, ps, A, B[1:end-1])
+
+    t = ntuple(_ -> fill(FT(250), Nc, Nc, Nz), 6)
+    bad_t = ntuple(p -> p == 5 ? fill(FT(250), Nc, Nc, Nz + 1) : t[p], 6)
+    @test_throws DimensionMismatch fill_dz_hydrostatic_virtualT!(dz, bad_t, qv, ps, A, B)
+    @test all(all(==(-one(FT)), dz[p]) for p in 1:6)
+    @test_throws DimensionMismatch fill_dz_hydrostatic_virtualT!(
+        dz, t, qv, ps, A[1:end-1], B)
 end
 
 @testset "diffusion runtime humidity selection and missing-humidity fallback" begin
