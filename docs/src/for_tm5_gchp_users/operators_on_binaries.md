@@ -51,8 +51,8 @@ Where:
 
 For binary-scheduled drivers the full `step!` is bypassed; the
 runtime brackets the window's `transport_step!` substeps with exact
-exponential-decay half-steps, then runs convection and any unsplit chemistry
-at the window end. The convection placement is GCHP-style, and is
+constant-rate exponential-decay half-steps, then runs convection and any
+unsplit chemistry (including time-varying-rate decay) at the window end. The convection placement is GCHP-style, and is
 *different from TM5's `xyzvvzyx` interleaving* — TM5 runs convection
 inside the vertical-only legs. See the philosophy page for the
 rationale.

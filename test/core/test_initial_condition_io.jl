@@ -110,6 +110,31 @@ function _write_synthetic_cs_native_ic_file(path::AbstractString; Nc=2, Nz=2)
     return nothing
 end
 
+# A cs_native IC whose level k (file order) holds `level_values[k]` everywhere,
+# with optional hybrid coefficients: `ap`/`bp` = `nothing` omits the variable,
+# `ap_units` = `nothing` omits its units attribute.
+function _write_hybrid_cs_native_ic_file(path::AbstractString; Nc, level_values,
+                                         ap, bp, ap_units = "Pa")
+    Nsrc = length(level_values)
+    NCDataset(path, "c") do ds
+        for (name, n) in (("Xdim", Nc), ("Ydim", Nc), ("nf", 6),
+                          ("lev", Nsrc), ("ilev", Nsrc + 1))
+            defDim(ds, name, n)
+        end
+        tracer = defVar(ds, "TRACER", Float64, ("Xdim", "Ydim", "nf", "lev"))
+        if ap !== nothing
+            attrib = ap_units === nothing ? Dict{String, Any}() :
+                                            Dict{String, Any}("units" => ap_units)
+            defVar(ds, "ap", Float64, ("ilev",); attrib)[:] = ap
+        end
+        bp === nothing || (defVar(ds, "bp", Float64, ("ilev",))[:] = bp)
+        for k in 1:Nsrc
+            tracer[:, :, :, k] .= level_values[k]
+        end
+    end
+    return path
+end
+
 function _write_synthetic_surface_flux_file(path::AbstractString)
     ds = NCDataset(path, "c")
     try
@@ -484,6 +509,93 @@ end
             clamped = build_initial_mixing_ratio(air_mass, grid, clamped_cfg)
             @test minimum(vcat((vec(clamped[p]) for p in 1:6)...)) == 0
             @test maximum(vcat((vec(clamped[p]) for p in 1:6)...)) > 0
+        end
+    end
+
+    @testset "cs_native hybrid coefficients: orientation, agreement and units" begin
+        mktempdir() do dir
+            Nc, Hp, Nz = 2, 1, 3
+            mesh = CubedSphereMesh(; FT, Nc, Hp)
+            # A normal top-first target: interface 1 is the model top.
+            A_top = [100.0, 3000.0, 6000.0, 0.0]
+            B_top = [0.0, 0.2, 0.6, 1.0]
+            grid = AtmosGrid(mesh, HybridSigmaPressure(FT.(A_top), FT.(B_top)), CPU(); FT)
+            air_mass = ntuple(_ -> fill(FT(1e10), Nc + 2Hp, Nc + 2Hp, Nz), 6)
+            # Source levels surface-first: level 1 is the surface layer.
+            surface_first_values = [1e-6, 2e-6, 3e-6]
+            cfg_for(path) = Dict{String, Any}("kind" => "cs_native", "file" => path,
+                                              "variable" => "TRACER")
+            build(path) = build_initial_mixing_ratio(air_mass, grid, cfg_for(path))
+            message(f) = try
+                f()
+                ""
+            catch err
+                err isa ArgumentError || err isa DimensionMismatch || rethrow()
+                sprint(showerror, err)
+            end
+
+            # Opposite orientation, equal level counts: the source column is
+            # reversed onto the target, so the surface value lands at k = Nz.
+            # ap of 6000 Pa without a units attribute is unambiguously Pa.
+            reversed = _write_hybrid_cs_native_ic_file(joinpath(dir, "surface_first.nc");
+                Nc, level_values = surface_first_values,
+                ap = reverse(A_top), bp = reverse(B_top), ap_units = nothing)
+            vmr = build(reversed)
+            for p in 1:6, k in 1:Nz
+                @test all(vmr[p][:, :, k] .== FT(surface_first_values[Nz - k + 1]))
+            end
+            # A consistent vertical_order is accepted; a contradicting one is not.
+            consistent = merge(cfg_for(reversed), Dict{String, Any}("vertical_order" => "surface_first"))
+            @test build_initial_mixing_ratio(air_mass, grid, consistent) == vmr
+            contradicting = merge(cfg_for(reversed), Dict{String, Any}("vertical_order" => "toa_first"))
+            @test occursin("contradicts the hybrid coefficients",
+                           message(() -> build_initial_mixing_ratio(air_mass, grid, contradicting)))
+
+            # Same orientation as the target: copied level for level.
+            same = _write_hybrid_cs_native_ic_file(joinpath(dir, "top_first.nc");
+                Nc, level_values = reverse(surface_first_values), ap = A_top, bp = B_top)
+            @test build(same) == vmr
+
+            # Equal level counts with other coefficients are another vertical
+            # grid: rejected, never copied cell for cell.
+            other_bp = _write_hybrid_cs_native_ic_file(joinpath(dir, "other_bp.nc");
+                Nc, level_values = surface_first_values,
+                ap = reverse(A_top), bp = [1.0, 0.5, 0.2, 0.0])
+            @test occursin("bp coefficients differ", message(() -> build(other_bp)))
+            other_ap = _write_hybrid_cs_native_ic_file(joinpath(dir, "other_ap.nc");
+                Nc, level_values = surface_first_values,
+                ap = [0.0, 7000.0, 3000.0, 100.0], bp = reverse(B_top))
+            @test occursin("ap coefficients differ", message(() -> build(other_ap)))
+
+            # Only one of ap and bp is an error, whatever the level counts.
+            only_ap = _write_hybrid_cs_native_ic_file(joinpath(dir, "only_ap.nc");
+                Nc, level_values = surface_first_values, ap = reverse(A_top), bp = nothing)
+            only_bp = _write_hybrid_cs_native_ic_file(joinpath(dir, "only_bp.nc");
+                Nc, level_values = surface_first_values, ap = nothing, bp = reverse(B_top))
+            for path in (only_ap, only_bp)
+                @test occursin("must provide both ap and bp, or neither", message(() -> build(path)))
+            end
+
+            # ap in hPa, or unit-less with hPa-sized values, is rejected, not guessed.
+            hpa = _write_hybrid_cs_native_ic_file(joinpath(dir, "hpa.nc");
+                Nc, level_values = surface_first_values,
+                ap = reverse(A_top) ./ 100, bp = reverse(B_top), ap_units = "hPa")
+            @test occursin("must use Pa; got units = \"hPa\"", message(() -> build(hpa)))
+            ambiguous = _write_hybrid_cs_native_ic_file(joinpath(dir, "ambiguous.nc");
+                Nc, level_values = surface_first_values,
+                ap = reverse(A_top) ./ 100, bp = reverse(B_top), ap_units = nothing)
+            @test occursin("ambiguous with hPa", message(() -> build(ambiguous)))
+            # Explicit Pa spellings and a unit-less pure-sigma (all-zero) ap pass.
+            pascal = _write_hybrid_cs_native_ic_file(joinpath(dir, "pascal.nc");
+                Nc, level_values = surface_first_values,
+                ap = reverse(A_top), bp = reverse(B_top), ap_units = "Pascal")
+            @test build(pascal) == vmr
+            sigma_grid = AtmosGrid(mesh, HybridSigmaPressure(zeros(FT, Nz + 1), FT.(B_top)), CPU(); FT)
+            sigma = _write_hybrid_cs_native_ic_file(joinpath(dir, "sigma.nc");
+                Nc, level_values = surface_first_values,
+                ap = zeros(Nz + 1), bp = reverse(B_top), ap_units = nothing)
+            sigma_vmr = build_initial_mixing_ratio(air_mass, sigma_grid, cfg_for(sigma))
+            @test sigma_vmr == vmr
         end
     end
 
@@ -1134,6 +1246,24 @@ end
             # Stepwise slices switch at interval starts, not their mid-month
             # coordinate stamps.
             @test series.times_sec == [31.0, 59.0, 90.0] .* 86400
+
+            # Julian bounds are instants: Julian 2021-01-01 is proleptic
+            # Gregorian 2021-01-14, so each switch is 13 days after the
+            # Julian calendar fields, as for the decoded coordinate.
+            julian_bounds = [0.0 31.0 59.0; 31.0 59.0 90.0]
+            julian = write_permonth(joinpath(dir, "julian.nc");
+                                    times = vec(sum(julian_bounds; dims = 1) ./ 2),
+                                    values = [1.0, 2.0, 3.0] .*
+                                             vec(julian_bounds[2, :] .- julian_bounds[1, :]) .* 86400,
+                                    calendar = "julian", bounds = julian_bounds)
+            julian_series = ICIO._load_timevarying_surface_flux_field(
+                Dict{String, Any}("kind" => "gridfed_fossil_co2", "file" => julian,
+                                  "time_varying" => true),
+                Float64, DateTime(2021, 1, 1); species = :co2)
+            @test julian_series.times_sec == ([0.0, 31.0, 59.0] .+ 13) .* 86400
+            for month in 1:3
+                @test all(julian_series.raw_series[:, :, month] .== month)
+            end
 
             # time_index remains explicitly positional: slice 1 is April.
             static_cfg = Dict{String, Any}(

@@ -395,7 +395,10 @@ Decode the optional CF bounds named by time coordinate `name`. The returned
 matrix has shape `(2, ntime)`, with interval starts in row 1 and ends in row 2.
 `nothing` means that the coordinate has no `bounds` attribute. Bounds inherit
 the coordinate's units and calendar and are validated as finite, ordered
-intervals before decoding.
+intervals before decoding. They are decoded as [`decode_time`](@ref) decodes
+the coordinate: a bound of a `julian` axis, or a `standard` bound before
+1582-10-15, is the same instant in the proleptic Gregorian calendar (Julian
+2000-01-01 is 2000-01-14), never its Julian calendar fields.
 """
 function decode_time_bounds(ds, name::AbstractString)
     axis = String(name)
@@ -505,9 +508,7 @@ function _decode_month_keys_values(::CFDecoder, class::CFTimeUnits, ds, name::St
                                    values)
     DT = _time_calendar_type(ds, name)
     _check_cf_origin(class, DT, ds, name)
-    ms_per_unit = Dates.value(Dates.Millisecond(class.period))
-    ms = Int64[round(Int64, v * ms_per_unit) for v in values]
-    stamps = CFTime.timedecode(DT, ms, "milliseconds since $(class.origin)")
+    stamps = _cf_value_stamps(class, DT, values)
     return MonthKey[MonthKey(Dates.year(t), Dates.month(t)) for t in stamps]
 end
 
@@ -600,9 +601,15 @@ function _cf_calendar_stamps(class::CFTimeUnits, ds, name::String)
             "time variable '$(name)' of $(_dataset_path(ds)) has fill values"))
         return calendar, DateTime[DateTime(x) for x in vals]
     end
+    return calendar, _cf_value_stamps(class, DT, _raw_time_values(ds, name))
+end
+
+# Stamps, in the axis's calendar `DT`, of raw `values` in the fixed-length unit
+# of `class`, each rounded to the millisecond.
+function _cf_value_stamps(class::CFTimeUnits, DT, values)
     ms_per_unit = Dates.value(Dates.Millisecond(class.period))
-    ms = Int64[round(Int64, x * ms_per_unit) for x in _raw_time_values(ds, name)]
-    return calendar, CFTime.timedecode(DT, ms, "milliseconds since $(class.origin)")
+    ms = Int64[round(Int64, value * ms_per_unit) for value in values]
+    return CFTime.timedecode(DT, ms, "milliseconds since $(class.origin)")
 end
 
 function _decode(::CFDecoder, class::CFTimeUnits, ds, name::String)
@@ -610,21 +617,27 @@ function _decode(::CFDecoder, class::CFTimeUnits, ds, name::String)
     return DateTime[_gregorian_datetime(t, calendar, name, ds) for t in stamps]
 end
 
+# Raw values on the axis's units and calendar (time bounds) decoded as
+# `decode_time` decodes the axis itself.
 function _decode_time_values(::CFDecoder, class::CFTimeUnits, ds, name::String, values)
     calendar = lowercase(strip(_string_attribute(NCDatasets.variable(ds, name),
                                                  "calendar", "standard")))
     DT = _time_calendar_type(ds, name)
     _check_cf_origin(class, DT, ds, name)
-    ms_per_unit = Dates.value(Dates.Millisecond(class.period))
-    ms = Int64[round(Int64, value * ms_per_unit) for value in values]
-    stamps = CFTime.timedecode(DT, ms, "milliseconds since $(class.origin)")
-    return DateTime[_gregorian_datetime(t, calendar, name, ds) for t in stamps]
+    return DateTime[_gregorian_datetime(t, calendar, name, ds)
+                    for t in _cf_value_stamps(class, DT, values)]
 end
 
-# A stamp as a DateTime: itself, or the calendar date and time of day of a
-# non-Gregorian CFTime stamp, which must exist in the proleptic Gregorian
+# A stamp as a DateTime. A Gregorian-like stamp (`standard`,
+# `proleptic_gregorian`, `julian`) is converted as an instant, as
+# `DateTime(x)` converts NCDatasets' decoding of the axis in
+# `_cf_calendar_stamps`: Julian 2000-01-01 and a pre-1582-10-15 `standard`
+# date (Julian) become the same instant in the proleptic Gregorian calendar
+# (2000-01-14 for the former). A stamp of the other calendars keeps its
+# calendar date and time of day, which must exist in the proleptic Gregorian
 # calendar.
 _gregorian_datetime(t::DateTime, calendar, name, ds) = t
+_gregorian_datetime(t::Union{_GREGORIAN_LIKE...}, calendar, name, ds) = DateTime(t)
 function _gregorian_datetime(t, calendar, name, ds)
     parts = (Dates.year(t), Dates.month(t), Dates.day(t), Dates.hour(t), Dates.minute(t),
              Dates.second(t), Dates.millisecond(t))

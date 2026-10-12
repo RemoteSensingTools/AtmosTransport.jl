@@ -17,7 +17,7 @@ function _script_module(name::Symbol, relative_path::AbstractString)
     return mod
 end
 
-function _write_mixed_window_binary(path, window_seconds)
+function _write_mixed_window_binary(path, window_seconds; extra_header = Dict{String, Any}())
     FT = Float64
     Nx, Ny, Nz = 4, 3, 2
     mesh = LatLonMesh(; FT, Nx, Ny)
@@ -36,7 +36,7 @@ function _write_mixed_window_binary(path, window_seconds)
                            steps_per_window = 1, mass_basis = :dry,
                            surface_pressure_basis = TotalSurfacePressure(),
                            source_flux_sampling = :window_start_endpoint,
-                           flux_sampling = :window_constant)
+                           flux_sampling = :window_constant, extra_header)
     return path
 end
 
@@ -52,9 +52,12 @@ end
             @test basename(staged) != basename(original)
             driver = AtmosTransport.MetDrivers.TransportBinaryDriver(staged; FT = Float64)
             try
-                origin = AtmosTransport.Models.DrivenRunner._runtime_output_origin(
-                    Dict{String, Any}(), driver, original)
+                DR = AtmosTransport.Models.DrivenRunner
+                origin = DR._run_time_origin(Dict{String, Any}(), driver, original)
                 @test origin == DateTime(2021, 12, 1)
+                @test DR._runtime_output_origin(origin, driver) == DateTime(2021, 12, 1)
+                @test DR._runtime_output_origin(origin, driver; start_window = 2) ==
+                      DateTime(2021, 12, 1, 1)
             finally
                 close(driver)
             end
@@ -100,6 +103,98 @@ function _write_full_window_cs_binary(path)
         MD.close_streaming_transport_binary!(writer)
     end
     return path
+end
+
+@testset "run origin: start_date, header date and file-name date must agree" begin
+    DR = AtmosTransport.Models.DrivenRunner
+    dated(day) = Dict{String, Any}("input" => Dict{String, Any}("start_date" => day))
+    origin_error(cfg, driver, path) =
+        try
+            DR._run_time_origin(cfg, driver, path)
+            ""
+        catch err
+            err isa ArgumentError || rethrow()
+            sprint(showerror, err)
+        end
+    with_driver(f, path) = begin
+        driver = AtmosTransport.MetDrivers.TransportBinaryDriver(path; FT = Float64)
+        try
+            f(driver)
+        finally
+            close(driver)
+        end
+    end
+    mktempdir() do dir
+        # Legacy binary: no `date` header, the day only in the file name. A
+        # start_date one day later must not silently win over the file name.
+        legacy = _write_mixed_window_binary(joinpath(dir, "transport_20211201.bin"), 3600.0)
+        with_driver(legacy) do driver
+            @test DR._run_time_origin(dated("2021-12-01"), driver, legacy) == DateTime(2021, 12, 1)
+            msg = origin_error(dated("2021-12-02"), driver, legacy)
+            @test occursin("[input].start_date = 2021-12-02 disagrees with the date in the " *
+                           "first transport binary's file name transport_20211201.bin = 2021-12-01",
+                           msg)
+        end
+
+        # Header and file name are compared even without start_date.
+        headed = _write_mixed_window_binary(joinpath(dir, "transport_2021-12-01.bin"), 3600.0;
+                                            extra_header = Dict{String, Any}("date" => "2021-12-02"))
+        with_driver(headed) do driver
+            msg = origin_error(Dict{String, Any}(), driver, headed)
+            @test occursin("`date` header = 2021-12-02 disagrees with the date in the first " *
+                           "transport binary's file name transport_2021-12-01.bin = 2021-12-01", msg)
+            @test occursin("disagrees with the first transport binary's `date` header",
+                           origin_error(dated("2021-12-01"), driver, headed))
+        end
+
+        # All three present and equal.
+        agreeing = _write_mixed_window_binary(joinpath(dir, "transport_20211202.bin"), 3600.0;
+                                              extra_header = Dict{String, Any}("date" => "2021-12-02"))
+        with_driver(agreeing) do driver
+            @test DR._run_time_origin(dated("2021-12-02"), driver, agreeing) == DateTime(2021, 12, 2)
+        end
+
+        # Undated: no origin; output then needs one, a run without output does not.
+        undated = _write_mixed_window_binary(joinpath(dir, "transport.bin"), 3600.0)
+        with_driver(undated) do driver
+            @test DR._run_time_origin(Dict{String, Any}(), driver, undated) === nothing
+            @test DR._run_time_origin(dated("2021-12-03"), driver, undated) == DateTime(2021, 12, 3)
+            @test_throws ArgumentError DR._runtime_output_origin(nothing, driver)
+        end
+
+        # Only whole `YYYYMMDD` or `YYYY-MM-DD` tokens, delimited by non-digits, date a file.
+        @test DR._filename_date("/x/era5_transport_20211201_merged1000Pa_float64.bin") ==
+              Date(2021, 12, 1)
+        @test DR._filename_date("transport_2021-12-01_v4.bin") == Date(2021, 12, 1)
+        for undated_name in ("transport_2021-1201.bin", "transport_202112-01.bin",
+                             "run_120211201.bin", "c90_2021.bin")
+            @test DR._filename_date(undated_name) === nothing
+        end
+
+        # A delimited 8-digit token that is not a calendar date does not date the file.
+        not_a_date = _write_mixed_window_binary(joinpath(dir, "transport_20211301.bin"), 3600.0)
+        with_driver(not_a_date) do driver
+            @test (@test_logs (:warn, r"not a calendar date") DR._run_time_origin(
+                dated("2021-12-01"), driver, not_a_date)) == DateTime(2021, 12, 1)
+        end
+
+        # The runners check the origin whether or not they write output: a
+        # mismatched start_date would otherwise shift time-varying fluxes.
+        no_output = Dict{String, Any}(
+            "input" => Dict{String, Any}("binary_paths" => [legacy], "start_date" => "2021-12-02"),
+            "advection" => Dict{String, Any}("scheme" => "upwind"),
+            "tracers" => Dict{String, Any}("co2" => Dict{String, Any}(
+                "init" => Dict{String, Any}("kind" => "uniform", "background" => 4e-4))))
+        err = try run_driven_simulation(no_output); nothing catch e; e end
+        @test err isa ArgumentError && occursin("disagrees with the date in the first transport " *
+                                                "binary's file name", sprint(showerror, err))
+        cs_legacy = _write_full_window_cs_binary(joinpath(dir, "cs_20211201.bin"))
+        cs_no_output = deepcopy(no_output)
+        cs_no_output["input"]["binary_paths"] = [cs_legacy]
+        err = try run_driven_simulation(cs_no_output); nothing catch e; e end
+        @test err isa ArgumentError && occursin("disagrees with the date in the first transport " *
+                                                "binary's file name cs_20211201.bin", sprint(showerror, err))
+    end
 end
 
 @testset "runtime preflight reports malformed tables before reading binaries" begin

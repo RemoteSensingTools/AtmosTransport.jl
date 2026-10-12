@@ -271,9 +271,9 @@ and integrate them with these functions.
 | `ExponentialDecay` | Applies configured first-order loss rates to selected tracers. |
 | `CompositeChemistry` | Applies a typed tuple of chemistry operators in sequence. |
 
-Exponential decay uses exact half-steps before and after the transport/
-emissions window. Other chemistry runs after the transport and convection
-blocks. The same operator interface covers `CellState` and
+Constant-rate exponential decay uses exact half-steps before and after the
+transport/emissions window. Other chemistry, including exponential decay with
+a time-varying rate, runs after the transport and convection blocks. The same operator interface covers `CellState` and
 `CubedSphereState`; topology dispatch selects the storage-specific kernel
 launch.
 

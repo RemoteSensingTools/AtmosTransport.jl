@@ -90,6 +90,12 @@ not sort entries or validate date continuity; provide them chronologically.
   every binary it writes. Use it for binaries of unknown origin.
 - `expected_nlevel`, `required_preprocessor_contract` and
   `require_adaptive_substeps` reject a first binary whose header differs.
+- The run origin is 00:00 UTC of the day of window 1 of the first binary.
+  `start_date`, that binary's `date` header and a `YYYYMMDD` (or
+  `YYYY-MM-DD`) date in its file name each name this day when present, and
+  every run requires them to agree, with or without output. Output needs at
+  least one of them for its CF time origin; time-varying surface fluxes need
+  `start_date`.
 
 #### `[input.staging]` — rolling NVMe staging (opt-in)
 

@@ -384,7 +384,9 @@ end
 # Parse the run start as a `DateTime` (at 00:00) from `[input].start_date`,
 # used as the `reference_time` for time-varying surface fluxes so their slice
 # times align to the simulation clock. Returns `nothing` if no start_date is
-# present (`validate_config` then rejects time-varying surface fluxes).
+# present (`validate_config` then rejects time-varying surface fluxes). The
+# runners check it against the first binary's dates (`_run_time_origin`)
+# before any forcing is built, so a present start_date is the run origin.
 function _run_reference_time(cfg)
     input_cfg = get(cfg, "input", nothing)
     input_cfg isa AbstractDict || return nothing
@@ -404,45 +406,57 @@ function _header_date(driver)
     end
 end
 
+# The forcing day in a binary's file name: the first `YYYYMMDD` or
+# `YYYY-MM-DD` token delimited by non-digits, so a hash prefix, a longer
+# numeric identifier or a partly dashed token (`2021-1201`) is never read as a
+# date. Canonical daily binaries predate the `date` header but carry their day
+# in the name (e.g. `transport_20211202.bin`). A token that is not a calendar
+# date (`20211301`) does not date the file.
 function _filename_date(path::AbstractString)
-    # Tokens must be delimited by non-digits. This cannot mistake a hash prefix
-    # or a longer numeric identifier for the forcing day.
-    stamp = match(r"(?:^|\D)(\d{4})-?(\d{2})-?(\d{2})(?=\D|$)", basename(path))
+    stamp = match(r"(?:^|\D)(\d{8}|\d{4}-\d{2}-\d{2})(?=\D|$)", basename(path))
     stamp === nothing && return nothing
-    year_token = something(stamp[1])
-    month_token = something(stamp[2])
-    day_token = something(stamp[3])
-    try
-        return Date(parse(Int, year_token), parse(Int, month_token), parse(Int, day_token))
-    catch err
-        err isa ArgumentError || rethrow()
-        throw(ArgumentError("invalid transport-binary filename date $(stamp.match) " *
-                            "in $(basename(path))"))
-    end
+    token = something(stamp[1])
+    date = tryparse(Date, replace(token, "-" => ""), dateformat"yyyymmdd")
+    date === nothing && @warn "the token $(token) in $(basename(path)) is not a calendar " *
+                              "date; the file name does not date the run"
+    return date
 end
 
-function _runtime_output_origin(cfg, driver, original_binary_path::AbstractString;
-                                start_window::Integer = 1)
-    origin = _run_reference_time(cfg)
+# The run's absolute origin, 00:00 UTC of the day of window 1 of the first
+# binary, from every date that names it: `[input].start_date`, the first
+# binary's `date` header and the date in its original (unstaged) file name.
+# All present dates must agree: a disagreement would shift the output times
+# and the time-varying surface fluxes, so it is an error. `nothing` when no
+# date is present. Both runners call this once, right after opening the first
+# binary, whether or not the run writes output; `RunContext` does the same.
+function _run_time_origin(cfg, driver, original_binary_path::AbstractString)
+    dates = Tuple{String, Date}[]
+    start = _run_reference_time(cfg)
+    start === nothing || push!(dates, ("[input].start_date", Date(start)))
     header_day = _header_date(driver)
-    if origin !== nothing && header_day !== nothing && Date(origin) != header_day
-        throw(ArgumentError("[input].start_date = $(Date(origin)) disagrees with the first " *
-                            "transport binary's `date` header = $(header_day)"))
-    elseif origin === nothing
-        if header_day !== nothing
-            origin = DateTime(header_day)
-        else
-            # Canonical daily binaries predate the `date` header but carry the
-            # forcing day in their filename (for example transport_20211202.bin).
-            # Retain that supported input shape while still refusing to invent
-            # an absolute origin for a genuinely undated binary.
-            filename_day = _filename_date(original_binary_path)
-            filename_day === nothing && throw(ArgumentError(
-                "runtime output needs [input].start_date, a transport binary `date` " *
-                "header, or a YYYYMMDD date in the binary filename to write the CF time origin"))
-            origin = DateTime(filename_day)
-        end
+    header_day === nothing ||
+        push!(dates, ("the first transport binary's `date` header", header_day))
+    filename_day = _filename_date(original_binary_path)
+    filename_day === nothing ||
+        push!(dates, ("the date in the first transport binary's file name " *
+                      basename(original_binary_path), filename_day))
+    isempty(dates) && return nothing
+    label, day = first(dates)
+    for (other_label, other_day) in dates[2:end]
+        other_day == day || throw(ArgumentError(
+            "$(label) = $(day) disagrees with $(other_label) = $(other_day)"))
     end
+    return DateTime(day)
+end
+
+# CF time origin of the output: the run origin plus the windows skipped by
+# `[run].start_window`. Output needs an absolute origin; a run without output
+# does not.
+function _runtime_output_origin(origin::Union{DateTime, Nothing}, driver;
+                                start_window::Integer = 1)
+    origin === nothing && throw(ArgumentError(
+        "runtime output needs [input].start_date, a transport binary `date` " *
+        "header, or a YYYYMMDD date in the binary filename to write the CF time origin"))
     offset_ms = round(Int64, (start_window - 1) * Float64(window_dt(driver)) * 1000)
     return origin + Millisecond(offset_ms)
 end
@@ -504,6 +518,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                           arch = arch, validate_replay)
     _check_multifile_window_range(first_driver, start_window, stop_window_override,
                                   length(binary_paths))
+    run_origin = _run_time_origin(cfg, first_driver, first(binary_paths))
     # Windows of every binary: the run length and the window ends of the schedule.
     layout = _runtime_window_layout(something(window_layout,
                                               _uniform_window_layout(first_driver, binary_paths)), FT)
@@ -513,7 +528,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     snapshot_schedule_hours = snapshot_hours(output_spec)
     do_snapshots = output_enabled(output_spec)
     do_snapshots && set_time_origin!(output_spec,
-        _runtime_output_origin(cfg, first_driver, first(binary_paths); start_window))
+        _runtime_output_origin(run_origin, first_driver; start_window))
     _check_snapshot_day_paths(output_spec, binary_paths)
     _check_output_targets(output_spec, output_cfg)
     _check_snapshot_schedule(output_spec,
@@ -824,6 +839,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                    false, "[input].validate_replay")
     driver1 = input_resources.driver = TransportBinaryDriver(staged_path_for!(stager, 1);
                                     FT = FT, arch = arch, Hp = Hp, validate_replay)
+    run_origin = _run_time_origin(cfg, driver1, first(binary_paths))
     layout = _runtime_window_layout(something(window_layout,
                                               _uniform_window_layout(driver1, binary_paths)), FT)
     run_hours = _layout_run_hours(layout; stop_window_override)
@@ -831,8 +847,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     output_spec = runtime_output_spec(output_cfg, FT; default_cap_hours = run_hours)
     snapshot_schedule_hours = snapshot_hours(output_spec)
     do_snapshots = output_enabled(output_spec)
-    do_snapshots && set_time_origin!(output_spec,
-        _runtime_output_origin(cfg, driver1, first(binary_paths)))
+    do_snapshots && set_time_origin!(output_spec, _runtime_output_origin(run_origin, driver1))
     _check_snapshot_day_paths(output_spec, binary_paths)
     _check_output_targets(output_spec, output_cfg)
     _check_snapshot_schedule(output_spec, _window_end_hours(layout; stop_window_override))

@@ -138,9 +138,10 @@ function DrivenSimulation(model::TransportModel,
     # user-supplied surface sources as a `SurfaceFluxOperator` inside the
     # wrapped model so the palindrome's S slot runs at the correct
     # center-of-transport position. `with_chemistry` installs the user's
-    # chemistry in the model. `step!(model)` symmetrically splits exponential
-    # decay around its transport/emissions block; the binary-scheduled path
-    # below performs the same split around the complete met window.
+    # chemistry in the model. `step!(model)` symmetrically splits constant-rate
+    # exponential decay around its transport/emissions block; the
+    # binary-scheduled path below performs the same split around the complete
+    # met window. Time-varying-rate decay runs unsplit after transport.
     model = with_chemistry(model, chemistry)
     if !isempty(surface_sources_adapted)
         emissions_op = SurfaceFluxOperator(PerTracerFluxMap(surface_sources_adapted))

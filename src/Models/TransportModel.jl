@@ -4,11 +4,12 @@ const _TRANSPORT_MODEL_OVERVIEW = """
 Minimal Oceanigans-style model object for standalone `src` transport runs.
 
 Carries advection, chemistry, vertical diffusion, surface emissions,
-and convection operators. Exponential decay is Strang-split around the
-transport block's emissions:
+and convection operators. Constant-rate exponential decay is Strang-split
+around the transport block's emissions:
     decay(dt/2) → transport_block(dt) → convection_block(dt) → decay(dt/2)
 
-Other chemistry operators retain the unsplit order:
+Other chemistry operators, including exponential decay with a time-varying
+rate, retain the unsplit order:
     transport_block(dt) → convection_block(dt) → chemistry_block(dt)
 
 where `transport_block` runs the full palindrome with diffusion and
@@ -18,9 +19,10 @@ emissions at the center:
     X → Y → Z → S(dt) → V(dt) → Z → Y → X                  (diffusive boundary coupling)
     X → Y → Z → V(dt) → Z → Y → X                          (no emissions)
 
-`step!(model, dt)` executes the full runtime composition. Exponential decay
-runs as two exact half-steps around transport/emissions; other chemistry runs
-once after transport and convection.
+`step!(model, dt)` executes the full runtime composition. Constant-rate
+exponential decay runs as two exact half-steps around transport/emissions;
+other chemistry, including time-varying-rate decay, runs once after transport
+and convection.
 
 Defaults `chemistry = NoChemistry()`, `diffusion = NoDiffusion()`,
 `emissions = NoSurfaceFlux()`, and `convection = NoConvection()` make the
