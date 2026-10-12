@@ -139,7 +139,7 @@ the device; now each tracer holds a few 0.19 MB slices there.
   [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl) and
   [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)
 - Tests:
-  - [`../../../test/orphan/test_surface_flux_operator.jl`](../../../test/orphan/test_surface_flux_operator.jl)
+  - [`../../../test/core/test_per_tracer_flux_map.jl`](../../../test/core/test_per_tracer_flux_map.jl)
   - [`../../../test/core/test_transport_model_emissions.jl`](../../../test/core/test_transport_model_emissions.jl)
   - [`../../../test/core/test_emissions_palindrome.jl`](../../../test/core/test_emissions_palindrome.jl)
   - [`../../../test/core/test_driven_simulation.jl`](../../../test/core/test_driven_simulation.jl)

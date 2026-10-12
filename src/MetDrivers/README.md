@@ -124,5 +124,5 @@ methods report configured source support without reading meteorological files.
     [`../../test/core/test_persistence_hardening.jl`](../../test/core/test_persistence_hardening.jl)
     (writers publish only complete files, with mode `0o666 & ~umask`)
   - [`../../test/real_data/test_dry_flux_interface.jl`](../../test/real_data/test_dry_flux_interface.jl)
-  - [`../../test/orphan/test_current_time.jl`](../../test/orphan/test_current_time.jl)
+  - [`../../test/core/test_multiday_source_clock.jl`](../../test/core/test_multiday_source_clock.jl)
   - [`../../test/core/test_cubed_sphere_runtime.jl`](../../test/core/test_cubed_sphere_runtime.jl)

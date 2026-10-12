@@ -85,4 +85,4 @@ operators, and sequential `CompositeChemistry` composition that
 - Tests:
   - [`../../../test/core/test_chemistry.jl`](../../../test/core/test_chemistry.jl)
   - [`../../../test/core/test_cs_chemistry.jl`](../../../test/core/test_cs_chemistry.jl)
-  - [`../../../test/orphan/test_current_time.jl`](../../../test/orphan/test_current_time.jl)
+  - [`../../../test/core/test_multiday_source_clock.jl`](../../../test/core/test_multiday_source_clock.jl)

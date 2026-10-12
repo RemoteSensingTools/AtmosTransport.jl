@@ -97,4 +97,4 @@ runs on the host and may refresh caches before an operator launch.
 - Tests:
   - [`../../../test/core/test_fields.jl`](../../../test/core/test_fields.jl)
   - [`../../../test/core/test_diffusion_mass_flux_conservation.jl`](../../../test/core/test_diffusion_mass_flux_conservation.jl)
-  - [`../../../test/orphan/test_current_time.jl`](../../../test/orphan/test_current_time.jl)
+  - [`../../../test/core/test_multiday_source_clock.jl`](../../../test/core/test_multiday_source_clock.jl)

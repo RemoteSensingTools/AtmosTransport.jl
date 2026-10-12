@@ -13,12 +13,17 @@ Validates:
 - `Adapt.adapt_structure` path: CPU passthrough preserves structure
   and per-source rate arrays
 - GPU adaptation (when CUDA.functional()): rate arrays become CuArrays
+- `SurfaceFluxOperator` resolves the map's tracer names against the state:
+  `emitting_tracer_indices`, map tracers absent from the state are skipped,
+  and a structured `(Nx, Ny, Nz, Nt)` buffer and its unrolled face-indexed
+  `(Nx*Ny, Nz, Nt)` form receive the same increments
 """
 
 using Test
 using AtmosTransport
 using AtmosTransport: SurfaceFluxSource, PerTracerFluxMap, flux_for
-using AtmosTransport.Operators.SurfaceFlux: tracer_names
+using AtmosTransport.Operators.SurfaceFlux: tracer_names, emitting_tracer_indices,
+                                            apply_surface_flux!
 using Adapt
 
 const HAS_GPU_FLUX = try
@@ -154,6 +159,42 @@ end
         src3d = SurfaceFluxSource(:Y, rate3d)
         src3d_ad = Adapt.adapt(Array, src3d)
         @test src3d_ad.cell_mass_rate == rate3d
+    end
+
+    @testset "SurfaceFluxOperator resolves map tracers against the state" begin
+        FT = Float64
+        Nx, Ny, Nz = 4, 3, 2
+        state = CellState(MoistBasis, ones(FT, Nx, Ny, Nz);
+                          CO2 = ones(FT, Nx, Ny, Nz), SF6 = ones(FT, Nx, Ny, Nz),
+                          Rn222 = ones(FT, Nx, Ny, Nz))
+
+        op = SurfaceFluxOperator(SurfaceFluxSource(:SF6,   fill(1.0, Nx, Ny)),
+                                 SurfaceFluxSource(:Rn222, fill(2.0, Nx, Ny)))
+        @test emitting_tracer_indices(op, state) === (2, 3)
+        @test emitting_tracer_indices(NoSurfaceFlux(), state) === ()
+
+        # A map tracer the state does not carry (CH4) is skipped, not an error.
+        op = SurfaceFluxOperator(SurfaceFluxSource(:CO2, fill(2.0, Nx, Ny)),
+                                 SurfaceFluxSource(:CH4, fill(9.9, Nx, Ny)))
+        apply!(state, nothing, nothing, op, 1.5)
+        @test all(state.tracers.CO2[:, :, Nz] .≈ 1.0 + 2.0 * 1.5)
+        @test all(state.tracers.CO2[:, :, 1] .== 1.0)
+        @test all(state.tracers.SF6 .== 1.0)
+
+        # Structured and unrolled face-indexed buffers get the same increments.
+        Nt, Nz4 = 2, 4
+        rate_x = reshape(FT.(1:(Nx * Ny)), Nx, Ny) ./ 10
+        rate_y = fill(FT(0.5), Nx, Ny)
+        q_struct = zeros(FT, Nx, Ny, Nz4, Nt)
+        q_face = zeros(FT, Nx * Ny, Nz4, Nt)
+        apply_surface_flux!(q_struct, SurfaceFluxOperator(SurfaceFluxSource(:X, rate_x),
+                                                          SurfaceFluxSource(:Y, rate_y)),
+                            nothing, FT(7), nothing, nothing; tracer_names = (:X, :Y))
+        apply_surface_flux!(q_face, SurfaceFluxOperator(SurfaceFluxSource(:X, vec(copy(rate_x))),
+                                                        SurfaceFluxSource(:Y, vec(copy(rate_y)))),
+                            nothing, FT(7), nothing, nothing; tracer_names = (:X, :Y))
+        @test any(!iszero, q_face)
+        @test reshape(q_struct, Nx * Ny, Nz4, Nt) ≈ q_face
     end
 
     if HAS_GPU_FLUX

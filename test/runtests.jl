@@ -6,15 +6,13 @@
 #   test/core/        — canonical CI baseline (no external data); must stay green
 #   test/real_data/   — needs preprocessed binaries / ERA5 GRIB; opt-in via --all
 #   test/diagnostic/  — large numerical sweeps; opt-in via --diagnostic or --all
-#   test/orphan/      — promotion candidates; CI-excluded; opt-in via --orphan
 #   test/regridding/  — conservative-remapping correctness; part of CI baseline
 #
 # Usage:
 #   julia --project=test test/runtests.jl                # core + regridding
 #   julia --project=test test/runtests.jl --all          # default + real_data + diagnostic
 #   julia --project=test test/runtests.jl --diagnostic   # default + diagnostic
-#   julia --project=test test/runtests.jl --orphan       # default + orphan watchlist
-#   julia --project=test test/runtests.jl --tiers=core,real_data,orphan
+#   julia --project=test test/runtests.jl --tiers=core,real_data
 #
 # Selectors pick files of the default tiers (core, regridding) from the topics
 # and the quick set of test/groups.toml instead of running them all:
@@ -37,7 +35,6 @@ const TIER_FOLDERS = (
     regridding = "regridding",
     real_data  = "real_data",
     diagnostic = "diagnostic",
-    orphan     = "orphan",
 )
 
 const DEFAULT_TIERS = (:core, :regridding)
@@ -57,8 +54,6 @@ function _parse_args(args::Vector{String})
             push!(extra_tiers, :diagnostic)
         elseif arg == "--real-data" || arg == "--real_data"
             push!(extra_tiers, :real_data)
-        elseif arg == "--orphan"
-            push!(extra_tiers, :orphan)
         elseif startswith(arg, "--tiers=")
             for s in split(arg[length("--tiers=")+1:end], ",")
                 key = Symbol(replace(strip(s), "-" => "_"))
@@ -80,7 +75,7 @@ function _parse_args(args::Vector{String})
             list = true
         else
             error("Unknown argument '$arg'. Tier flags: --all --diagnostic --real-data " *
-                  "--orphan --tiers=a,b; selectors: --quick --topics=a,b --changed[=<ref>]; --list")
+                  "--tiers=a,b; selectors: --quick --topics=a,b --changed[=<ref>]; --list")
         end
     end
     selector = quick || !isempty(topics) || changed !== nothing
@@ -169,7 +164,7 @@ opts.selector && include(joinpath(@__DIR__, "helpers", "test_groups.jl"))
 subset, whole = opts.selector ? _selected_subset(opts) : (Set{String}(), Set{Symbol}())
 selected = union(opts.tiers, whole)
 plan = Pair{Symbol, Vector{String}}[]
-for tier in (:core, :regridding, :real_data, :diagnostic, :orphan)
+for tier in (:core, :regridding, :real_data, :diagnostic)
     files = _tier_files(tier)
     tier in selected || (files = filter(in(subset), files))
     push!(plan, tier => files)
@@ -199,7 +194,7 @@ for (tier, files) in plan
 end
 
 skipped = [tier for (tier, files) in plan if !(tier in selected) && isempty(files)]
-isempty(skipped) || @info "Skipped tiers: $(sort(skipped)) (opt-in flags: --real-data --diagnostic --orphan --all)"
+isempty(skipped) || @info "Skipped tiers: $(sort(skipped)) (opt-in flags: --real-data --diagnostic --all)"
 opts.selector && @info "Selectors ran $(length(timings)) files; the merge check runs the full suite (no flags)."
 slowest = first(sort(timings; by = last, rev = true), N_SLOWEST)
 @info "Slowest $(length(slowest)) of $(length(timings)) test files:\n" *

@@ -181,4 +181,4 @@ for the support gates and fallback diagnostics.
   - [`../../test/core/test_driven_simulation.jl`](../../test/core/test_driven_simulation.jl)
   - [`../../test/core/test_no_advection.jl`](../../test/core/test_no_advection.jl)
   - [`../../test/core/test_transport_model_emissions.jl`](../../test/core/test_transport_model_emissions.jl)
-  - [`../../test/orphan/test_current_time.jl`](../../test/orphan/test_current_time.jl)
+  - [`../../test/core/test_multiday_source_clock.jl`](../../test/core/test_multiday_source_clock.jl)

@@ -9,9 +9,9 @@ include other tiers.
 | **Core** | [`core/`](core/) | Default (CI green-bar) | API/health gates, kernel correctness, runtime composition, adjoint identity, preprocessor contracts, mesh / regridding / vertical-transform invariants, type and aliasing safety. Everything that catches regressions of the production code paths. |
 | **Real data** | [`real_data/`](real_data/) | `--all` or `--real-data` | Tests that need preprocessed transport binaries or ERA5 GRIB files on disk in `~/data/AtmosTransport/`. Skipped on CI runners. |
 | **Diagnostic** | [`diagnostic/`](diagnostic/) | `--all` or `--diagnostic` | Large numerical sweeps useful for adjoint / inversion debugging (Taylor-sweep, integration footprints). Run occasionally, not every PR. |
-| **Orphan** | [`orphan/`](orphan/) | `--orphan` only | Promotion candidates — tests that exist but were not in the CI roster as of 2026-05-29. Each should be reviewed and either promoted to `core/` (with a short note here) or deleted. |
 | **Regridding** | [`regridding/`](regridding/) | Default (CI green-bar) | Conservative-remapping geometry, conservation, direction, and persistence checks. Its `runtests.jl` is included as one isolated suite by the top-level orchestrator. |
 | **Golden** | [`golden/`](golden/) | By hand, before committing a refactor | End-to-end preprocessing and runtime cases compared bit for bit with a recorded reference (`golden/run_goldens.jl`); needs the group's data and a GPU. Not run by `runtests.jl`. |
+| **Python** | [`diagnostics/`](diagnostics/) | By hand: `python3 test/diagnostics/test_transcom_partition.py` | `unittest` of the land-weight normalization in `scripts/preprocessing/prepare_transcom_c30.py` (3 cases). Not run by `runtests.jl` or CI. The Python flux port plan ([`docs/memos/2026-10-10_python_flux_port_design.md`](../docs/memos/2026-10-10_python_flux_port_design.md), step P7) ports it to `core/test_surface_flux_regions.jl` and deletes it with the script. |
 
 ## Usage
 
@@ -33,8 +33,7 @@ julia --project=test test/runtests.jl                # core + regridding
 julia --project=test test/runtests.jl --all          # default + real data + diagnostic
 julia --project=test test/runtests.jl --diagnostic   # default + diagnostic
 julia --project=test test/runtests.jl --real-data    # default + real data
-julia --project=test test/runtests.jl --orphan       # default + orphan watchlist
-julia --project=test test/runtests.jl --tiers=core,orphan # only listed tiers
+julia --project=test test/runtests.jl --tiers=core,real_data # only listed tiers
 ```
 
 A failing file does not stop the run: every selected file runs (an interrupt
@@ -124,12 +123,14 @@ Julia 1.10 and the current release stays the merge requirement.
    helpers and constants without creating new copies of package types.
 5. Include shared test fixtures with paths relative to `@__DIR__`.
 
-## Promotion / retirement workflow
+## Retirement workflow
 
-- An `orphan/` file becomes promotable when it loads cleanly under the
-  current `src/`, asserts something the team wants to keep regressing,
-  and is not redundant with an existing core test. Move it into `core/`
-  in the same commit that fixes any path adjustments.
+- Every test file belongs to a tier that some command runs; there is no
+  holding area for tests nothing runs. The former `orphan/` tier (tests that
+  were not in the CI roster as of 2026-05-29) was emptied on 2026-10-12: of
+  its 18 files, 14 moved to `core/` (two after their stale assertions were
+  updated) and the unique checks of the other four were folded into core
+  files.
 - A test file is deleted, not archived, when the code path it tests is
   deleted or a newer test fully subsumes it; git history keeps it. Remove it
   from `groups.toml` in the same commit. The former `archived/` folder (two
@@ -141,7 +142,7 @@ own module while reusing Julia's package cache. Avoid including the package
 source separately in each core test: that repeats compilation and gives each
 copy distinct type identities.
 
-The snapshot contract suite was promoted from `orphan/` to
+The snapshot contract suite was promoted from the former `orphan/` tier to
 `core/test_output_snapshots.jl` during the current-main output port. It retains
 main's signed-total and ATMSNAP-header checks alongside the new selected-capture,
 streaming, and asynchronous write-lifetime suites. The opt-in
