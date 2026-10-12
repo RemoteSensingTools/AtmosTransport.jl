@@ -62,13 +62,16 @@ function write_runtime_recipe_surface_flux_file(path::AbstractString)
 
         vlon = defVar(ds, "longitude", Float64, ("longitude",))
         vlat = defVar(ds, "latitude", Float64, ("latitude",))
-        vtime = defVar(ds, "time", Float64, ("time",))
+        # Per-month units on a coordinate-backed axis take each slice's month
+        # from its CF time; slice 1 is January 2021 (31 days).
+        vtime = defVar(ds, "time", Float64, ("time",),
+                       attrib = Dict("units" => "months since 2021-01-01"))
         vtotal = defVar(ds, "TOTAL", Float64, ("longitude", "latitude", "time"))
         varea = defVar(ds, "cell_area", Float64, ("longitude", "latitude"))
 
         vlon[:] = [-135.0, -45.0, 45.0, 135.0]
         vlat[:] = [45.0, -45.0]
-        vtime[:] = [1.0]
+        vtime[:] = [0.0]
         raw = zeros(Float64, 4, 2)
         raw[1, 1] = 7 * _RUNTIME_RECIPE_JANUARY_SECONDS
         vtotal[:, :, 1] = raw
