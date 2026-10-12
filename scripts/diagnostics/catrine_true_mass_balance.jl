@@ -198,7 +198,10 @@ function mass_balance(run::AtmosTransportRun)
     for f in snapshot_files(run.pattern)
         NCDataset(f) do ds
             area = Float64.(ds["cell_area"][:, :, :])
-            for (k, h) in enumerate(Float64.(ds["time"][:]))
+            # Keep the model-relative elapsed hours used by the budget equations.
+            # NCDatasets decodes the runtime CF time coordinate to DateTime, so
+            # read the stored numeric coordinate through the underlying variable.
+            for (k, h) in enumerate(Float64.(ds["time"].var[:]))
                 (h < run.start_hours || (!isempty(mb.hours) && h == mb.hours[end])) && continue
                 push!(mb.hours, h)
                 foreach(n -> push!(mb.burden[n], Float64(ds["$(n)_total_mass"][k])), tracers)

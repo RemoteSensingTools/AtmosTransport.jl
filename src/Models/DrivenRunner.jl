@@ -110,6 +110,7 @@ using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, S
                 AbstractOutputPartition, SingleOutputFile, DailyOutputFiles,
                 AbstractOutputFormat, NetCDFOutput, BinaryMmapOutput,
                 RuntimeOutputSpec, runtime_output_spec, snapshot_hours,
+                set_physics_attributes!, set_time_origin!,
                 output_enabled, output_path, output_path_for_day,
                 capture_snapshot, write_snapshot_netcdf, write_snapshot_binary,
                 NoObservationOutput, ObservationOutputSpec, observation_output_spec,
@@ -129,7 +130,7 @@ import ..Models: DrivenSimulation, run_window!, run!, step!, allocate_face_fluxe
 # through `Main.AtmosTransport.*`.
 using ..Models: build_runtime_physics_recipe, validate_runtime_physics_recipe,
                  build_runtime_advection, configured_halo_width,
-                 CubedSphereRuntimeRecipeStyle
+                 CubedSphereRuntimeRecipeStyle, runtime_physics_attributes
 # Config-only parsers, run by `validate_config` before any binary is opened.
 using ..Models: advection_spec, diffusion_spec, convection_spec, chemistry_spec,
                  _ADVECTION_SPEC_KEYS,
@@ -391,6 +392,34 @@ function _run_reference_time(cfg)
     return DateTime(Date(String(input_cfg["start_date"])))
 end
 
+function _runtime_output_origin(cfg, driver; start_window::Integer = 1)
+    origin = _run_reference_time(cfg)
+    if origin === nothing
+        raw = driver.reader.header.raw_header
+        if haskey(raw, "date")
+            origin = DateTime(Date(String(raw["date"])))
+        else
+            # Canonical daily binaries predate the `date` header but carry the
+            # forcing day in their filename (for example transport_20211202.bin).
+            # Retain that supported input shape while still refusing to invent
+            # an absolute origin for a genuinely undated binary.
+            stamp = match(r"(\d{4})-?(\d{2})-?(\d{2})", basename(driver.reader.path))
+            stamp === nothing && throw(ArgumentError(
+                "runtime output needs [input].start_date, a transport binary `date` " *
+                "header, or a YYYYMMDD date in the binary filename to write the CF time origin"))
+            origin = try
+                DateTime(Date(parse(Int, stamp[1]), parse(Int, stamp[2]), parse(Int, stamp[3])))
+            catch err
+                err isa ArgumentError || rethrow()
+                throw(ArgumentError("invalid transport-binary filename date $(stamp.match) " *
+                                    "in $(basename(driver.reader.path))"))
+            end
+        end
+    end
+    offset_ms = round(Int64, (start_window - 1) * Float64(window_dt(driver)) * 1000)
+    return origin + Millisecond(offset_ms)
+end
+
 # Run interval `(0, t_end)` in seconds since the run start; time-varying flux
 # files are read only where the run can use them. `t_end` is the end of the
 # run's windows (`run_hours`, from every binary's header) plus 1 s for rounding
@@ -456,6 +485,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     output_spec = runtime_output_spec(output_cfg, FT; default_cap_hours = run_hours)
     snapshot_schedule_hours = snapshot_hours(output_spec)
     do_snapshots = output_enabled(output_spec)
+    do_snapshots && set_time_origin!(output_spec,
+        _runtime_output_origin(cfg, first_driver; start_window))
     _check_snapshot_day_paths(output_spec, binary_paths)
     _check_output_targets(output_spec, output_cfg)
     _check_snapshot_schedule(output_spec,
@@ -488,6 +519,9 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     surface_sources = build_surface_flux_sources(grid_of_first, tracer_specs, FT;
                                                  reference_time = _run_reference_time(cfg),
                                                  run_span = flux_run_span)
+    set_physics_attributes!(output_spec,
+        runtime_physics_attributes(cfg, first_driver, surface_sources,
+                                   air_mass_basis(first_driver), binary_paths))
     m0 = total_air_mass(model.state)
     tracer_masses0 = Dict(name => total_mass(model.state, name)
                           for name in tracer_names(model.state))
@@ -770,6 +804,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     output_spec = runtime_output_spec(output_cfg, FT; default_cap_hours = run_hours)
     snapshot_schedule_hours = snapshot_hours(output_spec)
     do_snapshots = output_enabled(output_spec)
+    do_snapshots && set_time_origin!(output_spec, _runtime_output_origin(cfg, driver1))
     _check_snapshot_day_paths(output_spec, binary_paths)
     _check_output_targets(output_spec, output_cfg)
     _check_snapshot_schedule(output_spec, _window_end_hours(layout; stop_window_override))
@@ -855,6 +890,9 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     surface_sources = build_surface_flux_sources(grid, tracer_specs, FT;
                                                  reference_time = _run_reference_time(cfg),
                                                  run_span = flux_run_span)
+    set_physics_attributes!(output_spec,
+        runtime_physics_attributes(cfg, driver1, surface_sources,
+                                   air_mass_basis(driver1), binary_paths))
     source_tracers = Set(source.tracer_name for source in surface_sources)
     for source in surface_sources
         # Global storage rate at the run start, by dispatch on the source type.

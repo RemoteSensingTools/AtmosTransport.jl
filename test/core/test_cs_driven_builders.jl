@@ -205,6 +205,28 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "limiter" => "nope"), inversion)
     end
 
+    @testset "runtime physics metadata dispatches on typed specs" begin
+        M = AtmosTransport.Models
+        ppm = advection_spec(Dict("scheme" => "ppm", "limiter" => "cw84",
+                                  "vertical" => "fv3_kord8_signed"))
+        ppm_attrs = M._advection_attributes(ppm)
+        @test ppm_attrs["physics_advection_scheme"] == "ppm"
+        @test ppm_attrs["physics_advection_limiter"] == "cw84"
+        @test ppm_attrs["physics_vertical_remap"] == "fv3_kord8_signed"
+
+        linrood = advection_spec(Dict("scheme" => "linrood", "ppm_order" => 7))
+        lr_attrs = M._advection_attributes(linrood)
+        @test lr_attrs["physics_advection_order"] == "7"
+        @test lr_attrs["physics_vertical_remap"] == "fv3_kord8"
+
+        diff = diffusion_spec(Dict("kind" => "constant", "value" => 3.5,
+                                   "surface_flux_boundary" => true))
+        diff_attrs = M._diffusion_attributes(diff)
+        @test diff_attrs["physics_diffusion"] == "constant"
+        @test diff_attrs["physics_diffusion_kz_m2_s"] == "3.5"
+        @test diff_attrs["physics_diffusion_surface_flux_coupling"] == "diffusive_boundary"
+    end
+
     @testset "cs_halo_width dispatch" begin
         @test cs_halo_width(Dict{String,Any}(), UpwindScheme()) == 1
         @test cs_halo_width(Dict("advection" => Dict("scheme" => "ppm")), PPMScheme()) == 3

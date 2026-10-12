@@ -30,8 +30,8 @@ All in [`Visualization.jl`](Visualization.jl):
 - `available_variables`, `snapshot_times`, `snapshot_topology`, and
   `frame_indices(snapshot, times=AllFrames())` query an open snapshot
 - `fieldview(snapshot, variable; transform=ColumnMean(), time=1, level=nothing, unit=NativeUnit()) -> HorizontalField`
-  - `time` is a frame index (integer) or a snapshot hour (the nearest frame is
-    taken)
+  - `time` is a frame index (integer), decoded `DateTime`, or snapshot hour
+    (the nearest frame is taken)
   - `unit=PPMUnit()` multiplies the values by 1e6
   - Cubed-sphere transforms:
     - `ColumnMean()` uses the stored `<var>_column_mean` if present; otherwise
@@ -81,8 +81,9 @@ All in [`Visualization.jl`](Visualization.jl):
   `panel_convention` (`gnomonic` or `geos_native`) attributes. It uses the
   default definition for that convention, puts both meshes on
   `IFS_EARTH_RADIUS`, and keeps no disk cache.
-- Snapshot times are read as raw Float64 hours (`ds["time"].var[:]`), skipping
-  CF time decoding.
+- Current snapshot times are decoded from CF `hours since <run start>` units;
+  numeric-hour frame selection still uses the raw elapsed-hour coordinate.
+  Legacy files with bare `hours` continue to expose numeric times.
 - To plot, load a Makie backend such as CairoMakie before calling the
   plotting functions.
 

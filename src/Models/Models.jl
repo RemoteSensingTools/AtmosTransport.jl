@@ -29,6 +29,7 @@ include("TransportModel.jl")
 include("RuntimeRecipeStyles.jl")    # runtime-style traits (dispatched on by specs)
 include("RuntimePhysicsSpecs.jl")    # typed config specs + materialize (Oceananigans-style)
 include("RuntimePhysicsRecipe.jl")
+include("RuntimePhysicsMetadata.jl")
 include("InitialConditionIO.jl")
 using .InitialConditionIO: FileInitialConditionSource,
                            AbstractInitialConditionSpec,

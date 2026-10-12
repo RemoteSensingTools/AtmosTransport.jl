@@ -4,14 +4,15 @@
 
 Runners should only decide when to sample state. They should call
 `capture_snapshot(model; time_hours, halo_width, fields)` and
-`write_snapshot_netcdf(path, frames, grid; mass_basis, options)` instead of
+`write_snapshot_netcdf(path, frames, grid; mass_basis, options, time_origin)` instead of
 writing topology-specific NetCDF files directly.
 
 ## Files
 
 - `Output.jl` assembles the module (imports, include order, exports).
 - `runtime_output.jl` defines the `[output]` schedule, partition and
-  layer-selection types and the runtime output specification.
+  layer-selection types, runtime output specification, and the resolved
+  `physics_*`/time-origin metadata carried to every sink.
 - `binary_writer.jl` writes the ATMSNAP snapshot binary (header with
   the mesh definition and radius, Float32 payload).
 - `snapshots.jl` defines `SnapshotFrame`, `SnapshotWriteOptions`, and
@@ -94,6 +95,12 @@ Every selected tracer also writes `<tracer>_total_mass(time)` as Float64. The
 value is captured before spatial output conversion and is the authoritative
 global sum of model storage. ATMSNAP carries it in the JSON header so its
 Float32 spatial payload does not erase small signed residuals.
+
+Runtime NetCDF time coordinates use CF `hours since <run start>` with the
+`proleptic_gregorian` calendar. ATMSNAP records the same units and calendar in
+its JSON header. Both formats also record the typed runtime physics block:
+advection and limiter, vertical remap, convection, diffusion, surface sources,
+chemistry/decay, mass basis, met source, and transport-binary provenance.
 
 To add a topology, implement schema and payload methods for the new mesh type.
 Do not special-case the runner.

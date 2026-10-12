@@ -28,12 +28,13 @@ computed by that routine.
 
 ## Entry Points
 
-- `daily_snapshot_series(paths, variables; origin)` in
+- `daily_snapshot_series(paths, variables; origin=nothing)` in
   [`snapshot_series.jl`](snapshot_series.jl): the frames of runtime snapshot
   files, concatenated in file order, as `(; times::Vector{DateTime},
-  values::Dict{String, Array})` with time as the last dimension. `origin` is
-  the simulation start (snapshots store `time` in bare `"hours"`); a repeated
-  hour is dropped (first occurrence wins); fill values become NaN.
+  values::Dict{String, Array})` with time as the last dimension. Current files
+  decode the simulation start from CF `hours since <run start>` units; `origin`
+  is only needed for legacy files with bare `"hours"`. A repeated time is
+  dropped (first occurrence wins); fill values become NaN.
   `keep_frame = t -> ...` reads only the frames whose time it accepts (one
   field per day from 3-hourly snapshots).
 - `EqualAreaBands(n)`, `BandAssignment(bands, lat, area)`,

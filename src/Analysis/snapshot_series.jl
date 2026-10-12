@@ -11,7 +11,7 @@
 # ===========================================================================
 
 """
-    daily_snapshot_series(paths, variables; origin::DateTime, keep_frame = nothing)
+    daily_snapshot_series(paths, variables; origin=nothing, keep_frame = nothing)
         -> (; times, values)
 
 Concatenate the frames of runtime snapshot files into one series per variable.
@@ -21,11 +21,10 @@ Concatenate the frames of runtime snapshot files into one series per variable.
 - `variables` names snapshot variables whose last dimension is `time`, for
   example `"co2_natural_column_mean"` `(Xdim, Ydim, nf, time)` or
   `"air_mass_per_area"` `(Xdim, Ydim, nf, lev, time)`.
-- `origin` is the simulation start. Snapshot files store `time` in hours since
-  that start with the bare units `"hours"`, so the origin is not in the file
-  and the caller passes it (`[input].start_date` of the run config). A `time`
-  variable with any other units is an error. (Reading the origin from CF
-  `"hours since …"` units follows when the snapshot writer records it.)
+- `origin` is optional for current files: their CF `time` coordinate records
+  `hours since <run start>` and is decoded directly. Pass `origin` only to read
+  legacy files whose time units are the bare string `"hours"`; when supplied
+  for a current file it must agree with the encoded origin.
 
 Each frame is stamped `origin + hours`. A frame whose hour was already read is
 a duplicated boundary frame and is skipped: the first occurrence wins. A frame
@@ -48,41 +47,45 @@ equal to `_FillValue` or `missing_value` become NaN. Every file must hold each
 variable with the same non-time shape and element type.
 """
 function daily_snapshot_series(paths::AbstractVector{<:AbstractString}, variables;
-                               origin::DateTime, keep_frame = nothing)
+                               origin::Union{Nothing, DateTime}=nothing, keep_frame = nothing)
     isempty(paths) && throw(ArgumentError("daily_snapshot_series: no snapshot paths given"))
     names = String[String(v) for v in variables]
     isempty(names) && throw(ArgumentError("daily_snapshot_series: no variables given"))
     allunique(names) || throw(ArgumentError("daily_snapshot_series: variables repeat: $(names)"))
 
-    ms_per_hour = Dates.toms(Dates.Hour(1))
-    stamp(h) = origin + Millisecond(round(Int64, h * ms_per_hour))
-
-    # Pass 1: frame hours of every file and the frames to keep.
-    hours = Float64[]          # kept frames
-    seen = Set{Float64}()      # every distinct frame read, kept or not
-    latest = -Inf
+    # Pass 1: decoded frame times of every file and the frames to keep.
+    times = DateTime[]
+    seen = Set{DateTime}()
+    latest = typemin(DateTime)
+    encoded_origin = Ref{Union{Nothing, DateTime}}(nothing)
     plan = Vector{Vector{Int}}(undef, length(paths))
     for (f, path) in enumerate(paths)
-        file_hours = NCDataset(ds -> _snapshot_hours(ds, path), path, "r")
+        file_times, file_origin = NCDataset(ds -> _snapshot_times(ds, path, origin), path, "r")
+        if encoded_origin[] === nothing
+            encoded_origin[] = file_origin
+        elseif file_origin != encoded_origin[]
+            throw(ArgumentError("$(path): snapshot time origin $(file_origin) differs from " *
+                                "$(encoded_origin[]) in the first file"))
+        end
         keep = Int[]
-        for (k, h) in enumerate(file_hours)
-            h in seen && continue
-            if h < latest
-                throw(ArgumentError("$(path): frame $(k) at hour $(h) precedes hour " *
-                                    "$(latest) read before it; pass the files of one run in time order"))
+        for (k, t) in enumerate(file_times)
+            t in seen && continue
+            if t < latest
+                throw(ArgumentError("$(path): frame $(k) at $(t) precedes $(latest) " *
+                                    "read before it; pass the files of one run in time order"))
             end
-            push!(seen, h)
-            latest = h
-            (keep_frame === nothing || keep_frame(stamp(h))::Bool) || continue
+            push!(seen, t)
+            latest = t
+            (keep_frame === nothing || keep_frame(t)::Bool) || continue
             push!(keep, k)
-            push!(hours, h)
+            push!(times, t)
         end
         plan[f] = keep
     end
 
     # Pass 2: allocate from the first file, then copy the kept frames.
     values = NCDataset(paths[1], "r") do ds
-        Dict{String, Array}(name => _allocate_series(ds, name, paths[1], length(hours))
+        Dict{String, Array}(name => _allocate_series(ds, name, paths[1], length(times))
                             for name in names)
     end
     column = 0
@@ -96,19 +99,35 @@ function daily_snapshot_series(paths::AbstractVector{<:AbstractString}, variable
         column += length(plan[f])
     end
 
-    return (; times = DateTime[stamp(h) for h in hours], values)
+    return (; times, values)
 end
 
-function _snapshot_hours(ds, path)
+function _snapshot_times(ds, path, explicit_origin)
     haskey(ds, "time") || throw(ArgumentError("$(path) has no `time` variable"))
     var = ds["time"]
     units = strip(String(get(var.attrib, "units", "")))
-    units == "hours" ||
-        throw(ArgumentError("$(path): `time` has units \"$(units)\"; expected the snapshot " *
-                            "writer's \"hours\" (hours since the simulation start passed as `origin`)"))
     hours = Float64.(collect(var.var[:]))
     all(isfinite, hours) || throw(ArgumentError("$(path): `time` holds non-finite values"))
-    return hours
+    ms_per_hour = Dates.toms(Dates.Hour(1))
+    if units == "hours"
+        explicit_origin === nothing && throw(ArgumentError(
+            "$(path): legacy `time` units \"hours\" need the `origin` keyword"))
+        times = DateTime[explicit_origin + Millisecond(round(Int64, h * ms_per_hour))
+                         for h in hours]
+        return times, explicit_origin
+    end
+    occursin(r"^hours\s+since\s+"i, units) || throw(ArgumentError(
+        "$(path): `time` has units $(repr(units)); expected CF `hours since <run start>`"))
+    times = DateTime.(decode_time(ds, "time", (CFDecoder(),)))
+    isempty(times) && throw(ArgumentError("$(path): snapshot `time` coordinate is empty"))
+    origins = DateTime[times[i] - Millisecond(round(Int64, hours[i] * ms_per_hour))
+                       for i in eachindex(times)]
+    all(==(first(origins)), origins) || throw(ArgumentError(
+        "$(path): `time` values do not share one CF origin"))
+    file_origin = first(origins)
+    explicit_origin === nothing || explicit_origin == file_origin || throw(ArgumentError(
+        "$(path): encoded snapshot origin $(file_origin) differs from requested origin $(explicit_origin)"))
+    return times, file_origin
 end
 
 # The variable's floating element type and non-time shape, checked.

@@ -84,6 +84,25 @@ Every snapshot file carries a CF-style global header set by
 | `output_options` | `float_type=…, deflate_level=…, shuffle=…` (only present when writer options are passed) |
 | `history` | CF-canonical chain; the writer prepends `"<creation_date>: written by AtmosTransport.Output (commit <sha>[+dirty]) with N frame(s)"` |
 
+The runner also writes the resolved physics as global attributes. These are
+constructed by dispatch on the typed runtime specifications and instantiated
+surface sources, not copied from unvalidated configuration strings:
+
+| Attribute | Meaning |
+| --- | --- |
+| `physics_advection_scheme`, `physics_advection_limiter` | horizontal scheme and limiter that ran |
+| `physics_advection_order` | Lin–Rood edge family, when applicable |
+| `physics_vertical_remap` | vertical reconstruction/remap |
+| `physics_convection`, `physics_convection_*` | convection family and its numerical options |
+| `physics_diffusion`, `physics_diffusion_*` | diffusion family and surface-flux coupling |
+| `physics_surface_fluxes` | per-tracer static or time-varying sources and temporal reconstruction |
+| `physics_chemistry`, `physics_decay_half_lives_seconds` | chemistry family and resolved decay half-lives |
+| `physics_mass_basis` | carrier-air basis used by the physics |
+| `physics_met_source` | transport binary source family |
+| `physics_binary_provenance`, `physics_binary_inputs` | producing code/fingerprint fields and input binary names |
+
+ATMSNAP writes the same names as root JSON-header fields.
+
 Every provenance value is best-effort. A source tree exported with
 `git archive` (the code snapshots used for long runs) has no `.git`; git writes
 the commit into its `src/REVISION` on export, and the writer reports that commit
@@ -116,7 +135,7 @@ Coordinate variables:
 | `lon_bounds` | `(lon, nv)` (`nv = 2`) | `degrees_east` |
 | `lat_bounds` | `(lat, nv)` (`nv = 2`) | `degrees_north` |
 | `cell_area` | `(lon, lat)` | `m2` |
-| `time` | `(time,)` | `hours` since the configured simulation start |
+| `time` | `(time,)` | `hours since YYYY-MM-DD HH:MM:SS`; `calendar = "proleptic_gregorian"` |
 | `lev` | `(lev,)` | `1` (dimensionless level index; `positive = "down"`) |
 
 Per-topology mass diagnostics (enabled by default):
@@ -141,6 +160,10 @@ The per-tracer full-3D field `<tracer>` is the mixing ratio. The
 `<tracer>_column_mass_per_area` diagnostic is the sum of the model's
 `χ × carrier-air-mass` storage divided by area; no molecular-weight conversion
 to physical kg species is applied.
+
+The `time` values remain elapsed hours from the run start; the CF units encode
+that start so readers do not need the run configuration. ATMSNAP stores the
+same contract as `time_units` and `time_calendar` beside `times_hours`.
 
 ## Reduced-Gaussian snapshot
 

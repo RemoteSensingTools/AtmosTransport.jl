@@ -39,7 +39,8 @@ const _ATMSNAP_HEADER_ALIGN = 4096
 const _ATMSNAP_VERSION = 1
 
 """
-    write_snapshot_binary(path, frames, grid; mass_basis=:dry, options=SnapshotWriteOptions())
+    write_snapshot_binary(path, frames, grid; mass_basis=:dry, options=SnapshotWriteOptions(),
+                          physics_attributes=Dict())
 
 Write CS snapshots to a self-describing binary file. Skips NetCDF library
 overhead entirely; pair with `scripts/postprocess/binary_to_netcdf.jl` for the
@@ -49,7 +50,10 @@ function write_snapshot_binary(path::AbstractString,
                                 frames::AbstractVector{<:AbstractSnapshotFrame},
                                 grid::AtmosGrid;
                                 mass_basis::Symbol = :dry,
-                                options::SnapshotWriteOptions = SnapshotWriteOptions())
+                                options::SnapshotWriteOptions = SnapshotWriteOptions(),
+                                physics_attributes::AbstractDict{<:AbstractString,<:AbstractString} =
+                                    Dict{String, String}(),
+                                time_origin::Union{Nothing, DateTime} = nothing)
     all(f -> f isa SnapshotFrame, frames) || throw(ArgumentError("binary output requires full snapshots"))
     mesh = grid.horizontal
     mesh isa CubedSphereMesh || throw(ArgumentError(
@@ -93,6 +97,9 @@ function write_snapshot_binary(path::AbstractString,
         ),
         "fields" => field_names,
         "times_hours" => [frame.time_hours for frame in frames],
+        "time_units" => time_origin === nothing ? "hours" :
+            "hours since " * Dates.format(time_origin, "yyyy-mm-dd HH:MM:SS"),
+        "time_calendar" => time_origin === nothing ? "none" : "proleptic_gregorian",
         "tracer_total_mass" => Dict(
             String(name) => [frame.tracer_total_mass[name] for frame in frames]
             for name in tracer_keys),
@@ -101,6 +108,11 @@ function write_snapshot_binary(path::AbstractString,
         "n_frames" => n_frames,
         "payload_bytes" => payload_bytes,
     )
+    for key in sort!(collect(keys(physics_attributes)))
+        startswith(key, "physics_") || throw(ArgumentError(
+            "runtime physics attribute $(repr(key)) must start with `physics_`"))
+        header[String(key)] = String(physics_attributes[key])
+    end
     header_bytes = Vector{UInt8}(JSON3.write(header))
     fixed_prefix = length(_ATMSNAP_MAGIC) + sizeof(UInt64)   # 8 + 8 = 16
     raw_header_end = fixed_prefix + length(header_bytes)

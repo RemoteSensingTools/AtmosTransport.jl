@@ -34,6 +34,7 @@ using Statistics: mean, std, cor
 using ..Architectures: _neumaier_sum
 using ..Parameters: DRY_AIR_MOLAR_MASS, GEOSCHEM_SPECIES_MOLAR_MASS, RN222_HALF_LIFE
 using ..Output: with_netcdf_lock
+using ..GriddedIO: decode_time, CFDecoder
 
 # Budget closure (`run_context.jl`, `budget_closure.jl`) builds on the runtime's own
 # config parsing, grid, output naming and surface-flux sources.
