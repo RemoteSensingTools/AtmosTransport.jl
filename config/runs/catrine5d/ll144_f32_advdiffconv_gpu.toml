@@ -1,3 +1,5 @@
+# LEGACY INPUT: the *_tm5 binary was built on the pre-#18 mirrored tropo34 grid,
+# which matches neither corrected TM5 preset. Regenerate it for new results.
 # 5-day Catrine campaign — ll144 Float32 advdiffconv GPU
 #
 # Runner:

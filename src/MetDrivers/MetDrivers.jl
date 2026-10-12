@@ -16,7 +16,8 @@ using ..Architectures: array_adapter_for
 using ..State
 using ..Grids
 using ..Parameters: EARTH_RADIUS, DEFAULT_MET_INTERVAL_SECONDS, GMAO_CS_LONGITUDE_OFFSET_DEG,
-                    REPLAY_TOLERANCE_FLOAT64, REPLAY_TOLERANCE_FLOAT32
+                    REPLAY_TOLERANCE_FLOAT64, REPLAY_TOLERANCE_FLOAT32,
+                    TM5_CONVECTION_MASS_BASIS_KEY
 import ..source_revision
 
 include("AbstractMetDriver.jl")
@@ -44,6 +45,7 @@ export TransportBinaryDriver, TransportWindow
 export StructuredFluxDeltas, FaceIndexedFluxDeltas, CubedSphereFluxDeltas
 export load_window!, load_flux_delta_window!
 export load_tm5_convection_window!, has_tm5_convection
+export TM5_CONVECTION_MASS_BASIS_KEY, tm5_convection_mass_basis
 export load_qv_pair_window!, load_grid, load_transport_window, load_transport_window!
 export driver_grid, air_mass_basis, has_humidity_endpoints
 export interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!

@@ -25,8 +25,6 @@ reference   = "https://github.com/google-research/arco-era5"
 coefficients_file = "config/era5_L137_coefficients.toml"
 
 [preprocessing]
-level_orientation = "top_down"
-
 # ARCO core carries no spectral lnsp → source PS from ARCO single_level sp.
 arco_surface_pressure = true
 

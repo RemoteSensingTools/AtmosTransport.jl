@@ -122,7 +122,12 @@ cubed-sphere driver). The parent overview is [`../README.md`](../README.md).
 - `p_half[k] = A_ifc[k] + B_ifc[k] * ps`, with `k = 1` at the top of the atmosphere
   and `nlevel + 1` interfaces.
 - `write_transport_binary` defaults to `mass_basis = :dry`. Both streaming openers
-  default to `:moist`, and the in-tree preprocessors pass the basis explicitly.
+  require `mass_basis` (no default), because the TM5 convection basis stamp is
+  inferred from it.
+- With TM5 convection sections, writers default `tm5_convection_mass_basis` to
+  the binary's `mass_basis`. Transformation writers pass the source record
+  explicitly; `nothing` preserves a genuinely legacy keyless payload. This
+  structural key cannot be supplied through `extra_header`.
 - Writers publish atomically. The eager writer renames `<path>.tmp`; streaming
   writers rename a temp file in the destination directory after rewriting the
   header at close, and refuse to publish an incomplete stream.

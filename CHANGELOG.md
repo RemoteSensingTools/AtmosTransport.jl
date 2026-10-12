@@ -4,6 +4,11 @@
 
 ### Breaking changes
 
+- ERA5 L137 `echlevs` now uses TM5/ECMWF half-level numbering (`0` is the
+  model top, `137` the surface). The ambiguous development aliases
+  `ml137_94L` and `ml137_85L` are removed; use `ml137_cfl94` and
+  `ml137_cfl85`.
+
 - Run settings no longer come from environment variables. These are removed
   without a transition period; the package ignores them:
 
@@ -149,6 +154,26 @@
   to `replay_tolerance` of the binary's storage type (was 1e-10). Payloads
   are unchanged; the check does not validate the winds themselves.
 
+- The ERA5 level selector chose coefficient `137 - e` for a TM5 `echlevs`
+  entry `e`, reflecting TM5 level selections about the middle of L137. It
+  now chooses coefficient `e` as TM5 does. `ml137_tropo34` contains the
+  TM5-MP r1112 list verbatim, and new `ml137_tropo34a` contains the TM5
+  cy3-4dvar/CAMS73 list verbatim. AtmosTransport's `ml137_66L`,
+  `ml137_cfl94`, and `ml137_cfl85` recipes were transformed to keep their
+  existing grids bit-identical; `ml137_tropo34` binaries must be regenerated.
+- ERA5 and legacy TM5-archive convection fluxes are now converted from their
+  total-air (moist) basis to the transport binary's air-mass basis before use.
+  This removes a 0.7–1.1% global high bias (up to about 2% in humid tropical
+  columns) in TM5 convective rates for dry-air binaries. New binaries record
+  `tm5_convection_mass_basis`; readers reject a recorded mismatch and warn for
+  legacy dry TM5 binaries until the production archive is regenerated. All
+  three ERA5 routes are covered: spectral ec2tm, N320 to cubed sphere, and the
+  CATRINE TM5 attachment. Reported by pera-noaa (NOAA GML).
+- Spectral synthesis now drops the top zonal wavenumber `m = N/2` on
+  even-length latitude rings instead of giving it half weight. The per-ring
+  limit `min(T, (N - 1) ÷ 2)` is shared by the lat-lon, reduced-Gaussian and
+  batched ERA5 N320 synthesis paths, with single-harmonic coverage for even
+  and odd rings. Reported by pera-noaa (NOAA GML) in issue #13.
 - Transport binaries (eager and streaming writers), the spectral day cache and
   cached regridders are published through `AtomicFiles`: a sibling staging
   file moved onto the target by one replacing rename (`rename(2)` on POSIX

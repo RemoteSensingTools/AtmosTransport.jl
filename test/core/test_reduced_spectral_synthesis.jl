@@ -1,8 +1,10 @@
 #!/usr/bin/env julia
 # Batched spectral → reduced-Gaussian synthesis (`ReducedSpectralSynthesis`):
 #   1. single spherical harmonics reproduce P̃_n^m(sin φ)·2Re(f̂ e^{imλ}) at the
-#      cell centres for m < nlon/2, including the top wavenumber of odd-length
-#      rings; the Nyquist term m = nlon/2 of even rings enters with weight 1;
+#      cell centres for m ≤ ring_max_wavenumber(T, nlon) = min(T, (nlon − 1) ÷ 2),
+#      including the top wavenumber of odd-length rings; higher wavenumbers,
+#      among them the Nyquist term m = nlon/2 of even rings, are dropped
+#      (issue #13);
 #   2. random fields agree with the per-ring `spectral_to_reduced_scalar!` to
 #      round-off;
 #   3. levels are synthesised independently.
@@ -51,11 +53,9 @@ end
         P.synthesize_reduced!(out, spec, s)
         expected = single_mode(grid, T, n, m, 0.7 - 0.3im)
         cells(f) = vcat([fill(f(nl), nl) for nl in grid.nlon_per_ring]...)
-        resolved = cells(nl -> 2m < nl)                 # full weight
-        nyquist = cells(nl -> 2m == nl)                 # half weight (single FFT bin)
+        resolved = cells(nl -> 2m < nl)                 # full weight (all m ≤ T here)
         @test out[resolved, 2] ≈ expected[resolved] atol = 1e-12
-        @test out[nyquist, 2] ≈ expected[nyquist] ./ 2 atol = 1e-12
-        @test all(iszero, out[cells(nl -> 2m > nl), 2])
+        @test all(iszero, out[.!resolved, 2])           # dropped, incl. the Nyquist term 2m = nl
         @test all(iszero, out[:, 1]) && all(iszero, out[:, 3])
     end
 

@@ -129,7 +129,7 @@ end
         entu, detu, entd, detd,
         udmf, ddmf, udrf, ddrf,
         t, q, ps, ak_full, bk_full, Nz_native;
-        stats = stats)
+        basis = DryBasis(), stats = stats)
 
     # Every column processed.
     @test stats.columns_processed[] == Nlon * Nlat
@@ -170,7 +170,7 @@ end
         zeros(FT, Nlon, Nlat, Nz_native),
         zeros(FT, Nlon, Nlat, Nz_native),
         udmf, ddmf, udrf, ddrf, t, q, ps,
-        ak_full, bk_full, Nz_native)
+        ak_full, bk_full, Nz_native; basis = DryBasis())
 
     # Wrong Nz_native arg → clear error.
     @test_throws ArgumentError tm5_native_fields_for_hour!(
@@ -179,7 +179,7 @@ end
         zeros(FT, Nlon, Nlat, Nz_native),
         zeros(FT, Nlon, Nlat, Nz_native),
         udmf, ddmf, udrf, ddrf, t, q, ps,
-        ak_full, bk_full, 3)   # wrong Nz_native
+        ak_full, bk_full, 3; basis = DryBasis())   # wrong Nz_native
 end
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -218,7 +218,7 @@ end
     tm5_native_fields_for_hour!(
         entu_n, detu_n, entd_n, detd_n,
         udmf, ddmf, udrf, ddrf,
-        t, q, ps, ak_full, bk_full, Nz_native)
+        t, q, ps, ak_full, bk_full, Nz_native; basis = DryBasis())
 
     # Merge to Nz_merged.
     entu_m = zeros(FT, Nlon, Nlat, Nz_merged)

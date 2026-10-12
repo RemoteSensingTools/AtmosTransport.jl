@@ -48,7 +48,15 @@ supports_spectral_massflux_preprocessing(::AbstractTargetGeometry) = false
 supports_spectral_massflux_preprocessing(::LatLonTargetGeometry) = true
 supports_spectral_massflux_preprocessing(::ReducedGaussianTargetGeometry) = true
 
-"""Spectral truncation T for the target grid: Nyquist = `nlon ÷ 2 − 1` to avoid aliasing."""
+"""
+    target_spectral_truncation(grid) -> Int
+
+Spectral truncation `T` for the target grid: the highest zonal wavenumber its
+widest latitude ring resolves, `nlon ÷ 2 − 1` (the term `m = nlon/2` is never
+synthesised; see `ring_max_wavenumber`). For a reduced Gaussian grid this is set
+by the widest ring; each narrower ring drops its wavenumbers above
+`ring_max_wavenumber(T, nlon_j)`.
+"""
 target_spectral_truncation(grid::LatLonTargetGeometry) = div(nlon(grid), 2) - 1
 target_spectral_truncation(grid::ReducedGaussianTargetGeometry) =
     div(maximum(grid.nlon_per_ring), 2) - 1

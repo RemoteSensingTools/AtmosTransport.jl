@@ -285,6 +285,20 @@ end
     return cache.real_buffers[n]
 end
 
+"""
+    spectral_to_ring!(dest, spec, T, lat_deg, cache; lon_shift_rad = 0.0) -> dest
+
+Synthesise the spectral field `spec[n + 1, m + 1] = f̂_n^m` (truncation `T`) on
+the `N = length(dest)` equally spaced points `λ_k = lon_shift_rad + 2πk/N` of
+the ring at latitude `lat_deg`:
+
+    dest[k + 1] = G_0 + 2 Re Σ_{m=1}^{M} G_m e^{i m λ_k},
+    G_m = Σ_{n=m}^{T} f̂_n^m P̃_n^m(sin φ),   M = ring_max_wavenumber(T, N),
+
+through [`fill_ring_spectrum!`](@ref) (shared with `spectral_to_grid!`) and
+one unnormalised inverse FFT. The term `m = N/2` of an even ring is dropped
+(see [`ring_max_wavenumber`](@ref)).
+"""
 function spectral_to_ring!(dest::AbstractVector{Float64},
                            spec::AbstractMatrix{ComplexF64},
                            T::Int,
@@ -292,29 +306,9 @@ function spectral_to_ring!(dest::AbstractVector{Float64},
                            cache::ReducedSpectralThreadCache;
                            lon_shift_rad::Real = 0.0)
     Nlon = length(dest)
-    lat_deg64 = Float64(lat_deg)
-    lon_shift_rad64 = Float64(lon_shift_rad)
-    compute_legendre_column!(cache.P_buf, T, sind(lat_deg64))
+    compute_legendre_column!(cache.P_buf, T, sind(Float64(lat_deg)))
     fft_buf = _fft_buffer!(cache, Nlon)
-    fill!(fft_buf, zero(ComplexF64))
-
-    for m in 0:min(T, div(Nlon, 2))
-        Gm = zero(ComplexF64)
-        @inbounds for n in m:T
-            Gm += spec[n + 1, m + 1] * cache.P_buf[n + 1, m + 1]
-        end
-        if lon_shift_rad64 != 0.0 && m > 0
-            Gm *= exp(im * m * lon_shift_rad64)
-        end
-        fft_buf[m + 1] = Gm
-    end
-
-    # Hermitian mirror of every 0 < m < Nlon/2 (for odd Nlon this includes
-    # m = (Nlon − 1)/2); the Nyquist term of an even ring has no mirror.
-    for m in 1:min(T, (Nlon - 1) ÷ 2)
-        fft_buf[Nlon - m + 1] = conj(fft_buf[m + 1])
-    end
-
+    fill_ring_spectrum!(fft_buf, spec, cache.P_buf, T, Float64(lon_shift_rad))
     FFTW.bfft!(fft_buf)
     @inbounds for i in 1:Nlon
         dest[i] = real(fft_buf[i])

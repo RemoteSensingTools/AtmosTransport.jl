@@ -51,9 +51,12 @@ tile on first use and reuse it. The default legacy budget is 1.0 GiB.
 
 `TM5Convection` is **basis-polymorphic**, identical to
 [`CMFMCConvection`](@ref). The four forcing fields
-must be on the same basis as `state.air_mass` (moist by upstream
-Fortran convention and by the ec2tm preprocessor default; dry
-requires a sibling preprocessor path).
+must be on the same basis as `state.air_mass`. ECMWF and TM5 archive
+convection fields are total-air (moist) fluxes upstream; maintained
+preprocessors convert them to the binary's declared basis before writing and
+record that basis as `tm5_convection_mass_basis`. Opening a binary rejects a
+recorded mismatch. Legacy dry binaries without that key warn because their
+unconverted moist fluxes make rates about 1 % too large.
 
 # Fields required on `ConvectionForcing`
 

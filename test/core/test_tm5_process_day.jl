@@ -96,6 +96,7 @@ end
     regridder = build_regridder(source_grid.mesh, target_grid.mesh; normalize = false)
 
     ws = allocate_tm5_workspace(8, 4, 3, 2, FT;
+                                basis = DryBasis(),
                                 regridder = regridder,
                                 target_nlon = 4,
                                 target_nlat = 2,
@@ -238,6 +239,8 @@ end
             hdr_parsed = JSON3.read(String(hdr_buf[1:json_end]))
 
             @test hdr_parsed["include_tm5conv"] == true
+            # The TM5 fluxes are put on the binary's basis (moist here).
+            @test hdr_parsed["tm5_convection_mass_basis"] == "moist"
             sections = String.(hdr_parsed["payload_sections"])
             @test sections[end-3:end] == ["entu", "detu", "entd", "detd"]
 
@@ -350,7 +353,7 @@ end
             Nz = 3
             merge_map = [1, 1, 2, 2, 3]
 
-            ws = allocate_tm5_workspace(Nlon, Nlat, Nz_native, Nz, FT)
+            ws = allocate_tm5_workspace(Nlon, Nlat, Nz_native, Nz, FT; basis = DryBasis())
             stats = TM5CleanupStats()
 
             # L137-style hybrid coefs: surface-down pressure.
@@ -396,7 +399,7 @@ end
             merge_map = [1, 1, 2, 2, 3]
 
             ws = allocate_tm5_workspace(Nlon, Nlat, Nz_native, Nz, FT;
-                                         physics_eltype = Float32)
+                                         basis = DryBasis(), physics_eltype = Float32)
             @test ws.physics_bufs !== nothing
             @test eltype(ws.physics_bufs[1]) === Float64
 

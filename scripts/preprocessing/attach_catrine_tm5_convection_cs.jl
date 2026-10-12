@@ -7,12 +7,18 @@
 # space/time than the native ERA5-N320 hourly transport forcing. The output
 # records that provenance explicitly so downstream experiments cannot confuse
 # the attached product with native-N320 convection.
+#
+# The archive's fluxes are per unit of total (moist) air. For a dry-basis
+# binary they are converted to dry air on the 1-degree grid, at the native
+# ERA5 levels, with the ERA5 N320 specific humidity of each hourly window
+# (`tm5_convection_to_basis!`), before the level merge and the remap.
 
 using ArgParse
 using Dates
 using NCDatasets
 using AtmosTransport
-using AtmosTransport.Parameters: ERA5_NATIVE_LEVEL_COUNT, ERA5_MET_INTERVAL_SECONDS
+using AtmosTransport.Parameters: ERA5_NATIVE_LEVEL_COUNT, ERA5_MET_INTERVAL_SECONDS,
+                                  IFS_EARTH_RADIUS
 
 const MD = AtmosTransport.MetDrivers
 const PP = AtmosTransport.Preprocessing
@@ -34,6 +40,11 @@ function settings()
             dest_name = "cache_dir"
             default = "/temp2/catrine-runs/met/regrid_cache"
             help = "conservative-regrid weight cache"
+        "--era5-root"
+            dest_name = "era5_root"
+            default = ""
+            help = "ERA5 N320 native GRIB root (ml_an_native_core/) supplying the specific " *
+                   "humidity for the dry-air conversion; default: the input binary's source_root"
         "--force"
             action = :store_true
             help = "replace an existing output"
@@ -180,6 +191,110 @@ function closure_error(fields)
     return worst
 end
 
+# Moist (total-air) archive fluxes are converted to the binary's air-mass
+# basis with the specific humidity of each window; a moist binary needs none.
+humidity_target_mesh(mesh::AtmosTransport.LatLonMesh) =
+    AtmosTransport.LatLonMesh(mesh.λᶠ, mesh.φᶠ;
+                              FT = eltype(mesh), radius = IFS_EARTH_RADIUS)
+
+humidity_remap(::AtmosTransport.MoistBasis, raw_header, era5_root, date, mesh, cache_dir) = nothing
+function humidity_remap(::AtmosTransport.DryBasis, raw_header, era5_root, date,
+                        mesh, cache_dir)
+    # Specific humidity is intensive, so changing only the sphere radius does
+    # not change its target values. ConservativeRegridding requires both
+    # manifolds to match: use the N320/IFS radius here, while the subsequent
+    # extensive convection-field remap keeps the transport binary's radius.
+    target = humidity_target_mesh(mesh)
+    return PP.open_era5_humidity_remap(
+        isempty(era5_root) ? era5_root_of(raw_header) : era5_root,
+        date, target; cache_dir)
+end
+
+# The ERA5 N320 archive a no-convection binary was built from.
+function era5_root_of(raw_header)
+    get(raw_header, "source_type", "") == "era5_n320_native_grib" && haskey(raw_header, "source_root") ||
+        error("the input binary does not record its ERA5 N320 source_root; pass --era5-root")
+    return String(raw_header["source_root"])
+end
+
+humidity_source_label(::Nothing) = "none (moist binary)"
+humidity_source_label(remap) =
+    "ERA5 N320 specific humidity at the start of each hourly window ($(remap.handles.core_path)), " *
+    "conservatively remapped to the 1-degree convection grid"
+
+"""
+    window_fields_to_basis!(out, slot, basis, remap, hour, era5_level, columns) -> out
+
+Copy the file-level TM5 fields of a three-hour slot (`slot`, NamedTuple of
+`(360, 180, 137)` arrays `eu, du, ed, dd`, surface first) into `out` and put
+them on the binary's air-mass `basis` with the specific humidity of `hour`
+from `remap`: column by column at the native ERA5 levels (top first), by
+`tm5_convection_to_basis!`. `columns` holds five length-137 scratch vectors.
+"""
+function window_fields_to_basis!(out, slot, ::AtmosTransport.MoistBasis, ::Nothing,
+                                 hour, era5_level, columns)
+    foreach(copyto!, out, slot)
+    return out
+end
+
+function window_fields_to_basis!(out, slot, basis::AtmosTransport.DryBasis, remap,
+                                 hour, era5_level, columns)
+    nlon, nlat, nlev = size(slot.eu)
+    q = reshape(PP.remap_era5_humidity!(remap, hour), nlon, nlat, nlev)   # top first
+    return file_fields_to_basis!(out, slot, basis, q, era5_level, columns)
+end
+
+"""
+    file_fields_to_basis!(out, slot, basis, q, era5_level, columns) -> out
+
+Convert one file-order TM5 archive slot using top-first layer-centre humidity
+`q`. This is the pure conversion step used after the N320 humidity remap and
+is separate so the attachment route can be regression-tested without GRIB
+input.
+"""
+function file_fields_to_basis!(out, slot, basis::AtmosTransport.DryBasis,
+                               q::AbstractArray{<:Any, 3}, era5_level, columns)
+    nlon, nlat, nlev = size(slot.eu)
+    size(q) == (nlon, nlat, nlev) ||
+        throw(DimensionMismatch("humidity shape $(size(q)) does not match TM5 slot $(size(slot.eu))"))
+    eu, du, ed, dd, qc = columns
+    @inbounds for j in 1:nlat, i in 1:nlon
+        for (k, level) in enumerate(era5_level)
+            eu[level] = slot.eu[i, j, k]; du[level] = slot.du[i, j, k]
+            ed[level] = slot.ed[i, j, k]; dd[level] = slot.dd[i, j, k]
+        end
+        for level in 1:nlev
+            qc[level] = q[i, j, level]
+        end
+        PP.tm5_convection_to_basis!(basis, eu, du, ed, dd, qc)
+        for (k, level) in enumerate(era5_level)
+            out.eu[i, j, k] = eu[level]; out.du[i, j, k] = du[level]
+            out.ed[i, j, k] = ed[level]; out.dd[i, j, k] = dd[level]
+        end
+    end
+    return out
+end
+
+function open_attachment_writer(output, Nc, np, Nz, h, g, vc, metadata)
+    return MD.open_streaming_cs_transport_binary(
+        output, Nc, np, Nz, h.nwindow, vc;
+        FT = Float32, planet_radius = h.planet_radius_m, dt_met_seconds = h.dt_met_seconds,
+        half_dt_seconds = h.half_dt_seconds, steps_per_window = 1,
+        source_flux_sampling = h.source_flux_sampling,
+        air_mass_sampling = h.air_mass_sampling,
+        flux_sampling = h.flux_sampling, flux_kind = h.flux_kind,
+        include_flux_delta = true, mass_basis = h.mass_basis,
+        tm5_convection_mass_basis = PP.mass_basis_from_symbol(h.mass_basis),
+        include_surface = true, include_tm5conv = true,
+        include_precomputed_dkg = true,
+        panel_convention = String(g.panel_convention),
+        cs_definition = String(g.definition),
+        cs_coordinate_law = String(g.coordinate_law),
+        cs_center_law = String(g.center_law),
+        longitude_offset_deg = g.longitude_offset_deg,
+        extra_header = metadata)
+end
+
 function main(argv)
     args = parse_args(argv, settings())
     input = abspath(args["input"])
@@ -193,6 +308,7 @@ function main(argv)
     @warn "Attaching legacy 1-degree, 3-hourly TM5 convection; this is not native ERA5-N320 hourly convection"
     reader = MD.TransportBinaryReader(input; FT = Float32)
     writer = nothing
+    humidity = nothing
     started = time()
     try
         h = reader.header
@@ -222,11 +338,22 @@ function main(argv)
             source_mesh, target_grid.horizontal; normalize = false,
             cache_dir = abspath(args["cache_dir"]))
 
+        basis = PP.mass_basis_from_symbol(h.mass_basis)
+        humidity = humidity_remap(basis, h.raw_header, args["era5_root"],
+                                  Date(_date_label(input), dateformat"yyyymmdd"),
+                                  source_mesh, abspath(args["cache_dir"]))
+        @info "Convection fluxes on the $(h.mass_basis) basis; humidity: $(humidity_source_label(humidity))"
+
         Nc, Nz, np = g.Nc, h.nlevel, g.npanel
         nsrc, ndst = length(regridder.src_areas), length(regridder.dst_areas)
         merged = zeros(Float64, 360, 180, Nz)
         src_flat = zeros(Float64, nsrc, Nz)
         dst_flat = zeros(Float64, ndst, Nz)
+        native_shape = (360, 180, ERA5_NATIVE_LEVEL_COUNT)
+        slot = (eu = zeros(native_shape), du = zeros(native_shape),
+                ed = zeros(native_shape), dd = zeros(native_shape))
+        on_basis = map(similar, slot)
+        columns = ntuple(_ -> zeros(ERA5_NATIVE_LEVEL_COUNT), 5)
         tm5 = (
             entu = ntuple(_ -> zeros(Float32, Nc, Nc, Nz), np),
             detu = ntuple(_ -> zeros(Float32, Nc, Nc, Nz), np),
@@ -240,7 +367,9 @@ function main(argv)
             "experimental" => true,
             "validation_status" => "legacy_1deg_3hour_convection_attached; transport_archive_validated_separately",
             "experimental_caveat" => "Legacy 1-degree, 3-hourly CATRINE TM5 convection conservatively remapped to the target cubed sphere; native ERA5-N320 hourly convection comparison remains required.",
-            "convection_attachment" => "legacy_catrine_1deg_3hour_tm5_to_cs_v3",
+            # v4: fluxes put on the binary's air-mass basis (v3: level order fixed).
+            "convection_attachment" => "legacy_catrine_1deg_3hour_tm5_to_cs_v4",
+            "convection_humidity_source" => humidity_source_label(humidity),
             "convection_source_level_order" => level_order,
             "convection_attach_git_revision" => _git_revision(),
             "convection_target_grid" => "C$(Nc)_L$(Nz)",
@@ -257,44 +386,30 @@ function main(argv)
             haskey(raw, key) && (metadata[key] = raw[key])
         end
         vc = AtmosTransport.HybridSigmaPressure(Float32.(h.A_ifc), Float32.(h.B_ifc))
-        writer = MD.open_streaming_cs_transport_binary(
-            output, Nc, np, Nz, h.nwindow, vc;
-            FT = Float32, planet_radius = h.planet_radius_m, dt_met_seconds = h.dt_met_seconds,
-            half_dt_seconds = h.half_dt_seconds, steps_per_window = 1,
-            source_flux_sampling = h.source_flux_sampling,
-            air_mass_sampling = h.air_mass_sampling,
-            flux_sampling = h.flux_sampling, flux_kind = h.flux_kind,
-            include_flux_delta = true, mass_basis = h.mass_basis,
-            include_surface = true, include_tm5conv = true,
-            include_precomputed_dkg = true,
-            panel_convention = String(g.panel_convention),
-            cs_definition = String(g.definition),
-            cs_coordinate_law = String(g.coordinate_law),
-            cs_center_law = String(g.center_law),
-            longitude_offset_deg = g.longitude_offset_deg,
-            extra_header = metadata)
+        writer = open_attachment_writer(output, Nc, np, Nz, h, g, vc, metadata)
 
         worst_closure = 0.0
         NCDataset(conv_path, "r") do ds
             for win in 1:h.nwindow
                 tidx = clamp(fld(win - 1, 3) + 1, 1, 8)
                 if win == 1 || tidx != clamp(fld(win - 2, 3) + 1, 1, 8)
-                    merged_tm5_to_panels!(tm5.entu, dst_flat, src_flat, merged,
-                        ds["eu"][:, :, :, tidx], merge_map, era5_level, regridder, Nc)
-                    merged_tm5_to_panels!(tm5.detu, dst_flat, src_flat, merged,
-                        ds["du"][:, :, :, tidx], merge_map, era5_level, regridder, Nc)
-                    merged_tm5_to_panels!(tm5.entd, dst_flat, src_flat, merged,
-                        ds["ed"][:, :, :, tidx], merge_map, era5_level, regridder, Nc)
-                    merged_tm5_to_panels!(tm5.detd, dst_flat, src_flat, merged,
-                        ds["dd"][:, :, :, tidx], merge_map, era5_level, regridder, Nc)
-                    worst_closure = max(worst_closure, closure_error(tm5))
-                    mean_level = updraft_mean_level(tm5.entu)
-                    isfinite(mean_level) ||
-                        error("updraft entrainment in slot $tidx of $conv_path is all zero or not finite")
-                    mean_level > Nz / 2 ||
-                        error("updraft entrainment mean level $(round(mean_level; digits = 1)) of $Nz " *
-                              "is in the upper half of the column (slot $tidx); level order is wrong")
+                    for (field, name) in zip(slot, ("eu", "du", "ed", "dd"))
+                        field .= ds[name][:, :, :, tidx]
+                    end
                 end
+                # The humidity changes every hour, so the remap does too.
+                window_fields_to_basis!(on_basis, slot, basis, humidity, win - 1, era5_level, columns)
+                for (panels, field) in zip(tm5, on_basis)
+                    merged_tm5_to_panels!(panels, dst_flat, src_flat, merged,
+                        field, merge_map, era5_level, regridder, Nc)
+                end
+                worst_closure = max(worst_closure, closure_error(tm5))
+                mean_level = updraft_mean_level(tm5.entu)
+                isfinite(mean_level) ||
+                    error("updraft entrainment in slot $tidx of $conv_path is all zero or not finite")
+                mean_level > Nz / 2 ||
+                    error("updraft entrainment mean level $(round(mean_level; digits = 1)) of $Nz " *
+                          "is in the upper half of the column (slot $tidx); level order is wrong")
                 source = MD.load_window!(reader, win)
                 dm = MD.load_flux_delta_window!(reader, win).dm
                 payload = (m = source.m, am = source.am, bm = source.bm,
@@ -326,6 +441,7 @@ function main(argv)
         end
         rethrow()
     finally
+        humidity === nothing || close(humidity)
         close(reader)
     end
 end

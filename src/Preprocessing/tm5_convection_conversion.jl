@@ -43,12 +43,11 @@
 # reverse BEFORE calling ec2tm (this function must not perform a
 # runtime reorientation).
 #
-# The commit point for this conversion in the preprocessor pipeline
-# is after moist-field merging but before Poisson balancing.
-# Preprocessor integration (wiring this function into the spectral
-# pipeline + adding convective-variable downloads from CDS) is a
-# future scope item — the math + tests ship here ready for that
-# integration.
+# ECMWF convective fluxes are per unit of total (moist) air. The
+# preprocessors put them on the binary's air-mass basis with
+# `ecmwf_convection_to_basis!` (convection_mass_basis.jl) just before
+# `ec2tm_from_rates!`: `tm5_native_fields_for_hour!` (spectral lat-lon
+# path) and `derive_c180_tm5_convection!` (ERA5 N320 → cubed sphere).
 # ---------------------------------------------------------------------------
 
 """
@@ -438,26 +437,12 @@ function ec2tm_from_rates!(entu::AbstractVector{FT}, detu::AbstractVector{FT},
     neg_entd = 0
     neg_detd = 0
     @inbounds for k in 1:Nz
-        if entu[k] < zero(FT)
-            detu[k] -= entu[k]
-            entu[k] = zero(FT)
-            neg_entu += 1
-        end
-        if detu[k] < zero(FT)
-            entu[k] -= detu[k]
-            detu[k] = zero(FT)
-            neg_detu += 1
-        end
-        if entd[k] < zero(FT)
-            detd[k] -= entd[k]
-            entd[k] = zero(FT)
-            neg_entd += 1
-        end
-        if detd[k] < zero(FT)
-            entd[k] -= detd[k]
-            detd[k] = zero(FT)
-            neg_detd += 1
-        end
+        up_ent, up_det = _redistribute_negative_tm5_pair!(entu, detu, k)
+        down_ent, down_det = _redistribute_negative_tm5_pair!(entd, detd, k)
+        neg_entu += up_ent
+        neg_detu += up_det
+        neg_entd += down_ent
+        neg_detd += down_det
     end
 
     # Column-integrated net-zero closure (TM5 `meteo.F90:2023-2052`).
@@ -709,6 +694,7 @@ end
 #
 # Per-column flow:
 #   dz           ← dz_hydrostatic_virtual! from T, Q, ps, ak, bk
+#   udmf ... ddrf ← ecmwf_convection_to_basis! (× (1 − q) for a dry binary)
 #   (entu, detu, ← ec2tm_from_rates! from (udmf, ddmf, udrf_rate,
 #    entd, detd)                           ddrf_rate, dz)
 #   merged       ← merge_cell_field!-style accumulate per merge_map
@@ -724,11 +710,14 @@ end
                                   udmf_hour, ddmf_hour, udrf_hour, ddrf_hour,
                                   t_hour, q_hour, ps_hour,
                                   ak_full, bk_full, Nz_native;
-                                  stats=nothing, scratch=nothing) -> nothing
+                                  basis, stats=nothing, scratch=nothing) -> nothing
 
 Grid-level entry point: for each column `(i, j)` in the 2D grid,
-compute `dz` from `(T, Q, ps)` then call `ec2tm_from_rates!`.
+compute `dz` from `(T, Q, ps)`, put the ECMWF fields on the air-mass `basis`
+of the binary (`DryBasis()` or `MoistBasis()`, required) with
+[`ecmwf_convection_to_basis!`](@ref), then call `ec2tm_from_rates!`.
 Writes results into the 3D `(Nlon, Nlat, Nz_native)` output arrays.
+The layer thickness `dz` is geometric and uses the moist `T_v`.
 
 All input 3D arrays are native-level (137 layers for ERA5);
 2D `ps_hour` is surface pressure in Pa. `stats` counters are
@@ -751,6 +740,7 @@ function tm5_native_fields_for_hour!(
         ak_full::AbstractVector,
         bk_full::AbstractVector,
         Nz_native::Integer;
+        basis::AbstractMassBasis,
         stats = nothing,
         scratch = nothing) where {FT <: AbstractFloat}
 
@@ -778,21 +768,16 @@ function tm5_native_fields_for_hour!(
     end
 
     @inbounds for j in 1:Nlat, i in 1:Nlon
-        # Half-level mass fluxes: ERA5 provides them on 137 levels;
-        # TM5's formula wants Nz+1 interfaces. Here we treat the
-        # ERA5 native dataset as having the interface at each
-        # level's *top*. The TOA half-level (index 1 in the Nz+1
-        # vector) is always 0 (no mass flux above TOA); the surface
-        # half-level (Nz_native+1) likewise reads 0 because the 137th
-        # layer has its bottom at the surface and the array doesn't
-        # include that boundary. Interfaces between layers 1..Nz_native
-        # come directly from the NC layer-center values — since ERA5
-        # defines these AS half-level fluxes at the layer top, the
-        # `udmf[k]` at layer k IS the interface above layer k. So:
-        #   udmf_col[1]     = 0   (TOA)
-        #   udmf_col[k+1]   = udmf_hour[i, j, k]  for k=1..Nz_native
-        # Shift-by-1 packs ERA5 Nlev half-level values into our
-        # (Nz_native+1)-length interface vector.
+        # ERA5 archives mass fluxes on half-levels 1:Nz_native, including
+        # half-level 137 at the surface. TM5's interface vector also includes
+        # half-level 0 at the model top. With Julia's one-based indexing,
+        # half-level 0 therefore occupies element 1 and archived half-level k
+        # occupies element k + 1:
+        #   udmf_col[1]     = 0   (half-level 0, TOA)
+        #   udmf_col[k + 1] = udmf_hour[i, j, k]  for k=1:Nz_native
+        # Thus the last archived value is stored at element Nz_native + 1,
+        # the surface interface; the +1 is an index shift, not an inferred
+        # missing boundary.
         udmf_col[1] = zero(FT)
         ddmf_col[1] = zero(FT)
         for k in 1:Nz_native
@@ -806,6 +791,7 @@ function tm5_native_fields_for_hour!(
 
         dz_hydrostatic_virtual!(dz_col, t_col, q_col, ps_hour[i, j],
                                  ak_full, bk_full, Nz_native)
+        ecmwf_convection_to_basis!(basis, udmf_col, ddmf_col, udrf_col, ddrf_col, q_col)
 
         ec2tm_from_rates!(entu_col, detu_col, entd_col, detd_col,
                            udmf_col, ddmf_col, udrf_col, ddrf_col,

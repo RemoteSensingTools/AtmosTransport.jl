@@ -8,7 +8,8 @@ using AtmosTransport.Parameters: EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVIT
                                  R_DRY_AIR, CP_OVER_R_DIATOMIC, CP_DRY_AIR, DRY_AIR_MOLAR_MASS,
                                  VON_KARMAN, STANDARD_SEA_LEVEL_AIR_DENSITY,
                                  GLOBAL_MEAN_DRY_SURFACE_PRESSURE, SPECIES_MOLAR_MASS, CARBON_MOLAR_MASS,
-                                 GEOSCHEM_SPECIES_MOLAR_MASS, RN222_HALF_LIFE
+                                 GEOSCHEM_SPECIES_MOLAR_MASS, RN222_HALF_LIFE,
+                                 TM5_CONVECTION_MASS_BASIS_KEY
 
 # Every exported constant of `Parameters`, with its value. The test compares with
 # `===`, which pins the type as well: counts stay `Int`, everything else stays
@@ -67,12 +68,37 @@ const PINNED_PARAMETERS = (
     # MetSourceConstants.jl
     ERA5_NATIVE_LEVEL_COUNT = 137,
     ERA5_MET_INTERVAL_SECONDS = 3600.0,
+    TM5_CONVECTION_MASS_BASIS_KEY = "tm5_convection_mass_basis",
     GEOS_MASS_FLUX_DT_SECONDS = 450.0,
     GEOS_MET_INTERVAL_SECONDS = 3600.0,
     GEOS_3HOURLY_INTERVAL_SECONDS = 10800.0,
     GMAO_CS_LONGITUDE_OFFSET_DEG = -10.0,
     SURFACE_AIR_TEMPERATURE_RANGE = (150.0, 350.0),
     SURFACE_HEAT_FLUX_MAX_ABS = 5000.0,
+    # TM5 echlevs lists (TM5 half-level numbering, surface first).
+    ECHLEVS_ML137_TROPO34 = (137, 134, 129, 124, 119, 114, 110, 105, 101, 97, 93, 88, 84, 81,
+                             78, 76, 73, 70, 67, 65, 62, 59, 57, 54, 51, 46, 42, 37, 32, 27,
+                             22, 17, 12, 7, 0),
+    ECHLEVS_ML137_TROPO34A = (137, 134, 131, 126, 122, 117, 113, 109, 105, 102, 98, 96, 94, 92,
+                              90, 88, 85, 83, 81, 78, 75, 73, 70, 67, 64, 61, 57, 54, 51, 44,
+                              34, 26, 20, 14, 0),
+    # AtmosTransport-native recipes (top first).
+    ECHLEVS_ML137_66L = (0, 2:5:37..., 41, 44:3:77..., 79:2:107..., 108:137...),
+    ECHLEVS_ML137_CFL94 = (0, 12, 24:4:52..., 53:137...),
+    ECHLEVS_ML137_CFL85 = (0, 12, 24:4:52..., 53:2:71..., 72:137...),
+    ECHLEVS_ML137_FULL = Tuple(0:137),
+    ERA5_L137_ECHLEVS_PRESETS = (
+        ml137_tropo34 = (137, 134, 129, 124, 119, 114, 110, 105, 101, 97, 93, 88, 84, 81, 78,
+                         76, 73, 70, 67, 65, 62, 59, 57, 54, 51, 46, 42, 37, 32, 27, 22, 17,
+                         12, 7, 0),
+        ml137_tropo34a = (137, 134, 131, 126, 122, 117, 113, 109, 105, 102, 98, 96, 94, 92, 90,
+                          88, 85, 83, 81, 78, 75, 73, 70, 67, 64, 61, 57, 54, 51, 44, 34, 26,
+                          20, 14, 0),
+        ml137_66L = (0, 2:5:37..., 41, 44:3:77..., 79:2:107..., 108:137...),
+        ml137_cfl94 = (0, 12, 24:4:52..., 53:137...),
+        ml137_cfl85 = (0, 12, 24:4:52..., 53:2:71..., 72:137...),
+        ml137_full = Tuple(0:137),
+    ),
 )
 
 @testset "every Parameters constant is pinned" begin
