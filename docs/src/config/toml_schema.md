@@ -344,7 +344,10 @@ binary's header). Every listed file's time axis is
 read, but flux data only for those slices. Every temporal scheme blends only
 the two slices around a time, so results are unchanged. A binary that runs past
 that end stops the run with an error before it starts. Time-varying sources
-require `start_date`.
+require `start_date`. The loaded series stays in host memory; a GPU run copies
+only the slices of the current met window to the device (see
+[Operators](@ref Operator-concepts)), so the device memory of a time-varying
+source does not grow with the run length.
 
 For an already aligned GEOS-native cubed-sphere inventory, use
 `kind = "cs_native"`, `time_varying = true`, `file`, and `variable`.

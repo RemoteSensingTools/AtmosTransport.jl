@@ -13,7 +13,8 @@ Asserts:
   clamped ends — driven by a stub `meteo` exposing `current_time`. This drives
   `state.tracers_raw` (the packed multi-tracer CS buffer used by the production
   `scheme = "ppm"` split-sweep path).
-- `Adapt.adapt(Array, src)` is identity on CPU and keeps `times` host-side.
+- `Adapt.adapt(Array, src)` is identity on CPU (series, compensation and
+  window buffer shared) and keeps `times` host-side.
 - `PerTracerFluxMap` accepts the new abstract source type.
 """
 
@@ -265,12 +266,15 @@ end
     series = ntuple(_ -> fill(FT(1.0), 2, 2, 2), 6)
     src    = TimeVaryingSurfaceFluxSource(:CO2, series, times)
 
-    # Adapt-to-Array is identity on CPU; times stays a host Vector.
+    # Adapt-to-Array is identity on CPU; times stays a host Vector, and the
+    # series, compensation and window buffer are the source's own.
     src2 = Adapt.adapt(Array, src)
     @test src2 isa TimeVaryingSurfaceFluxSource
     @test src2.times === src.times
     @test src2.times isa Vector{Float64}
-    @test all(src2.cell_mass_rate_series[p] == src.cell_mass_rate_series[p] for p in 1:6)
+    @test src2.cell_mass_rate_series === src.cell_mass_rate_series
+    @test src2.compensation === src.compensation
+    @test src2.window_buffer === src.window_buffer
 
     # PerTracerFluxMap accepts the abstract source type (mixed with a static one).
     static = SurfaceFluxSource(:SF6, ntuple(_ -> fill(FT(2.0), 2, 2), 6))

@@ -279,22 +279,38 @@ function _apply_cs_surface_flux!(q_raw::NTuple{6}, src::SurfaceFluxSource, dt_FT
 end
 
 # Time-varying series: the bracketing slices and weights come from the sim
-# clock (`current_time(meteo)`; `nothing` → 0).
+# clock (`current_time(meteo)`). The kernel reads the slices from the source's
+# device window buffer; the step's slices are made resident first, which copies
+# nothing when the runner has staged the window (`stage_surface_flux_window!`).
 function _apply_cs_surface_flux!(q_raw::NTuple{6}, src::TimeVaryingSurfaceFluxSource, dt_FT::FT,
                                  t_idx, Hp, backend, meteo, deposit) where FT
-    series = src.cell_mass_rate_series
-    series isa NTuple{6} || throw(ArgumentError(
+    src.cell_mass_rate_series isa NTuple{6} || throw(ArgumentError(
         "apply_surface_flux!: cubed-sphere time-varying source $(src.tracer_name) must provide NTuple{6} panel series"))
     segments = _flux_temporal_segments(src.scheme, src.times, Float64(current_time(meteo)),
                                        Float64(dt_FT))
+    buffer = _stage_flux_slices!(src.window_buffer, src.cell_mass_rate_series,
+                                 _segment_slices(segments))
+    slots = buffer.slots
     kernel = _surface_flux_cs_interp_kernel!(backend, (16, 16))
     for p in 1:6
-        Nc, Ny, Nz = _cs_interior_shape(q_raw[p], Hp, series[p], src, p)
+        Nc, Ny, Nz = _cs_interior_shape(q_raw[p], Hp, slots[p], src, p)
         for (i0, i1, w0, w1, frac) in segments
-            kernel(q_raw[p], series[p], src.compensation[p], FT(w0), FT(w1), i0, i1,
+            kernel(q_raw[p], slots[p], src.compensation[p], FT(w0), FT(w1),
+                   _buffer_slot(buffer, i0), _buffer_slot(buffer, i1),
                    dt_FT * FT(frac), t_idx, Nz, Hp, _panel_deposit(deposit, p); ndrange = (Nc, Ny))
         end
     end
+    return nothing
+end
+
+# Window staging: the time-varying sources of a surface-flux operator copy the
+# window's slices to their device buffers; other operators hold nothing to stage.
+stage_surface_flux_window!(::AbstractSurfaceFluxOperator, t0, t1) = nothing
+
+function stage_surface_flux_window!(op::SurfaceFluxOperator, t0::Real, t1::Real)
+    copies = _FluxSliceCopy[]
+    foreach(src -> _prepare_surface_flux_window!(copies, src, t0, t1), op.flux_map.sources)
+    _perform_flux_slice_copies!(copies)
     return nothing
 end
 

@@ -3,7 +3,8 @@
 
 # Surface-source shape and compatibility helpers live with the operator.
 using ..Operators.SurfaceFlux: _surface_shape,
-                                _check_surface_source_compatibility
+                                _check_surface_source_compatibility,
+                                stage_surface_flux_window!
 using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
                               fill_dz_hydrostatic_constT!,
                               fill_dz_hydrostatic_virtualT!

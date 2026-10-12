@@ -7,9 +7,10 @@ the topology-specific kernels that inject mass into the surface layer.
 
 ## Entry Points
 
-- Source container:
+- Source containers:
   [`sources.jl`](sources.jl)
-  defines `SurfaceFluxSource`
+  defines `SurfaceFluxSource` and `TimeVaryingSurfaceFluxSource` (with its
+  device `FluxWindowBuffer`)
 - Tracer lookup map:
   [`PerTracerFluxMap.jl`](PerTracerFluxMap.jl)
   defines `PerTracerFluxMap` and `flux_for`
@@ -28,6 +29,39 @@ the topology-specific kernels that inject mass into the surface layer.
   provides `total_emission_rate(src, t)`, `emission_segments(src, t, dt)` and
   `integrated_emission(src, t0, t1, dt)`
 
+## Time-Varying Series In Host Memory
+
+A `TimeVaryingSurfaceFluxSource` keeps its rate series (`cell_mass_rate_series`,
+`NTuple{6}` of `(Nc, Nc, ntime)` on the cube) in host memory on every backend.
+Its `Adapt` hook moves only the Kahan compensation and a `FluxWindowBuffer`: a
+ring of `capacity` slots on the compute backend that holds the slices the
+current met window reads (slice `k` in slot `mod1(k, capacity)`). A C90
+2014-2024 daily series (4018 slices) takes 0.78 GB per tracer in Float32, so
+93 such tracers (73 GB) did not fit one GPU when the whole series was moved to
+the device; now each tracer holds a few 0.19 MB slices there.
+
+- `_flux_window_slices(scheme, times, t0, t1)` (next to
+  `_flux_temporal_segments`) is the contiguous range of slices that the steps
+  of the window `[t0, t1]` reference: the slices in effect for `StepwiseFlux`,
+  from the left bracket at `t0` to the right bracket at the window end for
+  `LinearInterpFlux` and `ConservativeMeanFlux`. The window end is padded for
+  a Float32 step that ends slightly after it.
+- `stage_surface_flux_window!(op, t0, t1)` copies the slices of that range that
+  are not resident (one contiguous `copyto!` per panel and slice).
+  `DrivenSimulation` calls it on the model's surface-flux operator when a
+  window becomes current: at construction and in `_maybe_advance_window!`
+  after the next window's met data are taken from the prefetch. It runs on the
+  task that launches the kernels; the prefetch task never touches the buffer.
+- The operator makes the slices of each step's segments resident before its
+  kernels (`_stage_flux_slices!`), so it copies nothing after the window was
+  staged and still works when called directly (tests, budget scripts). The
+  kernels read `w0 * slots[slot(i0)] + w1 * slots[slot(i1)]`, the same values
+  as the full series: results are bit-identical.
+- The capacity grows to the longest staged range (2 slices for stepwise, 3 for
+  linear or conservative sources with daily or hourly series and hourly met
+  windows) and does not depend on the run length.
+- The emission totals (`integrals.jl`) sum the host series in place.
+
 ## Layout Conventions
 
 - The surface is always `k = Nz`
@@ -41,8 +75,10 @@ the topology-specific kernels that inject mass into the surface layer.
 - [`SurfaceFlux.jl`](SurfaceFlux.jl) — submodule assembly and public exports
 - [`sources.jl`](sources.jl) — `SurfaceFluxSource`,
   `TimeVaryingSurfaceFluxSource`, the temporal schemes
-  (`_flux_temporal_weights`, `_flux_temporal_segments`), compatibility checks,
-  and low-level source helpers
+  (`_flux_temporal_weights`, `_flux_temporal_segments`), the slices a window
+  reads (`_flux_window_slices`), the device window buffer (`FluxWindowBuffer`,
+  `stage_surface_flux_window!`), compatibility checks, and low-level source
+  helpers
 - [`PerTracerFluxMap.jl`](PerTracerFluxMap.jl) — tuple-backed source map
   keyed by tracer name
 - [`surface_flux_kernels.jl`](surface_flux_kernels.jl) — structured,
@@ -50,7 +86,8 @@ the topology-specific kernels that inject mass into the surface layer.
   emitted mass is placed by `SurfaceLayerDeposit` or `ProfileDeposit` (GEOS-Chem
   non-local VDIFF spreads fresh emissions over the PBL, see `emission_deposit`)
 - [`operators.jl`](operators.jl) — operator hierarchy, source-to-tracer
-  lookup, state-level `apply!`, array-level `apply_surface_flux!`
+  lookup, state-level `apply!`, array-level `apply_surface_flux!`, and
+  `stage_surface_flux_window!` for an operator
 - [`integrals.jl`](integrals.jl) — global emission totals from the same
   temporal reconstruction the operator applies: the rate at an instant, the
   pieces of one step, and the integral over a run's steps (Float64 sums)
@@ -75,7 +112,12 @@ the topology-specific kernels that inject mass into the surface layer.
 - Tracing runtime installation:
   start from the `DrivenSimulation` constructor in
   [`../../Models/driven_stepping.jl`](../../Models/driven_stepping.jl),
-  which turns `surface_sources` into a `SurfaceFluxOperator`
+  which turns `surface_sources` into a `SurfaceFluxOperator`; the same file
+  stages each window's flux slices (`_stage_surface_flux_window!`)
+- Checking device memory or upload counts of a time-varying source:
+  `src.window_buffer` holds the slots, the resident slice of each slot and
+  the number of slices staged over the logical buffer's lifetime (`uploads`;
+  preserved when a populated buffer is adapted to another backend)
 
 ## Cross-Dependencies
 
@@ -104,3 +146,6 @@ the topology-specific kernels that inject mass into the surface layer.
   - [`../../../test/orphan/test_cubed_sphere_runtime.jl`](../../../test/orphan/test_cubed_sphere_runtime.jl)
   - [`../../../test/core/test_timevarying_surface_flux.jl`](../../../test/core/test_timevarying_surface_flux.jl)
   - [`../../../test/core/test_surface_flux_integrals.jl`](../../../test/core/test_surface_flux_integrals.jl)
+  - [`../../../test/core/test_surface_flux_window_buffer.jl`](../../../test/core/test_surface_flux_window_buffer.jl)
+  - [`../../../test/diagnostic/test_surface_flux_window_buffer_gpu.jl`](../../../test/diagnostic/test_surface_flux_window_buffer_gpu.jl)
+    (opt-in CUDA check, `ATMOSTR_RUN_SURFACE_FLUX_GPU_TESTS=1`)

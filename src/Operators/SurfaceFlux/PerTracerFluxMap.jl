@@ -40,9 +40,10 @@ flux_for(map, :CH4)         # nothing (not emitting)
 
 # Adapt / GPU
 
-`Adapt.adapt(CuArray, map)` converts each `cell_mass_rate` to a
-`CuArray` transparently via `SurfaceFluxSource`'s `adapt_structure`;
-tuples adapt element-wise.
+`Adapt.adapt(CuArray, map)` adapts each source through its
+`adapt_structure`; tuples adapt element-wise. A `SurfaceFluxSource` moves its
+`cell_mass_rate` to the device. A `TimeVaryingSurfaceFluxSource` moves only its
+compensation and its small window buffer; its rate series stays in host memory.
 
 # Fields
 - `sources :: S` — `NTuple{N, <:AbstractSurfaceFluxSource}` for some
@@ -122,8 +123,7 @@ tracer_names(m::PerTracerFluxMap) = map(s -> s.tracer_name, m.sources)
 # Adapt — GPU dispatch
 # =========================================================================
 
-# Tuples adapt element-wise; each SurfaceFluxSource's adapt_structure
-# carries its cell_mass_rate to the device backing. The map stays a
-# thin wrapper.
+# Tuples adapt element-wise; each source's adapt_structure decides what moves
+# to the device (see the docstring above). The map stays a thin wrapper.
 Adapt.adapt_structure(to, m::PerTracerFluxMap) =
     PerTracerFluxMap(map(s -> Adapt.adapt(to, s), m.sources))

@@ -98,10 +98,17 @@ Concrete schemes implement
     _flux_temporal_weights(scheme, times, t, dt) -> (i0, i1, w0, w1)
 
 returning two bracketing slice indices and blend weights (`w0 + w1 == 1`)
-applied as `w0·series[i0] + w1·series[i1]`. New reconstructions (e.g.
-mass-flux-integral matching, higher-order in time) are added as new
-subtypes + one `_flux_temporal_weights` method — no kernel or operator
-change.
+applied as `w0·series[i0] + w1·series[i1]`, together with
+
+    _flux_temporal_segments(scheme, times, t, dt) -> [(i0, i1, w0, w1, frac), …]
+    _slices_read_at(scheme, times, τ) -> (first, last)
+
+the pieces of one step `[t, t + dt]`, and the first and last slice index that
+an evaluation at the instant `τ` reads (non-decreasing in `τ`; the device
+window buffer of a time-varying source holds the slices between those of a
+window's start and end). New reconstructions (e.g. mass-flux-integral
+matching, higher-order in time) are added as new subtypes and these methods —
+no kernel or operator change.
 """
 abstract type AbstractFluxTemporalScheme end
 
@@ -200,6 +207,54 @@ function _knot_split_segments(times, t, dt, point_weights)
     return segs
 end
 
+# -------------------------------------------------------------------------
+# The slices one met window reads. Every segment above evaluates the scheme's
+# point weights at one time τ inside its step: the step start (linear) or a
+# sub-interval midpoint (stepwise, conservative). The slice in effect and both
+# bracket indices are non-decreasing in τ, so the slices of all steps inside
+# [t0, t1] lie between the first index read at t0 and the last index read at
+# t1. The window end is padded because the last step can end slightly after
+# t1: the runner's clock is exact Float64, but its step length is the storage
+# float type (a Float32 5400/7 s step is 2.3e-8 relative too long), and
+# `_knot_split_segments` splits at a slice time inside that overshoot.
+# -------------------------------------------------------------------------
+
+# The first and last slice index read at the instant τ.
+_slices_read_at(::StepwiseFlux, times, τ) = (k = first(_flux_temporal_weights(StepwiseFlux(), times, τ, 0.0)); (k, k))
+_slices_read_at(::Union{LinearInterpFlux, ConservativeMeanFlux}, times, τ) =
+    (b = _time_interp_bracket(times, τ); (b[1], b[2]))
+
+# The overshoot is at most eps(Float32)/2 of one step plus the clock's Float64
+# rounding; 8 eps(Float32) of the window length and 4 eps(t1) cover it.
+_window_read_end(t0::Float64, t1::Float64) = t1 + 8 * eps(Float32) * (t1 - t0) + 4 * eps(abs(t1))
+
+"""
+    _flux_window_slices(scheme, times, t0, t1) -> UnitRange{Int}
+
+Slice indices that `_flux_temporal_segments(scheme, times, t, dt)` can reference
+(as `i0` or `i1`, including a zero-weight `i1`) for any step `[t, t + dt]`
+inside the met window `[t0, t1]` (seconds since the run start): the slices
+from the first one read at `t0` to the last one read at the padded window end.
+
+- [`StepwiseFlux`](@ref): the slices in effect over the window.
+- [`LinearInterpFlux`](@ref), [`ConservativeMeanFlux`](@ref): from the left
+  bracket slice at `t0` to the right bracket slice at the window end.
+
+The range is contiguous and may hold one slice more than the window's steps
+read (a slice that starts exactly at `t1`, or the right bracket of a linear
+step that starts before it). Every time-varying source copies these slices to
+its device `FluxWindowBuffer` before the window's steps
+(`stage_surface_flux_window!`).
+"""
+function _flux_window_slices(scheme::AbstractFluxTemporalScheme, times, t0::Real, t1::Real)
+    a, b = Float64(t0), Float64(t1)
+    b >= a || throw(ArgumentError("_flux_window_slices: window end $(t1) precedes its start $(t0)"))
+    return first(_slices_read_at(scheme, times, a)):last(_slices_read_at(scheme, times, _window_read_end(a, b)))
+end
+
+# Slice indices that a list of segments references.
+_segment_slices(segments) = minimum(first, segments):maximum(s -> s[2], segments)
+
 """
     flux_temporal_scheme(name) -> AbstractFluxTemporalScheme
 
@@ -218,22 +273,177 @@ function flux_temporal_scheme(name::AbstractString)
 end
 
 # =========================================================================
+# FluxWindowBuffer — the slices of the current met window, on the device
+# =========================================================================
+
+"""
+    FluxWindowBuffer
+
+The time slices of a [`TimeVaryingSurfaceFluxSource`](@ref) that the current
+met window reads, held on the compute backend (CPU arrays on the CPU, device
+arrays on CUDA or Metal), while the full series stays in host memory. The
+surface-flux kernels read rates from this buffer; nothing else changes, so
+results equal those of a device-resident series bit for bit.
+
+The buffer is a ring of `capacity` slots: slice `k` goes to slot
+`mod1(k, capacity)`, so a contiguous range of at most `capacity` slices fills
+distinct slots, and a slice that the next window reads again stays where it
+is. `stage_surface_flux_window!` copies the slices of a window
+(`_flux_window_slices`) that are not resident yet; the operator stages
+the slices of each step the same way, which copies nothing after the window
+was staged. The capacity grows to the longest range staged (the largest
+window's slice count: 2 or 3 slices for daily or hourly series and hourly met
+windows) and never with the run length; it starts at zero, so a source that
+never emits allocates no slots.
+
+# Fields
+- `slots` — `NTuple` of `(…, capacity)` panel arrays, or one `(…, capacity)`
+  array, matching the series without its time dimension.
+- `resident :: Vector{Int}` — the slice index held by each slot, `0` if none
+  (host).
+- `uploads :: Int` — slices staged over this logical buffer's lifetime. The
+  count is preserved when `Adapt` moves a populated buffer to another backend;
+  it counts staged slices, not the panel transfers performed for each slice.
+"""
+mutable struct FluxWindowBuffer{B}
+    slots    :: B
+    resident :: Vector{Int}
+    uploads  :: Int
+end
+
+# An empty buffer on the series' backend.
+FluxWindowBuffer(series) = FluxWindowBuffer(_alloc_slice_slots(series, 0), Int[], 0)
+
+_capacity(buffer::FluxWindowBuffer) = length(buffer.resident)
+
+# Slot of slice `k` (it must be resident).
+@inline _buffer_slot(buffer::FluxWindowBuffer, k::Integer) = mod1(k, length(buffer.resident))
+
+# `capacity` slots shaped like one slice of `like` (a series or a buffer's slots).
+_alloc_slice_slots(like::AbstractArray, capacity::Integer) =
+    similar(like, size(like)[1:end-1]..., capacity)
+_alloc_slice_slots(like::Tuple, capacity::Integer) = map(a -> _alloc_slice_slots(a, capacity), like)
+
+# Copy slice `k` of `series` into `slot`: one contiguous block per array (the
+# time dimension is the slowest), so a host-to-device copy is one transfer.
+function _copy_slice!(slots::AbstractArray, slot::Integer, series::AbstractArray, k::Integer)
+    n = length(series) ÷ size(series, ndims(series))
+    copyto!(slots, (slot - 1) * n + 1, series, (k - 1) * n + 1, n)
+    return slots
+end
+function _copy_slice!(slots::Tuple, slot::Integer, series::Tuple, k::Integer)
+    foreach((a, s) -> _copy_slice!(a, slot, s, k), slots, series)
+    return slots
+end
+
+# One logical slice copy, expanded to one transfer per panel by `_copy_slice!`.
+# Keeping the logical operation intact makes `uploads` independent of topology
+# while allowing a backend extension to stage a whole operator/window in bulk.
+struct _FluxSliceCopy{B, S}
+    buffer :: B
+    series :: S
+    slot   :: Int
+    slice  :: Int
+end
+
+_first_flux_array(a::AbstractArray) = a
+_first_flux_array(a::Tuple) = _first_flux_array(first(a))
+
+# Backend-dispatched bulk hook. Each call contains only copies whose first
+# destination array has the same dispatch group, so an extension never receives
+# copies for another backend merely because that backend appeared later in the
+# operator. Extensions can widen their group key when one method handles several
+# concrete array types.
+_bulk_copy_flux_slices_group(a::AbstractArray) = typeof(a)
+
+function _bulk_copy_flux_slices!(::AbstractArray, copies::AbstractVector)
+    for copy in copies
+        _copy_slice!(copy.buffer.slots, copy.slot, copy.series, copy.slice)
+    end
+    return nothing
+end
+
+function _prepare_flux_slices!(copies::AbstractVector, buffer::FluxWindowBuffer,
+                               series, ks::UnitRange{Int})
+    if length(ks) > _capacity(buffer)
+        buffer.slots = _alloc_slice_slots(buffer.slots, length(ks))
+        buffer.resident = zeros(Int, length(ks))
+    end
+    for k in ks
+        slot = _buffer_slot(buffer, k)
+        buffer.resident[slot] == k && continue
+        push!(copies, _FluxSliceCopy(buffer, series, slot, k))
+    end
+    return copies
+end
+
+function _perform_flux_slice_copies!(copies::AbstractVector)
+    isempty(copies) && return nothing
+    first_dest = _first_flux_array(first(copies).buffer.slots)
+    first_key = _bulk_copy_flux_slices_group(first_dest)
+    if all(copy -> isequal(_bulk_copy_flux_slices_group(
+                              _first_flux_array(copy.buffer.slots)), first_key), copies)
+        _bulk_copy_flux_slices!(first_dest, copies)
+    else
+        groups = Dict{Any, Vector{_FluxSliceCopy}}()
+        for copy in copies
+            dest = _first_flux_array(copy.buffer.slots)
+            key = _bulk_copy_flux_slices_group(dest)
+            push!(get!(() -> _FluxSliceCopy[], groups, key), copy)
+        end
+        for group in values(groups)
+            _bulk_copy_flux_slices!(_first_flux_array(first(group).buffer.slots), group)
+        end
+    end
+    for copy in copies
+        copy.buffer.resident[copy.slot] = copy.slice
+        copy.buffer.uploads += 1
+    end
+    return nothing
+end
+
+"""
+    _stage_flux_slices!(buffer, series, ks::UnitRange{Int}) -> buffer
+
+Make slices `ks` of `series` resident in `buffer`, copying only those that are
+not. A range longer than the capacity first replaces the slots by `length(ks)`
+empty ones on the same backend.
+"""
+function _stage_flux_slices!(buffer::FluxWindowBuffer, series, ks::UnitRange{Int})
+    copies = _FluxSliceCopy[]
+    _prepare_flux_slices!(copies, buffer, series, ks)
+    _perform_flux_slice_copies!(copies)
+    return buffer
+end
+
+# Adapt hook: the slots move to the target backend with their contents, so the
+# residency map stays valid. Slots already there are shared, with the buffer.
+function Adapt.adapt_structure(to, buffer::FluxWindowBuffer)
+    slots = Adapt.adapt(to, buffer.slots)
+    slots === buffer.slots && return buffer
+    return FluxWindowBuffer(slots, copy(buffer.resident), buffer.uploads)
+end
+
+# =========================================================================
 # TimeVaryingSurfaceFluxSource — 3-hourly (or any cadence) emission series
 # =========================================================================
 
 """
-    TimeVaryingSurfaceFluxSource{RateT, T}
+    TimeVaryingSurfaceFluxSource{RateT, T, S, CompT, BufT}
 
 A single-tracer surface source whose per-cell rate advances through a
 time series of slices with the simulation clock. Used to carry the
 CAMS/LMDZ 3-hourly diurnal cycle (instead of collapsing it to a monthly
-mean) and to match GeosChem.
+mean), the daily and hourly `cs_native` biosphere drivers, and to match
+GeosChem.
 
 - `tracer_name :: Symbol` — matches a name in `CellState.tracer_names`.
 - `cell_mass_rate_series :: RateT` — a stack of static rate slices, in
   the same per-cell model-storage units as [`SurfaceFluxSource`](@ref).
   For cubed-sphere this is an `NTuple{6}` of `(Nc, Nc, ntime)` arrays
-  (one stacked panel per face). The trailing dimension is time.
+  (one stacked panel per face). The trailing dimension is time. The series
+  stays where it was built (host memory for every loader): `Adapt` does not
+  move it, so a multi-year series costs no device memory.
 - `times :: T` — slice times in **seconds since run start**, length
   `ntime`, sorted strictly ascending. Stays a **host** `Vector` even
   after Adapt-to-device so the operator can `searchsortedlast` it on the
@@ -243,23 +453,32 @@ mean) and to match GeosChem.
   ([`StepwiseFlux`](@ref), [`LinearInterpFlux`](@ref), or
   [`ConservativeMeanFlux`](@ref)). A singleton, carried through Adapt
   unchanged.
+- `compensation :: CompT` — Kahan compensation, one slice in shape, on the
+  compute backend.
+- `window_buffer :: BufT` — a `FluxWindowBuffer`: the slices the
+  current met window reads, on the compute backend. `Adapt` moves it (and
+  `compensation`) to the device.
 
-The operator resolves `(i0, i1, w0, w1) = _flux_temporal_weights(scheme,
-times, current_time(meteo), dt)` on the host, then blends the two bracketing
-slices in the kernel. End slices are clamped (constant extrapolation) outside
-`[times[1], times[end]]`.
+The operator resolves the segments `(i0, i1, w0, w1, frac)` of
+`_flux_temporal_segments(scheme, times, current_time(meteo), dt)` on the host,
+makes their slices resident in `window_buffer` (the runner has staged the
+window's slices before its first step, see `stage_surface_flux_window!`),
+then blends the two slices in the kernel. End slices are clamped (constant
+extrapolation) outside `[times[1], times[end]]`.
 """
 struct TimeVaryingSurfaceFluxSource{RateT, T <: AbstractVector{<:Real},
                                     S <: AbstractFluxTemporalScheme,
-                                    CompT} <: AbstractSurfaceFluxSource
+                                    CompT, BufT <: FluxWindowBuffer} <: AbstractSurfaceFluxSource
     tracer_name           :: Symbol
     cell_mass_rate_series :: RateT
     times                 :: T
     scheme                :: S
     compensation          :: CompT   # Kahan compensation; shape = one time-slice of series
+    window_buffer         :: BufT    # the current window's slices, on the compute backend
 end
 
-# Outer constructors: allocate zero compensation from the series shape.
+# Outer constructors: allocate zero compensation and an empty window buffer
+# from the series shape.
 function TimeVaryingSurfaceFluxSource(name::Symbol, series::RateT,
                                       times::T, scheme::S) where {RateT, T, S}
     isempty(times) && throw(ArgumentError(
@@ -281,20 +500,54 @@ function TimeVaryingSurfaceFluxSource(name::Symbol, series::RateT,
         end
     end
     comp = _alloc_flux_comp_from_series(series)
-    return TimeVaryingSurfaceFluxSource{RateT, T, S, typeof(comp)}(
-        name, series, times, scheme, comp)
+    buffer = FluxWindowBuffer(series)
+    return TimeVaryingSurfaceFluxSource{RateT, T, S, typeof(comp), typeof(buffer)}(
+        name, series, times, scheme, comp, buffer)
 end
 
 TimeVaryingSurfaceFluxSource(name::Symbol, series, times) =
     TimeVaryingSurfaceFluxSource(name, series, times, LinearInterpFlux())
 
-# Adapt hook: carry series + compensation to device; keep times + scheme on host.
+# Adapt hook: compensation and window buffer go to the device; the series,
+# times and scheme stay where they are.
 function Adapt.adapt_structure(to, source::TimeVaryingSurfaceFluxSource)
-    series       = Adapt.adapt(to, source.cell_mass_rate_series)
     compensation = Adapt.adapt(to, source.compensation)
-    return TimeVaryingSurfaceFluxSource{typeof(series), typeof(source.times),
-                                        typeof(source.scheme), typeof(compensation)}(
-        source.tracer_name, series, source.times, source.scheme, compensation)
+    buffer       = Adapt.adapt(to, source.window_buffer)
+    return TimeVaryingSurfaceFluxSource{typeof(source.cell_mass_rate_series),
+                                        typeof(source.times), typeof(source.scheme),
+                                        typeof(compensation), typeof(buffer)}(
+        source.tracer_name, source.cell_mass_rate_series, source.times, source.scheme,
+        compensation, buffer)
+end
+
+"""
+    stage_surface_flux_window!(op_or_source, t0, t1)
+
+Copy the time slices that the met window `[t0, t1]` (seconds since the run
+start) reads from each time-varying source's host series into its device
+`FluxWindowBuffer`: the slices of
+`_flux_window_slices(scheme, times, t0, t1)` that are not resident
+yet. `DrivenSimulation` calls it on the model's surface-flux operator when a
+window becomes current (at construction and after each window advance, on the
+task that launches the window's kernels), so the copies are ordered before
+the window's first surface-flux kernel. Static sources, other source types and
+[`NoSurfaceFlux`](@ref) have nothing to stage. Returns `nothing`.
+"""
+stage_surface_flux_window!(::AbstractSurfaceFluxSource, t0, t1) = nothing
+
+_prepare_surface_flux_window!(copies, ::AbstractSurfaceFluxSource, t0, t1) = copies
+
+function _prepare_surface_flux_window!(copies, src::TimeVaryingSurfaceFluxSource,
+                                       t0::Real, t1::Real)
+    return _prepare_flux_slices!(copies, src.window_buffer, src.cell_mass_rate_series,
+                                 _flux_window_slices(src.scheme, src.times, t0, t1))
+end
+
+function stage_surface_flux_window!(src::TimeVaryingSurfaceFluxSource, t0::Real, t1::Real)
+    copies = _FluxSliceCopy[]
+    _prepare_surface_flux_window!(copies, src, t0, t1)
+    _perform_flux_slice_copies!(copies)
+    return nothing
 end
 
 function _check_surface_source_compatibility(state::CubedSphereState,

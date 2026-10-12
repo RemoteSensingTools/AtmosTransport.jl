@@ -33,10 +33,12 @@ equivalent s⁻¹ (physical kg species s⁻¹ × `DRY_AIR_MOLAR_MASS / M_species
 
 Cell sums are accumulated in Float64 (pairwise) whatever the storage float
 type, so a Float32 source gives its total to Float64 accuracy. The sums run on
-the host: a source adapted to a device (CUDA, Metal) is copied to host memory
-first, the whole rate field of a static source or one slice at a time of a
-series, because Metal has no Float64. Host sources are summed in place. The
-runner logs `total_emission_rate(source, 0.0)`, the rate at the run start.
+the host, because Metal has no Float64: a static source adapted to a device
+(CUDA, Metal) is copied to host memory first. A time-varying source keeps its
+series in host memory on every backend (only its window buffer is on the
+device), so it is summed in place; a series built directly on a device is
+copied one slice at a time. The runner logs `total_emission_rate(source, 0.0)`,
+the rate at the run start.
 """
 function total_emission_rate end
 
@@ -103,8 +105,9 @@ to rounding); one step of length `t1 - t0` gives the same value. For
 [`LinearInterpFlux`](@ref), `E` is the step-start Riemann sum of the
 interpolated rate and depends on `dt`: pass the run's advection step.
 
-Slice totals are summed once per call in Float64 on the host (as for
-[`total_emission_rate`](@ref), a device source is copied one slice at a time)
+Slice totals are summed once per call in Float64 on the host series (as for
+[`total_emission_rate`](@ref), a series built on a device is copied one slice
+at a time)
 and the step sum is compensated (Neumaier), so a run-long integral carries
 about one rounding of the total. Throws `ArgumentError` unless `dt`, `t0` and `t1` are finite,
 `dt > 0`, `t1 ≥ t0`, and `(t1 - t0) / dt` is an integer to a relative
@@ -155,8 +158,9 @@ _slice_total(series::Tuple, k::Integer) = sum(panel -> _slice_total(panel, k), s
 
 # Pairwise Float64 sum of `values`, taken on the host. A device array (CUDA,
 # Metal) is copied to host memory first: Metal has no Float64, and these totals
-# are start-up and budget diagnostics, not per-step work. Host arrays are summed
-# in place, so CPU totals are unchanged by the dispatch.
+# are start-up and budget diagnostics, not per-step work. Host arrays (every
+# time-varying series) are summed in place, so CPU totals are unchanged by the
+# dispatch.
 _host_total(values::AbstractArray) = sum(Float64, _host_values(get_backend(values), values))
 
 _host_values(::KA.CPU, values) = values

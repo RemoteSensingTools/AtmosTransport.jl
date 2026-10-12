@@ -449,6 +449,44 @@
   end (warm, L40S, six runs each; garbage collection 6.0 → 2.3 s). The
   loaded period ends with the binaries' windows (from every binary's header)
   or the end of `end_date`, whichever is later.
+- Time-varying surface-flux series (`TimeVaryingSurfaceFluxSource`: `cs_native`
+  and the regridded LMDZ and GridFED series) stay in host memory on every
+  backend. Their `Adapt` hook used to copy the whole run-span series to the
+  device: 0.78 GB per tracer in Float32 for a C90 2014–2024 daily driver, 73 GB
+  for 93 such tracers, more than one GPU holds. Each source now has a device
+  window buffer (`FluxWindowBuffer`, a ring of slots) with the slices the
+  current met window reads (`_flux_window_slices`, next to
+  `_flux_temporal_segments`); `DrivenSimulation` copies the missing ones when
+  a window becomes current (`stage_surface_flux_window!`, at construction and
+  after each window advance, on the task that launches the window's kernels).
+  The buffer holds two or three slices for daily or hourly series and hourly
+  met windows, independent of the run length. The kernels read the same
+  rates, so results are bit-identical: every scheme, Float32 and Float64,
+  window lengths that do and do not align with slices, and multi-binary runs
+  (`test/core/test_surface_flux_window_buffer.jl`, against the former
+  full-series operator kept in `test/helpers/surface_flux_window_buffer.jl`). `total_emission_rate`,
+  `emission_segments` and `integrated_emission` sum the host series in place.
+  On the CPU the buffer is a host array, so the same code runs on every
+  backend. The surface-flux operator also stages each step's own slices, which
+  copies nothing after the window was staged and lets it run without a
+  `DrivenSimulation`. Verified on CUDA (L40S): every GPU runtime golden case is
+  bit-identical (the ten C90 cases use time-varying fluxes), and the opt-in
+  `test/diagnostic/test_surface_flux_window_buffer_gpu.jl` matches the full
+  device series bit for bit for every scheme. A three-day C90 Float64 run with
+  four `cs_native` daily tracers whose series span 2014-09-01 to 2024-12-31
+  (3775 slices, 5.9 GB) writes bit-identical output, including the 3-D tracer
+  fields, and its device memory peaks at 2.9 GB instead of 18.9 GB: the old
+  hook copied the series to the device again for every input file, and up to
+  three copies were alive at once. Time per day is unchanged within noise
+  (10–13 s), and on CUDA host staging/enqueue takes 0.02 s over the run's 72
+  windows (DMA completion can be paid at a later synchronization). This timer
+  is backend-dependent: Metal's optimized dense-host path avoids repeated
+  global queue synchronizations, but its low-level private-storage transfers
+  wait for completion one by one, so `surface_flux_upload` includes those
+  per-transfer DMA waits. The series
+  still take host memory (0.73 GB per tracer in Float32 and 1.47 GB in Float64
+  for that period). The opt-in Metal diagnostic covers the Float32 window
+  buffer against the full-series reference.
 - New in `Architectures`: point operations (`AbstractPointOp`, `Fused`,
   `Sequence`, `launch!(op, ctx, backend)`), with a per-backend
   `fusion_policy` (one fused kernel by default, separate launches on Metal). A kernel body is written once as

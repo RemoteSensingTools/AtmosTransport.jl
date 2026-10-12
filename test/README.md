@@ -80,6 +80,19 @@ Shared synthetic runtime inputs live in `test/fixtures/`. The window-prefetch
 and cubed-sphere file-handoff fixtures are used by both CPU core tests and
 explicitly enabled GPU diagnostics. They need no external meteorology files.
 
+The time-varying surface-flux fixtures in
+`helpers/surface_flux_window_buffer.jl` (the former full-series operator as a
+reference, a small cubed-sphere state on any array type, and a window driver)
+serve `core/test_surface_flux_window_buffer.jl` and the opt-in
+`diagnostic/test_surface_flux_window_buffer_gpu.jl`, which checks on CUDA that
+the host series with its device window buffer gives the full device series'
+tracers and Kahan compensation bit for bit:
+
+```bash
+ATMOSTR_RUN_SURFACE_FLUX_GPU_TESTS=1 CUDA_VISIBLE_DEVICES=<id> \
+    julia --project=. test/diagnostic/test_surface_flux_window_buffer_gpu.jl
+```
+
 The transporting adjoint GPU diagnostic checks unlimited/monotone PPM and
 Lin-Rood ORD=5/7 footprints in both precisions, including CPU/GPU agreement,
 Float64 directional finite differences, and full/stride/revolve replay. It
