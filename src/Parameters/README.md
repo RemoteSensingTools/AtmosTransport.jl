@@ -68,6 +68,10 @@ other AtmosTransport modules; every later module may import from it.
     the conjugate-gradient residual tolerance), `DEFAULT_POISSON_BALANCE_MAX_ITER`
     (20000, an `Int`) and `DEFAULT_POISSON_PROJECT_EVERY` (50, an `Int`, the
     iterations between null-space projections of the cubed-sphere solve)
+  - transport-binary replay check: `REPLAY_TOLERANCE_FLOAT64` (1e-12) and
+    `REPLAY_TOLERANCE_FLOAT32` (1e-5), the largest accepted per-cell budget
+    residual relative to the summed magnitudes of the budget's terms
+    (`replay_tolerance(FT)` in `../MetDrivers/ReplayContinuity.jl` picks one)
   - `DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG` (10°), the width of the Gaussian-blob
     initial condition when the config sets none
   - `DEFAULT_LINROOD_PPM_ORDER` (5, an `Int`), the Lin–Rood PPM edge

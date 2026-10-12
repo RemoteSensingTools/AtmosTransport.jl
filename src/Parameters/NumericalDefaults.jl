@@ -87,6 +87,26 @@ preprocessing has no independent vertical-flux input (issue #11).
 """
 const HORIZONTAL_BALANCE_TAG = "column"
 
+"""
+Replay-check tolerance for Float64 transport-binary data. The check replays each
+window's air-mass budget cell by cell,
+`r = m_cur − 2n (Σ F_out − Σ F_in) − m_next` over the cell's faces, and accepts
+the window when every cell has
+`|r| ≤ τ (|m_cur| + |m_next| + 2n Σ |F|)`: the residual relative to the summed
+magnitudes of the budget's own terms, the scale that the rounding error of the
+sum is bounded by. Stored Float64 binaries (2026-10 goldens) measure at most
+6.5e-14, set by the residual of the Poisson flux balance.
+"""
+const REPLAY_TOLERANCE_FLOAT64 = 1.0e-12
+
+"""
+Replay-check tolerance for Float32 transport-binary data, in the per-cell metric
+of `REPLAY_TOLERANCE_FLOAT64`. Stored Float32 binaries measure at most 1.0e-6
+(about 9 eps(Float32): Float32 rounding) in C90 and C180 cubed-sphere binaries
+from ERA5, MERRA-2 and GEOS-IT alike (2026-10 goldens and production samples).
+"""
+const REPLAY_TOLERANCE_FLOAT32 = 1.0e-5
+
 "Weight of one GEOS moisture-filter / column-drift smoothing sweep (see `DEFAULT_GEOS_SMOOTHING_SWEEPS`)."
 const DEFAULT_GEOS_SMOOTHING_WEIGHT = 0.5
 
@@ -102,4 +122,5 @@ export DEFAULT_CFL_LIMIT, DEFAULT_POSITIVITY_CFL_LIMIT, DEFAULT_SUBSTEP_CFL_TARG
        DEFAULT_MAX_STEPS_PER_WINDOW, ADAPTIVE_SUBSTEP_MAX_REFINEMENTS, DEFAULT_POISSON_BALANCE_TOL,
        DEFAULT_POISSON_BALANCE_MAX_ITER, DEFAULT_POISSON_PROJECT_EVERY, HORIZONTAL_BALANCE_TAG,
        DEFAULT_GEOS_SMOOTHING_WEIGHT,
-       DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG, DEFAULT_LINROOD_PPM_ORDER
+       DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG, DEFAULT_LINROOD_PPM_ORDER,
+       REPLAY_TOLERANCE_FLOAT64, REPLAY_TOLERANCE_FLOAT32

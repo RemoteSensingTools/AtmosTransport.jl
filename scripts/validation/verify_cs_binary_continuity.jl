@@ -11,11 +11,15 @@ using Printf
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport.MetDrivers: TransportBinaryReader, load_window!,
-    load_flux_delta_window!, verify_window_continuity_cs
+    load_flux_delta_window!, verify_window_continuity_cs, replay_tolerance,
+    ReplayScratch
 
 const USAGE = """
 Usage: julia --project=. scripts/validation/verify_cs_binary_continuity.jl \\
-           --binary <transport_cs.bin> [--threshold 1e-10] [--report <out.csv>]
+           --binary <transport_cs.bin> [--threshold <tol>] [--report <out.csv>]
+
+The threshold applies to the per-cell replay metric of `verify_window_continuity`;
+it defaults to `replay_tolerance` of the binary's storage float type.
 """
 
 function parse_args(argv::Vector{String})
@@ -81,16 +85,18 @@ end
 function main(argv = ARGS)
     args = parse_args(Vector{String}(argv))
     path = args["--binary"]
-    threshold = parse(Float64, get(args, "--threshold", "1e-10"))
     report = get(args, "--report", "")
-
-    @info "Test 4: CS binary replay-continuity validation"
-    @info "  binary: $path"
-    @info "  threshold: $threshold"
 
     reader = TransportBinaryReader(path; FT = Float64)
     try
         h = reader.header
+        disk_ft = h.on_disk_float_type === :Float32 ? Float32 : Float64
+        threshold = haskey(args, "--threshold") ? parse(Float64, args["--threshold"]) :
+                    replay_tolerance(Float64, disk_ft)
+        @info "Test 4: CS binary replay-continuity validation"
+        @info "  binary: $path"
+        @info "  threshold: $threshold"
+
         Nt = h.nwindow
         steps_schedule = h.steps_per_window_by_window
         has_dm = :dm in h.payload_sections
@@ -110,6 +116,7 @@ function main(argv = ARGS)
 
         dm_worst = nothing
         cur = load_window!(reader, 1)
+        scratch = nothing   # allocated at the first checkable window
         for win in 1:Nt
             target_source = ""
             m_next = nothing
@@ -138,8 +145,9 @@ function main(argv = ARGS)
             end
 
             steps = steps_schedule[win]
+            scratch === nothing && (scratch = ReplayScratch(size(cur.m[1])))
             diag = verify_window_continuity_cs(cur.m, cur.am, cur.bm, cur.cm,
-                                               m_next, steps)
+                                               m_next, steps; scratch)
             row = (window = win, max_abs_err = diag.max_abs_err,
                    max_rel_err = diag.max_rel_err, worst_idx = diag.worst_idx,
                    target_source = target_source)

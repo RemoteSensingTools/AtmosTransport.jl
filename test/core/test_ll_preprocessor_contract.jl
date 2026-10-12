@@ -28,6 +28,7 @@ using .AtmosTransport.Preprocessing: verify_substep_positivity_ll!,
                                        verify_window!,
                                        update_accumulator!,
                                        summarize_status!
+using .AtmosTransport.MetDrivers: ReplayScratch
 
 # Build a single-grid LL window whose horizontal fluxes vanish and whose
 # vertical fluxes encode the per-cell mass tendency exactly. The result
@@ -454,22 +455,23 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
 
     @testset "verify_ll_window_contract!: scratch kwarg is reused (codex round-1)" begin
         w = build_clean_ll_window(Float64)
-        div_scratch = Array{Float64}(undef, size(w.m_cur))
-        fill!(div_scratch, NaN)
+        replay_scratch = ReplayScratch(size(w.m_cur))
+        fill!(replay_scratch.div, NaN)
+        fill!(replay_scratch.mag, NaN)
         result = verify_ll_window_contract!(w.m_cur, w.am, w.bm, w.cm, w.m_next,
                                              w.steps, 1;
                                              replay_tol = 1e-12,
                                              positivity_cfl_limit = 0.95,
-                                             div_scratch = div_scratch)
+                                             replay_scratch = replay_scratch)
         @test result.replay.max_rel_err <= 1e-12
         @test result.positivity.ok
         # Shape-mismatch scratch must fail loudly.
-        bad_scratch = zeros(Float64, size(w.m_cur, 1) + 1, size(w.m_cur, 2),
-                             size(w.m_cur, 3))
+        bad_scratch = ReplayScratch((size(w.m_cur, 1) + 1, size(w.m_cur, 2),
+                                     size(w.m_cur, 3)))
         @test_throws ErrorException verify_ll_window_contract!(
             w.m_cur, w.am, w.bm, w.cm, w.m_next, w.steps, 1;
             replay_tol = 1e-12,
-            div_scratch = bad_scratch)
+            replay_scratch = bad_scratch)
     end
 
     @testset "LatLonContract: verify_window! returns the same diagnostics" begin
@@ -573,15 +575,15 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         contract = LatLonContract{Float64}(replay_tol = 1e-12,
                                             positivity_cfl_limit = 0.95,
                                             steps_per_window = w.steps)
-        @test contract._div_scratch === nothing
+        @test contract._replay_scratch === nothing
         verify_window!((m_cur = w.m_cur, am = w.am, bm = w.bm,
                         cm = w.cm, m_next = w.m_next), contract, 1)
-        @test contract._div_scratch isa Array{Float64, 3}
-        @test size(contract._div_scratch) == size(w.m_cur)
-        ds = contract._div_scratch
+        @test contract._replay_scratch isa ReplayScratch{Array{Float64, 3}}
+        @test size(contract._replay_scratch) == size(w.m_cur)
+        ds = contract._replay_scratch
         verify_window!((m_cur = w.m_cur, am = w.am, bm = w.bm,
                         cm = w.cm, m_next = w.m_next), contract, 2)
-        @test contract._div_scratch === ds
+        @test contract._replay_scratch === ds
     end
 
     @testset "LatLonContract: update_accumulator!/summarize_status! lifecycle" begin

@@ -261,14 +261,19 @@ palindrome continuity, and compares the result with the stored endpoint
 
 ```
 m_evolved[c] = m_n[c] − 2N · (div_h[c] + cm[c, k+1] − cm[c, k])
-max_c |m_evolved[c] − m_{n+1}[c]|  /  max_c |m_{n+1}[c]|  ≤  tol
+|m_evolved[c] − m_{n+1}[c]| ≤ tol · (|m_n[c]| + |m_{n+1}[c]| + 2N Σ_faces |F[c]|)
 ```
 
 Here `N` is the window's substep count, `div_h` the horizontal divergence of
 the per-substep face mass amounts and `c` runs over all cells of the grid (of
-one panel on the cubed sphere). The denominator is the largest cell mass, not
-each cell's own mass. `tol = replay_tolerance(FT)` is `1e-10` for Float64 and
-`1e-4` for Float32. A binary that fails this gate is **rejected at write
+one panel on the cubed sphere). The sum runs over the cell's horizontal and
+vertical face fluxes. The residual is measured against the
+summed magnitudes of the cell's own budget terms, the scale its rounding
+error is bounded by. `tol = replay_tolerance(FT)`
+(`src/MetDrivers/ReplayContinuity.jl`) is `REPLAY_TOLERANCE_FLOAT64 = 1e-12`
+or `REPLAY_TOLERANCE_FLOAT32 = 1e-5` from `src/Parameters`; in 2026-10 the
+golden and sampled production binaries measured at most `6.5e-14` (Float64)
+and `1.0e-6` (Float32). A binary that fails this gate is **rejected at write
 time**; the preprocessor errors out rather than producing a
 known-bad file. Diagnostic runs can explicitly bypass this gate with
 `[numerics] write_replay_check = false` in the preprocessing config (or
@@ -292,9 +297,11 @@ validate_replay = true
 driver = TransportBinaryDriver(path; validate_replay = true)
 ```
 
-The write-time gate (above) is on by default. A failure throws an
-`ArgumentError` with the worst-cell location and tolerance margin, pointing
-the user at binary regeneration.
+The write-time gate (above) is on by default. The load-time gate uses the
+same per-cell test; for a binary loaded in a different float type than it
+is stored in, the less precise of the two sets the tolerance. A failure
+throws an `ArgumentError` with the worst-cell location and tolerance margin,
+pointing the user at binary regeneration.
 
 The load-time gate is **off by default** because it doubles binary
 load time; it is the recommended sanity check for any new binary
@@ -319,10 +326,8 @@ the source binary. A passing binary is self-consistent:
 
 - the balance converged, so every column's budget closes;
 - the stored `cm` closes the explicit-`dm` budget layer by layer;
-- rounding to the storage precision keeps the closure. The lat-lon and
-  cubed-sphere write-time gates check the stored arrays; the reduced-Gaussian
-  write-time gate checks the Float64 work arrays before they are rounded, so
-  only its load-time gate sees the stored values;
+- rounding to the storage precision keeps the closure. Every topology's
+  write-time gate checks the arrays in the output storage type;
 - the substep count used to diagnose `cm` matches the one in the replay, and
   consecutive windows chain (the last window of a day closes against the
   first mass of the next day when it is available);
@@ -346,13 +351,6 @@ the same fluxes it checks, it cannot detect:
   surface): only the differences `cm[k+1] − cm[k]` enter the replay. The
   `cm` diagnosis sets both boundary values to zero, but the gate does not
   check them;
-- errors that are large compared with a thin cell's own mass. Since the
-  error is divided by the largest cell mass, a cell's own relative error can
-  exceed `tol` by the ratio of the largest cell mass to its mass. In the
-  72 × 37 × 34 lat-lon golden-test binary the lightest top-level cell holds
-  `1.85e-5` of the largest cell's mass, so the Float32 tolerance admits a
-  540 % error in that cell and the Float64 tolerance a `5.4e-6` error.
-
 `test/core/test_replay_consistency.jl` ("Replay gate scope") checks these
 statements. Flux errors of the kind listed above must be found by comparing
 the fluxes with their source, for example by re-deriving a sample of face

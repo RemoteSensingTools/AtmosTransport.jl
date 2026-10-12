@@ -680,7 +680,7 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
 
     @testset "CubedSphereContract: scratch is lazily allocated once and reused (codex round-2)" begin
         # P2 watchpoint closed: the trait `verify_window!` allocates
-        # the panel-shared `_div_scratch` on the first call and reuses
+        # the panel-shared `_replay_scratch` on the first call and reuses
         # it thereafter. Eliminates the per-window `Array{Float64}`
         # allocation the original `verify_window_continuity_cs` would
         # produce inside the legacy convenience wrapper.
@@ -688,16 +688,16 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         contract = CubedSphereContract{Float64}(replay_tol = 1e-12,
                                                  positivity_cfl_limit = 0.95,
                                                  steps_per_window = w.steps)
-        @test contract._div_scratch === nothing
+        @test contract._replay_scratch === nothing
         # Build a window NamedTuple matching the typed-concrete surface.
         window = (m_cur = w.m_cur, am = w.am, bm = w.bm,
                   cm = w.cm, m_next = w.m_next)
         AtmosTransport.Preprocessing.verify_window!(window, contract, 1)
-        @test contract._div_scratch isa Array{Float64, 3}
-        @test size(contract._div_scratch) == size(w.m_cur[1])
-        ds = contract._div_scratch
+        @test contract._replay_scratch isa AtmosTransport.MetDrivers.ReplayScratch{Array{Float64, 3}}
+        @test size(contract._replay_scratch) == size(w.m_cur[1])
+        ds = contract._replay_scratch
         AtmosTransport.Preprocessing.verify_window!(window, contract, 2)
-        @test contract._div_scratch === ds
+        @test contract._replay_scratch === ds
     end
 
     @testset "CubedSphereContract: write_replay_on = false runs only the positivity gate" begin

@@ -97,14 +97,14 @@ and the column balance and `cm` diagnosis both target it.
 ### Write-time replay gate
 
 For every written window, the preprocessor evolves `m_n` forward with the
-stored flux fields and asserts
+stored flux fields and asserts, in every cell,
 
 ```
-max|m_evolved - m_stored[n+1]| / max|m_stored[n+1]|  ≤  tol
+|m_evolved - m_stored[n+1]|  ≤  tol · (|m_n| + |m_stored[n+1]| + 2 n Σ_faces |F|)
 ```
 
-with `tol = 1e-4` (Float32) or `1e-10` (Float64); the maxima run over the
-cells of the grid (of one panel on the cubed sphere). Output is staged under a temporary name; a failed product is removed
+with `tol = 1e-5` (Float32) or `1e-12` (Float64) and `n` substeps per
+window. Output is staged under a temporary name; a failed product is removed
 instead of being promoted to its canonical path.
 
 Since `cm` is diagnosed from the same horizontal fluxes just before the

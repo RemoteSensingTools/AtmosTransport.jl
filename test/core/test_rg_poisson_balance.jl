@@ -56,7 +56,7 @@ function close_window(hflux, m_cur, m_next, face_left, face_right, steps)
     recompute_cm_from_dm_target!(faceindexed_replay_layout(face_left, face_right), div, cm,
                                  m_cur, (m_next .- m_cur) ./ (2steps), hflux)
     replay = verify_window_continuity_rg(m_cur, hflux, cm, m_next, face_left, face_right,
-                                         similar(m_cur), steps)
+                                         steps)
     return cm, replay.max_rel_err
 end
 

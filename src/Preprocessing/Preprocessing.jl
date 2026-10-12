@@ -153,7 +153,7 @@ using ..MetDrivers: LatLonBinaryGeometry, CubedSphereBinaryGeometry, TransportBi
                     verify_window_continuity, verify_window_continuity_ll,
                     verify_window_continuity_rg, verify_window_continuity_cs,
                     delta_semantics,
-                    replay_tolerance, run_replay_gate,
+                    replay_tolerance, run_replay_gate, ReplayScratch,
                     structured_replay_layout, faceindexed_replay_layout
 
 # Re-export the CS preprocessor contract surface. `cubed_sphere_contracts.jl`

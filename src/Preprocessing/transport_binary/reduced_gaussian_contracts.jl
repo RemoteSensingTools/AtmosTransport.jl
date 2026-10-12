@@ -300,7 +300,7 @@ end
     verify_rg_window_contract!(m_cur, hflux, cm, m_next, face_left, face_right,
                                steps_per_window, win_idx;
                                replay_tol, positivity_cfl_limit = DEFAULT_POSITIVITY_CFL_LIMIT,
-                               div_scratch = nothing,
+                               replay_scratch = nothing,
                                outgoing_h = nothing, bad_h = nothing,
                                boundary_stub_tol = 0.0)
 
@@ -320,8 +320,8 @@ in order:
      the run-level accumulator + `summarize_rg_positivity_status`
      decides fatal-vs-warn.
 
-`div_scratch`, `outgoing_h`, `bad_h` may be pre-allocated by the
-caller (workspace-owned scratch) to suppress per-window
+`replay_scratch` (a `ReplayScratch` of the mass shape), `outgoing_h`,
+`bad_h` may be pre-allocated by the caller (workspace-owned scratch) to suppress per-window
 allocation. Default `nothing` → allocate locally.
 
 Returns `(; replay, positivity)`. Boundary-stub failure does not
@@ -338,7 +338,7 @@ function verify_rg_window_contract!(m_cur::AbstractMatrix{FT},
                                      win_idx::Integer;
                                      replay_tol::Real,
                                      positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
-                                     div_scratch::Union{Nothing, AbstractMatrix{Float64}} = nothing,
+                                     replay_scratch::Union{Nothing, ReplayScratch} = nothing,
                                      outgoing_h::Union{Nothing, AbstractMatrix{Float64}} = nothing,
                                      bad_h::Union{Nothing, AbstractMatrix{Bool}} = nothing,
                                      boundary_stub_tol::Real = 0.0) where FT
@@ -362,16 +362,16 @@ function verify_rg_window_contract!(m_cur::AbstractMatrix{FT},
               "(`Advection/sweeps.jl`) will silently discard this flux. " *
               "Either the writer's boundary-masking logic dropped a zero, " *
               "or `face_left`/`face_right` connectivity has the wrong sign.")
-    if div_scratch === nothing
-        div_scratch = Array{Float64}(undef, size(m_cur))
+    if replay_scratch === nothing
+        replay_scratch = ReplayScratch(size(m_cur))
     else
-        size(div_scratch) == size(m_cur) ||
-            error("verify_rg_window_contract!: div_scratch shape " *
-                  "$(size(div_scratch)) != m_cur shape $(size(m_cur)).")
+        size(replay_scratch) == size(m_cur) ||
+            error("verify_rg_window_contract!: replay_scratch shape " *
+                  "$(size(replay_scratch)) != m_cur shape $(size(m_cur)).")
     end
     replay = verify_window_continuity_rg(m_cur, hflux, cm, m_next,
-                                          face_left, face_right,
-                                          div_scratch, steps_per_window)
+                                          face_left, face_right, steps_per_window;
+                                          scratch = replay_scratch)
     replay.max_rel_err <= replay_tol ||
         error("Write-time replay gate FAILED for RG window $(win_idx): " *
               "rel=$(replay.max_rel_err) > tol=$(replay_tol) at cell " *
@@ -506,9 +506,9 @@ mutable struct ReducedGaussianContract{FT} <:
     # Lazy scratch (codex round-2): allocated on first `verify_window!`
     # call from the window's `(nc, Nz)` shape and reused thereafter.
     # Eliminates per-window `Array{Float64}(undef, nc, Nz)` allocations
-    # for the replay divergence, the positivity horizontal-outflow
-    # accumulator, and the NaN/Inf flag mask.
-    _div_scratch                :: Union{Nothing, Matrix{Float64}}
+    # for the replay divergence and flux magnitude, the positivity
+    # horizontal-outflow accumulator, and the NaN/Inf flag mask.
+    _replay_scratch             :: Union{Nothing, ReplayScratch{Matrix{Float64}}}
     _outgoing_h                 :: Union{Nothing, Matrix{Float64}}
     _bad_h                      :: Union{Nothing, Matrix{Bool}}
 
@@ -557,10 +557,10 @@ function verify_window!(window, contract::ReducedGaussianContract, win_idx::Inte
     # Lazy-allocate the three scratch buffers on first call (or
     # reallocate on a shape change). Subsequent calls reuse them.
     m_shape = size(window.m_cur)
-    if contract._div_scratch === nothing || size(contract._div_scratch) != m_shape
-        contract._div_scratch = Array{Float64}(undef, m_shape)
-        contract._outgoing_h  = Array{Float64}(undef, m_shape)
-        contract._bad_h       = Array{Bool}(undef, m_shape)
+    if contract._replay_scratch === nothing || size(contract._replay_scratch) != m_shape
+        contract._replay_scratch = ReplayScratch(m_shape)
+        contract._outgoing_h     = Array{Float64}(undef, m_shape)
+        contract._bad_h          = Array{Bool}(undef, m_shape)
     end
     return verify_rg_window_contract!(window.m_cur, window.hflux,
                                        window.cm, window.m_next,
@@ -569,7 +569,7 @@ function verify_window!(window, contract::ReducedGaussianContract, win_idx::Inte
                                        replay_tol           = contract.replay_tol,
                                        positivity_cfl_limit = contract.positivity_cfl_limit,
                                        boundary_stub_tol    = contract.boundary_stub_tol,
-                                       div_scratch          = contract._div_scratch,
+                                       replay_scratch       = contract._replay_scratch,
                                        outgoing_h           = contract._outgoing_h,
                                        bad_h                = contract._bad_h)
 end

@@ -26,6 +26,7 @@ using .AtmosTransport.Preprocessing: verify_substep_positivity_rg!,
                                        verify_window!,
                                        update_accumulator!,
                                        summarize_status!
+using .AtmosTransport.MetDrivers: ReplayScratch
 
 # Build a single-ring RG window (4 cells, 4 ring faces). Each face `f`
 # connects cell `f` on its left to cell `mod1(f + 1, 4)` on its right.
@@ -686,11 +687,12 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
     @testset "verify_rg_window_contract!: scratch kwargs are reused (codex round-1)" begin
         w = build_clean_rg_window(Float64)
         nc, Nz = size(w.m_cur)
-        div_scratch = Array{Float64}(undef, nc, Nz)
+        replay_scratch = ReplayScratch((nc, Nz))
         outgoing_h  = Array{Float64}(undef, nc, Nz)
         bad_h       = Array{Bool}(undef, nc, Nz)
         # Poison scratch to confirm the helper resets it.
-        fill!(div_scratch, NaN)
+        fill!(replay_scratch.div, NaN)
+        fill!(replay_scratch.mag, NaN)
         fill!(outgoing_h, NaN)
         fill!(bad_h, true)
         result = verify_rg_window_contract!(w.m_cur, w.hflux, w.cm, w.m_next,
@@ -698,7 +700,7 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
                                              w.steps, 1;
                                              replay_tol = 1e-12,
                                              positivity_cfl_limit = 0.95,
-                                             div_scratch = div_scratch,
+                                             replay_scratch = replay_scratch,
                                              outgoing_h = outgoing_h,
                                              bad_h = bad_h)
         @test result.replay.max_rel_err <= 1e-12
@@ -708,7 +710,7 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
             w.m_cur, w.hflux, w.cm, w.m_next,
             w.face_left, w.face_right, w.steps, 1;
             replay_tol = 1e-12,
-            div_scratch = zeros(Float64, nc + 1, Nz))
+            replay_scratch = ReplayScratch((nc + 1, Nz)))
     end
 
     @testset "ReducedGaussianContract: verify_window! returns the same diagnostics" begin
@@ -793,21 +795,21 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
                                                      steps_per_window = w.steps,
                                                      face_left = w.face_left,
                                                      face_right = w.face_right)
-        @test contract._div_scratch === nothing
+        @test contract._replay_scratch === nothing
         @test contract._outgoing_h  === nothing
         @test contract._bad_h       === nothing
         verify_window!((m_cur = w.m_cur, hflux = w.hflux, cm = w.cm,
                         m_next = w.m_next), contract, 1)
-        @test contract._div_scratch isa Matrix{Float64}
+        @test contract._replay_scratch isa ReplayScratch{Matrix{Float64}}
         @test contract._outgoing_h  isa Matrix{Float64}
         @test contract._bad_h       isa Matrix{Bool}
-        @test size(contract._div_scratch) == size(w.m_cur)
-        ds = contract._div_scratch
+        @test size(contract._replay_scratch) == size(w.m_cur)
+        ds = contract._replay_scratch
         oh = contract._outgoing_h
         bh = contract._bad_h
         verify_window!((m_cur = w.m_cur, hflux = w.hflux, cm = w.cm,
                         m_next = w.m_next), contract, 2)
-        @test contract._div_scratch === ds
+        @test contract._replay_scratch === ds
         @test contract._outgoing_h  === oh
         @test contract._bad_h       === bh
     end

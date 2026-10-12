@@ -175,7 +175,6 @@ end
 
                 replay = AtmosTransport.MetDrivers.verify_window_continuity_rg(
                     m_cur, hflux, cm, m_next, face_left, face_right,
-                    zeros(Float64, size(m_cur)),
                     reader.header.steps_per_window_by_window[1])
                 @test replay.max_rel_err <= AtmosTransport.MetDrivers.replay_tolerance(FT)
             finally
@@ -259,5 +258,48 @@ end
                                                 next_day_hour0 = next_day)
         @test read(final, String) == "existing binary"
         @test !isfile(final * ".tmp")
+    end
+end
+
+# The write-time contract replays what the writer stores: the buffer slot's
+# fluxes in the output float type, not the Float64 balance work arrays they are
+# rounded from. A tolerance below Float32 rounding therefore fails a Float32
+# window and passes a Float64 one.
+@testset "RG write-time contract checks the stored output arrays" begin
+    mktempdir() do tmp
+        date = Date(2021, 12, 1)
+        for FT in (Float64, Float32)
+            grid = build_target_geometry(Val(:synthetic_reduced_gaussian),
+                                         Dict{String, Any}("gaussian_number" => 2), FT)
+            settings = _rg_test_settings(FT, tmp, tmp, joinpath(tmp, "out"))
+            ws = Pre.allocate_window_workspace(grid, settings, _rg_test_vertical(FT),
+                                               (T = 0, n_times = 2), date, FT)
+            nc, Nz = size(ws.buf.m[1])
+            nf = size(ws.buf.hflux[1], 1)
+            # Integer masses below 2^24 are exact in Float32, so the endpoints close
+            # globally in both float types (the tendency sums to zero over the cells).
+            m_cur = [1_000_000.0 + 1000c for c in 1:nc, k in 1:Nz]
+            tendency = [isodd(c) ? 500.0 : -500.0 for c in 1:nc, k in 1:Nz]
+            ws.buf.m[ws.cur] .= FT.(m_cur)
+            ws.buf.m[ws.nxt] .= FT.(m_cur .+ tendency)
+            interior(f) = ws.work.face_left[f] > 0 && ws.work.face_right[f] > 0
+            ws.buf.hflux[ws.cur] .= FT.([interior(f) ? 1e5 * cospi(0.37f + k) : 0.0
+                                         for f in 1:nf, k in 1:Nz])
+            contract = Pre.ReducedGaussianContract{FT}(
+                replay_tol = 1e-12, steps_per_window = ws.steps_schedule[1],
+                face_left = ws.work.face_left, face_right = ws.work.face_right)
+            policy = Pre.SubstepSchedulePolicy(adaptive_substeps = false,
+                                               substep_cfl_target = 0.95)
+            drain() = Pre.drain_ready_windows!(ws, contract, 1, ws.steps_schedule[1];
+                                               write_replay_on = true,
+                                               substep_policy = policy)
+            if FT === Float64
+                @test drain().contract.replay.max_rel_err <= 1e-12
+            else
+                err = try drain(); nothing catch e; e end
+                @test err isa ErrorException
+                @test occursin("Write-time replay gate FAILED for RG window 1", err.msg)
+            end
+        end
     end
 end

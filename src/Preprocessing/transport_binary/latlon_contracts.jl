@@ -98,10 +98,11 @@ Iterates every window k and asserts
     m[Nt] − 2·steps·(∇·am + ∇·bm + ∂_k cm) ≈ last_hour_next.m   (k == Nt, if available)
     m[Nt] − 2·steps·(∇·am + ∇·bm + ∂_k cm) ≈ m[Nt]              (otherwise zero-tendency fallback)
 
-to within a Poisson-balance tolerance floor derived from `FT` (roughly
-`1e-10` for `Float64`, `1e-4` for `Float32`). Errors loudly with a per-window
-diagnostic if the contract is violated — this was the gate that would have
-caught the dry-basis Δb×pit closure bug before it reached the runtime.
+cell by cell, to within `replay_tolerance(FT)` of the summed magnitudes of
+the budget's terms (see `verify_window_continuity`). Errors loudly with a
+per-window diagnostic if the contract is violated — this was the gate that
+would have caught the dry-basis Δb×pit closure bug before it reached the
+runtime.
 
 `write_replay_on = false` (`[numerics] write_replay_check = false`) skips it,
 for diagnostic runs.
@@ -118,7 +119,7 @@ function verify_storage_continuity_ll!(storage::WindowStorage{FT},
     Nt = length(storage.all_m)
     Nt == 0 && return nothing
     tol_rel = replay_tolerance(FT)
-    div_scratch = Array{Float64}(undef, size(storage.all_m[1]))
+    scratch = ReplayScratch(size(storage.all_m[1]))
     layout = structured_replay_layout()
     run_replay_gate(Nt; tol_rel=tol_rel,
                     summary_label="  Write-time replay gate",
@@ -130,7 +131,7 @@ function verify_storage_continuity_ll!(storage::WindowStorage{FT},
         else
             storage.all_m[k]
         end
-        verify_window_continuity(layout, div_scratch,
+        verify_window_continuity(layout, scratch,
                                  storage.all_m[k],
                                  storage.all_cm[k],
                                  m_next,
@@ -564,16 +565,15 @@ end
 """
     verify_ll_window_contract!(m_cur, am, bm, cm, m_next, steps_per_window, win_idx;
                                replay_tol, positivity_cfl_limit = DEFAULT_POSITIVITY_CFL_LIMIT,
-                               div_scratch = nothing)
+                               replay_scratch = nothing)
 
 Single canonical per-window LL binary contract check. Runs the replay
 gate (errors on failure) followed by the per-substep positivity scan
 (`verify_substep_positivity_ll!`, returns a diagnostic).
 
-`div_scratch` may be pre-allocated by the caller (workspace-owned
-scratch) to suppress the per-window `Array{Float64}` the
-default-allocating `verify_window_continuity_ll` would otherwise
-produce. Default `nothing` → allocate locally.
+`replay_scratch` (a `ReplayScratch` of the mass shape) may be pre-allocated
+by the caller (workspace-owned scratch) to suppress the per-window
+allocation. Default `nothing` → allocate locally.
 
 Returns `(; replay, positivity)`. Positivity is non-fatal here —
 callers aggregate the worst window across the loop and pass it to
@@ -589,18 +589,18 @@ function verify_ll_window_contract!(m_cur::AbstractArray{FT, 3},
                                      win_idx::Integer;
                                      replay_tol::Real,
                                      positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
-                                     div_scratch::Union{Nothing, AbstractArray{Float64, 3}} = nothing) where FT
+                                     replay_scratch::Union{Nothing, ReplayScratch} = nothing) where FT
     _validate_replay_tol(replay_tol, "verify_ll_window_contract!")
     _validate_cfl_limit(positivity_cfl_limit, "verify_ll_window_contract!")
-    if div_scratch === nothing
-        div_scratch = Array{Float64}(undef, size(m_cur))
+    if replay_scratch === nothing
+        replay_scratch = ReplayScratch(size(m_cur))
     else
-        size(div_scratch) == size(m_cur) ||
-            error("verify_ll_window_contract!: div_scratch shape " *
-                  "$(size(div_scratch)) != m_cur shape $(size(m_cur)).")
+        size(replay_scratch) == size(m_cur) ||
+            error("verify_ll_window_contract!: replay_scratch shape " *
+                  "$(size(replay_scratch)) != m_cur shape $(size(m_cur)).")
     end
     replay = verify_window_continuity(structured_replay_layout(),
-                                       div_scratch, m_cur, cm, m_next,
+                                       replay_scratch, m_cur, cm, m_next,
                                        steps_per_window, am, bm)
     replay.max_rel_err <= replay_tol ||
         error("Write-time replay gate FAILED for LL window $(win_idx): " *
@@ -724,9 +724,9 @@ mutable struct LatLonContract{FT} <:
     worst                       :: LLWorst
     # Lazy scratch (codex round-2): allocated on first `verify_window!`
     # call from the window's mass shape and reused thereafter.
-    # Eliminates the per-window `Array{Float64}(undef, size(m_cur))`
-    # allocation that the wrapper would otherwise produce.
-    _div_scratch                :: Union{Nothing, Array{Float64, 3}}
+    # Eliminates the per-window replay-scratch allocation that the
+    # wrapper would otherwise produce.
+    _replay_scratch             :: Union{Nothing, ReplayScratch{Array{Float64, 3}}}
 
     function LatLonContract{FT}(;
                                  replay_tol::Real,
@@ -757,18 +757,18 @@ end
 @inline contract_require_positivity(c::LatLonContract) = c.require_substep_positivity
 
 function verify_window!(window, contract::LatLonContract, win_idx::Integer)
-    # Lazy-allocate `_div_scratch` on first call (or reallocate on a
+    # Lazy-allocate `_replay_scratch` on first call (or reallocate on a
     # shape change). Subsequent calls reuse the buffer.
     m_shape = size(window.m_cur)
-    if contract._div_scratch === nothing || size(contract._div_scratch) != m_shape
-        contract._div_scratch = Array{Float64}(undef, m_shape)
+    if contract._replay_scratch === nothing || size(contract._replay_scratch) != m_shape
+        contract._replay_scratch = ReplayScratch(m_shape)
     end
     return verify_ll_window_contract!(window.m_cur, window.am, window.bm,
                                        window.cm, window.m_next,
                                        contract.steps_per_window, Int(win_idx);
                                        replay_tol           = contract.replay_tol,
                                        positivity_cfl_limit = contract.positivity_cfl_limit,
-                                       div_scratch          = contract._div_scratch)
+                                       replay_scratch       = contract._replay_scratch)
 end
 
 function update_accumulator!(contract::LatLonContract, positivity_diag,
