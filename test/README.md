@@ -42,16 +42,66 @@ A failing file does not stop the run: every selected file runs (an interrupt
 still stops it), and at the end the runner prints the 15 slowest files and then
 fails with the list of failed files, if any.
 
+## Quick set and topics
+
+The full default run takes 30 to 70 minutes on one process, depending on the
+machine and its load. For fast checks while developing,
+[`groups.toml`](groups.toml) sorts every `core/` file and the regridding suite
+into exactly one topic, and names a quick set:
+
+```bash
+julia --project=test test/runtests.jl --quick                     # crucial fast set
+julia --project=test test/runtests.jl --topics=advection,diffusion
+julia --project=test test/runtests.jl --changed                   # topics of your changes vs origin/main
+julia --project=test test/runtests.jl --changed=<git-ref> --quick
+julia --project=test test/runtests.jl --quick --list              # print the selection, run nothing
+julia --project=. -e 'using Pkg; Pkg.test(test_args=["--quick"])'
+```
+
+- `--quick` runs the quick set: the package health gates (Aqua and JET, still
+  first), the metadata gates (`test_physical_constants`, `test_readme_current`,
+  `test_public_api_surface`, `test_public_docstrings`, `test_public_contracts`,
+  `test_environment_variables`, `test_documentation_links`,
+  `test_config_schema_agreement`, `test_config_key_checks`), the groups
+  meta-test, and physics smokes: mass conservation and uniform-tracer
+  invariance of the advection kernels, convection and diffusion, short
+  driven lat-lon runs, a cubed-sphere run with every operator family across
+  a file handoff, binary write/read round trips, and the replay-consistency
+  gates. It takes about 4 minutes in one process on a lab machine, where
+  the full default run took 32 minutes.
+- `--topics=a,b` runs the files of the named topics (the topic names and
+  descriptions are in `groups.toml`).
+- `--changed[=<ref>]` (default `origin/main`) maps the files changed on the
+  branch since its merge base with `<ref>` (`git diff --name-only <ref>...HEAD`),
+  plus uncommitted and untracked files, to topics through each topic's
+  `paths` globs. A changed test file selects itself; a changed helper or
+  fixture that no topic maps selects every test file that mentions its name
+  (the runner and `groups.toml` map to the `health` topic). A changed `src/`
+  file that no topic maps runs the full `core/` and `regridding/` tiers, with
+  a message naming the file.
+- Selectors combine with each other and with the tier flags; the union runs
+  (`--quick --diagnostic` adds the diagnostic tier). Without flags the runner
+  runs all of `core/` and `regridding/`, as before.
+
+[`core/test_test_groups.jl`](core/test_test_groups.jl) (in the quick set)
+fails when a `core/` file is in no topic or in several, a quick or topic
+entry does not exist, no topic maps a file of some `src/` folder, or a `paths`
+glob matches nothing.
+
 ## Adding a new test
 
 1. Decide which tier the test belongs in. Default to `core/` if the test
    doesn't need external data and is part of a production code path.
 2. Drop the file into the matching folder. The orchestrator picks up
    anything matching `test_*.jl` automatically — no manual roster edit.
-3. Import the cached package with `using AtmosTransport` or
+3. Add a `core/` file to exactly one topic in [`groups.toml`](groups.toml)
+   (`core/test_test_groups.jl` fails otherwise). If the code it tests lives in
+   a file no topic's `paths` cover yet, add the glob. Add it to the quick set
+   only if it is a fast, crucial gate.
+4. Import the cached package with `using AtmosTransport` or
    `import AtmosTransport`. Each test file runs in its own module to isolate
    helpers and constants without creating new copies of package types.
-4. Include shared test fixtures with paths relative to `@__DIR__`.
+5. Include shared test fixtures with paths relative to `@__DIR__`.
 
 ## Promotion / retirement workflow
 

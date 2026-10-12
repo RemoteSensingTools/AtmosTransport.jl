@@ -1,0 +1,499 @@
+# Test groups for `test/runtests.jl` (see test/README.md).
+#
+# Every file of test/core/ and the regridding suite (regridding/runtests.jl)
+# belongs to exactly one topic. `files` are paths relative to test/; `paths`
+# are repository-relative globs (`**` crosses folders, `*` stays in one, `{a,b}`
+# alternates) that map a changed file to the topic for `--changed`. A path may
+# map to several topics. A changed `src/` file that no topic maps runs the
+# full default tiers. `core/test_test_groups.jl` checks this file.
+#
+#   julia --project=test test/runtests.jl --quick
+#   julia --project=test test/runtests.jl --topics=advection,diffusion
+#   julia --project=test test/runtests.jl --changed[=<git-ref>]
+#
+# The quick set is the crucial fast check (metadata gates that CI has failed
+# on, Aqua and JET, and short physics smokes); it should stay near 5 minutes
+# in one process. The full suite (no flags) remains the merge requirement.
+
+quick = [
+    "core/test_aqua.jl",
+    "core/test_jet.jl",
+    "core/test_test_groups.jl",
+    "core/test_physical_constants.jl",
+    "core/test_readme_current.jl",
+    "core/test_public_api_surface.jl",
+    "core/test_public_docstrings.jl",
+    "core/test_environment_variables.jl",
+    "core/test_documentation_links.jl",
+    "core/test_config_schema_agreement.jl",
+    "core/test_config_key_checks.jl",
+    "core/test_public_contracts.jl",
+    # Physics smokes: mass conservation and uniform-tracer invariance of the
+    # advection kernels, convection and diffusion; driven lat-lon runs and a
+    # cubed-sphere run across file handoffs with every operator family; binary
+    # write/read round trips and the replay-consistency gates.
+    "core/test_advection_kernels.jl",
+    "core/test_transport_model_convection.jl",
+    "core/test_diffusion_mass_flux_conservation.jl",
+    "core/test_window_prefetch.jl",
+    "core/test_driven_simulation.jl",
+    "core/test_cs_multifile_equivalence.jl",
+    "core/test_binary_inspector.jl",
+    "core/test_cs_optional_2d_sections.jl",
+    "core/test_replay_consistency.jl",
+]
+
+[topics.health]
+description = "Package and repository hygiene: Aqua, JET, public API and docstrings, module READMEs, documentation links, environment variables, source revision, the test runner and these groups"
+files = [
+    "core/test_aqua.jl",
+    "core/test_jet.jl",
+    "core/test_public_api_surface.jl",
+    "core/test_public_docstrings.jl",
+    "core/test_public_contracts.jl",
+    "core/test_readme_current.jl",
+    "core/test_documentation_links.jl",
+    "core/test_environment_variables.jl",
+    "core/test_source_revision.jl",
+    "core/test_runtests_runner.jl",
+    "core/test_test_groups.jl",
+]
+paths = [
+    "Project.toml",
+    "test/Project.toml",
+    "test/runtests.jl",
+    "test/groups.toml",
+    "test/helpers/test_groups.jl",
+    "src/AtmosTransport.jl",
+    "src/REVISION",
+    "README.md",
+    "CONTRIBUTING.md",
+    "CHANGELOG.md",
+    "**/README.md",
+    "src/**/*.md",
+    "docs/**",
+    "scripts/checks/**",
+]
+
+[topics.parameters_config]
+description = "Physical constants and defaults (src/Parameters), the run-config schema, key checks, active config files, and the runtime preflight and CLIs"
+files = [
+    "core/test_physical_constants.jl",
+    "core/test_config_schema_agreement.jl",
+    "core/test_config_key_checks.jl",
+    "core/test_config_matrix_contract.jl",
+    "core/test_public_config_and_cli.jl",
+]
+paths = [
+    "src/Parameters/**",
+    "src/ConfigChecks.jl",
+    "src/Models/runner/config_keys.jl",
+    "src/Models/runner/configuration.jl",
+    "schemas/**",
+    "config/**",
+    "scripts/run_transport.jl",
+    "scripts/preprocessing/preprocess_transport_binary.jl",
+    "scripts/downloads/download_data.jl",
+]
+
+[topics.grids_state]
+description = "Architectures, meshes and vertical coordinates, state and basis types, fields and their GPU adaptation, Float32 summation contracts"
+files = [
+    "core/test_architectures.jl",
+    "core/test_basis_explicit_core.jl",
+    "core/test_structured_mesh_metadata.jl",
+    "core/test_reduced_gaussian_mesh.jl",
+    "core/test_latlon_explicit_faces.jl",
+    "core/test_cs_lonlat_inverse_projection.jl",
+    "core/test_gpu_field_adaptation.jl",
+    "core/test_float32_conservation.jl",
+]
+paths = [
+    "src/Architectures.jl",
+    "src/Grids/**",
+    "src/State/**",
+    "src/Quantities/**",
+    "src/Operators/AbstractOperators.jl",
+    "src/Operators/Operators.jl",
+    "ext/**",
+]
+
+[topics.advection]
+description = "Advection schemes and kernels (upwind, slopes, PPM, Lin-Rood, FV3 vertical profile), cubed-sphere halos and seams, launch layouts, the binary CFL check"
+files = [
+    "core/test_advection_kernels.jl",
+    "core/test_cubed_sphere_advection.jl",
+    "core/test_no_advection.jl",
+    "core/test_ppm_cw84_limiter.jl",
+    "core/test_ppm_subgrid_distributions.jl",
+    "core/test_slopes_tm5_reference.jl",
+    "core/test_fv3_vertical_profile.jl",
+    "core/test_cs_halo_fill.jl",
+    "core/test_cs_seam_exchange.jl",
+    "core/test_linrood_seams.jl",
+    "core/test_cs_ppm_launch_layouts.jl",
+    "core/test_binary_cfl_check.jl",
+]
+paths = [
+    "src/Operators/Advection/**",
+    "src/Operators/AbstractOperators.jl",
+    "src/Adjoints/CubedSphereSeams.jl",
+    "src/Adjoints/HaloAdjoint.jl",
+    "src/Grids/PanelConnectivity.jl",
+]
+
+[topics.convection]
+description = "Convection operators (CMFMC, CMFMC matrix, TM5) with their column solves, workspaces and adjoints, and the convection preprocessing (TM5 conversion and attach, ERA5 and GEOS convection fields, mass basis)"
+files = [
+    "core/test_cmfmc_matrix_convection.jl",
+    "core/test_cmfmc_adjoint_identity.jl",
+    "core/test_convection_mass_basis.jl",
+    "core/test_transport_model_convection.jl",
+    "core/test_tm5_alias_safety.jl",
+    "core/test_tm5_bidiagonal_solve.jl",
+    "core/test_tm5_convection.jl",
+    "core/test_tm5_driven_simulation.jl",
+    "core/test_tm5_hessenberg.jl",
+    "core/test_tm5_tile_bit_equality.jl",
+    "core/test_tm5_tracer_batching.jl",
+    "core/test_tm5_vs_cmfmc_parity.jl",
+    "core/test_tm5_workspace_lifetime.jl",
+    "core/test_tm5_preprocessing.jl",
+    "core/test_tm5_preprocessing_rates.jl",
+    "core/test_tm5_process_day.jl",
+    "core/test_tm5_vertical_remap.jl",
+    "core/test_tm5_attach_level_order.jl",
+    "core/test_era5_c180_tm5_convection.jl",
+    "core/test_era5_physics_binary.jl",
+    "core/test_era5_n320_convection.jl",
+    "core/test_geos_convection.jl",
+]
+paths = [
+    "src/Operators/Convection/**",
+    "src/MetDrivers/ConvectionForcing.jl",
+    "src/Adjoints/ConvectionAdjoint.jl",
+    "src/Preprocessing/convection_mass_basis.jl",
+    "src/Preprocessing/tm5_convection_*.jl",
+    "src/Preprocessing/era5_physics_binary.jl",
+    "src/Preprocessing/sources/era5_n320_mass_convection.jl",
+    "scripts/preprocessing/attach_catrine_tm5_convection_cs.jl",
+    "scripts/preprocessing/convert_era5_physics_nc_to_bin.jl",
+    "scripts/validation/diagnose_tm5_active_layers.jl",
+]
+
+[topics.diffusion]
+description = "Vertical diffusion: implicit and conservative Dkg solves, Kz fields, TM5 bldiff, GCHP non-local PBL, layer thickness (dz) from dry or total pressure"
+files = [
+    "core/test_conservative_dkg.jl",
+    "core/test_diffusion_mass_flux_conservation.jl",
+    "core/test_diffusion_palindrome_contract.jl",
+    "core/test_dz_helpers_virtual_T.jl",
+    "core/test_gchp_nonlocal_pbl.jl",
+    "core/test_packed_diffusion_f32_conservation.jl",
+    "core/test_precomputed_dkg_binary_payload.jl",
+    "core/test_tm5_bldiff.jl",
+]
+paths = [
+    "src/Operators/Diffusion/**",
+    "src/State/Fields/*Kz*.jl",
+    "src/State/Fields/GCHPNonlocalPBLField.jl",
+    "src/State/Fields/PrecomputedCSDkgField.jl",
+    "src/Adjoints/DiffusionAdjoint.jl",
+    "src/Preprocessing/tm5_bldiff.jl",
+    "src/Models/driven_physics_refresh.jl",
+]
+
+[topics.surface_flux_chemistry]
+description = "Surface-flux operators (static, time-varying, native cubed-sphere, window buffers, Kahan accumulation, integrals) and chemistry"
+files = [
+    "core/test_surface_flux_integrals.jl",
+    "core/test_surface_flux_kahan_accuracy.jl",
+    "core/test_surface_flux_window_buffer.jl",
+    "core/test_timevarying_surface_flux.jl",
+    "core/test_native_cs_surface_flux.jl",
+    "core/test_multiday_source_clock.jl",
+    "core/test_cs_chemistry.jl",
+    "core/test_runtime_chemistry_recipe.jl",
+]
+paths = [
+    "src/Operators/SurfaceFlux/**",
+    "src/Operators/Chemistry/**",
+    "src/MetDrivers/SurfaceForcing.jl",
+    "src/State/Fields/StepwiseField.jl",
+    "src/Models/initial_conditions/surface_flux*.jl",
+]
+
+[topics.gridded_io]
+description = "Surface-flux input files (GriddedIO): coordinates, source meshes, time axes, units, staging, cs_native and lat-lon flux files, the flux comparison and parity scripts"
+files = [
+    "core/test_gridded_io_coordinates.jl",
+    "core/test_gridded_io_source_meshes.jl",
+    "core/test_gridded_io_staging.jl",
+    "core/test_gridded_io_time_axes.jl",
+    "core/test_cs_native_flux_schema.jl",
+    "core/test_flux_units.jl",
+    "core/test_latlon_flux_writer.jl",
+    "core/test_compare_cs_flux_files.jl",
+    "core/test_flux_port_parity_harness.jl",
+]
+paths = [
+    "src/GriddedIO/**",
+    "src/Preprocessing/cs_native_fluxes.jl",
+    "scripts/validation/compare_cs_flux_files.jl",
+    "scripts/validation/flux_port_parity/**",
+    "scripts/preprocessing/catrine_protocol_cs_fluxes.jl",
+]
+
+[topics.initial_conditions]
+description = "Initial conditions: file and analytic initializers, vertical orientation and remap, cubed-sphere packing and pressure-layer initialization"
+files = [
+    "core/test_initial_condition_io.jl",
+    "core/test_file_ic_vertical_order.jl",
+    "core/test_cs_initial_state_packing.jl",
+    "core/test_cs_pressure_layer_initialization.jl",
+]
+paths = [
+    "src/Models/InitialConditionIO.jl",
+    "src/Models/initial_conditions/**",
+]
+
+[topics.metdrivers_binary]
+description = "Transport binaries and met drivers: writers and readers, header contract, sections, inspector, replay continuity, path expansion, window loading, prefetch and input staging, atomic publication"
+files = [
+    "core/test_binary_inspector.jl",
+    "core/test_binary_planet_radius.jl",
+    "core/test_binary_path_expander.jl",
+    "core/test_cs_optional_2d_sections.jl",
+    "core/test_cs_section_table.jl",
+    "core/test_cs_window_staging.jl",
+    "core/test_cs_writer_contract_guard.jl",
+    "core/test_cs_multifile_equivalence.jl",
+    "core/test_replay_consistency.jl",
+    "core/test_validate_replay_config.jl",
+    "core/test_persistence_hardening.jl",
+    "core/test_atomic_files.jl",
+    "core/test_window_prefetch.jl",
+    "core/test_input_staging.jl",
+    "core/test_input_resource_lifetime.jl",
+]
+paths = [
+    "src/MetDrivers/**",
+    "src/AtomicFiles.jl",
+    "src/Models/BinaryPathExpander.jl",
+    "src/Models/InputStaging.jl",
+    "src/Models/driven_window_state.jl",
+    "src/Models/runner/resources.jl",
+    "scripts/diagnostics/inspect_transport_binary.jl",
+    "scripts/validation/verify_cs_binary_continuity.jl",
+    "scripts/postprocess/**",
+]
+
+[topics.preprocessing]
+description = "Preprocessing core: per-topology window contracts, Poisson balance, unified driver and writer adapters, substep schedule, vertical transforms and presets, mass pins, cubed-sphere face fluxes and wind rotation, lat-lon to cubed-sphere regrid, coarsener"
+files = [
+    "core/test_cs_preprocessor_contract.jl",
+    "core/test_ll_preprocessor_contract.jl",
+    "core/test_rg_preprocessor_contract.jl",
+    "core/test_poisson_balance.jl",
+    "core/test_rg_poisson_balance.jl",
+    "core/test_preprocessor_unified_driver.jl",
+    "core/test_preprocessor_writer_adapters.jl",
+    "core/test_preprocessor_substep_schedule.jl",
+    "core/test_preprocessing_integrity.jl",
+    "core/test_horizontal_balance_config.jl",
+    "core/test_vertical_transforms.jl",
+    "core/test_preprocessing_vertical_presets.jl",
+    "core/test_global_ps_pin.jl",
+    "core/test_native_mass_fix_target.jl",
+    "core/test_cs_face_fluxes.jl",
+    "core/test_cs_panel_geographic_roundtrip.jl",
+    "core/test_ll_to_cs_regrid_script.jl",
+    "core/test_cs_binary_coarsener.jl",
+]
+paths = [
+    "src/Preprocessing/**",
+    "scripts/preprocessing/**",
+]
+
+[topics.preprocessing_sources]
+description = "Meteorological sources for preprocessing: ERA5 native GRIB and spectral synthesis (lat-lon, reduced Gaussian, cubed sphere), N320 to cubed sphere, GEOS-FP/IT and MERRA-2 readers and passthrough, OMEGA regularization, met-source settings"
+files = [
+    "core/test_era5_n320_dry_mass.jl",
+    "core/test_era5_n320_reader.jl",
+    "core/test_era5_n320_to_c180_pipeline.jl",
+    "core/test_era5_n320_to_c180_regrid.jl",
+    "core/test_era5_n320_vertical_merge.jl",
+    "core/test_era5_n320_window_reader.jl",
+    "core/test_spectral_ring_synthesis.jl",
+    "core/test_reduced_spectral_synthesis.jl",
+    "core/test_preprocessing_cache_io.jl",
+    "core/test_ll_spectral_unified_driver.jl",
+    "core/test_cs_spectral_unified_driver.jl",
+    "core/test_rg_preprocessor_unified_driver.jl",
+    "core/test_geos_reader.jl",
+    "core/test_geos_cs_passthrough.jl",
+    "core/test_geosfp_native_physics_fallback.jl",
+    "core/test_geos_omega_regularization.jl",
+    "core/test_met_readers.jl",
+    "core/test_met_source_loader.jl",
+    "core/test_met_sources_trait.jl",
+]
+paths = [
+    "src/Preprocessing/sources/**",
+    "src/Preprocessing/spectral_*.jl",
+    "src/Preprocessing/reduced_*.jl",
+    "src/Preprocessing/ring_poisson_balance.jl",
+    "src/Preprocessing/met_*.jl",
+    "src/Preprocessing/era5_surface_reader.jl",
+    "src/Preprocessing/transport_binary/{era5,geos,merra2}*.jl",
+    "src/Preprocessing/transport_binary/*_spectral.jl",
+    "src/MetDrivers/ERA5/**",
+    "config/met_sources/**",
+]
+
+[topics.runner]
+description = "Driven simulations and the run driver: window stepping, runtime operator builders, schedules, callbacks and checks, progress and section timers"
+files = [
+    "core/test_driven_simulation.jl",
+    "core/test_cs_driven_builders.jl",
+    "core/test_run_logging_checks.jl",
+    "core/test_run_progress_timer.jl",
+    "core/test_section_timer.jl",
+]
+paths = [
+    "src/Models/**",
+    "src/Diagnostics/**",
+    "src/LogLevels.jl",
+    "scripts/run_transport.jl",
+]
+
+[topics.output]
+description = "Run output: NetCDF snapshots and streams, selected captures, cubed-sphere geometry helpers, asynchronous writes"
+files = [
+    "core/test_output_snapshots.jl",
+    "core/test_selected_snapshots.jl",
+    "core/test_netcdf_stream.jl",
+    "core/test_output_cs_geometry_helpers.jl",
+    "core/test_async_output_lifetime.jl",
+]
+paths = [
+    "src/Output/*.jl",
+    "src/Models/runner/output.jl",
+]
+
+[topics.observations]
+description = "Observation sampling output ([output.observations]): sources, schedules, cell location, gathers, the sampler, runner integration and the schema"
+files = [
+    "core/test_observation_cell_locator.jl",
+    "core/test_observation_gather.jl",
+    "core/test_observation_output_spec.jl",
+    "core/test_observation_runner.jl",
+    "core/test_observation_sampler.jl",
+    "core/test_observation_schedules.jl",
+    "core/test_observation_schema.jl",
+    "core/test_observation_sources.jl",
+]
+paths = [
+    "src/Output/observations/**",
+    "src/Models/runner/observations.jl",
+    "schemas/observation_sites.schema.json",
+]
+
+[topics.analysis_visualization]
+description = "Post-run analysis (bands, budgets, decomposition, GEOS-Chem archives, mass totals, snapshot series), Float32/Float64 attribution, visualization and the diagnostic scripts built on them"
+files = [
+    "core/test_analysis_bands_stats.jl",
+    "core/test_analysis_budget_closure.jl",
+    "core/test_analysis_decomposition.jl",
+    "core/test_analysis_geoschem_archive.jl",
+    "core/test_analysis_mass_totals.jl",
+    "core/test_analysis_snapshot_series.jl",
+    "core/test_float32_float64_diagnostics.jl",
+    "core/test_visualization_snapshots.jl",
+]
+paths = [
+    "src/Analysis/**",
+    "src/Visualization/**",
+    "ext/AtmosTransportMakieExt.jl",
+    "scripts/diagnostics/**",
+    "scripts/visualization/**",
+]
+
+[topics.adjoint_footprint]
+description = "Adjoint kernels and footprints: Lin-Rood and PPM transposes, footprint finite-difference checks, tape storage and checkpointing (full, stride, revolve)"
+files = [
+    "core/test_linrood_kernel_adjoints.jl",
+    "core/test_cs_linrood_footprint_fd.jl",
+    "core/test_cs_ppm_adjoint_footprint.jl",
+    "core/test_cs_stride_checkpoint.jl",
+    "core/test_cs_tape_mmap_roundtrip.jl",
+    "core/test_cs_tape_path.jl",
+]
+paths = [
+    "src/Adjoints/**",
+    "src/Footprint/**",
+    "src/Tape/**",
+    "src/Operators/Advection/linrood_adjoint*.jl",
+]
+
+[topics.inversion]
+description = "4D-Var inversion: adjoint identities and gradient Taylor tests, covariance and preconditioning, optimizers and iteration logs, observation and departure files, the inversion driver and synthetic truth recovery"
+files = [
+    "core/test_adjoint_identity_model_space.jl",
+    "core/test_adjoint_identity_preconditioned.jl",
+    "core/test_gradient_taylor_sweep.jl",
+    "core/test_cs_4dvar_preconditioned.jl",
+    "core/test_cs_covariance.jl",
+    "core/test_cs_preconditioning.jl",
+    "core/test_cs_optimizer_dispatch.jl",
+    "core/test_cs_lbfgs.jl",
+    "core/test_cs_iteration_log.jl",
+    "core/test_cs_observations_io.jl",
+    "core/test_cs_observation_binding.jl",
+    "core/test_cs_departures_io.jl",
+    "core/test_cs_inversion_driver.jl",
+    "core/test_cs_inversion_truth_recovery.jl",
+]
+paths = [
+    "src/Inversion/**",
+    "src/Footprint/**",
+    "scripts/inversions/**",
+    "config/inversions/**",
+    "schemas/cs_*.toml",
+]
+
+[topics.downloads]
+description = "Data downloads: configuration, logging, source URLs"
+files = [
+    "core/test_download_logging.jl",
+    "core/test_download_source_urls.jl",
+]
+paths = [
+    "src/Downloads/**",
+    "scripts/downloads/**",
+    "config/downloads/**",
+]
+
+[topics.regridding]
+description = "Conservative regridding: weights, conservation, transposes, serialization, nested cubed spheres, the identity regridder and the weight cache"
+files = [
+    "regridding/runtests.jl",
+    "core/test_identity_regrid.jl",
+    "core/test_regrid_cache_dir.jl",
+]
+paths = [
+    "src/Regridding/**",
+    "src/Models/initial_conditions/surface_flux_regridding.jl",
+]
+
+[topics.harnesses]
+description = "Developer harnesses: golden-output sessions and the benchmark lab lane"
+files = [
+    "core/test_golden_sessions.jl",
+    "core/test_benchmark_lab_lane.jl",
+]
+paths = [
+    "test/golden/**",
+    "benchmarking/**",
+    "scripts/benchmarks/**",
+]

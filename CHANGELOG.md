@@ -931,6 +931,22 @@
 
 ### Coverage, benchmarks, and documentation
 
+- Faster test runs while developing; the full suite stays the merge check.
+  `test/groups.toml` sorts every `test/core/` file and the regridding suite
+  into exactly one of 21 topics (for example `advection`, `convection`,
+  `metdrivers_binary`, `preprocessing`, `inversion`), each with the
+  repository paths it covers, and names a quick set. `test/runtests.jl`
+  gains selectors that run a subset of the default tiers: `--quick`,
+  `--topics=a,b`, and `--changed[=<git-ref>]` (default `origin/main`), which
+  maps the branch's and the uncommitted changes to topics and runs the full
+  default tiers when a changed `src/` file maps to no topic; `--list` prints
+  the selection. Selectors combine with each other and with the tier flags.
+  Without flags the runner runs `core/` and `regridding/` as before; an
+  unknown argument is now an error instead of being ignored.
+  `test/core/test_test_groups.jl` checks the groups file. The quick set
+  (Aqua, JET, the metadata gates, the groups check, and physics smokes) took
+  4 minutes in one process on a lab machine, where the full default run
+  took 32.
 - Documentation corrections from an external review against the TM5 Fortran
   by pera-noaa (NOAA GML), GitHub issues #12, #15 and #20. Thank you.
   - `SlopesScheme` is no longer described as a port of TM5's slopes
