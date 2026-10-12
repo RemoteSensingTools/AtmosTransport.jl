@@ -316,6 +316,36 @@ end
     end
 end
 
+@testset "binary window symmetrically splits Rn-222 decay around emissions" begin
+    FT = Float64
+    Nx, Ny, Nz = 4, 3, 5
+    driver, _, _ = _make_convection_window_driver(
+        FT = FT, steps = 4, binary_contract = true)
+    T = driver.dt
+    half_life = FT(330_350.4)
+    λ = log(FT(2)) / half_life
+    E = FT(2.5)
+    Bstar = E * T / (2sinh(λ * T / 2))
+
+    air = fill(FT(_REALISTIC_AIR_MASS_KG), Nx, Ny, Nz)
+    rn222 = zeros(FT, Nx, Ny, Nz)
+    rn222[:, :, Nz] .= Bstar
+    state = CellState(DryBasis, air; rn222)
+    fluxes = allocate_face_fluxes(driver.grid.horizontal, Nz;
+                                  FT, basis = DryBasis)
+    model = TransportModel(state, fluxes, driver.grid, UpwindScheme())
+    source = SurfaceFluxSource(:rn222, fill(E, Nx, Ny))
+    decay = ExponentialDecay(FT; rn222 = half_life)
+    sim = DrivenSimulation(model, driver;
+                           start_window = 1, stop_window = 1,
+                           surface_sources = (source,), chemistry = decay)
+
+    run!(sim)
+
+    burden = dropdims(sum(sim.model.state.tracers.rn222; dims = 3); dims = 3)
+    @test all(isapprox.(burden, Bstar; rtol = 3e-15))
+end
+
 @testset "DrivenSimulation keeps convection runtime on model FT" begin
     FT = Float32
     driver, forcing_a, _ = _make_convection_window_driver(FT = FT)

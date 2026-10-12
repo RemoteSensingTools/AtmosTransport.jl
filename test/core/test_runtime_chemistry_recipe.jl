@@ -22,6 +22,8 @@ using .AT.Models: build_runtime_chemistry,
     chemistry_spec, NoChemistrySpec, DecayChemistrySpec
 using .AT.State: field_value
 
+const RN222_HALF_LIFE_SECONDS = 330_350.4
+
 @testset "build_runtime_chemistry — dispatch" begin
     # No [chemistry] section → NoChemistry
     op = build_runtime_chemistry(Dict{String,Any}(), Float64)
@@ -70,6 +72,41 @@ using .AT.State: field_value
     @test length(op.tracer_names) == 2
     @test :rn222 in op.tracer_names
     @test :kr85 in op.tracer_names
+end
+
+@testset "Rn-222 symmetric window split has the analytic steady burden" begin
+    FT = Float64
+    Nx, Ny, Nz = 2, 2, 1
+    T = FT(3600)
+    E = FT(3.0)
+    λ = log(FT(2)) / FT(RN222_HALF_LIFE_SECONDS)
+    x = λ * T
+
+    # For half-decay → window emissions → half-decay,
+    # B[n+1] = exp(-x)B[n] + E*T*exp(-x/2). Its exact discrete fixed point is
+    # E*T/(2sinh(x/2)); E/λ is the continuous-source steady burden.
+    Bstar = E * T / (2sinh(x / 2))
+    Bcontinuous = E / λ
+    Bold = E * T / expm1(x)
+
+    mesh = AT.LatLonMesh(; FT, Nx, Ny)
+    vertical = AT.HybridSigmaPressure(FT[0, 0], FT[0, 1])
+    grid = AT.AtmosGrid(mesh, vertical, AT.CPU(); FT)
+    air = ones(FT, Nx, Ny, Nz)
+    state = AT.CellState(AT.DryBasis, air; rn222 = fill(Bstar, Nx, Ny, Nz))
+    fluxes = AT.allocate_face_fluxes(mesh, Nz; FT, basis = AT.DryBasis)
+    emissions = AT.SurfaceFluxOperator(AT.SurfaceFluxSource(:rn222, fill(E, Nx, Ny)))
+    decay = AT.ExponentialDecay(FT; rn222 = RN222_HALF_LIFE_SECONDS)
+    model = AT.TransportModel(state, fluxes, grid, AT.UpwindScheme();
+                              emissions, chemistry = decay)
+
+    AT.step!(model, T)
+
+    @test all(isapprox.(model.state.tracers.rn222, Bstar; rtol = 2e-15))
+    @test Bstar / Bcontinuous - 1 ≈ x / (2sinh(x / 2)) - 1 rtol = 1e-10
+    @test Bstar / Bcontinuous - 1 ≈ -2.3773563538886933e-6 atol = 1e-14
+    @test Bold / Bcontinuous - 1 ≈ x / expm1(x) - 1 rtol = 1e-12
+    @test Bold / Bcontinuous - 1 ≈ -0.0037720378199672666 atol = 1e-14
 end
 
 @testset "ChemistrySpec parse" begin

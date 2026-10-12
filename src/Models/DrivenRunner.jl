@@ -46,7 +46,8 @@ is:
    for CS. Those functions live in `driven_stepping.jl`.
 5. `DrivenSimulation.step!` refreshes time-varying forcing from the driver,
    then calls `TransportModel.step!` or, for binary-scheduled substeps,
-   `transport_step!` plus an end-of-window `convection_chemistry_step!`.
+   `transport_step!` bracketed by exponential-decay half-steps, plus
+   end-of-window convection (and unsplit non-decay chemistry).
 6. `TransportModel.jl` is where advection, surface emissions, diffusion,
    convection, and chemistry are applied to the state.
 
@@ -970,8 +971,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                 # Physics handoff for CS: one `step!(sim)` is one runtime substep.
                 # `DrivenSimulation.step!` refreshes window forcing, then delegates
                 # to `TransportModel.step!` or to the binary-scheduled
-                # `transport_step!` + end-of-window `convection_chemistry_step!`
-                # split. See those functions for the actual operator order.
+                # the binary-scheduled window composition. See
+                # `driven_stepping.jl` for the exact operator order.
                 timed_transport!(timer, () -> step!(sim))
                 if sim.iteration == sim.current_window_end_iteration
                     tick_window!(timer;

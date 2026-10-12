@@ -368,13 +368,15 @@ end
             @test r[4] ≈ co2_rate(1) * s1 + co2_rate(2) * s2 rtol = 1e-12
             @test r[7] ≈ rn_rate * (r[1] - 6.0) * 3600 rtol = 1e-12
             # Transport moves nothing, so the run conserves: r ≈ 0 for the stable tracer
-            # and, with the model's emit-then-decay order per window, for Rn-222.
+            # and, with the model's symmetric decay/emission split, for Rn-222.
             @test abs(r[5]) <= 1e-12 * r[3]
             @test abs(r[8]) <= 1e-12 * max(r[6], rn_rate * 10800)
         end
         @test rows[1][[4, 5, 7, 8]] == zeros(4)
-        # The exact solution of B' = E − λB lies above the model's (fresh emissions decay for a whole window).
-        @test occursin(r"rn222\s+splitting bias of the model's decay vs the exact solution: -\d", text)
+        # Midpoint emissions leave only the negative O((λT)²) Strang-splitting bias.
+        m = match(r"rn222\s+splitting bias of the model's decay vs the exact solution: ([+-]\d\.\d+e[+-]\d+)", text)
+        @test m !== nothing
+        @test -1e-4 < parse(Float64, only(m.captures)) < 0
         @test occursin(r"\s+co2\s+r = [+-]\d\.\d{4}e[+-]\d+ kg-storage", text)
         @test mb.tracers == [:co2, :rn222]
     end

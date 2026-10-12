@@ -415,7 +415,8 @@ scheme    = "linrood"           # "upwind" | "slopes" | "ppm" | "linrood" | "non
 ppm_order = 7                   # cubed-sphere LinRoodPPM only; ∈ {5, 7}.
                                 # Setting ppm_order with scheme = "ppm" errors.
 # vertical = "fv3_kord8"        # scheme = "ppm": "same_as_horizontal" (default);
-                                # scheme = "linrood": "upwind" (default);
+                                # scheme = "linrood": "fv3_kord8" (default);
+                                # explicit "upwind" retains first-order vertical;
                                 # either: "fv3_kord8" (FV3 scalar_profile,
                                 # positive definite, the GCHP tracer profile)
                                 # | "fv3_kord8_signed" (for tracers that go

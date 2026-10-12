@@ -45,8 +45,9 @@ The adjoint supports the following advection schemes (full union in
 - `SlopesScheme(NoLimiter())`
 - `PPMScheme(NoLimiter())`
 - `PPMScheme(MonotoneLimiter())` and `PPMScheme(CW84Limiter())` — via a stored tracer-branch tape around the base trajectory
-- `LinRoodPPMScheme(5)` and `LinRoodPPMScheme(7)`, with the default upwind
-  vertical sweeps
+- `LinRoodPPMScheme(5)` and `LinRoodPPMScheme(7)`, with explicit upwind
+  vertical sweeps (`vertical = "upwind"`; configured forward runs now default
+  to the unsupported FV3 profile)
 
 The FV3 vertical profile (`vertical = "fv3_kord8"` or `"fv3_kord8_signed"`)
 has no adjoint, for `PPMScheme` or for Lin–Rood's vertical sweeps; neither do

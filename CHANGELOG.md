@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Numerical changes
+
+- Rn-222 and other configured exponential decay now use exact half-window
+  decay steps before and after each window's emissions. For constant emission
+  rate `E`, decay rate `λ`, and window `T`, the discrete steady burden is
+  `E T / (2 sinh(λT/2))`; its hourly Rn-222 bias relative to `E/λ` is
+  -0.000237736%, down from -0.377204% with emit-then-decay ordering.
+- Configured Lin-Rood transport now defaults its vertical remap to
+  `fv3_kord8`, the closest GCHP match. Explicit `vertical = "upwind"` and
+  `vertical = "fv3_kord8_signed"` settings are unchanged; the Lin-Rood
+  adjoint still requires explicit upwind vertical sweeps.
+
 ### Breaking changes
 
 - Removed the deprecated, unused `State.MetState`,

@@ -3,9 +3,10 @@
 The runtime ships **four** flux-form advection schemes, each behind the
 abstract type `AbstractAdvectionScheme` declared in
 `src/Operators/Advection/schemes.jl`. Upwind, slopes, and standard PPM use
-directional sweeps. Lin–Rood couples the two horizontal directions and uses
-upwind vertically by default. On the cubed sphere, PPM and Lin–Rood can
-instead use FV3's vertical tracer profile (`vertical = "fv3_kord8"`). The model-facing operator interface dispatches to the
+directional sweeps. Lin–Rood couples the two horizontal directions; configured
+runs default its vertical sweep to FV3's `kord = 8` tracer profile, while the
+low-level Julia constructor retains upwind. On the cubed sphere, PPM can also
+select that profile with `vertical = "fv3_kord8"`. The model-facing operator interface dispatches to the
 appropriate transport path.
 
 | Scheme | Smooth-flow accuracy | Monotone? | Positive? | LL | CS | RG |
@@ -36,11 +37,13 @@ Choose the algorithm explicitly when comparing runs:
 | `scheme = "ppm", limiter = "cw84"` | `PPMScheme(CW84Limiter())` | complete CW84 PPM, as horizontally |
 | `scheme = "ppm", vertical = "fv3_kord8"` | `PPMScheme(MonotoneLimiter(), FV3ScalarProfile())` (CS only) | FV3 `scalar_profile`, `kord = 8`, positive definite |
 | `scheme = "ppm", vertical = "fv3_kord8_signed"` | `PPMScheme(MonotoneLimiter(), FV3ScalarProfile(; positive_definite = false))` (CS only) | FV3 `scalar_profile`, `kord = 8`, for signed tracers |
-| `scheme = "linrood", ppm_order = 5` | `LinRoodPPMScheme(5)` (CS only) | upwind |
-| `scheme = "linrood", ppm_order = 7` | `LinRoodPPMScheme(7)` (CS only) | upwind |
+| `scheme = "linrood", ppm_order = 5` | `LinRoodPPMScheme(5; vertical = PPMScheme(; vertical = FV3ScalarProfile()))` (CS only) | FV3 `scalar_profile`, `kord = 8` (default) |
+| `scheme = "linrood", ppm_order = 7` | `LinRoodPPMScheme(7; vertical = PPMScheme(; vertical = FV3ScalarProfile()))` (CS only) | FV3 `scalar_profile`, `kord = 8` (default) |
+| `scheme = "linrood", vertical = "upwind"` | `LinRoodPPMScheme(5; vertical = UpwindScheme())` (CS only) | upwind (explicit legacy choice) |
 | `scheme = "linrood", ppm_order = 7, vertical = "fv3_kord8"` | `LinRoodPPMScheme(7; vertical = PPMScheme(; vertical = FV3ScalarProfile()))` (CS only) | FV3 `scalar_profile`, `kord = 8` |
 
-Omitting `ppm_order` for Lin–Rood selects 5. Setting it with `scheme = "ppm"`
+Omitting `ppm_order` for Lin–Rood selects 5, and omitting `vertical` selects
+the GCHP-matched `fv3_kord8` profile. Setting `ppm_order` with `scheme = "ppm"`
 is an error: standard split PPM has no order selector. `vertical` is only
 accepted with `scheme = "ppm"` or `"linrood"`, and `limiter` (`"monotone"`, the
 default, or `"cw84"`) only with `scheme = "ppm"`. `NoLimiter` and

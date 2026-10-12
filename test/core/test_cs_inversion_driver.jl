@@ -212,13 +212,14 @@ end
     @test scheme_of("[advection]\nscheme = \"ppm\"\nlimiter = \"cw84\"\n") ==
           AT.PPMScheme(AT.CW84Limiter())
     @test scheme_of("[advection]\nscheme = \"upwind\"\n") == AT.UpwindScheme()
-    @test scheme_of("[advection]\nscheme = \"linrood\"\n") isa
+    @test scheme_of("[advection]\nscheme = \"linrood\"\nvertical = \"upwind\"\n") isa
           AT.LinRoodPPMScheme{5, AT.UpwindScheme}
-    @test scheme_of("[advection]\nscheme = \"linrood\"\nppm_order = 7\n") isa
+    @test scheme_of("[advection]\nscheme = \"linrood\"\nppm_order = 7\nvertical = \"upwind\"\n") isa
           AT.LinRoodPPMScheme{7, AT.UpwindScheme}
 
     # A Lin–Rood inversion runs end to end through the driver.
-    lr = _run_config_text(with_advection("[advection]\nscheme = \"linrood\"\n"))
+    lr = _run_config_text(with_advection(
+        "[advection]\nscheme = \"linrood\"\nvertical = \"upwind\"\n"))
     @test lr isa AT.CS4DVarSolveResult
     @test lr.last.cost < lr.cost_history[1]
 
@@ -233,6 +234,8 @@ end
         "[advection]\nscheme = \"ppm\"\nvertical = \"fv3_kord8\"\n")))
     @test occursin("FV3-profile vertical sweeps", _config_error(with_advection(
         "[advection]\nscheme = \"linrood\"\nvertical = \"fv3_kord8\"\n")))
+    @test occursin("FV3-profile vertical sweeps", _config_error(with_advection(
+        "[advection]\nscheme = \"linrood\"\n")))
     @test occursin("NoAdvection", _config_error(with_advection("[advection]\nscheme = \"none\"\n")))
     @test occursin("Unknown [advection] limiter", _config_error(with_advection(
         "[advection]\nscheme = \"ppm\"\nlimiter = \"minmod\"\n")))
@@ -246,8 +249,9 @@ end
                     Dict("scheme" => "ppm"),
                     Dict("scheme" => "ppm", "limiter" => "cw84"),
                     Dict("scheme" => "ppm", "limiter" => "none"),
-                    Dict("scheme" => "linrood"),
-                    Dict("scheme" => "linrood", "ppm_order" => 7))
+                    Dict("scheme" => "linrood", "vertical" => "upwind"),
+                    Dict("scheme" => "linrood", "ppm_order" => 7,
+                         "vertical" => "upwind"))
         scheme = scheme_of(section)
         @test AT.require_adjoint_support(scheme) === scheme
     end

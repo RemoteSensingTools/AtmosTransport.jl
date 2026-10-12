@@ -192,7 +192,8 @@ struct LinRoodAdvectionSpec{Z <: AbstractAdvectionScheme} <: AbstractAdvectionSp
     order    :: Int
     vertical :: Z
 end
-LinRoodAdvectionSpec(order::Integer) = LinRoodAdvectionSpec(Int(order), UpwindScheme())
+LinRoodAdvectionSpec(order::Integer) = LinRoodAdvectionSpec(
+    Int(order), PPMScheme(; vertical = FV3ScalarProfile()))
 
 """
     AbstractAdvectionContext
@@ -287,9 +288,9 @@ function _parse_ppm_limiter(section, context::AbstractAdvectionContext)
     return limiters[key]
 end
 
-# Lin–Rood's vertical sweeps: "upwind" (default) or an FV3 profile.
+# Lin–Rood's vertical sweeps: the GCHP-matched FV3 profile (default) or upwind.
 function _parse_linrood_vertical(section)
-    raw = get(section, "vertical", "upwind")
+    raw = get(section, "vertical", "fv3_kord8")
     key = raw isa AbstractString ? lowercase(raw) : ""
     key == "upwind" && return UpwindScheme()
     key in _LINROOD_VERTICALS || throw(ArgumentError(
@@ -304,7 +305,7 @@ end
 Parse an `[advection]` section into a typed spec. `ppm_order` is only meaningful
 for `scheme = "linrood"`; pairing it with `scheme = "ppm"` is rejected (the split
 PPM path takes no order knob). `vertical` applies to `scheme = "ppm"` (default
-`same_as_horizontal`) and `scheme = "linrood"` (default `upwind`). `limiter`
+`same_as_horizontal`) and `scheme = "linrood"` (default `fv3_kord8`). `limiter`
 applies to `scheme = "ppm"` only (`monotone`, the default, or `cw84`; the
 inversion driver also accepts `none`). In a forward run an omitted selector
 defaults to upwind; the inversion driver requires it. An omitted Lin–Rood

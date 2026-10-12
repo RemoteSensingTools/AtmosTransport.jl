@@ -4,8 +4,12 @@ const _TRANSPORT_MODEL_OVERVIEW = """
 Minimal Oceanigans-style model object for standalone `src` transport runs.
 
 Carries advection, chemistry, vertical diffusion, surface emissions,
-and convection operators. The step composition is:
-    transport_block(dt)   →   convection_block(dt)   →   chemistry_block(dt)
+and convection operators. Exponential decay is Strang-split around the
+transport block's emissions:
+    decay(dt/2) → transport_block(dt) → convection_block(dt) → decay(dt/2)
+
+Other chemistry operators retain the unsplit order:
+    transport_block(dt) → convection_block(dt) → chemistry_block(dt)
 
 where `transport_block` runs the full palindrome with diffusion and
 emissions at the center:
@@ -14,8 +18,9 @@ emissions at the center:
     X → Y → Z → S(dt) → V(dt) → Z → Y → X                  (diffusive boundary coupling)
     X → Y → Z → V(dt) → Z → Y → X                          (no emissions)
 
-`step!(model, dt)` executes the full runtime composition:
-transport block → convection block → chemistry block.
+`step!(model, dt)` executes the full runtime composition. Exponential decay
+runs as two exact half-steps around transport/emissions; other chemistry runs
+once after transport and convection.
 
 Defaults `chemistry = NoChemistry()`, `diffusion = NoDiffusion()`,
 `emissions = NoSurfaceFlux()`, and `convection = NoConvection()` make the
@@ -436,6 +441,38 @@ function transport_step!(model::TransportModel, dt; meteo = nothing)
     return nothing
 end
 
+# ExponentialDecay is linear and autonomous over a met window, so two exact
+# half-steps place the window-integrated emissions at the window midpoint.
+# NoChemistry is included so the default remains a compile-time no-op. A
+# CompositeChemistry is split only when every member has the same safe
+# property; future/non-decay chemistry retains the historical end-step order.
+@inline _symmetric_decay_split(::ExponentialDecay) = true
+@inline _symmetric_decay_split(::NoChemistry) = true
+@inline _symmetric_decay_split(op::CompositeChemistry) =
+    all(_symmetric_decay_split, op.schemes)
+@inline _symmetric_decay_split(::AbstractChemistryOperator) = false
+
+@inline _half_step(dt) = dt / 2
+
+function _chemistry_before_emissions!(model::TransportModel, dt; meteo = nothing)
+    _symmetric_decay_split(model.chemistry) || return nothing
+    SectionTimer.@section :chemistry apply!(model.state, meteo, model.grid,
+                                            model.chemistry, _half_step(dt))
+    return nothing
+end
+
+function _chemistry_after_emissions!(model::TransportModel, dt; meteo = nothing)
+    chemistry_dt = _symmetric_decay_split(model.chemistry) ? _half_step(dt) : dt
+    SectionTimer.@section :chemistry apply!(model.state, meteo, model.grid,
+                                            model.chemistry, chemistry_dt)
+    return nothing
+end
+
+function _convection_step!(model::TransportModel, dt)
+    _convection_block!(model.convection, model, dt)
+    return nothing
+end
+
 """
     convection_chemistry_step!(model::TransportModel, dt; meteo = nothing)
 
@@ -443,7 +480,7 @@ Advance the non-transport physics blocks once: convection block →
 chemistry block.
 """
 function convection_chemistry_step!(model::TransportModel, dt; meteo = nothing)
-    _convection_block!(model.convection, model, dt)
+    _convection_step!(model, dt)
     SectionTimer.@section :chemistry apply!(model.state, meteo, model.grid,
                                             model.chemistry, dt)
     return nothing
@@ -461,10 +498,10 @@ end
 """
     step!(model::TransportModel, dt; meteo = nothing)
 
-Advance `model.state` by one full runtime step: transport block
-(advection with vertical diffusion at the palindrome center, surface
-emissions wrapped by the two V half-steps when active) → convection
-block → chemistry block.
+Advance `model.state` by one full runtime step. Exponential decay uses the
+symmetric composition decay(dt/2) → transport/emissions(dt) →
+convection(dt) → decay(dt/2). Other chemistry operators keep the
+transport/emissions(dt) → convection(dt) → chemistry(dt) order.
 
 With defaults `diffusion = NoDiffusion()`, `emissions = NoSurfaceFlux()`,
 `chemistry = NoChemistry()`, `convection = NoConvection()`, every live
@@ -477,8 +514,10 @@ to thread `current_time(meteo)` through operators
 that consume time-varying fields.
 """
 function step!(model::TransportModel, dt; meteo = nothing)
+    _chemistry_before_emissions!(model, dt; meteo = meteo)
     transport_step!(model, dt; meteo = meteo)
-    convection_chemistry_step!(model, dt; meteo = meteo)
+    _convection_step!(model, dt)
+    _chemistry_after_emissions!(model, dt; meteo = meteo)
     return nothing
 end
 

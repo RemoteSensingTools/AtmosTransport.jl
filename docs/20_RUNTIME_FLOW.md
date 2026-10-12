@@ -42,9 +42,10 @@ numerical stepping remains in `DrivenSimulation` and `TransportModel`.
 step!(sim)
 ├── load/prefetch the next window at a window boundary
 ├── find the active substep and refresh forcing
-├── run transport at the binary's stored substep cadence
+├── apply an exponential-decay half-step at the window start
+├── run transport/emissions at the binary's stored substep cadence
 ├── advance time and iteration
-├── at a met-window boundary, run convection and chemistry once
+├── at a met-window boundary, run convection and the second decay half-step
 └── invoke callbacks
 ```
 
@@ -57,6 +58,7 @@ substep = substep_index(sim)
 _refresh_forcing!(sim, substep)
 
 if _uses_binary_transport_schedule(sim)
+    substep == 1 && _chemistry_before_emissions!(sim.model, sim.window_dt; meteo = sim)
     transport_step!(sim.model, sim.Δt; meteo = sim)
 else
     step!(sim.model, sim.Δt; meteo = sim)
@@ -68,13 +70,16 @@ sim.time = _clock_time(sim)     # Float64, from window and step counters
 if _uses_binary_transport_schedule(sim) &&
    sim.iteration == sim.current_window_end_iteration
     _maybe_reset_to_window_endpoint!(sim)
-    convection_chemistry_step!(sim.model, sim.window_dt; meteo = sim)
+    _convection_step!(sim.model, sim.window_dt)
+    _chemistry_after_emissions!(sim.model, sim.window_dt; meteo = sim)
 end
 ```
 
 A version-4 transport binary carries the advection substep schedule. It does
-not request convection and chemistry at every stored advection substep; those
-blocks run once per meteorological window on the canonical path.
+not request convection and chemistry at every stored advection substep.
+Convection runs once per meteorological window on the canonical path;
+exponential decay is split into two exact half-window steps around all of the
+window's emissions. Non-decay chemistry retains one end-window call.
 
 ## Window advance and forcing refresh
 
@@ -111,14 +116,13 @@ function transport_step!(model, dt; meteo = nothing)
            meteo)
 end
 
-function convection_chemistry_step!(model, dt; meteo = nothing)
-    # dispatches away when convection is NoConvection()
-    _convection_block!(model.convection, model, dt)
-    apply!(model.state, meteo, model.grid, model.chemistry, dt)
-end
+_chemistry_before_emissions!(model, dt; meteo) # decay(dt/2), otherwise no-op
+transport_step!(model, dt; meteo)
+_convection_step!(model, dt)
+_chemistry_after_emissions!(model, dt; meteo)  # decay(dt/2), otherwise chemistry(dt)
 ```
 
-`step!(model, dt)` calls both in order. `NoDiffusion`, `NoSurfaceFlux`,
+`step!(model, dt)` calls these in order. `NoDiffusion`, `NoSurfaceFlux`,
 `NoConvection`, and `NoChemistry` provide explicit identity methods; callers
 do not need `nothing` checks or string branches in the operator loop.
 

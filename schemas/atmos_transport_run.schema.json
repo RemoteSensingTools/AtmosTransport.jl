@@ -168,7 +168,7 @@
         "vertical": {
           "type": "string",
           "enum": ["same_as_horizontal", "fv3_kord8", "fv3_kord8_signed", "upwind"],
-          "description": "PPM: same_as_horizontal (default), fv3_kord8 or fv3_kord8_signed (cubed sphere). Lin-Rood: upwind (default), fv3_kord8 or fv3_kord8_signed."
+          "description": "PPM: same_as_horizontal (default), fv3_kord8 or fv3_kord8_signed (cubed sphere). Lin-Rood: fv3_kord8 (default), upwind or fv3_kord8_signed."
         },
         "limiter": {
           "type": "string",
