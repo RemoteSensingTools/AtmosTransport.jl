@@ -1,8 +1,8 @@
 # Full-L137 C180 smoke test — Float32 GPU, PBL diffusion + surface emissions.
 #
 # This is the quick end-to-end runtime smoke for the full-L137 C180 binary.
-# The sibling `c180_full137_f32_pbl_tm5_smoke_gpu.toml` also enables TM5
-# convection, but the dense full-137 TM5 solve is not a quick smoke on an L40S.
+# The former TM5 sibling was moved to `config/runs/likely_legacy/`: its
+# pre-PBL-rename input was quarantined and no compatible binary remains.
 #
 # Runner:
 #   julia -t8 --project=. scripts/run_transport.jl \

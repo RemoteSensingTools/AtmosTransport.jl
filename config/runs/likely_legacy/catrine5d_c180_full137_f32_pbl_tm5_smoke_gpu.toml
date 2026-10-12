@@ -1,8 +1,10 @@
+# LIKELY LEGACY: the configured input was quarantined as pre-PBL-rename and
+# no compatible binary remains at this path. Retained for provenance only.
 # Full-L137 C180 smoke test — Float32 GPU, PBL diffusion + TM5 convection.
 #
 # Runner:
 #   julia -t8 --project=. scripts/run_transport.jl \
-#         config/runs/catrine5d/c180_full137_f32_pbl_tm5_smoke_gpu.toml
+#         config/runs/likely_legacy/catrine5d_c180_full137_f32_pbl_tm5_smoke_gpu.toml
 
 [input]
 binary_paths = [

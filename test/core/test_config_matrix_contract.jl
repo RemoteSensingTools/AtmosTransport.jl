@@ -27,6 +27,48 @@ function _active_tomls(rel::AbstractString; skip_completed::Bool = false)
     return sort(paths)
 end
 
+const SCRIPT_REFERENCE = r"scripts/[A-Za-z0-9_./*?{},-]+"
+
+function _citation_files()
+    paths = String[]
+    for rel_root in ("src", "config", "docs/src")
+        root = joinpath(REPO_ROOT, rel_root)
+        for (dir, dirs, files) in walkdir(root)
+            if rel_root == "config"
+                filter!(d -> d != "likely_legacy" && d != "completed_experiments", dirs)
+            end
+            append!(paths, (relpath(joinpath(dir, file), REPO_ROOT) for file in files))
+        end
+    end
+    return sort(paths)
+end
+
+function _brace_expansions(pattern::AbstractString)
+    m = match(r"\{([^{}]+)\}", pattern)
+    m === nothing && return [String(pattern)]
+    first = m.offset
+    last = first + ncodeunits(m.match) - 1
+    prefix = first == firstindex(pattern) ? "" : pattern[firstindex(pattern):prevind(pattern, first)]
+    suffix = last == lastindex(pattern) ? "" : pattern[nextind(pattern, last):lastindex(pattern)]
+    return reduce(vcat, (_brace_expansions(prefix * choice * suffix)
+                         for choice in split(only(m.captures), ',')))
+end
+
+function _glob_regex(pattern::AbstractString)
+    escaped = replace(pattern, "\\" => "\\\\", "." => "\\.", "+" => "\\+",
+                      "(" => "\\(", ")" => "\\)", "^" => "\\^", "\$" => "\\\$")
+    escaped = replace(escaped, "**" => "__DOUBLE_STAR__")
+    escaped = replace(escaped, "*" => "[^/]*", "?" => "[^/]")
+    escaped = replace(escaped, "__DOUBLE_STAR__" => ".*")
+    return Regex("^" * escaped * "\$")
+end
+
+function _script_reference_exists(reference::AbstractString, candidates)
+    !occursin(r"[*?{]", reference) && return ispath(joinpath(REPO_ROOT, reference))
+    return any(pattern -> any(candidate -> occursin(_glob_regex(pattern), candidate), candidates),
+               _brace_expansions(reference))
+end
+
 _has_canonical_input(input) =
     input isa AbstractDict &&
     (haskey(input, "binary_paths") ||
@@ -43,19 +85,6 @@ function _missing_keys(cfg, required)
     end
     return missing
 end
-
-const STALE_ACTIVE_SCRIPT_REFS = (
-    "scripts/run.jl",
-    "scripts/run_transport_binary.jl",
-    "scripts/run_cs_driven.jl",
-    "scripts/deprecated/",              # retired runner shims
-    "scripts/completed_experiments/",   # dissolved; scripts retired or under heritage/
-    "scripts/preprocess_spectral_massflux.jl",
-    "scripts/preprocessing/preprocess_spectral_massflux.jl",
-    "scripts/preprocessing/preprocess_geos_transport_binary.jl",
-    "scripts/preprocessing/preprocess_era5_reduced_gaussian_transport_binary_v2.jl",
-    "scripts/preprocessing/preprocess_spectral_v4_binary.jl",
-)
 
 @testset "active preprocessing configs use unified source/topology schema" begin
     bad = String[]
@@ -105,28 +134,33 @@ end
         cfg = TOML.parsefile(joinpath(REPO_ROOT, rel))
         _has_canonical_input(get(cfg, "input", nothing)) ||
             push!(bad, "$(rel): missing canonical [input] binary_paths or folder/start_date/end_date")
-        text = read(joinpath(REPO_ROOT, rel), String)
-        stale = [ref for ref in STALE_ACTIVE_SCRIPT_REFS if occursin(ref, text)]
-        isempty(stale) || push!(bad, "$(rel): stale script refs $(join(stale, ", "))")
     end
     @test isempty(bad)
 end
 
-# Script paths cited in active configs (recipes, provenance, comparison
-# commands) must resolve, so moving or retiring a script also updates the
-# configs that name it.
-@testset "active configs cite existing scripts" begin
-    script_ref = r"scripts/[A-Za-z0-9_./-]+\.(?:jl|py|sh)"
+# Source, documentation, and active configuration citations are executable
+# contracts. Historical configs are excluded by their explicit
+# likely_legacy/completed_experiments classification. References may name a
+# file, directory, or glob/brace pattern.
+@testset "maintained files cite existing scripts" begin
+    candidates = String[]
+    for (dir, dirs, files) in walkdir(joinpath(REPO_ROOT, "scripts"))
+        push!(candidates, relpath(dir, REPO_ROOT) * "/")
+        append!(candidates, (relpath(joinpath(dir, file), REPO_ROOT) for file in files))
+    end
     bad = String[]
-    for rel in vcat(_active_tomls("config/preprocessing"),
-                    _active_tomls("config/runs"; skip_completed = true))
-        for line in eachline(joinpath(REPO_ROOT, rel))
-            for m in eachmatch(script_ref, line)
-                isfile(joinpath(REPO_ROOT, m.match)) ||
-                    push!(bad, "$(rel): missing $(m.match)")
+    checked = 0
+    for rel in _citation_files()
+        for (line_number, line) in enumerate(eachline(joinpath(REPO_ROOT, rel)))
+            for m in eachmatch(SCRIPT_REFERENCE, line)
+                reference = rstrip(c -> c in ('.', ',', ';', ':'), m.match)
+                checked += 1
+                _script_reference_exists(reference, candidates) ||
+                    push!(bad, "$(rel):$(line_number): missing $(reference)")
             end
         end
     end
+    @test checked > 100
     @test isempty(bad)
 end
 

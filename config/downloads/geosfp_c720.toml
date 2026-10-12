@@ -1,7 +1,7 @@
 # ===========================================================================
 # GEOS-FP C720 cubed-sphere mass flux download
 #
-# Downloads hourly CTM mass flux files from WashU archive.
+# Downloads hourly CTM mass flux files from the GEOS-Chem public S3 archive.
 # ~2.7 GB per file, 24 files per day.
 #
 # Output: met/geosfp/C720/raw/YYYYMMDD/
@@ -17,7 +17,7 @@ met_source = "config/met_sources/geosfp.toml"
 
 [download]
 protocol = "http"
-base_url = "http://geoschemdata.wustl.edu/ExtData/GEOS_C720/GEOS_FP_Native"
+base_url = "https://geos-chem.s3.amazonaws.com/GEOS_C720/GEOS_FP_Raw"
 product = "geosfp_c720"
 
 [[download.requests]]
