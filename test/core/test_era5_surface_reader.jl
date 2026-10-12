@@ -1,4 +1,7 @@
 #!/usr/bin/env julia
+# ERA5 surface reader: masked-cell fill, field normalization, the 0.25-degree
+# snapped-face source mesh (C4), and the ARCO / split-CDS ZIP layouts. Uses
+# synthetic NetCDF files only (promoted from test/orphan).
 
 using Test
 using Dates
@@ -198,7 +201,14 @@ end
     end
 end
 
+# The reader unpacks CDS ZIP payloads with the system `unzip`; the fixture
+# needs `zip`. Skip, visibly, where either tool is missing.
+const _HAVE_ZIP_TOOLS = Sys.which("zip") !== nothing && Sys.which("unzip") !== nothing
+
 @testset "ERA5 surface reader opens split CDS ZIP payloads" begin
+    if !_HAVE_ZIP_TOOLS
+        @test_skip "zip/unzip not on PATH"
+    else
     mktempdir() do dir
         inst_path = joinpath(dir, "data_stream-oper_stepType-instant.nc")
         accum_path = joinpath(dir, "data_stream-oper_stepType-accum.nc")
@@ -248,5 +258,6 @@ end
         finally
             AtmosTransport.Preprocessing.close_era5_surface_reader(reader)
         end
+    end
     end
 end
