@@ -677,10 +677,11 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
     _scale_cs_flux_panels!(workspace.cm_v4, full_window_scale)
     stored_fidelity_capture = scale_captured_flux_samples(
         workspace.fidelity_capture[], full_window_scale)
-    # GEOS stores full-window amounts: the closure ran on per-application
-    # amounts, so its kg residuals scale with the payload (ratios do not).
-    stored_closure = scale_column_closure_record(workspace.closure_record[],
-                                                 Float64(full_window_scale))
+    # GEOS stores full-window amounts: the closure is evaluated again on the
+    # scaled fluxes as written, so the record describes the stored payload.
+    stored_closure = full_window_column_closure_record(
+        workspace.closure_record[], workspace.am_v4, workspace.bm_v4, workspace.m_cur,
+        workspace.m_next_target, grid.face_table, steps, grid.poisson_scratch)
 
     surface_payload = (settings.include_surface || settings.include_vdiff_fields) ?
         _geos_surface_payload!(workspace.strategy, workspace.strategy_ws,

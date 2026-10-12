@@ -155,7 +155,9 @@ Per-window record of a cubed-sphere column balance and its `cm` diagnosis
 column residual `max_c |r_c^⊥|` and its ratio to the cell's closure tolerance
 `τ_c = max(closure_tol, 8 ε_FT Σ_{f∂c} Σ_k |F_{f,k}|)`, and the largest
 residual `|R_c|` folded into `cm` with its ratio to the cell's tolerance.
-Both ratios are at most 1 for a window that passed.
+Both ratios are at most 1 for a window that passed. The projected residual
+describes the fluxes as stored (`full_window_column_closure_record` for GEOS
+full-window amounts); the `cm` fields describe the diagnosis of `cm`.
 """
 abstract type AbstractColumnClosureRecord end
 struct ColumnClosureRecord <: AbstractColumnClosureRecord
@@ -173,13 +175,30 @@ column_closure_record(balance_diag, cm_diag) = ColumnClosureRecord(
     Float64(cm_diag.max_booked_residual),
     Float64(cm_diag.max_raw_residual_ratio))
 
-# Residuals in the payload's amount convention: a writer that stores
-# full-window amounts (GEOS) scales the kg values; ratios are evaluated where
-# the balance ran (per flux application).
-scale_column_closure_record(r::NoColumnClosureRecord, _factor) = r
-scale_column_closure_record(r::ColumnClosureRecord, factor::Real) = ColumnClosureRecord(
-    factor * r.projected_residual_kg, r.residual_to_tolerance,
-    factor * r.booked_residual_kg, r.cm_residual_to_tolerance)
+"""
+    full_window_column_closure_record(record, am, bm, m, m_next, ft, steps, scratch) -> record′
+
+Closure record of a payload stored as full-window amounts (GEOS): the balanced
+per-application fluxes multiplied by `2 steps` in the storage type, a product
+that rounds unless `2 steps` is a power of two. The column closure is
+evaluated again on the stored `am`, `bm` in per-application units
+(`recheck_cs_column_closure` with `flux_scale = 1/(2 steps)`), so the projected
+residual and its ratio describe the payload as written; kg values are stated
+in the stored (full-window) amounts. The `cm` fields keep the residual folded
+into `cm` when it was diagnosed, per application, in stored amounts.
+"""
+full_window_column_closure_record(r::NoColumnClosureRecord, _am, _bm, _m, _m_next,
+                                  _ft, _steps, _scratch) = r
+function full_window_column_closure_record(r::ColumnClosureRecord, am, bm, m, m_next,
+                                           ft::CSGlobalFaceTable, steps::Integer,
+                                           scratch::CSPoissonScratch)
+    amounts = 2 * Int(steps)
+    stored = recheck_cs_column_closure(am, bm, m, m_next, ft, Int(steps), scratch, (;);
+                                       flux_scale = 1 / amounts)
+    return ColumnClosureRecord(amounts * Float64(stored.final_column_projected_residual),
+                               Float64(stored.final_column_residual_ratio),
+                               amounts * r.booked_residual_kg, r.cm_residual_to_tolerance)
+end
 
 const COLUMN_CLOSURE_RULE = "per_cell_8eps_incident_flux_v1"
 

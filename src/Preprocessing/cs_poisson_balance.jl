@@ -526,7 +526,8 @@ function _distribute_cs_column_delta!(panels_am::NTuple{6, Array{FT, 3}},
 end
 
 # Per-cell closure tolerance, into `scratch.tol`:
-#     τ_c = max(closure_tol, 8 ε_FT Σ_{f∂c} Σ_k |F_{f,k}|).
+#     τ_c = max(closure_tol, 8 ε_FT Σ_{f∂c} Σ_k |F_{f,k}|),
+# with the stored values `F` multiplied by `flux_scale` (per-application units).
 # The Float64 column solve itself has the configured absolute tolerance;
 # storing a correction in FT can round both the increment and the addition at
 # every level of the cell's own faces. Eight epsilons per incident stored face
@@ -537,7 +538,8 @@ function _cs_column_roundoff_tolerance!(scratch::CSPoissonScratch,
                                         panels_am::NTuple{6, Array{FT, 3}},
                                         panels_bm::NTuple{6, Array{FT, 3}},
                                         ft::CSGlobalFaceTable,
-                                        closure_tol::Float64) where FT
+                                        closure_tol::Float64,
+                                        flux_scale::Float64 = 1.0) where FT
     budget = scratch.tol
     fill!(budget, 0.0)
     factor = 8.0 * eps(FT)
@@ -553,7 +555,7 @@ function _cs_column_roundoff_tolerance!(scratch::CSPoissonScratch,
                 "column-balanced fluxes must be finite"))
             scale += abs(Float64(value))
         end
-        face_budget = factor * scale
+        face_budget = factor * scale * flux_scale
         budget[Int(ft.face_left[f])] += face_budget
         budget[Int(ft.face_right[f])] += face_budget
     end
@@ -709,12 +711,16 @@ end
 """
     recheck_cs_column_closure(panels_am, panels_bm, panels_m, panels_m_next, ft,
                               steps_per_window, scratch, balance_diag;
-                              closure_tol = COLUMN_CLOSURE_TOL_KG) -> balance_diag′
+                              closure_tol = COLUMN_CLOSURE_TOL_KG,
+                              flux_scale = 1.0) -> balance_diag′
 
 Recompute the column-closure statistics and per-cell tolerances of
 `balance_cs_column_mass_fluxes!` for fluxes changed after the balance (the GEOS
-OMEGA reconstruction moves flux between levels of a column), so the `cm`
-diagnosis and the recorded closure describe the fluxes that are stored. Returns
+OMEGA reconstruction moves flux between levels of a column; GEOS stores
+full-window amounts), so the `cm` diagnosis and the recorded closure describe
+the fluxes that are stored. `flux_scale` converts the given amounts to
+amounts per flux application before the check (`1/(2 steps_per_window)` for
+full-window amounts); residuals and tolerances are per application. Returns
 `balance_diag` with its `final_column_*` fields replaced.
 """
 function recheck_cs_column_closure(panels_am::NTuple{6, Array{FT, 3}},
@@ -723,7 +729,10 @@ function recheck_cs_column_closure(panels_am::NTuple{6, Array{FT, 3}},
                                    panels_m_next::NTuple{6, Array{FT, 3}},
                                    ft::CSGlobalFaceTable, steps_per_window::Int,
                                    scratch::CSPoissonScratch, balance_diag;
-                                   closure_tol::Float64 = COLUMN_CLOSURE_TOL_KG) where FT
+                                   closure_tol::Float64 = COLUMN_CLOSURE_TOL_KG,
+                                   flux_scale::Float64 = 1.0) where FT
+    isfinite(flux_scale) && flux_scale > 0 || throw(ArgumentError(
+        "flux_scale must be finite and positive; got $flux_scale"))
     Nc, Nz = ft.Nc, size(panels_am[1], 3)
     col_am = ntuple(_ -> zeros(Float64, Nc + 1, Nc, 1), 6)
     col_bm = ntuple(_ -> zeros(Float64, Nc, Nc + 1, 1), 6)
@@ -731,7 +740,11 @@ function recheck_cs_column_closure(panels_am::NTuple{6, Array{FT, 3}},
     col_m_next = ntuple(_ -> zeros(Float64, Nc, Nc, 1), 6)
     _fill_cs_column_buffers!(col_am, col_bm, col_m, col_m_next,
                              panels_am, panels_bm, panels_m, panels_m_next, Nc, Nz)
-    _cs_column_roundoff_tolerance!(scratch, panels_am, panels_bm, ft, closure_tol)
+    for p in 1:6
+        col_am[p] .*= flux_scale
+        col_bm[p] .*= flux_scale
+    end
+    _cs_column_roundoff_tolerance!(scratch, panels_am, panels_bm, ft, closure_tol, flux_scale)
     stats = _cs_column_balance_projected_linf(col_am, col_bm, col_m, col_m_next, ft,
                                               steps_per_window, scratch)
     return merge(balance_diag, (

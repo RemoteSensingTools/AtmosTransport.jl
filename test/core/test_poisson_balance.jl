@@ -515,14 +515,35 @@ end
     record = Prep.column_closure_record(diag32, cm_diag32)
     @test record.residual_to_tolerance == diag32.final_column_residual_ratio
     @test record.booked_residual_kg == cm_diag32.max_booked_residual
-    # Full-window payloads (GEOS) scale the kg residuals, not the ratios.
-    scaled = Prep.scale_column_closure_record(record, 8.0)
-    @test scaled.projected_residual_kg == 8 * record.projected_residual_kg
-    @test scaled.residual_to_tolerance == record.residual_to_tolerance
     # Fluxes changed after the balance are re-checked against their own tolerances.
     recheck = Prep.recheck_cs_column_closure(am32, bm32, m32, m32_next, ft, steps,
                                              scratch32, diag32)
     @test recheck.final_column_residual_ratio <= 1
+    # Full-window payloads (GEOS) are re-checked as stored, in per-application
+    # units: an exact (power-of-two) scaling reproduces the per-application
+    # closure, kg values are stated in stored amounts.
+    full = 2steps
+    @test ispow2(full)
+    stored_am = map(x -> x .* Float32(full), am32)
+    stored_bm = map(x -> x .* Float32(full), bm32)
+    stored = Prep.full_window_column_closure_record(record, stored_am, stored_bm, m32,
+                                                    m32_next, ft, steps, scratch32)
+    @test stored.residual_to_tolerance == recheck.final_column_residual_ratio
+    @test stored.projected_residual_kg == full * recheck.final_column_projected_residual
+    @test stored.booked_residual_kg == full * record.booked_residual_kg
+    @test stored.cm_residual_to_tolerance == record.cm_residual_to_tolerance
+    @test Prep.full_window_column_closure_record(Prep.NoColumnClosureRecord(), stored_am,
+              stored_bm, m32, m32_next, ft, steps, scratch32) === Prep.NoColumnClosureRecord()
+    # A factor that is not a power of two rounds every stored value; the check
+    # sees the stored payload, not the fluxes before the scaling.
+    rounded = Prep.recheck_cs_column_closure(map(x -> x .* 18f0, am32),
+                                             map(x -> x .* 18f0, bm32), m32, m32_next,
+                                             ft, steps, scratch32, (;); flux_scale = 1 / 18)
+    @test rounded.final_column_residual_ratio <= 1
+    @test rounded.final_column_projected_residual != recheck.final_column_projected_residual
+    @test_throws ArgumentError Prep.recheck_cs_column_closure(am32, bm32, m32, m32_next, ft,
+                                                              steps, scratch32, (;);
+                                                              flux_scale = 0.0)
     moved = map(copy, am32); moved[2][3, 3, 1] += 1f9; moved[2][3, 3, 2] -= 1f9  # same column sum
     @test Prep.recheck_cs_column_closure(moved, bm32, m32, m32_next, ft, steps,
                                          scratch32, diag32).final_column_residual_ratio <= 1

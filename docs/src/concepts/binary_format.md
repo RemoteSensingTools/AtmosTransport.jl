@@ -551,9 +551,15 @@ endpoints differ in global air mass fails here with a message that names
 `column_closure_residual_to_tolerance_max`,
 `column_closure_booked_residual_max_kg` and
 `column_closure_cm_residual_to_tolerance_max` hold the maxima over windows
-(both ratios at most 1; the kg residuals are in the payload's amount
-convention, scaled to full-window amounts for GEOS). Lat-lon, reduced-Gaussian, payload-only and GEOS
-pressure-fixer binaries have no cubed-sphere column balance and omit them.
+(both ratios at most 1; residuals and tolerances per flux application, the kg
+residuals stated in the payload's amount convention). The projected residual
+and its ratio describe the fluxes as stored: GEOS stores full-window amounts,
+the balanced per-application fluxes multiplied by `2n` in the storage type (a
+Float32 product that rounds unless `2n` is a power of two), and evaluates the
+closure again on the stored values (`flux_scale = 1/(2n)`); the `cm` keys
+record the residual folded into `cm` when it was diagnosed. Lat-lon,
+reduced-Gaussian, payload-only and GEOS pressure-fixer binaries have no
+cubed-sphere column balance and omit them.
 
 The flat keys begin with `flux_fidelity_`, `omega_fidelity_`,
 `balance_correction_` and `column_closure_`; they form one block, which a
