@@ -50,8 +50,8 @@ export recover_total_surface_pressure!
 include("thomas_solve.jl")
 include("diffusion_kernels.jl")
 include("conservative_dkg.jl")
-include("dz_helpers.jl")
 include("workspace.jl")
+include("dz_helpers.jl")
 include("operators.jl")
 
 end # module Diffusion

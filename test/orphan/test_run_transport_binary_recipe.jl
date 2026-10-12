@@ -8,7 +8,7 @@ using .AtmosTransport
 using .AtmosTransport.Operators.Convection: TM5Workspace
 
 const _RUNTIME_RECIPE_AIR_MASS = 1e16
-const _RUNTIME_RECIPE_SECONDS_PER_MONTH = 365.25 * 86400 / 12
+const _RUNTIME_RECIPE_JANUARY_SECONDS = 31 * 86400
 
 function _make_runtime_recipe_tm5_fields(::Type{FT}, Nx, Ny, Nz) where FT
     entu = zeros(FT, Nx, Ny, Nz)
@@ -48,6 +48,7 @@ function write_runtime_recipe_binary(path::AbstractString; FT::Type{<:AbstractFl
                            half_dt_seconds = 1800.0,
                            steps_per_window = 1,
                            mass_basis = :dry,
+                           surface_pressure_basis = TotalSurfacePressure(),
                            source_flux_sampling = :window_start_endpoint,
                            flux_sampling = :window_constant)
     return nothing
@@ -70,7 +71,7 @@ function write_runtime_recipe_surface_flux_file(path::AbstractString)
         vlat[:] = [45.0, -45.0]
         vtime[:] = [1.0]
         raw = zeros(Float64, 4, 2)
-        raw[1, 1] = 7 * _RUNTIME_RECIPE_SECONDS_PER_MONTH
+        raw[1, 1] = 7 * _RUNTIME_RECIPE_JANUARY_SECONDS
         vtotal[:, :, 1] = raw
         varea[:, :] = reshape(Float64.(1:8), 4, 2)
         vtotal.attrib["units"] = "kgCO2/month/m2"
@@ -160,7 +161,10 @@ end
         model = run_driven_simulation(cfg)
         @test total_mass(model.state, :natural_co2) ≈
               60 * _RUNTIME_RECIPE_AIR_MASS * 4.0e-4 rtol = 1e-12
-        @test total_mass(model.state, :fossil_co2) ≈ 7.0 * 3600.0 rtol = 1e-12
+        storage_per_kg_co2 = AtmosTransport.Parameters.DRY_AIR_MOLAR_MASS /
+                             AtmosTransport.Parameters.SPECIES_MOLAR_MASS.co2
+        @test total_mass(model.state, :fossil_co2) ≈
+              7.0 * storage_per_kg_co2 * 3600.0 rtol = 1e-12
     end
 end
 

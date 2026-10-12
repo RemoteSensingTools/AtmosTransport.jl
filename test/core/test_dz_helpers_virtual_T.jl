@@ -1,6 +1,9 @@
 #!/usr/bin/env julia
 """
-Tests for the virtual-temperature `dz` helper (D6 fix). Three checks:
+Tests for diffusion pressure recovery and hydrostatic `dz` helpers. Checks
+cover structured and face-indexed CPU arrays, cubed-sphere tuples, the
+runtime humidity-selection contract, and optional CUDA execution. Metal is
+covered by `test/diagnostic/test_metal_kernels.jl` on supported CI hosts.
 
   1. Numerical correctness vs hand-computed dz at a few sample columns.
      For each `(i, j, k)`, dz should reduce to
@@ -14,13 +17,6 @@ Tests for the virtual-temperature `dz` helper (D6 fix). Three checks:
   3. dz_v != dz_c when virtual T differs from `T_ref = 260 K` — the
      whole point of D6.
 
-NOTE: the runtime fallback `_fill_dz_for_diffusion!` in
-`src/Models/driven_physics_refresh.jl` (which warns + reverts to constT when
-the window lacks `vdiff`) is exercised indirectly by the regression
-test suite when LocalHoltslagBovilleKzField runs are loaded. We don't
-unit-test it here because it requires constructing a mock
-`DrivenSimulation` with a synthetic window payload — out of scope for
-the kernel-level helper tests.
 """
 
 using Test
@@ -29,6 +25,10 @@ using .AtmosTransport.Operators.Diffusion: fill_dz_hydrostatic_virtualT!,
                                             fill_dz_hydrostatic_constT!,
                                             recover_total_surface_pressure!
 using .AtmosTransport.Parameters: R_DRY_AIR, STANDARD_GRAVITY
+using .AtmosTransport.Models: _diffusion_pressure_humidity,
+                               _diffusion_total_surface_pressure!
+using .AtmosTransport.Operators: DiffusionWorkspace
+using .AtmosTransport.Operators.Diffusion: _stage_hybrid_coefficients!
 
 const _R_DRY  = R_DRY_AIR
 const _G_REF  = STANDARD_GRAVITY
@@ -71,6 +71,68 @@ end
         @test Array(recovered_gpu) ≈ ps_total rtol = 32eps(FT)
         @test Array(dz_gpu) ≈ dz_total rtol = 64eps(FT)
     end
+end
+
+@testset "dry-pressure recovery handles pure-pressure and unobservable coordinates" begin
+    FT = Float64
+
+    # Surface pressure does not enter an A-only coordinate, so dry→total
+    # recovery is both unnecessary and mathematically unobservable. Preserve
+    # the finite input instead of evaluating 0/0. Exercise both runtime shapes.
+    ak_pressure = FT[0, 90_000]
+    bk_pressure = FT[0, 0]
+    ps_matrix = fill(FT(90_000), 3, 2)
+    qv_matrix = zeros(FT, 3, 2, 1)
+    recovered_matrix = fill(FT(NaN), 3, 2)
+    recover_total_surface_pressure!(recovered_matrix, ps_matrix, qv_matrix,
+                                    ak_pressure, bk_pressure)
+    @test recovered_matrix == ps_matrix
+
+    ps_vector = fill(FT(90_000), 5)
+    qv_vector = zeros(FT, 5, 1)
+    recovered_vector = fill(FT(NaN), 5)
+    recover_total_surface_pressure!(recovered_vector, ps_vector, qv_vector,
+                                    ak_pressure, bk_pressure)
+    @test recovered_vector == ps_vector
+
+    dz_matrix = zeros(FT, 3, 2, 1)
+    dz_vector = zeros(FT, 5, 1)
+    fill_dz_hydrostatic_constT!(dz_matrix, recovered_matrix, ak_pressure, bk_pressure)
+    fill_dz_hydrostatic_constT!(dz_vector, recovered_vector, ak_pressure, bk_pressure)
+    @test all(isfinite, dz_matrix)
+    @test all(isfinite, dz_vector)
+
+    # When B does affect pressure but saturated/unphysical humidity removes
+    # every observable B increment, recovery must fail explicitly rather than
+    # emitting NaN/Inf into the following dz kernel.
+    ak_sigma = FT[0, 0]
+    bk_sigma = FT[0, 1]
+    @test_throws ArgumentError recover_total_surface_pressure!(
+        similar(ps_matrix), ps_matrix, ones(FT, 3, 2, 1), ak_sigma, bk_sigma)
+    @test_throws ArgumentError recover_total_surface_pressure!(
+        similar(ps_vector), ps_vector, ones(FT, 5, 1), ak_sigma, bk_sigma)
+end
+
+@testset "diffusion runtime humidity selection and missing-humidity fallback" begin
+    qv_start = fill(0.01, 2, 2, 2)
+    qv_vdiff = fill(0.02, 2, 2, 2)
+    @test _diffusion_pressure_humidity((; qv_start, vdiff = (; qv = qv_vdiff))) === qv_start
+    @test _diffusion_pressure_humidity((; qv_start = nothing,
+                                        vdiff = (; qv = qv_vdiff))) === qv_vdiff
+    @test _diffusion_pressure_humidity((; qv_start = nothing, vdiff = nothing)) === nothing
+
+    ps = fill(90_000.0, 2, 2)
+    workspace = DiffusionWorkspace(ones(2, 2, 2))
+    coefficients = _stage_hybrid_coefficients!(workspace.hybrid_coefficients,
+                                               [0.0, 0.0, 0.0],
+                                               [0.0, 0.5, 1.0])
+    returned = Ref{Any}()
+    @test_logs (:warn, r"dry surface pressure without endpoint or VDIFF humidity") begin
+        returned[] = _diffusion_total_surface_pressure!(
+            AtmosTransport.DrySurfacePressure(), workspace.factors,
+            ps, [0.0, 0.0, 0.0], [0.0, 0.5, 1.0], nothing, coefficients)
+    end
+    @test returned[] === ps
 end
 
 @testset "fill_dz_hydrostatic_virtualT! — single 3D array matches hand formula" begin

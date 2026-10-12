@@ -235,10 +235,9 @@ VMR depend on topographic differences or the preprocessing dry-mass pin; see
 the equations and CATRINE measurements in
 [`src/Models/initial_conditions/README.md`](https://github.com/RemoteSensingTools/AtmosTransport/blob/main/src/Models/initial_conditions/README.md).
 
-The dry-air weighting uses source specific humidity when the file provides it.
-Set `humidity_variable = "name"` to select it explicitly; otherwise variables
-with CF `standard_name = "specific_humidity"` or the conventional names `q`,
-`qv`, `hus`, and `specific_humidity` are detected. If the transport binary
+The dry-air weighting uses source specific humidity only when it is explicitly
+selected with `humidity_variable = "name"`; without that key, source humidity
+is not loaded. If the transport binary
 stores dry surface pressure, its window-start endpoint humidity is used to
 recover total pressure; on native cubed-sphere physics binaries VDIFF `qv` is
 used when endpoints are absent. A legacy dry-pressure binary with no humidity

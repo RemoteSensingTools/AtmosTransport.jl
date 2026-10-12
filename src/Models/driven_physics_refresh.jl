@@ -6,9 +6,10 @@ using ..Operators.SurfaceFlux: _surface_shape,
                                 _check_surface_source_compatibility,
                                 stage_surface_flux_window!
 using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
-                              fill_dz_hydrostatic_constT!,
-                              fill_dz_hydrostatic_virtualT!,
-                              recover_total_surface_pressure!
+                              _stage_hybrid_coefficients!,
+                              _recover_total_surface_pressure_staged!,
+                              _fill_dz_hydrostatic_constT_staged!,
+                              _fill_dz_hydrostatic_virtualT_staged!
 
 # ---------------------------------------------------------------------------
 # Diffusion layer-thickness refresh.
@@ -39,12 +40,14 @@ using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
     diffusion_workspace === nothing && return nothing
     layer_thickness = diffusion_workspace.layer_thickness
     vertical = sim.model.grid.vertical
+    coefficients = _stage_hybrid_coefficients!(
+        diffusion_workspace.hybrid_coefficients, vertical.A, vertical.B)
     ps = _diffusion_total_surface_pressure!(
         surface_pressure_basis(sim.driver), diffusion_workspace.factors,
         sim.window.surface_pressure, vertical.A, vertical.B,
-        _diffusion_pressure_humidity(sim.window))
+        _diffusion_pressure_humidity(sim.window), coefficients)
     _fill_dz_for_diffusion!(layer_thickness, ps, vertical.A, vertical.B,
-                             diffusion, sim.window)
+                             diffusion, sim.window, coefficients)
     return nothing
 end
 
@@ -52,10 +55,10 @@ _diffusion_pressure_humidity(window) = window.qv_start !== nothing ? window.qv_s
                                        window.vdiff === nothing ? nothing : window.vdiff.qv
 
 @inline _diffusion_total_surface_pressure!(::TotalSurfacePressure, _factors,
-                                           ps, _A, _B, _qv) = ps
+                                           ps, _A, _B, _qv, _coefficients) = ps
 
 function _diffusion_total_surface_pressure!(::DrySurfacePressure, _factors,
-                                            ps, _A, _B, ::Nothing)
+                                            ps, _A, _B, ::Nothing, _coefficients)
     @warn "diffusion received dry surface pressure without endpoint or VDIFF humidity; approximating total surface pressure as dry ps for hybrid layer thickness (typically 0.5-2% low in humid columns)" maxlog=1
     return ps
 end
@@ -65,9 +68,9 @@ _diffusion_ps_scratch(factors::NTuple{6}) =
     ntuple(p -> selectdim(factors[p], ndims(factors[p]), 1), 6)
 
 function _diffusion_total_surface_pressure!(::DrySurfacePressure, factors,
-                                            ps, A, B, qv)
+                                            ps, _A, _B, qv, coefficients)
     scratch = _diffusion_ps_scratch(factors)
-    recover_total_surface_pressure!(scratch, ps, qv, A, B)
+    _recover_total_surface_pressure_staged!(scratch, ps, qv, coefficients; sync = true)
     return scratch
 end
 
@@ -78,13 +81,14 @@ end
 # `dz` while Kz had been computed on layer-varying `dz`.
 #
 # All other diffusion configurations stay on the constant-T_ref path.
-@inline _fill_dz_for_diffusion!(layer_thickness, ps, ak, bk, _diffop, _window) =
-    fill_dz_hydrostatic_constT!(layer_thickness, ps, ak, bk)
+@inline _fill_dz_for_diffusion!(layer_thickness, ps, _ak, _bk, _diffop, _window,
+                                coefficients) =
+    _fill_dz_hydrostatic_constT_staged!(layer_thickness, ps, coefficients; sync = true)
 
 @inline function _fill_dz_for_diffusion!(
         layer_thickness, ps, ak, bk,
         op::ImplicitVerticalDiffusion{FT, <:LocalHoltslagBovilleKzField},
-        window) where FT
+        window, coefficients) where FT
     vdiff = window.vdiff
     # Defensive fallback: if VDIFF isn't actually present on the window
     # (shouldn't happen — the diffusion runtime validator rejects this
@@ -98,9 +102,11 @@ end
         Kz cache's virtual-T column geometry. Check the binary's VDIFF
         payload and the [diffusion] runtime config.
         """
-        return fill_dz_hydrostatic_constT!(layer_thickness, ps, ak, bk)
+        return _fill_dz_hydrostatic_constT_staged!(layer_thickness, ps, coefficients;
+                                                   sync = true)
     end
-    fill_dz_hydrostatic_virtualT!(layer_thickness, vdiff.t, vdiff.qv, ps, ak, bk)
+    _fill_dz_hydrostatic_virtualT_staged!(layer_thickness, vdiff.t, vdiff.qv, ps,
+                                          coefficients; sync = true)
     return layer_thickness
 end
 
@@ -139,7 +145,8 @@ function _refresh_pbl_kz_for_window!(field::PrecomputedCSDkgField,
 end
 
 @inline function _fill_dz_for_diffusion!(layer_thickness, _ps, _ak, _bk,
-        ::ImplicitVerticalDiffusion{FT, <:AbstractCSDkgField}, _window) where FT
+        ::ImplicitVerticalDiffusion{FT, <:AbstractCSDkgField}, _window,
+        _coefficients) where FT
     return layer_thickness
 end
 

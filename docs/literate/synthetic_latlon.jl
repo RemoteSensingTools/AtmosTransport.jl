@@ -53,6 +53,7 @@ function build_demo_latlon_binary(path::AbstractString;
                            half_dt_seconds      = 1800.0,
                            steps_per_window     = 2,
                            mass_basis           = :dry,
+                           surface_pressure_basis = TotalSurfacePressure(),
                            source_flux_sampling = :window_start_endpoint,
                            flux_sampling        = :window_constant,
                            extra_header         = Dict(

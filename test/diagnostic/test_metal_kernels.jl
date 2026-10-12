@@ -14,6 +14,8 @@ else
     include(joinpath(helpers, "cs_halo_fill.jl"))
     include(joinpath(helpers, "cmfmc_cfl.jl"))
     include(joinpath(helpers, "surface_flux_window_buffer.jl"))
+    using .AtmosTransport.Operators.Diffusion: recover_total_surface_pressure!,
+                                                fill_dz_hydrostatic_constT!
     @testset "Metal point operations" begin
         # Separate launches with bound contexts on Metal (faster there).
         @test PointArch.fusion_policy(Metal.MetalBackend()) === PointArch.SeparateLaunches()
@@ -27,6 +29,23 @@ else
     end
     @testset "Metal CMFMC CFL scan matches the host reference" begin
         check_cmfmc_cfl_on_device(MtlArray; float_types = (Float32,))
+    end
+    @testset "Metal dry-pressure recovery and hydrostatic dz" begin
+        FT = Float32
+        Nx, Ny, Nz = 3, 2, 4
+        A = FT[100, 500, 1200, 800, 0]
+        B = FT[0, 0.1, 0.35, 0.7, 1]
+        ps_total = FT[96_000 + 300i + 200j for i in 1:Nx, j in 1:Ny]
+        qv = FT[0.001 + 0.003k + 0.0002i for i in 1:Nx, j in 1:Ny, k in 1:Nz]
+        ps_dry = FT[sum((1 - qv[i, j, k]) *
+                        ((A[k + 1] - A[k]) + (B[k + 1] - B[k]) * ps_total[i, j])
+                        for k in 1:Nz) for i in 1:Nx, j in 1:Ny]
+        recovered = MtlArray(zeros(FT, Nx, Ny))
+        recover_total_surface_pressure!(recovered, MtlArray(ps_dry), MtlArray(qv), A, B)
+        dz = MtlArray(zeros(FT, Nx, Ny, Nz))
+        fill_dz_hydrostatic_constT!(dz, recovered, A, B)
+        @test Array(recovered) ≈ ps_total rtol = 32eps(FT)
+        @test all(isfinite, Array(dz))
     end
     @testset "Metal surface-flux window staging matches the full series" begin
         for scheme in SCHEMES
