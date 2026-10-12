@@ -559,7 +559,12 @@ Float32 product that rounds unless `2n` is a power of two), and evaluates the
 closure again on the stored values (`flux_scale = 1/(2n)`); the `cm` keys
 record the residual folded into `cm` when it was diagnosed. Lat-lon,
 reduced-Gaussian, payload-only and GEOS pressure-fixer binaries have no
-cubed-sphere column balance and omit them.
+cubed-sphere column balance and omit them. The reader decodes the keys into
+`TransportBinaryHeader.column_closure` (`ColumnClosureHeader`; a binary without
+them reads as `NoColumnClosureHeader()`, "not recorded") and refuses to load a
+record that is incomplete, names another rule, covers other than `nwindow`
+windows, or holds a non-finite, negative or above-1 ratio: such a binary must
+be regenerated.
 
 The flat keys begin with `flux_fidelity_`, `omega_fidelity_`,
 `balance_correction_` and `column_closure_`; they form one block, which a

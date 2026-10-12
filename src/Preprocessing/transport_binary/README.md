@@ -87,7 +87,9 @@ balance correction only, while binary-only regrid and coarsen paths state
 `not_applicable/source_payload_only`. Where source OMEGA is open, the writer
 also compares it with `g cm/(A_cell Δt)` and gates `NRMSE < 1`, correlation
 `> 0.5`, slope `> 0` (`OmegaFidelityBaseline`). Every cubed-sphere column
-balance adds its `ColumnClosureRecord` (`column_closure_*` keys). Algebraic
+balance adds its `ColumnClosureRecord` (`column_closure_*` keys, describing
+the stored fluxes), which the reader decodes into `ColumnClosureHeader` and
+rejects when incomplete, not covering `nwindow` or above its tolerance. Algebraic
 sample failures throw before the window write; an aggregate OMEGA failure
 throws while the file is still staged, so it is quarantined (the RG/CS
 adapters then also abandon the inner writer's staging file).

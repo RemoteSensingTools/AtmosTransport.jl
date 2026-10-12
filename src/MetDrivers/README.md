@@ -55,7 +55,10 @@ methods report configured source support without reading meteorological files.
   [`transport_binary/`](transport_binary/) in dependency order and re-exports
   the public names. The implementation lives in:
   - `transport_binary/header.jl` — header schema, schedule/sampling parsers,
-    header `summary`/`show`, `_parse_transport_header`, `_transport_common_header`
+    typed write-time certificates (`FluxFidelityHeader`, `OmegaFidelityHeader`)
+    and column-closure record (`ColumnClosureHeader`) with their load-time
+    consistency checks, header `summary`/`show`, `_parse_transport_header`,
+    `_transport_common_header`
   - `transport_binary/contract.jl` — `TransportBinaryContract`,
     `canonical_window_constant_contract`, `validate_cs_writer_contract!`,
     `validate_transport_contract!`

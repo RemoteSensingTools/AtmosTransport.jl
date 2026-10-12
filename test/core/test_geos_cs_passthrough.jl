@@ -371,6 +371,11 @@ end
             @test raw["column_closure_windows"] == reader.header.nwindow
             @test 0 <= raw["column_closure_residual_to_tolerance_max"] <= 1
             @test 0 <= raw["column_closure_cm_residual_to_tolerance_max"] <= 1
+            closure = reader.header.column_closure
+            @test closure isa AtmosTransport.MetDrivers.ColumnClosureHeader
+            @test closure.windows == reader.header.nwindow
+            @test closure.residual_to_tolerance_max ==
+                  raw["column_closure_residual_to_tolerance_max"]
         finally
             close(reader)
         end
@@ -403,6 +408,7 @@ end
             @test reader.header.raw_header["horizontal_balance"] == "none"
             @test !haskey(reader.header.raw_header, "column_balance_weights")
             @test !any(startswith("column_closure_"), keys(reader.header.raw_header))
+            @test reader.header.column_closure === AtmosTransport.MetDrivers.NoColumnClosureHeader()
         finally
             close(reader)
         end

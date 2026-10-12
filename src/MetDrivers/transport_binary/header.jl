@@ -142,6 +142,44 @@ struct OmegaFidelityHeader{S<:AbstractFidelityStatus}
     passed::Union{Nothing,Bool}
 end
 
+"""
+Column closure of a cubed-sphere transport binary, decoded from its
+`column_closure_*` header keys: `ColumnClosureHeader` when the writer
+column-balanced its fluxes and recorded the closure, `NoColumnClosureHeader`
+when the keys are absent (no cubed-sphere column balance ran, or the binary
+predates the record).
+"""
+abstract type AbstractColumnClosureHeader end
+struct NoColumnClosureHeader <: AbstractColumnClosureHeader end
+
+"""
+Recorded column closure (`docs/src/concepts/binary_format.md`): the rule of
+the per-cell tolerance `τ_c`, the windows covered, and the maxima over windows
+of the projected column residual `|r_c^⊥|` [kg], its ratio to `τ_c`, the
+residual folded into `cm` [kg] and its ratio to its tolerance. Both ratios are
+at most 1 in a binary that loads.
+"""
+struct ColumnClosureHeader <: AbstractColumnClosureHeader
+    rule::String
+    windows::Int
+    projected_residual_max_kg::Float64
+    residual_to_tolerance_max::Float64
+    booked_residual_max_kg::Float64
+    cm_residual_to_tolerance_max::Float64
+end
+
+"""
+Rule of the recorded column closure (header `column_closure_rule`): per-cell
+`τ_c = max(COLUMN_CLOSURE_TOL_KG, 8 ε_FT Σ_{f∂c} Σ_k |F_{f,k}|)` over the
+cell's incident faces.
+"""
+const COLUMN_CLOSURE_RULE = "per_cell_8eps_incident_flux_v1"
+
+const _COLUMN_CLOSURE_KEYS = (
+    :column_closure_rule, :column_closure_windows,
+    :column_closure_projected_residual_max_kg, :column_closure_residual_to_tolerance_max,
+    :column_closure_booked_residual_max_kg, :column_closure_cm_residual_to_tolerance_max)
+
 """Geometry metadata for a regular longitude-latitude binary."""
 struct LatLonBinaryGeometry <: AbstractTransportBinaryGeometry
     Nx                 :: Int
@@ -193,6 +231,10 @@ runtime builds its mesh with it. Binaries written before the key existed read as
 `p_half[k] = A_ifc[k] + B_ifc[k] * surface_pressure`, with `k = 1` at the
 top of atmosphere. `flux_kind` distinguishes mass per transport substep from a
 full-window mass amount.
+
+`flux_fidelity`, `omega_fidelity` and `column_closure` are the write-time
+certificate and column-closure record, checked for consistency when the header
+is parsed.
 """
 struct TransportBinaryHeader{G <: AbstractTransportBinaryGeometry}
     format_version       :: Int
@@ -228,6 +270,7 @@ struct TransportBinaryHeader{G <: AbstractTransportBinaryGeometry}
     elems_per_window     :: Int
     flux_fidelity        :: FluxFidelityHeader
     omega_fidelity       :: OmegaFidelityHeader
+    column_closure       :: AbstractColumnClosureHeader
     raw_header           :: Dict{String, Any}
 end
 
@@ -490,6 +533,50 @@ function _parse_omega_fidelity_header(hdr)
         _optional_float(hdr, :omega_fidelity_correlation_min),
         _optional_float(hdr, :omega_fidelity_slope_min),
         haskey(hdr, :omega_fidelity_passed) ? Bool(hdr.omega_fidelity_passed) : nothing)
+end
+
+"""
+    _parse_column_closure_header(hdr, nwindow) -> AbstractColumnClosureHeader
+
+Decode and check the column-closure record. Absent keys mean the closure was
+not recorded (`NoColumnClosureHeader`). A record must be complete, name the
+known rule, cover `nwindow` windows and hold finite, non-negative values with
+both residual/tolerance ratios at most 1; otherwise the stored fluxes cannot be
+trusted to close the column mass budget and the binary must be regenerated.
+"""
+function _parse_column_closure_header(hdr, nwindow::Integer)
+    present = [key for key in _COLUMN_CLOSURE_KEYS if haskey(hdr, key)]
+    isempty(present) && return NoColumnClosureHeader()
+    missing_keys = setdiff(_COLUMN_CLOSURE_KEYS, present)
+    isempty(missing_keys) || throw(ArgumentError(
+        "column-closure record lacks $(join(("`$k`" for k in missing_keys), ", ")); " *
+        "regenerate this binary"))
+    rule = String(hdr.column_closure_rule)
+    rule == COLUMN_CLOSURE_RULE || throw(ArgumentError(
+        "unsupported column_closure_rule $(repr(rule)); expected $(repr(COLUMN_CLOSURE_RULE))"))
+    windows = Int(hdr.column_closure_windows)
+    windows == nwindow || throw(ArgumentError(
+        "column-closure record covers $windows windows; the binary has nwindow=$nwindow; " *
+        "regenerate this binary"))
+    number(key) = (value = getproperty(hdr, key);
+                   value isa Real ? Float64(value) : throw(ArgumentError(
+                       "column-closure record has non-numeric `$key` = $(repr(value)); " *
+                       "regenerate this binary")))
+    projected = number(:column_closure_projected_residual_max_kg)
+    ratio = number(:column_closure_residual_to_tolerance_max)
+    booked = number(:column_closure_booked_residual_max_kg)
+    cm_ratio = number(:column_closure_cm_residual_to_tolerance_max)
+    values = (projected, ratio, booked, cm_ratio)
+    all(isfinite, values) && all(>=(0), values) || throw(ArgumentError(
+        "column-closure record is not finite and non-negative: projected residual " *
+        "$projected kg, ratio $ratio, cm residual $booked kg, cm ratio $cm_ratio; " *
+        "regenerate this binary"))
+    ratio <= 1 && cm_ratio <= 1 || throw(ArgumentError(
+        "column-closure record exceeds its per-cell tolerance (residual/tolerance " *
+        "ratio $ratio, cm residual ratio $cm_ratio; both must be at most 1): the stored " *
+        "fluxes do not close the column mass budget; regenerate this binary with the " *
+        "current preprocessor"))
+    return ColumnClosureHeader(rule, windows, projected, ratio, booked, cm_ratio)
 end
 
 function _parse_steps_per_window_schedule(hdr, nwindow::Integer,
@@ -788,6 +875,7 @@ function _parse_transport_header(raw_bytes::Vector{UInt8};
     elems_per_window = Int(hdr.elems_per_window)
     flux_fidelity = _parse_flux_fidelity_header(hdr, nwindow, nlevel)
     omega_fidelity = _parse_omega_fidelity_header(hdr)
+    column_closure = _parse_column_closure_header(hdr, nwindow)
     raw_header = Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr))
 
     return TransportBinaryHeader(
@@ -824,6 +912,7 @@ function _parse_transport_header(raw_bytes::Vector{UInt8};
         elems_per_window,
         flux_fidelity,
         omega_fidelity,
+        column_closure,
         raw_header,
     )
 end

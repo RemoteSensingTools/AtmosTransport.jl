@@ -167,6 +167,7 @@ using ..MetDrivers: LatLonBinaryGeometry, CubedSphereBinaryGeometry, TransportBi
                     open_streaming_transport_binary, write_streaming_window!,
                     close_streaming_transport_binary!, abandon_streaming_transport_binary!,
                     FLUX_CERTIFICATE_KEY_PREFIXES, _is_certificate_key,
+                    COLUMN_CLOSURE_RULE,
                     set_streaming_steps_per_window_schedule!,
                     set_transport_header_steps_per_window_schedule!,
                     open_streaming_cs_transport_binary, write_streaming_cs_window!,

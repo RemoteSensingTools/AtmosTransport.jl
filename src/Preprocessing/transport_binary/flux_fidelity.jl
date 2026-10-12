@@ -200,7 +200,6 @@ function full_window_column_closure_record(r::ColumnClosureRecord, am, bm, m, m_
                                amounts * r.booked_residual_kg, r.cm_residual_to_tolerance)
 end
 
-const COLUMN_CLOSURE_RULE = "per_cell_8eps_incident_flux_v1"
 
 struct FluxFidelityEvidenceBundle{F,O,C<:AbstractColumnClosureRecord}
     flux::F
@@ -586,6 +585,9 @@ function _column_closure_header!(header::AbstractDict, acc::FluxFidelityAccumula
     acc.closure_windows == 0 && return header
     acc.closure_windows == acc.windows_seen || throw(ArgumentError(
         "column-closure records cover $(acc.closure_windows) of $(acc.windows_seen) windows"))
+    haskey(header, "nwindow") && Int(header["nwindow"]) != acc.closure_windows &&
+        throw(ArgumentError("column-closure records cover $(acc.closure_windows) windows; " *
+                            "the header has nwindow=$(header["nwindow"])"))
     header["column_closure_rule"] = COLUMN_CLOSURE_RULE
     header["column_closure_windows"] = acc.closure_windows
     header["column_closure_projected_residual_max_kg"] = acc.closure_projected_max

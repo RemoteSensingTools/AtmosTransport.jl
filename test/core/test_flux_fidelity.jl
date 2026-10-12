@@ -312,6 +312,28 @@ end
         @test header["flux_fidelity_sample_rule"] == "none"
         # Re-patching replaces, never accumulates, the certificate keys.
         @test Pre.flux_fidelity_header!(copy(header), acc) == header
+        @test_throws ArgumentError Pre.flux_fidelity_header!(
+            Dict{String,Any}("nwindow" => 3), acc)
+        # The reader decodes and checks the record; absent keys mean "not recorded".
+        parse_closure(h, nwindow = 2) =
+            MD._parse_column_closure_header(JSON3.read(JSON3.write(h)), nwindow)
+        closure = parse_closure(header)
+        @test closure isa MD.ColumnClosureHeader
+        @test closure.rule == MD.COLUMN_CLOSURE_RULE
+        @test (closure.windows, closure.projected_residual_max_kg,
+               closure.residual_to_tolerance_max, closure.booked_residual_max_kg,
+               closure.cm_residual_to_tolerance_max) == (2, 2.0e5, 0.7, 6.0e4, 0.2)
+        @test parse_closure(Dict{String,Any}("nwindow" => 2)) === MD.NoColumnClosureHeader()
+        @test_throws ArgumentError parse_closure(header, 24)
+        for mutate in (h -> h["column_closure_residual_to_tolerance_max"] = 1.2,
+                       h -> h["column_closure_cm_residual_to_tolerance_max"] = 3.0,
+                       h -> h["column_closure_projected_residual_max_kg"] = "NaN",
+                       h -> h["column_closure_booked_residual_max_kg"] = -1.0,
+                       h -> h["column_closure_rule"] = "global_max_v0",
+                       h -> delete!(h, "column_closure_booked_residual_max_kg"))
+            h = copy(header); mutate(h)
+            @test_throws ArgumentError parse_closure(h)
+        end
         # Windows without a column balance write no closure keys.
         none = Pre.FluxFidelityAccumulator()
         Pre.verify_flux_fidelity!(none, Pre.FluxFidelityEvidenceBundle(
