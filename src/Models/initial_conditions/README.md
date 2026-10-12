@@ -61,16 +61,18 @@ the model column despite topographic or dry-air-mass differences between the
 file's model and the transport binary. Aloft, where ``b^s=0``, it reduces to
 ordinary absolute-pressure placement.
 
-The remap treats each source value as a layer mean and conserves its pressure
-integral. With the piecewise-linear cumulative integral
+The remap treats each source value as a layer mean. Source humidity is opt-in
+through `init.humidity_variable`; conventional names such as `q`, `QV`, and
+`hus` are not auto-detected. With ``d^s=1-q_v^s``, the source-dry-air mean is
 
 ```math
-C(p)=\int_{p^s_{top}}^p q^s(p')\,dp', \qquad
-q^t_k=\frac{C(p^t_{k+1/2})-C(p^t_{k-1/2})}
-           {p^t_{k+1/2}-p^t_{k-1/2}},
+C_q(p)=\int_{p^s_{top}}^p q^s(p')d^s(p')\,dp',\qquad
+C_d(p)=\int_{p^s_{top}}^p d^s(p')\,dp',
+\qquad q^t_k=\frac{\Delta C_q}{\Delta C_d},
 ```
 
-each target value is the mass-weighted mean over its layer. If a target
+each target value is source-dry-air weighted and a uniform source remains
+uniform when target humidity differs. If a target
 interface lies outside the source coverage, the nearest end source layer is
 extended. This includes pure pressure-level sources (`bp = 0`) whose bottom
 may lie above or below the model surface.

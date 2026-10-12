@@ -184,12 +184,8 @@ end
 function _infer_legacy_surface_pressure_basis(reader::TransportBinaryReader)
     mass_basis(reader) === :moist && return TotalSurfacePressure()
     grid = _legacy_surface_pressure_grid(reader, binary_geometry(reader))
-    loaded = load_window!(reader, 1)
-    if loaded isa Tuple
-        air_mass, surface_pressure = loaded[1], loaded[2]
-    else
-        air_mass, surface_pressure = loaded.m, loaded.ps
-    end
+    air_mass = _transport_section_view(reader, 1, :m)
+    surface_pressure = _transport_section_view(reader, 1, :ps)
     return _infer_legacy_surface_pressure_basis(
         grid, air_mass, surface_pressure, binary_geometry(reader))
 end
@@ -206,10 +202,15 @@ function _infer_legacy_surface_pressure_basis(grid, air_mass, surface_pressure,
                                                ::LatLonBinaryGeometry)
     mesh = grid.horizontal
     g = Float64(gravity(grid))
+    Nx, Ny = mesh.Nx, mesh.Ny
+    ncell = Nx * Ny
+    Nz = nlevels(grid)
     worst = 0.0
-    @inbounds for j in axes(surface_pressure, 2), i in axes(surface_pressure, 1)
-        p_dry = sum(@view air_mass[i, j, :]) * g / Float64(cell_area(mesh, i, j))
-        ps = Float64(surface_pressure[i, j])
+    @inbounds for j in 1:Ny, i in 1:Nx
+        c = i + (j - 1) * Nx
+        m_column = sum(k -> Float64(air_mass[c + (k - 1) * ncell]), 1:Nz)
+        p_dry = m_column * g / Float64(cell_area(mesh, i, j))
+        ps = Float64(surface_pressure[c])
         worst = max(worst, abs(p_dry - ps) / max(abs(ps), 1.0))
     end
     return worst <= 2e-5 ? DrySurfacePressure() : TotalSurfacePressure()
@@ -219,9 +220,12 @@ function _infer_legacy_surface_pressure_basis(grid, air_mass, surface_pressure,
                                                ::ReducedGaussianBinaryGeometry)
     mesh = grid.horizontal
     g = Float64(gravity(grid))
+    ncell = ncells(mesh)
+    Nz = nlevels(grid)
     worst = 0.0
-    @inbounds for c in eachindex(surface_pressure)
-        p_dry = sum(@view air_mass[c, :]) * g / Float64(cell_area(mesh, c))
+    @inbounds for c in 1:ncell
+        m_column = sum(k -> Float64(air_mass[c + (k - 1) * ncell]), 1:Nz)
+        p_dry = m_column * g / Float64(cell_area(mesh, c))
         ps = Float64(surface_pressure[c])
         worst = max(worst, abs(p_dry - ps) / max(abs(ps), 1.0))
     end
@@ -232,11 +236,16 @@ function _infer_legacy_surface_pressure_basis(grid, air_mass, surface_pressure,
                                                geometry::CubedSphereBinaryGeometry)
     mesh = grid.horizontal
     g = Float64(gravity(grid))
+    panel_cells = geometry.Nc * geometry.Nc
+    Nz = nlevels(grid)
     worst = 0.0
     @inbounds for p in 1:geometry.npanel, j in 1:geometry.Nc, i in 1:geometry.Nc
-        p_dry = sum(@view air_mass[p][i, j, :]) * g /
-                Float64(cell_area(mesh, i, j))
-        ps = Float64(surface_pressure[p][i, j])
+        c = i + (j - 1) * geometry.Nc
+        m_base = (p - 1) * panel_cells * Nz
+        m_column = sum(k -> Float64(air_mass[m_base + c + (k - 1) * panel_cells]),
+                       1:Nz)
+        p_dry = m_column * g / Float64(cell_area(mesh, i, j))
+        ps = Float64(surface_pressure[(p - 1) * panel_cells + c])
         worst = max(worst, abs(p_dry - ps) / max(abs(ps), 1.0))
     end
     return worst <= 2e-5 ? DrySurfacePressure() : TotalSurfacePressure()

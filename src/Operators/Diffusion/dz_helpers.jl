@@ -34,6 +34,97 @@
 # on the operator's Kz field type.
 # ---------------------------------------------------------------------------
 
+@kernel function _recover_total_ps_2d_kernel!(ps_total, @Const(ps_dry),
+                                              @Const(qv), @Const(ak_ifc),
+                                              @Const(bk_ifc), Nz::Int)
+    i, j = @index(Global, NTuple)
+    FT = eltype(ps_total)
+    offset = zero(FT)
+    slope = zero(FT)
+    @inbounds for k in 1:Nz
+        dry_fraction = one(FT) - qv[i, j, k]
+        offset += dry_fraction * (ak_ifc[k + 1] - ak_ifc[k])
+        slope += dry_fraction * (bk_ifc[k + 1] - bk_ifc[k])
+    end
+    @inbounds ps_total[i, j] = (ps_dry[i, j] - offset) / slope
+end
+
+@kernel function _recover_total_ps_1d_kernel!(ps_total, @Const(ps_dry),
+                                              @Const(qv), @Const(ak_ifc),
+                                              @Const(bk_ifc), Nz::Int)
+    c = @index(Global)
+    FT = eltype(ps_total)
+    offset = zero(FT)
+    slope = zero(FT)
+    @inbounds for k in 1:Nz
+        dry_fraction = one(FT) - qv[c, k]
+        offset += dry_fraction * (ak_ifc[k + 1] - ak_ifc[k])
+        slope += dry_fraction * (bk_ifc[k + 1] - bk_ifc[k])
+    end
+    @inbounds ps_total[c] = (ps_dry[c] - offset) / slope
+end
+
+"""
+    recover_total_surface_pressure!(dest, ps_dry, qv, A, B)
+
+Recover total surface pressure on the array backend used by `dest`. For the
+hybrid interfaces `p_{k+1/2}=A_{k+1/2}+B_{k+1/2}p_{s,total}`, stored dry
+surface pressure satisfies
+
+```math
+p_{s,dry}=\\sum_k(1-q_{v,k})
+  [\\Delta A_k+\\Delta B_k p_{s,total}],\\qquad
+p_{s,total}=\\frac{p_{s,dry}-\\sum_k(1-q_{v,k})\\Delta A_k}
+                  {\\sum_k(1-q_{v,k})\\Delta B_k}.
+```
+
+The implementation uses KernelAbstractions for CPU, CUDA, ROCm, and Metal;
+device arrays are never scalar-indexed by the host.
+"""
+function recover_total_surface_pressure!(dest::AbstractMatrix, ps_dry::AbstractMatrix,
+                                         qv::AbstractArray{<:AbstractFloat, 3},
+                                         ak_ifc::AbstractVector, bk_ifc::AbstractVector)
+    Nx, Ny = size(dest)
+    size(ps_dry) == (Nx, Ny) || throw(DimensionMismatch("dry ps shape mismatch"))
+    size(qv)[1:2] == (Nx, Ny) || throw(DimensionMismatch("humidity horizontal shape mismatch"))
+    Nz = size(qv, 3)
+    length(ak_ifc) == Nz + 1 && length(bk_ifc) == Nz + 1 ||
+        throw(DimensionMismatch("humidity levels must match hybrid coefficients"))
+    FT = eltype(dest)
+    ak_dev, bk_dev = similar(dest, FT, Nz + 1), similar(dest, FT, Nz + 1)
+    copyto!(ak_dev, FT.(ak_ifc)); copyto!(bk_dev, FT.(bk_ifc))
+    backend = get_backend(dest)
+    launch!(_recover_total_ps_2d_kernel!, backend, (8, 8), (Nx, Ny),
+            dest, ps_dry, qv, ak_dev, bk_dev, Nz)
+    return dest
+end
+
+function recover_total_surface_pressure!(dest::AbstractVector, ps_dry::AbstractVector,
+                                         qv::AbstractMatrix,
+                                         ak_ifc::AbstractVector, bk_ifc::AbstractVector)
+    ncells = length(dest)
+    length(ps_dry) == ncells || throw(DimensionMismatch("dry ps length mismatch"))
+    size(qv, 1) == ncells || throw(DimensionMismatch("humidity cell count mismatch"))
+    Nz = size(qv, 2)
+    length(ak_ifc) == Nz + 1 && length(bk_ifc) == Nz + 1 ||
+        throw(DimensionMismatch("humidity levels must match hybrid coefficients"))
+    FT = eltype(dest)
+    ak_dev, bk_dev = similar(dest, FT, Nz + 1), similar(dest, FT, Nz + 1)
+    copyto!(ak_dev, FT.(ak_ifc)); copyto!(bk_dev, FT.(bk_ifc))
+    backend = get_backend(dest)
+    launch!(_recover_total_ps_1d_kernel!, backend, 256, ncells,
+            dest, ps_dry, qv, ak_dev, bk_dev, Nz)
+    return dest
+end
+
+function recover_total_surface_pressure!(dest::NTuple{6}, ps_dry::NTuple{6},
+                                         qv::NTuple{6}, ak_ifc, bk_ifc)
+    @inbounds for p in 1:6
+        recover_total_surface_pressure!(dest[p], ps_dry[p], qv[p], ak_ifc, bk_ifc)
+    end
+    return dest
+end
+
 @kernel function _dz_hydrostatic_constT_kernel!(dz, @Const(ps),
                                                 @Const(ak_ifc), @Const(bk_ifc),
                                                 T_ref, R, g, Nz::Int)

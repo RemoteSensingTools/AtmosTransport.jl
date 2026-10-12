@@ -1051,6 +1051,7 @@ slice_total(X, k) = sum(Float64(X[i, j, p, k]) * AREA[i, j] for p in 1:6, j in 1
                       bm = ntuple(_ -> zeros(NC, NC + 1, 2), 6), cm = ntuple(_ -> zeros(NC, NC, 3), 6),
                       ps = ntuple(_ -> fill(1e5, NC, NC), 6))
             writer = MD.open_streaming_cs_transport_binary(bin, NC, 6, 2, 1, vertical; mass_basis = :dry,
+                                                           surface_pressure_basis = DrySurfacePressure(),
                                                            panel_convention = "geos_native",
                                                            planet_radius = IFS_EARTH_RADIUS)
             MD.write_streaming_cs_window!(writer, window, NC, 6)

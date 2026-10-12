@@ -279,7 +279,8 @@ end
                 "file" => ic_path,
                 "variable" => "CO2",
             )
-            humid_cfg = merge(init_cfg, Dict("file" => humid_ic_path))
+            humid_cfg = merge(init_cfg, Dict("file" => humid_ic_path,
+                                              "humidity_variable" => "QV"))
             humid_source = ICIO._load_file_initial_condition_source(humid_cfg, Float64, 2)
             @test humid_source.qv !== nothing
             @test humid_source.qv[1, 1, :] == [0.35, 0.08, 0.001]
@@ -481,9 +482,9 @@ end
     @testset "surface-anchored conservative hybrid remap ($T)" for T in (Float32, Float64)
         function remap!(dest, src_q, src_qv, ap, bp, A_tgt, B_tgt, ps,
                         target_dp_dry, src_p = zeros(Float64, length(src_q) + 1),
-                        cumulative = similar(src_p))
+                        cumulative = similar(src_p), dry_cumulative = similar(src_p))
             ICIO._remap_hybrid_profile!(dest, src_q, src_qv, ap, bp, A_tgt,
-                                        B_tgt, ps, target_dp_dry, src_p, cumulative)
+                                        B_tgt, ps, src_p, cumulative, dry_cumulative)
         end
 
         # Different source and target partitions of the same pressure column,
@@ -507,8 +508,9 @@ end
         dest = zeros(T, 4)
         scratch_p = zeros(Float64, 4)
         scratch_cumulative = similar(scratch_p)
+        scratch_dry_cumulative = similar(scratch_p)
         remap!(dest, src_q, src_qv, ap, bp, A_tgt, B_tgt, ps, target_dp_dry,
-               scratch_p, scratch_cumulative)
+               scratch_p, scratch_cumulative, scratch_dry_cumulative)
         source_integral = sum(Float64.(src_q) .* (1 .- Float64.(src_qv)) .*
                               (-diff(src_interfaces)))
         target_integral = sum(Float64.(dest) .* target_dp_dry)
@@ -517,7 +519,13 @@ end
                         sum(Float64.(src_q) .* (-diff(src_interfaces))); rtol = 1e-3)
         @test @allocated(remap!(dest, src_q, src_qv, ap, bp, A_tgt, B_tgt,
                                 ps, target_dp_dry, scratch_p,
-                                scratch_cumulative)) == 0
+                                scratch_cumulative, scratch_dry_cumulative)) == 0
+
+        uniform = similar(dest)
+        remap!(uniform, fill(T(400e-6), length(src_q)), src_qv, ap, bp,
+               A_tgt, B_tgt, ps, fill(1.0, length(dest)), scratch_p,
+               scratch_cumulative, scratch_dry_cumulative)
+        @test uniform ≈ fill(T(400e-6), length(uniform)) rtol = 8eps(T)
 
         # Without source-file humidity the target dry factor cancels exactly,
         # even for a target layer with 40% humidity.
@@ -525,7 +533,7 @@ end
         binary_dp_dry = (1 .- Float64.(target_qv)) .* diff(tgt_p)
         fallback = zeros(T, 4)
         remap!(fallback, src_q, nothing, ap, bp, A_tgt, B_tgt, ps,
-               binary_dp_dry, scratch_p, scratch_cumulative)
+               binary_dp_dry, scratch_p, scratch_cumulative, scratch_dry_cumulative)
         expected = zeros(Float64, 4)
         for k in eachindex(expected), s in eachindex(src_q)
             overlap = max(0.0, min(tgt_p[k + 1], src_interfaces[s]) -
@@ -539,7 +547,7 @@ end
                binary_dp_dry, scratch_p, scratch_cumulative)
         @test @allocated(remap!(fallback, src_q, nothing, ap, bp, A_tgt, B_tgt,
                                 ps, binary_dp_dry, scratch_p,
-                                scratch_cumulative)) == 0
+                                scratch_cumulative, scratch_dry_cumulative)) == 0
 
         # A near-surface peak stays on the same sigma layers when every column
         # receives a uniform surface-pressure shift.
@@ -668,12 +676,12 @@ end
             @test length(specs) == 2
             @test all(spec -> spec.init_cfg["humidity_variable"] == "q", specs)
 
-            # The bare conventional name `q` is also detected without the
-            # explicit option.
+            # Humidity is opt-in: a conventional `q` name does not silently
+            # change the conservative carrier.
             autodetect_cfg = copy(init_cfg)
             delete!(autodetect_cfg, "humidity_variable")
             source = ICIO._load_file_initial_condition_source(autodetect_cfg, T, 2)
-            @test source.qv !== nothing
+            @test source.qv === nothing
 
             vertical = HybridSigmaPressure(T[0, 0, 0], T[0, 0.5, 1])
             ps_total = T(100_000)

@@ -11,7 +11,8 @@ function input_lifetime_fixture(path)
                 cm=zeros(FT,4,3,3), ps=fill(FT(100000),4,3))
     write_transport_binary(path, grid, [window,window]; FT,
         dt_met_seconds=3600.0, half_dt_seconds=900.0, steps_per_window=2,
-        mass_basis=:dry, source_flux_sampling=:window_start_endpoint,
+        mass_basis=:dry, surface_pressure_basis=TotalSurfacePressure(),
+        source_flux_sampling=:window_start_endpoint,
         flux_sampling=:window_constant,
         extra_header=Dict("poisson_balance_target_scale"=>0.25,
             "poisson_balance_target_semantics"=>"forward_window_mass_difference / (2 * steps_per_window)"))
@@ -130,7 +131,8 @@ end
             cs_path = joinpath(dir,"cs.bin")
             vc = HybridSigmaPressure([0.0,0.0,0.0],[0.0,0.5,1.0])
             writer = MD.open_streaming_cs_transport_binary(cs_path,2,6,2,1,vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
-                FT=Float64,dt_met_seconds=3600.0,steps_per_window=2,mass_basis=:dry)
+                FT=Float64,dt_met_seconds=3600.0,steps_per_window=2,mass_basis=:dry,
+                surface_pressure_basis=TotalSurfacePressure())
             window = (;m=ntuple(_->ones(2,2,2),6),am=ntuple(_->zeros(3,2,2),6),
                        bm=ntuple(_->zeros(2,3,2),6),cm=ntuple(_->zeros(2,2,3),6),
                        ps=ntuple(_->fill(100000.0,2,2),6))

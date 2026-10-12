@@ -259,11 +259,6 @@ function _transport_parse_surface_pressure_basis(value)
         "expected total or dry"))
 end
 
-_default_surface_pressure_basis(::MoistBasis) = TotalSurfacePressure()
-_default_surface_pressure_basis(::DryBasis) = DrySurfacePressure()
-_default_surface_pressure_basis(mass_basis::Symbol) =
-    _default_surface_pressure_basis(_transport_parse_mass_basis_tag(mass_basis, "mass_basis"))
-
 function _transport_parse_mass_basis_tag(value, key::AbstractString)
     basis_str = lowercase(string(value))
     basis_str == "dry" && return DryBasis()

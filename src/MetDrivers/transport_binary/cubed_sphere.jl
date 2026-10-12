@@ -192,6 +192,8 @@ convention (`"gnomonic"` or `"geos_native"`), the geometry law and
 `planet_radius` (the radius of the mesh on which the air masses were computed),
 so readers reconstruct the same mesh. Each subsequent window must match the
 registered panel shapes and payload sections exactly.
+The typed `surface_pressure_basis` keyword is required and independently
+declares whether the stored `ps` panels are total or dry pressure.
 """
 function open_streaming_cs_transport_binary(
         path::AbstractString,
@@ -211,8 +213,7 @@ function open_streaming_cs_transport_binary(
         flux_kind::Symbol = :substep_mass_amount,
         include_flux_delta::Bool = false,
         mass_basis::Symbol,
-        surface_pressure_basis::Union{TotalSurfacePressure, DrySurfacePressure} =
-            _default_surface_pressure_basis(mass_basis),
+        surface_pressure_basis::Union{TotalSurfacePressure, DrySurfacePressure},
         tm5_convection_mass_basis::Union{_DefaultTM5ConvectionMassBasis,
                                          Nothing, AbstractMassBasis} =
             _DEFAULT_TM5_CONVECTION_MASS_BASIS,

@@ -26,11 +26,52 @@ the kernel-level helper tests.
 using Test
 import AtmosTransport
 using .AtmosTransport.Operators.Diffusion: fill_dz_hydrostatic_virtualT!,
-                                            fill_dz_hydrostatic_constT!
+                                            fill_dz_hydrostatic_constT!,
+                                            recover_total_surface_pressure!
 using .AtmosTransport.Parameters: R_DRY_AIR, STANDARD_GRAVITY
 
 const _R_DRY  = R_DRY_AIR
 const _G_REF  = STANDARD_GRAVITY
+
+const HAS_CUDA_DZ = try
+    using CUDA
+    CUDA.functional()
+catch
+    false
+end
+
+@testset "dry and total surface pressure give equivalent diffusion dz" begin
+    FT = Float64
+    Nx, Ny, Nz = 3, 2, 4
+    ak = FT[100, 500, 1200, 800, 0]
+    bk = FT[0, 0.1, 0.35, 0.7, 1]
+    ps_total = FT[96_000 + 300i + 200j for i in 1:Nx, j in 1:Ny]
+    qv = FT[0.001 + 0.003k + 0.0002i for i in 1:Nx, j in 1:Ny, k in 1:Nz]
+    ps_dry = similar(ps_total)
+    for j in 1:Ny, i in 1:Nx
+        ps_dry[i, j] = sum((1 - qv[i, j, k]) *
+                           ((ak[k + 1] - ak[k]) +
+                            (bk[k + 1] - bk[k]) * ps_total[i, j]) for k in 1:Nz)
+    end
+
+    recovered = similar(ps_total)
+    recover_total_surface_pressure!(recovered, ps_dry, qv, ak, bk)
+    dz_total, dz_dry = zeros(FT, Nx, Ny, Nz), zeros(FT, Nx, Ny, Nz)
+    fill_dz_hydrostatic_constT!(dz_total, ps_total, ak, bk)
+    fill_dz_hydrostatic_constT!(dz_dry, recovered, ak, bk)
+    @test recovered ≈ ps_total rtol = 32eps(FT)
+    @test dz_dry ≈ dz_total rtol = 64eps(FT)
+
+    if HAS_CUDA_DZ
+        recovered_gpu = CUDA.zeros(FT, Nx, Ny)
+        recover_total_surface_pressure!(recovered_gpu, CUDA.CuArray(ps_dry),
+                                        CUDA.CuArray(qv), ak, bk)
+        dz_gpu = CUDA.zeros(FT, Nx, Ny, Nz)
+        fill_dz_hydrostatic_constT!(dz_gpu, recovered_gpu, ak, bk)
+        @test Array(recovered_gpu) ≈ ps_total rtol = 32eps(FT)
+        @test Array(dz_gpu) ≈ dz_total rtol = 64eps(FT)
+    end
+end
 
 @testset "fill_dz_hydrostatic_virtualT! — single 3D array matches hand formula" begin
     FT = Float64

@@ -21,6 +21,7 @@ function latlon_binary(path, radius)
     window = (m = fill(1e16, Nx, Ny, 2), am = zeros(Nx + 1, Ny, 2), bm = zeros(Nx, Ny + 1, 2),
               cm = zeros(Nx, Ny, 3), ps = fill(1e5, Nx, Ny))
     write_transport_binary(path, grid, [window]; steps_per_window = 1, mass_basis = :dry,
+                           surface_pressure_basis = DrySurfacePressure(),
                            source_flux_sampling = :window_start_endpoint, flux_sampling = :window_constant)
 end
 
@@ -31,6 +32,7 @@ function reduced_binary(path, radius)
     nc, nf = ncells(mesh), nfaces(mesh)
     window = (m = fill(1e16, nc, 2), hflux = zeros(nf, 2), cm = zeros(nc, 3), ps = fill(1e5, nc))
     write_transport_binary(path, grid, [window]; steps_per_window = 1, mass_basis = :dry,
+                           surface_pressure_basis = DrySurfacePressure(),
                            source_flux_sampling = :window_start_endpoint, flux_sampling = :window_constant)
 end
 
@@ -40,7 +42,9 @@ function cs_binary(path; kw...)
     window = (m = ntuple(_ -> fill(1e16, Nc, Nc, 2), 6), am = ntuple(_ -> zeros(Nc + 1, Nc, 2), 6),
               bm = ntuple(_ -> zeros(Nc, Nc + 1, 2), 6), cm = ntuple(_ -> zeros(Nc, Nc, 3), 6),
               ps = ntuple(_ -> fill(1e5, Nc, Nc), 6))
-    writer = MD.open_streaming_cs_transport_binary(path, Nc, 6, 2, 1, VERTICAL; mass_basis = :dry, kw...)
+    writer = MD.open_streaming_cs_transport_binary(
+        path, Nc, 6, 2, 1, VERTICAL; mass_basis = :dry,
+        surface_pressure_basis = TotalSurfacePressure(), kw...)
     MD.write_streaming_cs_window!(writer, window, Nc, 6)
     MD.close_streaming_transport_binary!(writer)
 end

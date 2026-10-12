@@ -41,6 +41,7 @@ function write_driven_latlon_binary(path::AbstractString;
                            half_dt_seconds=1800.0,
                            steps_per_window=2,
                            mass_basis,
+                           surface_pressure_basis=TotalSurfacePressure(),
                            source_flux_sampling=source_flux_sampling,
                            flux_sampling=flux_sampling,
                            extra_header=Dict(
@@ -108,6 +109,7 @@ function write_driven_reduced_binary(path::AbstractString;
                            half_dt_seconds=1800.0,
                            steps_per_window=2,
                            mass_basis=:moist,
+                           surface_pressure_basis=TotalSurfacePressure(),
                            source_flux_sampling=source_flux_sampling,
                            extra_header=Dict(
                                "poisson_balance_target_scale" => 0.25,

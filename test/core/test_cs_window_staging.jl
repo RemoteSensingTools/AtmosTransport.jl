@@ -46,6 +46,7 @@ end
         writer = StagingMD.open_streaming_cs_transport_binary(
             path, Nc, np, Nz, nwin, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
             FT = disk_FT, mass_basis = :dry, include_flux_delta = true, include_cmfmc = true,
+            surface_pressure_basis = TotalSurfacePressure(),
             include_dtrain = true, include_surface = true, include_tm5conv = true,
             include_gchp_vdiff = true, include_precomputed_dkg = true,
             include_pbl_eflux = true, include_cmfmc_cloud_base = true)

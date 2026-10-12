@@ -488,7 +488,7 @@ function process_day(date::Date,
         "poisson_balance_target_scale"     => rg_contract.poisson_balance_target_scale,
         "poisson_balance_target_semantics" => rg_contract.poisson_balance_target_semantics,
     )
-    settings.mass_fix_enable &&
+    settings.mass_fix_enable && settings.mass_basis == :dry &&
         (metadata["mass_fix_target_ps_dry_pa"] = settings.target_ps_dry_pa)
 
     writer = open_streaming_transport_binary(

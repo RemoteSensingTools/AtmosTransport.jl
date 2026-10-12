@@ -15,6 +15,7 @@ function synthetic_ll_binary(path; nwindows = 2)
               cm = zeros(Float64, 2, 2, 2), ps = fill(95000.0, 2, 2))
     write_transport_binary(path, grid, fill(window, nwindows); FT = Float64, dt_met_seconds = 3600.0,
                            half_dt_seconds = 1800.0, steps_per_window = 1, mass_basis = :dry,
+                           surface_pressure_basis = TotalSurfacePressure(),
                            source_flux_sampling = :window_start_endpoint, flux_sampling = :window_constant)
     return path, mesh
 end

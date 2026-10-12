@@ -238,7 +238,7 @@ function build_v4_header(date::Date,
             "flip latitude to south-to-north if thermo file is stored north-to-south" : "",
     )
 
-    settings.mass_fix_enable &&
+    settings.mass_fix_enable && (settings.include_qv || settings.mass_basis == :dry) &&
         (header["mass_fix_target_ps_dry_pa"] = settings.target_ps_dry_pa)
     # ERA5 convective fluxes are put on the binary's basis before ec2tm.
     _with_tm5_convection_basis(header, settings.tm5_convection_enable ?

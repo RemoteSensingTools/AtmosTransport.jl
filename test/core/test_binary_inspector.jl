@@ -13,6 +13,8 @@ function _inspector_fixture_binary(path::AbstractString;
                                    with_tm5::Bool = false,
                                    with_surface::Bool = false,
                                    with_single_qv::Bool = false,
+                                   with_humidity::Bool = false,
+                                   mass_basis::Symbol = :dry,
                                    mass_fix_enabled = true,
                                    mass_fix_flags = nothing,
                                    recorded_target = GLOBAL_MEAN_DRY_SURFACE_PRESSURE,
@@ -48,6 +50,10 @@ function _inspector_fixture_binary(path::AbstractString;
     end
     with_single_qv &&
         (optional = merge(optional, (; qv = zeros(FT, Nx, Ny, Nz))))
+    with_humidity && (optional = merge(optional, (
+        qv_start = fill(FT(0.02), Nx, Ny, Nz),
+        qv_end = fill(FT(0.02), Nx, Ny, Nz),
+    )))
     window = merge((; m, am, bm, cm, ps), optional)
 
     mass_fix_header = Dict{String, Any}()
@@ -64,7 +70,8 @@ function _inspector_fixture_binary(path::AbstractString;
                            dt_met_seconds = 3600.0,
                            half_dt_seconds = 1800.0,
                            steps_per_window = 1,
-                           mass_basis = :dry,
+                           mass_basis,
+                           surface_pressure_basis = TotalSurfacePressure(),
                            extra_header = mass_fix_header,
                            source_flux_sampling = :window_start_endpoint,
                            flux_sampling = :window_constant,
@@ -72,7 +79,64 @@ function _inspector_fixture_binary(path::AbstractString;
     return nothing
 end
 
+function _legacy_inference_fixture(path::AbstractString, ::Val{:latlon})
+    Nx, Ny, Nz = 48, 25, 8
+    grid = AtmosGrid(LatLonMesh(; Nx, Ny),
+        HybridSigmaPressure(zeros(Nz + 1), collect(range(0.0, 1.0; length=Nz + 1))), CPU())
+    window = (m = ones(Nx, Ny, Nz), am = zeros(Nx + 1, Ny, Nz),
+              bm = zeros(Nx, Ny + 1, Nz), cm = zeros(Nx, Ny, Nz + 1),
+              ps = fill(90_000.0, Nx, Ny))
+    write_transport_binary(path, grid, [window]; mass_basis=:dry,
+        surface_pressure_basis=TotalSurfacePressure(),
+        source_flux_sampling=:window_start_endpoint)
+end
+
+function _legacy_inference_fixture(path::AbstractString, ::Val{:reduced_gaussian})
+    Nz = 8
+    mesh = ReducedGaussianMesh(collect(range(-85.0, 85.0; length=24)), fill(48, 24))
+    grid = AtmosGrid(mesh,
+        HybridSigmaPressure(zeros(Nz + 1), collect(range(0.0, 1.0; length=Nz + 1))), CPU())
+    window = (m = ones(ncells(mesh), Nz), hflux = zeros(nfaces(mesh), Nz),
+              cm = zeros(ncells(mesh), Nz + 1), ps = fill(90_000.0, ncells(mesh)))
+    write_transport_binary(path, grid, [window]; mass_basis=:dry,
+        surface_pressure_basis=TotalSurfacePressure(),
+        source_flux_sampling=:window_start_endpoint)
+end
+
+function _legacy_inference_fixture(path::AbstractString, ::Val{:cubed_sphere})
+    Nc, Nz = 12, 8
+    vc = HybridSigmaPressure(zeros(Nz + 1), collect(range(0.0, 1.0; length=Nz + 1)))
+    panel3(x) = ntuple(_ -> fill(x, Nc, Nc, Nz), 6)
+    window = (m=panel3(1.0),
+              am=ntuple(_ -> zeros(Nc + 1, Nc, Nz), 6),
+              bm=ntuple(_ -> zeros(Nc, Nc + 1, Nz), 6),
+              cm=ntuple(_ -> zeros(Nc, Nc, Nz + 1), 6),
+              ps=ntuple(_ -> fill(90_000.0, Nc, Nc), 6))
+    writer = AtmosTransport.MetDrivers.open_streaming_cs_transport_binary(
+        path, Nc, 6, Nz, 1, vc; mass_basis=:dry,
+        surface_pressure_basis=TotalSurfacePressure(),
+        planet_radius=AtmosTransport.Parameters.EARTH_RADIUS)
+    AtmosTransport.MetDrivers.write_streaming_cs_window!(writer, window, Nc, 6)
+    AtmosTransport.MetDrivers.close_streaming_transport_binary!(writer)
+end
+
 @testset "binary_capabilities + inspect_binary" begin
+
+    @testset "legacy pressure-basis inference reads section views only" begin
+        mktempdir() do dir
+            for geometry in (:latlon, :reduced_gaussian, :cubed_sphere)
+                path = joinpath(dir, "$(geometry).bin")
+                _legacy_inference_fixture(path, Val(geometry))
+                reader = TransportBinaryReader(path; FT=Float64)
+                infer(r) = AtmosTransport.MetDrivers._infer_legacy_surface_pressure_basis(r)
+                infer(reader) # compile before measuring
+                bytes = @allocated infer(reader)
+                @test bytes < 200_000
+                @test bytes < reader.header.elems_per_window * sizeof(Float64)
+                close(reader)
+            end
+        end
+    end
 
     @testset "one version-4 reader API" begin
         @test isdefined(AtmosTransport, :TransportBinaryReader)
@@ -186,6 +250,7 @@ end
             pinned_path = joinpath(dir, "pinned.bin")
             unpinned_path = joinpath(dir, "unpinned.bin")
             legacy_path = joinpath(dir, "legacy.bin")
+            legacy_pinned_path = joinpath(dir, "legacy_pinned.bin")
             equal_pinned_path = joinpath(dir, "equal_pinned.bin")
             other_pinned_path = joinpath(dir, "other_pinned.bin")
             _inspector_fixture_binary(pinned_path)
@@ -194,10 +259,14 @@ end
                                       recorded_target = GLOBAL_MEAN_DRY_SURFACE_PRESSURE)
             _inspector_fixture_binary(legacy_path; mass_fix_enabled = nothing,
                                       recorded_target = nothing)
+            _inspector_fixture_binary(legacy_pinned_path;
+                mass_fix_enabled = nothing, recorded_target = nothing,
+                mass_fix_flags = Dict("global_mass_pin_enabled" => true))
 
             pinned = inspect_binary(pinned_path; io = devnull)
             unpinned = inspect_binary(unpinned_path; io = devnull)
             legacy = inspect_binary(legacy_path; io = devnull)
+            legacy_pinned = inspect_binary(legacy_pinned_path; io = devnull)
             carried = _INSPECTOR_AIR_MASS * 4 * 3 * 5 *
                       AtmosTransport.Parameters.STANDARD_GRAVITY /
                       (4π * AtmosTransport.Parameters.EARTH_RADIUS^2)
@@ -213,10 +282,17 @@ end
             @test legacy.dry_mass_target_source === :legacy_window1
             @test legacy.dry_mass_pinned === nothing
             @test legacy.dry_mass_target_ps_pa == unpinned.dry_mass_target_ps_pa
+            @test legacy_pinned.dry_mass_target_source === :legacy_window1
+            @test legacy_pinned.dry_mass_pinned === true
+            @test legacy_pinned.dry_mass_target_ps_pa ≈ carried
 
             item(path, caps) = (; path, caps)
             check(xs...) = AtmosTransport.Models.DrivenRunner._check_run_dry_mass_targets(
                 collect(xs))
+            drifting_unpinned = merge(unpinned,
+                (dry_mass_target_ps_pa = unpinned.dry_mass_target_ps_pa + 2.0,))
+            @test check(item(unpinned_path, unpinned),
+                        item("next_unpinned.bin", drifting_unpinned)) === nothing
             @test check(item(unpinned_path, unpinned), item(legacy_path, legacy)) ≈ carried
             @test check(item(pinned_path, pinned), item(pinned_path, pinned)) ==
                   GLOBAL_MEAN_DRY_SURFACE_PRESSURE
@@ -250,6 +326,15 @@ end
             @test occursin("GLOBAL_MEAN_DRY_SURFACE_PRESSURE=98325.0 Pa",
                            sprint(showerror, pressure_err))
 
+            check_basis(xs...) = AtmosTransport.Models.DrivenRunner._check_run_surface_pressure_bases(
+                collect(xs))
+            dry_ps_caps = merge(pinned, (surface_pressure_basis=DrySurfacePressure(),))
+            total_ps_caps = merge(pinned, (surface_pressure_basis=TotalSurfacePressure(),))
+            @test check_basis(item("dry.bin", dry_ps_caps),
+                              item("dry2.bin", dry_ps_caps)) isa DrySurfacePressure
+            @test_throws ArgumentError check_basis(item("dry.bin", dry_ps_caps),
+                                                    item("total.bin", total_ps_caps))
+
             # Warm compilation before measuring. The fallback may allocate a
             # tiny SubArray descriptor, but never any payload-sized arrays.
             reader = TransportBinaryReader(legacy_path; FT = Float64)
@@ -257,6 +342,20 @@ end
             bytes = @allocated AtmosTransport.MetDrivers.binary_dry_mass_target(reader)
             @test bytes < 4096
             close(reader)
+
+            moist_qv_path = joinpath(dir, "moist_qv.bin")
+            moist_unknown_path = joinpath(dir, "moist_unknown.bin")
+            _inspector_fixture_binary(moist_qv_path; mass_basis = :moist,
+                with_humidity = true, mass_fix_enabled = false,
+                recorded_target = nothing)
+            _inspector_fixture_binary(moist_unknown_path; mass_basis = :moist,
+                mass_fix_enabled = false, recorded_target = nothing)
+            moist_qv = inspect_binary(moist_qv_path; io = devnull)
+            moist_unknown = inspect_binary(moist_unknown_path; io = devnull)
+            @test moist_qv.dry_mass_target_ps_pa ≈ carried * 0.98
+            @test moist_qv.dry_mass_target_source === :unpinned_window1
+            @test moist_unknown.dry_mass_target_ps_pa === nothing
+            @test moist_unknown.dry_mass_target_source === :unclassifiable
         end
     end
 
@@ -317,7 +416,7 @@ end
                 e
             end
             @test err isa ArgumentError
-            @test occursin("without a numeric mass_fix_target_ps_dry_pa",
+            @test occursin("non-numeric mass_fix_target_ps_dry_pa",
                            sprint(showerror, err))
         end
     end

@@ -158,6 +158,7 @@ end
             steps_per_window = 1,
             source_flux_sampling = :window_start_endpoint,
             mass_basis = :dry,
+            surface_pressure_basis = TotalSurfacePressure(),
             humidity_sampling = :none,
             delta_semantics = :none,
         )
@@ -190,6 +191,7 @@ end
             steps_per_window = 1,
             include_flux_delta = true,
             mass_basis = :dry,
+            surface_pressure_basis = TotalSurfacePressure(),
         )
         window = (m = ntuple(_ -> fill(FT(1), Nc, Nc, Nz), npanel),
                   am = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz), npanel),

@@ -104,17 +104,21 @@ The JSON header distinguishes three dry-mass states:
   baseline as `mass_fix_target_ps_dry_pa`;
 - explicitly unpinned binaries record a recognized enable flag as `false`,
   omit the target, and inspection reports `sum(m) g / (4 pi R_header^2)` from
-  window 1;
+  window 1 as `:unpinned_window1`;
 - legacy binaries record no enable flag, so inspection uses the same window-1
   fallback but reports the pin state as unknown.
 
 A multi-file run rejects conflicting explicit pin states before comparing the
-effective targets, and rejects effective targets that differ. This prevents a
-day-boundary VMR jump while retaining compatibility with legacy files.
+effective targets of pinned and legacy files. Explicitly unpinned files are not
+compared to one another because their carried mass may drift continuously.
+Legacy enabled headers without a numeric target are pinned window-1 fallbacks.
+Moist-basis fallbacks use `m(1-qv_start)`; without humidity their dry target is
+unclassifiable.
 The canonical enable flag is `mass_fix_enabled`; inspection also recognizes
 the source-specific flags in older native-source archives.
 
-Current writers always record `surface_pressure_basis = "total"` or `"dry"`.
+Current writers require the typed `surface_pressure_basis` keyword and record
+`"total"` or `"dry"`; it is never inferred from `mass_basis`.
 The reader parses it once to a `TotalSurfacePressure` or `DrySurfacePressure`
 type, and transformations preserve that typed value. For a legacy binary that
 lacks the key, opening the reader compares window 1 `:ps` with the column
@@ -123,7 +127,8 @@ compatibility fallback becomes an error after archive regeneration.
 
 Dry-pressure binaries use `:qv_start` when present, or VDIFF `:vdiff_qv` on
 native cubed-sphere physics binaries, to reconstruct total pressure for hybrid
-interface placement. If neither humidity payload exists, total pressure is
+interface placement and runtime diffusion thickness. ERA5-N320 CS products
+without either humidity payload use `ps_total ≈ ps_dry`; total pressure is then
 unobservable: the runtime retains dry `ps`, warns once, and documents the
 typically 0.5--2 % low humid-column approximation.
 
@@ -186,8 +191,8 @@ returns a `NamedTuple`:
 | `adaptive_substeps :: Union{Nothing, Bool}` | explicit `adaptive_substeps` header value for CS; `nothing` when not recorded |
 | `preprocessor_contract :: Union{Nothing, String}` | preprocessor contract tag (CS only); e.g. `"plan41_variable_substeps"` |
 | `vertical_Nz_output :: Union{Nothing, Int}` | preprocessor-recorded output level count for CS; `nothing` otherwise |
-| `dry_mass_target_ps_pa :: Float64` | recorded target, or window-1/header-radius fallback for a legacy binary |
-| `dry_mass_target_source :: Symbol` | `:header` or `:legacy_window1` |
+| `dry_mass_target_ps_pa :: Union{Nothing, Float64}` | recorded target, or window-1/header-radius fallback; `nothing` when moist mass lacks humidity |
+| `dry_mass_target_source :: Symbol` | `:header`, `:legacy_window1`, `:unpinned_window1`, or `:unclassifiable` |
 | `dry_mass_target_is_current :: Bool` | agrees with `Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE` |
 | `payload_sections :: Vector{Symbol}` | the raw list, for advanced filtering |
 
@@ -239,6 +244,7 @@ writer = open_streaming_transport_binary(
     dt_met_seconds        = 3600.0,
     steps_per_window      = 2,   # default; overwritten with adaptive schedule
     mass_basis            = :dry,   # required, no default
+    surface_pressure_basis = DrySurfacePressure(), # required; meaning of :ps
     flux_kind             = :substep_mass_amount,
     flux_sampling         = :window_start_endpoint,
     air_mass_sampling     = :window_start_endpoint,
@@ -255,6 +261,7 @@ writer = open_streaming_cs_transport_binary(
     dt_met_seconds = 3600.0,
     steps_per_window = 4,
     mass_basis = :dry,              # required, no default
+    surface_pressure_basis = DrySurfacePressure(), # required; meaning of :ps
     include_flux_delta = false,    # writes :dm (CS only; no :dam/:dbm/:dcm)
     include_cmfmc = false,         # writes :cmfmc when true
     include_dtrain = false,        # writes :dtrain when true (requires include_cmfmc)

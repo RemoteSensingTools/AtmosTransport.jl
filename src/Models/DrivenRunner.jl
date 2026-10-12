@@ -267,6 +267,7 @@ function _run_driven_simulation_inputs(cfg, input_cfg, binary_paths, arch::Abstr
     for item in binary_caps
         _log_binary_summary(item.path, item.caps)
     end
+    _check_run_surface_pressure_bases(binary_caps)
     _check_run_dry_mass_targets(binary_caps)
     caps = first(binary_caps).caps
     _validate_input_binary_expectations(caps, input_cfg, first(binary_paths))
@@ -296,6 +297,23 @@ function _run_driven_simulation_inputs(cfg, input_cfg, binary_paths, arch::Abstr
     end
 end
 
+function _check_run_surface_pressure_bases(binary_caps)
+    isempty(binary_caps) && return nothing
+    reference = first(binary_caps)
+    basis_ref = reference.caps.surface_pressure_basis
+    for item in Iterators.drop(binary_caps, 1)
+        typeof(item.caps.surface_pressure_basis) === typeof(basis_ref) && continue
+        throw(ArgumentError(
+            "transport binaries in one run must share one surface-pressure basis: " *
+            "$(basename(reference.path)) stores $(nameof(typeof(basis_ref))), but " *
+            "$(basename(item.path)) stores " *
+            "$(nameof(typeof(item.caps.surface_pressure_basis))). Regenerate the " *
+            "mismatched day so hybrid-coordinate consumers, including diffusion, " *
+            "interpret surface pressure consistently."))
+    end
+    return basis_ref
+end
+
 function _check_run_dry_mass_targets(binary_caps)
     isempty(binary_caps) && return nothing
     explicit = nothing
@@ -316,9 +334,14 @@ function _check_run_dry_mass_targets(binary_caps)
         end
     end
 
-    reference = first(binary_caps)
+    comparable = filter(binary_caps) do item
+        item.caps.dry_mass_pinned !== false &&
+            item.caps.dry_mass_target_ps_pa !== nothing
+    end
+    isempty(comparable) && return nothing
+    reference = first(comparable)
     target_ref = Float64(reference.caps.dry_mass_target_ps_pa)
-    for item in Iterators.drop(binary_caps, 1)
+    for item in Iterators.drop(comparable, 1)
         target = Float64(item.caps.dry_mass_target_ps_pa)
         isapprox(target, target_ref; atol = 0.1, rtol = 1e-7) && continue
         throw(ArgumentError(

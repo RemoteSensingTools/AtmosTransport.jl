@@ -238,7 +238,8 @@ end
         grid, window = ll_fixture(include_tm5)
         write_transport_binary(path, grid, [window]; FT = Float64,
             dt_met_seconds = 3600.0, half_dt_seconds = 1800.0, steps_per_window = 1,
-            mass_basis = :dry, source_flux_sampling = :window_start_endpoint,
+            mass_basis = :dry, surface_pressure_basis = DrySurfacePressure(),
+            source_flux_sampling = :window_start_endpoint,
             flux_sampling = :window_constant, basis_kw(tm5_basis)...)
     end
 
@@ -246,7 +247,8 @@ end
         grid, window = rg_fixture(include_tm5)
         write_transport_binary(path, grid, [window]; FT = Float64,
             dt_met_seconds = 3600.0, half_dt_seconds = 1800.0, steps_per_window = 1,
-            mass_basis = :dry, source_flux_sampling = :window_start_endpoint,
+            mass_basis = :dry, surface_pressure_basis = DrySurfacePressure(),
+            source_flux_sampling = :window_start_endpoint,
             flux_sampling = :window_constant, basis_kw(tm5_basis)...)
     end
 
@@ -254,7 +256,8 @@ end
         grid, window = rg_fixture(include_tm5)
         writer = MD.open_streaming_transport_binary(
             path, grid, 1, window; FT = Float64, steps_per_window = 1,
-            mass_basis = :dry, source_flux_sampling = :window_start_endpoint,
+            mass_basis = :dry, surface_pressure_basis = DrySurfacePressure(),
+            source_flux_sampling = :window_start_endpoint,
             flux_sampling = :window_constant, basis_kw(tm5_basis)...)
         MD.write_streaming_window!(writer, window)
         MD.close_streaming_transport_binary!(writer)
@@ -274,7 +277,8 @@ end
             HybridSigmaPressure([0.0, 1000, 2000], [0.0, 0.2, 1.0]);
             planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
             steps_per_window = 1, include_tm5conv = include_tm5,
-            mass_basis = :dry, basis_kw(tm5_basis)...)
+            mass_basis = :dry, surface_pressure_basis = DrySurfacePressure(),
+            basis_kw(tm5_basis)...)
         MD.write_streaming_cs_window!(writer, window, Nc, np)
         MD.close_streaming_transport_binary!(writer)
     end
@@ -355,6 +359,7 @@ end
         legacy_moist = joinpath(dir, "legacy_moist.bin")
         write_transport_binary(legacy_moist, grid, [window]; FT = Float64,
             steps_per_window = 1, mass_basis = :moist,
+            surface_pressure_basis = TotalSurfacePressure(),
             source_flux_sampling = :window_start_endpoint,
             tm5_convection_mass_basis = nothing)
         @test_logs min_level = Base.CoreLogging.Warn close(TransportBinaryReader(legacy_moist))

@@ -40,6 +40,7 @@ function _ll_fixture_binary(path::AbstractString;
                             tm5_basis = :default,
                             am_uniform::Real = 0,
                             bm_uniform::Real = 0,
+                            surface_pressure_basis::AbstractSurfacePressureBasis = TotalSurfacePressure(),
                             extra_header::AbstractDict = Dict{String, Any}(),
                             radius::Real = AtmosTransport.Parameters.IFS_EARTH_RADIUS)
     # Default: the preprocessors' sphere, which the CS target shares.
@@ -136,6 +137,7 @@ function _ll_fixture_binary(path::AbstractString;
                            half_dt_seconds = 1800.0,
                            steps_per_window = 2,
                            mass_basis = :dry,
+                           surface_pressure_basis,
                            extra_header,
                            source_flux_sampling = :window_start_endpoint,
                            flux_sampling = :window_constant,
@@ -194,9 +196,9 @@ end
             @test reader.header.nlevel == meta.Nz
             @test reader.header.raw_header["mass_fix_enabled"] === true
             @test reader.header.raw_header["mass_fix_target_ps_dry_pa"] == 98_325.0
-            @test reader.header.raw_header["surface_pressure_basis"] == "dry"
+            @test reader.header.raw_header["surface_pressure_basis"] == "total"
             @test AtmosTransport.MetDrivers.surface_pressure_basis(reader) isa
-                  DrySurfacePressure
+                  TotalSurfacePressure
             @test has_flux_delta(reader)
             @test delta_semantics(reader) == :forward_window_endpoint_difference
 
@@ -591,6 +593,17 @@ end
             reader = AtmosTransport.MetDrivers.TransportBinaryReader(cs_path; FT = Float64)
             @test reader.header.planet_radius_m == AtmosTransport.Parameters.IFS_EARTH_RADIUS
             close(reader)
+        end
+    end
+
+    @testset "dry-pressure LL input is rejected" begin
+        mktempdir() do dir
+            ll_path = joinpath(dir, "ll_dry_ps.bin")
+            _ll_fixture_binary(ll_path; surface_pressure_basis = DrySurfacePressure())
+            cs_grid = build_target_geometry(Val(:cubed_sphere), Dict{String, Any}(
+                "Nc" => 4, "regridder_cache_dir" => joinpath(dir, "cr_cache")), Float64)
+            @test_throws ArgumentError regrid_ll_binary_to_cs(
+                ll_path, cs_grid, joinpath(dir, "cs.bin"); FT = Float64)
         end
     end
 

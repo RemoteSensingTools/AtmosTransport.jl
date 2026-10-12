@@ -109,12 +109,16 @@ function main(argv)
     last_month = Date(args["last-month"], dateformat"yyyy-mm")
     reader = MD.TransportBinaryReader(args["binary"]; FT = Float32)
     mesh = MD.load_grid(reader; FT = Float64, Hp = 0).horizontal
+    dry_target = MD.binary_dry_mass_target(reader)
     close(reader)
-    dry_air_mass = AtmosTransport.Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE *
+    dry_target.ps_dry_pa === nothing && error(
+        "the supplied transport binary has no classifiable dry-air mass target")
+    dry_air_mass = dry_target.ps_dry_pa *
                    (4π * mesh.radius^2) / AtmosTransport.Parameters.STANDARD_GRAVITY
     months = month_starts(Date(2021, 12, 1), last_month)
     series_end = DateTime(last_month + Month(1))
-    @info "Target mesh C$(mesh.Nc); $(length(months)) monthly slices from $(first(months)) to $(last(months))"
+    @info "Target mesh C$(mesh.Nc); binary dry-air target=$(dry_target.ps_dry_pa) Pa " *
+          "($(dry_target.source)); $(length(months)) monthly slices from $(first(months)) to $(last(months))"
 
     # -- fossil CO2: zero in the December 2021 spin-up, GridFED monthly after.
     fossil = Array{Float64, 3}[]

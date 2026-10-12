@@ -133,6 +133,14 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     geometry = binary_geometry(reader)
     geometry isa LatLonBinaryGeometry || throw(ArgumentError(
         "LL-to-CS regridding requires a lat-lon binary; got $(grid_type(reader))"))
+    if surface_pressure_basis(reader) isa DrySurfacePressure
+        close(reader)
+        throw(ArgumentError(
+            "regrid_ll_binary_to_cs cannot transform a dry-surface-pressure input: " *
+            "wind recovery and hybrid flux reconstruction require total pressure, " *
+            "and the regrid path does not load humidity. Regenerate the LL source " *
+            "with surface_pressure_basis=TotalSurfacePressure()."))
+    end
     Nx_ll = geometry.Nx
     Ny_ll = geometry.Ny
     Nz = h.nlevel

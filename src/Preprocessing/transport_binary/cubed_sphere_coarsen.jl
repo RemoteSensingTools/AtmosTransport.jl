@@ -199,8 +199,11 @@ function _experimental_coarsen_metadata(reader, output_Nc::Int, ratio::Int)
     pin_enabled = _dry_mass_pin_enabled(raw, basename(reader.path))
     if pin_enabled !== nothing
         metadata["mass_fix_enabled"] = pin_enabled
-        pin_enabled && (metadata["mass_fix_target_ps_dry_pa"] =
-            binary_dry_mass_target(reader).ps_dry_pa)
+        if pin_enabled
+            dry_target = binary_dry_mass_target(reader).ps_dry_pa
+            dry_target === nothing ||
+                (metadata["mass_fix_target_ps_dry_pa"] = dry_target)
+        end
     end
     return metadata
 end

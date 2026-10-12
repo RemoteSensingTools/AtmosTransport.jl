@@ -48,7 +48,8 @@ end
 
 const RG_KWARGS = (FT = Float32, header_bytes = 4096, steps_per_window = 1,
                    source_flux_sampling = :window_start_endpoint,
-                   humidity_sampling = :none, delta_semantics = :none, mass_basis = :dry)
+                   humidity_sampling = :none, delta_semantics = :none, mass_basis = :dry,
+                   surface_pressure_basis = TotalSurfacePressure())
 
 @testset "atomic_publish writes the target through a sibling staging file" begin
     mktempdir() do dir
@@ -305,7 +306,8 @@ end
         vc = HybridSigmaPressure(Float32[0, 1000], Float32[0, 1])
         cs_writer = MD.open_streaming_cs_transport_binary(
             cs_path, 2, 6, 1, 1, vc; planet_radius = AT.Parameters.EARTH_RADIUS,
-            FT = Float32, header_bytes = 4096, steps_per_window = 1, mass_basis = :dry)
+            FT = Float32, header_bytes = 4096, steps_per_window = 1, mass_basis = :dry,
+            surface_pressure_basis = TotalSurfacePressure())
         @test dirname(cs_writer.staging_path) == dir
         Sys.iswindows() ||
             @test startswith(basename(cs_writer.staging_path), "cs.bin.tmp-$(getpid())-")

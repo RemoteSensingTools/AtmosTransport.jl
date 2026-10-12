@@ -28,6 +28,8 @@ using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
 using ...State: CellState, CubedSphereState,
                 AbstractTimeVaryingField, AbstractCubedSphereField,
                 AbstractCSDkgField, PrecomputedCSDkgField,
+                AbstractSurfacePressureBasis, TotalSurfacePressure,
+                DrySurfacePressure,
                 field_value, update_field!, panel_field, eachtracer, ntracers
 using ...MetDrivers: current_time
 using ...Architectures: _two_sum, _neumaier_add, _ledger_residual, launch!
@@ -43,6 +45,7 @@ export AbstractSurfaceFluxCoupling, SplitSurfaceFluxCoupling,
        DiffusiveSurfaceFluxBoundary, uses_diffusive_surface_flux_boundary
 export apply_vertical_diffusion_vmr!
 export fill_dz_hydrostatic_constT!, fill_dz_hydrostatic_virtualT!
+export recover_total_surface_pressure!
 
 include("thomas_solve.jl")
 include("diffusion_kernels.jl")

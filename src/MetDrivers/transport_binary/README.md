@@ -122,13 +122,14 @@ cubed-sphere driver). The parent overview is [`../README.md`](../README.md).
   be finite and positive, and `load_grid` builds the mesh on it.
 - `p_half[k] = A_ifc[k] + B_ifc[k] * ps`, with `k = 1` at the top of the atmosphere
   and `nlevel + 1` interfaces.
-- Every current writer records `surface_pressure_basis = "total"` or `"dry"`;
-  transformations preserve it. A keyless legacy file is inferred once from
+- Every current writer requires typed `surface_pressure_basis` and records
+  `"total"` or `"dry"`; mass basis supplies no default. Transformations
+  preserve it. A keyless legacy file is inferred once from
   window-1 pressure and mass with one warning.
-- `write_transport_binary` defaults to `mass_basis = :dry`. Both streaming openers
-  require `mass_basis` (no default), because the TM5 convection basis stamp is
-  inferred from it; the in-tree preprocessors pass both the mass and
-  surface-pressure bases explicitly.
+- `write_transport_binary` defaults to `mass_basis = :dry`. Every eager and
+  streaming writer requires an explicit typed surface-pressure basis; both
+  streaming openers also require `mass_basis` (no default), because the TM5
+  convection basis stamp is inferred from it.
 - With TM5 convection sections, writers default `tm5_convection_mass_basis` to
   the binary's `mass_basis`. Transformation writers pass the source record
   explicitly; `nothing` preserves a genuinely legacy keyless payload. This

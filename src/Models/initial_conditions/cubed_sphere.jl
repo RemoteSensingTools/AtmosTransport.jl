@@ -86,7 +86,8 @@ function _build_cs_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 
             "init.kind=pressure_layer requires `surface_pressure` " *
             "(NTuple{6, Matrix}) so the target layer can be selected by " *
             "per-column ps. Pass `window.surface_pressure` from the binary."))
-        return _build_cs_pressure_layer_ic(air_mass, grid, cfg, FT, surface_pressure, vmr)
+        return _build_cs_pressure_layer_ic(air_mass, grid, cfg, FT, surface_pressure,
+                                           pressure_basis, qv, vmr)
     elseif kind === :cs_native
         return _build_cs_native_ic(grid, air_mass, cfg, FT)
     elseif _is_file_init_kind(kind)
@@ -161,11 +162,9 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
     vmr = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), CS_PANEL_COUNT)
     src_q = Vector{FT}(undef, Nlev_src)
     src_qv = source_qv_levels === nothing ? nothing : similar(src_q)
-    target_dp_dry = Vector{Float64}(undef, Nz)
     src_p = Vector{Float64}(undef, length(source.ap))
     cumulative = similar(src_p)
-    Hp = mesh.Hp
-    g = Float64(gravity(grid))
+    dry_cumulative = similar(src_p)
     source.needs_vinterp &&
         _warn_surface_pressure_approximation(pressure_basis, target_qv_panels)
 
@@ -179,14 +178,10 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
                             @view(target_qv_panels[p][i, j, :])
                 ps_total = _total_surface_pressure(
                     pressure_basis, ps_tgt_panels[p][i, j], A_tgt, B_tgt, target_qv)
-                scale = g / Float64(cell_area(mesh, i, j))
-                _target_dry_pressure!(
-                    target_dp_dry, @view(air_mass[p][i + Hp, j + Hp, :]),
-                    scale, mass_basis, target_qv)
                 _remap_hybrid_profile!(@view(vmr[p][i, j, :]), src_q, src_qv,
                                        source.ap, source.bp,
-                                       A_tgt, B_tgt, ps_total, target_dp_dry,
-                                       src_p, cumulative)
+                                       A_tgt, B_tgt, ps_total,
+                                       src_p, cumulative, dry_cumulative)
             else
                 _copy_profile!(@view(vmr[p][i, j, :]), src_q)
             end
@@ -296,6 +291,8 @@ function _build_cs_pressure_layer_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}}
                                       grid::AtmosGrid{<:CubedSphereMesh},
                                       cfg, ::Type{FT},
                                       surface_pressure::NTuple{6, <:AbstractMatrix},
+                                      pressure_basis::AbstractSurfacePressureBasis,
+                                      qv::Union{Nothing, NTuple{6}},
                                       vmr = nothing) where FT
     mesh = grid.horizontal
     Nc   = mesh.Nc
@@ -315,6 +312,9 @@ function _build_cs_pressure_layer_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}}
         (FT(0) < psurf_fraction <= FT(1)) || throw(ArgumentError(
             "init.kind=pressure_layer requires 0 < psurf_fraction <= 1; got $(psurf_fraction)"))
     end
+    qv === nothing || all(p -> size(qv[p]) == (Nc, Nc, Nz), 1:CS_PANEL_COUNT) ||
+        throw(DimensionMismatch("CS target humidity panels must each have shape ($Nc, $Nc, $Nz)"))
+    !lowest_layer && _warn_surface_pressure_approximation(pressure_basis, qv)
     total_molecules > 0 || throw(ArgumentError(
         "init.kind=pressure_layer requires total_molecules > 0; got $(total_molecules)"))
 
@@ -331,7 +331,9 @@ function _build_cs_pressure_layer_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}}
         for p in 1:CS_PANEL_COUNT
             ps = surface_pressure[p]
             for j in 1:Nc, i in 1:Nc
-                ps_col = Float64(ps[i, j])
+                qv_col = qv === nothing ? nothing : @view(qv[p][i, j, :])
+                ps_col = _total_surface_pressure(
+                    pressure_basis, ps[i, j], A, B, qv_col)
                 target_p = psurf_fraction * ps_col
                 k_best, dp_best = 1, Inf
                 for k in 1:Nz

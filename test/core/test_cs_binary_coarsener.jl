@@ -41,6 +41,7 @@ using .AtmosTransport.Preprocessing: coarsen_nested_cs_transport_binary
                 include_surface = true,
                 include_precomputed_dkg = true,
                 mass_basis = :dry,
+                surface_pressure_basis = DrySurfacePressure(),
                 extra_header)
             AtmosTransport.MetDrivers.write_streaming_cs_window!(writer, window, source_Nc, np)
             AtmosTransport.MetDrivers.set_streaming_steps_per_window_schedule!(writer, [3])

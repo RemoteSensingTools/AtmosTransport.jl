@@ -39,6 +39,26 @@ const PressureIC = AtmosTransport.Models.InitialConditionIO
             @test isapprox(molecules, 1e28; rtol=4eps(FT))
         end
 
+        # The pressure selector must use total hybrid-coordinate pressure even
+        # when the binary stores dry column pressure.
+        qv = ntuple(_ -> reshape(repeat(FT[0.001, 0.004, 0.012, 0.02], Nc * Nc),
+                                 Nc, Nc, Nz), 6)
+        ps_dry = ntuple(p -> FT[
+            sum((1 - qv[p][i, j, k]) *
+                ((A[k + 1] - A[k]) + (B[k + 1] - B[k]) * ps[p][i, j])
+                for k in 1:Nz)
+            for i in 1:Nc, j in 1:Nc], 6)
+        basis_cfg = Dict{String, Any}("kind" => "pressure_layer",
+                                      "psurf_fraction" => 0.72,
+                                      "total_molecules" => 1e28)
+        from_total = PressureIC.build_initial_mixing_ratio(
+            air, grid, basis_cfg; surface_pressure = ps,
+            pressure_basis = TotalSurfacePressure(), qv)
+        from_dry = PressureIC.build_initial_mixing_ratio(
+            air, grid, basis_cfg; surface_pressure = ps_dry,
+            pressure_basis = DrySurfacePressure(), qv)
+        @test from_dry == from_total
+
         cfg = Dict{String,Any}("kind" => "pressure_layer", "total_molecules" => 1e28)
         @test_throws ArgumentError PressureIC.build_initial_mixing_ratio(air, grid, cfg)
         for fraction in (0, -0.1, 1.1, NaN)

@@ -201,9 +201,9 @@ function _pin_era5_endpoint_mass!(::PurePressureMergePinCompatibility,
                                   m_dry, _native_qv, merged_qv,
                                   _native_pin_sensitivity, _merged_pin_sensitivity,
                                   plan, cell_areas, gravity, target_kg)
-    # The shipped L117 plan merges only dB=0 layers, for which the correction
-    # is identically zero. Retain the historical merged-q arithmetic on its
-    # singleton hybrid layers so existing golden payloads remain bit-identical.
+    # Pure-pressure-only merges have zero sensitivity in every merged dB=0
+    # group. Keep the direct merged-q path for the remaining singleton hybrid
+    # layers so this no-op merge class retains its established rounding.
     return _pin_cs_global_air_mass!(m_dry, merged_qv, cell_areas, gravity,
                                     target_kg, diff(plan.merged_vc.B))
 end

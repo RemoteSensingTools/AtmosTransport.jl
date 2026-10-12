@@ -196,7 +196,8 @@ end
         write_transport_binary(path, grid, [window];
                                 FT = FT,
                                 source_flux_sampling = :window_start_endpoint,
-                                mass_basis = :dry)
+                                mass_basis = :dry,
+                                surface_pressure_basis = TotalSurfacePressure())
 
         reader = TransportBinaryReader(path; FT = FT)
         try
@@ -232,7 +233,8 @@ end
         write_transport_binary(path, grid, [window];
                                 FT = FT,
                                 source_flux_sampling = :window_start_endpoint,
-                                mass_basis = :dry)
+                                mass_basis = :dry,
+                                surface_pressure_basis = TotalSurfacePressure())
 
         reader = TransportBinaryReader(path; FT = FT)
         try
@@ -261,7 +263,8 @@ end
         write_transport_binary(path, grid, [window];
                                 FT = FT,
                                 source_flux_sampling = :window_start_endpoint,
-                                mass_basis = :dry)
+                                mass_basis = :dry,
+                                surface_pressure_basis = TotalSurfacePressure())
 
         driver = TransportBinaryDriver(path;
                                         FT = FT,
