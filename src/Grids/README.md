@@ -129,4 +129,4 @@ must sit on the sphere of the mesh it is regridded to. The contract:
   - [`../../test/core/test_latlon_explicit_faces.jl`](../../test/core/test_latlon_explicit_faces.jl)
   - [`../../test/core/test_reduced_gaussian_mesh.jl`](../../test/core/test_reduced_gaussian_mesh.jl)
   - [`../../test/core/test_basis_explicit_core.jl`](../../test/core/test_basis_explicit_core.jl)
-  - [`../../test/orphan/test_cubed_sphere_runtime.jl`](../../test/orphan/test_cubed_sphere_runtime.jl)
+  - [`../../test/core/test_cubed_sphere_runtime.jl`](../../test/core/test_cubed_sphere_runtime.jl)

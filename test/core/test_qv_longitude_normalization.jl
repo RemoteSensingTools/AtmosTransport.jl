@@ -21,9 +21,8 @@ Codex findings #2 + #3 (regrid-bug audit, 2026-04-28):
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
-using .AtmosTransport.Preprocessing: _normalize_lon_to_centered, _interpolate_ll_qv!
+using AtmosTransport
+using AtmosTransport.Preprocessing: _normalize_lon_to_centered, _interpolate_ll_qv!
 
 @testset "QV longitude normalization (Codex finding #2)" begin
     Nx, Ny, Nz = 8, 4, 2

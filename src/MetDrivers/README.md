@@ -118,11 +118,11 @@ methods report configured source support without reading meteorological files.
   [`../../docs/20_RUNTIME_FLOW.md`](../../docs/20_RUNTIME_FLOW.md)
 - Tests:
   - [`../../test/real_data/test_transport_binary_reader.jl`](../../test/real_data/test_transport_binary_reader.jl)
-  - [`../../test/orphan/test_run_transport_binary_recipe.jl`](../../test/orphan/test_run_transport_binary_recipe.jl)
+  - [`../../test/core/test_run_transport_binary_recipe.jl`](../../test/core/test_run_transport_binary_recipe.jl)
   - [`../../test/core/test_binary_path_expander.jl`](../../test/core/test_binary_path_expander.jl)
   - [`../../test/core/test_atomic_files.jl`](../../test/core/test_atomic_files.jl) and
     [`../../test/core/test_persistence_hardening.jl`](../../test/core/test_persistence_hardening.jl)
     (writers publish only complete files, with mode `0o666 & ~umask`)
   - [`../../test/real_data/test_dry_flux_interface.jl`](../../test/real_data/test_dry_flux_interface.jl)
   - [`../../test/orphan/test_current_time.jl`](../../test/orphan/test_current_time.jl)
-  - [`../../test/orphan/test_cubed_sphere_runtime.jl`](../../test/orphan/test_cubed_sphere_runtime.jl)
+  - [`../../test/core/test_cubed_sphere_runtime.jl`](../../test/core/test_cubed_sphere_runtime.jl)

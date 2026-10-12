@@ -4,8 +4,11 @@
 # Codex's directive: this test is *deterministic* — it constructs
 # fixture columns with the failure-mode geometries directly, rather
 # than sampling from a production binary. The test gates the
-# `icltop_eff = min(icllfs, max(icltop, 2) - 1)` formula and the
-# active-window LU implementation.
+# `icltop_eff = min(icllfs, max(icltop, 2) - 1)` formula
+# (`_tm5_effective_cloud_top` in src/Adjoints/ConvectionAdjoint.jl; the
+# forward `_tm5_solve_column!` in src/Operators/Convection/tm5_column_solve.jl
+# writes the same expression inline) and the active-window LU
+# implementation.
 #
 # Assertions per fixture:
 # 1. Upper rows are identity:  conv1[k, j] == (k == j) for k ∈ [1, icltop_eff-1].
@@ -20,19 +23,14 @@
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport.Operators.Convection: _tm5_diagnose_cloud_dims,
+using AtmosTransport.Operators.Convection: _tm5_diagnose_cloud_dims,
                                               _tm5_build_conv1!
+# The active-window pivot `icltop_eff` used by the TM5 LU solves.
+# `max(icltop, 2)` guards `icltop = 1` (no skip possible); a value `< 1`
+# means no skip (already handled by the LU loop).
+using AtmosTransport.Adjoints: _tm5_effective_cloud_top
 
 const FT = Float32
-
-"""
-Compute the post-Commit-7 active-window pivot per the corrected
-formula. `max(icltop, 2)` guards `icltop = 1` (no skip possible).
-A return value `< 1` means no skip (already handled by the LU loop).
-"""
-@inline _icltop_eff(icltop::Integer, icllfs::Integer) =
-    min(Int(icllfs), max(Int(icltop), 2) - 1)
 
 """
 Build a column with prescribed `(icltop_target, icllfs_target)`.
@@ -92,7 +90,7 @@ function _build_and_check(name::String; Nz::Int,
                       f = conv1_alias, amu = amu_alias, amd = amd_alias)
     @test conv1_alias == conv1
 
-    icltop_eff = _icltop_eff(icltop, icllfs)
+    icltop_eff = _tm5_effective_cloud_top(icltop, icllfs)
     upper_ok = true
     for k in 1:max(0, icltop_eff - 1)
         for j in 1:Nz

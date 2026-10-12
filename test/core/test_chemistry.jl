@@ -21,9 +21,8 @@ Validates `apply!(state, meteo, grid, op, dt; workspace)` for the three
 
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
-using .AtmosTransport.State: field_value
+using AtmosTransport
+using AtmosTransport.State: field_value
 
 # Try to load CUDA; skip GPU tests gracefully if unavailable
 const HAS_GPU_CHEM = try

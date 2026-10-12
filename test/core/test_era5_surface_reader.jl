@@ -4,7 +4,7 @@ using Test
 using Dates
 using NCDatasets
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
+import AtmosTransport
 
 const _fill_masked_surface = AtmosTransport.Preprocessing._fill_masked_surface
 

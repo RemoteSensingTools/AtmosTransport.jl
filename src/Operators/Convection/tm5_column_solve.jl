@@ -254,7 +254,7 @@ function _tm5_build_conv1!(conv1::AbstractMatrix{FT},
     #
     # Rows above `icltop_eff` are provably identity rows and the active
     # lower-left quadrant is provably zero
-    # (`test/test_tm5_sparsity_above_icltop.jl`). Write those explicitly and
+    # (`test/core/test_tm5_sparsity_above_icltop.jl`). Write those explicitly and
     # only assemble the lower-right active block. This keeps the full-matrix
     # public contract while avoiding O(Nz²) dead work for shallow convection.
     @inbounds for k_atm in 1:(k_lo - 1)
@@ -300,7 +300,7 @@ function _tm5_lu!(conv1::AbstractMatrix{FT},
     Nz == 0 && return nothing
     # Active-window LU: rows above `icltop_eff` are
     # pure identity by `_tm5_build_conv1!`'s structure (proven by
-    # `test/test_tm5_sparsity_above_icltop.jl`), and the lower-left
+    # `test/core/test_tm5_sparsity_above_icltop.jl`), and the lower-left
     # quadrant `(k ≥ icltop_eff, j < icltop_eff)` is zero. So the LU
     # factorization is block-diagonal — only the lower-right
     # `(Nz - icltop_eff + 1)`-by-`(Nz - icltop_eff + 1)` block needs
@@ -582,7 +582,7 @@ function _tm5_solve_column!(rm_col::AbstractMatrix{FT},
     # Active-window LU. `icltop_eff` is the smallest
     # row index with any non-identity entry, derived from the builder
     # in `_tm5_build_conv1!`. Proven correct by
-    # `test/test_tm5_sparsity_above_icltop.jl`. The `max(icltop, 2)`
+    # `test/core/test_tm5_sparsity_above_icltop.jl`. The `max(icltop, 2)`
     # guard keeps the formula well-defined at icltop = 1 (no skip).
     icltop_eff = min(Int(icllfs), max(Int(icltop), 2) - 1)
 

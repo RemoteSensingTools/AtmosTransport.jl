@@ -61,9 +61,9 @@ ULP-bounded tolerances that vary by scheme and step count:
 | Slopes, 4 steps | `16 * eps(FT)` per cell |
 | PPM, 4 steps | `16 * eps(FT)` per cell |
 
-`LinRoodPPMScheme` is not in this CPU/GPU agreement matrix; it has a
-forward runtime coverage in the opt-in orphan test
-`test/orphan/test_cubed_sphere_runtime.jl`, but no per-step GPU comparison.
+`LinRoodPPMScheme` is not in this CPU/GPU agreement matrix; it has
+forward CPU runtime coverage in `test/core/test_cubed_sphere_runtime.jl`,
+but no per-step GPU comparison.
 
 The CPU/GPU agreement check runs ONLY when CUDA.jl is loaded; it's
 gated by `HAS_GPU` at the top of the test file. CI runs the CPU

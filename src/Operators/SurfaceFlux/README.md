@@ -140,10 +140,10 @@ the device; now each tracer holds a few 0.19 MB slices there.
   [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)
 - Tests:
   - [`../../../test/orphan/test_surface_flux_operator.jl`](../../../test/orphan/test_surface_flux_operator.jl)
-  - [`../../../test/orphan/test_transport_model_emissions.jl`](../../../test/orphan/test_transport_model_emissions.jl)
-  - [`../../../test/orphan/test_emissions_palindrome.jl`](../../../test/orphan/test_emissions_palindrome.jl)
+  - [`../../../test/core/test_transport_model_emissions.jl`](../../../test/core/test_transport_model_emissions.jl)
+  - [`../../../test/core/test_emissions_palindrome.jl`](../../../test/core/test_emissions_palindrome.jl)
   - [`../../../test/core/test_driven_simulation.jl`](../../../test/core/test_driven_simulation.jl)
-  - [`../../../test/orphan/test_cubed_sphere_runtime.jl`](../../../test/orphan/test_cubed_sphere_runtime.jl)
+  - [`../../../test/core/test_cubed_sphere_runtime.jl`](../../../test/core/test_cubed_sphere_runtime.jl)
   - [`../../../test/core/test_timevarying_surface_flux.jl`](../../../test/core/test_timevarying_surface_flux.jl)
   - [`../../../test/core/test_surface_flux_integrals.jl`](../../../test/core/test_surface_flux_integrals.jl)
   - [`../../../test/core/test_surface_flux_window_buffer.jl`](../../../test/core/test_surface_flux_window_buffer.jl)

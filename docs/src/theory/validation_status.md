@@ -16,7 +16,7 @@ The terms in their canonical sense:
   shared kernel test matrix in `test/core/test_advection_kernels.jl`:
   uniform-invariance, mass-budget, and CPU/GPU-agreement tests all
   run for those three. `LinRoodPPMScheme` has a CPU CS runtime smoke test in
-  the opt-in `test/orphan/test_cubed_sphere_runtime.jl`, plus core kernel and
+  `test/core/test_cubed_sphere_runtime.jl`, plus core kernel and
   adjoint tests, but is not covered by the same per-step CPU/GPU matrix. The replay gate enforces the
   discrete-conservation contract on every preprocessor write and
   every opt-in runtime load, regardless of scheme. See
