@@ -63,6 +63,9 @@ Base.@kwdef struct ERA5GRIBSettings{flavor} <: AbstractERA5GRIBSettings
     face_fluxes           :: Symbol = :panel_average
     face_interpolation    :: Symbol = :linear
     wind_regrid           :: Symbol = :scalar
+    # Pressure thickness multiplying winds in the horizontal face fluxes.
+    # Dry mass is the transported quantity, so dry thickness is the default.
+    flux_thickness        :: Symbol = :dry_mass
     # Time sampling of the hourly window fluxes: the winds at the window start
     # (`:window_start`, historical) or the mean of the face fluxes at the start
     # and end of the window (`:window_mean`, trapezoidal rule for ∫ u Δp dt).

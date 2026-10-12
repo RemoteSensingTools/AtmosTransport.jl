@@ -216,7 +216,7 @@ function _process_day_geos_cs_unified(date::Date,
                          adjacent_omega = _uses_omega(cm_closure))
     driver_started = false
     inner_writer = nothing
-    tmp_path = out_path * ".tmp"
+    tmp_path = ""
 
     try
         nw = windows_per_day(reader)
@@ -248,7 +248,7 @@ function _process_day_geos_cs_unified(date::Date,
         @info "  Level orientation: $(reader.handles.orientation)  (next-day endpoint: $(_geos_next_endpoint_available(reader.handles)))"
 
         mkpath(dirname(out_path))
-        isfile(tmp_path) && rm(tmp_path; force = true)
+        tmp_path = _open_preprocessing_staging(out_path)
 
         # The header records it and the gate uses it.
         write_replay_on = write_replay_check

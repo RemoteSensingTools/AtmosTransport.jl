@@ -754,7 +754,7 @@ calls the unified `process_day` preprocessing entry point. Source-specific
 `[preprocessing]` keys live in the met-source descriptor
 (`config/met_sources/*.toml`); the flux-construction keys of the MERRA-2 and
 ERA5 N320 sources (`column_balance_weights`, `face_fluxes`, `face_lengths`,
-`face_interpolation`, `wind_regrid`, and for MERRA-2 `flux_thickness`) and the
+`face_interpolation`, `wind_regrid`, and `flux_thickness`) and the
 `column_balance_weights` of the GEOS sources are described in
 [Data sources](data_sources.md).
 

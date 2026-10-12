@@ -9,6 +9,18 @@ const FACE_LENGTH_KINDS        = (:cell_centerline, :edge)
 const FACE_FLUX_KINDS          = (:panel_average, :vector, :line_integral)
 const FACE_INTERPOLATION_KINDS = (:linear, :cubic, :fv3)
 const WIND_REGRID_KINDS        = (:scalar, :cartesian)
+const FLUX_THICKNESS_KINDS     = (:moist, :dry_mass)
+
+struct MoistFluxThickness end
+struct DryMassFluxThickness end
+_flux_thickness(kind::Symbol) =
+    (moist = MoistFluxThickness(), dry_mass = DryMassFluxThickness())[kind]
+
+function _validate_flux_thickness(kind::Symbol, source::AbstractString)
+    kind in FLUX_THICKNESS_KINDS || throw(ArgumentError(
+        "$source flux_thickness must be one of $(join(FLUX_THICKNESS_KINDS, ", ")); got :$kind"))
+    return kind
+end
 
 # Reject unknown flux-construction options; `source` names the met source in errors.
 function _validate_flux_construction(s, source::AbstractString)

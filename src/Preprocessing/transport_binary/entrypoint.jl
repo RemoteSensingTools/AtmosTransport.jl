@@ -411,6 +411,8 @@ function _process_day_native(cfg::AbstractDict;
     ensure_preprocessor_pair_supported(grid, settings; context = "native-source")
 
     dates = _resolve_dates_native(cfg; day_override, start_date, end_date)
+    terminal_day_kwargs = settings isa Union{AbstractERA5GRIBSettings, MERRA2Settings} ?
+        (; configured_last_day = last(dates)) : (;)
 
     @info @sprintf("Preprocessor: %s  → %s  Nz=%d  FT=%s  %d day(s)",
                    typeof(settings), typeof(grid),
@@ -449,13 +451,13 @@ function _process_day_native(cfg::AbstractDict;
             cm_closure = cm_closure,
             smooth_iters = smooth_iters,
             omega_regularization = omega_regularization,
+            terminal_day_kwargs...,
         )
         return process_day(d, day_grid, settings, vertical; day_kwargs...)
     end
 
-    threaded = Threads.nthreads() > 1 && length(dates) > 1 &&
-               supports_day_threading(settings) && !chain_mass &&
-               !(global_mass_pin && !isfinite(configured_global_mass_target_kg))
+    threaded = _day_threading_enabled(settings, length(dates), chain_mass,
+                                      global_mass_pin, configured_global_mass_target_kg)
     # When the day loop itself is threaded, the inner OMEGA reconstruction
     # per-level Poisson loop must run SERIAL so day-workers don't each re-grab
     # the whole pool (oversubscription). In the single-day-per-process (`--day`)
@@ -503,6 +505,7 @@ function _process_day_native(cfg::AbstractDict;
                 cm_closure = cm_closure,
                 smooth_iters = smooth_iters,
                 omega_regularization = omega_regularization,
+                terminal_day_kwargs...,
             )
             result = process_day(d, day_grid, settings, vertical; day_kwargs...)
             seed_m = get(result, :final_m, nothing)

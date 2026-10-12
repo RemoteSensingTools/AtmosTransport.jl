@@ -235,6 +235,11 @@ interior_divergence(am, bm, Nc) =
         vc = (A = [0.0, 1000.0, 3000.0, 0.0], B = [0.0, 0.0, 0.2, 1.0])
         P._fill_flux_thickness!(P.MoistFluxThickness(), x, ps, m, vc, mesh, Nc, Nz)
         @test dp[1][1, 1, :] ≈ [1000.0, 2000.0 + 0.2e5, 0.8e5 - 3000.0]
+
+        qv = ntuple(_ -> fill(0.1, Nc, Nc, Nz), 6)
+        pipe = (c180_fields = (ps = ps, qv = qv),)
+        P._fill_era5_flux_thickness!(P.DryMassFluxThickness(), x, pipe, vc, Nc, Nz)
+        @test dp[1][1, 1, :] ≈ 0.9 .* [1000.0, 2000.0 + 0.2e5, 0.8e5 - 3000.0]
     end
 
     @testset "winds regridded as vectors near the poles" begin
@@ -459,6 +464,11 @@ interior_divergence(am, bm, Nc) =
                                          [0.0, 0.0], [0.0, 1.0], 9.80665, 450.0, 1)
             @test all(p -> am[p][:, :, k] ≈ Float32.(a1[p][:, :, 1]) && bm[p][:, :, k] ≈ Float32.(b1[p][:, :, 1]), 1:6)
         end
+        moist_am, moist_bm = deepcopy(am), deepcopy(bm)
+        dry_dp = 0.9 .* [abs(A[k + 1] - A[k] + (B[k + 1] - B[k]) * ps[c])
+                         for c in eachindex(ps), k in 1:2]
+        P.line_integral_face_fluxes!(am, bm, li, u, v, dry_dp, 9.80665, 450.0, 2)
+        @test all(p -> am[p] ≈ 0.9 .* moist_am[p] && bm[p] ≈ 0.9 .* moist_bm[p], 1:6)
     end
 
     @testset "flux options in the met-source TOML" begin
@@ -472,17 +482,20 @@ interior_divergence(am, bm, Nc) =
             @test_throws ArgumentError P.load_met_settings(write_toml("bad.toml", bad); root_dir = dir)
             wrong = replace(merra, "[preprocessing]" => "[preprocessing]\nface_fluxes = \"spline\"")
             @test_throws ArgumentError P.load_met_settings(write_toml("wrong.toml", wrong); root_dir = dir)
-            # ERA5 N320 takes the shared flux-construction keys, but not the MERRA-2 flux thickness
+            # ERA5 N320 takes the shared flux-construction keys, including dry
+            # thickness by default (with moist available for reproducing old files).
             era = write_toml("era.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nface_fluxes = \"vector\"\n" *
                                          "face_interpolation = \"fv3\"\nwind_regrid = \"cartesian\"\n" *
                                          "column_balance_weights = \"hybrid_b\"\n")
             e = P.load_met_settings(era; root_dir = dir)
             @test (e.face_fluxes, e.face_interpolation, e.wind_regrid, e.column_balance_weights) ==
                   (:vector, :fv3, :cartesian, :hybrid_b)
-            @test P.load_met_settings(write_toml("era0.toml", "[source]\nname = \"ERA5-N320\"\n"); root_dir = dir).face_fluxes ===
-                  :panel_average
-            era_dry = write_toml("era_dry.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nflux_thickness = \"dry_mass\"\n")
-            @test_throws ArgumentError P.load_met_settings(era_dry; root_dir = dir)
+            era0 = P.load_met_settings(write_toml("era0.toml", "[source]\nname = \"ERA5-N320\"\n"); root_dir = dir)
+            @test (era0.face_fluxes, era0.flux_thickness) == (:panel_average, :dry_mass)
+            era_moist = write_toml("era_moist.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nflux_thickness = \"moist\"\n")
+            @test P.load_met_settings(era_moist; root_dir = dir).flux_thickness === :moist
+            era_thick_bad = write_toml("era_thick_bad.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nflux_thickness = \"unknown\"\n")
+            @test_throws ArgumentError P.load_met_settings(era_thick_bad; root_dir = dir)
             era_bad = write_toml("era_bad.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nwind_regrid = \"bilinear\"\n")
             @test_throws ArgumentError P.load_met_settings(era_bad; root_dir = dir)
             # window-mean fluxes and line integrals are ERA5 N320 options

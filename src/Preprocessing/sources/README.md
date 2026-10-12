@@ -45,7 +45,7 @@ writers that turn these fields into transport binaries live in
 | Level order | detected from `DELP`, flipped to top-down | canonical GRIB order is top-down | detected from `QV`, flipped to top-down |
 | Horizontal flux | `MFXC`/`MFYC` divided by `mass_flux_dt` | built from winds by the writer | built from winds by the writer |
 | Fills `RawWindow` | yes (`read_window!`) | no | no |
-| `supports_day_threading` | `false` | `true` | `false` |
+| `supports_day_threading` | `false` | `false` | `false` |
 
 ## File Map
 
@@ -101,8 +101,9 @@ writers that turn these fields into transport binaries live in
 - GEOS `mass_flux_dt` defaults to `450` s; the loader accepts
   `[preprocessing].mass_flux_dt_seconds` in 100–3600 and warns outside 400–500.
 - The last GEOS window needs the next day's `CTM_I1` endpoint and errors
-  without it; ERA5 N320 and MERRA-2 fall back to a zero-tendency final window
-  with a warning.
+  without it; ERA5 N320 and MERRA-2 fall back with a warning to a zero-tendency
+  final window only on the configured last day, and error if the endpoint is
+  missing earlier.
 - The loader rejects options a source does not implement, for example
   `arco_surface_pressure` on GEOS, `include_vdiff_fields` on ERA5 N320, and
   `include_tm5_diffusion` on MERRA-2. ERA5 `include_tm5_diffusion` requires

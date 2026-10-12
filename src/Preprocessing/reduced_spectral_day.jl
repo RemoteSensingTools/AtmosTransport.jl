@@ -468,10 +468,9 @@ function process_day(date::Date,
         include_flux_delta   = false,
     )
 
-    # Stage to `.tmp`; the driver renames it to `bin_path` after every gate
+    # Stage to a unique sibling file; the driver atomically publishes it after every gate
     # passed and deletes it on failure, so a failed day never touches `bin_path`.
-    tmp_path = bin_path * ".tmp"
-    rm(tmp_path; force = true)
+    tmp_path = _open_preprocessing_staging(bin_path)
     metadata = Dict{String, Any}(
         "preprocessor"     => "preprocess_transport_binary.jl",
         "source_type"      => "era5_spectral",

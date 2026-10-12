@@ -86,7 +86,8 @@ using NCDatasets
 
 using ..ConfigChecks: config_bool as _config_bool, check_known_keys
 using ..LogLevels: log_level, with_log_level
-using ..AtomicFiles: atomic_publish
+using ..AtomicFiles: atomic_publish, open_atomic_staging,
+                     commit_atomic_staging, abandon_atomic_staging
 using GRIB
 using SHA
 using FastGaussQuadrature: gausslegendre
@@ -94,6 +95,16 @@ using FastGaussQuadrature: gausslegendre
 # Re-export parent module types we need
 import ..expand_data_path
 import ..source_revision
+
+# Reserve the package-standard unique sibling staging path for preprocessing
+# writers whose existing APIs open a path themselves. Publication and cleanup
+# are handled by the writer adapters through `commit_atomic_staging` /
+# `abandon_atomic_staging`.
+function _open_preprocessing_staging(path::AbstractString)
+    staging, io = open_atomic_staging(path)
+    close(io)
+    return staging
+end
 # Source settings and binary readers extend the same public capability queries.
 import ..MetDrivers: has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base
 using ..Architectures: CPU

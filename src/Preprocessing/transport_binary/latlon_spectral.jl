@@ -124,7 +124,7 @@ function promote_streaming_binary!(writer::LatLonDeferredBinaryWriter)
     writer.promoted && return writer.final_path
     close_streaming_binary!(writer)
     if writer.path != writer.final_path && isfile(writer.path)
-        mv(writer.path, writer.final_path; force = true)
+        commit_atomic_staging(writer.path, writer.final_path)
     end
     writer.promoted = true
     return writer.final_path
@@ -132,8 +132,11 @@ end
 
 function quarantine_streaming_binary!(writer::LatLonDeferredBinaryWriter)
     writer.promoted && return writer.path
-    close_streaming_binary!(writer)
-    isfile(writer.path) && rm(writer.path; force = true)
+    try
+        close_streaming_binary!(writer)
+    finally
+        abandon_atomic_staging(writer.path)
+    end
     return writer.path
 end
 
@@ -497,8 +500,7 @@ function process_day(date::Date,
     @info "  Computing spectral -> gridpoint -> merged for $Nt windows..."
 
     try
-        tmp_path = bin_path * ".tmp"
-        rm(tmp_path; force = true)
+        tmp_path = _open_preprocessing_staging(bin_path)
         writer = LatLonDeferredBinaryWriter(
             tmp_path, header, workspace, settings, FT,
             mass_basis_from_symbol(Symbol(settings.mass_basis));

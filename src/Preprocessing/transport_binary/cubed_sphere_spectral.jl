@@ -462,12 +462,11 @@ function process_day(date::Date,
     mkpath(settings.out_dir)
     bin_path = output_binary_path(date, settings.out_dir, settings.min_dp, FT)
 
-    # Stage to `.tmp` so any mid-loop exception (replay failure, IO error,
+    # Stage to a unique sibling file so any mid-loop exception (replay failure, IO error,
     # quarantined positivity violation) never leaves a partial binary at
     # `bin_path`. Promote `tmp_path -> bin_path` only after every contract
     # gate passes (or after a warning-only positivity summary returns).
-    tmp_path = bin_path * ".tmp"
-    isfile(tmp_path) && rm(tmp_path; force = true)
+    tmp_path = _open_preprocessing_staging(bin_path)
 
     workspace = allocate_window_workspace(grid, settings, vertical, spec, date, FT;
                                           cache = run_cache)

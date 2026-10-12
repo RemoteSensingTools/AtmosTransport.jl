@@ -51,8 +51,9 @@ to the source `Nc` or an integer divisor of it (nested block coarsening).
 
 The entry point resolves configuration once and calls `process_day` per date.
 Native sources run days serially, passing `final_m` and `global_mass_target_kg`
-forward; days run on threads only when `supports_day_threading(settings)` (ERA5
-N320), `chain_mass = false`, and an enabled mass pin has a fixed target.
+forward. The driver can thread days only when `supports_day_threading(settings)`,
+`chain_mass = false`, and an enabled mass pin has a fixed target; ERA5 N320
+currently returns `false` because its inner kernels use static thread schedules.
 
 ERA5 spectral to LL, RG, or CS:
 
@@ -125,7 +126,7 @@ Files directly in this folder; the subfolders have their own READMEs
 - [`cs_wind_rotation.jl`](cs_wind_rotation.jl) — east/north ↔ panel-local wind rotation, CS face fluxes → cell-center winds
 - [`cs_native_fluxes.jl`](cs_native_fluxes.jl) — `geos_native_to_face_flux!` with panel halo sync, `compute_cs_cm_pressure_fixer!`
 - [`face_line_integrals.jl`](face_line_integrals.jl) — `LineIntegralFaceFluxes` (cube-face fluxes integrated from N320 winds)
-- [`flux_construction.jl`](flux_construction.jl) — `[preprocessing]` flux options (`face_fluxes`, `face_lengths`, `face_interpolation`, `wind_regrid`) for MERRA-2 and ERA5 N320
+- [`flux_construction.jl`](flux_construction.jl) — `[preprocessing]` flux options (`face_fluxes`, `face_lengths`, `face_interpolation`, `wind_regrid`, `flux_thickness`) for MERRA-2 and ERA5 N320
 - [`era5_physics_binary.jl`](era5_physics_binary.jl) — ERA5 physics NetCDF to flat BIN converter and reader
 - [`era5_surface_reader.jl`](era5_surface_reader.jl) — ERA5 single-level PBL fields (`open_era5_surface_reader`, `load_era5_surface_window`)
 - [`tm5_convection_conversion.jl`](tm5_convection_conversion.jl) — `ec2tm!`, `ec2tm_from_rates!` (ECMWF to TM5 entu/detu/entd/detd)
@@ -177,7 +178,8 @@ Files directly in this folder; the subfolders have their own READMEs
   direction's outflow against `m`. With
   `require_substep_positivity = true` (default) a violation errors and deletes
   the staged file; with `false` it is kept with a warning.
-- Outputs are staged as `<out>.tmp` and renamed after the gates.
+- Outputs use unique sibling staging files from `AtomicFiles` and are
+  atomically published after the gates.
 - GEOS `mass_flux_dt` defaults to `450` s (`[preprocessing].mass_flux_dt_seconds`
   must be 100–3600, warns outside 400–500); the GEOS writer uses
   `round(dt_met_seconds / mass_flux_dt)` source substeps per window.

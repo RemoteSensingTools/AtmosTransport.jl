@@ -272,12 +272,11 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     vc_merged = HybridSigmaPressure(A_ifc, B_ifc)
 
     # --- Open streaming CS binary writer ---
-    # Stage to `out_path.tmp` so the positivity gate (final step) can
+    # Stage to a unique sibling file so the positivity gate (final step) can
     # error without leaving a bad binary at `out_path`. Renamed to the
     # final name on success.
     mkpath(dirname(out_path))
-    tmp_path = out_path * ".tmp"
-    isfile(tmp_path) && rm(tmp_path)
+    tmp_path = _open_preprocessing_staging(out_path)
     inner_writer = open_streaming_cs_transport_binary(
         tmp_path, Nc, CS_PANEL_COUNT, Nz, Nt, vc_merged;
         FT=FT,
@@ -615,7 +614,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         @info "  Write-time replay gate: $replay_msg"
     end
 
-    # Single contract summary — errors (and deletes the staged .tmp) on
+    # Single contract summary — errors (and deletes the staging file) on
     # require_substep_positivity=true if the gate failed, otherwise warns.
     summarize_cs_positivity_status(worst_positivity;
                                    cfl_limit = positivity_cfl_limit,

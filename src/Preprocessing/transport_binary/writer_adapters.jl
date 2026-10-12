@@ -160,7 +160,7 @@ function promote_streaming_binary!(writer::AbstractBinaryWriter)
     writer.promoted && return writer.final_path
     close_streaming_binary!(writer)
     if writer.path != writer.final_path
-        mv(writer.path, writer.final_path; force=true)
+        commit_atomic_staging(writer.path, writer.final_path)
     end
     writer.promoted = true
     return writer.final_path
@@ -168,8 +168,11 @@ end
 
 function quarantine_streaming_binary!(writer::AbstractBinaryWriter)
     writer.promoted && return writer.path
-    close_streaming_binary!(writer)
-    isfile(writer.path) && rm(writer.path; force=true)
+    try
+        close_streaming_binary!(writer)
+    finally
+        abandon_atomic_staging(writer.path)
+    end
     return writer.path
 end
 

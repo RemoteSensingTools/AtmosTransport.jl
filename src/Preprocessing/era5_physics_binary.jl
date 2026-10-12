@@ -185,9 +185,9 @@ from the current day's file). Raises if either is missing.
 The thermo NC is calendar-day aligned so only the target-date
 file is needed.
 
-Writes the BIN atomically: first to `<name>.bin.tmp`, then renames.
-This is safe to run concurrently with a reader: the rename step is
-an atomic fs operation on a single filesystem.
+Writes the BIN through `AtomicFiles.atomic_publish`, using a unique sibling
+staging file and one replacing rename. This is safe to run concurrently with
+a reader: it sees either the previous complete file or the new complete file.
 """
 function convert_era5_physics_nc_to_bin(nc_dir::AbstractString,
                                          bin_dir::AbstractString,
@@ -200,7 +200,6 @@ function convert_era5_physics_nc_to_bin(nc_dir::AbstractString,
     mkpath(year_dir)
     date_str = Dates.format(date, "yyyymmdd")
     bin_path = joinpath(year_dir, "era5_physics_$(date_str).bin")
-    tmp_path = bin_path * ".tmp"
 
     if !force_rewrite && isfile(bin_path)
         verbose && @info "ERA5PhysicsBIN: skip $(basename(bin_path)) (exists; force_rewrite=false)"
@@ -272,18 +271,18 @@ function convert_era5_physics_nc_to_bin(nc_dir::AbstractString,
         ),
     )
 
-    open(tmp_path, "w") do io
-        _write_header!(io, header, header_bytes)
-        seek(io, header_bytes)
-        _write_payload!(io, udmf)
-        _write_payload!(io, ddmf)
-        _write_payload!(io, udrf)
-        _write_payload!(io, ddrf)
-        _write_payload!(io, thermo_arrays.t)
-        _write_payload!(io, thermo_arrays.q)
+    atomic_publish(bin_path) do tmp_path
+        open(tmp_path, "w") do io
+            _write_header!(io, header, header_bytes)
+            seek(io, header_bytes)
+            _write_payload!(io, udmf)
+            _write_payload!(io, ddmf)
+            _write_payload!(io, udrf)
+            _write_payload!(io, ddrf)
+            _write_payload!(io, thermo_arrays.t)
+            _write_payload!(io, thermo_arrays.q)
+        end
     end
-
-    mv(tmp_path, bin_path; force = true)
 
     verbose && @info "ERA5PhysicsBIN: wrote $(basename(bin_path)) " *
                       "($(round(filesize(bin_path) / 1e9; digits = 2)) GB)"
@@ -419,7 +418,7 @@ function _write_payload!(io::IO, arr::AbstractArray{Float32})
     written == expected ||
         error("ERA5PhysicsBIN: short write ($written/$expected bytes). " *
               "Disk full? Check `df -h` on the staging directory. " *
-              "Partial BIN is discarded when the outer `.tmp` rename is skipped.")
+              "Partial BIN is discarded by the outer atomic publication.")
     return nothing
 end
 

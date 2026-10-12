@@ -400,6 +400,7 @@ struct MERRA2DayDriver{S, H, G, V, W, B, F, X, Q}
     replay_tol   :: Float64
     replay_check :: Bool
     mass_target  :: Union{Nothing, Float64}
+    configured_last_day :: Union{Nothing, Date}
     scratch      :: X
     win_phys     :: Q
 end
@@ -465,10 +466,12 @@ function _read_next_day_endpoint!(d::MERRA2DayDriver, nxt::MERRA2BlockState, cur
     pipe, Nc = nxt.pipe, d.grid.Nc
     endpoint = read_merra2_next_day_endpoint(d.handles, pipe.Nz; FT = eltype(nxt.m_dry[1]))
     if endpoint === nothing
-        # HACK: zero-tendency fallback for the final day of the archive (no
-        # next-day inst3 file). The positivity gate will likely warn/fail, as
-        # it should: the last block's continuity does not close. TODO: accept
-        # only on the configured last day and fail otherwise.
+        _require_configured_terminal_day(
+            d.handles.date, d.configured_last_day, "MERRA-2 preprocessor",
+            "next-day inst3 endpoint for $(d.handles.date + Day(1))")
+        # The configured archive boundary has no next-day inst3 file. The
+        # positivity gate will likely warn/fail, as it should: the last block's
+        # continuity does not close.
         @warn "process_merra2_to_cs_day: archive-boundary fallback — no next-day inst3 file " *
               "for $(d.handles.date + Day(1)), using zero-tendency m_next. Final window's " *
               "continuity will not close."
@@ -488,10 +491,6 @@ function _read_next_day_endpoint!(d::MERRA2DayDriver, nxt::MERRA2BlockState, cur
 end
 
 # Layer thickness that multiplies the winds in the face fluxes.
-struct MoistFluxThickness end      # from the moist surface pressure (historical)
-struct DryMassFluxThickness end    # g m_dry / A: the dry air the fluxes transport
-_flux_thickness(kind::Symbol) = (moist = MoistFluxThickness(), dry_mass = DryMassFluxThickness())[kind]
-
 _fill_flux_thickness!(::MoistFluxThickness, x, ps_moist, m_a, vc, mesh, Nc, Nz) =
     fill_cs_layer_thickness!(x.dp, ps_moist, vc.A, vc.B, Nc, Nz)
 function _fill_flux_thickness!(::DryMassFluxThickness, x, ps_moist, m_a, vc, mesh, Nc, Nz)
@@ -632,8 +631,7 @@ function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{
                              nwindow, nsub, dt_window, steps, policy, mass_target,
                              write_replay_on::Bool) where FT
     mkpath(dirname(out_path))
-    tmp_path = out_path * ".tmp"
-    isfile(tmp_path) && rm(tmp_path)
+    tmp_path = _open_preprocessing_staging(out_path)
     header = merge(_merra2_provenance(settings, handles, nsub), Dict{String, Any}(
         "preprocessor" => "process_merra2_to_cs_day",
         # Advection at the baked substep cadence; convection and chemistry once
@@ -657,19 +655,24 @@ function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{
     mass_target === nothing ||
         (header["mass_fix_target_ps_dry_pa"] = Float64(mass_target) * STANDARD_GRAVITY /
             (6.0 * sum(Float64, grid.mesh.cell_areas)))
-    inner = open_streaming_cs_transport_binary(
-        tmp_path, grid.Nc, 6, length(vc.A) - 1, nwindow, vc;
-        FT, dt_met_seconds = dt_window, half_dt_seconds = dt_window / 2,
-        steps_per_window = steps, include_flux_delta = true, mass_basis = :dry,
-        surface_pressure_basis = DrySurfacePressure(),
-        include_surface = has_surface(settings), include_cmfmc = has_convection(settings),
-        include_dtrain = has_convection(settings), include_gchp_vdiff = has_vdiff_fields(settings),
-        include_pbl_eflux = has_pbl_eflux(settings),
-        include_cmfmc_cloud_base = has_cmfmc_cloud_base(settings),
-        panel_convention = _cs_panel_convention_tag(grid), cs_definition = _cs_definition_tag(grid),
-        cs_coordinate_law = _cs_coordinate_law_tag(grid), cs_center_law = _cs_center_law_tag(grid),
-        longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
-        planet_radius = grid.mesh.radius, extra_header = _with_replay_record(header, write_replay_on))
+    inner = try
+        open_streaming_cs_transport_binary(
+            tmp_path, grid.Nc, 6, length(vc.A) - 1, nwindow, vc;
+            FT, dt_met_seconds = dt_window, half_dt_seconds = dt_window / 2,
+            steps_per_window = steps, include_flux_delta = true, mass_basis = :dry,
+            surface_pressure_basis = DrySurfacePressure(),
+            include_surface = has_surface(settings), include_cmfmc = has_convection(settings),
+            include_dtrain = has_convection(settings), include_gchp_vdiff = has_vdiff_fields(settings),
+            include_pbl_eflux = has_pbl_eflux(settings),
+            include_cmfmc_cloud_base = has_cmfmc_cloud_base(settings),
+            panel_convention = _cs_panel_convention_tag(grid), cs_definition = _cs_definition_tag(grid),
+            cs_coordinate_law = _cs_coordinate_law_tag(grid), cs_center_law = _cs_center_law_tag(grid),
+            longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
+            planet_radius = grid.mesh.radius, extra_header = _with_replay_record(header, write_replay_on))
+    catch
+        abandon_atomic_staging(tmp_path)
+        rethrow()
+    end
     return CubedSphereBinaryWriter(inner, mass_basis_from_symbol(:dry); Nc = grid.Nc, npanel = 6,
                                    final_path = String(out_path))
 end
@@ -678,7 +681,8 @@ end
     process_merra2_to_cs_day(date, settings, target_grid; out_path, dt_met_seconds, …)
 
 Write a v4 cubed-sphere transport binary for one UTC `date` from MERRA-2 to
-`out_path` (staged as `out_path.tmp`, promoted when the gates pass).
+`out_path` (written through a unique sibling staging file and atomically
+published when the gates pass).
 
 Horizontal mass fluxes come from the regridded 3-hour mean winds and are
 Poisson-balanced (a column pressure fix) against the dry-mass change between
@@ -707,7 +711,8 @@ function process_merra2_to_cs_day(date::Date,
                                   write_replay_check::Bool = true,
                                   cache_dir::Union{Nothing, AbstractString} = nothing,
                                   global_mass_pin::Bool = false,
-                                  global_mass_target_kg::Real = NaN) where FT
+                                  global_mass_target_kg::Real = NaN,
+                                  configured_last_day::Union{Nothing, Date} = nothing) where FT
     mass_basis === :dry ||
         throw(ArgumentError("MERRA-2 → CS writer only supports mass_basis=:dry; got $(mass_basis)"))
     steps_per_window >= 1 || throw(ArgumentError("steps_per_window must be ≥ 1; got $(steps_per_window)"))
@@ -728,6 +733,7 @@ function process_merra2_to_cs_day(date::Date,
                        mass_target * STANDARD_GRAVITY / (6 * sum(Float64, target_grid.mesh.cell_areas)))
 
     handles = open_merra2_day(settings, date; next_day_handle = true)
+    writer = nothing
     try
         new_block() = MERRA2BlockState(allocate_merra2_to_c180_pipeline(target_grid; Nz, cache_dir, settings))
         cur, nxt = new_block(), new_block()
@@ -747,7 +753,7 @@ function process_merra2_to_cs_day(date::Date,
             (method = _face_flux_method(settings, target_grid),
              thickness = _flux_thickness(settings.flux_thickness)),
             Float64(positivity_cfl_limit), replay_tolerance(FT),
-            write_replay_on, mass_target,
+            write_replay_on, mass_target, configured_last_day,
             _merra2_window_scratch(FT, target_grid.Nc, Nz),
             allocate_merra2_window_physics(settings, target_grid.Nc, Nz, FT))
         diag = MERRA2DayDiagnostics(nwindow, Int(steps_per_window))
@@ -778,6 +784,14 @@ function process_merra2_to_cs_day(date::Date,
                            diag.replay_rel, diag.replay_abs, diag.replay_win)
         return nothing
     finally
+        if writer !== nothing && !writer.promoted
+            try
+                quarantine_streaming_binary!(writer)
+            catch err
+                @warn("MERRA-2 preprocessor: failed to close staging writer during cleanup",
+                      exception = (err, catch_backtrace()))
+            end
+        end
         close_merra2_day!(handles)
     end
 end
@@ -819,6 +833,7 @@ function process_day(date::Date,
                      write_replay_check::Bool = true,
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
+                     configured_last_day::Union{Nothing, Date} = nothing,
                      kwargs...)
     reject_removed_horizontal_balance_keyword(kwargs)
     steps_floor = min_steps_per_window === nothing ? 1 : Int(min_steps_per_window)
@@ -836,7 +851,8 @@ function process_day(date::Date,
         write_replay_check    = write_replay_check,
         cache_dir             = grid.cache_dir,
         global_mass_pin       = global_mass_pin,
-        global_mass_target_kg = global_mass_target_kg)
+        global_mass_target_kg = global_mass_target_kg,
+        configured_last_day   = configured_last_day)
     return (; final_m = nothing,
             global_mass_target_kg = global_mass_target_kg)
 end

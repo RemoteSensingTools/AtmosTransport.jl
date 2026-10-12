@@ -149,3 +149,41 @@ function line_integral_face_fluxes!(am::NTuple{6, Array{FT, 3}}, bm::NTuple{6, A
     _sync_cs_mirrors!(am, bm, ft, Nz)
     return nothing
 end
+
+"""
+    line_integral_face_fluxes!(am, bm, method, u, v, dp, gravity, dt_factor, Nz)
+
+Line-integral face fluxes with explicitly supplied pressure thickness
+`dp[source_cell, level]`. The dry-air path supplies
+`dp = (1-q) |ΔA + ΔB ps| = g m_dry / cell_area`.
+"""
+function line_integral_face_fluxes!(am::NTuple{6, Array{FT, 3}}, bm::NTuple{6, Array{FT, 3}},
+                                    m::LineIntegralFaceFluxes, u::AbstractMatrix, v::AbstractMatrix,
+                                    dp::AbstractMatrix, gravity, dt_factor, Nz::Int) where FT
+    ft = m.face_table
+    (; sinλ, cosλ, sinφ, cosφ) = m.src_trig
+    size(u) == size(v) == size(dp) && size(u, 1) == length(sinλ) && size(u, 2) >= Nz ||
+        throw(DimensionMismatch(
+            "source winds $(size(u)), $(size(v)) and thickness $(size(dp)) do not match the operator"))
+    scale = Float64(dt_factor) / Float64(gravity)
+    nsrc = size(dp, 1)
+    Threads.@threads :static for k in 1:Nz
+        XYZ = m.src_flux[Threads.threadid()]
+        F = m.face_flux[Threads.threadid()]
+        @inbounds for c in 1:nsrc
+            uu = Float64(u[c, k]) * Float64(dp[c, k])
+            vv = Float64(v[c, k]) * Float64(dp[c, k])
+            XYZ[c]         = -sinλ[c] * uu - sinφ[c] * cosλ[c] * vv
+            XYZ[nsrc + c]  =  cosλ[c] * uu - sinφ[c] * sinλ[c] * vv
+            XYZ[2nsrc + c] =  cosφ[c] * vv
+        end
+        mul!(F, m.L, XYZ)
+        @inbounds for f in 1:ft.nf
+            p, i, j = Int(ft.face_panel[f]), Int(ft.face_idx_i[f]), Int(ft.face_idx_j[f])
+            target = ft.face_dir[f] == 1 ? am[p] : bm[p]
+            target[i, j, k] = FT(F[f] * scale)
+        end
+    end
+    _sync_cs_mirrors!(am, bm, ft, Nz)
+    return nothing
+end

@@ -4,6 +4,7 @@
 using Test
 
 using AtmosTransport
+const Pre = AtmosTransport.Preprocessing
 using .AtmosTransport.Architectures: CPU
 using .AtmosTransport.Grids: AtmosGrid, HybridSigmaPressure, ncells, nfaces
 using .AtmosTransport.MetDrivers: open_streaming_transport_binary,
@@ -50,8 +51,9 @@ end
         settings = (include_qv = false,
                     tm5_convection_enable = false,
                     include_surface = false)
-        staging = joinpath(tmp, "ll.tmp")
         final = joinpath(tmp, "ll.bin")
+        staging = Pre._open_preprocessing_staging(final)
+        @test startswith(staging, abspath(final) * ".tmp-")
 
         writer = LatLonBinaryWriter(staging, "{}", settings, merged, nothing,
                                     FT, DryBasis(); final_path = final)
@@ -90,8 +92,8 @@ end
         merged = allocate_merge_workspace(grid, Nz, Nz, FT)
         settings = (include_qv=false, tm5_convection_enable=false,
                     include_surface=false)
-        staging = joinpath(tmp, "bad-size.tmp")
         final = joinpath(tmp, "preserved.bin")
+        staging = Pre._open_preprocessing_staging(final)
         sentinel = Vector{UInt8}(codeunits("previous-valid-output"))
         write(final, sentinel)
         writer = LatLonBinaryWriter(
@@ -122,7 +124,7 @@ end
         settings = (include_qv = false,
                     tm5_convection_enable = false,
                     include_surface = false)
-        staging = joinpath(tmp, "ll.tmp")
+        staging = Pre._open_preprocessing_staging(joinpath(tmp, "ll.bin"))
         writer = LatLonBinaryWriter(staging, "{}", settings, merged, nothing,
                                     FT, DryBasis())
         write_window!(writer, ReadyWindow{LatLonTargetGeometry, FT}(1, (; storage)))
@@ -149,8 +151,8 @@ end
                   hflux = zeros(FT, nface, Nz),
                   cm = zeros(FT, ncell, Nz + 1),
                   ps = fill(FT(90000), ncell))
-        staging = joinpath(tmp, "rg.tmp")
         final = joinpath(tmp, "rg.bin")
+        staging = Pre._open_preprocessing_staging(final)
         inner = open_streaming_transport_binary(
             staging, grid, 1, window;
             FT = FT,
@@ -182,8 +184,8 @@ end
         FT = Float64
         Nc, npanel, Nz = 2, 6, 1
         vc = HybridSigmaPressure(FT[0, 1000], FT[0, 1])
-        staging = joinpath(tmp, "cs.tmp")
         final = joinpath(tmp, "cs.bin")
+        staging = Pre._open_preprocessing_staging(final)
         inner = open_streaming_cs_transport_binary(
             staging, Nc, npanel, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
             FT = FT,

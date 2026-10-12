@@ -90,8 +90,8 @@ With in addition `wind_regrid = "cartesian"` and `face_interpolation = "fv3"`
 `"cubic"` without the filter gives mixed near-surface changes (worse for CO₂,
 fossil CO₂ and SF₆, better for Rn-222).
 
-The ERA5 N320 path (`era5_n320_regrid.jl`) takes the same options, except
-`flux_thickness`; the spectral and lat-lon ERA5 paths (`cubed_sphere_spectral.jl`,
+The ERA5 N320 path (`era5_n320_regrid.jl`) takes the same options; the spectral
+and lat-lon ERA5 paths (`cubed_sphere_spectral.jl`,
 `cubed_sphere_regrid.jl`) still use `panel_average` and the scalar wind regrid.
 The reduced Gaussian source cells have great-circle edges along their latitude
 bounds, so they leave up to 0.3 % of the polar C90 cells uncovered. The N320
@@ -141,8 +141,20 @@ the cell winds reach the face midpoint:
 - `"fv3"`: `"cubic"` plus the filter that GCHP's restaggering applies along
   each face (next paragraph).
 
-`flux_thickness = "dry_mass"` uses the dry layer thickness `g m_dry / A` that
-the fluxes transport, instead of the moist `Δp`.
+`flux_thickness = "dry_mass"` uses the dry layer thickness that the fluxes
+transport, instead of total-air `Δp`:
+
+```math
+\Delta p_{\mathrm{dry},k}
+  = (1-q_k)\,\left|\Delta A_k + \Delta B_k p_s\right|
+  = \frac{g\,m_{\mathrm{dry},k}}{A_{\mathrm{cell}}}.
+```
+
+For target-grid face methods this thickness is evaluated in each cubed-sphere
+cell before interpolation to faces. ERA5's line-integral method evaluates the
+equivalent `(1-q) Δp` on N320 before integrating along a cube face. ERA5 N320
+defaults to `dry_mass`, matching its dry-basis layer masses; MERRA-2 retains
+its historical `moist` default for compatibility.
 
 **ERA5** (`.../era5_n320_regrid.jl`). Instantaneous hourly winds on the N320
 reduced Gaussian grid. Surface pressure comes from the 0.25° ARCO product.

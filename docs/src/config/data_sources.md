@@ -253,8 +253,9 @@ Face-flux construction (MERRA-2 and ERA5 N320; see
   cells), `"cubic"` (FV3's fourth-order stencil across interior faces) or
   `"fv3"` (`"cubic"` plus the filter along the face of GCHP's A → D → C
   restaggering).
-- `flux_thickness = "moist"` (default) or `"dry_mass"` (MERRA-2 only): the
-  layer thickness in the fluxes.
+- `flux_thickness = "moist"` or `"dry_mass"`: the layer thickness in the
+  fluxes. ERA5 N320 defaults to `"dry_mass"`; MERRA-2 keeps the historical
+  `"moist"` default. Dry thickness is `(1-q) Δp = g m_dry / A_cell`.
 - `wind_regrid = "scalar"` (default) or `"cartesian"`: regrid `u` and `v` as
   two scalars, or the wind as a vector, as GCHP does. The scalar regrid is
   off by about 5% poleward of 88°.
