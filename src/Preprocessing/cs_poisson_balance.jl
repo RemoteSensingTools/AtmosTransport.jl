@@ -600,7 +600,8 @@ cell,
   8\\,\\epsilon_{FT}∑_{f∂c}∑_k |F_{f,k}|\\right),
 ```
 
-the requested absolute tolerance for Float64 and a conservative
+the requested absolute tolerance (`COLUMN_CLOSURE_TOL_KG`, 10 kg, by default)
+for Float64 and a conservative
 representability bound of the cell's own stored faces for Float32
 redistribution (a global maximum over cells would let a small-flux cell keep a
 residual set by the largest-flux cell). The returned
@@ -625,7 +626,7 @@ function balance_cs_column_mass_fluxes!(
     max_iter::Int=DEFAULT_POISSON_BALANCE_MAX_ITER,
     project_every::Int=DEFAULT_POISSON_PROJECT_EVERY,
     closure_passes::Int=8,
-    closure_tol::Float64=10.0,
+    closure_tol::Float64=COLUMN_CLOSURE_TOL_KG,
     weights::AbstractColumnWeights=MassWeightedColumn(),
 ) where FT
     Nc = ft.Nc
@@ -708,7 +709,7 @@ end
 """
     recheck_cs_column_closure(panels_am, panels_bm, panels_m, panels_m_next, ft,
                               steps_per_window, scratch, balance_diag;
-                              closure_tol = 10.0) -> balance_diag′
+                              closure_tol = COLUMN_CLOSURE_TOL_KG) -> balance_diag′
 
 Recompute the column-closure statistics and per-cell tolerances of
 `balance_cs_column_mass_fluxes!` for fluxes changed after the balance (the GEOS
@@ -722,7 +723,7 @@ function recheck_cs_column_closure(panels_am::NTuple{6, Array{FT, 3}},
                                    panels_m_next::NTuple{6, Array{FT, 3}},
                                    ft::CSGlobalFaceTable, steps_per_window::Int,
                                    scratch::CSPoissonScratch, balance_diag;
-                                   closure_tol::Float64 = 10.0) where FT
+                                   closure_tol::Float64 = COLUMN_CLOSURE_TOL_KG) where FT
     Nc, Nz = ft.Nc, size(panels_am[1], 3)
     col_am = ntuple(_ -> zeros(Float64, Nc + 1, Nc, 1), 6)
     col_bm = ntuple(_ -> zeros(Float64, Nc, Nc + 1, 1), 6)
@@ -749,7 +750,7 @@ end
 
 """
     diagnose_cs_cm!(panels_cm, panels_am, panels_bm, panels_dm, panels_m, Nc, Nz[, weights];
-                    residual_tol=10.0, context="cm diagnosis")
+                    residual_tol=COLUMN_CLOSURE_TOL_KG, context="cm diagnosis")
 
 Diagnose vertical mass flux `cm` from column-balanced horizontal flux divergence
 and mass tendency for all 6 panels:
@@ -791,7 +792,7 @@ function diagnose_cs_cm!(panels_cm::NTuple{6, Array{FT, 3}},
                           panels_m::NTuple{6, Array{FT, 3}},
                           Nc::Int, Nz::Int,
                           weights::AbstractColumnWeights = MassWeightedColumn();
-                          residual_tol::Union{Real, AbstractVector{<:Real}} = 10.0,
+                          residual_tol::Union{Real, AbstractVector{<:Real}} = COLUMN_CLOSURE_TOL_KG,
                           context::AbstractString = "cm diagnosis") where FT
     _check_weight_levels(weights, Nz)
     _check_column_tolerance(residual_tol, 6 * Nc * Nc)

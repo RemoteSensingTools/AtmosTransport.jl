@@ -539,7 +539,8 @@ cell `c`,
 ```
 
 the representability bound of the cell's own stored faces (`closure_tol` =
-10 kg is the Float64 tolerance); the `cm` residual `R_c` folded into the column
+`COLUMN_CLOSURE_TOL_KG` = 10 kg per flux application, the bound that binds for
+Float64 payloads); the `cm` residual `R_c` folded into the column
 must satisfy the same `τ_c` plus the rounding bound of the `cm` recursion. A
 window outside either bound fails before it is written (GEOS OMEGA closures
 re-check the closure after their reconstruction moves flux between levels); an unpinned run whose

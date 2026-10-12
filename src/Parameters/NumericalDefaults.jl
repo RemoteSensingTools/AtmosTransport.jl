@@ -101,6 +101,20 @@ L137 layer 55 (`ΔB = 7.0e-6`), the next GEOS layer has `6.96e-3`.
 const HYBRID_LAYER_MIN_DB = 1.0e-6
 
 """
+Absolute floor of the per-cell closure tolerance of the cubed-sphere column
+balance [kg per flux application]:
+`τ_c = max(COLUMN_CLOSURE_TOL_KG, 8 ε_FT Σ_{f∂c} Σ_k |F_{f,k}|)` bounds the
+mean-free column residual of every cell after the balance
+(`balance_cs_column_mass_fluxes!`, `recheck_cs_column_closure`) and, plus the
+rounding bound of the recursion, the `cm` residual folded into the column
+(`diagnose_cs_cm!`). The floor binds for Float64 payloads (ERA5 C24 golden:
+largest projected residual 0.10 kg against `τ_c = 10` kg); Float32 payloads
+are bound by the rounding term (smallest `τ_c` of window 1 of the MERRA-2 C90
+golden: 6.1e5 kg).
+"""
+const COLUMN_CLOSURE_TOL_KG = 10.0
+
+"""
 Write-time OMEGA-fidelity gate: the normalized RMS difference between the
 vertical velocity diagnosed from a binary's `cm` and the source OMEGA,
 `NRMSE = RMS(ω_cm − ω_src) / RMS(ω_src)`, must be below 1.0. `NRMSE = 1` is
@@ -159,7 +173,7 @@ export DEFAULT_CFL_LIMIT, DEFAULT_POSITIVITY_CFL_LIMIT, DEFAULT_SUBSTEP_CFL_TARG
        DEFAULT_BACKGROUND_VMR, DEFAULT_GEOS_SMOOTHING_SWEEPS, DEFAULT_MAX_SUBCYCLES,
        DEFAULT_MAX_STEPS_PER_WINDOW, ADAPTIVE_SUBSTEP_MAX_REFINEMENTS, DEFAULT_POISSON_BALANCE_TOL,
        DEFAULT_POISSON_BALANCE_MAX_ITER, DEFAULT_POISSON_PROJECT_EVERY, HORIZONTAL_BALANCE_TAG,
-       HYBRID_LAYER_MIN_DB, OMEGA_FIDELITY_NRMSE_LIMIT, OMEGA_FIDELITY_CORRELATION_MIN,
+       HYBRID_LAYER_MIN_DB, COLUMN_CLOSURE_TOL_KG, OMEGA_FIDELITY_NRMSE_LIMIT, OMEGA_FIDELITY_CORRELATION_MIN,
        OMEGA_FIDELITY_SLOPE_MIN,
        DEFAULT_GEOS_SMOOTHING_WEIGHT,
        DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG, DEFAULT_LINROOD_PPM_ORDER,
