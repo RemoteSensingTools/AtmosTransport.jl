@@ -148,6 +148,7 @@ paths = [
 [topics.convection]
 description = "Convection operators (CMFMC, CMFMC matrix, TM5) with their column solves, workspaces and adjoints, and the convection preprocessing (TM5 conversion and attach, ERA5 and GEOS convection fields, mass basis)"
 files = [
+    "core/test_cmfmc_convection.jl",
     "core/test_cmfmc_matrix_convection.jl",
     "core/test_cmfmc_adjoint_identity.jl",
     "core/test_convection_mass_basis.jl",
