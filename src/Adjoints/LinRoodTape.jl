@@ -59,6 +59,11 @@
 #     supported). `_CSLinRoodHorizRecord`
 #     binds ORD as a type parameter; the reverse pass reads it via
 #     dispatch and forwards `Val(ORD)` to the face-kernel adjoints.
+#   * Vertical sweeps: `scheme.vertical`, upwind or the FV3 `kord = 8` profile
+#     (OF-94). The FV3 records stage the tracer mass entering the sweep and the
+#     reverse applies the transpose at the forward's limiter branches
+#     (`Operators/Advection/vertical_fv3_profile_adjoint.jl`), the same
+#     frozen-limiter linearization as the horizontal PPM.
 # ---------------------------------------------------------------------------
 
 # Forward kernels + adjoint wrappers from Operators.Advection. Imported at
@@ -405,20 +410,19 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
     panels_m  = ntuple(p -> copy(panels_m0[p]),  Val(6))
 
     ops = Any[]
-    ws = CSAdvectionWorkspace(mesh, panels_rm[1])
+    ws = CSAdvectionWorkspace(mesh, panels_rm[1];
+                              column_scratch = needs_column_scratch(scheme))
 
     # The Z (vertical) sweep MUST match the production LinRood forward: both
     # `_strang_split_linrood_ppm_cs!` and the FD reference `_linrood_run_forward_step!`
-    # do the vertical sweep via `_sweep_z!`, which uses `UpwindScheme()`
-    # (CubedSphereStrang.jl). Recording a different Z scheme here (the old
-    # `PPMScheme(MonotoneLimiter())`) makes the adjoint the transpose of a
-    # DIFFERENT forward — masked while horizontal fluxes were trivial (the field
-    # stayed vertically uniform, where Upwind and PPM Z agree), but a ~0.14%
-    # footprint-vs-FD error once real horizontal transport develops vertical
-    # structure. Use Upwind so the tape, the FD reference, and production agree.
-    # `UpwindScheme ∈ CSAdjointLinearScheme`, so its Z records stage only the air
-    # mass (`panels_rm = nothing`, the linear reverse path).
-    z_scheme = UpwindScheme()
+    # sweep with `scheme.vertical` through `_sweep_z_panels!`. Recording a
+    # different Z scheme makes the adjoint the transpose of a DIFFERENT forward
+    # (once: a monotone-PPM Z recorded under an upwind forward gave a ~0.14%
+    # footprint-vs-FD error as soon as horizontal transport built vertical
+    # structure). `UpwindScheme ∈ CSAdjointLinearScheme` stages only the air mass;
+    # the FV3 profile (`CSAdjointFV3Vertical`) also stages the tracer mass entering
+    # the sweep, from which the reverse replays the limiter branches.
+    z_scheme = scheme.vertical
 
     @inbounds for step in 1:nsteps
         panels_am = panels_am_steps[step]
@@ -440,8 +444,9 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
             record_ops = record_ops)
         record_ops && push!(ops, record_a)
 
-        # Z half-sweep. The record holds the air mass entering the sweep, which
-        # is what the reverse upwind coefficients F / m_donor need (issue #10).
+        # Z half-sweep. The record holds the state entering the sweep: the reverse
+        # coefficients divide by the pre-sweep donor mass (issue #10), and the FV3
+        # profile replays its limiter branches from the pre-sweep tracer mass.
         _record_and_sweep_z!(ops, z_scheme, panels_rm, panels_m, panels_cm, ws, mesh,
                              FT(flux_scale), storage; record_ops)
 
@@ -536,13 +541,14 @@ function _linrood_run_forward_step!(panels_rm, panels_m,
     array_type = typeof(parent(panels_rm[1]))
     ws_lr = LinRoodWorkspace(mesh; FT = FT, Nz = Nz, array_type = array_type)
     # Palindrome H → Z → (midpoint/emissions) → Z → H, matching
-    # `_strang_split_linrood_ppm_cs!`.
+    # `_strang_split_linrood_ppm_cs!`, with the scheme's vertical sweep (`ws`
+    # carries the column scratch the FV3 profile needs).
     fv_tp_2d_cs!(panels_rm, panels_m, panels_am, panels_bm, mesh, Val(ORD), ws, ws_lr)
-    _sweep_z!(panels_rm, panels_m, panels_cm, mesh, ws)
+    _sweep_z_panels!(panels_rm, panels_m, panels_cm, mesh, scheme.vertical, ws)
     if midpoint! !== nothing
         midpoint!()
     end
-    _sweep_z!(panels_rm, panels_m, panels_cm, mesh, ws)
+    _sweep_z_panels!(panels_rm, panels_m, panels_cm, mesh, scheme.vertical, ws)
     fv_tp_2d_cs!(panels_rm, panels_m, panels_am, panels_bm, mesh, Val(ORD), ws, ws_lr)
     return nothing
 end

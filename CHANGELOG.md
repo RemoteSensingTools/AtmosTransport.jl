@@ -13,6 +13,25 @@
   `fv3_kord8`, the closest GCHP match. Explicit `vertical = "upwind"` and
   `vertical = "fv3_kord8_signed"` settings are unchanged; the Lin-Rood
   adjoint still requires explicit upwind vertical sweeps.
+- The Lin-Rood adjoint now also transposes the FV3 `kord = 8` vertical sweeps
+  (`vertical = "fv3_kord8"` and `"fv3_kord8_signed"`; OF-94); explicit upwind
+  vertical sweeps are no longer required. Footprints and 4D-Var gradients use
+  the same vertical transport as forward Lin-Rood runs.
+  For fixed limiter branches the sweep is linear, `rm' = W(β) rm`. Each vertical
+  record now also stages the tracer mass entering the sweep; the reverse pass
+  replays the forward profile code on numbers that carry their partial
+  derivatives, which recovers the forward's branches bit for bit, and applies
+  `W(β)ᵀ` column by column on CPU and GPU (a frozen-limiter adjoint, as for the
+  horizontal PPM). The Lin-Rood tape grows from ten to twelve full-panel tuples
+  per step (C90 L72 Float64: 552 instead of 488 MB per step).
+  `require_adjoint_support` accepts these schemes, and the inversion driver's
+  Lin-Rood `vertical` default is now `fv3_kord8`, as in forward runs (an omitted
+  `vertical` was an error). The footprint API's finite-difference forward
+  (`run_cs_footprint_forward`) now runs the scheme's vertical sweep; it ran
+  upwind for every Lin-Rood vertical. Forward transport is bit-identical.
+  `CSAdjointWorkspace` takes `column_scratch = true` for tapes with FV3 vertical
+  sweeps. The split-sweep `PPMScheme` with the FV3 vertical profile still has
+  no adjoint.
 
 ### Breaking changes
 

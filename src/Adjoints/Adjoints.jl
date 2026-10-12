@@ -37,8 +37,9 @@ using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
     _pre_advect_y_kernel!, _pre_advect_x_kernel!, _linrood_update_kernel!,
     _copy_interior!, _accumulate_linrood_halo_adjoint!,
     strang_split_linrood_ppm!, CSLinRoodAdvectionWorkspace, LinRoodWorkspace,
-    fv_tp_2d_cs!, _sweep_z!, _cs_flux_x_interior, _cs_flux_y_interior,
-    _advection_mass_floor, _ppm_edge_weights   # shared with the forward fluxes (AdvectionAdjoint.jl)
+    fv_tp_2d_cs!, _sweep_z_panels!, _cs_flux_x_interior, _cs_flux_y_interior,
+    _advection_mass_floor, _ppm_edge_weights,  # shared with the forward fluxes (AdvectionAdjoint.jl)
+    needs_column_scratch, _fv3_adjoint_column_scratch, _sweep_z_panels_fv3_adjoint!
 using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
     apply_vertical_diffusion_vmr!, _dkg_transfer_ratios
 using ..Operators.Convection: CMFMCConvection, _require_edge_cloud_base, CMFMCWorkspace,
@@ -79,21 +80,30 @@ using ..Tape: AbstractCSTapeStorage,
               RevolveCheckpoint,
               checkpoint_window_count, checkpoint_window_range
 
-# PPM adjoints exist for the default vertical reconstruction only; the FV3
-# vertical profile (`FV3ScalarProfile`) has no adjoint yet.
+# Split-sweep PPM adjoints exist for the default vertical reconstruction only;
+# the FV3 vertical profile has an adjoint as Lin–Rood's vertical sweep (below).
 const CSAdjointLinearScheme = Union{UpwindScheme, SlopesScheme{NoLimiter},
                                     PPMScheme{NoLimiter, SameAsHorizontal}}
 # Limiters whose PPM adjoint replays the forward branches from taped tracer masses.
 const _PPMTapedLimiter = Union{MonotoneLimiter, CW84Limiter}
 const CSAdjointNonlinearScheme = PPMScheme{<:_PPMTapedLimiter, SameAsHorizontal}
+# The FV3 `kord = 8` vertical sweep (`vertical = "fv3_kord8"` or
+# `"fv3_kord8_signed"`). Its records stage the tracer mass entering the sweep;
+# the reverse replays the forward profile there and applies the transpose at the
+# forward's limiter branches (`vertical_fv3_profile_adjoint.jl`). Only Lin–Rood's
+# vertical sweeps record it.
+const CSAdjointFV3Vertical = PPMScheme{<:AbstractLimiter, <:FV3ScalarProfile}
+# Sweeps whose record stages the tracer mass as well as the air mass.
+const _RmTapedSweepScheme = Union{CSAdjointNonlinearScheme, CSAdjointFV3Vertical}
 # LinRoodPPMScheme (ORD 5 and 7) is supported via its own horizontal
 # tape record (`_CSLinRoodHorizRecord`, LinRoodTape.jl) and the kernel
-# adjoints in `src/Operators/Advection/linrood_adjoint_*.jl`. The
-# reverse loop (`_walk_window_reverse!` in `src/Footprint/ReverseLoop.jl`)
-# handles that record in its own branch alongside the
+# adjoints in `src/Operators/Advection/linrood_adjoint_*.jl`; its vertical
+# sweeps are `_CSSweepRecord`s of `scheme.vertical` (upwind or the FV3 profile).
+# The reverse loop (`_walk_window_reverse!` in `src/Footprint/ReverseLoop.jl`)
+# handles the horizontal record in its own branch alongside the
 # `_CSSweepRecord`, `_CSHaloRecord`, `_CSDiffusionRecord`,
 # `_CSConvectionRecord`, and `_CSMidpointRecord` cases.
-const CSAdjointLinRoodScheme = LinRoodPPMScheme{<:Any, UpwindScheme}   # upwind vertical only
+const CSAdjointLinRoodScheme = LinRoodPPMScheme{<:Any, <:Union{UpwindScheme, CSAdjointFV3Vertical}}
 const CSAdjointSupportedScheme = Union{CSAdjointLinearScheme,
                                         CSAdjointNonlinearScheme,
                                         CSAdjointLinRoodScheme}
@@ -109,17 +119,18 @@ rejected with an explanation before any tape is recorded.
 
 Supported: `UpwindScheme()`, `SlopesScheme(NoLimiter())`, `PPMScheme` with
 `NoLimiter`, `MonotoneLimiter` or `CW84Limiter` and the default vertical
-reconstruction, and `LinRoodPPMScheme` (ORD 5 or 7) with upwind vertical
-sweeps. Unsupported: limited `SlopesScheme`, the FV3 vertical profile
-(`FV3ScalarProfile`, either for `PPMScheme` or for Lin–Rood's vertical
-sweeps), `NoAdvection`, and every other scheme or limiter.
+reconstruction, and `LinRoodPPMScheme` (ORD 5 or 7) with any of its vertical
+sweeps: upwind or the FV3 `kord = 8` profile (`vertical = "fv3_kord8"` or
+`"fv3_kord8_signed"`). Unsupported: limited `SlopesScheme`, the split-sweep
+`PPMScheme` with the FV3 vertical profile, `NoAdvection`, and every other
+scheme or limiter.
 """
 require_adjoint_support(scheme::CSAdjointSupportedScheme) = scheme
 require_adjoint_support(scheme) = throw(ArgumentError(
     _adjoint_gap(scheme) * " Advection with a cubed-sphere adjoint: " *
     "UpwindScheme(), SlopesScheme(NoLimiter()), PPMScheme with NoLimiter, " *
     "MonotoneLimiter or CW84Limiter and the default vertical, or " *
-    "LinRoodPPMScheme(5 or 7) with upwind vertical sweeps."))
+    "LinRoodPPMScheme(5 or 7) with upwind or FV3 kord-8 vertical sweeps."))
 
 # The part of `scheme` that has no adjoint, for `require_adjoint_support`.
 _adjoint_gap(s::SlopesScheme) =
@@ -127,12 +138,9 @@ _adjoint_gap(s::SlopesScheme) =
     "SlopesScheme(NoLimiter()) does."
 _adjoint_gap(::PPMScheme{<:AbstractLimiter, <:FV3ScalarProfile}) =
     "PPMScheme with the FV3 vertical profile (vertical = \"fv3_kord8\" or " *
-    "\"fv3_kord8_signed\") has no adjoint."
+    "\"fv3_kord8_signed\") has no split-sweep adjoint; the profile's adjoint " *
+    "covers the vertical sweeps of scheme = \"linrood\"."
 _adjoint_gap(s::PPMScheme) = "PPMScheme with $(nameof(typeof(s.limiter))) has no adjoint."
-_adjoint_gap(::LinRoodPPMScheme) =
-    "LinRoodPPMScheme with the configured vertical reconstruction has no adjoint; " *
-    "forward Lin–Rood runs default to vertical = \"fv3_kord8\", while inversions " *
-    "must explicitly use vertical = \"upwind\" (OF-94)."
 _adjoint_gap(::NoAdvection) =
     "NoAdvection (scheme = \"none\") has no record in the cubed-sphere tape."
 _adjoint_gap(s) = "$(nameof(typeof(s))) has no cubed-sphere adjoint."
@@ -183,23 +191,31 @@ include("../Inversion/Preconditioning.jl")
 
 
 """
-    CSAdjointWorkspace(mesh, prototype)
+    CSAdjointWorkspace(mesh, prototype; column_scratch = false)
 
 Scratch storage for CS adjoint sweeps. `lambda_A` is one halo-padded panel
 used as the per-panel transpose output. `seam_seeds` caches both neighbors'
 output-seed difference before any panel transpose overwrites those values.
+`column_scratch` is the per-column working storage of the FV3 vertical sweep's
+reverse pass (`Nc × Nc × (Nz+1) × 5`); it is empty unless built with
+`column_scratch = true`, which a tape with FV3-profile vertical sweeps needs
+(`needs_column_scratch(scheme)`).
 """
-struct CSAdjointWorkspace{FT, A <: AbstractArray{FT, 3}}
+struct CSAdjointWorkspace{FT, A <: AbstractArray{FT, 3}, A4 <: AbstractArray{FT, 4}}
     lambda_A::A
     seam_seeds::A
+    column_scratch::A4
 end
 
 function CSAdjointWorkspace(mesh::CubedSphereMesh,
-                            prototype::AbstractArray{FT, 3}) where {FT <: AbstractFloat}
+                            prototype::AbstractArray{FT, 3};
+                            column_scratch::Bool = false) where {FT <: AbstractFloat}
     N = mesh.Nc + 2 * mesh.Hp
-    lambda_A = similar(prototype, FT, N, N, size(prototype, 3))
-    seam_seeds = similar(prototype, FT, mesh.Nc, size(prototype, 3), 12)
-    return CSAdjointWorkspace{FT, typeof(lambda_A)}(lambda_A, seam_seeds)
+    Nz = size(prototype, 3)
+    lambda_A = similar(prototype, FT, N, N, Nz)
+    seam_seeds = similar(prototype, FT, mesh.Nc, Nz, 12)
+    scratch = _fv3_adjoint_column_scratch(lambda_A, mesh.Nc, Nz, column_scratch)
+    return CSAdjointWorkspace{FT, typeof(lambda_A), typeof(scratch)}(lambda_A, seam_seeds, scratch)
 end
 
 struct _SingleSurfaceRatePerturbation{FT}

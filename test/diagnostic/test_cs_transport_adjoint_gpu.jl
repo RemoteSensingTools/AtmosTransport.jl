@@ -18,12 +18,17 @@ else
     # differences. The corner observation exercises panel-edge transport.
     # Float32 is compared with its CPU gradient; Float64 also checks the
     # gradient against perturbations of the GPU forward model.
+    # The FV3 vertical sweeps (OF-94) run on 8 layers so that the interior
+    # layers' Huynh constraint and positivity limiter are exercised.
+    fv3 = AT.PPMScheme(; vertical = AT.Operators.Advection.FV3ScalarProfile())
+    fv3_signed = AT.PPMScheme(; vertical = AT.Operators.Advection.FV3ScalarProfile(; positive_definite = false))
     @testset "CUDA transporting footprint gradients" begin
-        for FT in (Float64, Float32), scheme in (
-                AT.PPMScheme(AT.NoLimiter()), AT.PPMScheme(), AT.PPMScheme(AT.CW84Limiter()),
-                AT.LinRoodPPMScheme(5), AT.LinRoodPPMScheme(7))
+        for FT in (Float64, Float32), (scheme, Nz) in (
+                (AT.PPMScheme(AT.NoLimiter()), 4), (AT.PPMScheme(), 4), (AT.PPMScheme(AT.CW84Limiter()), 4),
+                (AT.LinRoodPPMScheme(5), 4), (AT.LinRoodPPMScheme(7), 4),
+                (AT.LinRoodPPMScheme(5; vertical = fv3), 8), (AT.LinRoodPPMScheme(7; vertical = fv3_signed), 8))
             @testset "$FT $scheme" begin
-                mesh, m, rm, am, bm, cm = _transport_cs_problem(; Nc=4, Nz=4, nsteps=3, FT)
+                mesh, m, rm, am, bm, cm = _transport_cs_problem(; Nc=4, Nz, nsteps=3, FT)
                 _fill_smooth_tracer!(rm, m, mesh)
                 rates = [ntuple(6) do p
                     [FT(sin(0.31s + 0.17p + 0.23i - 0.19j))

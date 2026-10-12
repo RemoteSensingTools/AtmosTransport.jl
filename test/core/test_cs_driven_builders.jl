@@ -201,7 +201,9 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test materialize(advection_spec(Dict("scheme" => "ppm", "limiter" => "none"), inversion),
                           CS_STYLE) == PPMScheme(NoLimiter())
         @test advection_spec(Dict("scheme" => "ppm"), inversion).limiter isa MonotoneLimiter
-        @test_throws ArgumentError advection_spec(Dict("scheme" => "linrood"), inversion)
+        # Lin–Rood's vertical default is the same in both contexts (OF-94).
+        @test advection_spec(Dict("scheme" => "linrood"), inversion).vertical ==
+              advection_spec(Dict("scheme" => "linrood"), forward).vertical == PPMScheme(; vertical = FV3ScalarProfile())
         @test_throws ArgumentError advection_spec(Dict{String,Any}(), inversion)
         @test_throws ArgumentError advection_spec(Dict("scheme" => "upwind", "limiter" => "none"), inversion)
         @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "limiter" => "nope"), inversion)

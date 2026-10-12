@@ -43,10 +43,11 @@ Choose the algorithm explicitly when comparing runs:
 | `scheme = "linrood", ppm_order = 7, vertical = "fv3_kord8"` | `LinRoodPPMScheme(7; vertical = PPMScheme(; vertical = FV3ScalarProfile()))` (CS only) | FV3 `scalar_profile`, `kord = 8` |
 
 Omitting `ppm_order` for Lin–Rood selects 5, and omitting `vertical` selects
-the GCHP-matched `fv3_kord8` profile in configured forward runs. The Julia
+the GCHP-matched `fv3_kord8` profile, in forward runs and in the inversion
+driver alike: every Lin–Rood vertical choice has an adjoint (see
+[the FV3 profile's adjoint](@ref fv3-vertical-adjoint)). The Julia
 constructors `LinRoodAdvectionSpec(order)` and `LinRoodPPMScheme()` remain
-upwind. Inversion configuration must state `vertical = "upwind"` explicitly;
-it never inherits the forward-only FV3 default. Setting `ppm_order` with `scheme = "ppm"`
+upwind. Setting `ppm_order` with `scheme = "ppm"`
 is an error: standard split PPM has no order selector. `vertical` is only
 accepted with `scheme = "ppm"` or `"linrood"`, and `limiter` (`"monotone"`, the
 default, or `"cw84"`) only with `scheme = "ppm"`. `NoLimiter` and

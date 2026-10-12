@@ -76,11 +76,14 @@ The API accepts the following advection families:
 - `PPMScheme(NoLimiter())`
 - monotone `PPMScheme()` and `PPMScheme(CW84Limiter())` using recorded
   limiter branches
-- `LinRoodPPMScheme` with upwind vertical sweeps and its dedicated
-  horizontal tape
+- `LinRoodPPMScheme` with its dedicated horizontal tape and either vertical
+  sweep: upwind, or FV3's `kord = 8` profile (`vertical = "fv3_kord8"`, the
+  configured default, or `"fv3_kord8_signed"`), transposed at the limiter
+  branches of the recorded state
 
 `require_adjoint_support(scheme)` checks a scheme against this list and names
-what is missing otherwise (for example the FV3 vertical profile).
+what is missing otherwise (for example the split-sweep `PPMScheme` with the FV3
+vertical profile).
 
 Optional vertical diffusion and supported convection operators can be passed
 with the corresponding operator, forcing, and workspace keywords. Unsupported

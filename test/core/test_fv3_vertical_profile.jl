@@ -325,7 +325,7 @@ test_profiles(Nz) = (
         @test LinRoodPPMScheme(7).vertical isa UpwindScheme
         @test !needs_column_scratch(LinRoodPPMScheme(7)) && needs_column_scratch(linrood)
         @test_throws TypeError LinRoodPPMScheme(7; vertical = PPMScheme())   # not a LinRoodVertical
-        @test !(linrood isa AtmosTransport.Adjoints.CSAdjointSupportedScheme)
+        @test linrood isa AtmosTransport.Adjoints.CSAdjointSupportedScheme   # OF-94
         @test LinRoodPPMScheme(5) isa AtmosTransport.Adjoints.CSAdjointSupportedScheme
     end
 
@@ -343,7 +343,7 @@ test_profiles(Nz) = (
         # structured (lat-lon) sweeps refuse the FV3 profile
         @test _require_structured_vertical(PPMScheme()) === nothing
         @test_throws ArgumentError _require_structured_vertical(FV3_PPM)
-        # no adjoint for the FV3 vertical profile yet
+        # the FV3 profile's adjoint covers Lin–Rood's vertical sweeps, not the split PPM
         @test PPMScheme() isa AtmosTransport.Adjoints.CSAdjointSupportedScheme
         @test !(FV3_PPM isa AtmosTransport.Adjoints.CSAdjointSupportedScheme)
     end

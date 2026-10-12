@@ -38,8 +38,9 @@ record types, and schedules come from [`../Tape/`](../Tape/).
 - [`TapeRecording.jl`](TapeRecording.jl): `cs_tape_byte_estimate(...)` returns
   a `CSTapeByteEstimate` without recording anything. It counts both the
   split-sweep layouts (linear and limited PPM) and Lin-Rood's larger layout;
-  each Lin-Rood step retains ten full-panel states and six face-panel tuples
-  before optional diffusion and convection records.
+  each Lin-Rood step retains ten (upwind vertical) or twelve (FV3 vertical)
+  full-panel states and six face-panel tuples before optional diffusion and
+  convection records.
 - [`FootprintResult.jl`](FootprintResult.jl): `CSFootprintResult` (with
   `footprints[t]::NTuple{6}` of `(Nc, Nc)` arrays and
   `lag_steps[t] == nsteps - t`) and `CSTapeByteEstimate`.
@@ -51,7 +52,8 @@ record types, and schedules come from [`../Tape/`](../Tape/).
   `_record_sweep!`, `_record_and_sweep_z!` (records, then applies, one Z
   sweep; used by all three tapes, including Lin-Rood),
   `_record_cs_mass_tape` (linear schemes: stages `m`
-  only), `_record_cs_tracer_tape` (monotone PPM: stages `m` and `rm`), and
+  only), `_record_cs_tracer_tape` (monotone PPM: stages `m` and `rm`; the
+  FV3 vertical sweeps of the Lin-Rood tape stage both as well), and
   the `_record_cs_adjoint_tape` dispatcher (Lin-Rood goes to
   `_record_cs_linrood_tape`)
 - [`ReverseLoop.jl`](ReverseLoop.jl) — `_collect_surface_footprints`,
@@ -92,7 +94,8 @@ record types, and schedules come from [`../Tape/`](../Tape/).
   optional convection. `n` is the subcycle count from
   `_cs_static_palindrome_subcycle_count`, the production CFL schedule.
   Lin-Rood steps record `H Z [midpoint] Z H`. There is no subcycling
-  (`cfl_limit` is ignored), and Z is `UpwindScheme`.
+  (`cfl_limit` is ignored), and Z is the scheme's vertical sweep (upwind or
+  the FV3 profile).
 - In the split-sweep tapes, the forward halo fills after initialization are
   recorded as `_CSHaloRecord(dir)` (1 = X, 2 = Y): one after each horizontal
   sweep, and one before each of the second-half Y and X blocks (Lin-Rood keeps
@@ -108,8 +111,9 @@ record types, and schedules come from [`../Tape/`](../Tape/).
   factor.
 - Air mass and fluxes are fixed tape inputs. The Lin-Rood branch computes a
   `lambda_m` for each step and then discards it.
-- Monotone PPM records the tracer branch state of the base trajectory. Pass
-  `base_emission_rates` when you differentiate around non-zero emissions.
+- Monotone PPM and the FV3 vertical profile record the tracer branch state
+  of the base trajectory. Pass `base_emission_rates` when you differentiate
+  around non-zero emissions.
 - `StrideCheckpoint` replays the same kernels as `FullCheckpoint`, plus halo
   refreshes at segment boundaries. Tests require agreement within
   `atol = 1e-12` for every scheme family. `RevolveCheckpoint` can drift by about 1e-7 for monotone
@@ -132,6 +136,9 @@ record types, and schedules come from [`../Tape/`](../Tape/).
   seed entry, GPU smoke test
 - [`../../test/core/test_cs_linrood_footprint_fd.jl`](../../test/core/test_cs_linrood_footprint_fd.jl):
   Lin-Rood footprint vs. finite differences with upward vertical flux
+- [`../../test/core/test_cs_linrood_fv3_adjoint.jl`](../../test/core/test_cs_linrood_fv3_adjoint.jl):
+  the FV3 vertical sweep's transpose and Lin-Rood footprints with it vs.
+  finite differences, checkpoint parity
 - [`../../test/core/test_cs_stride_checkpoint.jl`](../../test/core/test_cs_stride_checkpoint.jl),
   [`../../test/core/test_cs_tape_path.jl`](../../test/core/test_cs_tape_path.jl),
   [`../../test/core/test_cs_tape_mmap_roundtrip.jl`](../../test/core/test_cs_tape_mmap_roundtrip.jl)

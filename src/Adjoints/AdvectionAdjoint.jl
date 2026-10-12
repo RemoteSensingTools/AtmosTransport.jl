@@ -13,7 +13,9 @@
 #   * Per-direction sweep adjoint kernels (`_cs_xsweep_adjoint_kernel!`,
 #     `_cs_ysweep_adjoint_kernel!`, `_cs_zsweep_adjoint_kernel!`).
 #   * The driver `_adjoint_scheme_sweep!` for both linear and monotone
-#     PPM schemes; LinRood is handled out-of-line in `LinRoodTape.jl`.
+#     PPM schemes and the FV3 vertical profile (whose column kernel lives in
+#     `Operators/Advection/vertical_fv3_profile_adjoint.jl`); the LinRood
+#     horizontal record is handled out-of-line in `LinRoodTape.jl`.
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -687,8 +689,8 @@ function _adjoint_scheme_sweep!(lambda_panels, m_before, flux_panels,
     return nothing
 end
 
-# PPM adjoints cover the default vertical reconstruction only; the FV3 vertical
-# profile (`FV3ScalarProfile`) has no adjoint yet.
+# Split-sweep PPM adjoints cover the default vertical reconstruction only; the
+# FV3 vertical profile has its own reverse (below), used by Lin–Rood.
 function _adjoint_scheme_sweep!(lambda_panels, m_before, rm_before, flux_panels,
                                 direction::Symbol, scheme::CSAdjointNonlinearScheme,
                                 mesh::CubedSphereMesh, ws::CSAdjointWorkspace,
@@ -728,5 +730,20 @@ function _adjoint_scheme_sweep!(lambda_panels, m_before, rm_before, flux_panels,
     end
     horizontal && _apply_cs_seam_adjoint!(lambda_panels, m_before, rm_before,
         flux_panels, ws.seam_seeds, mesh, scheme, axis, flux_scale)
+    return nothing
+end
+
+# Reverse of an FV3-profile vertical sweep. Only `_record_and_sweep_z!` records
+# this scheme (Lin–Rood's vertical sweeps), so the record is always a Z sweep.
+# The transpose is column-local and in place on `lambda_panels`
+# (`_sweep_z_panels_fv3_adjoint!`); `m_before` and `rm_before` are the state
+# that entered the forward sweep.
+function _adjoint_scheme_sweep!(lambda_panels, m_before, rm_before, flux_panels,
+                                ::Symbol, scheme::CSAdjointFV3Vertical,
+                                mesh::CubedSphereMesh, ws::CSAdjointWorkspace,
+                                flux_scale)
+    _sweep_z_panels_fv3_adjoint!(lambda_panels, rm_before, m_before, flux_panels,
+                                 scheme.vertical, ws.column_scratch, mesh;
+                                 flux_scale)
     return nothing
 end
