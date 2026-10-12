@@ -372,7 +372,10 @@ end
                        h -> h["omega_fidelity_nrmse"] = 1.2,
                        h -> h["omega_fidelity_correlation"] = 0.2,
                        h -> h["omega_fidelity_slope"] = -0.1,
-                       h -> delete!(h, "omega_fidelity_nrmse_limit"))
+                       h -> delete!(h, "omega_fidelity_nrmse_limit"),
+                       h -> (delete!(h, "omega_fidelity_pressure_bands_hpa");
+                             delete!(h, "omega_fidelity_band_nrmse")),
+                       h -> h["omega_fidelity_band_nrmse"] = [0.3, "NaN", 0.2, 0.1, 0.4])
             h = copy(passed); mutate(h)
             @test_throws ArgumentError parse_omega(h)
         end

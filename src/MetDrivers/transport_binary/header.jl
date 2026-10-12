@@ -417,6 +417,11 @@ function _check_omega_status(::FidelityPassed, hdr)
     _require_finite_keys(hdr, _OMEGA_FIDELITY_METRIC_KEYS, "passed OMEGA-fidelity")
     get(hdr, :omega_fidelity_passed, false) === true || throw(ArgumentError(
         "passed OMEGA-fidelity certificate needs omega_fidelity_passed = true"))
+    haskey(hdr, :omega_fidelity_pressure_bands_hpa) && haskey(hdr, :omega_fidelity_band_nrmse) &&
+        !isempty(hdr.omega_fidelity_band_nrmse) &&
+        all(x -> x isa Real && isfinite(Float64(x)), hdr.omega_fidelity_band_nrmse) ||
+        throw(ArgumentError(
+        "passed OMEGA-fidelity certificate needs finite pressure-band NRMSE values"))
     nrmse = Float64(hdr.omega_fidelity_nrmse)
     correlation = Float64(hdr.omega_fidelity_correlation)
     slope = Float64(hdr.omega_fidelity_slope)

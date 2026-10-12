@@ -481,7 +481,9 @@ is written. The certificate records maximum/RMS absolute and relative errors,
 maximum ULP distance, both tolerances and the scale floor, sample coverage,
 the worst window/face/level, method and effective duration. Because column
 Poisson balance intentionally changes fluxes, its effect is separate:
-`|F_balanced-F_r|` plus maximum and RMS normalized correction ratios.
+`|F_balanced-F_r|` plus maximum and RMS correction ratios
+`|F_balanced-F_r| / max(|F_r|, |F_c|, F_floor)` (for native GEOS fluxes,
+`F_c = F_r` is the native amount).
 
 Where source pressure velocity is available, the writer normalizes it to the
 same dry basis, time sampling, grid, and vertical coordinate and compares it

@@ -450,13 +450,15 @@ function verify_flux_fidelity!(acc::FluxFidelityAccumulator,
                                evidence::NativeFluxEvidence{G}, win) where G
     samples = evidence.samples
     _record_sampled_window!(acc, G, evidence, win, evidence.method, "native")
+    # The correction ratio is normalized as for wind evidence, by the
+    # pre-balance amount (here the native one) above the scale floor.
     FT = typeof(first(samples).native)
-    max_scale = maximum(s -> max(abs(Float64(s.native)), abs(Float64(s.balanced))), samples)
+    max_scale = maximum(s -> abs(Float64(s.native)), samples)
     scale_floor = max(floatmin(FT), eps(FT) * max(max_scale, 1.0))
     for s in samples
-        native = Float64(s.native); balanced = Float64(s.balanced)
-        _record_balance_correction!(acc, native, balanced,
-                                    max(abs(native), abs(balanced), scale_floor))
+        native = Float64(s.native)
+        _record_balance_correction!(acc, native, Float64(s.balanced),
+                                    max(abs(native), scale_floor))
     end
     acc.native_windows += 1
     return nothing
