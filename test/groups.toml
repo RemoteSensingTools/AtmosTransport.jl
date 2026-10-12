@@ -151,6 +151,7 @@ files = [
     "core/test_cmfmc_convection.jl",
     "core/test_cmfmc_matrix_convection.jl",
     "core/test_cmfmc_adjoint_identity.jl",
+    "core/test_convection_forcing.jl",
     "core/test_convection_mass_basis.jl",
     "core/test_transport_model_convection.jl",
     "core/test_tm5_alias_safety.jl",

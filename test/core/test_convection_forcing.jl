@@ -6,20 +6,25 @@
 #
 # 1-11 struct / window / model extensions, Adapt round-trips, CMFMC+TM5
 #      dual capability (Decision 28 — supersedes §2.4's "no mixing").
+#      The capability tuple `_cap` is (cmfmc, dtrain, tm5_fields,
+#      cloud_base) since the cloud-base slot was added (4a5daf38).
 # 12-17 copy_convection_forcing! semantics including strict capability
 #       match (Decision 27 invariance regression).
 # 18-19 allocate_convection_forcing_like shape/backend match
 #       (Decision 26).
 # 20-21 with_convection / with_convection_forcing helpers.
+# 22   cloud_base: requires CMFMC, is copied and allocated with the
+#      forcing, and is part of the capability match.
 # ---------------------------------------------------------------------------
 
 using Test
 using Adapt
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
-using .AtmosTransport: AbstractConvection
-using .AtmosTransport.MetDrivers: _cap, _check_capability_match
+using AtmosTransport
+# `copy_convection_forcing!` and `allocate_convection_forcing_like` are
+# exported by MetDrivers but not re-exported by AtmosTransport.
+using AtmosTransport.MetDrivers: _cap, copy_convection_forcing!,
+                                 allocate_convection_forcing_like
 
 # Custom dummy convection operator for test 20 (CMFMCConvection lands
 # in Commit 3).
@@ -58,7 +63,7 @@ end
     @test f.dtrain === dtrain
     @test f.tm5_fields === nothing
     @test has_convection_forcing(f)
-    @test _cap(f) == (true, true, false)
+    @test _cap(f) == (true, true, false, false)
 end
 
 @testset "ConvectionForcing TM5-mode construction" begin
@@ -74,7 +79,7 @@ end
     @test f.dtrain === nothing
     @test f.tm5_fields === tm5
     @test has_convection_forcing(f)
-    @test _cap(f) == (false, false, true)
+    @test _cap(f) == (false, false, true, false)
 end
 
 @testset "ConvectionForcing dual-capability (Decision 28)" begin
@@ -89,7 +94,7 @@ end
              entd = zeros(FT, 4, 3, 4), detd = zeros(FT, 4, 3, 4))
 
     f = ConvectionForcing(cmfmc, dtrain, tm5)
-    @test _cap(f) == (true, true, true)
+    @test _cap(f) == (true, true, true, false)
     @test has_convection_forcing(f)
 end
 
@@ -100,7 +105,7 @@ end
     FT = Float64
     cmfmc = zeros(FT, 4, 3, 5)
     f = ConvectionForcing(cmfmc, nothing, nothing)
-    @test _cap(f) == (true, false, false)
+    @test _cap(f) == (true, false, false, false)
     @test has_convection_forcing(f)
 end
 
@@ -153,7 +158,7 @@ end
     # All-nothing placeholder round-trips as all-nothing
     f_none = ConvectionForcing()
     f_none2 = Adapt.adapt(Array, f_none)
-    @test _cap(f_none2) == (false, false, false)
+    @test _cap(f_none2) == (false, false, false, false)
 
     # TM5 mode round-trips the NamedTuple
     tm5 = (; entu = zeros(FT, 4, 3, 4), detu = zeros(FT, 4, 3, 4),
@@ -178,7 +183,7 @@ end
     win = TransportWindow(m, ps, fluxes; convection = forcing)
     win2 = Adapt.adapt(Array, win)
     @test win2.convection !== nothing
-    @test _cap(win2.convection) == (true, false, false)
+    @test _cap(win2.convection) == (true, false, false, false)
     @test size(win2.convection.cmfmc) == size(cmfmc)
 
     # Round-trip of a `convection === nothing` window stays `nothing`.
@@ -204,7 +209,7 @@ end
 
     model2 = Adapt.adapt(Array, model)
     @test model2.convection isa _DummyConvOp
-    @test _cap(model2.convection_forcing) == (true, false, false)
+    @test _cap(model2.convection_forcing) == (true, false, false, false)
     @test size(model2.convection_forcing.cmfmc) == size(cmfmc)
 end
 
@@ -236,7 +241,7 @@ end
     forcing = ConvectionForcing(cmfmc, nothing, nothing)
     win_with = TransportWindow(m, ps, fluxes; convection = forcing)
     @test has_convection_forcing(win_with)
-    @test _cap(win_with.convection) == (true, false, false)
+    @test _cap(win_with.convection) == (true, false, false, false)
 end
 
 # ---------------------------------------------------------------------------
@@ -383,7 +388,7 @@ end
     src = ConvectionForcing(cmfmc, nothing, nothing)
 
     dst = allocate_convection_forcing_like(src, zeros(FT, 4, 3, 2))
-    @test _cap(dst) == (true, false, false)
+    @test _cap(dst) == (true, false, false, false)
     @test dst.dtrain === nothing
     @test size(dst.cmfmc) == size(cmfmc)
 end
@@ -464,4 +469,32 @@ end
     @test model2.chemistry === model.chemistry
     @test model2.diffusion === model.diffusion
     @test model2.emissions === model.emissions
+end
+
+# ---------------------------------------------------------------------------
+# Cloud base (fourth capability slot)
+# ---------------------------------------------------------------------------
+
+@testset "cloud_base requires CMFMC and travels with the forcing" begin
+    FT = Float32
+    Nc, Nz = 3, 2
+    cmfmc = ntuple(_ -> fill(FT(0.01), Nc, Nc, Nz + 1), 6)
+    cloud_base = ntuple(p -> fill(FT(p), Nc, Nc), 6)
+
+    @test_throws ArgumentError ConvectionForcing(nothing, nothing, nothing, cloud_base)
+
+    src = ConvectionForcing(cmfmc, nothing, nothing, cloud_base)
+    @test _cap(src) == (true, false, false, true)
+
+    dst = allocate_convection_forcing_like(src, ntuple(_ -> zeros(FT, Nc + 2, Nc + 2, Nz), 6))
+    @test _cap(dst) == _cap(src)
+    @test dst.cloud_base[1] !== src.cloud_base[1]
+    buffer = dst.cloud_base[4]
+    copy_convection_forcing!(dst, src)
+    @test dst.cloud_base[4] === buffer
+    @test dst.cloud_base == cloud_base
+
+    # A destination without the cloud base is a capability mismatch.
+    no_base = ConvectionForcing(ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), 6), nothing, nothing)
+    @test_throws ArgumentError copy_convection_forcing!(no_base, src)
 end
