@@ -229,10 +229,10 @@ end
     # ‖g‖∞ ≤ ‖g‖₂ always).
     norms_l2 = [entry.gradient_norm for entry in log]
     @test all(norms_l2 .>= 0)
-    # The final row's L2 norm must equal the final history entry,
-    # which is also L2 (populated from `state.g_norm` … but L-BFGS's
-    # `state.g_norm` is L∞; the log uses L2 directly). Cross-check
-    # the log row against an explicit L2 recomputation.
+    @test solve.gradient_norm_history == norms_l2
+    # The final row's L2 norm must equal the final history entry. Both are
+    # populated by the callback rather than Optim's L∞ `state.g_norm`.
+    # Cross-check the log row against an explicit L2 recomputation.
     # The returned result is the evaluation at the minimizer, the last
     # accepted iterate, so the last row's norm is its gradient's L2 norm
     # (up to summation order).

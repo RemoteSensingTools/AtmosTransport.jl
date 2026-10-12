@@ -268,6 +268,10 @@ function _run_driven_simulation_inputs(cfg, input_cfg, binary_paths, arch::Abstr
     _validate_input_binary_expectations(caps, input_cfg, first(binary_paths))
     # (window length, window count) of every binary, for the snapshot schedule.
     window_layout = [(item.caps.window_seconds, item.caps.nwindow) for item in binary_caps]
+    run_cfg = get(cfg, "run", Dict{String, Any}())
+    _check_window_range(window_layout;
+                        start_window = Int(get(run_cfg, "start_window", 1)),
+                        stop_window_override = get(run_cfg, "stop_window", nothing))
     # Rolling NVMe input staging (opt-in via [input.staging]; default off ⇒
     # `staged_path_for!` returns the NAS path, bit-identical to today). Created
     # here and torn down in `finally` so staged multi-GB files are always
@@ -402,7 +406,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     # `DrivenSimulation.step!` below.
     model = _make_structured_model(first_driver;
                                     FT = FT, recipe = recipe,
-                                    tracer_specs = tracer_specs, arch = arch)
+                                    tracer_specs = tracer_specs, arch = arch,
+                                    start_window = start_window)
     _assert_gpu_residency!(model.state, arch)
 
     grid_of_first = driver_grid(first_driver)
@@ -854,7 +859,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                           length(binary_paths))
             stop_window = stop_window_override === nothing ?
                           total_windows(driver) :
-                          min(Int(stop_window_override), total_windows(driver))
+                          Int(stop_window_override)
             window_hours = window_dt(driver) / 3600.0
             _check_flux_run_span(flux_run_span,
                                  total_hour * 3600.0 + stop_window * Float64(window_dt(driver)),

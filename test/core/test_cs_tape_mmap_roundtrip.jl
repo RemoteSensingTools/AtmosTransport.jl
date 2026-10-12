@@ -439,6 +439,23 @@ end
         old_buggy = est.state_records + est.halo_records + est.midpoint_records
         @test old_buggy - est.total_records == est.sweep_records
     end
+
+    @testset "Lin-Rood counts its four-state horizontal records" begin
+        mesh, panels_m, _, am, bm, cm =
+            _trivial_problem(Nc = 4, Nz = 3, nsteps = 2; nontrivial = false)
+        est = AT.cs_tape_byte_estimate(
+            panels_m, am, bm, cm, mesh, AT.LinRoodPPMScheme(5))
+        @test est.nsteps == 2
+        @test est.sweep_records == 8       # H, Z, Z, H per step
+        @test est.halo_records == 0        # halo work is inside each H record
+        @test est.midpoint_records == 2
+        @test est.state_records == 20      # 2*(4-state H) + 2*(1-state Z)
+        @test est.total_records == 10
+        face_tuple_bytes = sizeof(Float64) * 6 * (mesh.Nc + 1) * mesh.Nc *
+                           size(panels_m[1], 3)
+        @test est.state_bytes == est.state_records * est.bytes_per_state +
+                                 12 * face_tuple_bytes
+    end
 end
 
 # ---------------------------------------------------------------------------
@@ -482,6 +499,9 @@ end
         AT.CSObservation(1, AT.CSLayerMeanObjective(1, 2, 2, 3),
                          0.01f0, 0.2f0),
     ]
+    @test_throws UndefKeywordError AT.cs_surface_flux_4dvar(
+        panels_rm, panels_m, am, bm, cm, mesh, observations, good_control;
+        dt = Float32(1))
     AT.cs_surface_flux_4dvar(
         panels_rm, panels_m, am, bm, cm, mesh, observations, good_control;
         scheme = AT.PPMScheme(AT.NoLimiter()), dt = Float32(1))

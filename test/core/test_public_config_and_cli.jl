@@ -17,6 +17,65 @@ function _script_module(name::Symbol, relative_path::AbstractString)
     return mod
 end
 
+function _write_mixed_window_binary(path, window_seconds)
+    FT = Float64
+    Nx, Ny, Nz = 4, 3, 2
+    mesh = LatLonMesh(; FT, Nx, Ny)
+    vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
+    grid = AtmosGrid(mesh, vertical, CPU(); FT)
+    windows = [(
+        m = ones(FT, Nx, Ny, Nz),
+        am = zeros(FT, Nx + 1, Ny, Nz),
+        bm = zeros(FT, Nx, Ny + 1, Nz),
+        cm = zeros(FT, Nx, Ny, Nz + 1),
+        ps = fill(FT(95_000), Nx, Ny),
+    ) for _ in 1:2]
+    write_transport_binary(path, grid, windows;
+                           FT, dt_met_seconds = window_seconds,
+                           half_dt_seconds = window_seconds / 2,
+                           steps_per_window = 1, mass_basis = :dry,
+                           source_flux_sampling = :window_start_endpoint,
+                           flux_sampling = :window_constant)
+    return path
+end
+
+function _write_full_window_cs_binary(path)
+    MD = AtmosTransport.MetDrivers
+    FT = Float64
+    Nc, Nz = 2, 2
+    vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
+    writer = MD.open_streaming_cs_transport_binary(
+        path, Nc, 6, Nz, 2, vertical;
+        FT, dt_met_seconds = 3600.0, steps_per_window = 2,
+        flux_kind = :full_window_mass_amount, mass_basis = :dry,
+        planet_radius = AtmosTransport.Parameters.EARTH_RADIUS)
+    try
+        for win in 1:2
+            m = ntuple(_ -> begin
+                values = ones(FT, Nc, Nc, Nz)
+                win == 2 && (values[:, :, Nz] .= 0.9)
+                values
+            end, 6)
+            cm = ntuple(_ -> begin
+                values = zeros(FT, Nc, Nc, Nz + 1)
+                win == 1 && (values[:, :, Nz + 1] .= 0.1)
+                values
+            end, 6)
+            window = (
+                m,
+                am = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz), 6),
+                bm = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz), 6),
+                cm,
+                ps = ntuple(_ -> fill(FT(95_000), Nc, Nc), 6),
+            )
+            MD.write_streaming_cs_window!(writer, window, Nc, 6)
+        end
+    finally
+        MD.close_streaming_transport_binary!(writer)
+    end
+    return path
+end
+
 @testset "runtime preflight reports malformed tables before reading binaries" begin
     mktemp() do path, io
         # An existing empty file passes path checks, but is not a transport
@@ -176,6 +235,38 @@ end
                               for t in axes(storage_per_area, 3)]
             @test all(x -> isapprox(x, storage_totals[1]; rtol = 2f-6), storage_totals)
         end
+    end
+end
+
+@testset "runner handles mixed binary window lengths end to end" begin
+    mktempdir() do dir
+        half_hour = _write_mixed_window_binary(joinpath(dir, "half_hour.bin"), 1800.0)
+        hourly = _write_mixed_window_binary(joinpath(dir, "hourly.bin"), 3600.0)
+        output_path = joinpath(dir, "mixed_windows.nc")
+        cfg = Dict{String, Any}(
+            "input" => Dict("binary_paths" => [half_hour, hourly]),
+            "advection" => Dict("scheme" => "upwind"),
+            "tracers" => Dict("co2" => Dict(
+                "init" => Dict("kind" => "uniform", "background" => 4e-4))),
+            "output" => Dict("path" => output_path,
+                             "hours" => [0.0, 0.5, 1.0, 2.0, 3.0]),
+        )
+        model = run_driven_simulation(cfg)
+        @test all(mixing_ratio(model.state, :co2) .== 4e-4)
+        NCDataset(output_path) do ds
+            @test ds["time"][:] == [0.0, 0.5, 1.0, 2.0, 3.0]
+        end
+    end
+end
+
+@testset "CS continuity verifier scales full-window flux amounts" begin
+    verifier = _script_module(
+        :VerifyCSBinaryContinuityTest,
+        "scripts/validation/verify_cs_binary_continuity.jl",
+    )
+    mktempdir() do dir
+        binary = _write_full_window_cs_binary(joinpath(dir, "full_window.bin"))
+        @test getfield(verifier, :main)(["--binary", binary, "--threshold", "1e-14"]) == 0
     end
 end
 

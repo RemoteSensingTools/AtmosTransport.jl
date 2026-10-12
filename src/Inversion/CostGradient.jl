@@ -340,7 +340,7 @@ end
 _truncate_stepwise_arg(value, n::Int) = value
 
 """
-    cs_surface_flux_4dvar(..., observations, controls; kwargs...) -> CS4DVarResult
+    cs_surface_flux_4dvar(..., observations, controls; scheme, kwargs...) -> CS4DVarResult
 
 Evaluate the prototype CS surface-flux 4D-Var cost and gradient. Controls are
 named `CSSurfaceFluxControl`s over `CSSurfaceFluxWindow`s. Observations are
@@ -351,6 +351,9 @@ simulated values, every observation re-runs the forward model with a tape up
 to its step and then its own reverse pass, so one cost-and-gradient
 evaluation costs one taped forward and reverse run per observation (see
 [Adjoint status](@ref)).
+
+`scheme` is required: inversion callers must name the advection operator whose
+forward and adjoint they intend to use; there is no hidden numerical default.
 
 Two modes:
 
@@ -386,7 +389,7 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
                                mesh::CubedSphereMesh,
                                observations,
                                controls;
-                               scheme::CSAdjointSupportedScheme = PPMScheme(NoLimiter()),
+                               scheme::CSAdjointSupportedScheme,
                                dt = one(eltype(panels_rm0[1])),
                                flux_scale = one(eltype(panels_rm0[1])),
                                cfl_limit = DEFAULT_CFL_LIMIT,

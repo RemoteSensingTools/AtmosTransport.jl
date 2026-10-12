@@ -197,6 +197,12 @@ end
     @test Runner._snapshot_due(10 / 60, 10 / 60, 10 / 60)
     @test !Runner._snapshot_due(10 / 60, 20 / 60, 10 / 60)   # 10-minute windows
     @test !Runner._snapshot_due(0.0, 10 / 60, 10 / 60)
+    @test Runner._check_window_range([(3600.0, 4), (1800.0, 6)];
+                                     stop_window_override = 4) === nothing
+    @test_throws ArgumentError Runner._check_window_range(
+        [(3600.0, 4), (1800.0, 3)]; stop_window_override = 4)
+    @test_throws ArgumentError Runner._check_window_range(
+        [(3600.0, 2)]; start_window = 3)
 end
 
 @testset "preflight details" begin

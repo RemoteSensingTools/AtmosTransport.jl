@@ -43,7 +43,17 @@ AtmosTransport.Models._runtime_recipe_style(::StubReader) =
     AtmosTransport.Models.CubedSphereRuntimeRecipeStyle()
 AtmosTransport.Models._runtime_has_tm5_convection(r::StubReader) = r.has_tm5
 AtmosTransport.Models._runtime_has_cmfmc(r::StubReader) = r.has_cmfmc
+AtmosTransport.Models._runtime_has_dtrain(r::StubReader) = r.has_cmfmc
 AtmosTransport.Models._runtime_has_surface(::StubReader) = false
+
+struct StubMatrixReader
+    has_cmfmc :: Bool
+    has_dtrain :: Bool
+end
+AtmosTransport.Models._runtime_recipe_style(::StubMatrixReader) =
+    AtmosTransport.Models.CubedSphereRuntimeRecipeStyle()
+AtmosTransport.Models._runtime_has_cmfmc(r::StubMatrixReader) = r.has_cmfmc
+AtmosTransport.Models._runtime_has_dtrain(r::StubMatrixReader) = r.has_dtrain
 
 struct StubPBLReader end
 AtmosTransport.Models._runtime_recipe_style(::StubPBLReader) =
@@ -359,6 +369,16 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test cs_physics_recipe(Dict("convection" => Dict("kind" => "tm5")), only_tm5, Float64).convection isa TM5Convection
         @test cs_physics_recipe(Dict("convection" => Dict("kind" => "cmfmc")), only_cmfmc, Float64).convection isa CMFMCConvection
         @test cs_physics_recipe(Dict("convection" => Dict("kind" => "cmfmc")), full_conv, Float64).convection isa CMFMCConvection
+        matrix_cfg = Dict("convection" => Dict("kind" => "cmfmc_matrix"))
+        matrix_recipe = cs_physics_recipe(
+            matrix_cfg, StubMatrixReader(true, true), Float64)
+        @test matrix_recipe.convection isa CMFMCMatrixConvection
+        # The runner reuses the first binary's recipe and validates each later
+        # driver. A later cmfmc binary without dtrain must still be rejected.
+        @test_throws ArgumentError validate_runtime_physics_recipe(
+            matrix_recipe, StubMatrixReader(true, false))
+        @test_throws ArgumentError cs_physics_recipe(
+            matrix_cfg, StubMatrixReader(true, false), Float64)
 
         @test_throws ArgumentError cs_physics_recipe(
             Dict("convection" => Dict("kind" => "tm5")), no_conv, Float64)

@@ -81,10 +81,12 @@ function _make_structured_model(driver::TransportBinaryDriver;
                                 FT::Type{<:AbstractFloat},
                                 recipe,
                                 tracer_specs,
-                                arch)
+                                arch,
+                                start_window::Integer = 1)
     grid = driver_grid(driver)
     mesh = grid.horizontal
-    window = load_transport_window(driver, 1)
+    _require_global_longitude_span(mesh)
+    window = load_transport_window(driver, Int(start_window))
     air_mass = copy(window.air_mass)
 
     tracer_specs_tuple = Tuple(tracer_specs)
@@ -111,6 +113,20 @@ function _make_structured_model(driver::TransportBinaryDriver;
                            chemistry = recipe.chemistry)
     adaptor = array_adapter(arch)
     return adaptor === Array ? model : Base.invokelatest(Adapt.adapt, adaptor, model)
+end
+
+# Structured transport closes the zonal boundary periodically. Regional
+# LatLonMesh values remain useful for source/regridding grids, but they cannot
+# enter the transport runner without silently joining their west/east edges.
+_require_global_longitude_span(::ReducedGaussianMesh) = nothing
+function _require_global_longitude_span(mesh::LatLonMesh)
+    span = Float64(last(mesh.λᶠ) - first(mesh.λᶠ))
+    tolerance = max(64eps(Float64), 4eps(eltype(mesh))) * 360.0
+    isapprox(span, 360.0; rtol = 0.0, atol = tolerance) ||
+        throw(ArgumentError(
+            "lat-lon transport requires a global 360-degree longitude span " *
+            "because the zonal boundary is periodic; got $(span) degrees."))
+    return nothing
 end
 
 # Snapshot capture and NetCDF writing live in `AtmosTransport.Output`. The

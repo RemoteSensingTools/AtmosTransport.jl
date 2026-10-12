@@ -43,10 +43,11 @@ pass will push onto the tape — except `state_records` which is a
 nonlinear schemes that stage both `panels_m` and `panels_rm` per
 sweep).
 
-`state_bytes = state_records * bytes_per_state` is the raw panel-data
-cost of the tape; halo, midpoint, and the diffusion-palindrome's two
-op records contribute scalar metadata only and are not counted in
-`state_bytes`.
+`state_bytes` is the raw panel-data cost of the tape. It equals
+`state_records * bytes_per_state` for split-sweep tapes; Lin-Rood additionally
+retains face-shaped tuples whose exact byte cost is included in `state_bytes`.
+Halo, midpoint, and the diffusion-palindrome's two op records contribute
+scalar metadata only and are not counted in `state_bytes`.
 
 `total_records` is the **op count**:
 `sweep + halo + midpoint + diffusion + convection`. It is not in

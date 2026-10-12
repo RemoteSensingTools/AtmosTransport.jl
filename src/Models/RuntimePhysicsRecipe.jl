@@ -204,10 +204,15 @@ end
 
 @inline _runtime_has_tm5_convection(_context) = false
 @inline _runtime_has_cmfmc(_context) = false
+@inline _runtime_has_dtrain(_context) = false
 @inline _runtime_has_tm5_convection(reader::TransportBinaryReader) = MetDrivers.has_tm5_convection(reader)
 @inline _runtime_has_tm5_convection(driver::TransportBinaryDriver) = MetDrivers.has_tm5_convection(driver.reader)
 @inline _runtime_has_cmfmc(reader::TransportBinaryReader) = MetDrivers.has_cmfmc(reader)
 @inline _runtime_has_cmfmc(driver::TransportBinaryDriver) = MetDrivers.has_cmfmc(driver.reader)
+@inline _runtime_has_dtrain(reader::TransportBinaryReader) =
+    :dtrain in reader.header.payload_sections
+@inline _runtime_has_dtrain(driver::TransportBinaryDriver) =
+    _runtime_has_dtrain(driver.reader)
 @inline _runtime_has_cmfmc_cloud_base(_context) = false
 @inline _runtime_has_cmfmc_cloud_base(reader::TransportBinaryReader) =
     MetDrivers.has_cmfmc_cloud_base(reader)
@@ -300,15 +305,14 @@ end
 function validate_runtime_convection(::AbstractRuntimeRecipeStyle,
                                      ::CMFMCMatrixConvection,
                                      context)
-    # The matrix variant requires both cmfmc AND dtrain — see the
-    # capability check in `DrivenRunner._validate_capability_match` for
-    # the detailed reason. Recipe-level validators don't have access to
-    # `caps.payload_sections` so we can only check the cmfmc capability
-    # here; DrivenRunner enforces the dtrain requirement directly.
-    _runtime_has_cmfmc(context) ||
+    # This validator runs for every driver in a multi-binary run. Keep dtrain
+    # separate from the broader cmfmc capability so a later binary cannot
+    # silently lose the explicit detrainment field required by the matrix
+    # closure.
+    (_runtime_has_cmfmc(context) && _runtime_has_dtrain(context)) ||
         throw(ArgumentError(
             "[convection] kind = \"cmfmc_matrix\" requires CMFMC convection " *
-            "forcing (cmfmc + dtrain) in the runtime forcing source. The " *
+            "forcing with both cmfmc and dtrain in every runtime forcing source. The " *
             "matrix variant reads the same binary sections as kind=\"cmfmc\" " *
             "and derives entu/detu at runtime — no Tiedtke fallback."))
     return nothing
