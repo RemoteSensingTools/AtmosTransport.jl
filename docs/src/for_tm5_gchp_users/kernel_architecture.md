@@ -197,8 +197,10 @@ The runner prints a timing breakdown and writes a sibling
 `*.timings.csv` when an output NetCDF path is configured. Useful sections
 include window loading, backend copying, forcing refresh, advection,
 diffusion, convection, and output; with time-varying surface fluxes,
-`surface_flux_upload` is the copy of each window's flux slices from host
-memory to the device. Allocation sampling can be added with
+`surface_flux_upload` measures the host staging and enqueue time for each
+window's flux slices. CUDA copies are asynchronous, so DMA completion can be
+paid at a later synchronization and is not necessarily included in this
+section. Allocation sampling can be added with
 `ATMOSTR_ALLOC_TIMERS=1`.
 
 Read these measurements with their scope in mind:

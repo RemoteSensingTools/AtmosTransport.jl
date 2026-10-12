@@ -116,7 +116,8 @@ the device; now each tracer holds a few 0.19 MB slices there.
   stages each window's flux slices (`_stage_surface_flux_window!`)
 - Checking device memory or upload counts of a time-varying source:
   `src.window_buffer` holds the slots, the resident slice of each slot and
-  the number of slices copied so far (`uploads`)
+  the number of slices staged over the logical buffer's lifetime (`uploads`;
+  preserved when a populated buffer is adapted to another backend)
 
 ## Cross-Dependencies
 

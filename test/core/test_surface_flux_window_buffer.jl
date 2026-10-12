@@ -165,6 +165,13 @@ Base.similar(a::DeviceStandIn, ::Type{T}, dims::Dims) where {T} = DeviceStandIn(
 struct ToDeviceStandIn end
 Adapt.adapt_storage(::ToDeviceStandIn, x::Array) = DeviceStandIn(copy(x))
 
+const BULK_STAGE_CALLS = Ref(0)
+function SF._bulk_copy_flux_slices!(dest::DeviceStandIn, copies::AbstractVector)
+    BULK_STAGE_CALLS[] += 1
+    return invoke(SF._bulk_copy_flux_slices!, Tuple{AbstractArray, AbstractVector},
+                  dest, copies)
+end
+
 @testset "Adapt keeps the series on the host and moves the window buffer" begin
     FT = Float32
     host = TimeVaryingSurfaceFluxSource(:co2, series_for(FT, length(HOURLY), 1), HOURLY, ConservativeMeanFlux())
@@ -174,8 +181,8 @@ Adapt.adapt_storage(::ToDeviceStandIn, x::Array) = DeviceStandIn(copy(x))
     @test device.compensation[1] isa DeviceStandIn{FT, 2}
     @test device.window_buffer.slots[1] isa DeviceStandIn{FT, 3}
     @test device.window_buffer !== host.window_buffer
-    # Adapting to the backend the buffer is on shares it (the runner adapts the
-    # sources again for every input file); on the CPU, `Array` is that backend.
+    # Adapting to the backend the buffer is already on is an idempotent direct
+    # API operation; on the CPU, `Array` is that backend.
     @test Adapt.adapt(ToDeviceStandIn(), device).window_buffer === device.window_buffer
     @test Adapt.adapt(Array, host).window_buffer === host.window_buffer
     @test Adapt.adapt(Array, host).compensation === host.compensation
@@ -196,6 +203,23 @@ Adapt.adapt_storage(::ToDeviceStandIn, x::Array) = DeviceStandIn(copy(x))
     moved = Adapt.adapt(ToDeviceStandIn(), host)
     @test moved.window_buffer.resident == host.window_buffer.resident
     @test all(p -> moved.window_buffer.slots[p].data == host.window_buffer.slots[p], 1:6)
+    @test moved.window_buffer.uploads == host.window_buffer.uploads > 0
+
+    # All missing slices of all sources go through one backend-dispatched bulk
+    # hook per operator/window. A fully resident repeat invokes no hook.
+    bulk_hosts = (
+        TimeVaryingSurfaceFluxSource(:co2, series_for(FT, length(HOURLY), 8), HOURLY,
+                                     StepwiseFlux()),
+        TimeVaryingSurfaceFluxSource(:tag, series_for(FT, length(HOURLY), 9), HOURLY,
+                                     LinearInterpFlux()))
+    bulk_devices = map(s -> Adapt.adapt(ToDeviceStandIn(), s), bulk_hosts)
+    bulk_op = SurfaceFluxOperator(PerTracerFluxMap(bulk_devices))
+    BULK_STAGE_CALLS[] = 0
+    SF.stage_surface_flux_window!(bulk_op, 0.0, 7200.0)
+    @test BULK_STAGE_CALLS[] == 1
+    @test sum(s -> s.window_buffer.uploads, bulk_devices) > 2
+    SF.stage_surface_flux_window!(bulk_op, 0.0, 7200.0)
+    @test BULK_STAGE_CALLS[] == 1
 end
 
 # ---------------------------------------------------------------------------

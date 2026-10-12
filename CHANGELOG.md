@@ -478,9 +478,11 @@
   fields, and its device memory peaks at 2.9 GB instead of 18.9 GB: the old
   hook copied the series to the device again for every input file, and up to
   three copies were alive at once. Time per day is unchanged within noise
-  (10–13 s), and the uploads take 0.02 s over the run's 72 windows. The series
+  (10–13 s), and host staging/enqueue takes 0.02 s over the run's 72 windows
+  (CUDA DMA completion can be paid at a later synchronization). The series
   still take host memory (0.73 GB per tracer in Float32 and 1.47 GB in Float64
-  for that period). Metal is not verified.
+  for that period). The opt-in Metal diagnostic covers the Float32 window
+  buffer against the full-series reference.
 - New in `Architectures`: point operations (`AbstractPointOp`, `Fused`,
   `Sequence`, `launch!(op, ctx, backend)`), with a per-backend
   `fusion_policy` (one fused kernel by default, separate launches on Metal). A kernel body is written once as

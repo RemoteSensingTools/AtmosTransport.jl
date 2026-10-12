@@ -281,8 +281,9 @@ end
 # current window reads into their device buffers. This runs on the task that
 # launches the window's kernels, after the window's met data became current,
 # so the copies are ordered before the window's first surface-flux kernel
-# (CUDA.jl issues both on the task's stream; Metal.jl synchronizes the queue
-# before a host copy). The prefetch task never touches the buffers.
+# (CUDA.jl issues both on the task's stream; the Metal bulk hook synchronizes
+# once before all of the window's host copies). The prefetch task never touches
+# the buffers.
 function _stage_surface_flux_window!(sim::DrivenSimulation)
     t0, t1 = _window_time_span(sim)
     SectionTimer.@section :surface_flux_upload stage_surface_flux_window!(sim.model.emissions, t0, t1)

@@ -308,7 +308,9 @@ end
 stage_surface_flux_window!(::AbstractSurfaceFluxOperator, t0, t1) = nothing
 
 function stage_surface_flux_window!(op::SurfaceFluxOperator, t0::Real, t1::Real)
-    foreach(src -> stage_surface_flux_window!(src, t0, t1), op.flux_map.sources)
+    copies = _FluxSliceCopy[]
+    foreach(src -> _prepare_surface_flux_window!(copies, src, t0, t1), op.flux_map.sources)
+    _perform_flux_slice_copies!(copies)
     return nothing
 end
 

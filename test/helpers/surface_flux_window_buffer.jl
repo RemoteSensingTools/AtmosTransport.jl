@@ -76,6 +76,16 @@ FullSeriesReference(src::TimeVaryingSurfaceFluxSource, to = Array) =
     FullSeriesReference(src.tracer_name, Adapt.adapt(to, src.cell_mass_rate_series), src.times,
                         src.scheme, Adapt.adapt(to, map(c -> zero(c), src.compensation)))
 
+# Reproduce the pre-R1 lifecycle in DrivenSimulation tests: adapting the same
+# host reference for each binary creates a fresh full device series and fresh
+# compensation, just as adapting a host TimeVaryingSurfaceFluxSource creates a
+# fresh window buffer and compensation.
+function Adapt.adapt_structure(to, src::FullSeriesReference)
+    series = Adapt.adapt(to, src.series)
+    compensation = Adapt.adapt(to, src.compensation)
+    return FullSeriesReference(src.tracer_name, series, src.times, src.scheme, compensation)
+end
+
 function SF._apply_cs_surface_flux!(q_raw::NTuple{6}, src::FullSeriesReference, dt_FT::FT,
                                     t_idx, Hp, backend, meteo, deposit) where FT
     series = src.series

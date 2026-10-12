@@ -301,7 +301,9 @@ never emits allocates no slots.
   array, matching the series without its time dimension.
 - `resident :: Vector{Int}` — the slice index held by each slot, `0` if none
   (host).
-- `uploads :: Int` — slices copied into this buffer so far.
+- `uploads :: Int` — slices staged over this logical buffer's lifetime. The
+  count is preserved when `Adapt` moves a populated buffer to another backend;
+  it counts staged slices, not the panel transfers performed for each slice.
 """
 mutable struct FluxWindowBuffer{B}
     slots    :: B
@@ -334,6 +336,53 @@ function _copy_slice!(slots::Tuple, slot::Integer, series::Tuple, k::Integer)
     return slots
 end
 
+# One logical slice copy, expanded to one transfer per panel by `_copy_slice!`.
+# Keeping the logical operation intact makes `uploads` independent of topology
+# while allowing a backend extension to stage a whole operator/window in bulk.
+struct _FluxSliceCopy{B, S}
+    buffer :: B
+    series :: S
+    slot   :: Int
+    slice  :: Int
+end
+
+_first_flux_array(a::AbstractArray) = a
+_first_flux_array(a::Tuple) = _first_flux_array(first(a))
+
+# Backend-dispatched bulk hook. The first destination array selects the method;
+# extensions can order all transfers after one backend synchronization without
+# putting optional backend types in the core package.
+function _bulk_copy_flux_slices!(::AbstractArray, copies::AbstractVector)
+    for copy in copies
+        _copy_slice!(copy.buffer.slots, copy.slot, copy.series, copy.slice)
+    end
+    return nothing
+end
+
+function _prepare_flux_slices!(copies::AbstractVector, buffer::FluxWindowBuffer,
+                               series, ks::UnitRange{Int})
+    if length(ks) > _capacity(buffer)
+        buffer.slots = _alloc_slice_slots(buffer.slots, length(ks))
+        buffer.resident = zeros(Int, length(ks))
+    end
+    for k in ks
+        slot = _buffer_slot(buffer, k)
+        buffer.resident[slot] == k && continue
+        push!(copies, _FluxSliceCopy(buffer, series, slot, k))
+    end
+    return copies
+end
+
+function _perform_flux_slice_copies!(copies::AbstractVector)
+    isempty(copies) && return nothing
+    _bulk_copy_flux_slices!(_first_flux_array(first(copies).buffer.slots), copies)
+    for copy in copies
+        copy.buffer.resident[copy.slot] = copy.slice
+        copy.buffer.uploads += 1
+    end
+    return nothing
+end
+
 """
     _stage_flux_slices!(buffer, series, ks::UnitRange{Int}) -> buffer
 
@@ -342,17 +391,9 @@ not. A range longer than the capacity first replaces the slots by `length(ks)`
 empty ones on the same backend.
 """
 function _stage_flux_slices!(buffer::FluxWindowBuffer, series, ks::UnitRange{Int})
-    if length(ks) > _capacity(buffer)
-        buffer.slots = _alloc_slice_slots(buffer.slots, length(ks))
-        buffer.resident = zeros(Int, length(ks))
-    end
-    for k in ks
-        slot = _buffer_slot(buffer, k)
-        buffer.resident[slot] == k && continue
-        _copy_slice!(buffer.slots, slot, series, k)
-        buffer.resident[slot] = k
-        buffer.uploads += 1
-    end
+    copies = _FluxSliceCopy[]
+    _prepare_flux_slices!(copies, buffer, series, ks)
+    _perform_flux_slice_copies!(copies)
     return buffer
 end
 
@@ -361,7 +402,7 @@ end
 function Adapt.adapt_structure(to, buffer::FluxWindowBuffer)
     slots = Adapt.adapt(to, buffer.slots)
     slots === buffer.slots && return buffer
-    return FluxWindowBuffer(slots, copy(buffer.resident), 0)
+    return FluxWindowBuffer(slots, copy(buffer.resident), buffer.uploads)
 end
 
 # =========================================================================
@@ -475,9 +516,18 @@ the window's first surface-flux kernel. Static sources, other source types and
 """
 stage_surface_flux_window!(::AbstractSurfaceFluxSource, t0, t1) = nothing
 
+_prepare_surface_flux_window!(copies, ::AbstractSurfaceFluxSource, t0, t1) = copies
+
+function _prepare_surface_flux_window!(copies, src::TimeVaryingSurfaceFluxSource,
+                                       t0::Real, t1::Real)
+    return _prepare_flux_slices!(copies, src.window_buffer, src.cell_mass_rate_series,
+                                 _flux_window_slices(src.scheme, src.times, t0, t1))
+end
+
 function stage_surface_flux_window!(src::TimeVaryingSurfaceFluxSource, t0::Real, t1::Real)
-    _stage_flux_slices!(src.window_buffer, src.cell_mass_rate_series,
-                        _flux_window_slices(src.scheme, src.times, t0, t1))
+    copies = _FluxSliceCopy[]
+    _prepare_surface_flux_window!(copies, src, t0, t1)
+    _perform_flux_slice_copies!(copies)
     return nothing
 end
 

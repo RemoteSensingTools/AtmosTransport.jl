@@ -13,6 +13,7 @@ else
     include(joinpath(helpers, "point_ops.jl"))
     include(joinpath(helpers, "cs_halo_fill.jl"))
     include(joinpath(helpers, "cmfmc_cfl.jl"))
+    include(joinpath(helpers, "surface_flux_window_buffer.jl"))
     @testset "Metal point operations" begin
         # Separate launches with bound contexts on Metal (faster there).
         @test PointArch.fusion_policy(Metal.MetalBackend()) === PointArch.SeparateLaunches()
@@ -26,5 +27,23 @@ else
     end
     @testset "Metal CMFMC CFL scan matches the host reference" begin
         check_cmfmc_cfl_on_device(MtlArray; float_types = (Float32,))
+    end
+    @testset "Metal surface-flux window staging matches the full series" begin
+        for scheme in SCHEMES
+            hosts = (
+                TimeVaryingSurfaceFluxSource(:co2,
+                    series_for(Float32, length(HOURLY), 21), HOURLY, scheme),
+                TimeVaryingSurfaceFluxSource(:tag,
+                    series_for(Float32, length(THREE_HOURLY), 22), THREE_HOURLY, scheme))
+            devices = map(h -> Adapt.adapt(MtlArray, h), hosts)
+            state, grid = cs_state(Float32; arr = MtlArray)
+            q_new, comp_new, copied = drive!(state, grid, devices, 5400.0f0, 8, 7)
+            state, grid = cs_state(Float32; arr = MtlArray)
+            refs = map(h -> FullSeriesReference(h, MtlArray), hosts)
+            q_ref, comp_ref, _ = drive!(state, grid, refs, 5400.0f0, 8, 7)
+            @test bitequal(q_new, q_ref)
+            @test all(map(bitequal, comp_new, comp_ref))
+            @test all(iszero, copied)
+        end
     end
 end
