@@ -35,7 +35,6 @@ species  = "co2"
 
 [advection]
 scheme            = "slopes"
-prognostic_slopes = false
 mass_fixer        = false    # TM5-strict: NO fixer (will fail on polar cells)
 
 [output]

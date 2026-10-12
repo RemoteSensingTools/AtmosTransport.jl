@@ -109,6 +109,9 @@ end
         bad(f) = (cfg = base(); f(cfg); errors_of(cfg))
         @test any(contains("ppm_order"),
                   bad(c -> c["advection"] = Dict("scheme" => "ppm", "ppm_order" => 7)))
+        @test any(contains("prognostic_slopes"),
+                  bad(c -> c["advection"] = Dict("scheme" => "slopes",
+                                                  "prognostic_slopes" => true)))
         @test any(contains("must be 5 or 7"),
                   bad(c -> c["advection"] = Dict("scheme" => "linrood", "ppm_order" => 3)))
         @test any(contains("moved to the [advection] table"),

@@ -33,7 +33,6 @@ species  = "co2"
 
 [advection]
 scheme              = "slopes"
-prognostic_slopes   = true       # TM5 second-order moments (rxm/rym/rzm)
 enable_flux_delta   = true
 mass_fixer          = true
 

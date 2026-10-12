@@ -239,7 +239,7 @@ vertical upwind. Two edge-value families are selectable:
 
 | `ORD` | Interior reconstruction | Panel-edge treatment |
 |---|---|---|
-| `5` | Huynh-constrained PPM | default edge-value family |
+| `5` | Colella–Woodward fourth-order edges with extremum flattening | default edge-value family |
 | `7` | Same as ORD=5 | special cubed-sphere boundary correction |
 
 `PPMScheme` is the strict-structured PPM; `LinRoodPPMScheme` is the

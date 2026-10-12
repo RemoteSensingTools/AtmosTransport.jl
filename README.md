@@ -87,7 +87,8 @@ The reading order:
 - **Advection schemes:** `UpwindScheme` (1st order), `SlopesScheme`
   (Russell-Lerner flux with van Leer slopes re-diagnosed every sweep, 2nd
   order in smooth regions; not TM5's prognostic-moment scheme),
-  `PPMScheme` (Putman-Lin, 3rd order in smooth regions),
+  `PPMScheme` (limited Colella–Woodward edges feeding a Russell–Lerner flux,
+  2nd order in smooth regions),
   `LinRoodPPMScheme{ORD}` for cubed-sphere with FV3 cross-term advection
   (`ORD ∈ {5, 7}` selects the boundary stencil).
 - **Convection:** `CMFMCConvection` (GCHP-style RAS / Grell-Freitas, for
@@ -169,7 +170,7 @@ column and global mass diagnostics, independently of transport precision.
 ## Status tracker
 
 Single source of truth for what is production-ready, what is preview /
-experimental, and what is planned. Reviewed `2026-09-06`. Items move out
+experimental, and what is planned. Reviewed `2026-10-11`. Items move out
 of "experimental" only after a passing CPU+GPU regression suite and a
 documented validation run.
 
@@ -210,9 +211,9 @@ documented validation run.
 | --- | :---: | :---: | :---: | :---: | :---: |
 | `UpwindScheme` (1st order) | ✅ | ✅ | ✅ | — | ✅ |
 | `SlopesScheme` (van Leer, diagnosed slopes) | ✅ | ❌ | ✅ | — | ✅ |
-| `PPMScheme` (Putman-Lin) | ✅ | ❌ | ✅ | — | ✅ |
+| `PPMScheme` (PPM-informed slopes) | ✅ | ❌ | ✅ | — | ✅ |
 | `LinRoodPPMScheme{5}` | — | — | — | ✅ | ❌ (per-tracer loop) |
-| `LinRoodPPMScheme{7}` | — | — | — | 🟡 | ❌ (per-tracer loop) |
+| `LinRoodPPMScheme{7}` | — | — | — | ✅ | ❌ (per-tracer loop) |
 
 No scheme reproduces TM5's slopes advection, which carries the tracer-mass
 slopes as prognostic state; `SlopesScheme` shares only its face flux. A
@@ -335,8 +336,9 @@ prognostic-moment scheme is postponed (see
 - **Real-data preprocessing:** opt-in ERA5 and GEOS workflows exercise the
   write-time replay contract; these are not a substitute for a full
   cross-model validation campaign.
-- **Multi-month + observational closure:** *not yet done*; the cross-model and
-  observation intercomparison reports have not been published. See
+- **Multi-month cross-model validation:** 25-month CATRINE production runs and
+  controlled four-month scheme comparisons against GCHP are documented;
+  observational closure and a maintained end-to-end regression remain open. See
   [Validation status](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/theory/validation_status)
   for the honest current-state report.
 

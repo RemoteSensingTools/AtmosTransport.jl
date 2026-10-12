@@ -13,7 +13,7 @@
 # ORD=5/7 use the 4th-order cell-edge interpolation (7/12, -1/12); ORD=6 uses the
 # unlimited 5th-order upwind-biased stencil. (The earlier port from legacy
 # src_legacy/Advection/ppm_subgrid_distributions.jl carried two reconstruction
-# bugs — an ORD=5 Huynh call that collapsed to 2-point averaging, and ORD=6
+# bugs — an ORD=5 limiter call that collapsed to 2-point averaging, and ORD=6
 # weights that summed to 58/60 — both corrected here.)
 # ---------------------------------------------------------------------------
 
@@ -46,7 +46,7 @@ end
     minmod_ppm(a, b, c)
 
 Minmod limiter for PPM: returns the value with smallest magnitude if all have
-the same sign, otherwise zero. Used in ORD=4 and ORD=5.
+the same sign, otherwise zero. Used in ORD=4.
 """
 @inline function minmod_ppm(a::FT, b::FT, c::FT) where FT
     return _minmod3(a, b, c)
@@ -81,10 +81,9 @@ Uses a 5-point stencil with minmod slope limiter.
 end
 
 # ---------------------------------------------------------------------------
-# ORD=5: PPM with Huynh's second constraint
+# ORD=5: Colella–Woodward fourth-order PPM edge interpolation
 #
-# Putman & Lin Sec. 4, "ORD=5 scheme"
-# Huynh (1996), "Schemes and constraints for advection"
+# Colella & Woodward (1984); the base interpolation of FV3 xppm/yppm for ord>=5
 # ---------------------------------------------------------------------------
 
 """
@@ -95,11 +94,11 @@ Compute PPM cell-edge values (q_L, q_R) for ORD=5 via the 4th-order interpolatio
     q_{i-1/2} = (7/12)(q_im + q_i) - (1/12)(q_imm + q_ip)   (= q_L)
     q_{i+1/2} = (7/12)(q_i + q_ip) - (1/12)(q_im + q_ipp)   (= q_R)
 
-(Colella & Woodward 1984; FV3 xppm/yppm `ord>=5` base; Putman & Lin 2007 Sec. 4).
-Quasi-monotone (Huynh-class) limiting is applied separately by
-`_apply_monotonicity` in the face kernels, so this returns the *unlimited*
-4th-order edge values. Exact for constant and linear fields; 4th-order accurate
-for smooth data.
+(Colella & Woodward 1984; FV3 xppm/yppm `ord>=5` base). The face kernels later
+apply only Colella–Woodward extremum flattening through `_apply_monotonicity`;
+they do not apply Huynh's second constraint. This function therefore returns
+the *unlimited* fourth-order edge values. It is exact for constant and linear
+fields and fourth-order accurate for smooth data.
 """
 @inline function _ppm_edge_values_ord5(q_imm::FT, q_im::FT, q_i::FT, q_ip::FT, q_ipp::FT) where FT
     p1, one_twelfth = _ppm_edge_weights(FT)    # (7/12, 1/12)

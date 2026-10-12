@@ -31,7 +31,6 @@ species  = "co2"
 
 [advection]
 scheme            = "slopes"
-prognostic_slopes = false
 mass_fixer        = true
 
 [output]

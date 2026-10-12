@@ -43,7 +43,6 @@ species  = "co2"
 
 [advection]
 scheme            = "slopes"
-prognostic_slopes = false    # diagnostic slopes (revisit after mass path stable)
 mass_fixer        = false    # TM5-faithful: no fixer
 
 [output]

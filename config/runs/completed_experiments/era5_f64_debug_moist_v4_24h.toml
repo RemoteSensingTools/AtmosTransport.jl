@@ -32,7 +32,6 @@ species  = "co2"
 
 [advection]
 scheme            = "slopes"
-prognostic_slopes = false
 mass_fixer        = true     # TM5-faithful: equivalent to TM5 r1112 m=(at+bt*ps)
 
 [output]
