@@ -73,9 +73,10 @@ using ..Operators.SurfaceFlux: SurfaceFluxSource, TimeVaryingSurfaceFluxSource,
 # file (reader, cell-area gate) are owned by GriddedIO.
 using ...GriddedIO: find_coordinate, LongitudeAxis, LatitudeAxis, TimeAxis, VerticalAxis,
                     latlon_orientation, orient, orient_coordinates, read_raw, MaskedAsZero,
-                    source_latlon_mesh, UniformSpanFaces, decode_time, parse_flux_units,
+                    source_latlon_mesh, UniformSpanFaces, decode_time, decode_month_seconds,
+                    parse_flux_units,
                     AbstractTimeBasis, PerSquareMetre, PerCell, PerMonth, TimeInterval,
-                    MonthKey, interval, FluxUnits, kg_per_unit, period_seconds, seconds_since,
+                    FluxUnits, kg_per_unit, period_seconds, seconds_since,
                     mass_rate_factor, cs_native_flux_info, read_cs_native_flux!
 # Grid accessors used by both LL/RG and CS surface-flux builders
 using ..Grids: AbstractHorizontalMesh, nx, ny, ncells

@@ -404,6 +404,49 @@ function decode_month_keys(ds, name::AbstractString, decoders::Tuple = DEFAULT_T
     return _decode_month_keys(decoder, class, ds, String(name))
 end
 
+"""
+    decode_month_seconds(ds, name) -> Vector{Float64}
+
+Length in seconds of the calendar month represented by each slice of time axis
+`name`. This is the conversion basis for flux variables whose units are per
+calendar month.
+
+When the coordinate names a CF bounds variable, each slice is assigned from
+the midpoint of its bounds. For fixed-length CF units the bounds' actual
+duration is returned; for `months since` bounds, one calendar month is
+required. Without bounds, the coordinate stamp assigns the month. Month
+lengths use the coordinate's `calendar` (`standard` by default), including
+`360_day`, `365_day`/`noleap`, and `366_day`/`all_leap`. Thus neither a slice's
+ordinal position nor the proleptic-Gregorian month length is guessed.
+"""
+function decode_month_seconds(ds, name::AbstractString)
+    axis = String(name)
+    decoder, class = _time_decoder(ds, axis, DEFAULT_TIME_DECODERS)
+    bounds = _time_bounds_values(ds, axis)
+    values = bounds === nothing ? _raw_time_values(ds, axis) :
+             vec((bounds[1, :] .+ bounds[2, :]) ./ 2)
+    keys = _decode_month_keys_values(decoder, class, ds, axis, values)
+    DT = _time_calendar_type(ds, axis)
+    calendar_seconds = Float64[CFTime.daysinmonth(DT, k.year, k.month) * 86400 for k in keys]
+    bounds === nothing && return calendar_seconds
+
+    if class isa CFTimeUnits
+        seconds_per_unit = Dates.value(Dates.Millisecond(class.period)) / 1000.0
+        return Float64[(bounds[2, i] - bounds[1, i]) * seconds_per_unit
+                       for i in axes(bounds, 2)]
+    elseif class isa MonthsSinceUnits
+        for i in axes(bounds, 2)
+            width = bounds[2, i] - bounds[1, i]
+            isapprox(width, 1.0; atol = 1e-9, rtol = 0.0) || throw(ArgumentError(
+                "time bounds for per-month slice $i of $(_dataset_path(ds)) span " *
+                "$(width) months; expected exactly one calendar month"))
+        end
+        return calendar_seconds
+    end
+    throw(ArgumentError(
+        "time axis '$axis' of $(_dataset_path(ds)) cannot define calendar-month durations"))
+end
+
 # The decoder of `decoders` for axis `name`, and the class of its units.
 function _time_decoder(ds, name::AbstractString, decoders::Tuple)
     haskey(ds, name) || throw(ArgumentError(
@@ -426,6 +469,57 @@ _decode_month_keys(d::AbstractTimeDecoder, class::AbstractTimeUnits, ds, name::S
 _decode_month_keys(::CFDecoder, class::CFTimeUnits, ds, name::String) =
     month_keys(last(_cf_calendar_stamps(class, ds, name)))
 
+_decode_month_keys_values(::MonthsSince, class::MonthsSinceUnits, ds, name::String,
+                          values) = begin
+    base = 12 * class.year + (class.month - 1)
+    MonthKey[_month_key(base + floor(Int, v + MONTHS_SINCE_FLOOR_OFFSET)) for v in values]
+end
+
+function _decode_month_keys_values(::CFDecoder, class::CFTimeUnits, ds, name::String,
+                                   values)
+    DT = _time_calendar_type(ds, name)
+    _check_cf_origin(class, DT, ds, name)
+    ms_per_unit = Dates.value(Dates.Millisecond(class.period))
+    ms = Int64[round(Int64, v * ms_per_unit) for v in values]
+    stamps = CFTime.timedecode(DT, ms, "milliseconds since $(class.origin)")
+    return MonthKey[MonthKey(Dates.year(t), Dates.month(t)) for t in stamps]
+end
+
+# The optional CF bounds of a one-dimensional time coordinate, normalised to
+# `(2, ntime)`. Bounds inherit the coordinate's units and calendar under CF, so
+# their raw numeric values use the coordinate decoder selected above.
+function _time_bounds_values(ds, name::String)
+    axis = NCDatasets.variable(ds, name)
+    bounds_name = strip(_string_attribute(axis, "bounds"))
+    isempty(bounds_name) && return nothing
+    haskey(ds, bounds_name) || throw(ArgumentError(
+        "time axis '$name' of $(_dataset_path(ds)) names missing bounds variable " *
+        repr(bounds_name)))
+    bounds_var = NCDatasets.variable(ds, bounds_name)
+    ndims(bounds_var) == 2 || throw(ArgumentError(
+        "time bounds '$bounds_name' of $(_dataset_path(ds)) must be two-dimensional"))
+    vals = Array(NCDatasets.cfvariable(ds, bounds_name; units = nothing,
+                                      calendar = nothing, maskingvalue = missing))
+    any(ismissing, vals) && throw(ArgumentError(
+        "time bounds '$bounds_name' of $(_dataset_path(ds)) have fill values"))
+    ntime = length(axis)
+    bounds = if size(vals) == (2, ntime)
+        Float64.(vals)
+    elseif size(vals) == (ntime, 2)
+        permutedims(Float64.(vals))
+    else
+        throw(DimensionMismatch(
+            "time bounds '$bounds_name' of $(_dataset_path(ds)) have size $(size(vals)); " *
+            "expected (2, $ntime) or ($ntime, 2)"))
+    end
+    for i in axes(bounds, 2)
+        isfinite(bounds[1, i]) && isfinite(bounds[2, i]) && bounds[1, i] < bounds[2, i] ||
+            throw(ArgumentError(
+                "time bounds for slice $i of $(_dataset_path(ds)) must be finite and ordered"))
+    end
+    return bounds
+end
+
 # Raw numeric values of a variable, with fill values as `missing` (an error)
 # and `scale_factor`/`add_offset` applied, never time-decoded.
 function _raw_time_values(ds, name::String)
@@ -443,7 +537,7 @@ const _GREGORIAN_LIKE = (CFTime.DateTimeStandard, CFTime.DateTimeProlepticGregor
 # `DateTime` for the Gregorian-like calendars (NCDatasets' decoding, rounded to
 # the millisecond), CFTime stamps otherwise (values rounded to the millisecond
 # first). An origin day beyond its month in that calendar is an error.
-function _cf_calendar_stamps(class::CFTimeUnits, ds, name::String)
+function _time_calendar_type(ds, name::String)
     raw = NCDatasets.variable(ds, name)
     calendar = lowercase(strip(_string_attribute(raw, "calendar", "standard")))
     DT = try
@@ -452,6 +546,12 @@ function _cf_calendar_stamps(class::CFTimeUnits, ds, name::String)
         throw(ArgumentError(
             "time axis '$(name)' of $(_dataset_path(ds)) has the unsupported calendar $(repr(calendar))"))
     end
+    return DT
+end
+
+function _check_cf_origin(class::CFTimeUnits, DT, ds, name::String)
+    calendar = lowercase(strip(_string_attribute(NCDatasets.variable(ds, name),
+                                                 "calendar", "standard")))
     if class.date !== nothing
         y, m, d = class.date
         d <= CFTime.daysinmonth(DT, y, m) || throw(ArgumentError(
@@ -459,6 +559,14 @@ function _cf_calendar_stamps(class::CFTimeUnits, ds, name::String)
             "whose origin is not a valid instant: $(y)-$(lpad(m, 2, '0'))-$(lpad(d, 2, '0')) " *
             "does not exist in the $(calendar) calendar"))
     end
+    return nothing
+end
+
+function _cf_calendar_stamps(class::CFTimeUnits, ds, name::String)
+    raw = NCDatasets.variable(ds, name)
+    calendar = lowercase(strip(_string_attribute(raw, "calendar", "standard")))
+    DT = _time_calendar_type(ds, name)
+    _check_cf_origin(class, DT, ds, name)
     if DT in _GREGORIAN_LIKE
         vals = Array(NCDatasets.cfvariable(ds, name; units = class.units, calendar,
                                            maskingvalue = missing))

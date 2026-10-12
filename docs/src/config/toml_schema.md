@@ -219,7 +219,7 @@ CS builder in `src/Models/initial_conditions/cubed_sphere.jl`):
 | `"file_field"` | yes | yes | yes | `file`, `variable`, optional `humidity_variable`, `time_index`, `vertical_order` |
 | `"catrine_co2"` | yes | yes | yes | optional `file`, `variable`, `humidity_variable`, `time_index` overrides for the built-in defaults |
 | `"pressure_layer"` | no | no | yes | `lowest_layer = true` or `psurf_fraction`; optional `total_molecules` |
-| `"cs_native"` | no | no | yes | `file`, `variable`; optional `time_index`, `vertical_order`, `clamp_negative` (default `false`) |
+| `"cs_native"` | no | no | yes | `file`, `variable`; optional `humidity_variable`, `time_index`, `vertical_order`, `clamp_negative` (default `false`) |
 
 The file kinds (`file`, `netcdf`, `file_field`, `catrine_co2`) read a
 lon-lat-level field of layer-mean dry VMR. A file with hybrid coefficients
@@ -252,6 +252,12 @@ model's level count, and its vertical coordinate must say which end is the
 top: pressure units or CF `positive = "down"` (values grow toward the
 surface), height units or `positive = "up"`; otherwise set
 `vertical_order = "toa_first"` or `"surface_first"`.
+
+Native cubed-sphere ICs keep their cell-for-cell horizontal mapping. When their
+level count matches the binary, they also retain the existing exact vertical
+copy. When it differs, `ap` and `bp` are required and the same conservative
+hybrid remap, dry-carrier humidity weighting, and typed surface-pressure basis
+described above are used column by column.
 
 `pressure_layer` places tracer in one level per column. With
 `lowest_layer = true`, it uses the bottom level and ignores `psurf_fraction`.

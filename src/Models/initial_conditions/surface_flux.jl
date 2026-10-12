@@ -304,15 +304,34 @@ function _flux_units(raw_var, variable, file, species::Symbol)
     end
 end
 
-# The time interval whose length converts slice `month` of per-month units: that
-# calendar month of the source year (GridFED: twelve monthly slices). Other time
-# units have a fixed length.
-_slice_interval(::AbstractTimeBasis, cfg, file, ds, month) = nothing
-_slice_interval(::PerMonth, cfg, file, ds, month) =
-    interval(MonthKey(_surface_flux_year(cfg, file, ds), month))
+# Per-slice denominators for per-month units. Coordinate-backed files derive
+# them from the time coordinate's CF bounds and calendar. The ordinal rule is
+# deliberately limited to the legacy GridFED layout: twelve slices on a time
+# dimension for which no coordinate variable exists.
+_slice_periods(::AbstractTimeBasis, cfg, file, ds, raw_var, kind) = nothing
+function _slice_periods(::PerMonth, cfg, file, ds, raw_var, kind::Symbol)
+    ntime = ndims(raw_var) == 3 ? size(raw_var, 3) : 1
+    time_var = find_coordinate(ds, TimeAxis(); length = ntime, required = false)
+    if time_var !== nothing
+        periods = decode_month_seconds(ds, time_var)
+        length(periods) == ntime || throw(DimensionMismatch(
+            "time coordinate '$time_var' has $(length(periods)) values; " *
+            "surface-flux variable has $ntime slices"))
+        return periods
+    end
+    kind === :gridfed_fossil_co2 || throw(ArgumentError(
+        "per-month surface-flux units need a CF time coordinate; only the " *
+        "coordinate-less GridFED format may use ordinal months"))
+    ntime == 12 || throw(ArgumentError(
+        "coordinate-less GridFED per-month source must contain 12 monthly slices, " *
+        "got $ntime in $file"))
+    year = _surface_flux_year(cfg, file, ds)
+    return Float64[Dates.daysinmonth(year, month) * 86400 for month in 1:12]
+end
 
 _unit_seconds(units, ::Nothing) = period_seconds(units)
 _unit_seconds(units, iv::TimeInterval) = period_seconds(units, iv)
+_unit_seconds(units, seconds::Real) = Float64(seconds)
 
 # One slice `raw` (in place) from `units` to kg `species` m⁻² s⁻¹; `iv` is the
 # slice's time interval (per-month units) and `area` the source cell areas
@@ -390,14 +409,16 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}; species::Symbol,
         cell_area_src === nothing || (cell_area_src = orient(cell_area_src, orientation))
         lon_src, lat_src = orient_coordinates(lon_src, lat_src, orientation)
 
-        # Units → kg species m⁻² s⁻¹. Per-month values (GridFED) are slice
-        # `time_index` of the source year; per-cell values (EDGAR) are divided
-        # by the file's cell areas or, without them, the band areas of the grid
-        # on the destination mesh's sphere, so the per-cell totals survive
-        # regridding whatever its radius.
+        # Units → kg species m⁻² s⁻¹. Coordinate-backed per-month
+        # values use that slice's CF bounds/calendar; only coordinate-less
+        # GridFED uses `time_index` as the ordinal month. Per-cell values
+        # (EDGAR) are divided by the file's cell areas or, without them, the
+        # band areas of the grid on the destination mesh's sphere, so the
+        # per-cell totals survive regridding whatever its radius.
         units = _flux_units(raw_var, variable, file, species)
         _in_flux_file_context(variable, file) do
-            iv = _slice_interval(units.time, cfg, file, ds, time_index)
+            periods = _slice_periods(units.time, cfg, file, ds, raw_var, kind)
+            iv = periods === nothing ? nothing : periods[time_index]
             area = !(units.area isa PerCell) ? nothing :
                    cell_area_src !== nothing ? cell_area_src :
                    _lonlat_cell_areas_m2(lon_src, lat_src; radius)
@@ -443,15 +464,14 @@ function _load_single_timevarying_surface_flux_field(
         raw = orient(raw, orientation)
         lon_src, lat_src = orient_coordinates(lon_src, lat_src, orientation)
 
-        # Per-slice unit conversion (as the static loader). Per-month values
-        # (GridFED) are twelve monthly slices: slice k is month k of the source
-        # year.
+        # Per-slice unit conversion (as the static loader). Coordinate-backed
+        # per-month values use their CF time bounds/calendar; only legacy
+        # coordinate-less GridFED uses slice k as month k.
         units = _flux_units(raw_var, variable, file, species)
-        units.time isa PerMonth && ntime != 12 && throw(ArgumentError(
-            "time-varying source with per-month units must contain 12 monthly slices, got $ntime in $file"))
+        periods = _slice_periods(units.time, cfg, file, ds, raw_var, kind)
         _in_flux_file_context(variable, file) do
             for (out, t) in enumerate(keep)
-                iv = _slice_interval(units.time, cfg, file, ds, t)
+                iv = periods === nothing ? nothing : periods[t]
                 _to_flux_density!(view(raw, :, :, out), units, species, iv, nothing)
             end
         end

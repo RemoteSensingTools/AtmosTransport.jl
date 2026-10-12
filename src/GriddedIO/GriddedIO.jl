@@ -32,7 +32,7 @@ methods dispatch on it.
   any CFTime call, and [`decode_month_keys`](@ref), the months of an axis in its
   own calendar; [`MonthKey`](@ref), [`TimeInterval`](@ref),
   [`month_keys`](@ref), [`interval`](@ref), [`seconds_since`](@ref),
-  [`check_last_month`](@ref).
+  [`decode_month_seconds`](@ref), [`check_last_month`](@ref).
 - Staging (`staging.jl`): [`stage_input`](@ref) decompresses `.nc.gz` and
   single-member `.nc.tar.gz` inputs into a cache directory.
 - Flux units (`flux_units.jl`): [`parse_flux_units`](@ref) →
@@ -80,7 +80,7 @@ export AbstractFaceRule, SnappedFaces, UniformSpanFaces, source_latlon_mesh
 export TimeInterval, MonthKey, month_keys, interval, seconds_since, check_last_month
 export AbstractTimeDecoder, CFDecoder, MonthsSince, DecimalYears, AuxiliaryTimeVariable,
        AbstractMonthStamp, MonthStart, MidMonth, MonthEnd, DEFAULT_TIME_DECODERS, decode_time,
-       decode_month_keys
+       decode_month_keys, decode_month_seconds
 # staging.jl
 export stage_input
 # flux_units.jl
