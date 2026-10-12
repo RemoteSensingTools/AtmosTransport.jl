@@ -211,9 +211,9 @@ Two archive layouts are supported (`[preprocessing] layout`):
 
 `column_balance_weights` spreads the column mass-budget correction of the
 horizontal fluxes over the levels, on every cubed-sphere path:
-- `"mass"` (default): by layer air mass;
+- `"mass"`: by layer air mass;
 - `"hybrid_b"`: by `ΔB`, as in TM5;
-- `"hybrid_mass"`: by air mass in hybrid layers only.
+- `"hybrid_mass"` (default): by air mass in hybrid layers only.
 
 The hybrid options leave the pure-pressure stratospheric layers untouched. Where
 it is set:
@@ -227,7 +227,8 @@ it is set:
 
 The GEOS closures that keep the native fluxes (`pressure_fixer`,
 `pfix_corrected`) have no column balance to weight and reject other weights
-than `"mass"`. MERRA-2 and ERA5 N320 headers always
+than `"mass"`; selecting either closure therefore also requires an explicit
+`column_balance_weights = "mass"`. MERRA-2 and ERA5 N320 headers always
 record the choice; the other paths record it when it is not `"mass"`. See
 [Vertical transport](../theory/vertical_transport.md) section 2 and
 `config/met_sources/merra2_geoschem_hybrid{b,mass}.toml`.

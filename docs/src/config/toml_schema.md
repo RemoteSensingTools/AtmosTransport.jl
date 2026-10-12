@@ -927,7 +927,8 @@ positivity gate still runs. Default `true`.
 Every path that applies a Poisson balance closes a window's horizontal mass
 fluxes against its endpoint mass tendency before diagnosing `cm`, with one
 solve for the column-integrated divergence; the correction is distributed over
-the layers by `column_balance_weights` (`"mass"` by default;
+the layers by `column_balance_weights` (`"hybrid_mass"` by default on
+cubed-sphere targets;
 [Data sources](data_sources.md) lists where each path sets it), so layer winds
 keep their vertical structure and `cm` carries the vertical motion. GEOS
 `pressure_fixer` and `pfix_corrected` keep the native horizontal fluxes and
@@ -936,7 +937,7 @@ here (cubed-sphere targets; lat-lon and reduced-Gaussian targets use `"mass"`):
 
 ```toml
 [numerics]
-column_balance_weights = "mass"    # or "hybrid_b", "hybrid_mass"
+column_balance_weights = "hybrid_mass"    # or "hybrid_b", "mass"
 ```
 
 Binary headers record the balance as `horizontal_balance = "column"` (GEOS:

@@ -555,7 +555,10 @@ end
             explicit_header, explicit_payload = parts(regrid("mass.bin"; column_balance_weights = :mass))
             hyb_path = regrid("hyb.bin"; column_balance_weights = :hybrid_b)
             hyb_header, hyb_payload = parts(hyb_path)
-            @test !haskey(default_header, "column_balance_weights")      # default headers unchanged
+            @test default_header["column_balance_weights"] == "hybrid_mass"
+            @test !haskey(explicit_header, "column_balance_weights")     # legacy mass provenance
+            # This fixture has no pure-pressure layers, so mass and hybrid_mass
+            # have identical payloads even though their provenance differs.
             @test explicit_payload == default_payload
             @test hyb_header["column_balance_weights"] == "hybrid_b"
             @test hyb_payload != default_payload                          # the spread differs

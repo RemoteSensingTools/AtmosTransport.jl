@@ -26,6 +26,9 @@ const REPO = pkgdir(AtmosTransport)
             Dict{String, Any}("numerics" => Dict{String, Any}(key => value)))
     end
     @test resolve_balance_settings(Dict{String, Any}()).column_balance_weights === :mass
+    @test resolve_balance_settings(Dict{String, Any}(
+        "grid" => Dict{String, Any}("type" => "cubed_sphere"))).column_balance_weights ===
+        :hybrid_mass
     # Native configs: rejected before the met source is read.
     err = try
         process_day(Dict{String, Any}("source" => Dict{String, Any}("toml" => "missing.toml"),
@@ -61,7 +64,9 @@ end
 
 @testset "column balance weights" begin
     P = AtmosTransport.Preprocessing
-    @test P.resolve_column_balance_weights(Dict{String, Any}()) === :mass
+    @test P.resolve_column_balance_weights(Dict{String, Any}()) === :hybrid_mass
+    @test ERA5N320Settings(root_dir = "/tmp").column_balance_weights === :hybrid_mass
+    @test MERRA2Settings(root_dir = "/tmp").column_balance_weights === :hybrid_mass
     @test P.resolve_column_balance_weights(Dict("column_balance_weights" => "Hybrid_B")) === :hybrid_b
     @test_throws ArgumentError P.resolve_column_balance_weights(Dict("column_balance_weights" => "pressure"))
     @test_throws ArgumentError P.resolve_column_balance_weights(Dict("column_balance_weights" => 1))
@@ -123,7 +128,7 @@ end
         base = ["--input", input, "--output", input * ".cs", "--Nc", "8"]
         @test !hasproperty(parse(base), :balance_mode)
         @test_throws ErrorException parse(vcat(base, ["--balance-mode", "column"]))   # removed
-        @test parse(base).column_balance_weights == "mass"
+        @test parse(base).column_balance_weights == "hybrid_mass"
         @test parse(vcat(base, ["--column-balance-weights", "Hybrid_B"])).column_balance_weights == "hybrid_b"
         @test_throws ErrorException parse(vcat(base, ["--column-balance-weights", "pressure"]))
     end

@@ -56,8 +56,9 @@ Base.@kwdef struct ERA5GRIBSettings{flavor} <: AbstractERA5GRIBSettings
     coefficients_file     :: String = "config/era5_L137_coefficients.toml"
     level_orientation     :: Symbol = :top_down
     # Flux construction (shared with MERRA-2; see `flux_construction.jl` and
-    # docs/src/config/data_sources.md). The defaults reproduce the historical path.
-    column_balance_weights :: Symbol = :mass
+    # docs/src/config/data_sources.md). Geometry defaults reproduce the
+    # historical path; column weighting defaults to the hybrid-layer-safe mode.
+    column_balance_weights :: Symbol = :hybrid_mass
     face_lengths          :: Symbol = :cell_centerline
     face_fluxes           :: Symbol = :panel_average
     face_interpolation    :: Symbol = :linear

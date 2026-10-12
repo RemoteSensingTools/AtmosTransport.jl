@@ -364,12 +364,12 @@ end
         reader = TransportBinaryReader(out_path; FT = FT_TEST)
         try
             @test !haskey(reader.header.raw_header, "write_replay_check")
-            @test !haskey(reader.header.raw_header, "column_balance_weights")
+            @test reader.header.raw_header["column_balance_weights"] == "hybrid_mass"
         finally
             close(reader)
         end
 
-        # Column weights from the met source: recorded when not mass (this
+        # Column weights from the met source: every non-mass choice is recorded (this
         # fixture has no column mismatch, so the transported mass is the same),
         # and refused by closures that keep the native fluxes.
         hyb_settings = GEOSITSettings(root_dir = tmpdir, Nc = NC, mass_flux_dt = 450.0,

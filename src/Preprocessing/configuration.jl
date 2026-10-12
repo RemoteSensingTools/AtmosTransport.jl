@@ -175,11 +175,19 @@ keeping roundoff bounded. Set it to `1` for the legacy every-iteration path.
 function resolve_balance_settings(cfg)
     numerics = get(cfg, "numerics", Dict{String, Any}())
     reject_removed_balance_mode(numerics)
+    grid_cfg = get(cfg, "grid", Dict{String, Any}())
+    grid_kind = Symbol(lowercase(String(get(grid_cfg, "type", "latlon"))))
+    # Lat-lon and reduced-Gaussian balances currently implement mass weights
+    # only. Every cubed-sphere spectral target uses the owner-selected default.
+    column_default = grid_kind in (:latlon, :reduced_gaussian,
+                                   :era5_native_reduced_gaussian,
+                                   :synthetic_reduced_gaussian) ? :mass : :hybrid_mass
     return (
         cs_balance_tol = Float64(get(numerics, "cs_balance_tol", DEFAULT_POISSON_BALANCE_TOL)),
         cs_balance_project_every = Int(get(numerics, "cs_balance_project_every",
                                            DEFAULT_POISSON_PROJECT_EVERY)),
-        column_balance_weights = resolve_column_balance_weights(numerics),
+        column_balance_weights = resolve_column_balance_weights(numerics;
+                                                                default = column_default),
     )
 end
 
@@ -220,12 +228,15 @@ end
     resolve_column_balance_weights(numerics) -> Symbol
 
 `[numerics] column_balance_weights` of an ERA5 spectral preprocessing config:
-how the column balance spreads its correction over the levels, `:mass`
-(default), `:hybrid_b` or `:hybrid_mass` (see `AbstractColumnWeights`). Native
-sources set it in their met-source `[preprocessing]` table instead.
+how the column balance spreads its correction over the levels, `:hybrid_mass`
+(default for cubed-sphere targets), `:hybrid_b` or `:mass` (see
+`AbstractColumnWeights`). Lat-lon and reduced-Gaussian targets continue to use
+`:mass`. Native sources set it in their met-source `[preprocessing]` table
+instead.
 """
-function resolve_column_balance_weights(numerics::AbstractDict)
-    raw = get(numerics, "column_balance_weights", "mass")
+function resolve_column_balance_weights(numerics::AbstractDict;
+                                        default::Symbol = :hybrid_mass)
+    raw = get(numerics, "column_balance_weights", String(default))
     raw isa AbstractString || throw(ArgumentError(
         "[numerics].column_balance_weights must be a string; got $(repr(raw))"))
     return _validate_column_balance_weights(Symbol(lowercase(raw)), "[numerics]")
@@ -254,15 +265,15 @@ end
 # column weights; checked by the entry point before any input is read, and by
 # each writer for direct callers.
 _check_spectral_column_weights(::CubedSphereTargetGeometry, settings) =
-    _validate_column_balance_weights(get(settings, :column_balance_weights, :mass), "[numerics]")
+    _validate_column_balance_weights(get(settings, :column_balance_weights, :hybrid_mass), "[numerics]")
 _check_spectral_column_weights(::LatLonTargetGeometry, settings) =
     _require_mass_column_weights(settings, "the lat-lon column balance spreads its correction by layer mass")
 _check_spectral_column_weights(::ReducedGaussianTargetGeometry, settings) =
     _require_mass_column_weights(settings, "the reduced-Gaussian column balance spreads its correction by layer mass")
 
-# Record non-default column weights in a binary header. Binaries of the ERA5
-# spectral, lat-lon → cubed-sphere and GEOS paths written with the default
-# mass weights record nothing, so their headers are unchanged.
+# Record every non-mass weighting in a binary header. This deliberately records
+# the new `hybrid_mass` default: legacy keyless binaries remain identifiable as
+# mass-weighted, rather than changing the meaning of an absent provenance key.
 function _with_column_weights_record(header::AbstractDict, kind::Symbol)
     kind === :mass || (header["column_balance_weights"] = String(kind))
     return header

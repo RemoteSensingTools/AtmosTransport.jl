@@ -524,7 +524,8 @@ function _balance_window!(d::MERRA2DayDriver, ps_moist, m_a, m_b, steps)
     sync_all_cs_boundary_mirrors!(x.am, x.bm, mesh.connectivity, Nc, Nz)
     fill_cs_window_mass_tendency!(x.dm, m_a, m_b, steps)
     foreach(c -> fill!(c, zero(FT)), x.cm)
-    diagnose_cs_cm!(x.cm, x.am, x.bm, x.dm, m_a, Nc, Nz, d.balance.weights)
+    _diagnose_balanced_cs_cm!(x.cm, x.am, x.bm, x.dm, m_a, Nc, Nz, diag,
+                              "MERRA-2 window", d.balance.weights)
     return diag
 end
 

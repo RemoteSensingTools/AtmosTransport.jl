@@ -15,7 +15,8 @@ using Test
 using Random
 using AtmosTransport
 using .AtmosTransport.Preprocessing: build_compressed_laplacian, balance_compressed_column_fluxes!,
-    spread_column_correction!, MassWeightedColumn, HybridBWeightedColumn
+    spread_column_correction!, MassWeightedColumn, HybridBWeightedColumn,
+    HybridMassWeightedColumn
 using .AtmosTransport.MetDrivers: verify_window_continuity_rg, recompute_cm_from_dm_target!,
     faceindexed_replay_layout
 
@@ -146,16 +147,28 @@ end
         @test flux ≈ FT[1, 2, 3, 4] .+ FT.(10 .* (m_a .+ m_b) ./ sum(m_a .+ m_b))
         @test isapprox(sum(Float64, flux) - 10, 10; atol = 4 * eps(FT) * 10)
     end
-    # Negative masses carry no weight; all-zero weights split evenly.
+    # Negative masses carry no weight; a correction with no eligible weight is undefined.
     flux = zeros(4)
     spread_column_correction!(flux, 4.0, MassWeightedColumn(), [-1.0, 1.0, 0.0, 0.0], zeros(4))
     @test flux == [0.0, 4.0, 0.0, 0.0]
-    flux = zeros(4)
-    spread_column_correction!(flux, 4.0, MassWeightedColumn(), zeros(4), zeros(4))
-    @test flux == fill(1.0, 4)
+    @test_throws DomainError spread_column_correction!(zeros(4), 4.0,
+        MassWeightedColumn(), zeros(4), zeros(4))
+    @test_throws DomainError spread_column_correction!(zeros(4), 4.0,
+        MassWeightedColumn(), fill(NaN, 4), zeros(4))
+    @test_throws DomainError spread_column_correction!(zeros(4), 4.0,
+        MassWeightedColumn(), fill(Inf, 4), zeros(4))
     # Hybrid-B weights: pure-pressure layers (ΔB = 0) receive nothing.
     flux = zeros(4)
     spread_column_correction!(flux, 1.0, HybridBWeightedColumn([0.0, 0.0, 0.25, 0.5, 1.0]),
                               m_a, m_b)
     @test flux ≈ [0.0, 0.25, 0.25, 0.5]
+    # The remainder goes to the last eligible layer, never outside a hybrid mask.
+    flux = zeros(Float32, 4)
+    spread_column_correction!(flux, 1.0, HybridMassWeightedColumn([0.0, 0.5, 1.0, 1.0, 1.0]),
+                              ones(4), ones(4))
+    @test flux[3:4] == zeros(Float32, 2)
+    @test sum(flux) == 1.0f0
+    @test_throws DomainError spread_column_correction!(zeros(4), 1.0,
+        HybridMassWeightedColumn([0.0, 0.0, 0.0, 1.0, 1.0]),
+        [1.0, 1.0, 0.0, 0.0], zeros(4))
 end

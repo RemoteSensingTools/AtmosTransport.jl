@@ -41,7 +41,7 @@ surface_pressure_var = "surface_pressure"
 format               = "netcdf_native"
 level_orientation    = "auto"        # auto-detect; explicit "bottom_up" for GEOS-IT
 mass_flux_dt_seconds = 450.0         # FV3 dynamics timestep — NOT the 1-hour cadence
-# column_balance_weights = "mass"    # "mass" (default) | "hybrid_b" | "hybrid_mass": how the
+# column_balance_weights = "hybrid_mass"  # default; or "mass" | "hybrid_b": how the
 #                                    # column balance spreads its correction over the levels
 collections_required = ["CTM_A1", "CTM_I1"]
 collections_optional = ["A1", "A3mstE", "A3dyn", "I3"]   # surface + convection + GCHP VDIFF gated by preprocessing config

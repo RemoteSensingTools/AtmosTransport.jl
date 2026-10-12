@@ -32,7 +32,7 @@
 #                                         # otherwise fails the positivity gate)
 #       [--column-balance-weights mass|hybrid_b|hybrid_mass]
 #                                         # how the column balance spreads its
-#                                         # correction over the levels (default mass)
+#                                         # correction over the levels (default hybrid_mass)
 #       [--no-write-replay-check]        # skip the write-time replay gate (diagnostic;
 #                                         # recorded in the header)
 #
@@ -71,7 +71,7 @@ function _parse_args(argv)
     cache_dir = nothing
     steps_per_window = nothing  # nothing = match source header
     require_substep_positivity = true
-    column_balance_weights = "mass"
+    column_balance_weights = "hybrid_mass"
     write_replay_check = true
 
     i = 1

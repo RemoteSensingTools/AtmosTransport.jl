@@ -66,9 +66,9 @@ function _reject_unsupported_flux_keys(ctor::Type, cfg)
     return nothing
 end
 
-# `[preprocessing] column_balance_weights` of a met source (default `:mass`).
+# `[preprocessing] column_balance_weights` of a met source (default `:hybrid_mass`).
 function _column_balance_weights_option(pre_cfg)
-    raw = get(pre_cfg, "column_balance_weights", "mass")
+    raw = get(pre_cfg, "column_balance_weights", "hybrid_mass")
     raw isa AbstractString || throw(ArgumentError(
         "[preprocessing].column_balance_weights must be a string; got $(repr(raw))"))
     return Symbol(lowercase(raw))

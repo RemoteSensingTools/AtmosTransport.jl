@@ -306,8 +306,9 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
         for p in 1:CS_PANEL_COUNT
             fill!(cur_cm[p], zero(FT))
         end
-        diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz,
-                        ctx.balance_weights)
+        _diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
+                                  cur_m, Nc, Nz, bal_diag,
+                                  "ERA5 spectral window $win", ctx.balance_weights)
 
         t_replay = time()
         contract_diag = verify_window!((m_cur = cur_m,

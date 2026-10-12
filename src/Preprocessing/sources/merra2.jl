@@ -131,7 +131,7 @@ Base.@kwdef struct MERRA2Settings{A <: MERRA2Archive} <: AbstractMetSettings
     include_convection    :: Bool   = false
     include_vdiff_fields  :: Bool   = false
     include_convective_cloud_base :: Bool = false
-    column_balance_weights :: Symbol = :mass   # a key of COLUMN_WEIGHT_KINDS (cs_poisson_balance.jl)
+    column_balance_weights :: Symbol = :hybrid_mass  # a key of COLUMN_WEIGHT_KINDS (cs_poisson_balance.jl)
     face_lengths   :: Symbol = :cell_centerline   # face length in the flux: :cell_centerline or :edge
     flux_thickness :: Symbol = :moist             # Δp in the flux: :moist (from moist ps) or :dry_mass
     face_fluxes    :: Symbol = :panel_average     # :panel_average (panel components) or :vector (edge lengths always)

@@ -25,9 +25,10 @@ they must close against the selected next-hour dry-air endpoint.
 The current path uses `balance_cs_column_mass_fluxes!`: it integrates each
 column vertically, applies a **global cubed-sphere Poisson correction** to
 those column totals, and distributes the face corrections back over levels
-using local air-mass weights. This avoids an independent correction at every
-level while retaining the column budget needed for closed top and bottom
-boundaries.
+using local air-mass weights in hybrid layers (`hybrid_mass`, the default).
+Pure-pressure layers therefore receive no correction. This avoids an
+independent correction at every level while retaining the column budget needed
+for closed top and bottom boundaries.
 
 The preprocessor then diagnoses vertical mass flux with `diagnose_cs_cm!`
 from the corrected horizontal divergence and explicit layer mass tendency.

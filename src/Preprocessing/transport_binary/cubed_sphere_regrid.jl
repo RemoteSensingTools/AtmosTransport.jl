@@ -99,7 +99,7 @@ face fluxes are reconstructed with the output scaling.
   for legacy LL sources that do not carry `dm`. Production-safe regrids should
   leave this at `false` so the final CS window is closed against an explicit
   endpoint target instead of an inferred zero-tendency fallback.
-- `column_balance_weights::Symbol = :mass` — how the column Poisson balance
+- `column_balance_weights::Symbol = :hybrid_mass` — how the column Poisson balance
   spreads its correction over the levels (`:mass`, `:hybrid_b` or
   `:hybrid_mass`; see `AbstractColumnWeights`), from the source binary's hybrid
   `B` interfaces. Other weights than `:mass` are recorded in the header.
@@ -120,7 +120,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 steps_per_window::Union{Nothing, Integer} = nothing,
                                 cs_balance_tol::Real = DEFAULT_POISSON_BALANCE_TOL,
                                 cs_balance_project_every::Integer = DEFAULT_POISSON_PROJECT_EVERY,
-                                column_balance_weights::Symbol = :mass,
+                                column_balance_weights::Symbol = :hybrid_mass,
                                 write_replay_check::Bool = true,
                                 run_cache = nothing)
     t_start = time()
@@ -465,7 +465,9 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
 
         fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, steps_per_met)
         for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
-        diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz, balance_weights)
+        _diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
+                                  cur_m, Nc, Nz, bal_diag,
+                                  "LL-to-CS window $(win - 1)", balance_weights)
         pos_diag = if write_replay_on
             contract = verify_cs_window_contract!(cur_m, cur_am, cur_bm, cur_cm,
                                                   cs_ws.m_next_panels,
@@ -558,7 +560,9 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
 
     fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, steps_per_met)
     for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
-    diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz, balance_weights)
+    _diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
+                              cur_m, Nc, Nz, bal_diag,
+                              "LL-to-CS window $Nt", balance_weights)
     pos_diag = if write_replay_on
         contract = verify_cs_window_contract!(cur_m, cur_am, cur_bm, cur_cm,
                                               cs_ws.m_next_panels,

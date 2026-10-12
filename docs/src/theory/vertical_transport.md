@@ -264,9 +264,9 @@ it):
 
 | Option | Weights `w_k` | Consequence |
 |---|---|---|
-| `mass` (current default) | layer air mass of the two adjacent cells | The correction reaches every layer, including the stratosphere |
+| `mass` | layer air mass of the two adjacent cells | The correction reaches every layer, including the stratosphere |
 | `hybrid_b` | `ΔB_k` | Only hybrid layers are corrected; the semantics of TM5 and GCHP |
-| `hybrid_mass` | layer air mass where `ΔB_k > 0`, else 0 | Like `mass` in the troposphere, no correction in pure-pressure layers |
+| `hybrid_mass` (default) | layer air mass where `ΔB_k > 0`, else 0 | Like `mass` in the troposphere, no correction in pure-pressure layers |
 
 The vertical mass flux (section 3) inherits the correction as
 `Σ_{j ≤ k} (w_j/Σw − ΔB_j) · δ`, a mode that is coherent in the vertical.
@@ -543,7 +543,7 @@ runs the GEOS-Chem schemes.
 | Step | TM5 | GCHP 14.7 (MERRA-2) | AtmosTransport |
 |---|---|---|---|
 | Horizontal fluxes | Spectral edge integrals | FV3 from conservatively regridded A3dyn winds | Two-cell means of conservatively regridded winds × layer thickness |
-| Column closure | Per-level Poisson, vertical flux fixed, ΔB | None; mismatch in advected `p_s`, reset each step | Column Poisson; weights `mass` (default), `hybrid_b`, `hybrid_mass` |
+| Column closure | Per-level Poisson, vertical flux fixed, ΔB | None; mismatch in advected `p_s`, reset each step | Column Poisson; weights `hybrid_mass` (default), `hybrid_b`, `mass` |
 | Vertical motion | IFS vertical velocity | Implied by Lagrangian remap (ΔB) | `cm` from continuity, constant per window |
 | Vertical scheme | Prognostic slopes, positivity limiter | Lagrangian remap, PPM `kord 8` | Flux form; PPM-informed slope with CW84 limiter (`ppm`), or FV3 `kord 8` parabola (`vertical = "fv3_kord8"`) |
 | Time step | Global `ndyn`, CFL-limited | 600 s | 10–13 substeps per hourly window |

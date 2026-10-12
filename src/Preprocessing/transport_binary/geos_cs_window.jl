@@ -64,7 +64,7 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, V
     omega_regularization :: OmegaRegularization
     omega_regularization_scratch :: OR
     # How the column balance spreads its correction over the levels
-    # (`settings.column_balance_weights`; `MassWeightedColumn()` by default).
+    # (`settings.column_balance_weights`; `HybridMassWeightedColumn()` by default).
     balance_weights :: CW
 end
 
@@ -406,9 +406,11 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
                 end
             end
         end
-        diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,
-                        workspace.dm_v4, workspace.m_cur, Nc, Nz,
-                        workspace.balance_weights)
+        _diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
+                                  workspace.bm_v4, workspace.dm_v4,
+                                  workspace.m_cur, Nc, Nz, bal_diag,
+                                  "GEOS moisture-filtered window",
+                                  workspace.balance_weights)
         return bal_diag
     end
 
@@ -443,9 +445,11 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         target = if workspace.cm_closure === :omega_regularized
             # Preserve endpoint-balanced transport as the resolved-scale reference.
             # OMEGA only supplies a capped, UTLS-local grid-scale correction.
-            diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,
-                            workspace.dm_v4, workspace.m_cur, Nc, Nz,
-                        workspace.balance_weights)
+            _diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
+                                      workspace.bm_v4, workspace.dm_v4,
+                                      workspace.m_cur, Nc, Nz, bal_diag,
+                                      "GEOS omega-regularized reference",
+                                      workspace.balance_weights)
             _regularize_omega_target!(
                 workspace.vdiv_target, workspace.cm_v4, workspace.vdiv_om,
                 workspace.m_cur, workspace.m_next_target, grid, workspace.g,
@@ -474,9 +478,10 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
                   "gate $(workspace.omega_regularization.max_bottom_flux_correction)")
         end
         _OMEGA_TIMING[] && (_OMEGA_TIMING_STATE.recon_time += time() - _t_recon)
-        diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,
-                        workspace.dm_v4, workspace.m_cur, Nc, Nz,
-                        workspace.balance_weights)
+        _diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
+                                  workspace.bm_v4, workspace.dm_v4,
+                                  workspace.m_cur, Nc, Nz, bal_diag,
+                                  "GEOS omega window", workspace.balance_weights)
         return (bal_diag..., omega_max_increment = recon.max_increment,
                 omega_max_post_residual = recon.max_post_residual,
                 omega_max_relative_correction = recon.max_relative_correction,
@@ -493,9 +498,11 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         grid.poisson_scratch; weights = workspace.balance_weights)
     fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
                                   workspace.m_next_target, steps)
-    diagnose_cs_cm!(workspace.cm_v4, workspace.am_v4, workspace.bm_v4,
-                    workspace.dm_v4, workspace.m_cur, Nc, Nz,
-                        workspace.balance_weights)
+    _diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
+                              workspace.bm_v4, workspace.dm_v4,
+                              workspace.m_cur, Nc, Nz, bal_diag,
+                              "GEOS endpoint-balanced window",
+                              workspace.balance_weights)
     return bal_diag
 end
 

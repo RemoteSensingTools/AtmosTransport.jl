@@ -749,7 +749,8 @@ function process_era5_n320_to_cs_day(date::Date,
             sync_all_cs_boundary_mirrors!(am, bm, mesh.connectivity, Nc, Nz_int)
             fill_cs_window_mass_tendency!(dm, m_dry, m_next, steps)
             for p in 1:6; fill!(cm[p], zero(FT)); end
-            diagnose_cs_cm!(cm, am, bm, dm, m_dry, Nc, Nz_int, balance_weights)
+            _diagnose_balanced_cs_cm!(cm, am, bm, dm, m_dry, Nc, Nz_int,
+                                      bal_diag, "ERA5 N320 window", balance_weights)
             return bal_diag
         end
 

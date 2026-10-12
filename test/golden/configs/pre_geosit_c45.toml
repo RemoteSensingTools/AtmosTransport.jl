@@ -1,5 +1,6 @@
 # GEOS-IT native C180 -> C45, full L72, minimal dynamics-only golden.
-# `column_balance_weights` is deliberately absent here and in the source
+# `column_balance_weights` is deliberately absent here and in the source, so
+# this case exercises the `hybrid_mass` default.
 # descriptor: this case protects the GEOS native path's effective default.
 
 [source]

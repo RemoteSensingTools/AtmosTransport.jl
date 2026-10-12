@@ -381,6 +381,25 @@ end
     w = m[p][i - 1, j, hybrid[1:end-1]] .+ m[p][i, j, hybrid[1:end-1]]
     @test inc ./ w ≈ fill(inc[1] / w[1], length(w)) rtol = 1e-10
 
+    # A seam uses the two physical cells from the global face table, not two
+    # copies of whichever boundary cell happens to own the canonical face.
+    f = findfirst(!=(0), ft.mirror_panel)
+    fp, fd = Int(ft.face_panel[f]), Int(ft.face_dir[f])
+    fi, fj = Int(ft.face_idx_i[f]), Int(ft.face_idx_j[f])
+    left, right = Int(ft.face_left[f]), Int(ft.face_right[f])
+    cell_view(c) = begin
+        panel = (c - 1) ÷ Nc^2 + 1
+        local_idx = (c - 1) % Nc^2
+        i = local_idx % Nc + 1
+        j = local_idx ÷ Nc + 1
+        view(m[panel], i, j, :)
+    end
+    seam_inc = fd == 1 ? am_mass[fp][fi, fj, :] .- am0[fp][fi, fj, :] :
+                         bm_mass[fp][fi, fj, :] .- bm0[fp][fi, fj, :]
+    seam_w = cell_view(left) .+ cell_view(right)
+    @test seam_inc[1:end-1] ./ seam_w[1:end-1] ≈
+          fill(seam_inc[1] / seam_w[1], Nz - 1) rtol = 1e-10
+
     # cm diagnosis: the bottom residual is spread over hybrid layers only
     dm = ntuple(p -> (m_next[p] .- m[p]) ./ (2steps), 6)
     cm_mass, cm_hyb = ntuple(_ -> ntuple(_ -> zeros(Nc, Nc, Nz + 1), 6), 2)
@@ -397,6 +416,38 @@ end
     @test all(p -> cm_hyb[p][:, :, 1:3] == raw[p][:, :, 1:3], 1:6)    # top and pure-pressure interfaces
     @test any(p -> cm_mass[p][:, :, 2:3] != raw[p][:, :, 2:3], 1:6)   # mass weights reach them
     @test maximum(p -> maximum(abs, cm_hyb[p][:, :, Nz + 1]), 1:6) < 1e-12
+
+    # Residual folding is explicit and bounded: the raw value is returned,
+    # while an out-of-tolerance value fails before it can be hidden in cm.
+    cm_probe = ntuple(_ -> zeros(Nc, Nc, Nz + 1), 6)
+    dm_probe = ntuple(_ -> zeros(Nc, Nc, Nz), 6)
+    dm_probe[1][1, 1, 1] = 0.25
+    cm_diag = Prep.diagnose_cs_cm!(cm_probe, ntuple(_ -> zeros(Nc + 1, Nc, Nz), 6),
+                                   ntuple(_ -> zeros(Nc, Nc + 1, Nz), 6),
+                                   dm_probe, m, Nc, Nz; residual_tol = 0.25)
+    @test cm_diag.max_raw_residual == 0.25
+    @test cm_diag.max_booked_residual == 0.25
+    @test cm_probe[1][1, 1, end] == 0.0
+    @test_throws ErrorException Prep.diagnose_cs_cm!(cm_probe,
+        ntuple(_ -> zeros(Nc + 1, Nc, Nz), 6),
+        ntuple(_ -> zeros(Nc, Nc + 1, Nz), 6), dm_probe, m, Nc, Nz;
+        residual_tol = 0.24)
+
+    # Float32 uses the documented representability tolerance and exposes it
+    # for a mandatory caller-side check.
+    m32 = map(x -> Float32.(1e11 .* x), m)
+    m32_next = map(x -> Float32.(1e11 .* x), m_next)
+    am32 = map(x -> Float32.(1e10 .* x), am0)
+    bm32 = map(x -> Float32.(1e10 .* x), bm0)
+    diag32 = Prep.balance_cs_column_mass_fluxes!(
+        am32, bm32, m32, m32_next, ft, degree, steps,
+        Prep.CSPoissonScratch(ft.nc); closure_passes = 8)
+    @test diag32.final_column_projected_residual <= diag32.final_column_tolerance
+    @test diag32.final_column_tolerance >= 10.0
+    @test Prep._require_cs_column_balance(diag32, "Float32 test") === diag32
+    bad_diag = merge(diag32, (final_column_projected_residual =
+                                  2diag32.final_column_tolerance,))
+    @test_throws ErrorException Prep._require_cs_column_balance(bad_diag, "bad test")
 
     # ΔB weights are layer thicknesses in B, normalized, for any vector type
     for Bv in (B, Float32.(B), collect(B))
