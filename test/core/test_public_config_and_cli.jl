@@ -34,6 +34,7 @@ function _write_mixed_window_binary(path, window_seconds)
                            FT, dt_met_seconds = window_seconds,
                            half_dt_seconds = window_seconds / 2,
                            steps_per_window = 1, mass_basis = :dry,
+                           surface_pressure_basis = TotalSurfacePressure(),
                            source_flux_sampling = :window_start_endpoint,
                            flux_sampling = :window_constant)
     return path
@@ -48,6 +49,7 @@ function _write_full_window_cs_binary(path)
         path, Nc, 6, Nz, 2, vertical;
         FT, dt_met_seconds = 3600.0, steps_per_window = 2,
         flux_kind = :full_window_mass_amount, mass_basis = :dry,
+        surface_pressure_basis = TotalSurfacePressure(),
         planet_radius = AtmosTransport.Parameters.EARTH_RADIUS)
     try
         for win in 1:2

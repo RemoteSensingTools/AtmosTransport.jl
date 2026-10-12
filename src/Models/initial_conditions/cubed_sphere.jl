@@ -161,7 +161,9 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
     # Vertical remap column-by-column into interior `(Nc, Nc, Nz)` tuple.
     vmr = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), CS_PANEL_COUNT)
     src_q = Vector{FT}(undef, Nlev_src)
-    src_qv = source_qv_levels === nothing ? nothing : similar(src_q)
+    # Keep the loop-local scratch concrete even when source humidity is absent.
+    # Its values are only consumed when `source_qv_levels !== nothing`.
+    src_qv = similar(src_q)
     src_p = Vector{Float64}(undef, length(source.ap))
     cumulative = similar(src_p)
     dry_cumulative = similar(src_p)
@@ -178,7 +180,8 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
                             @view(target_qv_panels[p][i, j, :])
                 ps_total = _total_surface_pressure(
                     pressure_basis, ps_tgt_panels[p][i, j], A_tgt, B_tgt, target_qv)
-                _remap_hybrid_profile!(@view(vmr[p][i, j, :]), src_q, src_qv,
+                source_qv = source_qv_levels === nothing ? nothing : src_qv
+                _remap_hybrid_profile!(@view(vmr[p][i, j, :]), src_q, source_qv,
                                        source.ap, source.bp,
                                        A_tgt, B_tgt, ps_total,
                                        src_p, cumulative, dry_cumulative)

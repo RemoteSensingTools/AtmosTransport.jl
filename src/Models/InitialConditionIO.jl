@@ -874,7 +874,9 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
     mesh = grid.horizontal
     q = Array{FT}(undef, size(air_mass))
     src_q = Vector{FT}(undef, size(source.raw, 3))
-    src_qv = source.qv === nothing ? nothing : similar(src_q)
+    # Keep the loop-local scratch concrete even when source humidity is absent.
+    # Its values are only consumed when `source.qv !== nothing`.
+    src_qv = similar(src_q)
     src_p = Vector{Float64}(undef, length(source.ap))
     cumulative = similar(src_p)
     dry_cumulative = similar(src_p)
@@ -905,7 +907,8 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
                 target_qv = qv === nothing ? nothing : @view(qv[i, j, :])
                 ps_total = _total_surface_pressure(
                     pressure_basis, surface_pressure[i, j], A_tgt, B_tgt, target_qv)
-                _remap_hybrid_profile!(@view(q[i, j, :]), src_q, src_qv,
+                source_qv = source.qv === nothing ? nothing : src_qv
+                _remap_hybrid_profile!(@view(q[i, j, :]), src_q, source_qv,
                                        source.ap, source.bp,
                                        A_tgt, B_tgt, ps_total,
                                        src_p, cumulative, dry_cumulative)
@@ -932,7 +935,9 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
     mesh = grid.horizontal
     q = Array{FT}(undef, size(air_mass))
     src_q = Vector{FT}(undef, size(source.raw, 3))
-    src_qv = source.qv === nothing ? nothing : similar(src_q)
+    # Keep the loop-local scratch concrete even when source humidity is absent.
+    # Its values are only consumed when `source.qv !== nothing`.
+    src_qv = similar(src_q)
     src_p = Vector{Float64}(undef, length(source.ap))
     cumulative = similar(src_p)
     dry_cumulative = similar(src_p)
@@ -963,7 +968,8 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
                 target_qv = qv === nothing ? nothing : @view(qv[c, :])
                 ps_total = _total_surface_pressure(
                     pressure_basis, surface_pressure[c], A_tgt, B_tgt, target_qv)
-                _remap_hybrid_profile!(@view(q[c, :]), src_q, src_qv,
+                source_qv = source.qv === nothing ? nothing : src_qv
+                _remap_hybrid_profile!(@view(q[c, :]), src_q, source_qv,
                                        source.ap, source.bp,
                                        A_tgt, B_tgt, ps_total,
                                        src_p, cumulative, dry_cumulative)
