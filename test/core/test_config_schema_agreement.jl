@@ -59,8 +59,9 @@ property_keys(node) = Set(String.(keys(node.properties)))
     @test Set(typeof.(schemes)) ==
           concrete_subtypes(AtmosTransport.Operators.SurfaceFlux.AbstractFluxTemporalScheme,
                             AtmosTransport.Operators.SurfaceFlux)
-    @test Set(AtmosTransport.Output._parse_output_format(f)
-              for f in enum_of(d.output.properties.format)) == Set([:netcdf, :binary_mmap])
+    @test Set(typeof(AtmosTransport.Output._parse_output_format(f))
+              for f in enum_of(d.output.properties.format)) ==
+          concrete_subtypes(AtmosTransport.Output.AbstractOutputFormat, AtmosTransport.Output)
     @test Set(typeof(AtmosTransport.Output._parse_layer_selection(l, "x"))
               for l in enum_of(d.layer_selection)) ==
           concrete_subtypes(AtmosTransport.Output.AbstractLayerSelection, AtmosTransport.Output)

@@ -453,12 +453,12 @@ Analysis.expected_storage_change(m::FixedEmission, ::RunContext, spec, t0, t1) =
         "init" => Dict{String, Any}("kind" => "uniform", "background" => 4e-4))
     ctx_ll = quietly(() -> RunContext(legacy_cfg))
     @test ctx_ll.air_mass == 2e15 * 8
-    @test only(ctx_ll.tracer_specs).init_spec isa UniformInitialConditionSpec
+    @test only(ctx_ll.tracer_specs).init_spec isa AtmosTransport.Models.InitialConditionIO.UniformInitialConditionSpec
     @test [(s.name, s.init_cfg["background"], isempty(s.surface_flux_cfg)) for s in ctx_ll.tracer_specs] ==
           [(:co2, 4e-4, true)]
     nonuniform = TransportTracerSpec(:blob,
         Dict{String, Any}("kind" => "gaussian_blob"), Dict{String, Any}())
-    @test nonuniform.init_spec isa GaussianBlobInitialConditionSpec
+    @test nonuniform.init_spec isa AtmosTransport.Models.InitialConditionIO.GaussianBlobInitialConditionSpec
     @test Analysis._initial_carrier(nonuniform, 6.0, 3.0) == 2.0
     @test ctx_ll.windows == [(; binary = 1, start = 0.0, length = 86400.0, steps = 2, step = 43200.0)]
     @test ctx_ll.run_seconds == 86400.0
