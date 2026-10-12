@@ -18,9 +18,12 @@ Private = false
 Field selection uses typed values. Pass `ColumnMean()`, `ColumnSum()`,
 `LevelSlice()`, or `SurfaceSlice()` as the `transform` keyword to `fieldview`;
 `LevelSlice()` also requires `level`. Pass `NativeUnit()` or `PPMUnit()` as
-`unit`, and use `AllFrames()` to select every frame. For example:
+`unit`, and pass `AllFrames()` to `frame_indices` to select every frame. These
+selectors are exported by `AtmosTransport.Visualization`, not by the top-level
+module. For example:
 
 ```julia
+using AtmosTransport.Visualization
 snapshot = open_snapshot("output.nc")
 surface = fieldview(snapshot, :co2; transform=SurfaceSlice(), time=1,
                     unit=PPMUnit())

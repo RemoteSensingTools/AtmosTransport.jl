@@ -333,13 +333,34 @@ function _append_tail!(tail::_BoundedByteTail, chunk::AbstractVector{UInt8})
     return tail
 end
 
-_tail_text(tail::_BoundedByteTail) = strip(String(copy(tail.bytes)))
+_is_utf8_continuation(byte::UInt8) = (byte & 0xc0) == 0x80
+
+# Number of leading bytes of `bytes` that end on a UTF-8 character boundary,
+# so a fixed-size fragment never splits a multibyte character.
+function _utf8_complete_prefix(bytes::AbstractVector{UInt8})
+    n = length(bytes)
+    i = n
+    while i > 0 && _is_utf8_continuation(bytes[i])
+        i -= 1
+    end
+    i == 0 && return n                      # no lead byte: not UTF-8, keep all
+    lead = bytes[i]
+    width = lead < 0x80 ? 1 : lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : lead >= 0xc0 ? 2 : 1
+    return n - i + 1 >= width ? n : i - 1
+end
+
+# The tail drops whole bytes from the front; skip a partial first character.
+function _tail_text(tail::_BoundedByteTail)
+    first = findfirst(!_is_utf8_continuation, tail.bytes)
+    first === nothing && return ""
+    return strip(String(tail.bytes[first:end]))
+end
 
 function _report_subprocess_text!(reporter::AbstractDownloadProgressReporter,
-                                  bytes::Vector{UInt8})
-    text = strip(String(copy(bytes)))
-    isempty(text) || _report_progress!(reporter, text)
-    empty!(bytes)
+                                  bytes::Vector{UInt8}, upto::Int = length(bytes))
+    text = String(bytes[1:upto])
+    isempty(strip(text)) || _report_progress!(reporter, text)
+    deleteat!(bytes, 1:upto)
     return nothing
 end
 
@@ -352,8 +373,8 @@ function _append_progress!(reporter::AbstractDownloadProgressReporter,
             push!(pending, byte)
             # A subprocess can emit an arbitrarily long unterminated line.
             # Forward fixed-size fragments rather than buffering that line.
-            length(pending) == _SUBPROCESS_READ_BYTES &&
-                _report_subprocess_text!(reporter, pending)
+            length(pending) >= _SUBPROCESS_READ_BYTES &&
+                _report_subprocess_text!(reporter, pending, _utf8_complete_prefix(pending))
         end
     end
     return nothing

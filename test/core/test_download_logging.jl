@@ -250,3 +250,14 @@ end
     @test occursin("OUT diagnostic", rendered)
     @test occursin("ERR diagnostic", rendered)
 end
+
+@testset "subprocess fragments never split a UTF-8 character" begin
+    D = AtmosTransport.DataDownloads
+    s = Vector{UInt8}("ab€")                       # € is three bytes
+    @test D._utf8_complete_prefix(s) == length(s)
+    @test D._utf8_complete_prefix(s[1:end-1]) == 2  # a partial € is held back
+    @test D._utf8_complete_prefix(s[1:end-2]) == 2
+    tail = D._BoundedByteTail(4)
+    D._append_tail!(tail, Vector{UInt8}("x€yz"))     # the 4-byte tail starts mid-€
+    @test isvalid(String(D._tail_text(tail)))
+end
