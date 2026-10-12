@@ -79,7 +79,7 @@ the header. `header_bytes` and a few sampling-metadata fields
 `delta_semantics`, optional `runtime_substep_contract`) round out the header.
 The full list lives in `src/MetDrivers/TransportBinary.jl`.
 
-Every current writer also emits a schema-1 flux-fidelity certificate. The
+Every current writer also emits a schema-2 flux-fidelity certificate. The
 reader decodes its status and construction kind into nominal types
 (`FidelityPassed`, `FidelityFailed`, `FidelityNotApplicable`,
 `FidelityUnavailable`; and `WindRederivedFidelity`,
