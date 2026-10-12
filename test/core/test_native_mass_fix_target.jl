@@ -39,3 +39,20 @@ struct GEOSLikeSource <: AbstractGEOSSettings end
     @test occursin("target_ps_dry_pa", sprint(showerror, stale_err))
     @test occursin("GLOBAL_MEAN_DRY_SURFACE_PRESSURE", sprint(showerror, stale_err))
 end
+
+@testset "the header records the configured dry-ps target exactly" begin
+    record = AtmosTransport.Preprocessing.mass_fix_target_ps_dry_record
+    area = 6 * 2025 * 2.5e10                      # a C45-sized sphere [m²]
+    target_kg = GLOBAL_MEAN_DRY_SURFACE_PRESSURE * area / STANDARD_GRAVITY
+    for g in (STANDARD_GRAVITY, Float32(STANDARD_GRAVITY))
+        @test record(GLOBAL_MEAN_DRY_SURFACE_PRESSURE, target_kg, area, g) ===
+              GLOBAL_MEAN_DRY_SURFACE_PRESSURE
+    end
+    # Without a configured target (GEOS `initial_endpoint`, or a kg-only
+    # caller) the record is the mean dry pressure of the pinned mass, which a
+    # Float32 `g` moves off the configured value.
+    @test record(NaN, target_kg, area, STANDARD_GRAVITY) ≈
+          GLOBAL_MEAN_DRY_SURFACE_PRESSURE rtol = 1e-15
+    @test record(NaN, target_kg, area, Float32(STANDARD_GRAVITY)) !=
+          GLOBAL_MEAN_DRY_SURFACE_PRESSURE
+end

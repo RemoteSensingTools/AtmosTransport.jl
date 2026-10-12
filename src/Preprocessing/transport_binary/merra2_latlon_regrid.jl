@@ -678,7 +678,7 @@ end
 
 function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{FT}, vc, out_path,
                              nwindow, nsub, dt_window, steps, policy, mass_target,
-                             write_replay_on::Bool) where FT
+                             mass_target_ps_dry_pa::Real, write_replay_on::Bool) where FT
     mkpath(dirname(out_path))
     tmp_path = _open_preprocessing_staging(out_path)
     header = merge(_merra2_provenance(settings, handles, nsub), Dict{String, Any}(
@@ -702,8 +702,9 @@ function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{
         "global_mass_pin_target_kg" => mass_target,
     ))
     mass_target === nothing ||
-        (header["mass_fix_target_ps_dry_pa"] = Float64(mass_target) * STANDARD_GRAVITY /
-            (6.0 * sum(Float64, grid.mesh.cell_areas)))
+        (header["mass_fix_target_ps_dry_pa"] = mass_fix_target_ps_dry_record(
+            mass_target_ps_dry_pa, mass_target, 6.0 * sum(Float64, grid.mesh.cell_areas),
+            STANDARD_GRAVITY))
     inner = try
         open_streaming_cs_transport_binary(
             tmp_path, grid.Nc, 6, length(vc.A) - 1, nwindow, vc;
@@ -761,6 +762,7 @@ function process_merra2_to_cs_day(date::Date,
                                   cache_dir::Union{Nothing, AbstractString} = nothing,
                                   global_mass_pin::Bool = false,
                                   global_mass_target_kg::Real = NaN,
+                                  mass_fix_target_ps_dry_pa::Real = NaN,
                                   configured_last_day::Union{Nothing, Date} = nothing) where FT
     mass_basis === :dry ||
         throw(ArgumentError("MERRA-2 → CS writer only supports mass_basis=:dry; got $(mass_basis)"))
@@ -792,7 +794,7 @@ function process_merra2_to_cs_day(date::Date,
         write_replay_on = write_replay_check
         writer = _open_merra2_writer(settings, handles, target_grid, vc, out_path, nwindow, nsub,
                                      Float64(dt_met_seconds), Int(steps_per_window), policy, mass_target,
-                                     write_replay_on)
+                                     mass_fix_target_ps_dry_pa, write_replay_on)
         @info @sprintf("  Output: %s (Nc=%d, Nz=%d, FT=%s)", basename(out_path), target_grid.Nc, Nz, string(FT))
         d = MERRA2DayDriver(
             settings, handles, target_grid, vc, writer, nsub, Float64(dt_met_seconds), policy,
@@ -882,6 +884,7 @@ function process_day(date::Date,
                      write_replay_check::Bool = true,
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
+                     mass_fix_target_ps_dry_pa::Real = NaN,
                      configured_last_day::Union{Nothing, Date} = nothing,
                      kwargs...)
     reject_removed_horizontal_balance_keyword(kwargs)
@@ -901,6 +904,7 @@ function process_day(date::Date,
         cache_dir             = grid.cache_dir,
         global_mass_pin       = global_mass_pin,
         global_mass_target_kg = global_mass_target_kg,
+        mass_fix_target_ps_dry_pa = mass_fix_target_ps_dry_pa,
         configured_last_day   = configured_last_day)
     return (; final_m = nothing,
             global_mass_target_kg = global_mass_target_kg)

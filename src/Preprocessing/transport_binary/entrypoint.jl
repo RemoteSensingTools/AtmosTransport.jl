@@ -402,12 +402,17 @@ function _native_preprocessing_plan(cfg::AbstractDict)
         error("OMEGA-based GEOS cm closures require [mass_fix].enable=true so " *
               "the per-level Poisson targets have zero global column tendency")
     configured_global_mass_target_kg = _native_mass_fix_target_kg(cfg, grid, settings)
+    # The kg target is finite only in `target_ps_dry` mode, where it is this
+    # pressure's air mass; the header records the pressure itself.
+    configured_mass_fix_target_ps_dry_pa = isfinite(configured_global_mass_target_kg) ?
+        GLOBAL_MEAN_DRY_SURFACE_PRESSURE : NaN
     _check_native_closure_config(settings, cm_closure)
     ensure_preprocessor_pair_supported(grid, settings; context = "native-source")
     return (; FT, grid, settings, vertical, mass_basis, dt_met_seconds, chain_mass,
             positivity_cfl_limit, require_substep_positivity, write_replay_check,
             substep_policy, cm_closure, smooth_iters, omega_regularization,
-            global_mass_pin, configured_global_mass_target_kg)
+            global_mass_pin, configured_global_mass_target_kg,
+            configured_mass_fix_target_ps_dry_pa)
 end
 
 # Closure-specific config checks of a native source; only GEOS has `cm`
@@ -421,7 +426,8 @@ function _process_day_native(cfg::AbstractDict;
     (; FT, grid, settings, vertical, mass_basis, dt_met_seconds, chain_mass,
        positivity_cfl_limit, require_substep_positivity, write_replay_check,
        substep_policy, cm_closure, smooth_iters, omega_regularization,
-       global_mass_pin, configured_global_mass_target_kg) = _native_preprocessing_plan(cfg)
+       global_mass_pin, configured_global_mass_target_kg,
+       configured_mass_fix_target_ps_dry_pa) = _native_preprocessing_plan(cfg)
     if cm_closure === :omega_full_replacement
         @warn "[numerics].geos_cm_closure=:omega_full_replacement is a known-failed " *
               "diagnostic: it rewrites PBL horizontal fluxes by 2-7× and corrupts " *
@@ -473,6 +479,7 @@ function _process_day_native(cfg::AbstractDict;
             seed_m          = seed_m_in,
             global_mass_pin = global_mass_pin,
             global_mass_target_kg = configured_global_mass_target_kg,
+            mass_fix_target_ps_dry_pa = configured_mass_fix_target_ps_dry_pa,
             cm_closure = cm_closure,
             smooth_iters = smooth_iters,
             omega_regularization = omega_regularization,
@@ -527,6 +534,7 @@ function _process_day_native(cfg::AbstractDict;
                 seed_m          = seed_m,
                 global_mass_pin = global_mass_pin,
                 global_mass_target_kg = global_mass_target_kg,
+                mass_fix_target_ps_dry_pa = configured_mass_fix_target_ps_dry_pa,
                 cm_closure = cm_closure,
                 smooth_iters = smooth_iters,
                 omega_regularization = omega_regularization,

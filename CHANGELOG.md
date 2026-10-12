@@ -199,6 +199,14 @@
 
 ### Fixes
 
+- Native preprocessing (GEOS, MERRA-2, ERA5 N320) records the configured
+  dry-mass target `mass_fix_target_ps_dry_pa` exactly
+  (`GLOBAL_MEAN_DRY_SURFACE_PRESSURE`, 98325 Pa). It was recomputed from the
+  pinned air mass: 98325.00162169515 Pa on the GEOS-IT C45 golden (the GEOS
+  writer divided by a Float32 `g`) and 98325.00000000001 Pa on the MERRA-2
+  C90 and ERA5 N320 L117 goldens at 637036cf. GEOS `initial_endpoint` runs,
+  which have no configured pressure, still record the pressure of the pinned
+  mass. The pin and the payloads are unchanged.
 - Relative hybrid-coefficient paths of preprocessing configs
   (`config/era5_L137_coefficients.toml`, `config/geos_L72_coefficients.toml`)
   resolve in the working directory first and then in the package root

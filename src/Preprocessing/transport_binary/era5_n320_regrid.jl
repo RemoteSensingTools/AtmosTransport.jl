@@ -383,7 +383,8 @@ end
                                  cache_dir = nothing,
                                  include_convection = false,
                                  global_mass_pin = false,
-                                 global_mass_target_kg = NaN)
+                                 global_mass_target_kg = NaN,
+                                 mass_fix_target_ps_dry_pa = NaN)
 
 The float type is the target grid's (`target_grid::CubedSphereTargetGeometry{FT}`).
 
@@ -429,6 +430,7 @@ function process_era5_n320_to_cs_day(date::Date,
                                        include_convection::Bool = false,
                                        global_mass_pin::Bool = false,
                                        global_mass_target_kg::Real = NaN,
+                                       mass_fix_target_ps_dry_pa::Real = NaN,
                                        configured_last_day::Union{Nothing, Date} = nothing) where FT
     mass_basis === :dry ||
         throw(ArgumentError("ERA5 N320 → CS writer only supports mass_basis=:dry; got $(mass_basis)"))
@@ -743,9 +745,9 @@ function process_era5_n320_to_cs_day(date::Date,
             rethrow()
         end
         do_mass_pin &&
-            (inner_writer.header["mass_fix_target_ps_dry_pa"] =
-                Float64(global_mass_target_kg) * STANDARD_GRAVITY /
-                (6.0 * sum(Float64, cs_cell_areas)))
+            (inner_writer.header["mass_fix_target_ps_dry_pa"] = mass_fix_target_ps_dry_record(
+                mass_fix_target_ps_dry_pa, global_mass_target_kg,
+                6.0 * sum(Float64, cs_cell_areas), STANDARD_GRAVITY))
         writer = CubedSphereBinaryWriter(inner_writer,
                                           mass_basis_from_symbol(mass_basis);
                                           Nc = Nc,
@@ -1192,6 +1194,7 @@ function process_day(date::Date,
                      max_steps_per_window::Integer = typemax(Int),
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
+                     mass_fix_target_ps_dry_pa::Real = NaN,
                      configured_last_day::Union{Nothing, Date} = nothing,
                      kwargs...)
     reject_removed_horizontal_balance_keyword(kwargs)
@@ -1216,6 +1219,7 @@ function process_day(date::Date,
         include_convection        = settings.include_convection,
         global_mass_pin           = global_mass_pin,
         global_mass_target_kg     = global_mass_target_kg,
+        mass_fix_target_ps_dry_pa = mass_fix_target_ps_dry_pa,
         configured_last_day       = configured_last_day)
     # Surface the fixed target so the unified driver's serial path can echo it
     # across days (no-op for the threaded path, which uses the config target).

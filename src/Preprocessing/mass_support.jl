@@ -751,6 +751,22 @@ function recompute_cm_from_divergence!(cm::Array{FT, 3}, am::Array{FT, 3},
 end
 
 """
+    mass_fix_target_ps_dry_record(target_ps_dry_pa, target_kg, total_area_m2, g) -> Float64
+
+Header value `mass_fix_target_ps_dry_pa` of a native-source dry-mass pin. A
+configured target (`[mass_fix] mode = "target_ps_dry"`, `target_ps_dry_pa`
+finite) is recorded exactly: recomputing it from the pinned air mass rounds
+(98325.00000000001 Pa) or, with a Float32 `g`, is off by 1.6e-3 Pa. Without
+one (GEOS `mode = "initial_endpoint"`, or a caller that passes only a kg
+target, `target_ps_dry_pa = NaN`) the record is the mean dry surface pressure
+of the pinned mass, `target_kg g / A`.
+"""
+mass_fix_target_ps_dry_record(target_ps_dry_pa::Real, target_kg::Real,
+                              total_area_m2::Real, g::Real) =
+    isfinite(target_ps_dry_pa) ? Float64(target_ps_dry_pa) :
+        Float64(target_kg) * Float64(g) / Float64(total_area_m2)
+
+"""
     pin_global_mean_ps!(sp, area; target_ps_dry_pa, qv_global) -> Float64
 
 Apply a uniform additive offset to `sp` so that ⟨sp⟩_area corresponds to a

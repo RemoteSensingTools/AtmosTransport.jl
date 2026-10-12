@@ -95,13 +95,16 @@ struct GEOSCSUnifiedDriverContext{G, S, V}
     write_replay_on  :: Bool
     replay_stats     :: Base.RefValue{GEOSReplayStats}
     split_stats      :: Base.RefValue{GEOSSplitSubstepStats}
+    mass_fix_target_ps_dry_pa :: Float64   # configured pin target; NaN: none
 end
 
 GEOSCSUnifiedDriverContext(grid, settings, vertical, steps_per_met::Integer;
-                           write_replay_on::Bool = true) =
+                           write_replay_on::Bool = true,
+                           mass_fix_target_ps_dry_pa::Real = NaN) =
     GEOSCSUnifiedDriverContext{typeof(grid), typeof(settings), typeof(vertical)}(
         grid, settings, vertical, Int(steps_per_met), write_replay_on,
-        Ref(GEOSReplayStats()), Ref(GEOSSplitSubstepStats()))
+        Ref(GEOSReplayStats()), Ref(GEOSSplitSubstepStats()),
+        Float64(mass_fix_target_ps_dry_pa))
 
 function _geos_required_split_steps(workspace::GEOSCubedSphereWindowWorkspace,
                                     current_steps::Integer,
@@ -168,12 +171,12 @@ function driver_before_close_writer!(workspace::GEOSCubedSphereWindowWorkspace,
                                      _reader::GEOSNativeReader,
                                      _contract::CubedSphereContract,
                                      writer::CubedSphereBinaryWriter,
-                                     _ctx::GEOSCSUnifiedDriverContext)
+                                     ctx::GEOSCSUnifiedDriverContext)
     set_streaming_steps_per_window_schedule!(writer.inner, workspace.steps_schedule)
     if workspace.global_mass_pin_enabled && isfinite(workspace.global_mass_target_kg)
-        writer.inner.header["mass_fix_target_ps_dry_pa"] =
-            workspace.global_mass_target_kg * Float64(workspace.g) /
-            _cs_total_area(workspace.cell_areas)
+        writer.inner.header["mass_fix_target_ps_dry_pa"] = mass_fix_target_ps_dry_record(
+            ctx.mass_fix_target_ps_dry_pa, workspace.global_mass_target_kg,
+            _cs_total_area(workspace.cell_areas), workspace.g)
     end
     return nothing
 end
@@ -205,6 +208,7 @@ function _process_day_geos_cs_unified(date::Date,
                                       seed_m::Union{Nothing, NTuple{6, <:AbstractArray}},
                                       global_mass_pin::Bool,
                                       global_mass_target_kg::Real,
+                                      mass_fix_target_ps_dry_pa::Real = NaN,
                                       cm_closure::Symbol = :endpoint_balanced,
                                       smooth_iters::Integer = DEFAULT_GEOS_SMOOTHING_SWEEPS,
                                       omega_regularization::OmegaRegularization = OmegaRegularization())
@@ -357,7 +361,7 @@ function _process_day_geos_cs_unified(date::Date,
         )
         write_replay_on || @info "  Write-time CS replay gate SKIPPED (disabled for this run)"
         ctx = GEOSCSUnifiedDriverContext(grid, settings, vertical, steps_per_met;
-                                         write_replay_on)
+                                         write_replay_on, mass_fix_target_ps_dry_pa)
 
         t_start = time()
         driver_started = true
@@ -469,6 +473,7 @@ function process_day(date::Date,
                      seed_m::Union{Nothing, NTuple{6, <:AbstractArray}} = nothing,
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
+                     mass_fix_target_ps_dry_pa::Real = NaN,
                      cm_closure::Symbol = :endpoint_balanced,
                      smooth_iters::Integer = DEFAULT_GEOS_SMOOTHING_SWEEPS,
                      omega_regularization::OmegaRegularization = OmegaRegularization(),
@@ -497,6 +502,7 @@ function process_day(date::Date,
         seed_m = seed_m,
         global_mass_pin = global_mass_pin,
         global_mass_target_kg = global_mass_target_kg,
+        mass_fix_target_ps_dry_pa = mass_fix_target_ps_dry_pa,
         cm_closure = cm_closure,
         smooth_iters = smooth_iters,
         omega_regularization = omega_regularization,
