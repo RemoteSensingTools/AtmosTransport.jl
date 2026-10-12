@@ -27,7 +27,10 @@ sparse operator. Its
 precision-derived limits are
 `T_abs = 64 eps(FT) max(F_scale, 1 kg)` and `T_rel = 256 eps(FT)`; a sample
 fails only if both its absolute error and its relative error exceed those
-limits. See [Binary format](../concepts/binary_format.md#Flux-fidelity-gate-and-header-certificate)
+limits. The check shares its inputs with production, so it cannot detect input
+errors; its vector evaluator also shares the production face geometry, and
+native GEOS fluxes are not rederivable (certificate `not_applicable`). See
+[Binary format](../concepts/binary_format.md#Flux-fidelity-gate-and-header-certificate)
 for sampling, normalization, and header details.
 
 **MERRA-2** (`src/Preprocessing/transport_binary/merra2_latlon_regrid.jl`).
@@ -389,7 +392,9 @@ fluxes.
 When source OMEGA is available, write-time certification additionally compares
 it with `ω_cm = g cm/(A_cell Δt_amount)` after matching dry `(1-q)` basis,
 time sampling, horizontal grid, and vertical levels. The header reports global
-and pressure-band errors against a named per-source baseline. This is a
+and pressure-band errors against a named per-source baseline, which passes only
+with `NRMSE < 1` (the score of `cm ≡ 0`), correlation `> 0.5` and slope `> 0`
+(MERRA-2 C90: 0.47, 0.89, 0.87). This is a
 physical-fidelity diagnostic distinct from replay closure: replay asks whether
 the stored arrays conserve mass together, while OMEGA asks whether their
 vertical motion agrees with an independent meteorological field.

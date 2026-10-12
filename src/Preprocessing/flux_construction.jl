@@ -89,6 +89,16 @@ end
 # applied through `_endpoint_face_fluxes!` (era5_n320_regrid.jl), which has them.
 _prepare_cell_winds!(::LineIntegralFaceFluxes, x, u_east, v_north, mesh, Nz) = nothing
 
+# Header record of the face-interpolation and wind-regrid choices a face-flux
+# method actually uses: only vector fluxes interpolate across faces, and line
+# integrals bypass the cube-centre winds (they integrate the source winds).
+flux_header_face_interpolation(::VectorFaceFluxes, settings) = String(settings.face_interpolation)
+flux_header_face_interpolation(::Union{PanelAverageFluxes, LineIntegralFaceFluxes}, _settings) =
+    "not_applicable"
+flux_header_wind_regrid(::Union{PanelAverageFluxes, VectorFaceFluxes}, settings) =
+    String(settings.wind_regrid)
+flux_header_wind_regrid(::LineIntegralFaceFluxes, _settings) = "source_line_integral"
+
 _face_fluxes!(m::PanelAverageFluxes, x, g, dt, Nc, Nz) =
     cs_face_fluxes!(x.am, x.bm, x.u_local, x.v_local, x.dp, m.lengths, g, dt, Nc, Nz)
 _face_fluxes!(m::VectorFaceFluxes, x, g, dt, Nc, Nz) =

@@ -101,6 +101,31 @@ L137 layer 55 (`ΔB = 7.0e-6`), the next GEOS layer has `6.96e-3`.
 const HYBRID_LAYER_MIN_DB = 1.0e-6
 
 """
+Write-time OMEGA-fidelity gate: the normalized RMS difference between the
+vertical velocity diagnosed from a binary's `cm` and the source OMEGA,
+`NRMSE = RMS(ω_cm − ω_src) / RMS(ω_src)`, must be below 1.0. `NRMSE = 1` is
+the score of `cm ≡ 0`, so the limit accepts only a vertical transport that is
+closer to the source than none at all. A sign-flipped `cm` scores about 2, a
+level-flipped one about 1.4; MERRA-2 wind-derived C90 scores 0.47 (2.1×
+margin; 2022-01 golden).
+"""
+const OMEGA_FIDELITY_NRMSE_LIMIT = 1.0
+
+"""
+Write-time OMEGA-fidelity gate: the correlation between `ω_cm` and the source
+OMEGA must exceed 0.5 (MERRA-2 wind-derived C90: 0.886). A zero `cm` has
+correlation 0, a sign-flipped one −1.
+"""
+const OMEGA_FIDELITY_CORRELATION_MIN = 0.5
+
+"""
+Write-time OMEGA-fidelity gate: the regression slope of `ω_cm` on the source
+OMEGA must be positive (MERRA-2 wind-derived C90: 0.865); a zero or
+sign-flipped `cm` fails.
+"""
+const OMEGA_FIDELITY_SLOPE_MIN = 0.0
+
+"""
 Replay-check tolerance for Float64 transport-binary data. The check replays each
 window's air-mass budget cell by cell,
 `r = m_cur − 2n (Σ F_out − Σ F_in) − m_next` over the cell's faces, and accepts
@@ -134,7 +159,8 @@ export DEFAULT_CFL_LIMIT, DEFAULT_POSITIVITY_CFL_LIMIT, DEFAULT_SUBSTEP_CFL_TARG
        DEFAULT_BACKGROUND_VMR, DEFAULT_GEOS_SMOOTHING_SWEEPS, DEFAULT_MAX_SUBCYCLES,
        DEFAULT_MAX_STEPS_PER_WINDOW, ADAPTIVE_SUBSTEP_MAX_REFINEMENTS, DEFAULT_POISSON_BALANCE_TOL,
        DEFAULT_POISSON_BALANCE_MAX_ITER, DEFAULT_POISSON_PROJECT_EVERY, HORIZONTAL_BALANCE_TAG,
-       HYBRID_LAYER_MIN_DB,
+       HYBRID_LAYER_MIN_DB, OMEGA_FIDELITY_NRMSE_LIMIT, OMEGA_FIDELITY_CORRELATION_MIN,
+       OMEGA_FIDELITY_SLOPE_MIN,
        DEFAULT_GEOS_SMOOTHING_WEIGHT,
        DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG, DEFAULT_LINROOD_PPM_ORDER,
        REPLAY_TOLERANCE_FLOAT64, REPLAY_TOLERANCE_FLOAT32

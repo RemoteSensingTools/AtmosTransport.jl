@@ -75,6 +75,9 @@ other AtmosTransport modules; every later module may import from it.
   - `HYBRID_LAYER_MIN_DB` (1e-6), the smallest `ΔB_k` at which a layer counts
     as hybrid in the `hybrid_mass` column-balance weighting (GEOS L72 layer 41,
     `ΔB = 8.2e-9`, is pure-pressure; ERA5 L137 layer 55, `7e-6`, is hybrid)
+  - write-time OMEGA-fidelity gate of transport binaries:
+    `OMEGA_FIDELITY_NRMSE_LIMIT` (1.0, the score of a zero `cm`),
+    `OMEGA_FIDELITY_CORRELATION_MIN` (0.5) and `OMEGA_FIDELITY_SLOPE_MIN` (0)
   - transport-binary replay check: `REPLAY_TOLERANCE_FLOAT64` (1e-12) and
     `REPLAY_TOLERANCE_FLOAT32` (1e-5), the largest accepted per-cell budget
     residual relative to the summed magnitudes of the budget's terms

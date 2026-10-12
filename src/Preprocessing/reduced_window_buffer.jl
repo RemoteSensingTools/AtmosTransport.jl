@@ -11,16 +11,17 @@ O160/O320 binary generation without OOM.
 struct SlidingWindowBuffer{FT}
     m     :: Vector{Matrix{FT}}     # length-2 circular buffer
     hflux :: Vector{Matrix{FT}}
-    fidelity_hflux :: Vector{Matrix{FT}}
+    fidelity_samples :: Vector{Matrix{FT}}   # (fidelity samples, Nz)
     cm    :: Vector{Matrix{FT}}
     ps    :: Vector{Vector{FT}}
 end
 
-function allocate_sliding_window_buffer(nc::Int, nf::Int, Nz::Int, ::Type{FT}) where FT
+function allocate_sliding_window_buffer(nc::Int, nf::Int, Nz::Int, ::Type{FT};
+                                        fidelity_samples::Int) where FT
     SlidingWindowBuffer{FT}(
         [zeros(FT, nc, Nz)     for _ in 1:2],
         [zeros(FT, nf, Nz)     for _ in 1:2],
-        [zeros(FT, nf, Nz)     for _ in 1:2],
+        [zeros(FT, fidelity_samples, Nz) for _ in 1:2],
         [zeros(FT, nc, Nz + 1) for _ in 1:2],
         [zeros(FT, nc)         for _ in 1:2],
     )
@@ -37,7 +38,7 @@ function fill_buffer_slot!(buf::SlidingWindowBuffer{FT},
                            ps_vec::AbstractVector) where FT
     copyto!(buf.m[slot],     merged.m_merged)
     copyto!(buf.hflux[slot], merged.hflux_merged)
-    copyto!(buf.fidelity_hflux[slot], merged.fidelity_hflux_merged)
+    copyto!(buf.fidelity_samples[slot], merged.fidelity_merged)
     copyto!(buf.cm[slot],    merged.cm_merged)
     buf.ps[slot] .= ps_vec   # broadcast handles Float64→FT conversion in-place
     return nothing
@@ -110,8 +111,9 @@ function allocate_window_workspace(grid::ReducedGaussianTargetGeometry,
     Nz = vertical.Nz
 
     work = allocate_reduced_transform_workspace(grid, spec.T, Nz_native)
-    merged = allocate_reduced_merge_workspace(grid, Nz_native, Nz, FT)
-    buf = allocate_sliding_window_buffer(nc, nf, Nz, FT)
+    ns = nsamples(work.fidelity_sampler)
+    merged = allocate_reduced_merge_workspace(grid, Nz_native, Nz, FT; fidelity_samples = ns)
+    buf = allocate_sliding_window_buffer(nc, nf, Nz, FT; fidelity_samples = ns)
     ps_offsets = zeros(Float64, spec.n_times + 1)   # the last entry: the next day's 00 UTC
 
     thermo_path = ""
@@ -201,8 +203,8 @@ function drain_ready_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
     old_steps = workspace.steps_schedule[win_idx]
     source_steps = old_steps
     workspace.fidelity_capture[] = capture_faceindexed_flux_samples(
-        workspace.buf.hflux[workspace.cur];
-        candidate_hflux=workspace.buf.fidelity_hflux[workspace.cur])
+        workspace.work.fidelity_sampler.faces, workspace.buf.hflux[workspace.cur],
+        workspace.buf.fidelity_samples[workspace.cur])
     diag = nothing
     contract_diag = nothing
     while true
@@ -262,8 +264,8 @@ function flush_final_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
     old_steps = workspace.steps_schedule[win_idx]
     source_steps = old_steps
     workspace.fidelity_capture[] = capture_faceindexed_flux_samples(
-        workspace.buf.hflux[workspace.cur];
-        candidate_hflux=workspace.buf.fidelity_hflux[workspace.cur])
+        workspace.work.fidelity_sampler.faces, workspace.buf.hflux[workspace.cur],
+        workspace.buf.fidelity_samples[workspace.cur])
     diag = nothing
     contract_diag = nothing
     while true

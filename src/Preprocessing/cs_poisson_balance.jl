@@ -261,6 +261,10 @@ function _fill_cs_column_buffers!(col_am::NTuple{6, Array{BT, 3}},
     return nothing
 end
 
+# |r| / τ, with an exactly closed cell (0/0, possible for closure_tol = 0 and
+# a cell without flux) counted as closed.
+@inline _residual_ratio(r::Float64, tol::Float64) = r == 0 ? 0.0 : r / tol
+
 # Column residuals of the stored fluxes after a closure pass: the raw and
 # mean-free (projected) maxima, the mean, and the largest ratio of a cell's
 # projected residual to its own tolerance `scratch.tol[c]`.
@@ -307,7 +311,7 @@ function _cs_column_balance_projected_linf(col_am::NTuple{6, Array{FT, 3}},
     @inbounds for c in 1:ft.nc
         r = abs(div[c] - mean)
         projected_linf = max(projected_linf, r)
-        worst_ratio = max(worst_ratio, r / tol[c])
+        worst_ratio = max(worst_ratio, _residual_ratio(r, tol[c]))
     end
     return (raw_linf = raw_linf, projected_linf = projected_linf,
             mean_abs = abs(mean), worst_ratio = worst_ratio)
@@ -701,6 +705,44 @@ function balance_cs_column_mass_fluxes!(
     )
 end
 
+"""
+    recheck_cs_column_closure(panels_am, panels_bm, panels_m, panels_m_next, ft,
+                              steps_per_window, scratch, balance_diag;
+                              closure_tol = 10.0) -> balance_diag′
+
+Recompute the column-closure statistics and per-cell tolerances of
+`balance_cs_column_mass_fluxes!` for fluxes changed after the balance (the GEOS
+OMEGA reconstruction moves flux between levels of a column), so the `cm`
+diagnosis and the recorded closure describe the fluxes that are stored. Returns
+`balance_diag` with its `final_column_*` fields replaced.
+"""
+function recheck_cs_column_closure(panels_am::NTuple{6, Array{FT, 3}},
+                                   panels_bm::NTuple{6, Array{FT, 3}},
+                                   panels_m::NTuple{6, Array{FT, 3}},
+                                   panels_m_next::NTuple{6, Array{FT, 3}},
+                                   ft::CSGlobalFaceTable, steps_per_window::Int,
+                                   scratch::CSPoissonScratch, balance_diag;
+                                   closure_tol::Float64 = 10.0) where FT
+    Nc, Nz = ft.Nc, size(panels_am[1], 3)
+    col_am = ntuple(_ -> zeros(Float64, Nc + 1, Nc, 1), 6)
+    col_bm = ntuple(_ -> zeros(Float64, Nc, Nc + 1, 1), 6)
+    col_m = ntuple(_ -> zeros(Float64, Nc, Nc, 1), 6)
+    col_m_next = ntuple(_ -> zeros(Float64, Nc, Nc, 1), 6)
+    _fill_cs_column_buffers!(col_am, col_bm, col_m, col_m_next,
+                             panels_am, panels_bm, panels_m, panels_m_next, Nc, Nz)
+    _cs_column_roundoff_tolerance!(scratch, panels_am, panels_bm, ft, closure_tol)
+    stats = _cs_column_balance_projected_linf(col_am, col_bm, col_m, col_m_next, ft,
+                                              steps_per_window, scratch)
+    return merge(balance_diag, (
+        final_column_raw_residual = stats.raw_linf,
+        final_column_projected_residual = stats.projected_linf,
+        final_column_mean_residual = stats.mean_abs,
+        final_column_residual_ratio = stats.worst_ratio,
+        final_column_tolerance_min = minimum(scratch.tol),
+        final_column_tolerance_max = maximum(scratch.tol),
+        final_column_tolerance_by_cell = scratch.tol))
+end
+
 # ---------------------------------------------------------------------------
 # Vertical mass flux diagnosis
 # ---------------------------------------------------------------------------
@@ -785,7 +827,7 @@ function diagnose_cs_cm!(panels_cm::NTuple{6, Array{FT, 3}},
                 "vertical mass-flux diagnosis residual must be finite"))
             c = (p - 1) * Nc * Nc + (j - 1) * Nc + i
             tolerance = _column_tolerance(residual_tol, c) + 2epsFT * rounding
-            ratio = abs(raw_residual) / tolerance
+            ratio = _residual_ratio(abs(raw_residual), tolerance)
             sum_residual += raw_residual
             max_raw_residual = max(max_raw_residual, abs(raw_residual))
             if ratio > max_ratio

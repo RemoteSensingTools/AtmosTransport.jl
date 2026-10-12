@@ -68,6 +68,7 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, V
     balance_weights :: CW
     fidelity_map :: FidelitySampleMap
     fidelity_capture :: Ref{Any}
+    omega_cells :: OmegaFidelityCells
     # Column-balance record of the accepted window (`NoColumnClosureRecord` for
     # the pressure-fixer closures, which balance nothing).
     closure_record :: Base.RefValue{AbstractColumnClosureRecord}
@@ -216,6 +217,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             omega_buf, qv_buf, vdiv_om, vdiv_target,
             omega_regularization, omega_regularization_scratch, balance_weights,
             FidelitySampleMap(grid.face_table), Ref{Any}(nothing),
+            OmegaFidelityCells(Nc),
             Ref{AbstractColumnClosureRecord}(NoColumnClosureRecord()))
 end
 
@@ -490,6 +492,11 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
                   "gate $(workspace.omega_regularization.max_bottom_flux_correction)")
         end
         _OMEGA_TIMING[] && (_OMEGA_TIMING_STATE.recon_time += time() - _t_recon)
+        # The reconstruction moved flux between levels: re-derive the column
+        # closure and its per-cell tolerances for the fluxes that are stored.
+        bal_diag = recheck_cs_column_closure(
+            workspace.am_v4, workspace.bm_v4, workspace.m_cur, workspace.m_next_target,
+            grid.face_table, steps, grid.poisson_scratch, bal_diag)
         cm_diag = _diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
                                             workspace.bm_v4, workspace.dm_v4,
                                             workspace.m_cur, Nc, Nz, bal_diag,
@@ -670,6 +677,10 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
     _scale_cs_flux_panels!(workspace.cm_v4, full_window_scale)
     stored_fidelity_capture = scale_captured_flux_samples(
         workspace.fidelity_capture[], full_window_scale)
+    # GEOS stores full-window amounts: the closure ran on per-application
+    # amounts, so its kg residuals scale with the payload (ratios do not).
+    stored_closure = scale_column_closure_record(workspace.closure_record[],
+                                                 Float64(full_window_scale))
 
     surface_payload = (settings.include_surface || settings.include_vdiff_fields) ?
         _geos_surface_payload!(workspace.strategy, workspace.strategy_ws,
@@ -696,18 +707,18 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
             workspace.qv_buf, workspace.ps_cur,
             workspace.plan.merged_vc.A, workspace.plan.merged_vc.B,
             workspace.cell_areas, workspace.g,
-            2 * steps * Float64(workspace.flux_scale) * Float64(workspace.g);
+            2 * steps * Float64(workspace.flux_scale) * Float64(workspace.g),
+            workspace.omega_cells;
             source = "GEOS_A3dyn_OMEGA",
             sampling = "pchip_to_ctm_window",
-            baseline_id = "geos_native_omega_v1",
-            nrmse_limit = 10.0)
+            baseline = GEOS_NATIVE_OMEGA_BASELINE)
     else
         NoSourceOmegaEvidence{
             CubedSphereTargetGeometry,FT,SourceNotOpened}(SourceNotOpened())
     end
     ready = ReadyWindow{CubedSphereTargetGeometry, FT}(
         win, window_nt, FluxFidelityEvidenceBundle(flux_evidence, omega_evidence,
-                                                   workspace.closure_record[]))
+                                                   stored_closure))
     return PreverifiedWindow(ready, contract_diag)
 end
 

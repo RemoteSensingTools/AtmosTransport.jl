@@ -143,42 +143,48 @@ function write_window!(writer::CubedSphereBinaryWriter{FT},
     return write_streaming_cs_window!(writer.inner, ready.payload, writer.Nc, writer.npanel)
 end
 
+# Closing patches the certificate into the header; a failed aggregate gate
+# (`flux_fidelity_header!` throws) must not leave the IO open. The LL writer's
+# file is its own staging path (removed by `quarantine_streaming_binary!`).
 function close_streaming_binary!(writer::LatLonBinaryWriter)
     writer.closed && return writer.path
-    flux_fidelity_header!(writer.header, writer.fidelity)
-    header_json = JSON3.write(writer.header)
-    pad = writer.header_bytes - ncodeunits(header_json)
-    pad > 0 || error("transport binary header must leave room for a null terminator within header_bytes=$(writer.header_bytes)")
-    seek(writer.io, 0)
-    write(writer.io, header_json)
-    write(writer.io, zeros(UInt8, pad))
-    flush(writer.io)
-    close(writer.io)
     writer.closed = true
-    return writer.path
-end
-
-function close_streaming_binary!(writer::ReducedGaussianBinaryWriter)
-    writer.closed && return writer.path
     try
-        flux_fidelity_header!(writer.inner.header, writer.fidelity)
-        close_streaming_transport_binary!(writer.inner)
+        flux_fidelity_header!(writer.header, writer.fidelity)
+        header_json = JSON3.write(writer.header)
+        pad = writer.header_bytes - ncodeunits(header_json)
+        pad > 0 || error("transport binary header must leave room for a null terminator within header_bytes=$(writer.header_bytes)")
+        seek(writer.io, 0)
+        write(writer.io, header_json)
+        write(writer.io, zeros(UInt8, pad))
+        flush(writer.io)
     finally
-        writer.closed = true
+        close(writer.io)
     end
     return writer.path
 end
 
-function close_streaming_binary!(writer::CubedSphereBinaryWriter)
+# The RG/CS adapters wrap a streaming writer with its own atomic staging file
+# (`inner.staging_path`, published onto `inner.path` = the adapter's staging
+# path). When the certificate fails, that inner staging file is abandoned and
+# its IO closed here: quarantine removes only the adapter's path.
+function _close_wrapped_streaming_writer!(writer)
     writer.closed && return writer.path
+    writer.closed = true
     try
         flux_fidelity_header!(writer.inner.header, writer.fidelity)
-        close_streaming_transport_binary!(writer.inner)
-    finally
-        writer.closed = true
+    catch
+        abandon_streaming_transport_binary!(writer.inner)
+        rethrow()
     end
+    close_streaming_transport_binary!(writer.inner)
     return writer.path
 end
+
+close_streaming_binary!(writer::ReducedGaussianBinaryWriter) =
+    _close_wrapped_streaming_writer!(writer)
+close_streaming_binary!(writer::CubedSphereBinaryWriter) =
+    _close_wrapped_streaming_writer!(writer)
 
 function promote_streaming_binary!(writer::AbstractBinaryWriter)
     writer.promoted && return writer.final_path

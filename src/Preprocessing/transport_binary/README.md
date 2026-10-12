@@ -75,15 +75,24 @@ header (LL does it when `LatLonDeferredBinaryWriter` opens). GEOS uses
 
 ## Flux-fidelity certificate
 
-`ReadyWindow.fidelity` carries typed evidence beside the payload. Wind-derived
-paths independently evaluate a deterministic set of canonical faces from
-`u`, `v`, and layer pressure thickness before Poisson balance. Native GEOS
-paths certify scaling/mapping, while binary-only regrid and coarsen paths state
+`ReadyWindow.fidelity` (a `FluxFidelityEvidenceBundle`: flux evidence, OMEGA
+evidence, column-closure record) carries typed evidence beside the payload.
+Wind-derived paths independently evaluate a deterministic set of canonical
+faces from `u`, `v`, and layer pressure thickness before Poisson balance, and
+build only the sampled values (lat-lon: the sampled columns; reduced Gaussian:
+the sampled latitude lines; N320 moist line integrals: thickness at the
+stencil cells). Native GEOS fluxes have no independent source: their
+certificate is `not_applicable/native_fluxes_not_rederivable` and records the
+balance correction only, while binary-only regrid and coarsen paths state
 `not_applicable/source_payload_only`. Where source OMEGA is open, the writer
-also compares it with `g cm/(A_cell Δt)`. Algebraic sample failures throw before
-the window write; an aggregate OMEGA baseline failure throws while the file is
-still staged, so it is quarantined. `close_streaming_binary!` patches the
-aggregate flat header keys without touching payload bytes.
+also compares it with `g cm/(A_cell Δt)` and gates `NRMSE < 1`, correlation
+`> 0.5`, slope `> 0` (`OmegaFidelityBaseline`). Every cubed-sphere column
+balance adds its `ColumnClosureRecord` (`column_closure_*` keys). Algebraic
+sample failures throw before the window write; an aggregate OMEGA failure
+throws while the file is still staged, so it is quarantined (the RG/CS
+adapters then also abandon the inner writer's staging file).
+`close_streaming_binary!` patches the aggregate flat header keys without
+touching payload bytes.
 
 For a sampled face, the independently reconstructed mass amount is
 

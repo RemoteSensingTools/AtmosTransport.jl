@@ -334,6 +334,9 @@ mutable struct CSSpectralUnifiedDriverContext{G, S, V, SP, N, W}
     total_balance              :: Float64
     total_replay               :: Float64
     total_last_endpoint        :: Float64
+    # Window-mean sampling whose final window had no right endpoint (archive
+    # boundary): that window's effective sampling is the start-flux fallback.
+    final_boundary_fallback    :: Bool
 end
 
 function CSSpectralUnifiedDriverContext(grid, settings, vertical, spec,
@@ -352,7 +355,7 @@ function CSSpectralUnifiedDriverContext(grid, settings, vertical, spec,
             date, substep_policy, Int(steps_per_met), Float64(cs_balance_tol),
             Int(cs_balance_project_every), write_replay_on,
             balance_weights, 0.0, 0.0, 0, 0.0, 0.0, 0,
-            (0, 0, 0, 0), 0.0, 0.0, 0.0, 0.0)
+            (0, 0, 0, 0), 0.0, 0.0, 0.0, 0.0, false)
 end
 
 driver_windows_per_day(::Nothing, ctx::CSSpectralUnifiedDriverContext) =
@@ -465,7 +468,8 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
         cur_am, cur_bm, grid.face_table;
         method = flux_fidelity_method(workspace.flux_method),
         samples_per_window = length(workspace.fidelity_map.faces),
-        time_sampling = String(ctx.settings.flux_time_sampling),
+        time_sampling = (win == ctx.spec.n_times && ctx.final_boundary_fallback) ?
+            "window_start_boundary_fallback" : String(ctx.settings.flux_time_sampling),
         amount_seconds = ctx.settings.met_interval / (2 * workspace.steps_schedule[win]))
     omega_evidence = NoSourceOmegaEvidence{
         CubedSphereTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega())
@@ -523,6 +527,7 @@ function driver_flush_final_windows!(workspace::CubedSphereSpectralWindowWorkspa
         # At an explicit archive boundary no right endpoint exists. Holding
         # the start endpoint makes the final trapezoid reduce to window-start
         # sampling and keeps the fallback auditable in the header.
+        ctx.final_boundary_fallback = ctx.settings.flux_time_sampling === :window_mean
         _copy_cs_spectral_panels!(workspace.cs_ws.am_panels,
                                   workspace.endpoint_am)
         _copy_cs_spectral_panels!(workspace.cs_ws.bm_panels,
@@ -561,10 +566,8 @@ function driver_before_close_writer!(workspace::CubedSphereSpectralWindowWorkspa
         copy(@view workspace.ps_offsets[1:ctx.spec.n_times])
     writer.inner.header["ps_offsets_next_day_hour0_pa"] =
         workspace.ps_offsets[ctx.spec.n_times + 1]
-    if ctx.settings.flux_time_sampling === :window_mean && ctx.next_day_hour0 === nothing
-        writer.inner.header["flux_time_sampling_effective"] =
-            "window_start_boundary_fallback"
-    end
+    ctx.final_boundary_fallback &&
+        (writer.inner.header["flux_time_sampling_effective"] = "window_start_boundary_fallback")
     return nothing
 end
 
@@ -646,10 +649,8 @@ function process_day(date::Date,
         "face_fluxes" => String(settings.face_fluxes),
         "flux_face_lengths" => settings.face_fluxes === :panel_average ?
             String(settings.face_lengths) : "edge",
-        "face_interpolation" => settings.face_fluxes === :vector ?
-            String(settings.face_interpolation) : "not_applicable",
-        "wind_regrid" => settings.face_fluxes === :line_integral ?
-            "source_line_integral" : String(settings.wind_regrid),
+        "face_interpolation" => flux_header_face_interpolation(workspace.flux_method, settings),
+        "wind_regrid" => flux_header_wind_regrid(workspace.flux_method, settings),
         "flux_time_sampling" => String(settings.flux_time_sampling),
         "source_flux_sampling" => settings.flux_time_sampling === :window_start ?
             "window_start_endpoint" : "window_mean",

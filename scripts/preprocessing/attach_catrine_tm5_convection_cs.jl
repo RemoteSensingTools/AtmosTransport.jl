@@ -122,8 +122,14 @@ function copy_source_metadata!(metadata::AbstractDict, raw::AbstractDict,
                 "poisson_balanced", "vertical_transform",
                 "target_coefficients", "vertical_mapping_method", "target_vertical_name",
                 "coarsening_method", "coarsening_source_Nc", "coarsening_target_Nc",
-                "coarsening_ratio")
+                "coarsening_ratio", "horizontal_balance", "column_balance_weights")
         haskey(raw, key) && (metadata[key] = raw[key])
+    end
+    # The write-time flux certificate (flux and OMEGA fidelity, balance
+    # correction, column closure) describes the m/am/bm/cm payload, which the
+    # attachment copies unchanged: carry it over verbatim.
+    for (key, value) in raw
+        MD._is_certificate_key(String(key)) && (metadata[String(key)] = value)
     end
     pin_enabled = AtmosTransport.MetDrivers._dry_mass_pin_enabled(raw, "source metadata")
     if pin_enabled !== nothing
@@ -456,10 +462,7 @@ function main(argv)
         println("  closure:", worst_closure)
         println("  time:   ", round(time() - started; digits = 2), " s")
     catch
-        if writer !== nothing
-            isopen(writer.io) && close(writer.io)
-            isfile(writer.staging_path) && rm(writer.staging_path; force = true)
-        end
+        writer === nothing || MD.abandon_streaming_transport_binary!(writer)
         rethrow()
     finally
         humidity === nothing || close(humidity)

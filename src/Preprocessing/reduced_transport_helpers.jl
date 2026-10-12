@@ -10,13 +10,105 @@ struct ReducedSpectralThreadCache
     v_spec       :: Matrix{ComplexF64}
 end
 
+"""
+    ReducedFidelitySampler(grid, face_left, face_right; samples = 256, lines = 32)
+
+Faces of a reduced-Gaussian target sampled by the write-time flux-fidelity
+check (`rg_hashed_latitude_lines_v1`). At most `lines` latitude lines are
+chosen by the SplitMix64 hash among the rings (zonal faces) and the interior
+ring boundaries (meridional faces), then faces within each chosen line, about
+`samples` in total. The check re-synthesizes the winds of the chosen lines
+only, with the same spectral transform as production (shared code, so this
+check does not test the transform itself), and keeps `samples × levels`
+values; production synthesizes `2 n_rings − 1` lines.
+
+Per sample it stores the line, the point on the line, the two cells whose
+`ln p_s` set the face pressure (synthesis convention), the face-table cells
+(pin rescale and humidity), the edge length factor and `cos φ` (1 for
+meridional faces).
+"""
+struct ReducedFidelitySampler
+    faces       :: Vector{Int}
+    line_zonal  :: Vector{Bool}
+    line_index  :: Vector{Int}           # ring (zonal) or ring boundary (meridional)
+    line_slots  :: Vector{Vector{Int}}   # sample slots on each line
+    segment     :: Vector{Int}
+    flux_left   :: Vector{Int}
+    flux_right  :: Vector{Int}
+    face_left   :: Vector{Int32}
+    face_right  :: Vector{Int32}
+    edge        :: Vector{Float64}
+    cos_lat     :: Vector{Float64}
+end
+
+function ReducedFidelitySampler(grid::ReducedGaussianTargetGeometry,
+                                face_left::AbstractVector{<:Integer},
+                                face_right::AbstractVector{<:Integer};
+                                samples::Integer = 256, lines::Integer = 32)
+    mesh = grid.mesh
+    nr = nrings(mesh)
+    seed = FLUX_FIDELITY_SAMPLE_SEED
+    # Line ids: rings 1..nr (zonal), then interior boundaries 2..nr (meridional).
+    line_ids = collect(1:(2nr - 1))
+    sort!(line_ids; by = id -> _splitmix64(xor(seed, UInt64(id), UInt64(0x5a))))
+    chosen = sort(line_ids[1:min(Int(lines), length(line_ids))])
+    per_line = cld(Int(samples), length(chosen))
+    picks = Tuple{Int, Bool, Int, Int}[]          # (face, zonal, line index, segment)
+    for id in chosen
+        zonal = id <= nr
+        index = zonal ? id : id - nr + 1
+        npts = zonal ? mesh.nlon_per_ring[index] : mesh.boundary_counts[index]
+        first_face = zonal ? mesh.ring_offsets[index] :
+                             mesh._ncells + mesh.boundary_offsets[index]
+        segments = sort(collect(1:npts); by = seg -> _splitmix64(xor(
+            seed, UInt64(first_face + seg - 1), UInt64(0x7f))))
+        for seg in sort(segments[1:min(per_line, npts)])
+            push!(picks, (first_face + seg - 1, zonal, index, seg))
+        end
+    end
+    sort!(picks; by = first)
+    ns = length(picks)
+    line_key(zonal, index) = zonal ? index : nr + index - 1
+    slot_of_line = Dict(id => Int[] for id in chosen)
+    faces = Vector{Int}(undef, ns); segment = Vector{Int}(undef, ns)
+    flux_left = Vector{Int}(undef, ns); flux_right = Vector{Int}(undef, ns)
+    edge = Vector{Float64}(undef, ns); cos_lat = Vector{Float64}(undef, ns)
+    for (q, (f, zonal, index, seg)) in pairs(picks)
+        faces[q] = f; segment[q] = seg
+        push!(slot_of_line[line_key(zonal, index)], q)
+        if zonal
+            count = mesh.nlon_per_ring[index]
+            first_cell = mesh.ring_offsets[index]
+            flux_left[q] = first_cell + (seg == 1 ? count - 1 : seg - 2)
+            flux_right[q] = first_cell + seg - 1
+            edge[q] = deg2rad(mesh.lat_faces[index + 1] - mesh.lat_faces[index])
+            cos_lat[q] = cosd(grid.lats[index])
+        else
+            count = mesh.boundary_counts[index]
+            south_count = mesh.nlon_per_ring[index - 1]
+            north_count = mesh.nlon_per_ring[index]
+            flux_left[q] = mesh.ring_offsets[index - 1] + ((seg - 1) * south_count) ÷ count
+            flux_right[q] = mesh.ring_offsets[index] + ((seg - 1) * north_count) ÷ count
+            edge[q] = 2pi / count
+            cos_lat[q] = 1.0
+        end
+    end
+    return ReducedFidelitySampler(faces,
+        [id <= nr for id in chosen], [id <= nr ? id : id - nr + 1 for id in chosen],
+        [slot_of_line[id] for id in chosen], segment, flux_left, flux_right,
+        Int32.(face_left[faces]), Int32.(face_right[faces]), edge, cos_lat)
+end
+
+nsamples(s::ReducedFidelitySampler) = length(s.faces)
+
 struct ReducedTransformWorkspace
     sp             :: Vector{Float64}
     lnsp           :: Vector{Float64}
     dp             :: Matrix{Float64}
     m_arr          :: Matrix{Float64}
     hflux_arr      :: Matrix{Float64}
-    fidelity_hflux_arr :: Matrix{Float64}
+    fidelity_sampler :: ReducedFidelitySampler
+    fidelity_native :: Matrix{Float64}       # (samples, Nz_native), Float64
     cm_arr         :: Matrix{Float64}
     cell_areas     :: Vector{Float64}
     face_left      :: Vector{Int32}
@@ -35,10 +127,10 @@ end
 struct ReducedMergeWorkspace{FT}
     m_native_ft     :: Matrix{FT}
     hflux_native_ft :: Matrix{FT}
-    fidelity_hflux_native_ft :: Matrix{FT}
+    fidelity_native_ft :: Matrix{FT}        # (samples, Nz_native)
     m_merged        :: Matrix{FT}
     hflux_merged    :: Matrix{FT}
-    fidelity_hflux_merged :: Matrix{FT}
+    fidelity_merged :: Matrix{FT}           # (samples, Nz)
     cm_merged       :: Matrix{FT}
     div_scratch     :: Matrix{Float64}
 end
@@ -241,6 +333,7 @@ function allocate_reduced_transform_workspace(grid::ReducedGaussianTargetGeometr
                  zeros(ComplexF64, T + 1, T + 1),
                  zeros(ComplexF64, T + 1, T + 1),
              ) for _ in 1:nt_max]
+    sampler = ReducedFidelitySampler(grid, face_left, face_right)
 
     return ReducedTransformWorkspace(
         zeros(Float64, nc),
@@ -248,7 +341,8 @@ function allocate_reduced_transform_workspace(grid::ReducedGaussianTargetGeometr
         zeros(Float64, nc, Nz_native),
         zeros(Float64, nc, Nz_native),
         zeros(Float64, nf, Nz_native),
-        zeros(Float64, nf, Nz_native),
+        sampler,
+        zeros(Float64, nsamples(sampler), Nz_native),
         zeros(Float64, nc, Nz_native + 1),
         cell_areas,
         face_left,
@@ -267,17 +361,18 @@ end
 function allocate_reduced_merge_workspace(grid::ReducedGaussianTargetGeometry,
                                           Nz_native::Int,
                                           Nz::Int,
-                                          ::Type{FT}) where FT
+                                          ::Type{FT};
+                                          fidelity_samples::Int) where FT
     mesh = grid.mesh
     nc = ncells(mesh)
     nf = nfaces(mesh)
     return ReducedMergeWorkspace{FT}(
         zeros(FT, nc, Nz_native),
         zeros(FT, nf, Nz_native),
-        zeros(FT, nf, Nz_native),
+        zeros(FT, fidelity_samples, Nz_native),
         zeros(FT, nc, Nz),
         zeros(FT, nf, Nz),
-        zeros(FT, nf, Nz),
+        zeros(FT, fidelity_samples, Nz),
         zeros(FT, nc, Nz + 1),
         zeros(Float64, nc, Nz),
     )
@@ -420,54 +515,79 @@ function compute_reduced_horizontal_fluxes!(hflux::AbstractVector{Float64},
     return nothing
 end
 
-"Scalar re-evaluation of reduced-grid face amounts for write-time fidelity."
-function rederive_reduced_horizontal_fluxes!(hflux::AbstractVector{Float64},
-                                             lnsp_center::Vector{Float64},
-                                             u_spec::AbstractMatrix{ComplexF64},
-                                             v_spec::AbstractMatrix{ComplexF64},
-                                             T::Int, dA_k::Float64, dB_k::Float64,
-                                             grid::ReducedGaussianTargetGeometry,
-                                             half_dt::Float64,
-                                             cache::ReducedSpectralThreadCache)
+"""
+    sample_reduced_horizontal_fluxes!(out, sampler, lnsp_center, u_spec, v_spec, T,
+                                      dA_k, dB_k, grid, half_dt, cache)
+
+Scalar re-evaluation of the sampled reduced-grid face amounts of one level for
+the write-time fidelity check,
+`F = u Δp R Δφ Δt/(g cos φ)` (zonal) and `F = v Δp R Δλ Δt/g` (meridional),
+with `Δp = |ΔA + ΔB exp((ln p_{s,a} + ln p_{s,b})/2)|`. Only the sampler's
+lines are synthesized; `out` has one value per sample.
+"""
+function sample_reduced_horizontal_fluxes!(out::AbstractVector{Float64},
+                                           s::ReducedFidelitySampler,
+                                           lnsp_center::Vector{Float64},
+                                           u_spec::AbstractMatrix{ComplexF64},
+                                           v_spec::AbstractMatrix{ComplexF64},
+                                           T::Int, dA_k::Float64, dB_k::Float64,
+                                           grid::ReducedGaussianTargetGeometry,
+                                           half_dt::Float64,
+                                           cache::ReducedSpectralThreadCache)
     mesh = grid.mesh
     factor = Float64(mesh.radius) * half_dt / Float64(STANDARD_GRAVITY)
-    fill!(hflux, 0.0)
-    @inbounds for ring in 1:nrings(mesh)
-        count = mesh.nlon_per_ring[ring]
-        wind = _real_buffer!(cache, count)
-        spectral_to_ring!(wind, u_spec, T, grid.lats[ring], cache; lon_shift_rad=0.0)
-        first_cell = mesh.ring_offsets[ring]
-        edge = deg2rad(mesh.lat_faces[ring + 1] - mesh.lat_faces[ring])
-        for segment in 1:count
-            face = first_cell + segment - 1
-            west = first_cell + (segment == 1 ? count - 1 : segment - 2)
-            east = first_cell + segment - 1
-            ps_face = exp(0.5 * (lnsp_center[west] + lnsp_center[east]))
+    @inbounds for (line, slots) in pairs(s.line_slots)
+        index = s.line_index[line]
+        if s.line_zonal[line]
+            wind = _real_buffer!(cache, mesh.nlon_per_ring[index])
+            spectral_to_ring!(wind, u_spec, T, grid.lats[index], cache; lon_shift_rad=0.0)
+        else
+            wind = _real_buffer!(cache, mesh.boundary_counts[index])
+            spectral_to_reduced_boundary!(wind, v_spec, T, mesh.lat_faces[index], cache)
+        end
+        for q in slots
+            ps_face = exp(0.5 * (lnsp_center[s.flux_left[q]] + lnsp_center[s.flux_right[q]]))
             thickness = abs(dA_k + dB_k * ps_face)
-            hflux[face] = wind[segment] * thickness * factor * edge /
-                          cosd(grid.lats[ring])
+            out[q] = wind[s.segment[q]] * thickness * factor * s.edge[q] / s.cos_lat[q]
         end
     end
-    @inbounds for boundary in 2:nrings(mesh)
-        count = mesh.boundary_counts[boundary]
-        wind = _real_buffer!(cache, count)
-        spectral_to_reduced_boundary!(wind, v_spec, T, mesh.lat_faces[boundary], cache)
-        south_ring, north_ring = boundary - 1, boundary
-        south_count = mesh.nlon_per_ring[south_ring]
-        north_count = mesh.nlon_per_ring[north_ring]
-        first_face = mesh._ncells + mesh.boundary_offsets[boundary] - 1
-        edge = 2pi / count
-        for segment in 1:count
-            south_i = ((segment - 1) * south_count) ÷ count + 1
-            north_i = ((segment - 1) * north_count) ÷ count + 1
-            south = mesh.ring_offsets[south_ring] + south_i - 1
-            north = mesh.ring_offsets[north_ring] + north_i - 1
-            ps_face = exp(0.5 * (lnsp_center[south] + lnsp_center[north]))
-            thickness = abs(dA_k + dB_k * ps_face)
-            hflux[first_face + segment] = wind[segment] * thickness * factor * edge
+    return out
+end
+
+# The pin and dry-basis steps of `pin_convert_merge_window!` on the sampled
+# values, in the same order and arithmetic as on the full field.
+function rescale_reduced_samples_to_ps!(values::AbstractMatrix{Float64},
+                                        s::ReducedFidelitySampler,
+                                        lnsp_old::AbstractVector{Float64},
+                                        sp_new::AbstractVector{Float64},
+                                        dA::AbstractVector, dB::AbstractVector)
+    @inbounds for k in axes(values, 2), q in axes(values, 1)
+        left, right = s.face_left[q], s.face_right[q]
+        if left == 0 || right == 0
+            values[q, k] = 0.0
+            continue
+        end
+        p_old = exp((lnsp_old[left] + lnsp_old[right]) / 2)
+        p_new = sqrt(sp_new[left] * sp_new[right])
+        dp_old = abs(dA[k] + dB[k] * p_old)
+        dp_old > 0 && (values[q, k] *= abs(dA[k] + dB[k] * p_new) / dp_old)
+    end
+    return values
+end
+
+function apply_dry_basis_reduced_samples!(values::AbstractMatrix{Float64},
+                                          s::ReducedFidelitySampler,
+                                          qv_cell::AbstractMatrix{Float64})
+    @inbounds for k in axes(values, 2), q in axes(values, 1)
+        left, right = s.face_left[q], s.face_right[q]
+        if left == 0 || right == 0
+            values[q, k] = 0.0
+        else
+            q_face = clamp(0.5 * (qv_cell[left, k] + qv_cell[right, k]), 0.0, 0.999999)
+            values[q, k] *= 1 - q_face
         end
     end
-    return hflux
+    return values
 end
 
 """
@@ -559,10 +679,11 @@ function spectral_to_native_fields!(work::ReducedTransformWorkspace,
                                            grid,
                                            half_dt,
                                            cache)
-        rederive_reduced_horizontal_fluxes!(@view(work.fidelity_hflux_arr[:, kk]),
-                                            work.lnsp, cache.u_spec, cache.v_spec,
-                                            T, Float64(ab.dA[kk]), Float64(ab.dB[kk]),
-                                            grid, half_dt, cache)
+        sample_reduced_horizontal_fluxes!(@view(work.fidelity_native[:, kk]),
+                                          work.fidelity_sampler,
+                                          work.lnsp, cache.u_spec, cache.v_spec,
+                                          T, Float64(ab.dA[kk]), Float64(ab.dB[kk]),
+                                          grid, half_dt, cache)
     end
 
     recompute_faceindexed_cm_from_divergence!(work.cm_arr, work.hflux_arr,
@@ -584,11 +705,11 @@ function merge_reduced_window!(merged::ReducedMergeWorkspace{FT},
                                vertical) where FT
     @. merged.m_native_ft = FT(native.m_arr)
     @. merged.hflux_native_ft = FT(native.hflux_arr)
-    @. merged.fidelity_hflux_native_ft = FT(native.fidelity_hflux_arr)
+    @. merged.fidelity_native_ft = FT(native.fidelity_native)
     merge_field_2d!(merged.m_merged, merged.m_native_ft, vertical.merge_map)
     merge_field_2d!(merged.hflux_merged, merged.hflux_native_ft, vertical.merge_map)
-    merge_field_2d!(merged.fidelity_hflux_merged,
-                    merged.fidelity_hflux_native_ft, vertical.merge_map)
+    merge_field_2d!(merged.fidelity_merged,
+                    merged.fidelity_native_ft, vertical.merge_map)
     recompute_faceindexed_cm_from_divergence!(merged.cm_merged,
                                               merged.hflux_merged,
                                               native.face_left,

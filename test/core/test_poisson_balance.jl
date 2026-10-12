@@ -515,6 +515,25 @@ end
     record = Prep.column_closure_record(diag32, cm_diag32)
     @test record.residual_to_tolerance == diag32.final_column_residual_ratio
     @test record.booked_residual_kg == cm_diag32.max_booked_residual
+    # Full-window payloads (GEOS) scale the kg residuals, not the ratios.
+    scaled = Prep.scale_column_closure_record(record, 8.0)
+    @test scaled.projected_residual_kg == 8 * record.projected_residual_kg
+    @test scaled.residual_to_tolerance == record.residual_to_tolerance
+    # Fluxes changed after the balance are re-checked against their own tolerances.
+    recheck = Prep.recheck_cs_column_closure(am32, bm32, m32, m32_next, ft, steps,
+                                             scratch32, diag32)
+    @test recheck.final_column_residual_ratio <= 1
+    moved = map(copy, am32); moved[2][3, 3, 1] += 1f9; moved[2][3, 3, 2] -= 1f9  # same column sum
+    @test Prep.recheck_cs_column_closure(moved, bm32, m32, m32_next, ft, steps,
+                                         scratch32, diag32).final_column_residual_ratio <= 1
+    broken = map(copy, am32); broken[2][3, 3, 1] += 1f9                        # column budget broken
+    @test Prep.recheck_cs_column_closure(broken, bm32, m32, m32_next, ft, steps,
+                                         scratch32, diag32).final_column_residual_ratio > 1
+    # An exactly closed column with zero tolerance (closure_tol = 0, no flux) is closed.
+    zf = ntuple(_ -> zeros(Nc + 1, Nc, Nz), 6), ntuple(_ -> zeros(Nc, Nc + 1, Nz), 6)
+    zdiag = Prep.balance_cs_column_mass_fluxes!(zf..., m, m, ft, degree, steps,
+                                                Prep.CSPoissonScratch(ft.nc); closure_tol = 0.0)
+    @test zdiag.final_column_residual_ratio == 0
 
     # ΔB weights are layer thicknesses in B, normalized, for any vector type
     for Bv in (B, Float32.(B), collect(B))

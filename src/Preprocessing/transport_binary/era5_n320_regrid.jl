@@ -310,12 +310,10 @@ function _capture_era5_endpoint_flux_fidelity(method::LineIntegralFaceFluxes,
                                               ::MoistFluxThickness, x, pipe, ft,
                                               gravity, dt_factor, Nc, Nz, smap, rows)
     w = pipe.window_fields
-    dp = similar(w.u)
-    A, B = pipe.vc.A, pipe.vc.B
-    for k in 1:Nz, c in axes(dp, 1)
-        dp[c, k] = abs((A[k + 1] - A[k]) + (B[k + 1] - B[k]) * w.ps[c])
-    end
-    return capture_cs_wind_flux_samples(method, x.am, x.bm, w.u, w.v, dp,
+    # Thickness at the sampled stencil cells only, as the production moist
+    # line integral computes it; no source-grid array per endpoint/retry.
+    return capture_cs_wind_flux_samples(method, x.am, x.bm, w.u, w.v,
+                                        HybridLayerThickness(pipe.vc.A, pipe.vc.B, w.ps),
                                         ft, gravity, dt_factor, Nc, Nz;
                                         sample_map = smap, line_rows = rows)
 end
@@ -732,8 +730,8 @@ function process_era5_n320_to_cs_day(date::Date,
                 "flux_thickness" => String(settings.flux_thickness),
                 "flux_face_lengths" => settings.face_fluxes === :panel_average ? String(settings.face_lengths) : "edge",
                 "flux_time_sampling" => String(settings.flux_time_sampling),
-                "face_interpolation" => String(settings.face_interpolation),
-                "wind_regrid" => String(settings.wind_regrid),
+                "face_interpolation" => flux_header_face_interpolation(flux_method, settings),
+                "wind_regrid" => flux_header_wind_regrid(flux_method, settings),
                 "tm5_convection_source" => include_convection ?
                     "ec2tm_from_rates(udmf,ddmf,udrf,ddrf)" : "none",
                 "global_mass_pin_enabled" => do_mass_pin,
@@ -1040,8 +1038,11 @@ function process_era5_n320_to_cs_day(date::Date,
             # binary. Run with [numerics].require_substep_positivity = false
             # only when you understand and accept this for boundary days.
             @warn "process_era5_n320_to_cs_day: archive-boundary fallback — " *
-                  "no next-day core file for $(handles.date + Day(1)), using " *
-                  "zero-tendency m_next. Final window's continuity will not close."
+                  "no next-day core file for $(handles.date + Day(1)). The final " *
+                  "window ends at an artificial zero-tendency endpoint (m_next = m_start) " *
+                  "and its fluxes use the window-start winds; they are still balanced and " *
+                  "cm diagnosed against that endpoint, so continuity closes algebraically " *
+                  "and the replay gate runs, but the window's mass change is not physical."
             for p in 1:6
                 copyto!(nxt_m_dry[p], cur_m_dry[p])
             end
@@ -1091,12 +1092,18 @@ function process_era5_n320_to_cs_day(date::Date,
         end
         final_payload = merge(final_payload,
                               surface_vdiff_payload(cur_fields, cur_m_dry, nwindow))
+        # Without a next day the window-mean trapezoid uses the start fluxes
+        # twice: the final window's effective sampling is the fallback.
+        boundary_fallback = window_mean && next_handles === nothing
+        boundary_fallback && (writer.inner.header["flux_time_sampling_effective"] =
+                                  "window_start_boundary_fallback")
         flux_evidence = wind_derived_evidence(
             CubedSphereTargetGeometry, fidelity_capture[], cur_am, cur_bm,
             target_grid.face_table;
             method = flux_fidelity_method(flux_method),
             samples_per_window = length(fidelity_map.faces),
-            time_sampling = String(settings.flux_time_sampling),
+            time_sampling = boundary_fallback ? "window_start_boundary_fallback" :
+                            String(settings.flux_time_sampling),
             amount_seconds = dt_met_seconds / (2 * final_steps))
         omega_evidence = NoSourceOmegaEvidence{
             CubedSphereTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega())

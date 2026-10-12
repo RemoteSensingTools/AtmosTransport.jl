@@ -17,6 +17,7 @@ mutable struct LatLonSpectralWindowWorkspace{FT, TW, MW, SW, QW} <:
     ps_offsets     :: Vector{Float64}
     last_hour_next :: Union{Nothing, LLNextDayFields{FT}}
     steps_schedule :: Vector{Int}
+    fidelity_sampler :: StructuredFidelitySampler   # sampled faces, ranked once
     fidelity_captures :: Vector{Any}
     write_replay_on :: Bool        # resolved once per output: header record and gate
 
@@ -28,6 +29,7 @@ mutable struct LatLonSpectralWindowWorkspace{FT, TW, MW, SW, QW} <:
             ps_offsets::Vector{Float64},
             last_hour_next,
             steps_schedule::Vector{Int},
+            fidelity_sampler::StructuredFidelitySampler,
             fidelity_captures::Vector{Any},
             write_replay_on::Bool) where {FT, TW, MW, SW, QW}
         if last_hour_next !== nothing && !(last_hour_next isa LLNextDayFields{FT})
@@ -37,7 +39,7 @@ mutable struct LatLonSpectralWindowWorkspace{FT, TW, MW, SW, QW} <:
         end
         return new{FT, TW, MW, SW, QW}(
             transform, merged, storage, qv, ps_offsets, last_hour_next,
-            steps_schedule, fidelity_captures, write_replay_on)
+            steps_schedule, fidelity_sampler, fidelity_captures, write_replay_on)
     end
 end
 
@@ -174,6 +176,7 @@ function allocate_window_workspace(grid::LatLonTargetGeometry,
     return LatLonSpectralWindowWorkspace{FT, typeof(transform), typeof(merged),
                                          typeof(storage), typeof(qv)}(
         transform, merged, storage, qv, ps_offsets, nothing, steps_schedule,
+        StructuredFidelitySampler(nlon(grid), nlat(grid)),
         Vector{Any}(undef, Nt), write_replay_on)
 end
 
@@ -198,6 +201,7 @@ function ingest_window!(workspace::LatLonSpectralWindowWorkspace,
                     tm5_stats = tm5_stats,
                     surface_reader = surface_reader)
     workspace.fidelity_captures[win_idx] = capture_structured_wind_flux_samples(
+        workspace.fidelity_sampler,
         workspace.storage.all_am[win_idx], workspace.storage.all_bm[win_idx],
         workspace.transform, workspace.qv, grid, vertical, settings)
     return nothing

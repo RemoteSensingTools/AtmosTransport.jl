@@ -62,43 +62,59 @@ function remap_extensive_field_pressure_overlap!(dst::Array{FT, 3},
 
     Threads.@threads for j in 1:Ny
         @inbounds for i in 1:Nx
-            psij = Float64(ps[i, j])
-            for kt in 1:Nt
-                dst[i, j, kt] = zero(FT)
+            _remap_extensive_column_pressure_overlap!(
+                view(dst, i, j, :), view(src, i, j, :), Float64(ps[i, j]), src_vc, dst_vc)
+        end
+    end
+    return dst
+end
+
+# One column of `remap_extensive_field_pressure_overlap!` at surface pressure
+# `psij`; shared with the write-time flux-fidelity check, which evaluates only
+# the sampled columns.
+function _remap_extensive_column_pressure_overlap!(dst::AbstractVector{FT},
+                                                   src::AbstractVector,
+                                                   psij::Float64,
+                                                   src_vc::HybridSigmaPressure,
+                                                   dst_vc::HybridSigmaPressure) where FT
+    Ns = length(src)
+    Nt = length(dst)
+    @inbounds begin
+        for kt in 1:Nt
+            dst[kt] = zero(FT)
+        end
+
+        ks0 = 1
+        for kt in 1:Nt
+            t0 = Float64(dst_vc.A[kt]) + Float64(dst_vc.B[kt]) * psij
+            t1 = Float64(dst_vc.A[kt + 1]) + Float64(dst_vc.B[kt + 1]) * psij
+            tlo = min(t0, t1)
+            thi = max(t0, t1)
+            acc = 0.0
+
+            while ks0 <= Ns
+                s0 = Float64(src_vc.A[ks0]) + Float64(src_vc.B[ks0]) * psij
+                s1 = Float64(src_vc.A[ks0 + 1]) + Float64(src_vc.B[ks0 + 1]) * psij
+                max(s0, s1) <= tlo && (ks0 += 1; continue)
+                break
             end
 
-            ks0 = 1
-            for kt in 1:Nt
-                t0 = Float64(dst_vc.A[kt]) + Float64(dst_vc.B[kt]) * psij
-                t1 = Float64(dst_vc.A[kt + 1]) + Float64(dst_vc.B[kt + 1]) * psij
-                tlo = min(t0, t1)
-                thi = max(t0, t1)
-                acc = 0.0
-
-                while ks0 <= Ns
-                    s0 = Float64(src_vc.A[ks0]) + Float64(src_vc.B[ks0]) * psij
-                    s1 = Float64(src_vc.A[ks0 + 1]) + Float64(src_vc.B[ks0 + 1]) * psij
-                    max(s0, s1) <= tlo && (ks0 += 1; continue)
-                    break
+            ks = ks0
+            while ks <= Ns
+                s0 = Float64(src_vc.A[ks]) + Float64(src_vc.B[ks]) * psij
+                s1 = Float64(src_vc.A[ks + 1]) + Float64(src_vc.B[ks + 1]) * psij
+                slo = min(s0, s1)
+                shi = max(s0, s1)
+                slo >= thi && break
+                overlap = min(shi, thi) - max(slo, tlo)
+                if overlap > 0
+                    thick = shi - slo
+                    thick > 0 && (acc += Float64(src[ks]) * overlap / thick)
                 end
-
-                ks = ks0
-                while ks <= Ns
-                    s0 = Float64(src_vc.A[ks]) + Float64(src_vc.B[ks]) * psij
-                    s1 = Float64(src_vc.A[ks + 1]) + Float64(src_vc.B[ks + 1]) * psij
-                    slo = min(s0, s1)
-                    shi = max(s0, s1)
-                    slo >= thi && break
-                    overlap = min(shi, thi) - max(slo, tlo)
-                    if overlap > 0
-                        thick = shi - slo
-                        thick > 0 && (acc += Float64(src[i, j, ks]) * overlap / thick)
-                    end
-                    shi >= thi && break
-                    ks += 1
-                end
-                dst[i, j, kt] = FT(acc)
+                shi >= thi && break
+                ks += 1
             end
+            dst[kt] = FT(acc)
         end
     end
     return dst
@@ -122,11 +138,24 @@ function fill_xface_surface_pressure!(ps_xface::AbstractMatrix{<:Real},
     size(ps_xface) == (Nx + 1, Ny) ||
         throw(DimensionMismatch("x-face ps shape $(size(ps_xface)) != ($Nx+1, $Ny)"))
     @inbounds for j in 1:Ny, i in 1:(Nx + 1)
-        il = i == 1 ? Nx : i - 1
-        ir = i <= Nx ? i : 1
-        ps_xface[i, j] = _geometric_mean_ps(ps_cell[il, j], ps_cell[ir, j])
+        ps_xface[i, j] = _xface_surface_pressure(ps_cell, i, j)
     end
     return ps_xface
+end
+
+# Surface pressure of x-face `(i, j)` (periodic in longitude) and of y-face
+# `(i, j)` (pole rows copy the adjacent cell), as `fill_*face_surface_pressure!`.
+@inline function _xface_surface_pressure(ps_cell::AbstractMatrix{<:Real}, i::Int, j::Int)
+    Nx = size(ps_cell, 1)
+    il = i == 1 ? Nx : i - 1
+    ir = i <= Nx ? i : 1
+    return _geometric_mean_ps(ps_cell[il, j], ps_cell[ir, j])
+end
+@inline function _yface_surface_pressure(ps_cell::AbstractMatrix{<:Real}, i::Int, j::Int)
+    Ny = size(ps_cell, 2)
+    j == 1 && return Float64(ps_cell[i, 1])
+    j == Ny + 1 && return Float64(ps_cell[i, Ny])
+    return _geometric_mean_ps(ps_cell[i, j - 1], ps_cell[i, j])
 end
 
 """
@@ -142,12 +171,8 @@ function fill_yface_surface_pressure!(ps_yface::AbstractMatrix{<:Real},
     Nx, Ny = size(ps_cell)
     size(ps_yface) == (Nx, Ny + 1) ||
         throw(DimensionMismatch("y-face ps shape $(size(ps_yface)) != ($Nx, $Ny+1)"))
-    @inbounds for i in 1:Nx
-        ps_yface[i, 1] = Float64(ps_cell[i, 1])
-        ps_yface[i, Ny + 1] = Float64(ps_cell[i, Ny])
-    end
-    @inbounds for j in 2:Ny, i in 1:Nx
-        ps_yface[i, j] = _geometric_mean_ps(ps_cell[i, j - 1], ps_cell[i, j])
+    @inbounds for j in 1:(Ny + 1), i in 1:Nx
+        ps_yface[i, j] = _yface_surface_pressure(ps_cell, i, j)
     end
     return ps_yface
 end

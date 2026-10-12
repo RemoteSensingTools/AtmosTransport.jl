@@ -92,8 +92,10 @@ coverage.
   that the winds are right; for that, every newly written binary carries a typed
   flux-fidelity certificate: wind-bearing paths independently reconstruct
   deterministic face samples from `u`, `v`, and `dp`, and paths with source
-  OMEGA compare it with the stored vertical mass flux. Payload-only paths carry
-  an explicit typed not-applicable reason.
+  OMEGA compare it with the stored vertical mass flux (NRMSE below that of a
+  zero vertical flux, correlation > 0.5, positive slope). Native GEOS fluxes
+  and payload-only paths carry an explicit typed not-applicable reason; no
+  certificate can catch errors in the input fields themselves.
 - **Stable — Operator-modular.** Every physics operator is behind an abstract type
   with a `No<Operator>` no-op default; swap schemes via type dispatch
   without modifying core code.

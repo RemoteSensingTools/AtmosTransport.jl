@@ -429,6 +429,13 @@ MERRA2DayDiagnostics(nwindow, steps) =
     MERRA2DayDiagnostics(fill(steps, nwindow), 0.0, 0.0, 0, 0.0, 0.0, 0,
                          init_cs_positivity_accumulator())
 
+# The OMEGA a MERRA-2 run compares with comes from its winds collection: the
+# 3-hour mean of the block (tavg3, GEOS-Chem A3dyn) or the instantaneous
+# record at the block start (inst3).
+const MERRA2_OMEGA_LABELS = (
+    tavg3 = (source = "MERRA2_tavg3_OMEGA", sampling = "tavg3_block_mean"),
+    inst3 = (source = "MERRA2_inst3_OMEGA", sampling = "inst3_block_start"))
+
 function _merra2_window_scratch(::Type{FT}, Nc, Nz, face_table) where FT
     panels(dims...) = ntuple(_ -> zeros(FT, dims...), 6)
     return (am = panels(Nc + 1, Nc, Nz), bm = panels(Nc, Nc + 1, Nz), cm = panels(Nc, Nc, Nz + 1),
@@ -438,6 +445,7 @@ function _merra2_window_scratch(::Type{FT}, Nc, Nz, face_table) where FT
             ps_dry = panels(Nc, Nc), ps_moist = panels(Nc, Nc),
             fidelity_capture = Ref{Any}(nothing),
             fidelity_map = FidelitySampleMap(face_table),
+            omega_cells = OmegaFidelityCells(Nc),
             closure_record = Ref{AbstractColumnClosureRecord}(NoColumnClosureRecord()))
 end
 
@@ -480,12 +488,13 @@ function _read_next_day_endpoint!(d::MERRA2DayDriver, nxt::MERRA2BlockState, cur
         _require_configured_terminal_day(
             d.handles.date, d.configured_last_day, "MERRA-2 preprocessor",
             "next-day inst3 endpoint for $(d.handles.date + Day(1))")
-        # The configured archive boundary has no next-day inst3 file. The
-        # positivity gate will likely warn/fail, as it should: the last block's
-        # continuity does not close.
+        # The configured archive boundary has no next-day inst3 file: the last
+        # block closes against an artificial zero-tendency endpoint.
         @warn "process_merra2_to_cs_day: archive-boundary fallback — no next-day inst3 file " *
-              "for $(d.handles.date + Day(1)), using zero-tendency m_next. Final window's " *
-              "continuity will not close."
+              "for $(d.handles.date + Day(1)). The last block ends at an artificial " *
+              "zero-tendency endpoint (m_next = m_start); its fluxes are still balanced and " *
+              "cm diagnosed against that endpoint, so continuity closes algebraically and " *
+              "the replay gate runs, but the block's mass change is not physical."
         for p in 1:6
             copyto!(nxt.m_dry[p], cur.m_dry[p]); copyto!(nxt.ps_dry[p], cur.ps_dry[p])
             copyto!(pipe.c180_fields.ps[p], cur.pipe.c180_fields.ps[p])
@@ -614,15 +623,16 @@ function _emit_block!(d::MERRA2DayDriver, cur::MERRA2BlockState, nxt::MERRA2Bloc
             time_sampling = "window_start_endpoint",
             amount_seconds = d.dt_window / (2 * steps))
         omega_evidence = if cur.pipe.omega_available[]
+            # Dry conversion with the sub-window's own start humidity (`qv_a`,
+            # linear in time within the block), not the block-start one.
+            labels = getproperty(MERRA2_OMEGA_LABELS, d.settings.winds_collection)
             source_omega_evidence_cs(
                 CubedSphereTargetGeometry, x.cm, cur.pipe.c180_fields.omega,
-                cur.pipe.c180_fields.qv, x.ps_moist, d.vc.A, d.vc.B,
+                d.win_phys.qv_a, x.ps_moist, d.vc.A, d.vc.B,
                 d.grid.mesh.cell_areas, FT(STANDARD_GRAVITY),
-                d.dt_window / (2 * steps);
-                source = "MERRA2_A3dyn_OMEGA",
-                sampling = "tavg3_block_mean",
-                baseline_id = "merra2_wind_omega_v1",
-                nrmse_limit = 10.0)
+                d.dt_window / (2 * steps), x.omega_cells;
+                source = labels.source, sampling = labels.sampling,
+                baseline = MERRA2_WIND_OMEGA_BASELINE)
         else
             NoSourceOmegaEvidence{
                 CubedSphereTargetGeometry,FT,SourceNotOpened}(SourceNotOpened())
