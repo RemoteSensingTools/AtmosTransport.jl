@@ -133,6 +133,14 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     geometry = binary_geometry(reader)
     geometry isa LatLonBinaryGeometry || throw(ArgumentError(
         "LL-to-CS regridding requires a lat-lon binary; got $(grid_type(reader))"))
+    if surface_pressure_basis(reader) isa DrySurfacePressure
+        close(reader)
+        throw(ArgumentError(
+            "regrid_ll_binary_to_cs cannot transform a dry-surface-pressure input: " *
+            "wind recovery and hybrid flux reconstruction require total pressure, " *
+            "and the regrid path does not load humidity. Regenerate the LL source " *
+            "with surface_pressure_basis=TotalSurfacePressure()."))
+    end
     Nx_ll = geometry.Nx
     Ny_ll = geometry.Ny
     Nz = h.nlevel
@@ -174,6 +182,10 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             ":forward_window_endpoint_difference when `dm` is present, got " *
             "$(delta_semantics(reader))."
         ))
+    source_mass_fix = Dict{String, Any}()
+    for key in ("mass_fix_enabled", "mass_fix_target_ps_dry_pa")
+        haskey(h.raw_header, key) && (source_mass_fix[key] = h.raw_header[key])
+    end
 
     # Timestep metadata comes from the source header. The stored `am/bm`
     # are per-substep mass (flux_kind = :substep_mass_amount) with the
@@ -276,6 +288,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         include_surface=source_has_surface,
         include_tm5conv=source_has_tm5,
         mass_basis=output_basis,
+        surface_pressure_basis=surface_pressure_basis(reader),
         # The regrid copies the source's TM5 sections and their basis record;
         # explicit `nothing` preserves a genuinely legacy keyless source.
         tm5_convection_mass_basis=tm5_convection_mass_basis(reader),
@@ -285,7 +298,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         cs_center_law=_cs_center_law_tag(cs_grid),
         longitude_offset_deg=longitude_offset_deg(cs_definition(cs_grid.mesh)),
         planet_radius=cs_grid.mesh.radius,
-        extra_header=_with_replay_record(_with_column_weights_record(Dict{String, Any}(
+        extra_header=_with_replay_record(_with_column_weights_record(merge(Dict{String, Any}(
             "preprocessor"      => "regrid_ll_binary_to_cs",
             "source_type"       => "ll_transport_binary",
             "source_path"       => ll_binary_path,
@@ -293,7 +306,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             "regrid_method"     => "conservative",
             "poisson_balanced"  => true,
             "horizontal_balance" => HORIZONTAL_BALANCE_TAG,
-        ), column_balance_weights), write_replay_check))
+        ), source_mass_fix), column_balance_weights), write_replay_check))
     writer = CubedSphereBinaryWriter(inner_writer, mass_basis_from_symbol(output_basis);
                                      Nc = Nc,
                                      npanel = CS_PANEL_COUNT,

@@ -34,7 +34,7 @@ const PINNED_PARAMETERS = (
     STANDARD_TROPOPAUSE_TEMPERATURE = 216.65,
     HYDROSTATIC_REFERENCE_TEMPERATURE = 260.0,
     DAYS_PER_JULIAN_YEAR = 365.25,
-    GLOBAL_MEAN_DRY_SURFACE_PRESSURE = 98726.0,
+    GLOBAL_MEAN_DRY_SURFACE_PRESSURE = 98325.0,
     GLOBAL_MEAN_SPECIFIC_HUMIDITY = 0.00247,
     SPECIES_MOLAR_MASS = (co2 = 44.0095e-3, sf6 = 146.055e-3, rn222 = 222.0e-3),
     GEOSCHEM_SPECIES_MOLAR_MASS = (co2 = 44.01e-3, sf6 = 146.06e-3, rn222 = 222.0e-3),
@@ -115,8 +115,10 @@ end
 @testset "physical constants are coherent" begin
     @test CP_DRY_AIR ≈ CP_OVER_R_DIATOMIC * R_DRY_AIR        # the GEOS set is coherent (to one ulp)
     @test SPECIES_MOLAR_MASS.co2 ≈ CARBON_MOLAR_MASS + 2 * 15.9994e-3   # IUPAC 2007 C and O
-    # The dry surface-pressure target is the Trenberth and Smith (2005) dry-air mass.
-    @test GLOBAL_MEAN_DRY_SURFACE_PRESSURE * 4π * IFS_EARTH_RADIUS^2 / STANDARD_GRAVITY ≈ 5.1353e18 rtol = 1e-5
+    # Modern-reanalysis pressure target, cross-checked against T&S pressure.
+    ts_dry_ps = 98550.0 * 5.1352 / 5.1480
+    @test GLOBAL_MEAN_DRY_SURFACE_PRESSURE ≈ ts_dry_ps rtol = 5e-4
+    @test GLOBAL_MEAN_DRY_SURFACE_PRESSURE / (1 - 0.00247) ≈ 98550.0 rtol = 5e-4
     # 3.8235 days in Float64 is the 330350.4 s of the run configs, bit for bit.
     @test RN222_HALF_LIFE === 3.8235 * 86400.0
     # GEOS-Chem's species molar masses differ from the model's by the amounts its docstring states.

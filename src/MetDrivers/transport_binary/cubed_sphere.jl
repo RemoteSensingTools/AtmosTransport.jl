@@ -26,6 +26,10 @@ function _cs_section_elements(Nc::Int, npanel::Int, nlevel::Int, section::Symbol
     error("Unsupported CS section: $section")
 end
 
+_transport_section_elements(h::TransportBinaryHeader{CubedSphereBinaryGeometry},
+                            section::Symbol) =
+    _cs_section_elements(h.geometry.Nc, h.geometry.npanel, h.nlevel, section)
+
 # The latent heat flux travels with the other PBL surface fields.
 @inline _cs_window_has_pbl_eflux(window) =
     _transport_window_has_surface(window) && haskey(window, :surface) &&
@@ -188,6 +192,8 @@ convention (`"gnomonic"` or `"geos_native"`), the geometry law and
 `planet_radius` (the radius of the mesh on which the air masses were computed),
 so readers reconstruct the same mesh. Each subsequent window must match the
 registered panel shapes and payload sections exactly.
+The typed `surface_pressure_basis` keyword is required and independently
+declares whether the stored `ps` panels are total or dry pressure.
 """
 function open_streaming_cs_transport_binary(
         path::AbstractString,
@@ -207,6 +213,7 @@ function open_streaming_cs_transport_binary(
         flux_kind::Symbol = :substep_mass_amount,
         include_flux_delta::Bool = false,
         mass_basis::Symbol,
+        surface_pressure_basis::Union{TotalSurfacePressure, DrySurfacePressure},
         tm5_convection_mass_basis::Union{_DefaultTM5ConvectionMassBasis,
                                          Nothing, AbstractMassBasis} =
             _DEFAULT_TM5_CONVECTION_MASS_BASIS,
@@ -265,6 +272,7 @@ function open_streaming_cs_transport_binary(
                                       half_dt_seconds=half_dt_seconds,
                                       steps_per_window=steps_per_window,
                                       mass_basis=mass_basis,
+                                      surface_pressure_basis,
                                       source_flux_sampling=source_flux_sampling,
                                       air_mass_sampling=air_mass_sampling,
                                       flux_sampling=flux_sampling,

@@ -7,6 +7,29 @@ using .AtmosTransport.MetDrivers: driver_grid
 using .AtmosTransport.Models: current_qv, substep_index, window_index
 const Runner = AtmosTransport.Models.DrivenRunner
 
+# A documented custom driver may omit `surface_pressure_basis`; the generic
+# compatibility contract must continue to interpret its ps as total pressure.
+struct CompatibilityMetDriver{D} <: AbstractMetDriver
+    inner::D
+end
+AtmosTransport.MetDrivers.total_windows(d::CompatibilityMetDriver) =
+    AtmosTransport.MetDrivers.total_windows(d.inner)
+AtmosTransport.MetDrivers.window_dt(d::CompatibilityMetDriver) =
+    AtmosTransport.MetDrivers.window_dt(d.inner)
+AtmosTransport.MetDrivers.steps_per_window(d::CompatibilityMetDriver) =
+    AtmosTransport.MetDrivers.steps_per_window(d.inner)
+AtmosTransport.MetDrivers.load_transport_window(d::CompatibilityMetDriver, w) =
+    AtmosTransport.MetDrivers.load_transport_window(d.inner, w)
+AtmosTransport.MetDrivers.driver_grid(d::CompatibilityMetDriver) =
+    AtmosTransport.MetDrivers.driver_grid(d.inner)
+AtmosTransport.MetDrivers.air_mass_basis(d::CompatibilityMetDriver) =
+    AtmosTransport.MetDrivers.air_mass_basis(d.inner)
+AtmosTransport.MetDrivers.flux_interpolation_mode(d::CompatibilityMetDriver) =
+    AtmosTransport.MetDrivers.flux_interpolation_mode(d.inner)
+AtmosTransport.MetDrivers.flux_kind(d::CompatibilityMetDriver) =
+    AtmosTransport.MetDrivers.flux_kind(d.inner)
+AtmosTransport.MetDrivers.supports_native_vertical_flux(::CompatibilityMetDriver) = true
+
 function write_driven_latlon_binary(path::AbstractString;
                                     FT::Type{<:AbstractFloat}=Float64,
                                     source_flux_sampling::Symbol=:window_start_endpoint,
@@ -41,6 +64,7 @@ function write_driven_latlon_binary(path::AbstractString;
                            half_dt_seconds=1800.0,
                            steps_per_window=2,
                            mass_basis,
+                           surface_pressure_basis=TotalSurfacePressure(),
                            source_flux_sampling=source_flux_sampling,
                            flux_sampling=flux_sampling,
                            extra_header=Dict(
@@ -82,7 +106,10 @@ end
 function write_driven_reduced_binary(path::AbstractString;
                                      FT::Type{<:AbstractFloat}=Float64,
                                      source_flux_sampling::Symbol=:window_start_endpoint,
-                                     window_mass_scales::Tuple{Vararg{Real}}=(1, 1))
+                                     window_mass_scales::Tuple{Vararg{Real}}=(1, 1),
+                                     mass_basis::Symbol=:moist,
+                                     surface_pressure_basis=TotalSurfacePressure(),
+                                     include_humidity::Bool=true)
     mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT=FT)
     vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
     grid = AtmosGrid(mesh, vertical, CPU(); FT=FT)
@@ -95,10 +122,19 @@ function write_driven_reduced_binary(path::AbstractString;
             m = fill(FT(window_mass_scales[win]), ncell, nlevel)
             hflux = zeros(FT, nface_h, nlevel)
             cm = zeros(FT, ncell, nlevel + 1)
-            ps = fill(FT(90000 + 100win), ncell)
+            ps_total = FT(90000 + 100win)
             qv_start = fill(FT(0.01win), ncell, nlevel)
             qv_end = fill(FT(0.01win + 0.01), ncell, nlevel)
-            (; m, hflux, cm, ps, qv_start, qv_end)
+            ps_value = if surface_pressure_basis isa DrySurfacePressure
+                sum((one(FT) - qv_start[1, k]) *
+                    ((vertical.A[k + 1] - vertical.A[k]) +
+                     (vertical.B[k + 1] - vertical.B[k]) * ps_total)
+                    for k in 1:nlevel)
+            else
+                ps_total
+            end
+            base = (; m, hflux, cm, ps = fill(ps_value, ncell))
+            include_humidity ? merge(base, (; qv_start, qv_end)) : base
         end for win in 1:length(window_mass_scales)
     ]
 
@@ -107,7 +143,8 @@ function write_driven_reduced_binary(path::AbstractString;
                            dt_met_seconds=3600.0,
                            half_dt_seconds=1800.0,
                            steps_per_window=2,
-                           mass_basis=:moist,
+                           mass_basis,
+                           surface_pressure_basis,
                            source_flux_sampling=source_flux_sampling,
                            extra_header=Dict(
                                "poisson_balance_target_scale" => 0.25,
@@ -282,7 +319,9 @@ end
         close(io)
         write_driven_reduced_binary(path; FT=Float64, window_mass_scales=(1,))
 
-        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU())
+        binary_driver = TransportBinaryDriver(path; FT=Float64, arch=CPU())
+        driver = CompatibilityMetDriver(binary_driver)
+        @test surface_pressure_basis(driver) isa TotalSurfacePressure
         grid = driver_grid(driver)
         ncell = ncells(grid.horizontal)
 
@@ -310,7 +349,46 @@ end
         @test all(sim.model.state.tracers.fossil_co2[:, 1] .> 0.0)
         @test total_mass(sim.model.state, :fossil_co2) ≈ m0 + ncell * 2.0 * 1800.0 * 2 rtol=1e-7
 
-        close(driver)
+        close(binary_driver)
+    end
+end
+
+@testset "DrivenSimulation dry-pressure diffusion refresh uses humidity or documented fallback" begin
+    for include_humidity in (true, false)
+        mktemp() do path, io
+            close(io)
+            write_driven_reduced_binary(
+                path; FT = Float64, window_mass_scales = (1,), mass_basis = :dry,
+                surface_pressure_basis = DrySurfacePressure(), include_humidity)
+
+            driver = TransportBinaryDriver(path; FT = Float64, arch = CPU())
+            grid = driver_grid(driver)
+            window = load_transport_window(driver, 1)
+            state = CellState(DryBasis, copy(window.air_mass);
+                              CO2 = window.air_mass .* 1e-6)
+            fluxes = allocate_face_fluxes(grid.horizontal, 2;
+                                          FT = Float64, basis = DryBasis)
+            diffusion = ImplicitVerticalDiffusion(;
+                kz_field = ConstantField{Float64, 2}(1.0))
+            model = TransportModel(state, fluxes, grid, UpwindScheme(); diffusion)
+            sim = if include_humidity
+                DrivenSimulation(model, driver; start_window = 1, stop_window = 1)
+            else
+                @test_logs (:warn, r"dry surface pressure without endpoint or VDIFF humidity")
+                    DrivenSimulation(model, driver; start_window = 1, stop_window = 1)
+            end
+
+            # With qv_start, dry ps reconstructs the known total ps. Without
+            # humidity, the documented compatibility fallback keeps dry ps.
+            ps_for_dz = include_humidity ? fill(90_100.0, length(window.surface_pressure)) :
+                                           window.surface_pressure
+            expected = similar(sim.model.workspace.diffusion_ws.layer_thickness)
+            AtmosTransport.Operators.Diffusion.fill_dz_hydrostatic_constT!(
+                expected, ps_for_dz, grid.vertical.A, grid.vertical.B)
+            @test sim.model.workspace.diffusion_ws.layer_thickness ≈ expected
+            @test all(isfinite, sim.model.workspace.diffusion_ws.layer_thickness)
+            close(driver)
+        end
     end
 end
 

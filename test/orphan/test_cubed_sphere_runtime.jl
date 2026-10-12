@@ -6,6 +6,12 @@ using JSON3
 include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport.Architectures: CPU
+using .AtmosTransport.MetDrivers: PBLSurfaceForcing, load_window!
+using .AtmosTransport.Models: current_qv
+using .AtmosTransport.State: CubedSphereField, WindowPBLKzField,
+                             LocalHoltslagBovilleKzField
+using .AtmosTransport.Operators.Advection: CSLinRoodAdvectionWorkspace
+using .AtmosTransport.Operators.Convection: TM5Workspace
 
 function rewrite_cs_header!(path::AbstractString; updates = Dict{String, Any}())
     open(path, "r+") do io
@@ -73,6 +79,7 @@ function write_driven_cs_binary(path::AbstractString;
         steps_per_window = steps_per_window,
         include_flux_delta = window_dm_panels !== nothing,
         mass_basis = :dry,
+        surface_pressure_basis = TotalSurfacePressure(),
         include_surface = surface_windows !== nothing,
         include_cmfmc = convection_windows !== nothing,
         include_dtrain = dtrain_windows !== nothing,
@@ -179,9 +186,9 @@ end
         write_driven_cs_binary(path; FT=Float64, Nc=4, Nz=2,
                                window_mass_scales=(1,),
                                steps_per_window=4)
-        driver_legacy = TransportBinaryDriver(path; FT=Float64, arch=CPU(), Hp=1)
-        @test !AtmosTransport.MetDrivers.uses_binary_substep_contract(driver_legacy)
-        close(driver_legacy)
+        driver_written = TransportBinaryDriver(path; FT=Float64, arch=CPU(), Hp=1)
+        @test AtmosTransport.MetDrivers.uses_binary_substep_contract(driver_written)
+        close(driver_written)
 
         rewrite_cs_header!(path; updates = Dict(
             "preprocessor_contract" => "plan41_variable_substeps",
@@ -361,7 +368,7 @@ end
 
         driver = TransportBinaryDriver(path; FT = FT, arch = CPU(), Hp = 1)
         recipe = build_runtime_physics_recipe(
-            Dict("diffusion" => Dict("kind" => "pbl")),
+            Dict("diffusion" => Dict("kind" => "tm5_beljaars_viterbo_local_kz")),
             driver,
             FT,
         )
@@ -640,7 +647,7 @@ end
 
         driver = TransportBinaryDriver(path; FT = FT, arch = CPU(), Hp = 1)
         recipe = build_runtime_physics_recipe(
-            Dict("diffusion" => Dict("kind" => "pbl"),
+            Dict("diffusion" => Dict("kind" => "tm5_beljaars_viterbo_local_kz"),
                  "convection" => Dict("kind" => "cmfmc")),
             driver,
             FT,
@@ -705,6 +712,7 @@ end
             half_dt_seconds = 1800.0,
             steps_per_window = 2,
             mass_basis = :dry,
+            surface_pressure_basis = TotalSurfacePressure(),
             source_flux_sampling = :window_start_endpoint,
             flux_sampling = :window_constant,
         )

@@ -114,7 +114,8 @@ function write_run_binary(path)
     vc = HybridSigmaPressure(fill(100.0, RUN_NZ + 1), collect(range(0.0, 1.0; length = RUN_NZ + 1)))
     writer = MD.open_streaming_cs_transport_binary(path, RUN_NC, 6, RUN_NZ, 8, vc; planet_radius = EARTH_RADIUS,
                                                    FT = Float64, dt_met_seconds = 10800.0,
-                                                   steps_per_window = 2, mass_basis = :dry)
+                                                   steps_per_window = 2, mass_basis = :dry,
+                                                   surface_pressure_basis = TotalSurfacePressure())
     try
         window = (; m = ntuple(_ -> fill(RUN_AIR, RUN_NC, RUN_NC, RUN_NZ), 6),
                   am = ntuple(_ -> zeros(RUN_NC + 1, RUN_NC, RUN_NZ), 6),

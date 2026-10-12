@@ -1,5 +1,6 @@
 using Test
-using AtmosTransport: AtmosGrid, CPU, HybridSigmaPressure, ReducedGaussianMesh
+using AtmosTransport: AtmosGrid, CPU, HybridSigmaPressure, ReducedGaussianMesh,
+                      TotalSurfacePressure
 using AtmosTransport.Grids: ncells, nfaces
 using AtmosTransport.Preprocessing:
     SubstepSchedulePolicy,
@@ -68,7 +69,8 @@ end
             flux_kind = :substep_mass_amount,
             humidity_sampling = :none,
             delta_semantics = :forward_window_endpoint_difference,
-            mass_basis = :dry)
+            mass_basis = :dry,
+            surface_pressure_basis = TotalSurfacePressure())
         try
             header = writer.header
             set_transport_header_steps_per_window_schedule!(header, [4, 7, 5])

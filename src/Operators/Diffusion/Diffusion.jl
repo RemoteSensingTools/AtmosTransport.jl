@@ -24,10 +24,12 @@ transposes live in `src/Adjoints/DiffusionAdjoint.jl`.
 module Diffusion
 
 using Adapt
-using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
+using KernelAbstractions: @kernel, @index, @Const, @atomic, get_backend, synchronize
 using ...State: CellState, CubedSphereState,
                 AbstractTimeVaryingField, AbstractCubedSphereField,
                 AbstractCSDkgField, PrecomputedCSDkgField,
+                AbstractSurfacePressureBasis, TotalSurfacePressure,
+                DrySurfacePressure,
                 field_value, update_field!, panel_field, eachtracer, ntracers
 using ...MetDrivers: current_time
 using ...Architectures: _two_sum, _neumaier_add, _ledger_residual, launch!
@@ -43,12 +45,13 @@ export AbstractSurfaceFluxCoupling, SplitSurfaceFluxCoupling,
        DiffusiveSurfaceFluxBoundary, uses_diffusive_surface_flux_boundary
 export apply_vertical_diffusion_vmr!
 export fill_dz_hydrostatic_constT!, fill_dz_hydrostatic_virtualT!
+export recover_total_surface_pressure!
 
 include("thomas_solve.jl")
 include("diffusion_kernels.jl")
 include("conservative_dkg.jl")
-include("dz_helpers.jl")
 include("workspace.jl")
+include("dz_helpers.jl")
 include("operators.jl")
 
 end # module Diffusion

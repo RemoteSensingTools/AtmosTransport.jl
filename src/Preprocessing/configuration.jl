@@ -58,12 +58,26 @@ resolve_output_float_type(cfg) =
 
 Parse the optional global dry-surface-pressure mass-fix settings.
 """
-function resolve_mass_fix_settings(cfg)
+function _checked_mass_fix_config(cfg)
     mass_fix_cfg = get(cfg, "mass_fix", Dict{String, Any}())
+    stale = filter(key -> haskey(mass_fix_cfg, key),
+                   ("target_ps_dry_pa", "target_total_kg"))
+    stale_label = join(stale, " and [mass_fix].")
+    isempty(stale) || throw(ArgumentError(
+        "[mass_fix].$(stale_label) was removed; " *
+        "the dry-mass target is the single " *
+        "Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE constant " *
+        "($(GLOBAL_MEAN_DRY_SURFACE_PRESSURE) Pa) for every met source"))
+    check_known_keys(mass_fix_cfg, ("enable", "mode", "qv_global_climatology"),
+                     "[mass_fix]")
+    return mass_fix_cfg
+end
+
+function resolve_mass_fix_settings(cfg)
+    mass_fix_cfg = _checked_mass_fix_config(cfg)
     return (
         mass_fix_enable = _config_bool(mass_fix_cfg, "enable", true, "[mass_fix].enable"),
-        target_ps_dry_pa = Float64(get(mass_fix_cfg, "target_ps_dry_pa",
-                                       GLOBAL_MEAN_DRY_SURFACE_PRESSURE)),
+        target_ps_dry_pa = GLOBAL_MEAN_DRY_SURFACE_PRESSURE,
         qv_global_climatology = Float64(get(mass_fix_cfg, "qv_global_climatology",
                                             GLOBAL_MEAN_SPECIFIC_HUMIDITY)),
     )

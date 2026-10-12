@@ -66,6 +66,8 @@ reduced-Gaussian grid.
 be written (e.g. `(m=..., hflux=..., cm=..., ps=...)`).  Its arrays must
 have the correct sizes but their *values* are ignored — it is only used to
 determine `payload_sections` and to validate dimensions.
+The typed `surface_pressure_basis` keyword is required; it is not inferred
+from the air-mass basis.
 
 Returns a [`StreamingTransportBinaryWriter`](@ref).
 """
@@ -86,6 +88,7 @@ function open_streaming_transport_binary(
         humidity_sampling::Symbol = :auto,
         delta_semantics::Symbol = :auto,
         mass_basis::Symbol,
+        surface_pressure_basis::Union{TotalSurfacePressure, DrySurfacePressure},
         tm5_convection_mass_basis::Union{_DefaultTM5ConvectionMassBasis,
                                          Nothing, AbstractMassBasis} =
             _DEFAULT_TM5_CONVECTION_MASS_BASIS,
@@ -118,6 +121,7 @@ function open_streaming_transport_binary(
                                       half_dt_seconds=half_dt_seconds,
                                       steps_per_window=steps_per_window,
                                       mass_basis=basis_sym,
+                                      surface_pressure_basis,
                                       source_flux_sampling=source_flux_sampling,
                                       air_mass_sampling=air_mass_sampling,
                                       flux_sampling=flux_sampling,

@@ -4,6 +4,19 @@
 > Active by default in `era5_spectral_v4_tropo34_dec2021.toml` and the F64
 > variant. Disable via `[mass_fix] enable = false` in the preprocessor TOML.
 
+> **Correction (2026-10-11).** The original memo converted Trenberth and
+> Smith's 5.1352e18 kg dry-air estimate with constant `g` on a spherical Earth
+> and called the resulting 98,726 Pa a measured pressure. That was wrong: their
+> mass-pressure conversion accounts for Earth's shape and varying gravity. A
+> constant-`g` thin-shell model cannot match both their mass and pressure. The
+> model now matches the observed modern-reanalysis pressure instead, using one
+> `Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE = 98325.0` Pa target for every
+> source. MERRA-2 measures 98,324.7 Pa; ERA5 averages 98,329 Pa over 2014–2025;
+> Trenberth and Smith imply 98,305 Pa. The per-config `target_ps_dry_pa` and
+> `target_total_kg` options were removed and are errors. Sections below are
+> corrected accordingly; the old April verification numbers are retained only
+> where explicitly labelled historical.
+
 ## TL;DR
 
 ERA5's 4DVar reanalysis is **not mass-conserving**: the area-weighted global
@@ -108,36 +121,26 @@ on global analyses") quantify:
 | Quantity | Value | Variability |
 |---|---|---|
 | Total atmospheric mass `M_total` | 5.1480 × 10¹⁸ kg | ~0.1% seasonal |
-| **Dry atmospheric mass `M_dry`** | **5.1352 × 10¹⁸ kg** | **constant** |
+| **Modern-reanalysis dry surface pressure** | **98,325 Pa** | **shared target** |
 | Mean water vapor mass `M_water` | 1.27 × 10¹⁶ kg | ~5% seasonal |
 | Mean column TPW `⟨W⟩` | ~25 kg m⁻² | varies |
 | Climatological column-mean specific humidity `⟨q_v⟩_global` | 0.00247 | weak seasonal |
 
-Using `A_Earth = 4π R²` with `R = 6371 km` gives `A_Earth = 5.1006 × 10¹⁴ m²`,
-and with `g = 9.80665` m s⁻² we recover the area-weighted mean surface
-pressures:
+The target is measured in pressure space:
 
 ```
-⟨ps_dry⟩    = M_dry  · g / A_Earth  ≈ 98726 Pa     ← physical target
-⟨ps_total⟩  = M_total · g / A_Earth  ≈ 98972 Pa
-⟨ps_water⟩  ≈ 246 Pa  (≈ ⟨W⟩ · g)
+MERRA-2 dry mean (2021-12 through 2024-01) = 98,324.7 Pa
+ERA5 dry mean (2014-2025)                  = 98,329.3 Pa
+Trenberth & Smith pressure cross-check     = 98,305 Pa
+shared model target                        = 98,325 Pa
 ```
 
-**We pin `⟨ps_dry⟩` to 98726 Pa.** Any choice of constant target eliminates
-the drift, but `⟨ps_dry⟩` is the more defensible choice physically because it
-corresponds to the genuinely conserved quantity. (TM5's value of 98500 Pa from
-`binas.F90:132` is a 1990s-era nominal round number that differs from
-Trenberth's measurement by ~0.25%, which is within the seasonal variability of
-total mass — so neither value is "wrong", but Trenberth's is more recent and
-authoritative.)
-
-> **Comment on TM5's choice**: TM5 was originally targeted at climate
-> applications and chose 98500 Pa as a stable round number. Recent reanalyses
-> (Trenberth & Smith 2005, Trenberth et al. 2007) refined this to ~98726 Pa
-> (dry) or ~98972 Pa (total). The difference (~0.25%) is below ERA5's typical
-> error envelope, but it does mean our binaries will diagnostically differ from
-> TM5's by ~250 Pa per cell on average. Both values pin the drift identically;
-> the choice of constant only affects the absolute scale.
+With the IFS sphere and constant standard gravity, 98,325 Pa implies
+5.114e18 kg. This is 0.41% below Trenberth and Smith's mass because their
+conversion is not the model's thin-shell conversion. The model intentionally
+matches pressure. The implied total pressure at the retained humidity
+climatology is 98,568 Pa, within 0.02% of the 98,550 Pa literature estimate
+and the 98,573–98,577 Pa modern-reanalysis totals.
 
 ## 4. The math: how the uniform shift eliminates `Σm` drift
 
@@ -197,9 +200,11 @@ A uniform additive shift on `sp` does NOT change:
   with the surface fully shifted and the model top unchanged — physically
   reasonable)
 
-So the cost of the fix is bounded: a small uniform offset (~+400 Pa for our
-Dec 2021 data, see §6) applied identically to every cell. No spatial pattern
-is altered.
+The old 98,726 Pa target imposed a roughly +400 Pa offset. At 98,325 Pa,
+MERRA-2 needs essentially no mean offset and ERA5 remains within its observed
+interannual range (roughly -16 to +8 Pa over 2014–2025). Native paths distribute
+the correction as `Delta m_k = Delta B_k Delta ps (1-q_k) A/g`, matching the
+spectral path and leaving pure-pressure layers unchanged.
 
 ## 5. The TM5 reference
 
@@ -291,10 +296,10 @@ convert:
 target_ps_total = target_ps_dry / (1 - ⟨q_v⟩_global)
 ```
 
-For Trenberth's `target_ps_dry = 98726.0 Pa` and `⟨q_v⟩_global = 0.00247`:
+For the shared `target_ps_dry = 98325.0 Pa` and `⟨q_v⟩_global = 0.00247`:
 
 ```
-target_ps_total = 98726.0 / (1 - 0.00247) = 98970.46 Pa
+target_ps_total = 98325.0 / (1 - 0.00247) = 98568.45 Pa
 ```
 
 This is the value we actually pin. The error from using a fixed climatology
@@ -312,10 +317,10 @@ The v4 binary header now contains:
 ```json
 {
   "mass_fix_enabled": true,
-  "mass_fix_target_ps_dry_pa": 98726.0,
+  "mass_fix_target_ps_dry_pa": 98325.0,
   "mass_fix_qv_global_climatology": 0.00247,
-  "ps_offsets_pa_per_window": [+401.92, +401.87, +401.89, ..., +402.85],
-  "ps_offsets_next_day_hour0_pa": +402.91
+  "ps_offsets_pa_per_window": [-0.08, -0.13, -0.11, "..."],
+  "ps_offsets_next_day_hour0_pa": -0.09
 }
 ```
 
@@ -334,15 +339,22 @@ older binaries).
 # Mirrors TM5 cy3-4dvar meteo.F90 Match('area-aver', sp_region0=p_global).
 # Eliminates ERA5 4DVar's analysis-cycle mass drift (~10⁻⁴/day) by uniform
 # additive shift on sp so that ⟨sp⟩_area corresponds to a fixed dry-mass
-# target (Trenberth & Smith 2005: M_dry = 5.1352e18 kg → ⟨ps_dry⟩ ≈ 98726 Pa
-# via M_dry·g/A_Earth).
+# target is Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE (98325 Pa), shared by
+# all meteorological sources and recorded in the binary header.
 # Set enable=false to keep the raw ERA5 drift (regression diagnostic).
 enable = true
-target_ps_dry_pa = 98726.0
 qv_global_climatology = 0.00247
 ```
 
-## 7. Verification (Dec 1 2021)
+`target_ps_dry_pa` and `target_total_kg` are removed options; either one now
+fails config validation and names `GLOBAL_MEAN_DRY_SURFACE_PRESSURE`.
+
+## 7. Historical verification of the replaced target (Dec 1 2021)
+
+The numbers in this section measured the original 98,726 Pa implementation.
+They demonstrate drift removal but are not the current absolute target. Current
+goldens and regenerated binaries use 98,325 Pa and therefore move dry surface
+pressure down by about 401 Pa relative to those results.
 
 ### Per-window offsets
 
@@ -360,12 +372,12 @@ Window 24/24 (hour 23)  ps_offset = +402.854 Pa
 Mass-fix offsets (Pa) min/max/mean: +401.652 / +402.877 / +402.217
 ```
 
-Interpretation:
-- The +402 Pa mean offset reflects that ERA5's raw `⟨ps⟩` ≈ 98568 Pa is
-  ~400 Pa below Trenberth's M_dry-derived target of ~98970 Pa total. This is a
-  systematic disagreement between ERA5 climatology and Trenberth's older
-  measurement (~0.4% of ps). Either is internally consistent; we chose
-  Trenberth's value as the more recent/physical reference.
+Interpretation (corrected 2026-10-11):
+- The +402 Pa mean offset was an artefact of converting a literature mass with
+  the model's constant-`g` sphere. ERA5 does not disagree with Trenberth and
+  Smith by 0.4%: its 98,569 Pa total agrees with their 98,550 Pa to 0.02%.
+  The current 98,325 Pa dry target implies 98,568 Pa total at `q=0.00247`, so
+  this systematic offset disappears.
 - The window-to-window variation of the offset (max - min = 1.225 Pa) is the
   ERA5 drift signal we wanted to absorb. Per window: ~0.05 Pa = ~5×10⁻⁵
   fraction of `ps`. Per day: ~10⁻³ fraction. This matches the published ERA5
@@ -385,8 +397,8 @@ before): a ~500,000× reduction.
 
 ### CDS comparison (probe `/tmp/probe_compare_sp.jl`)
 
-After the fix, our `⟨ps⟩_ours` is constant at `9.897045703 × 10⁴ Pa`
-(= `target_ps_total = 98726.0 / (1 - 0.00247) = 98970.46 Pa`) every window,
+In this historical run, our `⟨ps⟩_ours` was constant at `9.897045703 × 10⁴ Pa`
+(the replaced `98726.0 / (1 - 0.00247) = 98970.46 Pa` target) every window,
 while CDS surface_pressure (the independent ECMWF download) still shows
 ERA5's natural drift:
 
@@ -429,8 +441,9 @@ on cell location. In particular, it does NOT address:
   (j ∈ {1, 2, Ny-1, Ny}) have `|bm|/m ≈ 0.30` per face from the spectral
   preprocessor, and cumulative drainage over a window of substeps still
   exceeds cell mass without the runtime `mass_fixer`. The mass fix shifts
-  local `m` by only `b_k · Δps` (~+400 Pa × b ≈ +400 Pa at the surface,
-  ~+1 Pa near the model top) — far too small to change the local CFL ratio
+  local `m` by `Delta B_k (1-q_k) Delta ps`; at the current target the
+  MERRA-2 correction is near zero and the ERA5 correction is at most tens of
+  pascals — far too small to change the local CFL ratio
   significantly. **`mass_fixer = true` at runtime is still required for
   ERA5 LL stability**, independently of this fix. See CLAUDE.md invariant 11.
 - **The Poisson singular mode**: the Poisson balance solver
@@ -439,13 +452,9 @@ on cell location. In particular, it does NOT address:
   this fix, that residual was ~5×10⁶ kg/cell uniformly, which the runtime
   `mass_fixer` absorbed. With the fix, the global residual is now zero by
   construction, so the Poisson singular mode is no longer a problem.
-- **CDS / ERA5 absolute reference matching**: our per-cell ps now disagrees
-  with the raw ERA5 ps by ~+400 Pa (the offset). This is a deliberate
-  trade-off: we are explicitly enforcing global mass conservation in
-  preference to matching ERA5's published ps values. If you need to compare
-  per-cell ps against ERA5 directly (e.g., for diagnostic plots), use the
-  binary written with `[mass_fix] enable = false`, or subtract the per-window
-  offset from the binary header from each cell.
+- **CDS / ERA5 absolute reference matching**: the pin removes each window's
+  small global dry-mass departure; it does not make dry `ps` equal raw total
+  ERA5 `sp`. The applied offset is recorded in the header.
 
 ## 9. Caveats and open questions
 
@@ -453,8 +462,9 @@ on cell location. In particular, it does NOT address:
 
 The climatological `qv_global = 0.00247` is from Trenberth & Smith 2005. Real
 `⟨q_v⟩_global` varies seasonally by ~5% (i.e., ranges 0.0023 to 0.0026 over
-the year, with hemisphere asymmetry). Using the constant introduces an error
-of ~12 Pa in the target_total computation (see §6). Compared to:
+the year, with hemisphere asymmetry). Using the constant can introduce an
+order-10 Pa approximation in the spectral total-pressure target (see §6).
+Native paths use gridded Q directly. Compared to:
 - The current 24h drift after fix: 5.88×10⁻⁹ %
 - The climatology error: ~1.2 × 10⁻⁴ % at worst (if `⟨q_v⟩` differs by 5%
   from the climatology)
@@ -469,10 +479,11 @@ defer this until measurements show it's necessary.
 
 ### Should the target be configurable per dataset?
 
-Yes — `target_ps_dry_pa` is a TOML knob. Defaults are sensible for any
-modern reanalysis (ERA5, MERRA2, GEOS-IT, GEOS-FP) since they all target the
-same Earth atmosphere. If a specific dataset has known biases that warrant a
-different target, override it in the dataset's preprocessor config.
+No. Dry atmospheric mass belongs to Earth, not to a reanalysis. Per-source
+targets would make day-threaded archives and mixed-met inversions jump between
+baselines, while ERA5's own annual dry mean spans 19 Pa—larger than its 4.6 Pa
+long-term difference from MERRA-2. One measured target lives in
+`src/Parameters`; stale config target keys are errors.
 
 ### Why apply the fix in the preprocessor instead of the runtime?
 
@@ -490,13 +501,12 @@ Three reasons:
 
 ### Is the absolute target value scientifically sensitive?
 
-Not for transport. The choice of constant target (98500 vs 98726 vs 98972 Pa)
-shifts every cell's `sp` by a constant; gradients, variances, and local
-features are preserved. The only thing it changes is the absolute scale of
-total mass (which is what we explicitly want to control). For diagnostic
-applications that depend on absolute ps (e.g., comparison to a specific
-observational dataset), consult the binary header to know what offset was
-applied and undo it locally if needed.
+Yes, at the 0.4% level relevant here. It sets absolute pressure and dry air
+mass, so a fixed emitted tracer mass produces a mole-fraction enhancement
+inversely proportional to it; it also enters burden conversions and mass
+budgets. Uniform initialized mole fractions remain uniform, so the change is
+not a blanket background shift. Every binary records the target, the runtime
+refuses mixed targets, and inspection flags a non-current value.
 
 ### Why not instead remove only the time-mean drift, preserving absolute ps?
 
@@ -507,8 +517,9 @@ scale. We considered this and rejected it because:
 - It still has small day-to-day jumps at batch boundaries.
 - It requires processing a full batch before writing any binary (annoying for
   daily processing).
-- The benefit (preserving the absolute ERA5 climatology) is marginal because
-  ERA5's climatology disagrees with Trenberth by ~0.4% anyway.
+- ERA5 and MERRA-2 dry means already agree to 0.005%, and their total means
+  agree with Trenberth and Smith to about 0.02%; there is no 0.4%
+  observational disagreement to preserve.
 - For long simulations (months to years), pinning to a fixed constant gives
   zero drift across the entire simulation, while batch-mean pinning gives
   small jumps at batch boundaries.
@@ -585,3 +596,12 @@ will be zero. All other behavior is unchanged.
 
 *Document created 2026-04-07 alongside the implementation. Update this file
 in the same commit as any changes to `pin_global_mean_ps!` or its call sites.*
+
+## 2026-10-11 correction
+
+The `+400 Pa` diagnostic above describes the historical 98,726 Pa dry-mass
+target and is no longer the expected signature of an enabled fix. All current
+meteorological sources use the single dry-air target **98,325 Pa**; the applied
+offset is source- and time-dependent and may be small. Check
+`mass_fix_enabled` together with `mass_fix_target_ps_dry_pa = 98325.0` in the
+binary header rather than diagnosing the fix from the offset magnitude.

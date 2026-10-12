@@ -233,7 +233,8 @@ end
         mktempdir() do dir
             path = joinpath(dir, "nonuniform.bin")
             @test_throws "non-uniform latitude faces" AtmosTransport.MetDrivers.write_transport_binary(
-                path, grid, Any[]; source_flux_sampling = :window_start_endpoint)
+                path, grid, Any[]; source_flux_sampling = :window_start_endpoint,
+                surface_pressure_basis = DrySurfacePressure())
             @test isempty(readdir(dir))
         end
     end

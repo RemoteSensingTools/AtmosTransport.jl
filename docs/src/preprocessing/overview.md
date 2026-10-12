@@ -153,9 +153,12 @@ max_steps_per_window = 16
 # Optional: pin global-mean dry surface pressure (recommended for ERA5)
 [mass_fix]
 enable                = true
-target_ps_dry_pa      = 98726.0
 qv_global_climatology = 0.00247
 ```
+
+Every source uses the 98,325 Pa target in
+`Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE`; it is recorded in the binary
+header as `mass_fix_target_ps_dry_pa`.
 
 Native ERA5 can reuse the named L137 interface-selection presets:
 

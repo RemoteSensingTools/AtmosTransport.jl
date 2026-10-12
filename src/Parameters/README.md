@@ -38,7 +38,8 @@ other AtmosTransport modules; every later module may import from it.
   - `HYDROSTATIC_REFERENCE_TEMPERATURE` (260 K), the isothermal temperature of
     hydrostatic layer thicknesses when no temperature is available
   - `DAYS_PER_JULIAN_YEAR` (365.25), for annual totals given as rates
-  - `GLOBAL_MEAN_DRY_SURFACE_PRESSURE` (98726 Pa), the dry-mass fix target,
+  - `GLOBAL_MEAN_DRY_SURFACE_PRESSURE` (98325 Pa), the shared modern-reanalysis
+    dry-mass fix target,
     and `GLOBAL_MEAN_SPECIFIC_HUMIDITY` (0.00247 kg kg⁻¹), which turns it into
     a total-pressure target
 - Numerical defaults, in [`NumericalDefaults.jl`](NumericalDefaults.jl):

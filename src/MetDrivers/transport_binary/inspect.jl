@@ -29,6 +29,80 @@ _supports_gchp_vdiff(
 ) = has_surface(reader) && has_vdiff_fields(reader)
 
 """
+    binary_dry_mass_target(reader) -> NamedTuple
+
+Return the binary's global-mean dry-mass target in pascals and its provenance.
+Pinned current binaries record `mass_fix_enabled=true` together with
+`mass_fix_target_ps_dry_pa` in the header. Historical binaries may instead use
+the source-specific `global_mass_pin_enabled` or
+`geos_global_mass_pin_enabled` flag and omit the pressure target; those files
+fall back to their carried window-1 dry mass with `pinned=true`. Unpinned and
+keyless legacy dry-basis binaries use the same zero-copy fallback,
+`sum(m_k) g / (4 pi R_header^2)`, on the radius recorded by the binary.
+
+For moist-basis payloads the fallback computes
+`sum(m_k * (1-qv_k)) g / (4 pi R_header^2)` from `qv_start`. Without endpoint
+humidity the dry target is physically unclassifiable and `ps_dry_pa=nothing`;
+total-air mass is never reported as dry-air mass.
+"""
+function _dry_mass_pin_enabled(raw::AbstractDict, label::AbstractString)
+    enabled = nothing
+    enabled_key = nothing
+    for key in ("mass_fix_enabled", "global_mass_pin_enabled",
+                "geos_global_mass_pin_enabled")
+        haskey(raw, key) || continue
+        value = raw[key]
+        value isa Bool || throw(ArgumentError(
+            "$(label) has non-Boolean $(key)=$(repr(value))"))
+        if enabled === nothing
+            enabled = value
+            enabled_key = key
+        elseif value != enabled
+            throw(ArgumentError(
+                "$(label) has conflicting dry-mass pin flags: " *
+                "$(enabled_key)=$(enabled) but $(key)=$(value)"))
+        end
+    end
+    return enabled
+end
+
+function binary_dry_mass_target(reader::TransportBinaryReader)
+    raw = reader.header.raw_header
+    label = basename(reader.path)
+    enabled = _dry_mass_pin_enabled(raw, label)
+    recorded = get(raw, "mass_fix_target_ps_dry_pa", nothing)
+    if enabled === true && recorded !== nothing
+        recorded isa Real && !(recorded isa Bool) || throw(ArgumentError(
+            "$(label) records a non-numeric mass_fix_target_ps_dry_pa"))
+        target = Float64(recorded)
+        isfinite(target) && target > 0.0 || throw(ArgumentError(
+            "$(label) has invalid mass_fix_target_ps_dry_pa=$(recorded)"))
+        return (ps_dry_pa = target, source = :header, pinned = true)
+    end
+
+    m = _transport_section_view(reader, 1, :m)
+    dry_mass = if mass_basis(reader) === :dry
+        sum(Float64, m)
+    elseif has_qv_endpoints(reader)
+        qv = _transport_section_view(reader, 1, :qv_start)
+        length(qv) == length(m) || throw(DimensionMismatch(
+            "window-1 qv_start length $(length(qv)) does not match mass length $(length(m))"))
+        mapreduce(pair -> Float64(first(pair)) * (1.0 - Float64(last(pair))),
+                  +, zip(m, qv); init = 0.0)
+    else
+        return (ps_dry_pa = nothing, source = :unclassifiable,
+                pinned = enabled === false ? false : enabled)
+    end
+    area = 4pi * reader.header.planet_radius_m^2
+    target = dry_mass * STANDARD_GRAVITY / area
+    isfinite(target) && target > 0.0 || throw(ArgumentError(
+        "could not infer a positive legacy dry-mass target from window 1 of $(reader.path)"))
+    source = enabled === false ? :unpinned_window1 : :legacy_window1
+    pin_state = enabled === true ? true : enabled === false ? false : nothing
+    return (ps_dry_pa = target, source, pinned = pin_state)
+end
+
+"""
     binary_capabilities(reader) -> NamedTuple
 
 Summarise what operators this binary can drive. Geometry-specific advection
@@ -51,18 +125,24 @@ requirements are selected through the reader's geometry type. Fields:
 - `surface_pressure :: Bool` — ps present.
 - `humidity :: Bool` — qv_start/qv_end present.
 - `mass_basis :: Symbol` — `:dry` or `:moist`.
+- `surface_pressure_basis :: AbstractSurfacePressureBasis` — typed meaning of
+  the stored `ps` payload.
 - `grid_type :: Symbol` — `:latlon` / `:reduced_gaussian` / `:cubed_sphere`.
 - `nlevel`, `steps_per_window` — header values.
 - `variable_step_schedule :: Bool` — per-window substep counts differ.
 - `flux_kind :: Symbol` — stored mass-flux normalization contract.
 - `preprocessor_contract`, `vertical_Nz_output`, `adaptive_substeps` — raw
   header values, `nothing` when absent.
+- `dry_mass_target_ps_pa`, `dry_mass_target_source`, `dry_mass_pinned` — the
+  pinned header target or carried window-1 mass, its provenance, and pin state
+  (`nothing` for legacy files whose state is not recorded).
 - `payload_sections :: Vector{Symbol}` — raw set for debugging.
 """
 function binary_capabilities(reader::TransportBinaryReader)
     hdr = reader.header
     raw = hdr.raw_header
     required_advection = _required_advection_sections(hdr.geometry)
+    dry_target = binary_dry_mass_target(reader)
     return (
         advection        = all(s in hdr.payload_sections for s in required_advection),
         replay_gate      = has_flux_delta(reader),
@@ -76,6 +156,7 @@ function binary_capabilities(reader::TransportBinaryReader)
         surface_pressure = :ps in hdr.payload_sections,
         humidity         = has_qv_endpoints(reader),
         mass_basis       = hdr.mass_basis,
+        surface_pressure_basis = surface_pressure_basis(reader),
         grid_type        = grid_type(hdr),
         nlevel           = hdr.nlevel,
         nwindow          = hdr.nwindow,
@@ -86,6 +167,12 @@ function binary_capabilities(reader::TransportBinaryReader)
         preprocessor_contract = get(raw, "preprocessor_contract", nothing),
         vertical_Nz_output = get(raw, "vertical_Nz_output", nothing),
         adaptive_substeps = get(raw, "adaptive_substeps", nothing),
+        dry_mass_target_ps_pa = dry_target.ps_dry_pa,
+        dry_mass_target_source = dry_target.source,
+        dry_mass_pinned = dry_target.pinned,
+        dry_mass_target_is_current = dry_target.ps_dry_pa !== nothing &&
+            isapprox(dry_target.ps_dry_pa, GLOBAL_MEAN_DRY_SURFACE_PRESSURE;
+                     atol = 0.1, rtol = 1e-7),
         # false only for binaries written with the write-time replay gate off
         write_replay_check = get(raw, "write_replay_check", true) !== false,
         payload_sections = hdr.payload_sections,
@@ -108,17 +195,17 @@ function inspect_binary(path::AbstractString; io::IO = stdout)
     isfile(path) || throw(ArgumentError("binary not found: $(path)"))
     reader = TransportBinaryReader(String(path); FT = Float64)
     try
+        caps = binary_capabilities(reader)
         println(io, reader)
         println(io)
-        _print_capability_rows(io, reader)
-        return binary_capabilities(reader)
+        _print_capability_rows(io, caps)
+        return caps
     finally
         close(reader)
     end
 end
 
-function _print_capability_rows(io::IO, reader)
-    caps = binary_capabilities(reader)
+function _print_capability_rows(io::IO, caps)
     println(io, "Capabilities:")
     _print_cap(io, caps.advection,        "advection",        "(m, am, bm, cm)")
     _print_cap(io, caps.replay_gate,      "replay gate",      "(dam, dbm, dcm, dm)")
@@ -130,6 +217,8 @@ function _print_capability_rows(io::IO, reader)
     _print_cap(io, caps.surface_pressure, "surface pressure", "(ps)")
     _print_cap(io, caps.humidity,         "humidity",         "(qv_start, qv_end)")
     println(io, "  mass_basis       = ", caps.mass_basis)
+    println(io, "  surface_pressure_basis = ",
+            _transport_surface_pressure_basis_label(caps.surface_pressure_basis))
     if caps.tm5_convection
         println(io, "  tm5_convection_mass_basis = ",
                 caps.tm5_convection_mass_basis === nothing ? "not recorded" :
@@ -139,6 +228,17 @@ function _print_capability_rows(io::IO, reader)
                         "on dry air mass, convective rates about 1 % too large")
     end
     println(io, "  grid_type        = ", caps.grid_type)
+    source_note = caps.dry_mass_target_source === :header ? "pinned header" :
+                  caps.dry_mass_target_source === :unpinned_window1 ? "unpinned window-1 mass" :
+                  "legacy window-1 fallback"
+    if caps.dry_mass_target_ps_pa === nothing
+        println(io, "  dry-mass target  = unclassifiable (moist mass without qv_start)")
+    else
+        @printf(io, "  dry-mass target  = %.6f Pa (%s)%s\n",
+                caps.dry_mass_target_ps_pa, source_note,
+                caps.dry_mass_target_is_current ? "" :
+                    @sprintf("  ⚠ current constant is %.1f Pa", GLOBAL_MEAN_DRY_SURFACE_PRESSURE))
+    end
     caps.write_replay_check || println(io, "  ⚠ written with the write-time replay check disabled; " *
                                            "not for production runs")
 end

@@ -40,6 +40,7 @@ function write_test_transport_binary_reduced(path::AbstractString;
                                              FT::Type{<:AbstractFloat}=Float64,
                                              source_flux_sampling::Symbol=:window_start_endpoint,
                                              cm_fill::Union{Nothing, Real}=nothing,
+                                             surface_pressure_basis=TotalSurfacePressure(),
                                              binary_kwargs...)
     mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT=FT)
     vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
@@ -67,6 +68,7 @@ function write_test_transport_binary_reduced(path::AbstractString;
                            half_dt_seconds=1800.0,
                            steps_per_window=2,
                            mass_basis=:moist,
+                           surface_pressure_basis,
                            source_flux_sampling=source_flux_sampling,
                            extra_header=Dict(
                                "poisson_balance_target_scale" => 0.25,
@@ -82,6 +84,7 @@ function write_test_transport_binary_latlon(path::AbstractString;
                                             flux_sampling::Symbol=:window_constant,
                                             include_poisson_metadata::Bool=true,
                                             cm_fill::Union{Nothing, Real}=nothing,
+                                            surface_pressure_basis=TotalSurfacePressure(),
                                             binary_kwargs...)
     Nx, Ny, Nz = 6, 4, 3
     mesh = LatLonMesh(; FT=FT, Nx=Nx, Ny=Ny)
@@ -117,6 +120,7 @@ function write_test_transport_binary_latlon(path::AbstractString;
                            half_dt_seconds=1800.0,
                            steps_per_window=2,
                            mass_basis=:moist,
+                           surface_pressure_basis,
                            source_flux_sampling=source_flux_sampling,
                            flux_sampling=flux_sampling,
                            extra_header=extra_header,
@@ -348,6 +352,7 @@ end
                                half_dt_seconds=1800.0,
                                steps_per_window=2,
                                mass_basis=:dry,
+                               surface_pressure_basis=DrySurfacePressure(),
                                source_flux_sampling=:window_start_endpoint)
 
         reader = TransportBinaryReader(path; FT=FT)
@@ -391,7 +396,8 @@ end
             dt_met_seconds = 3600.0,
             steps_per_window = 2,
             source_flux_sampling = :window_start_endpoint,
-            mass_basis = :moist)
+            mass_basis = :moist,
+            surface_pressure_basis = TotalSurfacePressure())
         set_streaming_steps_per_window_schedule!(writer, [2, 3])
         write_streaming_window!(writer, window)
         write_streaming_window!(writer, window)
@@ -469,6 +475,7 @@ end
             steps_per_window = 2,
             source_flux_sampling = :window_start_endpoint,
             mass_basis = :moist,
+            surface_pressure_basis = TotalSurfacePressure(),
             extra_header = Dict("format_version" => 1))
     end
 end

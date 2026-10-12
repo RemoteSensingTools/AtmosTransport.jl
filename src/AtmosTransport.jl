@@ -208,6 +208,7 @@ using .MetDrivers: AbstractMetDriver,
                    has_surface, has_vdiff_fields, has_tm5_convection,
                    grid_type, horizontal_topology,
                    source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics,
+                   surface_pressure_basis,
                    A_ifc, B_ifc,
                    diagnose_cm_from_continuity!,
                    ERA5ReducedGaussianGeometry,
@@ -298,6 +299,7 @@ export lonlat_to_panel_xy
 
 # State and diagnostics
 export CellState, CubedSphereState, DryBasis, MoistBasis
+export AbstractSurfacePressureBasis, TotalSurfacePressure, DrySurfacePressure
 export allocate_face_fluxes, allocate_tracers
 export get_tracer, mixing_ratio, total_mass, total_air_mass
 export tracer_names, ntracers
@@ -339,6 +341,7 @@ export TransportBinaryReader, TransportBinaryHeader, TransportBinaryDriver
 export load_transport_window, driver_grid
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule
 export window_count, load_grid, mass_basis, air_mass_basis
+export surface_pressure_basis
 export has_qv_endpoints, has_flux_delta, has_cmfmc
 export has_surface, has_vdiff_fields, has_tm5_convection, has_humidity_endpoints
 export delta_semantics

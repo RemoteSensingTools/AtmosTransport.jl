@@ -29,5 +29,4 @@ met_interval = 3600.0
 
 [mass_fix]
 enable = true
-target_ps_dry_pa = 98726.0
 qv_global_climatology = 0.00247

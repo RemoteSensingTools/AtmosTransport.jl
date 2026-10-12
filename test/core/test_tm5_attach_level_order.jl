@@ -15,10 +15,38 @@ const MD = AtmosTransport.MetDrivers
 @testset "humidity remap uses the ERA5 manifold" begin
     transport_mesh = LatLonMesh(; FT = Float64, Nx = 4, Ny = 2,
                                 radius = AtmosTransport.Parameters.EARTH_RADIUS)
-    humidity_mesh = AttachScript.humidity_target_mesh(transport_mesh)
+    opened = Ref{Any}()
+    opener(root, date, target; cache_dir) =
+        (opened[] = (; root, date, target, cache_dir); :mock_remap)
+    result = AttachScript.humidity_remap(
+        DryBasis(), Dict{String, Any}(), "/era5", Date(2021, 12, 1),
+        transport_mesh, "/cache"; opener)
+    @test result === :mock_remap
+    humidity_mesh = opened[].target
     @test humidity_mesh.λᶠ == transport_mesh.λᶠ
     @test humidity_mesh.φᶠ == transport_mesh.φᶠ
     @test humidity_mesh.radius == AtmosTransport.Parameters.IFS_EARTH_RADIUS
+    @test opened[].root == "/era5"
+    @test opened[].cache_dir == "/cache"
+end
+
+@testset "attachment preserves dry-mass pin metadata" begin
+    raw = Dict{String, Any}(
+        "geos_global_mass_pin_enabled" => true,
+        "mass_fix_target_ps_dry_pa" => 98_325.0,
+        "unrelated" => "drop",
+    )
+    metadata = AttachScript.copy_source_metadata!(Dict{String, Any}(), raw)
+    @test metadata == Dict{String, Any}(
+        "mass_fix_enabled" => true,
+        "mass_fix_target_ps_dry_pa" => 98_325.0,
+    )
+
+    stale = AttachScript.copy_source_metadata!(Dict{String, Any}(), Dict{String, Any}(
+        "global_mass_pin_enabled" => false,
+        "mass_fix_target_ps_dry_pa" => 98_325.0,
+    ))
+    @test stale == Dict{String, Any}("mass_fix_enabled" => false)
 end
 
 @testset "legacy TM5 convection level order" begin
@@ -102,6 +130,7 @@ end
             air_mass_sampling = :window_start_endpoint,
             flux_sampling = :window_constant, flux_kind = :substep_mass_amount,
             mass_basis = :dry,
+            surface_pressure_basis = DrySurfacePressure(),
         )
         geometry = (
             panel_convention = "gnomonic", definition = "equiangular_gnomonic",
@@ -121,6 +150,7 @@ end
         reader = MD.TransportBinaryReader(path)
         @test MD.tm5_convection_mass_basis(reader) isa DryBasis
         @test reader.header.raw_header[MD.TM5_CONVECTION_MASS_BASIS_KEY] == "dry"
+        @test MD.surface_pressure_basis(reader) isa DrySurfacePressure
         close(reader)
     end
 end

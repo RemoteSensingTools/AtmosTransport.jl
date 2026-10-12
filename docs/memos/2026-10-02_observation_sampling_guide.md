@@ -7,15 +7,14 @@ files. For each one it writes the model profile from the grid cell that
 contains the observation, plus everything needed to apply averaging kernels
 offline.
 
-The feature lives on the branch `feature/observation-sampling` (not yet merged
-into `main`).
+The feature is part of AtmosTransport; no separate observation-sampling branch
+is required.
 
 ## 1. Get the code
 
 ```bash
 git clone https://github.com/RemoteSensingTools/AtmosTransport.jl.git
 cd AtmosTransport.jl
-git switch feature/observation-sampling
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
 # GPU runs: a separate environment with CUDA (see docs/src/getting_started/installation.md)
 julia -e 'using Pkg; Pkg.activate("gpu-env"); Pkg.develop(path="."); Pkg.add("CUDA")'
@@ -293,11 +292,12 @@ profile in p/ps.
   the example, day 1 has 25 records and day 2 has 24. With `nearest_window`,
   soundings in the first half hour after midnight land in the previous day's
   file.
-- **Surface pressure.** `ps_dry` is rebuilt from the model's dry air mass. Over
-  ocean it matches OCO's total surface pressure (ratio about 1.000). A dry
-  pressure should be about 0.4% lower, since water vapour is missing from it.
-  The cause is not yet known. Mixing ratios are not affected. Map profiles in
-  p/ps, as above, rather than in pascals.
+- **Surface pressure.** `ps_dry` is rebuilt from the model's dry air mass. The
+  earlier near-match to OCO's total surface pressure came from the old 98,726 Pa
+  dry-mass pin. PR-B corrects the common dry-pressure target to 98,325 Pa, so
+  `ps_dry` is now expected to be about 0.4% below total pressure because water
+  vapour is absent. Mixing ratios are not affected. Map profiles in p/ps, as
+  above, rather than in pascals.
 - **Intake heights.** Layer heights are computed from pressure with a
   constant 280 K, because the ERA5 binaries carry no temperature;
   `height_method = 0` records this. The model surface follows the ERA5

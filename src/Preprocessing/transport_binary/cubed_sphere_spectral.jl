@@ -395,9 +395,16 @@ function driver_before_close_writer!(workspace::CubedSphereSpectralWindowWorkspa
                                      ::Nothing,
                                      contract::CubedSphereContract,
                                      writer::CubedSphereBinaryWriter,
-                                     ::CSSpectralUnifiedDriverContext)
+                                     ctx::CSSpectralUnifiedDriverContext)
     set_streaming_steps_per_window_schedule!(writer.inner, workspace.steps_schedule)
     set_contract_steps_schedule!(contract, workspace.steps_schedule)
+    ctx.settings.mass_fix_enable &&
+        (ctx.settings.include_qv || ctx.settings.mass_basis == :dry) &&
+        (writer.inner.header["mass_fix_target_ps_dry_pa"] = ctx.settings.target_ps_dry_pa)
+    writer.inner.header["ps_offsets_pa_per_window"] =
+        copy(@view workspace.ps_offsets[1:ctx.spec.n_times])
+    writer.inner.header["ps_offsets_next_day_hour0_pa"] =
+        workspace.ps_offsets[ctx.spec.n_times + 1]
     return nothing
 end
 
@@ -487,6 +494,7 @@ function process_day(date::Date,
                 steps_per_window=steps_per_met,
                 include_flux_delta=true,
                 mass_basis=Symbol(settings.mass_basis),
+                surface_pressure_basis=TotalSurfacePressure(),
                 panel_convention=_cs_panel_convention_tag(grid),
                 cs_definition=_cs_definition_tag(grid),
                 cs_coordinate_law=_cs_coordinate_law_tag(grid),

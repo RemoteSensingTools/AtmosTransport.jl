@@ -26,6 +26,12 @@ Supertype for all meteorological data drivers.
     load_transport_window(driver, win_index)
     driver_grid(driver)
     air_mass_basis(driver)
+    surface_pressure_basis(driver)
+
+Custom drivers that do not override `surface_pressure_basis` retain the
+historical interpretation that their window `surface_pressure` is total
+(moist-air) pressure. Drivers carrying dry pressure must return
+`DrySurfacePressure()` explicitly.
 """
 abstract type AbstractMetDriver end
 
@@ -44,6 +50,13 @@ function steps_per_window_schedule end
 function load_transport_window end
 function driver_grid end
 function air_mass_basis end
+"""Surface-pressure meaning supplied by a meteorological driver.
+
+The compatibility fallback is total pressure, matching the pre-existing
+custom-driver contract. A driver that supplies dry pressure must override this
+method and return `DrySurfacePressure()`.
+"""
+surface_pressure_basis(::AbstractMetDriver) = TotalSurfacePressure()
 function flux_interpolation_mode end
 function flux_kind end
 function uses_binary_substep_contract end
@@ -134,6 +147,7 @@ export AbstractMetDriver, AbstractMassFluxMetDriver
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule,
        load_transport_window
 export driver_grid, air_mass_basis, flux_interpolation_mode
+export surface_pressure_basis
 export uses_binary_substep_contract
 export supports_diffusion, supports_convection
 export supports_native_vertical_flux, supports_moisture

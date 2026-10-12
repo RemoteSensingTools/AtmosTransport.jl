@@ -59,7 +59,9 @@ end
 
 Write a canonical v4 lat-lon or reduced-Gaussian transport binary from an
 AtmosGrid and an ordered vector of forcing windows. Window payloads must match
-the grid topology and declared mass basis. The file is written through
+the grid topology and declared mass basis. The typed `surface_pressure_basis`
+keyword is required and records whether `window.ps` is total or dry pressure;
+it is deliberately independent of `mass_basis`. The file is written through
 [`AtomicFiles.atomic_publish`](@ref AtmosTransport.AtomicFiles.atomic_publish):
 it replaces `path` only after the header and all payloads succeed, with mode
 `0o666 & ~umask`. A lat-lon mesh must have uniform latitude faces: the header
@@ -81,6 +83,8 @@ function write_transport_binary(path::AbstractString,
                                 humidity_sampling::Symbol = :auto,
                                 delta_semantics::Symbol = :auto,
                                 mass_basis::Symbol = :dry,
+                                surface_pressure_basis::Union{TotalSurfacePressure,
+                                                              DrySurfacePressure},
                                 tm5_convection_mass_basis::Union{_DefaultTM5ConvectionMassBasis,
                                                                  Nothing, AbstractMassBasis} =
                                     _DEFAULT_TM5_CONVECTION_MASS_BASIS,
@@ -124,6 +128,7 @@ function write_transport_binary(path::AbstractString,
                                       half_dt_seconds=half_dt_seconds,
                                       steps_per_window=steps_per_window,
                                       mass_basis=basis_sym,
+                                      surface_pressure_basis,
                                       source_flux_sampling=source_flux_sampling,
                                       air_mass_sampling=air_mass_sampling,
                                       flux_sampling=flux_sampling,
@@ -183,6 +188,8 @@ function write_transport_binary(path::AbstractString,
                                 humidity_sampling::Symbol = :auto,
                                 delta_semantics::Symbol = :auto,
                                 mass_basis::Symbol = :dry,
+                                surface_pressure_basis::Union{TotalSurfacePressure,
+                                                              DrySurfacePressure},
                                 tm5_convection_mass_basis::Union{_DefaultTM5ConvectionMassBasis,
                                                                  Nothing, AbstractMassBasis} =
                                     _DEFAULT_TM5_CONVECTION_MASS_BASIS,
@@ -219,6 +226,7 @@ function write_transport_binary(path::AbstractString,
                                       half_dt_seconds=half_dt_seconds,
                                       steps_per_window=steps_per_window,
                                       mass_basis=basis_sym,
+                                      surface_pressure_basis,
                                       source_flux_sampling=source_flux_sampling,
                                       air_mass_sampling=air_mass_sampling,
                                       flux_sampling=flux_sampling,

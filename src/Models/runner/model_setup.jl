@@ -47,11 +47,17 @@ function _allocate_cs_runner_fluxes(mesh, _Nz::Int, _FT, _basis)
         "$(typeof(mesh)); expected CubedSphereMesh"))
 end
 
-# Initialize one tracer at a time in its final packed slot. The runner rejects
-# moist CS binaries before this helper because their windows do not contain qv.
+# Initial humidity is an endpoint field when the binary carries one. Native CS
+# physics binaries instead carry the same window-start qv in the VDIFF state.
+_initial_condition_qv(window) = window.qv_start !== nothing ? window.qv_start :
+                                window.vdiff === nothing ? nothing : window.vdiff.qv
+
+# Initialize one tracer at a time in its final packed slot.
 function _initialize_cs_dry_state(grid::AtmosGrid{<:CubedSphereMesh},
                                   air_mass::NTuple{6, <:AbstractArray{FT, 3}},
-                                  tracer_init; surface_pressure) where FT
+                                  tracer_init; surface_pressure,
+                                  pressure_basis = TotalSurfacePressure(),
+                                  qv = nothing) where FT
     isempty(tracer_init) && throw(ArgumentError("at least one tracer must be configured"))
     # Match the old mass-array dictionary's insertion and iteration order. A
     # direct Tuple(keys(tracer_init)) differs at some dictionary capacities.
@@ -68,7 +74,9 @@ function _initialize_cs_dry_state(grid::AtmosGrid{<:CubedSphereMesh},
     # is copied into its independent packed slot before the buffer is reused.
     vmr = nothing
     for (name, init_cfg) in tracer_init
-        vmr = _build_cs_initial_mixing_ratio(air_mass, grid, init_cfg, vmr; surface_pressure)
+        vmr = _build_cs_initial_mixing_ratio(
+            air_mass, grid, init_cfg, vmr;
+            surface_pressure, pressure_basis, mass_basis = DryBasis(), qv)
         index = tracer_indices[name]
         destination = ntuple(p -> selectdim(raw[p], 4, index), 6)
         _cs_pack_interior_into_halo!(destination, grid, air_mass, vmr, nothing)
@@ -93,14 +101,16 @@ function _make_structured_model(driver::TransportBinaryDriver;
     isempty(tracer_specs_tuple) && throw(ArgumentError("at least one tracer must be configured"))
 
     basis_type = air_mass_basis(driver) == :dry ? DryBasis : MoistBasis
+    basis = basis_type()
+    qv = _initial_condition_qv(window)
+    pressure_basis = surface_pressure_basis(driver)
     tracer_names_tup = Tuple(spec.name for spec in tracer_specs_tuple)
     rm_arrays = map(tracer_specs_tuple) do spec
         vmr = build_initial_mixing_ratio(air_mass, grid, spec.init_cfg;
-                                         surface_pressure = window.surface_pressure)
-        # MoistBasis LL/RG runs would need qv threaded from window.qv —
-        # none in-tree today; the packer errors with a precise message.
+                                         surface_pressure = window.surface_pressure,
+                                         pressure_basis, mass_basis = basis, qv)
         return pack_initial_tracer_mass(grid, air_mass, vmr;
-                                        mass_basis = basis_type())
+                                        mass_basis = basis, qv)
     end
 
     tracer_tuple = NamedTuple{tracer_names_tup}(Tuple(rm_arrays))

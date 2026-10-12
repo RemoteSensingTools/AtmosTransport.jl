@@ -24,7 +24,8 @@ using .AtmosTransport.Adjoints: _vertical_diffusion_cs_single_dkg_adjoint_kernel
         close(io)
         writer = AtmosTransport.MetDrivers.open_streaming_cs_transport_binary(
             path, Nc, np, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS, FT, include_flux_delta = true,
-            include_precomputed_dkg = true, mass_basis = :dry)
+            include_precomputed_dkg = true, mass_basis = :dry,
+            surface_pressure_basis = TotalSurfacePressure())
         dkg = ntuple(p -> FT[(k == Nz ? 0 : 100p + 10k + i + j)
                              for i in 1:Nc, j in 1:Nc, k in 1:Nz], np)
         window = (m = panels3(1e6),
@@ -55,6 +56,22 @@ using .AtmosTransport.Adjoints: _vertical_diffusion_cs_single_dkg_adjoint_kernel
             @test op.kz_field isa PrecomputedCSDkgField
             driver = AtmosTransport.MetDrivers.TransportBinaryDriver(reader; Hp = 1)
             @test AtmosTransport.MetDrivers.supports_diffusion(driver)
+
+            # The direct-Dkg runtime does not consume geometric dz. Its
+            # specialized window refresh must leave layer_thickness untouched
+            # (and therefore must not reconstruct dry/total pressure).
+            runtime_window = load_transport_window(driver, 1)
+            mesh = driver_grid(driver).horizontal
+            tracer = ntuple(p -> runtime_window.air_mass[p] .* FT(1e-6), np)
+            state = CubedSphereState(DryBasis, mesh, runtime_window.air_mass;
+                                     CO2 = tracer)
+            fluxes = allocate_face_fluxes(mesh, Nz; FT, basis = DryBasis)
+            model = TransportModel(state, fluxes, driver_grid(driver), UpwindScheme();
+                                   diffusion = op)
+            foreach(x -> fill!(x, FT(NaN)), model.workspace.diffusion_ws.layer_thickness)
+            sim = DrivenSimulation(model, driver; start_window = 1, stop_window = 1)
+            @test all(panel -> all(isnan, panel),
+                      sim.model.workspace.diffusion_ws.layer_thickness)
         finally
             close(reader.io)
         end
@@ -84,7 +101,8 @@ using .AtmosTransport.Adjoints: _vertical_diffusion_cs_single_dkg_adjoint_kernel
 
     @test_throws ArgumentError AtmosTransport.MetDrivers.open_streaming_cs_transport_binary(
         tempname(), Nc, np, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS, FT,
-        include_precomputed_dkg = true, mass_basis = :moist)
+        include_precomputed_dkg = true, mass_basis = :moist,
+        surface_pressure_basis = TotalSurfacePressure())
 
     # Direct-dkg solve conserves column tracer mass without consulting dz.
     Hp = 1

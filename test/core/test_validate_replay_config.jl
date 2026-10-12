@@ -14,7 +14,9 @@ function write_inconsistent_cs_binary(path; Nc = 3, Nz = 2)
     vc = HybridSigmaPressure([0.0, 5000.0, 0.0], [0.0, 0.5, 1.0])
     writer = ReplayMD.open_streaming_cs_transport_binary(
         path, Nc, 6, Nz, 2, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
-        FT = Float64, mass_basis = :dry, dt_met_seconds = 3600.0, steps_per_window = 2)
+        FT = Float64, mass_basis = :dry,
+        surface_pressure_basis = TotalSurfacePressure(),
+        dt_met_seconds = 3600.0, steps_per_window = 2)
     try
         for scale in (1.0, 1.1)
             window = (m  = ntuple(_ -> fill(1e16 * scale, Nc, Nc, Nz), 6),
@@ -39,6 +41,7 @@ function write_inconsistent_ll_binary(path; Nx = 4, Ny = 3, Nz = 2)
                for scale in (1.0, 1.1)]
     write_transport_binary(path, grid, windows; FT = Float64, dt_met_seconds = 3600.0,
                            half_dt_seconds = 1800.0, steps_per_window = 2, mass_basis = :dry,
+                           surface_pressure_basis = TotalSurfacePressure(),
                            source_flux_sampling = :window_start_endpoint,
                            flux_sampling = :window_constant)
     return path
@@ -68,6 +71,7 @@ function write_consistent_ll_binary(path; FT = Float32, Nx = 4, Ny = 3, Nz = 2, 
                 cm = zeros(Nx, Ny, Nz + 1), ps = fill(1e5, Nx, Ny))]
     write_transport_binary(path, grid, windows; FT, dt_met_seconds = 3600.0,
                            half_dt_seconds = 1800.0, steps_per_window = steps, mass_basis = :dry,
+                           surface_pressure_basis = TotalSurfacePressure(),
                            source_flux_sampling = :window_start_endpoint,
                            flux_sampling = :window_constant)
     return path

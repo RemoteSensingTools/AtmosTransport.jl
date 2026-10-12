@@ -116,6 +116,32 @@ catch
 end
 
 const ERA5_L137_COEFFICIENTS = joinpath(@__DIR__, "..", "..", "config", "era5_L137_coefficients.toml")
+function copy_source_metadata!(metadata::AbstractDict, raw::AbstractDict,
+                               dry_target = nothing)
+    for key in ("adaptive_substeps", "preprocessor_contract", "runtime_substep_contract",
+                "poisson_balanced", "vertical_transform",
+                "target_coefficients", "vertical_mapping_method", "target_vertical_name",
+                "coarsening_method", "coarsening_source_Nc", "coarsening_target_Nc",
+                "coarsening_ratio")
+        haskey(raw, key) && (metadata[key] = raw[key])
+    end
+    pin_enabled = AtmosTransport.MetDrivers._dry_mass_pin_enabled(raw, "source metadata")
+    if pin_enabled !== nothing
+        metadata["mass_fix_enabled"] = pin_enabled
+        if pin_enabled
+            recorded = get(raw, "mass_fix_target_ps_dry_pa",
+                           dry_target === nothing ? nothing : dry_target.ps_dry_pa)
+            recorded isa Real && !(recorded isa Bool) || error(
+                "pinned source metadata lacks numeric mass_fix_target_ps_dry_pa")
+            target = Float64(recorded)
+            isfinite(target) && target > 0 || error(
+                "invalid source mass_fix_target_ps_dry_pa=$(repr(recorded))")
+            metadata["mass_fix_target_ps_dry_pa"] = target
+        end
+    end
+    return metadata
+end
+
 # The YYYYMMDD field of `convec_YYYYMMDD_00p03.nc` / `..._transport_YYYYMMDD_float32.bin`.
 _date_label(path) = (m = match(r"_(\d{8})[_.]", basename(path)); m === nothing ? nothing : m.captures[1])
 
@@ -199,13 +225,13 @@ humidity_target_mesh(mesh::AtmosTransport.LatLonMesh) =
 
 humidity_remap(::AtmosTransport.MoistBasis, raw_header, era5_root, date, mesh, cache_dir) = nothing
 function humidity_remap(::AtmosTransport.DryBasis, raw_header, era5_root, date,
-                        mesh, cache_dir)
+                        mesh, cache_dir; opener = PP.open_era5_humidity_remap)
     # Specific humidity is intensive, so changing only the sphere radius does
     # not change its target values. ConservativeRegridding requires both
     # manifolds to match: use the N320/IFS radius here, while the subsequent
     # extensive convection-field remap keeps the transport binary's radius.
     target = humidity_target_mesh(mesh)
-    return PP.open_era5_humidity_remap(
+    return opener(
         isempty(era5_root) ? era5_root_of(raw_header) : era5_root,
         date, target; cache_dir)
 end
@@ -284,6 +310,7 @@ function open_attachment_writer(output, Nc, np, Nz, h, g, vc, metadata)
         air_mass_sampling = h.air_mass_sampling,
         flux_sampling = h.flux_sampling, flux_kind = h.flux_kind,
         include_flux_delta = true, mass_basis = h.mass_basis,
+        surface_pressure_basis = h.surface_pressure_basis,
         tm5_convection_mass_basis = PP.mass_basis_from_symbol(h.mass_basis),
         include_surface = true, include_tm5conv = true,
         include_precomputed_dkg = true,
@@ -378,13 +405,7 @@ function main(argv)
             "source_binary" => input,
             "merge_map" => merge_map,
         )
-        for key in ("adaptive_substeps", "preprocessor_contract", "runtime_substep_contract",
-                    "poisson_balanced", "global_mass_pin_target_kg", "vertical_transform",
-                    "target_coefficients", "vertical_mapping_method", "target_vertical_name",
-                    "mass_fix_enabled", "global_mass_pin_enabled", "coarsening_method",
-                    "coarsening_source_Nc", "coarsening_target_Nc", "coarsening_ratio")
-            haskey(raw, key) && (metadata[key] = raw[key])
-        end
+        copy_source_metadata!(metadata, raw, MD.binary_dry_mass_target(reader))
         vc = AtmosTransport.HybridSigmaPressure(Float32.(h.A_ifc), Float32.(h.B_ifc))
         writer = open_attachment_writer(output, Nc, np, Nz, h, g, vc, metadata)
 

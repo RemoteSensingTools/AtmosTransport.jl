@@ -34,6 +34,254 @@
 # on the operator's Kz field type.
 # ---------------------------------------------------------------------------
 
+function _stage_hybrid_coefficients!(coefficients::HybridCoefficientWorkspace,
+                                     ak_ifc::AbstractVector,
+                                     bk_ifc::AbstractVector)
+    length(coefficients.A) == length(ak_ifc) || throw(DimensionMismatch(
+        "coefficient workspace length $(length(coefficients.A)) ≠ A length $(length(ak_ifc))"))
+    length(coefficients.B) == length(bk_ifc) || throw(DimensionMismatch(
+        "coefficient workspace length $(length(coefficients.B)) ≠ B length $(length(bk_ifc))"))
+    copyto!(coefficients.A, eltype(coefficients.A).(ak_ifc))
+    copyto!(coefficients.B, eltype(coefficients.B).(bk_ifc))
+    coefficients.pure_pressure = all(iszero, bk_ifc)
+    db = diff(bk_ifc)
+    coefficients.positive_b_coordinate =
+        all(>=(zero(eltype(db))), db) && any(>(zero(eltype(db))), db)
+    return coefficients
+end
+
+function _stage_hybrid_coefficients(reference, ak_ifc::AbstractVector,
+                                    bk_ifc::AbstractVector)
+    FT = eltype(reference)
+    coefficients = HybridCoefficientWorkspace(similar(reference, FT, length(ak_ifc)),
+                                              similar(reference, FT, length(bk_ifc)))
+    return _stage_hybrid_coefficients!(coefficients, ak_ifc, bk_ifc)
+end
+
+@kernel function _recover_total_ps_2d_kernel!(ps_total, @Const(ps_dry),
+                                              @Const(qv), @Const(ak_ifc),
+                                              @Const(bk_ifc), status, Nz::Int)
+    i, j = @index(Global, NTuple)
+    FT = eltype(ps_total)
+    offset = zero(FT)
+    slope = zero(FT)
+    @inbounds for k in 1:Nz
+        dry_fraction = one(FT) - qv[i, j, k]
+        offset += dry_fraction * (ak_ifc[k + 1] - ak_ifc[k])
+        slope += dry_fraction * (bk_ifc[k + 1] - bk_ifc[k])
+    end
+    if !(isfinite(slope) && slope > zero(FT))
+        @atomic status[1] = one(eltype(status))
+    end
+    @inbounds ps_total[i, j] = (ps_dry[i, j] - offset) / slope
+end
+
+@kernel function _recover_total_ps_1d_kernel!(ps_total, @Const(ps_dry),
+                                              @Const(qv), @Const(ak_ifc),
+                                              @Const(bk_ifc), status, Nz::Int)
+    c = @index(Global)
+    FT = eltype(ps_total)
+    offset = zero(FT)
+    slope = zero(FT)
+    @inbounds for k in 1:Nz
+        dry_fraction = one(FT) - qv[c, k]
+        offset += dry_fraction * (ak_ifc[k + 1] - ak_ifc[k])
+        slope += dry_fraction * (bk_ifc[k + 1] - bk_ifc[k])
+    end
+    if !(isfinite(slope) && slope > zero(FT))
+        @atomic status[1] = one(eltype(status))
+    end
+    @inbounds ps_total[c] = (ps_dry[c] - offset) / slope
+end
+
+@inline function _recovery_status(reference)
+    status = similar(reference, Int32, 1)
+    fill!(status, zero(Int32))
+    return status
+end
+
+function _check_recovery_status(status)
+    only(Array(status)) == zero(eltype(status)) || throw(ArgumentError(
+        "cannot recover total surface pressure: humidity-weighted hybrid-B slope " *
+        "must be finite and positive in every column"))
+    return nothing
+end
+
+function _validate_recovery_panel(dest, ps_dry, qv, nA::Int, nB::Int;
+                                  label::AbstractString = "")
+    prefix = isempty(label) ? "" : "$label "
+    ndims(dest) == 2 || throw(DimensionMismatch("$(prefix)destination must be rank 2"))
+    ndims(ps_dry) == 2 || throw(DimensionMismatch("$(prefix)dry ps must be rank 2"))
+    ndims(qv) == 3 || throw(DimensionMismatch("$(prefix)humidity must be rank 3"))
+    Nx, Ny = size(dest)
+    size(ps_dry) == (Nx, Ny) || throw(DimensionMismatch("$(prefix)dry ps shape mismatch"))
+    size(qv)[1:2] == (Nx, Ny) ||
+        throw(DimensionMismatch("$(prefix)humidity horizontal shape mismatch"))
+    Nz = size(qv, 3)
+    nA == Nz + 1 && nB == Nz + 1 || throw(DimensionMismatch(
+        "$(prefix)humidity levels must match hybrid coefficients"))
+    return nothing
+end
+
+function _validate_recovery_panels(dest::NTuple{6}, ps_dry::NTuple{6},
+                                   qv::NTuple{6}, nA::Int, nB::Int)
+    @inbounds for p in 1:6
+        _validate_recovery_panel(dest[p], ps_dry[p], qv[p], nA, nB;
+                                 label = "panel $p")
+    end
+    return nothing
+end
+
+"""
+    recover_total_surface_pressure!(dest, ps_dry, qv, A, B)
+
+Recover total surface pressure on the array backend used by `dest`. For the
+hybrid interfaces `p_{k+1/2}=A_{k+1/2}+B_{k+1/2}p_{s,total}`, stored dry
+surface pressure satisfies
+
+```math
+p_{s,dry}=\\sum_k(1-q_{v,k})
+  [\\Delta A_k+\\Delta B_k p_{s,total}],\\qquad
+p_{s,total}=\\frac{p_{s,dry}-\\sum_k(1-q_{v,k})\\Delta A_k}
+                  {\\sum_k(1-q_{v,k})\\Delta B_k}.
+```
+
+The implementation uses KernelAbstractions for CPU and the package's supported
+CUDA and Metal backends; device arrays are never scalar-indexed by the host.
+For an A-only coordinate (`B ≡ 0`) recovery is unobservable and unnecessary,
+so `ps_dry` is copied unchanged. Otherwise the humidity-weighted B slope must
+be finite and positive or the function throws `ArgumentError`.
+"""
+function recover_total_surface_pressure!(dest::AbstractMatrix, ps_dry::AbstractMatrix,
+                                         qv::AbstractArray{<:AbstractFloat, 3},
+                                         ak_ifc::AbstractVector, bk_ifc::AbstractVector)
+    Nx, Ny = size(dest)
+    size(ps_dry) == (Nx, Ny) || throw(DimensionMismatch("dry ps shape mismatch"))
+    size(qv)[1:2] == (Nx, Ny) || throw(DimensionMismatch("humidity horizontal shape mismatch"))
+    Nz = size(qv, 3)
+    length(ak_ifc) == Nz + 1 && length(bk_ifc) == Nz + 1 ||
+        throw(DimensionMismatch("humidity levels must match hybrid coefficients"))
+    coefficients = _stage_hybrid_coefficients(dest, ak_ifc, bk_ifc)
+    return _recover_total_surface_pressure_staged!(dest, ps_dry, qv,
+                                                    coefficients; sync = true)
+end
+
+function recover_total_surface_pressure!(dest::AbstractVector, ps_dry::AbstractVector,
+                                         qv::AbstractMatrix,
+                                         ak_ifc::AbstractVector, bk_ifc::AbstractVector)
+    ncells = length(dest)
+    length(ps_dry) == ncells || throw(DimensionMismatch("dry ps length mismatch"))
+    size(qv, 1) == ncells || throw(DimensionMismatch("humidity cell count mismatch"))
+    Nz = size(qv, 2)
+    length(ak_ifc) == Nz + 1 && length(bk_ifc) == Nz + 1 ||
+        throw(DimensionMismatch("humidity levels must match hybrid coefficients"))
+    coefficients = _stage_hybrid_coefficients(dest, ak_ifc, bk_ifc)
+    return _recover_total_surface_pressure_staged!(dest, ps_dry, qv,
+                                                    coefficients; sync = true)
+end
+
+function recover_total_surface_pressure!(dest::NTuple{6}, ps_dry::NTuple{6},
+                                         qv::NTuple{6}, ak_ifc, bk_ifc)
+    _validate_recovery_panels(dest, ps_dry, qv, length(ak_ifc), length(bk_ifc))
+    coefficients = _stage_hybrid_coefficients(dest[1], ak_ifc, bk_ifc)
+    return _recover_total_surface_pressure_staged!(dest, ps_dry, qv,
+                                                    coefficients; sync = true)
+end
+
+function _recover_total_surface_pressure_staged!(dest::AbstractMatrix,
+                                                  ps_dry::AbstractMatrix,
+                                                  qv::AbstractArray{<:AbstractFloat, 3},
+                                                  coefficients::HybridCoefficientWorkspace;
+                                                  sync::Bool)
+    if coefficients.pure_pressure
+        copyto!(dest, ps_dry)
+        sync && synchronize(get_backend(dest))
+        return dest
+    end
+    Nx, Ny = size(dest)
+    Nz = size(qv, 3)
+    backend = get_backend(dest)
+    status = _recovery_status(dest)
+    launch!(_recover_total_ps_2d_kernel!, backend, (8, 8), (Nx, Ny),
+            dest, ps_dry, qv, coefficients.A, coefficients.B, status, Nz; sync)
+    sync && _check_recovery_status(status)
+    return dest
+end
+
+function _recover_total_surface_pressure_staged!(dest::AbstractVector,
+                                                  ps_dry::AbstractVector,
+                                                  qv::AbstractMatrix,
+                                                  coefficients::HybridCoefficientWorkspace;
+                                                  sync::Bool)
+    if coefficients.pure_pressure
+        copyto!(dest, ps_dry)
+        sync && synchronize(get_backend(dest))
+        return dest
+    end
+    ncells, Nz = size(qv)
+    backend = get_backend(dest)
+    status = _recovery_status(dest)
+    launch!(_recover_total_ps_1d_kernel!, backend, 256, ncells,
+            dest, ps_dry, qv, coefficients.A, coefficients.B, status, Nz; sync)
+    sync && _check_recovery_status(status)
+    return dest
+end
+
+
+function _recover_total_surface_pressure_staged!(dest::NTuple{6},
+                                                  ps_dry::NTuple{6},
+                                                  qv::NTuple{6},
+                                                  coefficients::HybridCoefficientWorkspace;
+                                                  sync::Bool)
+    _validate_recovery_panels(dest, ps_dry, qv, length(coefficients.A),
+                              length(coefficients.B))
+    backend = get_backend(dest[1])
+    if coefficients.pure_pressure
+        @inbounds for p in 1:6
+            copyto!(dest[p], ps_dry[p])
+        end
+        sync && synchronize(backend)
+        return dest
+    end
+    status = _recovery_status(dest[1])
+    @inbounds for p in 1:6
+        Nx, Ny = size(dest[p])
+        Nz = size(qv[p], 3)
+        launch!(_recover_total_ps_2d_kernel!, backend, (8, 8), (Nx, Ny),
+                dest[p], ps_dry[p], qv[p], coefficients.A, coefficients.B,
+                status, Nz; sync = false)
+    end
+    if sync
+        synchronize(backend)
+        _check_recovery_status(status)
+    end
+    return dest
+end
+
+function _validate_constT_panel(dz, ps, nA::Int, nB::Int;
+                                label::AbstractString = "")
+    prefix = isempty(label) ? "" : "$label "
+    ndims(dz) == 3 || throw(DimensionMismatch("$(prefix)dz must be rank 3"))
+    ndims(ps) == 2 || throw(DimensionMismatch("$(prefix)ps must be rank 2"))
+    Nx, Ny, Nz = size(dz)
+    size(ps) == (Nx, Ny) || throw(DimensionMismatch(
+        "$(prefix)ps shape $(size(ps)) ≠ ($Nx, $Ny) expected from dz"))
+    nA == Nz + 1 || throw(DimensionMismatch(
+        "$(prefix)ak_ifc length $nA ≠ Nz+1=$(Nz + 1)"))
+    nB == Nz + 1 || throw(DimensionMismatch(
+        "$(prefix)bk_ifc length $nB ≠ Nz+1=$(Nz + 1)"))
+    return nothing
+end
+
+function _validate_constT_panels(dz_panels::NTuple{6}, ps_panels::NTuple{6},
+                                 nA::Int, nB::Int)
+    @inbounds for p in 1:6
+        _validate_constT_panel(dz_panels[p], ps_panels[p], nA, nB;
+                               label = "panel $p")
+    end
+    return nothing
+end
+
 @kernel function _dz_hydrostatic_constT_kernel!(dz, @Const(ps),
                                                 @Const(ak_ifc), @Const(bk_ifc),
                                                 T_ref, R, g, Nz::Int)
@@ -72,17 +320,23 @@ function fill_dz_hydrostatic_constT!(dz::AbstractArray{<:AbstractFloat, 3},
         "ak_ifc length $(length(ak_ifc)) ≠ Nz+1=$(Nz+1)"))
     length(bk_ifc) == Nz + 1 || throw(DimensionMismatch(
         "bk_ifc length $(length(bk_ifc)) ≠ Nz+1=$(Nz+1)"))
+    coefficients = _stage_hybrid_coefficients(dz, ak_ifc, bk_ifc)
+    return _fill_dz_hydrostatic_constT_staged!(dz, ps, coefficients;
+                                               T_ref, R, gravity, sync = true)
+end
+
+function _fill_dz_hydrostatic_constT_staged!(dz::AbstractArray{<:AbstractFloat, 3},
+                                              ps::AbstractArray{<:AbstractFloat, 2},
+                                              coefficients::HybridCoefficientWorkspace;
+                                              T_ref::Real = HYDROSTATIC_REFERENCE_TEMPERATURE,
+                                              R::Real = R_DRY_AIR,
+                                              gravity::Real = STANDARD_GRAVITY,
+                                              sync::Bool)
+    Nx, Ny, Nz = size(dz)
     FT = eltype(dz)
     backend = get_backend(dz)
-    # Stage ak/bk on whatever device `dz` lives on. `similar(dz, FT, n)`
-    # gives an Array on CPU or a CuArray on GPU; `copyto!` does the
-    # H→D transfer once per fill (cheaper than per-thread broadcast).
-    ak_dev = similar(dz, FT, Nz + 1)
-    bk_dev = similar(dz, FT, Nz + 1)
-    copyto!(ak_dev, FT.(ak_ifc))
-    copyto!(bk_dev, FT.(bk_ifc))
-    launch!(_dz_hydrostatic_constT_kernel!, backend, (8, 8, 1), (Nx, Ny, Nz), dz, ps, ak_dev,
-            bk_dev, FT(T_ref), FT(R), FT(gravity), Nz)
+    launch!(_dz_hydrostatic_constT_kernel!, backend, (8, 8, 1), (Nx, Ny, Nz), dz, ps,
+            coefficients.A, coefficients.B, FT(T_ref), FT(R), FT(gravity), Nz; sync)
     return dz
 end
 
@@ -99,11 +353,49 @@ function fill_dz_hydrostatic_constT!(dz_panels::NTuple{6, <:AbstractArray{<:Abst
                                       ak_ifc::AbstractVector,
                                       bk_ifc::AbstractVector;
                                       kwargs...)
-    @inbounds for p in 1:6
-        fill_dz_hydrostatic_constT!(dz_panels[p], ps_panels[p],
-                                    ak_ifc, bk_ifc; kwargs...)
-    end
+    _validate_constT_panels(dz_panels, ps_panels, length(ak_ifc), length(bk_ifc))
+    coefficients = _stage_hybrid_coefficients(dz_panels[1], ak_ifc, bk_ifc)
+    _fill_dz_hydrostatic_constT_staged!(dz_panels, ps_panels, coefficients;
+                                        kwargs..., sync = true)
     return dz_panels
+end
+
+function _fill_dz_hydrostatic_constT_staged!(dz_panels::NTuple{6},
+                                              ps_panels::NTuple{6},
+                                              coefficients::HybridCoefficientWorkspace;
+                                              sync::Bool, kwargs...)
+    _validate_constT_panels(dz_panels, ps_panels, length(coefficients.A),
+                            length(coefficients.B))
+    @inbounds for p in 1:6
+        _fill_dz_hydrostatic_constT_staged!(dz_panels[p], ps_panels[p], coefficients;
+                                            kwargs..., sync = false)
+    end
+    sync && synchronize(get_backend(dz_panels[1]))
+    return dz_panels
+end
+
+function _validate_virtualT_panel(dz, t_lyr, qv_lyr, ps, nA::Int, nB::Int;
+                                  label::AbstractString = "")
+    _validate_constT_panel(dz, ps, nA, nB; label)
+    prefix = isempty(label) ? "" : "$label "
+    expected = size(dz)
+    ndims(t_lyr) == 3 || throw(DimensionMismatch("$(prefix)t_lyr must be rank 3"))
+    ndims(qv_lyr) == 3 || throw(DimensionMismatch("$(prefix)qv_lyr must be rank 3"))
+    size(t_lyr) == expected || throw(DimensionMismatch(
+        "$(prefix)t_lyr shape $(size(t_lyr)) ≠ $expected expected from dz"))
+    size(qv_lyr) == expected || throw(DimensionMismatch(
+        "$(prefix)qv_lyr shape $(size(qv_lyr)) ≠ $expected expected from dz"))
+    return nothing
+end
+
+function _validate_virtualT_panels(dz_panels::NTuple{6}, t_panels::NTuple{6},
+                                   qv_panels::NTuple{6}, ps_panels::NTuple{6},
+                                   nA::Int, nB::Int)
+    @inbounds for p in 1:6
+        _validate_virtualT_panel(dz_panels[p], t_panels[p], qv_panels[p],
+                                 ps_panels[p], nA, nB; label = "panel $p")
+    end
+    return nothing
 end
 
 # ---------------------------------------------------------------------------
@@ -188,14 +480,27 @@ function fill_dz_hydrostatic_virtualT!(dz::AbstractArray{<:AbstractFloat, 3},
         "ak_ifc length $(length(ak_ifc)) ≠ Nz+1=$(Nz + 1)"))
     length(bk_ifc) == Nz + 1 || throw(DimensionMismatch(
         "bk_ifc length $(length(bk_ifc)) ≠ Nz+1=$(Nz + 1)"))
+    coefficients = _stage_hybrid_coefficients(dz, ak_ifc, bk_ifc)
+    return _fill_dz_hydrostatic_virtualT_staged!(dz, t_lyr, qv_lyr, ps,
+                                                  coefficients;
+                                                  R, gravity, sync = true)
+end
+
+function _fill_dz_hydrostatic_virtualT_staged!(
+        dz::AbstractArray{<:AbstractFloat, 3},
+        t_lyr::AbstractArray{<:AbstractFloat, 3},
+        qv_lyr::AbstractArray{<:AbstractFloat, 3},
+        ps::AbstractArray{<:AbstractFloat, 2},
+        coefficients::HybridCoefficientWorkspace;
+        R::Real = R_DRY_AIR,
+        gravity::Real = STANDARD_GRAVITY,
+        sync::Bool)
+    Nx, Ny, Nz = size(dz)
     FT = eltype(dz)
     backend = get_backend(dz)
-    ak_dev = similar(dz, FT, Nz + 1)
-    bk_dev = similar(dz, FT, Nz + 1)
-    copyto!(ak_dev, FT.(ak_ifc))
-    copyto!(bk_dev, FT.(bk_ifc))
-    launch!(_dz_hydrostatic_virtualT_3d_kernel!, backend, (8, 8, 1), (Nx, Ny, Nz), dz, t_lyr,
-            qv_lyr, ps, ak_dev, bk_dev, FT(R), FT(gravity), Nz)
+    launch!(_dz_hydrostatic_virtualT_3d_kernel!, backend, (8, 8, 1), (Nx, Ny, Nz), dz,
+            t_lyr, qv_lyr, ps, coefficients.A, coefficients.B,
+            FT(R), FT(gravity), Nz; sync)
     return dz
 end
 
@@ -217,10 +522,28 @@ function fill_dz_hydrostatic_virtualT!(
         ak_ifc::AbstractVector,
         bk_ifc::AbstractVector;
         kwargs...)
+    _validate_virtualT_panels(dz_panels, t_panels, qv_panels, ps_panels,
+                              length(ak_ifc), length(bk_ifc))
+    coefficients = _stage_hybrid_coefficients(dz_panels[1], ak_ifc, bk_ifc)
+    _fill_dz_hydrostatic_virtualT_staged!(dz_panels, t_panels, qv_panels,
+                                          ps_panels, coefficients;
+                                          kwargs..., sync = true)
+    return dz_panels
+end
+
+
+function _fill_dz_hydrostatic_virtualT_staged!(
+        dz_panels::NTuple{6}, t_panels::NTuple{6}, qv_panels::NTuple{6},
+        ps_panels::NTuple{6}, coefficients::HybridCoefficientWorkspace;
+        sync::Bool, kwargs...)
+    _validate_virtualT_panels(dz_panels, t_panels, qv_panels, ps_panels,
+                              length(coefficients.A), length(coefficients.B))
     @inbounds for p in 1:6
-        fill_dz_hydrostatic_virtualT!(dz_panels[p], t_panels[p], qv_panels[p],
-                                       ps_panels[p], ak_ifc, bk_ifc; kwargs...)
+        _fill_dz_hydrostatic_virtualT_staged!(dz_panels[p], t_panels[p], qv_panels[p],
+                                              ps_panels[p], coefficients;
+                                              kwargs..., sync = false)
     end
+    sync && synchronize(get_backend(dz_panels[1]))
     return dz_panels
 end
 
@@ -262,13 +585,22 @@ function fill_dz_hydrostatic_constT!(dz::AbstractArray{<:AbstractFloat, 2},
         "ak_ifc length $(length(ak_ifc)) ≠ Nz+1=$(Nz + 1)"))
     length(bk_ifc) == Nz + 1 || throw(DimensionMismatch(
         "bk_ifc length $(length(bk_ifc)) ≠ Nz+1=$(Nz + 1)"))
+    coefficients = _stage_hybrid_coefficients(dz, ak_ifc, bk_ifc)
+    return _fill_dz_hydrostatic_constT_staged!(dz, ps, coefficients;
+                                               T_ref, R, gravity, sync = true)
+end
+
+function _fill_dz_hydrostatic_constT_staged!(dz::AbstractArray{<:AbstractFloat, 2},
+                                              ps::AbstractArray{<:AbstractFloat, 1},
+                                              coefficients::HybridCoefficientWorkspace;
+                                              T_ref::Real = HYDROSTATIC_REFERENCE_TEMPERATURE,
+                                              R::Real = R_DRY_AIR,
+                                              gravity::Real = STANDARD_GRAVITY,
+                                              sync::Bool)
+    ncells, Nz = size(dz)
     FT = eltype(dz)
     backend = get_backend(dz)
-    ak_dev = similar(dz, FT, Nz + 1)
-    bk_dev = similar(dz, FT, Nz + 1)
-    copyto!(ak_dev, FT.(ak_ifc))
-    copyto!(bk_dev, FT.(bk_ifc))
     launch!(_dz_hydrostatic_constT_face_kernel!, backend, (256, 1), (ncells, Nz), dz, ps,
-            ak_dev, bk_dev, FT(T_ref), FT(R), FT(gravity), Nz)
+            coefficients.A, coefficients.B, FT(T_ref), FT(R), FT(gravity), Nz; sync)
     return dz
 end

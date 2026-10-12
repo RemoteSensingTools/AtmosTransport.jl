@@ -157,7 +157,7 @@ end
             dt = 900.0, met_interval = 3600.0, half_dt = 450.0,
             output_float_type = FT,
             mass_fix_enable = false,
-            target_ps_dry_pa = 98726.0,
+            target_ps_dry_pa = AtmosTransport.Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE,
             qv_global_climatology = 0.00247,
             T_target = 47,
             tm5_convection_enable = true,

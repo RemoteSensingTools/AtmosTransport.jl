@@ -6,6 +6,7 @@ using Dates
 using JSON3
 
 using AtmosTransport
+using .AtmosTransport.Parameters: GLOBAL_MEAN_DRY_SURFACE_PRESSURE
 using .AtmosTransport.Preprocessing: build_target_geometry, process_day, HEADER_SIZE,
                                       ERA5SpectralSettings
 
@@ -63,7 +64,7 @@ function _ll_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir;
         include_qv = false,
         mass_basis = :moist,
         mass_fix_enable = false,
-        target_ps_dry_pa = 98726.0,
+        target_ps_dry_pa = GLOBAL_MEAN_DRY_SURFACE_PRESSURE,
         qv_global_climatology = 0.0,
         thermo_dir = dirname(out_dir),
         half_dt = 450.0,
@@ -120,6 +121,7 @@ end
         @test second_last.m == first_last.m
         @test second_last.am == first_last.am
         @test second_last.bm == first_last.bm
+        @test _header_without_creation_time(first_path)[:surface_pressure_basis] == "total"
 
         # The column balance is recorded in the header.
         @test _header_without_creation_time(first_path)[:horizontal_balance] == "column"

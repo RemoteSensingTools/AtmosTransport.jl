@@ -22,11 +22,15 @@ using .AtmosTransport.Preprocessing: coarsen_nested_cs_transport_binary
     )
 
     mktempdir() do dir
+        source_path = joinpath(dir, "source_c6.bin")
+        output_path = joinpath(dir, "output_c2.bin")
         window = (m = panels3(100), am, bm, cm, ps = panels2(90_000),
                   dm = panels3(0), surface, dkg)
         function write_source(path; horizontal_balance = nothing)
             extra_header = Dict{String, Any}(
-                "date" => "2021-01-01", "adaptive_substeps" => true)
+                "date" => "2021-01-01", "adaptive_substeps" => true,
+                "geos_global_mass_pin_enabled" => true,
+                "mass_fix_target_ps_dry_pa" => 98_325.0)
             horizontal_balance === nothing ||
                 (extra_header["horizontal_balance"] = horizontal_balance)
             writer = AtmosTransport.MetDrivers.open_streaming_cs_transport_binary(
@@ -37,6 +41,7 @@ using .AtmosTransport.Preprocessing: coarsen_nested_cs_transport_binary
                 include_surface = true,
                 include_precomputed_dkg = true,
                 mass_basis = :dry,
+                surface_pressure_basis = DrySurfacePressure(),
                 extra_header)
             AtmosTransport.MetDrivers.write_streaming_cs_window!(writer, window, source_Nc, np)
             AtmosTransport.MetDrivers.set_streaming_steps_per_window_schedule!(writer, [3])
@@ -59,6 +64,12 @@ using .AtmosTransport.Preprocessing: coarsen_nested_cs_transport_binary
             @test AtmosTransport.MetDrivers.binary_geometry(reader).Nc == target_Nc
             @test reader.header.steps_per_window_by_window == [1]
             @test reader.header.raw_header["experimental"] == true
+            @test reader.header.raw_header["mass_fix_enabled"] === true
+            @test reader.header.raw_header["mass_fix_target_ps_dry_pa"] == 98_325.0
+            @test reader.header.raw_header["surface_pressure_basis"] == "dry"
+            @test AtmosTransport.MetDrivers.surface_pressure_basis(reader) isa
+                  DrySurfacePressure
+            @test !haskey(reader.header.raw_header, "geos_global_mass_pin_enabled")
             @test reader.header.raw_header["validation_status"] ==
                   "testing_only_not_yet_scientifically_validated"
             # Legacy binaries predate this provenance field. The coarsener

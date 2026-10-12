@@ -72,4 +72,3 @@ max_steps_per_window       = 512   # headroom for the unmerged mesospheric top
 # one dry-air baseline. See docs/src/theory/mass_conservation.md.
 enable           = true
 mode             = "target_ps_dry"
-target_ps_dry_pa = 98726.0

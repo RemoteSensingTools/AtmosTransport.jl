@@ -214,6 +214,7 @@ end
 
 function _geos_pin_global_mass_if_needed!(workspace::GEOSCubedSphereWindowWorkspace{FT},
                                           panels_m::NTuple{CS_PANEL_COUNT, <:AbstractArray{FT, 3}},
+                                          panels_qv,
                                           label::AbstractString) where FT
     workspace.global_mass_pin_enabled || return nothing
     if !isfinite(workspace.global_mass_target_kg)
@@ -226,8 +227,17 @@ function _geos_pin_global_mass_if_needed!(workspace::GEOSCubedSphereWindowWorksp
                 delta_ps_pa = 0.0,
                 residual_kg = 0.0)
     end
-    stats = _pin_cs_global_air_mass!(panels_m, workspace.cell_areas,
-                                     workspace.g, workspace.global_mass_target_kg)
+    panels_qv === nothing && error("GEOS native dry-mass pin requires endpoint qv")
+    native_dB = diff(workspace.plan.native_vc.B)
+    _geos_pin_sensitivity_native!(workspace.strategy, workspace.strategy_ws,
+                                  workspace.m_native_kg, panels_qv, native_dB,
+                                  workspace.cell_areas, workspace.inv_g)
+    for p in 1:CS_PANEL_COUNT
+        apply_vertical!(workspace.dm_v4[p], workspace.m_native_kg[p],
+                        workspace.plan, MassField())
+    end
+    stats = _pin_cs_global_air_mass_from_sensitivity!(
+        panels_m, workspace.dm_v4, workspace.global_mass_target_kg)
     abs(stats.delta_ps_pa) > 1e-10 &&
         @debug @sprintf("  GEOS global dry-mass pin %s: Δps=%+.6e Pa residual=%+.6e kg",
                         label, stats.delta_ps_pa, stats.residual_kg)
@@ -573,7 +583,7 @@ function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
                                 workspace.plan, MassField())
             end
         end
-        _geos_pin_global_mass_if_needed!(workspace, workspace.m_cur,
+        _geos_pin_global_mass_if_needed!(workspace, workspace.m_cur, workspace.raw.qv,
                                          "window $(win) start")
         for p in 1:CS_PANEL_COUNT
             _ps_from_air_mass!(workspace.ps_cur[p], workspace.m_cur[p],
@@ -589,6 +599,7 @@ function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
                         workspace.plan, MassField())
     end
     _geos_pin_global_mass_if_needed!(workspace, workspace.m_next_target,
+                                     workspace.raw.qv_next,
                                      "window $(win) endpoint")
     # Preserve the pinned raw GEOS DELP_dry endpoint; `:moisture_filtered`
     # balances + diagnoses against it while overwriting `m_next_target` with the

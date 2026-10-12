@@ -11,6 +11,7 @@ const PP = AT.Preprocessing
 
 using .AtmosTransport.Architectures: CPU
 using .AtmosTransport.Grids: AtmosGrid, HybridSigmaPressure, ncells, nfaces
+using .AtmosTransport.State: TotalSurfacePressure
 
 function _rg_fixture(::Type{FT}=Float32) where FT
     mesh = AT.ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT=FT)
@@ -32,6 +33,7 @@ function _open_rg(path, nwindow=1; extra_header=Dict{String,Any}())
         FT=Float32, header_bytes=4096, steps_per_window=1,
         source_flux_sampling=:window_start_endpoint,
         humidity_sampling=:none, delta_semantics=:none, mass_basis=:dry,
+        surface_pressure_basis=TotalSurfacePressure(),
         extra_header=extra_header,
     )
     return writer, window
@@ -160,6 +162,7 @@ end
                 path, Nc, npanel, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
                 FT=Float32, header_bytes=4096, steps_per_window=1,
                 mass_basis=:dry,
+                surface_pressure_basis=TotalSurfacePressure(),
             )
             window = (
                 m=ntuple(_ -> ones(Float32, Nc, Nc, Nz), npanel),
@@ -185,6 +188,7 @@ end
                 path, Nc, npanel, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
                 FT=Float32, header_bytes=4096, steps_per_window=1,
                 mass_basis=:dry,
+                surface_pressure_basis=TotalSurfacePressure(),
             )
             window = (
                 m=ntuple(_ -> ones(Float32, Nc, Nc, Nz), npanel),
@@ -207,6 +211,7 @@ end
                 empty_path, Nc, npanel, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
                 FT=Float32, header_bytes=4096, steps_per_window=1,
                 mass_basis=:dry,
+                surface_pressure_basis=TotalSurfacePressure(),
             )
             empty_optionals = (
                 cmfmc=nothing, dtrain=nothing, dkg=nothing,
@@ -225,6 +230,8 @@ end
             @test_throws ArgumentError _open_rg(path, 1; extra_header=Dict("ncell" => 999))
             @test_throws ArgumentError _open_rg(
                 path, 1; extra_header=Dict("latitudes" => [-30.0, 30.0]))
+            @test_throws ArgumentError _open_rg(
+                path, 1; extra_header=Dict("surface_pressure_basis" => "dry"))
             @test !ispath(path)
         end
 
@@ -234,6 +241,7 @@ end
             header = deepcopy(writer.header)
             for (key, value) in (("float_type", "Float128"),
                                  ("mass_basis", "unknown"),
+                                 ("surface_pressure_basis", "unknown"),
                                  ("elems_per_window", header["elems_per_window"] + 1),
                                  ("dt_met_seconds", Inf),
                                  ("nface_h", header["nface_h"] + 1))
@@ -271,6 +279,7 @@ end
                 source_flux_sampling=:window_start_endpoint,
                 humidity_sampling=:none, delta_semantics=:none,
                 mass_basis=:dry,
+                surface_pressure_basis=TotalSurfacePressure(),
             )
             header = open(path, "r") do io
                 raw = MD._read_transport_header_json(io; source=path)
@@ -302,6 +311,7 @@ end
                     source_flux_sampling=:window_start_endpoint,
                     humidity_sampling=:none, delta_semantics=:none,
                     mass_basis=:dry,
+                    surface_pressure_basis=TotalSurfacePressure(),
                 )
                 @test isfile(path)
             end
@@ -331,6 +341,7 @@ end
                 source_flux_sampling=:window_start_endpoint,
                 humidity_sampling=:none, delta_semantics=:none,
                 mass_basis=:dry,
+                surface_pressure_basis=TotalSurfacePressure(),
             )
             @test read(path) == sentinel
             @test isempty(filter(f -> startswith(f, "atomic-eager.bin.tmp"), readdir(dir)))
@@ -379,6 +390,7 @@ end
             FT=Float32, header_bytes=400_000, steps_per_window=1,
             source_flux_sampling=:window_start_endpoint,
             humidity_sampling=:none, delta_semantics=:none, mass_basis=:dry,
+            surface_pressure_basis=TotalSurfacePressure(),
             extra_header=metadata,
         )
         MD.write_streaming_window!(rg_writer, window)
@@ -393,7 +405,8 @@ end
         cs_writer = MD.open_streaming_cs_transport_binary(
             cs_path, Nc, npanel, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
             FT=Float32, header_bytes=400_000, steps_per_window=1,
-            mass_basis=:dry, extra_header=metadata,
+            mass_basis=:dry, surface_pressure_basis=TotalSurfacePressure(),
+            extra_header=metadata,
         )
         cs_window = (
             m=ntuple(_ -> ones(Float32, Nc, Nc, Nz), npanel),

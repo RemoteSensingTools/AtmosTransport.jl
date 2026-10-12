@@ -230,24 +230,20 @@ end
 # Global dry-mass target of the native-source pin: `NaN` when the pin is off or
 # when it pins to the first window start (`mode = "initial_endpoint"`).
 function _native_mass_fix_target_kg(cfg::AbstractDict, grid, settings)
-    mass_fix_cfg = get(cfg, "mass_fix", Dict{String, Any}())
+    mass_fix_cfg = _checked_mass_fix_config(cfg)
     _config_bool(mass_fix_cfg, "enable", false, "[mass_fix].enable") || return NaN
-    haskey(mass_fix_cfg, "target_total_kg") &&
-        return Float64(mass_fix_cfg["target_total_kg"])
 
     mode = Symbol(replace(lowercase(String(get(mass_fix_cfg, "mode", "target_ps_dry"))),
                           '-' => '_'))
-    if mode in (:target_ps_dry, :target_dry_ps, :fixed_dry_ps)
+    if mode === :target_ps_dry
         hasproperty(grid, :mesh) && hasproperty(grid.mesh, :cell_areas) ||
             error("native-source [mass_fix].mode=\"target_ps_dry\" requires a grid with cell_areas")
-        target_ps_dry_pa = Float64(get(mass_fix_cfg, "target_ps_dry_pa",
-                                       GLOBAL_MEAN_DRY_SURFACE_PRESSURE))
         total_area = 6.0 * sum(Float64, grid.mesh.cell_areas)
-        return target_ps_dry_pa * total_area / STANDARD_GRAVITY
+        return GLOBAL_MEAN_DRY_SURFACE_PRESSURE * total_area / STANDARD_GRAVITY
     elseif mode === :initial_endpoint
         supports_initial_endpoint_mass_pin(settings) || error(
             "[mass_fix].mode=\"initial_endpoint\" is implemented for GEOS native sources " *
-            "only; $(nameof(typeof(settings))) needs mode=\"target_ps_dry\" or target_total_kg")
+            "only; $(nameof(typeof(settings))) needs mode=\"target_ps_dry\"")
         return NaN
     else
         error("native-source [mass_fix].mode must be \"target_ps_dry\" or " *

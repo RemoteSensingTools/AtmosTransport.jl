@@ -6,6 +6,7 @@ using Dates
 using JSON3
 
 using AtmosTransport
+using .AtmosTransport.Parameters: GLOBAL_MEAN_DRY_SURFACE_PRESSURE
 using .AtmosTransport.Preprocessing: build_target_geometry, process_day,
                                       ERA5SpectralSettings
 
@@ -122,7 +123,7 @@ function _rg_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir;
         include_qv = include_qv,
         mass_basis = :moist,
         mass_fix_enable = mass_fix,
-        target_ps_dry_pa = 98726.0,
+        target_ps_dry_pa = GLOBAL_MEAN_DRY_SURFACE_PRESSURE,
         qv_global_climatology = 0.0,
         thermo_dir = dirname(out_dir),
         half_dt = 450.0,
@@ -219,6 +220,7 @@ end
         second_header, second_payload = _stable_binary_parts(second_path)
         @test second_header == first_header
         @test second_payload == first_payload
+        @test first_header[:surface_pressure_basis] == "total"
 
         # `write_replay_check = false` skips the gate and is recorded; same payload.
         off = _rg_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "off"))
@@ -243,8 +245,10 @@ end
                                                      next_day_hour0 = next_day))
         @test header[:mass_fix_qv_mode] == "global_qv_climatology"
         @test header[:horizontal_balance] == "column"
-        @test all(≈(98726.0 - 100000.0), header[:ps_offsets_pa_per_window])
-        @test header[:ps_offsets_next_day_hour0_pa] ≈ 98726.0 - 101000.0
+        @test all(≈(GLOBAL_MEAN_DRY_SURFACE_PRESSURE - 100000.0),
+                  header[:ps_offsets_pa_per_window])
+        @test header[:ps_offsets_next_day_hour0_pa] ≈
+              GLOBAL_MEAN_DRY_SURFACE_PRESSURE - 101000.0
 
         # A failed day keeps an existing binary and removes its staging file. Without
         # the pin, the last window's global mass change cannot be closed by horizontal

@@ -215,17 +215,39 @@ CS builder in `src/Models/initial_conditions/cubed_sphere.jl`):
 | `"latitude_step"` | yes | yes | yes | optional `south_value`, `north_value`, `split_lat_deg` |
 | `"bl_enhanced"` | yes | **no** | **no** | `background`, `enhancement`, `n_layers` (LL-only; RG/CS path errors at IC build) |
 | `"gaussian_blob"` | yes | yes | yes | `background`, `lon0_deg`, `lat0_deg`, `sigma_lon_deg`, `sigma_lat_deg`, `amplitude` |
-| `"file"` / `"netcdf"` | yes | yes | yes | `file`, `variable`, optional `time_index`, `vertical_order` |
-| `"file_field"` | yes | yes | yes | `file`, `variable`, optional `time_index`, `vertical_order` |
-| `"catrine_co2"` | yes | yes | yes | optional `file`, `variable`, `time_index` overrides for the built-in defaults |
+| `"file"` / `"netcdf"` | yes | yes | yes | `file`, `variable`, optional `humidity_variable`, `time_index`, `vertical_order` |
+| `"file_field"` | yes | yes | yes | `file`, `variable`, optional `humidity_variable`, `time_index`, `vertical_order` |
+| `"catrine_co2"` | yes | yes | yes | optional `file`, `variable`, `humidity_variable`, `time_index` overrides for the built-in defaults |
 | `"pressure_layer"` | no | no | yes | `lowest_layer = true` or `psurf_fraction`; optional `total_molecules` |
 | `"cs_native"` | no | no | yes | `file`, `variable`; optional `time_index`, `vertical_order`, `clamp_negative` (default `false`) |
 
 The file kinds (`file`, `netcdf`, `file_field`, `catrine_co2`) read a
-lon-lat-level field of dry VMR. A file with hybrid coefficients (`ap`, `bp`
-and `Psurf`, like the CATRINE start files) is oriented by its interface
-pressures and remapped onto the model levels in log pressure, whatever its
-level count. A file without them is copied level by level, so it must have the
+lon-lat-level field of layer-mean dry VMR. A file with hybrid coefficients
+`ap` and `bp` is oriented by its interface pressures and conservatively
+remapped, whatever its level count; `Psurf` is not needed or read. In each
+column the source interfaces are `ap + bp * ps_target`, using the transport
+binary's surface pressure, and the target interfaces are
+`A_target + B_target * ps_target`. The remap preserves layer pressure
+integrals. It is terrain-following near the surface, becomes absolute-pressure
+mapping where `bp = 0`, and extends the nearest end layer if a pressure-level
+source does not span the target top or surface. This avoids making an initial
+VMR depend on topographic differences or the preprocessing dry-mass pin; see
+the equations and CATRINE measurements in
+[`src/Models/initial_conditions/README.md`](https://github.com/RemoteSensingTools/AtmosTransport/blob/main/src/Models/initial_conditions/README.md).
+
+The dry-air weighting uses source specific humidity only when it is explicitly
+selected with `humidity_variable = "name"`; without that key, source humidity
+is not loaded. If the transport binary
+stores dry surface pressure, its window-start endpoint humidity is used to
+recover total pressure; on native cubed-sphere physics binaries VDIFF `qv` is
+used when endpoints are absent. A legacy dry-pressure binary with no humidity
+cannot determine total pressure, so the runtime keeps dry `ps` for hybrid
+interface placement and emits one warning. This approximation is typically
+0.5--2 % low in humid columns. Current binaries record this choice explicitly
+as `surface_pressure_basis = "total"` or `"dry"`; keyless legacy binaries are
+inferred once when opened and warn that regeneration is required.
+
+A file without `ap` and `bp` is copied level by level, so it must have the
 model's level count, and its vertical coordinate must say which end is the
 top: pressure units or CF `positive = "down"` (values grow toward the
 surface), height units or `positive = "up"`; otherwise set
@@ -969,12 +991,14 @@ ERA5 spectral path:
 ```toml
 [mass_fix]
 enable                = true
-target_ps_dry_pa      = 98726.0
 qv_global_climatology = 0.00247
 ```
 
 pins the global-mean surface pressure so that the dry air mass stays at
-`target_ps_dry_pa`. LL spectral runs without it drift by tens of Pa per window.
+`Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE` (98,325 Pa). LL spectral runs
+without it drift by tens of Pa per window. The target is one package constant,
+not a config choice; `target_ps_dry_pa` and `target_total_kg` are rejected as
+stale keys.
 
 Native sources (GEOS, MERRA-2 and ERA5 N320 to the cubed sphere):
 
@@ -982,11 +1006,12 @@ Native sources (GEOS, MERRA-2 and ERA5 N320 to the cubed sphere):
 [mass_fix]
 enable           = true
 mode             = "target_ps_dry"  # or "initial_endpoint" (GEOS only)
-target_ps_dry_pa = 98726.0          # target_total_kg = … takes precedence
 ```
 
 `target_ps_dry` (the default) pins the global dry air mass of every window
-endpoint to `target_ps_dry_pa` times the sphere's area divided by `g`.
+endpoint to `Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE` times the binary
+header sphere's area divided by `g`. The native correction is distributed as
+`Delta B_k (1-q_k)`, so pure-pressure layers are unchanged.
 `initial_endpoint` pins to the dry mass at the start of the first window
 instead, carried across the days of one preprocessing run; only the GEOS native
 path implements it, and the other sources reject it.

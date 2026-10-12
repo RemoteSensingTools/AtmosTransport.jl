@@ -728,7 +728,7 @@ Apply a uniform additive offset to `sp` so that ⟨sp⟩_area corresponds to a
 prescribed dry-air mass target inferred from a global humidity climatology.
 `sp` and `area` hold one value per column: lat-lon `(Nx, Ny)` or
 reduced-Gaussian `(ncell,)`. The defaults are `GLOBAL_MEAN_DRY_SURFACE_PRESSURE`
-(98726 Pa) and `GLOBAL_MEAN_SPECIFIC_HUMIDITY` (0.00247 kg kg⁻¹).
+(98325 Pa) and `GLOBAL_MEAN_SPECIFIC_HUMIDITY` (0.00247 kg kg⁻¹).
 """
 function pin_global_mean_ps!(sp::AbstractArray{<:Real},
                              area::AbstractArray{<:Real};
@@ -760,7 +760,7 @@ The correction is still spatially uniform in `ps`; only the global dry-mass
 targeting uses the instantaneous humidity pattern. `sp` and `area` hold one
 value per column and `qv` adds the level dimension last: lat-lon `(Nx, Ny)`
 and `(Nx, Ny, Nz)`, or reduced-Gaussian `(ncell,)` and `(ncell, Nz)`. The
-default target is `GLOBAL_MEAN_DRY_SURFACE_PRESSURE` (98726 Pa).
+default target is `GLOBAL_MEAN_DRY_SURFACE_PRESSURE` (98325 Pa).
 """
 function pin_global_mean_ps_using_qv!(sp::AbstractArray{<:Real},
                                       area::AbstractArray{<:Real},
@@ -796,9 +796,34 @@ function pin_global_mean_ps_using_qv!(sp::AbstractArray{<:Real},
 
     mean_dry_ps_current = sum_dry_ps_area / sum_area
     mean_alpha = sum_alpha_area / sum_area
-    mean_alpha > 0.0 || error("Computed non-positive dry-pressure sensitivity: $mean_alpha")
-
-    offset = (target_ps_dry_pa - mean_dry_ps_current) / mean_alpha
+    offset = _mass_target_offset(target_ps_dry_pa, mean_dry_ps_current, mean_alpha)
     @. sp += offset
     return offset
+end
+
+"""
+    _mass_target_offset(target, current, sensitivity) -> Float64
+
+Solve the linear dry-mass pin shared by the spectral and native paths,
+
+```math
+\\Delta p_s = \\frac{M_{\\mathrm{target}}-M_{\\mathrm{current}}}
+                   {\\partial M_{\\mathrm{dry}}/\\partial p_s}.
+```
+
+The inputs may be pressure or mass so long as `target` and `current` share
+units and `sensitivity` is their change per pascal. For a hybrid layer,
+`\\partial \\Delta p_{dry,k}/\\partial p_s = \\Delta B_k(1-q_k)`. Keeping this
+algebra in one function ensures the spectral surface-pressure pin and every
+native mass pin solve the same physical correction.
+"""
+function _mass_target_offset(target::Real, current::Real, sensitivity::Real)
+    target_f = Float64(target)
+    current_f = Float64(current)
+    sensitivity_f = Float64(sensitivity)
+    isfinite(target_f) || error("Dry-mass pin target must be finite; got $target")
+    isfinite(current_f) || error("Dry-mass pin current value must be finite; got $current")
+    isfinite(sensitivity_f) && sensitivity_f > 0.0 ||
+        error("Computed non-positive dry-pressure sensitivity: $sensitivity")
+    return (target_f - current_f) / sensitivity_f
 end

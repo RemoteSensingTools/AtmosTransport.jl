@@ -1,6 +1,9 @@
 #!/usr/bin/env julia
 """
-Tests for the virtual-temperature `dz` helper (D6 fix). Three checks:
+Tests for diffusion pressure recovery and hydrostatic `dz` helpers. Checks
+cover structured and face-indexed CPU arrays, cubed-sphere tuples, the
+runtime humidity-selection contract, and optional CUDA execution. Metal is
+covered by `test/diagnostic/test_metal_kernels.jl` on supported CI hosts.
 
   1. Numerical correctness vs hand-computed dz at a few sample columns.
      For each `(i, j, k)`, dz should reduce to
@@ -14,23 +17,209 @@ Tests for the virtual-temperature `dz` helper (D6 fix). Three checks:
   3. dz_v != dz_c when virtual T differs from `T_ref = 260 K` — the
      whole point of D6.
 
-NOTE: the runtime fallback `_fill_dz_for_diffusion!` in
-`src/Models/driven_physics_refresh.jl` (which warns + reverts to constT when
-the window lacks `vdiff`) is exercised indirectly by the regression
-test suite when LocalHoltslagBovilleKzField runs are loaded. We don't
-unit-test it here because it requires constructing a mock
-`DrivenSimulation` with a synthetic window payload — out of scope for
-the kernel-level helper tests.
 """
 
 using Test
 import AtmosTransport
 using .AtmosTransport.Operators.Diffusion: fill_dz_hydrostatic_virtualT!,
-                                            fill_dz_hydrostatic_constT!
+                                            fill_dz_hydrostatic_constT!,
+                                            recover_total_surface_pressure!
 using .AtmosTransport.Parameters: R_DRY_AIR, STANDARD_GRAVITY
+using .AtmosTransport.Models: _diffusion_pressure_humidity,
+                               _diffusion_total_surface_pressure!
+using .AtmosTransport.Operators: DiffusionWorkspace
+using .AtmosTransport.Operators.Diffusion: _stage_hybrid_coefficients!
 
 const _R_DRY  = R_DRY_AIR
 const _G_REF  = STANDARD_GRAVITY
+
+const HAS_CUDA_DZ = try
+    using CUDA
+    CUDA.functional()
+catch
+    false
+end
+
+@testset "dry and total surface pressure give equivalent diffusion dz" begin
+    FT = Float64
+    Nx, Ny, Nz = 3, 2, 4
+    ak = FT[100, 500, 1200, 800, 0]
+    bk = FT[0, 0.1, 0.35, 0.7, 1]
+    ps_total = FT[96_000 + 300i + 200j for i in 1:Nx, j in 1:Ny]
+    qv = FT[0.001 + 0.003k + 0.0002i for i in 1:Nx, j in 1:Ny, k in 1:Nz]
+    ps_dry = similar(ps_total)
+    for j in 1:Ny, i in 1:Nx
+        ps_dry[i, j] = sum((1 - qv[i, j, k]) *
+                           ((ak[k + 1] - ak[k]) +
+                            (bk[k + 1] - bk[k]) * ps_total[i, j]) for k in 1:Nz)
+    end
+
+    recovered = similar(ps_total)
+    recover_total_surface_pressure!(recovered, ps_dry, qv, ak, bk)
+    dz_total, dz_dry = zeros(FT, Nx, Ny, Nz), zeros(FT, Nx, Ny, Nz)
+    fill_dz_hydrostatic_constT!(dz_total, ps_total, ak, bk)
+    fill_dz_hydrostatic_constT!(dz_dry, recovered, ak, bk)
+    @test recovered ≈ ps_total rtol = 32eps(FT)
+    @test dz_dry ≈ dz_total rtol = 64eps(FT)
+
+    if HAS_CUDA_DZ
+        recovered_gpu = CUDA.zeros(FT, Nx, Ny)
+        recover_total_surface_pressure!(recovered_gpu, CUDA.CuArray(ps_dry),
+                                        CUDA.CuArray(qv), ak, bk)
+        dz_gpu = CUDA.zeros(FT, Nx, Ny, Nz)
+        fill_dz_hydrostatic_constT!(dz_gpu, recovered_gpu, ak, bk)
+        @test Array(recovered_gpu) ≈ ps_total rtol = 32eps(FT)
+        @test Array(dz_gpu) ≈ dz_total rtol = 64eps(FT)
+    end
+end
+
+@testset "Float64 hybrid coefficients stage into Float32 workspaces" begin
+    FT = Float32
+    Nx, Ny, Nz = 2, 2, 3
+    A64 = Float64[125.125, 80.25, 20.5, 0.0]
+    B64 = Float64[0.0, 0.2, 0.625, 1.0]
+    A32, B32 = FT.(A64), FT.(B64)
+    ps_total = FT[95_000 + 100i + 50j for i in 1:Nx, j in 1:Ny]
+    qv = FT[0.002 + 0.001k for i in 1:Nx, j in 1:Ny, k in 1:Nz]
+    ps_dry = FT[sum((one(FT) - qv[i, j, k]) *
+                    ((A32[k + 1] - A32[k]) +
+                     (B32[k + 1] - B32[k]) * ps_total[i, j]) for k in 1:Nz)
+                for i in 1:Nx, j in 1:Ny]
+
+    workspace = DiffusionWorkspace(ones(FT, Nx, Ny, Nz))
+    staged = _stage_hybrid_coefficients!(workspace.hybrid_coefficients, A64, B64)
+    @test eltype(staged.A) === FT
+    @test eltype(staged.B) === FT
+    @test staged.A == A32
+    @test staged.B == B32
+
+    recovered64 = zeros(FT, Nx, Ny)
+    recovered32 = similar(recovered64)
+    recover_total_surface_pressure!(recovered64, ps_dry, qv, A64, B64)
+    recover_total_surface_pressure!(recovered32, ps_dry, qv, A32, B32)
+    @test recovered64 == recovered32
+
+    dz64 = zeros(FT, Nx, Ny, Nz)
+    dz32 = similar(dz64)
+    fill_dz_hydrostatic_constT!(dz64, recovered64, A64, B64)
+    fill_dz_hydrostatic_constT!(dz32, recovered32, A32, B32)
+    @test dz64 == dz32
+end
+
+@testset "dry-pressure recovery handles pure-pressure and unobservable coordinates" begin
+    FT = Float64
+
+    # Surface pressure does not enter an A-only coordinate, so dry→total
+    # recovery is both unnecessary and mathematically unobservable. Preserve
+    # the finite input instead of evaluating 0/0. Exercise both runtime shapes.
+    ak_pressure = FT[0, 90_000]
+    bk_pressure = FT[0, 0]
+    ps_matrix = fill(FT(90_000), 3, 2)
+    qv_matrix = zeros(FT, 3, 2, 1)
+    recovered_matrix = fill(FT(NaN), 3, 2)
+    recover_total_surface_pressure!(recovered_matrix, ps_matrix, qv_matrix,
+                                    ak_pressure, bk_pressure)
+    @test recovered_matrix == ps_matrix
+
+    ps_vector = fill(FT(90_000), 5)
+    qv_vector = zeros(FT, 5, 1)
+    recovered_vector = fill(FT(NaN), 5)
+    recover_total_surface_pressure!(recovered_vector, ps_vector, qv_vector,
+                                    ak_pressure, bk_pressure)
+    @test recovered_vector == ps_vector
+
+    dz_matrix = zeros(FT, 3, 2, 1)
+    dz_vector = zeros(FT, 5, 1)
+    fill_dz_hydrostatic_constT!(dz_matrix, recovered_matrix, ak_pressure, bk_pressure)
+    fill_dz_hydrostatic_constT!(dz_vector, recovered_vector, ak_pressure, bk_pressure)
+    @test all(isfinite, dz_matrix)
+    @test all(isfinite, dz_vector)
+
+    # When B does affect pressure but saturated/unphysical humidity removes
+    # every observable B increment, recovery must fail explicitly rather than
+    # emitting NaN/Inf into the following dz kernel.
+    ak_sigma = FT[0, 0]
+    bk_sigma = FT[0, 1]
+    @test_throws ArgumentError recover_total_surface_pressure!(
+        similar(ps_matrix), ps_matrix, ones(FT, 3, 2, 1), ak_sigma, bk_sigma)
+    @test_throws ArgumentError recover_total_surface_pressure!(
+        similar(ps_vector), ps_vector, ones(FT, 5, 1), ak_sigma, bk_sigma)
+
+    # Validation is performed on the actual accumulated slope inside the
+    # recovery kernel, including non-finite inputs and arithmetic overflow.
+    ps_one = fill(FT(90_000), 1, 1)
+    dest_one = similar(ps_one)
+    for bad_qv in (fill(FT(-Inf), 1, 1, 1), fill(FT(NaN), 1, 1, 1))
+        @test_throws ArgumentError recover_total_surface_pressure!(
+            dest_one, ps_one, bad_qv, ak_sigma, bk_sigma)
+    end
+    qv_overflow = fill(-floatmax(FT), 1, 1, 2)
+    @test_throws ArgumentError recover_total_surface_pressure!(
+        dest_one, ps_one, qv_overflow, FT[0, 0, 0], FT[0, 1, 2])
+
+    # One shared device-style status flag covers all six panel launches.
+    panel_ps = ntuple(_ -> fill(FT(90_000), 1, 1), 6)
+    panel_dest = ntuple(_ -> zeros(FT, 1, 1), 6)
+    panel_qv = ntuple(p -> p == 4 ? fill(FT(NaN), 1, 1, 1) : zeros(FT, 1, 1, 1), 6)
+    @test_throws ArgumentError recover_total_surface_pressure!(
+        panel_dest, panel_ps, panel_qv, ak_sigma, bk_sigma)
+
+    pure_panel_dest = ntuple(_ -> fill(FT(NaN), 1, 1), 6)
+    recover_total_surface_pressure!(pure_panel_dest, panel_ps,
+                                    ntuple(_ -> zeros(FT, 1, 1, 1), 6),
+                                    ak_pressure, bk_pressure)
+    @test all(pure_panel_dest[p] == panel_ps[p] for p in 1:6)
+end
+
+@testset "cubed-sphere dz helpers preflight every panel and coefficient length" begin
+    FT = Float64
+    Nc, Nz = 2, 2
+    A = FT[100, 50, 0]
+    B = FT[0, 0.5, 1]
+    ps = ntuple(_ -> fill(FT(95_000), Nc, Nc), 6)
+    qv = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
+
+    recovered = ntuple(_ -> fill(FT(-1), Nc, Nc), 6)
+    bad_ps = ntuple(p -> p == 6 ? zeros(FT, Nc + 1, Nc) : ps[p], 6)
+    @test_throws DimensionMismatch recover_total_surface_pressure!(recovered, bad_ps, qv, A, B)
+    @test all(all(==(-one(FT)), recovered[p]) for p in 1:6)
+    @test_throws DimensionMismatch recover_total_surface_pressure!(
+        recovered, ps, qv, A[1:end-1], B)
+
+    dz = ntuple(_ -> fill(FT(-1), Nc, Nc, Nz), 6)
+    @test_throws DimensionMismatch fill_dz_hydrostatic_constT!(dz, bad_ps, A, B)
+    @test all(all(==(-one(FT)), dz[p]) for p in 1:6)
+    @test_throws DimensionMismatch fill_dz_hydrostatic_constT!(dz, ps, A, B[1:end-1])
+
+    t = ntuple(_ -> fill(FT(250), Nc, Nc, Nz), 6)
+    bad_t = ntuple(p -> p == 5 ? fill(FT(250), Nc, Nc, Nz + 1) : t[p], 6)
+    @test_throws DimensionMismatch fill_dz_hydrostatic_virtualT!(dz, bad_t, qv, ps, A, B)
+    @test all(all(==(-one(FT)), dz[p]) for p in 1:6)
+    @test_throws DimensionMismatch fill_dz_hydrostatic_virtualT!(
+        dz, t, qv, ps, A[1:end-1], B)
+end
+
+@testset "diffusion runtime humidity selection and missing-humidity fallback" begin
+    qv_start = fill(0.01, 2, 2, 2)
+    qv_vdiff = fill(0.02, 2, 2, 2)
+    @test _diffusion_pressure_humidity((; qv_start, vdiff = (; qv = qv_vdiff))) === qv_start
+    @test _diffusion_pressure_humidity((; qv_start = nothing,
+                                        vdiff = (; qv = qv_vdiff))) === qv_vdiff
+    @test _diffusion_pressure_humidity((; qv_start = nothing, vdiff = nothing)) === nothing
+
+    ps = fill(90_000.0, 2, 2)
+    workspace = DiffusionWorkspace(ones(2, 2, 2))
+    coefficients = _stage_hybrid_coefficients!(workspace.hybrid_coefficients,
+                                               [0.0, 0.0, 0.0],
+                                               [0.0, 0.5, 1.0])
+    returned = Ref{Any}()
+    @test_logs (:warn, r"dry surface pressure without endpoint or VDIFF humidity") begin
+        returned[] = _diffusion_total_surface_pressure!(
+            AtmosTransport.DrySurfacePressure(), workspace.factors,
+            ps, [0.0, 0.0, 0.0], [0.0, 0.5, 1.0], nothing, coefficients)
+    end
+    @test returned[] === ps
+end
 
 @testset "fill_dz_hydrostatic_virtualT! — single 3D array matches hand formula" begin
     FT = Float64

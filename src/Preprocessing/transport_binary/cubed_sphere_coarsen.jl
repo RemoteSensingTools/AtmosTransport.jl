@@ -190,12 +190,20 @@ function _experimental_coarsen_metadata(reader, output_Nc::Int, ratio::Int)
         "regrid_method" => "nested_block_operator_restriction",
         "poisson_balanced" => true,
     )
-    for key in ("date", "mass_fix_enabled", "mass_fix_target_ps_dry_pa",
-                "global_mass_pin_enabled", "global_mass_pin_target_kg",
+    for key in ("date",
                 "vertical_mapping_method", "target_vertical_name",
                 "target_coefficients", "merge_map", "merge_min_thickness_Pa",
                 "horizontal_balance")    # block sums keep the source's balance
         haskey(raw, key) && (metadata[key] = raw[key])
+    end
+    pin_enabled = _dry_mass_pin_enabled(raw, basename(reader.path))
+    if pin_enabled !== nothing
+        metadata["mass_fix_enabled"] = pin_enabled
+        if pin_enabled
+            dry_target = binary_dry_mass_target(reader).ps_dry_pa
+            dry_target === nothing ||
+                (metadata["mass_fix_target_ps_dry_pa"] = dry_target)
+        end
     end
     return metadata
 end
@@ -294,6 +302,7 @@ function coarsen_nested_cs_transport_binary(
             flux_kind = :substep_mass_amount,
             include_flux_delta = true,
             mass_basis = h.mass_basis,
+            surface_pressure_basis = surface_pressure_basis(reader),
             tm5_convection_mass_basis = tm5_convection_mass_basis(reader),
             include_surface,
             include_precomputed_dkg = include_dkg,

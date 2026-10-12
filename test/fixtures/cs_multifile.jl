@@ -8,6 +8,7 @@ function cs_handoff_fixture(path, strengths; FT=Float64)
     vc = HybridSigmaPressure(fill(FT(100),Nz+1),FT.(range(0,1;length=Nz+1)))
     writer = MD.open_streaming_cs_transport_binary(path,Nc,6,Nz,length(strengths),vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
         FT,dt_met_seconds=3600.0,steps_per_window=2,mass_basis=:dry,
+        surface_pressure_basis=DrySurfacePressure(),
         include_cmfmc=true,include_dtrain=true,include_tm5conv=true)
     try
         for strength in strengths

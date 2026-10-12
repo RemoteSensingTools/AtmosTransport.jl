@@ -286,6 +286,9 @@ end
             @test reader.header.nwindow == 24                        # GEOS hourly
             @test reader.header.steps_per_window == 8
             @test reader.header.mass_basis === :dry
+            @test reader.header.raw_header["surface_pressure_basis"] == "dry"
+            @test AtmosTransport.MetDrivers.surface_pressure_basis(reader) isa
+                  AtmosTransport.DrySurfacePressure
             @test reader.header.geometry.panel_convention === :geos_native
             @test :dm in reader.header.payload_sections              # delta enabled
             @test reader.header.raw_header["runtime_substep_contract"] == "binary_schedule"
@@ -298,6 +301,33 @@ end
             @test any(panel -> any(x -> x != 0, panel), window.bm)
         finally
             close(reader)
+        end
+
+        # Fixed-target native pin: exercises the GEOS endpoint-q path and the
+        # header-radius round trip. Choosing the unpinned first endpoint as the
+        # target keeps this synthetic fixture close to its original state.
+        target_reader = TransportBinaryReader(out_path; FT = FT_TEST)
+        target_window = AtmosTransport.MetDrivers.load_window!(target_reader, 1)
+        target_kg = sum(sum(Float64, panel) for panel in target_window[1])
+        close(target_reader)
+        target_ps = target_kg * AtmosTransport.Parameters.STANDARD_GRAVITY /
+                    (4π * grid.mesh.radius^2)
+        pinned_path = joinpath(tmpdir, "out_cs_pinned.bin")
+        process_day(Date(2021, 12, 1), grid, settings, vertical;
+                    out_path = pinned_path, dt_met_seconds = 3600.0,
+                    FT = FT_TEST, mass_basis = :dry, replay_tol = 1e-12,
+                    global_mass_pin = true, global_mass_target_kg = target_kg)
+        pinned_reader = TransportBinaryReader(pinned_path; FT = FT_TEST)
+        try
+            @test pinned_reader.header.raw_header["mass_fix_target_ps_dry_pa"] ≈
+                  target_ps rtol = 1e-14
+            pinned_window = AtmosTransport.MetDrivers.load_window!(pinned_reader, 1)
+            held_ps = sum(sum(Float64, panel) for panel in pinned_window[1]) *
+                      AtmosTransport.Parameters.STANDARD_GRAVITY /
+                      (4π * pinned_reader.header.planet_radius_m^2)
+            @test held_ps ≈ target_ps rtol = 2e-7
+        finally
+            close(pinned_reader)
         end
 
         second_path = joinpath(tmpdir, "out_cs_second.bin")

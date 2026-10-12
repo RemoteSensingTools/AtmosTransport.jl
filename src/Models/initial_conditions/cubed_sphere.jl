@@ -10,8 +10,12 @@
 function build_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                                     grid::AtmosGrid{<:CubedSphereMesh},
                                     cfg;
-                                    surface_pressure::Union{Nothing, NTuple{6, <:AbstractMatrix}} = nothing) where FT
-    return _build_cs_initial_mixing_ratio(air_mass, grid, cfg, nothing; surface_pressure)
+                                    surface_pressure::Union{Nothing, NTuple{6, <:AbstractMatrix}} = nothing,
+                                    pressure_basis::AbstractSurfacePressureBasis = TotalSurfacePressure(),
+                                    mass_basis::AbstractMassBasis = DryBasis(),
+                                    qv::Union{Nothing, NTuple{6}} = nothing) where FT
+    return _build_cs_initial_mixing_ratio(
+        air_mass, grid, cfg, nothing; surface_pressure, pressure_basis, mass_basis, qv)
 end
 
 # The allocating public API always owns fresh panels. The runner may reuse its
@@ -32,7 +36,10 @@ end
 
 function _build_cs_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                                        grid::AtmosGrid{<:CubedSphereMesh}, cfg, vmr;
-                                       surface_pressure::Union{Nothing, NTuple{6, <:AbstractMatrix}} = nothing) where FT
+                                       surface_pressure::Union{Nothing, NTuple{6, <:AbstractMatrix}} = nothing,
+                                       pressure_basis::AbstractSurfacePressureBasis = TotalSurfacePressure(),
+                                       mass_basis::AbstractMassBasis = DryBasis(),
+                                       qv::Union{Nothing, NTuple{6}} = nothing) where FT
     kind = _init_kind(cfg)
     mesh = grid.horizontal
     Nc = mesh.Nc
@@ -79,7 +86,8 @@ function _build_cs_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 
             "init.kind=pressure_layer requires `surface_pressure` " *
             "(NTuple{6, Matrix}) so the target layer can be selected by " *
             "per-column ps. Pass `window.surface_pressure` from the binary."))
-        return _build_cs_pressure_layer_ic(air_mass, grid, cfg, FT, surface_pressure, vmr)
+        return _build_cs_pressure_layer_ic(air_mass, grid, cfg, FT, surface_pressure,
+                                           pressure_basis, qv, vmr)
     elseif kind === :cs_native
         return _build_cs_native_ic(grid, air_mass, cfg, FT)
     elseif _is_file_init_kind(kind)
@@ -96,7 +104,10 @@ function _build_cs_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 
             size(surface_pressure[p]) == (Nc, Nc) || throw(DimensionMismatch(
                 "surface_pressure[$p] size $(size(surface_pressure[p])) must be ($Nc, $Nc)"))
         end
-        return _build_cs_file_ic(grid, air_mass, cfg, FT, surface_pressure)
+        qv === nothing || all(p -> size(qv[p]) == (Nc, Nc, Nz), 1:CS_PANEL_COUNT) ||
+            throw(DimensionMismatch("CS target humidity panels must each have shape ($Nc, $Nc, $Nz)"))
+        return _build_cs_file_ic(grid, air_mass, cfg, FT, surface_pressure,
+                                 pressure_basis, mass_basis, qv)
     else
         throw(ArgumentError(
             "unsupported init.kind=$(kind) for CubedSphereMesh; " *
@@ -107,7 +118,10 @@ end
 function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
                            air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                            cfg, ::Type{FT},
-                           ps_tgt_panels::NTuple{6, <:AbstractMatrix}) where FT
+                           ps_tgt_panels::NTuple{6, <:AbstractMatrix},
+                           pressure_basis::AbstractSurfacePressureBasis,
+                           mass_basis::AbstractMassBasis,
+                           target_qv_panels::Union{Nothing, NTuple{6}}) where FT
     mesh = grid.horizontal
     Nc   = mesh.Nc
     Nz   = size(air_mass[1], 3)
@@ -134,37 +148,43 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
     vmr_src_levels = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nlev_src), CS_PANEL_COUNT)
     unpack_flat_to_panels_3d!(vmr_src_levels, dst_flat, Nc, Nlev_src)
 
-    # 2D source surface pressure (files with hybrid coefficients, always remapped).
-    # NOTE: this is the SOURCE psurf (Catrine), used to build source p-half
-    # levels. The TARGET ps comes from `ps_tgt_panels` passed in by the caller
-    # — the binary's own ps. Mixing the two cleanly is what fixes the
-    # area-mismatch artifact.
-    src_ps_panels = if source.needs_vinterp
-        src_ps_flat = Vector{Float64}(undef, n_src)
-        dst_ps_flat = Vector{Float64}(undef, n_dst)
-        copyto!(src_ps_flat, reshape(source.psurf, n_src))
-        apply_regridder!(dst_ps_flat, regridder, src_ps_flat)
-        panels_ps = ntuple(_ -> Matrix{Float64}(undef, Nc, Nc), CS_PANEL_COUNT)
-        unpack_flat_to_panels_2d!(panels_ps, dst_ps_flat, Nc)
-        panels_ps
-    else
+    source_qv_levels = if source.qv === nothing
         nothing
+    else
+        copyto!(src_flat, reshape(source.qv, n_src, Nlev_src))
+        apply_regridder!(dst_flat, regridder, src_flat)
+        panels = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nlev_src), CS_PANEL_COUNT)
+        unpack_flat_to_panels_3d!(panels, dst_flat, Nc, Nlev_src)
+        panels
     end
 
     # Vertical remap column-by-column into interior `(Nc, Nc, Nz)` tuple.
     vmr = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), CS_PANEL_COUNT)
     src_q = Vector{FT}(undef, Nlev_src)
+    # Keep the loop-local scratch concrete even when source humidity is absent.
+    # Its values are only consumed when `source_qv_levels !== nothing`.
+    src_qv = similar(src_q)
+    src_p = Vector{Float64}(undef, length(source.ap))
+    cumulative = similar(src_p)
+    dry_cumulative = similar(src_p)
+    source.needs_vinterp &&
+        _warn_surface_pressure_approximation(pressure_basis, target_qv_panels)
 
     for p in 1:CS_PANEL_COUNT
         for j in 1:Nc, i in 1:Nc
             @views copyto!(src_q, vmr_src_levels[p][i, j, :])
+            source_qv_levels === nothing || @views copyto!(
+                src_qv, source_qv_levels[p][i, j, :])
             if source.needs_vinterp
-                ps_src = Float64(src_ps_panels[p][i, j])
-                ps_tgt = Float64(ps_tgt_panels[p][i, j])
-                _interpolate_log_pressure_profile!(@view(vmr[p][i, j, :]),
-                                                   src_q,
-                                                   source.ap, source.bp, ps_src,
-                                                   A_tgt, B_tgt, ps_tgt)
+                target_qv = target_qv_panels === nothing ? nothing :
+                            @view(target_qv_panels[p][i, j, :])
+                ps_total = _total_surface_pressure(
+                    pressure_basis, ps_tgt_panels[p][i, j], A_tgt, B_tgt, target_qv)
+                source_qv = source_qv_levels === nothing ? nothing : src_qv
+                _remap_hybrid_profile!(@view(vmr[p][i, j, :]), src_q, source_qv,
+                                       source.ap, source.bp,
+                                       A_tgt, B_tgt, ps_total,
+                                       src_p, cumulative, dry_cumulative)
             else
                 _copy_profile!(@view(vmr[p][i, j, :]), src_q)
             end
@@ -274,6 +294,8 @@ function _build_cs_pressure_layer_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}}
                                       grid::AtmosGrid{<:CubedSphereMesh},
                                       cfg, ::Type{FT},
                                       surface_pressure::NTuple{6, <:AbstractMatrix},
+                                      pressure_basis::AbstractSurfacePressureBasis,
+                                      qv::Union{Nothing, NTuple{6}},
                                       vmr = nothing) where FT
     mesh = grid.horizontal
     Nc   = mesh.Nc
@@ -293,6 +315,9 @@ function _build_cs_pressure_layer_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}}
         (FT(0) < psurf_fraction <= FT(1)) || throw(ArgumentError(
             "init.kind=pressure_layer requires 0 < psurf_fraction <= 1; got $(psurf_fraction)"))
     end
+    qv === nothing || all(p -> size(qv[p]) == (Nc, Nc, Nz), 1:CS_PANEL_COUNT) ||
+        throw(DimensionMismatch("CS target humidity panels must each have shape ($Nc, $Nc, $Nz)"))
+    !lowest_layer && _warn_surface_pressure_approximation(pressure_basis, qv)
     total_molecules > 0 || throw(ArgumentError(
         "init.kind=pressure_layer requires total_molecules > 0; got $(total_molecules)"))
 
@@ -309,7 +334,9 @@ function _build_cs_pressure_layer_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}}
         for p in 1:CS_PANEL_COUNT
             ps = surface_pressure[p]
             for j in 1:Nc, i in 1:Nc
-                ps_col = Float64(ps[i, j])
+                qv_col = qv === nothing ? nothing : @view(qv[p][i, j, :])
+                ps_col = _total_surface_pressure(
+                    pressure_basis, ps[i, j], A, B, qv_col)
                 target_p = psurf_fraction * ps_col
                 k_best, dp_best = 1, Inf
                 for k in 1:Nz

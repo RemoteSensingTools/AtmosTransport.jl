@@ -1,7 +1,7 @@
 #!/usr/bin/env julia
 # File-based initial conditions start the right way up: files with hybrid
-# coefficients are oriented by their interface pressures and remapped in log
-# pressure, whatever their level count; files without them must match the
+# coefficients are oriented by their interface pressures and conservatively
+# remapped, whatever their level count; files without them must match the
 # model's levels and say which end is the top.
 
 using Test
@@ -33,7 +33,6 @@ function write_ic(path; q, ap = nothing, bp = nothing, lev = Float64.(0:length(q
             defDim(ds, "ilev", nlev + 1)
             defVar(ds, "ap", Float64, ("ilev",))[:] = ap
             defVar(ds, "bp", Float64, ("ilev",))[:] = bp
-            defVar(ds, "Psurf", Float64, ("lon", "lat"))[:, :] = fill(PS, 4, 3)
         end
         field = Array{Float64}(undef, 4, 3, nlev)
         for k in 1:nlev
@@ -61,13 +60,17 @@ end
         top = write_ic(joinpath(dir, "top.nc"); q = Q_TOP, ap = A_TOP, bp = B_TOP)
         @test column(sfc) ≈ Q_TOP
         @test column(top) ≈ Q_TOP
-        # Another level count: a profile linear in log pressure on eight finer
-        # sigma levels is remapped exactly onto the model's layer midpoints,
-        # from a top-first and from a surface-first file alike.
-        bp8 = [0.0, 0.01, 0.05, 0.15, 0.3, 0.5, 0.7, 0.9, 1.0]                # top first
-        mid(p) = 0.5 .* (p[1:end-1] .+ p[2:end])
-        q8 = 1e-6 .* log.(mid(bp8 .* PS))
-        expected = 1e-6 .* log.(mid(A_TOP .+ B_TOP .* PS))
+        # Another level count: conservative means over eight finer sigma
+        # layers are reproduced from top-first and surface-first files alike.
+        # Fine interfaces include the target interfaces 0, .05, .30, .65, 1.
+        bp8 = [0.0, 0.01, 0.05, 0.15, 0.3, 0.5, 0.65, 0.9, 1.0]             # top first
+        q8 = 1e-6 .* collect(1.0:8.0)
+        expected = 1e-6 .* [
+            (1 * 0.01 + 2 * 0.04) / 0.05,
+            (3 * 0.10 + 4 * 0.15) / 0.25,
+            (5 * 0.20 + 6 * 0.15) / 0.35,
+            (7 * 0.25 + 8 * 0.10) / 0.35,
+        ]
         fine_top = write_ic(joinpath(dir, "fine_top.nc"); q = q8, ap = zeros(9), bp = bp8)
         fine_sfc = write_ic(joinpath(dir, "fine_sfc.nc"); q = reverse(q8), ap = zeros(9), bp = reverse(bp8))
         @test column(fine_top) ≈ expected rtol = 1e-12

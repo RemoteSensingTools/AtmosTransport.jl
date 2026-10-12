@@ -20,7 +20,8 @@ else
                                  FT.(range(0, 1; length = Nz + 1)))
         writer = MD.open_streaming_cs_transport_binary(path, Nc, 6, Nz, nwin, vc;
             planet_radius = AtmosTransport.Parameters.EARTH_RADIUS, FT,
-            dt_met_seconds = 3600.0, steps_per_window = steps, mass_basis = :dry)
+            dt_met_seconds = 3600.0, steps_per_window = steps, mass_basis = :dry,
+            surface_pressure_basis = TotalSurfacePressure())
         try
             for _ in 1:nwin
                 MD.write_streaming_cs_window!(writer, (;

@@ -45,7 +45,8 @@ time-varying field contracts consumed by operators.
 ## File Map
 
 - [`State.jl`](State.jl) — submodule assembly and re-exports
-- [`Basis.jl`](Basis.jl) — dry/moist basis tags for state and fluxes
+- [`Basis.jl`](Basis.jl) — dry/moist mass-basis tags plus typed total/dry
+  surface-pressure interpretations used by transport-binary readers
 - [`CellState.jl`](CellState.jl) — structured and face-indexed
   cell-centered prognostic state
 - [`CubedSphereState.jl`](CubedSphereState.jl) — panel-native

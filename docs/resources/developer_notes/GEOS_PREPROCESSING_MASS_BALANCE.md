@@ -1,14 +1,22 @@
 > **Archived research note.** This dated investigation is preserved for
 > scientific provenance. Paths, run status, and implementation details may
 > have changed; use the maintained manual for current workflows.
+
+> **Correction (2026-10-11).** The former 98,726 Pa target came from converting
+> Trenberth and Smith's dry-air mass with constant gravity on a sphere. That
+> conversion cannot reproduce their pressure because their estimate includes
+> Earth's shape and varying gravity. All current paths instead use the measured
+> shared modern-reanalysis dry mean, 98,325 Pa, from
+> `Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE`. The config target key was
+> removed, and the native correction is distributed by `Delta B (1-q)`.
 # GEOS Preprocessing: Mass-Flux Balance and Global Dry-Air Conservation
 
 > **Status (2026-05-29).** Global dry-air pins are **shipped** for both native
 > CS-producing paths in commit `8646772` ("Pin global dry mass in native
 > preprocessing"): **GEOS-CS** and **ERA5 N320→C180** both pin the **measured**
 > dry-air mass (after the Q-based dry-DELP derivation) to the **same fixed
-> absolute target** (`mode = "target_ps_dry"`, `target_ps_dry_pa = 98726.0`,
-> ⟨dry mass⟩ = 5.135e18 kg). Sharing one target across the two paths is what
+> absolute target** (`mode = "target_ps_dry"`, 98,325 Pa,
+> ⟨dry mass⟩ = 5.114e18 kg on the IFS sphere). Sharing one target across the two paths is what
 > makes GEOS-driven and ERA-N320-driven binaries mutually consistent (one
 > dry-air baseline; see §7). Enable per config via `[mass_fix]`. The local
 > mass-flux balance (column or per-layer) is orthogonal and unchanged. Per-day
@@ -211,7 +219,7 @@ that pairing is what makes their binaries mutually consistent.
 | Local balance | Poisson | column / per-layer | column / per-layer | algebraic Cameron-Smith (zonal-band) |
 | Global dry-air pin | **yes** (`pin_global_mean_ps!`) | **yes** (`mode="target_ps_dry"`) | **yes** (`mode="target_ps_dry"`) | n/a (online, never stitches snapshots) |
 | Pin quantity | total `ps` → dry via climatological ⟨q_v⟩=0.00247 | **measured** dry mass directly | **measured** dry mass directly | — |
-| Fixed target | `target_ps_dry_pa` | `98726.0` (shared) | `98726.0` (shared) | — |
+| Fixed target | `Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE` | `98325.0` (shared) | `98325.0` (shared) | — |
 | Native fluxes | reconstructed from winds | reconstructed from winds | native dry MFXC/MFYC | dry mass flux |
 | `ps` after pin | uniform shift on `ps` | recomputed from pinned mass | recomputed from pinned mass | — |
 | Endpoint source | spectral LNSP → ps | N320 PS − Q → dry mass (regridded) | moist PS − Q → dry mass | live GMAO stream at 450 s |
@@ -219,8 +227,8 @@ that pairing is what makes their binaries mutually consistent.
 | Cadence | hourly window | hourly window | hourly window | 450 s dynamics step |
 
 **ERA-N320 and GEOS-CS are the consistent pair.** Both pin the *measured* dry
-mass (each has the real per-column Q) to the *same* `98726.0` Pa target
-(⟨dry mass⟩ = 5.135e18 kg), and both recompute `ps` from the pinned mass. So a
+mass (each has the real per-column Q) to the *same* `98325.0` Pa target
+(⟨dry mass⟩ = 5.114e18 kg on the IFS sphere), and both recompute `ps` from the pinned mass. So a
 4D-Var inversion can mix ERA-N320-driven and GEOS-driven binaries with no
 dry-air baseline jump in XCO₂. The ERA *spectral* path (the original
 `pin_global_mean_ps!`) instead works on total `ps` and converts the dry target
@@ -247,9 +255,9 @@ zonal-band structure fits our polar-clustered target poorly).
 1. **GEOS-CS global dry-air pin** (`mode = "target_ps_dry"`). Compute the
    *measured* global dry-air mass after the Q-based dry-DELP derivation, then
    apply a uniform offset so it equals a fixed target
-   `target_ps_dry_pa · A_Earth / g` (Trenberth & Smith 2005:
-   M_dry = 5.1352e18 kg → ⟨ps_dry⟩ ≈ 98726 Pa). Recompute `ps` from the pinned
-   dry mass. No climatological ⟨q_v⟩ proxy — GEOS has the real Q (§7).
+   `GLOBAL_MEAN_DRY_SURFACE_PRESSURE · A_header / g`. Recompute `ps` from
+   the pinned dry mass. The correction in layer `k` is
+   `Delta B_k Delta ps (1-q_k) A/g`; pure-pressure layers are unchanged.
 2. **Keep the local balance.** Pin and balance are orthogonal; the pin fixes
    the global mean the balance discards as its singular mode. Because MFXC/MFYC
    are native dry fluxes, the pin only shifts endpoint masses; the balance then
@@ -267,7 +275,7 @@ started it — Dec 1 and Dec 6 would carry different global dry masses. A fixed
 absolute target removes both the drift and the baseline ambiguity, which buys
 two things beyond reproducibility:
 
-- **Cross-dataset comparability.** Using the *same* 98726 Pa target for ERA and
+- **Cross-dataset comparability.** Using the *same* 98325 Pa target for ERA and
   GEOS gives both driver families one shared dry-air baseline, so an inversion
   can mix ERA-driven and GEOS-driven binaries without a baseline jump in XCO₂.
 - **Multi-day binary coherence — the precondition for the preprocessing

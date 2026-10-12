@@ -7,7 +7,7 @@ These files are included into the `InitialConditionIO` module at the end of
 [`../InitialConditionIO.jl`](../InitialConditionIO.jl). The parent file owns the
 lat-lon and reduced-Gaussian `build_initial_mixing_ratio` methods,
 `pack_initial_tracer_mass`, the NetCDF IC loader
-`_load_file_initial_condition_source`, and the log-pressure profile interpolation
+`_load_file_initial_condition_source`, and the conservative hybrid-coordinate remap
 these files reuse. The parent overview is [`../README.md`](../README.md).
 
 ## Entry Points
@@ -43,6 +43,48 @@ these files reuse. The parent overview is [`../README.md`](../README.md).
   conservative regridding for CS file ICs and surface fluxes
   (`source_latlon_mesh(lon, lat, UniformSpanFaces(); radius)` on the
   destination's sphere).
+
+## File Initial Conditions
+
+The file kinds read layer-mean dry VMR. A file with `ap` and `bp` interface
+coefficients is remapped vertically; it does not need `Psurf`. For each model
+column, both the source and target interfaces use the transport binary's own
+surface pressure ``p_{s,t}``:
+
+```math
+p^s_{i+1/2}=a^s_{i+1/2}+b^s_{i+1/2}p_{s,t}, \qquad
+p^t_{k+1/2}=A^t_{k+1/2}+B^t_{k+1/2}p_{s,t}.
+```
+
+This surface anchoring keeps boundary-layer parcels at the same position in
+the model column despite topographic or dry-air-mass differences between the
+file's model and the transport binary. Aloft, where ``b^s=0``, it reduces to
+ordinary absolute-pressure placement.
+
+The remap treats each source value as a layer mean. Source humidity is opt-in
+through `init.humidity_variable`; conventional names such as `q`, `QV`, and
+`hus` are not auto-detected. With ``d^s=1-q_v^s``, the source-dry-air mean is
+
+```math
+C_q(p)=\int_{p^s_{top}}^p q^s(p')d^s(p')\,dp',\qquad
+C_d(p)=\int_{p^s_{top}}^p d^s(p')\,dp',
+\qquad q^t_k=\frac{\Delta C_q}{\Delta C_d},
+```
+
+each target value is source-dry-air weighted and a uniform source remains
+uniform when target humidity differs. If a target
+interface lies outside the source coverage, the nearest end source layer is
+extended. This includes pure pressure-level sources (`bp = 0`) whose bottom
+may lie above or below the model surface.
+
+The previous point interpolation used the file's `Psurf` for source levels
+and the binary's surface pressure for target levels. In the CATRINE C90 case,
+that made the bottom-10%-of-column CO₂ depend on the dry-mass pin and produced
+1.2–1.5 ppm RMS local errors (maxima 62–70 ppm). The surface-anchored
+conservative remap reduces the RMS error to 0.007 ppm and the global mean error
+to at most 0.001 ppm in the measured pin comparison. The real-file regression
+in `test/core/test_initial_condition_io.jl` measures a −0.000153 ppm C90
+near-surface difference for a uniform 400 Pa surface-pressure shift.
 
 ## File Map
 

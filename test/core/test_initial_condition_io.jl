@@ -19,8 +19,9 @@
 
 using Test
 using Dates
+using TOML
 using Printf: @sprintf
-import NCDatasets: NCDataset, defDim, defVar
+import NCDatasets: NCDataset, defDim, defVar, nomissing
 
 using AtmosTransport
 using .AtmosTransport.Grids: cell_index, nrings, ring_longitudes
@@ -34,7 +35,9 @@ const _SYNTHETIC_SECONDS_JAN_2021 = 31 * 86400
 _synthetic_file_ic_value(lon_deg, lat_deg) =
     3.5e-4 + 1e-6 * mod(lon_deg, 360.0) + 2e-6 * lat_deg
 
-function _write_synthetic_ic_file(path::AbstractString)
+function _write_synthetic_ic_file(path::AbstractString; with_humidity::Bool = false,
+                                  humidity_name::AbstractString = "QV",
+                                  humidity_standard_name::Bool = true)
     ds = NCDataset(path, "c")
     try
         defDim(ds, "longitude", 4)
@@ -48,8 +51,10 @@ function _write_synthetic_ic_file(path::AbstractString)
         vhlev = defVar(ds, "hlevel", Float64, ("hlevel",))
         vap = defVar(ds, "ap", Float64, ("hlevel",))
         vbp = defVar(ds, "bp", Float64, ("hlevel",))
-        vps = defVar(ds, "Psurf", Float64, ("longitude", "latitude"))
         vco2 = defVar(ds, "CO2", Float64, ("longitude", "latitude", "level"))
+        vqv = with_humidity ?
+              defVar(ds, humidity_name, Float64,
+                     ("longitude", "latitude", "level")) : nothing
 
         lon = [-135.0, -45.0, 45.0, 135.0]
         lat = [45.0, -45.0]  # descending on purpose
@@ -59,14 +64,20 @@ function _write_synthetic_ic_file(path::AbstractString)
         vhlev[:] = [0.0, 1.0, 2.0, 3.0]
         vap[:] = [0.0, 0.0, 0.0, 0.0]
         vbp[:] = [1.0, 2.0 / 3.0, 1.0 / 3.0, 0.0]
-        vps[:, :] = fill(9.0e4, 4, 2)
-
         raw = Array{Float64}(undef, 4, 2, 3)
         for k in 1:3, j in 1:2, i in 1:4
             raw[i, j, k] = _synthetic_file_ic_value(lon[i], lat[j])
         end
         vco2[:, :, :] = raw
         vco2.attrib["units"] = "mol mol-1"
+        if vqv !== nothing
+            for k in 1:3
+                vqv[:, :, k] .= (0.35, 0.08, 0.001)[k]
+            end
+            humidity_standard_name &&
+                (vqv.attrib["standard_name"] = "specific_humidity")
+            vqv.attrib["units"] = "kg kg-1"
+        end
     finally
         close(ds)
     end
@@ -260,14 +271,21 @@ end
         mktempdir() do dir
             ic_path = joinpath(dir, "test_ic.nc")
             _write_synthetic_ic_file(ic_path)
+            humid_ic_path = joinpath(dir, "test_ic_humid.nc")
+            _write_synthetic_ic_file(humid_ic_path; with_humidity = true)
 
             init_cfg = Dict{String, Any}(
                 "kind" => "file",
                 "file" => ic_path,
                 "variable" => "CO2",
             )
+            humid_cfg = merge(init_cfg, Dict("file" => humid_ic_path,
+                                              "humidity_variable" => "QV"))
+            humid_source = ICIO._load_file_initial_condition_source(humid_cfg, Float64, 2)
+            @test humid_source.qv !== nothing
+            @test humid_source.qv[1, 1, :] == [0.35, 0.08, 0.001]
 
-            vertical = HybridSigmaPressure(Float64[0, 0, 0], Float64[1, 0.5, 0])
+            vertical = HybridSigmaPressure(Float64[0, 0, 0], Float64[0, 0.5, 1])
 
             latlon_mesh = LatLonMesh(; FT = Float64, Nx = 4, Ny = 2)
             latlon_grid = AtmosGrid(latlon_mesh, vertical, CPU(); FT = Float64)
@@ -461,31 +479,285 @@ end
         end
     end
 
-    @testset "file IC log-pressure interpolation handles TOA-to-surface targets" begin
-        f = ICIO._interpolate_log_pressure_profile!
-        src_half = Float64[100000.0, 50000.0, 10000.0, 1000.0]
-        src_mid = 0.5 .* (src_half[1:end-1] .+ src_half[2:end])
-        # Deliberately non-log-linear in pressure: this catches regressions
-        # where the source bracket index is carried in the wrong direction
-        # while targets are visited TOA -> surface.
-        src_q = (src_mid ./ 1000.0) .^ 2  # source levels are surface -> TOA
-        A_tgt = Float64[1000.0, 8000.0, 40000.0, 100000.0]
-        B_tgt = zeros(Float64, length(A_tgt))
-        dest = zeros(Float64, 3)
+    @testset "surface-anchored conservative hybrid remap ($T)" for T in (Float32, Float64)
+        function remap!(dest, src_q, src_qv, ap, bp, A_tgt, B_tgt, ps,
+                        target_dp_dry, src_p = zeros(Float64, length(src_q) + 1),
+                        cumulative = similar(src_p), dry_cumulative = similar(src_p))
+            ICIO._remap_hybrid_profile!(dest, src_q, src_qv, ap, bp, A_tgt,
+                                        B_tgt, ps, src_p, cumulative, dry_cumulative)
+        end
 
-        f(dest, src_q, src_half, zeros(Float64, 4), 0.0, A_tgt, B_tgt, 0.0)
+        # Different source and target partitions of the same pressure column,
+        # including a strongly humid source bottom layer. The tracer integral
+        # is conserved on dry pressure, not total pressure.
+        src_q = T[9.0, 2.0, 5.0]                         # surface -> TOA
+        src_qv = T[0.35, 0.08, 0.001]                    # strong humidity
+        ap = zeros(T, 4)
+        bp = T[1.0, 0.7, 0.2, 0.0]                      # surface -> TOA
+        A_tgt = zeros(T, 5)
+        B_tgt = T[0.0, 0.1, 0.4, 0.8, 1.0]              # TOA -> surface
+        ps = T(100_000)
+        src_interfaces = Float64.(ap) .+ Float64.(bp) .* Float64(ps)
+        tgt_p = Float64.(A_tgt) .+ Float64.(B_tgt) .* Float64(ps)
+        target_dp_dry = zeros(Float64, 4)
+        for k in eachindex(target_dp_dry), s in eachindex(src_qv)
+            overlap = max(0.0, min(tgt_p[k + 1], src_interfaces[s]) -
+                               max(tgt_p[k], src_interfaces[s + 1]))
+            target_dp_dry[k] += (1 - Float64(src_qv[s])) * overlap
+        end
+        dest = zeros(T, 4)
+        scratch_p = zeros(Float64, 4)
+        scratch_cumulative = similar(scratch_p)
+        scratch_dry_cumulative = similar(scratch_p)
+        remap!(dest, src_q, src_qv, ap, bp, A_tgt, B_tgt, ps, target_dp_dry,
+               scratch_p, scratch_cumulative, scratch_dry_cumulative)
+        source_integral = sum(Float64.(src_q) .* (1 .- Float64.(src_qv)) .*
+                              (-diff(src_interfaces)))
+        target_integral = sum(Float64.(dest) .* target_dp_dry)
+        @test target_integral ≈ source_integral rtol = 64eps(T)
+        @test !isapprox(sum(Float64.(dest) .* diff(tgt_p)),
+                        sum(Float64.(src_q) .* (-diff(src_interfaces))); rtol = 1e-3)
+        @test @allocated(remap!(dest, src_q, src_qv, ap, bp, A_tgt, B_tgt,
+                                ps, target_dp_dry, scratch_p,
+                                scratch_cumulative, scratch_dry_cumulative)) == 0
 
-        logp_interp(q1, q2, p1, p2, p) =
-            q1 + (log(p) - log(p1)) / (log(p2) - log(p1)) * (q2 - q1)
-        expected = Float64[
-            src_q[3],  # target midpoint above source TOA clamps to TOA value
-            logp_interp(src_q[2], src_q[3], src_mid[2], src_mid[3], 24000.0),
-            logp_interp(src_q[1], src_q[2], src_mid[1], src_mid[2], 70000.0),
-        ]
-        @test dest ≈ expected rtol=1e-12 atol=1e-12
-        @test_throws DimensionMismatch f(zeros(Float64, 3), src_q,
-                                         src_half[1:3], zeros(Float64, 3),
-                                         0.0, A_tgt, B_tgt, 0.0)
+        uniform = similar(dest)
+        remap!(uniform, fill(T(400e-6), length(src_q)), src_qv, ap, bp,
+               A_tgt, B_tgt, ps, fill(1.0, length(dest)), scratch_p,
+               scratch_cumulative, scratch_dry_cumulative)
+        @test uniform ≈ fill(T(400e-6), length(uniform)) rtol = 8eps(T)
+
+        # Without source-file humidity the target dry factor cancels exactly,
+        # even for a target layer with 40% humidity.
+        target_qv = T[0.0, 0.4, 0.12, 0.02]
+        binary_dp_dry = (1 .- Float64.(target_qv)) .* diff(tgt_p)
+        fallback = zeros(T, 4)
+        remap!(fallback, src_q, nothing, ap, bp, A_tgt, B_tgt, ps,
+               binary_dp_dry, scratch_p, scratch_cumulative, scratch_dry_cumulative)
+        expected = zeros(Float64, 4)
+        for k in eachindex(expected), s in eachindex(src_q)
+            overlap = max(0.0, min(tgt_p[k + 1], src_interfaces[s]) -
+                               max(tgt_p[k], src_interfaces[s + 1]))
+            expected[k] += Float64(src_q[s]) * overlap / (tgt_p[k + 1] - tgt_p[k])
+        end
+        @test Float64.(fallback) ≈ expected rtol = 32eps(T)
+
+        # Caller-owned scratch makes the production kernel allocation-free.
+        remap!(fallback, src_q, nothing, ap, bp, A_tgt, B_tgt, ps,
+               binary_dp_dry, scratch_p, scratch_cumulative)
+        @test @allocated(remap!(fallback, src_q, nothing, ap, bp, A_tgt, B_tgt,
+                                ps, binary_dp_dry, scratch_p,
+                                scratch_cumulative, scratch_dry_cumulative)) == 0
+
+        # A near-surface peak stays on the same sigma layers when every column
+        # receives a uniform surface-pressure shift.
+        peaked_q = T[50.0, 7.0, 3.0, 1.0]
+        peaked_bp = T[1.0, 0.95, 0.8, 0.4, 0.0]
+        shifted_1 = zeros(T, 5)
+        shifted_2 = similar(shifted_1)
+        target_bp = T[0.0, 0.1, 0.3, 0.6, 0.85, 1.0]
+        remap!(shifted_1, peaked_q, nothing, zeros(T, 5), peaked_bp,
+               zeros(T, 6), target_bp, T(98_325),
+               diff(Float64.(target_bp) .* 98_325))
+        remap!(shifted_2, peaked_q, nothing, zeros(T, 5), peaked_bp,
+               zeros(T, 6), target_bp, T(98_725),
+               diff(Float64.(target_bp) .* 98_725))
+        @test shifted_1 ≈ shifted_2 rtol = 32eps(T)
+
+        # A pure pressure-level source keeps its absolute levels. Its surface
+        # end layer extends when the source bottom is above the target surface,
+        # and is truncated when it is below the target surface.
+        pressure_q = T[10.0, 2.0]
+        pressure_ap = T[800.0, 600.0, 300.0]
+        pressure_bp = zeros(T, 3)
+        target_A = T[0.0, 300.0, 0.0]
+        target_B = T[0.0, 0.0, 1.0]
+        shallower = zeros(T, 2)
+        deeper = similar(shallower)
+        remap!(shallower, pressure_q, nothing, pressure_ap, pressure_bp,
+               target_A, target_B, T(700),
+               diff(Float64.(target_A) .+ Float64.(target_B) .* 700))
+        remap!(deeper, pressure_q, nothing, pressure_ap, pressure_bp,
+               target_A, target_B, T(1_000),
+               diff(Float64.(target_A) .+ Float64.(target_B) .* 1_000))
+        @test shallower ≈ T[2.0, 4.0] rtol = 16eps(T)
+        @test deeper ≈ T[2.0, 4600 / 700] rtol = 16eps(T)
+
+        @test_throws DimensionMismatch remap!(zeros(T, 3), src_q, nothing,
+                                              ap[1:3], bp[1:3], A_tgt,
+                                              B_tgt, ps, ones(3))
+        @test :psurf ∉ fieldnames(ICIO.FileInitialConditionSource{T})
+        @test :qv ∈ fieldnames(ICIO.FileInitialConditionSource{T})
+    end
+
+    @testset "LL, RG, and CS binary surface-pressure basis traits ($T)" for T in (Float32, Float64)
+        vertical = HybridSigmaPressure(zeros(T, 3), T[0.0, 0.5, 1.0])
+        ps_total = T(100_000)
+        dp_dry = T[30_000.0, 45_000.0] # qv = [0.40, 0.10]
+
+        ll_mesh = LatLonMesh(; FT = T, Nx = 4, Ny = 2)
+        ll_grid = AtmosGrid(ll_mesh, vertical, CPU(); FT = T)
+        ll_air = Array{T}(undef, 4, 2, 2)
+        for j in 1:2, i in 1:4, k in 1:2
+            ll_air[i, j, k] = dp_dry[k] * cell_area(ll_mesh, i, j) /
+                              AtmosTransport.Grids.gravity(ll_grid)
+        end
+        @test ICIO._stored_surface_pressure_basis(
+            ll_grid, ll_air, fill(ps_total, 4, 2), DryBasis()) isa ICIO.TotalSurfacePressure
+
+        rg_mesh = ReducedGaussianMesh([-45.0, 45.0], [4, 4]; FT = T)
+        rg_grid = AtmosGrid(rg_mesh, vertical, CPU(); FT = T)
+        rg_air = Array{T}(undef, ncells(rg_mesh), 2)
+        for c in 1:ncells(rg_mesh), k in 1:2
+            rg_air[c, k] = dp_dry[k] * cell_area(rg_mesh, c) /
+                           AtmosTransport.Grids.gravity(rg_grid)
+        end
+        @test ICIO._stored_surface_pressure_basis(
+            rg_grid, rg_air, fill(ps_total, ncells(rg_mesh)), DryBasis()) isa
+            ICIO.TotalSurfacePressure
+
+        Nc, Hp = 2, 1
+        cs_mesh = CubedSphereMesh(; FT = T, Nc, Hp)
+        cs_grid = AtmosGrid(cs_mesh, vertical, CPU(); FT = T)
+        cs_air = ntuple(_ -> zeros(T, Nc + 2Hp, Nc + 2Hp, 2), 6)
+        for p in 1:6, j in 1:Nc, i in 1:Nc, k in 1:2
+            cs_air[p][i + Hp, j + Hp, k] =
+                dp_dry[k] * cell_area(cs_mesh, i, j) /
+                AtmosTransport.Grids.gravity(cs_grid)
+        end
+        cs_ps_total = ntuple(_ -> fill(ps_total, Nc, Nc), 6)
+        cs_ps_dry = ntuple(_ -> fill(sum(dp_dry), Nc, Nc), 6)
+        @test ICIO._stored_surface_pressure_basis(
+            cs_grid, cs_air, cs_ps_total, DryBasis()) isa ICIO.TotalSurfacePressure
+        @test ICIO._stored_surface_pressure_basis(
+            cs_grid, cs_air, cs_ps_dry, DryBasis()) isa ICIO.DrySurfacePressure
+        recovered = ICIO._total_surface_pressure(
+            ICIO.DrySurfacePressure(), sum(dp_dry), vertical.A, vertical.B, T[0.4, 0.1])
+        @test recovered ≈ ps_total rtol = 16eps(T)
+    end
+
+    @test_logs (:warn, r"no humidity payload.*approximating total surface pressure") begin
+        ICIO._warn_surface_pressure_approximation(ICIO.DrySurfacePressure(), nothing)
+        ICIO._warn_surface_pressure_approximation(ICIO.DrySurfacePressure(), nothing)
+    end
+    @test ICIO._total_surface_pressure(
+        ICIO.DrySurfacePressure(), 98_000.0, zeros(3), [0.0, 0.5, 1.0], nothing) == 98_000.0
+
+    runner = AtmosTransport.Models.DrivenRunner
+    @test runner._initial_condition_qv((qv_start = :endpoint,
+                                        vdiff = (qv = :vdiff,))) === :endpoint
+    @test runner._initial_condition_qv((qv_start = nothing,
+                                        vdiff = (qv = :vdiff,))) === :vdiff
+    @test runner._initial_condition_qv((qv_start = nothing,
+                                        vdiff = nothing)) === nothing
+
+    @testset "validated humidity config reaches LL/RG/CS builders ($T)" for T in (Float32, Float64)
+        mktempdir() do dir
+            path = joinpath(dir, "q_source.nc")
+            _write_synthetic_ic_file(path; with_humidity = true,
+                                     humidity_name = "q",
+                                     humidity_standard_name = false)
+            init_cfg = Dict{String, Any}(
+                "kind" => "file",
+                "file" => path,
+                "variable" => "CO2",
+                "humidity_variable" => "q",
+            )
+            cfg = Dict{String, Any}(
+                "input" => Dict("binary_paths" => [path]),
+                "numerics" => Dict("float_type" => string(T)),
+                "tracers" => Dict(
+                    "nested" => Dict("init" => init_cfg),
+                    "flat" => copy(init_cfg),
+                ),
+            )
+            @test validate_config(cfg) == (true, String[])
+            specs = AtmosTransport.Models.DrivenRunner._parse_tracer_specs(cfg)
+            @test length(specs) == 2
+            @test all(spec -> spec.init_cfg["humidity_variable"] == "q", specs)
+
+            # Humidity is opt-in: a conventional `q` name does not silently
+            # change the conservative carrier.
+            autodetect_cfg = copy(init_cfg)
+            delete!(autodetect_cfg, "humidity_variable")
+            source = ICIO._load_file_initial_condition_source(autodetect_cfg, T, 2)
+            @test source.qv === nothing
+
+            vertical = HybridSigmaPressure(T[0, 0, 0], T[0, 0.5, 1])
+            ps_total = T(100_000)
+            src_bp = [1.0, 2 / 3, 1 / 3, 0.0] # file order: surface -> TOA
+            src_qv = [0.35, 0.08, 0.001]
+            tgt_p = [0.0, 50_000.0, 100_000.0]
+            src_p = src_bp .* Float64(ps_total)
+            dp_dry = zeros(Float64, 2)
+            for k in 1:2, s in 1:3
+                overlap = max(0.0, min(tgt_p[k + 1], src_p[s]) -
+                                   max(tgt_p[k], src_p[s + 1]))
+                dp_dry[k] += (1 - src_qv[s]) * overlap
+            end
+            ps_dry = T(sum(dp_dry))
+            target_qv = T.(1 .- dp_dry ./ diff(tgt_p))
+            cases = (
+                (ICIO.TotalSurfacePressure(), ps_total, nothing),
+                (ICIO.DrySurfacePressure(), ps_dry, target_qv),
+                (ICIO.DrySurfacePressure(), ps_dry, nothing),
+            )
+
+            ll_mesh = LatLonMesh(; FT = T, Nx = 4, Ny = 2)
+            ll_grid = AtmosGrid(ll_mesh, vertical, CPU(); FT = T)
+            ll_air = Array{T}(undef, 4, 2, 2)
+            for j in 1:2, i in 1:4, k in 1:2
+                ll_air[i, j, k] = T(dp_dry[k] * cell_area(ll_mesh, i, j) /
+                                      AtmosTransport.Grids.gravity(ll_grid))
+            end
+            ll_qv = repeat(reshape(target_qv, 1, 1, 2), 4, 2, 1)
+            ll_results = map(cases) do (basis, ps, qv_profile)
+                qv = qv_profile === nothing ? nothing : ll_qv
+                build_initial_mixing_ratio(ll_air, ll_grid, init_cfg;
+                    surface_pressure = fill(ps, 4, 2), pressure_basis = basis,
+                    mass_basis = DryBasis(), qv)
+            end
+            @test ll_results[1] ≈ ll_results[2] rtol = 128eps(T)
+            @test all(isfinite, ll_results[3])
+
+            rg_mesh = ReducedGaussianMesh([-45.0, 45.0], [4, 4]; FT = T)
+            rg_grid = AtmosGrid(rg_mesh, vertical, CPU(); FT = T)
+            rg_air = Array{T}(undef, ncells(rg_mesh), 2)
+            for c in 1:ncells(rg_mesh), k in 1:2
+                rg_air[c, k] = T(dp_dry[k] * cell_area(rg_mesh, c) /
+                                   AtmosTransport.Grids.gravity(rg_grid))
+            end
+            rg_qv = repeat(reshape(target_qv, 1, 2), ncells(rg_mesh), 1)
+            rg_results = map(cases) do (basis, ps, qv_profile)
+                qv = qv_profile === nothing ? nothing : rg_qv
+                build_initial_mixing_ratio(rg_air, rg_grid, init_cfg;
+                    surface_pressure = fill(ps, ncells(rg_mesh)),
+                    pressure_basis = basis, mass_basis = DryBasis(), qv)
+            end
+            @test rg_results[1] ≈ rg_results[2] rtol = 128eps(T)
+            @test all(isfinite, rg_results[3])
+
+            Nc, Hp = 2, 1
+            cs_mesh = CubedSphereMesh(; FT = T, Nc, Hp)
+            cs_grid = AtmosGrid(cs_mesh, vertical, CPU(); FT = T)
+            cs_air = ntuple(_ -> zeros(T, Nc + 2Hp, Nc + 2Hp, 2), 6)
+            for p in 1:6, j in 1:Nc, i in 1:Nc, k in 1:2
+                cs_air[p][i + Hp, j + Hp, k] =
+                    T(dp_dry[k] * cell_area(cs_mesh, i, j) /
+                      AtmosTransport.Grids.gravity(cs_grid))
+            end
+            cs_qv = ntuple(_ -> repeat(reshape(target_qv, 1, 1, 2), Nc, Nc, 1), 6)
+            cs_results = map(cases) do (basis, ps, qv_profile)
+                qv = qv_profile === nothing ? nothing : cs_qv
+                build_initial_mixing_ratio(cs_air, cs_grid, init_cfg;
+                    surface_pressure = ntuple(_ -> fill(ps, Nc, Nc), 6),
+                    pressure_basis = basis, mass_basis = DryBasis(), qv)
+            end
+            for p in 1:6
+                @test cs_results[1][p] ≈ cs_results[2][p] rtol = 128eps(T)
+                @test all(isfinite, cs_results[3][p])
+            end
+        end
     end
 
     # --------- plan 40 Commit 2: catrine_co2 semantic unification -----
@@ -513,7 +785,7 @@ end
             mesh_ll = LatLonMesh(; Nx = 36, Ny = 18,
                                 longitude = (0.0, 360.0),
                                 latitude  = (-90.0, 90.0))
-            vertical = HybridSigmaPressure(FT[0, 50000, 0], FT[1, 0.5, 0])
+            vertical = HybridSigmaPressure(FT[0, 50000, 0], FT[0, 0.5, 1])
             grid_ll = AtmosGrid(mesh_ll, vertical, CPU(); FT = FT)
             air_mass_ll = fill(FT(1e10), 36, 18, 2)
             ps_ll = fill(FT(101325), 36, 18)
@@ -555,6 +827,108 @@ end
             all_vals = vcat((vec(q_catrine_cs[p]) for p in 1:6)...)
             @test minimum(all_vals) > 1e-4    # > 100 ppm
             @test maximum(all_vals) < 1e-3    # < 1000 ppm
+        end
+    end
+
+    @testset "CATRINE C90 near-surface band is preserved" begin
+        catrine_ic_path =
+            expanduser("~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc")
+        if !isfile(catrine_ic_path)
+            @info "Skipping CATRINE C90 conservative-remap regression; file not present at $catrine_ic_path"
+            @test_skip false
+        else
+            # Independent bottom-fraction mean for one column. Source files
+            # are surface first; model columns are top first.
+            function surface_band(q, dp, fraction; surface_first)
+                total = sum(dp)
+                remaining = fraction * total
+                weighted = 0.0
+                indices = surface_first ? eachindex(q) : Iterators.reverse(eachindex(q))
+                for k in indices
+                    take = min(remaining, dp[k])
+                    weighted += Float64(q[k]) * take
+                    remaining -= take
+                    remaining <= 16eps(Float64) * total && break
+                end
+                return weighted / (fraction * total)
+            end
+
+            coeff_path = normpath(joinpath(@__DIR__, "..", "..", "config",
+                                           "geos_L72_coefficients.toml"))
+            coeff = TOML.parsefile(coeff_path)["coefficients"]
+            A = Float64.(coeff["a"])
+            B = Float64.(coeff["b"])
+            Nz = length(A) - 1
+
+            mesh = CubedSphereMesh(; FT = Float64, Nc = 90, Hp = 1)
+            grid = AtmosGrid(mesh, HybridSigmaPressure(A, B), CPU(); FT = Float64)
+            air = ntuple(_ -> ones(Float64, 92, 92, Nz), 6)
+            cfg = Dict{String, Any}("kind" => "file", "file" => catrine_ic_path,
+                                    "variable" => "CO2")
+
+            # Put the source topography on C90, then shift every column by the
+            # same 400 Pa. The correct surface-anchored remap is invariant to
+            # this pin-sized shift; the replaced absolute-pressure mapping was
+            # not. `Psurf` is read only to construct this independent test
+            # perturbation and is not part of FileInitialConditionSource.
+            source = ICIO._load_file_initial_condition_source(cfg, Float64, Nz)
+            source_ps = NCDataset(catrine_ic_path) do ds
+                lon = Float64.(ds["longitude"][:])
+                lat = Float64.(ds["latitude"][:])
+                raw_ps = Float64.(nomissing(ds["Psurf"][:, :], 100_000.0))
+                orientation = AtmosTransport.GriddedIO.latlon_orientation(lon, lat)
+                AtmosTransport.GriddedIO.orient(raw_ps, orientation)
+            end
+            source_mesh = AtmosTransport.GriddedIO.source_latlon_mesh(
+                source.lon, source.lat, AtmosTransport.GriddedIO.UniformSpanFaces();
+                radius = mesh.radius)
+            ps_regridder = AtmosTransport.Regridding.build_regridder(source_mesh, mesh)
+            ps_flat = Vector{Float64}(undef, 6 * 90 * 90)
+            AtmosTransport.Regridding.apply_regridder!(ps_flat, ps_regridder,
+                                                       reshape(source_ps, :))
+            ps_base = ntuple(_ -> Matrix{Float64}(undef, 90, 90), 6)
+            AtmosTransport.Preprocessing.unpack_flat_to_panels_2d!(ps_base, ps_flat, 90)
+            ps = ntuple(p -> ps_base[p] .+ 400.0, 6)
+            mapped = build_initial_mixing_ratio(air, grid, cfg; surface_pressure = ps)
+
+            target_weighted = 0.0
+            target_area = 0.0
+            for p in 1:6, j in 1:90, i in 1:90
+                area = Float64(cell_area(mesh, i, j))
+                target_dp = diff(A .+ B .* ps[p][i, j])
+                target_weighted += area * surface_band(@view(mapped[p][i, j, :]),
+                                                       target_dp, 0.1;
+                                                       surface_first = false)
+                target_area += area
+            end
+            target_mean = target_weighted / target_area
+
+            source_mean = NCDataset(catrine_ic_path) do ds
+                q = Float64.(nomissing(ds["CO2"][:, :, :], 0.0))
+                source_ps = Float64.(nomissing(ds["Psurf"][:, :], 100_000.0))
+                ap = Float64.(ds["ap"][:])
+                bp = Float64.(ds["bp"][:])
+                lat = Float64.(ds["latitude"][:])
+                weighted = 0.0
+                area_sum = 0.0
+                for j in eachindex(lat), i in axes(q, 1)
+                    # Exact spherical strip weight for the regular 1-degree
+                    # source grid; the longitude-width factor cancels.
+                    south = max(-90.0, lat[j] - 0.5)
+                    north = min(90.0, lat[j] + 0.5)
+                    area = sind(north) - sind(south)
+                    interfaces = ap .+ bp .* source_ps[i, j]
+                    dp = -diff(interfaces)
+                    weighted += area * surface_band(@view(q[i, j, :]), dp, 0.1;
+                                                    surface_first = true)
+                    area_sum += area
+                end
+                weighted / area_sum
+            end
+
+            difference_ppm = (target_mean - source_mean) * 1e6
+            @info "CATRINE C90 conservative IC regression" target_ppm=target_mean * 1e6 source_ppm=source_mean * 1e6 difference_ppm
+            @test abs(difference_ppm) <= 1e-3
         end
     end
 

@@ -96,7 +96,8 @@ function write_binary(path, steps; air = (AIR_PER_CELL,))
     vc = HybridSigmaPressure(fill(100.0, NZ + 1), collect(range(0.0, 1.0; length = NZ + 1)))
     writer = MD.open_streaming_cs_transport_binary(path, NC, 6, NZ, length(air), vc; planet_radius = RADIUS,
                                                    FT = Float64, dt_met_seconds = 86400.0,
-                                                   steps_per_window = steps, mass_basis = :dry)
+                                                   steps_per_window = steps, mass_basis = :dry,
+                                                   surface_pressure_basis = TotalSurfacePressure())
     try
         for m in air
             window = (; m = ntuple(_ -> fill(m, NC, NC, NZ), 6),
@@ -445,6 +446,7 @@ Analysis.expected_storage_change(m::FixedEmission, ::RunContext, spec, t0, t1) =
     ll_bin = joinpath(dir, "ll_20210101.bin")
     write_transport_binary(ll_bin, ll_grid, ll_windows; FT = Float64, dt_met_seconds = 86400.0,
                            half_dt_seconds = 43200.0, steps_per_window = 2, mass_basis = :dry,
+                           surface_pressure_basis = TotalSurfacePressure(),
                            source_flux_sampling = :window_start_endpoint, flux_sampling = :window_constant)
     legacy_cfg = Dict{String, Any}(
         "input" => Dict{String, Any}("binary_paths" => [ll_bin], "start_date" => "2021-01-01"),

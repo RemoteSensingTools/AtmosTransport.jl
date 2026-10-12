@@ -11,8 +11,11 @@
 using Test
 using AtmosTransport
 using .AtmosTransport.Preprocessing: pin_global_mean_ps!, pin_global_mean_ps_using_qv!,
-                                     rescale_reduced_fluxes_to_ps!
+                                     rescale_reduced_fluxes_to_ps!,
+                                     _pin_cs_global_air_mass!
 using .AtmosTransport.Grids: face_cells
+using .AtmosTransport.Parameters: GLOBAL_MEAN_DRY_SURFACE_PRESSURE, STANDARD_GRAVITY,
+                                   IFS_EARTH_RADIUS
 
 @testset "global ps pins" begin
     Nx, Ny, Nz = 6, 4, 3
@@ -25,25 +28,50 @@ using .AtmosTransport.Grids: face_cells
 
     @testset "dry pin with native humidity" begin
         sp = copy(ps)
-        offset = pin_global_mean_ps_using_qv!(sp, area, dA, dB, qv; target_ps_dry_pa = 98726.0)
+        offset = pin_global_mean_ps_using_qv!(sp, area, dA, dB, qv)
         @test sp == ps .+ offset
-        @test dry_ps(sp) ≈ 98726.0 rtol = 1e-14
+        @test dry_ps(sp) ≈ GLOBAL_MEAN_DRY_SURFACE_PRESSURE rtol = 1e-14
         # Reduced-Gaussian layout: one column per cell.
         sp_rg = vec(copy(ps))
-        @test pin_global_mean_ps_using_qv!(sp_rg, vec(area), dA, dB, reshape(qv, Nx * Ny, Nz);
-                                           target_ps_dry_pa = 98726.0) === offset
+        @test pin_global_mean_ps_using_qv!(sp_rg, vec(area), dA, dB,
+                                           reshape(qv, Nx * Ny, Nz)) === offset
         @test sp_rg == vec(sp)
         @test_throws ErrorException pin_global_mean_ps_using_qv!(copy(ps), area, dA, dB, qv[:, 1:2, :])
     end
 
     @testset "total pin with climatological humidity" begin
         sp = copy(ps)
-        offset = pin_global_mean_ps!(sp, area; target_ps_dry_pa = 98726.0, qv_global = 0.00247)
-        @test sum(sp .* area) / sum(area) ≈ 98726.0 / (1 - 0.00247) rtol = 1e-14
+        offset = pin_global_mean_ps!(sp, area; qv_global = 0.00247)
+        @test sum(sp .* area) / sum(area) ≈ GLOBAL_MEAN_DRY_SURFACE_PRESSURE / (1 - 0.00247) rtol = 1e-14
         sp_rg = vec(copy(ps))
-        @test pin_global_mean_ps!(sp_rg, vec(area); target_ps_dry_pa = 98726.0, qv_global = 0.00247) === offset
+        @test pin_global_mean_ps!(sp_rg, vec(area); qv_global = 0.00247) === offset
         @test sp_rg == vec(sp)
     end
+end
+
+@testset "native pin uses Delta-B times dry fraction" begin
+    mesh = CubedSphereMesh(; Nc = 2, radius = IFS_EARTH_RADIUS)
+    area = mesh.cell_areas
+    dB = [0.0, 0.4, 0.6]
+    qv = ntuple(p -> [0.001p + 0.0002k for _i in 1:2, _j in 1:2, k in 1:3], 6)
+    m = ntuple(p -> begin
+        out = zeros(2, 2, 3)
+        for k in 1:3, j in 1:2, i in 1:2
+            out[i, j, k] = (1000.0 + dB[k] * 100000.0) *
+                           (1 - qv[p][i, j, k]) * area[i, j] / STANDARD_GRAVITY
+        end
+        out
+    end, 6)
+    pure_pressure_before = ntuple(p -> copy(m[p][:, :, 1]), 6)
+    target_kg = GLOBAL_MEAN_DRY_SURFACE_PRESSURE *
+                (6 * sum(Float64, area)) / STANDARD_GRAVITY
+    stats = _pin_cs_global_air_mass!(m, qv, area, STANDARD_GRAVITY,
+                                     target_kg, dB)
+    @test stats.after_kg ≈ target_kg rtol = 5e-15
+    @test stats.delta_ps_pa < 0
+    @test all(m[p][:, :, 1] == pure_pressure_before[p] for p in 1:6)
+    @test sum(sum(Float64, panel) for panel in m) * STANDARD_GRAVITY /
+          (4π * IFS_EARTH_RADIUS^2) ≈ GLOBAL_MEAN_DRY_SURFACE_PRESSURE rtol = 5e-15
 end
 
 # Reduced-Gaussian face fluxes are wind × Δp at the face, with the face pressure

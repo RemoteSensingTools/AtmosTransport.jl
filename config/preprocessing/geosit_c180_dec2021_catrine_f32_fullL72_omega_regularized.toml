@@ -54,4 +54,3 @@ max_bottom_flux_correction = 0.01
 [mass_fix]
 enable = true
 mode = "target_ps_dry"
-target_ps_dry_pa = 98726.0

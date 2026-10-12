@@ -238,7 +238,8 @@ end
         grid, window = ll_fixture(include_tm5)
         write_transport_binary(path, grid, [window]; FT = Float64,
             dt_met_seconds = 3600.0, half_dt_seconds = 1800.0, steps_per_window = 1,
-            mass_basis = :dry, source_flux_sampling = :window_start_endpoint,
+            mass_basis = :dry, surface_pressure_basis = DrySurfacePressure(),
+            source_flux_sampling = :window_start_endpoint,
             flux_sampling = :window_constant, basis_kw(tm5_basis)...)
     end
 
@@ -246,7 +247,8 @@ end
         grid, window = rg_fixture(include_tm5)
         write_transport_binary(path, grid, [window]; FT = Float64,
             dt_met_seconds = 3600.0, half_dt_seconds = 1800.0, steps_per_window = 1,
-            mass_basis = :dry, source_flux_sampling = :window_start_endpoint,
+            mass_basis = :dry, surface_pressure_basis = DrySurfacePressure(),
+            source_flux_sampling = :window_start_endpoint,
             flux_sampling = :window_constant, basis_kw(tm5_basis)...)
     end
 
@@ -254,7 +256,8 @@ end
         grid, window = rg_fixture(include_tm5)
         writer = MD.open_streaming_transport_binary(
             path, grid, 1, window; FT = Float64, steps_per_window = 1,
-            mass_basis = :dry, source_flux_sampling = :window_start_endpoint,
+            mass_basis = :dry, surface_pressure_basis = DrySurfacePressure(),
+            source_flux_sampling = :window_start_endpoint,
             flux_sampling = :window_constant, basis_kw(tm5_basis)...)
         MD.write_streaming_window!(writer, window)
         MD.close_streaming_transport_binary!(writer)
@@ -274,7 +277,8 @@ end
             HybridSigmaPressure([0.0, 1000, 2000], [0.0, 0.2, 1.0]);
             planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
             steps_per_window = 1, include_tm5conv = include_tm5,
-            mass_basis = :dry, basis_kw(tm5_basis)...)
+            mass_basis = :dry, surface_pressure_basis = DrySurfacePressure(),
+            basis_kw(tm5_basis)...)
         MD.write_streaming_cs_window!(writer, window, Nc, np)
         MD.close_streaming_transport_binary!(writer)
     end
@@ -318,6 +322,7 @@ end
             path = joinpath(dir, replace(lowercase("$writer_name-$case_name"), ' ' => '_') * ".bin")
             write_fixture(path; include_tm5, tm5_basis)
             header = raw_header(path)
+            @test header["surface_pressure_basis"] == "dry"
             if expected === nothing
                 @test !haskey(header, TM5_CONVECTION_MASS_BASIS_KEY)
             else
@@ -327,6 +332,7 @@ end
 
         recorded = joinpath(dir, "eager_ll-inferred_tm5_basis.bin")
         reader = TransportBinaryReader(recorded; FT = Float64)
+        @test surface_pressure_basis(reader) isa DrySurfacePressure
         @test tm5_convection_mass_basis(reader) isa DryBasis
         @test reader.header.tm5_convection_mass_basis isa DryBasis
         @test binary_capabilities(reader).tm5_convection_mass_basis isa DryBasis
@@ -353,9 +359,38 @@ end
         legacy_moist = joinpath(dir, "legacy_moist.bin")
         write_transport_binary(legacy_moist, grid, [window]; FT = Float64,
             steps_per_window = 1, mass_basis = :moist,
+            surface_pressure_basis = TotalSurfacePressure(),
             source_flux_sampling = :window_start_endpoint,
             tm5_convection_mass_basis = nothing)
         @test_logs min_level = Base.CoreLogging.Warn close(TransportBinaryReader(legacy_moist))
+
+        total_ps = joinpath(dir, "eager_ll-total_surface_pressure.bin")
+        grid, window = ll_fixture(false)
+        write_transport_binary(total_ps, grid, [window]; FT = Float64,
+            steps_per_window = 1, mass_basis = :dry,
+            surface_pressure_basis = TotalSurfacePressure(),
+            source_flux_sampling = :window_start_endpoint)
+        total_reader = TransportBinaryReader(total_ps; FT = Float64)
+        @test total_reader.header.raw_header["surface_pressure_basis"] == "total"
+        @test surface_pressure_basis(total_reader) isa TotalSurfacePressure
+        close(total_reader)
+
+        legacy_ps = joinpath(dir, "legacy_surface_pressure_basis.bin")
+        cp(total_ps, legacy_ps)
+        legacy_header = raw_header(legacy_ps)
+        delete!(legacy_header, "surface_pressure_basis")
+        header_bytes = Int(legacy_header["header_bytes"])
+        encoded = Vector{UInt8}(codeunits(JSON3.write(legacy_header)))
+        open(legacy_ps, "r+") do io
+            write(io, encoded)
+            write(io, zeros(UInt8, header_bytes - length(encoded)))
+        end
+        legacy_reader = nothing
+        @test_logs (:warn, r"no `surface_pressure_basis`.*inferred `total`") begin
+            legacy_reader = TransportBinaryReader(legacy_ps; FT = Float64)
+        end
+        @test surface_pressure_basis(legacy_reader) isa TotalSurfacePressure
+        close(legacy_reader)
 
         @test_throws ArgumentError write_eager_ll(
             joinpath(dir, "writer_mismatch.bin"); include_tm5 = true,

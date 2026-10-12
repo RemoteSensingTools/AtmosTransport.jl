@@ -42,6 +42,7 @@ function _write_clock_test_binary(path; FT = Float64, steps = 2)
                            FT = FT, dt_met_seconds = 3600.0,
                            half_dt_seconds = 1800.0, steps_per_window = steps,
                            mass_basis = :moist,
+                           surface_pressure_basis = TotalSurfacePressure(),
                            source_flux_sampling = :window_start_endpoint)
     return grid
 end

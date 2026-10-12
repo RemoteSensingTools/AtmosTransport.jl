@@ -163,6 +163,7 @@ function build_v4_header(date::Date,
         "Nz_native" => sizes.Nz_native, "Nt" => sizes.Nt,
         "float_type" => string(FT), "float_bytes" => sizeof(FT),
         "mass_basis" => String(settings.mass_basis),
+        "surface_pressure_basis" => "total",
         "payload_sections" => payload_sections,
         "elems_per_window" => counts.elems_per_window,
         "n_geometry_elems" => 0,
@@ -220,7 +221,6 @@ function build_v4_header(date::Date,
         "git_dirty" => provenance.git_dirty,
         "creation_time" => provenance.creation_time,
         "mass_fix_enabled" => settings.mass_fix_enable,
-        "mass_fix_target_ps_dry_pa" => settings.target_ps_dry_pa,
         "mass_fix_qv_global_climatology" => settings.qv_global_climatology,
         "mass_fix_qv_mode" => settings.include_qv || settings.mass_basis == :dry ?
             "native_hourly_qv" : "global_qv_climatology",
@@ -238,6 +238,8 @@ function build_v4_header(date::Date,
             "flip latitude to south-to-north if thermo file is stored north-to-south" : "",
     )
 
+    settings.mass_fix_enable && (settings.include_qv || settings.mass_basis == :dry) &&
+        (header["mass_fix_target_ps_dry_pa"] = settings.target_ps_dry_pa)
     # ERA5 convective fluxes are put on the binary's basis before ec2tm.
     _with_tm5_convection_basis(header, settings.tm5_convection_enable ?
                                        mass_basis_from_symbol(settings.mass_basis) : nothing)
@@ -382,6 +384,7 @@ end
 
 const _OUTPUT_REUSE_CONTRACT_KEYS = (
     "format_version", "float_type", "float_bytes", "mass_basis",
+    "surface_pressure_basis",
     "grid_type", "horizontal_topology", "planet_radius_m", "Nx", "Ny", "nlevel", "nwindow",
     "payload_sections", "elems_per_window", "A_ifc", "B_ifc", "merge_map",
     "merge_min_thickness_Pa", "vertical_mapping_method", "target_vertical_name",

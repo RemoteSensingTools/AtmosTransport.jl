@@ -24,6 +24,7 @@ using .AtmosTransport
             include_surface = true,
             include_gchp_vdiff = true,
             mass_basis = :dry,
+            surface_pressure_basis = TotalSurfacePressure(),
         )
 
         panels3(x) = ntuple(p -> fill(FT(x + p), Nc, Nc, Nz), np)

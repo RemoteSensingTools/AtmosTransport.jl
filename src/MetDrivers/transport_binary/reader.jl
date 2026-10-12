@@ -34,7 +34,8 @@ function Base.show(io::IO, r::TransportBinaryReader)
           "├── geometry:      ", _transport_geometry_summary(h), "\n",
           "├── storage:       ", h.on_disk_float_type, " on disk, load as ",
               _transport_load_float_type(r), "\n",
-          "├── basis:         ", h.mass_basis, "\n",
+          "├── basis:         ", h.mass_basis, ", ps=",
+              _transport_surface_pressure_basis_label(h.surface_pressure_basis), "\n",
           "├── timing:        dt=", h.dt_met_seconds, " s, steps/window=",
               _steps_per_window_summary(h.steps_per_window, h.steps_per_window_by_window), "\n",
           "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
@@ -52,6 +53,7 @@ steps_per_window(r::TransportBinaryReader, win::Integer) =
 steps_per_window_schedule(r::TransportBinaryReader) =
     copy(r.header.steps_per_window_by_window)
 mass_basis(r::TransportBinaryReader) = r.header.mass_basis
+surface_pressure_basis(r::TransportBinaryReader) = r.header.surface_pressure_basis
 binary_geometry(r::TransportBinaryReader) = binary_geometry(r.header)
 grid_type(r::TransportBinaryReader) = grid_type(r.header)
 horizontal_topology(r::TransportBinaryReader) = horizontal_topology(r.header)
@@ -162,6 +164,15 @@ function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Flo
         data = Mmap.mmap(io, Vector{DiskFT}, total_elems, header.header_bytes)
         G = typeof(header.geometry)
         reader = TransportBinaryReader{FT, DiskFT, G}(data, io, header, bin_path)
+        if !haskey(header.raw_header, "surface_pressure_basis")
+            inferred = _infer_legacy_surface_pressure_basis(reader)
+            @warn "$(basename(bin_path)) has no `surface_pressure_basis` header key; " *
+                  "inferred `$(_transport_surface_pressure_basis_label(inferred))` once from " *
+                  "window-1 surface pressure and air mass. Regenerate the binary before the " *
+                  "legacy fallback becomes an error." maxlog=1
+            header = _parse_transport_header(raw; legacy_surface_pressure_basis=inferred)
+            reader = TransportBinaryReader{FT, DiskFT, G}(data, io, header, bin_path)
+        end
         _check_tm5_convection_basis(reader)
         return reader
     catch
@@ -170,10 +181,99 @@ function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Flo
     end
 end
 
+function _infer_legacy_surface_pressure_basis(reader::TransportBinaryReader)
+    mass_basis(reader) === :moist && return TotalSurfacePressure()
+    grid = _legacy_surface_pressure_grid(reader, binary_geometry(reader))
+    air_mass = _transport_section_view(reader, 1, :m)
+    surface_pressure = _transport_section_view(reader, 1, :ps)
+    return _infer_legacy_surface_pressure_basis(
+        grid, air_mass, surface_pressure, binary_geometry(reader))
+end
+
+_legacy_surface_pressure_grid(reader::TransportBinaryReader,
+                              ::Union{LatLonBinaryGeometry,
+                                      ReducedGaussianBinaryGeometry}) =
+    load_grid(reader; FT=Float64)
+_legacy_surface_pressure_grid(reader::TransportBinaryReader,
+                              ::CubedSphereBinaryGeometry) =
+    load_grid(reader; FT=Float64, Hp=0)
+
+function _infer_legacy_surface_pressure_basis(grid, air_mass, surface_pressure,
+                                               ::LatLonBinaryGeometry)
+    mesh = grid.horizontal
+    g = Float64(gravity(grid))
+    Nx, Ny = mesh.Nx, mesh.Ny
+    ncell = Nx * Ny
+    Nz = nlevels(grid)
+    worst = 0.0
+    @inbounds for j in 1:Ny, i in 1:Nx
+        c = i + (j - 1) * Nx
+        m_column = sum(k -> Float64(air_mass[c + (k - 1) * ncell]), 1:Nz)
+        p_dry = m_column * g / Float64(cell_area(mesh, i, j))
+        ps = Float64(surface_pressure[c])
+        worst = max(worst, abs(p_dry - ps) / max(abs(ps), 1.0))
+    end
+    return worst <= 2e-5 ? DrySurfacePressure() : TotalSurfacePressure()
+end
+
+function _infer_legacy_surface_pressure_basis(grid, air_mass, surface_pressure,
+                                               ::ReducedGaussianBinaryGeometry)
+    mesh = grid.horizontal
+    g = Float64(gravity(grid))
+    ncell = ncells(mesh)
+    Nz = nlevels(grid)
+    worst = 0.0
+    @inbounds for c in 1:ncell
+        m_column = sum(k -> Float64(air_mass[c + (k - 1) * ncell]), 1:Nz)
+        p_dry = m_column * g / Float64(cell_area(mesh, c))
+        ps = Float64(surface_pressure[c])
+        worst = max(worst, abs(p_dry - ps) / max(abs(ps), 1.0))
+    end
+    return worst <= 2e-5 ? DrySurfacePressure() : TotalSurfacePressure()
+end
+
+function _infer_legacy_surface_pressure_basis(grid, air_mass, surface_pressure,
+                                               geometry::CubedSphereBinaryGeometry)
+    mesh = grid.horizontal
+    g = Float64(gravity(grid))
+    panel_cells = geometry.Nc * geometry.Nc
+    Nz = nlevels(grid)
+    worst = 0.0
+    @inbounds for p in 1:geometry.npanel, j in 1:geometry.Nc, i in 1:geometry.Nc
+        c = i + (j - 1) * geometry.Nc
+        m_base = (p - 1) * panel_cells * Nz
+        m_column = sum(k -> Float64(air_mass[m_base + c + (k - 1) * panel_cells]),
+                       1:Nz)
+        p_dry = m_column * g / Float64(cell_area(mesh, i, j))
+        ps = Float64(surface_pressure[(p - 1) * panel_cells + c])
+        worst = max(worst, abs(p_dry - ps) / max(abs(ps), 1.0))
+    end
+    return worst <= 2e-5 ? DrySurfacePressure() : TotalSurfacePressure()
+end
+
 Base.close(r::TransportBinaryReader) = close(r.io)
 
 @inline _transport_window_offset(r::TransportBinaryReader, win::Int) =
     r.header.n_geometry_elems + (win - 1) * r.header.elems_per_window
+
+"""
+    _transport_section_view(reader, win, section)
+
+Return a zero-copy view of one payload `section` in window `win`. This is the
+section-level reader primitive for metadata probes that do not need a complete
+transport window (and must not allocate all of its flux and physics arrays).
+"""
+function _transport_section_view(reader::TransportBinaryReader,
+                                 win::Int, wanted::Symbol)
+    1 <= win <= reader.header.nwindow || throw(BoundsError(reader, win))
+    o = _transport_window_offset(reader, win)
+    for section in reader.header.payload_sections
+        n = _transport_section_elements(reader.header, section)
+        section === wanted && return @view reader.data[(o + 1):(o + n)]
+        o += n
+    end
+    throw(ArgumentError("transport binary payload is missing section `$(wanted)`"))
+end
 
 function _transport_interval_from_centers(centers::Vector{Float64}, fallback_Δ::Float64)
     isempty(centers) && error("Cannot reconstruct interval from empty center array")

@@ -265,6 +265,7 @@ function _synthetic_ll_binary(dir)
     bin = joinpath(dir, "transport_20211202.bin")
     write_transport_binary(bin, grid, windows; FT = Float64, dt_met_seconds = 3600.0,
                            half_dt_seconds = 1800.0, steps_per_window = 1, mass_basis = :dry,
+                           surface_pressure_basis = TotalSurfacePressure(),
                            source_flux_sampling = :window_start_endpoint,
                            flux_sampling = :window_constant)
     return bin
