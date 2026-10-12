@@ -254,10 +254,15 @@ surface), height units or `positive = "up"`; otherwise set
 `vertical_order = "toa_first"` or `"surface_first"`.
 
 Native cubed-sphere ICs keep their cell-for-cell horizontal mapping. When their
-level count matches the binary, they also retain the existing exact vertical
-copy. When it differs, `ap` and `bp` are required and the same conservative
+level count matches the binary, `ap`/`bp` are used when present to infer level
+orientation and must match the binary coefficients within numeric tolerance
+before the exact vertical copy. Without them, `vertical_order` controls the
+copy. When the level count differs, `ap` and `bp` are required and the same conservative
 hybrid remap, dry-carrier humidity weighting, and typed surface-pressure basis
-described above are used column by column.
+described above are used column by column. In both IC paths, `ap` has pressure
+units: an explicit units attribute must be `Pa`; a missing attribute is accepted
+only for all-zero pure-sigma coefficients or magnitudes that unambiguously
+indicate pascals. Ambiguous hPa-sized values are rejected.
 
 `pressure_layer` places tracer in one level per column. With
 `lowest_layer = true`, it uses the bottom level and ignores `psurf_fraction`.
@@ -275,7 +280,8 @@ block with a `kind` selector and per-kind keys:
 ```toml
 [tracers.co2_fossil.surface_flux]
 kind       = "gridfed_fossil_co2"   # one of the registered source kinds
-time_index = 12                     # month index (1..12) for monthly inventories
+time_index = 12                     # positional slice index (1-based)
+# month = 12                        # decoded calendar month when time exists
 scale      = 1.0                    # optional multiplicative scaling
 
 [tracers.sf6.surface_flux]

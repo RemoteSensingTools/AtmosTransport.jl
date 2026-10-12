@@ -208,6 +208,28 @@ function _resolve_surface_flux_file(cfg, kind::Symbol)
     return file, variable, time_index
 end
 
+# `time_index` is deliberately positional. In contrast, an explicitly named
+# `month` is a semantic selector whenever the file has a time coordinate.
+# This keeps partial-year and out-of-order inventories from silently reading a
+# different month while preserving the coordinate-less twelve-slice GridFED
+# layout.
+function _static_surface_flux_time_index(cfg, kind::Symbol, ds, raw_var,
+                                         fallback::Integer)
+    haskey(cfg, "time_index") && return Int(cfg["time_index"])
+    haskey(cfg, "month") || return Int(fallback)
+    month = Int(cfg["month"])
+    1 <= month <= 12 || throw(ArgumentError("surface_flux.month must be in 1:12"))
+    ndims(raw_var) == 3 || return Int(fallback)
+    time_var = find_coordinate(ds, TimeAxis(); length = size(raw_var, 3), required = false)
+    time_var === nothing && return Int(fallback)
+    keys = decode_month_keys(ds, time_var)
+    matches = findall(key -> key.month == month, keys)
+    length(matches) == 1 || throw(ArgumentError(
+        "surface_flux.month = $month matches $(length(matches)) slices on time coordinate " *
+        "'$time_var'; expected exactly one"))
+    return only(matches)
+end
+
 """Resolve one or more regular-grid files for a time-varying surface source."""
 function _resolve_timevarying_surface_flux_files(
         cfg, kind::Symbol, reference_time::Union{DateTime, Nothing})
@@ -361,6 +383,9 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}; species::Symbol,
         ndims(raw_var) in (2, 3) || throw(ArgumentError(
             "surface-flux variable '$variable' must be 2D or 3D, got ndims=$(ndims(raw_var))"))
         lon_src, lat_src = _latlon_centres(ds, raw_var)
+        time_index = _static_surface_flux_time_index(cfg, kind, ds, raw_var, time_index)
+        ndims(raw_var) == 2 || 1 <= time_index <= size(raw_var, 3) || throw(ArgumentError(
+            "surface_flux time index $time_index is outside 1:$(size(raw_var, 3))"))
 
         # Fill values become 0 (GriddedIO.MaskedAsZero).
         raw = if ndims(raw_var) == 3
@@ -499,7 +524,18 @@ end
 function _timevarying_slice_seconds(time_var::AbstractString, ds, cfg, kind::Symbol, file,
                                     reference_time)
     _require_reference_time(reference_time)
+    if _surface_flux_temporal_scheme(cfg) isa StepwiseFlux
+        bounds = decode_time_bounds(ds, time_var)
+        bounds === nothing || return seconds_since(vec(bounds[1, :]), reference_time)
+    end
     return seconds_since(decode_time(ds, time_var), reference_time)
+end
+
+
+function _surface_flux_temporal_scheme(cfg)
+    default = _surface_flux_kind(cfg) in (:lmdz_co2, :gridfed_fossil_co2) ?
+              "stepwise" : "linear"
+    return flux_temporal_scheme(String(get(cfg, "temporal_scheme", default)))
 end
 function _timevarying_slice_seconds(::Nothing, ds, cfg, kind::Symbol, file, reference_time)
     kind === :gridfed_fossil_co2 || throw(ArgumentError(
@@ -805,9 +841,7 @@ function _build_timevarying_cs_surface_flux_source(mesh, tracer_name::Symbol, cf
     # linear/interp default smears the diurnal cycle (anomaly corr 0.91 vs 0.998).
     # GridFED monthly totals are likewise held constant through each month.
     # Other kinds keep the generic "linear" default.
-    default_scheme = _surface_flux_kind(cfg) in (:lmdz_co2, :gridfed_fossil_co2) ?
-                     "stepwise" : "linear"
-    scheme = flux_temporal_scheme(String(get(cfg, "temporal_scheme", default_scheme)))
+    scheme = _surface_flux_temporal_scheme(cfg)
     return TimeVaryingSurfaceFluxSource(tracer_name, panels_series, field.times_sec, scheme)
 end
 

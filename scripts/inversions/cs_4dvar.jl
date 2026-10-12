@@ -33,11 +33,13 @@
 #     [advection]                 # required; same parser as run_transport.jl
 #     scheme = "ppm"              # upwind | slopes | ppm | linrood | none
 #     limiter = "none"            # ppm only: monotone (default) | cw84 | none
-#     # vertical = "upwind"       # linrood only (fv3_kord8 has no adjoint)
+#     vertical = "upwind"         # REQUIRED for linrood inversion (OF-94)
 #     # ppm_order = 5             # linrood only: 5 or 7
 #     # The gradient is the adjoint of this scheme, so `scheme` has no
 #     # default here, and schemes without a cubed-sphere adjoint
-#     # (limited slopes, the FV3 vertical profile, none) are rejected.
+#     # (limited slopes, the FV3 vertical profile, none) are rejected. Forward
+#     # Lin–Rood runs default to fv3_kord8; inversions do not inherit that
+#     # unsupported default and must state vertical = "upwind" explicitly.
 #     # `limiter = "none"` (unlimited, linear PPM) is accepted only here,
 #     # not in forward runs.
 #

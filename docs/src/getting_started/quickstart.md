@@ -90,6 +90,7 @@ shape is:
 ```toml
 [input]
 binary_paths = ["data/quickstart/synthetic_latlon_v4.bin"]
+start_date = "2021-12-01"
 
 [architecture]
 use_gpu = false

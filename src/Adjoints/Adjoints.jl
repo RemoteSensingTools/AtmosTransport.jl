@@ -130,7 +130,9 @@ _adjoint_gap(::PPMScheme{<:AbstractLimiter, <:FV3ScalarProfile}) =
     "\"fv3_kord8_signed\") has no adjoint."
 _adjoint_gap(s::PPMScheme) = "PPMScheme with $(nameof(typeof(s.limiter))) has no adjoint."
 _adjoint_gap(::LinRoodPPMScheme) =
-    "LinRoodPPMScheme with FV3-profile vertical sweeps has no adjoint; use vertical = \"upwind\"."
+    "LinRoodPPMScheme with the configured vertical reconstruction has no adjoint; " *
+    "forward Lin–Rood runs default to vertical = \"fv3_kord8\", while inversions " *
+    "must explicitly use vertical = \"upwind\" (OF-94)."
 _adjoint_gap(::NoAdvection) =
     "NoAdvection (scheme = \"none\") has no record in the cubed-sphere tape."
 _adjoint_gap(s) = "$(nameof(typeof(s))) has no cubed-sphere adjoint."

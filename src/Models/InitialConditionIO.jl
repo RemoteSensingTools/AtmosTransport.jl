@@ -67,13 +67,14 @@ using ..Regridding: build_regridder, apply_regridder!, default_regrid_cache_dir
 using ..Preprocessing: unpack_flat_to_panels_3d!, unpack_flat_to_panels_2d!,
                        CS_PANEL_COUNT
 using ..Operators.SurfaceFlux: SurfaceFluxSource, TimeVaryingSurfaceFluxSource,
-                               flux_temporal_scheme
+                               StepwiseFlux, flux_temporal_scheme
 # The conventions of native gridded input files (coordinates, orientation,
 # fill values, source meshes, time axes, flux units) and the `cs_native` flux
 # file (reader, cell-area gate) are owned by GriddedIO.
 using ...GriddedIO: find_coordinate, LongitudeAxis, LatitudeAxis, TimeAxis, VerticalAxis,
                     latlon_orientation, orient, orient_coordinates, read_raw, MaskedAsZero,
-                    source_latlon_mesh, decode_time, decode_month_seconds,
+                    source_latlon_mesh, decode_time, decode_time_bounds, decode_month_keys,
+                    decode_month_seconds,
                     parse_flux_units,
                     AbstractTimeBasis, PerSquareMetre, PerCell, PerMonth, TimeInterval,
                     FluxUnits, kg_per_unit, period_seconds, seconds_since,
@@ -370,9 +371,12 @@ function _load_file_initial_condition_source(cfg, ::Type{FT}, Nz_target::Integer
                 read_raw(FT, ds, humidity_name, MaskedAsZero())
         end
 
-        has_hybrid = haskey(ds, "ap") && haskey(ds, "bp")
+        haskey(ds, "ap") == haskey(ds, "bp") || throw(ArgumentError(
+            "$(file) must provide both hybrid interface coefficients ap and bp, or neither"))
+        has_hybrid = haskey(ds, "ap")
         ap = has_hybrid ? Float64.(ds["ap"][:]) : Float64[]
         bp = has_hybrid ? Float64.(ds["bp"][:]) : Float64[]
+        has_hybrid && _validate_ap_units(ds["ap"], ap, file)
 
         # Latitude ascending, longitude from the first value ≥ 0 (GriddedIO).
         orientation = latlon_orientation(lon_src, lat_src)
@@ -424,6 +428,27 @@ function _hybrid_surface_first(ap, bp)
     p_first == p_last && throw(ArgumentError(
         "hybrid coefficients give the same pressure at both ends of the column"))
     return p_first > p_last
+end
+
+# Hybrid A coefficients are pressures. Explicit units must be Pa; without a
+# units attribute, values above 2000 unambiguously indicate Pa, while an
+# all-zero pure-sigma A is unit-independent. Smaller nonzero magnitudes are
+# ambiguous with hPa and must not be guessed.
+function _validate_ap_units(ap_var, ap, file)
+    raw_units = String(string(get(ap_var.attrib, "units", "")))
+    units = lowercase(strip(raw_units))
+    units = replace(units, r"[\s_-]+" => "")
+    if !isempty(units)
+        units in ("pa", "pascal", "pascals") || throw(ArgumentError(
+            "hybrid coefficient ap in $(file) must use Pa; got units = " *
+            repr(raw_units)))
+        return nothing
+    end
+    scale = maximum(abs, ap; init = 0.0)
+    (iszero(scale) || scale > 2000) || throw(ArgumentError(
+        "hybrid coefficient ap in $(file) has no units and maximum magnitude $scale, " *
+        "which is ambiguous with hPa; add units = \"Pa\""))
+    return nothing
 end
 
 # `init.vertical_order` of a file: which end of its levels comes first.

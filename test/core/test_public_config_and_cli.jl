@@ -40,6 +40,30 @@ function _write_mixed_window_binary(path, window_seconds)
     return path
 end
 
+@testset "runtime output origin uses original path through staging" begin
+    mktempdir() do dir
+        original = _write_mixed_window_binary(
+            joinpath(dir, "transport_20211201.bin"), 3600.0)
+        stager = AtmosTransport.Models.InputStager([original], Dict{String, Any}(
+            "enabled" => true, "dir" => joinpath(dir, "stage"),
+            "lookahead_days" => 0, "cleanup_on_exit" => true))
+        try
+            staged = AtmosTransport.Models.staged_path_for!(stager, 1)
+            @test basename(staged) != basename(original)
+            driver = AtmosTransport.MetDrivers.TransportBinaryDriver(staged; FT = Float64)
+            try
+                origin = AtmosTransport.Models.DrivenRunner._runtime_output_origin(
+                    Dict{String, Any}(), driver, original)
+                @test origin == DateTime(2021, 12, 1)
+            finally
+                close(driver)
+            end
+        finally
+            AtmosTransport.Models.cleanup_staging!(stager)
+        end
+    end
+end
+
 function _write_full_window_cs_binary(path)
     MD = AtmosTransport.MetDrivers
     FT = Float64
@@ -216,7 +240,8 @@ end
             @test all(isfinite, column_mean)
 
             # The documented output schedule is part of the public example.
-            @test ds["time"][:] == collect(0.0:4.0)
+            @test ds["time"].var[:] == collect(0.0:4.0)
+            @test ds["time"][:] == DateTime(2021, 12, 1) .+ Hour.(0:4)
 
             # Constant periodic mass flux should move the Gaussian east while
             # conserving both air mass and the model's mass-like tracer
@@ -237,6 +262,19 @@ end
                               for t in axes(storage_per_area, 3)]
             @test all(x -> isapprox(x, storage_totals[1]; rtol = 2f-6), storage_totals)
         end
+
+        inconsistent = deepcopy(cfg)
+        inconsistent["input"]["start_date"] = "2021-12-02"
+        inconsistent["output"]["path"] = joinpath(dir, "bad_origin.nc")
+        err = try
+            run_driven_simulation(inconsistent)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("disagrees with the first transport binary's `date` header",
+                       sprint(showerror, err))
     end
 end
 
@@ -246,7 +284,8 @@ end
         hourly = _write_mixed_window_binary(joinpath(dir, "hourly.bin"), 3600.0)
         output_path = joinpath(dir, "mixed_windows.nc")
         cfg = Dict{String, Any}(
-            "input" => Dict("binary_paths" => [half_hour, hourly]),
+            "input" => Dict("binary_paths" => [half_hour, hourly],
+                            "start_date" => "2021-12-01"),
             "advection" => Dict("scheme" => "upwind"),
             "tracers" => Dict("co2" => Dict(
                 "init" => Dict("kind" => "uniform", "background" => 4e-4))),
@@ -256,7 +295,10 @@ end
         model = run_driven_simulation(cfg)
         @test all(mixing_ratio(model.state, :co2) .== 4e-4)
         NCDataset(output_path) do ds
-            @test ds["time"][:] == [0.0, 0.5, 1.0, 2.0, 3.0]
+            @test ds["time"].var[:] == [0.0, 0.5, 1.0, 2.0, 3.0]
+            @test ds["time"][:] == DateTime(2021, 12, 1) .+
+                                   Millisecond.([0, 1_800_000, 3_600_000,
+                                                7_200_000, 10_800_000])
         end
     end
 end

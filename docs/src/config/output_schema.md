@@ -92,12 +92,14 @@ surface sources, not copied from unvalidated configuration strings:
 | --- | --- |
 | `physics_advection_scheme`, `physics_advection_limiter` | horizontal scheme and limiter that ran |
 | `physics_advection_order` | Lin–Rood edge family, when applicable |
-| `physics_vertical_remap` | vertical reconstruction/remap |
+| `physics_vertical_reconstruction` | vertical advection reconstruction |
 | `physics_convection`, `physics_convection_*` | convection family and its numerical options |
 | `physics_diffusion`, `physics_diffusion_*` | diffusion family and surface-flux coupling |
 | `physics_surface_fluxes` | per-tracer static or time-varying sources and temporal reconstruction |
 | `physics_chemistry`, `physics_decay_half_lives_seconds` | chemistry family and resolved decay half-lives |
 | `physics_mass_basis` | carrier-air basis used by the physics |
+| `physics_cadence` | resolved convection/chemistry cadence (`window` or `substep`) |
+| `physics_air_mass_reset_mode` | resolved window-boundary air-mass reset policy |
 | `physics_met_source` | transport binary source family |
 | `physics_binary_provenance`, `physics_binary_inputs` | producing code/fingerprint fields and input binary names |
 

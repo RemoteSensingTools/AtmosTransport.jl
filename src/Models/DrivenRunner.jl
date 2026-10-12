@@ -392,28 +392,55 @@ function _run_reference_time(cfg)
     return DateTime(Date(String(input_cfg["start_date"])))
 end
 
-function _runtime_output_origin(cfg, driver; start_window::Integer = 1)
+function _header_date(driver)
+    raw = driver.reader.header.raw_header
+    haskey(raw, "date") || return nothing
+    value = raw["date"]
+    try
+        return Date(String(value))
+    catch err
+        err isa ArgumentError || rethrow()
+        throw(ArgumentError("invalid transport-binary `date` header $(repr(value))"))
+    end
+end
+
+function _filename_date(path::AbstractString)
+    # Tokens must be delimited by non-digits. This cannot mistake a hash prefix
+    # or a longer numeric identifier for the forcing day.
+    stamp = match(r"(?:^|\D)(\d{4})-?(\d{2})-?(\d{2})(?=\D|$)", basename(path))
+    stamp === nothing && return nothing
+    year_token = something(stamp[1])
+    month_token = something(stamp[2])
+    day_token = something(stamp[3])
+    try
+        return Date(parse(Int, year_token), parse(Int, month_token), parse(Int, day_token))
+    catch err
+        err isa ArgumentError || rethrow()
+        throw(ArgumentError("invalid transport-binary filename date $(stamp.match) " *
+                            "in $(basename(path))"))
+    end
+end
+
+function _runtime_output_origin(cfg, driver, original_binary_path::AbstractString;
+                                start_window::Integer = 1)
     origin = _run_reference_time(cfg)
-    if origin === nothing
-        raw = driver.reader.header.raw_header
-        if haskey(raw, "date")
-            origin = DateTime(Date(String(raw["date"])))
+    header_day = _header_date(driver)
+    if origin !== nothing && header_day !== nothing && Date(origin) != header_day
+        throw(ArgumentError("[input].start_date = $(Date(origin)) disagrees with the first " *
+                            "transport binary's `date` header = $(header_day)"))
+    elseif origin === nothing
+        if header_day !== nothing
+            origin = DateTime(header_day)
         else
             # Canonical daily binaries predate the `date` header but carry the
             # forcing day in their filename (for example transport_20211202.bin).
             # Retain that supported input shape while still refusing to invent
             # an absolute origin for a genuinely undated binary.
-            stamp = match(r"(\d{4})-?(\d{2})-?(\d{2})", basename(driver.reader.path))
-            stamp === nothing && throw(ArgumentError(
+            filename_day = _filename_date(original_binary_path)
+            filename_day === nothing && throw(ArgumentError(
                 "runtime output needs [input].start_date, a transport binary `date` " *
                 "header, or a YYYYMMDD date in the binary filename to write the CF time origin"))
-            origin = try
-                DateTime(Date(parse(Int, stamp[1]), parse(Int, stamp[2]), parse(Int, stamp[3])))
-            catch err
-                err isa ArgumentError || rethrow()
-                throw(ArgumentError("invalid transport-binary filename date $(stamp.match) " *
-                                    "in $(basename(driver.reader.path))"))
-            end
+            origin = DateTime(filename_day)
         end
     end
     offset_ms = round(Int64, (start_window - 1) * Float64(window_dt(driver)) * 1000)
@@ -486,7 +513,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     snapshot_schedule_hours = snapshot_hours(output_spec)
     do_snapshots = output_enabled(output_spec)
     do_snapshots && set_time_origin!(output_spec,
-        _runtime_output_origin(cfg, first_driver; start_window))
+        _runtime_output_origin(cfg, first_driver, first(binary_paths); start_window))
     _check_snapshot_day_paths(output_spec, binary_paths)
     _check_output_targets(output_spec, output_cfg)
     _check_snapshot_schedule(output_spec,
@@ -804,7 +831,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     output_spec = runtime_output_spec(output_cfg, FT; default_cap_hours = run_hours)
     snapshot_schedule_hours = snapshot_hours(output_spec)
     do_snapshots = output_enabled(output_spec)
-    do_snapshots && set_time_origin!(output_spec, _runtime_output_origin(cfg, driver1))
+    do_snapshots && set_time_origin!(output_spec,
+        _runtime_output_origin(cfg, driver1, first(binary_paths)))
     _check_snapshot_day_paths(output_spec, binary_paths)
     _check_output_targets(output_spec, output_cfg)
     _check_snapshot_schedule(output_spec, _window_end_hours(layout; stop_window_override))

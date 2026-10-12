@@ -120,7 +120,7 @@ end
 
 # The frames of the daily file for `day` must lie in [day 00 UTC, day + 1 00 UTC].
 function check_file_day(path, day::Date, origin::DateTime)
-    hours = NCDataset(ds -> Float64.(collect(ds["time"].var[:])), path, "r")
+    hours = NCDataset(ds -> _comparison_hours(ds, path, origin), path, "r")
     stamps = [origin + Millisecond(round(Int64, h * 3_600_000)) for h in hours]
     lo, hi = DateTime(day), DateTime(day) + Day(1)
     all(t -> lo <= t <= hi, stamps) || throw(ArgumentError(
@@ -152,15 +152,26 @@ function _column_layout(ds, name, path)
     return (; T, shape = size(var)[1:end-1])
 end
 
-function _comparison_hours(ds, path)
+function _comparison_hours(ds, path, origin::DateTime)
     haskey(ds, "time") || throw(ArgumentError("$(path) has no `time` variable"))
     var = ds["time"]
     units = strip(String(get(var.attrib, "units", "")))
-    units == "hours" || throw(ArgumentError(
-        "$(path): `time` has units \"$(units)\"; expected the snapshot writer's \"hours\" " *
-        "(hours since the simulation start passed as `origin`)"))
     hours = Float64.(collect(var.var[:]))
     all(isfinite, hours) || throw(ArgumentError("$(path): `time` holds non-finite values"))
+    if units == "hours"                         # legacy snapshots
+        return hours
+    end
+    startswith(lowercase(units), "hours since ") || throw(ArgumentError(
+        "$(path): `time` has units $(repr(units)); expected \"hours\" or CF \"hours since <origin>\""))
+    stamps = DateTime.(collect(var[:]))
+    length(stamps) == length(hours) || throw(DimensionMismatch(
+        "$(path): decoded and raw time coordinates have different lengths"))
+    ms_per_hour = Dates.toms(Dates.Hour(1))
+    inferred = stamps[1] - Millisecond(round(Int64, hours[1] * ms_per_hour))
+    inferred == origin || throw(ArgumentError(
+        "$(path): encoded CF time origin $(inferred) disagrees with --origin $(origin)"))
+    all(stamps .== [origin + Millisecond(round(Int64, h * ms_per_hour)) for h in hours]) ||
+        throw(ArgumentError("$(path): decoded CF time values disagree with their raw hour offsets"))
     return hours
 end
 
@@ -174,7 +185,7 @@ function _column_sample_plan(paths, names, origin, keep_frame)
     ms_per_hour = Dates.toms(Dates.Hour(1))
     stamp(h) = origin + Millisecond(round(Int64, h * ms_per_hour))
     for path in paths
-        hours = NCDataset(ds -> _comparison_hours(ds, path), path, "r")
+        hours = NCDataset(ds -> _comparison_hours(ds, path, origin), path, "r")
         keep = Int[]
         for (frame, h) in enumerate(hours)
             h in seen && continue

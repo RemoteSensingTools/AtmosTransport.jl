@@ -193,7 +193,7 @@ struct LinRoodAdvectionSpec{Z <: AbstractAdvectionScheme} <: AbstractAdvectionSp
     vertical :: Z
 end
 LinRoodAdvectionSpec(order::Integer) = LinRoodAdvectionSpec(
-    Int(order), PPMScheme(; vertical = FV3ScalarProfile()))
+    Int(order), UpwindScheme())
 
 """
     AbstractAdvectionContext
@@ -288,9 +288,17 @@ function _parse_ppm_limiter(section, context::AbstractAdvectionContext)
     return limiters[key]
 end
 
-# Lin–Rood's vertical sweeps: the GCHP-matched FV3 profile (default) or upwind.
-function _parse_linrood_vertical(section)
-    raw = get(section, "vertical", "fv3_kord8")
+# Lin–Rood's vertical sweeps. Forward configuration defaults to the GCHP-matched
+# FV3 profile. An inversion must make the different, adjoint-supported upwind
+# choice explicit so omitting one key cannot silently change the forward model.
+_default_linrood_vertical(::ForwardAdvectionContext) = "fv3_kord8"
+_default_linrood_vertical(::InversionAdvectionContext) = throw(ArgumentError(
+    "[advection] `vertical` is required for a Lin–Rood inversion. Forward runs " *
+    "default to vertical = \"fv3_kord8\", but its adjoint is not implemented; " *
+    "the inversion supports only vertical = \"upwind\" (OF-94)."))
+
+function _parse_linrood_vertical(section, context::AbstractAdvectionContext)
+    raw = get(() -> _default_linrood_vertical(context), section, "vertical")
     key = raw isa AbstractString ? lowercase(raw) : ""
     key == "upwind" && return UpwindScheme()
     key in _LINROOD_VERTICALS || throw(ArgumentError(
@@ -331,7 +339,7 @@ function advection_spec(section, context::AbstractAdvectionContext = ForwardAdve
     order = _spec_int(section, "ppm_order", DEFAULT_LINROOD_PPM_ORDER, "[advection]")                    # :linrood
     order in _LINROOD_PPM_ORDERS || throw(ArgumentError(
         "[advection] `ppm_order` must be 5 or 7 for `scheme = \"linrood\"`; got $(order)."))
-    return LinRoodAdvectionSpec(order, _parse_linrood_vertical(section))
+    return LinRoodAdvectionSpec(order, _parse_linrood_vertical(section, context))
 end
 
 # Materialize with topology gates close to construction: RG currently accepts

@@ -61,6 +61,11 @@ the model column despite topographic or dry-air-mass differences between the
 file's model and the transport binary. Aloft, where ``b^s=0``, it reduces to
 ordinary absolute-pressure placement.
 
+`ap` is always interpreted in Pa. An explicit units attribute must say Pa; if
+it is absent, only an all-zero pure-sigma coefficient or a magnitude clearly
+in the pascal range is accepted. This prevents an hPa coefficient from moving
+every pure-pressure interface by a factor of 100.
+
 The remap treats each source value as a layer mean. Source humidity is opt-in
 through `init.humidity_variable`; conventional names such as `q`, `QV`, and
 `hus` are not auto-detected. With ``d^s=1-q_v^s``, the source-dry-air mean is
@@ -122,9 +127,11 @@ for per-cell units (the file's `cell_area`/`area`, else the band areas of the
 grid on the destination sphere), multiply by `GriddedIO.kg_per_unit` (kg of the
 tracer's species per unit; kg of another species is an error) and divide by
 `GriddedIO.period_seconds` (per-month units: CF time bounds when present, else
-the coordinate's month in its own calendar). Slice position is never a month
-number except for the documented legacy GridFED format with twelve slices and
-no time coordinate.
+the coordinate's month in its own calendar). `time_index` is always a 1-based
+positional selector. `month` selects the unique decoded calendar month when a
+time coordinate exists, and is ordinal only for the documented legacy GridFED
+format with twelve slices and no time coordinate. Stepwise time-varying fields
+switch at CF bound starts when bounds exist, otherwise at coordinate stamps.
 Time-varying lat-lon sources need densities (per m²). Any other `kind` is an
 error (`_surface_flux_kind`); `none` (the default) emits nothing.
 
@@ -173,9 +180,11 @@ error (`_surface_flux_kind`); `none` (the default) emits nothing.
   the species of a tracer named `co2`, `co2_natural`, `co2_fossil`,
   `fossil_co2`, `sf6` or `rn222`. Any other tracer without `species` is an
   error.
-- `k = 1` is the top of the atmosphere:
-  - equal-level `cs_native` ICs default to `vertical_order = "surface_first"`
-    and are flipped exactly as before;
+- The target hybrid coefficients define the model's level order:
+  - equal-level `cs_native` ICs with `ap`/`bp` infer source order from interface
+    pressure, orient values to the target order, and require coefficients that
+    match the binary; without coefficients, `vertical_order` defaults to
+    `"surface_first"`;
   - mismatched-level `cs_native` ICs require `ap`/`bp` and use the conservative
     hybrid remap, with optional `humidity_variable` dry-carrier weighting and
     the binary's typed total/dry surface-pressure basis.

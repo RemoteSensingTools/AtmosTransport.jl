@@ -49,7 +49,7 @@ function _write_synthetic_ic_file(path::AbstractString; with_humidity::Bool = fa
         vlat = defVar(ds, "latitude", Float64, ("latitude",))
         vlev = defVar(ds, "level", Float64, ("level",))
         vhlev = defVar(ds, "hlevel", Float64, ("hlevel",))
-        vap = defVar(ds, "ap", Float64, ("hlevel",))
+        vap = defVar(ds, "ap", Float64, ("hlevel",), attrib = Dict("units" => "Pa"))
         vbp = defVar(ds, "bp", Float64, ("hlevel",))
         vco2 = defVar(ds, "CO2", Float64, ("longitude", "latitude", "level"))
         vqv = with_humidity ?
@@ -96,7 +96,7 @@ function _write_synthetic_cs_native_ic_file(path::AbstractString; Nc=2, Nz=2)
                         ("Xdim", "Ydim", "nf", "lev"))
         # Equal level counts must retain the exact-copy path even when the
         # native file carries otherwise usable hybrid metadata.
-        defVar(ds, "ap", Float64, ("ilev",))[:] = zeros(Nz + 1)
+        defVar(ds, "ap", Float64, ("ilev",), attrib = Dict("units" => "Pa"))[:] = zeros(Nz + 1)
         defVar(ds, "bp", Float64, ("ilev",))[:] = collect(range(1.0, 0.0; length = Nz + 1))
         values = Array{Float64}(undef, Nc, Nc, 6, Nz)
         for k in 1:Nz, p in 1:6, j in 1:Nc, i in 1:Nc
@@ -149,7 +149,7 @@ function _write_mismatched_cs_native_ic_file(path::AbstractString; Nc=2)
         end
         raw = defVar(ds, "TRACER", Float64, ("Xdim", "Ydim", "nf", "lev"))
         humidity = defVar(ds, "QV", Float64, ("Xdim", "Ydim", "nf", "lev"))
-        defVar(ds, "ap", Float64, ("ilev",))[:] = zeros(Nsrc + 1)
+        defVar(ds, "ap", Float64, ("ilev",), attrib = Dict("units" => "Pa"))[:] = zeros(Nsrc + 1)
         defVar(ds, "bp", Float64, ("ilev",))[:] = [1.0, 2 / 3, 1 / 3, 0.0]
         for k in 1:Nsrc
             raw[:, :, :, k] .= (6.0, 3.0, 0.0)[k]
@@ -458,14 +458,15 @@ end
             _write_synthetic_cs_native_ic_file(path; Nc, Nz)
 
             mesh = CubedSphereMesh(; FT, Nc, Hp)
-            vertical = HybridSigmaPressure(FT[0, 50000, 0], FT[1, 0.5, 0])
+            vertical = HybridSigmaPressure(zeros(FT, Nz + 1),
+                                           collect(FT, range(1.0, 0.0; length = Nz + 1)))
             grid = AtmosGrid(mesh, vertical, CPU(); FT)
             air_mass = ntuple(_ -> fill(FT(1e10), Nc + 2Hp, Nc + 2Hp, Nz), 6)
             base_cfg = Dict{String, Any}(
                 "kind" => "cs_native",
                 "file" => path,
                 "variable" => "SIGNED",
-                "vertical_order" => "toa_first",
+                "vertical_order" => "surface_first",
             )
 
             signed = build_initial_mixing_ratio(air_mass, grid, base_cfg)
@@ -1130,15 +1131,38 @@ end
             @test all(series.raw_series[:, :, 1] .== 2.0)
             @test all(series.raw_series[:, :, 2] .== 3.0)
             @test all(series.raw_series[:, :, 3] .== 4.0)
-            @test series.times_sec == [45.0, 74.5, 105.0] .* 86400
+            # Stepwise slices switch at interval starts, not their mid-month
+            # coordinate stamps.
+            @test series.times_sec == [31.0, 59.0, 90.0] .* 86400
 
-            # The static selector also uses slice metadata, not time_index as
-            # an ordinal month: the first stored slice is April.
+            # time_index remains explicitly positional: slice 1 is April.
             static_cfg = Dict{String, Any}(
                 "kind" => "gridfed_fossil_co2", "file" => path, "time_index" => 1)
             static = ICIO._load_file_surface_flux_field(
                 static_cfg, Float64; species = :co2)
             @test all(static.raw .== 4.0)
+
+            # month is semantic when a coordinate exists, even though the
+            # partial-year file is out of order.
+            february = ICIO._load_file_surface_flux_field(
+                Dict{String, Any}("kind" => "gridfed_fossil_co2", "file" => path,
+                                  "month" => 2), Float64; species = :co2)
+            @test all(february.raw .== 2.0)
+            @test_throws ArgumentError ICIO._load_file_surface_flux_field(
+                Dict{String, Any}("kind" => "gridfed_fossil_co2", "file" => path,
+                                  "month" => 1), Float64; species = :co2)
+
+            # Fixed-unit bounds must span exactly the represented calendar
+            # month; a daily interval cannot normalize a monthly amount.
+            bad_bounds = [31.0 59.0 90.0; 32.0 60.0 91.0]
+            bad = write_permonth(joinpath(dir, "daily_bounds.nc");
+                                 times = vec(sum(bad_bounds; dims = 1) ./ 2),
+                                 values = ones(3), calendar = "proleptic_gregorian",
+                                 bounds = bad_bounds)
+            @test_throws ArgumentError ICIO._load_timevarying_surface_flux_field(
+                Dict{String, Any}("kind" => "gridfed_fossil_co2", "file" => bad,
+                                  "time_varying" => true),
+                Float64, DateTime(2021, 1, 1); species = :co2)
 
             # Without bounds, month length comes from the coordinate's own
             # 360_day calendar: February is 30 days, not Gregorian 28 days.

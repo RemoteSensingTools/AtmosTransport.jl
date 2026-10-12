@@ -15,28 +15,28 @@ _physics_linrood_vertical(s::PPMScheme) = _physics_vertical(s.vertical)
 _advection_attributes(::UpwindAdvectionSpec) = Dict(
     "physics_advection_scheme" => "upwind",
     "physics_advection_limiter" => "not_applicable",
-    "physics_vertical_remap" => "upwind",
+    "physics_vertical_reconstruction" => "upwind",
 )
 _advection_attributes(::SlopesAdvectionSpec) = Dict(
     "physics_advection_scheme" => "slopes",
     "physics_advection_limiter" => "monotone",
-    "physics_vertical_remap" => "same_as_horizontal",
+    "physics_vertical_reconstruction" => "same_as_horizontal",
 )
 _advection_attributes(::NoAdvectionSpec) = Dict(
     "physics_advection_scheme" => "none",
     "physics_advection_limiter" => "not_applicable",
-    "physics_vertical_remap" => "none",
+    "physics_vertical_reconstruction" => "none",
 )
 _advection_attributes(spec::PPMAdvectionSpec) = Dict(
     "physics_advection_scheme" => "ppm",
     "physics_advection_limiter" => _physics_limiter(spec.limiter),
-    "physics_vertical_remap" => _physics_vertical(spec.vertical),
+    "physics_vertical_reconstruction" => _physics_vertical(spec.vertical),
 )
 _advection_attributes(spec::LinRoodAdvectionSpec) = Dict(
     "physics_advection_scheme" => "linrood_ppm",
     "physics_advection_order" => string(spec.order),
     "physics_advection_limiter" => "not_applicable",
-    "physics_vertical_remap" => _physics_linrood_vertical(spec.vertical),
+    "physics_vertical_reconstruction" => _physics_linrood_vertical(spec.vertical),
 )
 
 _cloud_base_label(::CMFMCEdgeCloudBase) = "cmfmc"
@@ -136,6 +136,11 @@ function runtime_physics_attributes(cfg, driver, surface_sources, mass_basis::Sy
     merge!(attributes, _surface_flux_attributes(surface_sources))
     merge!(attributes, _binary_provenance_attributes(driver, binary_paths))
     attributes["physics_mass_basis"] = String(mass_basis)
+    run_cfg = get(cfg, "run", Dict{String, Any}())
+    attributes["physics_cadence"] = String(_resolve_physics_cadence(
+        get(run_cfg, "physics_cadence", nothing)))
+    attributes["physics_air_mass_reset_mode"] = String(_normalize_air_mass_reset_mode(
+        get(run_cfg, "air_mass_reset_mode", "preserve_tracer_mass")))
     return attributes
 end
 

@@ -169,7 +169,9 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
             Dict("advection" => Dict("scheme" => "ppm", "vertical" => "fv3_kord8_signed")),
             LatLonRuntimeRecipeStyle())
         # Lin-Rood vertical sweeps: the GCHP-matched FV3 profile by default;
-        # explicit upwind remains available.
+        # explicit upwind remains available. The programmatic one-argument
+        # constructor stays upwind; only configured forward runs default FV3.
+        @test LinRoodAdvectionSpec(5).vertical isa UpwindScheme
         lr_default = advection_spec(Dict("scheme" => "linrood"))
         @test lr_default.vertical isa PPMScheme{MonotoneLimiter, FV3ScalarProfile{true}}
         @test materialize(lr_default, CS_STYLE) isa
@@ -199,7 +201,7 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test materialize(advection_spec(Dict("scheme" => "ppm", "limiter" => "none"), inversion),
                           CS_STYLE) == PPMScheme(NoLimiter())
         @test advection_spec(Dict("scheme" => "ppm"), inversion).limiter isa MonotoneLimiter
-        @test advection_spec(Dict("scheme" => "linrood"), inversion) isa LinRoodAdvectionSpec
+        @test_throws ArgumentError advection_spec(Dict("scheme" => "linrood"), inversion)
         @test_throws ArgumentError advection_spec(Dict{String,Any}(), inversion)
         @test_throws ArgumentError advection_spec(Dict("scheme" => "upwind", "limiter" => "none"), inversion)
         @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "limiter" => "nope"), inversion)
@@ -212,12 +214,12 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         ppm_attrs = M._advection_attributes(ppm)
         @test ppm_attrs["physics_advection_scheme"] == "ppm"
         @test ppm_attrs["physics_advection_limiter"] == "cw84"
-        @test ppm_attrs["physics_vertical_remap"] == "fv3_kord8_signed"
+        @test ppm_attrs["physics_vertical_reconstruction"] == "fv3_kord8_signed"
 
         linrood = advection_spec(Dict("scheme" => "linrood", "ppm_order" => 7))
         lr_attrs = M._advection_attributes(linrood)
         @test lr_attrs["physics_advection_order"] == "7"
-        @test lr_attrs["physics_vertical_remap"] == "fv3_kord8"
+        @test lr_attrs["physics_vertical_reconstruction"] == "fv3_kord8"
 
         diff = diffusion_spec(Dict("kind" => "constant", "value" => 3.5,
                                    "surface_flux_boundary" => true))

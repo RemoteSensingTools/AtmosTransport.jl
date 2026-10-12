@@ -441,12 +441,17 @@ function transport_step!(model::TransportModel, dt; meteo = nothing)
     return nothing
 end
 
-# ExponentialDecay is linear and autonomous over a met window, so two exact
-# half-steps place the window-integrated emissions at the window midpoint.
+# Constant-rate ExponentialDecay is linear and autonomous over a met window,
+# so two exact half-steps place the window-integrated emissions at the window
+# midpoint. A time-varying rate is not autonomous and retains the historical
+# end-step order: sampling its two halves on opposite sides of a forcing
+# boundary would apply part of the next interval's rate to this interval.
 # NoChemistry is included so the default remains a compile-time no-op. A
 # CompositeChemistry is split only when every member has the same safe
 # property; future/non-decay chemistry retains the historical end-step order.
-@inline _symmetric_decay_split(::ExponentialDecay) = true
+@inline _symmetric_decay_split(
+    ::ExponentialDecay{FT, N, R}) where {FT, N, R <: NTuple{N, ConstantField}} = true
+@inline _symmetric_decay_split(::ExponentialDecay) = false
 @inline _symmetric_decay_split(::NoChemistry) = true
 @inline _symmetric_decay_split(op::CompositeChemistry) =
     all(_symmetric_decay_split, op.schemes)

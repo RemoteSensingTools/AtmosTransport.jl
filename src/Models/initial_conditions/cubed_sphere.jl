@@ -232,7 +232,7 @@ function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
     isfile(file) || throw(ArgumentError("cs_native initial-condition file not found: $file"))
     time_index = Int(get(cfg, "time_index", 1))
     ds = NCDataset(file)
-    raw, source_qv, ap, bp = try
+    raw, source_qv, ap, bp, has_hybrid = try
         haskey(ds, variable) || throw(ArgumentError("variable '$variable' not found in $file"))
         rv = ds[variable]
         nd = ndims(rv)
@@ -263,9 +263,12 @@ function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
         end
 
         has_ap, has_bp = haskey(ds, "ap"), haskey(ds, "bp")
+        has_ap == has_bp || throw(ArgumentError(
+            "cs_native initial condition must provide both ap and bp, or neither"))
         source_ap = has_ap ? Float64.(ds["ap"][:]) : Float64[]
         source_bp = has_bp ? Float64.(ds["bp"][:]) : Float64[]
-        values, source_humidity, source_ap, source_bp
+        has_ap && _validate_ap_units(ds["ap"], source_ap, file)
+        values, source_humidity, source_ap, source_bp, has_ap
     finally
         close(ds)
     end
@@ -288,10 +291,40 @@ function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
 
     vmr = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), CS_PANEL_COUNT)
 
+    surface_first = false
+    if has_hybrid
+        length(ap) == Nsrc + 1 && length(bp) == Nsrc + 1 || throw(DimensionMismatch(
+            "cs_native hybrid coefficients must have source lev + 1 = $(Nsrc + 1) entries; " *
+            "got ap=$(length(ap)), bp=$(length(bp))"))
+        surface_first = _hybrid_surface_first(ap, bp)
+        if haskey(cfg, "vertical_order")
+            configured_order = cfg["vertical_order"]
+            _parse_vertical_order(configured_order) ===
+                (surface_first ? :surface_first : :toa_first) ||
+                throw(ArgumentError("init.vertical_order = $(repr(configured_order)) contradicts " *
+                                    "the hybrid coefficients of $(file)"))
+        end
+    end
+
     if Nsrc == Nz
-        # Preserve the pre-E7 result bit for bit when the level counts match.
-        flip_vertical = _parse_vertical_order(
-            get(cfg, "vertical_order", "surface_first")) === :surface_first
+        if has_hybrid
+            A_tgt, B_tgt = grid.vertical.A, grid.vertical.B
+            target_surface_first = _hybrid_surface_first(A_tgt, B_tgt)
+            if surface_first != target_surface_first
+                raw = raw[:, :, :, end:-1:1]
+                source_qv === nothing || (source_qv = source_qv[:, :, :, end:-1:1])
+                ap = reverse(ap)
+                bp = reverse(bp)
+            end
+            all(isapprox.(ap, A_tgt; atol = 1e-3, rtol = 1e-6)) || throw(ArgumentError(
+                "cs_native ap coefficients differ from the transport binary despite equal level counts"))
+            all(isapprox.(bp, B_tgt; atol = 1e-8, rtol = 1e-6)) || throw(ArgumentError(
+                "cs_native bp coefficients differ from the transport binary despite equal level counts"))
+            flip_vertical = false
+        else
+            flip_vertical = _parse_vertical_order(
+                get(cfg, "vertical_order", "surface_first")) === :surface_first
+        end
         for p in 1:CS_PANEL_COUNT
             dst = vmr[p]
             @inbounds for k in 1:Nz
@@ -305,12 +338,9 @@ function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
         return vmr
     end
 
-    (isempty(ap) || isempty(bp)) && throw(ArgumentError(
+    has_hybrid || throw(ArgumentError(
         "cs_native initial condition has $Nsrc levels but the binary has $Nz; " *
         "mismatched levels require both hybrid interface coefficients ap and bp"))
-    length(ap) == Nsrc + 1 && length(bp) == Nsrc + 1 || throw(DimensionMismatch(
-        "cs_native hybrid coefficients must have source lev + 1 = $(Nsrc + 1) entries; " *
-        "got ap=$(length(ap)), bp=$(length(bp))"))
     surface_pressure === nothing && throw(ArgumentError(
         "cs_native initial condition has $Nsrc levels but the binary has $Nz; " *
         "pass the binary's surface_pressure panels for conservative hybrid remapping"))
@@ -319,12 +349,7 @@ function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
     qv === nothing || all(p -> size(qv[p]) == (Nc, Nc, Nz), 1:CS_PANEL_COUNT) ||
         throw(DimensionMismatch("CS target humidity panels must each have shape ($Nc, $Nc, $Nz)"))
 
-    surface_first = _hybrid_surface_first(ap, bp)
-    haskey(cfg, "vertical_order") &&
-        _parse_vertical_order(cfg["vertical_order"]) !==
-            (surface_first ? :surface_first : :toa_first) &&
-        throw(ArgumentError("init.vertical_order = $(repr(cfg["vertical_order"])) contradicts " *
-                            "the hybrid coefficients of $(file)"))
+    # The conservative remapper consumes source profiles surface-to-TOA.
     if !surface_first
         raw = raw[:, :, :, end:-1:1]
         source_qv === nothing || (source_qv = source_qv[:, :, :, end:-1:1])

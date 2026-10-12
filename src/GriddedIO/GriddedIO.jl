@@ -80,7 +80,7 @@ export AbstractFaceRule, SnappedFaces, UniformSpanFaces, source_latlon_mesh
 export TimeInterval, MonthKey, month_keys, interval, seconds_since, check_last_month
 export AbstractTimeDecoder, CFDecoder, MonthsSince, DecimalYears, AuxiliaryTimeVariable,
        AbstractMonthStamp, MonthStart, MidMonth, MonthEnd, DEFAULT_TIME_DECODERS, decode_time,
-       decode_month_keys, decode_month_seconds
+       decode_time_bounds, decode_month_keys, decode_month_seconds
 # staging.jl
 export stage_input
 # flux_units.jl

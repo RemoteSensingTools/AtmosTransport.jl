@@ -74,6 +74,17 @@ const RN222_HALF_LIFE_SECONDS = 330_350.4
     @test :kr85 in op.tracer_names
 end
 
+@testset "only constant decay rates use the symmetric split" begin
+    constant = AT.ExponentialDecay(Float64; rn222 = RN222_HALF_LIFE_SECONDS)
+    @test AT.Models._symmetric_decay_split(constant)
+
+    rate = AT.State.StepwiseField([1e-6, 2e-6], [0.0, 10.0, 20.0])
+    rates = (rate,)
+    varying = AT.Operators.Chemistry.ExponentialDecay{
+        Float64, 1, typeof(rates)}(rates, (:rn222,))
+    @test !AT.Models._symmetric_decay_split(varying)
+end
+
 @testset "Rn-222 symmetric window split has the analytic steady burden" begin
     FT = Float64
     Nx, Ny, Nz = 2, 2, 1

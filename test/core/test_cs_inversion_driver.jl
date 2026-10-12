@@ -232,9 +232,9 @@ end
                    _config_error(with_advection("[advection]\nscheme = \"slopes\"\n")))
     @test occursin("FV3 vertical profile", _config_error(with_advection(
         "[advection]\nscheme = \"ppm\"\nvertical = \"fv3_kord8\"\n")))
-    @test occursin("FV3-profile vertical sweeps", _config_error(with_advection(
+    @test occursin("forward Lin–Rood runs default", _config_error(with_advection(
         "[advection]\nscheme = \"linrood\"\nvertical = \"fv3_kord8\"\n")))
-    @test occursin("FV3-profile vertical sweeps", _config_error(with_advection(
+    @test occursin("`vertical` is required", _config_error(with_advection(
         "[advection]\nscheme = \"linrood\"\n")))
     @test occursin("NoAdvection", _config_error(with_advection("[advection]\nscheme = \"none\"\n")))
     @test occursin("Unknown [advection] limiter", _config_error(with_advection(
