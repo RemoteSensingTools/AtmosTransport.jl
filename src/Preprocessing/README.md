@@ -106,6 +106,7 @@ Files directly in this folder; the subfolders have their own READMEs
 - [`met_readers.jl`](met_readers.jl) — `AbstractMetReader`, `NoChain`/`ChainedMass`, `GEOSNativeReader`, `ERA5SpectralReader`, `preprocessor_pair_supported`, `supports_day_threading`
 - [`target_geometry.jl`](target_geometry.jl) — `AbstractTargetGeometry`, LL/RG/CS target types, `build_target_geometry`, header metadata
 - [`configuration.jl`](configuration.jl) — ERA5 spectral TOML parsing (`resolve_runtime_settings`, `build_vertical_setup`, dates, `next_day_hour0`)
+- [`convection_mass_basis.jl`](convection_mass_basis.jl) — moist-to-dry conversion and binary basis metadata for TM5 convection fluxes
 - [`vertical_coordinates.jl`](vertical_coordinates.jl) — `merge_thin_levels`, `select_levels_echlevs`, echlevs presets, coefficient loaders
 - [`vertical_transforms.jl`](vertical_transforms.jl) — `AbstractVerticalTransform` types, `VerticalPlan`, `plan_vertical`, `apply_vertical!`
 - [`spectral_io.jl`](spectral_io.jl) — spectral GRIB reading, day cache (published with `AtomicFiles.atomic_publish`), `read_day_spectral`, `read_hour0_spectral`
@@ -160,8 +161,8 @@ Files directly in this folder; the subfolders have their own READMEs
   GEOS, ERA5 N320, and MERRA-2 writers reject other values; spectral dry basis
   requires `[input].thermo_dir`.
 - `k = 1` is the model top: GEOS files are flipped after
-  `detect_level_orientation`, MERRA-2 readers return top-down arrays, ERA5
-  N320 settings default to `level_orientation = :top_down`. `cm` is zero at
+  `detect_level_orientation`, MERRA-2 readers return top-down arrays, and
+  canonical ERA5 N320 GRIB fields are top-down. `cm` is zero at
   the top (`k = 1`) and surface (`k = Nz + 1`) interfaces.
 - Balance before `cm`: horizontal fluxes are balanced against the target
   `(m_next - m) / (2 * steps)` (each substep applies them twice; see

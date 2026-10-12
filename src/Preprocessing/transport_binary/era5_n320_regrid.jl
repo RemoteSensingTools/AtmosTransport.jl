@@ -589,7 +589,8 @@ function process_era5_n320_to_cs_day(date::Date,
                 "global_mass_pin_enabled" => do_mass_pin,
                 "global_mass_pin_target_kg" => do_mass_pin ?
                     Float64(global_mass_target_kg) : nothing,
-            ), write_replay_on))
+            ),
+            write_replay_on))
         writer = CubedSphereBinaryWriter(inner_writer,
                                           mass_basis_from_symbol(mass_basis);
                                           Nc = Nc,

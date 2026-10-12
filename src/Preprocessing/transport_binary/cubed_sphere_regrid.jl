@@ -276,6 +276,9 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         include_surface=source_has_surface,
         include_tm5conv=source_has_tm5,
         mass_basis=output_basis,
+        # The regrid copies the source's TM5 sections and their basis record;
+        # explicit `nothing` preserves a genuinely legacy keyless source.
+        tm5_convection_mass_basis=tm5_convection_mass_basis(reader),
         panel_convention=_cs_panel_convention_tag(cs_grid),
         cs_definition=_cs_definition_tag(cs_grid),
         cs_coordinate_law=_cs_coordinate_law_tag(cs_grid),

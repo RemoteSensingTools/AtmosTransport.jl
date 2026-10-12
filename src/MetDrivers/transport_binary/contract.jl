@@ -153,6 +153,39 @@ const _CS_WRITER_CONTRACT_KEYS = ("runtime_substep_contract",
                                   "preprocessor_contract",
                                   "adaptive_substeps")
 
+# An omitted writer keyword infers the TM5 payload basis from `mass_basis`.
+# Explicit `nothing` is distinct: transformation writers use it to preserve a
+# genuinely legacy source whose TM5 sections predate the basis record.
+struct _DefaultTM5ConvectionMassBasis end
+const _DEFAULT_TM5_CONVECTION_MASS_BASIS = _DefaultTM5ConvectionMassBasis()
+
+function _set_tm5_convection_mass_basis!(header::Dict{String, Any},
+                                         payload_sections,
+                                         mass_basis::Symbol,
+                                         requested::Union{_DefaultTM5ConvectionMassBasis,
+                                                          Nothing, AbstractMassBasis})
+    tm5_sections = (:entu, :detu, :entd, :detd)
+    present = map(section -> section in payload_sections, tm5_sections)
+    any(present) == all(present) || throw(ArgumentError(
+        "TM5 convection payload must contain all of $(tm5_sections), or none"))
+
+    if !all(present)
+        requested isa _DefaultTM5ConvectionMassBasis || requested === nothing ||
+            throw(ArgumentError(
+                "tm5_convection_mass_basis requires TM5 convection payload sections"))
+        return header
+    end
+
+    requested === nothing && return header
+    binary_basis = _transport_parse_mass_basis_tag(mass_basis, "mass_basis")
+    basis = requested isa _DefaultTM5ConvectionMassBasis ? binary_basis : requested
+    typeof(basis) === typeof(binary_basis) || throw(ArgumentError(
+        "tm5_convection_mass_basis=$(_transport_basis_symbol(basis)) does not match " *
+        "mass_basis=$(_transport_basis_symbol(binary_basis))"))
+    header[TM5_CONVECTION_MASS_BASIS_KEY] = String(_transport_basis_symbol(basis))
+    return header
+end
+
 const _TRANSPORT_STRUCTURAL_HEADER_KEYS = Set((
     "magic", "format_version", "header_bytes", "float_type", "float_bytes",
     "grid_type", "horizontal_topology", "planet_radius_m", "ncell", "nface_h", "nlevel",
@@ -163,14 +196,19 @@ const _TRANSPORT_STRUCTURAL_HEADER_KEYS = Set((
     "panel_convention", "cs_definition", "cs_coordinate_law",
     "cs_center_law", "longitude_offset_deg",
     "include_qv_endpoints", "include_flux_delta",
+    TM5_CONVECTION_MASS_BASIS_KEY,
 ))
 
 """Merge caller metadata without permitting it to rewrite the binary layout."""
 function _merge_transport_extra_header!(header::Dict{String, Any}, extra_header)
     for (raw_key, value) in pairs(extra_header)
         key = String(raw_key)
-        if key in _TRANSPORT_STRUCTURAL_HEADER_KEYS && haskey(header, key) &&
-           !isequal(header[key], value)
+        if key == TM5_CONVECTION_MASS_BASIS_KEY
+            throw(ArgumentError(
+                "extra_header cannot set structural field $(repr(key)); " *
+                "use the tm5_convection_mass_basis writer keyword"))
+        elseif key in _TRANSPORT_STRUCTURAL_HEADER_KEYS && haskey(header, key) &&
+               !isequal(header[key], value)
             throw(ArgumentError(
                 "extra_header cannot override structural field $(repr(key)): " *
                 "writer computed $(repr(header[key])), caller supplied $(repr(value))"))

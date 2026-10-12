@@ -28,9 +28,6 @@ reference   = "https://doi.org/10.1002/qj.3803"
 coefficients_file = "config/era5_L137_coefficients.toml"
 
 [preprocessing]
-# ERA5 model levels are top-down (level 1 = TOA, level 137 = surface).
-level_orientation = "top_down"
-
 # Toggle the optional GRIB streams the reader opens.
 include_surface      = true
 include_convection   = true

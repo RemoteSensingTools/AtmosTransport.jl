@@ -79,6 +79,51 @@ preprocessor when `tm5_convection = true`. Used by the
 """
 has_tm5_convection(r::TransportBinaryReader) =
     all(s in r.header.payload_sections for s in (:entu, :detu, :entd, :detd))
+"""
+    tm5_convection_mass_basis(r::TransportBinaryReader) -> Union{AbstractMassBasis, Nothing}
+
+Typed air-mass basis of the TM5 convection sections (`DryBasis()` or
+`MoistBasis()`) parsed from the header key
+[`TM5_CONVECTION_MASS_BASIS_KEY`](@ref); `nothing` when the binary has no TM5
+sections or does not record the basis (written before the key existed, with
+moist fluxes).
+"""
+tm5_convection_mass_basis(r::TransportBinaryReader) =
+    r.header.tm5_convection_mass_basis
+
+"""
+    _check_tm5_convection_basis(reader) -> nothing
+
+Check on opening that TM5 convection sections are on the binary's air-mass
+basis. A recorded mismatch is an error. A legacy dry binary without the
+record carries moist fluxes and warns until the corrected production archive
+has been regenerated.
+"""
+function _check_tm5_convection_basis(reader::TransportBinaryReader)
+    has_tm5_convection(reader) || return nothing
+    recorded = tm5_convection_mass_basis(reader)
+    binary_basis = mass_basis(reader)
+    if recorded === nothing
+        # Planned production-regeneration switch: after the ERA5 TM5 archive
+        # is regenerated with issue #19 fixed, replace this warning by an error.
+        binary_basis === :dry && @warn(
+            "$(basename(reader.path)) does not record `$(TM5_CONVECTION_MASS_BASIS_KEY)`: " *
+            "it was written before TM5 convection fluxes were converted to dry air " *
+            "(issue #19). Its moist fluxes act on dry air mass, so convective rates " *
+            "are too large by 1/(1-q): about 0.7 % (updraft) and 1.1 % (downdraft) " *
+            "globally, up to about 2 % in humid tropical columns. Regenerate the " *
+            "binary to remove the bias. (Reported once per session.)",
+            maxlog = 1)
+    elseif typeof(recorded) !== typeof(_transport_parse_mass_basis_tag(binary_basis, "mass_basis"))
+        recorded_label = _transport_basis_symbol(recorded)
+        throw(ArgumentError(
+            "$(basename(reader.path)): TM5 convection fluxes are on a $(recorded_label) basis " *
+            "(`$(TM5_CONVECTION_MASS_BASIS_KEY)`) but the air mass is $(binary_basis) " *
+            "(`mass_basis`); TM5Convection needs both on the same basis. Regenerate the binary."))
+    end
+    return nothing
+end
+
 has_cmfmc(r::TransportBinaryReader) = :cmfmc in r.header.payload_sections
 has_surface(r::TransportBinaryReader) =
     all(s in r.header.payload_sections for s in _PBL_SURFACE_PAYLOAD_SECTIONS)
@@ -116,7 +161,9 @@ function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Flo
             "from the header, found $(actual_bytes)"))
         data = Mmap.mmap(io, Vector{DiskFT}, total_elems, header.header_bytes)
         G = typeof(header.geometry)
-        return TransportBinaryReader{FT, DiskFT, G}(data, io, header, bin_path)
+        reader = TransportBinaryReader{FT, DiskFT, G}(data, io, header, bin_path)
+        _check_tm5_convection_basis(reader)
+        return reader
     catch
         isopen(io) && close(io)
         rethrow()

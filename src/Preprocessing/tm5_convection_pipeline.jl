@@ -9,7 +9,7 @@
 # typically 720×361 matching the physics BIN):
 #
 #   native-L137 UDMF/DDMF/UDRF/DDRF + T + Q + PS (from physics BIN)
-#       ↓  tm5_native_fields_for_hour!
+#       ↓  tm5_native_fields_for_hour! (× (1 − q) onto the binary's basis, ec2tm)
 #   native-L137 entu/detu/entd/detd (kg/m²/s)
 #       ↓  merge_tm5_field_3d!
 #   merged-Nz entu/detu/entd/detd on the source (ERA5) grid
@@ -23,9 +23,11 @@
 # ---------------------------------------------------------------------------
 
 """
-    TM5PreprocessingWorkspace{FT, R, B}
+    TM5PreprocessingWorkspace{FT, R, B, MB}
 
-Per-day scratch for the TM5 convection preprocessor.  Holds the
+Per-day scratch for the TM5 convection preprocessor.  `basis::MB`
+(`DryBasis()` or `MoistBasis()`) is the air-mass basis of the binary being
+written; the ECMWF fluxes are put on it before ec2tm.  Holds the
 per-column vectors reused across all columns of an hour, plus the
 4×(Nlon_src, Nlat_src, Nz_native) native-vertical buffers and the
 4×(Nlon_src, Nlat_src, Nz) merged-vertical buffers on the ERA5
@@ -42,7 +44,8 @@ Array{FT, 3}}` and `compute_tm5_merged_hour_on_source!` upcasts
 hour views into them in-place — alloc once per workspace, reused
 across all 24 hours per day.
 """
-struct TM5PreprocessingWorkspace{FT, R, B}
+struct TM5PreprocessingWorkspace{FT, R, B, MB <: AbstractMassBasis}
+    basis           :: MB
     col_scratch     :: NTuple{11, Vector{FT}}
     entu_native     :: Array{FT, 3}
     detu_native     :: Array{FT, 3}
@@ -60,10 +63,11 @@ end
 
 """
     allocate_tm5_workspace(Nlon_src, Nlat_src, Nz_native, Nz, FT;
-                           regridder=nothing, target_nlon=Nlon_src,
+                           basis, regridder=nothing, target_nlon=Nlon_src,
                            target_nlat=Nlat_src) -> TM5PreprocessingWorkspace
 
-Allocate the TM5 preprocessing workspace.  Pass `regridder=nothing`
+Allocate the TM5 preprocessing workspace for a binary on the air-mass
+`basis` (`DryBasis()` or `MoistBasis()`, required).  Pass `regridder=nothing`
 for identity (source and target grids match).  Otherwise pass a
 `ConservativeRegridding.Regridder` built via
 `build_regridder(source_mesh, target_mesh)` from
@@ -72,6 +76,7 @@ for identity (source and target grids match).  Otherwise pass a
 function allocate_tm5_workspace(Nlon_src::Integer, Nlat_src::Integer,
                                 Nz_native::Integer, Nz::Integer,
                                 ::Type{FT};
+                                basis::AbstractMassBasis,
                                 regridder = nothing,
                                 target_nlon::Integer = Nlon_src,
                                 target_nlat::Integer = Nlat_src,
@@ -96,7 +101,8 @@ function allocate_tm5_workspace(Nlon_src::Integer, Nlat_src::Integer,
         # Allocate once, reuse across all 24 hours per day.
         ntuple(_ -> Array{FT, 3}(undef, Nlon_src, Nlat_src, Nz_native), 6)
     end
-    return TM5PreprocessingWorkspace{FT, typeof(regridder), typeof(physics_bufs)}(
+    return TM5PreprocessingWorkspace{FT, typeof(regridder), typeof(physics_bufs), typeof(basis)}(
+        basis,
         col_scratch,
         Array{FT, 3}(undef, Nlon_src, Nlat_src, Nz_native),
         Array{FT, 3}(undef, Nlon_src, Nlat_src, Nz_native),
@@ -118,8 +124,8 @@ end
                                          Nz_native, merge_map; stats)
 
 Phase 1 of the per-hour TM5 step.  Reads native-L137 ERA5 physics
-fields for `hour` from the mmap-backed `reader`, runs the TM5 math
-column-by-column into `ws.*_native`, then collapses to merged Nz
+fields for `hour` from the mmap-backed `reader`, puts them on `ws.basis`
+and runs the TM5 math column-by-column into `ws.*_native`, then collapses to merged Nz
 into `ws.*_merged_src`.  All work is on the ERA5-native horizontal
 grid (720×361 for standard physics BINs).
 
@@ -205,7 +211,7 @@ function compute_tm5_merged_hour_on_source!(
         ws.entu_native, ws.detu_native, ws.entd_native, ws.detd_native,
         udmf_in, ddmf_in, udrf_in, ddrf_in, t_in, q_in, ps_h_ft,
         ak_full, bk_full, Nz_native;
-        stats = stats, scratch = ws.col_scratch,
+        basis = ws.basis, stats = stats, scratch = ws.col_scratch,
     )
 
     merge_tm5_field_3d!(ws.entu_merged_src, ws.entu_native, merge_map)

@@ -21,6 +21,11 @@ julia --project=. scripts/run_transport.jl config/examples/minimal_template.toml
 | `completed_experiments/` | Preserved historical baselines and comparison runs. | Read `completed_experiments/README.md`. |
 | `likely_legacy/` | Older configs that may reference moved data or old schemas. | Avoid for new work. |
 
+The `catrine5d/` configs whose input directory ends in `_tm5` are historical:
+those binaries were built on the pre-#18 mirrored `tropo34` vertical grid,
+which matches neither corrected TM5 preset. Do not use them for new results;
+regenerate their transport inputs first.
+
 ## Data Roots
 
 Most production configs use `$ATMOSTRANSPORT_DATA_ROOT/...`, which defaults to

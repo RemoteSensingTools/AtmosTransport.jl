@@ -7,11 +7,12 @@
 #     f(λ_i, φ_j) = Re Σ_{m=0}^{M_j} w_m G_m(φ_j) e^{i m λ_i},
 #     G_m(φ_j)    = Σ_{n=m}^{T} f̂_n^m P̃_n^m(sin φ_j),
 #
-# with M_j = min(T, nlon_j ÷ 2), w_0 = 1, w_m = 2 for 0 < m < nlon_j / 2, and
-# cell centres λ_i = (i − ½) Δλ_j. Wavenumbers above nlon_j ÷ 2 are dropped on
-# ring j. The Nyquist term m = nlon_j / 2 of an even ring enters with w = 1,
-# as in the per-ring path (`spectral_to_ring!`); ERA5's ring lengths keep its
-# amplitude small. The
+# with M_j = ring_max_wavenumber(T, nlon_j) = min(T, (nlon_j − 1) ÷ 2),
+# w_0 = 1, w_m = 2 for 0 < m ≤ M_j, and cell centres λ_i = (i − ½) Δλ_j.
+# Wavenumbers above M_j are dropped on ring j, including the term
+# m = nlon_j / 2 of an even ring, which the staggered points of a ring cannot
+# represent consistently (see `ring_max_wavenumber`); the per-ring path
+# (`spectral_to_ring!`) uses the same limit. The
 # Legendre sums G_m are the expensive part. For one m, all levels k and all
 # rings j they form one matrix product, G_m[k, j] = Σ_n F_m[k, n] P_m[n, j],
 # with P_m[n − m + 1, j] = P̃_n^m(sin φ_j); the longitude sums are one inverse
@@ -79,7 +80,9 @@ end
     synthesize_reduced!(out, spec, s::ReducedSpectralSynthesis) -> out
 
 Synthesise the spectral coefficients `spec[n + 1, m + 1, k]` of `s.Nf` levels
-`k` onto the reduced Gaussian cell centres: `out[c, k]` for cell `c`.
+`k` onto the reduced Gaussian cell centres: `out[c, k]` for cell `c`. Ring `j`
+carries the wavenumbers `m ≤ ring_max_wavenumber(s.T, nlon_j)`, as in
+`spectral_to_ring!`.
 """
 function synthesize_reduced!(out::AbstractMatrix{<:Real}, spec::AbstractArray{ComplexF64, 3},
                              s::ReducedSpectralSynthesis)
@@ -91,9 +94,11 @@ function synthesize_reduced!(out::AbstractMatrix{<:Real}, spec::AbstractArray{Co
     size(out) == (ncells(mesh), Nf) ||
         throw(DimensionMismatch("output $(size(out)) ≠ ($(ncells(mesh)), $Nf)"))
 
-    # Legendre sums G_m(φ_j) for all levels and rings; m ≤ nlon_j ÷ 2 enters
-    # ring j's half spectrum, shifted to the cell centres by e^{i m Δλ_j / 2}.
-    # Entries with m > T are never written and stay zero from the allocation.
+    # Legendre sums G_m(φ_j) for all levels and rings; m ≤ M_j =
+    # ring_max_wavenumber(T, nlon_j) enters ring j's half spectrum, shifted to
+    # the cell centres by e^{i m Δλ_j / 2}. Entries with m > M_j (for an even
+    # ring this includes the Nyquist bin m = nlon_j / 2) are never written and
+    # stay zero from the allocation.
     for m in 0:T
         F = view(coeffs, :, 1:(T - m + 1))
         @inbounds for k in 1:Nf, n in m:T
@@ -104,7 +109,7 @@ function synthesize_reduced!(out::AbstractMatrix{<:Real}, spec::AbstractArray{Co
         mul!(sums, F, legendre[m + 1])
         @inbounds for j in 1:nr
             nlon = mesh.nlon_per_ring[j]
-            m <= nlon ÷ 2 || continue
+            m <= ring_max_wavenumber(T, nlon) || continue
             shift = m == 0 ? one(ComplexF64) : exp(im * m * (pi / nlon))
             col = half_offsets[j] + m
             for k in 1:Nf
@@ -115,7 +120,7 @@ function synthesize_reduced!(out::AbstractMatrix{<:Real}, spec::AbstractArray{Co
 
     # Longitude sums: one inverse real FFT per ring and level. `brfft` is the
     # unnormalised inverse: it adds each 0 < m < nlon/2 term twice (m and its
-    # mirror −m) and the Nyquist term once.
+    # mirror −m); the Nyquist bin of an even ring is zero.
     Threads.@threads :static for j in 1:nr
         tid = Threads.threadid()
         nlon = mesh.nlon_per_ring[j]

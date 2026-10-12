@@ -9,9 +9,13 @@ julia_bin=${ATMOS_CATRINE_JULIA:-/home/cfranken/.juliaup/bin/julia}
 project=${ATMOS_CATRINE_PROJECT:-$repo}
 source_dir=${ATMOS_CATRINE_C30_SOURCE:-/home/cfranken/data/AtmosTransport/met/era5/c90_to_c30/transport_binary_v4_l66_f32_no_convection_experimental}
 conv_root=${ATMOS_CATRINE_CONVECTION_ROOT:-/home/cfranken/data/AtmosTransport/met/era5/1.0x1.0/raw/convection}
+# ERA5 N320 native GRIB root for the dry-air conversion (the coarsened C30
+# sources do not record it).
+era5_root=${ATMOS_CATRINE_ERA5_ROOT:-/home/cfranken/data/AtmosTransport/met/era5/N320/hourly/raw}
+# v4: fluxes converted to dry air (v3 carries moist fluxes on dry air mass).
 # v3: convection levels mapped surface-first -> top-first; the earlier
 # era5_c30_*_fullphysics_experimental sets store the profiles upside down.
-output_dir=${ATMOS_CATRINE_C30_FULLPHYS:-/temp2/catrine-runs/met/era5_c30_2021_fullphysics_experimental_v3}
+output_dir=${ATMOS_CATRINE_C30_FULLPHYS:-/temp2/catrine-runs/met/era5_c30_2021_fullphysics_experimental_v4}
 log_dir="$output_dir/_logs"
 mkdir -p "$output_dir" "$log_dir"
 
@@ -23,7 +27,7 @@ available=$(find "$source_dir" -maxdepth 1 -type f \
     exit 1
 }
 
-export repo julia_bin project source_dir conv_root output_dir log_dir threads year
+export repo julia_bin project source_dir conv_root era5_root output_dir log_dir threads year
 attach_one() {
     local ymd=$1
     local month=${ymd:4:2}
@@ -36,7 +40,7 @@ attach_one() {
     echo "START $ymd"
     "$julia_bin" -t "$threads" --project="$project" \
         "$repo/scripts/preprocessing/attach_catrine_tm5_convection_cs.jl" \
-        "$src" "$nc" "$dst" >"$log" 2>&1 || {
+        "$src" "$nc" "$dst" --era5-root "$era5_root" >"$log" 2>&1 || {
         # xargs workers do not inherit `set -e`: fail explicitly, and remove a
         # partial output that the `-s $dst` skip check would otherwise accept.
         rm -f "$dst"

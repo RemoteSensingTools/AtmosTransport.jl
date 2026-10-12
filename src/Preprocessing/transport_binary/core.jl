@@ -238,6 +238,10 @@ function build_v4_header(date::Date,
             "flip latitude to south-to-north if thermo file is stored north-to-south" : "",
     )
 
+    # ERA5 convective fluxes are put on the binary's basis before ec2tm.
+    _with_tm5_convection_basis(header, settings.tm5_convection_enable ?
+                                       mass_basis_from_symbol(settings.mass_basis) : nothing)
+
     merge!(header, target_header_metadata(grid))
     validate_transport_contract!(header)
     return header
@@ -429,6 +433,11 @@ function existing_output_schema_matches(bin_path::AbstractString,
             # Optional key: absent means the write-time replay gate ran.
             get(disk_header, "write_replay_check", true) == get(expected_header, "write_replay_check", true) ||
                 push!(changed, "write_replay_check")
+            # Optional key: absent on binaries without TM5 sections and on
+            # TM5 binaries written before the fluxes were put on the binary's basis.
+            get(disk_header, TM5_CONVECTION_MASS_BASIS_KEY, nothing) ==
+                get(expected_header, TM5_CONVECTION_MASS_BASIS_KEY, nothing) ||
+                push!(changed, TM5_CONVECTION_MASS_BASIS_KEY)
             isempty(changed) || return (
                 false, "generation contract changed: " * join(changed, ","))
         end

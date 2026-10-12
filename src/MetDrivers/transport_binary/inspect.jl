@@ -38,6 +38,10 @@ requirements are selected through the reader's geometry type. Fields:
   (`m, am, bm, cm` on LL/CS; `m, hflux, cm` on RG).
 - `replay_gate :: Bool` — any flux-delta section (dam/dbm/dcm/dm/dhflux) present.
 - `tm5_convection :: Bool` — entu/detu/entd/detd all present.
+- `tm5_convection_mass_basis :: Union{Nothing, AbstractMassBasis}` — typed
+  basis of the TM5 sections (`DryBasis()`/`MoistBasis()`); `nothing` without
+  TM5 sections or when the
+  binary predates the record (moist fluxes, see `TM5_CONVECTION_MASS_BASIS_KEY`).
 - `cmfmc_convection :: Bool` — cmfmc present (CS only; LL/RG returns false).
 - `pbl_diffusion :: Bool` — complete runnable PBL forcing (CS only).
 - `gchp_vdiff :: Bool` — complete runnable GCHP VDIFF forcing (CS only).
@@ -63,6 +67,7 @@ function binary_capabilities(reader::TransportBinaryReader)
         advection        = all(s in hdr.payload_sections for s in required_advection),
         replay_gate      = has_flux_delta(reader),
         tm5_convection   = has_tm5_convection(reader),
+        tm5_convection_mass_basis = tm5_convection_mass_basis(reader),
         cmfmc_convection = has_cmfmc(reader),
         pbl_diffusion    = _supports_pbl_diffusion(reader),
         gchp_vdiff       = _supports_gchp_vdiff(reader),
@@ -125,6 +130,14 @@ function _print_capability_rows(io::IO, reader)
     _print_cap(io, caps.surface_pressure, "surface pressure", "(ps)")
     _print_cap(io, caps.humidity,         "humidity",         "(qv_start, qv_end)")
     println(io, "  mass_basis       = ", caps.mass_basis)
+    if caps.tm5_convection
+        println(io, "  tm5_convection_mass_basis = ",
+                caps.tm5_convection_mass_basis === nothing ? "not recorded" :
+                    _transport_basis_symbol(caps.tm5_convection_mass_basis))
+        caps.tm5_convection_mass_basis === nothing && caps.mass_basis === :dry &&
+            println(io, "  ⚠ TM5 convection fluxes predate the dry-air conversion: moist fluxes " *
+                        "on dry air mass, convective rates about 1 % too large")
+    end
     println(io, "  grid_type        = ", caps.grid_type)
     caps.write_replay_check || println(io, "  ⚠ written with the write-time replay check disabled; " *
                                            "not for production runs")

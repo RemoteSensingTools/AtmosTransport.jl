@@ -32,16 +32,20 @@ using .AtmosTransport.Preprocessing: ERA5C180RegridFields,
     scratches = [allocate_tm5_convection_column_scratch(FT, Nz)
                  for _ in 1:Threads.maxthreadid()]
     stats = TM5CleanupStats()
-    derive_c180_tm5_convection!(out, raw, thermo, vc, scratches; stats)
+    derive_c180_tm5_convection!(out, raw, thermo, vc, scratches; basis = DryBasis(), stats)
     @test stats.columns_processed[] == 6 * Nc * Nc
 
     # Every target column must equal an independent ec2tm call on that target
-    # column's already-mapped raw diagnostics and thermodynamic geometry.
+    # column's already-mapped raw diagnostics, converted to dry air (issue #19:
+    # interface fluxes × (1 − q at the interface), centre rates × (1 − q)), and
+    # thermodynamic geometry.
     p, i, j = 5, 2, 1
-    udmf = vcat(0.0, vec(raw.udmf[p][i,j,:]))
-    ddmf = vcat(0.0, vec(raw.ddmf[p][i,j,:]))
-    udrf = vec(copy(raw.udrf[p][i,j,:]))
-    ddrf = vec(copy(raw.ddrf[p][i,j,:]))
+    q = vec(thermo.qv[p][i,j,:])
+    q_interface = [k == 1 ? q[1] : k == Nz + 1 ? q[Nz] : (q[k-1] + q[k]) / 2 for k in 1:Nz+1]
+    udmf = vcat(0.0, vec(raw.udmf[p][i,j,:])) .* (1 .- q_interface)
+    ddmf = vcat(0.0, vec(raw.ddmf[p][i,j,:])) .* (1 .- q_interface)
+    udrf = vec(raw.udrf[p][i,j,:]) .* (1 .- q)
+    ddrf = vec(raw.ddrf[p][i,j,:]) .* (1 .- q)
     dz = zeros(FT, Nz)
     dz_hydrostatic_virtual!(dz, vec(thermo.t[p][i,j,:]),
                             vec(thermo.qv[p][i,j,:]), thermo.ps[p][i,j], A, B, Nz)

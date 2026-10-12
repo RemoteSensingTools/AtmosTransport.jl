@@ -798,8 +798,47 @@ transform = "level_selection"
 preset = "ml137_66L"
 ```
 
-Available ERA5 presets are `ml137_tropo34`, `ml137_66L`, `ml137_cfl85`
-(`ml137_85L`), `ml137_cfl94` (`ml137_94L`), and `ml137_full`.
+#### [ERA5 vertical level presets](@id era5-vertical-level-presets)
+
+The same preset names work for `[vertical] preset` (native ERA5 N320) and
+for `[grid] echlevs` (spectral ERA5). Each preset lists the ERA5 L137
+interfaces (half levels) that are kept; the native layers between two kept
+interfaces are summed into one layer. An unknown name is an error that lists
+the available presets.
+
+The indices follow TM5 and ECMWF: `e = 0` is the model top and `e = 137` is
+the surface. For native hybrid coefficients ``A_e, B_e`` and surface pressure
+``p_s``, selecting interface ``e`` retains
+
+```math
+p_{e+1/2} = A_e + B_e p_s.
+```
+
+This is TM5's `at(l) = a_ec(echlevs(l-1))` convention. Older
+AtmosTransport versions instead selected coefficient `137 - e`, reflecting
+the grid about the middle of the coefficient array.
+
+| Preset | Layers | Selection |
+|---|---|---|
+| `ml137_tropo34a` | 34 | TM5 cy3-4dvar `levels/ml137/tropo34a`, the CAMS73 34-layer selection |
+| `ml137_tropo34` | 34 | TM5-MP r1112 `levels/ml137/tropo34` (an older TM5 selection) |
+| `ml137_66L` | 66 | the selection of the ERA5 N320 → C90 configs |
+| `ml137_cfl94` | 94 | native layers 1-24 (from the top) in groups of 12, 25-53 in groups of 4, native below |
+| `ml137_cfl85` | 85 | as `ml137_cfl94`, with layers 54-71 in pairs |
+| `ml137_full` | 137 | all native layers |
+
+The AtmosTransport-native `ml137_66L`, `ml137_cfl94`, and `ml137_cfl85`
+recipes use transformed indices so this numbering correction leaves their
+grids bit-identical. The development aliases `ml137_94L` and `ml137_85L`
+were removed; use the `cfl` names shown above.
+
+The two `tropo34` presets are different grids. They share only the
+surface, the model top and the interface above the lowest layer. At a
+surface pressure of 1013.25 hPa, `ml137_tropo34a` puts interface 10
+(counted from the surface) at 558.3 hPa and interface 20 at 211.6 hPa;
+`ml137_tropo34` puts them at 459.6 hPa and 112.1 hPa. Below 200 hPa,
+`ml137_tropo34a` has 20 layers and `ml137_tropo34` has 15. Use the preset
+whose named TM5 source is the intended comparison.
 
 ### `[numerics]`
 

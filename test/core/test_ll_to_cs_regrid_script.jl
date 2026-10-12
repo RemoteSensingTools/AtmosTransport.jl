@@ -25,7 +25,7 @@ using Dates: Date
 using AtmosTransport
 using .AtmosTransport.Preprocessing: regrid_ll_binary_to_cs, build_target_geometry,
                                       PreprocessorRunCache, CubedSphereTargetGeometry
-using .AtmosTransport.MetDrivers: load_window!, has_surface
+using .AtmosTransport.MetDrivers: load_window!, has_surface, tm5_convection_mass_basis
 
 # LL fixture: small but non-trivial. Pressure varies with latitude so
 # `recover_ll_cell_center_winds!` sees a genuine ∇p field, and air mass
@@ -37,6 +37,7 @@ function _ll_fixture_binary(path::AbstractString;
                             final_dm_fraction::Real = 0,
                             surface_uniform = nothing,
                             tm5_uniform::Real = 0,
+                            tm5_basis = :default,
                             am_uniform::Real = 0,
                             bm_uniform::Real = 0,
                             radius::Real = AtmosTransport.Parameters.IFS_EARTH_RADIUS)
@@ -126,6 +127,8 @@ function _ll_fixture_binary(path::AbstractString;
         windows[win] = win_nt
     end
 
+    basis_kw = tm5_basis === :default ? (;) :
+               (; tm5_convection_mass_basis = tm5_basis)
     write_transport_binary(path, grid, windows;
                            FT = FT,
                            dt_met_seconds = 3600.0,
@@ -134,7 +137,8 @@ function _ll_fixture_binary(path::AbstractString;
                            mass_basis = :dry,
                            source_flux_sampling = :window_start_endpoint,
                            flux_sampling = :window_constant,
-                           delta_semantics = :forward_window_endpoint_difference)
+                           delta_semantics = :forward_window_endpoint_difference,
+                           basis_kw...)
     return (; Nx, Ny, Nz, nwindow,
             final_dm_fraction = Float64(final_dm_fraction),
             window_totals = fill(sum(m), nwindow))
@@ -258,6 +262,10 @@ end
                                 Nx = 24, Ny = 13, Nz = 4, nwindow = 2,
                                 tm5_uniform = tm5_val)
 
+            source_reader = TransportBinaryReader(ll_path; FT = Float64)
+            @test tm5_convection_mass_basis(source_reader) isa DryBasis
+            close(source_reader)
+
             cfg_grid = Dict{String, Any}(
                 "Nc" => 4,
                 "regridder_cache_dir" => joinpath(dir, "cr_cache"),
@@ -274,6 +282,7 @@ end
             # round-trips to near-uniform CS output through conservative
             # regrid, so each panel cell should be close to `tm5_val`.
             reader = TransportBinaryReader(cs_path; FT = Float64)
+            @test tm5_convection_mass_basis(reader) isa DryBasis
             win = load_window!(reader, 1)
             @test haskey(win, :tm5_fields) && win.tm5_fields !== nothing
             for fld in (:entu, :detu, :entd, :detd)
@@ -285,6 +294,23 @@ end
                 @test isapprox(minimum(vals), tm5_val; atol = 5e-3)
             end
             close(reader)
+
+            # An explicitly legacy source remains keyless after the
+            # transformation instead of acquiring a misleading dry record.
+            legacy_ll = joinpath(dir, "legacy_ll.bin")
+            legacy_cs = joinpath(dir, "legacy_cs.bin")
+            _ll_fixture_binary(legacy_ll; FT = Float64,
+                               Nx = 24, Ny = 13, Nz = 4, nwindow = 2,
+                               tm5_uniform = tm5_val, tm5_basis = nothing)
+            @test_logs (:warn, r"tm5_convection_mass_basis.*1/\(1-q\)") min_level = Base.CoreLogging.Warn begin
+                regrid_ll_binary_to_cs(legacy_ll, cs_grid, legacy_cs; FT = Float64)
+            end
+            legacy_reader = nothing
+            @test_logs (:warn, r"tm5_convection_mass_basis.*1/\(1-q\)") begin
+                legacy_reader = TransportBinaryReader(legacy_cs; FT = Float64)
+            end
+            @test tm5_convection_mass_basis(legacy_reader) === nothing
+            close(legacy_reader)
         end
     end
 

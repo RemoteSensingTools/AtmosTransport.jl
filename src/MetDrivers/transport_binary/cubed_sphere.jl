@@ -206,7 +206,10 @@ function open_streaming_cs_transport_binary(
         flux_sampling::Symbol = :window_constant,
         flux_kind::Symbol = :substep_mass_amount,
         include_flux_delta::Bool = false,
-        mass_basis::Symbol = :moist,
+        mass_basis::Symbol,
+        tm5_convection_mass_basis::Union{_DefaultTM5ConvectionMassBasis,
+                                         Nothing, AbstractMassBasis} =
+            _DEFAULT_TM5_CONVECTION_MASS_BASIS,
         include_cmfmc::Bool = false,
         include_dtrain::Bool = false,
         include_surface::Bool = false,
@@ -336,6 +339,8 @@ function open_streaming_cs_transport_binary(
             _cs_section_elements(Nc, npanel, nlevel, :cmfmc_cloud_base) : 0,
         "cmfmc_cloud_base_payload" => include_cmfmc_cloud_base ? "top_down_layer_index_v1" : "none",
     ))
+    _set_tm5_convection_mass_basis!(header, payload_sections, mass_basis,
+                                    tm5_convection_mass_basis)
     isempty(extra_header) || _merge_transport_extra_header!(header, extra_header)
     header["panel_convention"] = _normalize_cs_panel_convention(header["panel_convention"])
     if !haskey(header, "cs_definition") || !haskey(header, "cs_coordinate_law") ||

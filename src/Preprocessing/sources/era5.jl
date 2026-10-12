@@ -167,7 +167,13 @@ ERA5GRIBDayHandles(settings::S, date, core_path, convection_path, surface_path, 
     ERA5GRIBDayHandles{S}(settings, date, core_path, convection_path, surface_path, next_core_path,
                           prev_convection_path, arco_sp_path, Ref{Union{Nothing, GRIB.Index}}(nothing))
 
-const ERA5_VALID_LEVEL_ORIENTATIONS = (:top_down, :bottom_up)
+function _validate_era5_level_orientation(settings::AbstractERA5GRIBSettings)
+    settings.level_orientation === :top_down ||
+        throw(ArgumentError("ERA5 level_orientation must be :top_down because " *
+                            "canonical ERA5 GRIB model levels are top-first; " *
+                            "got :$(settings.level_orientation)"))
+    return settings
+end
 
 """
     open_era5_day(settings, date; next_day_handle=true) -> ERA5GRIBDayHandles
@@ -182,10 +188,7 @@ or an incomplete download is immediately visible.
 """
 function open_era5_day(settings::AbstractERA5GRIBSettings, date::Date;
                        next_day_handle::Bool = true)
-    settings.level_orientation in ERA5_VALID_LEVEL_ORIENTATIONS ||
-        throw(ArgumentError("ERA5 level_orientation must be one of " *
-                            join(ERA5_VALID_LEVEL_ORIENTATIONS, ", ") *
-                            "; got :$(settings.level_orientation)"))
+    _validate_era5_level_orientation(settings)
 
     core_path = era5_grib_path(settings, date, :core)
     isfile(core_path) ||

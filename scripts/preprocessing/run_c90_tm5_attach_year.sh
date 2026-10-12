@@ -9,9 +9,11 @@ julia_bin=${ATMOS_C90_CONV_JULIA:-/home/cfranken/.juliaup/bin/julia}
 project=${ATMOS_C90_CONV_PROJECT:-$repo}
 source_dir=${ATMOS_C90_CONV_SOURCE:-/home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_no_convection}
 conv_root=${ATMOS_C90_CONVECTION_ROOT:-/home/cfranken/data/AtmosTransport/met/era5/1.0x1.0/raw/convection}
-# v3: convection levels mapped surface-first -> top-first (the earlier
-# ..._tm5_convection_1deg_3hour set stored the profiles upside down).
-output_dir=${ATMOS_C90_CONV_OUTPUT:-/home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour_v3}
+# v4: fluxes converted to dry air with the ERA5 N320 humidity, read from the
+# source binaries' recorded source_root (the v3 set carries moist fluxes on
+# dry air mass). v3: convection levels mapped surface-first -> top-first (the
+# earlier ..._tm5_convection_1deg_3hour set stored the profiles upside down).
+output_dir=${ATMOS_C90_CONV_OUTPUT:-/home/cfranken/data/AtmosTransport/met/era5/n320_to_c90/transport_binary_v4_l66_f32_tm5_convection_1deg_3hour_v4}
 cache_dir=${ATMOS_C90_CONV_CACHE:-$HOME/.cache/AtmosTransport/tm5_attach_c90}
 mkdir -p "$cache_dir"
 log_dir="$output_dir/_logs/$year"

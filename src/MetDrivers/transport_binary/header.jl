@@ -115,6 +115,7 @@ struct TransportBinaryHeader{G <: AbstractTransportBinaryGeometry}
     A_ifc                :: Vector{Float64}  # hybrid A [Pa], length nlevel+1
     B_ifc                :: Vector{Float64}  # hybrid B [1],  length nlevel+1
     mass_basis           :: Symbol           # :moist or :dry
+    tm5_convection_mass_basis :: Union{Nothing, DryBasis, MoistBasis}
     payload_sections     :: Vector{Symbol}
     n_geometry_elems     :: Int
     elems_per_window     :: Int
@@ -242,6 +243,23 @@ function _transport_parse_mass_basis(hdr)
     basis_str in ("dry", "moist") || throw(ArgumentError(
         "unsupported transport binary mass_basis=$(repr(basis_str)); expected dry or moist"))
     return Symbol(basis_str)
+end
+
+function _transport_parse_mass_basis_tag(value, key::AbstractString)
+    basis_str = lowercase(string(value))
+    basis_str == "dry" && return DryBasis()
+    basis_str == "moist" && return MoistBasis()
+    throw(ArgumentError(
+        "unsupported transport binary $(key)=$(repr(basis_str)); expected dry or moist"))
+end
+
+function _transport_parse_tm5_convection_mass_basis(hdr, payload_sections)
+    all(section in payload_sections for section in (:entu, :detu, :entd, :detd)) ||
+        return nothing
+    key = Symbol(TM5_CONVECTION_MASS_BASIS_KEY)
+    haskey(hdr, key) || return nothing
+    return _transport_parse_mass_basis_tag(getproperty(hdr, key),
+                                           TM5_CONVECTION_MASS_BASIS_KEY)
 end
 
 @inline function _transport_normalize_symbol(value)
@@ -413,6 +431,7 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
         A_ifc,
         B_ifc,
         _transport_parse_mass_basis(hdr),
+        _transport_parse_tm5_convection_mass_basis(hdr, payload_sections),
         payload_sections,
         n_geometry_elems,
         elems_per_window,

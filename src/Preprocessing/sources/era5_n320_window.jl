@@ -286,6 +286,44 @@ end
 # Window read + synthesis.
 # ---------------------------------------------------------------------------
 
+# One `reduced_gg` specific-humidity message into level `level` of `qv`
+# (`n_cells × Nz`, mesh order), marking it in `have_q`.
+function _read_humidity_level!(qv::AbstractMatrix, have_q::AbstractVector{Bool},
+                               msg, level::Integer, mesh::ReducedGaussianMesh,
+                               date::Date, hour::Integer)
+    Nz = size(qv, 2)
+    1 <= level <= Nz ||
+        error("Q level $level outside [1, $Nz] for date=$date hour=$hour")
+    _check_grid_point_layout(msg)
+    _reorder_grib_reduced_gg_to_mesh!(view(qv, :, level), msg["values"], msg["pl"], mesh)
+    have_q[level] = true
+    return qv
+end
+
+"""
+    read_era5_n320_humidity!(qv, handles, mesh, date, hour) -> qv
+
+Specific humidity (kg kg⁻¹) of `(date, hour)` from the day's ERA5 core GRIB,
+decoded into `qv` (`n_cells × Nz`, top-first levels) on the
+`ReducedGaussianMesh` cell centres exactly as
+[`read_era5_n320_window_fields!`](@ref) does, without the spectral fields.
+Errors if a level is missing.
+"""
+function read_era5_n320_humidity!(qv::AbstractMatrix, handles::ERA5GRIBDayHandles,
+                                  mesh::ReducedGaussianMesh, date::Date, hour::Integer)
+    0 <= hour <= 23 || throw(ArgumentError("hour must be in 0..23, got $hour"))
+    size(qv, 1) == ncells(mesh) ||
+        throw(DimensionMismatch("qv has $(size(qv, 1)) cells; mesh has $(ncells(mesh))"))
+    have_q = falses(size(qv, 2))
+    for msg in _core_messages(handles, date, hour)
+        String(msg["gridType"]) == "reduced_gg" && String(msg["shortName"]) == "q" &&
+            _read_humidity_level!(qv, have_q, msg, Int(msg["level"]), mesh, date, hour)
+    end
+    all(have_q) ||
+        error("ERA5 N320 read: Q missing for $(date) hour $(hour) at levels $(findall(!, have_q))")
+    return qv
+end
+
 """
     read_era5_n320_window_fields!(fields, workspace, handles, date, hour) -> fields
 
@@ -348,14 +386,7 @@ function read_era5_n320_window_fields!(fields::ERA5N320WindowFields{FT},
                 workspace.have_lnsp[] = true
             end
         elseif grid_type == "reduced_gg" && short_name == "q"
-            1 <= level <= Nz ||
-                error("Q level $level outside [1, $Nz] for date=$date hour=$hour")
-            _check_grid_point_layout(msg)
-            vals = msg["values"]
-            pl   = msg["pl"]
-            _reorder_grib_reduced_gg_to_mesh!(
-                view(fields.qv, :, level), vals, pl, mesh)
-            workspace.have_q[level] = true
+            _read_humidity_level!(fields.qv, workspace.have_q, msg, level, mesh, date, hour)
         end
     end
 

@@ -67,7 +67,8 @@ end
             flux_sampling = :window_constant,
             flux_kind = :substep_mass_amount,
             humidity_sampling = :none,
-            delta_semantics = :forward_window_endpoint_difference)
+            delta_semantics = :forward_window_endpoint_difference,
+            mass_basis = :dry)
         try
             header = writer.header
             set_transport_header_steps_per_window_schedule!(header, [4, 7, 5])

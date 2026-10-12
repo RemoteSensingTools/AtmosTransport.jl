@@ -85,7 +85,10 @@ function open_streaming_transport_binary(
         flux_kind::Symbol = :substep_mass_amount,
         humidity_sampling::Symbol = :auto,
         delta_semantics::Symbol = :auto,
-        mass_basis::Symbol = :moist,
+        mass_basis::Symbol,
+        tm5_convection_mass_basis::Union{_DefaultTM5ConvectionMassBasis,
+                                         Nothing, AbstractMassBasis} =
+            _DEFAULT_TM5_CONVECTION_MASS_BASIS,
         extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}())
 
     flux_kind === :substep_mass_amount || throw(ArgumentError(
@@ -132,6 +135,8 @@ function open_streaming_transport_binary(
         "n_dm" => (:dm in payload_sections) ?
             _transport_faceindexed_section_elements(ncell, nface_h, nlevel, :dm) : 0,
     ))
+    _set_tm5_convection_mass_basis!(header, payload_sections, basis_sym,
+                                    tm5_convection_mass_basis)
     isempty(extra_header) || _merge_transport_extra_header!(header, extra_header)
 
     validate_transport_contract!(header)
