@@ -32,35 +32,49 @@ _supports_gchp_vdiff(
     binary_dry_mass_target(reader) -> NamedTuple
 
 Return the binary's global-mean dry-mass target in pascals and its provenance.
-Pinned current binaries record `mass_fix_enabled=true` (or the native-source
-equivalent `global_mass_pin_enabled` / `geos_global_mass_pin_enabled`) together
-with `mass_fix_target_ps_dry_pa` in the header. Unpinned and legacy binaries
-infer the carried mass from window 1 as
+Pinned current binaries record `mass_fix_enabled=true` together with
+`mass_fix_target_ps_dry_pa` in the header. Historical binaries may instead use
+the source-specific `global_mass_pin_enabled` or
+`geos_global_mass_pin_enabled` flag. Unpinned and legacy binaries infer the
+carried mass from window 1 as
 `sum(m_k) g / (4 pi R_header^2)`, using the radius recorded by that binary.
 This fallback deliberately describes the actual carried dry mass, so a run
 cannot silently cross a legacy/current day boundary with different targets.
 """
+function _dry_mass_pin_enabled(raw::AbstractDict, label::AbstractString)
+    enabled = nothing
+    enabled_key = nothing
+    for key in ("mass_fix_enabled", "global_mass_pin_enabled",
+                "geos_global_mass_pin_enabled")
+        haskey(raw, key) || continue
+        value = raw[key]
+        value isa Bool || throw(ArgumentError(
+            "$(label) has non-Boolean $(key)=$(repr(value))"))
+        if enabled === nothing
+            enabled = value
+            enabled_key = key
+        elseif value != enabled
+            throw(ArgumentError(
+                "$(label) has conflicting dry-mass pin flags: " *
+                "$(enabled_key)=$(enabled) but $(key)=$(value)"))
+        end
+    end
+    return enabled
+end
+
 function binary_dry_mass_target(reader::TransportBinaryReader)
     raw = reader.header.raw_header
-    enabled = if haskey(raw, "mass_fix_enabled")
-        raw["mass_fix_enabled"]
-    elseif haskey(raw, "global_mass_pin_enabled")
-        raw["global_mass_pin_enabled"]
-    else
-        get(raw, "geos_global_mass_pin_enabled", nothing)
-    end
+    label = basename(reader.path)
+    enabled = _dry_mass_pin_enabled(raw, label)
     recorded = get(raw, "mass_fix_target_ps_dry_pa", nothing)
     if enabled === true
-        recorded isa Real || throw(ArgumentError(
-            "$(basename(reader.path)) records mass_fix_enabled=true without a numeric " *
+        recorded isa Real && !(recorded isa Bool) || throw(ArgumentError(
+            "$(label) records mass_fix_enabled=true without a numeric " *
             "mass_fix_target_ps_dry_pa"))
         target = Float64(recorded)
         isfinite(target) && target > 0.0 || throw(ArgumentError(
-            "$(basename(reader.path)) has invalid mass_fix_target_ps_dry_pa=$(recorded)"))
+            "$(label) has invalid mass_fix_target_ps_dry_pa=$(recorded)"))
         return (ps_dry_pa = target, source = :header, pinned = true)
-    elseif enabled !== nothing && enabled !== false
-        throw(ArgumentError(
-            "$(basename(reader.path)) has non-Boolean mass_fix_enabled=$(repr(enabled))"))
     end
 
     m = _transport_section_view(reader, 1, :m)

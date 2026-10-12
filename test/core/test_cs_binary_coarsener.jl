@@ -33,7 +33,7 @@ using .AtmosTransport.Preprocessing: coarsen_nested_cs_transport_binary
             mass_basis = :dry,
             extra_header = Dict("date" => "2021-01-01",
                                 "adaptive_substeps" => true,
-                                "mass_fix_enabled" => true,
+                                "geos_global_mass_pin_enabled" => true,
                                 "mass_fix_target_ps_dry_pa" => 98_325.0))
         window = (m = panels3(100), am, bm, cm, ps = panels2(90_000),
                   dm = panels3(0), surface, dkg)
@@ -74,6 +74,7 @@ using .AtmosTransport.Preprocessing: coarsen_nested_cs_transport_binary
             @test reader.header.raw_header["experimental"] == true
             @test reader.header.raw_header["mass_fix_enabled"] === true
             @test reader.header.raw_header["mass_fix_target_ps_dry_pa"] == 98_325.0
+            @test !haskey(reader.header.raw_header, "geos_global_mass_pin_enabled")
             @test reader.header.raw_header["validation_status"] ==
                   "testing_only_not_yet_scientifically_validated"
             # Legacy binaries predate this provenance field. The coarsener

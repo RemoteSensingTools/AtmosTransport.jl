@@ -296,6 +296,24 @@ end
 
 function _check_run_dry_mass_targets(binary_caps)
     isempty(binary_caps) && return nothing
+    explicit = nothing
+    explicit_path = nothing
+    for item in binary_caps
+        state = item.caps.dry_mass_pinned
+        state === nothing && continue
+        if explicit === nothing
+            explicit = state
+            explicit_path = item.path
+        elseif state != explicit
+            throw(ArgumentError(
+                "transport binaries in one run cannot mix explicitly pinned and " *
+                "unpinned dry-mass states: $(basename(explicit_path)) has " *
+                "dry_mass_pinned=$(explicit), but $(basename(item.path)) has " *
+                "dry_mass_pinned=$(state). Regenerate the mismatched binary with " *
+                "one consistent mass-fix configuration."))
+        end
+    end
+
     reference = first(binary_caps)
     target_ref = Float64(reference.caps.dry_mass_target_ps_pa)
     for item in Iterators.drop(binary_caps, 1)

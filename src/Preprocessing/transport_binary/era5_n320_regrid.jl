@@ -152,6 +152,7 @@ function _fill_era5_pin_sensitivity!(out, qv, dB, cell_areas, gravity)
 end
 
 abstract type AbstractERA5PinSensitivityStrategy end
+struct NoERA5MassPin <: AbstractERA5PinSensitivityStrategy end
 struct NativeMergedPinSensitivity <: AbstractERA5PinSensitivityStrategy end
 struct PurePressureMergePinCompatibility <: AbstractERA5PinSensitivityStrategy end
 
@@ -162,6 +163,26 @@ function _era5_pin_sensitivity_strategy(plan::VerticalPlan)
     end
     return merges_hybrid ? NativeMergedPinSensitivity() :
                            PurePressureMergePinCompatibility()
+end
+
+_allocate_era5_pin_sensitivity(::NoERA5MassPin, _FT, _Nc, _Nz_native, _Nz_output) =
+    (native = nothing, merged = nothing)
+_allocate_era5_pin_sensitivity(::PurePressureMergePinCompatibility,
+                               _FT, _Nc, _Nz_native, _Nz_output) =
+    (native = nothing, merged = nothing)
+function _allocate_era5_pin_sensitivity(::NativeMergedPinSensitivity,
+                                        ::Type{FT}, Nc, Nz_native, Nz_output) where FT
+    return (
+        native = ntuple(_ -> zeros(FT, Nc, Nc, Nz_native), 6),
+        merged = ntuple(_ -> zeros(FT, Nc, Nc, Nz_output), 6),
+    )
+end
+
+function _pin_era5_endpoint_mass!(::NoERA5MassPin,
+                                  _m_dry, _native_qv, _merged_qv,
+                                  _native_pin_sensitivity, _merged_pin_sensitivity,
+                                  _plan, _cell_areas, _gravity, _target_kg)
+    return nothing
 end
 
 function _pin_era5_endpoint_mass!(::NativeMergedPinSensitivity,
@@ -415,6 +436,11 @@ function process_era5_n320_to_cs_day(date::Date,
         vc = plan.merged_vc
         mesh = target_grid.mesh
 
+        do_mass_pin = global_mass_pin && isfinite(global_mass_target_kg)
+        pin_strategy = do_mass_pin ? _era5_pin_sensitivity_strategy(plan) : NoERA5MassPin()
+        pin_sensitivity = _allocate_era5_pin_sensitivity(
+            pin_strategy, FT, Nc, Nz_native, Nz_int)
+
         # --- CS-side workspaces (dry mass on target, face flux, balance). ---
         cs_cell_areas = mesh.cell_areas   # (Nc, Nc), shared across panels
         native_m_dry    = ntuple(_ -> zeros(FT, Nc, Nc, Nz_native), 6)
@@ -422,7 +448,6 @@ function process_era5_n320_to_cs_day(date::Date,
         native_ps_dry   = ntuple(_ -> zeros(FT, Nc, Nc), 6)
         native_ps_acc   = ntuple(_ -> zeros(Float64, Nc, Nc), 6)
         native_dp       = ntuple(_ -> zeros(FT, Nc, Nc, Nz_native), 6)
-        native_pin_sensitivity = ntuple(_ -> zeros(FT, Nc, Nc, Nz_native), 6)
         native_u_local  = ntuple(_ -> zeros(FT, Nc, Nc, Nz_native), 6)
         native_v_local  = ntuple(_ -> zeros(FT, Nc, Nc, Nz_native), 6)
         native_am       = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz_native), 6)
@@ -441,7 +466,6 @@ function process_era5_n320_to_cs_day(date::Date,
         nxt_delp_dry   = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6)
         nxt_ps_dry     = ntuple(_ -> zeros(FT, Nc, Nc), 6)
         nxt_ps_dry_acc = ntuple(_ -> zeros(Float64, Nc, Nc), 6)
-        merged_pin_sensitivity = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6)
         tm5_merged = include_convection ?
             allocate_era5_c180_tm5_convection_fields(target_grid, Nz_int) : nothing
 
@@ -558,17 +582,15 @@ function process_era5_n320_to_cs_day(date::Date,
         # `target_ps_dry`-derived target is independent of the start
         # day/window, which is required for the day-threaded build to produce
         # a globally coherent multi-day archive.
-        do_mass_pin = global_mass_pin && isfinite(global_mass_target_kg)
         do_mass_pin && @info @sprintf("  Global dry-mass pin ON: target=%.9e kg (%.3f Pa dry ⟨ps⟩)",
                                       Float64(global_mass_target_kg),
                                       Float64(global_mass_target_kg) * Float64(gravity) /
                                       (6 * sum(Float64, cs_cell_areas)))
-        pin_strategy = _era5_pin_sensitivity_strategy(plan)
         pin_endpoint_mass! = function (m_dry, ps_dry, native_qv, merged_qv)
             do_mass_pin || return nothing
             _pin_era5_endpoint_mass!(
                 pin_strategy, m_dry, native_qv, merged_qv,
-                native_pin_sensitivity, merged_pin_sensitivity,
+                pin_sensitivity.native, pin_sensitivity.merged,
                 plan, cs_cell_areas, gravity, global_mass_target_kg)
             for p in 1:6
                 _ps_from_air_mass!(ps_dry[p], m_dry[p], cs_cell_areas, gravity, Nc, Nz_int)

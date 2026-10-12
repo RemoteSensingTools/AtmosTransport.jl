@@ -118,12 +118,24 @@ end
 const ERA5_L137_COEFFICIENTS = joinpath(@__DIR__, "..", "..", "config", "era5_L137_coefficients.toml")
 function copy_source_metadata!(metadata::AbstractDict, raw::AbstractDict)
     for key in ("adaptive_substeps", "preprocessor_contract", "runtime_substep_contract",
-                "poisson_balanced", "global_mass_pin_target_kg", "vertical_transform",
+                "poisson_balanced", "vertical_transform",
                 "target_coefficients", "vertical_mapping_method", "target_vertical_name",
-                "mass_fix_enabled", "mass_fix_target_ps_dry_pa", "global_mass_pin_enabled",
                 "coarsening_method", "coarsening_source_Nc", "coarsening_target_Nc",
                 "coarsening_ratio")
         haskey(raw, key) && (metadata[key] = raw[key])
+    end
+    pin_enabled = AtmosTransport.MetDrivers._dry_mass_pin_enabled(raw, "source metadata")
+    if pin_enabled !== nothing
+        metadata["mass_fix_enabled"] = pin_enabled
+        if pin_enabled
+            recorded = get(raw, "mass_fix_target_ps_dry_pa", nothing)
+            recorded isa Real && !(recorded isa Bool) || error(
+                "pinned source metadata lacks numeric mass_fix_target_ps_dry_pa")
+            target = Float64(recorded)
+            isfinite(target) && target > 0 || error(
+                "invalid source mass_fix_target_ps_dry_pa=$(repr(recorded))")
+            metadata["mass_fix_target_ps_dry_pa"] = target
+        end
     end
     return metadata
 end

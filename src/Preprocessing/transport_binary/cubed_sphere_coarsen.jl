@@ -190,12 +190,17 @@ function _experimental_coarsen_metadata(reader, output_Nc::Int, ratio::Int)
         "regrid_method" => "nested_block_operator_restriction",
         "poisson_balanced" => true,
     )
-    for key in ("date", "mass_fix_enabled", "mass_fix_target_ps_dry_pa",
-                "global_mass_pin_enabled", "global_mass_pin_target_kg",
+    for key in ("date",
                 "vertical_mapping_method", "target_vertical_name",
                 "target_coefficients", "merge_map", "merge_min_thickness_Pa",
                 "horizontal_balance")    # block sums keep the source's balance
         haskey(raw, key) && (metadata[key] = raw[key])
+    end
+    pin_enabled = _dry_mass_pin_enabled(raw, basename(reader.path))
+    if pin_enabled !== nothing
+        metadata["mass_fix_enabled"] = pin_enabled
+        pin_enabled && (metadata["mass_fix_target_ps_dry_pa"] =
+            binary_dry_mass_target(reader).ps_dry_pa)
     end
     return metadata
 end

@@ -138,6 +138,7 @@ using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField
 using ..MetDrivers: LatLonBinaryGeometry, CubedSphereBinaryGeometry, TransportBinaryReader,
                     mesh_definition,
                     TransportBinaryHeader, binary_geometry, grid_type,
+                    binary_dry_mass_target, _dry_mass_pin_enabled,
                     write_transport_binary,
                     TRANSPORT_BINARY_FORMAT_VERSION,
                     StreamingTransportBinaryWriter,

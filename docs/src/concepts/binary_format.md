@@ -97,10 +97,21 @@ The full list lives in `src/MetDrivers/TransportBinary.jl`.
   by 1 along the vertical axis.
 - `:ps` — surface pressure per cell, in Pa.
 
-The JSON header records the common dry-mass baseline as
-`mass_fix_target_ps_dry_pa`. For a legacy binary without that key, inspection
-infers `sum(m) g / (4 pi R_header^2)` from window 1. A multi-file run rejects
-targets that differ, preventing a day-boundary VMR jump.
+The JSON header distinguishes three dry-mass states:
+
+- pinned binaries record a recognized enable flag as `true` and the common
+  baseline as `mass_fix_target_ps_dry_pa`;
+- explicitly unpinned binaries record a recognized enable flag as `false`,
+  omit the target, and inspection reports `sum(m) g / (4 pi R_header^2)` from
+  window 1;
+- legacy binaries record no enable flag, so inspection uses the same window-1
+  fallback but reports the pin state as unknown.
+
+A multi-file run rejects conflicting explicit pin states before comparing the
+effective targets, and rejects effective targets that differ. This prevents a
+day-boundary VMR jump while retaining compatibility with legacy files.
+The canonical enable flag is `mass_fix_enabled`; inspection also recognizes
+the source-specific flags in older native-source archives.
 
 ### Optional sections (each enables a runtime capability)
 

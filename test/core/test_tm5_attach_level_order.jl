@@ -23,7 +23,7 @@ end
 
 @testset "attachment preserves dry-mass pin metadata" begin
     raw = Dict{String, Any}(
-        "mass_fix_enabled" => true,
+        "geos_global_mass_pin_enabled" => true,
         "mass_fix_target_ps_dry_pa" => 98_325.0,
         "unrelated" => "drop",
     )
@@ -32,6 +32,12 @@ end
         "mass_fix_enabled" => true,
         "mass_fix_target_ps_dry_pa" => 98_325.0,
     )
+
+    stale = AttachScript.copy_source_metadata!(Dict{String, Any}(), Dict{String, Any}(
+        "global_mass_pin_enabled" => false,
+        "mass_fix_target_ps_dry_pa" => 98_325.0,
+    ))
+    @test stale == Dict{String, Any}("mass_fix_enabled" => false)
 end
 
 @testset "legacy TM5 convection level order" begin

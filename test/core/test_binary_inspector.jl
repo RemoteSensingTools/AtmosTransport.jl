@@ -14,6 +14,7 @@ function _inspector_fixture_binary(path::AbstractString;
                                    with_surface::Bool = false,
                                    with_single_qv::Bool = false,
                                    mass_fix_enabled = true,
+                                   mass_fix_flags = nothing,
                                    recorded_target = GLOBAL_MEAN_DRY_SURFACE_PRESSURE,
                                    flux_kind::Symbol = :substep_mass_amount)
     Nx, Ny, Nz = 4, 3, 5
@@ -50,8 +51,12 @@ function _inspector_fixture_binary(path::AbstractString;
     window = merge((; m, am, bm, cm, ps), optional)
 
     mass_fix_header = Dict{String, Any}()
-    mass_fix_enabled === nothing ||
-        (mass_fix_header["mass_fix_enabled"] = mass_fix_enabled)
+    if mass_fix_flags === nothing
+        mass_fix_enabled === nothing ||
+            (mass_fix_header["mass_fix_enabled"] = mass_fix_enabled)
+    else
+        merge!(mass_fix_header, mass_fix_flags)
+    end
     recorded_target === nothing ||
         (mass_fix_header["mass_fix_target_ps_dry_pa"] = recorded_target)
     write_transport_binary(path, grid, [window];
@@ -181,6 +186,8 @@ end
             pinned_path = joinpath(dir, "pinned.bin")
             unpinned_path = joinpath(dir, "unpinned.bin")
             legacy_path = joinpath(dir, "legacy.bin")
+            equal_pinned_path = joinpath(dir, "equal_pinned.bin")
+            other_pinned_path = joinpath(dir, "other_pinned.bin")
             _inspector_fixture_binary(pinned_path)
             # A stale target must not classify an explicitly unpinned file.
             _inspector_fixture_binary(unpinned_path; mass_fix_enabled = false,
@@ -194,6 +201,10 @@ end
             carried = _INSPECTOR_AIR_MASS * 4 * 3 * 5 *
                       AtmosTransport.Parameters.STANDARD_GRAVITY /
                       (4π * AtmosTransport.Parameters.EARTH_RADIUS^2)
+            _inspector_fixture_binary(equal_pinned_path; recorded_target = carried)
+            _inspector_fixture_binary(other_pinned_path; recorded_target = carried + 1)
+            equal_pinned = inspect_binary(equal_pinned_path; io = devnull)
+            other_pinned = inspect_binary(other_pinned_path; io = devnull)
             @test pinned.dry_mass_target_source === :header
             @test pinned.dry_mass_pinned === true
             @test unpinned.dry_mass_target_source === :unpinned_window1
@@ -215,8 +226,29 @@ end
                 e
             end
             @test err isa ArgumentError
-            @test occursin("must share one dry-mass target", sprint(showerror, err))
-            @test occursin("GLOBAL_MEAN_DRY_SURFACE_PRESSURE=98325.0 Pa", sprint(showerror, err))
+            @test occursin("cannot mix explicitly pinned and unpinned", sprint(showerror, err))
+
+            # Equal window-1 mass must not hide conflicting explicit states.
+            equal_err = try
+                check(item(equal_pinned_path, equal_pinned), item(unpinned_path, unpinned))
+            catch e
+                e
+            end
+            @test equal_pinned.dry_mass_target_ps_pa == unpinned.dry_mass_target_ps_pa
+            @test equal_err isa ArgumentError
+            @test occursin("cannot mix explicitly pinned and unpinned",
+                           sprint(showerror, equal_err))
+
+            pressure_err = try
+                check(item(equal_pinned_path, equal_pinned),
+                      item(other_pinned_path, other_pinned))
+            catch e
+                e
+            end
+            @test pressure_err isa ArgumentError
+            @test occursin("must share one dry-mass target", sprint(showerror, pressure_err))
+            @test occursin("GLOBAL_MEAN_DRY_SURFACE_PRESSURE=98325.0 Pa",
+                           sprint(showerror, pressure_err))
 
             # Warm compilation before measuring. The fallback may allocate a
             # tiny SubArray descriptor, but never any payload-sized arrays.
@@ -225,6 +257,68 @@ end
             bytes = @allocated AtmosTransport.MetDrivers.binary_dry_mass_target(reader)
             @test bytes < 4096
             close(reader)
+        end
+    end
+
+    @testset "all dry-mass pin aliases are validated together" begin
+        mktempdir() do dir
+            keys = ("mass_fix_enabled", "global_mass_pin_enabled",
+                    "geos_global_mass_pin_enabled")
+            states = (nothing, false, true)
+            case_id = 0
+            for values in Iterators.product(states, states, states)
+                case_id += 1
+                flags = Dict{String, Any}(keys[i] => values[i]
+                                          for i in eachindex(keys)
+                                          if values[i] !== nothing)
+                path = joinpath(dir, "truth_$(case_id).bin")
+                _inspector_fixture_binary(path; mass_fix_enabled = nothing,
+                                          mass_fix_flags = flags)
+                present = filter(!isnothing, collect(values))
+                conflicting = !isempty(present) && any(!=(first(present)), present)
+                if conflicting
+                    err = try
+                        inspect_binary(path; io = devnull)
+                    catch e
+                        e
+                    end
+                    @test err isa ArgumentError
+                    @test occursin("conflicting dry-mass pin flags", sprint(showerror, err))
+                else
+                    caps = inspect_binary(path; io = devnull)
+                    expected = isempty(present) ? nothing : first(present)
+                    @test caps.dry_mass_pinned === expected
+                    @test caps.dry_mass_target_source ===
+                          (expected === true ? :header :
+                           expected === false ? :unpinned_window1 : :legacy_window1)
+                end
+            end
+
+            for (idx, malformed_key) in enumerate(keys)
+                flags = Dict{String, Any}("mass_fix_enabled" => false,
+                                          malformed_key => "false")
+                path = joinpath(dir, "malformed_$(idx).bin")
+                _inspector_fixture_binary(path; mass_fix_enabled = nothing,
+                                          mass_fix_flags = flags)
+                err = try
+                    inspect_binary(path; io = devnull)
+                catch e
+                    e
+                end
+                @test err isa ArgumentError
+                @test occursin("non-Boolean $(malformed_key)", sprint(showerror, err))
+            end
+
+            bool_target = joinpath(dir, "bool_target.bin")
+            _inspector_fixture_binary(bool_target; recorded_target = true)
+            err = try
+                inspect_binary(bool_target; io = devnull)
+            catch e
+                e
+            end
+            @test err isa ArgumentError
+            @test occursin("without a numeric mass_fix_target_ps_dry_pa",
+                           sprint(showerror, err))
         end
     end
 

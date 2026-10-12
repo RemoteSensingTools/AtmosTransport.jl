@@ -64,6 +64,50 @@ end
     plan = Pre.plan_vertical(Pre.MergeByIndex([1:2, 3:3]), vc)
     @test Pre._era5_pin_sensitivity_strategy(plan) isa
           Pre.PurePressureMergePinCompatibility
+
+    for FT in (Float32, Float64)
+        strategy = Pre._era5_pin_sensitivity_strategy(plan)
+        buffers = Pre._allocate_era5_pin_sensitivity(strategy, FT, 2, 3, 2)
+        @test buffers.native === nothing
+        @test buffers.merged === nothing
+
+        area = fill(FT(2.5e10), 2, 2)
+        qv = ntuple(p -> FT[0.001p + 0.0001i + 0.0002j + 0.0003k
+                             for i in 1:2, j in 1:2, k in 1:2], 6)
+        initial = ntuple(p -> FT[1.0e12 + 1000p + 100i + 10j + k
+                                  for i in 1:2, j in 1:2, k in 1:2], 6)
+        dispatched = map(copy, initial)
+        historical = map(copy, initial)
+        target = sum(sum(Float64, panel) for panel in initial) + 1.25e8
+        gravity = FT(AtmosTransport.Parameters.STANDARD_GRAVITY)
+
+        dispatched_stats = Pre._pin_era5_endpoint_mass!(
+            strategy, dispatched, nothing, qv, buffers.native, buffers.merged,
+            plan, area, gravity, target)
+        historical_stats = Pre._pin_cs_global_air_mass!(
+            historical, qv, area, gravity, target, diff(plan.merged_vc.B))
+
+        @test dispatched_stats == historical_stats
+        @test dispatched == historical
+        for p in 1:6
+            @test collect(reinterpret(UInt8, vec(dispatched[p]))) ==
+                  collect(reinterpret(UInt8, vec(historical[p])))
+        end
+    end
+
+    disabled = Pre._allocate_era5_pin_sensitivity(
+        Pre.NoERA5MassPin(), Float64, 2, 3, 2)
+    @test disabled.native === nothing
+    @test disabled.merged === nothing
+
+    native_plan = Pre.plan_vertical(
+        Pre.MergeByIndex([1:2, 3:3]),
+        Pre.HybridSigmaPressure([0.0, 100.0, 300.0, 300.0],
+                               [0.0, 0.2, 0.5, 1.0]))
+    native_buffers = Pre._allocate_era5_pin_sensitivity(
+        Pre._era5_pin_sensitivity_strategy(native_plan), Float32, 2, 3, 2)
+    @test size(native_buffers.native[1]) == (2, 2, 3)
+    @test size(native_buffers.merged[1]) == (2, 2, 2)
 end
 
 @testset "native ERA5 config resolves named L66 preset" begin
