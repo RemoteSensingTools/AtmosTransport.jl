@@ -306,7 +306,8 @@ function flush_final_windows!(workspace::LatLonSpectralWindowWorkspace{FT},
                     workspace.last_hour_next === nothing ?
                         workspace.storage.all_m[win_idx] :
                         workspace.last_hour_next.m),
-                FluxFidelityEvidenceBundle(flux_evidence, omega_evidence))
+                FluxFidelityEvidenceBundle(flux_evidence, omega_evidence,
+                                   NoColumnClosureRecord()))
             end
             for win_idx in eachindex(workspace.storage.all_m))
 end

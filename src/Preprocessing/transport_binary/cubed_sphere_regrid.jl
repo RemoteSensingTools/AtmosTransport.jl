@@ -4,6 +4,14 @@
 # `cubed_sphere_contracts.jl` — all three CS-producing preprocessors call the
 # same `verify_cs_window_contract!` so no path can silently skip a check.
 
+# The LL → CS regrid has no winds or OMEGA of its own (payload only), but it
+# runs a cubed-sphere column balance whose closure is recorded per window.
+_regrid_window_evidence(::Type{FT}, balance_diag, cm_diag) where FT =
+    FluxFidelityEvidenceBundle(
+        NoFluxFidelityEvidence{CubedSphereTargetGeometry,FT,SourcePayloadOnly}(SourcePayloadOnly()),
+        NoSourceOmegaEvidence{CubedSphereTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega()),
+        column_closure_record(balance_diag, cm_diag))
+
 function _ll_binary_to_cs_regridder_cache_key(grid::CubedSphereTargetGeometry,
                                               Nx_ll::Integer,
                                               Ny_ll::Integer)
@@ -464,9 +472,9 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
 
         fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, steps_per_met)
         for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
-        _diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
-                                  cur_m, Nc, Nz, bal_diag,
-                                  "LL-to-CS window $(win - 1)", balance_weights)
+        cm_diag = _diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
+                                            cur_m, Nc, Nz, bal_diag,
+                                            "LL-to-CS window $(win - 1)", balance_weights)
         pos_diag = if write_replay_on
             contract = verify_cs_window_contract!(cur_m, cur_am, cur_bm, cur_cm,
                                                   cs_ws.m_next_panels,
@@ -500,7 +508,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                               (tm5_fields=(entu=cur_entu, detu=cur_detu,
                                            entd=cur_entd, detd=cur_detd),))
         end
-        write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(win - 1, window_nt))
+        write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(
+            win - 1, window_nt, _regrid_window_evidence(FT, bal_diag, cm_diag)))
 
         if should_log_window(win - 1, Nt)
             @info @sprintf("    Window %2d/%d: wrote (colbal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
@@ -559,9 +568,9 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
 
     fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, steps_per_met)
     for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
-    _diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
-                              cur_m, Nc, Nz, bal_diag,
-                              "LL-to-CS window $Nt", balance_weights)
+    cm_diag = _diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
+                                        cur_m, Nc, Nz, bal_diag,
+                                        "LL-to-CS window $Nt", balance_weights)
     pos_diag = if write_replay_on
         contract = verify_cs_window_contract!(cur_m, cur_am, cur_bm, cur_cm,
                                               cs_ws.m_next_panels,
@@ -595,7 +604,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                           (tm5_fields=(entu=cur_entu, detu=cur_detu,
                                        entd=cur_entd, detd=cur_detd),))
     end
-    write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(Nt, window_nt))
+    write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(
+        Nt, window_nt, _regrid_window_evidence(FT, bal_diag, cm_diag)))
 
     @info @sprintf("    Window %2d/%d (last): colbal %.2fs  pre=%.2e post=%.2e iter=%d",
                    Nt, Nt, t_bal, bal_diag.max_pre_residual,

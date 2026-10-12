@@ -365,6 +365,12 @@ end
         try
             @test !haskey(reader.header.raw_header, "write_replay_check")
             @test reader.header.raw_header["column_balance_weights"] == "hybrid_mass"
+            # Every window's column closure is recorded, within its per-cell tolerance.
+            raw = reader.header.raw_header
+            @test raw["column_closure_rule"] == "per_cell_8eps_incident_flux_v1"
+            @test raw["column_closure_windows"] == reader.header.nwindow
+            @test 0 <= raw["column_closure_residual_to_tolerance_max"] <= 1
+            @test 0 <= raw["column_closure_cm_residual_to_tolerance_max"] <= 1
         finally
             close(reader)
         end
@@ -396,6 +402,7 @@ end
         try
             @test reader.header.raw_header["horizontal_balance"] == "none"
             @test !haskey(reader.header.raw_header, "column_balance_weights")
+            @test !any(startswith("column_closure_"), keys(reader.header.raw_header))
         finally
             close(reader)
         end

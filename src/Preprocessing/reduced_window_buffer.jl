@@ -244,7 +244,8 @@ function drain_ready_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
          hflux = workspace.buf.hflux[workspace.cur],
          cm = workspace.buf.cm[workspace.cur],
          ps = workspace.buf.ps[workspace.cur]),
-        FluxFidelityEvidenceBundle(flux_evidence, omega_evidence))
+        FluxFidelityEvidenceBundle(flux_evidence, omega_evidence,
+                                   NoColumnClosureRecord()))
     workspace.cur, workspace.nxt = workspace.nxt, workspace.cur
     return (ready = ready, balance = diag, contract = contract_diag)
 end
@@ -303,6 +304,7 @@ function flush_final_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
          hflux = workspace.buf.hflux[workspace.cur],
          cm = workspace.buf.cm[workspace.cur],
          ps = workspace.buf.ps[workspace.cur]),
-        FluxFidelityEvidenceBundle(flux_evidence, omega_evidence))
+        FluxFidelityEvidenceBundle(flux_evidence, omega_evidence,
+                                   NoColumnClosureRecord()))
     return (ready = ready, balance = diag, contract = contract_diag)
 end

@@ -450,27 +450,71 @@ end
                                    dm_probe, m, Nc, Nz; residual_tol = 0.25)
     @test cm_diag.max_raw_residual == 0.25
     @test cm_diag.max_booked_residual == 0.25
+    @test cm_diag.max_raw_residual_ratio <= 1
     @test cm_probe[1][1, 1, end] == 0.0
     @test_throws ErrorException Prep.diagnose_cs_cm!(cm_probe,
         ntuple(_ -> zeros(Nc + 1, Nc, Nz), 6),
         ntuple(_ -> zeros(Nc, Nc + 1, Nz), 6), dm_probe, m, Nc, Nz;
         residual_tol = 0.24)
+    # A per-cell tolerance applies to its own column only.
+    per_cell = fill(0.24, 6Nc^2); per_cell[1] = 0.25
+    @test Prep.diagnose_cs_cm!(cm_probe, ntuple(_ -> zeros(Nc + 1, Nc, Nz), 6),
+        ntuple(_ -> zeros(Nc, Nc + 1, Nz), 6), dm_probe, m, Nc, Nz;
+        residual_tol = per_cell).max_raw_residual_ratio <= 1
+    per_cell[1] = 0.24
+    @test_throws ErrorException Prep.diagnose_cs_cm!(cm_probe,
+        ntuple(_ -> zeros(Nc + 1, Nc, Nz), 6), ntuple(_ -> zeros(Nc, Nc + 1, Nz), 6),
+        dm_probe, m, Nc, Nz; residual_tol = per_cell)
+    @test_throws DimensionMismatch Prep.diagnose_cs_cm!(cm_probe,
+        ntuple(_ -> zeros(Nc + 1, Nc, Nz), 6), ntuple(_ -> zeros(Nc, Nc + 1, Nz), 6),
+        dm_probe, m, Nc, Nz; residual_tol = per_cell[2:end])
+    # A residual common to every column (a global air-mass change, as left by
+    # an unpinned run) names [mass_fix] in the error.
+    dm_global = ntuple(_ -> fill(1.0, Nc, Nc, Nz), 6)
+    err = try
+        Prep.diagnose_cs_cm!(ntuple(_ -> zeros(Nc, Nc, Nz + 1), 6),
+            ntuple(_ -> zeros(Nc + 1, Nc, Nz), 6), ntuple(_ -> zeros(Nc, Nc + 1, Nz), 6),
+            dm_global, m, Nc, Nz; residual_tol = 1.0, context = "unpinned test")
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException && contains(err.msg, "[mass_fix]") &&
+          contains(err.msg, "unpinned test")
 
-    # Float32 uses the documented representability tolerance and exposes it
-    # for a mandatory caller-side check.
+    # Float32: the closure tolerance is per cell (a global maximum would let a
+    # small-flux cell keep a residual set by the largest-flux cell) and the
+    # result is exposed for a mandatory caller-side check.
     m32 = map(x -> Float32.(1e11 .* x), m)
-    m32_next = map(x -> Float32.(1e11 .* x), m_next)
+    # A tendency with zero global sum (a pinned run): panel pairs exchange mass.
+    exchange = Float32.(1e9 .* (m_next[1] .- m[1]))
+    m32_next = ntuple(p -> m32[p] .+ (isodd(p) ? exchange : -exchange), 6)
     am32 = map(x -> Float32.(1e10 .* x), am0)
     bm32 = map(x -> Float32.(1e10 .* x), bm0)
+    am32[1][:, :, :] .*= 1000                  # one panel with 1000× larger fluxes
+    bm32[1][:, :, :] .*= 1000
+    Prep._sync_cs_mirrors!(am32, bm32, ft, Nz)
+    scratch32 = Prep.CSPoissonScratch(ft.nc)
     diag32 = Prep.balance_cs_column_mass_fluxes!(
-        am32, bm32, m32, m32_next, ft, degree, steps,
-        Prep.CSPoissonScratch(ft.nc); closure_passes = 8)
-    @test diag32.final_column_projected_residual <= diag32.final_column_tolerance
-    @test diag32.final_column_tolerance >= 10.0
+        am32, bm32, m32, m32_next, ft, degree, steps, scratch32; closure_passes = 8)
+    @test diag32.final_column_residual_ratio <= 1
+    @test diag32.final_column_tolerance_by_cell === scratch32.tol
+    @test diag32.final_column_tolerance_min >= 10.0
+    @test diag32.final_column_tolerance_max > 5 * diag32.final_column_tolerance_min
+    @test minimum(scratch32.tol) == diag32.final_column_tolerance_min
     @test Prep._require_cs_column_balance(diag32, "Float32 test") === diag32
-    bad_diag = merge(diag32, (final_column_projected_residual =
-                                  2diag32.final_column_tolerance,))
+    bad_diag = merge(diag32, (final_column_residual_ratio = 1.5,))
     @test_throws ErrorException Prep._require_cs_column_balance(bad_diag, "bad test")
+    @test_throws ErrorException Prep._require_cs_column_balance(
+        merge(diag32, (final_column_residual_ratio = NaN,)), "nan test")
+    dm32 = ntuple(p -> (m32_next[p] .- m32[p]) ./ Float32(2steps), 6)
+    cm32 = ntuple(_ -> zeros(Float32, Nc, Nc, Nz + 1), 6)
+    cm_diag32 = Prep._diagnose_balanced_cs_cm!(cm32, am32, bm32, dm32, m32, Nc, Nz,
+                                               diag32, "Float32 test")
+    @test cm_diag32.max_raw_residual_ratio <= 1
+    record = Prep.column_closure_record(diag32, cm_diag32)
+    @test record.residual_to_tolerance == diag32.final_column_residual_ratio
+    @test record.booked_residual_kg == cm_diag32.max_booked_residual
 
     # ΔB weights are layer thicknesses in B, normalized, for any vector type
     for Bv in (B, Float32.(B), collect(B))

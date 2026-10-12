@@ -394,6 +394,7 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
 
     steps = initial_substeps(ctx.substep_policy, workspace.steps_schedule[win])
     contract_diag = nothing
+    closure = NoColumnClosureRecord()
     while true
         _rebuild_spectral_window_fluxes!(workspace, cs_ws.am_panels,
                                          cs_ws.bm_panels,
@@ -425,9 +426,10 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
         for p in 1:CS_PANEL_COUNT
             fill!(cur_cm[p], zero(FT))
         end
-        _diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
-                                  cur_m, Nc, Nz, bal_diag,
-                                  "ERA5 spectral window $win", ctx.balance_weights)
+        cm_diag = _diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
+                                            cur_m, Nc, Nz, bal_diag,
+                                            "ERA5 spectral window $win", ctx.balance_weights)
+        closure = column_closure_record(bal_diag, cm_diag)
 
         t_replay = time()
         contract_diag = verify_window!((m_cur = cur_m,
@@ -468,7 +470,7 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
     omega_evidence = NoSourceOmegaEvidence{
         CubedSphereTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega())
     ready = ReadyWindow{CubedSphereTargetGeometry, FT}(
-        win, payload, FluxFidelityEvidenceBundle(flux_evidence, omega_evidence))
+        win, payload, FluxFidelityEvidenceBundle(flux_evidence, omega_evidence, closure))
     return PreverifiedWindow(ready, contract_diag; accumulated = true)
 end
 

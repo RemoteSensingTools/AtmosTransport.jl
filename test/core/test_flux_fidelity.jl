@@ -102,11 +102,49 @@ const G = AtmosTransport.Grids
             Pre.CubedSphereTargetGeometry,FT,typeof(omega_samples)}(
                 omega_samples, "fixture", "instantaneous", "dry", "fixture-v1", 0.1)
         acc = Pre.FluxFidelityAccumulator()
-        Pre.verify_flux_fidelity!(acc, Pre.FluxFidelityEvidenceBundle(flux, omega), 1)
+        Pre.verify_flux_fidelity!(acc, Pre.FluxFidelityEvidenceBundle(
+            flux, omega, Pre.NoColumnClosureRecord()), 1)
         header = Dict{String,Any}()
         @test_throws ArgumentError Pre.flux_fidelity_header!(header, acc)
         @test header["omega_fidelity_status"] == "failed"
         @test header["omega_fidelity_reason"] == "baseline_limit_exceeded"
+    end
+
+    @testset "column-closure records reach the header" begin
+        FT = Float32
+        G = Pre.CubedSphereTargetGeometry
+        no_flux = Pre.NoFluxFidelityEvidence{G,FT,Pre.SourcePayloadOnly}(Pre.SourcePayloadOnly())
+        no_omega = Pre.NoSourceOmegaEvidence{G,FT,Pre.SourceHasNoOmega}(Pre.SourceHasNoOmega())
+        acc = Pre.FluxFidelityAccumulator()
+        for (win, r) in enumerate((Pre.ColumnClosureRecord(2.0e5, 0.4, 3.0e4, 0.2),
+                                   Pre.ColumnClosureRecord(1.0e5, 0.7, 6.0e4, 0.1)))
+            Pre.verify_flux_fidelity!(acc, Pre.FluxFidelityEvidenceBundle(no_flux, no_omega, r), win)
+        end
+        header = Pre.flux_fidelity_header!(Dict{String,Any}("column_balance_weights" => "hybrid_mass"), acc)
+        @test header["column_closure_rule"] == Pre.COLUMN_CLOSURE_RULE
+        @test header["column_closure_windows"] == 2
+        @test header["column_closure_projected_residual_max_kg"] == 2.0e5
+        @test header["column_closure_residual_to_tolerance_max"] == 0.7
+        @test header["column_closure_booked_residual_max_kg"] == 6.0e4
+        @test header["column_closure_cm_residual_to_tolerance_max"] == 0.2
+        @test header["column_balance_weights"] == "hybrid_mass"      # not a certificate key
+        # Re-patching replaces, never accumulates, the certificate keys.
+        @test Pre.flux_fidelity_header!(copy(header), acc) == header
+        # Windows without a column balance write no closure keys.
+        none = Pre.FluxFidelityAccumulator()
+        Pre.verify_flux_fidelity!(none, Pre.FluxFidelityEvidenceBundle(
+            no_flux, no_omega, Pre.NoColumnClosureRecord()), 1)
+        @test !any(startswith("column_closure_"), keys(Pre.flux_fidelity_header!(Dict{String,Any}(), none)))
+        # Partial coverage and out-of-tolerance records are rejected.
+        Pre.verify_flux_fidelity!(none, Pre.FluxFidelityEvidenceBundle(
+            no_flux, no_omega, Pre.ColumnClosureRecord(1.0, 0.1, 0.0, 0.0)), 2)
+        @test_throws ArgumentError Pre.flux_fidelity_header!(Dict{String,Any}(), none)
+        @test_throws ArgumentError Pre.verify_flux_fidelity!(Pre.FluxFidelityAccumulator(),
+            Pre.FluxFidelityEvidenceBundle(no_flux, no_omega,
+                                           Pre.ColumnClosureRecord(1.0, 1.5, 0.0, 0.0)), 1)
+        @test_throws ArgumentError Pre.verify_flux_fidelity!(Pre.FluxFidelityAccumulator(),
+            Pre.FluxFidelityEvidenceBundle(no_flux, no_omega,
+                                           Pre.ColumnClosureRecord(NaN, 0.1, 0.0, 0.0)), 1)
     end
 
     @testset "read-side parsing uses nominal status and kind types" begin

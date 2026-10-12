@@ -557,6 +557,10 @@ end
             hyb_header, hyb_payload = parts(hyb_path)
             @test default_header["column_balance_weights"] == "hybrid_mass"
             @test !haskey(explicit_header, "column_balance_weights")     # legacy mass provenance
+            # The regrid's cubed-sphere column closure is recorded per window.
+            @test default_header["column_closure_windows"] == default_header["nwindow"]
+            @test 0 <= default_header["column_closure_residual_to_tolerance_max"] <= 1
+            @test default_header["flux_fidelity_status"] == "not_applicable"
             # This fixture has no pure-pressure layers, so mass and hybrid_mass
             # have identical payloads even though their provenance differs.
             @test explicit_payload == default_payload

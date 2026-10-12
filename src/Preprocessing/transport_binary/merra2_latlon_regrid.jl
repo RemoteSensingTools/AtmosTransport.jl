@@ -437,7 +437,8 @@ function _merra2_window_scratch(::Type{FT}, Nc, Nz, face_table) where FT
             m_a = panels(Nc, Nc, Nz), m_b = panels(Nc, Nc, Nz),
             ps_dry = panels(Nc, Nc), ps_moist = panels(Nc, Nc),
             fidelity_capture = Ref{Any}(nothing),
-            fidelity_map = FidelitySampleMap(face_table))
+            fidelity_map = FidelitySampleMap(face_table),
+            closure_record = Ref{AbstractColumnClosureRecord}(NoColumnClosureRecord()))
 end
 
 # Global dry-air mass pin, mirroring the GEOS-CS / N320 paths: apply the
@@ -537,8 +538,9 @@ function _balance_window!(d::MERRA2DayDriver, ps_moist, m_a, m_b, steps)
     sync_all_cs_boundary_mirrors!(x.am, x.bm, mesh.connectivity, Nc, Nz)
     fill_cs_window_mass_tendency!(x.dm, m_a, m_b, steps)
     foreach(c -> fill!(c, zero(FT)), x.cm)
-    _diagnose_balanced_cs_cm!(x.cm, x.am, x.bm, x.dm, m_a, Nc, Nz, diag,
-                              "MERRA-2 window", d.balance.weights)
+    cm_diag = _diagnose_balanced_cs_cm!(x.cm, x.am, x.bm, x.dm, m_a, Nc, Nz, diag,
+                                        "MERRA-2 window", d.balance.weights)
+    x.closure_record[] = column_closure_record(diag, cm_diag)
     return diag
 end
 
@@ -625,7 +627,8 @@ function _emit_block!(d::MERRA2DayDriver, cur::MERRA2BlockState, nxt::MERRA2Bloc
             NoSourceOmegaEvidence{
                 CubedSphereTargetGeometry,FT,SourceNotOpened}(SourceNotOpened())
         end
-        fidelity = FluxFidelityEvidenceBundle(flux_evidence, omega_evidence)
+        fidelity = FluxFidelityEvidenceBundle(flux_evidence, omega_evidence,
+                                              x.closure_record[])
         write_window!(d.writer, ReadyWindow{CubedSphereTargetGeometry, FT}(win, payload, fidelity))
         @info @sprintf("    Window %2d/%d: wrote (steps=%d bal %.2fs pre=%.2e post=%.2e iter=%d)",
                        win, length(diag.steps), steps, t_balance, balance.max_pre_residual,

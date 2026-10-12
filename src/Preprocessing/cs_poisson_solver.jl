@@ -26,7 +26,10 @@ end
 """
     CSPoissonScratch
 
-Pre-allocated work buffers for the CS global Poisson balance.
+Pre-allocated work buffers for the CS global Poisson balance. `tol` holds the
+per-cell closure tolerance of the last column balance
+(`balance_cs_column_mass_fluxes!`), which the `cm` diagnosis that follows it
+checks the column residuals against.
 """
 struct CSPoissonScratch
     psi :: Vector{Float64}
@@ -36,6 +39,7 @@ struct CSPoissonScratch
     Ap  :: Vector{Float64}
     z   :: Vector{Float64}
     div :: Vector{Float64}
+    tol :: Vector{Float64}
 end
 
 function CSPoissonScratch(nc::Int)
@@ -43,7 +47,7 @@ function CSPoissonScratch(nc::Int)
         zeros(Float64, nc), zeros(Float64, nc),
         zeros(Float64, nc), zeros(Float64, nc),
         zeros(Float64, nc), zeros(Float64, nc),
-        zeros(Float64, nc),
+        zeros(Float64, nc), zeros(Float64, nc),
     )
 end
 

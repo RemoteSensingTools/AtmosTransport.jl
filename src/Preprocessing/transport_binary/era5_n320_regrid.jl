@@ -546,6 +546,7 @@ function process_era5_n320_to_cs_day(date::Date,
         fidelity_rows = flux_method isa LineIntegralFaceFluxes ?
             LineIntegralFidelityStencil(flux_method, fidelity_map) : nothing
         fidelity_capture = Ref{Any}(nothing)
+        closure_record = Ref{AbstractColumnClosureRecord}(NoColumnClosureRecord())
         balance_weights = column_weights(settings.column_balance_weights, vc.B)
         # Per-substep flux scaling for a window taking `steps` substeps. The
         # face flux is the substep-mass amount, so it scales as 1/steps; the
@@ -836,8 +837,9 @@ function process_era5_n320_to_cs_day(date::Date,
             sync_all_cs_boundary_mirrors!(am, bm, mesh.connectivity, Nc, Nz_int)
             fill_cs_window_mass_tendency!(dm, m_dry, m_next, steps)
             for p in 1:6; fill!(cm[p], zero(FT)); end
-            _diagnose_balanced_cs_cm!(cm, am, bm, dm, m_dry, Nc, Nz_int,
-                                      bal_diag, "ERA5 N320 window", balance_weights)
+            cm_diag = _diagnose_balanced_cs_cm!(cm, am, bm, dm, m_dry, Nc, Nz_int,
+                                                bal_diag, "ERA5 N320 window", balance_weights)
+            closure_record[] = column_closure_record(bal_diag, cm_diag)
             return bal_diag
         end
 
@@ -960,7 +962,8 @@ function process_era5_n320_to_cs_day(date::Date,
                 amount_seconds = dt_met_seconds / (2 * win_steps))
             omega_evidence = NoSourceOmegaEvidence{
                 CubedSphereTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega())
-            fidelity = FluxFidelityEvidenceBundle(flux_evidence, omega_evidence)
+            fidelity = FluxFidelityEvidenceBundle(flux_evidence, omega_evidence,
+                                                  closure_record[])
             write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(
                 win - 1, payload, fidelity))
 
@@ -1097,7 +1100,8 @@ function process_era5_n320_to_cs_day(date::Date,
             amount_seconds = dt_met_seconds / (2 * final_steps))
         omega_evidence = NoSourceOmegaEvidence{
             CubedSphereTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega())
-        final_fidelity = FluxFidelityEvidenceBundle(flux_evidence, omega_evidence)
+        final_fidelity = FluxFidelityEvidenceBundle(flux_evidence, omega_evidence,
+                                                    closure_record[])
         write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(
             nwindow, final_payload, final_fidelity))
 

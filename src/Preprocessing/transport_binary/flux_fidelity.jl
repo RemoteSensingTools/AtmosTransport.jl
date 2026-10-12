@@ -8,6 +8,10 @@ const FLUX_FIDELITY_SAMPLE_SEED = UInt64(0x6a09e667f3bcc909)
 const FLUX_FIDELITY_SAMPLE_RULE = "cs_stratified_faces_v1"
 const OMEGA_FIDELITY_PRESSURE_BANDS =
     ("surface-700", "700-300", "300-100", "100-10", "<10")
+# Header-key prefixes of the write-time certificate: patched at close, copied
+# verbatim by payload-preserving tools (TM5 convection attachment).
+const FLUX_CERTIFICATE_KEY_PREFIXES =
+    ("flux_fidelity_", "omega_fidelity_", "balance_correction_", "column_closure_")
 
 abstract type AbstractFluxFidelityReason end
 struct EvidenceNotAttached <: AbstractFluxFidelityReason end
@@ -77,15 +81,43 @@ struct NoSourceOmegaEvidence{G,FT,R<:AbstractFluxFidelityReason} <:
     reason::R
 end
 
-struct FluxFidelityEvidenceBundle{F,O}
+"""
+Per-window record of a cubed-sphere column balance and its `cm` diagnosis
+(`balance_cs_column_mass_fluxes!`, `diagnose_cs_cm!`): the largest projected
+column residual `max_c |r_c^⊥|` and its ratio to the cell's closure tolerance
+`τ_c = max(closure_tol, 8 ε_FT Σ_{f∂c} Σ_k |F_{f,k}|)`, and the largest
+residual `|R_c|` folded into `cm` with its ratio to the cell's tolerance.
+Both ratios are at most 1 for a window that passed.
+"""
+abstract type AbstractColumnClosureRecord end
+struct ColumnClosureRecord <: AbstractColumnClosureRecord
+    projected_residual_kg :: Float64
+    residual_to_tolerance :: Float64
+    booked_residual_kg    :: Float64
+    cm_residual_to_tolerance :: Float64
+end
+"No cubed-sphere column balance ran (lat-lon/reduced Gaussian, payload-only, pressure fixer)."
+struct NoColumnClosureRecord <: AbstractColumnClosureRecord end
+
+column_closure_record(balance_diag, cm_diag) = ColumnClosureRecord(
+    Float64(balance_diag.final_column_projected_residual),
+    Float64(balance_diag.final_column_residual_ratio),
+    Float64(cm_diag.max_booked_residual),
+    Float64(cm_diag.max_raw_residual_ratio))
+
+const COLUMN_CLOSURE_RULE = "per_cell_8eps_incident_flux_v1"
+
+struct FluxFidelityEvidenceBundle{F,O,C<:AbstractColumnClosureRecord}
     flux::F
     omega::O
+    closure::C
 end
 
 function default_fidelity_evidence(::Type{G}, ::Type{FT}) where {G,FT}
     return FluxFidelityEvidenceBundle(
         NoFluxFidelityEvidence{G,FT,SourcePayloadOnly}(SourcePayloadOnly()),
-        NoSourceOmegaEvidence{G,FT,SourceHasNoOmega}(SourceHasNoOmega()))
+        NoSourceOmegaEvidence{G,FT,SourceHasNoOmega}(SourceHasNoOmega()),
+        NoColumnClosureRecord())
 end
 
 "Canonical sampled face identifiers, stable across processes and Julia versions."
@@ -189,6 +221,12 @@ mutable struct FluxFidelityAccumulator
     omega_band_count::Vector{Int}
     omega_baseline_id::String
     omega_limit::Float64
+    windows_seen::Int
+    closure_windows::Int
+    closure_projected_max::Float64
+    closure_ratio_max::Float64
+    closure_booked_max::Float64
+    closure_cm_ratio_max::Float64
 end
 
 function FluxFidelityAccumulator()
@@ -197,7 +235,8 @@ function FluxFidelityAccumulator()
         0, 0, 0, 0.0, 0.0, 0.0, 0,
         false, nothing, "", "", "", 0, 0.0, 0.0, 0.0,
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-        zeros(5), zeros(5), zeros(Int, 5), "", Inf)
+        zeros(5), zeros(5), zeros(Int, 5), "", Inf,
+        0, 0, 0.0, 0.0, 0.0, 0.0)
 end
 
 @inline function _ordered_bits(x::Float32)
@@ -315,11 +354,44 @@ function verify_omega_fidelity!(acc::FluxFidelityAccumulator,
     return nothing
 end
 
+verify_column_closure!(::FluxFidelityAccumulator, ::NoColumnClosureRecord, _win) = nothing
+function verify_column_closure!(acc::FluxFidelityAccumulator, r::ColumnClosureRecord, win)
+    values = (r.projected_residual_kg, r.residual_to_tolerance,
+              r.booked_residual_kg, r.cm_residual_to_tolerance)
+    all(isfinite, values) && all(>=(0), values) || throw(ArgumentError(
+        "column-closure record of window $win is not finite and non-negative: $(r)"))
+    r.residual_to_tolerance <= 1 && r.cm_residual_to_tolerance <= 1 || throw(ArgumentError(
+        "column-closure record of window $win exceeds its per-cell tolerance: $(r)"))
+    acc.closure_windows += 1
+    acc.closure_projected_max = max(acc.closure_projected_max, r.projected_residual_kg)
+    acc.closure_ratio_max = max(acc.closure_ratio_max, r.residual_to_tolerance)
+    acc.closure_booked_max = max(acc.closure_booked_max, r.booked_residual_kg)
+    acc.closure_cm_ratio_max = max(acc.closure_cm_ratio_max, r.cm_residual_to_tolerance)
+    return nothing
+end
+
 function verify_flux_fidelity!(acc::FluxFidelityAccumulator,
                                bundle::FluxFidelityEvidenceBundle, win::Int)
     verify_flux_fidelity!(acc, bundle.flux, win)
     verify_omega_fidelity!(acc, bundle.omega, win)
+    verify_column_closure!(acc, bundle.closure, win)
+    acc.windows_seen += 1
     return nothing
+end
+
+# Column-closure keys: written when every window carried a cubed-sphere
+# column-balance record, absent when none did (no such balance ran).
+function _column_closure_header!(header::AbstractDict, acc::FluxFidelityAccumulator)
+    acc.closure_windows == 0 && return header
+    acc.closure_windows == acc.windows_seen || throw(ArgumentError(
+        "column-closure records cover $(acc.closure_windows) of $(acc.windows_seen) windows"))
+    header["column_closure_rule"] = COLUMN_CLOSURE_RULE
+    header["column_closure_windows"] = acc.closure_windows
+    header["column_closure_projected_residual_max_kg"] = acc.closure_projected_max
+    header["column_closure_residual_to_tolerance_max"] = acc.closure_ratio_max
+    header["column_closure_booked_residual_max_kg"] = acc.closure_booked_max
+    header["column_closure_cm_residual_to_tolerance_max"] = acc.closure_cm_ratio_max
+    return header
 end
 
 function _fidelity_status_for_reason(reason::Union{Nothing,String})
@@ -330,9 +402,10 @@ end
 
 function flux_fidelity_header!(header::AbstractDict, acc::FluxFidelityAccumulator)
     for key in collect(keys(header))
-        (startswith(String(key), "flux_fidelity_") || startswith(String(key), "omega_fidelity_") ||
-         startswith(String(key), "balance_correction_")) && delete!(header, key)
+        any(prefix -> startswith(String(key), prefix), FLUX_CERTIFICATE_KEY_PREFIXES) &&
+            delete!(header, key)
     end
+    _column_closure_header!(header, acc)
     header["flux_fidelity_schema"] = FLUX_FIDELITY_SCHEMA
     header["flux_fidelity_sample_rule"] = FLUX_FIDELITY_SAMPLE_RULE
     header["flux_fidelity_sample_seed"] = string(FLUX_FIDELITY_SAMPLE_SEED)

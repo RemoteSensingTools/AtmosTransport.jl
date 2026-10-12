@@ -471,8 +471,34 @@ versioned per-path baseline; an aggregate failure quarantines the staged file.
 When winds or OMEGA are not present, numeric metrics are omitted (never NaN)
 and a typed `not_applicable` or `unavailable` reason is recorded.
 
-The flat keys begin with `flux_fidelity_`, `omega_fidelity_`, and
-`balance_correction_`. `flux_fidelity_schema = 1` is part of the output-reuse
+Every cubed-sphere writer that column-balances its fluxes (ERA5 spectral and
+N320, MERRA-2, GEOS closures with a balance, lat-lon → cubed-sphere regrid)
+also records the column closure of every window. The integrated balance runs
+in Float64; a Float32 payload rounds the redistributed face values, so the
+mean-free column residual `r_c^⊥` of the stored fluxes must satisfy, in every
+cell `c`,
+
+```math
+|r_c^\perp| \le \tau_c = \max\!\left(\mathtt{closure\_tol},\;
+  8\,\epsilon_{FT}\sum_{f\partial c}\sum_k |F_{f,k}|\right),
+```
+
+the representability bound of the cell's own stored faces (`closure_tol` =
+10 kg is the Float64 tolerance); the `cm` residual `R_c` folded into the column
+must satisfy the same `τ_c` plus the rounding bound of the `cm` recursion. A
+window outside either bound fails before it is written; an unpinned run whose
+endpoints differ in global air mass fails here with a message that names
+`[mass_fix]`. The header keys `column_closure_rule`
+(`per_cell_8eps_incident_flux_v1`), `column_closure_windows`,
+`column_closure_projected_residual_max_kg`,
+`column_closure_residual_to_tolerance_max`,
+`column_closure_booked_residual_max_kg` and
+`column_closure_cm_residual_to_tolerance_max` hold the maxima over windows
+(both ratios at most 1). Lat-lon, reduced-Gaussian, payload-only and GEOS
+pressure-fixer binaries have no cubed-sphere column balance and omit them.
+
+The flat keys begin with `flux_fidelity_`, `omega_fidelity_`,
+`balance_correction_` and `column_closure_`. `flux_fidelity_schema = 1` is part of the output-reuse
 contract, so an older uncertified binary is regenerated rather than skipped.
 The final aggregate header is patched at close time; the payload layout and
 bytes are unchanged.

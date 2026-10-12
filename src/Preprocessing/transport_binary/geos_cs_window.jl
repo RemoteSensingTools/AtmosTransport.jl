@@ -68,6 +68,9 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, V
     balance_weights :: CW
     fidelity_map :: FidelitySampleMap
     fidelity_capture :: Ref{Any}
+    # Column-balance record of the accepted window (`NoColumnClosureRecord` for
+    # the pressure-fixer closures, which balance nothing).
+    closure_record :: Base.RefValue{AbstractColumnClosureRecord}
 end
 
 function allocate_window_workspace(grid::CubedSphereTargetGeometry,
@@ -212,7 +215,8 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
             cm_closure, ΔB, m_next_delp, Int(smooth_iters),
             omega_buf, qv_buf, vdiv_om, vdiv_target,
             omega_regularization, omega_regularization_scratch, balance_weights,
-            FidelitySampleMap(grid.face_table), Ref{Any}(nothing))
+            FidelitySampleMap(grid.face_table), Ref{Any}(nothing),
+            Ref{AbstractColumnClosureRecord}(NoColumnClosureRecord()))
 end
 
 function _geos_pin_global_mass_if_needed!(workspace::GEOSCubedSphereWindowWorkspace{FT},
@@ -279,6 +283,7 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
     for p in 1:CS_PANEL_COUNT
         fill!(workspace.cm_v4[p], zero(FT))
     end
+    workspace.closure_record[] = NoColumnClosureRecord()
 
     if workspace.cm_closure === :pressure_fixer
         # Keep native horizontal fluxes UNBALANCED; close cm by construction via
@@ -412,11 +417,12 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
                 end
             end
         end
-        _diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
-                                  workspace.bm_v4, workspace.dm_v4,
-                                  workspace.m_cur, Nc, Nz, bal_diag,
-                                  "GEOS moisture-filtered window",
-                                  workspace.balance_weights)
+        cm_diag = _diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
+                                            workspace.bm_v4, workspace.dm_v4,
+                                            workspace.m_cur, Nc, Nz, bal_diag,
+                                            "GEOS moisture-filtered window",
+                                            workspace.balance_weights)
+        workspace.closure_record[] = column_closure_record(bal_diag, cm_diag)
         return bal_diag
     end
 
@@ -484,10 +490,11 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
                   "gate $(workspace.omega_regularization.max_bottom_flux_correction)")
         end
         _OMEGA_TIMING[] && (_OMEGA_TIMING_STATE.recon_time += time() - _t_recon)
-        _diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
-                                  workspace.bm_v4, workspace.dm_v4,
-                                  workspace.m_cur, Nc, Nz, bal_diag,
-                                  "GEOS omega window", workspace.balance_weights)
+        cm_diag = _diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
+                                            workspace.bm_v4, workspace.dm_v4,
+                                            workspace.m_cur, Nc, Nz, bal_diag,
+                                            "GEOS omega window", workspace.balance_weights)
+        workspace.closure_record[] = column_closure_record(bal_diag, cm_diag)
         return (bal_diag..., omega_max_increment = recon.max_increment,
                 omega_max_post_residual = recon.max_post_residual,
                 omega_max_relative_correction = recon.max_relative_correction,
@@ -504,11 +511,12 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         grid.poisson_scratch; weights = workspace.balance_weights)
     fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
                                   workspace.m_next_target, steps)
-    _diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
-                              workspace.bm_v4, workspace.dm_v4,
-                              workspace.m_cur, Nc, Nz, bal_diag,
-                              "GEOS endpoint-balanced window",
-                              workspace.balance_weights)
+    cm_diag = _diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
+                                        workspace.bm_v4, workspace.dm_v4,
+                                        workspace.m_cur, Nc, Nz, bal_diag,
+                                        "GEOS endpoint-balanced window",
+                                        workspace.balance_weights)
+    workspace.closure_record[] = column_closure_record(bal_diag, cm_diag)
     return bal_diag
 end
 
@@ -698,7 +706,8 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
             CubedSphereTargetGeometry,FT,SourceNotOpened}(SourceNotOpened())
     end
     ready = ReadyWindow{CubedSphereTargetGeometry, FT}(
-        win, window_nt, FluxFidelityEvidenceBundle(flux_evidence, omega_evidence))
+        win, window_nt, FluxFidelityEvidenceBundle(flux_evidence, omega_evidence,
+                                                   workspace.closure_record[]))
     return PreverifiedWindow(ready, contract_diag)
 end
 
