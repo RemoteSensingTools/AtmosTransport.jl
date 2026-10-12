@@ -263,7 +263,7 @@ end
                                 tm5_uniform = tm5_val)
 
             source_reader = TransportBinaryReader(ll_path; FT = Float64)
-            @test tm5_convection_mass_basis(source_reader) === :dry
+            @test tm5_convection_mass_basis(source_reader) isa DryBasis
             close(source_reader)
 
             cfg_grid = Dict{String, Any}(
@@ -282,7 +282,7 @@ end
             # round-trips to near-uniform CS output through conservative
             # regrid, so each panel cell should be close to `tm5_val`.
             reader = TransportBinaryReader(cs_path; FT = Float64)
-            @test tm5_convection_mass_basis(reader) === :dry
+            @test tm5_convection_mass_basis(reader) isa DryBasis
             win = load_window!(reader, 1)
             @test haskey(win, :tm5_fields) && win.tm5_fields !== nothing
             for fld in (:entu, :detu, :entd, :detd)

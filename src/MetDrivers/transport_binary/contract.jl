@@ -163,7 +163,7 @@ function _set_tm5_convection_mass_basis!(header::Dict{String, Any},
                                          payload_sections,
                                          mass_basis::Symbol,
                                          requested::Union{_DefaultTM5ConvectionMassBasis,
-                                                          Nothing, Symbol})
+                                                          Nothing, AbstractMassBasis})
     tm5_sections = (:entu, :detu, :entd, :detd)
     present = map(section -> section in payload_sections, tm5_sections)
     any(present) == all(present) || throw(ArgumentError(
@@ -177,12 +177,12 @@ function _set_tm5_convection_mass_basis!(header::Dict{String, Any},
     end
 
     requested === nothing && return header
-    binary_basis = _transport_basis_symbol(mass_basis)
-    basis = requested isa _DefaultTM5ConvectionMassBasis ? binary_basis :
-            _transport_basis_symbol(requested)
-    basis === binary_basis || throw(ArgumentError(
-        "tm5_convection_mass_basis=$(basis) does not match mass_basis=$(binary_basis)"))
-    header[TM5_CONVECTION_MASS_BASIS_KEY] = String(basis)
+    binary_basis = _transport_parse_mass_basis_tag(mass_basis, "mass_basis")
+    basis = requested isa _DefaultTM5ConvectionMassBasis ? binary_basis : requested
+    typeof(basis) === typeof(binary_basis) || throw(ArgumentError(
+        "tm5_convection_mass_basis=$(_transport_basis_symbol(basis)) does not match " *
+        "mass_basis=$(_transport_basis_symbol(binary_basis))"))
+    header[TM5_CONVECTION_MASS_BASIS_KEY] = String(_transport_basis_symbol(basis))
     return header
 end
 

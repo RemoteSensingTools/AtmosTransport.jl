@@ -17,7 +17,8 @@ using ArgParse
 using Dates
 using NCDatasets
 using AtmosTransport
-using AtmosTransport.Parameters: ERA5_NATIVE_LEVEL_COUNT, ERA5_MET_INTERVAL_SECONDS
+using AtmosTransport.Parameters: ERA5_NATIVE_LEVEL_COUNT, ERA5_MET_INTERVAL_SECONDS,
+                                  IFS_EARTH_RADIUS
 
 const MD = AtmosTransport.MetDrivers
 const PP = AtmosTransport.Preprocessing
@@ -192,10 +193,22 @@ end
 
 # Moist (total-air) archive fluxes are converted to the binary's air-mass
 # basis with the specific humidity of each window; a moist binary needs none.
+humidity_target_mesh(mesh::AtmosTransport.LatLonMesh) =
+    AtmosTransport.LatLonMesh(mesh.λᶠ, mesh.φᶠ;
+                              FT = eltype(mesh), radius = IFS_EARTH_RADIUS)
+
 humidity_remap(::AtmosTransport.MoistBasis, raw_header, era5_root, date, mesh, cache_dir) = nothing
-humidity_remap(::AtmosTransport.DryBasis, raw_header, era5_root, date, mesh, cache_dir) =
-    PP.open_era5_humidity_remap(isempty(era5_root) ? era5_root_of(raw_header) : era5_root,
-                                date, mesh; cache_dir)
+function humidity_remap(::AtmosTransport.DryBasis, raw_header, era5_root, date,
+                        mesh, cache_dir)
+    # Specific humidity is intensive, so changing only the sphere radius does
+    # not change its target values. ConservativeRegridding requires both
+    # manifolds to match: use the N320/IFS radius here, while the subsequent
+    # extensive convection-field remap keeps the transport binary's radius.
+    target = humidity_target_mesh(mesh)
+    return PP.open_era5_humidity_remap(
+        isempty(era5_root) ? era5_root_of(raw_header) : era5_root,
+        date, target; cache_dir)
+end
 
 # The ERA5 N320 archive a no-convection binary was built from.
 function era5_root_of(raw_header)
@@ -271,7 +284,7 @@ function open_attachment_writer(output, Nc, np, Nz, h, g, vc, metadata)
         air_mass_sampling = h.air_mass_sampling,
         flux_sampling = h.flux_sampling, flux_kind = h.flux_kind,
         include_flux_delta = true, mass_basis = h.mass_basis,
-        tm5_convection_mass_basis = h.mass_basis,
+        tm5_convection_mass_basis = PP.mass_basis_from_symbol(h.mass_basis),
         include_surface = true, include_tm5conv = true,
         include_precomputed_dkg = true,
         panel_convention = String(g.panel_convention),

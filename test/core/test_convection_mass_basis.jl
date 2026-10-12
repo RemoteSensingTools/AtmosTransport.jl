@@ -297,10 +297,20 @@ end
         return path
     end
 
+    rg_grid, rg_window = rg_fixture(false)
+    @test_throws UndefKeywordError MD.open_streaming_transport_binary(
+        tempname(), rg_grid, 1, rg_window;
+        source_flux_sampling = :window_start_endpoint)
+    @test_throws UndefKeywordError MD.open_streaming_cs_transport_binary(
+        tempname(), 2, 6, 2, 1,
+        HybridSigmaPressure([0.0, 1000, 2000], [0.0, 0.2, 1.0]);
+        planet_radius = AtmosTransport.Parameters.EARTH_RADIUS)
+
     mktempdir() do dir
         writers = (("eager LL", write_eager_ll), ("eager RG", write_eager_rg),
                    ("streaming RG", write_streaming_rg), ("streaming CS", write_streaming_cs))
         cases = (("inferred TM5 basis", true, :default, "dry"),
+                 ("explicit typed TM5 basis", true, DryBasis(), "dry"),
                  ("explicit keyless TM5", true, nothing, nothing),
                  ("non-TM5 payload", false, :default, nothing))
         @testset "$writer_name: $case_name" for (writer_name, write_fixture) in writers,
@@ -317,8 +327,11 @@ end
 
         recorded = joinpath(dir, "eager_ll-inferred_tm5_basis.bin")
         reader = TransportBinaryReader(recorded; FT = Float64)
-        @test tm5_convection_mass_basis(reader) === :dry
-        @test binary_capabilities(reader).tm5_convection_mass_basis === :dry
+        @test tm5_convection_mass_basis(reader) isa DryBasis
+        @test reader.header.tm5_convection_mass_basis isa DryBasis
+        @test binary_capabilities(reader).tm5_convection_mass_basis isa DryBasis
+        @test occursin("tm5_convection_mass_basis = dry",
+                       sprint(io -> inspect_binary(recorded; io)))
         close(reader)
         @test_logs min_level = Base.CoreLogging.Warn close(TransportBinaryDriver(recorded))
 
@@ -345,7 +358,8 @@ end
         @test_logs min_level = Base.CoreLogging.Warn close(TransportBinaryReader(legacy_moist))
 
         @test_throws ArgumentError write_eager_ll(
-            joinpath(dir, "writer_mismatch.bin"); include_tm5 = true, tm5_basis = :moist)
+            joinpath(dir, "writer_mismatch.bin"); include_tm5 = true,
+            tm5_basis = MoistBasis())
 
         # Simulate an externally generated binary. This bypasses every writer
         # guard so the reader's independent basis check must reject it.

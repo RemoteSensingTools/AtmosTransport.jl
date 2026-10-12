@@ -1,5 +1,10 @@
 # CATRINE C30 2022 MacBook bundle
 
+> **RETIRED (2026-10-03):** Do not use this bundle for new science. Its TM5
+> convection fields were attached with the vertical level order inverted.
+> Existing outputs made from the bundle inherit that error and must not be
+> combined with regenerated products.
+
 This bundle contains the C30, 66-level, dry-air full-physics transport
 binaries from 2021-12-01 through 2022-12-31. December 2021 is required
 spin-up; the analysis year is 2022. It also includes the 13 monthly LMDZ CO2

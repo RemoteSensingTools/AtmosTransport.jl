@@ -86,7 +86,8 @@ starts: it is ``2\,\mathrm{Re}\,G`` at the cell faces (``λ_0 = 0``, where `u`
 is synthesised) and ``−2\,\mathrm{Im}\,G`` at the cell centres
 (``λ_0 = π/N``, where `lnsp` is synthesised). The term is therefore dropped.
 This matches ecTrans's rule for linear reduced grids,
-`NMEN = MIN(NSMAX, INT((NLOEN − 1)/2))` (`setup_geom_mod.F90`).
+`NMEN = MIN(NSMAX, (NLOEN − 1)/2)`
+(`src/trans/common/internal/setup_geom_mod.F90:48`, ecTrans `aff81b9`).
 
 On lat-lon targets and the cubed-sphere staging grid `T = N/2 − 1`, so the
 limit never binds. On a reduced Gaussian target `T` is set by the widest ring

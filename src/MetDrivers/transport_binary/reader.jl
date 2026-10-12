@@ -80,19 +80,16 @@ preprocessor when `tm5_convection = true`. Used by the
 has_tm5_convection(r::TransportBinaryReader) =
     all(s in r.header.payload_sections for s in (:entu, :detu, :entd, :detd))
 """
-    tm5_convection_mass_basis(r::TransportBinaryReader) -> Union{Symbol, Nothing}
+    tm5_convection_mass_basis(r::TransportBinaryReader) -> Union{AbstractMassBasis, Nothing}
 
-Air-mass basis of the TM5 convection sections (`:dry` or `:moist`) from the
-header key [`TM5_CONVECTION_MASS_BASIS_KEY`](@ref); `nothing` when the binary
-has no TM5 sections or does not record the basis (written before the key
-existed, with moist fluxes).
+Typed air-mass basis of the TM5 convection sections (`DryBasis()` or
+`MoistBasis()`) parsed from the header key
+[`TM5_CONVECTION_MASS_BASIS_KEY`](@ref); `nothing` when the binary has no TM5
+sections or does not record the basis (written before the key existed, with
+moist fluxes).
 """
-function tm5_convection_mass_basis(r::TransportBinaryReader)
-    has_tm5_convection(r) || return nothing
-    value = get(r.header.raw_header, TM5_CONVECTION_MASS_BASIS_KEY, nothing)
-    value === nothing && return nothing
-    return _transport_basis_symbol(Symbol(value))
-end
+tm5_convection_mass_basis(r::TransportBinaryReader) =
+    r.header.tm5_convection_mass_basis
 
 """
     _check_tm5_convection_basis(reader) -> nothing
@@ -117,9 +114,10 @@ function _check_tm5_convection_basis(reader::TransportBinaryReader)
             "globally, up to about 2 % in humid tropical columns. Regenerate the " *
             "binary to remove the bias. (Reported once per session.)",
             maxlog = 1)
-    elseif recorded !== binary_basis
+    elseif typeof(recorded) !== typeof(_transport_parse_mass_basis_tag(binary_basis, "mass_basis"))
+        recorded_label = _transport_basis_symbol(recorded)
         throw(ArgumentError(
-            "$(basename(reader.path)): TM5 convection fluxes are on a $(recorded) basis " *
+            "$(basename(reader.path)): TM5 convection fluxes are on a $(recorded_label) basis " *
             "(`$(TM5_CONVECTION_MASS_BASIS_KEY)`) but the air mass is $(binary_basis) " *
             "(`mass_basis`); TM5Convection needs both on the same basis. Regenerate the binary."))
     end

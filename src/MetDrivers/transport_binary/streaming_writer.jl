@@ -85,9 +85,9 @@ function open_streaming_transport_binary(
         flux_kind::Symbol = :substep_mass_amount,
         humidity_sampling::Symbol = :auto,
         delta_semantics::Symbol = :auto,
-        mass_basis::Symbol = :moist,
+        mass_basis::Symbol,
         tm5_convection_mass_basis::Union{_DefaultTM5ConvectionMassBasis,
-                                         Nothing, Symbol} =
+                                         Nothing, AbstractMassBasis} =
             _DEFAULT_TM5_CONVECTION_MASS_BASIS,
         extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}())
 

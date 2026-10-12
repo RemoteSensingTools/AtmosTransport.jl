@@ -88,7 +88,8 @@ staggered points of a ring. The term is dropped, and every `1 ≤ m ≤ M` enter
 with its mirror (weight 2).
 
 This matches ECMWF ecTrans's rule for linear reduced grids,
-`NMEN = MIN(NSMAX, INT((NLOEN − 1)/2))` (`setup_geom_mod.F90`), including
+`NMEN = MIN(NSMAX, (NLOEN − 1)/2)`
+(`src/trans/common/internal/setup_geom_mod.F90:48`, ecTrans `aff81b9`), including
 ERA5's linear N320 grid at T639. On lat-lon and cubed-sphere staging targets
 `target_spectral_truncation` sets `T = nlon ÷ 2 − 1`, so `M = T` there. On a
 reduced Gaussian target `T` is set by the widest ring, and each narrower ring

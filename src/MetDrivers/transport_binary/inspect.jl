@@ -38,8 +38,9 @@ requirements are selected through the reader's geometry type. Fields:
   (`m, am, bm, cm` on LL/CS; `m, hflux, cm` on RG).
 - `replay_gate :: Bool` — any flux-delta section (dam/dbm/dcm/dm/dhflux) present.
 - `tm5_convection :: Bool` — entu/detu/entd/detd all present.
-- `tm5_convection_mass_basis :: Union{Nothing, Symbol}` — basis of the TM5
-  sections (`:dry`/`:moist`); `nothing` without TM5 sections or when the
+- `tm5_convection_mass_basis :: Union{Nothing, AbstractMassBasis}` — typed
+  basis of the TM5 sections (`DryBasis()`/`MoistBasis()`); `nothing` without
+  TM5 sections or when the
   binary predates the record (moist fluxes, see `TM5_CONVECTION_MASS_BASIS_KEY`).
 - `cmfmc_convection :: Bool` — cmfmc present (CS only; LL/RG returns false).
 - `pbl_diffusion :: Bool` — complete runnable PBL forcing (CS only).
@@ -131,7 +132,8 @@ function _print_capability_rows(io::IO, reader)
     println(io, "  mass_basis       = ", caps.mass_basis)
     if caps.tm5_convection
         println(io, "  tm5_convection_mass_basis = ",
-                something(caps.tm5_convection_mass_basis, "not recorded"))
+                caps.tm5_convection_mass_basis === nothing ? "not recorded" :
+                    _transport_basis_symbol(caps.tm5_convection_mass_basis))
         caps.tm5_convection_mass_basis === nothing && caps.mass_basis === :dry &&
             println(io, "  ⚠ TM5 convection fluxes predate the dry-air conversion: moist fluxes " *
                         "on dry air mass, convective rates about 1 % too large")

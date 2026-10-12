@@ -12,6 +12,15 @@ end
 const PP = AtmosTransport.Preprocessing
 const MD = AtmosTransport.MetDrivers
 
+@testset "humidity remap uses the ERA5 manifold" begin
+    transport_mesh = LatLonMesh(; FT = Float64, Nx = 4, Ny = 2,
+                                radius = AtmosTransport.Parameters.EARTH_RADIUS)
+    humidity_mesh = AttachScript.humidity_target_mesh(transport_mesh)
+    @test humidity_mesh.λᶠ == transport_mesh.λᶠ
+    @test humidity_mesh.φᶠ == transport_mesh.φᶠ
+    @test humidity_mesh.radius == AtmosTransport.Parameters.IFS_EARTH_RADIUS
+end
+
 @testset "legacy TM5 convection level order" begin
     vc = PP.load_hybrid_coefficients(AttachScript.ERA5_L137_COEFFICIENTS)
     A, B = Float64.(vc.A), Float64.(vc.B)
@@ -110,7 +119,7 @@ end
 
         @test !haskey(metadata, MD.TM5_CONVECTION_MASS_BASIS_KEY)
         reader = MD.TransportBinaryReader(path)
-        @test MD.tm5_convection_mass_basis(reader) === :dry
+        @test MD.tm5_convection_mass_basis(reader) isa DryBasis
         @test reader.header.raw_header[MD.TM5_CONVECTION_MASS_BASIS_KEY] == "dry"
         close(reader)
     end

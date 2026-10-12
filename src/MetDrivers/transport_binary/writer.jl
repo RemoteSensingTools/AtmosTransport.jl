@@ -82,7 +82,7 @@ function write_transport_binary(path::AbstractString,
                                 delta_semantics::Symbol = :auto,
                                 mass_basis::Symbol = :dry,
                                 tm5_convection_mass_basis::Union{_DefaultTM5ConvectionMassBasis,
-                                                                 Nothing, Symbol} =
+                                                                 Nothing, AbstractMassBasis} =
                                     _DEFAULT_TM5_CONVECTION_MASS_BASIS,
                                 extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}(),
                                 threaded::Bool = Threads.nthreads() > 1)
@@ -184,7 +184,7 @@ function write_transport_binary(path::AbstractString,
                                 delta_semantics::Symbol = :auto,
                                 mass_basis::Symbol = :dry,
                                 tm5_convection_mass_basis::Union{_DefaultTM5ConvectionMassBasis,
-                                                                 Nothing, Symbol} =
+                                                                 Nothing, AbstractMassBasis} =
                                     _DEFAULT_TM5_CONVECTION_MASS_BASIS,
                                 extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}(),
                                 threaded::Bool = Threads.nthreads() > 1)

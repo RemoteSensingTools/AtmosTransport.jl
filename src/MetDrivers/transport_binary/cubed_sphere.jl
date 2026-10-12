@@ -206,9 +206,9 @@ function open_streaming_cs_transport_binary(
         flux_sampling::Symbol = :window_constant,
         flux_kind::Symbol = :substep_mass_amount,
         include_flux_delta::Bool = false,
-        mass_basis::Symbol = :moist,
+        mass_basis::Symbol,
         tm5_convection_mass_basis::Union{_DefaultTM5ConvectionMassBasis,
-                                         Nothing, Symbol} =
+                                         Nothing, AbstractMassBasis} =
             _DEFAULT_TM5_CONVECTION_MASS_BASIS,
         include_cmfmc::Bool = false,
         include_dtrain::Bool = false,
