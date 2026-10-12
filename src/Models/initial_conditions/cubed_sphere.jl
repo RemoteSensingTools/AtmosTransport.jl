@@ -134,8 +134,7 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
     # ascending latitude. The source mesh is Float64 for every run precision
     # (Float32 and Float64 runs share weights) and sits on the destination
     # sphere, so the conservative weights compare areas on one sphere.
-    # TODO(P2b): pole-centred faces (`SnappedFaces`) for pole-centred files.
-    src_mesh = source_latlon_mesh(source.lon, source.lat, UniformSpanFaces(); radius = mesh.radius)
+    src_mesh = source_latlon_mesh(source.lon, source.lat; radius = mesh.radius)
     regridder = build_regridder(src_mesh, mesh)
 
     # 3D VMR: (Nx_src, Ny_src, Nlev_src) → 6 × (Nc, Nc, Nlev_src)

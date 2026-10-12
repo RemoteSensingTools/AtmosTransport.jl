@@ -6,10 +6,9 @@
 # `lon`/`lat` centres the source-mesh rule turns back into the mesh faces,
 # `lon_bnds`/`lat_bnds`, the mesh `cell_area`, atomic publication; the runtime
 # reads such a file (conservative regrid onto a cubed sphere conserves the
-# emitted mass). Until step P2b the runtime rebuilds the faces from the
-# centres (`UniformSpanFaces`), so the writer refuses meshes whose faces that
-# rule does not reproduce bit for bit (pole-centred, snapped, truncated,
-# Gaussian); the regrid of an accepted mesh uses exactly its cells.
+# emitted mass). The runtime rebuilds snapped faces from the file coordinates,
+# so the writer refuses meshes whose faces that rule does not reproduce bit for
+# bit; the regrid of an accepted mesh uses exactly its cells.
 
 using Test
 using Dates
@@ -20,7 +19,7 @@ using AtmosTransport
 using AtmosTransport: CubedSphereMesh, LatLonMesh, HybridSigmaPressure, AtmosGrid, CPU,
                       SurfaceFluxSource
 using AtmosTransport.GriddedIO: write_latlon_flux, TimeInterval, source_latlon_mesh,
-                                find_coordinate, LongitudeAxis, LatitudeAxis, UniformSpanFaces,
+                                find_coordinate, LongitudeAxis, LatitudeAxis,
                                 latlon_orientation, orient_coordinates
 using AtmosTransport.Grids: cell_area
 using AtmosTransport.Models.InitialConditionIO: build_surface_flux_source
@@ -29,11 +28,11 @@ using AtmosTransport.Parameters: DRY_AIR_MOLAR_MASS, SPECIES_MOLAR_MASS, EARTH_R
 pattern(i, j, t) = Float32(1f-9 * (i + 100j + 10000t))
 
 # The mesh the runtime regrids a written file on: the file's centres, oriented,
-# with uniform faces from their span (the `kind = "file"` loader's rule).
+# with snapped faces (the `kind = "file"` loader's rule).
 function runtime_mesh(path, radius)
     lon, lat = NCDataset(ds -> (Float64.(ds["lon"][:]), Float64.(ds["lat"][:])), path)
     lon_o, lat_o = orient_coordinates(lon, lat, latlon_orientation(lon, lat))
-    return source_latlon_mesh(lon_o, lat_o, UniformSpanFaces(); radius)
+    return source_latlon_mesh(lon_o, lat_o; radius)
 end
 
 @testset "lat-lon flux writer" begin
@@ -121,7 +120,7 @@ end
     end
 end
 
-@testset "only meshes the runtime rebuilds exactly (until P2b)" begin
+@testset "only meshes the runtime rebuilds exactly" begin
     mktempdir() do dir
         R = EARTH_RADIUS
         field(m) = [pattern(i, j, 0) for i in 1:m.Nx, j in 1:m.Ny]
@@ -133,6 +132,10 @@ end
             ("1°, 0..360", LatLonMesh(; FT = Float64, Nx = 360, Ny = 180, longitude = (0, 360))),
             ("0.5° (ECCO-Darwin)", LatLonMesh(; FT = Float64, Nx = 720, Ny = 360)),
             ("2.5° × 2°", LatLonMesh(; FT = Float64, Nx = 144, Ny = 90)),
+            ("snapped Float32 0.1° (GridFED)",
+             source_latlon_mesh(Float64.(Float32.([-180 + (k + 0.5) / 10 for k in 0:3599])),
+                                Float64.(Float32.([-90 + (k + 0.5) / 10 for k in 0:1799]));
+                                radius = R)),
             ("regional", LatLonMesh(; FT = Float64, Nx = 30, Ny = 20, longitude = (0, 30), latitude = (-10, 10))),
             ("regional, west of 0°", LatLonMesh(; FT = Float64, Nx = 50, Ny = 30, longitude = (-100, -50),
                                                 latitude = (20, 50))),
@@ -154,9 +157,6 @@ end
             ("pole-centred (LMDZ rows)", source_latlon_mesh(lon, collect(range(-90.0, 90.0; length = 73)); radius = R)),
             ("truncated (FATES rows)", source_latlon_mesh(lon, Float32.([-90 + (k + 16) * 180 / 95 for k in 0:79]); radius = R)),
             ("Gaussian (T31)", source_latlon_mesh(collect(0.0:3.75:356.25), asind.(x); radius = R)),
-            ("snapped Float32 0.1° (GridFED)", source_latlon_mesh(Float64.(Float32.([-180 + (k + 0.5) / 10 for k in 0:3599])),
-                                                                  Float64.(Float32.([-90 + (k + 0.5) / 10 for k in 0:1799]));
-                                                                  radius = R)),
             ("regional across 0°", LatLonMesh(; FT = Float64, Nx = 60, Ny = 30, longitude = (-30, 30), latitude = (20, 50))),
         ]
         for (name, m) in refused
@@ -164,7 +164,6 @@ end
                 file = joinpath(dir, "no_$(hash(name)).nc")
                 err = try write(m, basename(file)); nothing catch e; e end
                 @test err isa ArgumentError
-                @test occursin("P2b", sprint(showerror, err)) && occursin("UniformSpanFaces", sprint(showerror, err))
                 @test !isfile(file)
             end
         end

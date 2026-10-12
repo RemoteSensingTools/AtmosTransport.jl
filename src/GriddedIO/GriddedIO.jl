@@ -25,7 +25,7 @@ methods dispatch on it.
 - Source meshes (`source_meshes.jl`): [`source_latlon_mesh`](@ref), the cell
   faces of a file's latitude-longitude grid, by the face rule
   [`SnappedFaces`](@ref) (on `Grids.LatLonMesh(λᶠ, φᶠ; radius)`) or
-  [`UniformSpanFaces`](@ref) (the runtime loaders' uniform mesh).
+  [`UniformSpanFaces`](@ref) (the legacy uniform-span reconstruction).
 - Time axes (`time_axes.jl`): [`decode_time`](@ref) with the decoders
   [`CFDecoder`](@ref), [`MonthsSince`](@ref), [`DecimalYears`](@ref) and
   [`AuxiliaryTimeVariable`](@ref), chosen from the raw `units` string before

@@ -161,30 +161,15 @@ function _surface_flux_storage_scale(tracer_name::Symbol, cfg)
     return DRY_AIR_MOLAR_MASS / getproperty(SPECIES_MOLAR_MASS, species)
 end
 
-# Derive per-cell area `(Nx, Ny)` on a regular lat/lon grid from the
-# coordinate vectors. Uses the spherical-cap formula
-# `R² · Δlon · |sin(φ + Δlat/2) - sin(φ - Δlat/2)|`.
+# Derive per-cell area `(Nx, Ny)` on a lat/lon grid from the cell faces implied
+# by its file coordinate vectors (`GriddedIO.SnappedFaces`).
 # Used for per-cell units (EDGAR Tonnes) when the source file does not carry
 # a `cell_area` or `area` variable.
-# TODO(P2b): areas of the source mesh (`Grids.cell_area`), with the
-# pole-centred faces; that changes the EDGAR band areas in the last bits.
 function _lonlat_cell_areas_m2(lon::AbstractVector, lat::AbstractVector; radius::Real = EARTH_RADIUS)
     Nx, Ny = length(lon), length(lat)
-    R = Float64(radius)
-    # Cell width in radians, assuming uniform spacing. Take it from the full
-    # span: coordinates stored in Float32 make the first difference err by
-    # ~1e-4 relative, a bias of every cell area.
-    dlon = Nx > 1 ? deg2rad(abs(lon[end] - lon[1]) / (Nx - 1)) : deg2rad(360.0 / Nx)
-    dlat_half = Ny > 1 ? deg2rad(abs(lat[end] - lat[1]) / (Ny - 1)) / 2 : deg2rad(180.0 / Ny) / 2
-    out = Array{Float64, 2}(undef, Nx, Ny)
-    @inbounds for j in 1:Ny
-        ϕ = deg2rad(lat[j])
-        band = R * R * dlon * abs(sin(ϕ + dlat_half) - sin(ϕ - dlat_half))
-        for i in 1:Nx
-            out[i, j] = band
-        end
-    end
-    return out
+    mesh = source_latlon_mesh(lon, lat; radius)
+    areas = Float64[cell_area(mesh, i, j) for i in 1:Nx, j in 1:Ny]
+    return lat[2] > lat[1] ? areas : areas[:, end:-1:1]
 end
 
 function _resolve_surface_flux_file(cfg, kind::Symbol)

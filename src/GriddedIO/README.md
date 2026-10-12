@@ -30,12 +30,12 @@ CFTime), Dates and SHA. It never imports `Preprocessing` or `Models`, so the run
 |---|---|
 | [`GriddedIO.jl`](GriddedIO.jl) | Module, imports, exports, includes. |
 | [`coordinates.jl`](coordinates.jl) | `AbstractAxis` (`LongitudeAxis`, `LatitudeAxis`, `TimeAxis`, `VerticalAxis`) and `find_coordinate`; `LatLonOrientation`, `latlon_orientation`, `orient`, `orient_coordinates`; `AbstractFillPolicy` (`MaskedAsZero`, `MaskedAsNaN`, `FillValueOnly`) and `read_raw([T,] ds, name, policy, idx...)`. |
-| [`source_meshes.jl`](source_meshes.jl) | `source_latlon_mesh(lon, lat, rule; radius)` and `source_latlon_mesh(ds, rule; radius)` with the face rules `AbstractFaceRule` (`SnappedFaces`: snapping rule, centre-on-0/180 rule, midpoint and pole rules on `LatLonMesh(λᶠ, φᶠ; radius)`; `UniformSpanFaces`: the runtime loaders' uniform mesh). |
+| [`source_meshes.jl`](source_meshes.jl) | `source_latlon_mesh(lon, lat, rule; radius)` and `source_latlon_mesh(ds, rule; radius)` with the face rules `AbstractFaceRule` (`SnappedFaces`: the runtime rule, with snapping, centre-on-0/180, midpoint and pole rules on `LatLonMesh(λᶠ, φᶠ; radius)`; `UniformSpanFaces`: the legacy uniform-span reconstruction). |
 | [`time_axes.jl`](time_axes.jl) | `TimeInterval`, `MonthKey`, `interval`, `month_keys`, `seconds_since`, `check_last_month`; `AbstractTimeDecoder` (`CFDecoder`, `MonthsSince`, `DecimalYears`, `AuxiliaryTimeVariable`) with the stamp positions `MonthStart`, `MidMonth`, `MonthEnd`; `DEFAULT_TIME_DECODERS`, `decode_time`, `decode_month_keys`, and bounds/calendar-aware `decode_month_seconds`; the flux writers' time axis (contiguous intervals → `time`, `time_bnds`). |
 | [`staging.jl`](staging.jl) | `stage_input(path; staging_dir)`: `.nc.gz` and single-member `.nc.tar.gz` decompressed through the system `gzip`/`tar`, cached, published atomically. |
 | [`flux_units.jl`](flux_units.jl) | `FluxUnits{S,A,T}` with `AbstractSubstance` (`TargetSpecies`, `Carbon`, `Species`), `AbstractAreaBasis` (`PerSquareMetre`, `PerCell`), `AbstractTimeBasis` (`PerSecond`, `PerDay`, `PerMonth`, `PerYear`); `parse_flux_units`, `kg_per_unit`, `period_seconds`, `mass_rate_factor`, `canonical_units_string`. |
 | [`cs_native_flux.jl`](cs_native_flux.jl) | The `cs_native` flux file, the runtime contract: `CS_NATIVE_FLUX_DIMS`; the writer `CSNativeFluxWriter` (`open_cs_native_writer`, `write_slices!`, `publish!`, `abandon!`); the streaming reader `cs_native_flux_info` / `read_cs_native_flux!` (the runtime's `kind = "cs_native"` loader, panel by panel into the caller's arrays); the whole-file reader `read_cs_native_flux` (the builder's readback); the cell-area gate `check_cell_area`. |
-| [`latlon_flux.jl`](latlon_flux.jl) | `write_latlon_flux`: static CF lat-lon flux files for `kind = "file"`, on meshes the runtime rebuilds exactly (until P2b). |
+| [`latlon_flux.jl`](latlon_flux.jl) | `write_latlon_flux`: static CF lat-lon flux files for `kind = "file"`, on meshes the runtime rebuilds exactly from their coordinates. |
 
 ## Invariants
 
@@ -70,8 +70,8 @@ bit.
 
 `source_latlon_mesh(lon, lat, rule; radius)` takes a face rule
 (`AbstractFaceRule`): `SnappedFaces()` (the default, the rules below) or
-`UniformSpanFaces()`, the uniform mesh of the runtime loaders
-(`Models.InitialConditionIO`: surface fluxes and file initial conditions). `UniformSpanFaces`
+`UniformSpanFaces()`, the legacy uniform-span reconstruction. Runtime surface
+fluxes and file initial conditions use the default `SnappedFaces`. `UniformSpanFaces`
 builds a uniform mesh whose spacing is the mean spacing of the centres, with
 faces half a spacing outside the first and last centre and extents within
 `1e-3` of a cell of ±90° or a 360° span snapped to them; its faces carry the
@@ -223,15 +223,11 @@ truncated or Gaussian rows. `SnappedFaces`:
   rebuilds the mesh faces from them), `lon_bnds`/`lat_bnds` and the mesh
   `cell_area`, atomically. There is no time axis: `kind = "file"` reads one
   static field per tracer and is not a time-varying kind.
-- Until step P2b the runtime rebuilds the faces of a `kind = "file"` source
-  from the oriented centres with `UniformSpanFaces`, not from the file. The
-  writer therefore refuses (`ArgumentError` naming P2b) a mesh whose faces that
-  rule does not reproduce bit for bit, cell by cell up to the 360° shift of the
-  orientation: pole-centred, truncated and Gaussian rows, snapped Float32 grids
-  (GridFED 0.1°), a regional axis across 0°, and also uniform grids whose
-  rebuilt faces differ by round-off (a 0.1° mesh: 6.9e-18° at 0°). Uniform
-  1°, 0.5°, 0.25° and 2.5° × 2° meshes and regional meshes on one side of 0°
-  are written.
+- The runtime rebuilds the faces of a `kind = "file"` source from the oriented
+  centres with `SnappedFaces`, not from bounds. The writer refuses a mesh whose
+  faces that rule does not reproduce bit for bit, cell by cell up to the 360°
+  shift of the orientation, because the runtime would otherwise regrid the
+  field on different cells.
 
 ## Tests
 

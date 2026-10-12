@@ -94,14 +94,14 @@ end
     lat = Float64.(Float32.(range(-89.95, 89.95; length = 1800)))
     GIO = AtmosTransport.GriddedIO
     R = AtmosTransport.Parameters.EARTH_RADIUS
-    mesh = GIO.source_latlon_mesh(lon, lat, GIO.UniformSpanFaces(); radius = R)
+    mesh = GIO.source_latlon_mesh(lon, lat; radius = R)
     @test mesh isa LatLonMesh{Float64}
     @test (first(mesh.φᶠ), last(mesh.φᶠ)) == (-90.0, 90.0)
     @test last(mesh.λᶠ) - first(mesh.λᶠ) ≈ 360 atol = 1e-9
     @test RG._latlon_full_sphere(mesh)
 
-    regional = GIO.source_latlon_mesh(collect(0.5:1.0:29.5), collect(-9.5:1.0:9.5),
-                                      GIO.UniformSpanFaces(); radius = R)
+    regional = GIO.source_latlon_mesh(collect(0.5:1.0:29.5), collect(-9.5:1.0:9.5);
+                                      radius = R)
     @test (first(regional.φᶠ), last(regional.φᶠ)) == (-10.0, 10.0)
     @test !RG._latlon_full_sphere(regional)
 end

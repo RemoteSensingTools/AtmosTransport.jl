@@ -14,8 +14,7 @@
 # below: the snapped faces equal it bit for bit on exactly stored regular grids
 # and regional grids; on Float32-stored centres (GridFED 0.1°) the old west face
 # carried the coordinate round-off (7.45e-10°), the snapped one does not. The
-# face rule `UniformSpanFaces`, which the runtime loaders use, reproduces it
-# bit for bit everywhere.
+# legacy face rule `UniformSpanFaces` reproduces it bit for bit everywhere.
 
 using Test
 using NCDatasets
@@ -246,7 +245,7 @@ end
     @test_throws ArgumentError source_latlon_mesh(lon, [NaN, 1.0]; radius = R)
 end
 
-@testset "UniformSpanFaces: the runtime loaders' mesh, bit for bit" begin
+@testset "UniformSpanFaces: the former runtime mesh, bit for bit" begin
     oriented(lon, lat) = orient_coordinates(lon, lat, latlon_orientation(lon, lat))
     gridfed = oriented(Float64.(Float32.(centres(3600, -180, 360))),
                        Float64.(Float32.(centres(1800, -90, 180))))
@@ -256,7 +255,7 @@ end
         ("Zhang 0.5°, oriented", oriented(Float64.(Float32.(collect(-179.75:0.5:179.75))),
                                           Float64.(Float32.(collect(-89.75:0.5:89.75))))...),
         # Pole-centred LMDZ rows (CATRINE SF6 initial state, 144 × 143): the
-        # uniform faces are shifted from the cells, as the runtime has them.
+        # uniform faces are shifted from the cells, as the former runtime had them.
         ("LMDZ pole-centred", collect(0.0:2.5:357.5), collect(range(-90.0, 90.0; length = 143))),
         ("regional", collect(0.5:1.0:29.5), collect(-9.5:1.0:9.5)),
         ("regional, negative lon", collect(-99.5:1.0:-50.5), collect(20.5:1.0:49.5)),

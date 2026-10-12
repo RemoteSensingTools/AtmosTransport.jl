@@ -216,8 +216,8 @@ struct SnappedFaces <: AbstractFaceRule end
     UniformSpanFaces()
 
 Face rule of [`source_latlon_mesh`](@ref) that gives the uniform mesh of the
-runtime surface-flux and initial-condition loaders (`Models.InitialConditionIO`),
-bit for bit. The mesh is uniform:
+former runtime surface-flux and initial-condition loaders
+(`Models.InitialConditionIO`), bit for bit. The mesh is uniform:
 for `n` centres `x`, the spacing is the mean spacing `(x[n] − x[1]) / (n − 1)`
 and the faces lie half a spacing outside the first and last centres. A
 latitude extent within `1e-3` of a cell of ±90° becomes ±90°; a longitude

@@ -41,7 +41,7 @@ these files reuse. The parent overview is [`../README.md`](../README.md).
   `MaskedAsZero`, straight into the run's float type), time axes (`decode_time`, classified by their units before any
   CFTime call), flux units (`parse_flux_units`), and the Float64 source mesh of
   conservative regridding for CS file ICs and surface fluxes
-  (`source_latlon_mesh(lon, lat, UniformSpanFaces(); radius)` on the
+  (`source_latlon_mesh(lon, lat; radius)`, using `SnappedFaces` on the
   destination's sphere).
 
 ## File Initial Conditions
@@ -184,9 +184,9 @@ error (`_surface_flux_kind`); `none` (the default) emits nothing.
   Target half levels come from the grid's hybrid coefficients and that pressure.
 - `pressure_layer` indexes `air_mass` as halo-padded panels (`[Hp + i, Hp + j, k]`).
 - The source lat-lon mesh and the EDGAR fallback cell areas use the destination
-  mesh radius, so regridding weights compare areas on one sphere. Both are
-  uniform in the span of the centres (`UniformSpanFaces`); pole-centred files
-  (CATRINE SF6 initial state) get faces shifted from their cells.
+  mesh radius, so regridding weights compare areas on one sphere. Both derive
+  `SnappedFaces` from the oriented file coordinates, including midpoint faces
+  and polar caps for pole-centred files.
 - CS surface fluxes are regridded conservatively, except `cs_native` sources,
   which are read on the run's panels. LL and RG default to
   `regridding = "bilinear"`, renormalised to the native total only when the file

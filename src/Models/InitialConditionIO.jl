@@ -29,7 +29,7 @@ topology-dispatched VMR builders for the unified runtime.
 - File conventions come from `GriddedIO`: coordinates (`find_coordinate`),
   orientation (`latlon_orientation`, `orient`), fill values (`read_raw` with
   `MaskedAsZero`), the source mesh of LL→CS conservative regridding
-  (`source_latlon_mesh(lon, lat, UniformSpanFaces(); radius)`), time axes
+  (`source_latlon_mesh(lon, lat; radius)`, using `SnappedFaces`), time axes
   (`decode_time`) and flux units (`parse_flux_units`).
 - Surface-flux loaders and builders (`initial_conditions/surface_flux*.jl`):
   static `FileSurfaceFluxField` and time-varying series, and LL/RG/CS
@@ -73,7 +73,7 @@ using ..Operators.SurfaceFlux: SurfaceFluxSource, TimeVaryingSurfaceFluxSource,
 # file (reader, cell-area gate) are owned by GriddedIO.
 using ...GriddedIO: find_coordinate, LongitudeAxis, LatitudeAxis, TimeAxis, VerticalAxis,
                     latlon_orientation, orient, orient_coordinates, read_raw, MaskedAsZero,
-                    source_latlon_mesh, UniformSpanFaces, decode_time, decode_month_seconds,
+                    source_latlon_mesh, decode_time, decode_month_seconds,
                     parse_flux_units,
                     AbstractTimeBasis, PerSquareMetre, PerCell, PerMonth, TimeInterval,
                     FluxUnits, kg_per_unit, period_seconds, seconds_since,

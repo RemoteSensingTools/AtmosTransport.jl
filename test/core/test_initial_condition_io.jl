@@ -948,8 +948,7 @@ end
                 AtmosTransport.GriddedIO.orient(raw_ps, orientation)
             end
             source_mesh = AtmosTransport.GriddedIO.source_latlon_mesh(
-                source.lon, source.lat, AtmosTransport.GriddedIO.UniformSpanFaces();
-                radius = mesh.radius)
+                source.lon, source.lat; radius = mesh.radius)
             ps_regridder = AtmosTransport.Regridding.build_regridder(source_mesh, mesh)
             ps_flat = Vector{Float64}(undef, 6 * 90 * 90)
             AtmosTransport.Regridding.apply_regridder!(ps_flat, ps_regridder,
@@ -1454,6 +1453,20 @@ end
     @test density("Tonnes", :sf6; v = 1.0, area = fill(2.0, 1, 1)) ===
           1000.0 / (2.0 * AtmosTransport.Parameters.DAYS_PER_JULIAN_YEAR * 86400)
     @test_throws ArgumentError density("kg/s", :co2)
+    # Missing per-cell areas come from the same snapped source mesh used by
+    # conservative regridding, including half-width polar caps. Preserve the
+    # caller's latitude row order when the file stores north to south.
+    lon = collect(45.0:90.0:315.0)
+    lat = [-90.0, 0.0, 90.0]
+    mesh = AtmosTransport.GriddedIO.source_latlon_mesh(
+        lon, lat; radius = AtmosTransport.Parameters.EARTH_RADIUS)
+    expected_area = [cell_area(mesh, i, j) for i in 1:4, j in 1:3]
+    @test ICIO._lonlat_cell_areas_m2(lon, lat) == expected_area
+    @test ICIO._lonlat_cell_areas_m2(lon, reverse(lat)) == expected_area[:, end:-1:1]
+    old_uniform = AtmosTransport.GriddedIO.source_latlon_mesh(
+        lon, lat, AtmosTransport.GriddedIO.UniformSpanFaces();
+        radius = AtmosTransport.Parameters.EARTH_RADIUS)
+    @test expected_area != [cell_area(old_uniform, i, j) for i in 1:4, j in 1:3]
     # A molar flux that names no substance is of the tracer's species
     # (ECCO-Darwin writes mmol m-2 s-1 of CO2).
     M = AtmosTransport.Parameters.SPECIES_MOLAR_MASS
