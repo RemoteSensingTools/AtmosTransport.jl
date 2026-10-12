@@ -95,8 +95,9 @@ Each file adds a `build_tasks` method for one source and its protocol.
   `daily`. Tasks run one after another.
 - Downloads never write directly to stdout. Startup/completion summaries and
   warnings use package logging; routine messages go through the typed progress
-  reporter. Python and command subprocess output is captured and re-emitted
-  through the same paths.
+  reporter. Python and command subprocess pipes are drained concurrently and
+  forwarded while the process runs. Bounded stdout/stderr tails are retained
+  for the final error log if the subprocess exhausts its retries.
 
 ## Tests And Docs
 

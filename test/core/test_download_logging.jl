@@ -8,6 +8,13 @@ using AtmosTransport
 const DD = AtmosTransport.DataDownloads
 const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 
+struct RecordingDownloadReporter <: DD.AbstractDownloadProgressReporter
+    messages::Channel{String}
+end
+
+DD._report_progress!(reporter::RecordingDownloadReporter, message::AbstractString) =
+    put!(reporter.messages, String(message))
+
 function download_fixture(dir; logging=nothing)
     cfg = Dict{String,Any}(
         "source" => Dict("met_source" => joinpath(REPO_ROOT, "config", "met_sources",
@@ -182,5 +189,64 @@ end
     end
     @test isempty(stdout)
     @test isempty(stderr)
-    @test string.(getproperty.(logs, :message)) == ["python stdout", "python stderr"]
+    @test Set(string.(getproperty.(logs, :message))) == Set(["python stdout", "python stderr"])
+end
+
+@testset "subprocess output is streamed with bounded failure tails" begin
+    python = something(Sys.which("python3"), "python3")
+    messages = Channel{String}(4)
+    reporter = RecordingDownloadReporter(messages)
+    script = "import time\nprint('before sleep', flush=True)\ntime.sleep(1)\nprint('after sleep', flush=True)\n"
+    runner = @async DD._run_command(`$python -c $script`, reporter; label="streaming test")
+
+    @test timedwait(() -> isready(messages), 5) == :ok
+    @test take!(messages) == "before sleep"
+    @test !istaskdone(runner)
+    wait(runner)
+    @test take!(messages) == "after sleep"
+
+    limit = DD._SUBPROCESS_TAIL_BYTES
+    failure_script = """
+import sys
+sys.stdout.write('o' * $(limit + 1024) + '\\nstdout sentinel\\n')
+sys.stderr.write('e' * $(limit + 1024) + '\\nstderr sentinel\\n')
+sys.exit(9)
+"""
+    failure = try
+        DD._run_command(`$python -c $failure_script`, DD.NoDownloadProgress();
+                        label="bounded test")
+        nothing
+    catch e
+        e
+    end
+    @test failure isa DD._SubprocessFailure
+    @test ncodeunits(failure.stdout_tail) <= limit
+    @test ncodeunits(failure.stderr_tail) <= limit
+    @test endswith(failure.stdout_tail, "stdout sentinel")
+    @test endswith(failure.stderr_tail, "stderr sentinel")
+end
+
+@testset "final subprocess failure retains diagnostics at error level" begin
+    python = something(Sys.which("python3"), "python3")
+    script = "import sys\nprint('OUT diagnostic')\nprint('ERR diagnostic', file=sys.stderr)\nsys.exit(3)\n"
+    logs, result = Test.collect_test_logs(min_level=Logging.Error) do
+        DD._with_retries("error-level test", tempname(); max_retries=1, retry_wait=0) do _
+            DD._run_command(`$python -c $script`, DD.NoDownloadProgress();
+                            label="diagnostic test")
+            true
+        end
+    end
+
+    @test result === false
+    @test length(logs) == 1
+    final_error = only(logs)
+    @test final_error.level == Logging.Error
+    @test occursin("Failed after 1 attempts", string(final_error.message))
+    @test final_error.kwargs[:stdout_tail] == "OUT diagnostic"
+    @test final_error.kwargs[:stderr_tail] == "ERR diagnostic"
+    exception, _ = final_error.kwargs[:exception]
+    @test exception isa DD._SubprocessFailure
+    rendered = sprint(showerror, exception)
+    @test occursin("OUT diagnostic", rendered)
+    @test occursin("ERR diagnostic", rendered)
 end

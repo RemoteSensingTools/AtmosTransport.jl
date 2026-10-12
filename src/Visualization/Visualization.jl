@@ -466,10 +466,10 @@ end
 Load one topology-native horizontal field from a snapshot file.
 
 `time` may be a one-based frame index or a snapshot hour. For CS snapshots,
-`transform` may be `:column_mean`, `:column_sum`, `:level_slice`, or
-`:surface_slice`. Stored CS column means support column-only output; level
+`transform` may be `ColumnMean()`, `ColumnSum()`, `LevelSlice()`, or
+`SurfaceSlice()`. Stored CS column means support column-only output; level
 selection uses original model indices and rejects levels that were not written.
-LL/RG snapshots currently carry column means only.
+LL/RG snapshots currently support `ColumnMean()` only.
 """
 function fieldview(snapshot::SnapshotDataset, variable::Union{Symbol, AbstractString};
                    transform=ColumnMean(),

@@ -33,7 +33,7 @@ using CairoMakie
 using AtmosTransport
 using AtmosTransport.Visualization: SnapshotDataset, SnapshotRegridCache,
                                      open_snapshot, fieldview, as_raster,
-                                     frame_indices, ColumnMean
+                                     frame_indices, AllFrames, ColumnMean
 using AtmosTransport.Visualization: mapplot!
 
 const REPO_ROOT = normpath(joinpath(@__DIR__, "..", "..", ".."))

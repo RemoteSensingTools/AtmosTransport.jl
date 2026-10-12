@@ -37,8 +37,8 @@ end
                label="", reporter=DownloadProgressLines())
 
 Write `script` to a temporary file, execute with the configured Python
-interpreter, capture its output, and clean up. Reports captured output and timing
-through `reporter`.
+interpreter, stream its output through `reporter`, and clean up. Failure
+diagnostics retain bounded stdout and stderr tails.
 """
 function run_python(script::String, env::PythonEnvironment; label::String="",
                     reporter::AbstractDownloadProgressReporter=DownloadProgressLines())

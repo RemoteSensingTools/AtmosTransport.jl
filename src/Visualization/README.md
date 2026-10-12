@@ -75,7 +75,7 @@ All in [`Visualization.jl`](Visualization.jl):
   lon/lat diagnostic raster (`regridding` attribute), not from native cells.
 - Cubed-sphere level selection uses the original model level indices. If a
   variable stores only selected levels (`lev_selected` dimension), a level that
-  was not written raises `ArgumentError`, and `:column_mean` is refused unless
+  was not written raises `ArgumentError`, and `ColumnMean()` is refused unless
   a stored column mean exists.
 - Cubed-sphere rasterization rebuilds the mesh from the `Nc` and
   `panel_convention` (`gnomonic` or `geos_native`) attributes. It uses the

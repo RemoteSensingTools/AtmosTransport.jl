@@ -477,7 +477,7 @@ function _write_plots(cli, matched, weights, tracer_keys)
     for at_sym in tracer_keys
         haskey(at_snap.ds, String(at_sym)) || continue
         # `snapshot_grid` panels the AT side at the chosen times.
-        spec = Visualization.PlotSpec(at_sym; transform = :column_mean)
+        spec = Visualization.PlotSpec(at_sym; transform = Visualization.ColumnMean())
         out = joinpath(cli.plots, "$(at_sym)_at_grid.png")
         try
             fig = Visualization.snapshot_grid(at_snap, [spec];

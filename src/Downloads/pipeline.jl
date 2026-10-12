@@ -309,25 +309,106 @@ function execute!(task::DownloadTask, protocol::AbstractDownloadProtocol;
           "Load the appropriate protocol module.")
 end
 
+const _SUBPROCESS_READ_BYTES = 8 * 1024
+const _SUBPROCESS_TAIL_BYTES = 64 * 1024
+
+mutable struct _BoundedByteTail
+    bytes::Vector{UInt8}
+    limit::Int
+end
+
+_BoundedByteTail(limit::Int) = _BoundedByteTail(UInt8[], limit)
+
+function _append_tail!(tail::_BoundedByteTail, chunk::AbstractVector{UInt8})
+    isempty(chunk) && return tail
+    if length(chunk) >= tail.limit
+        empty!(tail.bytes)
+        append!(tail.bytes, @view chunk[(end - tail.limit + 1):end])
+        return tail
+    end
+
+    overflow = length(tail.bytes) + length(chunk) - tail.limit
+    overflow > 0 && deleteat!(tail.bytes, 1:overflow)
+    append!(tail.bytes, chunk)
+    return tail
+end
+
+_tail_text(tail::_BoundedByteTail) = strip(String(copy(tail.bytes)))
+
+function _report_subprocess_text!(reporter::AbstractDownloadProgressReporter,
+                                  bytes::Vector{UInt8})
+    text = strip(String(copy(bytes)))
+    isempty(text) || _report_progress!(reporter, text)
+    empty!(bytes)
+    return nothing
+end
+
+function _append_progress!(reporter::AbstractDownloadProgressReporter,
+                           pending::Vector{UInt8}, chunk::AbstractVector{UInt8})
+    for byte in chunk
+        if byte == UInt8('\n') || byte == UInt8('\r')
+            _report_subprocess_text!(reporter, pending)
+        else
+            push!(pending, byte)
+            # A subprocess can emit an arbitrarily long unterminated line.
+            # Forward fixed-size fragments rather than buffering that line.
+            length(pending) == _SUBPROCESS_READ_BYTES &&
+                _report_subprocess_text!(reporter, pending)
+        end
+    end
+    return nothing
+end
+
+function _drain_subprocess_pipe(pipe::Pipe,
+                                reporter::AbstractDownloadProgressReporter)
+    tail = _BoundedByteTail(_SUBPROCESS_TAIL_BYTES)
+    pending = UInt8[]
+    sizehint!(pending, _SUBPROCESS_READ_BYTES)
+    while !eof(pipe)
+        navailable = bytesavailable(pipe)
+        navailable == 0 && continue
+        chunk = read(pipe, min(navailable, _SUBPROCESS_READ_BYTES))
+        _append_tail!(tail, chunk)
+        _append_progress!(reporter, pending, chunk)
+    end
+    _report_subprocess_text!(reporter, pending)
+    return _tail_text(tail)
+end
+
+struct _SubprocessFailure <: Exception
+    label::String
+    cause::ProcessFailedException
+    stdout_tail::String
+    stderr_tail::String
+end
+
+function Base.showerror(io::IO, failure::_SubprocessFailure)
+    print(io, failure.label, " subprocess failed: ")
+    showerror(io, failure.cause)
+    isempty(failure.stdout_tail) ||
+        print(io, "\nstdout tail:\n", failure.stdout_tail)
+    isempty(failure.stderr_tail) ||
+        print(io, "\nstderr tail:\n", failure.stderr_tail)
+end
+
 function _run_command(cmd::Cmd, reporter::AbstractDownloadProgressReporter;
                       label::AbstractString)
-    stdout_buffer = IOBuffer()
-    stderr_buffer = IOBuffer()
-    try
-        run(pipeline(cmd; stdout=stdout_buffer, stderr=stderr_buffer))
-    catch
-        stdout_text = strip(String(take!(stdout_buffer)))
-        stderr_text = strip(String(take!(stderr_buffer)))
-        if !isempty(stdout_text) || !isempty(stderr_text)
-            @warn "$label subprocess output" stdout=stdout_text stderr=stderr_text
-        end
-        rethrow()
-    end
-    for text in (String(take!(stdout_buffer)), String(take!(stderr_buffer)))
-        for line in eachline(IOBuffer(text))
-            isempty(strip(line)) || _report_progress!(reporter, line)
-        end
-    end
+    stdout_pipe = Pipe()
+    stderr_pipe = Pipe()
+    process = run(pipeline(ignorestatus(cmd); stdout=stdout_pipe, stderr=stderr_pipe);
+                  wait=false)
+    # The parent must close its copies of the write ends so the drain tasks see
+    # EOF as soon as the child exits.
+    close(stdout_pipe.in)
+    close(stderr_pipe.in)
+    stdout_task = @async _drain_subprocess_pipe(stdout_pipe, reporter)
+    stderr_task = @async _drain_subprocess_pipe(stderr_pipe, reporter)
+
+    wait(process)
+    stdout_tail = fetch(stdout_task)
+    stderr_tail = fetch(stderr_task)
+    success(process) || throw(_SubprocessFailure(
+        String(label), ProcessFailedException(process), stdout_tail, stderr_tail))
     return nothing
 end
 
@@ -343,16 +424,32 @@ success. On failure, cleans up `dest` and waits before retrying.
 """
 function _with_retries(f::Function, label::String, dest::String;
                        max_retries::Int, retry_wait::Int)
+    last_failure = nothing
+    last_backtrace = nothing
     for attempt in 1:max_retries
         try
             f(attempt) && return true
+            last_failure = nothing
+            last_backtrace = nothing
         catch e
+            last_failure = e
+            last_backtrace = catch_backtrace()
             @warn "  Attempt $attempt failed: $e"
             isfile(dest) && rm(dest; force=true)
             attempt < max_retries && sleep(retry_wait)
         end
     end
-    @error "  Failed after $max_retries attempts: $label"
+    if last_failure isa _SubprocessFailure
+        @error("  Failed after $max_retries attempts: $label",
+               exception=(last_failure, last_backtrace),
+               stdout_tail=last_failure.stdout_tail,
+               stderr_tail=last_failure.stderr_tail)
+    elseif last_failure !== nothing
+        @error("  Failed after $max_retries attempts: $label",
+               exception=(last_failure, last_backtrace))
+    else
+        @error "  Failed after $max_retries attempts: $label"
+    end
     return false
 end
 
