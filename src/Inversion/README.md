@@ -92,10 +92,12 @@ lookup as the forward observation sampler.
 - Cost: `J = Σ 0.5 ((H(x) − y)/σ)²` plus the background term. Residual and
   departure are `simulated − observed`. The departure file records this in
   its `departure_sign_convention` attribute.
-- Gradient norm: every optimizer tolerance, `gradient_norm_history`, and
-  `CSIterationLogEntry.gradient_norm` uses the Euclidean (L2) norm over all
-  controls, panels, and cells, in physical x-space or preconditioned χ-space
-  according to the active mode.
+- Gradient norm: each backend uses one convention consistently for its
+  tolerance, `gradient_norm_history`, and `CSIterationLogEntry.gradient_norm`.
+  `CSGradientDescent` uses the Euclidean (L2) norm; `CSLBFGS` uses Optim's
+  L-infinity norm, preserving the established meaning of its
+  `gradient_tolerance`. The norm is over all controls, panels, and cells, in
+  physical x-space or preconditioned χ-space according to the active mode.
 - Preconditioned mode (`preconditioner` set): `controls[k].value` is χ,
   `J = 0.5‖χ‖² + J_obs(T(χ))`, and the gradient is `χ + T'(χ)ᵀ ∇ₓJ_obs`.
   Per-control `background` and `sigma` are ignored in this mode.

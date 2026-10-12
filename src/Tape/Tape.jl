@@ -18,6 +18,7 @@ module Tape
 
 using ..AtomicFiles: atomic_publish, open_atomic_staging,
                      commit_atomic_staging, abandon_atomic_staging
+using SHA: sha256
 
 export AbstractCSTapeStorage,
        DeviceCSTapeStorage,

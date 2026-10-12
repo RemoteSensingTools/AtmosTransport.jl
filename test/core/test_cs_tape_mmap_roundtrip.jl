@@ -7,6 +7,11 @@ import AtmosTransport
 const AT = AtmosTransport
 const TapeMod = AtmosTransport.Tape
 
+function _manifest_records_path(dir)
+    manifest = TOML.parsefile(joinpath(dir, "manifest.toml"))
+    return joinpath(dir, manifest["meta"]["records_file"])
+end
+
 # ---------------------------------------------------------------------------
 # Plan 26 Phase A.1 — `MmapCSTapeStorage` on-disk tape roundtrip tests.
 #
@@ -74,12 +79,14 @@ end
 
             TapeMod.finalize_tape!(storage)
             @test isfile(joinpath(dir, "manifest.toml"))
-            @test filesize(joinpath(dir, "records.bin")) == storage.cursor
+            @test filesize(_manifest_records_path(dir)) == storage.cursor
 
             m = TOML.parsefile(joinpath(dir, "manifest.toml"))
             @test m["meta"]["finalised"] === true
             @test m["meta"]["record_count"] == 1
-            @test m["meta"]["version"] == "v1"
+            @test m["meta"]["version"] == "v2"
+            @test m["meta"]["records_file"] == basename(storage.bin_path)
+            @test m["meta"]["records_sha256"] == storage.records_sha256
             @test m["meta"]["endianness"] in ("little", "big")
             @test length(m["record"]) == 1
             @test m["record"][1]["eltype"] == "Float64"
@@ -542,7 +549,7 @@ end
 # ---------------------------------------------------------------------------
 # Plan 26 P0.A.2c — manifest-driven resume API.
 #
-# load_mmap_tape(dir) parses manifest.toml + records.bin from a previously
+# load_mmap_tape(dir) parses manifest.toml plus its named records generation
 # finalised MmapCSTapeStorage and rebuilds the slot table. get_record(...)
 # reconstructs MmapCSTapeSlot descriptors so _tape_panels can mmap-view
 # the stored bytes. The reopened storage defaults to readonly: any further
@@ -684,7 +691,7 @@ end
             @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
         end
 
-        # records.bin missing.
+        # Manifest without the required generation metadata.
         mktempdir() do dir
             open(joinpath(dir, "manifest.toml"), "w") do io
                 println(io, "[meta]")
@@ -701,7 +708,7 @@ end
             TapeMod.finalize_tape!(storage)
             mpath = joinpath(dir, "manifest.toml")
             txt = read(mpath, String)
-            write(mpath, replace(txt, "version = \"v1\"" => "version = \"v0\""))
+            write(mpath, replace(txt, "version = \"v2\"" => "version = \"v0\""))
             @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
         end
 
@@ -718,14 +725,30 @@ end
             @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
         end
 
-        # records.bin truncated below total_bytes.
+        # Same-size content corruption is rejected by the manifest digest.
         mktempdir() do dir
             storage = TapeMod.MmapCSTapeStorage(; dir = dir,
                                                 cleanup_on_finalize = false)
             TapeMod._stage_panels(storage,
                 _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32))
             TapeMod.finalize_tape!(storage)
-            bin_path = joinpath(dir, "records.bin")
+            bin_path = _manifest_records_path(dir)
+            open(bin_path, "r+") do io
+                byte = read(io, UInt8)
+                seekstart(io)
+                write(io, xor(byte, UInt8(0x01)))
+            end
+            @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
+        end
+
+        # Named records generation truncated below total_bytes.
+        mktempdir() do dir
+            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
+                                                cleanup_on_finalize = false)
+            TapeMod._stage_panels(storage,
+                _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32))
+            TapeMod.finalize_tape!(storage)
+            bin_path = _manifest_records_path(dir)
             open(bin_path, "r+") do io
                 Base.truncate(io, max(filesize(bin_path) - 16, 0))
             end
@@ -772,8 +795,8 @@ end
 
             # Negative offset.
             mktempdir() do dir
-                cp(joinpath(good_dir, "records.bin"), joinpath(dir, "records.bin"))
                 m = TOML.parsefile(mpath)
+                cp(_manifest_records_path(good_dir), joinpath(dir, m["meta"]["records_file"]))
                 m["record"][1]["offsets"][1] = -8
                 open(joinpath(dir, "manifest.toml"), "w") do io
                     TOML.print(io, m)
@@ -783,8 +806,8 @@ end
 
             # offset + nbytes past total_bytes.
             mktempdir() do dir
-                cp(joinpath(good_dir, "records.bin"), joinpath(dir, "records.bin"))
                 m = TOML.parsefile(mpath)
+                cp(_manifest_records_path(good_dir), joinpath(dir, m["meta"]["records_file"]))
                 m["record"][1]["offsets"][6] = Int(m["meta"]["total_bytes"]) - 1
                 open(joinpath(dir, "manifest.toml"), "w") do io
                     TOML.print(io, m)
@@ -794,8 +817,8 @@ end
 
             # nbytes disagrees with shape × sizeof(eltype).
             mktempdir() do dir
-                cp(joinpath(good_dir, "records.bin"), joinpath(dir, "records.bin"))
                 m = TOML.parsefile(mpath)
+                cp(_manifest_records_path(good_dir), joinpath(dir, m["meta"]["records_file"]))
                 m["record"][1]["nbytes"][1] += 4
                 open(joinpath(dir, "manifest.toml"), "w") do io
                     TOML.print(io, m)
@@ -805,8 +828,8 @@ end
 
             # Shape vector with wrong length.
             mktempdir() do dir
-                cp(joinpath(good_dir, "records.bin"), joinpath(dir, "records.bin"))
                 m = TOML.parsefile(mpath)
+                cp(_manifest_records_path(good_dir), joinpath(dir, m["meta"]["records_file"]))
                 m["record"][1]["shapes"][1] = [9, 9]  # length 2 instead of 3
                 open(joinpath(dir, "manifest.toml"), "w") do io
                     TOML.print(io, m)
@@ -816,8 +839,8 @@ end
 
             # offsets vector with wrong length.
             mktempdir() do dir
-                cp(joinpath(good_dir, "records.bin"), joinpath(dir, "records.bin"))
                 m = TOML.parsefile(mpath)
+                cp(_manifest_records_path(good_dir), joinpath(dir, m["meta"]["records_file"]))
                 m["record"][1]["offsets"] = m["record"][1]["offsets"][1:5]
                 open(joinpath(dir, "manifest.toml"), "w") do io
                     TOML.print(io, m)
@@ -827,8 +850,8 @@ end
 
             # Missing required field.
             mktempdir() do dir
-                cp(joinpath(good_dir, "records.bin"), joinpath(dir, "records.bin"))
                 m = TOML.parsefile(mpath)
+                cp(_manifest_records_path(good_dir), joinpath(dir, m["meta"]["records_file"]))
                 delete!(m["record"][1], "eltype")
                 open(joinpath(dir, "manifest.toml"), "w") do io
                     TOML.print(io, m)
@@ -869,7 +892,7 @@ end
         end
     end
 
-    @testset "reopen mode validation" begin
+    @testset "writable reopen selection" begin
         mktempdir() do dir
             storage = TapeMod.MmapCSTapeStorage(; dir = dir,
                                                 cleanup_on_finalize = false)
@@ -877,13 +900,7 @@ end
                 _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32))
             TapeMod.finalize_tape!(storage)
 
-            # Internal reopen constructor must reject destructive modes.
-            @test_throws ArgumentError TapeMod.MmapCSTapeStorage(
-                dir, TapeMod.MmapTapeRecordEntry[], Int64(0); mode = "w+")
-            @test_throws ArgumentError TapeMod.MmapCSTapeStorage(
-                dir, TapeMod.MmapTapeRecordEntry[], Int64(0); mode = "wb")
-
-            # readonly = false → "r+" mode is allowed.
+            # The public loader exposes only readonly or non-destructive r+.
             rw = TapeMod.load_mmap_tape(dir; readonly = false)
             @test rw.readonly === false
             TapeMod.finalize_tape!(rw)

@@ -123,6 +123,20 @@
 
 ### Fixes
 
+- Memory-mapped adjoint tapes now publish immutable content-addressed records
+  generations and select them with one atomic `manifest.toml` replacement.
+  Interrupted overwrites preserve the previous tape, readers spanning a
+  publication keep their old generation, and reload verifies the selected
+  payload's exact size and SHA-256. The restored ERA5 physics and hourly
+  spectral downloaders likewise stage outputs, validate complete inventories,
+  and exit nonzero rather than accepting partial downloads.
+
+- `CSLBFGS` uses Optim's L-infinity gradient norm consistently for stopping,
+  `gradient_norm_history`, and iteration logs. This explicitly preserves the
+  existing `gradient_tolerance` convention while making every reported
+  L-BFGS norm match the stopping criterion. `CSGradientDescent` continues to
+  use its documented L2 norm.
+
 - `CSLBFGS` evaluated every control point at least twice (#17): Optim
   received separate value and gradient closures that each ran the full
   `cost_fn` (a forward run plus the adjoint footprints), and the initial

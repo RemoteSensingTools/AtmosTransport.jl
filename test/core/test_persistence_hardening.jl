@@ -1,6 +1,7 @@
 #!/usr/bin/env julia
 
 using Test
+using TOML
 
 import AtmosTransport
 const AT = AtmosTransport
@@ -8,6 +9,7 @@ const MD = AT.MetDrivers
 const TapeMod = AT.Tape
 const DD = AT.DataDownloads
 const PP = AT.Preprocessing
+const AF = AT.AtomicFiles
 
 using .AtmosTransport.Architectures: CPU
 using .AtmosTransport.Grids: AtmosGrid, HybridSigmaPressure, ncells, nfaces
@@ -426,33 +428,97 @@ end
     )
 end
 
-@testset "mmap tape manifest is atomic and cannot outlive its records" begin
+@testset "mmap tape generations are crash-consistent and reader-safe" begin
     mktempdir() do dir
         panels = ntuple(_ -> ones(Float32, 2, 2, 1), 6)
         first_storage = TapeMod.MmapCSTapeStorage(
             dir=dir, cleanup_on_finalize=false)
         TapeMod._stage_panels(first_storage, panels)
         TapeMod.finalize_tape!(first_storage)
-        @test isfile(joinpath(dir, "manifest.toml"))
-        first_records = read(joinpath(dir, "records.bin"))
+        manifest_path = joinpath(dir, "manifest.toml")
+        @test isfile(manifest_path)
+        first_manifest = read(manifest_path, String)
+        first_meta = TOML.parse(first_manifest)["meta"]
+        first_records_path = joinpath(dir, first_meta["records_file"])
+        first_records = read(first_records_path)
+        old_reader = TapeMod.load_mmap_tape(dir)
 
+        # Publication step 0: constructing and staging an overwrite leaves the
+        # old pointer and generation valid. An interrupted writer removes only
+        # its private staging file.
         second_storage = TapeMod.MmapCSTapeStorage(
             dir=dir, cleanup_on_finalize=false)
-        @test !ispath(joinpath(dir, "manifest.toml"))
-        # The next recording is private until finalization: the old payload
-        # remains at the public path while new bytes go to a sibling staging file.
-        @test read(joinpath(dir, "records.bin")) == first_records
+        TapeMod._stage_panels(second_storage, ntuple(_ -> zeros(Float32, 2, 2, 1), 6))
+        @test read(manifest_path, String) == first_manifest
+        @test read(first_records_path) == first_records
         @test isfile(second_storage.bin_staging_path)
         @test second_storage.bin_staging_path != second_storage.bin_path
-        @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
-        TapeMod.finalize_tape!(second_storage)
-        @test filesize(joinpath(dir, "records.bin")) == 0
-        @test second_storage.bin_staging_path === nothing
-        @test isempty(filter(f -> occursin(".tmp-", f), readdir(dir)))
+        staged_path = second_storage.bin_staging_path
+        probe = TapeMod.load_mmap_tape(dir)
+        @test all(TapeMod._tape_panels(TapeMod.get_record(probe, 1))[1] .== 1)
+        TapeMod.finalize_tape!(probe)
 
-        open(joinpath(dir, "records.bin"), "a") do io
+        # Publication step 1: after the new immutable records generation is
+        # renamed into place, the old manifest still selects the old bytes.
+        close(second_storage.bin_io)
+        TapeMod._publish_records_generation!(second_storage)
+        @test second_storage.bin_staging_path === nothing
+        @test !ispath(staged_path)
+        second_records_path = second_storage.bin_path
+        @test second_records_path != first_records_path
+        @test isfile(second_records_path)
+        @test read(manifest_path, String) == first_manifest
+        probe = TapeMod.load_mmap_tape(dir)
+        @test all(TapeMod._tape_panels(TapeMod.get_record(probe, 1))[1] .== 1)
+        TapeMod.finalize_tape!(probe)
+
+        # Publication step 2: a fully written manifest staging file is not
+        # visible until its one replacing rename. This models a crash just
+        # before the pointer swap.
+        manifest_staging, manifest_io = AF.open_atomic_staging(manifest_path)
+        close(manifest_io)
+        open(manifest_staging, "w") do io
+            TOML.print(io, TapeMod._mmap_manifest(second_storage))
+        end
+        @test read(manifest_path, String) == first_manifest
+        probe = TapeMod.load_mmap_tape(dir)
+        @test all(TapeMod._tape_panels(TapeMod.get_record(probe, 1))[1] .== 1)
+        TapeMod.finalize_tape!(probe)
+
+        # Publication step 3: the manifest rename switches the generation.
+        AF.commit_atomic_staging(manifest_staging, manifest_path)
+        second_storage.finalised = true
+        second_storage.closed = true
+        current = TapeMod.load_mmap_tape(dir)
+        @test all(TapeMod._tape_panels(TapeMod.get_record(current, 1))[1] .== 0)
+        TapeMod.finalize_tape!(current)
+
+        # A reader opened before publication retains the old inode/generation
+        # and remains usable after the pointer swap.
+        @test all(TapeMod._tape_panels(TapeMod.get_record(old_reader, 1))[1] .== 1)
+        TapeMod.finalize_tape!(old_reader)
+        @test isfile(first_records_path)
+        @test isfile(second_records_path)
+
+        # A later interrupted overwrite preserves the currently published
+        # generation and removes only its own staging file.
+        third_storage = TapeMod.MmapCSTapeStorage(
+            dir=dir, cleanup_on_finalize=false)
+        TapeMod._stage_panels(third_storage, ntuple(_ -> fill(2f0, 2, 2, 1), 6))
+        third_staging = third_storage.bin_staging_path
+        current_manifest = read(manifest_path, String)
+        TapeMod._mmap_storage_gc_close!(third_storage)
+        @test !ispath(third_staging)
+        @test read(manifest_path, String) == current_manifest
+        current = TapeMod.load_mmap_tape(dir)
+        @test all(TapeMod._tape_panels(TapeMod.get_record(current, 1))[1] .== 0)
+        TapeMod.finalize_tape!(current)
+
+        # Exact-size and hash validation reject damage to the selected pair.
+        open(second_records_path, "a") do io
             write(io, UInt8(0x01))
         end
         @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
+        @test isempty(filter(f -> occursin(".tmp-", f), readdir(dir)))
     end
 end

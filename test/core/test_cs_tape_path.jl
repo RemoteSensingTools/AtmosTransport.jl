@@ -1,27 +1,31 @@
 #!/usr/bin/env julia
 
 using Test
+using TOML
 
 import AtmosTransport
 const AT = AtmosTransport
 const Adv = AtmosTransport.Operators.Advection
 const TapeMod = AtmosTransport.Tape
 
+_records_path(dir) = joinpath(
+    dir, TOML.parsefile(joinpath(dir, "manifest.toml"))["meta"]["records_file"])
+
 # ---------------------------------------------------------------------------
 # Plan 26 P0.A3 — `tape_path` kwarg on `cs_surface_emission_footprint` and
 # `cs_surface_emission_footprint_from_seed`.
 #
 # Verifies:
-#   * FullCheckpoint + `:mmap` + `tape_path` produces `records.bin` +
+#   * FullCheckpoint + `:mmap` + `tape_path` produces a named records generation +
 #     `manifest.toml` at the user-supplied directory and matches the
 #     temp-dir default to roundoff.
 #   * The user's directory is preserved after the call (no cleanup).
 #   * `load_mmap_tape(tape_path)` can reopen the finalised tape.
 #   * StrideCheckpoint with tape_path creates per-window subdirectories
-#     (`window_NNNNN/{records.bin,manifest.toml}`) and matches the
+#     (`window_NNNNN/{records-<sha256>.bin,manifest.toml}`) and matches the
 #     temp-dir default to roundoff.
 #   * RevolveCheckpoint with tape_path creates per-base-case subdirs
-#     (`step_NNNNN/{records.bin,manifest.toml}`).
+#     (`step_NNNNN/{records-<sha256>.bin,manifest.toml}`).
 #   * Validation: `tape_path` with non-`:mmap` storage, with
 #     pre-constructed `AbstractCSTapeStorage`, with LinRood, and with
 #     empty string all raise `ArgumentError`.
@@ -112,7 +116,7 @@ end
 
         # The user-supplied directory is created, finalised, and preserved.
         @test isdir(dir)
-        @test isfile(joinpath(dir, "records.bin"))
+        @test isfile(_records_path(dir))
         @test isfile(joinpath(dir, "manifest.toml"))
 
         # Loader reopens the finalised tape.
@@ -164,7 +168,7 @@ end
         for w in 1:nw
             sub = joinpath(dir, "window_" * lpad(w, 5, '0'))
             @test isdir(sub)
-            @test isfile(joinpath(sub, "records.bin"))
+            @test isfile(_records_path(sub))
             @test isfile(joinpath(sub, "manifest.toml"))
         end
 
@@ -193,7 +197,7 @@ end
         for step in 1:4
             sub = joinpath(dir, "step_" * lpad(step, 5, '0'))
             @test isdir(sub)
-            @test isfile(joinpath(sub, "records.bin"))
+            @test isfile(_records_path(sub))
             @test isfile(joinpath(sub, "manifest.toml"))
         end
 

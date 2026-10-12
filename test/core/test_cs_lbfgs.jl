@@ -81,6 +81,30 @@ end
     @test_throws ArgumentError AT.CSLBFGS(m = 0)
 end
 
+@testset "CSLBFGS — gradient_tolerance keeps Optim's L∞ meaning" begin
+    values = ntuple(_ -> fill(0.75, 1, 1), 6)
+    control = AT.CSSurfaceFluxControl(
+        AT.CSSurfaceFluxWindow(:one, 1), values)
+    cost_fn = function (controls)
+        gradients = ntuple(p -> copy(controls[1].value[p]), 6)
+        cost = 0.5 * sum(p -> sum(abs2, controls[1].value[p]), 1:6)
+        return AT.CS4DVarResult(
+            cost, cost, 0.0, Float64[], Float64[], [gradients],
+            Dict{Symbol, typeof(gradients)}(:one => gradients),
+            collect(controls), AT.CSObservation[])
+    end
+
+    # At the initial point ‖g‖∞ = 0.75 <= 0.8 while
+    # ‖g‖₂ = sqrt(6)*0.75 > 0.8. Optim's established L∞ convention
+    # must stop before taking a step, and the history/log must report 0.75.
+    solve = AT.cs_surface_flux_4dvar_solve(
+        AT.CSLBFGS(iterations = 5, gradient_tolerance = 0.8, log = true),
+        cost_fn, control)
+    @test solve.iterations == 0
+    @test solve.gradient_norm_history == [0.75]
+    @test [entry.gradient_norm for entry in solve.log] == [0.75]
+end
+
 # ---------------------------------------------------------------------------
 # L-BFGS vs GD: same budget, L-BFGS ends lower.
 #
