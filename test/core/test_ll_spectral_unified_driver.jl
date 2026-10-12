@@ -121,6 +121,7 @@ end
         @test second_last.m == first_last.m
         @test second_last.am == first_last.am
         @test second_last.bm == first_last.bm
+        @test _header_without_creation_time(first_path)[:surface_pressure_basis] == "total"
 
         # The column balance is recorded in the header.
         @test _header_without_creation_time(first_path)[:horizontal_balance] == "column"

@@ -131,7 +131,8 @@ using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cs_face_edge_le
                default_panel_connectivity, gnomonic_panel_connectivity, reciprocal_edge,
                GnomonicPanelConvention, GEOSNativePanelConvention,
                EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
-using ..State: AbstractMassBasis, DryBasis, MoistBasis
+using ..State: AbstractMassBasis, DryBasis, MoistBasis,
+               TotalSurfacePressure, DrySurfacePressure
 using ..Regridding: build_regridder, apply_regridder!, coarsen_sum!, coarsen_area_weighted!,
                     default_regrid_cache_dir
 using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField
@@ -158,6 +159,7 @@ using ..MetDrivers: LatLonBinaryGeometry, CubedSphereBinaryGeometry, TransportBi
                     verify_window_continuity, verify_window_continuity_ll,
                     verify_window_continuity_rg, verify_window_continuity_cs,
                     delta_semantics,
+                    surface_pressure_basis,
                     replay_tolerance, run_replay_gate, ReplayScratch,
                     structured_replay_layout, faceindexed_replay_layout
 

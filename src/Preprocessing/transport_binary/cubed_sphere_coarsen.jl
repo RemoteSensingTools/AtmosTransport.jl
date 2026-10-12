@@ -299,6 +299,7 @@ function coarsen_nested_cs_transport_binary(
             flux_kind = :substep_mass_amount,
             include_flux_delta = true,
             mass_basis = h.mass_basis,
+            surface_pressure_basis = surface_pressure_basis(reader),
             tm5_convection_mass_basis = tm5_convection_mass_basis(reader),
             include_surface,
             include_precomputed_dkg = include_dkg,

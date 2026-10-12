@@ -211,6 +211,8 @@ function open_streaming_cs_transport_binary(
         flux_kind::Symbol = :substep_mass_amount,
         include_flux_delta::Bool = false,
         mass_basis::Symbol,
+        surface_pressure_basis::Union{TotalSurfacePressure, DrySurfacePressure} =
+            _default_surface_pressure_basis(mass_basis),
         tm5_convection_mass_basis::Union{_DefaultTM5ConvectionMassBasis,
                                          Nothing, AbstractMassBasis} =
             _DEFAULT_TM5_CONVECTION_MASS_BASIS,
@@ -269,6 +271,7 @@ function open_streaming_cs_transport_binary(
                                       half_dt_seconds=half_dt_seconds,
                                       steps_per_window=steps_per_window,
                                       mass_basis=mass_basis,
+                                      surface_pressure_basis,
                                       source_flux_sampling=source_flux_sampling,
                                       air_mass_sampling=air_mass_sampling,
                                       flux_sampling=flux_sampling,

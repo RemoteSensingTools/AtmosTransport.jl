@@ -190,6 +190,7 @@ const _TRANSPORT_STRUCTURAL_HEADER_KEYS = Set((
     "magic", "format_version", "header_bytes", "float_type", "float_bytes",
     "grid_type", "horizontal_topology", "planet_radius_m", "ncell", "nface_h", "nlevel",
     "nwindow", "A_ifc", "B_ifc", "mass_basis", "payload_sections",
+    "surface_pressure_basis",
     "elems_per_window", "n_geometry_elems", "Nx", "Ny", "Nc", "npanel",
     "lons", "lats", "longitude_interval", "latitude_interval",
     "nlat", "latitudes", "nlon_per_ring",
@@ -207,6 +208,10 @@ function _merge_transport_extra_header!(header::Dict{String, Any}, extra_header)
             throw(ArgumentError(
                 "extra_header cannot set structural field $(repr(key)); " *
                 "use the tm5_convection_mass_basis writer keyword"))
+        elseif key == "surface_pressure_basis"
+            throw(ArgumentError(
+                "extra_header cannot set structural field $(repr(key)); " *
+                "use the typed surface_pressure_basis writer keyword"))
         elseif key in _TRANSPORT_STRUCTURAL_HEADER_KEYS && haskey(header, key) &&
                !isequal(header[key], value)
             throw(ArgumentError(
@@ -252,6 +257,12 @@ function _validate_transport_layout!(header::AbstractDict)
     basis = lowercase(String(get(header, "mass_basis", "")))
     basis in ("dry", "moist") || throw(ArgumentError(
         "Transport-binary contract violation — mass_basis must be dry or moist; got $(repr(basis))"))
+    if haskey(header, "surface_pressure_basis")
+        ps_basis = lowercase(String(header["surface_pressure_basis"]))
+        ps_basis in ("total", "dry") || throw(ArgumentError(
+            "Transport-binary contract violation — surface_pressure_basis must be total or dry; " *
+            "got $(repr(ps_basis))"))
+    end
     for key in ("dt_met_seconds", "half_dt_seconds")
         value = try Float64(header[key]) catch; NaN end
         isfinite(value) && value > 0 || throw(ArgumentError(

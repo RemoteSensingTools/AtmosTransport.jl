@@ -139,6 +139,12 @@
   existing `gradient_tolerance` convention while making every reported
   L-BFGS norm match the stopping criterion. `CSGradientDescent` continues to
   use its documented L2 norm.
+- Transport binaries now record whether `ps` is total or dry pressure as the
+  typed `surface_pressure_basis` header contract. Every eager and streaming
+  LL/RG/CS writer emits it, binary transformations preserve it, and the file-IC
+  hybrid remap consumes the parsed `TotalSurfacePressure` or
+  `DrySurfacePressure` value. Keyless legacy files retain the previous
+  window-1 mass/pressure inference with one regeneration warning.
 
 - `CSLBFGS` evaluated every control point at least twice (#17): Optim
   received separate value and gradient closures that each ran the full

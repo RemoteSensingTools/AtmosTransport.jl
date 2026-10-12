@@ -660,6 +660,7 @@ function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{
         tmp_path, grid.Nc, 6, length(vc.A) - 1, nwindow, vc;
         FT, dt_met_seconds = dt_window, half_dt_seconds = dt_window / 2,
         steps_per_window = steps, include_flux_delta = true, mass_basis = :dry,
+        surface_pressure_basis = DrySurfacePressure(),
         include_surface = has_surface(settings), include_cmfmc = has_convection(settings),
         include_dtrain = has_convection(settings), include_gchp_vdiff = has_vdiff_fields(settings),
         include_pbl_eflux = has_pbl_eflux(settings),

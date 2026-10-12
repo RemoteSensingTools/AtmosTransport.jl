@@ -244,8 +244,9 @@ recover total pressure; on native cubed-sphere physics binaries VDIFF `qv` is
 used when endpoints are absent. A legacy dry-pressure binary with no humidity
 cannot determine total pressure, so the runtime keeps dry `ps` for hybrid
 interface placement and emits one warning. This approximation is typically
-0.5--2 % low in humid columns. A planned `surface_pressure_basis` header key
-will make this choice explicit.
+0.5--2 % low in humid columns. Current binaries record this choice explicitly
+as `surface_pressure_basis = "total"` or `"dry"`; keyless legacy binaries are
+inferred once when opened and warn that regeneration is required.
 
 A file without `ap` and `bp` is copied level by level, so it must have the
 model's level count, and its vertical coordinate must say which end is the

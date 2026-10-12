@@ -109,6 +109,8 @@ requirements are selected through the reader's geometry type. Fields:
 - `surface_pressure :: Bool` — ps present.
 - `humidity :: Bool` — qv_start/qv_end present.
 - `mass_basis :: Symbol` — `:dry` or `:moist`.
+- `surface_pressure_basis :: AbstractSurfacePressureBasis` — typed meaning of
+  the stored `ps` payload.
 - `grid_type :: Symbol` — `:latlon` / `:reduced_gaussian` / `:cubed_sphere`.
 - `nlevel`, `steps_per_window` — header values.
 - `variable_step_schedule :: Bool` — per-window substep counts differ.
@@ -138,6 +140,7 @@ function binary_capabilities(reader::TransportBinaryReader)
         surface_pressure = :ps in hdr.payload_sections,
         humidity         = has_qv_endpoints(reader),
         mass_basis       = hdr.mass_basis,
+        surface_pressure_basis = surface_pressure_basis(reader),
         grid_type        = grid_type(hdr),
         nlevel           = hdr.nlevel,
         nwindow          = hdr.nwindow,
@@ -198,6 +201,8 @@ function _print_capability_rows(io::IO, caps)
     _print_cap(io, caps.surface_pressure, "surface pressure", "(ps)")
     _print_cap(io, caps.humidity,         "humidity",         "(qv_start, qv_end)")
     println(io, "  mass_basis       = ", caps.mass_basis)
+    println(io, "  surface_pressure_basis = ",
+            _transport_surface_pressure_basis_label(caps.surface_pressure_basis))
     if caps.tm5_convection
         println(io, "  tm5_convection_mass_basis = ",
                 caps.tm5_convection_mass_basis === nothing ? "not recorded" :

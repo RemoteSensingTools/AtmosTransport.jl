@@ -22,7 +22,8 @@ cubed-sphere driver). The parent overview is [`../README.md`](../README.md).
 - Header types: [`header.jl`](header.jl) defines `TransportBinaryHeader{G}`,
   `LatLonBinaryGeometry`, `ReducedGaussianBinaryGeometry`,
   `CubedSphereBinaryGeometry`, `TRANSPORT_BINARY_FORMAT_VERSION`, `grid_type`,
-  `horizontal_topology`, and `binary_geometry`
+  `horizontal_topology`, `binary_geometry`, and the typed
+  `surface_pressure_basis`
 - Contract: [`contract.jl`](contract.jl) defines `validate_transport_contract!`,
   `TransportBinaryContract`, `canonical_window_constant_contract`, and
   `validate_cs_writer_contract!`
@@ -121,9 +122,13 @@ cubed-sphere driver). The parent overview is [`../README.md`](../README.md).
   be finite and positive, and `load_grid` builds the mesh on it.
 - `p_half[k] = A_ifc[k] + B_ifc[k] * ps`, with `k = 1` at the top of the atmosphere
   and `nlevel + 1` interfaces.
+- Every current writer records `surface_pressure_basis = "total"` or `"dry"`;
+  transformations preserve it. A keyless legacy file is inferred once from
+  window-1 pressure and mass with one warning.
 - `write_transport_binary` defaults to `mass_basis = :dry`. Both streaming openers
   require `mass_basis` (no default), because the TM5 convection basis stamp is
-  inferred from it.
+  inferred from it; the in-tree preprocessors pass both the mass and
+  surface-pressure bases explicitly.
 - With TM5 convection sections, writers default `tm5_convection_mass_basis` to
   the binary's `mass_basis`. Transformation writers pass the source record
   explicitly; `nothing` preserves a genuinely legacy keyless payload. This

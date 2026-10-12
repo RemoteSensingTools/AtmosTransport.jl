@@ -163,6 +163,7 @@ function build_v4_header(date::Date,
         "Nz_native" => sizes.Nz_native, "Nt" => sizes.Nt,
         "float_type" => string(FT), "float_bytes" => sizeof(FT),
         "mass_basis" => String(settings.mass_basis),
+        "surface_pressure_basis" => "total",
         "payload_sections" => payload_sections,
         "elems_per_window" => counts.elems_per_window,
         "n_geometry_elems" => 0,
@@ -383,6 +384,7 @@ end
 
 const _OUTPUT_REUSE_CONTRACT_KEYS = (
     "format_version", "float_type", "float_bytes", "mass_basis",
+    "surface_pressure_basis",
     "grid_type", "horizontal_topology", "planet_radius_m", "Nx", "Ny", "nlevel", "nwindow",
     "payload_sections", "elems_per_window", "A_ifc", "B_ifc", "merge_map",
     "merge_min_thickness_Pa", "vertical_mapping_method", "target_vertical_name",

@@ -450,6 +450,8 @@ steps_per_window_schedule(driver::TransportBinaryDriver) =
     copy(driver.reader.header.steps_per_window_by_window)
 """Return the binary's declared air-mass basis (`:dry` or `:moist`)."""
 air_mass_basis(driver::TransportBinaryDriver) = mass_basis(driver.reader)
+surface_pressure_basis(driver::TransportBinaryDriver) =
+    surface_pressure_basis(driver.reader)
 supports_moisture(driver::TransportBinaryDriver) = has_qv_endpoints(driver.reader)
 supports_native_vertical_flux(::TransportBinaryDriver) = true
 supports_convection(driver::TransportBinaryDriver) =

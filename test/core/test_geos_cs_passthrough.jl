@@ -286,6 +286,9 @@ end
             @test reader.header.nwindow == 24                        # GEOS hourly
             @test reader.header.steps_per_window == 8
             @test reader.header.mass_basis === :dry
+            @test reader.header.raw_header["surface_pressure_basis"] == "dry"
+            @test AtmosTransport.MetDrivers.surface_pressure_basis(reader) isa
+                  AtmosTransport.DrySurfacePressure
             @test reader.header.geometry.panel_convention === :geos_native
             @test :dm in reader.header.payload_sections              # delta enabled
             @test reader.header.raw_header["runtime_substep_contract"] == "binary_schedule"

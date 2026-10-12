@@ -194,6 +194,9 @@ end
             @test reader.header.nlevel == meta.Nz
             @test reader.header.raw_header["mass_fix_enabled"] === true
             @test reader.header.raw_header["mass_fix_target_ps_dry_pa"] == 98_325.0
+            @test reader.header.raw_header["surface_pressure_basis"] == "dry"
+            @test AtmosTransport.MetDrivers.surface_pressure_basis(reader) isa
+                  DrySurfacePressure
             @test has_flux_delta(reader)
             @test delta_semantics(reader) == :forward_window_endpoint_difference
 

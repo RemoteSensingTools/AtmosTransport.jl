@@ -220,6 +220,7 @@ end
         second_header, second_payload = _stable_binary_parts(second_path)
         @test second_header == first_header
         @test second_payload == first_payload
+        @test first_header[:surface_pressure_basis] == "total"
 
         # `write_replay_check = false` skips the gate and is recorded; same payload.
         off = _rg_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "off"))

@@ -115,6 +115,7 @@ struct TransportBinaryHeader{G <: AbstractTransportBinaryGeometry}
     A_ifc                :: Vector{Float64}  # hybrid A [Pa], length nlevel+1
     B_ifc                :: Vector{Float64}  # hybrid B [1],  length nlevel+1
     mass_basis           :: Symbol           # :moist or :dry
+    surface_pressure_basis :: Union{TotalSurfacePressure, DrySurfacePressure}
     tm5_convection_mass_basis :: Union{Nothing, DryBasis, MoistBasis}
     payload_sections     :: Vector{Symbol}
     n_geometry_elems     :: Int
@@ -123,6 +124,7 @@ struct TransportBinaryHeader{G <: AbstractTransportBinaryGeometry}
 end
 
 binary_geometry(h::TransportBinaryHeader) = h.geometry
+surface_pressure_basis(h::TransportBinaryHeader) = h.surface_pressure_basis
 grid_type(h::TransportBinaryHeader) = grid_type(h.geometry)
 horizontal_topology(h::TransportBinaryHeader) = horizontal_topology(h.geometry)
 
@@ -245,6 +247,23 @@ function _transport_parse_mass_basis(hdr)
     return Symbol(basis_str)
 end
 
+@inline _transport_surface_pressure_basis_label(::TotalSurfacePressure) = "total"
+@inline _transport_surface_pressure_basis_label(::DrySurfacePressure) = "dry"
+
+function _transport_parse_surface_pressure_basis(value)
+    basis = lowercase(String(value))
+    basis == "total" && return TotalSurfacePressure()
+    basis == "dry" && return DrySurfacePressure()
+    throw(ArgumentError(
+        "unsupported transport binary surface_pressure_basis=$(repr(basis)); " *
+        "expected total or dry"))
+end
+
+_default_surface_pressure_basis(::MoistBasis) = TotalSurfacePressure()
+_default_surface_pressure_basis(::DryBasis) = DrySurfacePressure()
+_default_surface_pressure_basis(mass_basis::Symbol) =
+    _default_surface_pressure_basis(_transport_parse_mass_basis_tag(mass_basis, "mass_basis"))
+
 function _transport_parse_mass_basis_tag(value, key::AbstractString)
     basis_str = lowercase(string(value))
     basis_str == "dry" && return DryBasis()
@@ -356,7 +375,10 @@ function _parse_transport_geometry(hdr, grid::Symbol, topology::Symbol)
     throw(ArgumentError("unsupported transport-binary geometry $(grid)/$(topology)"))
 end
 
-function _parse_transport_header(raw_bytes::Vector{UInt8})
+function _parse_transport_header(raw_bytes::Vector{UInt8};
+                                 legacy_surface_pressure_basis::Union{TotalSurfacePressure,
+                                                                      DrySurfacePressure} =
+                                     TotalSurfacePressure())
     json_end = something(findfirst(==(0x00), raw_bytes), length(raw_bytes) + 1) - 1
     hdr = JSON3.read(String(raw_bytes[1:json_end]))
 
@@ -385,6 +407,9 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
     nwindow = Int(hdr.nwindow)
     A_ifc = Float64.(collect(hdr.A_ifc))
     B_ifc = Float64.(collect(hdr.B_ifc))
+    surface_pressure_basis = haskey(hdr, :surface_pressure_basis) ?
+        _transport_parse_surface_pressure_basis(hdr.surface_pressure_basis) :
+        legacy_surface_pressure_basis
     payload_sections = _transport_parse_sections(hdr)
     source_flux_sampling = _transport_parse_symbol_key(hdr, :source_flux_sampling, :unknown)
     air_mass_sampling    = _transport_parse_symbol_key(hdr, :air_mass_sampling,    :unknown)
@@ -431,6 +456,7 @@ function _parse_transport_header(raw_bytes::Vector{UInt8})
         A_ifc,
         B_ifc,
         _transport_parse_mass_basis(hdr),
+        surface_pressure_basis,
         _transport_parse_tm5_convection_mass_basis(hdr, payload_sections),
         payload_sections,
         n_geometry_elems,
@@ -464,6 +490,8 @@ function _transport_common_header(grid_type::String,
                                   half_dt_seconds::Real,
                                   steps_per_window::Integer,
                                   mass_basis::Symbol,
+                                  surface_pressure_basis::Union{TotalSurfacePressure,
+                                                                DrySurfacePressure},
                                   source_flux_sampling::Symbol,
                                   air_mass_sampling::Symbol,
                                   flux_sampling::Symbol,
@@ -523,6 +551,8 @@ function _transport_common_header(grid_type::String,
         "poisson_balance_target_semantics" => contract.poisson_balance_target_semantics,
         "poisson_balance_target_scale_by_window" => poisson_scale_schedule,
         "mass_basis" => String(mass_basis),
+        "surface_pressure_basis" =>
+            _transport_surface_pressure_basis_label(surface_pressure_basis),
         "payload_sections" => String.(payload_sections),
         "include_qv_endpoints" => (:qv_start in payload_sections) || (:qv_end in payload_sections),
         "include_flux_delta" => any(section in (:dam, :dbm, :dcm, :dm, :dhflux) for section in payload_sections),

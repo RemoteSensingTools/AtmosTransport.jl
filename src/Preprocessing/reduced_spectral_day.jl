@@ -504,6 +504,7 @@ function process_day(date::Date,
         humidity_sampling    = rg_contract.humidity_sampling,
         delta_semantics      = rg_contract.delta_semantics,
         mass_basis           = Symbol(settings.mass_basis),
+        surface_pressure_basis = TotalSurfacePressure(),
         extra_header = _with_replay_record(metadata, write_replay_on))
 
     bytes_per_window = writer.elems_per_window * sizeof(eltype(writer.pack_buffer))

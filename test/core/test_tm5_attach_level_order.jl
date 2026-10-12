@@ -121,6 +121,7 @@ end
             air_mass_sampling = :window_start_endpoint,
             flux_sampling = :window_constant, flux_kind = :substep_mass_amount,
             mass_basis = :dry,
+            surface_pressure_basis = DrySurfacePressure(),
         )
         geometry = (
             panel_convention = "gnomonic", definition = "equiangular_gnomonic",
@@ -140,6 +141,7 @@ end
         reader = MD.TransportBinaryReader(path)
         @test MD.tm5_convection_mass_basis(reader) isa DryBasis
         @test reader.header.raw_header[MD.TM5_CONVECTION_MASS_BASIS_KEY] == "dry"
+        @test MD.surface_pressure_basis(reader) isa DrySurfacePressure
         close(reader)
     end
 end

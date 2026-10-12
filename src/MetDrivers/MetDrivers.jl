@@ -61,6 +61,7 @@ export binary_capabilities, inspect_binary
 export binary_dry_mass_target
 export has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base
 export mass_basis, grid_type, horizontal_topology, A_ifc, B_ifc
+export surface_pressure_basis
 export uses_binary_substep_contract
 export source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics
 export flux_application_seconds, flux_storage_substep_scale

@@ -225,6 +225,8 @@ end
             @test_throws ArgumentError _open_rg(path, 1; extra_header=Dict("ncell" => 999))
             @test_throws ArgumentError _open_rg(
                 path, 1; extra_header=Dict("latitudes" => [-30.0, 30.0]))
+            @test_throws ArgumentError _open_rg(
+                path, 1; extra_header=Dict("surface_pressure_basis" => "dry"))
             @test !ispath(path)
         end
 
@@ -234,6 +236,7 @@ end
             header = deepcopy(writer.header)
             for (key, value) in (("float_type", "Float128"),
                                  ("mass_basis", "unknown"),
+                                 ("surface_pressure_basis", "unknown"),
                                  ("elems_per_window", header["elems_per_window"] + 1),
                                  ("dt_met_seconds", Inf),
                                  ("nface_h", header["nface_h"] + 1))

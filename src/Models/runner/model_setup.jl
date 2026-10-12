@@ -103,8 +103,7 @@ function _make_structured_model(driver::TransportBinaryDriver;
     basis_type = air_mass_basis(driver) == :dry ? DryBasis : MoistBasis
     basis = basis_type()
     qv = _initial_condition_qv(window)
-    pressure_basis = _stored_surface_pressure_basis(
-        grid, air_mass, window.surface_pressure, basis)
+    pressure_basis = surface_pressure_basis(driver)
     tracer_names_tup = Tuple(spec.name for spec in tracer_specs_tuple)
     rm_arrays = map(tracer_specs_tuple) do spec
         vmr = build_initial_mixing_ratio(air_mass, grid, spec.init_cfg;

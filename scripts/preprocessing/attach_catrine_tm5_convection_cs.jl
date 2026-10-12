@@ -308,6 +308,7 @@ function open_attachment_writer(output, Nc, np, Nz, h, g, vc, metadata)
         air_mass_sampling = h.air_mass_sampling,
         flux_sampling = h.flux_sampling, flux_kind = h.flux_kind,
         include_flux_delta = true, mass_basis = h.mass_basis,
+        surface_pressure_basis = h.surface_pressure_basis,
         tm5_convection_mass_basis = PP.mass_basis_from_symbol(h.mass_basis),
         include_surface = true, include_tm5conv = true,
         include_precomputed_dkg = true,

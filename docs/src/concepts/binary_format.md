@@ -53,6 +53,7 @@ the runtime actually dispatches on:
 | `nlevel` | `Int` | vertical levels (`k = 1` is TOA, `k = nlevel` is surface) |
 | `A_ifc`, `B_ifc` | `Vector{Float64}` | hybrid-σ-pressure coefficients at `nlevel + 1` interfaces, in Pa and dimensionless |
 | `mass_basis` | `Symbol` | `:dry` or `:moist` (see [Mass basis contract](#Mass-basis-contract) below) |
+| `surface_pressure_basis` | `AbstractSurfacePressureBasis` | JSON value `"total"` or `"dry"`, parsed once as `TotalSurfacePressure()` or `DrySurfacePressure()`; states whether `:ps` is moist-air hybrid-coordinate pressure or dry column pressure |
 | `panel_convention` | `Symbol` | CS only — `:gnomonic` or `:geos_native` |
 | `cs_definition` | `Symbol` | CS only — `:equiangular_gnomonic` or `:gmao_equal_distance` |
 | `cs_coordinate_law` | `Symbol` | CS only — e.g. `:equiangular_gnomonic` or `:gmao_equal_distance_gnomonic` |
@@ -113,14 +114,18 @@ day-boundary VMR jump while retaining compatibility with legacy files.
 The canonical enable flag is `mass_fix_enabled`; inspection also recognizes
 the source-specific flags in older native-source archives.
 
-For current legacy binaries, the runtime infers whether `:ps` is total or dry
-surface pressure by comparing it with the column pressure implied by the air
-mass. Dry-basis binaries use `:qv_start` when present, or VDIFF `:vdiff_qv` on
+Current writers always record `surface_pressure_basis = "total"` or `"dry"`.
+The reader parses it once to a `TotalSurfacePressure` or `DrySurfacePressure`
+type, and transformations preserve that typed value. For a legacy binary that
+lacks the key, opening the reader compares window 1 `:ps` with the column
+pressure implied by `:m`, stores the inferred type, and emits one warning; this
+compatibility fallback becomes an error after archive regeneration.
+
+Dry-pressure binaries use `:qv_start` when present, or VDIFF `:vdiff_qv` on
 native cubed-sphere physics binaries, to reconstruct total pressure for hybrid
 interface placement. If neither humidity payload exists, total pressure is
 unobservable: the runtime retains dry `ps`, warns once, and documents the
-typically 0.5--2 % low humid-column approximation. A planned
-`surface_pressure_basis` header key will replace this inference.
+typically 0.5--2 % low humid-column approximation.
 
 ### Optional sections (each enables a runtime capability)
 

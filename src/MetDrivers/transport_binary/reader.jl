@@ -34,7 +34,8 @@ function Base.show(io::IO, r::TransportBinaryReader)
           "├── geometry:      ", _transport_geometry_summary(h), "\n",
           "├── storage:       ", h.on_disk_float_type, " on disk, load as ",
               _transport_load_float_type(r), "\n",
-          "├── basis:         ", h.mass_basis, "\n",
+          "├── basis:         ", h.mass_basis, ", ps=",
+              _transport_surface_pressure_basis_label(h.surface_pressure_basis), "\n",
           "├── timing:        dt=", h.dt_met_seconds, " s, steps/window=",
               _steps_per_window_summary(h.steps_per_window, h.steps_per_window_by_window), "\n",
           "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
@@ -52,6 +53,7 @@ steps_per_window(r::TransportBinaryReader, win::Integer) =
 steps_per_window_schedule(r::TransportBinaryReader) =
     copy(r.header.steps_per_window_by_window)
 mass_basis(r::TransportBinaryReader) = r.header.mass_basis
+surface_pressure_basis(r::TransportBinaryReader) = r.header.surface_pressure_basis
 binary_geometry(r::TransportBinaryReader) = binary_geometry(r.header)
 grid_type(r::TransportBinaryReader) = grid_type(r.header)
 horizontal_topology(r::TransportBinaryReader) = horizontal_topology(r.header)
@@ -162,12 +164,82 @@ function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Flo
         data = Mmap.mmap(io, Vector{DiskFT}, total_elems, header.header_bytes)
         G = typeof(header.geometry)
         reader = TransportBinaryReader{FT, DiskFT, G}(data, io, header, bin_path)
+        if !haskey(header.raw_header, "surface_pressure_basis")
+            inferred = _infer_legacy_surface_pressure_basis(reader)
+            @warn "$(basename(bin_path)) has no `surface_pressure_basis` header key; " *
+                  "inferred `$(_transport_surface_pressure_basis_label(inferred))` once from " *
+                  "window-1 surface pressure and air mass. Regenerate the binary before the " *
+                  "legacy fallback becomes an error." maxlog=1
+            header = _parse_transport_header(raw; legacy_surface_pressure_basis=inferred)
+            reader = TransportBinaryReader{FT, DiskFT, G}(data, io, header, bin_path)
+        end
         _check_tm5_convection_basis(reader)
         return reader
     catch
         isopen(io) && close(io)
         rethrow()
     end
+end
+
+function _infer_legacy_surface_pressure_basis(reader::TransportBinaryReader)
+    mass_basis(reader) === :moist && return TotalSurfacePressure()
+    grid = _legacy_surface_pressure_grid(reader, binary_geometry(reader))
+    loaded = load_window!(reader, 1)
+    if loaded isa Tuple
+        air_mass, surface_pressure = loaded[1], loaded[2]
+    else
+        air_mass, surface_pressure = loaded.m, loaded.ps
+    end
+    return _infer_legacy_surface_pressure_basis(
+        grid, air_mass, surface_pressure, binary_geometry(reader))
+end
+
+_legacy_surface_pressure_grid(reader::TransportBinaryReader,
+                              ::Union{LatLonBinaryGeometry,
+                                      ReducedGaussianBinaryGeometry}) =
+    load_grid(reader; FT=Float64)
+_legacy_surface_pressure_grid(reader::TransportBinaryReader,
+                              ::CubedSphereBinaryGeometry) =
+    load_grid(reader; FT=Float64, Hp=0)
+
+function _infer_legacy_surface_pressure_basis(grid, air_mass, surface_pressure,
+                                               ::LatLonBinaryGeometry)
+    mesh = grid.horizontal
+    g = Float64(gravity(grid))
+    worst = 0.0
+    @inbounds for j in axes(surface_pressure, 2), i in axes(surface_pressure, 1)
+        p_dry = sum(@view air_mass[i, j, :]) * g / Float64(cell_area(mesh, i, j))
+        ps = Float64(surface_pressure[i, j])
+        worst = max(worst, abs(p_dry - ps) / max(abs(ps), 1.0))
+    end
+    return worst <= 2e-5 ? DrySurfacePressure() : TotalSurfacePressure()
+end
+
+function _infer_legacy_surface_pressure_basis(grid, air_mass, surface_pressure,
+                                               ::ReducedGaussianBinaryGeometry)
+    mesh = grid.horizontal
+    g = Float64(gravity(grid))
+    worst = 0.0
+    @inbounds for c in eachindex(surface_pressure)
+        p_dry = sum(@view air_mass[c, :]) * g / Float64(cell_area(mesh, c))
+        ps = Float64(surface_pressure[c])
+        worst = max(worst, abs(p_dry - ps) / max(abs(ps), 1.0))
+    end
+    return worst <= 2e-5 ? DrySurfacePressure() : TotalSurfacePressure()
+end
+
+function _infer_legacy_surface_pressure_basis(grid, air_mass, surface_pressure,
+                                               geometry::CubedSphereBinaryGeometry)
+    mesh = grid.horizontal
+    g = Float64(gravity(grid))
+    worst = 0.0
+    @inbounds for p in 1:geometry.npanel, j in 1:geometry.Nc, i in 1:geometry.Nc
+        p_dry = sum(@view air_mass[p][i, j, :]) * g /
+                Float64(cell_area(mesh, i, j))
+        ps = Float64(surface_pressure[p][i, j])
+        worst = max(worst, abs(p_dry - ps) / max(abs(ps), 1.0))
+    end
+    return worst <= 2e-5 ? DrySurfacePressure() : TotalSurfacePressure()
 end
 
 Base.close(r::TransportBinaryReader) = close(r.io)

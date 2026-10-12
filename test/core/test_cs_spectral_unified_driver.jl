@@ -121,6 +121,7 @@ end
         @test second_header == first_header
         @test second_payload == first_payload
         @test first_header[:mass_fix_enabled] === false
+        @test first_header[:surface_pressure_basis] == "total"
         @test !haskey(first_header, :mass_fix_target_ps_dry_pa)
         @test length(first_header[:ps_offsets_pa_per_window]) == 24
         @test first_header[:ps_offsets_next_day_hour0_pa] isa Real

@@ -54,7 +54,9 @@ import ...expand_data_path
 using ...ConfigChecks: key_suggestion
 using ...Parameters: AVOGADRO, EARTH_RADIUS, SPECIES_MOLAR_MASS, STANDARD_PRESSURE, DRY_AIR_MOLAR_MASS,
                      DEFAULT_BACKGROUND_VMR, DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG
-using ..State: AbstractMassBasis, DryBasis, MoistBasis
+using ..State: AbstractMassBasis, DryBasis, MoistBasis,
+               AbstractSurfacePressureBasis, TotalSurfacePressure,
+               DrySurfacePressure
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                 nrings, ring_longitudes, cell_index, cell_area,
                 gravity, panel_cell_center_lonlat
@@ -194,15 +196,6 @@ function _target_dry_pressure!(dest, air_mass, scale, ::MoistBasis, qv)
     @. dest = air_mass * scale * (1 - qv)
     return dest
 end
-
-"""Typed interpretation of the transport binary's stored surface pressure."""
-abstract type AbstractSurfacePressureBasis end
-
-"""Stored `ps` is the total (moist-air) pressure used by the hybrid coordinate."""
-struct TotalSurfacePressure <: AbstractSurfacePressureBasis end
-
-"""Stored `ps` is the column dry-air pressure implied by the dry air mass."""
-struct DrySurfacePressure <: AbstractSurfacePressureBasis end
 
 # ---------------------------------------------------------------------------
 # Bracket search + bilinear interpolation
@@ -633,7 +626,10 @@ end
 """
     _stored_surface_pressure_basis(grid, air_mass, surface_pressure, mass_basis)
 
-Return the typed meaning of a transport window's stored surface pressure.
+Infer the typed meaning of a legacy transport window's stored surface pressure.
+Current readers parse `surface_pressure_basis` once and pass its recorded type
+to the initial-condition remap; this helper covers keyless legacy data and
+focused numerical tests.
 Moist-basis windows necessarily carry total pressure. For a dry-basis window,
 compare `ps` with the column dry pressure diagnosed from its authoritative
 layer masses,
@@ -714,8 +710,8 @@ humidity nor VDIFF `qv`), total pressure is unobservable. To keep those runs
 working, interface placement explicitly approximates `ps_total` by the stored
 `ps_dry` and emits one warning. This usually understates total pressure by
 about 0.5--2 % in humid columns. The remap still takes its target dry-layer
-carrier from the binary air masses. A planned `surface_pressure_basis` header
-key will make the stored pressure meaning explicit for new binaries.
+carrier from the binary air masses. Current binaries record the stored
+pressure meaning explicitly in `surface_pressure_basis`.
 """
 @inline _total_surface_pressure(::TotalSurfacePressure, ps_stored::Real,
                                 _A, _B, _qv) = Float64(ps_stored)
