@@ -3,19 +3,17 @@
 #
 # `MmapCSTapeStorage` is a sibling of `DeviceCSTapeStorage` and
 # `PinnedHostCSTapeStorage` that evicts staged
-# panel snapshots from working memory onto a raw appended binary staging file.
-# At finalisation, the payload is published under a content-addressed,
-# generation-specific name, then the human-readable `manifest.toml` pointer is
-# atomically replaced. The manifest is used during resume / inspection.
+# panel snapshots from working memory onto a raw appended binary file
+# (`records.bin`). A separate human-readable manifest (`manifest.toml`)
+# is written at finalisation time and used during resume / inspection.
 #
-# Layout summary (v2):
+# Layout summary (v1):
 #
 #   tape/<run-id>/
 #   ├── manifest.toml      # written on finalize_tape!
-#   ├── records-<sha256>.bin # immutable payload selected by manifest
-#   └── records-<old>.bin    # older generations retained for readers
+#   └── records.bin        # grown via truncate as slots are allocated
 #
-# Each slot reserves a contiguous span of the staged records generation and holds six
+# Each slot reserves a contiguous span of `records.bin` and holds six
 # `(record_id, panel_offset, panel_shape)` triplets. `stage_panels!`
 # copies the source panels into `Mmap.mmap` views over the reserved
 # region; `_tape_panels` returns mmap views (CPU runs) or copies them
@@ -26,9 +24,9 @@ using Mmap: Mmap
 using TOML: TOML
 using Dates: now
 
-const _MMAP_TAPE_FORMAT_VERSION = "v2"
+const _MMAP_TAPE_FORMAT_VERSION = "v1"
 
-# One forward record's locator into a records generation. Kept inside the storage
+# One forward record's locator into records.bin. Kept inside the storage
 # so the manifest emitter has a single source of truth at finalise time.
 struct MmapTapeRecordEntry
     record_id::Int
@@ -42,14 +40,11 @@ end
     MmapCSTapeStorage(; dir = mktempdir(prefix="atmostransport-cstape-"),
                        cleanup_on_finalize = (dir == ""))
 
-Tape storage policy that streams staged adjoint mass states onto a sibling
-staging file inside `dir`. Finalisation publishes the binary under an immutable
-`records-<sha256>.bin` generation name and then atomically replaces the TOML
-manifest (`manifest.toml`) that selects it. A previous manifest and its payload
-remain valid until the manifest swap, and older payload generations are retained
-so readers that already observed an old manifest can finish safely.
-`dir` is created if it does not exist; if omitted, a unique temporary
-directory is created and deleted when the storage object is garbage-collected.
+Tape storage policy that streams staged adjoint mass states onto a
+single appended raw binary file (`records.bin`) inside `dir` and emits a
+TOML manifest (`manifest.toml`) at finalisation. `dir` is created if it
+does not exist; if omitted, a unique temporary directory is created and
+deleted when the storage object is garbage-collected.
 
 The policy is backend-agnostic: CPU source panels yield in-place
 `Mmap.mmap` views at read time; GPU source panels go through a shared
@@ -60,13 +55,11 @@ bm-shaped (Nx,Nx+1,Nz), and cm-shaped (Nx,Nx,Nz+1) slots reuses each
 shape's cache instead of reallocating six `similar(panel)` device
 buffers on every read.
 
-The on-disk format is the `manifest.toml` metadata plus appended raw panel
-payloads in the content-addressed records file named by the manifest.
+The on-disk format is the `manifest.toml` metadata plus appended raw
+panel payloads in `records.bin`.
 """
 mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
     bin_path::String
-    bin_staging_path::Union{Nothing,String}
-    records_sha256::Union{Nothing,String}
     manifest_path::String
     dir::String
     bin_io::IOStream
@@ -86,9 +79,9 @@ mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
     # the forward-recording constructor leaves this false.
     readonly::Bool
 
-    # Forward-recording constructor: opens a fresh sibling staging file in
-    # read+write mode. `cleanup_on_finalize` defaults to true
-    # when `dir` is empty (temp dir) and false when the user supplies one.
+    # Forward-recording constructor: opens a fresh records.bin in
+    # read+write mode. `cleanup_on_finalize` defaults to true when
+    # `dir` is empty (temp dir) and false when the user supplies one.
     function MmapCSTapeStorage(; dir::AbstractString = "",
                                cleanup_on_finalize::Union{Nothing,Bool} = nothing)
         if isempty(dir)
@@ -100,14 +93,14 @@ mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
         end
         bin_path = joinpath(dir, "records.bin")
         manifest_path = joinpath(dir, "manifest.toml")
-        bin_staging_path, bin_io = open_atomic_staging(bin_path)
+        # A manifest describes one immutable, finalised records.bin. Remove it
+        # before truncating that file so a crash during a new recording can
+        # never make fresh bytes look like the previous completed tape.
+        ispath(manifest_path) && rm(manifest_path; force = true)
+        bin_io = open(bin_path, "w+")
         local storage
         try
-            # Do not touch an existing manifest: it remains the atomic pointer
-            # to the previous valid generation until finalisation commits the
-            # replacement manifest.
-            storage = new(bin_path, bin_staging_path, nothing,
-                          manifest_path, String(dir), bin_io, Int64(0),
+            storage = new(bin_path, manifest_path, String(dir), bin_io, Int64(0),
                           MmapTapeRecordEntry[],
                           Dict{NTuple{6, NTuple{3, Int}}, CSPanelCache}(),
                           nothing,
@@ -115,7 +108,6 @@ mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
             finalizer(_mmap_storage_gc_close!, storage)
         catch
             close(bin_io)
-            abandon_atomic_staging(bin_staging_path)
             rethrow()
         end
         return storage
@@ -126,22 +118,24 @@ mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
     # errors before any IOStream is opened). All slot bookkeeping
     # is restored from a finalised manifest; `cursor` reflects the
     # total bytes written by the original forward pass.
-    function MmapCSTapeStorage(dir::AbstractString, bin_path::AbstractString,
-                               bin_io::IOStream, records_sha256::AbstractString,
-                               records::Vector{MmapTapeRecordEntry}, cursor::Int64;
-                               readonly::Bool = true)
+    function MmapCSTapeStorage(dir::AbstractString, records::Vector{MmapTapeRecordEntry},
+                               cursor::Int64; mode::AbstractString = "r")
+        mode in ("r", "r+") || throw(ArgumentError(
+            "MmapCSTapeStorage reopen mode $(repr(mode)) is not supported; " *
+            "use \"r\" (default, readonly) or \"r+\" (forward-compat for Phase B)"))
         isdir(dir) || throw(ArgumentError("tape directory $(repr(dir)) does not exist"))
+        bin_path = joinpath(dir, "records.bin")
         manifest_path = joinpath(dir, "manifest.toml")
         isfile(bin_path) || throw(ArgumentError(
-            "tape directory $(repr(dir)) is missing records file $(basename(bin_path))"))
+            "tape directory $(repr(dir)) is missing records.bin"))
+        bin_io = open(bin_path, mode)
         local storage
         try
-            storage = new(String(bin_path), nothing, String(records_sha256),
-                          manifest_path, String(dir), bin_io, cursor,
+            storage = new(bin_path, manifest_path, String(dir), bin_io, cursor,
                           records,
                           Dict{NTuple{6, NTuple{3, Int}}, CSPanelCache}(),
                           nothing,
-                          true, false, false, readonly)
+                          true, false, false, mode == "r")
             finalizer(_mmap_storage_gc_close!, storage)
         catch
             close(bin_io)
@@ -212,7 +206,7 @@ _mmap_file_size(io::IOStream) = stat(io).size
 """
     _bump_cursor!(storage, nbytes)
 
-Reserve `nbytes` of contiguous space at the end of the staged records file, extending
+Reserve `nbytes` of contiguous space at the end of `records.bin`, extending
 the file via `truncate` (sparse on filesystems that support it) so that
 subsequent `Mmap.mmap` calls find the region backed.
 Returns the base offset of the reserved region.
@@ -223,9 +217,9 @@ Returns the base offset of the reserved region.
 # refcounts the file). Windows is not supported.
 function _bump_cursor!(storage::MmapCSTapeStorage, nbytes::Int64)
     storage.readonly && throw(ArgumentError(
-        "MmapCSTapeStorage at $(storage.dir) is readonly; cannot extend records generation"))
+        "MmapCSTapeStorage at $(storage.dir) is readonly; cannot extend records.bin"))
     storage.closed && throw(ArgumentError(
-        "MmapCSTapeStorage at $(storage.dir) is closed; cannot extend records generation"))
+        "MmapCSTapeStorage at $(storage.dir) is closed; cannot extend records.bin"))
     base = storage.cursor
     storage.cursor += nbytes
     if storage.cursor > _mmap_file_size(storage.bin_io)
@@ -292,7 +286,7 @@ _mmap_prepare_for_panels!(storage::MmapCSTapeStorage,
 """
     _allocate_tape_slot(storage::MmapCSTapeStorage, panels)
 
-Reserve a span of the staged records generation for one tape record (six panel arrays)
+Reserve a span of `records.bin` for one tape record (six panel arrays)
 and return a slot that can be staged into and later read from. The disk
 bookkeeping is backend-agnostic; backend-specific setup (read-cache
 allocation, synchronisation hooks) happens in
@@ -321,7 +315,7 @@ end
     stage_panels!(slot::MmapCSTapeSlot, src)
 
 Write the six source panels into the slot's reserved region of
-the staged records file via `Mmap.mmap` views. Works uniformly for CPU `Array` and
+`records.bin` via `Mmap.mmap` views. Works uniformly for CPU `Array` and
 GPU `CuArray` sources because `copyto!(::Array, ::CuArray)` performs a
 device→host transfer.
 """
@@ -429,17 +423,14 @@ end
 """
     finalize_tape!(storage::MmapCSTapeStorage; quiet = false, strict = false)
 
-Sync any pending mmap state, close and publish an immutable
-`records-<sha256>.bin` generation, then atomically replace the TOML manifest
-that names that exact file, size and digest. The manifest is published last,
-so readers see either the complete previous generation or the complete new
-one. Older records generations remain available to readers that observed an
-older manifest. Safe to call more than once; subsequent calls are no-ops. If
-the storage owns its temp directory and `cleanup_on_finalize` is true, the
-directory is also removed after manifest emission.
+Sync any pending mmap state, write the TOML manifest, and close the
+underlying `records.bin` handle. Safe to call more than once; subsequent
+calls are no-ops. If the storage owns its temp directory and
+`cleanup_on_finalize` is true, the directory is also removed after
+manifest emission.
 
-By default (`strict = false`), failures during records publication, manifest
-emission, IO close, or temp-dir cleanup are caught and surfaced via `@warn` (or
+By default (`strict = false`), failures during manifest emission, IO
+close, or temp-dir cleanup are caught and surfaced via `@warn` (or
 suppressed if `quiet = true`). This matches the temp-dir use case
 where leaving a partially-finalised storage behind is benign — the
 directory gets cleaned up by GC or by the caller's `mktempdir do`
@@ -455,27 +446,8 @@ would defeat the purpose of persisting the tape.
 function finalize_tape!(storage::MmapCSTapeStorage; quiet::Bool = false,
                         strict::Bool = false)
     storage.closed && return storage
-    close_err = nothing
-    try
-        close(storage.bin_io)
-    catch err
-        close_err = err
-        !quiet && !strict &&
-            @warn "MmapCSTapeStorage: bin close failed" exception = err
-    end
-    records_err = nothing
-    if close_err === nothing && !storage.finalised && storage.bin_staging_path !== nothing
-        try
-            _publish_records_generation!(storage)
-        catch err
-            records_err = err
-            !quiet && !strict &&
-                @warn "MmapCSTapeStorage: records publication failed" exception = err
-        end
-    end
     manifest_err = nothing
-    if close_err === nothing && records_err === nothing &&
-       !storage.finalised && isdir(storage.dir)
+    if !storage.finalised && isdir(storage.dir)
         try
             _write_manifest(storage)
             storage.finalised = true
@@ -485,9 +457,13 @@ function finalize_tape!(storage::MmapCSTapeStorage; quiet::Bool = false,
                 @warn "MmapCSTapeStorage: manifest emission failed" exception = err
         end
     end
-    if storage.bin_staging_path !== nothing
-        abandon_atomic_staging(storage.bin_staging_path)
-        storage.bin_staging_path = nothing
+    close_err = nothing
+    try
+        close(storage.bin_io)
+    catch err
+        close_err = err
+        !quiet && !strict &&
+            @warn "MmapCSTapeStorage: bin close failed" exception = err
     end
     # Drop the per-shape device cache so any device-resident buffers
     # are released promptly. This matters for long-running 4D-Var
@@ -503,48 +479,10 @@ function finalize_tape!(storage::MmapCSTapeStorage; quiet::Bool = false,
         end
     end
     if strict
-        close_err !== nothing && throw(close_err)
-        records_err !== nothing && throw(records_err)
         manifest_err !== nothing && throw(manifest_err)
+        close_err !== nothing && throw(close_err)
     end
     return storage
-end
-
-_file_sha256(path::AbstractString) = open(path, "r") do io
-    bytes2hex(sha256(io))
-end
-
-_io_sha256(io::IO) = begin
-    seekstart(io)
-    digest = bytes2hex(sha256(io))
-    seekstart(io)
-    digest
-end
-
-function _publish_records_generation!(storage::MmapCSTapeStorage)
-    staging = storage.bin_staging_path
-    staging === nothing && throw(ArgumentError(
-        "MmapCSTapeStorage at $(storage.dir) has no records staging file to publish"))
-    digest = _file_sha256(staging)
-    generation_path = joinpath(storage.dir, "records-$(digest).bin")
-
-    if isfile(generation_path)
-        # Identical content may legitimately recur. Never replace an existing
-        # content-addressed generation without first proving its name is true.
-        existing_size = filesize(generation_path)
-        existing_digest = _file_sha256(generation_path)
-        existing_size == storage.cursor && existing_digest == digest ||
-            throw(ArgumentError(
-                "existing mmap tape generation $(generation_path) does not match " *
-                "its content-addressed name/size"))
-        abandon_atomic_staging(staging)
-    else
-        commit_atomic_staging(staging, generation_path)
-    end
-    storage.bin_staging_path = nothing
-    storage.bin_path = generation_path
-    storage.records_sha256 = digest
-    return generation_path
 end
 
 # GC-driven close. Closes the IOStream and optionally removes the temp
@@ -559,14 +497,6 @@ function _mmap_storage_gc_close!(storage::MmapCSTapeStorage)
     catch
         # Finaliser must never throw.
     end
-    if storage.bin_staging_path !== nothing
-        try
-            abandon_atomic_staging(storage.bin_staging_path)
-        catch
-            # Finaliser must never throw.
-        end
-        storage.bin_staging_path = nothing
-    end
     storage.closed = true
     if storage.cleanup_on_finalize && isdir(storage.dir)
         try
@@ -578,18 +508,13 @@ function _mmap_storage_gc_close!(storage::MmapCSTapeStorage)
     return nothing
 end
 
-function _mmap_manifest(storage::MmapCSTapeStorage)
-    digest = storage.records_sha256
-    digest === nothing && throw(ArgumentError(
-        "cannot emit mmap tape manifest before publishing its records generation"))
+function _write_manifest(storage::MmapCSTapeStorage)
     meta = Dict{String, Any}(
         "version"             => _MMAP_TAPE_FORMAT_VERSION,
         "created_at"          => string(now()),
         "endianness"          => _machine_endianness(),
         "julia_version"       => string(VERSION),
         "total_bytes"         => storage.cursor,
-        "records_file"        => basename(storage.bin_path),
-        "records_sha256"      => digest,
         "record_count"        => length(storage.records),
         "finalised"           => true,
     )
@@ -602,15 +527,16 @@ function _mmap_manifest(storage::MmapCSTapeStorage)
             "shapes"  => [collect(s) for s in r.shapes],
         ) for r in storage.records
     ]
-    return Dict{String, Any}("meta" => meta, "record" => records)
-end
-
-function _write_manifest(storage::MmapCSTapeStorage)
-    manifest = _mmap_manifest(storage)
-    atomic_publish(storage.manifest_path) do tmp
-        open(tmp, "w") do io
-            TOML.print(io, manifest)
-        end
+    tmp_path, io = mktemp(storage.dir; cleanup = false)
+    try
+        TOML.print(io, Dict{String, Any}("meta" => meta, "record" => records))
+        flush(io)
+        close(io)
+        mv(tmp_path, storage.manifest_path; force = true)
+    catch
+        isopen(io) && close(io)
+        rm(tmp_path; force = true)
+        rethrow()
     end
     return storage.manifest_path
 end
@@ -660,7 +586,7 @@ function _parse_mmap_record(d::AbstractDict, cursor::Int64)
     end
     et = _parse_mmap_eltype(d["eltype"])
 
-    # Per-panel sanity: offsets and lengths must fit inside the records generation
+    # Per-panel sanity: offsets and lengths must fit inside records.bin
     # (cursor is meta.total_bytes), nbytes must agree with shape × sizeof(et),
     # and no field may be negative. Caught here at load time so the user
     # gets a tape-aware diagnostic rather than an opaque `Mmap.mmap` error
@@ -674,7 +600,7 @@ function _parse_mmap_record(d::AbstractDict, cursor::Int64)
         all(>=(0), shapes[p]) || throw(ArgumentError(
             "mmap tape record id=$(d["id"]) panel $(p) has negative-shape entry $(shapes[p])"))
         offsets[p] + nbytes[p] <= cursor || throw(ArgumentError(
-            "mmap tape record id=$(d["id"]) panel $(p) extends past records generation: " *
+            "mmap tape record id=$(d["id"]) panel $(p) extends past records.bin: " *
             "offset=$(offsets[p]) + nbytes=$(nbytes[p]) > total_bytes=$(cursor)"))
         expected = bytes_per_elt * Int64(prod(shapes[p]))
         nbytes[p] == expected || throw(ArgumentError(
@@ -688,11 +614,10 @@ end
     load_mmap_tape(dir; readonly = true) -> MmapCSTapeStorage
 
 Reopen a finalised `MmapCSTapeStorage` directory written by an earlier
-session. The loader parses `manifest.toml`, opens the immutable records
-generation named there, validates its exact size and SHA-256 together with
-the format version and machine endianness, and rebuilds the in-memory record
-table so callers can fetch slots via [`get_record`](@ref) and read them
-through `_tape_panels`.
+session. The loader parses `manifest.toml`, validates the format
+version and machine endianness, and rebuilds the in-memory record
+table so callers can fetch slots via [`get_record`](@ref) and read
+them through `_tape_panels`.
 
 The returned storage has `finalised = true` and `cleanup_on_finalize
 = false`; it never touches the on-disk files except through mmap reads
@@ -704,22 +629,23 @@ appends — appends are blocked by the `finalised` flag.
 
 Validation:
 
-* `manifest.toml` and the content-addressed records file it names must both
-  exist under `dir`.
+* `manifest.toml` and `records.bin` must both exist under `dir`.
 * Format version must equal `$(_MMAP_TAPE_FORMAT_VERSION)`.
 * Endianness must match the loading machine.
 * `meta.finalised` must be `true`; a torn tape from an interrupted
   run is rejected here (Phase B is responsible for repairing it).
-* The records file must be exactly `meta.total_bytes` long and its SHA-256
-  must equal `meta.records_sha256`; the cursor is restored from
-  `meta.total_bytes`.
+* `records.bin` must be at least `meta.total_bytes` long; the cursor
+  is restored from `meta.total_bytes`.
 """
 function load_mmap_tape(dir::AbstractString; readonly::Bool = true)
     isdir(dir) || throw(ArgumentError(
         "tape directory $(repr(dir)) does not exist"))
     manifest_path = joinpath(dir, "manifest.toml")
+    bin_path = joinpath(dir, "records.bin")
     isfile(manifest_path) || throw(ArgumentError(
         "tape directory $(repr(dir)) is missing manifest.toml"))
+    isfile(bin_path) || throw(ArgumentError(
+        "tape directory $(repr(dir)) is missing records.bin"))
 
     manifest = TOML.parsefile(manifest_path)
     haskey(manifest, "meta") || throw(ArgumentError(
@@ -746,23 +672,10 @@ function load_mmap_tape(dir::AbstractString; readonly::Bool = true)
     total_bytes isa Integer || throw(ArgumentError(
         "mmap tape manifest missing integer meta.total_bytes; got $(repr(total_bytes))"))
     cursor = Int64(total_bytes)
-
-    records_file = get(meta, "records_file", nothing)
-    records_file isa AbstractString || throw(ArgumentError(
-        "mmap tape manifest missing string meta.records_file; got $(repr(records_file))"))
-    digest = get(meta, "records_sha256", nothing)
-    digest isa AbstractString || throw(ArgumentError(
-        "mmap tape manifest missing string meta.records_sha256; got $(repr(digest))"))
-    occursin(r"^records-[0-9a-f]{64}\.bin$", records_file) || throw(ArgumentError(
-        "mmap tape manifest records filename $(repr(records_file)) is not a " *
-        "content-addressed records-<sha256>.bin basename"))
-    expected_name = "records-$(digest).bin"
-    records_file == expected_name || throw(ArgumentError(
-        "mmap tape manifest records_file $(repr(records_file)) disagrees with " *
-        "records_sha256 $(repr(digest))"))
-    bin_path = joinpath(dir, records_file)
-    isfile(bin_path) || throw(ArgumentError(
-        "tape directory $(repr(dir)) is missing records generation $(records_file)"))
+    file_size = filesize(bin_path)
+    file_size == cursor || throw(ArgumentError(
+        "mmap tape records.bin is $(file_size) bytes but manifest reports " *
+        "total_bytes = $(cursor); refusing a truncated or trailing-data tape"))
 
     raw_records = get(manifest, "record", Any[])
     raw_records isa AbstractVector || throw(ArgumentError(
@@ -780,24 +693,7 @@ function load_mmap_tape(dir::AbstractString; readonly::Bool = true)
     end
 
     mode = readonly ? "r" : "r+"
-    bin_io = open(bin_path, mode)
-    try
-        file_size = _mmap_file_size(bin_io)
-        file_size == cursor || throw(ArgumentError(
-            "mmap tape records generation $(records_file) is $(file_size) bytes " *
-            "but manifest reports total_bytes = $(cursor); refusing a truncated " *
-            "or trailing-data tape"))
-        actual_digest = _io_sha256(bin_io)
-        actual_digest == digest || throw(ArgumentError(
-            "mmap tape records generation $(records_file) has SHA-256 " *
-            "$(actual_digest), but manifest reports $(digest); refusing an " *
-            "inconsistent manifest/records pair"))
-        return MmapCSTapeStorage(dir, bin_path, bin_io, digest, records, cursor;
-                                 readonly = readonly)
-    catch
-        close(bin_io)
-        rethrow()
-    end
+    return MmapCSTapeStorage(dir, records, cursor; mode = mode)
 end
 
 """

@@ -5,7 +5,7 @@ Tape storage policies (device, pinned-host, mmap on disk), tape record types,
 and checkpoint schedules for the AtmosTransport.jl cubed-sphere adjoint
 pipeline.
 
-`Tape` depends only on the base-only `AtomicFiles` sibling module.
+`Tape` imports nothing from other AtmosTransport modules.
 `src/AtmosTransport.jl` loads it before `Adjoints`, which imports these names
 with `using ..Tape: ...`. The forward recorder, reverse loop and checkpoint
 drivers (`src/Footprint/`) and the 4D-Var code (`src/Inversion/`) are files
@@ -15,10 +15,6 @@ Module dependency order:
     Tape  →  Adjoints (includes Footprint/ and Inversion/ files)
 """
 module Tape
-
-using ..AtomicFiles: atomic_publish, open_atomic_staging,
-                     commit_atomic_staging, abandon_atomic_staging
-using SHA: sha256
 
 export AbstractCSTapeStorage,
        DeviceCSTapeStorage,

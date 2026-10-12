@@ -35,9 +35,8 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
     plain `Array`s; the CUDA extension overrides `_allocate_tape_slot` and
     `stage_panels!` for `CuArray` panels to use `CUDA.pin` memory.
   - `MmapCSTapeStorage(; dir, cleanup_on_finalize)` in
-    [`MmapTapeStorage.jl`](MmapTapeStorage.jl): appends payloads to a sibling
-    staging file, publishes an immutable `records-<sha256>.bin` generation,
-    then atomically swaps `manifest.toml` on `finalize_tape!`.
+    [`MmapTapeStorage.jl`](MmapTapeStorage.jl): appends payloads to
+    `records.bin` and writes `manifest.toml` on `finalize_tape!`.
 - Symbol resolution: `_tape_storage(:device | :pinned_host | :mmap)`.
   `_resolve_tape_path` and `_build_window_storage` turn the public
   `tape_storage` / `tape_path` kwargs into one storage per tape or window.
@@ -91,14 +90,10 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
   (`CSAdjointSupportedScheme`) happens where records are built and consumed.
 - `_CSLinRoodHorizRecord` is defined in `../Adjoints/LinRoodTape.jl` and is
   not part of `_CSTapeOp`; the reverse loop handles it in its own branch.
-- Mmap manifests select one immutable, finalised
-  `records-<sha256>.bin` generation and record its exact filename, size, and
-  SHA-256. Recording never removes the live manifest. Finalisation publishes
-  the new records generation first and switches generations with one atomic
-  manifest rename; older generation files remain available to readers that
-  already observed an old manifest. `load_mmap_tape` rejects tapes that are
-  not finalised, use another version or byte order, or whose selected records
-  filename, size, or digest disagrees with the manifest.
+- Mmap manifests describe one finalised `records.bin`. The recording
+  constructor deletes any old manifest before truncating the binary.
+  `load_mmap_tape` rejects tapes that are not finalised, use another version
+  or byte order, or whose file size differs from `meta.total_bytes`.
 - The manifest is written only by an explicit `finalize_tape!`. The GC
   finalizer only closes the file and deletes owned temp dirs.
 - Each mmap record stores its own eltype. The loader accepts only
@@ -125,6 +120,6 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
 - [`../../test/core/test_cs_stride_checkpoint.jl`](../../test/core/test_cs_stride_checkpoint.jl):
   Stride and Revolve parity against `FullCheckpoint`, window arithmetic
 - [`../../test/core/test_persistence_hardening.jl`](../../test/core/test_persistence_hardening.jl):
-  interrupted overwrites and readers spanning a generation publication
+  a stale manifest cannot validate a re-recorded tape
 - [`../../test/core/test_public_api_surface.jl`](../../test/core/test_public_api_surface.jl):
   `CSTapeSlot` is reachable but not exported at top level

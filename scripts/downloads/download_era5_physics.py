@@ -48,6 +48,7 @@ Requirements:
 """
 
 import argparse
+import math
 import os
 import sys
 from datetime import datetime, timedelta
@@ -116,11 +117,27 @@ def expected_grib_inventory(date_str, param_ids, convection):
     }
 
 
-def validate_grib(path, expected, label):
-    """Require exactly the requested parameter/date/time/step/level messages."""
-    from eccodes import codes_get_long, codes_grib_new_from_file, codes_release
+def regular_ll_shape(resolution):
+    """Return the global regular-lat/lon dimensions for a grid spacing."""
+    ni = round(360.0 / resolution)
+    nj_intervals = round(180.0 / resolution)
+    if (not math.isclose(ni * resolution, 360.0, rel_tol=0.0, abs_tol=1e-9)
+            or not math.isclose(nj_intervals * resolution, 180.0,
+                                rel_tol=0.0, abs_tol=1e-9)):
+        raise ValueError(
+            f"resolution {resolution} must divide both 360 and 180 degrees")
+    return ni, nj_intervals + 1
+
+
+def validate_grib(path, expected, label, resolution, convection):
+    """Require the requested inventory and regular model-level representation."""
+    from eccodes import (codes_get_double, codes_get_long, codes_get_string,
+                         codes_grib_new_from_file, codes_release)
 
     seen = set()
+    expected_ni, expected_nj = regular_ll_shape(resolution)
+    expected_data_type = "fc" if convection else "an"
+    expected_step_type = "avg" if convection else "instant"
     try:
         with open(path, "rb") as stream:
             while True:
@@ -135,8 +152,40 @@ def validate_grib(path, expected, label):
                         codes_get_long(gid, "step"),
                         codes_get_long(gid, "level"),
                     )
+                    representation = {
+                        "gridType": codes_get_string(gid, "gridType"),
+                        "typeOfLevel": codes_get_string(gid, "typeOfLevel"),
+                        "dataType": codes_get_string(gid, "dataType"),
+                        "stepType": codes_get_string(gid, "stepType"),
+                        "Ni": codes_get_long(gid, "Ni"),
+                        "Nj": codes_get_long(gid, "Nj"),
+                        "iDirectionIncrementInDegrees": codes_get_double(
+                            gid, "iDirectionIncrementInDegrees"),
+                        "jDirectionIncrementInDegrees": codes_get_double(
+                            gid, "jDirectionIncrementInDegrees"),
+                    }
                 finally:
                     codes_release(gid)
+                expected_representation = {
+                    "gridType": "regular_ll",
+                    "typeOfLevel": "hybrid",
+                    "dataType": expected_data_type,
+                    "stepType": expected_step_type,
+                    "Ni": expected_ni,
+                    "Nj": expected_nj,
+                }
+                for name, wanted in expected_representation.items():
+                    if representation[name] != wanted:
+                        raise ValueError(
+                            f"message {key} has {name}={representation[name]!r}; "
+                            f"expected {wanted!r}")
+                for name in ("iDirectionIncrementInDegrees",
+                             "jDirectionIncrementInDegrees"):
+                    if not math.isclose(representation[name], resolution,
+                                        rel_tol=0.0, abs_tol=1e-9):
+                        raise ValueError(
+                            f"message {key} has {name}={representation[name]!r}; "
+                            f"expected {resolution!r}")
                 if key in seen:
                     raise ValueError(f"duplicate GRIB message {key}")
                 seen.add(key)
@@ -151,15 +200,19 @@ def validate_grib(path, expected, label):
         return False
 
 
-def retrieve_grib_atomic(client, request, grib_path, expected, label):
-    if os.path.isfile(grib_path) and validate_grib(grib_path, expected, label):
+def retrieve_grib_atomic(client, request, grib_path, expected, label,
+                         resolution, convection):
+    if (os.path.isfile(grib_path)
+            and validate_grib(grib_path, expected, label,
+                              resolution, convection)):
         return
     part_path = grib_path + ".part"
     if os.path.exists(part_path):
         os.remove(part_path)
     try:
         client.retrieve("reanalysis-era5-complete", request, part_path)
-        if not validate_grib(part_path, expected, label):
+        if not validate_grib(part_path, expected, label,
+                             resolution, convection):
             raise RuntimeError("downloaded GRIB failed inventory validation")
         os.replace(part_path, grib_path)
     except Exception:
@@ -168,8 +221,8 @@ def retrieve_grib_atomic(client, request, grib_path, expected, label):
         raise
 
 
-def validate_netcdf(path, canonical_names, convection):
-    """Validate canonical variables, 24 valid times, and all 137 levels."""
+def validate_netcdf(path, canonical_names, convection, date_str, resolution):
+    """Validate variables, times, levels, and the requested representation."""
     import numpy as np
     import xarray as xr
 
@@ -189,12 +242,38 @@ def validate_netcdf(path, canonical_names, convection):
             if levels != set(range(1, 138)):
                 raise ValueError("model levels are not exactly 1..137")
 
+        expected_ni, expected_nj = regular_ll_shape(resolution)
+        if "latitude" not in ds.coords or "longitude" not in ds.coords:
+            raise ValueError("missing latitude/longitude coordinates")
+        latitude = np.asarray(ds["latitude"]).reshape(-1)
+        longitude = np.asarray(ds["longitude"]).reshape(-1)
+        if latitude.size != expected_nj or longitude.size != expected_ni:
+            raise ValueError(
+                f"expected regular_ll dimensions latitude={expected_nj}, "
+                f"longitude={expected_ni}; got latitude={latitude.size}, "
+                f"longitude={longitude.size}")
+        if (not np.allclose(np.sort(latitude),
+                            np.linspace(-90.0, 90.0, expected_nj),
+                            rtol=0.0, atol=1e-9)
+                or not np.allclose(np.sort(np.mod(longitude, 360.0)),
+                                   np.arange(expected_ni) * resolution,
+                                   rtol=0.0, atol=1e-9)):
+            raise ValueError(
+                f"latitude/longitude coordinates do not describe the requested "
+                f"global {resolution}-degree regular_ll grid")
+
         if "valid_time" not in ds.variables:
             raise ValueError("missing valid_time coordinate")
-        valid_time = np.asarray(ds["valid_time"]).reshape(-1)
-        if valid_time.size != 24 or np.unique(valid_time).size != 24:
+        valid_time = np.asarray(ds["valid_time"]).astype("datetime64[ns]").reshape(-1)
+        start_hour = 7 if convection else 0
+        expected_valid_time = (
+            np.datetime64(date_str, "ns")
+            + np.arange(start_hour, start_hour + 24).astype("timedelta64[h]"))
+        if (valid_time.size != 24
+                or not np.array_equal(np.sort(valid_time), expected_valid_time)):
             raise ValueError(
-                f"expected 24 distinct valid times, got {np.unique(valid_time).size}")
+                f"valid times do not exactly match the 24 requested hours for "
+                f"{date_str}")
 
         expected_time_dims = {"time", "step"} if convection else {"time"}
         if convection and (ds.sizes.get("time") != 2 or ds.sizes.get("step") != 12):
@@ -202,10 +281,25 @@ def validate_netcdf(path, canonical_names, convection):
                 f"expected convection layout time=2, step=12; sizes={dict(ds.sizes)}")
         if not convection and ds.sizes.get("time") != 24:
             raise ValueError(f"expected thermodynamics time=24; sizes={dict(ds.sizes)}")
+        expected_attrs = {
+            "GRIB_gridType": "regular_ll",
+            "GRIB_typeOfLevel": "hybrid",
+            "GRIB_dataType": "fc" if convection else "an",
+            "GRIB_stepType": "avg" if convection else "instant",
+        }
+        latitude_dim = ds["latitude"].dims[0]
+        longitude_dim = ds["longitude"].dims[0]
         for name in canonical_names:
             dims = set(ds[name].dims)
-            if level_dim not in dims or not expected_time_dims.issubset(dims):
+            required_dims = expected_time_dims | {
+                level_dim, latitude_dim, longitude_dim}
+            if not required_dims.issubset(dims):
                 raise ValueError(f"variable {name} has incomplete dimensions {ds[name].dims}")
+            for attr, wanted in expected_attrs.items():
+                actual = ds[name].attrs.get(attr)
+                if actual != wanted:
+                    raise ValueError(
+                        f"variable {name} has {attr}={actual!r}; expected {wanted!r}")
         return True
     except Exception as exc:
         print(f"    INVALID NetCDF {os.path.basename(path)}: {exc}")
@@ -216,7 +310,7 @@ def validate_netcdf(path, canonical_names, convection):
 
 
 def grib_to_netcdf_by_param(grib_path, nc_path, param_ids, canonical_names,
-                            convection):
+                            convection, date_str, resolution):
     """Convert GRIB to NetCDF, extracting variables by paramId and renaming.
 
     Each paramId is opened separately via filter_by_keys to handle cases
@@ -251,7 +345,8 @@ def grib_to_netcdf_by_param(grib_path, nc_path, param_ids, canonical_names,
                 f"requested {sorted(canonical_names)}")
         encoding = {v: {"zlib": True, "complevel": 4} for v in merged.data_vars}
         merged.to_netcdf(part_path, encoding=encoding)
-        if not validate_netcdf(part_path, canonical_names, convection):
+        if not validate_netcdf(part_path, canonical_names, convection,
+                               date_str, resolution):
             raise RuntimeError("temporary NetCDF failed completeness validation")
         os.replace(part_path, nc_path)
     except Exception:
@@ -276,7 +371,9 @@ def download_convection(client, date_str, resolution, outdir, keep_grib):
     grib_path = nc_path.replace(".nc", ".grib")
 
     canonical_names = list(CONVECTION_PARAMS.values())
-    if os.path.isfile(nc_path) and validate_netcdf(nc_path, canonical_names, True):
+    if (os.path.isfile(nc_path)
+            and validate_netcdf(nc_path, canonical_names, True,
+                                date_str, resolution)):
         sz = os.path.getsize(nc_path) / 1e6
         print(f"  SKIP convection (validated, {sz:.1f} MB): {os.path.basename(nc_path)}")
         return
@@ -297,14 +394,14 @@ def download_convection(client, date_str, resolution, outdir, keep_grib):
     }
     expected = expected_grib_inventory(date_str, CONVECTION_PARAMS, True)
     retrieve_grib_atomic(client, request, grib_path, expected,
-                         f"convection {date_str}")
+                         f"convection {date_str}", resolution, True)
     sz = os.path.getsize(grib_path) / 1e6
     print(f"    GRIB validated: {os.path.basename(grib_path)} ({sz:.1f} MB)")
 
     grib_to_netcdf_by_param(
         grib_path, nc_path,
         list(CONVECTION_PARAMS.keys()),
-        canonical_names, True)
+        canonical_names, True, date_str, resolution)
 
     if not keep_grib and os.path.exists(grib_path):
         os.remove(grib_path)
@@ -316,7 +413,9 @@ def download_thermodynamics(client, date_str, resolution, outdir, keep_grib):
     grib_path = nc_path.replace(".nc", ".grib")
 
     canonical_names = list(THERMO_PARAMS.values())
-    if os.path.isfile(nc_path) and validate_netcdf(nc_path, canonical_names, False):
+    if (os.path.isfile(nc_path)
+            and validate_netcdf(nc_path, canonical_names, False,
+                                date_str, resolution)):
         sz = os.path.getsize(nc_path) / 1e6
         print(f"  SKIP thermodynamics (validated, {sz:.1f} MB): {os.path.basename(nc_path)}")
         return
@@ -336,17 +435,35 @@ def download_thermodynamics(client, date_str, resolution, outdir, keep_grib):
     }
     expected = expected_grib_inventory(date_str, THERMO_PARAMS, False)
     retrieve_grib_atomic(client, request, grib_path, expected,
-                         f"thermodynamics {date_str}")
+                         f"thermodynamics {date_str}", resolution, False)
     sz = os.path.getsize(grib_path) / 1e6
     print(f"    GRIB validated: {os.path.basename(grib_path)} ({sz:.1f} MB)")
 
     grib_to_netcdf_by_param(
         grib_path, nc_path,
         list(THERMO_PARAMS.keys()),
-        canonical_names, False)
+        canonical_names, False, date_str, resolution)
 
     if not keep_grib and os.path.exists(grib_path):
         os.remove(grib_path)
+
+
+def output_group_available(outdir, dates, resolution, convection):
+    """Return whether every requested day has a valid output for one group."""
+    if convection:
+        prefix = "era5_convection_"
+        canonical_names = list(CONVECTION_PARAMS.values())
+    else:
+        prefix = "era5_thermo_ml_"
+        canonical_names = list(THERMO_PARAMS.values())
+    for dt in dates:
+        date_str = dt.strftime("%Y-%m-%d")
+        path = os.path.join(outdir, f"{prefix}{dt.strftime('%Y%m%d')}.nc")
+        if (not os.path.isfile(path)
+                or not validate_netcdf(path, canonical_names, convection,
+                                       date_str, resolution)):
+            return False
+    return True
 
 
 # ── Main ──────────────────────────────────────────────────────────────────
@@ -360,6 +477,11 @@ def main():
         return 2
     if args.resolution <= 0:
         print("ERROR: --resolution must be positive", file=sys.stderr)
+        return 2
+    try:
+        regular_ll_shape(args.resolution)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     outdir = os.path.expanduser(args.outdir)
     os.makedirs(outdir, exist_ok=True)
@@ -433,13 +555,24 @@ def main():
         return 1
 
     print(f"\nDone! Downloaded and validated {n_days} days to {outdir}")
-    if do_conv:
+    dates = list(date_range(start, end_date))
+    convection_available = output_group_available(
+        outdir, dates, args.resolution, True)
+    thermodynamics_available = output_group_available(
+        outdir, dates, args.resolution, False)
+    if convection_available and thermodynamics_available:
         print("\nNext steps for convection:")
         print("  julia --project=. scripts/preprocessing/convert_era5_physics_nc_to_bin.jl \\")
         print(f"      --nc-dir {outdir} --bin-dir <BIN_DIR> \\")
         print(f"      --start {args.start} --end {args.end}")
         print("  The converter also needs the convection download for the day before --start.")
         print("  Then set [convection] type = \"tm5\" in your run config.")
+    elif convection_available:
+        print("\nThermodynamics are required before running the convection converter:")
+        print("  python3 scripts/downloads/download_era5_physics.py \\")
+        print(f"      --start {args.start} --end {args.end} \\")
+        print(f"      --outdir {outdir} --resolution {args.resolution} \\")
+        print("      --fields thermodynamics")
     return 0
 
 

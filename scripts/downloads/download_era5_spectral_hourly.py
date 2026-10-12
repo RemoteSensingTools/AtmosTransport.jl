@@ -9,7 +9,8 @@ import sys
 import time as _time
 
 import cdsapi
-from eccodes import codes_get_long, codes_grib_new_from_file, codes_release
+from eccodes import (codes_get_long, codes_get_string,
+                     codes_grib_new_from_file, codes_release)
 
 OUTDIR = os.path.expanduser("~/data/AtmosTransport/met/era5/spectral_hourly")
 
@@ -30,7 +31,7 @@ def expected_inventory(date, param_ids, levels):
 
 
 def validate_grib(path, expected, label):
-    """Require exactly the requested parameter/date/time/step/level messages."""
+    """Require the requested inventory and native T639 spectral representation."""
     seen = set()
     count = 0
     try:
@@ -47,8 +48,35 @@ def validate_grib(path, expected, label):
                         codes_get_long(gid, "step"),
                         codes_get_long(gid, "level"),
                     )
+                    representation = {
+                        "edition": codes_get_long(gid, "edition"),
+                        "gridType": codes_get_string(gid, "gridType"),
+                        "typeOfLevel": codes_get_string(gid, "typeOfLevel"),
+                        "dataType": codes_get_string(gid, "dataType"),
+                        "stepType": codes_get_string(gid, "stepType"),
+                        "packingType": codes_get_string(gid, "packingType"),
+                        "J": codes_get_long(gid, "J"),
+                        "K": codes_get_long(gid, "K"),
+                        "M": codes_get_long(gid, "M"),
+                    }
                 finally:
                     codes_release(gid)
+                expected_representation = {
+                    "edition": 1,
+                    "gridType": "sh",
+                    "typeOfLevel": "hybrid",
+                    "dataType": "an",
+                    "stepType": "instant",
+                    "packingType": "spectral_complex",
+                    "J": 639,
+                    "K": 639,
+                    "M": 639,
+                }
+                for name, wanted in expected_representation.items():
+                    if representation[name] != wanted:
+                        raise ValueError(
+                            f"message {key} has {name}={representation[name]!r}; "
+                            f"expected {wanted!r}")
                 count += 1
                 if key in seen:
                     raise ValueError(f"duplicate GRIB message {key}")
