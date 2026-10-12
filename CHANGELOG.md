@@ -57,10 +57,11 @@
   `capture_structured_wind_flux_samples` takes a `StructuredFidelitySampler`
   and `capture_faceindexed_flux_samples` the sampled faces and values. In the
   header and its typed form, `omega_fidelity_limit` is replaced by
-  `omega_fidelity_nrmse_limit`, `omega_fidelity_correlation_min` and
-  `omega_fidelity_slope_min` (`OmegaFidelityHeader.nrmse_limit`,
-  `.correlation_min`, `.slope_min`), and `FluxFidelityHeader` gains
-  `time_sampling_by_window`.
+  `omega_fidelity_nrmse_limit`, `omega_fidelity_correlation_min`,
+  `omega_fidelity_slope_min` and `omega_fidelity_slope_max`
+  (`OmegaFidelityHeader.nrmse_limit`, `.correlation_min`, `.slope_min`,
+  `.slope_max`; `OmegaFidelityBaseline` gains `slope_max`), and
+  `FluxFidelityHeader` gains `time_sampling_by_window`.
 
 - Removed the deprecated, unused `State.MetState`,
   `diagnose_cm_from_continuity_vc!`, and
@@ -212,9 +213,12 @@
   written when a sample exceeds both `64 ε max(F_scale, 1 kg)` and
   `256 ε` relative; the balance correction is reported separately. Where
   source OMEGA is open (MERRA-2; GEOS OMEGA closures), `ω_cm = g cm/(A Δt)`
-  must beat a zero vertical flux, `NRMSE < 1`, with correlation `> 0.5` and a
-  positive slope (MERRA-2 C90: 0.47, 0.89, 0.87); a failure quarantines the
-  staged file. Native GEOS fluxes have no independent source and are certified
+  must beat a zero vertical flux, `NRMSE < 1`, with correlation `> 0.5` and
+  slope `0.5 < s < 1.5` (MERRA-2 C90: 0.47, 0.89, 0.87; baselines
+  `merra2_wind_omega_v3`, `geos_native_omega_v3`); a failure quarantines the
+  staged file. The two-sided slope bound rejects a `cm` that is uniformly a
+  factor 2 or more too large or too small (an amount or time-convention
+  error), which NRMSE and correlation alone accept down to 1/20. Native GEOS fluxes have no independent source and are certified
   `not_applicable` (`native_fluxes_not_rederivable`, balance correction only);
   payload-only paths say `source_payload_only`. The checks evaluate only the
   sampled faces (lat-lon columns, at most 32 reduced-Gaussian latitude lines,

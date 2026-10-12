@@ -134,10 +134,24 @@ const OMEGA_FIDELITY_CORRELATION_MIN = 0.5
 
 """
 Write-time OMEGA-fidelity gate: the regression slope of `ω_cm` on the source
-OMEGA must be positive (MERRA-2 wind-derived C90: 0.865); a zero or
-sign-flipped `cm` fails.
+OMEGA must exceed 0.5 (and stay below `OMEGA_FIDELITY_SLOPE_MAX`). An amount
+or time-convention error (`2n` against `n` substeps, the 8× `mass_flux_dt`
+error, a factor `g`) scales `cm` uniformly: it scales the slope by the same
+factor but leaves the correlation unchanged, and NRMSE stays below 1 for
+factors down to 1/20, so only a bound on the slope catches it. MERRA-2
+wind-derived C90 measures 0.865 (2022-01 golden); `0.5 = 0.865/1.73` and
+`OMEGA_FIDELITY_SLOPE_MAX = 1.5 = 0.865 × 1.73` are symmetric about it in
+log space, so a factor-2 error (slope 0.43 or 1.73) fails. Zero and
+sign-flipped `cm` fail too.
 """
-const OMEGA_FIDELITY_SLOPE_MIN = 0.0
+const OMEGA_FIDELITY_SLOPE_MIN = 0.5
+
+"""
+Write-time OMEGA-fidelity gate: the regression slope of `ω_cm` on the source
+OMEGA must stay below 1.5 (see `OMEGA_FIDELITY_SLOPE_MIN`: a `cm` twice too
+large has slope 1.73 at MERRA-2 C90).
+"""
+const OMEGA_FIDELITY_SLOPE_MAX = 1.5
 
 """
 Replay-check tolerance for Float64 transport-binary data. The check replays each
@@ -174,7 +188,7 @@ export DEFAULT_CFL_LIMIT, DEFAULT_POSITIVITY_CFL_LIMIT, DEFAULT_SUBSTEP_CFL_TARG
        DEFAULT_MAX_STEPS_PER_WINDOW, ADAPTIVE_SUBSTEP_MAX_REFINEMENTS, DEFAULT_POISSON_BALANCE_TOL,
        DEFAULT_POISSON_BALANCE_MAX_ITER, DEFAULT_POISSON_PROJECT_EVERY, HORIZONTAL_BALANCE_TAG,
        HYBRID_LAYER_MIN_DB, COLUMN_CLOSURE_TOL_KG, OMEGA_FIDELITY_NRMSE_LIMIT, OMEGA_FIDELITY_CORRELATION_MIN,
-       OMEGA_FIDELITY_SLOPE_MIN,
+       OMEGA_FIDELITY_SLOPE_MIN, OMEGA_FIDELITY_SLOPE_MAX,
        DEFAULT_GEOS_SMOOTHING_WEIGHT,
        DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG, DEFAULT_LINROOD_PPM_ORDER,
        REPLAY_TOLERANCE_FLOAT64, REPLAY_TOLERANCE_FLOAT32

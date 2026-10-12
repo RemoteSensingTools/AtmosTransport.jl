@@ -117,7 +117,7 @@ end
 Typed source-OMEGA certificate decoded from the flat binary header. A
 `FidelityPassed` certificate has samples, finite metrics, `passed == true` and
 satisfies its own gates: `nrmse < nrmse_limit`, `correlation >
-correlation_min`, `slope > slope_min`.
+correlation_min`, `slope_min < slope < slope_max`.
 """
 struct OmegaFidelityHeader{S<:AbstractFidelityStatus}
     status::S
@@ -139,6 +139,7 @@ struct OmegaFidelityHeader{S<:AbstractFidelityStatus}
     nrmse_limit::Union{Nothing,Float64}
     correlation_min::Union{Nothing,Float64}
     slope_min::Union{Nothing,Float64}
+    slope_max::Union{Nothing,Float64}
     passed::Union{Nothing,Bool}
 end
 
@@ -312,7 +313,7 @@ const _OMEGA_FIDELITY_METRIC_KEYS = (
     :omega_fidelity_bias_pa_s, :omega_fidelity_rmse_pa_s, :omega_fidelity_nrmse,
     :omega_fidelity_max_abs_pa_s, :omega_fidelity_slope, :omega_fidelity_correlation,
     :omega_fidelity_bottom_residual_pa_s, :omega_fidelity_nrmse_limit,
-    :omega_fidelity_correlation_min, :omega_fidelity_slope_min)
+    :omega_fidelity_correlation_min, :omega_fidelity_slope_min, :omega_fidelity_slope_max)
 
 function _require_finite_keys(hdr, keys, what::AbstractString)
     for key in keys
@@ -470,7 +471,8 @@ function _check_omega_status(::FidelityPassed, hdr)
     slope = Float64(hdr.omega_fidelity_slope)
     nrmse < Float64(hdr.omega_fidelity_nrmse_limit) &&
         correlation > Float64(hdr.omega_fidelity_correlation_min) &&
-        slope > Float64(hdr.omega_fidelity_slope_min) || throw(ArgumentError(
+        Float64(hdr.omega_fidelity_slope_min) < slope < Float64(hdr.omega_fidelity_slope_max) ||
+        throw(ArgumentError(
         "passed OMEGA-fidelity certificate violates its own gates: nrmse=$nrmse, " *
         "correlation=$correlation, slope=$slope"))
     return nothing
@@ -500,7 +502,7 @@ function _parse_omega_fidelity_header(hdr)
     if !haskey(hdr, :omega_fidelity_status)
         return OmegaFidelityHeader(FidelityUnavailable(), FidelityReason("legacy_header_missing"),
             "", "", "", 0, nothing, nothing, nothing, nothing, nothing, nothing,
-            nothing, String[], Float64[], "", nothing, nothing, nothing, nothing)
+            nothing, String[], Float64[], "", nothing, nothing, nothing, nothing, nothing)
     end
     status = _parse_fidelity_status(hdr.omega_fidelity_status)
     reason = haskey(hdr, :omega_fidelity_reason) ? FidelityReason(String(hdr.omega_fidelity_reason)) : nothing
@@ -532,6 +534,7 @@ function _parse_omega_fidelity_header(hdr)
         _optional_float(hdr, :omega_fidelity_nrmse_limit),
         _optional_float(hdr, :omega_fidelity_correlation_min),
         _optional_float(hdr, :omega_fidelity_slope_min),
+        _optional_float(hdr, :omega_fidelity_slope_max),
         haskey(hdr, :omega_fidelity_passed) ? Bool(hdr.omega_fidelity_passed) : nothing)
 end
 

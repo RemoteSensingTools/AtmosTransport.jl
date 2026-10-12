@@ -257,15 +257,16 @@ end
         @test size(work.fidelity_native) == (length(work.fidelity_sampler.faces), 1)
     end
 
-    @testset "OMEGA gate: NRMSE < 1, correlation > 0.5, slope > 0" begin
+    @testset "OMEGA gate: NRMSE < 1, correlation > 0.5, 0.5 < slope < 1.5" begin
         good, err = omega_header((src, k, rng) -> 0.9src + 0.02randn(rng))
         @test err === nothing
         @test good["omega_fidelity_status"] == "passed"
         @test good["omega_fidelity_nrmse"] < 1
         @test good["omega_fidelity_nrmse_limit"] == AtmosTransport.Parameters.OMEGA_FIDELITY_NRMSE_LIMIT
         @test good["omega_fidelity_correlation_min"] == 0.5
-        @test good["omega_fidelity_slope_min"] == 0.0
-        @test good["omega_fidelity_baseline_id"] == "merra2_wind_omega_v2"
+        @test good["omega_fidelity_slope_min"] == 0.5
+        @test good["omega_fidelity_slope_max"] == 1.5
+        @test good["omega_fidelity_baseline_id"] == "merra2_wind_omega_v3"
         @test parse_omega(good).status isa MD.FidelityPassed
         # Zero, sign-flipped and level-flipped vertical transport fail.
         for (label, candidate) in (("zero", (src, k, rng) -> 0.0),
@@ -276,6 +277,46 @@ end
             @test h["omega_fidelity_status"] == "failed"
             @test h["omega_fidelity_reason"] == "baseline_gate_failed"
             @test h["omega_fidelity_passed"] === false
+            @test parse_omega(h).status isa MD.FidelityFailed
+        end
+        # A uniformly mis-scaled `cm` (an amount or time-convention error: 2n
+        # against n substeps, the 8× `mass_flux_dt` error) keeps the
+        # correlation and, when too small, NRMSE < 1; only the two-sided slope
+        # bound rejects it. Source and noise tuned to the MERRA-2 C90 golden
+        # (slope 0.865, NRMSE 0.47, r 0.89), through the production accumulator.
+        rng = Xoshiro(1)
+        src = 0.1 .* randn(rng, 20_000)
+        noise = 0.0436 .* randn(rng, 20_000)
+        function scaled_cm_header(scale)
+            samples = [Pre.OmegaFidelitySample{Float64}(s, scale * (0.865s + e), 500.0, 0.0)
+                       for (s, e) in zip(src, noise)]
+            evidence = Pre.SourceOmegaEvidence{CS,Float64,typeof(samples)}(
+                samples, "fixture", "instantaneous", "dry", Pre.MERRA2_WIND_OMEGA_BASELINE)
+            acc = Pre.FluxFidelityAccumulator()
+            Pre.verify_flux_fidelity!(acc, Pre.FluxFidelityEvidenceBundle(
+                Pre.NoFluxFidelityEvidence{CS,Float64,Pre.SourceHasNoWinds}(Pre.SourceHasNoWinds()),
+                evidence, Pre.NoColumnClosureRecord()), 1)
+            header = Dict{String,Any}()
+            err = try
+                Pre.flux_fidelity_header!(header, acc)
+                nothing
+            catch e
+                e
+            end
+            return header, err
+        end
+        unscaled, err = scaled_cm_header(1.0)
+        @test err === nothing
+        @test unscaled["omega_fidelity_slope"] ≈ 0.865 atol = 0.02
+        @test unscaled["omega_fidelity_nrmse"] ≈ 0.47 atol = 0.03
+        @test parse_omega(unscaled).status isa MD.FidelityPassed
+        for scale in (2.0, 0.5, 1 / 8)
+            h, e = scaled_cm_header(scale)
+            @test e isa ArgumentError
+            @test h["omega_fidelity_status"] == "failed"
+            @test h["omega_fidelity_correlation"] > 0.5
+            @test scale > 1 || h["omega_fidelity_nrmse"] < 1
+            @test !(0.5 < h["omega_fidelity_slope"] < 1.5)
             @test parse_omega(h).status isa MD.FidelityFailed
         end
         zero_header, _ = omega_header((src, k, rng) -> 0.0)
@@ -394,6 +435,8 @@ end
                        h -> h["omega_fidelity_nrmse"] = 1.2,
                        h -> h["omega_fidelity_correlation"] = 0.2,
                        h -> h["omega_fidelity_slope"] = -0.1,
+                       h -> h["omega_fidelity_slope"] = 1.6,
+                       h -> delete!(h, "omega_fidelity_slope_max"),
                        h -> delete!(h, "omega_fidelity_nrmse_limit"),
                        h -> (delete!(h, "omega_fidelity_pressure_bands_hpa");
                              delete!(h, "omega_fidelity_band_nrmse")),

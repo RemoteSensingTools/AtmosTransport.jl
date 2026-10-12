@@ -80,7 +80,9 @@ other AtmosTransport modules; every later module may import from it.
     and of the `cm` residual check (binding for Float64 payloads)
   - write-time OMEGA-fidelity gate of transport binaries:
     `OMEGA_FIDELITY_NRMSE_LIMIT` (1.0, the score of a zero `cm`),
-    `OMEGA_FIDELITY_CORRELATION_MIN` (0.5) and `OMEGA_FIDELITY_SLOPE_MIN` (0)
+    `OMEGA_FIDELITY_CORRELATION_MIN` (0.5), `OMEGA_FIDELITY_SLOPE_MIN` (0.5) and
+    `OMEGA_FIDELITY_SLOPE_MAX` (1.5; the slope bounds reject a uniformly
+    mis-scaled `cm`)
   - transport-binary replay check: `REPLAY_TOLERANCE_FLOAT64` (1e-12) and
     `REPLAY_TOLERANCE_FLOAT32` (1e-5), the largest accepted per-cell budget
     residual relative to the summed magnitudes of the budget's terms

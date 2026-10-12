@@ -498,18 +498,26 @@ slope, correlation, bottom residual, and NRMSE in the surface–700, 700–300,
 300–100, 100–10, and below-10 hPa bands, with
 `NRMSE = RMS(ω_cm − ω_src)/RMS(ω_src)`. It passes only when it has samples,
 every metric is finite, and the named, versioned per-path baseline
-(`omega_fidelity_baseline_id`: `merra2_wind_omega_v2`, `geos_native_omega_v2`)
+(`omega_fidelity_baseline_id`: `merra2_wind_omega_v3`, `geos_native_omega_v3`)
 holds all three gates, recorded in the header:
 
 - `NRMSE < 1.0` (`omega_fidelity_nrmse_limit`): `NRMSE = 1` is the score of
   `cm ≡ 0`, so the stored vertical transport must be closer to the source than
   none at all;
 - correlation `> 0.5` (`omega_fidelity_correlation_min`);
-- slope `> 0` (`omega_fidelity_slope_min`).
+- `0.5 < slope < 1.5` (`omega_fidelity_slope_min`, `omega_fidelity_slope_max`),
+  the least-squares slope of `ω_cm` on `ω_src`.
 
 A zero `cm` (NRMSE 1, r 0), a sign-flipped one (NRMSE ≈ 2, r = −1) and a
 level-flipped one (NRMSE ≈ 1.4) fail; MERRA-2 wind-derived C90 measures NRMSE
-0.47, r 0.89, slope 0.87 (2.1× margin). An aggregate failure writes a `failed`
+0.47, r 0.89, slope 0.87 (2.1× margin). The slope bounds catch an amount or
+time-convention error (`2n` against `n` substeps, the 8× `mass_flux_dt` error,
+a factor `g`): it scales `cm` uniformly, which scales the slope by the same
+factor `s` but leaves the correlation unchanged, and NRMSE stays below 1 for
+`s` down to 1/20 (on a source with the MERRA-2 C90 statistics: NRMSE 0.61 at
+`s = 1/2`, 0.89 at 1/8). The bounds are symmetric about the measured 0.865 in
+log space (`0.865/1.73` and `0.865 × 1.73`), so `s = 2` (slope 1.73) and
+`s = 1/2` (0.43) fail. An aggregate failure writes a `failed`
 certificate (`omega_fidelity_passed = false`) and quarantines the staged file.
 MERRA-2 compares the OMEGA of its winds collection (`tavg3` block mean or
 `inst3` block start, recorded in `omega_fidelity_source`/`_sampling`) on the

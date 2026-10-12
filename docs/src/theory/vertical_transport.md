@@ -413,8 +413,9 @@ When source OMEGA is available, write-time certification additionally compares
 it with `ω_cm = g cm/(A_cell Δt_amount)` after matching dry `(1-q)` basis,
 time sampling, horizontal grid, and vertical levels. The header reports global
 and pressure-band errors against a named per-source baseline, which passes only
-with `NRMSE < 1` (the score of `cm ≡ 0`), correlation `> 0.5` and slope `> 0`
-(MERRA-2 C90: 0.47, 0.89, 0.87). This is a
+with `NRMSE < 1` (the score of `cm ≡ 0`), correlation `> 0.5` and
+`0.5 < slope < 1.5` (MERRA-2 C90: 0.47, 0.89, 0.87; the slope bounds reject a
+`cm` that is uniformly a factor 2 or more too small or too large). This is a
 physical-fidelity diagnostic distinct from replay closure: replay asks whether
 the stored arrays conserve mass together, while OMEGA asks whether their
 vertical motion agrees with an independent meteorological field.

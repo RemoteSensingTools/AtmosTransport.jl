@@ -110,31 +110,34 @@ struct OmegaFidelitySample{FT}
 end
 
 """
-    OmegaFidelityBaseline(id; nrmse_limit, correlation_min, slope_min)
+    OmegaFidelityBaseline(id; nrmse_limit, correlation_min, slope_min, slope_max)
 
 Named, versioned acceptance gates of a path's OMEGA comparison. A certificate
 passes when it has samples, every metric is finite, `NRMSE < nrmse_limit`,
-correlation `> correlation_min` and slope `> slope_min`; the defaults are
-`OMEGA_FIDELITY_NRMSE_LIMIT`, `OMEGA_FIDELITY_CORRELATION_MIN` and
-`OMEGA_FIDELITY_SLOPE_MIN` (Parameters).
+correlation `> correlation_min` and `slope_min < slope < slope_max`; the
+defaults are `OMEGA_FIDELITY_NRMSE_LIMIT`, `OMEGA_FIDELITY_CORRELATION_MIN`,
+`OMEGA_FIDELITY_SLOPE_MIN` and `OMEGA_FIDELITY_SLOPE_MAX` (Parameters).
 """
 struct OmegaFidelityBaseline
     id::String
     nrmse_limit::Float64
     correlation_min::Float64
     slope_min::Float64
+    slope_max::Float64
 end
 OmegaFidelityBaseline(id::AbstractString;
                       nrmse_limit::Real = OMEGA_FIDELITY_NRMSE_LIMIT,
                       correlation_min::Real = OMEGA_FIDELITY_CORRELATION_MIN,
-                      slope_min::Real = OMEGA_FIDELITY_SLOPE_MIN) =
+                      slope_min::Real = OMEGA_FIDELITY_SLOPE_MIN,
+                      slope_max::Real = OMEGA_FIDELITY_SLOPE_MAX) =
     OmegaFidelityBaseline(String(id), Float64(nrmse_limit), Float64(correlation_min),
-                          Float64(slope_min))
+                          Float64(slope_min), Float64(slope_max))
 
 # Per-path baselines. MERRA-2 wind-derived C90 measures NRMSE 0.47, r 0.886,
-# slope 0.865 (2022-01 golden); GEOS OMEGA closures use the same gates.
-const MERRA2_WIND_OMEGA_BASELINE = OmegaFidelityBaseline("merra2_wind_omega_v2")
-const GEOS_NATIVE_OMEGA_BASELINE = OmegaFidelityBaseline("geos_native_omega_v2")
+# slope 0.865 (2022-01 golden); GEOS OMEGA closures use the same gates, which
+# no golden measures yet. v3: the slope is bounded on both sides.
+const MERRA2_WIND_OMEGA_BASELINE = OmegaFidelityBaseline("merra2_wind_omega_v3")
+const GEOS_NATIVE_OMEGA_BASELINE = OmegaFidelityBaseline("geos_native_omega_v3")
 
 struct SourceOmegaEvidence{G,FT,S} <: AbstractOmegaFidelityEvidence{G,FT}
     samples::S
@@ -718,7 +721,7 @@ function _write_omega_certificate!(header::AbstractDict, acc::FluxFidelityAccumu
                correlation, acc.omega_bottom_max)
     gates = (nrmse = nrmse < baseline.nrmse_limit,
              correlation = correlation > baseline.correlation_min,
-             slope = slope > baseline.slope_min)
+             slope = baseline.slope_min < slope < baseline.slope_max)
     passed = all(isfinite, metrics) && all(isfinite, band_nrmse) && all(values(gates))
     header["omega_fidelity_status"] = passed ? "passed" : "failed"
     passed || (header["omega_fidelity_reason"] = "baseline_gate_failed")
@@ -739,12 +742,14 @@ function _write_omega_certificate!(header::AbstractDict, acc::FluxFidelityAccumu
     header["omega_fidelity_nrmse_limit"] = baseline.nrmse_limit
     header["omega_fidelity_correlation_min"] = baseline.correlation_min
     header["omega_fidelity_slope_min"] = baseline.slope_min
+    header["omega_fidelity_slope_max"] = baseline.slope_max
     header["omega_fidelity_passed"] = passed
     failed = join((String(k) for (k, ok) in pairs(gates) if !ok), ", ")
     passed || throw(ArgumentError(
         "aggregate OMEGA-fidelity gate FAILED ($(baseline.id)): nrmse=$nrmse " *
         "(limit < $(baseline.nrmse_limit)), correlation=$correlation " *
-        "(> $(baseline.correlation_min)), slope=$slope (> $(baseline.slope_min))" *
+        "(> $(baseline.correlation_min)), slope=$slope (between $(baseline.slope_min) " *
+        "and $(baseline.slope_max))" *
         (isempty(failed) ? "; non-finite metric" : "; failed: $failed")))
     return header
 end
