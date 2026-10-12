@@ -113,6 +113,15 @@ day-boundary VMR jump while retaining compatibility with legacy files.
 The canonical enable flag is `mass_fix_enabled`; inspection also recognizes
 the source-specific flags in older native-source archives.
 
+For current legacy binaries, the runtime infers whether `:ps` is total or dry
+surface pressure by comparing it with the column pressure implied by the air
+mass. Dry-basis binaries use `:qv_start` when present, or VDIFF `:vdiff_qv` on
+native cubed-sphere physics binaries, to reconstruct total pressure for hybrid
+interface placement. If neither humidity payload exists, total pressure is
+unobservable: the runtime retains dry `ps`, warns once, and documents the
+typically 0.5--2 % low humid-column approximation. A planned
+`surface_pressure_basis` header key will replace this inference.
+
 ### Optional sections (each enables a runtime capability)
 
 | Section(s) | Capability unlocked |

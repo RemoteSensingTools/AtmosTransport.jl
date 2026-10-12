@@ -456,7 +456,11 @@
         },
         "variable": {
           "type": "string",
-          "description": "Variable read as dry VMR (mol/mol), without unit conversion. File kinds: a lon-lat-level field, interpolated bilinearly (lat-lon, reduced Gaussian) or conservatively (cubed sphere) and in log pressure when the file has ap, bp and Psurf (otherwise level by level); cs_native: (time,) lev, nf, Ydim, Xdim on the binary's cube and levels. catrine_co2 defaults to CO2."
+          "description": "Variable read as dry VMR (mol/mol), without unit conversion. File kinds: a lon-lat-level field, interpolated bilinearly (lat-lon, reduced Gaussian) or conservatively (cubed sphere), then conservatively remapped in pressure when the file has ap and bp (otherwise copied level by level); cs_native: (time,) lev, nf, Ydim, Xdim on the binary's cube and levels. catrine_co2 defaults to CO2."
+        },
+        "humidity_variable": {
+          "type": "string",
+          "description": "File kinds: optional name of the source specific-humidity variable (kg/kg) used for dry-air-weighted vertical remapping. When omitted, a CF specific_humidity variable or q, qv, hus, or specific_humidity is detected automatically."
         },
         "time_index": {
           "type": "integer",

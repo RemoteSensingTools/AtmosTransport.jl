@@ -215,9 +215,9 @@ CS builder in `src/Models/initial_conditions/cubed_sphere.jl`):
 | `"latitude_step"` | yes | yes | yes | optional `south_value`, `north_value`, `split_lat_deg` |
 | `"bl_enhanced"` | yes | **no** | **no** | `background`, `enhancement`, `n_layers` (LL-only; RG/CS path errors at IC build) |
 | `"gaussian_blob"` | yes | yes | yes | `background`, `lon0_deg`, `lat0_deg`, `sigma_lon_deg`, `sigma_lat_deg`, `amplitude` |
-| `"file"` / `"netcdf"` | yes | yes | yes | `file`, `variable`, optional `time_index`, `vertical_order` |
-| `"file_field"` | yes | yes | yes | `file`, `variable`, optional `time_index`, `vertical_order` |
-| `"catrine_co2"` | yes | yes | yes | optional `file`, `variable`, `time_index` overrides for the built-in defaults |
+| `"file"` / `"netcdf"` | yes | yes | yes | `file`, `variable`, optional `humidity_variable`, `time_index`, `vertical_order` |
+| `"file_field"` | yes | yes | yes | `file`, `variable`, optional `humidity_variable`, `time_index`, `vertical_order` |
+| `"catrine_co2"` | yes | yes | yes | optional `file`, `variable`, `humidity_variable`, `time_index` overrides for the built-in defaults |
 | `"pressure_layer"` | no | no | yes | `lowest_layer = true` or `psurf_fraction`; optional `total_molecules` |
 | `"cs_native"` | no | no | yes | `file`, `variable`; optional `time_index`, `vertical_order`, `clamp_negative` (default `false`) |
 
@@ -234,6 +234,18 @@ source does not span the target top or surface. This avoids making an initial
 VMR depend on topographic differences or the preprocessing dry-mass pin; see
 the equations and CATRINE measurements in
 [`src/Models/initial_conditions/README.md`](https://github.com/RemoteSensingTools/AtmosTransport/blob/main/src/Models/initial_conditions/README.md).
+
+The dry-air weighting uses source specific humidity when the file provides it.
+Set `humidity_variable = "name"` to select it explicitly; otherwise variables
+with CF `standard_name = "specific_humidity"` or the conventional names `q`,
+`qv`, `hus`, and `specific_humidity` are detected. If the transport binary
+stores dry surface pressure, its window-start endpoint humidity is used to
+recover total pressure; on native cubed-sphere physics binaries VDIFF `qv` is
+used when endpoints are absent. A legacy dry-pressure binary with no humidity
+cannot determine total pressure, so the runtime keeps dry `ps` for hybrid
+interface placement and emits one warning. This approximation is typically
+0.5--2 % low in humid columns. A planned `surface_pressure_basis` header key
+will make this choice explicit.
 
 A file without `ap` and `bp` is copied level by level, so it must have the
 model's level count, and its vertical coordinate must say which end is the

@@ -29,7 +29,7 @@ _copy_cfg_dict(cfg) = Dict{String, Any}(String(k) => v for (k, v) in pairs(cfg))
 const _TRACER_FLAT_INIT_KEYS = ("kind", "background", "lon0_deg", "lat0_deg", "sigma_lon_deg",
                                 "sigma_lat_deg", "amplitude", "south_value", "north_value",
                                 "south", "north", "split_lat_deg", "file", "variable",
-                                "time_index")
+                                "humidity_variable", "time_index")
 const _TRACER_FLAT_SURFACE_FLUX_KEYS = (("surface_flux_kind", "kind"),
                                         ("surface_flux_file", "file"),
                                         ("surface_flux_variable", "variable"),

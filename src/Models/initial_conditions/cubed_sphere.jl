@@ -162,8 +162,12 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
     src_q = Vector{FT}(undef, Nlev_src)
     src_qv = source_qv_levels === nothing ? nothing : similar(src_q)
     target_dp_dry = Vector{Float64}(undef, Nz)
+    src_p = Vector{Float64}(undef, length(source.ap))
+    cumulative = similar(src_p)
     Hp = mesh.Hp
     g = Float64(gravity(grid))
+    source.needs_vinterp &&
+        _warn_surface_pressure_approximation(pressure_basis, target_qv_panels)
 
     for p in 1:CS_PANEL_COUNT
         for j in 1:Nc, i in 1:Nc
@@ -181,7 +185,8 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
                     scale, mass_basis, target_qv)
                 _remap_hybrid_profile!(@view(vmr[p][i, j, :]), src_q, src_qv,
                                        source.ap, source.bp,
-                                       A_tgt, B_tgt, ps_total, target_dp_dry)
+                                       A_tgt, B_tgt, ps_total, target_dp_dry,
+                                       src_p, cumulative)
             else
                 _copy_profile!(@view(vmr[p][i, j, :]), src_q)
             end

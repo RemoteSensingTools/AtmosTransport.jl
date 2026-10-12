@@ -367,7 +367,7 @@ function _load_file_initial_condition_source(cfg, ::Type{FT}, Nz_target::Integer
 
         # A source-file humidity profile takes precedence over transport-file
         # humidity. `humidity_variable` is explicit; otherwise recognize the
-        # CF standard name or the conventional qv/QV/hus variable names.
+        # CF standard name or the conventional q/qv/QV/hus variable names.
         humidity_name = if haskey(cfg, "humidity_variable")
             name = String(cfg["humidity_variable"])
             haskey(ds, name) || throw(ArgumentError(
@@ -379,7 +379,8 @@ function _load_file_initial_condition_source(cfg, ::Type{FT}, Nz_target::Integer
                 var = ds[name]
                 standard_name = lowercase(String(get(var.attrib, "standard_name", "")))
                 lname = lowercase(String(name))
-                if standard_name == "specific_humidity" || lname in ("qv", "hus", "specific_humidity")
+                if standard_name == "specific_humidity" ||
+                   lname in ("q", "qv", "hus", "specific_humidity")
                     push!(candidates, String(name))
                 end
             end
@@ -494,7 +495,7 @@ end
 
 """
     _remap_hybrid_profile!(dest, src_q, src_qv, ap, bp, A_tgt, B_tgt,
-                           ps_total, target_dp_dry)
+                           ps_total, target_dp_dry, src_p, cumulative)
 
 Conservatively remap source dry-VMR layer means `src_q[1:Nsrc]` onto
 `dest[1:Nz]`. The source is surface first and the target is top first; both
@@ -515,12 +516,15 @@ q^t_k = \\frac{\\int_{p^t_{k-1/2}}^{p^t_{k+1/2}}
 ```
 
 When the IC file supplies `src_qv`, `d(p)` is piecewise constant on its source
-layers. Otherwise the source is assumed to sample the binary target column's
-humidity: `d(p)` is `target_dp_dry / Δp_total`, piecewise constant on target
-layers and extended onto the source coordinate. Thus missing source humidity
-does not imply `q_v=0`. Source VMR and humidity end layers are extended when a
-target interface lies outside source coverage. For equal pressure coverage,
-`sum(dest .* target_dp_dry)` equals the source tracer integral on dry air.
+layers and `cumulative` stores one cumulative integral of
+`src_q * (1-src_qv) * dp`. Otherwise the target-layer dry factor cancels
+exactly between numerator and denominator, so the remap uses the cumulative
+pressure integral of `src_q * dp`. Source VMR and humidity end layers are
+extended when a target interface lies outside source coverage. For equal
+pressure coverage, `sum(dest .* target_dp_dry)` equals the source tracer
+integral on dry air. `src_p` and `cumulative` are caller-owned scratch vectors
+of length `length(src_q) + 1`; the implementation is allocation-free and
+`O(Nsource + Ntarget)` after argument validation.
 """
 function _remap_hybrid_profile!(dest::AbstractVector{FT},
                                 src_q::AbstractVector{FT},
@@ -530,7 +534,9 @@ function _remap_hybrid_profile!(dest::AbstractVector{FT},
                                 A_tgt::AbstractVector{<:Real},
                                 B_tgt::AbstractVector{<:Real},
                                 ps_total::Real,
-                                target_dp_dry::AbstractVector{<:Real}) where FT
+                                target_dp_dry::AbstractVector{<:Real},
+                                src_p::AbstractVector{Float64},
+                                cumulative::AbstractVector{Float64}) where FT
     Nsrc = length(src_q)
     Nz = length(dest)
     Nsrc > 0 || throw(ArgumentError("source profile must contain at least one layer"))
@@ -546,12 +552,15 @@ function _remap_hybrid_profile!(dest::AbstractVector{FT},
         "target_dp_dry has length $(length(target_dp_dry)), expected Nz = $Nz"))
     src_qv === nothing || length(src_qv) == Nsrc || throw(DimensionMismatch(
         "src_qv has length $(length(src_qv)), expected Nsrc = $Nsrc"))
+    length(src_p) == Nsrc + 1 || throw(DimensionMismatch(
+        "src_p scratch has length $(length(src_p)), expected Nsrc+1 = $(Nsrc + 1)"))
+    length(cumulative) == Nsrc + 1 || throw(DimensionMismatch(
+        "cumulative scratch has length $(length(cumulative)), expected Nsrc+1 = $(Nsrc + 1)"))
 
     ps = Float64(ps_total)
     isfinite(ps) || throw(ArgumentError(
         "target total surface pressure must be finite; got $ps_total"))
 
-    src_p = Vector{Float64}(undef, Nsrc + 1)
     @inbounds for k in eachindex(src_p)
         src_p[k] = Float64(ap[k]) + Float64(bp[k]) * ps
     end
@@ -561,59 +570,62 @@ function _remap_hybrid_profile!(dest::AbstractVector{FT},
             "interfaces $k and $(k + 1) are $(src_p[k]) and $(src_p[k + 1]) Pa"))
     end
 
-    tgt_p = Vector{Float64}(undef, Nz + 1)
-    @inbounds for k in eachindex(tgt_p)
-        tgt_p[k] = Float64(A_tgt[k]) + Float64(B_tgt[k]) * ps
-    end
+    p_lo = Float64(A_tgt[1]) + Float64(B_tgt[1]) * ps
     @inbounds for k in 1:Nz
-        tgt_p[k + 1] > tgt_p[k] || throw(ArgumentError(
+        p_hi = Float64(A_tgt[k + 1]) + Float64(B_tgt[k + 1]) * ps
+        p_hi > p_lo || throw(ArgumentError(
             "target hybrid interfaces must be strictly TOA-to-surface increasing; " *
-            "interfaces $k and $(k + 1) are $(tgt_p[k]) and $(tgt_p[k + 1]) Pa"))
+            "interfaces $k and $(k + 1) are $p_lo and $p_hi Pa"))
         isfinite(target_dp_dry[k]) && target_dp_dry[k] > 0 || throw(ArgumentError(
             "target dry-air layer pressure must be finite and positive; " *
             "target_dp_dry[$k] = $(target_dp_dry[k])"))
+        p_lo = p_hi
     end
 
-    function source_layer_at(p::Float64)
-        p >= src_p[1] && return 1
-        p <= src_p[end] && return Nsrc
-        lo, hi = 1, Nsrc + 1
-        while hi - lo > 1
-            mid = (lo + hi) >>> 1
-            src_p[mid] >= p ? (lo = mid) : (hi = mid)
+    # Integral from the source top interface to each source interface. The
+    # source arrays run surface -> TOA, hence the reverse fill.
+    cumulative[Nsrc + 1] = 0.0
+    @inbounds for s in Nsrc:-1:1
+        weight = Float64(src_q[s])
+        if src_qv !== nothing
+            qv_s = Float64(src_qv[s])
+            isfinite(qv_s) && 0 <= qv_s < 1 || throw(ArgumentError(
+                "source specific humidity src_qv[$s]=$(src_qv[s]) must lie in [0, 1)"))
+            weight *= 1.0 - qv_s
         end
-        return lo
-    end
-    function target_layer_at(p::Float64)
-        p <= tgt_p[1] && return 1
-        p >= tgt_p[end] && return Nz
-        return clamp(searchsortedlast(tgt_p, p), 1, Nz)
-    end
-    function dry_fraction(p::Float64)
-        if src_qv === nothing
-            k = target_layer_at(p)
-            return Float64(target_dp_dry[k]) / (tgt_p[k + 1] - tgt_p[k])
-        end
-        return 1.0 - Float64(src_qv[source_layer_at(p)])
+        cumulative[s] = cumulative[s + 1] + weight * (src_p[s] - src_p[s + 1])
     end
 
-    # Midpoint evaluation on source-interface subintervals is exact because
-    # source VMR and either definition of dry fraction are piecewise constant.
+    # Target interfaces are increasing, so the source-layer cursor moves only
+    # surfaceward. End-layer extension follows from using s=Nsrc below the
+    # source top and s=1 above the source surface.
+    s = Nsrc
+    p_lo = Float64(A_tgt[1]) + Float64(B_tgt[1]) * ps
+    while s > 1 && p_lo > src_p[s]
+        s -= 1
+    end
+    weight_lo = Float64(src_q[s]) *
+                (src_qv === nothing ? 1.0 : 1.0 - Float64(src_qv[s]))
+    integral_lo = cumulative[s + 1] + weight_lo * (p_lo - src_p[s + 1])
+
     @inbounds for k in 1:Nz
-        p_lo, p_hi = tgt_p[k], tgt_p[k + 1]
-        cuts = Float64[p_lo, p_hi]
-        for p in src_p
-            p_lo < p < p_hi && push!(cuts, p)
+        p_hi = Float64(A_tgt[k + 1]) + Float64(B_tgt[k + 1]) * ps
+        while s > 1 && p_hi > src_p[s]
+            s -= 1
         end
-        sort!(cuts)
-        tracer_dp_dry = 0.0
-        for n in 1:(length(cuts) - 1)
-            a, b = cuts[n], cuts[n + 1]
-            mid = (a + b) / 2
-            tracer_dp_dry += Float64(src_q[source_layer_at(mid)]) *
-                             dry_fraction(mid) * (b - a)
+        weight_hi = Float64(src_q[s]) *
+                    (src_qv === nothing ? 1.0 : 1.0 - Float64(src_qv[s]))
+        integral_hi = cumulative[s + 1] + weight_hi * (p_hi - src_p[s + 1])
+        tracer_integral = integral_hi - integral_lo
+        if src_qv === nothing
+            # target_dp_dry / dp_total appears in both numerator and
+            # denominator and cancels exactly.
+            dest[k] = FT(tracer_integral / (p_hi - p_lo))
+        else
+            dest[k] = FT(tracer_integral / Float64(target_dp_dry[k]))
         end
-        dest[k] = FT(tracer_dp_dry / Float64(target_dp_dry[k]))
+        p_lo = p_hi
+        integral_lo = integral_hi
     end
     return nothing
 end
@@ -697,12 +709,23 @@ p_{s,dry}=\\sum_k (1-q_{v,k})
     [\\Delta A_k + \\Delta B_k p_{s,total}].
 ```
 
-If a dry-pressure binary contains no humidity at all, total pressure is
-unobservable; the explicit fallback is `q_v=0`, so `ps_total=ps_dry`. The
-remap still takes its target dry-layer carrier from the binary air masses.
+If a legacy dry-pressure binary contains no humidity payload (neither endpoint
+humidity nor VDIFF `qv`), total pressure is unobservable. To keep those runs
+working, interface placement explicitly approximates `ps_total` by the stored
+`ps_dry` and emits one warning. This usually understates total pressure by
+about 0.5--2 % in humid columns. The remap still takes its target dry-layer
+carrier from the binary air masses. A planned `surface_pressure_basis` header
+key will make the stored pressure meaning explicit for new binaries.
 """
 @inline _total_surface_pressure(::TotalSurfacePressure, ps_stored::Real,
                                 _A, _B, _qv) = Float64(ps_stored)
+
+_warn_surface_pressure_approximation(::AbstractSurfacePressureBasis, _qv) = nothing
+
+function _warn_surface_pressure_approximation(::DrySurfacePressure, ::Nothing)
+    @warn "dry-basis transport binary stores dry surface pressure but carries no humidity payload; approximating total surface pressure as dry ps for hybrid-interface placement (typically 0.5-2% low in humid columns)" maxlog=1
+    return nothing
+end
 
 function _total_surface_pressure(::DrySurfacePressure, ps_dry::Real,
                                  A_tgt, B_tgt, qv::Nothing)
@@ -778,7 +801,10 @@ contains, and `qv` is the binary's window-start specific humidity when
 available. The target dry carrier is diagnosed from mass as
 `Δp_dry = g m_dry / A_cell` (or `g m_moist (1-qv) / A_cell`). Source humidity
 from the IC file takes precedence; otherwise the target dry-carrier profile is
-assumed on the source layers.
+assumed on the source layers. For legacy dry-pressure binaries without any
+humidity payload, total pressure cannot be reconstructed: the builder keeps
+the stored dry pressure for interface placement and warns once that it is
+typically 0.5--2 % below total pressure in humid columns.
 
 Returns an array shaped like `air_mass` for lat-lon and reduced-Gaussian grids,
 or an `NTuple{6}` of interior `(Nc, Nc, Nz)` arrays for cubed-sphere grids.
@@ -882,6 +908,8 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
     src_q = Vector{FT}(undef, size(source.raw, 3))
     src_qv = source.qv === nothing ? nothing : similar(src_q)
     target_dp_dry = Vector{Float64}(undef, size(air_mass, 3))
+    src_p = Vector{Float64}(undef, length(source.ap))
+    cumulative = similar(src_p)
     A_tgt = grid.vertical.A
     B_tgt = grid.vertical.B
     surface_pressure === nothing && throw(ArgumentError(
@@ -896,6 +924,7 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
         "horizontal extent $(size(air_mass)[1:2])"))
     qv === nothing || size(qv) == size(air_mass) || throw(DimensionMismatch(
         "qv size $(size(qv)) must match air_mass size $(size(air_mass))"))
+    source.needs_vinterp && _warn_surface_pressure_approximation(pressure_basis, qv)
 
     for j in axes(q, 2)
         lat = mesh.φᶜ[j]
@@ -913,7 +942,8 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
                                       scale, mass_basis, target_qv)
                 _remap_hybrid_profile!(@view(q[i, j, :]), src_q, src_qv,
                                        source.ap, source.bp,
-                                       A_tgt, B_tgt, ps_total, target_dp_dry)
+                                       A_tgt, B_tgt, ps_total, target_dp_dry,
+                                       src_p, cumulative)
             else
                 _copy_profile!(@view(q[i, j, :]), src_q)
             end
@@ -939,6 +969,8 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
     src_q = Vector{FT}(undef, size(source.raw, 3))
     src_qv = source.qv === nothing ? nothing : similar(src_q)
     target_dp_dry = Vector{Float64}(undef, size(air_mass, 2))
+    src_p = Vector{Float64}(undef, length(source.ap))
+    cumulative = similar(src_p)
     A_tgt = grid.vertical.A
     B_tgt = grid.vertical.B
     surface_pressure === nothing && throw(ArgumentError(
@@ -951,6 +983,7 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
         "air_mass cells $(size(air_mass, 1))"))
     qv === nothing || size(qv) == size(air_mass) || throw(DimensionMismatch(
         "qv size $(size(qv)) must match air_mass size $(size(air_mass))"))
+    source.needs_vinterp && _warn_surface_pressure_approximation(pressure_basis, qv)
 
     for j in 1:nrings(mesh)
         lat = mesh.latitudes[j]
@@ -970,7 +1003,8 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
                                       scale, mass_basis, target_qv)
                 _remap_hybrid_profile!(@view(q[c, :]), src_q, src_qv,
                                        source.ap, source.bp,
-                                       A_tgt, B_tgt, ps_total, target_dp_dry)
+                                       A_tgt, B_tgt, ps_total, target_dp_dry,
+                                       src_p, cumulative)
             else
                 _copy_profile!(@view(q[c, :]), src_q)
             end
