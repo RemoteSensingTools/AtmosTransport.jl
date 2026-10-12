@@ -253,3 +253,29 @@ struct DownloadConfig{S <: AbstractDownloadSource, P <: AbstractDownloadProtocol
     schedule::ScheduleConfig
     requests::Vector{Dict{String, Any}}   # per-request configs from [[download.requests]]
 end
+
+# ---------------------------------------------------------------------------
+# Logging and progress reporting
+# ---------------------------------------------------------------------------
+
+"How routine download progress is reported. Warnings and summaries use logging."
+abstract type AbstractDownloadProgressReporter end
+
+"One `@info` message for every download progress event (the default)."
+struct DownloadProgressLines <: AbstractDownloadProgressReporter end
+
+"A redrawn progress indicator for interactive download sessions."
+struct DownloadProgressBar <: AbstractDownloadProgressReporter
+    progress::ProgressUnknown
+end
+DownloadProgressBar() = DownloadProgressBar(
+    ProgressUnknown(; desc="Downloads ", spinner=true))
+
+"Suppress routine download progress; summaries and warnings are still logged."
+struct NoDownloadProgress <: AbstractDownloadProgressReporter end
+
+"Parsed `[logging]` settings for one download operation."
+struct DownloadLogging{R <: AbstractDownloadProgressReporter}
+    level::Union{Nothing, LogLevel}
+    progress::R
+end

@@ -20,6 +20,31 @@ function parse_download_config(cfg::Dict{String, Any})
     return DownloadConfig(source, protocol, output, schedule, requests)
 end
 
+"""
+    download_logging(cfg) -> DownloadLogging
+
+Parse the download recipe's `[logging]` table. `level` has the package-wide
+`debug|info|warn|error` values; `progress` is `bar`, `lines` (the default), or
+`none`, matching runtime configuration.
+"""
+function download_logging(cfg::AbstractDict)
+    level = log_level(cfg)
+    section = get(cfg, "logging", Dict{String, Any}())
+    raw = get(section, "progress", "lines")
+    kind = raw isa AbstractString ? lowercase(raw) : nothing
+    progress = if kind == "bar"
+        DownloadProgressBar()
+    elseif kind == "lines"
+        DownloadProgressLines()
+    elseif kind == "none"
+        NoDownloadProgress()
+    else
+        throw(ArgumentError(
+            "[logging].progress must be \"bar\", \"lines\" or \"none\"; got $(repr(raw))"))
+    end
+    return DownloadLogging(level, progress)
+end
+
 # ---------------------------------------------------------------------------
 # Source construction
 # ---------------------------------------------------------------------------

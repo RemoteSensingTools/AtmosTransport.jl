@@ -51,9 +51,20 @@ end
         @test snapshot_topology(ll) isa LatLonSnapshotTopology
         @test available_variables(ll) == [:co2]
         @test snapshot_times(ll) == [0.0, 6.0]
+        @test frame_indices(ll) == [1, 2]
+        @test frame_indices(ll, AllFrames()) == [1, 2]
+        @test_throws ArgumentError frame_indices(ll, :all)
 
-        ll_field = fieldview(ll, :co2; time=6.0, unit=:ppm)
+        ll_field = fieldview(ll, :co2; time=6.0, unit=PPMUnit())
         @test ll_field.values == fill(401.0, 4, 3)
+        @test ll_field.transform isa ColumnMean
+        @test ll_field.units == "ppm"
+        ll_native = fieldview(ll, :co2; time=1, unit=NativeUnit())
+        @test ll_native.values == fill(400e-6, 4, 3)
+        @test ll_native.units == "mol mol-1"
+        @test_throws ArgumentError fieldview(ll, :co2; transform=ColumnSum())
+        @test_throws ArgumentError fieldview(ll, :co2; transform=:column_mean)
+        @test_throws ArgumentError fieldview(ll, :co2; unit=:native)
         ll_raster = as_raster(ll_field)
         @test ll_raster.values == fill(401.0, 4, 3)
         @test ll_raster.units == "ppm"
@@ -63,18 +74,35 @@ end
         @test snapshot_topology(cs) isa CubedSphereSnapshotTopology
         @test available_variables(cs) == [:co2]
 
-        cs_field = fieldview(cs, :co2; transform=:column_mean, time=1, unit=:ppm)
-        @test size(cs_field.values) == (2, 2, 6)
-        @test all(isapprox.(cs_field.values, 400.0; atol=1e-12))
-
-        level_field = fieldview(cs, :co2; transform=:level_slice, level=2, time=2, unit=:ppm)
-        @test all(isapprox.(level_field.values, 660.0; atol=1e-12))
+        cases = (
+            (ColumnMean(), nothing, (300e-6 * 2.0 + 600e-6) / 3.0),
+            (ColumnSum(), nothing, 300e-6 + 600e-6),
+            (LevelSlice(), 2, 600e-6),
+            (SurfaceSlice(), nothing, 600e-6),
+        )
+        for (transform, level, expected) in cases
+            native = fieldview(cs, :co2; transform, level, time=1, unit=NativeUnit())
+            ppm = fieldview(cs, :co2; transform, level, time=1, unit=PPMUnit())
+            @test native.values == fill(expected, 2, 2, 6)
+            @test ppm.values == fill(expected * 1.0e6, 2, 2, 6)
+            @test native.units == (transform isa ColumnSum ? "" : "mol mol-1")
+            @test ppm.units == "ppm"
+            @test typeof(native.transform) === typeof(transform)
+        end
+        level_field = fieldview(cs, :co2; transform=LevelSlice(), level=2, time=2,
+                                unit=PPMUnit())
+        @test level_field.values == fill(660e-6 * 1.0e6, 2, 2, 6)
+        @test_throws ArgumentError fieldview(cs, :co2; transform=:LevelSlice)
+        @test_throws ArgumentError fieldview(cs, :co2; unit=:PPM)
+        @test PlotSpec(:co2; transform=:surface_slice, unit="ppm").transform isa SurfaceSlice
+        @test PlotSpec(:co2; transform=:surface_slice, unit="ppm").unit isa PPMUnit
         @test robust_colorrange([ll_raster]) == (401.0, 401.0 + max(401.0, 1.0) * eps(Float64))
 
         geos_path = write_cs_snapshot(joinpath(dir, "cs_geos.nc"); panel_convention="geos_native")
         geos = open_snapshot(geos_path)
-        @test snapshot_topology(geos).panel_convention === :geos_native
-        geos_field = fieldview(geos, :co2; transform=:column_mean, time=1, unit=:ppm)
+        @test snapshot_topology(geos).panel_convention isa
+              AtmosTransport.Grids.GEOSNativePanelConvention
+        geos_field = fieldview(geos, :co2; transform=ColumnMean(), time=1, unit=PPMUnit())
         geos_raster = as_raster(geos_field; resolution=(24, 12))
         @test size(geos_raster.values) == (24, 12)
         @test maximum(abs.(geos_raster.values .- 400.0)) < 1e-10
@@ -90,7 +118,7 @@ end
     # Cell-indexed values, so moving any cell boundary changes the raster.
     cache = SnapshotRegridCache()            # one cache: entries must be per definition
     function cell_raster(snap)
-        field = fieldview(snap, :co2; transform=:level_slice, level=1, time=1)
+        field = fieldview(snap, :co2; transform=LevelSlice(), level=1, time=1)
         Nc = snapshot_topology(snap).Nc
         values = [i + 10.0j + 100.0p for i in 1:Nc, j in 1:Nc, p in 1:6]
         cells = AtmosTransport.Visualization.HorizontalField(

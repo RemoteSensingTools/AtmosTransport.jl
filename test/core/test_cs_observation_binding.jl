@@ -90,22 +90,22 @@ end
     ]
     set = AT.CSObservationSet(records; time_origin = "2024-06-15 00:00:00")
 
-    # :reject default
+    # RejectOutOfRange default
     @test_throws ArgumentError AT.bind_to_mesh(set, mesh, T0_TEST, DT_TEST;
                                                nsteps = 5)
 
-    # :skip drops the two out-of-range records, keeps the middle one.
+    # SkipOutOfRange drops the two out-of-range records, keeps the middle one.
     obs_skip = AT.bind_to_mesh(set, mesh, T0_TEST, DT_TEST;
                                nsteps = 5,
-                               out_of_range_policy = :skip)
+                               out_of_range_policy = AT.SkipOutOfRange())
     @test length(obs_skip) == 1
     @test obs_skip[1].step == 1
     @test obs_skip[1].objective isa AT.CSColumnMeanObjective
 
-    # :clamp snaps to [1, nsteps].
+    # ClampOutOfRange snaps to [1, nsteps].
     obs_clamp = AT.bind_to_mesh(set, mesh, T0_TEST, DT_TEST;
                                 nsteps = 5,
-                                out_of_range_policy = :clamp)
+                                out_of_range_policy = AT.ClampOutOfRange())
     @test [o.step for o in obs_clamp] == [1, 1, 5]
 end
 
@@ -130,12 +130,12 @@ end
 
     obs_skip = AT.bind_to_mesh(set, mesh, T0_TEST, DT_TEST;
                                nsteps = nsteps,
-                               out_of_range_policy = :skip)
+                               out_of_range_policy = "skip")
     @test isempty(obs_skip)
 
     obs_clamp = AT.bind_to_mesh(set, mesh, T0_TEST, DT_TEST;
                                 nsteps = nsteps,
-                                out_of_range_policy = :clamp)
+                                out_of_range_policy = "clamp")
     @test length(obs_clamp) == 1
     @test obs_clamp[1].step == nsteps
 end
@@ -151,7 +151,18 @@ end
     @test_throws ArgumentError AT.bind_to_mesh(set, mesh, T0_TEST, DT_TEST;
                                                nsteps = 0)
     @test_throws ArgumentError AT.bind_to_mesh(set, mesh, T0_TEST, DT_TEST;
-                                               out_of_range_policy = :bogus)
+                                               out_of_range_policy = "bogus")
+    for removed in (:reject, :skip, :clamp)
+        error = try
+            AT.bind_to_mesh(set, mesh, T0_TEST, DT_TEST;
+                            out_of_range_policy = removed)
+            nothing
+        catch caught
+            caught
+        end
+        @test error isa ArgumentError
+        @test occursin("Symbol policies are not supported", sprint(showerror, error))
+    end
 end
 
 # ---------------------------------------------------------------------------

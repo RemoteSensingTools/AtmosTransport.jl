@@ -50,6 +50,22 @@ julia --project=. scripts/downloads/download_data.jl \
     config/downloads/geosit_c180.toml --verify
 ```
 
+### Logging
+
+Download recipes accept the same log levels and progress choices as runtime
+configs. Routine download events default to durable log lines; use `bar` for an
+interactive indicator or `none` to suppress routine progress. Startup and
+completion summaries remain leveled messages even with progress disabled.
+
+```toml
+[logging]
+level = "info"      # "debug" | "info" | "warn" | "error"
+progress = "lines"  # "bar" | "lines" (default) | "none"
+```
+
+The downloader does not write directly to stdout, so its output can be managed
+entirely through the logger and progress setting.
+
 ## Heritage scripts
 
 `download_era5_surface_netcdf.py` (monthly CDS surface NetCDF) is kept for

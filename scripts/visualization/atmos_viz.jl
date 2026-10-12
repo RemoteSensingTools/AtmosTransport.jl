@@ -91,7 +91,7 @@ function _settings()
 end
 
 function _parse_times(raw::AbstractString)
-    lowercase(raw) == "all" && return :all
+    lowercase(raw) == "all" && return AllFrames()
     vals = split(raw, ",")
     return [parse(Float64, strip(v)) for v in vals if !isempty(strip(v))]
 end
@@ -103,9 +103,12 @@ function main(argv=ARGS)
     backend = VIZ_BACKEND
 
     snapshot = open_snapshot(expanduser(opts["input"]))
-    transform = Symbol(opts["transform"])
     level = opts["level"] == 0 ? nothing : opts["level"]
-    unit = opts["ppm"] ? :ppm : :native
+    plot_spec = PlotSpec(Symbol(opts["tracer"]);
+                         transform=opts["transform"], level,
+                         unit=opts["ppm"] ? PPMUnit() : NativeUnit())
+    transform = plot_spec.transform
+    unit = plot_spec.unit
     times = _parse_times(opts["times"])
     resolution = _parse_resolution(opts["resolution"])
     colormap = Symbol(opts["colormap"])
@@ -114,12 +117,12 @@ function main(argv=ARGS)
 
     kind = lowercase(opts["kind"])
     if kind == "frame"
-        first_time = times === :all ? 1 : first(times)
+        first_time = times isa AllFrames ? 1 : first(times)
         field = fieldview(snapshot, opts["tracer"];
                           transform=transform,
                           time=first_time,
                           level=level,
-        unit=unit)
+                          unit=unit)
         fig = mapplot(field; resolution=resolution, colormap=colormap)
         backend.save(out, fig)
     elseif kind == "grid"

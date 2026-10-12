@@ -33,7 +33,7 @@ using CairoMakie
 using AtmosTransport
 using AtmosTransport.Visualization: SnapshotDataset, SnapshotRegridCache,
                                      open_snapshot, fieldview, as_raster,
-                                     frame_indices
+                                     frame_indices, AllFrames, ColumnMean
 using AtmosTransport.Visualization: mapplot!
 
 const REPO_ROOT = normpath(joinpath(@__DIR__, "..", "..", ".."))
@@ -58,9 +58,9 @@ function _final_raster(path::AbstractString, tracer::AbstractString,
                        cache::SnapshotRegridCache)
     isfile(path) || return nothing
     snap = open_snapshot(path)
-    indices = frame_indices(snap, :all)
+    indices = frame_indices(snap, AllFrames())
     isempty(indices) && return nothing
-    field = fieldview(snap, tracer; transform = :column_mean, time = indices[end])
+    field = fieldview(snap, tracer; transform = ColumnMean(), time = indices[end])
     raster = as_raster(field; resolution = RES, cache = cache)
     all(isfinite, raster.values) || return nothing
     return raster

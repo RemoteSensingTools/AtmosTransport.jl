@@ -15,6 +15,7 @@ using Printf
 using Statistics: quantile
 
 using ..Grids: LatLonMesh, CubedSphereMesh,
+               AbstractCubedSpherePanelConvention,
                GnomonicPanelConvention, GEOSNativePanelConvention,
                AbstractCubedSphereDefinition, CubedSphereDefinition, _default_cs_definition,
                EquiangularGnomonic, GMAOEqualDistanceGnomonic,
@@ -24,6 +25,69 @@ using ..Parameters: IFS_EARTH_RADIUS
 
 
 abstract type AbstractSnapshotTopology end
+
+abstract type AbstractFieldTransform end
+
+struct ColumnMean <: AbstractFieldTransform end
+struct ColumnSum <: AbstractFieldTransform end
+struct LevelSlice <: AbstractFieldTransform end
+struct SurfaceSlice <: AbstractFieldTransform end
+
+abstract type AbstractDisplayUnit end
+
+struct NativeUnit <: AbstractDisplayUnit end
+struct PPMUnit <: AbstractDisplayUnit end
+
+"Select every available snapshot frame."
+struct AllFrames end
+
+field_transform_label(::ColumnMean) = :column_mean
+field_transform_label(::ColumnSum) = :column_sum
+field_transform_label(::LevelSlice) = :level_slice
+field_transform_label(::SurfaceSlice) = :surface_slice
+
+display_unit_label(::NativeUnit) = :native
+display_unit_label(::PPMUnit) = :ppm
+
+_parse_field_transform(transform::AbstractFieldTransform) = transform
+function _parse_field_transform(transform::Union{Symbol, AbstractString})
+    name = String(transform)
+    name == "column_mean" && return ColumnMean()
+    name == "column_sum" && return ColumnSum()
+    name == "level_slice" && return LevelSlice()
+    name == "surface_slice" && return SurfaceSlice()
+    throw(ArgumentError(
+        "visualization transform must be column_mean, column_sum, level_slice, or surface_slice; got $(repr(transform))"))
+end
+function _parse_field_transform(transform)
+    throw(ArgumentError(
+        "visualization transform must be column_mean, column_sum, level_slice, or surface_slice; got $(repr(transform))"))
+end
+
+_parse_display_unit(unit::AbstractDisplayUnit) = unit
+function _parse_display_unit(unit::Union{Symbol, AbstractString})
+    name = String(unit)
+    name == "native" && return NativeUnit()
+    name == "ppm" && return PPMUnit()
+    throw(ArgumentError("visualization unit must be native or ppm; got $(repr(unit))"))
+end
+function _parse_display_unit(unit)
+    throw(ArgumentError("visualization unit must be native or ppm; got $(repr(unit))"))
+end
+
+_require_field_transform(transform::AbstractFieldTransform) = transform
+function _require_field_transform(transform)
+    throw(ArgumentError(
+        "fieldview transform must be an AbstractFieldTransform such as ColumnMean(); " *
+        "got $(repr(transform)). PlotSpec parses canonical Symbol/String selectors."))
+end
+
+_require_display_unit(unit::AbstractDisplayUnit) = unit
+function _require_display_unit(unit)
+    throw(ArgumentError(
+        "fieldview unit must be an AbstractDisplayUnit such as NativeUnit() or PPMUnit(); " *
+        "got $(repr(unit)). PlotSpec parses canonical Symbol/String selectors."))
+end
 
 """
     LatLonSnapshotTopology(lons, lats; grid_type=:latlon)
@@ -57,16 +121,18 @@ single horizontal field, with `nf == 6`. `definition` is the mesh the snapshot
 was written on (coordinate and center laws, panel convention, longitude
 offset); it defaults to the panel convention's standard definition.
 """
-struct CubedSphereSnapshotTopology{D <: AbstractCubedSphereDefinition} <: AbstractSnapshotTopology
+struct CubedSphereSnapshotTopology{P <: AbstractCubedSpherePanelConvention,
+                                   D <: AbstractCubedSphereDefinition} <: AbstractSnapshotTopology
     Nc::Int
     nlevel::Int
-    panel_convention::Symbol
+    panel_convention::P
     definition::D
 end
 
-CubedSphereSnapshotTopology(Nc, nlevel, panel_convention::Symbol) =
+CubedSphereSnapshotTopology(Nc, nlevel,
+                            panel_convention::AbstractCubedSpherePanelConvention) =
     CubedSphereSnapshotTopology(Nc, nlevel, panel_convention,
-                                _default_cs_definition(_cs_panel_convention(panel_convention)))
+                                _default_cs_definition(panel_convention))
 
 """
     SnapshotDataset
@@ -93,14 +159,14 @@ A topology-native horizontal field view from one snapshot time.
 For LL/RG snapshots `values` is a `(lon, lat)` matrix. For CS snapshots it is a
 `(Xdim, Ydim, nf)` array until rasterized or plotted natively.
 """
-struct HorizontalField{T <: AbstractSnapshotTopology, A}
+struct HorizontalField{T <: AbstractSnapshotTopology, A, F <: AbstractFieldTransform}
     topology::T
     values::A
     name::Symbol
     units::String
     time::Float64
     time_index::Int
-    transform::Symbol
+    transform::F
     level::Union{Nothing, Int}
     source_path::String
 end
@@ -110,14 +176,14 @@ end
 
 Regular lon-lat representation used by fast debug maps and movies.
 """
-struct RasterField
+struct RasterField{F <: AbstractFieldTransform}
     lons::Vector{Float64}
     lats::Vector{Float64}
     values::Matrix{Float64}
     name::Symbol
     units::String
     time::Float64
-    transform::Symbol
+    transform::F
     source_topology::Symbol
 end
 
@@ -134,23 +200,24 @@ end
 SnapshotRegridCache() = SnapshotRegridCache(Dict{Any, Any}())
 
 """
-    PlotSpec(variable; transform=:column_mean, level=nothing, title=nothing, unit=:native)
+    PlotSpec(variable; transform=ColumnMean(), level=nothing, title=nothing, unit=NativeUnit())
 
 One panel specification for multi-panel plots and movies.
 """
-struct PlotSpec
+struct PlotSpec{F <: AbstractFieldTransform, U <: AbstractDisplayUnit}
     variable::Symbol
-    transform::Symbol
+    transform::F
     level::Union{Nothing, Int}
     title::Union{Nothing, String}
-    unit::Symbol
+    unit::U
 end
 
-PlotSpec(variable::Symbol; transform::Symbol=:column_mean,
+PlotSpec(variable::Symbol; transform=ColumnMean(),
          level::Union{Nothing, Int}=nothing,
          title::Union{Nothing, String}=nothing,
-         unit::Symbol=:native) =
-    PlotSpec(variable, transform, level, title, unit)
+         unit=NativeUnit()) =
+    PlotSpec(variable, _parse_field_transform(transform), level, title,
+             _parse_display_unit(unit))
 
 PlotSpec(variable::AbstractString; kwargs...) = PlotSpec(Symbol(variable); kwargs...)
 
@@ -218,7 +285,7 @@ function open_snapshot(path::AbstractString)
         topology = if _is_cs_snapshot(ds)
             Nc = haskey(attrs, "Nc") ? Int(attrs["Nc"]) : length(ds.dim["Xdim"])
             nlevel = haskey(ds, "lev") ? size(ds["lev"], 1) : size(ds["air_mass"], 4)
-            conv = Symbol(get(attrs, "panel_convention", "gnomonic"))
+            conv = _parse_cs_panel_convention(get(attrs, "panel_convention", "gnomonic"))
             CubedSphereSnapshotTopology(Nc, nlevel, conv, _cs_snapshot_definition(attrs, conv))
         elseif _is_lonlat_snapshot(ds)
             lons = Float64.(collect(ds["lon"][:]))
@@ -257,31 +324,32 @@ function _resolve_time_index(times::AbstractVector{<:Real}, time)
     end
 end
 
-function frame_indices(snapshot::SnapshotDataset, times=:all)
-    if times === :all
-        return collect(eachindex(snapshot.times))
-    elseif times isa AbstractVector
-        return [_resolve_time_index(snapshot.times, t) for t in times]
-    elseif times isa AbstractRange
-        return [_resolve_time_index(snapshot.times, t) for t in collect(times)]
-    else
-        return [_resolve_time_index(snapshot.times, times)]
-    end
+frame_indices(snapshot::SnapshotDataset, ::AllFrames=AllFrames()) =
+    collect(eachindex(snapshot.times))
+frame_indices(snapshot::SnapshotDataset, times::AbstractVector) =
+    [_resolve_time_index(snapshot.times, t) for t in times]
+frame_indices(snapshot::SnapshotDataset, times::AbstractRange) =
+    [_resolve_time_index(snapshot.times, t) for t in collect(times)]
+frame_indices(snapshot::SnapshotDataset, time::Real) =
+    [_resolve_time_index(snapshot.times, time)]
+function frame_indices(::SnapshotDataset, times)
+    throw(ArgumentError(
+        "frame selection must be AllFrames(), a numeric time/index, range, or vector; got $(repr(times))"))
 end
 
-function _scale_units!(values, units::String, unit::Symbol)
-    unit === :native && return values, units
-    if unit === :ppm
-        values .*= 1.0e6
-        return values, "ppm"
-    end
-    throw(ArgumentError("unsupported visualization unit: $(unit)"))
+_scale_units!(values, units::String, ::NativeUnit) = (values, units)
+function _scale_units!(values, ::String, ::PPMUnit)
+    values .*= 1.0e6
+    return values, "ppm"
 end
 
-function _field_key(snapshot::SnapshotDataset, variable::Symbol, transform::Symbol)
-    transform === :column_mean ||
-        throw(ArgumentError("$(typeof(snapshot.topology)) only has column-mean variables in this snapshot format; got transform=$(transform)"))
+function _field_key(::SnapshotDataset, variable::Symbol, ::ColumnMean)
     return "$(variable)_column_mean"
+end
+function _field_key(snapshot::SnapshotDataset, ::Symbol, transform::AbstractFieldTransform)
+    throw(ArgumentError(
+        "$(typeof(snapshot.topology)) only has column-mean variables in this snapshot format; " *
+        "got transform=$(field_transform_label(transform))"))
 end
 
 function _cs_column_mean(vmr, air)
@@ -314,7 +382,8 @@ function _cs_column_sum(values)
 end
 
 function _read_lonlat_field(snapshot::SnapshotDataset, ds, variable::Symbol,
-                            transform::Symbol, ti::Int, unit::Symbol)
+                            transform::AbstractFieldTransform, ti::Int,
+                            unit::AbstractDisplayUnit)
     key = _field_key(snapshot, variable, transform)
     haskey(ds, key) || throw(ArgumentError("$(basename(snapshot.path)) has no variable `$(key)`"))
     values = Array{Float64}(ds[key][:, :, ti])
@@ -324,72 +393,98 @@ function _read_lonlat_field(snapshot::SnapshotDataset, ds, variable::Symbol,
                            snapshot.times[ti], ti, transform, nothing, snapshot.path)
 end
 
-function _read_cs_field(snapshot::SnapshotDataset, ds, variable::Symbol,
-                        transform::Symbol, ti::Int,
-                        level::Union{Nothing, Int}, unit::Symbol)
+function _stored_cs_column_mean(snapshot::SnapshotDataset, ds, variable::Symbol,
+                                transform::ColumnMean, ti::Int,
+                                unit::AbstractDisplayUnit)
     name = String(variable)
     column_name = "$(name)_column_mean"
-    if transform === :column_mean && haskey(ds, column_name)
-        values = Array{Float64}(ds[column_name][:, :, :, ti])
-        units = String(get(ds[column_name].attrib, "units", "mol mol-1"))
-        values, units = _scale_units!(values, units, unit)
-        return HorizontalField(snapshot.topology, values, variable, units,
-                               snapshot.times[ti], ti, transform, nothing, snapshot.path)
-    end
+    haskey(ds, column_name) || return nothing
+    values = Array{Float64}(ds[column_name][:, :, :, ti])
+    units = String(get(ds[column_name].attrib, "units", "mol mol-1"))
+    values, units = _scale_units!(values, units, unit)
+    return HorizontalField(snapshot.topology, values, variable, units,
+                           snapshot.times[ti], ti, transform, nothing, snapshot.path)
+end
+_stored_cs_column_mean(::SnapshotDataset, ds, ::Symbol,
+                       ::AbstractFieldTransform, ::Int, ::AbstractDisplayUnit) = nothing
+
+function _transform_cs_field(snapshot::SnapshotDataset, ds, raw, levels, selected::Bool,
+                             ::ColumnMean, ::Union{Nothing, Int}, ti::Int)
+    selected &&
+        throw(ArgumentError("CS column_mean requires full levels or a stored column mean"))
+    haskey(ds, "air_mass") ||
+        throw(ArgumentError("CS column_mean requires `air_mass` in $(basename(snapshot.path))"))
+    return _cs_column_mean(raw, Array{Float64}(ds["air_mass"][:, :, :, :, ti]))
+end
+
+_transform_cs_field(::SnapshotDataset, ds, raw, levels, selected::Bool,
+                    ::ColumnSum, ::Union{Nothing, Int}, ti::Int) =
+    _cs_column_sum(raw)
+
+function _transform_cs_field(::SnapshotDataset, ds, raw, levels, selected::Bool,
+                             ::LevelSlice, level::Union{Nothing, Int}, ti::Int)
+    lev = level === nothing ? throw(ArgumentError("level_slice requires `level`")) : level
+    index = findfirst(==(lev), levels)
+    index === nothing && throw(ArgumentError("model level $(lev) was not written"))
+    return Array{Float64}(raw[:, :, :, index])
+end
+
+function _transform_cs_field(snapshot::SnapshotDataset, ds, raw, levels, selected::Bool,
+                             ::SurfaceSlice, level::Union{Nothing, Int}, ti::Int)
+    lev = level === nothing ? snapshot.topology.nlevel : level
+    index = findfirst(==(lev), levels)
+    index === nothing && throw(ArgumentError("model level $(lev) was not written"))
+    return Array{Float64}(raw[:, :, :, index])
+end
+
+_default_cs_units(::ColumnMean) = "mol mol-1"
+_default_cs_units(::ColumnSum) = ""
+_default_cs_units(::LevelSlice) = "mol mol-1"
+_default_cs_units(::SurfaceSlice) = "mol mol-1"
+
+function _read_cs_field(snapshot::SnapshotDataset, ds, variable::Symbol,
+                        transform::AbstractFieldTransform, ti::Int,
+                        level::Union{Nothing, Int}, unit::AbstractDisplayUnit)
+    stored = _stored_cs_column_mean(snapshot, ds, variable, transform, ti, unit)
+    stored === nothing || return stored
+    name = String(variable)
     haskey(ds, name) || throw(ArgumentError("$(basename(snapshot.path)) has no CS variable `$(name)`"))
     raw = Array{Float64}(ds[name][:, :, :, :, ti])
     selected = "lev_selected" in dimnames(ds[name])
     levels = selected ? Int.(ds["lev_selected"][:]) : collect(1:size(raw, 4))
-    values = if transform === :column_mean
-        selected && throw(ArgumentError("CS column_mean requires full levels or a stored column mean"))
-        haskey(ds, "air_mass") ||
-            throw(ArgumentError("CS column_mean requires `air_mass` in $(basename(snapshot.path))"))
-        air = Array{Float64}(ds["air_mass"][:, :, :, :, ti])
-        _cs_column_mean(raw, air)
-    elseif transform === :column_sum
-        _cs_column_sum(raw)
-    elseif transform === :level_slice
-        lev = level === nothing ? throw(ArgumentError("level_slice requires `level`")) : level
-        index = findfirst(==(lev), levels)
-        index === nothing && throw(ArgumentError("model level $(lev) was not written"))
-        Array{Float64}(raw[:, :, :, index])
-    elseif transform === :surface_slice
-        lev = level === nothing ? snapshot.topology.nlevel : level
-        index = findfirst(==(lev), levels)
-        index === nothing && throw(ArgumentError("model level $(lev) was not written"))
-        Array{Float64}(raw[:, :, :, index])
-    else
-        throw(ArgumentError("unsupported CS transform: $(transform)"))
-    end
-    units = String(get(ds[name].attrib, "units", transform in (:column_mean, :level_slice, :surface_slice) ? "mol mol-1" : ""))
+    values = _transform_cs_field(snapshot, ds, raw, levels, selected,
+                                 transform, level, ti)
+    units = String(get(ds[name].attrib, "units", _default_cs_units(transform)))
     values, units = _scale_units!(values, units, unit)
     return HorizontalField(snapshot.topology, values, variable, units,
                            snapshot.times[ti], ti, transform, level, snapshot.path)
 end
 
 """
-    fieldview(snapshot, variable; transform=:column_mean, time=1, level=nothing, unit=:native)
+    fieldview(snapshot, variable; transform=ColumnMean(), time=1, level=nothing, unit=NativeUnit())
 
 Load one topology-native horizontal field from a snapshot file.
 
 `time` may be a one-based frame index or a snapshot hour. For CS snapshots,
-`transform` may be `:column_mean`, `:column_sum`, `:level_slice`, or
-`:surface_slice`. Stored CS column means support column-only output; level
+`transform` may be `ColumnMean()`, `ColumnSum()`, `LevelSlice()`, or
+`SurfaceSlice()`. Stored CS column means support column-only output; level
 selection uses original model indices and rejects levels that were not written.
-LL/RG snapshots currently carry column means only.
+LL/RG snapshots currently support `ColumnMean()` only.
 """
 function fieldview(snapshot::SnapshotDataset, variable::Union{Symbol, AbstractString};
-                   transform::Symbol=:column_mean,
+                   transform=ColumnMean(),
                    time=1,
                    level::Union{Nothing, Int}=nothing,
-                   unit::Symbol=:native)
+                   unit=NativeUnit())
     var = Symbol(variable)
+    parsed_transform = _require_field_transform(transform)
+    parsed_unit = _require_display_unit(unit)
     ti = _resolve_time_index(snapshot.times, time)
     NCDataset(snapshot.path, "r") do ds
         if snapshot.topology isa CubedSphereSnapshotTopology
-            return _read_cs_field(snapshot, ds, var, transform, ti, level, unit)
+            return _read_cs_field(snapshot, ds, var, parsed_transform, ti, level, parsed_unit)
         else
-            return _read_lonlat_field(snapshot, ds, var, transform, ti, unit)
+            return _read_lonlat_field(snapshot, ds, var, parsed_transform, ti, parsed_unit)
         end
     end
 end
@@ -415,10 +510,12 @@ function _target_lonlat_mesh(resolution::Tuple{Int, Int})
     return mesh, Float64.(mesh.λᶜ), Float64.(mesh.φᶜ)
 end
 
-function _cs_panel_convention(sym::Symbol)
-    sym === :gnomonic && return GnomonicPanelConvention()
-    sym === :geos_native && return GEOSNativePanelConvention()
-    throw(ArgumentError("unsupported CS panel_convention=$(sym); expected :gnomonic or :geos_native"))
+function _parse_cs_panel_convention(raw)
+    name = String(raw)
+    name == "gnomonic" && return GnomonicPanelConvention()
+    name == "geos_native" && return GEOSNativePanelConvention()
+    throw(ArgumentError(
+        "unsupported CS panel_convention=$(repr(raw)); expected gnomonic or geos_native"))
 end
 
 const _CS_COORDINATE_LAWS = Dict("equiangular_gnomonic" => EquiangularGnomonic(),
@@ -428,15 +525,15 @@ const _CS_CENTER_LAWS = Dict("angular_midpoint" => AngularMidpointCenter(),
 
 # The mesh definition recorded by the snapshot writer (`define_cs_horizontal_geometry!`);
 # files written before those attributes get the panel convention's default.
-function _cs_snapshot_definition(attrs, convention::Symbol)
-    conv = _cs_panel_convention(convention)
-    haskey(attrs, "cs_coordinate_law") || return _default_cs_definition(conv)
+function _cs_snapshot_definition(attrs,
+                                 convention::AbstractCubedSpherePanelConvention)
+    haskey(attrs, "cs_coordinate_law") || return _default_cs_definition(convention)
     law = get(_CS_COORDINATE_LAWS, String(attrs["cs_coordinate_law"]), nothing)
     center = get(_CS_CENTER_LAWS, String(get(attrs, "cs_center_law", "")), nothing)
     (law === nothing || center === nothing) && throw(ArgumentError(
         "unsupported CS geometry attributes cs_coordinate_law=$(repr(attrs["cs_coordinate_law"])), " *
         "cs_center_law=$(repr(get(attrs, "cs_center_law", nothing)))"))
-    return CubedSphereDefinition(law, center, conv;
+    return CubedSphereDefinition(law, center, convention;
                                  longitude_offset_deg = Float64(attrs["longitude_of_central_meridian"]),
                                  tag = Symbol(get(attrs, "cs_definition", "custom")))
 end
@@ -591,6 +688,9 @@ end
 
 export AbstractSnapshotTopology
 export LatLonSnapshotTopology, ReducedGaussianSnapshotTopology, CubedSphereSnapshotTopology
+export AbstractFieldTransform, ColumnMean, ColumnSum, LevelSlice, SurfaceSlice
+export AbstractDisplayUnit, NativeUnit, PPMUnit, AllFrames
+export field_transform_label, display_unit_label
 export SnapshotDataset, HorizontalField, RasterField, SnapshotRegridCache, PlotSpec
 export open_snapshot, available_variables, snapshot_times, snapshot_topology
 export fieldview, frame_indices, as_raster, robust_colorrange

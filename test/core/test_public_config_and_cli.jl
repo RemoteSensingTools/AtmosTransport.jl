@@ -62,6 +62,14 @@ end
         @test_throws "[architecture] must be a TOML table" run_driven_simulation(
             merge(base, Dict("architecture" => "cpu")))
 
+        for removed in ("host", "nvidia", "apple", "apple_metal", "gpu")
+            cfg = merge(base, Dict("architecture" => Dict("backend" => removed)))
+            ok, errors = validate_config(cfg)
+            @test !ok
+            @test any(error -> occursin("spelling \"$(removed)\" was removed", error),
+                      errors)
+        end
+
         # Nested input validation must also work when no tracers are supplied.
         for staging in (false, "nvme", 7, ["cache"])
             cfg = Dict("input" => Dict("binary_paths" => [path], "staging" => staging))

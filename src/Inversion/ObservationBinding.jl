@@ -24,7 +24,40 @@
 
 import Dates
 
-const _OUT_OF_RANGE_POLICIES = (:reject, :skip, :clamp)
+"""
+    AbstractOutOfRangePolicy
+
+Policy applied when an observation maps outside the valid model-step range.
+Use [`RejectOutOfRange`](@ref), [`SkipOutOfRange`](@ref), or
+[`ClampOutOfRange`](@ref).
+"""
+abstract type AbstractOutOfRangePolicy end
+
+"""Reject the first observation outside the valid model-step range."""
+struct RejectOutOfRange <: AbstractOutOfRangePolicy end
+
+"""Drop observations outside the valid model-step range."""
+struct SkipOutOfRange <: AbstractOutOfRangePolicy end
+
+"""Move observations outside the valid model-step range to its nearest end."""
+struct ClampOutOfRange <: AbstractOutOfRangePolicy end
+
+_parse_out_of_range_policy(policy::AbstractOutOfRangePolicy) = policy
+
+function _parse_out_of_range_policy(raw::AbstractString)
+    raw == "reject" && return RejectOutOfRange()
+    raw == "skip" && return SkipOutOfRange()
+    raw == "clamp" && return ClampOutOfRange()
+    throw(ArgumentError(
+        "out_of_range_policy must be \"reject\", \"skip\", or \"clamp\"; " *
+        "got $(repr(raw))."))
+end
+
+_parse_out_of_range_policy(raw) = throw(ArgumentError(
+    "out_of_range_policy must be a concrete AbstractOutOfRangePolicy or one " *
+    "of the strings \"reject\", \"skip\", or \"clamp\"; got $(repr(raw)). " *
+    "Symbol policies are not supported; use RejectOutOfRange(), " *
+    "SkipOutOfRange(), or ClampOutOfRange()."))
 
 """
     bind_to_mesh(set::CSObservationSet,
@@ -33,7 +66,7 @@ const _OUT_OF_RANGE_POLICIES = (:reject, :skip, :clamp)
                  dt::Real;
                  nsteps::Union{Nothing, Integer} = nothing,
                  tracer_filter::Union{Nothing, AbstractString} = nothing,
-                 out_of_range_policy::Symbol = :reject)
+                 out_of_range_policy = RejectOutOfRange())
         -> Vector{CSObservation{CSColumnMeanObjective, Float64}}
 
 Map each `CSObservationRecord` in `set` to a `CSObservation` tied to a
@@ -49,9 +82,13 @@ feed `cs_surface_flux_jacobian` / `cs_surface_flux_4dvar`.
   exactly (e.g. `"CO2"`). `nothing` keeps every record.
 - `out_of_range_policy` chooses what happens when an observation's
   date falls outside the valid step range:
-    - `:reject` (default) — throw an `ArgumentError`.
-    - `:skip` — drop the record silently.
-    - `:clamp` — snap to the nearest valid step (`1` or `nsteps`).
+    - `RejectOutOfRange()` (default) or `"reject"` — throw an `ArgumentError`.
+    - `SkipOutOfRange()` or `"skip"` — drop the record silently.
+    - `ClampOutOfRange()` or `"clamp"` — snap to the nearest valid step
+      (`1` or `nsteps`).
+
+Canonical strings are parsed once by this outer API. Symbols and spelling
+aliases are rejected; the binding loop receives only a concrete policy.
 
 Altitude (`record.alt`) is ignored: every observation becomes a
 column-mean objective. The on-disk `set.time_origin` is not consulted
@@ -63,10 +100,19 @@ function bind_to_mesh(set::CSObservationSet,
                       dt::Real;
                       nsteps::Union{Nothing, Integer} = nothing,
                       tracer_filter::Union{Nothing, AbstractString} = nothing,
-                      out_of_range_policy::Symbol = :reject)
-    out_of_range_policy in _OUT_OF_RANGE_POLICIES || throw(ArgumentError(
-        "out_of_range_policy must be one of $(_OUT_OF_RANGE_POLICIES); " *
-        "got $(repr(out_of_range_policy))"))
+                      out_of_range_policy = RejectOutOfRange())
+    policy = _parse_out_of_range_policy(out_of_range_policy)
+    return _bind_to_mesh(set, mesh, t_start, dt, policy;
+                         nsteps, tracer_filter)
+end
+
+function _bind_to_mesh(set::CSObservationSet,
+                       mesh::CubedSphereMesh,
+                       t_start::Dates.DateTime,
+                       dt::Real,
+                       policy::AbstractOutOfRangePolicy;
+                       nsteps::Union{Nothing, Integer},
+                       tracer_filter::Union{Nothing, AbstractString})
     dt_f = float(dt)
     dt_f > 0 || throw(ArgumentError("dt must be positive, got $dt"))
     if nsteps !== nothing
@@ -87,18 +133,9 @@ function bind_to_mesh(set::CSObservationSet,
         k = _step_index_from_date(record.date_components, t_start, dt_f)
         in_range = 1 <= k <= nsteps_max
         if !in_range
-            if out_of_range_policy === :reject
-                throw(ArgumentError(
-                    "observation id $(record.id) at " *
-                    "$(_date_components_string(record.date_components)) " *
-                    "maps to step $k, outside [1, " *
-                    "$(nsteps === nothing ? "Inf" : string(nsteps_max))]; " *
-                    "pass `out_of_range_policy = :skip` or `:clamp` to handle"))
-            elseif out_of_range_policy === :skip
-                continue
-            else  # :clamp
-                k = clamp(k, 1, nsteps_max)
-            end
+            adjusted = _out_of_range_step(policy, record, k, nsteps, nsteps_max)
+            adjusted === nothing && continue
+            k = adjusted
         end
 
         p, i, j = _locate_cs_cell(Float64(record.lat),
@@ -109,6 +146,23 @@ function bind_to_mesh(set::CSObservationSet,
     end
     return out
 end
+
+function _out_of_range_step(::RejectOutOfRange, record, k::Int,
+                            nsteps::Union{Nothing, Integer}, nsteps_max::Int)
+    throw(ArgumentError(
+        "observation id $(record.id) at " *
+        "$(_date_components_string(record.date_components)) " *
+        "maps to step $k, outside [1, " *
+        "$(nsteps === nothing ? "Inf" : string(nsteps_max))]; pass " *
+        "`out_of_range_policy = SkipOutOfRange()` or `ClampOutOfRange()` to handle"))
+end
+
+@inline _out_of_range_step(::SkipOutOfRange, record, k::Int,
+                           nsteps::Union{Nothing, Integer}, nsteps_max::Int) = nothing
+
+@inline _out_of_range_step(::ClampOutOfRange, record, k::Int,
+                           nsteps::Union{Nothing, Integer}, nsteps_max::Int) =
+    clamp(k, 1, nsteps_max)
 
 # ---------------------------------------------------------------------------
 # Per-record fail-fast validation

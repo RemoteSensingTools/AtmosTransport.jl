@@ -524,8 +524,16 @@ end
 # χ₀: the background of a uniform initial condition (the runner's default for a
 # missing background), otherwise the initial mean mixing ratio S(t₀)/M.
 function _initial_carrier(spec::TransportTracerSpec, initial_storage::Real, air_mass::Real)
-    _init_kind(spec.init_cfg) === :uniform &&
-        return Float64(get(spec.init_cfg, "background", DEFAULT_BACKGROUND_VMR))
+    return _initial_carrier(spec.init_spec, spec, initial_storage, air_mass)
+end
+
+function _initial_carrier(::UniformInitialConditionSpec, spec::TransportTracerSpec,
+                          ::Real, ::Real)
+    return Float64(get(spec.init_cfg, "background", DEFAULT_BACKGROUND_VMR))
+end
+
+function _initial_carrier(::AbstractInitialConditionSpec, ::TransportTracerSpec,
+                          initial_storage::Real, air_mass::Real)
     return Float64(initial_storage) / Float64(air_mass)
 end
 

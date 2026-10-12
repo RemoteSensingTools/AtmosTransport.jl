@@ -31,6 +31,10 @@ struct MockMetalArray end
     @test Arch.architecture_from_config(Dict("use_gpu" => false)) isa Arch.CPU
     @test Arch.architecture_from_config(Dict("backend" => "cuda")) isa Arch.GPU{:cuda}
     @test Arch.GPU("metal") isa Arch.GPU{:metal}
+    @test Arch._architecture_request("cpu") isa Arch.CPURequest
+    @test Arch._architecture_request("cuda") isa Arch.CUDARequest
+    @test Arch._architecture_request("metal") isa Arch.MetalRequest
+    @test Arch._architecture_request("auto") isa Arch.AutoGPURequest
     @test Arch.backend_name(Arch.GPU(:cuda)) === :cuda
     @test Arch.is_gpu(Arch.GPU(:metal))
     @test_throws MethodError Arch.GPU()
@@ -38,6 +42,18 @@ struct MockMetalArray end
     @test_throws ArgumentError Arch.architecture_from_config(Dict("use_gpu" => true,
                                                                   "backend" => "cpu"))
     @test_throws ArgumentError Arch.architecture_from_config(Dict("backend" => "rocm"))
+    @test_throws ArgumentError Arch.architecture_from_config(Dict("backend" => :cuda))
+
+    for alias in ("host", "nvidia", "apple", "apple_metal", "apple-metal", "gpu", "CPU")
+        err = try
+            Arch.architecture_from_config(Dict("backend" => alias))
+            nothing
+        catch caught
+            caught
+        end
+        @test err isa ArgumentError
+        @test occursin("spelling \"$(alias)\" was removed", sprint(showerror, err))
+    end
 
     architecture_source = read(joinpath(@__DIR__, "..", "..", "src", "Architectures.jl"), String)
     driven_source = join((read(joinpath(@__DIR__, "..", "..", "src", "Models", f), String)

@@ -31,12 +31,27 @@ include("RuntimePhysicsSpecs.jl")    # typed config specs + materialize (Oceanan
 include("RuntimePhysicsRecipe.jl")
 include("InitialConditionIO.jl")
 using .InitialConditionIO: FileInitialConditionSource,
+                           AbstractInitialConditionSpec,
+                           UniformInitialConditionSpec,
+                           LatitudeStepInitialConditionSpec,
+                           BoundaryLayerEnhancedInitialConditionSpec,
+                           GaussianBlobInitialConditionSpec,
+                           FileInitialConditionSpec,
+                           CatrineCO2InitialConditionSpec,
+                           PressureLayerInitialConditionSpec,
+                           CSNativeInitialConditionSpec,
+                           initial_condition_spec,
                            build_initial_mixing_ratio,
                            pack_initial_tracer_mass,
                            FileSurfaceFluxField,
                            build_surface_flux_source,
                            build_surface_flux_sources
 export FileInitialConditionSource, build_initial_mixing_ratio, pack_initial_tracer_mass
+export AbstractInitialConditionSpec, UniformInitialConditionSpec, initial_condition_spec
+export LatitudeStepInitialConditionSpec, BoundaryLayerEnhancedInitialConditionSpec
+export GaussianBlobInitialConditionSpec, FileInitialConditionSpec
+export CatrineCO2InitialConditionSpec, PressureLayerInitialConditionSpec
+export CSNativeInitialConditionSpec
 export FileSurfaceFluxField, build_surface_flux_source, build_surface_flux_sources
 include("BinaryPathExpander.jl")  # `[input]` folder+date-range
 using .BinaryPathExpander: expand_binary_paths

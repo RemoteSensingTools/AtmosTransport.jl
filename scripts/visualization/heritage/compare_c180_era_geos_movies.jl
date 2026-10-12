@@ -21,7 +21,8 @@ using Printf
 
 include(joinpath(@__DIR__, "..", "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport.Visualization:
-    SnapshotDataset, SnapshotRegridCache, RasterField,
+    AbstractFieldTransform, ColumnMean, LevelSlice, SurfaceSlice, PPMUnit,
+    SnapshotDataset, SnapshotRegridCache, RasterField, AllFrames,
     open_snapshot, snapshot_times, fieldview, frame_indices, as_raster,
     robust_colorrange
 
@@ -29,9 +30,9 @@ const DEFAULT_ERA_DIR = "/temp1/c180_era5_geosgrid_cfl85_3d"
 const DEFAULT_GEOS_DIR = "/temp1/c180_geosit_native_3d"
 const DEFAULT_OUT_DIR = "/tmp/tm5_smoke/viz_era_geos_c180_comparison_movies"
 
-struct MovieSpec
+struct MovieSpec{T <: AbstractFieldTransform}
     name::String
-    transform::Symbol
+    transform::T
     era_level::Union{Nothing, Int}
     geos_level::Union{Nothing, Int}
 end
@@ -59,17 +60,17 @@ function _parse_specs(raw_specs)
     for raw in raw_specs
         name = lowercase(strip(raw))
         if name == "column_mean"
-            push!(out, MovieSpec("column_mean", :column_mean, nothing, nothing))
+            push!(out, MovieSpec("column_mean", ColumnMean(), nothing, nothing))
         elseif name == "surface"
-            push!(out, MovieSpec("surface", :surface_slice, nothing, nothing))
+            push!(out, MovieSpec("surface", SurfaceSlice(), nothing, nothing))
         elseif name == "mid_trop"
             # Fast tropospheric visual diagnostics matching the per-source
             # single-run scripts: L85 ERA level 65, L72 GEOS level 55.
-            push!(out, MovieSpec("mid_trop", :level_slice, 65, 55))
+            push!(out, MovieSpec("mid_trop", LevelSlice(), 65, 55))
         elseif name == "upper_trop"
             # Fast upper-tropospheric visual diagnostics matching the
             # per-source single-run scripts: L85 ERA level 40, L72 GEOS level 35.
-            push!(out, MovieSpec("upper_trop", :level_slice, 40, 35))
+            push!(out, MovieSpec("upper_trop", LevelSlice(), 40, 35))
         else
             error("Unknown SPECS entry $(raw). Supported: column_mean,surface,mid_trop,upper_trop")
         end
@@ -99,7 +100,7 @@ function _load_rasters(snapshot::SnapshotDataset, tracer::AbstractString,
                           transform = spec.transform,
                           time = idx,
                           level = level,
-                          unit = :ppm)
+                          unit = PPMUnit())
         push!(rasters, as_raster(field; resolution = resolution, cache = cache))
     end
     return rasters
@@ -159,7 +160,7 @@ function _write_movie(era_path::String, geos_path::String, out_path::String;
                       trim)
     era = open_snapshot(era_path)
     geos = open_snapshot(geos_path)
-    era_indices = frame_indices(era, :all)
+    era_indices = frame_indices(era, AllFrames())
     geos_indices = _matched_indices(snapshot_times(era), snapshot_times(geos))
     length(era_indices) == length(geos_indices) ||
         error("Internal time-match mismatch for $(run) $(tracer) $(spec.name)")

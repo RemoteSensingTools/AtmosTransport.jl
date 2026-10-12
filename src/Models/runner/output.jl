@@ -190,8 +190,26 @@ function Base.close(output::RunSnapshotOutput)
     return nothing
 end
 
+_snapshot_capture_fields(spec::RuntimeOutputSpec) =
+    _snapshot_capture_fields(spec.format, spec.fields)
+_snapshot_capture_fields(::NetCDFOutput, fields) = fields
+_snapshot_capture_fields(::BinaryMmapOutput, fields) = nothing
+
+_validate_structured_output_format(::NetCDFOutput) = nothing
+function _validate_structured_output_format(::BinaryMmapOutput)
+    throw(ArgumentError(
+        "[output] format = \"binary_mmap\" (ATMSNAP) is written for cubed-sphere runs " *
+        "only; use format = \"netcdf\" on lat-lon and reduced-Gaussian grids"))
+end
+
 function _single_netcdf_stream(output::RunSnapshotOutput, spec::RuntimeOutputSpec, grid; mass_basis)
-    output_enabled(spec) && spec.format === :netcdf && spec.partition isa SingleOutputFile ||
+    return _single_netcdf_stream(output, spec, grid, spec.format; mass_basis)
+end
+_single_netcdf_stream(::RunSnapshotOutput, ::RuntimeOutputSpec, grid,
+                      ::BinaryMmapOutput; mass_basis) = nothing
+function _single_netcdf_stream(output::RunSnapshotOutput, spec::RuntimeOutputSpec, grid,
+                               ::NetCDFOutput; mass_basis)
+    output_enabled(spec) && spec.partition isa SingleOutputFile ||
         return nothing
     output.stream = NetCDFSnapshotStream(output_path(spec), grid;
                                          mass_basis, options=spec.options, fields=spec.fields)
@@ -222,17 +240,21 @@ function _write_output_frames!(timer::RunProgressTimer,
     output_enabled(spec) || return nothing
     isempty(frames) && return nothing
     path = _output_path_for_partition(spec, partition, date_label, day_index)
-    timed_io_write!(timer, () -> if spec.format === :binary_mmap
-        write_snapshot_binary(path, frames, grid;
-                              mass_basis = mass_basis,
-                              options = spec.options)
-    else
-        write_snapshot_netcdf(path, frames, grid;
-                              mass_basis = mass_basis,
-                              options = spec.options,
-                              fields = spec.fields)
-    end)
+    timed_io_write!(timer, () -> _write_output_frames!(spec.format, spec, path,
+                                                        frames, grid, mass_basis))
     return path
+end
+
+function _write_output_frames!(::BinaryMmapOutput, spec, path, frames, grid, mass_basis)
+    write_snapshot_binary(path, frames, grid;
+                          mass_basis = mass_basis,
+                          options = spec.options)
+end
+function _write_output_frames!(::NetCDFOutput, spec, path, frames, grid, mass_basis)
+    write_snapshot_netcdf(path, frames, grid;
+                          mass_basis = mass_basis,
+                          options = spec.options,
+                          fields = spec.fields)
 end
 
 # Write accumulated HOST-side snapshot frames to disk. Used by the async
@@ -243,15 +265,18 @@ end
 function _write_frames_to_disk(spec::RuntimeOutputSpec, path::AbstractString,
                                frames::AbstractVector{<:AbstractSnapshotFrame}, grid, mass_basis::Symbol)
     isempty(frames) && return path
-    if spec.format === :binary_mmap
-        write_snapshot_binary(path, frames, grid; mass_basis = mass_basis,
-                              options = spec.options)
-    else
-        # The writer takes the shared NetCDF lock itself.
-        write_snapshot_netcdf(path, frames, grid; mass_basis = mass_basis,
-                              options = spec.options, fields = spec.fields)
-    end
+    _write_frames_to_disk(spec.format, spec, path, frames, grid, mass_basis)
     return path
+end
+
+function _write_frames_to_disk(::BinaryMmapOutput, spec, path, frames, grid, mass_basis)
+    write_snapshot_binary(path, frames, grid; mass_basis = mass_basis,
+                          options = spec.options)
+end
+function _write_frames_to_disk(::NetCDFOutput, spec, path, frames, grid, mass_basis)
+    # The writer takes the shared NetCDF lock itself.
+    write_snapshot_netcdf(path, frames, grid; mass_basis = mass_basis,
+                          options = spec.options, fields = spec.fields)
 end
 
 function _start_daily_output!(output::RunSnapshotOutput, spec::RuntimeOutputSpec,

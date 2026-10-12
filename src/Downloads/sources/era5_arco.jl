@@ -104,12 +104,14 @@ end
 # GRIB parts; `single` is a plain verified download.
 # ---------------------------------------------------------------------------
 function execute!(task::DownloadTask, proto::GCSProtocol;
-                  max_retries::Int=3, retry_wait::Int=30)
+                  max_retries::Int=3, retry_wait::Int=30,
+                  reporter::AbstractDownloadProgressReporter=DownloadProgressLines())
     mkpath(dirname(task.dest_path))
     assemble = get(task.request, "assemble", "single")
 
     if assemble == "single"
-        return verified_download(task.source_url, task.dest_path; max_retries=max_retries)
+        return verified_download(task.source_url, task.dest_path;
+                                 max_retries=max_retries, reporter)
 
     elseif assemble == "concat"
         stage = task.request["stage_dir"]
@@ -120,7 +122,7 @@ function execute!(task::DownloadTask, proto::GCSProtocol;
         # Fetch the parts concurrently (libcurl multiplexes the transfers).
         @sync for (i, c) in enumerate(comps)
             @async oks[i] = verified_download(String(c.url), parts[i];
-                                              max_retries=max_retries)
+                                              max_retries=max_retries, reporter)
         end
         if !all(oks)
             @error "  ARCO concat: component download failed for $(basename(task.dest_path))"
@@ -129,8 +131,17 @@ function execute!(task::DownloadTask, proto::GCSProtocol;
         end
         tmp = task.dest_path * ".part"
         try
-            @info "  Concatenating $(length(parts)) parts → $(basename(task.dest_path))"
-            run(pipeline(Cmd(vcat("cat", parts)); stdout=tmp))   # streams; memory-safe
+            _report_progress!(reporter,
+                              "  Concatenating $(length(parts)) parts → $(basename(task.dest_path))")
+            stderr_buffer = IOBuffer()
+            try
+                run(pipeline(Cmd(vcat("cat", parts)); stdout=tmp,
+                             stderr=stderr_buffer))   # streams; memory-safe
+            catch
+                stderr_text = strip(String(take!(stderr_buffer)))
+                isempty(stderr_text) || @error "  ARCO concat subprocess output" stderr=stderr_text
+                rethrow()
+            end
             mv(tmp, task.dest_path; force=true)
         catch e
             @error "  ARCO concat failed: $e"

@@ -13,7 +13,7 @@
 
 Main entry point. Parses TOML config and executes downloads.
 
-- `dry_run`: print what would be downloaded without executing
+- `dry_run`: report what would be downloaded without executing
 - `verify_only`: check existing files against expected sizes
 """
 function download_data!(cfg::Dict{String, Any};
@@ -21,6 +21,26 @@ function download_data!(cfg::Dict{String, Any};
                         end_date::Union{Date, Nothing}=nothing,
                         dry_run::Bool=false,
                         verify_only::Bool=false)
+    settings = download_logging(cfg)
+    return with_log_level(settings.level) do
+        try
+            result = _download_data!(cfg; start_date, end_date, dry_run, verify_only,
+                                     reporter=settings.progress)
+            _finish_progress!(settings.progress)
+            result
+        catch
+            _cancel_progress!(settings.progress)
+            rethrow()
+        end
+    end
+end
+
+function _download_data!(cfg::Dict{String, Any};
+                         start_date::Union{Date, Nothing}=nothing,
+                         end_date::Union{Date, Nothing}=nothing,
+                         dry_run::Bool=false,
+                         verify_only::Bool=false,
+                         reporter::AbstractDownloadProgressReporter=DownloadProgressLines())
     config = parse_download_config(cfg)
     dry_run || verify_only || protocol_can_download(config.protocol) || throw(ArgumentError(
         "$(nameof(typeof(config.protocol))) downloads are not implemented; run this recipe " *
@@ -42,7 +62,7 @@ function download_data!(cfg::Dict{String, Any};
         config.schedule
     end
 
-    _print_banner(config, sched, dry_run, verify_only)
+    _log_download_start(config, sched, dry_run, verify_only)
 
     # Group dates by chunk strategy
     date_groups = _group_dates(sched)
@@ -58,13 +78,13 @@ function download_data!(cfg::Dict{String, Any};
 
     for (i, group) in enumerate(date_groups)
         label = _group_label(group, sched.chunk)
-        @info "[$i/$n_total] $label"
+        _report_progress!(reporter, "[$i/$n_total] $label")
 
         tasks = build_tasks(config.source, config.protocol, group,
                             config.output, config.requests)
 
         if dry_run
-            _print_dry_run(tasks)
+            _report_dry_run(reporter, tasks)
             n_ok += length(tasks)
             continue
         end
@@ -74,7 +94,8 @@ function download_data!(cfg::Dict{String, Any};
                 status, expected = _existing_task_status(task, config.protocol)
                 if status === :verified
                     sz = filesize(task.dest_path)
-                    @info "  ✓ $(basename(task.dest_path)) ($(sz ÷ 1_000_000) MB)"
+                    _report_progress!(reporter,
+                                      "  ✓ $(basename(task.dest_path)) ($(sz ÷ 1_000_000) MB)")
                     n_ok += 1
                     total_bytes += sz
                 elseif status === :unverifiable
@@ -96,7 +117,8 @@ function download_data!(cfg::Dict{String, Any};
             if sched.skip_existing
                 status, _ = _existing_task_status(task, config.protocol)
                 if status === :verified
-                    @info "  Skip (verified): $(basename(task.dest_path))"
+                    _report_progress!(reporter,
+                                      "  Skip (verified): $(basename(task.dest_path))")
                     n_skip += 1
                     total_bytes += filesize(task.dest_path)
                     continue
@@ -111,7 +133,8 @@ function download_data!(cfg::Dict{String, Any};
 
             success = execute!(task, config.protocol;
                                max_retries=sched.max_retries,
-                               retry_wait=sched.retry_wait_seconds)
+                               retry_wait=sched.retry_wait_seconds,
+                               reporter)
             if success
                 _write_download_manifest(task, config.protocol)
                 n_ok += 1
@@ -122,7 +145,8 @@ function download_data!(cfg::Dict{String, Any};
         end
     end
 
-    _print_summary(n_ok, n_skip, n_fail, total_bytes, dry_run, verify_only)
+    _log_download_summary(n_ok, n_skip, n_fail, total_bytes, dry_run, verify_only)
+    return nothing
 end
 
 _task_remote_url(task::DownloadTask, ::HTTPProtocol) = task.source_url
@@ -273,14 +297,140 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    execute!(task::DownloadTask, protocol; max_retries=3, retry_wait=30) -> Bool
+    execute!(task::DownloadTask, protocol; max_retries=3, retry_wait=30,
+             reporter=DownloadProgressLines()) -> Bool
 
 Execute a single download task. Dispatches on protocol type.
 """
 function execute!(task::DownloadTask, protocol::AbstractDownloadProtocol;
-                  max_retries::Int=3, retry_wait::Int=30)
+                  max_retries::Int=3, retry_wait::Int=30,
+                  reporter::AbstractDownloadProgressReporter=DownloadProgressLines())
     error("execute! not implemented for $(typeof(protocol)). " *
           "Load the appropriate protocol module.")
+end
+
+const _SUBPROCESS_READ_BYTES = 8 * 1024
+const _SUBPROCESS_TAIL_BYTES = 64 * 1024
+
+mutable struct _BoundedByteTail
+    bytes::Vector{UInt8}
+    limit::Int
+end
+
+_BoundedByteTail(limit::Int) = _BoundedByteTail(UInt8[], limit)
+
+function _append_tail!(tail::_BoundedByteTail, chunk::AbstractVector{UInt8})
+    isempty(chunk) && return tail
+    if length(chunk) >= tail.limit
+        empty!(tail.bytes)
+        append!(tail.bytes, @view chunk[(end - tail.limit + 1):end])
+        return tail
+    end
+
+    overflow = length(tail.bytes) + length(chunk) - tail.limit
+    overflow > 0 && deleteat!(tail.bytes, 1:overflow)
+    append!(tail.bytes, chunk)
+    return tail
+end
+
+_is_utf8_continuation(byte::UInt8) = (byte & 0xc0) == 0x80
+
+# Number of leading bytes of `bytes` that end on a UTF-8 character boundary,
+# so a fixed-size fragment never splits a multibyte character.
+function _utf8_complete_prefix(bytes::AbstractVector{UInt8})
+    n = length(bytes)
+    i = n
+    while i > 0 && _is_utf8_continuation(bytes[i])
+        i -= 1
+    end
+    i == 0 && return n                      # no lead byte: not UTF-8, keep all
+    lead = bytes[i]
+    width = lead < 0x80 ? 1 : lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : lead >= 0xc0 ? 2 : 1
+    return n - i + 1 >= width ? n : i - 1
+end
+
+# The tail drops whole bytes from the front; skip a partial first character.
+function _tail_text(tail::_BoundedByteTail)
+    first = findfirst(!_is_utf8_continuation, tail.bytes)
+    first === nothing && return ""
+    return strip(String(tail.bytes[first:end]))
+end
+
+function _report_subprocess_text!(reporter::AbstractDownloadProgressReporter,
+                                  bytes::Vector{UInt8}, upto::Int = length(bytes))
+    text = String(bytes[1:upto])
+    isempty(strip(text)) || _report_progress!(reporter, text)
+    deleteat!(bytes, 1:upto)
+    return nothing
+end
+
+function _append_progress!(reporter::AbstractDownloadProgressReporter,
+                           pending::Vector{UInt8}, chunk::AbstractVector{UInt8})
+    for byte in chunk
+        if byte == UInt8('\n') || byte == UInt8('\r')
+            _report_subprocess_text!(reporter, pending)
+        else
+            push!(pending, byte)
+            # A subprocess can emit an arbitrarily long unterminated line.
+            # Forward fixed-size fragments rather than buffering that line.
+            length(pending) >= _SUBPROCESS_READ_BYTES &&
+                _report_subprocess_text!(reporter, pending, _utf8_complete_prefix(pending))
+        end
+    end
+    return nothing
+end
+
+function _drain_subprocess_pipe(pipe::Pipe,
+                                reporter::AbstractDownloadProgressReporter)
+    tail = _BoundedByteTail(_SUBPROCESS_TAIL_BYTES)
+    pending = UInt8[]
+    sizehint!(pending, _SUBPROCESS_READ_BYTES)
+    while !eof(pipe)
+        navailable = bytesavailable(pipe)
+        navailable == 0 && continue
+        chunk = read(pipe, min(navailable, _SUBPROCESS_READ_BYTES))
+        _append_tail!(tail, chunk)
+        _append_progress!(reporter, pending, chunk)
+    end
+    _report_subprocess_text!(reporter, pending)
+    return _tail_text(tail)
+end
+
+struct _SubprocessFailure <: Exception
+    label::String
+    cause::ProcessFailedException
+    stdout_tail::String
+    stderr_tail::String
+end
+
+function Base.showerror(io::IO, failure::_SubprocessFailure)
+    print(io, failure.label, " subprocess failed: ")
+    showerror(io, failure.cause)
+    isempty(failure.stdout_tail) ||
+        print(io, "\nstdout tail:\n", failure.stdout_tail)
+    isempty(failure.stderr_tail) ||
+        print(io, "\nstderr tail:\n", failure.stderr_tail)
+end
+
+function _run_command(cmd::Cmd, reporter::AbstractDownloadProgressReporter;
+                      label::AbstractString)
+    stdout_pipe = Pipe()
+    stderr_pipe = Pipe()
+    process = run(pipeline(ignorestatus(cmd); stdout=stdout_pipe, stderr=stderr_pipe);
+                  wait=false)
+    # The parent must close its copies of the write ends so the drain tasks see
+    # EOF as soon as the child exits.
+    close(stdout_pipe.in)
+    close(stderr_pipe.in)
+    stdout_task = @async _drain_subprocess_pipe(stdout_pipe, reporter)
+    stderr_task = @async _drain_subprocess_pipe(stderr_pipe, reporter)
+
+    wait(process)
+    stdout_tail = fetch(stdout_task)
+    stderr_tail = fetch(stderr_task)
+    success(process) || throw(_SubprocessFailure(
+        String(label), ProcessFailedException(process), stdout_tail, stderr_tail))
+    return nothing
 end
 
 # ---------------------------------------------------------------------------
@@ -295,22 +445,39 @@ success. On failure, cleans up `dest` and waits before retrying.
 """
 function _with_retries(f::Function, label::String, dest::String;
                        max_retries::Int, retry_wait::Int)
+    last_failure = nothing
+    last_backtrace = nothing
     for attempt in 1:max_retries
         try
             f(attempt) && return true
+            last_failure = nothing
+            last_backtrace = nothing
         catch e
+            last_failure = e
+            last_backtrace = catch_backtrace()
             @warn "  Attempt $attempt failed: $e"
             isfile(dest) && rm(dest; force=true)
             attempt < max_retries && sleep(retry_wait)
         end
     end
-    @error "  Failed after $max_retries attempts: $label"
+    if last_failure isa _SubprocessFailure
+        @error("  Failed after $max_retries attempts: $label",
+               exception=(last_failure, last_backtrace),
+               stdout_tail=last_failure.stdout_tail,
+               stderr_tail=last_failure.stderr_tail)
+    elseif last_failure !== nothing
+        @error("  Failed after $max_retries attempts: $label",
+               exception=(last_failure, last_backtrace))
+    else
+        @error "  Failed after $max_retries attempts: $label"
+    end
     return false
 end
 
 # OPeNDAP protocol execution (Phase 4 — requires NCDatasets remote access)
 function execute!(task::DownloadTask, proto::OPeNDAPProtocol;
-                  max_retries::Int=3, retry_wait::Int=30)
+                  max_retries::Int=3, retry_wait::Int=30,
+                  reporter::AbstractDownloadProgressReporter=DownloadProgressLines())
     # TODO: implement OPeNDAP subset download via NCDatasets remote read
     # (`download_data!` refuses OPeNDAP recipes before any task runs).
     error("OPeNDAP downloads are not implemented (see `protocol_can_download`).")
@@ -318,30 +485,33 @@ end
 
 # HTTP protocol execution
 function execute!(task::DownloadTask, ::HTTPProtocol;
-                  max_retries::Int=3, retry_wait::Int=30)
+                  max_retries::Int=3, retry_wait::Int=30,
+                  reporter::AbstractDownloadProgressReporter=DownloadProgressLines())
     mkpath(dirname(task.dest_path))
     return verified_download(task.source_url, task.dest_path;
-                             max_retries=max_retries)
+                             max_retries=max_retries, reporter)
 end
 
 # S3 protocol execution — uses public HTTPS URL for no_sign_request buckets,
 # falls back to aws CLI for authenticated buckets
 function execute!(task::DownloadTask, proto::S3Protocol;
-                  max_retries::Int=3, retry_wait::Int=30)
+                  max_retries::Int=3, retry_wait::Int=30,
+                  reporter::AbstractDownloadProgressReporter=DownloadProgressLines())
     mkpath(dirname(task.dest_path))
     if proto.no_sign_request
         # Public bucket: use HTTPS URL directly (no aws CLI needed)
         https_url = "https://$(proto.bucket).s3.amazonaws.com/$(task.source_url)"
         return verified_download(https_url, task.dest_path;
-                                 max_retries=max_retries)
+                                 max_retries=max_retries, reporter)
     else
         s3_url = "s3://$(proto.bucket)/$(task.source_url)"
         staging = task.dest_path * ".part"
         rm(staging; force=true)
         success = _with_retries(basename(task.dest_path), staging;
                              max_retries, retry_wait) do attempt
-            @info "  Downloading $(basename(task.dest_path)) (attempt $attempt)..."
-            run(`aws s3 cp $s3_url $staging`)
+            _report_progress!(reporter,
+                              "  Downloading $(basename(task.dest_path)) (attempt $attempt)...")
+            _run_command(`aws s3 cp $s3_url $staging`, reporter; label="AWS S3")
             isfile(staging) && filesize(staging) > 0
         end
         success && mv(staging, task.dest_path; force=true)
@@ -351,7 +521,8 @@ end
 
 # CDS protocol execution
 function execute!(task::DownloadTask, proto::CDSProtocol;
-                  max_retries::Int=3, retry_wait::Int=30)
+                  max_retries::Int=3, retry_wait::Int=30,
+                  reporter::AbstractDownloadProgressReporter=DownloadProgressLines())
     mkpath(dirname(task.dest_path))
     dataset = get(task.request, "dataset", "reanalysis-era5-complete")
     request = Dict{String,Any}(k => v for (k, v) in task.request if k != "dataset")
@@ -359,8 +530,9 @@ function execute!(task::DownloadTask, proto::CDSProtocol;
     rm(staging; force=true)
     success = _with_retries(task.name, staging; max_retries, retry_wait) do attempt
         script = build_cds_retrieve_script(dataset, request, staging)
-        @info "  CDS retrieve: $(task.name) (attempt $attempt)..."
-        run_python(script, proto.python_env; label=task.name)
+        _report_progress!(reporter,
+                          "  CDS retrieve: $(task.name) (attempt $attempt)...")
+        run_python(script, proto.python_env; label=task.name, reporter)
         isfile(staging) && filesize(staging) > 0
     end
     success && mv(staging, task.dest_path; force=true)
@@ -369,22 +541,24 @@ end
 
 # MARS protocol execution (with CDS fallback)
 function execute!(task::DownloadTask, proto::MARSProtocol;
-                  max_retries::Int=3, retry_wait::Int=30)
+                  max_retries::Int=3, retry_wait::Int=30,
+                  reporter::AbstractDownloadProgressReporter=DownloadProgressLines())
     mkpath(dirname(task.dest_path))
     request = Dict{String,Any}(k => v for (k, v) in task.request if k != "dataset")
     staging = task.dest_path * ".part"
     rm(staging; force=true)
     success = _with_retries(task.name, staging; max_retries, retry_wait) do attempt
         script = build_mars_retrieve_script(request, staging)
-        @info "  MARS retrieve: $(task.name) (attempt $attempt)..."
-        run_python(script, proto.python_env; label=task.name)
+        _report_progress!(reporter,
+                          "  MARS retrieve: $(task.name) (attempt $attempt)...")
+        run_python(script, proto.python_env; label=task.name, reporter)
         isfile(staging) && filesize(staging) > 0
     end
     success && mv(staging, task.dest_path; force=true)
     if !success && proto.fallback_to_cds
         @warn "  MARS failed, falling back to CDS for $(task.name)"
         return execute!(task, CDSProtocol(proto.python_env);
-                        max_retries=max_retries, retry_wait=retry_wait)
+                        max_retries=max_retries, retry_wait=retry_wait, reporter)
     end
     return success
 end
@@ -393,31 +567,22 @@ end
 # Display helpers
 # ---------------------------------------------------------------------------
 
-function _print_banner(config::DownloadConfig, sched::ScheduleConfig,
-                       dry_run::Bool, verify_only::Bool)
-    mode = dry_run ? " [DRY RUN]" : verify_only ? " [VERIFY]" : ""
+function _log_download_start(config::DownloadConfig, sched::ScheduleConfig,
+                             dry_run::Bool, verify_only::Bool)
+    mode = dry_run ? "dry-run" : verify_only ? "verify" : "download"
     out_dir = canonical_output_dir(config.output)
     n_days = Dates.value(sched.end_date - sched.start_date) + 1
-
-    println("=" ^ 70)
-    println("AtmosTransport Download$mode")
-    println("=" ^ 70)
-    println("  Source:   $(source_name(config.source))")
-    println("  Period:   $(sched.start_date) to $(sched.end_date) ($n_days days)")
-    println("  Chunk:    $(sched.chunk)")
-    println("  Output:   $out_dir")
-    if !isempty(config.requests)
-        println("  Requests: $(length(config.requests))")
-        for req in config.requests
-            name = get(req, "name", "unnamed")
-            desc = get(req, "description", "")
-            println("    - $name: $desc")
-        end
-    end
-    println("=" ^ 70)
+    requests = [(name=get(req, "name", "unnamed"),
+                 description=get(req, "description", "")) for req in config.requests]
+    @info("AtmosTransport download started",
+          mode=mode, source=source_name(config.source),
+          start_date=sched.start_date, end_date=sched.end_date, days=n_days,
+          chunk=sched.chunk, output=out_dir, requests=requests)
+    return nothing
 end
 
-function _print_dry_run(tasks::Vector{DownloadTask})
+function _report_dry_run(reporter::AbstractDownloadProgressReporter,
+                         tasks::Vector{DownloadTask})
     for task in tasks
         est = if task.estimated_size_mb >= 1000
             " (~$(@sprintf("%.0f", task.estimated_size_mb / 1000)) GB)"
@@ -426,17 +591,37 @@ function _print_dry_run(tasks::Vector{DownloadTask})
         else
             ""
         end
-        println("  → $(task.dest_path)$est")
+        _report_progress!(reporter, "  → $(task.dest_path)$est")
     end
+    return nothing
 end
 
-function _print_summary(n_ok, n_skip, n_fail, total_bytes, dry_run, verify_only)
-    println()
-    println("=" ^ 70)
+function _log_download_summary(n_ok, n_skip, n_fail, total_bytes, dry_run, verify_only)
     action = dry_run ? "Would download" : verify_only ? "Verified" : "Downloaded"
-    println("$action: $n_ok")
-    !dry_run && !verify_only && n_skip > 0 && println("Skipped (existing): $n_skip")
-    n_fail > 0 && println("Failed: $n_fail")
-    total_bytes > 0 && println("Total size: $(@sprintf("%.1f", total_bytes / 1e9)) GB")
-    println("=" ^ 70)
+    @info("AtmosTransport download finished",
+          action=action, succeeded=n_ok, skipped=n_skip, total_bytes=total_bytes)
+    n_fail > 0 && @warn "AtmosTransport download failures" failed=n_fail
+    return nothing
+end
+
+_report_progress!(::NoDownloadProgress, message::AbstractString) = nothing
+function _report_progress!(::DownloadProgressLines, message::AbstractString)
+    @info message
+    return nothing
+end
+function _report_progress!(reporter::DownloadProgressBar, message::AbstractString)
+    next!(reporter.progress; showvalues=[(:status, message)])
+    return nothing
+end
+
+_finish_progress!(::Union{DownloadProgressLines, NoDownloadProgress}) = nothing
+function _finish_progress!(reporter::DownloadProgressBar)
+    finish!(reporter.progress)
+    return nothing
+end
+
+_cancel_progress!(::Union{DownloadProgressLines, NoDownloadProgress}) = nothing
+function _cancel_progress!(reporter::DownloadProgressBar)
+    cancel(reporter.progress, "Download failed"; color=:red)
+    return nothing
 end

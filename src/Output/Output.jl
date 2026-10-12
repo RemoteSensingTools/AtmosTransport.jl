@@ -70,6 +70,7 @@ using ..State: AbstractMassBasis, DryBasis, MoistBasis, mass_basis, tracer_names
 
 export AbstractSnapshotFrame, SnapshotFrame, SelectedSnapshotFrame, SnapshotWriteOptions
 export AbstractOutputSchedule, AbstractOutputPartition
+export AbstractOutputFormat, NetCDFOutput, BinaryMmapOutput, output_format_label
 export AbstractLayerSelection, FullLayerSelection, SelectedLayerSelection
 export NoLayerSelection, TracerOutputFields, OutputFieldSpec
 export ExplicitSnapshotSchedule, IntervalSnapshotSchedule
