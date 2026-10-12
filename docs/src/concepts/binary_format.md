@@ -480,10 +480,23 @@ only when both limits are exceeded. Failure occurs before that window's payload
 is written. The certificate records maximum/RMS absolute and relative errors,
 maximum ULP distance, both tolerances and the scale floor, sample coverage,
 the worst window/face/level, method and effective duration. Because column
-Poisson balance intentionally changes fluxes, its effect is separate:
-`|F_balanced-F_r|` plus maximum and RMS correction ratios
-`|F_balanced-F_r| / max(|F_r|, |F_c|, F_floor)` (for native GEOS fluxes,
-`F_c = F_r` is the native amount).
+Poisson balance intentionally changes fluxes, its effect is separate. With
+`Δ = F_balanced − F_r` at every sampled face and level of every window (for
+native GEOS fluxes `F_r` is the native amount), the header records the largest
+`|Δ|` (`balance_correction_max_abs_kg`) and the flux-weighted relative
+correction
+
+```math
+\frac{\mathrm{RMS}(\Delta)}{\mathrm{RMS}(F_r)} =
+\sqrt{\frac{\sum \Delta^2}{\sum F_r^2}},
+```
+
+over all samples (`balance_correction_rms_relative`) and per level, whose
+largest value and level (1 = top) are `balance_correction_max_level_rms_relative`
+and `balance_correction_max_level`; `RMS(F_r)` is floored at `F_floor`. A
+per-sample ratio `|Δ|/|F_r|` is not recorded: faces whose pre-balance amount is
+near zero dominate it (golden headers of the earlier definition: maxima of
+6.5e13 on the ERA5 72 × 37 lat-lon golden, 1.3e4 on GEOS-IT C45).
 
 Where source pressure velocity is available, the writer normalizes it to the
 same dry basis, time sampling, grid, and vertical coordinate and compares it

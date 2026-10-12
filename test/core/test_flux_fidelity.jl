@@ -101,7 +101,10 @@ end
             @test h["flux_fidelity_sample_rule"] == "cs_stratified_faces_v1"
             @test h["flux_fidelity_sample_count"] == 3 * 2 * 2
             @test h["flux_fidelity_time_sampling"] == "window_mean"
-            @test h["balance_correction_max_ratio"] > 0
+            # Balanced = 1.1 × reference at every sample: 10 % flux-weighted correction.
+            @test h["balance_correction_rms_relative"] ≈ 0.1 rtol = 1e-5
+            @test h["balance_correction_max_level_rms_relative"] ≈ 0.1 rtol = 1e-5
+            @test h["balance_correction_max_level"] in 1:2
             @test h["omega_fidelity_status"] == "not_applicable"
             @test h["omega_fidelity_reason"] == "source_has_no_omega"
             parsed = parse_flux(h)
@@ -151,7 +154,12 @@ end
 
     @testset "native fluxes are not applicable, with the balance correction" begin
         FT = Float32
-        samples = [Pre.FluxBalanceSample(f, k, FT(2e9), FT(2.2e9)) for f in (4, 5) for k in 1:3]
+        # Every sample is corrected by 2e8 kg; one level-1 face had almost no
+        # pre-balance flux (1 kg). A per-sample ratio would report 2e8 for it;
+        # the flux-weighted metric reports the correction relative to the flux.
+        pre(f, k) = f == 5 && k == 1 ? FT(1) : FT(2e9)
+        samples = [Pre.FluxBalanceSample(f, k, pre(f, k), pre(f, k) + FT(2e8))
+                   for f in (4, 5) for k in 1:3]
         native = Pre.NativeFluxEvidence{CS,FT,typeof(samples)}(
             samples, 2, "geos_native_scaling_vertical_map", 3600.0)
         h = certificate(_ -> Pre.FluxFidelityEvidenceBundle(
@@ -161,6 +169,9 @@ end
         @test h["flux_fidelity_kind"] == "native_passthrough"
         @test h["flux_fidelity_reason"] == "native_fluxes_not_rederivable"
         @test h["balance_correction_max_abs_kg"] ≈ 2e8 rtol = 1e-6
+        @test h["balance_correction_rms_relative"] ≈ sqrt(6 / 5) * 0.1 rtol = 1e-6
+        @test h["balance_correction_max_level_rms_relative"] ≈ sqrt(2) * 0.1 rtol = 1e-6
+        @test h["balance_correction_max_level"] == 1
         @test !haskey(h, "flux_fidelity_max_abs_kg")             # nothing was compared
         @test h["omega_fidelity_status"] == "unavailable"
         parsed = parse_flux(h)
@@ -408,7 +419,8 @@ end
                 ("kind none", h -> h["flux_fidelity_kind"] = "none"),
                 ("native kind", h -> h["flux_fidelity_kind"] = "native_passthrough"),
                 ("missing metric", h -> delete!(h, "flux_fidelity_max_abs_kg")),
-                ("missing balance metric", h -> delete!(h, "balance_correction_max_ratio")),
+                ("missing balance metric", h -> delete!(h, "balance_correction_rms_relative")),
+                ("balance level outside the binary", h -> h["balance_correction_max_level"] = 3),
                 ("non-finite metric", h -> h["flux_fidelity_rms_rel"] = "NaN"),
                 ("reason on passed", h -> h["flux_fidelity_reason"] = "x"))
             @test_throws Exception parse_flux(broken(mutate))

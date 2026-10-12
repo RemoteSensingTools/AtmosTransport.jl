@@ -61,7 +61,17 @@
   `omega_fidelity_slope_min` and `omega_fidelity_slope_max`
   (`OmegaFidelityHeader.nrmse_limit`, `.correlation_min`, `.slope_min`,
   `.slope_max`; `OmegaFidelityBaseline` gains `slope_max`), and
-  `FluxFidelityHeader` gains `time_sampling_by_window`.
+  `FluxFidelityHeader` gains `time_sampling_by_window`. The per-sample
+  balance-correction ratios `balance_correction_max_ratio` and
+  `balance_correction_rms_ratio` (near-zero pre-balance faces dominated them)
+  are replaced by `balance_correction_rms_relative`,
+  `balance_correction_max_level_rms_relative` and
+  `balance_correction_max_level` (`FluxFidelityHeader` fields of the same
+  names). `TransportBinaryHeader` gains `column_closure`
+  (`ColumnClosureHeader` or `NoColumnClosureHeader`), and
+  `recheck_cs_column_closure` takes `flux_scale`;
+  `scale_column_closure_record` is replaced by
+  `full_window_column_closure_record`.
 
 - Removed the deprecated, unused `State.MetState`,
   `diagnose_cm_from_continuity_vc!`, and
@@ -211,7 +221,9 @@
   (#15, item 3). Wind-derived paths rebuild deterministic face samples from
   `u`, `v` and `Δp` before the column balance and fail a window before it is
   written when a sample exceeds both `64 ε max(F_scale, 1 kg)` and
-  `256 ε` relative; the balance correction is reported separately. Where
+  `256 ε` relative; the balance correction `Δ = F_balanced − F` is reported
+  separately, flux-weighted: largest `|Δ|`, `RMS(Δ)/RMS(F)` over all samples
+  and its largest per-level value with the level. Where
   source OMEGA is open (MERRA-2; GEOS OMEGA closures), `ω_cm = g cm/(A Δt)`
   must beat a zero vertical flux, `NRMSE < 1`, with correlation `> 0.5` and
   slope `0.5 < s < 1.5` (MERRA-2 C90: 0.47, 0.89, 0.87; baselines

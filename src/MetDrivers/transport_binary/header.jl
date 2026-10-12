@@ -81,6 +81,11 @@ always `WindRederivedFidelity` and carries every numeric metric (finite);
 and carries only the balance-correction metrics; `NoFluxFidelityKind` has no
 samples. `time_sampling` is the windows' common effective sampling or
 `"mixed"`, in which case `time_sampling_by_window` lists every window's.
+The balance-correction metrics measure the column-balance correction
+`Δ = F_balanced − F` of the sampled pre-balance amounts `F`, flux-weighted:
+`balance_correction_rms_relative = RMS(Δ)/RMS(F)` over all samples, and the
+largest per-level value with its level (`balance_correction_max_level`,
+1 = top).
 """
 struct FluxFidelityHeader{S<:AbstractFidelityStatus,K<:AbstractFluxFidelityKind}
     schema::Int
@@ -109,8 +114,9 @@ struct FluxFidelityHeader{S<:AbstractFidelityStatus,K<:AbstractFluxFidelityKind}
     worst_face::Union{Nothing,Int}
     worst_level::Union{Nothing,Int}
     balance_correction_max_abs_kg::Union{Nothing,Float64}
-    balance_correction_max_ratio::Union{Nothing,Float64}
-    balance_correction_rms_ratio::Union{Nothing,Float64}
+    balance_correction_rms_relative::Union{Nothing,Float64}
+    balance_correction_max_level_rms_relative::Union{Nothing,Float64}
+    balance_correction_max_level::Union{Nothing,Int}
 end
 
 """
@@ -307,8 +313,8 @@ const _FLUX_FIDELITY_METRIC_KEYS = (
     :flux_fidelity_rel_tol, :flux_fidelity_scale_floor_kg, :flux_fidelity_worst_window,
     :flux_fidelity_worst_face, :flux_fidelity_worst_level)
 const _BALANCE_CORRECTION_KEYS = (
-    :balance_correction_max_abs_kg, :balance_correction_max_ratio,
-    :balance_correction_rms_ratio)
+    :balance_correction_max_abs_kg, :balance_correction_rms_relative,
+    :balance_correction_max_level_rms_relative, :balance_correction_max_level)
 const _OMEGA_FIDELITY_METRIC_KEYS = (
     :omega_fidelity_bias_pa_s, :omega_fidelity_rmse_pa_s, :omega_fidelity_nrmse,
     :omega_fidelity_max_abs_pa_s, :omega_fidelity_slope, :omega_fidelity_correlation,
@@ -328,6 +334,14 @@ function _forbid_keys(hdr, keys, what::AbstractString)
     for key in keys
         haskey(hdr, key) && throw(ArgumentError("$what certificate must not carry `$key`"))
     end
+    return nothing
+end
+
+# The level of the largest per-level balance correction is one of the binary's.
+function _check_balance_correction_level(hdr, nlevel::Integer)
+    level = Int(hdr.balance_correction_max_level)
+    1 <= level <= nlevel || throw(ArgumentError(
+        "balance_correction_max_level = $level is not a level of this binary (1..$nlevel)"))
     return nothing
 end
 
@@ -370,6 +384,7 @@ _check_flux_kind(::FidelityPassed, ::WindRederivedFidelity, hdr, nwindow, nlevel
     _check_flux_fidelity_coverage(hdr, nwindow, nlevel)
     _require_finite_keys(hdr, (_FLUX_FIDELITY_METRIC_KEYS..., _BALANCE_CORRECTION_KEYS...),
                          "passed flux-fidelity")
+    _check_balance_correction_level(hdr, nlevel)
     isempty(String(get(hdr, :flux_fidelity_time_sampling, ""))) && throw(ArgumentError(
         "passed flux-fidelity certificate lacks `flux_fidelity_time_sampling`"))
     nothing
@@ -377,6 +392,7 @@ end
 _check_flux_kind(::FidelityNotApplicable, ::NativePassthroughFidelity, hdr, nwindow, nlevel) = begin
     _check_flux_fidelity_coverage(hdr, nwindow, nlevel)
     _require_finite_keys(hdr, _BALANCE_CORRECTION_KEYS, "native flux-fidelity")
+    _check_balance_correction_level(hdr, nlevel)
     _forbid_keys(hdr, _FLUX_FIDELITY_METRIC_KEYS, "native flux-fidelity")
     nothing
 end
@@ -413,7 +429,7 @@ function _parse_flux_fidelity_header(hdr, nwindow::Integer, nlevel::Integer)
             FidelityReason("legacy_header_missing"), "", "", 0, 0, 0, "", "", String[],
             nothing, nothing, nothing, nothing, nothing, nothing, nothing,
             nothing, nothing, nothing, nothing, nothing, nothing, nothing,
-            nothing, nothing)
+            nothing, nothing, nothing)
     end
     schema = Int(hdr.flux_fidelity_schema)
     schema == 1 || throw(ArgumentError("unsupported flux_fidelity_schema=$(schema); expected 1"))
@@ -450,8 +466,9 @@ function _parse_flux_fidelity_header(hdr, nwindow::Integer, nlevel::Integer)
         _optional_int(hdr, :flux_fidelity_worst_face),
         _optional_int(hdr, :flux_fidelity_worst_level),
         _optional_float(hdr, :balance_correction_max_abs_kg),
-        _optional_float(hdr, :balance_correction_max_ratio),
-        _optional_float(hdr, :balance_correction_rms_ratio))
+        _optional_float(hdr, :balance_correction_rms_relative),
+        _optional_float(hdr, :balance_correction_max_level_rms_relative),
+        _optional_int(hdr, :balance_correction_max_level))
 end
 
 # OMEGA certificate checks by status.

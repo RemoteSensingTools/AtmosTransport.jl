@@ -336,9 +336,13 @@ mutable struct FluxFidelityAccumulator
     worst_face::Int
     worst_level::Int
     balance_max_abs::Float64
-    balance_max_ratio::Float64
-    balance_sumsq_ratio::Float64
+    balance_sumsq_delta::Float64
+    balance_sumsq_native::Float64
     balance_count::Int
+    balance_scale_floor::Float64
+    balance_level_delta2::Vector{Float64}
+    balance_level_native2::Vector{Float64}
+    balance_level_count::Vector{Int}
     omega_windows::Int
     omega_none_windows::Int
     omega_none_reason::Union{Nothing,AbstractFluxFidelityReason}
@@ -370,7 +374,7 @@ end
 FluxFidelityAccumulator() = FluxFidelityAccumulator(
     "none", 0, 0, 0, nothing, "", String[], 0, 0, Inf, -Inf,
     0.0, 0.0, 0.0, 0.0, UInt64(0), 0.0, 0.0, 0.0, 0, 0, 0,
-    0.0, 0.0, 0.0, 0,
+    0.0, 0.0, 0.0, 0, 0.0, Float64[], Float64[], Int[],
     0, 0, nothing, "", "", "", nothing, 0,
     0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
     zeros(5), zeros(5), zeros(Int, 5),
@@ -415,15 +419,27 @@ function _record_sampled_window!(acc::FluxFidelityAccumulator, ::Type{G}, eviden
     return nothing
 end
 
-@inline function _record_balance_correction!(acc::FluxFidelityAccumulator, native, balanced, scale)
-    correction = abs(balanced - native)
-    ratio = correction / scale
-    isfinite(correction) && isfinite(ratio) || throw(ArgumentError(
-        "flux balance correction is not finite"))
-    acc.balance_max_abs = max(acc.balance_max_abs, correction)
-    acc.balance_max_ratio = max(acc.balance_max_ratio, ratio)
-    acc.balance_sumsq_ratio += ratio * ratio
+# One sampled face/level of the column-balance correction `Δ = F_balanced − F`
+# of its pre-balance amount `F` (the wind reference or the native amount):
+# flux-weighted sums, globally and per level (`level` 1 = top).
+@inline function _record_balance_correction!(acc::FluxFidelityAccumulator, native::Float64,
+                                             balanced::Float64, level::Integer)
+    correction = balanced - native
+    isfinite(correction) || throw(ArgumentError("flux balance correction is not finite"))
+    level >= 1 || throw(ArgumentError("flux balance sample has level $level"))
+    if level > length(acc.balance_level_count)
+        n = Int(level)
+        append!(acc.balance_level_delta2, zeros(n - length(acc.balance_level_delta2)))
+        append!(acc.balance_level_native2, zeros(n - length(acc.balance_level_native2)))
+        append!(acc.balance_level_count, zeros(Int, n - length(acc.balance_level_count)))
+    end
+    acc.balance_max_abs = max(acc.balance_max_abs, abs(correction))
+    acc.balance_sumsq_delta += correction * correction
+    acc.balance_sumsq_native += native * native
     acc.balance_count += 1
+    acc.balance_level_delta2[level] += correction * correction
+    acc.balance_level_native2[level] += native * native
+    acc.balance_level_count[level] += 1
     return nothing
 end
 
@@ -458,12 +474,13 @@ function verify_flux_fidelity!(acc::FluxFidelityAccumulator,
         acc.max_rel = max(acc.max_rel, re)
         acc.sumsq_rel += re * re
         acc.max_ulp = max(acc.max_ulp, _ulp_distance(s.reference, s.candidate))
-        _record_balance_correction!(acc, ref, Float64(s.balanced), scale)
+        _record_balance_correction!(acc, ref, Float64(s.balanced), s.level)
     end
     acc.wind_windows += 1
     acc.abs_tol = max(acc.abs_tol, abs_tol)
     acc.rel_tol = max(acc.rel_tol, rel_tol)
     acc.scale_floor = max(acc.scale_floor, scale_floor)
+    acc.balance_scale_floor = max(acc.balance_scale_floor, scale_floor)
     return nothing
 end
 
@@ -471,17 +488,16 @@ function verify_flux_fidelity!(acc::FluxFidelityAccumulator,
                                evidence::NativeFluxEvidence{G}, win) where G
     samples = evidence.samples
     _record_sampled_window!(acc, G, evidence, win, evidence.method, "native")
-    # The correction ratio is normalized as for wind evidence, by the
-    # pre-balance amount (here the native one) above the scale floor.
+    # The correction is measured against the pre-balance (native) amounts, as
+    # for wind evidence against the wind reference.
     FT = typeof(first(samples).native)
     max_scale = maximum(s -> abs(Float64(s.native)), samples)
     scale_floor = max(floatmin(FT), eps(FT) * max(max_scale, 1.0))
     for s in samples
-        native = Float64(s.native)
-        _record_balance_correction!(acc, native, Float64(s.balanced),
-                                    max(abs(native), scale_floor))
+        _record_balance_correction!(acc, Float64(s.native), Float64(s.balanced), s.level)
     end
     acc.native_windows += 1
+    acc.balance_scale_floor = max(acc.balance_scale_floor, scale_floor)
     return nothing
 end
 
@@ -623,10 +639,28 @@ function _write_time_sampling!(header::AbstractDict, sampling::Vector{String})
     return header
 end
 
+# Flux-weighted size of the column-balance correction: `RMS(Δ)/RMS(F)` over
+# every sampled face, level and window, and the largest per-level value with
+# its level. RMS(F) is floored at the scale floor `F_floor`, so a level whose
+# sampled pre-balance amounts are all zero still gives a finite value.
+function _balance_relative_rms(delta2::Float64, native2::Float64, count::Int, floor::Float64)
+    count > 0 || return 0.0
+    return sqrt(delta2) / max(sqrt(native2), sqrt(count) * floor)
+end
+
 function _write_balance_correction!(header::AbstractDict, acc::FluxFidelityAccumulator)
+    floor = acc.balance_scale_floor
+    worst_level, worst = 0, -1.0
+    for k in eachindex(acc.balance_level_count)
+        r = _balance_relative_rms(acc.balance_level_delta2[k], acc.balance_level_native2[k],
+                                  acc.balance_level_count[k], floor)
+        r > worst && ((worst_level, worst) = (k, r))
+    end
     header["balance_correction_max_abs_kg"] = acc.balance_max_abs
-    header["balance_correction_max_ratio"] = acc.balance_max_ratio
-    header["balance_correction_rms_ratio"] = sqrt(acc.balance_sumsq_ratio / acc.balance_count)
+    header["balance_correction_rms_relative"] = _balance_relative_rms(
+        acc.balance_sumsq_delta, acc.balance_sumsq_native, acc.balance_count, floor)
+    header["balance_correction_max_level_rms_relative"] = worst
+    header["balance_correction_max_level"] = worst_level
     return header
 end
 
