@@ -312,6 +312,8 @@ files = [
     "core/test_preprocessor_writer_adapters.jl",
     "core/test_preprocessor_substep_schedule.jl",
     "core/test_preprocessing_integrity.jl",
+    "core/test_preprocessing_config_validation.jl",
+    "core/test_flux_fidelity.jl",
     "core/test_horizontal_balance_config.jl",
     "core/test_vertical_transforms.jl",
     "core/test_preprocessing_vertical_presets.jl",
