@@ -45,5 +45,36 @@ else
             @test all(map(bitequal, comp_new, comp_ref))
             @test all(iszero, copied)
         end
+
+        # One Metal dispatch group may mix the optimized dense host path with
+        # generic copies. Device-resident series and host SubArrays must stay on
+        # `_copy_slice!`; neither is valid input to the unsafe Array-to-MtlArray
+        # transfer primitive.
+        dense_arrays = series_for(Float32, length(HOURLY), 31)
+        dense = Adapt.adapt(MtlArray,
+            TimeVaryingSurfaceFluxSource(:co2, dense_arrays, HOURLY,
+                                         StepwiseFlux()))
+        view_arrays = map(a -> view(a, :, :, :),
+                          series_for(Float32, length(HOURLY), 32))
+        views = Adapt.adapt(MtlArray,
+            TimeVaryingSurfaceFluxSource(:tag, view_arrays, HOURLY,
+                                         StepwiseFlux()))
+        device_arrays = map(MtlArray,
+                            series_for(Float32, length(HOURLY), 33))
+        resident = TimeVaryingSurfaceFluxSource(:ch4, device_arrays, HOURLY,
+                                                StepwiseFlux())
+        mixed = (dense, views, resident)
+        SF.stage_surface_flux_window!(
+            SurfaceFluxOperator(PerTracerFluxMap(mixed)), 0.0, 7200.0)
+
+        @test views.cell_mass_rate_series === view_arrays
+        @test all(a -> a isa SubArray, views.cell_mass_rate_series)
+        @test all(a -> a isa MtlArray, resident.cell_mass_rate_series)
+        for source in mixed, k in 1:3, panel in 1:6
+            slot = SF._buffer_slot(source.window_buffer, k)
+            staged = Array(source.window_buffer.slots[panel])[:, :, slot]
+            expected = Array(source.cell_mass_rate_series[panel])[:, :, k]
+            @test staged == expected
+        end
     end
 end

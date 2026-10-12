@@ -349,9 +349,13 @@ end
 _first_flux_array(a::AbstractArray) = a
 _first_flux_array(a::Tuple) = _first_flux_array(first(a))
 
-# Backend-dispatched bulk hook. The first destination array selects the method;
-# extensions can order all transfers after one backend synchronization without
-# putting optional backend types in the core package.
+# Backend-dispatched bulk hook. Each call contains only copies whose first
+# destination array has the same dispatch group, so an extension never receives
+# copies for another backend merely because that backend appeared later in the
+# operator. Extensions can widen their group key when one method handles several
+# concrete array types.
+_bulk_copy_flux_slices_group(a::AbstractArray) = typeof(a)
+
 function _bulk_copy_flux_slices!(::AbstractArray, copies::AbstractVector)
     for copy in copies
         _copy_slice!(copy.buffer.slots, copy.slot, copy.series, copy.slice)
@@ -375,7 +379,22 @@ end
 
 function _perform_flux_slice_copies!(copies::AbstractVector)
     isempty(copies) && return nothing
-    _bulk_copy_flux_slices!(_first_flux_array(first(copies).buffer.slots), copies)
+    first_dest = _first_flux_array(first(copies).buffer.slots)
+    first_key = _bulk_copy_flux_slices_group(first_dest)
+    if all(copy -> isequal(_bulk_copy_flux_slices_group(
+                              _first_flux_array(copy.buffer.slots)), first_key), copies)
+        _bulk_copy_flux_slices!(first_dest, copies)
+    else
+        groups = Dict{Any, Vector{_FluxSliceCopy}}()
+        for copy in copies
+            dest = _first_flux_array(copy.buffer.slots)
+            key = _bulk_copy_flux_slices_group(dest)
+            push!(get!(() -> _FluxSliceCopy[], groups, key), copy)
+        end
+        for group in values(groups)
+            _bulk_copy_flux_slices!(_first_flux_array(first(group).buffer.slots), group)
+        end
+    end
     for copy in copies
         copy.buffer.resident[copy.slot] = copy.slice
         copy.buffer.uploads += 1

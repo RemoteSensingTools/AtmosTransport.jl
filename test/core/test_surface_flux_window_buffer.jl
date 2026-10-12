@@ -168,6 +168,8 @@ Adapt.adapt_storage(::ToDeviceStandIn, x::Array) = DeviceStandIn(copy(x))
 const BULK_STAGE_CALLS = Ref(0)
 function SF._bulk_copy_flux_slices!(dest::DeviceStandIn, copies::AbstractVector)
     BULK_STAGE_CALLS[] += 1
+    @test all(copy -> SF._first_flux_array(copy.buffer.slots) isa DeviceStandIn,
+              copies)
     return invoke(SF._bulk_copy_flux_slices!, Tuple{AbstractArray, AbstractVector},
                   dest, copies)
 end
@@ -205,19 +207,25 @@ end
     @test all(p -> moved.window_buffer.slots[p].data == host.window_buffer.slots[p], 1:6)
     @test moved.window_buffer.uploads == host.window_buffer.uploads > 0
 
-    # All missing slices of all sources go through one backend-dispatched bulk
-    # hook per operator/window. A fully resident repeat invokes no hook.
+    # Missing slices are partitioned by destination dispatch group: the two
+    # stand-in sources share one bulk call even with a CPU source between them,
+    # and that call never receives the CPU copy. A fully resident repeat invokes
+    # no stand-in hook.
     bulk_hosts = (
         TimeVaryingSurfaceFluxSource(:co2, series_for(FT, length(HOURLY), 8), HOURLY,
                                      StepwiseFlux()),
         TimeVaryingSurfaceFluxSource(:tag, series_for(FT, length(HOURLY), 9), HOURLY,
                                      LinearInterpFlux()))
     bulk_devices = map(s -> Adapt.adapt(ToDeviceStandIn(), s), bulk_hosts)
-    bulk_op = SurfaceFluxOperator(PerTracerFluxMap(bulk_devices))
+    cpu_source = TimeVaryingSurfaceFluxSource(
+        :ch4, series_for(FT, length(HOURLY), 10), HOURLY, ConservativeMeanFlux())
+    bulk_op = SurfaceFluxOperator(PerTracerFluxMap((bulk_devices[1], cpu_source,
+                                                    bulk_devices[2])))
     BULK_STAGE_CALLS[] = 0
     SF.stage_surface_flux_window!(bulk_op, 0.0, 7200.0)
     @test BULK_STAGE_CALLS[] == 1
     @test sum(s -> s.window_buffer.uploads, bulk_devices) > 2
+    @test cpu_source.window_buffer.uploads > 0
     SF.stage_surface_flux_window!(bulk_op, 0.0, 7200.0)
     @test BULK_STAGE_CALLS[] == 1
 end
