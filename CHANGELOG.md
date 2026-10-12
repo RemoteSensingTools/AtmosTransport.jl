@@ -494,11 +494,13 @@
   column's flux budget goes by air mass to hybrid layers only, and the
   column's remaining `cm` residual is folded with the same weights, so
   pure-pressure (stratospheric) layers receive none of it. A layer is hybrid
-  when `ΔB_k ≥ 1e-6` (`HYBRID_LAYER_MIN_DB`): GEOS/MERRA-2 L72 layer 41
-  (150–177 hPa) has `ΔB = 8.2e-9`, a rounding residue of the table, and now
-  counts as pure pressure (with `ΔB > 0` it took about 3 % of every
-  correction at full mass weight); the smallest genuine increment of the
-  shipped tables is ERA5 L137 layer 55, `ΔB = 7e-6`. The change is large in
+  when `ΔB_k ≥ 1e-6` (`HYBRID_LAYER_MIN_DB`; its thickness changes by at
+  least 0.1 Pa when `p_s` changes by 1000 hPa): GEOS/MERRA-2 L72 layer 41
+  (150–177 hPa) has `ΔB = 8.2e-9` (8.2e-4 Pa per 1000 hPa), a rounding
+  residue of the table, and now counts as pure pressure (with `ΔB > 0` it
+  took about 3 % of every correction at full mass weight); the smallest
+  genuine increment of the shipped tables is ERA5 L137 layer 55,
+  `ΔB = 7e-6` (0.7 Pa per 1000 hPa). The change is large in
   the stratosphere:
   - GEOS-IT C45 (`pre_geosit_c45`, `hybrid_mass` against `mass`, measured
     with the `ΔB > 0` mask):

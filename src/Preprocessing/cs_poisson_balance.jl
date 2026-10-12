@@ -360,11 +360,11 @@ end
 Air-mass weights restricted to the hybrid layers of interface `B` (top first):
 layer `k` is hybrid when `ΔB_k = B_{k+1} − B_k ≥ HYBRID_LAYER_MIN_DB` (1e-6),
 i.e. when a 1000 hPa change of surface pressure changes its thickness by at
-least 1 Pa. Smaller positive increments are rounding residues of a
+least 0.1 Pa. Smaller positive increments are rounding residues of a
 pure-pressure layer (GEOS/MERRA-2 L72 layer 41, 150–177 hPa: `ΔB = 8.2e-9`,
-3e-7 of its thickness); the smallest genuine increment of the shipped tables
-is ERA5 L137 layer 55 (`ΔB = 7e-6`). A coordinate with no hybrid layer is an
-error.
+8.2e-4 Pa per 1000 hPa, 3e-7 of its thickness); the smallest genuine increment
+of the shipped tables is ERA5 L137 layer 55 (`ΔB = 7e-6`, 0.7 Pa per
+1000 hPa). A coordinate with no hybrid layer is an error.
 """
 struct HybridMassWeightedColumn <: AbstractColumnWeights
     hybrid :: BitVector            # layers with ΔB ≥ HYBRID_LAYER_MIN_DB, top first

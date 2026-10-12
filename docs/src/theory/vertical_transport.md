@@ -304,13 +304,18 @@ applies a column balance: lat-lon, reduced Gaussian and cubed sphere;
 
 `hybrid_mass` counts a layer as hybrid when `ΔB_k ≥ 10⁻⁶`
 (`HYBRID_LAYER_MIN_DB`): its thickness `Δp_k = ΔA_k + ΔB_k p_s` then changes
-by at least 1 Pa when `p_s` changes by 1000 hPa. GEOS/MERRA-2 L72 layer 41
-(150–177 hPa) has `ΔB = 8.2 × 10⁻⁹`, a rounding residue of the `B` table
-(`3 × 10⁻⁷` of its 2650 Pa thickness); with a plain `ΔB > 0` mask it took about
-3 % of every column correction at full mass weight although its thickness does
-not follow `p_s`. The smallest genuine hybrid increment of the shipped tables
-is ERA5 L137 layer 55 (`ΔB = 7 × 10⁻⁶`, 0.17 % of its thickness at 1000 hPa);
-the next GEOS layer has `ΔB = 7 × 10⁻³`. On the GEOS-IT C45 golden day the
+by at least `10⁻⁶ × 10⁵` Pa = 0.1 Pa when `p_s` changes by 1000 hPa.
+GEOS/MERRA-2 L72 layer 41 (150–177 hPa) has `ΔB = 8.2 × 10⁻⁹` (8.2 × 10⁻⁴ Pa
+per 1000 hPa), a rounding residue of the `B` table (`3 × 10⁻⁷` of its 2654 Pa
+thickness); with a plain `ΔB > 0` mask it took about 3 % of every column
+correction at full mass weight although its thickness does not follow `p_s`.
+The smallest genuine hybrid increment of the shipped tables is ERA5 L137 layer
+55 (73–77 hPa, the topmost layer with `ΔB > 0`: `ΔB = 7 × 10⁻⁶`, 0.7 Pa per
+1000 hPa, 0.17 % of its 416 Pa thickness at `p_s` = 1000 hPa); the ERA5 level
+presets keep it at `ΔB = 7 × 10⁻⁶` (`ml137_full`, `ml137_cfl94`,
+`ml137_cfl85`) or merge it into a layer with `2.4 × 10⁻⁵` (`ml137_66L`) or
+`5.9 × 10⁻⁵` (`ml137_tropo34`, `ml137_tropo34a`), all above the threshold. The
+next GEOS layer has `ΔB = 7 × 10⁻³` (696 Pa per 1000 hPa). On the GEOS-IT C45 golden day the
 threshold changes the layer-41 fluxes by 1.8–1.9 % RMS and `cm` at 177–288 hPa
 by 12 % to 5 % RMS; on MERRA-2 C90 by 0.25 % and 3.5 % to 1.4 %, and the
 MERRA-2 OMEGA NRMSE improves from 0.4725 to 0.4712.

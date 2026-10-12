@@ -92,11 +92,16 @@ Smallest increment `ΔB_k = B_{k+1} − B_k` of hybrid `B` at which a layer coun
 as hybrid in the column-balance weighting `HybridMassWeightedColumn`: a layer
 with `ΔB_k < 1e-6` is treated as pure-pressure and receives no part of a column
 correction. `ΔB_k` is the share of a surface-pressure change that changes the
-layer's thickness, `Δ(Δp_k) = ΔB_k Δp_s`, so the threshold means 1 Pa per
-1000 hPa. GEOS/MERRA-2 L72 layer 41 (150–177 hPa) has `ΔB = 8.2e-9`, a
-rounding residue of its `B` table (3.1e-7 of its 2650 Pa thickness at
-1000 hPa); the smallest genuine hybrid increment of the shipped tables is ERA5
-L137 layer 55 (`ΔB = 7.0e-6`), the next GEOS layer has `6.96e-3`.
+layer's thickness, `Δ(Δp_k) = ΔB_k Δp_s`, so at the threshold a 1000 hPa
+(1e5 Pa) change of `p_s` changes the thickness by 0.1 Pa. GEOS/MERRA-2 L72
+layer 41 (150–177 hPa) has `ΔB = 8.2e-9` (8.2e-4 Pa per 1000 hPa, 3.1e-7 of
+its 2654 Pa thickness at `p_s` = 1000 hPa), a rounding residue of its `B`
+table. The smallest genuine hybrid increment of the shipped tables is ERA5
+L137 layer 55 (73–77 hPa, the topmost layer with `ΔB > 0`): `ΔB = 7.0e-6`,
+0.7 Pa per 1000 hPa, 0.17 % of its 416 Pa thickness. The ERA5 level presets
+keep it at `ΔB = 7.0e-6` (`ml137_full`, `ml137_cfl94`, `ml137_cfl85`) or merge
+it into a layer with `2.4e-5` (`ml137_66L`) or `5.9e-5` (`ml137_tropo34`,
+`ml137_tropo34a`); the next GEOS layer has `6.96e-3` (696 Pa per 1000 hPa).
 """
 const HYBRID_LAYER_MIN_DB = 1.0e-6
 
