@@ -90,6 +90,12 @@ not sort entries or validate date continuity; provide them chronologically.
   every binary it writes. Use it for binaries of unknown origin.
 - `expected_nlevel`, `required_preprocessor_contract` and
   `require_adaptive_substeps` reject a first binary whose header differs.
+- The run origin is 00:00 UTC of the day of window 1 of the first binary.
+  `start_date`, that binary's `date` header and a `YYYYMMDD` (or
+  `YYYY-MM-DD`) date in its file name each name this day when present, and
+  every run requires them to agree, with or without output. Output needs at
+  least one of them for its CF time origin; time-varying surface fluxes need
+  `start_date`.
 
 #### `[input.staging]` — rolling NVMe staging (opt-in)
 
@@ -219,7 +225,7 @@ CS builder in `src/Models/initial_conditions/cubed_sphere.jl`):
 | `"file_field"` | yes | yes | yes | `file`, `variable`, optional `humidity_variable`, `time_index`, `vertical_order` |
 | `"catrine_co2"` | yes | yes | yes | optional `file`, `variable`, `humidity_variable`, `time_index` overrides for the built-in defaults |
 | `"pressure_layer"` | no | no | yes | `lowest_layer = true` or `psurf_fraction`; optional `total_molecules` |
-| `"cs_native"` | no | no | yes | `file`, `variable`; optional `time_index`, `vertical_order`, `clamp_negative` (default `false`) |
+| `"cs_native"` | no | no | yes | `file`, `variable`; optional `humidity_variable`, `time_index`, `vertical_order`, `clamp_negative` (default `false`) |
 
 The file kinds (`file`, `netcdf`, `file_field`, `catrine_co2`) read a
 lon-lat-level field of layer-mean dry VMR. A file with hybrid coefficients
@@ -253,6 +259,17 @@ top: pressure units or CF `positive = "down"` (values grow toward the
 surface), height units or `positive = "up"`; otherwise set
 `vertical_order = "toa_first"` or `"surface_first"`.
 
+Native cubed-sphere ICs keep their cell-for-cell horizontal mapping. When their
+level count matches the binary, `ap`/`bp` are used when present to infer level
+orientation and must match the binary coefficients within numeric tolerance
+before the exact vertical copy. Without them, `vertical_order` controls the
+copy. When the level count differs, `ap` and `bp` are required and the same conservative
+hybrid remap, dry-carrier humidity weighting, and typed surface-pressure basis
+described above are used column by column. In both IC paths, `ap` has pressure
+units: an explicit units attribute must be `Pa`; a missing attribute is accepted
+only for all-zero pure-sigma coefficients or magnitudes that unambiguously
+indicate pascals. Ambiguous hPa-sized values are rejected.
+
 `pressure_layer` places tracer in one level per column. With
 `lowest_layer = true`, it uses the bottom level and ignores `psurf_fraction`.
 Otherwise it chooses the level whose logarithmic pressure midpoint is nearest
@@ -269,7 +286,8 @@ block with a `kind` selector and per-kind keys:
 ```toml
 [tracers.co2_fossil.surface_flux]
 kind       = "gridfed_fossil_co2"   # one of the registered source kinds
-time_index = 12                     # month index (1..12) for monthly inventories
+time_index = 12                     # positional slice index (1-based)
+# month = 12                        # decoded calendar month when time exists
 scale      = 1.0                    # optional multiplicative scaling
 
 [tracers.sf6.surface_flux]
@@ -409,7 +427,8 @@ scheme    = "linrood"           # "upwind" | "slopes" | "ppm" | "linrood" | "non
 ppm_order = 7                   # cubed-sphere LinRoodPPM only; ∈ {5, 7}.
                                 # Setting ppm_order with scheme = "ppm" errors.
 # vertical = "fv3_kord8"        # scheme = "ppm": "same_as_horizontal" (default);
-                                # scheme = "linrood": "upwind" (default);
+                                # scheme = "linrood": "fv3_kord8" (default);
+                                # explicit "upwind" retains first-order vertical;
                                 # either: "fv3_kord8" (FV3 scalar_profile,
                                 # positive definite, the GCHP tracer profile)
                                 # | "fv3_kord8_signed" (for tracers that go

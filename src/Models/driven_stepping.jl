@@ -63,21 +63,24 @@ Keyword arguments:
   `:preserve_tracer_mass`. When non-`:none`, each newly loaded window
   replaces prognostic air mass using the selected tracer invariant. For
   binary-scheduled runs, the same endpoint reset is applied before the
-  once-per-window convection/chemistry block so physics sees the binary's
-  authoritative window-end mass.
+  once-per-window convection and closing chemistry half-step so physics sees
+  the binary's authoritative window-end mass.
 - `physics_cadence=nothing` — `:window` (the default for `nothing`) or
   `:substep`. On a binary with a per-window physics contract, `:window` runs
-  convection and chemistry once per met window after the stored advection
-  substeps; `:substep` runs them every advection substep (the cadence before
-  2026-05-31), for cadence-sensitivity comparisons on the same binary. The
-  window-end air-mass reset is the same for both. Other binaries run the full
-  operator suite every substep either way.
+  convection once per met window and splits exponential decay around all
+  stored advection/emission substeps; `:substep` runs the full composition
+  every advection substep (the cadence before 2026-05-31), for
+  cadence-sensitivity comparisons on the same binary. The window-end air-mass
+  reset is the same for both. Other binaries run the full operator suite every
+  substep either way.
 - `prefetch_windows=true` — on a device backend with more than one Julia
   thread, load the next met window on a second thread while the current one
   runs. `false` loads each window when it is needed and keeps one device
   window buffer instead of two. Window contents are the same either way.
 - `surface_sources=()`
-- `chemistry=NoChemistry()` — applied after advection + surface sources each step
+- `chemistry=NoChemistry()` — exponential decay is applied in exact half-window
+  steps before and after the window's transport + surface sources; other
+  chemistry operators run after transport and convection
 - `callbacks=NamedTuple()`
 - `start_time=0` — simulation clock origin [s]. Multi-binary runners MUST pass
   the accumulated run time here when rebuilding the sim per binary: `sim.time`
@@ -130,19 +133,15 @@ function DrivenSimulation(model::TransportModel,
     surface_sources_adapted = _adapt_sources_to_model_backend(Tuple(surface_sources), model.state.air_mass)
     foreach(source -> _check_surface_source_compatibility(model.state, source), surface_sources_adapted)
 
-    # Chemistry + emissions are applied inside the model's transport block,
-    # not as a sim-level post-step. `with_emissions` installs the
+    # Chemistry + emissions are applied by the model-level composition, not as
+    # an independent sim-level post-step. `with_emissions` installs the
     # user-supplied surface sources as a `SurfaceFluxOperator` inside the
     # wrapped model so the palindrome's S slot runs at the correct
     # center-of-transport position. `with_chemistry` installs the user's
-    # chemistry in the model; `step!(model)` runs
-    # `advection → emissions → diffusion → chemistry` as ONE composed
-    # call. The step loop delegates entirely to the model-level operator
-    # composition.
-    #
-    # The palindrome integration preserves TM5's
-    # `advection → emissions → chemistry` order with emissions inside the
-    # palindrome, so the sim delegates entirely to `step!(model)`.
+    # chemistry in the model. `step!(model)` symmetrically splits constant-rate
+    # exponential decay around its transport/emissions block; the
+    # binary-scheduled path below performs the same split around the complete
+    # met window. Time-varying-rate decay runs unsplit after transport.
     model = with_chemistry(model, chemistry)
     if !isempty(surface_sources_adapted)
         emissions_op = SurfaceFluxOperator(PerTracerFluxMap(surface_sources_adapted))
@@ -291,7 +290,8 @@ function _stage_surface_flux_window!(sim::DrivenSimulation)
 end
 
 # A binary with a per-window contract makes its endpoint mass authoritative at
-# window ends. Convection and chemistry run once per window there, unless
+# window ends. Convection runs once per window there and exponential decay is
+# split into exact half-steps around the window's transport/emissions, unless
 # `physics_cadence = :substep` (`[run] physics_cadence`) asks for every advection
 # substep; the window-end mass reset is the same for both cadences, so an A/B
 # comparison on one binary changes only where physics runs.
@@ -322,8 +322,12 @@ function step!(sim::DrivenSimulation)
     # Transport binaries carry an advection substep contract, not a
     # physics cadence contract, so driven
     # binary-scheduled runs apply only the transport block at each stored
-    # substep and defer convection + chemistry to the end of the met window.
+    # substep. Exact exponential decay half-steps bracket the complete met
+    # window, placing its integrated emissions at the midpoint; convection
+    # remains at the end. Non-decay chemistry retains its end-window call.
     if _uses_binary_transport_schedule(sim)
+        substep == 1 &&
+            _chemistry_before_emissions!(sim.model, sim.window_dt; meteo = sim)
         transport_step!(sim.model, sim.Δt; meteo = sim)
     else
         step!(sim.model, sim.Δt; meteo = sim)
@@ -332,8 +336,10 @@ function step!(sim::DrivenSimulation)
     sim.time = _clock_time(sim)
     if _binary_window_contract(sim) && sim.iteration == sim.current_window_end_iteration
         _maybe_reset_to_window_endpoint!(sim)
-        sim.physics_every_substep ||
-            convection_chemistry_step!(sim.model, sim.window_dt; meteo = sim)
+        if !sim.physics_every_substep
+            _convection_step!(sim.model, sim.window_dt)
+            _chemistry_after_emissions!(sim.model, sim.window_dt; meteo = sim)
+        end
     end
     for callback in values(sim.callbacks)
         callback(sim)

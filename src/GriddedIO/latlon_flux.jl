@@ -40,17 +40,13 @@ function _define_latlon_flux_axes!(ds, mesh::LatLonMesh)
     return nothing
 end
 
-# TODO(P2b): remove this gate when the runtime `kind = "file"` loader takes
-# the faces from the file instead of rebuilding them from the centres.
-#
 # The runtime reads the written centres back (Float64), orients them
 # (`latlon_orientation`, `orient_coordinates`: latitude ascending, longitudes
-# from the first value ≥ 0, modulo 360°) and rebuilds the faces by the uniform
-# rule `UniformSpanFaces`. A mesh is writable only if that reproduces its
-# faces bit for bit: each oriented cell keeps the faces of its mesh cell,
-# shifted by the same multiple of 360° as its centre. Otherwise the runtime
-# would regrid the file on other cells (pole-centred, snapped, truncated or
-# Gaussian rows; a regional axis across 0°) and change the emitted mass.
+# from the first value ≥ 0, modulo 360°) and derives snapped faces from those
+# coordinates. A mesh is writable only if that reproduces its faces bit for
+# bit: each oriented cell keeps the faces of its mesh cell, shifted by the same
+# multiple of 360° as its centre. Otherwise the runtime would regrid the file
+# on other cells and change the emitted mass.
 
 # The mesh's longitude faces in the runtime's cell order, or `nothing` when the
 # oriented cells are not contiguous. Oriented cell i is mesh cell `order[i]`,
@@ -79,7 +75,7 @@ function _runtime_face_mismatch(mesh::LatLonMesh)
     λᶜ, φᶜ = Float64.(mesh.λᶜ), Float64.(mesh.φᶜ)      # what the file stores
     o = latlon_orientation(λᶜ, φᶜ)                     # a LatLonMesh stores φ ascending
     λ, φ = orient_coordinates(λᶜ, φᶜ, o)
-    runtime = source_latlon_mesh(λ, φ, UniformSpanFaces(); radius = mesh.radius)
+    runtime = source_latlon_mesh(λ, φ; radius = mesh.radius)
     mine_λᶠ = _oriented_longitude_faces(mesh, o, λ)
     mine_λᶠ === nothing &&
         return "its longitude cells are not contiguous once oriented (a regional axis across 0°)"
@@ -92,10 +88,9 @@ function _check_runtime_reconstructs_faces(mesh::LatLonMesh)
     why = _runtime_face_mismatch(mesh)
     why === nothing || throw(ArgumentError(
         "write_latlon_flux: the runtime loader (surface_flux.kind = \"file\") rebuilds the " *
-        "cell faces from the written centres (oriented, then uniform faces from their span: " *
-        "GriddedIO.UniformSpanFaces) and would regrid this $(mesh.Nx)×$(mesh.Ny) mesh on " *
-        "other cells: $(why). Until step P2b gives the runtime explicit faces, only meshes " *
-        "whose faces it rebuilds exactly (uniform, cell-centred rows) can be written."))
+        "cell faces from the written centres (oriented, then GriddedIO.SnappedFaces) and " *
+        "would regrid this $(mesh.Nx)×$(mesh.Ny) mesh on other cells: $(why). Only meshes " *
+        "whose faces it reconstructs exactly can be written."))
     return nothing
 end
 
@@ -126,12 +121,10 @@ return `path`.
   into the atmosphere, size `(Nx, Ny)`, Julia order `(lon, lat)`. Every value
   must be finite; the file stores no `_FillValue`.
 - **The mesh must be one the runtime rebuilds exactly.** The runtime takes the
-  cell faces from the written centres (oriented, then uniform faces from their
-  span: [`UniformSpanFaces`](@ref)), never from `lon_bnds`/`lat_bnds`. A mesh
-  whose faces that rule does not reproduce bit for bit (pole-centred, snapped
-  Float32, truncated or Gaussian latitudes; a regional longitude axis across
-  0°) is refused with an `ArgumentError` until step P2b gives the runtime
-  explicit faces: its file would be regridded on other cells.
+  cell faces from the written centres (oriented, then [`SnappedFaces`](@ref)),
+  never from `lon_bnds`/`lat_bnds`. A mesh whose faces that rule does not
+  reproduce bit for bit is refused with an `ArgumentError`: its file would be
+  regridded on other cells.
 - Coordinates: `lon`, `lat` (Float64 cell centres `mesh.λᶜ`, `mesh.φᶜ`) with
   `lon_bnds`, `lat_bnds` (the mesh faces) and `cell_area` `(lon, lat)` from
   `cell_area(mesh, i, j)` [m²].

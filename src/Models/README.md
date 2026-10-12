@@ -61,6 +61,9 @@ read.
   chemistry family (`chemistry_spec`, `materialize` dispatches on run `FT`) +
   diffusion family (`diffusion_spec`; `materialize(spec, style, FT, context)`
   threads all three — topology/capability helpers stay in `RuntimePhysicsRecipe.jl`)
+- [`RuntimePhysicsMetadata.jl`](RuntimePhysicsMetadata.jl) — dispatches on those
+  typed runtime specs and materialized surface sources to describe the physics
+  that ran as `physics_*` output attributes, including met/binary provenance
 - [`RuntimePhysicsRecipe.jl`](RuntimePhysicsRecipe.jl) — topology-dispatched
   runtime recipe construction and capability validation for advection,
   diffusion, convection, chemistry, and surface forcing

@@ -1,5 +1,6 @@
 using Test
 using NCDatasets
+using Dates
 
 import AtmosTransport
 
@@ -12,7 +13,9 @@ function write_ll_snapshot(path)
         defDim(ds, "time", 2)
         defVar(ds, "lon", Float64, ("lon",))[:] = [-135.0, -45.0, 45.0, 135.0]
         defVar(ds, "lat", Float64, ("lat",))[:] = [-60.0, 0.0, 60.0]
-        defVar(ds, "time", Float64, ("time",))[:] = [0.0, 6.0]
+        defVar(ds, "time", Float64, ("time",), attrib=Dict(
+            "units" => "hours since 2021-12-01 00:00:00",
+            "calendar" => "proleptic_gregorian"))[:] = [0.0, 6.0]
         v = defVar(ds, "co2_column_mean", Float64, ("lon", "lat", "time"),
                    attrib = Dict("units" => "mol mol-1"))
         v[:, :, 1] = fill(400e-6, 4, 3)
@@ -31,7 +34,9 @@ function write_cs_snapshot(path; panel_convention="gnomonic", geometry=nothing, 
         ds.attrib["Nc"] = Nc
         ds.attrib["panel_convention"] = panel_convention
         geometry === nothing || foreach(((k, v),) -> ds.attrib[k] = v, geometry)
-        defVar(ds, "time", Float64, ("time",))[:] = [0.0, 6.0]
+        defVar(ds, "time", Float64, ("time",), attrib=Dict(
+            "units" => "hours since 2021-12-01 00:00:00",
+            "calendar" => "proleptic_gregorian"))[:] = [0.0, 6.0]
         air = defVar(ds, "air_mass", Float64, ("Xdim", "Ydim", "nf", "lev", "time"))
         co2 = defVar(ds, "co2", Float64, ("Xdim", "Ydim", "nf", "lev", "time"))
         air[:, :, :, 1, :] = fill(2.0, Nc, Nc, 6, 2)
@@ -50,7 +55,8 @@ end
         ll = open_snapshot(ll_path)
         @test snapshot_topology(ll) isa LatLonSnapshotTopology
         @test available_variables(ll) == [:co2]
-        @test snapshot_times(ll) == [0.0, 6.0]
+        @test snapshot_times(ll) == DateTime(2021, 12, 1) .+ Hour.([0, 6])
+        @test frame_indices(ll, DateTime(2021, 12, 1, 6)) == [2]
         @test frame_indices(ll) == [1, 2]
         @test frame_indices(ll, AllFrames()) == [1, 2]
         @test_throws ArgumentError frame_indices(ll, :all)

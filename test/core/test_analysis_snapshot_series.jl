@@ -32,11 +32,16 @@ const NX, NY, NF, NL = 3, 2, 6, 4
 
 # A cubed-sphere snapshot-like file: column means (Xdim, Ydim, nf, time) and a
 # level field (Xdim, Ydim, nf, lev, time), both Float32.
-function write_fixture(path, hours, value_of; units = "hours", fill = nothing, missing_value = nothing)
+function write_fixture(path, hours, value_of;
+                       units = "hours since 2021-12-01 00:00:00",
+                       calendar = "proleptic_gregorian", fill = nothing,
+                       missing_value = nothing)
     NCDataset(path, "c") do ds
         defDim(ds, "Xdim", NX); defDim(ds, "Ydim", NY); defDim(ds, "nf", NF)
         defDim(ds, "lev", NL); defDim(ds, "time", length(hours))
-        t = defVar(ds, "time", Float64, ("time",), attrib = Dict("units" => units))
+        tattrib = Dict("units" => units)
+        calendar === nothing || (tattrib["calendar"] = calendar)
+        t = defVar(ds, "time", Float64, ("time",), attrib = tattrib)
         t[:] = hours
         attrib = Dict{String, Any}("units" => "mol mol-1 dry")
         missing_value === nothing || (attrib["missing_value"] = missing_value)
@@ -60,7 +65,7 @@ end
     f1 = write_fixture(joinpath(dir, "run_20211201.nc"), [0.0, 24.0], h -> h)
     f2 = write_fixture(joinpath(dir, "run_20211202.nc"), [24.0, 48.0], h -> h == 24 ? -1.0f6 : h)  # repeats hour 24
     f3 = write_fixture(joinpath(dir, "run_20211203.nc"), [60.0, 72.0], h -> h)
-    s = daily_snapshot_series([f1, f2, f3], ["co2_column_mean", :co2]; origin)
+    s = daily_snapshot_series([f1, f2, f3], ["co2_column_mean", :co2])
     @test s.times == origin .+ Hour.([0, 24, 48, 60, 72])
     cm = s.values["co2_column_mean"]
     @test cm isa Array{Float32, 4}
@@ -84,10 +89,15 @@ end
     @test isnan(daily_snapshot_series([g3], ["co2_column_mean"]; origin).values["co2_column_mean"][1, 1, 1, 1])
 
     # Errors.
-    @test_throws UndefKeywordError daily_snapshot_series([f1], ["co2"])
+    legacy = write_fixture(joinpath(dir, "legacy.nc"), [0.0], h -> h;
+                           units = "hours", calendar = nothing)
+    @test_throws ArgumentError daily_snapshot_series([legacy], ["co2"])
+    @test daily_snapshot_series([legacy], ["co2"]; origin).times == [origin]
     @test_throws ArgumentError daily_snapshot_series([f3, f1], ["co2"]; origin)          # out of order
-    cf = write_fixture(joinpath(dir, "cf.nc"), [0.0], h -> h; units = "hours since 2021-12-01 00:00:00")
-    @test_throws ArgumentError daily_snapshot_series([cf], ["co2"]; origin)
+    cf = write_fixture(joinpath(dir, "cf.nc"), [0.0], h -> h)
+    @test daily_snapshot_series([cf], ["co2"]).times == [origin]
+    @test_throws ArgumentError daily_snapshot_series([cf], ["co2"];
+                                                     origin = DateTime(2020, 1, 1))
     @test_throws ArgumentError daily_snapshot_series([f1], ["nope"]; origin)
     @test_throws ArgumentError daily_snapshot_series([f1], ["cell_area"]; origin)
     @test_throws ArgumentError daily_snapshot_series([f1], ["co2", "co2"]; origin)
@@ -95,7 +105,9 @@ end
     other = joinpath(dir, "other.nc")
     NCDataset(other, "c") do ds
         defDim(ds, "Xdim", NX + 1); defDim(ds, "time", 1)
-        defVar(ds, "time", Float64, ("time",), attrib = Dict("units" => "hours"))[:] = [96.0]
+        defVar(ds, "time", Float64, ("time",), attrib = Dict(
+            "units" => "hours since 2021-12-01 00:00:00",
+            "calendar" => "proleptic_gregorian"))[:] = [96.0]
         defVar(ds, "co2_column_mean", Float32, ("Xdim", "time"))[:, :] = zeros(Float32, NX + 1, 1)
         defVar(ds, "count", Int32, ("Xdim", "time"))[:, :] = zeros(Int32, NX + 1, 1)
     end
@@ -109,10 +121,10 @@ end
     grid = AtmosGrid(mesh, HybridSigmaPressure(Float64[0, 1, 2], Float64[0, 0.5, 1]), CPU(); FT = Float64)
     air = ntuple(_ -> fill(2.0, 4, 4, 2), 6)
     frame(h, vmr) = SnapshotFrame(h, air, Dict(:co2 => ntuple(_ -> fill(vmr * 2.0, 4, 4, 2), 6)), :dry)
-    a = write_snapshot_netcdf(joinpath(dir, "run_20211201.nc"), [frame(0.0, 400e-6), frame(24.0, 401e-6)], grid)
-    b = write_snapshot_netcdf(joinpath(dir, "run_20211202.nc"), [frame(24.0, 999e-6), frame(48.0, 402e-6)], grid)
     origin = DateTime(2014, 9, 1)
-    s = daily_snapshot_series([a, b], ["co2_column_mean", "air_mass_per_area", "co2_total_mass"]; origin)
+    a = write_snapshot_netcdf(joinpath(dir, "run_20211201.nc"), [frame(0.0, 400e-6), frame(24.0, 401e-6)], grid; time_origin=origin)
+    b = write_snapshot_netcdf(joinpath(dir, "run_20211202.nc"), [frame(24.0, 999e-6), frame(48.0, 402e-6)], grid; time_origin=origin)
+    s = daily_snapshot_series([a, b], ["co2_column_mean", "air_mass_per_area", "co2_total_mass"])
     @test s.times == origin .+ Hour.([0, 24, 48])
     cm = s.values["co2_column_mean"]
     @test size(cm) == (4, 4, 6, 3)

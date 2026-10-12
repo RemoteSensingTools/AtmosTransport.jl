@@ -389,6 +389,27 @@ function decode_time(ds, name::AbstractString, decoders::Tuple = DEFAULT_TIME_DE
 end
 
 """
+    decode_time_bounds(ds, name) -> Union{Nothing, Matrix{DateTime}}
+
+Decode the optional CF bounds named by time coordinate `name`. The returned
+matrix has shape `(2, ntime)`, with interval starts in row 1 and ends in row 2.
+`nothing` means that the coordinate has no `bounds` attribute. Bounds inherit
+the coordinate's units and calendar and are validated as finite, ordered
+intervals before decoding. They are decoded as [`decode_time`](@ref) decodes
+the coordinate: a bound of a `julian` axis, or a `standard` bound before
+1582-10-15, is the same instant in the proleptic Gregorian calendar (Julian
+2000-01-01 is 2000-01-14), never its Julian calendar fields.
+"""
+function decode_time_bounds(ds, name::AbstractString)
+    axis = String(name)
+    decoder, class = _time_decoder(ds, axis, DEFAULT_TIME_DECODERS)
+    bounds = _time_bounds_values(ds, axis)
+    bounds === nothing && return nothing
+    decoded = _decode_time_values(decoder, class, ds, axis, vec(bounds))
+    return reshape(decoded, size(bounds))
+end
+
+"""
     decode_month_keys(ds, name, decoders::Tuple = DEFAULT_TIME_DECODERS) -> Vector{MonthKey}
 
 The month of each stamp of the time axis `name` of `ds`, in the axis's own
@@ -402,6 +423,57 @@ February of a `360_day` axis is February; other axes give
 function decode_month_keys(ds, name::AbstractString, decoders::Tuple = DEFAULT_TIME_DECODERS)
     decoder, class = _time_decoder(ds, name, decoders)
     return _decode_month_keys(decoder, class, ds, String(name))
+end
+
+"""
+    decode_month_seconds(ds, name) -> Vector{Float64}
+
+Length in seconds of the calendar month represented by each slice of time axis
+`name`. This is the conversion basis for flux variables whose units are per
+calendar month.
+
+When the coordinate names a CF bounds variable, each slice is assigned from
+the midpoint of its bounds. For fixed-length CF units the bounds' actual
+duration is returned; for `months since` bounds, one calendar month is
+required. Without bounds, the coordinate stamp assigns the month. Month
+lengths use the coordinate's `calendar` (`standard` by default), including
+`360_day`, `365_day`/`noleap`, and `366_day`/`all_leap`. Thus neither a slice's
+ordinal position nor the proleptic-Gregorian month length is guessed.
+"""
+function decode_month_seconds(ds, name::AbstractString)
+    axis = String(name)
+    decoder, class = _time_decoder(ds, axis, DEFAULT_TIME_DECODERS)
+    bounds = _time_bounds_values(ds, axis)
+    values = bounds === nothing ? _raw_time_values(ds, axis) :
+             vec((bounds[1, :] .+ bounds[2, :]) ./ 2)
+    keys = _decode_month_keys_values(decoder, class, ds, axis, values)
+    DT = _time_calendar_type(ds, axis)
+    calendar_seconds = Float64[CFTime.daysinmonth(DT, k.year, k.month) * 86400 for k in keys]
+    bounds === nothing && return calendar_seconds
+
+    if class isa CFTimeUnits
+        seconds_per_unit = Dates.value(Dates.Millisecond(class.period)) / 1000.0
+        bound_seconds = Float64[(bounds[2, i] - bounds[1, i]) * seconds_per_unit
+                                for i in axes(bounds, 2)]
+        for i in eachindex(bound_seconds)
+            isapprox(bound_seconds[i], calendar_seconds[i]; atol = 1e-3, rtol = 1e-10) ||
+                throw(ArgumentError(
+                    "time bounds for per-month slice $i of $(_dataset_path(ds)) span " *
+                    "$(bound_seconds[i]) seconds; expected the calendar month length " *
+                    "$(calendar_seconds[i]) seconds"))
+        end
+        return calendar_seconds
+    elseif class isa MonthsSinceUnits
+        for i in axes(bounds, 2)
+            width = bounds[2, i] - bounds[1, i]
+            isapprox(width, 1.0; atol = 1e-9, rtol = 0.0) || throw(ArgumentError(
+                "time bounds for per-month slice $i of $(_dataset_path(ds)) span " *
+                "$(width) months; expected exactly one calendar month"))
+        end
+        return calendar_seconds
+    end
+    throw(ArgumentError(
+        "time axis '$axis' of $(_dataset_path(ds)) cannot define calendar-month durations"))
 end
 
 # The decoder of `decoders` for axis `name`, and the class of its units.
@@ -426,6 +498,55 @@ _decode_month_keys(d::AbstractTimeDecoder, class::AbstractTimeUnits, ds, name::S
 _decode_month_keys(::CFDecoder, class::CFTimeUnits, ds, name::String) =
     month_keys(last(_cf_calendar_stamps(class, ds, name)))
 
+_decode_month_keys_values(::MonthsSince, class::MonthsSinceUnits, ds, name::String,
+                          values) = begin
+    base = 12 * class.year + (class.month - 1)
+    MonthKey[_month_key(base + floor(Int, v + MONTHS_SINCE_FLOOR_OFFSET)) for v in values]
+end
+
+function _decode_month_keys_values(::CFDecoder, class::CFTimeUnits, ds, name::String,
+                                   values)
+    DT = _time_calendar_type(ds, name)
+    _check_cf_origin(class, DT, ds, name)
+    stamps = _cf_value_stamps(class, DT, values)
+    return MonthKey[MonthKey(Dates.year(t), Dates.month(t)) for t in stamps]
+end
+
+# The optional CF bounds of a one-dimensional time coordinate, normalised to
+# `(2, ntime)`. Bounds inherit the coordinate's units and calendar under CF, so
+# their raw numeric values use the coordinate decoder selected above.
+function _time_bounds_values(ds, name::String)
+    axis = NCDatasets.variable(ds, name)
+    bounds_name = strip(_string_attribute(axis, "bounds"))
+    isempty(bounds_name) && return nothing
+    haskey(ds, bounds_name) || throw(ArgumentError(
+        "time axis '$name' of $(_dataset_path(ds)) names missing bounds variable " *
+        repr(bounds_name)))
+    bounds_var = NCDatasets.variable(ds, bounds_name)
+    ndims(bounds_var) == 2 || throw(ArgumentError(
+        "time bounds '$bounds_name' of $(_dataset_path(ds)) must be two-dimensional"))
+    vals = Array(NCDatasets.cfvariable(ds, bounds_name; units = nothing,
+                                      calendar = nothing, maskingvalue = missing))
+    any(ismissing, vals) && throw(ArgumentError(
+        "time bounds '$bounds_name' of $(_dataset_path(ds)) have fill values"))
+    ntime = length(axis)
+    bounds = if size(vals) == (2, ntime)
+        Float64.(vals)
+    elseif size(vals) == (ntime, 2)
+        permutedims(Float64.(vals))
+    else
+        throw(DimensionMismatch(
+            "time bounds '$bounds_name' of $(_dataset_path(ds)) have size $(size(vals)); " *
+            "expected (2, $ntime) or ($ntime, 2)"))
+    end
+    for i in axes(bounds, 2)
+        isfinite(bounds[1, i]) && isfinite(bounds[2, i]) && bounds[1, i] < bounds[2, i] ||
+            throw(ArgumentError(
+                "time bounds for slice $i of $(_dataset_path(ds)) must be finite and ordered"))
+    end
+    return bounds
+end
+
 # Raw numeric values of a variable, with fill values as `missing` (an error)
 # and `scale_factor`/`add_offset` applied, never time-decoded.
 function _raw_time_values(ds, name::String)
@@ -443,7 +564,7 @@ const _GREGORIAN_LIKE = (CFTime.DateTimeStandard, CFTime.DateTimeProlepticGregor
 # `DateTime` for the Gregorian-like calendars (NCDatasets' decoding, rounded to
 # the millisecond), CFTime stamps otherwise (values rounded to the millisecond
 # first). An origin day beyond its month in that calendar is an error.
-function _cf_calendar_stamps(class::CFTimeUnits, ds, name::String)
+function _time_calendar_type(ds, name::String)
     raw = NCDatasets.variable(ds, name)
     calendar = lowercase(strip(_string_attribute(raw, "calendar", "standard")))
     DT = try
@@ -452,6 +573,12 @@ function _cf_calendar_stamps(class::CFTimeUnits, ds, name::String)
         throw(ArgumentError(
             "time axis '$(name)' of $(_dataset_path(ds)) has the unsupported calendar $(repr(calendar))"))
     end
+    return DT
+end
+
+function _check_cf_origin(class::CFTimeUnits, DT, ds, name::String)
+    calendar = lowercase(strip(_string_attribute(NCDatasets.variable(ds, name),
+                                                 "calendar", "standard")))
     if class.date !== nothing
         y, m, d = class.date
         d <= CFTime.daysinmonth(DT, y, m) || throw(ArgumentError(
@@ -459,6 +586,14 @@ function _cf_calendar_stamps(class::CFTimeUnits, ds, name::String)
             "whose origin is not a valid instant: $(y)-$(lpad(m, 2, '0'))-$(lpad(d, 2, '0')) " *
             "does not exist in the $(calendar) calendar"))
     end
+    return nothing
+end
+
+function _cf_calendar_stamps(class::CFTimeUnits, ds, name::String)
+    raw = NCDatasets.variable(ds, name)
+    calendar = lowercase(strip(_string_attribute(raw, "calendar", "standard")))
+    DT = _time_calendar_type(ds, name)
+    _check_cf_origin(class, DT, ds, name)
     if DT in _GREGORIAN_LIKE
         vals = Array(NCDatasets.cfvariable(ds, name; units = class.units, calendar,
                                            maskingvalue = missing))
@@ -466,9 +601,15 @@ function _cf_calendar_stamps(class::CFTimeUnits, ds, name::String)
             "time variable '$(name)' of $(_dataset_path(ds)) has fill values"))
         return calendar, DateTime[DateTime(x) for x in vals]
     end
+    return calendar, _cf_value_stamps(class, DT, _raw_time_values(ds, name))
+end
+
+# Stamps, in the axis's calendar `DT`, of raw `values` in the fixed-length unit
+# of `class`, each rounded to the millisecond.
+function _cf_value_stamps(class::CFTimeUnits, DT, values)
     ms_per_unit = Dates.value(Dates.Millisecond(class.period))
-    ms = Int64[round(Int64, x * ms_per_unit) for x in _raw_time_values(ds, name)]
-    return calendar, CFTime.timedecode(DT, ms, "milliseconds since $(class.origin)")
+    ms = Int64[round(Int64, value * ms_per_unit) for value in values]
+    return CFTime.timedecode(DT, ms, "milliseconds since $(class.origin)")
 end
 
 function _decode(::CFDecoder, class::CFTimeUnits, ds, name::String)
@@ -476,10 +617,27 @@ function _decode(::CFDecoder, class::CFTimeUnits, ds, name::String)
     return DateTime[_gregorian_datetime(t, calendar, name, ds) for t in stamps]
 end
 
-# A stamp as a DateTime: itself, or the calendar date and time of day of a
-# non-Gregorian CFTime stamp, which must exist in the proleptic Gregorian
+# Raw values on the axis's units and calendar (time bounds) decoded as
+# `decode_time` decodes the axis itself.
+function _decode_time_values(::CFDecoder, class::CFTimeUnits, ds, name::String, values)
+    calendar = lowercase(strip(_string_attribute(NCDatasets.variable(ds, name),
+                                                 "calendar", "standard")))
+    DT = _time_calendar_type(ds, name)
+    _check_cf_origin(class, DT, ds, name)
+    return DateTime[_gregorian_datetime(t, calendar, name, ds)
+                    for t in _cf_value_stamps(class, DT, values)]
+end
+
+# A stamp as a DateTime. A Gregorian-like stamp (`standard`,
+# `proleptic_gregorian`, `julian`) is converted as an instant, as
+# `DateTime(x)` converts NCDatasets' decoding of the axis in
+# `_cf_calendar_stamps`: Julian 2000-01-01 and a pre-1582-10-15 `standard`
+# date (Julian) become the same instant in the proleptic Gregorian calendar
+# (2000-01-14 for the former). A stamp of the other calendars keeps its
+# calendar date and time of day, which must exist in the proleptic Gregorian
 # calendar.
 _gregorian_datetime(t::DateTime, calendar, name, ds) = t
+_gregorian_datetime(t::Union{_GREGORIAN_LIKE...}, calendar, name, ds) = DateTime(t)
 function _gregorian_datetime(t, calendar, name, ds)
     parts = (Dates.year(t), Dates.month(t), Dates.day(t), Dates.hour(t), Dates.minute(t),
              Dates.second(t), Dates.millisecond(t))
@@ -497,6 +655,13 @@ function _decode(::MonthsSince, class::MonthsSinceUnits, ds, name::String)
     base = 12 * class.year + (class.month - 1)
     return DateTime[_month_start(base + floor(Int, v + MONTHS_SINCE_FLOOR_OFFSET))
                     for v in _raw_time_values(ds, name)]
+end
+
+function _decode_time_values(::MonthsSince, class::MonthsSinceUnits, ds, name::String,
+                             values)
+    base = 12 * class.year + (class.month - 1)
+    return DateTime[_month_start(base + floor(Int, v + MONTHS_SINCE_FLOOR_OFFSET))
+                    for v in values]
 end
 
 _stamp_label(::MonthStart) = "month-start"

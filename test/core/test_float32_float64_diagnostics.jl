@@ -64,10 +64,13 @@ const NC = 2                       # cells per panel edge of the fixtures
 # (optionally) `<tracer>_column_mean` of type `T` with a 1e15 fill value, and
 # the geometry variables.
 function write_snapshot(path, hours; totals = Dict{String, Vector{Float64}}(),
-                        columns = Dict{String, Array{<:Real, 4}}(), T = Float32)
+                        columns = Dict{String, Array{<:Real, 4}}(), T = Float32,
+                        time_units = "hours")
     NCDataset(path, "c") do ds
         defDim(ds, "Xdim", NC); defDim(ds, "Ydim", NC); defDim(ds, "nf", 6); defDim(ds, "time", length(hours))
-        defVar(ds, "time", Float64, ("time",), attrib = Dict("units" => "hours"))[:] = hours
+        defVar(ds, "time", Float64, ("time",),
+               attrib = Dict("units" => time_units,
+                             "calendar" => "proleptic_gregorian"))[:] = hours
         defVar(ds, "lons", Float64, ("Xdim", "Ydim", "nf"))[:, :, :] = [10.0i + 2j + 60p for i in 1:NC, j in 1:NC, p in 1:6]
         defVar(ds, "lats", Float64, ("Xdim", "Ydim", "nf"))[:, :, :] = [-80.0 + 5i + 3j + 20p for i in 1:NC, j in 1:NC, p in 1:6]
         defVar(ds, "cell_area", Float64, ("Xdim", "Ydim", "nf"))[:, :, :] = AREA
@@ -444,6 +447,16 @@ end
     @test cmp.times == origin .+ Hour.(Int.(hours))
     @test cmp.sample_times == origin .+ Hour.([0, 24, 48, 72])
     @test cmp.cell_area == AREA
+
+    # Current snapshots use CF time. Their encoded origin must agree with the
+    # diagnostic's --origin; legacy bare-hour fixtures above remain supported.
+    cf_path = write_snapshot(joinpath(root, "cf_time.nc"), [0.0, 3.0];
+                             time_units = "hours since 2021-12-01 00:00:00")
+    @test NCDataset(ds -> twin(:_comparison_hours, ds, cf_path, origin),
+                    cf_path, "r") == [0.0, 3.0]
+    @test occursin("encoded CF time origin", error_message(() ->
+        NCDataset(ds -> twin(:_comparison_hours, ds, cf_path, origin + Day(1)),
+                  cf_path, "r")))
 
     # Regression against the former all-days-in-memory calculation. The
     # production helper reads one common 3-D snapshot at a time, but its

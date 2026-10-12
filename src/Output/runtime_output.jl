@@ -43,6 +43,14 @@ struct OutputFieldSpec{L <: AbstractLayerSelection}
     column_air_mass_per_area::Bool
 end
 
+"Metadata resolved from the typed physics objects of one runtime invocation."
+mutable struct RuntimeOutputMetadata
+    physics_attributes::Dict{String, String}
+    time_origin::Union{Nothing, DateTime}
+end
+
+RuntimeOutputMetadata() = RuntimeOutputMetadata(Dict{String, String}(), nothing)
+
 struct RuntimeOutputSpec{S <: AbstractOutputSchedule,
                          P <: AbstractOutputPartition,
                          O <: SnapshotWriteOptions,
@@ -55,6 +63,7 @@ struct RuntimeOutputSpec{S <: AbstractOutputSchedule,
     fields::F
     enabled::Bool
     format::M
+    metadata::RuntimeOutputMetadata
 end
 
 function ExplicitSnapshotSchedule(hours::AbstractVector{<:Real})
@@ -310,7 +319,24 @@ function runtime_output_spec(output_cfg::AbstractDict, ::Type{FT};
     fields = output_field_spec(get(output_cfg, "fields", Dict{String, Any}()))
     enabled = _config_bool(get(output_cfg, "enabled", true), "[output].enabled")
     path = _output_path(output_cfg, default_path)
-    return RuntimeOutputSpec(path, schedule, partition, options, fields, enabled, format)
+    return RuntimeOutputSpec(path, schedule, partition, options, fields, enabled, format,
+                             RuntimeOutputMetadata())
+end
+
+function set_physics_attributes!(spec::RuntimeOutputSpec,
+                                 attributes::AbstractDict{<:AbstractString, <:AbstractString})
+    empty!(spec.metadata.physics_attributes)
+    for (key, value) in pairs(attributes)
+        startswith(key, "physics_") || throw(ArgumentError(
+            "runtime physics attribute $(repr(key)) must start with `physics_`"))
+        spec.metadata.physics_attributes[String(key)] = String(value)
+    end
+    return spec
+end
+
+function set_time_origin!(spec::RuntimeOutputSpec, origin::DateTime)
+    spec.metadata.time_origin = origin
+    return spec
 end
 
 function _parse_output_format(value)

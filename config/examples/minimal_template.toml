@@ -8,6 +8,7 @@
 # The newcomer generator writes this current format-v4 fixture locally:
 #   julia --project=. examples/generate_synthetic_quickstart.jl
 binary_paths = ["data/quickstart/synthetic_latlon_v4.bin"]
+start_date = "2021-12-01"
 
 # Optional. Use only if filenames need a strict date pattern.
 # file_pattern = "era5_transport_{YYYYMMDD}_merged1000Pa_float32.bin"

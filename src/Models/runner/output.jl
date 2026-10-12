@@ -228,7 +228,9 @@ function _single_netcdf_stream(output::RunSnapshotOutput, spec::RuntimeOutputSpe
     output_enabled(spec) && spec.partition isa SingleOutputFile ||
         return nothing
     output.stream = NetCDFSnapshotStream(output_path(spec), grid;
-                                         mass_basis, options=spec.options, fields=spec.fields)
+                                         mass_basis, options=spec.options, fields=spec.fields,
+                                         physics_attributes=spec.metadata.physics_attributes,
+                                         time_origin=spec.metadata.time_origin)
     return output.stream
 end
 
@@ -264,13 +266,17 @@ end
 function _write_output_frames!(::BinaryMmapOutput, spec, path, frames, grid, mass_basis)
     write_snapshot_binary(path, frames, grid;
                           mass_basis = mass_basis,
-                          options = spec.options)
+                          options = spec.options,
+                          physics_attributes = spec.metadata.physics_attributes,
+                          time_origin = spec.metadata.time_origin)
 end
 function _write_output_frames!(::NetCDFOutput, spec, path, frames, grid, mass_basis)
     write_snapshot_netcdf(path, frames, grid;
                           mass_basis = mass_basis,
                           options = spec.options,
-                          fields = spec.fields)
+                          fields = spec.fields,
+                          physics_attributes = spec.metadata.physics_attributes,
+                          time_origin = spec.metadata.time_origin)
 end
 
 # Write accumulated HOST-side snapshot frames to disk. Used by the async
@@ -287,12 +293,16 @@ end
 
 function _write_frames_to_disk(::BinaryMmapOutput, spec, path, frames, grid, mass_basis)
     write_snapshot_binary(path, frames, grid; mass_basis = mass_basis,
-                          options = spec.options)
+                          options = spec.options,
+                          physics_attributes = spec.metadata.physics_attributes,
+                          time_origin = spec.metadata.time_origin)
 end
 function _write_frames_to_disk(::NetCDFOutput, spec, path, frames, grid, mass_basis)
     # The writer takes the shared NetCDF lock itself.
     write_snapshot_netcdf(path, frames, grid; mass_basis = mass_basis,
-                          options = spec.options, fields = spec.fields)
+                          options = spec.options, fields = spec.fields,
+                          physics_attributes = spec.metadata.physics_attributes,
+                          time_origin = spec.metadata.time_origin)
 end
 
 function _start_daily_output!(output::RunSnapshotOutput, spec::RuntimeOutputSpec,

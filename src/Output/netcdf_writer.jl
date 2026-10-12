@@ -257,7 +257,7 @@ end
 
 """
     write_snapshot_netcdf(path, frames, grid; mass_basis=:dry, options=SnapshotWriteOptions(),
-                          fields=output_field_spec())
+                          fields=output_field_spec(), physics_attributes=Dict())
 
 Write topology-aware runtime snapshots to NetCDF.
 
@@ -272,7 +272,10 @@ function write_snapshot_netcdf(path::AbstractString,
                                grid::AtmosGrid;
                                mass_basis::Symbol=:dry,
                                options::SnapshotWriteOptions=SnapshotWriteOptions(),
-                               fields::OutputFieldSpec=output_field_spec())
+                               fields::OutputFieldSpec=output_field_spec(),
+                               physics_attributes::AbstractDict{<:AbstractString,<:AbstractString}=
+                                   Dict{String, String}(),
+                               time_origin::Union{Nothing, DateTime}=nothing)
     expanded = expand_data_path(String(path))
     mesh = grid.horizontal
     _validate_snapshot_inputs(frames, mesh, mass_basis)
@@ -285,9 +288,10 @@ function write_snapshot_netcdf(path::AbstractString,
     with_netcdf_lock() do
         ds = _create_netcdf_dataset(expanded)
         try
-            _define_common_attributes!(ds, mesh, frames, mass_basis; options = options)
+            _define_common_attributes!(ds, mesh, frames, mass_basis; options = options,
+                                       physics_attributes)
             ds.attrib["output_fields"] = _fields_string(fields, tracer_keys)
-            geometry = _define_geometry!(ds, mesh, Nz, times)
+            geometry = _define_geometry!(ds, mesh, Nz, times, time_origin)
             _write_tracer_total_mass!(ds, frames, tracer_keys, mass_basis)
             _write_snapshot_payload!(ds, mesh, frames, tracer_keys, geometry,
                                      mass_basis, options, fields)

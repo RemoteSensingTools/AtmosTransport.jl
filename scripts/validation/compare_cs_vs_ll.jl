@@ -247,7 +247,7 @@ function main()
     _require_dry_mass_basis(ds_cs, opts.cs)
     cs_convention = _cs_panel_convention(ds_cs, opts.cs)
     Nc    = Int(ds_cs.attrib["Nc"])
-    time  = Float64.(collect(ds_cs["time"][:]))
+    time  = collect(ds_cs["time"][:])
     air   = Array{Float64}(ds_cs["air_mass"][:, :, :, :, :])   # (Nc,Nc,nf,Nz,ntime)
     tracer_names = _cs_tracer_names(ds_cs)
     cs_vmr_full = Dict{Symbol, Array{Float64, 5}}()
@@ -261,7 +261,7 @@ function main()
     _require_dry_mass_basis(ds_ll, opts.ll)
     ll_lons = Float64.(collect(ds_ll["lon"][:]))
     ll_lats = Float64.(collect(ds_ll["lat"][:]))
-    ll_time = Float64.(collect(ds_ll["time"][:]))
+    ll_time = collect(ds_ll["time"][:])
     # All `<name>_column_mean` variables in the LL snapshot.
     ll_tracer_names = Set{Symbol}()
     for n in keys(ds_ll)
@@ -294,8 +294,12 @@ function main()
     # Sanity checks on matching snapshots.
     length(time) == length(ll_time) ||
         error("snapshot counts differ: CS=$(length(time)) LL=$(length(ll_time))")
-    all(abs.(time .- ll_time) .< 0.5) ||
-        error("CS/LL snapshot hours differ beyond 0.5h: CS=$(time) LL=$(ll_time)")
+    if eltype(time) <: Real && eltype(ll_time) <: Real
+        all(abs.(time .- ll_time) .< 0.5) ||
+            error("CS/LL snapshot hours differ beyond 0.5h: CS=$(time) LL=$(ll_time)")
+    else
+        time == ll_time || error("CS/LL decoded snapshot times differ: CS=$(time) LL=$(ll_time)")
+    end
 
     # Build meshes + LL→CS conservative regridder.
     @info "Building LL→CS regridder"

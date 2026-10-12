@@ -1,6 +1,7 @@
 using Test
 using NCDatasets
 using JSON3
+using Dates
 
 using AtmosTransport
 # AtmosTransport re-exports only a subset of Output's names (e.g.
@@ -183,7 +184,10 @@ using .AtmosTransport.Output
             @test frame.tracer_total_mass[:signed] == 1.0
 
             path = write_snapshot_binary(joinpath(dir, "signed.atmsnap"),
-                                         [frame], grid; mass_basis = :dry)
+                                         [frame], grid; mass_basis = :dry,
+                                         time_origin = DateTime(2021, 12, 1),
+                                         physics_attributes = Dict(
+                                             "physics_advection_scheme" => "upwind"))
             header = open(path, "r") do io
                 @test String(read(io, 8)) == "ATMSNAP1"
                 header_size = read(io, UInt64)
@@ -193,6 +197,9 @@ using .AtmosTransport.Output
             @test header["tracer_total_mass_storage"] ==
                   "mixing_ratio_times_carrier_air_mass"
             @test Float64(header["tracer_total_mass"]["signed"][1]) == 1.0
+            @test header["time_units"] == "hours since 2021-12-01 00:00:00"
+            @test header["time_calendar"] == "proleptic_gregorian"
+            @test header["physics_advection_scheme"] == "upwind"
         end
     end
 
@@ -209,11 +216,17 @@ using .AtmosTransport.Output
             path = write_snapshot_netcdf(joinpath(dir, "ll.nc"), [frame], grid;
                                          mass_basis=:dry,
                                          options=SnapshotWriteOptions(float_type=Float64,
-                                                                      deflate_level=1))
+                                                                      deflate_level=1),
+                                         time_origin=DateTime(2021, 12, 1),
+                                         physics_attributes=Dict(
+                                             "physics_advection_scheme" => "upwind"))
 
             NCDataset(path, "r") do ds
                 @test ds.attrib["output_contract"] == "AtmosTransport snapshot v2"
                 @test ds.attrib["grid_type"] == "latlon"
+                @test ds.attrib["physics_advection_scheme"] == "upwind"
+                @test ds["time"].attrib["units"] == "hours since 2021-12-01 00:00:00"
+                @test ds["time"].attrib["calendar"] == "proleptic_gregorian"
                 @test haskey(ds, "air_mass")
                 @test haskey(ds, "air_mass_per_area")
                 @test haskey(ds, "column_air_mass_per_area")
@@ -369,7 +382,7 @@ using .AtmosTransport.Output
                                    flux_sampling=:window_constant)
             out = joinpath(dir, "snapshot.nc")
             cfg = Dict{String, Any}(
-                "input" => Dict("binary_paths" => [bin]),
+                "input" => Dict("binary_paths" => [bin], "start_date" => "2021-12-01"),
                 "numerics" => Dict("float_type" => "Float64"),
                 "run" => Dict("tracer_name" => "co2"),
                 "init" => Dict("kind" => "uniform", "background" => 400e-6),
@@ -381,6 +394,18 @@ using .AtmosTransport.Output
             run_driven_simulation(cfg)
             NCDataset(out, "r") do ds
                 @test ds.attrib["output_contract"] == "AtmosTransport snapshot v2"
+                @test ds.attrib["physics_advection_scheme"] == "upwind"
+                @test ds.attrib["physics_advection_limiter"] == "not_applicable"
+                @test ds.attrib["physics_vertical_reconstruction"] == "upwind"
+                @test ds.attrib["physics_convection"] == "none"
+                @test ds.attrib["physics_diffusion"] == "none"
+                @test ds.attrib["physics_surface_fluxes"] == "none"
+                @test ds.attrib["physics_chemistry"] == "none"
+                @test ds.attrib["physics_mass_basis"] == "dry"
+                @test ds.attrib["physics_cadence"] == "window"
+                @test ds.attrib["physics_air_mass_reset_mode"] == "preserve_tracer_mass"
+                @test ds["time"].attrib["units"] == "hours since 2021-12-01 00:00:00"
+                @test ds["time"].attrib["calendar"] == "proleptic_gregorian"
                 @test haskey(ds, "co2")
                 @test haskey(ds, "co2_column_mean")
                 @test NCDatasets.deflate(ds["co2"].var) == (true, true, 1)

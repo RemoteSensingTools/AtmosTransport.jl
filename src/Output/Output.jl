@@ -74,8 +74,9 @@ export AbstractOutputFormat, NetCDFOutput, BinaryMmapOutput, output_format_label
 export AbstractLayerSelection, FullLayerSelection, SelectedLayerSelection
 export NoLayerSelection, TracerOutputFields, OutputFieldSpec
 export ExplicitSnapshotSchedule, IntervalSnapshotSchedule
-export SingleOutputFile, DailyOutputFiles, RuntimeOutputSpec
+export SingleOutputFile, DailyOutputFiles, RuntimeOutputSpec, RuntimeOutputMetadata
 export runtime_output_spec, snapshot_hours, output_enabled, output_path
+export set_physics_attributes!, set_time_origin!
 export output_fields, output_field_spec, output_path_for_day
 export tracer_fields, layer_selection, layer_selection_label, air_mass_layer_selection
 export capture_snapshot, write_snapshot_netcdf, write_snapshot_binary

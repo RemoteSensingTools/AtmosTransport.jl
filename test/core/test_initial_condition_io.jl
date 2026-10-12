@@ -49,7 +49,7 @@ function _write_synthetic_ic_file(path::AbstractString; with_humidity::Bool = fa
         vlat = defVar(ds, "latitude", Float64, ("latitude",))
         vlev = defVar(ds, "level", Float64, ("level",))
         vhlev = defVar(ds, "hlevel", Float64, ("hlevel",))
-        vap = defVar(ds, "ap", Float64, ("hlevel",))
+        vap = defVar(ds, "ap", Float64, ("hlevel",), attrib = Dict("units" => "Pa"))
         vbp = defVar(ds, "bp", Float64, ("hlevel",))
         vco2 = defVar(ds, "CO2", Float64, ("longitude", "latitude", "level"))
         vqv = with_humidity ?
@@ -91,8 +91,13 @@ function _write_synthetic_cs_native_ic_file(path::AbstractString; Nc=2, Nz=2)
         defDim(ds, "Ydim", Nc)
         defDim(ds, "nf", 6)
         defDim(ds, "lev", Nz)
+        defDim(ds, "ilev", Nz + 1)
         tracer = defVar(ds, "SIGNED", Float64,
                         ("Xdim", "Ydim", "nf", "lev"))
+        # Equal level counts must retain the exact-copy path even when the
+        # native file carries otherwise usable hybrid metadata.
+        defVar(ds, "ap", Float64, ("ilev",), attrib = Dict("units" => "Pa"))[:] = zeros(Nz + 1)
+        defVar(ds, "bp", Float64, ("ilev",))[:] = collect(range(1.0, 0.0; length = Nz + 1))
         values = Array{Float64}(undef, Nc, Nc, 6, Nz)
         for k in 1:Nz, p in 1:6, j in 1:Nc, i in 1:Nc
             values[i, j, p, k] = (isodd(i + j + p + k) ? -1.0 : 1.0) *
@@ -105,6 +110,31 @@ function _write_synthetic_cs_native_ic_file(path::AbstractString; Nc=2, Nz=2)
     return nothing
 end
 
+# A cs_native IC whose level k (file order) holds `level_values[k]` everywhere,
+# with optional hybrid coefficients: `ap`/`bp` = `nothing` omits the variable,
+# `ap_units` = `nothing` omits its units attribute.
+function _write_hybrid_cs_native_ic_file(path::AbstractString; Nc, level_values,
+                                         ap, bp, ap_units = "Pa")
+    Nsrc = length(level_values)
+    NCDataset(path, "c") do ds
+        for (name, n) in (("Xdim", Nc), ("Ydim", Nc), ("nf", 6),
+                          ("lev", Nsrc), ("ilev", Nsrc + 1))
+            defDim(ds, name, n)
+        end
+        tracer = defVar(ds, "TRACER", Float64, ("Xdim", "Ydim", "nf", "lev"))
+        if ap !== nothing
+            attrib = ap_units === nothing ? Dict{String, Any}() :
+                                            Dict{String, Any}("units" => ap_units)
+            defVar(ds, "ap", Float64, ("ilev",); attrib)[:] = ap
+        end
+        bp === nothing || (defVar(ds, "bp", Float64, ("ilev",))[:] = bp)
+        for k in 1:Nsrc
+            tracer[:, :, :, k] .= level_values[k]
+        end
+    end
+    return path
+end
+
 function _write_synthetic_surface_flux_file(path::AbstractString)
     ds = NCDataset(path, "c")
     try
@@ -114,13 +144,14 @@ function _write_synthetic_surface_flux_file(path::AbstractString)
 
         vlon = defVar(ds, "longitude", Float64, ("longitude",))
         vlat = defVar(ds, "latitude", Float64, ("latitude",))
-        vtime = defVar(ds, "time", Float64, ("time",))
+        vtime = defVar(ds, "time", Float64, ("time",),
+                       attrib = Dict("units" => "months since 2021-01-01"))
         vtotal = defVar(ds, "TOTAL", Float64, ("longitude", "latitude", "time"))
         varea = defVar(ds, "cell_area", Float64, ("longitude", "latitude"))
 
         vlon[:] = [-135.0, -45.0, 45.0, 135.0]
         vlat[:] = [45.0, -45.0]  # descending on purpose
-        vtime[:] = [1.0, 2.0]
+        vtime[:] = [0.0, 1.0]
         raw1 = zeros(Float64, 4, 2)
         raw1[1, 1] = 7 * _SYNTHETIC_SECONDS_JAN_2021
         raw2 = 2 .* raw1
@@ -130,6 +161,25 @@ function _write_synthetic_surface_flux_file(path::AbstractString)
         vtotal.attrib["units"] = "kgCO2/month/m2"
     finally
         close(ds)
+    end
+    return nothing
+end
+
+function _write_mismatched_cs_native_ic_file(path::AbstractString; Nc=2)
+    Nsrc = 3
+    NCDataset(path, "c") do ds
+        for (name, n) in (("Xdim", Nc), ("Ydim", Nc), ("nf", 6),
+                          ("lev", Nsrc), ("ilev", Nsrc + 1))
+            defDim(ds, name, n)
+        end
+        raw = defVar(ds, "TRACER", Float64, ("Xdim", "Ydim", "nf", "lev"))
+        humidity = defVar(ds, "QV", Float64, ("Xdim", "Ydim", "nf", "lev"))
+        defVar(ds, "ap", Float64, ("ilev",), attrib = Dict("units" => "Pa"))[:] = zeros(Nsrc + 1)
+        defVar(ds, "bp", Float64, ("ilev",))[:] = [1.0, 2 / 3, 1 / 3, 0.0]
+        for k in 1:Nsrc
+            raw[:, :, :, k] .= (6.0, 3.0, 0.0)[k]
+            humidity[:, :, :, k] .= (0.0, 0.5, 0.0)[k]
+        end
     end
     return nothing
 end
@@ -433,25 +483,156 @@ end
             _write_synthetic_cs_native_ic_file(path; Nc, Nz)
 
             mesh = CubedSphereMesh(; FT, Nc, Hp)
-            vertical = HybridSigmaPressure(FT[0, 50000, 0], FT[1, 0.5, 0])
+            vertical = HybridSigmaPressure(zeros(FT, Nz + 1),
+                                           collect(FT, range(1.0, 0.0; length = Nz + 1)))
             grid = AtmosGrid(mesh, vertical, CPU(); FT)
             air_mass = ntuple(_ -> fill(FT(1e10), Nc + 2Hp, Nc + 2Hp, Nz), 6)
             base_cfg = Dict{String, Any}(
                 "kind" => "cs_native",
                 "file" => path,
                 "variable" => "SIGNED",
-                "vertical_order" => "toa_first",
+                "vertical_order" => "surface_first",
             )
 
             signed = build_initial_mixing_ratio(air_mass, grid, base_cfg)
             @test minimum(vcat((vec(signed[p]) for p in 1:6)...)) < 0
             @test maximum(vcat((vec(signed[p]) for p in 1:6)...)) > 0
+            # Equal level counts retain the pre-E7 cell-for-cell copy exactly.
+            for k in 1:Nz, p in 1:6, j in 1:Nc, i in 1:Nc
+                expected = (isodd(i + j + p + k) ? -1.0 : 1.0) *
+                           (1e-6 + 1e-8 * (i + 2j + 3p + 4k))
+                @test signed[p][i, j, k] === FT(expected)
+            end
 
             clamped_cfg = copy(base_cfg)
             clamped_cfg["clamp_negative"] = true
             clamped = build_initial_mixing_ratio(air_mass, grid, clamped_cfg)
             @test minimum(vcat((vec(clamped[p]) for p in 1:6)...)) == 0
             @test maximum(vcat((vec(clamped[p]) for p in 1:6)...)) > 0
+        end
+    end
+
+    @testset "cs_native hybrid coefficients: orientation, agreement and units" begin
+        mktempdir() do dir
+            Nc, Hp, Nz = 2, 1, 3
+            mesh = CubedSphereMesh(; FT, Nc, Hp)
+            # A normal top-first target: interface 1 is the model top.
+            A_top = [100.0, 3000.0, 6000.0, 0.0]
+            B_top = [0.0, 0.2, 0.6, 1.0]
+            grid = AtmosGrid(mesh, HybridSigmaPressure(FT.(A_top), FT.(B_top)), CPU(); FT)
+            air_mass = ntuple(_ -> fill(FT(1e10), Nc + 2Hp, Nc + 2Hp, Nz), 6)
+            # Source levels surface-first: level 1 is the surface layer.
+            surface_first_values = [1e-6, 2e-6, 3e-6]
+            cfg_for(path) = Dict{String, Any}("kind" => "cs_native", "file" => path,
+                                              "variable" => "TRACER")
+            build(path) = build_initial_mixing_ratio(air_mass, grid, cfg_for(path))
+            message(f) = try
+                f()
+                ""
+            catch err
+                err isa ArgumentError || err isa DimensionMismatch || rethrow()
+                sprint(showerror, err)
+            end
+
+            # Opposite orientation, equal level counts: the source column is
+            # reversed onto the target, so the surface value lands at k = Nz.
+            # ap of 6000 Pa without a units attribute is unambiguously Pa.
+            reversed = _write_hybrid_cs_native_ic_file(joinpath(dir, "surface_first.nc");
+                Nc, level_values = surface_first_values,
+                ap = reverse(A_top), bp = reverse(B_top), ap_units = nothing)
+            vmr = build(reversed)
+            for p in 1:6, k in 1:Nz
+                @test all(vmr[p][:, :, k] .== FT(surface_first_values[Nz - k + 1]))
+            end
+            # A consistent vertical_order is accepted; a contradicting one is not.
+            consistent = merge(cfg_for(reversed), Dict{String, Any}("vertical_order" => "surface_first"))
+            @test build_initial_mixing_ratio(air_mass, grid, consistent) == vmr
+            contradicting = merge(cfg_for(reversed), Dict{String, Any}("vertical_order" => "toa_first"))
+            @test occursin("contradicts the hybrid coefficients",
+                           message(() -> build_initial_mixing_ratio(air_mass, grid, contradicting)))
+
+            # Same orientation as the target: copied level for level.
+            same = _write_hybrid_cs_native_ic_file(joinpath(dir, "top_first.nc");
+                Nc, level_values = reverse(surface_first_values), ap = A_top, bp = B_top)
+            @test build(same) == vmr
+
+            # Equal level counts with other coefficients are another vertical
+            # grid: rejected, never copied cell for cell.
+            other_bp = _write_hybrid_cs_native_ic_file(joinpath(dir, "other_bp.nc");
+                Nc, level_values = surface_first_values,
+                ap = reverse(A_top), bp = [1.0, 0.5, 0.2, 0.0])
+            @test occursin("bp coefficients differ", message(() -> build(other_bp)))
+            other_ap = _write_hybrid_cs_native_ic_file(joinpath(dir, "other_ap.nc");
+                Nc, level_values = surface_first_values,
+                ap = [0.0, 7000.0, 3000.0, 100.0], bp = reverse(B_top))
+            @test occursin("ap coefficients differ", message(() -> build(other_ap)))
+
+            # Only one of ap and bp is an error, whatever the level counts.
+            only_ap = _write_hybrid_cs_native_ic_file(joinpath(dir, "only_ap.nc");
+                Nc, level_values = surface_first_values, ap = reverse(A_top), bp = nothing)
+            only_bp = _write_hybrid_cs_native_ic_file(joinpath(dir, "only_bp.nc");
+                Nc, level_values = surface_first_values, ap = nothing, bp = reverse(B_top))
+            for path in (only_ap, only_bp)
+                @test occursin("must provide both ap and bp, or neither", message(() -> build(path)))
+            end
+
+            # ap in hPa, or unit-less with hPa-sized values, is rejected, not guessed.
+            hpa = _write_hybrid_cs_native_ic_file(joinpath(dir, "hpa.nc");
+                Nc, level_values = surface_first_values,
+                ap = reverse(A_top) ./ 100, bp = reverse(B_top), ap_units = "hPa")
+            @test occursin("must use Pa; got units = \"hPa\"", message(() -> build(hpa)))
+            ambiguous = _write_hybrid_cs_native_ic_file(joinpath(dir, "ambiguous.nc");
+                Nc, level_values = surface_first_values,
+                ap = reverse(A_top) ./ 100, bp = reverse(B_top), ap_units = nothing)
+            @test occursin("ambiguous with hPa", message(() -> build(ambiguous)))
+            # Explicit Pa spellings and a unit-less pure-sigma (all-zero) ap pass.
+            pascal = _write_hybrid_cs_native_ic_file(joinpath(dir, "pascal.nc");
+                Nc, level_values = surface_first_values,
+                ap = reverse(A_top), bp = reverse(B_top), ap_units = "Pascal")
+            @test build(pascal) == vmr
+            sigma_grid = AtmosGrid(mesh, HybridSigmaPressure(zeros(FT, Nz + 1), FT.(B_top)), CPU(); FT)
+            sigma = _write_hybrid_cs_native_ic_file(joinpath(dir, "sigma.nc");
+                Nc, level_values = surface_first_values,
+                ap = zeros(Nz + 1), bp = reverse(B_top), ap_units = nothing)
+            sigma_vmr = build_initial_mixing_ratio(air_mass, sigma_grid, cfg_for(sigma))
+            @test sigma_vmr == vmr
+        end
+    end
+
+    @testset "cs_native conservatively remaps mismatched hybrid levels" begin
+        mktempdir() do dir
+            Nc, Hp, Nz = 2, 1, 2
+            path = joinpath(dir, "mismatched_cs_native.nc")
+            _write_mismatched_cs_native_ic_file(path; Nc)
+            mesh = CubedSphereMesh(; FT, Nc, Hp)
+            vertical = HybridSigmaPressure(FT[0, 0, 0], FT[0, 0.5, 1])
+            grid = AtmosGrid(mesh, vertical, CPU(); FT)
+            air_mass = ntuple(_ -> fill(FT(1e10), Nc + 2Hp, Nc + 2Hp, Nz), 6)
+            cfg = Dict{String, Any}(
+                "kind" => "cs_native", "file" => path, "variable" => "TRACER",
+                "humidity_variable" => "QV")
+
+            ps_total = ntuple(_ -> fill(FT(90000), Nc, Nc), 6)
+            total = build_initial_mixing_ratio(
+                air_mass, grid, cfg; surface_pressure = ps_total,
+                pressure_basis = TotalSurfacePressure())
+            for p in 1:6
+                @test total[p][:, :, 1] == fill(FT(0.6), Nc, Nc)
+                @test total[p][:, :, 2] == fill(FT(5.4), Nc, Nc)
+                # Dry-carrier pressure integral is conserved in every column.
+                @test sum(Float64.(total[p][1, 1, :])) * 37500 == 225000
+            end
+
+            # The typed dry-pressure path recovers the same 90 kPa total ps
+            # from target qv before placing source and target interfaces.
+            target_qv = ntuple(_ -> fill(FT(0.1), Nc, Nc, Nz), 6)
+            ps_dry = ntuple(_ -> fill(FT(81000), Nc, Nc), 6)
+            dry = build_initial_mixing_ratio(
+                air_mass, grid, cfg; surface_pressure = ps_dry,
+                pressure_basis = DrySurfacePressure(), qv = target_qv)
+            @test dry == total
+
+            @test_throws ArgumentError build_initial_mixing_ratio(air_mass, grid, cfg)
         end
     end
 
@@ -880,8 +1061,7 @@ end
                 AtmosTransport.GriddedIO.orient(raw_ps, orientation)
             end
             source_mesh = AtmosTransport.GriddedIO.source_latlon_mesh(
-                source.lon, source.lat, AtmosTransport.GriddedIO.UniformSpanFaces();
-                radius = mesh.radius)
+                source.lon, source.lat; radius = mesh.radius)
             ps_regridder = AtmosTransport.Regridding.build_regridder(source_mesh, mesh)
             ps_flat = Vector{Float64}(undef, 6 * 90 * 90)
             AtmosTransport.Regridding.apply_regridder!(ps_flat, ps_regridder,
@@ -1008,6 +1188,147 @@ end
             for month in 1:12
                 @test all(gridfed.raw_series[:, :, month] .== month)
             end
+
+            # The ordinal fallback belongs only to the documented GridFED
+            # layout, even when another kind points at the same data variable.
+            not_gridfed = copy(gridfed_cfg)
+            not_gridfed["kind"] = "lmdz_co2"
+            not_gridfed["variable"] = "TOTAL"
+            @test_throws ArgumentError ICIO._load_timevarying_surface_flux_field(
+                not_gridfed, Float64, DateTime(2022, 1, 1); species = :co2)
+        end
+    end
+
+    @testset "per-month slices use CF coordinates, bounds, and calendar" begin
+        function write_permonth(path; times, values, calendar, bounds = nothing)
+            NCDataset(path, "c") do ds
+                defDim(ds, "longitude", 4)
+                defDim(ds, "latitude", 2)
+                defDim(ds, "time", length(times))
+                defVar(ds, "longitude", Float64, ("longitude",))[:] =
+                    [-135.0, -45.0, 45.0, 135.0]
+                defVar(ds, "latitude", Float64, ("latitude",))[:] = [45.0, -45.0]
+                attrib = Dict("units" => "days since 2021-01-01", "calendar" => calendar)
+                bounds === nothing || (attrib["bounds"] = "time_bnds")
+                defVar(ds, "time", Float64, ("time",); attrib)[:] = times
+                if bounds !== nothing
+                    defDim(ds, "nv", 2)
+                    defVar(ds, "time_bnds", Float64, ("nv", "time"))[:, :] = bounds
+                end
+                flux = defVar(ds, "TOTAL", Float64,
+                              ("longitude", "latitude", "time"),
+                              attrib = Dict("units" => "kgCO2/month/m2"))
+                for t in eachindex(values)
+                    flux[:, :, t] .= values[t]
+                end
+            end
+            return path
+        end
+
+        mktempdir() do dir
+            # A partial year in file order April, February, March. Bounds assign
+            # each amount its duration; the coordinate sorts the returned series.
+            bounds = [90.0 31.0 59.0; 120.0 59.0 90.0]
+            markers = [4.0, 2.0, 3.0]
+            values = markers .* vec(bounds[2, :] .- bounds[1, :]) .* 86400
+            path = write_permonth(joinpath(dir, "partial_out_of_order.nc");
+                                  times = vec(sum(bounds; dims = 1) ./ 2), values,
+                                  calendar = "proleptic_gregorian", bounds)
+            cfg = Dict{String, Any}(
+                "kind" => "gridfed_fossil_co2", "file" => path,
+                "time_varying" => true)
+            series = ICIO._load_timevarying_surface_flux_field(
+                cfg, Float64, DateTime(2021, 1, 1); species = :co2)
+            @test size(series.raw_series, 3) == 3
+            @test all(series.raw_series[:, :, 1] .== 2.0)
+            @test all(series.raw_series[:, :, 2] .== 3.0)
+            @test all(series.raw_series[:, :, 3] .== 4.0)
+            # Stepwise slices switch at interval starts, not their mid-month
+            # coordinate stamps.
+            @test series.times_sec == [31.0, 59.0, 90.0] .* 86400
+
+            # Julian bounds are instants: Julian 2021-01-01 is proleptic
+            # Gregorian 2021-01-14, so each switch is 13 days after the
+            # Julian calendar fields, as for the decoded coordinate.
+            julian_bounds = [0.0 31.0 59.0; 31.0 59.0 90.0]
+            julian = write_permonth(joinpath(dir, "julian.nc");
+                                    times = vec(sum(julian_bounds; dims = 1) ./ 2),
+                                    values = [1.0, 2.0, 3.0] .*
+                                             vec(julian_bounds[2, :] .- julian_bounds[1, :]) .* 86400,
+                                    calendar = "julian", bounds = julian_bounds)
+            julian_series = ICIO._load_timevarying_surface_flux_field(
+                Dict{String, Any}("kind" => "gridfed_fossil_co2", "file" => julian,
+                                  "time_varying" => true),
+                Float64, DateTime(2021, 1, 1); species = :co2)
+            @test julian_series.times_sec == ([0.0, 31.0, 59.0] .+ 13) .* 86400
+            for month in 1:3
+                @test all(julian_series.raw_series[:, :, month] .== month)
+            end
+
+            # time_index remains explicitly positional: slice 1 is April.
+            static_cfg = Dict{String, Any}(
+                "kind" => "gridfed_fossil_co2", "file" => path, "time_index" => 1)
+            static = ICIO._load_file_surface_flux_field(
+                static_cfg, Float64; species = :co2)
+            @test all(static.raw .== 4.0)
+
+            # month is semantic when a coordinate exists, even though the
+            # partial-year file is out of order.
+            february = ICIO._load_file_surface_flux_field(
+                Dict{String, Any}("kind" => "gridfed_fossil_co2", "file" => path,
+                                  "month" => 2), Float64; species = :co2)
+            @test all(february.raw .== 2.0)
+            @test_throws ArgumentError ICIO._load_file_surface_flux_field(
+                Dict{String, Any}("kind" => "gridfed_fossil_co2", "file" => path,
+                                  "month" => 1), Float64; species = :co2)
+
+            # Fixed-unit bounds must span exactly the represented calendar
+            # month; a daily interval cannot normalize a monthly amount.
+            bad_bounds = [31.0 59.0 90.0; 32.0 60.0 91.0]
+            bad = write_permonth(joinpath(dir, "daily_bounds.nc");
+                                 times = vec(sum(bad_bounds; dims = 1) ./ 2),
+                                 values = ones(3), calendar = "proleptic_gregorian",
+                                 bounds = bad_bounds)
+            @test_throws ArgumentError ICIO._load_timevarying_surface_flux_field(
+                Dict{String, Any}("kind" => "gridfed_fossil_co2", "file" => bad,
+                                  "time_varying" => true),
+                Float64, DateTime(2021, 1, 1); species = :co2)
+
+            # Without bounds, month length comes from the coordinate's own
+            # 360_day calendar: February is 30 days, not Gregorian 28 days.
+            values360 = [m * 30 * 86400.0 for m in 1:3]
+            path360 = write_permonth(joinpath(dir, "partial_360_day.nc");
+                                     times = [15.0, 45.0, 75.0], values = values360,
+                                     calendar = "360_day")
+            cfg360 = Dict{String, Any}(
+                "kind" => "gridfed_fossil_co2", "file" => path360,
+                "time_varying" => true)
+            series360 = ICIO._load_timevarying_surface_flux_field(
+                cfg360, Float64, DateTime(2021, 1, 1); species = :co2)
+            for month in 1:3
+                @test all(series360.raw_series[:, :, month] .== month)
+            end
+
+            # A coordinate-less partial year is not the legacy twelve-slice
+            # GridFED layout and therefore cannot fall back to ordinal months.
+            partial_no_coordinate = joinpath(dir, "partial_no_coordinate.nc")
+            NCDataset(partial_no_coordinate, "c") do ds
+                defDim(ds, "longitude", 4)
+                defDim(ds, "latitude", 2)
+                defDim(ds, "time", 3)
+                defVar(ds, "longitude", Float64, ("longitude",))[:] =
+                    [-135.0, -45.0, 45.0, 135.0]
+                defVar(ds, "latitude", Float64, ("latitude",))[:] = [45.0, -45.0]
+                flux = defVar(ds, "TOTAL", Float64,
+                              ("longitude", "latitude", "time"),
+                              attrib = Dict("units" => "kgCO2/month/m2"))
+                flux[:, :, :] .= 1.0
+            end
+            partial_cfg = Dict{String, Any}(
+                "kind" => "gridfed_fossil_co2", "file" => partial_no_coordinate,
+                "time_varying" => true, "year" => 2021)
+            @test_throws ArgumentError ICIO._load_timevarying_surface_flux_field(
+                partial_cfg, Float64, DateTime(2021, 1, 1); species = :co2)
         end
     end
 
@@ -1286,6 +1607,20 @@ end
     @test density("Tonnes", :sf6; v = 1.0, area = fill(2.0, 1, 1)) ===
           1000.0 / (2.0 * AtmosTransport.Parameters.DAYS_PER_JULIAN_YEAR * 86400)
     @test_throws ArgumentError density("kg/s", :co2)
+    # Missing per-cell areas come from the same snapped source mesh used by
+    # conservative regridding, including half-width polar caps. Preserve the
+    # caller's latitude row order when the file stores north to south.
+    lon = collect(45.0:90.0:315.0)
+    lat = [-90.0, 0.0, 90.0]
+    mesh = AtmosTransport.GriddedIO.source_latlon_mesh(
+        lon, lat; radius = AtmosTransport.Parameters.EARTH_RADIUS)
+    expected_area = [cell_area(mesh, i, j) for i in 1:4, j in 1:3]
+    @test ICIO._lonlat_cell_areas_m2(lon, lat) == expected_area
+    @test ICIO._lonlat_cell_areas_m2(lon, reverse(lat)) == expected_area[:, end:-1:1]
+    old_uniform = AtmosTransport.GriddedIO.source_latlon_mesh(
+        lon, lat, AtmosTransport.GriddedIO.UniformSpanFaces();
+        radius = AtmosTransport.Parameters.EARTH_RADIUS)
+    @test expected_area != [cell_area(old_uniform, i, j) for i in 1:4, j in 1:3]
     # A molar flux that names no substance is of the tracer's species
     # (ECCO-Darwin writes mmol m-2 s-1 of CO2).
     M = AtmosTransport.Parameters.SPECIES_MOLAR_MASS

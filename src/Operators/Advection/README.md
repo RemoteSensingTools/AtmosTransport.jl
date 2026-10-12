@@ -23,7 +23,8 @@ the model-facing `apply!` entrypoints that the transport block calls.
   `CSAdvectionWorkspace`
 - Lin–Rood horizontal transport:
   [`linrood_horizontal.jl`](linrood_horizontal.jl) provides `fv_tp_2d_cs!`,
-  [`LinRood.jl`](LinRood.jl) `CSLinRoodAdvectionWorkspace`; the runtime pairs it with vertical upwind
+  [`LinRood.jl`](LinRood.jl) `CSLinRoodAdvectionWorkspace`; configured runs
+  pair it by default with the FV3 `kord = 8` vertical profile
 - Cubed-sphere halo support:
   [`HaloExchange.jl`](HaloExchange.jl)
   provides `fill_panel_halos!` and `copy_corners!`
@@ -37,7 +38,9 @@ the model-facing `apply!` entrypoints that the transport block calls.
 `scheme="linrood"` selects the CS cross-term path; `ppm_order=5` (default) or
 `7` chooses its edge-value family. ORD=7 retains the order-5 interior and adds
 special panel-edge treatment. It does not select a seventh-order transport
-method. Configuration parsing lives in
+method. Its configured vertical default is `fv3_kord8`; set
+`vertical="upwind"` explicitly for the first-order or adjoint-supported path.
+Configuration parsing lives in
 [`../../Models/RuntimePhysicsSpecs.jl`](../../Models/RuntimePhysicsSpecs.jl).
 
 - LatLon and reduced-Gaussian transport run through the `apply!` methods in

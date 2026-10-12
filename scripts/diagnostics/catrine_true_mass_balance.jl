@@ -27,12 +27,11 @@
 #     times with the surface operator's own `emission_segments` (one step per
 #     interval, split at every source slice time). In storage units the molar
 #     masses cancel, so no inventory rate or unit factor enters.
-#   * Decaying tracers (Rn-222): the model emits at every advection substep
-#     and applies the decay e^{−λT} once at the end of each met window T. The
-#     reference follows that order, B̂ ← (B̂ + ∫_window E dt) e^{−λT}, so r is
-#     again the conservation error. The model's departure from the exact
-#     solution of B' = E − λB (about −λT/2 of the burden: fresh emissions decay
-#     for a whole window) is reported separately as the splitting bias.
+#   * Decaying tracers (Rn-222): exact half-window decay steps bracket every
+#     met window T. The reference follows that order,
+#     B̂ ← (B̂ e^{−λT/2} + ∫_window E dt) e^{−λT/2}, so r is again the
+#     conservation error. The remaining O((λT)²) departure from the exact
+#     solution of B' = E − λB is reported separately as the splitting bias.
 #   * The dry-air mass m_dry comes from the output's dry
 #     `column_air_mass_per_area`. The output `time` axis is taken as hours since
 #     [input].start_date 00 UTC, the origin of the model's source times.
@@ -199,7 +198,10 @@ function mass_balance(run::AtmosTransportRun)
     for f in snapshot_files(run.pattern)
         NCDataset(f) do ds
             area = Float64.(ds["cell_area"][:, :, :])
-            for (k, h) in enumerate(Float64.(ds["time"][:]))
+            # Keep the model-relative elapsed hours used by the budget equations.
+            # NCDatasets decodes the runtime CF time coordinate to DateTime, so
+            # read the stored numeric coordinate through the underlying variable.
+            for (k, h) in enumerate(Float64.(ds["time"].var[:]))
                 (h < run.start_hours || (!isempty(mb.hours) && h == mb.hours[end])) && continue
                 push!(mb.hours, h)
                 foreach(n -> push!(mb.burden[n], Float64(ds["$(n)_total_mass"][k])), tracers)
@@ -222,7 +224,7 @@ function mass_balance(run::AtmosTransportRun)
         c, ref, exact = 0.0, B[1], B[1]
         cum, res = zeros(length(t)), zeros(length(t))
         for k in 2:length(t)
-            if l > 0      # window by window: emit, then decay (model order); exact ODE alongside
+            if l > 0      # window by window: symmetric half-decay around emissions; exact ODE alongside
                 nw = round(Int, (t[k] - t[k - 1]) / window)
                 nw * window ≈ t[k] - t[k - 1] ||
                     error("output interval $(t[k] - t[k - 1]) s is not a multiple of the met window $window s")
@@ -230,7 +232,8 @@ function mass_balance(run::AtmosTransportRun)
                     segs = segments(src, a, window)
                     e = emitted(segs)
                     c += e
-                    ref = (ref + e) * exp(-l * window)
+                    half_decay = exp(-l * window / 2)
+                    ref = (ref * half_decay + e) * half_decay
                     for (r, ℓ) in segs
                         exact = exact_decay(exact, r, l, ℓ)
                     end
@@ -250,7 +253,7 @@ end
 
 function describe(io, run::AtmosTransportRun, mb::MassBalance, out_csv)
     println(io, "true mass balance from t₀ = $(run.start_hours) h to $(mb.hours[end]) h ($(length(mb.hours)) times) → $out_csv")
-    println(io, "  residual r = B(t) − B(t₀) − ∫E dt (decay: B − B̂ with the model's emit-then-decay order); mole fraction = r / dry-air mass")
+    println(io, "  residual r = B(t) − B(t₀) − ∫E dt (decay: B − B̂ with the model's symmetric half-window order); mole fraction = r / dry-air mass")
 end
 
 # -----------------------------------------------------------------------------

@@ -15,6 +15,7 @@
 
 using JSON3
 using Printf
+using Dates
 
 using AtmosTransport
 using AtmosTransport.Architectures: CPU
@@ -167,11 +168,21 @@ function main()
 
     options = SnapshotWriteOptions(float_type = Float32)
     fields = output_field_spec()
+    time_units = String(get(header, "time_units", "hours"))
+    time_origin = if startswith(time_units, "hours since ")
+        DateTime(time_units[length("hours since ") + 1:end], dateformat"yyyy-mm-dd HH:MM:SS")
+    else
+        nothing
+    end
+    physics_attributes = Dict{String, String}(
+        key => String(value) for (key, value) in pairs(header) if startswith(key, "physics_"))
     t0 = time()
     write_snapshot_netcdf(output, frames, grid;
                           mass_basis = mass_basis,
                           options = options,
-                          fields = fields)
+                          fields = fields,
+                          time_origin,
+                          physics_attributes)
     elapsed = time() - t0
     @info @sprintf("wrote NetCDF: %s (%.1fs)", output, elapsed)
     return nothing

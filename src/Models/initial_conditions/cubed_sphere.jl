@@ -89,7 +89,8 @@ function _build_cs_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 
         return _build_cs_pressure_layer_ic(air_mass, grid, cfg, FT, surface_pressure,
                                            pressure_basis, qv, vmr)
     elseif kind === :cs_native
-        return _build_cs_native_ic(grid, air_mass, cfg, FT)
+        return _build_cs_native_ic(grid, air_mass, cfg, FT;
+                                   surface_pressure, pressure_basis, qv)
     elseif _is_file_init_kind(kind)
         surface_pressure === nothing && throw(ArgumentError(
             "build_initial_mixing_ratio(::AtmosGrid{<:CubedSphereMesh}, ...) " *
@@ -133,8 +134,7 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
     # ascending latitude. The source mesh is Float64 for every run precision
     # (Float32 and Float64 runs share weights) and sits on the destination
     # sphere, so the conservative weights compare areas on one sphere.
-    # TODO(P2b): pole-centred faces (`SnappedFaces`) for pole-centred files.
-    src_mesh = source_latlon_mesh(source.lon, source.lat, UniformSpanFaces(); radius = mesh.radius)
+    src_mesh = source_latlon_mesh(source.lon, source.lat; radius = mesh.radius)
     regridder = build_regridder(src_mesh, mesh)
 
     # 3D VMR: (Nx_src, Ny_src, Nlev_src) → 6 × (Nc, Nc, Nlev_src)
@@ -196,10 +196,11 @@ end
 
 # ---------------------------------------------------------------------------
 # CS NATIVE IC — read a native cubed-sphere field cell-for-cell (no
-# horizontal regrid, no vertical interpolation) and state-align to the
-# binary's own topology. Used to seed tracers from a GEOS-Chem 3D field
-# stored on the SAME C180 cube the binary uses (e.g. CATRINE FossilCO2 /
-# Rn222), so only transport + emission diverge from GC afterwards.
+# horizontal regrid) and state-align to the binary's own topology. When source
+# and target level counts differ, use the same conservative hybrid remap as
+# other file ICs. Used to seed tracers from a GEOS-Chem 3D field stored on the
+# SAME cube the binary uses (e.g. CATRINE FossilCO2 / Rn222), so only transport
+# + emission diverge from GC afterwards.
 #
 # The source NetCDF carries `<variable>(time, lev, nf, Ydim, Xdim)` in CF
 # (surface-first lev, like GEOS-Chem SpeciesConcVV_*). NCDatasets reads it
@@ -209,12 +210,17 @@ end
 # in `(Xdim, Ydim, nf, lev)` order. We therefore map
 # `src[i, j, p, k_src]` directly onto interior panel `p` cell `(i, j)`, and
 # flip the vertical (source SURFACE-first → model TOA-first) via
-# `k = Nz - k_src + 1`. Requires `size(lev) == Nz` (same vertical grid).
+# `k = Nz - k_src + 1`. Equal level counts retain that exact copy contract.
+# Mismatched counts require `ap`/`bp`, target surface pressure, and optionally
+# source/target humidity for dry-carrier weighting.
 # ---------------------------------------------------------------------------
 
 function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
                              air_mass::NTuple{6, <:AbstractArray{FT, 3}},
-                             cfg, ::Type{FT}) where FT
+                             cfg, ::Type{FT};
+                             surface_pressure::Union{Nothing, NTuple{6, <:AbstractMatrix}} = nothing,
+                             pressure_basis::AbstractSurfacePressureBasis = TotalSurfacePressure(),
+                             qv::Union{Nothing, NTuple{6}} = nothing) where FT
     mesh = grid.horizontal
     Nc   = mesh.Nc
     Nz   = size(air_mass[1], 3)
@@ -225,18 +231,14 @@ function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
     isempty(variable) && throw(ArgumentError("init.kind=cs_native requires init.variable"))
     isfile(file) || throw(ArgumentError("cs_native initial-condition file not found: $file"))
     time_index = Int(get(cfg, "time_index", 1))
-    # Source vertical convention: "surface_first" (GEOS-Chem default) flips to
-    # the model's TOA-first ordering; "toa_first" copies straight through.
-    flip_vertical = _parse_vertical_order(get(cfg, "vertical_order", "surface_first")) === :surface_first
-
     ds = NCDataset(file)
-    raw = try
+    raw, source_qv, ap, bp, has_hybrid = try
         haskey(ds, variable) || throw(ArgumentError("variable '$variable' not found in $file"))
         rv = ds[variable]
         nd = ndims(rv)
         # NCDatasets reverses CF dim order: (Xdim, Ydim, nf, lev[, time]).
         # Fill values become 0 (GriddedIO.MaskedAsZero), read straight into FT.
-        if nd == 5
+        values = if nd == 5
             read_raw(FT, ds, variable, MaskedAsZero(), :, :, :, :, time_index)
         elseif nd == 4
             read_raw(FT, ds, variable, MaskedAsZero())
@@ -244,6 +246,29 @@ function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
             throw(ArgumentError("init.kind=cs_native: variable '$variable' must be " *
                                 "4D (Xdim,Ydim,nf,lev) or 5D (…,time), got ndims=$nd"))
         end
+
+        humidity_name = haskey(cfg, "humidity_variable") ? String(cfg["humidity_variable"]) : nothing
+        source_humidity = if humidity_name === nothing
+            nothing
+        else
+            haskey(ds, humidity_name) || throw(ArgumentError(
+                "humidity variable '$humidity_name' not found in $file"))
+            qv_var = ds[humidity_name]
+            ndims(qv_var) == nd && size(qv_var)[1:4] == size(rv)[1:4] ||
+                throw(DimensionMismatch(
+                    "humidity variable '$humidity_name' must share the cs_native IC " *
+                    "field's Xdim, Ydim, panel, and level dimensions"))
+            nd == 5 ? read_raw(FT, ds, humidity_name, MaskedAsZero(), :, :, :, :, time_index) :
+                      read_raw(FT, ds, humidity_name, MaskedAsZero())
+        end
+
+        has_ap, has_bp = haskey(ds, "ap"), haskey(ds, "bp")
+        has_ap == has_bp || throw(ArgumentError(
+            "cs_native initial condition must provide both ap and bp, or neither"))
+        source_ap = has_ap ? Float64.(ds["ap"][:]) : Float64[]
+        source_bp = has_bp ? Float64.(ds["bp"][:]) : Float64[]
+        has_ap && _validate_ap_units(ds["ap"], source_ap, file)
+        values, source_humidity, source_ap, source_bp, has_ap
     finally
         close(ds)
     end
@@ -255,9 +280,9 @@ function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
         "cs_native: source Ydim=$(size(raw, 2)) != binary Nc=$Nc"))
     size(raw, 3) == CS_PANEL_COUNT || throw(DimensionMismatch(
         "cs_native: source nf=$(size(raw, 3)) != $CS_PANEL_COUNT panels"))
-    size(raw, 4) == Nz || throw(DimensionMismatch(
-        "cs_native: source lev=$(size(raw, 4)) != binary Nz=$Nz (no vertical " *
-        "interpolation is performed; the source must share the vertical grid)"))
+    Nsrc = size(raw, 4)
+    source_qv === nothing || all(v -> isfinite(v) && 0 <= v < 1, source_qv) ||
+        throw(ArgumentError("cs_native humidity_variable must contain finite specific humidity in [0, 1)"))
 
     # Signed tracer contributions are part of the state contract. Preserve
     # negative values by default; physical-species workflows may explicitly
@@ -265,15 +290,94 @@ function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
     clamp_negative = _config_bool(cfg, "clamp_negative", false, "initial-condition clamp_negative")
 
     vmr = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), CS_PANEL_COUNT)
-    for p in 1:CS_PANEL_COUNT
-        dst = vmr[p]
-        @inbounds for k in 1:Nz
-            k_src = flip_vertical ? (Nz - k + 1) : k
-            for j in 1:Nc, i in 1:Nc
-                v = raw[i, j, p, k_src]
-                dst[i, j, k] = (clamp_negative && v < zero(FT)) ? zero(FT) : v
+
+    surface_first = false
+    if has_hybrid
+        length(ap) == Nsrc + 1 && length(bp) == Nsrc + 1 || throw(DimensionMismatch(
+            "cs_native hybrid coefficients must have source lev + 1 = $(Nsrc + 1) entries; " *
+            "got ap=$(length(ap)), bp=$(length(bp))"))
+        surface_first = _hybrid_surface_first(ap, bp)
+        if haskey(cfg, "vertical_order")
+            configured_order = cfg["vertical_order"]
+            _parse_vertical_order(configured_order) ===
+                (surface_first ? :surface_first : :toa_first) ||
+                throw(ArgumentError("init.vertical_order = $(repr(configured_order)) contradicts " *
+                                    "the hybrid coefficients of $(file)"))
+        end
+    end
+
+    if Nsrc == Nz
+        if has_hybrid
+            A_tgt, B_tgt = grid.vertical.A, grid.vertical.B
+            target_surface_first = _hybrid_surface_first(A_tgt, B_tgt)
+            if surface_first != target_surface_first
+                raw = raw[:, :, :, end:-1:1]
+                source_qv === nothing || (source_qv = source_qv[:, :, :, end:-1:1])
+                ap = reverse(ap)
+                bp = reverse(bp)
+            end
+            all(isapprox.(ap, A_tgt; atol = 1e-3, rtol = 1e-6)) || throw(ArgumentError(
+                "cs_native ap coefficients differ from the transport binary despite equal level counts"))
+            all(isapprox.(bp, B_tgt; atol = 1e-8, rtol = 1e-6)) || throw(ArgumentError(
+                "cs_native bp coefficients differ from the transport binary despite equal level counts"))
+            flip_vertical = false
+        else
+            flip_vertical = _parse_vertical_order(
+                get(cfg, "vertical_order", "surface_first")) === :surface_first
+        end
+        for p in 1:CS_PANEL_COUNT
+            dst = vmr[p]
+            @inbounds for k in 1:Nz
+                k_src = flip_vertical ? (Nz - k + 1) : k
+                for j in 1:Nc, i in 1:Nc
+                    v = raw[i, j, p, k_src]
+                    dst[i, j, k] = (clamp_negative && v < zero(FT)) ? zero(FT) : v
+                end
             end
         end
+        return vmr
+    end
+
+    has_hybrid || throw(ArgumentError(
+        "cs_native initial condition has $Nsrc levels but the binary has $Nz; " *
+        "mismatched levels require both hybrid interface coefficients ap and bp"))
+    surface_pressure === nothing && throw(ArgumentError(
+        "cs_native initial condition has $Nsrc levels but the binary has $Nz; " *
+        "pass the binary's surface_pressure panels for conservative hybrid remapping"))
+    all(p -> size(surface_pressure[p]) == (Nc, Nc), 1:CS_PANEL_COUNT) ||
+        throw(DimensionMismatch("CS target surface-pressure panels must each have shape ($Nc, $Nc)"))
+    qv === nothing || all(p -> size(qv[p]) == (Nc, Nc, Nz), 1:CS_PANEL_COUNT) ||
+        throw(DimensionMismatch("CS target humidity panels must each have shape ($Nc, $Nc, $Nz)"))
+
+    # The conservative remapper consumes source profiles surface-to-TOA.
+    if !surface_first
+        raw = raw[:, :, :, end:-1:1]
+        source_qv === nothing || (source_qv = source_qv[:, :, :, end:-1:1])
+        ap = reverse(ap)
+        bp = reverse(bp)
+    end
+
+    _warn_surface_pressure_approximation(pressure_basis, qv)
+    A_tgt, B_tgt = grid.vertical.A, grid.vertical.B
+    src_profile = Vector{FT}(undef, Nsrc)
+    src_qv_profile = similar(src_profile)
+    src_p = Vector{Float64}(undef, Nsrc + 1)
+    cumulative = similar(src_p)
+    dry_cumulative = similar(src_p)
+    for p in 1:CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc
+        @inbounds for k in 1:Nsrc
+            value = raw[i, j, p, k]
+            src_profile[k] = clamp_negative && value < zero(FT) ? zero(FT) : value
+            source_qv === nothing || (src_qv_profile[k] = source_qv[i, j, p, k])
+        end
+        target_qv = qv === nothing ? nothing : @view(qv[p][i, j, :])
+        ps_total = _total_surface_pressure(
+            pressure_basis, surface_pressure[p][i, j], A_tgt, B_tgt, target_qv)
+        source_qv_profile_or_nothing = source_qv === nothing ? nothing : src_qv_profile
+        _remap_hybrid_profile!(@view(vmr[p][i, j, :]), src_profile,
+                               source_qv_profile_or_nothing, ap, bp,
+                               A_tgt, B_tgt, ps_total,
+                               src_p, cumulative, dry_cumulative)
     end
     return vmr
 end

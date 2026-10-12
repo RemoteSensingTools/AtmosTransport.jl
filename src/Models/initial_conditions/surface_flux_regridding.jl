@@ -25,14 +25,13 @@ end
 Build the conservative LL→`dst_mesh` regridder for a source flux grid
 defined by its oriented cell centres `lon`/`lat`, with Float64 geometry for
 every run precision. The source mesh is `GriddedIO.source_latlon_mesh` with
-`UniformSpanFaces()`, on the destination mesh's sphere. Factored out so the
-time-varying path can build the regridder once and reuse it across every time
-slice instead of rebuilding it per slice.
+its default `SnappedFaces()` rule, on the destination mesh's sphere. Factored
+out so the time-varying path can build the regridder once and reuse it across
+every time slice instead of rebuilding it per slice.
 """
 function _build_surface_flux_regridder(lon::Vector{Float64}, lat::Vector{Float64},
                                        dst_mesh::AbstractHorizontalMesh)
-    # TODO(P2b): pole-centred faces (`SnappedFaces`) for pole-centred files.
-    src_mesh = source_latlon_mesh(lon, lat, UniformSpanFaces(); radius = dst_mesh.radius)
+    src_mesh = source_latlon_mesh(lon, lat; radius = dst_mesh.radius)
     return build_regridder(src_mesh, dst_mesh; cache_dir = default_regrid_cache_dir())
 end
 

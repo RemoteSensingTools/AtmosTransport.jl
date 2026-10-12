@@ -9,12 +9,14 @@ A stream owns its output path, must be used serially, and must be closed with
 I/O failure the stream cannot be reused, and the file may contain a partial
 last record; `completed_snapshots` records the last successful append.
 """
-mutable struct NetCDFSnapshotStream{G,O,F}
+mutable struct NetCDFSnapshotStream{G,O,F,M,T}
     path::String
     grid::G
     mass_basis::Symbol
     options::O
     fields::F
+    physics_attributes::M
+    time_origin::T
     count::Int
     last_time::Float64
     nlevel::Int
@@ -29,9 +31,13 @@ end
 function NetCDFSnapshotStream(path::AbstractString, grid;
                               mass_basis::Symbol=:dry,
                               options::SnapshotWriteOptions=SnapshotWriteOptions(),
-                              fields::OutputFieldSpec=output_field_spec())
+                              fields::OutputFieldSpec=output_field_spec(),
+                              physics_attributes::AbstractDict{<:AbstractString,<:AbstractString}=
+                                  Dict{String, String}(),
+                              time_origin::Union{Nothing, DateTime}=nothing)
     return NetCDFSnapshotStream(expand_data_path(String(path)), grid, mass_basis,
-                                options, deepcopy(fields), 0, -Inf, 0, Symbol[],
+                                options, deepcopy(fields), Dict{String, String}(physics_attributes),
+                                time_origin, 0, -Inf, 0, Symbol[],
                                 nothing, nothing, nothing, false, false)
 end
 
@@ -98,10 +104,11 @@ function append_snapshot!(stream::NetCDFSnapshotStream, frame::AbstractSnapshotF
         ds = stream.dataset
         if first_record
             _define_common_attributes!(ds, mesh, [frame], stream.mass_basis;
-                                       options=stream.options)
+                                       options=stream.options,
+                                       physics_attributes=stream.physics_attributes)
             ds.attrib["output_fields"] = _fields_string(stream.fields, names)
             ds.attrib["completed_snapshots"] = 0
-            stream.geometry = _define_geometry!(ds, mesh, Nz, nothing)
+            stream.geometry = _define_geometry!(ds, mesh, Nz, nothing, stream.time_origin)
         end
         _write_tracer_total_mass!(ds, [frame], names, stream.mass_basis; time_offset=stream.count)
         _write_snapshot_payload!(ds, mesh, [frame], names, stream.geometry,

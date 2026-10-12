@@ -357,6 +357,46 @@ end
           [DateTime(2000, 3, 14)]
 end
 
+@testset "decode_time_bounds: the instants decode_time gives" begin
+    dir = mktempdir()
+    function bounded_file(values, bounds; units, calendar)
+        time_file(dir, values; units, calendar, extra = ds -> begin
+            NCDatasets.variable(ds, "time").attrib["bounds"] = "time_bnds"
+            defDim(ds, "nv", 2)
+            defVar(ds, "time_bnds", Float64, ("nv", "time"))[:, :] = bounds
+        end)
+    end
+    decode_bounds(path) = NCDataset(ds -> GIO.decode_time_bounds(ds, "time"), path)
+    # Coordinates at the bound starts, so row 1 must equal decode_time.
+    cases = [
+        # Julian 2000-01-01 is proleptic Gregorian 2000-01-14 (13 days apart);
+        # Julian 2000-03-01 is 2000-03-14. Copying the Julian fields would
+        # switch stepwise slices 13 days early.
+        ("days since 2000-01-01", "julian", [0.0 31.0; 31.0 60.0],
+         [DateTime(2000, 1, 14) DateTime(2000, 2, 14); DateTime(2000, 2, 14) DateTime(2000, 3, 14)]),
+        # `standard` before 1582-10-15 is Julian: 1500-01-01 is 1500-01-10.
+        ("days since 1500-01-01", "standard", [0.0 31.0; 31.0 59.0],
+         [DateTime(1500, 1, 10) DateTime(1500, 2, 10); DateTime(1500, 2, 10) DateTime(1500, 3, 10)]),
+        ("hours since 2021-01-01", "proleptic_gregorian", [0.0 744.0; 744.0 1416.0],
+         [DateTime(2021, 1, 1) DateTime(2021, 2, 1); DateTime(2021, 2, 1) DateTime(2021, 3, 1)]),
+        # Non-Gregorian calendars keep their calendar fields, as decode_time does.
+        ("days since 2001-01-01", "noleap", [0.0 31.0; 31.0 59.0],
+         [DateTime(2001, 1, 1) DateTime(2001, 2, 1); DateTime(2001, 2, 1) DateTime(2001, 3, 1)]),
+    ]
+    for (units, calendar, bounds, expected) in cases
+        path = bounded_file(vec(bounds[1, :]), bounds; units, calendar)
+        decoded = decode_bounds(path)
+        @test decoded == expected
+        @test decoded[1, :] == decode_file(path)
+    end
+    # Coordinates at mid-interval: bounds and coordinate agree on the Julian shift.
+    julian = bounded_file([15.5, 45.5], [0.0 31.0; 31.0 60.0]; units = "days since 2000-01-01",
+                          calendar = "julian")
+    @test decode_file(julian) == [DateTime(2000, 1, 29, 12), DateTime(2000, 2, 28, 12)]
+    @test decode_bounds(julian)[1, :] == [DateTime(2000, 1, 14), DateTime(2000, 2, 14)]
+    @test decode_bounds(time_file(dir, [0.0]; units = "days since 2000-01-01")) === nothing
+end
+
 @testset "fill values and malformed axes" begin
     dir = mktempdir()
     path = time_file(dir, [0.0, -1.0]; units = "hours since 2021-12-01", fill = -1.0)

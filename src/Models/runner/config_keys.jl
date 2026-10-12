@@ -46,7 +46,8 @@ const _INIT_KIND_KEYS = (
                       "amplitude"),
     bl_enhanced    = ("background", "n_layers", "enhancement"),
     file           = ("file", "variable", "humidity_variable", "time_index", "vertical_order"),
-    cs_native      = ("file", "variable", "time_index", "vertical_order", "clamp_negative"),
+    cs_native      = ("file", "variable", "humidity_variable", "time_index",
+                      "vertical_order", "clamp_negative"),
     pressure_layer = ("lowest_layer", "psurf_fraction", "total_molecules"),
     uniform        = ("background",),
 )

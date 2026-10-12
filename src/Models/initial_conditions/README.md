@@ -41,7 +41,7 @@ these files reuse. The parent overview is [`../README.md`](../README.md).
   `MaskedAsZero`, straight into the run's float type), time axes (`decode_time`, classified by their units before any
   CFTime call), flux units (`parse_flux_units`), and the Float64 source mesh of
   conservative regridding for CS file ICs and surface fluxes
-  (`source_latlon_mesh(lon, lat, UniformSpanFaces(); radius)` on the
+  (`source_latlon_mesh(lon, lat; radius)`, using `SnappedFaces` on the
   destination's sphere).
 
 ## File Initial Conditions
@@ -60,6 +60,11 @@ This surface anchoring keeps boundary-layer parcels at the same position in
 the model column despite topographic or dry-air-mass differences between the
 file's model and the transport binary. Aloft, where ``b^s=0``, it reduces to
 ordinary absolute-pressure placement.
+
+`ap` is always interpreted in Pa. An explicit units attribute must say Pa; if
+it is absent, only an all-zero pure-sigma coefficient or a magnitude clearly
+in the pascal range is accepted. This prevents an hPa coefficient from moving
+every pure-pressure interface by a factor of 100.
 
 The remap treats each source value as a layer mean. Source humidity is opt-in
 through `init.humidity_variable`; conventional names such as `q`, `QV`, and
@@ -109,7 +114,7 @@ near-surface difference for a uniform 400 Pa surface-pressure shift.
 
 | `kind` | Defaults in `_resolve_surface_flux_file` | Units of the default file → kg species m⁻² s⁻¹ | `time_varying` |
 |---|---|---|---|
-| `gridfed_fossil_co2` | GridFED `TOTAL`; needs `time_index` or `month` | kgCO2/month/m2 ÷ month length; year from `year`, time units, or file name | CS, 12 monthly slices |
+| `gridfed_fossil_co2` | GridFED `TOTAL`; needs `time_index` or `month` | kgCO2/month/m2 ÷ the slice's CF time bounds/calendar month; coordinate-less legacy files alone use ordinal month plus `year`/file-name year | CS, 12 monthly slices for the coordinate-less format |
 | `edgar_sf6` | EDGAR v8 `emissions` | Tonnes (per cell and year) × 1000 ÷ cell area ÷ 365.25 d | no |
 | `zhang_rn222` | Zhang `rnemis`; `month` (default 1) | kg/m2/s | no |
 | `lmdz_co2` | CAMS `flux_apos` | kgC m-2 s-1 × M(CO2)/M(C) ≈ 3.66419; static path averages all time slices | CS |
@@ -121,7 +126,12 @@ loaders parse it with `GriddedIO.parse_flux_units` and divide by the cell area
 for per-cell units (the file's `cell_area`/`area`, else the band areas of the
 grid on the destination sphere), multiply by `GriddedIO.kg_per_unit` (kg of the
 tracer's species per unit; kg of another species is an error) and divide by
-`GriddedIO.period_seconds` (per-month units: the calendar month of the slice).
+`GriddedIO.period_seconds` (per-month units: CF time bounds when present, else
+the coordinate's month in its own calendar). `time_index` is always a 1-based
+positional selector. `month` selects the unique decoded calendar month when a
+time coordinate exists, and is ordinal only for the documented legacy GridFED
+format with twelve slices and no time coordinate. Stepwise time-varying fields
+switch at CF bound starts when bounds exist, otherwise at coordinate stamps.
 Time-varying lat-lon sources need densities (per m²). Any other `kind` is an
 error (`_surface_flux_kind`); `none` (the default) emits nothing.
 
@@ -170,16 +180,22 @@ error (`_surface_flux_kind`); `none` (the default) emits nothing.
   the species of a tracer named `co2`, `co2_natural`, `co2_fossil`,
   `fossil_co2`, `sf6` or `rn222`. Any other tracer without `species` is an
   error.
-- `k = 1` is the top of the atmosphere:
-  - `cs_native` ICs default to `vertical_order = "surface_first"` and are flipped.
+- The target hybrid coefficients define the model's level order:
+  - equal-level `cs_native` ICs with `ap`/`bp` infer source order from interface
+    pressure, orient values to the target order, and require coefficients that
+    match the binary; without coefficients, `vertical_order` defaults to
+    `"surface_first"`;
+  - mismatched-level `cs_native` ICs require `ap`/`bp` and use the conservative
+    hybrid remap, with optional `humidity_variable` dry-carrier weighting and
+    the binary's typed total/dry surface-pressure basis.
   - `pressure_layer` with `lowest_layer = true` selects `k = Nz`.
 - CS file ICs and `pressure_layer` need the binary's `surface_pressure` panels.
   Target half levels come from the grid's hybrid coefficients and that pressure.
 - `pressure_layer` indexes `air_mass` as halo-padded panels (`[Hp + i, Hp + j, k]`).
 - The source lat-lon mesh and the EDGAR fallback cell areas use the destination
-  mesh radius, so regridding weights compare areas on one sphere. Both are
-  uniform in the span of the centres (`UniformSpanFaces`); pole-centred files
-  (CATRINE SF6 initial state) get faces shifted from their cells.
+  mesh radius, so regridding weights compare areas on one sphere. Both derive
+  `SnappedFaces` from the oriented file coordinates, including midpoint faces
+  and polar caps for pole-centred files.
 - CS surface fluxes are regridded conservatively, except `cs_native` sources,
   which are read on the run's panels. LL and RG default to
   `regridding = "bilinear"`, renormalised to the native total only when the file

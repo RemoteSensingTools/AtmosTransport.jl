@@ -86,7 +86,8 @@ function define_provenance_attributes!(ds)
 end
 
 function _define_common_attributes!(ds, mesh, frames, mass_basis_sym::Symbol;
-                                     options = nothing)
+                                     options = nothing,
+                                     physics_attributes = Dict{String, String}())
     ds.attrib["Conventions"]    = "CF-1.8"
     ds.attrib["title"]          = "AtmosTransport runtime snapshot"
     ds.attrib["source"]         = "AtmosTransport.jl"
@@ -100,6 +101,11 @@ function _define_common_attributes!(ds, mesh, frames, mass_basis_sym::Symbol;
     (; creation_date, git_commit, git_dirty) = define_provenance_attributes!(ds)
     options === nothing ||
         (ds.attrib["output_options"] = _options_string(options))
+    for key in sort!(collect(keys(physics_attributes)))
+        startswith(key, "physics_") || throw(ArgumentError(
+            "runtime physics attribute $(repr(key)) must start with `physics_`"))
+        ds.attrib[key] = physics_attributes[key]
+    end
 
     # `history` is the CF-canonical "what touched this file" chain. We
     # prepend a single line; readers that pass the file through other
@@ -116,23 +122,33 @@ _grid_type_string(::LatLonMesh) = "latlon"
 _grid_type_string(::ReducedGaussianMesh) = "reduced_gaussian"
 _grid_type_string(::CubedSphereMesh) = "cubed_sphere"
 
-function _define_time!(ds, times)
+function _time_attributes(origin::Union{Nothing, DateTime})
+    if origin === nothing
+        return Dict("units" => "hours",
+                    "long_name" => "elapsed simulation time",
+                    "comment" => "hours since the configured simulation start")
+    end
+    return Dict("units" => "hours since " * Dates.format(origin, "yyyy-mm-dd HH:MM:SS"),
+                "calendar" => "proleptic_gregorian",
+                "long_name" => "time",
+                "standard_name" => "time")
+end
+
+function _define_time!(ds, times, origin::Union{Nothing, DateTime})
     defDim(ds, "time", length(times))
     v = defVar(ds, "time", Float64, ("time",),
-               attrib = Dict("units" => "hours",
-                             "long_name" => "elapsed simulation time",
-                             "comment" => "hours since the configured simulation start"))
+               attrib = _time_attributes(origin))
     v[:] = Float64.(times)
     return v
 end
 
+_define_time!(ds, times) = _define_time!(ds, times, nothing)
+
 # Streaming files grow along time; batch output keeps its fixed dimension.
-function _define_time!(ds, ::Nothing)
+function _define_time!(ds, ::Nothing, origin::Union{Nothing, DateTime})
     defDim(ds, "time", Inf)
     return defVar(ds, "time", Float64, ("time",),
-                  attrib = Dict("units" => "hours",
-                                "long_name" => "elapsed simulation time",
-                                "comment" => "hours since the configured simulation start"))
+                  attrib = _time_attributes(origin))
 end
 
 function _define_lev!(ds, Nz::Integer)
@@ -164,12 +180,12 @@ function _bounds_from_faces(faces)
     return out
 end
 
-function _define_latlon_geometry!(ds, mesh::LatLonMesh, Nz::Integer, times)
+function _define_latlon_geometry!(ds, mesh::LatLonMesh, Nz::Integer, times, time_origin)
     defDim(ds, "lon", nx(mesh))
     defDim(ds, "lat", ny(mesh))
     defDim(ds, "nv", 2)
     _define_lev!(ds, Nz)
-    _define_time!(ds, times)
+    _define_time!(ds, times, time_origin)
 
     v_lon = defVar(ds, "lon", Float64, ("lon",),
                    attrib = Dict("units" => "degrees_east",
@@ -243,11 +259,11 @@ function _rg_legacy_raster_map(mesh::ReducedGaussianMesh)
     return out_lons, out_lats, nn_map
 end
 
-function _define_rg_geometry!(ds, mesh::ReducedGaussianMesh, Nz::Integer, times)
+function _define_rg_geometry!(ds, mesh::ReducedGaussianMesh, Nz::Integer, times, time_origin)
     defDim(ds, "cell", ncells(mesh))
     defDim(ds, "nv", 4)
     _define_lev!(ds, Nz)
-    _define_time!(ds, times)
+    _define_time!(ds, times, time_origin)
 
     lons, lats, areas, lon_bounds, lat_bounds = _rg_native_coordinates(mesh)
     defVar(ds, "cell", Int32, ("cell",),
@@ -441,20 +457,23 @@ function define_cs_horizontal_geometry!(ds, mesh::CubedSphereMesh)
     return nothing
 end
 
-function _define_geometry!(ds, mesh::LatLonMesh, Nz::Integer, times)
-    return _define_latlon_geometry!(ds, mesh, Nz, times)
+function _define_geometry!(ds, mesh::LatLonMesh, Nz::Integer, times, time_origin)
+    return _define_latlon_geometry!(ds, mesh, Nz, times, time_origin)
 end
 
-function _define_geometry!(ds, mesh::ReducedGaussianMesh, Nz::Integer, times)
-    return _define_rg_geometry!(ds, mesh, Nz, times)
+function _define_geometry!(ds, mesh::ReducedGaussianMesh, Nz::Integer, times, time_origin)
+    return _define_rg_geometry!(ds, mesh, Nz, times, time_origin)
 end
 
 # The shared horizontal geometry, then the snapshot's level and time axes.
 # Defining `lev` and `time` after the horizontal block keeps the dimension order
 # Xdim, Ydim, Xcorner, Ycorner, nf, lev, time.
-function _define_geometry!(ds, mesh::CubedSphereMesh, Nz::Integer, times)
+function _define_geometry!(ds, mesh::CubedSphereMesh, Nz::Integer, times, time_origin)
     define_cs_horizontal_geometry!(ds, mesh)
     _define_lev!(ds, Nz)
-    _define_time!(ds, times)
+    _define_time!(ds, times, time_origin)
     return (;)
 end
+
+_define_geometry!(ds, mesh, Nz::Integer, times) =
+    _define_geometry!(ds, mesh, Nz, times, nothing)

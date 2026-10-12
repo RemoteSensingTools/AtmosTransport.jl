@@ -99,6 +99,7 @@ function RunContext(config::AbstractDict; config_path::AbstractString = "")
 
     driver = TransportBinaryDriver(first(binary_paths); FT = FT, arch = CPU(), Hp = 1)
     try
+        _run_time_origin(cfg, driver, first(binary_paths))   # start_date agrees with the binary
         grid = driver_grid(driver)
         specs = _run_tracer_specs(cfg, grid.horizontal)
         grid.horizontal isa CubedSphereMesh && start_window != 1 && throw(ArgumentError(

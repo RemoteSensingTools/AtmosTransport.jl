@@ -161,30 +161,15 @@ function _surface_flux_storage_scale(tracer_name::Symbol, cfg)
     return DRY_AIR_MOLAR_MASS / getproperty(SPECIES_MOLAR_MASS, species)
 end
 
-# Derive per-cell area `(Nx, Ny)` on a regular lat/lon grid from the
-# coordinate vectors. Uses the spherical-cap formula
-# `R² · Δlon · |sin(φ + Δlat/2) - sin(φ - Δlat/2)|`.
+# Derive per-cell area `(Nx, Ny)` on a lat/lon grid from the cell faces implied
+# by its file coordinate vectors (`GriddedIO.SnappedFaces`).
 # Used for per-cell units (EDGAR Tonnes) when the source file does not carry
 # a `cell_area` or `area` variable.
-# TODO(P2b): areas of the source mesh (`Grids.cell_area`), with the
-# pole-centred faces; that changes the EDGAR band areas in the last bits.
 function _lonlat_cell_areas_m2(lon::AbstractVector, lat::AbstractVector; radius::Real = EARTH_RADIUS)
     Nx, Ny = length(lon), length(lat)
-    R = Float64(radius)
-    # Cell width in radians, assuming uniform spacing. Take it from the full
-    # span: coordinates stored in Float32 make the first difference err by
-    # ~1e-4 relative, a bias of every cell area.
-    dlon = Nx > 1 ? deg2rad(abs(lon[end] - lon[1]) / (Nx - 1)) : deg2rad(360.0 / Nx)
-    dlat_half = Ny > 1 ? deg2rad(abs(lat[end] - lat[1]) / (Ny - 1)) / 2 : deg2rad(180.0 / Ny) / 2
-    out = Array{Float64, 2}(undef, Nx, Ny)
-    @inbounds for j in 1:Ny
-        ϕ = deg2rad(lat[j])
-        band = R * R * dlon * abs(sin(ϕ + dlat_half) - sin(ϕ - dlat_half))
-        for i in 1:Nx
-            out[i, j] = band
-        end
-    end
-    return out
+    mesh = source_latlon_mesh(lon, lat; radius)
+    areas = Float64[cell_area(mesh, i, j) for i in 1:Nx, j in 1:Ny]
+    return lat[2] > lat[1] ? areas : areas[:, end:-1:1]
 end
 
 function _resolve_surface_flux_file(cfg, kind::Symbol)
@@ -221,6 +206,28 @@ function _resolve_surface_flux_file(cfg, kind::Symbol)
     end
     time_index < 1 && throw(ArgumentError("surface_flux.time_index must be >= 1"))
     return file, variable, time_index
+end
+
+# `time_index` is deliberately positional. In contrast, an explicitly named
+# `month` is a semantic selector whenever the file has a time coordinate.
+# This keeps partial-year and out-of-order inventories from silently reading a
+# different month while preserving the coordinate-less twelve-slice GridFED
+# layout.
+function _static_surface_flux_time_index(cfg, kind::Symbol, ds, raw_var,
+                                         fallback::Integer)
+    haskey(cfg, "time_index") && return Int(cfg["time_index"])
+    haskey(cfg, "month") || return Int(fallback)
+    month = Int(cfg["month"])
+    1 <= month <= 12 || throw(ArgumentError("surface_flux.month must be in 1:12"))
+    ndims(raw_var) == 3 || return Int(fallback)
+    time_var = find_coordinate(ds, TimeAxis(); length = size(raw_var, 3), required = false)
+    time_var === nothing && return Int(fallback)
+    keys = decode_month_keys(ds, time_var)
+    matches = findall(key -> key.month == month, keys)
+    length(matches) == 1 || throw(ArgumentError(
+        "surface_flux.month = $month matches $(length(matches)) slices on time coordinate " *
+        "'$time_var'; expected exactly one"))
+    return only(matches)
 end
 
 """Resolve one or more regular-grid files for a time-varying surface source."""
@@ -304,15 +311,34 @@ function _flux_units(raw_var, variable, file, species::Symbol)
     end
 end
 
-# The time interval whose length converts slice `month` of per-month units: that
-# calendar month of the source year (GridFED: twelve monthly slices). Other time
-# units have a fixed length.
-_slice_interval(::AbstractTimeBasis, cfg, file, ds, month) = nothing
-_slice_interval(::PerMonth, cfg, file, ds, month) =
-    interval(MonthKey(_surface_flux_year(cfg, file, ds), month))
+# Per-slice denominators for per-month units. Coordinate-backed files derive
+# them from the time coordinate's CF bounds and calendar. The ordinal rule is
+# deliberately limited to the legacy GridFED layout: twelve slices on a time
+# dimension for which no coordinate variable exists.
+_slice_periods(::AbstractTimeBasis, cfg, file, ds, raw_var, kind) = nothing
+function _slice_periods(::PerMonth, cfg, file, ds, raw_var, kind::Symbol)
+    ntime = ndims(raw_var) == 3 ? size(raw_var, 3) : 1
+    time_var = find_coordinate(ds, TimeAxis(); length = ntime, required = false)
+    if time_var !== nothing
+        periods = decode_month_seconds(ds, time_var)
+        length(periods) == ntime || throw(DimensionMismatch(
+            "time coordinate '$time_var' has $(length(periods)) values; " *
+            "surface-flux variable has $ntime slices"))
+        return periods
+    end
+    kind === :gridfed_fossil_co2 || throw(ArgumentError(
+        "per-month surface-flux units need a CF time coordinate; only the " *
+        "coordinate-less GridFED format may use ordinal months"))
+    ntime == 12 || throw(ArgumentError(
+        "coordinate-less GridFED per-month source must contain 12 monthly slices, " *
+        "got $ntime in $file"))
+    year = _surface_flux_year(cfg, file, ds)
+    return Float64[Dates.daysinmonth(year, month) * 86400 for month in 1:12]
+end
 
 _unit_seconds(units, ::Nothing) = period_seconds(units)
 _unit_seconds(units, iv::TimeInterval) = period_seconds(units, iv)
+_unit_seconds(units, seconds::Real) = Float64(seconds)
 
 # One slice `raw` (in place) from `units` to kg `species` m⁻² s⁻¹; `iv` is the
 # slice's time interval (per-month units) and `area` the source cell areas
@@ -357,6 +383,9 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}; species::Symbol,
         ndims(raw_var) in (2, 3) || throw(ArgumentError(
             "surface-flux variable '$variable' must be 2D or 3D, got ndims=$(ndims(raw_var))"))
         lon_src, lat_src = _latlon_centres(ds, raw_var)
+        time_index = _static_surface_flux_time_index(cfg, kind, ds, raw_var, time_index)
+        ndims(raw_var) == 2 || 1 <= time_index <= size(raw_var, 3) || throw(ArgumentError(
+            "surface_flux time index $time_index is outside 1:$(size(raw_var, 3))"))
 
         # Fill values become 0 (GriddedIO.MaskedAsZero).
         raw = if ndims(raw_var) == 3
@@ -390,14 +419,16 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}; species::Symbol,
         cell_area_src === nothing || (cell_area_src = orient(cell_area_src, orientation))
         lon_src, lat_src = orient_coordinates(lon_src, lat_src, orientation)
 
-        # Units → kg species m⁻² s⁻¹. Per-month values (GridFED) are slice
-        # `time_index` of the source year; per-cell values (EDGAR) are divided
-        # by the file's cell areas or, without them, the band areas of the grid
-        # on the destination mesh's sphere, so the per-cell totals survive
-        # regridding whatever its radius.
+        # Units → kg species m⁻² s⁻¹. Coordinate-backed per-month
+        # values use that slice's CF bounds/calendar; only coordinate-less
+        # GridFED uses `time_index` as the ordinal month. Per-cell values
+        # (EDGAR) are divided by the file's cell areas or, without them, the
+        # band areas of the grid on the destination mesh's sphere, so the
+        # per-cell totals survive regridding whatever its radius.
         units = _flux_units(raw_var, variable, file, species)
         _in_flux_file_context(variable, file) do
-            iv = _slice_interval(units.time, cfg, file, ds, time_index)
+            periods = _slice_periods(units.time, cfg, file, ds, raw_var, kind)
+            iv = periods === nothing ? nothing : periods[time_index]
             area = !(units.area isa PerCell) ? nothing :
                    cell_area_src !== nothing ? cell_area_src :
                    _lonlat_cell_areas_m2(lon_src, lat_src; radius)
@@ -443,15 +474,14 @@ function _load_single_timevarying_surface_flux_field(
         raw = orient(raw, orientation)
         lon_src, lat_src = orient_coordinates(lon_src, lat_src, orientation)
 
-        # Per-slice unit conversion (as the static loader). Per-month values
-        # (GridFED) are twelve monthly slices: slice k is month k of the source
-        # year.
+        # Per-slice unit conversion (as the static loader). Coordinate-backed
+        # per-month values use their CF time bounds/calendar; only legacy
+        # coordinate-less GridFED uses slice k as month k.
         units = _flux_units(raw_var, variable, file, species)
-        units.time isa PerMonth && ntime != 12 && throw(ArgumentError(
-            "time-varying source with per-month units must contain 12 monthly slices, got $ntime in $file"))
+        periods = _slice_periods(units.time, cfg, file, ds, raw_var, kind)
         _in_flux_file_context(variable, file) do
             for (out, t) in enumerate(keep)
-                iv = _slice_interval(units.time, cfg, file, ds, t)
+                iv = periods === nothing ? nothing : periods[t]
                 _to_flux_density!(view(raw, :, :, out), units, species, iv, nothing)
             end
         end
@@ -494,7 +524,18 @@ end
 function _timevarying_slice_seconds(time_var::AbstractString, ds, cfg, kind::Symbol, file,
                                     reference_time)
     _require_reference_time(reference_time)
+    if _surface_flux_temporal_scheme(cfg) isa StepwiseFlux
+        bounds = decode_time_bounds(ds, time_var)
+        bounds === nothing || return seconds_since(vec(bounds[1, :]), reference_time)
+    end
     return seconds_since(decode_time(ds, time_var), reference_time)
+end
+
+
+function _surface_flux_temporal_scheme(cfg)
+    default = _surface_flux_kind(cfg) in (:lmdz_co2, :gridfed_fossil_co2) ?
+              "stepwise" : "linear"
+    return flux_temporal_scheme(String(get(cfg, "temporal_scheme", default)))
 end
 function _timevarying_slice_seconds(::Nothing, ds, cfg, kind::Symbol, file, reference_time)
     kind === :gridfed_fossil_co2 || throw(ArgumentError(
@@ -800,9 +841,7 @@ function _build_timevarying_cs_surface_flux_source(mesh, tracer_name::Symbol, cf
     # linear/interp default smears the diurnal cycle (anomaly corr 0.91 vs 0.998).
     # GridFED monthly totals are likewise held constant through each month.
     # Other kinds keep the generic "linear" default.
-    default_scheme = _surface_flux_kind(cfg) in (:lmdz_co2, :gridfed_fossil_co2) ?
-                     "stepwise" : "linear"
-    scheme = flux_temporal_scheme(String(get(cfg, "temporal_scheme", default_scheme)))
+    scheme = _surface_flux_temporal_scheme(cfg)
     return TimeVaryingSurfaceFluxSource(tracer_name, panels_series, field.times_sec, scheme)
 end
 

@@ -46,7 +46,8 @@ is:
    for CS. Those functions live in `driven_stepping.jl`.
 5. `DrivenSimulation.step!` refreshes time-varying forcing from the driver,
    then calls `TransportModel.step!` or, for binary-scheduled substeps,
-   `transport_step!` plus an end-of-window `convection_chemistry_step!`.
+   `transport_step!` bracketed by exponential-decay half-steps, plus
+   end-of-window convection (and unsplit non-decay chemistry).
 6. `TransportModel.jl` is where advection, surface emissions, diffusion,
    convection, and chemistry are applied to the state.
 
@@ -109,6 +110,7 @@ using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, S
                 AbstractOutputPartition, SingleOutputFile, DailyOutputFiles,
                 AbstractOutputFormat, NetCDFOutput, BinaryMmapOutput,
                 RuntimeOutputSpec, runtime_output_spec, snapshot_hours,
+                set_physics_attributes!, set_time_origin!,
                 output_enabled, output_path, output_path_for_day,
                 capture_snapshot, write_snapshot_netcdf, write_snapshot_binary,
                 NoObservationOutput, ObservationOutputSpec, observation_output_spec,
@@ -128,7 +130,7 @@ import ..Models: DrivenSimulation, run_window!, run!, step!, allocate_face_fluxe
 # through `Main.AtmosTransport.*`.
 using ..Models: build_runtime_physics_recipe, validate_runtime_physics_recipe,
                  build_runtime_advection, configured_halo_width,
-                 CubedSphereRuntimeRecipeStyle
+                 CubedSphereRuntimeRecipeStyle, runtime_physics_attributes
 # Config-only parsers, run by `validate_config` before any binary is opened.
 using ..Models: advection_spec, diffusion_spec, convection_spec, chemistry_spec,
                  _ADVECTION_SPEC_KEYS,
@@ -382,12 +384,81 @@ end
 # Parse the run start as a `DateTime` (at 00:00) from `[input].start_date`,
 # used as the `reference_time` for time-varying surface fluxes so their slice
 # times align to the simulation clock. Returns `nothing` if no start_date is
-# present (`validate_config` then rejects time-varying surface fluxes).
+# present (`validate_config` then rejects time-varying surface fluxes). The
+# runners check it against the first binary's dates (`_run_time_origin`)
+# before any forcing is built, so a present start_date is the run origin.
 function _run_reference_time(cfg)
     input_cfg = get(cfg, "input", nothing)
     input_cfg isa AbstractDict || return nothing
     haskey(input_cfg, "start_date") || return nothing
     return DateTime(Date(String(input_cfg["start_date"])))
+end
+
+function _header_date(driver)
+    raw = driver.reader.header.raw_header
+    haskey(raw, "date") || return nothing
+    value = raw["date"]
+    try
+        return Date(String(value))
+    catch err
+        err isa ArgumentError || rethrow()
+        throw(ArgumentError("invalid transport-binary `date` header $(repr(value))"))
+    end
+end
+
+# The forcing day in a binary's file name: the first `YYYYMMDD` or
+# `YYYY-MM-DD` token delimited by non-digits, so a hash prefix, a longer
+# numeric identifier or a partly dashed token (`2021-1201`) is never read as a
+# date. Canonical daily binaries predate the `date` header but carry their day
+# in the name (e.g. `transport_20211202.bin`). A token that is not a calendar
+# date (`20211301`) does not date the file.
+function _filename_date(path::AbstractString)
+    stamp = match(r"(?:^|\D)(\d{8}|\d{4}-\d{2}-\d{2})(?=\D|$)", basename(path))
+    stamp === nothing && return nothing
+    token = something(stamp[1])
+    date = tryparse(Date, replace(token, "-" => ""), dateformat"yyyymmdd")
+    date === nothing && @warn "the token $(token) in $(basename(path)) is not a calendar " *
+                              "date; the file name does not date the run"
+    return date
+end
+
+# The run's absolute origin, 00:00 UTC of the day of window 1 of the first
+# binary, from every date that names it: `[input].start_date`, the first
+# binary's `date` header and the date in its original (unstaged) file name.
+# All present dates must agree: a disagreement would shift the output times
+# and the time-varying surface fluxes, so it is an error. `nothing` when no
+# date is present. Both runners call this once, right after opening the first
+# binary, whether or not the run writes output; `RunContext` does the same.
+function _run_time_origin(cfg, driver, original_binary_path::AbstractString)
+    dates = Tuple{String, Date}[]
+    start = _run_reference_time(cfg)
+    start === nothing || push!(dates, ("[input].start_date", Date(start)))
+    header_day = _header_date(driver)
+    header_day === nothing ||
+        push!(dates, ("the first transport binary's `date` header", header_day))
+    filename_day = _filename_date(original_binary_path)
+    filename_day === nothing ||
+        push!(dates, ("the date in the first transport binary's file name " *
+                      basename(original_binary_path), filename_day))
+    isempty(dates) && return nothing
+    label, day = first(dates)
+    for (other_label, other_day) in dates[2:end]
+        other_day == day || throw(ArgumentError(
+            "$(label) = $(day) disagrees with $(other_label) = $(other_day)"))
+    end
+    return DateTime(day)
+end
+
+# CF time origin of the output: the run origin plus the windows skipped by
+# `[run].start_window`. Output needs an absolute origin; a run without output
+# does not.
+function _runtime_output_origin(origin::Union{DateTime, Nothing}, driver;
+                                start_window::Integer = 1)
+    origin === nothing && throw(ArgumentError(
+        "runtime output needs [input].start_date, a transport binary `date` " *
+        "header, or a YYYYMMDD date in the binary filename to write the CF time origin"))
+    offset_ms = round(Int64, (start_window - 1) * Float64(window_dt(driver)) * 1000)
+    return origin + Millisecond(offset_ms)
 end
 
 # Run interval `(0, t_end)` in seconds since the run start; time-varying flux
@@ -447,6 +518,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                           arch = arch, validate_replay)
     _check_multifile_window_range(first_driver, start_window, stop_window_override,
                                   length(binary_paths))
+    run_origin = _run_time_origin(cfg, first_driver, first(binary_paths))
     # Windows of every binary: the run length and the window ends of the schedule.
     layout = _runtime_window_layout(something(window_layout,
                                               _uniform_window_layout(first_driver, binary_paths)), FT)
@@ -455,6 +527,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     output_spec = runtime_output_spec(output_cfg, FT; default_cap_hours = run_hours)
     snapshot_schedule_hours = snapshot_hours(output_spec)
     do_snapshots = output_enabled(output_spec)
+    do_snapshots && set_time_origin!(output_spec,
+        _runtime_output_origin(run_origin, first_driver; start_window))
     _check_snapshot_day_paths(output_spec, binary_paths)
     _check_output_targets(output_spec, output_cfg)
     _check_snapshot_schedule(output_spec,
@@ -487,6 +561,9 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     surface_sources = build_surface_flux_sources(grid_of_first, tracer_specs, FT;
                                                  reference_time = _run_reference_time(cfg),
                                                  run_span = flux_run_span)
+    set_physics_attributes!(output_spec,
+        runtime_physics_attributes(cfg, first_driver, surface_sources,
+                                   air_mass_basis(first_driver), binary_paths))
     m0 = total_air_mass(model.state)
     tracer_masses0 = Dict(name => total_mass(model.state, name)
                           for name in tracer_names(model.state))
@@ -762,6 +839,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                    false, "[input].validate_replay")
     driver1 = input_resources.driver = TransportBinaryDriver(staged_path_for!(stager, 1);
                                     FT = FT, arch = arch, Hp = Hp, validate_replay)
+    run_origin = _run_time_origin(cfg, driver1, first(binary_paths))
     layout = _runtime_window_layout(something(window_layout,
                                               _uniform_window_layout(driver1, binary_paths)), FT)
     run_hours = _layout_run_hours(layout; stop_window_override)
@@ -769,6 +847,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     output_spec = runtime_output_spec(output_cfg, FT; default_cap_hours = run_hours)
     snapshot_schedule_hours = snapshot_hours(output_spec)
     do_snapshots = output_enabled(output_spec)
+    do_snapshots && set_time_origin!(output_spec, _runtime_output_origin(run_origin, driver1))
     _check_snapshot_day_paths(output_spec, binary_paths)
     _check_output_targets(output_spec, output_cfg)
     _check_snapshot_schedule(output_spec, _window_end_hours(layout; stop_window_override))
@@ -854,6 +933,9 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     surface_sources = build_surface_flux_sources(grid, tracer_specs, FT;
                                                  reference_time = _run_reference_time(cfg),
                                                  run_span = flux_run_span)
+    set_physics_attributes!(output_spec,
+        runtime_physics_attributes(cfg, driver1, surface_sources,
+                                   air_mass_basis(driver1), binary_paths))
     source_tracers = Set(source.tracer_name for source in surface_sources)
     for source in surface_sources
         # Global storage rate at the run start, by dispatch on the source type.
@@ -970,8 +1052,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                 # Physics handoff for CS: one `step!(sim)` is one runtime substep.
                 # `DrivenSimulation.step!` refreshes window forcing, then delegates
                 # to `TransportModel.step!` or to the binary-scheduled
-                # `transport_step!` + end-of-window `convection_chemistry_step!`
-                # split. See those functions for the actual operator order.
+                # the binary-scheduled window composition. See
+                # `driven_stepping.jl` for the exact operator order.
                 timed_transport!(timer, () -> step!(sim))
                 if sim.iteration == sim.current_window_end_iteration
                     tick_window!(timer;

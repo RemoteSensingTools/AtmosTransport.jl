@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Numerical changes
+
+- Rn-222 and other configured exponential decay now use exact half-window
+  decay steps before and after each window's emissions. For constant emission
+  rate `E`, decay rate `λ`, and window `T`, the discrete steady burden is
+  `E T / (2 sinh(λT/2))`; its hourly Rn-222 bias relative to `E/λ` is
+  -0.000237736%, down from -0.377204% with emit-then-decay ordering.
+- Configured Lin-Rood transport now defaults its vertical remap to
+  `fv3_kord8`, the closest GCHP match. Explicit `vertical = "upwind"` and
+  `vertical = "fv3_kord8_signed"` settings are unchanged; the Lin-Rood
+  adjoint still requires explicit upwind vertical sweeps.
+
 ### Breaking changes
 
 - Removed the deprecated, unused `State.MetState`,
@@ -129,6 +141,19 @@
   `verify_write_replay_cs!` (was `div_scratch`). See Fixes for the test itself.
 
 ### Fixes
+
+- A run's absolute time origin is checked before any output or forcing is set
+  up, whether or not the run writes output: `[input].start_date`, the first
+  binary's `date` header and a `YYYYMMDD` (or `YYYY-MM-DD`) date in its
+  original, unstaged file name must agree wherever present, so a start date
+  one day off a legacy `transport_20211201.bin` is an error rather than a
+  silent shift of output times and time-varying surface fluxes. `RunContext`
+  applies the same check. A delimited 8-digit file-name token that is not a
+  calendar date does not date the run (warning).
+- `GriddedIO.decode_time_bounds` converts `julian` bounds and `standard`
+  bounds before 1582-10-15 as instants, exactly as `decode_time` converts the
+  coordinate (Julian 2000-01-01 is 2000-01-14), so stepwise surface fluxes
+  from such files switch at the right instants, not up to 13 days early.
 
 - The restored ERA5 physics and hourly spectral downloaders stage outputs,
   validate complete inventories and the requested grid/representation, and

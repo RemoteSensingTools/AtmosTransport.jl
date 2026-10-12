@@ -423,6 +423,9 @@ standard Strang split implemented by `strang_split_cs!`, while
 (`fv_tp_2d_cs!`). Its vertical sweeps use `vertical`: first-order
 `UpwindScheme()` (default) or `PPMScheme(; vertical = FV3ScalarProfile())`,
 FV3's `kord = 8` profile (TOML `vertical = "fv3_kord8"`).
+The low-level Julia constructor retains its API default of upwind; the TOML
+runtime defaults configured Lin–Rood runs to `fv3_kord8` for the closest GCHP
+match.
 
 Supported orders currently match the implemented PPM edge-value families in
 `ppm_subgrid_distributions.jl`:

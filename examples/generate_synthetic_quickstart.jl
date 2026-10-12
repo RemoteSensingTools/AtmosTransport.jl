@@ -53,6 +53,7 @@ function generate_synthetic_quickstart(
         source_flux_sampling = :window_start_endpoint,
         flux_sampling = :window_constant,
         extra_header = Dict(
+            "date" => "2021-12-01",
             "poisson_balance_target_scale" => 0.25,
             "poisson_balance_target_semantics" =>
                 "forward_window_mass_difference / (2 * steps_per_window)",

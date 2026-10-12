@@ -382,6 +382,11 @@ GCHP uses for tracers, FV3's `scalar_profile` with `kord = 8` and `iv = 0`
 (`src/Operators/Advection/vertical_fv3_profile.jl`). Within layer `k`, with
 `s ∈ [0, 1]` running from the top to the bottom edge,
 
+This is also the default vertical remap for configured
+`scheme = "linrood"` runs, following the runtime rule that the default should
+be the closest GCHP match. `vertical = "upwind"` remains available explicitly
+(and is required by the current Lin–Rood adjoint).
+
 ```math
 q(s) = q_L + s\,\bigl[(q_R - q_L) + q_6 (1 - s)\bigr], \qquad q_6 = 3\,(2\bar q_k - q_L - q_R).
 ```

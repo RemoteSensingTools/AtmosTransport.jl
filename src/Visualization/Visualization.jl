@@ -10,6 +10,7 @@ plotting load cost unless a Makie backend is explicitly loaded.
 """
 module Visualization
 
+using Dates
 using NCDatasets
 using Printf
 using Statistics: quantile
@@ -22,6 +23,7 @@ using ..Grids: LatLonMesh, CubedSphereMesh,
                AngularMidpointCenter, FourCornerNormalizedCenter
 using ..Regridding: build_regridder, apply_regridder!
 using ..Parameters: IFS_EARTH_RADIUS
+using ..GriddedIO: decode_time, CFDecoder
 
 
 abstract type AbstractSnapshotTopology end
@@ -143,10 +145,11 @@ The object intentionally does not hold an open NetCDF handle. Field reads open
 the file briefly and close it immediately, which is robust for scripts,
 animations, and long debugging sessions.
 """
-struct SnapshotDataset{T <: AbstractSnapshotTopology}
+struct SnapshotDataset{T <: AbstractSnapshotTopology, TT}
     path::String
     topology::T
-    times::Vector{Float64}
+    times::Vector{TT}
+    hours::Vector{Float64}
     variables::Vector{Symbol}
     attributes::Dict{String, Any}
 end
@@ -159,12 +162,12 @@ A topology-native horizontal field view from one snapshot time.
 For LL/RG snapshots `values` is a `(lon, lat)` matrix. For CS snapshots it is a
 `(Xdim, Ydim, nf)` array until rasterized or plotted natively.
 """
-struct HorizontalField{T <: AbstractSnapshotTopology, A, F <: AbstractFieldTransform}
+struct HorizontalField{T <: AbstractSnapshotTopology, A, F <: AbstractFieldTransform, TT}
     topology::T
     values::A
     name::Symbol
     units::String
-    time::Float64
+    time::TT
     time_index::Int
     transform::F
     level::Union{Nothing, Int}
@@ -176,13 +179,13 @@ end
 
 Regular lon-lat representation used by fast debug maps and movies.
 """
-struct RasterField{F <: AbstractFieldTransform}
+struct RasterField{F <: AbstractFieldTransform, TT}
     lons::Vector{Float64}
     lats::Vector{Float64}
     values::Matrix{Float64}
     name::Symbol
     units::String
-    time::Float64
+    time::TT
     transform::F
     source_topology::Symbol
 end
@@ -233,18 +236,16 @@ function _read_attributes(ds)
 end
 
 function _read_times(ds)
-    haskey(ds, "time") || return Float64[]
-    # Snapshots write time as Float64 with units "hours since YYYY-MM-DD".
-    # NCDatasets auto-converts that to a Vector{DateTime} via CF-time
-    # decoding. Use `.var[:]` to bypass and read the raw Float64s, falling
-    # back to DateTime→Float64 hours via the time origin attribute when a
-    # legacy file stores actual DateTime values.
+    haskey(ds, "time") || return (Float64[], Float64[])
     var = ds["time"]
-    raw = var.var[:]
-    if eltype(raw) <: AbstractFloat
-        return Float64.(collect(raw))
+    hours = Float64.(collect(var.var[:]))
+    units = strip(String(get(var.attrib, "units", "")))
+    if occursin(r"^hours\s+since\s+"i, units)
+        return DateTime.(decode_time(ds, "time", (CFDecoder(),))), hours
     end
-    return Float64.(collect(raw))
+    # Legacy snapshots did not encode their origin. Keep their elapsed-hour API
+    # so old files remain inspectable, while current CF snapshots expose dates.
+    return hours, hours
 end
 
 function _snapshot_variables(ds, topology::AbstractSnapshotTopology)
@@ -281,7 +282,7 @@ function open_snapshot(path::AbstractString)
 
     NCDataset(expanded, "r") do ds
         attrs = _read_attributes(ds)
-        times = _read_times(ds)
+        times, hours = _read_times(ds)
         topology = if _is_cs_snapshot(ds)
             Nc = haskey(attrs, "Nc") ? Int(attrs["Nc"]) : length(ds.dim["Xdim"])
             nlevel = haskey(ds, "lev") ? size(ds["lev"], 1) : size(ds["air_mass"], 4)
@@ -302,7 +303,7 @@ function open_snapshot(path::AbstractString)
             throw(ArgumentError("$(expanded) is not a recognized AtmosTransport snapshot"))
         end
         variables = _snapshot_variables(ds, topology)
-        return SnapshotDataset(expanded, topology, times, variables, attrs)
+        return SnapshotDataset(expanded, topology, times, hours, variables, attrs)
     end
 end
 
@@ -310,28 +311,32 @@ available_variables(snapshot::SnapshotDataset) = snapshot.variables
 snapshot_times(snapshot::SnapshotDataset) = snapshot.times
 snapshot_topology(snapshot::SnapshotDataset) = snapshot.topology
 
-function _resolve_time_index(times::AbstractVector{<:Real}, time)
+function _resolve_time_index(snapshot::SnapshotDataset, time)
+    times = snapshot.times
     isempty(times) && return Int(time)
     if time isa Integer
         1 <= time <= length(times) ||
             throw(ArgumentError("time index $(time) outside 1:$(length(times))"))
         return Int(time)
     elseif time isa Real
-        _, idx = findmin(abs.(Float64.(times) .- Float64(time)))
+        _, idx = findmin(abs.(snapshot.hours .- Float64(time)))
+        return idx
+    elseif time isa Dates.TimeType && eltype(times) <: Dates.TimeType
+        _, idx = findmin(abs.(Dates.value.(times .- time)))
         return idx
     else
-        throw(ArgumentError("time must be an integer index or numeric snapshot hour"))
+        throw(ArgumentError("time must be an integer index, numeric snapshot hour, or decoded date"))
     end
 end
 
 frame_indices(snapshot::SnapshotDataset, ::AllFrames=AllFrames()) =
     collect(eachindex(snapshot.times))
 frame_indices(snapshot::SnapshotDataset, times::AbstractVector) =
-    [_resolve_time_index(snapshot.times, t) for t in times]
+    [_resolve_time_index(snapshot, t) for t in times]
 frame_indices(snapshot::SnapshotDataset, times::AbstractRange) =
-    [_resolve_time_index(snapshot.times, t) for t in collect(times)]
-frame_indices(snapshot::SnapshotDataset, time::Real) =
-    [_resolve_time_index(snapshot.times, time)]
+    [_resolve_time_index(snapshot, t) for t in collect(times)]
+frame_indices(snapshot::SnapshotDataset, time::Union{Real, Dates.TimeType}) =
+    [_resolve_time_index(snapshot, time)]
 function frame_indices(::SnapshotDataset, times)
     throw(ArgumentError(
         "frame selection must be AllFrames(), a numeric time/index, range, or vector; got $(repr(times))"))
@@ -479,7 +484,7 @@ function fieldview(snapshot::SnapshotDataset, variable::Union{Symbol, AbstractSt
     var = Symbol(variable)
     parsed_transform = _require_field_transform(transform)
     parsed_unit = _require_display_unit(unit)
-    ti = _resolve_time_index(snapshot.times, time)
+    ti = _resolve_time_index(snapshot, time)
     NCDataset(snapshot.path, "r") do ds
         if snapshot.topology isa CubedSphereSnapshotTopology
             return _read_cs_field(snapshot, ds, var, parsed_transform, ti, level, parsed_unit)

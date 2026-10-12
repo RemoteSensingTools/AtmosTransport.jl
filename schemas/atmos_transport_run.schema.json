@@ -168,7 +168,7 @@
         "vertical": {
           "type": "string",
           "enum": ["same_as_horizontal", "fv3_kord8", "fv3_kord8_signed", "upwind"],
-          "description": "PPM: same_as_horizontal (default), fv3_kord8 or fv3_kord8_signed (cubed sphere). Lin-Rood: upwind (default), fv3_kord8 or fv3_kord8_signed."
+          "description": "PPM: same_as_horizontal (default), fv3_kord8 or fv3_kord8_signed (cubed sphere). Lin-Rood: fv3_kord8 (default), upwind or fv3_kord8_signed."
         },
         "limiter": {
           "type": "string",
@@ -456,7 +456,7 @@
         },
         "variable": {
           "type": "string",
-          "description": "Variable read as dry VMR (mol/mol), without unit conversion. File kinds: a lon-lat-level field, interpolated bilinearly (lat-lon, reduced Gaussian) or conservatively (cubed sphere), then conservatively remapped in pressure when the file has ap and bp (otherwise copied level by level); cs_native: (time,) lev, nf, Ydim, Xdim on the binary's cube and levels. catrine_co2 defaults to CO2."
+          "description": "Variable read as dry VMR (mol/mol), without unit conversion. File kinds: a lon-lat-level field, interpolated bilinearly (lat-lon, reduced Gaussian) or conservatively (cubed sphere), then conservatively remapped in pressure when the file has ap and bp (ap must be Pa; otherwise copied level by level); cs_native: (time,) lev, nf, Ydim, Xdim on the binary's cube and levels. Equal-level cs_native files with ap/bp must match the binary coefficients. catrine_co2 defaults to CO2."
         },
         "humidity_variable": {
           "type": "string",
@@ -465,12 +465,12 @@
         "time_index": {
           "type": "integer",
           "minimum": 1,
-          "description": "File kinds and cs_native: 1-based index along the variable's time dimension, used when it has one; default 1."
+          "description": "File kinds and cs_native: positional 1-based index along the variable's time dimension, used when it has one; default 1."
         },
         "vertical_order": {
           "type": "string",
           "enum": ["surface_first", "toa_first"],
-          "description": "Which end of the file's levels comes first. cs_native: surface_first (default, GEOS-Chem) is flipped to the model's top-first order, toa_first is copied as is. File kinds: needed only for a file without hybrid coefficients whose level coordinate has neither pressure or height units nor a CF positive attribute; files with hybrid coefficients are oriented by their interface pressures (a contradicting value is an error)."
+          "description": "Which end of the file's levels comes first. cs_native without ap/bp defaults to surface_first; with ap/bp, source and target orientations come from interface pressure and a contradicting value is an error. File kinds: needed only for a file without hybrid coefficients whose level coordinate has neither pressure or height units nor a CF positive attribute; files with hybrid coefficients are oriented by their interface pressures (a contradicting value is an error)."
         },
         "clamp_negative": {
           "type": "boolean",
@@ -538,7 +538,7 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 12,
-          "description": "Static gridfed_fossil_co2 and zhang_rn222: month (1-12) read when time_index is absent. gridfed_fossil_co2 needs month or time_index; zhang_rn222 defaults to 1."
+          "description": "Static gridfed_fossil_co2 and zhang_rn222: calendar month (1-12) read when time_index is absent. With a time coordinate, selects the unique slice whose decoded month matches; coordinate-less legacy GridFED uses the ordinal month. gridfed_fossil_co2 needs month or time_index; zhang_rn222 defaults to 1."
         },
         "scale": {
           "type": "number",
