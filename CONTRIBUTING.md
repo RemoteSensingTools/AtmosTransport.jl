@@ -26,8 +26,24 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'
 julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 
-The test tiers, opt-in flags, and how to add a test file are described in
-[`test/README.md`](test/README.md).
+The full suite takes 30 to 70 minutes on one process. While developing, run the
+quick set and the tests of the topics your change touches, or the quick gate,
+which does both and two static checks:
+
+```bash
+julia --project=test -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'  # once
+julia --project=test test/runtests.jl --quick                  # crucial fast set, a few minutes
+julia --project=test test/runtests.jl --topics=advection       # one or more topics
+julia --project=test test/runtests.jl --changed                # topics of your changes vs origin/main
+scripts/dev/quick_gate.sh                                      # before committing
+```
+
+The quick gate runs `git diff --check`, a check that every call passes the
+keywords its function requires (`scripts/checks/check_keyword_calls.jl`, which
+also covers scripts and the literate docs that no test runs), and
+`--quick --changed` in one Julia process; it exits non-zero on any failure.
+The test tiers, opt-in flags, topics (`test/groups.toml`), and how to add a
+test file are described in [`test/README.md`](test/README.md).
 
 ### Coverage
 
@@ -162,7 +178,9 @@ that the default path is bit-identical to the explicit no-op path.
 
 1. Fork the repository and create a feature branch
 2. Make your changes with clear, focused commits
-3. Ensure all tests pass: `julia --project=. -e 'using Pkg; Pkg.test()'`
+3. Run `scripts/dev/quick_gate.sh` while you work, and make sure the full
+   suite passes before review: `julia --project=. -e 'using Pkg; Pkg.test()'`
+   (CI runs it on every pull request and requires it for merging)
 4. Update the relevant `README.md` or reference docs when the change affects
    public behavior, scripts, configuration, or setup
 5. Open a pull request with a clear description of what changed and why

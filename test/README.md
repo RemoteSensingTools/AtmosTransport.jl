@@ -42,7 +42,7 @@ A failing file does not stop the run: every selected file runs (an interrupt
 still stops it), and at the end the runner prints the 15 slowest files and then
 fails with the list of failed files, if any.
 
-## Quick set and topics
+## Quick set, topics, and the quick gate
 
 The full default run takes 30 to 70 minutes on one process, depending on the
 machine and its load. For fast checks while developing,
@@ -63,12 +63,13 @@ julia --project=. -e 'using Pkg; Pkg.test(test_args=["--quick"])'
   `test_public_api_surface`, `test_public_docstrings`, `test_public_contracts`,
   `test_environment_variables`, `test_documentation_links`,
   `test_config_schema_agreement`, `test_config_key_checks`), the groups
-  meta-test, and physics smokes: mass conservation and uniform-tracer
-  invariance of the advection kernels, convection and diffusion, short
-  driven lat-lon runs, a cubed-sphere run with every operator family across
-  a file handoff, binary write/read round trips, and the replay-consistency
-  gates. It takes about 4 minutes in one process on a lab machine, where
-  the full default run took 32 minutes.
+  meta-test, the required-keyword call check (`test_keyword_calls`), and
+  physics smokes: mass conservation and uniform-tracer invariance of the
+  advection kernels, convection and diffusion, short driven lat-lon runs, a
+  cubed-sphere run with every operator family across a file handoff, binary
+  write/read round trips, and the replay-consistency gates. It takes about
+  4 minutes in one process on a lab machine, where the full default run took
+  32 minutes.
 - `--topics=a,b` runs the files of the named topics (the topic names and
   descriptions are in `groups.toml`).
 - `--changed[=<ref>]` (default `origin/main`) maps the files changed on the
@@ -87,6 +88,24 @@ julia --project=. -e 'using Pkg; Pkg.test(test_args=["--quick"])'
 fails when a `core/` file is in no topic or in several, a quick or topic
 entry does not exist, no topic maps a file of some `src/` folder, or a `paths`
 glob matches nothing.
+
+[`scripts/dev/quick_gate.sh`](../scripts/dev/quick_gate.sh) is the check to
+run before committing or handing work back:
+
+```bash
+scripts/dev/quick_gate.sh               # against origin/main
+scripts/dev/quick_gate.sh <git-ref>     # e.g. a stacked branch's base
+```
+
+It runs `git diff --check` on the branch's commits and on the uncommitted and
+untracked files,
+[`scripts/checks/check_keyword_calls.jl`](../scripts/checks/check_keyword_calls.jl)
+(calls in `src/`, `ext/`, `test/`, `scripts/`, `benchmarking/`, `examples/`,
+`docs/literate/` and `docs/scripts/` that omit a keyword every candidate
+method requires, such as `surface_pressure_basis` of the transport-binary
+writers), and then
+`--quick --changed=<ref>` in one Julia process. It prints a summary and exits
+non-zero if any step failed. `JULIA="julia +1.10"` selects another Julia.
 
 ## Adding a new test
 

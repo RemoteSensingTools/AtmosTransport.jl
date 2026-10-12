@@ -19,6 +19,7 @@ quick = [
     "core/test_aqua.jl",
     "core/test_jet.jl",
     "core/test_test_groups.jl",
+    "core/test_keyword_calls.jl",
     "core/test_physical_constants.jl",
     "core/test_readme_current.jl",
     "core/test_public_api_surface.jl",
@@ -57,6 +58,7 @@ files = [
     "core/test_source_revision.jl",
     "core/test_runtests_runner.jl",
     "core/test_test_groups.jl",
+    "core/test_keyword_calls.jl",
 ]
 paths = [
     "Project.toml",
@@ -73,6 +75,7 @@ paths = [
     "src/**/*.md",
     "docs/**",
     "scripts/checks/**",
+    "scripts/dev/**",
 ]
 
 [topics.parameters_config]

@@ -15,7 +15,9 @@ move the function there), not copy it.
 | [`validation/flux_port_parity/`](validation/flux_port_parity/) | Parity harness of the Python → Julia surface-flux port. `run_parity.jl` runs a TOML list of comparisons through `compare_cs_flux_files.jl` and writes one JSON and one markdown report. The README covers the validation levels (S0, L1, T, L2, R, X), the S0 references and how to add a driver. Legacy emulators live only here and are deleted in step P11 |
 | [`visualization/`](visualization/) | Plots and animations; `atmos_viz.jl` is the topology-aware snapshot CLI |
 | [`benchmarks/`](benchmarks/) | Synthetic cubed-sphere advection and TM5 convection benchmarks; recorded experiments with their evidence in `benchmarks/results/` |
-| [`postprocess/`](postprocess/), [`inversions/`](inversions/), [`checks/`](checks/) | Snapshot conversion, inversion prototypes, documentation checks |
+| [`postprocess/`](postprocess/), [`inversions/`](inversions/) | Snapshot conversion, inversion prototypes |
+| [`checks/`](checks/) | Static checks: markdown citations (`check_markdown_citations.jl`) and calls that omit a required keyword (`check_keyword_calls.jl`, run by the quick gate and by `test/core/test_keyword_calls.jl`) |
+| [`dev/`](dev/) | `quick_gate.sh`, the check to run before committing: `git diff --check`, the keyword-call check, and the quick test set plus the topics of the changed files (see `test/README.md`) |
 
 A `heritage/` subfolder (in `scripts/` itself and in `benchmarks/`,
 `diagnostics/`, `downloads/`, `preprocessing/`, `validation/` and

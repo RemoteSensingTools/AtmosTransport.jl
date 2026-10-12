@@ -944,9 +944,19 @@
   Without flags the runner runs `core/` and `regridding/` as before; an
   unknown argument is now an error instead of being ignored.
   `test/core/test_test_groups.jl` checks the groups file. The quick set
-  (Aqua, JET, the metadata gates, the groups check, and physics smokes) took
-  4 minutes in one process on a lab machine, where the full default run
-  took 32.
+  (Aqua, JET, the metadata gates, the groups and keyword-call checks, and
+  physics smokes) took 4 minutes in one process on a lab machine, where the
+  full default run took 32.
+- `scripts/checks/check_keyword_calls.jl` parses `src/` for methods with
+  required keywords (and `@kwdef` fields without defaults) and reports calls
+  in `src/`, `ext/`, `test/`, `scripts/`, `benchmarking/`, `examples/`,
+  `docs/literate/` and `docs/scripts/` that omit one, such as the
+  transport-binary writers' `surface_pressure_basis`; on the tree before
+  `5e00e94a` it reports the nine call sites that commit fixed. It runs in the
+  quick set as `test/core/test_keyword_calls.jl`.
+- `scripts/dev/quick_gate.sh [<git-ref>]` runs `git diff --check`, the
+  keyword-call check, and `--quick --changed=<ref>` in one Julia process, and
+  exits non-zero on any failure.
 - Documentation corrections from an external review against the TM5 Fortran
   by pera-noaa (NOAA GML), GitHub issues #12, #15 and #20. Thank you.
   - `SlopesScheme` is no longer described as a port of TM5's slopes
