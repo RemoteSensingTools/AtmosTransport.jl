@@ -203,7 +203,6 @@ function full_window_column_closure_record(r::ColumnClosureRecord, am, bm, m, m_
                                amounts * r.booked_residual_kg, r.cm_residual_to_tolerance)
 end
 
-
 struct FluxFidelityEvidenceBundle{F,O,C<:AbstractColumnClosureRecord}
     flux::F
     omega::O
