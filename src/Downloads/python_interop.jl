@@ -14,7 +14,7 @@ Called once during module initialization.
 function detect_python_env(python_path::String="python3")
     check_pkg = pkg -> begin
         try
-            success(`$python_path -c "import $pkg"`)
+            success(pipeline(`$python_path -c "import $pkg"`; stdout=devnull, stderr=devnull))
         catch
             false
         end
@@ -33,19 +33,22 @@ function detect_python_env(python_path::String="python3")
 end
 
 """
-    run_python(script::String, env::PythonEnvironment; label="")
+    run_python(script::String, env::PythonEnvironment;
+               label="", reporter=DownloadProgressLines())
 
 Write `script` to a temporary file, execute with the configured Python
-interpreter, and clean up. Logs timing.
+interpreter, capture its output, and clean up. Reports captured output and timing
+through `reporter`.
 """
-function run_python(script::String, env::PythonEnvironment; label::String="")
+function run_python(script::String, env::PythonEnvironment; label::String="",
+                    reporter::AbstractDownloadProgressReporter=DownloadProgressLines())
     tmp = tempname() * ".py"
     write(tmp, script)
     try
         t0 = time()
-        run(`$(env.python_path) $tmp`)
+        _run_command(`$(env.python_path) $tmp`, reporter; label="Python")
         elapsed = round(time() - t0; digits=1)
-        !isempty(label) && @info "  Python ($label): $(elapsed)s"
+        !isempty(label) && _report_progress!(reporter, "  Python ($label): $(elapsed)s")
     finally
         rm(tmp; force=true)
     end
@@ -100,8 +103,6 @@ import os
 os.makedirs(os.path.dirname("$outfile"), exist_ok=True)
 c = cdsapi.Client()
 c.retrieve("$dataset", $req_py, "$outfile")
-sz = os.path.getsize("$outfile") / 1e6
-print(f"  OK: {sz:.1f} MB -> $outfile")
 """
 end
 
@@ -120,7 +121,5 @@ import os
 os.makedirs(os.path.dirname("$outfile"), exist_ok=True)
 server = ecmwfapi.ECMWFService("mars")
 server.execute($req_py, "$outfile")
-sz = os.path.getsize("$outfile") / 1e6
-print(f"  OK: {sz:.1f} MB -> $outfile")
 """
 end

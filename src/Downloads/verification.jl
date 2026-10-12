@@ -7,7 +7,8 @@
 using Downloads: Downloads as DL
 
 """
-    verified_download(url, dest; max_retries=3) -> Bool
+    verified_download(url, dest;
+                      max_retries=3, reporter=DownloadProgressLines()) -> Bool
 
 Download `url` to `dest` with Content-Length integrity checking.
 
@@ -17,13 +18,15 @@ Download `url` to `dest` with Content-Length integrity checking.
 4. After download: verify local size matches Content-Length
 5. If mismatch: delete corrupt file and retry
 """
-function verified_download(url::String, dest::String; max_retries::Int=3)
+function verified_download(url::String, dest::String; max_retries::Int=3,
+                           reporter::AbstractDownloadProgressReporter=DownloadProgressLines())
     remote_size = _get_content_length(url)
 
     if isfile(dest)
         local_size = filesize(dest)
         if remote_size > 0 && local_size == remote_size
-            @info "  Verified: $(basename(dest)) ($(local_size ÷ 1_000_000) MB)"
+            _report_progress!(reporter,
+                              "  Verified: $(basename(dest)) ($(local_size ÷ 1_000_000) MB)")
             return true
         elseif remote_size > 0
             @warn "  Size mismatch: $(basename(dest)) " *
@@ -36,10 +39,11 @@ function verified_download(url::String, dest::String; max_retries::Int=3)
     rm(staging; force=true)
     for attempt in 1:max_retries
         try
-            @info "  Downloading $(basename(dest)) (attempt $attempt)..."
+            _report_progress!(reporter,
+                              "  Downloading $(basename(dest)) (attempt $attempt)...")
             DL.download(url, staging)
             local_size = filesize(staging)
-            @info "    → $(local_size ÷ 1_000_000) MB"
+            _report_progress!(reporter, "    → $(local_size ÷ 1_000_000) MB")
 
             if local_size <= 0 || (remote_size > 0 && local_size != remote_size)
                 @warn "    Truncated: got $(local_size) bytes, " *

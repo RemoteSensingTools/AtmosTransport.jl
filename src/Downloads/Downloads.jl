@@ -39,9 +39,11 @@ module DataDownloads
 using Dates
 using Logging
 using Printf
+using ProgressMeter
 using SHA
 using TOML
 using ..Parameters: ERA5_NATIVE_LEVEL_COUNT, ERA5_MET_INTERVAL_SECONDS
+using ..LogLevels: log_level, with_log_level
 
 # Type hierarchy (sources, protocols, tasks, configs)
 include("types.jl")
