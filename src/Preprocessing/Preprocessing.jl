@@ -97,6 +97,12 @@ using FastGaussQuadrature: gausslegendre
 import ..expand_data_path
 import ..source_revision
 
+# Root of the package checkout. Shipped configs name their companion files
+# (met-source descriptors under `config/met_sources/`, hybrid-coefficient
+# tables `config/*_coefficients.toml`) relative to it.
+const PACKAGE_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
+_package_path(relpath::AbstractString) = normpath(joinpath(PACKAGE_ROOT, relpath))
+
 # Reserve the package-standard unique sibling staging path for preprocessing
 # writers whose existing APIs open a path themselves. Publication and cleanup
 # are handled by the writer adapters through `commit_atomic_staging` /

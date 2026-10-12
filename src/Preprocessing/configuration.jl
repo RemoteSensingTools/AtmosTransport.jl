@@ -369,7 +369,7 @@ function _resolve_target_vertical_coordinate(cfg_grid)
     if isempty(target_path)
         target_path = if target_name in ("geos_l72", "geos-it_l72", "geosfp_l72",
                                          "geos_fp_l72", "gmao_l72")
-            joinpath(@__DIR__, "..", "..", "config", "geos_L72_coefficients.toml")
+            _package_path(joinpath("config", "geos_L72_coefficients.toml"))
         else
             error("grid.target_vertical='$target_name' needs grid.target_coefficients")
         end

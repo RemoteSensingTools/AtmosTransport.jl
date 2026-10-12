@@ -22,15 +22,71 @@ function _shipped_preprocessing_configs()
     return sort(paths)
 end
 
+# Files outside the repository that validation reads: the reduced-Gaussian
+# grid takes its geometry from a GRIB file in the user's data tree.
+const EXTERNAL_VALIDATION_INPUTS = (("grid", "geometry_source_grib"),)
+
+function _missing_external_inputs(cfg)
+    missing = String[]
+    for (table, key) in EXTERNAL_VALIDATION_INPUTS
+        haskey(get(cfg, table, Dict()), key) || continue
+        path = Pre.expand_data_path(String(cfg[table][key]))
+        isfile(path) || push!(missing, "[$table].$key = $path")
+    end
+    return missing
+end
+
 @testset "shipped preprocessing configs validate" begin
     paths = _shipped_preprocessing_configs()
     @test length(paths) >= 60
-    for path in paths
-        cfg = TOML.parsefile(path)
-        plan = with_logger(NullLogger()) do
-            Pre.validate_preprocessing_config(cfg)
+    skipped = String[]
+    # Shipped configs name their coefficient tables relative to the package
+    # root; validation must not depend on the working directory (`Pkg.test`
+    # runs in `test/`).
+    cd(mktempdir()) do
+        for path in paths
+            cfg = TOML.parsefile(path)
+            absent = _missing_external_inputs(cfg)
+            if !isempty(absent)
+                @info "Skipping $(basename(path)): its external input is absent " *
+                      "($(join(absent, "; ")))."
+                push!(skipped, basename(path))
+                @test_skip false
+                continue
+            end
+            plan = with_logger(NullLogger()) do
+                Pre.validate_preprocessing_config(cfg)
+            end
+            @test plan.vertical.Nz >= 1
         end
-        @test plan.vertical.Nz >= 1
+    end
+    @info "Validated $(length(paths) - length(skipped)) of $(length(paths)) shipped " *
+          "preprocessing configs; skipped $(length(skipped)) whose external inputs are " *
+          "absent" * (isempty(skipped) ? "." : ": $(join(skipped, ", ")).")
+    @test length(paths) - length(skipped) >= 60
+end
+
+@testset "coefficient tables resolve independent of the working directory" begin
+    shipped = joinpath(pkgdir(AtmosTransport), "config", "era5_L137_coefficients.toml")
+    cd(mktempdir()) do
+        @test Pre.resolve_coefficients_path("config/era5_L137_coefficients.toml") ==
+              normpath(shipped)
+        # A table in the working directory takes precedence over the shipped one.
+        mkpath("config")
+        cp(shipped, joinpath("config", "era5_L137_coefficients.toml"))
+        @test Pre.resolve_coefficients_path("config/era5_L137_coefficients.toml") ==
+              "config/era5_L137_coefficients.toml"
+        @test Pre.n_levels(Pre.load_hybrid_coefficients("config/geos_L72_coefficients.toml")) == 72
+        err = try
+            Pre.resolve_coefficients_path("config/no_such_coefficients.toml")
+            nothing
+        catch e
+            sprint(showerror, e)
+        end
+        @test err !== nothing
+        @test occursin(joinpath(pwd(), "config", "no_such_coefficients.toml"), err)
+        @test occursin(joinpath(pkgdir(AtmosTransport), "config", "no_such_coefficients.toml"), err)
+        @test_throws ErrorException Pre.resolve_coefficients_path(joinpath(pwd(), "absent.toml"))
     end
 end
 

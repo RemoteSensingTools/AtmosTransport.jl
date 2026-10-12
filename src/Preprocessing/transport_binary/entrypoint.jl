@@ -269,8 +269,7 @@ function _native_preprocessing_plan(cfg::AbstractDict)
     reject_removed_balance_mode(get(cfg, "numerics", Dict{String, Any}()))
     src_cfg = cfg["source"]
     toml_relpath = String(src_cfg["toml"])
-    toml_path = isabspath(toml_relpath) ? toml_relpath :
-                joinpath(@__DIR__, "..", "..", "..", toml_relpath)
+    toml_path = isabspath(toml_relpath) ? toml_relpath : _package_path(toml_relpath)
 
     # Single source of truth for the float type: build the grid AND the
     # source settings against the same `FT` so cell areas and the reader's

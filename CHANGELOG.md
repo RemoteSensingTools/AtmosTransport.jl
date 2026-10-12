@@ -30,7 +30,9 @@
   failed with the new default because `config/met_sources/geosit.toml`
   supplies it. `Preprocessing.validate_preprocessing_config(cfg)` runs every
   config-level check of `process_day(cfg)` without reading input, and a core
-  test loads all shipped preprocessing configs through it.
+  test loads all shipped preprocessing configs through it from a scratch
+  working directory (a config whose external input, such as the
+  reduced-Gaussian `geometry_source_grib`, is absent is skipped and counted).
 - Removed the met-source descriptors `merra2_geoschem_hm_gchp.toml`,
   `merra2_geoschem_hm_vs.toml` and `merra2_geoschem_hybridmass.toml`: with
   the new defaults they equal `config/met_sources/merra2_geoschem.toml`, which
@@ -186,6 +188,12 @@
 
 ### Fixes
 
+- Relative hybrid-coefficient paths of preprocessing configs
+  (`config/era5_L137_coefficients.toml`, `config/geos_L72_coefficients.toml`)
+  resolve in the working directory first and then in the package root
+  (`Preprocessing.resolve_coefficients_path`), as `[source].toml` already did;
+  the shipped configs failed from any other working directory, e.g. under
+  `Pkg.test`, which runs in `test/`. A missing table names both locations.
 - A run's absolute time origin is checked before any output or forcing is set
   up, whether or not the run writes output: `[input].start_date`, the first
   binary's `date` header and a `YYYYMMDD` (or `YYYY-MM-DD`) date in its

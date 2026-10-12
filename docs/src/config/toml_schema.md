@@ -787,6 +787,14 @@ declares collection mappings, `mass_flux_dt_seconds`, and
 `level_orientation`. See [GEOS native cubed-sphere](@ref) for the
 descriptor schema details.
 
+A relative `[source].toml` is relative to the AtmosTransport package root. A
+relative hybrid-coefficient table (`coefficients`, `coefficients_file`,
+`target_coefficients`) is looked up in the working directory first and then in
+the package root, where `config/era5_L137_coefficients.toml` and
+`config/geos_L72_coefficients.toml` ship, so the shipped configs work from any
+working directory; a table found in neither place is an error that names both
+locations.
+
 ### `[output]`
 
 ```toml
