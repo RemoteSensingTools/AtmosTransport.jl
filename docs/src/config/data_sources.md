@@ -173,11 +173,11 @@ the project's own configs use historically.
   product (`GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.*.nc4`).
 - `config/downloads/geosfp_c720.toml` — the **native C720**
   cubed-sphere download descriptor; the **`src/Downloads/sources/geosfp.jl`**
-  downloader pulls from the WashU HTTP archive (NOT the
-  GEOS-IT-style AWS S3 path) into a local directory.
+  downloader pulls over HTTPS from the public GEOS-Chem S3 archive into a
+  local directory.
 
 `GEOSSettings{:geosfp}` opens 24 hourly native CTM files plus the
-next-day 00Z endpoint. The WashU archive names the hourly averaged
+next-day 00Z endpoint. The public archive names the hourly averaged
 files with `HH30` timestamps; test fixtures may also use `HH00`. When
 `[source] include_surface = true` or
 `include_convection = true`, set `[source] physics_dir` to a directory

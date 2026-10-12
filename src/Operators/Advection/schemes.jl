@@ -427,8 +427,8 @@ FV3's `kord = 8` profile (TOML `vertical = "fv3_kord8"`).
 Supported orders currently match the implemented PPM edge-value families in
 `ppm_subgrid_distributions.jl`:
 
-- `ORD = 5` — Huynh-constrained PPM
-- `ORD = 7` — order-5 interior with special cubed-sphere face treatment
+- `ORD = 5` — Colella–Woodward fourth-order edge interpolation with extremum flattening
+- `ORD = 7` — ORD=5 interior with special cubed-sphere face treatment
 
 # Examples
 ```julia

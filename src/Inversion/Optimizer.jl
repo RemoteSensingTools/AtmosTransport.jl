@@ -48,7 +48,7 @@ abstract type AbstractCSOptimizer end
 
 Plain backtracking-line-search gradient descent. `iterations` is the
 maximum count of accepted descent steps; the loop terminates early
-when the gradient norm falls below `gradient_tolerance` or the
+when the gradient L2 norm falls below `gradient_tolerance` or the
 line search shrinks `step` below `min_step`. With
 `line_search = false` every candidate step is accepted (constant
 step size unless the loop exits on tolerance).
@@ -204,8 +204,10 @@ Limited-memory BFGS (L-BFGS) optimizer backed by
 [`Optim.jl`](https://github.com/JuliaNLSolvers/Optim.jl). `m` is the
 history length; the line search is Optim's `LBFGS` default
 (Hager–Zhang). `iterations` is the max outer iteration count;
-`gradient_tolerance` is the L∞ stopping threshold on the
-χ-space / x-space gradient. `show_trace = true` forwards verbose
+`gradient_tolerance` is Optim's L-infinity stopping threshold on the
+χ-space / x-space gradient. The same L-infinity norm is recorded in
+`gradient_norm_history` and `CSIterationLogEntry.gradient_norm` for this
+backend. `show_trace = true` forwards verbose
 progress to Optim's logger. `log = true` records one
 [`CSIterationLogEntry`](@ref) for the initial state (iteration 0) and
 one per accepted iterate.
@@ -390,10 +392,11 @@ function cs_surface_flux_4dvar_solve(optimizer::CSLBFGS, cost_fn, controls)
     end
     objective = Optim.OnceDifferentiable(f, g!, fg!, x0, zero(FT))
 
-    # Optional per-iteration log populated via Optim's callback hook. Optim
-    # calls it once for the initial state (iteration 0) and once after each
-    # accepted iterate, so the log rows line up with `opt_result.trace`.
+    # Optim's native L-BFGS convergence and trace use L∞. Stopping, history,
+    # and optional logs all consume that same value at the initial state and
+    # every accepted iterate, preserving Optim's established tolerance meaning.
     log = optimizer.log ? CSIterationLog{FT}() : nothing
+    gradient_tolerance = FT(optimizer.gradient_tolerance)
     t0 = time()
     callback = log === nothing ? nothing : function (state)
         # Optim's `OptimizationState` for L-BFGS exposes
@@ -406,12 +409,11 @@ function cs_surface_flux_4dvar_solve(optimizer::CSLBFGS, cost_fn, controls)
         # not run `cost_fn`; it recovers the observation/background split
         # that Optim's state does not carry.
         #
-        # `g_norm` is the L2 norm to match the `CSIterationLogEntry`
-        # docstring ("gradient L2 norm"). Optim's own `state.g_norm`
-        # would be L∞ for L-BFGS; we compute L2 by hand from the flat
-        # gradient vector.
+        # Optim's L-BFGS convergence check uses the L∞ norm of `g_x`.
+        # The callback state does not expose the derived `g_norm`, so compute
+        # the identical value directly from its flat gradient.
         r = _evaluate!(cache, state.x)
-        g_norm = FT(sqrt(sum(abs2, state.g_x)))
+        g_norm = FT(maximum(abs, state.g_x))
         push!(log.entries, CSIterationLogEntry{FT}(
             state.pseudo_iteration, FT(r.cost),
             FT(r.observation_cost), FT(r.background_cost),
@@ -424,14 +426,14 @@ function cs_surface_flux_4dvar_solve(optimizer::CSLBFGS, cost_fn, controls)
     # `store_trace` powers `cost_history` / `gradient_norm_history`.
     options = callback === nothing ?
         Optim.Options(iterations = optimizer.iterations,
-                       g_abstol = optimizer.gradient_tolerance,
-                       show_trace = optimizer.show_trace,
-                       store_trace = true) :
+                      g_abstol = gradient_tolerance,
+                      show_trace = optimizer.show_trace,
+                      store_trace = true) :
         Optim.Options(iterations = optimizer.iterations,
-                       g_abstol = optimizer.gradient_tolerance,
-                       show_trace = optimizer.show_trace,
-                       store_trace = true,
-                       callback = callback)
+                      g_abstol = gradient_tolerance,
+                      show_trace = optimizer.show_trace,
+                      store_trace = true,
+                      callback = callback)
     opt_result = Optim.optimize(objective, x0, Optim.LBFGS(m = optimizer.m), options)
 
     # The result at the minimizer, normally the cached last evaluation (the

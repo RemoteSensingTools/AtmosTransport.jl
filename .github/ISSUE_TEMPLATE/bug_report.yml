@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a reproducible problem in AtmosTransport.jl
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Thank you for helping improve AtmosTransport.jl.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Include the smallest configuration or Julia code that reproduces the problem.
+      render: julia
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include the AtmosTransport.jl commit or version, Julia version, operating system, and CPU/GPU backend.
+      placeholder: |
+        AtmosTransport.jl:
+        Julia:
+        OS:
+        Backend:
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or stack trace
+      description: Paste relevant output. Remove credentials, private paths, and unpublished data.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: I removed secrets and sensitive data from this report.
+          required: true

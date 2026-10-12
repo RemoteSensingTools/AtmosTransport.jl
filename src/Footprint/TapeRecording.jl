@@ -26,6 +26,55 @@ function _tape_byte_estimate(panels_m0,
                              panels_bm_steps,
                              panels_cm_steps,
                              mesh::CubedSphereMesh,
+                             scheme::CSAdjointLinRoodScheme;
+                             cfl_limit = DEFAULT_CFL_LIMIT,
+                             flux_scale = one(eltype(panels_m0[1])),
+                             diffusion_op = NoDiffusion(),
+                             convection_op = NoConvection())
+    _ = (mesh, scheme, cfl_limit, flux_scale)
+    nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps,
+                                      panels_cm_steps)
+
+    # Each Lin-Rood step records two horizontal operators and two vertical
+    # upwind sweeps. A horizontal record retains four full-panel states
+    # (rm, m, and the two q_buf phases) plus three face-panel tuples (fx_in,
+    # fx_out, fy_in); each vertical sweep retains one full-panel m state.
+    # Thus its base tape is ten full-panel tuples and six face-panel tuples
+    # per step, not the split-sweep layout used by the generic method.
+    sweep_records = 4nsteps
+    halo_records = 0
+    midpoint_records = nsteps
+    diffusion_records = 0
+    diffusion_state_records = 0
+    @inbounds for step in 1:nsteps
+        if !(_diffusion_sequence_at(diffusion_op, step, nsteps,
+                                    "diffusion_op") isa NoDiffusion)
+            diffusion_records += 2
+            diffusion_state_records += 1
+        end
+    end
+    convection_records = convection_op isa NoConvection ? 0 : nsteps
+    state_records = 10nsteps + diffusion_state_records + convection_records
+    total_records = sweep_records + midpoint_records + diffusion_records +
+                    convection_records
+    bytes_per_state = _bytes_per_panel_tuple(panels_m0)
+    Nc = mesh.Nc
+    Nz = size(panels_m0[1], 3)
+    bytes_per_face_tuple = 6 * (Nc + 1) * Nc * Nz * sizeof(eltype(panels_m0[1]))
+    state_bytes = state_records * bytes_per_state +
+                  6nsteps * bytes_per_face_tuple
+    return CSTapeByteEstimate(nsteps, sweep_records, halo_records,
+                              midpoint_records, diffusion_records,
+                              convection_records, state_records,
+                              total_records, bytes_per_state,
+                              state_bytes)
+end
+
+function _tape_byte_estimate(panels_m0,
+                             panels_am_steps,
+                             panels_bm_steps,
+                             panels_cm_steps,
+                             mesh::CubedSphereMesh,
                              scheme::CSAdjointSupportedScheme;
                              cfl_limit = DEFAULT_CFL_LIMIT,
                              flux_scale = one(eltype(panels_m0[1])),
@@ -164,12 +213,12 @@ because none of them compress the payload:
     of `records.bin`. The shape-keyed device cache holds at most one
     `NTuple{6, T}` per distinct shape signature on top of that.
 
-`bytes_per_state` is the per-record panel-data size; multiply by
-`state_records` to recover `state_bytes` and divide by the storage
-policy's per-record overhead (typically 0 for in-memory, ~hundreds of
-bytes per record of TOML manifest for `:mmap`) to plan filesystem
-capacity. Halo / midpoint records carry only scalar metadata and are
-counted in `total_records` but NOT in `state_bytes`.
+`bytes_per_state` is the size of one full-panel state tuple. For split-sweep
+tapes, multiply it by `state_records` to recover `state_bytes`. Lin-Rood's
+`state_bytes` additionally includes the six retained face-panel tuples per
+step, whose dimensions differ from a full state. Halo / midpoint records carry
+only scalar metadata and are counted in `total_records` but NOT in
+`state_bytes`.
 """
 cs_tape_byte_estimate(args...; kwargs...) =
     _tape_byte_estimate(args...; kwargs...)

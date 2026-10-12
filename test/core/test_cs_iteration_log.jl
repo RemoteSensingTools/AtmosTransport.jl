@@ -208,12 +208,11 @@ end
 end
 
 # ---------------------------------------------------------------------------
-# Regression: L-BFGS log entries now use L2 gradient norm consistently
-# with the iteration-0 initial row and with CSGradientDescent log
-# entries. Pre-fix the per-iteration rows used `maximum(abs, g_x)` (L∞).
+# Regression: L-BFGS stopping, histories and log entries all use Optim's
+# L∞ gradient norm. `CSGradientDescent` intentionally keeps its L2 norm.
 # ---------------------------------------------------------------------------
 
-@testset "CSLBFGS — log gradient norm is L2" begin
+@testset "CSLBFGS — log gradient norm is Optim's L∞ norm" begin
     s = _scenario()
     opt = AT.CSLBFGS(iterations = 4, gradient_tolerance = 1e-12, log = true)
     solve = AT.cs_surface_flux_4dvar_solve(opt, s.cost_fn, s.control)
@@ -221,24 +220,14 @@ end
     @test log isa AT.CSIterationLog
     @test length(log) >= 2
 
-    # Iteration-0 row uses `_control_gradient_norm` (L2 by construction).
-    # All subsequent rows must use the same convention. Verify
-    # monotonicity is plausible (L2 norm of a converging gradient
-    # eventually shrinks), and that no per-iter row is below the L∞
-    # value (which would be a signature of the old L∞ path —
-    # ‖g‖∞ ≤ ‖g‖₂ always).
-    norms_l2 = [entry.gradient_norm for entry in log]
-    @test all(norms_l2 .>= 0)
-    # The final row's L2 norm must equal the final history entry,
-    # which is also L2 (populated from `state.g_norm` … but L-BFGS's
-    # `state.g_norm` is L∞; the log uses L2 directly). Cross-check
-    # the log row against an explicit L2 recomputation.
-    # The returned result is the evaluation at the minimizer, the last
-    # accepted iterate, so the last row's norm is its gradient's L2 norm
-    # (up to summation order).
+    norms_linf = [entry.gradient_norm for entry in log]
+    @test all(norms_linf .>= 0)
+    @test solve.gradient_norm_history == norms_linf
+    # The returned result is the last accepted iterate, so cross-check the
+    # last callback row against an explicit L∞ recomputation.
     final = solve.last
-    expected_l2 = sqrt(sum(p -> sum(abs2, final.gradients[1][p]), 1:6))
-    @test norms_l2[end] ≈ expected_l2 rtol = 1e-12
+    expected_linf = maximum(p -> maximum(abs, final.gradients[1][p]), 1:6)
+    @test norms_linf[end] ≈ expected_linf rtol = 1e-12
 end
 
 @testset "cs_surface_flux_4dvar_optimize — log via explicit optimizer" begin

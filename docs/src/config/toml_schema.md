@@ -128,7 +128,9 @@ metadata in a `.source.toml` sidecar. This rejects equal-sized rewritten inputs
 and old copies without metadata. These checks are filesystem identity checks,
 not content checksums: source binaries must remain immutable during a run.
 Cleanup removes this run's staged files and metadata, preserving unrelated
-files in the directory. Implementation: `src/Models/InputStaging.jl`.
+files in the directory. Completed staged binaries and metadata sidecars are
+published through `AtomicFiles`, so readers never open a partial copy.
+Implementation: `src/Models/InputStaging.jl`.
 
 ### `[architecture]` — backend selection
 

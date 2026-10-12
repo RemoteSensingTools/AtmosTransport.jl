@@ -110,7 +110,7 @@ const REPLAY_TOLERANCE_FLOAT32 = 1.0e-5
 "Weight of one GEOS moisture-filter / column-drift smoothing sweep (see `DEFAULT_GEOS_SMOOTHING_SWEEPS`)."
 const DEFAULT_GEOS_SMOOTHING_WEIGHT = 0.5
 
-"Order of the Lin–Rood PPM edge reconstruction when the config sets none: 5 (Huynh-constrained) or 7."
+"Lin–Rood PPM edge-value family when the config sets none: 5 (Colella–Woodward fourth-order edges) or 7."
 const DEFAULT_LINROOD_PPM_ORDER = 5
 
 "Width (standard deviation) of the Gaussian-blob initial condition when the config sets none [degrees]."

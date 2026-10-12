@@ -475,9 +475,8 @@ dispatch would be cleaner or measurably faster.
   ([driver.jl](../../src/MetDrivers/transport_binary/driver.jl#L55))
   at driver construction — 24 windows × ~4 arrays × ~8 MB = ~768 MB
   temporary allocation. Pre-allocate buffers before the loop.
-- **`diagnose_cm_from_continuity_vc!` allocates `Δb` per call**
-  ([VerticalClosure.jl:62](../../src/MetDrivers/ERA5/VerticalClosure.jl#L62));
-  `vc` is immutable — cache.
+- **`diagnose_cm_from_continuity_vc!` allocated `Δb` per call**; the unused
+  wrapper was removed for v0.5.0 rather than optimized.
 - **Per-window TM5 buffer allocation in `_store_window_tm5_fields!`**
   ([latlon_workspaces.jl:723](../../src/Preprocessing/transport_binary/latlon_workspaces.jl#L723))
   and **`store_qv_output!`** at `:463` — 4+1 arrays per window per day.

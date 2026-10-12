@@ -169,8 +169,9 @@ end
                         gradient_norm, step_size, elapsed_seconds)
 
 One row of per-iteration solver diagnostics. Captures the
-cost-decomposition (observation vs background terms), the L2
-gradient norm, the line-search step accepted on this iteration
+cost-decomposition (observation vs background terms), the optimizer's
+documented gradient norm (L2 for `CSGradientDescent`, L-infinity for
+`CSLBFGS`), the line-search step accepted on this iteration
 (`0` for optimizers that don't expose a step — e.g. L-BFGS), and the
 wall-clock time since the solve started.
 

@@ -45,11 +45,27 @@ after `elapsed_hours`: within half a window, and at most half an hour, of it.
 
 # Hours since the run start of every met-window end, accumulated as the run
 # loops accumulate them. `layout` holds `(window_seconds, windows)` per binary.
+function _check_window_range(layout; start_window::Integer = 1,
+                             stop_window_override = nothing)
+    for (binary_index, (_, nwindow)) in enumerate(layout)
+        start_window <= nwindow || throw(ArgumentError(
+            "[run] start_window=$(start_window) exceeds the window count " *
+            "$(nwindow) of input binary $(binary_index)."))
+        if stop_window_override !== nothing
+            stop_window = Int(stop_window_override)
+            stop_window <= nwindow || throw(ArgumentError(
+                "[run] stop_window=$(stop_window) exceeds the window count " *
+                "$(nwindow) of input binary $(binary_index)."))
+        end
+    end
+    return nothing
+end
+
 function _window_end_hours(layout; start_window::Integer = 1, stop_window_override = nothing)
     ends = Float64[]
     elapsed = 0.0
     for (window_seconds, nwindow) in layout
-        stop = stop_window_override === nothing ? nwindow : min(Int(stop_window_override), nwindow)
+        stop = stop_window_override === nothing ? nwindow : Int(stop_window_override)
         for _ in start_window:stop
             elapsed += Float64(window_seconds) / 3600
             push!(ends, elapsed)
@@ -62,7 +78,7 @@ end
 function _layout_run_hours(layout; start_window::Integer = 1, stop_window_override = nothing)
     seconds = 0.0
     for (window_seconds, nwindow) in layout
-        stop = stop_window_override === nothing ? nwindow : min(Int(stop_window_override), nwindow)
+        stop = stop_window_override === nothing ? nwindow : Int(stop_window_override)
         seconds += max(stop - start_window + 1, 0) * Float64(window_seconds)
     end
     return seconds / 3600

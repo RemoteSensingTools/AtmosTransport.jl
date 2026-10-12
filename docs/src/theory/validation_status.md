@@ -96,8 +96,8 @@ operator coverage remain open.
 | Algorithm | Measured coverage | Evidence |
 |---|---|---|
 | Standard split `PPMScheme(MonotoneLimiter())` (`scheme="ppm"`) | Full-day performance and conservation; 7- and 31-day conservation in Float32/Float64. The month uses six tracers; the week also checks 32 in Float32. | [31-day results](https://github.com/RemoteSensingTools/AtmosTransport.jl/blob/9fd853822a9322403c55316c08c47cf04d647f83/scripts/benchmarks/results/main_monthly_mass_v100_20260906/README.md), [7-day results](https://github.com/RemoteSensingTools/AtmosTransport.jl/blob/9fd853822a9322403c55316c08c47cf04d647f83/scripts/benchmarks/results/main_weekly_mass_v100_20260906/README.md) |
-| `LinRoodPPMScheme(7)` (`scheme="linrood", ppm_order=7`) | Earlier six-tracer, full-day Float32/Float64 comparison of the shared panel-face correction, before the conservative Dkg change. | [Lin–Rood seam experiment](https://github.com/RemoteSensingTools/AtmosTransport.jl/blob/9fd853822a9322403c55316c08c47cf04d647f83/scripts/benchmarks/results/main_mass_seams_v100_20260905/README.md) |
-| `LinRoodPPMScheme(5)` | Kernel/adjoint checks; no matched long-duration run in this revamp. | `test/core/test_linrood_kernel_adjoints.jl` |
+| `LinRoodPPMScheme(7)` (`scheme="linrood", ppm_order=7`) | Six-tracer full-day Float32/Float64 seam experiment plus a matched four-month CATRINE comparison against split PPM. | [Lin–Rood seam experiment](https://github.com/RemoteSensingTools/AtmosTransport.jl/blob/9fd853822a9322403c55316c08c47cf04d647f83/scripts/benchmarks/results/main_mass_seams_v100_20260905/README.md), `docs/memos/2026-10-07_v0.5_transport_fidelity_backlog.md` |
+| `LinRoodPPMScheme(5)` | Kernel/adjoint checks plus the matched four-month CATRINE comparison against split PPM and LR7. | `test/core/test_linrood_kernel_adjoints.jl`, `docs/memos/2026-10-07_v0.5_transport_fidelity_backlog.md` |
 | Unlimited standard PPM (`PPMScheme(NoLimiter())`) | Focused seam/adjoint checks, outside the long real-input comparisons. | `test/core/test_cs_seam_exchange.jl`, `test/diagnostic/test_cs_seam_exchange_gpu.jl` |
 
 The 31-day maximum daily relative mass drift, `5.84e-7` in Float32 and
@@ -106,14 +106,14 @@ and conservative Dkg diffusion**. It is not a bound for Lin–Rood or all limite
 choices. Small negative column means occur even in the standard PPM run;
 conservation and field boundedness are separate checks.
 
-A longer, controlled comparison of standard monotone PPM, LR5, and LR7 is
-deferred to an **A100**. It should hold forcing, initialization, timestep policy,
-other operators, precision, tracer count, and output cadence fixed; report
-mass drift, field errors against an independent reference where available,
-diffusion, undershoots, runtime, and peak host/device memory. Standard PPM and
-Lin–Rood currently differ vertically as well as horizontally, so any field
-difference must be attributed to the complete configured algorithm. See
-[Advection schemes](@ref) for dispatch and order definitions.
+The proposed A100 comparison of standard monotone PPM, LR5, and LR7 is closed
+as superseded by the completed four-month CATRINE five-variant comparison. It
+holds the forcing and physics fixed and reports field errors against GCHP; the
+full results and configuration differences are in
+`docs/memos/2026-10-07_v0.5_transport_fidelity_backlog.md`. Standard PPM and
+Lin–Rood differ vertically as well as horizontally unless the FV3 vertical
+profile is selected, so field differences apply to the complete configured
+algorithm. See [Advection schemes](@ref) for dispatch and order definitions.
 
 ### Real-data preprocessor smoke tests (verification with real input)
 
@@ -137,16 +137,16 @@ comparison the runtime currently has. No advection option reproduces TM5's
 slopes advection; a prognostic-moment scheme is postponed (see
 [Advection schemes](@ref)).
 
-## What HAS NOT been validated end-to-end
+## Remaining end-to-end validation gaps
 
-The following work is on the roadmap but **not yet done**:
+The following gaps remain even where production comparisons now exist:
 
 | Gap | Why it matters | Status |
 |---|---|---|
-| **GCHP parity for full-physics CS runs** | The CMFMC convection and ImplicitVerticalDiffusion operators are independently unit-tested but a full multi-day GCHP-vs-AtmosTransport intercomparison on identical met forcing has not been published. | comparison script exists (`scripts/diagnostics/catrine_compare_vs_geoschem.py`) but no committed parity report |
-| **CATRINE D7.1 intercomparison** | The European CATRINE protocol is the natural validation target (4 tracers: CO2, fossil CO2, SF6, 222Rn; full-physics; multi-month). The configs (`config/runs/catrine_*.toml`) exist and the runtime can produce the output, but no maintained end-to-end CATRINE smoke test, full multi-month regression, or published comparison memo exists. | protocol configs only; end-to-end regression not wired |
+| **GCHP parity for full-physics CS runs** | A 25-month CATRINE C90 comparison and controlled four-month transport comparisons on MERRA-2 forcing are complete and documented. Residual polar differences remain, and no automated multi-month regression is maintained. | production comparison complete; regression automation open |
+| **CATRINE D7.1 intercomparison** | Four-tracer (CO2, fossil CO2, SF6, 222Rn) full-physics production runs span 25 months; the four-month controlled comparison covers five transport variants and documents their differences against GCHP in `docs/memos/2026-10-07_v0.5_transport_fidelity_backlog.md`. | multi-month comparison documented; maintained end-to-end regression not wired |
 | **Observational closure** | Comparison of model output (column CO2, surface SF6 etc.) against an observational network (NOAA in-situ + TCCON / OCO satellite) | not started |
-| **Multi-month GPU production runs** | The V100 experiment above covers 31 days of one forcing archive with standard PPM; CI has no multi-week real-data GPU regression. | multi-month and controlled A100 scheme comparisons deferred |
+| **Multi-month GPU production runs** | CATRINE production runs span 25 months and controlled scheme comparisons span four months; CI still has no multi-week real-data GPU regression. | production evidence exists; maintained regression open |
 | **Adjoint kernels** | See [Adjoint status](@ref). Tape + checkpoint + revolve (bisection variant), the supported advection/convection and halo reverse paths, and the 4D-Var driver are on CI. Gaps: optimized/clamped convection variants, optimal binomial Revolve, a single-sweep 4D-Var gradient (today one adjoint run per observation), vertical observation binding, and TM5-4DVAR cross-validation. | partial (shipped) |
 
 ## Floating-point tolerance practice

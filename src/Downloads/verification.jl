@@ -1,5 +1,5 @@
 # ===========================================================================
-# Download verification — originally scripts/downloads/download_utils.jl (removed)
+# Download verification — migrated from the removed legacy download utility
 #
 # Content-Length integrity checking for HTTP-based downloads.
 # ===========================================================================

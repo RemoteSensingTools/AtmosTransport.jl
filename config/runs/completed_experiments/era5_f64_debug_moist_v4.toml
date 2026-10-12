@@ -56,7 +56,6 @@ species  = "co2"
 
 [advection]
 scheme            = "slopes"
-prognostic_slopes = false    # diagnostic slopes (revisit after mass path stable)
 # Mass fixer ENABLED: TM5 r1112 effectively does this via the
 # m = (at + bt × ps_evolving) × area / g formula at every substep.
 # Disabling mass_fixer is incompatible with the polar drainage at high

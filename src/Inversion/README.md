@@ -31,7 +31,9 @@ lookup as the forward observation sampler.
 
 - [`CostGradient.jl`](CostGradient.jl): `cs_surface_flux_4dvar(panels_rm0,
   panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps, mesh,
-  observations, controls; ..., preconditioner)` returns a `CS4DVarResult`.
+  observations, controls; scheme, ..., preconditioner)` returns a
+  `CS4DVarResult`. `scheme` is required so an inversion cannot silently choose
+  a different forward/adjoint advection operator.
 - [`Optimizer.jl`](Optimizer.jl): `cs_surface_flux_4dvar_optimize(...;
   optimizer)` and `cs_surface_flux_4dvar_solve(opt, cost_fn, controls)`.
   Backends are `CSGradientDescent` and `CSLBFGS` (`Optim.LBFGS`).
@@ -90,6 +92,12 @@ lookup as the forward observation sampler.
 - Cost: `J = Σ 0.5 ((H(x) − y)/σ)²` plus the background term. Residual and
   departure are `simulated − observed`. The departure file records this in
   its `departure_sign_convention` attribute.
+- Gradient norm: each backend uses one convention consistently for its
+  tolerance, `gradient_norm_history`, and `CSIterationLogEntry.gradient_norm`.
+  `CSGradientDescent` uses the Euclidean (L2) norm; `CSLBFGS` uses Optim's
+  L-infinity norm, preserving the established meaning of its
+  `gradient_tolerance`. The norm is over all controls, panels, and cells, in
+  physical x-space or preconditioned χ-space according to the active mode.
 - Preconditioned mode (`preconditioner` set): `controls[k].value` is χ,
   `J = 0.5‖χ‖² + J_obs(T(χ))`, and the gradient is `χ + T'(χ)ᵀ ∇ₓJ_obs`.
   Per-control `background` and `sigma` are ignored in this mode.

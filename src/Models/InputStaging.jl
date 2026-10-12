@@ -22,6 +22,7 @@
 module InputStaging
 
 using ..Models: _config_bool
+using ...AtomicFiles: atomic_publish
 using FileWatching: Pidfile
 import TOML
 
@@ -169,11 +170,8 @@ end
 # Falls back to `cp` if `dd` is unavailable or errors (e.g. O_DIRECT unsupported
 # on the target filesystem).
 function _stage_copy(src::AbstractString, dst::AbstractString)
-    tmp = dst * ".part"
-    metadata_tmp = _staged_metadata_path(dst) * ".part"
-    isfile(tmp) && rm(tmp; force = true)
-    try
-        stamp = _source_stamp(src)
+    stamp = _source_stamp(src)
+    atomic_publish(dst) do tmp
         ok = try
             run(pipeline(`dd if=$src of=$tmp bs=8M iflag=direct oflag=direct status=none`;
                          stderr=devnull))
@@ -186,18 +184,13 @@ function _stage_copy(src::AbstractString, dst::AbstractString)
             "staged copy size mismatch for $src"))
         _source_stamp(src) == stamp || throw(ErrorException(
             "staging source changed during copy: $src"))
-        open(metadata_tmp,"w") do io
-            TOML.print(io,stamp)
-        end
-        mv(tmp,dst;force=true)
-        mv(metadata_tmp,_staged_metadata_path(dst);force=true)
-        return dst
-    finally
-        # Never leave our partial files behind after a failed copy. Other
-        # files in the configured directory belong to their own producers.
-        isfile(tmp) && rm(tmp;force=true)
-        isfile(metadata_tmp) && rm(metadata_tmp;force=true)
     end
+    atomic_publish(_staged_metadata_path(dst)) do tmp
+        open(tmp, "w") do io
+            TOML.print(io, stamp)
+        end
+    end
+    return dst
 end
 
 # Spawn copy tasks for days [idx, idx+lookahead] that are neither staged nor in flight.

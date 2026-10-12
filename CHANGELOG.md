@@ -4,6 +4,12 @@
 
 ### Breaking changes
 
+- Removed the deprecated, unused `State.MetState`,
+  `diagnose_cm_from_continuity_vc!`, and
+  `diagnose_cm_from_continuity_ka!` APIs. Call
+  `diagnose_cm_from_continuity!` with explicit hybrid-coordinate `Δb`
+  coefficients when diagnosing structured vertical mass fluxes.
+
 - ERA5 L137 `echlevs` now uses TM5/ECMWF half-level numbering (`0` is the
   model top, `137` the surface). The ambiguous development aliases
   `ml137_94L` and `ml137_85L` are removed; use `ml137_cfl94` and
@@ -116,6 +122,16 @@
   `verify_write_replay_cs!` (was `div_scratch`). See Fixes for the test itself.
 
 ### Fixes
+
+- The restored ERA5 physics and hourly spectral downloaders stage outputs,
+  validate complete inventories and the requested grid/representation, and
+  exit nonzero rather than accepting partial downloads.
+
+- `CSLBFGS` uses Optim's L-infinity gradient norm consistently for stopping,
+  `gradient_norm_history`, and iteration logs. This explicitly preserves the
+  existing `gradient_tolerance` convention while making every reported
+  L-BFGS norm match the stopping criterion. `CSGradientDescent` continues to
+  use its documented L2 norm.
 
 - `CSLBFGS` evaluated every control point at least twice (#17): Optim
   received separate value and gradient closures that each ran the full
@@ -514,10 +530,8 @@
   every time step and is removed. Unlike the variable, `"substep"` keeps the window-end reset to
   the binary's endpoint air mass, so a cadence comparison changes only where
   convection and chemistry run.
-- Deprecated, for removal in the next minor release: `State.MetState`,
-  `diagnose_cm_from_continuity_vc!` and `diagnose_cm_from_continuity_ka!`. No
-  part of the package uses them. Removed: the exported generic function
-  `Preprocessing.reset_workspace!`, which had no methods.
+- Removed the exported generic function `Preprocessing.reset_workspace!`,
+  which had no methods.
 - Runs and preprocessing from `git archive` code snapshots record their commit:
   git writes it into `src/REVISION` on export (`export-subst`), and
   `source_revision()` reports it when the tree has no `.git`; edits made after

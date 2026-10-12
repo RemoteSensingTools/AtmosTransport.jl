@@ -61,8 +61,7 @@ export mass_basis, grid_type, horizontal_topology, A_ifc, B_ifc
 export uses_binary_substep_contract
 export source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics
 export flux_application_seconds, flux_storage_substep_scale
-export diagnose_cm_from_continuity!, diagnose_cm_from_continuity_vc!
-export diagnose_cm_from_continuity_ka!
+export diagnose_cm_from_continuity!
 export recompute_cm_from_dm_target!, recompute_faceindexed_cm_from_dm_target!
 export verify_window_continuity, verify_window_continuity_ll, verify_window_continuity_rg,
        verify_window_continuity_cs, ReplayScratch

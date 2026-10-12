@@ -64,38 +64,48 @@ The reading order:
 
 ## Features
 
-- **Multi-grid:** Regular lat-lon, reduced Gaussian, and cubed-sphere
-  (gnomonic and GEOS-native panel conventions). Hybrid σ-pressure vertical
-  coordinate.
-- **Multi-source:** ERA5 spectral preprocessing (LL / RG / CS targets) and
-  native cubed-sphere preprocessing for GEOS-IT C180 and GEOS-FP C720,
-  plus a preview MERRA-2 wind-derived CS path (with convection and PBL
-  inputs from the GEOS-Chem MERRA-2 archive). MERRA-2 data must currently
-  be staged outside the unified downloader.
-- **Multi-backend:** Single codebase for CPU and GPU via
+Feature labels summarize the detailed [validation status](#status-tracker):
+**stable** means production-used and regression-tested; **preview / experimental**
+means implemented but still missing campaign validation or complete backend
+coverage.
+
+- **Stable: lat-lon and cubed-sphere; preview / experimental: reduced
+  Gaussian — Multi-grid.** Regular lat-lon, reduced Gaussian, and cubed-sphere
+  (gnomonic and GEOS-native panel conventions), with a hybrid σ-pressure
+  vertical coordinate.
+- **Stable: ERA5 and GEOS-IT; preview / experimental: GEOS-FP and MERRA-2 —
+  Multi-source.** ERA5 spectral preprocessing (LL / RG / CS targets) and
+  native cubed-sphere preprocessing for GEOS-IT C180 and GEOS-FP C720, plus a
+  MERRA-2 wind-derived CS path (with convection and PBL inputs from the
+  GEOS-Chem MERRA-2 archive). MERRA-2 data must currently be staged outside
+  the unified downloader.
+- **Stable: CPU and NVIDIA CUDA; preview / experimental: Apple Metal —
+  Multi-backend.** Single codebase for CPU and GPU via
   [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl).
   CUDA path is end-to-end through the runtime driver; an Apple Silicon /
   Metal weakdep extension exists.
-- **Mass-conserving:** Dry-basis air-mass bookkeeping, with **write-time
+- **Stable — Mass-conserving.** Dry-basis air-mass bookkeeping, with **write-time
   replay gates** enabled by default in the preprocessor and **opt-in load-time
-  replay validation** at runtime. Tolerances `1e-10` (F64) / `1e-4` (F32) of
-  the largest cell mass. The gates certify that the stored fluxes and air
-  masses are consistent, not that the winds are right.
-- **Operator-modular:** Every physics operator is behind an abstract type
+  replay validation** at runtime. Per-cell tolerances are `1e-12` (F64) /
+  `1e-5` (F32), relative to the summed magnitudes of that cell's budget terms.
+  The gates certify that the stored fluxes and air masses are consistent, not
+  that the winds are right.
+- **Stable — Operator-modular.** Every physics operator is behind an abstract type
   with a `No<Operator>` no-op default; swap schemes via type dispatch
   without modifying core code.
-- **Advection schemes:** `UpwindScheme` (1st order), `SlopesScheme`
+- **Stable — Advection schemes.** `UpwindScheme` (1st order), `SlopesScheme`
   (Russell-Lerner flux with van Leer slopes re-diagnosed every sweep, 2nd
   order in smooth regions; not TM5's prognostic-moment scheme),
-  `PPMScheme` (Putman-Lin, 3rd order in smooth regions),
+  `PPMScheme` (limited Colella–Woodward edges feeding a Russell–Lerner flux,
+  2nd order in smooth regions),
   `LinRoodPPMScheme{ORD}` for cubed-sphere with FV3 cross-term advection
   (`ORD ∈ {5, 7}` selects the boundary stencil).
-- **Convection:** `CMFMCConvection` (GCHP-style RAS / Grell-Freitas, for
+- **Stable — Convection.** `CMFMCConvection` (GCHP-style RAS / Grell-Freitas, for
   GEOS sources) and `TM5Convection` (TM5 four-field entrainment /
   detrainment, for ERA5 sources) — different physics, identical
   `ConvectionForcing` plumbing.
 
-> **Note on adjoint maturity.** The cubed-sphere discrete-adjoint and
+> **Preview / experimental — adjoint and inversion.** The cubed-sphere discrete-adjoint and
 > surface-flux 4D-Var stack ship for the supported advection/operator matrix,
 > with checkpointing, covariance preconditioning, and optimization drivers.
 > Coverage is not universal: the optimized/clamped convection variants and
@@ -169,7 +179,7 @@ column and global mass diagnostics, independently of transport precision.
 ## Status tracker
 
 Single source of truth for what is production-ready, what is preview /
-experimental, and what is planned. Reviewed `2026-09-06`. Items move out
+experimental, and what is planned. Reviewed `2026-10-11`. Items move out
 of "experimental" only after a passing CPU+GPU regression suite and a
 documented validation run.
 
@@ -210,9 +220,9 @@ documented validation run.
 | --- | :---: | :---: | :---: | :---: | :---: |
 | `UpwindScheme` (1st order) | ✅ | ✅ | ✅ | — | ✅ |
 | `SlopesScheme` (van Leer, diagnosed slopes) | ✅ | ❌ | ✅ | — | ✅ |
-| `PPMScheme` (Putman-Lin) | ✅ | ❌ | ✅ | — | ✅ |
+| `PPMScheme` (PPM-informed slopes) | ✅ | ❌ | ✅ | — | ✅ |
 | `LinRoodPPMScheme{5}` | — | — | — | ✅ | ❌ (per-tracer loop) |
-| `LinRoodPPMScheme{7}` | — | — | — | 🟡 | ❌ (per-tracer loop) |
+| `LinRoodPPMScheme{7}` | — | — | — | ✅ | ❌ (per-tracer loop) |
 
 No scheme reproduces TM5's slopes advection, which carries the tracer-mass
 slopes as prognostic state; `SlopesScheme` shares only its face flux. A
@@ -335,8 +345,9 @@ prognostic-moment scheme is postponed (see
 - **Real-data preprocessing:** opt-in ERA5 and GEOS workflows exercise the
   write-time replay contract; these are not a substitute for a full
   cross-model validation campaign.
-- **Multi-month + observational closure:** *not yet done*; the cross-model and
-  observation intercomparison reports have not been published. See
+- **Multi-month cross-model validation:** 25-month CATRINE production runs and
+  controlled four-month scheme comparisons against GCHP are documented;
+  observational closure and a maintained end-to-end regression remain open. See
   [Validation status](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/theory/validation_status)
   for the honest current-state report.
 

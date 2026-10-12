@@ -2,7 +2,7 @@
 # GEOS-FP download task builder
 #
 # Supports two products:
-#   - C720 cubed-sphere mass fluxes from WashU archive (HTTP)
+#   - C720 cubed-sphere mass fluxes from the GEOS-Chem public S3 archive (HTTP)
 #   - 0.25° lat-lon surface/physics fields from AWS S3 (HTTP)
 # ===========================================================================
 
@@ -72,13 +72,13 @@ function _geosfp_file_urls(source::GEOSFPSource, protocol::HTTPProtocol,
     d = @sprintf("%02d", day(date))
 
     if source.product == "geosfp_c720"
-        # C720 hourly CTM files from WashU — timestamp is HHMM (30-min offset
-        # for time-averaged data), URL path is Y$y/M$m/D$d/
+        # C720 hourly CTM files from the GEOS-Chem public S3 archive — timestamp
+        # is HHMM (30-min offset for time-averaged data), URL path is Y$y/M$m/D$d/
         for coll in collections
             for hour in 0:23
                 timestamp = @sprintf("%02d30", hour)
                 fname = "GEOS.fp.asm.$(coll).$(datestr)_$(timestamp).V01.nc4"
-                url = "$(protocol.base_url)/$(coll)/Y$y/M$m/D$d/$fname"
+                url = "$(protocol.base_url)/Y$y/M$m/D$d/$fname"
                 push!(results, (url, fname, 2700.0))  # ~2.7 GB per file
             end
         end

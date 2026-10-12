@@ -10,7 +10,7 @@ toml     = "config/met_sources/geosfp.toml"
 root_dir = "~/data/AtmosTransport/met/geosfp/C720/raw"
 include_surface = true
 include_convection = true
-physics_dir = "~/data/AtmosTransport/met/geosfp/0.25x0.3125/raw"
+physics_dir = "~/data/AtmosTransport/met/geosfp/C720/raw_025"
 physics_layout = "latlon_025"
 
 [output]

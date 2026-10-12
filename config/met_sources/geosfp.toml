@@ -55,7 +55,7 @@ collections_required = ["tavg_1hr_ctm_c0720_v72"]
 # ---------------------------------------------------------------------------
 [access]
 protocol      = "http"
-base_url      = "http://geoschemdata.wustl.edu/ExtData/GEOS_C720/GEOS_FP_Native"
+base_url      = "https://geos-chem.s3.amazonaws.com/GEOS_C720/GEOS_FP_Raw"
 auth_required = false
 time_interval = 3600.0
 

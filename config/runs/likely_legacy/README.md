@@ -14,3 +14,8 @@ They use legacy `[run].tracer_name`, top-level `[init]` and
 on the review host, so no real-input acceptance is claimed. Start a current
 two-day run from `config/examples/minimal_template.toml`, supply consecutive
 version-4 files, and omit `stop_window` to consume both complete files.
+
+`catrine5d_c180_full137_f32_pbl_tm5_smoke_gpu.toml` is also provenance-only:
+its pre-PBL-rename input directory was quarantined and contains no compatible
+transport binary. It must not be reactivated without a regenerated L137 input
+and an evidence-based collaborative-LU depth or aggregation choice.

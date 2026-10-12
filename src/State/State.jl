@@ -8,7 +8,6 @@ Provides:
 - `AbstractFaceFluxState` hierarchy — face mass fluxes
   - `AbstractStructuredFaceFluxState` → `StructuredFaceFluxState` (am, bm, cm)
   - `AbstractUnstructuredFaceFluxState` → `FaceIndexedFluxState`
-- `MetState` — upstream meteorological fields (deprecated: no caller; removed in the next minor release)
 - Tracer allocation and mixing-ratio utilities
 """
 module State
@@ -23,7 +22,6 @@ include("Basis.jl")
 include("CellState.jl")
 include("CubedSphereState.jl")
 include("FaceFluxState.jl")
-include("MetState.jl")
 include("Tracers.jl")
 include("Fields/Fields.jl")
 

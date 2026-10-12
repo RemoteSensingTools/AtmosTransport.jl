@@ -493,7 +493,7 @@ Delete the fallbacks for the horizontal-balance, physics-cadence and replay vari
 **Kernels**
 10. Kernels:
     - keep `launch!`'s `sync = true` default [yes];
-    - remove the deprecated exported `diagnose_cm_from_continuity_ka!` (breaking: needs a version bump and release notes);
+    - ~~remove the deprecated exported `diagnose_cm_from_continuity_ka!`~~ (done for v0.5.0 with release notes);
     - export `launch!`?
     - spend GPU time on the sync measurement?
     - which machine is the timing reference (L40S F32 or A100 F64)?

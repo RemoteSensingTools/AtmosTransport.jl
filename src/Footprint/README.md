@@ -36,9 +36,10 @@ record types, and schedules come from [`../Tape/`](../Tape/).
   - `run_cs_footprint_forward(...)` is forward only and returns the objective
     value. Use it for finite-difference checks.
 - [`TapeRecording.jl`](TapeRecording.jl): `cs_tape_byte_estimate(...)` returns
-  a `CSTapeByteEstimate` without recording anything. It counts the split-sweep
-  record layout (tested for the linear and monotone-PPM schemes); Lin-Rood
-  records hold more panel states.
+  a `CSTapeByteEstimate` without recording anything. It counts both the
+  split-sweep layouts (linear and limited PPM) and Lin-Rood's larger layout;
+  each Lin-Rood step retains ten full-panel states and six face-panel tuples
+  before optional diffusion and convection records.
 - [`FootprintResult.jl`](FootprintResult.jl): `CSFootprintResult` (with
   `footprints[t]::NTuple{6}` of `(Nc, Nc)` arrays and
   `lag_steps[t] == nsteps - t`) and `CSTapeByteEstimate`.

@@ -12,7 +12,7 @@ include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport.MetDrivers: TransportBinaryReader, load_window!,
     load_flux_delta_window!, verify_window_continuity_cs, replay_tolerance,
-    ReplayScratch
+    ReplayScratch, flux_kind, flux_storage_substep_scale
 
 const USAGE = """
 Usage: julia --project=. scripts/validation/verify_cs_binary_continuity.jl \\
@@ -66,6 +66,15 @@ function dm_endpoint_consistency(cur_m, dm, next_m)
     end
     return (max_abs_err = max_abs, max_rel_err = max_abs / denom,
             worst_idx = worst_idx)
+end
+
+function scale_stored_fluxes_for_replay!(window, steps, stored_flux_kind)
+    scale = flux_storage_substep_scale(Float64, steps, stored_flux_kind)
+    isone(scale) && return window
+    for panels in (window.am, window.bm, window.cm), p in eachindex(panels)
+        panels[p] .*= scale
+    end
+    return window
 end
 
 function maybe_write_report(path::AbstractString, rows)
@@ -145,6 +154,7 @@ function main(argv = ARGS)
             end
 
             steps = steps_schedule[win]
+            scale_stored_fluxes_for_replay!(cur, steps, flux_kind(reader))
             scratch === nothing && (scratch = ReplayScratch(size(cur.m[1])))
             diag = verify_window_continuity_cs(cur.m, cur.am, cur.bm, cur.cm,
                                                m_next, steps; scratch)

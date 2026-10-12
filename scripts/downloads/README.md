@@ -20,7 +20,7 @@ the maintained data-layout guidance.
 | `era5_arco.toml` | ERA5-ARCO | Daily | **Default ERA5 core+surface.** Native spectral GRIB + single_level netCDF from Google ARCO-ERA5 (GCS, no MARS queue, ~78 MB/s) |
 | `era5_convection_only.toml` | ERA5 (CDS) | Daily | Convective mass flux (235009-012) — the one field ARCO lacks; daily requests retain normal CDS priority |
 | `era5_native_monthly.toml` | ERA5 (CDS) | Monthly | Legacy all-fields CDS path (core/convection/surface); MARS-queue-bound |
-| `geosfp_c720.toml` | GEOS-FP | Per-file | C720 cubed-sphere CTM mass fluxes from WashU |
+| `geosfp_c720.toml` | GEOS-FP | Per-file | C720 cubed-sphere CTM mass fluxes from the public GEOS-Chem S3 archive |
 | `geosit_c180.toml` | GEOS-IT | Per-file | C180 cubed-sphere from AWS S3 |
 | `merra2.toml` | MERRA-2 | Per-day | OPeNDAP download (not yet implemented) |
 
@@ -32,6 +32,11 @@ from the single_level `sp` netCDF, not spectral `lnsp`). The CDS
 For a full multi-year bulk pull, run several `download_data.jl` invocations in
 parallel with disjoint `[time]` ranges — the per-file download manifest keeps
 concurrent processes from colliding.
+
+The legacy split-file ERA5 producers remain available for inputs consumed by
+the 0.5° preprocessing path: `download_era5_spectral_hourly.py` writes the
+hourly spectral GRIB streams, and `download_era5_physics.py` writes the model-
+level convection and thermodynamic NetCDF files.
 
 ### Examples
 

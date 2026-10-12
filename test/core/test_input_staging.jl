@@ -34,7 +34,7 @@ end
             end
         end
         cleanup_staging!(mgr)
-        @test isempty(filter(f -> endswith(f, ".bin") || endswith(f, ".part"), readdir(stage)))
+        @test isempty(filter(f -> endswith(f, ".bin") || occursin(".tmp-", f), readdir(stage)))
     end
 
     @testset "disabled: returns NAS paths, no staging" begin

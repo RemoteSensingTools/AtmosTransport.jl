@@ -5,12 +5,14 @@ using Test
 using AtmosTransport
 using .AtmosTransport.MetDrivers: driver_grid
 using .AtmosTransport.Models: current_qv, substep_index, window_index
+const Runner = AtmosTransport.Models.DrivenRunner
 
 function write_driven_latlon_binary(path::AbstractString;
                                     FT::Type{<:AbstractFloat}=Float64,
                                     source_flux_sampling::Symbol=:window_start_endpoint,
                                     flux_sampling::Symbol=:window_constant,
-                                    window_mass_scales::Tuple{Vararg{Real}}=(1, 1))
+                                    window_mass_scales::Tuple{Vararg{Real}}=(1, 1),
+                                    mass_basis::Symbol=:moist)
     Nx, Ny, Nz = 4, 3, 2
     mesh = LatLonMesh(; FT=FT, Nx=Nx, Ny=Ny)
     vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
@@ -38,7 +40,7 @@ function write_driven_latlon_binary(path::AbstractString;
                            dt_met_seconds=3600.0,
                            half_dt_seconds=1800.0,
                            steps_per_window=2,
-                           mass_basis=:moist,
+                           mass_basis,
                            source_flux_sampling=source_flux_sampling,
                            flux_sampling=flux_sampling,
                            extra_header=Dict(
@@ -46,6 +48,35 @@ function write_driven_latlon_binary(path::AbstractString;
                                "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
                            ))
     return grid
+end
+
+@testset "runner initial condition uses start_window air mass" begin
+    mktemp() do path, io
+        close(io)
+        write_driven_latlon_binary(path; FT = Float64,
+                                   window_mass_scales = (1, 2),
+                                   mass_basis = :dry)
+        cfg = Dict{String, Any}(
+            "input" => Dict("binary_paths" => [path]),
+            "run" => Dict("start_window" => 2, "stop_window" => 2,
+                          "prefetch_windows" => false),
+            "advection" => Dict("scheme" => "upwind"),
+            "tracers" => Dict("co2" => Dict(
+                "init" => Dict("kind" => "uniform", "background" => 4e-4))),
+            "output" => Dict("enabled" => false),
+        )
+        model = run_driven_simulation(cfg)
+        @test all(mixing_ratio(model.state, :co2) .== 4e-4)
+        @test all(model.state.air_mass .== 2.0)
+    end
+end
+
+@testset "lat-lon runner requires a global longitude span" begin
+    @test Runner._require_global_longitude_span(
+        LatLonMesh(; FT = Float64, Nx = 4, Ny = 3)) === nothing
+    regional = LatLonMesh(; FT = Float64, Nx = 4, Ny = 3,
+                          longitude = (-20, 20))
+    @test_throws ArgumentError Runner._require_global_longitude_span(regional)
 end
 
 function write_driven_reduced_binary(path::AbstractString;
