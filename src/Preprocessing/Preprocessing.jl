@@ -110,7 +110,7 @@ import ..MetDrivers: has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_clo
 using ..Architectures: CPU
 # Physical constants, numerical defaults and met-source constants
 # (`src/Parameters`) used by the files below.
-using ..Parameters: IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_PRESSURE, TM5_CONSTANTS, R_DRY_AIR,
+using ..Parameters: EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_PRESSURE, TM5_CONSTANTS, R_DRY_AIR,
                     VIRTUAL_TEMPERATURE_FACTOR, HYDROSTATIC_REFERENCE_TEMPERATURE,
                     GLOBAL_MEAN_DRY_SURFACE_PRESSURE, GLOBAL_MEAN_SPECIFIC_HUMIDITY,
                     DEFAULT_POSITIVITY_CFL_LIMIT, DEFAULT_SUBSTEP_CFL_TARGET,
@@ -147,6 +147,7 @@ using ..State: AbstractMassBasis, DryBasis, MoistBasis,
 using ..Regridding: build_regridder, apply_regridder!, coarsen_sum!, coarsen_area_weighted!,
                     default_regrid_cache_dir
 using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField
+using ..GriddedIO: source_latlon_mesh, SnappedFaces
 using ..MetDrivers: LatLonBinaryGeometry, CubedSphereBinaryGeometry, TransportBinaryReader,
                     mesh_definition,
                     TransportBinaryHeader, binary_geometry, grid_type,

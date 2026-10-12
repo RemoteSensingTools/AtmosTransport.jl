@@ -518,11 +518,11 @@ function process_era5_n320_to_cs_day(date::Date,
         # adaptive loop re-reconstructs at the chosen `steps`.
         out_dt_factor_for(steps) = FT(dt_met_seconds / (2 * steps))
         # --- Surface PBL payload setup. ---
-        # Surface fields live on a SEPARATE regular-lat-lon 0.25° NetCDF
+        # Surface fields live on a SEPARATE point-registered lat-lon 0.25° NetCDF
         # (`sfc_an_native/era5_surface_YYYYMM.nc`), read via the shared
         # `era5_surface_reader` (handles ERA5 unit/sign + orientation: pblh=blh,
         # ustar=zust, hflux=-sshf/3600, t2m=2t; lat S→N, lon centered). They are
-        # regridded to C180 with a dedicated regular-ll → CS regridder (the same
+        # regridded to C180 with a dedicated snapped-face LL → CS regridder (the same
         # `build_regridder` used by the LL→CS path), then written as the
         # `surface` payload.
         do_surface = settings.include_surface
@@ -531,11 +531,13 @@ function process_era5_n320_to_cs_day(date::Date,
         do_tm5_diffusion = settings.include_tm5_diffusion
         if do_surface
             surf_Nx, surf_Ny = 1440, 721      # ERA5 0.25° single-levels regular-ll
-            # radius = the TARGET mesh's radius so the LL source manifold matches
-            # the CS target manifold (build_regridder rejects a mismatch).
-            surf_ll_mesh = LatLonMesh(; FT = FT, Nx = surf_Nx, Ny = surf_Ny,
-                                       longitude = (-180, 180), latitude = (-90, 90),
-                                       radius = mesh.radius)
+            surf_reader = open_era5_surface_reader(
+                joinpath(settings.root_dir, "sfc_an_native"), date, surf_Nx, surf_Ny)
+            # Derive faces from the actual file coordinates. ERA5's 721
+            # latitude rows include both poles, so SnappedFaces gives
+            # half-width polar caps instead of treating the rows as 721
+            # uniform cells spread over -90..90.
+            surf_ll_mesh = era5_surface_source_mesh(surf_reader, mesh.radius)
             surf_regridder = build_regridder(surf_ll_mesh, mesh;
                                              normalize = false, cache_dir = cache_dir)
             surf_ws = allocate_cs_preprocess_workspace(
@@ -546,9 +548,7 @@ function process_era5_n320_to_cs_day(date::Date,
             surf_ustar = ntuple(_ -> zeros(FT, Nc, Nc), 6)
             surf_hflux = ntuple(_ -> zeros(FT, Nc, Nc), 6)
             surf_t2m   = ntuple(_ -> zeros(FT, Nc, Nc), 6)
-            surf_reader = open_era5_surface_reader(
-                joinpath(settings.root_dir, "sfc_an_native"), date, surf_Nx, surf_Ny)
-            @info "  Surface PBL payload ENABLED (regular-ll 0.25° → C180)"
+            @info "  Surface PBL payload ENABLED (file-coordinate SnappedFaces 0.25° LL → C180)"
             if do_tm5_diffusion
                 surf_lhflux = ntuple(_ -> zeros(FT, Nc, Nc), 6)   # latent flux on C180
                 dkg_c180    = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6)

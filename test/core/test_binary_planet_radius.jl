@@ -73,6 +73,24 @@ end
 # As written before the key existed.
 drop_radius_key!(path) = rewrite_header!(h -> delete!(h, "planet_radius_m"), path)
 
+@testset "preprocessing targets use one Earth radius" begin
+    P = AtmosTransport.Preprocessing
+    for FT in (Float32, Float64)
+        targets = (
+            P.build_target_geometry(Val(:latlon),
+                Dict{String, Any}("nlon" => 8, "nlat" => 4), FT),
+            P.build_target_geometry(Val(:synthetic_reduced_gaussian),
+                Dict{String, Any}("gaussian_number" => 2), FT),
+            P.build_target_geometry(Val(:cubed_sphere),
+                Dict{String, Any}("Nc" => 2), FT),
+        )
+        for target in targets
+            @test target.mesh.radius === FT(EARTH_RADIUS)
+            @test P.target_header_metadata(target)["planet_radius_m"] == EARTH_RADIUS
+        end
+    end
+end
+
 @testset "binaries carry the mesh radius to the runtime" begin
     mktempdir() do dir
         for radius in (EARTH_RADIUS, IFS_EARTH_RADIUS), FT in (Float32, Float64)

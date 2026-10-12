@@ -35,7 +35,7 @@ GEOS-native panel convention).
 function source_grid(settings::GEOSSettings; FT::Type{<:AbstractFloat}=Float64)
     return CubedSphereMesh(; Nc = settings.Nc, FT = FT,
                             convention = GEOSNativePanelConvention(),
-                            radius = FT(IFS_EARTH_RADIUS))
+                            radius = FT(EARTH_RADIUS))
 end
 
 """

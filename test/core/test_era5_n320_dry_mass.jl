@@ -71,8 +71,8 @@ end
         areas = n320_cell_areas(grid)
         @test length(areas) == ncells(grid.mesh)
         @test all(areas .> 0)
-        # Total surface area should be ≈ 4πR² for Earth (R = 6.371229e6 m).
-        @test isapprox(sum(areas), 4π * (6.371229e6)^2; rtol = 1e-6)
+        # Synthetic reduced-Gaussian targets use the common target sphere.
+        @test isapprox(sum(areas), 4π * grid.mesh.radius^2; rtol = 1e-6)
     end
 
     @testset "Q = 0 ⇒ dry == moist exactly" begin

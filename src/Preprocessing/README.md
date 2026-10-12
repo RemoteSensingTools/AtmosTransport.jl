@@ -10,6 +10,12 @@ face-indexed `hflux`), `cm`, `ps`, forward deltas (CS `dm`; LL `dam`, `dbm`,
 writer balances the fluxes, diagnoses `cm`, and runs the replay and positivity
 gates before the file is kept (exceptions under Invariants). The runtime reads it through [`../MetDrivers/`](../MetDrivers/README.md).
 
+Every output target is built on `Parameters.EARTH_RADIUS` (6 371 000 m), and
+that value is written as `planet_radius_m` so preprocessing areas and runtime
+areas are identical. `IFS_EARTH_RADIUS` (6 371 229 m) is source-side only:
+ERA5 spectral transforms, the native N320 source sphere, and the TM5 humidity
+remap retain it where reproducing IFS geometry requires it.
+
 ## Entry Points
 
 - CLI: [`../../scripts/preprocessing/preprocess_transport_binary.jl`](../../scripts/preprocessing/preprocess_transport_binary.jl)

@@ -405,7 +405,11 @@ divergence to the complete mass tendency and left almost nothing for `cm`.
 function compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps,
                               dA, dB, grid::LatLonTargetGeometry, half_dt, Nz)
     Nlon, Nlat = nlon(grid), nlat(grid)
-    R_g = IFS_EARTH_RADIUS / STANDARD_GRAVITY   # [m × s²/m] = [s²/m²] — converts dp × R / g to mass/area
+    # The spectral wind synthesis above uses the IFS radius because vorticity
+    # and divergence are defined on the physical IFS sphere.  These face
+    # integrals, however, belong to the output mesh and must use its recorded
+    # radius so their areas agree with `planet_radius_m` at runtime.
+    R_g = grid.mesh.radius / STANDARD_GRAVITY   # [m × s²/m] = [s²/m²] — converts dp × R / g to mass/area
     dlon = grid.dlon        # [radians] — longitudinal grid spacing
     dlat = grid.dlat        # [radians] — latitudinal grid spacing
     # --- Zonal mass flux: am[i, j, k] at west face of cell (i, j) ---

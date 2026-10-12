@@ -42,7 +42,7 @@ function _ll_fixture_binary(path::AbstractString;
                             bm_uniform::Real = 0,
                             surface_pressure_basis::AbstractSurfacePressureBasis = TotalSurfacePressure(),
                             extra_header::AbstractDict = Dict{String, Any}(),
-                            radius::Real = AtmosTransport.Parameters.IFS_EARTH_RADIUS)
+                            radius::Real = AtmosTransport.Parameters.EARTH_RADIUS)
     # Default: the preprocessors' sphere, which the CS target shares.
     mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny, radius)
     A_ifc = FT[0, 2500, 5000, 7500, 10000]
@@ -575,9 +575,9 @@ end
             cs_grid = build_target_geometry(Val(:cubed_sphere), cfg_grid, Float64)
 
             # A source on another sphere is rejected.
-            ll_path = joinpath(dir, "ll_earth.bin")
-            _ll_fixture_binary(ll_path; radius = AtmosTransport.Parameters.EARTH_RADIUS)
-            @test_throws ArgumentError regrid_ll_binary_to_cs(ll_path, cs_grid, joinpath(dir, "cs_earth.bin");
+            ll_path = joinpath(dir, "ll_ifs.bin")
+            _ll_fixture_binary(ll_path; radius = AtmosTransport.Parameters.IFS_EARTH_RADIUS)
+            @test_throws ArgumentError regrid_ll_binary_to_cs(ll_path, cs_grid, joinpath(dir, "cs_ifs.bin");
                                                               FT = Float64)
 
             # A source without the radius key was built on the IFS sphere.
@@ -591,11 +591,8 @@ end
             delete!(header, "planet_radius_m")
             json = Vector{UInt8}(JSON3.write(header))
             open(io -> write(io, json, zeros(UInt8, nbytes - length(json))), ll_path, "r+")
-            cs_path = joinpath(dir, "cs_keyless.bin")
-            regrid_ll_binary_to_cs(ll_path, cs_grid, cs_path; FT = Float64)
-            reader = AtmosTransport.MetDrivers.TransportBinaryReader(cs_path; FT = Float64)
-            @test reader.header.planet_radius_m == AtmosTransport.Parameters.IFS_EARTH_RADIUS
-            close(reader)
+            @test_throws ArgumentError regrid_ll_binary_to_cs(
+                ll_path, cs_grid, joinpath(dir, "cs_keyless.bin"); FT = Float64)
         end
     end
 

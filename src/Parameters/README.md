@@ -20,10 +20,13 @@ other AtmosTransport modules; every later module may import from it.
 ## Entry Points
 
 - Constants of nature, in [`PhysicalConstants.jl`](PhysicalConstants.jl):
-  - `EARTH_RADIUS` (6.371e6 m), the default radius of meshes built without one
-    (and of transport binaries that do not record `planet_radius_m`)
-  - `IFS_EARTH_RADIUS` (6.371229e6 m), the radius of the ERA5 spectral transforms,
-    TM5 and every preprocessing target mesh (recorded in binaries as `planet_radius_m`)
+  - `EARTH_RADIUS` (6.371e6 m), the radius of every preprocessing target mesh,
+    the default radius of other meshes, and the fallback for transport binaries
+    that do not record `planet_radius_m`
+  - `IFS_EARTH_RADIUS` (6.371229e6 m), used only for source-side calculations
+    whose physical definition comes from IFS/TM5: ERA5 spectral wind synthesis,
+    the native N320 source mesh, and the N320 humidity remap used by the TM5
+    attachment path. It is not a transport target radius.
   - `STANDARD_GRAVITY`, `STANDARD_PRESSURE`, `THETA_REFERENCE_PRESSURE`
   - `R_DRY_AIR`, `CP_DRY_AIR`, `CP_OVER_R_DIATOMIC`, `DRY_AIR_MOLAR_MASS`,
     `VIRTUAL_TEMPERATURE_FACTOR`, `AVOGADRO`

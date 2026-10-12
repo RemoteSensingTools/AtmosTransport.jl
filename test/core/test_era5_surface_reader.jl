@@ -68,6 +68,11 @@ end
 
         reader = AtmosTransport.Preprocessing.open_era5_surface_reader(dir, Date(2021, 12, 1), 4, 3)
         try
+            mesh = AtmosTransport.Preprocessing.era5_surface_source_mesh(
+                reader, AtmosTransport.Parameters.EARTH_RADIUS)
+            @test mesh.λᶜ == [-180.0, -90.0, 0.0, 90.0]
+            @test mesh.φᶠ == [-90.0, -45.0, 45.0, 90.0]
+            @test isnan(mesh.Δφ)
             surface = AtmosTransport.Preprocessing.load_era5_surface_window(reader, 2, Float64)
             @test size(surface.pblh) == (4, 3)
             # Latitude flips S->N, then longitude rolls 0..360 to centered [-180,180).
@@ -77,6 +82,34 @@ end
             @test all(surface.ustar .== 0.25)
             @test all(surface.hflux .== 0.1)
             @test all(surface.t2m .== 290.0)
+        finally
+            AtmosTransport.Preprocessing.close_era5_surface_reader(reader)
+        end
+    end
+end
+
+@testset "ERA5 0.25-degree surface mesh uses file-coordinate snapped faces" begin
+    mktempdir() do dir
+        path = joinpath(dir, "era5_surface_20211201.nc")
+        NCDataset(path, "c") do ds
+            ds.dim["longitude"] = 1440
+            ds.dim["latitude"] = 721
+            defVar(ds, "longitude", collect(0.0:0.25:359.75), ("longitude",))
+            defVar(ds, "latitude", collect(90.0:-0.25:-90.0), ("latitude",))
+        end
+
+        reader = AtmosTransport.Preprocessing.open_era5_surface_reader(
+            dir, Date(2021, 12, 1), 1440, 721)
+        try
+            mesh = AtmosTransport.Preprocessing.era5_surface_source_mesh(
+                reader, AtmosTransport.Parameters.EARTH_RADIUS)
+            @test mesh.λᶜ[1:3] == [-180.0, -179.75, -179.5]
+            @test mesh.λᶠ[1:3] == [-180.125, -179.875, -179.625]
+            @test mesh.φᶠ[1:3] == [-90.0, -89.875, -89.625]
+            @test mesh.φᶠ[end-2:end] == [89.625, 89.875, 90.0]
+            @test isnan(mesh.Δφ)
+            @test sum(AtmosTransport.Grids.cell_areas_by_latitude(mesh)) * mesh.Nx ≈
+                  4π * AtmosTransport.Parameters.EARTH_RADIUS^2 rtol = 1e-12
         finally
             AtmosTransport.Preprocessing.close_era5_surface_reader(reader)
         end
