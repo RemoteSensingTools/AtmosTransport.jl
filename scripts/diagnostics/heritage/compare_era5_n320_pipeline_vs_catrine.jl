@@ -96,7 +96,7 @@ function main(args::Vector{String} = ARGS)
     cli.Nc == 180 ||
         error("Catrine snapshots are C180 — comparison requires `--nc 180`. " *
               "For a faster scalar smoke without Catrine, run " *
-              "`test/test_era5_n320_to_c180_pipeline.jl` with smaller Nc.")
+              "`test/real_data/test_era5_n320_to_c180_pipeline.jl` with smaller Nc.")
 
     catrine_file = _catrine_path(cli.catrine, cli.date, cli.hour)
     isfile(catrine_file) ||

@@ -334,7 +334,6 @@ description = "Meteorological sources for preprocessing: ERA5 native GRIB and sp
 files = [
     "core/test_era5_n320_dry_mass.jl",
     "core/test_era5_n320_reader.jl",
-    "core/test_era5_n320_to_c180_pipeline.jl",
     "core/test_era5_n320_to_c180_regrid.jl",
     "core/test_era5_n320_vertical_merge.jl",
     "core/test_era5_n320_window_reader.jl",
