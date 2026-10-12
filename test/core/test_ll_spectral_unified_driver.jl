@@ -135,10 +135,18 @@ end
         @test !haskey(_header_without_creation_time(first_path), :write_replay_check)
         @test read(off_path)[HEADER_SIZE + 1:end] == read(first_path)[HEADER_SIZE + 1:end]
 
-        # The lat-lon column balance spreads its correction by layer mass only.
+        # The lat-lon column balance takes every column weighting; the header
+        # records a non-mass one. With one (hybrid) level every weighting
+        # puts the whole correction there, so the payload is unchanged.
         hyb = _ll_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "hyb");
                                 column_balance_weights = :hybrid_b)
-        err = try process_day(date, grid, hyb, vertical; positivity_cfl_limit = 0.95); nothing catch e; e end
-        @test err isa ArgumentError && contains(err.msg, "cubed-sphere targets only")
+        hyb_path, _ = process_day(date, grid, hyb, vertical; positivity_cfl_limit = 0.95)
+        @test _header_without_creation_time(hyb_path)[:column_balance_weights] == "hybrid_b"
+        @test !haskey(_header_without_creation_time(first_path), :column_balance_weights)
+        @test read(hyb_path)[HEADER_SIZE + 1:end] == read(first_path)[HEADER_SIZE + 1:end]
+        bad = _ll_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "bad");
+                                column_balance_weights = :pressure)
+        err = try process_day(date, grid, bad, vertical; positivity_cfl_limit = 0.95); nothing catch e; e end
+        @test err isa ArgumentError && contains(err.msg, "column_balance_weights must be one of")
     end
 end

@@ -185,8 +185,9 @@ For each of the day's 24 hourly windows:
       previous-window state forward; the per-day binary is built
       window-by-window rather than accumulated.
     - Every target balances the column-integrated fluxes and spreads
-      each face's correction over the layers by air mass, so `cm`
-      keeps the vertical motion (see
+      each face's correction over the layers with `[numerics]
+      column_balance_weights` (air mass in hybrid layers, `hybrid_mass`,
+      by default), so `cm` keeps the vertical motion (see
       [Vertical transport](../theory/vertical_transport.md) section 2).
     - **CS** (spectral source): a CG-based solve on the per-panel
       cubed-sphere Laplacian; cm is then derived via

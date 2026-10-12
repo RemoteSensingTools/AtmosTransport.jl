@@ -244,6 +244,7 @@ function build_v4_header(date::Date,
     _with_tm5_convection_basis(header, settings.tm5_convection_enable ?
                                        mass_basis_from_symbol(settings.mass_basis) : nothing)
 
+    _with_column_weights_record(header, _check_spectral_column_weights(grid, settings))
     merge!(header, target_header_metadata(grid))
     validate_transport_contract!(header)
     return header

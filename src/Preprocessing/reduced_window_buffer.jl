@@ -43,7 +43,7 @@ function fill_buffer_slot!(buf::SlidingWindowBuffer{FT},
     return nothing
 end
 
-mutable struct ReducedGaussianSpectralWindowWorkspace{FT, TW, MW, BW, QW, CL}
+mutable struct ReducedGaussianSpectralWindowWorkspace{FT, TW, MW, BW, QW, CL, CW}
     work           :: TW
     merged         :: MW
     buf            :: BW
@@ -58,6 +58,7 @@ mutable struct ReducedGaussianSpectralWindowWorkspace{FT, TW, MW, BW, QW, CL}
     div_scratch    :: Matrix{Float64}
     dm_target_work :: Matrix{Float64}
     steps_schedule :: Vector{Int}
+    balance_weights :: CW          # column-balance weights on the output levels
     fidelity_capture :: Ref{Any}
     dt_met_seconds :: Float64
     cur            :: Int
@@ -135,13 +136,17 @@ function allocate_window_workspace(grid::ReducedGaussianTargetGeometry,
     div_scratch = zeros(Float64, nc, Nz)
     dm_target_work = zeros(Float64, nc, Nz)
 
+    balance_weights = _spectral_column_weights(grid, settings, vertical)
+
     return ReducedGaussianSpectralWindowWorkspace{
-        FT, typeof(work), typeof(merged), typeof(buf), typeof(qv_ws), typeof(cL)}(
+        FT, typeof(work), typeof(merged), typeof(buf), typeof(qv_ws), typeof(cL),
+        typeof(balance_weights)}(
             work, merged, buf, qv_ws, thermo_path, ps_offsets, cL,
             hflux_work, m_cur_work, m_next_work, cm_work, div_scratch,
             dm_target_work, fill(exact_steps_per_window(settings.met_interval,
                                                          settings.dt),
                                   spec.n_times),
+            balance_weights,
             Ref{Any}(nothing),
             Float64(settings.met_interval),
             1, 2)
@@ -212,7 +217,8 @@ function drain_ready_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
                                workspace.div_scratch, workspace.dm_target_work,
                                workspace.buf, workspace.cur,
                                workspace.buf.m[workspace.nxt],
-                               workspace.work, workspace.cL, steps)
+                               workspace.work, workspace.cL, steps;
+                               weights = workspace.balance_weights)
         contract_diag = _verify_rg_stored_window!(
             contract, workspace, workspace.buf.m[workspace.nxt], win_idx;
             write_replay_on = write_replay_on, accumulate = false)
@@ -270,7 +276,8 @@ function flush_final_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
                                workspace.m_next_work, workspace.cm_work,
                                workspace.div_scratch, workspace.dm_target_work,
                                workspace.buf, workspace.cur, m_next,
-                               workspace.work, workspace.cL, steps)
+                               workspace.work, workspace.cL, steps;
+                               weights = workspace.balance_weights)
         contract_diag = _verify_rg_stored_window!(
             contract, workspace, m_next, win_idx;
             write_replay_on = write_replay_on, accumulate = false)

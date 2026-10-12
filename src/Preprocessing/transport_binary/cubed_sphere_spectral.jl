@@ -595,8 +595,8 @@ function process_day(date::Date,
     cs_balance_project_every = Int(get(settings, :cs_balance_project_every,
                                        DEFAULT_POISSON_PROJECT_EVERY))
     # Column weights, checked before any input is read.
-    weights_kind = _check_spectral_column_weights(grid, settings)
-    balance_weights = column_weights(weights_kind, vertical.merged_vc.B)
+    balance_weights = _spectral_column_weights(grid, settings, vertical)
+    weights_kind = get(settings, :column_balance_weights, :hybrid_mass)
     date_str = Dates.format(date, "yyyymmdd")
 
     vo_d_path = joinpath(settings.spectral_dir, "era5_spectral_$(date_str)_vo_d.gb")

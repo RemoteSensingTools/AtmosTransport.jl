@@ -315,7 +315,9 @@ How a column mass-budget correction is spread over the levels of a column.
   stratosphere) receive none of it, so a column mismatch cannot appear in
   their vertical mass flux as a coherent mode proportional to pressure.
 - `HybridMassWeightedColumn(B)`: in proportion to layer air mass, but only in
-  layers with `ΔB > 0`; pure-pressure layers receive none of it.
+  hybrid layers, `ΔB_k ≥ HYBRID_LAYER_MIN_DB` (1e-6); pure-pressure layers,
+  including near-pure-pressure ones such as GEOS L72 layer 41 (`ΔB = 8.2e-9`),
+  receive none of it.
 """
 abstract type AbstractColumnWeights end
 struct MassWeightedColumn <: AbstractColumnWeights end
@@ -344,12 +346,24 @@ end
 """
     HybridMassWeightedColumn(B) -> weights
 
-Air-mass weights restricted to the hybrid layers (`ΔB_k > 0`) of interface
-`B`, top first.
+Air-mass weights restricted to the hybrid layers of interface `B` (top first):
+layer `k` is hybrid when `ΔB_k = B_{k+1} − B_k ≥ HYBRID_LAYER_MIN_DB` (1e-6),
+i.e. when a 1000 hPa change of surface pressure changes its thickness by at
+least 1 Pa. Smaller positive increments are rounding residues of a
+pure-pressure layer (GEOS/MERRA-2 L72 layer 41, 150–177 hPa: `ΔB = 8.2e-9`,
+3e-7 of its thickness); the smallest genuine increment of the shipped tables
+is ERA5 L137 layer 55 (`ΔB = 7e-6`). A coordinate with no hybrid layer is an
+error.
 """
 struct HybridMassWeightedColumn <: AbstractColumnWeights
-    hybrid :: BitVector            # layers with ΔB > 0, top first
-    HybridMassWeightedColumn(B::AbstractVector{<:AbstractFloat}) = new(_hybrid_layer_dB(B) .> 0)
+    hybrid :: BitVector            # layers with ΔB ≥ HYBRID_LAYER_MIN_DB, top first
+    function HybridMassWeightedColumn(B::AbstractVector{<:AbstractFloat})
+        hybrid = _hybrid_layer_dB(B) .>= HYBRID_LAYER_MIN_DB
+        any(hybrid) || throw(ArgumentError(
+            "hybrid B has no layer with ΔB ≥ $(HYBRID_LAYER_MIN_DB); " *
+            "hybrid_mass column weights need at least one hybrid layer"))
+        return new(hybrid)
+    end
 end
 
 # Weight of level `k` for a face between cells of air mass `m_a`, `m_b`,
@@ -369,6 +383,14 @@ end
 @inline _cell_weight(w::HybridBWeightedColumn, m, k) = w.dB[k]
 @inline _cell_weight(w::HybridMassWeightedColumn, m, k) =
     w.hybrid[k] ? _finite_nonnegative_weight(m) : 0.0
+
+# The column weights as the residual weight of the explicit-tendency closure
+# `recompute_cm_from_dm_target!` (lat-lon and reduced Gaussian), so a column's
+# residual is folded into the same levels as its horizontal correction.
+struct ColumnResidualWeight{W<:AbstractColumnWeights} <: Function
+    weights :: W
+end
+(r::ColumnResidualWeight)(m, k) = _cell_weight(r.weights, m, k)
 
 # Number of layers the weights are defined for (`nothing`: any).
 _weight_levels(::MassWeightedColumn) = nothing

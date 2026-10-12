@@ -42,15 +42,27 @@
 _geos_effective_balance(cm_closure::Symbol) =
     cm_closure in (:pressure_fixer, :pfix_corrected) ? "none" : HORIZONTAL_BALANCE_TAG
 
-# Non-mass column weights need a closure that balances the column: the
-# pressure-fixer closures keep the native fluxes.
+# Column weights spread the correction of a column balance. The pressure-fixer
+# closures keep the native horizontal fluxes and balance nothing, so for them
+# the met source's weights (default `hybrid_mass`) do not apply: they are
+# validated and otherwise ignored, never an error.
 function _check_geos_column_weights(kind::Symbol, cm_closure::Symbol)
     _validate_column_balance_weights(kind, "GEOS")
-    kind === :mass && return nothing
-    _geos_effective_balance(cm_closure) == "none" && throw(ArgumentError(
-        "column_balance_weights = $(kind) needs a column balance; geos_cm_closure = " *
-        "$(repr(cm_closure)) keeps the native horizontal fluxes"))
+    _geos_effective_balance(cm_closure) == "none" &&
+        @info "GEOS geos_cm_closure = $(repr(cm_closure)) keeps the native horizontal " *
+              "fluxes; column_balance_weights = $(kind) does not apply"
     return nothing
+end
+
+_check_native_closure_config(settings::AbstractGEOSSettings, cm_closure::Symbol) =
+    _check_geos_column_weights(settings.column_balance_weights, cm_closure)
+
+# Record the column weights in a GEOS header only when the closure balances the
+# column; otherwise `horizontal_balance = "none"` states that no balance ran.
+function _with_geos_column_weights_record(header::AbstractDict, kind::Symbol,
+                                          cm_closure::Symbol)
+    _geos_effective_balance(cm_closure) == "none" && return header
+    return _with_column_weights_record(header, kind)
 end
 
 _geos_balance_description(balance::AbstractString) =
@@ -271,7 +283,7 @@ function _process_day_geos_cs_unified(date::Date,
             cs_center_law      = _cs_center_law_tag(grid),
             longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
             planet_radius      = grid.mesh.radius,
-            extra_header = _with_replay_record(_with_column_weights_record(Dict{String, Any}(
+            extra_header = _with_replay_record(_with_geos_column_weights_record(Dict{String, Any}(
                 "preprocessor" => "geos_native_to_cs",
                 "preprocessor_contract" => "plan41_variable_substeps",
                 "runtime_substep_contract" => "binary_schedule",
@@ -332,7 +344,7 @@ function _process_day_geos_cs_unified(date::Date,
                      "geos_omega_max_bottom_flux_correction" =>
                          workspace.omega_regularization.max_bottom_flux_correction) :
                     ())...,
-            ), settings.column_balance_weights), write_replay_on),
+            ), settings.column_balance_weights, workspace.cm_closure), write_replay_on),
         )
         writer = CubedSphereBinaryWriter(inner_writer, DryBasis();
                                          Nc = Nc, npanel = npanel,

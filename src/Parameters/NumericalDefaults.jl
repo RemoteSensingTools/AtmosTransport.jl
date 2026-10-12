@@ -88,6 +88,19 @@ preprocessing has no independent vertical-flux input (issue #11).
 const HORIZONTAL_BALANCE_TAG = "column"
 
 """
+Smallest increment `ΔB_k = B_{k+1} − B_k` of hybrid `B` at which a layer counts
+as hybrid in the column-balance weighting `HybridMassWeightedColumn`: a layer
+with `ΔB_k < 1e-6` is treated as pure-pressure and receives no part of a column
+correction. `ΔB_k` is the share of a surface-pressure change that changes the
+layer's thickness, `Δ(Δp_k) = ΔB_k Δp_s`, so the threshold means 1 Pa per
+1000 hPa. GEOS/MERRA-2 L72 layer 41 (150–177 hPa) has `ΔB = 8.2e-9`, a
+rounding residue of its `B` table (3.1e-7 of its 2650 Pa thickness at
+1000 hPa); the smallest genuine hybrid increment of the shipped tables is ERA5
+L137 layer 55 (`ΔB = 7.0e-6`), the next GEOS layer has `6.96e-3`.
+"""
+const HYBRID_LAYER_MIN_DB = 1.0e-6
+
+"""
 Replay-check tolerance for Float64 transport-binary data. The check replays each
 window's air-mass budget cell by cell,
 `r = m_cur − 2n (Σ F_out − Σ F_in) − m_next` over the cell's faces, and accepts
@@ -121,6 +134,7 @@ export DEFAULT_CFL_LIMIT, DEFAULT_POSITIVITY_CFL_LIMIT, DEFAULT_SUBSTEP_CFL_TARG
        DEFAULT_BACKGROUND_VMR, DEFAULT_GEOS_SMOOTHING_SWEEPS, DEFAULT_MAX_SUBCYCLES,
        DEFAULT_MAX_STEPS_PER_WINDOW, ADAPTIVE_SUBSTEP_MAX_REFINEMENTS, DEFAULT_POISSON_BALANCE_TOL,
        DEFAULT_POISSON_BALANCE_MAX_ITER, DEFAULT_POISSON_PROJECT_EVERY, HORIZONTAL_BALANCE_TAG,
+       HYBRID_LAYER_MIN_DB,
        DEFAULT_GEOS_SMOOTHING_WEIGHT,
        DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG, DEFAULT_LINROOD_PPM_ORDER,
        REPLAY_TOLERANCE_FLOAT64, REPLAY_TOLERANCE_FLOAT32

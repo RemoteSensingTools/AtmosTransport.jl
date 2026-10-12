@@ -277,7 +277,10 @@ about 0.1–0.2 Pa/s RMS before correction. AtmosTransport closes each column:
 
 The lat-lon (`balance_column_mass_fluxes!`) and reduced-Gaussian
 (`balance_compressed_column_fluxes!`) spectral paths close their columns the
-same way, with `mass` weights. No path balances each level to its own mass
+same way, with the same weights. The explicit-tendency `cm` closure
+(`recompute_cm_from_dm_target!`, `diagnose_cs_cm!` on the cube) folds a
+column's remaining residual `R` into the levels with the same weights,
+`C_{k+1} ← C_{k+1} − R Σ_{j≤k} w_j / Σ_j w_j`. No path balances each level to its own mass
 change: with the column closed, the per-level imbalance that remains is the
 vertical mass flux of section 3, and a per-level balance would remove it.
 TM5's per-level balance (`BalanceMassFluxes_m`) keeps vertical motion only
@@ -286,15 +289,25 @@ independent vertical flux. The reduced-Gaussian path balanced per level until
 issue #11, which left its vertical mass flux at about 1e-4 of the lat-lon one
 on the same ERA5 day.
 
-The weights are selectable (`column_balance_weights`, on every cubed-sphere
-path; [Data sources](../config/data_sources.md) lists where each path sets
-it):
+The weights are selectable (`column_balance_weights`, on every path that
+applies a column balance: lat-lon, reduced Gaussian and cubed sphere;
+[Data sources](../config/data_sources.md) lists where each path sets it):
 
 | Option | Weights `w_k` | Consequence |
 |---|---|---|
 | `mass` | layer air mass of the two adjacent cells | The correction reaches every layer, including the stratosphere |
 | `hybrid_b` | `ΔB_k` | Only hybrid layers are corrected; the semantics of TM5 and GCHP |
-| `hybrid_mass` (default) | layer air mass where `ΔB_k > 0`, else 0 | Like `mass` in the troposphere, no correction in pure-pressure layers |
+| `hybrid_mass` (default) | layer air mass where `ΔB_k ≥ 10⁻⁶`, else 0 | Like `mass` in the troposphere, no correction in pure-pressure layers |
+
+`hybrid_mass` counts a layer as hybrid when `ΔB_k ≥ 10⁻⁶`
+(`HYBRID_LAYER_MIN_DB`): its thickness `Δp_k = ΔA_k + ΔB_k p_s` then changes
+by at least 1 Pa when `p_s` changes by 1000 hPa. GEOS/MERRA-2 L72 layer 41
+(150–177 hPa) has `ΔB = 8.2 × 10⁻⁹`, a rounding residue of the `B` table
+(`3 × 10⁻⁷` of its 2650 Pa thickness); with a plain `ΔB > 0` mask it took about
+3 % of every column correction at full mass weight although its thickness does
+not follow `p_s`. The smallest genuine hybrid increment of the shipped tables
+is ERA5 L137 layer 55 (`ΔB = 7 × 10⁻⁶`, 0.17 % of its thickness at 1000 hPa);
+the next GEOS layer has `ΔB = 7 × 10⁻³`.
 
 The vertical mass flux (section 3) inherits the correction as
 `Σ_{j ≤ k} (w_j/Σw − ΔB_j) · δ`, a mode that is coherent in the vertical.

@@ -106,6 +106,29 @@ Prep = AtmosTransport.Preprocessing
         @test am1 ≈ am2 atol=1e-15
         @test bm1 ≈ bm2 atol=1e-15
     end
+
+    @testset "Column balance spreads by the column weights" begin
+        Nx, Ny, Nz = 16, 9, 5
+        B = [0.0, 0.0, 0.3, 0.6, 0.85, 1.0]          # layer 1 pure pressure
+        m = [1e10 * k * (1 + 0.1sin(i + 2j)) for i in 1:Nx, j in 1:Ny, k in 1:Nz]
+        am0 = [1e7 * cos(0.3i + 0.7j + k) for i in 1:Nx+1, j in 1:Ny, k in 1:Nz]
+        bm0 = [1e7 * sin(0.5i - 0.2j + k) for i in 1:Nx, j in 1:Ny+1, k in 1:Nz]
+        bm0[:, 1, :] .= 0; bm0[:, Ny+1, :] .= 0
+        dm_dt = zeros(Nx, Ny, Nz)
+        ws = Prep.LLPoissonWorkspace(Nx, Ny)
+        function balanced(weights)
+            am, bm = copy(am0), copy(bm0)
+            diag = Prep.balance_column_mass_fluxes!(am, bm, m, dm_dt, ws; weights)
+            return am, bm, diag
+        end
+        am_m, bm_m, diag_m = balanced(Prep.MassWeightedColumn())
+        am_h, bm_h, diag_h = balanced(Prep.column_weights(:hybrid_mass, B))
+        @test diag_h.max_post_residual <= 10 * max(diag_m.max_post_residual, 1e-6)
+        @test am_h[:, :, 1] == am0[:, :, 1] && bm_h[:, :, 1] == bm0[:, :, 1]
+        @test am_m[:, :, 1] != am0[:, :, 1]
+        @test sum(am_h; dims = 3) ≈ sum(am_m; dims = 3) rtol = 1e-10
+        @test_throws DimensionMismatch balanced(Prep.column_weights(:hybrid_mass, B[2:end]))
+    end
 end
 
 # ---------------------------------------------------------------------------
@@ -454,7 +477,29 @@ end
         w = Prep.column_weights(:hybrid_b, Bv)
         @test length(w.dB) == Nz && isapprox(w.dB, diff(B) ./ (B[end] - B[1]); rtol = 1e-6)
     end
-    @test Prep.column_weights(:hybrid_mass, B).hybrid == (diff(B) .> 0)
+    @test Prep.column_weights(:hybrid_mass, B).hybrid ==
+          (diff(B) .>= AtmosTransport.Parameters.HYBRID_LAYER_MIN_DB)
+
+    # Near-pure-pressure layers: a positive ΔB below HYBRID_LAYER_MIN_DB (a
+    # rounding residue such as GEOS L72 layer 41, ΔB = 8.2e-9) is treated as
+    # pure pressure, by the horizontal spread and by the cm residual booking.
+    B_tiny = [0.0, 0.0, 8.175413e-9, 0.2, 0.5, 0.8, 1.0]
+    w_tiny = Prep.column_weights(:hybrid_mass, B_tiny)
+    @test w_tiny.hybrid == BitVector([false, false, true, true, true, true])
+    am_t, bm_t, _ = balanced(; weights = w_tiny)
+    @test all(p -> am_t[p][:, :, 1:2] == am0[p][:, :, 1:2], 1:6)
+    @test all(p -> bm_t[p][:, :, 1:2] == bm0[p][:, :, 1:2], 1:6)
+    cm_tiny = ntuple(_ -> zeros(Nc, Nc, Nz + 1), 6)
+    Prep.diagnose_cs_cm!(cm_tiny, am0, bm0, dm, m, Nc, Nz, w_tiny)
+    @test all(p -> cm_tiny[p][:, :, 1:3] == raw[p][:, :, 1:3], 1:6)
+    @test_throws ArgumentError Prep.HybridMassWeightedColumn([0.0, 1e-9, 2e-9])
+    for (file, layer, hybrid) in (("geos_L72_coefficients.toml", 41, false),
+                                  ("geos_L72_coefficients.toml", 42, true),
+                                  ("era5_L137_coefficients.toml", 54, false),
+                                  ("era5_L137_coefficients.toml", 55, true))
+        vc = Prep.load_hybrid_coefficients(joinpath(pkgdir(AtmosTransport), "config", file))
+        @test Prep.HybridMassWeightedColumn(vc.B).hybrid[layer] == hybrid
+    end
 
     # weights for a different number of layers are rejected
     @test_throws DimensionMismatch balanced(; weights = Prep.column_weights(:hybrid_b, B[2:end]))

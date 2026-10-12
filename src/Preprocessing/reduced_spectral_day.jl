@@ -156,14 +156,15 @@ end
 """
     balance_window!(hflux_work, m_cur_work, m_next_work, cm_work, div_scratch,
                     dm_target_work, buf, slot, m_next, work, cL, steps_per_window;
-                    tol, max_iter)
+                    weights = MassWeightedColumn(), tol, max_iter)
 
 Close the window in buffer `slot` against its end point `m_next`: the column
 Poisson balance of its horizontal fluxes (`balance_compressed_column_fluxes!`,
 one CG solve on the compressed Laplacian `cL`, correction spread over the
-layers by air mass), then the vertical mass flux `cm` from the explicit
-endpoint tendency (`recompute_cm_from_dm_target!`). The balanced fluxes and
-`cm` are stored back into the buffer in its float type.
+layers by the column `weights`), then the vertical mass flux `cm` from the
+explicit endpoint tendency (`recompute_cm_from_dm_target!`, residual folded
+with the same weights). The balanced fluxes and `cm` are stored back into the
+buffer in its float type.
 
 All scratch arrays are preallocated Float64 buffers — no per-call allocation.
 Returns the balance diagnostics.
@@ -180,6 +181,7 @@ function balance_window!(hflux_work::Matrix{Float64},
                          work::ReducedTransformWorkspace,
                          cL::CompressedLaplacian,
                          steps_per_window::Int;
+                         weights::AbstractColumnWeights = MassWeightedColumn(),
                          tol::Float64 = DEFAULT_POISSON_BALANCE_TOL,
                          max_iter::Int = DEFAULT_POISSON_BALANCE_MAX_ITER) where FT
 
@@ -195,7 +197,7 @@ function balance_window!(hflux_work::Matrix{Float64},
     diag = balance_compressed_column_fluxes!(
         hflux_work, m_cur_work, m_next_work,
         work.face_left, work.face_right, cL,
-        steps_per_window, scratch; tol=tol, max_iter=max_iter)
+        steps_per_window, scratch; weights, tol=tol, max_iter=max_iter)
 
     # Store balanced hflux back as FT.
     buf.hflux[slot] .= FT.(hflux_work)
@@ -210,7 +212,8 @@ function balance_window!(hflux_work::Matrix{Float64},
     inv_scale = 1.0 / (2 * max(Int(steps_per_window), 1))
     @. dm_target_work = (m_next_work - m_cur_work) * inv_scale
     recompute_cm_from_dm_target!(replay_layout, div_scratch, cm_work,
-                                 m_cur_work, dm_target_work, hflux_work)
+                                 m_cur_work, dm_target_work, hflux_work;
+                                 residual_weight = ColumnResidualWeight(weights))
     buf.cm[slot] .= FT.(cm_work)
 
     return diag
@@ -519,7 +522,10 @@ function process_day(date::Date,
         delta_semantics      = rg_contract.delta_semantics,
         mass_basis           = Symbol(settings.mass_basis),
         surface_pressure_basis = TotalSurfacePressure(),
-        extra_header = _with_replay_record(metadata, write_replay_on))
+        extra_header = _with_replay_record(
+            _with_column_weights_record(metadata,
+                _check_spectral_column_weights(grid, settings)),
+            write_replay_on))
 
     bytes_per_window = writer.elems_per_window * sizeof(eltype(writer.pack_buffer))
     expected_total = writer.header_bytes + Nt * bytes_per_window

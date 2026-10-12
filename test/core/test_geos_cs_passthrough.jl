@@ -370,8 +370,9 @@ end
         end
 
         # Column weights from the met source: every non-mass choice is recorded (this
-        # fixture has no column mismatch, so the transported mass is the same),
-        # and refused by closures that keep the native fluxes.
+        # fixture has no column mismatch, so the transported mass is the same).
+        # Closures that keep the native fluxes balance nothing: the weights do
+        # not apply, are not an error, and are not recorded.
         hyb_settings = GEOSITSettings(root_dir = tmpdir, Nc = NC, mass_flux_dt = 450.0,
                                       coefficients_file = coef_path,
                                       column_balance_weights = :hybrid_b)
@@ -387,9 +388,17 @@ end
         finally
             close(reader)
         end
-        @test_throws ArgumentError process_day(Date(2021, 12, 1), grid, hyb_settings, vertical;
-            out_path = joinpath(tmpdir, "out_cs_pfix.bin"), dt_met_seconds = 3600.0,
+        pfix_path = joinpath(tmpdir, "out_cs_pfix.bin")
+        process_day(Date(2021, 12, 1), grid, hyb_settings, vertical;
+            out_path = pfix_path, dt_met_seconds = 3600.0,
             FT = FT_TEST, mass_basis = :dry, cm_closure = :pressure_fixer)
+        reader = TransportBinaryReader(pfix_path; FT = FT_TEST)
+        try
+            @test reader.header.raw_header["horizontal_balance"] == "none"
+            @test !haskey(reader.header.raw_header, "column_balance_weights")
+        finally
+            close(reader)
+        end
     end
 
     @testset "process_day supports GEOS native vertical merge above pressure" begin

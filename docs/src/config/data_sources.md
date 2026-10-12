@@ -210,26 +210,30 @@ Two archive layouts are supported (`[preprocessing] layout`):
   `[diffusion] kind = "geoschem_nonlocal_vdiff"` for GEOS-Chem's physics.
 
 `column_balance_weights` spreads the column mass-budget correction of the
-horizontal fluxes over the levels, on every cubed-sphere path:
+horizontal fluxes over the levels, on every path that applies a column
+balance (lat-lon, reduced Gaussian and cubed sphere):
 - `"mass"`: by layer air mass;
 - `"hybrid_b"`: by `ΔB`, as in TM5;
-- `"hybrid_mass"` (default): by air mass in hybrid layers only.
+- `"hybrid_mass"` (default): by air mass in hybrid layers only
+  (`ΔB_k ≥ 10⁻⁶`; GEOS L72 layer 41 with `ΔB = 8.2 × 10⁻⁹` is pure pressure).
 
 The hybrid options leave the pure-pressure stratospheric layers untouched. Where
 it is set:
 - MERRA-2, ERA5 N320 and GEOS (native fluxes): `[preprocessing]
   column_balance_weights` in the met-source file;
 - ERA5 spectral: `[numerics] column_balance_weights` in the preprocessing
-  config (cubed-sphere targets; lat-lon and reduced-Gaussian targets reject
-  other weights than `"mass"`);
+  config (every target);
 - lat-lon → cubed-sphere regrid: `--column-balance-weights` of
   `scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl`.
 
 The GEOS closures that keep the native fluxes (`pressure_fixer`,
-`pfix_corrected`) have no column balance to weight and reject other weights
-than `"mass"`; selecting either closure therefore also requires an explicit
-`column_balance_weights = "mass"`. MERRA-2 and ERA5 N320 headers always
-record the choice; the other paths record it when it is not `"mass"`. See
+`pfix_corrected`) have no column balance; the met source's weights do not
+apply to them and are ignored (no error), and their headers omit
+`column_balance_weights` (`horizontal_balance = "none"`). MERRA-2 and ERA5 N320
+headers always record the choice; the other paths record it when it is not
+`"mass"`. `AtmosTransport.Preprocessing.validate_preprocessing_config(cfg)`
+runs these checks, with every other config-level check of the entry point,
+without reading meteorological input. See
 [Vertical transport](../theory/vertical_transport.md) section 2 and
 `config/met_sources/merra2_geoschem_hybridb.toml` (the base MERRA-2 source now
 uses `hybrid_mass`).

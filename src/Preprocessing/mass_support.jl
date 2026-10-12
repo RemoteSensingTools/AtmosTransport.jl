@@ -368,20 +368,24 @@ function balance_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
 end
 
 """
-    balance_column_mass_fluxes!(am, bm, m, dm_dt, ws::LLPoissonWorkspace)
+    balance_column_mass_fluxes!(am, bm, m, dm_dt, ws::LLPoissonWorkspace;
+                                weights = MassWeightedColumn())
 
 Column Poisson balance of a lat-lon window: one FFT Poisson solve
 (`balance_mass_fluxes!`) makes the convergence of the
 column-integrated fluxes `Σ_k am`, `Σ_k bm` equal the column mass tendency
 `Σ_k dm_dt` in every cell, and each face's column correction `δ` is spread
-over the layers by the air mass of the two cells that share it
-(`spread_column_correction!`). The layer winds keep their vertical
-structure, and `cm` diagnosed afterwards from the explicit tendency carries
-the vertical motion and closes at the top and the surface.
+over the layers by `spread_column_correction!` with the column `weights`
+(`AbstractColumnWeights`; production passes the configured
+`column_balance_weights`, `hybrid_mass` by default, built from the output
+coordinate's `B`). The layer winds keep their vertical structure, and `cm`
+diagnosed afterwards from the explicit tendency carries the vertical motion
+and closes at the top and the surface.
 """
 function balance_column_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
                                      m::Array{FT, 3}, dm_dt::Array{FT, 3},
-                                     ws::LLPoissonWorkspace) where FT
+                                     ws::LLPoissonWorkspace;
+                                     weights::AbstractColumnWeights = MassWeightedColumn()) where FT
     Nx = size(am, 1) - 1
     Ny = size(bm, 2) - 1
     Nz = size(am, 3)
@@ -391,6 +395,7 @@ function balance_column_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
         error("balance_column_mass_fluxes!: m shape $(size(m)) incompatible with am $(size(am))")
     size(dm_dt) == size(m) ||
         error("balance_column_mass_fluxes!: dm_dt shape $(size(dm_dt)) incompatible with m $(size(m))")
+    _check_weight_levels(weights, Nz)
 
     col_am = zeros(FT, Nx + 1, Ny, 1)
     col_bm = zeros(FT, Nx, Ny + 1, 1)
@@ -420,7 +425,6 @@ function balance_column_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
     balance_mass_fluxes!(col_am, col_bm, col_dm, ws; log_summary=false)
 
     max_face_delta = 0.0
-    weights = MassWeightedColumn()
     @inbounds for j in 1:Ny, i in 1:Nx + 1
         delta = Float64(col_am[i, j, 1] - col_am_before[i, j, 1])
         max_face_delta = max(max_face_delta, abs(delta))

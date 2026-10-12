@@ -41,7 +41,8 @@ and on the source settings type. Each supported pair has a `process_day` method:
 5. Column Poisson balance of the horizontal mass fluxes (header key
    `horizontal_balance = "column"`): one Poisson solve for the
    column-integrated divergence against the column mass tendency, each face's
-   correction spread over the layers by air mass (`spread_column_correction!`),
+   correction spread over the layers by the column weights
+   (`spread_column_correction!`; air mass in hybrid layers by default),
    so `cm` keeps the vertical motion:
    - LL: FFT Poisson solve — `balance_column_mass_fluxes!`, `mass_support.jl`
    - RG: compressed-Laplacian CG — `balance_compressed_column_fluxes!`,
@@ -119,6 +120,7 @@ using ..Parameters: EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_P
                     DEFAULT_MET_INTERVAL_SECONDS,
                     DEFAULT_POISSON_BALANCE_TOL, DEFAULT_POISSON_BALANCE_MAX_ITER,
                     DEFAULT_POISSON_PROJECT_EVERY, HORIZONTAL_BALANCE_TAG,
+                    HYBRID_LAYER_MIN_DB,
                     DEFAULT_GEOS_SMOOTHING_SWEEPS, DEFAULT_GEOS_SMOOTHING_WEIGHT,
                     ERA5_NATIVE_LEVEL_COUNT, ERA5_MET_INTERVAL_SECONDS,
                     GEOS_MASS_FLUX_DT_SECONDS, GEOS_MET_INTERVAL_SECONDS,

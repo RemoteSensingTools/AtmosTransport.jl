@@ -279,7 +279,8 @@ function flush_final_windows!(workspace::LatLonSpectralWindowWorkspace{FT},
         workspace.ps_offsets)
     apply_poisson_balance!(workspace.storage, workspace.last_hour_next,
                            workspace.steps_schedule, contract, substep_policy;
-                           write_replay_on = workspace.write_replay_on)
+                           write_replay_on = workspace.write_replay_on,
+                           weights = _spectral_column_weights(grid, settings, vertical))
     fill_qv_endpoints!(workspace.storage, workspace.last_hour_next)
     return (begin
             amount_seconds = settings.met_interval / (2 * workspace.steps_schedule[win_idx])

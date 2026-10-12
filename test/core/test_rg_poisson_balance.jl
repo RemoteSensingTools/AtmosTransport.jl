@@ -126,6 +126,44 @@ new_scratch(nc) = (psi = zeros(nc), rhs = zeros(nc), r = zeros(nc), p = zeros(nc
         @test maximum(abs, cm) > 0.1 * maximum(abs, tendency)
     end
 
+    @testset "column weights reach the balance and the cm residual" begin
+        B = [0.0, 0.0, 0.4, 0.8, 1.0]                  # layer 1 pure pressure
+        weights = HybridMassWeightedColumn(B)
+        hflux = 1e6 .* randn(rng, nf, Nz)
+        hflux[stub, :] .= 0
+        tendency = 1e5 .* randn(rng, nc, Nz)
+        tendency .-= sum(tendency) / length(tendency)
+        m_next = m_cur .- 2steps .* tendency
+        hflux0 = copy(hflux)
+        balance_compressed_column_fluxes!(hflux, m_cur, m_next, face_left, face_right, L,
+                                          steps, new_scratch(nc); weights)
+        @test hflux[:, 1] == hflux0[:, 1]
+        @test hflux[:, 2:end] != hflux0[:, 2:end]
+        # The residual of the explicit-tendency closure is folded with the
+        # same weights: a pure-pressure interface keeps its integrated value.
+        cm_w, cm_m = zeros(nc, Nz + 1), zeros(nc, Nz + 1)
+        layout = faceindexed_replay_layout(face_left, face_right)
+        dm = (m_next .- m_cur) ./ (2steps)
+        dm_skew = copy(dm); dm_skew[:, end] .+= 1e3          # a column residual to fold
+        recompute_cm_from_dm_target!(layout, zeros(nc, Nz), cm_m, m_cur, dm_skew, hflux)
+        recompute_cm_from_dm_target!(layout, zeros(nc, Nz), cm_w, m_cur, dm_skew, hflux;
+                                     residual_weight = AtmosTransport.Preprocessing.ColumnResidualWeight(weights))
+        raw = zeros(nc, Nz + 1)
+        div = outflow_divergence(hflux, face_left, face_right, nc)
+        for c in 1:nc, k in 1:Nz
+            raw[c, k + 1] = raw[c, k] - div[c, k] - dm_skew[c, k]
+        end
+        @test cm_w[:, 1:2] == raw[:, 1:2]
+        @test cm_m[:, 2] != raw[:, 2]
+        @test maximum(abs, cm_w[:, end]) <= 1e-6 * maximum(abs, raw)
+        # The default residual weight is the layer mass, bit for bit.
+        cm_d = zeros(nc, Nz + 1)
+        recompute_cm_from_dm_target!(layout, zeros(nc, Nz), cm_d, m_cur, dm_skew, hflux;
+                                     residual_weight = AtmosTransport.Preprocessing.ColumnResidualWeight(
+                                         MassWeightedColumn()))
+        @test cm_d == cm_m
+    end
+
     @testset "argument checks" begin
         scratch = new_scratch(nc)
         @test_throws DimensionMismatch balance_compressed_column_fluxes!(
