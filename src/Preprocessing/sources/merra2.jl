@@ -132,11 +132,11 @@ Base.@kwdef struct MERRA2Settings{A <: MERRA2Archive} <: AbstractMetSettings
     include_vdiff_fields  :: Bool   = false
     include_convective_cloud_base :: Bool = false
     column_balance_weights :: Symbol = :hybrid_mass  # a key of COLUMN_WEIGHT_KINDS (cs_poisson_balance.jl)
-    face_lengths   :: Symbol = :cell_centerline   # face length in the flux: :cell_centerline or :edge
+    face_lengths   :: Symbol = :edge              # face length in the flux: :cell_centerline or :edge
     flux_thickness :: Symbol = :moist             # Δp in the flux: :moist (from moist ps) or :dry_mass
-    face_fluxes    :: Symbol = :panel_average     # :panel_average (panel components) or :vector (edge lengths always)
-    face_interpolation :: Symbol = :linear        # :linear, :cubic or :fv3 (cubic + FV3's along-face filter; vector only)
-    wind_regrid    :: Symbol = :scalar            # :scalar (u, v separately) or :cartesian (as a vector)
+    face_fluxes    :: Symbol = :vector            # :panel_average (panel components) or :vector (edge lengths always)
+    face_interpolation :: Symbol = :fv3           # :linear, :cubic or :fv3 (cubic + FV3's along-face filter; vector only)
+    wind_regrid    :: Symbol = :cartesian         # :scalar (u, v separately) or :cartesian (as a vector)
 end
 
 const MERRA2_NATIVE_LEVEL_COUNT = 72

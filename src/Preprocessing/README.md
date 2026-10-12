@@ -70,8 +70,9 @@ ERA5 spectral to LL, RG, or CS:
 3. Pin global dry mass when `[mass_fix].enable` (default `true` here) with
    `pin_global_mean_ps_using_qv!` (hourly qv) or `pin_global_mean_ps!`; convert
    to dry basis; merge to output levels.
-4. CS only: conservative regrid to panels, recover and rotate winds, rebuild
-   face fluxes (`reconstruct_cs_fluxes!`).
+4. CS only: conservative regrid to panels and build face fluxes through the
+   shared typed construction (`VectorFaceFluxes`, `PanelAverageFluxes`, or
+   `LineIntegralFaceFluxes`), averaging raw endpoint fluxes by default.
 5. Column-balance against the forward endpoint mass (LL
    `balance_column_mass_fluxes!`, CS `balance_cs_column_mass_fluxes!`, RG
    `balance_compressed_column_fluxes!`; each spreads its face corrections over
@@ -131,8 +132,8 @@ Files directly in this folder; the subfolders have their own READMEs
 - [`cs_flux_reconstruction.jl`](cs_flux_reconstruction.jl) — CS face fluxes from cell-center winds (`cs_face_fluxes!`)
 - [`cs_wind_rotation.jl`](cs_wind_rotation.jl) — east/north ↔ panel-local wind rotation, CS face fluxes → cell-center winds
 - [`cs_native_fluxes.jl`](cs_native_fluxes.jl) — `geos_native_to_face_flux!` with panel halo sync, `compute_cs_cm_pressure_fixer!`
-- [`face_line_integrals.jl`](face_line_integrals.jl) — `LineIntegralFaceFluxes` (cube-face fluxes integrated from N320 winds)
-- [`flux_construction.jl`](flux_construction.jl) — `[preprocessing]` flux options (`face_fluxes`, `face_lengths`, `face_interpolation`, `wind_regrid`, `flux_thickness`) for MERRA-2 and ERA5 N320
+- [`face_line_integrals.jl`](face_line_integrals.jl) — `LineIntegralFaceFluxes` (cube-face fluxes integrated from N320 or spectral staging-grid winds)
+- [`flux_construction.jl`](flux_construction.jl) — typed flux methods and wind regrids shared by MERRA-2, ERA5 N320, and spectral ERA5-to-CS
 - [`era5_physics_binary.jl`](era5_physics_binary.jl) — ERA5 physics NetCDF to flat BIN converter and reader
 - [`era5_surface_reader.jl`](era5_surface_reader.jl) — ERA5 single-level PBL fields (`open_era5_surface_reader`, `load_era5_surface_window`)
 - [`tm5_convection_conversion.jl`](tm5_convection_conversion.jl) — `ec2tm!`, `ec2tm_from_rates!` (ECMWF to TM5 entu/detu/entd/detd)

@@ -517,7 +517,7 @@ function allocate_era5_n320_to_c180_pipeline(handles::ERA5GRIBDayHandles,
                                                 Nz::Integer = ERA5_NATIVE_LEVEL_COUNT,
                                                 cache_dir::Union{Nothing, AbstractString} = nothing,
                                                 include_convection::Bool = true,
-                                                wind_regrid::Union{Symbol, AbstractWindRegrid} = :scalar,
+                                                wind_regrid::Union{Symbol, AbstractWindRegrid} = :cartesian,
                                                 synthesis::Union{Nothing, ReducedSpectralSynthesis} = nothing) where FT
     Nz_int = Int(Nz)
     Nz_int >= 1 || throw(ArgumentError("Nz must be ≥ 1, got $Nz"))

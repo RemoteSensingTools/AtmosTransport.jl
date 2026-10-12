@@ -533,6 +533,7 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
     settings = ERA5SpectralSettings(
         merge(settings_nt, (T_target = target_spectral_truncation(grid),)))
     _check_spectral_column_weights(grid, settings)     # before any file is read
+    _validate_flux_construction(settings, "ERA5 spectral")
     vertical = build_vertical_setup(settings.coeff_path, settings.level_range,
                                     settings.min_dp, cfg["grid"])
 

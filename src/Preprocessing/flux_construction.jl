@@ -34,13 +34,20 @@ function _validate_flux_construction(s, source::AbstractString)
     s.face_fluxes === :vector || s.face_interpolation === :linear ||
         throw(ArgumentError("$source face_interpolation applies to face_fluxes = :vector only"))
     s.face_fluxes !== :line_integral || _has_source_line_integrals(s) ||
-        throw(ArgumentError("$source does not implement face_fluxes = :line_integral (ERA5 N320 only)"))
+        throw(ArgumentError("$source does not implement face_fluxes = :line_integral (ERA5 only)"))
     _validate_column_balance_weights(s.column_balance_weights, source)
     _validate_flux_time_sampling(s, source)
     return s
 end
-_validate_flux_time_sampling(s, source) = nothing      # sources without the option (ERA5 N320 has one)
-_has_source_line_integrals(s) = false                  # true for ERA5 N320 (sources/era5.jl)
+_validate_flux_time_sampling(s, source) = nothing      # sources without the option (ERA5 paths have one)
+_has_source_line_integrals(s) = false                  # true for ERA5 native and spectral paths
+_has_source_line_integrals(::ERA5SpectralSettings) = true
+function _validate_flux_time_sampling(s::ERA5SpectralSettings, source)
+    s.flux_time_sampling in (:window_start, :window_mean) || throw(ArgumentError(
+        "$source flux_time_sampling must be one of window_start, window_mean; " *
+        "got :$(s.flux_time_sampling)"))
+    return nothing
+end
 
 # How face fluxes are built from the cell-centre winds.
 struct PanelAverageFluxes{L <: AbstractFaceLengths}    # panel components averaged (historical)
@@ -54,11 +61,11 @@ end
 const _FACE_INTERPOLATION = (linear = (order = 2, along_face_filter = false),
                              cubic  = (order = 4, along_face_filter = false),
                              fv3    = (order = 4, along_face_filter = true))
-# `source` is the source mesh, needed by `:line_integral` (ERA5 N320 only).
+# `source` is the source mesh, needed by `:line_integral`.
 function _face_flux_method(settings, grid; source = nothing)
     if settings.face_fluxes === :line_integral
-        source isa ReducedGaussianMesh || throw(ArgumentError(
-            "face_fluxes = :line_integral is implemented for ERA5 N320 sources only"))
+        source isa Union{LatLonMesh, ReducedGaussianMesh} || throw(ArgumentError(
+            "face_fluxes = :line_integral needs a LatLonMesh or ReducedGaussianMesh source"))
         return LineIntegralFaceFluxes(source, grid.mesh, grid.face_table)
     end
     settings.face_fluxes === :vector && return VectorFaceFluxes(

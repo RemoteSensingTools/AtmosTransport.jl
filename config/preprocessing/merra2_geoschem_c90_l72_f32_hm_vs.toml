@@ -15,7 +15,7 @@
 # ===========================================================================
 
 [source]
-toml     = "config/met_sources/merra2_geoschem_hm_vs.toml"
+toml     = "config/met_sources/merra2_geoschem.toml"
 root_dir = "~/data/AtmosTransport/met/merra2/geoschem_0.5x0.625"
 
 [vertical]

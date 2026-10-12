@@ -231,44 +231,45 @@ than `"mass"`; selecting either closure therefore also requires an explicit
 `column_balance_weights = "mass"`. MERRA-2 and ERA5 N320 headers always
 record the choice; the other paths record it when it is not `"mass"`. See
 [Vertical transport](../theory/vertical_transport.md) section 2 and
-`config/met_sources/merra2_geoschem_hybrid{b,mass}.toml`.
+`config/met_sources/merra2_geoschem_hybridb.toml` (the base MERRA-2 source now
+uses `hybrid_mass`).
 
-Face-flux construction (MERRA-2 and ERA5 N320; see
+Face-flux construction (MERRA-2, ERA5 N320, and spectral ERA5-to-CS; see
 [Vertical transport](../theory/vertical_transport.md) section 1):
 - `face_fluxes`:
-  - `"panel_average"` (default): averages panel-local wind components, with
+  - `"panel_average"`: averages panel-local wind components, with
     one-sided panel seams;
-  - `"vector"`: combines the winds as 3-D vectors, projects them onto the true
+  - `"vector"` (default): combines the winds as 3-D vectors, projects them onto the true
     face normals with true face lengths, and interpolates along the edge at
     panel seams.
-  - `"line_integral"` (ERA5 N320 only): integrates `(V · N) Δp` along each face
-    from the N320 winds and surface pressure (bilinear interpolation of the
+  - `"line_integral"` (ERA5): integrates `(V · N) Δp` along each face
+    from N320 or the spectral lat–lon staging grid (bilinear interpolation of the
     Cartesian wind components, 16 midpoints per face). TM5 integrates the
     spectral winds along its cell edges in the same spirit. Each cube cell's
     convergence is then that of the source flow; the cell-centre methods
     smooth it at the cube grid scale.
-- `face_lengths = "cell_centerline"` (default) or `"edge"`: the length used by
+- `face_lengths = "edge"` (default) or `"cell_centerline"`: the length used by
   `panel_average`.
-- `face_interpolation` (`vector` only): `"linear"` (default, the two adjacent
-  cells), `"cubic"` (FV3's fourth-order stencil across interior faces) or
-  `"fv3"` (`"cubic"` plus the filter along the face of GCHP's A → D → C
-  restaggering).
+- `face_interpolation` (`vector` only): `"fv3"` (default, fourth order plus
+  the filter along the face of GCHP's A → D → C restaggering), `"linear"`
+  (the two adjacent cells), or `"cubic"` (FV3's fourth-order stencil across
+  interior faces without the along-face filter).
 - `flux_thickness = "moist"` or `"dry_mass"`: the layer thickness in the
   fluxes. ERA5 N320 defaults to `"dry_mass"`; MERRA-2 keeps the historical
   `"moist"` default. Dry thickness is `(1-q) Δp = g m_dry / A_cell`.
-- `wind_regrid = "scalar"` (default) or `"cartesian"`: regrid `u` and `v` as
-  two scalars, or the wind as a vector, as GCHP does. The scalar regrid is
+- `wind_regrid = "cartesian"` (default) or `"scalar"`: regrid the wind as a
+  Cartesian vector, as GCHP does, or regrid `u` and `v` as two scalars. The scalar regrid is
   off by about 5% poleward of 88°.
-- `flux_time_sampling` (ERA5 N320 only): `"window_start"` (default) holds the
-  instantaneous winds of each hour over the following hourly window;
-  `"window_mean"` uses the mean of the face fluxes at the start and end of the
+- `flux_time_sampling` (ERA5): `"window_mean"` (default) uses the mean of the face fluxes at the start and end of the
   window, the trapezoidal rule for `∫ u Δp dt`, so the fluxes are centred in
-  time. The binary header records it as `source_flux_sampling`.
+  time; `"window_start"` retains the historical endpoint hold. The binary
+  header records the effective sampling.
 
-The GEOS sources reject these keys. `config/met_sources/merra2_geoschem_hm_gchp.toml`
-and `config/met_sources/era5_n320_arco_diffusion_hb_gchp.toml` select GCHP's
-construction; the ERA5 one uses `hybrid_b`, because its 66-level grid has
-hybrid layers up to 82 hPa.
+Native sources set these options in their met-source `[preprocessing]` table;
+spectral ERA5 sets them in `[numerics]`. GEOS sources reject them.
+`config/met_sources/era5_n320_arco_diffusion_hb_gchp.toml` differs from the
+new construction defaults only in selecting `hybrid_b`, because its 66-level
+grid has hybrid layers up to 82 hPa.
 `config/met_sources/era5_n320_arco_diffusion_li.toml` selects `hybrid_b`,
 `line_integral` and `window_mean`; with
 `config/preprocessing/era5_n320_arco_diffusion_to_c90_l117_li.toml` it keeps

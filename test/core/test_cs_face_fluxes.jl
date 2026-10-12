@@ -469,14 +469,54 @@ interior_divergence(am, bm, Nc) =
                          for c in eachindex(ps), k in 1:2]
         P.line_integral_face_fluxes!(am, bm, li, u, v, dry_dp, 9.80665, 450.0, 2)
         @test all(p -> am[p] ≈ 0.9 .* moist_am[p] && bm[p] ≈ 0.9 .* moist_bm[p], 1:6)
+
+        # The same operator accepts the regular lat–lon staging mesh used by
+        # the spectral-to-CS path. Weights wrap at the mesh's actual longitude
+        # origin and use the nearest latitude row in both polar caps.
+        ll = G.LatLonMesh(; FT = Float64, Nx = 72, Ny = 36,
+                          longitude = (-180, 180), latitude = (-90, 90),
+                          radius = mesh.radius)
+        point(lon, lat) = (cosd(lat) * cosd(lon), cosd(lat) * sind(lon), sind(lat))
+        for (lonq, latq) in ((179.9, 0.0), (-180.1, 0.0), (12.0, 89.9), (12.0, -89.9))
+            weights = P._point_weights(ll, point(lonq, latq))
+            @test sum(last, weights) ≈ 1.0
+            @test all(cw -> 1 <= first(cw) <= G.ncells(ll), weights)
+        end
+        wrap_east = P._point_weights(ll, point(179.9, 0.0))
+        wrap_west = P._point_weights(ll, point(-180.1, 0.0))
+        @test first.(wrap_east) == first.(wrap_west)
+        @test collect(last.(wrap_east)) ≈ collect(last.(wrap_west))
+        li_ll = P.LineIntegralFaceFluxes(ll, mesh, ft)
+        ll_lon, ll_lat = P._source_cell_centers(ll)
+        ll_u = [30.0 * cosd(ll_lat[c]) for c in eachindex(ll_lon), k in 1:1]
+        ll_v = zeros(size(ll_u))
+        ll_am = ntuple(_ -> zeros(Nc + 1, Nc, 1), 6)
+        ll_bm = ntuple(_ -> zeros(Nc, Nc + 1, 1), 6)
+        P.line_integral_face_fluxes!(ll_am, ll_bm, li_ll, ll_u, ll_v,
+                                     ones(length(ll_lon), 1), 1.0, 1.0, 1)
+        ll_div = [ll_am[p][i, j, 1] - ll_am[p][i + 1, j, 1] +
+                  ll_bm[p][i, j, 1] - ll_bm[p][i, j + 1, 1]
+                  for p in 1:6, i in 1:Nc, j in 1:Nc]
+        @test maximum(abs, ll_div) < 2e-3 * maximum(abs, ll_am[1])
     end
 
     @testset "flux options in the met-source TOML" begin
         mktempdir() do dir
+            direct_era = P.ERA5N320Settings(; root_dir = dir)
+            direct_merra = P.MERRA2Settings(; root_dir = dir)
+            for direct in (direct_era, direct_merra)
+                @test (direct.face_fluxes, direct.face_lengths,
+                       direct.face_interpolation, direct.wind_regrid) ==
+                      (:vector, :edge, :fv3, :cartesian)
+            end
+            @test direct_era.flux_time_sampling === :window_mean
             write_toml(name, body) = (path = joinpath(dir, name); write(path, body); path)
             merra = read(joinpath(pkgdir(AtmosTransport), "config", "met_sources", "merra2_geoschem.toml"), String)
             ok = write_toml("ok.toml", merra * "\n")
-            @test P.load_met_settings(ok; root_dir = dir).face_fluxes === :panel_average
+            default_merra = P.load_met_settings(ok; root_dir = dir)
+            @test (default_merra.face_fluxes, default_merra.face_lengths,
+                   default_merra.face_interpolation, default_merra.wind_regrid) ===
+                  (:vector, :edge, :fv3, :cartesian)
             # vector ignores face_lengths, so an explicit centreline choice is rejected
             bad = replace(merra, "[preprocessing]" => "[preprocessing]\nface_fluxes = \"vector\"\nface_lengths = \"cell_centerline\"")
             @test_throws ArgumentError P.load_met_settings(write_toml("bad.toml", bad); root_dir = dir)
@@ -491,7 +531,9 @@ interior_divergence(am, bm, Nc) =
             @test (e.face_fluxes, e.face_interpolation, e.wind_regrid, e.column_balance_weights) ==
                   (:vector, :fv3, :cartesian, :hybrid_b)
             era0 = P.load_met_settings(write_toml("era0.toml", "[source]\nname = \"ERA5-N320\"\n"); root_dir = dir)
-            @test (era0.face_fluxes, era0.flux_thickness) == (:panel_average, :dry_mass)
+            @test (era0.face_fluxes, era0.face_lengths, era0.face_interpolation,
+                   era0.wind_regrid, era0.flux_thickness) ==
+                  (:vector, :edge, :fv3, :cartesian, :dry_mass)
             era_moist = write_toml("era_moist.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nflux_thickness = \"moist\"\n")
             @test P.load_met_settings(era_moist; root_dir = dir).flux_thickness === :moist
             era_thick_bad = write_toml("era_thick_bad.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nflux_thickness = \"unknown\"\n")
@@ -504,7 +546,7 @@ interior_divergence(am, bm, Nc) =
             e = P.load_met_settings(era_li; root_dir = dir)
             @test (e.face_fluxes, e.flux_time_sampling) == (:line_integral, :window_mean)
             @test P.load_met_settings(write_toml("era00.toml", "[source]\nname = \"ERA5-N320\"\n"); root_dir = dir).flux_time_sampling ===
-                  :window_start
+                  :window_mean
             era_t = write_toml("era_t.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nflux_time_sampling = \"window_end\"\n")
             @test_throws ArgumentError P.load_met_settings(era_t; root_dir = dir)
             merra_t = replace(merra, "[preprocessing]" => "[preprocessing]\nflux_time_sampling = \"window_mean\"")
@@ -515,11 +557,30 @@ interior_divergence(am, bm, Nc) =
             s = P.load_met_settings(write_toml("vec.toml", vec); root_dir = dir)
             @test (s.face_interpolation, s.wind_regrid) == (:fv3, :cartesian)
             # the cubic stencil belongs to the vector method
-            cubic = replace(merra, "[preprocessing]" => "[preprocessing]\nface_interpolation = \"cubic\"")
+            cubic = replace(merra, "[preprocessing]" =>
+                "[preprocessing]\nface_fluxes = \"panel_average\"\nface_interpolation = \"cubic\"")
             @test_throws ArgumentError P.load_met_settings(write_toml("cubic.toml", cubic); root_dir = dir)
             bad_regrid = replace(merra, "[preprocessing]" => "[preprocessing]\nwind_regrid = \"bilinear\"")
             @test_throws ArgumentError P.load_met_settings(write_toml("regrid.toml", bad_regrid); root_dir = dir)
         end
+    end
+
+    @testset "spectral flux options in numerics" begin
+        defaults = P.resolve_spectral_flux_settings(Dict{String, Any}())
+        @test defaults == (face_lengths = :edge, face_fluxes = :vector,
+                           face_interpolation = :fv3, wind_regrid = :cartesian,
+                           flux_time_sampling = :window_mean)
+        legacy = P.resolve_spectral_flux_settings(Dict("numerics" => Dict(
+            "face_lengths" => "cell_centerline",
+            "face_fluxes" => "panel_average",
+            "wind_regrid" => "scalar",
+            "flux_time_sampling" => "window_start")))
+        @test legacy == (face_lengths = :cell_centerline, face_fluxes = :panel_average,
+                         face_interpolation = :linear, wind_regrid = :scalar,
+                         flux_time_sampling = :window_start)
+        @test_throws ArgumentError P.resolve_spectral_flux_settings(Dict(
+            "numerics" => Dict("face_fluxes" => "vector",
+                               "face_lengths" => "cell_centerline")))
     end
 end
 

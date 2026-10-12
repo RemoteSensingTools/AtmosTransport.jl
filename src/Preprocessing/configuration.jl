@@ -192,6 +192,38 @@ function resolve_balance_settings(cfg)
 end
 
 """
+    resolve_spectral_flux_settings(cfg) -> NamedTuple
+
+Resolve the ERA5 spectral-to-cubed-sphere flux construction selected in
+`[numerics]`. The defaults are the GCHP-matched path: regrid winds as Cartesian
+vectors, interpolate them to true cube edges with FV3's fourth-order filtered
+stencil, and average independently constructed start/end face fluxes over the
+meteorological window. `face_fluxes = "line_integral"` instead evaluates
+
+```math
+F_f = (Δt/g) ∫_f (v · n_f) Δp dl
+```
+
+directly on the spectral staging grid.
+"""
+function resolve_spectral_flux_settings(cfg)
+    numerics = get(cfg, "numerics", Dict{String, Any}())
+    option(key, default) = Symbol(lowercase(String(get(numerics, key, default))))
+    face_fluxes = option("face_fluxes", "vector")
+    face_lengths = option("face_lengths", "edge")
+    face_fluxes === :vector && face_lengths === :cell_centerline &&
+        haskey(numerics, "face_lengths") && throw(ArgumentError(
+            "[numerics] face_fluxes = \"vector\" always uses face edge lengths; " *
+            "remove face_lengths = \"cell_centerline\""))
+    return (face_lengths,
+            face_fluxes,
+            face_interpolation = option("face_interpolation",
+                                        face_fluxes === :vector ? "fv3" : "linear"),
+            wind_regrid = option("wind_regrid", "cartesian"),
+            flux_time_sampling = option("flux_time_sampling", "window_mean"))
+end
+
+"""
     reject_removed_balance_mode(numerics)
 
 Throw if a preprocessing `[numerics]` table sets `balance_mode` (or its older
@@ -323,7 +355,8 @@ function resolve_runtime_settings(cfg)
        resolve_tm5_convection_settings(cfg),
        resolve_surface_settings(cfg),
        resolve_preprocessing_cache_settings(cfg),
-       resolve_balance_settings(cfg))
+       resolve_balance_settings(cfg),
+       resolve_spectral_flux_settings(cfg))
 end
 
 """

@@ -14,6 +14,16 @@
   `vertical = "fv3_kord8_signed"` settings are unchanged; the Lin-Rood
   adjoint still requires explicit upwind vertical sweeps.
 
+### Changed
+
+- Wind-derived cubed-sphere preprocessing now defaults to GCHP-matched
+  Cartesian/vector/FV3 face construction with true edge lengths. ERA5 also
+  defaults to trapezoidal `window_mean` endpoint sampling. The ERA5 spectral
+  path uses the same typed implementations as native MERRA-2/ERA5 N320 and
+  supports source-grid line integrals; historical behavior remains available
+  explicitly as `panel_average`/`cell_centerline`/`linear`/`scalar`/
+  `window_start`.
+
 ### Breaking changes
 
 - Removed the deprecated, unused `State.MetState`,
@@ -729,11 +739,12 @@
 - `config/met_sources/era5_n320_arco_diffusion_li.toml` and
   `config/preprocessing/era5_n320_arco_diffusion_to_c90_l117_li.toml` combine
   both with `hybrid_b` on 117 levels (native below about 8 hPa).
-- MERRA-2 preprocessing option `[preprocessing] face_fluxes = "vector"`
+- MERRA-2 preprocessing `[preprocessing] face_fluxes = "vector"`
   builds face fluxes from the cell winds as 3-D vectors. They are projected
   onto the true face normals, use the faces' great-circle lengths, and are
-  interpolated along the edge at panel seams, as FV3 does. The default
-  (`"panel_average"`) is unchanged.
+  interpolated along the edge at panel seams, as FV3 does. It is now the
+  default together with Cartesian wind regridding, edge lengths, and FV3
+  interpolation; `"panel_average"` remains available explicitly.
   - The default construction misplaces the seam winds by up to a quarter of a
     face length and uses cell centerline widths instead of face lengths.
   - For solid-body rotation the spurious divergence at seam cells drops from

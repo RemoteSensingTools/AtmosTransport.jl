@@ -465,7 +465,7 @@ end
     # GEOS still rejects the face-flux construction keys (it keeps native fluxes).
     mktempdir() do dir
         merra2 = Prep.load_met_settings(joinpath(pkgdir(AtmosTransport), "config", "met_sources",
-                                                 "merra2_geoschem_hybridmass.toml"); root_dir = dir)
+                                                 "merra2_geoschem.toml"); root_dir = dir)
         @test merra2.column_balance_weights === :hybrid_mass
         toml = joinpath(dir, "era5.toml")
         write(toml, "[source]\nname = \"ERA5-N320\"\n[preprocessing]\ncolumn_balance_weights = \"hybrid_b\"\n")

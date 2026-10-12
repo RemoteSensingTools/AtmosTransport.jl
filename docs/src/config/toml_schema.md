@@ -899,7 +899,16 @@ dt           = 900.0         # advection sub-step (s)
 met_interval = 3600.0        # window cadence (s); 1 hour for ERA5
 cs_balance_tol = 1e-14       # CS Poisson balance tolerance
 cs_balance_project_every = 50 # CS PCG mean-zero projection cadence; 1 = every iteration
+face_fluxes = "vector"        # panel_average, vector, or line_integral
+face_lengths = "edge"         # edge or cell_centerline (panel_average only)
+face_interpolation = "fv3"    # linear, cubic, or fv3 (vector only)
+wind_regrid = "cartesian"     # cartesian or scalar
+flux_time_sampling = "window_mean" # window_mean or window_start
 ```
+
+The five flux keys apply to spectral cubed-sphere targets. They share the
+typed implementations used by native MERRA-2 and ERA5 N320 preprocessing;
+lat-lon and reduced-Gaussian spectral targets do not construct cube faces.
 
 ```toml
 # Native (GEOS-IT) preprocessing

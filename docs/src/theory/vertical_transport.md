@@ -20,9 +20,9 @@ cell faces of the cubed sphere, for each layer and substep.
 **MERRA-2** (`src/Preprocessing/transport_binary/merra2_latlon_regrid.jl`).
 - Inputs: A3dyn 3-hour mean winds (0.5° × 0.625°); I3 instantaneous surface
   pressure and humidity.
-- `u_east` and `v_north` are regridded conservatively to C90 cell means,
-  by default as two scalars (`[preprocessing] wind_regrid = "scalar"`);
-  `"cartesian"` regrids the wind as a vector (see *Poles* below).
+- `u_east` and `v_north` are regridded conservatively to C90 cell means as a
+  Cartesian vector by default (`[preprocessing] wind_regrid = "cartesian"`);
+  `"scalar"` retains the historical component-wise path (see *Poles* below).
 - Hourly windows split each 3-hour block; air mass, `p_s`, humidity and
   temperature are linear in time.
 
@@ -30,7 +30,7 @@ Two constructions of the face fluxes from cube-centre winds are available
 (`[preprocessing] face_fluxes`, MERRA-2 and ERA5 N320 paths); ERA5 N320 also
 offers line integrals of the source flow (`"line_integral"`, see **ERA5** below):
 
-- **`panel_average`** (default, historical,
+- **`panel_average`** (historical,
   `src/Preprocessing/cs_flux_reconstruction.jl`, `cs_face_fluxes!`).
   - Each cell's wind is projected onto its panel's local face-normal
     directions.
@@ -41,7 +41,7 @@ offers line integrals of the source flow (`"line_integral"`, see **ERA5** below)
     (`face_lengths = "cell_centerline"`). `"edge"` uses the face's own
     great-circle length instead.
   - At a panel seam only the cell on the owning panel is used.
-- **`vector`** (`cs_vector_face_fluxes!`).
+- **`vector`** (default, `cs_vector_face_fluxes!`).
   - The two cells' winds are combined as 3-D vectors.
   - At a panel seam the result is further interpolated along the edge to the
     face midpoint, as FV3 does.
@@ -83,16 +83,17 @@ profile), `vector` changes:
   0.310 ppm.
 
 With in addition `wind_regrid = "cartesian"` and `face_interpolation = "fv3"`
-(GCHP's construction; `config/met_sources/merra2_geoschem_hm_gchp.toml`):
+(GCHP's construction, now the default):
 - the stratospheric growth is the same (−0.036 ppm);
 - the near-surface RMSE falls further, by 15 % (CO₂), 16 % (fossil CO₂) and
   24 % (Rn-222), and the column CO₂ RMSE from 0.101 to 0.085 ppm.
 `"cubic"` without the filter gives mixed near-surface changes (worse for CO₂,
 fossil CO₂ and SF₆, better for Rn-222).
 
-The ERA5 N320 path (`era5_n320_regrid.jl`) takes the same options; the spectral
-and lat-lon ERA5 paths (`cubed_sphere_spectral.jl`,
-`cubed_sphere_regrid.jl`) still use `panel_average` and the scalar wind regrid.
+The ERA5 N320 and spectral-to-CS paths (`era5_n320_regrid.jl` and
+`cubed_sphere_spectral.jl`) take the same options and defaults. The separate
+lat-lon-binary regrid path (`cubed_sphere_regrid.jl`) retains the historical
+construction because its input binary does not preserve endpoint source winds.
 The reduced Gaussian source cells have great-circle edges along their latitude
 bounds, so they leave up to 0.3 % of the polar C90 cells uncovered. The N320
 path therefore divides every intensive field by the regridded constant 1
@@ -130,7 +131,7 @@ GCHP's own C90 winds (`Met_U`/`Met_V` in the CATRINE output) match it to within
 
 **Interpolation to the faces.** `face_interpolation` (`vector` only) chooses how
 the cell winds reach the face midpoint:
-- `"linear"` (default): the two adjacent cells.
+- `"linear"`: the two adjacent cells.
 - `"cubic"`: FV3's fourth-order stencil `(−1, 9, 9, −1)/16` across interior
   faces that have two cells on each side in the same panel row. The layer
   thickness stays linear. Against exact line integrals of a smooth analytic
@@ -138,7 +139,7 @@ the cell winds reach the face midpoint:
   accurate (`face_flux_accuracy.jl`). The divergence gains less, 1.6 times at
   that wavelength, because the faces next to the seams stay second order
   (`CSVectorFaceGeometry`); for very smooth winds it is slightly worse.
-- `"fv3"`: `"cubic"` plus the filter that GCHP's restaggering applies along
+- `"fv3"` (default): `"cubic"` plus the filter that GCHP's restaggering applies along
   each face (next paragraph).
 
 `flux_thickness = "dry_mass"` uses the dry layer thickness that the fluxes
@@ -156,12 +157,14 @@ equivalent `(1-q) Δp` on N320 before integrating along a cube face. ERA5 N320
 defaults to `dry_mass`, matching its dry-basis layer masses; MERRA-2 retains
 its historical `moist` default for compatibility.
 
-**ERA5** (`.../era5_n320_regrid.jl`). Instantaneous hourly winds on the N320
-reduced Gaussian grid. Surface pressure comes from the 0.25° ARCO product.
+**ERA5** (`.../era5_n320_regrid.jl` and
+`.../cubed_sphere_spectral.jl`). Instantaneous hourly winds are supplied on
+the N320 reduced Gaussian grid or synthesized onto the regular lat–lon staging
+grid. Surface pressure comes from ARCO or the spectral LNSP field.
 - With `panel_average` or `vector` the winds are regridded to the cube as
   above.
 - `face_fluxes = "line_integral"` (`LineIntegralFaceFluxes`) integrates the
-  N320 flow along each cube face instead:
+  source-grid flow along each cube face instead:
 
   ```math
   F_f = \frac{\Delta t}{g} \int_f (\mathbf{V} \cdot \mathbf{N}_f)\, \Delta p \, dl .
@@ -169,16 +172,16 @@ reduced Gaussian grid. Surface pressure comes from the 0.25° ARCO product.
 
   A cube face is a great-circle arc, so its unit normal `N_f` is the same
   vector along it. The Cartesian components of `V Δp` are interpolated
-  bilinearly from the N320 cells to 16 midpoints of the arc. By the divergence
+  bilinearly from the N320 or staging-grid cells to 16 midpoints of the arc. By the divergence
   theorem the net flux out of a cube cell is then the N320 flow's divergence
   integrated over the cell; the cell-centre methods smooth it at the cube
   grid scale. TM5 integrates the spectral winds along its cell edges in the
   same spirit.
-- `flux_time_sampling = "window_start"` (default) holds the fluxes from the
-  winds at hour `h` over the window `[h, h + 1]`. `"window_mean"` uses
+- `flux_time_sampling = "window_mean"` (default) uses
   `(F(h) + F(h + 1)) / 2`, the trapezoidal rule for the window's mean flux;
   the Poisson balance then closes it against `m(h + 1) − m(h)` as before.
-  Without a next day on disk the last window uses `F(h)`.
+  `"window_start"` holds `F(h)` over the window. Without a next day on disk
+  the last window uses `F(h)` and records the boundary fallback.
 
 Against ERA5's own vertical velocity (ARCO-ERA5
 `ar/model-level-1h-0p25deg.zarr-v1`, 2022-01-15, C90, `hybrid_b`), in the
