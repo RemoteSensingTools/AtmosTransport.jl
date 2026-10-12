@@ -345,8 +345,7 @@ end
         storage = TapeMod.MmapCSTapeStorage(; dir)
         # Point the final rename below a parent that does not exist. This is
         # deterministic even for privileged test processes, unlike chmod or
-        # pre-creating the destination (atomic `mv(...; force=true)` replaces
-        # both files and directories).
+        # pre-creating the destination.
         storage.manifest_path = joinpath(dir, "missing", "manifest.toml")
         @test_throws Exception TapeMod.finalize_tape!(storage; strict = true)
         @test storage.closed

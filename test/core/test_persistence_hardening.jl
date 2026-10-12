@@ -434,13 +434,21 @@ end
         TapeMod._stage_panels(first_storage, panels)
         TapeMod.finalize_tape!(first_storage)
         @test isfile(joinpath(dir, "manifest.toml"))
+        first_records = read(joinpath(dir, "records.bin"))
 
         second_storage = TapeMod.MmapCSTapeStorage(
             dir=dir, cleanup_on_finalize=false)
         @test !ispath(joinpath(dir, "manifest.toml"))
-        @test filesize(joinpath(dir, "records.bin")) == 0
+        # The next recording is private until finalization: the old payload
+        # remains at the public path while new bytes go to a sibling staging file.
+        @test read(joinpath(dir, "records.bin")) == first_records
+        @test isfile(second_storage.bin_staging_path)
+        @test second_storage.bin_staging_path != second_storage.bin_path
         @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
         TapeMod.finalize_tape!(second_storage)
+        @test filesize(joinpath(dir, "records.bin")) == 0
+        @test second_storage.bin_staging_path === nothing
+        @test isempty(filter(f -> occursin(".tmp-", f), readdir(dir)))
 
         open(joinpath(dir, "records.bin"), "a") do io
             write(io, UInt8(0x01))

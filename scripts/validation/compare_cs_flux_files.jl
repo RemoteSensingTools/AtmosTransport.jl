@@ -174,6 +174,7 @@ using AtmosTransport.Parameters: EARTH_RADIUS, SPECIES_MOLAR_MASS, CARBON_MOLAR_
 using AtmosTransport.MetDrivers: TransportBinaryReader, load_grid
 using AtmosTransport.Analysis: EqualAreaBands, band_index
 using AtmosTransport.Preprocessing: build_cs_global_face_table
+using AtmosTransport.AtomicFiles: atomic_publish
 # The runtime's `cs_native` series layout (Julia order), defined once in GriddedIO.
 using AtmosTransport.GriddedIO: CS_NATIVE_FLUX_DIMS
 
@@ -1517,17 +1518,11 @@ _jsonable(x::AbstractDict) = Dict(string(k) => _jsonable(v) for (k, v) in x)
 _jsonable(x::Symbol) = String(x)
 _jsonable(x) = x
 
-# Write `path` through a sibling temporary file renamed on success.
-# TODO(P1): replace with `AtomicFiles.atomic_publish`.
+# Write `path` through the package's shared atomic-publication contract.
 function _write_atomically(f, path::AbstractString)
     mkpath(dirname(abspath(path)))
-    tmp = "$(path).tmp-$(getpid())-$(rand(UInt32))"
-    try
+    atomic_publish(path) do tmp
         open(f, tmp, "w")
-        mv(tmp, path; force = true)
-    catch
-        rm(tmp; force = true)
-        rethrow()
     end
     return path
 end

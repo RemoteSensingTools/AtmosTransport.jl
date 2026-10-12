@@ -301,9 +301,10 @@ appeared), about 800 lines:
   `_cs_coarsen_npanel`, `_date_range_from_str`, `SECONDS_PER_MONTH`, the
   unused ERA5 GRIB parameter-id constants.
 
-Left for the owner (public API, used only by tests): `State.MetState`, and the
-exported `diagnose_cm_from_continuity_vc!` / `diagnose_cm_from_continuity_ka!`
-(no caller; `diagnose_cm_from_continuity!` is tested). Stale comments fixed:
+The unused public APIs `State.MetState` and
+`diagnose_cm_from_continuity_vc!` / `diagnose_cm_from_continuity_ka!` were
+subsequently removed for v0.5.0; `diagnose_cm_from_continuity!` remains tested.
+Stale comments fixed:
 the RG contract header (the positivity gate is wired into `process_day`).
 
 ### Fixes found while writing the READMEs
@@ -357,9 +358,9 @@ Behavior worth a decision:
   conservative regridding; streaming writers default to `mass_basis = :moist`,
   `write_transport_binary` to `:dry` (all in-tree callers pass it).
 
-Public API with no production caller: `State.MetState`,
-`diagnose_cm_from_continuity_vc!`/`_ka!`, `reset_workspace!` (exported, no
-methods), `ERA5SpectralReader`/`end_of_day_seed` (tests only),
+Public API with no production caller included `State.MetState`,
+`diagnose_cm_from_continuity_vc!`/`_ka!`, and `reset_workspace!` (all since
+removed for v0.5.0), plus `ERA5SpectralReader`/`end_of_day_seed` (tests only),
 `SurfaceLapseTemperature` (tests only), the single-surface perturbation
 helpers in `Adjoints`.
 
@@ -685,9 +686,8 @@ reproduce their accepted reference.
 
 ### Public API
 
-`reset_workspace!` (exported, no methods) is removed; `MetState`,
-`diagnose_cm_from_continuity_vc!` and `_ka!` are deprecated for removal in the
-next minor release.
+`reset_workspace!` (exported, no methods), `MetState`,
+`diagnose_cm_from_continuity_vc!`, and `_ka!` are removed for v0.5.0.
 
 ### Experiments (plan item A11 remainder and the positivity gates)
 

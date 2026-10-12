@@ -4,8 +4,9 @@
 # `MmapCSTapeStorage` is a sibling of `DeviceCSTapeStorage` and
 # `PinnedHostCSTapeStorage` that evicts staged
 # panel snapshots from working memory onto a raw appended binary file
-# (`records.bin`). A separate human-readable manifest (`manifest.toml`)
-# is written at finalisation time and used during resume / inspection.
+# (a sibling staging file for `records.bin`). At finalisation, `records.bin`
+# and then a separate human-readable `manifest.toml` are atomically published;
+# the manifest is used during resume / inspection.
 #
 # Layout summary (v1):
 #
@@ -40,11 +41,11 @@ end
     MmapCSTapeStorage(; dir = mktempdir(prefix="atmostransport-cstape-"),
                        cleanup_on_finalize = (dir == ""))
 
-Tape storage policy that streams staged adjoint mass states onto a
-single appended raw binary file (`records.bin`) inside `dir` and emits a
-TOML manifest (`manifest.toml`) at finalisation. `dir` is created if it
-does not exist; if omitted, a unique temporary directory is created and
-deleted when the storage object is garbage-collected.
+Tape storage policy that streams staged adjoint mass states onto a sibling
+staging file for the raw binary (`records.bin`) inside `dir`. Finalisation
+atomically publishes the binary and then a TOML manifest (`manifest.toml`).
+`dir` is created if it does not exist; if omitted, a unique temporary
+directory is created and deleted when the storage object is garbage-collected.
 
 The policy is backend-agnostic: CPU source panels yield in-place
 `Mmap.mmap` views at read time; GPU source panels go through a shared
@@ -60,6 +61,7 @@ panel payloads in `records.bin`.
 """
 mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
     bin_path::String
+    bin_staging_path::Union{Nothing,String}
     manifest_path::String
     dir::String
     bin_io::IOStream
@@ -79,9 +81,9 @@ mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
     # the forward-recording constructor leaves this false.
     readonly::Bool
 
-    # Forward-recording constructor: opens a fresh records.bin in
-    # read+write mode. `cleanup_on_finalize` defaults to true when
-    # `dir` is empty (temp dir) and false when the user supplies one.
+    # Forward-recording constructor: opens a fresh sibling staging file for
+    # records.bin in read+write mode. `cleanup_on_finalize` defaults to true
+    # when `dir` is empty (temp dir) and false when the user supplies one.
     function MmapCSTapeStorage(; dir::AbstractString = "",
                                cleanup_on_finalize::Union{Nothing,Bool} = nothing)
         if isempty(dir)
@@ -93,14 +95,14 @@ mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
         end
         bin_path = joinpath(dir, "records.bin")
         manifest_path = joinpath(dir, "manifest.toml")
-        # A manifest describes one immutable, finalised records.bin. Remove it
-        # before truncating that file so a crash during a new recording can
-        # never make fresh bytes look like the previous completed tape.
-        ispath(manifest_path) && rm(manifest_path; force = true)
-        bin_io = open(bin_path, "w+")
+        bin_staging_path, bin_io = open_atomic_staging(bin_path)
         local storage
         try
-            storage = new(bin_path, manifest_path, String(dir), bin_io, Int64(0),
+            # A manifest describes one immutable, finalised records.bin.
+            # Invalidate it only after staging was opened successfully, so a
+            # constructor failure cannot discard the previous valid tape.
+            ispath(manifest_path) && rm(manifest_path; force = true)
+            storage = new(bin_path, bin_staging_path, manifest_path, String(dir), bin_io, Int64(0),
                           MmapTapeRecordEntry[],
                           Dict{NTuple{6, NTuple{3, Int}}, CSPanelCache}(),
                           nothing,
@@ -108,6 +110,7 @@ mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
             finalizer(_mmap_storage_gc_close!, storage)
         catch
             close(bin_io)
+            abandon_atomic_staging(bin_staging_path)
             rethrow()
         end
         return storage
@@ -131,7 +134,7 @@ mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
         bin_io = open(bin_path, mode)
         local storage
         try
-            storage = new(bin_path, manifest_path, String(dir), bin_io, cursor,
+            storage = new(bin_path, nothing, manifest_path, String(dir), bin_io, cursor,
                           records,
                           Dict{NTuple{6, NTuple{3, Int}}, CSPanelCache}(),
                           nothing,
@@ -423,14 +426,15 @@ end
 """
     finalize_tape!(storage::MmapCSTapeStorage; quiet = false, strict = false)
 
-Sync any pending mmap state, write the TOML manifest, and close the
-underlying `records.bin` handle. Safe to call more than once; subsequent
-calls are no-ops. If the storage owns its temp directory and
-`cleanup_on_finalize` is true, the directory is also removed after
-manifest emission.
+Sync any pending mmap state, close and atomically publish `records.bin`, then
+atomically publish the TOML manifest. The manifest is published last, so a
+completed manifest never names a partly written records file. Safe to call
+more than once; subsequent calls are no-ops. If the storage owns its temp
+directory and `cleanup_on_finalize` is true, the directory is also removed
+after manifest emission.
 
-By default (`strict = false`), failures during manifest emission, IO
-close, or temp-dir cleanup are caught and surfaced via `@warn` (or
+By default (`strict = false`), failures during records publication, manifest
+emission, IO close, or temp-dir cleanup are caught and surfaced via `@warn` (or
 suppressed if `quiet = true`). This matches the temp-dir use case
 where leaving a partially-finalised storage behind is benign — the
 directory gets cleaned up by GC or by the caller's `mktempdir do`
@@ -446,8 +450,28 @@ would defeat the purpose of persisting the tape.
 function finalize_tape!(storage::MmapCSTapeStorage; quiet::Bool = false,
                         strict::Bool = false)
     storage.closed && return storage
+    close_err = nothing
+    try
+        close(storage.bin_io)
+    catch err
+        close_err = err
+        !quiet && !strict &&
+            @warn "MmapCSTapeStorage: bin close failed" exception = err
+    end
+    records_err = nothing
+    if close_err === nothing && !storage.finalised && storage.bin_staging_path !== nothing
+        try
+            commit_atomic_staging(storage.bin_staging_path, storage.bin_path)
+            storage.bin_staging_path = nothing
+        catch err
+            records_err = err
+            !quiet && !strict &&
+                @warn "MmapCSTapeStorage: records publication failed" exception = err
+        end
+    end
     manifest_err = nothing
-    if !storage.finalised && isdir(storage.dir)
+    if close_err === nothing && records_err === nothing &&
+       !storage.finalised && isdir(storage.dir)
         try
             _write_manifest(storage)
             storage.finalised = true
@@ -457,13 +481,9 @@ function finalize_tape!(storage::MmapCSTapeStorage; quiet::Bool = false,
                 @warn "MmapCSTapeStorage: manifest emission failed" exception = err
         end
     end
-    close_err = nothing
-    try
-        close(storage.bin_io)
-    catch err
-        close_err = err
-        !quiet && !strict &&
-            @warn "MmapCSTapeStorage: bin close failed" exception = err
+    if storage.bin_staging_path !== nothing
+        abandon_atomic_staging(storage.bin_staging_path)
+        storage.bin_staging_path = nothing
     end
     # Drop the per-shape device cache so any device-resident buffers
     # are released promptly. This matters for long-running 4D-Var
@@ -479,8 +499,9 @@ function finalize_tape!(storage::MmapCSTapeStorage; quiet::Bool = false,
         end
     end
     if strict
-        manifest_err !== nothing && throw(manifest_err)
         close_err !== nothing && throw(close_err)
+        records_err !== nothing && throw(records_err)
+        manifest_err !== nothing && throw(manifest_err)
     end
     return storage
 end
@@ -496,6 +517,14 @@ function _mmap_storage_gc_close!(storage::MmapCSTapeStorage)
         close(storage.bin_io)
     catch
         # Finaliser must never throw.
+    end
+    if storage.bin_staging_path !== nothing
+        try
+            abandon_atomic_staging(storage.bin_staging_path)
+        catch
+            # Finaliser must never throw.
+        end
+        storage.bin_staging_path = nothing
     end
     storage.closed = true
     if storage.cleanup_on_finalize && isdir(storage.dir)
@@ -527,16 +556,10 @@ function _write_manifest(storage::MmapCSTapeStorage)
             "shapes"  => [collect(s) for s in r.shapes],
         ) for r in storage.records
     ]
-    tmp_path, io = mktemp(storage.dir; cleanup = false)
-    try
-        TOML.print(io, Dict{String, Any}("meta" => meta, "record" => records))
-        flush(io)
-        close(io)
-        mv(tmp_path, storage.manifest_path; force = true)
-    catch
-        isopen(io) && close(io)
-        rm(tmp_path; force = true)
-        rethrow()
+    atomic_publish(storage.manifest_path) do tmp
+        open(tmp, "w") do io
+            TOML.print(io, Dict{String, Any}("meta" => meta, "record" => records))
+        end
     end
     return storage.manifest_path
 end

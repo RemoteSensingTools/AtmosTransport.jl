@@ -113,7 +113,8 @@ read.
   binary loop: copies upcoming days NAS→local NVMe ahead of the GPU loop and
   evicts processed days, bounding local-disk use for multi-month/year runs.
   A directory has one active owner, and retained-copy reuse checks source
-  identity metadata. Unavailable staging falls back to original source paths.
+  identity metadata. Copies and metadata are published through `AtomicFiles`;
+  unavailable staging falls back to original source paths.
   Default off ⇒ bit-identical to a non-staged run
 
 ## Common Tasks

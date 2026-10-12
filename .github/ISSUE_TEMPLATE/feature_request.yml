@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose a new capability or improvement
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: Please describe the scientific or engineering need before prescribing an implementation.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What workflow is blocked or unnecessarily difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed capability
+      description: Describe the behavior, interface, or output you would like.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation and evidence
+      description: How should correctness be checked, and are reference data or published methods available?
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Note any current workaround or alternative design.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission check
+      options:
+        - label: I searched existing issues and the validation-status documentation for this capability.
+          required: true

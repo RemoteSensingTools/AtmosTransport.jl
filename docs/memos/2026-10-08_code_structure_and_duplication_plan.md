@@ -106,7 +106,8 @@ report the change in a 1-day run and the true mass balance.
   MERRA-2) instead of `run_unified_preprocessor_day!`; the CS window close
   (balance, mirror sync, cm) appears at eight sites.
 - Dead code: about 1,000 lines (reduced-Gaussian CG chain, LL subcycled
-  sweeps, q-space Lin-Rood helpers, `MetState`, unused cm diagnosers).
+  sweeps, q-space Lin-Rood helpers; `MetState` and the unused cm diagnosers
+  were subsequently removed for v0.5.0).
 
 ## D. Duplication to consolidate (largest first)
 
