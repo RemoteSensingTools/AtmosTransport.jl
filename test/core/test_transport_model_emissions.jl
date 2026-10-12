@@ -9,12 +9,12 @@ Verifies:
 3. `with_emissions(model, op)` returns a new model with replaced
    emissions operator; other fields are storage-shared.
 4. `step!` with active `emissions` adds surface mass via the palindrome's
-   S slot — end-to-end composed with diffusion + chemistry.
-5. `DrivenSimulation` constructor no longer forces `NoChemistry()` inside
-   the wrapped model (plan-15 workaround removed).
-6. `DrivenSimulation` installs `surface_sources` into the wrapped model
-   via `with_emissions`, and `step!(sim)` delegates entirely to
-   `step!(model)` — no sim-level post-step emissions/chemistry.
+   S slot — end-to-end composed with diffusion + chemistry, on lat-lon and
+   reduced-Gaussian grids; tracers absent from the state are skipped.
+
+The `DrivenSimulation` side (sim-level `surface_sources` installed into the
+wrapped model with `with_emissions`) is covered by `test_driven_simulation.jl`
+("DrivenSimulation applies bottom-layer surface sources").
 """
 
 using Test
@@ -203,20 +203,3 @@ end
         @test all(model.state.tracers.SF6[:, 1] .== 0.0)
     end
 end
-
-# =====================================================================
-# DrivenSimulation cleanup — plan 17 Commit 6 resolves plan 15 workaround
-# =====================================================================
-#
-# DrivenSimulation's behavioural contract: install sim-level
-# surface_sources + chemistry into the wrapped TransportModel via
-# `with_emissions` + `with_chemistry`. `step!(sim)` delegates entirely
-# to `step!(model)` — no sim-level post-step application. The
-# behavioural test (surface flux adds 3600 mass over a 1-hour window)
-# already lives in test_driven_simulation.jl:"applies bottom-layer
-# surface sources" and passes unchanged, confirming end-to-end
-# equivalence to the pre-17 call path.
-#
-# The plan-15 "force NoChemistry() inside the wrapped model" workaround
-# is now removed: wrapped model retains the user's chemistry operator.
-# Verified by inspecting the constructed sim.

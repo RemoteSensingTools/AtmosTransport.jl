@@ -963,6 +963,28 @@
 - The `test/archived/` tests are deleted: they included preprocessing scripts
   that `cc63b87f` removed and a configuration that `71ff14f9` removed, so they
   could not load.
+- The `test/orphan/` tier is gone, and with it the `--orphan` runner flag:
+  its 18 files, which CI never ran, now run in `core/`. Fourteen moved there
+  and load the cached package; `test_cmfmc_convection.jl` lost the
+  hand-expanded checks of the two-term CMFMC tendency that `dfb7a7be`
+  replaced, and `test_convection_forcing.jl` expects the four-slot
+  capability tuple (cloud base, `4a5daf38`). The unique checks of
+  `test_convection_types.jl`, `test_current_time.jl`,
+  `test_gchp_vdiff_binary_payload.jl` and `test_surface_flux_operator.jl`
+  moved into `test_transport_model_convection.jl`,
+  `test_multiday_source_clock.jl`, `test_cs_optional_2d_sections.jl` and
+  `test_per_tracer_flux_map.jl`. Newly in CI: the lat-lon chemistry
+  operators, the CS Poisson projection cadence, the cubed-sphere driven
+  runtime (per-window step schedule, Lin-Rood with diffusion and TM5
+  convection, rejection of obsolete binaries and partial-day carryover),
+  the ERA5 surface reader (ARCO layout, split CDS ZIP, latent heat flux),
+  the Kz and stepwise fields, pressure-overlap remap, QV longitude
+  normalization, the lat-lon `run_transport` recipe, the TM5 sparsity
+  above the effective cloud top, and the surface-flux map and palindrome
+  emissions. `test_era5_n320_to_c180_pipeline.jl`, which skips without the
+  N320 archive, moved to `test/real_data/`, and `test_tm5_vs_cmfmc_parity.jl`
+  keeps only its uniform-mixing-ratio checks (its conservation checks are
+  tighter elsewhere).
 - Documentation corrections from an external review against the TM5 Fortran
   by pera-noaa (NOAA GML), GitHub issues #12, #15 and #20. Thank you.
   - `SlopesScheme` is no longer described as a port of TM5's slopes

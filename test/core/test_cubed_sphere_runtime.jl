@@ -3,15 +3,14 @@
 using Test
 using JSON3
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
-using .AtmosTransport.Architectures: CPU
-using .AtmosTransport.MetDrivers: PBLSurfaceForcing, load_window!
-using .AtmosTransport.Models: current_qv
-using .AtmosTransport.State: CubedSphereField, WindowPBLKzField,
+using AtmosTransport
+using AtmosTransport.Architectures: CPU
+using AtmosTransport.MetDrivers: PBLSurfaceForcing, load_window!
+using AtmosTransport.Models: current_qv
+using AtmosTransport.State: CubedSphereField, WindowPBLKzField,
                              LocalHoltslagBovilleKzField
-using .AtmosTransport.Operators.Advection: CSLinRoodAdvectionWorkspace
-using .AtmosTransport.Operators.Convection: TM5Workspace
+using AtmosTransport.Operators.Advection: CSLinRoodAdvectionWorkspace
+using AtmosTransport.Operators.Convection: TM5Workspace
 
 function rewrite_cs_header!(path::AbstractString; updates = Dict{String, Any}())
     open(path, "r+") do io

@@ -1,8 +1,7 @@
 using Test
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport.Grids: HybridSigmaPressure
-using .AtmosTransport.Preprocessing:
+using AtmosTransport.Grids: HybridSigmaPressure
+using AtmosTransport.Preprocessing:
     remap_extensive_field_pressure_overlap!,
     remap_qv_pressure_overlap!,
     fill_xface_surface_pressure!,

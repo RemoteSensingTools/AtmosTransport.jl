@@ -76,7 +76,7 @@ zero runtime orientation gymnastics.
 # Solver class
 
 Partial-pivot Gaussian elimination on the active lower-right block per
-column (see `test/test_tm5_sparsity_above_icltop.jl` for the structure
+column (see `test/core/test_tm5_sparsity_above_icltop.jl` for the structure
 survey).
 Identity rows above the effective cloud top and the lower-left zero
 quadrant are skipped by both the factorization and the tracer solve.

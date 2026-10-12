@@ -13,6 +13,11 @@
 #
 # The fix: `DrivenSimulation(...; start_time)` sets the clock origin, and
 # both runner loops pass the accumulated run time.
+#
+# Operators read that clock through `current_time(meteo)`: `step!(sim)`
+# passes the simulation itself as `meteo` (plan 18 A3; passing the
+# stateless driver made every operator see 0.0), and `current_time(nothing)`
+# is 0.0 for operators applied without meteorology.
 # ---------------------------------------------------------------------------
 
 using Test
@@ -69,6 +74,38 @@ end
         @test current_time(sim) == day2
         step!(sim)
         @test current_time(sim) == day2 + sim.Δt   # advances FROM the origin
+    end
+end
+
+# A chemistry operator that records the `meteo` its `apply!` receives.
+struct _MeteoCaptureChemistry <: AtmosTransport.AbstractChemistryOperator
+    captured :: Base.RefValue{Any}
+end
+function AtmosTransport.apply!(state, meteo, grid, op::_MeteoCaptureChemistry, dt::Real;
+                               workspace = nothing)
+    op.captured[] = meteo
+    return state
+end
+
+@testset "operators read the clock from the simulation passed as meteo" begin
+    @test current_time(nothing) === 0.0
+    mktemp() do path, io
+        close(io)
+        _write_clock_test_binary(path)
+        driver = TransportBinaryDriver(path; FT = Float64, arch = CPU())
+        grid = driver_grid(driver)
+        state = CellState(MoistBasis, ones(Float64, 4, 3, 2);
+                          CO2 = fill(400e-6, 4, 3, 2))
+        fluxes = allocate_face_fluxes(grid.horizontal, 2; FT = Float64,
+                                      basis = MoistBasis)
+        capture = _MeteoCaptureChemistry(Ref{Any}(nothing))
+        sim = DrivenSimulation(TransportModel(state, fluxes, grid, UpwindScheme()), driver;
+                               chemistry = capture)
+        @test capture.captured[] === nothing
+        step!(sim)
+        @test capture.captured[] === sim               # not sim.driver
+        @test current_time(capture.captured[]) == sim.Δt
+        close(driver)
     end
 end
 

@@ -9,9 +9,13 @@
 #      coefficient-file vs Nz mismatch.
 #   2. `include_convection = false` produces a pipeline with
 #      `convection_fields === nothing`.
-#   3. (opt-in, real GRIB) End-to-end smoke for 2021-12-01 hour 6 against
-#      the real N320 archive: every output field (n320 window, dry mass,
-#      convection, C180 regridded) reaches its expected physical range.
+#   3. End-to-end smoke for 2021-12-01 hour 6 against the real N320
+#      archive: every output field (n320 window, dry mass, convection,
+#      C180 regridded) reaches its expected physical range.
+#
+# All three need the real N320 GRIB archive: set `ATMOS_ERA5_N320_ROOT`
+# (otherwise the file records one skipped test). Hence the real_data tier
+# (`test/runtests.jl --real-data`).
 # ---------------------------------------------------------------------------
 
 using Test

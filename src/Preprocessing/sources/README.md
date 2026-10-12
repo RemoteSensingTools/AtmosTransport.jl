@@ -116,5 +116,7 @@ In [`../../../test/core/`](../../../test/core/): `test_met_source_loader.jl`,
 `test_geosfp_native_physics_fallback.jl`, `test_geos_convection.jl`,
 `test_era5_n320_reader.jl`, `test_era5_n320_window_reader.jl`,
 `test_era5_n320_dry_mass.jl`, `test_era5_n320_convection.jl`,
-`test_era5_n320_to_c180_regrid.jl`, `test_era5_n320_to_c180_pipeline.jl`,
-`test_era5_c180_tm5_convection.jl`.
+`test_era5_n320_to_c180_regrid.jl`, `test_era5_c180_tm5_convection.jl`. The
+full per-window N320 → C180 pipeline needs the ERA5 N320 GRIB archive
+(`ATMOS_ERA5_N320_ROOT`) and is tested in
+[`../../../test/real_data/test_era5_n320_to_c180_pipeline.jl`](../../../test/real_data/test_era5_n320_to_c180_pipeline.jl).

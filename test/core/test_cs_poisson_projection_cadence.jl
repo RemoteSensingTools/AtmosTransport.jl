@@ -4,8 +4,7 @@ using Test
 using Random
 using LinearAlgebra
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 
 const P = AtmosTransport.Preprocessing
 

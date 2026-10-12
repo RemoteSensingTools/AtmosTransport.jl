@@ -163,5 +163,5 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
   - [`../../../test/core/test_advection_kernels.jl`](../../../test/core/test_advection_kernels.jl)
   - [`../../../test/core/test_cubed_sphere_advection.jl`](../../../test/core/test_cubed_sphere_advection.jl)
   - [`../../../test/core/test_basis_explicit_core.jl`](../../../test/core/test_basis_explicit_core.jl)
-  - [`../../../test/orphan/test_emissions_palindrome.jl`](../../../test/orphan/test_emissions_palindrome.jl)
+  - [`../../../test/core/test_emissions_palindrome.jl`](../../../test/core/test_emissions_palindrome.jl)
   - [`../../../test/core/test_diffusion_palindrome_contract.jl`](../../../test/core/test_diffusion_palindrome_contract.jl)

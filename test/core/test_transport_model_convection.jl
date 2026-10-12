@@ -92,6 +92,12 @@ AtmosTransport.MetDrivers.uses_binary_substep_contract(driver::_ConvectionWindow
     driver.binary_contract
 AtmosTransport.supports_convection(::_ConvectionWindowDriver) = true
 
+# `NoConvection` is a dead branch: after warm-up, `apply!` allocates nothing.
+function _no_convection_apply_allocs(state, forcing, grid, dt)
+    apply!(state, forcing, grid, NoConvection(), dt; workspace = nothing)
+    return @allocated apply!(state, forcing, grid, NoConvection(), dt; workspace = nothing)
+end
+
 struct _CountingChemistry <: AbstractChemistryOperator
     calls    :: Base.RefValue{Int}
     total_dt :: Base.RefValue{Float64}
@@ -159,6 +165,28 @@ end
         end
 
         @test model_a.state.tracers_raw == model_b.state.tracers_raw
+    end
+
+    @testset "NoConvection apply! is an allocation-free identity, also on cubed-sphere states" begin
+        FT = Float64
+        grid = _make_convection_grid(FT = FT, Nx = 2, Ny = 2)
+        m = ones(FT, 2, 2, 5)
+        state = CellState(m; CO2 = FT(400e-6) .* m)
+        @test _no_convection_apply_allocs(state, ConvectionForcing(), grid, FT(1)) == 0
+
+        Nc, Hp, Nz = 2, 1, 2
+        mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = Hp)
+        cs_grid = AtmosGrid(mesh, HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1]), CPU(); FT = FT)
+        dims = (Nc + 2Hp, Nc + 2Hp, Nz)
+        cs_state = CubedSphereState(DryBasis, mesh, ntuple(_ -> ones(FT, dims), 6);
+                                    CO2 = ntuple(_ -> fill(FT(400e-6), dims), 6))
+        air_before = deepcopy(cs_state.air_mass)
+        raw_before = deepcopy(cs_state.tracers_raw)
+        result = apply!(cs_state, ConvectionForcing(), cs_grid, NoConvection(), FT(1800);
+                        workspace = nothing)
+        @test result === cs_state
+        @test cs_state.air_mass == air_before
+        @test cs_state.tracers_raw == raw_before
     end
 
     @testset "step! with CMFMCConvection redistributes vertically" begin
