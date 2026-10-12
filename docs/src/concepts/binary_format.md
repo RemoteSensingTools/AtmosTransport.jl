@@ -577,7 +577,9 @@ residuals stated in the payload's amount convention). The projected residual
 and its ratio describe the fluxes as stored: GEOS stores full-window amounts,
 the balanced per-application fluxes multiplied by `2n` in the storage type (a
 Float32 product that rounds unless `2n` is a power of two), and evaluates the
-closure again on the stored values (`flux_scale = 1/(2n)`); the `cm` keys
+closure again on the stored values (`flux_scale = 1/(2n)`; GEOS-IT C45
+golden: largest ratio 0.014 in the windows with `n = 9`, against 0.0012
+before the scaling); the `cm` keys
 record the residual folded into `cm` when it was diagnosed. Lat-lon,
 reduced-Gaussian, payload-only and GEOS pressure-fixer binaries have no
 cubed-sphere column balance and omit them. The reader decodes the keys into
@@ -586,6 +588,21 @@ them reads as `NoColumnClosureHeader()`, "not recorded") and refuses to load a
 record that is incomplete, names another rule, covers other than `nwindow`
 windows, or holds a non-finite, negative or above-1 ratio: such a binary must
 be regenerated.
+
+**Known limits.**
+
+- The GEOS OMEGA baseline (`geos_native_omega_v3`) reuses the MERRA-2 gates
+  and has not been measured: no golden case covers the `omega_regularized` or
+  `omega_full_replacement` closures. A GEOS OMEGA day may fail the gate, and
+  `omega_regularized` with a per-level cap (`applied_scale < 1`) breaks
+  column neutrality, which the closure re-check rejects. Run one day of such a
+  configuration before relying on it.
+- Coarse unpinned Float32 runs can approach the `cm` closure limit: an
+  unpinned GEOS-IT C45 golden day (`[mass_fix] enable = false`) passes with
+  `column_closure_cm_residual_to_tolerance_max = 0.924`, because the global
+  air-mass change of each window stays in every column. Other days can exceed
+  1 and fail before the window is written, with a message that names
+  `[mass_fix]`.
 
 The flat keys begin with `flux_fidelity_`, `omega_fidelity_`,
 `balance_correction_` and `column_closure_`; they form one block, which a

@@ -231,7 +231,11 @@
   written when a sample exceeds both `64 ε max(F_scale, 1 kg)` and
   `256 ε` relative; the balance correction `Δ = F_balanced − F` is reported
   separately, flux-weighted: largest `|Δ|`, `RMS(Δ)/RMS(F)` over all samples
-  and its largest per-level value with the level. Where
+  and its largest per-level value with the level (goldens, global and
+  largest per-level value, the latter at the lowest level in every case:
+  0.39 % and 0.95 % for MERRA-2 C90, 0.29 % and 0.58 % for ERA5 N320 L117,
+  2.3 % and 5.9 % for GEOS-IT C45, 3.0 % and 6.9 % for ERA5 C24, 3.7 % and
+  9.4 % for the 72 × 37 lat-lon and 0.78 % and 1.7 % for O24). Where
   source OMEGA is open (MERRA-2; GEOS OMEGA closures), `ω_cm = g cm/(A Δt)`
   must beat a zero vertical flux, `NRMSE < 1`, with correlation `> 0.5` and
   slope `0.5 < s < 1.5` (MERRA-2 C90: 0.47, 0.89, 0.87; baselines
@@ -266,9 +270,22 @@
   golden payloads by at most 2.7e-4 (`pre_c24`), 3.8e-5 (`pre_merra2_c90`),
   6.0e-8 (`pre_era5_n320_c90_l117`) and 2.8e-3 (`pre_geosit_c45`) relative;
   the per-cell rule changes none: every golden window closes at the first pass
-  with largest residual/tolerance ratios of 0.0021 (MERRA-2 C90), 0.0012
+  with largest residual/tolerance ratios of 0.0021 (MERRA-2 C90), 0.014
   (GEOS-IT C45), 0.0002 (ERA5 N320 L117) and 0.01 (ERA5 C24), and `cm`
-  residual ratios of at most 0.22.
+  residual ratios of at most 0.22. The record describes the stored payload:
+  GEOS stores full-window amounts, `2n` times the balanced fluxes, a Float32
+  product that rounds when `2n` is not a power of two, so its closure is
+  evaluated again after that scaling (GEOS-IT C45: 0.014, set by windows with
+  `n = 9`, against 0.0012 before the scaling; largest projected residual
+  3.4e5 kg per flux application). The `cm` keys record the residual folded
+  into `cm` at its diagnosis. The reader decodes the record
+  (`TransportBinaryHeader.column_closure`) and refuses a binary whose record
+  is incomplete, covers other than `nwindow` windows or exceeds its
+  tolerance; binaries without the keys load as "not recorded". Known limits:
+  the GEOS OMEGA baseline is unmeasured (no golden covers `omega_regularized`
+  or `omega_full_replacement`), and coarse unpinned Float32 runs can
+  approach the `cm` limit (unpinned GEOS-IT C45 golden day: `cm` residual
+  ratio 0.924).
 - ERA5 surface fields (PBL height, friction velocity, heat fluxes, 2 m
   temperature) are remapped from cell faces derived from the file's own
   coordinates (`SnappedFaces`, half-width polar caps). The previous uniform
