@@ -88,6 +88,86 @@ end
     @test all(==(100.0), packed[1][:, :, :, 1])
 end
 
+# The qmincg fallback fires only where the counter-gradient increment
+# cₖ = x (fₖ − δₖN) is negative and makes the layer negative (OF-108): roundoff
+# negatives that transport leaves in zero-background tracers must not send the
+# column's emission to the surface layer.
+@testset "qmincg fallback: only layers the redistribution lowers" begin
+    x = FT(20)                                                    # 2 kg s⁻¹ × 10 s
+    # Deposit into column (1, 1) of panel 1 (other columns: surface only);
+    # returns the column before and after.
+    function deposit_column(q_col, f_col; rate = 2.0)
+        profile = zeros(FT, Nc, Nc, Nz); profile[:, :, Nz] .= 1
+        profile[1, 1, :] .= f_col
+        q = ntuple(_ -> fill(FT(100), Nc + 2Hp, Nc + 2Hp, Nz), 6)
+        q[1][1 + Hp, 1 + Hp, :] .= q_col
+        op = SurfaceFluxOperator(SurfaceFluxSource(:x, ntuple(_ -> fill(FT(rate), Nc, Nc), 6)))
+        apply_surface_flux!(q, op, nothing, 10.0, nothing, nothing; tracer_names = (:x,),
+                            halo_width = Hp, deposit = ntuple(_ -> ProfileDeposit(profile), 6))
+        return q[1][1 + Hp, 1 + Hp, :]
+    end
+    column(pairs...) = (q = zeros(FT, Nz); for (k, v) in pairs; q[k] = v; end; q)
+    f = column(Nz - 2 => 0.2, Nz - 1 => 0.3, Nz => 0.5)          # c = (4, 6, −10) at Nz-2:Nz
+    gained = FT[]                                                 # column gain of every case
+
+    # A layer above the PBL that is roundoff-negative and receives nothing
+    # (c = 0): the emission follows the profile. Before OF-108 it all stayed in
+    # the surface layer.
+    q0 = column(5 => -1e-24, 12 => -3e-316, Nz => 50)
+    q1 = deposit_column(q0, f); push!(gained, sum(q1) - sum(q0))
+    @test q1[Nz-2:Nz] ≈ [4, 6, 60]
+    @test q1[5] == -1e-24 && q1[12] == -3e-316
+
+    # A negative layer the redistribution raises but leaves negative: the
+    # profile applies. (GEOS-Chem's literal test, q + c < 0 in the bottom npbl
+    # layers, would fall back here.)
+    q0 = column(Nz - 2 => -5, Nz => 50)
+    q1 = deposit_column(q0, f); push!(gained, sum(q1) - sum(q0))
+    @test q1[Nz-2:Nz] ≈ [-1, 6, 60]
+
+    # Genuine qmincg: the redistribution would turn the surface layer negative.
+    q0 = column(Nz => 5)
+    q1 = deposit_column(q0, f); push!(gained, sum(q1) - sum(q0))
+    @test q1[Nz] == 25 && q1[Nz-2] == 0 && q1[Nz-1] == 0
+
+    # A negative fraction lowers layer Nz-1 by 10: the threshold is q + c < 0.
+    fneg = column(Nz - 2 => 0.7, Nz - 1 => -0.5, Nz => 0.8)       # c = (14, −10, −4)
+    q0 = column(Nz - 1 => 10, Nz => 50)                           # ends at exactly 0: profile
+    q1 = deposit_column(q0, fneg); push!(gained, sum(q1) - sum(q0))
+    @test q1[Nz-2:Nz] ≈ [14, 0, 66] && q1[Nz-1] >= 0
+    for q_low in (prevfloat(FT(10)), FT(-1e-24))                  # ends below 0: fallback
+        q0 = column(Nz - 1 => q_low, Nz => 50)
+        q1 = deposit_column(q0, fneg); push!(gained, sum(q1) - sum(q0))
+        @test q1[Nz-2:Nz] == [0, q_low, 70]
+    end
+
+    # Uptake (x < 0) lowers the layers above the surface: an empty one falls back.
+    q0 = column(Nz - 2 => 100, Nz - 1 => 100, Nz => 100)
+    q1 = deposit_column(q0, f; rate = -2.0); push!(gained, -(sum(q1) - sum(q0)))
+    @test q1[Nz-2:Nz] ≈ [96, 94, 90]
+    q0 = column(Nz - 1 => 100, Nz => 100)
+    q1 = deposit_column(q0, f; rate = -2.0); push!(gained, -(sum(q1) - sum(q0)))
+    @test q1[Nz-2:Nz] == [0, 100, 80]
+
+    # Conservation: the column gains exactly the emission in every case.
+    @test all(g -> isapprox(g, x; rtol = 4eps(FT)), gained)
+
+    # GEOS-Chem's profile: every nonzero cₖ lies in its bottom npbl layers, so
+    # the condition never needs that range. A zero-background column with
+    # roundoff negatives above the PBL and a filled PBL takes the profile.
+    field, col = refreshed(hflux = 250.0)
+    prof = field.emission_profile[1][1, 1, :]
+    prm = GCHPVdiffParameters{FT}()
+    n_pbl = AtmosTransport.State.Fields.gchp_pbl_layer_count(col.vertical.A, col.vertical.B, prm)
+    lofted = findall(!iszero, prof[1:Nz-1])
+    @test !isempty(lofted) && minimum(lofted) >= Nz - n_pbl + 1
+    @test any(<(0), prof)                                         # a layer the profile lowers
+    q0 = zeros(FT, Nz); q0[Nz-n_pbl+1:Nz] .= 1e3; q0[1:Nz-n_pbl] .= -1e-30
+    q1 = deposit_column(q0, prof)
+    @test q1 ≈ q0 .+ x .* prof rtol = 1e-14
+    @test q1[1:Nz-n_pbl] == q0[1:Nz-n_pbl]
+end
+
 @testset "geoschem_nonlocal_vdiff config" begin
     spec(d) = AtmosTransport.Models.diffusion_spec(d)
     @test spec(Dict("kind" => "geoschem_nonlocal_vdiff")) isa
