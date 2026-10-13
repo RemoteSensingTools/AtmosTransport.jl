@@ -271,8 +271,21 @@ golden columns, one hourly step grew a column's ``\sum_k |r_k|`` up to 84-fold.
 The air-mass-weighted increment ``w_k = m_k / M_s`` is linear in the tracer but
 not monotone. On the same columns it turned non-negative Rn-222 and fossil
 CO₂ into up to 35,000 negative cells per hourly step (down to −7 % of the
-field maximum), so it was not adopted. The split is not linear. Merged solves
-have no adjoint: CS footprints require `n_merge = 1`.
+field maximum), so it was not adopted. Merged solves have no adjoint: CS
+footprints require `n_merge = 1`.
+
+Known limitations of the split (use `n_merge = 1` where they matter):
+
+- It is not additive in the tracer: it scales with the tracer and flips with
+  its sign, but the split of a sum is not the sum of the splits. Tagged-tracer
+  budgets (components that must add up to a total tracer) and runs that rely
+  on linearity, such as anomaly or interannual-variability transport, are
+  therefore not exact with `n_merge > 1`.
+- A super-layer that is nearly empty but of one sign hands almost all of its
+  convective gain to the fine layer holding the trace amount (for example a
+  pair holding 1e-25 and 1e-22 kg). This stays conservative and bounded — the
+  mixing ratio within the pair can differ by up to about a factor `n_merge` —
+  and the pre-OF-107 split behaved the same way.
 
 ### `CMFMCConvection`
 

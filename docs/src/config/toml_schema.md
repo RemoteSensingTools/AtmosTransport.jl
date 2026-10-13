@@ -477,7 +477,10 @@ cloud_base = "cmfmc"            # cmfmc only: "cmfmc" = lowest layer with updraf
 use_collab_lu = true            # batched/collaborative column LU (fast path)
 lmax_conv     = 0               # 0 = full column; >0 retains that many bottom layers
 n_merge       = 1               # 1 = no aggregation; >1 merges adjacent vertical
-                                # layers within each column (a numerical approximation)
+                                # layers within each column (a numerical approximation;
+                                # not additive in the tracer — use 1 for tagged-tracer
+                                # budgets, anomaly transport and adjoints; see
+                                # "Level merging" in operators_on_binaries.md)
 
 # TM5 and CMFMC-matrix: per-topology legacy column-tile budget in GiB.
 # Collaborative GPU runs defer this global scratch allocation. A CPU or
