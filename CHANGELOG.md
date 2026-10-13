@@ -305,11 +305,14 @@ these keys, and readers act on them:
 - TM5 level merging (`n_merge > 1`) is not additive in the tracer: tagged-
   tracer budgets, anomaly transport and adjoints need `n_merge = 1` (the
   convection adjoint rejects `n_merge ≠ 1`).
-- Lin–Rood transport is far more sensitive to Float32 than PPM: on the C24
-  golden blob day its relative difference Float32 vs Float64 is 2.0e-3 (CPU;
-  CUDA vs CPU 2.2e-3, Metal 2.3e-3), against 7.6e-6 for PPM. The difference
-  grows through the day and sits in undershoot cells near the model top; it is
-  under investigation. Use Float64 or PPM where this matters.
+- Lin–Rood transport is far more sensitive to arithmetic precision than PPM.
+  On the C24 golden blob day (maximum absolute difference of the blob field,
+  normalized by the blob maximum), default Lin–Rood (PPM5, `fv3_kord8`
+  vertical) differs by 2.0e-3 between CPU Float32 and CPU Float64, and by
+  2.2e-3 (CUDA) and 2.3e-3 (Metal) between GPU Float32 and CPU Float32; split
+  PPM with `fv3_kord8` differs by 7.6e-6 between CPU Float32 and Float64. The
+  difference grows through the day and sits in undershoot cells near the model
+  top; it is under investigation. Use Float64 or PPM where this matters.
 - Metal runs Float32 only. A time-varying surface-flux source built in
   Julia with host `SubArray` series cannot be staged on Metal (Metal.jl 1.11
   has no offset `copyto!` from a host view, so it fails with a
