@@ -22,6 +22,11 @@ Thank you.
   (#13), all in PR #41. **TM5 level merging** (`n_merge > 1`) no longer
   amplifies near-cancelling mixed-sign layer pairs into dipoles with negative
   mixing ratios (OF-107, PR #51); the default `n_merge = 1` is unaffected.
+- **GEOS-Chem non-local VDIFF emission deposit fixed** (OF-108, PR #53): a
+  roundoff-triggered `qmincg` fallback had kept about 94 % of fresh emissions
+  of zero-background tracers (Rn-222, fossil CO₂) in the surface layer
+  instead of the boundary-layer profile. Rerun MERRA-2 runs that use
+  `[diffusion] kind = "geoschem_nonlocal_vdiff"`.
 - **Column-only Poisson balance**, which fixes the reduced-Gaussian sign error
   (#11, PR #36).
 - **Per-cell replay gate** with tighter tolerances (#15, PR #39), and
