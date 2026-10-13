@@ -442,6 +442,7 @@ description = "Adjoint kernels and footprints: Lin-Rood and PPM transposes, foot
 files = [
     "core/test_linrood_kernel_adjoints.jl",
     "core/test_cs_linrood_footprint_fd.jl",
+    "core/test_cs_linrood_fv3_adjoint.jl",
     "core/test_cs_ppm_adjoint_footprint.jl",
     "core/test_cs_stride_checkpoint.jl",
     "core/test_cs_tape_mmap_roundtrip.jl",
