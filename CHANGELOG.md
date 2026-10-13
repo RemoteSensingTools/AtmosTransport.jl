@@ -217,6 +217,44 @@
 
 ### Fixes
 
+- GEOS-Chem's non-local VDIFF (`[diffusion] kind = "geoschem_nonlocal_vdiff"`,
+  OF-108) now spreads fresh surface emissions over the boundary layer in the
+  columns where GEOS-Chem does. Its `qmincg` fallback keeps a column's
+  emission `x` in the surface layer instead. It fired when any layer `k` had
+  `q_k + c_k < 0`, with `c_k = x (f_k − δ_kN)` the counter-gradient increment,
+  including layers with `c_k = 0`. Transport leaves roundoff negatives, as
+  small as −3e-316, in tracers with a zero background. Over the first 2 h of
+  the C90 MERRA-2 golden day, 94 % of the Rn-222 and fossil CO₂ column
+  deposits therefore stayed in the surface layer; 2–3 % took the profile and
+  3–4 % fell back as GEOS-Chem would. The choice also flipped with the sign of
+  roundoff, which failed the Float64 GPU-vs-CPU release comparison. The
+  fallback now requires `c_k < 0` and `q_k + c_k < 0` for some `k`: the
+  redistribution makes a layer negative or a negative layer more negative.
+  Every nonzero `c_k` lies in GEOS-Chem's bottom `npbl` layers, the range
+  `vdiff_mod.F90` checks. GEOS-Chem also falls back on a layer that was
+  negative before the step and that `c_k` does not lower; this test does
+  not. Both placements add exactly `x` to the column. The equations are in
+  the `ProfileDeposit` docstring and in
+  `docs/src/for_tm5_gchp_users/operators_on_binaries.md`.
+  Golden effect: the five `geoschem_nonlocal_vdiff` cases change in Rn-222
+  and fossil CO₂ only; CO₂, SF₆ and the uniform tracer are bit-identical, as
+  are all other cases. In `run_c90_merra2_cpu_f64` (24 h), Rn-222 changes by
+  3.2 % (L1; largest cell 4.3 % of the field maximum) and fossil CO₂ by 3.6 %
+  (2.0 %); column means by 0.79 % and 1.1 % (L1). The surface layer holds less
+  of the tracer: 59.8 % instead of 60.8 % of the Rn-222 mass at 3 h (fossil
+  CO₂: 44.9 % instead of 47.1 %), 29.7 % instead of 30.1 % at 24 h (30.0 %
+  instead of 30.5 %). Total masses agree to 2e-16. In the Float32 GPU cases
+  Rn-222 changes by 1.6–2.6 % and fossil CO₂ by 3.6–3.9 % (L1; total masses
+  to 8e-9, Float32 rounding), except with the CW84 limiter
+  (`run_c90_merra2_cw84_gpu_f32`): 0.03 % and 0.20 %. That case leaves fewer
+  negative values (at 3 h, 0.5 % and 1.1 % of the cells, against 2–3 % and
+  17–22 % in the other Float32 cases and 49 % and 48 % in Float64), so the
+  old test rarely fired there.
+  CATRINE MERRA-2 protocol runs with this scheme
+  (`config/runs/catrine_protocol/catrine_c90_merra2_l72_protocol.toml` and
+  the GCHP-matched MERRA-2 runs) therefore kept too much of the emission of
+  zero-background tracers (Rn-222, fossil CO₂) in the surface layer. Tracers
+  with a positive background everywhere (CO₂, SF₆) are unaffected.
 - TM5 convection level merging (`n_merge > 1`, OF-107) no longer amplifies
   super-layers that hold near-cancelling values of both signs. The merged
   path gave each fine layer `R'_s r_k / R_s` of its super-layer's new tracer

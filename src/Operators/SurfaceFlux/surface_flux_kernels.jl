@@ -90,9 +90,27 @@ step. `SurfaceLayerDeposit` adds it to the surface layer `k = Nz` with Kahan
 compensation. `ProfileDeposit` spreads it over the column with per-layer
 fractions `profile[i, j, k]` that sum to one: the non-local PBL transport of
 fresh surface emissions in GEOS-Chem's VDIFF (the counter-gradient term
-`∂(ρ K γ)/∂z`, linear in the surface flux). As in GEOS-Chem (`qmincg`), a
-column whose counter-gradient redistribution alone would turn a layer
-negative keeps the emission in the surface layer. Upper-layer additions are
+`∂(ρ K γ)/∂z`, linear in the surface flux). A fraction may be negative: that
+layer loses tracer to the layers above.
+
+Of a column's emission ``x``, the counter-gradient redistribution moves
+``c_k = x\\,(f_k - \\delta_{k N})`` into layer ``k`` (``f_k`` the fraction,
+``N = N_z`` the surface layer). As in GEOS-Chem's `qmincg` check, the column
+keeps all of ``x`` in the surface layer instead when that redistribution
+would make a layer negative or a negative layer more negative,
+
+```math
+\\exists\\, k:\\quad c_k < 0 \\quad\\text{and}\\quad q_k + c_k < 0,
+```
+
+with ``q_k`` the tracer before the step's emission. A layer the
+redistribution raises or leaves unchanged (``c_k \\ge 0``) never triggers the
+fallback, so the roundoff negatives that transport leaves in zero-background
+tracers do not. GEOS-Chem tests ``q_k + c_k < 0`` on its bottom `npbl`
+layers, which hold every nonzero ``c_k``; it also falls back on a layer that
+was negative before the step and that the redistribution does not lower.
+
+Both placements add exactly ``x`` to the column. Upper-layer additions are
 tracked with `_two_sum`, and the surface layer receives the emission minus what
 landed above through the Kahan update, so the column gains exactly the
 emitted mass.
@@ -128,7 +146,9 @@ end
     @inbounds begin
         for k in 1:Nz
             redistributed = x * (f[ii, jj, k] - (k == Nz))       # counter-gradient part only
-            q[_tracer_cell(q, ii + Hp, jj + Hp, k, t)] + redistributed < 0 &&
+            # qmincg: only a layer the redistribution lowers can trigger the fallback;
+            # a roundoff-negative layer it raises or leaves unchanged does not.
+            redistributed < 0 && q[_tracer_cell(q, ii + Hp, jj + Hp, k, t)] + redistributed < 0 &&
                 return _deposit!(q, comp, x, ii, jj, Hp, Nz, t, SurfaceLayerDeposit())
         end
         lofted, lofted_err = zero(x), zero(x)          # mass that reached layers 1…Nz-1

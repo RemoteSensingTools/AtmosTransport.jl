@@ -206,6 +206,7 @@ paths = [
     "src/State/Fields/*Kz*.jl",
     "src/State/Fields/GCHPNonlocalPBLField.jl",
     "src/State/Fields/PrecomputedCSDkgField.jl",
+    "src/Operators/SurfaceFlux/surface_flux_kernels.jl",
     "src/Adjoints/DiffusionAdjoint.jl",
     "src/Preprocessing/tm5_bldiff.jl",
     "src/Models/driven_physics_refresh.jl",
