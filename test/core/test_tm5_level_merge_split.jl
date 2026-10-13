@@ -15,6 +15,13 @@ using Test, Random
 
 using AtmosTransport
 
+const _HAS_CUDA = try
+    @eval using CUDA
+    @eval CUDA.functional()
+catch
+    false
+end
+
 const Cv = AtmosTransport.Operators.Convection
 
 # Convective forcing (kg m⁻² s⁻¹) on `Nz` layers, k = 1 at the top: an updraft
@@ -204,4 +211,30 @@ _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
         q_cs[interior..., :, :] .= halo0[interior..., :, :]
         @test q_cs == halo0
     end
+
+    @testset "CUDA broadcasts match the CPU split" begin
+        if !_HAS_CUDA
+            @test_skip "CUDA backend required"
+        else
+            FT = Float32
+            rng = MersenneTwister(5)
+            Nx, Ny = 6, 5
+            m = FT(500) .+ FT(1000) .* rand(rng, FT, Nx, Ny, Nz)
+            q = randn(rng, FT, Nx, Ny, Nz, 3) .* reshape(m, Nx, Ny, Nz, 1) .* FT(1e-6)
+            forcing = _column_forcing(FT, Nx, Ny, Nz)
+            q_cpu = _merged_step!(copy(q), m, forcing, 2)
+            # Device arrays throughout; only the coarse column solve runs on the
+            # host, so the split's reductions and broadcasts run on the GPU.
+            q_gpu = CuArray(q)
+            Cv._tm5_merge_aggregate_solve_disaggregate!(
+                q_gpu, CuArray(m), map(CuArray, forcing)..., 0, Nz, Nz ÷ 2, 2, 3,
+                function (qS, args...)
+                    h = Array(qS)
+                    _serial_super_solve!(3600, h, map(Array, args)...)
+                    copyto!(qS, h)
+                end)
+            @test isapprox(Array(q_gpu), q_cpu; rtol = 16 * eps(FT), atol = 16 * eps(FT) * maximum(abs, q_cpu))
+        end
+    end
 end
+

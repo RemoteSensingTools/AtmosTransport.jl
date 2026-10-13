@@ -513,9 +513,13 @@ With layer aggregation, the solver uses `L_super = fld(L, n_merge)`, where
 `L_super*n_merge`, so a nondivisible choice omits up to `n_merge-1` additional
 top layers. Cloud-top closure forces remaining updraft mass to detrain at the
 active boundary; it does not recover the mixing excluded by that boundary.
-Redistribution follows each tracer's prior fine-layer profile, using uniform
-weights when its old super-layer total is zero. Conservation is to rounding,
-not exact arithmetic. The default `n_merge` is 1.
+Each fine layer then receives a share of its super-layer's tracer-mass change,
+weighted by `|r_k|/Σ|r_j|` over the super-layer (air-mass weights when all its
+values are zero). Non-negative tracers stay non-negative, layers the solve did
+not change keep their values, and no cell moves by more than its super-layer's
+change; the equations are in the
+[level-merging section](@ref tm5-level-merging).
+Conservation is to rounding, not exact arithmetic. The default `n_merge` is 1.
 
 Topology checks happen while the runtime recipe is built: reduced-Gaussian
 runs accept `upwind` or `none` advection and require midpoint surface-flux

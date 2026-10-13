@@ -222,6 +222,52 @@ algorithm follows `tm5/levitation.F90` closely; the column solve is
 in `src/Operators/Convection/tm5_column_solve.jl` and the kernels
 in `tm5_kernels.jl`.
 
+#### [Level merging (`n_merge > 1`)](@id tm5-level-merging)
+
+`n_merge > 1` is an AtmosTransport approximation for the collaborative GPU
+solver; TM5 merges levels once, in its met preprocessing, and never
+reconstructs a fine profile. Each group `s` of `n_merge` adjacent fine layers
+`k` (tracer mass `r_k`, air mass `m_k`) becomes one super-layer:
+
+```math
+R_s = \sum_{k \in s} r_k, \qquad M_s = \sum_{k \in s} m_k, \qquad
+F_s = \sum_{k \in s} F_k \quad (F = \mathrm{entu}, \mathrm{detu}, \mathrm{entd}, \mathrm{detd}).
+```
+
+The backward-Euler solve `C R' = R` on the super grid gives `R'_s`. Its matrix
+has unit column sums and a non-negative inverse, so it conserves mass and is
+monotone. Each fine layer then receives a share of its super-layer's change:
+
+```math
+r'_k = r_k + (R'_s - R_s)\, w_k, \qquad
+w_k = \frac{|r_k|}{\sum_{j \in s} |r_j|}
+\quad \Bigl(w_k = \frac{m_k}{M_s} \text{ if } \sum_{j \in s} |r_j| = 0\Bigr).
+```
+
+- The weights lie in ``[0, 1]`` and sum to one, so ``\sum_{k \in s} r'_k = R'_s``:
+  the column total is conserved, and a uniform mixing ratio ``r_k = c\, m_k``
+  (for which ``w_k = m_k / M_s`` and the solve returns ``R'_s = R_s`` up to
+  rounding) is kept.
+- Columns without convection, and super-layers above the solved cloud window,
+  have ``R'_s = R_s`` and keep their values bit for bit.
+- No cell changes by more than ``|R'_s - R_s|``.
+- If a super-layer's fine values share one sign, ``r'_k = R'_s\, r_k / R_s``:
+  the fine profile is scaled, and non-negative tracers stay non-negative, as
+  with the unmerged solve.
+- A super-layer holding values of both signs can increase the column's
+  ``\sum_k |r_k|`` by at most ``2\,|R'_s - R_s|``. Otherwise the column's
+  ``\sum_k |r_k|`` does not grow, as for the solve itself.
+
+Before OF-107 the split was ``r'_k = R'_s\, r_k / R_s``. Its weights are
+unbounded when a super-layer holds near-cancelling values of both signs, which
+small advection undershoots and negative emission cells provide. On the C90
+golden columns, one hourly step grew a column's ``\sum_k |r_k|`` up to 84-fold.
+The air-mass-weighted increment ``w_k = m_k / M_s`` is linear in the tracer but
+not monotone. On the same columns it turned non-negative Rn-222 and fossil
+CO₂ into up to 35,000 negative cells per hourly step (down to −7 % of the
+field maximum), so it was not adopted. The split is not linear. Merged solves
+have no adjoint: CS footprints require `n_merge = 1`.
+
 ### `CMFMCConvection`
 
 Consumes `:cmfmc` (and optionally `:dtrain`) from the binary and
