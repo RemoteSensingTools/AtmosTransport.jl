@@ -254,7 +254,7 @@ well.
 - Columns without convection, and super-layers above the solved cloud window,
   have ``R'_s = R_s`` and keep their values bit for bit.
 - No cell changes by more than ``|R'_s - R_s|``.
-- If a super-layer's fine values share one sign, ``r'_k = r_k\, R'_s / R_s``:
+- If a super-layer's fine values share one sign, ``r'_k = R'_s\, r_k / R_s``:
   the fine profile is scaled. The code evaluates this form for such
   super-layers, so non-negative tracers stay non-negative in floating point
   too, as with the unmerged solve.

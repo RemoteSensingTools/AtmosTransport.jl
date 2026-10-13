@@ -6,7 +6,7 @@
 #     r'_k = r_k + (R'_s - R_s) |r_k| / Σ_{j∈s} |r_j|      (m_k / M_s if that sum is 0).
 #
 # For super-layers whose fine values share one sign this is evaluated as
-# r'_k = r_k R'_s / R_s. The merged path runs only in the collaborative GPU
+# r'_k = R'_s (r_k / R_s). The merged path runs only in the collaborative GPU
 # solver, so the CPU tests drive `_tm5_merge_aggregate_solve_disaggregate!`
 # directly with the serial column solve on the super grid; a CUDA testset runs
 # the production `apply!`. The previous proportional split
@@ -164,6 +164,20 @@ _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
         end
     end
 
+    @testset "nearly empty pair receiving tracer stays finite ($FT)" for FT in (Float32, Float64)
+        m = FT.(collect(range(800, 1200; length = Nz)))
+        forcing = map(f -> reshape(f, 1, 1, Nz), _merge_test_forcing(FT, Nz))
+        q = zeros(FT, 1, 1, Nz, 1)
+        q[1, 1, (Nz - 3):Nz, 1] .= FT(1e-5) .* m[(Nz - 3):Nz]
+        q[1, 1, 4, 1] = floatmin(FT) / 2^10           # subnormal; pair (3, 4) detrains
+        q0 = copy(q)
+        _merged_step!(q, reshape(m, 1, 1, Nz), forcing, 2)
+        @test all(isfinite, q)
+        @test minimum(q) >= 0
+        @test q[1, 1, 4, 1] > q0[1, 1, 4, 1]
+        @test isapprox(sum(Float64, q), sum(Float64, q0); rtol = 64 * eps(FT))
+    end
+
     @testset "split value: depletion, empty and massless super-layers" begin
         # A nearly emptied fine layer next to a full one: the increment form
         # rounds r + ΔR w to a tiny negative in Float32; the single-sign
@@ -174,6 +188,11 @@ _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
             @test all(x -> Cv._merged_split_value(x, R, R_new, R, 1f0, 2f0, 0.5f0) >= 0, r)
         end
         @test Cv._merged_split_value(r[2], R, R, R, 1f0, 2f0, 0.5f0) == r[2]
+        # A nearly empty single-sign super-layer receiving tracer: R'/R would
+        # overflow Float32 (0 * Inf = NaN), the weights r/R do not.
+        @test Cv._merged_split_value(0f0, 1f-40, 1f3, 1f-40, 1f0, 2f0, 0.5f0) == 0f0
+        @test Cv._merged_split_value(1f-40, 1f-40, 1f3, 1f-40, 1f0, 2f0, 0.5f0) == 1f3
+        @test Cv._merged_split_value(-0f0, -0f0, -0f0, 0f0, 1f0, 2f0, 0.5f0) === -0f0
         # All-zero super-layer: air-mass weights; massless: equal weights.
         @test Cv._merged_split_value(0f0, 0f0, 6f0, 0f0, 1f0, 3f0, 0.5f0) == 2f0
         @test Cv._merged_split_value(0f0, 0f0, 6f0, 0f0, 0f0, 0f0, 0.5f0) == 3f0

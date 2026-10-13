@@ -53,7 +53,7 @@ The weights lie in [0, 1] and sum to one. The split conserves the column
 total, keeps a uniform mixing ratio, leaves columns and layers without
 convection unchanged bit for bit, and changes no cell by more than
 `|R'_s - R_s|`. If a super-layer's fine values share one sign, it equals the
-proportional split `r'_k = r_k R'_s / R_s` and is evaluated in that form, so
+proportional split `r'_k = R'_s (r_k / R_s)` and is evaluated in that form, so
 non-negative tracers stay non-negative in floating point as well. Only
 super-layers holding values of both signs can increase the column's `Σ|r|`:
 by at most `2 Σ_{s mixed} |R'_s - R_s|` in total. The split is not linear in
@@ -341,14 +341,17 @@ end
 # super-layer total exactly in exact arithmetic, keeps a uniform mixing
 # ratio, leaves layers the solve did not change (ΔR_s == 0) bit for bit, and
 # changes no cell by more than |ΔR_s|. For a super-layer whose fine values
-# share one sign it equals the proportional split r'_k = r_k R'_s / R_s,
-# which is how it is evaluated there: the product keeps the sign of r_k in
-# floating point, while the increment form can round a nearly emptied fine
-# layer to a tiny negative. Unlike the old proportional split of every
-# super-layer, no 1/R_s factor amplifies near-cancelling values of both
-# signs. See the TM5Convection docstring.
+# share one sign it equals the proportional split r'_k = R'_s (r_k / R_s),
+# which is how it is evaluated there: the weight r_k / R_s lies in [0, 1] and
+# the product keeps its sign in floating point, while the increment form can
+# round a nearly emptied fine layer to a tiny negative. (The form
+# r_k (R'_s / R_s) is not used: R'_s / R_s overflows when a nearly empty
+# super-layer receives tracer, and 0 * Inf is NaN.) Unlike the old proportional
+# split of every super-layer, no 1/R_s factor amplifies near-cancelling values
+# of both signs. See the TM5Convection docstring.
 @inline function _merged_split_value(r, R_old, R_new, abs_sum, m, m_sum, n_inv)
-    abs_sum > 0 && abs_sum == abs(R_old) && return r * (R_new / R_old)
+    R_new == R_old && return r
+    abs_sum > 0 && abs_sum == abs(R_old) && return R_new * (r / R_old)
     w = abs_sum > 0 ? abs(r) / abs_sum :
         m_sum   > 0 ? m / m_sum : n_inv
     return r + (R_new - R_old) * w
