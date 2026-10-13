@@ -50,10 +50,12 @@ The weights lie in [0, 1] and sum to one. The split conserves the column
 total, keeps a uniform mixing ratio, leaves columns and layers without
 convection unchanged bit for bit, and changes no cell by more than
 `|R'_s - R_s|`. If a super-layer's fine values share one sign, it equals the
-proportional split `r'_k = R'_s r_k / R_s`, so non-negative tracers stay
-non-negative. A super-layer holding both signs can increase the column's
-`Σ|r|` by at most `2|R'_s - R_s|`. The split is not linear in the tracer; merged
-solves have no adjoint (CS footprints require `n_merge = 1`).
+proportional split `r'_k = r_k R'_s / R_s` and is evaluated in that form, so
+non-negative tracers stay non-negative in floating point as well. Only
+super-layers holding values of both signs can increase the column's `Σ|r|`:
+by at most `2 Σ_{s mixed} |R'_s - R_s|` in total. The split is not linear in
+the tracer; merged solves have no adjoint (CS footprints require
+`n_merge = 1`).
 
 # Memory budget
 
@@ -269,25 +271,24 @@ end
     entd_active = selectdim(entd,     k_dim, (k_shift + 1):(k_shift + L_padded))
     detd_active = selectdim(detd,     k_dim, (k_shift + 1):(k_shift + L_padded))
 
-    # Sum-aggregate along the `n_merge` super-internal axis.
-    q_super    = _agg_sum(q_active,    k_dim, n_merge, L_super)
-    m_super    = _agg_sum(m_active,    k_dim, n_merge, L_super)
-    entu_super = _agg_sum(entu_active, k_dim, n_merge, L_super)
-    detu_super = _agg_sum(detu_active, k_dim, n_merge, L_super)
-    entd_super = _agg_sum(entd_active, k_dim, n_merge, L_super)
-    detd_super = _agg_sum(detd_active, k_dim, n_merge, L_super)
+    # Sum-aggregate along the `n_merge` super-internal axis. The contiguous
+    # fine tracer and air-mass copies (see `_agg_sum`) are kept for the split,
+    # as is the super-layer tracer mass before the solve.
+    q_fine_old  = copy(q_active)
+    m_fine      = copy(m_active)
+    q_super     = _sum_layers(q_fine_old, k_dim, n_merge, L_super)
+    m_super     = _sum_layers(m_fine,     k_dim, n_merge, L_super)
+    entu_super  = _agg_sum(entu_active, k_dim, n_merge, L_super)
+    detu_super  = _agg_sum(detu_active, k_dim, n_merge, L_super)
+    entd_super  = _agg_sum(entd_active, k_dim, n_merge, L_super)
+    detd_super  = _agg_sum(detd_active, k_dim, n_merge, L_super)
+    q_super_old = copy(q_super)
 
-    # Snapshots for the split: fine tracer and air mass (contiguous copies,
-    # see `_agg_sum`) and the super-layer tracer mass before the solve.
-    q_fine_save  = copy(q_active)
-    m_fine       = copy(m_active)
-    q_super_save = copy(q_super)
-
-    # Solve on the coarse grid (mutates `q_super`).
+    # Solve on the coarse grid (mutates `q_super`; reads `m_super`).
     solve!(q_super, m_super, entu_super, detu_super, entd_super, detd_super)
 
-    _split_merged_increment!(q_active, q_super, q_super_save, q_fine_save, m_fine,
-                             k_dim, n_merge, L_super, Hp)
+    _split_merged_increment!(q_active, q_super, q_super_old, q_fine_old,
+                             m_fine, m_super, k_dim, n_merge, L_super, Hp)
     return nothing
 end
 
@@ -306,10 +307,14 @@ end
     # gives a contiguous `(N1, …, L_padded, Nt)` array; reshape on
     # *that* is a plain layout transform and the subsequent sum is
     # bit-stable.
-    src = copy(arr)
-    return dropdims(sum(reshape(src, _split_layer_axis(size(src), k_dim, n_merge, L_super));
-                        dims = k_dim); dims = k_dim)
+    return _sum_layers(copy(arr), k_dim, n_merge, L_super)
 end
+
+# Super-layer sums of a contiguous array whose layer axis `k_dim` holds
+# `n_merge * L_super` fine layers.
+@inline _sum_layers(src, k_dim::Int, n_merge::Int, L_super::Int) =
+    dropdims(sum(reshape(src, _split_layer_axis(size(src), k_dim, n_merge, L_super));
+                 dims = k_dim); dims = k_dim)
 
 # Shape with the layer axis `k_dim` (length `n_merge * L_super`) split into
 # `(n_merge, L_super)`: the fine layers of one super-layer share an index
@@ -330,26 +335,41 @@ end
 # super-layer total exactly in exact arithmetic, keeps a uniform mixing
 # ratio, leaves layers the solve did not change (ΔR_s == 0) bit for bit, and
 # changes no cell by more than |ΔR_s|. For a super-layer whose fine values
-# share one sign it equals the proportional split r'_k = R'_s r_k / R_s, so a
-# non-negative tracer stays non-negative; unlike that split it has no 1/R_s
-# factor, which amplified super-layers holding near-cancelling values of both
-# signs without bound. See the TM5Convection docstring.
-#
+# share one sign it equals the proportional split r'_k = r_k R'_s / R_s,
+# which is how it is evaluated there: the product keeps the sign of r_k in
+# floating point, while the increment form can round a nearly emptied fine
+# layer to a tiny negative. Unlike the old proportional split of every
+# super-layer, no 1/R_s factor amplifies near-cancelling values of both
+# signs. See the TM5Convection docstring.
+@inline function _merged_split_value(r, R_old, R_new, abs_sum, m, m_sum, n_inv)
+    abs_sum > 0 && abs_sum == abs(R_old) && return r * (R_new / R_old)
+    w = abs_sum > 0 ? abs(r) / abs_sum :
+        m_sum   > 0 ? m / m_sum : n_inv
+    return r + (R_new - R_old) * w
+end
+
+# Shape `sh` with a length-1 axis inserted at `k_dim`, so super-layer arrays
+# broadcast across the fine layers of the `_split_layer_axis` reshape.
+@inline _insert_singleton_axis(sh::Tuple, k_dim::Int) =
+    ntuple(d -> d < k_dim ? sh[d] : d == k_dim ? 1 : sh[d - 1], length(sh) + 1)
+
 # Broadcasts over `(…, n_merge, L_super, …)` reshapes run on the arrays' backend.
 @inline function _split_merged_increment!(q_active, q_super_new, q_super_old,
-                                          q_fine_old, m_fine,
+                                          q_fine_old, m_fine, m_super,
                                           k_dim::Int, n_merge::Int, L_super::Int,
                                           Hp::Int)
     sh_fine = size(q_fine_old)
     r_old = reshape(q_fine_old, _split_layer_axis(sh_fine, k_dim, n_merge, L_super))
     m_old = reshape(m_fine, _split_layer_axis(size(m_fine), k_dim, n_merge, L_super))
-    # Super-layer sums keep a length-1 axis at `k_dim` and broadcast across
-    # the fine layers; `m_old` lacks the trailing tracer axis.
+    # Super-layer quantities keep a length-1 axis at `k_dim`; the air masses
+    # lack the trailing tracer axis.
+    sh_super = _insert_singleton_axis(size(q_super_old), k_dim)
+    R_old   = reshape(q_super_old, sh_super)
+    R_new   = reshape(q_super_new, sh_super)
+    m_sum   = reshape(m_super, _insert_singleton_axis(size(m_super), k_dim))
     abs_sum = sum(abs, r_old; dims = k_dim)
-    m_sum   = sum(m_old; dims = k_dim)
-    sh_super = size(abs_sum)
-    dR = reshape(q_super_new, sh_super) .- reshape(q_super_old, sh_super)
-    r_new = @. r_old + dR * ifelse(abs_sum > 0, abs(r_old) / abs_sum, m_old / m_sum)
+    n_inv   = inv(eltype(q_fine_old)(n_merge))
+    r_new = _merged_split_value.(r_old, R_old, R_new, abs_sum, m_old, m_sum, n_inv)
     new_fine = reshape(r_new, sh_fine)
     if Hp == 0
         # LL / RG: no halo, write the whole active slice.

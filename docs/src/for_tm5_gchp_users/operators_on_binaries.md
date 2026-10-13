@@ -251,12 +251,15 @@ w_k = \frac{|r_k|}{\sum_{j \in s} |r_j|}
 - Columns without convection, and super-layers above the solved cloud window,
   have ``R'_s = R_s`` and keep their values bit for bit.
 - No cell changes by more than ``|R'_s - R_s|``.
-- If a super-layer's fine values share one sign, ``r'_k = R'_s\, r_k / R_s``:
-  the fine profile is scaled, and non-negative tracers stay non-negative, as
-  with the unmerged solve.
-- A super-layer holding values of both signs can increase the column's
-  ``\sum_k |r_k|`` by at most ``2\,|R'_s - R_s|``. Otherwise the column's
-  ``\sum_k |r_k|`` does not grow, as for the solve itself.
+- If a super-layer's fine values share one sign, ``r'_k = r_k\, R'_s / R_s``:
+  the fine profile is scaled. The code evaluates this form for such
+  super-layers, so non-negative tracers stay non-negative in floating point
+  too, as with the unmerged solve.
+- Only super-layers holding values of both signs can increase the column's
+  ``\sum_k |r_k|``:
+  ``\sum_k |r'_k| - \sum_k |r_k| \le 2 \sum_{s\ \mathrm{mixed}} |R'_s - R_s|``.
+  Without them the column's ``\sum_k |r_k|`` does not grow, as for the solve
+  itself.
 
 Before OF-107 the split was ``r'_k = R'_s\, r_k / R_s``. Its weights are
 unbounded when a super-layer holds near-cancelling values of both signs, which

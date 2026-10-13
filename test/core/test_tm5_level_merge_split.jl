@@ -5,9 +5,11 @@
 #
 #     r'_k = r_k + (R'_s - R_s) |r_k| / Σ_{j∈s} |r_j|      (m_k / M_s if that sum is 0).
 #
-# The merged path runs only in the collaborative GPU solver, so these CPU tests
-# drive `_tm5_merge_aggregate_solve_disaggregate!` directly with the serial
-# column solve on the super grid. The previous proportional split
+# For super-layers whose fine values share one sign this is evaluated as
+# r'_k = r_k R'_s / R_s. The merged path runs only in the collaborative GPU
+# solver, so the CPU tests drive `_tm5_merge_aggregate_solve_disaggregate!`
+# directly with the serial column solve on the super grid; a CUDA testset runs
+# the production `apply!`. The previous proportional split
 # `r'_k = R'_s r_k / R_s` fails the near-cancellation testset (column Σ|r| grew
 # 130-200-fold in one step) and the unchanged-layer testset.
 
@@ -20,6 +22,9 @@ const _HAS_CUDA = try
     @eval CUDA.functional()
 catch
     false
+end
+if _HAS_CUDA
+    @eval using Adapt
 end
 
 const Cv = AtmosTransport.Operators.Convection
@@ -144,14 +149,37 @@ _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
         _merged_step!(q, m, _column_forcing(FT, Nx, Ny, Nz), 2)
         @test minimum(q) >= 0
         @test q != q0
-        # Pairs that held tracer keep their fine ratio r'_k / r_k.
-        for j in 1:Ny, i in 1:Nx, s in (Nz ÷ 2 - 1):(Nz ÷ 2)
+        # Pairs that held tracer keep their fine ratio r'_k / r_k; empty pairs
+        # that receive detrained tracer (layers 3-6) get a uniform mixing ratio.
+        for j in 1:Ny, i in 1:Nx, s in 2:(Nz ÷ 2)
             k1, k2 = 2s - 1, 2s
             if q0[i, j, k1, 1] > 0 && q0[i, j, k2, 1] > 0
                 @test isapprox(q[i, j, k1, 1] / q0[i, j, k1, 1], q[i, j, k2, 1] / q0[i, j, k2, 1];
                                rtol = 64 * eps(FT))
+            elseif s in (2, 3)
+                @test q[i, j, k1, 1] > 0
+                @test isapprox(q[i, j, k1, 1] / m[i, j, k1], q[i, j, k2, 1] / m[i, j, k2];
+                               rtol = 64 * eps(FT))
             end
         end
+    end
+
+    @testset "split value: depletion, empty and massless super-layers" begin
+        # A nearly emptied fine layer next to a full one: the increment form
+        # rounds r + ΔR w to a tiny negative in Float32; the single-sign
+        # super-layer uses r R'/R and stays non-negative.
+        r = (1f-10, 1f10); R = r[1] + r[2]
+        @test r[1] + (0f0 - R) * (r[1] / R) < 0
+        for R_new in (0f0, 1f-3, 1f0)
+            @test all(x -> Cv._merged_split_value(x, R, R_new, R, 1f0, 2f0, 0.5f0) >= 0, r)
+        end
+        @test Cv._merged_split_value(r[2], R, R, R, 1f0, 2f0, 0.5f0) == r[2]
+        # All-zero super-layer: air-mass weights; massless: equal weights.
+        @test Cv._merged_split_value(0f0, 0f0, 6f0, 0f0, 1f0, 3f0, 0.5f0) == 2f0
+        @test Cv._merged_split_value(0f0, 0f0, 6f0, 0f0, 0f0, 0f0, 0.5f0) == 3f0
+        @test Cv._merged_split_value(0f0, 0f0, 0f0, 0f0, 0f0, 0f0, 0.5f0) == 0f0
+        # Mixed signs: the change is bounded by |ΔR|, whatever R.
+        @test abs(Cv._merged_split_value(-1.0, 1e-9, 0.5, 2.0 + 1e-9, 1.0, 2.0, 0.5) + 1.0) <= 0.5
     end
 
     @testset "no-convection columns and layers above the cloud are unchanged ($FT)" for FT in (Float32, Float64)
@@ -212,6 +240,40 @@ _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
         @test q_cs == halo0
     end
 
+    @testset "CUDA apply!: near-cancelling pairs on the collaborative path" begin
+        if !_HAS_CUDA
+            @test_skip "CUDA backend required"
+        else
+            FT = Float32
+            G = AtmosTransport.Grids
+            Nx, Ny = 4, 3
+            A_ifc = collect(FT, range(0, 5f4; length = Nz + 1))
+            B_ifc = collect(FT, range(1, 0; length = Nz + 1))
+            A_ifc[1] = 0; B_ifc[end] = 0; B_ifc[1] = 0; A_ifc[end] = 0
+            grid = G.AtmosGrid(G.LatLonMesh(; Nx = Nx, Ny = Ny, FT = FT),
+                               G.HybridSigmaPressure(A_ifc, B_ifc), AtmosTransport.CPU(); FT = FT)
+            m = FT(500) .+ FT(1000) .* rand(MersenneTwister(6), FT, Nx, Ny, Nz)
+            forcing = _column_forcing(FT, Nx, Ny, Nz)
+            q = FT(1e-6) .* m
+            q[:, :, 9] .= FT(1e-3) .* m[:, :, 9]                # pair (9, 10) nearly cancels
+            q[:, :, 10] .= .-q[:, :, 9] .* (1 - FT(1e-6))
+            state = AtmosTransport.State.CellState(m; CO2 = copy(q))
+            ws = AtmosTransport.Operators.TM5Workspace(state.air_mass; cell_metrics = ones(FT, Ny))
+            state_d = Adapt.adapt(CUDA.CuArray, state)
+            ws_d = Adapt.adapt(CUDA.CuArray, ws)
+            tm5_d = map(CUDA.CuArray, NamedTuple{(:entu, :detu, :entd, :detd)}(forcing))
+            forcing_d = AtmosTransport.MetDrivers.ConvectionForcing(nothing, nothing, tm5_d)
+            AtmosTransport.Operators.apply!(state_d, forcing_d, grid,
+                AtmosTransport.Operators.TM5Convection(use_collab_lu = true, n_merge = 2),
+                FT(3600); workspace = ws_d)
+            q_gpu = Array(state_d.tracers_raw)[:, :, :, 1]
+            q_cpu = _merged_step!(reshape(copy(q), Nx, Ny, Nz, 1), m, forcing, 2)[:, :, :, 1]
+            @test isapprox(sum(Float64, q_gpu), sum(Float64, q); rtol = 64 * eps(FT))
+            @test sum(abs, q_gpu) <= FT(1.05) * sum(abs, q)
+            @test isapprox(q_gpu, q_cpu; rtol = 64 * eps(FT), atol = 64 * eps(FT) * maximum(abs, q_cpu))
+        end
+    end
+
     @testset "CUDA broadcasts match the CPU split" begin
         if !_HAS_CUDA
             @test_skip "CUDA backend required"
@@ -225,9 +287,9 @@ _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
             q_cpu = _merged_step!(copy(q), m, forcing, 2)
             # Device arrays throughout; only the coarse column solve runs on the
             # host, so the split's reductions and broadcasts run on the GPU.
-            q_gpu = CuArray(q)
+            q_gpu = CUDA.CuArray(q)
             Cv._tm5_merge_aggregate_solve_disaggregate!(
-                q_gpu, CuArray(m), map(CuArray, forcing)..., 0, Nz, Nz ÷ 2, 2, 3,
+                q_gpu, CUDA.CuArray(m), map(CUDA.CuArray, forcing)..., 0, Nz, Nz ÷ 2, 2, 3,
                 function (qS, args...)
                     h = Array(qS)
                     _serial_super_solve!(3600, h, map(Array, args)...)
@@ -237,4 +299,3 @@ _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
         end
     end
 end
-
