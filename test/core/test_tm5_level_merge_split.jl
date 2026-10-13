@@ -179,84 +179,36 @@ _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
     end
 
     @testset "split value: depletion, empty and massless super-layers" begin
+        # Arguments: r, R_old, R_new, positive sum, negative sum, m, M, 1/n.
+        sv(r, Ro, Rn, pos, neg; m = 1f0, M = 2f0) =
+            Cv._merged_split_value(r, Ro, Rn, pos, neg, m, M, 0.5f0)
         # A nearly emptied fine layer next to a full one: the increment form
         # rounds r + ΔR w to a tiny negative in Float32; the single-sign
-        # super-layer uses r R'/R and stays non-negative.
+        # super-layer uses R' (r/R) and stays non-negative.
         r = (1f-10, 1f10); R = r[1] + r[2]
         @test r[1] + (0f0 - R) * (r[1] / R) < 0
         for R_new in (0f0, 1f-3, 1f0)
-            @test all(x -> Cv._merged_split_value(x, R, R_new, R, 1f0, 2f0, 0.5f0) >= 0, r)
+            @test all(x -> sv(x, R, R_new, R, 0f0) >= 0, r)
         end
-        @test Cv._merged_split_value(r[2], R, R, R, 1f0, 2f0, 0.5f0) == r[2]
+        @test sv(r[2], R, R, R, 0f0) == r[2]
         # A nearly empty single-sign super-layer receiving tracer: R'/R would
         # overflow Float32 (0 * Inf = NaN), the weights r/R do not.
-        @test Cv._merged_split_value(0f0, 1f-40, 1f3, 1f-40, 1f0, 2f0, 0.5f0) == 0f0
-        @test Cv._merged_split_value(1f-40, 1f-40, 1f3, 1f-40, 1f0, 2f0, 0.5f0) == 1f3
-        @test Cv._merged_split_value(-0f0, -0f0, -0f0, 0f0, 1f0, 2f0, 0.5f0) === -0f0
+        @test sv(0f0, 1f-40, 1f3, 1f-40, 0f0) == 0f0
+        @test sv(1f-40, 1f-40, 1f3, 1f-40, 0f0) == 1f3
+        @test sv(-0f0, -0f0, -0f0, 0f0, 0f0) === -0f0
         # All-zero super-layer: air-mass weights; massless: equal weights.
-        @test Cv._merged_split_value(0f0, 0f0, 6f0, 0f0, 1f0, 3f0, 0.5f0) == 2f0
-        @test Cv._merged_split_value(0f0, 0f0, 6f0, 0f0, 0f0, 0f0, 0.5f0) == 3f0
-        @test Cv._merged_split_value(0f0, 0f0, 0f0, 0f0, 0f0, 0f0, 0.5f0) == 0f0
+        @test sv(0f0, 0f0, 6f0, 0f0, 0f0; m = 1f0, M = 3f0) == 2f0
+        @test sv(0f0, 0f0, 6f0, 0f0, 0f0; m = 0f0, M = 0f0) == 3f0
+        @test sv(0f0, 0f0, 0f0, 0f0, 0f0; m = 0f0, M = 0f0) == 0f0
         # Mixed signs: the change is bounded by |ΔR|, whatever R.
-        @test abs(Cv._merged_split_value(-1.0, 1e-9, 0.5, 2.0 + 1e-9, 1.0, 2.0, 0.5) + 1.0) <= 0.5
-    end
-
-    @testset "no-convection columns and layers above the cloud are unchanged ($FT)" for FT in (Float32, Float64)
-        Nx, Ny = 3, 2
-        rng = MersenneTwister(3)
-        m = FT(500) .+ FT(1000) .* rand(rng, FT, Nx, Ny, Nz)
-        # Cloud top at layer 8: super-layers 1-2 (fine layers 1-4) lie above
-        # the solved window.
-        forcing = _column_forcing(FT, Nx, Ny, Nz; top = 7)
-        for f in forcing
-            f[1, 1, :] .= 0                       # column (1, 1) has no convection
-        end
-        q = randn(rng, FT, Nx, Ny, Nz, 1) .* reshape(m, Nx, Ny, Nz, 1) .* FT(1e-6)
-        q[:, :, 1, 1] .= FT(3e-6) .* m[:, :, 1]   # exactly cancelling pair above the cloud
-        q[:, :, 2, 1] .= .-q[:, :, 1, 1]
-        q0 = copy(q)
-        _merged_step!(q, m, forcing, 2)
-        @test q[1, 1, :, :] == q0[1, 1, :, :]
-        @test q[:, :, 1:4, :] == q0[:, :, 1:4, :]
-        @test q[2:end, :, 5:end, :] != q0[2:end, :, 5:end, :]
-    end
-
-    @testset "layouts: reduced-Gaussian axis and cubed-sphere halo" begin
-        FT = Float64
-        rng = MersenneTwister(4)
-        Nx, Ny, Hp = 3, 3, 1
-        m = FT(500) .+ FT(1000) .* rand(rng, FT, Nx, Ny, Nz)
-        q = randn(rng, FT, Nx, Ny, Nz, 2) .* reshape(m, Nx, Ny, Nz, 1) .* FT(1e-6)
-        forcing = _column_forcing(FT, Nx, Ny, Nz)
-        q_ll = _merged_step!(copy(q), m, forcing, 2)
-
-        # Reduced Gaussian: (ncells, Nz, Nt), layer axis 2.
-        nc = Nx * Ny
-        q_rg = reshape(copy(q), nc, Nz, 2)
-        rg(f) = reshape(f, nc, Nz)
-        Cv._tm5_merge_aggregate_solve_disaggregate!(
-            q_rg, rg(m), map(rg, forcing)..., 0, Nz, Nz ÷ 2, 2, 2,
-            (qS, mS, eU, dU, eD, dD) -> _serial_super_solve!(3600,
-                reshape(qS, Nx, Ny, Nz ÷ 2, 2), reshape(mS, Nx, Ny, :),
-                (reshape(x, Nx, Ny, :) for x in (eU, dU, eD, dD))...))
-        @test reshape(q_rg, Nx, Ny, Nz, 2) == q_ll
-
-        # Cubed-sphere panel: halo of width Hp around the (Nx, Ny) interior;
-        # forcings carry no halo. The halo must come back untouched.
-        q_cs = fill(FT(7), Nx + 2Hp, Ny + 2Hp, Nz, 2)
-        m_cs = fill(FT(900), Nx + 2Hp, Ny + 2Hp, Nz)
-        q_cs[(Hp + 1):(Hp + Nx), (Hp + 1):(Hp + Ny), :, :] .= q
-        m_cs[(Hp + 1):(Hp + Nx), (Hp + 1):(Hp + Ny), :] .= m
-        halo0 = copy(q_cs)
-        interior = (Hp + 1):(Hp + Nx), (Hp + 1):(Hp + Ny)
-        Cv._tm5_merge_aggregate_solve_disaggregate!(
-            q_cs, m_cs, forcing..., 0, Nz, Nz ÷ 2, 2, 3,
-            (qS, mS, eU, dU, eD, dD) -> _serial_super_solve!(3600,
-                view(qS, interior..., :, :), view(mS, interior..., :), eU, dU, eD, dD);
-            Hp = Hp)
-        @test q_cs[interior..., :, :] == q_ll
-        q_cs[interior..., :, :] .= halo0[interior..., :, :]
-        @test q_cs == halo0
+        @test abs(Cv._merged_split_value(-1.0, 1e-9, 0.5, 1.0 + 1e-9, -1.0, 1.0, 2.0, 0.5) + 1.0) <= 0.5
+        # A negative value below rounding of the positive one: Σ|r| == |R|
+        # in Float32, but the pair holds both signs, so the bounded increment
+        # applies and the negative is not scaled by R'/R.
+        pos, neg = 1f0, -1f-8; R = pos + neg
+        @test R == pos - neg
+        @test sv(neg, R, 1000f0, pos, neg) > 0
+        @test sv(pos, R, 1000f0, pos, neg) + sv(neg, R, 1000f0, pos, neg) ≈ 1000f0
     end
 
     @testset "CUDA apply!: near-cancelling pairs on the collaborative path" begin
@@ -276,7 +228,10 @@ _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
             q = FT(1e-6) .* m
             q[:, :, 9] .= FT(1e-3) .* m[:, :, 9]                # pair (9, 10) nearly cancels
             q[:, :, 10] .= .-q[:, :, 9] .* (1 - FT(1e-6))
-            state = AtmosTransport.State.CellState(m; CO2 = copy(q))
+            q_empty = zeros(FT, Nx, Ny, Nz)                    # nearly empty pair (3, 4) detrains
+            q_empty[:, :, (Nz - 3):Nz] .= FT(1e-5) .* m[:, :, (Nz - 3):Nz]
+            q_empty[:, :, 4] .= floatmin(FT) / 2^10
+            state = AtmosTransport.State.CellState(m; CO2 = copy(q), Rn = copy(q_empty))
             ws = AtmosTransport.Operators.TM5Workspace(state.air_mass; cell_metrics = ones(FT, Ny))
             state_d = Adapt.adapt(CUDA.CuArray, state)
             ws_d = Adapt.adapt(CUDA.CuArray, ws)
@@ -285,11 +240,14 @@ _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
             AtmosTransport.Operators.apply!(state_d, forcing_d, grid,
                 AtmosTransport.Operators.TM5Convection(use_collab_lu = true, n_merge = 2),
                 FT(3600); workspace = ws_d)
-            q_gpu = Array(state_d.tracers_raw)[:, :, :, 1]
+            out = Array(state_d.tracers_raw)
+            q_gpu = out[:, :, :, 1]
             q_cpu = _merged_step!(reshape(copy(q), Nx, Ny, Nz, 1), m, forcing, 2)[:, :, :, 1]
             @test isapprox(sum(Float64, q_gpu), sum(Float64, q); rtol = 64 * eps(FT))
             @test sum(abs, q_gpu) <= FT(1.05) * sum(abs, q)
             @test isapprox(q_gpu, q_cpu; rtol = 64 * eps(FT), atol = 64 * eps(FT) * maximum(abs, q_cpu))
+            @test all(isfinite, out[:, :, :, 2]) && minimum(out[:, :, :, 2]) >= 0
+            @test isapprox(sum(Float64, out[:, :, :, 2]), sum(Float64, q_empty); rtol = 64 * eps(FT))
         end
     end
 

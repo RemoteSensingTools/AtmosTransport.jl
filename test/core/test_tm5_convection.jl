@@ -747,10 +747,15 @@ end
                 tracer_init = tt == 1 ? tracer1 : tracer2
                 @test q_out[:, :, k, tt] == tracer_init[:, :, k]
             end
-            # Non-trivial: the active layers were actually mixed.
-            @test any(q_out[:, :, 5:Nz, :] .!= cat(tracer1[:, :, 5:Nz],
-                                                     tracer2[:, :, 5:Nz];
-                                                     dims = 4))
+            # Two or more super-layers mix the active layers. A single
+            # super-layer (n_merge = 8) has no vertical transport, so the
+            # split returns its values bit for bit.
+            active_init = cat(tracer1[:, :, 5:Nz], tracer2[:, :, 5:Nz]; dims = 4)
+            if nm < 8
+                @test any(q_out[:, :, 5:Nz, :] .!= active_init)
+            else
+                @test q_out[:, :, 5:Nz, :] == active_init
+            end
         end
     end
 end

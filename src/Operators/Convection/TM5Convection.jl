@@ -349,9 +349,12 @@ end
 # super-layer receives tracer, and 0 * Inf is NaN.) Unlike the old proportional
 # split of every super-layer, no 1/R_s factor amplifies near-cancelling values
 # of both signs. See the TM5Convection docstring.
-@inline function _merged_split_value(r, R_old, R_new, abs_sum, m, m_sum, n_inv)
+# `pos` and `neg` are the super-layer sums of the positive and negative fine
+# values; one of them is zero exactly when the fine values share one sign.
+@inline function _merged_split_value(r, R_old, R_new, pos, neg, m, m_sum, n_inv)
     R_new == R_old && return r
-    abs_sum > 0 && abs_sum == abs(R_old) && return R_new * (r / R_old)
+    (iszero(pos) || iszero(neg)) && !iszero(R_old) && return R_new * (r / R_old)
+    abs_sum = pos - neg
     w = abs_sum > 0 ? abs(r) / abs_sum :
         m_sum   > 0 ? m / m_sum : n_inv
     return r + (R_new - R_old) * w
@@ -376,9 +379,10 @@ end
     R_old   = reshape(q_super_old, sh_super)
     R_new   = reshape(q_super_new, sh_super)
     m_sum   = reshape(m_super, _insert_singleton_axis(size(m_super), k_dim))
-    abs_sum = sum(abs, r_old; dims = k_dim)
+    pos     = sum(x -> max(x, zero(x)), r_old; dims = k_dim)
+    neg     = sum(x -> min(x, zero(x)), r_old; dims = k_dim)
     n_inv   = inv(eltype(q_fine_old)(n_merge))
-    r_new = _merged_split_value.(r_old, R_old, R_new, abs_sum, m_old, m_sum, n_inv)
+    r_new = _merged_split_value.(r_old, R_old, R_new, pos, neg, m_old, m_sum, n_inv)
     new_fine = reshape(r_new, sh_fine)
     if Hp == 0
         # LL / RG: no halo, write the whole active slice.
