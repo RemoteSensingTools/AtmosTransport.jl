@@ -217,6 +217,48 @@
 
 ### Fixes
 
+- TM5 convection level merging (`n_merge > 1`, OF-107) no longer amplifies
+  super-layers that hold near-cancelling values of both signs. The merged
+  path gave each fine layer `R'_s r_k / R_s` of its super-layer's new tracer
+  mass. These weights are unbounded when the fine values nearly cancel, as
+  small advection undershoots and negative emission cells (0.47 % of the
+  CATRINE fossil flux cells) make them. On the C90 golden columns, one
+  hourly step grew a column's `Σ|r|` up to 84-fold while totals stayed
+  conserved. Each fine layer now receives a share of the coarse change,
+  `r'_k = r_k + (R'_s - R_s) |r_k| / Σ_{j∈s} |r_j|`. An all-zero
+  super-layer uses air-mass weights, or equal weights if its air mass is
+  zero too. The split conserves mass and keeps a uniform mixing ratio.
+  Layers the solve leaves unchanged keep their values bit for bit, and no
+  cell moves by more than `|R'_s - R_s|`. For single-sign super-layers the
+  split equals the old proportional split and is evaluated as
+  `R'_s (r_k / R_s)`, so non-negative tracers stay non-negative, also in
+  Float32. The air-mass-weighted increment is linear but was rejected: on
+  the same columns it made up to 35,000 negative cells per hourly step from
+  non-negative Rn-222 and fossil fields. Merged solves still have no
+  adjoint. The equations are in the TM5Convection docstring and in
+  `docs/src/for_tm5_gchp_users/operators_on_binaries.md`.
+  Golden effect: the 27 `n_merge = 1` cases are bit-identical, and
+  `run_c90_era5_tm5_nmerge2_gpu_f32` changes in every tracer. Its dipoles
+  are gone. At every output time of the 24-hour run, the Rn-222 maximum
+  matches the `n_merge = 1` case to four digits; before, it reached
+  8.4e-17 at 06 UTC, 163 times the `n_merge = 1` maximum. The most negative
+  Rn-222 value at 24 h is −2.62e-20 (−2.62e-20 with `n_merge = 1`;
+  −4.7e-19 before). Fossil CO₂ at 24 h ranges from −2.54e-6 to 4.27e-4
+  (`n_merge = 1`: −2.57e-6 to 4.27e-4; before: −3.05e-3 to 3.18e-3). The
+  largest difference from the `n_merge = 1` case falls from 163 to
+  0.17 times its maximum for Rn-222 and from 9.1 to 0.11 for fossil CO₂.
+  Column `Σ|r|` exceeds `|Σ r|` by 1.45e-3 (Rn-222) and 3.7e-3 (fossil
+  CO₂) at 24 h, as with `n_merge = 1`; before, by 2.0e-2 and 0.25.
+  Every earlier run with `n_merge ≥ 2` used the unbounded split, with or
+  without `lmax_conv` clipping. Check its surface-tracer output for dipoles
+  and negative values. The shipped configs that set it are
+  `config/runs/campaign_winter2021/era5_4tracer_fullphys.toml` and
+  `config/runs/fullphys_dec1-3/era5_fullphys_co2nat_dec1-3.toml` (both
+  `n_merge = 2`, ERA5 L137), and
+  `config/runs/convection_compare_4tracer/convonly_tm5_n3_era5_c180_3day.toml`
+  (`n_merge = 3`). The timing configs
+  `config/runs/era5_geosnative_c180_cfl85_3day_ppm/fullphysics_steps48_1day_timing_collab_n{3,4,5,15}.toml`
+  also set it.
 - Native preprocessing (GEOS, MERRA-2, ERA5 N320) records the configured
   dry-mass target `mass_fix_target_ps_dry_pa` exactly
   (`GLOBAL_MEAN_DRY_SURFACE_PRESSURE`, 98325 Pa). It was recomputed from the

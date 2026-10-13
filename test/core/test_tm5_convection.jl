@@ -635,13 +635,12 @@ end
 end
 
 @testset "P6 collab-LU: n_merge = 1 is bit-exact to no-merge path (CUDA)" begin
-    # When `n_merge = 1` the host should bypass the aggregation
-    # wrapper entirely and call the collab kernel directly.
-    # Equivalently, even if the wrapper ran with n_merge=1 (single-
-    # layer "super" cells), the proportional disaggregation reduces
-    # to identity. Verify the dispatch picks the no-merge fast path
-    # by comparing against `lmax_conv = 75, n_merge = 1` vs the
-    # baseline collab-LU with `n_merge = 1`.
+    # When `n_merge = 1` the host must bypass the aggregation
+    # wrapper entirely and call the collab kernel directly (the
+    # wrapper's increment split would reproduce the solve only to
+    # rounding). Verify the dispatch picks the no-merge fast path
+    # by comparing the default collab-LU operator with an explicit
+    # `n_merge = 1`.
     if !_HAS_CUDA
         @test_skip "CUDA backend required"
     else
@@ -735,9 +734,9 @@ end
             mass_after_ch4 = sum(q_out[:, :, :, 2])
             # Same tolerance as the existing TM5 apply! testset
             # (kernel-level mass conservation is bounded by TM5's
-            # surface-boundary handling, not by the disaggregation
-            # arithmetic; the proportional redistribution is
-            # mass-exact within roundoff).
+            # surface-boundary handling, not by the split arithmetic;
+            # the increment split conserves each super-layer's
+            # total within roundoff).
             @test isapprox(mass_after_co2, mass_before_co2;
                             rtol = 1f4 * eps(FT))
             @test isapprox(mass_after_ch4, mass_before_ch4;
@@ -748,10 +747,15 @@ end
                 tracer_init = tt == 1 ? tracer1 : tracer2
                 @test q_out[:, :, k, tt] == tracer_init[:, :, k]
             end
-            # Non-trivial: the active layers were actually mixed.
-            @test any(q_out[:, :, 5:Nz, :] .!= cat(tracer1[:, :, 5:Nz],
-                                                     tracer2[:, :, 5:Nz];
-                                                     dims = 4))
+            # Two or more super-layers mix the active layers. A single
+            # super-layer (n_merge = 8) has no vertical transport, so the
+            # split returns its values bit for bit.
+            active_init = cat(tracer1[:, :, 5:Nz], tracer2[:, :, 5:Nz]; dims = 4)
+            if nm < 8
+                @test any(q_out[:, :, 5:Nz, :] .!= active_init)
+            else
+                @test q_out[:, :, 5:Nz, :] == active_init
+            end
         end
     end
 end
