@@ -19,7 +19,9 @@ Thank you.
   to their first endpoint. Native pins use the ΔB(1−q) shape.
 - **TM5 convection on the dry basis** (#19), **TM5 `echlevs` numbering
   fixed** (#18) and the **unpaired Nyquist harmonic dropped** on even rings
-  (#13), all in PR #41.
+  (#13), all in PR #41. **TM5 level merging** (`n_merge > 1`) no longer
+  amplifies near-cancelling mixed-sign layer pairs into dipoles with negative
+  mixing ratios (OF-107, PR #51); the default `n_merge = 1` is unaffected.
 - **Column-only Poisson balance**, which fixes the reduced-Gaussian sign error
   (#11, PR #36).
 - **Per-cell replay gate** with tighter tolerances (#15, PR #39), and
@@ -300,6 +302,9 @@ these keys, and readers act on them:
   publication of memory-mapped tapes is not implemented. 4D-Var cost grows
   with the number of observations, and observations bind to column means
   (#20). TM5 prognostic slopes are not implemented (#12).
+- TM5 level merging (`n_merge > 1`) is not additive in the tracer: tagged-
+  tracer budgets, anomaly transport and adjoints need `n_merge = 1` (the
+  convection adjoint rejects `n_merge ≠ 1`).
 - Lin–Rood transport is far more sensitive to Float32 than PPM: on the C24
   golden blob day its relative difference Float32 vs Float64 is 2.0e-3 (CPU;
   CUDA vs CPU 2.2e-3, Metal 2.3e-3), against 7.6e-6 for PPM. The difference
