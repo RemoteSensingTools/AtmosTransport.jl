@@ -252,7 +252,14 @@ state). Three input sets are frozen copies in `/temp1/cfranken/goldens/inputs`:
   directories, so verify them with
   `cd /temp1/cfranken/goldens/inputs/era5_0.5x0.5 && sha256sum -c SHA256SUMS`.
 - The ERA5 C90 L66 binaries with TM5 convection attached (2022-01-15 and 16),
-  because convection attachment is not part of the preprocessor.
+  because convection attachment is not part of the preprocessor. Since the
+  v0.5 re-record (2026-10-13) they are byte-identical copies of two days of the
+  v0.5 production set `transport_binary_v4_l66_f32_tm5_convection_1deg_3hour_v05`
+  (ERA5 N320 → C90 L66, `hybrid_mass` column weights, dry flux thickness,
+  98,325 Pa dry-mass target, TM5 attachment v4 with dry convection rates; code
+  f4ac1f65). `inputs/SHA256SUMS` lists them and `inputs/README.md` records
+  their provenance; the previous pair is kept in
+  `inputs/superseded_2026-10-12_l66_hb_gchp_v3attach/`.
 - `geosit_c180_20211201/` holds only the GEOS-IT native C180 collections used
   by `pre_geosit_c45`: 2021-12-01 CTM_A1 and CTM_I1 plus the 2021-12-02 CTM_I1
   endpoint. Surface, convection and VDIFF collections are deliberately absent.

@@ -300,6 +300,11 @@ these keys, and readers act on them:
   publication of memory-mapped tapes is not implemented. 4D-Var cost grows
   with the number of observations, and observations bind to column means
   (#20). TM5 prognostic slopes are not implemented (#12).
+- Lin–Rood transport is far more sensitive to Float32 than PPM: on the C24
+  golden blob day its relative difference Float32 vs Float64 is 2.0e-3 (CPU;
+  CUDA vs CPU 2.2e-3, Metal 2.3e-3), against 7.6e-6 for PPM. The difference
+  grows through the day and sits in undershoot cells near the model top; it is
+  under investigation. Use Float64 or PPM where this matters.
 - Metal runs Float32 only. A time-varying surface-flux source built in
   Julia with host `SubArray` series cannot be staged on Metal (Metal.jl 1.11
   has no offset `copyto!` from a host view, so it fails with a
