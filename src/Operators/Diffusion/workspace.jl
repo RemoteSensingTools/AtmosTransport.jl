@@ -14,6 +14,14 @@ Preallocated storage for implicit vertical diffusion.
 - `hybrid_coefficients` persistently stages the vertical A/B vectors on the
   workspace backend. Window refreshes reuse this storage for dry-pressure
   recovery and hydrostatic `dz`, avoiding per-panel device allocations.
+- `ledger_carry` is persistent state of the conservative Dkg column mass
+  ledger: per column and tracer, the part of the last solve's rounding
+  residual that the largest exchanging layer could not hold (about half its
+  ulp at most; see `_ledger_deposit`). Cubed-sphere workspaces hold
+  `(Nx, Ny, Nt)` zeros per panel, shaped like `references`; other topologies,
+  which have no Dkg path, hold `nothing`. Restarts do not store it: a
+  restarted run drops about half an ulp of each column's largest layer,
+  once.
 
 The workspace owns only diffusion data. Advection and convection buffers live
 in their respective workspace types.
@@ -35,16 +43,24 @@ function HybridCoefficientWorkspace(layer_thickness)
                                       similar(reference, FT, ninterface), false, false)
 end
 
-struct DiffusionWorkspace{F, D, R, C}
+struct DiffusionWorkspace{F, D, R, C, L}
     factors         :: F
     layer_thickness :: D
     references      :: R
     hybrid_coefficients :: C
+    ledger_carry    :: L
 end
 
-DiffusionWorkspace(factors, layer_thickness, references) =
-    DiffusionWorkspace(factors, layer_thickness, references,
-                       HybridCoefficientWorkspace(layer_thickness))
+DiffusionWorkspace(factors, layer_thickness, references,
+                   hybrid_coefficients = HybridCoefficientWorkspace(layer_thickness)) =
+    DiffusionWorkspace(factors, layer_thickness, references, hybrid_coefficients,
+                       _zero_ledger_carry(references))
+
+# One carry per column and tracer, shaped like the per-tracer references of a
+# cubed-sphere workspace. Only the cubed-sphere Dkg path keeps a ledger.
+_zero_ledger_carry(references::NTuple{6, AbstractArray}) =
+    ntuple(p -> fill!(similar(references[p]), zero(eltype(references[p]))), 6)
+_zero_ledger_carry(references) = nothing
 
 function DiffusionWorkspace(air_mass::AbstractArray{FT, N}, n_tracers::Integer = 0) where {FT, N}
     N in (2, 3) || throw(ArgumentError(
@@ -84,6 +100,7 @@ function Adapt.adapt_structure(to, workspace::DiffusionWorkspace)
         Adapt.adapt(to, workspace.layer_thickness),
         Adapt.adapt(to, workspace.references),
         Adapt.adapt(to, workspace.hybrid_coefficients),
+        Adapt.adapt(to, workspace.ledger_carry),
     )
 end
 

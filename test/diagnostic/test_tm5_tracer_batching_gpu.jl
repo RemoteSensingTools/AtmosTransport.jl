@@ -78,15 +78,19 @@ function launch_batch!(q, m, rates, areas, f, topology)
     backend = KA.get_backend(q)
     nt = size(q, ndims(q))
     wg = C._TM5_COLLAB_WG_SIZE
+    # A fresh (zero) column ledger carry per launch, as in a first model step.
     if topology == :rg
         C._tm5_faceindexed_column_collab_kernel!(backend, wg)(
-            q, m, rates..., areas, f.nz, nt, FT(1800), Val(f.depth); ndrange=wg*4)
+            q, CUDA.zeros(FT, 4, nt), m, rates..., areas, f.nz, nt, FT(1800), Val(f.depth);
+            ndrange=wg*4)
     elseif topology == :ll
         C._tm5_column_collab_kernel!(backend, wg)(
-            q, m, rates..., areas, 2, f.nz, nt, FT(1800), Val(f.depth); ndrange=wg*4)
+            q, CUDA.zeros(FT, 2, 2, nt), m, rates..., areas, 2, f.nz, nt, FT(1800), Val(f.depth);
+            ndrange=wg*4)
     else
         C._tm5_cs_panel_column_collab_kernel!(backend, wg)(
-            q, m, rates..., areas, 1, 2, f.nz, nt, FT(1800), Val(f.depth); ndrange=wg*4)
+            q, CUDA.zeros(FT, 2, 2, nt), m, rates..., areas, 1, 2, f.nz, nt, FT(1800),
+            Val(f.depth); ndrange=wg*4)
     end
     KA.synchronize(backend)
 end

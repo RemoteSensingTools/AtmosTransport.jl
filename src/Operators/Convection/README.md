@@ -29,7 +29,7 @@ operator.
 - [`operators.jl`](operators.jl) — abstract hierarchy, no-op, and public helper
   surface.
 - [`convection_workspace.jl`](convection_workspace.jl) — reusable CMFMC and TM5
-  scratch storage.
+  scratch storage, and the TM5 column-ledger carry.
 - [`CMFMCConvection.jl`](CMFMCConvection.jl) — direct CMFMC operator,
   validation, and topology dispatch; the cloud-base rule is a type parameter
   (`CMFMCEdgeCloudBase`, or GEOS-Chem's DQRCU base via `ArchivedCloudBase`).
@@ -57,6 +57,20 @@ To add an implementation, subtype `AbstractConvection`, define its forcing and
 workspace requirements, provide state/grid-dispatched `apply!` methods, and add
 mass-conservation plus topology tests. Do not add an operator-name conditional
 to the model loop.
+
+### Column mass ledger
+
+The TM5 matrix conserves column mass, but its `Float32` solve does not
+exactly. Each tracer solve (`_tm5_conserving_solve_tracer!`, used by every
+topology kernel and the CPU path) compares compensated column sums before and
+after and adds the residual to the column's largest cell. The part below that
+cell's spacing persists in `TM5Workspace.ledger_carry`, one value per column
+and tracer, sized with zeros by the first `apply!`, and is added with the
+column's next residual. With level merging (`n_merge > 1`) a second ledger
+covers the fine layers the whole merged operation changed
+(`_tm5_merged_column_ledger!`), because the split rounds every fine layer; it
+holds the carry, and the coarse solve's ledger keeps none. Adjoint replays keep no carry. See the
+[single-precision page](../../../docs/src/theory/float32_conservation.md).
 
 ### Factorization without downdrafts
 

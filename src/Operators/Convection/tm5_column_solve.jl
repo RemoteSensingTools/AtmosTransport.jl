@@ -431,19 +431,24 @@ end
 # sign (≈1e-5 of every tracer per month on the L40S). Compensated sums of the
 # active window (`lo:n`, slot `slot` of `q`) before and after the solve give
 # the residual, a few ulps of the largest cell, which is added back there;
-# spread over the column it would round away again. What remains is unbiased.
+# spread over the column it would round away again. The part below that
+# cell's spacing is returned as the column's new carry (`_ledger_deposit`),
+# which the caller keeps for the column's next solve.
 # ---------------------------------------------------------------------------
 @inline _tm5_column_sum(q, lo, n, slot) = _neumaier_sum(k -> @inbounds(q[k, slot]), lo:n, eltype(q))
 
-@inline function _tm5_restore_column_mass!(q, lo, n, slot, before)
+@inline function _tm5_restore_column_mass!(q, lo, n, slot, before, carry)
     kmax, largest = lo, abs(@inbounds q[lo, slot])
     @inbounds for k in (lo + 1):n
         value = abs(q[k, slot])
         value > largest && ((kmax, largest) = (k, value))
     end
     after = _tm5_column_sum(q, lo, n, slot)
-    @inbounds q[kmax, slot] += _ledger_residual(before, after, largest, n - lo + 1)
-    return nothing
+    cells = n - lo + 1
+    value, carry = _ledger_deposit(@inbounds(q[kmax, slot]),
+                                   _ledger_residual(before, after, largest, cells), carry, cells)
+    @inbounds q[kmax, slot] = value
+    return carry
 end
 
 # A thread owns one complete shared-memory RHS. There are no workgroup
@@ -502,23 +507,26 @@ end
 end
 
 """
-    _tm5_conserving_solve_tracer!(q, A, pivots, n, lo, tracer, bidiagonal)
+    _tm5_conserving_solve_tracer!(q, A, pivots, n, lo, tracer, bidiagonal,
+                                  carry = 0) -> carry′
 
 Production convection solve of one tracer column with the mass ledger. TM5's
 convection matrix conserves column mass (unit column sums; the cloud-top
 closure keeps the active window closed), so the residual of the Float32 solve
-is rounding and is returned to the column (see `_ledger_residual`). The plain
-solves above stay exact linear algebra for any matrix.
+is rounding and is returned to the column (see `_ledger_residual`). `carry` is
+the column's ledger carry from its previous solve; the new carry is returned
+(`_ledger_deposit`). The plain solves above stay exact linear algebra for any
+matrix.
 """
-@inline function _tm5_conserving_solve_tracer!(q, A, pivots, n, lo, tracer, bidiagonal::Bool)
+@inline function _tm5_conserving_solve_tracer!(q, A, pivots, n, lo, tracer, bidiagonal::Bool,
+                                               carry = zero(eltype(q)))
     before = _tm5_column_sum(q, lo, n, tracer)
     if bidiagonal
         _tm5_solve_bidiagonal_tracer!(q, A, n, lo, tracer)
     else
         _tm5_solve_shared_tracer!(q, A, pivots, n, lo, tracer)
     end
-    _tm5_restore_column_mass!(q, lo, n, tracer, before)
-    return nothing
+    return _tm5_restore_column_mass!(q, lo, n, tracer, before, carry)
 end
 
 function _tm5_solve_bidiagonal!(q, A, Nz, Nt; icltop_eff=1)
@@ -546,6 +554,9 @@ Backend-agnostic full column solver. Shapes:
 - `dt          :: FT`                            — step length in seconds.
 - `cell_area   :: FT`                            — grid-cell area (m²) used to convert
                                                   `m_col` to kg/m².
+- `carry`                                        — the column's ledger carries, one per
+                                                  tracer (`(Nt,)`, updated in place), or
+                                                  `nothing` to drop the sub-ulp part.
 
 Zero-forcing (`entu = detu = entd = detd = 0`) short-circuits to
 identity. Zero-size columns (`Nz = 0`) are a no-op.
@@ -564,6 +575,7 @@ function _tm5_solve_column!(rm_col::AbstractMatrix{FT},
                             f_buf::AbstractMatrix{FT}   = zeros(FT, length(m_col) + 1, length(m_col)),
                             amu_buf::AbstractVector{FT} = zeros(FT, length(m_col) + 1),
                             amd_buf::AbstractVector{FT} = zeros(FT, length(m_col) + 1),
+                            carry = nothing,
                             ) where {FT}
     Nz = length(m_col)
     Nz == 0 && return nothing
@@ -595,7 +607,9 @@ function _tm5_solve_column!(rm_col::AbstractMatrix{FT},
     _tm5_factorize!(conv1_buf, pivots_buf, Nz, icllfs; icltop_eff = icltop_eff)
     bidiagonal = icllfs > Nz && _tm5_identity_pivots(pivots_buf, Nz, icltop_eff)
     for t in 1:Nt
-        _tm5_conserving_solve_tracer!(rm_col, conv1_buf, pivots_buf, Nz, max(icltop_eff, 1), t, bidiagonal)
+        c = _tm5_conserving_solve_tracer!(rm_col, conv1_buf, pivots_buf, Nz, max(icltop_eff, 1), t,
+                                          bidiagonal, _load_ledger_carry(carry, FT, t))
+        _store_ledger_carry!(carry, c, t)
     end
     return nothing
 end

@@ -249,7 +249,7 @@ apply_vertical_diffusion!(q_raw::NTuple{6}, air_mass::NTuple{6},
                           meteo = nothing; halo_width = 0) = nothing
 apply_vertical_diffusion_vmr!(q_raw::NTuple{6}, air_mass::NTuple{6},
                               ::NoDiffusion, workspace, dt,
-                              meteo = nothing; halo_width = 0) = nothing
+                              meteo = nothing; halo_width = 0, tracer = nothing) = nothing
 # LL/RG mass-flux NoDiffusion stubs.
 apply_vertical_diffusion!(q_raw::AbstractArray{<:Any, 4},
                           air_mass::AbstractArray{<:Any, 3},
@@ -542,20 +542,30 @@ function _cs_scale_vmr_to_tracer_mass!(q_raw::NTuple{6, A},
 end
 
 """
-    apply_vertical_diffusion_vmr!(rm, air_mass, op, workspace, dt, meteo; halo_width)
+    apply_vertical_diffusion_vmr!(rm, air_mass, op, workspace, dt, meteo;
+                                  halo_width, tracer = nothing)
 
 Cubed-sphere helper for state variables stored as tracer mass. The implicit
 solver uses the current dry air mass. Precomputed Dkg uses conservative
 bidiagonal factors directly on tracer mass. Other fields convert mass to VMR,
 apply the column solve, then restore tracer mass before advection resumes.
+
+The Dkg solve keeps a column mass ledger whose sub-ulp remainder persists in
+`workspace.ledger_carry`, one value per column and tracer (see
+`_ledger_deposit`). Packed tracers (`(N, N, Nz, Nt)` panels) use carry slot
+`t` for tracer `t`. A single-tracer panel tuple uses slot `tracer`, its index
+in the state; with `tracer = nothing` it keeps no carry, so the call is a
+function of its input alone (adjoint tapes and replays rely on this). Other
+fields ignore `tracer`.
 """
 function apply_vertical_diffusion_vmr!(rm::NTuple{6, A}, air_mass::NTuple{6},
                                        op::ImplicitVerticalDiffusion{FT, KzF},
                                        workspace::DiffusionWorkspace, dt, meteo=nothing;
-                                       halo_width::Integer) where {
+                                       halo_width::Integer,
+                                       tracer::Union{Nothing, Integer} = nothing) where {
                                            FT, A <: AbstractArray{FT, 3},
                                            KzF <: AbstractCSDkgField{FT}}
-    _apply_cs_dkg_mass!(rm, air_mass, op, workspace, dt, meteo, halo_width)
+    _apply_cs_dkg_mass!(rm, air_mass, op, workspace, dt, meteo, halo_width, tracer)
 end
 
 function apply_vertical_diffusion_vmr!(rm::NTuple{6, A}, air_mass::NTuple{6},
@@ -564,16 +574,37 @@ function apply_vertical_diffusion_vmr!(rm::NTuple{6, A}, air_mass::NTuple{6},
                                        halo_width::Integer) where {
                                            FT, A <: AbstractArray{FT, 4},
                                            KzF <: AbstractCSDkgField{FT}}
-    _apply_cs_dkg_mass!(rm, air_mass, op, workspace, dt, meteo, halo_width)
+    _apply_cs_dkg_mass!(rm, air_mass, op, workspace, dt, meteo, halo_width, nothing)
+end
+
+# Ledger carry panel `p` for a Dkg call: the workspace carry (packed tracers,
+# or a single tracer with its `tracer` slot), or `nothing` (no carry).
+_dkg_carry_panel(carry, p, packed, tracer) = packed || tracer !== nothing ? carry[p] : nothing
+_dkg_carry_panel(::Nothing, p, packed, tracer) = nothing
+
+function _check_dkg_ledger_carry(carry, p, columns, Nt, packed, tracer)
+    if packed
+        carry === nothing && return nothing      # workspace without a ledger carry
+        size(carry[p]) == (columns..., Nt) || throw(DimensionMismatch(
+            "Dkg ledger carry panel $p has shape $(size(carry[p])); packed tracers need " *
+            "$((columns..., Nt)). Build the workspace with DiffusionWorkspace(state)."))
+    elseif tracer !== nothing
+        carry !== nothing && size(carry[p])[1:2] == columns && 1 <= tracer <= size(carry[p], 3) ||
+            throw(ArgumentError(
+                "Dkg tracer=$tracer needs a workspace ledger carry with that tracer slot " *
+                "and columns $columns; build the workspace with DiffusionWorkspace(state)."))
+    end
+    return nothing
 end
 
 function _apply_cs_dkg_mass!(rm::NTuple{6}, air_mass::NTuple{6}, op,
-                             workspace::DiffusionWorkspace, dt, meteo, halo_width)
+                             workspace::DiffusionWorkspace, dt, meteo, halo_width, tracer)
     FT = eltype(rm[1])
     Hp = Int(halo_width)
     Hp >= 0 || throw(ArgumentError("halo_width must be nonnegative"))
     packed = ndims(rm[1]) == 4
     length(workspace.factors) == 6 || throw(DimensionMismatch("Dkg requires six factor panels"))
+    carry = workspace.ledger_carry
     # Check every panel before changing any tracer values.
     for p in 1:6
         N, Ny, Nz, Nt = size(rm[p], 1), size(rm[p], 2), size(rm[p], 3), size(rm[p], 4)
@@ -582,6 +613,7 @@ function _apply_cs_dkg_mass!(rm::NTuple{6}, air_mass::NTuple{6}, op,
         size(air_mass[p]) == (N, Ny, Nz) || throw(DimensionMismatch("Dkg panel $p tracer and air shapes differ"))
         size(workspace.factors[p]) == (Nc, Nj, Nz) ||
             throw(DimensionMismatch("Dkg factor panel $p must have shape $((Nc, Nj, Nz))"))
+        _check_dkg_ledger_carry(carry, p, (Nc, Nj), Nt, packed, tracer)
     end
     update_field!(op.kz_field, current_time(meteo))
     for p in 1:6
@@ -589,6 +621,7 @@ function _apply_cs_dkg_mass!(rm::NTuple{6}, air_mass::NTuple{6}, op,
         Nz, Nt = size(rm[p], 3), size(rm[p], 4)
         backend = get_backend(rm[p])
         dkg = panel_field(op.kz_field, p)
+        carry_p = _dkg_carry_panel(carry, p, packed, tracer)
         column_tile = _cs_dkg_mass_workgroupsize(backend, FT)
         tracer_tile = _cs_dkg_tracer_workgroupsize(backend, FT)
         if packed && Nt > 1 && tracer_tile !== nothing
@@ -597,15 +630,16 @@ function _apply_cs_dkg_mass!(rm::NTuple{6}, air_mass::NTuple{6}, op,
             launch!(_vertical_diffusion_cs_dkg_factors_kernel!, backend, column_tile, (Nc, Ny),
                     workspace.factors[p], air_mass[p], dkg, FT(dt), Nz, Hp; sync = false)
             launch!(_vertical_diffusion_cs_mass_dkg_tracers_kernel!, backend, tracer_tile,
-                    (Nc, Ny, Nt), rm[p], air_mass[p], dkg, workspace.factors[p], FT(dt), Nz, Hp;
-                    sync = false)
+                    (Nc, Ny, Nt), rm[p], carry_p, air_mass[p], dkg, workspace.factors[p], FT(dt),
+                    Nz, Hp; sync = false)
         elseif packed
             launch!(_vertical_diffusion_cs_mass_dkg_packed_kernel!, backend, column_tile,
-                    (Nc, Ny), rm[p], air_mass[p], dkg, workspace.factors[p], FT(dt), Nz, Nt, Hp;
-                    sync = false)
+                    (Nc, Ny), rm[p], carry_p, air_mass[p], dkg, workspace.factors[p], FT(dt), Nz,
+                    Nt, Hp; sync = false)
         else
             launch!(_vertical_diffusion_cs_mass_dkg_kernel!, backend, column_tile, (Nc, Ny),
-                    rm[p], air_mass[p], dkg, workspace.factors[p], FT(dt), Nz, Hp; sync = false)
+                    rm[p], carry_p, air_mass[p], dkg, workspace.factors[p], FT(dt), Nz, Hp,
+                    tracer === nothing ? 1 : Int(tracer); sync = false)
         end
         synchronize(backend)
     end
@@ -617,8 +651,9 @@ function apply_vertical_diffusion_vmr!(q_raw::NTuple{6, A},
                                        op::ImplicitVerticalDiffusion{FT, KzF},
                                        workspace::DiffusionWorkspace, dt,
                                        meteo = nothing;
-                                       halo_width::Integer) where {FT, A <: AbstractArray{FT, 3},
-                                                                    KzF <: AbstractCubedSphereField{FT}}
+                                       halo_width::Integer,
+                                       tracer = nothing) where {FT, A <: AbstractArray{FT, 3},
+                                                                KzF <: AbstractCubedSphereField{FT}}
     _cs_scale_tracer_mass_to_vmr!(q_raw, air_mass, halo_width)
     # Mass-flux kernel needs `air_mass` for coefficient construction.
     apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt, meteo;

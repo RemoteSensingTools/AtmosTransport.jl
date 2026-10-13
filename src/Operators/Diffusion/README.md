@@ -28,7 +28,14 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
 Precomputed cubed-sphere Dkg acts directly on tracer mass through paired
 retention/transfer passes. It shares factors across tracers, carries rounding
 residuals in registers, and preserves layers with no exchange exactly. There is
-no tracer-total normalization. The public VMR-level solver retains its Thomas
+no tracer-total normalization. A column mass ledger returns each column's
+`Float32` rounding residual to its largest exchanging layer; the part that
+layer cannot hold persists in `DiffusionWorkspace.ledger_carry`, one value per
+column and tracer, and is added with the column's next residual (see the
+[single-precision page](../../../docs/src/theory/float32_conservation.md)).
+Packed tracers use carry slot `t`; a single-tracer call selects its slot with
+`tracer = idx` (the per-tracer Lin-Rood path) and keeps no carry without it
+(adjoint replays). The public VMR-level solver retains its Thomas
 implementation; state-mass entry points dispatch to the conservative path.
 On CUDA, packed states with multiple tracers factor each column once and then
 solve distinct column/tracer pairs in parallel. Factors are read-only during
@@ -59,7 +66,8 @@ halos, against that serial kernel.
 - [`dz_helpers.jl`](dz_helpers.jl) — hydrostatic layer-thickness helper
   kernels and host wrappers shared by vertical diffusion paths
 - [`workspace.jl`](workspace.jl) — topology-aware `DiffusionWorkspace`
-  allocation and device adaptation
+  allocation (including the persistent Dkg ledger carry) and device
+  adaptation
 - [`operators.jl`](operators.jl) — operator hierarchy, constructor
   validation, state-level `apply!`, array-level `apply_vertical_diffusion_vmr!`
 

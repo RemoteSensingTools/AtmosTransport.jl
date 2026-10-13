@@ -371,6 +371,7 @@ end
 if _HAS_CUDA
     @eval using Adapt
     @eval using CUDA: CuArray
+    include(joinpath(@__DIR__, "..", "helpers", "ledger_carry.jl"))
 end
 
 @testset "P6 collab-LU: bit-exact equivalence with per-thread kernel (CUDA)" begin
@@ -677,6 +678,17 @@ end
                workspace = ws_d_b)
         CUDA.synchronize()
         @test Array(state_d_a.tracers_raw) == Array(state_d_b.tracers_raw)
+    end
+end
+
+@testset "P6 collab-LU: the column ledger carry persists across calls (CUDA)" begin
+    # Each column's tracer mass plus its ledger carry (TM5Workspace.ledger_carry)
+    # is conserved over many calls on every topology, also with level merging,
+    # whose ledger covers the whole fine-grid operation.
+    if !_HAS_CUDA
+        @test_skip "CUDA backend required"
+    else
+        check_tm5_ledger_carry(CuArray)
     end
 end
 

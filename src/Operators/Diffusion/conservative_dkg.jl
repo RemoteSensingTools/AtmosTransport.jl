@@ -71,7 +71,11 @@ end
     return above_closed && below_closed
 end
 
-@inline function _dkg_diffuse_mass_column!(rm, air_mass, dkg_field, factors, dt, ii, jj, Nz, Hp, t)
+# `carry` holds the column ledger carries (`(Nc, Nc, Ncarry)` per panel, or
+# `nothing`); `slot` selects the tracer's carry. `t` selects the tracer in a
+# packed `rm` and is ignored for a single-tracer `rm`.
+@inline function _dkg_diffuse_mass_column!(rm, carry, air_mass, dkg_field, factors, dt, ii, jj, Nz, Hp,
+                                           t, slot)
     FT = eltype(rm)
     i, j = ii + Hp, jj + Hp
     @inbounds begin
@@ -133,34 +137,40 @@ end
         # Column mass ledger. The exchange form conserves the column exactly,
         # but the final `retained + cref·m` writes drop sub-ulp exchanges
         # (≈1e-7 of SF₆ per month in Float32). The residual, about one ulp of
-        # the largest exchanging layer, is added back there. In about a quarter
-        # of the columns it is below half an ulp and rounds away, so the bias
-        # is removed statistically rather than exactly.
-        # Layers without exchange stay bit-exact, and zero-carrier columns keep
-        # their absorbing convention.
+        # the largest exchanging layer, is added back there. The part below
+        # that layer's spacing (in about a quarter of the columns all of it)
+        # is the column's carry, deposited with the next solve's residual
+        # (`_ledger_deposit`). Layers without exchange stay bit-exact.
+        # Zero-carrier columns keep their absorbing convention: they are not
+        # ledgered, and like columns without exchange they keep their carry.
         if positive_carrier && kmax > 0
-            _set_dkg_mass!(rm, i, j, kmax, t, _dkg_mass_value(rm, i, j, kmax, t) +
-                           _ledger_residual(before, after, largest, exchanging))
+            value, column_carry = _ledger_deposit(
+                _dkg_mass_value(rm, i, j, kmax, t),
+                _ledger_residual(before, after, largest, exchanging),
+                _load_ledger_carry(carry, FT, ii, jj, slot), exchanging)
+            _set_dkg_mass!(rm, i, j, kmax, t, value)
+            _store_ledger_carry!(carry, column_carry, ii, jj, slot)
         end
     end
     return nothing
 end
 
-@kernel function _vertical_diffusion_cs_mass_dkg_kernel!(rm, @Const(air_mass),
+# Single-tracer panel: `slot` is the tracer's carry slot.
+@kernel function _vertical_diffusion_cs_mass_dkg_kernel!(rm, carry, @Const(air_mass),
                                                         dkg_field, factors,
-                                                        dt, Nz::Int, Hp::Int)
+                                                        dt, Nz::Int, Hp::Int, slot::Int)
     ii, jj = @index(Global, NTuple)
     _dkg_factor_column!(factors, air_mass, dkg_field, dt, ii, jj, Nz, Hp)
-    _dkg_diffuse_mass_column!(rm, air_mass, dkg_field, factors, dt, ii, jj, Nz, Hp, 1)
+    _dkg_diffuse_mass_column!(rm, carry, air_mass, dkg_field, factors, dt, ii, jj, Nz, Hp, 1, slot)
 end
 
-@kernel function _vertical_diffusion_cs_mass_dkg_packed_kernel!(rm, @Const(air_mass),
+@kernel function _vertical_diffusion_cs_mass_dkg_packed_kernel!(rm, carry, @Const(air_mass),
                                                                dkg_field, factors,
                                                                dt, Nz::Int, Nt::Int, Hp::Int)
     ii, jj = @index(Global, NTuple)
     _dkg_factor_column!(factors, air_mass, dkg_field, dt, ii, jj, Nz, Hp)
     for t in 1:Nt
-        _dkg_diffuse_mass_column!(rm, air_mass, dkg_field, factors, dt, ii, jj, Nz, Hp, t)
+        _dkg_diffuse_mass_column!(rm, carry, air_mass, dkg_field, factors, dt, ii, jj, Nz, Hp, t, t)
     end
 end
 
@@ -176,9 +186,9 @@ end
     _dkg_factor_column!(factors, air_mass, dkg_field, dt, ii, jj, Nz, Hp)
 end
 
-@kernel function _vertical_diffusion_cs_mass_dkg_tracers_kernel!(rm, @Const(air_mass),
+@kernel function _vertical_diffusion_cs_mass_dkg_tracers_kernel!(rm, carry, @Const(air_mass),
                                                                dkg_field, @Const(factors),
                                                                dt, Nz::Int, Hp::Int)
     ii, jj, t = @index(Global, NTuple)
-    _dkg_diffuse_mass_column!(rm, air_mass, dkg_field, factors, dt, ii, jj, Nz, Hp, t)
+    _dkg_diffuse_mass_column!(rm, carry, air_mass, dkg_field, factors, dt, ii, jj, Nz, Hp, t, t)
 end

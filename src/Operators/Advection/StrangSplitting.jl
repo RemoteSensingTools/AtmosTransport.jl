@@ -280,13 +280,14 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
             _copy_cs_storage!(m, m_save)
         end
 
+        # One tracer at a time: `tracer = idx` selects its diffusion ledger carry.
         rm_tracer = get_tracer(state, idx)
         fill_panel_halos!(rm_tracer, grid.horizontal; dir=1)
         tracer_name = tracer_names[idx]
         midpoint! = if emissions_op isa NoSurfaceFlux
             () -> SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
                 rm_tracer, m, diffusion_op, diffusion_workspace, dt, meteo;
-                halo_width = state.halo_width)
+                halo_width = state.halo_width, tracer = idx)
         elseif uses_diffusive_surface_flux_boundary(diffusion_op)
             () -> begin
                 apply_surface_flux!(rm_tracer, emissions_op, workspace, dt, meteo, grid;
@@ -295,20 +296,20 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
                                     deposit = emission_deposit(diffusion_op))
                 SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
                     rm_tracer, m, diffusion_op, diffusion_workspace, dt, meteo;
-                    halo_width = state.halo_width)
+                    halo_width = state.halo_width, tracer = idx)
             end
         else
             half_dt = dt / 2
             () -> begin
                 SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
                     rm_tracer, m, diffusion_op, diffusion_workspace, half_dt, meteo;
-                    halo_width = state.halo_width)
+                    halo_width = state.halo_width, tracer = idx)
                 apply_surface_flux!(rm_tracer, emissions_op, workspace, dt, meteo, grid;
                                     tracer_names = (tracer_name,),
                                     halo_width = state.halo_width)
                 SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
                     rm_tracer, m, diffusion_op, diffusion_workspace, half_dt, meteo;
-                    halo_width = state.halo_width)
+                    halo_width = state.halo_width, tracer = idx)
             end
         end
         _cs_transport_step!(cs_advection_style(scheme),
