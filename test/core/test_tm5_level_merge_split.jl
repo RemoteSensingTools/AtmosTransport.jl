@@ -211,6 +211,64 @@ _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
         @test sv(pos, R, 1000f0, pos, neg) + sv(neg, R, 1000f0, pos, neg) ≈ 1000f0
     end
 
+    @testset "no-convection columns and layers above the cloud are unchanged ($FT)" for FT in (Float32, Float64)
+        Nx, Ny = 3, 2
+        rng = MersenneTwister(3)
+        m = FT(500) .+ FT(1000) .* rand(rng, FT, Nx, Ny, Nz)
+        # Cloud top at layer 8: super-layers 1-2 (fine layers 1-4) lie above
+        # the solved window.
+        forcing = _column_forcing(FT, Nx, Ny, Nz; top = 7)
+        for f in forcing
+            f[1, 1, :] .= 0                       # column (1, 1) has no convection
+        end
+        q = randn(rng, FT, Nx, Ny, Nz, 1) .* reshape(m, Nx, Ny, Nz, 1) .* FT(1e-6)
+        q[:, :, 1, 1] .= FT(3e-6) .* m[:, :, 1]   # exactly cancelling pair above the cloud
+        q[:, :, 2, 1] .= .-q[:, :, 1, 1]
+        q0 = copy(q)
+        _merged_step!(q, m, forcing, 2)
+        @test q[1, 1, :, :] == q0[1, 1, :, :]
+        @test q[:, :, 1:4, :] == q0[:, :, 1:4, :]
+        @test q[2:end, :, 5:end, :] != q0[2:end, :, 5:end, :]
+    end
+
+    @testset "layouts: reduced-Gaussian axis and cubed-sphere halo" begin
+        FT = Float64
+        rng = MersenneTwister(4)
+        Nx, Ny, Hp = 3, 3, 1
+        m = FT(500) .+ FT(1000) .* rand(rng, FT, Nx, Ny, Nz)
+        q = randn(rng, FT, Nx, Ny, Nz, 2) .* reshape(m, Nx, Ny, Nz, 1) .* FT(1e-6)
+        forcing = _column_forcing(FT, Nx, Ny, Nz)
+        q_ll = _merged_step!(copy(q), m, forcing, 2)
+
+        # Reduced Gaussian: (ncells, Nz, Nt), layer axis 2.
+        nc = Nx * Ny
+        q_rg = reshape(copy(q), nc, Nz, 2)
+        rg(f) = reshape(f, nc, Nz)
+        Cv._tm5_merge_aggregate_solve_disaggregate!(
+            q_rg, rg(m), map(rg, forcing)..., 0, Nz, Nz ÷ 2, 2, 2,
+            (qS, mS, eU, dU, eD, dD) -> _serial_super_solve!(3600,
+                reshape(qS, Nx, Ny, Nz ÷ 2, 2), reshape(mS, Nx, Ny, :),
+                (reshape(x, Nx, Ny, :) for x in (eU, dU, eD, dD))...))
+        @test reshape(q_rg, Nx, Ny, Nz, 2) == q_ll
+
+        # Cubed-sphere panel: halo of width Hp around the (Nx, Ny) interior;
+        # forcings carry no halo. The halo must come back untouched.
+        q_cs = fill(FT(7), Nx + 2Hp, Ny + 2Hp, Nz, 2)
+        m_cs = fill(FT(900), Nx + 2Hp, Ny + 2Hp, Nz)
+        q_cs[(Hp + 1):(Hp + Nx), (Hp + 1):(Hp + Ny), :, :] .= q
+        m_cs[(Hp + 1):(Hp + Nx), (Hp + 1):(Hp + Ny), :] .= m
+        halo0 = copy(q_cs)
+        interior = (Hp + 1):(Hp + Nx), (Hp + 1):(Hp + Ny)
+        Cv._tm5_merge_aggregate_solve_disaggregate!(
+            q_cs, m_cs, forcing..., 0, Nz, Nz ÷ 2, 2, 3,
+            (qS, mS, eU, dU, eD, dD) -> _serial_super_solve!(3600,
+                view(qS, interior..., :, :), view(mS, interior..., :), eU, dU, eD, dD);
+            Hp = Hp)
+        @test q_cs[interior..., :, :] == q_ll
+        q_cs[interior..., :, :] .= halo0[interior..., :, :]
+        @test q_cs == halo0
+    end
+
     @testset "CUDA apply!: near-cancelling pairs on the collaborative path" begin
         if !_HAS_CUDA
             @test_skip "CUDA backend required"
