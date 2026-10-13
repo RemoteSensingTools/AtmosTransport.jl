@@ -435,6 +435,7 @@ between them. Performance-tuning notes live beside the implementation.
 | Scheme abstract root | `src/Operators/Advection/schemes.jl::AbstractAdvectionScheme` |
 | `UpwindScheme`, `SlopesScheme{L}`, `PPMScheme{L,V}`, `LinRoodPPMScheme{ORD,Z}` | `src/Operators/Advection/schemes.jl` |
 | FV3 vertical profile (`FV3ScalarProfile`) | `src/Operators/Advection/vertical_fv3_profile.jl` |
+| FV3 vertical-profile adjoint (frozen-limiter transpose) | `src/Operators/Advection/vertical_fv3_profile_adjoint.jl::_sweep_z_panels_fv3_adjoint!` |
 | Limiter primitives (branchless, GPU-safe) | `src/Operators/Advection/limiters.jl` |
 | Slopes face flux (Russell-Lerner formula) | `src/Operators/Advection/reconstruction.jl::_slopes_face_flux` |
 | Structured-grid Strang palindrome | `src/Operators/Advection/StrangSplitting.jl::strang_split!` |

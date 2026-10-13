@@ -11,8 +11,7 @@
   -0.000237736%, down from -0.377204% with emit-then-decay ordering.
 - Configured Lin-Rood transport now defaults its vertical remap to
   `fv3_kord8`, the closest GCHP match. Explicit `vertical = "upwind"` and
-  `vertical = "fv3_kord8_signed"` settings are unchanged; the Lin-Rood
-  adjoint still requires explicit upwind vertical sweeps.
+  `vertical = "fv3_kord8_signed"` settings are unchanged.
 - The Lin-Rood adjoint now also transposes the FV3 `kord = 8` vertical sweeps
   (`vertical = "fv3_kord8"` and `"fv3_kord8_signed"`; OF-94); explicit upwind
   vertical sweeps are no longer required. Footprints and 4D-Var gradients use

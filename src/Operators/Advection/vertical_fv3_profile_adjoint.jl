@@ -265,6 +265,8 @@ function _sweep_z_panels_fv3_adjoint!(lambda_panels::NTuple{6}, panels_rm::NTupl
                                       flux_scale = one(eltype(lambda_panels[1])))
     Nc, Hp = mesh.Nc, mesh.Hp
     Nz = size(lambda_panels[1], 3)
+    Nz >= 4 || throw(ArgumentError(
+        "the FV3 vertical-profile adjoint needs at least 4 layers, got Nz = $Nz."))
     FT = eltype(lambda_panels[1])
     _check_fv3_adjoint_column_scratch(scratch, Nc, Nz)
     for p in 1:6

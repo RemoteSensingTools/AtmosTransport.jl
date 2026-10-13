@@ -739,9 +739,11 @@ end
 # (`_sweep_z_panels_fv3_adjoint!`); `m_before` and `rm_before` are the state
 # that entered the forward sweep.
 function _adjoint_scheme_sweep!(lambda_panels, m_before, rm_before, flux_panels,
-                                ::Symbol, scheme::CSAdjointFV3Vertical,
+                                direction::Symbol, scheme::CSAdjointFV3Vertical,
                                 mesh::CubedSphereMesh, ws::CSAdjointWorkspace,
                                 flux_scale)
+    direction === :z || throw(ArgumentError(
+        "an FV3-profile adjoint record must be a vertical (:z) sweep, got $(repr(direction))"))
     _sweep_z_panels_fv3_adjoint!(lambda_panels, rm_before, m_before, flux_panels,
                                  scheme.vertical, ws.column_scratch, mesh;
                                  flux_scale)
