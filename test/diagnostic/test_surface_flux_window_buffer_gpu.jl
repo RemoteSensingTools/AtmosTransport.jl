@@ -200,4 +200,33 @@ else
                       hosts)
         end
     end
+
+    # The GEOS-Chem qmincg decision of `ProfileDeposit` (OF-108) on the device:
+    # one case per column, x = 20 and fractions whose shares are exact, so the
+    # CPU and CUDA results agree bit for bit (FMA contraction included).
+    @testset "ProfileDeposit qmincg decision on CUDA" begin
+        for FT in (Float32, Float64)
+            Nc, Nz, Hp = 4, 6, 1
+            f = zeros(FT, Nc, Nc, Nz); f[:, :, Nz] .= 1
+            f[1:3, 1, Nz-2:Nz] .= reshape(FT[0.25, 0.25, 0.5], 1, 3)    # c = (5, 5, −10)
+            q = fill(FT(100), Nc + 2Hp, Nc + 2Hp, Nz)
+            q[1 + Hp, 1 + Hp, :] .= FT[0, -nextfloat(zero(FT)), -1e-24, 0, 0, 50]  # c = 0 layers: profile
+            q[2 + Hp, 1 + Hp, :] .= FT[0, 0, 0, -10, 0, 50]                      # raised to −5: profile
+            q[3 + Hp, 1 + Hp, :] .= FT[0, 0, 0, 0, 0, 5]                         # 5 − 10 < 0: fallback
+            function deposit(arr)
+                panels = ntuple(_ -> arr(copy(q)), 6)
+                source = Adapt.adapt(arr, SurfaceFluxSource(:x, ntuple(_ -> fill(FT(2), Nc, Nc), 6)))
+                SF.apply_surface_flux!(panels, SurfaceFluxOperator(source), nothing, 10.0, nothing, nothing;
+                                       tracer_names = (:x,), halo_width = Hp,
+                                       deposit = ntuple(_ -> SF.ProfileDeposit(arr(f)), 6))
+                return map(Array, panels)
+            end
+            q_cpu, q_gpu = deposit(Array), deposit(CuArray)
+            @test all(map(bitequal, q_cpu, q_gpu))
+            added = q_gpu[1][:, :, :] .- q
+            @test added[1 + Hp, 1 + Hp, :] == FT[0, 0, 0, 5, 5, 10]
+            @test added[2 + Hp, 1 + Hp, :] == FT[0, 0, 0, 5, 5, 10]
+            @test added[3 + Hp, 1 + Hp, :] == FT[0, 0, 0, 0, 0, 20]
+        end
+    end
 end

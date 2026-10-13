@@ -209,10 +209,12 @@ and `w_{1/2} = 0` at the model top. Layer `k` keeps
 f_k = w_{k+1/2} - w_{k-1/2}, \qquad \sum_k f_k = 1 .
 ```
 
-The interior `w` is zero above the PBL and outside GEOS-Chem's bottom `npbl`
-layers (those with reference pressure above 400 hPa), in stable columns, and
-where the interface lies in the surface layer of the PBL (`z < 0.1 h`). It can
-grow with height, so some `f_k` are negative. Of a column's emission `x` in
+The interior `w` is nonzero only at interfaces among GEOS-Chem's bottom
+`npbl` layers (those with reference pressure above 400 hPa) whose lower layer
+has its midpoint below the PBL height `h`, as in GEOS-Chem; the highest such
+interface can lie just above `h`. It is zero in stable columns and where the
+interface lies in the surface layer of the PBL (`z < 0.1 h`). It can grow
+with height, so some `f_k` are negative. Of a column's emission `x` in
 one step, `ProfileDeposit` adds `x f_k` to layer `k`. Its counter-gradient
 part, relative to a surface-only deposit, is
 
