@@ -44,7 +44,10 @@ preprocessing, and never reconstructs a fine profile. Each group `s` of
 backward-Euler solve on the super grid gives `R'_s`, each fine layer receives a
 share of the super-layer's change:
 
-    r'_k = r_k + (R'_s - R_s) * |r_k| / Σ_{j∈s} |r_j|        (m_k / M_s if Σ_{j∈s} |r_j| = 0)
+    r'_k = r_k + (R'_s - R_s) * w_k,   w_k = |r_k| / Σ_{j∈s} |r_j|
+
+with `w_k = m_k / M_s` if `Σ_{j∈s} |r_j| = 0`, and `w_k = 1 / n_merge` if
+`M_s = 0` as well.
 
 The weights lie in [0, 1] and sum to one. The split conserves the column
 total, keeps a uniform mixing ratio, leaves columns and layers without
@@ -132,7 +135,8 @@ struct TM5Convection{FT} <: AbstractConvection
     # when lmax_conv=0), for the collaborative solve.
     # The effective fine span can therefore lose up to n_merge-1 top layers.
     # Each super-layer's tracer-mass change is split over its fine layers
-    # with weights |r_k|/Σ|r_j| (air-mass weights if all are zero); this
+    # with weights |r_k|/Σ|r_j| (air-mass weights if all are zero, equal
+    # weights if the air mass is zero too); this
     # conserves mass up to rounding but changes vertical mixing.
     n_merge :: Int
 
@@ -329,7 +333,9 @@ end
 # Increment split (OF-107). Each fine layer k of super-layer s receives a share
 # of the super-layer's tracer-mass change ΔR_s = R'_s - R_s from the coarse solve:
 #
-#     r'_k = r_k + ΔR_s * w_k,   w_k = |r_k| / Σ_{j∈s} |r_j|   (m_k / M_s if that sum is 0).
+#     r'_k = r_k + ΔR_s * w_k,   w_k = |r_k| / Σ_{j∈s} |r_j|
+#
+# (w_k = m_k / M_s if that sum is 0; 1 / n_merge if M_s is 0 as well).
 #
 # The weights lie in [0, 1] and sum to one, so the split conserves the
 # super-layer total exactly in exact arithmetic, keeps a uniform mixing

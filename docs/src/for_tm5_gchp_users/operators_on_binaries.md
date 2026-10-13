@@ -240,9 +240,12 @@ monotone. Each fine layer then receives a share of its super-layer's change:
 
 ```math
 r'_k = r_k + (R'_s - R_s)\, w_k, \qquad
-w_k = \frac{|r_k|}{\sum_{j \in s} |r_j|}
-\quad \Bigl(w_k = \frac{m_k}{M_s} \text{ if } \sum_{j \in s} |r_j| = 0\Bigr).
+w_k = \frac{|r_k|}{\sum_{j \in s} |r_j|}.
 ```
+
+If all of a super-layer's fine values are zero, the weights are
+``w_k = m_k / M_s`` (uniform mixing ratio), and `1/n_merge` if ``M_s = 0`` as
+well.
 
 - The weights lie in ``[0, 1]`` and sum to one, so ``\sum_{k \in s} r'_k = R'_s``:
   the column total is conserved, and a uniform mixing ratio ``r_k = c\, m_k``

@@ -515,7 +515,7 @@ top layers. Cloud-top closure forces remaining updraft mass to detrain at the
 active boundary; it does not recover the mixing excluded by that boundary.
 Each fine layer then receives a share of its super-layer's tracer-mass change,
 weighted by `|r_k|/Σ|r_j|` over the super-layer (air-mass weights when all its
-values are zero). Non-negative tracers stay non-negative, layers the solve did
+values are zero, equal weights if its air mass is zero too). Non-negative tracers stay non-negative, layers the solve did
 not change keep their values, and no cell moves by more than its super-layer's
 change; the equations are in the
 [level-merging section](@ref tm5-level-merging).
