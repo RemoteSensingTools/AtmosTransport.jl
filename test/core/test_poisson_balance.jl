@@ -451,7 +451,9 @@ end
     @test cm_diag.max_raw_residual == 0.25
     @test cm_diag.max_booked_residual == 0.25
     @test cm_diag.max_raw_residual_ratio <= 1
-    @test cm_probe[1][1, 1, end] == 0.0
+    # The folded residual closes the column to rounding of the 0.25 kg residual
+    # (Julia 1.10 and 1.12 sum in different orders: 0 vs one ulp).
+    @test abs(cm_probe[1][1, 1, end]) <= 4eps(0.25)
     @test_throws ErrorException Prep.diagnose_cs_cm!(cm_probe,
         ntuple(_ -> zeros(Nc + 1, Nc, Nz), 6),
         ntuple(_ -> zeros(Nc, Nc + 1, Nz), 6), dm_probe, m, Nc, Nz;
