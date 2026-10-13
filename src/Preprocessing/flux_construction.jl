@@ -9,6 +9,18 @@ const FACE_LENGTH_KINDS        = (:cell_centerline, :edge)
 const FACE_FLUX_KINDS          = (:panel_average, :vector, :line_integral)
 const FACE_INTERPOLATION_KINDS = (:linear, :cubic, :fv3)
 const WIND_REGRID_KINDS        = (:scalar, :cartesian)
+const FLUX_THICKNESS_KINDS     = (:moist, :dry_mass)
+
+struct MoistFluxThickness end
+struct DryMassFluxThickness end
+_flux_thickness(kind::Symbol) =
+    (moist = MoistFluxThickness(), dry_mass = DryMassFluxThickness())[kind]
+
+function _validate_flux_thickness(kind::Symbol, source::AbstractString)
+    kind in FLUX_THICKNESS_KINDS || throw(ArgumentError(
+        "$source flux_thickness must be one of $(join(FLUX_THICKNESS_KINDS, ", ")); got :$kind"))
+    return kind
+end
 
 # Reject unknown flux-construction options; `source` names the met source in errors.
 function _validate_flux_construction(s, source::AbstractString)
@@ -22,13 +34,20 @@ function _validate_flux_construction(s, source::AbstractString)
     s.face_fluxes === :vector || s.face_interpolation === :linear ||
         throw(ArgumentError("$source face_interpolation applies to face_fluxes = :vector only"))
     s.face_fluxes !== :line_integral || _has_source_line_integrals(s) ||
-        throw(ArgumentError("$source does not implement face_fluxes = :line_integral (ERA5 N320 only)"))
+        throw(ArgumentError("$source does not implement face_fluxes = :line_integral (ERA5 only)"))
     _validate_column_balance_weights(s.column_balance_weights, source)
     _validate_flux_time_sampling(s, source)
     return s
 end
-_validate_flux_time_sampling(s, source) = nothing      # sources without the option (ERA5 N320 has one)
-_has_source_line_integrals(s) = false                  # true for ERA5 N320 (sources/era5.jl)
+_validate_flux_time_sampling(s, source) = nothing      # sources without the option (ERA5 paths have one)
+_has_source_line_integrals(s) = false                  # true for ERA5 native and spectral paths
+_has_source_line_integrals(::ERA5SpectralSettings) = true
+function _validate_flux_time_sampling(s::ERA5SpectralSettings, source)
+    s.flux_time_sampling in (:window_start, :window_mean) || throw(ArgumentError(
+        "$source flux_time_sampling must be one of window_start, window_mean; " *
+        "got :$(s.flux_time_sampling)"))
+    return nothing
+end
 
 # How face fluxes are built from the cell-centre winds.
 struct PanelAverageFluxes{L <: AbstractFaceLengths}    # panel components averaged (historical)
@@ -42,11 +61,11 @@ end
 const _FACE_INTERPOLATION = (linear = (order = 2, along_face_filter = false),
                              cubic  = (order = 4, along_face_filter = false),
                              fv3    = (order = 4, along_face_filter = true))
-# `source` is the source mesh, needed by `:line_integral` (ERA5 N320 only).
+# `source` is the source mesh, needed by `:line_integral`.
 function _face_flux_method(settings, grid; source = nothing)
     if settings.face_fluxes === :line_integral
-        source isa ReducedGaussianMesh || throw(ArgumentError(
-            "face_fluxes = :line_integral is implemented for ERA5 N320 sources only"))
+        source isa Union{LatLonMesh, ReducedGaussianMesh} || throw(ArgumentError(
+            "face_fluxes = :line_integral needs a LatLonMesh or ReducedGaussianMesh source"))
         return LineIntegralFaceFluxes(source, grid.mesh, grid.face_table)
     end
     settings.face_fluxes === :vector && return VectorFaceFluxes(
@@ -69,6 +88,16 @@ end
 # The line integrals use the source winds, not the cube-centre ones; they are
 # applied through `_endpoint_face_fluxes!` (era5_n320_regrid.jl), which has them.
 _prepare_cell_winds!(::LineIntegralFaceFluxes, x, u_east, v_north, mesh, Nz) = nothing
+
+# Header record of the face-interpolation and wind-regrid choices a face-flux
+# method actually uses: only vector fluxes interpolate across faces, and line
+# integrals bypass the cube-centre winds (they integrate the source winds).
+flux_header_face_interpolation(::VectorFaceFluxes, settings) = String(settings.face_interpolation)
+flux_header_face_interpolation(::Union{PanelAverageFluxes, LineIntegralFaceFluxes}, _settings) =
+    "not_applicable"
+flux_header_wind_regrid(::Union{PanelAverageFluxes, VectorFaceFluxes}, settings) =
+    String(settings.wind_regrid)
+flux_header_wind_regrid(::LineIntegralFaceFluxes, _settings) = "source_line_integral"
 
 _face_fluxes!(m::PanelAverageFluxes, x, g, dt, Nc, Nz) =
     cs_face_fluxes!(x.am, x.bm, x.u_local, x.v_local, x.dp, m.lengths, g, dt, Nc, Nz)

@@ -251,10 +251,17 @@ function _native_mass_fix_target_kg(cfg::AbstractDict, grid, settings)
     end
 end
 
-function _process_day_native(cfg::AbstractDict;
-                             day_override = nothing,
-                             start_date   = nothing,
-                             end_date     = nothing)
+"""
+    _native_preprocessing_plan(cfg) -> NamedTuple
+
+Everything a native-source (`[source].toml`) preprocessing config fixes before
+any meteorological input is read: float type, target grid, met-source settings,
+vertical setup, numerics, the GEOS `cm` closure and its OMEGA settings, the
+dry-mass pin and the source/target pair. Shared by `process_day(cfg)` and
+`validate_preprocessing_config`, so a config that validates is one the entry
+point accepts.
+"""
+function _native_preprocessing_plan(cfg::AbstractDict)
     # Native sources take their column weights from the met-source file.
     haskey(get(cfg, "numerics", Dict()), "column_balance_weights") && throw(ArgumentError(
         "[numerics] column_balance_weights applies to ERA5 spectral configs; native sources " *
@@ -262,8 +269,7 @@ function _process_day_native(cfg::AbstractDict;
     reject_removed_balance_mode(get(cfg, "numerics", Dict{String, Any}()))
     src_cfg = cfg["source"]
     toml_relpath = String(src_cfg["toml"])
-    toml_path = isabspath(toml_relpath) ? toml_relpath :
-                joinpath(@__DIR__, "..", "..", "..", toml_relpath)
+    toml_path = isabspath(toml_relpath) ? toml_relpath : _package_path(toml_relpath)
 
     # Single source of truth for the float type: build the grid AND the
     # source settings against the same `FT` so cell areas and the reader's
@@ -362,18 +368,6 @@ function _process_day_native(cfg::AbstractDict;
     # The fingering is the intrinsic MFXC↔DELP residual; the validated cure is
     # input-side (wind-derived / ERA5). `:omega_regularized` is the conservative
     # native-cube candidate that avoids the full OMEGA pathway's oversmoothing.
-    if cm_closure === :omega_full_replacement
-        @warn "[numerics].geos_cm_closure=:omega_full_replacement is a known-failed " *
-              "diagnostic: it rewrites PBL horizontal fluxes by 2-7× and corrupts " *
-              "surface-plume transport. Use :omega_regularized or :endpoint_balanced."
-    elseif cm_closure !== :endpoint_balanced
-        @warn "[numerics].geos_cm_closure=$(cm_closure) is DIAGNOSTIC/CANDIDATE, NOT " *
-              "the science-validated production default (see " *
-              "docs/src/preprocessing/geos_native_cs.md). Use " *
-              ":endpoint_balanced for production and the ERA5/wind-derived path " *
-              "for UTLS-sensitive science. :omega_regularized limits OMEGA to a " *
-              "UTLS high-pass prior and still requires tracer validation."
-    end
     # Spatial low-pass sweeps: the `:moisture_filtered` residual smoother and the
     # `:pfix_corrected` column-drift smoother (ignored by the other closures).
     smooth_iters = Int(get(numerics_cfg, "geos_moisture_filter_smooth_iters",
@@ -408,9 +402,48 @@ function _process_day_native(cfg::AbstractDict;
         error("OMEGA-based GEOS cm closures require [mass_fix].enable=true so " *
               "the per-level Poisson targets have zero global column tendency")
     configured_global_mass_target_kg = _native_mass_fix_target_kg(cfg, grid, settings)
+    # The kg target is finite only in `target_ps_dry` mode, where it is this
+    # pressure's air mass; the header records the pressure itself.
+    configured_mass_fix_target_ps_dry_pa = isfinite(configured_global_mass_target_kg) ?
+        GLOBAL_MEAN_DRY_SURFACE_PRESSURE : NaN
+    _check_native_closure_config(settings, cm_closure)
     ensure_preprocessor_pair_supported(grid, settings; context = "native-source")
+    return (; FT, grid, settings, vertical, mass_basis, dt_met_seconds, chain_mass,
+            positivity_cfl_limit, require_substep_positivity, write_replay_check,
+            substep_policy, cm_closure, smooth_iters, omega_regularization,
+            global_mass_pin, configured_global_mass_target_kg,
+            configured_mass_fix_target_ps_dry_pa)
+end
+
+# Closure-specific config checks of a native source; only GEOS has `cm`
+# closures (its method is in `cubed_sphere_geos.jl`).
+_check_native_closure_config(::AbstractMetSettings, _cm_closure::Symbol) = nothing
+
+function _process_day_native(cfg::AbstractDict;
+                             day_override = nothing,
+                             start_date   = nothing,
+                             end_date     = nothing)
+    (; FT, grid, settings, vertical, mass_basis, dt_met_seconds, chain_mass,
+       positivity_cfl_limit, require_substep_positivity, write_replay_check,
+       substep_policy, cm_closure, smooth_iters, omega_regularization,
+       global_mass_pin, configured_global_mass_target_kg,
+       configured_mass_fix_target_ps_dry_pa) = _native_preprocessing_plan(cfg)
+    if cm_closure === :omega_full_replacement
+        @warn "[numerics].geos_cm_closure=:omega_full_replacement is a known-failed " *
+              "diagnostic: it rewrites PBL horizontal fluxes by 2-7× and corrupts " *
+              "surface-plume transport. Use :omega_regularized or :endpoint_balanced."
+    elseif cm_closure !== :endpoint_balanced
+        @warn "[numerics].geos_cm_closure=$(cm_closure) is DIAGNOSTIC/CANDIDATE, NOT " *
+              "the science-validated production default (see " *
+              "docs/src/preprocessing/geos_native_cs.md). Use " *
+              ":endpoint_balanced for production and the ERA5/wind-derived path " *
+              "for UTLS-sensitive science. :omega_regularized limits OMEGA to a " *
+              "UTLS high-pass prior and still requires tracer validation."
+    end
 
     dates = _resolve_dates_native(cfg; day_override, start_date, end_date)
+    terminal_day_kwargs = settings isa Union{AbstractERA5GRIBSettings, MERRA2Settings} ?
+        (; configured_last_day = last(dates)) : (;)
 
     @info @sprintf("Preprocessor: %s  → %s  Nz=%d  FT=%s  %d day(s)",
                    typeof(settings), typeof(grid),
@@ -446,16 +479,17 @@ function _process_day_native(cfg::AbstractDict;
             seed_m          = seed_m_in,
             global_mass_pin = global_mass_pin,
             global_mass_target_kg = configured_global_mass_target_kg,
+            mass_fix_target_ps_dry_pa = configured_mass_fix_target_ps_dry_pa,
             cm_closure = cm_closure,
             smooth_iters = smooth_iters,
             omega_regularization = omega_regularization,
+            terminal_day_kwargs...,
         )
         return process_day(d, day_grid, settings, vertical; day_kwargs...)
     end
 
-    threaded = Threads.nthreads() > 1 && length(dates) > 1 &&
-               supports_day_threading(settings) && !chain_mass &&
-               !(global_mass_pin && !isfinite(configured_global_mass_target_kg))
+    threaded = _day_threading_enabled(settings, length(dates), chain_mass,
+                                      global_mass_pin, configured_global_mass_target_kg)
     # When the day loop itself is threaded, the inner OMEGA reconstruction
     # per-level Poisson loop must run SERIAL so day-workers don't each re-grab
     # the whole pool (oversubscription). In the single-day-per-process (`--day`)
@@ -500,9 +534,11 @@ function _process_day_native(cfg::AbstractDict;
                 seed_m          = seed_m,
                 global_mass_pin = global_mass_pin,
                 global_mass_target_kg = global_mass_target_kg,
+                mass_fix_target_ps_dry_pa = configured_mass_fix_target_ps_dry_pa,
                 cm_closure = cm_closure,
                 smooth_iters = smooth_iters,
                 omega_regularization = omega_regularization,
+                terminal_day_kwargs...,
             )
             result = process_day(d, day_grid, settings, vertical; day_kwargs...)
             seed_m = get(result, :final_m, nothing)
@@ -522,16 +558,56 @@ end
 # new met sources must use the typed native-source path.
 # ---------------------------------------------------------------------------
 
+"""
+    _spectral_preprocessing_plan(cfg, grid) -> NamedTuple
+
+Everything an ERA5 spectral preprocessing config fixes before any spectral
+input is read: typed settings, column weights, flux construction, vertical
+setup, numerics and the source/target pair. Shared by `process_day(cfg)` and
+`validate_preprocessing_config`.
+"""
+function _spectral_preprocessing_plan(cfg::AbstractDict, grid::AbstractTargetGeometry)
+    settings_nt = resolve_runtime_settings(cfg)
+    settings = ERA5SpectralSettings(
+        merge(settings_nt, (T_target = target_spectral_truncation(grid),)))
+    _check_spectral_column_weights(grid, settings)
+    _validate_flux_construction(settings, "ERA5 spectral")
+    vertical = build_vertical_setup(settings.coeff_path, settings.level_range,
+                                    settings.min_dp, cfg["grid"])
+    _spectral_column_weights(grid, settings, vertical)  # the output coordinate has hybrid layers
+    positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
+    require_substep_positivity = _resolve_require_substep_positivity(cfg)
+    write_replay_check         = _resolve_write_replay_check(cfg)
+    substep_policy             = _resolve_substep_schedule_policy(cfg, positivity_cfl_limit)
+    ensure_preprocessor_pair_supported(grid, settings; context = "ERA5 spectral")
+    return (; settings, vertical, positivity_cfl_limit, require_substep_positivity,
+            write_replay_check, substep_policy)
+end
+
+"""
+    validate_preprocessing_config(cfg) -> NamedTuple
+
+Run every check of a preprocessing config that needs no meteorological input,
+the same checks `process_day(cfg)` runs before it opens any input: for a
+native source (`[source].toml`) the met-source settings, vertical setup,
+numerics, GEOS `cm` closure, OMEGA regularization, dry-mass pin and column
+weights; for ERA5 spectral configs the settings, column weights, face-flux
+construction, vertical setup and numerics. Both check that the source/target
+pair is supported. Returns the resolved plan; throws on the first problem.
+"""
+function validate_preprocessing_config(cfg::AbstractDict)
+    _is_native_source_cfg(cfg) && return _native_preprocessing_plan(cfg)
+    grid = build_target_geometry(cfg["grid"], Float64)
+    ensure_supported_target(grid)
+    return _spectral_preprocessing_plan(cfg, grid)
+end
+
 function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
                                day_override = nothing,
                                start_date   = nothing,
                                end_date     = nothing)
-    settings_nt = resolve_runtime_settings(cfg)
-    settings = ERA5SpectralSettings(
-        merge(settings_nt, (T_target = target_spectral_truncation(grid),)))
-    _check_spectral_column_weights(grid, settings)     # before any file is read
-    vertical = build_vertical_setup(settings.coeff_path, settings.level_range,
-                                    settings.min_dp, cfg["grid"])
+    (; settings, vertical, positivity_cfl_limit, require_substep_positivity,
+       write_replay_check, substep_policy) = _spectral_preprocessing_plan(cfg, grid)
 
     log_preprocessor_configuration(settings, grid, vertical)
 
@@ -548,12 +624,6 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
         day_filter = parse_day_filter(day_override === nothing ? String[] : ["--day", day_override])
         select_processing_dates(available_spectral_dates(settings.spectral_dir), day_filter)
     end
-
-    positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
-    require_substep_positivity = _resolve_require_substep_positivity(cfg)
-    write_replay_check         = _resolve_write_replay_check(cfg)
-    substep_policy             = _resolve_substep_schedule_policy(cfg, positivity_cfl_limit)
-    ensure_preprocessor_pair_supported(grid, settings; context = "ERA5 spectral")
 
     @info @sprintf("Processing %d days: %s to %s", length(dates), first(dates), last(dates))
     @info "Unified preprocessor driver enabled for ERA5 spectral → $(grid_kind(grid))"

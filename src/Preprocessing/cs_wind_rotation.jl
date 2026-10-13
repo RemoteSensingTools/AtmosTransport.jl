@@ -70,7 +70,7 @@ function rotate_winds_to_panel_local!(u_panel::NTuple{CS_PANEL_COUNT, Array{FT, 
                                        u_east::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                        v_north::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                        Nc::Int, Nz::Int) where FT
-    mesh = CubedSphereMesh(; Nc=Nc, FT=FT, radius=FT(IFS_EARTH_RADIUS),
+    mesh = CubedSphereMesh(; Nc=Nc, FT=FT, radius=FT(EARTH_RADIUS),
                             convention=GnomonicPanelConvention())
     return rotate_winds_to_panel_local!(u_panel, v_panel, u_east, v_north, mesh, Nz)
 end

@@ -200,8 +200,17 @@ const _TRANSPORT_STRUCTURAL_HEADER_KEYS = Set((
     TM5_CONVECTION_MASS_BASIS_KEY,
 ))
 
-"""Merge caller metadata without permitting it to rewrite the binary layout."""
+"""
+Merge caller metadata without permitting it to rewrite the binary layout. A
+caller certificate (any `FLUX_CERTIFICATE_KEY_PREFIXES` key) replaces the
+writer's default certificate block as a whole.
+"""
 function _merge_transport_extra_header!(header::Dict{String, Any}, extra_header)
+    if any(raw_key -> _is_certificate_key(String(raw_key)), keys(extra_header))
+        for key in collect(keys(header))
+            _is_certificate_key(key) && delete!(header, key)
+        end
+    end
     for (raw_key, value) in pairs(extra_header)
         key = String(raw_key)
         if key == TM5_CONVECTION_MASS_BASIS_KEY

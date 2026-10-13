@@ -190,6 +190,8 @@ function _experimental_coarsen_metadata(reader, output_Nc::Int, ratio::Int)
         "regrid_method" => "nested_block_operator_restriction",
         "poisson_balanced" => true,
     )
+    # Block sums of the source binary's fluxes: no winds or OMEGA of its own.
+    payload_only_fidelity_header!(metadata, CubedSphereTargetGeometry, Float64)
     for key in ("date",
                 "vertical_mapping_method", "target_vertical_name",
                 "target_coefficients", "merge_map", "merge_min_thickness_Pa",

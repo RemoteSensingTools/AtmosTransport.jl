@@ -67,7 +67,7 @@ Base.@kwdef struct GEOSSettings{flavor} <: AbstractGEOSSettings
     physics_dir         :: String  = ""       # GEOS-FP 0.25°/CS fallback for surface + convection
     physics_layout      :: Symbol  = :auto    # :auto, :latlon_025, :cubed_sphere
     coefficients_file   :: String  = "config/geos_L72_coefficients.toml"
-    column_balance_weights :: Symbol = :mass  # a key of COLUMN_WEIGHT_KINDS (cs_poisson_balance.jl)
+    column_balance_weights :: Symbol = :hybrid_mass  # a key of COLUMN_WEIGHT_KINDS (cs_poisson_balance.jl)
 end
 
 const GEOSITSettings = GEOSSettings{:geosit}

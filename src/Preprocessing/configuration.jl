@@ -184,6 +184,38 @@ function resolve_balance_settings(cfg)
 end
 
 """
+    resolve_spectral_flux_settings(cfg) -> NamedTuple
+
+Resolve the ERA5 spectral-to-cubed-sphere flux construction selected in
+`[numerics]`. The defaults are the GCHP-matched path: regrid winds as Cartesian
+vectors, interpolate them to true cube edges with FV3's fourth-order filtered
+stencil, and average independently constructed start/end face fluxes over the
+meteorological window. `face_fluxes = "line_integral"` instead evaluates
+
+```math
+F_f = (Δt/g) ∫_f (v · n_f) Δp dl
+```
+
+directly on the spectral staging grid.
+"""
+function resolve_spectral_flux_settings(cfg)
+    numerics = get(cfg, "numerics", Dict{String, Any}())
+    option(key, default) = Symbol(lowercase(String(get(numerics, key, default))))
+    face_fluxes = option("face_fluxes", "vector")
+    face_lengths = option("face_lengths", "edge")
+    face_fluxes === :vector && face_lengths === :cell_centerline &&
+        haskey(numerics, "face_lengths") && throw(ArgumentError(
+            "[numerics] face_fluxes = \"vector\" always uses face edge lengths; " *
+            "remove face_lengths = \"cell_centerline\""))
+    return (face_lengths,
+            face_fluxes,
+            face_interpolation = option("face_interpolation",
+                                        face_fluxes === :vector ? "fv3" : "linear"),
+            wind_regrid = option("wind_regrid", "cartesian"),
+            flux_time_sampling = option("flux_time_sampling", "window_mean"))
+end
+
+"""
     reject_removed_balance_mode(numerics)
 
 Throw if a preprocessing `[numerics]` table sets `balance_mode` (or its older
@@ -220,12 +252,13 @@ end
     resolve_column_balance_weights(numerics) -> Symbol
 
 `[numerics] column_balance_weights` of an ERA5 spectral preprocessing config:
-how the column balance spreads its correction over the levels, `:mass`
-(default), `:hybrid_b` or `:hybrid_mass` (see `AbstractColumnWeights`). Native
-sources set it in their met-source `[preprocessing]` table instead.
+how the column balance spreads its correction over the levels, `:hybrid_mass`
+(default, on every target: lat-lon, reduced Gaussian and cubed sphere),
+`:hybrid_b` or `:mass` (see `AbstractColumnWeights`). Native sources set it in
+their met-source `[preprocessing]` table instead.
 """
 function resolve_column_balance_weights(numerics::AbstractDict)
-    raw = get(numerics, "column_balance_weights", "mass")
+    raw = get(numerics, "column_balance_weights", "hybrid_mass")
     raw isa AbstractString || throw(ArgumentError(
         "[numerics].column_balance_weights must be a string; got $(repr(raw))"))
     return _validate_column_balance_weights(Symbol(lowercase(raw)), "[numerics]")
@@ -240,29 +273,21 @@ function _validate_column_balance_weights(kind::Symbol, source::AbstractString)
     return kind
 end
 
-# Spectral targets whose column balance spreads its correction by mass only
-# (lat-lon, reduced Gaussian) reject other weights.
-function _require_mass_column_weights(settings, reason::AbstractString)
-    kind = get(settings, :column_balance_weights, :mass)
-    kind === :mass || throw(ArgumentError(
-        "[numerics] column_balance_weights = $(kind) is implemented for cubed-sphere targets " *
-        "only; $(reason)"))
-    return nothing
-end
+# The configured column weights of an ERA5 spectral run, validated; checked by
+# the entry point before any input is read, and by each writer for direct
+# callers. Every target's column balance (lat-lon FFT, reduced-Gaussian CG,
+# cubed-sphere CG) spreads its correction with `spread_column_correction!`, so
+# every weighting applies to every target.
+_check_spectral_column_weights(::AbstractTargetGeometry, settings) =
+    _validate_column_balance_weights(get(settings, :column_balance_weights, :hybrid_mass), "[numerics]")
 
-# Whether the spectral preprocessing of a target can honor the configured
-# column weights; checked by the entry point before any input is read, and by
-# each writer for direct callers.
-_check_spectral_column_weights(::CubedSphereTargetGeometry, settings) =
-    _validate_column_balance_weights(get(settings, :column_balance_weights, :mass), "[numerics]")
-_check_spectral_column_weights(::LatLonTargetGeometry, settings) =
-    _require_mass_column_weights(settings, "the lat-lon column balance spreads its correction by layer mass")
-_check_spectral_column_weights(::ReducedGaussianTargetGeometry, settings) =
-    _require_mass_column_weights(settings, "the reduced-Gaussian column balance spreads its correction by layer mass")
+# The column weights of an ERA5 spectral run on its output levels (`vertical.merged_vc`).
+_spectral_column_weights(grid::AbstractTargetGeometry, settings, vertical) =
+    column_weights(_check_spectral_column_weights(grid, settings), vertical.merged_vc.B)
 
-# Record non-default column weights in a binary header. Binaries of the ERA5
-# spectral, lat-lon → cubed-sphere and GEOS paths written with the default
-# mass weights record nothing, so their headers are unchanged.
+# Record every non-mass weighting in a binary header. This deliberately records
+# the new `hybrid_mass` default: legacy keyless binaries remain identifiable as
+# mass-weighted, rather than changing the meaning of an absent provenance key.
 function _with_column_weights_record(header::AbstractDict, kind::Symbol)
     kind === :mass || (header["column_balance_weights"] = String(kind))
     return header
@@ -312,7 +337,8 @@ function resolve_runtime_settings(cfg)
        resolve_tm5_convection_settings(cfg),
        resolve_surface_settings(cfg),
        resolve_preprocessing_cache_settings(cfg),
-       resolve_balance_settings(cfg))
+       resolve_balance_settings(cfg),
+       resolve_spectral_flux_settings(cfg))
 end
 
 """
@@ -343,7 +369,7 @@ function _resolve_target_vertical_coordinate(cfg_grid)
     if isempty(target_path)
         target_path = if target_name in ("geos_l72", "geos-it_l72", "geosfp_l72",
                                          "geos_fp_l72", "gmao_l72")
-            joinpath(@__DIR__, "..", "..", "config", "geos_L72_coefficients.toml")
+            _package_path(joinpath("config", "geos_L72_coefficients.toml"))
         else
             error("grid.target_vertical='$target_name' needs grid.target_coefficients")
         end

@@ -156,9 +156,37 @@ function echlevs_preset(name::AbstractString)
     return copy(getproperty(_ERA5_L137_ECHLEVS_PRESET_VECTORS, key))
 end
 
+"""
+    resolve_coefficients_path(path) -> String
+
+Locate a hybrid-coefficient table. `path` is expanded with `expand_data_path`;
+an absolute path must exist as given. A relative path is looked up in the
+working directory first and then in the package root, where the shipped tables
+live (`config/era5_L137_coefficients.toml`, `config/geos_L72_coefficients.toml`),
+so a shipped config works from any working directory (`Pkg.test` runs in
+`test/`). A working-directory table that differs from the shipped table of the
+same relative path is used, with a warning naming both files. A table found in
+neither place is an error naming both locations.
+"""
+function resolve_coefficients_path(path::AbstractString)
+    expanded = expand_data_path(path)
+    shipped = isabspath(expanded) ? expanded : _package_path(expanded)
+    if isfile(expanded)
+        if shipped != abspath(expanded) && isfile(shipped) && read(shipped) != read(expanded)
+            @warn "Hybrid coefficients: $(abspath(expanded)) (working directory) differs from " *
+                  "the shipped table $shipped; using the working-directory table"
+        end
+        return expanded
+    end
+    isabspath(expanded) && error("Coefficients not found: $expanded")
+    isfile(shipped) && return shipped
+    error("Coefficients not found: $(repr(String(path))) is neither " *
+          "$(abspath(expanded)) (relative to the working directory) nor $shipped " *
+          "(relative to the AtmosTransport package root)")
+end
+
 function load_era5_vertical_coordinate(coeff_path::String, level_top::Int, level_bot::Int)
-    isfile(coeff_path) || error("Coefficients not found: $coeff_path")
-    cfg = TOML.parsefile(coeff_path)
+    cfg = TOML.parsefile(resolve_coefficients_path(coeff_path))
     a_all = Float64.(cfg["coefficients"]["a"])
     b_all = Float64.(cfg["coefficients"]["b"])
     return HybridSigmaPressure(a_all[level_top:level_bot+1], b_all[level_top:level_bot+1])
@@ -173,15 +201,13 @@ sources whose level count comes from the file rather than a config knob
 (e.g. GEOS-72, MERRA-2, native ERA5 L137 without sub-tropo selection).
 """
 function load_hybrid_coefficients(coeff_path::String)
-    isfile(coeff_path) || error("Coefficients not found: $coeff_path")
-    cfg = TOML.parsefile(coeff_path)
+    cfg = TOML.parsefile(resolve_coefficients_path(coeff_path))
     return HybridSigmaPressure(Float64.(cfg["coefficients"]["a"]),
                                Float64.(cfg["coefficients"]["b"]))
 end
 
 function load_ab_coefficients(coeff_path::String, level_range)
-    isfile(coeff_path) || error("Coefficients not found: $coeff_path")
-    cfg = TOML.parsefile(coeff_path)
+    cfg = TOML.parsefile(resolve_coefficients_path(coeff_path))
     a_all = Float64.(cfg["coefficients"]["a"])
     b_all = Float64.(cfg["coefficients"]["b"])
     Nz = length(level_range)

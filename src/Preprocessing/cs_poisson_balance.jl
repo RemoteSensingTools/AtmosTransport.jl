@@ -231,20 +231,20 @@ function balance_cs_global_mass_fluxes!(
     )
 end
 
-function _fill_cs_column_buffers!(col_am::NTuple{6, Array{FT, 3}},
-                                  col_bm::NTuple{6, Array{FT, 3}},
-                                  col_m::NTuple{6, Array{FT, 3}},
-                                  col_m_next::NTuple{6, Array{FT, 3}},
+function _fill_cs_column_buffers!(col_am::NTuple{6, Array{BT, 3}},
+                                  col_bm::NTuple{6, Array{BT, 3}},
+                                  col_m::NTuple{6, Array{BT, 3}},
+                                  col_m_next::NTuple{6, Array{BT, 3}},
                                   panels_am::NTuple{6, Array{FT, 3}},
                                   panels_bm::NTuple{6, Array{FT, 3}},
                                   panels_m::NTuple{6, Array{FT, 3}},
                                   panels_m_next::NTuple{6, Array{FT, 3}},
-                                  Nc::Int, Nz::Int) where FT
+                                  Nc::Int, Nz::Int) where {BT, FT}
     for p in 1:6
-        fill!(col_am[p], zero(FT))
-        fill!(col_bm[p], zero(FT))
-        fill!(col_m[p], zero(FT))
-        fill!(col_m_next[p], zero(FT))
+        fill!(col_am[p], zero(BT))
+        fill!(col_bm[p], zero(BT))
+        fill!(col_m[p], zero(BT))
+        fill!(col_m_next[p], zero(BT))
         @inbounds for k in 1:Nz
             for j in 1:Nc, i in 1:Nc + 1
                 col_am[p][i, j, 1] += panels_am[p][i, j, k]
@@ -261,6 +261,13 @@ function _fill_cs_column_buffers!(col_am::NTuple{6, Array{FT, 3}},
     return nothing
 end
 
+# |r| / τ, with an exactly closed cell (0/0, possible for closure_tol = 0 and
+# a cell without flux) counted as closed.
+@inline _residual_ratio(r::Float64, tol::Float64) = r == 0 ? 0.0 : r / tol
+
+# Column residuals of the stored fluxes after a closure pass: the raw and
+# mean-free (projected) maxima, the mean, and the largest ratio of a cell's
+# projected residual to its own tolerance `scratch.tol[c]`.
 function _cs_column_balance_projected_linf(col_am::NTuple{6, Array{FT, 3}},
                                            col_bm::NTuple{6, Array{FT, 3}},
                                            col_m::NTuple{6, Array{FT, 3}},
@@ -299,11 +306,15 @@ function _cs_column_balance_projected_linf(col_am::NTuple{6, Array{FT, 3}},
     end
     mean /= ft.nc
     projected_linf = 0.0
-    @inbounds @simd for c in 1:ft.nc
-        projected_linf = max(projected_linf, abs(div[c] - mean))
+    worst_ratio = 0.0
+    tol = scratch.tol
+    @inbounds for c in 1:ft.nc
+        r = abs(div[c] - mean)
+        projected_linf = max(projected_linf, r)
+        worst_ratio = max(worst_ratio, _residual_ratio(r, tol[c]))
     end
     return (raw_linf = raw_linf, projected_linf = projected_linf,
-            mean_abs = abs(mean))
+            mean_abs = abs(mean), worst_ratio = worst_ratio)
 end
 
 """
@@ -315,7 +326,9 @@ How a column mass-budget correction is spread over the levels of a column.
   stratosphere) receive none of it, so a column mismatch cannot appear in
   their vertical mass flux as a coherent mode proportional to pressure.
 - `HybridMassWeightedColumn(B)`: in proportion to layer air mass, but only in
-  layers with `ΔB > 0`; pure-pressure layers receive none of it.
+  hybrid layers, `ΔB_k ≥ HYBRID_LAYER_MIN_DB` (1e-6); pure-pressure layers,
+  including near-pure-pressure ones such as GEOS L72 layer 41 (`ΔB = 8.2e-9`),
+  receive none of it.
 """
 abstract type AbstractColumnWeights end
 struct MassWeightedColumn <: AbstractColumnWeights end
@@ -344,24 +357,51 @@ end
 """
     HybridMassWeightedColumn(B) -> weights
 
-Air-mass weights restricted to the hybrid layers (`ΔB_k > 0`) of interface
-`B`, top first.
+Air-mass weights restricted to the hybrid layers of interface `B` (top first):
+layer `k` is hybrid when `ΔB_k = B_{k+1} − B_k ≥ HYBRID_LAYER_MIN_DB` (1e-6),
+i.e. when a 1000 hPa change of surface pressure changes its thickness by at
+least 0.1 Pa. Smaller positive increments are rounding residues of a
+pure-pressure layer (GEOS/MERRA-2 L72 layer 41, 150–177 hPa: `ΔB = 8.2e-9`,
+8.2e-4 Pa per 1000 hPa, 3e-7 of its thickness); the smallest genuine increment
+of the shipped tables is ERA5 L137 layer 55 (`ΔB = 7e-6`, 0.7 Pa per
+1000 hPa). A coordinate with no hybrid layer is an error.
 """
 struct HybridMassWeightedColumn <: AbstractColumnWeights
-    hybrid :: BitVector            # layers with ΔB > 0, top first
-    HybridMassWeightedColumn(B::AbstractVector{<:AbstractFloat}) = new(_hybrid_layer_dB(B) .> 0)
+    hybrid :: BitVector            # layers with ΔB ≥ HYBRID_LAYER_MIN_DB, top first
+    function HybridMassWeightedColumn(B::AbstractVector{<:AbstractFloat})
+        hybrid = _hybrid_layer_dB(B) .>= HYBRID_LAYER_MIN_DB
+        any(hybrid) || throw(ArgumentError(
+            "hybrid B has no layer with ΔB ≥ $(HYBRID_LAYER_MIN_DB); " *
+            "hybrid_mass column weights need at least one hybrid layer"))
+        return new(hybrid)
+    end
 end
 
 # Weight of level `k` for a face between cells of air mass `m_a`, `m_b`,
 # and for a single cell of air mass `m`.
+@inline function _finite_nonnegative_weight(m)
+    x = Float64(m)
+    isfinite(x) || throw(DomainError(m, "column-balance weights must be finite"))
+    return max(0.0, x)
+end
+
 @inline _layer_weight(::MassWeightedColumn, m_a, m_b, k) =
-    max(0.0, Float64(m_a)) + max(0.0, Float64(m_b))
+    _finite_nonnegative_weight(m_a) + _finite_nonnegative_weight(m_b)
 @inline _layer_weight(w::HybridBWeightedColumn, m_a, m_b, k) = w.dB[k]
 @inline _layer_weight(w::HybridMassWeightedColumn, m_a, m_b, k) =
     w.hybrid[k] ? _layer_weight(MassWeightedColumn(), m_a, m_b, k) : 0.0
-@inline _cell_weight(::MassWeightedColumn, m, k) = m
-@inline _cell_weight(w::HybridBWeightedColumn, m, k) = oftype(m, w.dB[k])
-@inline _cell_weight(w::HybridMassWeightedColumn, m, k) = w.hybrid[k] ? m : zero(m)
+@inline _cell_weight(::MassWeightedColumn, m, k) = _finite_nonnegative_weight(m)
+@inline _cell_weight(w::HybridBWeightedColumn, m, k) = w.dB[k]
+@inline _cell_weight(w::HybridMassWeightedColumn, m, k) =
+    w.hybrid[k] ? _finite_nonnegative_weight(m) : 0.0
+
+# The column weights as the residual weight of the explicit-tendency closure
+# `recompute_cm_from_dm_target!` (lat-lon and reduced Gaussian), so a column's
+# residual is folded into the same levels as its horizontal correction.
+struct ColumnResidualWeight{W<:AbstractColumnWeights} <: Function
+    weights :: W
+end
+(r::ColumnResidualWeight)(m, k) = _cell_weight(r.weights, m, k)
 
 # Number of layers the weights are defined for (`nothing`: any).
 _weight_levels(::MassWeightedColumn) = nothing
@@ -407,11 +447,13 @@ face's layer fluxes `flux[k]`, `k = 1 … Nz` (top first), with `m_a[k]` and
 \\Delta F_k = \\delta \\, \\frac{w_k}{\\sum_{j=1}^{N_z} w_j},
 ```
 
-where the layer weight `w_k` comes from `weights` (see `AbstractColumnWeights`):
-`w_k = m_{a,k} + m_{b,k}` for `MassWeightedColumn()`. Each increment is rounded
-to the flux type; the bottom layer takes `δ` minus the rounded increments of
-the layers above, so the increments sum to `δ` up to the rounding of that last
-addition. A face whose weights are all zero receives `δ / N_z` per layer.
+where the finite, non-negative layer weight `w_k` comes from `weights` (see
+`AbstractColumnWeights`): `w_k = max(m_{a,k},0) + max(m_{b,k},0)` for
+`MassWeightedColumn()`. Each increment is rounded to the flux type. The last
+level with positive weight receives `δ` minus the *realized* changes of the
+other levels, so a hybrid mask can never leak a correction into an excluded
+level. A non-finite weight or `Σ_j w_j = 0` is an error: no physically defined
+vertical distribution exists in that case.
 
 This is the vertical distribution step of every column Poisson balance (the
 lat-lon `balance_column_mass_fluxes!`, the reduced-Gaussian
@@ -423,68 +465,151 @@ lat-lon `balance_column_mass_fluxes!`, the reduced-Gaussian
                                            m_a::AbstractVector, m_b::AbstractVector) where FT
     Nz = length(flux)
     denom = 0.0
+    anchor = 0
     @inbounds for k in 1:Nz
-        denom += _layer_weight(weights, m_a[k], m_b[k], k)
+        w = _layer_weight(weights, m_a[k], m_b[k], k)
+        denom += w
+        w > 0.0 && (anchor = k)
     end
+    denom > 0.0 || throw(DomainError(denom,
+        "column-balance face weights sum to zero; cannot distribute a correction"))
     applied = 0.0
-    if denom > 0.0
-        @inbounds for k in 1:Nz-1
-            w = _layer_weight(weights, m_a[k], m_b[k], k) / denom
-            inc = FT(delta * w)
-            flux[k] += inc
-            applied += Float64(inc)
-        end
-    else
-        even = delta / Nz
-        @inbounds for k in 1:Nz-1
-            inc = FT(even)
-            flux[k] += inc
-            applied += Float64(inc)
-        end
+    @inbounds for k in 1:Nz
+        k == anchor && continue
+        w = _layer_weight(weights, m_a[k], m_b[k], k)
+        w == 0.0 && continue
+        old = flux[k]
+        flux[k] = old + FT(delta * w / denom)
+        applied += Float64(flux[k]) - Float64(old)
     end
-    @inbounds flux[Nz] += FT(delta - applied)
+    @inbounds flux[anchor] += FT(delta - applied)
     return flux
 end
 
 function _distribute_cs_column_delta!(panels_am::NTuple{6, Array{FT, 3}},
                                       panels_bm::NTuple{6, Array{FT, 3}},
                                       panels_m::NTuple{6, Array{FT, 3}},
-                                      col_am::NTuple{6, Array{FT, 3}},
-                                      col_bm::NTuple{6, Array{FT, 3}},
-                                      col_am_before::NTuple{6, Array{FT, 3}},
-                                      col_bm_before::NTuple{6, Array{FT, 3}},
-                                      Nc::Int, Nz::Int,
+                                      col_am::NTuple{6, <:Array},
+                                      col_bm::NTuple{6, <:Array},
+                                      col_am_before::NTuple{6, <:Array},
+                                      col_bm_before::NTuple{6, <:Array},
+                                      ft::CSGlobalFaceTable, Nz::Int,
                                       weights::AbstractColumnWeights = MassWeightedColumn()) where FT
     _check_weight_levels(weights, Nz)
+    Nc = ft.Nc
     max_face_delta = 0.0
-    for p in 1:6
-        am, bm, m = panels_am[p], panels_bm[p], panels_m[p]
-        @inbounds for j in 1:Nc, i in 1:Nc + 1
-            delta = Float64(col_am[p][i, j, 1] - col_am_before[p][i, j, 1])
-            max_face_delta = max(max_face_delta, abs(delta))
-            delta == 0.0 && continue
-            spread_column_correction!(view(am, i, j, :), delta, weights,
-                                      view(m, max(i - 1, 1), j, :), view(m, min(i, Nc), j, :))
-        end
+    @inbounds for f in 1:ft.nf
+        p = Int(ft.face_panel[f])
+        dir = Int(ft.face_dir[f])
+        i = Int(ft.face_idx_i[f])
+        j = Int(ft.face_idx_j[f])
+        col = dir == 1 ? col_am[p] : col_bm[p]
+        col_before = dir == 1 ? col_am_before[p] : col_bm_before[p]
+        delta = Float64(col[i, j, 1] - col_before[i, j, 1])
+        max_face_delta = max(max_face_delta, abs(delta))
+        delta == 0.0 && continue
 
-        @inbounds for j in 1:Nc + 1, i in 1:Nc
-            delta = Float64(col_bm[p][i, j, 1] - col_bm_before[p][i, j, 1])
-            max_face_delta = max(max_face_delta, abs(delta))
-            delta == 0.0 && continue
-            spread_column_correction!(view(bm, i, j, :), delta, weights,
-                                      view(m, i, max(j - 1, 1), :), view(m, i, min(j, Nc), :))
-        end
+        left = Int(ft.face_left[f])
+        right = Int(ft.face_right[f])
+        lp = (left - 1) ÷ (Nc * Nc) + 1
+        rp = (right - 1) ÷ (Nc * Nc) + 1
+        ll = (left - 1) % (Nc * Nc)
+        rl = (right - 1) % (Nc * Nc)
+        li, lj = ll % Nc + 1, ll ÷ Nc + 1
+        ri, rj = rl % Nc + 1, rl ÷ Nc + 1
+        flux = dir == 1 ? view(panels_am[p], i, j, :) : view(panels_bm[p], i, j, :)
+        spread_column_correction!(flux, delta, weights,
+                                  view(panels_m[lp], li, lj, :),
+                                  view(panels_m[rp], ri, rj, :))
     end
     return max_face_delta
+end
+
+# Per-cell closure tolerance, into `scratch.tol`:
+#     τ_c = max(closure_tol, 8 ε_FT Σ_{f∂c} Σ_k |F_{f,k}|),
+# with the stored values `F` multiplied by `flux_scale` (per-application units).
+# The Float64 column solve itself has the configured absolute tolerance;
+# storing a correction in FT can round both the increment and the addition at
+# every level of the cell's own faces. Eight epsilons per incident stored face
+# value bounds those operations with margin. The bound is per cell: a global
+# maximum would let a cell with small fluxes keep a residual set by the
+# largest-flux cell of the sphere.
+function _cs_column_roundoff_tolerance!(scratch::CSPoissonScratch,
+                                        panels_am::NTuple{6, Array{FT, 3}},
+                                        panels_bm::NTuple{6, Array{FT, 3}},
+                                        ft::CSGlobalFaceTable,
+                                        closure_tol::Float64,
+                                        flux_scale::Float64 = 1.0) where FT
+    budget = scratch.tol
+    fill!(budget, 0.0)
+    factor = 8.0 * eps(FT)
+    @inbounds for f in 1:ft.nf
+        p = Int(ft.face_panel[f])
+        dir = Int(ft.face_dir[f])
+        i = Int(ft.face_idx_i[f])
+        j = Int(ft.face_idx_j[f])
+        flux = dir == 1 ? view(panels_am[p], i, j, :) : view(panels_bm[p], i, j, :)
+        scale = 0.0
+        for value in flux
+            isfinite(value) || throw(DomainError(value,
+                "column-balanced fluxes must be finite"))
+            scale += abs(Float64(value))
+        end
+        face_budget = factor * scale * flux_scale
+        budget[Int(ft.face_left[f])] += face_budget
+        budget[Int(ft.face_right[f])] += face_budget
+    end
+    @inbounds @simd for c in eachindex(budget)
+        budget[c] = max(closure_tol, budget[c])
+    end
+    return budget
+end
+
+function _require_cs_column_balance(diag, context::AbstractString)
+    ratio = diag.final_column_residual_ratio
+    isfinite(ratio) && ratio <= 1 || error(
+        "$context: final projected column-balance residual " *
+        "$(diag.final_column_projected_residual) kg exceeds its cell's typed closure " *
+        "tolerance (largest residual/tolerance ratio $ratio; per-cell tolerances " *
+        "$(diag.final_column_tolerance_min)..$(diag.final_column_tolerance_max) kg)")
+    return diag
 end
 
 """
     balance_cs_column_mass_fluxes!(panels_am, panels_bm, panels_m, panels_m_next,
                                    ft, degree, steps_per_window, scratch; ...)
 
-Apply a single vertically integrated CS Poisson correction, then distribute the
-face correction over levels with `weights` (`MassWeightedColumn()`, local air
-mass, by default; `HybridBWeightedColumn` follows TM5).
+Apply vertically integrated CS Poisson corrections, then distribute every
+physical face correction over levels with `weights` (`MassWeightedColumn()`,
+local air mass, by default; `HybridBWeightedColumn` follows TM5). Seam faces
+use the two cells in `ft.face_left/right`, independent of which panel owns the
+canonical stored face.
+
+The column equation is
+
+```math
+r_c = ∑_{f∂c} s_{cf}∑_k F_{f,k}
+      - \\frac{∑_k(m_{c,k}-m'_{c,k})}{2N_s}, \\qquad
+r_c^\\perp = r_c - \\frac{1}{N_c}∑_d r_d .
+```
+
+Corrections repeat until every cell has `|r_c^⊥| ≤ τ_c` or `closure_passes`
+is exhausted, in which case this function raises. The typed tolerance is per
+cell,
+
+```math
+τ_c = \\max\\!\\left(\\mathtt{closure\\_tol},
+  8\\,\\epsilon_{FT}∑_{f∂c}∑_k |F_{f,k}|\\right),
+```
+
+the requested absolute tolerance (`COLUMN_CLOSURE_TOL_KG`, 10 kg, by default)
+for Float64 and a conservative
+representability bound of the cell's own stored faces for Float32
+redistribution (a global maximum over cells would let a small-flux cell keep a
+residual set by the largest-flux cell). The returned
+`final_column_residual_ratio = max_c |r_c^⊥|/τ_c` must still be checked by
+production callers with `_require_cs_column_balance`; `τ_c` stays in
+`scratch.tol` (`final_column_tolerance_by_cell`) for the `cm` diagnosis.
 
 This is the ERA CS default. It enforces the column mass budget required by zero
 top/bottom `cm` while avoiding the legacy per-layer correction that can rewrite
@@ -502,25 +627,32 @@ function balance_cs_column_mass_fluxes!(
     tol::Float64=DEFAULT_POISSON_BALANCE_TOL,
     max_iter::Int=DEFAULT_POISSON_BALANCE_MAX_ITER,
     project_every::Int=DEFAULT_POISSON_PROJECT_EVERY,
-    closure_passes::Int=1,
-    closure_tol::Float64=10.0,
+    closure_passes::Int=8,
+    closure_tol::Float64=COLUMN_CLOSURE_TOL_KG,
     weights::AbstractColumnWeights=MassWeightedColumn(),
 ) where FT
     Nc = ft.Nc
     Nz = size(panels_am[1], 3)
 
-    col_am = ntuple(_ -> zeros(FT, Nc + 1, Nc, 1), 6)
-    col_bm = ntuple(_ -> zeros(FT, Nc, Nc + 1, 1), 6)
-    col_m = ntuple(_ -> zeros(FT, Nc, Nc, 1), 6)
-    col_m_next = ntuple(_ -> zeros(FT, Nc, Nc, 1), 6)
-    col_am_before = ntuple(_ -> zeros(FT, Nc + 1, Nc, 1), 6)
-    col_bm_before = ntuple(_ -> zeros(FT, Nc, Nc + 1, 1), 6)
+    closure_passes > 0 || throw(ArgumentError("closure_passes must be positive"))
+    closure_tol >= 0.0 || throw(ArgumentError("closure_tol must be non-negative"))
+
+    # Accumulate the stored values exactly enough for the Poisson target even
+    # when the payload itself is Float32; only the redistributed faces are FT.
+    col_am = ntuple(_ -> zeros(Float64, Nc + 1, Nc, 1), 6)
+    col_bm = ntuple(_ -> zeros(Float64, Nc, Nc + 1, 1), 6)
+    col_m = ntuple(_ -> zeros(Float64, Nc, Nc, 1), 6)
+    col_m_next = ntuple(_ -> zeros(Float64, Nc, Nc, 1), 6)
+    col_am_before = ntuple(_ -> zeros(Float64, Nc + 1, Nc, 1), 6)
+    col_bm_before = ntuple(_ -> zeros(Float64, Nc, Nc + 1, 1), 6)
 
     max_face_delta = 0.0
     diag = nothing
     final_stats = nothing
-    passes = max(1, closure_passes)
-    for pass in 1:passes
+    passes_used = 0
+    converged = false
+    for pass in 1:closure_passes
+        passes_used = pass
         _fill_cs_column_buffers!(col_am, col_bm, col_m, col_m_next,
                                  panels_am, panels_bm, panels_m, panels_m_next,
                                  Nc, Nz)
@@ -536,16 +668,26 @@ function balance_cs_column_mass_fluxes!(
             _distribute_cs_column_delta!(panels_am, panels_bm, panels_m,
                                          col_am, col_bm,
                                          col_am_before, col_bm_before,
-                                         Nc, Nz, weights))
+                                         ft, Nz, weights))
         _sync_cs_mirrors!(panels_am, panels_bm, ft, Nz)
 
         _fill_cs_column_buffers!(col_am, col_bm, col_m, col_m_next,
                                  panels_am, panels_bm, panels_m, panels_m_next,
                                  Nc, Nz)
+        _cs_column_roundoff_tolerance!(scratch, panels_am, panels_bm, ft, closure_tol)
         final_stats = _cs_column_balance_projected_linf(
             col_am, col_bm, col_m, col_m_next, ft, steps_per_window, scratch)
-        final_stats.projected_linf <= closure_tol && break
+        if final_stats.worst_ratio <= 1
+            converged = true
+            break
+        end
     end
+
+    converged || error(
+        "cubed-sphere column balance failed after $closure_passes passes: " *
+        "final projected residual $(final_stats.projected_linf) kg exceeds its " *
+        "cell's typed closure tolerance (largest residual/tolerance ratio " *
+        "$(final_stats.worst_ratio))")
 
     return (;
         max_pre_residual = diag.max_pre_residual,
@@ -556,9 +698,63 @@ function balance_cs_column_mass_fluxes!(
         final_column_raw_residual = final_stats.raw_linf,
         final_column_projected_residual = final_stats.projected_linf,
         final_column_mean_residual = final_stats.mean_abs,
+        final_column_residual_ratio = final_stats.worst_ratio,
+        final_column_tolerance_min = minimum(scratch.tol),
+        final_column_tolerance_max = maximum(scratch.tol),
+        final_column_tolerance_by_cell = scratch.tol,
+        closure_passes = passes_used,
         max_cg_iter = diag.max_cg_iter,
         max_face_delta = max_face_delta,
     )
+end
+
+"""
+    recheck_cs_column_closure(panels_am, panels_bm, panels_m, panels_m_next, ft,
+                              steps_per_window, scratch, balance_diag;
+                              closure_tol = COLUMN_CLOSURE_TOL_KG,
+                              flux_scale = 1.0) -> balance_diag′
+
+Recompute the column-closure statistics and per-cell tolerances of
+`balance_cs_column_mass_fluxes!` for fluxes changed after the balance (the GEOS
+OMEGA reconstruction moves flux between levels of a column; GEOS stores
+full-window amounts), so the `cm` diagnosis and the recorded closure describe
+the fluxes that are stored. `flux_scale` converts the given amounts to
+amounts per flux application before the check (`1/(2 steps_per_window)` for
+full-window amounts); residuals and tolerances are per application. Returns
+`balance_diag` with its `final_column_*` fields replaced.
+"""
+function recheck_cs_column_closure(panels_am::NTuple{6, Array{FT, 3}},
+                                   panels_bm::NTuple{6, Array{FT, 3}},
+                                   panels_m::NTuple{6, Array{FT, 3}},
+                                   panels_m_next::NTuple{6, Array{FT, 3}},
+                                   ft::CSGlobalFaceTable, steps_per_window::Int,
+                                   scratch::CSPoissonScratch, balance_diag;
+                                   closure_tol::Float64 = COLUMN_CLOSURE_TOL_KG,
+                                   flux_scale::Float64 = 1.0) where FT
+    isfinite(flux_scale) && flux_scale > 0 || throw(ArgumentError(
+        "flux_scale must be finite and positive; got $flux_scale"))
+    Nc, Nz = ft.Nc, size(panels_am[1], 3)
+    col_am = ntuple(_ -> zeros(Float64, Nc + 1, Nc, 1), 6)
+    col_bm = ntuple(_ -> zeros(Float64, Nc, Nc + 1, 1), 6)
+    col_m = ntuple(_ -> zeros(Float64, Nc, Nc, 1), 6)
+    col_m_next = ntuple(_ -> zeros(Float64, Nc, Nc, 1), 6)
+    _fill_cs_column_buffers!(col_am, col_bm, col_m, col_m_next,
+                             panels_am, panels_bm, panels_m, panels_m_next, Nc, Nz)
+    for p in 1:6
+        col_am[p] .*= flux_scale
+        col_bm[p] .*= flux_scale
+    end
+    _cs_column_roundoff_tolerance!(scratch, panels_am, panels_bm, ft, closure_tol, flux_scale)
+    stats = _cs_column_balance_projected_linf(col_am, col_bm, col_m, col_m_next, ft,
+                                              steps_per_window, scratch)
+    return merge(balance_diag, (
+        final_column_raw_residual = stats.raw_linf,
+        final_column_projected_residual = stats.projected_linf,
+        final_column_mean_residual = stats.mean_abs,
+        final_column_residual_ratio = stats.worst_ratio,
+        final_column_tolerance_min = minimum(scratch.tol),
+        final_column_tolerance_max = maximum(scratch.tol),
+        final_column_tolerance_by_cell = scratch.tol))
 end
 
 # ---------------------------------------------------------------------------
@@ -566,11 +762,41 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    diagnose_cs_cm!(panels_cm, panels_am, panels_bm, panels_dm, panels_m, Nc, Nz[, weights])
+    diagnose_cs_cm!(panels_cm, panels_am, panels_bm, panels_dm, panels_m, Nc, Nz[, weights];
+                    residual_tol=COLUMN_CLOSURE_TOL_KG, context="cm diagnosis")
 
 Diagnose vertical mass flux `cm` from column-balanced horizontal flux divergence
-and mass tendency for all 6 panels. A remaining column residual is spread with
-`weights` (layer air mass by default).
+and mass tendency for all 6 panels:
+
+```math
+C_{k+1} = C_k + (F^x_{i}-F^x_{i+1})
+                    + (F^y_{j}-F^y_{j+1}) - \\Delta m_k,
+\\qquad C_1=0.
+```
+
+The raw surface residual `R_c = C_{N_z+1}` of column `c` is never folded
+silently. It must satisfy
+
+```math
+|R_c| ≤ τ_c + 2\\,ε_{FT} ∑_k \\big(|C_k| + |F^x_{i,k}| + |F^x_{i+1,k}|
+        + |F^y_{j,k}| + |F^y_{j+1,k}| + |Δm_k|\\big),
+```
+
+where `τ_c` is `residual_tol` (a number, or a vector over the `6 N_c^2` cells
+in face-table order) and the sum bounds the rounding of the recursion above in
+the storage type `FT`; otherwise this function raises before redistribution,
+naming `[mass_fix]` when the global-mean residual (a change of the global air
+mass that no horizontal flux can remove) dominates. Accepted residuals are
+booked in the returned diagnostics and folded back as
+
+```math
+C_{k+1} \\leftarrow C_{k+1} - R
+  \\frac{∑_{j=1}^{k}w_j}{∑_{j=1}^{N_z}w_j}.
+```
+
+Weights must be finite and have a positive sum. Production callers pass the
+per-cell closure tolerance of `balance_cs_column_mass_fluxes!`
+(`_diagnose_balanced_cs_cm!`).
 """
 function diagnose_cs_cm!(panels_cm::NTuple{6, Array{FT, 3}},
                           panels_am::NTuple{6, Array{FT, 3}},
@@ -578,41 +804,126 @@ function diagnose_cs_cm!(panels_cm::NTuple{6, Array{FT, 3}},
                           panels_dm::NTuple{6, Array{FT, 3}},
                           panels_m::NTuple{6, Array{FT, 3}},
                           Nc::Int, Nz::Int,
-                          weights::AbstractColumnWeights = MassWeightedColumn()) where FT
+                          weights::AbstractColumnWeights = MassWeightedColumn();
+                          residual_tol::Union{Real, AbstractVector{<:Real}} = COLUMN_CLOSURE_TOL_KG,
+                          context::AbstractString = "cm diagnosis") where FT
     _check_weight_levels(weights, Nz)
+    _check_column_tolerance(residual_tol, 6 * Nc * Nc)
+    max_raw_residual = 0.0
+    max_ratio = 0.0
+    worst = (0, 0, 0)
+    worst_residual = 0.0
+    worst_tolerance = 0.0
+    sum_residual = 0.0
+    epsFT = Float64(eps(FT))
     for p in 1:6
         am = panels_am[p]
         bm = panels_bm[p]
         cm = panels_cm[p]
         dm = panels_dm[p]
-        m  = panels_m[p]
 
         @inbounds for j in 1:Nc, i in 1:Nc
             cm[i, j, 1] = zero(FT)
+            rounding = 0.0
 
             for k in 1:Nz
                 div_h = (am[i, j, k] - am[i + 1, j, k]) +
                         (bm[i, j, k] - bm[i, j + 1, k])
                 cm[i, j, k + 1] = cm[i, j, k] + div_h - dm[i, j, k]
+                rounding += abs(Float64(cm[i, j, k])) +
+                            abs(Float64(am[i, j, k])) + abs(Float64(am[i + 1, j, k])) +
+                            abs(Float64(bm[i, j, k])) + abs(Float64(bm[i, j + 1, k])) +
+                            abs(Float64(dm[i, j, k]))
             end
 
-            # Redistribute any remaining residual with the column weights
-            residual = cm[i, j, Nz + 1]
-            if abs(residual) > eps(FT)
-                total_m = zero(FT)
-                for k in 1:Nz
-                    total_m += _cell_weight(weights, m[i, j, k], k)
-                end
-                if total_m > zero(FT)
-                    cum_fix = zero(FT)
-                    for k in 1:Nz
-                        frac = _cell_weight(weights, m[i, j, k], k) / total_m
-                        cum_fix += frac * residual
-                        cm[i, j, k + 1] -= cum_fix
-                    end
-                end
+            raw_residual = Float64(cm[i, j, Nz + 1])
+            isfinite(raw_residual) || throw(DomainError(raw_residual,
+                "vertical mass-flux diagnosis residual must be finite"))
+            c = (p - 1) * Nc * Nc + (j - 1) * Nc + i
+            tolerance = _column_tolerance(residual_tol, c) + 2epsFT * rounding
+            ratio = _residual_ratio(abs(raw_residual), tolerance)
+            sum_residual += raw_residual
+            max_raw_residual = max(max_raw_residual, abs(raw_residual))
+            if ratio > max_ratio
+                max_ratio, worst = ratio, (p, i, j)
+                worst_residual, worst_tolerance = raw_residual, tolerance
             end
         end
     end
+    mean_residual = sum_residual / (6 * Nc * Nc)
+
+    if !(max_ratio <= 1)
+        hint = abs(mean_residual) >= 0.5 * abs(worst_residual) ?
+            " The mean column residual over the sphere is $(mean_residual) kg: a " *
+            "global-mean residual is a change of the global air mass that no " *
+            "horizontal flux can remove. A run without the dry-mass pin keeps it " *
+            "in every column; enable [mass_fix] (enable = true) so the window " *
+            "endpoints share one global dry mass." :
+            " The mean column residual over the sphere is $(mean_residual) kg."
+        error("$context: vertical mass-flux diagnosis residual $(worst_residual) kg " *
+              "in column (panel, i, j) = $(worst) exceeds its tolerance " *
+              "$(worst_tolerance) kg." * hint)
+    end
+
+    max_booked_residual = 0.0
+    for p in 1:6
+        cm = panels_cm[p]
+        m = panels_m[p]
+        @inbounds for j in 1:Nc, i in 1:Nc
+            residual = Float64(cm[i, j, Nz + 1])
+            if abs(residual) > eps(FT)
+                total_m = 0.0
+                for k in 1:Nz
+                    total_m += _cell_weight(weights, m[i, j, k], k)
+                end
+                total_m > 0.0 || throw(DomainError(total_m,
+                    "column-balance cell weights sum to zero; cannot book cm residual"))
+                cum_fix = 0.0
+                for k in 1:Nz
+                    frac = _cell_weight(weights, m[i, j, k], k) / total_m
+                    cum_fix += frac * residual
+                    cm[i, j, k + 1] -= FT(cum_fix)
+                end
+                max_booked_residual = max(max_booked_residual, abs(residual))
+            end
+        end
+    end
+    return (; max_raw_residual, max_raw_residual_ratio = max_ratio,
+            max_booked_residual, mean_raw_residual = mean_residual)
+end
+
+# A scalar column tolerance, or one per cell of the 6-panel face table.
+_check_column_tolerance(tol::Real, _nc) =
+    (tol >= 0 || throw(ArgumentError("residual_tol must be non-negative")); nothing)
+function _check_column_tolerance(tol::AbstractVector{<:Real}, nc)
+    length(tol) == nc || throw(DimensionMismatch(
+        "per-cell residual_tol has $(length(tol)) entries for $nc cells"))
+    all(x -> x >= 0, tol) || throw(ArgumentError("residual_tol must be non-negative"))
     return nothing
+end
+@inline _column_tolerance(tol::Real, _c) = Float64(tol)
+@inline _column_tolerance(tol::AbstractVector{<:Real}, c) = Float64(@inbounds tol[c])
+
+"""
+    _diagnose_balanced_cs_cm!(..., balance_diag, context[, weights])
+
+Production bridge between column balance and vertical-flux diagnosis. It
+explicitly checks `balance_diag.final_column_residual_ratio ≤ 1` (every cell's
+projected residual within its own closure tolerance), then passes the same
+per-cell tolerances (`final_column_tolerance_by_cell`) to `diagnose_cs_cm!`,
+whose returned diagnostic books any residual folded into `cm`.
+"""
+function _diagnose_balanced_cs_cm!(panels_cm::NTuple{6, Array{FT, 3}},
+                                   panels_am::NTuple{6, Array{FT, 3}},
+                                   panels_bm::NTuple{6, Array{FT, 3}},
+                                   panels_dm::NTuple{6, Array{FT, 3}},
+                                   panels_m::NTuple{6, Array{FT, 3}},
+                                   Nc::Int, Nz::Int,
+                                   balance_diag, context::AbstractString,
+                                   weights::AbstractColumnWeights = MassWeightedColumn()) where FT
+    _require_cs_column_balance(balance_diag, context)
+    return diagnose_cs_cm!(panels_cm, panels_am, panels_bm, panels_dm,
+                           panels_m, Nc, Nz, weights;
+                           residual_tol = balance_diag.final_column_tolerance_by_cell,
+                           context)
 end

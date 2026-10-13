@@ -364,14 +364,26 @@ end
         reader = TransportBinaryReader(out_path; FT = FT_TEST)
         try
             @test !haskey(reader.header.raw_header, "write_replay_check")
-            @test !haskey(reader.header.raw_header, "column_balance_weights")
+            @test reader.header.raw_header["column_balance_weights"] == "hybrid_mass"
+            # Every window's column closure is recorded, within its per-cell tolerance.
+            raw = reader.header.raw_header
+            @test raw["column_closure_rule"] == "per_cell_8eps_incident_flux_v1"
+            @test raw["column_closure_windows"] == reader.header.nwindow
+            @test 0 <= raw["column_closure_residual_to_tolerance_max"] <= 1
+            @test 0 <= raw["column_closure_cm_residual_to_tolerance_max"] <= 1
+            closure = reader.header.column_closure
+            @test closure isa AtmosTransport.MetDrivers.ColumnClosureHeader
+            @test closure.windows == reader.header.nwindow
+            @test closure.residual_to_tolerance_max ==
+                  raw["column_closure_residual_to_tolerance_max"]
         finally
             close(reader)
         end
 
-        # Column weights from the met source: recorded when not mass (this
-        # fixture has no column mismatch, so the transported mass is the same),
-        # and refused by closures that keep the native fluxes.
+        # Column weights from the met source: every non-mass choice is recorded (this
+        # fixture has no column mismatch, so the transported mass is the same).
+        # Closures that keep the native fluxes balance nothing: the weights do
+        # not apply, are not an error, and are not recorded.
         hyb_settings = GEOSITSettings(root_dir = tmpdir, Nc = NC, mass_flux_dt = 450.0,
                                       coefficients_file = coef_path,
                                       column_balance_weights = :hybrid_b)
@@ -387,9 +399,19 @@ end
         finally
             close(reader)
         end
-        @test_throws ArgumentError process_day(Date(2021, 12, 1), grid, hyb_settings, vertical;
-            out_path = joinpath(tmpdir, "out_cs_pfix.bin"), dt_met_seconds = 3600.0,
+        pfix_path = joinpath(tmpdir, "out_cs_pfix.bin")
+        process_day(Date(2021, 12, 1), grid, hyb_settings, vertical;
+            out_path = pfix_path, dt_met_seconds = 3600.0,
             FT = FT_TEST, mass_basis = :dry, cm_closure = :pressure_fixer)
+        reader = TransportBinaryReader(pfix_path; FT = FT_TEST)
+        try
+            @test reader.header.raw_header["horizontal_balance"] == "none"
+            @test !haskey(reader.header.raw_header, "column_balance_weights")
+            @test !any(startswith("column_closure_"), keys(reader.header.raw_header))
+            @test reader.header.column_closure === AtmosTransport.MetDrivers.NoColumnClosureHeader()
+        finally
+            close(reader)
+        end
     end
 
     @testset "process_day supports GEOS native vertical merge above pressure" begin

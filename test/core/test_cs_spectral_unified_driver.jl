@@ -12,6 +12,21 @@ using .AtmosTransport.Preprocessing: build_target_geometry, process_day,
 
 const Pre = AtmosTransport.Preprocessing
 
+@testset "spectral endpoint flux mean is rebuilt from raw endpoints" begin
+    panels(value) = ntuple(_ -> fill(Float64(value), 2, 2, 1), 6)
+    ws = (endpoint_am = panels(2), endpoint_bm = panels(4),
+          cur_am = panels(0), cur_bm = panels(0))
+    end_am, end_bm = panels(6), panels(12)
+    Pre._rebuild_spectral_window_fluxes!(ws, end_am, end_bm, :window_mean, 4, 4)
+    @test all(==(4.0), Iterators.flatten(ws.cur_am))
+    @test all(==(8.0), Iterators.flatten(ws.cur_bm))
+    foreach(a -> fill!(a, 999.0), ws.cur_am) # stand in for Poisson-balanced faces
+    foreach(a -> fill!(a, 999.0), ws.cur_bm)
+    Pre._rebuild_spectral_window_fluxes!(ws, end_am, end_bm, :window_mean, 4, 8)
+    @test all(==(2.0), Iterators.flatten(ws.cur_am))
+    @test all(==(4.0), Iterators.flatten(ws.cur_bm))
+end
+
 function _write_fake_cs_spectral_cache!(spectral_dir::String,
                                         cache_dir::String,
                                         date::Date)
@@ -63,7 +78,12 @@ function _cs_test_vertical(::Type{FT}) where FT
 end
 
 function _cs_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir;
-                           column_balance_weights = :mass) where FT
+                           column_balance_weights = :mass,
+                           face_lengths = :edge,
+                           face_fluxes = :vector,
+                           face_interpolation = :fv3,
+                           wind_regrid = :cartesian,
+                           flux_time_sampling = :window_mean) where FT
     return ERA5SpectralSettings((
         column_balance_weights = column_balance_weights,
         output_float_type = FT,
@@ -81,6 +101,11 @@ function _cs_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir;
         met_interval = 3600.0,
         dt = 900.0,
         out_dir = out_dir,
+        face_lengths,
+        face_fluxes,
+        face_interpolation,
+        wind_regrid,
+        flux_time_sampling,
     ))
 end
 
@@ -122,6 +147,13 @@ end
         @test second_payload == first_payload
         @test first_header[:mass_fix_enabled] === false
         @test first_header[:surface_pressure_basis] == "total"
+        @test first_header[:face_fluxes] == "vector"
+        @test first_header[:flux_face_lengths] == "edge"
+        @test first_header[:face_interpolation] == "fv3"
+        @test first_header[:wind_regrid] == "cartesian"
+        @test first_header[:flux_time_sampling] == "window_mean"
+        @test first_header[:flux_time_sampling_effective] ==
+              "window_start_boundary_fallback"
         @test !haskey(first_header, :mass_fix_target_ps_dry_pa)
         @test length(first_header[:ps_offsets_pa_per_window]) == 24
         @test first_header[:ps_offsets_next_day_hour0_pa] isa Real
@@ -134,6 +166,32 @@ end
         @test off_header[:write_replay_check] === false
         @test !haskey(first_header, :write_replay_check)
         @test off_payload == first_payload
+
+        # Both alternatives dispatch through the same spectral endpoint
+        # lifecycle: source-grid line integrals and the fully historical path.
+        li = _cs_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "li");
+                               face_fluxes = :line_integral,
+                               face_interpolation = :linear)
+        li_header, li_payload = _stable_binary_parts(
+            process_day(date, grid, li, vertical; positivity_cfl_limit = 0.95))
+        @test li_header[:face_fluxes] == "line_integral"
+        @test li_header[:wind_regrid] == "source_line_integral"
+        @test li_header[:line_integral_samples_per_face] == 16
+        @test li_header[:line_integral_source_grid] == "latlon_staging"
+        @test li_payload == first_payload
+
+        legacy = _cs_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "legacy");
+                                   face_lengths = :cell_centerline,
+                                   face_fluxes = :panel_average,
+                                   face_interpolation = :linear,
+                                   wind_regrid = :scalar,
+                                   flux_time_sampling = :window_start)
+        legacy_header, legacy_payload = _stable_binary_parts(
+            process_day(date, grid, legacy, vertical; positivity_cfl_limit = 0.95))
+        @test legacy_header[:face_fluxes] == "panel_average"
+        @test legacy_header[:flux_face_lengths] == "cell_centerline"
+        @test legacy_header[:flux_time_sampling] == "window_start"
+        @test legacy_payload == first_payload
 
         # Column weights are recorded only when not the default mass weights;
         # with one level every weighting gives the same fluxes.

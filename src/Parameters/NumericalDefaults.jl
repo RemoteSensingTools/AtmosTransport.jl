@@ -88,6 +88,77 @@ preprocessing has no independent vertical-flux input (issue #11).
 const HORIZONTAL_BALANCE_TAG = "column"
 
 """
+Smallest increment `ΔB_k = B_{k+1} − B_k` of hybrid `B` at which a layer counts
+as hybrid in the column-balance weighting `HybridMassWeightedColumn`: a layer
+with `ΔB_k < 1e-6` is treated as pure-pressure and receives no part of a column
+correction. `ΔB_k` is the share of a surface-pressure change that changes the
+layer's thickness, `Δ(Δp_k) = ΔB_k Δp_s`, so at the threshold a 1000 hPa
+(1e5 Pa) change of `p_s` changes the thickness by 0.1 Pa. GEOS/MERRA-2 L72
+layer 41 (150–177 hPa) has `ΔB = 8.2e-9` (8.2e-4 Pa per 1000 hPa, 3.1e-7 of
+its 2654 Pa thickness at `p_s` = 1000 hPa), a rounding residue of its `B`
+table. The smallest genuine hybrid increment of the shipped tables is ERA5
+L137 layer 55 (73–77 hPa, the topmost layer with `ΔB > 0`): `ΔB = 7.0e-6`,
+0.7 Pa per 1000 hPa, 0.17 % of its 416 Pa thickness. The ERA5 level presets
+keep it at `ΔB = 7.0e-6` (`ml137_full`, `ml137_cfl94`, `ml137_cfl85`) or merge
+it into a layer with `2.4e-5` (`ml137_66L`) or `5.9e-5` (`ml137_tropo34`,
+`ml137_tropo34a`); the next GEOS layer has `6.96e-3` (696 Pa per 1000 hPa).
+"""
+const HYBRID_LAYER_MIN_DB = 1.0e-6
+
+"""
+Absolute floor of the per-cell closure tolerance of the cubed-sphere column
+balance [kg per flux application]:
+`τ_c = max(COLUMN_CLOSURE_TOL_KG, 8 ε_FT Σ_{f∂c} Σ_k |F_{f,k}|)` bounds the
+mean-free column residual of every cell after the balance
+(`balance_cs_column_mass_fluxes!`, `recheck_cs_column_closure`) and, plus the
+rounding bound of the recursion, the `cm` residual folded into the column
+(`diagnose_cs_cm!`). The floor binds for Float64 payloads (ERA5 C24 golden:
+largest projected residual 0.10 kg against `τ_c = 10` kg); Float32 payloads
+are bound by the rounding term (smallest `τ_c` of window 1 of the MERRA-2 C90
+golden: 6.1e5 kg).
+"""
+const COLUMN_CLOSURE_TOL_KG = 10.0
+
+"""
+Write-time OMEGA-fidelity gate: the normalized RMS difference between the
+vertical velocity diagnosed from a binary's `cm` and the source OMEGA,
+`NRMSE = RMS(ω_cm − ω_src) / RMS(ω_src)`, must be below 1.0. `NRMSE = 1` is
+the score of `cm ≡ 0`, so the limit accepts only a vertical transport that is
+closer to the source than none at all. A sign-flipped `cm` scores about 2, a
+level-flipped one about 1.4; MERRA-2 wind-derived C90 scores 0.47 (2.1×
+margin; 2022-01 golden).
+"""
+const OMEGA_FIDELITY_NRMSE_LIMIT = 1.0
+
+"""
+Write-time OMEGA-fidelity gate: the correlation between `ω_cm` and the source
+OMEGA must exceed 0.5 (MERRA-2 wind-derived C90: 0.886). A zero `cm` has
+correlation 0, a sign-flipped one −1.
+"""
+const OMEGA_FIDELITY_CORRELATION_MIN = 0.5
+
+"""
+Write-time OMEGA-fidelity gate: the regression slope of `ω_cm` on the source
+OMEGA must exceed 0.5 (and stay below `OMEGA_FIDELITY_SLOPE_MAX`). An amount
+or time-convention error (`2n` against `n` substeps, the 8× `mass_flux_dt`
+error, a factor `g`) scales `cm` uniformly: it scales the slope by the same
+factor but leaves the correlation unchanged, and NRMSE stays below 1 for
+factors down to 1/20, so only a bound on the slope catches it. MERRA-2
+wind-derived C90 measures 0.865 (2022-01 golden); `0.5 = 0.865/1.73` and
+`OMEGA_FIDELITY_SLOPE_MAX = 1.5 = 0.865 × 1.73` are symmetric about it in
+log space, so a factor-2 error (slope 0.43 or 1.73) fails. Zero and
+sign-flipped `cm` fail too.
+"""
+const OMEGA_FIDELITY_SLOPE_MIN = 0.5
+
+"""
+Write-time OMEGA-fidelity gate: the regression slope of `ω_cm` on the source
+OMEGA must stay below 1.5 (see `OMEGA_FIDELITY_SLOPE_MIN`: a `cm` twice too
+large has slope 1.73 at MERRA-2 C90).
+"""
+const OMEGA_FIDELITY_SLOPE_MAX = 1.5
+
+"""
 Replay-check tolerance for Float64 transport-binary data. The check replays each
 window's air-mass budget cell by cell,
 `r = m_cur − 2n (Σ F_out − Σ F_in) − m_next` over the cell's faces, and accepts
@@ -121,6 +192,8 @@ export DEFAULT_CFL_LIMIT, DEFAULT_POSITIVITY_CFL_LIMIT, DEFAULT_SUBSTEP_CFL_TARG
        DEFAULT_BACKGROUND_VMR, DEFAULT_GEOS_SMOOTHING_SWEEPS, DEFAULT_MAX_SUBCYCLES,
        DEFAULT_MAX_STEPS_PER_WINDOW, ADAPTIVE_SUBSTEP_MAX_REFINEMENTS, DEFAULT_POISSON_BALANCE_TOL,
        DEFAULT_POISSON_BALANCE_MAX_ITER, DEFAULT_POISSON_PROJECT_EVERY, HORIZONTAL_BALANCE_TAG,
+       HYBRID_LAYER_MIN_DB, COLUMN_CLOSURE_TOL_KG, OMEGA_FIDELITY_NRMSE_LIMIT, OMEGA_FIDELITY_CORRELATION_MIN,
+       OMEGA_FIDELITY_SLOPE_MIN, OMEGA_FIDELITY_SLOPE_MAX,
        DEFAULT_GEOS_SMOOTHING_WEIGHT,
        DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG, DEFAULT_LINROOD_PPM_ORDER,
        REPLAY_TOLERANCE_FLOAT64, REPLAY_TOLERANCE_FLOAT32

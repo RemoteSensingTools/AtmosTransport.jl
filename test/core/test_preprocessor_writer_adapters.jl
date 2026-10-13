@@ -4,6 +4,7 @@
 using Test
 
 using AtmosTransport
+const Pre = AtmosTransport.Preprocessing
 using .AtmosTransport.Architectures: CPU
 using .AtmosTransport.Grids: AtmosGrid, HybridSigmaPressure, ncells, nfaces
 using .AtmosTransport.MetDrivers: open_streaming_transport_binary,
@@ -50,8 +51,9 @@ end
         settings = (include_qv = false,
                     tm5_convection_enable = false,
                     include_surface = false)
-        staging = joinpath(tmp, "ll.tmp")
         final = joinpath(tmp, "ll.bin")
+        staging = Pre._open_preprocessing_staging(final)
+        @test startswith(staging, abspath(final) * ".tmp-")
 
         writer = LatLonBinaryWriter(staging, "{}", settings, merged, nothing,
                                     FT, DryBasis(); final_path = final)
@@ -90,8 +92,8 @@ end
         merged = allocate_merge_workspace(grid, Nz, Nz, FT)
         settings = (include_qv=false, tm5_convection_enable=false,
                     include_surface=false)
-        staging = joinpath(tmp, "bad-size.tmp")
         final = joinpath(tmp, "preserved.bin")
+        staging = Pre._open_preprocessing_staging(final)
         sentinel = Vector{UInt8}(codeunits("previous-valid-output"))
         write(final, sentinel)
         writer = LatLonBinaryWriter(
@@ -122,7 +124,7 @@ end
         settings = (include_qv = false,
                     tm5_convection_enable = false,
                     include_surface = false)
-        staging = joinpath(tmp, "ll.tmp")
+        staging = Pre._open_preprocessing_staging(joinpath(tmp, "ll.bin"))
         writer = LatLonBinaryWriter(staging, "{}", settings, merged, nothing,
                                     FT, DryBasis())
         write_window!(writer, ReadyWindow{LatLonTargetGeometry, FT}(1, (; storage)))
@@ -149,8 +151,8 @@ end
                   hflux = zeros(FT, nface, Nz),
                   cm = zeros(FT, ncell, Nz + 1),
                   ps = fill(FT(90000), ncell))
-        staging = joinpath(tmp, "rg.tmp")
         final = joinpath(tmp, "rg.bin")
+        staging = Pre._open_preprocessing_staging(final)
         inner = open_streaming_transport_binary(
             staging, grid, 1, window;
             FT = FT,
@@ -182,8 +184,8 @@ end
         FT = Float64
         Nc, npanel, Nz = 2, 6, 1
         vc = HybridSigmaPressure(FT[0, 1000], FT[0, 1])
-        staging = joinpath(tmp, "cs.tmp")
         final = joinpath(tmp, "cs.bin")
+        staging = Pre._open_preprocessing_staging(final)
         inner = open_streaming_cs_transport_binary(
             staging, Nc, npanel, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
             FT = FT,
@@ -214,5 +216,74 @@ end
         @test isfile(final)
         @test !isfile(staging)
         @test filesize(final) > 4096
+    end
+end
+
+# A failed aggregate certificate (here an OMEGA comparison that fails its
+# gates) surfaces only when the header is patched at close. The adapter must
+# then close the inner writer's IO and abandon its own staging file: the
+# quarantine of the adapter path alone would leave a full-size orphan.
+function _failing_omega_bundle(::Type{FT}) where FT
+    G = CubedSphereTargetGeometry
+    samples = [Pre.OmegaFidelitySample(FT(s), FT(-s), FT(500), FT(0)) for s in (0.1, -0.2, 0.3)]
+    omega = Pre.SourceOmegaEvidence{G,FT,typeof(samples)}(
+        samples, "fixture", "instantaneous", "dry", Pre.MERRA2_WIND_OMEGA_BASELINE)
+    return Pre.FluxFidelityEvidenceBundle(
+        Pre.NoFluxFidelityEvidence{G,FT,Pre.SourceHasNoWinds}(Pre.SourceHasNoWinds()),
+        omega, Pre.NoColumnClosureRecord())
+end
+
+@testset "a failed certificate at close leaves no staging file" begin
+    mktempdir() do tmp
+        FT = Float64
+        Nc, npanel, Nz = 2, 6, 1
+        vc = HybridSigmaPressure(FT[0, 1000], FT[0, 1])
+        final = joinpath(tmp, "cs.bin")
+        staging = Pre._open_preprocessing_staging(final)
+        inner = open_streaming_cs_transport_binary(
+            staging, Nc, npanel, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
+            FT = FT, header_bytes = 8192, steps_per_window = 1, include_flux_delta = true,
+            mass_basis = :dry, surface_pressure_basis = TotalSurfacePressure())
+        window = (m = ntuple(_ -> fill(FT(1), Nc, Nc, Nz), npanel),
+                  am = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz), npanel),
+                  bm = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz), npanel),
+                  cm = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), npanel),
+                  ps = ntuple(_ -> fill(FT(90000), Nc, Nc), npanel),
+                  dm = ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel))
+        writer = CubedSphereBinaryWriter(inner, DryBasis(); Nc = Nc, npanel = npanel,
+                                         final_path = final)
+        write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(
+            1, window, _failing_omega_bundle(FT)))
+        @test isfile(inner.staging_path)
+        @test_throws ArgumentError close_streaming_binary!(writer)
+        @test writer.closed
+        @test !isopen(inner.io)
+        @test !isfile(inner.staging_path)
+        quarantine_streaming_binary!(writer)          # the adapter's reserved path
+        @test isempty(readdir(tmp))
+        @test !isfile(final)
+    end
+
+    mktempdir() do tmp
+        FT = Float32
+        Nx, Ny, Nz = 3, 2, 2
+        grid = build_target_geometry(Val(:latlon),
+                                      Dict{String, Any}("nlon" => Nx, "nlat" => Ny), FT)
+        storage = _fill_ll_storage!(allocate_window_storage(1, FT), FT, Nx, Ny, Nz)
+        merged = allocate_merge_workspace(grid, Nz, Nz, FT)
+        settings = (include_qv = false, tm5_convection_enable = false, include_surface = false)
+        final = joinpath(tmp, "ll.bin")
+        staging = Pre._open_preprocessing_staging(final)
+        writer = LatLonBinaryWriter(staging, "{}", settings, merged, nothing,
+                                    FT, DryBasis(); final_path = final)
+        writer.fidelity.omega_none_windows = 1          # inconsistent OMEGA coverage
+        G = LatLonTargetGeometry
+        samples = [Pre.OmegaFidelitySample(FT(0.1), FT(0.1), FT(500), FT(0))]
+        Pre.verify_omega_fidelity!(writer.fidelity, Pre.SourceOmegaEvidence{G,FT,typeof(samples)}(
+            samples, "fixture", "instantaneous", "dry", Pre.MERRA2_WIND_OMEGA_BASELINE), 1)
+        @test_throws ArgumentError close_streaming_binary!(writer)
+        @test !isopen(writer.io)
+        quarantine_streaming_binary!(writer)
+        @test isempty(readdir(tmp))
     end
 end

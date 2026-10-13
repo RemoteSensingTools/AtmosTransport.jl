@@ -10,6 +10,12 @@ face-indexed `hflux`), `cm`, `ps`, forward deltas (CS `dm`; LL `dam`, `dbm`,
 writer balances the fluxes, diagnoses `cm`, and runs the replay and positivity
 gates before the file is kept (exceptions under Invariants). The runtime reads it through [`../MetDrivers/`](../MetDrivers/README.md).
 
+Every output target is built on `Parameters.EARTH_RADIUS` (6 371 000 m), and
+that value is written as `planet_radius_m` so preprocessing areas and runtime
+areas are identical. `IFS_EARTH_RADIUS` (6 371 229 m) is source-side only:
+ERA5 spectral transforms, the native N320 source sphere, and the TM5 humidity
+remap retain it where reproducing IFS geometry requires it.
+
 ## Entry Points
 
 - CLI: [`../../scripts/preprocessing/preprocess_transport_binary.jl`](../../scripts/preprocessing/preprocess_transport_binary.jl)
@@ -51,8 +57,9 @@ to the source `Nc` or an integer divisor of it (nested block coarsening).
 
 The entry point resolves configuration once and calls `process_day` per date.
 Native sources run days serially, passing `final_m` and `global_mass_target_kg`
-forward; days run on threads only when `supports_day_threading(settings)` (ERA5
-N320), `chain_mass = false`, and an enabled mass pin has a fixed target.
+forward. The driver can thread days only when `supports_day_threading(settings)`,
+`chain_mass = false`, and an enabled mass pin has a fixed target; ERA5 N320
+currently returns `false` because its inner kernels use static thread schedules.
 
 ERA5 spectral to LL, RG, or CS:
 
@@ -63,8 +70,9 @@ ERA5 spectral to LL, RG, or CS:
 3. Pin global dry mass when `[mass_fix].enable` (default `true` here) with
    `pin_global_mean_ps_using_qv!` (hourly qv) or `pin_global_mean_ps!`; convert
    to dry basis; merge to output levels.
-4. CS only: conservative regrid to panels, recover and rotate winds, rebuild
-   face fluxes (`reconstruct_cs_fluxes!`).
+4. CS only: conservative regrid to panels and build face fluxes through the
+   shared typed construction (`VectorFaceFluxes`, `PanelAverageFluxes`, or
+   `LineIntegralFaceFluxes`), averaging raw endpoint fluxes by default.
 5. Column-balance against the forward endpoint mass (LL
    `balance_column_mass_fluxes!`, CS `balance_cs_column_mass_fluxes!`, RG
    `balance_compressed_column_fluxes!`; each spreads its face corrections over
@@ -124,8 +132,8 @@ Files directly in this folder; the subfolders have their own READMEs
 - [`cs_flux_reconstruction.jl`](cs_flux_reconstruction.jl) — CS face fluxes from cell-center winds (`cs_face_fluxes!`)
 - [`cs_wind_rotation.jl`](cs_wind_rotation.jl) — east/north ↔ panel-local wind rotation, CS face fluxes → cell-center winds
 - [`cs_native_fluxes.jl`](cs_native_fluxes.jl) — `geos_native_to_face_flux!` with panel halo sync, `compute_cs_cm_pressure_fixer!`
-- [`face_line_integrals.jl`](face_line_integrals.jl) — `LineIntegralFaceFluxes` (cube-face fluxes integrated from N320 winds)
-- [`flux_construction.jl`](flux_construction.jl) — `[preprocessing]` flux options (`face_fluxes`, `face_lengths`, `face_interpolation`, `wind_regrid`) for MERRA-2 and ERA5 N320
+- [`face_line_integrals.jl`](face_line_integrals.jl) — `LineIntegralFaceFluxes` (cube-face fluxes integrated from N320 or spectral staging-grid winds)
+- [`flux_construction.jl`](flux_construction.jl) — typed flux methods and wind regrids shared by MERRA-2, ERA5 N320, and spectral ERA5-to-CS
 - [`era5_physics_binary.jl`](era5_physics_binary.jl) — ERA5 physics NetCDF to flat BIN converter and reader
 - [`era5_surface_reader.jl`](era5_surface_reader.jl) — ERA5 single-level PBL fields (`open_era5_surface_reader`, `load_era5_surface_window`)
 - [`tm5_convection_conversion.jl`](tm5_convection_conversion.jl) — `ec2tm!`, `ec2tm_from_rates!` (ECMWF to TM5 entu/detu/entd/detd)
@@ -177,7 +185,8 @@ Files directly in this folder; the subfolders have their own READMEs
   direction's outflow against `m`. With
   `require_substep_positivity = true` (default) a violation errors and deletes
   the staged file; with `false` it is kept with a warning.
-- Outputs are staged as `<out>.tmp` and renamed after the gates.
+- Outputs use unique sibling staging files from `AtomicFiles` and are
+  atomically published after the gates.
 - GEOS `mass_flux_dt` defaults to `450` s (`[preprocessing].mass_flux_dt_seconds`
   must be 100–3600, warns outside 400–500); the GEOS writer uses
   `round(dt_met_seconds / mass_flux_dt)` source substeps per window.

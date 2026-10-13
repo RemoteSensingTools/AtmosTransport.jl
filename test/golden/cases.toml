@@ -8,7 +8,7 @@
 # @REPO@; `set` overrides "section.key" entries of the template and `add` adds
 # entries the template does not have (in an existing section).
 # Tags: "preprocess" or "run"; the grid (latlon, reduced_gaussian, cubed_sphere); the
-# backend (cpu, gpu); the met source (merra2, era5); "multiday"; "slow" (several
+# backend (cpu, gpu); the met source (merra2, era5, geos); "multiday"; "slow" (several
 # minutes or more); and "known_failure" (skipped by default; see README.md).
 
 # --- preprocessing ------------------------------------------------------------------
@@ -40,6 +40,13 @@ kind   = "preprocess"
 config = "configs/pre_merra2_c90.toml"
 day    = "2022-01-15"
 tags   = ["preprocess", "cubed_sphere", "cpu", "merra2"]
+
+[[case]]
+name   = "pre_geosit_c45"
+kind   = "preprocess"
+config = "configs/pre_geosit_c45.toml"
+day    = "2021-12-01"
+tags   = ["preprocess", "cubed_sphere", "cpu", "geos"]
 
 [[case]]
 name   = "pre_era5_n320_c90_l117"

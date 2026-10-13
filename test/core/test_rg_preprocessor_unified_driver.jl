@@ -231,10 +231,15 @@ end
         @test !haskey(first_header, :write_replay_check)
         @test off_payload == first_payload
 
-        # The reduced-Gaussian column balance spreads its correction by air mass only.
+        # The reduced-Gaussian column balance takes every column weighting and
+        # records a non-mass one; with one hybrid level the payload is the same.
         hyb = _rg_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "hyb");
                                 column_balance_weights = :hybrid_b)
-        @test_throws ArgumentError process_day(date, grid, hyb, vertical; positivity_cfl_limit = 0.95)
+        hyb_header, hyb_payload = _stable_binary_parts(
+            process_day(date, grid, hyb, vertical; positivity_cfl_limit = 0.95))
+        @test hyb_header[:column_balance_weights] == "hybrid_b"
+        @test !haskey(first_header, :column_balance_weights)
+        @test hyb_payload == first_payload
 
         # The last window ends at the next day's 00 UTC state, pinned like every window.
         pinned = _rg_test_settings(FT, spectral_dir, cache_dir, joinpath(tmp, "pinned"); mass_fix = true)

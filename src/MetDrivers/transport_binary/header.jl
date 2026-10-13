@@ -36,6 +36,165 @@ construction code dispatches on this type instead of branching on string tags.
 """
 abstract type AbstractTransportBinaryGeometry end
 
+"""
+Header-key prefixes of the write-time certificate (flux and OMEGA fidelity,
+balance correction, column closure). The certificate is one block: writers
+patch all of it at close, and a caller that supplies a certificate through
+`extra_header` (e.g. the TM5 convection attachment copying its source's)
+replaces the writer's default block as a whole.
+"""
+const FLUX_CERTIFICATE_KEY_PREFIXES =
+    ("flux_fidelity_", "omega_fidelity_", "balance_correction_", "column_closure_")
+
+_is_certificate_key(key::AbstractString) =
+    any(prefix -> startswith(key, prefix), FLUX_CERTIFICATE_KEY_PREFIXES)
+
+# Write-time flux-fidelity certification is metadata, but it is deliberately
+# parsed into nominals rather than Symbols.  This keeps unknown/new spellings
+# fail-closed and lets downstream code dispatch on the result without string or
+# Symbol switches.
+abstract type AbstractFidelityStatus end
+struct FidelityPassed        <: AbstractFidelityStatus end
+struct FidelityFailed        <: AbstractFidelityStatus end
+struct FidelityNotApplicable <: AbstractFidelityStatus end
+struct FidelityUnavailable   <: AbstractFidelityStatus end
+
+abstract type AbstractFluxFidelityKind end
+struct WindRederivedFidelity  <: AbstractFluxFidelityKind end
+struct NativePassthroughFidelity <: AbstractFluxFidelityKind end
+struct NoFluxFidelityKind     <: AbstractFluxFidelityKind end
+
+struct FidelityReason
+    code::String
+    function FidelityReason(code::AbstractString)
+        isempty(code) && throw(ArgumentError("fidelity reason must not be empty"))
+        new(String(code))
+    end
+end
+
+"""
+Typed horizontal-flux certificate decoded from the flat binary header.
+
+`status` and `kind` are nominal types. A `FidelityPassed` certificate is
+always `WindRederivedFidelity` and carries every numeric metric (finite);
+`NativePassthroughFidelity` (GEOS native fluxes) is `FidelityNotApplicable`
+and carries only the balance-correction metrics; `NoFluxFidelityKind` has no
+samples. `time_sampling` is the windows' common effective sampling or
+`"mixed"`, in which case `time_sampling_by_window` lists every window's.
+The balance-correction metrics measure the column-balance correction
+`Δ = F_balanced − F` of the sampled pre-balance amounts `F`, flux-weighted:
+`balance_correction_rms_relative = RMS(Δ)/RMS(F)` over all samples, and the
+largest per-level value with its level (`balance_correction_max_level`,
+1 = top).
+"""
+struct FluxFidelityHeader{S<:AbstractFidelityStatus,K<:AbstractFluxFidelityKind}
+    schema::Int
+    status::S
+    kind::K
+    reason::Union{Nothing,FidelityReason}
+    sample_rule::String
+    sample_seed::String
+    samples_per_window::Int
+    sample_count::Int
+    windows::Int
+    method::String
+    time_sampling::String
+    time_sampling_by_window::Vector{String}
+    amount_seconds_min::Union{Nothing,Float64}
+    amount_seconds_max::Union{Nothing,Float64}
+    max_abs_kg::Union{Nothing,Float64}
+    rms_abs_kg::Union{Nothing,Float64}
+    max_rel::Union{Nothing,Float64}
+    rms_rel::Union{Nothing,Float64}
+    max_ulp::Union{Nothing,UInt64}
+    abs_tol_kg::Union{Nothing,Float64}
+    rel_tol::Union{Nothing,Float64}
+    scale_floor_kg::Union{Nothing,Float64}
+    worst_window::Union{Nothing,Int}
+    worst_face::Union{Nothing,Int}
+    worst_level::Union{Nothing,Int}
+    balance_correction_max_abs_kg::Union{Nothing,Float64}
+    balance_correction_rms_relative::Union{Nothing,Float64}
+    balance_correction_max_level_rms_relative::Union{Nothing,Float64}
+    balance_correction_max_level::Union{Nothing,Int}
+end
+
+"""
+Typed source-OMEGA certificate decoded from the flat binary header. A
+`FidelityPassed` certificate has samples, finite metrics, `passed == true` and
+satisfies its own gates: `nrmse < nrmse_limit`, `correlation >
+correlation_min`, `slope_min < slope < slope_max`.
+"""
+struct OmegaFidelityHeader{S<:AbstractFidelityStatus}
+    status::S
+    reason::Union{Nothing,FidelityReason}
+    source::String
+    sampling::String
+    basis::String
+    sample_count::Int
+    bias_pa_s::Union{Nothing,Float64}
+    rmse_pa_s::Union{Nothing,Float64}
+    nrmse::Union{Nothing,Float64}
+    max_abs_pa_s::Union{Nothing,Float64}
+    slope::Union{Nothing,Float64}
+    correlation::Union{Nothing,Float64}
+    bottom_residual_pa_s::Union{Nothing,Float64}
+    pressure_bands_hpa::Vector{String}
+    band_nrmse::Vector{Float64}
+    baseline_id::String
+    nrmse_limit::Union{Nothing,Float64}
+    correlation_min::Union{Nothing,Float64}
+    slope_min::Union{Nothing,Float64}
+    slope_max::Union{Nothing,Float64}
+    passed::Union{Nothing,Bool}
+end
+
+"""
+Column closure of a cubed-sphere transport binary, decoded from its
+`column_closure_*` header keys: `ColumnClosureHeader` when the writer
+column-balanced its fluxes and recorded the closure, `NoColumnClosureHeader`
+when the keys are absent (no cubed-sphere column balance ran, or the binary
+predates the record).
+"""
+abstract type AbstractColumnClosureHeader end
+struct NoColumnClosureHeader <: AbstractColumnClosureHeader end
+
+"""
+Recorded column closure (`docs/src/concepts/binary_format.md`): the rule of
+the per-cell tolerance `τ_c`, the windows covered, and the maxima over windows
+of the projected column residual `|r_c^⊥|` [kg], its ratio to `τ_c`, the
+residual folded into `cm` [kg] and its ratio to its tolerance. Both ratios are
+at most 1 in a binary that loads.
+"""
+struct ColumnClosureHeader <: AbstractColumnClosureHeader
+    rule::String
+    windows::Int
+    projected_residual_max_kg::Float64
+    residual_to_tolerance_max::Float64
+    booked_residual_max_kg::Float64
+    cm_residual_to_tolerance_max::Float64
+end
+
+"""
+Rule of the recorded column closure (header `column_closure_rule`): per-cell
+`τ_c = max(COLUMN_CLOSURE_TOL_KG, 8 ε_FT Σ_{f∂c} Σ_k |F_{f,k}|)` over the
+cell's incident faces.
+"""
+const COLUMN_CLOSURE_RULE = "per_cell_8eps_incident_flux_v1"
+
+"""
+Version of the flux-certificate key block (header `flux_fidelity_schema`).
+Schema 2 carries the flux-weighted `balance_correction_*_relative` metrics and
+the two-sided OMEGA slope bound; schema 1 headers came only from unreleased
+development builds and are rejected.
+"""
+const FLUX_FIDELITY_SCHEMA = 2
+
+const _COLUMN_CLOSURE_KEYS = (
+    :column_closure_rule, :column_closure_windows,
+    :column_closure_projected_residual_max_kg, :column_closure_residual_to_tolerance_max,
+    :column_closure_booked_residual_max_kg, :column_closure_cm_residual_to_tolerance_max)
+
 """Geometry metadata for a regular longitude-latitude binary."""
 struct LatLonBinaryGeometry <: AbstractTransportBinaryGeometry
     Nx                 :: Int
@@ -87,6 +246,10 @@ runtime builds its mesh with it. Binaries written before the key existed read as
 `p_half[k] = A_ifc[k] + B_ifc[k] * surface_pressure`, with `k = 1` at the
 top of atmosphere. `flux_kind` distinguishes mass per transport substep from a
 full-window mass amount.
+
+`flux_fidelity`, `omega_fidelity` and `column_closure` are the write-time
+certificate and column-closure record, checked for consistency when the header
+is parsed.
 """
 struct TransportBinaryHeader{G <: AbstractTransportBinaryGeometry}
     format_version       :: Int
@@ -120,6 +283,9 @@ struct TransportBinaryHeader{G <: AbstractTransportBinaryGeometry}
     payload_sections     :: Vector{Symbol}
     n_geometry_elems     :: Int
     elems_per_window     :: Int
+    flux_fidelity        :: FluxFidelityHeader
+    omega_fidelity       :: OmegaFidelityHeader
+    column_closure       :: AbstractColumnClosureHeader
     raw_header           :: Dict{String, Any}
 end
 
@@ -127,6 +293,321 @@ binary_geometry(h::TransportBinaryHeader) = h.geometry
 surface_pressure_basis(h::TransportBinaryHeader) = h.surface_pressure_basis
 grid_type(h::TransportBinaryHeader) = grid_type(h.geometry)
 horizontal_topology(h::TransportBinaryHeader) = horizontal_topology(h.geometry)
+
+function _parse_fidelity_status(value)
+    text = lowercase(String(value))
+    text == "passed" && return FidelityPassed()
+    text == "failed" && return FidelityFailed()
+    text == "not_applicable" && return FidelityNotApplicable()
+    text == "unavailable" && return FidelityUnavailable()
+    throw(ArgumentError("unsupported fidelity status $(repr(text)); expected passed, failed, not_applicable, or unavailable"))
+end
+
+function _parse_flux_fidelity_kind(value)
+    text = lowercase(String(value))
+    text == "wind_rederived" && return WindRederivedFidelity()
+    text == "native_passthrough" && return NativePassthroughFidelity()
+    text == "none" && return NoFluxFidelityKind()
+    throw(ArgumentError("unsupported flux_fidelity_kind $(repr(text)); expected wind_rederived, native_passthrough, or none"))
+end
+
+@inline _optional_float(hdr, key) = haskey(hdr, key) ? Float64(getproperty(hdr, key)) : nothing
+@inline _optional_int(hdr, key) = haskey(hdr, key) ? Int(getproperty(hdr, key)) : nothing
+
+# Certificate keys that only a wind-derived (passed) certificate carries.
+const _FLUX_FIDELITY_METRIC_KEYS = (
+    :flux_fidelity_max_abs_kg, :flux_fidelity_rms_abs_kg, :flux_fidelity_max_rel,
+    :flux_fidelity_rms_rel, :flux_fidelity_max_ulp, :flux_fidelity_abs_tol_kg,
+    :flux_fidelity_rel_tol, :flux_fidelity_scale_floor_kg, :flux_fidelity_worst_window,
+    :flux_fidelity_worst_face, :flux_fidelity_worst_level)
+const _BALANCE_CORRECTION_KEYS = (
+    :balance_correction_max_abs_kg, :balance_correction_rms_relative,
+    :balance_correction_max_level_rms_relative, :balance_correction_max_level)
+const _OMEGA_FIDELITY_METRIC_KEYS = (
+    :omega_fidelity_bias_pa_s, :omega_fidelity_rmse_pa_s, :omega_fidelity_nrmse,
+    :omega_fidelity_max_abs_pa_s, :omega_fidelity_slope, :omega_fidelity_correlation,
+    :omega_fidelity_bottom_residual_pa_s, :omega_fidelity_nrmse_limit,
+    :omega_fidelity_correlation_min, :omega_fidelity_slope_min, :omega_fidelity_slope_max)
+
+function _require_finite_keys(hdr, keys, what::AbstractString)
+    for key in keys
+        haskey(hdr, key) || throw(ArgumentError("$what certificate lacks `$key`"))
+        value = Float64(getproperty(hdr, key))
+        isfinite(value) || throw(ArgumentError("$what certificate has non-finite `$key` = $value"))
+    end
+    return nothing
+end
+
+function _forbid_keys(hdr, keys, what::AbstractString)
+    for key in keys
+        haskey(hdr, key) && throw(ArgumentError("$what certificate must not carry `$key`"))
+    end
+    return nothing
+end
+
+# The level of the largest per-level balance correction is one of the binary's.
+function _check_balance_correction_level(hdr, nlevel::Integer)
+    level = Int(hdr.balance_correction_max_level)
+    1 <= level <= nlevel || throw(ArgumentError(
+        "balance_correction_max_level = $level is not a level of this binary (1..$nlevel)"))
+    return nothing
+end
+
+# Sampled certificates (wind-derived or native) cover every window, sampled
+# face and level of the binary.
+function _check_flux_fidelity_coverage(hdr, nwindow::Integer, nlevel::Integer)
+    windows = Int(get(hdr, :flux_fidelity_windows, 0))
+    per_window = Int(get(hdr, :flux_fidelity_samples_per_window, 0))
+    count = Int(get(hdr, :flux_fidelity_sample_count, 0))
+    windows == nwindow || throw(ArgumentError(
+        "flux-fidelity certificate covers $windows windows; the binary has nwindow=$nwindow"))
+    per_window >= 1 || throw(ArgumentError(
+        "flux-fidelity certificate has $per_window samples per window"))
+    count == windows * per_window * nlevel || throw(ArgumentError(
+        "flux-fidelity sample count $count != windows ($windows) × samples per window " *
+        "($per_window) × nlevel ($nlevel)"))
+    isempty(String(get(hdr, :flux_fidelity_method, ""))) && throw(ArgumentError(
+        "flux-fidelity certificate lacks `flux_fidelity_method`"))
+    _require_finite_keys(hdr, (:flux_fidelity_amount_seconds_min,
+                               :flux_fidelity_amount_seconds_max), "flux-fidelity")
+    return nothing
+end
+
+function _parse_time_sampling(hdr, windows::Integer)
+    sampling = String(get(hdr, :flux_fidelity_time_sampling, ""))
+    by_window = haskey(hdr, :flux_fidelity_time_sampling_by_window) ?
+        String.(collect(hdr.flux_fidelity_time_sampling_by_window)) : String[]
+    if sampling == "mixed"
+        length(by_window) == windows || throw(ArgumentError(
+            "mixed flux_fidelity_time_sampling needs one entry per window; got " *
+            "$(length(by_window)) for $windows windows"))
+    else
+        isempty(by_window) || throw(ArgumentError(
+            "flux_fidelity_time_sampling_by_window is only valid with \"mixed\" sampling"))
+    end
+    return sampling, by_window
+end
+
+_check_flux_kind(::FidelityPassed, ::WindRederivedFidelity, hdr, nwindow, nlevel) = begin
+    _check_flux_fidelity_coverage(hdr, nwindow, nlevel)
+    _require_finite_keys(hdr, (_FLUX_FIDELITY_METRIC_KEYS..., _BALANCE_CORRECTION_KEYS...),
+                         "passed flux-fidelity")
+    _check_balance_correction_level(hdr, nlevel)
+    isempty(String(get(hdr, :flux_fidelity_time_sampling, ""))) && throw(ArgumentError(
+        "passed flux-fidelity certificate lacks `flux_fidelity_time_sampling`"))
+    nothing
+end
+_check_flux_kind(::FidelityNotApplicable, ::NativePassthroughFidelity, hdr, nwindow, nlevel) = begin
+    _check_flux_fidelity_coverage(hdr, nwindow, nlevel)
+    _require_finite_keys(hdr, _BALANCE_CORRECTION_KEYS, "native flux-fidelity")
+    _check_balance_correction_level(hdr, nlevel)
+    _forbid_keys(hdr, _FLUX_FIDELITY_METRIC_KEYS, "native flux-fidelity")
+    nothing
+end
+function _check_flux_kind(::Union{FidelityNotApplicable, FidelityUnavailable, FidelityFailed},
+                          ::NoFluxFidelityKind, hdr, _nwindow, _nlevel)
+    for key in (:flux_fidelity_windows, :flux_fidelity_samples_per_window,
+                :flux_fidelity_sample_count)
+        Int(get(hdr, key, 0)) == 0 || throw(ArgumentError(
+            "flux-fidelity certificate without samples has `$key` = $(getproperty(hdr, key))"))
+    end
+    _forbid_keys(hdr, (_FLUX_FIDELITY_METRIC_KEYS..., _BALANCE_CORRECTION_KEYS...),
+                 "flux-fidelity certificate without samples")
+    return nothing
+end
+_check_flux_kind(status, kind, _hdr, _nwindow, _nlevel) = throw(ArgumentError(
+    "flux-fidelity status $(nameof(typeof(status))) is inconsistent with kind " *
+    "$(nameof(typeof(kind)))"))
+
+"""
+    _parse_flux_fidelity_header(hdr, nwindow, nlevel) -> FluxFidelityHeader
+
+Decode and check the horizontal-flux certificate: the status/kind pair must be
+one a writer emits, a sampled certificate must cover `nwindow` windows and
+`nlevel` levels (`sample_count == windows × samples_per_window × nlevel`) with
+finite metrics, and a non-passed certificate needs a reason. Binaries written
+before the certificate existed read as `FidelityUnavailable`
+(`legacy_header_missing`).
+"""
+function _parse_flux_fidelity_header(hdr, nwindow::Integer, nlevel::Integer)
+    # Pre-C6 v4 files stay readable, but their lack of certification is made
+    # explicit in the typed result. Every current writer emits FLUX_FIDELITY_SCHEMA.
+    if !haskey(hdr, :flux_fidelity_schema)
+        return FluxFidelityHeader(0, FidelityUnavailable(), NoFluxFidelityKind(),
+            FidelityReason("legacy_header_missing"), "", "", 0, 0, 0, "", "", String[],
+            nothing, nothing, nothing, nothing, nothing, nothing, nothing,
+            nothing, nothing, nothing, nothing, nothing, nothing, nothing,
+            nothing, nothing, nothing)
+    end
+    schema = Int(hdr.flux_fidelity_schema)
+    schema == FLUX_FIDELITY_SCHEMA || throw(ArgumentError(
+        "unsupported flux_fidelity_schema=$(schema); expected $(FLUX_FIDELITY_SCHEMA) — " *
+        "regenerate this binary with the current preprocessor"))
+    status = _parse_fidelity_status(hdr.flux_fidelity_status)
+    kind = _parse_flux_fidelity_kind(hdr.flux_fidelity_kind)
+    reason = haskey(hdr, :flux_fidelity_reason) ? FidelityReason(String(hdr.flux_fidelity_reason)) : nothing
+    status isa FidelityPassed && reason !== nothing && throw(ArgumentError(
+        "passed flux-fidelity certificate must not carry flux_fidelity_reason"))
+    !(status isa FidelityPassed) && reason === nothing && throw(ArgumentError(
+        "non-passed flux-fidelity certificate requires flux_fidelity_reason"))
+    _check_flux_kind(status, kind, hdr, nwindow, nlevel)
+    windows = Int(get(hdr, :flux_fidelity_windows, 0))
+    time_sampling, by_window = _parse_time_sampling(hdr, windows)
+    max_ulp = haskey(hdr, :flux_fidelity_max_ulp) ? UInt64(hdr.flux_fidelity_max_ulp) : nothing
+    return FluxFidelityHeader(
+        schema, status, kind, reason,
+        String(get(hdr, :flux_fidelity_sample_rule, "")),
+        String(get(hdr, :flux_fidelity_sample_seed, "")),
+        Int(get(hdr, :flux_fidelity_samples_per_window, 0)),
+        Int(get(hdr, :flux_fidelity_sample_count, 0)),
+        windows,
+        String(get(hdr, :flux_fidelity_method, "")),
+        time_sampling, by_window,
+        _optional_float(hdr, :flux_fidelity_amount_seconds_min),
+        _optional_float(hdr, :flux_fidelity_amount_seconds_max),
+        _optional_float(hdr, :flux_fidelity_max_abs_kg),
+        _optional_float(hdr, :flux_fidelity_rms_abs_kg),
+        _optional_float(hdr, :flux_fidelity_max_rel),
+        _optional_float(hdr, :flux_fidelity_rms_rel), max_ulp,
+        _optional_float(hdr, :flux_fidelity_abs_tol_kg),
+        _optional_float(hdr, :flux_fidelity_rel_tol),
+        _optional_float(hdr, :flux_fidelity_scale_floor_kg),
+        _optional_int(hdr, :flux_fidelity_worst_window),
+        _optional_int(hdr, :flux_fidelity_worst_face),
+        _optional_int(hdr, :flux_fidelity_worst_level),
+        _optional_float(hdr, :balance_correction_max_abs_kg),
+        _optional_float(hdr, :balance_correction_rms_relative),
+        _optional_float(hdr, :balance_correction_max_level_rms_relative),
+        _optional_int(hdr, :balance_correction_max_level))
+end
+
+# OMEGA certificate checks by status.
+function _check_omega_status(::FidelityPassed, hdr)
+    Int(get(hdr, :omega_fidelity_sample_count, 0)) > 0 || throw(ArgumentError(
+        "passed OMEGA-fidelity certificate has no samples"))
+    _require_finite_keys(hdr, _OMEGA_FIDELITY_METRIC_KEYS, "passed OMEGA-fidelity")
+    get(hdr, :omega_fidelity_passed, false) === true || throw(ArgumentError(
+        "passed OMEGA-fidelity certificate needs omega_fidelity_passed = true"))
+    haskey(hdr, :omega_fidelity_pressure_bands_hpa) && haskey(hdr, :omega_fidelity_band_nrmse) &&
+        !isempty(hdr.omega_fidelity_band_nrmse) &&
+        all(x -> x isa Real && isfinite(Float64(x)), hdr.omega_fidelity_band_nrmse) ||
+        throw(ArgumentError(
+        "passed OMEGA-fidelity certificate needs finite pressure-band NRMSE values"))
+    nrmse = Float64(hdr.omega_fidelity_nrmse)
+    correlation = Float64(hdr.omega_fidelity_correlation)
+    slope = Float64(hdr.omega_fidelity_slope)
+    nrmse < Float64(hdr.omega_fidelity_nrmse_limit) &&
+        correlation > Float64(hdr.omega_fidelity_correlation_min) &&
+        Float64(hdr.omega_fidelity_slope_min) < slope < Float64(hdr.omega_fidelity_slope_max) ||
+        throw(ArgumentError(
+        "passed OMEGA-fidelity certificate violates its own gates: nrmse=$nrmse, " *
+        "correlation=$correlation, slope=$slope"))
+    return nothing
+end
+function _check_omega_status(::FidelityFailed, hdr)
+    get(hdr, :omega_fidelity_passed, true) === false || throw(ArgumentError(
+        "failed OMEGA-fidelity certificate needs omega_fidelity_passed = false"))
+    return nothing
+end
+function _check_omega_status(::Union{FidelityNotApplicable, FidelityUnavailable}, hdr)
+    Int(get(hdr, :omega_fidelity_sample_count, 0)) == 0 || throw(ArgumentError(
+        "OMEGA-fidelity certificate without a comparison has samples"))
+    _forbid_keys(hdr, (_OMEGA_FIDELITY_METRIC_KEYS..., :omega_fidelity_passed),
+                 "OMEGA-fidelity certificate without a comparison")
+    return nothing
+end
+
+"""
+    _parse_omega_fidelity_header(hdr) -> OmegaFidelityHeader
+
+Decode and check the source-OMEGA certificate: a passed certificate has
+samples, finite metrics, `omega_fidelity_passed = true` and satisfies its
+recorded gates; a failed one has `omega_fidelity_passed = false`; a
+not-applicable or unavailable one has no samples or metrics.
+"""
+function _parse_omega_fidelity_header(hdr)
+    if !haskey(hdr, :omega_fidelity_status)
+        return OmegaFidelityHeader(FidelityUnavailable(), FidelityReason("legacy_header_missing"),
+            "", "", "", 0, nothing, nothing, nothing, nothing, nothing, nothing,
+            nothing, String[], Float64[], "", nothing, nothing, nothing, nothing, nothing)
+    end
+    status = _parse_fidelity_status(hdr.omega_fidelity_status)
+    reason = haskey(hdr, :omega_fidelity_reason) ? FidelityReason(String(hdr.omega_fidelity_reason)) : nothing
+    status isa FidelityPassed && reason !== nothing && throw(ArgumentError(
+        "passed OMEGA-fidelity certificate must not carry omega_fidelity_reason"))
+    !(status isa FidelityPassed) && reason === nothing && throw(ArgumentError(
+        "non-passed OMEGA-fidelity certificate requires omega_fidelity_reason"))
+    _check_omega_status(status, hdr)
+    bands = haskey(hdr, :omega_fidelity_pressure_bands_hpa) ?
+        String.(collect(hdr.omega_fidelity_pressure_bands_hpa)) : String[]
+    band_nrmse = haskey(hdr, :omega_fidelity_band_nrmse) ?
+        Float64.(collect(hdr.omega_fidelity_band_nrmse)) : Float64[]
+    length(bands) == length(band_nrmse) || throw(ArgumentError(
+        "omega_fidelity_pressure_bands_hpa and omega_fidelity_band_nrmse lengths differ"))
+    return OmegaFidelityHeader(
+        status, reason, String(get(hdr, :omega_fidelity_source, "")),
+        String(get(hdr, :omega_fidelity_sampling, "")),
+        String(get(hdr, :omega_fidelity_basis, "")),
+        Int(get(hdr, :omega_fidelity_sample_count, 0)),
+        _optional_float(hdr, :omega_fidelity_bias_pa_s),
+        _optional_float(hdr, :omega_fidelity_rmse_pa_s),
+        _optional_float(hdr, :omega_fidelity_nrmse),
+        _optional_float(hdr, :omega_fidelity_max_abs_pa_s),
+        _optional_float(hdr, :omega_fidelity_slope),
+        _optional_float(hdr, :omega_fidelity_correlation),
+        _optional_float(hdr, :omega_fidelity_bottom_residual_pa_s),
+        bands, band_nrmse,
+        String(get(hdr, :omega_fidelity_baseline_id, "")),
+        _optional_float(hdr, :omega_fidelity_nrmse_limit),
+        _optional_float(hdr, :omega_fidelity_correlation_min),
+        _optional_float(hdr, :omega_fidelity_slope_min),
+        _optional_float(hdr, :omega_fidelity_slope_max),
+        haskey(hdr, :omega_fidelity_passed) ? Bool(hdr.omega_fidelity_passed) : nothing)
+end
+
+"""
+    _parse_column_closure_header(hdr, nwindow) -> AbstractColumnClosureHeader
+
+Decode and check the column-closure record. Absent keys mean the closure was
+not recorded (`NoColumnClosureHeader`). A record must be complete, name the
+known rule, cover `nwindow` windows and hold finite, non-negative values with
+both residual/tolerance ratios at most 1; otherwise the stored fluxes cannot be
+trusted to close the column mass budget and the binary must be regenerated.
+"""
+function _parse_column_closure_header(hdr, nwindow::Integer)
+    present = [key for key in _COLUMN_CLOSURE_KEYS if haskey(hdr, key)]
+    isempty(present) && return NoColumnClosureHeader()
+    missing_keys = setdiff(_COLUMN_CLOSURE_KEYS, present)
+    isempty(missing_keys) || throw(ArgumentError(
+        "column-closure record lacks $(join(("`$k`" for k in missing_keys), ", ")); " *
+        "regenerate this binary"))
+    rule = String(hdr.column_closure_rule)
+    rule == COLUMN_CLOSURE_RULE || throw(ArgumentError(
+        "unsupported column_closure_rule $(repr(rule)); expected $(repr(COLUMN_CLOSURE_RULE))"))
+    windows = Int(hdr.column_closure_windows)
+    windows == nwindow || throw(ArgumentError(
+        "column-closure record covers $windows windows; the binary has nwindow=$nwindow; " *
+        "regenerate this binary"))
+    number(key) = (value = getproperty(hdr, key);
+                   value isa Real ? Float64(value) : throw(ArgumentError(
+                       "column-closure record has non-numeric `$key` = $(repr(value)); " *
+                       "regenerate this binary")))
+    projected = number(:column_closure_projected_residual_max_kg)
+    ratio = number(:column_closure_residual_to_tolerance_max)
+    booked = number(:column_closure_booked_residual_max_kg)
+    cm_ratio = number(:column_closure_cm_residual_to_tolerance_max)
+    values = (projected, ratio, booked, cm_ratio)
+    all(isfinite, values) && all(>=(0), values) || throw(ArgumentError(
+        "column-closure record is not finite and non-negative: projected residual " *
+        "$projected kg, ratio $ratio, cm residual $booked kg, cm ratio $cm_ratio; " *
+        "regenerate this binary"))
+    ratio <= 1 && cm_ratio <= 1 || throw(ArgumentError(
+        "column-closure record exceeds its per-cell tolerance (residual/tolerance " *
+        "ratio $ratio, cm residual ratio $cm_ratio; both must be at most 1): the stored " *
+        "fluxes do not close the column mass budget; regenerate this binary with the " *
+        "current preprocessor"))
+    return ColumnClosureHeader(rule, windows, projected, ratio, booked, cm_ratio)
+end
 
 function _parse_steps_per_window_schedule(hdr, nwindow::Integer,
                                           steps_per_window::Integer)
@@ -422,6 +903,9 @@ function _parse_transport_header(raw_bytes::Vector{UInt8};
         hdr, nwindow, poisson_balance_target_scale)
     n_geometry_elems = Int(get(hdr, :n_geometry_elems, 0))
     elems_per_window = Int(hdr.elems_per_window)
+    flux_fidelity = _parse_flux_fidelity_header(hdr, nwindow, nlevel)
+    omega_fidelity = _parse_omega_fidelity_header(hdr)
+    column_closure = _parse_column_closure_header(hdr, nwindow)
     raw_header = Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr))
 
     return TransportBinaryHeader(
@@ -456,6 +940,9 @@ function _parse_transport_header(raw_bytes::Vector{UInt8};
         payload_sections,
         n_geometry_elems,
         elems_per_window,
+        flux_fidelity,
+        omega_fidelity,
+        column_closure,
         raw_header,
     )
 end
@@ -572,5 +1059,20 @@ function _transport_common_header(grid_type::String,
         "n_vdiff_qv" => n_vdiff,
         "n_geometry_elems" => 0,
         "elems_per_window" => elems_per_window,
+        "flux_fidelity_schema" => FLUX_FIDELITY_SCHEMA,
+        "flux_fidelity_status" => "unavailable",
+        "flux_fidelity_kind" => "none",
+        "flux_fidelity_reason" => "evidence_not_attached",
+        "flux_fidelity_sample_rule" => "none",
+        "flux_fidelity_sample_seed" => string(UInt64(0x6a09e667f3bcc909)),
+        "flux_fidelity_samples_per_window" => 0,
+        "flux_fidelity_sample_count" => 0,
+        "flux_fidelity_windows" => 0,
+        "omega_fidelity_status" => "unavailable",
+        "omega_fidelity_reason" => "source_not_opened",
+        "omega_fidelity_source" => "none",
+        "omega_fidelity_sampling" => "none",
+        "omega_fidelity_basis" => "none",
+        "omega_fidelity_sample_count" => 0,
     )
 end

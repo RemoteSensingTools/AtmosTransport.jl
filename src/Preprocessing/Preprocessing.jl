@@ -41,7 +41,8 @@ and on the source settings type. Each supported pair has a `process_day` method:
 5. Column Poisson balance of the horizontal mass fluxes (header key
    `horizontal_balance = "column"`): one Poisson solve for the
    column-integrated divergence against the column mass tendency, each face's
-   correction spread over the layers by air mass (`spread_column_correction!`),
+   correction spread over the layers by the column weights
+   (`spread_column_correction!`; air mass in hybrid layers by default),
    so `cm` keeps the vertical motion:
    - LL: FFT Poisson solve — `balance_column_mass_fluxes!`, `mass_support.jl`
    - RG: compressed-Laplacian CG — `balance_compressed_column_fluxes!`,
@@ -86,7 +87,8 @@ using NCDatasets
 
 using ..ConfigChecks: config_bool as _config_bool, check_known_keys
 using ..LogLevels: log_level, with_log_level
-using ..AtomicFiles: atomic_publish
+using ..AtomicFiles: atomic_publish, open_atomic_staging,
+                     commit_atomic_staging, abandon_atomic_staging
 using GRIB
 using SHA
 using FastGaussQuadrature: gausslegendre
@@ -94,12 +96,28 @@ using FastGaussQuadrature: gausslegendre
 # Re-export parent module types we need
 import ..expand_data_path
 import ..source_revision
+
+# Root of the package checkout. Shipped configs name their companion files
+# (met-source descriptors under `config/met_sources/`, hybrid-coefficient
+# tables `config/*_coefficients.toml`) relative to it.
+const PACKAGE_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
+_package_path(relpath::AbstractString) = normpath(joinpath(PACKAGE_ROOT, relpath))
+
+# Reserve the package-standard unique sibling staging path for preprocessing
+# writers whose existing APIs open a path themselves. Publication and cleanup
+# are handled by the writer adapters through `commit_atomic_staging` /
+# `abandon_atomic_staging`.
+function _open_preprocessing_staging(path::AbstractString)
+    staging, io = open_atomic_staging(path)
+    close(io)
+    return staging
+end
 # Source settings and binary readers extend the same public capability queries.
 import ..MetDrivers: has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base
 using ..Architectures: CPU
 # Physical constants, numerical defaults and met-source constants
 # (`src/Parameters`) used by the files below.
-using ..Parameters: IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_PRESSURE, TM5_CONSTANTS, R_DRY_AIR,
+using ..Parameters: EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_PRESSURE, TM5_CONSTANTS, R_DRY_AIR,
                     VIRTUAL_TEMPERATURE_FACTOR, HYDROSTATIC_REFERENCE_TEMPERATURE,
                     GLOBAL_MEAN_DRY_SURFACE_PRESSURE, GLOBAL_MEAN_SPECIFIC_HUMIDITY,
                     DEFAULT_POSITIVITY_CFL_LIMIT, DEFAULT_SUBSTEP_CFL_TARGET,
@@ -108,6 +126,9 @@ using ..Parameters: IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_PRESSURE, TM5_C
                     DEFAULT_MET_INTERVAL_SECONDS,
                     DEFAULT_POISSON_BALANCE_TOL, DEFAULT_POISSON_BALANCE_MAX_ITER,
                     DEFAULT_POISSON_PROJECT_EVERY, HORIZONTAL_BALANCE_TAG,
+                    HYBRID_LAYER_MIN_DB, COLUMN_CLOSURE_TOL_KG, OMEGA_FIDELITY_NRMSE_LIMIT,
+                    OMEGA_FIDELITY_CORRELATION_MIN, OMEGA_FIDELITY_SLOPE_MIN,
+                    OMEGA_FIDELITY_SLOPE_MAX,
                     DEFAULT_GEOS_SMOOTHING_SWEEPS, DEFAULT_GEOS_SMOOTHING_WEIGHT,
                     ERA5_NATIVE_LEVEL_COUNT, ERA5_MET_INTERVAL_SECONDS,
                     GEOS_MASS_FLUX_DT_SECONDS, GEOS_MET_INTERVAL_SECONDS,
@@ -136,6 +157,7 @@ using ..State: AbstractMassBasis, DryBasis, MoistBasis,
 using ..Regridding: build_regridder, apply_regridder!, coarsen_sum!, coarsen_area_weighted!,
                     default_regrid_cache_dir
 using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField
+using ..GriddedIO: source_latlon_mesh, SnappedFaces
 using ..MetDrivers: LatLonBinaryGeometry, CubedSphereBinaryGeometry, TransportBinaryReader,
                     mesh_definition,
                     TransportBinaryHeader, binary_geometry, grid_type,
@@ -144,7 +166,9 @@ using ..MetDrivers: LatLonBinaryGeometry, CubedSphereBinaryGeometry, TransportBi
                     TRANSPORT_BINARY_FORMAT_VERSION,
                     StreamingTransportBinaryWriter,
                     open_streaming_transport_binary, write_streaming_window!,
-                    close_streaming_transport_binary!,
+                    close_streaming_transport_binary!, abandon_streaming_transport_binary!,
+                    FLUX_CERTIFICATE_KEY_PREFIXES, _is_certificate_key,
+                    COLUMN_CLOSURE_RULE, FLUX_FIDELITY_SCHEMA,
                     set_streaming_steps_per_window_schedule!,
                     set_transport_header_steps_per_window_schedule!,
                     open_streaming_cs_transport_binary, write_streaming_cs_window!,
@@ -193,6 +217,11 @@ export SubstepSchedulePolicy, clamp_substeps, initial_substeps,
        required_substeps, next_substeps, rescale_substep_amounts!,
        contract_steps_for_window, set_contract_steps_schedule!
 export ReadyWindow, PreverifiedWindow, PreprocessorRunCache
+export AbstractFluxFidelityEvidence, AbstractOmegaFidelityEvidence,
+       WindDerivedFluxEvidence, NativeFluxEvidence, NoFluxFidelityEvidence,
+       SourceOmegaEvidence, NoSourceOmegaEvidence, FluxFidelityEvidenceBundle,
+       FluxFidelitySample, OmegaFidelitySample, FidelitySampleMap,
+       FluxFidelityAccumulator, verify_flux_fidelity!, flux_fidelity_header!
 export verify_window!, update_accumulator!, summarize_status!
 export contract_replay_tolerance, contract_cfl_limit, contract_require_positivity
 export allocate_window_workspace,

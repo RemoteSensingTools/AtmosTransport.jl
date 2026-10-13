@@ -37,18 +37,22 @@ with `X = −sin λ u − sin φ cos λ v`, `Y = cos λ u − sin φ sin λ v`,
 `Z = cos φ v` the Cartesian wind components of each source cell. Cartesian
 components are smooth across the poles, unlike `u` and `v`.
 
-Only a `ReducedGaussianMesh` source (ERA5 N320) is implemented. With 16 samples
-a C90 face (≤ 1.2°) is sampled every ≤ 0.08°, about four times per N320 cell.
+`source_mesh` may be a `ReducedGaussianMesh` (ERA5 N320) or a regular
+`LatLonMesh` (the spectral-to-cube staging grid). With 16 samples a C90 face
+(≤ 1.2°) is sampled every ≤ 0.08°, about four times per N320 cell.
 """
-struct LineIntegralFaceFluxes
+struct LineIntegralFaceFluxes{S,T}
     L          :: SparseMatrixCSC{Float64, Int}    # (n_faces, 3 n_source_cells): X, Y, Z blocks
     face_table :: CSGlobalFaceTable
     src_trig   :: NamedTuple{(:sinλ, :cosλ, :sinφ, :cosφ), NTuple{4, Vector{Float64}}}
     src_flux   :: Vector{Vector{Float64}}          # per thread: [X Δp; Y Δp; Z Δp] of one level
     face_flux  :: Vector{Vector{Float64}}          # per thread: F of one level
+    samples_per_face :: Int
+    source_mesh :: S
+    target_mesh :: T
 end
 
-function LineIntegralFaceFluxes(source::ReducedGaussianMesh, target::CubedSphereMesh,
+function LineIntegralFaceFluxes(source::Union{LatLonMesh, ReducedGaussianMesh}, target::CubedSphereMesh,
                                 ft::CSGlobalFaceTable; samples_per_face::Integer = 16)
     samples_per_face >= 1 || throw(ArgumentError("samples_per_face must be ≥ 1, got $samples_per_face"))
     R = Float64(target.radius)
@@ -72,7 +76,48 @@ function LineIntegralFaceFluxes(source::ReducedGaussianMesh, target::CubedSphere
     nt = Threads.maxthreadid()
     return LineIntegralFaceFluxes(sparse(I, J, V, ft.nf, 3nsrc),   # repeated (face, cell) pairs add up
                                   ft, _trig(deg2rad.(Float64.(lon)), deg2rad.(Float64.(lat))),
-                                  [zeros(3nsrc) for _ in 1:nt], [zeros(ft.nf) for _ in 1:nt])
+                                  [zeros(3nsrc) for _ in 1:nt], [zeros(ft.nf) for _ in 1:nt],
+                                  Int(samples_per_face), source, target)
+end
+
+"""
+    _point_weights(mesh::LatLonMesh, x) -> NTuple{4, Tuple{Int, Float64}}
+
+Bilinear interpolation weights at the unit vector `x` from a regular
+latitude-longitude mesh. Longitude is periodic and is bracketed relative to
+the mesh's actual first centre (so meshes centred on 0° and meshes centred on
+±180° both work). Latitude is linear between adjacent centres; poleward of
+the outermost centres the nearest row is used. Flat indices use the mesh's
+longitude-fast storage order, `c = i + (j - 1) Nx`.
+"""
+function _point_weights(m::LatLonMesh, x)
+    λ = mod(atand(x[2], x[1]) - Float64(first(m.λᶜ)), 360.0)
+    φ = asind(clamp(x[3], -1.0, 1.0))
+
+    s = λ / Float64(m.Δλ)
+    i0 = floor(Int, s)
+    tx = s - i0
+    i1 = mod(i0, m.Nx) + 1
+    i2 = mod(i0 + 1, m.Nx) + 1
+
+    if m.Ny == 1
+        j1 = j2 = 1
+        ty = 0.0
+    else
+        j1 = clamp(searchsortedlast(m.φᶜ, φ), 1, m.Ny - 1)
+        j2 = j1 + 1
+        ty = clamp((φ - Float64(m.φᶜ[j1])) /
+                   (Float64(m.φᶜ[j2]) - Float64(m.φᶜ[j1])), 0.0, 1.0)
+    end
+
+    c11 = i1 + (j1 - 1) * m.Nx
+    c21 = i2 + (j1 - 1) * m.Nx
+    c12 = i1 + (j2 - 1) * m.Nx
+    c22 = i2 + (j2 - 1) * m.Nx
+    return ((c11, (1 - tx) * (1 - ty)),
+            (c21, tx * (1 - ty)),
+            (c12, (1 - tx) * ty),
+            (c22, tx * ty))
 end
 
 # Point at fraction t of the great-circle arc from unit vector a to b (θ = arc).
@@ -141,6 +186,44 @@ function line_integral_face_fluxes!(am::NTuple{6, Array{FT, 3}}, bm::NTuple{6, A
         end
         mul!(F, m.L, XYZ)                               # ∫ (V · N) Δp dl for every face
         @inbounds for f in 1:ft.nf                      # canonical entry, positive from left to right cell
+            p, i, j = Int(ft.face_panel[f]), Int(ft.face_idx_i[f]), Int(ft.face_idx_j[f])
+            target = ft.face_dir[f] == 1 ? am[p] : bm[p]
+            target[i, j, k] = FT(F[f] * scale)
+        end
+    end
+    _sync_cs_mirrors!(am, bm, ft, Nz)
+    return nothing
+end
+
+"""
+    line_integral_face_fluxes!(am, bm, method, u, v, dp, gravity, dt_factor, Nz)
+
+Line-integral face fluxes with explicitly supplied pressure thickness
+`dp[source_cell, level]`. The dry-air path supplies
+`dp = (1-q) |ΔA + ΔB ps| = g m_dry / cell_area`.
+"""
+function line_integral_face_fluxes!(am::NTuple{6, Array{FT, 3}}, bm::NTuple{6, Array{FT, 3}},
+                                    m::LineIntegralFaceFluxes, u::AbstractMatrix, v::AbstractMatrix,
+                                    dp::AbstractMatrix, gravity, dt_factor, Nz::Int) where FT
+    ft = m.face_table
+    (; sinλ, cosλ, sinφ, cosφ) = m.src_trig
+    size(u) == size(v) == size(dp) && size(u, 1) == length(sinλ) && size(u, 2) >= Nz ||
+        throw(DimensionMismatch(
+            "source winds $(size(u)), $(size(v)) and thickness $(size(dp)) do not match the operator"))
+    scale = Float64(dt_factor) / Float64(gravity)
+    nsrc = size(dp, 1)
+    Threads.@threads :static for k in 1:Nz
+        XYZ = m.src_flux[Threads.threadid()]
+        F = m.face_flux[Threads.threadid()]
+        @inbounds for c in 1:nsrc
+            uu = Float64(u[c, k]) * Float64(dp[c, k])
+            vv = Float64(v[c, k]) * Float64(dp[c, k])
+            XYZ[c]         = -sinλ[c] * uu - sinφ[c] * cosλ[c] * vv
+            XYZ[nsrc + c]  =  cosλ[c] * uu - sinφ[c] * sinλ[c] * vv
+            XYZ[2nsrc + c] =  cosφ[c] * vv
+        end
+        mul!(F, m.L, XYZ)
+        @inbounds for f in 1:ft.nf
             p, i, j = Int(ft.face_panel[f]), Int(ft.face_idx_i[f]), Int(ft.face_idx_j[f])
             target = ft.face_dir[f] == 1 ? am[p] : bm[p]
             target[i, j, k] = FT(F[f] * scale)

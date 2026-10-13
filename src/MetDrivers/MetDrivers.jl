@@ -35,6 +35,12 @@ using .ERA5
 
 export TRANSPORT_BINARY_FORMAT_VERSION
 export TransportBinaryReader, TransportBinaryHeader, write_transport_binary
+export AbstractFidelityStatus, FidelityPassed, FidelityFailed,
+       FidelityNotApplicable, FidelityUnavailable, FidelityReason
+export AbstractFluxFidelityKind, WindRederivedFidelity,
+       NativePassthroughFidelity, NoFluxFidelityKind
+export FluxFidelityHeader, OmegaFidelityHeader
+export AbstractColumnClosureHeader, ColumnClosureHeader, NoColumnClosureHeader
 export AbstractTransportBinaryGeometry, LatLonBinaryGeometry
 export ReducedGaussianBinaryGeometry, CubedSphereBinaryGeometry, binary_geometry
 export TransportBinaryContract, canonical_window_constant_contract,

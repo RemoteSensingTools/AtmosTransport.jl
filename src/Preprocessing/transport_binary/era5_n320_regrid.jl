@@ -252,23 +252,79 @@ function _next_day_core_only_handle(handles::ERA5GRIBDayHandles)
 end
 
 """
-    _endpoint_face_fluxes!(method, x, pipe, vc, gravity, dt_factor, Nc, Nz)
+    _endpoint_face_fluxes!(method, thickness, x, pipe, vc, gravity, dt_factor, Nc, Nz)
 
 Face mass fluxes `x.am`, `x.bm` of one window endpoint (`pipe`, one hour) on the
-native levels. The cell-centre methods use the regridded cube winds and the cube
-layer thickness from the regridded surface pressure; the line integrals use the
-source (N320) winds and surface pressure directly.
+native levels. `MoistFluxThickness` uses hybrid pressure thickness from total
+surface pressure. `DryMassFluxThickness` uses the dry thickness
+`(1-q) Δp = g m_dry / A` on the target or source grid, respectively.
 """
-function _endpoint_face_fluxes!(method::Union{PanelAverageFluxes, VectorFaceFluxes}, x, pipe, vc,
-                                gravity, dt_factor, Nc, Nz)
+function _fill_era5_flux_thickness!(::MoistFluxThickness, x, pipe, vc, Nc, Nz)
     fill_cs_layer_thickness!(x.dp, pipe.c180_fields.ps, vc.A, vc.B, Nc, Nz)
+    return nothing
+end
+
+function _fill_era5_flux_thickness!(::DryMassFluxThickness, x, pipe, vc, Nc, Nz)
+    A, B = vc.A, vc.B
+    @inbounds for p in 1:6, k in 1:Nz
+        dA = Float64(A[k + 1]) - Float64(A[k])
+        dB = Float64(B[k + 1]) - Float64(B[k])
+        for j in 1:Nc, i in 1:Nc
+            dp = abs(dA + dB * Float64(pipe.c180_fields.ps[p][i, j]))
+            x.dp[p][i, j, k] = (1 - pipe.c180_fields.qv[p][i, j, k]) * dp
+        end
+    end
+    return nothing
+end
+
+function _endpoint_face_fluxes!(method::Union{PanelAverageFluxes, VectorFaceFluxes}, thickness,
+                                x, pipe, vc, gravity, dt_factor, Nc, Nz)
+    _fill_era5_flux_thickness!(thickness, x, pipe, vc, Nc, Nz)
     _face_fluxes!(method, x, gravity, dt_factor, Nc, Nz)
     return nothing
 end
-function _endpoint_face_fluxes!(method::LineIntegralFaceFluxes, x, pipe, vc, gravity, dt_factor, Nc, Nz)
+
+function _endpoint_face_fluxes!(method::LineIntegralFaceFluxes, ::MoistFluxThickness,
+                                x, pipe, vc, gravity, dt_factor, Nc, Nz)
     w = pipe.window_fields
     line_integral_face_fluxes!(x.am, x.bm, method, w.u, w.v, w.ps, vc.A, vc.B, gravity, dt_factor, Nz)
     return nothing
+end
+
+function _endpoint_face_fluxes!(method::LineIntegralFaceFluxes, ::DryMassFluxThickness,
+                                x, pipe, vc, gravity, dt_factor, Nc, Nz)
+    w = pipe.window_fields
+    line_integral_face_fluxes!(x.am, x.bm, method, w.u, w.v,
+                               pipe.dry_fields.delp_dry, gravity, dt_factor, Nz)
+    return nothing
+end
+
+function _capture_era5_endpoint_flux_fidelity(method::Union{PanelAverageFluxes,VectorFaceFluxes},
+                                              _thickness, x, pipe, ft, gravity,
+                                              dt_factor, Nc, Nz, smap, _rows)
+    return capture_cs_wind_flux_samples(method, x.am, x.bm, x.u_local, x.v_local,
+                                        x.dp, ft, gravity, dt_factor, Nc, Nz;
+                                        sample_map = smap)
+end
+function _capture_era5_endpoint_flux_fidelity(method::LineIntegralFaceFluxes,
+                                              ::MoistFluxThickness, x, pipe, ft,
+                                              gravity, dt_factor, Nc, Nz, smap, rows)
+    w = pipe.window_fields
+    # Thickness at the sampled stencil cells only, as the production moist
+    # line integral computes it; no source-grid array per endpoint/retry.
+    return capture_cs_wind_flux_samples(method, x.am, x.bm, w.u, w.v,
+                                        HybridLayerThickness(pipe.vc.A, pipe.vc.B, w.ps),
+                                        ft, gravity, dt_factor, Nc, Nz;
+                                        sample_map = smap, line_rows = rows)
+end
+function _capture_era5_endpoint_flux_fidelity(method::LineIntegralFaceFluxes,
+                                              ::DryMassFluxThickness, x, pipe, ft,
+                                              gravity, dt_factor, Nc, Nz, smap, rows)
+    w = pipe.window_fields
+    return capture_cs_wind_flux_samples(method, x.am, x.bm, w.u, w.v,
+                                        pipe.dry_fields.delp_dry, ft, gravity,
+                                        dt_factor, Nc, Nz; sample_map = smap,
+                                        line_rows = rows)
 end
 
 """
@@ -327,7 +383,8 @@ end
                                  cache_dir = nothing,
                                  include_convection = false,
                                  global_mass_pin = false,
-                                 global_mass_target_kg = NaN)
+                                 global_mass_target_kg = NaN,
+                                 mass_fix_target_ps_dry_pa = NaN)
 
 The float type is the target grid's (`target_grid::CubedSphereTargetGeometry{FT}`).
 
@@ -348,8 +405,9 @@ depends on the flux sign); the runtime subcycling gate sums each cell's
 outgoing x, y and z face fluxes over the palindrome and divides by its mass
 (`cs_subcycling.jl`).
 
-The function stages writes to `out_path.tmp` and promotes to `out_path`
-on success — a partial run leaves no usable file at the requested path.
+The function writes through a unique sibling staging file and atomically
+publishes `out_path` on success — a partial run leaves no usable file at the
+requested path.
 """
 function process_era5_n320_to_cs_day(date::Date,
                                        settings::ERA5N320Settings,
@@ -371,10 +429,13 @@ function process_era5_n320_to_cs_day(date::Date,
                                        cache_dir::Union{Nothing, AbstractString} = nothing,
                                        include_convection::Bool = false,
                                        global_mass_pin::Bool = false,
-                                       global_mass_target_kg::Real = NaN) where FT
+                                       global_mass_target_kg::Real = NaN,
+                                       mass_fix_target_ps_dry_pa::Real = NaN,
+                                       configured_last_day::Union{Nothing, Date} = nothing) where FT
     mass_basis === :dry ||
         throw(ArgumentError("ERA5 N320 → CS writer only supports mass_basis=:dry; got $(mass_basis)"))
     _validate_flux_construction(settings, "ERA5")
+    _validate_flux_thickness(settings.flux_thickness, "ERA5")
     native_vc_cfg = load_hybrid_coefficients(settings.coefficients_file)
     native_vc_ft = HybridSigmaPressure(FT.(native_vc_cfg.A), FT.(native_vc_cfg.B))
     plan = if vertical_plan === nothing
@@ -417,6 +478,7 @@ function process_era5_n320_to_cs_day(date::Date,
                    string(date), Nc, Nz_int, string(FT))
 
     handles = open_era5_day(settings, date; next_day_handle = true)
+    writer = nothing
     try
         # --- Allocate two ERA5 pipelines: current + next sliding-window. ---
         @info "  Allocating ERA5 N320 → C180 pipelines (×2, sliding window)..."
@@ -473,23 +535,29 @@ function process_era5_n320_to_cs_day(date::Date,
         # Flux construction (`[preprocessing]` keys; defaults reproduce the
         # historical panel-average fluxes and mass-weighted column balance).
         flux_method = _face_flux_method(settings, target_grid; source = cur_pipe.source_grid.mesh)
+        flux_thickness = _flux_thickness(settings.flux_thickness)
         flux_x = (am = native_am, bm = native_bm, u_local = native_u_local,
                   v_local = native_v_local, dp = native_dp)
         # Window-mean fluxes also need the face fluxes at the window end, and the
         # cell-centre methods their own winds and Δp there.
         window_mean = settings.flux_time_sampling === :window_mean
         flux_x_end = window_mean ? map(x -> map(zero, x), flux_x) : nothing
+        fidelity_map = FidelitySampleMap(target_grid.face_table)
+        fidelity_rows = flux_method isa LineIntegralFaceFluxes ?
+            LineIntegralFidelityStencil(flux_method, fidelity_map) : nothing
+        fidelity_capture = Ref{Any}(nothing)
+        closure_record = Ref{AbstractColumnClosureRecord}(NoColumnClosureRecord())
         balance_weights = column_weights(settings.column_balance_weights, vc.B)
         # Per-substep flux scaling for a window taking `steps` substeps. The
         # face flux is the substep-mass amount, so it scales as 1/steps; the
         # adaptive loop re-reconstructs at the chosen `steps`.
         out_dt_factor_for(steps) = FT(dt_met_seconds / (2 * steps))
         # --- Surface PBL payload setup. ---
-        # Surface fields live on a SEPARATE regular-lat-lon 0.25° NetCDF
+        # Surface fields live on a SEPARATE point-registered lat-lon 0.25° NetCDF
         # (`sfc_an_native/era5_surface_YYYYMM.nc`), read via the shared
         # `era5_surface_reader` (handles ERA5 unit/sign + orientation: pblh=blh,
         # ustar=zust, hflux=-sshf/3600, t2m=2t; lat S→N, lon centered). They are
-        # regridded to C180 with a dedicated regular-ll → CS regridder (the same
+        # regridded to C180 with a dedicated snapped-face LL → CS regridder (the same
         # `build_regridder` used by the LL→CS path), then written as the
         # `surface` payload.
         do_surface = settings.include_surface
@@ -498,11 +566,13 @@ function process_era5_n320_to_cs_day(date::Date,
         do_tm5_diffusion = settings.include_tm5_diffusion
         if do_surface
             surf_Nx, surf_Ny = 1440, 721      # ERA5 0.25° single-levels regular-ll
-            # radius = the TARGET mesh's radius so the LL source manifold matches
-            # the CS target manifold (build_regridder rejects a mismatch).
-            surf_ll_mesh = LatLonMesh(; FT = FT, Nx = surf_Nx, Ny = surf_Ny,
-                                       longitude = (-180, 180), latitude = (-90, 90),
-                                       radius = mesh.radius)
+            surf_reader = open_era5_surface_reader(
+                joinpath(settings.root_dir, "sfc_an_native"), date, surf_Nx, surf_Ny)
+            # Derive faces from the actual file coordinates. ERA5's 721
+            # latitude rows include both poles, so SnappedFaces gives
+            # half-width polar caps instead of treating the rows as 721
+            # uniform cells spread over -90..90.
+            surf_ll_mesh = era5_surface_source_mesh(surf_reader, mesh.radius)
             surf_regridder = build_regridder(surf_ll_mesh, mesh;
                                              normalize = false, cache_dir = cache_dir)
             surf_ws = allocate_cs_preprocess_workspace(
@@ -513,9 +583,7 @@ function process_era5_n320_to_cs_day(date::Date,
             surf_ustar = ntuple(_ -> zeros(FT, Nc, Nc), 6)
             surf_hflux = ntuple(_ -> zeros(FT, Nc, Nc), 6)
             surf_t2m   = ntuple(_ -> zeros(FT, Nc, Nc), 6)
-            surf_reader = open_era5_surface_reader(
-                joinpath(settings.root_dir, "sfc_an_native"), date, surf_Nx, surf_Ny)
-            @info "  Surface PBL payload ENABLED (regular-ll 0.25° → C180)"
+            @info "  Surface PBL payload ENABLED (file-coordinate SnappedFaces 0.25° LL → C180)"
             if do_tm5_diffusion
                 surf_lhflux = ntuple(_ -> zeros(FT, Nc, Nc), 6)   # latent flux on C180
                 dkg_c180    = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6)
@@ -604,13 +672,13 @@ function process_era5_n320_to_cs_day(date::Date,
         # the binary header before close so the runtime executes it directly.
         steps_schedule = fill(steps_per_met, nwindow)
         mkpath(dirname(out_path))
-        tmp_path = out_path * ".tmp"
-        isfile(tmp_path) && rm(tmp_path)
+        tmp_path = _open_preprocessing_staging(out_path)
         @info @sprintf("  Output: %s (Nc=%d, Nz=%d, FT=%s)",
                        basename(out_path), Nc, Nz_int, string(FT))
         # The header records it and the gate uses it.
         write_replay_on = write_replay_check
-        inner_writer = open_streaming_cs_transport_binary(
+        inner_writer = try
+            open_streaming_cs_transport_binary(
             tmp_path, Nc, 6, Nz_int, nwindow, vc;
             FT = FT,
             dt_met_seconds = Float64(dt_met_seconds),
@@ -661,20 +729,25 @@ function process_era5_n320_to_cs_day(date::Date,
                 "horizontal_balance" => HORIZONTAL_BALANCE_TAG,
                 "column_balance_weights" => String(settings.column_balance_weights),
                 "face_fluxes" => String(settings.face_fluxes),
+                "flux_thickness" => String(settings.flux_thickness),
                 "flux_face_lengths" => settings.face_fluxes === :panel_average ? String(settings.face_lengths) : "edge",
                 "flux_time_sampling" => String(settings.flux_time_sampling),
-                "face_interpolation" => String(settings.face_interpolation),
-                "wind_regrid" => String(settings.wind_regrid),
+                "face_interpolation" => flux_header_face_interpolation(flux_method, settings),
+                "wind_regrid" => flux_header_wind_regrid(flux_method, settings),
                 "tm5_convection_source" => include_convection ?
                     "ec2tm_from_rates(udmf,ddmf,udrf,ddrf)" : "none",
                 "global_mass_pin_enabled" => do_mass_pin,
                 "global_mass_pin_target_kg" => do_mass_pin ?
                     Float64(global_mass_target_kg) : nothing,
             ), write_replay_on))
+        catch
+            abandon_atomic_staging(tmp_path)
+            rethrow()
+        end
         do_mass_pin &&
-            (inner_writer.header["mass_fix_target_ps_dry_pa"] =
-                Float64(global_mass_target_kg) * STANDARD_GRAVITY /
-                (6.0 * sum(Float64, cs_cell_areas)))
+            (inner_writer.header["mass_fix_target_ps_dry_pa"] = mass_fix_target_ps_dry_record(
+                mass_fix_target_ps_dry_pa, global_mass_target_kg,
+                6.0 * sum(Float64, cs_cell_areas), STANDARD_GRAVITY))
         writer = CubedSphereBinaryWriter(inner_writer,
                                           mass_basis_from_symbol(mass_basis);
                                           Nc = Nc,
@@ -729,16 +802,31 @@ function process_era5_n320_to_cs_day(date::Date,
         # the balance, the mass tendency, and `cm` depend on `steps`.
         _balance_window_at_steps! = function (pipe, pipe_end, m_dry, m_next, am, bm, cm, dm, steps)
             dt = out_dt_factor_for(steps)
-            _endpoint_face_fluxes!(flux_method, flux_x, pipe, native_vc, gravity, dt, Nc, Nz_native)
+            _endpoint_face_fluxes!(flux_method, flux_thickness, flux_x, pipe,
+                                   native_vc, gravity, dt, Nc, Nz_native)
+            start_capture = _capture_era5_endpoint_flux_fidelity(
+                flux_method, flux_thickness, flux_x, pipe,
+                target_grid.face_table, gravity, dt, Nc, Nz_native,
+                fidelity_map, fidelity_rows)
             if window_mean    # trapezoidal rule: mean of the start and end fluxes
-                _endpoint_face_fluxes!(flux_method, flux_x_end, pipe_end, native_vc, gravity, dt, Nc, Nz_native)
+                _endpoint_face_fluxes!(flux_method, flux_thickness, flux_x_end, pipe_end,
+                                       native_vc, gravity, dt, Nc, Nz_native)
+                end_capture = _capture_era5_endpoint_flux_fidelity(
+                    flux_method, flux_thickness, flux_x_end, pipe_end,
+                    target_grid.face_table, gravity, dt, Nc, Nz_native,
+                    fidelity_map, fidelity_rows)
                 for p in 1:6
                     native_am[p] .= (native_am[p] .+ flux_x_end.am[p]) ./ 2
                     native_bm[p] .= (native_bm[p] .+ flux_x_end.bm[p]) ./ 2
                 end
+                start_capture = combine_captured_flux_samples(
+                    start_capture, end_capture, native_am, native_bm,
+                    target_grid.face_table; mean_endpoints = true)
             end
             _merge_cs_center_extensive!(am, native_am, plan, MassFluxField())
             _merge_cs_center_extensive!(bm, native_bm, plan, MassFluxField())
+            fidelity_capture[] = merge_captured_flux_samples(
+                start_capture, plan, am, bm, target_grid.face_table)
             bal_diag = balance_cs_column_mass_fluxes!(
                 am, bm, m_dry, m_next,
                 target_grid.face_table, target_grid.cell_degree, steps,
@@ -749,7 +837,9 @@ function process_era5_n320_to_cs_day(date::Date,
             sync_all_cs_boundary_mirrors!(am, bm, mesh.connectivity, Nc, Nz_int)
             fill_cs_window_mass_tendency!(dm, m_dry, m_next, steps)
             for p in 1:6; fill!(cm[p], zero(FT)); end
-            diagnose_cs_cm!(cm, am, bm, dm, m_dry, Nc, Nz_int, balance_weights)
+            cm_diag = _diagnose_balanced_cs_cm!(cm, am, bm, dm, m_dry, Nc, Nz_int,
+                                                bal_diag, "ERA5 N320 window", balance_weights)
+            closure_record[] = column_closure_record(bal_diag, cm_diag)
             return bal_diag
         end
 
@@ -863,7 +953,19 @@ function process_era5_n320_to_cs_day(date::Date,
             end
             payload = merge(payload,
                             surface_vdiff_payload(cur_fields, cur_m_dry, win - 1))
-            write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(win - 1, payload))
+            flux_evidence = wind_derived_evidence(
+                CubedSphereTargetGeometry, fidelity_capture[], cur_am, cur_bm,
+                target_grid.face_table;
+                method = flux_fidelity_method(flux_method),
+                samples_per_window = length(fidelity_map.faces),
+                time_sampling = String(settings.flux_time_sampling),
+                amount_seconds = dt_met_seconds / (2 * win_steps))
+            omega_evidence = NoSourceOmegaEvidence{
+                CubedSphereTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega())
+            fidelity = FluxFidelityEvidenceBundle(flux_evidence, omega_evidence,
+                                                  closure_record[])
+            write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(
+                win - 1, payload, fidelity))
 
             @info @sprintf("    Window %2d/%d: wrote (steps=%d bal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
                             win - 1, nwindow, win_steps, t_bal, bal_diag.max_pre_residual,
@@ -898,6 +1000,8 @@ function process_era5_n320_to_cs_day(date::Date,
             finally
                 close_era5_day!(next_handles)
             end
+            derive_n320_dry_mass!(nxt_pipe.dry_fields, nxt_pipe.window_fields,
+                                  nxt_pipe.vc, nxt_pipe.cell_areas)
             regrid_n320_to_c180!(nxt_pipe.c180_fields,
                                    nxt_pipe.window_fields,
                                    nxt_pipe.regrid_ws,
@@ -926,15 +1030,21 @@ function process_era5_n320_to_cs_day(date::Date,
             pin_endpoint_mass!(nxt_m_dry, nxt_ps_dry,
                                nxt_pipe.c180_fields.qv, nxt_fields.qv)
         else
-            # HACK: zero-tendency fallback for the final day of the archive
-            # (no next_core_path on disk). The positivity gate will likely
+            _require_configured_terminal_day(
+                handles.date, configured_last_day, "ERA5 N320 preprocessor",
+                "next-day core endpoint for $(handles.date + Day(1))")
+            # The configured archive boundary has no next_core_path on disk.
+            # The positivity gate will likely
             # warn/fail in this case — that's correct: a zero-tendency
             # closure for the last hour is a known artifact, not a passing
             # binary. Run with [numerics].require_substep_positivity = false
             # only when you understand and accept this for boundary days.
             @warn "process_era5_n320_to_cs_day: archive-boundary fallback — " *
-                  "no next-day core file for $(handles.date + Day(1)), using " *
-                  "zero-tendency m_next. Final window's continuity will not close."
+                  "no next-day core file for $(handles.date + Day(1)). The final " *
+                  "window ends at an artificial zero-tendency endpoint (m_next = m_start) " *
+                  "and its fluxes use the window-start winds; they are still balanced and " *
+                  "cm diagnosed against that endpoint, so continuity closes algebraically " *
+                  "and the replay gate runs, but the window's mass change is not physical."
             for p in 1:6
                 copyto!(nxt_m_dry[p], cur_m_dry[p])
             end
@@ -984,7 +1094,25 @@ function process_era5_n320_to_cs_day(date::Date,
         end
         final_payload = merge(final_payload,
                               surface_vdiff_payload(cur_fields, cur_m_dry, nwindow))
-        write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(nwindow, final_payload))
+        # Without a next day the window-mean trapezoid uses the start fluxes
+        # twice: the final window's effective sampling is the fallback.
+        boundary_fallback = window_mean && next_handles === nothing
+        boundary_fallback && (writer.inner.header["flux_time_sampling_effective"] =
+                                  "window_start_boundary_fallback")
+        flux_evidence = wind_derived_evidence(
+            CubedSphereTargetGeometry, fidelity_capture[], cur_am, cur_bm,
+            target_grid.face_table;
+            method = flux_fidelity_method(flux_method),
+            samples_per_window = length(fidelity_map.faces),
+            time_sampling = boundary_fallback ? "window_start_boundary_fallback" :
+                            String(settings.flux_time_sampling),
+            amount_seconds = dt_met_seconds / (2 * final_steps))
+        omega_evidence = NoSourceOmegaEvidence{
+            CubedSphereTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega())
+        final_fidelity = FluxFidelityEvidenceBundle(flux_evidence, omega_evidence,
+                                                    closure_record[])
+        write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(
+            nwindow, final_payload, final_fidelity))
 
         worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
         worst_post = max(worst_post, bal_diag.max_post_residual)
@@ -994,7 +1122,7 @@ function process_era5_n320_to_cs_day(date::Date,
         # runtime executes it directly (no runtime CFL adaptation).
         set_streaming_steps_per_window_schedule!(writer.inner, steps_schedule)
 
-        # Summarize positivity BEFORE promoting the .tmp so a failed-gate day
+        # Summarize positivity BEFORE publishing so a failed-gate day
         # quarantines the staged file (matches cubed_sphere_regrid.jl:610-617).
         summarize_cs_positivity_status(worst_positivity;
                                        cfl_limit = positivity_cfl_limit,
@@ -1013,6 +1141,14 @@ function process_era5_n320_to_cs_day(date::Date,
                             worst_replay_rel, worst_replay_abs, worst_replay_win)
         return nothing
     finally
+        if writer !== nothing && !writer.promoted
+            try
+                quarantine_streaming_binary!(writer)
+            catch err
+                @warn("ERA5 N320 preprocessor: failed to close staging writer during cleanup",
+                      exception = (err, catch_backtrace()))
+            end
+        end
         close_era5_day!(handles)
         @isdefined(surf_reader) && close_era5_surface_reader(surf_reader)
     end
@@ -1058,6 +1194,8 @@ function process_day(date::Date,
                      max_steps_per_window::Integer = typemax(Int),
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
+                     mass_fix_target_ps_dry_pa::Real = NaN,
+                     configured_last_day::Union{Nothing, Date} = nothing,
                      kwargs...)
     reject_removed_horizontal_balance_keyword(kwargs)
     # The substep floor is the policy's min_steps_per_window (the entrypoint
@@ -1080,7 +1218,9 @@ function process_day(date::Date,
         cache_dir                 = grid.cache_dir,
         include_convection        = settings.include_convection,
         global_mass_pin           = global_mass_pin,
-        global_mass_target_kg     = global_mass_target_kg)
+        global_mass_target_kg     = global_mass_target_kg,
+        mass_fix_target_ps_dry_pa = mass_fix_target_ps_dry_pa,
+        configured_last_day       = configured_last_day)
     # Surface the fixed target so the unified driver's serial path can echo it
     # across days (no-op for the threaded path, which uses the config target).
     return (; final_m = nothing,

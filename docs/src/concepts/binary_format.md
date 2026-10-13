@@ -59,7 +59,7 @@ the runtime actually dispatches on:
 | `cs_coordinate_law` | `Symbol` | CS only — e.g. `:equiangular_gnomonic` or `:gmao_equal_distance_gnomonic` |
 | `cs_center_law` | `Symbol` | CS only — `:angular_midpoint` or `:four_corner_normalized` |
 | `longitude_offset_deg` | `Float64` | CS only — final longitude rotation, `-10.0` for GEOS native |
-| `planet_radius_m` | `Float64` | radius [m] of the mesh on which the preprocessor computed cell areas and air masses; the runtime builds its mesh with it. The preprocessors use the IFS radius 6 371 229 m; binaries without the key read as 6 371 000 m |
+| `planet_radius_m` | `Float64` | radius [m] of the mesh on which the preprocessor computed cell areas and air masses; the runtime builds its mesh with it. Preprocessing targets use `EARTH_RADIUS` (6 371 000 m), which is also the fallback for binaries without the key. `IFS_EARTH_RADIUS` (6 371 229 m) is reserved for physical IFS/TM5 source calculations and legacy binaries that explicitly recorded it. |
 | `dt_met_seconds` | `Float64` | met-window cadence (typically 3600 s for hourly ERA5) |
 | `steps_per_window` | `Int` | compatibility scalar, equal to `maximum(steps_per_window_by_window)` |
 | `steps_per_window_by_window` | `Vector{Int}` | required v4 per-window substep schedule used by replay gates and runtime stepping |
@@ -78,6 +78,15 @@ the header. `header_bytes` and a few sampling-metadata fields
 (`source_flux_sampling`, `air_mass_sampling`, `humidity_sampling`,
 `delta_semantics`, optional `runtime_substep_contract`) round out the header.
 The full list lives in `src/MetDrivers/TransportBinary.jl`.
+
+Every current writer also emits a schema-2 flux-fidelity certificate. The
+reader decodes its status and construction kind into nominal types
+(`FidelityPassed`, `FidelityFailed`, `FidelityNotApplicable`,
+`FidelityUnavailable`; and `WindRederivedFidelity`,
+`NativePassthroughFidelity`, or `NoFluxFidelityKind`). Downstream code therefore
+dispatches on types rather than switching on `Symbol` values. A pre-C6 v4 file
+remains readable but is represented as `FidelityUnavailable` with reason
+`legacy_header_missing`.
 
 ## Payload sections
 
@@ -375,7 +384,7 @@ the source binary. A passing binary is self-consistent:
   substep counts) still integrates to its stored endpoints, which also
   catches stale or damaged binaries.
 
-The gate does **not** validate the winds. Because `cm` is re-diagnosed from
+The replay gate alone does **not** validate the winds. Because `cm` is re-diagnosed from
 the same fluxes it checks, it cannot detect:
 
 - horizontal flux errors that leave every column's budget intact: a
@@ -392,11 +401,218 @@ the same fluxes it checks, it cannot detect:
   `cm` diagnosis sets both boundary values to zero, but the gate does not
   check them;
 `test/core/test_replay_consistency.jl` ("Replay gate scope") checks these
-statements. Flux errors of the kind listed above must be found by comparing
-the fluxes with their source, for example by re-deriving a sample of face
-fluxes from the source winds and pressure thickness, or by comparing the
-diagnosed `cm` with the source's vertical velocity; the preprocessors do
-not run such checks today.
+statements. The independent flux-fidelity gate below covers the corresponding
+source comparison for newly generated binaries.
+
+## Flux-fidelity gate and header certificate
+
+Before balance and before payload serialization, paths that have winds
+independently reconstruct deterministic sampled face amounts from source
+`u`, `v`, and layer pressure thickness `Δp`:
+
+```math
+F_f = \frac{\Delta t_{\mathrm{amount}}}{g}
+      \int_f [(u\,\mathbf e_\lambda+v\,\mathbf e_\phi)\cdot\mathbf n_f]
+      \,\Delta p\,dl.
+```
+
+The evaluator is scalar and separate from the bulk constructor. It implements
+the selected panel-average, vector/FV3, or line-integral definition directly.
+For line integrals it rebuilds all 16 midpoint locations and their four-cell
+source interpolation weights from the source and target meshes; it never reads
+the production sparse operator. The direct stencils for the selected faces are
+cached once per workspace and reused at subsequent endpoints, and the moist
+layer thickness `|ΔA + ΔB p_s|` is evaluated only at the stencil cells.
+Independence has limits that the certificate cannot remove:
+
+- the panel-average and line-integral evaluators are independent of the
+  production constructors; the vector evaluator re-evaluates the face formula
+  but reuses the production face geometry and FV3 filter (`_vector_face_value`,
+  face lengths), so it catches assembly, scatter and time-scaling errors, not
+  geometry errors;
+- reference and candidate read the same input arrays (winds, pressure
+  thickness, humidity), so no check can catch an input error: wrong
+  registration, level order or units pass;
+- native GEOS fluxes have no independent source to rederive them from. Their
+  certificate is `not_applicable` with reason `native_fluxes_not_rederivable`
+  (kind `native_passthrough`) and records only the balance correction.
+
+Each topology has a deterministic sample rule (`flux_fidelity_sample_rule`):
+`cs_stratified_faces_v1` (cubed sphere: seams, panel corners, interior),
+`structured_hashed_faces_v1` (lat-lon: 256 faces ranked once per workspace;
+only their columns are rebuilt, through the same vertical map) and
+`rg_hashed_latitude_lines_v1` (reduced Gaussian: about 256 faces on at most
+32 latitude lines, so the check re-synthesizes about 32 of the `2 n_rings − 1`
+lines production synthesizes, with the same spectral transform). The fixed
+SplitMix64 seed and canonical face identifiers make each map stable across
+processes and prevent counting panel-seam mirrors twice. All levels of each
+selected face are checked. Adaptive paths discard rejected schedules and
+certify only the accepted amount duration. Each window states its effective
+time sampling; when a `window_mean` run reaches an archive boundary without a
+next day, the final window uses the start fluxes
+(`window_start_boundary_fallback`, also `flux_time_sampling_effective` in the
+header) and the certificate records `flux_fidelity_time_sampling = "mixed"`
+with `flux_fidelity_time_sampling_by_window`.
+
+For reference `F_r` and independently computed `F_c`, the recorded errors are
+
+```math
+e_{\rm abs}=|F_c-F_r|,\qquad
+e_{\rm rel}=\frac{e_{\rm abs}}
+ {\max(|F_c|,|F_r|,F_{\rm floor})},
+```
+
+where, for the file precision `FT` and the maximum sampled magnitude
+`F_scale`,
+
+```math
+F_{\rm floor}=\max(\operatorname{floatmin}(FT),
+                    \epsilon(FT)\max(F_{\rm scale},1\ {\rm kg})),
+```
+
+```math
+T_{\rm abs}=64\epsilon(FT)\max(F_{\rm scale},1\ {\rm kg}),\qquad
+T_{\rm rel}=256\epsilon(FT).
+```
+
+A sample passes when `e_abs ≤ T_abs` or `e_rel ≤ T_rel`; equivalently it fails
+only when both limits are exceeded. Failure occurs before that window's payload
+is written. The certificate records maximum/RMS absolute and relative errors,
+maximum ULP distance, both tolerances and the scale floor, sample coverage,
+the worst window/face/level, method and effective duration. Because column
+Poisson balance intentionally changes fluxes, its effect is separate. With
+`Δ = F_balanced − F_r` at every sampled face and level of every window (for
+native GEOS fluxes `F_r` is the native amount), the header records the largest
+`|Δ|` (`balance_correction_max_abs_kg`) and the flux-weighted relative
+correction
+
+```math
+\frac{\mathrm{RMS}(\Delta)}{\mathrm{RMS}(F_r)} =
+\sqrt{\frac{\sum \Delta^2}{\sum F_r^2}},
+```
+
+over all samples (`balance_correction_rms_relative`) and per level, whose
+largest value and level (1 = top) are `balance_correction_max_level_rms_relative`
+and `balance_correction_max_level`; `RMS(F_r)` is floored at `F_floor`. A
+per-sample ratio `|Δ|/|F_r|` is not recorded: faces whose pre-balance amount is
+near zero dominate it (golden headers of the earlier definition: maxima of
+6.5e13 on the ERA5 72 × 37 lat-lon golden, 1.3e4 on GEOS-IT C45).
+
+Where source pressure velocity is available, the writer normalizes it to the
+same dry basis, time sampling, grid, and vertical coordinate and compares it
+with the stored downward interface amount through
+
+```math
+\omega_{cm}=\frac{g\,cm}{A_{cell}\Delta t_{amount}}.
+```
+
+The OMEGA certificate records bias, RMSE, normalized RMSE, maximum error,
+slope, correlation, bottom residual, and NRMSE in the surface–700, 700–300,
+300–100, 100–10, and below-10 hPa bands, with
+`NRMSE = RMS(ω_cm − ω_src)/RMS(ω_src)`. It passes only when it has samples,
+every metric is finite, and the named, versioned per-path baseline
+(`omega_fidelity_baseline_id`: `merra2_wind_omega_v3`, `geos_native_omega_v3`)
+holds all three gates, recorded in the header:
+
+- `NRMSE < 1.0` (`omega_fidelity_nrmse_limit`): `NRMSE = 1` is the score of
+  `cm ≡ 0`, so the stored vertical transport must be closer to the source than
+  none at all;
+- correlation `> 0.5` (`omega_fidelity_correlation_min`);
+- `0.5 < slope < 1.5` (`omega_fidelity_slope_min`, `omega_fidelity_slope_max`),
+  the least-squares slope of `ω_cm` on `ω_src`.
+
+A zero `cm` (NRMSE 1, r 0), a sign-flipped one (NRMSE ≈ 2, r = −1) and a
+level-flipped one (NRMSE ≈ 1.4) fail; MERRA-2 wind-derived C90 measures NRMSE
+0.47, r 0.89, slope 0.87 (2.1× margin). The slope bounds catch an amount or
+time-convention error (`2n` against `n` substeps, the 8× `mass_flux_dt` error,
+a factor `g`): it scales `cm` uniformly, which scales the slope by the same
+factor `s` but leaves the correlation unchanged, and NRMSE stays below 1 for
+`s` down to 1/20 (on a source with the MERRA-2 C90 statistics: NRMSE 0.61 at
+`s = 1/2`, 0.89 at 1/8). The bounds are symmetric about the measured 0.865 in
+log space (`0.865/1.73` and `0.865 × 1.73`), so `s = 2` (slope 1.73) and
+`s = 1/2` (0.43) fail. An aggregate failure writes a `failed`
+certificate (`omega_fidelity_passed = false`) and quarantines the staged file.
+MERRA-2 compares the OMEGA of its winds collection (`tavg3` block mean or
+`inst3` block start, recorded in `omega_fidelity_source`/`_sampling`) on the
+dry basis of each sub-window's own start humidity. When winds or OMEGA are not
+present, numeric metrics are omitted (never NaN) and a typed `not_applicable`
+or `unavailable` reason is recorded.
+
+The reader checks each certificate for consistency and rejects one that a
+writer cannot produce: a `passed` flux certificate is `wind_rederived`, covers
+`nwindow` windows with `sample_count = windows × samples_per_window × nlevel`
+and carries every metric, finite; a `native_passthrough` certificate is
+`not_applicable` with finite balance-correction metrics; a certificate without
+samples carries no metrics; a `passed` OMEGA certificate has samples, finite
+metrics, `omega_fidelity_passed = true` and satisfies its own recorded gates.
+The writer enforces the same coverage before it patches the header.
+
+Every cubed-sphere writer that column-balances its fluxes (ERA5 spectral and
+N320, MERRA-2, GEOS closures with a balance, lat-lon → cubed-sphere regrid)
+also records the column closure of every window. The integrated balance runs
+in Float64; a Float32 payload rounds the redistributed face values, so the
+mean-free column residual `r_c^⊥` of the stored fluxes must satisfy, in every
+cell `c`,
+
+```math
+|r_c^\perp| \le \tau_c = \max\!\left(\mathtt{closure\_tol},\;
+  8\,\epsilon_{FT}\sum_{f\partial c}\sum_k |F_{f,k}|\right),
+```
+
+the representability bound of the cell's own stored faces (`closure_tol` =
+`COLUMN_CLOSURE_TOL_KG` = 10 kg per flux application, the bound that binds for
+Float64 payloads); the `cm` residual `R_c` folded into the column
+must satisfy the same `τ_c` plus the rounding bound of the `cm` recursion. A
+window outside either bound fails before it is written (GEOS OMEGA closures
+re-check the closure after their reconstruction moves flux between levels); an unpinned run whose
+endpoints differ in global air mass fails here with a message that names
+`[mass_fix]`. The header keys `column_closure_rule`
+(`per_cell_8eps_incident_flux_v1`), `column_closure_windows`,
+`column_closure_projected_residual_max_kg`,
+`column_closure_residual_to_tolerance_max`,
+`column_closure_booked_residual_max_kg` and
+`column_closure_cm_residual_to_tolerance_max` hold the maxima over windows
+(both ratios at most 1; residuals and tolerances per flux application, the kg
+residuals stated in the payload's amount convention). The projected residual
+and its ratio describe the fluxes as stored: GEOS stores full-window amounts,
+the balanced per-application fluxes multiplied by `2n` in the storage type (a
+Float32 product that rounds unless `2n` is a power of two), and evaluates the
+closure again on the stored values (`flux_scale = 1/(2n)`; GEOS-IT C45
+golden: largest ratio 0.014 in the windows with `n = 9`, against 0.0012
+before the scaling); the `cm` keys
+record the residual folded into `cm` when it was diagnosed. Lat-lon,
+reduced-Gaussian, payload-only and GEOS pressure-fixer binaries have no
+cubed-sphere column balance and omit them. The reader decodes the keys into
+`TransportBinaryHeader.column_closure` (`ColumnClosureHeader`; a binary without
+them reads as `NoColumnClosureHeader()`, "not recorded") and refuses to load a
+record that is incomplete, names another rule, covers other than `nwindow`
+windows, or holds a non-finite, negative or above-1 ratio: such a binary must
+be regenerated.
+
+**Known limits.**
+
+- The GEOS OMEGA baseline (`geos_native_omega_v3`) reuses the MERRA-2 gates
+  and has not been measured: no golden case covers the `omega_regularized` or
+  `omega_full_replacement` closures. A GEOS OMEGA day may fail the gate, and
+  `omega_regularized` with a per-level cap (`applied_scale < 1`) breaks
+  column neutrality, which the closure re-check rejects. Run one day of such a
+  configuration before relying on it.
+- Coarse unpinned Float32 runs can approach the `cm` closure limit: an
+  unpinned GEOS-IT C45 golden day (`[mass_fix] enable = false`) passes with
+  `column_closure_cm_residual_to_tolerance_max = 0.924`, because the global
+  air-mass change of each window stays in every column. Other days can exceed
+  1 and fail before the window is written, with a message that names
+  `[mass_fix]`.
+
+The flat keys begin with `flux_fidelity_`, `omega_fidelity_`,
+`balance_correction_` and `column_closure_`; they form one block, which a
+payload-preserving tool (the TM5 convection attachment) copies verbatim from
+its source and which replaces a writer's default block as a whole.
+`flux_fidelity_schema = 2` is part of the output-reuse
+contract, so an older uncertified binary is regenerated rather than skipped;
+the reader refuses any other schema with a "regenerate this binary" error.
+The final aggregate header is patched at close time; the payload layout and
+bytes are unchanged.
 
 ## What's next
 

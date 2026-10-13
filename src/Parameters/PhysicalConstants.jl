@@ -11,10 +11,10 @@
 # schemes.
 # =============================================================================
 
-"Default Earth radius of meshes built without one [m] (mean radius, rounded)."
+"Earth radius of every transport target mesh [m] (mean radius, rounded)."
 const EARTH_RADIUS = 6.371e6
 
-"Earth radius of the ECMWF IFS [m]: ERA5 spectral transforms, TM5, and the preprocessing target meshes."
+"Earth radius of the ECMWF IFS [m], used only where reproducing IFS/TM5 source geometry requires it."
 const IFS_EARTH_RADIUS = 6.371229e6
 
 "Standard acceleration of gravity [m s⁻²] (3rd CGPM 1901; WMO)."

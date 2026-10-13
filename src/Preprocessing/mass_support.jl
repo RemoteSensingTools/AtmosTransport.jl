@@ -62,43 +62,59 @@ function remap_extensive_field_pressure_overlap!(dst::Array{FT, 3},
 
     Threads.@threads for j in 1:Ny
         @inbounds for i in 1:Nx
-            psij = Float64(ps[i, j])
-            for kt in 1:Nt
-                dst[i, j, kt] = zero(FT)
+            _remap_extensive_column_pressure_overlap!(
+                view(dst, i, j, :), view(src, i, j, :), Float64(ps[i, j]), src_vc, dst_vc)
+        end
+    end
+    return dst
+end
+
+# One column of `remap_extensive_field_pressure_overlap!` at surface pressure
+# `psij`; shared with the write-time flux-fidelity check, which evaluates only
+# the sampled columns.
+function _remap_extensive_column_pressure_overlap!(dst::AbstractVector{FT},
+                                                   src::AbstractVector,
+                                                   psij::Float64,
+                                                   src_vc::HybridSigmaPressure,
+                                                   dst_vc::HybridSigmaPressure) where FT
+    Ns = length(src)
+    Nt = length(dst)
+    @inbounds begin
+        for kt in 1:Nt
+            dst[kt] = zero(FT)
+        end
+
+        ks0 = 1
+        for kt in 1:Nt
+            t0 = Float64(dst_vc.A[kt]) + Float64(dst_vc.B[kt]) * psij
+            t1 = Float64(dst_vc.A[kt + 1]) + Float64(dst_vc.B[kt + 1]) * psij
+            tlo = min(t0, t1)
+            thi = max(t0, t1)
+            acc = 0.0
+
+            while ks0 <= Ns
+                s0 = Float64(src_vc.A[ks0]) + Float64(src_vc.B[ks0]) * psij
+                s1 = Float64(src_vc.A[ks0 + 1]) + Float64(src_vc.B[ks0 + 1]) * psij
+                max(s0, s1) <= tlo && (ks0 += 1; continue)
+                break
             end
 
-            ks0 = 1
-            for kt in 1:Nt
-                t0 = Float64(dst_vc.A[kt]) + Float64(dst_vc.B[kt]) * psij
-                t1 = Float64(dst_vc.A[kt + 1]) + Float64(dst_vc.B[kt + 1]) * psij
-                tlo = min(t0, t1)
-                thi = max(t0, t1)
-                acc = 0.0
-
-                while ks0 <= Ns
-                    s0 = Float64(src_vc.A[ks0]) + Float64(src_vc.B[ks0]) * psij
-                    s1 = Float64(src_vc.A[ks0 + 1]) + Float64(src_vc.B[ks0 + 1]) * psij
-                    max(s0, s1) <= tlo && (ks0 += 1; continue)
-                    break
+            ks = ks0
+            while ks <= Ns
+                s0 = Float64(src_vc.A[ks]) + Float64(src_vc.B[ks]) * psij
+                s1 = Float64(src_vc.A[ks + 1]) + Float64(src_vc.B[ks + 1]) * psij
+                slo = min(s0, s1)
+                shi = max(s0, s1)
+                slo >= thi && break
+                overlap = min(shi, thi) - max(slo, tlo)
+                if overlap > 0
+                    thick = shi - slo
+                    thick > 0 && (acc += Float64(src[ks]) * overlap / thick)
                 end
-
-                ks = ks0
-                while ks <= Ns
-                    s0 = Float64(src_vc.A[ks]) + Float64(src_vc.B[ks]) * psij
-                    s1 = Float64(src_vc.A[ks + 1]) + Float64(src_vc.B[ks + 1]) * psij
-                    slo = min(s0, s1)
-                    shi = max(s0, s1)
-                    slo >= thi && break
-                    overlap = min(shi, thi) - max(slo, tlo)
-                    if overlap > 0
-                        thick = shi - slo
-                        thick > 0 && (acc += Float64(src[i, j, ks]) * overlap / thick)
-                    end
-                    shi >= thi && break
-                    ks += 1
-                end
-                dst[i, j, kt] = FT(acc)
+                shi >= thi && break
+                ks += 1
             end
+            dst[kt] = FT(acc)
         end
     end
     return dst
@@ -122,11 +138,24 @@ function fill_xface_surface_pressure!(ps_xface::AbstractMatrix{<:Real},
     size(ps_xface) == (Nx + 1, Ny) ||
         throw(DimensionMismatch("x-face ps shape $(size(ps_xface)) != ($Nx+1, $Ny)"))
     @inbounds for j in 1:Ny, i in 1:(Nx + 1)
-        il = i == 1 ? Nx : i - 1
-        ir = i <= Nx ? i : 1
-        ps_xface[i, j] = _geometric_mean_ps(ps_cell[il, j], ps_cell[ir, j])
+        ps_xface[i, j] = _xface_surface_pressure(ps_cell, i, j)
     end
     return ps_xface
+end
+
+# Surface pressure of x-face `(i, j)` (periodic in longitude) and of y-face
+# `(i, j)` (pole rows copy the adjacent cell), as `fill_*face_surface_pressure!`.
+@inline function _xface_surface_pressure(ps_cell::AbstractMatrix{<:Real}, i::Int, j::Int)
+    Nx = size(ps_cell, 1)
+    il = i == 1 ? Nx : i - 1
+    ir = i <= Nx ? i : 1
+    return _geometric_mean_ps(ps_cell[il, j], ps_cell[ir, j])
+end
+@inline function _yface_surface_pressure(ps_cell::AbstractMatrix{<:Real}, i::Int, j::Int)
+    Ny = size(ps_cell, 2)
+    j == 1 && return Float64(ps_cell[i, 1])
+    j == Ny + 1 && return Float64(ps_cell[i, Ny])
+    return _geometric_mean_ps(ps_cell[i, j - 1], ps_cell[i, j])
 end
 
 """
@@ -142,12 +171,8 @@ function fill_yface_surface_pressure!(ps_yface::AbstractMatrix{<:Real},
     Nx, Ny = size(ps_cell)
     size(ps_yface) == (Nx, Ny + 1) ||
         throw(DimensionMismatch("y-face ps shape $(size(ps_yface)) != ($Nx, $Ny+1)"))
-    @inbounds for i in 1:Nx
-        ps_yface[i, 1] = Float64(ps_cell[i, 1])
-        ps_yface[i, Ny + 1] = Float64(ps_cell[i, Ny])
-    end
-    @inbounds for j in 2:Ny, i in 1:Nx
-        ps_yface[i, j] = _geometric_mean_ps(ps_cell[i, j - 1], ps_cell[i, j])
+    @inbounds for j in 1:(Ny + 1), i in 1:Nx
+        ps_yface[i, j] = _yface_surface_pressure(ps_cell, i, j)
     end
     return ps_yface
 end
@@ -368,20 +393,24 @@ function balance_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
 end
 
 """
-    balance_column_mass_fluxes!(am, bm, m, dm_dt, ws::LLPoissonWorkspace)
+    balance_column_mass_fluxes!(am, bm, m, dm_dt, ws::LLPoissonWorkspace;
+                                weights = MassWeightedColumn())
 
 Column Poisson balance of a lat-lon window: one FFT Poisson solve
 (`balance_mass_fluxes!`) makes the convergence of the
 column-integrated fluxes `Σ_k am`, `Σ_k bm` equal the column mass tendency
 `Σ_k dm_dt` in every cell, and each face's column correction `δ` is spread
-over the layers by the air mass of the two cells that share it
-(`spread_column_correction!`). The layer winds keep their vertical
-structure, and `cm` diagnosed afterwards from the explicit tendency carries
-the vertical motion and closes at the top and the surface.
+over the layers by `spread_column_correction!` with the column `weights`
+(`AbstractColumnWeights`; production passes the configured
+`column_balance_weights`, `hybrid_mass` by default, built from the output
+coordinate's `B`). The layer winds keep their vertical structure, and `cm`
+diagnosed afterwards from the explicit tendency carries the vertical motion
+and closes at the top and the surface.
 """
 function balance_column_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
                                      m::Array{FT, 3}, dm_dt::Array{FT, 3},
-                                     ws::LLPoissonWorkspace) where FT
+                                     ws::LLPoissonWorkspace;
+                                     weights::AbstractColumnWeights = MassWeightedColumn()) where FT
     Nx = size(am, 1) - 1
     Ny = size(bm, 2) - 1
     Nz = size(am, 3)
@@ -391,6 +420,7 @@ function balance_column_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
         error("balance_column_mass_fluxes!: m shape $(size(m)) incompatible with am $(size(am))")
     size(dm_dt) == size(m) ||
         error("balance_column_mass_fluxes!: dm_dt shape $(size(dm_dt)) incompatible with m $(size(m))")
+    _check_weight_levels(weights, Nz)
 
     col_am = zeros(FT, Nx + 1, Ny, 1)
     col_bm = zeros(FT, Nx, Ny + 1, 1)
@@ -420,7 +450,6 @@ function balance_column_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
     balance_mass_fluxes!(col_am, col_bm, col_dm, ws; log_summary=false)
 
     max_face_delta = 0.0
-    weights = MassWeightedColumn()
     @inbounds for j in 1:Ny, i in 1:Nx + 1
         delta = Float64(col_am[i, j, 1] - col_am_before[i, j, 1])
         max_face_delta = max(max_face_delta, abs(delta))
@@ -720,6 +749,22 @@ function recompute_cm_from_divergence!(cm::Array{FT, 3}, am::Array{FT, 3},
         end
     end
 end
+
+"""
+    mass_fix_target_ps_dry_record(target_ps_dry_pa, target_kg, total_area_m2, g) -> Float64
+
+Header value `mass_fix_target_ps_dry_pa` of a native-source dry-mass pin. A
+configured target (`[mass_fix] mode = "target_ps_dry"`, `target_ps_dry_pa`
+finite) is recorded exactly: recomputing it from the pinned air mass rounds
+(98325.00000000001 Pa) or, with a Float32 `g`, is off by 1.6e-3 Pa. Without
+one (GEOS `mode = "initial_endpoint"`, or a caller that passes only a kg
+target, `target_ps_dry_pa = NaN`) the record is the mean dry surface pressure
+of the pinned mass, `target_kg g / A`.
+"""
+mass_fix_target_ps_dry_record(target_ps_dry_pa::Real, target_kg::Real,
+                              total_area_m2::Real, g::Real) =
+    isfinite(target_ps_dry_pa) ? Float64(target_ps_dry_pa) :
+        Float64(target_kg) * Float64(g) / Float64(total_area_m2)
 
 """
     pin_global_mean_ps!(sp, area; target_ps_dry_pa, qv_global) -> Float64

@@ -7,7 +7,7 @@
 #       config/preprocessing/merra2_geoschem_c90_l72_f32_hm_gchp.toml \
 #       --start 2021-12-01 --end 2023-12-31
 #
-# Flux construction as in GCHP (met source merra2_geoschem_hm_gchp.toml):
+# Flux construction as in GCHP (now the met-source default):
 # hybrid-mass column closure, vector face fluxes with the seam correction,
 # Cartesian wind regrid and FV3's along-face filter. See
 # docs/memos/2026-10-07_v0.5_transport_fidelity_backlog.md, section B1.
@@ -20,7 +20,7 @@
 # ===========================================================================
 
 [source]
-toml     = "config/met_sources/merra2_geoschem_hm_gchp.toml"
+toml     = "config/met_sources/merra2_geoschem.toml"
 root_dir = "~/data/AtmosTransport/met/merra2/geoschem_0.5x0.625"
 
 [vertical]

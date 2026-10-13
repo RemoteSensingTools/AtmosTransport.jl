@@ -92,11 +92,13 @@ struct MERRA2ToC180Pipeline{FT <: AbstractFloat, R, P, E, W <: AbstractWindRegri
     regridder   :: R
     ws          :: CubedSpherePreprocessWorkspace{FT}
     Nz          :: Int
-    c180_fields :: NamedTuple{(:ps, :qv, :u, :v),
+    c180_fields :: NamedTuple{(:ps, :qv, :u, :v, :omega),
                               Tuple{NTuple{6, Matrix{FT}},
                                     NTuple{6, Array{FT, 3}},
                                     NTuple{6, Array{FT, 3}},
+                                    NTuple{6, Array{FT, 3}},
                                     NTuple{6, Array{FT, 3}}}}
+    omega_available :: Ref{Bool}
     phys        :: P
     edge_src    :: E
     edge_dst    :: E
@@ -165,6 +167,7 @@ function allocate_merra2_to_c180_pipeline(target_grid::CubedSphereTargetGeometry
         qv = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6),
         u  = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6),
         v  = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6),
+        omega = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6),
     )
     panels2() = ntuple(_ -> zeros(FT, Nc, Nc), 6)
     panels3(nz) = ntuple(_ -> zeros(FT, Nc, Nc, nz), 6)
@@ -183,7 +186,7 @@ function allocate_merra2_to_c180_pipeline(target_grid::CubedSphereTargetGeometry
     edge_dst = conv ? zeros(FT, n_dst, Nz_int + 1) : nothing
     wind = _wind_regrid(settings.wind_regrid, source_ll_mesh, target_grid.mesh, Nz_int, FT)
     return MERRA2ToC180Pipeline{FT, typeof(regridder), typeof(phys), typeof(edge_src), typeof(wind)}(
-        regridder, ws, Nz_int, c180_fields, phys, edge_src, edge_dst, wind)
+        regridder, ws, Nz_int, c180_fields, Ref(false), phys, edge_src, edge_dst, wind)
 end
 
 """
@@ -205,6 +208,11 @@ function process_merra2_window!(pipe::MERRA2ToC180Pipeline{FT},
     _regrid_winds!(pipe.wind, pipe.c180_fields.u, pipe.c180_fields.v,
                    (panels, f) -> regrid_3d_to_cs_panels!(panels, pipe.regridder, f, pipe.ws, Nc),
                    fields.u, fields.v)
+    pipe.omega_available[] = fields.omega !== nothing
+    if fields.omega !== nothing
+        regrid_3d_to_cs_panels!(pipe.c180_fields.omega, pipe.regridder,
+                                fields.omega, pipe.ws, Nc)
+    end
     isempty(pipe.phys) || _regrid_merra2_physics!(pipe, handles, win)
     return pipe
 end
@@ -400,6 +408,7 @@ struct MERRA2DayDriver{S, H, G, V, W, B, F, X, Q}
     replay_tol   :: Float64
     replay_check :: Bool
     mass_target  :: Union{Nothing, Float64}
+    configured_last_day :: Union{Nothing, Date}
     scratch      :: X
     win_phys     :: Q
 end
@@ -420,13 +429,24 @@ MERRA2DayDiagnostics(nwindow, steps) =
     MERRA2DayDiagnostics(fill(steps, nwindow), 0.0, 0.0, 0, 0.0, 0.0, 0,
                          init_cs_positivity_accumulator())
 
-function _merra2_window_scratch(::Type{FT}, Nc, Nz) where FT
+# The OMEGA a MERRA-2 run compares with comes from its winds collection: the
+# 3-hour mean of the block (tavg3, GEOS-Chem A3dyn) or the instantaneous
+# record at the block start (inst3).
+const MERRA2_OMEGA_LABELS = (
+    tavg3 = (source = "MERRA2_tavg3_OMEGA", sampling = "tavg3_block_mean"),
+    inst3 = (source = "MERRA2_inst3_OMEGA", sampling = "inst3_block_start"))
+
+function _merra2_window_scratch(::Type{FT}, Nc, Nz, face_table) where FT
     panels(dims...) = ntuple(_ -> zeros(FT, dims...), 6)
     return (am = panels(Nc + 1, Nc, Nz), bm = panels(Nc, Nc + 1, Nz), cm = panels(Nc, Nc, Nz + 1),
             dm = panels(Nc, Nc, Nz), dp = panels(Nc, Nc, Nz),
             u_local = panels(Nc, Nc, Nz), v_local = panels(Nc, Nc, Nz),
             m_a = panels(Nc, Nc, Nz), m_b = panels(Nc, Nc, Nz),
-            ps_dry = panels(Nc, Nc), ps_moist = panels(Nc, Nc))
+            ps_dry = panels(Nc, Nc), ps_moist = panels(Nc, Nc),
+            fidelity_capture = Ref{Any}(nothing),
+            fidelity_map = FidelitySampleMap(face_table),
+            omega_cells = OmegaFidelityCells(Nc),
+            closure_record = Ref{AbstractColumnClosureRecord}(NoColumnClosureRecord()))
 end
 
 # Global dry-air mass pin, mirroring the GEOS-CS / N320 paths: apply the
@@ -465,13 +485,16 @@ function _read_next_day_endpoint!(d::MERRA2DayDriver, nxt::MERRA2BlockState, cur
     pipe, Nc = nxt.pipe, d.grid.Nc
     endpoint = read_merra2_next_day_endpoint(d.handles, pipe.Nz; FT = eltype(nxt.m_dry[1]))
     if endpoint === nothing
-        # HACK: zero-tendency fallback for the final day of the archive (no
-        # next-day inst3 file). The positivity gate will likely warn/fail, as
-        # it should: the last block's continuity does not close. TODO: accept
-        # only on the configured last day and fail otherwise.
+        _require_configured_terminal_day(
+            d.handles.date, d.configured_last_day, "MERRA-2 preprocessor",
+            "next-day inst3 endpoint for $(d.handles.date + Day(1))")
+        # The configured archive boundary has no next-day inst3 file: the last
+        # block closes against an artificial zero-tendency endpoint.
         @warn "process_merra2_to_cs_day: archive-boundary fallback — no next-day inst3 file " *
-              "for $(d.handles.date + Day(1)), using zero-tendency m_next. Final window's " *
-              "continuity will not close."
+              "for $(d.handles.date + Day(1)). The last block ends at an artificial " *
+              "zero-tendency endpoint (m_next = m_start); its fluxes are still balanced and " *
+              "cm diagnosed against that endpoint, so continuity closes algebraically and " *
+              "the replay gate runs, but the block's mass change is not physical."
         for p in 1:6
             copyto!(nxt.m_dry[p], cur.m_dry[p]); copyto!(nxt.ps_dry[p], cur.ps_dry[p])
             copyto!(pipe.c180_fields.ps[p], cur.pipe.c180_fields.ps[p])
@@ -488,10 +511,6 @@ function _read_next_day_endpoint!(d::MERRA2DayDriver, nxt::MERRA2BlockState, cur
 end
 
 # Layer thickness that multiplies the winds in the face fluxes.
-struct MoistFluxThickness end      # from the moist surface pressure (historical)
-struct DryMassFluxThickness end    # g m_dry / A: the dry air the fluxes transport
-_flux_thickness(kind::Symbol) = (moist = MoistFluxThickness(), dry_mass = DryMassFluxThickness())[kind]
-
 _fill_flux_thickness!(::MoistFluxThickness, x, ps_moist, m_a, vc, mesh, Nc, Nz) =
     fill_cs_layer_thickness!(x.dp, ps_moist, vc.A, vc.B, Nc, Nz)
 function _fill_flux_thickness!(::DryMassFluxThickness, x, ps_moist, m_a, vc, mesh, Nc, Nz)
@@ -515,6 +534,10 @@ function _balance_window!(d::MERRA2DayDriver, ps_moist, m_a, m_b, steps)
     Nc, Nz = d.grid.Nc, size(m_a[1], 3)
     _reconstruct_window_fluxes!(d.flux, x, ps_moist, m_a, vc, mesh,
                                 FT(STANDARD_GRAVITY), FT(d.dt_window / (2 * steps)), Nc, Nz)
+    x.fidelity_capture[] = capture_cs_wind_flux_samples(
+        d.flux.method, x.am, x.bm, x.u_local, x.v_local, x.dp,
+        d.grid.face_table, FT(STANDARD_GRAVITY), FT(d.dt_window / (2 * steps)),
+        Nc, Nz; sample_map = x.fidelity_map)
     g, tol, project_every = d.grid, d.balance.tol, d.balance.project_every
     # Column solve, the correction spread over the levels by `weights`.
     diag = balance_cs_column_mass_fluxes!(x.am, x.bm, m_a, m_b, g.face_table, g.cell_degree,
@@ -524,7 +547,9 @@ function _balance_window!(d::MERRA2DayDriver, ps_moist, m_a, m_b, steps)
     sync_all_cs_boundary_mirrors!(x.am, x.bm, mesh.connectivity, Nc, Nz)
     fill_cs_window_mass_tendency!(x.dm, m_a, m_b, steps)
     foreach(c -> fill!(c, zero(FT)), x.cm)
-    diagnose_cs_cm!(x.cm, x.am, x.bm, x.dm, m_a, Nc, Nz, d.balance.weights)
+    cm_diag = _diagnose_balanced_cs_cm!(x.cm, x.am, x.bm, x.dm, m_a, Nc, Nz, diag,
+                                        "MERRA-2 window", d.balance.weights)
+    x.closure_record[] = column_closure_record(diag, cm_diag)
     return diag
 end
 
@@ -590,7 +615,31 @@ function _emit_block!(d::MERRA2DayDriver, cur::MERRA2BlockState, nxt::MERRA2Bloc
         _fill_cs_mass_delta_payload!(x.dm, x.m_a, x.m_b)
         payload = merge((m = x.m_a, am = x.am, bm = x.bm, cm = x.cm, ps = x.ps_dry, dm = x.dm),
                         merra2_window_physics!(d.win_phys, d.settings, cur.pipe, nxt.pipe, h, d.nsub))
-        write_window!(d.writer, ReadyWindow{CubedSphereTargetGeometry, FT}(win, payload))
+        flux_evidence = wind_derived_evidence(
+            CubedSphereTargetGeometry, x.fidelity_capture[], x.am, x.bm,
+            d.grid.face_table;
+            method = flux_fidelity_method(d.flux.method),
+            samples_per_window = length(x.fidelity_map.faces),
+            time_sampling = "window_start_endpoint",
+            amount_seconds = d.dt_window / (2 * steps))
+        omega_evidence = if cur.pipe.omega_available[]
+            # Dry conversion with the sub-window's own start humidity (`qv_a`,
+            # linear in time within the block), not the block-start one.
+            labels = getproperty(MERRA2_OMEGA_LABELS, d.settings.winds_collection)
+            source_omega_evidence_cs(
+                CubedSphereTargetGeometry, x.cm, cur.pipe.c180_fields.omega,
+                d.win_phys.qv_a, x.ps_moist, d.vc.A, d.vc.B,
+                d.grid.mesh.cell_areas, FT(STANDARD_GRAVITY),
+                d.dt_window / (2 * steps), x.omega_cells;
+                source = labels.source, sampling = labels.sampling,
+                baseline = MERRA2_WIND_OMEGA_BASELINE)
+        else
+            NoSourceOmegaEvidence{
+                CubedSphereTargetGeometry,FT,SourceNotOpened}(SourceNotOpened())
+        end
+        fidelity = FluxFidelityEvidenceBundle(flux_evidence, omega_evidence,
+                                              x.closure_record[])
+        write_window!(d.writer, ReadyWindow{CubedSphereTargetGeometry, FT}(win, payload, fidelity))
         @info @sprintf("    Window %2d/%d: wrote (steps=%d bal %.2fs pre=%.2e post=%.2e iter=%d)",
                        win, length(diag.steps), steps, t_balance, balance.max_pre_residual,
                        balance.max_post_residual, balance.max_cg_iter)
@@ -629,10 +678,9 @@ end
 
 function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{FT}, vc, out_path,
                              nwindow, nsub, dt_window, steps, policy, mass_target,
-                             write_replay_on::Bool) where FT
+                             mass_target_ps_dry_pa::Real, write_replay_on::Bool) where FT
     mkpath(dirname(out_path))
-    tmp_path = out_path * ".tmp"
-    isfile(tmp_path) && rm(tmp_path)
+    tmp_path = _open_preprocessing_staging(out_path)
     header = merge(_merra2_provenance(settings, handles, nsub), Dict{String, Any}(
         "preprocessor" => "process_merra2_to_cs_day",
         # Advection at the baked substep cadence; convection and chemistry once
@@ -654,21 +702,27 @@ function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{
         "global_mass_pin_target_kg" => mass_target,
     ))
     mass_target === nothing ||
-        (header["mass_fix_target_ps_dry_pa"] = Float64(mass_target) * STANDARD_GRAVITY /
-            (6.0 * sum(Float64, grid.mesh.cell_areas)))
-    inner = open_streaming_cs_transport_binary(
-        tmp_path, grid.Nc, 6, length(vc.A) - 1, nwindow, vc;
-        FT, dt_met_seconds = dt_window, half_dt_seconds = dt_window / 2,
-        steps_per_window = steps, include_flux_delta = true, mass_basis = :dry,
-        surface_pressure_basis = DrySurfacePressure(),
-        include_surface = has_surface(settings), include_cmfmc = has_convection(settings),
-        include_dtrain = has_convection(settings), include_gchp_vdiff = has_vdiff_fields(settings),
-        include_pbl_eflux = has_pbl_eflux(settings),
-        include_cmfmc_cloud_base = has_cmfmc_cloud_base(settings),
-        panel_convention = _cs_panel_convention_tag(grid), cs_definition = _cs_definition_tag(grid),
-        cs_coordinate_law = _cs_coordinate_law_tag(grid), cs_center_law = _cs_center_law_tag(grid),
-        longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
-        planet_radius = grid.mesh.radius, extra_header = _with_replay_record(header, write_replay_on))
+        (header["mass_fix_target_ps_dry_pa"] = mass_fix_target_ps_dry_record(
+            mass_target_ps_dry_pa, mass_target, 6.0 * sum(Float64, grid.mesh.cell_areas),
+            STANDARD_GRAVITY))
+    inner = try
+        open_streaming_cs_transport_binary(
+            tmp_path, grid.Nc, 6, length(vc.A) - 1, nwindow, vc;
+            FT, dt_met_seconds = dt_window, half_dt_seconds = dt_window / 2,
+            steps_per_window = steps, include_flux_delta = true, mass_basis = :dry,
+            surface_pressure_basis = DrySurfacePressure(),
+            include_surface = has_surface(settings), include_cmfmc = has_convection(settings),
+            include_dtrain = has_convection(settings), include_gchp_vdiff = has_vdiff_fields(settings),
+            include_pbl_eflux = has_pbl_eflux(settings),
+            include_cmfmc_cloud_base = has_cmfmc_cloud_base(settings),
+            panel_convention = _cs_panel_convention_tag(grid), cs_definition = _cs_definition_tag(grid),
+            cs_coordinate_law = _cs_coordinate_law_tag(grid), cs_center_law = _cs_center_law_tag(grid),
+            longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
+            planet_radius = grid.mesh.radius, extra_header = _with_replay_record(header, write_replay_on))
+    catch
+        abandon_atomic_staging(tmp_path)
+        rethrow()
+    end
     return CubedSphereBinaryWriter(inner, mass_basis_from_symbol(:dry); Nc = grid.Nc, npanel = 6,
                                    final_path = String(out_path))
 end
@@ -677,7 +731,8 @@ end
     process_merra2_to_cs_day(date, settings, target_grid; out_path, dt_met_seconds, …)
 
 Write a v4 cubed-sphere transport binary for one UTC `date` from MERRA-2 to
-`out_path` (staged as `out_path.tmp`, promoted when the gates pass).
+`out_path` (written through a unique sibling staging file and atomically
+published when the gates pass).
 
 Horizontal mass fluxes come from the regridded 3-hour mean winds and are
 Poisson-balanced (a column pressure fix) against the dry-mass change between
@@ -706,7 +761,9 @@ function process_merra2_to_cs_day(date::Date,
                                   write_replay_check::Bool = true,
                                   cache_dir::Union{Nothing, AbstractString} = nothing,
                                   global_mass_pin::Bool = false,
-                                  global_mass_target_kg::Real = NaN) where FT
+                                  global_mass_target_kg::Real = NaN,
+                                  mass_fix_target_ps_dry_pa::Real = NaN,
+                                  configured_last_day::Union{Nothing, Date} = nothing) where FT
     mass_basis === :dry ||
         throw(ArgumentError("MERRA-2 → CS writer only supports mass_basis=:dry; got $(mass_basis)"))
     steps_per_window >= 1 || throw(ArgumentError("steps_per_window must be ≥ 1; got $(steps_per_window)"))
@@ -727,6 +784,7 @@ function process_merra2_to_cs_day(date::Date,
                        mass_target * STANDARD_GRAVITY / (6 * sum(Float64, target_grid.mesh.cell_areas)))
 
     handles = open_merra2_day(settings, date; next_day_handle = true)
+    writer = nothing
     try
         new_block() = MERRA2BlockState(allocate_merra2_to_c180_pipeline(target_grid; Nz, cache_dir, settings))
         cur, nxt = new_block(), new_block()
@@ -736,7 +794,7 @@ function process_merra2_to_cs_day(date::Date,
         write_replay_on = write_replay_check
         writer = _open_merra2_writer(settings, handles, target_grid, vc, out_path, nwindow, nsub,
                                      Float64(dt_met_seconds), Int(steps_per_window), policy, mass_target,
-                                     write_replay_on)
+                                     mass_fix_target_ps_dry_pa, write_replay_on)
         @info @sprintf("  Output: %s (Nc=%d, Nz=%d, FT=%s)", basename(out_path), target_grid.Nc, Nz, string(FT))
         d = MERRA2DayDriver(
             settings, handles, target_grid, vc, writer, nsub, Float64(dt_met_seconds), policy,
@@ -746,8 +804,8 @@ function process_merra2_to_cs_day(date::Date,
             (method = _face_flux_method(settings, target_grid),
              thickness = _flux_thickness(settings.flux_thickness)),
             Float64(positivity_cfl_limit), replay_tolerance(FT),
-            write_replay_on, mass_target,
-            _merra2_window_scratch(FT, target_grid.Nc, Nz),
+            write_replay_on, mass_target, configured_last_day,
+            _merra2_window_scratch(FT, target_grid.Nc, Nz, target_grid.face_table),
             allocate_merra2_window_physics(settings, target_grid.Nc, Nz, FT))
         diag = MERRA2DayDiagnostics(nwindow, Int(steps_per_window))
 
@@ -777,6 +835,14 @@ function process_merra2_to_cs_day(date::Date,
                            diag.replay_rel, diag.replay_abs, diag.replay_win)
         return nothing
     finally
+        if writer !== nothing && !writer.promoted
+            try
+                quarantine_streaming_binary!(writer)
+            catch err
+                @warn("MERRA-2 preprocessor: failed to close staging writer during cleanup",
+                      exception = (err, catch_backtrace()))
+            end
+        end
         close_merra2_day!(handles)
     end
 end
@@ -818,6 +884,8 @@ function process_day(date::Date,
                      write_replay_check::Bool = true,
                      global_mass_pin::Bool = false,
                      global_mass_target_kg::Real = NaN,
+                     mass_fix_target_ps_dry_pa::Real = NaN,
+                     configured_last_day::Union{Nothing, Date} = nothing,
                      kwargs...)
     reject_removed_horizontal_balance_keyword(kwargs)
     steps_floor = min_steps_per_window === nothing ? 1 : Int(min_steps_per_window)
@@ -835,7 +903,9 @@ function process_day(date::Date,
         write_replay_check    = write_replay_check,
         cache_dir             = grid.cache_dir,
         global_mass_pin       = global_mass_pin,
-        global_mass_target_kg = global_mass_target_kg)
+        global_mass_target_kg = global_mass_target_kg,
+        mass_fix_target_ps_dry_pa = mass_fix_target_ps_dry_pa,
+        configured_last_day   = configured_last_day)
     return (; final_m = nothing,
             global_mass_target_kg = global_mass_target_kg)
 end

@@ -236,6 +236,19 @@ function write_streaming_window!(writer::StreamingTransportBinaryWriter{FT},
 end
 
 """
+    abandon_streaming_transport_binary!(writer) -> Nothing
+
+Close the writer's IO and remove its staging file without publishing; the
+final `path` is untouched. Used when a caller's own check fails between the
+last window and `close_streaming_transport_binary!`.
+"""
+function abandon_streaming_transport_binary!(writer::StreamingTransportBinaryWriter)
+    isopen(writer.io) && close(writer.io)
+    abandon_atomic_staging(writer.staging_path)
+    return nothing
+end
+
+"""
     close_streaming_transport_binary!(writer) -> String
 
 Flush and close the streaming transport binary. Returns the file path. An

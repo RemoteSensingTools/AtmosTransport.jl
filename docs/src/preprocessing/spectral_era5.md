@@ -61,6 +61,30 @@ resolution is configurable via `staging_nlon`, `staging_nlat` in the
 `[grid]` block; the defaults `max(4·Nc, 360)` × `max(2·Nc + 1, 181)`
 are what the LL bundle binaries use.
 
+For a cubed-sphere target, `[numerics]` defaults to
+`face_fluxes = "vector"`, `face_lengths = "edge"`,
+`face_interpolation = "fv3"`, and `wind_regrid = "cartesian"`. The staging
+wind is converted to fixed Cartesian components before conservative regrid,
+projected back to east/north at cube-cell centres, interpolated to the true
+great-circle face, and projected on its normal. The stored half-substep mass
+amount is
+
+```math
+F_f = \frac{\Delta t}{g}\,\ell_f\,(\mathbf{v}_f\cdot\mathbf{n}_f)\,\Delta p_f.
+```
+
+Alternatively `face_fluxes = "line_integral"` evaluates
+
+```math
+F_f = \frac{\Delta t}{g}\int_f (\mathbf{v}\cdot\mathbf{n}_f)\,\Delta p\,dl
+```
+
+from the staging-grid winds at 16 midpoints of each face. With the default
+`flux_time_sampling = "window_mean"`, raw face amounts are constructed at both
+window endpoints and averaged before column balance. Adaptive retries rebuild
+that mean from the untouched endpoint amounts at the new half-substep duration;
+they never rescale an already balanced field.
+
 ## Zonal truncation on each latitude ring
 
 Every synthesis of a spectral field ``\hat f_n^m`` (triangular truncation
@@ -161,8 +185,9 @@ For each of the day's 24 hourly windows:
       previous-window state forward; the per-day binary is built
       window-by-window rather than accumulated.
     - Every target balances the column-integrated fluxes and spreads
-      each face's correction over the layers by air mass, so `cm`
-      keeps the vertical motion (see
+      each face's correction over the layers with `[numerics]
+      column_balance_weights` (air mass in hybrid layers, `hybrid_mass`,
+      by default), so `cm` keeps the vertical motion (see
       [Vertical transport](../theory/vertical_transport.md) section 2).
     - **CS** (spectral source): a CG-based solve on the per-panel
       cubed-sphere Laplacian; cm is then derived via

@@ -25,7 +25,12 @@ const REPO = pkgdir(AtmosTransport)
         @test_throws ArgumentError resolve_balance_settings(
             Dict{String, Any}("numerics" => Dict{String, Any}(key => value)))
     end
-    @test resolve_balance_settings(Dict{String, Any}()).column_balance_weights === :mass
+    # `hybrid_mass` is the default on every target (owner decision OF-03).
+    for type in ("latlon", "reduced_gaussian", "synthetic_reduced_gaussian", "cubed_sphere")
+        @test resolve_balance_settings(Dict{String, Any}(
+            "grid" => Dict{String, Any}("type" => type))).column_balance_weights === :hybrid_mass
+    end
+    @test resolve_balance_settings(Dict{String, Any}()).column_balance_weights === :hybrid_mass
     # Native configs: rejected before the met source is read.
     err = try
         process_day(Dict{String, Any}("source" => Dict{String, Any}("toml" => "missing.toml"),
@@ -61,7 +66,9 @@ end
 
 @testset "column balance weights" begin
     P = AtmosTransport.Preprocessing
-    @test P.resolve_column_balance_weights(Dict{String, Any}()) === :mass
+    @test P.resolve_column_balance_weights(Dict{String, Any}()) === :hybrid_mass
+    @test ERA5N320Settings(root_dir = "/tmp").column_balance_weights === :hybrid_mass
+    @test MERRA2Settings(root_dir = "/tmp").column_balance_weights === :hybrid_mass
     @test P.resolve_column_balance_weights(Dict("column_balance_weights" => "Hybrid_B")) === :hybrid_b
     @test_throws ArgumentError P.resolve_column_balance_weights(Dict("column_balance_weights" => "pressure"))
     @test_throws ArgumentError P.resolve_column_balance_weights(Dict("column_balance_weights" => 1))
@@ -69,14 +76,16 @@ end
     @test P._with_column_weights_record(Dict{String, Any}(), :mass) == Dict{String, Any}()
     @test P._with_column_weights_record(Dict{String, Any}(), :hybrid_b) ==
           Dict{String, Any}("column_balance_weights" => "hybrid_b")
-    # GEOS: the weights need a closure that balances the column.
+    # GEOS: the weights apply to the closures that balance the column; the
+    # pressure-fixer closures keep the native fluxes, so any weights are
+    # accepted and ignored there.
     check = P._check_geos_column_weights
     @test check(:mass, :pressure_fixer) === nothing
     @test check(:hybrid_b, :endpoint_balanced) === nothing
     @test check(:hybrid_b, :moisture_filtered) === nothing
     @test check(:hybrid_mass, :omega_regularized) === nothing
-    @test_throws ArgumentError check(:hybrid_b, :pressure_fixer)
-    @test_throws ArgumentError check(:hybrid_mass, :pfix_corrected)
+    @test check(:hybrid_b, :pressure_fixer) === nothing
+    @test check(:hybrid_mass, :pfix_corrected) === nothing
     @test_throws ArgumentError check(:pressure, :endpoint_balanced)
     # Native configs take the weights from the met source, not [numerics].
     err = try
@@ -87,11 +96,9 @@ end
         e
     end
     @test err isa ArgumentError && contains(err.msg, "met-source [preprocessing]")
-    # Lat-lon and reduced-Gaussian spectral targets keep mass weights.
-    @test_throws ArgumentError P._require_mass_column_weights((; column_balance_weights = :hybrid_b), "x")
-    @test P._require_mass_column_weights(NamedTuple(), "x") === nothing
-    # The spectral entry point checks the target before reading any file (the
-    # paths below do not exist).
+    # Every spectral target accepts every weighting; an unknown name is
+    # rejected by the entry point before any file is read (the paths below do
+    # not exist).
     spectral_cfg = Dict{String, Any}(
         "input" => Dict{String, Any}("spectral_dir" => "/nonexistent/spectral",
                                      "coefficients" => "/nonexistent/coefficients.toml",
@@ -100,9 +107,15 @@ end
         "grid" => Dict{String, Any}("type" => "latlon", "nlon" => 8, "nlat" => 5,
                                     "merge_min_thickness_Pa" => 0.0),
         "numerics" => Dict{String, Any}("dt" => 900.0, "met_interval" => 3600.0,
-                                        "column_balance_weights" => "hybrid_b"))
+                                        "column_balance_weights" => "pressure"))
     err = try process_day(spectral_cfg; day_override = "2021-12-01"); nothing catch e; e end
-    @test err isa ArgumentError && contains(err.msg, "cubed-sphere targets only")
+    @test err isa ArgumentError && contains(err.msg, "column_balance_weights must be one of")
+    for type in ("latlon", "cubed_sphere")
+        grid = build_target_geometry(Dict{String, Any}("type" => type, "nlon" => 8, "nlat" => 5,
+                                                       "Nc" => 2), Float64)
+        @test P._check_spectral_column_weights(grid, (; column_balance_weights = :hybrid_b)) === :hybrid_b
+        @test P._check_spectral_column_weights(grid, NamedTuple()) === :hybrid_mass
+    end
 end
 
 @testset "GEOS header records the balance its closure applies" begin
@@ -123,7 +136,7 @@ end
         base = ["--input", input, "--output", input * ".cs", "--Nc", "8"]
         @test !hasproperty(parse(base), :balance_mode)
         @test_throws ErrorException parse(vcat(base, ["--balance-mode", "column"]))   # removed
-        @test parse(base).column_balance_weights == "mass"
+        @test parse(base).column_balance_weights == "hybrid_mass"
         @test parse(vcat(base, ["--column-balance-weights", "Hybrid_B"])).column_balance_weights == "hybrid_b"
         @test_throws ErrorException parse(vcat(base, ["--column-balance-weights", "pressure"]))
     end

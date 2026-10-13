@@ -113,17 +113,28 @@ end
     allocate_era5_c180_regrid_workspace(source_grid, target_grid, Nz; cache_dir=nothing)
 
 Build (or load from `cache_dir`) the N320 → C180 conservative regridder and
-allocate the flat scratch buffers. The regridder's `intersections` matrix is
-the expensive piece — on first run it is built and serialised to JLD2 under
-`cache_dir`, and subsequent runs load it in milliseconds.
+allocate the flat scratch buffers. N320 spectral synthesis remains on the
+physical IFS sphere, but conservative weights for these intensive fields use
+an otherwise identical source mesh on the target sphere: spherical
+intersection libraries require one manifold, and a common radius leaves
+intensive interpolation weights unchanged. The regridder's `intersections`
+matrix is the expensive piece — on first run it is built and serialised to
+JLD2 under `cache_dir`, and subsequent runs load it in milliseconds.
 """
+function _n320_regrid_mesh(source::ReducedGaussianMesh, target_radius::Real)
+    source.radius == target_radius && return source
+    return ReducedGaussianMesh(source.latitudes, source.nlon_per_ring;
+                               FT = eltype(source), radius = target_radius)
+end
+
 function allocate_era5_c180_regrid_workspace(source_grid::ReducedGaussianTargetGeometry{FT},
                                                 target_grid::CubedSphereTargetGeometry{FT},
                                                 Nz::Integer;
                                                 cache_dir::Union{Nothing, AbstractString} = nothing) where FT
     Nz >= 1 || throw(ArgumentError("Nz must be ≥ 1, got $Nz"))
     Nz_int = Int(Nz)
-    regridder = build_regridder(source_grid.mesh, target_grid.mesh;
+    regrid_source = _n320_regrid_mesh(source_grid.mesh, target_grid.mesh.radius)
+    regridder = build_regridder(regrid_source, target_grid.mesh;
                                  normalize = false,
                                  cache_dir = cache_dir)
     n_src = length(regridder.src_areas)
@@ -250,7 +261,8 @@ function open_era5_humidity_remap(root_dir::AbstractString, date::Date, target_m
                             next_day_handle = false)
     try
         source_mesh = discover_era5_n320_source_grid(handles.core_path; FT = Float64).mesh
-        regridder = build_regridder(source_mesh, target_mesh; normalize = false,
+        regrid_source = _n320_regrid_mesh(source_mesh, target_mesh.radius)
+        regridder = build_regridder(regrid_source, target_mesh; normalize = false,
                                     cache_dir = cache_dir)
         coverage = _n320_regrid_coverage(regridder, string(nameof(typeof(target_mesh))))
         n_src, n_dst = length(regridder.src_areas), length(regridder.dst_areas)
@@ -505,7 +517,7 @@ function allocate_era5_n320_to_c180_pipeline(handles::ERA5GRIBDayHandles,
                                                 Nz::Integer = ERA5_NATIVE_LEVEL_COUNT,
                                                 cache_dir::Union{Nothing, AbstractString} = nothing,
                                                 include_convection::Bool = true,
-                                                wind_regrid::Union{Symbol, AbstractWindRegrid} = :scalar,
+                                                wind_regrid::Union{Symbol, AbstractWindRegrid} = :cartesian,
                                                 synthesis::Union{Nothing, ReducedSpectralSynthesis} = nothing) where FT
     Nz_int = Int(Nz)
     Nz_int >= 1 || throw(ArgumentError("Nz must be ≥ 1, got $Nz"))

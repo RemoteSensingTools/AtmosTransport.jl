@@ -213,14 +213,15 @@ end
 
 """
     apply_poisson_balance!(storage, last_hour_next, steps_per_window, contract=nothing;
-                           write_replay_on=true)
+                           write_replay_on=true, weights=MassWeightedColumn())
 
 Close each stored window against its forward mass endpoint.
 
-This applies the column Poisson balance (`balance_column_mass_fluxes!`), then
-diagnoses the vertical mass flux from the explicit endpoint mass tendency. This
-keeps the ERA layer winds anchored to the spectral U/V fields while satisfying
-the zero top/bottom `cm` replay contract.
+This applies the column Poisson balance (`balance_column_mass_fluxes!`, the
+correction spread by the column `weights`), then diagnoses the vertical mass
+flux from the explicit endpoint mass tendency, folding the column residual into
+the same levels. This keeps the ERA layer winds anchored to the spectral U/V
+fields while satisfying the zero top/bottom `cm` replay contract.
 
 `write_replay_on = false` (`[numerics] write_replay_check = false`) skips the
 write-time replay gate; the typed contract's positivity gate still runs.
@@ -229,7 +230,8 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
                                 last_hour_next,
                                 steps_per_window::Int,
                                 contract = nothing;
-                                write_replay_on::Bool = true) where FT
+                                write_replay_on::Bool = true,
+                                weights::AbstractColumnWeights = MassWeightedColumn()) where FT
     Nx, Ny, Nz = size(storage.all_m[1])
     dm_dt_buf = Array{FT}(undef, Nx, Ny, Nz)
     div_scratch = Array{Float64}(undef, Nx, Ny, Nz)
@@ -246,7 +248,7 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
         col_diag = balance_column_mass_fluxes!(storage.all_am[win_idx],
                                                storage.all_bm[win_idx],
                                                storage.all_m[win_idx],
-                                               dm_dt_buf, poisson_ws)
+                                               dm_dt_buf, poisson_ws; weights)
         worst_column_pre = max(worst_column_pre, col_diag.max_pre_residual)
         worst_column_post = max(worst_column_post, col_diag.max_post_residual)
         worst_column_delta = max(worst_column_delta, col_diag.max_face_delta)
@@ -258,7 +260,8 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
         # observed on F64 probe; see plan39_reconnect.md memory entry.
         recompute_cm_from_dm_target!(replay_layout, div_scratch,
                                      storage.all_cm[win_idx], storage.all_m[win_idx], dm_dt_buf,
-                                     storage.all_am[win_idx], storage.all_bm[win_idx])
+                                     storage.all_am[win_idx], storage.all_bm[win_idx];
+                                     residual_weight = ColumnResidualWeight(weights))
         @views storage.all_cm[win_idx][:, :, 1] .= zero(FT)
         @views storage.all_cm[win_idx][:, :, Nz + 1] .= zero(FT)
     end
@@ -289,7 +292,8 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
                                 steps_schedule::Vector{Int},
                                 contract,
                                 substep_policy::SubstepSchedulePolicy;
-                                write_replay_on::Bool = true) where FT
+                                write_replay_on::Bool = true,
+                                weights::AbstractColumnWeights = MassWeightedColumn()) where FT
     contract === nothing &&
         throw(ArgumentError("adaptive LL Poisson balance requires a LatLonContract"))
     Nt = length(storage.all_m)
@@ -331,7 +335,7 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
             col_diag = balance_column_mass_fluxes!(storage.all_am[win_idx],
                                                    storage.all_bm[win_idx],
                                                    storage.all_m[win_idx],
-                                                   dm_dt_buf, poisson_ws)
+                                                   dm_dt_buf, poisson_ws; weights)
             worst_column_pre = max(worst_column_pre, col_diag.max_pre_residual)
             worst_column_post = max(worst_column_post, col_diag.max_post_residual)
             worst_column_delta = max(worst_column_delta, col_diag.max_face_delta)
@@ -339,7 +343,8 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
                                          storage.all_cm[win_idx],
                                          storage.all_m[win_idx], dm_dt_buf,
                                          storage.all_am[win_idx],
-                                         storage.all_bm[win_idx])
+                                         storage.all_bm[win_idx];
+                                         residual_weight = ColumnResidualWeight(weights))
             @views storage.all_cm[win_idx][:, :, 1] .= zero(FT)
             @views storage.all_cm[win_idx][:, :, Nz + 1] .= zero(FT)
 

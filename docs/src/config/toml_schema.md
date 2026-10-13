@@ -754,7 +754,7 @@ calls the unified `process_day` preprocessing entry point. Source-specific
 `[preprocessing]` keys live in the met-source descriptor
 (`config/met_sources/*.toml`); the flux-construction keys of the MERRA-2 and
 ERA5 N320 sources (`column_balance_weights`, `face_fluxes`, `face_lengths`,
-`face_interpolation`, `wind_regrid`, and for MERRA-2 `flux_thickness`) and the
+`face_interpolation`, `wind_regrid`, and `flux_thickness`) and the
 `column_balance_weights` of the GEOS sources are described in
 [Data sources](data_sources.md).
 
@@ -786,6 +786,14 @@ descriptor** (a separate TOML in `config/met_sources/`) that
 declares collection mappings, `mass_flux_dt_seconds`, and
 `level_orientation`. See [GEOS native cubed-sphere](@ref) for the
 descriptor schema details.
+
+A relative `[source].toml` is relative to the AtmosTransport package root. A
+relative hybrid-coefficient table (`coefficients`, `coefficients_file`,
+`target_coefficients`) is looked up in the working directory first and then in
+the package root, where `config/era5_L137_coefficients.toml` and
+`config/geos_L72_coefficients.toml` ship, so the shipped configs work from any
+working directory; a table found in neither place is an error that names both
+locations.
 
 ### `[output]`
 
@@ -899,7 +907,16 @@ dt           = 900.0         # advection sub-step (s)
 met_interval = 3600.0        # window cadence (s); 1 hour for ERA5
 cs_balance_tol = 1e-14       # CS Poisson balance tolerance
 cs_balance_project_every = 50 # CS PCG mean-zero projection cadence; 1 = every iteration
+face_fluxes = "vector"        # panel_average, vector, or line_integral
+face_lengths = "edge"         # edge or cell_centerline (panel_average only)
+face_interpolation = "fv3"    # linear, cubic, or fv3 (vector only)
+wind_regrid = "cartesian"     # cartesian or scalar
+flux_time_sampling = "window_mean" # window_mean or window_start
 ```
+
+The five flux keys apply to spectral cubed-sphere targets. They share the
+typed implementations used by native MERRA-2 and ERA5 N320 preprocessing;
+lat-lon and reduced-Gaussian spectral targets do not construct cube faces.
 
 ```toml
 # Native (GEOS-IT) preprocessing
@@ -927,16 +944,17 @@ positivity gate still runs. Default `true`.
 Every path that applies a Poisson balance closes a window's horizontal mass
 fluxes against its endpoint mass tendency before diagnosing `cm`, with one
 solve for the column-integrated divergence; the correction is distributed over
-the layers by `column_balance_weights` (`"mass"` by default;
+the layers by `column_balance_weights` (`"hybrid_mass"` by default on every
+target;
 [Data sources](data_sources.md) lists where each path sets it), so layer winds
 keep their vertical structure and `cm` carries the vertical motion. GEOS
 `pressure_fixer` and `pfix_corrected` keep the native horizontal fluxes and
 record `horizontal_balance = "none"`. ERA5 spectral configs set the weights
-here (cubed-sphere targets; lat-lon and reduced-Gaussian targets use `"mass"`):
+here, for lat-lon, reduced-Gaussian and cubed-sphere targets alike:
 
 ```toml
 [numerics]
-column_balance_weights = "mass"    # or "hybrid_b", "hybrid_mass"
+column_balance_weights = "hybrid_mass"    # or "hybrid_b", "mass"
 ```
 
 Binary headers record the balance as `horizontal_balance = "column"` (GEOS:

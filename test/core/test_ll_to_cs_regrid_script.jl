@@ -42,7 +42,7 @@ function _ll_fixture_binary(path::AbstractString;
                             bm_uniform::Real = 0,
                             surface_pressure_basis::AbstractSurfacePressureBasis = TotalSurfacePressure(),
                             extra_header::AbstractDict = Dict{String, Any}(),
-                            radius::Real = AtmosTransport.Parameters.IFS_EARTH_RADIUS)
+                            radius::Real = AtmosTransport.Parameters.EARTH_RADIUS)
     # Default: the preprocessors' sphere, which the CS target shares.
     mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny, radius)
     A_ifc = FT[0, 2500, 5000, 7500, 10000]
@@ -518,6 +518,14 @@ end
             patch_header!(reuse_path, h -> h["write_replay_check"] = false)
             @test matches(merge(copy(disk), Dict("write_replay_check" => false)))    # false / false
             @test !matches(copy(disk))                                             # false / absent
+            # Column weights: absent means mass, so a mass binary is not reused
+            # for the hybrid_mass default (and the reverse).
+            patch_header!(reuse_path, h -> delete!(h, "write_replay_check"))
+            @test matches(merge(copy(disk), Dict("column_balance_weights" => "mass")))
+            @test !matches(merge(copy(disk), Dict("column_balance_weights" => "hybrid_mass")))
+            patch_header!(reuse_path, h -> h["column_balance_weights"] = "hybrid_mass")
+            @test matches(merge(copy(disk), Dict("column_balance_weights" => "hybrid_mass")))
+            @test !matches(copy(disk))
 
             # A lat-lon binary with the record is reported the same way.
             ll_off = joinpath(dir, "ll_off.bin")
@@ -555,7 +563,14 @@ end
             explicit_header, explicit_payload = parts(regrid("mass.bin"; column_balance_weights = :mass))
             hyb_path = regrid("hyb.bin"; column_balance_weights = :hybrid_b)
             hyb_header, hyb_payload = parts(hyb_path)
-            @test !haskey(default_header, "column_balance_weights")      # default headers unchanged
+            @test default_header["column_balance_weights"] == "hybrid_mass"
+            @test !haskey(explicit_header, "column_balance_weights")     # legacy mass provenance
+            # The regrid's cubed-sphere column closure is recorded per window.
+            @test default_header["column_closure_windows"] == default_header["nwindow"]
+            @test 0 <= default_header["column_closure_residual_to_tolerance_max"] <= 1
+            @test default_header["flux_fidelity_status"] == "not_applicable"
+            # This fixture has no pure-pressure layers, so mass and hybrid_mass
+            # have identical payloads even though their provenance differs.
             @test explicit_payload == default_payload
             @test hyb_header["column_balance_weights"] == "hybrid_b"
             @test hyb_payload != default_payload                          # the spread differs
@@ -572,9 +587,9 @@ end
             cs_grid = build_target_geometry(Val(:cubed_sphere), cfg_grid, Float64)
 
             # A source on another sphere is rejected.
-            ll_path = joinpath(dir, "ll_earth.bin")
-            _ll_fixture_binary(ll_path; radius = AtmosTransport.Parameters.EARTH_RADIUS)
-            @test_throws ArgumentError regrid_ll_binary_to_cs(ll_path, cs_grid, joinpath(dir, "cs_earth.bin");
+            ll_path = joinpath(dir, "ll_ifs.bin")
+            _ll_fixture_binary(ll_path; radius = AtmosTransport.Parameters.IFS_EARTH_RADIUS)
+            @test_throws ArgumentError regrid_ll_binary_to_cs(ll_path, cs_grid, joinpath(dir, "cs_ifs.bin");
                                                               FT = Float64)
 
             # A source without the radius key was built on the IFS sphere.
@@ -588,11 +603,8 @@ end
             delete!(header, "planet_radius_m")
             json = Vector{UInt8}(JSON3.write(header))
             open(io -> write(io, json, zeros(UInt8, nbytes - length(json))), ll_path, "r+")
-            cs_path = joinpath(dir, "cs_keyless.bin")
-            regrid_ll_binary_to_cs(ll_path, cs_grid, cs_path; FT = Float64)
-            reader = AtmosTransport.MetDrivers.TransportBinaryReader(cs_path; FT = Float64)
-            @test reader.header.planet_radius_m == AtmosTransport.Parameters.IFS_EARTH_RADIUS
-            close(reader)
+            @test_throws ArgumentError regrid_ll_binary_to_cs(
+                ll_path, cs_grid, joinpath(dir, "cs_keyless.bin"); FT = Float64)
         end
     end
 

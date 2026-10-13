@@ -49,6 +49,37 @@ end
     @test stale == Dict{String, Any}("mass_fix_enabled" => false)
 end
 
+# The attachment copies m/am/bm/cm unchanged, so the source binary's write-time
+# certificate (C6) still describes the attached file and is carried over.
+function _source_certificate(nwindow, nlevel)
+    FT = Float32
+    G = PP.CubedSphereTargetGeometry
+    acc = PP.FluxFidelityAccumulator()
+    for win in 1:nwindow
+        samples = [PP.FluxFidelitySample(f, k, FT(1e9 + f), FT(1e9 + f), FT(1.1e9 + f))
+                   for f in (3, 7) for k in 1:nlevel]
+        flux = PP.WindDerivedFluxEvidence{G,FT,String,typeof(samples)}(
+            "vector", samples, 2, "window_mean", 450.0)
+        omega = PP.NoSourceOmegaEvidence{G,FT,PP.SourceHasNoOmega}(PP.SourceHasNoOmega())
+        PP.verify_flux_fidelity!(acc, PP.FluxFidelityEvidenceBundle(
+            flux, omega, PP.ColumnClosureRecord(1.0e5, 0.25, 2.0e4, 0.5)), win)
+    end
+    return PP.flux_fidelity_header!(Dict{String, Any}("nwindow" => nwindow,
+                                                      "nlevel" => nlevel), acc)
+end
+
+@testset "attachment carries the source flux certificate" begin
+    certificate = _source_certificate(1, 1)
+    delete!(certificate, "nwindow"); delete!(certificate, "nlevel")
+    raw = merge(Dict{String, Any}("unrelated" => "drop", "horizontal_balance" => "column",
+                                  "column_balance_weights" => "hybrid_mass"), certificate)
+    metadata = AttachScript.copy_source_metadata!(Dict{String, Any}(), raw)
+    @test metadata == merge(certificate, Dict{String, Any}(
+        "horizontal_balance" => "column", "column_balance_weights" => "hybrid_mass"))
+    @test metadata["flux_fidelity_status"] == "passed"
+    @test metadata["column_closure_windows"] == 1
+end
+
 @testset "legacy TM5 convection level order" begin
     vc = PP.load_hybrid_coefficients(AttachScript.ERA5_L137_COEFFICIENTS)
     A, B = Float64.(vc.A), Float64.(vc.B)
@@ -139,6 +170,8 @@ end
         )
         metadata = Dict{String, Any}(
             "convection_attachment" => "legacy_catrine_1deg_3hour_tm5_to_cs_v4")
+        certificate = _source_certificate(1, Nz)
+        AttachScript.copy_source_metadata!(metadata, certificate)
         path = joinpath(dir, "attached.bin")
         writer = AttachScript.open_attachment_writer(
             path, Nc, np, Nz, header, geometry,
@@ -151,6 +184,15 @@ end
         @test MD.tm5_convection_mass_basis(reader) isa DryBasis
         @test reader.header.raw_header[MD.TM5_CONVECTION_MASS_BASIS_KEY] == "dry"
         @test MD.surface_pressure_basis(reader) isa DrySurfacePressure
+        # The source certificate reaches the attached file and parses as typed.
+        @test reader.header.flux_fidelity.status isa MD.FidelityPassed
+        @test reader.header.flux_fidelity.kind isa MD.WindRederivedFidelity
+        @test reader.header.flux_fidelity.sample_count == 2
+        @test reader.header.omega_fidelity.status isa MD.FidelityNotApplicable
+        for (key, value) in certificate
+            key in ("nwindow", "nlevel") && continue
+            @test reader.header.raw_header[key] == value
+        end
         close(reader)
     end
 end

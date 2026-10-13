@@ -131,12 +131,12 @@ Base.@kwdef struct MERRA2Settings{A <: MERRA2Archive} <: AbstractMetSettings
     include_convection    :: Bool   = false
     include_vdiff_fields  :: Bool   = false
     include_convective_cloud_base :: Bool = false
-    column_balance_weights :: Symbol = :mass   # a key of COLUMN_WEIGHT_KINDS (cs_poisson_balance.jl)
-    face_lengths   :: Symbol = :cell_centerline   # face length in the flux: :cell_centerline or :edge
+    column_balance_weights :: Symbol = :hybrid_mass  # a key of COLUMN_WEIGHT_KINDS (cs_poisson_balance.jl)
+    face_lengths   :: Symbol = :edge              # face length in the flux: :cell_centerline or :edge
     flux_thickness :: Symbol = :moist             # Δp in the flux: :moist (from moist ps) or :dry_mass
-    face_fluxes    :: Symbol = :panel_average     # :panel_average (panel components) or :vector (edge lengths always)
-    face_interpolation :: Symbol = :linear        # :linear, :cubic or :fv3 (cubic + FV3's along-face filter; vector only)
-    wind_regrid    :: Symbol = :scalar            # :scalar (u, v separately) or :cartesian (as a vector)
+    face_fluxes    :: Symbol = :vector            # :panel_average (panel components) or :vector (edge lengths always)
+    face_interpolation :: Symbol = :fv3           # :linear, :cubic or :fv3 (cubic + FV3's along-face filter; vector only)
+    wind_regrid    :: Symbol = :cartesian         # :scalar (u, v separately) or :cartesian (as a vector)
 end
 
 const MERRA2_NATIVE_LEVEL_COUNT = 72
@@ -355,12 +355,12 @@ windows_per_day(::MERRA2Settings, ::Date) = round(Int, 86400 / GEOS_3HOURLY_INTE
 
 The native MERRA-2 source mesh (576 × 361, -180..180 lon, -90..90 lat). The
 preprocessor builds its own regridder against the *target* mesh radius; this
-descriptor uses `IFS_EARTH_RADIUS` and is provided for the canonical trait surface.
+canonical descriptor uses the same `EARTH_RADIUS` as preprocessing targets.
 """
 source_grid(::MERRA2Settings; FT::Type{<:AbstractFloat} = Float64) =
     LatLonMesh(; FT = FT, Nx = MERRA2_NX, Ny = MERRA2_NY,
                 longitude = (-180, 180), latitude = (-90, 90),
-                radius = FT(IFS_EARTH_RADIUS))
+                radius = FT(EARTH_RADIUS))
 
 # VDIFF output needs the PBL surface fields too (the Holtslag-Boville closure
 # reads PBLH/USTAR/HFLUX/T2M), so it implies the surface sections.
@@ -433,7 +433,7 @@ end
 
 """
     read_merra2_window_fields(handles, win, Nz; FT)
-        -> (; ps, qv, u, v)
+        -> (; ps, qv, u, v, omega)
 
 Read one window's worth of native MERRA-2 LL fields for 1-based window index
 `win` (1..8):
@@ -461,8 +461,10 @@ function read_merra2_window_fields(handles::MERRA2DayHandles, win::Integer,
         handles.inst3
     u = read_merra2_3d_slice(winds_ds, "U", win, Nz, order; FT = FT)
     v = read_merra2_3d_slice(winds_ds, "V", win, Nz, order; FT = FT)
+    omega = haskey(winds_ds, "OMEGA") ?
+        read_merra2_3d_slice(winds_ds, "OMEGA", win, Nz, order; FT = FT) : nothing
 
-    return (; ps = ps, qv = qv, u = u, v = v)
+    return (; ps = ps, qv = qv, u = u, v = v, omega = omega)
 end
 
 """

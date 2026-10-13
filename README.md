@@ -89,7 +89,13 @@ coverage.
   replay validation** at runtime. Per-cell tolerances are `1e-12` (F64) /
   `1e-5` (F32), relative to the summed magnitudes of that cell's budget terms.
   The gates certify that the stored fluxes and air masses are consistent, not
-  that the winds are right.
+  that the winds are right; for that, every newly written binary carries a typed
+  flux-fidelity certificate: wind-bearing paths independently reconstruct
+  deterministic face samples from `u`, `v`, and `dp`, and paths with source
+  OMEGA compare it with the stored vertical mass flux (NRMSE below that of a
+  zero vertical flux, correlation > 0.5, positive slope). Native GEOS fluxes
+  and payload-only paths carry an explicit typed not-applicable reason; no
+  certificate can catch errors in the input fields themselves.
 - **Stable — Operator-modular.** Every physics operator is behind an abstract type
   with a `No<Operator>` no-op default; swap schemes via type dispatch
   without modifying core code.
@@ -284,7 +290,7 @@ prognostic-moment scheme is postponed (see
 | AMD ROCm | 📐 | Backend axis in place; not wired |
 | mmap binary reader | ✅ | Read-only mmap with typed host-window copies |
 | NetCDF snapshot writer | ✅ | Typed `SingleOutputFile` / `DailyOutputFiles` |
-| Replay-gate (write-time) | ✅ | On by default; explicit diagnostic escape hatch available. Checks flux/mass self-consistency, not wind fidelity |
+| Replay + flux-fidelity gates (write-time) | ✅ | Replay checks flux/mass closure; deterministic source-wind samples check horizontal construction, and source OMEGA is checked where available. Typed results and tolerances are stored in every regenerated binary header |
 | Adaptive-schedule gate (load-time, opt-in) | ✅ | `[input].require_adaptive_substeps = true` |
 
 ### Documentation

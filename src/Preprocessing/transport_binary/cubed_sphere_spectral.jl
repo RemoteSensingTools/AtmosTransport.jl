@@ -1,6 +1,6 @@
 # Spectral ERA5 to cubed-sphere transport-binary preprocessing path.
 
-mutable struct CubedSphereSpectralWindowWorkspace{FT, SG, R, TW, MW, QW, CSW, DX, DY} <:
+mutable struct CubedSphereSpectralWindowWorkspace{FT, SG, R, TW, MW, QW, CSW, FM, WR} <:
                AbstractWindowWorkspace{CubedSphereTargetGeometry, FT}
     staging_grid :: SG
     regridder    :: R
@@ -9,18 +9,26 @@ mutable struct CubedSphereSpectralWindowWorkspace{FT, SG, R, TW, MW, QW, CSW, DX
     qv           :: QW
     ps_offsets   :: Vector{Float64}
     cs_ws        :: CSW
+    flux_method  :: FM
+    wind_regrid  :: WR
     A_ifc        :: Vector{Float64}
     B_ifc        :: Vector{Float64}
     gravity      :: FT
     dt_factor    :: FT
-    Δx           :: DX
-    Δy           :: DY
+    source_dp    :: Array{FT, 3}
     cur_m        :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     cur_ps       :: NTuple{CS_PANEL_COUNT, Array{FT, 2}}
+    endpoint_am  :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
+    endpoint_bm  :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     cur_am       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     cur_bm       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     cur_cm       :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}
     steps_schedule :: Vector{Int}
+    fidelity_map :: FidelitySampleMap
+    fidelity_rows :: Any
+    latest_fidelity_capture :: Ref{Any}
+    endpoint_fidelity_capture :: Ref{Any}
+    window_fidelity_capture :: Ref{Any}
     regridder_time :: Float64
     qv_time        :: Float64
 end
@@ -94,6 +102,9 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     ps_offsets = zeros(Float64, spec.n_times + 1)
     cs_ws = allocate_cs_preprocess_workspace(Nc, Nx_stg, Ny_stg, Nz,
                                              n_src, n_dst, FT)
+    flux_method = _face_flux_method(settings, grid; source = staging_grid.mesh)
+    wind_regrid = _wind_regrid(settings.wind_regrid, staging_grid.mesh,
+                               grid.mesh, Nz, FT)
 
     vc_merged = vertical.merged_vc
     A_ifc = Float64.(vc_merged.A)
@@ -101,23 +112,103 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     gravity = FT(STANDARD_GRAVITY)
     steps_per_met = exact_steps_per_window(settings.met_interval, settings.dt)
     dt_factor = FT(settings.met_interval / (2 * steps_per_met))
-    Δx = grid.mesh.Δx
-    Δy = grid.mesh.Δy
+    source_dp = zeros(FT, Nx_stg, Ny_stg, Nz)
 
     cur_m  = ntuple(_ -> zeros(FT, Nc, Nc, Nz), CS_PANEL_COUNT)
     cur_ps = ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT)
+    endpoint_am = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz), CS_PANEL_COUNT)
+    endpoint_bm = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz), CS_PANEL_COUNT)
     cur_am = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz), CS_PANEL_COUNT)
     cur_bm = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz), CS_PANEL_COUNT)
     cur_cm = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), CS_PANEL_COUNT)
 
+    fidelity_map = FidelitySampleMap(grid.face_table)
+    fidelity_rows = flux_method isa LineIntegralFaceFluxes ?
+        LineIntegralFidelityStencil(flux_method, fidelity_map) : nothing
+
     return CubedSphereSpectralWindowWorkspace{
         FT, typeof(staging_grid), typeof(regridder), typeof(transform),
-        typeof(merged), typeof(qv), typeof(cs_ws), typeof(Δx), typeof(Δy)}(
+        typeof(merged), typeof(qv), typeof(cs_ws), typeof(flux_method), typeof(wind_regrid)}(
             staging_grid, regridder, transform, merged, qv, ps_offsets,
-            cs_ws, A_ifc, B_ifc, gravity, dt_factor, Δx, Δy,
-            cur_m, cur_ps, cur_am, cur_bm, cur_cm,
+            cs_ws, flux_method, wind_regrid, A_ifc, B_ifc, gravity, dt_factor,
+            source_dp, cur_m, cur_ps, endpoint_am, endpoint_bm,
+            cur_am, cur_bm, cur_cm,
             fill(steps_per_met, spec.n_times),
+            fidelity_map, fidelity_rows, Ref{Any}(nothing),
+            Ref{Any}(nothing), Ref{Any}(nothing),
             t_regridder, t_qv)
+end
+
+"""
+    _fill_spectral_source_dp!(dp, ps, A, B)
+
+Fill merged-layer pressure thickness on the spectral lat–lon staging mesh,
+
+```math
+Δp_k(λ,φ) = |A_{k+1}-A_k + (B_{k+1}-B_k) p_s(λ,φ)|.
+```
+
+The same thickness is used to recover the staging-grid effective winds and to
+form line-integral face fluxes, preserving the basis conversion already
+applied to the spectral horizontal mass fluxes.
+"""
+function _fill_spectral_source_dp!(dp, ps, A, B)
+    @inbounds for k in axes(dp, 3), j in axes(dp, 2), i in axes(dp, 1)
+        dp[i, j, k] = abs((A[k + 1] - A[k]) + (B[k + 1] - B[k]) * ps[i, j])
+    end
+    return dp
+end
+
+function _spectral_endpoint_face_fluxes!(method::Union{PanelAverageFluxes, VectorFaceFluxes},
+                                         workspace, grid, ps_out, am_out, bm_out, Nz)
+    cs_ws = workspace.cs_ws
+    Nc = grid.Nc
+    regrid! = (panels, field) -> regrid_3d_to_cs_panels!(
+        panels, workspace.regridder, field, cs_ws, Nc, IntensiveCellField())
+    _regrid_winds!(workspace.wind_regrid, cs_ws.u_cs_panels, cs_ws.v_cs_panels,
+                   regrid!, cs_ws.u_cc, cs_ws.v_cc)
+    x = (am = am_out, bm = bm_out,
+         u_local = cs_ws.u_cs_panels, v_local = cs_ws.v_cs_panels,
+         dp = cs_ws.dp_panels)
+    _prepare_cell_winds!(method, x, cs_ws.u_cs_panels, cs_ws.v_cs_panels,
+                         grid.mesh, Nz)
+    fill_cs_layer_thickness!(x.dp, ps_out, workspace.A_ifc, workspace.B_ifc,
+                             Nc, Nz)
+    return _face_fluxes!(method, x, workspace.gravity, workspace.dt_factor, Nc, Nz)
+end
+
+function _spectral_endpoint_face_fluxes!(method::LineIntegralFaceFluxes,
+                                         workspace, grid, ps_out, am_out, bm_out, Nz)
+    _fill_spectral_source_dp!(workspace.source_dp, workspace.transform.sp,
+                              workspace.A_ifc, workspace.B_ifc)
+    return line_integral_face_fluxes!(
+        am_out, bm_out, method,
+        reshape(workspace.cs_ws.u_cc, :, Nz),
+        reshape(workspace.cs_ws.v_cc, :, Nz),
+        reshape(workspace.source_dp, :, Nz),
+        workspace.gravity, workspace.dt_factor, Nz)
+end
+
+function _capture_spectral_endpoint_fidelity!(workspace, grid, am_out, bm_out, Nz)
+    Nc = grid.Nc
+    if workspace.flux_method isa LineIntegralFaceFluxes
+        workspace.latest_fidelity_capture[] = capture_cs_wind_flux_samples(
+            workspace.flux_method, am_out, bm_out,
+            reshape(workspace.cs_ws.u_cc, :, Nz),
+            reshape(workspace.cs_ws.v_cc, :, Nz),
+            reshape(workspace.source_dp, :, Nz),
+            grid.face_table, workspace.gravity, workspace.dt_factor, Nc, Nz;
+            sample_map = workspace.fidelity_map,
+            line_rows = workspace.fidelity_rows)
+    else
+        workspace.latest_fidelity_capture[] = capture_cs_wind_flux_samples(
+            workspace.flux_method, am_out, bm_out,
+            workspace.cs_ws.u_cs_panels, workspace.cs_ws.v_cs_panels,
+            workspace.cs_ws.dp_panels,
+            grid.face_table, workspace.gravity, workspace.dt_factor, Nc, Nz;
+            sample_map = workspace.fidelity_map)
+    end
+    return nothing
 end
 
 function ingest_window!(workspace::CubedSphereSpectralWindowWorkspace{FT},
@@ -172,25 +263,49 @@ function ingest_window!(workspace::CubedSphereSpectralWindowWorkspace{FT},
         workspace.A_ifc, workspace.B_ifc, stg_lats, Δy_ll, Δlon_ll,
         FT(staging_grid.mesh.radius), workspace.gravity, workspace.dt_factor)
 
-    regrid_3d_to_cs_panels!(cs_ws.u_cs_panels, workspace.regridder,
-                            cs_ws.u_cc, cs_ws, Nc)
-    regrid_3d_to_cs_panels!(cs_ws.v_cs_panels, workspace.regridder,
-                            cs_ws.v_cc, cs_ws, Nc)
-    rotate_winds_to_panel_local!(cs_ws.u_cs_panels, cs_ws.v_cs_panels,
-                                  cs_ws.u_cs_panels, cs_ws.v_cs_panels,
-                                  grid.tangent_basis, Nc, Nz)
-
-    reconstruct_cs_fluxes!(am_out, bm_out, cs_ws.u_cs_panels, cs_ws.v_cs_panels,
-                           cs_ws.dp_panels, ps_out,
-                           workspace.A_ifc, workspace.B_ifc,
-                           workspace.Δx, workspace.Δy,
-                           workspace.gravity, workspace.dt_factor, Nc, Nz)
+    _spectral_endpoint_face_fluxes!(workspace.flux_method, workspace, grid,
+                                    ps_out, am_out, bm_out, Nz)
+    _capture_spectral_endpoint_fidelity!(workspace, grid, am_out, bm_out, Nz)
     return time() - t0
 end
 
 @inline function _copy_cs_spectral_panels!(dst, src)
     for p in 1:CS_PANEL_COUNT
         copyto!(dst[p], src[p])
+    end
+    return nothing
+end
+
+"""
+    _rebuild_spectral_window_fluxes!(workspace, end_am, end_bm, sampling,
+                                     base_steps, steps)
+
+Rebuild the unbalanced face amount for a window from immutable endpoint
+amounts. For `window_mean`, the trapezoidal approximation is
+
+```math
+F_f = ½(F_f(t_n) + F_f(t_{n+1})),
+```
+
+formed before the Poisson column balance. The factor `base_steps / steps`
+changes only the half-substep duration. Repeating this operation on an
+adaptive retry therefore never rescales a face field that has already been
+balanced.
+"""
+function _rebuild_spectral_window_fluxes!(workspace, end_am, end_bm,
+                                          sampling::Symbol,
+                                          base_steps::Int, steps::Int)
+    scale = eltype(workspace.cur_am[1])(base_steps / steps)
+    use_mean = sampling === :window_mean
+    half = eltype(workspace.cur_am[1])(0.5)
+    for p in 1:CS_PANEL_COUNT
+        if use_mean
+            @. workspace.cur_am[p] = scale * half * (workspace.endpoint_am[p] + end_am[p])
+            @. workspace.cur_bm[p] = scale * half * (workspace.endpoint_bm[p] + end_bm[p])
+        else
+            @. workspace.cur_am[p] = scale * workspace.endpoint_am[p]
+            @. workspace.cur_bm[p] = scale * workspace.endpoint_bm[p]
+        end
     end
     return nothing
 end
@@ -219,6 +334,9 @@ mutable struct CSSpectralUnifiedDriverContext{G, S, V, SP, N, W}
     total_balance              :: Float64
     total_replay               :: Float64
     total_last_endpoint        :: Float64
+    # Window-mean sampling whose final window had no right endpoint (archive
+    # boundary): that window's effective sampling is the start-flux fallback.
+    final_boundary_fallback    :: Bool
 end
 
 function CSSpectralUnifiedDriverContext(grid, settings, vertical, spec,
@@ -237,7 +355,7 @@ function CSSpectralUnifiedDriverContext(grid, settings, vertical, spec,
             date, substep_policy, Int(steps_per_met), Float64(cs_balance_tol),
             Int(cs_balance_project_every), write_replay_on,
             balance_weights, 0.0, 0.0, 0, 0.0, 0.0, 0,
-            (0, 0, 0, 0), 0.0, 0.0, 0.0, 0.0)
+            (0, 0, 0, 0), 0.0, 0.0, 0.0, 0.0, false)
 end
 
 driver_windows_per_day(::Nothing, ctx::CSSpectralUnifiedDriverContext) =
@@ -256,8 +374,9 @@ function driver_ingest_window!(workspace::CubedSphereSpectralWindowWorkspace,
     if win == 1
         _copy_cs_spectral_panels!(workspace.cur_m,  cs_ws.m_panels)
         _copy_cs_spectral_panels!(workspace.cur_ps, cs_ws.ps_panels)
-        _copy_cs_spectral_panels!(workspace.cur_am, cs_ws.am_panels)
-        _copy_cs_spectral_panels!(workspace.cur_bm, cs_ws.bm_panels)
+        _copy_cs_spectral_panels!(workspace.endpoint_am, cs_ws.am_panels)
+        _copy_cs_spectral_panels!(workspace.endpoint_bm, cs_ws.bm_panels)
+        workspace.endpoint_fidelity_capture[] = workspace.latest_fidelity_capture[]
     end
     return nothing
 end
@@ -277,14 +396,18 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
     Nz = ctx.vertical.Nz
 
     steps = initial_substeps(ctx.substep_policy, workspace.steps_schedule[win])
-    old_steps = workspace.steps_schedule[win]
     contract_diag = nothing
+    closure = NoColumnClosureRecord()
     while true
-        old_steps == steps || begin
-            rescale_substep_amounts!(cur_am, old_steps, steps)
-            rescale_substep_amounts!(cur_bm, old_steps, steps)
-        end
-        old_steps = steps
+        _rebuild_spectral_window_fluxes!(workspace, cs_ws.am_panels,
+                                         cs_ws.bm_panels,
+                                         ctx.settings.flux_time_sampling,
+                                         ctx.steps_per_met, steps)
+        workspace.window_fidelity_capture[] = combine_captured_flux_samples(
+            workspace.endpoint_fidelity_capture[], workspace.latest_fidelity_capture[],
+            workspace.cur_am, workspace.cur_bm, grid.face_table;
+            scale = ctx.steps_per_met / steps,
+            mean_endpoints = ctx.settings.flux_time_sampling === :window_mean)
         workspace.steps_schedule[win] = steps
         contract.steps_per_window = steps
 
@@ -306,8 +429,10 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
         for p in 1:CS_PANEL_COUNT
             fill!(cur_cm[p], zero(FT))
         end
-        diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz,
-                        ctx.balance_weights)
+        cm_diag = _diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
+                                            cur_m, Nc, Nz, bal_diag,
+                                            "ERA5 spectral window $win", ctx.balance_weights)
+        closure = column_closure_record(bal_diag, cm_diag)
 
         t_replay = time()
         contract_diag = verify_window!((m_cur = cur_m,
@@ -338,7 +463,18 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
     convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
     payload = (m = cur_m, am = cur_am, bm = cur_bm, cm = cur_cm,
                ps = workspace.cur_ps, dm = cs_ws.m_next_panels)
-    ready = ReadyWindow{CubedSphereTargetGeometry, FT}(win, payload)
+    flux_evidence = wind_derived_evidence(
+        CubedSphereTargetGeometry, workspace.window_fidelity_capture[],
+        cur_am, cur_bm, grid.face_table;
+        method = flux_fidelity_method(workspace.flux_method),
+        samples_per_window = length(workspace.fidelity_map.faces),
+        time_sampling = (win == ctx.spec.n_times && ctx.final_boundary_fallback) ?
+            "window_start_boundary_fallback" : String(ctx.settings.flux_time_sampling),
+        amount_seconds = ctx.settings.met_interval / (2 * workspace.steps_schedule[win]))
+    omega_evidence = NoSourceOmegaEvidence{
+        CubedSphereTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega())
+    ready = ReadyWindow{CubedSphereTargetGeometry, FT}(
+        win, payload, FluxFidelityEvidenceBundle(flux_evidence, omega_evidence, closure))
     return PreverifiedWindow(ready, contract_diag; accumulated = true)
 end
 
@@ -370,9 +506,33 @@ function driver_flush_final_windows!(workspace::CubedSphereSpectralWindowWorkspa
                                 workspace.regridder,
                                 last_hour_next.m, workspace.cs_ws, grid.Nc,
                                 ExtensiveCellField())
+        regrid_2d_to_cs_panels!(workspace.cs_ws.ps_panels,
+                                workspace.regridder,
+                                workspace.transform.sp, workspace.cs_ws,
+                                grid.Nc, IntensiveCellField())
+        stg = workspace.staging_grid
+        recover_ll_cell_center_winds!(workspace.cs_ws.u_cc, workspace.cs_ws.v_cc,
+            workspace.merged.am_merged, workspace.merged.bm_merged,
+            workspace.transform.sp, workspace.A_ifc, workspace.B_ifc, stg.lats,
+            FT(stg.mesh.radius * deg2rad(stg.mesh.Δφ)), FT(deg2rad(stg.mesh.Δλ)),
+            FT(stg.mesh.radius), workspace.gravity, workspace.dt_factor)
+        _spectral_endpoint_face_fluxes!(workspace.flux_method, workspace, grid,
+            workspace.cs_ws.ps_panels, workspace.cs_ws.am_panels,
+            workspace.cs_ws.bm_panels, ctx.vertical.Nz)
+        _capture_spectral_endpoint_fidelity!(workspace, grid,
+            workspace.cs_ws.am_panels, workspace.cs_ws.bm_panels, ctx.vertical.Nz)
     else
         _copy_cs_spectral_panels!(workspace.cs_ws.m_next_panels,
                                   workspace.cur_m)
+        # At an explicit archive boundary no right endpoint exists. Holding
+        # the start endpoint makes the final trapezoid reduce to window-start
+        # sampling and keeps the fallback auditable in the header.
+        ctx.final_boundary_fallback = ctx.settings.flux_time_sampling === :window_mean
+        _copy_cs_spectral_panels!(workspace.cs_ws.am_panels,
+                                  workspace.endpoint_am)
+        _copy_cs_spectral_panels!(workspace.cs_ws.bm_panels,
+                                  workspace.endpoint_bm)
+        workspace.latest_fidelity_capture[] = workspace.endpoint_fidelity_capture[]
     end
     return (_cs_spectral_contract_diag!(workspace, contract, ctx, Nt,
                                         DEFAULT_POISSON_BALANCE_MAX_ITER),)
@@ -386,8 +546,9 @@ function driver_after_write_window!(workspace::CubedSphereSpectralWindowWorkspac
     cs_ws = workspace.cs_ws
     _copy_cs_spectral_panels!(workspace.cur_m,  cs_ws.m_panels)
     _copy_cs_spectral_panels!(workspace.cur_ps, cs_ws.ps_panels)
-    _copy_cs_spectral_panels!(workspace.cur_am, cs_ws.am_panels)
-    _copy_cs_spectral_panels!(workspace.cur_bm, cs_ws.bm_panels)
+    _copy_cs_spectral_panels!(workspace.endpoint_am, cs_ws.am_panels)
+    _copy_cs_spectral_panels!(workspace.endpoint_bm, cs_ws.bm_panels)
+    workspace.endpoint_fidelity_capture[] = workspace.latest_fidelity_capture[]
     return nothing
 end
 
@@ -405,6 +566,8 @@ function driver_before_close_writer!(workspace::CubedSphereSpectralWindowWorkspa
         copy(@view workspace.ps_offsets[1:ctx.spec.n_times])
     writer.inner.header["ps_offsets_next_day_hour0_pa"] =
         workspace.ps_offsets[ctx.spec.n_times + 1]
+    ctx.final_boundary_fallback &&
+        (writer.inner.header["flux_time_sampling_effective"] = "window_start_boundary_fallback")
     return nothing
 end
 
@@ -429,6 +592,7 @@ function process_day(date::Date,
                      next_day_hour0=nothing,
                      run_cache = nothing)
     FT = settings.output_float_type
+    _validate_flux_construction(settings, "ERA5 spectral")
     Nc = grid.Nc
     Nz = vertical.Nz
     steps_per_met = exact_steps_per_window(settings.met_interval, settings.dt)
@@ -436,8 +600,8 @@ function process_day(date::Date,
     cs_balance_project_every = Int(get(settings, :cs_balance_project_every,
                                        DEFAULT_POISSON_PROJECT_EVERY))
     # Column weights, checked before any input is read.
-    weights_kind = _check_spectral_column_weights(grid, settings)
-    balance_weights = column_weights(weights_kind, vertical.merged_vc.B)
+    balance_weights = _spectral_column_weights(grid, settings, vertical)
+    weights_kind = get(settings, :column_balance_weights, :hybrid_mass)
     date_str = Dates.format(date, "yyyymmdd")
 
     vo_d_path = joinpath(settings.spectral_dir, "era5_spectral_$(date_str)_vo_d.gb")
@@ -461,12 +625,11 @@ function process_day(date::Date,
     mkpath(settings.out_dir)
     bin_path = output_binary_path(date, settings.out_dir, settings.min_dp, FT)
 
-    # Stage to `.tmp` so any mid-loop exception (replay failure, IO error,
+    # Stage to a unique sibling file so any mid-loop exception (replay failure, IO error,
     # quarantined positivity violation) never leaves a partial binary at
     # `bin_path`. Promote `tmp_path -> bin_path` only after every contract
     # gate passes (or after a warning-only positivity summary returns).
-    tmp_path = bin_path * ".tmp"
-    isfile(tmp_path) && rm(tmp_path; force = true)
+    tmp_path = _open_preprocessing_staging(bin_path)
 
     workspace = allocate_window_workspace(grid, settings, vertical, spec, date, FT;
                                           cache = run_cache)
@@ -482,6 +645,21 @@ function process_day(date::Date,
     write_replay_on = write_replay_check
     write_replay_on || @info "  Write-time CS replay gate SKIPPED ([numerics] write_replay_check = false)"
     replay_tol = replay_tolerance(FT)
+    construction_header = Dict{String, Any}(
+        "face_fluxes" => String(settings.face_fluxes),
+        "flux_face_lengths" => settings.face_fluxes === :panel_average ?
+            String(settings.face_lengths) : "edge",
+        "face_interpolation" => flux_header_face_interpolation(workspace.flux_method, settings),
+        "wind_regrid" => flux_header_wind_regrid(workspace.flux_method, settings),
+        "flux_time_sampling" => String(settings.flux_time_sampling),
+        "source_flux_sampling" => settings.flux_time_sampling === :window_start ?
+            "window_start_endpoint" : "window_mean",
+    )
+    if workspace.flux_method isa LineIntegralFaceFluxes
+        construction_header["line_integral_samples_per_face"] =
+            workspace.flux_method.samples_per_face
+        construction_header["line_integral_source_grid"] = "latlon_staging"
+    end
 
         writer = nothing
         driver_started = false
@@ -501,7 +679,7 @@ function process_day(date::Date,
                 cs_center_law=_cs_center_law_tag(grid),
                 longitude_offset_deg=longitude_offset_deg(cs_definition(grid.mesh)),
                 planet_radius=grid.mesh.radius,
-                extra_header=_with_replay_record(_with_column_weights_record(Dict{String, Any}(
+                extra_header=_with_replay_record(_with_column_weights_record(merge(Dict{String, Any}(
                     "preprocessor"     => "preprocess_transport_binary.jl",
                     "preprocessor_contract" => "plan41_variable_substeps",
                     "runtime_substep_contract" => "binary_schedule",
@@ -522,7 +700,7 @@ function process_day(date::Date,
                     "merge_map" => vertical.merge_map,
                     "poisson_balanced" => true,
                     "mass_fix_enabled" => settings.mass_fix_enable,
-                ), weights_kind), write_replay_on))
+                ), construction_header), weights_kind), write_replay_on))
 
             bytes_per_window = writer.elems_per_window * sizeof(FT)
             expected_total = writer.header_bytes + Nt * bytes_per_window

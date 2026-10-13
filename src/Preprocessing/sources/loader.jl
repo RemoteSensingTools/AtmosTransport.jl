@@ -54,7 +54,8 @@ const _FLUX_CONSTRUCTION_KEYS = ("column_balance_weights", "face_lengths", "face
                                  "face_interpolation", "wind_regrid")
 const _ALL_FLUX_KEYS = (_FLUX_CONSTRUCTION_KEYS..., "flux_thickness", "flux_time_sampling")
 _supported_flux_keys(::Type{MERRA2Settings}) = (_FLUX_CONSTRUCTION_KEYS..., "flux_thickness")
-_supported_flux_keys(::Type{<:ERA5GRIBSettings}) = (_FLUX_CONSTRUCTION_KEYS..., "flux_time_sampling")
+_supported_flux_keys(::Type{<:ERA5GRIBSettings}) =
+    (_FLUX_CONSTRUCTION_KEYS..., "flux_thickness", "flux_time_sampling")
 _supported_flux_keys(::Type{<:GEOSSettings}) = ("column_balance_weights",)   # native fluxes, column balance
 _supported_flux_keys(::Type) = ()
 function _reject_unsupported_flux_keys(ctor::Type, cfg)
@@ -66,9 +67,9 @@ function _reject_unsupported_flux_keys(ctor::Type, cfg)
     return nothing
 end
 
-# `[preprocessing] column_balance_weights` of a met source (default `:mass`).
+# `[preprocessing] column_balance_weights` of a met source (default `:hybrid_mass`).
 function _column_balance_weights_option(pre_cfg)
-    raw = get(pre_cfg, "column_balance_weights", "mass")
+    raw = get(pre_cfg, "column_balance_weights", "hybrid_mass")
     raw isa AbstractString || throw(ArgumentError(
         "[preprocessing].column_balance_weights must be a string; got $(repr(raw))"))
     return Symbol(lowercase(raw))
@@ -77,14 +78,15 @@ end
 # The shared flux-construction keys as settings keyword arguments.
 function _flux_construction_kwargs(pre_cfg)
     option(key, default) = Symbol(lowercase(String(get(pre_cfg, key, default))))
-    face_fluxes  = option("face_fluxes", "panel_average")
-    face_lengths = option("face_lengths", "cell_centerline")
+    face_fluxes  = option("face_fluxes", "vector")
+    face_lengths = option("face_lengths", "edge")
     face_fluxes === :vector && face_lengths === :cell_centerline && haskey(pre_cfg, "face_lengths") &&
         throw(ArgumentError("[preprocessing] face_fluxes = \"vector\" always uses face edge lengths; " *
                             "remove face_lengths = \"cell_centerline\""))
     return (column_balance_weights = _column_balance_weights_option(pre_cfg), face_lengths, face_fluxes,
-            face_interpolation = option("face_interpolation", "linear"),
-            wind_regrid = option("wind_regrid", "scalar"))
+            face_interpolation = option("face_interpolation",
+                                        face_fluxes === :vector ? "fv3" : "linear"),
+            wind_regrid = option("wind_regrid", "cartesian"))
 end
 
 # ---------------------------------------------------------------------------
@@ -160,8 +162,10 @@ function _build_met_settings(ctor::Type{<:ERA5GRIBSettings}, cfg::AbstractDict,
         include_surface, include_convection,
         include_tm5_diffusion, arco_surface_pressure, level_orientation,
         coefficients_file = coefs, _flux_construction_kwargs(pre_cfg)...,
-        flux_time_sampling = Symbol(lowercase(String(get(pre_cfg, "flux_time_sampling", "window_start")))),
+        flux_thickness = Symbol(lowercase(String(get(pre_cfg, "flux_thickness", "dry_mass")))),
+        flux_time_sampling = Symbol(lowercase(String(get(pre_cfg, "flux_time_sampling", "window_mean")))),
         kwargs...))
+    _validate_flux_thickness(settings.flux_thickness, "ERA5")
     return _validate_flux_construction(settings, "ERA5")
 end
 

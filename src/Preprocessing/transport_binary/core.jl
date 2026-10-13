@@ -244,6 +244,7 @@ function build_v4_header(date::Date,
     _with_tm5_convection_basis(header, settings.tm5_convection_enable ?
                                        mass_basis_from_symbol(settings.mass_basis) : nothing)
 
+    _with_column_weights_record(header, _check_spectral_column_weights(grid, settings))
     merge!(header, target_header_metadata(grid))
     validate_transport_contract!(header)
     return header
@@ -385,6 +386,7 @@ end
 const _OUTPUT_REUSE_CONTRACT_KEYS = (
     "format_version", "float_type", "float_bytes", "mass_basis",
     "surface_pressure_basis",
+    "flux_fidelity_schema",
     "grid_type", "horizontal_topology", "planet_radius_m", "Nx", "Ny", "nlevel", "nwindow",
     "payload_sections", "elems_per_window", "A_ifc", "B_ifc", "merge_map",
     "merge_min_thickness_Pa", "vertical_mapping_method", "target_vertical_name",
@@ -436,6 +438,11 @@ function existing_output_schema_matches(bin_path::AbstractString,
             # Optional key: absent means the write-time replay gate ran.
             get(disk_header, "write_replay_check", true) == get(expected_header, "write_replay_check", true) ||
                 push!(changed, "write_replay_check")
+            # Optional key: absent means mass column weights (keyless legacy
+            # binaries), so a binary balanced with other weights is regenerated.
+            get(disk_header, "column_balance_weights", "mass") ==
+                get(expected_header, "column_balance_weights", "mass") ||
+                push!(changed, "column_balance_weights")
             # Optional key: absent on binaries without TM5 sections and on
             # TM5 binaries written before the fluxes were put on the binary's basis.
             get(disk_header, TM5_CONVECTION_MASS_BASIS_KEY, nothing) ==

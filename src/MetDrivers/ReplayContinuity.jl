@@ -168,38 +168,57 @@ function horizontal_flux_magnitude!(mag_h::AbstractMatrix{Float64},
 end
 
 """
-    recompute_cm_from_dm_target!(layout, div_h, cm, m, dm_target, flux_args...)
+    layer_mass_residual_weight(m_k, k) -> Float64
+
+Default residual weight of `recompute_cm_from_dm_target!`: the layer air mass.
+"""
+layer_mass_residual_weight(m_k, _k) = Float64(m_k)
+
+"""
+    recompute_cm_from_dm_target!(layout, div_h, cm, m, dm_target, flux_args...;
+                                 residual_weight = layer_mass_residual_weight)
 
 Shared explicit-dm continuity closure. The topology-specific code only builds
-`div_h`; the vertical integration and residual redistribution are common.
+`div_h`; the vertical integration and residual redistribution are common:
+
+```math
+C_{k+1} = C_k - D_k - Δm_k,\\qquad C_1 = 0,
+```
+
+and the column residual `R = C_{N_z+1}` is folded back as
+`C_{k+1} ← C_{k+1} − R Σ_{j≤k} w_j / Σ_j w_j` with `w_k = residual_weight(m_k, k)`
+(the layer mass by default). Preprocessing passes its column-balance weights,
+so the residual of a `hybrid_mass` balance reaches only hybrid layers, as in
+the cubed-sphere `diagnose_cs_cm!`.
 """
 function recompute_cm_from_dm_target!(layout::AbstractReplayLayout,
                                       div_h::AbstractArray{Float64, N},
                                       cm::AbstractArray{FT, N},
                                       m::AbstractArray{<:Any, N},
                                       dm_target::AbstractArray{<:Real, N},
-                                      flux_args...) where {FT, N}
+                                      flux_args...;
+                                      residual_weight::W = layer_mass_residual_weight) where {FT, N, W}
     horizontal_divergence!(div_h, layout, flux_args...)
     _check_continuity_shapes("recompute_cm_from_dm_target!", div_h, m, cm, dm_target)
     fill!(cm, zero(FT))
 
     @inbounds for col in _horizontal_columns(m)
         acc = 0.0
-        total_m = 0.0
+        total_w = 0.0
         for k in axes(m, N)
             idx = _column_index(col, k, Val(N))
-            total_m += Float64(m[idx])
+            total_w += residual_weight(m[idx], k)
             acc = acc - Float64(div_h[idx]) - Float64(dm_target[idx])
             cm[_column_index(col, k + 1, Val(N))] = FT(acc)
         end
 
         residual = acc
-        if residual != 0.0 && total_m > 0.0
+        if residual != 0.0 && total_w > 0.0
             cum_fix = 0.0
             for k in axes(m, N)
                 idx = _column_index(col, k, Val(N))
                 idx_next = _column_index(col, k + 1, Val(N))
-                cum_fix += (Float64(m[idx]) / total_m) * residual
+                cum_fix += (residual_weight(m[idx], k) / total_w) * residual
                 cm[idx_next] = FT(Float64(cm[idx_next]) - cum_fix)
             end
         end

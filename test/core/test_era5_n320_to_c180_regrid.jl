@@ -39,14 +39,24 @@ using .AtmosTransport.Preprocessing: ERA5N320Settings, ERA5GRIBDayHandles,
                                       build_target_geometry,
                                       CubedSphereTargetGeometry
 using .AtmosTransport.Grids: ncells, nrings, cell_area
+using .AtmosTransport.Parameters: EARTH_RADIUS, IFS_EARTH_RADIUS
 
-function _tiny_source_grid(::Type{FT} = Float64; nlon_mode = "regular") where FT
+function _tiny_source_grid(::Type{FT} = Float64; nlon_mode = "regular",
+                           radius = EARTH_RADIUS) where FT
     cfg = Dict{String, Any}(
         "type"            => "synthetic_reduced_gaussian",
         "gaussian_number" => 8,
         "nlon_mode"       => nlon_mode,
     )
-    return build_target_geometry(Val(:synthetic_reduced_gaussian), cfg, FT)
+    grid = build_target_geometry(Val(:synthetic_reduced_gaussian), cfg, FT)
+    FT(radius) == grid.mesh.radius && return grid
+    mesh = AtmosTransport.ReducedGaussianMesh(
+        grid.mesh.latitudes, grid.mesh.nlon_per_ring; FT, radius = FT(radius))
+    return AtmosTransport.Preprocessing.ReducedGaussianTargetGeometry{
+        FT, typeof(mesh)}(mesh, grid.geometry_source_grib, grid.gaussian_number,
+                          copy(grid.nlon_per_ring), copy(grid.lats),
+                          [FT.(AtmosTransport.Grids.ring_longitudes(mesh, j))
+                           for j in 1:AtmosTransport.Grids.nrings(mesh)])
 end
 
 function _tiny_cs_target(::Type{FT} = Float64; Nc = 8) where FT
@@ -92,6 +102,17 @@ end
                                                        cache_dir = cache_dir)
             @test ws2 isa ERA5C180RegridWorkspace
         end
+    end
+
+    @testset "physical N320 sphere is distinct from target regrid sphere" begin
+        src = _tiny_source_grid(Float64; radius = IFS_EARTH_RADIUS)
+        dst = _tiny_cs_target(Float64; Nc = 8)
+        ws = allocate_era5_c180_regrid_workspace(src, dst, 1)
+        @test src.mesh.radius == IFS_EARTH_RADIUS
+        @test dst.mesh.radius == EARTH_RADIUS
+        @test sum(ws.regridder.src_areas) ≈ 4π * EARTH_RADIUS^2 rtol = 1e-6
+        @test sum(cell_area(src.mesh, c) for c in 1:ncells(src.mesh)) ≈
+              4π * IFS_EARTH_RADIUS^2 rtol = 1e-6
     end
 
     @testset "Uniform PS regrid recovers the source value ($nlon_mode)" for nlon_mode in ("regular", "octahedral")

@@ -407,6 +407,29 @@ threading is enabled only when this trait AND `!chain_mass` both hold.
 """
 supports_day_threading(::AbstractMetSettings) = false
 supports_day_threading(::AbstractERA5GRIBSettings) = true
+supports_day_threading(::ERA5GRIBSettings{:n320}) = false
+
+function _day_threading_enabled(settings, ndays::Integer, chain_mass::Bool,
+                                global_mass_pin::Bool,
+                                configured_global_mass_target_kg::Real)
+    return Threads.nthreads() > 1 && ndays > 1 &&
+           supports_day_threading(settings) && !chain_mass &&
+           !(global_mass_pin && !isfinite(configured_global_mass_target_kg))
+end
+
+function _require_configured_terminal_day(date::Date,
+                                          configured_last_day::Union{Nothing, Date},
+                                          source::AbstractString,
+                                          missing_endpoint::AbstractString)
+    configured_last_day === nothing && error(
+        "$source cannot use a zero-tendency endpoint on $date because no configured " *
+        "last day was supplied; missing $missing_endpoint")
+    date == configured_last_day || error(
+        "$source is missing $missing_endpoint for $date, but the configured last day " *
+        "is $configured_last_day; refusing a zero-tendency endpoint before the " *
+        "configured archive boundary")
+    return nothing
+end
 
 """
     supports_initial_endpoint_mass_pin(settings) -> Bool

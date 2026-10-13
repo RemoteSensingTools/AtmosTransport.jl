@@ -18,6 +18,9 @@ mutable struct LatLonBinaryWriter{FT,
     settings::Settings
     merged::Merged
     last_hour_next::Last
+    header::Dict{String, Any}
+    header_bytes::Int
+    fidelity::FluxFidelityAccumulator
     bytes_written::Int64
     closed::Bool
     promoted::Bool
@@ -31,12 +34,14 @@ function LatLonBinaryWriter(path::AbstractString,
                             ::Type{FT},
                             _basis::Basis;
                             final_path::AbstractString=path) where {FT, Basis<:AbstractMassBasis}
-    header_bytes = codeunits(header_json)
-    length(header_bytes) <= HEADER_SIZE ||
+    encoded_header = codeunits(header_json)
+    length(encoded_header) < HEADER_SIZE ||
         throw(ArgumentError("header JSON exceeds fixed header size ($HEADER_SIZE bytes)"))
 
     hdr_buf = zeros(UInt8, HEADER_SIZE)
-    copyto!(hdr_buf, 1, header_bytes, 1, length(header_bytes))
+    copyto!(hdr_buf, 1, encoded_header, 1, length(encoded_header))
+    parsed = JSON3.read(String(header_json))
+    header = Dict{String, Any}(String(k) => v for (k, v) in pairs(parsed))
     io = open(path, "w")
     write(io, hdr_buf)
     return LatLonBinaryWriter{FT, Basis, typeof(io), typeof(settings), typeof(merged), typeof(last_hour_next)}(
@@ -46,6 +51,9 @@ function LatLonBinaryWriter(path::AbstractString,
         settings,
         merged,
         last_hour_next,
+        header,
+        HEADER_SIZE,
+        FluxFidelityAccumulator(),
         HEADER_SIZE,
         false,
         false,
@@ -55,6 +63,7 @@ end
 function write_window!(writer::LatLonBinaryWriter{FT},
                        ready::ReadyWindow{LatLonTargetGeometry, FT}) where {FT}
     writer.closed && throw(ArgumentError("cannot write to a closed LatLonBinaryWriter"))
+    verify_flux_fidelity!(writer.fidelity, ready.fidelity, ready.index)
     storage = ready.payload.storage
     bytes = write_window!(writer.io,
                           ready.index,
@@ -74,6 +83,7 @@ mutable struct ReducedGaussianBinaryWriter{FT,
     final_path::String
     closed::Bool
     promoted::Bool
+    fidelity::FluxFidelityAccumulator
 end
 
 function ReducedGaussianBinaryWriter(inner::StreamingTransportBinaryWriter{FT},
@@ -85,12 +95,14 @@ function ReducedGaussianBinaryWriter(inner::StreamingTransportBinaryWriter{FT},
         String(final_path),
         false,
         false,
+        FluxFidelityAccumulator(),
     )
 end
 
 function write_window!(writer::ReducedGaussianBinaryWriter{FT},
                        ready::ReadyWindow{ReducedGaussianTargetGeometry, FT}) where {FT}
     writer.closed && throw(ArgumentError("cannot write to a closed ReducedGaussianBinaryWriter"))
+    verify_flux_fidelity!(writer.fidelity, ready.fidelity, ready.index)
     return write_streaming_window!(writer.inner, ready.payload)
 end
 
@@ -104,6 +116,7 @@ mutable struct CubedSphereBinaryWriter{FT,
     npanel::Int
     closed::Bool
     promoted::Bool
+    fidelity::FluxFidelityAccumulator
 end
 
 function CubedSphereBinaryWriter(inner::StreamingTransportBinaryWriter{FT},
@@ -119,48 +132,65 @@ function CubedSphereBinaryWriter(inner::StreamingTransportBinaryWriter{FT},
         Int(npanel),
         false,
         false,
+        FluxFidelityAccumulator(),
     )
 end
 
 function write_window!(writer::CubedSphereBinaryWriter{FT},
                        ready::ReadyWindow{CubedSphereTargetGeometry, FT}) where {FT}
     writer.closed && throw(ArgumentError("cannot write to a closed CubedSphereBinaryWriter"))
+    verify_flux_fidelity!(writer.fidelity, ready.fidelity, ready.index)
     return write_streaming_cs_window!(writer.inner, ready.payload, writer.Nc, writer.npanel)
 end
 
+# Closing patches the certificate into the header; a failed aggregate gate
+# (`flux_fidelity_header!` throws) must not leave the IO open. The LL writer's
+# file is its own staging path (removed by `quarantine_streaming_binary!`).
 function close_streaming_binary!(writer::LatLonBinaryWriter)
     writer.closed && return writer.path
-    flush(writer.io)
-    close(writer.io)
     writer.closed = true
-    return writer.path
-end
-
-function close_streaming_binary!(writer::ReducedGaussianBinaryWriter)
-    writer.closed && return writer.path
     try
-        close_streaming_transport_binary!(writer.inner)
+        flux_fidelity_header!(writer.header, writer.fidelity)
+        header_json = JSON3.write(writer.header)
+        pad = writer.header_bytes - ncodeunits(header_json)
+        pad > 0 || error("transport binary header must leave room for a null terminator within header_bytes=$(writer.header_bytes)")
+        seek(writer.io, 0)
+        write(writer.io, header_json)
+        write(writer.io, zeros(UInt8, pad))
+        flush(writer.io)
     finally
-        writer.closed = true
+        close(writer.io)
     end
     return writer.path
 end
 
-function close_streaming_binary!(writer::CubedSphereBinaryWriter)
+# The RG/CS adapters wrap a streaming writer with its own atomic staging file
+# (`inner.staging_path`, published onto `inner.path` = the adapter's staging
+# path). When the certificate fails, that inner staging file is abandoned and
+# its IO closed here: quarantine removes only the adapter's path.
+function _close_wrapped_streaming_writer!(writer)
     writer.closed && return writer.path
+    writer.closed = true
     try
-        close_streaming_transport_binary!(writer.inner)
-    finally
-        writer.closed = true
+        flux_fidelity_header!(writer.inner.header, writer.fidelity)
+    catch
+        abandon_streaming_transport_binary!(writer.inner)
+        rethrow()
     end
+    close_streaming_transport_binary!(writer.inner)
     return writer.path
 end
+
+close_streaming_binary!(writer::ReducedGaussianBinaryWriter) =
+    _close_wrapped_streaming_writer!(writer)
+close_streaming_binary!(writer::CubedSphereBinaryWriter) =
+    _close_wrapped_streaming_writer!(writer)
 
 function promote_streaming_binary!(writer::AbstractBinaryWriter)
     writer.promoted && return writer.final_path
     close_streaming_binary!(writer)
     if writer.path != writer.final_path
-        mv(writer.path, writer.final_path; force=true)
+        commit_atomic_staging(writer.path, writer.final_path)
     end
     writer.promoted = true
     return writer.final_path
@@ -168,8 +198,11 @@ end
 
 function quarantine_streaming_binary!(writer::AbstractBinaryWriter)
     writer.promoted && return writer.path
-    close_streaming_binary!(writer)
-    isfile(writer.path) && rm(writer.path; force=true)
+    try
+        close_streaming_binary!(writer)
+    finally
+        abandon_atomic_staging(writer.path)
+    end
     return writer.path
 end
 

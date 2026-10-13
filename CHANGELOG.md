@@ -16,6 +16,63 @@
 
 ### Breaking changes
 
+- Preprocessing column balances spread their correction with
+  `column_balance_weights = "hybrid_mass"` by default on every target (owner
+  decision OF-03; effect in Numerical changes). `[numerics]
+  column_balance_weights` is now accepted for lat-lon and reduced-Gaussian
+  targets (it was rejected), every path that balances records the weights in
+  its header, and an existing binary whose recorded weights differ (absent
+  means `mass`) is regenerated instead of reused. The GEOS `pressure_fixer`
+  and `pfix_corrected` closures keep the native fluxes, so column weights do
+  not apply to them: they are accepted and ignored (and not recorded) instead
+  of rejected. The three shipped GEOS pressure-fixer configs
+  (`geosit_c180_dec2021_catrine_f32_{fullL72_pressurefixer,merged_pressurefixer,pfixcorrected}.toml`)
+  failed with the new default because `config/met_sources/geosit.toml`
+  supplies it. `Preprocessing.validate_preprocessing_config(cfg)` runs every
+  config-level check of `process_day(cfg)` without reading input, and a core
+  test loads all shipped preprocessing configs through it from a scratch
+  working directory (a config whose external input, such as the
+  reduced-Gaussian `geometry_source_grib`, is absent is skipped and counted).
+- Removed the met-source descriptors `merra2_geoschem_hm_gchp.toml`,
+  `merra2_geoschem_hm_vs.toml` and `merra2_geoschem_hybridmass.toml`: with
+  the new defaults they equal `config/met_sources/merra2_geoschem.toml`, which
+  their preprocessing configs now use.
+- Native preprocessing (ERA5 N320, MERRA-2) errors when the next day's
+  endpoint is missing on any day but the configured last day; the warned
+  zero-tendency fallback applies only there. ERA5 N320 days are no longer
+  day-threaded (their inner kernels use static scheduling).
+- Preprocessing internals changed for the certificate and column-closure work
+  (callers on other branches must follow): `FluxFidelityEvidenceBundle(flux,
+  omega, closure)` takes a third, column-closure field;
+  `SourceOmegaEvidence` and `source_omega_evidence_cs` take an
+  `OmegaFidelityBaseline` (and cached `OmegaFidelityCells`) instead of
+  `baseline_id`/`nrmse_limit`; `NativeFluxEvidence` holds
+  `FluxBalanceSample`s; `balance_column_mass_fluxes!`, `balance_window!` and
+  `apply_poisson_balance!` take `weights`; `recompute_cm_from_dm_target!`
+  takes `residual_weight` (default: the layer mass, bit-identical);
+  `balance_cs_column_mass_fluxes!` returns `final_column_residual_ratio` and
+  `final_column_tolerance_{min,max,by_cell}` instead of
+  `final_column_tolerance`; `diagnose_cs_cm!` accepts a per-cell
+  `residual_tol` and a `context`; `CSPoissonScratch` has a `tol` buffer;
+  `capture_structured_wind_flux_samples` takes a `StructuredFidelitySampler`
+  and `capture_faceindexed_flux_samples` the sampled faces and values. In the
+  header and its typed form, `omega_fidelity_limit` is replaced by
+  `omega_fidelity_nrmse_limit`, `omega_fidelity_correlation_min`,
+  `omega_fidelity_slope_min` and `omega_fidelity_slope_max`
+  (`OmegaFidelityHeader.nrmse_limit`, `.correlation_min`, `.slope_min`,
+  `.slope_max`; `OmegaFidelityBaseline` gains `slope_max`), and
+  `FluxFidelityHeader` gains `time_sampling_by_window`. The per-sample
+  balance-correction ratios `balance_correction_max_ratio` and
+  `balance_correction_rms_ratio` (near-zero pre-balance faces dominated them)
+  are replaced by `balance_correction_rms_relative`,
+  `balance_correction_max_level_rms_relative` and
+  `balance_correction_max_level` (`FluxFidelityHeader` fields of the same
+  names). `TransportBinaryHeader` gains `column_closure`
+  (`ColumnClosureHeader` or `NoColumnClosureHeader`), and
+  `recheck_cs_column_closure` takes `flux_scale`;
+  `scale_column_closure_record` is replaced by
+  `full_window_column_closure_record`.
+
 - Removed the deprecated, unused `State.MetState`,
   `diagnose_cm_from_continuity_vc!`, and
   `diagnose_cm_from_continuity_ka!` APIs. Call
@@ -142,6 +199,22 @@
 
 ### Fixes
 
+- Native preprocessing (GEOS, MERRA-2, ERA5 N320) records the configured
+  dry-mass target `mass_fix_target_ps_dry_pa` exactly
+  (`GLOBAL_MEAN_DRY_SURFACE_PRESSURE`, 98325 Pa). It was recomputed from the
+  pinned air mass: 98325.00162169515 Pa on the GEOS-IT C45 golden (the GEOS
+  writer divided by a Float32 `g`) and 98325.00000000001 Pa on the MERRA-2
+  C90 and ERA5 N320 L117 goldens at 637036cf. GEOS `initial_endpoint` runs,
+  which have no configured pressure, still record the pressure of the pinned
+  mass. The pin and the payloads are unchanged.
+- Relative hybrid-coefficient paths of preprocessing configs
+  (`config/era5_L137_coefficients.toml`, `config/geos_L72_coefficients.toml`)
+  resolve in the working directory first and then in the package root
+  (`Preprocessing.resolve_coefficients_path`), as `[source].toml` already did;
+  the shipped configs failed from any other working directory, e.g. under
+  `Pkg.test`, which runs in `test/`. A missing table names both locations; a
+  working-directory table that differs from the shipped one is used with a
+  warning naming both files.
 - A run's absolute time origin is checked before any output or forcing is set
   up, whether or not the run writes output: `[input].start_date`, the first
   binary's `date` header and a `YYYYMMDD` (or `YYYY-MM-DD`) date in its
@@ -154,6 +227,83 @@
   bounds before 1582-10-15 as instants, exactly as `decode_time` converts the
   coordinate (Julian 2000-01-01 is 2000-01-14), so stepwise surface fluxes
   from such files switch at the right instants, not up to 13 days early.
+- Write-time flux-fidelity certificate in every new transport-binary header
+  (#15, item 3). Wind-derived paths rebuild deterministic face samples from
+  `u`, `v` and `Δp` before the column balance and fail a window before it is
+  written when a sample exceeds both `64 ε max(F_scale, 1 kg)` and
+  `256 ε` relative; the balance correction `Δ = F_balanced − F` is reported
+  separately, flux-weighted: largest `|Δ|`, `RMS(Δ)/RMS(F)` over all samples
+  and its largest per-level value with the level (goldens, global and
+  largest per-level value, the latter at the lowest level in every case:
+  0.39 % and 0.95 % for MERRA-2 C90, 0.29 % and 0.58 % for ERA5 N320 L117,
+  2.3 % and 5.9 % for GEOS-IT C45, 3.0 % and 6.9 % for ERA5 C24, 3.7 % and
+  9.4 % for the 72 × 37 lat-lon and 0.78 % and 1.7 % for O24). Where
+  source OMEGA is open (MERRA-2; GEOS OMEGA closures), `ω_cm = g cm/(A Δt)`
+  must beat a zero vertical flux, `NRMSE < 1`, with correlation `> 0.5` and
+  slope `0.5 < s < 1.5` (MERRA-2 C90: 0.47, 0.89, 0.87; baselines
+  `merra2_wind_omega_v3`, `geos_native_omega_v3`); a failure quarantines the
+  staged file. The two-sided slope bound rejects a `cm` that is uniformly a
+  factor 2 or more too large or too small (an amount or time-convention
+  error), which NRMSE and correlation alone accept down to 1/20. Native GEOS fluxes have no independent source and are certified
+  `not_applicable` (`native_fluxes_not_rederivable`, balance correction only);
+  payload-only paths say `source_payload_only`. The checks evaluate only the
+  sampled faces (lat-lon columns, at most 32 reduced-Gaussian latitude lines,
+  N320 thickness at stencil cells), record each window's effective time
+  sampling (`window_start_boundary_fallback` at an archive boundary) and are
+  checked for consistency by the writer and the reader (coverage of every
+  window and level, finite metrics, status/kind pairs). The certificate is one
+  header block that the TM5 convection attachment carries over from its source
+  (the flux payload is unchanged). No certificate can catch input errors
+  (registration, level order, units): reference and candidate share the input
+  fields, and the vector evaluator shares the production face geometry. See
+  `docs/src/concepts/binary_format.md`. The block carries
+  `flux_fidelity_schema = 2`; the reader refuses any other schema with a
+  "regenerate this binary" error.
+
+- Cubed-sphere column balances close in Float64 with a bounded Float32
+  closure loop; every production caller checks the closure, the `cm` residual
+  is checked before it is folded into the column (an out-of-tolerance or
+  non-finite residual raises), seam faces weight both physical cells, and
+  zero-sum, NaN or Inf weights raise. The Float32 closure tolerance is per
+  cell, `τ_c = max(10 kg, 8 ε Σ_{f∂c} Σ_k |F_{f,k}|)`: the global maximum of
+  that budget (8.9e8 kg on GEOS C45, 2.3e7 kg on MERRA-2 C90) would have
+  accepted the measured pre-fix defects (2.9e8 kg, 6.0e6 kg). Headers record
+  the closure (`column_closure_*`: largest projected residual, its ratio to
+  `τ_c`, largest residual folded into `cm`); a residual dominated by the
+  global mean of an unpinned run names `[mass_fix]`. The Float64 solve changed
+  golden payloads by at most 2.7e-4 (`pre_c24`), 3.8e-5 (`pre_merra2_c90`),
+  6.0e-8 (`pre_era5_n320_c90_l117`) and 2.8e-3 (`pre_geosit_c45`) relative;
+  the per-cell rule changes none: every golden window closes at the first pass
+  with largest residual/tolerance ratios of 0.0021 (MERRA-2 C90), 0.014
+  (GEOS-IT C45), 0.0002 (ERA5 N320 L117) and 0.01 (ERA5 C24), and `cm`
+  residual ratios of at most 0.22. The record describes the stored payload:
+  GEOS stores full-window amounts, `2n` times the balanced fluxes, a Float32
+  product that rounds when `2n` is not a power of two, so its closure is
+  evaluated again after that scaling (GEOS-IT C45: 0.014, set by windows with
+  `n = 9`, against 0.0012 before the scaling; largest projected residual
+  3.4e5 kg per flux application). The `cm` keys record the residual folded
+  into `cm` at its diagnosis. The reader decodes the record
+  (`TransportBinaryHeader.column_closure`) and refuses a binary whose record
+  is incomplete, covers other than `nwindow` windows or exceeds its
+  tolerance; binaries without the keys load as "not recorded". Known limits:
+  the GEOS OMEGA baseline is unmeasured (no golden covers `omega_regularized`
+  or `omega_full_replacement`), and coarse unpinned Float32 runs can
+  approach the `cm` limit (unpinned GEOS-IT C45 golden day: `cm` residual
+  ratio 0.924).
+- ERA5 surface fields (PBL height, friction velocity, heat fluxes, 2 m
+  temperature) are remapped from cell faces derived from the file's own
+  coordinates (`SnappedFaces`, half-width polar caps). The previous uniform
+  mesh shifted every column 0.125° east and stretched latitudes by up to
+  0.125° near the poles. On the L117 golden day the surface fields change
+  locally (median 0.05–0.2 %, p99.9 4–5 %, largest 10.8 % (pblh), 9.8 %
+  (ustar), 12.8 % (heat flux) of each field's maximum), as does the derived
+  TM5 `dkg` (largest 35.7 % of its maximum, but only 0.06 % of values change
+  by more than 1 %).
+- Every preprocessing transport writer and the ERA5 physics NetCDF-to-binary
+  converter write through a unique sibling staging file and publish
+  atomically; a failed day removes its staging file. A certificate that fails
+  when the header is patched closes the writer and abandons the inner staging
+  file too.
 
 - The restored ERA5 physics and hourly spectral downloaders stage outputs,
   validate complete inventories and the requested grid/representation, and
@@ -367,6 +517,59 @@
   tightened (`test_cs_stride_checkpoint.jl` from `3e-4` to `1e-9`).
 
 ### Numerical changes
+
+- Column balances use `hybrid_mass` weights by default on every target
+  (cubed sphere, and now lat-lon and reduced Gaussian): the correction of a
+  column's flux budget goes by air mass to hybrid layers only, and the
+  column's remaining `cm` residual is folded with the same weights, so
+  pure-pressure (stratospheric) layers receive none of it. A layer is hybrid
+  when `ΔB_k ≥ 1e-6` (`HYBRID_LAYER_MIN_DB`; its thickness changes by at
+  least 0.1 Pa when `p_s` changes by 1000 hPa): GEOS/MERRA-2 L72 layer 41
+  (150–177 hPa) has `ΔB = 8.2e-9` (8.2e-4 Pa per 1000 hPa), a rounding
+  residue of the table, and now counts as pure pressure (with `ΔB > 0` it
+  took about 3 % of every correction at full mass weight); the smallest
+  genuine increment of the shipped tables is ERA5 L137 layer 55,
+  `ΔB = 7e-6` (0.7 Pa per 1000 hPa). The change is large in
+  the stratosphere:
+  - GEOS-IT C45 (`pre_geosit_c45`, `hybrid_mass` against `mass`, measured
+    with the `ΔB > 0` mask):
+    stratospheric RMS `cm` falls by 25–43 % between 5 and 130 hPa (0.57× at
+    48 hPa); horizontal fluxes on faces above 10 % of the global maximum
+    change by up to 17.8 % (p99 2 %; flux-weighted 1–2.7 % in the
+    pure-pressure layers 1–40, 0.25–0.7 % in hybrid layers); tropospheric
+    `cm` changes by less than 0.3 %. ERA5 spectral C24 (`pre_c24`):
+    stratospheric RMS `cm` 0.65–0.72×.
+  - The `ΔB` threshold alone: `pre_geosit_c45` layer-41 fluxes change by
+    1.8–1.9 % RMS and `cm` at 177–288 hPa by 12 % to 5 % RMS;
+    `pre_merra2_c90` by 0.25 % and 3.5 % to 1.4 %, and its OMEGA NRMSE
+    improves from 0.4725 to 0.4712 (300–100 hPa: 0.302 to 0.297). ERA5 cases
+    are bit-identical.
+  - Lat-lon and reduced Gaussian (`hybrid_mass` against `mass`):
+    `pre_ll72` stratospheric RMS `cm` 0.60–0.69× at 10–100 hPa and
+    0.72–0.93× at 100–200 hPa, horizontal fluxes up to 11 % RMS per level
+    (meridional, 28 hPa); `pre_o24` 0.70–0.83× and 0.83–0.96×, horizontal
+    fluxes up to 1 % RMS per level.
+  - Air masses, `ps` and `dm` are bit-identical in every case. Run a
+    stratospheric tracer A/B before regenerating science sets.
+- Wind-derived cubed-sphere preprocessing defaults to the GCHP-matched
+  construction: Cartesian wind regridding, vector face fluxes with FV3
+  interpolation and true edge lengths, and (ERA5) trapezoidal `window_mean`
+  endpoint sampling. The ERA5 spectral path uses the same typed
+  implementations as MERRA-2 and ERA5 N320 and supports source-grid line
+  integrals. On `pre_c24` `am`, `bm` and `cm` change (largest `cm` change
+  5.0e12 kg against a maximum of 7.4e12 kg); `m`, `ps` and `dm` are
+  bit-identical. The historical construction remains available as
+  `panel_average`/`cell_centerline`/`linear`/`scalar`/`window_start`.
+- ERA5 N320 face fluxes use the dry pressure thickness by default
+  (`flux_thickness = "dry_mass"`, `Δp_dry = (1 − q)|ΔA + ΔB p_s| = g m_dry/A`),
+  consistent with the dry air masses; `"moist"` reproduces older files. On the
+  L117 golden day only `am`, `bm` and `cm` change (largest 5.4e10 kg against
+  3.3e12 kg); one window takes 13 instead of 14 substeps.
+- Every preprocessing target mesh (lat-lon, reduced Gaussian, cubed sphere)
+  uses `Parameters.EARTH_RADIUS` (6.371e6 m) and records it as
+  `planet_radius_m`, so cell areas and air masses scale by
+  `(6371000/6371229)² − 1 = −7.19e-5`. The IFS radius stays only in the
+  source-side ERA5 spectral and N320 calculations.
 
 - Reduced-Gaussian preprocessing now uses the same column-integrated Poisson
   balance as the lat-lon and cubed-sphere paths: one ring-graph solve per
@@ -729,36 +932,35 @@
 - `config/met_sources/era5_n320_arco_diffusion_li.toml` and
   `config/preprocessing/era5_n320_arco_diffusion_to_c90_l117_li.toml` combine
   both with `hybrid_b` on 117 levels (native below about 8 hPa).
-- MERRA-2 preprocessing option `[preprocessing] face_fluxes = "vector"`
+- MERRA-2 preprocessing `[preprocessing] face_fluxes = "vector"`
   builds face fluxes from the cell winds as 3-D vectors. They are projected
   onto the true face normals, use the faces' great-circle lengths, and are
-  interpolated along the edge at panel seams, as FV3 does. The default
-  (`"panel_average"`) is unchanged.
+  interpolated along the edge at panel seams, as FV3 does. It is now the
+  default together with Cartesian wind regridding, edge lengths, and FV3
+  interpolation; `"panel_average"` remains available explicitly.
   - The default construction misplaces the seam winds by up to a quarter of a
     face length and uses cell centerline widths instead of face lengths.
   - For solid-body rotation the spurious divergence at seam cells drops from
     4e-3 to 5e-6 of the face flux, and in the interior from 1e-4 to 2e-7.
   - Against MERRA-2 OMEGA on 2022-07-15 (C90, p < 150 hPa), the
     vertical-velocity error at seam cells falls from 8.8e-3 to 1.3e-3 Pa/s.
-  - Related opt-in keys: `face_lengths = "edge"` and
-    `flux_thickness = "dry_mass"`.
-- MERRA-2 preprocessing option `[preprocessing] column_balance_weights` sets
-  how the column mass-budget correction of the horizontal fluxes is spread
-  over levels. The options are `"mass"` (default, unchanged),
-  `"hybrid_b"` (by ΔB, as in TM5) and `"hybrid_mass"` (by air mass in hybrid
-  layers only). With `"mass"` the correction reaches the stratosphere as a
-  vertically coherent `cm` mode; the hybrid options keep it out of the
-  pure-pressure layers. In a four-month C90 run against GCHP, `"hybrid_mass"`
-  cut the growth of the bias above 100 hPa by about two thirds. Near-surface
-  RMSE changed by +0.4 % to −5 % depending on the tracer
-  (`docs/src/theory/vertical_transport.md`). The ERA5 N320 source reads the
-  same key, and the ERA5 spectral (`[numerics] column_balance_weights`),
-  lat-lon → cubed-sphere (`--column-balance-weights`) and GEOS
-  (`[preprocessing] column_balance_weights`) paths offer it too, with `"mass"`
-  as the default; those three record it in the header only when it is not
-  `"mass"`, so their default binaries are unchanged. Per-layer balance and
-  the GEOS pressure-fixer closures reject other weights; lat-lon and
-  reduced-Gaussian spectral targets accept only `"mass"`.
+  - Related key: `flux_thickness = "dry_mass"` (opt-in for MERRA-2, the
+    ERA5 N320 default).
+- Preprocessing option `column_balance_weights` sets how the column
+  mass-budget correction of the horizontal fluxes is spread over levels:
+  `"mass"`, `"hybrid_b"` (by ΔB, as in TM5) or `"hybrid_mass"` (by air mass in
+  hybrid layers only, the default on every target; see Numerical changes).
+  With `"mass"` the correction reaches the stratosphere as a vertically
+  coherent `cm` mode; the hybrid options keep it out of the pure-pressure
+  layers. In a four-month C90 run against GCHP, `"hybrid_mass"` cut the
+  growth of the bias above 100 hPa by about two thirds. Near-surface RMSE
+  changed by +0.4 % to −5 % depending on the tracer
+  (`docs/src/theory/vertical_transport.md`). MERRA-2, ERA5 N320 and GEOS set
+  it in the met source's `[preprocessing]` table, ERA5 spectral configs in
+  `[numerics]` (lat-lon, reduced Gaussian and cubed sphere alike), and the
+  lat-lon → cubed-sphere regrid with `--column-balance-weights`. Headers
+  record every choice but `"mass"`; the GEOS pressure-fixer closures, which
+  keep the native fluxes, ignore it.
 
 - Time-varying surface fluxes can span several files: `files = [...]` or a
   `file_pattern` with `{YYYYMM}` plus `year`. `gridfed_fossil_co2` joins the

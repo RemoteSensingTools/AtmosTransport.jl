@@ -17,12 +17,28 @@ layer is pure pressure, `ΔB_k = 0`.
 Preprocessing turns met winds into horizontal air-mass fluxes through the
 cell faces of the cubed sphere, for each layer and substep.
 
+At write time, the flux-fidelity gate independently checks deterministic face
+samples against the defining integral
+`F = (Δt/g) ∫face [(u eλ + v eφ) ⋅ n] Δp dl`. The check runs before column
+balance, whose deliberate correction is reported separately. Its
+line-integral evaluator independently rebuilds the 16 midpoint quadrature and
+four-cell interpolation weights from the meshes instead of applying the bulk
+sparse operator. Its
+precision-derived limits are
+`T_abs = 64 eps(FT) max(F_scale, 1 kg)` and `T_rel = 256 eps(FT)`; a sample
+fails only if both its absolute error and its relative error exceed those
+limits. The check shares its inputs with production, so it cannot detect input
+errors; its vector evaluator also shares the production face geometry, and
+native GEOS fluxes are not rederivable (certificate `not_applicable`). See
+[Binary format](../concepts/binary_format.md#Flux-fidelity-gate-and-header-certificate)
+for sampling, normalization, and header details.
+
 **MERRA-2** (`src/Preprocessing/transport_binary/merra2_latlon_regrid.jl`).
 - Inputs: A3dyn 3-hour mean winds (0.5° × 0.625°); I3 instantaneous surface
   pressure and humidity.
-- `u_east` and `v_north` are regridded conservatively to C90 cell means,
-  by default as two scalars (`[preprocessing] wind_regrid = "scalar"`);
-  `"cartesian"` regrids the wind as a vector (see *Poles* below).
+- `u_east` and `v_north` are regridded conservatively to C90 cell means as a
+  Cartesian vector by default (`[preprocessing] wind_regrid = "cartesian"`);
+  `"scalar"` retains the historical component-wise path (see *Poles* below).
 - Hourly windows split each 3-hour block; air mass, `p_s`, humidity and
   temperature are linear in time.
 
@@ -30,7 +46,7 @@ Two constructions of the face fluxes from cube-centre winds are available
 (`[preprocessing] face_fluxes`, MERRA-2 and ERA5 N320 paths); ERA5 N320 also
 offers line integrals of the source flow (`"line_integral"`, see **ERA5** below):
 
-- **`panel_average`** (default, historical,
+- **`panel_average`** (historical,
   `src/Preprocessing/cs_flux_reconstruction.jl`, `cs_face_fluxes!`).
   - Each cell's wind is projected onto its panel's local face-normal
     directions.
@@ -41,7 +57,7 @@ offers line integrals of the source flow (`"line_integral"`, see **ERA5** below)
     (`face_lengths = "cell_centerline"`). `"edge"` uses the face's own
     great-circle length instead.
   - At a panel seam only the cell on the owning panel is used.
-- **`vector`** (`cs_vector_face_fluxes!`).
+- **`vector`** (default, `cs_vector_face_fluxes!`).
   - The two cells' winds are combined as 3-D vectors.
   - At a panel seam the result is further interpolated along the edge to the
     face midpoint, as FV3 does.
@@ -83,16 +99,17 @@ profile), `vector` changes:
   0.310 ppm.
 
 With in addition `wind_regrid = "cartesian"` and `face_interpolation = "fv3"`
-(GCHP's construction; `config/met_sources/merra2_geoschem_hm_gchp.toml`):
+(GCHP's construction, now the default):
 - the stratospheric growth is the same (−0.036 ppm);
 - the near-surface RMSE falls further, by 15 % (CO₂), 16 % (fossil CO₂) and
   24 % (Rn-222), and the column CO₂ RMSE from 0.101 to 0.085 ppm.
 `"cubic"` without the filter gives mixed near-surface changes (worse for CO₂,
 fossil CO₂ and SF₆, better for Rn-222).
 
-The ERA5 N320 path (`era5_n320_regrid.jl`) takes the same options, except
-`flux_thickness`; the spectral and lat-lon ERA5 paths (`cubed_sphere_spectral.jl`,
-`cubed_sphere_regrid.jl`) still use `panel_average` and the scalar wind regrid.
+The ERA5 N320 and spectral-to-CS paths (`era5_n320_regrid.jl` and
+`cubed_sphere_spectral.jl`) take the same options and defaults. The separate
+lat-lon-binary regrid path (`cubed_sphere_regrid.jl`) retains the historical
+construction because its input binary does not preserve endpoint source winds.
 The reduced Gaussian source cells have great-circle edges along their latitude
 bounds, so they leave up to 0.3 % of the polar C90 cells uncovered. The N320
 path therefore divides every intensive field by the regridded constant 1
@@ -130,7 +147,7 @@ GCHP's own C90 winds (`Met_U`/`Met_V` in the CATRINE output) match it to within
 
 **Interpolation to the faces.** `face_interpolation` (`vector` only) chooses how
 the cell winds reach the face midpoint:
-- `"linear"` (default): the two adjacent cells.
+- `"linear"`: the two adjacent cells.
 - `"cubic"`: FV3's fourth-order stencil `(−1, 9, 9, −1)/16` across interior
   faces that have two cells on each side in the same panel row. The layer
   thickness stays linear. Against exact line integrals of a smooth analytic
@@ -138,18 +155,32 @@ the cell winds reach the face midpoint:
   accurate (`face_flux_accuracy.jl`). The divergence gains less, 1.6 times at
   that wavelength, because the faces next to the seams stay second order
   (`CSVectorFaceGeometry`); for very smooth winds it is slightly worse.
-- `"fv3"`: `"cubic"` plus the filter that GCHP's restaggering applies along
+- `"fv3"` (default): `"cubic"` plus the filter that GCHP's restaggering applies along
   each face (next paragraph).
 
-`flux_thickness = "dry_mass"` uses the dry layer thickness `g m_dry / A` that
-the fluxes transport, instead of the moist `Δp`.
+`flux_thickness = "dry_mass"` uses the dry layer thickness that the fluxes
+transport, instead of total-air `Δp`:
 
-**ERA5** (`.../era5_n320_regrid.jl`). Instantaneous hourly winds on the N320
-reduced Gaussian grid. Surface pressure comes from the 0.25° ARCO product.
+```math
+\Delta p_{\mathrm{dry},k}
+  = (1-q_k)\,\left|\Delta A_k + \Delta B_k p_s\right|
+  = \frac{g\,m_{\mathrm{dry},k}}{A_{\mathrm{cell}}}.
+```
+
+For target-grid face methods this thickness is evaluated in each cubed-sphere
+cell before interpolation to faces. ERA5's line-integral method evaluates the
+equivalent `(1-q) Δp` on N320 before integrating along a cube face. ERA5 N320
+defaults to `dry_mass`, matching its dry-basis layer masses; MERRA-2 retains
+its historical `moist` default for compatibility.
+
+**ERA5** (`.../era5_n320_regrid.jl` and
+`.../cubed_sphere_spectral.jl`). Instantaneous hourly winds are supplied on
+the N320 reduced Gaussian grid or synthesized onto the regular lat–lon staging
+grid. Surface pressure comes from ARCO or the spectral LNSP field.
 - With `panel_average` or `vector` the winds are regridded to the cube as
   above.
 - `face_fluxes = "line_integral"` (`LineIntegralFaceFluxes`) integrates the
-  N320 flow along each cube face instead:
+  source-grid flow along each cube face instead:
 
   ```math
   F_f = \frac{\Delta t}{g} \int_f (\mathbf{V} \cdot \mathbf{N}_f)\, \Delta p \, dl .
@@ -157,16 +188,16 @@ reduced Gaussian grid. Surface pressure comes from the 0.25° ARCO product.
 
   A cube face is a great-circle arc, so its unit normal `N_f` is the same
   vector along it. The Cartesian components of `V Δp` are interpolated
-  bilinearly from the N320 cells to 16 midpoints of the arc. By the divergence
+  bilinearly from the N320 or staging-grid cells to 16 midpoints of the arc. By the divergence
   theorem the net flux out of a cube cell is then the N320 flow's divergence
   integrated over the cell; the cell-centre methods smooth it at the cube
   grid scale. TM5 integrates the spectral winds along its cell edges in the
   same spirit.
-- `flux_time_sampling = "window_start"` (default) holds the fluxes from the
-  winds at hour `h` over the window `[h, h + 1]`. `"window_mean"` uses
+- `flux_time_sampling = "window_mean"` (default) uses
   `(F(h) + F(h + 1)) / 2`, the trapezoidal rule for the window's mean flux;
   the Poisson balance then closes it against `m(h + 1) − m(h)` as before.
-  Without a next day on disk the last window uses `F(h)`.
+  `"window_start"` holds `F(h)` over the window. Without a next day on disk
+  the last window uses `F(h)` and records the boundary fallback.
 
 Against ERA5's own vertical velocity (ARCO-ERA5
 `ar/model-level-1h-0p25deg.zarr-v1`, 2022-01-15, C90, `hybrid_b`), in the
@@ -249,7 +280,10 @@ about 0.1–0.2 Pa/s RMS before correction. AtmosTransport closes each column:
 
 The lat-lon (`balance_column_mass_fluxes!`) and reduced-Gaussian
 (`balance_compressed_column_fluxes!`) spectral paths close their columns the
-same way, with `mass` weights. No path balances each level to its own mass
+same way, with the same weights. The explicit-tendency `cm` closure
+(`recompute_cm_from_dm_target!`, `diagnose_cs_cm!` on the cube) folds a
+column's remaining residual `R` into the levels with the same weights,
+`C_{k+1} ← C_{k+1} − R Σ_{j≤k} w_j / Σ_j w_j`. No path balances each level to its own mass
 change: with the column closed, the per-level imbalance that remains is the
 vertical mass flux of section 3, and a per-level balance would remove it.
 TM5's per-level balance (`BalanceMassFluxes_m`) keeps vertical motion only
@@ -258,15 +292,50 @@ independent vertical flux. The reduced-Gaussian path balanced per level until
 issue #11, which left its vertical mass flux at about 1e-4 of the lat-lon one
 on the same ERA5 day.
 
-The weights are selectable (`column_balance_weights`, on every cubed-sphere
-path; [Data sources](../config/data_sources.md) lists where each path sets
-it):
+The weights are selectable (`column_balance_weights`, on every path that
+applies a column balance: lat-lon, reduced Gaussian and cubed sphere;
+[Data sources](../config/data_sources.md) lists where each path sets it):
 
 | Option | Weights `w_k` | Consequence |
 |---|---|---|
-| `mass` (current default) | layer air mass of the two adjacent cells | The correction reaches every layer, including the stratosphere |
+| `mass` | layer air mass of the two adjacent cells | The correction reaches every layer, including the stratosphere |
 | `hybrid_b` | `ΔB_k` | Only hybrid layers are corrected; the semantics of TM5 and GCHP |
-| `hybrid_mass` | layer air mass where `ΔB_k > 0`, else 0 | Like `mass` in the troposphere, no correction in pure-pressure layers |
+| `hybrid_mass` (default) | layer air mass where `ΔB_k ≥ 10⁻⁶`, else 0 | Like `mass` in the troposphere, no correction in pure-pressure layers |
+
+`hybrid_mass` counts a layer as hybrid when `ΔB_k ≥ 10⁻⁶`
+(`HYBRID_LAYER_MIN_DB`): its thickness `Δp_k = ΔA_k + ΔB_k p_s` then changes
+by at least `10⁻⁶ × 10⁵` Pa = 0.1 Pa when `p_s` changes by 1000 hPa.
+GEOS/MERRA-2 L72 layer 41 (150–177 hPa) has `ΔB = 8.2 × 10⁻⁹` (8.2 × 10⁻⁴ Pa
+per 1000 hPa), a rounding residue of the `B` table (`3 × 10⁻⁷` of its 2654 Pa
+thickness); with a plain `ΔB > 0` mask it took about 3 % of every column
+correction at full mass weight although its thickness does not follow `p_s`.
+The smallest genuine hybrid increment of the shipped tables is ERA5 L137 layer
+55 (73–77 hPa, the topmost layer with `ΔB > 0`: `ΔB = 7 × 10⁻⁶`, 0.7 Pa per
+1000 hPa, 0.17 % of its 416 Pa thickness at `p_s` = 1000 hPa); the ERA5 level
+presets keep it at `ΔB = 7 × 10⁻⁶` (`ml137_full`, `ml137_cfl94`,
+`ml137_cfl85`) or merge it into a layer with `2.4 × 10⁻⁵` (`ml137_66L`) or
+`5.9 × 10⁻⁵` (`ml137_tropo34`, `ml137_tropo34a`), all above the threshold. The
+next GEOS layer has `ΔB = 7 × 10⁻³` (696 Pa per 1000 hPa). On the GEOS-IT C45 golden day the
+threshold changes the layer-41 fluxes by 1.8–1.9 % RMS and `cm` at 177–288 hPa
+by 12 % to 5 % RMS; on MERRA-2 C90 by 0.25 % and 3.5 % to 1.4 %, and the
+MERRA-2 OMEGA NRMSE improves from 0.4725 to 0.4712.
+
+**Size of the default change.** `hybrid_mass` against `mass` on the golden
+days (2021-12-01 GEOS-IT and ERA5, 2022-01-15 MERRA-2; the cubed-sphere numbers
+were measured with the `ΔB > 0` mask, before the threshold above):
+- GEOS-IT native C180 → C45: stratospheric RMS `cm` falls by 25–43 % between
+  5 and 130 hPa (0.57× at 48 hPa). Horizontal fluxes on faces above 10 % of
+  the global maximum change by up to 17.8 % (99th percentile 2 %);
+  flux-weighted, by 1–2.7 % in the pure-pressure layers 1–40 and 0.25–0.7 % in
+  the hybrid layers. Tropospheric `cm` changes by less than 0.3 %. With `mass`
+  weights the column residual is pushed into the pure-pressure layers as
+  spurious stratospheric vertical flux (a young-air bias); `hybrid_mass` keeps
+  their native divergence, as GCHP's remap in fixed-pressure layers and TM5's
+  `ΔB` weighting do.
+- ERA5 spectral C24: stratospheric RMS `cm` 0.65–0.72×.
+- ERA5 lat-lon 72×37: stratospheric RMS `cm` 0.60–0.69× at 10–100 hPa and
+  0.72–0.93× at 100–200 hPa; reduced Gaussian O24: 0.70–0.83× and 0.83–0.96×.
+- Air masses, `ps` and `dm` are unchanged in every case.
 
 The vertical mass flux (section 3) inherits the correction as
 `Σ_{j ≤ k} (w_j/Σw − ΔB_j) · δ`, a mode that is coherent in the vertical.
@@ -344,6 +413,17 @@ binary stores `cm` for each window; it is constant within the window. GCHP
 has no stored vertical flux: its vertical motion is implicit in the remap.
 TM5 recomputes `cm` at every dynamics step from the time-interpolated
 fluxes.
+
+When source OMEGA is available, write-time certification additionally compares
+it with `ω_cm = g cm/(A_cell Δt_amount)` after matching dry `(1-q)` basis,
+time sampling, horizontal grid, and vertical levels. The header reports global
+and pressure-band errors against a named per-source baseline, which passes only
+with `NRMSE < 1` (the score of `cm ≡ 0`), correlation `> 0.5` and
+`0.5 < slope < 1.5` (MERRA-2 C90: 0.47, 0.89, 0.87; the slope bounds reject a
+`cm` that is uniformly a factor 2 or more too small or too large). This is a
+physical-fidelity diagnostic distinct from replay closure: replay asks whether
+the stored arrays conserve mass together, while OMEGA asks whether their
+vertical motion agrees with an independent meteorological field.
 
 ## 4. Vertical advection
 
@@ -543,7 +623,7 @@ runs the GEOS-Chem schemes.
 | Step | TM5 | GCHP 14.7 (MERRA-2) | AtmosTransport |
 |---|---|---|---|
 | Horizontal fluxes | Spectral edge integrals | FV3 from conservatively regridded A3dyn winds | Two-cell means of conservatively regridded winds × layer thickness |
-| Column closure | Per-level Poisson, vertical flux fixed, ΔB | None; mismatch in advected `p_s`, reset each step | Column Poisson; weights `mass` (default), `hybrid_b`, `hybrid_mass` |
+| Column closure | Per-level Poisson, vertical flux fixed, ΔB | None; mismatch in advected `p_s`, reset each step | Column Poisson; weights `hybrid_mass` (default), `hybrid_b`, `mass` |
 | Vertical motion | IFS vertical velocity | Implied by Lagrangian remap (ΔB) | `cm` from continuity, constant per window |
 | Vertical scheme | Prognostic slopes, positivity limiter | Lagrangian remap, PPM `kord 8` | Flux form; PPM-informed slope with CW84 limiter (`ppm`), or FV3 `kord 8` parabola (`vertical = "fv3_kord8"`) |
 | Time step | Global `ndyn`, CFL-limited | 600 s | 10–13 substeps per hourly window |

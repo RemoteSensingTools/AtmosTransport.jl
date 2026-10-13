@@ -20,10 +20,13 @@ other AtmosTransport modules; every later module may import from it.
 ## Entry Points
 
 - Constants of nature, in [`PhysicalConstants.jl`](PhysicalConstants.jl):
-  - `EARTH_RADIUS` (6.371e6 m), the default radius of meshes built without one
-    (and of transport binaries that do not record `planet_radius_m`)
-  - `IFS_EARTH_RADIUS` (6.371229e6 m), the radius of the ERA5 spectral transforms,
-    TM5 and every preprocessing target mesh (recorded in binaries as `planet_radius_m`)
+  - `EARTH_RADIUS` (6.371e6 m), the radius of every preprocessing target mesh,
+    the default radius of other meshes, and the fallback for transport binaries
+    that do not record `planet_radius_m`
+  - `IFS_EARTH_RADIUS` (6.371229e6 m), used only for source-side calculations
+    whose physical definition comes from IFS/TM5: ERA5 spectral wind synthesis,
+    the native N320 source mesh, and the N320 humidity remap used by the TM5
+    attachment path. It is not a transport target radius.
   - `STANDARD_GRAVITY`, `STANDARD_PRESSURE`, `THETA_REFERENCE_PRESSURE`
   - `R_DRY_AIR`, `CP_DRY_AIR`, `CP_OVER_R_DIATOMIC`, `DRY_AIR_MOLAR_MASS`,
     `VIRTUAL_TEMPERATURE_FACTOR`, `AVOGADRO`
@@ -69,6 +72,17 @@ other AtmosTransport modules; every later module may import from it.
     the conjugate-gradient residual tolerance), `DEFAULT_POISSON_BALANCE_MAX_ITER`
     (20000, an `Int`) and `DEFAULT_POISSON_PROJECT_EVERY` (50, an `Int`, the
     iterations between null-space projections of the cubed-sphere solve)
+  - `HYBRID_LAYER_MIN_DB` (1e-6), the smallest `ΔB_k` at which a layer counts
+    as hybrid in the `hybrid_mass` column-balance weighting (GEOS L72 layer 41,
+    `ΔB = 8.2e-9`, is pure-pressure; ERA5 L137 layer 55, `7e-6`, is hybrid)
+  - `COLUMN_CLOSURE_TOL_KG` (10 kg per flux application), the absolute floor
+    of the per-cell closure tolerance `τ_c` of the cubed-sphere column balance
+    and of the `cm` residual check (binding for Float64 payloads)
+  - write-time OMEGA-fidelity gate of transport binaries:
+    `OMEGA_FIDELITY_NRMSE_LIMIT` (1.0, the score of a zero `cm`),
+    `OMEGA_FIDELITY_CORRELATION_MIN` (0.5), `OMEGA_FIDELITY_SLOPE_MIN` (0.5) and
+    `OMEGA_FIDELITY_SLOPE_MAX` (1.5; the slope bounds reject a uniformly
+    mis-scaled `cm`)
   - transport-binary replay check: `REPLAY_TOLERANCE_FLOAT64` (1e-12) and
     `REPLAY_TOLERANCE_FLOAT32` (1e-5), the largest accepted per-cell budget
     residual relative to the summed magnitudes of the budget's terms

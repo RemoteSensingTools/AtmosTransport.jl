@@ -56,16 +56,20 @@ Base.@kwdef struct ERA5GRIBSettings{flavor} <: AbstractERA5GRIBSettings
     coefficients_file     :: String = "config/era5_L137_coefficients.toml"
     level_orientation     :: Symbol = :top_down
     # Flux construction (shared with MERRA-2; see `flux_construction.jl` and
-    # docs/src/config/data_sources.md). The defaults reproduce the historical path.
-    column_balance_weights :: Symbol = :mass
-    face_lengths          :: Symbol = :cell_centerline
-    face_fluxes           :: Symbol = :panel_average
-    face_interpolation    :: Symbol = :linear
-    wind_regrid           :: Symbol = :scalar
+    # docs/src/config/data_sources.md). Defaults use GCHP-matched vector
+    # construction; column weighting defaults to the hybrid-layer-safe mode.
+    column_balance_weights :: Symbol = :hybrid_mass
+    face_lengths          :: Symbol = :edge
+    face_fluxes           :: Symbol = :vector
+    face_interpolation    :: Symbol = :fv3
+    wind_regrid           :: Symbol = :cartesian
+    # Pressure thickness multiplying winds in the horizontal face fluxes.
+    # Dry mass is the transported quantity, so dry thickness is the default.
+    flux_thickness        :: Symbol = :dry_mass
     # Time sampling of the hourly window fluxes: the winds at the window start
     # (`:window_start`, historical) or the mean of the face fluxes at the start
     # and end of the window (`:window_mean`, trapezoidal rule for ∫ u Δp dt).
-    flux_time_sampling    :: Symbol = :window_start
+    flux_time_sampling    :: Symbol = :window_mean
 end
 
 const ERA5N320Settings = ERA5GRIBSettings{:n320}

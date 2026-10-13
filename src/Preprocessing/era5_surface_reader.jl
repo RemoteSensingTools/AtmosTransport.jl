@@ -26,6 +26,8 @@ mutable struct ERA5SurfaceReader
     Nx       :: Int
     Ny       :: Int
     time_len :: Int
+    lons     :: Vector{Float64}
+    lats     :: Vector{Float64}
 end
 
 function _resolve_era5_surface_path(surface_dir::AbstractString, date::Date)
@@ -156,8 +158,18 @@ function _open_era5_surface_reader_from(nc_paths::Vector{String},
         tmp_dir === nothing || rm(tmp_dir; recursive = true, force = true)
         rethrow()
     end
-    time_len = isempty(datasets) ? 0 : maximum(_surface_time_len, datasets)
-    return ERA5SurfaceReader(datasets, String(path), tmp_dir, date, Nx, Ny, time_len)
+    try
+        time_len = isempty(datasets) ? 0 : maximum(_surface_time_len, datasets)
+        lons, lats = _era5_surface_coordinates(datasets, path, Nx, Ny)
+        return ERA5SurfaceReader(datasets, String(path), tmp_dir, date, Nx, Ny,
+                                 time_len, lons, lats)
+    catch
+        for ds in datasets
+            close(ds)
+        end
+        tmp_dir === nothing || rm(tmp_dir; recursive = true, force = true)
+        rethrow()
+    end
 end
 
 function close_era5_surface_reader(reader::ERA5SurfaceReader)
@@ -177,6 +189,65 @@ function _surface_time_len(ds::NCDataset)
         end
     end
     return 1
+end
+
+function _normalize_surface_coordinates(lon, lat)
+    any(ismissing, lon) && throw(ArgumentError(
+        "ERA5 surface longitude coordinate contains missing values"))
+    any(ismissing, lat) && throw(ArgumentError(
+        "ERA5 surface latitude coordinate contains missing values"))
+    lons = Float64.(lon)
+    lats = Float64.(lat)
+    if length(lats) > 1 && lats[1] > lats[end]
+        reverse!(lats)
+    end
+    # Keep the coordinate order exactly synchronized with
+    # `_normalize_surface_ll!`: a 0..360 field is rolled by half a grid into
+    # the centred -180..180 order before it is regridded.
+    if length(lons) > 1 && lons[1] >= 0 && lons[end] > 180
+        lons = circshift(lons, length(lons) ÷ 2)
+        @. lons = ifelse(lons >= 180, lons - 360, lons)
+    end
+    return lons, lats
+end
+
+function _era5_surface_coordinates(datasets::Vector{NCDataset}, path,
+                                    Nx::Int, Ny::Int)
+    isempty(datasets) && throw(ArgumentError(
+        "ERA5 surface input $(path) contains no NetCDF datasets"))
+    reference = nothing
+    for ds in datasets
+        haskey(ds, "longitude") || throw(ArgumentError(
+            "ERA5 surface dataset in $(path) is missing longitude coordinates"))
+        haskey(ds, "latitude") || throw(ArgumentError(
+            "ERA5 surface dataset in $(path) is missing latitude coordinates"))
+        lons, lats = _normalize_surface_coordinates(
+            ds["longitude"][:], ds["latitude"][:])
+        length(lons) == Nx || throw(DimensionMismatch(
+            "ERA5 surface longitude coordinate has length $(length(lons)), expected $(Nx)"))
+        length(lats) == Ny || throw(DimensionMismatch(
+            "ERA5 surface latitude coordinate has length $(length(lats)), expected $(Ny)"))
+        if reference === nothing
+            reference = (lons, lats)
+        elseif lons != reference[1] || lats != reference[2]
+            throw(ArgumentError(
+                "ERA5 surface datasets in $(path) do not share one longitude/latitude grid"))
+        end
+    end
+    return reference
+end
+
+"""
+    era5_surface_source_mesh(reader, radius) -> LatLonMesh
+
+Build the ERA5 single-level source mesh from the coordinates stored in the
+open file. `SnappedFaces` preserves the point-registered 0.25° grid: the
+longitude points remain cell centres and the latitude rows at ±90° become
+half-width polar caps. The returned coordinate order matches the normalized
+surface arrays produced by [`load_era5_surface_window`](@ref).
+"""
+function era5_surface_source_mesh(reader::ERA5SurfaceReader, radius::Real)
+    return source_latlon_mesh(reader.lons, reader.lats, SnappedFaces(); radius)
 end
 
 function _surface_time_index(reader::ERA5SurfaceReader, ds::NCDataset, win_idx::Int)

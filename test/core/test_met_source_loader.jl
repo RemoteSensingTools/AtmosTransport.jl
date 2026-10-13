@@ -40,7 +40,7 @@ const REPO_ROOT = joinpath(@__DIR__, "..", "..")
         @test s.include_surface === false
         @test s.include_convection === false
         @test endswith(s.coefficients_file, "geos_L72_coefficients.toml")
-        @test s.column_balance_weights === :mass
+        @test s.column_balance_weights === :hybrid_mass
     end
 
     @testset "GEOS-FP TOML → native C720 GEOSFPSettings" begin

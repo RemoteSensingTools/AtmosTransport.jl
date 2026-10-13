@@ -4,6 +4,14 @@
 # `cubed_sphere_contracts.jl` — all three CS-producing preprocessors call the
 # same `verify_cs_window_contract!` so no path can silently skip a check.
 
+# The LL → CS regrid has no winds or OMEGA of its own (payload only), but it
+# runs a cubed-sphere column balance whose closure is recorded per window.
+_regrid_window_evidence(::Type{FT}, balance_diag, cm_diag) where FT =
+    FluxFidelityEvidenceBundle(
+        NoFluxFidelityEvidence{CubedSphereTargetGeometry,FT,SourcePayloadOnly}(SourcePayloadOnly()),
+        NoSourceOmegaEvidence{CubedSphereTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega()),
+        column_closure_record(balance_diag, cm_diag))
+
 function _ll_binary_to_cs_regridder_cache_key(grid::CubedSphereTargetGeometry,
                                               Nx_ll::Integer,
                                               Ny_ll::Integer)
@@ -99,7 +107,7 @@ face fluxes are reconstructed with the output scaling.
   for legacy LL sources that do not carry `dm`. Production-safe regrids should
   leave this at `false` so the final CS window is closed against an explicit
   endpoint target instead of an inferred zero-tendency fallback.
-- `column_balance_weights::Symbol = :mass` — how the column Poisson balance
+- `column_balance_weights::Symbol = :hybrid_mass` — how the column Poisson balance
   spreads its correction over the levels (`:mass`, `:hybrid_b` or
   `:hybrid_mass`; see `AbstractColumnWeights`), from the source binary's hybrid
   `B` interfaces. Other weights than `:mass` are recorded in the header.
@@ -120,7 +128,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 steps_per_window::Union{Nothing, Integer} = nothing,
                                 cs_balance_tol::Real = DEFAULT_POISSON_BALANCE_TOL,
                                 cs_balance_project_every::Integer = DEFAULT_POISSON_PROJECT_EVERY,
-                                column_balance_weights::Symbol = :mass,
+                                column_balance_weights::Symbol = :hybrid_mass,
                                 write_replay_check::Bool = true,
                                 run_cache = nothing)
     t_start = time()
@@ -272,12 +280,11 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     vc_merged = HybridSigmaPressure(A_ifc, B_ifc)
 
     # --- Open streaming CS binary writer ---
-    # Stage to `out_path.tmp` so the positivity gate (final step) can
+    # Stage to a unique sibling file so the positivity gate (final step) can
     # error without leaving a bad binary at `out_path`. Renamed to the
     # final name on success.
     mkpath(dirname(out_path))
-    tmp_path = out_path * ".tmp"
-    isfile(tmp_path) && rm(tmp_path)
+    tmp_path = _open_preprocessing_staging(out_path)
     inner_writer = open_streaming_cs_transport_binary(
         tmp_path, Nc, CS_PANEL_COUNT, Nz, Nt, vc_merged;
         FT=FT,
@@ -465,7 +472,9 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
 
         fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, steps_per_met)
         for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
-        diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz, balance_weights)
+        cm_diag = _diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
+                                            cur_m, Nc, Nz, bal_diag,
+                                            "LL-to-CS window $(win - 1)", balance_weights)
         pos_diag = if write_replay_on
             contract = verify_cs_window_contract!(cur_m, cur_am, cur_bm, cur_cm,
                                                   cs_ws.m_next_panels,
@@ -499,7 +508,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                               (tm5_fields=(entu=cur_entu, detu=cur_detu,
                                            entd=cur_entd, detd=cur_detd),))
         end
-        write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(win - 1, window_nt))
+        write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(
+            win - 1, window_nt, _regrid_window_evidence(FT, bal_diag, cm_diag)))
 
         if should_log_window(win - 1, Nt)
             @info @sprintf("    Window %2d/%d: wrote (colbal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
@@ -558,7 +568,9 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
 
     fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, steps_per_met)
     for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
-    diagnose_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels, cur_m, Nc, Nz, balance_weights)
+    cm_diag = _diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
+                                        cur_m, Nc, Nz, bal_diag,
+                                        "LL-to-CS window $Nt", balance_weights)
     pos_diag = if write_replay_on
         contract = verify_cs_window_contract!(cur_m, cur_am, cur_bm, cur_cm,
                                               cs_ws.m_next_panels,
@@ -592,7 +604,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                           (tm5_fields=(entu=cur_entu, detu=cur_detu,
                                        entd=cur_entd, detd=cur_detd),))
     end
-    write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(Nt, window_nt))
+    write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(
+        Nt, window_nt, _regrid_window_evidence(FT, bal_diag, cm_diag)))
 
     @info @sprintf("    Window %2d/%d (last): colbal %.2fs  pre=%.2e post=%.2e iter=%d",
                    Nt, Nt, t_bal, bal_diag.max_pre_residual,
@@ -611,7 +624,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         @info "  Write-time replay gate: $replay_msg"
     end
 
-    # Single contract summary — errors (and deletes the staged .tmp) on
+    # Single contract summary — errors (and deletes the staging file) on
     # require_substep_positivity=true if the gate failed, otherwise warns.
     summarize_cs_positivity_status(worst_positivity;
                                    cfl_limit = positivity_cfl_limit,

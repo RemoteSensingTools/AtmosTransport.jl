@@ -11,14 +11,17 @@ O160/O320 binary generation without OOM.
 struct SlidingWindowBuffer{FT}
     m     :: Vector{Matrix{FT}}     # length-2 circular buffer
     hflux :: Vector{Matrix{FT}}
+    fidelity_samples :: Vector{Matrix{FT}}   # (fidelity samples, Nz)
     cm    :: Vector{Matrix{FT}}
     ps    :: Vector{Vector{FT}}
 end
 
-function allocate_sliding_window_buffer(nc::Int, nf::Int, Nz::Int, ::Type{FT}) where FT
+function allocate_sliding_window_buffer(nc::Int, nf::Int, Nz::Int, ::Type{FT};
+                                        fidelity_samples::Int) where FT
     SlidingWindowBuffer{FT}(
         [zeros(FT, nc, Nz)     for _ in 1:2],
         [zeros(FT, nf, Nz)     for _ in 1:2],
+        [zeros(FT, fidelity_samples, Nz) for _ in 1:2],
         [zeros(FT, nc, Nz + 1) for _ in 1:2],
         [zeros(FT, nc)         for _ in 1:2],
     )
@@ -35,12 +38,13 @@ function fill_buffer_slot!(buf::SlidingWindowBuffer{FT},
                            ps_vec::AbstractVector) where FT
     copyto!(buf.m[slot],     merged.m_merged)
     copyto!(buf.hflux[slot], merged.hflux_merged)
+    copyto!(buf.fidelity_samples[slot], merged.fidelity_merged)
     copyto!(buf.cm[slot],    merged.cm_merged)
     buf.ps[slot] .= ps_vec   # broadcast handles Float64→FT conversion in-place
     return nothing
 end
 
-mutable struct ReducedGaussianSpectralWindowWorkspace{FT, TW, MW, BW, QW, CL}
+mutable struct ReducedGaussianSpectralWindowWorkspace{FT, TW, MW, BW, QW, CL, CW}
     work           :: TW
     merged         :: MW
     buf            :: BW
@@ -55,6 +59,9 @@ mutable struct ReducedGaussianSpectralWindowWorkspace{FT, TW, MW, BW, QW, CL}
     div_scratch    :: Matrix{Float64}
     dm_target_work :: Matrix{Float64}
     steps_schedule :: Vector{Int}
+    balance_weights :: CW          # column-balance weights on the output levels
+    fidelity_capture :: Ref{Any}
+    dt_met_seconds :: Float64
     cur            :: Int
     nxt            :: Int
 end
@@ -104,8 +111,9 @@ function allocate_window_workspace(grid::ReducedGaussianTargetGeometry,
     Nz = vertical.Nz
 
     work = allocate_reduced_transform_workspace(grid, spec.T, Nz_native)
-    merged = allocate_reduced_merge_workspace(grid, Nz_native, Nz, FT)
-    buf = allocate_sliding_window_buffer(nc, nf, Nz, FT)
+    ns = nsamples(work.fidelity_sampler)
+    merged = allocate_reduced_merge_workspace(grid, Nz_native, Nz, FT; fidelity_samples = ns)
+    buf = allocate_sliding_window_buffer(nc, nf, Nz, FT; fidelity_samples = ns)
     ps_offsets = zeros(Float64, spec.n_times + 1)   # the last entry: the next day's 00 UTC
 
     thermo_path = ""
@@ -130,13 +138,19 @@ function allocate_window_workspace(grid::ReducedGaussianTargetGeometry,
     div_scratch = zeros(Float64, nc, Nz)
     dm_target_work = zeros(Float64, nc, Nz)
 
+    balance_weights = _spectral_column_weights(grid, settings, vertical)
+
     return ReducedGaussianSpectralWindowWorkspace{
-        FT, typeof(work), typeof(merged), typeof(buf), typeof(qv_ws), typeof(cL)}(
+        FT, typeof(work), typeof(merged), typeof(buf), typeof(qv_ws), typeof(cL),
+        typeof(balance_weights)}(
             work, merged, buf, qv_ws, thermo_path, ps_offsets, cL,
             hflux_work, m_cur_work, m_next_work, cm_work, div_scratch,
             dm_target_work, fill(exact_steps_per_window(settings.met_interval,
                                                          settings.dt),
                                   spec.n_times),
+            balance_weights,
+            Ref{Any}(nothing),
+            Float64(settings.met_interval),
             1, 2)
 end
 
@@ -187,6 +201,10 @@ function drain_ready_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
     _ = steps_per_window
     steps = initial_substeps(substep_policy, workspace.steps_schedule[win_idx])
     old_steps = workspace.steps_schedule[win_idx]
+    source_steps = old_steps
+    workspace.fidelity_capture[] = capture_faceindexed_flux_samples(
+        workspace.work.fidelity_sampler.faces, workspace.buf.hflux[workspace.cur],
+        workspace.buf.fidelity_samples[workspace.cur])
     diag = nothing
     contract_diag = nothing
     while true
@@ -201,7 +219,8 @@ function drain_ready_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
                                workspace.div_scratch, workspace.dm_target_work,
                                workspace.buf, workspace.cur,
                                workspace.buf.m[workspace.nxt],
-                               workspace.work, workspace.cL, steps)
+                               workspace.work, workspace.cL, steps;
+                               weights = workspace.balance_weights)
         contract_diag = _verify_rg_stored_window!(
             contract, workspace, workspace.buf.m[workspace.nxt], win_idx;
             write_replay_on = write_replay_on, accumulate = false)
@@ -211,12 +230,24 @@ function drain_ready_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
         steps = next_steps
     end
     update_accumulator!(contract, contract_diag.positivity, win_idx)
+    amount_seconds = 0.5 * workspace.dt_met_seconds / steps
+    initial_seconds = 0.5 * workspace.dt_met_seconds / source_steps
+    accepted_capture = scale_captured_flux_samples(
+        workspace.fidelity_capture[], amount_seconds / initial_seconds)
+    flux_evidence = faceindexed_wind_evidence(
+        ReducedGaussianTargetGeometry, accepted_capture,
+        workspace.buf.hflux[workspace.cur]; method = "reduced_spectral_uv_dp",
+        amount_seconds)
+    omega_evidence = NoSourceOmegaEvidence{
+        ReducedGaussianTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega())
     ready = ReadyWindow{ReducedGaussianTargetGeometry, FT}(
         win_idx,
         (m = workspace.buf.m[workspace.cur],
          hflux = workspace.buf.hflux[workspace.cur],
          cm = workspace.buf.cm[workspace.cur],
-         ps = workspace.buf.ps[workspace.cur]))
+         ps = workspace.buf.ps[workspace.cur]),
+        FluxFidelityEvidenceBundle(flux_evidence, omega_evidence,
+                                   NoColumnClosureRecord()))
     workspace.cur, workspace.nxt = workspace.nxt, workspace.cur
     return (ready = ready, balance = diag, contract = contract_diag)
 end
@@ -231,6 +262,10 @@ function flush_final_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
     _ = steps_per_window
     steps = initial_substeps(substep_policy, workspace.steps_schedule[win_idx])
     old_steps = workspace.steps_schedule[win_idx]
+    source_steps = old_steps
+    workspace.fidelity_capture[] = capture_faceindexed_flux_samples(
+        workspace.work.fidelity_sampler.faces, workspace.buf.hflux[workspace.cur],
+        workspace.buf.fidelity_samples[workspace.cur])
     diag = nothing
     contract_diag = nothing
     while true
@@ -244,7 +279,8 @@ function flush_final_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
                                workspace.m_next_work, workspace.cm_work,
                                workspace.div_scratch, workspace.dm_target_work,
                                workspace.buf, workspace.cur, m_next,
-                               workspace.work, workspace.cL, steps)
+                               workspace.work, workspace.cL, steps;
+                               weights = workspace.balance_weights)
         contract_diag = _verify_rg_stored_window!(
             contract, workspace, m_next, win_idx;
             write_replay_on = write_replay_on, accumulate = false)
@@ -254,11 +290,23 @@ function flush_final_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
         steps = next_steps
     end
     update_accumulator!(contract, contract_diag.positivity, win_idx)
+    amount_seconds = 0.5 * workspace.dt_met_seconds / steps
+    initial_seconds = 0.5 * workspace.dt_met_seconds / source_steps
+    accepted_capture = scale_captured_flux_samples(
+        workspace.fidelity_capture[], amount_seconds / initial_seconds)
+    flux_evidence = faceindexed_wind_evidence(
+        ReducedGaussianTargetGeometry, accepted_capture,
+        workspace.buf.hflux[workspace.cur]; method = "reduced_spectral_uv_dp",
+        amount_seconds)
+    omega_evidence = NoSourceOmegaEvidence{
+        ReducedGaussianTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega())
     ready = ReadyWindow{ReducedGaussianTargetGeometry, FT}(
         win_idx,
         (m = workspace.buf.m[workspace.cur],
          hflux = workspace.buf.hflux[workspace.cur],
          cm = workspace.buf.cm[workspace.cur],
-         ps = workspace.buf.ps[workspace.cur]))
+         ps = workspace.buf.ps[workspace.cur]),
+        FluxFidelityEvidenceBundle(flux_evidence, omega_evidence,
+                                   NoColumnClosureRecord()))
     return (ready = ready, balance = diag, contract = contract_diag)
 end
