@@ -22,7 +22,8 @@ is a type the caller names, and the methods dispatch on it:
   for longitudes centred on 0° or ±180°, midpoint faces with pole and
   truncation rules for pole-centred, truncated and Gaussian latitudes.
   [`UniformSpanFaces`](@ref AtmosTransport.GriddedIO.UniformSpanFaces): the
-  uniform mesh of the runtime surface-flux and initial-condition loaders.
+  uniform mesh the runtime surface-flux and initial-condition loaders used
+  before they moved to `SnappedFaces`; the runtime no longer uses it.
   Bounds variables are never used.
 - **Time axes.** [`decode_time`](@ref AtmosTransport.GriddedIO.decode_time)
   classifies an axis by its raw `units` before any CFTime call and decodes it
@@ -60,7 +61,7 @@ is a type the caller names, and the methods dispatch on it:
 - **Lat-lon flux files** for `kind = "file"`:
   [`write_latlon_flux`](@ref AtmosTransport.GriddedIO.write_latlon_flux), static
   fields only, on meshes whose faces the runtime rebuilds exactly from the
-  centres (until step P2b gives it explicit faces).
+  written centres with `SnappedFaces`.
 
 The rules were measured on the TRENDY v14, GFED5, FLUXCOM-X, CAMS, GridFED and
 EDGAR files; `src/GriddedIO/README.md` lists them with their invariants.

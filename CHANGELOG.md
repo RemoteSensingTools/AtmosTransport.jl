@@ -1,17 +1,440 @@
 # Release notes
 
-## Unreleased
+## 0.5.0 — 2026-10-13
+
+This is a breaking release. It changes numerical results in preprocessing and
+at run time, removes configuration keys, environment variables and some Julia
+API, and tightens the transport-binary header contract. Regenerate transport
+binaries to get the corrected physics, and keep the version, forcing binary,
+run TOML and dependency manifest with reproducibility records; pin 0.4.0 to
+reproduce older runs. Most of the physics changes answer an external review
+against the TM5 and IFS Fortran by pera-noaa (NOAA GML), GitHub issues #10–#20.
+Thank you.
+
+### Summary
+
+- **One dry-air mass target** of 98,325 Pa for every met source with the
+  default `[mass_fix] mode = "target_ps_dry"` (was 98,726 Pa, 0.41 % too
+  much dry air; #14, PR #45); GEOS `mode = "initial_endpoint"` runs still pin
+  to their first endpoint. Native pins use the ΔB(1−q) shape.
+- **TM5 convection on the dry basis** (#19), **TM5 `echlevs` numbering
+  fixed** (#18) and the **unpaired Nyquist harmonic dropped** on even rings
+  (#13), all in PR #41. **TM5 level merging** (`n_merge > 1`) no longer
+  amplifies near-cancelling mixed-sign layer pairs into dipoles with negative
+  mixing ratios (OF-107, PR #51); the default `n_merge = 1` is unaffected.
+- **GEOS-Chem non-local VDIFF emission deposit fixed** (OF-108, PR #53): a
+  roundoff-triggered `qmincg` fallback had kept about 94 % of fresh emissions
+  of zero-background tracers (Rn-222, fossil CO₂) in the surface layer
+  instead of the boundary-layer profile. Rerun MERRA-2 runs that use
+  `[diffusion] kind = "geoschem_nonlocal_vdiff"`.
+- **Column-only Poisson balance**, which fixes the reduced-Gaussian sign error
+  (#11, PR #36).
+- **Per-cell replay gate** with tighter tolerances (#15, PR #39), and
+  **write-time flux-fidelity certificates** in every binary the
+  preprocessors write (schema 2: horizontal re-derivation; OMEGA comparison with NRMSE,
+  correlation and a two-sided slope bound), plus a **checked per-cell column
+  closure** recorded by the cubed-sphere column balances (#15 item 3,
+  PR #49).
+- **Conservative hybrid-coordinate remap** for file initial conditions
+  (PR #45) and for `cs_native` initial conditions (PR #46).
+- **GCHP-matched preprocessing defaults** (PR #49): vector/FV3 face fluxes
+  with true edge lengths and Cartesian wind regridding, ERA5 `window_mean`
+  sampling, `hybrid_mass` column weights on every target, dry N320 flux
+  thickness, and one target-sphere radius (`EARTH_RADIUS`).
+- **Runtime fidelity** (PR #46): symmetric Rn-222 decay; configured Lin–Rood
+  defaults to the `fv3_kord8` vertical remap; surface-flux and IC source
+  meshes from snapped file-coordinate faces; per-month fluxes decoded from CF
+  time; outputs record the physics that ran, with CF time units.
+- **Adjoint and inversion:** the Lin–Rood adjoint Z-sweep fix (#10, PR #37);
+  the Lin–Rood adjoint now also transposes the FV3 `kord = 8` vertical
+  sweeps, so footprints and 4D-Var use the forward default (OF-94, PR #50);
+  the 4D-Var driver honours `[advection]` and L-BFGS evaluates each point once
+  (#16, #17, PR #35).
+- **Settings move from environment variables to typed TOML keys** (PR #25).
+  Configs are validated strictly before any binary opens (PRs #24, #26).
+- **Performance:** surface-flux series stay on the host (device memory
+  18.9 → 2.9 GB for a ten-year C90 Float64 run, PR #42); CUDA halo exchange in
+  2 launches instead of 30 and in-place window refills (PR #24); ERA5 N320
+  preprocessing about 5× faster (PR #22).
+- **New tooling:** the `Analysis` module (PR #38), the `GriddedIO` module
+  (PR #33), observation sampling (PR #8), lab GPU benchmarks and Codecov
+  (PR #30), golden sessions (PR #31), test tiers and a quick gate (PR #47),
+  and the former orphan tests in CI (PR #48).
+
+**Regenerate your transport binaries** to get the corrected physics.
+Multi-file runs reject a mix of old (98,726 Pa) and new (98,325 Pa) dry-mass
+targets.
+Binaries without the new `surface_pressure_basis` key, and dry binaries with
+TM5 convection but no `tm5_convection_mass_basis`, still open with a one-time
+warning; these warnings become errors in the next minor release.
+
+### Breaking changes
+
+The details, with measurements, are in the sections further down.
+
+#### Configuration (TOML)
+
+| Removed or changed | Replacement / new rule | PR |
+|---|---|---|
+| `[mass_fix] target_ps_dry_pa`, `target_total_kg` | Removed and rejected. One target, `Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE = 98325.0` Pa. | #45 |
+| `[mass_fix] mode = "initial_endpoint"` on MERRA-2 / ERA5 N320 | Refused (only GEOS native implements it; before, it silently skipped the pin). | #22 |
+| `[numerics] geos_balance_mode` (and the per-layer balance) | Removed; a config that sets it is an error. The column balance is the only balance. | #36 |
+| `[run] scheme`, `ppm_order`, `vertical`, `limiter` | Read only from `[advection]`; in `[run]` they are an error that names the new table. | #26 |
+| `surface_flux.molar_mass_kg_mol` | `surface_flux.species = "co2" \| "sf6" \| "rn222"`; the molar mass comes from `Parameters.SPECIES_MOLAR_MASS`. Tracers named `co2`, `co2_natural`, `co2_fossil`, `fossil_co2`, `sf6`, `rn222` may omit it. | #33 |
+| Unknown `surface_flux.kind` (was read as a generic file) | Error with a suggestion; use `kind = "file"` for a generic NetCDF file (`"eccodarwin_ocean_co2"` → `"file"`). | #24 |
+| Time-varying surface fluxes without `[input] start_date` | `start_date` is required (the time origin came from the file). | #26 |
+| Surface-flux units | One unit grammar (`GriddedIO.parse_flux_units`); missing or unknown units are errors; kg of another named species than the tracer's is an error (it was read with factor 1). | #26, #33 |
+| Per-month surface-flux slices | Month lengths come from the file's CF time coordinate, bounds and calendar; a static `month` selects by decoded month; see *Surface fluxes and preprocessing*. | #46 |
+| `cs_native` flux files | Units kg m⁻² s⁻¹ of the species (or kgC, converted), no fill values, dimensions exactly `(time, nf, Ydim, Xdim)`, strictly increasing time; the mesh must match when the file carries `cell_area`. | #8, #26, #33 |
+| ERA5 L137 level presets `ml137_94L`, `ml137_85L` | Removed; use `ml137_cfl94`, `ml137_cfl85`. `echlevs` now uses TM5/ECMWF half-level numbering; `ml137_tropo34` is the TM5-MP r1112 list, new `ml137_tropo34a` the cy3-4dvar/CAMS73 list. | #41 |
+| ERA5 source `bottom_up` level orientation | Rejected (it was accepted but ignored). | #41 |
+| `[vertical].level_selection` on sources without 137 native levels | Rejected; `[vertical].coefficients_file` is accepted as an alias of `coefficients`. | #8 |
+| `[architecture] backend` aliases `host`, `nvidia`, `apple`, `apple_metal`, `gpu`, and other case or separator spellings | Rejected, naming the canonical value (`cpu`, `cuda`, `metal`, `auto`). | #44 |
+| Unknown tables and keys in a run config (ignored before) | Error with a "did you mean" suggestion; known keys that the chosen kind leaves unread are warnings. | #24, #26 |
+| `[advection] prognostic_slopes` | Was ignored; now an error (unknown key), removed from the ten shipped configs that set it. | #26, #43 |
+| `start_window` / `stop_window` beyond an input's window count | Error (`stop_window` was clamped). Lat-lon and reduced-Gaussian initial conditions use the air mass of `start_window`. | #43 |
+| Snapshot hours that are not met-window ends | Error at start (such snapshots, and every later one, were silently lost). `format = "binary_mmap"` on lat-lon / reduced-Gaussian grids is rejected before the run. | #24 |
+| Snapshot output without an absolute time origin | A run needs `[input] start_date`, a binary `date` header, or a `YYYYMMDD` date in the first binary's file name; where several are present they must agree. | #46 |
+| File ICs without hybrid coefficients | Must match the model's level count and state their order (pressure or height units, CF `positive`, or `init.vertical_order`). The file's `Psurf` is no longer read. | #26, #45 |
+| `cs_native` ICs whose level count differs from the binary | Need source `ap`/`bp` (conservative hybrid remap); optional `init.humidity_variable`. | #46 |
+| Lat-lon meshes | Must span 360° of longitude. | #43 |
+| `cmfmc_matrix` convection | Every binary must carry `cmfmc` and `dtrain`. | #43 |
+| 4D-Var driver `scripts/inversions/cs_4dvar.jl` | Requires an `[advection]` table with `scheme`; unknown tables and keys are errors, including `[diffusion]`, `[convection]` and `[output]`; schemes without a cubed-sphere adjoint are rejected (`require_adjoint_support`). Lin–Rood defaults to `vertical = "fv3_kord8"`, as in forward runs. | #35, #43, #50 |
+| Default `column_balance_weights` | `"hybrid_mass"` (was `"mass"`) on every target: cubed sphere, lat-lon and reduced Gaussian. `[numerics] column_balance_weights` is now accepted for lat-lon and reduced-Gaussian targets. The GEOS `pressure_fixer` / `pfix_corrected` closures keep the native fluxes and ignore the weights. A binary whose recorded weights differ is regenerated instead of reused. | #49 |
+| Wind-derived cubed-sphere flux construction | Defaults to `face_fluxes = "vector"`, `face_lengths = "edge"`, `face_interpolation = "fv3"`, `wind_regrid = "cartesian"`, and (ERA5) `flux_time_sampling = "window_mean"`; ERA5 N320 `flux_thickness = "dry_mass"`. The historical choices stay available explicitly. | #49 |
+| Met-source descriptors `merra2_geoschem_hm_gchp.toml`, `merra2_geoschem_hm_vs.toml`, `merra2_geoschem_hybridmass.toml` | Removed (equal to the new defaults); use `config/met_sources/merra2_geoschem.toml`. | #49 |
+| Missing next-day endpoint in native preprocessing | The zero-tendency fallback applies only to the configured last day of a range; any other missing endpoint is an error. | #49 |
+| Configured `scheme = "linrood"` | Defaults to `vertical = "fv3_kord8"` (was upwind); `vertical = "upwind"` keeps the old behavior. | #46 |
+
+`validate_config` (run at the start of every run) parses `[advection]`,
+`[diffusion]`, `[convection]`, `[chemistry]`, `air_mass_reset_mode`,
+`physics_cadence` and `[output]` before any binary opens (PR #24).
+
+#### Environment variables → typed config (PR #25)
+
+These are removed without a transition period; the package ignores them.
+
+| Removed variable | Use instead |
+|---|---|
+| `ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS` | `[run] physics_cadence = "substep"` |
+| `ATMOSTR_REPLAY_CHECK` | `[input] validate_replay = true` |
+| `ATMOSTR_NO_REPLAY_CHECK` | nothing (the load-time check runs only when asked for) |
+| `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE` | nothing (the per-layer balance is removed) |
+| `ATMOSTR_DISABLE_PREFETCH` | `[run] prefetch_windows = false` |
+| `ATMOSTR_ASSERT_CS_BINARY_CFL` | `[advection] check_binary_cfl = true` |
+| `ATMOSTR_NO_WRITE_REPLAY_CHECK` | `[numerics] write_replay_check = false` (preprocessing config); `--no-write-replay-check` of `regrid_ll_transport_binary_to_cs.jl` |
+
+Environment variables now set only paths, metadata, profiling and
+diagnostics; `docs/src/config/environment.md` lists them, and a test enforces
+the list.
+
+#### Julia API
+
+Removed:
+- `State.MetState`, `diagnose_cm_from_continuity_vc!` and
+  `diagnose_cm_from_continuity_ka!` (call `diagnose_cm_from_continuity!` with
+  explicit `Δb`), and `Preprocessing.reset_workspace!` (#43).
+- `FileInitialConditionSource.psurf` (#45).
+- The GEOS writer's `process_day(...; balance_mode)` keyword (#36).
+
+Changed signatures and required keywords:
+- `write_transport_binary(...)` requires `surface_pressure_basis =
+  TotalSurfacePressure()` or `DrySurfacePressure()` (#45).
+- `open_streaming_transport_binary` and `open_streaming_cs_transport_binary`
+  require both `mass_basis` and `surface_pressure_basis` (#41, #45).
+- The direct preprocessing writers (`process_day`, `regrid_ll_binary_to_cs`,
+  `process_merra2_to_cs_day`, `process_era5_n320_to_cs_day`) take a
+  `write_replay_check` keyword in place of the environment variable (#25).
+- The replay-check API takes a `ReplayScratch` instead of a divergence array:
+  `verify_window_continuity(layout, scratch, ...)`,
+  `verify_window_continuity_rg(...; scratch)`, and `replay_scratch` in place
+  of `div_scratch` in `verify_{ll,rg,cs}_window_contract!` and
+  `verify_write_replay_cs!` (#39).
+- `build_regridder` returns `NestedCubedSphereRegrid{Restriction|Prolongation}`
+  for cubed spheres of one definition whose `Nc` differ by an integer factor;
+  code that read `intersections` must use `src_areas`/`dst_areas` and
+  `apply_regridder!` (#29).
+- `apply_regridder!(dst, r, src, kind)` takes a quantity kind,
+  `IntensiveCellField()` or `ExtensiveCellField()` (#29).
+- `Visualization.open_snapshot` and `Analysis.daily_snapshot_series` decode
+  CF time for current files (#46).
+- `CSAdjointWorkspace` takes `column_scratch = true` for tapes with FV3
+  vertical sweeps (#50); `cs_surface_flux_4dvar` requires the `scheme`
+  keyword (#43).
+- Symbol selectors are types (#44): `fieldview` takes `transform =
+  ColumnMean()`, `ColumnSum()`, `LevelSlice()` or `SurfaceSlice()` and
+  `unit = NativeUnit()` or `PPMUnit()`; `AllFrames()` replaces `:all`;
+  `bind_to_mesh(...; out_of_range_policy)` takes `RejectOutOfRange()`,
+  `SkipOutOfRange()`, `ClampOutOfRange()` or the strings; and
+  `RuntimeOutputSpec.format` is `NetCDFOutput()` or `BinaryMmapOutput()`
+  (its six-argument constructor is removed).
+- The TM5 convection basis is the writer keyword `tm5_convection_mass_basis`;
+  `extra_header` may set neither it nor `surface_pressure_basis` (#41, #45).
+- Preprocessing certificate and column-closure internals changed (#49); see
+  *API and configuration changes in detail*.
+
+New top-level exports (13; see `docs/src/api/public_api.md`):
+`Callback`, `IterationInterval`, `WindowInterval`, `WallTimeInterval`,
+`NaNChecker` (#26); `AbstractSurfacePressureBasis`, `TotalSurfacePressure`,
+`DrySurfacePressure`, `surface_pressure_basis` (#45); `AbstractCloudBase`,
+`CMFMCEdgeCloudBase`, `ArchivedCloudBase` (#22); `observation_output_spec`
+(#8). No top-level export was removed. New modules: `AtmosTransport.Analysis`
+(#38), `AtmosTransport.GriddedIO` (#33), `ConfigChecks` (#24) and
+`AtomicFiles` (#29).
+
+#### Transport-binary header contract
+
+`format_version` stays 4, and every current binary opens. New writers record
+these keys, and readers act on them:
+
+| Header key | Written by | Reader behavior for older binaries | PR |
+|---|---|---|---|
+| `surface_pressure_basis` (`"total"` / `"dry"`) | every LL/RG/CS writer, eager and streaming; preserved by transformations | Missing: one warning per session, basis inferred from window-1 `ps` and air mass. Becomes an error in the next minor release. LL→CS regridding rejects dry-`ps` sources. | #45 |
+| `tm5_convection_mass_basis` | every writer with TM5 sections | Missing on a dry binary with TM5 sections: one warning (moist fluxes inflate convective rates by 1/(1−q), about 0.7–1.1 % globally). Becomes an error in the next minor release. A recorded mismatch is already an error. | #41 |
+| `mass_fix_target_ps_dry_pa`, `mass_fix_enabled` | pinned writers | Missing: target inferred from window-1 dry mass. Multi-file runs reject mixed targets and mixed pinned/unpinned files. | #45 |
+| `write_replay_check = false` | only when the write-time gate was skipped | The driver warns; `inspect_binary` marks it. | #24, #25 |
+| `horizontal_balance` (`"column"` / `"none"`) | every writer | informational | #36 |
+| `column_balance_weights` | MERRA-2 and ERA5 N320 always; other balancing paths when not `"mass"` | keyless means `"mass"` | #26, #49 |
+| `planet_radius_m` | every writer; targets use `EARTH_RADIUS` = 6,371,000 m (was 6,371,229 m) | keyless means `EARTH_RADIUS` | #49 |
+| flux-construction keys (`face_fluxes`, `face_lengths`, `face_interpolation`, `wind_regrid`, `flux_thickness`, `flux_time_sampling`) | effective choices | informational | #22, #49 |
+| flux-fidelity certificate (`flux_fidelity_schema = 2`) | every preprocessing writer (not the generic `write_transport_binary`) | Pre-certificate binaries read as `FidelityUnavailable` (`legacy_header_missing`); any other schema is an error ("regenerate this binary"). A binary without the current schema is regenerated, not reused, by the preprocessor. | #49 |
+| column closure (`column_closure_*`) | cubed-sphere column balances | Binaries without the keys load as "not recorded"; an incomplete record, or one that exceeds its tolerance, is refused. | #49 |
+| `git_commit`, `git_dirty` | cubed-sphere writers (`src/REVISION` for `git archive` trees) | provenance | #22 |
+
+#### Scripts and files
+
+- 161 stale scripts were removed and 58 moved to `heritage/` folders (PR #24);
+  recover a removed script with `git show 7c515038:<path>`. The
+  `scripts/deprecated/` runner shims are gone; use
+  `scripts/run_transport.jl`. `scripts/README.md` lists every removed script.
+- Python diagnostics are replaced by Julia (PR #38):
+  `check_trendy_npp_rh_run.py` → `tracer_budget_closure.jl series`,
+  `catrine_true_mass_balance_gc.py` →
+  `catrine_true_mass_balance.jl --model geoschem`, and the Float32 attribution
+  and Float32-vs-Float64 scripts; `catrine_station_timeseries.py` moved to
+  `heritage/`.
+- Retired configs: `config/runs/binary_format_ab/c45_*` (#24), the per-layer
+  GEOS twin `geosit_c180_dec2021_catrine_f32_reclosed.toml` and its two run
+  configs (#36), and one L137 TM5 config moved to `likely_legacy` (#43).
+- The `test/orphan/` tier and `--orphan` flag (#48) and `test/archived/`
+  (#47) are gone.
+- Benchmarks workflow: the self-hosted CUDA/Metal jobs and the inputs
+  `run_cuda`, `run_metal`, `gpu_float_types` are removed; GPU benchmarks run
+  in the lab lane (`benchmarking/lab/`, #30).
+
+### Migration guide
+
+1. **Regenerate transport binaries.**
+
+   | Binary set | Why | Action |
+   |---|---|---|
+   | Every dry-pinned binary written before PR #45 (target 98,726–98,733 Pa) | 0.41 % excess dry air; runs cannot mix old and new targets | Regenerate. Until then, run only complete old-target spans. |
+   | ERA5 binaries with TM5 convection (spectral ec2tm, N320→CS + TM5, CATRINE attach) before PR #41 | moist TM5 fluxes on dry air (+0.7–1.1 % rates) | Regenerate; check `tm5_convection_mass_basis = dry` with `inspect_transport_binary.jl`. |
+   | `ml137_tropo34` binaries | mirrored TM5 level set (#18) | Regenerate (`ml137_tropo34` = TM5-MP r1112 or `ml137_tropo34a` = cy3-4dvar). |
+   | CATRINE TM5-attached sets without the `_v3` tag | convection upside down (PR #9) | Regenerate with the current attach script. |
+   | ERA5 N320 binaries before PR #22 | half-cell humidity/convection shift; polar under-coverage | Regenerate. |
+   | Reduced-Gaussian (O-grid) binaries before PR #36 | wrong-sign per-layer balance | Regenerate. |
+   | Float32-preprocessed C180 and finer | Float32 mesh geometry (PR #22) | Regenerate. |
+   | Binaries without `surface_pressure_basis` | warn now; error in the next minor release | Regenerate. |
+   | Wind-derived binaries before PR #49 | new flux-construction, `hybrid_mass`, dry N320 thickness, target radius and ERA5 surface-field defaults; no fidelity certificate | Regenerate to get the defaults (old binaries stay readable). |
+   | Python-built flux drivers (TRENDY, FLUXCOM-X, SIF-GPP, GFED5) | carbon molar mass (+0.068 %) | Regenerate. |
+
+   Inspect a binary with
+   `julia --project=. scripts/diagnostics/inspect_transport_binary.jl <file.bin>`:
+   it reports the mass basis, `surface_pressure_basis`, the dry-mass target
+   and whether it is current, the TM5 basis and `write_replay_check`.
+
+2. **Edit configurations.** Run the config once: `validate_config` errors
+   name the replacement key. Then:
+   - delete `[mass_fix] target_ps_dry_pa` / `target_total_kg` and
+     `[numerics] geos_balance_mode`;
+   - move `scheme`, `ppm_order`, `vertical`, `limiter` from `[run]` to
+     `[advection]`;
+   - replace `molar_mass_kg_mol` by `species` (or omit it for the standard
+     tracer names);
+   - set `[input] start_date` for time-varying fluxes and for snapshot output
+     from undated binaries;
+   - use `kind = "file"` for generic flux files and fix typos in
+     `surface_flux.kind`;
+   - rename `ml137_94L` → `ml137_cfl94` and `ml137_85L` → `ml137_cfl85`;
+   - use the canonical `[architecture] backend` values `cpu`, `cuda`,
+     `metal`, `auto`;
+   - replace environment switches by the keys in the table above;
+   - remove `prognostic_slopes`, and make snapshot hours met-window ends;
+   - replace `merra2_geoschem_hm_gchp.toml`, `_hm_vs.toml` and
+     `_hybridmass.toml` by `merra2_geoschem.toml`;
+   - to keep the pre-0.5 flux construction for a wind-derived source, set it
+     explicitly (for example `face_fluxes = "panel_average"`,
+     `face_lengths = "cell_centerline"`, `face_interpolation = "linear"`,
+     `wind_regrid = "scalar"`, `flux_time_sampling = "window_start"`,
+     `column_balance_weights = "mass"`, and for ERA5 N320
+     `flux_thickness = "moist"`);
+   - forward Lin–Rood runs (and Lin–Rood inversions) that must reproduce
+     v0.4 vertical transport: set `[advection] vertical = "upwind"`.
+3. **Update Julia code.** Pass `surface_pressure_basis` (and `mass_basis` for
+   the streaming writers) when writing binaries; replace `div_scratch` by
+   `ReplayScratch` and `MetState` by explicit fields; use the `kind` argument
+   of `apply_regridder!`; pass `write_replay_check = false` to direct writer
+   calls instead of setting `ATMOSTR_NO_WRITE_REPLAY_CHECK`.
+4. **Output consumers.** NetCDF `time` is CF-encoded (`hours since <run
+   start>`), so NCDatasets returns `DateTime`; read `ds["time"].var[:]` for
+   elapsed hours. Outputs carry `physics_*` global attributes.
+5. **Reproducing v0.4 results.** Pin `AtmosTransport = "=0.4.0"` with the
+   v0.4 binaries, run TOML and Manifest. v0.5.0 cannot reproduce v0.4
+   numerics bit for bit: the target, conventions and gates changed.
+
+### Known limitations
+
+- The production binary archive is being regenerated, so the legacy-binary
+  warnings (`surface_pressure_basis`, `tm5_convection_mass_basis`) remain
+  warnings in 0.5.0; they become errors in the next minor release.
+- The OMEGA certificate thresholds are calibrated on MERRA-2 C90 only
+  (NRMSE 0.47, correlation 0.89, slope 0.87); no golden covers the GEOS OMEGA
+  closures (`omega_regularized`, `omega_full_replacement`), so their baseline
+  is unmeasured. Coarse unpinned Float32 builds can approach the `cm`
+  closure limit (unpinned GEOS-IT C45 golden day: ratio 0.924).
+- A run restarted from the previous chunk's final state differs from a
+  continuous run in the GEOS-Chem non-local VDIFF path: near-surface Rn-222
+  by up to 0.5 % of the field maximum in about 0.2 % of cells, decaying
+  within a day (MERRA-2, two days, CPU); with diffusion off the difference is
+  about 1500 times smaller. The cause is not yet identified.
+- Adjoints: the split-sweep `PPMScheme` with the FV3 vertical profile has no
+  adjoint (Lin–Rood with `fv3_kord8` has one). Adjoints, including the new
+  FV3 transpose, are untested on Metal. Split-sweep PPM cubed-sphere
+  footprints are not bit-reproducible with two or more threads (last-bit
+  differences; Lin–Rood is deterministic). `cs_tape_byte_estimate`
+  undercounts the Lin–Rood tape by four face-panel tuples per step. Atomic
+  publication of memory-mapped tapes is not implemented. 4D-Var cost grows
+  with the number of observations, and observations bind to column means
+  (#20). TM5 prognostic slopes are not implemented (#12).
+- TM5 level merging (`n_merge > 1`) is not additive in the tracer: tagged-
+  tracer budgets, anomaly transport and adjoints need `n_merge = 1` (the
+  convection adjoint rejects `n_merge ≠ 1`).
+- Lin–Rood transport is far more sensitive to arithmetic precision than PPM.
+  On the C24 golden blob day (maximum absolute difference of the blob field,
+  normalized by the blob maximum), default Lin–Rood (PPM5, `fv3_kord8`
+  vertical) differs by 2.0e-3 between CPU Float32 and CPU Float64, and by
+  2.2e-3 (CUDA) and 2.3e-3 (Metal) between GPU Float32 and CPU Float32; split
+  PPM with `fv3_kord8` differs by 7.6e-6 between CPU Float32 and Float64. The
+  difference grows through the day and sits in undershoot cells near the model
+  top; it is under investigation. Use Float64 or PPM where this matters.
+- Metal runs Float32 only. A time-varying surface-flux source built in
+  Julia with host `SubArray` series cannot be staged on Metal (Metal.jl 1.11
+  has no offset `copyto!` from a host view, so it fails with a
+  scalar-indexing error); the configured runner builds dense arrays.
+- The experimental nested coarsener carries a `# HACK:` include
+  (`src/Preprocessing/transport_binary/cubed_sphere_coarsen.jl`), and the
+  `cs_native` cell-area gate is still norm-based
+  (`src/GriddedIO/cs_native_flux.jl`, `TODO(P11)`).
+- Per-Strang adaptive subcycling is not implemented, and the MERRA-2 OPeNDAP
+  download recipe refuses to start.
+- `ConservativeRegridding = "=0.2.0"` and `GeometryOps = "=0.1.38"` stay
+  pinned exactly; newer versions removed an API this package uses.
+- Golden outputs do not cover Float64 on GPU, Metal, observation sampling,
+  adjoints or the TM5 attachment; the release procedure checks Float64 on
+  GPU and Metal separately.
+- Julia 1.10 remains supported (`julia = "1.10"`); CI runs the full suite on
+  Julia 1.10 and the current 1.x release.
 
 ### Numerical changes
 
-- Rn-222 and other configured exponential decay now use exact half-window
-  decay steps before and after each window's emissions. For constant emission
-  rate `E`, decay rate `λ`, and window `T`, the discrete steady burden is
-  `E T / (2 sinh(λT/2))`; its hourly Rn-222 bias relative to `E/λ` is
-  -0.000237736%, down from -0.377204% with emit-then-decay ordering.
+- Column balances use `hybrid_mass` weights by default on every target
+  (cubed sphere, and now lat-lon and reduced Gaussian): the correction of a
+  column's flux budget goes by air mass to hybrid layers only, and the
+  column's remaining `cm` residual is folded with the same weights, so
+  pure-pressure (stratospheric) layers receive none of it. A layer is hybrid
+  when `ΔB_k ≥ 1e-6` (`HYBRID_LAYER_MIN_DB`; its thickness changes by at
+  least 0.1 Pa when `p_s` changes by 1000 hPa): GEOS/MERRA-2 L72 layer 41
+  (150–177 hPa) has `ΔB = 8.2e-9` (8.2e-4 Pa per 1000 hPa), a rounding
+  residue of the table, and now counts as pure pressure (with `ΔB > 0` it
+  took about 3 % of every correction at full mass weight); the smallest
+  genuine increment of the shipped tables is ERA5 L137 layer 55,
+  `ΔB = 7e-6` (0.7 Pa per 1000 hPa). The change is large in
+  the stratosphere:
+  - GEOS-IT C45 (`pre_geosit_c45`, `hybrid_mass` against `mass`, measured
+    with the `ΔB > 0` mask):
+    stratospheric RMS `cm` falls by 25–43 % between 5 and 130 hPa (0.57× at
+    48 hPa); horizontal fluxes on faces above 10 % of the global maximum
+    change by up to 17.8 % (p99 2 %; flux-weighted 1–2.7 % in the
+    pure-pressure layers 1–40, 0.25–0.7 % in hybrid layers); tropospheric
+    `cm` changes by less than 0.3 %. ERA5 spectral C24 (`pre_c24`):
+    stratospheric RMS `cm` 0.65–0.72×.
+  - The `ΔB` threshold alone: `pre_geosit_c45` layer-41 fluxes change by
+    1.8–1.9 % RMS and `cm` at 177–288 hPa by 12 % to 5 % RMS;
+    `pre_merra2_c90` by 0.25 % and 3.5 % to 1.4 %, and its OMEGA NRMSE
+    improves from 0.4725 to 0.4712 (300–100 hPa: 0.302 to 0.297). ERA5 cases
+    are bit-identical.
+  - Lat-lon and reduced Gaussian (`hybrid_mass` against `mass`):
+    `pre_ll72` stratospheric RMS `cm` 0.60–0.69× at 10–100 hPa and
+    0.72–0.93× at 100–200 hPa, horizontal fluxes up to 11 % RMS per level
+    (meridional, 28 hPa); `pre_o24` 0.70–0.83× and 0.83–0.96×, horizontal
+    fluxes up to 1 % RMS per level.
+  - Air masses, `ps` and `dm` are bit-identical in every case. Run a
+    stratospheric tracer A/B before regenerating science sets.
+- Wind-derived cubed-sphere preprocessing defaults to the GCHP-matched
+  construction: Cartesian wind regridding, vector face fluxes with FV3
+  interpolation and true edge lengths, and (ERA5) trapezoidal `window_mean`
+  endpoint sampling. The ERA5 spectral path uses the same typed
+  implementations as MERRA-2 and ERA5 N320 and supports source-grid line
+  integrals. On `pre_c24` `am`, `bm` and `cm` change (largest `cm` change
+  5.0e12 kg against a maximum of 7.4e12 kg); `m`, `ps` and `dm` are
+  bit-identical. The historical construction remains available as
+  `panel_average`/`cell_centerline`/`linear`/`scalar`/`window_start`.
+- ERA5 N320 face fluxes use the dry pressure thickness by default
+  (`flux_thickness = "dry_mass"`, `Δp_dry = (1 − q)|ΔA + ΔB p_s| = g m_dry/A`),
+  consistent with the dry air masses; `"moist"` reproduces older files. On the
+  L117 golden day only `am`, `bm` and `cm` change (largest 5.4e10 kg against
+  3.3e12 kg); one window takes 13 instead of 14 substeps.
+- Every preprocessing target mesh (lat-lon, reduced Gaussian, cubed sphere)
+  uses `Parameters.EARTH_RADIUS` (6.371e6 m) and records it as
+  `planet_radius_m`, so cell areas and air masses scale by
+  `(6371000/6371229)² − 1 = −7.19e-5`. The IFS radius stays only in the
+  source-side ERA5 spectral and N320 calculations.
+- Reduced-Gaussian preprocessing now uses the same column-integrated Poisson
+  balance as the lat-lon and cubed-sphere paths: one ring-graph solve per
+  column, with each face correction spread over the layers by air mass. On the
+  O24 golden day, equivalent omega at the 418 hPa interface is restored from
+  6.9e-6 to 0.146 Pa/s RMS while every stored air-mass value and the global
+  dry-air total remain bit-identical. Horizontal fluxes change by at most 6.7%
+  of the previous global maximum, as expected from the reviewed prototype.
+  Reported by pera-noaa (NOAA GML) in issue #11.
+- Lat-lon preprocessing uses the cubed-sphere positivity gate (owner's
+  decision, 2026-10-10): the palindrome outflow `2 (out_x + out_y + out_z)`
+  against `min(m, m_next)`, one shared implementation, instead of each
+  direction's single application against `m`. Adaptive schedules (the
+  default) choose more substeps on lat-lon binaries: on the ERA5 72×37
+  lat-lon golden day (2021-12-01) two of 24 windows go from 4 to 5 substeps. A fixed
+  schedule that passed the old gate can now fail it. Reduced-Gaussian
+  binaries keep their per-direction gate.
+- Carbon-mass fluxes (`kgC m-2 s-1`, the CAMS/LMDZ inventories) become CO₂ by
+  the molar-mass ratio `M(CO2)/M(C)` = 44.0095/12.0107 ≈ 3.66419
+  (`CARBON_MOLAR_MASS`, the IUPAC value consistent with `SPECIES_MOLAR_MASS.co2`),
+  which conserves carbon atoms, instead of 44/12. These fluxes are 0.068 % lower
+  than before; GEOS-Chem's HEMCO uses `CTOCO2 = 3.6667` (44/12).
+  The Python flux preprocessors (TRENDY, FLUXCOM-X, SIF-GPP, GFED5) use the
+  same ratio; drivers they wrote before are 0.068 % higher until regenerated.
+- New cubed-sphere option `[advection] scheme = "ppm"`, `vertical = "fv3_kord8"`.
+  The vertical sweep integrates FV3's `scalar_profile` parabola (`kord = 8`,
+  positive definite; GCHP's tracer profile) over the swept fraction of the
+  donor layer (`PPMScheme(; vertical = FV3ScalarProfile())`). Use
+  `"fv3_kord8_signed"` for tracers that become negative.
+  - Edges and limited parabolas match a transcription of `fv_mapz.F90`
+    bit for bit.
+  - In 1-D translation tests it is third order or better and 4–900 times
+    more accurate than the default.
+  - `Float32` mass drift is at or below the default's.
+  - The default (`SameAsHorizontal`) is unchanged, and lat-lon runs and the
+    adjoint reject the option.
+  - `scheme = "linrood"` accepts the same `vertical` values; configured runs
+    default to `fv3_kord8` (see below), while the programmatic
+    `LinRoodPPMScheme(ORD)` keeps `vertical = UpwindScheme()`.
+  - `CSAdvectionWorkspace` gains `column_scratch` (`column_scratch = true`).
 - Configured Lin-Rood transport now defaults its vertical remap to
   `fv3_kord8`, the closest GCHP match. Explicit `vertical = "upwind"` and
   `vertical = "fv3_kord8_signed"` settings are unchanged.
+  `LinRoodPPMScheme(ORD)` and `LinRoodAdvectionSpec(order)` keep their
+  upwind default. Of the CPU goldens, `run_c24_linrood_cpu_f32` changes in
+  every tracer.
 - The Lin-Rood adjoint now also transposes the FV3 `kord = 8` vertical sweeps
   (`vertical = "fv3_kord8"` and `"fv3_kord8_signed"`; OF-94); explicit upwind
   vertical sweeps are no longer required. Footprints and 4D-Var gradients use
@@ -24,22 +447,107 @@
   horizontal PPM). The Lin-Rood tape grows from ten to twelve full-panel tuples
   per step (C90 L72 Float64: 552 instead of 488 MB per step).
   `require_adjoint_support` accepts these schemes, and the inversion driver's
-  Lin-Rood `vertical` default is now `fv3_kord8`, as in forward runs (an omitted
-  `vertical` was an error). The footprint API's finite-difference forward
+  Lin-Rood `vertical` default is now `fv3_kord8`, as in forward runs. The footprint API's finite-difference forward
   (`run_cs_footprint_forward`) now runs the scheme's vertical sweep; it ran
   upwind for every Lin-Rood vertical. Forward transport is bit-identical.
   `CSAdjointWorkspace` takes `column_scratch = true` for tapes with FV3 vertical
   sweeps. The split-sweep `PPMScheme` with the FV3 vertical profile still has
   no adjoint.
+- `PPMScheme` was documented as third order. It is second order: the limited
+  PPM edge sets a Russell–Lerner slope and the parabola is not integrated.
+  The docs now say so.
+- Rn-222 and other configured exponential decay now use exact half-window
+  decay steps before and after each window's emissions. For constant emission
+  rate `E`, decay rate `λ`, and window `T`, the discrete steady burden is
+  `E T / (2 sinh(λT/2))`; its hourly Rn-222 bias relative to `E/λ` is
+  -0.000237736%, down from -0.377204% with emit-then-decay ordering.
+  Only constant decay rates are split, which covers every `[chemistry]`
+  decay; `ExponentialDecay` with a time-varying rate and other chemistry
+  keep the end-of-step order. On binaries with a per-window physics contract
+  the half-steps bracket the whole met window and convection stays at its
+  end. Rn-222 golden fields change by 0.09–0.38 % relative;
+  `catrine_true_mass_balance.jl` replays the new order.
+- Kz diffusion computes layer thicknesses from total surface pressure; on
+  binaries that store dry `ps` (the GEOS native, MERRA-2 and ERA5 N320
+  writers) it used the dry value. Total pressure is recovered per column as
+  `p_s = (p_s,dry − Σ_k (1 − q_k) ΔA_k) / Σ_k (1 − q_k) ΔB_k` from
+  window-start or VDIFF humidity (one warning without either); `B ≡ 0`
+  coordinates are unchanged. `pressure_layer` initial conditions use the
+  same recovery. Precomputed `dkg` diffusion reads no layer thickness and
+  is unchanged, as are the CPU runtime goldens, which use it.
+- Conservative surface-flux regridding (cubed sphere; lat-lon and
+  reduced-Gaussian targets with `regridding = "conservative"`), the fallback
+  cell areas of per-cell inventories without a `cell_area` or `area`
+  variable, and cubed-sphere file initial conditions build their source
+  cells from the file's coordinates with `GriddedIO.SnappedFaces` (snapped
+  regular axes; midpoint faces and half-width polar caps for pole-centred
+  rows) instead of the uniform mesh of `UniformSpanFaces`, which the runtime
+  no longer uses. The uniform mesh misplaced the 143 pole-centred latitude
+  rows of the CATRINE SF₆ initial state by up to 0.62° (mean 0.31°). In the
+  `run_c90_era5_tm5` golden, SF₆ column means change by up to 0.87 % and
+  single cells by up to 40 % (at East Asian surface hotspots near 38.5° N,
+  127.6° E; at most 0.46 % poleward of 85° N). GridFED totals change by
+  9e-16 relative; the regridded GridFED field of the `run_c90_merra2` golden
+  changes by at most 3e-9 of its maximum (its Float32 0.1° coordinates gave
+  the uniform mesh a west face of 7.45e-10° instead of 0°).
+- Stepwise time-varying surface fluxes read from lat-lon files whose time
+  coordinate has CF `bounds` switch to each slice at the start of its bounds
+  instead of at its time stamp, so a monthly file stamped mid-month now
+  switches on the first of each month, about half a month earlier.
+  `stepwise` is the default for `lmdz_co2` and `gridfed_fossil_co2`; linear
+  and conservative schemes and files without bounds still use the stamps.
+  Golden results are unchanged.
+- `Float32` runs now conserve global tracer mass to about 1e-6 of the burden
+  per year. Over 3 days of ERA5 C90 transport without sources, the background
+  tracer drifts +9e-9 instead of −9.7e-7 and SF₆ +2.1e-9 instead of −1.0e-6.
+  A small advection bias (≈+1e-6 per year) and, with CMFMC convection, about
+  −1e-6 per year for CO₂ remain. Changes:
+  - TM5 convection and `dkg` diffusion return each column's rounding residual,
+    computed with compensated sums, to its largest participating cell. Only
+    rounding-sized residuals are returned, so a non-conserving matrix stays
+    visible.
+  - GEOS-Chem's non-local emission profile accounts for every upper-layer
+    addition with `TwoSum`.
+  - Cubed-sphere areas, edge lengths and corners, regridding geometry, the
+    decay decrement `expm1(−λΔt)` and the model clock are evaluated in
+    `Float64` and rounded once. The clock follows the window and step
+    counters, so window ends are exact for any step count. Meshes of either
+    precision now regrid on a `Float64` sphere and share cached weights
+    (cache version 3, so every cached regridder is rebuilt once).
+  - Lat-lon flux and initial-condition sources stored in `Float32` (GridFED)
+    snap to exact global extents. Previously the regridder dropped 2.1e-6 of
+    the GridFED flux in `Float64`.
+  - `total_mass` and `total_air_mass` return compensated `Float64` sums,
+    reduced on the device (shared with the snapshot totals).
 
-### Breaking changes
+  `Float32` global totals change at the 1e-6 level. `Float64` global totals
+  change by about 1e-11, except GridFED emissions (+2.1e-6). See
+  `docs/src/theory/float32_conservation.md`.
+- The two copies of the cubed-sphere block kernels (nested binary coarsener
+  and GEOS block coarsening) are one, `Regridding.coarsen_sum!` and
+  `coarsen_area_weighted!`. Area-weighted means now accumulate numerator and
+  denominator in `Float64` and round once (the coarsener's semantics); the
+  GEOS path accumulated them in the data precision. Float32 GEOS-native
+  builds whose target `Nc` is a divisor of the source `Nc`
+  (`geosit_c90_dec2021_catrine_f32_fullL72.toml`,
+  `geosit_c45_dec2021_catrine_f32_fullL72.toml`,
+  `geosfp_c720_native_to_cs180.toml`) change in `pblh`, `ustar`, `hflux`,
+  `t2m`, the vdiff `u/v/t/qv`, `cmfmc` and `dtrain` before vertical
+  remapping: 1–5 Float32 ulp in about half the cells of positive fields,
+  more on near-cancelling signed fields (the old result could be thousands of
+  ulp from the correctly rounded mean). Cell sums, face sums, Float64 builds
+  and same-`Nc` builds are bit-identical.
+
+### API and configuration changes in detail
 
 - Preprocessing column balances spread their correction with
   `column_balance_weights = "hybrid_mass"` by default on every target (owner
   decision OF-03; effect in Numerical changes). `[numerics]
   column_balance_weights` is now accepted for lat-lon and reduced-Gaussian
-  targets (it was rejected), every path that balances records the weights in
-  its header, and an existing binary whose recorded weights differ (absent
+  targets (it was rejected earlier in this cycle; v0.4.0 had no
+  `column_balance_weights` key), every path that balances records weights
+  other than `mass` in its header (MERRA-2 and ERA5 N320 record every
+  choice), and an existing binary whose recorded weights differ (absent
   means `mass`) is regenerated instead of reused. The GEOS `pressure_fixer`
   and `pfix_corrected` closures keep the native fluxes, so column weights do
   not apply to them: they are accepted and ignored (and not recorded) instead
@@ -55,10 +563,131 @@
   `merra2_geoschem_hm_vs.toml` and `merra2_geoschem_hybridmass.toml`: with
   the new defaults they equal `config/met_sources/merra2_geoschem.toml`, which
   their preprocessing configs now use.
+  They were added during this release cycle; v0.4.0 did not ship them.
 - Native preprocessing (ERA5 N320, MERRA-2) errors when the next day's
   endpoint is missing on any day but the configured last day; the warned
   zero-tendency fallback applies only there. ERA5 N320 days are no longer
   day-threaded (their inner kernels use static scheduling).
+- The preprocessing dry-mass target is now the single
+  `Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE = 98325.0` Pa constant for
+  every meteorological source. `[mass_fix].target_ps_dry_pa` and
+  `target_total_kg` are removed and rejected. Transport binaries record
+  `mass_fix_target_ps_dry_pa`; multi-file runs reject mixed targets, using the
+  window-1 mass and header radius as a legacy-binary fallback. Existing
+  production binaries pinned near 98,726–98,733 Pa must be regenerated.
+- ERA5 L137 `echlevs` now uses TM5/ECMWF half-level numbering (`0` is the
+  model top, `137` the surface). The ambiguous development aliases
+  `ml137_94L` and `ml137_85L` are removed; use `ml137_cfl94` and
+  `ml137_cfl85`.
+- Run settings no longer come from environment variables. These are removed
+  without a transition period; the package ignores them:
+
+  | Removed variable | Use instead |
+  |---|---|
+  | `ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS` | `[run] physics_cadence = "substep"` |
+  | `ATMOSTR_REPLAY_CHECK` | `[input] validate_replay = true` |
+  | `ATMOSTR_NO_REPLAY_CHECK` | nothing (the load-time check runs only when asked for) |
+  | `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE` | nothing (the per-layer balance it selected is removed; see below) |
+  | `ATMOSTR_DISABLE_PREFETCH` | `[run] prefetch_windows = false` (new) |
+  | `ATMOSTR_ASSERT_CS_BINARY_CFL` | `[advection] check_binary_cfl = true` (new) |
+  | `ATMOSTR_NO_WRITE_REPLAY_CHECK` | `[numerics] write_replay_check = false` in the preprocessing config (new) |
+
+  Environment variables now set only paths, metadata, profiling and
+  diagnostics (see `docs/src/config/environment.md`). Julia code that calls a
+  preprocessing writer directly (`process_day(date, grid, settings, vertical)`,
+  `regrid_ll_binary_to_cs`, `process_merra2_to_cs_day`,
+  `process_era5_n320_to_cs_day`) passes `write_replay_check = false` instead
+  of setting the variable; `write_replay_check_enabled` (added and removed
+  during this cycle) is gone. The three
+  new keys:
+
+  - `[run] prefetch_windows` (default `true`): GPU runs with at least two
+    Julia threads load the next met window on a second thread. The
+    `DrivenSimulation` keyword of the same name fixes the choice for the whole
+    simulation; the variable was read every window.
+  - `[advection] check_binary_cfl` (default `false`): a cubed-sphere
+    split-sweep step (`upwind`, `slopes`, `ppm`) that takes its subcycle count
+    from the binary recomputes the CFL budget and stops if the binary asks for
+    fewer. Typed as `BinaryCFLCheck()`/`NoBinaryCFLCheck()` on
+    `CSAdvectionWorkspace` (the `binary_cfl_check` keyword of
+    `TransportModel`); other schemes and grids reject `true`. The three
+    operator copies of the check are now one dispatched helper.
+  - `[numerics] write_replay_check` (default `true`) of a preprocessing config
+    reaches every writer as the `write_replay_check` keyword.
+- The per-layer Poisson balance is removed from every preprocessing path
+  (issue #11): balancing each layer to its own mass change leaves almost no
+  vertical mass flux, because no path has an independent vertical flux (see
+  Numerical changes). Every path that applies a Poisson balance uses the
+  column balance; GEOS `pressure_fixer` and `pfix_corrected` keep their native
+  horizontal fluxes and record `"none"`. Removed with it:
+  the `[numerics]` keys `balance_mode` and `geos_balance_mode` (a config that
+  sets either is an error; the 19 shipped preprocessing configs and the
+  `pre_merra2_c90` golden config that set `balance_mode = "column"` no longer
+  do), the `--balance-mode` option of
+  `scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl`, the
+  `horizontal_balance` keyword of the writers (`process_day`,
+  `regrid_ll_binary_to_cs`, `process_merra2_to_cs_day`,
+  `process_era5_n320_to_cs_day`) and `balance` of `apply_poisson_balance!`,
+  the types `AbstractHorizontalBalance`, `ColumnBalance` and `LayerBalance`
+  with `balance_tag`, `resolve_horizontal_balance` and
+  `effective_horizontal_balance`, the GEOS writer's `process_day(...;
+  balance_mode)` keyword, and `config/preprocessing/geosit_c180_dec2021_catrine_f32_reclosed.toml`
+  (the per-layer twin of `..._pinned_column.toml`; its output directory was
+  empty) with its two diagnostic run configs
+  `catrine_geosit_c180_v4_fullphys_reclosed_1d{,_f64_curry}.toml`. Headers
+  keep `horizontal_balance` (`"column"`, or `"none"` for the GEOS closures that
+  keep the native fluxes, `HORIZONTAL_BALANCE_TAG`).
+  Of the removed names, only `geos_balance_mode`, the GEOS `process_day(...;
+  balance_mode)` keyword and the `_reclosed` configs existed in v0.4.0; the
+  others were added during this release cycle.
+- The advection keys `scheme`, `ppm_order`, `vertical` and `limiter` are read
+  only from `[advection]`; in `[run]`, their old location, they are an error
+  that names the new table. The 121 shipped run configs that used `[run]`
+  moved them to `[advection]` (checked by parsing each file before and after);
+  two of them, which set `[run] scheme` next to an `[advection]` table and
+  were therefore rejected before, now run.
+- `surface_flux.molar_mass_kg_mol` is replaced by `surface_flux.species`
+  (`"co2"`, `"sf6"` or `"rn222"`); the molar mass comes from
+  `Parameters.SPECIES_MOLAR_MASS`. The old key is an error that names the new
+  one. Tracers named `co2`, `co2_natural`, `co2_fossil`, `fossil_co2`, `sf6` or
+  `rn222` may still omit it; any other tracer with a flux must set it, and an
+  unknown species is an error listing the known ones (also reported by
+  `validate_config`). The 250 occurrences in the shipped run configs (245 in
+  `config/runs/`, 5 in the golden-output configs) moved to `species`; every
+  migrated tracer resolves the same molar mass, and so the same storage factor
+  bit for bit (checked on all 461 tracer fluxes of those configs).
+  `Models.InitialConditionIO.surface_flux_species` gives the resolution to
+  scripts (`tracer_budget_closure.jl` uses it); the private
+  `_tracer_molar_mass_kg_mol` and `_KNOWN_TRACER_MOLAR_MASS_KG_MOL` are removed.
+- The 4D-Var inversion driver (`scripts/inversions/cs_4dvar.jl`) reads a
+  required `[advection]` table (#16). It hard-coded unlimited PPM and ignored
+  any `[advection]` table, even an invalid one, so the gradient was always
+  that of `PPMScheme(NoLimiter())`. The table now goes through the forward
+  run's `advection_spec` and `materialize`, with an `InversionAdvectionContext`
+  that requires `scheme` and also accepts `limiter = "none"` (unlimited PPM);
+  forward runs are unchanged and still reject `none`. Schemes without a
+  cubed-sphere adjoint (limited slopes, the FV3 vertical profile, `none`) are
+  rejected by the new `require_adjoint_support`. Unknown tables and keys are
+  errors, including `[diffusion]` and `[convection]`, which the driver does
+  not wire into the cost, and the documented but never written `[output]`
+  path; keys the selected kind does not read are warnings. The shipped
+  `example_synthetic.toml` states `scheme = "ppm"`, `limiter = "none"` and
+  gives bit-identical results. `SyntheticExperimentConfig` of
+  `scripts/inversions/synthetic_experiment.jl` gains a `scheme` field
+  (default unchanged).
+- The replay-check API takes a `ReplayScratch` (per-cell divergence and
+  flux-magnitude arrays) instead of one divergence array:
+  `verify_window_continuity(layout, scratch, ...)`,
+  `verify_window_continuity_rg(m_cur, hflux, cm, m_next, face_left, face_right,
+  steps_per_window; scratch)` (the positional `div_scratch` is gone), and the
+  `replay_scratch` keyword of `verify_ll_window_contract!`,
+  `verify_rg_window_contract!`, `verify_cs_window_contract!` and
+  `verify_write_replay_cs!` (was `div_scratch`). See Fixes for the test itself.
+- Removed the deprecated, unused `State.MetState`,
+  `diagnose_cm_from_continuity_vc!`, and
+  `diagnose_cm_from_continuity_ka!` APIs. Call
+  `diagnose_cm_from_continuity!` with explicit hybrid-coordinate `Δb`
+  coefficients when diagnosing structured vertical mass fluxes.
 - Preprocessing internals changed for the certificate and column-closure work
   (callers on other branches must follow): `FluxFidelityEvidenceBundle(flux,
   omega, closure)` takes a third, column-closure field;
@@ -90,130 +719,105 @@
   `recheck_cs_column_closure` takes `flux_scale`;
   `scale_column_closure_record` is replaced by
   `full_window_column_closure_record`.
-
-- Removed the deprecated, unused `State.MetState`,
-  `diagnose_cm_from_continuity_vc!`, and
-  `diagnose_cm_from_continuity_ka!` APIs. Call
-  `diagnose_cm_from_continuity!` with explicit hybrid-coordinate `Δb`
-  coefficients when diagnosing structured vertical mass fluxes.
-
-- ERA5 L137 `echlevs` now uses TM5/ECMWF half-level numbering (`0` is the
-  model top, `137` the surface). The ambiguous development aliases
-  `ml137_94L` and `ml137_85L` are removed; use `ml137_cfl94` and
-  `ml137_cfl85`.
-- The preprocessing dry-mass target is now the single
-  `Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE = 98325.0` Pa constant for
-  every meteorological source. `[mass_fix].target_ps_dry_pa` and
-  `target_total_kg` are removed and rejected. Transport binaries record
-  `mass_fix_target_ps_dry_pa`; multi-file runs reject mixed targets, using the
-  window-1 mass and header radius as a legacy-binary fallback. Existing
-  production binaries pinned near 98,726–98,733 Pa must be regenerated.
-
-- Run settings no longer come from environment variables. These are removed
-  without a transition period; the package ignores them:
-
-  | Removed variable | Use instead |
-  |---|---|
-  | `ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS` | `[run] physics_cadence = "substep"` |
-  | `ATMOSTR_REPLAY_CHECK` | `[input] validate_replay = true` |
-  | `ATMOSTR_NO_REPLAY_CHECK` | nothing (the load-time check runs only when asked for) |
-  | `ATMOSTR_ENABLE_HORIZONTAL_POISSON_BALANCE` | nothing (the per-layer balance it selected is removed; see below) |
-  | `ATMOSTR_DISABLE_PREFETCH` | `[run] prefetch_windows = false` (new) |
-  | `ATMOSTR_ASSERT_CS_BINARY_CFL` | `[advection] check_binary_cfl = true` (new) |
-  | `ATMOSTR_NO_WRITE_REPLAY_CHECK` | `[numerics] write_replay_check = false` in the preprocessing config (new) |
-
-  Environment variables now set only paths, metadata, profiling and
-  diagnostics (see `docs/src/config/environment.md`). Julia code that calls a
-  preprocessing writer directly (`process_day(date, grid, settings, vertical)`,
-  `regrid_ll_binary_to_cs`, `process_merra2_to_cs_day`,
-  `process_era5_n320_to_cs_day`) passes `write_replay_check = false` instead
-  of setting the variable; `write_replay_check_enabled` is removed. The three
-  new keys:
-
-  - `[run] prefetch_windows` (default `true`): GPU runs with at least two
-    Julia threads load the next met window on a second thread. The
-    `DrivenSimulation` keyword of the same name fixes the choice for the whole
-    simulation; the variable was read every window.
-  - `[advection] check_binary_cfl` (default `false`): a cubed-sphere
-    split-sweep step (`upwind`, `slopes`, `ppm`) that takes its subcycle count
-    from the binary recomputes the CFL budget and stops if the binary asks for
-    fewer. Typed as `BinaryCFLCheck()`/`NoBinaryCFLCheck()` on
-    `CSAdvectionWorkspace` (the `binary_cfl_check` keyword of
-    `TransportModel`); other schemes and grids reject `true`. The three
-    operator copies of the check are now one dispatched helper.
-  - `[numerics] write_replay_check` (default `true`) of a preprocessing config
-    reaches every writer as the `write_replay_check` keyword.
-
-- The per-layer Poisson balance is removed from every preprocessing path
-  (issue #11): balancing each layer to its own mass change leaves almost no
-  vertical mass flux, because no path has an independent vertical flux (see
-  Numerical changes). Every path that applies a Poisson balance uses the
-  column balance; GEOS `pressure_fixer` and `pfix_corrected` keep their native
-  horizontal fluxes and record `"none"`. Removed with it:
-  the `[numerics]` keys `balance_mode` and `geos_balance_mode` (a config that
-  sets either is an error; the 19 shipped preprocessing configs and the
-  `pre_merra2_c90` golden config that set `balance_mode = "column"` no longer
-  do), the `--balance-mode` option of
-  `scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl`, the
-  `horizontal_balance` keyword of the writers (`process_day`,
-  `regrid_ll_binary_to_cs`, `process_merra2_to_cs_day`,
-  `process_era5_n320_to_cs_day`) and `balance` of `apply_poisson_balance!`,
-  the types `AbstractHorizontalBalance`, `ColumnBalance` and `LayerBalance`
-  with `balance_tag`, `resolve_horizontal_balance` and
-  `effective_horizontal_balance`, the GEOS writer's `process_day(...;
-  balance_mode)` keyword, and `config/preprocessing/geosit_c180_dec2021_catrine_f32_reclosed.toml`
-  (the per-layer twin of `..._pinned_column.toml`; its output directory was
-  empty) with its two diagnostic run configs
-  `catrine_geosit_c180_v4_fullphys_reclosed_1d{,_f64_curry}.toml`. Headers
-  keep `horizontal_balance` (`"column"`, or `"none"` for the GEOS closures that
-  keep the native fluxes, `HORIZONTAL_BALANCE_TAG`).
-
-- The advection keys `scheme`, `ppm_order`, `vertical` and `limiter` are read
-  only from `[advection]`; in `[run]`, their old location, they are an error
-  that names the new table. The 121 shipped run configs that used `[run]`
-  moved them to `[advection]` (checked by parsing each file before and after);
-  two of them, which set `[run] scheme` next to an `[advection]` table and
-  were therefore rejected before, now run.
-
-- `surface_flux.molar_mass_kg_mol` is replaced by `surface_flux.species`
-  (`"co2"`, `"sf6"` or `"rn222"`); the molar mass comes from
-  `Parameters.SPECIES_MOLAR_MASS`. The old key is an error that names the new
-  one. Tracers named `co2`, `co2_natural`, `co2_fossil`, `fossil_co2`, `sf6` or
-  `rn222` may still omit it; any other tracer with a flux must set it, and an
-  unknown species is an error listing the known ones (also reported by
-  `validate_config`). The 250 occurrences in the shipped run configs (245 in
-  `config/runs/`, 5 in the golden-output configs) moved to `species`; every
-  migrated tracer resolves the same molar mass, and so the same storage factor
-  bit for bit (checked on all 461 tracer fluxes of those configs).
-  `Models.InitialConditionIO.surface_flux_species` gives the resolution to
-  scripts (`tracer_budget_closure.jl` uses it); the private
-  `_tracer_molar_mass_kg_mol` and `_KNOWN_TRACER_MOLAR_MASS_KG_MOL` are removed.
-
-- The 4D-Var inversion driver (`scripts/inversions/cs_4dvar.jl`) reads a
-  required `[advection]` table (#16). It hard-coded unlimited PPM and ignored
-  any `[advection]` table, even an invalid one, so the gradient was always
-  that of `PPMScheme(NoLimiter())`. The table now goes through the forward
-  run's `advection_spec` and `materialize`, with an `InversionAdvectionContext`
-  that requires `scheme` and also accepts `limiter = "none"` (unlimited PPM);
-  forward runs are unchanged and still reject `none`. Schemes without a
-  cubed-sphere adjoint (limited slopes, the FV3 vertical profile, `none`) are
-  rejected by the new `require_adjoint_support`. Unknown tables and keys are
-  errors, including `[diffusion]` and `[convection]`, which the driver does
-  not wire into the cost, and the documented but never written `[output]`
-  path; keys the selected kind does not read are warnings. The shipped
-  `example_synthetic.toml` states `scheme = "ppm"`, `limiter = "none"` and
-  gives bit-identical results. `SyntheticExperimentConfig` of
-  `scripts/inversions/synthetic_experiment.jl` gains a `scheme` field
-  (default unchanged).
-
-- The replay-check API takes a `ReplayScratch` (per-cell divergence and
-  flux-magnitude arrays) instead of one divergence array:
-  `verify_window_continuity(layout, scratch, ...)`,
-  `verify_window_continuity_rg(m_cur, hflux, cm, m_next, face_left, face_right,
-  steps_per_window; scratch)` (the positional `div_scratch` is gone), and the
-  `replay_scratch` keyword of `verify_ll_window_contract!`,
-  `verify_rg_window_contract!`, `verify_cs_window_contract!` and
-  `verify_write_replay_cs!` (was `div_scratch`). See Fixes for the test itself.
+  Most of these names were introduced during this release cycle; for code
+  written against v0.4.0 the changes that matter are the new arguments and
+  results of `balance_column_mass_fluxes!`, `balance_window!`,
+  `apply_poisson_balance!`, `recompute_cm_from_dm_target!`,
+  `balance_cs_column_mass_fluxes!`, `diagnose_cs_cm!` and `CSPoissonScratch`.
+- A surface-flux `kind` that is not a known source
+  (`none`, `file`, `cs_native`, `lmdz_co2`, `gridfed_fossil_co2`, `edgar_sf6`,
+  `zhang_rn222`) is an error, with a suggestion for a close name; it used to
+  be read silently as a generic file, so a typo such as `gridfed` lost the
+  GridFED unit conversion. Use `kind = "file"` for a generic NetCDF file. The
+  two ocean-flux configs now say `kind = "file"` instead of
+  `"eccodarwin_ocean_co2"` (same source, results unchanged).
+- Removed the exported generic function `Preprocessing.reset_workspace!`,
+  which had no methods.
+- Snapshot `time` is a CF coordinate: units `hours since <run start>`
+  (`YYYY-MM-DD HH:MM:SS`) with `calendar = "proleptic_gregorian"`, and in
+  ATMSNAP headers `time_units` and `time_calendar` beside `times_hours`
+  (`binary_to_netcdf.jl` restores the coordinate). The stored values are the
+  same elapsed hours, but NCDatasets and xarray now decode `time` to dates;
+  read `ds["time"].var[:]` for the numbers. Writing snapshots needs an
+  absolute origin, `[input].start_date`, the first binary's `date` header or
+  a `YYYYMMDD` (or `YYYY-MM-DD`) date in its file name; a run with output
+  enabled (the default) and none of them is an error. With `[run]
+  start_window`, the origin is the start of the first simulated window. The
+  quickstart and `config/examples/minimal_template.toml` set `start_date`,
+  and the synthetic quickstart binary has a `date` header.
+- File initial conditions (lat-lon kinds and `cs_native`) must give the
+  hybrid coefficients `ap` and `bp` together; a lat-lon file with only one
+  of them was read as having none. `ap` must be in pascals: a `units`
+  attribute must name Pa (`Pa`, `pascal`, `pascals`), and without one only
+  all-zero coefficients or a largest magnitude above 2000 are accepted;
+  hPa-sized values are refused instead of moving pressure interfaces by a
+  factor of 100.
+- `[architecture] backend` accepts exactly `"cpu"`, `"cuda"`, `"metal"` or
+  `"auto"`. The aliases `host`, `nvidia`, `apple`, `apple_metal` and `gpu`,
+  and spellings that differ only in case or separator (`"CPU"`,
+  `"apple-metal"`), are errors that name the canonical value
+  (`architecture.backend spelling "nvidia" was removed; use one of the
+  canonical values "cpu", "cuda", "metal", or "auto" ("cuda" for this
+  backend).`); any other value is an error listing the four. No shipped
+  config used an alias. The table is parsed once into `CPURequest`,
+  `CUDARequest`, `MetalRequest` or `AutoGPURequest`, and `GPU(::String)`
+  accepts only `"cuda"` and `"metal"`.
+- Julia selectors that were Symbols are types, without aliases. `fieldview`
+  takes `transform = ColumnMean()`, `ColumnSum()`, `LevelSlice()` or
+  `SurfaceSlice()` and `unit = NativeUnit()` or `PPMUnit()` (exported by
+  `AtmosTransport.Visualization`); `frame_indices`, `snapshot_grid` and
+  `movie_grid` select every frame with `AllFrames()` instead of `:all`;
+  `PlotSpec` (and so `movie` and `snapshot_grid`) still parses the names.
+  `CubedSphereSnapshotTopology` holds a panel-convention type.
+  `bind_to_mesh(...; out_of_range_policy)` takes `RejectOutOfRange()`,
+  `SkipOutOfRange()`, `ClampOutOfRange()` or the strings `"reject"`,
+  `"skip"`, `"clamp"`; a Symbol is an error. `RuntimeOutputSpec.format` is
+  `NetCDFOutput()` or `BinaryMmapOutput()` and its six-argument constructor
+  is removed. Run outputs are unchanged.
+- `[advection] prognostic_slopes`, which v0.4.0 ignored silently (there is
+  no prognostic-moment scheme; `scheme = "slopes"` re-diagnoses its slopes),
+  is an unknown key and therefore an error. The ten shipped configs that
+  set it no longer do.
+- `[run] start_window` or `stop_window` beyond the window count of any
+  input binary is an error; `stop_window` was clamped to each binary's
+  count. Lat-lon and reduced-Gaussian runs build their initial tracer
+  mass on the air mass of `start_window` instead of window 1
+  (cubed-sphere runs still require `start_window = 1`).
+- Lat-lon transport refuses a mesh whose longitudes do not span 360°:
+  the zonal boundary is periodic, so a regional mesh had its east and west
+  edges joined silently.
+- `cs_surface_flux_4dvar` requires the `scheme` keyword. It defaulted to
+  `PPMScheme(NoLimiter())`, whatever scheme the caller's forward runs used.
+- The transport-binary writers take their basis keywords explicitly.
+  `open_streaming_transport_binary` and `open_streaming_cs_transport_binary`
+  require `mass_basis` (v0.4.0 defaulted it to `:moist`, while
+  `write_transport_binary` defaults to `:dry`); every writer
+  (`write_transport_binary` and both streaming openers) requires
+  `surface_pressure_basis = TotalSurfacePressure()` or
+  `DrySurfacePressure()`, independent of `mass_basis`. The TM5 convection
+  basis is the writer keyword `tm5_convection_mass_basis`; `extra_header`
+  may set neither it nor `surface_pressure_basis`.
+- ERA5 met sources accept only `[preprocessing] level_orientation =
+  "top_down"`. `"bottom_up"` was accepted but never applied (every field
+  and merge map is read top-first, so such an input would have been merged
+  upside down); it is now an error. The six ERA5 N320 met-source files drop
+  the redundant `level_orientation = "top_down"`.
+- `regrid_ll_binary_to_cs` refuses a lat-lon binary that stores dry
+  surface pressure: wind recovery needs total pressure, and the regrid path
+  loads no humidity.
+- Multi-file runs also reject binaries that mix explicitly pinned and
+  unpinned dry mass (unpinned day chains, which drift by design, are
+  accepted) or total and dry surface pressure. Writers record
+  `mass_fix_target_ps_dry_pa` only when the pin is applied, next to one
+  `mass_fix_enabled` flag. `binary_capabilities` and `inspect_binary`
+  report `surface_pressure_basis`, `dry_mass_target_ps_pa`,
+  `dry_mass_target_source` (`:header`, `:legacy_window1`,
+  `:unpinned_window1` or `:unclassifiable`), `dry_mass_pinned` and
+  `dry_mass_target_is_current` (within 0.1 Pa of
+  `GLOBAL_MEAN_DRY_SURFACE_PRESSURE`), and `inspect_binary` flags an
+  outdated target. Legacy moist binaries take their dry mass from
+  `m (1 − qv_start)`; without humidity the target is unclassifiable
+  (`MetDrivers.binary_dry_mass_target`).
 
 ### Fixes
 
@@ -325,7 +929,8 @@
   bounds before 1582-10-15 as instants, exactly as `decode_time` converts the
   coordinate (Julian 2000-01-01 is 2000-01-14), so stepwise surface fluxes
   from such files switch at the right instants, not up to 13 days early.
-- Write-time flux-fidelity certificate in every new transport-binary header
+- Write-time flux-fidelity certificate in the header of every transport binary
+  the preprocessors write
   (#15, item 3). Wind-derived paths rebuild deterministic face samples from
   `u`, `v` and `Δp` before the column balance and fail a window before it is
   written when a sample exceeds both `64 ε max(F_scale, 1 kg)` and
@@ -357,7 +962,6 @@
   `docs/src/concepts/binary_format.md`. The block carries
   `flux_fidelity_schema = 2`; the reader refuses any other schema with a
   "regenerate this binary" error.
-
 - Cubed-sphere column balances close in Float64 with a bounded Float32
   closure loop; every production caller checks the closure, the `cm` residual
   is checked before it is folded into the column (an out-of-tolerance or
@@ -402,11 +1006,9 @@
   atomically; a failed day removes its staging file. A certificate that fails
   when the header is patched closes the writer and abandons the inner staging
   file too.
-
 - The restored ERA5 physics and hourly spectral downloaders stage outputs,
   validate complete inventories and the requested grid/representation, and
   exit nonzero rather than accepting partial downloads.
-
 - `CSLBFGS` uses Optim's L-infinity gradient norm consistently for stopping,
   `gradient_norm_history`, and iteration logs. This explicitly preserves the
   existing `gradient_tolerance` convention while making every reported
@@ -418,7 +1020,6 @@
   hybrid remap consumes the parsed `TotalSurfacePressure` or
   `DrySurfacePressure` value. Keyless legacy files retain the previous
   window-1 mass/pressure inference with one regeneration warning.
-
 - `CSLBFGS` evaluated every control point at least twice (#17): Optim
   received separate value and gradient closures that each ran the full
   `cost_fn` (a forward run plus the adjoint footprints), and the initial
@@ -429,7 +1030,6 @@
   bitwise-identical costs, gradients and minimizer (single-threaded). The
   iteration log no longer records iteration 0 twice; its rows now match
   `cost_history`.
-
 - The transport-binary replay check (write time and `[input] validate_replay`)
   is a per-cell test (#15, item 2). It divided each cell's budget residual by
   the largest cell mass of the window, so in thin top-level cells (down to
@@ -455,7 +1055,6 @@
   `scripts/validation/verify_cs_binary_continuity.jl` defaults `--threshold`
   to `replay_tolerance` of the binary's storage type (was 1e-10). Payloads
   are unchanged; the check does not validate the winds themselves.
-
 - The ERA5 level selector chose coefficient `137 - e` for a TM5 `echlevs`
   entry `e`, reflecting TM5 level selections about the middle of L137. It
   now chooses coefficient `e` as TM5 does. `ml137_tropo34` contains the
@@ -511,7 +1110,10 @@
 - Surface-flux files in per-second units must be in kg of the species per m²
   per second (`kg m-2 s-1`, `kg/m2/s`, `kgCO2/m2/s`, ...); other per-second
   units such as `mol m-2 s-1`, and files without units, were read unconverted
-  and are now rejected. Every shipped flux file passes.
+  and were rejected at first; with the unit grammar of `GriddedIO` (see
+  *Surface fluxes and preprocessing*) molar units (moles of the tracer's
+  species unless the units name one) and gram units convert, while missing
+  and unknown units stay errors. Every shipped flux file passes.
 - With `binary_paths`, `[input] end_date` was reported as unread but still
   widened the span of loaded time-varying flux slices; the span is now the
   run's windows, also with `folder` (where every day through `end_date` has a
@@ -542,8 +1144,9 @@
   highest wavenumber `(nlon − 1)/2` of rings with an odd number of longitudes,
   so that wave entered at half amplitude. ERA5 N320 has 72 such rings (of 640).
   Fixed there and in the batched synthesis below that now serves u, v and T;
-  the change is at most 6e-3 m/s and 2.5e-3 K. The Nyquist term `nlon/2` of
-  even rings still enters with half weight, as before.
+  the change is at most 6e-3 m/s and 2.5e-3 K. (At that step the Nyquist
+  term `nlon/2` of even rings still entered with half weight; the even-ring
+  entry above drops it.)
 - `scripts/preprocessing/attach_catrine_tm5_convection_cs.jl` stored the
   legacy 1-degree TM5 convection upside down. The CATRINE files keep ERA5 L137
   surface first, and the script summed them through the binary's top-first
@@ -613,144 +1216,40 @@
   `test/core/test_cs_linrood_footprint_fd.jl` covers the upward-flux case,
   and the Lin-Rood finite-difference tolerances that hid the error are
   tightened (`test_cs_stride_checkpoint.jl` from `3e-4` to `1e-9`).
-
-### Numerical changes
-
-- Column balances use `hybrid_mass` weights by default on every target
-  (cubed sphere, and now lat-lon and reduced Gaussian): the correction of a
-  column's flux budget goes by air mass to hybrid layers only, and the
-  column's remaining `cm` residual is folded with the same weights, so
-  pure-pressure (stratospheric) layers receive none of it. A layer is hybrid
-  when `ΔB_k ≥ 1e-6` (`HYBRID_LAYER_MIN_DB`; its thickness changes by at
-  least 0.1 Pa when `p_s` changes by 1000 hPa): GEOS/MERRA-2 L72 layer 41
-  (150–177 hPa) has `ΔB = 8.2e-9` (8.2e-4 Pa per 1000 hPa), a rounding
-  residue of the table, and now counts as pure pressure (with `ΔB > 0` it
-  took about 3 % of every correction at full mass weight); the smallest
-  genuine increment of the shipped tables is ERA5 L137 layer 55,
-  `ΔB = 7e-6` (0.7 Pa per 1000 hPa). The change is large in
-  the stratosphere:
-  - GEOS-IT C45 (`pre_geosit_c45`, `hybrid_mass` against `mass`, measured
-    with the `ΔB > 0` mask):
-    stratospheric RMS `cm` falls by 25–43 % between 5 and 130 hPa (0.57× at
-    48 hPa); horizontal fluxes on faces above 10 % of the global maximum
-    change by up to 17.8 % (p99 2 %; flux-weighted 1–2.7 % in the
-    pure-pressure layers 1–40, 0.25–0.7 % in hybrid layers); tropospheric
-    `cm` changes by less than 0.3 %. ERA5 spectral C24 (`pre_c24`):
-    stratospheric RMS `cm` 0.65–0.72×.
-  - The `ΔB` threshold alone: `pre_geosit_c45` layer-41 fluxes change by
-    1.8–1.9 % RMS and `cm` at 177–288 hPa by 12 % to 5 % RMS;
-    `pre_merra2_c90` by 0.25 % and 3.5 % to 1.4 %, and its OMEGA NRMSE
-    improves from 0.4725 to 0.4712 (300–100 hPa: 0.302 to 0.297). ERA5 cases
-    are bit-identical.
-  - Lat-lon and reduced Gaussian (`hybrid_mass` against `mass`):
-    `pre_ll72` stratospheric RMS `cm` 0.60–0.69× at 10–100 hPa and
-    0.72–0.93× at 100–200 hPa, horizontal fluxes up to 11 % RMS per level
-    (meridional, 28 hPa); `pre_o24` 0.70–0.83× and 0.83–0.96×, horizontal
-    fluxes up to 1 % RMS per level.
-  - Air masses, `ps` and `dm` are bit-identical in every case. Run a
-    stratospheric tracer A/B before regenerating science sets.
-- Wind-derived cubed-sphere preprocessing defaults to the GCHP-matched
-  construction: Cartesian wind regridding, vector face fluxes with FV3
-  interpolation and true edge lengths, and (ERA5) trapezoidal `window_mean`
-  endpoint sampling. The ERA5 spectral path uses the same typed
-  implementations as MERRA-2 and ERA5 N320 and supports source-grid line
-  integrals. On `pre_c24` `am`, `bm` and `cm` change (largest `cm` change
-  5.0e12 kg against a maximum of 7.4e12 kg); `m`, `ps` and `dm` are
-  bit-identical. The historical construction remains available as
-  `panel_average`/`cell_centerline`/`linear`/`scalar`/`window_start`.
-- ERA5 N320 face fluxes use the dry pressure thickness by default
-  (`flux_thickness = "dry_mass"`, `Δp_dry = (1 − q)|ΔA + ΔB p_s| = g m_dry/A`),
-  consistent with the dry air masses; `"moist"` reproduces older files. On the
-  L117 golden day only `am`, `bm` and `cm` change (largest 5.4e10 kg against
-  3.3e12 kg); one window takes 13 instead of 14 substeps.
-- Every preprocessing target mesh (lat-lon, reduced Gaussian, cubed sphere)
-  uses `Parameters.EARTH_RADIUS` (6.371e6 m) and records it as
-  `planet_radius_m`, so cell areas and air masses scale by
-  `(6371000/6371229)² − 1 = −7.19e-5`. The IFS radius stays only in the
-  source-side ERA5 spectral and N320 calculations.
-
-- Reduced-Gaussian preprocessing now uses the same column-integrated Poisson
-  balance as the lat-lon and cubed-sphere paths: one ring-graph solve per
-  column, with each face correction spread over the layers by air mass. On the
-  O24 golden day, equivalent omega at the 418 hPa interface is restored from
-  6.9e-6 to 0.146 Pa/s RMS while every stored air-mass value and the global
-  dry-air total remain bit-identical. Horizontal fluxes change by at most 6.7%
-  of the previous global maximum, as expected from the reviewed prototype.
-  Reported by pera-noaa (NOAA GML) in issue #11.
-
-- Carbon-mass fluxes (`kgC m-2 s-1`, the CAMS/LMDZ inventories) become CO₂ by
-  the molar-mass ratio `M(CO2)/M(C)` = 44.0095/12.0107 ≈ 3.66419
-  (`CARBON_MOLAR_MASS`, the IUPAC value consistent with `SPECIES_MOLAR_MASS.co2`),
-  which conserves carbon atoms, instead of 44/12. These fluxes are 0.068 % lower
-  than before; GEOS-Chem's HEMCO uses `CTOCO2 = 3.6667` (44/12).
-  The Python flux preprocessors (TRENDY, FLUXCOM-X, SIF-GPP, GFED5) use the
-  same ratio; drivers they wrote before are 0.068 % higher until regenerated.
-- Lat-lon preprocessing uses the cubed-sphere positivity gate (owner's
-  decision, 2026-10-10): the palindrome outflow `2 (out_x + out_y + out_z)`
-  against `min(m, m_next)`, one shared implementation, instead of each
-  direction's single application against `m`. Adaptive schedules (the
-  default) choose more substeps on lat-lon binaries: on the ERA5 72×37
-  lat-lon golden day (2021-12-01) two of 24 windows go from 4 to 5 substeps. A fixed
-  schedule that passed the old gate can now fail it. Reduced-Gaussian
-  binaries keep their per-direction gate.
-- New cubed-sphere option `[advection] scheme = "ppm"`, `vertical = "fv3_kord8"`.
-  The vertical sweep integrates FV3's `scalar_profile` parabola (`kord = 8`,
-  positive definite; GCHP's tracer profile) over the swept fraction of the
-  donor layer (`PPMScheme(; vertical = FV3ScalarProfile())`). Use
-  `"fv3_kord8_signed"` for tracers that become negative.
-  - Edges and limited parabolas match a transcription of `fv_mapz.F90`
-    bit for bit.
-  - In 1-D translation tests it is third order or better and 4–900 times
-    more accurate than the default.
-  - `Float32` mass drift is at or below the default's.
-  - The default (`SameAsHorizontal`) is unchanged, and lat-lon runs and the
-    adjoint reject the option.
-  - `scheme = "linrood"` accepts the same `vertical` values. Its default stays
-    upwind: `LinRoodPPMScheme(ORD; vertical = UpwindScheme())`.
-  - `CSAdvectionWorkspace` gains `column_scratch` (`column_scratch = true`).
-- `PPMScheme` was documented as third order. It is second order: the limited
-  PPM edge sets a Russell–Lerner slope and the parabola is not integrated.
-  The docs now say so.
-- `Float32` runs now conserve global tracer mass to about 1e-6 of the burden
-  per year. Over 3 days of ERA5 C90 transport without sources, the background
-  tracer drifts +9e-9 instead of −9.7e-7 and SF₆ +2.1e-9 instead of −1.0e-6.
-  A small advection bias (≈+1e-6 per year) and, with CMFMC convection, about
-  −1e-6 per year for CO₂ remain. Changes:
-  - TM5 convection and `dkg` diffusion return each column's rounding residual,
-    computed with compensated sums, to its largest participating cell. Only
-    rounding-sized residuals are returned, so a non-conserving matrix stays
-    visible.
-  - GEOS-Chem's non-local emission profile accounts for every upper-layer
-    addition with `TwoSum`.
-  - Cubed-sphere areas, edge lengths and corners, regridding geometry, the
-    decay decrement `expm1(−λΔt)` and the model clock are evaluated in
-    `Float64` and rounded once. The clock follows the window and step
-    counters, so window ends are exact for any step count. Meshes of either
-    precision now regrid on a `Float64` sphere and share cached weights
-    (cache version 3, so every cached regridder is rebuilt once).
-  - Lat-lon flux and initial-condition sources stored in `Float32` (GridFED)
-    snap to exact global extents. Previously the regridder dropped 2.1e-6 of
-    the GridFED flux in `Float64`.
-  - `total_mass` and `total_air_mass` return compensated `Float64` sums,
-    reduced on the device (shared with the snapshot totals).
-
-  `Float32` global totals change at the 1e-6 level. `Float64` global totals
-  change by about 1e-11, except GridFED emissions (+2.1e-6). See
-  `docs/src/theory/float32_conservation.md`.
-- The two copies of the cubed-sphere block kernels (nested binary coarsener
-  and GEOS block coarsening) are one, `Regridding.coarsen_sum!` and
-  `coarsen_area_weighted!`. Area-weighted means now accumulate numerator and
-  denominator in `Float64` and round once (the coarsener's semantics); the
-  GEOS path accumulated them in the data precision. Float32 GEOS-native
-  builds whose target `Nc` is a divisor of the source `Nc`
-  (`geosit_c90_dec2021_catrine_f32_fullL72.toml`,
-  `geosit_c45_dec2021_catrine_f32_fullL72.toml`,
-  `geosfp_c720_native_to_cs180.toml`) change in `pblh`, `ustar`, `hflux`,
-  `t2m`, the vdiff `u/v/t/qv`, `cmfmc` and `dtrain` before vertical
-  remapping: 1–5 Float32 ulp in about half the cells of positive fields,
-  more on near-cancelling signed fields (the old result could be thousands of
-  ulp from the correctly rounded mean). Cell sums, face sums, Float64 builds
-  and same-`Nc` builds are bit-identical.
+- `[convection] kind = "cmfmc_matrix"` requires `cmfmc` and `dtrain` in
+  every input binary; `dtrain` was checked in the first binary only.
+- `scripts/validation/verify_cs_binary_continuity.jl` scales
+  `full_window_mass_amount` fluxes (GEOS native binaries) to
+  per-application amounts before the replay; it replayed the stored
+  full-window amounts.
+- `cs_tape_byte_estimate` uses Lin-Rood's own record layout (ten
+  full-panel states per step, twelve with FV3 vertical sweeps, plus six
+  face-panel tuples); it applied the split-sweep layout to Lin-Rood. The
+  realized Lin-Rood tape is still larger than the estimate by four
+  face-panel tuples per step (see Known limitations).
+- The GEOS-FP C720 download recipe reads from the GEOS-Chem S3 archive
+  (`https://geos-chem.s3.amazonaws.com/GEOS_C720/GEOS_FP_Raw/Y<yyyy>/M<mm>/D<dd>/`)
+  instead of the WashU archive, without the collection directory the URL
+  builder inserted. The two C720 preprocessing configs read physics from
+  `met/geosfp/C720/raw_025`.
+- Staged input copies (`[input.staging]`) and their source stamps are
+  published through `AtomicFiles`; they were moved from `.part` files with
+  `mv(…; force = true)`.
+- Streaming transport binaries are published with mode `0o666 & ~umask`
+  (`0o644` under umask `022`), like the other writers' files; they were
+  staged with `mktemp` and published owner-only (`0o600`).
+- The conservative remap of file initial conditions conserves tracer in
+  the dry-air carrier. Each target layer gets the source's dry-air mean
+  `∫q (1 − q_v) dp / ∫(1 − q_v) dp`, so a uniform field stays uniform,
+  when `init.humidity_variable = "<name>"` names the source's specific
+  humidity (file kinds, `catrine_co2` and `cs_native`; it must share the
+  field's dimensions); without it the weight is `dp`, and names such as
+  `q`, `QV` or `hus` are not detected. Source interfaces use the binary's
+  total surface pressure: on a binary that stores dry `ps` it is recovered
+  from the window-start (else VDIFF) humidity; a legacy dry-pressure
+  binary without humidity keeps dry `ps` and warns once (typically
+  0.5–2 % low in humid columns). The remap is O(N_source + N_target) and
+  allocation-free.
 
 ### Runtime and output
 
@@ -813,15 +1312,15 @@
   run-loop wall time 10.2 → 8.7 s, of which transport 7.2 → 5.3 s (less
   garbage collection during transport).
 - Time-varying surface fluxes (cubed sphere) are read only for the run period
-  when `[input]` gives `start_date`: from the last slice at or before the run
+  (they now require `[input]` `start_date`): from the last slice at or before the run
   start to the first slice at or after the run end. Every temporal scheme uses
   only the two slices around a time, so results are unchanged (two-day
   MERRA-2 C90 run with LMDZ, GridFED and three native-C90 sources:
   bit-identical NetCDF output). That run reads 10 instead of 6088 LMDZ slices
   and 2 instead of 36 GridFED slices, and takes 12.4 s instead of 25.9 s end to
   end (warm, L40S, six runs each; garbage collection 6.0 → 2.3 s). The
-  loaded period ends with the binaries' windows (from every binary's header)
-  or the end of `end_date`, whichever is later.
+  loaded period ends with the binaries' windows (from every binary's header);
+  `end_date` no longer widens it (see Fixes).
 - Time-varying surface-flux series (`TimeVaryingSurfaceFluxSource`: `cs_native`
   and the regridded LMDZ and GridFED series) stay in host memory on every
   backend. Their `Adapt` hook used to copy the whole run-span series to the
@@ -887,8 +1386,6 @@
   every time step and is removed. Unlike the variable, `"substep"` keeps the window-end reset to
   the binary's endpoint air mass, so a cadence comparison changes only where
   convection and chemistry run.
-- Removed the exported generic function `Preprocessing.reset_workspace!`,
-  which had no methods.
 - Runs and preprocessing from `git archive` code snapshots record their commit:
   git writes it into `src/REVISION` on export (`export-subst`), and
   `source_revision()` reports it when the tree has no `.git`; edits made after
@@ -937,7 +1434,6 @@
   Two binaries that still resolve to one daily file fail before transport.
 - `[output.fields].tracers = "name"` (a single string) no longer throws a
   `MethodError`; it selects that one tracer as documented.
-
 - Scripts cleanup: 161 stale scripts were removed (git history keeps them;
   recover one with `git show 7c515038:<path>`) and 58 were moved into a
   `heritage/` subfolder of their folder, kept for reference but not
@@ -955,10 +1451,11 @@
   does not carry (it failed at the first chemistry step), an enabled `[output]`
   with a path but no snapshot-schedule key or with snapshot times but no path
   (nothing was written; `hours = []` still means deliberately none), Lin–Rood
-  `ppm_order` other than 5 or 7. Keys the run would ignore are logged as
-  warnings: unknown tables and keys with a "did you mean" suggestion, known
-  keys the chosen kind leaves unread (including flat `[tracers.<name>]` keys),
-  and surface-flux tables without `kind` (no flux is emitted). Of the 246 run
+  `ppm_order` other than 5 or 7. Keys the run would ignore were logged as
+  warnings at this step; since the strict-config change (PR #26) unknown
+  tables and keys are errors with a "did you mean" suggestion, and only known
+  keys the chosen kind leaves unread (including flat `[tracers.<name>]` keys)
+  and surface-flux tables without `kind` (no flux is emitted) are warnings. Of the 246 run
   configs with an `[input]` table in `config/runs` and `config/examples`, only
   four that already failed at run time differ: they now fail at the check.
 - `[input] validate_replay = true` replays every binary's continuity when the
@@ -977,13 +1474,6 @@
   package reads, and `test/core/test_environment_variables.jl` fails when
   `src/` reads one that is not listed there (or from outside the folder that
   owns it).
-- Breaking: a surface-flux `kind` that is not a known source
-  (`none`, `file`, `cs_native`, `lmdz_co2`, `gridfed_fossil_co2`, `edgar_sf6`,
-  `zhang_rn222`) is an error, with a suggestion for a close name; it used to
-  be read silently as a generic file, so a typo such as `gridfed` lost the
-  GridFED unit conversion. Use `kind = "file"` for a generic NetCDF file. The
-  two ocean-flux configs now say `kind = "file"` instead of
-  `"eccodarwin_ocean_co2"` (same source, results unchanged).
 - The two binary-format A/B configs `config/runs/binary_format_ab/c45_*` are
   retired: they set `[advection] order = 7`, which was never read, so they
   ran Lin–Rood PPM5 instead of the intended PPM7.
@@ -1005,6 +1495,54 @@
   parser's accepted values and every schema table with the known-key tables,
   both ways. New module `ConfigChecks` holds the strict Boolean and known-key
   helpers that `Output`, `Preprocessing` and `Models` each had a copy of.
+- Runtime snapshot output records the physics that ran, always, as global
+  attributes of NetCDF files and as root fields of the ATMSNAP JSON header
+  (`scripts/postprocess/binary_to_netcdf.jl` carries them over). The string
+  values come from the typed runtime specifications and the instantiated
+  surface sources, not from the TOML text: `physics_advection_scheme`,
+  `physics_advection_limiter`, `physics_advection_order` (Lin–Rood),
+  `physics_vertical_reconstruction`, `physics_convection` with
+  `physics_convection_clamp` and `physics_convection_cloud_base` (CMFMC) or
+  `physics_convection_solver`, `physics_convection_lmax` and
+  `physics_convection_level_merge` (TM5, CMFMC matrix), `physics_diffusion`
+  with `physics_diffusion_surface_flux_coupling` and, for constant Kz,
+  `physics_diffusion_kz_m2_s`, `physics_surface_fluxes` (per tracer `static`
+  or `time_varying:<scheme>`), `physics_chemistry`,
+  `physics_decay_half_lives_seconds`, `physics_mass_basis`,
+  `physics_cadence`, `physics_air_mass_reset_mode`, `physics_met_source`
+  (the binary's `source_type`), `physics_binary_provenance` (format version
+  and the header's preprocessor, git commit, dirty flag and generation
+  fingerprint) and `physics_binary_inputs` (binary file names). The snapshot
+  writers take them as `physics_attributes` (names must start with
+  `physics_`), and `Output` exports `set_physics_attributes!` and
+  `set_time_origin!`; `write_snapshot_netcdf`, `write_snapshot_binary` and
+  `NetCDFSnapshotStream` take `physics_attributes` and `time_origin`, and
+  `RuntimeOutputSpec` gains a `metadata` field. Data values are unchanged.
+- `init.kind = "cs_native"` initial conditions with a level count other
+  than the binary's are remapped column by column with the conservative
+  hybrid remap of the lat-lon file initial conditions (the binary's typed
+  total or dry surface pressure; optional dry-air weighting with the new
+  `init.humidity_variable`); they need the source `ap` and `bp` and were
+  rejected before. Files with the binary's level count are still copied
+  cell for cell (bit-identical); if they carry `ap`/`bp`, those set the
+  source level order (a contradicting `vertical_order` is an error) and must
+  match the binary's coefficients (`ap` within max(1e-3 Pa, 1e-6 relative),
+  `bp` within max(1e-8, 1e-6 relative)) or the file is refused. Without
+  coefficients `vertical_order` still defaults to `surface_first`.
+- Downloads report through the logger instead of writing to standard
+  output. A download recipe's `[logging]` table takes `level` (`"debug"`,
+  `"info"`, `"warn"`, `"error"`) and `progress` (`"lines"`, the default,
+  `"bar"` or `"none"`); start and completion summaries remain leveled
+  messages when progress is off. Python and AWS subprocess output is read
+  concurrently and forwarded while the job runs; only the last 64 KiB of
+  each stream is kept, and a job that exhausts its retries reports both
+  tails, also at `level = "error"`.
+- New exports `AbstractSurfacePressureBasis`, `TotalSurfacePressure`,
+  `DrySurfacePressure` and `surface_pressure_basis` (of a reader or
+  driver). A custom `AbstractMetDriver` is taken to carry total pressure
+  unless it returns `DrySurfacePressure()`.
+  `Operators.Diffusion.recover_total_surface_pressure!` recovers total from
+  dry surface pressure on CPU, CUDA and Metal.
 
 ### Surface fluxes and preprocessing
 
@@ -1059,12 +1597,14 @@
   lat-lon → cubed-sphere regrid with `--column-balance-weights`. Headers
   record every choice but `"mass"`; the GEOS pressure-fixer closures, which
   keep the native fluxes, ignore it.
-
 - Time-varying surface fluxes can span several files: `files = [...]` or a
   `file_pattern` with `{YYYYMM}` plus `year`. `gridfed_fossil_co2` joins the
   time-varying path (stepwise by default; monthly totals use each month's
   length), and an inventory's year is taken from the last year in its file
-  name (`GCP-GridFEDv2024.0_2022.short.nc` is 2022).
+  name (`GCP-GridFEDv2024.0_2022.short.nc` is 2022). Files with a CF time
+  coordinate now take their months and month lengths from it; the file-name
+  year and ordinal months remain only for coordinate-less GridFED files
+  (see the per-month entry below).
 - `kind = "cs_native"` with `time_varying = true` reads an already aligned
   GEOS-native `(time, nf, Ydim, Xdim)` flux-density series and converts it to
   per-cell storage rates without regridding.
@@ -1186,10 +1726,11 @@
   increase, time axes are decoded by `decode_time`, and units in kg of
   another named species than the tracer's are an error (they were read with
   factor 1). `write_latlon_flux` writes static CF `(lon, lat)` flux files for
-  `kind = "file"` (not a time-varying kind) and, until step P2b, refuses a mesh
-  whose faces the runtime would not rebuild bit for bit from the written
-  centres by its uniform face rule, now `GriddedIO.UniformSpanFaces`
-  (pole-centred, snapped, truncated, Gaussian rows). `catrine_protocol_cs_fluxes.jl` writes through the
+  `kind = "file"` (not a time-varying kind) and refuses a mesh whose faces
+  the runtime would not rebuild bit for bit from the written centres with
+  `GriddedIO.SnappedFaces` (pole-centred, truncated and Gaussian rows,
+  regional axes across 0°; snapped Float32 grids such as GridFED 0.1° are
+  written). `catrine_protocol_cs_fluxes.jl` writes through the
   `cs_native` writer: the same data, now with `time_bnds`, the geometry block
   and units `kg CO2|Rn222|SF6 m-2 s-1`; `compare_cs_flux_files.jl` takes the
   layout from `GriddedIO`.
@@ -1197,11 +1738,13 @@
   through `GriddedIO`: coordinates by name with a check against the field's
   dimensions, orientation, fill values (read straight into the run's float
   type), the conservative-regridding source mesh
-  (`source_latlon_mesh(…, UniformSpanFaces(); radius)`, the former uniform mesh),
+  (`source_latlon_mesh(…; radius)`, now with `SnappedFaces` faces; see
+  Numerical changes),
   time axes and flux units. For every file the shipped configs read (102
   inventories: CAMS/LMDZ, GridFED, EDGAR, Zhang Rn-222, ECCO-Darwin, CATRINE and
   TRENDY `cs_native` series), the loaded fields, source meshes, slice times and
-  storage factors are bit-identical to the former loaders. What changes:
+  storage factors were bit-identical to the former loaders at that step; the
+  source meshes then moved to `SnappedFaces`. What changes:
   - Units go through one grammar (`GriddedIO.parse_flux_units`): grams, days,
     molar units with a named species and per-cell units with any time unit now
     convert; the conversion follows the units, not the kind (a
@@ -1228,6 +1771,21 @@
     and `_load_timevarying_surface_flux_field` take the `species` keyword.
 - SIF-GPP, FLUXCOM, TRENDY v14, TRANSCOM, GFED, and CATRINE campaign
   preprocessing, run configs, visualization scripts, and ATBD memos.
+- Per-month surface-flux units (GridFED `kgCO2/month/m2`) are converted with
+  the month each slice covers on the file's CF time coordinate: the midpoint
+  of its `bounds`, or its stamp without bounds, and that month's length in
+  the coordinate's `calendar` (`360_day`, `noleap`/`365_day` and
+  `all_leap`/`366_day` included). Bounds that do not span exactly that
+  calendar month are an error. Before, slice `k` (or `time_index`) was month
+  `k` of the year from `year`, the time units or the file name, and
+  time-varying files needed exactly 12 slices; partial-year, out-of-order and
+  non-Gregorian files are now read correctly. A static `month = m` selects
+  the one slice whose time stamp lies in month `m` (none or several is an
+  error); `time_index` is a positional slice index. Only the coordinate-less
+  twelve-slice GridFED layout keeps the ordinal rule; other per-month files
+  without a time coordinate are rejected. New in `GriddedIO`:
+  `decode_month_seconds` and `decode_time_bounds`. Golden results are
+  unchanged.
 
 ### Coverage, benchmarks, and documentation
 
@@ -1396,12 +1954,34 @@
   roles, how results reach the dashboard, how to run a benchmark locally, and
   how to read the dashboard. `CONTRIBUTING.md` explains the benchmarks and
   coverage.
+- `CITATION.cff` and GitHub issue templates (bug report, feature request)
+  are new, and the README labels each feature stable or
+  preview/experimental, following *Validation status*.
+- `LinRoodPPMScheme{5}` was documented as Huynh-constrained PPM. It uses
+  Colella–Woodward fourth-order edges with extremum flattening, without
+  Huynh's second constraint; `ORD = 7` adds the cubed-sphere face
+  treatment. The docstrings say so.
+- The JET hot-path baseline on Julia 1.12 and later is 115 reports (was
+  153); the Julia 1.10 baseline stays 130. A core test checks that every
+  `scripts/` path cited in `src/`, docs and configs exists.
+- `config/runs/catrine5d/c180_full137_f32_pbl_tm5_smoke_gpu.toml` moved to
+  `config/runs/likely_legacy/` (as
+  `catrine5d_c180_full137_f32_pbl_tm5_smoke_gpu.toml`): no compatible
+  binary remains at its input path.
+- The golden-output harness gains `pre_geosit_c45`, its first GEOS native
+  preprocessing case: one GEOS-IT C180 day (2021-12-01) coarsened to C45
+  from staged, checksummed inputs, with default column weights. The
+  reference set has 28 cases.
+- Julia 1.10 remains the minimum supported version (`julia = "1.10"`).
+  CI runs the full suite on Julia 1.10 and on the current release
+  (`'1'`, Julia 1.13 since #32).
 
 ### Post-run diagnostics
 
 - New module `AtmosTransport.Analysis` (loaded after `Models`): the shared
   numerics of post-run diagnostics. `daily_snapshot_series` concatenates the
-  frames of snapshot files (explicit run origin; a repeated hour is read once);
+  frames of snapshot files (run origin from the CF time units, or an explicit
+  `origin` for legacy files; a repeated hour is read once);
   `EqualAreaBands` and `band_means` form area-weighted means on bands equally
   spaced in sin φ, leaving NaN cells out of numerator and denominator;
   `doy_linear_detrend` removes a per-calendar-day line across years (29
@@ -1492,6 +2072,19 @@
   the requested UTC hour (the Python script took one frame per file, the
   initial state from the first file, and so skipped 00 UTC of the second day),
   and cells with fill values are left out of the daily statistics and counted.
+- `Analysis.daily_snapshot_series` takes the run origin from the CF units;
+  `origin` is now optional and needed only for legacy files whose `time`
+  units are the bare `"hours"` (an `origin` given for a current file must
+  match it, and all files must share one origin). `Visualization.open_snapshot`
+  gives `DateTime`s in `snapshot_times`, `HorizontalField.time` and
+  `RasterField.time` for current files, and `fieldview`/`frame_indices` also
+  accept a `DateTime`; integer frame indices and numeric elapsed hours select
+  frames as before, and legacy files keep numeric times. `SnapshotDataset`,
+  `HorizontalField` and `RasterField` gain a time type parameter, and
+  `SnapshotDataset` an `hours` field. `compare_float32_float64_runs.jl`
+  checks the encoded origin against `--origin`, `compare_cs_vs_ll.jl`
+  compares decoded times, and `catrine_true_mass_balance.jl` reads the stored
+  hours.
 
 ### Verification and remaining limits
 
