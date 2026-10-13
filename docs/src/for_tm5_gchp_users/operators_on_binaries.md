@@ -179,12 +179,71 @@ diffusivity profile is supplied by an `AbstractKzField`:
 | `DerivedKzField` | Beljaars–Viterbo local Kz from `(ps, u, v, T, q, z0)` | Production |
 | `WindowPBLKzField` | PBL-aware variant of Beljaars–Viterbo | Production |
 | `LocalHoltslagBovilleKzField` | GEOS/VDIFF local Holtslag–Boville Kz | Supported when the v4 binary carries all VDIFF fields |
+| `GCHPNonlocalPBLField` | GEOS-Chem VDIFF: Holtslag–Boville Kz with the non-local counter-gradient term (`kind = "geoschem_nonlocal_vdiff"`) | Cubed sphere; needs the VDIFF fields and `:pbl_eflux` |
 
 For TM5 users: `DerivedKzField` is the closest analogue to the
 Holtslag–Boville-with-Beljaars-correction profile TM5 ships with.
-For GCHP users: `LocalHoltslagBovilleKzField` follows the local GCHP/VDIFF
-formulation almost line-for-line, with the same `(R_dry, cp_dry,
-karman)` parameters and the same non-local counter-gradient term.
+For GCHP users: `GCHPNonlocalPBLField` ports GEOS-Chem's `vdiff_mod.F90`,
+including the counter-gradient transport of fresh emissions.
+`LocalHoltslagBovilleKzField` uses the local Kz only, without the
+counter-gradient term.
+
+### [GEOS-Chem non-local VDIFF: emission profile and the `qmincg` fallback](@id gchp-vdiff-qmincg)
+
+GEOS-Chem's VDIFF moves fresh surface emissions up through the boundary layer
+with the counter-gradient flux `ρ K γ`, where `γ = cgs F / ρ_s` is linear in
+the surface flux `F`. `GCHPNonlocalPBLField` turns it into a per-step emission
+profile. Layers are numbered `k = 1 … N` from the top, `N` the surface layer.
+Let `w_{k+1/2}` be the fraction of the step's emission that crosses the
+interface below layer `k` upward:
+
+```math
+w_{N+1/2} = 1 \ \text{(the ground: the whole emission enters the column)}, \qquad
+w_{k+1/2} = \frac{\rho\, K\, \mathrm{cgs}}{\rho_s} \ \text{for } k < N
+\ \text{(the counter-gradient flux)},
+```
+
+and `w_{1/2} = 0` at the model top. Layer `k` keeps
+
+```math
+f_k = w_{k+1/2} - w_{k-1/2}, \qquad \sum_k f_k = 1 .
+```
+
+The interior `w` is zero above the PBL and outside GEOS-Chem's bottom `npbl`
+layers (those with reference pressure above 400 hPa), in stable columns, and
+where the interface lies in the surface layer of the PBL (`z < 0.1 h`). It can
+grow with height, so some `f_k` are negative. Of a column's emission `x` in
+one step, `ProfileDeposit` adds `x f_k` to layer `k`. Its counter-gradient
+part, relative to a surface-only deposit, is
+
+```math
+c_k = x\,(f_k - \delta_{kN}) .
+```
+
+GEOS-Chem (`vdiff_mod.F90`, GEOS-Chem 14.7.0) forms `q_k + c_k` in its
+bottom `npbl` layers from the tracer `q_k` before the step's emission. If any
+of these values is below `qmincg = 0`, it drops the counter-gradient term in
+that column, and the emission enters only the bottom layer. Its comment gives
+the reason: a negative value means the quasi-equilibrium assumed by the
+counter-gradient term is strongly violated. AtmosTransport keeps the whole
+emission in the surface layer when
+
+```math
+\exists\, k:\quad c_k < 0 \quad\text{and}\quad q_k + c_k < 0 ,
+```
+
+that is, when the redistribution would make a layer negative or a negative
+layer more negative. Every nonzero `c_k` lies in the bottom `npbl` layers,
+so the test covers GEOS-Chem's range. It differs from GEOS-Chem only for a
+layer that was negative before the step and that the redistribution does not
+lower: GEOS-Chem falls back there, AtmosTransport keeps the profile.
+Transport leaves roundoff negatives, as small as `-3e-316`, in tracers with a
+zero background such as Rn-222 and fossil CO₂. Until OF-108 the test was
+`q_k + c_k < 0` on every layer. In the first 2 h of the C90 MERRA-2 golden
+day, it kept 94 % of these tracers' column deposits in the surface layer
+because of a negative layer the profile does not touch, and the choice
+flipped with the sign of roundoff. Both placements add exactly `x` to the
+column.
 
 ### Surface-flux and diffusion ordering
 
