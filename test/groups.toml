@@ -160,6 +160,7 @@ files = [
     "core/test_tm5_convection.jl",
     "core/test_tm5_driven_simulation.jl",
     "core/test_tm5_hessenberg.jl",
+    "core/test_tm5_level_merge_split.jl",
     "core/test_tm5_sparsity_above_icltop.jl",
     "core/test_tm5_tile_bit_equality.jl",
     "core/test_tm5_tracer_batching.jl",

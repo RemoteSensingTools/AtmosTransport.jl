@@ -21,7 +21,8 @@ supported adjoint replay; collaborative factors live only in shared memory.
 
 `use_collab_lu` selects the workgroup-collaborative solver. `lmax_conv=0`
 uses all vertical levels; a positive value limits the active lower atmosphere.
-`n_merge` optionally aggregates adjacent active layers before the solve.
+`n_merge` optionally aggregates adjacent active layers before the solve (see
+Level merging below).
 Float32 GPU matrices support effective depths 1..85. Float64 CUDA supports
 unmerged (`n_merge=1`) depths 1..73, using Float64 shared arrays and arithmetic.
 CPU and unsupported Float64 configurations retain the legacy solver with a
@@ -33,6 +34,26 @@ The forcing arrays `(entu, detu, entd, detd)` arrive via
 `TransportModel.convection_forcing.tm5_fields`, populated each
 substep by `DrivenSimulation._refresh_forcing!` from
 `sim.window.convection`.
+
+# Level merging (`n_merge > 1`)
+
+An AtmosTransport approximation; TM5 itself merges levels once, in its met
+preprocessing, and never reconstructs a fine profile. Each group `s` of
+`n_merge` adjacent fine layers `k` becomes one super-layer with tracer mass
+`R_s = Σ_k r_k`, air mass `M_s = Σ_k m_k`, and summed forcings. After the
+backward-Euler solve on the super grid gives `R'_s`, each fine layer receives a
+share of the super-layer's change:
+
+    r'_k = r_k + (R'_s - R_s) * |r_k| / Σ_{j∈s} |r_j|        (m_k / M_s if Σ_{j∈s} |r_j| = 0)
+
+The weights lie in [0, 1] and sum to one. The split conserves the column
+total, keeps a uniform mixing ratio, leaves columns and layers without
+convection unchanged bit for bit, and changes no cell by more than
+`|R'_s - R_s|`. If a super-layer's fine values share one sign, it equals the
+proportional split `r'_k = R'_s r_k / R_s`, so non-negative tracers stay
+non-negative. A super-layer holding both signs can increase the column's
+`Σ|r|` by at most `2|R'_s - R_s|`. The split is not linear in the tracer; merged
+solves have no adjoint (CS footprints require `n_merge = 1`).
 
 # Memory budget
 
@@ -108,9 +129,9 @@ struct TM5Convection{FT} <: AbstractConvection
     # into floor(L/n_merge) super-layers, where L is the active depth (Nz
     # when lmax_conv=0), for the collaborative solve.
     # The effective fine span can therefore lose up to n_merge-1 top layers.
-    # Results are redistributed using each tracer's prior fine-layer profile,
-    # with uniform weights when the prior super-layer total is zero. This
-    # preserves its total up to rounding but changes vertical mixing.
+    # Each super-layer's tracer-mass change is split over its fine layers
+    # with weights |r_k|/Σ|r_j| (air-mass weights if all are zero); this
+    # conserves mass up to rounding but changes vertical mixing.
     n_merge :: Int
 
     # Validate every construction path, including Adapt and explicit type calls.
@@ -213,10 +234,8 @@ end
 # `(q_raw, air_mass, entu, detu, entd, detd)` along the `k_dim`-th
 # axis into a coarse super-grid of `L_super` layers (each spanning
 # `n_merge` fine layers), runs the supplied solve closure on the
-# super arrays, then disaggregates the new tracer values back to the
-# fine layers proportionally to the pre-convection distribution.
-# Redistribution preserves the new super-layer total up to rounding
-# (uniform fallback when the old super-layer total was zero).
+# super arrays, then splits each super-layer's tracer-mass change back
+# to its fine layers (`_split_merged_increment!`).
 #
 # `q_raw` has one more axis than the forcings (the tracer axis).
 # `solve!` is a closure that takes the super-grid arrays
@@ -258,16 +277,17 @@ end
     entd_super = _agg_sum(entd_active, k_dim, n_merge, L_super)
     detd_super = _agg_sum(detd_active, k_dim, n_merge, L_super)
 
-    # Snapshot fine q for the proportional disaggregation.
-    q_fine_save = copy(q_active)
+    # Snapshots for the split: fine tracer and air mass (contiguous copies,
+    # see `_agg_sum`) and the super-layer tracer mass before the solve.
+    q_fine_save  = copy(q_active)
+    m_fine       = copy(m_active)
+    q_super_save = copy(q_super)
 
     # Solve on the coarse grid (mutates `q_super`).
     solve!(q_super, m_super, entu_super, detu_super, entd_super, detd_super)
 
-    # Disaggregate: new_fine = super_new * (fine_old / super_old)
-    # with uniform fallback `1/n_merge` when super_old == 0.
-    n_inv = Float32(1) / Float32(n_merge)
-    _disaggregate!(q_active, q_super, q_fine_save, k_dim, n_merge, L_super, n_inv, Hp)
+    _split_merged_increment!(q_active, q_super, q_super_save, q_fine_save, m_fine,
+                             k_dim, n_merge, L_super, Hp)
     return nothing
 end
 
@@ -287,53 +307,53 @@ end
     # *that* is a plain layout transform and the subsequent sum is
     # bit-stable.
     src = copy(arr)
-    sh = size(src)
-    # New shape: insert `n_merge` axis just before `k_dim` and replace
-    # the `k_dim` size with `L_super`.
-    new_shape = ntuple(d ->
-        d <  k_dim ? sh[d] :
-        d == k_dim ? n_merge :
-        d == k_dim + 1 ? L_super :
-                         sh[d - 1],
-        length(sh) + 1)
-    return dropdims(sum(reshape(src, new_shape); dims = k_dim); dims = k_dim)
+    return dropdims(sum(reshape(src, _split_layer_axis(size(src), k_dim, n_merge, L_super));
+                        dims = k_dim); dims = k_dim)
 end
 
-# Proportional disaggregation. Writes `q_active` (the fine view of
-# q_raw) with `q_super .* (fine_old / super_old)`, broadcasting the
-# super-axis across `n_merge` fine slots. Uniform fallback when
-# `super_old == 0`.
-@inline function _disaggregate!(q_active, q_super, q_fine_save,
-                                 k_dim::Int, n_merge::Int, L_super::Int,
-                                 n_inv::Float32, Hp::Int)
-    sh_fine = size(q_fine_save)
-    # 5D view of the fine snapshot with the (n_merge, L_super) split.
-    sh5_fine = ntuple(d ->
-        d <  k_dim ? sh_fine[d] :
-        d == k_dim ? n_merge :
-        d == k_dim + 1 ? L_super :
-                         sh_fine[d - 1],
-        length(sh_fine) + 1)
-    fine_old_5d = reshape(q_fine_save, sh5_fine)
-    # super_old: sum over the n_merge axis.
-    super_old   = dropdims(sum(fine_old_5d; dims = k_dim); dims = k_dim)
-    # 5D broadcast view of super_old + q_super: insert a length-1
-    # axis at `k_dim` so they broadcast across n_merge fine slots.
-    sh5_super = ntuple(d ->
-        d <  k_dim ? size(super_old, d) :
-        d == k_dim ? 1 :
-                     size(super_old, d - 1),
-        length(sh_fine) + 1)
-    super_old_5d = reshape(super_old, sh5_super)
-    super_new_5d = reshape(q_super,   sh5_super)
+# Shape with the layer axis `k_dim` (length `n_merge * L_super`) split into
+# `(n_merge, L_super)`: the fine layers of one super-layer share an index
+# along the new axis `k_dim + 1`.
+@inline _split_layer_axis(sh::Tuple, k_dim::Int, n_merge::Int, L_super::Int) =
+    ntuple(d -> d <  k_dim     ? sh[d] :
+                d == k_dim     ? n_merge :
+                d == k_dim + 1 ? L_super :
+                                 sh[d - 1],
+           length(sh) + 1)
 
-    ratio_5d   = @. ifelse(super_old_5d == 0f0, n_inv,
-                            fine_old_5d / super_old_5d)
-    new_fine_5d = super_new_5d .* ratio_5d
-    new_fine_fine = reshape(new_fine_5d, sh_fine)
+# Increment split (OF-107). Each fine layer k of super-layer s receives a share
+# of the super-layer's tracer-mass change ΔR_s = R'_s - R_s from the coarse solve:
+#
+#     r'_k = r_k + ΔR_s * w_k,   w_k = |r_k| / Σ_{j∈s} |r_j|   (m_k / M_s if that sum is 0).
+#
+# The weights lie in [0, 1] and sum to one, so the split conserves the
+# super-layer total exactly in exact arithmetic, keeps a uniform mixing
+# ratio, leaves layers the solve did not change (ΔR_s == 0) bit for bit, and
+# changes no cell by more than |ΔR_s|. For a super-layer whose fine values
+# share one sign it equals the proportional split r'_k = R'_s r_k / R_s, so a
+# non-negative tracer stays non-negative; unlike that split it has no 1/R_s
+# factor, which amplified super-layers holding near-cancelling values of both
+# signs without bound. See the TM5Convection docstring.
+#
+# Broadcasts over `(…, n_merge, L_super, …)` reshapes run on the arrays' backend.
+@inline function _split_merged_increment!(q_active, q_super_new, q_super_old,
+                                          q_fine_old, m_fine,
+                                          k_dim::Int, n_merge::Int, L_super::Int,
+                                          Hp::Int)
+    sh_fine = size(q_fine_old)
+    r_old = reshape(q_fine_old, _split_layer_axis(sh_fine, k_dim, n_merge, L_super))
+    m_old = reshape(m_fine, _split_layer_axis(size(m_fine), k_dim, n_merge, L_super))
+    # Super-layer sums keep a length-1 axis at `k_dim` and broadcast across
+    # the fine layers; `m_old` lacks the trailing tracer axis.
+    abs_sum = sum(abs, r_old; dims = k_dim)
+    m_sum   = sum(m_old; dims = k_dim)
+    sh_super = size(abs_sum)
+    dR = reshape(q_super_new, sh_super) .- reshape(q_super_old, sh_super)
+    r_new = @. r_old + dR * ifelse(abs_sum > 0, abs(r_old) / abs_sum, m_old / m_sum)
+    new_fine = reshape(r_new, sh_fine)
     if Hp == 0
         # LL / RG: no halo, write the whole active slice.
-        copyto!(q_active, new_fine_fine)
+        copyto!(q_active, new_fine)
     else
         # CS panel: restrict the write-back to the interior cells
         # `Hp+1 : end-Hp` in the leading two dims. The halo region
@@ -346,7 +366,7 @@ end
         n2 = size(q_active, 2)
         copyto!(view(q_active, (Hp + 1):(n1 - Hp), (Hp + 1):(n2 - Hp),
                      :, ntuple(_ -> :, ndims(q_active) - 3)...),
-                view(new_fine_fine, (Hp + 1):(n1 - Hp), (Hp + 1):(n2 - Hp),
+                view(new_fine, (Hp + 1):(n1 - Hp), (Hp + 1):(n2 - Hp),
                      :, ntuple(_ -> :, ndims(q_active) - 3)...))
     end
     return nothing
