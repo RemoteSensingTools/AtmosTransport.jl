@@ -36,11 +36,12 @@ function _tape_byte_estimate(panels_m0,
                                       panels_cm_steps)
 
     # Each Lin-Rood step records two horizontal operators and two vertical
-    # upwind sweeps. A horizontal record retains four full-panel states
-    # (rm, m, and the two q_buf phases) plus three face-panel tuples (fx_in,
-    # fx_out, fy_in); each vertical sweep retains one full-panel m state.
-    # Thus its base tape is ten full-panel tuples and six face-panel tuples
-    # per step, not the split-sweep layout used by the generic method.
+    # sweeps. A horizontal record retains four full-panel states (rm, m, and
+    # the two q_buf phases) plus three face-panel tuples (fx_in, fx_out,
+    # fy_in); a vertical sweep retains the full-panel m state (upwind) or m and
+    # rm (FV3 profile). Thus its base tape is ten (upwind) or twelve (FV3)
+    # full-panel tuples and six face-panel tuples per step, not the split-sweep
+    # layout used by the generic method.
     sweep_records = 4nsteps
     halo_records = 0
     midpoint_records = nsteps
@@ -54,7 +55,8 @@ function _tape_byte_estimate(panels_m0,
         end
     end
     convection_records = convection_op isa NoConvection ? 0 : nsteps
-    state_records = 10nsteps + diffusion_state_records + convection_records
+    state_records = (8 + 2 * _staged_tuples_per_sweep(scheme.vertical)) * nsteps +
+                    diffusion_state_records + convection_records
     total_records = sweep_records + midpoint_records + diffusion_records +
                     convection_records
     bytes_per_state = _bytes_per_panel_tuple(panels_m0)
@@ -168,7 +170,7 @@ function _tape_byte_estimate(panels_m0,
     # tuple per step but contributes TWO `_CSDiffusionRecord` ops
     # (the palindrome's `V(dt/2) → emissions → V(dt/2)`); see
     # `_record_cs_mass_tape` for the staging path.
-    sweep_state_records = scheme isa CSAdjointNonlinearScheme ? 2sweep_records : sweep_records
+    sweep_state_records = _staged_tuples_per_sweep(scheme) * sweep_records
     state_records = sweep_state_records + diffusion_state_records + convection_records
 
     # `total_records` is the total number of OPS the tape will hold
@@ -227,6 +229,11 @@ cs_tape_byte_estimate(args...; kwargs...) =
 # Per-step tape recorders
 # ---------------------------------------------------------------------------
 
+# Full-panel tuples a sweep record stages: the air mass, plus the tracer mass
+# for the schemes whose reverse replays limiter branches.
+_staged_tuples_per_sweep(::CSAdjointLinearScheme) = 1
+_staged_tuples_per_sweep(::_RmTapedSweepScheme) = 2
+
 function _record_sweep!(ops, direction::Symbol, scheme::CSAdjointLinearScheme,
                         panels_m, panels_flux, flux_scale, tape_storage)
     push!(ops, _CSSweepRecord(direction, scheme,
@@ -236,7 +243,7 @@ function _record_sweep!(ops, direction::Symbol, scheme::CSAdjointLinearScheme,
     return nothing
 end
 
-function _record_sweep!(ops, direction::Symbol, scheme::CSAdjointNonlinearScheme,
+function _record_sweep!(ops, direction::Symbol, scheme::_RmTapedSweepScheme,
                         panels_m, panels_rm, panels_flux, flux_scale, tape_storage)
     push!(ops, _CSSweepRecord(direction, scheme,
                               _stage_panels(tape_storage, panels_m),
@@ -263,19 +270,15 @@ _record_sweep!(ops, direction::Symbol, scheme::CSAdjointLinearScheme,
 # is the mass entering the sweep. A record taken after the sweep holds the
 # updated mass m + F[k] - F[k+1] (F = flux_scale * cm) instead, which puts an
 # O(C_z) relative error in every coefficient (issue #10). `panels_rm` is always
-# swept; it is staged only for the taped-limiter PPM schemes (see the
-# `_record_sweep!` methods above).
+# swept; it is staged only for the taped-limiter PPM schemes and the FV3 profile
+# (see the `_record_sweep!` methods above). The FV3 profile sweeps through its
+# six-panel method, which needs `ws` built with column scratch.
 function _record_and_sweep_z!(ops, scheme, panels_rm, panels_m, panels_cm, ws,
                               mesh::CubedSphereMesh, flux_scale, tape_storage;
                               record_ops::Bool)
     record_ops && _record_sweep!(ops, :z, scheme, panels_m, panels_rm, panels_cm,
                                  flux_scale, tape_storage)
-    Nc, Hp = mesh.Nc, mesh.Hp
-    Nz = size(panels_m[1], 3)
-    for p in 1:6
-        _sweep_z_panel!(panels_rm[p], panels_m[p], panels_cm[p], scheme,
-                        ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale)
-    end
+    _sweep_z_panels!(panels_rm, panels_m, panels_cm, mesh, scheme, ws; flux_scale)
     return nothing
 end
 

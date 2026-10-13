@@ -459,13 +459,12 @@ In 3-D tests it behaves almost like `scheme = "slopes"` (minmod slopes).
 **`scheme = "ppm"`, `vertical = "fv3_kord8"`** (cubed sphere) uses the profile
 GCHP uses for tracers, FV3's `scalar_profile` with `kord = 8` and `iv = 0`
 (`fv_mapz.F90`), in the same flux form
-(`src/Operators/Advection/vertical_fv3_profile.jl`). Within layer `k`, with
-`s ∈ [0, 1]` running from the top to the bottom edge,
-
+(`src/Operators/Advection/vertical_fv3_profile.jl`).
 This is also the default vertical remap for configured
 `scheme = "linrood"` runs, following the runtime rule that the default should
-be the closest GCHP match. `vertical = "upwind"` remains available explicitly
-(and is required by the current Lin–Rood adjoint).
+be the closest GCHP match. `vertical = "upwind"` remains available explicitly.
+Both have an adjoint (see [the adjoint of the FV3 vertical sweep](@ref fv3-vertical-adjoint)).
+Within layer `k`, with `s ∈ [0, 1]` running from the top to the bottom edge,
 
 ```math
 q(s) = q_L + s\,\bigl[(q_R - q_L) + q_6 (1 - s)\bigr], \qquad q_6 = 3\,(2\bar q_k - q_L - q_R).
@@ -609,6 +608,106 @@ with either column-balance weighting:
 
 The FV3 profile also lowered near-surface RMSE for every tracer, by 1–3 %.
 The column closure (section 2) is the larger of the two effects.
+
+### [Adjoint of the FV3 vertical sweep](@id fv3-vertical-adjoint)
+
+The cubed-sphere adjoint (`cs_surface_emission_footprint`, the 4D-Var driver)
+transposes Lin–Rood's vertical sweeps with the FV3 profile
+(`vertical = "fv3_kord8"` or `"fv3_kord8_signed"`) as well as the upwind ones.
+Meteorology is fixed, so the adjoint carries only the tracer mass.
+
+*The sweep as a matrix.* In one column, with `m` the air mass entering the
+sweep and `F_e` the interface fluxes, the sweep is
+
+```math
+\bar q = S\, rm,\quad e = T \bar q,\quad
+(q_L, q_R, q_6)_k = P_k(β)\, x_k,\quad
+f_e = F^d_e\, c(α_e) \cdot (q_L, q_R, q_6)_{\mathrm{donor}(e)},\quad
+rm'_k = rm_k + f_k - f_{k+1},
+```
+
+with `S = diag(1/m)` (here and below `m` is floored at the advection mass floor,
+as in the forward), `T` the compact edge interpolation (a Thomas solve whose
+coefficients depend on `m` only), `x_k = (e_k, e_{k+1}, q̄_{k−2}, …, q̄_{k+2})`
+the inputs of layer `k`'s parabola, and `F^d`, `α = |F^d| / m_donor` the flux
+capped at the donor's mass and its swept fraction. Integrating the parabola
+gives the weights
+
+```math
+c_\downarrow(α) = \bigl(\tfrac{α}{2},\ 1 - \tfrac{α}{2},\ \tfrac{α}{2}(1 - \tfrac{2α}{3})\bigr), \qquad
+c_\uparrow(α) = \bigl(1 - \tfrac{α}{2},\ \tfrac{α}{2},\ \tfrac{α}{2}(1 - \tfrac{2α}{3})\bigr)
+```
+
+acting on the donor's `(q_L, q_R, q_6)`: a downward flux sweeps the bottom of
+the layer above the interface, an upward flux the top of the layer below.
+Every limiter step of section 4 replaces an edge or a parabola by one of a few
+linear forms of `x_k` (an edge clipped to a neighbouring mean, `3 q̄ − 2 q_R`, a
+flattened layer `(q̄, q̄, 0)`, zero); comparisons choose which. For fixed
+choices `β` the 3 × 7 matrix `P_k(β)` is constant and the sweep is linear,
+`rm' = W(β) rm`.
+
+*Reverse pass.* The adjoint is the transpose at the forward's branches,
+
+```math
+λ_{rm} = λ' + S\,\bigl(T^{\mathsf T} λ_e + λ_{\bar q}\bigr), \qquad
+(λ_e, λ_{\bar q}) = \sum_k P_k(β)^{\mathsf T}\, \sum_{e:\,\mathrm{donor}(e) = k} F^d_e\, c(α_e)\, (λ'_e - λ'_{e-1}),
+```
+
+computed column by column (`_cs_zsweep_fv3_adjoint_kernel!`,
+`src/Operators/Advection/vertical_fv3_profile_adjoint.jl`): the interface
+adjoints `λ'_e − λ'_{e−1}`, through each donor's parabola to its edge and mean
+adjoints, then the transposed Thomas solve (back substitution first, then the
+elimination rows from the surface up), then `S`.
+
+*What is recorded.* Each vertical-sweep record holds the air and tracer mass
+entering the sweep, with `cm` and the flux scale. The reverse pass replays the
+forward profile code (`_fv3_edge`, `_fv3_layer_profile`,
+`_fv3_interface_flux`) on numbers that carry their partial derivatives with
+respect to `x_k`. Their value arithmetic is the forward's floating-point
+arithmetic, so every comparison, and therefore `β`, is the forward's; the
+partials give `P_k(β)` and `c(α)` without a second copy of the limiter logic.
+The record adds one full-panel tracer tuple per vertical sweep to the Lin–Rood
+tape: twelve instead of ten full-panel tuples per step, plus six face tuples.
+At C90 L72 in Float64 that is 552 MB per step instead of 488 MB (L137: 1050 MB
+instead of 929 MB). Storing one byte of branch flags per cell instead would
+save about 11 % of the tape, at the cost of a second implementation of the
+limiter decisions.
+
+*Composition.* Per step the Lin–Rood tape is `H Z [diffusion] emissions
+[diffusion] Z H [convection]`, and the reverse pass applies the transposes in
+the opposite order. Stride and Revolve checkpointing store `(rm, m)` and record
+each window again from its checkpoint, so they reproduce the same branches;
+their footprints equal those of the full tape to rounding (`rtol = 1e-10`).
+
+*Frozen-limiter caveats.* The adjoint is the gradient of the piecewise-linear
+forward map within the branch region of the recorded state. On a branch
+boundary (a tie between two candidate values) it is the derivative of the
+branch the forward took. The PPM monotonicity and positivity limiters switch
+discontinuously, so the cost is only piecewise smooth. With a zero background,
+the positive-definite profile sits on its `q̄ ≤ 0` branch (a flat layer) in
+every layer the tracer has not reached. There the adjoint is that of the
+flattened profile, not of the parabola that a small positive tracer would get.
+Finite-difference checks therefore need a smooth, nonzero base field, as for
+the horizontal Lin–Rood adjoint.
+
+*Tests* (`test/core/test_cs_linrood_fv3_adjoint.jl`):
+- The replayed parabolas equal the forward's bit for bit, on columns that
+  engage every limiter, for both profiles.
+- In 256-bit arithmetic, `⟨λ', W δ⟩` from central differences
+  (`h = 1e-40`) equals `⟨Wᵀ λ', δ⟩` to `1e-30` on such columns, with fluxes in
+  both directions and fluxes capped beyond Courant number 1.
+- Lin–Rood footprints match central differences to `1e-9` (observed
+  `≤ 1e-10`) for ORD 5 and 7, upward and downward fluxes, surface-layer and
+  column-mean objectives, and both profiles (the signed one on a field that
+  crosses zero); a linearity witness confirms that no limiter switches branch
+  over the stencil.
+- Full, Stride and Revolve checkpointing give the same footprints to
+  rounding, and the tape's forward replay equals production transport bit for
+  bit.
+
+The split-sweep `scheme = "ppm"` with `vertical = "fv3_kord8"` has no
+adjoint: its x, y and z records share one scheme type, so the reverse pass
+cannot yet tell its vertical records apart.
 
 ## 5. Sub-grid vertical transport
 

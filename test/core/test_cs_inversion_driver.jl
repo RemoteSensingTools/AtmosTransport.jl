@@ -216,6 +216,13 @@ end
           AT.LinRoodPPMScheme{5, AT.UpwindScheme}
     @test scheme_of("[advection]\nscheme = \"linrood\"\nppm_order = 7\nvertical = \"upwind\"\n") isa
           AT.LinRoodPPMScheme{7, AT.UpwindScheme}
+    # The FV3 vertical profile has an adjoint (OF-94); an omitted `vertical`
+    # selects it, as in a forward run with the same table.
+    fv3_linrood = AT.LinRoodPPMScheme{5, AT.PPMScheme{AT.MonotoneLimiter, AT.FV3ScalarProfile{true}}}
+    @test scheme_of("[advection]\nscheme = \"linrood\"\nvertical = \"fv3_kord8\"\n") isa fv3_linrood
+    @test scheme_of("[advection]\nscheme = \"linrood\"\n") isa fv3_linrood
+    @test scheme_of("[advection]\nscheme = \"linrood\"\nvertical = \"fv3_kord8_signed\"\n") isa
+          AT.LinRoodPPMScheme{5, AT.PPMScheme{AT.MonotoneLimiter, AT.FV3ScalarProfile{false}}}
 
     # A Lin–Rood inversion runs end to end through the driver.
     lr = _run_config_text(with_advection(
@@ -232,9 +239,8 @@ end
                    _config_error(with_advection("[advection]\nscheme = \"slopes\"\n")))
     @test occursin("FV3 vertical profile", _config_error(with_advection(
         "[advection]\nscheme = \"ppm\"\nvertical = \"fv3_kord8\"\n")))
-    @test occursin("forward Lin–Rood runs default", _config_error(with_advection(
-        "[advection]\nscheme = \"linrood\"\nvertical = \"fv3_kord8\"\n")))
-    @test occursin("`vertical` is required", _config_error(with_advection(
+    # The synthetic meteorology has three layers; the FV3 profile needs four.
+    @test occursin("at least 4 layers", _config_error(with_advection(
         "[advection]\nscheme = \"linrood\"\n")))
     @test occursin("NoAdvection", _config_error(with_advection("[advection]\nscheme = \"none\"\n")))
     @test occursin("Unknown [advection] limiter", _config_error(with_advection(
@@ -251,14 +257,17 @@ end
                     Dict("scheme" => "ppm", "limiter" => "none"),
                     Dict("scheme" => "linrood", "vertical" => "upwind"),
                     Dict("scheme" => "linrood", "ppm_order" => 7,
-                         "vertical" => "upwind"))
+                         "vertical" => "upwind"),
+                    Dict("scheme" => "linrood"),
+                    Dict("scheme" => "linrood", "vertical" => "fv3_kord8"),
+                    Dict("scheme" => "linrood", "ppm_order" => 7,
+                         "vertical" => "fv3_kord8_signed"))
         scheme = scheme_of(section)
         @test AT.require_adjoint_support(scheme) === scheme
     end
     for section in (Dict("scheme" => "slopes"),
                     Dict("scheme" => "ppm", "vertical" => "fv3_kord8"),
                     Dict("scheme" => "ppm", "vertical" => "fv3_kord8_signed"),
-                    Dict("scheme" => "linrood", "vertical" => "fv3_kord8"),
                     Dict("scheme" => "none"))
         @test_throws ArgumentError AT.require_adjoint_support(scheme_of(section))
     end

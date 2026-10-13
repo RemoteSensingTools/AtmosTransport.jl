@@ -32,14 +32,18 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
   `CSAdjointLinearScheme` (`UpwindScheme`, `SlopesScheme{NoLimiter}`,
   `PPMScheme{NoLimiter, SameAsHorizontal}`), `CSAdjointNonlinearScheme`
   (`PPMScheme{MonotoneLimiter}` and `PPMScheme{CW84Limiter}`, both with
-  `SameAsHorizontal`), `CSAdjointLinRoodScheme`
-  (`LinRoodPPMScheme{<:Any, UpwindScheme}`), and their union
-  `CSAdjointSupportedScheme`. The FV3 vertical profile is not supported.
+  `SameAsHorizontal`), `CSAdjointFV3Vertical` (`PPMScheme` with
+  `FV3ScalarProfile`, recorded only as Lin-Rood's vertical sweep),
+  `CSAdjointLinRoodScheme` (`LinRoodPPMScheme` with upwind or FV3 vertical
+  sweeps), and their union `CSAdjointSupportedScheme`. The split-sweep
+  `PPMScheme` with the FV3 vertical profile is not supported.
   `require_adjoint_support(scheme)` is the dispatch-based gate on this union:
   it returns a supported scheme and otherwise throws an error naming the
   missing piece (used by the inversion driver for its `[advection]` table).
-- `CSAdjointWorkspace(mesh, prototype)` in [`Adjoints.jl`](Adjoints.jl):
-  per-panel transpose scratch plus the 12-seam seed cache.
+- `CSAdjointWorkspace(mesh, prototype; column_scratch = false)` in
+  [`Adjoints.jl`](Adjoints.jl): per-panel transpose scratch, the 12-seam seed
+  cache, and (with `column_scratch = true`) the per-column storage of the FV3
+  vertical sweep's reverse pass.
 - Objectives in [`ObjectiveSeeding.jl`](ObjectiveSeeding.jl):
   `CSLayerMeanObjective`, `CSColumnMeanObjective`, `CSSeedObjective`, and
   `evaluate_objective`.
@@ -60,7 +64,9 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
 - [`AdvectionAdjoint.jl`](AdvectionAdjoint.jl) — per-scheme face
   coefficients, x/y/z sweep adjoint kernels, `_adjoint_scheme_sweep!`.
   The monotone-PPM variant is the linearization around the recorded `rm`,
-  computed with six-component derivative tuples (`_d6_*`).
+  computed with six-component derivative tuples (`_d6_*`). The FV3 vertical
+  method calls the column kernel in
+  `../Operators/Advection/vertical_fv3_profile_adjoint.jl`.
 - [`CubedSphereSeams.jl`](CubedSphereSeams.jl) — transpose of the paired
   physical-seam exchange in `../Operators/Advection/CubedSphereSeams.jl`
 - [`HaloAdjoint.jl`](HaloAdjoint.jl) — transpose of `fill_panel_halos!` and
@@ -95,13 +101,15 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
 ## Invariants
 
 - Each reverse kernel is the transpose of the forward operator the tape
-  replays. For monotone PPM and Lin-Rood, it transposes the linearization
-  around the recorded state, so limiter branches are frozen. Kernel tests
-  check `⟨y, L·x⟩ = ⟨Lᵀ·y, x⟩` to rounding error.
+  replays. For monotone PPM, Lin-Rood and the FV3 vertical profile, it
+  transposes the linearization around the recorded state, so limiter branches
+  are frozen. Kernel tests check `⟨y, L·x⟩ = ⟨Lᵀ·y, x⟩` to rounding error.
 - The forward replays must match production: CMFMC replay uses the
   production `_cmfmc_cs_panel_column_kernel!`, and TM5 column solves are
-  checked bit-for-bit. The Lin-Rood vertical sweep is `UpwindScheme()`
-  because that is what `_sweep_z!` runs in production.
+  checked bit-for-bit. The Lin-Rood vertical sweep is `scheme.vertical`
+  (upwind or the FV3 profile) through `_sweep_z_panels!`, as in production.
+  The FV3 reverse replays the forward profile functions themselves, on
+  `_LinearForm` numbers, so its branches are the forward's.
 - A sweep record holds the state entering the sweep: the reverse
   coefficients divide by the pre-sweep donor mass. Every tape, including
   Lin-Rood, runs its Z sweeps through `_record_and_sweep_z!`
@@ -131,7 +139,8 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
   `test_tm5_bidiagonal_solve.jl` (convection),
   `test_diffusion_mass_flux_conservation.jl`,
   `test_precomputed_dkg_binary_payload.jl` (diffusion),
-  `test_cs_seam_exchange.jl`, `test_cubed_sphere_advection.jl` (seams), and
+  `test_cs_seam_exchange.jl`, `test_cubed_sphere_advection.jl` (seams),
+  `test_cs_linrood_fv3_adjoint.jl` (FV3 vertical sweep), and
   `test_fv3_vertical_profile.jl` (which schemes are supported)
 - End-to-end footprint tests: see [`../Footprint/README.md`](../Footprint/README.md).
   Opt-in GPU checks: `../../test/diagnostic/test_cs_transport_adjoint_gpu.jl`

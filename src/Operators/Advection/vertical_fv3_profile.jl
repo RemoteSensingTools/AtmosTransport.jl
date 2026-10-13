@@ -34,6 +34,17 @@
 @inline _nonnegative(::FV3ScalarProfile{false}, q) = q
 
 """
+    AbstractFV3Column
+
+A column the FV3 profile functions (`_fv3_edge`, `_fv3_layer_profile`) read
+edge values and layer means from, through `_edge(col, k)` and `_qbar(col, k)`:
+the working storage `FV3Column` of the forward sweep, or the linearized
+view of it that the adjoint evaluates the same functions on
+(`vertical_fv3_profile_adjoint.jl`).
+"""
+abstract type AbstractFV3Column end
+
+"""
     FV3Column(scratch, ii, jj, t)
 
 Working storage of the FV3 profile for interior column `(ii, jj)` and tracer
@@ -41,7 +52,7 @@ Working storage of the FV3 profile for interior column `(ii, jj)` and tracer
 the edge value at interface `k`, the elimination coefficient of the tridiagonal
 solve, and the mean mixing ratio of layer `k`.
 """
-struct FV3Column{A}
+struct FV3Column{A} <: AbstractFV3Column
     scratch :: A
     ii :: Int
     jj :: Int
@@ -93,7 +104,7 @@ boundary conditions of `scalar_profile` (iv ≠ −2).
 end
 
 """
-    _fv3_edge(col::FV3Column, e, Nz, profile) -> q_e
+    _fv3_edge(col::AbstractFV3Column, e, Nz, profile) -> q_e
 
 Edge value at interface `e` after FV3's large-scale constraints: an edge lies
 between its two neighbouring layer means unless the edge sits at a local
@@ -102,7 +113,7 @@ The positive-definite profile also keeps an edge at a local minimum
 non-negative. The top (`e = 1`) and surface (`e = Nz + 1`) edges are not
 constrained here.
 """
-@inline function _fv3_edge(col::FV3Column, e, Nz, profile)
+@inline function _fv3_edge(col::AbstractFV3Column, e, Nz, profile)
     q_e = _edge(col, e)
     (e == 1 || e == Nz + 1) && return q_e
 
@@ -169,7 +180,7 @@ so the minimum touches zero at the other edge.
 end
 
 """
-    _fv3_layer_profile(col::FV3Column, k, Nz, profile) -> (q_L, q_R, q_6)
+    _fv3_layer_profile(col::AbstractFV3Column, k, Nz, profile) -> (q_L, q_R, q_6)
 
 Limited parabola of layer `k`, following `scalar_profile` (kord = 8; `iv = 0`
 for the positive-definite `profile`, `iv = 1` for the signed one):
@@ -182,7 +193,7 @@ for the positive-definite `profile`, `iv = 1` for the signed one):
 - 3 ≤ k ≤ Nz − 2: Huynh's second constraint on both edges, then the
   positive-definite limiter (positive-definite profile only).
 """
-@inline function _fv3_layer_profile(col::FV3Column, k, Nz, profile)
+@inline function _fv3_layer_profile(col::AbstractFV3Column, k, Nz, profile)
     FT  = eltype(col.scratch)
     q   = _qbar(col, k)
     q_L = _fv3_edge(col, k, Nz, profile)

@@ -75,10 +75,10 @@ respect to surface-emission rates at each prior model step.
 This is a kernelized prototype VJP generator for tests and diagnostics.
 Supported CS schemes are the split-sweep `UpwindScheme()`,
 `SlopesScheme(NoLimiter())`, `PPMScheme(NoLimiter())` and monotone
-`PPMScheme()`, and `LinRoodPPMScheme` (ORD 5 or 7) with upwind vertical
-transport. The limited PPM path stores tracer branch states from the
-base trajectory; pass `base_emission_rates` when differentiating around
-nonzero surface emissions.
+`PPMScheme()`, and `LinRoodPPMScheme` (ORD 5 or 7) with upwind or FV3
+`kord = 8` vertical transport. The limited PPM paths, including the FV3
+vertical sweeps, store tracer branch states from the base trajectory; pass
+`base_emission_rates` when differentiating around nonzero surface emissions.
 Optional `ImplicitVerticalDiffusion` support transposes the Backward-Euler
 column solve in kernels on CPU/GPU and uses the same midpoint placement as
 surface-flux runtime transport. Optional `CMFMCConvection` support transposes

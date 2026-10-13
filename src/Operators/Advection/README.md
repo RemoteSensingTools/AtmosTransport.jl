@@ -38,8 +38,8 @@ the model-facing `apply!` entrypoints that the transport block calls.
 `scheme="linrood"` selects the CS cross-term path; `ppm_order=5` (default) or
 `7` chooses its edge-value family. ORD=7 retains the order-5 interior and adds
 special panel-edge treatment. It does not select a seventh-order transport
-method. Its configured vertical default is `fv3_kord8`; set
-`vertical="upwind"` explicitly for the first-order or adjoint-supported path.
+method. Its configured vertical default is `fv3_kord8`; `vertical="upwind"`
+selects first-order vertical transport. Both have an adjoint.
 Configuration parsing lives in
 [`../../Models/RuntimePhysicsSpecs.jl`](../../Models/RuntimePhysicsSpecs.jl).
 
@@ -103,6 +103,10 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
   cubed-sphere palindrome (`strang_split_cs!`, `strang_split_cs_mt!`)
 - [`vertical_fv3_profile.jl`](vertical_fv3_profile.jl) — vertical sweep with
   FV3's `scalar_profile` (kord 8) piecewise-parabolic tracer profile
+- [`vertical_fv3_profile_adjoint.jl`](vertical_fv3_profile_adjoint.jl) —
+  its reverse pass: the forward profile code replayed on `_LinearForm`
+  numbers (value plus partials) to obtain the limiter branches and local
+  Jacobians, and the transposed column kernel used by the Lin-Rood adjoint
 - [`CubedSphereSeams.jl`](CubedSphereSeams.jl) — canonical physical seam
   transfers paired across panels within each directional group
 - [`ppm_subgrid_distributions.jl`](ppm_subgrid_distributions.jl) — PPM

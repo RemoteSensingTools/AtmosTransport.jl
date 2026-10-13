@@ -28,7 +28,8 @@ function _collect_surface_footprints(lambda_panels, ops, panels_m0,
         footprints[step] = _zero_surface_rates(mesh, panels_m0[1])
     end
 
-    ws = CSAdjointWorkspace(mesh, lambda_panels[1])
+    ws = CSAdjointWorkspace(mesh, lambda_panels[1];
+                            column_scratch = any(_needs_column_scratch, ops))
     _walk_window_reverse!(footprints, lambda_panels, ops, mesh, ws, dt;
                           diffusion_meteo = diffusion_meteo,
                           convection_workspace = convection_workspace)
@@ -38,6 +39,11 @@ function _collect_surface_footprints(lambda_panels, ops, panels_m0,
     return CSFootprintResult{FT, typeof(objective), A2}(
         objective, footprints, lag_steps, FT(dt), zero(FT), FT(NaN))
 end
+
+# Whether a tape record's reverse needs `CSAdjointWorkspace.column_scratch`
+# (the FV3 vertical profile's sweeps).
+_needs_column_scratch(op::_CSSweepRecord) = needs_column_scratch(op.scheme)
+_needs_column_scratch(op) = false
 
 # Extracted from the original `_collect_surface_footprints`
 # body so that the stride / revolve checkpoint drivers can call it once per
@@ -131,7 +137,7 @@ function _run_cs_footprint_forward(panels_rm0, panels_m0,
     panels_m = _copy_panel_tuple(panels_m0)
     fill_panel_halos!(panels_rm, mesh; dir = 0)
     fill_panel_halos!(panels_m, mesh; dir = 0)
-    ws = CSAdvectionWorkspace(mesh, panels_rm[1])
+    ws = CSAdvectionWorkspace(mesh, panels_rm[1]; column_scratch = needs_column_scratch(scheme))
 
     if emission_rates !== nothing && length(emission_rates) != nsteps
         throw(ArgumentError("emission_rates length $(length(emission_rates)) does not match nsteps $nsteps"))
@@ -226,7 +232,7 @@ function _run_cs_observations_forward(panels_rm0, panels_m0,
     panels_m = _copy_panel_tuple(panels_m0)
     fill_panel_halos!(panels_rm, mesh; dir = 0)
     fill_panel_halos!(panels_m, mesh; dir = 0)
-    ws = CSAdvectionWorkspace(mesh, panels_rm[1])
+    ws = CSAdvectionWorkspace(mesh, panels_rm[1]; column_scratch = needs_column_scratch(scheme))
 
     if emission_rates !== nothing && length(emission_rates) != nsteps
         throw(ArgumentError("emission_rates length $(length(emission_rates)) does not match nsteps $nsteps"))

@@ -45,15 +45,18 @@ The adjoint supports the following advection schemes (full union in
 - `SlopesScheme(NoLimiter())`
 - `PPMScheme(NoLimiter())`
 - `PPMScheme(MonotoneLimiter())` and `PPMScheme(CW84Limiter())` — via a stored tracer-branch tape around the base trajectory
-- `LinRoodPPMScheme(5)` and `LinRoodPPMScheme(7)`, with explicit upwind
-  vertical sweeps (`vertical = "upwind"`; configured forward runs now default
-  to the unsupported FV3 profile)
+- `LinRoodPPMScheme(5)` and `LinRoodPPMScheme(7)`, with either vertical
+  sweep: FV3's `kord = 8` profile (`vertical = "fv3_kord8"`, the configured
+  default, or `"fv3_kord8_signed"`) or upwind (`vertical = "upwind"`). The FV3
+  sweeps are transposed at the limiter branches of the recorded state; see
+  [the adjoint of the FV3 vertical sweep](@ref fv3-vertical-adjoint)
 
-The FV3 vertical profile (`vertical = "fv3_kord8"` or `"fv3_kord8_signed"`)
-has no adjoint, for `PPMScheme` or for Lin–Rood's vertical sweeps; neither do
-limited `SlopesScheme` and `NoAdvection`. `require_adjoint_support(scheme)`
-returns a supported scheme and otherwise throws an error that names the
-missing piece. The inversion driver applies it to its `[advection]` table.
+The split-sweep `PPMScheme` with the FV3 vertical profile has no adjoint;
+neither do limited `SlopesScheme` and `NoAdvection`.
+`require_adjoint_support(scheme)` returns a supported scheme and otherwise
+throws an error that names the missing piece. The inversion driver applies it
+to its `[advection]` table; a Lin–Rood table without `vertical` selects
+`fv3_kord8` there as in forward runs.
 
 The supporting kernel adjoints in
 `src/Operators/Advection/linrood_adjoint_*.jl` are
@@ -65,7 +68,11 @@ base field. `test/core/test_cs_linrood_footprint_fd.jl` asserts `1e-9` with
 upward vertical flux and a surface-layer objective, the case most sensitive to
 which air mass the Z records hold. Every tape records the air mass entering a
 Z sweep, because the upwind adjoint coefficient `F / m_donor` uses the
-pre-sweep donor mass.
+pre-sweep donor mass; the FV3 profile's records also hold the tracer mass
+entering the sweep. `test/core/test_cs_linrood_fv3_adjoint.jl` checks the FV3
+vertical sweeps' transpose in 256-bit arithmetic and the Lin–Rood footprints
+with them against central differences (`1e-9`, upward and downward flux,
+ORD 5 and 7, both profiles), and Full/Stride/Revolve parity.
 
 The opt-in `test/diagnostic/test_cs_transport_adjoint_gpu.jl` also exercises
 transporting PPM and LinRood footprints on CUDA with scalar indexing disabled.

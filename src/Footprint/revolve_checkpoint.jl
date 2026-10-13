@@ -360,7 +360,8 @@ function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
                                                 objective, mesh, FT)
 
     footprints = [_zero_surface_rates(mesh, panels_m0[1]) for _ in 1:nsteps]
-    ws = CSAdjointWorkspace(mesh, lambda_panels[1])
+    ws = CSAdjointWorkspace(mesh, lambda_panels[1];
+                            column_scratch = needs_column_scratch(scheme))
 
     function reverse_range!(state_rm, state_m, lo, hi)
         if hi == lo
