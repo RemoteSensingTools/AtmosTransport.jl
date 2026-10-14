@@ -246,8 +246,39 @@ vertical upwind. Two edge-value families are selectable:
 
 | `ORD` | Interior reconstruction | Panel-edge treatment |
 |---|---|---|
-| `5` | Colella–Woodward fourth-order edges with extremum flattening | default edge-value family |
-| `7` | Same as ORD=5 | special cubed-sphere boundary correction |
+| `5` | Colella–Woodward fourth-order edges with extremum flattening | none: the fourth-order edges read the neighbor panel's halo cells |
+| `7` | Same as ORD=5 | FV3's cube-edge values (below) |
+
+With `ORD = 7` every face carries one edge value, used by both cells beside it,
+as FV3's `al(i)` in `tp_core.F90` (`xppm`/`yppm`, `iord < 8`). With face `f`
+between cells `f−1` and `f` and the panel edges at faces `1` and `Nc + 1`:
+
+```math
+\begin{aligned}
+q_{1} &= \tfrac12\Bigl[\bigl(\tfrac32 q_0 - \tfrac12 q_{-1}\bigr) + \bigl(\tfrac32 q_1 - \tfrac12 q_2\bigr)\Bigr]
+  && \text{panel edge (Putman \& Lin 2007, App. C, eq. 47)}\\
+q_{2} &= \tfrac{5}{14} q_1 + \tfrac{11}{14} q_2 - \tfrac{2}{14} q_3,\qquad
+q_{0} = -\tfrac{2}{14} q_{-2} + \tfrac{11}{14} q_{-1} + \tfrac{5}{14} q_0
+  && \text{one-sided, beside the edge}\\
+q_{f} &= \tfrac{7}{12}(q_{f-1} + q_f) - \tfrac{1}{12}(q_{f-2} + q_{f+1})
+  && \text{elsewhere,}
+\end{aligned}
+```
+
+and mirrored at `Nc`, `Nc + 1`, `Nc + 2` (`_ppm_edge_values_ord7`). No edge of a
+cell beside a panel edge is built from a stencil that crosses it, so cell 1
+has one parabola: the seam value on its left, the one-sided value on its
+right. FV3 weights the two seam extrapolations by the cell widths `dxa`; they
+are equal on both sides of an equiangular panel edge, and the code uses equal
+weights. Up to version 0.5.0 the seam value replaced only the edges at faces
+`1` and `Nc + 1`, so the face kernels rebuilt cell 1 with a cross-seam
+fourth-order left edge when they evaluated face 2 (issue #62). In solid-body
+rotation of a Gaussian blob about a tilted axis (one revolution in `16 Nc`
+steps), the consistent edges lower the global relative L2 error of ORD=7 by
+10–31% at C8–C64 (both panel conventions); in the two cell rows beside each
+panel edge the error changes by −9% to +17%. The forward and adjoint face kernels
+evaluate the same edge function (the adjoint on dual numbers), so the
+adjoint stays exact.
 
 `PPMScheme` is the strict-structured PPM; `LinRoodPPMScheme` is the
 cross-term-aware CS-native variant. Lin-Rood no longer runs the zero-referenced
@@ -272,7 +303,7 @@ moments, `reconstruction.jl`:
 | `NoLimiter()` | unlimited centered slope / parabola | smooth-flow benchmarks where you want the order-N error rate without limiter clipping |
 | `MonotoneLimiter()` (default) | van Leer minmod slope: `minmod(central, 2forward, 2backward)`, where `central = (forward + backward)/2`. Bounds the reconstructed profile relative to neighboring values and supports signed tracers. | production runs, including anomaly tracers |
 | `CW84Limiter()` (`PPMScheme` only) | the complete Colella–Woodward PPM: van Leer-limited edges, the monotone profile limiter, and the swept-parabola flux. Monotone in uniform 1-D flow; non-negative in every sweep in which no cell exports more than its air mass. | tracers that must stay non-negative under PPM (fossil and other emission tracers) |
-| `PositivityLimiter()` | one-sided clip that drops the slope where the reconstruction would go negative at a face. **Weaker than `MonotoneLimiter`**: positivity-only, may still create new local maxima from large gradients. | tracers that must stay non-negative (mole fractions, water vapor, aerosol concentrations) AND tolerate occasional new maxima |
+| `PositivityLimiter()` | keeps the sign of the centered slope and clips its magnitude to `\|s\| ≤ 2c`, so both face values `c ± s/2` stay non-negative (the moment form is the clamp `\|s_x\| ≤ r_m`). Rising and falling profiles are treated alike. **Weaker than `MonotoneLimiter`**: positivity-only, may still create new local maxima from large gradients. Requires a non-negative tracer. | tracers that must stay non-negative (mole fractions, water vapor, aerosol concentrations) AND tolerate occasional new maxima |
 
 Limiter primitives are written branchless (`ifelse(a*b > 0, ..., 0)`)
 in `limiters.jl` so they don't trigger warp divergence on the GPU.
@@ -294,38 +325,70 @@ a pure mass ratio — no `Δt` factor:
 \alpha_{c+1/2} \;=\; \frac{|F^n_{c+1/2}|}{m^n_c}
 ```
 
-If the maximum `α` over the domain exceeds the active `cfl_limit`,
-the runtime **subcycles** that direction:
+One transport step applies each direction twice (`X Y Z | midpoint | Z Y X`,
+`H V | midpoint | V H` on reduced Gaussian), so the runtime budgets one
+palindrome's worth of outflow per cell,
 
-```julia
-n_sub = ceil(max_α / cfl_limit)
+```math
+r_c \;=\; \frac{2\,\bigl(\mathrm{out}_x + \mathrm{out}_y + \mathrm{out}_z\bigr)}{m_c},
+\qquad \mathrm{out}_d = \max(0, -F_{d,\mathrm{lo}}) + \max(0, F_{d,\mathrm{hi}}),
 ```
 
-and runs the direction `n_sub` times with flux scaling `F → F / n_sub`.
-The X / Y / Z subcycle counts can differ; all six sweeps in the
-Strang palindrome use the same per-direction count to preserve time
-symmetry.
+and when `max r_c` exceeds `cfl_limit` it **subcycles** the whole step:
 
-`_subcycling_pass_count` in
-`src/Operators/Advection/subcycling.jl` is the per-direction
-counter; the structured per-direction max-α helpers are
-`_x_subcycling_pass_count` / `_y_subcycling_pass_count` /
-`_z_subcycling_pass_count` in the same file. The CS analogue is the
-palindrome-aware `_cs_static_palindrome_subcycle_count` in
-`src/Operators/Advection/cs_subcycling.jl`. The CS palindrome
-budget sums all six legs and uses
-`2·(out_x + out_y + out_z) / m_start` — see
-[Operators on top of the binary](../for_tm5_gchp_users/operators_on_binaries.md#cubed-sphere-palindrome-and-the-positivity-budget)
-for the derivation.
+```julia
+n = ceil(max_c r_c / cfl_limit)
+```
 
-The `cfl_limit` defaults are baked into the per-topology Strang
-entry points:
+and runs the symmetric composition
+
+```math
+S(Δt) \;=\; \bigl[X_h Y_h Z_h\bigr]^{n} \circ V(Δt) \circ \bigl[Z_h Y_h X_h\bigr]^{n},
+\qquad h = \frac{Δt}{2n},
+```
+
+where `X_h` is an x sweep with every flux scaled by `1/n` and operator
+products act right to left: `n` forward triples `X → Y → Z`, the midpoint
+operators `V` once, and `n` reverse triples `Z → Y → X`. With
+`ψ(h) = Z_h Y_h X_h` the forward half is `ψ^n` and the reverse half
+`(ψ^*)^n`, where `ψ^*(h) = X_h Y_h Z_h = ψ(−h)^{-1}` is its adjoint, so
+`S(−Δt) = S(Δt)^{-1}`: the composition is symmetric, hence second order like
+the palindrome itself, with the same `6n` sweeps; at `n = 1` it is the plain
+palindrome. FV3's `fv_tracer2d` subcycles the same way (its whole 2-D
+operator `nsplt` times at flux / `nsplt`).
+
+The budget bounds the outflow of any two consecutive passes, one palindrome's
+worth, by `cfl_limit × m_c` at the start of the step, so the first two passes
+cannot empty a cell. Later passes see the evolved mass: there the budget is a
+static proxy, and positivity is measured
+(`test/core/test_subcycle_composition.jl`: solid-body rotation and strain on
+the cubed sphere, strain on lat-lon, an overturning circulation on reduced
+Gaussian) rather than proven. Up to version 0.5.0 each direction was
+subcycled on its own, `X^n Y^n Z^n | Z^n Y^n X^n`: the `n` passes of one leg
+then remove the full-flux outflow of that direction before any other direction
+refills the cell, so subcycling bounded the Courant number of a pass but not
+the mass loss within a leg, and exactly non-divergent flows drove air mass
+negative (issue #61).
+
+`_palindrome_subcycle_count` and the per-cell `_palindrome_outflow_ratio` in
+`src/Operators/Advection/cs_subcycling.jl` are shared by all split-sweep
+topologies; `_cs_static_palindrome_subcycle_count` (same file),
+`_structured_palindrome_subcycle_count` and
+`_face_indexed_palindrome_subcycle_count` (`subcycling.jl`) evaluate them on
+each flux layout. See
+[Operators on top of the binary](../for_tm5_gchp_users/operators_on_binaries.md#palindrome-subcycling-and-the-positivity-budget)
+for the write-time gate and the binary schedule, which sets `n = 1` on
+cubed-sphere binaries with the `binary_schedule` substep contract.
+
+All split-sweep topologies share one default `cfl_limit`, `DEFAULT_CFL_LIMIT =
+0.95`, so the first palindrome's worth of passes leaves every cell at least 5%
+of its starting mass:
 
 | Topology | Default `cfl_limit` | Notes |
 | --- | --- | --- |
-| Lat-lon (structured-grid Strang, `strang_split!`) | `1.0` | |
-| Reduced Gaussian (face-indexed Strang) | `1.0` | Only `UpwindScheme` reachable today. |
-| Cubed-sphere (`SlopesScheme` / `PPMScheme`, `strang_split_cs!`) | `0.95` | Palindrome-budget metric. |
+| Lat-lon (structured-grid Strang, `strang_split!`) | `0.95` | Palindrome budget (was a per-direction `1.0` up to 0.5.0). |
+| Reduced Gaussian (face-indexed Strang) | `0.95` | Palindrome budget over `H` and `V`; only `UpwindScheme` reachable today. |
+| Cubed-sphere (`SlopesScheme` / `PPMScheme`, `strang_split_cs!`) | `0.95` | Palindrome budget. |
 | Cubed-sphere (`LinRoodPPMScheme`) | not used | The LinRood path relies on the binary's adaptive substep schedule. Its in-kernel 0.9 × cell-mass clipping limits carrier outflow; it does **not** guarantee tracer positivity. |
 
 If you're running `LinRoodPPMScheme` on a flow with locally large
@@ -440,8 +503,8 @@ between them. Performance-tuning notes live beside the implementation.
 | Slopes face flux (Russell-Lerner formula) | `src/Operators/Advection/reconstruction.jl::_slopes_face_flux` |
 | Structured-grid Strang palindrome | `src/Operators/Advection/StrangSplitting.jl::strang_split!` |
 | Cubed-sphere Strang palindrome | `src/Operators/Advection/CubedSphereStrang.jl::strang_split_cs!` |
-| CFL subcycle counters (structured) | `subcycling.jl::_subcycling_pass_count`, `_x/_y/_z_subcycling_pass_count` |
-| CFL subcycle counters (CS) | `cs_subcycling.jl::_cs_static_palindrome_subcycle_count` |
+| CFL subcycle counts (lat-lon, reduced Gaussian) | `subcycling.jl::_structured_palindrome_subcycle_count`, `_face_indexed_palindrome_subcycle_count` |
+| CFL subcycle count (CS) and the shared palindrome budget | `cs_subcycling.jl::_cs_static_palindrome_subcycle_count`, `_palindrome_subcycle_count` |
 | CS multi-tracer fused kernels (X / Y / Z) | `src/Operators/Advection/multitracer_kernels.jl` |
 | CS paired split seam exchange | `src/Operators/Advection/CubedSphereSeams.jl` |
 | CS paired split seam adjoint | `src/Adjoints/CubedSphereSeams.jl` |

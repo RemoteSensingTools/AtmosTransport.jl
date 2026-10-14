@@ -1,25 +1,82 @@
-# Cubed-sphere CFL subcycle count: the static palindrome outflow budget.
+# Palindrome CFL subcycle count: the static outflow budget shared by every
+# split-sweep topology, and its cubed-sphere evaluation.
 # Split from CubedSphereStrang.jl (refactor phase 4); included by Advection.jl in this order.
 
 # =========================================================================
-# CFL-based subcycle count
+# Palindrome outflow budget (all split-sweep topologies)
+# =========================================================================
+#
+# One transport step applies every direction twice: X Y Z | midpoint | Z Y X
+# for structured and cubed-sphere grids, H V | midpoint | V H on face-indexed
+# grids. When the stored fluxes are too large for one palindrome, the runtime
+# runs the subcycled composition
+#
+#     (X Y Z)^n  midpoint  (Z Y X)^n        every pass with flux / n
+#
+# (`strang_split_mt!`, `strang_split_cs!`, `strang_split_cs_mt!`, the
+# face-indexed `apply!`). Every topology takes `n` from the same budget: with
+# `out_d = max(0, -F_lo) + max(0, F_hi)` the cell's outflow through its two `d`
+# faces for one full-flux application,
+#
+#     2 (out_x + out_y + out_z) / (n m)  <=  cfl_limit
+#
+# i.e. two consecutive passes (one palindrome's worth of flux) remove at most
+# `cfl_limit` (default `DEFAULT_CFL_LIMIT`, 0.95) of the cell's step-start mass.
+# The first two passes therefore cannot empty a cell. Later passes see the
+# evolved mass, so the budget is a static proxy there, measured rather than
+# proven (tests in test/core/test_subcycle_composition.jl).
+
+"""
+    _outflow(F_lo, F_hi)
+
+Mass a cell loses through its two faces of one direction, `F_lo` the lower- and
+`F_hi` the higher-index face flux (positive toward higher index):
+`max(0, -F_lo) + max(0, F_hi)`. Both faces count at a divergent point (Lin &
+Rood 1996).
+"""
+@inline _outflow(F_lo, F_hi) = max(zero(F_lo), -F_lo) + max(zero(F_hi), F_hi)
+
+"""
+    _palindrome_outflow_ratio(m, out)
+
+Outflow of one palindrome relative to the cell mass, `2 out / m`, where `out`
+is the cell's outflow summed over all directions for one application of each.
+Cells without positive mass contribute zero.
+"""
+@inline _palindrome_outflow_ratio(m, out) = ifelse(m > zero(m), (out + out) / m, zero(m))
+
+"""
+    _palindrome_subcycle_count(max_ratio, cfl_limit, max_n_sub, topology) -> Int
+
+Number of subcycled passes `n` of a palindrome whose largest outflow ratio
+(`_palindrome_outflow_ratio`) is `max_ratio`: the smallest `n` with
+`max_ratio / n <= cfl_limit`. `cfl_limit = Inf` disables subcycling.
+"""
+function _palindrome_subcycle_count(max_ratio, cfl_limit, max_n_sub::Integer, topology)
+    cfl_limit > zero(cfl_limit) || throw(ArgumentError(
+        "$(topology) advection requires cfl_limit > 0, got $(cfl_limit)"))
+    max_ratio <= cfl_limit && return 1
+    n_sub = ceil(Int, max_ratio / cfl_limit)
+    n_sub <= max_n_sub || throw(ArgumentError(
+        "$(topology) palindrome subcycling exceeded max_n_sub=$(max_n_sub) " *
+        "(outflow ratio $(max_ratio), cfl_limit $(cfl_limit))"))
+    return n_sub
+end
+
+# =========================================================================
+# Cubed-sphere subcycle count
 # =========================================================================
 
-"""Static palindrome CFL subcycle count from initial mass.
+"""Static palindrome CFL subcycle count of a cubed-sphere step from its initial mass.
 
-A cell loses mass through a face when the flux points out of it: with `F_lo`,
-`F_hi` its lower- and higher-index faces (positive = toward higher index),
+The shared palindrome budget (`_palindrome_subcycle_count`) evaluated on the
+interior cells of the six panels, with every flux scaled by `flux_scale`.
 
-    outgoing = max(0, −F_lo) + max(0, F_hi)
-
-per direction, so both faces count at a divergent point (Lin & Rood 1996).
-
-This is the runtime-side second line of defense for the CS Strang sequence.
-The actual sequence applies each direction twice (`X-Y-Z-Z-Y-X`), so a
-per-direction CFL pilot can under-estimate cells where moderate outgoing flux
-exists in several directions at once. This budget is still a static proxy, not
-an evolving-mass proof, but it is conservative with respect to the old
-direction-isolated metric and uses the same palindrome-outflow numerator as the
+This is the runtime-side second line of defense for the CS Strang sequence;
+binaries with the `binary_schedule` substep contract pass their own count
+(see `_cs_palindrome_subcycles`). The sequence applies each direction twice,
+so a per-direction CFL pilot can under-estimate cells where moderate outgoing
+flux exists in several directions at once. The numerator is the one of the
 preprocessor's adaptive schedule gate (which can also divide by the smaller of
 the two window-end masses).
 """
@@ -44,23 +101,15 @@ function _cs_static_palindrome_subcycle_count(panels_am::NTuple{6},
         by_hi = view(panels_bm[p], iL:iH,     iL + 1:iH + 1, 1:Nz)
         cz_lo = view(panels_cm[p], iL:iH, iL:iH, 1    :Nz)
         cz_hi = view(panels_cm[p], iL:iH, iL:iH, 2:Nz + 1)
-        zero_FT = zero(FT)
         cfl_panel = mapreduce(max, m_int, ax_lo, ax_hi, by_lo, by_hi,
-                              cz_lo, cz_hi; init = zero_FT) do mi, axl, axh, byl, byh, czl, czh
-            out_x = max(zero_FT, -(fs * axl)) + max(zero_FT, fs * axh)
-            out_y = max(zero_FT, -(fs * byl)) + max(zero_FT, fs * byh)
-            out_z = max(zero_FT, -(fs * czl)) + max(zero_FT, fs * czh)
-            outgoing_half = out_x + out_y + out_z
-            outgoing = outgoing_half + outgoing_half
-            ifelse(mi > zero_FT, outgoing / mi, zero_FT)
+                              cz_lo, cz_hi; init = zero(FT)) do mi, axl, axh, byl, byh, czl, czh
+            _palindrome_outflow_ratio(mi, _outflow(fs * axl, fs * axh) +
+                                          _outflow(fs * byl, fs * byh) +
+                                          _outflow(fs * czl, fs * czh))
         end
         max_cfl = max(max_cfl, cfl_panel)
     end
-    max_cfl <= cfl_limit && return 1
-    n_sub = ceil(Int, max_cfl / cfl_limit)
-    n_sub <= max_n_sub ||
-        error("cubed-sphere palindrome subcycling exceeded max_n_sub=$(max_n_sub)")
-    return n_sub
+    return _palindrome_subcycle_count(max_cfl, cfl_limit, max_n_sub, "cubed-sphere")
 end
 
 

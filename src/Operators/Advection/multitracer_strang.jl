@@ -53,7 +53,7 @@ for (sweep_fn, kernel_fn, dim) in (
 end
 
 # =========================================================================
-# Multi-tracer Strang splitting: X → Y → Z → Z → Y → X
+# Multi-tracer Strang splitting: (X → Y → Z)^n → midpoint → (Z → Y → X)^n
 # =========================================================================
 
 """
@@ -68,6 +68,17 @@ rather than `6 × Nt` launches in the per-tracer path.
 The mass update (m_new = m + flux_in - flux_out) is computed ONCE per
 cell per sweep, shared across all tracers.
 
+## Subcycling
+
+One count `n` comes from the palindrome outflow budget
+`2 (out_x + out_y + out_z) / (n m) ≤ cfl_limit` that the cubed sphere uses
+(`_structured_palindrome_subcycle_count`, default `cfl_limit =
+DEFAULT_CFL_LIMIT`). The step then runs the symmetric composition
+
+    (X Y Z)^n → midpoint operators → (Z Y X)^n,     every pass with flux / n,
+
+6n sweeps, second order, and exactly `X Y Z | midpoint | Z Y X` at `n = 1`.
+
 # Arguments
 - `rm_4d::AbstractArray{FT,4}` — tracer mass `(Nx, Ny, Nz, Nt)`, mutated
 - `m::AbstractArray{FT,3}` — air mass `(Nx, Ny, Nz)`, mutated
@@ -80,7 +91,7 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
                           cm::AbstractArray{FT,3},
                           scheme::AbstractAdvectionScheme,
                           ws::AdvectionWorkspace{FT};
-                          cfl_limit::Real = one(FT),
+                          cfl_limit::Real = DEFAULT_CFL_LIMIT,
                           diffusion_op::AbstractDiffusion = NoDiffusion(),
                           diffusion_workspace = nothing,
                           emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
@@ -94,14 +105,9 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
                          m, size(rm_4d, 4))
     cfl_ft = convert(FT, cfl_limit)
 
-    # CFL subcycling per direction (reuse single-tracer pilot on the 3D mass)
-    n_x = _x_subcycling_pass_count(am, m, ws, cfl_ft)
-    n_y = _y_subcycling_pass_count(bm, m, ws, cfl_ft)
-    n_z = _z_subcycling_pass_count(cm, m, ws, cfl_ft)
-
-    fs_x = inv(FT(n_x))
-    fs_y = inv(FT(n_y))
-    fs_z = inv(FT(n_z))
+    # One palindrome subcycle count for all directions (the cubed-sphere budget).
+    n_sub = _structured_palindrome_subcycle_count(am, bm, cm, m, cfl_ft)
+    fs = inv(FT(n_sub))
 
     # Ping-pong state. (rm_cur, m_cur) starts as the caller's buffers;
     # (rm_alt, m_alt) is the workspace B pair. Each kernel launch reads
@@ -117,10 +123,12 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
         return rm_alt_, rm_cur_, m_alt_, m_cur_
     end
 
-    # Forward half: X → Y → Z
-    for _ in 1:n_x; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_x_mt!, rm_cur, rm_alt, m_cur, m_alt, am, fs_x); end
-    for _ in 1:n_y; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_y_mt!, rm_cur, rm_alt, m_cur, m_alt, bm, fs_y); end
-    for _ in 1:n_z; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_z_mt!, rm_cur, rm_alt, m_cur, m_alt, cm, fs_z); end
+    # Forward half: (X → Y → Z)^n_sub
+    for _ in 1:n_sub
+        rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_x_mt!, rm_cur, rm_alt, m_cur, m_alt, am, fs)
+        rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_y_mt!, rm_cur, rm_alt, m_cur, m_alt, bm, fs)
+        rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_z_mt!, rm_cur, rm_alt, m_cur, m_alt, cm, fs)
+    end
 
     # Palindrome center.
     # Two configurations:
@@ -173,15 +181,15 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
         apply_vertical_diffusion_vmr!(rm_cur, m_cur, diffusion_op, diffusion_workspace, half_dt, meteo)
     end
 
-    # Reverse half: Z → Y → X
-    for _ in 1:n_z; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_z_mt!, rm_cur, rm_alt, m_cur, m_alt, cm, fs_z); end
-    for _ in 1:n_y; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_y_mt!, rm_cur, rm_alt, m_cur, m_alt, bm, fs_y); end
-    for _ in 1:n_x; rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_x_mt!, rm_cur, rm_alt, m_cur, m_alt, am, fs_x); end
+    # Reverse half: (Z → Y → X)^n_sub
+    for _ in 1:n_sub
+        rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_z_mt!, rm_cur, rm_alt, m_cur, m_alt, cm, fs)
+        rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_y_mt!, rm_cur, rm_alt, m_cur, m_alt, bm, fs)
+        rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_x_mt!, rm_cur, rm_alt, m_cur, m_alt, am, fs)
+    end
 
-    # If total parity wound up in the alternate (B) buffer, copy back.
-    # When (n_x + n_y + n_z + n_z + n_y + n_x) is even — the common case,
-    # e.g. all-ones — the final result lands in the caller's arrays with
-    # zero copyto! calls.
+    # The 6 n_sub sweeps are an even count, so the result is back in the
+    # caller's arrays; the copy is a guard should the sequence ever change.
     if rm_cur !== rm_4d
         copyto!(rm_4d, rm_cur)
         copyto!(m,     m_cur)

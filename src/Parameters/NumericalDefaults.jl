@@ -9,9 +9,11 @@
 # =============================================================================
 
 """
-Courant-number limit of one advection subcycle pass at run time: a window's
-mass fluxes are split into passes with outflow at most this fraction of the
-cell's mass.
+Runtime palindrome outflow budget of split-sweep advection (lat-lon,
+reduced-Gaussian and cubed-sphere): a transport step is split into `n`
+subcycles so that one palindrome's worth of outflow,
+`2 (out_x + out_y + out_z) / n`, is at most this fraction of the cell's mass at
+the start of the step.
 """
 const DEFAULT_CFL_LIMIT = 0.95
 
@@ -44,8 +46,7 @@ correction.
 const DEFAULT_GEOS_SMOOTHING_SWEEPS = 8
 
 """
-Most CFL subcycle passes one advection step may need (one direction on
-structured grids, one Strang palindrome on the cubed sphere) before the run
+Most CFL subcycles one split-sweep advection step may need before the run
 stops: a guard against mass fluxes that would need absurdly many passes.
 """
 const DEFAULT_MAX_SUBCYCLES = 4096

@@ -213,7 +213,7 @@ end
     @test total_mass(sim_slopes.model.state, :CO2) ≈ rm0 atol=eps(FT) * rm0 * 10
 end
 
-@testset "Structured x-direction static CFL pilot" begin
+@testset "Structured static palindrome CFL pilot" begin
     FT = Float64
     Nx, Ny, Nz = 4, 1, 1
     m = ones(FT, Nx, Ny, Nz)
@@ -223,22 +223,28 @@ end
     cm = zeros(FT, Nx, Ny, Nz + 1)
 
     # Periodic inflow through face 1 / Nx+1 plus stronger outflow through face 2.
-    # Static outflow-based CFL: cell 1 loses max(am[2],0)=1.5 per step, m=1.0, so
-    # CFL=1.5 → n_sub = ceil(1.5/1.0) = 2. The pre-plan-13 evolving-mass pilot
-    # returned n_sub=3 because it flagged a post-first-pass transient CFL=1.0
-    # equality as a violation; the static pilot accepts CFL<=cfl_limit.
+    # Static palindrome budget: cell 1 loses max(am[2],0)=1.5 per application and
+    # the palindrome applies x twice, so 2·1.5/m = 3.0 → n_sub = ceil(3.0/1.0) = 3:
+    # the static pilot accepts a ratio equal to cfl_limit (the pre-plan-13
+    # evolving-mass pilot flagged that equality as a violation).
     am[1, 1, 1] = FT(1.0)
     am[2, 1, 1] = FT(1.5)
     am[Nx + 1, 1, 1] = FT(1.0)
 
     ws = AtmosTransport.Operators.Advection.AdvectionWorkspace(m)
-    nsub = AtmosTransport.Operators.Advection._x_subcycling_pass_count(am, m, ws, FT(1))
-    @test nsub == 2
+    count(limit) = AtmosTransport.Operators.Advection._structured_palindrome_subcycle_count(
+        am, bm, cm, m, FT(limit))
+    nsub = count(1)
+    @test nsub == 3
+    @test count(0.95) == 4
+    @test count(Inf) == 1
 
+    # Two consecutive passes carry one palindrome's worth of flux: the budget
+    # keeps every cell's mass non-negative over them.
     m0 = sum(m)
     rm0 = sum(rm)
     flux_scale = inv(FT(nsub))
-    for _ in 1:nsub
+    for _ in 1:2
         AtmosTransport.Operators.Advection.sweep_x!(rm, m, am, UpwindScheme(), ws, flux_scale)
     end
 
@@ -300,16 +306,14 @@ end
     fluxes.cm .= zero(FT)
 
     # Cell 1 sees one strong outflow and one weaker inflow in the same sweep.
-    # Static outflow-based CFL = 1.2 → n_sub = ceil(1.2/1.0) = 2. The
-    # pre-plan-13 evolving-mass pilot returned n_sub=3 because it flagged a
-    # post-first-pass transient CFL=1.0 equality as a violation.
+    # Static palindrome budget: 2 · 1.2 / m = 2.4 → n_sub = ceil(2.4/1.0) = 3.
     fluxes.horizontal_flux[1, 1] = FT(0.4)
     fluxes.horizontal_flux[2, 1] = FT(1.2)
 
     ws = AtmosTransport.Operators.Advection.AdvectionWorkspace(state.air_mass)
-    nsub = AtmosTransport.Operators.Advection._horizontal_face_subcycling_pass_count(
-        fluxes.horizontal_flux, state.air_mass, mesh, ws, FT(1))
-    @test nsub == 2
+    nsub = AtmosTransport.Operators.Advection._face_indexed_palindrome_subcycle_count(
+        fluxes.horizontal_flux, fluxes.cm, state.air_mass, mesh, FT(1))
+    @test nsub == 3
 
     flux_scale = inv(FT(nsub))
     for _ in 1:nsub
@@ -329,9 +333,10 @@ end
     if HAS_CUDA_FOR_ADAPT
         m = CUDA.fill(FT(1), 4, 1, 1)
         am = cu(reshape(FT[10, 10, 0, 0, 10], 5, 1, 1))
-        ws = AtmosTransport.Operators.Advection.AdvectionWorkspace(m)
-        @test_throws ArgumentError AtmosTransport.Operators.Advection._x_subcycling_pass_count(
-            am, m, ws, FT(1); max_n_sub=4)
+        bm = CUDA.zeros(FT, 4, 2, 1)
+        cm = CUDA.zeros(FT, 4, 1, 2)
+        @test_throws ArgumentError AtmosTransport.Operators.Advection._structured_palindrome_subcycle_count(
+            am, bm, cm, m, FT(1); max_n_sub=4)
     else
         @test true
     end

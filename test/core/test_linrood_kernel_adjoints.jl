@@ -543,13 +543,12 @@ end
         @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-6)
     end
 
-    @testset "X face_from_q ORD=7 VJP vs FD JVP (panel-edge boundary correction)" begin
-        # ORD=7 differs from ORD=5 only at panel-edge faces
-        # (`face_idx ∈ {1, Nc+1}`) where the forward path overrides the
-        # PPM edges with the linear discontinuous extrapolation. The
-        # interior is bit-equal to ORD=5; this test exercises BOTH
-        # interior and panel-edge faces simultaneously through the same
-        # JVP-vs-VJP identity used for ORD=5.
+    @testset "X face_from_q ORD=7 VJP vs FD JVP (panel-edge treatment)" begin
+        # ORD=7 differs from ORD=5 only at the faces at and next to the
+        # panel edges (0-2 and Nc..Nc+2), whose edge values are the linear
+        # seam extrapolation and FV3's one-sided values. This test exercises
+        # those and the interior faces through the same JVP-vs-VJP identity
+        # used for ORD=5.
         FT = Float64
         Nc = 4; Hp = 3; Nz = 2
         mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
@@ -574,7 +573,7 @@ end
         @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-6)
     end
 
-    @testset "Y face_from_q ORD=7 VJP vs FD JVP (panel-edge boundary correction)" begin
+    @testset "Y face_from_q ORD=7 VJP vs FD JVP (panel-edge treatment)" begin
         FT = Float64
         Nc = 4; Hp = 3; Nz = 2
         mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
@@ -600,12 +599,13 @@ end
     end
 
     @testset "ORD=7 interior is bit-equal to ORD=5 (no panel-edge cells in scope)" begin
-        # Build a config where the stencil never touches face_idx ∈ {1, Nc+1}.
-        # We do this by zeroing lambda_fx_face/lambda_fy_face at those
-        # columns / rows: ∂L/∂q is then a pure sum over interior faces,
-        # which the ORD=7 adjoint must produce bit-equal to ORD=5.
+        # ORD=7 replaces the edge values of faces 0, 1, 2 and Nc, Nc+1, Nc+2;
+        # the flux at face f reads the edges of faces f-1, f, f+1. Zeroing
+        # lambda_fx_face at faces 1-3 and Nc-1..Nc+1 leaves only faces whose
+        # stencil is clear of those, where the ORD=7 adjoint must be
+        # bit-equal to ORD=5.
         FT = Float64
-        Nc = 4; Hp = 3; Nz = 2
+        Nc = 8; Hp = 3; Nz = 2
         mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
         N = Nc + 2Hp
         rng = MersenneTwister(7303)
@@ -613,9 +613,8 @@ end
         am = FT(0.02) .* randn(rng, FT, Nc + 1, Nc, Nz)
         m  = FT(2) .+ rand(rng, FT, N, N, Nz)
         lambda_fx_face = randn(rng, FT, Nc + 1, Nc, Nz)
-        # Zero the two panel-edge face columns.
-        lambda_fx_face[1, :, :] .= 0
-        lambda_fx_face[Nc + 1, :, :] .= 0
+        # Zero the face columns whose stencil reaches a panel-edge face.
+        lambda_fx_face[[1, 2, 3, Nc - 1, Nc, Nc + 1], :, :] .= 0
         lambda_q_ord5 = zeros(FT, N, N, Nz)
         lambda_q_ord7 = zeros(FT, N, N, Nz)
         Adv.apply_ppm_x_face_from_q_adjoint!(
@@ -798,10 +797,10 @@ end
     end
 
     @testset "X face (rm-input) ORD=7 VJP vs FD JVP" begin
-        # ORD=7 adds the linear discontinuous-edge correction at panel-
-        # edge faces. The donor-state lo/hi helpers carry the corrected
-        # `(bl, br, b0)` into the α-contribution so the FD JVP and the
-        # adjoint VJP agree at both interior and panel-edge faces.
+        # ORD=7 replaces the edge values at and next to the panel edges.
+        # The donor-state lo/hi helpers carry the same `(bl, br, b0)` into
+        # the α-contribution so the FD JVP and the adjoint VJP agree at both
+        # interior and panel-edge faces.
         FT = Float64
         Nc = 4; Hp = 3; Nz = 2
         mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
@@ -858,8 +857,9 @@ end
     end
 
     @testset "rm-input ORD=7 interior bit-equals ORD=5" begin
+        # As above: only faces whose stencil is clear of the ORD=7 edge faces.
         FT = Float64
-        Nc = 4; Hp = 3; Nz = 2
+        Nc = 8; Hp = 3; Nz = 2
         mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
         N = Nc + 2Hp
         rng = MersenneTwister(7501)
@@ -867,8 +867,7 @@ end
         m  = FT(3) .+ rand(rng, FT, N, N, Nz)
         am = FT(0.02) .* randn(rng, FT, Nc + 1, Nc, Nz)
         lambda_fx_face = randn(rng, FT, Nc + 1, Nc, Nz)
-        lambda_fx_face[1, :, :] .= 0
-        lambda_fx_face[Nc + 1, :, :] .= 0
+        lambda_fx_face[[1, 2, 3, Nc - 1, Nc, Nc + 1], :, :] .= 0
         lambda_rm_5 = zeros(FT, N, N, Nz); lambda_m_5 = zeros(FT, N, N, Nz)
         lambda_rm_7 = zeros(FT, N, N, Nz); lambda_m_7 = zeros(FT, N, N, Nz)
         Adv.apply_ppm_x_face_adjoint!(
