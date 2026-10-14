@@ -134,36 +134,104 @@ share per layer, with random sign.
 ### Column mass ledger
 
 The TM5 convection matrix and the `dkg` diffusion exchange conserve column
-mass exactly: their columns sum to one. Their `Float32` solves do not. Around
-each solve, the ledger
+mass exactly: their columns sum to one. Their `Float32` solves do not. CMFMC
+convection's explicit update conserves too, since its interface fluxes cancel
+in the column sum, but it writes each layer's new mass `q·m` in `Float32`
+(the cloud-base layer twice), and a change below half an ulp of the stored
+mass vanishes. Around each solve or update, the ledger
 
 1. sums the participating cells before and after with compensated summation
    (Neumaier, 1974, in the branch-free `TwoSum` form of Ogita et al., 2005);
-2. forms the residual `(s₀ − s₁) + (c₀ − c₁)`. The solve changes the column
-   total by far less than a factor of two, so `s₀ − s₁` is exact (Sterbenz's
-   lemma);
-3. adds the residual to the largest participating cell.
+2. forms the residual `r = (s₀ − s₁) + (c₀ − c₁)`. The solve changes the
+   column total by far less than a factor of two, so `s₀ − s₁` is exact
+   (Sterbenz's lemma);
+3. adds `r` and the column's carry `c` to the largest participating cell `q`
+   with two error-free sums, and keeps what that cell cannot hold as the new
+   carry:
 
-The residual is small against that cell: a few ulps for TM5 convection
-(1–2e-8 of the active column) and about one ulp for `dkg` diffusion (≈5e-10
-of the column). Spread over the column it would round away again. Added to
-one cell it survives unless it is below half an ulp, which happens in 2–10 %
-of TM5 columns and 20–30 % of `dkg` columns. For `dkg` the ledger therefore
-removes the bias statistically, not column by column. The perturbation, a few
-ulps of one cell, is below the solve's own rounding there.
+   ```
+   t + t_lo = r + c,   q′ + s_lo = q + t,   c′ = fl(s_lo + t_lo).
+   ```
+
+The residual is a few ulps of the largest cell for TM5 convection (1–2e-8 of
+the active column) and about one ulp for `dkg` diffusion (≈5e-10 of the
+column). Spread over the column it would round away again. Added to the
+largest cell, it is rounded to that cell's spacing: the rounding error `s_lo`,
+at most half an ulp, is lost, and all of `r` is lost where it is below half an
+ulp, in 2–10 % of TM5 columns and 20–30 % of `dkg` columns. For a tracer
+peaked at the surface `s_lo` has one sign, so without the carry the losses
+added up: in one day of `dkg` diffusion alone, ERA5 C90 L117 fossil CO₂ lost
+8.1e4 kg, 2.5e-9 of its burden (v0.5.0 and earlier).
+
+With the carry, each cell is still rounded once per solve, and
+`q′ + c′ = q + r + c` up to one rounding of `c′`; with a zero carry the cell
+is bit-identical to the ledger without one. The carry is at most half an ulp
+of the cell plus the rounding of `r + c`; it is kept per column and tracer
+in the operator's workspace (`TM5Workspace`, `CMFMCWorkspace`,
+`DiffusionWorkspace`) and added with the column's next residual. The field
+plus the carries therefore conserves each column, and the field alone
+differs from it by the outstanding carries, which do not accumulate.
+Moving `r` to a smaller cell, where it is represented, also stops the drift
+but changes that cell by a larger fraction of its value, trading per-cell
+accuracy for column accuracy. In 200 repeated `Float32` solves of
+surface-peaked test columns, the column totals drift by 7.7e-9 (TM5) and
+1.9e-9 (`dkg`) without the carry and by 5e-11 and 8e-11 (the outstanding
+carries) with it; the largest error of a cell against `Float64` stays
+7.5e-6 and 3.4e-6 (`test/core/test_float32_conservation.jl`).
+
+In one day of an ERA5 C90 L117 CATRINE run (2023-05-15, `Float32` on an
+L40S, restarted from the v0.5 chain) with `dkg` diffusion only and no
+sources, the fossil-CO₂ total now changes by +57 kg (+1.7e-12) instead of
+−8.1e4 kg, and its 3-hourly values fluctuate within ±130 kg without a
+trend: the outstanding carries, about half an ulp of each column's largest
+cell at most. With TM5 convection only, the change is −300 kg instead of
+−780 kg, again without a trend. With all operators and sources, the fossil-CO₂
+residual of the day falls from −2.7e-9 to −1.1e-10 of the burden, below that
+of advection and emissions alone (−2.7e-10). The carry costs one load, one
+store and a second `TwoSum` per column and tracer; on an L40S the time of a
+C90 L117 call with ten tracers is unchanged within noise (`dkg` 1.56–1.57 ms,
+TM5 convection 53–54 ms). The ledgers rely on IEEE arithmetic without
+fast-math reassociation, which would break `TwoSum`; CPU and CUDA are tested,
+while the Metal checks (`test/diagnostic/test_metal_kernels.jl`) still have to
+be run on a Mac.
+
+Carries start at zero and are not written to restart files: a restarted run
+drops about half an ulp of each column's largest cell, once. A column that
+is not ledgered (no convection, no exchanging layer, or a zero-mass layer in a
+`dkg` column, which keeps its absorbing convention) keeps its carry for its
+next ledgered solve. Single-tracer `dkg` calls name their carry slot
+(`tracer = idx`, as the per-tracer Lin–Rood path does); without it they keep
+no carry.
 
 The ledger corrects rounding, not physics. A residual larger than
 `16·n·eps·|q_max|`, for `n` participating cells with largest value `q_max`, is
-left in place. That bound is about 1e-6 of the column in `Float32`, far above
-the measured residuals, so a matrix that does not conserve mass still shows up
-in the budgets.
+left in place and never enters the carry. That bound is about 1e-6 of the
+column in `Float32`, far above the measured residuals, so a matrix that does
+not conserve mass still shows up in the budgets; a leak smaller than the
+bound would be returned like rounding, which is why the ledger runs only
+where the operator conserves by construction. A carry above the same bound
+is dropped; since a carry is at most about half an ulp of the cell it came
+from, that happens only when the column's largest cell shrank more than about
+`32n`-fold since, for example when the column was emptied. A column
+overwritten with values of similar size keeps its carry, deposited once: a
+run restarted from reloaded fields into an existing model (reused workspaces)
+is therefore not bit-identical to one built fresh, by about half an ulp per
+column.
 
 The ledger runs only where the operator conserves mass by construction. The
 linear-algebra routines stay plain solves. TM5 convection uses the cloud
-levels; `dkg` diffusion uses layers that exchange mass, leaves isolated
-layers bit-exact, and keeps the absorbing convention of columns containing a
-zero-mass cell. The adjoint's forward replay applies the same ledger, so
-recorded states match the forward run.
+levels; with level merging (`n_merge > 1`) its ledger covers the fine layers
+that aggregation, coarse solve and split change, because the split also
+rounds every fine layer. `dkg` diffusion uses layers that exchange mass and
+leaves isolated layers bit-exact. CMFMC convection uses the whole column
+where nothing leaves it: the `cmfmc` flux through the model top is exactly
+zero and every layer holds air (`m` and `m/area` above the operator's
+`tiny`); the clamped variant (`clamp = true`), which clips negative values
+and rescales the column, is not ledgered. The adjoint's forward replay
+applies the same ledgers without a carry: every replayed solve starts from a
+zero carry, so it is a function of the recorded state alone and checkpointed
+replays reproduce the recorded states bit for bit. The adjoint itself
+transposes the exact operator.
 
 A delta-form solve, `(I + B) Δ = −B q` followed by `q += Δ`, would remove the
 bias at its source and also improve local accuracy. It needs the matrix
@@ -211,10 +279,21 @@ been identified. Removing storage rounding altogether would need double-single
 tracer storage (two `Float32` words per value), doubling memory traffic. That
 is not warranted at this level.
 
-**CMFMC convection.** The remaining CO₂ difference with all operators
-(−2.0e-8 of the burden per week, about −1e-6 per year) matches what CMFMC
-convection added to advection alone before the fixes (−2.2e-8). CMFMC applies
-its explicit flux-form update without a column ledger.
+**CMFMC convection.** In the MERRA-2 week above, the remaining CO₂
+difference with all operators (−2.0e-8 of the burden, about −1e-6 per year)
+matched what CMFMC convection added to advection alone (−2.2e-8); CMFMC had
+no column ledger then (v0.5.0 and earlier). In one day of the MERRA-2 C90
+L72 CATRINE run (2023-05-15, `Float32` on an L40S, restarted from the v0.5
+chain, no sources), CMFMC convection alone changed the SF₆ total by +1.3e-9
+of its burden and background CO₂ by +2.5e-9 without the ledger, and by
+−5.5e-12 and +4.9e-12 with it. With both ledgers, every operator and the
+sources, the day's SF₆ residual falls from +3.8e-9 to −6.6e-10 of the
+burden, the level of advection alone (−6.1e-10). In 200 repeated updates of
+a surface-peaked test column, the ledger also keeps the cells closer to
+`Float64`: within 1.3e-6 instead of 1.7e-5, and a uniform mixing ratio
+within 4.3 instead of 76 eps (relative;
+`test/core/test_float32_conservation.jl`). A C90 L72 CMFMC call with ten
+tracers takes about 1 % longer on an L40S (5.42 → 5.47 ms).
 
 **Emission rates.** Rounding each cell's rate to `Float32` changes global
 emission totals by less than 1e-9.
@@ -286,7 +365,9 @@ is +9.0e-7 for CO₂, +1.6e-7 for fossil CO₂ (relative to the emitted mass),
 last day is 0.015 ppm for CO₂ and 0.0009 ppt for SF₆.
 
 `test/core/test_float32_conservation.jl` checks the error-free and compensated
-sums, that the ledger leaves a leaking matrix visible, the geometry, the decay
+sums, that the ledger leaves a leaking matrix visible, the ledger carry (its
+deposit, repeated-solve drift of TM5 and `dkg` columns against `Float64`, and
+that the TM5 workspaces keep it on every topology), the geometry, the decay
 decrement, the source-grid extents and the profile deposit.
 `test/core/test_tm5_hessenberg.jl` and `test/helpers/conservative_dkg.jl`
 require the convection and diffusion ledgers to conserve each column to within

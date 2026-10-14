@@ -119,6 +119,11 @@ paths = [
     "src/Quantities/**",
     "src/Operators/AbstractOperators.jl",
     "src/Operators/Operators.jl",
+    # Column mass ledgers and their carries (test_float32_conservation.jl).
+    "src/Operators/Convection/tm5_column_solve.jl",
+    "src/Operators/Convection/convection_workspace.jl",
+    "src/Operators/Diffusion/conservative_dkg.jl",
+    "src/Operators/Diffusion/workspace.jl",
     "ext/**",
 ]
 

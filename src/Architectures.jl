@@ -669,14 +669,68 @@ Difference of two compensated sums of nearly equal totals. `s₀ − s₁` is ex
 
 Column mass ledger of a mass-conserving solve over `n` cells: the residual
 `Σbefore − Σafter` of the compensated sums, to be added back to the column's
-largest cell (`|largest|`). Only rounding-sized residuals, at most `16n` ulps
-of the largest cell, are returned. A larger one means the operator itself
-loses mass; it stays in the field so budgets reveal it.
+largest cell (`|largest|`) by `_ledger_deposit`. Only rounding-sized
+residuals, at most `16n` ulps of the largest cell, are returned. A larger one
+means the operator itself loses mass; it stays in the field so budgets reveal
+it.
 """
 @inline function _ledger_residual(before, after, largest, n)
     r = _neumaier_gap(before, after)
     return abs(r) <= 16n * eps(typeof(r)) * largest ? r : zero(r)
 end
+
+"""
+    _ledger_deposit(value, r, carry, n) -> (value′, carry′)
+
+Add the ledger residual `r` (`_ledger_residual`) and the column's carry to
+`value`, the largest of the column's `n` participating cells. Returns the new
+cell value and the new carry. With two error-free sums (`_two_sum`),
+
+    t + t_lo = r + carry,   value′ + s_lo = value + t,   carry′ = fl(s_lo + t_lo),
+
+so `value′ + carry′ = value + r + carry` up to one rounding of `carry′`
+(`2⁻²⁴` of it in `Float32`). `value′` is the rounded sum, as without a carry
+(with `carry = 0` it is bit-identical to `value + r`); `carry′` is the part
+below the cell's spacing: at most half its ulp, plus `t_lo`, the rounding of
+`r + carry`.
+
+Why a carry: `r` is a few ulps of the largest cell for TM5 convection and
+about one for `dkg` diffusion. Rounded into the cell, it loses `s_lo`, and for
+a tracer peaked at the surface `s_lo` has one sign. Dropped at every solve, it
+cost ERA5 C90 L117 fossil CO₂ (`Float32`) 8.1e4 kg, about 2.5e-9 of its
+burden, in one day of `dkg` diffusion alone. Moving `r` to a smaller cell keeps
+more of it but changes that cell by a larger fraction of its value, so the
+column drift is traded for per-cell error. The carry keeps `s_lo` for the
+column's next solve instead. With a zero carry the deposit is bit-identical
+to the ledger without one; later the largest cell receives an extra ulp
+whenever the accumulated remainder becomes representable, and the column
+total no longer drifts. The caller stores `carry′` per column and
+tracer in the operator workspace, starting from zero.
+
+A carry above the residual bound, `16n` ulps of `|value|`, is dropped, so
+the carry can neither flip a cell's sign nor hold more than rounding. Since a
+carry is at most about half an ulp of the cell it came from, that happens only
+when the column's largest cell has shrunk more than about `32n`-fold since
+(for example, the column was emptied). A column overwritten with values of
+similar size keeps its old carry, which is deposited once (about half an ulp
+at most): a run restarted from reloaded fields with a reused workspace is not
+bit-identical to one with a fresh workspace. A residual above the bound is
+never passed in (`_ledger_residual` returns zero): the carry holds rounding,
+and a leak larger than the bound stays visible in budgets.
+"""
+@inline function _ledger_deposit(value::T, r::T, carry::T, n) where T <: AbstractFloat
+    carry = abs(carry) <= 16n * eps(T) * abs(value) ? carry : zero(T)
+    t, t_lo = _two_sum(r, carry)
+    s, s_lo = _two_sum(value, t)
+    return s, s_lo + t_lo
+end
+
+# Persistent ledger carry of one column and tracer: an element of the carry
+# array, or no carry (`nothing`: the sub-ulp part is dropped at every solve).
+@inline _load_ledger_carry(::Nothing, ::Type{T}, I...) where T = zero(T)
+@inline _load_ledger_carry(carry::AbstractArray, ::Type{T}, I...) where T = @inbounds carry[I...]
+@inline _store_ledger_carry!(::Nothing, value, I...) = nothing
+@inline _store_ledger_carry!(carry::AbstractArray, value, I...) = (@inbounds carry[I...] = value; nothing)
 
 # --- Compensated Float64 totals -----------------------------------------------
 #

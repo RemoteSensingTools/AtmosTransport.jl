@@ -11,7 +11,7 @@
 # ---------------------------------------------------------------------------
 
 """
-    CMFMCWorkspace{FT, QC, CA}
+    CMFMCWorkspace{FT, QC, CA, L}
 
 Per-sim pre-allocated workspace for [`CMFMCConvection`](@ref).
 
@@ -33,6 +33,11 @@ Per-sim pre-allocated workspace for [`CMFMCConvection`](@ref).
 - `cache_valid :: Base.RefValue{Bool}` — sentinel; cleared via
   [`invalidate_cmfmc_cache!`](@ref) when the met window advances
   (`DrivenSimulation._maybe_advance_window!`).
+- `ledger_carry :: Base.RefValue{L}` — persistent state of the column mass
+  ledger, as in [`TM5Workspace`](@ref): per column and tracer, the part of
+  the last update's rounding residual that the column's largest layer could
+  not hold. Empty until the first `apply!` sizes it with zeros; not stored
+  in restarts.
 
 # Usage
 
@@ -40,12 +45,13 @@ Constructed once at `DrivenSimulation` setup time and reused for the
 whole run. `Adapt.adapt_structure` preserves the cached scalar state
 on the host while adapting `qc_scratch` to the requested backend.
 """
-struct CMFMCWorkspace{FT, QC, CA}
+struct CMFMCWorkspace{FT, QC, CA, L}
     qc_scratch   :: QC
     cell_metrics :: CA
     cached_n_sub :: Base.RefValue{Int}
     cache_valid  :: Base.RefValue{Bool}
     cached_clamp :: Base.RefValue{Bool}   # clamp mode the cached n_sub was computed for
+    ledger_carry :: Base.RefValue{L}      # persistent; sized by `_cmfmc_ledger_carry!`
 end
 
 """
@@ -73,12 +79,14 @@ function CMFMCWorkspace(air_mass::AbstractArray{FT}; cell_metrics = nothing) whe
     else
         _cmfmc_metric_buffer(cell_metrics, FT)
     end
-    return CMFMCWorkspace{FT, typeof(qc_scratch), typeof(metrics)}(
+    carry = _empty_ledger_carry(air_mass, FT)
+    return CMFMCWorkspace{FT, typeof(qc_scratch), typeof(metrics), typeof(carry)}(
         qc_scratch,
         metrics,
         Ref{Int}(1),
         Ref{Bool}(false),
         Ref{Bool}(false),
+        Ref(carry),
     )
 end
 
@@ -89,24 +97,28 @@ function CMFMCWorkspace(air_mass::NTuple{N, <:AbstractArray{FT}}; cell_metrics =
     else
         _cmfmc_metric_buffer(cell_metrics, FT)
     end
-    return CMFMCWorkspace{FT, typeof(qc_scratch), typeof(metrics)}(
+    carry = _empty_ledger_carry(air_mass, FT)
+    return CMFMCWorkspace{FT, typeof(qc_scratch), typeof(metrics), typeof(carry)}(
         qc_scratch,
         metrics,
         Ref{Int}(1),
         Ref{Bool}(false),
         Ref{Bool}(false),
+        Ref(carry),
     )
 end
 
 function Adapt.adapt_structure(to, ws::CMFMCWorkspace{FT}) where FT
     qc_scratch = Adapt.adapt(to, ws.qc_scratch)
     cell_metrics = ws.cell_metrics === nothing ? nothing : Adapt.adapt(to, ws.cell_metrics)
-    return CMFMCWorkspace{FT, typeof(qc_scratch), typeof(cell_metrics)}(
+    carry = Adapt.adapt(to, ws.ledger_carry[])       # persistent state, moves with the workspace
+    return CMFMCWorkspace{FT, typeof(qc_scratch), typeof(cell_metrics), typeof(carry)}(
         qc_scratch,
         cell_metrics,
         Ref{Int}(ws.cached_n_sub[]),
         Ref{Bool}(ws.cache_valid[]),
         Ref{Bool}(ws.cached_clamp[]),
+        Ref(carry),
     )
 end
 
@@ -131,7 +143,7 @@ invalidate_cmfmc_cache!(::Any) = nothing
 # ===========================================================================
 
 """
-    TM5Workspace{FT, M, P, C, F, A, CA}
+    TM5Workspace{FT, M, P, C, F, A, CA, L}
 
 Per-sim pre-allocated workspace for [`TM5Convection`](@ref).
 
@@ -175,6 +187,15 @@ Per-sim pre-allocated workspace for [`TM5Convection`](@ref).
   column mass expected by the TM5 matrix. `nothing` is allowed only
   for standalone unit-area column tests; topology-level `apply!`
   requires this field to be populated.
+- `ledger_carry :: L` — persistent state of the column mass ledger: per
+  column and tracer, the part of the last solve's rounding residual that
+  the column's largest cell could not hold (about half its ulp at most; see
+  `_ledger_deposit`). Shape `(Nx, Ny, Nt)` / `(ncells, Nt)` /
+  `NTuple{6, (Nc, Nc, Nt)}`. The constructor allocates it empty, with the
+  topology's storage type; the first `apply!` sizes it with zeros, and a
+  call with another tracer layout starts from zero again. Restarts do not
+  store it: a restarted run drops about half an ulp of each column's
+  largest cell, once.
 
 # Usage
 
@@ -183,7 +204,7 @@ Constructed once at `DrivenSimulation` setup time via
 `Adapt.adapt_structure` adapts each array to the requested backend
 without reallocating on the host.
 """
-mutable struct TM5Workspace{FT, M, P, C, F, A, CA}
+mutable struct TM5Workspace{FT, M, P, C, F, A, CA, L}
     conv1       :: M
     pivots      :: P
     cloud_dims  :: C
@@ -193,6 +214,7 @@ mutable struct TM5Workspace{FT, M, P, C, F, A, CA}
     cell_metrics :: CA
     scratch_columns :: Int
     defer_scratch :: Bool
+    ledger_carry :: L          # persistent; sized by `_tm5_ledger_carry!`
 end
 
 # Topology-shape introspection helpers used by the tile workspace
@@ -315,12 +337,13 @@ function TM5Workspace(air_mass;
     amu_scratch = similar(template, FT,  Nz + 1, allocated_columns)
     amd_scratch = similar(template, FT,  Nz + 1, allocated_columns)
     metrics = cell_metrics === nothing ? nothing : _cmfmc_metric_buffer(cell_metrics, FT)
+    carry = _empty_ledger_carry(air_mass, FT)
     return TM5Workspace{FT,
                         typeof(conv1), typeof(pivots), typeof(cloud_dims),
                         typeof(f_scratch), typeof(amu_scratch),
-                        typeof(metrics)}(
+                        typeof(metrics), typeof(carry)}(
         conv1, pivots, cloud_dims,
-        f_scratch, amu_scratch, amd_scratch, metrics, B, defer_scratch,
+        f_scratch, amu_scratch, amd_scratch, metrics, B, defer_scratch, carry,
     )
 end
 
@@ -366,15 +389,38 @@ function Adapt.adapt_structure(to, ws::TM5Workspace{FT}) where FT
         amd_scratch = Adapt.adapt(to, ws.amd_scratch)
     end
     cell_metrics = ws.cell_metrics === nothing ? nothing : Adapt.adapt(to, ws.cell_metrics)
+    # The carry is persistent state, not scratch: it moves with the workspace.
+    carry = Adapt.adapt(to, ws.ledger_carry)
     return TM5Workspace{FT,
                         typeof(conv1), typeof(pivots), typeof(cloud_dims),
                         typeof(f_scratch), typeof(amu_scratch),
-                        typeof(cell_metrics)}(
+                        typeof(cell_metrics), typeof(carry)}(
         conv1, pivots, cloud_dims,
         f_scratch, amu_scratch, amd_scratch, cell_metrics,
-        ws.scratch_columns, ws.defer_scratch,
+        ws.scratch_columns, ws.defer_scratch, carry,
     )
 end
+
+# Column ledger carry (see `_ledger_deposit`): one value per column and
+# tracer, `(Nx, Ny, Nt)` / `(ncells, Nt)` / six `(Nc, Nc, Nt)` panels. A
+# workspace starts with an empty carry of its topology's storage type; the
+# first call sizes it with zeros and later calls of the same tracer layout
+# reuse it, so the field type stays concrete.
+_empty_ledger_carry(air_mass::AbstractArray{<:Any, 3}, ::Type{FT}) where FT = similar(air_mass, FT, 0, 0, 0)
+_empty_ledger_carry(air_mass::AbstractArray{<:Any, 2}, ::Type{FT}) where FT = similar(air_mass, FT, 0, 0)
+_empty_ledger_carry(air_mass::NTuple{6, AbstractArray}, ::Type{FT}) where FT =
+    map(m -> similar(m, FT, 0, 0, 0), air_mass)
+
+_fitted_ledger_carry(carry::AbstractArray, dims::Dims) =
+    size(carry) == dims ? carry : fill!(similar(carry, dims), zero(eltype(carry)))
+_fitted_ledger_carry(carry::NTuple{6, AbstractArray}, dims::Dims) =
+    all(c -> size(c) == dims, carry) ? carry :
+    map(c -> fill!(similar(c, dims), zero(eltype(c))), carry)
+
+_tm5_ledger_carry!(ws::TM5Workspace, dims::Dims) =
+    ws.ledger_carry = _fitted_ledger_carry(ws.ledger_carry, dims)
+_cmfmc_ledger_carry!(ws::CMFMCWorkspace, dims::Dims) =
+    ws.ledger_carry[] = _fitted_ledger_carry(ws.ledger_carry[], dims)
 
 
 export CMFMCWorkspace, invalidate_cmfmc_cache!

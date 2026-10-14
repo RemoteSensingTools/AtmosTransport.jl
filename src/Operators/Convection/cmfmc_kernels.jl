@@ -79,7 +79,9 @@ updraft air from below (`qc_below`) in mass-weighted proportion.
 Returns `(qc, zero(qc))` — `qc` is the post-mix concentration, the
 scavenging fraction is identically zero. A future wet-deposition
 plan adds a method that splits `qc` into `(qc_pres, qc_scav)` keyed
-on a solubility trait parameter.
+on a solubility trait parameter. That plan must also exclude scavenged
+columns from the column mass ledger (see `_cmfmc_conserving_column`),
+which would otherwise return small scavenged amounts to the column.
 
 # Arguments
 
@@ -104,6 +106,43 @@ on a solubility trait parameter.
         qc = q_env
     end
     return qc, zero(qc)
+end
+
+
+# =========================================================================
+# Column mass ledger (see `_ledger_deposit` and the TM5 ledger in
+# tm5_column_solve.jl, whose helpers are shared). The flux-form update below
+# conserves column tracer mass by construction, but each layer's new mass is
+# written as `q · m` in the working precision (the cloud-base layer twice, by
+# the sub-cloud closure and by the flux update): a change below half an ulp of
+# the stored mass vanishes, with one sign where the mixing ratio falls with
+# height. Compensated column sums before and after the update give the
+# residual, which goes to the largest layer; what that layer cannot hold is the
+# column's carry for its next update.
+#
+# The ledger runs only where the update conserves by construction:
+#   - no flux through the model top (`cmfmc` at the top interface is exactly
+#     zero; otherwise `Φ(1)` leaves the column);
+#   - every layer holds air (`m > tiny` and `m / area > tiny`); a layer below
+#     that is emptied or skipped by the passes, which does not conserve;
+#   - no positivity clamp (`clamp = true` rescales the column instead).
+# Elsewhere the update is left as it is, so a leak stays visible in budgets
+# (inside the ledgered columns, a leak below the residual bound would not be).
+#
+# Wet scavenging: the `qc_scav` part of `_cmfmc_updraft_mix` is zero for the
+# inert tracers handled today. Scavenging removes tracer mass on purpose, and
+# the ledger would put small removals back. When wet deposition is added, a
+# column whose tracer is scavenged must not be ledgered (or its scavenged mass
+# must be added to `before`); extend this condition then.
+
+# =========================================================================
+@inline function _cmfmc_conserving_column(cmfmc_top, cell_area, Nz, tiny, air_mass, cell...)
+    iszero(cmfmc_top) || return false
+    @inbounds for k in 1:Nz
+        m = air_mass[cell..., k]
+        (m > tiny && m / cell_area > tiny) || return false
+    end
+    return true
 end
 
 # =========================================================================
@@ -415,6 +454,7 @@ end
 
 @kernel function _cmfmc_cs_panel_column_kernel!(
     tracers_raw,                 # (Nc+2Hp, Nc+2Hp, Nz, Nt), modified in place
+    ledger_carry,                # (Nc, Nc, Nt) column ledger carry, or nothing
     @Const(air_mass),            # (Nc+2Hp, Nc+2Hp, Nz)
     @Const(cmfmc),               # (Nc, Nc, Nz+1) at interfaces
     @Const(dtrain),              # (Nc, Nc, Nz) at centers
@@ -435,6 +475,9 @@ end
     ii = i + Hp
     jj = j + Hp
     cell_area = FT(cell_areas[i, j])
+    # The clamped variant rescales the column instead (not ledgered).
+    ledgered = !do_clamp &&
+        _cmfmc_conserving_column(cmfmc[i, j, 1], cell_area, Nz, tiny, air_mass, ii, jj)
 
     @inbounds for t_idx in 1:Nt
         cldbase_k = _cmfmc_cloud_base(cloud_base, cmfmc, i, j, Nz, tiny)
@@ -442,6 +485,8 @@ end
         if cldbase_k == 0
             continue
         end
+        column = view(tracers_raw, ii, jj, :, t_idx)
+        before = ledgered ? _tm5_column_sum(column, 1, Nz, 1) : (zero(FT), zero(FT))
 
         # Clamp+rescale (do_clamp): record the WHOLE-column tracer mass before
         # convection. After the (clamped) update the column is rescaled by
@@ -540,6 +585,12 @@ end
             tracers_raw[ii, jj, k, t_idx] = q_new * m_k
         end
 
+        if ledgered
+            carry = _tm5_restore_column_mass!(column, 1, Nz, 1, before,
+                                              _load_ledger_carry(ledger_carry, FT, i, j, t_idx))
+            _store_ledger_carry!(ledger_carry, carry, i, j, t_idx)
+        end
+
         # Clamp+rescale: restore the whole-column tracer mass with a single
         # uniform factor (keeps the profile continuous; positivity preserved
         # since the factor is positive and clamped cells are already 0).
@@ -589,6 +640,7 @@ end
 
 @kernel function _cmfmc_column_kernel!(
     tracers_raw,                 # (Nx, Ny, Nz, Nt), modified in place
+    ledger_carry,                # (Nx, Ny, Nt) column ledger carry, or nothing
     @Const(air_mass),            # (Nx, Ny, Nz)
     @Const(cmfmc),               # (Nx, Ny, Nz+1) at interfaces
     @Const(dtrain),              # (Nx, Ny, Nz) at centers (may be zeros for Tiedtke fallback)
@@ -604,6 +656,8 @@ end
     FT = eltype(tracers_raw)
     tiny = _cmfmc_tiny(FT)
     cell_area_j = FT(cell_areas_y[j])
+    # Column mass ledger: see `_cmfmc_conserving_column`.
+    ledgered = _cmfmc_conserving_column(cmfmc[i, j, 1], cell_area_j, Nz, tiny, air_mass, i, j)
 
     @inbounds for t_idx in 1:Nt
 
@@ -614,6 +668,8 @@ end
             # No active convection in this column — nothing to do.
             continue
         end
+        column = view(tracers_raw, i, j, :, t_idx)
+        before = ledgered ? _tm5_column_sum(column, 1, Nz, 1) : (zero(FT), zero(FT))
 
         # ── Well-mixed sub-cloud layer (GCHP convection_mod.F90:742-782) ──
         # Before Pass 1, uniformise the environment below cloud base so
@@ -738,11 +794,20 @@ end
             q_env_above = q_k     # PRE-tendency env value, for next level's Φ
             tracers_raw[i, j, k, t_idx] = q_new * m_k
         end
+
+        # Column mass ledger: return the rounding residual of the per-layer
+        # writes, keeping the sub-ulp remainder as the column's carry.
+        if ledgered
+            carry = _tm5_restore_column_mass!(column, 1, Nz, 1, before,
+                                              _load_ledger_carry(ledger_carry, FT, i, j, t_idx))
+            _store_ledger_carry!(ledger_carry, carry, i, j, t_idx)
+        end
     end
 end
 
 @kernel function _cmfmc_faceindexed_column_kernel!(
     tracers_raw,                 # (ncells, Nz, Nt), modified in place
+    ledger_carry,                # (ncells, Nt) column ledger carry, or nothing
     @Const(air_mass),            # (ncells, Nz)
     @Const(cmfmc),               # (ncells, Nz+1) at interfaces
     @Const(dtrain),              # (ncells, Nz) at centers
@@ -758,6 +823,8 @@ end
     FT = eltype(tracers_raw)
     tiny = _cmfmc_tiny(FT)
     cell_area = FT(cell_areas[c])
+    # Column mass ledger: see `_cmfmc_conserving_column`.
+    ledgered = _cmfmc_conserving_column(cmfmc[c, 1], cell_area, Nz, tiny, air_mass, c)
 
     @inbounds for t_idx in 1:Nt
         # Cloud base = largest k with `|cmfmc[k+1]| > tiny` (lowest
@@ -775,6 +842,8 @@ end
         if cldbase_k == 0
             continue
         end
+        column = view(tracers_raw, c, :, t_idx)
+        before = ledgered ? _tm5_column_sum(column, 1, Nz, 1) : (zero(FT), zero(FT))
 
         # Well-mixed sub-cloud, kg/m² accumulator + column-closing
         # cloud-base update — see LL kernel for the full derivation.
@@ -854,6 +923,12 @@ end
             q_new = bmass > tiny ? q_k + (dt / bmass) * (phi_bot - phi_top) : q_k
             q_env_above = q_k
             tracers_raw[c, k, t_idx] = q_new * m_k
+        end
+
+        if ledgered
+            carry = _tm5_restore_column_mass!(column, 1, Nz, 1, before,
+                                              _load_ledger_carry(ledger_carry, FT, c, t_idx))
+            _store_ledger_carry!(ledger_carry, carry, c, t_idx)
         end
     end
 end

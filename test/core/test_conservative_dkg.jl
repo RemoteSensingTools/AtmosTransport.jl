@@ -32,7 +32,7 @@ end
             factor!(ws.factors[p], m[p], panel, one(FT), Nz, 1; ndrange=(Nc,Nc))
             synchronize(backend)
             factors_before = copy(ws.factors[p])
-            solve!(actual[p], m[p], panel, ws.factors[p], one(FT), Nz, 1;
+            solve!(actual[p], ws.ledger_carry[p], m[p], panel, ws.factors[p], one(FT), Nz, 1;
                    ndrange=(Nc,Nc,Nt))
             synchronize(backend)
             @test isequal(ws.factors[p], factors_before)

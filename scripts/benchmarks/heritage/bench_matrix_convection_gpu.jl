@@ -43,11 +43,11 @@ function dense_reference(f, c)
     q
 end
 
-function kernel_resources(kernel, q, m, rates, areas, nz, nc, wg)
+function kernel_resources(kernel, q, carry, m, rates, areas, nz, nc, wg)
     # Match CUDAKernels' compilation options and metadata for this exact launch.
     nd, _, iterspace, _ = KA.launch_config(kernel, wg*nc, nothing)
     ctx = KA.mkcontext(kernel, nd, iterspace)
-    args = (ctx, q, m, rates..., areas, nz, size(q,3), 1800f0, Val(nz))
+    args = (ctx, q, carry, m, rates..., areas, nz, size(q,3), 1800f0, Val(nz))
     compiled = CUDA.cufunction(kernel.f, typeof(CUDA.cudaconvert(args));
         always_inline=KA.backend(kernel).always_inline, maxthreads=wg)
     memory = CUDA.memory(compiled)
@@ -67,18 +67,20 @@ function measure(nc, nz, nt, downdrafts, mode)
     ranges = mode == "split" ? [i:min(i+5,nt) for i in 1:6:nt] : [1:nt]
     initial = [CuArray(f.q[:,:,r]) for r in ranges]
     qs = copy.(initial)
+    carries = [CUDA.zeros(Float32, nc, length(r)) for r in ranges]   # column ledger carry
     backend = KA.get_backend(m)
     wg = C._TM5_COLLAB_WG_SIZE
     kernel = C._tm5_faceindexed_column_collab_kernel!(backend, wg)
     function launch!()
-        for q in qs
-            kernel(q, m, rates..., areas, nz, size(q,3), 1800f0, Val(nz);
+        for (q, carry) in zip(qs, carries)
+            kernel(q, carry, m, rates..., areas, nz, size(q,3), 1800f0, Val(nz);
                    ndrange=wg*nc)
         end
         nothing
     end
     function restore!()
         foreach(copyto!, qs, initial)
+        foreach(carry -> fill!(carry, 0f0), carries)
         CUDA.synchronize()
     end
     launch!() # Includes compilation, excluded from timings.
@@ -119,7 +121,7 @@ function measure(nc, nz, nt, downdrafts, mode)
         "samples_wall_ms"=>wall_ms, "shared_bytes_per_block"=>shared_bytes,
         "maximum_reference_relative_error"=>max_rel_error,
         "maximum_mass_relative_error"=>mass_error)
-    merge!(r, kernel_resources(kernel, qs[1], m, rates, areas, nz, nc, wg))
+    merge!(r, kernel_resources(kernel, qs[1], carries[1], m, rates, areas, nz, nc, wg))
     println("L=$nz Nt=$nt downdrafts=$downdrafts $mode: ",
         round(r["median_device_ms"]; digits=3), " ms")
     flush(stdout)

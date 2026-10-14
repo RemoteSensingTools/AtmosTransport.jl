@@ -146,9 +146,13 @@ function _tm5_solve_column_vector!(rm_col, m_col,
                       cell_area = FT(cell_area),
                       f = f_buf, amu = amu_buf, amd = amd_buf)
     _tm5_factorize!(conv1_buf, pivots_buf, Nz, icllfs; icltop_eff = icltop_eff)
-    # Same column mass ledger as the forward operator, so the replayed states
-    # are the forward run's (the ledger is rounding-level; the transpose below
-    # is the adjoint of the exact solve). A vector is a one-tracer column.
+    # Same column mass ledger as the forward operator, so a replayed solve is
+    # the forward solve bit for bit (the ledger is rounding-level; the
+    # transpose below is the adjoint of the exact solve). A vector is a
+    # one-tracer column. The replay keeps no ledger carry: every solve starts
+    # from a zero carry and drops the sub-ulp part, so the forward replay is a
+    # function of the recorded state alone and checkpoint replays reproduce the
+    # recorded states exactly.
     lo = max(icltop_eff, 1)
     before = _tm5_column_sum(rm_col, lo, Nz, 1)
     if icllfs > Nz && _tm5_identity_pivots(pivots_buf, Nz, icltop_eff)
@@ -156,7 +160,7 @@ function _tm5_solve_column_vector!(rm_col, m_col,
     else
         _tm5_solve_vector!(rm_col, conv1_buf, pivots_buf, Nz; icltop_eff)
     end
-    _tm5_restore_column_mass!(rm_col, lo, Nz, 1, before)
+    _tm5_restore_column_mass!(rm_col, lo, Nz, 1, before, zero(FT))
     return nothing
 end
 
@@ -587,7 +591,9 @@ function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
     @inbounds for _ in 1:n_sub
         for p in 1:6
             rm_packed = reshape(panels_rm[p], size(panels_rm[p])..., 1)   # one packed tracer
-            kernel!(rm_packed, panels_m[p], cmfmc[p], dtrain_arr[p], cell_areas[p],
+            # Same column mass ledger as the forward run, without a carry (the
+            # replay stays a function of the recorded state; see the TM5 replay).
+            kernel!(rm_packed, nothing, panels_m[p], cmfmc[p], dtrain_arr[p], cell_areas[p],
                     nothing, workspace.qc_scratch[p],
                     Nz, 1, sdt, Hp, Val(true), Val(false);
                     ndrange = (Nc, Nc))

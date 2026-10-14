@@ -698,6 +698,7 @@ const _HAS_CUDA_CMFMC_TEST = try
 catch
     false
 end
+_HAS_CUDA_CMFMC_TEST && include(joinpath(@__DIR__, "..", "helpers", "ledger_carry.jl"))
 
 @testset "B6. GPU CMFMC CFL scan avoids scalar indexing" begin
     if !_HAS_CUDA_CMFMC_TEST
@@ -723,6 +724,14 @@ end
             cmfmc_gpu, nothing, air_gpu)
         @test all(d -> d isa CUDA.CuArray, dtrain_gpu)
         @test size(dtrain_gpu[1]) == (Nc, Nc, Nz)
+    end
+end
+
+@testset "B7. GPU CMFMC column ledger keeps its carry" begin
+    if !_HAS_CUDA_CMFMC_TEST
+        @test_skip "CUDA not available"
+    else
+        check_cmfmc_ledger_carry(CUDA.CuArray)
     end
 end
 

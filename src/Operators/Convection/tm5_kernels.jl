@@ -24,7 +24,8 @@
 #   4. Decodes `c_global` to topology coordinates (column-major;
 #      LatLon → (i, j); RG → c; CS → (c1, c2) and halo-shifted (i, j)).
 #   5. Slices per-column views of the workspace using `t` (local).
-#   6. Calls `_tm5_solve_column!`.
+#   6. Calls `_tm5_solve_column!` with the column's ledger carries
+#      (`ledger_carry[cell..., :]`, one per tracer; see `_ledger_deposit`).
 #
 # CLAUDE.md gotcha: the kernel uses `@view` for per-column slices
 # because KA + CUDA tolerate SubArrays here — the surrounding
@@ -32,13 +33,17 @@
 # (mandatory for GPU correctness).
 # ---------------------------------------------------------------------------
 
+# The column's ledger carries, one per tracer, or `nothing` (no carry).
+@inline _tm5_carry_column(::Nothing, cell...) = nothing
+@inline _tm5_carry_column(carry::AbstractArray, cell...) = @view carry[cell..., :]
+
 # LatLon (structured 4D): state.tracers_raw :: (Nx, Ny, Nz, Nt),
 # air_mass :: (Nx, Ny, Nz), forcing fields :: (Nx, Ny, Nz),
 # tile workspace conv1 :: (Nz, Nz, B), pivots :: (Nz, B),
 # cloud_dims :: (3, B), f :: (Nz, Nz, B) aliased to conv1,
 # amu/amd :: (Nz+1, B).
 @kernel function _tm5_column_kernel!(
-    q_raw, @Const(air_mass),
+    q_raw, ledger_carry, @Const(air_mass),
     @Const(entu), @Const(detu), @Const(entd), @Const(detd),
     @Const(cell_areas_y),
     conv1_ws, pivots_ws, cloud_dims_ws,
@@ -72,13 +77,14 @@
                         conv1_col, pivots_col, cloud_col, dt;
                         cell_area = cell_area,
                         f_buf = f_col,
-                        amu_buf = amu_col, amd_buf = amd_col)
+                        amu_buf = amu_col, amd_buf = amd_col,
+                        carry = _tm5_carry_column(ledger_carry, i, j))
 end
 
 # Face-indexed ReducedGaussian: state.tracers_raw :: (ncells, Nz, Nt).
 # Single-axis cell index — no decode needed.
 @kernel function _tm5_faceindexed_column_kernel!(
-    q_raw, @Const(air_mass),
+    q_raw, ledger_carry, @Const(air_mass),
     @Const(entu), @Const(detu), @Const(entd), @Const(detd),
     @Const(cell_areas),
     conv1_ws, pivots_ws, cloud_dims_ws,
@@ -105,7 +111,8 @@ end
                         conv1_col, pivots_col, cloud_col, dt;
                         cell_area = cell_area,
                         f_buf = f_col,
-                        amu_buf = amu_col, amd_buf = amd_col)
+                        amu_buf = amu_col, amd_buf = amd_col,
+                        carry = _tm5_carry_column(ledger_carry, c_global))
 end
 
 # CubedSphere panel: q_raw_panel :: (Nc+2Hp, Nc+2Hp, Nz, Nt),
@@ -115,7 +122,7 @@ end
 # and KA stream ordering keeps panel n+1 from starting until panel
 # n's writes are visible.
 @kernel function _tm5_cs_panel_column_kernel!(
-    q_raw_panel, @Const(air_mass_panel),
+    q_raw_panel, ledger_carry, @Const(air_mass_panel),
     @Const(entu_panel), @Const(detu_panel),
     @Const(entd_panel), @Const(detd_panel),
     @Const(cell_areas_panel),
@@ -149,7 +156,8 @@ end
                         conv1_col, pivots_col, cloud_col, dt;
                         cell_area = cell_area,
                         f_buf = f_col,
-                        amu_buf = amu_col, amd_buf = amd_col)
+                        amu_buf = amu_col, amd_buf = amd_col,
+                        carry = _tm5_carry_column(ledger_carry, c1, c2))
 end
 
 # ---------------------------------------------------------------------------
@@ -258,6 +266,7 @@ choice that must cover the forcing's active depth; batching requires neither.
 # helper.
 @kernel function _tm5_column_collab_kernel!(
     q_raw_arr,            # (Nx, Ny, Nz, Nt)
+    ledger_carry,         # (Nx, Ny, Nt) column ledger carry, or nothing
     @Const(air_mass_arr), # (Nx, Ny, Nz)
     @Const(entu), @Const(detu), @Const(entd), @Const(detd),
     @Const(cell_areas_y), # (Ny,) — LL contract
@@ -481,8 +490,11 @@ choice that must cover the forcing's active depth; batching requires neither.
         # back solve need no barriers between them or between tracers.
         if !no_conv
             for slot in t:_TM5_COLLAB_WG_SIZE:n_batch
-                _tm5_conserving_solve_tracer!(q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot,
-                                              bidiagonal_lower)
+                tracer = first_tracer + slot - 1
+                carry = _tm5_conserving_solve_tracer!(
+                    q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot, bidiagonal_lower,
+                    _load_ledger_carry(ledger_carry, FT, i, j, tracer))
+                _store_ledger_carry!(ledger_carry, carry, i, j, tracer)
             end
         end
         @synchronize
@@ -503,6 +515,7 @@ end
 # body is inlined verbatim instead of factored into a helper.
 @kernel function _tm5_faceindexed_column_collab_kernel!(
     q_raw_arr,            # (ncells, Nz, Nt)
+    ledger_carry,         # (ncells, Nt) column ledger carry, or nothing
     @Const(air_mass_arr), # (ncells, Nz)
     @Const(entu), @Const(detu), @Const(entd), @Const(detd),
     @Const(cell_areas),   # (ncells,)
@@ -720,8 +733,11 @@ end
         # back solve need no barriers between them or between tracers.
         if !no_conv
             for slot in t:_TM5_COLLAB_WG_SIZE:n_batch
-                _tm5_conserving_solve_tracer!(q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot,
-                                              bidiagonal_lower)
+                tracer = first_tracer + slot - 1
+                carry = _tm5_conserving_solve_tracer!(
+                    q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot, bidiagonal_lower,
+                    _load_ledger_carry(ledger_carry, FT, c, tracer))
+                _store_ledger_carry!(ledger_carry, carry, c, tracer)
             end
         end
         @synchronize
@@ -744,6 +760,7 @@ end
 # the body is inlined verbatim instead of factored into a helper.
 @kernel function _tm5_cs_panel_column_collab_kernel!(
     q_raw_arr,                          # (Nc+2Hp, Nc+2Hp, Nz, Nt)
+    ledger_carry,                       # (Nc, Nc, Nt) column ledger carry, or nothing
     @Const(air_mass_arr),               # (Nc+2Hp, Nc+2Hp, Nz)
     @Const(entu), @Const(detu),
     @Const(entd), @Const(detd),
@@ -961,8 +978,11 @@ end
         # back solve need no barriers between them or between tracers.
         if !no_conv
             for slot in t:_TM5_COLLAB_WG_SIZE:n_batch
-                _tm5_conserving_solve_tracer!(q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot,
-                                              bidiagonal_lower)
+                tracer = first_tracer + slot - 1
+                carry = _tm5_conserving_solve_tracer!(
+                    q_loc, A_loc, piv_loc, LMAX_CONV, k_lo, slot, bidiagonal_lower,
+                    _load_ledger_carry(ledger_carry, FT, c1, c2, tracer))
+                _store_ledger_carry!(ledger_carry, carry, c1, c2, tracer)
             end
         end
         @synchronize

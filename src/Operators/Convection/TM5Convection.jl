@@ -54,7 +54,9 @@ total, keeps a uniform mixing ratio, leaves columns and layers without
 convection unchanged bit for bit, and changes no cell by more than
 `|R'_s - R_s|`. If a super-layer's fine values share one sign, it equals the
 proportional split `r'_k = R'_s (r_k / R_s)` and is evaluated in that form, so
-non-negative tracers stay non-negative in floating point as well. Only
+non-negative tracers stay non-negative in floating point as well. A column
+mass ledger over the whole merged operation returns the split's rounding to
+the column (see the `ledger_carry` of [`TM5Workspace`](@ref)). Only
 super-layers holding values of both signs can increase the column's `Σ|r|`:
 by at most `2 Σ_{s mixed} |R'_s - R_s|` in total. The split is not linear in
 the tracer; merged solves have no adjoint (CS footprints require
@@ -247,11 +249,17 @@ end
 # `solve!` is a closure that takes the super-grid arrays
 # `(q_super, m_super, entu_super, detu_super, entd_super, detd_super)`
 # and mutates `q_super` in place.
+#
+# `ledger_carry` (the workspace carry, one per column and tracer) adds a
+# column mass ledger over the whole merged operation: the split rounds every
+# fine layer outside the coarse solve's own ledger, while in exact arithmetic
+# aggregation, solve and split leave the fine column total unchanged. The
+# operator always passes it; `nothing` leaves the split as computed.
 @inline function _tm5_merge_aggregate_solve_disaggregate!(
         q_raw, air_mass, entu, detu, entd, detd,
         k_shift::Int, L_padded::Int, L_super::Int, n_merge::Int,
         k_dim::Int, solve!::F;
-        Hp::Int = 0,
+        Hp::Int = 0, ledger_carry = nothing,
     ) where {F}
     # Build slicing tuples for the active vertical span.  The
     # `Nz`-axis is `k_dim` for q_raw and the same for forcings
@@ -293,7 +301,57 @@ end
 
     _split_merged_increment!(q_active, q_super, q_super_old, q_fine_old,
                              m_fine, m_super, k_dim, n_merge, L_super, Hp)
+    ledger_carry === nothing ||
+        _tm5_merged_column_ledger!(q_active, q_fine_old, ledger_carry, Hp)
     return nothing
+end
+
+# Fine-grid column ledger of the merged operation: compensated sums of each
+# interior column before (`q_fine_old`) and after (`q_active`), residual and
+# carry into the largest fine layer (`_tm5_restore_column_mass!`). As in the
+# unmerged solve, only the changed part of the column takes part: from its
+# first changed layer down. Layers above (passed through) stay bit-exact and
+# do not enter the leak bound, and an unchanged column (no convection) is not
+# ledgered and keeps its carry.
+function _tm5_merged_column_ledger!(q_active::AbstractArray{<:Any, 4}, q_fine_old, carry, Hp::Int)
+    N1, N2, _, Nt = size(q_active)
+    launch!(_tm5_merged_ledger_kernel!, get_backend(q_fine_old), (8, 8, 1),
+            (N1 - 2Hp, N2 - 2Hp, Nt), q_active, carry, q_fine_old, Hp; sync = false)
+    return nothing
+end
+
+function _tm5_merged_column_ledger!(q_active::AbstractArray{<:Any, 3}, q_fine_old, carry, Hp::Int)
+    launch!(_tm5_merged_ledger_rg_kernel!, get_backend(q_fine_old), (64, 1),
+            (size(q_active, 1), size(q_active, 3)), q_active, carry, q_fine_old; sync = false)
+    return nothing
+end
+
+@inline function _tm5_merged_column_ledger!(column, old, carry, cell...)
+    FT = eltype(column)
+    L = length(column)
+    lo = L + 1
+    @inbounds for k in 1:L
+        if !isequal(column[k], old[k])
+            lo = k
+            break
+        end
+    end
+    lo > L && return nothing
+    before = _neumaier_sum(k -> @inbounds(old[k]), lo:L, FT)
+    c = _tm5_restore_column_mass!(column, lo, L, 1, before, _load_ledger_carry(carry, FT, cell...))
+    _store_ledger_carry!(carry, c, cell...)
+    return nothing
+end
+
+@kernel function _tm5_merged_ledger_kernel!(q_active, carry, q_fine_old, Hp::Int)
+    i, j, t = @index(Global, NTuple)
+    _tm5_merged_column_ledger!(view(q_active, i + Hp, j + Hp, :, t),
+                               view(q_fine_old, i + Hp, j + Hp, :, t), carry, i, j, t)
+end
+
+@kernel function _tm5_merged_ledger_rg_kernel!(q_active, carry, q_fine_old)
+    c, t = @index(Global, NTuple)
+    _tm5_merged_column_ledger!(view(q_active, c, :, t), view(q_fine_old, c, :, t), carry, c, t)
 end
 
 # Sum-aggregate `arr` (already sliced to the active vertical span)
@@ -431,6 +489,7 @@ function apply_convection!(q_raw::AbstractArray{FT, 4},
     N_total = Nx * Ny
     backend = get_backend(q_raw)
     dt_ft   = FT(dt)
+    carry   = _tm5_ledger_carry!(workspace, (Nx, Ny, Nt))
     if _should_use_collab(op, Nz, Nt, FT, backend)
         L_super, L_padded, nm = _tm5_super_dims(op, Nz)
         k_shift = Nz - L_padded
@@ -438,7 +497,7 @@ function apply_convection!(q_raw::AbstractArray{FT, 4},
         if nm == 1
             # No vertical aggregation — run the existing kernel
             # directly on the fine grid.
-            kernel(q_raw, air_mass,
+            kernel(q_raw, carry, air_mass,
                    tm5.entu, tm5.detu, tm5.entd, tm5.detd,
                    cell_areas_y,
                    Int(Nx), Int(Nz), Int(Nt), FT(dt), Val(L_super);
@@ -449,17 +508,19 @@ function apply_convection!(q_raw::AbstractArray{FT, 4},
             # captures the kernel-launch parameters; `_tm5_merge_…`
             # builds the super arrays, invokes it, and redistributes
             # the new tracer mass back to the fine layers.
+            # The ledger carry covers the whole merged operation (the coarse
+            # solve keeps its own ledger without a carry).
             _tm5_merge_aggregate_solve_disaggregate!(
                 q_raw, air_mass,
                 tm5.entu, tm5.detu, tm5.entd, tm5.detd,
                 k_shift, L_padded, L_super, nm, 3,
                 function (qS, mS, eU, dU, eD, dD)
-                    kernel(qS, mS, eU, dU, eD, dD, cell_areas_y,
+                    kernel(qS, nothing, mS, eU, dU, eD, dD, cell_areas_y,
                            Int(Nx), Int(L_super), Int(Nt),
                            FT(dt), Val(L_super);
                            ndrange = _TM5_COLLAB_WG_SIZE * N_total,
                            workgroupsize = _TM5_COLLAB_WG_SIZE)
-                end)
+                end; ledger_carry = carry)
         end
     else
         kernel = _tm5_column_kernel!(backend)
@@ -470,7 +531,7 @@ function apply_convection!(q_raw::AbstractArray{FT, 4},
         B = size(workspace.conv1, 3)
         for tile_off in 0:B:(N_total - 1)
             n = min(B, N_total - tile_off)
-            kernel(q_raw, air_mass,
+            kernel(q_raw, carry, air_mass,
                    tm5.entu, tm5.detu, tm5.entd, tm5.detd,
                    cell_areas_y,
                    workspace.conv1, workspace.pivots, workspace.cloud_dims,
@@ -497,12 +558,13 @@ function apply_convection!(q_raw::AbstractArray{FT, 3},
     N_total, Nz, Nt = size(q_raw)
     backend = get_backend(q_raw)
     dt_ft   = FT(dt)
+    carry   = _tm5_ledger_carry!(workspace, (N_total, Nt))
     if _should_use_collab(op, Nz, Nt, FT, backend)
         L_super, L_padded, nm = _tm5_super_dims(op, Nz)
         k_shift = Nz - L_padded
         kernel = _tm5_faceindexed_column_collab_kernel!(backend, _TM5_COLLAB_WG_SIZE)
         if nm == 1
-            kernel(q_raw, air_mass,
+            kernel(q_raw, carry, air_mass,
                    tm5.entu, tm5.detu, tm5.entd, tm5.detd,
                    cell_areas,
                    Int(Nz), Int(Nt), FT(dt), Val(L_super);
@@ -516,12 +578,12 @@ function apply_convection!(q_raw::AbstractArray{FT, 3},
                 tm5.entu, tm5.detu, tm5.entd, tm5.detd,
                 k_shift, L_padded, L_super, nm, 2,
                 function (qS, mS, eU, dU, eD, dD)
-                    kernel(qS, mS, eU, dU, eD, dD, cell_areas,
+                    kernel(qS, nothing, mS, eU, dU, eD, dD, cell_areas,
                            Int(L_super), Int(Nt),
                            FT(dt), Val(L_super);
                            ndrange = _TM5_COLLAB_WG_SIZE * N_total,
                            workgroupsize = _TM5_COLLAB_WG_SIZE)
-                end)
+                end; ledger_carry = carry)
         end
     else
         kernel = _tm5_faceindexed_column_kernel!(backend)
@@ -529,7 +591,7 @@ function apply_convection!(q_raw::AbstractArray{FT, 3},
         B = size(workspace.conv1, 3)
         for tile_off in 0:B:(N_total - 1)
             n = min(B, N_total - tile_off)
-            kernel(q_raw, air_mass,
+            kernel(q_raw, carry, air_mass,
                    tm5.entu, tm5.detu, tm5.entd, tm5.detd,
                    cell_areas,
                    workspace.conv1, workspace.pivots, workspace.cloud_dims,
@@ -563,6 +625,7 @@ function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
     # construction, so we read them off panel 1.
     Nz = size(air_mass[1], 3)
     Nt = size(q_raw[1], 4)
+    carry = _tm5_ledger_carry!(workspace, (Nc, Nc, Nt))
     if _should_use_collab(op, Nz, Nt, FT, backend)
         L_super, L_padded, nm = _tm5_super_dims(op, Nz)
         k_shift = Nz - L_padded
@@ -573,7 +636,7 @@ function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
         # are passed individually.
         for p in 1:6
             if nm == 1
-                kernel(q_raw[p], air_mass[p],
+                kernel(q_raw[p], carry[p], air_mass[p],
                        tm5.entu[p], tm5.detu[p], tm5.entd[p], tm5.detd[p],
                        cell_areas[p],
                        Int(Hp), Int(Nc), Int(Nz), Int(Nt), FT(dt), Val(L_super);
@@ -593,13 +656,13 @@ function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
                     tm5.entu[p], tm5.detu[p], tm5.entd[p], tm5.detd[p],
                     k_shift, L_padded, L_super, nm, 3,
                     function (qS, mS, eU, dU, eD, dD)
-                        kernel(qS, mS, eU, dU, eD, dD, cell_areas[p],
+                        kernel(qS, nothing, mS, eU, dU, eD, dD, cell_areas[p],
                                Int(Hp), Int(Nc), Int(L_super), Int(Nt),
                                FT(dt), Val(L_super);
                                ndrange = _TM5_COLLAB_WG_SIZE * N_total,
                                workgroupsize = _TM5_COLLAB_WG_SIZE)
                     end;
-                    Hp = Int(Hp))
+                    Hp = Int(Hp), ledger_carry = carry[p])
             end
         end
     else
@@ -614,7 +677,7 @@ function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
         for p in 1:6
             for tile_off in 0:B:(N_total - 1)
                 n = min(B, N_total - tile_off)
-                kernel(q_raw[p], air_mass[p],
+                kernel(q_raw[p], carry[p], air_mass[p],
                        tm5.entu[p], tm5.detu[p], tm5.entd[p], tm5.detd[p],
                        cell_areas[p],
                        workspace.conv1, workspace.pivots,

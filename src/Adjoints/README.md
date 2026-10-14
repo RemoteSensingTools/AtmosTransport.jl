@@ -106,8 +106,13 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
   are frozen. Kernel tests check `⟨y, L·x⟩ = ⟨Lᵀ·y, x⟩` to rounding error.
 - The forward replays must match production: CMFMC replay uses the
   production `_cmfmc_cs_panel_column_kernel!`, and TM5 column solves are
-  checked bit-for-bit. The Lin-Rood vertical sweep is `scheme.vertical`
-  (upwind or the FV3 profile) through `_sweep_z_panels!`, as in production.
+  checked bit-for-bit. Forward replays keep no column-ledger carry: TM5,
+  CMFMC and Dkg solves start from a zero carry, so each replayed solve is a
+  function of the recorded state alone (the production solve with a zero
+  carry, not a multi-step production run's accumulated one), and
+  checkpointed replays reproduce the recorded states exactly. The Lin-Rood
+  vertical sweep is `scheme.vertical` (upwind or the FV3 profile) through
+  `_sweep_z_panels!`, as in production.
   The FV3 reverse replays the forward profile functions themselves, on
   `_LinearForm` numbers, so its branches are the forward's.
 - A sweep record holds the state entering the sweep: the reverse

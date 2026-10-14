@@ -206,9 +206,12 @@ end
 
 @testset "CMFMC adjoint replay equals the production forward" begin
     # The forward the adjoint path replays is the production operator: same
-    # kernel, substeps, detrainment (DTRAIN, or derived from CMFMC without it)
-    # and compensated sums, so the replayed trajectory is the run's. A deep
-    # sub-cloud layer with uneven air masses exercises the compensated
+    # kernel, substeps, detrainment (DTRAIN, or derived from CMFMC without it),
+    # compensated sums and column ledger. The replay keeps no ledger carry, so
+    # it equals a production call that starts from a zero carry and has one
+    # substep bit for bit; with several substeps production carries the sub-ulp
+    # remainder from one substep to the next and the two differ by rounding. A
+    # deep sub-cloud layer with uneven air masses exercises the compensated
     # sub-cloud mean.
     for FT in (Float64, Float32), with_dtrain in (true, false)
         Nc, Hp, Nz = 4, 1, 24
@@ -235,5 +238,21 @@ end
                           CMFMCWorkspace(production; cell_metrics = cell_areas), grid)
         @test all(p -> replay[p] == dropdims(production[p]; dims = 4), 1:6)
         @test replay != rm                                     # convection did act
+
+        # Several substeps: the replay drops the carry between them, production
+        # keeps it; each cell differs by a few ulps of its column's largest cell.
+        replay = ntuple(p -> copy(rm[p]), 6)
+        ws_replay = CMFMCWorkspace(replay; cell_metrics = cell_areas)
+        _apply_cs_convection_forward!(replay, panels_m, forcing, CMFMCConvection(), FT(60_000),
+                                      ws_replay, mesh)
+        @test ws_replay.cached_n_sub[] > 1
+        production = ntuple(p -> reshape(copy(rm[p]), N, N, Nz, 1), 6)
+        apply_convection!(production, panels_m, forcing, CMFMCConvection(), FT(60_000),
+                          CMFMCWorkspace(production; cell_metrics = cell_areas), grid)
+        @test all(1:6) do p
+            gap = abs.(replay[p] .- dropdims(production[p]; dims = 4))
+            column_max = maximum(abs, rm[p]; dims = 3)
+            all(gap .<= 4 * ws_replay.cached_n_sub[] .* eps.(column_max))
+        end
     end
 end

@@ -32,7 +32,8 @@ using ...State: CellState, CubedSphereState,
                 DrySurfacePressure,
                 field_value, update_field!, panel_field, eachtracer, ntracers
 using ...MetDrivers: current_time
-using ...Architectures: _two_sum, _neumaier_add, _ledger_residual, launch!
+using ...Architectures: _two_sum, _neumaier_add, _ledger_residual, _ledger_deposit,
+                       _load_ledger_carry, _store_ledger_carry!, launch!
 using ...Parameters: VIRTUAL_TEMPERATURE_FACTOR, R_DRY_AIR, STANDARD_GRAVITY,
                      HYDROSTATIC_REFERENCE_TEMPERATURE
 import ..apply!

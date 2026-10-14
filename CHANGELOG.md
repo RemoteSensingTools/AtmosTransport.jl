@@ -1,5 +1,52 @@
 # Release notes
 
+## Unreleased
+
+### Numerical changes
+
+- **Column mass ledger carry** (OF-110). The `Float32` column mass ledgers of
+  TM5 convection (and `cmfmc_matrix`, which uses the TM5 solve) and of `dkg`
+  diffusion (and so of GEOS-Chem non-local VDIFF) add each column's rounding
+  residual to its largest cell, where the part below the cell's spacing was
+  lost, with one sign for tracers peaked at the surface: ERA5 C90 L117 fossil
+  CO₂ lost 8.1e4 kg, 2.5e-9 of its burden, in one day of `dkg` diffusion.
+  That part, about half an ulp at most, is now kept as a per-column,
+  per-tracer carry in the operator workspace and added with the column's next
+  residual. The same day's change is +57 kg instead, and with all operators
+  fossil CO₂ loses 1.1e-10 instead of 2.7e-9 of its burden. Cells are still
+  rounded once per solve, so runs with TM5 convection or `dkg` diffusion
+  change at the rounding level (golden outputs of such runs change). With
+  level merging (`n_merge > 1`) the ledger covers the whole fine-grid
+  operation, including the split. The carry is not written to restarts (a
+  restart drops about half an ulp per column, once), and adjoint forward
+  replays keep none, so replays still reproduce recorded states bit for bit.
+- **CMFMC column mass ledger** (OF-111). CMFMC convection's explicit update
+  conserves column mass by construction but rounds each layer's new mass when
+  writing it in `Float32`, and the lost sub-ulp changes had one sign: in one
+  day of MERRA-2 C90 L72 convection SF₆ gained 1.3e-9 and background CO₂
+  2.5e-9 of their burdens. A compensated column ledger with the same
+  persistent carry now returns them on lat-lon, reduced-Gaussian and
+  cubed-sphere grids (and in the adjoint's forward replay, without a carry):
+  the same day changes SF₆ by −5.5e-12. The OF-110 carry also removes the gain
+  of GEOS-Chem non-local VDIFF (SF₆ +4.5e-9 → −5.3e-12 per day); with all
+  operators the day's SF₆ residual falls from +3.8e-9 to −6.6e-10 of the
+  burden, the advection level. Columns with a flux through the model top or a
+  layer without air, and the clamped variant, are not ledgered. Runs with
+  CMFMC convection change at the rounding level.
+- New internal state: `TM5Workspace.ledger_carry` and
+  `CMFMCWorkspace.ledger_carry` (sized by the first `apply!`) and
+  `DiffusionWorkspace.ledger_carry`. The cubed-sphere
+  `apply_vertical_diffusion_vmr!` takes `tracer` for single-tracer panel
+  tuples (used by the per-tracer Lin–Rood path); TM5, CMFMC and `dkg` kernels
+  take the carry array as an argument. Packed cubed-sphere `dkg` diffusion now
+  throws a `DimensionMismatch` unless the workspace was built for exactly the
+  state's number of tracers (`DiffusionWorkspace(state)` or
+  `DiffusionWorkspace(air_mass, Hp, Nt)`); before, the tracer count of the
+  workspace was not checked on this path.
+- The ledgers rely on IEEE arithmetic without fast-math reassociation (which
+  would break `TwoSum`). They are tested on CPU and CUDA; the Metal checks
+  (`test/diagnostic/test_metal_kernels.jl`) have not been run yet.
+
 ## 0.5.0 — 2026-10-13
 
 This is a breaking release. It changes numerical results in preprocessing and
