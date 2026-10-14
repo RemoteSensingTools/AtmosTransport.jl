@@ -1,0 +1,67 @@
+<h1>Maps</h1>
+<p class="lede">Monthly-mean maps of each band of the air mass: each v0.5 run minus GCHP and GCHP itself<span data-runs="era5 merra2">,
+and the difference between the two v0.5 runs</span>. Hover or tap a map for values.</p>
+
+<div class="controls" id="controls"></div>
+
+<section class="card">
+  <div class="card-head"><h2 id="t1"></h2></div>
+  <p class="sub" id="s1"></p>
+  <div id="grid"></div>
+  <p class="note"><b>How to read:</b> the difference maps share one colour scale (±98th percentile of the run − GCHP
+  maps), so equal colours mean equal differences; the GCHP map uses its own scale (2nd–98th percentile). The fields are
+  monthly means of the 3-hourly snapshots on the C90 grid, averaged onto 2° cells for display.<span data-runs="era5 merra2">
+  ERA5 − MERRA-2 is the spread between two v0.5 runs that differ only in their meteorology and its physics (vertical grid,
+  convection, boundary-layer mixing): a lower bound on the transport uncertainty of this model.</span></p>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2 id="t2"></h2><span class="spacer"></span><span class="tools" id="view-ctl"></span></div>
+  <p class="sub" id="s2"></p>
+  <div class="plot" id="lat"></div>
+</section>
+
+<script>
+SITE.ready(async () => {
+  const S = SITE, m = S.meta();
+  const st = S.state({tracer: "co2", band: "column", month: "period", view: "diff", hide: ""},
+                     {tracer: S.keys(m.tracers), band: S.keys(m.bands), view: ["abs", "diff"]});
+  const hidden = new Set(st.hide ? st.hide.split(",") : []);
+  if (st.month !== "period" && !m.months.includes(st.month)) st.month = "period";
+  if (!m.common.length && st.month === "period") st.month = m.months[m.months.length - 1];
+  const runs = S.mainRuns().filter(S.hasMonths);
+  const ctl = document.getElementById("controls");
+  ctl.append(
+    S.control("Tracer", S.seg(m.tracers.map(t => ({key: t.key, name: t.name, title: t.long})), st.tracer, k => { st.tracer = k; draw(); })),
+    S.control("Band", S.seg(m.bands.map(b => ({key: b.key, name: b.name, title: b.long})), st.band, k => { st.band = k; draw(); })),
+    S.control("Month", S.monthSelect(m.months, st.month, k => { st.month = k; draw(); }, m.common.length > 0)));
+  document.getElementById("view-ctl").append(S.seg([{key: "diff", name: "Run − GCHP"}, {key: "abs", name: "Values"}], st.view, k => { st.view = k; lat(); }));
+  document.getElementById("view-ctl").prepend(S.legend([m.gc, ...runs], hidden, () => lat()));
+  let F = null;
+  const period = () => `${S.monthLabel(m.common[0])} – ${S.monthLabel(m.common[m.common.length - 1])}`;
+  function lat() {
+    st.hide = [...hidden].join(",");
+    S.saveState(st);
+    if (!F) { S.emptyNote(document.getElementById("lat"), "No data for this month."); return; }
+    const t = S.tracer(st.tracer), b = S.band(st.band);
+    document.getElementById("t2").innerHTML = `Zonal mean: ${t.name}, ${b.key === "column" ? "column" : b.name}`;
+    document.getElementById("s2").innerHTML = (st.view === "diff" ? "Each run minus GCHP" : "Values") + ` (${t.unit}), mean over longitude of the maps above.`;
+    S.latitudeChart(document.getElementById("lat"), F, st.tracer, st.view, hidden);
+  }
+  const next = S.gate();
+  async function draw() {
+    const current = next();
+    S.saveState(st);
+    const t = S.tracer(st.tracer), b = S.band(st.band);
+    document.getElementById("t1").innerHTML = `${t.name}, ${b.key === "column" ? "column mean" : b.name}, ${st.month === "period" ? "period mean" : S.monthLabel(st.month)}`;
+    document.getElementById("s1").innerHTML = `${b.long[0].toUpperCase() + b.long.slice(1)}; ${t.unit}. ` +
+      (st.month === "period" ? S.periodText() : "");
+    const got = await S.mapGrid(document.getElementById("grid"), st.tracer, st.band, st.month, current);
+    if (got === undefined) return;          // superseded by a newer selection
+    F = got;
+    lat();
+  }
+  await S.load("coast", "coast.js");
+  draw();
+});
+</script>

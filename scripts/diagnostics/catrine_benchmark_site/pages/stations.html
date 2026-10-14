@@ -1,0 +1,273 @@
+<h1>Stations</h1>
+<p class="lede">Time series at NOAA sites: each model sampled in the C90 cell nearest to the site, at the site's
+height, with NOAA CO<sub>2</sub> observations for orientation. Hover or tap for values; drag across the chart to zoom in time (both panels follow; on a touch screen, press <i>Zoom</i> first).</p>
+
+<div class="controls" id="controls"></div>
+
+<section class="card">
+  <div class="card-head"><h2 id="t1"></h2><span class="spacer"></span><span class="tools" id="lower-ctl"></span></div>
+  <p class="sub" id="s1"></p>
+  <div class="plot" id="p1"></div>
+  <p class="note" id="n1"></p>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2 id="t2"></h2></div>
+  <p class="sub" id="s2"></p>
+  <div class="table-wrap" id="stats"></div>
+</section>
+
+<section class="card" id="obs-card">
+  <div class="card-head"><h2>All sites against NOAA observations: CO<sub>2</sub></h2></div>
+  <p class="sub" id="obs-sub"></p>
+  <div class="plot" id="p-crmse"></div>
+  <div class="table-wrap" id="obs-stats"></div>
+  <p class="note" id="obs-gaps"></p>
+  <p class="note"><b>How to read:</b> the protocol CO<sub>2</sub> is not real CO<sub>2</sub> (protocol initial state and fluxes), so a bias
+  against the observations is expected for every model; the centred RMSE (bias removed), the correlation r and the seasonal
+  amplitude are the meaningful skill measures, and GCHP is scored exactly like the v0.5 runs. In situ sites: daily means of the
+  observations (hours with obs_flag = 1) against each model's daily mean at the site on the same days; flask sites: each model's
+  3-hourly series interpolated linearly in time to every sample. Seasonal amplitude: peak to trough of the linearly detrended
+  monthly means of the matched values (at least 12 months).</p>
+</section>
+
+<section class="card prose">
+  <div class="card-head"><h2>Sites and sampling</h2></div>
+  <div class="table-wrap" id="sites"></div>
+  <p class="note">Each model is sampled in the cubed-sphere cell whose centre is nearest to the site (C90 cells are about 100 km
+  across). <b>Lowest layer</b>: the model's lowest layer (surface sites). <b>Altitude</b>: GCHP's layer heights
+  (<code>Height_asl</code>) and dry pressures (<code>Met_PMIDDRY</code>) at each time give the dry pressure at the site's
+  height; GCHP is interpolated in height, each AtmosTransport run in log dry pressure on its own column (its dry pressure follows
+  from its air mass per area). Mauna Loa (MLO) is sampled at its altitude, the Park Falls tall tower (LEF) at the intake height
+  above the model surface. A mountain or coastal site sees air that a 100 km cell averages away (local upslope flow, sea
+  breezes, nearby sources), so single-site differences carry a representativeness error for every model.</p>
+</section>
+
+<section class="card prose" id="obs-sources">
+  <details class="more" style="margin:0">
+    <summary>Observations: sources, selection and citations</summary>
+    <div id="obs-text"></div>
+  </details>
+</section>
+
+<script>
+SITE.ready(async () => {
+  const S = SITE, m = S.meta(), el = S.el, H = x => S.html(x);
+  const ST = await S.load("stations", "stations.js");
+  const sites = ST.sites, codes = sites.map(s => s.code);
+  const runs = S.mainRuns().filter(S.hasMonths);
+  const st = S.state({site: codes[0], tracer: "co2", res: "daily", lower: "gchp", hide: ""},
+                     {site: codes, tracer: S.keys(m.tracers), res: ["daily", "3h"], lower: ["gchp", "obs"]});
+  const hidden = new Set(st.hide ? st.hide.split(",") : []);
+  const OBS = {key: "obs", name: "NOAA observations", color: "#7a7974", dash: "solid", title: "CO2 only"};
+  const site = () => sites.find(s => s.code === st.site);
+  const ctl = document.getElementById("controls");
+  const tracerSeg = S.seg(m.tracers.map(t => ({key: t.key, name: t.name, title: t.long})), st.tracer, k => { st.tracer = k; draw(); table(); });
+  const siteSeg = S.seg(sites.map(s => ({key: s.code, name: s.code, title: s.name})), st.site, k => { st.site = k; draw(); }, "site");
+  ctl.append(
+    S.control("Site", siteSeg),
+    S.control("Tracer", tracerSeg),
+    S.control("Show", S.seg([{key: "daily", name: "Daily mean"}, {key: "3h", name: "3-hourly"}], st.res, k => { st.res = k; draw(); })),
+    S.legend([m.gc, ...runs].concat(ST.obspack.available ? [OBS] : []), hidden, () => draw()));
+
+  const lowerSeg = S.seg([{key: "gchp", name: "Lower: run − GCHP"}, {key: "obs", name: "Lower: model − observations"}], st.lower,
+    k => { st.lower = k; draw(); }, "lower panel");
+  document.getElementById("lower-ctl").append(lowerSeg);
+
+  // ---- time axes
+  const times = P => { const t0 = Date.parse(P.t0 + ":00Z"), out = new Array(P.n);
+    for (let k = 0; k < P.n; k++) out[k] = new Date(t0 + k * 3 * 3600e3).toISOString().slice(0, 16).replace("T", " "); return out; };
+  const daily = (v, P) => {         // means of complete-enough days (at least 4 of 8 samples)
+    const x = [], y = [], t0 = Date.parse(P.t0 + ":00Z");
+    for (let d = 0; d + 8 <= P.n; d += 8) {
+      let s = 0, c = 0;
+      for (let k = d; k < d + 8; k++) if (isFinite(v[k])) { s += v[k]; c++; }
+      x.push(new Date(t0 + (d + 4) * 3 * 3600e3).toISOString().slice(0, 16).replace("T", " "));
+      y.push(c >= 4 ? s / c : null);
+    }
+    return [x, y];
+  };
+  const clean = v => Array.from(v, x => isFinite(x) ? x : null);
+  const placeText = s => s.mode === "lowest" ? "in the lowest model layer"
+    : s.mode === "asl" ? `at ${Math.round(s.target_asl)} m above sea level (≈ ${Math.round(s.pstar_median)} hPa dry pressure)`
+    : `${Math.round(s.intake)} m above the model surface (≈ ${Math.round(s.pstar_median)} hPa)`;
+
+  async function draw() {
+    st.hide = [...hidden].join(",");
+    S.saveState(st);
+    siteSeg.set(st.site);
+    const s = site(), t = S.tracer(st.tracer);
+    const P = await S.load(`station|${s.code}`, `stations/${s.code}.js`);
+    const obsMode = st.lower === "obs" && t.key === "co2" && P.obs;
+    lowerSeg.style.display = t.key === "co2" && P.obs ? "" : "none";
+    const d = t.digits + 1;
+    document.getElementById("t1").innerHTML = `${s.code} · ${s.name}: ${t.name}`;
+    document.getElementById("s1").innerHTML = `${st.res === "daily" ? "Daily means" : "3-hourly instantaneous values"} (${t.unit}), sampled ` +
+      `${placeText(s)} of the C90 cell centred ${Math.abs(s.cell_lat).toFixed(2)}° ${s.cell_lat >= 0 ? "N" : "S"}, ` +
+      `${Math.abs(s.cell_lon).toFixed(2)}° ${s.cell_lon >= 0 ? "E" : "W"}, ${Math.round(s.dist_km)} km from the site. ${obsMode ? "Lower panel: each model minus the observations, matched in time (see the table below)." : "Lower panel: each run minus GCHP."}`;
+    const T = times(P), series = {};
+    for (const k of ["gc", ...runs.map(r => r.key)]) if (P.series[k]) series[k] = S.decode(P.series[k][t.key]);
+    const xy = v => st.res === "daily" ? daily(v, P) : [T, clean(v)];
+    const upper = [], lower = [], w = st.res === "daily" ? 1.8 : 1.1;
+    for (const r of runs) {
+      if (hidden.has(r.key) || !series[r.key]) continue;
+      const [x, y] = xy(series[r.key]);
+      upper.push(S.series(r, x, y, {width: w}));
+      if (obsMode) continue;
+      const diff = series[r.key].map((v, i) => v - series.gc[i]);
+      const [xd, yd] = xy(diff);
+      lower.push(S.series(r, xd, yd, {width: st.res === "daily" ? 1.6 : 1}));
+    }
+    if (obsMode) {          // model minus observations, matched as in the statistics table
+      for (const ds of [m.gc, ...runs]) {
+        if (hidden.has(ds.key) || !series[ds.key]) continue;
+        const [mx, my] = matchObs(series[ds.key], P);
+        const flask = P.obs.kind === "flask";
+        lower.push(S.series(ds, mx, my, {line: !flask, markers: flask, size: 5, width: 1.3, label: `${S.runName(ds)} − obs`,
+                                         fmt: v => `${S.fmt(v, 2, true)} ppm`}));
+      }
+    }
+    if (!hidden.has("gc") && series.gc) {
+      const [x, y] = xy(series.gc);
+      upper.push(S.series(m.gc, x, y, {width: w}));
+    }
+    const obs = P.obs;
+    if (t.key === "co2" && obs && !hidden.has("obs")) {
+      const flask = obs.kind === "flask";
+      upper.push(S.series(OBS, flask ? obs.t : obs.t.map(x => x + " 12:00"), obs.v, {line: false, markers: flask ? "open" : true,
+        size: flask ? 7 : 4, label: flask ? "NOAA flask" : "NOAA in situ (daily mean)", fmt: v => `${S.fmt(v, 2)} ppm`,
+        whenFmt: flask ? "%-d %b %H:%M" : "%-d %b"}));
+    }
+    S.chart(document.getElementById("p1"), {height: 520, x: S.timeAxis(st.res === "daily" ? "day" : "3h"),
+      panels: [{y: {label: t.unit, fmt: S.valFmt(d, t.unit)}, series: upper, weight: 0.7},
+               {name: obsMode ? "model − observations" : "run − GCHP", series: lower, weight: 0.3,
+                y: {label: obsMode ? "model − obs" : "run − GCHP", zero: "ref", zeroColor: obsMode ? OBS.color : undefined,
+                    fmt: obsMode ? v => `${S.fmt(v, 2, true)} ppm` : S.valFmt(d, t.unit, true)}}]});
+    document.getElementById("n1").innerHTML = t.key === "co2"
+      ? (obs ? `<b>Observations for orientation only:</b> the CATRINE protocol CO<sub>2</sub> is driven by the protocol's fluxes and initial state, so an offset or a seasonal difference to real CO<sub>2</sub> is expected for every model, GCHP included; the comparison of interest here is model against model. ` +
+               `${obs.kind === "flask" ? "NOAA flask samples (lab 1, representative selection)" : "NOAA in situ: daily mean of the hourly values the provider marks representative of large-scale air (obs_flag = 1)"}; sources below.`
+             : "No CC0 NOAA record of this site is available locally; observations are not shown.")
+      : "Observations are shown for CO<sub>2</sub> only (the ObsPack product holds CO<sub>2</sub>).";
+    document.getElementById("t2").innerHTML = `All sites against GCHP: ${t.name}`;
+    const per = ST.obs_period || [];
+    document.getElementById("s2").textContent = `Daily means of the 3-hourly samples against GCHP's at the same site and times, over ` +
+      `${per.length ? `${S.monthLabel(per[0])} – ${S.monthLabel(per[per.length - 1])}` : "the compared months"} (the months every run on the site has compared; ` +
+      `the same days for every run). Select a row to show that site.`;
+  }
+
+  // Model values matched to the observations: daily means on the observed days (in situ), or the 3-hourly series
+  // interpolated linearly to each flask sample time; returns [x, model − obs].
+  function matchObs(v, P) {
+    const o = P.obs, t0 = Date.parse(P.t0 + ":00Z"), x = [], y = [];
+    if (o.kind === "insitu") {
+      for (let k = 0; k < o.t.length; k++) {
+        const d = Math.round((Date.parse(o.t[k] + "T00:00:00Z") - t0) / 86400e3);
+        if (d < 0 || 8 * d + 8 > P.n || o.v[k] === null) continue;
+        let s = 0, c = 0;
+        for (let j = 8 * d; j < 8 * d + 8; j++) if (isFinite(v[j])) { s += v[j]; c++; }
+        if (c >= 4) {
+          if (x.length && Date.parse(o.t[k]) - Date.parse(x[x.length - 1].slice(0, 10)) > 1.5 * 86400e3) { x.push(null); y.push(null); }   // gap
+          x.push(o.t[k] + " 12:00"); y.push(s / c - o.v[k]);
+        }
+      }
+    } else {
+      for (let k = 0; k < o.t.length; k++) {
+        const pos = (Date.parse(o.t[k].replace(" ", "T") + ":00Z") - t0) / 10800e3, j = Math.floor(pos), w = pos - j;
+        if (j < 0 || j + 1 >= P.n || !isFinite(v[j]) || !isFinite(v[j + 1]) || o.v[k] === null) continue;
+        x.push(o.t[k]); y.push((1 - w) * v[j] + w * v[j + 1] - o.v[k]);
+      }
+    }
+    return [x, y];
+  }
+
+  function obsTable() {
+    const card = document.getElementById("obs-card");
+    const OS = ST.obs_stats || {}, per = ST.obs_period || [];
+    if (!ST.obspack.available || !Object.keys(OS).length) { card.remove(); return; }
+    const models = [m.gc, ...runs];
+    document.getElementById("obs-sub").textContent = `Matched in time over the months every run on the site has compared, without the ` +
+      `December 2021 spin-up: ${S.monthLabel(per[0])} – ${S.monthLabel(per[per.length - 1])} (${per.length} months), the same days for every model. ` +
+      `Units: ppm. Chart: centred RMSE per site.`;
+    const withObs = sites.filter(s => OS[s.code]);
+    // centred RMSE per site and model (grouped bars)
+    S.bars(document.getElementById("p-crmse"), {height: 240, categories: withObs.map(s => s.code),
+      series: models.map(ds => ({key: ds.key, name: ds.name, color: ds.color, values: withObs.map(s => (OS[s.code][ds.key] || {}).crmse ?? null),
+        extra: withObs.map(s => { const x = OS[s.code][ds.key] || {}; return x.n ? `n ${x.n}, r ${S.fmt(x.r, 3)}` : ""; })})),
+      y: {label: "centred RMSE (ppm)", fmt: v => `${S.fmt(v, 3)} ppm`}});
+    const f = (x, d, sign) => S.fmt(x, d, sign);
+    const head = el("thead", {},
+      el("tr", {class: "group"}, el("th", {class: "l"}), el("th", {colspan: 2, class: "l"}, el("span", {class: "key", style: `border-top-color:${OBS.color}`}), "observations"),
+        models.map(ds => el("th", {colspan: 5, class: "sep l"}, el("span", {class: "key", style: `border-top-color:${ds.color}`}), ds.name))),
+      el("tr", {}, el("th", {class: "l"}, "site"), el("th", {}, "n"), el("th", {title: "seasonal amplitude of the observations"}, "amplitude"),
+        models.map(() => [el("th", {class: "sep", title: "model − observations"}, "bias"), el("th", {}, "RMSE"), el("th", {title: "bias-removed RMSE"}, "cRMSE"),
+                          el("th", {}, "r"), el("th", {title: "seasonal amplitude of the model"}, "amplitude")])));
+    const rows = withObs.map(s => {
+      const o = OS[s.code], any = models.map(ds => o[ds.key]).find(Boolean) || {};
+      const tr = el("tr", {style: "cursor:pointer", title: `show ${s.name} with model − observations`},
+        el("td", {class: "l"}, el("b", {}, s.code), " ", el("span", {style: "color:var(--ink2)"}, s.obs.kind === "flask" ? "flask" : "in situ")),
+        el("td", {}, any.n ?? "–"), el("td", {}, f(any.amp_obs, 2)),
+        models.map(ds => { const x = o[ds.key];
+          return x ? [el("td", {class: "sep"}, f(x.bias, 2, true)), el("td", {}, f(x.rmse, 2)), el("td", {}, el("b", {}, f(x.crmse, 2))), el("td", {}, f(x.r, 3)), el("td", {}, f(x.amp_model, 2))]
+                   : [el("td", {class: "sep dim"}, "–"), el("td", {class: "dim"}, "–"), el("td", {class: "dim"}, "–"), el("td", {class: "dim"}, "–"), el("td", {class: "dim"}, "–")]; }));
+      tr.addEventListener("click", () => { st.site = s.code; st.tracer = "co2"; st.lower = "obs"; tracerSeg.set("co2"); lowerSeg.set("obs"); draw(); table(); window.scrollTo({top: 0, behavior: "smooth"}); });
+      return tr;
+    });
+    const box = document.getElementById("obs-stats");
+    box.innerHTML = "";
+    box.append(el("table", {class: "data"}, head, el("tbody", {}, rows)));
+    const noAmp = withObs.filter(s => { const x = models.map(ds => OS[s.code][ds.key]).find(Boolean); return x && x.amp_obs === undefined; }).map(s => s.code);
+    document.getElementById("obs-gaps").innerHTML = (noAmp.length ? `Amplitude “–”: fewer than 12 months with matched values in the period (${noAmp.join(", ")}). ` : "") +
+      (noAmp.includes("MLO") ? "MLO has no in situ record from December 2022 to June 2023 in this ObsPack: access to the observatory was cut by the November 2022 Mauna Loa eruption. " : "") +
+      "Click a row to show that site with each model minus the observations.";
+  }
+
+  function table() {
+    const t = S.tracer(st.tracer);
+    const head = el("thead", {}, el("tr", {class: "group"}, el("th", {class: "l"}), el("th", {class: "l"}, el("span", {class: "key", style: `border-top-color:${m.gc.color}`}), "GCHP"),
+        runs.map(r => el("th", {colspan: 3, class: "sep l"}, el("span", {class: "key", style: `border-top-color:${r.color}`}), r.name))),
+      el("tr", {}, el("th", {class: "l"}, "site"), el("th", {}, H(`mean (${t.unit})`)), runs.map(() => [el("th", {class: "sep"}, "bias"), el("th", {}, "RMSE"), el("th", {}, "r")])));
+    const rows = sites.map(s => {
+      const g = runs.map(r => ST.stats[`${s.code}|${r.key}|${t.key}`]).find(Boolean) || {};
+      const tr = el("tr", {style: "cursor:pointer", title: `show ${s.name}`}, el("td", {class: "l"}, el("b", {}, s.code), " ", el("span", {style: "color:var(--ink2)"}, s.name)),
+        el("td", {}, S.fmt(g.gc_mean, t.digits)),
+        runs.map(r => { const x = ST.stats[`${s.code}|${r.key}|${t.key}`];
+          return x ? [el("td", {class: "sep"}, S.fmt(x.bias, t.digits, true)), el("td", {}, S.fmt(x.rmse, t.digits)), el("td", {}, S.fmt(x.r, 4))]
+                   : [el("td", {class: "sep dim"}, "–"), el("td", {class: "dim"}, "–"), el("td", {class: "dim"}, "–")]; }));
+      tr.addEventListener("click", () => { st.site = s.code; draw(); window.scrollTo({top: 0, behavior: "smooth"}); });
+      return tr;
+    });
+    const box = document.getElementById("stats");
+    box.innerHTML = "";
+    box.append(el("table", {class: "data"}, head, el("tbody", {}, rows)));
+  }
+
+  // ---- static tables: sites, observation sources
+  const deg = (v, p, n) => `${Math.abs(v).toFixed(p)}° ${v >= 0 ? n[0] : n[1]}`;
+  document.getElementById("sites").append(el("table", {class: "data sites"},
+    el("thead", {}, el("tr", {}, ["site", "name", "latitude", "longitude", "elevation (m asl)", "intake (m agl)", "sampled at", "C90 cell (face, j, i)", "cell centre, distance", "model surface (m)"]
+      .map((h, i) => el("th", {class: i < 2 || i === 6 ? "l" : ""}, h)))),
+    el("tbody", {}, sites.map(s => el("tr", {}, el("td", {class: "l"}, el("b", {}, s.code)), el("td", {class: "l"}, s.name),
+      el("td", {}, deg(s.lat, 3, "NS")), el("td", {}, deg(s.lon, 3, "EW")), el("td", {}, Math.round(s.elev)),
+      el("td", {}, s.intake === null ? "–" : Math.round(s.intake)), el("td", {class: "l"}, s.mode === "lowest" ? "lowest layer" : s.mode === "asl" ? "altitude (asl)" : "height above model surface"),
+      el("td", {}, `${s.cell[0] + 1}, ${s.cell[1] + 1}, ${s.cell[2] + 1}`), el("td", {}, `${deg(s.cell_lat, 2, "NS")}, ${deg(s.cell_lon, 2, "EW")}; ${Math.round(s.dist_km)} km`),
+      el("td", {}, Math.round(s.surface_m)))))));
+  const ot = document.getElementById("obs-text");
+  if (!ST.obspack.available) { ot.append(el("p", {}, "No ObsPack product was available when this site was built; observations are not shown.")); }
+  else {
+    ot.append(el("p", {}, H(`CO<sub>2</sub> observations from the NOAA ObsPack <b>GLOBALVIEWplus v10.1</b> records (${ST.obspack.product}), as distributed in the
+      OCO-2 MIP v5.0.1 observation package. Only datasets whose provider licence is CC0 (NOAA Global Monitoring Laboratory) are shown; site coordinates,
+      elevations and intake heights in the table above come from the same metadata. Product citation: Schuldt, K. N., Mund, J., et al. (2024),
+      Multi-laboratory compilation of atmospheric carbon dioxide data for the period 1957–2023; ${ST.obspack.product}; NOAA Global Monitoring Laboratory,
+      <a href="${ST.obspack.doi}">${ST.obspack.doi.replace("https://", "")}</a>. Please also see the
+      <a href="${ST.obspack.citation_url}">ObsPack citation and fair-use page</a>.`)));
+    const used = sites.filter(s => s.obs && s.obs.license_cc0);
+    ot.append(el("h3", {}, "Datasets shown"), el("ul", {}, used.map(s => el("li", {}, el("b", {}, `${s.code}: `), el("code", {}, s.obs.dataset),
+      ` (${s.obs.kind === "flask" ? "flask samples, provider's representative selection, obs_flag = 1" : "hourly in situ, all valid data; shown as daily means of the obs_flag = 1 hours"}). `,
+      ...s.obs.citations.map(c => el("span", {style: "display:block;color:var(--ink2);font-size:13px"}, c))))));
+    const skipped = ST.skipped.filter(x => !x.reason.startsWith("not selected"));
+    if (skipped.length) ot.append(el("h3", {}, "Not shown: provider licence not CC0, or none stated"),
+      el("p", {style: "font-size:13px;color:var(--ink2)"}, skipped.map(x => `${x.dataset} (${x.reason})`).join("; ")));
+  }
+  draw(); table(); obsTable();
+});
+</script>
