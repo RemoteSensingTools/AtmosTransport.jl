@@ -143,7 +143,7 @@ balanced correction. See the binary-format guide for the full schema.
 - [`writer_adapters.jl`](writer_adapters.jl) — typed LL/RG/CS writers, promote/quarantine, staged-size validation
 - [`driver.jl`](driver.jl) — `UnifiedPreprocessorDay`, default hooks, `run_unified_preprocessor_day!`
 - [`topology_dispatch.jl`](topology_dispatch.jl) — `preprocessor_pair_supported` fallback, `ensure_preprocessor_pair_supported`, fallback `process_day`
-- [`latlon_spectral.jl`](latlon_spectral.jl) — ERA5 spectral to LL `process_day`, `LatLonDeferredBinaryWriter`, LL hooks, TM5 LL regridding
+- [`latlon_spectral.jl`](latlon_spectral.jl) — ERA5 spectral to LL `process_day`, `LatLonDeferredBinaryWriter`, LL hooks
 - [`cubed_sphere_spectral.jl`](cubed_sphere_spectral.jl) — ERA5 spectral to CS `process_day` through an LL staging grid, CS hooks
 - [`cubed_sphere_regrid.jl`](cubed_sphere_regrid.jl) — `regrid_transport_binary`, `regrid_ll_binary_to_cs` (fixed substeps, own loop)
 - GEOS-IT/FP to CS, in include order:
@@ -194,5 +194,5 @@ In [`../../../test/core/`](../../../test/core/): `test_preprocessor_unified_driv
 `test_{ll_spectral,rg_preprocessor,cs_spectral}_unified_driver.jl`,
 `test_geos_cs_passthrough.jl`, `test_geos_omega_regularization.jl`,
 `test_ll_to_cs_regrid_script.jl`, `test_era5_n320_vertical_merge.jl`,
-`test_cs_binary_coarsener.jl`, `test_tm5_process_day.jl`. The full N320 and
+`test_cs_binary_coarsener.jl`. The full N320 and
 MERRA-2 day writers run only in [`../../../test/golden/`](../../../test/golden/).

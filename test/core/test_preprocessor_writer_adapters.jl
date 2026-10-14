@@ -49,7 +49,6 @@ end
         storage = _fill_ll_storage!(allocate_window_storage(1, FT), FT, Nx, Ny, Nz)
         merged = allocate_merge_workspace(grid, Nz, Nz, FT)
         settings = (include_qv = false,
-                    tm5_convection_enable = false,
                     include_surface = false)
         final = joinpath(tmp, "ll.bin")
         staging = Pre._open_preprocessing_staging(final)
@@ -90,8 +89,7 @@ end
         storage = _fill_ll_storage!(
             allocate_window_storage(1, FT), FT, Nx, Ny, Nz)
         merged = allocate_merge_workspace(grid, Nz, Nz, FT)
-        settings = (include_qv=false, tm5_convection_enable=false,
-                    include_surface=false)
+        settings = (include_qv=false, include_surface=false)
         final = joinpath(tmp, "preserved.bin")
         staging = Pre._open_preprocessing_staging(final)
         sentinel = Vector{UInt8}(codeunits("previous-valid-output"))
@@ -122,7 +120,6 @@ end
         storage = _fill_ll_storage!(allocate_window_storage(1, FT), FT, Nx, Ny, Nz)
         merged = allocate_merge_workspace(grid, Nz, Nz, FT)
         settings = (include_qv = false,
-                    tm5_convection_enable = false,
                     include_surface = false)
         staging = Pre._open_preprocessing_staging(joinpath(tmp, "ll.bin"))
         writer = LatLonBinaryWriter(staging, "{}", settings, merged, nothing,
@@ -271,7 +268,7 @@ end
                                       Dict{String, Any}("nlon" => Nx, "nlat" => Ny), FT)
         storage = _fill_ll_storage!(allocate_window_storage(1, FT), FT, Nx, Ny, Nz)
         merged = allocate_merge_workspace(grid, Nz, Nz, FT)
-        settings = (include_qv = false, tm5_convection_enable = false, include_surface = false)
+        settings = (include_qv = false, include_surface = false)
         final = joinpath(tmp, "ll.bin")
         staging = Pre._open_preprocessing_staging(final)
         writer = LatLonBinaryWriter(staging, "{}", settings, merged, nothing,

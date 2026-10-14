@@ -19,7 +19,8 @@ using ..Parameters: EARTH_RADIUS, STANDARD_GRAVITY,
                     GLOBAL_MEAN_DRY_SURFACE_PRESSURE,
                     DEFAULT_MET_INTERVAL_SECONDS, GMAO_CS_LONGITUDE_OFFSET_DEG,
                     REPLAY_TOLERANCE_FLOAT64, REPLAY_TOLERANCE_FLOAT32,
-                    TM5_CONVECTION_MASS_BASIS_KEY
+                    TM5_CONVECTION_MASS_BASIS_KEY, TM5_CONVECTION_SOURCE_KEY,
+                    TM5_EC2TM_CONVENTION_KEY, TM5_EC2TM_CONVENTION
 import ..source_revision
 
 include("AbstractMetDriver.jl")

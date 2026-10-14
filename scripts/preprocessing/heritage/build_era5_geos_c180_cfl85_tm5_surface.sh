@@ -21,6 +21,8 @@ END_DAY=${END_DAY:-04}
 STEPS_PER_WINDOW=${STEPS_PER_WINDOW:-8}
 FLOAT_TYPE=${FLOAT_TYPE:-Float32}
 
+# NOTE: this default config was deleted when the lat-lon physics-file TM5 route was
+# retired (#55); the script no longer runs unless LL_CFG points to a replacement.
 LL_CFG=${LL_CFG:-config/preprocessing/era5_ll720x361_cfl85_dec2021_f32_tm5_surface.toml}
 LL_DIR=${LL_DIR:-/home/cfranken/data/AtmosTransport/met/era5/ll720x361_v4/transport_binary_v2_cfl85_dec2021_f32_tm5_surface}
 CS_DIR=${CS_DIR:-/temp1/c180_era5_geosgrid_cfl85_tm5_surface_f32_steps${STEPS_PER_WINDOW}}

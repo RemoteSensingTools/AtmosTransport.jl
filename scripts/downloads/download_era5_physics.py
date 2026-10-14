@@ -448,24 +448,6 @@ def download_thermodynamics(client, date_str, resolution, outdir, keep_grib):
         os.remove(grib_path)
 
 
-def output_group_available(outdir, dates, resolution, convection):
-    """Return whether every requested day has a valid output for one group."""
-    if convection:
-        prefix = "era5_convection_"
-        canonical_names = list(CONVECTION_PARAMS.values())
-    else:
-        prefix = "era5_thermo_ml_"
-        canonical_names = list(THERMO_PARAMS.values())
-    for dt in dates:
-        date_str = dt.strftime("%Y-%m-%d")
-        path = os.path.join(outdir, f"{prefix}{dt.strftime('%Y%m%d')}.nc")
-        if (not os.path.isfile(path)
-                or not validate_netcdf(path, canonical_names, convection,
-                                       date_str, resolution)):
-            return False
-    return True
-
-
 # ── Main ──────────────────────────────────────────────────────────────────
 
 def main():
@@ -555,24 +537,6 @@ def main():
         return 1
 
     print(f"\nDone! Downloaded and validated {n_days} days to {outdir}")
-    dates = list(date_range(start, end_date))
-    convection_available = output_group_available(
-        outdir, dates, args.resolution, True)
-    thermodynamics_available = output_group_available(
-        outdir, dates, args.resolution, False)
-    if convection_available and thermodynamics_available:
-        print("\nNext steps for convection:")
-        print("  julia --project=. scripts/preprocessing/convert_era5_physics_nc_to_bin.jl \\")
-        print(f"      --nc-dir {outdir} --bin-dir <BIN_DIR> \\")
-        print(f"      --start {args.start} --end {args.end}")
-        print("  The converter also needs the convection download for the day before --start.")
-        print("  Then set [convection] type = \"tm5\" in your run config.")
-    elif convection_available:
-        print("\nThermodynamics are required before running the convection converter:")
-        print("  python3 scripts/downloads/download_era5_physics.py \\")
-        print(f"      --start {args.start} --end {args.end} \\")
-        print(f"      --outdir {outdir} --resolution {args.resolution} \\")
-        print("      --fields thermodynamics")
     return 0
 
 
