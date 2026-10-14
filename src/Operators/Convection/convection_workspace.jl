@@ -11,7 +11,7 @@
 # ---------------------------------------------------------------------------
 
 """
-    CMFMCWorkspace{FT, QC, CA}
+    CMFMCWorkspace{FT, QC, CA, L}
 
 Per-sim pre-allocated workspace for [`CMFMCConvection`](@ref).
 
@@ -33,6 +33,11 @@ Per-sim pre-allocated workspace for [`CMFMCConvection`](@ref).
 - `cache_valid :: Base.RefValue{Bool}` — sentinel; cleared via
   [`invalidate_cmfmc_cache!`](@ref) when the met window advances
   (`DrivenSimulation._maybe_advance_window!`).
+- `ledger_carry :: Base.RefValue{L}` — persistent state of the column mass
+  ledger, as in [`TM5Workspace`](@ref): per column and tracer, the part of
+  the last update's rounding residual that the column's largest layer could
+  not hold. Empty until the first `apply!` sizes it with zeros; not stored
+  in restarts.
 
 # Usage
 
@@ -40,12 +45,13 @@ Constructed once at `DrivenSimulation` setup time and reused for the
 whole run. `Adapt.adapt_structure` preserves the cached scalar state
 on the host while adapting `qc_scratch` to the requested backend.
 """
-struct CMFMCWorkspace{FT, QC, CA}
+struct CMFMCWorkspace{FT, QC, CA, L}
     qc_scratch   :: QC
     cell_metrics :: CA
     cached_n_sub :: Base.RefValue{Int}
     cache_valid  :: Base.RefValue{Bool}
     cached_clamp :: Base.RefValue{Bool}   # clamp mode the cached n_sub was computed for
+    ledger_carry :: Base.RefValue{L}      # persistent; sized by `_cmfmc_ledger_carry!`
 end
 
 """
@@ -73,12 +79,14 @@ function CMFMCWorkspace(air_mass::AbstractArray{FT}; cell_metrics = nothing) whe
     else
         _cmfmc_metric_buffer(cell_metrics, FT)
     end
-    return CMFMCWorkspace{FT, typeof(qc_scratch), typeof(metrics)}(
+    carry = _empty_ledger_carry(air_mass, FT)
+    return CMFMCWorkspace{FT, typeof(qc_scratch), typeof(metrics), typeof(carry)}(
         qc_scratch,
         metrics,
         Ref{Int}(1),
         Ref{Bool}(false),
         Ref{Bool}(false),
+        Ref(carry),
     )
 end
 
@@ -89,24 +97,28 @@ function CMFMCWorkspace(air_mass::NTuple{N, <:AbstractArray{FT}}; cell_metrics =
     else
         _cmfmc_metric_buffer(cell_metrics, FT)
     end
-    return CMFMCWorkspace{FT, typeof(qc_scratch), typeof(metrics)}(
+    carry = _empty_ledger_carry(air_mass, FT)
+    return CMFMCWorkspace{FT, typeof(qc_scratch), typeof(metrics), typeof(carry)}(
         qc_scratch,
         metrics,
         Ref{Int}(1),
         Ref{Bool}(false),
         Ref{Bool}(false),
+        Ref(carry),
     )
 end
 
 function Adapt.adapt_structure(to, ws::CMFMCWorkspace{FT}) where FT
     qc_scratch = Adapt.adapt(to, ws.qc_scratch)
     cell_metrics = ws.cell_metrics === nothing ? nothing : Adapt.adapt(to, ws.cell_metrics)
-    return CMFMCWorkspace{FT, typeof(qc_scratch), typeof(cell_metrics)}(
+    carry = Adapt.adapt(to, ws.ledger_carry[])       # persistent state, moves with the workspace
+    return CMFMCWorkspace{FT, typeof(qc_scratch), typeof(cell_metrics), typeof(carry)}(
         qc_scratch,
         cell_metrics,
         Ref{Int}(ws.cached_n_sub[]),
         Ref{Bool}(ws.cache_valid[]),
         Ref{Bool}(ws.cached_clamp[]),
+        Ref(carry),
     )
 end
 
@@ -407,6 +419,8 @@ _fitted_ledger_carry(carry::NTuple{6, AbstractArray}, dims::Dims) =
 
 _tm5_ledger_carry!(ws::TM5Workspace, dims::Dims) =
     ws.ledger_carry = _fitted_ledger_carry(ws.ledger_carry, dims)
+_cmfmc_ledger_carry!(ws::CMFMCWorkspace, dims::Dims) =
+    ws.ledger_carry[] = _fitted_ledger_carry(ws.ledger_carry[], dims)
 
 
 export CMFMCWorkspace, invalidate_cmfmc_cache!

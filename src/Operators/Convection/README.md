@@ -29,7 +29,7 @@ operator.
 - [`operators.jl`](operators.jl) — abstract hierarchy, no-op, and public helper
   surface.
 - [`convection_workspace.jl`](convection_workspace.jl) — reusable CMFMC and TM5
-  scratch storage, and the TM5 column-ledger carry.
+  scratch storage, and their column-ledger carries.
 - [`CMFMCConvection.jl`](CMFMCConvection.jl) — direct CMFMC operator,
   validation, and topology dispatch; the cloud-base rule is a type parameter
   (`CMFMCEdgeCloudBase`, or GEOS-Chem's DQRCU base via `ArchivedCloudBase`).
@@ -71,6 +71,14 @@ covers the fine layers the whole merged operation changed
 (`_tm5_merged_column_ledger!`), because the split rounds every fine layer; it
 holds the carry, and the coarse solve's ledger keeps none. Adjoint replays keep no carry. See the
 [single-precision page](../../../docs/src/theory/float32_conservation.md).
+
+`CMFMCConvection` ledgers its explicit update the same way, over the whole
+column and with `CMFMCWorkspace.ledger_carry`: its interface fluxes cancel in
+the column sum, but each layer's new mass `q·m` is rounded once. The ledger
+runs only where the update conserves by construction (no flux through the
+model top, air in every layer) and not for `clamp = true`, which rescales the
+column instead (`_cmfmc_conserving_column` in
+[`cmfmc_kernels.jl`](cmfmc_kernels.jl)).
 
 ### Factorization without downdrafts
 

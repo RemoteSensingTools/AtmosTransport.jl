@@ -591,7 +591,9 @@ function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
     @inbounds for _ in 1:n_sub
         for p in 1:6
             rm_packed = reshape(panels_rm[p], size(panels_rm[p])..., 1)   # one packed tracer
-            kernel!(rm_packed, panels_m[p], cmfmc[p], dtrain_arr[p], cell_areas[p],
+            # Same column mass ledger as the forward run, without a carry (the
+            # replay stays a function of the recorded state; see the TM5 replay).
+            kernel!(rm_packed, nothing, panels_m[p], cmfmc[p], dtrain_arr[p], cell_areas[p],
                     nothing, workspace.qc_scratch[p],
                     Nz, 1, sdt, Hp, Val(true), Val(false);
                     ndrange = (Nc, Nc))

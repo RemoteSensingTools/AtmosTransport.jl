@@ -192,6 +192,23 @@ end
     @test_throws ArgumentError Diff.apply_vertical_diffusion_vmr!(rm, mass, op, ws, 1f0;
                                                                   halo_width = Hp, tracer = Nt + 1)
 
+    # GEOS-Chem non-local VDIFF solves through the same Dkg path: with the same
+    # exchange it keeps the same field and the same carry.
+    panels() = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
+    gchp = AtmosTransport.State.GCHPNonlocalPBLField(
+        AtmosTransport.State.PrecomputedCSDkgField(dkg), panels(), panels(), panels(),
+        AtmosTransport.State.GCHPVdiffParameters{FT}(), zeros(FT, Nc, Nc))
+    op_gchp = Diff.ImplicitVerticalDiffusion(; kz_field = gchp)
+    packed = ntuple(p -> cat(rm[p], 2 .* rm[p]; dims = 4), 6)
+    a, b = map(copy, packed), map(copy, packed)
+    ws_a, ws_b = Diff.DiffusionWorkspace(mass, Hp, Nt), Diff.DiffusionWorkspace(mass, Hp, Nt)
+    for _ in 1:10
+        Diff.apply_vertical_diffusion_vmr!(a, mass, op, ws_a, 1f0; halo_width = Hp)
+        Diff.apply_vertical_diffusion_vmr!(b, mass, op_gchp, ws_b, 1f0; halo_width = Hp)
+    end
+    @test a == b && ws_a.ledger_carry == ws_b.ledger_carry
+    @test any(c -> any(!iszero, c), ws_b.ledger_carry)
+
     # The per-tracer Lin–Rood transport step diffuses each tracer with its own carry.
     A = collect(FT, range(0, 5f4; length = Nz + 1)); B = collect(FT, range(1, 0; length = Nz + 1))
     A[1] = 0; B[end] = 0; B[1] = 0; A[end] = 0
@@ -268,4 +285,58 @@ end
     added = sum(p -> sum(big, p), q) - sum(p -> sum(big, p), q0)
     ahead = sum(p -> sum(big, p), src.compensation)
     @test abs(added - (emitted + ahead)) < 1e-7 * emitted
+end
+
+# CMFMC convection: the flux-form update conserves each column by construction
+# (interface fluxes telescope), but each layer's new mass is written once as
+# `q·m`. Without a ledger, sub-ulp changes vanish with one sign: over these 200
+# updates a surface-peaked tracer drifted by -1.9e-7, its cells by up to 1.7e-5
+# against Float64, and a uniform mixing ratio by 76 eps. With the ledger and
+# its carry the field plus the carry is exact, the field alone is off by the
+# outstanding carries (6.6e-10), and the cells stay within 1.3e-6 and 4.3 eps.
+@testset "CMFMC column ledger and carry" begin
+    rng = MersenneTwister(2026)
+    Nx, Ny, Nz, calls = 8, 8, 40, 200
+    function cmfmc_grid(FT)
+        A = collect(FT, range(0, 5f4; length = Nz + 1)); B = collect(FT, range(1, 0; length = Nz + 1))
+        A[1] = 0; B[end] = 0; B[1] = 0; A[end] = 0
+        return AtmosGrid(LatLonMesh(; FT, Nx, Ny), HybridSigmaPressure(A, B), AtmosTransport.CPU(); FT)
+    end
+    m0 = [1f16 * (1 + 40 * Float32(k / Nz)^2) / 41 * (1 + 0.1f0 * rand(rng, Float32))
+          for i in 1:Nx, j in 1:Ny, k in 1:Nz]
+    q0 = [m0[i, j, k] * (t == 1 ? 1f-5 * exp(-(Nz - k) / 4f0) * (1 + rand(rng, Float32)) : 4f-4)
+          for i in 1:Nx, j in 1:Ny, k in 1:Nz, t in 1:2]
+    cmfmc = zeros(Float32, Nx, Ny, Nz + 1)            # zero at the model top
+    for i in 1:Nx, j in 1:Ny, k in 12:36
+        cmfmc[i, j, k] = 0.01f0 * (0.5f0 + rand(rng, Float32))
+    end
+    function convect(FT, cm; steps = calls)
+        state = CellState(FT.(m0); A = FT.(q0[:, :, :, 1]), B = FT.(q0[:, :, :, 2]))
+        ws = TM5.CMFMCWorkspace(state.air_mass)
+        forcing = ConvectionForcing(FT.(cm), nothing, nothing)
+        for _ in 1:steps
+            TM5.apply_convection!(state.tracers_raw, state.air_mass, forcing, TM5.CMFMCConvection(),
+                                  FT(900), ws, cmfmc_grid(FT))
+        end
+        return state.tracers_raw, ws.ledger_carry[]
+    end
+    (r32, carry), (r64, _) = convect(Float32, cmfmc), convect(Float64, cmfmc)
+    total0 = sum(big, q0[:, :, :, 1])
+    @test size(carry) == (Nx, Ny, 2) && any(!iszero, carry)
+    @test abs(Float64((sum(big, r32[:, :, :, 1]) - total0) / total0)) < 2e-9
+    @test abs(Float64((sum(big, r32[:, :, :, 1]) + sum(big, carry[:, :, 1]) - total0) / total0)) < 1e-13
+    @test maximum(abs.(r32[:, :, :, 1] .- r64[:, :, :, 1]) ./ r64[:, :, :, 1]) <= 2e-6
+    @test maximum(abs, r32[:, :, :, 2] ./ m0 .- 4f-4) <= 8 * eps(Float32) * 4f-4
+
+    # A flux through the model top leaks by construction: not ledgered, so the
+    # loss stays visible and no carry is kept.
+    leaking = copy(cmfmc); leaking[:, :, 1] .= 0.005f0
+    r, carry = convect(Float32, leaking; steps = 1)
+    @test all(iszero, carry)
+    @test sum(big, r[:, :, :, 2]) < sum(big, q0[:, :, :, 2]) * (1 - 1e-5)
+
+    # Every topology keeps the carry in the workspace (helpers/ledger_carry.jl,
+    # also run on CUDA and Metal); the clamped cubed-sphere variant rescales its
+    # columns instead and is not ledgered.
+    check_cmfmc_ledger_carry(Array)
 end

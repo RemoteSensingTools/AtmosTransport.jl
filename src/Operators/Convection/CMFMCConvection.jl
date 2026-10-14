@@ -71,6 +71,17 @@ base (`convection_mod.F90:742-782`). Absent in legacy Julia;
 deliberate improvement for surface-source tracers. See the kernel
 Pass-0 block in `cmfmc_kernels.jl`.
 
+# Column mass ledger
+
+The update conserves column tracer mass by construction, but each
+layer's new mass is rounded when it is written (the cloud-base layer
+twice, by the sub-cloud closure and by the flux update). A
+compensated column ledger returns that rounding to the column's
+largest layer and keeps the sub-ulp remainder as a per-column,
+per-tracer carry in `CMFMCWorkspace` (as for TM5 convection; see the
+single-precision page of the manual). Columns with a flux through the
+model top or a layer without air, and `clamp = true`, are not ledgered.
+
 # Scope
 
 `CMFMCConvection` now supports structured LatLon, face-indexed
@@ -234,9 +245,10 @@ function apply_convection!(q_raw::AbstractArray{FT, 4},
 
     backend = get_backend(q_raw)
     kernel = _cmfmc_column_kernel!(backend, (16, 16))
+    carry = _cmfmc_ledger_carry!(workspace, (Nx, Ny, Nt))
 
     for _ in 1:n_sub
-        kernel(q_raw, air_mass, cmfmc, dtrain_arr, cell_areas_y,
+        kernel(q_raw, carry, air_mass, cmfmc, dtrain_arr, cell_areas_y,
                workspace.qc_scratch,
                Nz, Nt, sdt, Val(has_dtrain_val);
                ndrange = (Nx, Ny))
@@ -278,9 +290,10 @@ function apply_convection!(q_raw::AbstractArray{FT, 3},
 
     backend = get_backend(q_raw)
     kernel = _cmfmc_faceindexed_column_kernel!(backend, 256)
+    carry = _cmfmc_ledger_carry!(workspace, (ncell, Nt))
 
     for _ in 1:n_sub
-        kernel(q_raw, air_mass, cmfmc, dtrain_arr, cell_areas,
+        kernel(q_raw, carry, air_mass, cmfmc, dtrain_arr, cell_areas,
                workspace.qc_scratch,
                Nz, Nt, sdt, Val(has_dtrain_val);
                ndrange = ncell)
@@ -332,10 +345,13 @@ function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
 
     backend = get_backend(q_raw[1])
     kernel = _cmfmc_cs_panel_column_kernel!(backend, (16, 16))
+    # The clamped variant is not ledgered and keeps no carry.
+    carry = op.clamp ? nothing : _cmfmc_ledger_carry!(workspace, (Nc, Nc, Nt))
 
     for _ in 1:n_sub
         for p in 1:6
-            kernel(q_raw[p], air_mass[p], cmfmc[p], dtrain_arr[p], cell_areas[p],
+            kernel(q_raw[p], carry === nothing ? nothing : carry[p], air_mass[p], cmfmc[p],
+                   dtrain_arr[p], cell_areas[p],
                    _panel_cloud_base(op.cloud_base, forcing, p),
                    workspace.qc_scratch[p],
                    Nz, Nt, sdt, Hp, Val(has_dtrain_val), Val(op.clamp);

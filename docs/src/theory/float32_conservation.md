@@ -134,8 +134,11 @@ share per layer, with random sign.
 ### Column mass ledger
 
 The TM5 convection matrix and the `dkg` diffusion exchange conserve column
-mass exactly: their columns sum to one. Their `Float32` solves do not. Around
-each solve, the ledger
+mass exactly: their columns sum to one. Their `Float32` solves do not. CMFMC
+convection's explicit update conserves too, since its interface fluxes cancel
+in the column sum, but it writes each layer's new mass `q·m` in `Float32`
+(the cloud-base layer twice), and a change below half an ulp of the stored
+mass vanishes. Around each solve or update, the ledger
 
 1. sums the participating cells before and after with compensated summation
    (Neumaier, 1974, in the branch-free `TwoSum` form of Ogita et al., 2005);
@@ -164,13 +167,13 @@ With the carry, each cell is still rounded once per solve, and
 `q′ + c′ = q + r + c` up to one rounding of `c′`; with a zero carry the cell
 is bit-identical to the ledger without one. The carry is at most half an ulp
 of the cell plus the rounding of `r + c`; it is kept per column and tracer
-in the operator's
-workspace (`TM5Workspace`, `DiffusionWorkspace`) and added with the column's
-next residual. The field plus the carries therefore conserves each column,
-and the field alone differs from it by the outstanding carries, which do not
-accumulate. Moving `r` to a smaller cell, where it is represented, also stops
-the drift but changes that cell by a larger fraction of its value, trading
-per-cell accuracy for column accuracy. In 200 repeated `Float32` solves of
+in the operator's workspace (`TM5Workspace`, `CMFMCWorkspace`,
+`DiffusionWorkspace`) and added with the column's next residual. The field
+plus the carries therefore conserves each column, and the field alone
+differs from it by the outstanding carries, which do not accumulate.
+Moving `r` to a smaller cell, where it is represented, also stops the drift
+but changes that cell by a larger fraction of its value, trading per-cell
+accuracy for column accuracy. In 200 repeated `Float32` solves of
 surface-peaked test columns, the column totals drift by 7.7e-9 (TM5) and
 1.9e-9 (`dkg`) without the carry and by 5e-11 and 8e-11 (the outstanding
 carries) with it; the largest error of a cell against `Float64` stays
@@ -201,18 +204,25 @@ The ledger corrects rounding, not physics. A residual larger than
 `16·n·eps·|q_max|`, for `n` participating cells with largest value `q_max`, is
 left in place and never enters the carry. That bound is about 1e-6 of the
 column in `Float32`, far above the measured residuals, so a matrix that does
-not conserve mass still shows up in the budgets. A carry above the same bound
+not conserve mass still shows up in the budgets; a leak smaller than the
+bound would be returned like rounding, which is why the ledger runs only
+where the operator conserves by construction. A carry above the same bound
 is stale (its column was emptied or overwritten) and is dropped.
 
 The ledger runs only where the operator conserves mass by construction. The
 linear-algebra routines stay plain solves. TM5 convection uses the cloud
 levels; with level merging (`n_merge > 1`) its ledger covers the fine layers
 that aggregation, coarse solve and split change, because the split also
-rounds every fine layer. `dkg` diffusion uses layers that exchange mass and leaves isolated
-layers bit-exact. The adjoint's forward replay applies the same ledger
-without a carry: every replayed solve starts from a zero carry, so it is a
-function of the recorded state alone and checkpointed replays reproduce the
-recorded states bit for bit. The adjoint itself transposes the exact solve.
+rounds every fine layer. `dkg` diffusion uses layers that exchange mass and
+leaves isolated layers bit-exact. CMFMC convection uses the whole column
+where nothing leaves it: the `cmfmc` flux through the model top is exactly
+zero and every layer holds air (`m` and `m/area` above the operator's
+`tiny`); the clamped variant (`clamp = true`), which clips negative values
+and rescales the column, is not ledgered. The adjoint's forward replay
+applies the same ledgers without a carry: every replayed solve starts from a
+zero carry, so it is a function of the recorded state alone and checkpointed
+replays reproduce the recorded states bit for bit. The adjoint itself
+transposes the exact operator.
 
 A delta-form solve, `(I + B) Δ = −B q` followed by `q += Δ`, would remove the
 bias at its source and also improve local accuracy. It needs the matrix
@@ -260,10 +270,20 @@ been identified. Removing storage rounding altogether would need double-single
 tracer storage (two `Float32` words per value), doubling memory traffic. That
 is not warranted at this level.
 
-**CMFMC convection.** The remaining CO₂ difference with all operators
-(−2.0e-8 of the burden per week, about −1e-6 per year) matches what CMFMC
-convection added to advection alone before the fixes (−2.2e-8). CMFMC applies
-its explicit flux-form update without a column ledger.
+**CMFMC convection.** In the MERRA-2 week above, the remaining CO₂
+difference with all operators (−2.0e-8 of the burden, about −1e-6 per year)
+matched what CMFMC convection added to advection alone (−2.2e-8); CMFMC had
+no column ledger then (v0.5.0 and earlier). In one day of the MERRA-2 C90
+L72 CATRINE run (2023-05-15, `Float32` on an L40S, restarted from the v0.5
+chain, no sources), CMFMC convection alone changed the SF₆ total by +1.3e-9
+of its burden and background CO₂ by +2.5e-9 without the ledger, and by
+−5.5e-12 and +4.9e-12 with it. With both ledgers, every operator and the
+sources, the day's SF₆ residual falls from +3.8e-9 to −6.6e-10 of the
+burden, the level of advection alone (−6.1e-10). In 200 repeated updates of
+a surface-peaked test column, the ledger also keeps the cells closer to
+`Float64`: within 1.3e-6 instead of 1.7e-5, and a uniform mixing ratio
+within 4.3 instead of 76 eps (relative;
+`test/core/test_float32_conservation.jl`).
 
 **Emission rates.** Rounding each cell's rate to `Float32` changes global
 emission totals by less than 1e-9.

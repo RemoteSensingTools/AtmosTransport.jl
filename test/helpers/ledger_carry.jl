@@ -105,3 +105,82 @@ function check_dkg_ledger_carry(array_type; FT = Float32, calls = 20)
     @test map(Array, ws_packed.ledger_carry) == map(Array, ws_single.ledger_carry)
     return nothing
 end
+
+# CMFMC convection on lat-lon (explicit and derived DTRAIN, one and several CFL
+# substeps), reduced Gaussian (which needs DTRAIN) and cubed sphere (edge and
+# archived DQRCU cloud base). A column with an empty layer is not ledgered and
+# keeps a zero carry; the clamped variant rescales its columns and keeps none.
+function check_cmfmc_ledger_carry(array_type; FT = Float32, calls = 30)
+    Nz, Nt = 12, 2
+    A = collect(FT, range(0, 5f4; length = Nz + 1)); B = collect(FT, range(1, 0; length = Nz + 1))
+    A[1] = 0; B[end] = 0; B[1] = 0; A[end] = 0
+    vc = HybridSigmaPressure(A, B)
+    profile(k, t) = t == 1 ? FT(1e-3) * exp(-(Nz - k) / FT(3)) : FT(1e-4) * (1 + FT(k) / Nz)
+    band(cols; strength = 1) =
+        [3 <= k <= Nz - 2 ? FT(0.01) * strength * (1 + FT(I[1]) / 7 + FT(k) / Nz) : zero(FT)
+         for I in CartesianIndices(cols), k in 1:Nz+1]                 # zero at the model top
+    detrain(c) = max.(zero(FT), selectdim(c, ndims(c), 2:Nz+1) .- selectdim(c, ndims(c), 1:Nz))
+    mass_column(k) = FT(1e12) * (1 + FT(k) / Nz)
+    run!(q, m, forcing, op, ws, grid) =
+        foreach(_ -> LedgerConv.apply_convection!(q, m, forcing, op, FT(900), ws, grid), 1:calls)
+
+    ll = AtmosGrid(LatLonMesh(; Nx = 4, Ny = 3, FT), vc, AtmosTransport.CPU(); FT)
+    for strength in (1, 6), derived in (false, true)
+        m = [mass_column(k) for i in 1:4, j in 1:3, k in 1:Nz]
+        q0 = [m[i, j, k] * profile(k, t) for i in 1:4, j in 1:3, k in 1:Nz, t in 1:Nt]
+        q, m_d = array_type(q0), array_type(m)
+        cmfmc = band((4, 3); strength)
+        forcing = ConvectionForcing(array_type(cmfmc), derived ? nothing : array_type(detrain(cmfmc)), nothing)
+        ws = Adapt.adapt(array_type, CMFMCWorkspace(m; cell_metrics = fill(FT(1e10), 3)))
+        run!(q, m_d, forcing, CMFMCConvection(), ws, ll)
+        @test _ledger_conserved(q0, Array(q), Array(ws.ledger_carry[]))
+        @test (ws.cached_n_sub[] > 1) == (strength > 1)
+    end
+    # An empty layer in column (1, 1): that column is not ledgered.
+    m = [mass_column(k) * (i == j == 1 && k == 6 ? 0 : 1) for i in 1:4, j in 1:3, k in 1:Nz]
+    q0 = [m[i, j, k] * profile(k, t) for i in 1:4, j in 1:3, k in 1:Nz, t in 1:Nt]
+    q, m_d = array_type(q0), array_type(m)
+    cmfmc = band((4, 3))
+    forcing = ConvectionForcing(array_type(cmfmc), array_type(detrain(cmfmc)), nothing)
+    ws = Adapt.adapt(array_type, CMFMCWorkspace(m; cell_metrics = fill(FT(1e10), 3)))
+    run!(q, m_d, forcing, CMFMCConvection(), ws, ll)
+    carry = Array(ws.ledger_carry[])
+    @test all(iszero, carry[1, 1, :]) && any(!iszero, carry)
+    @test _ledger_conserved(q0[2:4, :, :, :], Array(q)[2:4, :, :, :], carry[2:4, :, :])
+
+    rg = AtmosGrid(ReducedGaussianMesh(FT[-0.9, 0.0, 0.9], [4, 4, 4]; FT), vc, AtmosTransport.CPU(); FT)
+    m = [mass_column(k) for c in 1:12, k in 1:Nz]
+    q0 = [m[c, k] * profile(k, t) for c in 1:12, k in 1:Nz, t in 1:Nt]
+    q, m_d = array_type(q0), array_type(m)
+    cmfmc = band((12,))
+    forcing = ConvectionForcing(array_type(cmfmc), array_type(detrain(cmfmc)), nothing)
+    ws = Adapt.adapt(array_type, CMFMCWorkspace(m; cell_metrics = fill(FT(1e10), 12)))
+    run!(q, m_d, forcing, CMFMCConvection(), ws, rg)
+    @test _ledger_conserved(q0, Array(q), Array(ws.ledger_carry[]))
+
+    Nc, Hp = 3, 1
+    cs = AtmosGrid(CubedSphereMesh(; Nc, Hp, FT), vc, AtmosTransport.CPU(); FT)
+    m = ntuple(_ -> [mass_column(k) for i in 1:Nc+2Hp, j in 1:Nc+2Hp, k in 1:Nz], 6)
+    cmfmc = band((Nc, Nc))
+    dqrcu = ntuple(_ -> fill(FT(Nz - 5), Nc, Nc), 6)              # archived cloud base, layer Nz - 5
+    interior(a) = a[Hp+1:Hp+Nc, Hp+1:Hp+Nc, :, :]
+    for (op, base, derived) in ((CMFMCConvection(), nothing, true),
+                                (CMFMCConvection(; cloud_base = ArchivedCloudBase()), dqrcu, false),
+                                (CMFMCConvection(; clamp = true), nothing, false))
+        q0 = ntuple(p -> [m[p][i, j, k] * profile(k, t)
+                          for i in 1:Nc+2Hp, j in 1:Nc+2Hp, k in 1:Nz, t in 1:Nt], 6)
+        q, m_d = map(array_type, q0), map(array_type, m)
+        forcing = ConvectionForcing(ntuple(_ -> array_type(cmfmc), 6),
+                                    derived ? nothing : ntuple(_ -> array_type(detrain(cmfmc)), 6),
+                                    nothing, base === nothing ? nothing : map(array_type, base))
+        ws = Adapt.adapt(array_type, CMFMCWorkspace(m; cell_metrics = ntuple(_ -> fill(FT(1e10), Nc, Nc), 6)))
+        run!(q, m_d, forcing, op, ws, cs)
+        carry = map(Array, ws.ledger_carry[])
+        if op.clamp
+            @test all(isempty, carry)
+        else
+            @test all(p -> _ledger_conserved(interior(q0[p]), interior(Array(q[p])), carry[p]), 1:6)
+        end
+    end
+    return nothing
+end

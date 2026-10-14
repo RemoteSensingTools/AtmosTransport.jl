@@ -1,6 +1,6 @@
 # Opt-in Metal (Apple GPU, Float32) checks of the point operations, the
 # cubed-sphere halo exchange and the CMFMC CFL scan against host references,
-# and of the TM5 and Dkg column-ledger carries.
+# and of the TM5, CMFMC and Dkg column-ledger carries.
 # On an Apple-silicon Mac, from the repository root:
 #   ATMOSTR_RUN_METAL_TESTS=1 julia --project=<env with Metal + this package> test/diagnostic/test_metal_kernels.jl
 using Test
@@ -35,6 +35,7 @@ else
     @testset "Metal column mass ledgers keep their carry" begin
         check_tm5_ledger_carry(MtlArray)
         check_dkg_ledger_carry(MtlArray)
+        check_cmfmc_ledger_carry(MtlArray)
     end
     @testset "Metal dry-pressure recovery and hydrostatic dz" begin
         FT = Float32

@@ -20,11 +20,25 @@
   operation, including the split. The carry is not written to restarts (a
   restart drops about half an ulp per column, once), and adjoint forward
   replays keep none, so replays still reproduce recorded states bit for bit.
-- New internal state: `TM5Workspace.ledger_carry` (sized by the first
-  `apply!`) and `DiffusionWorkspace.ledger_carry`. The cubed-sphere
+- **CMFMC column mass ledger** (OF-111). CMFMC convection's explicit update
+  conserves column mass by construction but rounds each layer's new mass when
+  writing it in `Float32`, and the lost sub-ulp changes had one sign: in one
+  day of MERRA-2 C90 L72 convection SF₆ gained 1.3e-9 and background CO₂
+  2.5e-9 of their burdens. A compensated column ledger with the same
+  persistent carry now returns them on lat-lon, reduced-Gaussian and
+  cubed-sphere grids (and in the adjoint's forward replay, without a carry):
+  the same day changes SF₆ by −5.5e-12. The OF-110 carry also removes the gain
+  of GEOS-Chem non-local VDIFF (SF₆ +4.5e-9 → −5.3e-12 per day); with all
+  operators the day's SF₆ residual falls from +3.8e-9 to −6.6e-10 of the
+  burden, the advection level. Columns with a flux through the model top or a
+  layer without air, and the clamped variant, are not ledgered. Runs with
+  CMFMC convection change at the rounding level.
+- New internal state: `TM5Workspace.ledger_carry` and
+  `CMFMCWorkspace.ledger_carry` (sized by the first `apply!`) and
+  `DiffusionWorkspace.ledger_carry`. The cubed-sphere
   `apply_vertical_diffusion_vmr!` takes `tracer` for single-tracer panel
-  tuples (used by the per-tracer Lin–Rood path); TM5 and `dkg` kernels take
-  the carry array as an argument.
+  tuples (used by the per-tracer Lin–Rood path); TM5, CMFMC and `dkg` kernels
+  take the carry array as an argument.
 
 ## 0.5.0 — 2026-10-13
 
