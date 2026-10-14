@@ -279,7 +279,13 @@ grid has hybrid layers up to 82 hPa.
 `config/preprocessing/era5_n320_arco_diffusion_to_c90_l117_li.toml` it keeps
 ERA5's native levels below about 8 hPa and merges the 27 thinner ones above into
 7 (`[vertical] transform = "merge_layers_thinner_than"`, 100 Pa), 117 levels in
-all.
+all. The merge closes groups from the surface up; the four native layers left
+at the top (6.8 Pa at standard surface pressure) form the top output layer,
+thinner than 100 Pa. That layer is numerically benign: in a 2022-01-15 binary
+at most 0.005 of its mass crosses its lower interface per substep amount
+(0.012–0.05 in layers 2–4). Folding it into layer 2, which would give 116
+levels, changes the level set and is deferred to the next regeneration of
+these binaries.
 
 `[numerics] dt_met_seconds = 3600` splits every 3-hour MERRA-2 block into three
 hourly windows (endpoint mass, PS, QV and T linear in time, 3-hour mean winds),

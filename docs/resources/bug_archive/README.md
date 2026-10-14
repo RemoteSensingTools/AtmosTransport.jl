@@ -10,7 +10,12 @@ contributor is auditing past decisions.
 
 - **[SESSION1_GRID_CM_FIX_2026-04-03.md](SESSION1_GRID_CM_FIX_2026-04-03.md)**
   Grid-convention fix (cell centers at ±89.75° vs ±90°) and Float64
-  accumulation of `cm` in the ERA5 spectral preprocessor.
+  accumulation of `cm` in the ERA5 spectral preprocessor. Its pole-row
+  fix (section 3: keep `am` in rows 1 and `Ny`) was undone the same day as
+  a polar-CFL safeguard (`efefaba1`) and the zeroing stayed in the v4
+  spectral preprocessor; it was removed again on 2026-10-14 (issue #58),
+  with the adaptive substep schedule carrying the polar Courant number.
+  `test/core/test_spectral_pole_rows.jl` guards it.
 - **[SESSION2_NAN_BLOCKING_2026-04-03.md](SESSION2_NAN_BLOCKING_2026-04-03.md)**
   NaN blocker during `/n_sub` removal experiments; red/blue team
   analysis proving TM5 computes `am` per 450s, not 1800s. Diagnostic

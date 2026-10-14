@@ -1169,8 +1169,10 @@ _map_structured_fidelity_column!(column, native, vertical, ps_face::Float64,
 
 Rebuild the sampled lat-lon face amounts from the staggered spectral winds,
 face pressure thickness and (dry basis) face humidity, column by column: the
-native column at the face, then the configured vertical map and the polar
-zero-flux constraint. Memory is `O(Nz)`; no full-grid flux array is built.
+native column at the face, then the configured vertical map. The pole rows are
+ordinary cells whose zonal faces carry flux (issue #58); only the meridional
+faces on the poles (`bm[:, 1, :]`, `bm[:, Ny+1, :]`) are closed. Memory is
+`O(Nz)`; no full-grid flux array is built.
 """
 function capture_structured_wind_flux_samples(sampler::StructuredFidelitySampler,
                                               am::AbstractArray{FT,3},
@@ -1208,13 +1210,11 @@ function capture_structured_wind_flux_samples(sampler::StructuredFidelitySampler
                 thick = abs(Float64(dA[k]) + Float64(dB[k]) * ps_face)
                 qfactor = dry ? 1 - clamp(0.5 * (Float64(qfield[il, j, k]) +
                                                  Float64(qfield[ir, j, k])), 0.0, 0.999999) : 1.0
-                native[k] = FT((j == 1 || j == Ny) ? 0.0 :
-                    Float64(transform.u_stag[i, j, k]) / Float64(grid.cos_lat[j]) *
-                    thick * R_g * dlat * dt_amount * qfactor)
+                native[k] = FT(Float64(transform.u_stag[i, j, k]) / Float64(grid.cos_lat[j]) *
+                               thick * R_g * dlat * dt_amount * qfactor)
             end
             _map_structured_fidelity_column!(column, native, vertical,
                                              _xface_surface_pressure(sp, i, j), mapping)
-            (j == 1 || j == Ny) && fill!(column, zero(FT))
             reference_column = view(am, i, j, :)
         else
             i, j = Tuple(CartesianIndices((Nx, Ny + 1))[f - na])

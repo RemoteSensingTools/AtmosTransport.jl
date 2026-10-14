@@ -11,10 +11,11 @@
 # balance, cm diagnosis, streaming v4 write — lives in
 # `src/Preprocessing/binary_pipeline.jl:1545`.
 #
-# Timestep metadata is read from the source binary header. `--steps-per-window`
-# can override only the output substep count: winds are recovered with source
-# scaling and CS face fluxes are reconstructed with output scaling. There is no
-# `--met-interval` or `--dt` flag.
+# Timestep metadata is read from the source binary header; winds are recovered
+# with each source window's own substep count. The output substep count is
+# chosen per CS window from its Courant number; `--steps-per-window` fixes one
+# count for all windows instead (CS face fluxes are reconstructed with the
+# output scaling). There is no `--met-interval` or `--dt` flag.
 #
 # Usage:
 #   julia -t16 --project=. \
@@ -26,10 +27,9 @@
 #       [--mass-basis dry|moist]         # default: match source header
 #       [--convention gnomonic|geos_native]
 #       [--definition equiangular_gnomonic|gmao_equal_distance]
-#       [--steps-per-window 12]          # override source's substep count
-#                                         # (smaller per-substep flux; needed
-#                                         # for high-res CS output that
-#                                         # otherwise fails the positivity gate)
+#       [--steps-per-window 12]          # fixed output substep count
+#                                         # (default: per window from the CS
+#                                         # Courant number)
 #       [--column-balance-weights mass|hybrid_b|hybrid_mass]
 #                                         # how the column balance spreads its
 #                                         # correction over the levels (default hybrid_mass)
@@ -69,7 +69,7 @@ function _parse_args(argv)
     convention = "gnomonic"
     definition = nothing
     cache_dir = nothing
-    steps_per_window = nothing  # nothing = match source header
+    steps_per_window = nothing  # nothing = per window from the CS Courant number
     require_substep_positivity = true
     column_balance_weights = "hybrid_mass"
     write_replay_check = true
