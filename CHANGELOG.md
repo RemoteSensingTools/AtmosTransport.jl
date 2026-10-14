@@ -38,7 +38,14 @@
   `DiffusionWorkspace.ledger_carry`. The cubed-sphere
   `apply_vertical_diffusion_vmr!` takes `tracer` for single-tracer panel
   tuples (used by the per-tracer Lin–Rood path); TM5, CMFMC and `dkg` kernels
-  take the carry array as an argument.
+  take the carry array as an argument. Packed cubed-sphere `dkg` diffusion now
+  throws a `DimensionMismatch` unless the workspace was built for exactly the
+  state's number of tracers (`DiffusionWorkspace(state)` or
+  `DiffusionWorkspace(air_mass, Hp, Nt)`); before, the tracer count of the
+  workspace was not checked on this path.
+- The ledgers rely on IEEE arithmetic without fast-math reassociation (which
+  would break `TwoSum`). They are tested on CPU and CUDA; the Metal checks
+  (`test/diagnostic/test_metal_kernels.jl`) have not been run yet.
 
 ## 0.5.0 — 2026-10-13
 

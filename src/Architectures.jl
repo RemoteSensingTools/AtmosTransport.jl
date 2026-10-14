@@ -707,11 +707,16 @@ whenever the accumulated remainder becomes representable, and the column
 total no longer drifts. The caller stores `carry′` per column and
 tracer in the operator workspace, starting from zero.
 
-A carry above the residual bound, `16n` ulps of `|value|`, is stale (the
-column was emptied or overwritten since) and is dropped, so the carry can
-neither flip a cell's sign nor hold more than rounding. A residual above the
-bound is never passed in (`_ledger_residual` returns zero), so an operator
-that leaks mass stays visible: the carry holds rounding only.
+A carry above the residual bound, `16n` ulps of `|value|`, is dropped, so
+the carry can neither flip a cell's sign nor hold more than rounding. Since a
+carry is at most about half an ulp of the cell it came from, that happens only
+when the column's largest cell has shrunk more than about `32n`-fold since
+(for example, the column was emptied). A column overwritten with values of
+similar size keeps its old carry, which is deposited once (about half an ulp
+at most): a run restarted from reloaded fields with a reused workspace is not
+bit-identical to one with a fresh workspace. A residual above the bound is
+never passed in (`_ledger_residual` returns zero): the carry holds rounding,
+and a leak larger than the bound stays visible in budgets.
 """
 @inline function _ledger_deposit(value::T, r::T, carry::T, n) where T <: AbstractFloat
     carry = abs(carry) <= 16n * eps(T) * abs(value) ? carry : zero(T)

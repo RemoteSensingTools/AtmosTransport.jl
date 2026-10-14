@@ -7,6 +7,9 @@ const LedgerDiff = AtmosTransport.Operators.Diffusion
 # plus the workspace's ledger carry (see `_ledger_deposit`) to rounding of the
 # carry, and leave nonzero carries: they are loaded and stored on the device.
 _ledger_sums(q) = sum(big, q; dims = ndims(q) - 1)
+# Nonzero carries in every batch of tracers (`batches` of the last axis).
+_carry_in_batches(carries, batches) =
+    all(b -> any(c -> any(!iszero, selectdim(c, ndims(c), b)), carries), batches)
 function _ledger_conserved(q0, q, carry)
     before = _ledger_sums(q0)
     after = _ledger_sums(q) .+ big.(reshape(carry, size(before)))
@@ -15,16 +18,22 @@ end
 
 # TM5 convection on lat-lon, reduced Gaussian and cubed sphere, with the
 # per-thread and collaborative kernels (the CPU runs the per-thread ones for
-# both), unmerged and merged.
+# both), unmerged and merged. Thirteen tracers fill three collaborative tracer
+# batches (6 + 6 + 1, `_TM5_COLLAB_TRACER_BATCH`), so the carry slots of later
+# batches are exercised too; their scales span 1e-3 to 1e3.
 function check_tm5_ledger_carry(array_type; FT = Float32, calls = 30)
-    Nz, Nt = 12, 2
+    Nz, Nt = 12, 13
+    batches = (1:6, 7:12, 13:13)
     A = collect(FT, range(0, 5f4; length = Nz + 1)); B = collect(FT, range(1, 0; length = Nz + 1))
     A[1] = 0; B[end] = 0; B[1] = 0; A[end] = 0
     vc = HybridSigmaPressure(A, B)
-    # Tracer 1 peaks at the surface but holds the most mass in the pass-through
-    # top layer, which neither the solve nor the ledger may touch.
-    profile(k, t) = t == 1 ? (k == 1 ? FT(1) : FT(1e-3) * exp(-(Nz - k) / FT(3))) :
-                             FT(1e-4) * (1 + FT(k) / Nz)
+    # Odd tracers peak at the surface, even ones grow with depth. Tracer 1 holds
+    # the most mass in the pass-through top layer, which neither the solve nor
+    # the ledger may touch.
+    scale(t) = FT(10)^(-3 + 6 * FT(t - 1) / (Nt - 1))
+    shape(k, t) = t == 1 && k == 1 ? FT(1) :
+                  isodd(t) ? FT(1e-3) * exp(-(Nz - k) / FT(3)) : FT(1e-4) * (1 + FT(k) / Nz)
+    profile(k, t) = scale(t) * shape(k, t)
     # Cloud top at layer 5: layers 1-3 (1-2 with merging) pass through.
     rates(cols) = map(((lo, hi, s),) -> [lo <= k <= hi ? s * (1 + FT(I[1]) / 7) : zero(FT)
                                          for I in CartesianIndices(cols), k in 1:Nz],
@@ -47,6 +56,7 @@ function check_tm5_ledger_carry(array_type; FT = Float32, calls = 30)
                 LedgerConv.apply_convection!(q, m_d, forcing, op, FT(900), ws, grid)
             end
             @test _ledger_conserved(q0, Array(q), Array(ws.ledger_carry))
+            @test _carry_in_batches((Array(ws.ledger_carry),), batches)
             @test selectdim(Array(q), length(cols) + 1, 1) == selectdim(q0, length(cols) + 1, 1)
             # Without convection a column is not ledgered: it and its carry stay as they are.
             q1, carry1 = Array(q), Array(ws.ledger_carry)
@@ -70,6 +80,7 @@ function check_tm5_ledger_carry(array_type; FT = Float32, calls = 30)
         interior(a) = a[Hp+1:Hp+Nc, Hp+1:Hp+Nc, :, :]
         @test all(p -> _ledger_conserved(interior(q0[p]), interior(Array(q[p])),
                                          Array(ws.ledger_carry[p])), 1:6)
+        @test _carry_in_batches(map(Array, ws.ledger_carry), batches)
         @test all(p -> Array(q[p])[:, :, 1, :] == q0[p][:, :, 1, :], 1:6)
     end
     return nothing

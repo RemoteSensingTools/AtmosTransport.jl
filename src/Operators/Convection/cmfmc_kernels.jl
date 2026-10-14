@@ -79,7 +79,9 @@ updraft air from below (`qc_below`) in mass-weighted proportion.
 Returns `(qc, zero(qc))` — `qc` is the post-mix concentration, the
 scavenging fraction is identically zero. A future wet-deposition
 plan adds a method that splits `qc` into `(qc_pres, qc_scav)` keyed
-on a solubility trait parameter.
+on a solubility trait parameter. That plan must also exclude scavenged
+columns from the column mass ledger (see `_cmfmc_conserving_column`),
+which would otherwise return small scavenged amounts to the column.
 
 # Arguments
 
@@ -126,6 +128,12 @@ end
 #   - no positivity clamp (`clamp = true` rescales the column instead).
 # Elsewhere the update is left as it is, so a leak stays visible in budgets
 # (inside the ledgered columns, a leak below the residual bound would not be).
+#
+# Wet scavenging: the `qc_scav` part of `_cmfmc_updraft_mix` is zero for the
+# inert tracers handled today. Scavenging removes tracer mass on purpose, and
+# the ledger would put small removals back. When wet deposition is added, a
+# column whose tracer is scavenged must not be ledgered (or its scavenged mass
+# must be added to `before`); extend this condition then.
 
 # =========================================================================
 @inline function _cmfmc_conserving_column(cmfmc_top, cell_area, Nz, tiny, air_mass, cell...)

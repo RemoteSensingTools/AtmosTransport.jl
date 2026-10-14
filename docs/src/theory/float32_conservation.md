@@ -188,9 +188,12 @@ cell at most. With TM5 convection only, the change is −300 kg instead of
 −780 kg, again without a trend. With all operators and sources, the fossil-CO₂
 residual of the day falls from −2.7e-9 to −1.1e-10 of the burden, below that
 of advection and emissions alone (−2.7e-10). The carry costs one load, one
-store and a second `TwoSum` per column and tracer. On an L40S, a C90 L117 `dkg`
-call with ten tracers takes 1.57 ms instead of 1.56 ms, and a TM5 convection
-call 53 ms instead of 54 ms.
+store and a second `TwoSum` per column and tracer; on an L40S the time of a
+C90 L117 call with ten tracers is unchanged within noise (`dkg` 1.56–1.57 ms,
+TM5 convection 53–54 ms). The ledgers rely on IEEE arithmetic without
+fast-math reassociation, which would break `TwoSum`; CPU and CUDA are tested,
+while the Metal checks (`test/diagnostic/test_metal_kernels.jl`) still have to
+be run on a Mac.
 
 Carries start at zero and are not written to restart files: a restarted run
 drops about half an ulp of each column's largest cell, once. A column that
@@ -207,7 +210,13 @@ column in `Float32`, far above the measured residuals, so a matrix that does
 not conserve mass still shows up in the budgets; a leak smaller than the
 bound would be returned like rounding, which is why the ledger runs only
 where the operator conserves by construction. A carry above the same bound
-is stale (its column was emptied or overwritten) and is dropped.
+is dropped; since a carry is at most about half an ulp of the cell it came
+from, that happens only when the column's largest cell shrank more than about
+`32n`-fold since, for example when the column was emptied. A column
+overwritten with values of similar size keeps its carry, deposited once: a
+run restarted from reloaded fields into an existing model (reused workspaces)
+is therefore not bit-identical to one built fresh, by about half an ulp per
+column.
 
 The ledger runs only where the operator conserves mass by construction. The
 linear-algebra routines stay plain solves. TM5 convection uses the cloud
@@ -283,7 +292,8 @@ burden, the level of advection alone (−6.1e-10). In 200 repeated updates of
 a surface-peaked test column, the ledger also keeps the cells closer to
 `Float64`: within 1.3e-6 instead of 1.7e-5, and a uniform mixing ratio
 within 4.3 instead of 76 eps (relative;
-`test/core/test_float32_conservation.jl`).
+`test/core/test_float32_conservation.jl`). A C90 L72 CMFMC call with ten
+tracers takes about 1 % longer on an L40S (5.42 → 5.47 ms).
 
 **Emission rates.** Rounding each cell's rate to `Float32` changes global
 emission totals by less than 1e-9.

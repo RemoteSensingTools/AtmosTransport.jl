@@ -102,14 +102,14 @@ end
     @test value == 1.0 && carry == 2e-17
 end
 
-# Repeated Float32 solves of surface-peaked columns. Without the carry, the
-# part of each residual below the largest cell's spacing is lost with one sign
-# and the column totals drift (7.7e-9 for TM5 and 1.9e-9 for dkg here). With
-# it, the field plus the carry is conserved to rounding of the carry, and the
-# field alone differs from the start only by the outstanding carry, at most
-# half an ulp of each column's largest cell. Each cell stays as accurate
-# against Float64 as without the carry (the bounds are those measured
-# without it: 7.54e-6, 3.37e-6 and 1.8 eps).
+# Repeated Float32 solves of surface-peaked columns. Without the carry (as in
+# v0.5.0: a zero carry at every solve), the part of each residual below the
+# largest cell's spacing is lost with one sign and the column totals drift
+# (7.7e-9 for TM5 and 1.9e-9 for dkg here). With it, the field plus the carry
+# is conserved to rounding of the carry, and the field alone differs from the
+# start only by the outstanding carry, about half an ulp of each column's
+# largest cell. Each cell stays as accurate against Float64 as in the
+# carry-free run (measured: 7.54e-6, 3.37e-6 and 1.8 eps in both).
 @testset "Repeated solves do not drift (persistent ledger carry)" begin
     rng = MersenneTwister(2026)
     n, ncol, solves = 40, 64, 200
@@ -118,19 +118,24 @@ end
         A[k, k] += a; A[k + 1, k] -= a; A[k + 1, k + 1] += a; A[k, k + 1] -= a
     end
     q0 = Float32[1f9 * exp(-(n - k) / 4f0) * (1 + rand(rng, Float32)) for k in 1:n, _ in 1:ncol]
-    function convect(FT)
+    function convect(FT; keep_carry = true)
         B, q, pivots, carry = FT.(A), FT.(q0), zeros(Int, n), zeros(FT, ncol)
         TM5._tm5_lu!(B, pivots, n)
         for _ in 1:solves, c in 1:ncol
-            carry[c] = TM5._tm5_conserving_solve_tracer!(q, B, pivots, n, 1, c, false, carry[c])
+            c′ = TM5._tm5_conserving_solve_tracer!(q, B, pivots, n, 1, c, false, carry[c])
+            keep_carry && (carry[c] = c′)
         end
         return q, carry
     end
-    (q32, carry), (q64, _) = convect(Float32), convect(Float64)
+    (q32, carry), (plain32, _), (q64, _) = convect(Float32), convect(Float32; keep_carry = false),
+                                           convect(Float64)
     total0 = sum(big, q0)
-    @test abs(Float64((sum(big, q32) - total0) / total0)) < 2e-10
+    drift(q) = abs(Float64((sum(big, q) - total0) / total0))
+    cell_error(q) = maximum(abs.(q .- q64) ./ q64)
+    @test drift(plain32) > 1e-9                       # the fixture shows the bias
+    @test drift(q32) < 2e-10
     @test abs(Float64((sum(big, q32) + sum(big, carry) - total0) / total0)) < 1e-14
-    @test maximum(abs.(q32 .- q64) ./ q64) <= 7.6e-6
+    @test cell_error(q32) <= 1.1 * cell_error(plain32)
 
     Nc, Nz, Hp = 6, 40, 1
     N = Nc + 2
@@ -142,26 +147,31 @@ end
     # Tracer 1 is peaked at the surface, tracer 2 is a uniform mixing ratio.
     rm0 = ntuple(p -> [m[p][i,j,k] * (t == 1 ? 1f-5 * exp(-(Nz - k) / 4f0) * (1 + rand(rng, Float32)) : 4f-4)
                        for i in 1:N, j in 1:N, k in 1:Nz, t in 1:2], 6)
-    function diffuse(FT)
+    function diffuse(FT; keep_carry = true)
         mass, rm = map(a -> FT.(a), m), map(a -> FT.(a), rm0)
         field = AtmosTransport.State.PrecomputedCSDkgField(map(a -> FT.(a), d))
         op = Diff.ImplicitVerticalDiffusion(; kz_field = field)
         ws = Diff.DiffusionWorkspace(mass, Hp, 2)
         for _ in 1:solves
+            keep_carry || foreach(c -> fill!(c, zero(FT)), ws.ledger_carry)
             Diff.apply_vertical_diffusion_vmr!(rm, mass, op, ws, one(FT); halo_width = Hp)
         end
         return map(a -> a[1+Hp:Nc+Hp, 1+Hp:Nc+Hp, :, :], rm), ws.ledger_carry
     end
-    (r32, carry), (r64, _) = diffuse(Float32), diffuse(Float64)
+    (r32, carry), (plain32, _), (r64, _) = diffuse(Float32), diffuse(Float32; keep_carry = false),
+                                           diffuse(Float64)
     interior(a) = a[1+Hp:Nc+Hp, 1+Hp:Nc+Hp, :, :]
     total(x, t) = sum(p -> sum(big, @view x[p][:, :, :, t]), 1:6)
-    total0 = total(map(interior, rm0), 1)
+    dkg_total0 = total(map(interior, rm0), 1)
     held = sum(p -> sum(big, @view carry[p][:, :, 1]), 1:6)
-    @test abs(Float64((total(r32, 1) - total0) / total0)) < 2e-10
-    @test abs(Float64((total(r32, 1) + held - total0) / total0)) < 1e-14
-    @test maximum(p -> maximum(abs.(r32[p][:,:,:,1] .- r64[p][:,:,:,1]) ./ r64[p][:,:,:,1]), 1:6) <= 3.4e-6
-    @test maximum(p -> maximum(abs, r32[p][:,:,:,2] ./ m[p][1+Hp:Nc+Hp, 1+Hp:Nc+Hp, :] .- 4f-4), 1:6) <=
-          2 * eps(Float32) * 4f-4
+    dkg_drift(r) = abs(Float64((total(r, 1) - dkg_total0) / dkg_total0))
+    dkg_cell_error(r) = maximum(p -> maximum(abs.(r[p][:,:,:,1] .- r64[p][:,:,:,1]) ./ r64[p][:,:,:,1]), 1:6)
+    uniform_error(r) = maximum(p -> maximum(abs, r[p][:,:,:,2] ./ m[p][1+Hp:Nc+Hp, 1+Hp:Nc+Hp, :] .- 4f-4), 1:6)
+    @test dkg_drift(plain32) > 1e-9                       # the fixture shows the bias
+    @test dkg_drift(r32) < 2e-10
+    @test abs(Float64((total(r32, 1) + held - dkg_total0) / dkg_total0)) < 1e-14
+    @test dkg_cell_error(r32) <= 1.1 * dkg_cell_error(plain32)
+    @test uniform_error(r32) <= 1.1 * uniform_error(plain32)
 end
 
 # The production operators keep the carry in their workspaces: after many
