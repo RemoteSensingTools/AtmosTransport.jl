@@ -132,8 +132,9 @@ end
     total0 = sum(big, q0)
     drift(q) = abs(Float64((sum(big, q) - total0) / total0))
     cell_error(q) = maximum(abs.(q .- q64) ./ q64)
-    @test drift(plain32) > 1e-9                       # the fixture shows the bias
-    @test drift(q32) < 2e-10
+    bound = 2e-10           # the carry-free run fails it (its size varies with the Julia version)
+    @test drift(plain32) > bound
+    @test drift(q32) < bound
     @test abs(Float64((sum(big, q32) + sum(big, carry) - total0) / total0)) < 1e-14
     @test cell_error(q32) <= 1.1 * cell_error(plain32)
 
@@ -167,8 +168,8 @@ end
     dkg_drift(r) = abs(Float64((total(r, 1) - dkg_total0) / dkg_total0))
     dkg_cell_error(r) = maximum(p -> maximum(abs.(r[p][:,:,:,1] .- r64[p][:,:,:,1]) ./ r64[p][:,:,:,1]), 1:6)
     uniform_error(r) = maximum(p -> maximum(abs, r[p][:,:,:,2] ./ m[p][1+Hp:Nc+Hp, 1+Hp:Nc+Hp, :] .- 4f-4), 1:6)
-    @test dkg_drift(plain32) > 1e-9                       # the fixture shows the bias
-    @test dkg_drift(r32) < 2e-10
+    @test dkg_drift(plain32) > bound                      # 1.9e-9 on Julia 1.12, 4.9e-10 on 1.10
+    @test dkg_drift(r32) < bound
     @test abs(Float64((total(r32, 1) + held - dkg_total0) / dkg_total0)) < 1e-14
     @test dkg_cell_error(r32) <= 1.1 * dkg_cell_error(plain32)
     @test uniform_error(r32) <= 1.1 * uniform_error(plain32)
