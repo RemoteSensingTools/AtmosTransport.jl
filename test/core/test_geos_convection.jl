@@ -24,7 +24,7 @@ import AtmosTransport
 using .AtmosTransport.Grids: GEOSNativePanelConvention
 using .AtmosTransport.Preprocessing: GEOSITSettings, open_day, close_day!,
                                       read_window!, allocate_raw_window,
-                                      has_convection, process_day,
+                                      has_convection, has_pbl_eflux, process_day,
                                       build_target_geometry,
                                       load_hybrid_coefficients
 using .AtmosTransport.MetDrivers: TransportBinaryReader
@@ -118,6 +118,7 @@ function _write_synthetic_geosit_day_with_a3!(dir::String, datestr::String;
         _defvar2d_xyz_t!(ds, "USTAR", fill(0.30,   NC, NC, NPANEL, ntimes_a1); units = "m s-1")
         _defvar2d_xyz_t!(ds, "HFLUX", fill(120.0,  NC, NC, NPANEL, ntimes_a1); units = "W m-2")
         _defvar2d_xyz_t!(ds, "T2M",   fill(295.0,  NC, NC, NPANEL, ntimes_a1); units = "K")
+        _defvar2d_xyz_t!(ds, "EFLUX", fill(45.0,   NC, NC, NPANEL, ntimes_a1); units = "W m-2")
     end
 
     # A3mstE — CMFMC at interfaces (NZ+1 lev), 8 timesteps
@@ -143,6 +144,18 @@ function _write_synthetic_geosit_day_with_a3!(dir::String, datestr::String;
             dtrain[:, :, :, :, t] .= Float32(200.0 + t)
         end
         _defvar3d!(ds, "DTRAIN", dtrain; units = "kg m-2 s-1")
+        # Horizontal winds for the GEOS-Chem VDIFF fields (include_vdiff_fields)
+        _defvar3d!(ds, "U", fill(Float32(5.0),  NC, NC, NPANEL, NZ, NA3); units = "m s-1")
+        _defvar3d!(ds, "V", fill(Float32(-3.0), NC, NC, NPANEL, NZ, NA3); units = "m s-1")
+        defVar(ds, "lev", collect(1:NZ), ("lev",); attrib = ["positive" => "down"])
+    end
+
+    # I3 — 3-hourly temperature for the GEOS-Chem VDIFF fields
+    i3 = joinpath(dir, "GEOSIT.$(datestr).I3.C$(NC).nc")
+    NCDataset(i3, "c") do ds
+        ds.dim["Xdim"] = NC; ds.dim["Ydim"] = NC; ds.dim["nf"] = NPANEL
+        ds.dim["lev"]  = NZ; ds.dim["time"] = NA3
+        _defvar3d!(ds, "T", fill(Float32(280.0), NC, NC, NPANEL, NZ, NA3); units = "K")
         defVar(ds, "lev", collect(1:NZ), ("lev",); attrib = ["positive" => "down"])
     end
 
@@ -192,6 +205,12 @@ end
         coefficients_file = coef_path,
         include_surface = true,
         include_convection = true,
+    )
+    settings_vdiff = GEOSITSettings(
+        root_dir = tmpdir, Nc = NC,
+        coefficients_file = coef_path,
+        include_surface = true,
+        include_vdiff_fields = true,
     )
 
     grid = build_target_geometry(
@@ -277,6 +296,35 @@ end
             win = AtmosTransport.MetDrivers.load_window!(reader, 1)
             @test win.surface.pblh[1][1, 1] == 1000.0
             @test win.surface.t2m[1][1, 1] == 295.0
+        finally
+            close(reader)
+        end
+    end
+
+    @testset "GEOS-IT EFLUX reaches the binary with the VDIFF fields" begin
+        # geoschem_nonlocal_vdiff needs :pbl_eflux; GEOS-IT A1 carries EFLUX.
+        @test has_pbl_eflux(settings_vdiff) === true
+        @test has_pbl_eflux(settings_full) === false     # no VDIFF fields requested
+        handles = open_day(settings_vdiff, Date(2021, 12, 1))
+        try
+            raw = allocate_raw_window(settings_vdiff; FT = FT_TEST, Nz = NZ)
+            read_window!(raw, settings_vdiff, handles, Date(2021, 12, 1), 1)
+            @test all(p -> all(==(45.0), p), raw.surface.eflux)
+        finally
+            close_day!(handles)
+        end
+
+        out_vdiff = joinpath(tmpdir, "with_vdiff.bin")
+        process_day(Date(2021, 12, 1), grid, settings_vdiff, vertical;
+                    out_path = out_vdiff,
+                    dt_met_seconds = 3600.0, FT = FT_TEST,
+                    mass_basis = :dry, replay_tol = 1e-12)
+        reader = TransportBinaryReader(out_vdiff; FT = FT_TEST)
+        try
+            @test :pbl_eflux in reader.header.payload_sections
+            @test has_pbl_eflux(reader)
+            win = AtmosTransport.MetDrivers.load_window!(reader, 1)
+            @test win.surface.eflux[1][1, 1] == 45.0
         finally
             close(reader)
         end

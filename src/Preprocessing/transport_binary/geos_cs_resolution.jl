@@ -174,6 +174,7 @@ function _geos_strategy_workspace(::GEOSCSBlockCoarsenStrategy{R},
             ustar = panels_2d_dst(),
             hflux = panels_2d_dst(),
             t2m = panels_2d_dst(),
+            eflux = has_pbl_eflux(settings) ? panels_2d_dst() : nothing,
         ) : nothing,
         vdiff_native = settings.include_vdiff_fields ? (
             u = panels_3d_dst(Nz_native),
@@ -284,6 +285,8 @@ function _geos_surface_payload!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw) where 
         coarsen_area_weighted!(ws.surface.ustar[p], raw.surface.ustar[p], ws.source_cell_areas, R)
         coarsen_area_weighted!(ws.surface.hflux[p], raw.surface.hflux[p], ws.source_cell_areas, R)
         coarsen_area_weighted!(ws.surface.t2m[p], raw.surface.t2m[p], ws.source_cell_areas, R)
+        ws.surface.eflux === nothing ||
+            coarsen_area_weighted!(ws.surface.eflux[p], raw.surface.eflux[p], ws.source_cell_areas, R)
     end
     return ws.surface
 end
