@@ -47,8 +47,9 @@ other AtmosTransport modules; every later module may import from it.
     a total-pressure target
 - Numerical defaults, in [`NumericalDefaults.jl`](NumericalDefaults.jl):
   - `DEFAULT_CFL_LIMIT` (0.95), the runtime palindrome outflow budget of
-    split-sweep advection on every topology (fraction of a cell's step-start
-    mass that one palindrome's worth of subcycled passes may remove)
+    split-sweep advection on every topology (fraction of the smaller of a
+    cell's masses at the start and end of the step that one palindrome's
+    worth of subcycled passes may remove)
   - `DEFAULT_POSITIVITY_CFL_LIMIT` (0.95), the write-time substep positivity
     limit of transport binaries
   - adaptive write-time substep targets: `DEFAULT_SUBSTEP_CFL_TARGET` (0.95),

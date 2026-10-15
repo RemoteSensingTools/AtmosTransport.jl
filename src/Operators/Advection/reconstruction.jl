@@ -309,12 +309,11 @@ is bit-identical to the pre-clamp behavior.
     #       continuity by setting individual face fluxes that exceed cell
     #       mass over the window (e.g. C180 panel-4 south edge cell at
     #       lat 44°N has window-CFL ≈ 1.6 after balance).
-    #   (2) Passes after the first two of a subcycled step: the runtime count
-    #       (`(X Y Z)^n | midpoint | (Z Y X)^n` at flux / n, as FV3's
-    #       `fv_tracer2d.F90` repeats its whole 2-D operator) budgets the
-    #       outflow against the step-start mass, so later passes, which see
-    #       the evolved mass, can still exceed the donor mass in strongly
-    #       divergent flow.
+    #   (2) Binary-scheduled steps (`n = 1` from the binary): the write-time
+    #       gate budgets the outflow against the window's masses, not each
+    #       step's. (A runtime-chosen count, `(X Y Z)^n | midpoint | (Z Y X)^n`
+    #       at flux / n budgeted against min(m_start, m_end), keeps every
+    #       pass below half the donor mass; see cs_subcycling.jl.)
     # Without the clamp, `α = F/eps` blows up and the polynomial overflows.
     # With the clamp, α saturates at ±1 → degrades to upwind locally,
     # mass-conservation preserved (both adjacent cells see the same α).

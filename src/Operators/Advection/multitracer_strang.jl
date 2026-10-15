@@ -71,7 +71,8 @@ cell per sweep, shared across all tracers.
 ## Subcycling
 
 One count `n` comes from the palindrome outflow budget
-`2 (out_x + out_y + out_z) / (n m) ≤ cfl_limit` that the cubed sphere uses
+`2 (out_x + out_y + out_z) / (n min(m, m_end)) ≤ cfl_limit` (`m_end` the
+cell's mass after the step) that the cubed sphere uses
 (`_structured_palindrome_subcycle_count`, default `cfl_limit =
 DEFAULT_CFL_LIMIT`). The step then runs the symmetric composition
 

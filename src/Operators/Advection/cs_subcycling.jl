@@ -15,16 +15,32 @@
 #
 # (`strang_split_mt!`, `strang_split_cs!`, `strang_split_cs_mt!`, the
 # face-indexed `apply!`). Every topology takes `n` from the same budget: with
-# `out_d = max(0, -F_lo) + max(0, F_hi)` the cell's outflow through its two `d`
-# faces for one full-flux application,
+# `out_d = max(0, -F_lo) + max(0, F_hi)` the cell's outflow and
+# `F_lo - F_hi` its net inflow through its two `d` faces for one full-flux
+# application,
 #
-#     2 (out_x + out_y + out_z) / (n m)  <=  cfl_limit
+#     2 (out_x + out_y + out_z) / (n m_ref)  <=  cfl_limit,
+#     m_ref = min(m, m_end),   m_end = m + 2 Σ_d (F_lo - F_hi),
 #
-# i.e. two consecutive passes (one palindrome's worth of flux) remove at most
-# `cfl_limit` (default `DEFAULT_CFL_LIMIT`, 0.95) of the cell's step-start mass.
-# The first two passes therefore cannot empty a cell. Later passes see the
-# evolved mass, so the budget is a static proxy there, measured rather than
-# proven (tests in test/core/test_subcycle_composition.jl).
+# `m_end` being the cell's mass after the whole palindrome. This is the
+# reference mass of the write-time positivity gate
+# (`verify_substep_positivity_cs!`, `m_ref = min(m, m_next)`), with the step's
+# own end mass in place of the window's.
+#
+# Guarantee. The midpoint operators do not change air mass, and every block
+# of passes (one `X Y Z` or `Z Y X`) changes a cell's mass by the same
+# `Σ_d (F_lo - F_hi) / n`, so the masses at block boundaries lie on the line
+# from `m` to `m_end` and are all `>= m_ref`. Inside a block the passes remove
+# at most `out / n <= cfl_limit m_ref / 2` in total. Hence every pass removes
+# at most `cfl_limit / 2` of the mass the cell holds when the pass starts, and
+# the air mass stays `>= (1 - cfl_limit / 2) m_ref > 0` throughout the step.
+# Budgeting against the step-start mass alone (the earlier rule) does not
+# bound a cell that drains within the step: its later blocks start well
+# below `m`.
+#
+# A cell with outflow whose reference mass is not positive (`m <= 0`, or a
+# flux set that would leave it with `m_end <= 0`) has no valid count; the
+# count then throws instead of running.
 
 """
     _outflow(F_lo, F_hi)
@@ -37,24 +53,46 @@ Rood 1996).
 @inline _outflow(F_lo, F_hi) = max(zero(F_lo), -F_lo) + max(zero(F_hi), F_hi)
 
 """
-    _palindrome_outflow_ratio(m, out)
+    _net_inflow(F_lo, F_hi)
 
-Outflow of one palindrome relative to the cell mass, `2 out / m`, where `out`
-is the cell's outflow summed over all directions for one application of each.
-Cells without positive mass contribute zero.
+Mass a cell gains through its two faces of one direction for one application
+(same convention as `_outflow`): `F_lo - F_hi`.
 """
-@inline _palindrome_outflow_ratio(m, out) = ifelse(m > zero(m), (out + out) / m, zero(m))
+@inline _net_inflow(F_lo, F_hi) = F_lo - F_hi
+
+"""
+    _palindrome_outflow_ratio(m, out, net_in)
+
+Outflow of one palindrome relative to the cell's reference mass,
+`2 out / min(m, m + 2 net_in)`, where `out` is the cell's outflow and `net_in`
+its net inflow, each summed over all directions for one application of each.
+Cells without outflow contribute zero; a cell with outflow whose reference
+mass is not positive (or a non-finite flux) gives `Inf`, which
+`_palindrome_subcycle_count` rejects.
+"""
+@inline function _palindrome_outflow_ratio(m, out, net_in)
+    m_ref = min(m, m + (net_in + net_in))
+    return ifelse(m_ref > zero(m_ref), (out + out) / m_ref,
+                  ifelse(out == zero(out), zero(m_ref), oftype(m_ref, Inf)))
+end
 
 """
     _palindrome_subcycle_count(max_ratio, cfl_limit, max_n_sub, topology) -> Int
 
 Number of subcycled passes `n` of a palindrome whose largest outflow ratio
 (`_palindrome_outflow_ratio`) is `max_ratio`: the smallest `n` with
-`max_ratio / n <= cfl_limit`. `cfl_limit = Inf` disables subcycling.
+`max_ratio / n <= cfl_limit`. `cfl_limit = Inf` disables subcycling. Throws
+an `ArgumentError` for a non-finite `max_ratio` (invalid flux set) or when
+`n` would exceed `max_n_sub`.
 """
 function _palindrome_subcycle_count(max_ratio, cfl_limit, max_n_sub::Integer, topology)
     cfl_limit > zero(cfl_limit) || throw(ArgumentError(
         "$(topology) advection requires cfl_limit > 0, got $(cfl_limit)"))
+    isinf(cfl_limit) && return 1
+    isfinite(max_ratio) || throw(ArgumentError(
+        "$(topology) palindrome subcycling: a cell with outflow has non-positive air " *
+        "mass at the start or end of the step (min(m, m + 2 (in - out)) <= 0), or a " *
+        "flux or mass is not finite (outflow ratio $(max_ratio)); the flux set is invalid"))
     max_ratio <= cfl_limit && return 1
     n_sub = ceil(Int, max_ratio / cfl_limit)
     n_sub <= max_n_sub || throw(ArgumentError(
@@ -67,18 +105,19 @@ end
 # Cubed-sphere subcycle count
 # =========================================================================
 
-"""Static palindrome CFL subcycle count of a cubed-sphere step from its initial mass.
+"""Static palindrome CFL subcycle count of a cubed-sphere step.
 
-The shared palindrome budget (`_palindrome_subcycle_count`) evaluated on the
-interior cells of the six panels, with every flux scaled by `flux_scale`.
+The shared palindrome budget (`_palindrome_subcycle_count`, reference mass
+`min(m, m_end)`) evaluated on the interior cells of the six panels, with every
+flux scaled by `flux_scale`.
 
 This is the runtime-side second line of defense for the CS Strang sequence;
 binaries with the `binary_schedule` substep contract pass their own count
 (see `_cs_palindrome_subcycles`). The sequence applies each direction twice,
 so a per-direction CFL pilot can under-estimate cells where moderate outgoing
-flux exists in several directions at once. The numerator is the one of the
-preprocessor's adaptive schedule gate (which can also divide by the smaller of
-the two window-end masses).
+flux exists in several directions at once. Numerator and reference mass are
+those of the preprocessor's positivity gate (`verify_substep_positivity_cs!`),
+which takes the smaller of the window's two end masses.
 """
 function _cs_static_palindrome_subcycle_count(panels_am::NTuple{6},
                                               panels_bm::NTuple{6},
@@ -105,7 +144,10 @@ function _cs_static_palindrome_subcycle_count(panels_am::NTuple{6},
                               cz_lo, cz_hi; init = zero(FT)) do mi, axl, axh, byl, byh, czl, czh
             _palindrome_outflow_ratio(mi, _outflow(fs * axl, fs * axh) +
                                           _outflow(fs * byl, fs * byh) +
-                                          _outflow(fs * czl, fs * czh))
+                                          _outflow(fs * czl, fs * czh),
+                                      _net_inflow(fs * axl, fs * axh) +
+                                          _net_inflow(fs * byl, fs * byh) +
+                                          _net_inflow(fs * czl, fs * czh))
         end
         max_cfl = max(max_cfl, cfl_panel)
     end

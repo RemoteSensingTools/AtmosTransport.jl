@@ -18,11 +18,14 @@
 #     overturning circulation on reduced Gaussian;
 #   * the step is exactly the composition built from the sweep primitives,
 #     at n > 1 and (the plain palindrome) at n = 1;
-#   * the footprint tape records the same composition.
+#   * the footprint tape records the same composition;
+#   * a strongly divergent (draining) cell keeps positive air mass: the count
+#     budgets against min(m, m_end), and invalid flux sets throw.
 # ---------------------------------------------------------------------------
 
 using Test
 using LinearAlgebra
+using Random
 
 import AtmosTransport
 const AT  = AtmosTransport
@@ -198,7 +201,8 @@ end
     am = [0.2 * sin(0.7i + 0.3j + k) for i in 1:Nx+1, j in 1:Ny, k in 1:Nz]; am[Nx+1, :, :] .= am[1, :, :]
     bm = [0.2 * cos(0.4i + 0.9j + k) for i in 1:Nx, j in 1:Ny+1, k in 1:Nz]; bm[:, [1, Ny+1], :] .= 0
     cm = [0.2 * sin(0.5i + 0.2j + 2k) for i in 1:Nx, j in 1:Ny, k in 1:Nz+1]; cm[:, :, [1, Nz+1]] .= 0
-    for scale in (0.1, 1.0), scheme in (UpwindScheme(), SlopesScheme(MonotoneLimiter()), PPMScheme(MonotoneLimiter()))
+    # scale 0.5: n = 2 (at scale 1 some cells would end the step with negative mass)
+    for scale in (0.1, 0.5), scheme in (UpwindScheme(), SlopesScheme(MonotoneLimiter()), PPMScheme(MonotoneLimiter()))
         a, b, c = scale .* am, scale .* bm, scale .* cm
         n = Adv._structured_palindrome_subcycle_count(a, b, c, m0, AT.Parameters.DEFAULT_CFL_LIMIT)
         @test (n == 1) == (scale == 0.1)
@@ -217,6 +221,153 @@ end
         @test isequal(rm, rr)
         @test isequal(m, mr)
     end
+end
+
+# A strongly divergent cell: one cell of mass 1 among cells of mass 100, inflow
+# `I` through both faces of one direction and outflow `O` through both faces of
+# the other, so after the step it holds m_end = 1 + 2 (I − O). Budgeting
+# against the step-start mass alone chose n = 5 for (O, I) = (2.0, 1.51)
+# (m_end = 0.02): the reverse half then removed more than the cell held, air
+# mass went negative and PPM returned q = −1.7e43. The budget against
+# min(m, m_end) guarantees that every pass removes at most cfl_limit / 2 of the
+# mass the cell holds when the pass starts.
+function _ll_draining_cell(; O, I, div_dir)
+    m = fill(100.0, 8, 8, 1); m[4, 4, 1] = 1.0
+    am = zeros(9, 8, 1); bm = zeros(8, 9, 1); cm = zeros(8, 8, 2)
+    if div_dir === :y
+        am[4, 4, 1] = I / 2; am[5, 4, 1] = -I / 2
+        bm[4, 4, 1] = -O / 2; bm[4, 5, 1] = O / 2
+    else
+        bm[4, 4, 1] = I / 2; bm[4, 5, 1] = -I / 2
+        am[4, 4, 1] = -O / 2; am[5, 4, 1] = O / 2
+    end
+    return m, am, bm, cm
+end
+
+_ll_outflow(am, bm, cm) = (max.(0, -am[1:end-1, :, :]) .+ max.(0, am[2:end, :, :]),
+                           max.(0, -bm[:, 1:end-1, :]) .+ max.(0, bm[:, 2:end, :]),
+                           max.(0, -cm[:, :, 1:end-1]) .+ max.(0, cm[:, :, 2:end]))
+
+@testset "lat-lon subcycling of a draining cell keeps air mass positive" begin
+    cfl = AT.Parameters.DEFAULT_CFL_LIMIT
+    for div_dir in (:y, :x), (O, I) in ((2.0, 1.51), (2.0, 1.75), (1.2, 0.95))
+        m0, am, bm, cm = _ll_draining_cell(; O, I, div_dir)
+        m_end = 1 + 2 * (I - O)
+        n = Adv._structured_palindrome_subcycle_count(am, bm, cm, m0, cfl)
+        @testset "$(div_dir) divergent, O=$(O) I=$(I) n=$(n)" begin
+            @test n == ceil(Int, 2O / (m_end * cfl))
+            # Pass by pass: no pass removes more than cfl/2 of a cell's current mass.
+            out = _ll_outflow(am, bm, cm)
+            m = copy(m0); rr = reshape(0.4 .* m0, size(m0)..., 1)
+            ws = Adv.AdvectionWorkspace(m; n_tracers = 1)
+            fs = 1.0 / n
+            worst_fraction = 0.0
+            min_mass = Inf
+            pass!(sweep!, flux, d) = begin
+                worst_fraction = max(worst_fraction, maximum(fs .* out[d] ./ m))
+                sweep!(rr, m, flux, UpwindScheme(), ws, fs)
+                min_mass = min(min_mass, m[4, 4, 1])
+            end
+            for _ in 1:n
+                pass!(Adv.sweep_x_mt!, am, 1); pass!(Adv.sweep_y_mt!, bm, 2); pass!(Adv.sweep_z_mt!, cm, 3)
+            end
+            for _ in 1:n
+                pass!(Adv.sweep_z_mt!, cm, 3); pass!(Adv.sweep_y_mt!, bm, 2); pass!(Adv.sweep_x_mt!, am, 1)
+            end
+            @test worst_fraction <= cfl / 2 + 1e-12
+            @test min_mass >= (1 - cfl / 2) * m_end - 1e-12
+            @test m[4, 4, 1] ≈ m_end rtol = 1e-12
+
+            # The production step keeps a uniform tracer uniform with every scheme.
+            for scheme in (UpwindScheme(), SlopesScheme(MonotoneLimiter()), PPMScheme(MonotoneLimiter()))
+                m = copy(m0); rm = reshape(0.4 .* m0, size(m0)..., 1)
+                Adv.strang_split_mt!(rm, m, am, bm, cm, scheme, Adv.AdvectionWorkspace(m; n_tracers = 1))
+                @test minimum(m) > 0
+                @test maximum(abs.(rm[:, :, :, 1] ./ m .- 0.4)) < 1e-12
+            end
+        end
+    end
+end
+
+@testset "cubed-sphere and reduced-Gaussian counts budget against min(m, m_end)" begin
+    cfl = AT.Parameters.DEFAULT_CFL_LIMIT
+    # Cubed sphere: one interior cell of panel 3, inflow 1.51 in x, outflow 2.0 in y.
+    mesh, m0, am, bm, cm = _cs_flow_problem(:rotation, 0.0)
+    foreach(p -> fill!(m0[p], 100.0), 1:6)
+    i = j = mesh.Hp + 4
+    m0[3][i, j, 1] = 1.0
+    am[3][i, j, 1] = 0.755; am[3][i + 1, j, 1] = -0.755
+    bm[3][i, j, 1] = -1.0;  bm[3][i, j + 1, 1] = 1.0
+    @test Adv._cs_static_palindrome_subcycle_count(am, bm, cm, m0, mesh.Nc, mesh.Hp, 1, cfl) ==
+          ceil(Int, 4.0 / (0.02 * cfl))
+    # flux_scale enters the end mass too: at half the flux m_end = 0.51.
+    @test Adv._cs_static_palindrome_subcycle_count(am, bm, cm, m0, mesh.Nc, mesh.Hp, 1, cfl;
+                                                   flux_scale = 0.5) == ceil(Int, 2.0 / (0.51 * cfl))
+
+    # Reduced Gaussian: level 1 of cell l loses 1.0 through a side face and gains
+    # 0.6 from level 2 per application, so m_end = 1 − 2 · 0.4 = 0.2.
+    FT = Float64
+    rg = AT.ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT)
+    grid = AT.AtmosGrid(rg, AT.HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1]), AT.CPU(); FT)
+    nc, Nz = AT.ncells(rg), 2
+    f = findfirst(f -> all(>(0), G.face_cells(rg, f)), 1:G.nfaces(rg))
+    l, r = G.face_cells(rg, f)
+    fluxes = AT.allocate_face_fluxes(rg, Nz; FT, basis = AT.DryBasis)
+    fluxes.horizontal_flux .= 0; fluxes.cm .= 0
+    fluxes.horizontal_flux[f, 1] = 1.0       # l → r on level 1
+    fluxes.cm[l, 2] = -0.6                    # level 2 of l → level 1 of l (upward)
+    m0 = fill(10.0, nc, Nz); m0[l, 1] = 1.0
+    n = Adv._face_indexed_palindrome_subcycle_count(fluxes.horizontal_flux, fluxes.cm, m0, rg, FT(cfl))
+    @test n == ceil(Int, 2.0 / (0.2 * cfl))
+    state = AT.CellState(AT.DryBasis, copy(m0); CO2 = 0.4 .* m0)
+    AT.Operators.apply!(state, fluxes, grid, UpwindScheme(), 1.0;
+                        workspace = Adv.AdvectionWorkspace(state.air_mass))
+    @test minimum(state.air_mass) > 0
+    @test state.air_mass[l, 1] ≈ 0.2 rtol = 1e-12
+    @test maximum(abs.(state.tracers_raw[:, :, 1] ./ state.air_mass .- 0.4)) < 1e-12
+end
+
+@testset "invalid flux sets throw (non-positive reference mass with outflow)" begin
+    cfl = AT.Parameters.DEFAULT_CFL_LIMIT
+    # Lat-lon: a cell the step would leave with negative mass (m_end = 1 + 2 (1 − 2) = −1) ...
+    m0, am, bm, cm = _ll_draining_cell(; O = 2.0, I = 1.0, div_dir = :y)
+    @test_throws ArgumentError Adv._structured_palindrome_subcycle_count(am, bm, cm, m0, cfl)
+    @test_throws ArgumentError Adv.strang_split_mt!(reshape(copy(m0), 8, 8, 1, 1), copy(m0), am, bm, cm,
+                                                    UpwindScheme(), Adv.AdvectionWorkspace(m0; n_tracers = 1))
+    # ... a cell with no mass but outflow, and a non-finite flux.
+    m0, am, bm, cm = _ll_draining_cell(; O = 0.0, I = 0.0, div_dir = :y)
+    am[4, 4, 1] = -0.1; m0[4, 4, 1] = 0.0
+    @test_throws ArgumentError Adv._structured_palindrome_subcycle_count(am, bm, cm, m0, cfl)
+    am[4, 4, 1] = NaN; m0[4, 4, 1] = 1.0
+    @test_throws ArgumentError Adv._structured_palindrome_subcycle_count(am, bm, cm, m0, cfl)
+    # A cell without mass and without outflow is fine (it only receives).
+    m0, am, bm, cm = _ll_draining_cell(; O = 0.0, I = 0.0, div_dir = :y)
+    m0[4, 4, 1] = 0.0; am[4, 4, 1] = 0.1
+    @test Adv._structured_palindrome_subcycle_count(am, bm, cm, m0, cfl) == 1
+
+    # Cubed sphere: an empty cell with outflow.
+    mesh, m0, am, bm, cm = _cs_flow_problem(:rotation, 0.0)
+    i = mesh.Hp + 2
+    m0[5][i, i, 1] = 0.0; am[5][i + 1, i, 1] = 1e-3
+    @test_throws ArgumentError Adv._cs_static_palindrome_subcycle_count(am, bm, cm, m0, mesh.Nc, mesh.Hp, 1, cfl)
+
+    # Reduced Gaussian: random fluxes that empty cells (the adversarial review's case).
+    FT = Float64
+    rng = MersenneTwister(5)
+    rg = AT.ReducedGaussianMesh(FT[-60, -20, 20, 60], [6, 10, 10, 6]; FT)
+    grid = AT.AtmosGrid(rg, AT.HybridSigmaPressure(FT[0, 100, 300, 600], FT[0, 0, 0.3, 1]), AT.CPU(); FT)
+    nc, Nz = AT.ncells(rg), 3
+    fluxes = AT.allocate_face_fluxes(rg, Nz; FT, basis = AT.DryBasis)
+    fluxes.horizontal_flux .= 0; fluxes.cm .= 0
+    for f in 1:G.nfaces(rg), k in 1:Nz
+        l, r = G.face_cells(rg, f)
+        (l > 0 && r > 0) && (fluxes.horizontal_flux[f, k] = 0.5 * randn(rng))
+    end
+    fluxes.cm[:, 2:Nz] .= 0.5 .* randn(rng, nc, Nz - 1)
+    m0 = 1 .+ rand(rng, nc, Nz)
+    state = AT.CellState(AT.DryBasis, copy(m0); CO2 = 0.4 .* m0)
+    @test_throws ArgumentError AT.Operators.apply!(state, fluxes, grid, UpwindScheme(), 1.0;
+                                                   workspace = Adv.AdvectionWorkspace(state.air_mass))
 end
 
 # ------------------------------------------------------------- reduced Gaussian

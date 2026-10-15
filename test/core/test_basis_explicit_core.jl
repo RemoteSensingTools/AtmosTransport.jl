@@ -216,7 +216,7 @@ end
 @testset "Structured static palindrome CFL pilot" begin
     FT = Float64
     Nx, Ny, Nz = 4, 1, 1
-    m = ones(FT, Nx, Ny, Nz)
+    m = reshape(FT[2, 1, 1, 3], Nx, Ny, Nz)
     rm = copy(m) .* FT(400e-6)
     am = zeros(FT, Nx + 1, Ny, Nz)
     bm = zeros(FT, Nx, Ny + 1, Nz)
@@ -224,7 +224,8 @@ end
 
     # Periodic inflow through face 1 / Nx+1 plus stronger outflow through face 2.
     # Static palindrome budget: cell 1 loses max(am[2],0)=1.5 per application and
-    # the palindrome applies x twice, so 2·1.5/m = 3.0 → n_sub = ceil(3.0/1.0) = 3:
+    # the palindrome applies x twice, so it ends the step with 2 + 2(1 − 1.5) = 1
+    # and 2·1.5/min(2, 1) = 3.0 → n_sub = ceil(3.0/1.0) = 3 (cell 4: 2·1/min(3, 1) = 2):
     # the static pilot accepts a ratio equal to cfl_limit (the pre-plan-13
     # evolving-mass pilot flagged that equality as a violation).
     am[1, 1, 1] = FT(1.0)
@@ -298,7 +299,7 @@ end
     vc = HybridSigmaPressure(FT[0, 100], FT[0, 1])
     grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=FT)
 
-    m = ones(FT, ncells(mesh), Nz)
+    m = fill(FT(2.6), ncells(mesh), Nz)
     rm = reshape(FT[1, 0, 0, 0], :, 1)
     state = CellState(DryBasis, copy(m); CO2=copy(rm))
     fluxes = allocate_face_fluxes(mesh, Nz; FT=FT, basis=DryBasis)
@@ -306,7 +307,8 @@ end
     fluxes.cm .= zero(FT)
 
     # Cell 1 sees one strong outflow and one weaker inflow in the same sweep.
-    # Static palindrome budget: 2 · 1.2 / m = 2.4 → n_sub = ceil(2.4/1.0) = 3.
+    # Static palindrome budget: cell 1 ends the step with 2.6 + 2(0.4 − 1.2) = 1,
+    # so 2 · 1.2 / min(2.6, 1) = 2.4 → n_sub = ceil(2.4/1.0) = 3.
     fluxes.horizontal_flux[1, 1] = FT(0.4)
     fluxes.horizontal_flux[2, 1] = FT(1.2)
 
@@ -332,7 +334,7 @@ end
     FT = Float32
     if HAS_CUDA_FOR_ADAPT
         m = CUDA.fill(FT(1), 4, 1, 1)
-        am = cu(reshape(FT[10, 10, 0, 0, 10], 5, 1, 1))
+        am = cu(reshape(FT[10, 10, 10, 10, 10], 5, 1, 1))   # uniform: ratio 20, n = 20 > 4
         bm = CUDA.zeros(FT, 4, 2, 1)
         cm = CUDA.zeros(FT, 4, 1, 2)
         @test_throws ArgumentError AtmosTransport.Operators.Advection._structured_palindrome_subcycle_count(

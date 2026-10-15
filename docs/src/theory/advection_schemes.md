@@ -180,10 +180,13 @@ one-dimensional flow with Courant numbers up to 1 the update is monotone; on the
 above it stays in [0, 1] in Float32 and Float64. Every limited parabola is
 bounded by the neighbouring cell means, so within one sweep a cell's tracer
 mass stays non-negative as long as the fractions of the cell swept out through
-its two faces sum to at most 1. The runtime outflow budgets aim at this but
-are computed from the air mass at the start of the step
-(`_cs_static_palindrome_subcycle_count`), so positivity of complete runs is
-measured, not proven. Advecting one period of a sine at Courant number 0.4, the L2 error falls
+its two faces sum to at most 1. When the runtime chooses the subcycle count,
+its palindrome budget guarantees this for every pass: each pass removes at
+most `cfl_limit / 2` of the mass the cell holds when the pass starts (see
+"CFL handling and subcycling" below). Cubed-sphere
+binaries with the `binary_schedule` substep contract run `n = 1` and rely on
+the write-time gate, which checks the same budget against the window's masses
+rather than each step's, so there positivity is measured, not proven. Advecting one period of a sine at Courant number 0.4, the L2 error falls
 by 4.05 from 80 to 160 cells (3.46 for the default) and is 18% lower at 160
 cells; at 20 cells it is 29% higher, because the profile limiter flattens the
 sine's extrema. The cubed-sphere adjoint supports both the monotone and CW84
@@ -327,11 +330,13 @@ a pure mass ratio — no `Δt` factor:
 
 One transport step applies each direction twice (`X Y Z | midpoint | Z Y X`,
 `H V | midpoint | V H` on reduced Gaussian), so the runtime budgets one
-palindrome's worth of outflow per cell,
+palindrome's worth of outflow per cell against the smaller of the cell's
+masses at the start and at the end of the step,
 
 ```math
-r_c \;=\; \frac{2\,\bigl(\mathrm{out}_x + \mathrm{out}_y + \mathrm{out}_z\bigr)}{m_c},
+r_c \;=\; \frac{2\,\bigl(\mathrm{out}_x + \mathrm{out}_y + \mathrm{out}_z\bigr)}{\min\bigl(m_c,\, m_c^{\mathrm{end}}\bigr)},
 \qquad \mathrm{out}_d = \max(0, -F_{d,\mathrm{lo}}) + \max(0, F_{d,\mathrm{hi}}),
+\qquad m_c^{\mathrm{end}} = m_c + 2 \sum_d \bigl(F_{d,\mathrm{lo}} - F_{d,\mathrm{hi}}\bigr),
 ```
 
 and when `max r_c` exceeds `cfl_limit` it **subcycles** the whole step:
@@ -357,13 +362,34 @@ the palindrome itself, with the same `6n` sweeps; at `n = 1` it is the plain
 palindrome. FV3's `fv_tracer2d` subcycles the same way (its whole 2-D
 operator `nsplt` times at flux / `nsplt`).
 
-The budget bounds the outflow of any two consecutive passes, one palindrome's
-worth, by `cfl_limit × m_c` at the start of the step, so the first two passes
-cannot empty a cell. Later passes see the evolved mass: there the budget is a
-static proxy, and positivity is measured
-(`test/core/test_subcycle_composition.jl`: solid-body rotation and strain on
-the cubed sphere, strain on lat-lon, an overturning circulation on reduced
-Gaussian) rather than proven. Up to version 0.5.0 each direction was
+**What the budget guarantees.** The midpoint operators do not change air
+mass, and each block of passes (one `X_h Y_h Z_h` or `Z_h Y_h X_h`) changes a
+cell's mass by the same amount, `Σ_d (F_{d,lo} − F_{d,hi}) / n`. The masses
+between blocks therefore lie on the straight line from `m_c` to
+`m_c^end`, so all of them are at least `min(m_c, m_c^end)`. Within one block
+the passes remove at most `(out_x + out_y + out_z) / n ≤ (cfl_limit / 2)
+min(m_c, m_c^end)`. Hence:
+
+- every pass removes at most `cfl_limit / 2` of the mass the cell holds when
+  that pass starts, and
+- the air mass stays at least `(1 − cfl_limit / 2) min(m_c, m_c^end) > 0`
+  throughout the step.
+
+A reference mass of `m_c` alone, as the count used before this budget,
+bounds only the first block, because a cell that drains within the step
+starts its later blocks well below `m_c`. With one cell of mass 1 among
+cells of mass 100, inflow 1.51 in x and outflow 2.0 in y (`m_c^end = 0.02`),
+that rule chose `n = 5`, the reverse half drove the air mass negative, and PPM produced
+a mixing ratio of `−1.7 × 10^43`. The reference mass `min(m_c, m_c^end)` is
+the one of the write-time positivity gate (`min(m, m_next)`, with the step's
+own end mass for `m_next`); here it gives `n = 211`. A cell with outflow
+whose reference mass is not positive has no valid count (the flux set would
+leave it with no or negative mass), and the count throws an `ArgumentError`.
+The budget is sufficient, not tight: it assumes that a block's passes
+remove all of their outflow before any of their inflow arrives. `test/core/test_subcycle_composition.jl`
+checks it on the draining cell above (x and y swapped too), solid-body
+rotation and strain on the cubed sphere, strain on lat-lon and an overturning
+circulation on reduced Gaussian. Up to version 0.5.0 each direction was
 subcycled on its own, `X^n Y^n Z^n | Z^n Y^n X^n`: the `n` passes of one leg
 then remove the full-flux outflow of that direction before any other direction
 refills the cell, so subcycling bounded the Courant number of a pass but not
@@ -381,8 +407,9 @@ for the write-time gate and the binary schedule, which sets `n = 1` on
 cubed-sphere binaries with the `binary_schedule` substep contract.
 
 All split-sweep topologies share one default `cfl_limit`, `DEFAULT_CFL_LIMIT =
-0.95`, so the first palindrome's worth of passes leaves every cell at least 5%
-of its starting mass:
+0.95`, so when the runtime chooses the count no pass removes more than 47.5%
+of a cell's current mass and every cell keeps at least 52.5% of
+`min(m_c, m_c^end)`:
 
 | Topology | Default `cfl_limit` | Notes |
 | --- | --- | --- |

@@ -54,7 +54,8 @@ Configuration parsing lives in
   threaded into the palindrome midpoint through imports from
   `../Diffusion` and `../SurfaceFlux`
 - CFL subcycling (every topology): one count `n` from the palindrome
-  outflow budget, then `(X Y Z)^n → midpoint → (Z Y X)^n` with every flux
+  outflow budget against `min(m_start, m_end)` (no pass removes more than
+  `cfl_limit / 2` of a cell's current mass; an invalid flux set throws), then `(X Y Z)^n → midpoint → (Z Y X)^n` with every flux
   divided by `n` (`H V` / `V H` on reduced Gaussian); `n = 1` is the plain
   palindrome
 - This folder is the main place where topology-specific transport

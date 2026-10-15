@@ -105,13 +105,15 @@ outflow over one palindrome is therefore bounded by the *palindrome positivity
 budget*
 
 ```
-ratio = 2 · (out_x + out_y + out_z) / m_start
+ratio = 2 · (out_x + out_y + out_z) / min(m_start, m_end)
+m_end = m_start + 2 · (in_x + in_y + in_z − out_x − out_y − out_z)
 ```
 
 with `out_d = max(0,-a_lo) + max(0,a_hi)` (the Lin-Rood 1996
-refinement, not `max(|a_lo|, |a_hi|)`). The preprocessor's positivity
-gate uses the same budget against `min(m, m_next)`, for cubed-sphere and
-lat-lon binaries alike. For binaries written
+refinement, not `max(|a_lo|, |a_hi|)`) and `in_d − out_d = a_lo − a_hi`;
+`m_end` is the cell's mass after the palindrome. The preprocessor's
+positivity gate uses the same budget against `min(m, m_next)` with the
+window's end mass `m_next`, for cubed-sphere and lat-lon binaries alike. For binaries written
 with adaptive substeps, the preprocessor bakes the verified count into
 `steps_per_window_by_window[k]`. The binary-scheduled runtime executes exactly
 that many transport substeps and fixes the inner subcycle count at
@@ -132,11 +134,17 @@ the composition stays symmetric and keeps second-order splitting with the
 same `6n` sweeps; FV3's `fv_tracer2d` likewise repeats its whole 2-D operator
 `nsplt` times at flux / `nsplt`.
 
-The budget bounds what any two consecutive passes, one palindrome's worth of
-flux, remove from a cell: at most `cfl_limit` of its step-start mass, so the
-first two passes cannot empty a cell. Later passes see the evolved mass, so
-there the budget is a static proxy whose positivity is measured
-(`test/core/test_subcycle_composition.jl`) rather than proven. Subcycling each
+What the runtime count guarantees: the midpoint does not change air mass and
+every `X Y Z` (or `Z Y X`) block changes a cell's mass by the same amount, so
+the masses between blocks lie between `m_start` and `m_end`; one block removes
+at most `(cfl_limit / 2) · min(m_start, m_end)`. Hence every pass removes at
+most `cfl_limit / 2` (47.5%) of the mass the cell holds when the pass starts,
+and air mass stays positive through the whole step. A cell with outflow and
+`min(m_start, m_end) ≤ 0` is an invalid flux set and the count throws an
+`ArgumentError`. Budgeting against `m_start` alone (the earlier rule) fails in
+cells that drain within the step: their later blocks start well below
+`m_start` (`test/core/test_subcycle_composition.jl` has such a cell, where
+that rule drove air mass negative). Subcycling each
 direction separately (`X^n Y^n Z^n | Z^n Y^n X^n`, the order of 0.5.0 and earlier)
 does not have this property: the `n` passes of one leg together remove the
 full-flux outflow of that direction before another direction can refill the

@@ -74,9 +74,9 @@ values for the next reconstruction.
 
 ## Subcycling
 
-The count comes from the initial-mass palindrome budget
-`2 * (out_x + out_y + out_z) / (n m_start) ≤ cfl_limit`
-(`_cs_static_palindrome_subcycle_count`). A supplied `subcycle_count` uses the
+The count comes from the palindrome budget
+`2 * (out_x + out_y + out_z) / (n min(m_start, m_end)) ≤ cfl_limit`, `m_end`
+the cell's mass after the step (`_cs_static_palindrome_subcycle_count`). A supplied `subcycle_count` uses the
 binary's schedule; a workspace built with `binary_cfl_check = BinaryCFLCheck()`
 (`[advection] check_binary_cfl = true`) checks it against the runtime budget.
 
@@ -102,7 +102,8 @@ kernels only update interior cells; halo regions are filled by
 - `workspace`: pre-allocated `CSAdvectionWorkspace` buffers.
 - `flux_scale`: overall scaling applied to all fluxes (default 1.0).
 - `cfl_limit`: palindrome outflow budget per subcycle, as a fraction of the
-  step-start cell mass (default `DEFAULT_CFL_LIMIT`, 0.95).
+  smaller of the cell's masses at the start and end of the step (default
+  `DEFAULT_CFL_LIMIT`, 0.95).
 """
 function strang_split_cs!(panels_rm::NTuple{6},
                           panels_m::NTuple{6},

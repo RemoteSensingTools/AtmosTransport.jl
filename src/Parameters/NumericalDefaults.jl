@@ -12,8 +12,10 @@
 Runtime palindrome outflow budget of split-sweep advection (lat-lon,
 reduced-Gaussian and cubed-sphere): a transport step is split into `n`
 subcycles so that one palindrome's worth of outflow,
-`2 (out_x + out_y + out_z) / n`, is at most this fraction of the cell's mass at
-the start of the step.
+`2 (out_x + out_y + out_z) / n`, is at most this fraction of
+`min(m_start, m_end)`, the smaller of the cell's masses at the start and end of
+the step. Every pass then removes at most half this fraction of the mass the
+cell holds when the pass starts.
 """
 const DEFAULT_CFL_LIMIT = 0.95
 

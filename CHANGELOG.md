@@ -56,8 +56,20 @@
   direction's full-flux outflow before another direction refilled the cell:
   in exactly non-divergent flows air mass went negative (to −0.46 of a cell's
   mass at C12, n = 6) and uniform tracers were lost. All topologies now take
-  one count from the cubed-sphere palindrome budget
-  `2 (out_x + out_y + out_z) / (n m) ≤ cfl_limit`; the lat-lon and
+  one count from the palindrome budget
+  `2 (out_x + out_y + out_z) / (n m_ref) ≤ cfl_limit` with
+  `m_ref = min(m, m_end)`, `m_end = m + 2 (in − out)` the cell's mass after
+  the step (the reference mass of the write-time positivity gate). Between
+  `X Y Z` blocks a cell's mass lies between `m` and `m_end`, so every pass
+  removes at most `cfl_limit / 2` of the mass the cell holds when it starts
+  and air mass stays positive through the step. Budgeting against the
+  step-start mass `m` alone (main's per-direction counts too) does not bound
+  a cell that drains within the step: one cell of mass 1 among cells of 100
+  with inflow 1.51 in x and outflow 2.0 in y got `n = 5`, its air mass went
+  negative, and PPM gave a mixing ratio of −1.7e43 (now `n = 211`). A cell
+  with outflow and `m_ref ≤ 0`, or a non-finite flux, throws an
+  `ArgumentError` (main also failed, with an "exceeded max_n_sub" error);
+  the lat-lon and
   reduced-Gaussian default `cfl_limit` is `DEFAULT_CFL_LIMIT` (0.95, was 1.0
   per direction), like the cubed sphere. The footprint/4D-Var tape recorders
   record the same composition. Only runs whose pilot returns `n > 1` change:
