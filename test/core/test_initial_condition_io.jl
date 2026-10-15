@@ -152,12 +152,17 @@ function _write_synthetic_surface_flux_file(path::AbstractString)
         vlon[:] = [-135.0, -45.0, 45.0, 135.0]
         vlat[:] = [45.0, -45.0]  # descending on purpose
         vtime[:] = [0.0, 1.0]
+        # Every 90° × 90° cell has the area R² (π/2)(sin 90° − sin 0°) [m²] (the
+        # loader checks a file's cell areas against its coordinates); one cell
+        # emits 7 kg CO₂ s⁻¹ in January.
+        area = AtmosTransport.Parameters.EARTH_RADIUS^2 * π / 2
         raw1 = zeros(Float64, 4, 2)
-        raw1[1, 1] = 7 * _SYNTHETIC_SECONDS_JAN_2021
+        raw1[1, 1] = 7 * _SYNTHETIC_SECONDS_JAN_2021 / area
         raw2 = 2 .* raw1
         vtotal[:, :, 1] = raw1
         vtotal[:, :, 2] = raw2
-        varea[:, :] = reshape(Float64.(1:8), 4, 2)
+        varea[:, :] = fill(area, 4, 2)
+        varea.attrib["units"] = "m2"
         vtotal.attrib["units"] = "kgCO2/month/m2"
     finally
         close(ds)
@@ -1347,9 +1352,12 @@ end
                 _write_synthetic_lmdz_flux_file(
                     joinpath(dir, @sprintf("lmdz_%04d%02d.nc", 2022, month)), 2022, month)
             end
+            # Each synthetic month holds two 3-hourly slices, so the files do
+            # not cover their months; this test is about slice selection.
             cfg = Dict{String, Any}("kind" => "lmdz_co2",
                                     "file_pattern" => joinpath(dir, "lmdz_{YYYYMM}.nc"),
-                                    "year" => 2022, "time_varying" => true)
+                                    "year" => 2022, "time_varying" => true,
+                                    "hold_outside_coverage" => true)
             ref = DateTime(2022, 1, 1)
             full = ICIO._load_timevarying_surface_flux_field(cfg, Float32, ref; species = :co2)
             sec(d) = Dates.value(d - ref) / 1000.0

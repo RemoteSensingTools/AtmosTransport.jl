@@ -31,11 +31,11 @@ CFTime), Dates and SHA. It never imports `Preprocessing` or `Models`, so the run
 | [`GriddedIO.jl`](GriddedIO.jl) | Module, imports, exports, includes. |
 | [`coordinates.jl`](coordinates.jl) | `AbstractAxis` (`LongitudeAxis`, `LatitudeAxis`, `TimeAxis`, `VerticalAxis`) and `find_coordinate`; `LatLonOrientation`, `latlon_orientation`, `orient`, `orient_coordinates`; `AbstractFillPolicy` (`MaskedAsZero`, `MaskedAsNaN`, `FillValueOnly`) and `read_raw([T,] ds, name, policy, idx...)`. |
 | [`source_meshes.jl`](source_meshes.jl) | `source_latlon_mesh(lon, lat, rule; radius)` and `source_latlon_mesh(ds, rule; radius)` with the face rules `AbstractFaceRule` (`SnappedFaces`: the runtime rule, with snapping, centre-on-0/180, midpoint and pole rules on `LatLonMesh(λᶠ, φᶠ; radius)`; `UniformSpanFaces`: the legacy uniform-span reconstruction). |
-| [`time_axes.jl`](time_axes.jl) | `TimeInterval`, `MonthKey`, `interval`, `month_keys`, `seconds_since`, `check_last_month`; `AbstractTimeDecoder` (`CFDecoder`, `MonthsSince`, `DecimalYears`, `AuxiliaryTimeVariable`) with the stamp positions `MonthStart`, `MidMonth`, `MonthEnd`; `DEFAULT_TIME_DECODERS`, `decode_time`, `decode_month_keys`, and bounds/calendar-aware `decode_month_seconds`; the flux writers' time axis (contiguous intervals → `time`, `time_bnds`). |
+| [`time_axes.jl`](time_axes.jl) | `TimeInterval`, `MonthKey`, `interval`, `month_keys`, `seconds_since`, `check_last_month`; `AbstractTimeDecoder` (`CFDecoder`, `MonthsSince`, `DecimalYears`, `AuxiliaryTimeVariable`) with the stamp positions `MonthStart`, `MidMonth`, `MonthEnd`; `DEFAULT_TIME_DECODERS`, `decode_time`, `decode_time_bounds`, `decode_slice_intervals` (the interval each slice of a file stands for), `known_slice_intervals`, `stamp_intervals` (the regular step of a series of stamps over several files) and `STAMP_SPACING_TOLERANCE`, `decode_month_keys`, and bounds/calendar-aware `decode_month_seconds`; the flux writers' time axis (contiguous intervals → `time`, `time_bnds`). |
 | [`staging.jl`](staging.jl) | `stage_input(path; staging_dir)`: `.nc.gz` and single-member `.nc.tar.gz` decompressed through the system `gzip`/`tar`, cached, published atomically. |
 | [`flux_units.jl`](flux_units.jl) | `FluxUnits{S,A,T}` with `AbstractSubstance` (`TargetSpecies`, `Carbon`, `Species`), `AbstractAreaBasis` (`PerSquareMetre`, `PerCell`), `AbstractTimeBasis` (`PerSecond`, `PerDay`, `PerMonth`, `PerYear`); `parse_flux_units`, `kg_per_unit`, `period_seconds`, `mass_rate_factor`, `canonical_units_string`. |
 | [`cs_native_flux.jl`](cs_native_flux.jl) | The `cs_native` flux file, the runtime contract: `CS_NATIVE_FLUX_DIMS`; the writer `CSNativeFluxWriter` (`open_cs_native_writer`, `write_slices!`, `publish!`, `abandon!`); the streaming reader `cs_native_flux_info` / `read_cs_native_flux!` (the runtime's `kind = "cs_native"` loader, panel by panel into the caller's arrays); the whole-file reader `read_cs_native_flux` (the builder's readback); the cell-area gate `check_cell_area`. |
-| [`latlon_flux.jl`](latlon_flux.jl) | `write_latlon_flux`: static CF lat-lon flux files for `kind = "file"`, on meshes the runtime rebuilds exactly from their coordinates. |
+| [`latlon_flux.jl`](latlon_flux.jl) | `write_latlon_flux`: static CF lat-lon flux files for `kind = "file"`, on meshes the runtime rebuilds exactly from their coordinates; `check_latlon_cell_area`: the gate on a lat-lon file's `cell_area`/`area` (units m², within 1 % of the areas its coordinates define, norm-based; positive and finite wherever the flux is nonzero). |
 
 ## Invariants
 
@@ -136,8 +136,24 @@ truncated or Gaussian rows. `SnappedFaces`:
   `AuxiliaryTimeVariable`: stamps from another variable (CARDAMOM's `Time`,
   end-of-month days since 2003-01-01, `MonthEnd()`). All three return month
   starts; the stamp position is named per product, and a wrong one shifts the
-  axis by a month, which `check_last_month` catches. Fill values in a time axis are an error. Time bounds are not read,
-  and the axis length is never used to guess its meaning.
+  axis by a month, which `check_last_month` catches. Fill values in a time axis are an error. `decode_time` reads no
+  time bounds, and the axis length is never used to guess its meaning.
+- `decode_slice_intervals` gives the interval each slice of one file stands
+  for: `known_slice_intervals` (the CF bounds, `decode_time_bounds`, or for a
+  `months since` axis the month of each stamp) when the axis defines them,
+  else `stamp_intervals` of its stamps. A series spread over several files
+  calls `stamp_intervals` on the sorted stamps of all its files. There each
+  slice holds for the series' regular step: for month starts, until the next
+  stamp when that is one month later or one year later from 1 January to 1
+  January, the last stamp one month (one year after a yearly step); for other
+  stamps, until the next stamp when the spacing is the smallest spacing
+  (within `STAMP_SPACING_TOLERANCE`, 1 s), the last stamp that step. A slice
+  before a longer spacing holds for one step, so the gap stays uncovered. A
+  single stamp (also a month start: one 1 January 00Z stamp may be a day, a
+  month or a year), stamps about a month or a year apart that are not month
+  starts (mid-month stamps), and stamps that do not increase strictly are an
+  `ArgumentError`. The time-varying surface-flux loaders check their run
+  against these intervals.
 
 ### Staging
 

@@ -198,6 +198,109 @@ error**, not a silent fallback.
 inventories (EDGAR, GFED, GridFED, LMDz, …). See the worked CATRINE configs
 (`config/runs/catrine_*.toml`) for examples.
 
+### Inventories on the model grid
+
+A static lat-lon inventory has flux densities ``F_s`` [kg m⁻² s⁻¹] on source
+cells ``s`` with areas ``A_s``: the file's `cell_area` or `area` variable, or,
+without one, the latitude-circle area
+``R^2\,\Delta\lambda_s(\sin\varphi_{s+1/2}-\sin\varphi_{s-1/2})`` of the cell
+on the model sphere. The file's own total is ``T = \sum_s F_s A_s``; for a
+per-cell inventory (EDGAR tonnes per cell) ``F_s A_s`` is the stored amount
+itself. The source is the per-cell rate ``r_t`` [kg s⁻¹] of model cell ``t``
+(`surface_flux.regridding`):
+
+- **Conservative** (default, every topology). The rate ``m_s = F_s A_s`` is
+  regridded as an extensive field with the intersection areas ``W_{ts}`` of the
+  source and model cells,
+
+  ```math
+  r_t = \sum_s \frac{W_{ts}}{C_s}\, m_s, \qquad C_s = \sum_t W_{ts}, \qquad
+  \sum_t r_t = \sum_s m_s = T .
+  ```
+
+  ``C_s`` is the area of source cell ``s`` that model cells cover
+  (`Regridding.source_coverage`). The regridder's cells have great-circle
+  edges, so a lat-lon cell's polygon is not its latitude-circle cell:
+  regridding the density ``F_s`` instead would conserve
+  ``\sum_s F_s A^{\rm gc}_s``, which differs from ``T`` by up to
+  ``5\times10^{-5}`` per 1° cell and ``7\times10^{-4}`` per 3.75°×1.875° cell (and
+  by the file's radius convention, about ``7\times10^{-5}`` for the CAMS
+  `area`). On reduced-Gaussian grids two rings with different longitude
+  counts share a latitude as two different great-circle polylines, so a
+  sliver between them belongs to no model cell and ``C_s`` is smaller than
+  the source cell (on O24, 6.3e-4 of the sphere is uncovered and a 1° cell
+  loses up to 6.4 %; the density regrid gave a December 2021 CAMS total
+  1.2e-3 below the file's there). Dividing by ``C_s`` gives each source cell's whole amount
+  to the model cells it overlaps. On a target that does not cover the sphere
+  (a regional or latitude-truncated mesh; the shipped runs are global) this
+  also holds for a source cell that the target covers only in part: its whole
+  amount goes into the covered part, whose density is raised by
+  ``A_s / C_s`` (+4.8 % in the boundary row of a 1° source on a lat-lon target
+  ending at 74.75° N), and source cells that no model cell covers are dropped.
+  Telling a sliver from a partial cover would need an area threshold, so this
+  rule is kept and documented rather than special-cased.
+- **Bilinear** (lat-lon and reduced-Gaussian, only when set). The density is
+  sampled at the model cell centre ``x_t``, ``\tilde r_t = F(x_t)\,a_t``, with
+  the model cell area ``a_t``. The emission and uptake parts are renormalised
+  separately,
+
+  ```math
+  r_t = \tilde r_t \frac{P}{p}\ (\tilde r_t > 0), \qquad
+  r_t = \tilde r_t \frac{N}{n}\ (\tilde r_t < 0), \qquad
+  P = \sum_s \max(m_s, 0),\ N = \sum_s \min(m_s, 0),
+  ```
+
+  with ``p`` and ``n`` the same sums of ``\tilde r_t``. Both factors are
+  positive, so no cell changes sign, and ``\sum_t r_t = P + N = T``.
+  Renormalising the net total instead fails for fields with uptake: the
+  factor ``T/\sum_t \tilde r_t`` is arbitrary when the net is near zero and
+  negative when the sampled net has the other sign, which turns every source
+  into a sink (10 of 20 random fossil-plus-uptake fields on a 72×46 grid).
+  When ``p = 0 \ne P`` or ``n = 0 \ne N`` no factor exists, and the build is an
+  error; one uptake cell that falls between the sampled centres is enough.
+  The factors keep the two totals, not the cell values, and can be far from
+  1: the uptake of the GridFED December 2021 file on a 5° LL72 grid has
+  ``N/n = 3.53``, so every sampled uptake cell is multiplied by 3.53 (0.83 on
+  2.5°, 2.38 on 1°). Both factors are logged, and a factor more than 10 % from
+  1 is a warning. Point sources stay aliased: a 2° hotspot lands in whichever
+  model cell's centre samples it.
+
+Cubed-sphere grids always use the conservative path. Time-varying lat-lon
+series (cubed sphere only) are regridded slice by slice as densities with one
+regridder, so their slices conserve ``\sum_s F_s A^{\rm gc}_s``; their loader
+reads no file areas.
+
+### Time coverage of time-varying sources
+
+A time-varying source evaluates its slices with clamped temporal schemes, so
+outside ``[t_1, t_n]`` it holds its first or last slice. The loaders therefore
+require the run ``[t_{\rm start}, t_{\rm end}]`` to lie inside the union of
+the slices' intervals, taken over all files of the source together. A slice
+with CF time bounds stands for its bounds, a `months since` stamp for its
+month (`GriddedIO.known_slice_intervals`). The stamps without bounds of all
+files are merged and sorted, and each holds for the regular step of that
+series (`GriddedIO.stamp_intervals`):
+
+- month starts step by one month, or by one year from a 1 January to the
+  next: slice ``k`` holds ``[t_k, t_{k+1})``, the last slice one calendar
+  month (one year after a yearly step);
+- other stamps step by their smallest spacing ``\Delta``: slice ``k`` holds
+  ``[t_k, t_{k+1})`` when ``t_{k+1} - t_k = \Delta`` (within 1 s), the last
+  slice ``\Delta``;
+- a slice before a longer spacing (Jan 1 then Mar 1, or a missing day) holds
+  for one step only, so the gap stays uncovered.
+
+So daily files with one 00Z stamp each are a daily series, and only the very
+last stamp is extended. The period cannot be inferred, and the loaders stop
+with an error that asks for CF bounds, for a single stamp in all the files (a
+1 January 00Z stamp may be a day, a month or a year) and for stamps about a
+month or a year apart that are not month starts (mid-month stamps: held from
+the stamp or centred on it?). A part of the run that no slice covers,
+including a gap between or inside files, is an `ArgumentError` naming the
+dates, unless the source sets `hold_outside_coverage = true`. The runner's run span ends 1 s after its last
+window for the rounding of its accumulated clock
+(`RUN_SPAN_CLOCK_SLACK_SECONDS`); the files need not cover that second.
+
 ### Time-varying sources on a GPU
 
 A `TimeVaryingSurfaceFluxSource` (cubed sphere; `time_varying = true`) stores

@@ -16,6 +16,7 @@ regridder = build_regridder(src_mesh, dst_mesh;
 apply_regridder!(dst, regridder, src)                         # intensive field
 apply_regridder!(dst, regridder, src, ExtensiveCellField())   # per-cell totals
 regrid_conservation_report(regridder, src, dst, ExtensiveCellField())
+source_coverage(regridder)                                    # covered area per source cell
 ```
 
 - **`build_regridder`** chooses, in this order: `IdentityRegrid` for
@@ -40,6 +41,13 @@ regrid_conservation_report(regridder, src, dst, ExtensiveCellField())
 - **`regrid_conservation_report`** returns `(; src_total, dst_total,
   rel_error)` with Float64 sums; the leading dimensions of `src` and `dst`
   must match the regridder's cell counts.
+- **`source_coverage(r)`** returns the area of each source cell that the
+  destination covers, ``C_s = \sum_t W_{ts}``. It equals the source polygon
+  area when the destination tiles the source. A reduced-Gaussian destination
+  whose adjacent rings have different longitude counts leaves great-circle
+  slivers uncovered (6.3e-4 of the sphere on O24), so the runtime surface-flux
+  sources regrid their per-cell rates as ``\sum_s W_{ts} m_s / C_s``, which
+  keeps ``\sum_s m_s`` on every destination.
 - `normalize = true` scales weights so the largest intersection gets
   weight 1 — useful for diagnostic plots, **never** for mass fields.
 - `cache_dir = nothing` (the default) skips the JLD2 cache and

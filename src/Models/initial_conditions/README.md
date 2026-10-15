@@ -98,17 +98,27 @@ near-surface difference for a uniform 400 Pa surface-pressure shift.
 - [`surface_flux.jl`](surface_flux.jl) — kind and default-file resolution,
   `surface_flux_species` and the storage factor, NetCDF load and unit
   conversion (`_to_flux_density!`, dispatched on the parsed units' area basis),
-  GridFED calendar-year inference, EDGAR band areas, time-varying series loader
-  (with a run start, reads flux data only for the slices of the run period),
-  topology builders; includes the two files below
-- [`surface_flux_regridding.jl`](surface_flux_regridding.jl) — bilinear
-  renormalisation, `_regridding_method`, cached conservative regridder build/apply
+  GridFED calendar-year inference, source cell areas (the file's, else the
+  source mesh's band areas), time-varying series loader (with a run span,
+  checks that the slices of all files together cover it,
+  `_timevarying_source_intervals` and `_check_flux_time_coverage`, and
+  reads flux data only for the slices of the run period), topology builders;
+  includes the two files below
+- [`surface_flux_regridding.jl`](surface_flux_regridding.jl) — the regridding
+  methods `ConservativeFluxRegridding` (default; per-cell rate `F × A` over the
+  source cells' covered areas) and `BilinearFluxRegridding` (explicit LL/RG;
+  emission and uptake renormalised separately, factors logged and warned
+  beyond 10 %, or an error), parsed by
+  `_regridding_method`; cached conservative regridder build, the per-slice
+  density regrid of time-varying series
 - [`surface_flux_native.jl`](surface_flux_native.jl) — `cs_native` time-varying
   source: checks the file with `GriddedIO.cs_native_flux_info` (layout, units,
-  `cell_area` gate, time checks live there) and reads it panel by panel with
-  `GriddedIO.read_cs_native_flux!` straight into the source's `FT` arrays (fill
-  and non-finite checks), then slice times on the run clock and, in place, cell
-  areas and the units and storage factors, and the temporal scheme
+  `cell_area` gate, time checks live there), checks that its slices
+  (`time_bnds`, else the stamps) cover the run span, and reads it panel by
+  panel with `GriddedIO.read_cs_native_flux!` straight into the source's `FT`
+  arrays (fill and non-finite checks), then slice times on the run clock and,
+  in place, cell areas and the units and storage factors, and the temporal
+  scheme
 
 ## Surface-Flux Kinds
 
@@ -196,10 +206,20 @@ error (`_surface_flux_kind`); `none` (the default) emits nothing.
   mesh radius, so regridding weights compare areas on one sphere. Both derive
   `SnappedFaces` from the oriented file coordinates, including midpoint faces
   and polar caps for pole-centred files.
-- CS surface fluxes are regridded conservatively, except `cs_native` sources,
-  which are read on the run's panels. LL and RG default to
-  `regridding = "bilinear"`, renormalised to the native total only when the file
-  carries `cell_area` or `area`.
+- Static surface fluxes are regridded conservatively by default on every
+  topology (`ConservativeFluxRegridding`): the per-cell rate `F × A`, with the
+  file's `cell_area`/`area` or else the source mesh's band areas, is divided by
+  each source cell's covered area (`Regridding.source_coverage`), regridded and
+  multiplied by the target areas, so every model total equals the file's own
+  total `native_total_mass_rate` to rounding (also on reduced-Gaussian targets,
+  whose great-circle cells leave slivers uncovered). On a non-global target a
+  partly covered source cell puts its whole rate into the covered part. A file
+  area must be positive and finite wherever the flux is nonzero
+  (`GriddedIO.check_latlon_cell_area(...; flux)`). LL and RG accept
+  `regridding = "bilinear"`, renormalised per sign (emission to the file's
+  emission, uptake to its uptake) or refused; CS warns and stays conservative.
+  `cs_native` sources are read on the run's panels. Time-varying LL series are
+  regridded per slice as densities (great-circle source areas, no file areas).
 - Time-varying sources are cubed-sphere only (LL/RG builders throw):
   - Slice times are seconds since `reference_time`, from the file's time axis
     as `GriddedIO.decode_time` decodes it (`days`/`hours`/`minutes`/`seconds
@@ -208,6 +228,17 @@ error (`_surface_flux_kind`); `none` (the default) emits nothing.
     of each month of the source year.
   - `lmdz_co2`, `gridfed_fossil_co2`, and `cs_native` default to
     `temporal_scheme = "stepwise"`.
+  - With a run span (the runner always passes one), the slices' intervals
+    over all files of the source (`_timevarying_source_intervals`: CF bounds
+    and `months since` months per file, `GriddedIO.known_slice_intervals`;
+    GridFED without a time axis: the months of its year; the bare stamps of
+    all files merged into one series, `GriddedIO.stamp_intervals`, each
+    holding for the series' regular step, gaps left uncovered; a single stamp
+    or mid-month stamps are an error; `cs_native`: its one file,
+    `GriddedIO.decode_slice_intervals`) must cover the run, up to
+    `RUN_SPAN_CLOCK_SLACK_SECONDS` at its end; otherwise an `ArgumentError`
+    names the uncovered dates. `hold_outside_coverage = true` skips the check,
+    and the source holds its first or last slice outside its files.
   - `cs_native` files follow the schema of `GriddedIO` (`CS_NATIVE_FLUX_DIMS`,
     kg species or kgC m⁻² s⁻¹, no fill values); `GriddedIO.check_cell_area`
     compares a file `cell_area` with the runtime mesh (norm-based, `rtol = 1e-4`

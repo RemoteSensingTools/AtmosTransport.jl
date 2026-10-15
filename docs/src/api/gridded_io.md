@@ -33,7 +33,15 @@ is a type the caller names, and the methods dispatch on it:
   [`AuxiliaryTimeVariable`](@ref AtmosTransport.GriddedIO.AuxiliaryTimeVariable);
   [`MonthKey`](@ref AtmosTransport.GriddedIO.MonthKey),
   [`TimeInterval`](@ref AtmosTransport.GriddedIO.TimeInterval) and
-  [`seconds_since`](@ref AtmosTransport.GriddedIO.seconds_since) carry the result.
+  [`seconds_since`](@ref AtmosTransport.GriddedIO.seconds_since) carry the result;
+  [`decode_slice_intervals`](@ref AtmosTransport.GriddedIO.decode_slice_intervals)
+  gives the interval each slice of a file stands for (the time coverage of a
+  time-varying surface flux), from
+  [`known_slice_intervals`](@ref AtmosTransport.GriddedIO.known_slice_intervals)
+  (CF bounds, `months since`) or
+  [`stamp_intervals`](@ref AtmosTransport.GriddedIO.stamp_intervals), the
+  regular step of a series of stamps, which a series of several files applies
+  to the stamps of all its files together.
   Origins are validated, never normalised. `decode_time` returns proleptic
   Gregorian `DateTime`s, so a `360_day` 30 February is an error there;
   [`decode_month_keys`](@ref AtmosTransport.GriddedIO.decode_month_keys) gives

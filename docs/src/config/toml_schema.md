@@ -298,6 +298,7 @@ kind     = "file"
 file     = "/path/to/air_sea_flux.nc"
 variable = "co2_flux_ocean"
 species  = "co2"                    # required: the name "ocean" implies no species
+# regridding = "conservative"       # default; "bilinear" on lat-lon and reduced Gaussian
 ```
 
 Registered surface-flux source kinds (`_SURFACE_FLUX_KINDS` in
@@ -326,6 +327,39 @@ inventories use `kgC m-2 s-1` (CAMS/LMDZ), `kgCO2/month/m2` (GridFED, each
 month's length), `Tonnes` (EDGAR, per cell and year) and `kg/m2/s` (Zhang
 Rn-222). Time-varying lat-lon sources must be per m²; `cs_native` files must be
 kg (of the species or of carbon) m⁻² s⁻¹.
+
+**Regridding.** A static lat-lon inventory is put onto the model mesh by
+`regridding`:
+
+- `"conservative"` (the default on every topology): the per-cell rate, the
+  flux times the file's `cell_area` or `area` variable (else the
+  latitude-circle area of the source cell), is regridded as an extensive
+  field, so the model's total equals the file's own total to rounding, for
+  net-uptake fields and files without an area variable alike. A file's
+  area variable must be in m² and agree within 1 % with the cell areas its
+  coordinates define (`GriddedIO.check_latlon_cell_area`), else the run stops
+  with an error: areas in km² or a land fraction would scale the total. A
+  cell with a nonzero flux must also have a positive, finite area: masked
+  (zero) rows would drop their emission. On
+  reduced-Gaussian targets, whose great-circle cells leave slivers between
+  rings uncovered, each source cell's amount goes to the target cells it
+  overlaps, so the total is kept there too. On a target that does not cover
+  the sphere, a source cell covered only in part puts its whole amount into
+  the covered part (see [Operators](@ref Operator-concepts)).
+- `"bilinear"` (lat-lon and reduced-Gaussian targets, only when set): the
+  flux density sampled at each target cell centre times the cell area. The
+  emitting and the uptake cells are then rescaled separately to the file's
+  emission and uptake totals, so the total is the file's and no cell changes
+  sign. When the sample misses all of the file's emission or all of its
+  uptake (one uptake cell between the sampled centres), the run stops with an
+  error. The two factors keep the totals, not the cell values, and can be far
+  from 1 (3.53 for the GridFED December 2021 uptake on a 5° grid); they are
+  logged, and a factor more than 10 % from 1 is a warning. Bilinear sampling
+  still aliases point sources cell by cell.
+
+Cubed-sphere targets always regrid conservatively (`"bilinear"` there logs a
+warning and is ignored). The equations are in the surface-flux section of
+[Operators](@ref Operator-concepts).
 
 **Time-varying emission** (cubed-sphere). A source whose inventory has
 sub-monthly time slices (e.g. the LMDZ/CAMS biospheric flux) can drive the
@@ -386,7 +420,37 @@ binary's header). Every listed file's time axis is
 read, but flux data only for those slices. Every temporal scheme blends only
 the two slices around a time, so results are unchanged. A binary that runs past
 that end stops the run with an error before it starts. Time-varying sources
-require `start_date`. The loaded series stays in host memory; a GPU run copies
+require `start_date`.
+
+**Time coverage.** The run must lie inside the time the slices stand for.
+A slice stands for the interval of its CF time bounds when the time axis has
+them; GridFED files without a time axis cover their year, a `months since`
+axis its months. Stamps without bounds are read as one series over **all**
+the listed files (merged and sorted; `GriddedIO.stamp_intervals`): a slice
+holds until the next stamp when that is the series' regular step (one month
+or one year from 1 January for month starts, else the smallest spacing), and
+the last stamp holds for one step. Daily files with one 00Z stamp each are
+thus a daily series; a slice before a longer spacing (Jan 1 then Mar 1, a
+missing day) holds for one step, leaving a gap. One stamp in all the files
+(it may stand for a day, a month or a year) and stamps about a month or a year
+apart that are not month starts (mid-month stamps) have no known period and
+stop the run with an error asking for CF time bounds.
+A part of the run, or a gap between or inside files, that no slice covers
+stops the run before it starts, with an error naming the uncovered dates: outside its
+slices a source holds its first or last slice, so a December CAMS file in a
+January run would emit its last 3-hourly value for weeks. Set
+`hold_outside_coverage = true` to hold the end slices on purpose, e.g. for a
+climatology:
+
+```toml
+[tracers.co2_natural.surface_flux]
+kind                  = "lmdz_co2"
+files                 = ["/path/to/z_cams_l_cams55_202112_FT24r2_ra_sfc_3h_co2_flux.nc"]
+time_varying          = true
+hold_outside_coverage = true      # default false: a run outside the files is an error
+```
+
+The loaded series stays in host memory; a GPU run copies
 only the slices of the current met window to the device (see
 [Operators](@ref Operator-concepts)), so the device memory of a time-varying
 source does not grow with the run length.
@@ -406,6 +470,8 @@ loader; new files come from `GriddedIO.open_cs_native_writer`):
 - values are start-stamped slices on a strictly increasing time axis (decoded
   by `GriddedIO.decode_time`), with no fill or non-finite values; they are read
   panel by panel into the run's own arrays (`GriddedIO.read_cs_native_flux!`);
+  `time_bnds` (written by `GriddedIO.open_cs_native_writer`), else the
+  stamps, set the time coverage above;
 - a stored `cell_area` must agree with the runtime mesh areas
   (`isapprox(…; rtol = 1e-4)` per panel), so a file built on another cube
   geometry is refused.
