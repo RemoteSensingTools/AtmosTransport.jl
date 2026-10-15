@@ -91,45 +91,53 @@ const JET_HOT_PATH_BASELINE =
 const ADVISORY_ONLY = get(ENV, "ATMOSTRANSPORT_JET_ADVISORY", "0") == "1"
 
 @testset "JET: hot-path inference snapshot" begin
-    result = JET.report_package(AtmosTransport;
-                                target_modules = HOT_PATH_MODULES,
-                                toplevel_logger = nothing)
-    reports = JET.get_reports(result)
-    n = length(reports)
+    # JET loads as empty stubs on Julia versions it does not support yet (e.g. a new
+    # minor release); report_package would then throw. Skip with a clear message.
+    # (JET 0.9 on Julia 1.10 has no JET_AVAILABLE, hence the isdefined check.)
+    if isdefined(JET, :JET_AVAILABLE) && !JET.JET_AVAILABLE
+        @info "JET $(pkgversion(JET)) does not support Julia $VERSION; skipping the JET snapshot"
+        @test_skip false
+    else
+        result = JET.report_package(AtmosTransport;
+                                    target_modules = HOT_PATH_MODULES,
+                                    toplevel_logger = nothing)
+        reports = JET.get_reports(result)
+        n = length(reports)
 
-    @info "JET hot-path modules: $n reports (baseline $JET_HOT_PATH_BASELINE)"
+        @info "JET hot-path modules: $n reports (baseline $JET_HOT_PATH_BASELINE)"
 
-    if n > JET_HOT_PATH_BASELINE
-        # Print new reports so the author can triage
-        println()
-        println("⚠  JET report count rose above the baseline.")
-        println("   Baseline: $JET_HOT_PATH_BASELINE")
-        println("   Current:  $n")
-        println("   Delta:    +$(n - JET_HOT_PATH_BASELINE)")
-        println()
-        println("   First 20 reports:")
-        for (i, rep) in enumerate(first(reports, 20))
-            println("   [$i] ", rep)
-        end
-        println()
-        println("   If the new reports are genuine bugs: fix them.")
-        println("   If they're known-tolerated patterns (see docstring):")
-        println("     1. Update JET_HOT_PATH_BASELINE in this file.")
-        println("     2. Document the pattern in the 'Known-tolerated")
-        println("        noise sources' section of the docstring.")
-        println()
+        if n > JET_HOT_PATH_BASELINE
+            # Print new reports so the author can triage
+            println()
+            println("⚠  JET report count rose above the baseline.")
+            println("   Baseline: $JET_HOT_PATH_BASELINE")
+            println("   Current:  $n")
+            println("   Delta:    +$(n - JET_HOT_PATH_BASELINE)")
+            println()
+            println("   First 20 reports:")
+            for (i, rep) in enumerate(first(reports, 20))
+                println("   [$i] ", rep)
+            end
+            println()
+            println("   If the new reports are genuine bugs: fix them.")
+            println("   If they're known-tolerated patterns (see docstring):")
+            println("     1. Update JET_HOT_PATH_BASELINE in this file.")
+            println("     2. Document the pattern in the 'Known-tolerated")
+            println("        noise sources' section of the docstring.")
+            println()
 
-        if ADVISORY_ONLY
-            @warn "ATMOSTRANSPORT_JET_ADVISORY=1 set — demoting to warning."
+            if ADVISORY_ONLY
+                @warn "ATMOSTRANSPORT_JET_ADVISORY=1 set — demoting to warning."
+                @test true
+            else
+                @test n <= JET_HOT_PATH_BASELINE
+            end
+        elseif n < JET_HOT_PATH_BASELINE
+            @info "JET baseline can be tightened: $n < $JET_HOT_PATH_BASELINE. " *
+                  "Lower JET_HOT_PATH_BASELINE in test_jet.jl when this is stable."
             @test true
         else
-            @test n <= JET_HOT_PATH_BASELINE
+            @test true
         end
-    elseif n < JET_HOT_PATH_BASELINE
-        @info "JET baseline can be tightened: $n < $JET_HOT_PATH_BASELINE. " *
-              "Lower JET_HOT_PATH_BASELINE in test_jet.jl when this is stable."
-        @test true
-    else
-        @test true
     end
 end
