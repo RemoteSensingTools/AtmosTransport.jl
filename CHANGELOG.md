@@ -76,7 +76,11 @@
     header key (written before the #58 fix) are refused before any output is
     opened. Their stored pole-row `am` is the column balance's correction,
     not zero and not the wind, so only the header identifies them;
-    regenerate them.
+    regenerate them;
+  - with the adaptive schedule the `column_closure_*` header keys are
+    evaluated again on the rescaled stored fluxes
+    (`rescaled_column_closure_record`); they described the one-substep
+    balance and were N times the stored amounts.
 - **ERA5 humidity on lat-lon targets** (issue #63, pera-noaa). The thermo
   `q` is a set of point values at longitudes 0, Δ, … (index 1 at −180° after
   the roll), but the lat-lon and cubed-sphere-staging interpolation read it
@@ -95,7 +99,8 @@
 
 - `merge_thin_levels` (`[vertical] transform = "merge_layers_thinner_than"`,
   spectral `merge_min_thickness_Pa`): its top-down pass could never change the
-  result and is removed; the produced level sets are bit-identical. The
+  result and is removed; the produced level sets are bit-identical (for
+  level sets without a zero-thickness layer, which includes all ERA5 sets). The
   documentation now states the rule: groups close from the surface up, and
   the native layers left at the top form a top layer that can be thinner than
   the minimum (6.8 Pa for the L117 set at 100 Pa; folding it into an L116 set

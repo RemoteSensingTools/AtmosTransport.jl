@@ -15,6 +15,9 @@ layers with a 33 Pa top layer (native layers 1–9).
 
 Returns `(merged_vc, merge_map)` where `merge_map[k]` maps native layer `k`
 to its output layer. The kept interfaces keep their native `A` and `B`.
+The level sets are bit-identical to those of the top-down pass removed on
+2026-10-14 for every level set without a zero-thickness layer (all ERA5 sets);
+only a degenerate set with a zero-thickness layer can round differently.
 """
 function merge_thin_levels(vc::HybridSigmaPressure{FT};
                            min_thickness_Pa::Real = FT(1000),

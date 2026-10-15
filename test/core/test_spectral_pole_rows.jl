@@ -221,3 +221,61 @@ end
     @test am[:, 1, 1] ≈ am[:, 3, 1] rtol = 1e-12
     @test am[:, Ny, 1] ≈ am[:, 3, 1] rtol = 1e-12
 end
+
+@testset "LL → CS regrid: closure record of rescaled fluxes (adaptive vs explicit substeps)" begin
+    # The regrid balances and diagnoses `cm` for one substep, then the adaptive
+    # schedule rescales am/bm/cm to N. The header `column_closure_*` keys
+    # describe the fluxes as stored, so they must not depend on whether N came
+    # from the adaptive schedule or from an explicit `steps_per_window = N`.
+    # The `cm` ratio describes the diagnosis (run for 1 substep in the adaptive
+    # case) and is an upper bound of the explicit-N ratio.
+    mktempdir() do tmp
+        date = Date(2021, 12, 1)
+        spectral_dir = joinpath(tmp, "spectral")
+        cache_dir = joinpath(tmp, "cache")
+        _write_rotation_cache!(spectral_dir, cache_dir, date)
+        grid = build_target_geometry(Val(:latlon),
+            Dict{String, Any}("nlon" => 72, "nlat" => 37), Float64)
+        ll_path, _ = process_day(date, grid,
+            _pole_settings(spectral_dir, cache_dir, joinpath(tmp, "ll")), _pole_vertical(Float64);
+            positivity_cfl_limit = 0.95,
+            substep_policy = SubstepSchedulePolicy(adaptive_substeps = true,
+                                                   substep_cfl_target = 0.95))
+        cs_grid = build_target_geometry(Val(:cubed_sphere), Dict{String, Any}(
+            "Nc" => 24, "regridder_cache_dir" => joinpath(tmp, "regrid_cache")), Float64)
+        # A tight limit makes the adaptive schedule leave one substep (N = 4 here).
+        lim = 0.1
+        adaptive = joinpath(tmp, "adaptive.bin")
+        PoleRowsPre.regrid_ll_binary_to_cs(ll_path, cs_grid, adaptive; FT = Float64,
+                                           positivity_cfl_limit = lim)
+        ra = TransportBinaryReader(adaptive; FT = Float64)
+        sched = Int.(ra.header.steps_per_window_by_window)
+        ha = ra.header.raw_header
+        wa = load_window!(ra, 12)
+        close(ra)
+        N = maximum(sched)
+        @test N > 1 && all(==(N), sched)
+        explicit = joinpath(tmp, "explicit.bin")
+        PoleRowsPre.regrid_ll_binary_to_cs(ll_path, cs_grid, explicit; FT = Float64,
+                                           positivity_cfl_limit = lim, steps_per_window = N)
+        rb = TransportBinaryReader(explicit; FT = Float64)
+        hb = rb.header.raw_header
+        wb = load_window!(rb, 12)
+        close(rb)
+        # Same stored fluxes ...
+        for p in 1:6
+            @test wa.am[p] ≈ wb.am[p] rtol = 1e-9
+            @test wa.bm[p] ≈ wb.bm[p] rtol = 1e-9
+        end
+        # ... same record of their closure (on 45e86d6a the adaptive kg values
+        # and the projected ratio were N times the explicit ones).
+        for key in ("column_closure_projected_residual_max_kg",
+                    "column_closure_residual_to_tolerance_max",
+                    "column_closure_booked_residual_max_kg")
+            @test ha[key] ≈ hb[key] rtol = 1e-6
+        end
+        @test ha["column_closure_windows"] == hb["column_closure_windows"]
+        @test ha["column_closure_cm_residual_to_tolerance_max"] >=
+              hb["column_closure_cm_residual_to_tolerance_max"]
+    end
+end

@@ -6,11 +6,21 @@
 
 # The LL → CS regrid has no winds or OMEGA of its own (payload only), but it
 # runs a cubed-sphere column balance whose closure is recorded per window.
-_regrid_window_evidence(::Type{FT}, balance_diag, cm_diag) where FT =
+_regrid_window_evidence(::Type{FT}, closure::AbstractColumnClosureRecord) where FT =
     FluxFidelityEvidenceBundle(
         NoFluxFidelityEvidence{CubedSphereTargetGeometry,FT,SourcePayloadOnly}(SourcePayloadOnly()),
         NoSourceOmegaEvidence{CubedSphereTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega()),
-        column_closure_record(balance_diag, cm_diag))
+        closure)
+
+# The balance and the `cm` diagnosis run for `base_steps` substeps; an adaptive
+# output schedule then rescales `am`, `bm`, `cm` to `steps`. The record states
+# the closure of the stored fluxes (`rescaled_column_closure_record`); call it
+# before `m_next` is converted to the stored `dm`.
+_regrid_stored_closure_record(bal_diag, cm_diag, am, bm, m, m_next, cs_grid,
+                              base_steps::Int, steps::Int) =
+    rescaled_column_closure_record(column_closure_record(bal_diag, cm_diag),
+                                   am, bm, m, m_next, cs_grid.face_table,
+                                   base_steps, steps, cs_grid.poisson_scratch)
 
 # The pole rows of a lat-lon source are ordinary cells: the wind recovery takes
 # their zonal wind from `am` like every other row. ERA5 spectral lat-lon
@@ -542,6 +552,9 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                             "LL-to-CS window $(win - 1)", balance_weights)
         out_schedule[win - 1] = _select_regrid_output_steps!(
             out_policy, base_steps, cur_m, cur_am, cur_bm, cur_cm, cs_ws.m_next_panels)
+        closure = _regrid_stored_closure_record(bal_diag, cm_diag, cur_am, cur_bm, cur_m,
+                                                cs_ws.m_next_panels, cs_grid, base_steps,
+                                                out_schedule[win - 1])
         pos_diag = if write_replay_on
             contract = verify_cs_window_contract!(cur_m, cur_am, cur_bm, cur_cm,
                                                   cs_ws.m_next_panels,
@@ -576,7 +589,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                            entd=cur_entd, detd=cur_detd),))
         end
         write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(
-            win - 1, window_nt, _regrid_window_evidence(FT, bal_diag, cm_diag)))
+            win - 1, window_nt, _regrid_window_evidence(FT, closure)))
 
         if should_log_window(win - 1, Nt)
             @info @sprintf("    Window %2d/%d: wrote (colbal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
@@ -640,6 +653,9 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                         "LL-to-CS window $Nt", balance_weights)
     out_schedule[Nt] = _select_regrid_output_steps!(
         out_policy, base_steps, cur_m, cur_am, cur_bm, cur_cm, cs_ws.m_next_panels)
+    closure = _regrid_stored_closure_record(bal_diag, cm_diag, cur_am, cur_bm, cur_m,
+                                            cs_ws.m_next_panels, cs_grid, base_steps,
+                                            out_schedule[Nt])
     pos_diag = if write_replay_on
         contract = verify_cs_window_contract!(cur_m, cur_am, cur_bm, cur_cm,
                                               cs_ws.m_next_panels,
@@ -674,7 +690,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                        entd=cur_entd, detd=cur_detd),))
     end
     write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(
-        Nt, window_nt, _regrid_window_evidence(FT, bal_diag, cm_diag)))
+        Nt, window_nt, _regrid_window_evidence(FT, closure)))
 
     @info @sprintf("    Window %2d/%d (last): colbal %.2fs  pre=%.2e post=%.2e iter=%d",
                    Nt, Nt, t_bal, bal_diag.max_pre_residual,
