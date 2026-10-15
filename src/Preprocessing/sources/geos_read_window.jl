@@ -65,6 +65,7 @@ function allocate_raw_window(settings::GEOSSettings; FT::Type{<:AbstractFloat}, 
         ustar = panels_2d(),
         hflux = panels_2d(),
         t2m   = panels_2d(),
+        eflux = has_pbl_eflux(settings) ? panels_2d() : nothing,
     ) : nothing
     vdiff = settings.include_vdiff_fields ? (
         u  = panels_3d(),
@@ -218,6 +219,16 @@ function _read_geos_surface_window!(raw::RawWindow{FT},
         copyto!(raw.surface.ustar[p], ustar[p])
         copyto!(raw.surface.hflux[p], hflux[p])
         copyto!(raw.surface.t2m[p],   t2m[p])
+    end
+    if raw.surface.eflux !== nothing
+        # Upward latent heat flux [W m^-2], 1-hr average like HFLUX
+        eflux = _read_panels_2d(handles.a1, "EFLUX", win_idx; FT=FT)
+        for p in 1:6
+            copyto!(raw.surface.eflux[p], eflux[p])
+        end
+        all(p -> all(isfinite, p), raw.surface.eflux) &&
+            maximum(p -> maximum(abs, p), raw.surface.eflux) < SURFACE_HEAT_FLUX_MAX_ABS ||
+            error("GEOS surface EFLUX is non-finite or out of range in window $(win_idx)")
     end
     return raw
 end

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Fixes
+
+- **GEOS-IT binaries carry `:pbl_eflux`, so `geoschem_nonlocal_vdiff` runs on
+  GEOS-IT.** GEOS-Chem's non-local PBL scheme needs the surface latent heat flux,
+  which only the MERRA-2 path wrote; GEOS-IT binaries with the VDIFF fields were
+  rejected at run time although the GEOS-IT A1 collection carries `EFLUX`. With
+  `include_vdiff_fields = true` the GEOS-IT reader now reads `EFLUX` (finite and
+  magnitude-checked like `HFLUX`), block coarsening (e.g. C180 → C90) area-weights
+  it like `HFLUX`, and the writer adds `:pbl_eflux`. Every other section is
+  bit-identical (checked on GEOS-IT C180 → C90, 2021-12-01: `pbl_eflux` matches a
+  2×2 mean of raw A1 `EFLUX`, correlation 1.000000). GEOS-FP is unchanged: its
+  fallback readers do not read the VDIFF inputs. No golden case writes the VDIFF
+  fields from GEOS-IT, so goldens do not change.
+
 ### Testing
 
 - **JET 0.12 allowed in the test environment.** On 2026-10-15 the General registry
