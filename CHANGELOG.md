@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Testing
+
+- **JET 0.12 allowed in the test environment.** Julia 1.13.2 needs JET 0.12, but
+  `[compat]` allowed only JET 0.9–0.11, so the test environment could not be
+  resolved on the current Julia release (`Unsatisfiable requirements detected for
+  package JET`; every PR's "Julia 1" CI job failed at setup). `Project.toml` and
+  `test/Project.toml` now allow `JET = "0.9, 0.10, 0.11, 0.12"`;
+  `test/core/test_jet.jl` passes with JET 0.12.3 on Julia 1.13.1 and 1.13.2.
+
 ### Numerical changes
 
 - **Column mass ledger carry** (OF-110). The `Float32` column mass ledgers of
