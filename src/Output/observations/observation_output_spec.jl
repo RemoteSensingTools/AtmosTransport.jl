@@ -32,6 +32,7 @@ Parsed `[output.observations]` table. `path` is a template: `_soundings` or
 `{date}` / `{YYYYMMDD}` / `{day}` are substituted per input binary exactly as
 for snapshot output. `tracers === nothing` means every model tracer.
 `start_time` is only consulted when `[input].start_date` is absent.
+`placement` is the [`VerticalPlacementSpec`](@ref).
 """
 struct ObservationOutputSpec{P <: AbstractOutputPartition,
                              TI <: AbstractObservationTimeInterpolation} <: AbstractObservationOutput
@@ -44,6 +45,7 @@ struct ObservationOutputSpec{P <: AbstractOutputPartition,
     start_time::Union{Nothing, DateTime}
     deflate_level::Int
     sources::Vector{AbstractObservationSource}
+    placement::VerticalPlacementSpec
 end
 
 # Keyword constructor: the struct has many positional fields of similar types.
@@ -55,10 +57,11 @@ function ObservationOutputSpec(; path::AbstractString,
                                  layer_height_temperature_kelvin::Real,
                                  start_time::Union{Nothing, DateTime},
                                  deflate_level::Integer,
-                                 sources::Vector{AbstractObservationSource})
+                                 sources::Vector{AbstractObservationSource},
+                                 placement::VerticalPlacementSpec)
     return ObservationOutputSpec(String(path), partition, time_interpolation, tracers,
                                  write_profile_for_sites, Float64(layer_height_temperature_kelvin),
-                                 start_time, Int(deflate_level), sources)
+                                 start_time, Int(deflate_level), sources, placement)
 end
 
 "Whether a parsed `[output.observations]` table asks for sampling."
@@ -67,7 +70,9 @@ observations_enabled(::ObservationOutputSpec) = true
 
 const _OBSERVATION_OUTPUT_KEYS = ("enabled", "path", "time_interpolation", "tracers",
                                   "write_profile_for_sites", "layer_height_temperature_kelvin",
-                                  "start_time", "deflate_level", "sources")
+                                  "start_time", "deflate_level", "sources",
+                                  "surface_height_file", "dem_file", "dem_variable",
+                                  "unplaced_records", "absolute_altitude_above_agl_m")
 # Near-surface fallback for hypsometric layer heights when the binary carries
 # no temperature. The diffusion helpers' 260 K is a mid-troposphere value and
 # would bias intake-height placement in the lowest layers.
@@ -119,6 +124,42 @@ function _parse_observation_deflate_level(value)
     _is_plain_int(value) && 0 <= value <= 9 || throw(ArgumentError(
         "[output.observations].deflate_level must be an integer in 0..9; got $(repr(value))"))
     return Int(value)
+end
+
+function _parse_optional_path(obs_cfg::AbstractDict, key::AbstractString)
+    haskey(obs_cfg, key) || return nothing
+    raw = obs_cfg[key]
+    raw isa AbstractString && !isempty(strip(raw)) || throw(ArgumentError(
+        "[output.observations].$(key) must be a non-empty path; got $(repr(raw))"))
+    return expand_data_path(String(raw))
+end
+
+function _parse_altitude_placement(obs_cfg::AbstractDict, has_surface::Bool)
+    haskey(obs_cfg, "absolute_altitude_above_agl_m") || return AboveGroundPlacement()
+    value = obs_cfg["absolute_altitude_above_agl_m"]
+    value isa Real && !(value isa Bool) && isfinite(value) && value >= 0 || throw(ArgumentError(
+        "[output.observations].absolute_altitude_above_agl_m must be a number >= 0; got $(repr(value))"))
+    has_surface || throw(ArgumentError(
+        "[output.observations].absolute_altitude_above_agl_m places records by altitude above sea " *
+        "level and needs the model surface height: set surface_height_file"))
+    return AbsoluteAltitudeAbove(value)
+end
+
+# `surface_height_file`, `dem_file`/`dem_variable`, `unplaced_records`,
+# `absolute_altitude_above_agl_m` → `VerticalPlacementSpec`.
+function _parse_vertical_placement(obs_cfg::AbstractDict)
+    surface_height_file = _parse_optional_path(obs_cfg, "surface_height_file")
+    dem_file = _parse_optional_path(obs_cfg, "dem_file")
+    dem_variable = get(obs_cfg, "dem_variable", "z")
+    dem_variable isa AbstractString && !isempty(strip(dem_variable)) || throw(ArgumentError(
+        "[output.observations].dem_variable must be a non-empty variable name; got $(repr(dem_variable))"))
+    dem_file === nothing && haskey(obs_cfg, "dem_variable") && throw(ArgumentError(
+        "[output.observations].dem_variable has no effect without dem_file"))
+    unplaced = _parse_choice(get(obs_cfg, "unplaced_records", "error"), _UNPLACED_POLICIES,
+                             "[output.observations].unplaced_records")
+    return VerticalPlacementSpec(; surface_height_file, dem_file, dem_variable = String(dem_variable),
+                                 unplaced,
+                                 altitude_placement = _parse_altitude_placement(obs_cfg, surface_height_file !== nothing))
 end
 
 function _parse_observation_sources(obs_cfg::AbstractDict)
@@ -174,7 +215,8 @@ function observation_output_spec(output_cfg::AbstractDict;
                 _OBSERVATION_DEFAULT_LAYER_HEIGHT_TEMPERATURE_KELVIN)),
         start_time = _parse_start_time(get(obs_cfg, "start_time", nothing)),
         deflate_level = _parse_observation_deflate_level(get(obs_cfg, "deflate_level", 0)),
-        sources = _parse_observation_sources(obs_cfg))
+        sources = _parse_observation_sources(obs_cfg),
+        placement = _parse_vertical_placement(obs_cfg))
 end
 
 """

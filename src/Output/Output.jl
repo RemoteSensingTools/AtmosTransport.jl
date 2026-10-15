@@ -91,6 +91,12 @@ export AbstractSiteSchedule, EveryWindow, TimeRange, TimeList
 export AbstractObservationTimeInterpolation, LinearWindowInterpolation, NearestWindowSampling
 export AbstractObservationOutput, NoObservationOutput, ObservationOutputSpec, observation_output_spec
 export SoundingRequest, SiteRequest, ObservationSet
+export AbstractModelSurfaceHeight, NoModelSurfaceHeight, ModelSurfaceHeight, model_surface_height
+export AbstractPointElevation, NoPointElevation, point_elevation, ObservationTerrain
+export AbstractUnplacedPolicy, ErrorOnUnplaced, SkipUnplaced
+export AbstractAltitudePlacement, AboveGroundPlacement, AbsoluteAltitudeAbove, VerticalPlacementSpec
+export VerticalPlacement, VERTICAL_PLACEMENT_CODES, resolve_placement, placement_layer
+export AbstractMissingHeightRule, LowestLayerWithoutHeight, UnplacedWithoutHeight, missing_height_rule
 export read_observation_requests, build_observation_set
 export AbstractObservationSampler, NoObservationSampler, build_observation_sampler, samples_observations
 export observe_window_boundary!, begin_observation_day!, finish_observations!
@@ -108,8 +114,9 @@ include("binary_writer.jl")
 include("observations/observation_sources.jl")
 include("observations/observation_requests.jl")
 include("observations/observation_readers.jl")
-include("observations/observation_output_spec.jl")
 include("observations/cell_locator.jl")
+include("observations/observation_placement.jl")
+include("observations/observation_output_spec.jl")
 include("observations/observation_gather.jl")
 include("observations/observation_netcdf.jl")
 include("observations/observation_sampler.jl")

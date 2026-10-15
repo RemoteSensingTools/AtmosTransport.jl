@@ -60,6 +60,72 @@
   would break `TwoSum`). They are tested on CPU and CUDA; the Metal checks
   (`test/diagnostic/test_metal_kernels.jl`) have not been run yet.
 
+### Fixes
+
+- **Observation heights: altitude-only records are placed above the ground,
+  never silently in the lowest layer** (issue #56). ObsPack records that give
+  an `altitude` above sea level but no `intake_height` or `elevation` had a
+  `NaN` height and were sampled in the lowest model layer without a message.
+  This is the aircraft-insitu layout: in the OCO-2 MIP v5.0.1 daily ObsPack,
+  16.5% of the 2021-12 to 2023-12 records fill both per row, including 97% of
+  aircraft-insitu and all AirCore records. Heights are now resolved row by row
+  (`intake_height`, else `altitude − elevation`). An altitude without an
+  elevation becomes a height above the true ground through a DEM
+  (`dem_file`), and the record is placed that far above the model surface.
+  A record with no such height but a `pressure` is placed by pressure. The
+  model surface height is never used as the true ground. Records that still
+  cannot be placed, and ObsPack records with no vertical coordinate at all,
+  stop the sampler build (`unplaced_records = "error"`, the default) or are
+  skipped and counted (`"skip"`, `n_unplaced_*` attributes). A table row with
+  an altitude but no elevation no longer fails at read time; it follows the
+  same rules. `absolute_altitude_above_agl_m` optionally places
+  free-tropospheric records by pressure or by altitude above sea level against
+  the model surface height (`surface_height_file`); a record with only an
+  intake height takes its ground from the DEM there. Point events with an intake height (or
+  altitude and elevation) are sampled as before, except ObsPack rows whose
+  file has an `intake_height` variable but a fill value on that row: they used
+  `NaN` (lowest layer) and now use `altitude − elevation`.
+  Undeclared fill values are not placed: an ObsPack `pressure` ≤ 0, an
+  `elevation` (or `site_elevation`) below −450 m and a negative
+  `intake_height` are ignored with a warning (the JMA aircraft-flask rows of
+  the MIP ObsPack give elevation = intake_height = −1000 at 5 km altitude and
+  were sampled in the lowest layer; they are now placed by altitude − DEM).
+  Records placed more than 100 m below the ground are reported in a warning.
+  In ObsPack station series (`mode = "sites"`), rows that give only an
+  altitude are keyed by that altitude (one site per level of a tower that
+  states its levels as altitudes) instead of forming one lowest-layer
+  "surface" site; a dataset whose records stray more than 1° from the site
+  position (a moving platform) is reported, since each of its heights becomes
+  a site at that position.
+
+### API and configuration changes
+
+- `[output.observations]` takes `dem_file`, `dem_variable`,
+  `unplaced_records`, `surface_height_file` and `absolute_altitude_above_agl_m`
+  (`VerticalPlacementSpec`). Both ground datasets are external and static,
+  read through `GriddedIO`: the DEM by `read_point_elevation` (ground or sea
+  surface in m; a file below −450 m is rejected as bathymetry and one above
+  9000 m as an undeclared fill; the axes are told apart by dimension name, so
+  a `(lat, lon)`-stored DEM is read correctly; a gridline-registered global
+  DEM, −180…180 inclusive, has its repeated seam column dropped), the per-grid
+  model surface height by `read_model_surface_height` (written by
+  `write_model_surface_height` and
+  `scripts/preprocessing/build_model_surface_height.jl` from a met source's
+  surface geopotential). `build_observation_sampler` takes
+  `terrain = ObservationTerrain(...)` and keeps only its provenance.
+- Observation files add `altitude`, `pressure` (soundings),
+  `vertical_placement`, `placement_height_agl` and `model_surface_height` per
+  row or site, and the attributes `vertical_placement_codes`,
+  `n_unplaced_soundings`, `n_unplaced_sites`, `unplaced_records`,
+  `surface_height_file`, `dem_file`, `absolute_altitude_above_agl_m`.
+- `SoundingRequest` gains `altitude_m` and `pressure_pa`, `SiteRequest`
+  gains `altitude_m` (the old positional constructors remain);
+  `SoundingBatch` takes `altitudes`, `pressures` and `placements`;
+  `SiteNetCDFStream` takes the sites' placements. `intake_layer_index` throws
+  on a `NaN` height instead of returning the lowest layer.
+  `resolve_placement(option, missing_height_rule(source), request, cell, terrain)`
+  places one request.
+
 ## 0.5.0 — 2026-10-13
 
 This is a breaking release. It changes numerical results in preprocessing and

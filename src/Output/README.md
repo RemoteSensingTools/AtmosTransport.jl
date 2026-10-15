@@ -45,16 +45,35 @@ writing topology-specific NetCDF files directly.
   match them (`test/core/test_observation_schema.jl`).
 - `observations/observation_requests.jl` defines point events (`SoundingRequest`),
   station series (`SiteRequest`), site schedules (`EveryWindow`, `TimeRange`,
-  `TimeList`), and the per-run `ObservationSet`.
+  `TimeList`), and the per-run `ObservationSet`. Requests carry what the
+  record says about its height (`intake_height_m` above ground, `altitude_m`,
+  `elevation_m`, `pressure_pa`; NaN when absent).
 - `observations/observation_readers.jl` turns sources into requests:
   `expand_observation_paths` (date tokens + file-name wildcards),
   `read_observation_requests` per source type and mode (OCO-2 Lite and MIP 10-s
   files, ObsPack records or stations, CSV/TOML/NetCDF tables with schedules),
   and `build_observation_set` (time lists to point events, transported-span
-  filter, sites merged by id, skip counts).
+  filter, sites merged by id, skip counts). The height above ground of a row
+  is resolved row by row (`record_height_above_ground`: `intake_height`, else
+  `altitude − elevation`); an altitude without elevation is kept for
+  placement.
 - `observations/observation_output_spec.jl` parses `[output.observations]` into
   `ObservationOutputSpec` (or `NoObservationOutput`), rejecting unknown keys, and
   resolves `_soundings` / `_sites` file paths with the snapshot day template.
+- `observations/observation_placement.jl` places requests in the column: the
+  static ground interfaces `AbstractModelSurfaceHeight` (`ModelSurfaceHeight`,
+  per-cell model surface height) and `AbstractPointElevation` (DEM; the
+  concrete lat-lon type and both readers live in `GriddedIO`), bundled as
+  `ObservationTerrain`; the `[output.observations]` placement settings
+  (`VerticalPlacementSpec`, `ErrorOnUnplaced`/`SkipUnplaced`,
+  `AboveGroundPlacement`/`AbsoluteAltitudeAbove`); the per-source rule for
+  records without any vertical coordinate (`missing_height_rule`:
+  `LowestLayerWithoutHeight` for OCO-2 and tables, `UnplacedWithoutHeight` for
+  ObsPack); `resolve_placement` (record height → altitude − DEM → pressure →
+  missing-height rule; `nothing` when a record cannot be placed; the model
+  surface height is never a stand-in for the true ground) into a
+  `VerticalPlacement` with a `VERTICAL_PLACEMENT_CODES` code; and `placement_layer` /
+  `pressure_layer_index`, the layer of a placement in one sampled column.
 - `observations/cell_locator.jl` maps an observation (lon, lat) to its containing
   cell per topology (`cell_locator`, `locate` → `CellLocation` with native cell
   index, halo-aware device column, centre and area). Lat-lon and reduced
@@ -64,13 +83,17 @@ writing topology-specific NetCDF files directly.
   air mass and selected tracer storage for a batch of columns into compact
   `(level, observation)` buffers, plus the host Float64 reconstruction of
   interface pressures, hypsometric layer heights (`AbstractLayerTemperature`
-  sources), intake layer index, mixing-ratio profiles, and column means.
+  sources), intake layer index (a `NaN` height is an error, never the lowest
+  layer), mixing-ratio profiles, and column means.
 - `observations/observation_netcdf.jl` holds the append-only point-event and
   station NetCDF sinks (`SoundingNetCDFStream`, `SiteNetCDFStream`). Writes are
   queued and flushed whenever the shared NetCDF lock (`with_netcdf_lock`) is
   free, so the run never waits for a background daily snapshot write; every
   flush is synced before its `completed_*` attribute, and `close` drains.
-- `observations/observation_sampler.jl` is the runtime sampler: at every
+- `observations/observation_sampler.jl` is the runtime sampler. When it is
+  built it locates and places every request (requests that cannot be placed
+  fail the build or are skipped and counted, per `unplaced_records`) and keeps
+  only the terrain's provenance, not the DEM; at every
   met-window end it gathers the bracketing point events plus all sites in one
   launch, blends masses linearly between the two window ends (or takes the
   nearest end), reconstructs pressures, heights, intake layers, and mixing

@@ -142,12 +142,14 @@ id,lat,lon,elevation,intake_height
 mlo,19.536,-155.576,3397,40
 ```
 
-- `elevation` is metres above sea level and is informational only. The model
-  has no surface-elevation field.
-- `intake_height` is metres above ground and picks the model layer. You can
-  give `altitude` (metres above sea level) together with `elevation` instead.
-  If both are given, `intake_height` wins. With neither, the lowest model
-  layer is used.
+- `elevation` is the ground in metres above sea level.
+- `intake_height` is metres above ground and picks the model layer, counted
+  up from the model surface. You can give `altitude` (metres above sea level)
+  together with `elevation` instead. If both are given, `intake_height` wins.
+  An `altitude` without `elevation` needs the ground elevation from a DEM
+  (`dem_file`); without it the run stops at startup (or skips such rows with
+  `unplaced_records = "skip"`). The model surface height is never used as the
+  ground. With no height column at all, the lowest model layer is used. See "Vertical placement" in `docs/src/config/toml_schema.md`.
 - TCCON sites need neither, because you want the whole profile.
 - Accepted alternative names are `site_id`, `latitude`, `longitude`,
   `intake_height_m`, `height_agl`, `altitude_agl`, `altitude_asl`,
@@ -184,6 +186,14 @@ and intake height, sampled at every window end. The ObsPack reader has only
 been tested on synthetic files so far, so check the first output carefully
 when the real ObsPack arrives.
 
+Aircraft-insitu and AirCore records of the MIP daily ObsPack give only an
+altitude above sea level: `intake_height` and `elevation` are fill on those
+rows (16.5% of the 2021-12 to 2023-12 records), and the files have no
+`pressure`. Set `dem_file` to a DEM of the ground (sea surface 0 m over the
+ocean) so they are placed at `altitude` minus the DEM ground, counted up from
+the model surface; without it the run stops at startup. The
+`vertical_placement` variable records how every row was placed.
+
 ## 4. What is in the files
 
 Level 1 is the top of the atmosphere and the last level is the surface.
@@ -202,7 +212,7 @@ reversed order.
 | `cell_lon`, `cell_lat`, `cell_area` | the model cell that was sampled (`cell_lon` runs 0 to 360) |
 | `<tracer>` | profile, `(obs, lev)` |
 | `<tracer>_column_mean` | air-mass-weighted column mean (no averaging kernel) |
-| `<tracer>_intake` | value in the layer containing `intake_height`; the lowest layer when there is none, as for satellites |
+| `<tracer>_intake` | value in the layer chosen by `vertical_placement` (`placement_height_agl` above the model surface); the lowest layer for records without any height, as for satellites |
 | `p_half_dry`, `ps_dry` | layer-edge pressures `(obs, lev+1)` and surface pressure (Pa) |
 | `air_mass_per_area_dry` | layer air mass (kg m⁻²) |
 | `sample_time_prev`, `sample_time_next`, `interp_weight` | the two window ends around the observation, and the weight given to the later one |
@@ -301,9 +311,11 @@ profile in p/ps.
 - **Intake heights.** Layer heights are computed from pressure with a
   constant 280 K, because the ERA5 binaries carry no temperature;
   `height_method = 0` records this. The model surface follows the ERA5
-  surface pressure, not the station's elevation. Each row records the layer
-  used and its bottom and top heights, so you can judge mountain sites
-  yourself.
+  surface pressure, not the station's elevation: a record is placed at its
+  height above the ground, counted up from the model surface. Each row
+  records the layer used, its bottom and top heights, the placement method
+  and, with `surface_height_file`, the model surface height, so you can judge
+  mountain sites yourself.
 - **Run edges.** Observations outside the run's time span are skipped and
   counted in the startup log. One exactly at the final window end is kept.
   Two chained runs that share a boundary both write an observation sitting

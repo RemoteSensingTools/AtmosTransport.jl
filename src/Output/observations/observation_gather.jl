@@ -335,15 +335,19 @@ function layer_heights_agl!(z_half::AbstractVector{Float64}, p_half::AbstractVec
 end
 
 """
-    intake_layer_index(z_half, intake_height) -> Int
+    intake_layer_index(z_half, height) -> Int
 
-Layer `k` with `z_half[k+1] <= h < z_half[k]` (k = 1 top). A `NaN` or
-non-positive height selects the lowest layer; a height above the column top
-selects layer 1.
+Layer `k` with `z_half[k+1] <= h < z_half[k]` (k = 1 top), `h` in metres
+above the model surface. A non-positive height selects the lowest layer; a
+height above the column top selects layer 1. A `NaN` height is an
+`ArgumentError`: requests without a height are placed explicitly
+([`placement_layer`](@ref)), never by a `NaN` fallback.
 """
 function intake_layer_index(z_half::AbstractVector, intake_height::Real)
     nlevel = length(z_half) - 1
-    (isnan(intake_height) || intake_height <= 0) && return nlevel
+    isnan(intake_height) && throw(ArgumentError(
+        "intake_layer_index needs a height; a request without one must be placed explicitly (placement_layer)"))
+    intake_height <= 0 && return nlevel
     @inbounds for k in nlevel:-1:1
         intake_height < z_half[k] && return k
     end

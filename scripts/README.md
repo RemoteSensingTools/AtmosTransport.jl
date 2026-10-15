@@ -7,7 +7,7 @@ move the function there), not copy it.
 | Folder | Contents |
 |---|---|
 | [`run_transport.jl`](run_transport.jl) | The runtime entry point: `julia --project=. scripts/run_transport.jl <config.toml>`. Like `preprocessing/preprocess_transport_binary.jl`, it defines `main(args)`, which runs in the calling Julia session when the file is included (the golden harness runs its cases this way) |
-| [`preprocessing/`](preprocessing/) | Building transport binaries (`preprocess_transport_binary.jl`, the canonical CLI), regridding, coarsening and attaching fields, year-batch drivers, and preparing surface-flux inputs |
+| [`preprocessing/`](preprocessing/) | Building transport binaries (`preprocess_transport_binary.jl`, the canonical CLI), regridding, coarsening and attaching fields, year-batch drivers, preparing surface-flux inputs, and the per-grid model surface height for observation placement (`build_model_surface_height.jl`) |
 | [`downloads/`](downloads/) | `download_data.jl` with the recipes in `config/downloads/` |
 | [`diagnostics/`](diagnostics/) | Inspection and comparison tools that take paths as arguments (`inspect_transport_binary.jl`, the CATRINE benchmark suite against GEOS-Chem, mass-balance and Float32 checks, XCO2 extraction and Hovmoller plots) |
 | [`validation/`](validation/) | Checks of binaries and runs: replay continuity (`verify_cs_binary_continuity.jl`), cubed sphere vs lat-lon (`compare_cs_vs_ll.jl`), TM5 convection active layers (`diagnose_tm5_active_layers.jl`) |
