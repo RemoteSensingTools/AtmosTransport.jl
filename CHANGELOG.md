@@ -51,6 +51,25 @@
   `inspect_binary` prints it. New constants `TM5_CONVECTION_SOURCE_KEY`,
   `TM5_EC2TM_CONVENTION_KEY`, `TM5_EC2TM_CONVENTION`.
 
+### Post-run diagnostics
+
+- `scripts/diagnostics/catrine_benchmark_v05_site.py` builds the v0.5 CATRINE
+  benchmark web site (GCHP against the v0.5 MERRA-2 and ERA5 runs) from the
+  signoff comparison products: an overview (signoff state, key numbers,
+  agreement table per tracer and air-mass band) and pages for time series,
+  latitude–pressure sections, maps, the near-surface band, the stratosphere,
+  the mass budget, NOAA stations and the methods. Charts use self-hosted D3
+  (hover or tap for values; page scrolling is never captured on phones;
+  drag-to-zoom with a reset on daily time axes); one control row per page is
+  kept in the URL and data are loaded per view. Only finished comparison
+  seasons are read; `--datasets auto` (default) shows MERRA-2 and adds ERA5
+  once all 25 months are compared. The stations page shows GCHP and the runs
+  at eight NOAA sites (nearest C90 cell; lowest layer, or the site's height
+  through GCHP's height–dry-pressure profile) with NOAA CO₂ observations from
+  a local ObsPack (CC0 datasets only, cited) and scores each against them
+  (bias, RMSE, correlation). `catrine_benchmark_site/publish.sh` builds into a
+  staging folder and copies it to the public one (README there).
+
 ### Testing
 
 - **JET 0.12 allowed in the test environment.** On 2026-10-15 the General registry
