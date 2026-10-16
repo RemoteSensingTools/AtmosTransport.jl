@@ -1,0 +1,131 @@
+<h1>Methods and known differences</h1>
+<p class="lede">What was run, how the comparison is computed, and the differences between the models that are known and
+explained. GCHP is the reference of this benchmark, not the truth.</p>
+
+<section class="card prose">
+  <div class="card-head"><h2>The runs</h2></div>
+  <div class="table-wrap"><table class="data" id="runs-table">
+    <thead><tr><th class="l">run</th><th class="l">meteorology and grid</th><th class="l">transport and physics</th><th class="l">initial state</th><th class="l">status</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+  <p class="note">All runs use the CATRINE protocol inputs and write 3-hourly instantaneous fields from 2021-12-01 to 2023-12-31.
+  The AtmosTransport runs use Float32 arithmetic with compensated (Float64) mass totals, PPM horizontal advection and the FV3
+  kord-8 vertical remap, and run month by month (each month restarts from the previous month's last snapshot; the restarts change the monthly statistics by
+  about 10⁻⁵ relative).</p>
+</section>
+
+<section class="card prose">
+  <div class="card-head"><h2>Tracers</h2></div>
+  <ul>
+    <li><b>CO₂</b>: CATRINE initial state and the CAMS (LMDZ) posterior 3-hourly surface fluxes, which include fossil emissions
+    (in AtmosTransport's output this tracer is named <code>co2_natural</code>).</li>
+    <li><b>Fossil CO₂</b>: GridFED emissions, starting from zero. The protocol's fossil tracer starts on 2022-01-01, but GCHP's starts
+    on 2021-12-01; AtmosTransport carries both, and this site compares the one emitted from 2021-12-01 so the two models see the
+    same emissions.</li>
+    <li><b>SF₆</b>: protocol initial state and EDGAR emissions scaled to the NOAA growth rate.</li>
+    <li><b>Rn-222</b>: protocol soil emissions, starting from zero, radioactive decay with the protocol half-life of 3.8235 days.</li>
+  </ul>
+  <p>Mole fractions are dry-air mole fractions in every model. Units: CO₂ and fossil CO₂ in ppm (µmol/mol), SF₆ in ppt
+  (pmol/mol), Rn-222 in 10⁻²¹ mol/mol.</p>
+</section>
+
+<section class="card prose">
+  <div class="card-head"><h2>How the comparison is computed</h2></div>
+  <ul>
+    <li><b>One grid.</b> All models write the same GMAO C90 cubed sphere (6 × 90 × 90 columns, about 100 km); the cell
+    corners are checked to agree. Statistics are computed on that grid, never on interpolated maps.</li>
+    <li><b>Bands of air mass, not levels.</b> Each column is split by the fraction of its dry-air mass counted from the surface:
+    0–10 % (surface to ≈ 910 hPa), 10–60 % (≈ 910–400 hPa), 60–90 % (≈ 400–100 hPa) and 90–100 % (above ≈ 100 hPa), plus the
+    whole column. Band means are mass weighted, so they do not depend on the models' different level sets<span data-run="era5"> (72 and 117 levels)</span>.</li>
+    <li><b>Statistics.</b> Area-weighted over the globe: bias = mean(run − GCHP); RMSE = root of the mean squared difference;
+    r and R² = spatial correlation (coefficient of determination); slope = least-squares slope of run on GCHP. They are computed
+    for every 3-hourly snapshot (daily curves) and for monthly-mean fields (monthly curves, tables).</li>
+    <li><b>Overview table.</b> The monthly-mean-field statistics averaged over months: bias as a mean, RMSE as the root of the mean
+    square, r as a mean. The months used are those compared for every run on the site, without December 2021, the spin-up month.</li>
+    <li><b>Period mean</b> (maps and sections): the time-weighted mean of the monthly-mean fields over the common months.</li>
+    <li><b>Zonal means</b> on fixed dry-pressure levels (900–10 hPa) in 4° latitude bins: each model's profile is interpolated in
+    log pressure on its own grid first.</li>
+    <li><b>Maps</b> show the C90 fields averaged onto 2° cells; hover values are those 2° means.</li>
+    <li><b>Mass balance</b>: burden change minus the model's own emissions (and decay), from each model's own diagnostics.</li>
+  </ul>
+</section>
+
+<section class="card prose">
+  <div class="card-head"><h2>The v0.5 signoff</h2></div>
+  <p>The signoff asks whether AtmosTransport v0.5 transports these tracers at least as well as the pre-v0.5 runs did: each criterion
+  compares the v0.5 run with the pre-v0.5 run of the same meteorology and initial state, with tolerances set from measured run-to-run
+  spread (for example, switching between the GCHP-matched advection options). Absolute differences to GCHP that pass are reported as
+  transport uncertainty, not judged. The verdict is <i>pending</i> until all 25 months of both signoff runs (ERA5 and MERRA-2) are compared, <i>fail</i> if any
+  blocking criterion fails on any month, <i>pass</i> otherwise. Two raw ratios are reported but not counted because their changes were
+  attributed with evidence to corrections in v0.5 or in the initial-state handling (C5c, C6c).</p>
+</section>
+
+<section class="card prose" id="known">
+  <div class="card-head"><h2>Known differences</h2></div>
+  <h3>On the GCHP side (deviations from the CATRINE protocol, found in GCHP's 3-hourly diagnostics)</h3>
+  <ul>
+    <li><b>Initial state shifted by half a layer</b>: each protocol value sits at its layer's top interface. Above 100 hPa this gives
+    GCHP ≈ 0.35 ppm more CO₂ and ≈ 0.046 ppt more SF₆ than the protocol initial state (see <a href="stratosphere.html">Stratosphere</a>).</li>
+    <li><b>Fossil CO₂ emitted from 2021-12-01</b> instead of 2022-01-01 (compared here with a tracer emitted from the same date).</li>
+    <li><b>SF₆ emissions 0.48 % high</b>: the conversion of the protocol's ppt growth to kg used ≈ 5.139×10¹⁸ kg of air while GCHP's
+    dry air is 5.114×10¹⁸ kg (≈ +0.0019 ppt/yr faster growth); December 2021 uses a different emission map.</li>
+    <li><b>Rn-222 decays 0.17–0.23 % slower</b> than the protocol half-life (3.83 d instead of 3.8235 d).</li>
+    <li><code>ColumnMass_*</code> diagnostics are mislabelled (mole fraction × air mass, no molar-mass factor) and 1.3–2.5 % low; GCHP's
+    tracer-flux diagnostics are not budget-consistent. Neither is used here.</li>
+    <li>Emissions are otherwise identical per 3-hour step (fossil, Rn-222; natural CO₂ to 0.06 %), and the MERRA-2 boundary-layer height
+    and dry surface pressure match AtmosTransport's MERRA-2 run (PBLH to 0.006 m RMS; dry air mass to 1.3×10⁻⁵).</li>
+  </ul>
+  <h3>On the AtmosTransport side</h3>
+  <ul>
+    <li><b>v0.5 corrections that change the numbers</b> compared with earlier AtmosTransport benchmark pages: the dry-air mass now matches
+    GCHP's (98,325 Pa global dry surface pressure; earlier runs had 0.42 % more air, hence lower mole fractions for the same emitted
+    mass), Rn-222 decay is split symmetrically over each meteorological window (removes a −0.38 % bias), the initial state is remapped
+    conservatively onto the model's own surface pressure (earlier runs misplaced it near the surface by up to 7 ppm locally), and the
+    MERRA-2 non-local boundary-layer mixing no longer falls back to surface injection on roundoff (OF-108; the MERRA-2 run shown is the
+    rerun with the fix). Earlier pages are therefore not directly comparable with this one.</li>
+    <li data-run="era5"><b>ERA5 stratospheric drift (OF-109, attributed)</b>: above 100 hPa the ERA5 run falls increasingly below
+    GCHP, from a tropical deficit at 70–30 hPa that grows through 2022. ERA5's own tropical upwelling is weaker (net upward mass flux
+    across 70 hPa, 20° S–20° N: 0.65–0.72 × MERRA-2's, ≈ 0.6 × in June–November 2022), the transport binaries reproduce raw ERA5
+    within about 1 %, and the finer L117 layers (≈ 0.39 km against 1.15 km for L66/L72) carry less vertical numerical diffusion
+    than GCHP's L72 grid. Ploeger et al. (2021, <a href="https://doi.org/10.5194/acp-21-8393-2021">ACP 21, 8393</a>) report a
+    slower Brewer–Dobson circulation in ERA5 than in ERA-Interim. GCHP (MERRA-2, L72) is a reference here, not the truth; the
+    signoff reports the ERA5 − GCHP trend instead of counting it (<a href="stratosphere.html">Stratosphere</a>).</li>
+    <li><b>Open finding OF-104</b>: AtmosTransport keeps slightly more Rn-222 in the lowest 10 % of the air mass than GCHP (the cause is in
+    the mixing operators; emissions, boundary-layer height, dry pressure and decay are ruled out).</li>
+    <li><b>Open finding OF-105</b>: in the identical-start MERRA-2 comparison, v0.5 moves SF₆ out of the northern high latitudes
+    (60–90° N) slightly faster than the pre-v0.5 code (−0.001 ppt by February 2022); a transport difference, being attributed.</li>
+    <li><b>Open finding OF-106</b>: both models use the 1° LMDZ CO₂ flux product and GridFED v2024.0, while the protocol names the
+    0.1° CAMS product and GridFED v2024.1; the binding versions are being confirmed with the protocol owners.</li>
+  </ul>
+</section>
+
+<section class="card prose">
+  <div class="card-head"><h2>Rebuilding this site</h2></div>
+  <p>The site is static (no server code) and is regenerated from the signoff comparison products with one command:</p>
+  <p><code>python3 scripts/diagnostics/catrine_benchmark_v05_site.py --out &lt;folder&gt;</code></p>
+  <p>Only finished comparison seasons are read, so a rebuild while the runs continue shows the months compared so far; the status
+  line at the top gives the last compared month of each run and the time of the build. Charts are drawn with D3.js 7.9.0 (ISC licence), served from
+  this site; all data files are in <code>data/</code> (JSON wrapped in JavaScript so the pages also open from disk).</p>
+  <p id="build-info"></p>
+</section>
+
+<script>
+SITE.ready(() => {
+  const S = SITE, m = S.meta(), el = S.el;
+  const N = m.all_months.length;
+  const RUNS = [
+    [m.gc, "MERRA-2 (GEOS), C90, 72 levels", "GCHP's FV3 advection, GEOS convective mass fluxes, GEOS-Chem non-local boundary-layer mixing (GEOS-Chem CATRINE standard run)", "protocol fields, shifted by half a layer (see Known differences)", "reference, complete"],
+    [S.run("era5"), "ERA5 N320 regridded to C90; 117 levels (ERA5's 137 with layers thinner than 1 hPa merged); face mass fluxes from line integrals of the window-mean winds", "TM5 convection (1°, 3-hourly, on the dry basis, up to ≈ 77 hPa) and TM5 diffusion with the surface flux as lower boundary; AtmosTransport code f4ac1f65", "protocol", null],
+    [S.run("merra2"), "MERRA-2, C90, 72 levels; horizontal mass fluxes built to match GCHP's construction", "GEOS convective mass fluxes (cloud base from DQRCU) and GEOS-Chem non-local boundary-layer mixing, as in GCHP; AtmosTransport runtime 460da635 (with the OF-108 fix), transport binaries f4ac1f65", "protocol", null],
+    [S.run("merra2_gcic"), "as MERRA-2 v0.5", "as MERRA-2 v0.5 (supporting run)", "CO₂ and SF₆ from GCHP's own 2021-12-01 03 UTC fields (identical start)", null]];
+  const body = document.querySelector("#runs-table tbody");
+  for (const [r, met, phys, ic, status] of RUNS) {
+    if (!r) continue;
+    const s = status || `${r.months.length} of ${N} months compared` + (r.last_day ? `; transported through ${r.last_day}` : "; not started");
+    body.append(el("tr", {}, el("td", {class: "l"}, el("span", {class: "key", style: `display:inline-block;width:16px;border-top:2.5px ${r.dash === "dot" ? "dotted" : "solid"} ${r.color};vertical-align:middle;margin-right:6px`}), el("b", {}, r.name)),
+      el("td", {class: "l"}, met), el("td", {class: "l"}, phys), el("td", {class: "l"}, ic), el("td", {class: "l"}, s)));
+  }
+  document.getElementById("build-info").textContent = `This build: ${m.generated}; data as of ${m.data_time}; generator revision ${m.revision}.` +
+    (m.signoff_time ? ` Signoff table of ${m.signoff_time}.` : "");
+});
+</script>

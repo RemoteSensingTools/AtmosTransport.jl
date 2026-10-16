@@ -1,0 +1,262 @@
+<h1>AtmosTransport v0.5 against GCHP: CATRINE C90 benchmark</h1>
+<p class="lede" id="lede"></p>
+
+<div class="tiles" id="tiles"></div>
+
+<section class="card">
+  <div class="card-head"><h2>Key points</h2></div>
+  <ul class="points" id="points"></ul>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Agreement with GCHP</h2><span class="spacer"></span><span id="set-ctl"></span></div>
+  <p class="sub" id="table-sub"></p>
+  <div class="table-wrap" id="agreement"></div>
+  <p class="note"><b>How to read:</b> statistics of the monthly-mean fields on the common C90 grid, area weighted, then averaged
+  over the months (bias: mean; RMSE: root of the mean square; r: mean spatial correlation). Bias = run − GCHP. Bands are fractions
+  of each column's dry-air mass counted from the surface, so they do not depend on the models' level sets. The GCHP spatial standard
+  deviation sets the scale against which an RMSE is small or large.</p>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Column agreement month by month</h2><span class="spacer"></span><span class="tools" id="mult-legend"></span></div>
+  <p class="sub">RMSE of the monthly-mean column fields against GCHP. December 2021 is the spin-up month.</p>
+  <div class="grid2" id="multiples"></div>
+</section>
+
+<section class="card">
+  <details class="more" style="margin:0">
+    <summary id="crit-summary">v0.5 signoff criteria</summary>
+    <p class="sub" id="crit-sub"></p>
+    <div class="table-wrap" id="criteria"></div>
+    <details class="more"><summary>Reported, not counted</summary><div class="table-wrap" id="criteria-reported"></div></details>
+  </details>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Explore</h2></div>
+  <div class="explore">
+    <a href="timeseries.html"><b>Time series</b><span>Monthly means by band and latitude region; daily agreement statistics.</span></a>
+    <a href="vertical.html"><b>Vertical structure</b><span>Latitude–pressure sections and mean profiles, with the GCHP tropopause.</span></a>
+    <a href="maps.html"><b>Maps</b><span>Band-mean maps: GCHP and each run minus GCHP<span data-runs="era5 merra2">, and ERA5 minus MERRA-2</span>.</span></a>
+    <a href="surface.html"><b>Near surface</b><span>The lowest 10 % of the air mass: Rn-222, fossil CO₂ and the boundary layer.</span></a>
+    <a href="stratosphere.html"><b>Stratosphere</b><span>Biases above 100 hPa, drift, and the GCHP initial-state offset.</span></a>
+    <a href="mass.html"><b>Mass budget</b><span>Global burdens, conservation residuals and dry-air mass.</span></a>
+    <a href="stations.html"><b>Stations</b><span>Time series at NOAA sites (Mauna Loa, South Pole, …), with NOAA CO<sub>2</sub> observations.</span></a>
+    <a href="methods.html"><b>Methods</b><span>Runs, comparison method, known differences on both sides.</span></a>
+  </div>
+</section>
+
+<script>
+SITE.ready(async () => {
+  const S = SITE, m = S.meta(), el = S.el;
+  const [ov, mon] = await Promise.all([S.load("overview", "overview.js"), S.load("monthly", "monthly.js")]);
+  const runs = S.mainRuns().filter(S.hasMonths);
+  const N = m.all_months.length;
+  const H = markup => S.html(markup);
+  const short = r => S.runName(r);
+
+  // ---- lede
+  const names = runs.map(r => r.name.replace(" v0.5", ""));
+  document.getElementById("lede").innerHTML = (runs.length > 1
+    ? `Two AtmosTransport v0.5 runs of the CATRINE transport protocol (December 2021 to December 2023, four tracers), one driven by ${names[0]} and one by ${names[1]}, `
+    : `The AtmosTransport v0.5 run of the CATRINE transport protocol (December 2021 to December 2023, four tracers) driven by ${names[0]}, `) +
+    "compared with the GEOS-Chem High Performance (GCHP) C90 run of the same protocol. GCHP is a reference, not the truth: the differences measure transport uncertainty.";
+
+  // ---- tiles: signoff state and data coverage
+  const tiles = document.getElementById("tiles");
+  const so = ov.signoff;
+  // Failing blocking criteria of the runs shown (C6a of MERRA-2 is evaluated on the identical-start run), and of the
+  // signoff as a whole (it also covers runs not on the site yet).
+  const own = (per, rk) => per[rk] || (rk === "merra2" ? per.merra2_gcic : undefined);
+  const blockingFails = so ? Object.entries(so.criteria).filter(([, per]) => runs.some(r => { const c = own(per, r.key); return c && c.blocking && c.status === "FAIL"; })).map(([c]) => c) : [];
+  // the signoff's fails list holds "ID label: detail" strings; keep the IDs
+  const otherFails = so ? [...new Set((so.fails || []).map(f => String(f).split(/[\s:]/)[0]))].filter(c => c && !blockingFails.includes(c)) : [];
+  if (so) {
+    const months = Math.min(...runs.map(r => r.months.length));
+    const msg = so.verdict === "PASS" ? "Every blocking criterion passes on all 25 months."
+      : blockingFails.length ? `Failing: ${blockingFails.join(", ")} (blocks the signoff until the difference is attributed).`
+      : otherFails.length ? `No blocking criterion fails for the runs shown; failing for a run not shown yet: ${otherFails.join(", ")}.`
+      : `No blocking criterion fails on the ${months} month${months > 1 ? "s" : ""} compared so far; the verdict is final once all 25 months are compared.`;
+    const era5Reported = runs.some(r => r.key === "era5") && Object.entries(so.criteria).some(([c, per]) => /^C8c/.test(c) && per.era5 && per.era5.status === "REPORTED");
+    const fail = blockingFails.length || otherFails.length || so.verdict === "FAIL";
+    tiles.append(el("div", {class: "tile"}, el("div", {class: "l"}, "v0.5 signoff"),
+      el("div", {class: "v"}, fail ? S.badge("FAIL") : so.verdict === "PASS" ? S.badge("PASS") : "In progress"),
+      el("div", {class: "s"}, msg + (era5Reported ? " The ERA5 − GCHP stratospheric trend is reported, not counted (attributed, OF-109)." : ""))));
+  }
+  for (const r of runs) {
+    const done = r.months.length;
+    const sub = r.role === "signoff"
+      ? `${done ? `compared ${S.monthLabel(r.months[0])} – ${S.monthLabel(r.months[done - 1])}` : "no month compared yet"}` +
+        (r.last_day ? `; transported through ${r.last_day}` : "")
+      : (done ? `supporting run; compared through ${S.monthLabel(r.months[done - 1])}` : "supporting run, started from GCHP's own initial state; not compared yet");
+    tiles.append(el("div", {class: "tile"}, el("div", {class: "l"}, r.name),
+      el("div", {class: "v"}, `${done} `, el("span", {style: "font-size:15px;font-weight:500;color:var(--ink2)"}, `of ${N} months`)),
+      el("div", {class: "progress"}, el("span", {style: `width:${100 * done / N}%;background:${r.color}`})),
+      el("div", {class: "s"}, sub)));
+  }
+
+  // ---- agreement table
+  // "common" needs months that both runs have compared; before that, each run's own months
+  const haveCommon = runs.length > 1 && runs.every(r => ((ov.sets.common || {}).months || {})[r.key] && ov.sets.common.months[r.key].length);
+  let setKey = S.state({set: haveCommon ? "common" : "own"}, {set: ["common", "own"]}).set;
+  if (!haveCommon) setKey = "own";
+  const tracers = m.tracers, bands = m.bands;
+  function table() {
+    const set = ov.sets[setKey], T = set.table, months = set.months;
+    const describe = ms => ms && ms.length ? `${S.monthLabel(ms[0])} – ${S.monthLabel(ms[ms.length - 1])} (${ms.length} month${ms.length > 1 ? "s" : ""})` : "none";
+    document.getElementById("table-sub").textContent = setKey === "common"
+      ? `Months compared for both runs, without the December 2021 spin-up: ${describe(months[runs[0].key])}.`
+      : runs.length > 1 ? runs.map(r => `${r.name}: ${describe(months[r.key])}`).join("; ") + ". The two columns cover different months."
+      : `Months compared, without the December 2021 spin-up: ${describe(months[runs[0].key])}.`;
+    const head1 = el("tr", {class: "group"}, el("th", {class: "l"}), el("th", {colspan: 2, class: "l"}, el("span", {class: "key", style: `border-top-color:${m.gc.color}`}), "GCHP"),
+      runs.map(r => el("th", {colspan: 3, class: "sep l"}, el("span", {class: "key", style: `border-top-color:${r.color}`}), r.name)));
+    const head2 = el("tr", {}, el("th", {class: "l"}, "band"), el("th", {}, "mean"), el("th", {title: "area-weighted spatial standard deviation of the GCHP field"}, "spatial σ"),
+      runs.map(() => [el("th", {class: "sep", title: "run − GCHP"}, "bias"), el("th", {}, "RMSE"), el("th", {title: "spatial correlation"}, "r")]));
+    const body = [];
+    for (const t of tracers) {
+      body.push(el("tr", {class: "tracer"}, el("td", {colspan: 3 + 3 * runs.length}, H(`${t.name} <span style="font-weight:400;color:var(--ink2)">(${t.unit})</span>`))));
+      for (const b of bands) {
+        const ref = T[`${runs[0].key}|${t.key}|${b.key}`] || T[`${runs[runs.length - 1].key}|${t.key}|${b.key}`] || {};
+        const cells = runs.map(r => {
+          const v = T[`${r.key}|${t.key}|${b.key}`];
+          if (!v) return [el("td", {class: "sep dim"}, "–"), el("td", {class: "dim"}, "–"), el("td", {class: "dim"}, "–")];
+          return [el("td", {class: "sep"}, S.fmt(v.bias, t.digits, true)), el("td", {}, S.fmt(v.rmse, t.digits)), el("td", {}, S.fmt(v.r, 4))];
+        });
+        body.push(el("tr", {}, el("td", {class: "l", title: b.long}, b.name), el("td", {}, S.fmt(ref.ref_mean, t.digits > 3 ? 3 : 2)),
+          el("td", {}, S.fmt(ref.ref_std, t.digits)), cells));
+      }
+    }
+    const box = document.getElementById("agreement");
+    box.innerHTML = "";
+    box.append(el("table", {class: "data"}, el("thead", {}, head1, head2), el("tbody", {}, body)));
+  }
+  if (haveCommon) document.getElementById("set-ctl").append(S.seg([{key: "common", name: "Common months"}, {key: "own", name: "All compared months"}],
+    setKey, k => { setKey = k; S.saveState({set: k}); table(); }, "months"));
+  table();
+
+  // ---- key points (numbers from the data, so they follow the runs)
+  const T = ov.sets[haveCommon ? "common" : "own"].table, pts = document.getElementById("points");
+  const v = (r, t, b, s) => (T[`${r}|${t}|${b}`] || {})[s];
+  const both = (t, b, s, d, sign = false) => runs.map(r => S.fmt(v(r.key, t, b, s), d, sign)).join(" / ");
+  const who = runs.map(short).join(" / ");
+  const monthly = (rk, t, b) => {       // [first, last] [value, month] of the monthly bias
+    const arr = mon.stats[`${rk}|${t}|${b}|bias`] || [];
+    const idx = arr.map((x, i) => x === null ? -1 : i).filter(i => i >= 0);
+    return idx.length ? [[arr[idx[0]], m.months[idx[0]]], [arr[idx[idx.length - 1]], m.months[idx[idx.length - 1]]]] : [[null, null], [null, null]];
+  };
+  const point = (title, markup, link) => pts.append(el("li", {}, el("b", {}, title + " "), H(markup), link ? [" ", el("a", {href: link[1]}, link[0])] : []));
+  const rmin = Math.floor(1000 * Math.min(...runs.flatMap(r => tracers.map(t => v(r.key, t.key, "column", "r") ?? 1)))) / 1000;
+  point("Column means agree closely.",
+    `Spatial correlation of the monthly-mean column fields with GCHP is r ≥ ${S.fmt(rmin, 3)} for all four tracers${runs.length > 1 ? " and both runs" : ""}; ` +
+    `the CO<sub>2</sub> column RMSE is ${both("co2", "column", "rmse", 3)} ppm (${who}) against a GCHP spatial spread of ${S.fmt(v(runs[0].key, "co2", "column", "ref_std"), 2)} ppm.`);
+  const start = runs.map(r => S.fmt(monthly(r.key, "co2", "above_100hPa")[0][0], 2)).join(" / ");
+  const now = runs.map(r => { const [, [b, mo]] = monthly(r.key, "co2", "above_100hPa"); return `${S.fmt(b, 2)} ppm (${short(r)}, ${S.monthLabel(mo)})`; }).join(", ");
+  point("Stratospheric offsets start from GCHP's initial state.",
+    `Above 100 hPa ${runs.length > 1 ? "both runs start" : "the run starts"} ≈ 0.35 ppm CO<sub>2</sub> below GCHP (December 2021: ${start} ppm, ${who}): GCHP's CATRINE initial fields are ` +
+    `shifted up by half a model layer, which puts ≈ 0.35 ppm more CO<sub>2</sub> and ≈ 0.046 ppt more SF<sub>6</sub> above 100 hPa. Changes from that ` +
+    `start are differences in stratospheric transport: the bias is now ${now}.` +
+    (S.hasMonths(S.run("era5")) ? " ERA5's deficit grows in the tropics because ERA5's own tropical upwelling is weaker and the finer L117 grid diffuses " +
+      "less than GCHP's L72 (attributed, tracker OF-109)." : ""), ["Stratosphere →", "stratosphere.html"]);
+  const mixing = runs.length > 1 ? "the ERA5 run mixes with TM5's boundary-layer scheme, the MERRA-2 run with GEOS-Chem's, as GCHP does"
+    : runs[0].key === "merra2" ? "the MERRA-2 run mixes with GEOS-Chem's boundary-layer scheme, as GCHP does" : "the ERA5 run mixes with TM5's boundary-layer scheme";
+  point("Zero-start tracers test transport alone.",
+    `Fossil CO<sub>2</sub> and <sup>222</sup>Rn start from zero in every model: column RMSE ${both("fossil", "column", "rmse", 3)} ppm fossil CO<sub>2</sub> and ` +
+    `${both("rn222", "column", "rmse", 2)} ×10<sup>−21</sup> mol/mol <sup>222</sup>Rn (${who}). Near the surface the <sup>222</sup>Rn RMSE is ` +
+    `${both("rn222", "sfc_910hPa", "rmse", 2)} against a GCHP mean of ${S.fmt(v(runs[0].key, "rn222", "sfc_910hPa", "ref_mean"), 1)}; ` +
+    mixing + ".", ["Near surface →", "surface.html"]);
+  if (so) {
+    const mass = so.mass || {}, worst = {};
+    for (const r of runs) for (const [k, x] of Object.entries(mass[r.key] || {})) if (k !== "rn222" && x && x.value !== null) worst[r.key] = Math.max(worst[r.key] || 0, x.value);
+    const air = runs.map(r => Object.values((so.air || {})[r.key] || {})).flat();
+    const airDev = air.length ? Math.max(...air.map(a => Math.abs(a - 1))) : null;
+    const wmax = Math.max(...Object.values(worst));
+    const up = x => { const e = Math.pow(10, Math.floor(Math.log10(x)) - 1); return Math.ceil(x / e) * e; };   // round up, 2 digits
+    if (isFinite(wmax) && wmax > 0) point("Mass is conserved.",
+      `The budget residual of CO<sub>2</sub>, fossil CO<sub>2</sub> and SF<sub>6</sub> stays below ${S.sigfmt(up(wmax), 2)} mol/mol ` +
+      `of the dry air over the months evaluated so far (signoff C9); GCHP's own CO<sub>2</sub> budget residual reaches +4.4×10<sup>−9</sup> mol/mol over 25 months` +
+      (airDev !== null ? `. The dry-air mass matches GCHP's to ${S.sigfmt(airDev, 2)}.` : "."), ["Mass budget →", "mass.html"]);
+  }
+  point("GCHP deviates from the protocol in places.",
+    "Its SF<sub>6</sub> emissions are 0.48 % high, its <sup>222</sup>Rn half-life is 3.83 d instead of 3.8235 d, and its fossil CO<sub>2</sub> is emitted from " +
+    "2021-12-01 (this site compares a fossil tracer emitted from the same date).", ["Known differences →", "methods.html#known"]);
+
+  // ---- small multiples: monthly column RMSE per tracer
+  if (runs.length > 1) document.getElementById("mult-legend").append(S.legend(runs, new Set(), () => {}));
+  document.querySelectorAll("#mult-legend button").forEach(b => { b.disabled = true; b.style.cursor = "default"; });
+  const box = document.getElementById("multiples");
+  const x = m.months.map(S.midMonth);
+  for (const t of tracers) {
+    const div = el("div", {class: "plot"});
+    box.append(el("div", {}, el("div", {class: "panel-title"}, H(t.name), el("span", {class: "panel-sub"}, H(`column RMSE (${t.unit})`))), div));
+    S.chart(div, {height: 210, x: S.timeAxis("month", {hover: "%b %Y"}), y: {tozero: true, fmt: S.valFmt(t.digits, t.unit)},
+      series: runs.map(r => S.series(r, x, mon.stats[`${r.key}|${t.key}|column|rmse`], {markers: true}))});
+  }
+
+  // ---- criteria
+  if (!so) { document.getElementById("criteria").textContent = "No signoff table available."; return; }
+  document.getElementById("crit-summary").textContent = `v0.5 signoff criteria for ${runs.map(r => r.name).join(" and ")} (${blockingFails.length ? "failing: " + blockingFails.join(", ") : "none failing so far"})` +
+    (!blockingFails.length && otherFails.length ? `; failing for a run not shown: ${otherFails.join(", ")}` : "");
+  document.getElementById("crit-sub").textContent =
+    `The signoff tests that v0.5 does not regress against the pre-v0.5 runs, with tolerances from measured run-to-run spread (see Methods). ` +
+    `Criteria stay pending until all 25 months are compared. Signoff table of ${so.generated}.`;
+  const C = so.criteria;
+  const DESC = {
+    C1: "CO<sub>2</sub> bias above 100 hPa: change against pre-v0.5", C2: "SF<sub>6</sub> bias above 100 hPa: change against pre-v0.5",
+    C3: "CO<sub>2</sub> bias 400–100 hPa: change against pre-v0.5", C4: "SF<sub>6</sub> bias 400–100 hPa: change against pre-v0.5",
+    C5a: "Near-surface <sup>222</sup>Rn RMSE against pre-v0.5, corrected for the two exact v0.5 changes",
+    C5c: "Raw near-surface <sup>222</sup>Rn RMSE ratio (attributed to the decay-split and dry-air corrections)",
+    C6a: "CO<sub>2</sub> column RMSE of the identical-start runs against pre-v0.5",
+    "C6b-fossil": "Fossil CO<sub>2</sub> column RMSE against pre-v0.5", "C6b-rn222": "<sup>222</sup>Rn column RMSE against pre-v0.5",
+    C6c: "Raw CO<sub>2</sub> column RMSE ratio (attributed to the pre-v0.5 initial-state placement)",
+    C7: "ERA5 from April 2022: no worse than the pre-v0.5 ERA5 run",
+    "C8-co2": "Drift: trend of the CO<sub>2</sub> bias above 100 hPa", "C8-sf6": "Drift: trend of the SF<sub>6</sub> bias above 100 hPa",
+    C9: "Tracer mass conservation over the whole run", C10: "Dry-air mass against GCHP",
+    C11: "Provenance: certified binaries, one code version per run"};
+  // ERA5 drift criterion split (OF-109): construction invariance and met fidelity block; the trend against GCHP is reported.
+  const C8DESC = {C8a: "ERA5 drift, construction invariance: v0.5 against pre-v0.5 above 100 hPa (bias, its trend, fluxes above 230 hPa)",
+                  C8b: "ERA5 drift, meteorological fidelity: tropical (20° S–20° N) vertical mass flux of the binaries against raw ERA5",
+                  C8c: "ERA5 − GCHP trend above 100 hPa (attributed to ERA5's slower tropical upwelling and the finer L117 grid, OF-109; a positive trend above +0.15 ppm/yr still fails)"};
+  const SUFFIX = {co2: "CO<sub>2</sub>", sf6: "SF<sub>6</sub>"};
+  const describe = cid => {
+    if (DESC[cid]) return DESC[cid];
+    if (cid === "C8c-guard") return "ERA5 − GCHP trend above 100 hPa: guard against a positive drift (above +0.15 ppm/yr CO<sub>2</sub> or +0.02 ppt/yr SF<sub>6</sub> fails)";
+    const k = cid.match(/^(C8[abc])(?:-(\w+))?$/);
+    if (k) return C8DESC[k[1]] + (k[2] ? ` (${SUFFIX[k[2]] || k[2]})` : "");
+    return "see the signoff criteria";
+  };
+  const FIRST = ["C1", "C2", "C3", "C4", "C5a", "C5c", "C6a", "C6b-fossil", "C6b-rn222", "C6c", "C7"];
+  const ids = [...FIRST.filter(c => c in C), ...Object.keys(C).filter(c => /^C8/.test(c)).sort(), "C9",
+               ...["C10", "C11"].filter(c => c in C),
+               ...Object.keys(C).filter(c => !FIRST.includes(c) && !/^C8|^C9|^C10$|^C11$/.test(c))];
+  const order = {FAIL: 3, PENDING: 2, PASS: 1, REPORTED: 0};
+  const tidy = d => d.replace(/^\[SUPERSEDED[^\]]*\]\s*/, "").replace(/<=/g, "≤").replace(/transport_binary_v4_l72_f32_physics_hm_gchp_v05/g, "MERRA-2 set")
+    .replace(/transport_binary_v4_l117_f32_no_convection_li_v05/g, "ERA5 base set").replace(/transport_binary_v4_l117_f32_tm5_convection_1deg_3hour_li_v05/g, "ERA5 convection set");
+  const cell = (cid, rk) => {
+    let c = (C[cid] || {})[rk];
+    if (cid === "C6a" && rk === "merra2") c = (C[cid] || {}).merra2_gcic;
+    if (cid === "C9") {       // the per-tracer C9 rows, combined
+      const parts = Object.keys(C).filter(k => k.startsWith("C9-")).map(k => C[k][rk]).filter(Boolean);
+      if (!parts.length) return el("td", {class: "run dim"}, "–");
+      const status = parts.reduce((a, p) => order[p.status] > order[a] ? p.status : a, "PASS");
+      const vals = (so.mass || {})[rk] || {};
+      const nm = {co2_natural: "CO<sub>2</sub>", co2_fossil_from_dec2021: "fossil", co2_fossil: "fossil from 2022", sf6: "SF<sub>6</sub>", rn222: "Rn (of emitted)"};
+      const txt = Object.entries(vals).filter(([k]) => nm[k]).map(([k, x]) => `${nm[k]} ${S.sigfmt(x.value, 3)} (≤ ${S.sigfmt(x.limit, 3)})`).join(" · ");
+      const chunks = (parts[0].detail.match(/\[(\d+)\/(\d+) chunks\]/) || []);
+      return el("td", {class: "run"}, S.badge(status), el("span", {class: "detail"}, H(txt + (chunks[1] ? `; ${chunks[1]}/${chunks[2]} months` : ""))));
+    }
+    if (!c) return el("td", {class: "run dim"}, cid === "C6a" && rk === "era5" ? "no identical-start ERA5 run" : "–");
+    return el("td", {class: "run"}, S.badge(c.status), el("span", {class: "detail"}, tidy(c.detail)));
+  };
+  const thead = () => el("thead", {}, el("tr", {}, el("th", {class: "l"}, "ID"), el("th", {class: "l"}, "what is tested"),
+    S.mainRuns().map(r => el("th", {class: "l run"}, el("span", {class: "key", style: `display:inline-block;width:16px;border-top:2.5px solid ${r.color};vertical-align:middle;margin-right:6px`}), r.name))));
+  const rowsOf = list => el("tbody", {}, list.map(cid => el("tr", {}, el("td", {class: "id"}, cid), el("td", {class: "what"}, H(describe(cid))), S.mainRuns().map(r => cell(cid, r.key)))));
+  const entry = (cid, rk) => (C[cid] || {})[rk] || (cid === "C6a" && rk === "merra2" ? (C[cid] || {}).merra2_gcic : undefined);
+  const shown = cid => cid === "C9" || S.mainRuns().some(r => entry(cid, r.key));
+  // a criterion that is only REPORTED for every run shown goes to the "reported, not counted" table
+  const reported = cid => cid !== "C9" && S.mainRuns().map(r => entry(cid, r.key)).filter(Boolean).every(c => c.status === "REPORTED");
+  const list = ids.filter(shown);
+  document.getElementById("criteria").append(el("table", {class: "data crit"}, thead(), rowsOf(list.filter(c => !reported(c)))));
+  document.getElementById("criteria-reported").append(el("table", {class: "data crit"}, thead(), rowsOf(list.filter(reported))));
+});
+</script>
