@@ -796,16 +796,16 @@
           }
         },
         "pressure_basis": {
-          "description": "Interface pressures a pressure-placed record is compared with (AbstractPressureBasis). Record pressures are total pressures; the air mass of a dry-basis run gives dry interface pressures, lower by the weight of the water vapour above each interface.",
+          "description": "Interface pressures a pressure-placed record is compared with (AbstractPressureBasis); only with \"pressure\" in vertical_coordinates. Record pressures are total pressures; the air mass of a dry-basis run gives dry interface pressures, lower by the weight of the water vapour above each interface.",
           "default": "total",
           "oneOf": [
             {
               "const": "total",
-              "description": "TotalFromHumidity: total interface pressures p[k+1] = p[k] + g m[k] / (A (1 - q[k])) from the dry air mass and the binary's specific humidity (qv_start/qv_end, or GCHP VDIFF qv); a moist-basis air mass is used as it is. A dry-basis run without humidity fails when any record is placed by pressure."
+              "description": "TotalFromHumidity: total interface pressures p[k+1] = p[k] + g m[k] / (A (1 - q[k])) from the dry air mass and the binary's specific humidity (qv_start/qv_end, or the window-start GCHP VDIFF qv on the cubed sphere); a moist-basis air mass is used as it is. A dry-basis run whose binaries do not all carry humidity fails when any record is placed by pressure."
             },
             {
               "const": "dry",
-              "description": "DryInterfaces: the dry interface pressures p[k+1] = p[k] + g m[k] / A of a dry-basis run, for binaries without humidity; a record can land one layer too low (closer to the surface) in humid columns."
+              "description": "DryInterfaces: the dry interface pressures p[k+1] = p[k] + g m[k] / A of a dry-basis run, for binaries without humidity; a record can land one or more layers too low (closer to the surface) in humid columns."
             }
           ]
         }

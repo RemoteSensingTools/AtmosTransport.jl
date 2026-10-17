@@ -270,28 +270,33 @@ _unplaced_example(r::Union{SoundingRequest, SiteRequest}) =
     "pressure $(isfinite(_unplaced_pressure(r)) ? string(_unplaced_pressure(r), " Pa") : "none")"
 
 _coordinate_text(::HeightAboveGroundCoordinate) =
-    "a height above the ground (an altitude needs a record elevation or a dem_file value at the point)"
-_coordinate_text(::PressureCoordinate) = "a pressure"
+    "height above the ground (an altitude needs a record elevation or a dem_file value at the point)"
+_coordinate_text(::PressureCoordinate) = "valid pressure"
 
 function _unplaced_message(c::ObservationCounters, examples, coordinates::Tuple)
     labels = join(("\"$(vertical_coordinate_label(x))\"" for x in coordinates), ", ")
-    usable = join(_coordinate_text.(coordinates), " or ")
-    return "$(c.unplaced_soundings) point events and $(c.unplaced_sites) station series have none of the " *
-           "vertical coordinates in use (vertical_coordinates = [$(labels)]), i.e. no $(usable): " *
-           "an altitude above sea level without a ground elevation (no record elevation and no dem_file " *
-           "value at the point), a coordinate the run does not use, or no vertical coordinate at all " *
-           "(ObsPack). The model surface height is not used as the true ground. " *
+    return "$(c.unplaced_soundings) point events and $(c.unplaced_sites) station series give none of the " *
+           "vertical coordinates in use (vertical_coordinates = [$(labels)]): no " *
+           join(_coordinate_text.(coordinates), " and no ") * ". They give an altitude above sea level " *
+           "without a ground elevation, only a coordinate the run does not use, or no vertical coordinate " *
+           "at all (ObsPack). The model surface height is not used as the true ground. " *
            "First $(length(examples)): $(join(examples, "; "))"
+end
+
+# What could place them: a DEM (only with the height coordinate), another coordinate, or skipping.
+function _unplaced_remedy(coordinates::Tuple)
+    dem = _uses_coordinate(coordinates, HeightAboveGroundCoordinate) ?
+          "Set [output.observations].dem_file to a DEM covering these points (the ground elevation, " *
+          "m above sea level), add" : "Add"
+    return "$(dem) the coordinate the records give to vertical_coordinates, or set unplaced_records = " *
+           "\"skip\" to drop them (counted in the n_unplaced_* file attributes)."
 end
 
 _handle_unplaced(spec::VerticalPlacementSpec, c::ObservationCounters, examples) =
     _n_unplaced(c) == 0 ? nothing : _handle_unplaced_nonzero(spec.unplaced, c, examples, spec.coordinates)
 _handle_unplaced_nonzero(::ErrorOnUnplaced, c::ObservationCounters, examples, coordinates) = throw(ArgumentError(
     "observation sampling cannot place every request in the column. " *
-    _unplaced_message(c, examples, coordinates) *
-    ". Set [output.observations].dem_file to a DEM covering these points (the ground elevation, " *
-    "m above sea level), add the coordinate the records give to vertical_coordinates, or " *
-    "unplaced_records = \"skip\" to drop them (counted in the n_unplaced_* file attributes)."))
+    _unplaced_message(c, examples, coordinates) * " " * _unplaced_remedy(coordinates)))
 _handle_unplaced_nonzero(::SkipUnplaced, c::ObservationCounters, examples, coordinates) =
     @warn "observation sampling skips requests it cannot place (unplaced_records = \"skip\"). " *
           _unplaced_message(c, examples, coordinates)

@@ -102,25 +102,28 @@
   record by its pressure (ObsPack `pressure`, a total pressure) against the
   column's dry interface pressures on dry-basis runs, which lie lower by the
   weight of the water vapour above each interface (4.9 hPa at the surface for
-  50 kg m⁻² of precipitable water), so a record could land one layer too low.
+  50 kg m⁻² of precipitable water), so a record could land one or more layers
+  too low.
   The default `pressure_basis = "total"` (`TotalFromHumidity`) now compares it
   with the total interface pressures
   `p[k+1] = p[k] + g·m[k] / (A·(1 − q[k]))`, built from the dry air mass and
   the binary's specific humidity (`qv_start` at the run start and `qv_end` at
-  window ends on lat-lon and reduced-Gaussian binaries, the window's GCHP
-  VDIFF `qv` on cubed-sphere binaries; blended in time like the air mass).
+  window ends on lat-lon and reduced-Gaussian binaries; the window's GCHP
+  VDIFF `qv` on cubed-sphere binaries, a window-start value, so one window old
+  at window ends; blended in time like the air mass).
   Only rows with `vertical_placement = 2` change: their `intake_level`, layer
   heights and `<tracer>_intake`. On the GEOS L72 levels in a constructed
   tropical column (18 g/kg at the surface, 50 kg m⁻² of precipitable water)
   25% of pressures between 900 and 1010 hPa, 6% between 500 and 900 hPa and
-  0.4% between 200 and 500 hPa move up one layer (5%, 1% and 0% at 4 g/kg and
+  0.4% between 200 and 500 hPa move up (5%, 1% and 0% at 4 g/kg and
   10 kg m⁻²); in the sampler test case two of
   three pressure-placed rows moved up one layer and their intake values by
   −2.2 ppm (the column's per-layer CO₂ gradient). Height-placed, lowest-layer
   and site rows, and the written `p_half_dry`, are bit-identical. A dry-basis
-  run whose binaries carry no humidity now fails to build a sampler with
-  pressure-placed records unless `pressure_basis = "dry"` (`DryInterfaces`,
-  the old comparison) is set. Moist-basis runs are unchanged (their air mass
+  run whose binaries do not all carry humidity (every binary's header is
+  checked before transport) now fails to build a sampler with pressure-placed
+  records unless `pressure_basis = "dry"` (`DryInterfaces`, the old
+  comparison) is set. Moist-basis runs are unchanged (their air mass
   already gives total pressures). No golden case samples observations.
 - **Cubed-sphere adjoint footprints and 4D-Var gradients** change for runs
   with convection, with `DiffusiveSurfaceFluxBoundary`, or with limited-PPM
@@ -458,7 +461,8 @@
   a record's pressure; a single coordinate uses only that one, and a record
   that gives only the other one is unplaced (`unplaced_records`). An empty,
   repeating or unknown list is an error, as are `dem_file` and
-  `absolute_altitude_above_agl_m` without `"height_above_ground"`;
+  `absolute_altitude_above_agl_m` without `"height_above_ground"` and
+  `pressure_basis` without `"pressure"`;
   `absolute_altitude_above_agl_m` re-places by pressure only when
   `"pressure"` is listed. And `pressure_basis` (`"total"` →
   `TotalFromHumidity`, default; `"dry"` → `DryInterfaces`), see Numerical

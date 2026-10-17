@@ -138,14 +138,32 @@ _vdiff_temperature(vdiff) = vdiff.t
 # Specific humidity (kg kg⁻¹ of moist air, layer means, k = 1 at the top) at
 # the sampled boundary, for total interface pressures: the window's `qv_start`
 # at the run start and its `qv_end` at its end (lat-lon and reduced-Gaussian
-# binaries), else the window's GCHP VDIFF `qv` (cubed-sphere binaries, one
-# field per window, like the temperature); `nothing` when the binary carries
-# neither. `sim.window` is the window that just ended (the next one loads on
-# the next step). The runners pass `has_humidity` from the same fields.
+# binaries), else the window's GCHP VDIFF `qv` (cubed-sphere binaries). VDIFF
+# `qv` is the window-start humidity held through the window (like the
+# temperature), so at a cubed-sphere window end it is one window old; only the
+# run start is exact. `nothing` when the binary carries neither. `sim.window`
+# is the window that just ended (the next one loads on the next step).
 _window_humidity(window, run_start::Bool) =
     window.qv_start !== nothing ? (run_start ? window.qv_start : window.qv_end) : _vdiff_humidity(window.vdiff)
 _vdiff_humidity(::Nothing) = nothing
 _vdiff_humidity(vdiff) = vdiff.qv
+
+# Whether a binary (its `binary_capabilities`) carries the humidity
+# `_window_humidity` reads: `qv_start`/`qv_end`, or on the cubed sphere the
+# GCHP VDIFF payload (loaded only when complete, which the reader enforces).
+_binary_observation_humidity(caps) =
+    caps.humidity || (caps.grid_type === :cubed_sphere && :vdiff_qv in caps.payload_sections)
+
+# `has_humidity` of the sampler: every binary must carry humidity, checked
+# from the headers before transport (`binary_humidity`, one flag per binary),
+# so a later binary without it cannot stop the run midway; a direct runner
+# call without the flags falls back to the first binary.
+_run_observation_humidity(::Nothing, binary_paths, first_binary::Bool) = first_binary
+function _run_observation_humidity(binary_humidity::AbstractVector{Bool}, binary_paths, first_binary::Bool)
+    length(binary_humidity) == length(binary_paths) || throw(DimensionMismatch(
+        "$(length(binary_humidity)) humidity flags for $(length(binary_paths)) binaries"))
+    return all(binary_humidity)
+end
 
 _observe_window_end!(timer, ::NoObservationSampler, sim, seconds::Real; run_start::Bool = false) = nothing
 function _observe_window_end!(timer, sampler::AbstractObservationSampler, sim, seconds::Real;

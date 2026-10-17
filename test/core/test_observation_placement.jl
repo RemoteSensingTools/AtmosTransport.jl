@@ -369,6 +369,13 @@ file_variables(path) = NCDataset(ds -> Dict(k => Array(ds[k].var) for k in keys(
         @test err isa ArgumentError
         @test occursin("3 point events", sprint(showerror, err)) &&
               occursin("vertical_coordinates = [\"pressure\"]", sprint(showerror, err))
+        # Absolute altitude aloft re-places by the total pressure (899 hPa: layer 9, not the dry layer 10).
+        aloft = write_pack(joinpath(dir, "co2_iag_aircraft-insitu_1.nc"); intake = [500.0, 3000.0],
+                           elevation = [0.0, 0.0], pressure = [NaN, 899.0])
+        abs_rows = soundings(first(sample(dir, Any[obspack(aloft)]; name = "abstotal", m, humidity = m.q,
+                                          surface_height_file = surface_file(dir, 0.0),
+                                          absolute_altitude_above_agl_m = 1000.0)))
+        @test abs_rows.method == [CODES.record_height, CODES.pressure] && abs_rows.level[2] == 9
         # Height only: the pressure rows are unplaced, and no humidity is needed.
         h_only = soundings(first(sample(dir, Any[obspack(pack)]; name = "honly", m,
                                         vertical_coordinates = ["height_above_ground"], unplaced_records = "skip")))

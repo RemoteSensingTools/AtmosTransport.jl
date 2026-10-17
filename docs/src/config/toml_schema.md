@@ -714,7 +714,7 @@ path = "~/data/AtmosTransport/observations/tccon_sites.csv"
 | `unplaced_records` | `"error"` (default) → `ErrorOnUnplaced`, `"skip"` → `SkipUnplaced` |
 | `absolute_altitude_above_agl_m` | number ≥ 0 → `AbsoluteAltitudeAbove(h₀)`; omitted → `AboveGroundPlacement`. Needs `surface_height_file` and `"height_above_ground"` in `vertical_coordinates` |
 | `vertical_coordinates` | non-empty array, in preference order, of `"height_above_ground"` → `HeightAboveGroundCoordinate` and `"pressure"` → `PressureCoordinate`, each at most once; default `["height_above_ground", "pressure"]`. Without `"height_above_ground"`, `dem_file` and `absolute_altitude_above_agl_m` are rejected |
-| `pressure_basis` | `"total"` (default) → `TotalFromHumidity`, `"dry"` → `DryInterfaces`: the interface pressures a pressure-placed record is compared with (below) |
+| `pressure_basis` | `"total"` (default) → `TotalFromHumidity`, `"dry"` → `DryInterfaces`: the interface pressures a pressure-placed record is compared with (below); only with `"pressure"` in `vertical_coordinates` |
 
 Source paths are templates: `{YYYYMMDD}` (or `{date}`), `{YYMMDD}`, `{YYYY}`,
 `{MM}`, `{DD}` are substituted per run day, and `*` / `?` wildcards expand in
@@ -856,18 +856,21 @@ met model's hybrid coordinate (a total pressure). This inverts the
 preprocessor's dry conversion ``Δp_\mathrm{dry} = (1 - q)\,Δp``. The
 humidity is the binary's layer-mean specific humidity at the sampled window
 end: `qv_start` at the run start and `qv_end` at each window end of lat-lon
-and reduced-Gaussian binaries, the window's GCHP VDIFF `qv` on cubed-sphere
-binaries; with linear time interpolation it is blended between the two window
-ends like the air mass. A moist-basis run's air mass already gives total
-pressures. A dry-basis run whose binaries carry no humidity (for example the
-ERA5 N320 → cubed-sphere products) cannot build them: building the sampler
-then fails if any record is placed by pressure, and `pressure_basis = "dry"`
+and reduced-Gaussian binaries; on cubed-sphere binaries the window's GCHP
+VDIFF `qv`, a window-start value held through the window, so at a window end
+it is one window old (exact at the run start). With linear time
+interpolation it is blended between the two window ends like the air mass. A moist-basis run's air mass already gives total
+pressures. A dry-basis run whose binaries do not all carry humidity (for example the
+ERA5 N320 → cubed-sphere products; every binary's header is checked before
+transport) cannot build them: building the sampler then fails if any record
+is placed by pressure, and `pressure_basis = "dry"`
 (`DryInterfaces`) compares with the dry interfaces instead. Those lie at lower
-pressure, so a record can land one layer too low (closer to the surface): on
+pressure, so a record can land one or more layers too low (closer to the
+surface, where the layers are thinnest): on
 the GEOS L72 levels, in a constructed tropical column (18 g/kg at the
 surface, 50 kg m⁻² of precipitable water), the dry interfaces put 25% of
 pressures between 900 and 1010 hPa, 6% between 500 and 900 hPa and 0.4%
-between 200 and 500 hPa one layer lower (5%, 1% and 0% at 4 g/kg and
+between 200 and 500 hPa in a lower layer (5%, 1% and 0% at 4 g/kg and
 10 kg m⁻²). The files keep the dry interfaces as `p_half_dry`; the attribute
 `pressure_basis` records the basis used.
 

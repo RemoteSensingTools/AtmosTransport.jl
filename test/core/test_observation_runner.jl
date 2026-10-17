@@ -330,3 +330,37 @@ end
         @test levels(joinpath(dry_dir, "obs_soundings.nc")) == [3, 3, 3]
     end
 end
+
+@testset "runner humidity: sampled fields and per-binary capability (issue #20)" begin
+    R = AtmosTransport.Models.DrivenRunner
+    qs, qe, vq = fill(0.01, 2, 2, 3), fill(0.02, 2, 2, 3), ntuple(_ -> fill(0.03, 4, 4, 3), 6)
+    structured = (qv_start = qs, qv_end = qe, vdiff = nothing)
+    @test R._window_humidity(structured, true) === qs && R._window_humidity(structured, false) === qe
+    cubed = (qv_start = nothing, qv_end = nothing, vdiff = (t = vq, qv = vq))
+    @test R._window_humidity(cubed, true) === vq && R._window_humidity(cubed, false) === vq
+    @test R._window_humidity((qv_start = nothing, qv_end = nothing, vdiff = nothing), false) === nothing
+    caps(humidity, grid, sections = Symbol[]) = (humidity = humidity, grid_type = grid, payload_sections = sections)
+    @test R._binary_observation_humidity(caps(true, :latlon))
+    @test R._binary_observation_humidity(caps(false, :cubed_sphere, [:m, :vdiff_t, :vdiff_qv]))
+    @test !R._binary_observation_humidity(caps(false, :latlon, [:vdiff_qv]))   # lat-lon windows load no VDIFF
+    @test !R._binary_observation_humidity(caps(false, :cubed_sphere, [:m]))
+    @test R._run_observation_humidity([true, true], ["a", "b"], false)
+    @test !R._run_observation_humidity([true, false], ["a", "b"], true)
+    @test R._run_observation_humidity(nothing, ["a"], true)
+
+    # A later binary without humidity stops the run before transport, not midway.
+    mktempdir() do dir
+        pack = obspack_pressures(joinpath(dir, "co2_x_aircraft-insitu_1.nc"), [ORIGIN + Minute(30)], [664.0])
+        sources = Any[Dict{String, Any}("kind" => "obspack", "mode" => "soundings", "path" => pack)]
+        day1 = humid_ll_binary(joinpath(dir, "transport_20211202.bin"))
+        day2 = humid_ll_binary(joinpath(dir, "transport_20211203.bin"); humid = false)
+        err = try
+            quiet(() -> run_driven_simulation(ll_cfg(dir, [day1, day2]; observations = sources)))
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError && occursin("do not all carry humidity", sprint(showerror, err))
+        @test !isfile(joinpath(dir, "obs_soundings.nc"))
+    end
+end

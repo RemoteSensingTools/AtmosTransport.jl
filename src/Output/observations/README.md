@@ -155,7 +155,9 @@ separate system.
     humidity: the build fails without it (`has_humidity = false`), and every
     window end must pass it. The runner passes `qv_start` at the run start and
     `qv_end` at window ends (lat-lon, reduced Gaussian), else the window's GCHP
-    VDIFF `qv` (cubed sphere). Linear interpolation blends it like the masses.
+    VDIFF `qv` (cubed sphere; a window-start value, so one window old at
+    window ends). Linear interpolation blends it like the masses. The runner
+    sets `has_humidity` only when every binary carries humidity.
     Only pressure-placed rows read it, so the other rows do not change with
     the basis.
 - Mixing ratio is tracer storage divided by air mass, and NaN where air mass ≤ 0.
@@ -177,6 +179,9 @@ separate system.
     `missing_height_rule`.
   - `absolute_altitude_above_agl_m` re-places height placements aloft by
     pressure only when `pressure` is a coordinate.
+  - Placement keys that would have no effect are errors: `dem_variable`
+    without `dem_file`; `dem_file` and `absolute_altitude_above_agl_m` without
+    `"height_above_ground"`; `pressure_basis` without `"pressure"`.
   - The model surface height is never used as the true ground; it is only the
     reference of `absolute_altitude_above_agl_m`.
   - A request is never sampled in the lowest layer for lack of a height unless

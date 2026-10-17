@@ -278,6 +278,8 @@ function _run_driven_simulation_inputs(cfg, input_cfg, binary_paths, arch::Abstr
     _validate_input_binary_expectations(caps, input_cfg, first(binary_paths))
     # (window length, window count) of every binary, for the snapshot schedule.
     window_layout = [(item.caps.window_seconds, item.caps.nwindow) for item in binary_caps]
+    # Whether each binary carries the specific humidity observation sampling reads.
+    binary_humidity = [_binary_observation_humidity(item.caps) for item in binary_caps]
     run_cfg = get(cfg, "run", Dict{String, Any}())
     _check_window_range(window_layout;
                         start_window = Int(get(run_cfg, "start_window", 1)),
@@ -294,7 +296,7 @@ function _run_driven_simulation_inputs(cfg, input_cfg, binary_paths, arch::Abstr
             _with_run_resource(input_resources) do
                 _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg,
                                            stager, arch, output_resources, input_resources,
-                                           window_layout)
+                                           window_layout, binary_humidity)
             end
         end
     finally
@@ -363,24 +365,24 @@ end
 _run_driven_simulation_for(::Val{:latlon}, binary_paths::Vector{String}, cfg,
                            stager::InputStager, arch::AbstractArchitecture,
                            output_resources::RunSnapshotOutput, input_resources::RunInputResources,
-                           window_layout) =
+                           window_layout, binary_humidity) =
     _run_driven_simulation_structured(binary_paths, cfg, stager, arch, output_resources,
-                                      input_resources, window_layout)
+                                      input_resources, window_layout, binary_humidity)
 _run_driven_simulation_for(::Val{:reduced_gaussian}, binary_paths::Vector{String}, cfg,
                            stager::InputStager, arch::AbstractArchitecture,
                            output_resources::RunSnapshotOutput, input_resources::RunInputResources,
-                           window_layout) =
+                           window_layout, binary_humidity) =
     _run_driven_simulation_structured(binary_paths, cfg, stager, arch, output_resources,
-                                      input_resources, window_layout)
+                                      input_resources, window_layout, binary_humidity)
 _run_driven_simulation_for(::Val{:cubed_sphere}, binary_paths::Vector{String}, cfg,
                            stager::InputStager, arch::AbstractArchitecture,
                            output_resources::RunSnapshotOutput, input_resources::RunInputResources,
-                           window_layout) =
+                           window_layout, binary_humidity) =
     _run_driven_simulation_cs(binary_paths, cfg, stager, arch, output_resources,
-                              input_resources, window_layout)
+                              input_resources, window_layout, binary_humidity)
 function _run_driven_simulation_for(::Val{grid_type}, _binary_paths::Vector{String},
                                     _cfg, _stager::InputStager, _arch, _output_resources::RunSnapshotOutput, _input_resources::RunInputResources,
-                                    _window_layout) where grid_type
+                                    _window_layout, _binary_humidity) where grid_type
     throw(ArgumentError("Unsupported transport-binary grid_type=$(grid_type)."))
 end
 
@@ -495,7 +497,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                            arch::AbstractArchitecture,
                                            output_resources::RunSnapshotOutput,
                                            input_resources::RunInputResources,
-                                           window_layout = nothing)
+                                           window_layout = nothing, binary_humidity = nothing)
     FT = _cfg_float_type(cfg)
     assert_float_type!(arch, FT)
     run_cfg = get(cfg, "run", Dict{String, Any}())
@@ -555,7 +557,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     sampler = _install_observation_sampler!(output_resources, output_cfg, output_spec.partition,
                                             model.state, grid_of_first;
                                             cfg, binary_paths, halo_width = 0,
-                                            has_humidity = supports_moisture(first_driver),
+                                            has_humidity = _run_observation_humidity(binary_humidity, binary_paths,
+                                                                                     supports_moisture(first_driver)),
                                             offset_seconds = (start_window - 1) * Float64(window_dt(first_driver)),
                                             span_seconds = 3600 * run_hours)
     # Observation sampling needs the per-window loop even without snapshots.
@@ -807,7 +810,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                    arch::AbstractArchitecture,
                                    output_resources::RunSnapshotOutput,
                                    input_resources::RunInputResources,
-                                   window_layout = nothing)
+                                   window_layout = nothing, binary_humidity = nothing)
     FT   = _cfg_float_type(cfg)
     assert_float_type!(arch, FT)
 
@@ -927,7 +930,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     sampler = _install_observation_sampler!(output_resources, output_cfg, output_spec.partition,
                                             model.state, grid;
                                             cfg, binary_paths, halo_width = Hp,
-                                            has_humidity = _window_humidity(window1, true) !== nothing,
+                                            has_humidity = _run_observation_humidity(binary_humidity, binary_paths,
+                                                                                     _window_humidity(window1, true) !== nothing),
                                             span_seconds = 3600 * run_hours)
     observation_clock_seconds = 0.0   # exact Float64 run clock for observation times
 

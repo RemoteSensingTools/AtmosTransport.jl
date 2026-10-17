@@ -236,9 +236,10 @@ with ``A`` the cell area and ``p_\\mathrm{top}`` the pure-pressure model-top
 interface `A_ifc[1]`, a total pressure in the met model's hybrid coordinate
 (level 1 is the top). This inverts the preprocessing's dry conversion
 ``Δp_\\mathrm{dry} = (1 - q)\\,Δp``. The humidity is the binary's layer-mean
-specific humidity at the sampled window end (`qv_start` / `qv_end` of
-lat-lon and reduced-Gaussian binaries, the GCHP VDIFF `qv` of cubed-sphere
-binaries). On a moist-basis run the air mass already includes the vapour and
+specific humidity at the sampled window end: `qv_start` / `qv_end` of
+lat-lon and reduced-Gaussian binaries; on cubed-sphere binaries the GCHP
+VDIFF `qv`, a window-start value held through the window, so it is one
+window old at a window end. On a moist-basis run the air mass already includes the vapour and
 its interfaces are total pressures without humidity. A dry-basis run whose
 binaries carry no humidity cannot build them: building a sampler that places
 any record by pressure then fails unless `pressure_basis = "dry"`.
@@ -250,9 +251,9 @@ struct TotalFromHumidity <: AbstractPressureBasis end
 pressures ``p_{k+1/2} = p_{k-1/2} + g\\,m_k/A`` of a dry-basis run, for runs
 whose binaries carry no humidity (the sampler's only rule before issue #20).
 The dry interfaces lie at lower pressure than the total ones, so a record can
-be placed one layer lower in the column than its total pressure says, most
-likely near the surface where the vapour weight above an interface is
-largest. Not available on a moist-basis run.
+be placed one or more layers lower in the column than its total pressure
+says, most likely near the surface where the vapour weight above an
+interface is largest and the layers are thinnest. Not available on a moist-basis run.
 """
 struct DryInterfaces <: AbstractPressureBasis end
 
@@ -611,9 +612,9 @@ function check_pressure_basis(::TotalFromHumidity, ::DryBasis, has_humidity::Boo
     has_humidity || throw(ArgumentError(
         "$(n_pressure) requests are placed by pressure. Record pressures are total pressures, and " *
         "$(label).pressure_basis = \"total\" (the default) builds the total interface pressures from the " *
-        "dry air mass and the specific humidity, but the run's binaries carry no humidity (neither " *
-        "qv_start/qv_end nor GCHP VDIFF qv). Set $(label).pressure_basis = \"dry\" to compare them with the " *
-        "dry interface pressures instead (they lie at lower pressure, so a record can land one layer too " *
-        "low), or leave \"pressure\" out of $(label).vertical_coordinates"))
+        "dry air mass and the specific humidity, but the run's binaries do not all carry humidity " *
+        "(qv_start/qv_end or GCHP VDIFF qv). Set $(label).pressure_basis = \"dry\" to compare them with the " *
+        "dry interface pressures instead (they lie at lower pressure, so a record can land one or more " *
+        "layers too low), or leave \"pressure\" out of $(label).vertical_coordinates"))
     return true
 end
