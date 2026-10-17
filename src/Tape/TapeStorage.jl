@@ -133,8 +133,19 @@ is supplied with non-`:mmap` storage (since `:device` and
 if `tape_storage` is a pre-constructed `AbstractCSTapeStorage` (the
 storage's own configuration already determines where the tape lives).
 """
-function _resolve_tape_path(tape_storage::Symbol,
+function _resolve_tape_path(tape_storage::Union{Symbol, AbstractCSTapeStorage},
                             tape_path::Union{Nothing, AbstractString})
+    _validate_tape_path(tape_storage, tape_path)
+    tape_path === nothing && return nothing
+    isdir(tape_path) || mkpath(tape_path)
+    return String(tape_path)
+end
+
+# The checks of `_resolve_tape_path` without creating the directory, for
+# callers that must reject a bad combination before other validation that can
+# still fail, and so before any filesystem side effect.
+function _validate_tape_path(tape_storage::Symbol,
+                             tape_path::Union{Nothing, AbstractString})
     tape_path === nothing && return nothing
     tape_storage === :mmap || throw(ArgumentError(
         "tape_path requires tape_storage = :mmap; got tape_storage = " *
@@ -142,12 +153,11 @@ function _resolve_tape_path(tape_storage::Symbol,
         "keep tape state in memory and have no on-disk path."))
     isempty(tape_path) && throw(ArgumentError(
         "tape_path is empty; pass a non-empty directory path or omit the kwarg"))
-    isdir(tape_path) || mkpath(tape_path)
-    return String(tape_path)
+    return nothing
 end
 
-function _resolve_tape_path(::AbstractCSTapeStorage,
-                            tape_path::Union{Nothing, AbstractString})
+function _validate_tape_path(::AbstractCSTapeStorage,
+                             tape_path::Union{Nothing, AbstractString})
     tape_path === nothing && return nothing
     throw(ArgumentError(
         "tape_path is not compatible with a pre-constructed " *

@@ -61,10 +61,11 @@ function _tape_byte_estimate(panels_m0,
         end
     end
     convection_records = convection_op isa NoConvection ? 0 : nsteps
+    step_records = nsteps
     state_records = (8 + 2 * _staged_tuples_per_sweep(scheme.vertical)) * nsteps +
                     diffusion_state_records + convection_records
     total_records = sweep_records + midpoint_records + diffusion_records +
-                    convection_records
+                    convection_records + step_records
     bytes_per_state = _bytes_per_panel_tuple(panels_m0)
     Nc = mesh.Nc
     Nz = size(panels_m0[1], 3)
@@ -73,7 +74,7 @@ function _tape_byte_estimate(panels_m0,
                   6nsteps * bytes_per_face_tuple
     return CSTapeByteEstimate(nsteps, sweep_records, halo_records,
                               midpoint_records, diffusion_records,
-                              convection_records, state_records,
+                              convection_records, step_records, state_records,
                               total_records, bytes_per_state,
                               state_bytes)
 end
@@ -174,19 +175,21 @@ function _tape_byte_estimate(panels_m0,
     # one for `S → V(dt)` (`surface_flux_center!`).
     sweep_state_records = _staged_tuples_per_sweep(scheme) * sweep_records
     state_records = sweep_state_records + diffusion_state_records + convection_records
+    # One end-of-step marker per step (`_record_step_end!`).
+    step_records = nsteps
 
     # `total_records` is the total number of OPS the tape will hold
     # (every op the reverse loop dispatches on). Sum of all op
-    # counts — sweep + halo + midpoint + diffusion + convection —
+    # counts — sweep + halo + midpoint + diffusion + convection + step —
     # NOT `state_records + halo + midpoint`, since `state_records`
     # double-counts nonlinear staging vs op count and under-counts
     # the split diffusion center's two ops sharing one staged state.
     total_records = sweep_records + halo_records + midpoint_records +
-                    diffusion_records + convection_records
+                    diffusion_records + convection_records + step_records
     bytes_per_state = _bytes_per_panel_tuple(panels_m0)
     return CSTapeByteEstimate(nsteps, sweep_records, halo_records,
                               midpoint_records, diffusion_records,
-                              convection_records, state_records,
+                              convection_records, step_records, state_records,
                               total_records, bytes_per_state,
                               state_records * bytes_per_state)
 end
@@ -221,9 +224,9 @@ because none of them compress the payload:
 `bytes_per_state` is the size of one full-panel state tuple. For split-sweep
 tapes, multiply it by `state_records` to recover `state_bytes`. Lin-Rood's
 `state_bytes` additionally includes the six retained face-panel tuples per
-step, whose dimensions differ from a full state. Halo / midpoint records carry
-only scalar metadata and are counted in `total_records` but NOT in
-`state_bytes`.
+step, whose dimensions differ from a full state. Halo, midpoint and
+end-of-step records carry only scalar metadata and are counted in
+`total_records` but NOT in `state_bytes`.
 """
 cs_tape_byte_estimate(args...; kwargs...) =
     _tape_byte_estimate(args...; kwargs...)
@@ -290,12 +293,14 @@ end
 # applies the production operation (where the recorder applies it) and records
 # it, so the forward that the reverse walk transposes is the production step
 #
-#   [halo(1)] (X Y Z)^n  <center>  (Z Y X)^n  [convection]
+#   [halo(1)] (X Y Z)^n  <center>  (Z Y X)^n  [convection]  end(step)
 #
 # with `<center>` from `surface_flux_center!`, production's palindrome center
 # for a run with a surface-flux operator, and the same sequence as the forward
 # replay `_replay_cs_step!` (ReverseLoop.jl). Lin-Rood has no step-start halo
-# record (see `_replay_cs_transport!`).
+# record (see `_replay_cs_transport!`). `end(step)` is the `_CSStepEndRecord`
+# marker every recorder pushes last, where the reverse walk injects the
+# observation forcing of the step.
 # ---------------------------------------------------------------------------
 
 # Step-start halo refresh of a split-sweep step (`fill_cs_step_start_halos!`,
@@ -369,6 +374,14 @@ function _record_and_apply_convection!(ops, panels_rm, panels_m, mesh::CubedSphe
     record_ops && _record_convection!(ops, convection_op, forcing, storage, panels_m, dt)
     _apply_cs_convection_forward!(panels_rm, panels_m, forcing, convection_op, dt,
                                   convection_workspace, mesh)
+    return nothing
+end
+
+# End-of-step marker, after convection: the state runtime output and the
+# observation sampler see. The reverse walk injects the step's observation
+# forcing here (`_inject_step_forcing!`), before transposing the convection.
+function _record_step_end!(ops, absolute_step::Int; record_ops::Bool)
+    record_ops && push!(ops, _CSStepEndRecord(absolute_step))
     return nothing
 end
 
@@ -508,6 +521,7 @@ function _record_cs_mass_tape(panels_m0,
                                                          step, nsteps),
                                 storage, panels_m, FT(dt))
         end
+        _record_step_end!(ops, step + step_offset; record_ops)
     end
 
     return ops, panels_m
@@ -646,6 +660,7 @@ function _record_cs_tracer_tape(panels_rm0,
                                                                convection_forcing,
                                                                step, nsteps),
                                       convection_workspace; record_ops)
+        _record_step_end!(ops, step + step_offset; record_ops)
     end
 
     return ops, panels_rm, panels_m

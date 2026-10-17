@@ -6,8 +6,8 @@ cost and gradient, background covariance, preconditioning, and optimizers.
 This folder builds on the footprint machinery in [`../Footprint/`](../Footprint/).
 Controls are surface emission-rate fields grouped into named time windows.
 Observations are scalar objectives (layer or column means) sampled after a
-given model step. Gradients come from reverse-mode footprints, not from
-finite differences. Observations and departures can be read from and written
+given model step. Gradients come from one reverse-mode sweep that carries
+every observation's weighted departure, not from finite differences. Observations and departures can be read from and written
 to versioned NetCDF schemas.
 
 ## How It Is Loaded
@@ -31,14 +31,16 @@ lookup as the forward observation sampler.
 
 - [`CostGradient.jl`](CostGradient.jl): `cs_surface_flux_4dvar(panels_rm0,
   panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps, mesh,
-  observations, controls; scheme, ..., preconditioner)` returns a
-  `CS4DVarResult`. `scheme` is required so an inversion cannot silently choose
-  a different forward/adjoint advection operator.
+  observations, controls; scheme, ..., tape_storage, tape_path, checkpoint,
+  preconditioner)` returns a `CS4DVarResult`. `scheme` is required so an
+  inversion cannot silently choose a different forward/adjoint advection
+  operator.
 - [`Optimizer.jl`](Optimizer.jl): `cs_surface_flux_4dvar_optimize(...;
   optimizer)` and `cs_surface_flux_4dvar_solve(opt, cost_fn, controls)`.
   Backends are `CSGradientDescent` and `CSLBFGS` (`Optim.LBFGS`).
 - [`Jacobian.jl`](Jacobian.jl): `cs_surface_flux_jacobian(..., objectives,
-  windows; kwargs...)` returns a `CSSurfaceFluxJacobianResult`.
+  windows; kwargs...)` returns a `CSSurfaceFluxJacobianResult`; `kwargs` are
+  those of `cs_surface_emission_footprint`.
 - [`Covariance.jl`](Covariance.jl) / [`Preconditioning.jl`](Preconditioning.jl):
   `DiagonalCSCovariance`, `IsotropicGaussianCSCovariance`,
   `apply_B_half!` and its `_adjoint!` and `_inverse!` forms;
@@ -66,10 +68,12 @@ lookup as the forward observation sampler.
 - [`Preconditioning.jl`](Preconditioning.jl) — χ <-> x transforms and their
   tangent and adjoint
 - [`Jacobian.jl`](Jacobian.jl) — per-window footprint aggregation
-  (`_aggregate_surface_window`) and `cs_surface_flux_jacobian`
+  (`_aggregate_surface_window`) and `cs_surface_flux_jacobian` (one tape,
+  one reverse walk per objective under `FullCheckpoint`)
 - [`CostGradient.jl`](CostGradient.jl) — control validation and rate
   assembly, diagonal background term, preconditioned path, and
-  `cs_surface_flux_4dvar`
+  `cs_surface_flux_4dvar` (forward run, weighted departures, one taped run
+  and one reverse pass with the step forcing)
 - [`Optimizer.jl`](Optimizer.jl) — `AbstractCSOptimizer` backends and
   `cs_surface_flux_4dvar_optimize`
 
@@ -82,8 +86,11 @@ lookup as the forward observation sampler.
   an `Nc` field (the preconditioner reads `covariance.Nc`), and implement
   `apply_B_half!`, `apply_B_half_adjoint!`, and `apply_B_half_inverse!`.
 - Changing how observations reach the model: time and space mapping is in
-  `bind_to_mesh`; sampling during the forward run is
-  `_run_cs_observations_forward` in `../Footprint/ReverseLoop.jl`.
+  `bind_to_mesh`; sampling during the forward run (simulated values and each
+  observation's linear functional) is `_observe_cs_forward` in
+  `../Footprint/ReverseLoop.jl`; a new observation operator needs
+  `evaluate_objective` and `_linear_functional` methods
+  (`../Footprint/StepForcing.jl`).
 - Running an end-to-end inversion: `scripts/inversions/cs_4dvar.jl` with
   `config/inversions/*.toml`.
 
@@ -101,10 +108,16 @@ lookup as the forward observation sampler.
 - Preconditioned mode (`preconditioner` set): `controls[k].value` is χ,
   `J = 0.5‖χ‖² + J_obs(T(χ))`, and the gradient is `χ + T'(χ)ᵀ ∇ₓJ_obs`.
   Per-control `background` and `sigma` are ignored in this mode.
-- Each observation runs its own footprint: one tape plus one reverse pass,
-  truncated to `obs.step`. Cost therefore grows with the number of
-  observations. `cs_surface_flux_4dvar` forwards `tape_storage` but not
-  `checkpoint` or `tape_path`.
+- One gradient is one adjoint integration, whatever the number of
+  observations. Each observation is a fixed linear functional of the tracer
+  mass after its step (`CSLinearFunctional`, weights from the replayed air
+  mass). `cs_surface_flux_4dvar` runs the forward model once for the
+  simulated values and functionals, scales each functional by
+  `(H(x) − y)/σ²`, tapes one run to the last observation step, and walks it
+  back once, adding each step's scaled weights at the step's end-of-step
+  marker (after convection, before its transpose). Window steps after the
+  last observation get a zero gradient. `checkpoint`, `tape_storage` and
+  `tape_path` apply to that one taped run.
 - `bind_to_mesh` maps `[t_start + (k−1)dt, t_start + k dt)` to step `k`. It
   drops altitude (every observation becomes a `CSColumnMeanObjective`) and
   returns `CSObservation{_, Float64}`.
@@ -142,3 +155,7 @@ lookup as the forward observation sampler.
     `config/inversions/example_synthetic.toml`.
   - Finite-difference and optimizer testsets for the 4D-Var path:
     `test_cs_ppm_adjoint_footprint.jl`.
+  - Single-sweep gradient: `test_cs_4dvar_single_sweep.jl` checks it against
+    one footprint per observation (every scheme family, diffusion, TM5,
+    CMFMC, Full/Stride/Revolve), counts one recording and one reverse pass
+    per gradient, and checks the reused-tape Jacobian.

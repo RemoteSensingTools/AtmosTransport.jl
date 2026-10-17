@@ -167,10 +167,21 @@ The inversion layer composes the reverse pass rather than reimplementing it:
 | --- | --- |
 | `cs_surface_emission_footprint` | One scalar objective to per-step emission sensitivities. |
 | `cs_surface_flux_jacobian` | Batch objectives and aggregate steps into named control windows. |
-| `cs_surface_flux_4dvar` | Evaluate observation/background cost and its control gradient. |
+| `cs_surface_flux_4dvar` | Evaluate observation/background cost and its control gradient, with one taped run and one reverse pass for all observations. |
 | `cs_surface_flux_4dvar_optimize` | Optimize with `CSGradientDescent` or `CSLBFGS`. |
 | `read_observations`, `bind_to_mesh` | Read point observations and bind them to CS column-mean objectives (altitude is ignored; see Current limits). |
 | `read_departures`, `write_departures` | Exchange modeled-minus-observed diagnostics. |
+
+As in TM5-4DVAR, one gradient is one adjoint integration. Each observation
+is a fixed linear functional of the tracer mass after its model step (weights
+from the replayed air mass); `cs_surface_flux_4dvar` runs the forward model
+for the simulated values, tapes one run to the last observation step, and
+walks that tape back once, adding every observation's weighted departure
+`(H(x) − y)/σ²` at the end of its step, before the transposed convection of
+that step (TM5 adds its forcing just before the adjoint of the operator after
+which it sampled). See the [single-sweep gradient](@ref single-sweep-4dvar-gradient).
+`cs_surface_flux_jacobian` records its tape once and walks it once per
+objective.
 
 Controls are `CSSurfaceFluxControl` values associated with
 `CSSurfaceFluxWindow`s. A `CSSurfaceFluxPreconditioner` can apply either a
@@ -180,8 +191,8 @@ the exact keyword contracts in [Adjoints and checkpointing API](@ref).
 
 ## Tape and checkpoint choices
 
-The forward pass records typed advection, halo, midpoint, diffusion, and
-convection operations. Lin-Rood horizontal updates use an additional dedicated
+The forward pass records typed advection, halo, midpoint, diffusion,
+convection, and end-of-step operations. Lin-Rood horizontal updates use an additional dedicated
 record. The reverse loop dispatches on those record types and calls the
 matching transpose kernel.
 
@@ -221,7 +232,7 @@ refresh in the recorders, not from limiter flips.
 | Task | TM5-4DVAR / GEOS-Chem adjoint | AtmosTransport |
 | --- | --- | --- |
 | Forward integration | Separate CTM driver | `run_driven_simulation` or the lower-level CS arrays |
-| Reverse forcing | Observation operator | `CSObservation` objectives or an explicit seed |
+| Reverse forcing | Observation operator, departures injected during one adjoint run | `CSObservation` objectives as linear functionals, injected at each step's end in one reverse pass, or an explicit seed |
 | Observation IO | System-specific files | `CSObservationSet` NetCDF IO + `bind_to_mesh` |
 | Background covariance | B or B¹ᐟ² implementation | `DiagonalCSCovariance` / `IsotropicGaussianCSCovariance` |
 | Preconditioning | Hand-coded control transform | `CSSurfaceFluxPreconditioner` |
@@ -230,15 +241,6 @@ refresh in the recorders, not from limiter flips.
 
 ## Current limits
 
-- One adjoint run per observation. `cs_surface_flux_4dvar` runs the forward
-  model once for the simulated values, then for every observation re-runs it
-  with a tape up to the observation's step and runs a separate reverse pass.
-  The cost of one cost-and-gradient evaluation therefore grows linearly with
-  the number of observations, where TM5-4DVAR injects all weighted
-  departures into a single adjoint sweep. This is practical for small
-  synthetic experiments, not for ObsPack (about `10⁵` records) or OCO-2
-  (about `10⁶` soundings) volumes, where one gradient would need that many
-  adjoint runs.
 - Observations lose their altitude. `bind_to_mesh` turns every record into
   an air-mass-weighted column mean (`CSColumnMeanObjective`) of its cell and
   ignores `alt`, so a surface site and an aircraft sample in the same cell

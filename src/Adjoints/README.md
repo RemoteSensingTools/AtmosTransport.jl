@@ -17,7 +17,8 @@ by scripts, tests, and user code.
 `Adjoints/Adjoints.jl` (after `Operators`), followed by `using .Adjoints`.
 [`Adjoints.jl`](Adjoints.jl) includes files in an order that matters,
 because later files use types defined earlier:
-`ObjectiveSeeding.jl` and `Footprint/FootprintResult.jl`; then the
+`ObjectiveSeeding.jl`, `Footprint/FootprintResult.jl` and
+`Footprint/StepForcing.jl`; then the
 `Inversion/` type, IO, covariance, and preconditioner files; then inline
 helpers (`CSAdjointWorkspace`, `_add_surface_rates!`); then the kernel files
 in this folder ending with `LinRoodTape.jl`; then the remaining
@@ -59,7 +60,9 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
 - [`Adjoints.jl`](Adjoints.jl) — module, imports from `Operators`/`Tape`,
   scheme unions, include order, workspace, surface-rate kernels, exports
 - [`ObjectiveSeeding.jl`](ObjectiveSeeding.jl) — objective types, forward
-  evaluation, final-time seed `_seed_objective!`, per-step surface read-out
+  evaluation, final-time seed `_seed_objective!` (zero the adjoint state, then
+  add the objective's linear functional from `../Footprint/StepForcing.jl`;
+  the seed values are unchanged), per-step surface read-out
   `_accumulate_surface_footprint!`
 - [`AdvectionAdjoint.jl`](AdvectionAdjoint.jl) — per-scheme face
   coefficients, x/y/z sweep adjoint kernels, `_adjoint_scheme_sweep!`.

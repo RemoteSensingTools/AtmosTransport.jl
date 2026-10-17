@@ -9,7 +9,8 @@
 #   * forward-evaluate it on a `(panels_rm, panels_m)` pair to get the
 #     scalar value of the cost function,
 #   * seed `lambda_panels` from the objective at final time
-#     (`_seed_objective!`), and
+#     (`_seed_objective!`: zero, then add the objective's linear functional
+#     from `../Footprint/StepForcing.jl`), and
 #   * accumulate the per-step surface footprint
 #     (`_accumulate_surface_footprint!`).
 # ---------------------------------------------------------------------------
@@ -139,48 +140,18 @@ end
 # Adjoint seeding + per-step surface accumulator
 # ---------------------------------------------------------------------------
 
-@kernel function _seed_layer_objective_kernel!(lambda, @Const(m), value, i, j, k)
-    _ = @index(Global)
-    @inbounds lambda[i, j, k] = value / max(m[i, j, k], _objective_mass_floor(eltype(lambda)))
-end
-
-@kernel function _seed_column_objective_kernel!(lambda, @Const(m), denom, i, j, Hp)
-    k = @index(Global, Linear)
-    @inbounds lambda[i, j, k] = one(eltype(lambda)) / denom
-end
-
-function _seed_objective!(lambda_panels, obj::CSLayerMeanObjective, final_m,
+# The final-time seed `∂J/∂rm_final` of a built-in objective: zero the adjoint
+# state, then add the objective's linear functional at the final air mass
+# (`_linear_functional`, `_inject_functional!` in `../Footprint/StepForcing.jl`).
+# The seed values are the ones the objectives have always used, and adding them
+# to zero reproduces them bit for bit.
+function _seed_objective!(lambda_panels, obj::AbstractCSFootprintObjective, final_m,
                           mesh::CubedSphereMesh)
     FT = eltype(lambda_panels[1])
     @inbounds for p in 1:6
         fill!(lambda_panels[p], zero(FT))
     end
-    p = obj.panel
-    ii = mesh.Hp + obj.i
-    jj = mesh.Hp + obj.j
-    backend = get_backend(lambda_panels[p])
-    kernel! = _seed_layer_objective_kernel!(backend, 1)
-    kernel!(lambda_panels[p], final_m[p], one(FT), Int32(ii), Int32(jj), Int32(obj.level);
-            ndrange=1)
-    synchronize(backend)
-    return nothing
-end
-
-function _seed_objective!(lambda_panels, obj::CSColumnMeanObjective, final_m,
-                          mesh::CubedSphereMesh)
-    FT = eltype(lambda_panels[1])
-    @inbounds for p in 1:6
-        fill!(lambda_panels[p], zero(FT))
-    end
-    p = obj.panel
-    ii = mesh.Hp + obj.i
-    jj = mesh.Hp + obj.j
-    denom = sum(@view final_m[p][ii, jj, :])
-    backend = get_backend(lambda_panels[p])
-    kernel! = _seed_column_objective_kernel!(backend, 256)
-    kernel!(lambda_panels[p], final_m[p], FT(denom), Int32(ii), Int32(jj), Int32(mesh.Hp);
-            ndrange=size(final_m[p], 3))
-    synchronize(backend)
+    _inject_functional!(lambda_panels, _linear_functional(obj, 1, final_m, mesh), mesh)
     return nothing
 end
 

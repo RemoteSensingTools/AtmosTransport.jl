@@ -371,12 +371,14 @@ end
         @test est.bytes_per_state == sizeof(Float64) * 6 * length(panels_m[1])
         @test est.state_bytes ==
               est.state_records * est.bytes_per_state
-        # total_records is the op count — sum of every op-count field.
+        # total_records is the op count — sum of every op-count field,
+        # including the end-of-step markers (one per step, issue #20).
         @test est.total_records == est.sweep_records + est.halo_records +
                                    est.midpoint_records + est.diffusion_records +
-                                   est.convection_records
+                                   est.convection_records + est.step_records
         @test est.halo_records > 0
         @test est.midpoint_records == est.nsteps
+        @test est.step_records == est.nsteps
 
         # Sanity-check the estimate against a realised mmap tape — the
         # written `records.bin` size must be within rounding distance
@@ -442,14 +444,16 @@ end
         @test est.state_records == 2 * est.sweep_records
         @test est.total_records == est.sweep_records + est.halo_records +
                                    est.midpoint_records + est.diffusion_records +
-                                   est.convection_records
+                                   est.convection_records + est.step_records
         # The (buggy) old formula would have evaluated to
         # `state + halo + midpoint = 2*sweep + halo + midpoint`. Whatever
         # the actual cell count, the *gap* between old-formula and new is
         # `state - sweep = sweep_records` (the count of nonlinear duplicate
-        # state stagings). Assert that this delta is precisely accounted for.
+        # state stagings) less the end-of-step markers it never counted
+        # (one per step, issue #20). Assert that this delta is precisely
+        # accounted for.
         old_buggy = est.state_records + est.halo_records + est.midpoint_records
-        @test old_buggy - est.total_records == est.sweep_records
+        @test old_buggy - est.total_records == est.sweep_records - est.step_records
     end
 
     @testset "Lin-Rood counts its four-state horizontal records" begin
@@ -461,8 +465,9 @@ end
         @test est.sweep_records == 8       # H, Z, Z, H per step
         @test est.halo_records == 0        # halo work is inside each H record
         @test est.midpoint_records == 2
+        @test est.step_records == 2        # one end-of-step marker per step (issue #20)
         @test est.state_records == 20      # 2*(4-state H) + 2*(1-state Z)
-        @test est.total_records == 10
+        @test est.total_records == 12      # 8 sweeps + 2 midpoints + 2 step ends
         face_tuple_bytes = sizeof(Float64) * 6 * (mesh.Nc + 1) * mesh.Nc *
                            size(panels_m[1], 3)
         @test est.state_bytes == est.state_records * est.bytes_per_state +

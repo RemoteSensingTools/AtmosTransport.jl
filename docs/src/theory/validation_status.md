@@ -150,7 +150,7 @@ The following gaps remain even where production comparisons now exist:
 | **CATRINE D7.1 intercomparison** | Four-tracer (CO2, fossil CO2, SF6, 222Rn) full-physics production runs span 25 months; the four-month controlled comparison covers five transport variants and documents their differences against GCHP in `docs/memos/2026-10-07_v0.5_transport_fidelity_backlog.md`. | multi-month comparison documented; maintained end-to-end regression not wired |
 | **Observational closure** | Comparison of model output (column CO2, surface SF6 etc.) against an observational network (NOAA in-situ + TCCON / OCO satellite) | not started |
 | **Multi-month GPU production runs** | CATRINE production runs span 25 months and controlled scheme comparisons span four months; CI still has no multi-week real-data GPU regression. | production evidence exists; maintained regression open |
-| **Adjoint kernels** | See [Adjoint status](@ref). Tape + checkpoint + revolve (bisection variant), the supported advection/convection and halo reverse paths, and the 4D-Var driver are on CI. Gaps: optimized/clamped convection variants, optimal binomial Revolve, a single-sweep 4D-Var gradient (today one adjoint run per observation), vertical observation binding, and TM5-4DVAR cross-validation. | partial (shipped) |
+| **Adjoint kernels** | See [Adjoint status](@ref). Tape + checkpoint + revolve (bisection variant), the supported advection/convection and halo reverse paths, and the 4D-Var driver are on CI. The 4D-Var gradient takes one taped run and one reverse pass for all observations. Gaps: optimized/clamped convection variants, optimal binomial Revolve, vertical observation binding, and TM5-4DVAR cross-validation. | partial (shipped) |
 
 ## Floating-point tolerance practice
 
@@ -186,8 +186,8 @@ If you are doing:
 - **Inverse modelling that needs an adjoint** → the adjoint and
   4D-Var stack ship on CS. See [Adjoint status](@ref) for the supported
   scheme matrix and the remaining gaps (optimized/clamped convection
-  variants, one adjoint run per observation in the 4D-Var gradient,
-  column-mean observation binding, and TM5-4DVAR cross-validation).
+  variants, column-mean observation binding, and TM5-4DVAR
+  cross-validation).
 - **Validation against observations** → not in scope today; the
   forward model has the fidelity, but the observation-comparison
   diagnostics are external.

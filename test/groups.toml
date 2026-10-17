@@ -469,8 +469,9 @@ paths = [
 ]
 
 [topics.inversion]
-description = "4D-Var inversion: adjoint identities and gradient Taylor tests, covariance and preconditioning, optimizers and iteration logs, observation and departure files, the inversion driver and synthetic truth recovery"
+description = "4D-Var inversion: the single-sweep gradient and the reused-tape Jacobian, adjoint identities and gradient Taylor tests, covariance and preconditioning, optimizers and iteration logs, observation and departure files, the inversion driver and synthetic truth recovery"
 files = [
+    "core/test_cs_4dvar_single_sweep.jl",
     "core/test_adjoint_identity_model_space.jl",
     "core/test_adjoint_identity_preconditioned.jl",
     "core/test_gradient_taylor_sweep.jl",
@@ -489,6 +490,9 @@ files = [
 paths = [
     "src/Inversion/**",
     "src/Footprint/**",
+    # The end-of-step record and objective seeds behind the single-sweep gradient.
+    "src/Tape/TapeRecords.jl",
+    "src/Adjoints/ObjectiveSeeding.jl",
     "scripts/inversions/**",
     "config/inversions/**",
     "schemas/cs_*.toml",
