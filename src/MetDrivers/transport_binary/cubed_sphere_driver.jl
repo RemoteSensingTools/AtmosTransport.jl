@@ -119,13 +119,33 @@ function interpolate_fluxes!(dest::CubedSphereFaceFluxState,
     return copy_fluxes!(dest, window.fluxes)
 end
 
+"""
+Air mass of panel `p` a fraction `ctx.λ` into the window, cell by cell:
+`ctx.dest[p] = ctx.m[p] + ctx.λ * ctx.dm[p]` (window-start mass `m`, window
+mass change `dm`).
+"""
+struct ExpectedAirMass <: AbstractPointOp
+    p::Int
+end
+
+index_space(::ExpectedAirMass, ctx) = size(ctx.dest[1])
+bound_context(op::ExpectedAirMass, ctx) =
+    merge(ctx, (dest_p = ctx.dest[op.p], m_p = ctx.m[op.p], dm_p = ctx.dm[op.p]))
+
+@inline function apply_point!(op::ExpectedAirMass, ctx, I...)
+    dest = hasproperty(ctx, :dest_p) ? ctx.dest_p : select_panel(ctx.dest, op.p)
+    m = hasproperty(ctx, :m_p) ? ctx.m_p : select_panel(ctx.m, op.p)
+    dm = hasproperty(ctx, :dm_p) ? ctx.dm_p : select_panel(ctx.dm, op.p)
+    @inbounds dest[I...] = m[I...] + ctx.λ * dm[I...]
+    return nothing
+end
+
+# One launch for the six panels (queued; the stepping task's later work sees it).
 function expected_air_mass!(dest::NTuple{6}, window::TransportWindow, λ::Real)
-    _copy_cs_storage!(dest, window.air_mass)
-    window.deltas === nothing && return dest
-    λ_ft = convert(eltype(dest[1]), λ)
-    @inbounds for p in 1:6
-        @. dest[p] = dest[p] + λ_ft * window.deltas.dm[p]
-    end
+    window.deltas === nothing && return _copy_cs_storage!(dest, window.air_mass)
+    ctx = (; dest, m = window.air_mass, dm = window.deltas.dm,
+           λ = convert(eltype(dest[1]), λ))
+    launch!(Fused(ntuple(ExpectedAirMass, Val(6))), ctx, get_backend(dest[1]); sync = false)
     return dest
 end
 

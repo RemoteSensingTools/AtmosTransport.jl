@@ -86,6 +86,10 @@ end
             @test windows_equal(unpacked, load_transport_window(driver, win))
         end
         @test_throws BoundsError StagingMD.read_window_payload!(raw, driver, nwin + 1)
+        # Air mass a fraction into the window: start mass plus that fraction of dm.
+        expected = map(similar, unpacked.air_mass)
+        StagingMD.expected_air_mass!(expected, unpacked, 0.3)
+        @test all(p -> expected[p] == unpacked.air_mass[p] .+ FT(0.3) .* unpacked.deltas.dm[p], 1:6)
         @test staging.deltas !== nothing && staging.surface !== nothing &&
               staging.surface.eflux !== nothing && staging.vdiff !== nothing &&
               staging.dkg !== nothing && staging.convection.tm5_fields !== nothing &&

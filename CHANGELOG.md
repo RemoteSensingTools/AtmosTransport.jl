@@ -718,6 +718,9 @@
   now synchronizes 3 times. A window prefetch first waits for the stepping
   task's queued work, which may still read the window it refills. Results
   are bit-identical.
+- `expected_air_mass!` on cubed-sphere windows with flux deltas computes all
+  six panels in one launch (`ExpectedAirMass` point operations) instead of six
+  copies and six broadcasts per substep.
 
 ### Other changes
 
