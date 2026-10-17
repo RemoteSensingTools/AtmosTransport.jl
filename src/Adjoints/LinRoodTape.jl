@@ -482,6 +482,8 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
                                                                convection_forcing,
                                                                step, nsteps),
                                       convection_workspace; record_ops)
+        # End-of-step marker (observation forcing in the reverse walk).
+        _record_step_end!(ops, absolute_step; record_ops)
     end
 
     return ops, panels_rm, panels_m

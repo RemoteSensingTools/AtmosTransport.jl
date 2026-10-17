@@ -115,9 +115,9 @@ coverage.
 > surface-flux 4D-Var stack ship for the supported advection/operator matrix,
 > with checkpointing, covariance preconditioning, and optimization drivers.
 > Coverage is not universal: the optimized/clamped convection variants and
-> TM5-4DVAR cross-validation remain open, the 4D-Var gradient costs one
-> adjoint run per observation, and observations are bound to column means
-> whatever their altitude. See
+> TM5-4DVAR cross-validation remain open, and observations are bound to
+> column means whatever their altitude. The 4D-Var gradient takes one adjoint
+> run for all observations. See
 > [Adjoint status](https://RemoteSensingTools.github.io/AtmosTransport.jl/stable/theory/adjoint_status)
 > for details.
 
@@ -278,7 +278,7 @@ prognostic-moment scheme is postponed (see
 | CS edge and corner halo reverse | ✅ | `_adjoint_fill_panel_halos!` includes directional corner copying |
 | Covariance B^{1/2} | ✅ | B1 shipped (`src/Inversion/Covariance.jl`) |
 | Preconditioning + log-normal bijection | 🟡 | Linear/log-normal transforms and covariance inverse are gradient-tested |
-| End-to-end CS surface-flux 4D-Var | 🟡 | Cost/gradient plus gradient-descent and L-BFGS drivers ship; one adjoint run per observation and column-mean observation binding only; campaign validation remains open |
+| End-to-end CS surface-flux 4D-Var | 🟡 | Cost/gradient (one taped run and one reverse pass for all observations) plus gradient-descent and L-BFGS drivers ship; column-mean observation binding only; campaign validation remains open |
 
 ### Backends and IO
 

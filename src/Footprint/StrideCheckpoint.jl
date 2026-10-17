@@ -34,32 +34,9 @@ _slice_step_kwarg(v, ::AbstractUnitRange) = v
 _stride_window_subdir(w::Integer) = "window_" * lpad(w, 5, '0')
 _revolve_step_subdir(step::Integer) = "step_" * lpad(step, 5, '0')
 
-# Lambda construction at the start of the reverse pass.
-# - `final_adjoint_seed = nothing` (default): zero-allocate panels
-#   shaped like `final_m` and seed via the objective. Used by
-#   `cs_surface_emission_footprint` (objective-driven path).
-# - `final_adjoint_seed::NTuple{6}` (A.3d from-seed stride): caller
-#   supplies the final-time adjoint directly; the stride driver
-#   copies it instead of running `_seed_objective!`. The objective
-#   field is still threaded through for `CSFootprintResult` metadata,
-#   but `_seed_objective!` / `_validate_objective` are bypassed so
-#   `CSSeedObjective()` works without tripping its own validation
-#   reject (`ObjectiveSeeding.jl:75-79`).
-function _build_stride_lambda_panels(final_m, ::Nothing,
-                                     objective, mesh, ::Type{FT}) where {FT}
-    lambda_panels = ntuple(p -> begin
-        a = similar(final_m[p])
-        fill!(a, zero(FT))
-        a
-    end, 6)
-    _seed_objective!(lambda_panels, objective, final_m, mesh)
-    return lambda_panels
-end
-
-function _build_stride_lambda_panels(_final_m, final_adjoint_seed::NTuple{6},
-                                     _objective, _mesh, ::Type{FT}) where {FT}
-    return _copy_panel_tuple(final_adjoint_seed)
-end
+# Every driver below starts its reverse pass from `_initial_adjoint_state(start,
+# final_m, mesh)` (ReverseLoop.jl): the objective seed, an explicit seed, or
+# zero, and adds `forcing` at each end-of-step marker it walks.
 
 """
     _propagate_mass_checkpoints(panels_m0, panels_am_steps, panels_bm_steps,
@@ -133,13 +110,13 @@ end
 
 """
     _collect_surface_footprints_stride(panels_m0, panels_am_steps, ...,
-                                       mesh, scheme, schedule, objective, dt;
+                                       mesh, scheme, schedule, start, dt;
                                        cfl_limit, flux_scale,
                                        diffusion_op, diffusion_workspace,
                                        diffusion_meteo,
                                        convection_op, convection_forcing,
                                        convection_workspace,
-                                       tape_storage)
+                                       tape_storage, tape_path, forcing)
 
 Strided-checkpoint variant of `_collect_surface_footprints`. Returns a
 `CSFootprintResult` whose `footprints[step]` array agrees with the
@@ -160,7 +137,7 @@ function _collect_surface_footprints_stride(panels_m0,
                                             mesh::CubedSphereMesh,
                                             scheme::CSAdjointLinearScheme,
                                             schedule::StrideCheckpoint,
-                                            objective::AbstractCSFootprintObjective,
+                                            start,
                                             dt;
                                             cfl_limit,
                                             flux_scale,
@@ -172,17 +149,14 @@ function _collect_surface_footprints_stride(panels_m0,
                                             convection_workspace = nothing,
                                             tape_storage = :device,
                                             tape_path::Union{Nothing, AbstractString} = nothing,
-                                            final_adjoint_seed = nothing)
+                                            forcing::AbstractStepForcing = NoStepForcing())
     FT = eltype(panels_m0[1])
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps,
                                        panels_cm_steps)
     Nz = size(panels_m0[1], 3)
-    # Objective validation is bypassed in the from-seed path because
-    # `_validate_objective(::CSSeedObjective)` throws unconditionally
-    # (`ObjectiveSeeding.jl:75`); from-seed callers supply the lambda
-    # directly and only need the objective field for `CSFootprintResult`
-    # metadata.
-    final_adjoint_seed === nothing && _validate_objective(objective, mesh, Nz)
+    # Only an objective start is validated: `CSSeedObjective`, the metadata of
+    # the seed and zero starts, rejects itself by design.
+    _validate_start(start, mesh, Nz)
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
     # The stride driver constructs a fresh tape storage per window
@@ -216,8 +190,7 @@ function _collect_surface_footprints_stride(panels_m0,
     nw = checkpoint_window_count(schedule, nsteps)
     final_m = checkpoints[nw + 1]
 
-    lambda_panels = _build_stride_lambda_panels(final_m, final_adjoint_seed,
-                                                objective, mesh, FT)
+    lambda_panels = _initial_adjoint_state(start, final_m, mesh)
 
     footprints = [_zero_surface_rates(mesh, panels_m0[1]) for _ in 1:nsteps]
     ws = CSAdjointWorkspace(mesh, lambda_panels[1])
@@ -255,7 +228,8 @@ function _collect_surface_footprints_stride(panels_m0,
         try
             _walk_window_reverse!(footprints, lambda_panels, ops_window, mesh, ws, dt;
                                   diffusion_meteo = diffusion_meteo,
-                                  convection_workspace = convection_workspace)
+                                  convection_workspace = convection_workspace,
+                                  forcing = forcing)
         finally
             # Drop the window-scoped tape (mmap close + manifest emit +
             # temp-dir cleanup for `MmapCSTapeStorage`; no-op for
@@ -266,18 +240,27 @@ function _collect_surface_footprints_stride(panels_m0,
         end
     end
 
-    lag_steps = [nsteps - step for step in 1:nsteps]
+    return _footprint_result(start, footprints, dt)
+end
+
+# The `CSFootprintResult` of a reverse pass over `nsteps = length(footprints)`
+# steps started from `start`.
+function _footprint_result(start, footprints, dt)
+    nsteps = length(footprints)
     A2 = typeof(footprints[1][1])
+    FT = eltype(A2)
+    objective = _result_objective(start)
+    lag_steps = [nsteps - step for step in 1:nsteps]
     return CSFootprintResult{FT, typeof(objective), A2}(
         objective, footprints, lag_steps, FT(dt), zero(FT), FT(NaN))
 end
 
-# Schedule guard used by `cs_surface_emission_footprint` and
-# `cs_surface_emission_footprint_from_seed`. Both entry points accept
-# `StrideCheckpoint` and `RevolveCheckpoint` for every adjoint scheme
-# family (linear mass tape, monotone-PPM tracer tape, LinRood horizontal
-# tape); the from-seed path threads `final_adjoint_seed` into the same
-# drivers. Any other scheme is rejected for non-Full schedules.
+# Schedule guard of `_cs_surface_footprints` (FootprintAPI.jl), the dispatch
+# behind every footprint entry point, the Jacobian and the 4D-Var gradient.
+# `StrideCheckpoint` and `RevolveCheckpoint` are accepted for every adjoint
+# scheme family (linear mass tape, monotone-PPM tracer tape, LinRood
+# horizontal tape) and every adjoint start. Any other scheme is rejected for
+# non-Full schedules.
 function _require_checkpoint_supported(scheme, schedule::AbstractCheckpointSchedule)
     schedule isa FullCheckpoint && return nothing
     scheme isa CSAdjointLinearScheme && return nothing
@@ -287,6 +270,28 @@ function _require_checkpoint_supported(scheme, schedule::AbstractCheckpointSched
         "checkpoint=$(schedule) is not yet supported for scheme " *
         "$(nameof(typeof(scheme)))."))
 end
+
+# The storage checks the drivers make when they start, made up front: Stride
+# and Revolve build and finalize one storage per window, so they reject a
+# pre-constructed storage, and the Lin-Rood tape is device-only. The 4D-Var
+# gradient calls this before its forward run, so a rejected combination does
+# not waste that run.
+_require_tape_storage_supported(scheme, ::FullCheckpoint, tape_storage) =
+    _require_scheme_tape_storage(scheme, tape_storage)
+
+function _require_tape_storage_supported(scheme, schedule::AbstractCheckpointSchedule,
+                                         tape_storage)
+    tape_storage isa AbstractCSTapeStorage && throw(ArgumentError(
+        "$(nameof(typeof(schedule))) requires `tape_storage` to be a Symbol " *
+        "(:device, :pinned_host, or :mmap), not a pre-constructed " *
+        "$(typeof(tape_storage)); the driver builds and finalize_tape!s one " *
+        "storage instance per window."))
+    return _require_scheme_tape_storage(scheme, tape_storage)
+end
+
+_require_scheme_tape_storage(::CSAdjointLinRoodScheme, tape_storage) =
+    _linrood_validate_tape_storage(tape_storage)
+_require_scheme_tape_storage(_scheme, _tape_storage) = nothing
 
 # Per-scheme `tape_path` compatibility. LinRood is pinned to
 # `:device` storage (`_linrood_validate_tape_storage` inside

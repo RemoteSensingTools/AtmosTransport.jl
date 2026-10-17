@@ -376,16 +376,23 @@ end
         # Split center: two half solves; boundary coupling: one full solve.
         solves = coupling isa AT.SplitSurfaceFluxCoupling ? 2 : 1
         @test count_of(TapeMod._CSDiffusionRecord) == est.diffusion_records == solves * nsteps
+        # Every step closes with its end-of-step marker (issue #20), after
+        # convection: the state the observation sampler sees.
+        ends = findall(op -> op isa TapeMod._CSStepEndRecord, ops)
+        @test length(ends) == est.step_records == nsteps
+        @test [ops[i].step for i in ends] == 1:nsteps
+        @test last(ops) isa TapeMod._CSStepEndRecord
+        convections = findall(op -> op isa TapeMod._CSConvectionRecord, ops)
+        @test all(ops[i + 1] isa TapeMod._CSStepEndRecord for i in convections)
         if !(scheme isa AT.LinRoodPPMScheme)
             @test count_of(TapeMod._CSSweepRecord) == est.sweep_records
             # Every split-sweep step opens with the step-start halo refresh,
-            # which therefore sits between a step's convection and the next
-            # step's first X sweep.
+            # which therefore sits between a step's end marker (after its
+            # convection) and the next step's first X sweep.
             @test first(ops) isa TapeMod._CSHaloRecord && first(ops).dir == 1
-            convections = findall(op -> op isa TapeMod._CSConvectionRecord, ops)
             @test all(i == lastindex(ops) ||
                       (ops[i + 1] isa TapeMod._CSHaloRecord && ops[i + 1].dir == 1)
-                      for i in convections)
+                      for i in ends)
         end
         mids = findall(op -> op isa TapeMod._CSMidpointRecord, ops)
         if coupling isa AT.DiffusiveSurfaceFluxBoundary

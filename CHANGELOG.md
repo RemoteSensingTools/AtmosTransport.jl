@@ -4,6 +4,13 @@
 
 ### Breaking changes
 
+- **Adjoint API (issue #20).** A user-defined `AbstractCSFootprintObjective`
+  needs a `_linear_functional(objective, step, panels_m, mesh)` method (its
+  weights as a `CSLinearFunctional`) to be used in `cs_surface_flux_4dvar`
+  and as a footprint seed; validation, evaluation and seeding methods alone no
+  longer suffice. The exported `CSTapeByteEstimate` gains a `step_records`
+  field before `total_records` (positional construction changes), and
+  `total_records` now includes one end-of-step record per step.
 - **Lat-lon ERA5 physics-file TM5 route removed** (issue #55, pera-noaa). The
   `[tm5_convection]` table of ERA5 spectral preprocessing configs converted the
   ERA5 convection NetCDF to flat physics files and then to TM5 fields on the
@@ -72,6 +79,20 @@
 
 ### Testing
 
+- `test/core/test_cs_4dvar_single_sweep.jl` (inversion topic) checks the
+  single-sweep 4D-Var gradient against one `cs_surface_emission_footprint` per
+  observation rebuilt in the test (upwind, unlimited slopes and PPM, monotone
+  PPM, Lin-Rood; no physics, diffusion with both surface-flux couplings, TM5
+  and CMFMC; observations at the first and last step, two in one column and
+  step, two in one cell and step, at different steps), `StrideCheckpoint(2)`
+  and `RevolveCheckpoint()` against `FullCheckpoint`, the `tape_path` layout
+  (exactly one schedule's windows), one recording and one reverse pass per
+  gradient (counted through a tape storage) for one and seven observations,
+  the reused-tape Jacobian against per-objective footprints, and the step
+  forcing's injection. The tape-layout tests of
+  `test_cs_adjoint_production_parity.jl`, `test_subcycle_composition.jl` and
+  `test_cs_tape_mmap_roundtrip.jl` now expect the end-of-step record that
+  closes every step.
 - `test/core/test_cs_adjoint_production_parity.jl` (adjoint_footprint topic)
   checks the cubed-sphere adjoint against production: replay vs.
   `TransportModel.step!` for both surface-flux couplings with TM5, CMFMC and
@@ -136,6 +157,17 @@
   build a sampler with pressure-placed records unless `pressure_basis = "dry"`
   (`DryInterfaces`, the old comparison) is set. Moist-basis runs are unchanged (their air mass
   already gives total pressures). No golden case samples observations.
+- **4D-Var gradients** (issue #20) change at the rounding level: the single
+  reverse sweep sums the observations' contributions inside the adjoint state
+  instead of adding one footprint per observation. Against the previous
+  algorithm the gradients agree to `1e-12` relative in Float64 and `1e-5` in
+  Float32 (`test/core/test_cs_4dvar_single_sweep.jl`); costs and simulated
+  values are unchanged. Footprints from `cs_surface_emission_footprint` and
+  `cs_surface_emission_footprint_from_seed`, and Jacobians, are unchanged bit
+  for bit (single-threaded comparison with the previous main on 390 footprint,
+  15 from-seed and 15 Jacobian cases: every scheme family, diffusion with both
+  couplings, TM5 and CMFMC, three schedules, three tape storages). Forward
+  results are unchanged.
 - **Cubed-sphere adjoint footprints and 4D-Var gradients** change for runs
   with convection, with `DiffusiveSurfaceFluxBoundary`, or with limited-PPM
   `:pinned_host` / GPU `:mmap` tapes: the replays and tapes now follow the
@@ -424,6 +456,38 @@
 
 ### API and configuration changes
 
+- **Single-sweep 4D-Var gradient** (issue #20). `cs_surface_flux_4dvar` now
+  computes the observation-term gradient with one taped forward run (to the
+  last observation step) and one reverse pass, whatever the number of
+  observations, as TM5-4DVAR does; before, every observation re-ran a taped
+  forward run and its own reverse pass, so one gradient cost
+  `O(N_obs)` adjoint runs. Each observation is a fixed sparse linear
+  functional of the tracer mass after its step (`CSLinearFunctional`, weights
+  from the replayed air mass: `1/max(m, eps)` for a layer, `1/max(Σm, eps)` for a column). Its
+  weighted departure `(H(x) − y)/σ²` times those weights is added to the
+  adjoint state at the end of its step, after convection and before the
+  transposed convection: `λ_s = M_{s+1}ᵀ λ_{s+1} + Σ_{i: s_i = s} (H_i − y_i)/σ_i² w_i`.
+  Window steps after the last observation get a zero gradient, as before.
+  `cs_surface_flux_4dvar` gains `checkpoint` (`FullCheckpoint()`,
+  `StrideCheckpoint(k)`, `RevolveCheckpoint()`) and `tape_path`; before, it
+  supported only `FullCheckpoint` and no `tape_path`. Every tape recorder now
+  ends each step with an end-of-step record (`_CSStepEndRecord`, no payload),
+  where the reverse pass injects that step's forcing; `CSTapeByteEstimate`
+  gains `step_records`, and `total_records` counts these records.
+- `cs_surface_flux_jacobian` records the forward tape once and walks it once
+  per objective (with `FullCheckpoint`, the default) instead of recording one
+  tape per objective. Each walk is the one a separate
+  `cs_surface_emission_footprint` call makes.
+- Internally, `cs_surface_emission_footprint`,
+  `cs_surface_emission_footprint_from_seed`, `cs_surface_flux_jacobian` and
+  `cs_surface_flux_4dvar` share one checkpoint dispatch
+  (`_cs_surface_footprints`, replacing the duplicated dispatch in
+  `FootprintAPI.jl`); the Stride and Revolve drivers take an adjoint start
+  (objective seed, explicit seed, or zero) and a step forcing.
+  `_seed_objective!` zeroes the adjoint state and adds the objective's linear
+  functional; the seeds are bit-identical, except that the column seed now
+  carries the `eps` air-mass floor of the column objective's evaluation (it
+  differs only for columns holding less than `eps` of air).
 - **Time-varying surface fluxes must cover the run** (#59). A run that a
   time-varying source's files do not cover (before their first slice, after
   their last, or in a gap between files) now stops before it starts with an
