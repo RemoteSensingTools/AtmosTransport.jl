@@ -385,6 +385,31 @@ function intake_layer_index(z_half::AbstractVector, intake_height::Real)
     return 1
 end
 
+"""
+    sample_column_layer!(column::PlacementColumn, p_half, z_half, placement, air_column, area, g, p_top,
+                         temperature, basis, mass_basis) -> Int
+
+The layer (k = 1 top) of a [`VerticalPlacement`](@ref) in one sampled column,
+from the column alone: the interface pressures of the air mass
+(`interface_pressures!` into `p_half`, ``p_{k+1/2} = p_{k-1/2} + g\\,m_k/A``
+from `p_top`), the hypsometric interface heights above the model surface
+(`layer_heights_agl!` into `z_half`, with the `AbstractLayerTemperature`
+`temperature`), then [`column_layer!`](@ref). `column.humidity` must hold
+the column's specific humidity when a pressure placement needs it
+([`TotalFromHumidity`](@ref) on a dry basis). The forward observation sampler
+and the inversion's placed point observations both choose their layers with
+this function.
+"""
+function sample_column_layer!(column::PlacementColumn, p_half::AbstractVector{Float64},
+                              z_half::AbstractVector{Float64}, placement::VerticalPlacement,
+                              air_column::AbstractVector, area::Real, g::Real, p_top::Real,
+                              temperature::AbstractLayerTemperature, basis::AbstractPressureBasis,
+                              mass_basis::AbstractMassBasis)
+    interface_pressures!(p_half, air_column, area, g, p_top)
+    layer_heights_agl!(z_half, p_half, temperature, g)
+    return column_layer!(column, placement, z_half, air_column, area, g, p_top, basis, mass_basis)
+end
+
 "Air-mass-weighted column mean mixing ratio; NaN when the column holds no air."
 function column_mean_vmr(air_column::AbstractVector, tracer_column::AbstractVector)
     den = sum(Float64, air_column)

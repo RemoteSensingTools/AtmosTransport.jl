@@ -46,8 +46,10 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
   cache, and (with `column_scratch = true`) the per-column storage of the FV3
   vertical sweep's reverse pass.
 - Objectives in [`ObjectiveSeeding.jl`](ObjectiveSeeding.jl):
-  `CSLayerMeanObjective`, `CSColumnMeanObjective`, `CSSeedObjective`, and
-  `evaluate_objective`.
+  `CSLayerMeanObjective`, `CSColumnMeanObjective`, `CSPlacedPointObjective`
+  (an in-situ sample placed in the column; its layer is chosen per sampled
+  state from the column meteorology, so only `cs_surface_flux_4dvar` takes
+  it), `CSSeedObjective`, and `evaluate_objective`.
 - Reverse kernels called by `_walk_window_reverse!`
   (`../Footprint/ReverseLoop.jl`): `_adjoint_scheme_sweep!`,
   `_adjoint_fill_panel_halos!`, `_apply_cs_diffusion_adjoint!`,

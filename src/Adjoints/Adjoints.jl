@@ -61,8 +61,18 @@ using ..State: AbstractCubedSphereField,
     field_value, panel_field, update_field!
 using ..MetDrivers: ConvectionForcing, current_time
 using ..Architectures: _kahan_add
-using ..Parameters: DEFAULT_CFL_LIMIT, DEFAULT_LINROOD_PPM_ORDER
-using ..Output: cell_locator, locate                   # observation binding (Inversion/)
+using ..Parameters: DEFAULT_CFL_LIMIT, DEFAULT_LINROOD_PPM_ORDER, STANDARD_GRAVITY
+using ..State: AbstractMassBasis, DryBasis
+# Observation binding and vertical placement (Inversion/): the cell locator and
+# the placement rules of the forward observation sampler.
+using ..Output: cell_locator, locate, CellLocation,
+    VerticalPlacementSpec, VerticalPlacement, VERTICAL_PLACEMENT_CODES, ObservationTerrain,
+    SoundingRequest, SiteRequest, UnplacedWithoutHeight, resolve_placement, check_terrain,
+    check_surface_height_layout, check_pressure_basis,
+    AbstractPressureBasis, PlacementColumn, sample_column_layer!, needs_column_humidity,
+    AbstractLayerTemperature, ConstantLayerTemperature, ProfileLayerTemperature,
+    ObservationCounters, _handle_unplaced, _count_unplaced!, _unplaced_example, _warn_below_ground,
+    vertical_placement_codes_description
 
 # Tape storage policies + record types live in src/Tape/
 # (loaded before Adjoints in src/AtmosTransport.jl). Re-imported here so
@@ -165,27 +175,27 @@ include("../Footprint/FootprintResult.jl")
 include("../Footprint/StepForcing.jl")
 
 
-# Control / observation / 4D-Var result types.
+# Control / observation / 4D-Var result types (`CSTimeSampling`,
+# `CSObservation`, `CSObservationStencil`, `CS4DVarResult`, ...).
 include("../Inversion/Observations.jl")
 
-# On-disk observation IO (CSObservationRecord /
-# CSObservationSet, read/write to the v1 NetCDF schema documented in
-# `schemas/cs_observations_v1.toml`). Loaded after Observations.jl so
-# the in-memory 4D-Var types and the raw observation-record types
-# coexist in the Adjoints namespace.
+# The column meteorology of placed point observations
+# (`CSObservationColumnMet`) and the per-step sampling of every objective
+# (`_sample_objective`: value, linear functional and level), used by the
+# forward replay `_observe_cs_forward`.
+include("../Inversion/ObservationColumns.jl")
+
+# On-disk observation IO (CSObservationRecord / CSObservationSet, read/write
+# to the v2 NetCDF schema documented in `schemas/cs_observations_v2.toml`).
 include("../Inversion/ObservationsIO.jl")
 
-# `bind_to_mesh` bridge from the on-disk
-# `CSObservationSet` to a 4D-Var-ready `Vector{CSObservation}`. Loaded
-# after Observations.jl + ObservationsIO.jl because it references
-# `CSObservation` and `CSObservationRecord` directly; uses
-# `CSColumnMeanObjective` defined in ObjectiveSeeding.jl above.
+# `bind_to_mesh` bridge from the on-disk `CSObservationSet` to a 4D-Var-ready
+# `Vector{CSObservation}`: time sampling, containing cell, and the vertical
+# placement of point records (`CSPlacedPointObjective`) or column means.
 include("../Inversion/ObservationBinding.jl")
 
-# On-disk departures (forward-pass simulated values
-# paired with their originating observations). Loaded after
-# ObservationBinding.jl because the `build_departure_set` helper
-# consumes both `CSObservationSet` and `Vector{CSObservation}`.
+# On-disk departures (forward-pass simulated values and sampling stencils
+# paired with their originating observation records).
 include("../Inversion/DeparturesIO.jl")
 
 # Surface-flux background-error covariance B and its
@@ -425,9 +435,12 @@ include("../Inversion/Optimizer.jl")
 
 
 export AbstractCSFootprintObjective
-export CSLayerMeanObjective, CSColumnMeanObjective, CSSeedObjective, CSFootprintResult
+export CSLayerMeanObjective, CSColumnMeanObjective, CSPlacedPointObjective, CSSeedObjective, CSFootprintResult
 export CSSurfaceFluxWindow, CSSurfaceFluxJacobianResult
-export CSObservation, CSSurfaceFluxControl, CS4DVarResult, CS4DVarSolveResult
+export CSTimeSampling, CSObservation, CSSurfaceFluxControl, CS4DVarResult, CS4DVarSolveResult
+export CSObservationStencil, COLUMN_MEAN_PLACEMENT_CODE, FIXED_LEVEL_PLACEMENT_CODE
+export CSObservationColumnMet
+export AbstractObservationKind, PointObservationKind, ColumnObservationKind
 export CSObservationRecord, CSObservationSet, read_observations, write_observations
 export AbstractOutOfRangePolicy, RejectOutOfRange, SkipOutOfRange, ClampOutOfRange
 export bind_to_mesh

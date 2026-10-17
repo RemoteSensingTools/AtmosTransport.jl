@@ -4,6 +4,35 @@
 
 ### Breaking changes
 
+- **Observation and departure files: schema v2 (issue #20, part 3; findings
+  OF-84, OF-15).** `read_observations` and `read_departures` reject schema-v1
+  files with an explanation (internal development: no reader for v1).
+  Observation files store Float64 `lat`/`lon` (a Float32 point within
+  rounding of a cell edge could bind to the neighbouring cell) and replace
+  `alt` by `elevation_m`, `intake_height_m`, `altitude_m` and `pressure_pa`
+  (NaN = absent), with new `kind` (`"point"` / `"column"`), `time_window_s`,
+  `flag` and `model_sigma` (`schemas/cs_observations_v2.toml`). Departure
+  files store Float64 coordinates, the record kind and window, the vertical
+  placement (code, height above the model surface, pressure), `model_sigma`,
+  and every sampled step with its weight and level as a ragged `sample`
+  dimension, instead of `alt` and `step`, plus a `clamped` flag per row and
+  an `n_clamped` attribute; `normalized_departure` divides by
+  `√(value_sigma² + model_sigma²)` (`schemas/cs_departures_v2.toml`).
+  `CSObservationRecord` and `CSDepartureRecord` change accordingly.
+  `build_departure_set(set, result::CS4DVarResult, mesh, t_start, dt, nsteps)`
+  (or with `observations, simulated, stencils`) joins observations to records
+  by id, so filtered or skipped records need no pre-filtering of the set; the
+  old `(set, observations, simulated, ...)` signature is gone.
+- **4D-Var observations (issue #20, part 3).** `bind_to_mesh` binds point
+  records to `CSPlacedPointObjective`s placed in the column (it used to drop
+  the altitude and bind every record to a column mean) and returns a
+  `Vector{CSObservation}` of mixed objective types; records with a nonzero
+  `flag` are dropped. `CSObservation` gains `sampling::CSTimeSampling` and
+  `id` (positional construction of the struct changes; `CSObservation(step,
+  objective, value, sigma)` still builds an instantaneous observation).
+  `CS4DVarResult` gains a `stencils` field (positional construction changes).
+  `CSLinearFunctional` stores one step per entry (`steps`, instead of the
+  scalar `step`).
 - **Adjoint API (issue #20).** A user-defined `AbstractCSFootprintObjective`
   needs a `_linear_functional(objective, step, panels_m, mesh)` method (its
   weights as a `CSLinearFunctional`) to be used in `cs_surface_flux_4dvar`
@@ -79,6 +108,25 @@
 
 ### Testing
 
+- `test/core/test_cs_4dvar_placed_observations.jl` (inversion topic, new)
+  checks point observations placed in the column and time windows: parity
+  with the forward sampler (`build_observation_sampler` in nearest-window
+  mode and `bind_to_mesh` + `cs_surface_flux_4dvar` give the same layer and
+  value for intake-height, altitude, DEM and pressure records); a 10 m intake
+  and a 5 km aircraft sample in one cell read layers 10 and 5 with different
+  values; total against dry pressure placement; layers that follow the
+  replayed air mass step by step (checked against an independent replay); a
+  window observation's value and gradient against the Δt-weighted sum of its
+  single-step observations (`1e-12`); the single sweep against
+  per-observation footprints for placed and window observations (`1e-12`;
+  upwind, monotone PPM, Lin-Rood, TM5 convection, Full and Stride
+  checkpoints); and central finite differences of the cost.
+  `test_cs_observation_binding.jl`, `test_cs_observations_io.jl` and
+  `test_cs_departures_io.jl` move to schema v2 and add Float64 edge points,
+  window weights (including truncation at the run's ends), placement by
+  intake height, altitude minus elevation or DEM and pressure, the unplaced
+  policy, flags and model sigma, and v1 rejection; `test_cs_inversion_driver.jl`
+  runs an observation file on `synthetic_hydrostatic` meteorology.
 - `test/core/test_cs_4dvar_single_sweep.jl` (inversion topic) checks the
   single-sweep 4D-Var gradient against one `cs_surface_emission_footprint` per
   observation rebuilt in the test (upwind, unlimited slopes and PPM, monotone
@@ -456,6 +504,51 @@
 
 ### API and configuration changes
 
+- **Point observations placed in the column, and time windows, in the 4D-Var**
+  (issue #20, part 3). `bind_to_mesh(set, mesh, t_start, dt; nsteps,
+  tracer_filter, out_of_range_policy, placement, terrain)` turns each point
+  record into a forward-sampler request and places it with the forward rule
+  (`Output.resolve_placement` with an `Output.VerticalPlacementSpec`: ordered
+  `vertical_coordinates`, height above the true ground measured from the model
+  surface and/or pressure; pressure basis; altitude option; unplaced policy;
+  and an `Output.ObservationTerrain` with the model surface height and a DEM)
+  into a `CSPlacedPointObjective`; column records bind to column means. At
+  every sampled state the layer is chosen from the replayed air mass and the
+  new `CSObservationColumnMet` (model-top pressure, gravity, layer
+  temperature, humidity; static or per step; `cs_surface_flux_4dvar(...;
+  column_met)`) with `Output.sample_column_layer!`, which the forward sampler
+  now also calls, so both choose the same layer; the observation is that
+  layer's mixing ratio and its functional weight `1/max(m, eps)` there. A
+  record with `time_window_s = W > 0` samples the steps overlapping
+  `[t − W/2, t + W/2]` with weights proportional to the overlap (TM5-4DVAR's
+  Δt/ΣΔt), truncated at the run's ends and renormalised (`CSTimeSampling`;
+  window records need `nsteps`); `CSLinearFunctional` and the step forcing
+  carry entries at several steps. `ClampOutOfRange` now keeps the part of an
+  outside record's window inside the run (else the first or last step, as
+  before), counts clamped and skipped records in an `@info`, and departure
+  rows mark such records `clamped`. Record ids must be unique
+  (`CSObservationSet`, `read_observations`, `bind_to_mesh`), and the optional
+  vertical fields read a declared `_FillValue` (xarray's NaN) as absent. The
+  inversion samples the end of the model step containing a record's time (or
+  its window mean), the forward sampler window ends (linear or nearest):
+  both read the same layer and value of the same state.
+  Instantaneous observations give bit-identical costs and gradients to
+  before (checked on 75 scheme/physics/checkpoint combinations, Float32, and
+  the footprints and Jacobians). `CS4DVarResult.stencils`
+  (`CSObservationStencil`) returns each observation's steps, weights,
+  levels and placement. Observation `sigma` is
+  `√(value_sigma² + model_sigma²)`.
+- **Inversion driver: observation files and hydrostatic meteorology**
+  (issue #20). `scripts/inversions/cs_4dvar.jl` reads `[observations].file`
+  (schema v2) with `tracer` and `out_of_range_policy`, places its point
+  records with `[observations.placement]` (the `[output.observations]`
+  placement keys through the shared `_parse_vertical_placement`, plus
+  `layer_height_temperature_kelvin`), and needs `[time].start` and the new
+  `[meteo].source = "synthetic_hydrostatic"` (`interface_pressures_pa`,
+  optional `specific_humidity` and `temperature_kelvin`; dry air mass
+  `m = (1 − q)Δp A/g` per cell, no fluxes). Inline `[[observations.entries]]`
+  stay. A 4D-Var on transport-binary meteorology is assembled with the Julia
+  API.
 - **Single-sweep 4D-Var gradient** (issue #20). `cs_surface_flux_4dvar` now
   computes the observation-term gradient with one taped forward run (to the
   last observation step) and one reverse pass, whatever the number of

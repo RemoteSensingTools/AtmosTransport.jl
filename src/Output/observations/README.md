@@ -10,8 +10,12 @@ spec, gather, NetCDF, sampler. The runner glue lives in
 [`../../Models/runner/observations.jl`](../../Models/runner/observations.jl). See
 also the parent overview [`../README.md`](../README.md) and the file schema in
 [`../../../docs/src/config/output_schema.md`](../../../docs/src/config/output_schema.md).
-The inversion observation path under [`../../Inversion/`](../../Inversion/) is a
-separate system.
+The inversion observation path under [`../../Inversion/`](../../Inversion/) has
+its own records and files but places point records with this folder's rule:
+`bind_to_mesh` calls `resolve_placement` (with `UnplacedWithoutHeight`) and
+the shared `_handle_unplaced` / `_warn_below_ground`, and its placed point
+observations choose their layer with `sample_column_layer!`, the function the
+sampler uses, so a record is sampled in the same layer by both.
 
 ## Run Sequence
 
@@ -64,12 +68,15 @@ separate system.
   `missing_height_rule` (`LowestLayerWithoutHeight`, `UnplacedWithoutHeight`),
   `resolve_placement(spec, rule, request, cell, terrain)` → `VerticalPlacement`
   (`VERTICAL_PLACEMENT_CODES`), `placement_layer` / `pressure_layer_index`,
-  `placement_pressures!` / `check_pressure_basis`, and the sampler-free layer
-  rule `column_layer!` with its scratch `PlacementColumn`
+  `placement_pressures!` / `check_pressure_basis`, the sampler-free layer
+  rule `column_layer!` with its scratch `PlacementColumn`, and
+  `needs_column_humidity(placement, basis, mass_basis)`
 - Gather and host reconstruction, in [`observation_gather.jl`](observation_gather.jl):
   `ObservationGatherBuffers`, `gather_columns!`, `gather_field!`,
   `interface_pressures!`, `total_interface_pressures!`, `layer_heights_agl!`,
-  `intake_layer_index`,
+  `intake_layer_index`, `sample_column_layer!` (a column's layer from its air
+  mass: dry interfaces, hypsometric heights, then `column_layer!`; shared with
+  the inversion),
   `mixing_ratio_profile!`, `column_mean_vmr`, and the layer-temperature types
   `ConstantLayerTemperature`, `SurfaceLapseTemperature`, `ProfileLayerTemperature`
 - NetCDF, in [`observation_netcdf.jl`](observation_netcdf.jl):
@@ -162,7 +169,11 @@ separate system.
     `has_humidity` only when every binary carries humidity.
   - `column_layer!(column::PlacementColumn, placement, z_half, air, area, g,
     p_top, basis, mass_basis)` is the layer rule, free of the sampler, for any
-    caller that places records in a column.
+    caller that places records in a column; `sample_column_layer!` builds the
+    column's interface pressures and heights first. The sampler and the
+    inversion's `CSPlacedPointObjective` both call it, so a change here
+    changes both identically
+    (`test/core/test_cs_4dvar_placed_observations.jl` checks their parity).
     Only pressure-placed rows read it, so the other rows do not change with
     the basis.
 - Mixing ratio is tracer storage divided by air mass, and NaN where air mass ≤ 0.

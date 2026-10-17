@@ -304,13 +304,16 @@ function _unplaced_remedy(coordinates::Tuple, label::AbstractString)
            "$(label).unplaced_records = \"skip\" to drop them (counted in the n_unplaced_* file attributes)."
 end
 
-_handle_unplaced(spec::VerticalPlacementSpec, c::ObservationCounters, examples) =
-    _n_unplaced(c) == 0 ? nothing : _handle_unplaced_nonzero(spec.unplaced, c, examples, spec.coordinates)
-_handle_unplaced_nonzero(::ErrorOnUnplaced, c::ObservationCounters, examples, coordinates) = throw(ArgumentError(
-    "observation sampling cannot place every request in the column. " *
-    _unplaced_message(c, examples, coordinates) * " " * _unplaced_remedy(coordinates, _OUTPUT_OBSERVATIONS_LABEL)))
-_handle_unplaced_nonzero(::SkipUnplaced, c::ObservationCounters, examples, coordinates) =
-    @warn "observation sampling skips requests it cannot place (unplaced_records = \"skip\"). " *
+# `label` names the config table and `context` the caller in the messages; the
+# inversion's `bind_to_mesh` shares this policy.
+_handle_unplaced(spec::VerticalPlacementSpec, c::ObservationCounters, examples;
+                 label::AbstractString = _OUTPUT_OBSERVATIONS_LABEL, context::AbstractString = "observation sampling") =
+    _n_unplaced(c) == 0 ? nothing : _handle_unplaced_nonzero(spec.unplaced, c, examples, spec.coordinates, label, context)
+_handle_unplaced_nonzero(::ErrorOnUnplaced, c::ObservationCounters, examples, coordinates, label, context) =
+    throw(ArgumentError("$(context) cannot place every request in the column. " *
+                        _unplaced_message(c, examples, coordinates) * " " * _unplaced_remedy(coordinates, label)))
+_handle_unplaced_nonzero(::SkipUnplaced, c::ObservationCounters, examples, coordinates, label, context) =
+    @warn "$(context) skips requests it cannot place (unplaced_records = \"skip\"). " *
           _unplaced_message(c, examples, coordinates)
 
 function _log_placements(placements, site_placements, c::ObservationCounters)
@@ -324,8 +327,10 @@ end
 
 # Records placed more than BELOW_GROUND_TOLERANCE_M below the ground are kept
 # (sampled in the lowest layer, `placement_height_agl` records the height) but
-# reported, with the first few. Returns their number.
-function _warn_below_ground(soundings, placements, sites, site_placements)
+# reported, with the first few. Returns their number. `context` names the
+# caller (the inversion's `bind_to_mesh` shares the check).
+function _warn_below_ground(soundings, placements, sites, site_placements;
+                            context::AbstractString = "observation sampling")
     rows = [(r, p) for (r, p) in Iterators.flatten((zip(soundings, placements), zip(sites, site_placements)))
             if below_ground(p)]
     isempty(rows) && return 0
@@ -333,7 +338,7 @@ function _warn_below_ground(soundings, placements, sites, site_placements)
                      "$(round(p.height_agl_m; digits = 1)) m above the ground (altitude " *
                      "$(_fmt_height(r.altitude_m)), elevation $(_fmt_height(r.elevation_m)), intake_height " *
                      "$(_fmt_height(r.intake_height_m)))" for (r, p) in first(rows, 5)), "; ")
-    @warn "observation sampling: $(length(rows)) requests are more than $(BELOW_GROUND_TOLERANCE_M) m below the " *
+    @warn "$(context): $(length(rows)) requests are more than $(BELOW_GROUND_TOLERANCE_M) m below the " *
           "ground (a wrong elevation, DEM value, or altitude); they are sampled in the lowest layer and " *
           "their height is written as placement_height_agl. First $(min(5, length(rows))): $(examples)"
     return length(rows)
@@ -764,12 +769,9 @@ function _sounding_batch(s::ObservationSampler, range::UnitRange{Int}, prev::Vec
             air_col[k] = air_at(i, k)
             per_area[k, i] = air_col[k] / cell.area
         end
-        p = view(p_half, :, i)
-        interface_pressures!(p, air_col, cell.area, s.gravity, s.p_top)
         layer_temperature = temperature_at(i)
-        layer_heights_agl!(z_half, p, layer_temperature, s.gravity)
-        level = _sample_layer!(column, s, s.sounding_placements[idx], z_half, air_col, cell.area,
-                               k -> humidity_at(i, k))
+        level = _sample_layer!(column, view(p_half, :, i), z_half, s, s.sounding_placements[idx], air_col,
+                               cell.area, layer_temperature, k -> humidity_at(i, k))
         levels[i] = Int32(level)
         bottoms[i] = z_half[level + 1]
         tops[i] = z_half[level]
@@ -803,17 +805,19 @@ _row_layer_temperature(s::ObservationSampler, slot::Int, ::Nothing) =
 _row_layer_temperature(s::ObservationSampler, slot::Int, temperature) =
     ProfileLayerTemperature(view(s.temperature_buffers.air_host, :, slot))
 
-# Layer of `placement` in one sampled column (`column_layer!`); the humidity
-# column is filled only for a pressure placement that needs it.
-function _sample_layer!(column::PlacementColumn, s::ObservationSampler, placement::VerticalPlacement,
-                        z_half::AbstractVector, air_col::AbstractVector, area::Real, humidity_at)
+# Layer of `placement` in one sampled column (`sample_column_layer!`, which
+# also fills the interface pressures `p_half` and heights `z_half`); the
+# humidity column is filled only for a pressure placement that needs it.
+function _sample_layer!(column::PlacementColumn, p_half::AbstractVector{Float64}, z_half::AbstractVector{Float64},
+                        s::ObservationSampler, placement::VerticalPlacement, air_col::AbstractVector, area::Real,
+                        layer_temperature::AbstractLayerTemperature, humidity_at)
     if s.needs_humidity && placement.method == VERTICAL_PLACEMENT_CODES.pressure
         @inbounds for k in eachindex(column.humidity)
             column.humidity[k] = humidity_at(k)
         end
     end
-    return column_layer!(column, placement, z_half, air_col, area, s.gravity, s.p_top,
-                         s.spec.placement.pressure_basis, s.mass_basis)
+    return sample_column_layer!(column, p_half, z_half, placement, air_col, area, s.gravity, s.p_top,
+                                layer_temperature, s.spec.placement.pressure_basis, s.mass_basis)
 end
 
 function _emit_sites!(s::ObservationSampler, t::Float64, plan::GatherPlan, nsounding::Int, temperature)
@@ -840,11 +844,9 @@ function _emit_sites!(s::ObservationSampler, t::Float64, plan::GatherPlan, nsoun
         @inbounds for k in 1:nlevel
             air_col[k] = Float64(s.buffers.air_host[k, slot])
         end
-        interface_pressures!(p_half, air_col, cell.area, s.gravity, s.p_top)
         layer_temperature = _row_layer_temperature(s, slot, temperature)
-        layer_heights_agl!(z_half, p_half, layer_temperature, s.gravity)
-        level = _sample_layer!(column, s, s.site_placements[i], z_half, air_col, cell.area,
-                               k -> _gathered_humidity(s, k, slot))
+        level = _sample_layer!(column, p_half, z_half, s, s.site_placements[i], air_col, cell.area,
+                               layer_temperature, k -> _gathered_humidity(s, k, slot))
         record.ps[i] = p_half[nlevel + 1]
         record.intake_level[i] = Int32(level)
         record.layer_bottom[i] = z_half[level + 1]

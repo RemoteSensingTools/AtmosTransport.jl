@@ -98,7 +98,7 @@ export AbstractAltitudePlacement, AboveGroundPlacement, AbsoluteAltitudeAbove, V
 export AbstractVerticalCoordinate, HeightAboveGroundCoordinate, PressureCoordinate
 export AbstractPressureBasis, TotalFromHumidity, DryInterfaces
 export VerticalPlacement, VERTICAL_PLACEMENT_CODES, resolve_placement, placement_layer
-export PlacementColumn, column_layer!
+export PlacementColumn, column_layer!, sample_column_layer!, needs_column_humidity
 export AbstractMissingHeightRule, LowestLayerWithoutHeight, UnplacedWithoutHeight, missing_height_rule
 export read_observation_requests, build_observation_set
 export AbstractObservationSampler, NoObservationSampler, build_observation_sampler, samples_observations

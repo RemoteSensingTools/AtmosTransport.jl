@@ -1,788 +1,429 @@
 #!/usr/bin/env julia
 # ---------------------------------------------------------------------------
-# Plan 26 P0.D3 — departures IO round-trip + schema-validation tests.
+# Departures IO, schema v2 (`schemas/cs_departures_v2.toml`).
 #
 # Coverage:
-#   * `CSDepartureRecord` keyword constructor: dtype coercion, finite
-#     checks on simulated/departure/normalized/value/sigma, range
-#     checks on lat / panel / step / i / j.
-#   * `build_departure_set` alignment + finite gatekeeper. Length
-#     mismatches and non-finite simulated values are rejected.
-#   * `write_departures` / `read_departures` round-trip through a v1
-#     NetCDF file. Every field is bit-exact at its declared dtype
-#     precision.
-#   * On-disk layout matches `schemas/cs_departures_v1.toml`: dim
-#     names, variable dtypes, root attributes.
-#   * Row order + observation `id`s round-trip in the original order
-#     even when the input is constructed in non-monotonic id order
-#     (the user-specified D3 hard requirement).
-#   * Reader rejects schema violations: wrong-version, missing
-#     schema attr, missing required attr (each of the seven required
-#     root attrs), wrong departure-sign-convention, missing required
-#     variable, wrong `date_component` dim.
-#   * Optional `run_id` / `iteration` round-trip when given, absent
-#     when not.
-#   * Sign convention: `departure == simulated_value - observed_value`
-#     and `normalized_departure == departure / value_sigma` are
-#     computed correctly inside `build_departure_set`.
+#   * `CSDepartureRecord`: dtype coercion, finite and range checks, the
+#     placement code / level conventions of point and column records, the
+#     time-sampling invariants, and the sign convention with the model error
+#     (`normalized_departure = departure / √(value_sigma² + model_sigma²)`),
+#     through the keyword and the positional constructors.
+#   * `build_departure_set`: joins observations to records by id and rejects
+#     hand-built observations, unknown or duplicate ids, a moved cell, a wrong
+#     time sampling, value or sigma, a foreign stencil, a kind mismatch,
+#     non-finite simulated values and clamped records.
+#   * End to end: placed point and column observations through
+#     `cs_surface_flux_4dvar` -> `build_departure_set(set, result, ...)` ->
+#     `write_departures` / `read_departures`, bit for bit.
+#   * The v2 on-disk layout (Float64 coordinates, the ragged `sample`
+#     dimension) and the reader's rejection of v1 files and violations.
 # ---------------------------------------------------------------------------
 
 using Test
-using Dates: DateTime
-using NCDatasets: NCDataset, defDim, defVar
+using Dates: DateTime, Second, year, month, day, hour, minute, second
+using NCDatasets: NCDataset, defDim, defVar, dimnames
 
 import AtmosTransport
 const AT = AtmosTransport
+const O = AT.Output
 
-const FT_TEST = Float64
+include(joinpath(@__DIR__, "..", "helpers", "cs_observation_columns.jl"))
+
 const NC_TEST = 6
 const DT_TEST = 3600.0
 const T0_TEST_STR = "2024-06-15 00:00:00"
 const T0_TEST = DateTime(2024, 6, 15, 0, 0, 0)
+const CODES = O.VERTICAL_PLACEMENT_CODES
 
-_mesh() = AT.CubedSphereMesh(; Nc = NC_TEST, FT = FT_TEST)
+_mesh() = AT.CubedSphereMesh(; Nc = NC_TEST, FT = Float64)
 
-# Build an aligned (CSObservationSet, observations, simulated) triple
-# from a list of (id, panel, i, j, observed, sigma, hour_offset)
-# targets. The records and the bound observations are aligned
-# row-for-row because no filtering happens between them.
-function _aligned_inputs(targets; tracer = "CO2",
-                          instrument = "TCCON",
-                          sim_offset = 0.5)
+_dc_at(offset::Real) = (t = T0_TEST + Second(round(Int, offset));
+                        (year(t), month(t), day(t), hour(t), minute(t), second(t)))
+
+# The stencil `_observe_cs_forward` gives a column-mean observation.
+_column_stencil(o) = AT.CSObservationStencil(o.objective.panel, o.objective.i, o.objective.j,
+                                             o.sampling.steps, o.sampling.weights,
+                                             zeros(Int, length(o.sampling.steps)),
+                                             AT.COLUMN_MEAN_PLACEMENT_CODE, NaN, NaN)
+
+# Column records at the centres of `targets` (id, panel, i, j, observed, sigma,
+# hour_offset[, window, model_sigma]), bound to the 24-step run, with
+# simulated values `observed + sim_offset` and their stencils.
+function _aligned_inputs(targets; tracer = "CO2", instrument = "TCCON", sim_offset = 0.5)
     mesh = _mesh()
-    records = AT.CSObservationRecord[]
-    sims = Float64[]
-    for t in targets
+    records = map(targets) do t
         lons, lats = AT.panel_cell_center_lonlat(mesh, t.panel)
-        lat_, lon_ = lats[t.i, t.j], lons[t.i, t.j]
-        # date = T0 + hour_offset hours.
-        h = Int(t.hour_offset)
-        push!(records, AT.CSObservationRecord(
-            id = t.id,
-            date_components = (Int16(2024), Int16(6), Int16(15),
-                                Int16(h),    Int16(0), Int16(0)),
-            lat = Float32(lat_), lon = Float32(lon_), alt = 0.0f0,
-            value = Float64(t.observed), value_sigma = Float64(t.sigma),
-            instrument_type = instrument, tracer = tracer))
-        push!(sims, Float64(t.observed) + sim_offset)
+        AT.CSObservationRecord(id = t.id, date_components = _dc_at(t.hour_offset * DT_TEST + 1800),
+                               lat = lats[t.i, t.j], lon = lons[t.i, t.j], kind = "column",
+                               time_window_s = get(t, :window, 0.0), model_sigma = get(t, :model_sigma, 0.0),
+                               value = t.observed, value_sigma = t.sigma,
+                               instrument_type = instrument, tracer = tracer)
     end
     set = AT.CSObservationSet(records; time_origin = T0_TEST_STR)
     obs = AT.bind_to_mesh(set, mesh, T0_TEST, DT_TEST; nsteps = 24)
-    return (set = set, observations = obs, simulated = sims,
-            mesh = mesh, sim_offset = sim_offset)
+    sims = [t.observed + sim_offset for t in targets]
+    return (; set, observations = obs, simulated = sims, stencils = _column_stencil.(obs), mesh, sim_offset)
 end
 
+_build(inputs; observations = inputs.observations, simulated = inputs.simulated,
+       stencils = inputs.stencils, nsteps = 24, kwargs...) =
+    AT.build_departure_set(inputs.set, observations, simulated, stencils, inputs.mesh,
+                           T0_TEST_STR, DT_TEST, nsteps; kwargs...)
+
+_errmsg(f) = try f(); "" catch e e isa ArgumentError ? e.msg : rethrow() end
+
+const THREE = [(id = 1, panel = 1, i = 2, j = 3, observed = 410.0, sigma = 0.5, hour_offset = 0),
+               (id = 2, panel = 4, i = 5, j = 1, observed = 411.0, sigma = 0.7, hour_offset = 2,
+                window = 3DT_TEST, model_sigma = 0.3),
+               (id = 3, panel = 6, i = 1, j = 6, observed = 415.0, sigma = 1.0, hour_offset = 5)]
+
 # ---------------------------------------------------------------------------
-# CSDepartureRecord constructor
+# CSDepartureRecord
 # ---------------------------------------------------------------------------
+
+_dep(; kwargs...) = AT.CSDepartureRecord(; id = 1, tracer = "T", instrument_type = "I",
+    date_components = (2024, 1, 1, 0, 0, 0), lat = 0.0, lon = 0.0, kind = "point", panel = 1, i = 1, j = 1,
+    vertical_placement = CODES.record_height, placement_height_agl_m = 10.0,
+    steps = [1], weights = [1.0], levels = [5], observed_value = 1.0, simulated_value = 1.0,
+    departure = 0.0, value_sigma = 1.0, normalized_departure = 0.0, kwargs...)
 
 @testset "CSDepartureRecord keyword constructor" begin
-    r = AT.CSDepartureRecord(
-        id = 7, tracer = "CO2", instrument_type = "TCCON",
-        date_components = (2024, 6, 15, 12, 0, 0),
-        lat = 34.0, lon = -118.0, alt = 100.0,
-        step = 5, panel = 3, i = 4, j = 6,
-        observed_value = 420.0, simulated_value = 420.5,
-        departure = 0.5, value_sigma = 1.0,
-        normalized_departure = 0.5)
+    r = _dep(id = 7, lat = 34.123456789012, lon = -118.0, panel = 3, i = 4, j = 6, steps = [5, 6],
+             weights = [0.25, 0.75], levels = [9, 10], observed_value = 420.0, simulated_value = 420.5,
+             departure = 0.5, normalized_departure = 0.5)
     @test r.id === Int64(7)
-    @test r.tracer == "CO2"
-    @test r.instrument_type == "TCCON"
-    @test r.date_components === (Int16(2024), Int16(6), Int16(15),
-                                  Int16(12),   Int16(0), Int16(0))
-    @test r.lat === Float32(34.0)
-    @test r.lon === Float32(-118.0)
-    @test r.alt === Float32(100.0)
-    @test r.step === Int64(5)
-    @test r.panel === Int8(3)
-    @test r.i === Int32(4)
-    @test r.j === Int32(6)
-    @test r.observed_value === 420.0
-    @test r.simulated_value === 420.5
-    @test r.departure === 0.5
-    @test r.value_sigma === 1.0
-    @test r.normalized_departure === 0.5
+    @test r.lat === 34.123456789012 && r.lon === -118.0
+    @test r.kind === AT.PointObservationKind() && r.time_window_s === 0.0
+    @test r.panel === Int8(3) && r.i === Int32(4) && r.j === Int32(6)
+    @test r.vertical_placement === CODES.record_height
+    @test r.placement_height_agl_m === 10.0 && isnan(r.placement_pressure_pa)
+    @test r.steps == Int64[5, 6] && r.weights == [0.25, 0.75] && r.levels == Int32[9, 10]
+    @test r.model_sigma === 0.0
+    column = _dep(kind = "column", vertical_placement = AT.COLUMN_MEAN_PLACEMENT_CODE,
+                  placement_height_agl_m = NaN, levels = [0])
+    @test column.kind === AT.ColumnObservationKind()
 
-    _bad(; kwargs...) = AT.CSDepartureRecord(;
-        id = 1, tracer = "T", instrument_type = "I",
-        date_components = (2024, 1, 1, 0, 0, 0),
-        lat = 0.0, lon = 0.0, alt = 0.0,
-        step = 1, panel = 1, i = 1, j = 1,
-        observed_value = 1.0, simulated_value = 1.0,
-        departure = 0.0, value_sigma = 1.0,
-        normalized_departure = 0.0, kwargs...)
-    @test_throws ArgumentError _bad(simulated_value = NaN)
-    @test_throws ArgumentError _bad(simulated_value = Inf)
-    @test_throws ArgumentError _bad(departure = NaN)
-    @test_throws ArgumentError _bad(normalized_departure = Inf)
-    @test_throws ArgumentError _bad(observed_value = NaN)
-    @test_throws ArgumentError _bad(value_sigma = -1.0)
-    @test_throws ArgumentError _bad(value_sigma = Inf)
-    @test_throws ArgumentError _bad(lat = NaN)
-    @test_throws ArgumentError _bad(lat = 91.0)
-    @test_throws ArgumentError _bad(lon = Inf)
-    @test_throws ArgumentError _bad(step = 0)
-    @test_throws ArgumentError _bad(panel = 0)
-    @test_throws ArgumentError _bad(panel = 7)
-    @test_throws ArgumentError _bad(i = 0)
-    @test_throws ArgumentError _bad(j = -1)
+    for bad in ((simulated_value = NaN,), (simulated_value = Inf,), (departure = NaN,),
+                (normalized_departure = Inf,), (observed_value = NaN,), (value_sigma = -1.0,),
+                (value_sigma = Inf,), (model_sigma = -1.0,), (lat = NaN,), (lat = 91.0,), (lon = Inf,),
+                (panel = 0,), (panel = 7,), (i = 0,), (j = -1,), (time_window_s = -1.0,),
+                (steps = Int[], weights = Float64[], levels = Int[]), (steps = [0],), (steps = [2, 1],
+                weights = [0.5, 0.5], levels = [1, 1]), (weights = [0.9],), (levels = [0],),
+                (levels = [1, 2],), (vertical_placement = AT.COLUMN_MEAN_PLACEMENT_CODE,),
+                (vertical_placement = CODES.lowest_layer,), (vertical_placement = CODES.pressure,),
+                (placement_height_agl_m = NaN,), (placement_height_agl_m = Inf,))
+        @test_throws ArgumentError _dep(; bad...)
+    end
+    # Column records: column-mean code and levels 0.
+    @test_throws ArgumentError _dep(kind = "column", placement_height_agl_m = NaN, levels = [0])
+    @test_throws ArgumentError _dep(kind = "column", vertical_placement = AT.COLUMN_MEAN_PLACEMENT_CODE,
+                                    placement_height_agl_m = NaN, levels = [3])
+    @test _dep(vertical_placement = CODES.pressure, placement_height_agl_m = NaN,
+               placement_pressure_pa = 50000.0).placement_pressure_pa == 50000.0
+end
+
+@testset "CSDepartureRecord — sign convention with the model error" begin
+    ctor(; departure, normalized_departure, model_sigma = 0.0) =
+        _dep(observed_value = 10.0, simulated_value = 11.0, value_sigma = 2.0; departure,
+             normalized_departure, model_sigma)
+    @test ctor(departure = 1.0, normalized_departure = 0.5) isa AT.CSDepartureRecord
+    @test_throws ArgumentError ctor(departure = -1.0, normalized_departure = -0.5)
+    @test_throws ArgumentError ctor(departure = 1.0, normalized_departure = 0.3)
+    @test_throws ArgumentError ctor(departure = 2.0, normalized_departure = 1.0)
+    @test ctor(departure = 1.0 + 1e-13, normalized_departure = 0.5 + 5e-14) isa AT.CSDepartureRecord
+    # σ = √(2² + 1.5²) = 2.5
+    @test ctor(departure = 1.0, normalized_departure = 0.4, model_sigma = 1.5) isa AT.CSDepartureRecord
+    @test_throws ArgumentError ctor(departure = 1.0, normalized_departure = 0.5, model_sigma = 1.5)
+end
+
+@testset "CSDepartureRecord — positional constructor goes through validation" begin
+    args(; departure = 1.0, simulated = 11.0, panel = Int8(1)) =
+        (Int64(1), "CO2", "TCCON", (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
+         0.0, 0.0, AT.PointObservationKind(), 0.0, false, panel, Int32(1), Int32(1), CODES.record_height, 10.0, NaN,
+         Int64[1], [1.0], Int32[3], 10.0, simulated, departure, 2.0, 0.0, departure / 2)
+    @test AT.CSDepartureRecord(args()...) isa AT.CSDepartureRecord
+    @test_throws ArgumentError AT.CSDepartureRecord(args(departure = -1.0)...)
+    @test_throws ArgumentError AT.CSDepartureRecord(args(simulated = NaN, departure = NaN)...)
+    @test_throws ArgumentError AT.CSDepartureRecord(args(panel = Int8(7))...)
 end
 
 # ---------------------------------------------------------------------------
-# Arithmetic invariant — pinned by the v1 sign convention. A record
-# that contradicts `departure = simulated - observed` or
-# `normalized_departure = departure / sigma` must be rejected at
-# construction, which also covers `read_departures` (the reader
-# constructs one record per row).
+# build_departure_set
 # ---------------------------------------------------------------------------
 
-@testset "CSDepartureRecord — sign-convention arithmetic invariant" begin
-    _ctor(; departure, normalized_departure,
-            observed_value = 10.0, simulated_value = 11.0,
-            value_sigma = 2.0) = AT.CSDepartureRecord(
-        id = 1, tracer = "T", instrument_type = "I",
-        date_components = (2024, 1, 1, 0, 0, 0),
-        lat = 0.0, lon = 0.0, alt = 0.0,
-        step = 1, panel = 1, i = 1, j = 1,
-        observed_value = observed_value, simulated_value = simulated_value,
-        departure = departure, value_sigma = value_sigma,
-        normalized_departure = normalized_departure)
-
-    # Reference values: sim - obs = 1.0, normalized = 0.5.
-    @test _ctor(departure = 1.0, normalized_departure = 0.5) isa
-          AT.CSDepartureRecord
-
-    # Sign flip on `departure` — the exact case flagged by the review.
-    @test_throws ArgumentError _ctor(departure = -1.0,
-                                      normalized_departure = -0.5)
-
-    # `normalized_departure` inconsistent with `departure / sigma`.
-    @test_throws ArgumentError _ctor(departure = 1.0,
-                                      normalized_departure = 0.3)
-
-    # Magnitude off by a factor of 2.
-    @test_throws ArgumentError _ctor(departure = 2.0,
-                                      normalized_departure = 1.0)
-
-    # Within rounding tolerance — must still accept.
-    @test _ctor(departure = 1.0 + 1e-13,
-                normalized_departure = 0.5 + 5e-14) isa AT.CSDepartureRecord
-end
-
-# ---------------------------------------------------------------------------
-# Inner-ctor coverage — positional construction must NOT bypass the
-# arithmetic invariant. The default-positional ctor that Julia
-# auto-generates for any struct skips keyword-only validation; we put
-# the checks inside an inner ctor so both routes are gated.
-# ---------------------------------------------------------------------------
-
-@testset "CSDepartureRecord — positional ctor goes through validation" begin
-    # Reference good record via positional ctor.
-    @test AT.CSDepartureRecord(
-        Int64(1), "CO2", "TCCON",
-        (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
-        Float32(0.0), Float32(0.0), Float32(0.0),
-        Int64(1), Int8(1), Int32(1), Int32(1),
-        10.0, 11.0, 1.0, 2.0, 0.5) isa AT.CSDepartureRecord
-
-    # Sign-flipped departure via positional ctor — must be rejected
-    # by the inner ctor's arithmetic check (the exact case the review
-    # flagged: a positional CSDepartureRecord with observed=10,
-    # simulated=11, departure=-1 used to slip through).
-    @test_throws ArgumentError AT.CSDepartureRecord(
-        Int64(1), "CO2", "TCCON",
-        (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
-        Float32(0.0), Float32(0.0), Float32(0.0),
-        Int64(1), Int8(1), Int32(1), Int32(1),
-        10.0, 11.0, -1.0, 2.0, -0.5)
-
-    # Non-finite simulated via positional ctor.
-    @test_throws ArgumentError AT.CSDepartureRecord(
-        Int64(1), "CO2", "TCCON",
-        (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
-        Float32(0.0), Float32(0.0), Float32(0.0),
-        Int64(1), Int8(1), Int32(1), Int32(1),
-        10.0, NaN, NaN, 2.0, NaN)
-
-    # Out-of-range panel via positional ctor.
-    @test_throws ArgumentError AT.CSDepartureRecord(
-        Int64(1), "CO2", "TCCON",
-        (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
-        Float32(0.0), Float32(0.0), Float32(0.0),
-        Int64(1), Int8(7), Int32(1), Int32(1),  # panel = 7
-        10.0, 11.0, 1.0, 2.0, 0.5)
-end
-
-@testset "CSObservationRecord — positional ctor goes through validation" begin
-    # Good positional construction.
-    @test AT.CSObservationRecord(
-        Int64(1),
-        (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
-        Float32(0.0), Float32(0.0), Float32(0.0),
-        420.0, 1.0, "TCCON", "CO2") isa AT.CSObservationRecord
-
-    # NaN lat via positional ctor — same vulnerability class as
-    # CSDepartureRecord. Inner-ctor catch.
-    @test_throws ArgumentError AT.CSObservationRecord(
-        Int64(1),
-        (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
-        Float32(NaN), Float32(0.0), Float32(0.0),
-        420.0, 1.0, "TCCON", "CO2")
-
-    # Inf value_sigma via positional ctor — catches the case the D2
-    # review surfaced (`sigma > 0` alone passes Inf).
-    @test_throws ArgumentError AT.CSObservationRecord(
-        Int64(1),
-        (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
-        Float32(0.0), Float32(0.0), Float32(0.0),
-        420.0, Inf, "TCCON", "CO2")
-
-    # Lat out of range via positional ctor.
-    @test_throws ArgumentError AT.CSObservationRecord(
-        Int64(1),
-        (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
-        Float32(91.0), Float32(0.0), Float32(0.0),
-        420.0, 1.0, "TCCON", "CO2")
-end
-
-# ---------------------------------------------------------------------------
-# Stable row-identity alignment — re-derivation by (step, panel, i, j)
-# catches misalignment even when value / sigma happen to match across
-# rows. The exact case flagged by the review: two records with
-# identical `value` + `value_sigma` but different `date_components` /
-# `lat` / `lon` — reversing the observations vector now fails the
-# spatio-temporal check.
-# ---------------------------------------------------------------------------
-
-@testset "build_departure_set — identical value/sigma but reversed obs rejected" begin
-    # Two records with the same `value` + `value_sigma` (which is what
-    # the old check missed) but distinct dates AND distinct lat/lon
-    # (so the bound (step, panel, i, j) differs).
-    mesh = _mesh()
-    inputs = _aligned_inputs([
-        (id = 1, panel = 1, i = 2, j = 3, observed = 420.0, sigma = 0.5,
-         hour_offset = 0),
-        (id = 2, panel = 4, i = 5, j = 1, observed = 420.0, sigma = 0.5,
-         hour_offset = 3),
-    ])
-    @test length(inputs.observations) == 2
-    @test inputs.set.records[1].value == inputs.set.records[2].value
-    @test inputs.set.records[1].value_sigma == inputs.set.records[2].value_sigma
-
-    # Aligned -> accepted.
-    @test AT.build_departure_set(inputs.set, inputs.observations,
-                                  inputs.simulated, inputs.mesh,
-                                  T0_TEST_STR, DT_TEST, 24) isa AT.CSDepartureSet
-
-    # Reversed observations -> rejected on spatio-temporal grounds.
-    @test_throws ArgumentError AT.build_departure_set(
-        inputs.set, reverse(inputs.observations),
-        inputs.simulated, inputs.mesh,
-        T0_TEST_STR, DT_TEST, 24)
-end
-
-@testset "build_departure_set — rejects unparseable t_start" begin
-    inputs = _aligned_inputs([
-        (id = 1, panel = 1, i = 1, j = 1, observed = 410.0, sigma = 0.5,
-         hour_offset = 0)])
-    @test_throws ArgumentError AT.build_departure_set(
-        inputs.set, inputs.observations, inputs.simulated, inputs.mesh,
-        "not a date", DT_TEST, 24)
-end
-
-# ---------------------------------------------------------------------------
-# build_departure_set: alignment + finite gatekeeper + sign convention
-# ---------------------------------------------------------------------------
-
-@testset "build_departure_set — alignment + finite gates" begin
-    inputs = _aligned_inputs([
-        (id = 1, panel = 1, i = 2, j = 3, observed = 410.0, sigma = 0.5,
-         hour_offset = 0),
-        (id = 2, panel = 4, i = 5, j = 1, observed = 411.0, sigma = 0.7,
-         hour_offset = 2),
-        (id = 3, panel = 6, i = 1, j = 6, observed = 415.0, sigma = 1.0,
-         hour_offset = 5),
-    ])
-    # Sanity: bind_to_mesh preserved all three rows.
-    @test length(inputs.observations) == 3
-
-    dep = AT.build_departure_set(inputs.set, inputs.observations,
-                                  inputs.simulated, inputs.mesh,
-                                  T0_TEST_STR, DT_TEST, 24)
-    @test dep isa AT.CSDepartureSet
-    @test length(dep) == 3
+@testset "build_departure_set — join by id, sign convention, metadata" begin
+    inputs = _aligned_inputs(THREE)
+    @test inputs.observations[2].sampling.steps == [2, 3, 4]       # 02:30 ± 1.5 h
+    dep = _build(inputs)
+    @test dep isa AT.CSDepartureSet && length(dep) == 3
     @test dep.mesh_Nc == NC_TEST
     @test dep.mesh_panel_convention == "GnomonicPanelConvention"
     @test dep.mesh_cs_definition_tag == "equiangular_gnomonic"
-    @test dep.t_start == T0_TEST_STR
-    @test dep.dt_seconds == DT_TEST
-    @test dep.nsteps == 24
-    @test dep.run_id === nothing
-    @test dep.iteration === nothing
-
-    # Sign convention: simulated - observed; normalized = departure / sigma.
+    @test dep.t_start == T0_TEST_STR && dep.dt_seconds == DT_TEST && dep.nsteps == 24
+    @test dep.run_id === nothing && dep.iteration === nothing
     for (k, r) in enumerate(dep.records)
-        @test r.observed_value == inputs.set.records[k].value
-        @test r.simulated_value == inputs.simulated[k]
+        rec = inputs.set.records[k]
+        @test r.id == rec.id && r.lat === rec.lat && r.lon === rec.lon
+        @test r.observed_value == rec.value && r.simulated_value == inputs.simulated[k]
         @test r.departure ≈ inputs.sim_offset atol = 1e-12
-        @test r.normalized_departure ≈ inputs.sim_offset /
-                                       inputs.set.records[k].value_sigma atol = 1e-12
+        @test r.normalized_departure ≈ inputs.sim_offset / hypot(rec.value_sigma, rec.model_sigma) atol = 1e-12
+        @test r.vertical_placement == AT.COLUMN_MEAN_PLACEMENT_CODE && all(iszero, r.levels)
+        @test r.steps == inputs.observations[k].sampling.steps
     end
-
-    # Length-mismatch rejections.
-    @test_throws ArgumentError AT.build_departure_set(
-        inputs.set, inputs.observations[1:2],
-        inputs.simulated, inputs.mesh,
-        T0_TEST_STR, DT_TEST, 24)
-    @test_throws ArgumentError AT.build_departure_set(
-        inputs.set, inputs.observations,
-        inputs.simulated[1:2], inputs.mesh,
-        T0_TEST_STR, DT_TEST, 24)
-
-    # Non-finite simulated rejection.
-    bad_sim = copy(inputs.simulated)
-    bad_sim[2] = NaN
-    @test_throws ArgumentError AT.build_departure_set(
-        inputs.set, inputs.observations, bad_sim, inputs.mesh,
-        T0_TEST_STR, DT_TEST, 24)
-    bad_sim[2] = Inf
-    @test_throws ArgumentError AT.build_departure_set(
-        inputs.set, inputs.observations, bad_sim, inputs.mesh,
-        T0_TEST_STR, DT_TEST, 24)
-
-    # nsteps must be positive.
-    @test_throws ArgumentError AT.build_departure_set(
-        inputs.set, inputs.observations, inputs.simulated, inputs.mesh,
-        T0_TEST_STR, DT_TEST, 0)
+    # Rows follow the observations; the record order of the set does not matter.
+    order = [3, 1, 2]
+    reordered = _build(inputs; observations = inputs.observations[order], simulated = inputs.simulated[order],
+                       stencils = inputs.stencils[order])
+    @test [r.id for r in reordered] == [3, 1, 2]
+    shuffled_set = AT.CSObservationSet(inputs.set.records[[2, 3, 1]]; time_origin = T0_TEST_STR)
+    @test [r.id for r in AT.build_departure_set(shuffled_set, inputs.observations, inputs.simulated,
+                                                inputs.stencils, inputs.mesh, T0_TEST_STR, DT_TEST, 24)] == [1, 2, 3]
+    # Skipped records need no pre-filtering: observations name their records.
+    @test length(_build(inputs; observations = inputs.observations[2:3], simulated = inputs.simulated[2:3],
+                        stencils = inputs.stencils[2:3])) == 2
 end
 
-# ---------------------------------------------------------------------------
-# Alignment provenance — observations must come from the same records,
-# in the same order. Reversing the observations vector produces row 1
-# with id/value from `set.records[1]` but step/panel/cell from a
-# different observation. `build_departure_set` must catch this.
-# ---------------------------------------------------------------------------
-
-@testset "build_departure_set — alignment provenance check" begin
-    # Targets crafted so each record has a DIFFERENT observed value
-    # and sigma — otherwise reversing would coincidentally satisfy
-    # `obs.value == rec.value`.
-    inputs = _aligned_inputs([
-        (id = 1, panel = 1, i = 2, j = 3, observed = 410.0, sigma = 0.5,
-         hour_offset = 0),
-        (id = 2, panel = 4, i = 5, j = 1, observed = 411.0, sigma = 0.7,
-         hour_offset = 1),
-        (id = 3, panel = 6, i = 1, j = 6, observed = 412.0, sigma = 1.0,
-         hour_offset = 2),
-    ])
-
-    # Reversed observations vector — values no longer match rows.
-    reversed_obs = reverse(inputs.observations)
-    @test_throws ArgumentError AT.build_departure_set(
-        inputs.set, reversed_obs, inputs.simulated,
-        inputs.mesh, T0_TEST_STR, DT_TEST, 24)
-
-    # Reversed simulated stays aligned to records (sim/observed not
-    # constrained to match record's value pre-departure), but the
-    # observations-vs-records check still triggers when observations
-    # are scrambled.
-    scrambled_obs = inputs.observations[[2, 1, 3]]
-    @test_throws ArgumentError AT.build_departure_set(
-        inputs.set, scrambled_obs, inputs.simulated,
-        inputs.mesh, T0_TEST_STR, DT_TEST, 24)
-
-    # An obs hand-built with a deliberately wrong value (right step,
-    # wrong value) is also caught — provenance is about the value /
-    # sigma fields, not the index.
-    wrong_value_obs = copy(inputs.observations)
-    wrong_value_obs[2] = AT.CSObservation(
-        inputs.observations[2].step,
-        inputs.observations[2].objective,
-        999.0,                                 # value differs from record
-        Float64(inputs.set.records[2].value_sigma))
-    @test_throws ArgumentError AT.build_departure_set(
-        inputs.set, wrong_value_obs, inputs.simulated,
-        inputs.mesh, T0_TEST_STR, DT_TEST, 24)
-
-    # Wrong sigma (record sigma = 0.7, obs sigma = 99) — also caught.
-    wrong_sigma_obs = copy(inputs.observations)
-    wrong_sigma_obs[2] = AT.CSObservation(
-        inputs.observations[2].step,
-        inputs.observations[2].objective,
-        Float64(inputs.set.records[2].value),
-        99.0)
-    @test_throws ArgumentError AT.build_departure_set(
-        inputs.set, wrong_sigma_obs, inputs.simulated,
-        inputs.mesh, T0_TEST_STR, DT_TEST, 24)
+@testset "build_departure_set — consistency gatekeeper" begin
+    inputs = _aligned_inputs(THREE)
+    obs, sims, st = inputs.observations, inputs.simulated, inputs.stencils
+    replace_obs(k, o) = (v = copy(obs); v[k] = o; v)
+    # Lengths, non-finite simulated values, t_start, nsteps.
+    @test occursin("length mismatch", _errmsg(() -> _build(inputs; observations = obs[1:2])))
+    @test occursin("length mismatch", _errmsg(() -> _build(inputs; stencils = st[1:2])))
+    for bad in (NaN, Inf)
+        @test occursin("not finite", _errmsg(() -> _build(inputs; simulated = [sims[1], bad, sims[3]])))
+    end
+    @test_throws ArgumentError AT.build_departure_set(inputs.set, obs, sims, st, inputs.mesh, "not a date",
+                                                      DT_TEST, 24)
+    @test_throws ArgumentError _build(inputs; nsteps = 0)
+    # Hand-built observations (id 0) and unknown ids have no record.
+    o = obs[1]
+    hand = AT.CSObservation(o.sampling, o.objective, o.value, o.sigma)
+    @test occursin("not a record", _errmsg(() -> _build(inputs; observations = replace_obs(1, hand))))
+    foreign = AT.CSObservation(o.sampling, o.objective, o.value, o.sigma; id = 999)
+    @test occursin("not a record", _errmsg(() -> _build(inputs; observations = replace_obs(1, foreign))))
+    # Repeated ids: rejected by the set itself, and by build_departure_set for
+    # a set changed after construction.
+    @test occursin("record ids must be unique",
+                   _errmsg(() -> AT.CSObservationSet([inputs.set.records; inputs.set.records[1]])))
+    dup = AT.CSObservationSet(copy(inputs.set.records); time_origin = T0_TEST_STR)
+    push!(dup.records, inputs.set.records[1])
+    @test occursin("more than once", _errmsg(() -> AT.build_departure_set(dup, obs, sims, st, inputs.mesh,
+                                                                          T0_TEST_STR, DT_TEST, 24)))
+    # A moved cell, another time sampling, value or sigma.
+    p, i, j = o.objective.panel, o.objective.i, o.objective.j
+    moved = AT.CSObservation(o.sampling, AT.CSColumnMeanObjective(p, mod1(i + 1, NC_TEST), j), o.value, o.sigma;
+                             id = o.id)
+    @test occursin("is in cell", _errmsg(() -> _build(inputs; observations = replace_obs(1, moved))))
+    later = AT.CSObservation(o.step + 1, o.objective, o.value, o.sigma; id = o.id)
+    @test occursin("maps to", _errmsg(() -> _build(inputs; observations = replace_obs(1, later),
+                                                    stencils = [_column_stencil(later); st[2:3]])))
+    for (value, sigma, what) in ((999.0, o.sigma, "value"), (o.value, 99.0, "sigma"))
+        changed = AT.CSObservation(o.sampling, o.objective, value, sigma; id = o.id)
+        @test occursin(what, _errmsg(() -> _build(inputs; observations = replace_obs(1, changed))))
+    end
+    # The window record's σ includes its model error.
+    o2 = obs[2]
+    @test o2.sigma ≈ hypot(0.7, 0.3)
+    value_only = AT.CSObservation(o2.sampling, o2.objective, o2.value, 0.7; id = o2.id)
+    @test occursin("sigma", _errmsg(() -> _build(inputs; observations = replace_obs(2, value_only))))
+    # A stencil of another observation, and a kind mismatch.
+    @test occursin("stencil", _errmsg(() -> _build(inputs; stencils = st[[2, 1, 3]])))
+    placed = AT.CSObservation(o.sampling, AT.CSPlacedPointObjective(p, i, j, 1.0e12,
+                              O.VerticalPlacement(CODES.record_height, 10.0, NaN, NaN), O.TotalFromHumidity()),
+                              o.value, o.sigma; id = o.id)
+    @test occursin("column record bound to", _errmsg(() -> _build(inputs; observations = replace_obs(1, placed))))
 end
 
-# ---------------------------------------------------------------------------
-# Per-record bounds against run metadata. The CSDepartureSet ctor
-# rejects records whose step > nsteps or i/j > mesh_Nc, which also
-# covers `read_departures` (the reader builds a CSDepartureSet from
-# the parsed records).
-# ---------------------------------------------------------------------------
+@testset "build_departure_set — records kept by ClampOutOfRange are marked clamped" begin
+    mesh = _mesh()
+    lons, lats = AT.panel_cell_center_lonlat(mesh, 1)
+    rec(id, t, window) = AT.CSObservationRecord(; id, date_components = _dc_at(t), lat = lats[2, 2], lon = lons[2, 2],
+        kind = "column", time_window_s = window, value = 1.0, value_sigma = 1.0, instrument_type = "I", tracer = "CO2")
+    set = AT.CSObservationSet([rec(50, 30DT_TEST, 0.0), rec(51, 25DT_TEST, 6DT_TEST), rec(52, 3.5DT_TEST, 0.0)];
+                              time_origin = T0_TEST_STR)
+    obs = AT.bind_to_mesh(set, mesh, T0_TEST, DT_TEST; nsteps = 24, out_of_range_policy = "clamp")
+    dep = AT.build_departure_set(set, obs, fill(1.5, 3), _column_stencil.(obs), mesh, T0_TEST_STR, DT_TEST, 24)
+    @test [r.clamped for r in dep] == [true, true, false]
+    @test dep[1].steps == [24] && dep[2].steps == [23, 24] && dep[2].weights == [0.5, 0.5]
+    mktempdir() do dir
+        path = joinpath(dir, "clamped.nc")
+        AT.write_departures(path, dep)
+        @test NCDataset(ds -> ds.attrib["n_clamped"], path, "r") == 2
+        @test [r.clamped for r in AT.read_departures(path)] == [true, true, false]
+        NCDataset(ds -> ds.attrib["n_clamped"] = 1, path, "a")
+        @test occursin("n_clamped", _errmsg(() -> AT.read_departures(path)))
+    end
+    # A clamped observation must keep the clamped sampling of its record.
+    moved = AT.CSObservation(AT.CSTimeSampling(24), obs[2].objective, obs[2].value, obs[2].sigma; id = 51)
+    @test occursin("maps to", _errmsg(() -> AT.build_departure_set(set, [obs[1], moved, obs[3]], fill(1.5, 3),
+        _column_stencil.([obs[1], moved, obs[3]]), mesh, T0_TEST_STR, DT_TEST, 24)))
+end
 
 @testset "CSDepartureSet — per-record bounds vs run metadata" begin
-    _dep_rec(; step = 1, i = 1, j = 1, panel = 1) =
-        AT.CSDepartureRecord(
-            id = 1, tracer = "T", instrument_type = "I",
-            date_components = (2024, 1, 1, 0, 0, 0),
-            lat = 0.0, lon = 0.0, alt = 0.0,
-            step = step, panel = panel, i = i, j = j,
-            observed_value = 10.0, simulated_value = 11.0,
-            departure = 1.0, value_sigma = 2.0,
-            normalized_departure = 0.5)
-
-    function _set(rec; mesh_Nc = NC_TEST, nsteps = 24)
-        return AT.CSDepartureSet([rec];
-            mesh_Nc = mesh_Nc,
-            mesh_panel_convention = "GnomonicPanelConvention",
-            mesh_cs_definition_tag = "equiangular_gnomonic",
-            t_start = T0_TEST_STR,
-            dt_seconds = DT_TEST,
-            nsteps = nsteps)
-    end
-
-    # In bounds — accepted.
-    @test _set(_dep_rec()) isa AT.CSDepartureSet
-    @test _set(_dep_rec(step = 24, i = NC_TEST, j = NC_TEST)) isa
+    _set(rec; mesh_Nc = NC_TEST, nsteps = 24) = AT.CSDepartureSet([rec]; mesh_Nc, nsteps,
+        mesh_panel_convention = "GnomonicPanelConvention", mesh_cs_definition_tag = "equiangular_gnomonic",
+        t_start = T0_TEST_STR, dt_seconds = DT_TEST)
+    @test _set(_dep()) isa AT.CSDepartureSet
+    @test _set(_dep(steps = [23, 24], weights = [0.5, 0.5], levels = [1, 1], i = NC_TEST, j = NC_TEST)) isa
           AT.CSDepartureSet
-
-    # step > nsteps -> reject.
-    @test_throws ArgumentError _set(_dep_rec(step = 999))
-    @test_throws ArgumentError _set(_dep_rec(step = 25); nsteps = 24)
-
-    # i / j out of mesh.Nc bounds -> reject.
-    @test_throws ArgumentError _set(_dep_rec(i = 999))
-    @test_throws ArgumentError _set(_dep_rec(j = NC_TEST + 1))
-
-    # Negative / zero step is already caught by the CSDepartureRecord
-    # ctor — sanity-check it's still caught (defense in depth).
-    @test_throws ArgumentError _dep_rec(step = 0)
+    @test_throws ArgumentError _set(_dep(steps = [24, 25], weights = [0.5, 0.5], levels = [1, 1]))
+    @test_throws ArgumentError _set(_dep(i = 999))
+    @test_throws ArgumentError _set(_dep(j = NC_TEST + 1))
 end
 
 # ---------------------------------------------------------------------------
-# Round-trip: bit-exact across every field
+# End to end: placed point and column observations through the 4D-Var
 # ---------------------------------------------------------------------------
 
-@testset "CSDepartureSet bit-exact NetCDF round-trip" begin
-    inputs = _aligned_inputs([
-        (id = 10, panel = 1, i = 2, j = 3, observed = 410.1, sigma = 0.5,
-         hour_offset = 0),
-        (id = 20, panel = 3, i = 4, j = 5, observed = 411.2, sigma = 0.7,
-         hour_offset = 1),
-        (id = 30, panel = 6, i = 1, j = 6, observed = 415.0, sigma = 1.0,
-         hour_offset = 4),
-    ])
-    dep = AT.build_departure_set(inputs.set, inputs.observations,
-                                  inputs.simulated, inputs.mesh,
-                                  T0_TEST_STR, DT_TEST, 24;
-                                  run_id = "run-A", iteration = 3)
-
+@testset "4D-Var result -> departures -> NetCDF, bit for bit" begin
+    P = hydrostatic_cs_problem(; nsteps = 3)
+    t0, dt = T0_TEST, 600.0
+    lons, lats = AT.panel_cell_center_lonlat(P.mesh, 2)
+    at(s) = (t = t0 + Second(round(Int, s)); (year(t), month(t), day(t), hour(t), minute(t), second(t)))
+    rec(id, kind; kwargs...) = AT.CSObservationRecord(; id, kind, date_components = at(900), lat = lats[2, 3],
+        lon = lons[2, 3], value = 405e-6, value_sigma = 1e-6, instrument_type = "X", tracer = "CO2", kwargs...)
+    records = [rec(42, "point"; intake_height_m = 10.0), rec(7, "point"; altitude_m = 5000.0, elevation_m = 0.0),
+               rec(9, "point"; pressure_pa = 50000.0, time_window_s = 1200.0, model_sigma = 0.5e-6),
+               rec(3, "column"; time_window_s = 1500.0)]
+    set = AT.CSObservationSet(records; time_origin = "2024-06-15 00:00:00")
+    obs = AT.bind_to_mesh(set, P.mesh, t0, dt; nsteps = P.nsteps)
+    control = AT.CSSurfaceFluxControl(AT.CSSurfaceFluxWindow(:all, 1:P.nsteps), ntuple(_ -> fill(1e3, P.Nc, P.Nc), 6))
+    result = AT.cs_surface_flux_4dvar(P.rm, P.m, P.am, P.bm, P.cm, P.mesh, obs, [control];
+                                      scheme = AT.UpwindScheme(), dt, column_met = column_met(P))
+    dep = AT.build_departure_set(set, result, P.mesh, "2024-06-15 00:00:00", dt, P.nsteps;
+                                 run_id = "run-A", iteration = 3)
+    @test [r.id for r in dep] == [42, 7, 9, 3]
+    @test [r.vertical_placement for r in dep] ==
+          [CODES.record_height, CODES.record_height, CODES.pressure, AT.COLUMN_MEAN_PLACEMENT_CODE]
+    @test [r.levels for r in dep] == [s.levels for s in result.stencils]
+    @test dep[1].levels != dep[2].levels                          # surface intake vs 5 km aircraft
+    @test dep[3].steps == [1, 2, 3] && sum(dep[3].weights) ≈ 1
+    @test dep[3].normalized_departure ≈ result.residuals[3] / hypot(1e-6, 0.5e-6) rtol = 1e-12
+    @test [r.simulated_value for r in dep] == result.simulated
     mktempdir() do dir
-        path = joinpath(dir, "dep_v1.nc")
+        path = joinpath(dir, "dep_v2.nc")
         AT.write_departures(path, dep)
-        @test isfile(path)
-
         back = AT.read_departures(path)
-        @test back isa AT.CSDepartureSet
-        @test length(back) == length(dep)
-        @test back.mesh_Nc == dep.mesh_Nc
-        @test back.mesh_panel_convention == dep.mesh_panel_convention
-        @test back.mesh_cs_definition_tag == dep.mesh_cs_definition_tag
-        @test back.t_start == dep.t_start
-        @test back.dt_seconds == dep.dt_seconds
-        @test back.nsteps == dep.nsteps
-        @test back.run_id == "run-A"
-        @test back.iteration == 3
-
-        for (orig, got) in zip(dep, back)
-            @test orig.id == got.id
-            @test orig.tracer == got.tracer
-            @test orig.instrument_type == got.instrument_type
-            @test orig.date_components == got.date_components
-            @test orig.lat === got.lat
-            @test orig.lon === got.lon
-            @test orig.alt === got.alt
-            @test orig.step == got.step
-            @test orig.panel == got.panel
-            @test orig.i == got.i
-            @test orig.j == got.j
-            @test orig.observed_value === got.observed_value
-            @test orig.simulated_value === got.simulated_value
-            @test orig.departure === got.departure
-            @test orig.value_sigma === got.value_sigma
-            @test orig.normalized_departure === got.normalized_departure
+        @test (back.run_id, back.iteration, back.nsteps, back.dt_seconds) == ("run-A", 3, P.nsteps, dt)
+        for (a, b) in zip(dep, back), field in fieldnames(AT.CSDepartureRecord)
+            x, y = getfield(a, field), getfield(b, field)
+            @test x == y || (x isa Float64 && isnan(x) && isnan(y))
         end
     end
 end
 
 # ---------------------------------------------------------------------------
-# Row order + id preservation (user-specified D3 hard requirement)
+# Round trips, layout and reader validation
 # ---------------------------------------------------------------------------
 
-@testset "write_departures / read_departures preserves row order + ids" begin
-    # Non-monotonic id order: 99, 1, 42, 7 — the file must read back
-    # in this exact order.
-    inputs = _aligned_inputs([
-        (id = 99, panel = 1, i = 1, j = 1, observed = 410.0, sigma = 0.5,
-         hour_offset = 0),
-        (id =  1, panel = 3, i = 2, j = 4, observed = 411.0, sigma = 0.6,
-         hour_offset = 1),
-        (id = 42, panel = 5, i = 3, j = 2, observed = 412.0, sigma = 0.7,
-         hour_offset = 2),
-        (id =  7, panel = 6, i = 6, j = 6, observed = 413.0, sigma = 0.8,
-         hour_offset = 3),
-    ])
-    dep = AT.build_departure_set(inputs.set, inputs.observations,
-                                  inputs.simulated, inputs.mesh,
-                                  T0_TEST_STR, DT_TEST, 24)
-
+@testset "write_departures / read_departures: rows, ids and optional attributes" begin
+    inputs = _aligned_inputs([(id = 99, panel = 1, i = 1, j = 1, observed = 410.0, sigma = 0.5, hour_offset = 0),
+                              (id = 1, panel = 3, i = 2, j = 4, observed = 411.0, sigma = 0.6, hour_offset = 1,
+                               window = 7200.0),
+                              (id = 42, panel = 5, i = 3, j = 2, observed = 412.0, sigma = 0.7, hour_offset = 2),
+                              (id = 7, panel = 6, i = 6, j = 6, observed = 413.0, sigma = 0.8, hour_offset = 3)])
     mktempdir() do dir
-        path = joinpath(dir, "ordered.nc")
-        AT.write_departures(path, dep)
-        back = AT.read_departures(path)
+        with_attrs = joinpath(dir, "ordered.nc")
+        AT.write_departures(with_attrs, _build(inputs; run_id = "run-B", iteration = 7))
+        back = AT.read_departures(with_attrs)
         @test [r.id for r in back] == [99, 1, 42, 7]
-    end
-end
-
-# ---------------------------------------------------------------------------
-# Optional run_id / iteration
-# ---------------------------------------------------------------------------
-
-@testset "write_departures omits optional attrs when not provided" begin
-    inputs = _aligned_inputs([
-        (id = 1, panel = 1, i = 1, j = 1, observed = 410.0, sigma = 0.5,
-         hour_offset = 0)])
-    dep = AT.build_departure_set(inputs.set, inputs.observations,
-                                  inputs.simulated, inputs.mesh,
-                                  T0_TEST_STR, DT_TEST, 24)  # no run_id / iteration
-
-    mktempdir() do dir
-        path = joinpath(dir, "no_optional.nc")
-        AT.write_departures(path, dep)
-        NCDataset(path, "r") do ds
-            @test !haskey(ds.attrib, "run_id")
-            @test !haskey(ds.attrib, "iteration")
+        @test back[2].steps == [1, 2, 3] && back[2].weights == [0.25, 0.5, 0.25]
+        @test back.run_id == "run-B" && back.iteration == 7
+        plain = joinpath(dir, "plain.nc")
+        AT.write_departures(plain, _build(inputs))
+        NCDataset(plain, "r") do ds
+            @test !haskey(ds.attrib, "run_id") && !haskey(ds.attrib, "iteration")
         end
-        back = AT.read_departures(path)
-        @test back.run_id === nothing
-        @test back.iteration === nothing
+        @test AT.read_departures(plain).run_id === nothing
     end
 end
 
-# ---------------------------------------------------------------------------
-# On-disk layout matches schema
-# ---------------------------------------------------------------------------
-
-@testset "v1 NetCDF on-disk layout matches schema" begin
-    inputs = _aligned_inputs([
-        (id = 1, panel = 1, i = 2, j = 3, observed = 410.1, sigma = 0.5,
-         hour_offset = 0),
-        (id = 2, panel = 3, i = 4, j = 5, observed = 411.2, sigma = 0.7,
-         hour_offset = 1),
-    ])
-    dep = AT.build_departure_set(inputs.set, inputs.observations,
-                                  inputs.simulated, inputs.mesh,
-                                  T0_TEST_STR, DT_TEST, 24;
-                                  run_id = "run-B", iteration = 7)
-
+@testset "v2 NetCDF on-disk layout matches the schema" begin
+    inputs = _aligned_inputs(THREE)
+    dep = _build(inputs; run_id = "run-B", iteration = 7)
     mktempdir() do dir
         path = joinpath(dir, "layout.nc")
         AT.write_departures(path, dep)
         NCDataset(path, "r") do ds
-            @test ds.attrib["cs_departures_schema"] == "v1"
+            @test ds.attrib["cs_departures_schema"] == "v2"
             @test ds.attrib["mesh_Nc"] == NC_TEST
-            @test ds.attrib["mesh_panel_convention"] == "GnomonicPanelConvention"
-            @test ds.attrib["mesh_cs_definition_tag"] == "equiangular_gnomonic"
-            @test ds.attrib["t_start"] == T0_TEST_STR
-            @test ds.attrib["dt_seconds"] == DT_TEST
-            @test ds.attrib["nsteps"] == 24
             @test ds.attrib["departure_sign_convention"] == "simulated_minus_observed"
-            @test ds.attrib["run_id"] == "run-B"
-            @test ds.attrib["iteration"] == 7
-
-            @test ds.dim["obs"] == length(dep)
-            @test ds.dim["date_component"] == 6
-
-            @test eltype(ds["id"][:])                  === Int64
-            @test eltype(ds["date_components"][:, :])  === Int16
-            @test eltype(ds["lat"][:])                 === Float32
-            @test eltype(ds["lon"][:])                 === Float32
-            @test eltype(ds["alt"][:])                 === Float32
-            @test eltype(ds["step"][:])                === Int64
-            @test eltype(ds["panel"][:])               === Int8
-            @test eltype(ds["i"][:])                   === Int32
-            @test eltype(ds["j"][:])                   === Int32
-            @test eltype(ds["observed_value"][:])      === Float64
-            @test eltype(ds["simulated_value"][:])     === Float64
-            @test eltype(ds["departure"][:])           === Float64
-            @test eltype(ds["value_sigma"][:])         === Float64
-            @test eltype(ds["normalized_departure"][:]) === Float64
-            @test ds["tracer"][1] isa AbstractString
-            @test ds["instrument_type"][1] isa AbstractString
-
-            @test size(ds["date_components"][:, :]) == (6, length(dep))
+            @test occursin("-1 = column_mean", ds.attrib["vertical_placement_codes"])
+            @test occursin("2 = pressure", ds.attrib["vertical_placement_codes"])
+            @test ds.dim["obs"] == 3 && ds.dim["date_component"] == 6 && ds.dim["sample"] == 5
+            @test ds.attrib["n_clamped"] == 0
+            types = Dict("id" => Int64, "date_components" => Int16, "lat" => Float64, "lon" => Float64,
+                         "time_window_s" => Float64, "clamped" => Int8, "panel" => Int8, "i" => Int32, "j" => Int32,
+                         "vertical_placement" => Int8, "placement_height_agl_m" => Float64,
+                         "placement_pressure_pa" => Float64, "sample_count" => Int32, "sample_step" => Int64,
+                         "sample_weight" => Float64, "sample_level" => Int32, "observed_value" => Float64,
+                         "simulated_value" => Float64, "departure" => Float64, "value_sigma" => Float64,
+                         "model_sigma" => Float64, "normalized_departure" => Float64)
+            for (name, T) in types
+                @test eltype(ds[name].var) === T
+            end
+            @test ds["kind"][:] == ["column", "column", "column"]
+            @test ds["sample_count"][:] == [1, 3, 1]
+            @test ds["sample_step"][:] == [1, 2, 3, 4, 6]
         end
     end
 end
 
-# ---------------------------------------------------------------------------
-# Reader rejects schema violations
-# ---------------------------------------------------------------------------
-
-@testset "read_departures rejects schema violations" begin
-    inputs = _aligned_inputs([
-        (id = 1, panel = 1, i = 2, j = 3, observed = 410.1, sigma = 0.5,
-         hour_offset = 0),
-        (id = 2, panel = 3, i = 4, j = 5, observed = 411.2, sigma = 0.7,
-         hour_offset = 1),
-    ])
-    dep = AT.build_departure_set(inputs.set, inputs.observations,
-                                  inputs.simulated, inputs.mesh,
-                                  T0_TEST_STR, DT_TEST, 24)
-
+@testset "read_departures rejects v1 files and schema violations" begin
+    inputs = _aligned_inputs(THREE)
     mktempdir() do dir
         good = joinpath(dir, "good.nc")
-        AT.write_departures(good, dep)
+        AT.write_departures(good, _build(inputs))
         @test AT.read_departures(good) isa AT.CSDepartureSet
-
-        # Wrong schema version.
-        bad_version = joinpath(dir, "bad_version.nc")
-        cp(good, bad_version)
-        NCDataset(bad_version, "a") do ds
-            ds.attrib["cs_departures_schema"] = "v2"
+        mutated(name, f!) = (path = joinpath(dir, "$(name).nc"); cp(good, path); NCDataset(f!, path, "a"); path)
+        @test occursin("schema v1", _errmsg(() -> AT.read_departures(
+            mutated("v1", ds -> ds.attrib["cs_departures_schema"] = "v1"))))
+        @test_throws ArgumentError AT.read_departures(mutated("v3", ds -> ds.attrib["cs_departures_schema"] = "v3"))
+        @test_throws ArgumentError AT.read_departures(mutated("no_schema", ds -> delete!(ds.attrib, "cs_departures_schema")))
+        @test_throws ArgumentError AT.read_departures(
+            mutated("sign", ds -> ds.attrib["departure_sign_convention"] = "observed_minus_simulated"))
+        for attr in ("mesh_Nc", "mesh_panel_convention", "mesh_cs_definition_tag", "t_start", "dt_seconds",
+                     "nsteps", "departure_sign_convention", "n_clamped")
+            @test_throws ArgumentError AT.read_departures(mutated("no_$(attr)", ds -> delete!(ds.attrib, attr)))
         end
-        @test_throws ArgumentError AT.read_departures(bad_version)
-
-        # Missing schema attribute.
-        no_attr = joinpath(dir, "no_attr.nc")
-        cp(good, no_attr)
-        NCDataset(no_attr, "a") do ds
-            delete!(ds.attrib, "cs_departures_schema")
-        end
-        @test_throws ArgumentError AT.read_departures(no_attr)
-
-        # Wrong sign convention.
-        bad_sign = joinpath(dir, "bad_sign.nc")
-        cp(good, bad_sign)
-        NCDataset(bad_sign, "a") do ds
-            ds.attrib["departure_sign_convention"] = "observed_minus_simulated"
-        end
-        @test_throws ArgumentError AT.read_departures(bad_sign)
-
-        # Each required attribute missing -> reject.
-        required = ("mesh_Nc", "mesh_panel_convention", "mesh_cs_definition_tag",
-                    "t_start", "dt_seconds", "nsteps", "departure_sign_convention")
-        for attr in required
-            tmp = joinpath(dir, "no_" * attr * ".nc")
-            cp(good, tmp)
-            NCDataset(tmp, "a") do ds
-                delete!(ds.attrib, attr)
-            end
-            @test_throws ArgumentError AT.read_departures(tmp)
-        end
-
-        # Non-existent file.
         @test_throws ArgumentError AT.read_departures(joinpath(dir, "missing.nc"))
-
-        # Each required variable missing -> reject. We can't really
-        # delete a variable from a NetCDF in place via NCDatasets, so
-        # build each scenario by writing a fresh file that omits the
-        # target variable. The simplest path: write the good file,
-        # copy the byte stream, then prove that the reader requires
-        # the variable by rewriting the file with that variable
-        # absent. We do this by hand-constructing minimal NetCDFs.
-        function _write_missing_var(path, omitted_var)
-            isfile(path) && rm(path)
-            NCDataset(path, "c") do ds
-                defDim(ds, "obs", 1)
-                defDim(ds, "date_component", 6)
-                ds.attrib["cs_departures_schema"] = "v1"
-                ds.attrib["mesh_Nc"] = Int64(NC_TEST)
-                ds.attrib["mesh_panel_convention"] = "GnomonicPanelConvention"
-                ds.attrib["mesh_cs_definition_tag"] = "equiangular_gnomonic"
-                ds.attrib["t_start"] = T0_TEST_STR
-                ds.attrib["dt_seconds"] = DT_TEST
-                ds.attrib["nsteps"] = Int64(24)
-                ds.attrib["departure_sign_convention"] = "simulated_minus_observed"
-                spec = (
-                    ("id", Int64, ("obs",), [Int64(1)]),
-                    ("tracer", String, ("obs",), ["CO2"]),
-                    ("instrument_type", String, ("obs",), ["TCCON"]),
-                    ("date_components", Int16, ("date_component", "obs"),
-                     reshape(Int16[2024, 1, 1, 0, 0, 0], 6, 1)),
-                    ("lat", Float32, ("obs",), Float32[0.0]),
-                    ("lon", Float32, ("obs",), Float32[0.0]),
-                    ("alt", Float32, ("obs",), Float32[0.0]),
-                    ("step", Int64, ("obs",), [Int64(1)]),
-                    ("panel", Int8, ("obs",), Int8[1]),
-                    ("i", Int32, ("obs",), Int32[1]),
-                    ("j", Int32, ("obs",), Int32[1]),
-                    ("observed_value", Float64, ("obs",), [10.0]),
-                    ("simulated_value", Float64, ("obs",), [11.0]),
-                    ("departure", Float64, ("obs",), [1.0]),
-                    ("value_sigma", Float64, ("obs",), [2.0]),
-                    ("normalized_departure", Float64, ("obs",), [0.5]),
-                )
-                for (name, T, dims, data) in spec
-                    name == omitted_var && continue
-                    v = defVar(ds, name, T, dims)
-                    v[:] = data
+        # Sample counts that do not tile the sample dimension, or a row breaking an invariant.
+        @test occursin("inconsistent sample arrays", _errmsg(() -> AT.read_departures(
+            mutated("counts", ds -> ds["sample_count"][:] = Int32[1, 2, 1]))))
+        @test_throws ArgumentError AT.read_departures(mutated("weights", ds -> ds["sample_weight"][2] = 0.9))
+        @test_throws ArgumentError AT.read_departures(mutated("departure", ds -> ds["departure"][1] = -5.0))
+        # Missing variables: rewrite the file without one.
+        function without(var; fill = nothing, fillvalue = NaN)
+            path = joinpath(dir, "no_var_$(var)_$(fill === nothing).nc")
+            NCDataset(good, "r") do src
+                NCDataset(path, "c") do ds
+                    for (d, n) in src.dim
+                        defDim(ds, d, n)
+                    end
+                    for (k, v) in src.attrib
+                        ds.attrib[k] = v
+                    end
+                    for name in keys(src)
+                        name == var && continue
+                        data = Array(src[name])
+                        attrib = name == fill ? Dict{String, Any}("_FillValue" => fillvalue) : Dict{String, Any}()
+                        v = defVar(ds, name, eltype(src[name].var), dimnames(src[name]); attrib)
+                        v[ntuple(_ -> Colon(), ndims(data))...] = data
+                    end
                 end
             end
             return path
         end
-
-        required_vars = ("id", "tracer", "instrument_type", "date_components",
-                         "lat", "lon", "alt",
-                         "step", "panel", "i", "j",
-                         "observed_value", "simulated_value", "departure",
-                         "value_sigma", "normalized_departure")
-        for v in required_vars
-            tmp = joinpath(dir, "no_var_" * v * ".nc")
-            _write_missing_var(tmp, v)
-            @test_throws ArgumentError AT.read_departures(tmp)
+        for var in ("lat", "kind", "clamped", "vertical_placement", "sample_count", "sample_step", "sample_weight",
+                    "sample_level", "model_sigma", "normalized_departure")
+            @test occursin("missing required variable", _errmsg(() -> AT.read_departures(without(var))))
         end
-
-        # Wrong date_component dim length -> reject.
-        wrong_dc = joinpath(dir, "wrong_dc.nc")
-        NCDataset(wrong_dc, "c") do ds
-            defDim(ds, "obs", 1)
-            defDim(ds, "date_component", 5)  # wrong; must be 6
-            ds.attrib["cs_departures_schema"] = "v1"
-            ds.attrib["mesh_Nc"] = Int64(NC_TEST)
-            ds.attrib["mesh_panel_convention"] = "GnomonicPanelConvention"
-            ds.attrib["mesh_cs_definition_tag"] = "equiangular_gnomonic"
-            ds.attrib["t_start"] = T0_TEST_STR
-            ds.attrib["dt_seconds"] = DT_TEST
-            ds.attrib["nsteps"] = Int64(24)
-            ds.attrib["departure_sign_convention"] = "simulated_minus_observed"
-            spec = (
-                ("id", Int64, ("obs",), [Int64(1)]),
-                ("tracer", String, ("obs",), ["CO2"]),
-                ("instrument_type", String, ("obs",), ["TCCON"]),
-                ("date_components", Int16, ("date_component", "obs"),
-                 reshape(Int16[2024, 1, 1, 0, 0], 5, 1)),
-                ("lat", Float32, ("obs",), Float32[0.0]),
-                ("lon", Float32, ("obs",), Float32[0.0]),
-                ("alt", Float32, ("obs",), Float32[0.0]),
-                ("step", Int64, ("obs",), [Int64(1)]),
-                ("panel", Int8, ("obs",), Int8[1]),
-                ("i", Int32, ("obs",), Int32[1]),
-                ("j", Int32, ("obs",), Int32[1]),
-                ("observed_value", Float64, ("obs",), [10.0]),
-                ("simulated_value", Float64, ("obs",), [11.0]),
-                ("departure", Float64, ("obs",), [1.0]),
-                ("value_sigma", Float64, ("obs",), [2.0]),
-                ("normalized_departure", Float64, ("obs",), [0.5]),
-            )
-            for (name, T, dims, data) in spec
-                v = defVar(ds, name, T, dims)
-                v[:] = data
-            end
-        end
-        @test_throws ArgumentError AT.read_departures(wrong_dc)
+        # The unused placement height and pressure may be fill values
+        # (`_FillValue = NaN`); other variables may not.
+        back = AT.read_departures(without("none"; fill = "placement_pressure_pa"))
+        @test all(r -> isnan(r.placement_pressure_pa), back)
+        @test occursin("fill values", _errmsg(() -> AT.read_departures(           # every departure is 0.5
+            without("none"; fill = "departure", fillvalue = 0.5))))
     end
 end

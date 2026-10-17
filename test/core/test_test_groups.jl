@@ -31,6 +31,21 @@ end
     @test occursin(g("src/x/{era5,geos}*.jl"), "src/x/geos_cs_omega.jl")
     @test !occursin(g("src/x/{era5,geos}*.jl"), "src/x/merra2.jl")
     @test !occursin(g("src/a.jl"), "src/abjl")
+    e = TestGroups.expand_braces
+    @test e("src/x/{a,b}.jl") == ["src/x/a.jl", "src/x/b.jl"]
+    @test e("{a,b}/{c,d}") == ["a/c", "a/d", "b/c", "b/d"]
+    @test e("src/plain.jl") == ["src/plain.jl"]
+end
+
+@testset "the cell locator and the sampler select the inversion topic" begin
+    # Placed 4D-Var observations share the forward sampler's locator and layer
+    # rule, so changing them must run the parity tests.
+    groups = load_groups(joinpath(TEST_ROOT, "groups.toml"))
+    for f in ("src/Output/observations/cell_locator.jl",
+              "src/Output/observations/observation_sampler.jl",
+              "src/Output/observations/observation_placement.jl")
+        @test "inversion" in TestGroups.topics_for_path(groups, f)
+    end
 end
 
 @testset "changed files select topics, entries and users" begin

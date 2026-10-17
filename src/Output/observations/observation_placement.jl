@@ -663,3 +663,15 @@ function column_layer!(column::PlacementColumn, placement::VerticalPlacement, z_
     placement_pressures!(column.p_half, basis, mass_basis, air_column, column.humidity, area, g, p_top)
     return pressure_layer_index(column.p_half, placement.pressure_pa)
 end
+
+"""
+    needs_column_humidity(placement, basis, mass_basis) -> Bool
+
+Whether choosing the layer of `placement` needs the column's specific
+humidity: a pressure placement against total pressures
+([`TotalFromHumidity`](@ref)) on a dry-basis run.
+"""
+needs_column_humidity(placement::VerticalPlacement, basis::AbstractPressureBasis, mass_basis::AbstractMassBasis) =
+    placement.method == VERTICAL_PLACEMENT_CODES.pressure && _basis_needs_humidity(basis, mass_basis)
+_basis_needs_humidity(::TotalFromHumidity, ::DryBasis) = true
+_basis_needs_humidity(::AbstractPressureBasis, ::AbstractMassBasis) = false

@@ -44,8 +44,10 @@ record types, and schedules come from [`../Tape/`](../Tape/).
     tape) and `cs_surface_flux_4dvar` (a zero start plus the observation
     forcing). It returns one `CSFootprintResult` per adjoint start.
 - [`StepForcing.jl`](StepForcing.jl): `CSLinearFunctional` (an observation as
-  `offset + Σ weight · rm[panel][i, j, k]` at one step, built by
-  `_linear_functional` from the replayed air mass), `CSStepForcing`
+  `offset + Σ weight · rm_step[panel][i, j, k]`, each entry at one step: one
+  step for an instantaneous observation, several for a time window; built by
+  `_linear_functional` from the replayed air mass of a step and assembled per
+  observation by `_observe_cs_forward`), `CSStepForcing`
   (scaled functionals grouped by step and panel, on the device),
   `NoStepForcing`, `_assemble_step_forcing` and `_inject_step_forcing!`.
 - [`TapeRecording.jl`](TapeRecording.jl): `cs_tape_byte_estimate(...)` returns
@@ -82,9 +84,11 @@ record types, and schedules come from [`../Tape/`](../Tape/).
   type; step forcing at `_CSStepEndRecord`), `_replay_cs_step!` (one
   production step: step-start halo refresh, palindrome with the coupled
   center, convection), and the tape-free forward replays
-  `_run_cs_footprint_forward` and `_observe_cs_forward` (simulated values and
-  observation functionals; `_run_cs_observations_forward` wraps it) built on
-  it
+  `_run_cs_footprint_forward` and `_observe_cs_forward` (each observation
+  sampled after every step of its `CSTimeSampling`: simulated values,
+  stencils and functionals; placed point observations choose their layer from
+  `column_met` at each sampled state; `_run_cs_observations_forward` wraps it)
+  built on it
 - [`StrideCheckpoint.jl`](StrideCheckpoint.jl) (linear mass tape and the
   shared helpers), [`stride_checkpoint_ppm.jl`](stride_checkpoint_ppm.jl)
   (monotone-PPM tracer tape), [`stride_checkpoint_linrood.jl`](stride_checkpoint_linrood.jl)
@@ -113,8 +117,12 @@ record types, and schedules come from [`../Tape/`](../Tape/).
   then add a branch in `_walk_window_reverse!`.
 - Adding an observation operator: give its objective a `_linear_functional`
   method in [`StepForcing.jl`](StepForcing.jl) (weights from the air mass at
-  the observation's step) and an `evaluate_objective` method; the 4D-Var
-  gradient and the final-time seed then use it unchanged.
+  the sampled step) and an `evaluate_objective` method; the 4D-Var gradient
+  and the final-time seed then use it unchanged. An operator that needs more
+  than the air mass at the sampled state (as `CSPlacedPointObjective` needs
+  the column meteorology) adds a `_sample_objective` method in
+  `../Inversion/ObservationColumns.jl` instead and is a 4D-Var observation
+  only.
 - Changing schedule behaviour: [`StrideCheckpoint.jl`](StrideCheckpoint.jl) and the
   scheme-specific `stride_checkpoint_*.jl`, `revolve_checkpoint.jl`.
   The forward propagation passes call the same recorders with
@@ -141,13 +149,16 @@ record types, and schedules come from [`../Tape/`](../Tape/).
   `NoStepForcing` (every footprint path) the marker does nothing, so
   footprints are bit-identical to a tape without it.
 - An observation operator is a fixed linear functional of the tracer mass at
-  its step, with weights from the replayed air mass (meteorology is a fixed
-  tape input). Its gradient is its weight vector. `_seed_objective!` adds the
-  functional at the final air mass to a zeroed adjoint state, which
-  reproduces the earlier seeds bit for bit. The 4D-Var gradient starts from
-  zero (`_ZeroStart`) and adds every observation's scaled weights at its
-  step: one tape (to the last observation step) and one reverse walk per
-  gradient.
+  the steps it samples, with weights from the replayed air mass (meteorology
+  is a fixed tape input) times its time-sampling weights. Its gradient is its
+  weight vector. `_seed_objective!` adds the functional at the final air mass
+  to a zeroed adjoint state, which reproduces the earlier seeds bit for bit.
+  The 4D-Var gradient starts from zero (`_ZeroStart`) and adds every
+  observation's scaled weights at each sampled step: one tape (to the last
+  sampled step) and one reverse walk per gradient. A placed point
+  observation's level is resolved per sampled step from the replayed air
+  mass, so its stencil may change from step to step; the forcing carries the
+  stencil of the forward run.
 - The injection kernel gives each cell of a (step, panel) pair one work
   item, which adds the cell's entries in input order. The injection is
   deterministic and needs no atomics. (The halo and Lin-Rood face adjoint

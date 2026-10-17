@@ -3,16 +3,19 @@
 # forcing the reverse walk injects at end-of-step markers.
 #
 # With fixed meteorology the air mass `m` of every step is known before any
-# tracer is transported, so a mixing-ratio observation sampled after step `s`,
+# tracer is transported, so a mixing-ratio observation sampled after the steps
+# `s` of its time sampling, with weights `ω_s` summing to 1,
 #
-#     y_sim = h(rm_s) = offset + Σₑ wₑ · rm_s[pₑ][iₑ, jₑ, kₑ],
+#     y_sim = h(rm) = offset + Σₑ wₑ · rm_{sₑ}[pₑ][iₑ, jₑ, kₑ],
 #
-# is linear in the tracer mass `rm_s` with weights `wₑ` taken from `m_s`
-# (1/max(m, eps) for a layer, 1/Σm for a column mean). Its gradient ∂h/∂rm_s is the
-# weight vector itself. `CSLinearFunctional` stores one such operator.
+# is linear in the tracer masses with weights `wₑ = ω_{sₑ} · ŵₑ`, `ŵₑ` taken
+# from `m_{sₑ}` (1/max(m, eps) for a layer, 1/Σm for a column mean). Its
+# gradient ∂h/∂rm_s is the weight vector of the entries of step `s`.
+# `CSLinearFunctional` stores one such operator; an instantaneous observation
+# has the entries of one step.
 #
 # The 4D-Var cost J_obs = ½ Σᵢ ((hᵢ(rm) − yᵢ)/σᵢ)² has
-# ∂J_obs/∂rm_s = Σ_{i: sᵢ = s} (hᵢ − yᵢ)/σᵢ² · ∂hᵢ/∂rm_s. `CSStepForcing`
+# ∂J_obs/∂rm_s = Σᵢ (hᵢ − yᵢ)/σᵢ² · ∂hᵢ/∂rm_s. `CSStepForcing`
 # holds these scaled weights, grouped by step and panel, so one reverse walk
 # can add each step's sum to the adjoint state at that step's
 # `_CSStepEndRecord` (`_inject_step_forcing!`, one work item per cell, entries
@@ -24,22 +27,27 @@
 # ---------------------------------------------------------------------------
 
 """
-    CSLinearFunctional{FT}
+    CSLinearFunctional{FT}(steps, panel, i, j, k, weight, offset)
+    CSLinearFunctional{FT}(step::Integer, panel, i, j, k, weight, offset)
 
 Observation operator as a fixed sparse linear functional of the tracer mass
-`rm` at the end of model step `step` (after convection):
+`rm_s` at the end of model steps `s` (after convection):
 
-    h(rm) = offset + Σₑ weight[e] · rm[panel[e]][Hp + i[e], Hp + j[e], k[e]]
+    h(rm) = offset + Σₑ weight[e] · rm_{steps[e]}[panel[e]][Hp + i[e], Hp + j[e], k[e]]
 
-`i`, `j` are interior cell indices in `1:Nc`; `k` is the level (`Nz` is the
-surface layer). The weights come from the replayed air mass at `step`, which
-does not depend on the tracer, so `h` is linear in `rm` and its gradient is
-the weight vector. `offset` holds terms that do not depend on the transported
-tracer (for example an averaging kernel's prior term); it is zero for the
-built-in layer and column objectives. Built by `_linear_functional`.
+`steps[e]` is the step of entry `e` (the scalar-`step` form gives every entry
+that step: an instantaneous observation); `i`, `j` are interior cell indices
+in `1:Nc`; `k` is the level (`Nz` is the surface layer). The weights come
+from the replayed air mass at each entry's step, which does not depend on the
+tracer, so `h` is linear in `rm` and its gradient is the weight vector; a
+window observation's entries carry its time-sampling weights. `offset` holds
+terms that do not depend on the transported tracer (for example an averaging
+kernel's prior term); it is zero for the built-in objectives. Built by
+`_linear_functional` (one step) and `_observe_cs_forward` (an observation's
+sampled steps).
 """
 struct CSLinearFunctional{FT}
-    step::Int
+    steps::Vector{Int}
     panel::Vector{Int}
     i::Vector{Int}
     j::Vector{Int}
@@ -47,15 +55,21 @@ struct CSLinearFunctional{FT}
     weight::Vector{FT}
     offset::FT
 
-    function CSLinearFunctional{FT}(step::Integer, panel, i, j, k, weight,
+    function CSLinearFunctional{FT}(steps::AbstractVector{<:Integer}, panel, i, j, k, weight,
                                     offset) where {FT}
         n = length(weight)
-        length(panel) == length(i) == length(j) == length(k) == n ||
+        length(steps) == length(panel) == length(i) == length(j) == length(k) == n ||
             throw(DimensionMismatch("CSLinearFunctional entry vectors must have equal lengths"))
-        step >= 1 || throw(ArgumentError("CSLinearFunctional step must be positive, got $step"))
-        return new{FT}(Int(step), collect(Int, panel), collect(Int, i), collect(Int, j),
+        all(>=(1), steps) || throw(ArgumentError(
+            "CSLinearFunctional steps must be positive, got $(steps)"))
+        return new{FT}(collect(Int, steps), collect(Int, panel), collect(Int, i), collect(Int, j),
                        collect(Int, k), collect(FT, weight), FT(offset))
     end
+end
+
+function CSLinearFunctional{FT}(step::Integer, panel, i, j, k, weight, offset) where {FT}
+    step >= 1 || throw(ArgumentError("CSLinearFunctional step must be positive, got $step"))
+    return CSLinearFunctional{FT}(fill(Int(step), length(weight)), panel, i, j, k, weight, offset)
 end
 
 # ---------------------------------------------------------------------------
@@ -103,11 +117,17 @@ _linear_functional(::CSSeedObjective, ::Integer, _panels_m, ::CubedSphereMesh) =
         "`CSSeedObjective` is reserved for explicit final adjoint seeds; " *
         "use `cs_surface_emission_footprint_from_seed(final_adjoint_rm, ...)`"))
 
-# `h(rm)` on the host: gathers the entries' tracer masses (one small copy per
-# entry). For tests and diagnostics; the 4D-Var simulated values come from
+_linear_functional(::CSPlacedPointObjective, ::Integer, _panels_m, ::CubedSphereMesh) =
+    _placed_objective_needs_met()
+
+# `h(rm)` on the host for a functional of one step, on the tracer mass of that
+# step: gathers the entries' tracer masses (one small copy per entry). For
+# tests and diagnostics; the 4D-Var simulated values come from
 # `evaluate_objective`.
 function _evaluate_functional(f::CSLinearFunctional{FT}, panels_rm,
                               mesh::CubedSphereMesh) where {FT}
+    allequal(f.steps) || throw(ArgumentError(
+        "_evaluate_functional reads one tracer state; this functional spans steps $(unique(f.steps))"))
     value = f.offset
     Hp = mesh.Hp
     @inbounds for e in eachindex(f.weight)
@@ -190,7 +210,7 @@ function _assemble_step_forcing(functionals::AbstractVector{<:CSLinearFunctional
             1 <= i <= mesh.Nc || throw(ArgumentError("functional i must be in 1:$(mesh.Nc), got $i"))
             1 <= j <= mesh.Nc || throw(ArgumentError("functional j must be in 1:$(mesh.Nc), got $j"))
             1 <= k <= Nz || throw(ArgumentError("functional level must be in 1:$Nz, got $k"))
-            step[e] = f.step
+            step[e] = f.steps[idx]
             panel[e] = p
             ci[e] = i
             cj[e] = j
@@ -287,12 +307,13 @@ function _inject_step_forcing!(lambda_panels, forcing::CSStepForcing, step::Int,
     return nothing
 end
 
-# Add one functional (scale 1) to the adjoint state: the final-time seed of a
-# single-objective footprint (`_seed_objective!`).
+# Add one functional of one step (scale 1) to the adjoint state: the final-time
+# seed of a single-objective footprint (`_seed_objective!`).
 function _inject_functional!(lambda_panels, f::CSLinearFunctional{FT},
                              mesh::CubedSphereMesh) where {FT}
+    step = only(unique(f.steps))
     forcing = _assemble_step_forcing([f], (one(FT),), mesh, size(lambda_panels[1], 3),
                                      lambda_panels[1])
-    _inject_step_forcing!(lambda_panels, forcing, f.step, mesh)
+    _inject_step_forcing!(lambda_panels, forcing, step, mesh)
     return nothing
 end

@@ -1,0 +1,127 @@
+# ---------------------------------------------------------------------------
+# cs_observations_v2 — NetCDF schema for the observations of the CS 4D-Var
+# inversion (`read_observations` / `write_observations`, bound to the model by
+# `bind_to_mesh`).
+#
+# Single-file format. One unlimited dimension `obs` plus a fixed-size
+# `date_component` dimension of length 6 (year, month, day, hour, minute,
+# second). Coordinates are Float64. Record ids are unique. The vertical fields
+# use NaN (or a declared _FillValue, such as xarray's NaN) for "absent"; no
+# other variable may hold fill values;
+# a point record must give at least one vertical coordinate the inversion's
+# `vertical_coordinates` use (an intake height; an altitude with a ground
+# elevation, from the record or a DEM; a pressure). Root attributes pin the
+# schema version and the absolute time origin.
+#
+# Changes from v1 (no longer read): Float64 lat/lon (v1 Float32 coordinates
+# can bind a point near a cell edge to the neighbouring cell); `alt` replaced
+# by elevation_m, intake_height_m, altitude_m and pressure_pa; new kind,
+# time_window_s, flag and model_sigma.
+#
+# This file documents the schema; the loader/writer live in
+# `src/Inversion/ObservationsIO.jl`. Any version bump must update both.
+# ---------------------------------------------------------------------------
+
+[meta]
+version = "v2"
+shipped_in = "issue #20 (part 3)"
+intended_for = "src/Inversion/ObservationsIO.jl read_observations / write_observations"
+
+[dimensions]
+obs            = "unlimited"
+date_component = 6   # year, month, day, hour, minute, second
+
+# All variables below are REQUIRED — the loader rejects files that omit
+# any of them. `dims` is in NetCDF order (i.e. as it appears in `ncdump`),
+# which is the REVERSE of Julia's column-major order.
+
+[variables.id]
+dtype = "i64"
+dims  = ["obs"]
+description = "unique observation identifier (departures are joined to records by id; the loader rejects repeated ids)"
+
+[variables.date_components]
+dtype = "i16"
+dims  = ["date_component", "obs"]
+description = "(year, month, day, hour, minute, second) UTC per observation: the centre of its sampling window"
+
+[variables.lat]
+dtype = "f64"
+dims  = ["obs"]
+units = "degrees_north"
+description = "observation latitude, in [-90, 90]"
+
+[variables.lon]
+dtype = "f64"
+dims  = ["obs"]
+units = "degrees_east"
+description = "observation longitude, any convention with |lon| <= 720"
+
+[variables.kind]
+dtype = "string"
+dims  = ["obs"]
+description = "'point' (an in-situ sample placed in the column) or 'column' (a column average, bound to the air-mass-weighted column mean)"
+
+[variables.elevation_m]
+dtype = "f64"
+dims  = ["obs"]
+units = "m"
+description = "ground elevation above sea level; NaN = absent"
+
+[variables.intake_height_m]
+dtype = "f64"
+dims  = ["obs"]
+units = "m"
+description = "sampling height above the ground; NaN = absent (column records: NaN)"
+
+[variables.altitude_m]
+dtype = "f64"
+dims  = ["obs"]
+units = "m"
+description = "sampling altitude above sea level; NaN = absent (column records: NaN)"
+
+[variables.pressure_pa]
+dtype = "f64"
+dims  = ["obs"]
+units = "Pa"
+description = "total (ambient) pressure at the sample, positive; NaN = absent (column records: NaN)"
+
+[variables.time_window_s]
+dtype = "f64"
+dims  = ["obs"]
+units = "s"
+description = "length of the sampling window centred on the record time; 0 = the model step containing the time"
+
+[variables.flag]
+dtype = "i8"
+dims  = ["obs"]
+description = "quality flag: 0 = assimilate; bind_to_mesh drops records with any other value"
+
+[variables.value]
+dtype = "f64"
+dims  = ["obs"]
+description = "observation value in the tracer's native unit (dry mole fraction for trace gases)"
+
+[variables.value_sigma]
+dtype = "f64"
+dims  = ["obs"]
+description = "1-sigma observation error in the tracer's native unit, positive"
+
+[variables.model_sigma]
+dtype = "f64"
+dims  = ["obs"]
+description = "1-sigma model/representation error, >= 0, added in quadrature: sigma = sqrt(value_sigma^2 + model_sigma^2)"
+
+[variables.instrument_type]
+dtype = "string"
+dims  = ["obs"]
+description = "instrument family label, e.g. 'TCCON', 'ICOS', 'aircraft'"
+
+[variables.tracer]
+dtype = "string"
+dims  = ["obs"]
+description = "tracer name, e.g. 'CO2', 'CH4', 'CO'"
+
+[attributes]
+cs_observations_schema = "v2"   # mandatory; loader fails fast on any other value (v1 with an explanation)
+time_origin = "REQUIRED: ISO-8601 string, e.g. '1900-01-01 00:00:00'"

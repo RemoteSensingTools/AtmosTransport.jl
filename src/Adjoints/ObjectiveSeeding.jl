@@ -44,6 +44,41 @@ struct CSColumnMeanObjective <: AbstractCSFootprintObjective
 end
 
 """
+    CSPlacedPointObjective(panel, i, j, area, placement, pressure_basis)
+
+Mixing ratio `rm / m` of the model layer that contains an in-situ sample, in
+the physical CS interior cell `(panel, i, j)` of area `area` (m², the cell
+that contains the sample). `placement` (an `Output.VerticalPlacement`) says
+how the sample is placed in the column — its height above the model surface
+or its pressure — and is resolved once, by `bind_to_mesh` with
+`Output.resolve_placement`, the rule of the forward observation sampler. The
+layer itself is chosen every time the objective is sampled, from the replayed
+air mass of that state and the [`CSObservationColumnMet`](@ref) (hypsometric
+layer heights; interface pressures of `pressure_basis`), with
+`Output.sample_column_layer!`. Sampling it therefore needs the column
+meteorology: `cs_surface_flux_4dvar(...; column_met)`; the final-time
+footprint and Jacobian entry points do not take it.
+"""
+struct CSPlacedPointObjective{B <: AbstractPressureBasis} <: AbstractCSFootprintObjective
+    panel::Int
+    i::Int
+    j::Int
+    area::Float64
+    placement::VerticalPlacement
+    pressure_basis::B
+    function CSPlacedPointObjective(panel::Integer, i::Integer, j::Integer, area::Real,
+                                    placement::VerticalPlacement,
+                                    pressure_basis::B) where {B <: AbstractPressureBasis}
+        isfinite(area) && area > 0 || throw(ArgumentError(
+            "CSPlacedPointObjective area must be finite and positive, got $area"))
+        placement.method == VERTICAL_PLACEMENT_CODES.lowest_layer && throw(ArgumentError(
+            "an inversion point observation is placed by its height or pressure; " *
+            "the lowest-layer placement of column products does not apply"))
+        return new{B}(Int(panel), Int(i), Int(j), Float64(area), placement, pressure_basis)
+    end
+end
+
+"""
     CSSeedObjective()
 
 Marker objective used when the caller supplies an explicit final adjoint
@@ -63,12 +98,21 @@ function _validate_objective(obj::CSLayerMeanObjective, mesh::CubedSphereMesh, N
     return nothing
 end
 
-function _validate_objective(obj::CSColumnMeanObjective, mesh::CubedSphereMesh, Nz::Int)
+function _validate_objective(obj::Union{CSColumnMeanObjective, CSPlacedPointObjective},
+                             mesh::CubedSphereMesh, Nz::Int)
     1 <= obj.panel <= 6 || throw(ArgumentError("panel must be in 1:6, got $(obj.panel)"))
     1 <= obj.i <= mesh.Nc || throw(ArgumentError("i must be in 1:$(mesh.Nc), got $(obj.i)"))
     1 <= obj.j <= mesh.Nc || throw(ArgumentError("j must be in 1:$(mesh.Nc), got $(obj.j)"))
     return nothing
 end
+
+# A placed point objective chooses its layer from the column meteorology of the
+# sampled state, which only the 4D-Var path carries.
+_placed_objective_needs_met() = throw(ArgumentError(
+    "a CSPlacedPointObjective chooses its layer from the column meteorology of the sampled state " *
+    "(CSObservationColumnMet); use it as an observation of cs_surface_flux_4dvar(...; column_met). " *
+    "The footprint and Jacobian entry points take only objectives with a fixed stencil " *
+    "(CSLayerMeanObjective, CSColumnMeanObjective)"))
 
 function _validate_objective(::CSSeedObjective, mesh::CubedSphereMesh, Nz::Int)
     throw(ArgumentError(
@@ -135,6 +179,9 @@ function evaluate_objective(obj::CSColumnMeanObjective, panels_rm, panels_m,
     synchronize(backend)
     return _host_scalar(out)
 end
+
+evaluate_objective(::CSPlacedPointObjective, panels_rm, panels_m, mesh::CubedSphereMesh) =
+    _placed_objective_needs_met()
 
 # ---------------------------------------------------------------------------
 # Adjoint seeding + per-step surface accumulator
