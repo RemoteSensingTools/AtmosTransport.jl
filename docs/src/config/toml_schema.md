@@ -853,25 +853,46 @@ p_{k+1/2} = p_{k-1/2} + \frac{g\,m_k}{A\,(1 - q_k)},
 
 with ``p_\mathrm{top}`` = `A_ifc[1]`, the pure-pressure top interface of the
 met model's hybrid coordinate (a total pressure). This inverts the
-preprocessor's dry conversion ``Δp_\mathrm{dry} = (1 - q)\,Δp``. The
-humidity is the binary's layer-mean specific humidity at the sampled window
-end: `qv_start` at the run start and `qv_end` at each window end of lat-lon
-and reduced-Gaussian binaries; on cubed-sphere binaries the window's GCHP
-VDIFF `qv`, a window-start value held through the window, so at a window end
-it is one window old (exact at the run start). With linear time
-interpolation it is blended between the two window ends like the air mass. A moist-basis run's air mass already gives total
-pressures. A dry-basis run whose binaries do not all carry humidity (for example the
-ERA5 N320 → cubed-sphere products; every binary's header is checked before
-transport) cannot build them: building the sampler then fails if any record
-is placed by pressure, and `pressure_basis = "dry"`
-(`DryInterfaces`) compares with the dry interfaces instead. Those lie at lower
-pressure, so a record can land one or more layers too low (closer to the
-surface, where the layers are thinnest): on
-the GEOS L72 levels, in a constructed tropical column (18 g/kg at the
-surface, 50 kg m⁻² of precipitable water), the dry interfaces put 25% of
-pressures between 900 and 1010 hPa, 6% between 500 and 900 hPa and 0.4%
-between 200 and 500 hPa in a lower layer (5%, 1% and 0% at 4 g/kg and
-10 kg m⁻²). The files keep the dry interfaces as `p_half_dry`; the attribute
+preprocessor's dry conversion ``Δp_\mathrm{dry} = (1 - q)\,Δp``. On merged
+or remapped levels the binary carries a dry-mass-weighted ``q``, so the
+inverse is not exact there: on the golden `pre_ll72` binary (ERA5 L137 merged
+to 34 levels) the rebuilt total surface pressure differs from the stored one
+by −0.012 Pa on average and 0.125 Pa at most, where the dry interfaces are
+169 Pa low on average and 700 Pa at worst.
+
+The humidity is the binary's layer-mean specific humidity at the sampled
+boundary:
+
+- lat-lon binaries preprocessed with `output.include_qv = true`: `qv_start`
+  at the run start and `qv_end` at each window end;
+- cubed-sphere binaries with the GCHP VDIFF payload (`include_vdiff_fields`):
+  VDIFF `qv` is a window-start value, so a window end takes the `qv` of the
+  next window (window 1 of the next binary after a binary's last window),
+  and the run start the first window's. The run's last window end has no
+  next window and takes the ended window's `qv`, one window old: on the
+  golden MERRA-2 C90 L72 binary the interfaces rebuilt with it are up to
+  23 Pa (99th percentile 11 Pa) from the met model's total interfaces
+  ``A + B\,p_s``, against at most 0.23 Pa with the next window's `qv`;
+- reduced-Gaussian binaries (the preprocessor refuses `include_qv`) and
+  cubed-sphere binaries without the VDIFF payload (for example the ERA5
+  N320 → cubed-sphere products) carry none.
+
+With linear time interpolation the humidity is blended between the two
+window ends like the air mass. A moist-basis run's air mass already gives
+total pressures. A dry-basis run whose binaries do not all carry humidity
+(every binary's header is checked before transport) cannot build them:
+building the sampler then fails if any record is placed by pressure, and
+`pressure_basis = "dry"` (`DryInterfaces`) compares with the dry interfaces
+instead. Those lie at lower pressure, so a record can land one or more layers
+too low (closer to the surface, where the layers are thinnest). On the GEOS
+L72 levels with ``p_s`` = 1010 hPa and
+``q = q_s\,(p_\mathrm{mid}/p_s)^\lambda``, ``\lambda`` set by the
+precipitable water, the dry interfaces put a pressure uniformly spaced
+between 900 and 1010 hPa in a lower layer 25% of the time, between 500 and
+900 hPa 6% and between 200 and 500 hPa 0.4% for a tropical column
+(``q_s`` = 18 g/kg, 50 kg m⁻²), and 5%, 1% and 0% for ``q_s`` = 4 g/kg and
+10 kg m⁻²; an independent construction of the tropical case gave 29%, 6.5%
+and 0.36%. The files keep the dry interfaces as `p_half_dry`; the attribute
 `pressure_basis` records the basis used.
 
 **External ground datasets.** Both are static and external, never part of a

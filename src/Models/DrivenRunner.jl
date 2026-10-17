@@ -98,7 +98,8 @@ using ..MetDrivers: AbstractMetDriver, TransportBinaryDriver,
                      total_windows, window_dt, binary_capabilities,
                      inspect_binary, steps_per_window,
                      steps_per_window_schedule, release_payload!,
-                     surface_pressure_basis, supports_moisture
+                     surface_pressure_basis, supports_moisture,
+                     TransportBinaryReader, load_vdiff_qv_window!
 using ..InitialConditionIO: _regridding_method, _surface_flux_kind, surface_flux_species,
                             _hold_outside_coverage, RUN_SPAN_CLOCK_SLACK_SECONDS
 using ..InitialConditionIO: build_initial_mixing_ratio, _build_cs_initial_mixing_ratio,
@@ -118,7 +119,7 @@ using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, S
                 NoObservationOutput, ObservationOutputSpec, observation_output_spec,
                 AbstractObservationSampler, NoObservationSampler, build_observation_sampler,
                 samples_observations, begin_observation_day!, observe_window_boundary!,
-                finish_observations!, check_observation_tracer_names,
+                finish_observations!, check_observation_tracer_names, observation_needs_humidity,
                 observation_output_path, SoundingMode, SiteMode,
                 VerticalPlacementSpec, ObservationTerrain, NoModelSurfaceHeight, NoPointElevation,
                 _SNAPSHOT_SCHEDULE_KEYS, _SNAPSHOT_INTERVAL_KEYS, _schedule_has_times
@@ -933,6 +934,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                             has_humidity = _run_observation_humidity(binary_humidity, binary_paths,
                                                                                      _window_humidity(window1, true) !== nothing),
                                             span_seconds = 3600 * run_hours)
+    observation_humidity = _cs_observation_humidity(sampler, model.state, binary_paths)
     observation_clock_seconds = 0.0   # exact Float64 run clock for observation times
 
     # Build surface-flux sources from the parsed tracer specs and log per-source
@@ -1048,7 +1050,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
             model = sim.model
             day_start_seconds = observation_clock_seconds
             windows_done = 0
-            _begin_observation_binary!(timer, sampler, sim, path, driver_idx, day_start_seconds)
+            _begin_observation_binary!(timer, sampler, sim, path, driver_idx, day_start_seconds;
+                                       humidity = observation_humidity)
 
             day_t0 = time()
             set_progress_status!(timer;
@@ -1078,7 +1081,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                     total_hour += window_hours
                     windows_done += 1
                     _observe_window_end!(timer, sampler, sim,
-                                         day_start_seconds + windows_done * Float64(window_dt(driver)))
+                                         day_start_seconds + windows_done * Float64(window_dt(driver));
+                                         humidity = observation_humidity, binary_index = driver_idx)
                     while do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
                           _snapshot_due(total_hour, snapshot_schedule_hours[snap_idx], window_hours)
                         capture_cs!(total_hour)

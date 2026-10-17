@@ -235,14 +235,22 @@ p_{k+1/2} = p_{k-1/2} + \\frac{g\\,m_k}{A\\,(1 - q_k)},
 with ``A`` the cell area and ``p_\\mathrm{top}`` the pure-pressure model-top
 interface `A_ifc[1]`, a total pressure in the met model's hybrid coordinate
 (level 1 is the top). This inverts the preprocessing's dry conversion
-``Δp_\\mathrm{dry} = (1 - q)\\,Δp``. The humidity is the binary's layer-mean
-specific humidity at the sampled window end: `qv_start` / `qv_end` of
-lat-lon and reduced-Gaussian binaries; on cubed-sphere binaries the GCHP
-VDIFF `qv`, a window-start value held through the window, so it is one
-window old at a window end. On a moist-basis run the air mass already includes the vapour and
-its interfaces are total pressures without humidity. A dry-basis run whose
-binaries carry no humidity cannot build them: building a sampler that places
-any record by pressure then fails unless `pressure_basis = "dry"`.
+``Δp_\\mathrm{dry} = (1 - q)\\,Δp``. On merged or remapped levels the binary
+carries a dry-mass-weighted ``q``, so the inverse is not exact there; on the
+golden `pre_ll72` binary (ERA5 L137 merged to 34 levels) the rebuilt total
+surface pressure differs from the stored one by −0.012 Pa on average and
+0.125 Pa at most, where the dry interfaces are 169 Pa low on average and
+700 Pa at worst. The humidity is
+the binary's layer-mean specific humidity at the sampled boundary:
+`qv_start` / `qv_end` of lat-lon binaries preprocessed with
+`output.include_qv = true`; on cubed-sphere binaries with the GCHP VDIFF
+payload the window-start VDIFF `qv` of the next window (the run's last window
+end takes the ended window's, one window old). Reduced-Gaussian binaries, and
+cubed-sphere binaries without the VDIFF payload, carry no humidity. On a
+moist-basis run the air mass already includes the vapour and its interfaces
+are total pressures without humidity. A dry-basis run whose binaries do not
+all carry humidity cannot build them: building a sampler that places any
+record by pressure then fails unless `pressure_basis = "dry"`.
 """
 struct TotalFromHumidity <: AbstractPressureBasis end
 
@@ -309,20 +317,21 @@ VerticalPlacementSpec(; surface_height_file::Union{Nothing, AbstractString} = no
 
 # The spec names files the runner loads through GriddedIO; a sampler built
 # without them would silently place fewer records, or none by absolute altitude.
-function check_terrain(spec::VerticalPlacementSpec, terrain::ObservationTerrain)
+# `label` names the config table (`"[output.observations]"`).
+function check_terrain(spec::VerticalPlacementSpec, terrain::ObservationTerrain, label::AbstractString)
     spec.surface_height_file === nothing || !(terrain.model_surface isa NoModelSurfaceHeight) ||
-        throw(ArgumentError("[output.observations].surface_height_file is set but no model surface " *
+        throw(ArgumentError("$(label).surface_height_file is set but no model surface " *
                             "height was loaded (load it with GriddedIO.read_model_surface_height)"))
     spec.dem_file === nothing || !(terrain.dem isa NoPointElevation) ||
-        throw(ArgumentError("[output.observations].dem_file is set but no DEM was loaded " *
+        throw(ArgumentError("$(label).dem_file is set but no DEM was loaded " *
                             "(load it with GriddedIO.read_point_elevation)"))
-    _check_altitude_option(spec.altitude_placement, terrain)
+    _check_altitude_option(spec.altitude_placement, terrain, label)
     return nothing
 end
-_check_altitude_option(::AboveGroundPlacement, terrain) = nothing
-_check_altitude_option(::AbsoluteAltitudeAbove, terrain) = terrain.model_surface isa NoModelSurfaceHeight &&
-    throw(ArgumentError("absolute_altitude_above_agl_m needs the model surface height " *
-                        "([output.observations].surface_height_file)"))
+_check_altitude_option(::AboveGroundPlacement, terrain, label) = nothing
+_check_altitude_option(::AbsoluteAltitudeAbove, terrain, label) = terrain.model_surface isa NoModelSurfaceHeight &&
+    throw(ArgumentError("$(label).absolute_altitude_above_agl_m needs the model surface height " *
+                        "($(label).surface_height_file)"))
 
 # -- records without any vertical coordinate ---------------------------------
 
@@ -612,9 +621,45 @@ function check_pressure_basis(::TotalFromHumidity, ::DryBasis, has_humidity::Boo
     has_humidity || throw(ArgumentError(
         "$(n_pressure) requests are placed by pressure. Record pressures are total pressures, and " *
         "$(label).pressure_basis = \"total\" (the default) builds the total interface pressures from the " *
-        "dry air mass and the specific humidity, but the run's binaries do not all carry humidity " *
-        "(qv_start/qv_end or GCHP VDIFF qv). Set $(label).pressure_basis = \"dry\" to compare them with the " *
+        "dry air mass and the specific humidity, but the run's binaries do not all carry humidity: lat-lon " *
+        "binaries need qv_start/qv_end (preprocessed with output.include_qv = true), cubed-sphere binaries " *
+        "the GCHP VDIFF payload (include_vdiff_fields = true), and reduced-Gaussian binaries carry none. " *
+        "Set $(label).pressure_basis = \"dry\" to compare them with the " *
         "dry interface pressures instead (they lie at lower pressure, so a record can land one or more " *
         "layers too low), or leave \"pressure\" out of $(label).vertical_coordinates"))
     return true
+end
+
+"""
+    PlacementColumn(nlevel)
+
+Scratch for [`column_layer!`](@ref) on a column of `nlevel` layers:
+`p_half` receives the interface pressures a pressure placement is compared
+with, and `humidity` holds the column's specific humidity (k = 1 at the
+top), which the caller fills when the pressure basis needs it.
+"""
+struct PlacementColumn
+    p_half::Vector{Float64}
+    humidity::Vector{Float64}
+end
+PlacementColumn(nlevel::Integer) = PlacementColumn(Vector{Float64}(undef, nlevel + 1), Vector{Float64}(undef, nlevel))
+
+"""
+    column_layer!(column::PlacementColumn, placement, z_half, air_column, area, g, p_top, basis, mass_basis) -> Int
+
+Model layer (k = 1 top) of a [`VerticalPlacement`](@ref) in one column, the
+rule shared by the forward sampler and any other caller: by height above the
+model surface on the hypsometric interface heights `z_half`, or the lowest
+layer (as [`placement_layer`](@ref)); a pressure placement against the
+interface pressures of the [`AbstractPressureBasis`](@ref) `basis`, built
+into `column.p_half` from `air_column` (kg per cell, of `mass_basis`), the
+cell `area` (m²), gravity `g`, the model-top pressure `p_top` and, for
+[`TotalFromHumidity`](@ref) on a dry basis, `column.humidity`.
+"""
+function column_layer!(column::PlacementColumn, placement::VerticalPlacement, z_half::AbstractVector,
+                       air_column::AbstractVector, area::Real, g::Real, p_top::Real,
+                       basis::AbstractPressureBasis, mass_basis::AbstractMassBasis)
+    placement.method == VERTICAL_PLACEMENT_CODES.pressure || return placement_layer(placement, z_half, column.p_half)
+    placement_pressures!(column.p_half, basis, mass_basis, air_column, column.humidity, area, g, p_top)
+    return pressure_layer_index(column.p_half, placement.pressure_pa)
 end

@@ -34,7 +34,9 @@ cubed-sphere driver). The parent overview is [`../README.md`](../README.md).
   `load_surface_window!`, `load_grid`, and the `has_*` predicates
 - Cubed-sphere reader: [`cubed_sphere_reader.jl`](cubed_sphere_reader.jl) adds
   `load_window!`, which returns a NamedTuple of panel `NTuple`s. It also adds
-  `load_grid(reader; Hp)`, `mesh_convention`, and `mesh_definition`
+  `load_grid(reader; Hp)`, `mesh_convention`, `mesh_definition`, and
+  `load_vdiff_qv_window!` (one window's GCHP VDIFF humidity, for observation
+  sampling)
 - Writers: [`writer.jl`](writer.jl) `write_transport_binary(path, grid, windows; ...)`
   (lat-lon and reduced Gaussian); [`streaming_writer.jl`](streaming_writer.jl)
   `open_streaming_transport_binary` (reduced Gaussian only),

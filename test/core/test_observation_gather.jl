@@ -252,4 +252,17 @@ end
     @test_throws DimensionMismatch O.total_interface_pressures!(zeros(72), dry, q, area, g, A[1])
     undershoot = copy(q); undershoot[1] = -1e-9
     @test issorted(O.total_interface_pressures!(zeros(73), dry, undershoot, area, g, A[1]))
+
+    # The sampler-free layer rule: pressure placements against the basis's interfaces, the rest by height.
+    column = O.PlacementColumn(72)
+    column.humidity .= q
+    z_half = layer_heights_agl!(zeros(73), p_dry, ConstantLayerTemperature(280.0), g)
+    p_record = (p_dry[70] + p_ref[70]) / 2                    # between the dry and total bottom of layer 69
+    pressure = O.VerticalPlacement(O.VERTICAL_PLACEMENT_CODES.pressure, NaN, p_record, NaN)
+    @test O.column_layer!(column, pressure, z_half, dry, area, g, A[1], O.TotalFromHumidity(), DryBasis()) == 69
+    @test column.p_half == p_total
+    @test O.column_layer!(column, pressure, z_half, dry, area, g, A[1], O.DryInterfaces(), DryBasis()) == 70
+    height = O.VerticalPlacement(O.VERTICAL_PLACEMENT_CODES.record_height, 100.0, NaN, NaN)
+    @test O.column_layer!(column, height, z_half, dry, area, g, A[1], O.TotalFromHumidity(), DryBasis()) ==
+          intake_layer_index(z_half, 100.0)
 end

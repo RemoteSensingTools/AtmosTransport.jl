@@ -118,13 +118,24 @@ function _build_sampler(spec::ObservationOutputSpec, state, grid; cfg, binary_pa
     return build_observation_sampler(spec, state, grid; origin, window_seconds, halo_width, terrain, has_humidity)
 end
 
+# Where the sampler's boundary humidity comes from (`_boundary_humidity`).
+abstract type _AbstractObservationHumidity end
+struct _WindowFieldHumidity <: _AbstractObservationHumidity end
+struct _NextWindowVDIFFHumidity{H, D} <: _AbstractObservationHumidity
+    binary_paths::Vector{String}
+    host::H      # NTuple of host panels (Nc, Nc, Nz), read from the binary
+    field::D     # the same panels on the state's backend, handed to the sampler
+end
+
 # Per-binary entry: switch daily files, and on the first binary sample the
 # initial state at the start of the run.
-_begin_observation_binary!(timer, ::NoObservationSampler, sim, path, idx::Integer, seconds::Real) = nothing
+_begin_observation_binary!(timer, ::NoObservationSampler, sim, path, idx::Integer, seconds::Real; kwargs...) =
+    nothing
 function _begin_observation_binary!(timer, sampler::AbstractObservationSampler, sim, path,
-                                    idx::Integer, seconds::Real)
+                                    idx::Integer, seconds::Real;
+                                    humidity::_AbstractObservationHumidity = _WindowFieldHumidity())
     begin_observation_day!(sampler, _binary_date_label(path), idx)
-    idx == 1 && _observe_window_end!(timer, sampler, sim, seconds; run_start = true)
+    idx == 1 && _observe_window_end!(timer, sampler, sim, seconds; run_start = true, humidity, binary_index = idx)
     return nothing
 end
 
@@ -136,17 +147,60 @@ _vdiff_temperature(::Nothing) = nothing
 _vdiff_temperature(vdiff) = vdiff.t
 
 # Specific humidity (kg kg⁻¹ of moist air, layer means, k = 1 at the top) at
-# the sampled boundary, for total interface pressures: the window's `qv_start`
-# at the run start and its `qv_end` at its end (lat-lon and reduced-Gaussian
-# binaries), else the window's GCHP VDIFF `qv` (cubed-sphere binaries). VDIFF
-# `qv` is the window-start humidity held through the window (like the
-# temperature), so at a cubed-sphere window end it is one window old; only the
-# run start is exact. `nothing` when the binary carries neither. `sim.window`
-# is the window that just ended (the next one loads on the next step).
+# a sampled boundary, for total interface pressures, by where it comes from:
+#
+# - `_WindowFieldHumidity`: the window's own fields, `qv_start` at the run
+#   start and `qv_end` at the window's end (lat-lon binaries written with
+#   `include_qv`; the reduced-Gaussian preprocessor writes none).
+# - `_NextWindowVDIFFHumidity` (cubed sphere): the GCHP VDIFF `qv` is a
+#   window-start value, so the humidity at the end of window w is the `qv` of
+#   window w + 1 (window 1 of the next binary after a binary's last window),
+#   read from the binary. The run start takes the first window's own `qv`.
+#
+# `sim.window` is the window that just ended (the next one loads on the next step).
 _window_humidity(window, run_start::Bool) =
     window.qv_start !== nothing ? (run_start ? window.qv_start : window.qv_end) : _vdiff_humidity(window.vdiff)
 _vdiff_humidity(::Nothing) = nothing
 _vdiff_humidity(vdiff) = vdiff.qv
+
+# The cubed-sphere source when the sampler needs humidity (else nothing is read).
+function _cs_observation_humidity(sampler, state, binary_paths)
+    observation_needs_humidity(sampler) || return _WindowFieldHumidity()
+    reference = first(state.air_mass)
+    Nc = size(reference, 1) - 2 * state.halo_width
+    dims = (Nc, Nc, size(reference, 3))
+    host = ntuple(_ -> Array{eltype(reference)}(undef, dims), length(state.air_mass))
+    field = ntuple(_ -> similar(reference, dims), length(state.air_mass))
+    return _NextWindowVDIFFHumidity(collect(String, binary_paths), host, field)
+end
+
+_boundary_humidity(::_WindowFieldHumidity, sim, run_start::Bool, binary_index::Integer) =
+    _window_humidity(sim.window, run_start)
+function _boundary_humidity(h::_NextWindowVDIFFHumidity, sim, run_start::Bool, binary_index::Integer)
+    run_start && return _vdiff_humidity(sim.window.vdiff)
+    window = sim.current_window_index
+    if window < total_windows(sim.driver)
+        load_vdiff_qv_window!(h.host, sim.driver.reader, window + 1)
+    elseif binary_index < length(h.binary_paths)
+        reader = TransportBinaryReader(h.binary_paths[binary_index + 1]; FT = eltype(first(h.host)))
+        try
+            load_vdiff_qv_window!(h.host, reader, 1)
+        finally
+            close(reader)
+        end
+    else
+        # HACK: the run's last window end has no next window; it takes the ended
+        # window's start humidity, one window old. On the golden MERRA-2 C90 L72
+        # binary that puts the rebuilt interfaces up to 23 Pa (99th percentile
+        # 11 Pa) from the met model's total interfaces, against <= 0.23 Pa with
+        # the next window's humidity.
+        # TODO: carry a window-end humidity in cubed-sphere binaries (a VDIFF qv
+        # endpoint) so the final window end is exact too.
+        return _vdiff_humidity(sim.window.vdiff)
+    end
+    foreach(copyto!, h.field, h.host)
+    return h.field
+end
 
 # Whether a binary (its `binary_capabilities`) carries the humidity
 # `_window_humidity` reads: `qv_start`/`qv_end`, or on the cubed sphere the
@@ -165,11 +219,14 @@ function _run_observation_humidity(binary_humidity::AbstractVector{Bool}, binary
     return all(binary_humidity)
 end
 
-_observe_window_end!(timer, ::NoObservationSampler, sim, seconds::Real; run_start::Bool = false) = nothing
+_observe_window_end!(timer, ::NoObservationSampler, sim, seconds::Real; kwargs...) = nothing
 function _observe_window_end!(timer, sampler::AbstractObservationSampler, sim, seconds::Real;
-                              run_start::Bool = false)
+                              run_start::Bool = false,
+                              humidity::_AbstractObservationHumidity = _WindowFieldHumidity(),
+                              binary_index::Integer = 1)
     temperature = _window_temperature(sim)
-    humidity = _window_humidity(sim.window, run_start)
+    humidity = observation_needs_humidity(sampler) ? _boundary_humidity(humidity, sim, run_start, binary_index) :
+               nothing
     next_window_seconds = Float64(window_dt(sim.driver))
     timed_io_write!(timer, () -> observe_window_boundary!(sampler, sim.model.state, Float64(seconds);
                                                           next_window_seconds, temperature, humidity))

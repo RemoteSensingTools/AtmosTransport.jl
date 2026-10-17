@@ -364,3 +364,58 @@ end
         @test !isfile(joinpath(dir, "obs_soundings.nc"))
     end
 end
+
+# Cubed-sphere binary (Nc = 3, two layers, no fluxes) with a GCHP VDIFF payload
+# whose layer-1 humidity is `q1[w]` in window w (layer 2 dry). The dry air is
+# fixed, (1 − 0.01) Δp A / g with Δp = 49900 and 50000 Pa, so the total
+# interface between the layers is 100 + 49401 / (1 − q1).
+function cs_vdiff_binary(path, q1)
+    FT, Nc, Nz = Float64, 3, 2
+    vc = HybridSigmaPressure(FT[100, 0, 0], FT[0, 0.5, 1])
+    area = CubedSphereMesh(; FT, Nc).cell_areas          # the mesh the runner rebuilds from the header
+    m = ntuple(_ -> cat((1 - 0.01) * 49900 .* area ./ G, 50000 .* area ./ G; dims = 3), 6)
+    p3(v) = ntuple(_ -> fill(FT(v), Nc, Nc, Nz), 6)
+    writer = AtmosTransport.MetDrivers.open_streaming_cs_transport_binary(path, Nc, 6, Nz, length(q1), vc;
+        planet_radius = AtmosTransport.Parameters.EARTH_RADIUS, FT, dt_met_seconds = 3600.0, steps_per_window = 1,
+        mass_basis = :dry, surface_pressure_basis = DrySurfacePressure(), include_gchp_vdiff = true)
+    try
+        for q in q1
+            qv = ntuple(_ -> cat(fill(q, Nc, Nc), zeros(Nc, Nc); dims = 3), 6)
+            window = (m, am = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz), 6), bm = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz), 6),
+                      cm = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), 6),
+                      ps = ntuple(_ -> fill(FT(100 + 0.99 * 49900 + 50000), Nc, Nc), 6),
+                      vdiff = (u = p3(0), v = p3(0), t = p3(280), qv))
+            AtmosTransport.MetDrivers.write_streaming_cs_window!(writer, window, Nc, 6)
+        end
+    finally
+        AtmosTransport.MetDrivers.close_streaming_transport_binary!(writer)
+    end
+    return path
+end
+
+@testset "cubed sphere: a window end takes the next window's VDIFF humidity (issue #20)" begin
+    mktempdir() do dir
+        # q1 = 0.01, 0.03 (binary a), 0.05, 0.07 (binary b): the total interface is 50000, 51028.9,
+        # 52101.6 and 53219.4 Pa. VDIFF qv is a window-start value, so the humidity at 1 h, 2 h and 3 h
+        # is that of the next window: 505, 516 and 527 hPa are in layer 1 with it and in layer 2 with the
+        # ended window's (the lag). The final window end (4 h) takes the ended window's (0.07).
+        a = cs_vdiff_binary(joinpath(dir, "a.bin"), [0.01, 0.03])
+        b = cs_vdiff_binary(joinpath(dir, "b.bin"), [0.05, 0.07])
+        pack = obspack_pressures(joinpath(dir, "co2_cs_aircraft-insitu_1.nc"),
+                                 [ORIGIN + Hour(h) for h in 1:4], [505.0, 516.0, 527.0, 527.0])
+        cfg = Dict{String, Any}(
+            "input" => Dict("binary_paths" => [a, b]),
+            "numerics" => Dict("float_type" => "Float64"),
+            "advection" => Dict("scheme" => "upwind"),
+            "tracers" => Dict("co2" => Dict("init" => Dict("kind" => "uniform", "background" => 400e-6))),
+            "output" => Dict{String, Any}("enabled" => false,
+                "observations" => Dict{String, Any}("path" => joinpath(dir, "obs.nc"),
+                    "start_time" => "2021-12-02T00:00:00",
+                    "sources" => Any[Dict{String, Any}("kind" => "obspack", "mode" => "soundings", "path" => pack)])))
+        quiet(() -> run_driven_simulation(cfg))
+        NCDataset(joinpath(dir, "obs_soundings.nc"), "r") do ds
+            @test all(ds["vertical_placement"][:] .== 2)
+            @test Int.(ds["intake_level"][:]) == [1, 1, 1, 1]       # [2, 2, 2, 1] with the ended window's qv
+        end
+    end
+end

@@ -64,7 +64,8 @@ separate system.
   `missing_height_rule` (`LowestLayerWithoutHeight`, `UnplacedWithoutHeight`),
   `resolve_placement(spec, rule, request, cell, terrain)` → `VerticalPlacement`
   (`VERTICAL_PLACEMENT_CODES`), `placement_layer` / `pressure_layer_index`,
-  and `placement_pressures!` / `check_pressure_basis`
+  `placement_pressures!` / `check_pressure_basis`, and the sampler-free layer
+  rule `column_layer!` with its scratch `PlacementColumn`
 - Gather and host reconstruction, in [`observation_gather.jl`](observation_gather.jl):
   `ObservationGatherBuffers`, `gather_columns!`, `gather_field!`,
   `interface_pressures!`, `total_interface_pressures!`, `layer_heights_agl!`,
@@ -78,7 +79,7 @@ separate system.
 - Sampler, in [`observation_sampler.jl`](observation_sampler.jl):
   `build_observation_sampler`, `begin_observation_day!`,
   `observe_window_boundary!`, `finish_observations!`, `samples_observations`,
-  `NoObservationSampler`
+  `observation_needs_humidity`, `NoObservationSampler`
 
 ## File Map
 
@@ -154,10 +155,14 @@ separate system.
   - On `DryBasis` with pressure-placed requests, `TotalFromHumidity` needs
     humidity: the build fails without it (`has_humidity = false`), and every
     window end must pass it. The runner passes `qv_start` at the run start and
-    `qv_end` at window ends (lat-lon, reduced Gaussian), else the window's GCHP
-    VDIFF `qv` (cubed sphere; a window-start value, so one window old at
-    window ends). Linear interpolation blends it like the masses. The runner
-    sets `has_humidity` only when every binary carries humidity.
+    `qv_end` at window ends (lat-lon binaries with `include_qv`), or on the
+    cubed sphere the next window's window-start VDIFF `qv` (the run's last
+    window end: the ended window's). Reduced-Gaussian binaries carry none.
+    Linear interpolation blends it like the masses. The runner sets
+    `has_humidity` only when every binary carries humidity.
+  - `column_layer!(column::PlacementColumn, placement, z_half, air, area, g,
+    p_top, basis, mass_basis)` is the layer rule, free of the sampler, for any
+    caller that places records in a column.
     Only pressure-placed rows read it, so the other rows do not change with
     the basis.
 - Mixing ratio is tracer storage divided by air mass, and NaN where air mass ≤ 0.

@@ -249,6 +249,30 @@ function load_window!(reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinar
     )
 end
 
+"""
+    load_vdiff_qv_window!(dest, reader, win) -> dest
+
+Copy the GCHP VDIFF specific humidity `:vdiff_qv` of window `win` (the
+window-start humidity, interior panels `(Nc, Nc, Nz)`, k = 1 at the top) into
+the host panels `dest` without loading the rest of the window. Observation
+sampling reads it as the humidity at the end of the previous window.
+"""
+function load_vdiff_qv_window!(dest::NTuple{N, Array{<:AbstractFloat, 3}},
+                               reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
+                               win::Int) where {N}
+    h = reader.header
+    g = h.geometry
+    N == g.npanel || throw(DimensionMismatch("$(N) humidity panels for $(g.npanel) binary panels"))
+    all(p -> size(p) == (g.Nc, g.Nc, h.nlevel), dest) || throw(DimensionMismatch(
+        "humidity panels must be $((g.Nc, g.Nc, h.nlevel)); got $(size.(dest))"))
+    source = _transport_section_view(reader, win, :vdiff_qv)
+    n = g.Nc * g.Nc * h.nlevel
+    for p in 1:g.npanel
+        copyto!(dest[p], 1, source, (p - 1) * n + 1, n)
+    end
+    return dest
+end
+
 function load_flux_delta_window!(
     reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinaryGeometry},
     win::Int; dm = nothing,

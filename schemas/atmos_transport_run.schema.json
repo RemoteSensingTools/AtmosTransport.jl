@@ -801,7 +801,7 @@
           "oneOf": [
             {
               "const": "total",
-              "description": "TotalFromHumidity: total interface pressures p[k+1] = p[k] + g m[k] / (A (1 - q[k])) from the dry air mass and the binary's specific humidity (qv_start/qv_end, or the window-start GCHP VDIFF qv on the cubed sphere); a moist-basis air mass is used as it is. A dry-basis run whose binaries do not all carry humidity fails when any record is placed by pressure."
+              "description": "TotalFromHumidity: total interface pressures p[k+1] = p[k] + g m[k] / (A (1 - q[k])) from the dry air mass and the binary's specific humidity: qv_start/qv_end of lat-lon binaries preprocessed with output.include_qv, or on the cubed sphere the next window's (window-start) GCHP VDIFF qv (include_vdiff_fields); reduced-Gaussian binaries carry none. A moist-basis air mass is used as it is. A dry-basis run whose binaries do not all carry humidity fails when any record is placed by pressure."
             },
             {
               "const": "dry",

@@ -401,7 +401,8 @@ end
             "path" => joinpath(dir, "strict.nc"), "sources" => Any[obspack(pack)])))
         s = quiet(() -> build_observation_sampler(spec, m.state, m.grid; origin = ORIGIN,
                                                   window_seconds = (0.0, 86400.0), halo_width = 0, has_humidity = true))
-        @test s.needs_humidity && s.pressure_basis isa O.TotalFromHumidity
+        @test O.observation_needs_humidity(s) && s.spec.placement.pressure_basis isa O.TotalFromHumidity
+        @test !O.observation_needs_humidity(O.NoObservationSampler())
         begin_observation_day!(s, "20211202", 1)
         @test_throws ArgumentError observe_window_boundary!(s, m.state, 0.0; next_window_seconds = 3600.0)
         @test_throws DimensionMismatch observe_window_boundary!(s, m.state, 0.0; next_window_seconds = 3600.0,
