@@ -136,25 +136,104 @@ exactly — the previous coefficients summed to 58/60 and did not.
 end
 
 # ---------------------------------------------------------------------------
-# ORD=7: Special gnomonic face discontinuity treatment
+# ORD=7: cubed-sphere edge treatment
 #
-# Putman & Lin Appendix C, Eq. 47
-# Averages two one-sided second-order extrapolations at CS face boundaries.
+# Putman & Lin (2007) Appendix C, Eq. 47 at the panel edge; FV3 `tp_core.F90`
+# (`xppm`/`yppm`, `iord < 8` branch) for the one-sided edges beside it.
 # ---------------------------------------------------------------------------
 
 """
     _ppm_face_edge_value_ord7_discontinuous(q_left_0, q_left_1, q_right_0, q_right_1)
+    _ppm_face_edge_value_ord7_discontinuous(FT, q_left_0, q_left_1, q_right_0, q_right_1)
 
 Compute edge value at a gnomonic CS face discontinuity. Averages two one-sided
-second-order extrapolations (Putman & Lin Appendix C, Eq. 47).
+second-order extrapolations (Putman & Lin Appendix C, Eq. 47):
+
+    q_edge = ½ [(3/2 q_left_0 − ½ q_left_1) + (3/2 q_right_0 − ½ q_right_1)]
+
+with `q_left_0`, `q_left_1` the first and second cell on one side of the edge
+and `q_right_0`, `q_right_1` on the other. FV3 weights the two extrapolations
+by the cell widths `dxa`; on the equiangular grid they are equal at a panel
+edge. The `FT` method also accepts the Lin-Rood adjoint's dual numbers.
 """
-@inline function _ppm_face_edge_value_ord7_discontinuous(
-    q_left_0::FT, q_left_1::FT,
-    q_right_0::FT, q_right_1::FT
-) where FT
+@inline _ppm_face_edge_value_ord7_discontinuous(q_left_0::FT, q_left_1::FT,
+                                                q_right_0::FT, q_right_1::FT) where FT =
+    _ppm_face_edge_value_ord7_discontinuous(FT, q_left_0, q_left_1, q_right_0, q_right_1)
+
+@inline function _ppm_face_edge_value_ord7_discontinuous(::Type{FT}, q_left_0, q_left_1,
+                                                         q_right_0, q_right_1) where FT
     extrap_left = FT(3/2) * q_left_0 - q_left_1 / FT(2)
     extrap_right = FT(3/2) * q_right_0 - q_right_1 / FT(2)
-    return (extrap_left + extrap_right) / 2
+    return (extrap_left + extrap_right) / FT(2)
+end
+
+"""
+    _fv3_one_sided_edge_weights(FT) -> (c1, c2, c3) = (-2/14, 11/14, 5/14)
+
+Weights of FV3's one-sided edge value beside a cube edge (`tp_core.F90`,
+parameters `c1`, `c2`, `c3`): the edge between cells 1 and 2 is
+`c3 q_1 + c2 q_2 + c1 q_3`, built from cells 1-3 on the panel's own side only.
+Exact for linear profiles.
+"""
+@inline _fv3_one_sided_edge_weights(::Type{FT}) where {FT} =
+    (FT(-2) / FT(14), FT(11) / FT(14), FT(5) / FT(14))
+
+"""
+    _ppm_face_edge_value_ord7(FT, q_mm, q_m, q_p, q_pp, face, Nc)
+
+Unlimited ORD=7 edge value of panel-local face `face` (face `f` lies between
+cells `f-1` and `f`; the panel seams are faces `1` and `Nc + 1`) from the cells
+`f-2, f-1, f, f+1` = `(q_mm, q_m, q_p, q_pp)`. Every face has exactly one value,
+used by both cells beside it, as FV3's `al(i)` (`tp_core.F90`, `xppm`/`yppm`,
+`iord < 8` on the cube):
+
+| face            | value                                                            | FV3            |
+|:----------------|:-----------------------------------------------------------------|:---------------|
+| `1`, `Nc + 1`   | seam: `_ppm_face_edge_value_ord7_discontinuous(q_m, q_mm, q_p, q_pp)` | `al(1)`, `al(npx)` |
+| `2`, `Nc + 2`   | one-sided from the cells after the seam: `c3 q_m + c2 q_p + c1 q_pp` | `al(2)`, `al(npx+1)` |
+| `0`, `Nc`       | one-sided from the cells before the seam: `c1 q_mm + c2 q_m + c3 q_p` | `al(0)`, `al(npx-1)` |
+| otherwise       | fourth-order `7/12 (q_m + q_p) - 1/12 (q_mm + q_pp)`              | `al(i)`        |
+
+so no edge of the two cells beside a seam is built from a stencil that
+crosses it (`c1, c2, c3` from `_fv3_one_sided_edge_weights`). Faces `0` and
+`Nc + 2` are the outer edges of the halo cells that donate across a seam.
+Requires `Nc ≥ 3`, which every Lin-Rood run satisfies: its halo width is 3
+(`required_halo_width(::LinRoodPPMScheme)`) and the halo exchange rejects
+`Hp > Nc`. Generic in the cell-value type so the adjoint can pass its dual
+numbers.
+"""
+@inline function _ppm_face_edge_value_ord7(::Type{FT}, q_mm, q_m, q_p, q_pp,
+                                           face::Integer, Nc::Integer) where FT
+    if face == 1 || face == Nc + 1
+        return _ppm_face_edge_value_ord7_discontinuous(FT, q_m, q_mm, q_p, q_pp)
+    end
+    c1, c2, c3 = _fv3_one_sided_edge_weights(FT)
+    if face == 2 || face == Nc + 2
+        return c3 * q_m + c2 * q_p + c1 * q_pp
+    elseif face == 0 || face == Nc
+        return c1 * q_mm + c2 * q_m + c3 * q_p
+    end
+    p1, one_twelfth = _ppm_edge_weights(FT)    # (7/12, 1/12), as `_ppm_edge_values_ord5`
+    p2 = -one_twelfth
+    return p1 * (q_m + q_p) + p2 * (q_mm + q_pp)
+end
+
+"""
+    _ppm_edge_values_ord7(FT, c_m3, c_m2, c_m1, c_0, c_p1, c_p2, face, Nc)
+        -> (q_L_m, q_R_m, q_L_0, q_R_0)
+
+Unlimited ORD=7 edges of the two cells beside face `face`: the left cell
+`face-1` spans faces `face-1` and `face`, the right cell `face` spans `face` and
+`face+1` (`_ppm_face_edge_value_ord7`). The shared face carries one value,
+`q_R_m == q_L_0`. Away from the seams this equals two `_ppm_edge_values_ord5`
+calls bit for bit.
+"""
+@inline function _ppm_edge_values_ord7(::Type{FT}, c_m3, c_m2, c_m1, c_0, c_p1, c_p2,
+                                       face::Integer, Nc::Integer) where FT
+    q_lo  = _ppm_face_edge_value_ord7(FT, c_m3, c_m2, c_m1, c_0, face - 1, Nc)
+    q_mid = _ppm_face_edge_value_ord7(FT, c_m2, c_m1, c_0, c_p1, face, Nc)
+    q_hi  = _ppm_face_edge_value_ord7(FT, c_m1, c_0, c_p1, c_p2, face + 1, Nc)
+    return (q_lo, q_mid, q_mid, q_hi)
 end
 
 # ---------------------------------------------------------------------------
@@ -180,8 +259,7 @@ end
 end
 
 @inline function _ppm_edge_values(q_imm::FT, q_im::FT, q_i::FT, q_ip::FT, q_ipp::FT, ::Val{7}) where FT
-    # ORD=7 uses the same 4th-order interior reconstruction as ORD=5; the special
-    # gnomonic CS face-discontinuity treatment is applied at the kernel level via
-    # _apply_ord7_boundary().
+    # ORD=7 uses the same 4th-order interior reconstruction as ORD=5; the Lin-Rood
+    # face kernels build its cube-edge values per face (`_ppm_edge_values_ord7`).
     return _ppm_edge_values_ord5(q_imm, q_im, q_i, q_ip, q_ipp)
 end

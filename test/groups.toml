@@ -142,6 +142,7 @@ files = [
     "core/test_linrood_seams.jl",
     "core/test_cs_ppm_launch_layouts.jl",
     "core/test_binary_cfl_check.jl",
+    "core/test_subcycle_composition.jl",
 ]
 paths = [
     "src/Operators/Advection/**",

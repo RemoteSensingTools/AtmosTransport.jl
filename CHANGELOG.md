@@ -146,6 +146,59 @@
 - The ledgers rely on IEEE arithmetic without fast-math reassociation (which
   would break `TwoSum`). They are tested on CPU and CUDA; the Metal checks
   (`test/diagnostic/test_metal_kernels.jl`) have not been run yet.
+- **Runtime CFL subcycling runs whole palindromes' worth of passes**
+  (issue #61). When the runtime pilot needs `n > 1` subcycles, a transport step
+  now runs `(X Y Z)^n → midpoint → (Z Y X)^n` with every flux divided by `n`
+  (`(H V)^n → midpoint → (V H)^n` on reduced Gaussian) instead of
+  `X^n Y^n Z^n | Z^n Y^n X^n`. The new composition is symmetric (second
+  order, same `6n` sweeps) and identical at `n = 1`. The old order subcycled
+  each direction alone, so the passes of one leg still removed that
+  direction's full-flux outflow before another direction refilled the cell:
+  in exactly non-divergent flows air mass went negative (to −0.46 of a cell's
+  mass at C12, n = 6) and uniform tracers were lost. All topologies now take
+  one count from the palindrome budget
+  `2 (out_x + out_y + out_z) / (n m_ref) ≤ cfl_limit` with
+  `m_ref = min(m, m_end)`, `m_end = m + 2 (in − out)` the cell's mass after
+  the step (the reference mass of the write-time positivity gate). Between
+  `X Y Z` blocks a cell's mass lies between `m` and `m_end`, so every pass
+  removes at most `cfl_limit / 2` of the mass the cell holds when it starts
+  and air mass stays positive through the step. Budgeting against the
+  step-start mass `m` alone (main's per-direction counts too) does not bound
+  a cell that drains within the step: one cell of mass 1 among cells of 100
+  with inflow 1.51 in x and outflow 2.0 in y got `n = 5`, its air mass went
+  negative, and PPM gave a mixing ratio of −1.7e43 (now `n = 211`). A cell
+  with outflow and `m_ref ≤ 0`, or a non-finite flux, throws an
+  `ArgumentError` (main also failed, with an "exceeded max_n_sub" error);
+  the lat-lon and
+  reduced-Gaussian default `cfl_limit` is `DEFAULT_CFL_LIMIT` (0.95, was 1.0
+  per direction), like the cubed sphere. The footprint/4D-Var tape recorders
+  record the same composition. Only runs whose pilot returns `n > 1` change:
+  cubed-sphere binaries with the `binary_schedule` contract run `n = 1`, and
+  lat-lon binaries written with the default positivity gate (the same
+  palindrome budget) stay below it. The reduced-Gaussian write-time gate still
+  bounds horizontal and vertical outflow separately (each `≤ 0.95 m`), so a
+  reduced-Gaussian binary near that gate can now subcycle at run time (static
+  palindrome ratio up to 3.8, `n = 4`). Golden outputs do not change: their
+  worst static ratios are below the budget (`pre_o24`: 0.61). The per-direction
+  pass-count helpers (`_x/_y/_z_subcycling_pass_count`, the face-indexed
+  `_sweep_*_face_subcycled!`) are removed; the corrected
+  `operators_on_binaries.md` no longer claims the per-leg counts keep mass
+  positive.
+- **`PositivityLimiter` keeps downhill slopes** (issue #62). Its slope was
+  `minmod(s_c, c_i)`, which is zero whenever the centred slope is negative, so
+  the limiter acted as a sign test and treated rising and falling profiles
+  differently (mirror asymmetry 0.25 in a 1-D test). It now keeps the sign
+  and clips the magnitude to `|s| ≤ 2 c_i`, the bound that keeps both face
+  values non-negative. Selectable only from Julia (`SlopesScheme(PositivityLimiter())`).
+- **Lin–Rood `ppm_order = 7` uses one edge value per face** (issue #62). The
+  seam value replaced the edges only at the panel-edge faces, so the face
+  kernels rebuilt the cell next to a seam with a cross-seam fourth-order edge
+  when they evaluated its interior face. ORD=7 now follows FV3's cube-edge
+  values (`tp_core.F90`, `iord < 8`): the Putman–Lin seam average at the
+  panel edge and one-sided `5/14, 11/14, −2/14` edges on the faces beside it,
+  in the forward and adjoint kernels alike. Solid-body rotation errors fall
+  by 10–31% (C8–C64). Runs with `ppm_order = 7` change; `ppm_order = 5` (the
+  default, and all golden cases) is bit-identical.
 
 ### Fixes
 

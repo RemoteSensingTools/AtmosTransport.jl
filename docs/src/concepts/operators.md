@@ -283,11 +283,11 @@ The directional advection shell is a palindrome. Its center follows the
 diffusion operator's surface-coupling policy:
 
 ```text
-forward:   X → Y → Z   (each direction CFL-subcycled)
+forward:   (X → Y → Z) × n   (fluxes / n; n = 1 unless CFL subcycling is needed)
 center A:  V(dt/2) → S(dt) → V(dt/2)   (default symmetric Strang split)
 center B:  S(dt) → V(dt)               (LL/CS source-before-full-solve policy)
            [without surface flux, the center is one V(dt); NoDiffusion is a no-op]
-reverse:   Z → Y → X   (same subcycle counts)
+reverse:   (Z → Y → X) × n   (same n; the center runs once)
 post:      apply!(convection)   (convection is outside the palindrome)
            apply!(chemistry)    (chemistry is outside the palindrome)
 ```

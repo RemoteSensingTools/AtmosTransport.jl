@@ -96,30 +96,62 @@ time; the runtime sees the typed value and dispatches at compile
 time. *There is no runtime branch on the scheme name.* Subtyping is
 the extension mechanism.
 
-### Cubed-sphere palindrome and the positivity budget
+### Palindrome subcycling and the positivity budget
 
-The CS Strang split is a six-leg palindrome: `X → Y → Z → Z → Y → X`.
-Each leg may be **subcycled** by an integer count `n_x`, `n_y`, `n_z`
-chosen to keep tracer mass positive. The subcycle count comes from a
-*palindrome positivity budget* tighter than per-direction CFL:
+The Strang split is a six-leg palindrome, `X → Y → Z → midpoint → Z → Y → X`
+(`H → V → midpoint → V → H` on reduced Gaussian). Every leg moves one stored
+substep flux, so each direction is applied twice per transport step. A cell's
+outflow over one palindrome is therefore bounded by the *palindrome positivity
+budget*
 
 ```
-ratio = 2 · (out_x + out_y + out_z) / m_start
-n_sub = ceil(ratio / safety_factor)
+ratio = 2 · (out_x + out_y + out_z) / min(m_start, m_end)
+m_end = m_start + 2 · (in_x + in_y + in_z − out_x − out_y − out_z)
 ```
 
 with `out_d = max(0,-a_lo) + max(0,a_hi)` (the Lin-Rood 1996
-refinement, not `max(|a_lo|, |a_hi|)`). The factor of 2 is because
-the palindrome traverses each direction twice. The preprocessor's positivity
-gate uses the same budget against `min(m, m_next)`, for cubed-sphere and
-lat-lon binaries alike. For binaries written
+refinement, not `max(|a_lo|, |a_hi|)`) and `in_d − out_d = a_lo − a_hi`;
+`m_end` is the cell's mass after the palindrome. The preprocessor's
+positivity gate uses the same budget against `min(m, m_next)` with the
+window's end mass `m_next`, for cubed-sphere and lat-lon binaries alike. For binaries written
 with adaptive substeps, the preprocessor bakes the verified count into
 `steps_per_window_by_window[k]`. The binary-scheduled runtime executes exactly
-that many transport substeps and fixes the inner directional subcycle count at
+that many transport substeps and fixes the inner subcycle count at
 one; it neither re-pilots nor refines the stored schedule.
 
-This is the analogue of TM5's CFL-driven substep, hardened against
-the palindrome's specific stacking pattern.
+Without a binary schedule (lat-lon and reduced-Gaussian binaries, direct calls
+of the Strang functions) the runtime picks one subcycle count for the whole
+step, `n = ceil(ratio / cfl_limit)` with `cfl_limit = 0.95`
+(`DEFAULT_CFL_LIMIT`) on every topology, and runs the symmetric composition
+
+```
+(X → Y → Z)^n → midpoint operators → (Z → Y → X)^n,    every flux divided by n
+```
+
+with the midpoint (diffusion, surface flux) applied once. At `n = 1` this is
+the palindrome above. The reverse half is the adjoint of the forward half, so
+the composition stays symmetric and keeps second-order splitting with the
+same `6n` sweeps; FV3's `fv_tracer2d` likewise repeats its whole 2-D operator
+`nsplt` times at flux / `nsplt`.
+
+What the runtime count guarantees: the midpoint does not change air mass and
+every `X Y Z` (or `Z Y X`) block changes a cell's mass by the same amount, so
+the masses between blocks lie between `m_start` and `m_end`; one block removes
+at most `(cfl_limit / 2) · min(m_start, m_end)`. Hence every pass removes at
+most `cfl_limit / 2` (47.5%) of the mass the cell holds when the pass starts,
+and air mass stays positive through the whole step. A cell with outflow and
+`min(m_start, m_end) ≤ 0` is an invalid flux set and the count throws an
+`ArgumentError`. Budgeting against `m_start` alone (the earlier rule) fails in
+cells that drain within the step: their later blocks start well below
+`m_start` (`test/core/test_subcycle_composition.jl` has such a cell, where
+that rule drove air mass negative). Subcycling each
+direction separately (`X^n Y^n Z^n | Z^n Y^n X^n`, the order of 0.5.0 and earlier)
+does not have this property: the `n` passes of one leg together remove the
+full-flux outflow of that direction before another direction can refill the
+cell, so in non-divergent flows the air mass went negative and uniform tracers
+were lost (issue #61). TM5 keeps per-direction loops but steps the mass through
+them and shortens the whole step when a loop would fail
+(`advectm_cfl.F90`, `Check_CFL`).
 
 ### Multi-tracer fusion
 

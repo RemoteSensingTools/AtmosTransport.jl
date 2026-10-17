@@ -401,49 +401,19 @@ end
 end
 
 # ---------------------------------------------------------------------------
-# ORD=7 discontinuous-edge boundary correction.
+# ORD=7 cube-edge treatment.
 #
-# At gnomonic CS face boundaries (`face_idx == 1` or `face_idx == Nc + 1`)
-# the forward `_apply_ord7_boundary` (LinRood.jl:186) overrides `q_R_m`
-# and `q_L_0` with the same discontinuous edge value `q_bdy`. The forward
-# formula (`_ppm_face_edge_value_ord7_discontinuous` at
-# `ppm_subgrid_distributions.jl:168`) is LINEAR in the four stencil
-# cells (c_m1, c_m2, c_0, c_p1):
-#
-#     extrap_left  = (3/2) c_m1 - (1/2) c_m2
-#     extrap_right = (3/2) c_0  - (1/2) c_p1
-#     q_bdy        = (extrap_left + extrap_right) / 2
-#                  = (3/4) c_m1 - (1/4) c_m2 + (3/4) c_0 - (1/4) c_p1
-#
-# So `∂q_bdy/∂c_m2 = -1/4`, `∂q_bdy/∂c_m1 = +3/4`, `∂q_bdy/∂c_0 = +3/4`,
-# `∂q_bdy/∂c_p1 = -1/4`, and `c_m3`/`c_p2` do not contribute. The d6
-# wrapper handles this automatically because the D6 algebra is closed
-# under linear combinations.
-#
-# Returns the (possibly overridden) edge tuple `(q_L_m, q_R_m, q_L_0,
-# q_R_0)` in d6 form. For `face_idx` in the interior, this returns its
-# arguments unchanged — same compile-time elimination pattern as the
-# forward `_apply_ord7_boundary` for `ORD != 7`.
-@inline function _apply_ord7_boundary_d6(
-    q_L_m::D6{FT}, q_R_m::D6{FT}, q_L_0::D6{FT}, q_R_0::D6{FT},
-    c_m1::D6{FT}, c_m2::D6{FT}, c_0::D6{FT}, c_p1::D6{FT},
-    face_idx::Integer, Nc::Integer,
-) where {FT}
-    if face_idx == 1 || face_idx == Nc + 1
-        half = one(FT) / FT(2)
-        three_halves = FT(3) / FT(2)
-        extrap_left  = three_halves * c_m1 - c_m2 * half
-        extrap_right = three_halves * c_0  - c_p1 * half
-        q_bdy = (extrap_left + extrap_right) * half
-        return (q_L_m, q_bdy, q_bdy, q_R_0)
-    end
-    return (q_L_m, q_R_m, q_L_0, q_R_0)
-end
+# The forward ORD=7 edges (`_ppm_edge_values_ord7`, ppm_subgrid_distributions.jl)
+# give every face one value: the Putman & Lin seam average at faces 1 and
+# Nc + 1, FV3's one-sided values at faces 0, 2, Nc and Nc + 2, and the
+# fourth-order interpolation elsewhere. Each value is LINEAR in its four
+# stencil cells and generic in the number type, so the adjoint evaluates the
+# forward function itself on `D6` duals: the values (and therefore the
+# monotonicity branches) are the forward ones, and the gradients are exact.
+# Away from the seams it reduces to the ORD=5 chain bit for bit.
+# ---------------------------------------------------------------------------
 
-# ORD=7 from-q grad. Same chain as ORD=5 with the discontinuous boundary
-# correction inserted between `_ppm_edge_values_ord5_d6` and
-# `_apply_monotonicity_d6`. Identical to `_linrood_ppm_face_from_q_grad_ord5`
-# at interior faces (since `_apply_ord7_boundary_d6` is the identity there).
+# ORD=7 from-q grad. Same chain as ORD=5 with the per-face ORD=7 edges.
 @inline function _linrood_ppm_face_from_q_grad_ord7(
     F::FT, m_l::FT, m_r::FT,
     q_m3::FT, q_m2::FT, q_m1::FT, q_0::FT, q_p1::FT, q_p2::FT,
@@ -456,10 +426,8 @@ end
     c_p1 = _d6_var(q_p1, Val(5))
     c_p2 = _d6_var(q_p2, Val(6))
 
-    q_L_m, q_R_m = _ppm_edge_values_ord5_d6(c_m3, c_m2, c_m1, c_0, c_p1)
-    q_L_0, q_R_0 = _ppm_edge_values_ord5_d6(c_m2, c_m1, c_0, c_p1, c_p2)
-    q_L_m, q_R_m, q_L_0, q_R_0 = _apply_ord7_boundary_d6(
-        q_L_m, q_R_m, q_L_0, q_R_0, c_m1, c_m2, c_0, c_p1, face_idx, Nc)
+    q_L_m, q_R_m, q_L_0, q_R_0 = _ppm_edge_values_ord7(
+        FT, c_m3, c_m2, c_m1, c_0, c_p1, c_p2, face_idx, Nc)
     q_L_m, q_R_m = _apply_monotonicity_d6(q_L_m, q_R_m, c_m1)
     q_L_0, q_R_0 = _apply_monotonicity_d6(q_L_0, q_R_0, c_0)
 
@@ -516,9 +484,8 @@ end
 
 # ORD=7 from-q x-face adjoint kernel. Identical to the ORD=5 kernel
 # except the per-thread grad function takes `face_idx (= iif)` and `Nc`
-# so it can apply the discontinuous boundary correction at panel edges
-# (`iif == 1` or `iif == Nc + 1`). Compile-time eliminates to the ORD=5
-# computation at interior faces.
+# for the cube-edge treatment of the faces at and next to the panel edges
+# (`_ppm_edge_values_ord7`). Elsewhere it equals the ORD=5 computation.
 @kernel function _ppm_x_face_from_q_kernel_adjoint_ord7!(
     lambda_q,
     @Const(lambda_fx_face), @Const(q), @Const(am), @Const(m),
@@ -566,10 +533,10 @@ treated as fixed parameters from the tape — the adjoint propagates only
 the q-stencil sensitivity. Atomic writes on `lambda_q` because multiple
 faces share each cell.
 
-`ORD=7` dispatches to a kernel that applies the linear discontinuous
-boundary correction (`_apply_ord7_boundary_d6`) at panel-edge faces
-(`face_idx ∈ {1, Nc+1}`) before the monotonicity step; interior faces
-are bit-equal to ORD=5.
+`ORD=7` dispatches to a kernel that evaluates the forward per-face
+cube-edge values (`_ppm_edge_values_ord7`) on dual numbers before the
+monotonicity step; faces whose stencil is clear of the faces at and next
+to the panel edges are bit-equal to ORD=5.
 """
 function apply_ppm_x_face_from_q_adjoint!(lambda_q, lambda_fx_face,
                                           q, am, m,
@@ -634,8 +601,7 @@ end
 end
 
 # ORD=7 from-q y-face adjoint kernel. Mirrors the ORD=5 kernel with
-# `face_idx = jf` driving the discontinuous boundary correction at
-# panel-edge faces.
+# `face_idx = jf` selecting the ORD=7 cube-edge values.
 @kernel function _ppm_y_face_from_q_kernel_adjoint_ord7!(
     lambda_q,
     @Const(lambda_fy_face), @Const(q), @Const(bm), @Const(m),

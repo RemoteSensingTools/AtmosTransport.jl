@@ -52,6 +52,10 @@ Perform one full Strang-split advection step on a structured mesh.
   half    half   full  half    half
 ```
 
+When the palindrome outflow budget needs `n > 1` subcycles, the step runs
+`(X → Y → Z)^n → midpoint → (Z → Y → X)^n` with every flux divided by `n`
+(see [`strang_split_mt!`](@ref)).
+
 All `Nt = ntracers(state)` tracers are advanced together in a single
 multi-tracer kernel launch per direction. The mass update is computed
 once per cell; tracer fluxes are evaluated per-tracer inside the
@@ -72,7 +76,7 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                        scheme::AbstractAdvectionScheme;
                        workspace::AdvectionWorkspace,
                        diffusion_workspace = nothing,
-                       cfl_limit::Real = one(eltype(state.air_mass)),
+                       cfl_limit::Real = DEFAULT_CFL_LIMIT,
                        diffusion_op::AbstractDiffusion = NoDiffusion(),
                        emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                        meteo = nothing,
