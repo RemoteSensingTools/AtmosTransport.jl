@@ -314,7 +314,9 @@
   on the CPU and on CUDA (L40S). Internal API: the one-argument
   `_tape_panels(slot)` and `_ensure_tape_read_cache!` are replaced by
   `_tape_panels(slot, role)`, `_register_tape_read_backend!` and
-  `_tape_read_cache!`; the mmap field `device_caches` became `read_caches`.
+  `_tape_read_cache!`; the mmap field `device_caches` became `read_caches`,
+  and the pinned-host field `device_cache` became `read_template` and
+  `read_caches`.
 - **Cubed-sphere adjoint replays and tapes now follow the production step**
   (issue #60, pera-noaa). Two differences between the adjoint's forward model
   (`run_cs_footprint_forward`, the 4D-Var simulated values, the tape

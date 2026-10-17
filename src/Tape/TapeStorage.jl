@@ -214,7 +214,10 @@ end
 # The read cache of `role` for the shapes of `panels`, allocated on first use
 # on the backend of `read_template` (else of `panels`). One cache per role
 # keeps the operands of one reverse kernel apart; one per shape lets a storage
-# hold slots of different shapes.
+# hold slots of different shapes. Two reads of the same role and shape return
+# the same buffer, so a record whose reverse kernel reads two staged states
+# must give them different roles (a new role type if needed), or the kernel
+# sees one operand twice (issue #57).
 function _tape_read_cache!(storage::AbstractHostCSTapeStorage,
                            role::AbstractTapeReadRole, panels::NTuple{6})
     key = (role, ntuple(p -> size(panels[p]), 6))
