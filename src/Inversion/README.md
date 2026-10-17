@@ -5,9 +5,10 @@ cost and gradient, background covariance, preconditioning, and optimizers.
 
 This folder builds on the footprint machinery in [`../Footprint/`](../Footprint/).
 Controls are surface emission-rate fields grouped into named time windows.
-Observations are scalar objectives (layer means, column means, and in-situ
-point samples placed in the column) sampled after one model step or averaged
-over the steps of a time window. Gradients come from one reverse-mode sweep
+Observations are scalar objectives (layer means, column means, in-situ
+point samples placed in the column, and averaging-kernel columns of satellite
+and TCCON retrievals) sampled after one model step or averaged over the steps
+of a time window. Gradients come from one reverse-mode sweep
 that carries every observation's weighted departure, not from finite
 differences. Observations and departures can be read from and written to
 versioned NetCDF schemas (v2).
@@ -31,7 +32,12 @@ use them. `bind_to_mesh` uses the forward observation sampler's cell lookup
 (`Output.cell_locator` / `locate`) and placement rule
 (`Output.resolve_placement`, `VerticalPlacementSpec`, `ObservationTerrain`,
 the unplaced policy), and placed point observations choose their layer with
-`Output.sample_column_layer!`. Terrain files are read by the caller
+`Output.sample_column_layer!`. Averaging-kernel columns use the shared
+operator of `Output` (`RetrievalColumn`, `retrieval_column_weights!`,
+`retrieval_prior_offset`, `retrieval_profile!`,
+`retrieval_model_error_variance`, in
+`../Output/observations/retrieval_column.jl`) on the interface pressures of
+`Output.placement_pressures!`. Terrain files are read by the caller
 (`GriddedIO`, loaded after `Adjoints`) and passed in as an
 `ObservationTerrain`.
 
@@ -44,7 +50,8 @@ the unplaced policy), and placed point observations choose their layer with
   `CSObservationStencil` per observation). `scheme` is required so an
   inversion cannot silently choose a different forward/adjoint advection
   operator; `column_met` (a `CSObservationColumnMet`) is required when any
-  observation is a `CSPlacedPointObjective`.
+  observation is a `CSPlacedPointObjective` or a
+  `CSRetrievalColumnObjective`.
 - [`Optimizer.jl`](Optimizer.jl): `cs_surface_flux_4dvar_optimize(...;
   optimizer)` and `cs_surface_flux_4dvar_solve(opt, cost_fn, controls)`.
   Backends are `CSGradientDescent` and `CSLBFGS` (`Optim.LBFGS`).
@@ -57,9 +64,11 @@ the unplaced policy), and placed point observations choose their layer with
   `CSSurfaceFluxPreconditioner(covariance, background, optim_type)` with
   `LinearOptimType` or `LogNormalOptimType`; and `apply_preconditioner!`
   with its `_inverse!`, `_tangent!`, and `_adjoint!` forms.
-- File IO: `read_observations` / `write_observations` (schema v2), then
+- File IO: `read_observations` / `write_observations` (schema v2, with the
+  optional retrieval block of averaging-kernel columns), then
   `bind_to_mesh(set, mesh, t_start, dt; nsteps, tracer_filter,
-  out_of_range_policy, placement, terrain)` (records to `CSObservation`s),
+  out_of_range_policy, placement, terrain, max_surface_pressure_mismatch_pa)`
+  (records to `CSObservation`s),
   then `build_departure_set(set, result::CS4DVarResult, mesh, t_start, dt,
   nsteps)` and `read_departures` / `write_departures` (schema v2).
 
@@ -70,22 +79,31 @@ the unplaced policy), and placed point observations choose their layer with
   result, and iteration-log types
 - [`ObservationColumns.jl`](ObservationColumns.jl) — `CSObservationColumnMet`
   (model top, gravity, layer temperature, humidity; static or per step), the
-  per-step layer of a placed point observation (`_placed_level`), and
-  `_sample_objective` (value, linear functional and level of any objective
-  on a replayed state)
+  per-step layer of a placed point observation (`_placed_level`),
+  `_sample_objective` (value, linear functional, level and averaging-kernel
+  diagnostics of any objective on a replayed state; the averaging-kernel
+  column's weights `H_k/max(m_k, ε)` on its cell's total interface
+  pressures), and the surface-pressure screen of averaging-kernel columns
+  (`_screen_surface_pressure`)
 - [`ObservationsIO.jl`](ObservationsIO.jl) — `CSObservationRecord` (with
-  `PointObservationKind` / `ColumnObservationKind`), `CSObservationSet`, and
-  the NetCDF reader/writer for `schemas/cs_observations_v2.toml` (v1 files
+  `PointObservationKind` / `ColumnObservationKind` and an optional
+  `retrieval::Output.RetrievalColumn`), `CSObservationSet`, and the NetCDF
+  reader/writer for `schemas/cs_observations_v2.toml`, including the optional
+  NaN-padded retrieval block (units, ordering and padding checks; v1 files
   are rejected)
 - [`ObservationBinding.jl`](ObservationBinding.jl) — `bind_to_mesh`: time to
   a `CSTimeSampling` (instantaneous or Δt/ΣΔt window), (lat, lon) to the
   containing `(panel, i, j)`, point records to `CSPlacedPointObjective`s with
-  the forward placement rule, column records to column means; the
-  out-of-range and unplaced policies
+  the forward placement rule, column records with a retrieval block to
+  `CSRetrievalColumnObjective`s (pressure basis, surface-pressure limit and
+  unplaced policy of the placement), other column records to column means;
+  the out-of-range and unplaced policies
 - [`DeparturesIO.jl`](DeparturesIO.jl) — `CSDepartureRecord`,
   `CSDepartureSet`, `build_departure_set` (joins a 4D-Var result to the
   records by id), and strict v2 NetCDF IO for `schemas/cs_departures_v2.toml`
-  (sampled steps, weights and levels as a ragged `sample` dimension)
+  (sampled steps, weights and levels as a ragged `sample` dimension; the
+  optional block of averaging-kernel columns: surface-pressure mismatch,
+  retrieval-level model profile, profile model sigma, assimilated flag)
 - [`Covariance.jl`](Covariance.jl) — `B^(1/2) = D·L`, built per panel
   from the FFT spectral square root of a periodic Gaussian
 - [`Preconditioning.jl`](Preconditioning.jl) — χ <-> x transforms and their
@@ -95,8 +113,9 @@ the unplaced policy), and placed point observations choose their layer with
   one reverse walk per objective under `FullCheckpoint`)
 - [`CostGradient.jl`](CostGradient.jl) — control validation and rate
   assembly, diagonal background term, preconditioned path, and
-  `cs_surface_flux_4dvar` (forward run, weighted departures, one taped run
-  and one reverse pass with the step forcing)
+  `cs_surface_flux_4dvar` (forward run, weighted departures of the
+  assimilated observations, one taped run and one reverse pass with the step
+  forcing)
 - [`Optimizer.jl`](Optimizer.jl) — `AbstractCSOptimizer` backends and
   `cs_surface_flux_4dvar_optimize`
 
@@ -120,6 +139,9 @@ the unplaced policy), and placed point observations choose their layer with
   `Output.sample_column_layer!`; the forward sampler and the inversion change
   together, and the parity test in `test_cs_4dvar_placed_observations.jl`
   guards them.
+- Changing the averaging-kernel operator: edit
+  `../Output/observations/retrieval_column.jl`; the TM5 reference values and
+  the transcription in `test_cs_4dvar_retrieval_columns.jl` guard it.
 - Running an end-to-end inversion: `scripts/inversions/cs_4dvar.jl` with
   `config/inversions/*.toml`.
 
@@ -171,6 +193,21 @@ the unplaced policy), and placed point observations choose their layer with
   total or dry interface pressures), never fixed at binding: the vertical
   stencil follows the meteorology, as TM5 recomputes it from `gph` per step,
   and every vertical coordinate (height and pressure) is in the adjoint.
+- An averaging-kernel column (`CSRetrievalColumnObjective`) builds its
+  weights at every sampled state: the cell's interface pressures of its
+  pressure basis (total from the humidity by default) stretched onto the
+  retrieval column and rebinned onto its layers (TM5-4DVAR's operator),
+  ``X = Σₖ Hₖ xₖ + Σᵢ hᵢ(1 − aᵢ) x_a,ᵢ`` on the dry mixing ratios; its
+  functional has weights `Hₖ/max(mₖ, ε)` on every level and the prior term as
+  offset. Its model-error term `Σᵢ (hᵢ aᵢ σᵢ)²` (a record with
+  `retrieval_prior_sigma`) is added to σ² at binding: it depends on the record
+  only, so it is frozen for the inversion. A record whose time-weighted
+  model minus retrieval surface pressure exceeds
+  `max_surface_pressure_mismatch_pa` follows the unplaced policy at the
+  forward replay: an error, or (`SkipUnplaced`) reported with
+  `assimilated = false` in its stencil and left out of the cost and the
+  gradient (the same records in every iteration; counted in one log
+  message).
 - Precision: the model `FT` comes from the panels. Window weights are
   stored as `Float64` and converted to `FT` when used.
   `IsotropicGaussianCSCovariance` floors each 1-D spectrum at
@@ -206,6 +243,11 @@ the unplaced policy), and placed point observations choose their layer with
     (parity with the forward sampler, 10 m vs 5 km samples, total vs dry
     pressure, per-step layers, window = Δt-weighted single steps, single
     sweep vs per-observation footprints, finite differences).
+  - Averaging-kernel columns: `test_cs_4dvar_retrieval_columns.jl` (TM5
+    Fortran reference values and transcription, rebin conservation,
+    column-mean equivalence, the schema block, single sweep vs seeded
+    footprints, finite differences with windows, the mismatch policy,
+    departures).
   - Driver: `test_cs_inversion_driver.jl` runs
     `config/inversions/example_synthetic.toml`, and an observation file on
     the `synthetic_hydrostatic` meteorology.

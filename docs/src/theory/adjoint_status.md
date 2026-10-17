@@ -34,7 +34,7 @@ The shipped pieces, all exported through `AtmosTransport.Adjoints`:
 | `cs_surface_emission_footprint` | Forward → tape → reverse pass driver for CS, returning `dJ/dE_t` at every surface step |
 | `cs_surface_emission_footprint_from_seed` | Same, but accepts an explicit final `dJ/drm` seed for arbitrary observation operators |
 | `cs_surface_flux_jacobian` | Batches layer/column objectives on one recorded tape (one reverse walk per objective), aggregates per-step footprints into named user windows |
-| `cs_surface_flux_4dvar` | 4D-Var cost / gradient with named controls, scalar observations sampled at one step or over a time window (layer, column-mean, and point samples placed in the column), diagonal background; one taped run and one reverse pass per gradient, whatever the number of observations ([single-sweep gradient](@ref single-sweep-4dvar-gradient), [observation operators](@ref placed-observation-operator)) |
+| `cs_surface_flux_4dvar` | 4D-Var cost / gradient with named controls, scalar observations sampled at one step or over a time window (layer, column-mean, point samples placed in the column, and averaging-kernel columns), diagonal background; one taped run and one reverse pass per gradient, whatever the number of observations ([single-sweep gradient](@ref single-sweep-4dvar-gradient), [observation operators](@ref placed-observation-operator), [averaging-kernel columns](@ref retrieval-column-operator)) |
 | `cs_surface_flux_4dvar_optimize` | Dependency-free gradient-descent driver for the above |
 | `cs_surface_flux_4dvar_solve` | Production driver with optimizer choice (`CSGradientDescent` / `CSLBFGS`) |
 
@@ -160,8 +160,10 @@ with weights from the replayed air mass at each ``s``:
 ``w = 1/\max(m, \epsilon)`` on one cell for `CSLayerMeanObjective` and for
 the layer a `CSPlacedPointObjective` reads at that step (``\epsilon`` the
 machine epsilon, the floor of its evaluation), ``w = 1/\sum_k m_k`` on every
-level of a column for `CSColumnMeanObjective`, and ``c_i = 0`` (the offset
-carries tracer-independent terms such as an averaging kernel's prior term).
+level of a column for `CSColumnMeanObjective`, and ``c_i = 0``; an
+averaging-kernel column (`CSRetrievalColumnObjective`) has
+``w_k = H_k/\max(m_k, \epsilon)`` on every level and its prior term as the
+offset ``c_i`` ([averaging-kernel columns](@ref retrieval-column-operator)).
 Its gradient ``\partial H_i/\partial\mathbf{r}_s`` is
 ``\omega_{is}\mathbf{w}_{is}``. An instantaneous observation (one step,
 ``\omega = 1``) gives exactly the functional it had before time windows
@@ -243,8 +245,8 @@ the `vertical_coordinates` of the placement settings, in preference order
 
 A point record that gives none of the coordinates in use is unplaced: an
 error, or dropped and counted with `unplaced_records = "skip"`. A column
-record becomes a `CSColumnMeanObjective`; averaging kernels are not applied
-yet.
+record without a retrieval block becomes a `CSColumnMeanObjective`; one with
+a block becomes an [averaging-kernel column](@ref retrieval-column-operator).
 
 The layer is chosen at every sampled state ``s`` from that state's replayed
 dry air mass ``m_k`` (kg per cell, ``k = 1`` at the top) and the column
@@ -336,6 +338,161 @@ per-observation footprints for placed and window observations (``10^{-12}``,
 upwind, monotone PPM and Lin–Rood, TM5 convection, Full and Stride
 checkpoints), and central finite differences of the cost.
 
+### [Averaging-kernel columns](@id retrieval-column-operator)
+
+A retrieved column-averaged dry mole fraction (OCO-2, GOSAT, TROPOMI, TCCON)
+is not the column mean of the true profile: the retrieval weights the
+atmosphere with its averaging kernel and fills in its prior where it has
+little sensitivity. A column record that carries a **retrieval block**
+(schema v2, `schemas/cs_observations_v2.toml`) is compared with the model
+through that retrieval's own vertical description, with the operator of
+TM5-4DVAR (`deps/tm5-cy3-4dvar/base/f2py/src/averaging_kernels.F90`, the OCO-2
+routine `applyaveragingkernel` and the rebin `inv_rebin`). The block gives
+the retrieval's ``N`` layers from the surface up:
+
+- interfaces ``p^r_1 > p^r_2 > \dots > p^r_{N+1} \ge 0`` (Pa, total pressure),
+  with ``p^r_1 = p^r_s`` the retrieval surface pressure and ``p^r_{N+1} =
+  p^r_t`` its top;
+- pressure weights ``h_i \ge 0`` with ``\sum_i h_i = 1`` (checked to
+  ``10^{-4}``: a deficit ``\delta`` would bias the column by ``\delta X``);
+- the column averaging kernel ``a_i``, normalized, so that
+  ``\partial X/\partial x_i = h_i a_i`` on the retrieval layers;
+- the prior profile ``x_{a,i}`` (dry mole fraction, mol mol⁻¹; files state
+  the unit, ppm and ppb are converted). The operator adds it to the model's
+  dry mole fractions, so the record value and error and the transported
+  tracer are in mol mol⁻¹ too (a record value outside [0, 1] is rejected);
+- optionally a profile uncertainty ``\sigma_i``.
+
+`bind_to_mesh` turns such a record into a `CSRetrievalColumnObjective`. At
+every sampled state the model's interface pressures ``p_{k+1/2}`` of its cell
+are built as for pressure placement: total pressures from the replayed dry air
+mass and the specific humidity, ``p_{k+1/2} = p_{k-1/2} + g\,m_k/(A(1-q_k))``
+(`pressure_basis = "total"`, the default; retrieval pressures are total
+pressures), or the dry interfaces (`"dry"`). Model surface and top are
+``p_s = p_{N_z+1/2}`` and ``p_t = p_{1/2}``. Then (`Output.retrieval_column_weights!`):
+
+1. **Stretch.** The model interfaces are mapped linearly onto the
+   retrieval's pressure range, the model surface onto the retrieval surface
+   and the model top onto the retrieval top:
+
+   ```math
+   s_{k+1/2} = \mu\,p_{k+1/2} + c, \qquad
+   \mu = \frac{p^r_s - p^r_t}{p_s - p_t}, \qquad
+   c = \tfrac12\big[(p^r_s - \mu p_s) + (p^r_t - \mu p_t)\big].
+   ```
+
+2. **Rebin.** Each retrieval layer takes the pressure-weighted mean of the
+   stretched model layers it overlaps:
+
+   ```math
+   R_{ik} = \frac{\big|[s_{k-1/2},\, s_{k+1/2}] \cap [p^r_{i+1},\, p^r_i]\big|}
+                 {p^r_i - p^r_{i+1}}, \qquad (R x)_i = \sum_k R_{ik}\, x_k ,
+   ```
+
+   with the outermost retrieval interfaces taken from the stretched model
+   column (TM5's choice; they equal ``p^r_s`` and ``p^r_t`` to rounding).
+   Every row of ``R`` sums to 1 and ``\sum_i R_{ik}(p^r_i - p^r_{i+1}) =
+   s_{k+1/2} - s_{k-1/2}``: the rebin conserves the column integral.
+
+3. **Column.**
+
+   ```math
+   X = \sum_i h_i a_i\, (R x)_i + \sum_i h_i (1 - a_i)\, x_{a,i}
+     = \sum_k H_k\, x_k + c, \qquad
+   H_k = \sum_i h_i a_i R_{ik},
+   ```
+
+   on the model's dry mixing ratios ``x_k = r_k/\max(m_k, \epsilon)``.
+
+The pressures depend on the meteorology only, so ``X`` is linear in the
+tracer mass with weights ``w_k = H_k/\max(m_k, \epsilon)`` on every level of
+the cell and the offset ``c`` (`_linear_functional` is the exact derivative of
+the evaluation; a window record takes the ``\omega_s``-weighted sum over its
+steps, each step with its own pressures). The adjoint forcing is TM5's
+per-layer ``H \cdot (X - y)/\sigma^2``.
+
+**What the stretch does physically.** The stretch keeps every model layer's
+share of the column, ``(s_{k+1/2} - s_{k-1/2})/(p^r_s - p^r_t) = (p_{k+1/2} -
+p_{k-1/2})/(p_s - p_t)``: it moves the model column onto the retrieval's
+pressure range without adding or removing air, and it absorbs both a
+surface-pressure mismatch ``\Delta p_s = p_s - p^r_s`` and a different top.
+With ``a = 1`` and weights normalized to the retrieval column the operator
+returns the model's pressure-weighted column mean for any ``\Delta p_s``. A
+mismatch changes only where the model's layers sit against the vertical
+structure of the kernel. Where the model surface lies below the sounding's
+true ground (``\Delta p_s > 0``, smoothed model orography under a mountain
+sounding), the model's boundary layer is compressed onto the retrieval's
+lowest layers instead of being cut off below the retrieval surface, which
+would remove boundary-layer air, and its enhancements, from the column; a
+30 hPa mismatch moves every interface by about 3 % of its pressure. This is
+why the default is no limit, as in TM5.
+
+**Surface-pressure mismatch policy.** `max_surface_pressure_mismatch_pa`
+(`bind_to_mesh` keyword; `[observations.placement]` key of the inversion
+driver; default no limit) bounds ``|\Delta p_s|``, the time-weighted model
+minus retrieval surface pressure over the sampled steps, with the model
+surface pressure of the stretch's pressure basis (with `"dry"`, ``\Delta
+p_s`` also contains the vapour weight, about 0.5 % of the surface pressure).
+A record above the limit follows the unplaced policy: with
+`unplaced_records = "error"` (default) the 4D-Var stops and names the
+records; with `"skip"` the record is reported (simulated value, residual,
+its stencil with `assimilated = false`) but adds nothing to the cost or the
+gradient, and the number of such records is logged. The model surface
+pressure is known only at the sampled states, so the check runs in the
+4D-Var's forward replay; it depends on the meteorology only, so the same
+records are left out in every iteration.
+
+**Model-error term.** When the record gives a profile uncertainty, the
+observation error is
+``\sigma^2 = \sigma^2_\mathrm{obs} + \sigma^2_\mathrm{mod} + \sum_i (h_i a_i \sigma_i)^2``
+(`Output.retrieval_model_error_variance`): the operator's weights on the
+retrieval layers, squared, times the profile variance, the layers taken
+independent. It depends on the record only, not on the state or the
+meteorology, so it is fixed when the record is bound and the cost stays
+quadratic in every iteration (TM5 freezes its ``\sigma_\mathrm{mod}`` at the
+first iteration for the same reason).
+
+**Diagnostics.** The stencil of an averaging-kernel column
+(`CSObservationStencil`, placement code `RETRIEVAL_COLUMN_PLACEMENT_CODE` =
+−3, level 0) carries ``\Delta p_s``, the model profile on the retrieval
+layers ``R x`` (time-weighted) and `assimilated`; departure files add them
+with the profile model sigma (`schemas/cs_departures_v2.toml`).
+
+**Relation to TM5-4DVAR.** Matched: the stretch (including its averaging of
+the two offsets), the overlap matrix of `inv_rebin` with its outer
+interfaces, the column and its per-layer forcing; the test reproduces values
+computed with TM5's Fortran on fixed columns to ``10^{-14}``. Different:
+
+- the operator is in the model, a linear functional of the tracer mass at
+  each sampled step (a window record averages the operator over its steps),
+  where TM5 writes the Δt-averaged profile and surface pressure to a track
+  file and applies the kernel once in Python;
+- dry basis: ``x`` is the dry mixing ratio and the interfaces are total
+  pressures rebuilt from the dry air mass and the humidity; TM5 uses moist
+  ``rm/m`` and ``AT + BT\,p_s`` of its moist surface pressure;
+- the pressure weights come from the record and must sum to 1; TM5's OCO-2
+  routine computes ``h_i = \Delta p_i/p^r_s``, which leaves out the column
+  above a retrieval top above 0 Pa;
+- an explicit mismatch policy, where TM5's OCO-2 path has none and its CH4
+  TROPOMI path sets a huge σ above a tolerance (the same effect as `"skip"`);
+- a rebin that fails TM5's checks (possible only for a retrieval layer
+  thinner than the stretch's rounding) is an error, not a silent zero
+  departure;
+- the profile uncertainty is given on the retrieval layers by the record;
+  TM5's CH4 TROPOMI path uses the spread of the modelled profile on model
+  layers from its track file.
+
+`test/core/test_cs_4dvar_retrieval_columns.jl` checks agreement with TM5's
+Fortran (reference values computed with `averaging_kernels.F90` itself, with
+the model surface below and above the retrieval's and the retrieval top above
+and below the model top) and with a line-by-line transcription on random
+columns, conservation by the rebin, the pressure-weighted and air-mass-weighted
+column means for ``a = 1`` on the model's levels, the schema block (units,
+ordering, NaN padding, errors), the single sweep against a seeded footprint
+per observation and step (``10^{-12}``; upwind, monotone PPM, Lin–Rood, TM5
+convection, Full and Stride checkpoints), central finite differences with
+window records, the mismatch policy, and the departure diagnostics.
+
 ## What is not yet shipped
 
 | Item | Notes |
@@ -343,7 +500,7 @@ checkpoints), and central finite differences of the cost.
 | **Optimal binomial Revolve** | `RevolveCheckpoint` ships as the bisection variant — logarithmic memory but not the Griewank–Walther optimal recompute count. Optimal binomial Revolve is the next refinement. |
 | **Optimized/clamped convection adjoints** | CMFMC `clamp = true` and TM5/CMFMC-matrix collaborative, truncated, or merged solves are rejected by the footprint API until their exact branches are taped and transposed. |
 | **TM5-4DVAR cross-validation** | Synthetic truth-recovery via `test_cs_inversion_truth_recovery.jl` is on CI; a side-by-side parity run against TM5-4DVAR on real data has not been published. |
-| **Averaging-kernel columns** | Column records (`kind = "column"`) bind to the air-mass-weighted column mean of their cell (`CSColumnMeanObjective`). Satellite and TCCON averaging kernels, with the retrieval's pressure levels and prior, are not applied yet. |
+| **Averaging kernels in the forward observation sampler** | The 4D-Var applies averaging kernels to column records with a retrieval block ([averaging-kernel columns](@ref retrieval-column-operator)); the forward sampler's OCO-2 sounding output still writes air-mass-weighted column means. The operator is shared (`Output.retrieval_column_weights!`), but the OCO-2 reader does not read the kernel fields yet, and OCO-2 Lite gives them on 20 levels, which need a conversion to the layer form. |
 | **Inversion driver on transport binaries** | `scripts/inversions/cs_4dvar.jl` binds observation files only on its synthetic meteorology (`synthetic_hydrostatic`); a 4D-Var on transport-binary meteorology is assembled with the Julia API (`bind_to_mesh`, `CSObservationColumnMet`, `cs_surface_flux_4dvar`). |
 | **Tangent-linear model** | Forward TL is not exposed as a separate driver. If you need it, use the reverse pass plus identity seeding. |
 
