@@ -427,17 +427,22 @@ end
         kinds = map(ops) do op
             op isa AT.Tape._CSSweepRecord ? op.direction :
             op isa AT.Tape._CSHaloRecord ? Symbol("h", op.dir) :
-            op isa AT.Tape._CSMidpointRecord ? :mid : :other
+            op isa AT.Tape._CSMidpointRecord ? :mid :
+            op isa AT.Tape._CSStepEndRecord ? :end : :other
         end
         forward = reduce(vcat, [vcat(pass > 1 ? [:h1] : Symbol[], [:x, :h1, :y, :h2, :z]) for pass in 1:n])
         reverse_half = repeat([:z, :h2, :y, :h2, :h1, :x, :h1], n)
         # The leading X halo record is production's step-start refresh
-        # (`fill_cs_step_start_halos!`).
-        @test kinds == vcat([:h1], forward, [:mid], reverse_half)
+        # (`fill_cs_step_start_halos!`); the step closes with its end-of-step
+        # marker (issue #20), where the 4D-Var reverse pass adds the step's
+        # observation forcing.
+        @test kinds == vcat([:h1], forward, [:mid], reverse_half, [:end])
+        @test ops[end].step == 1
 
         est = AT.cs_tape_byte_estimate(m0, [am], [bm], [cm], mesh, scheme)
         @test est.sweep_records == count(in((:x, :y, :z)), kinds)
         @test est.halo_records == count(in((:h1, :h2)), kinds)
+        @test est.step_records == count(==(:end), kinds)
 
         if final !== nothing
             # The tape's forward trajectory is the production step.

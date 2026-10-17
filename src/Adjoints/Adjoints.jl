@@ -71,7 +71,7 @@ using ..Tape: AbstractCSTapeStorage,
               DeviceCSTapeStorage, PinnedHostCSTapeStorage, MmapCSTapeStorage,
               CSTapeSlot, PinnedHostCSTapeSlot, MmapCSTapeSlot,
               _tape_storage, _tape_panels,
-              _resolve_tape_path, _build_window_storage,
+              _resolve_tape_path, _validate_tape_path, _build_window_storage,
               _allocate_tape_slot, stage_panels!, _stage_panels,
               _after_tape_stage!, _after_tape_read!,
               _sync_pinned_tape_storage!, _sync_mmap_tape_storage!,
@@ -80,7 +80,7 @@ using ..Tape: AbstractCSTapeStorage,
               AbstractTapeReadRole, AirMassRead, TracerMassRead,
               _bytes_per_panel_tuple, finalize_tape!,
               load_mmap_tape, get_record,
-              _CSSweepRecord, _CSHaloRecord, _CSMidpointRecord,
+              _CSSweepRecord, _CSHaloRecord, _CSMidpointRecord, _CSStepEndRecord,
               _CSDiffusionRecord, _CSConvectionRecord, _CSTapeOp,
               AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint,
               RevolveCheckpoint,
@@ -157,6 +157,12 @@ include("ObjectiveSeeding.jl")
 
 # CSFootprintResult + CSTapeByteEstimate.
 include("../Footprint/FootprintResult.jl")
+
+# Observation operators as sparse linear functionals (`CSLinearFunctional`)
+# and the end-of-step adjoint forcing of the reverse walk (`NoStepForcing`,
+# `CSStepForcing`, `_inject_step_forcing!`); `_seed_objective!` above injects
+# one functional through the same kernel.
+include("../Footprint/StepForcing.jl")
 
 
 # Control / observation / 4D-Var result types.

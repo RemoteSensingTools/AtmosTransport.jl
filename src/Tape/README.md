@@ -51,8 +51,8 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
 - Persistence: `finalize_tape!`, `load_mmap_tape(dir; readonly = true)`,
   `get_record(storage, id)` in [`MmapTapeStorage.jl`](MmapTapeStorage.jl).
 - Records in [`TapeRecords.jl`](TapeRecords.jl): `_CSSweepRecord`,
-  `_CSHaloRecord`, `_CSMidpointRecord`, `_CSDiffusionRecord`,
-  `_CSConvectionRecord`, and the union `_CSTapeOp`.
+  `_CSHaloRecord`, `_CSMidpointRecord`, `_CSStepEndRecord`,
+  `_CSDiffusionRecord`, `_CSConvectionRecord`, and the union `_CSTapeOp`.
 - Schedules in [`CheckpointSchedule.jl`](CheckpointSchedule.jl):
   `FullCheckpoint()`, `StrideCheckpoint(K)`, `RevolveCheckpoint()`, plus
   `checkpoint_window_count` and `checkpoint_window_range` (Full and Stride
@@ -100,6 +100,10 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
   (`CSAdjointSupportedScheme`) happens where records are built and consumed.
 - `_CSLinRoodHorizRecord` is defined in `../Adjoints/LinRoodTape.jl` and is
   not part of `_CSTapeOp`; the reverse loop handles it in its own branch.
+- Every recorder ends each step with `_CSStepEndRecord(step)` (absolute
+  step, after convection). It carries no payload; the reverse loop adds the
+  4D-Var observation forcing of that step there and does nothing without a
+  forcing. `CSTapeByteEstimate.step_records` counts these markers.
 - Mmap manifests describe one finalised `records.bin`. The recording
   constructor deletes any old manifest before truncating the binary.
   `load_mmap_tape` rejects tapes that are not finalised, use another version

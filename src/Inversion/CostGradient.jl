@@ -15,10 +15,12 @@
 #     `_gradient_step_controls`, `_control_gradient_norm`,
 #     `_gradient_step_panel_kernel!`).
 #   * Vector flatten helpers (`_observation_vector`, `_control_vector`).
-#   * Step-sequence truncation helpers used when an objective lives
-#     before the end of the full run (`_truncate_steps`,
-#     `_truncate_convection_forcing`, `_truncate_stepwise_arg`).
-#   * `cs_surface_flux_4dvar` — the main cost/gradient entry point.
+#   * Step-sequence truncation helpers that end the taped run at the last
+#     observation step (`_truncate_steps`, `_truncate_convection_forcing`,
+#     `_truncate_stepwise_arg`).
+#   * `cs_surface_flux_4dvar` — the main cost/gradient entry point: one
+#     forward run, one taped run and one reverse pass with every
+#     observation's weighted departure injected at its step.
 # ---------------------------------------------------------------------------
 
 function _validate_control_windows(controls, nsteps::Int)
@@ -344,13 +346,25 @@ _truncate_stepwise_arg(value, n::Int) = value
 
 Evaluate the prototype CS surface-flux 4D-Var cost and gradient. Controls are
 named `CSSurfaceFluxControl`s over `CSSurfaceFluxWindow`s. Observations are
-scalar `CSObservation`s sampled after model steps. The observation-gradient
-term is assembled from the same reverse-mode footprints used by
-`cs_surface_emission_footprint`: after one shared forward run for the
-simulated values, every observation re-runs the forward model with a tape up
-to its step and then its own reverse pass, so one cost-and-gradient
-evaluation costs one taped forward and reverse run per observation (see
-[Adjoint status](@ref)).
+scalar `CSObservation`s sampled after model steps (after convection, the
+state runtime output sees).
+
+One cost-and-gradient evaluation is two forward runs and one reverse pass
+(with `FullCheckpoint`; the other schedules add their recomputation), whatever
+the number of observations, as in TM5-4DVAR:
+
+1. a forward run gives the simulated values `Hᵢ(x)` and each observation's
+   linear functional `hᵢ` (weights from the replayed air mass at its step);
+2. each observation contributes `(Hᵢ(x) − yᵢ)/σᵢ²` times its functional's
+   weights to the adjoint forcing of its step;
+3. one taped forward run to the last observation step and one reverse pass,
+   which adds each step's forcing at that step's end, give `∂J_obs/∂E` for
+   every step; each control's window collects its steps.
+
+Steps after the last observation do not affect the cost and get a zero
+gradient. `checkpoint` (`FullCheckpoint()`, `StrideCheckpoint(k)`,
+`RevolveCheckpoint()`) and `tape_storage` / `tape_path` select how the one
+taped run is stored, as in `cs_surface_emission_footprint`.
 
 `scheme` is required: inversion callers must name the advection operator whose
 forward and adjoint they intend to use; there is no hidden numerical default.
@@ -400,6 +414,8 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
                                convection_forcing = nothing,
                                convection_workspace = nothing,
                                tape_storage = :device,
+                               tape_path::Union{Nothing, AbstractString} = nothing,
+                               checkpoint::AbstractCheckpointSchedule = FullCheckpoint(),
                                preconditioner = nothing)
     FT = eltype(panels_rm0[1])
     dt_ft = FT(dt)
@@ -412,6 +428,12 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
     _validate_control_shapes(control_vec, mesh, "surface-flux control")
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
+    # Schedule, storage and tape-path checks before the forward run, not after
+    # it. They create nothing: the taped run below creates `tape_path`.
+    _require_checkpoint_supported(scheme, checkpoint)
+    _require_tape_storage_supported(scheme, checkpoint, tape_storage)
+    _require_tape_path_supported(scheme, tape_path)
+    _validate_tape_path(tape_storage, tape_path)
 
     seen = Set{Symbol}()
     for control in control_vec
@@ -440,7 +462,9 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
     end
 
     emission_rates = _surface_rates_from_controls(physical_controls, nsteps, mesh, panels_rm0[1])
-    simulated = _run_cs_observations_forward(
+    # (1) Simulated values and each observation's linear functional from one
+    # forward run.
+    simulated, functionals = _observe_cs_forward(
         panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
         mesh, observation_vec;
         scheme = scheme,
@@ -453,51 +477,56 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
         diffusion_meteo = diffusion_meteo,
         convection_op = convection_op,
         convection_forcing = convection_forcing,
-        convection_workspace = convection_workspace)
+        convection_workspace = convection_workspace,
+        build_functionals = true)
 
+    # (2) Weighted departures (H(x) − y)/σ² scale each functional's weights.
     residuals = Vector{FT}(undef, length(observation_vec))
-    # Physical-space gradient. In preconditioned mode this is
-    # `∂J_obs/∂x` per control; in unconditioned mode it doubles as the
-    # final reported gradient `∂J/∂x`.
-    physical_gradients = [_zero_surface_like(control.value) for control in physical_controls]
+    scales = Vector{FT}(undef, length(observation_vec))
     observation_cost = zero(FT)
-
     @inbounds for obs_idx in eachindex(observation_vec)
         obs = observation_vec[obs_idx]
         residual = simulated[obs_idx] - FT(obs.value)
         sigma = FT(obs.sigma)
         residuals[obs_idx] = residual
         observation_cost += FT(0.5) * (residual / sigma)^2
-        scale = residual / (sigma * sigma)
+        scales[obs_idx] = residual / (sigma * sigma)
+    end
 
-        panels_am_obs = _truncate_steps(panels_am_steps, obs.step)
-        panels_bm_obs = _truncate_steps(panels_bm_steps, obs.step)
-        panels_cm_obs = _truncate_steps(panels_cm_steps, obs.step)
-        diffusion_op_obs = _truncate_stepwise_arg(diffusion_op, obs.step)
-        diffusion_workspace_obs = _truncate_stepwise_arg(diffusion_workspace, obs.step)
-        base_emission_rates_obs = _truncate_stepwise_arg(emission_rates, obs.step)
-        convection_forcing_obs = _truncate_convection_forcing(convection_forcing, obs.step)
-        footprint = cs_surface_emission_footprint(
-            panels_rm0, panels_m0,
-            panels_am_obs, panels_bm_obs, panels_cm_obs,
-            mesh, obs.objective;
-            scheme = scheme,
-            dt = dt_ft,
-            flux_scale = FT(flux_scale),
-            cfl_limit = cfl_limit,
-            base_emission_rates = base_emission_rates_obs,
-            diffusion_op = diffusion_op_obs,
-            diffusion_workspace = diffusion_workspace_obs,
-            diffusion_meteo = diffusion_meteo,
-            convection_op = convection_op,
-            convection_forcing = convection_forcing_obs,
-            convection_workspace = convection_workspace,
-            tape_storage = tape_storage)
-        for control_idx in eachindex(physical_controls)
-            _add_window_gradient!(physical_gradients[control_idx], footprint,
-                                  physical_controls[control_idx].window, scale;
-                                  ignore_future = true)
-        end
+    # (3) One taped run to the last observation step and one reverse pass that
+    # adds each step's forcing at the step's end. Footprint `t` is then
+    # ∂J_obs/∂E_t for every step up to the last observation.
+    last_step = maximum(obs -> obs.step, observation_vec)
+    forcing = _assemble_step_forcing(functionals, scales, mesh,
+                                     size(panels_rm0[1], 3), panels_rm0[1])
+    footprint = only(_cs_surface_footprints(
+        panels_rm0, panels_m0,
+        _truncate_steps(panels_am_steps, last_step),
+        _truncate_steps(panels_bm_steps, last_step),
+        _truncate_steps(panels_cm_steps, last_step),
+        mesh, [_ZeroStart()];
+        scheme, checkpoint,
+        dt = dt_ft,
+        flux_scale = FT(flux_scale),
+        cfl_limit,
+        base_emission_rates = _truncate_stepwise_arg(emission_rates, last_step),
+        diffusion_op = _truncate_stepwise_arg(diffusion_op, last_step),
+        diffusion_workspace = _truncate_stepwise_arg(diffusion_workspace, last_step),
+        diffusion_meteo,
+        convection_op,
+        convection_forcing = _truncate_convection_forcing(convection_forcing, last_step),
+        convection_workspace,
+        tape_storage, tape_path, forcing))
+
+    # Physical-space gradient. In preconditioned mode this is
+    # `∂J_obs/∂x` per control; in unconditioned mode it doubles as the
+    # final reported gradient `∂J/∂x`. Window steps after the last
+    # observation do not affect the cost (`ignore_future`).
+    physical_gradients = [_zero_surface_like(control.value) for control in physical_controls]
+    @inbounds for control_idx in eachindex(physical_controls)
+        _add_window_gradient!(physical_gradients[control_idx], footprint,
+                              physical_controls[control_idx].window, one(FT);
+                              ignore_future = true)
     end
 
     # Either: (a) apply T'^T to physical gradient and add χ for the

@@ -46,11 +46,13 @@ sweep).
 `state_bytes` is the raw panel-data cost of the tape. It equals
 `state_records * bytes_per_state` for split-sweep tapes; Lin-Rood additionally
 retains face-shaped tuples whose exact byte cost is included in `state_bytes`.
-Halo, midpoint, and the diffusion-palindrome's two op records contribute
-scalar metadata only and are not counted in `state_bytes`.
+Halo, midpoint and end-of-step records and the diffusion-palindrome's two op
+records contribute scalar metadata only and are not counted in `state_bytes`.
+`step_records` counts the end-of-step markers (one per step, after
+convection), where the reverse pass injects observation forcing.
 
 `total_records` is the **op count**:
-`sweep + halo + midpoint + diffusion + convection`. It is not in
+`sweep + halo + midpoint + diffusion + convection + step`. It is not in
 general equal to `state_records + halo + midpoint`, because (a)
 nonlinear schemes have `state_records = 2 * sweep_records` and (b)
 the diffusion palindrome contributes two op records per step but
@@ -63,6 +65,7 @@ struct CSTapeByteEstimate
     midpoint_records::Int
     diffusion_records::Int
     convection_records::Int
+    step_records::Int
     state_records::Int
     total_records::Int
     bytes_per_state::Int
