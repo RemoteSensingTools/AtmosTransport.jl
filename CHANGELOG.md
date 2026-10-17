@@ -281,6 +281,23 @@
 
 ### Fixes
 
+- **Cubed-sphere adjoint: `:pinned_host` and GPU `:mmap` tapes handed the
+  limited-PPM reverse sweep `m === rm`** (issue #57, pera-noaa). Host-side tape
+  storage reads a staged state back through a device cache, and both policies
+  kept one cache per panel shape. A `MonotoneLimiter` or `CW84Limiter` sweep
+  record reads its air mass and tracer mass in one call, so the kernel got
+  the tracer mass twice: footprints were off by about 80 % and 4D-Var
+  gradients by about 20 % at every entry point (`FullCheckpoint`, Stride,
+  Revolve, from-seed, `cs_surface_flux_4dvar`). `:device`, CPU `:mmap` (mmap
+  views), unlimited schemes and Lin–Rood were not affected. Reads now name
+  their operand, `_tape_panels(slot, AirMassRead())` or `TracerMassRead()`,
+  and `PinnedHostCSTapeStorage` and `MmapCSTapeStorage` (the new
+  `AbstractHostCSTapeStorage`) keep one device cache per read role and panel
+  shape; `:pinned_host` and `:mmap` now agree with `:device` to rounding
+  on the CPU and on CUDA (L40S). Internal API: the one-argument
+  `_tape_panels(slot)` and `_ensure_tape_read_cache!` are replaced by
+  `_tape_panels(slot, role)`, `_register_tape_read_backend!` and
+  `_tape_read_cache!`; the mmap field `device_caches` became `read_caches`.
 - **Observation heights: altitude-only records are placed above the ground,
   never silently in the lowest layer** (issue #56). ObsPack records that give
   an `altitude` above sea level but no `intake_height` or `elevation` had a

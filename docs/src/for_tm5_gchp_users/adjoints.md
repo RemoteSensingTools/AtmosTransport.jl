@@ -121,7 +121,7 @@ matching transpose kernel.
 | Value | Use |
 | --- | --- |
 | `:device` | Default and simplest choice for short runs. |
-| `:pinned_host` | Move staged data to pinned host memory when device memory is limiting. |
+| `:pinned_host` | Move staged data to pinned host memory when device memory is limiting. Reads come back through one device buffer per operand (air mass, tracer mass). |
 | `:mmap` | Store records under an on-disk directory for long or inspectable runs. |
 
 With `:mmap`, pass `tape_path` when the files must persist beyond the API call.

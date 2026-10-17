@@ -31,9 +31,10 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
   - `DeviceCSTapeStorage()` in [`TapeStorage.jl`](TapeStorage.jl): snapshots
     stay on the source backend.
   - `PinnedHostCSTapeStorage()` in [`TapeStorage.jl`](TapeStorage.jl): host
-    copies plus one shared device read cache. The generic method allocates
-    plain `Array`s; the CUDA extension overrides `_allocate_tape_slot` and
-    `stage_panels!` for `CuArray` panels to use `CUDA.pin` memory.
+    copies read back through device read caches, one per read role and panel
+    shape. The generic method allocates plain `Array`s; the CUDA extension
+    overrides `_allocate_tape_slot` and `stage_panels!` for `CuArray` panels
+    to use `CUDA.pin` memory.
   - `MmapCSTapeStorage(; dir, cleanup_on_finalize)` in
     [`MmapTapeStorage.jl`](MmapTapeStorage.jl): appends payloads to
     `records.bin` and writes `manifest.toml` on `finalize_tape!`.
@@ -41,7 +42,12 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
   `_resolve_tape_path` and `_build_window_storage` turn the public
   `tape_storage` / `tape_path` kwargs into one storage per tape or window.
 - Slot API: `_stage_panels(storage, panels)` allocates and fills a slot;
-  `_tape_panels(slot)` returns readable panels; `stage_panels!` refills.
+  `_tape_panels(slot, role)` returns readable panels; `stage_panels!` refills.
+  The read role (`AirMassRead()`, `TracerMassRead()`, subtypes of
+  `AbstractTapeReadRole`) names the reverse-kernel operand the read feeds.
+  `PinnedHostCSTapeStorage` and `MmapCSTapeStorage` (the
+  `AbstractHostCSTapeStorage` policies) keep one device read cache per role
+  and panel shape, so two reads for one kernel never share a buffer.
 - Persistence: `finalize_tape!`, `load_mmap_tape(dir; readonly = true)`,
   `get_record(storage, id)` in [`MmapTapeStorage.jl`](MmapTapeStorage.jl).
 - Records in [`TapeRecords.jl`](TapeRecords.jl): `_CSSweepRecord`,
@@ -56,22 +62,26 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
 
 - [`Tape.jl`](Tape.jl) — module definition, export list, include order
   (`TapeStorage` -> `TapeRecords` -> `MmapTapeStorage` -> `CheckpointSchedule`)
-- [`TapeStorage.jl`](TapeStorage.jl) — abstract policy, device and
-  pinned-host policies, slot types, staging hooks, `_resolve_tape_path`,
-  no-op `finalize_tape!` fallback, `_bytes_per_panel_tuple`
+- [`TapeStorage.jl`](TapeStorage.jl) — abstract policies, read roles, the
+  role- and shape-keyed device read caches of host-side storage
+  (`_tape_read_cache!`), device and pinned-host policies, slot types,
+  staging hooks, `_resolve_tape_path`, no-op `finalize_tape!` fallback,
+  `_bytes_per_panel_tuple`
 - [`TapeRecords.jl`](TapeRecords.jl) — record structs pushed by the forward
   recorder and the `_CSTapeOp` union
 - [`MmapTapeStorage.jl`](MmapTapeStorage.jl) — on-disk policy: cursor
-  reservation, per-shape device read cache, manifest writer and loader,
-  `_build_window_storage`
+  reservation, mmap reads (views on the CPU, the role- and shape-keyed device
+  caches on a GPU), manifest writer and loader, `_build_window_storage`
 - [`CheckpointSchedule.jl`](CheckpointSchedule.jl) — schedule types and
   stride window arithmetic
 
 ## Common Tasks
 
-- Adding a storage policy: subtype `AbstractCSTapeStorage`, implement
-  `_allocate_tape_slot`, `stage_panels!`, `_tape_panels`, and (if it holds
-  resources) `finalize_tape!`; add a `_tape_storage(::Val{:name})` method.
+- Adding a storage policy: subtype `AbstractCSTapeStorage` (or
+  `AbstractHostCSTapeStorage` if reads copy into device caches), implement
+  `_allocate_tape_slot`, `stage_panels!`, `_tape_panels(slot, role)`, and (if
+  it holds resources) `finalize_tape!`; add a `_tape_storage(::Val{:name})`
+  method.
 - Adding a record type: define it in [`TapeRecords.jl`](TapeRecords.jl),
   add it to `_CSTapeOp`, and add a branch in `_walk_window_reverse!`
   (`../Footprint/ReverseLoop.jl`).
@@ -99,7 +109,11 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
 - Each mmap record stores its own eltype. The loader accepts only
   `Float32`, `Float64`, and `Float16`. On the CPU, `_tape_panels` returns
   mmap views without copying. On the GPU, it copies into a device cache
-  keyed by shape.
+  keyed by read role and shape.
+- A host-side read stays valid until the next read with the same role. A
+  reverse kernel that takes two staged states reads them with two roles:
+  the limited-PPM sweep record reads `m` with `AirMassRead()` and `rm` with
+  `TracerMassRead()` (one shared cache gave the kernel `m === rm`, issue #57).
 - Only staged slots are copied. Flux tuples (`_CSSweepRecord.panels_flux`)
   and forcing/operator objects are kept by reference, so callers must not
   change them before the reverse pass ends.

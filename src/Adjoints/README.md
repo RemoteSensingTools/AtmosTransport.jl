@@ -126,6 +126,10 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
   that is all zero or non-finite.
 - Lin-Rood tapes accept only `tape_storage = :device`; `tape_path` is
   rejected.
+- The reverse walk reads staged states with a read role
+  (`_tape_panels(slot, AirMassRead())`, `TracerMassRead()` for a limited
+  sweep's tracer mass): host-side tape storage keeps one device cache per
+  role, so one kernel's two staged operands are distinct buffers.
 - Level `Nz` is the surface layer. Surface rates are added to level `Nz`,
   and footprints are read from `lambda[:, :, Nz]` on the interior
   `Hp+1:Hp+Nc` cells.

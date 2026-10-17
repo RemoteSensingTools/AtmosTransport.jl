@@ -17,6 +17,7 @@ Module dependency order:
 module Tape
 
 export AbstractCSTapeStorage,
+       AbstractHostCSTapeStorage,
        DeviceCSTapeStorage,
        PinnedHostCSTapeStorage,
        MmapCSTapeStorage,
@@ -30,7 +31,8 @@ export AbstractCSTapeStorage,
        _sync_pinned_tape_storage!,
        _sync_mmap_tape_storage!,
        _mmap_prepare_for_panels!,
-       _ensure_tape_read_cache!,
+       _register_tape_read_backend!, _tape_read_cache!,
+       AbstractTapeReadRole, AirMassRead, TracerMassRead,
        _bytes_per_panel_tuple,
        finalize_tape!,
        load_mmap_tape, get_record,

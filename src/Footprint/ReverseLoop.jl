@@ -62,14 +62,17 @@ function _walk_window_reverse!(footprints, lambda_panels, ops,
                                convection_workspace = nothing)
     for op in Iterators.reverse(ops)
         if op isa _CSSweepRecord
+            # A record's air mass and tracer mass are read with different
+            # roles: host-side tape storage returns one device cache per
+            # role, so the kernel never gets `m === rm` (issue #57).
             if op.panels_rm === nothing
-                _adjoint_scheme_sweep!(lambda_panels, _tape_panels(op.panels_m),
+                _adjoint_scheme_sweep!(lambda_panels, _tape_panels(op.panels_m, AirMassRead()),
                                        op.panels_flux, op.direction, op.scheme,
                                        mesh, ws, op.flux_scale)
             else
-                _adjoint_scheme_sweep!(lambda_panels, _tape_panels(op.panels_m),
-                                       _tape_panels(op.panels_rm), op.panels_flux,
-                                       op.direction, op.scheme, mesh, ws,
+                _adjoint_scheme_sweep!(lambda_panels, _tape_panels(op.panels_m, AirMassRead()),
+                                       _tape_panels(op.panels_rm, TracerMassRead()),
+                                       op.panels_flux, op.direction, op.scheme, mesh, ws,
                                        op.flux_scale)
             end
         elseif op isa _CSHaloRecord
@@ -77,11 +80,11 @@ function _walk_window_reverse!(footprints, lambda_panels, ops,
         elseif op isa _CSMidpointRecord
             _accumulate_surface_footprint!(footprints[op.step], lambda_panels, dt, mesh)
         elseif op isa _CSDiffusionRecord
-            _apply_cs_diffusion_adjoint!(lambda_panels, _tape_panels(op.panels_m), op.op,
+            _apply_cs_diffusion_adjoint!(lambda_panels, _tape_panels(op.panels_m, AirMassRead()), op.op,
                                          op.workspace, op.dt,
                                          diffusion_meteo, mesh)
         elseif op isa _CSConvectionRecord
-            _apply_cs_convection_adjoint!(lambda_panels, _tape_panels(op.panels_m),
+            _apply_cs_convection_adjoint!(lambda_panels, _tape_panels(op.panels_m, AirMassRead()),
                                           op.forcing, op.op, op.dt,
                                           convection_workspace, mesh)
         elseif op isa _CSLinRoodHorizRecord

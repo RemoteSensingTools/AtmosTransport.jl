@@ -202,11 +202,12 @@ because none of them compress the payload:
   * `tape_storage = :device` — `state_bytes` is the device-resident
     RAM cost; the reverse loop holds the full tape on the backend.
   * `tape_storage = :pinned_host` — `state_bytes` is the pinned host
-    RAM cost; only one staged panel set is mirrored on the device at
-    a time via the shared read cache.
+    RAM cost; at most two staged panel sets (one per read role: air
+    mass and tracer mass) are mirrored on the device at a time.
   * `tape_storage = :mmap` — `state_bytes` is the on-disk footprint
-    of `records.bin`. The shape-keyed device cache holds at most one
-    `NTuple{6, T}` per distinct shape signature on top of that.
+    of `records.bin`. On a GPU the device read caches hold one
+    `NTuple{6, T}` per read role and distinct shape signature on top
+    of that.
 
 `bytes_per_state` is the size of one full-panel state tuple. For split-sweep
 tapes, multiply it by `state_records` to recover `state_bytes`. Lin-Rood's
