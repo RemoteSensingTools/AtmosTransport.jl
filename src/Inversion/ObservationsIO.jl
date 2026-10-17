@@ -287,6 +287,9 @@ overwritten.
 function write_observations(path::AbstractString, set::CSObservationSet)
     isempty(set.time_origin) && throw(ArgumentError(
         "CSObservationSet.time_origin must be a non-empty ISO-8601 string"))
+    # The records vector is mutable after construction: recheck before
+    # touching `path`, so no file is written that `read_observations` rejects.
+    _check_unique_ids(set.records, "CSObservationSet written to $(repr(path))")
     mkpath(dirname(abspath(path)))
     n = length(set)
     isfile(path) && rm(path)

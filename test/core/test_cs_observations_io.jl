@@ -104,6 +104,13 @@ end
         empty_path = joinpath(dir, "empty.nc")
         AT.write_observations(empty_path, AT.CSObservationSet(AT.CSObservationRecord[]))
         @test isempty(AT.read_observations(empty_path))
+        # Ids are rechecked on write (the records vector is mutable), before
+        # any file is created.
+        dup = AT.CSObservationSet(_sample_records(); time_origin = "2024-01-01 00:00:00")
+        push!(dup.records, dup.records[1])
+        dup_path = joinpath(dir, "dup.nc")
+        @test_throws ArgumentError AT.write_observations(dup_path, dup)
+        @test !isfile(dup_path)
     end
 end
 
