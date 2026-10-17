@@ -6,7 +6,7 @@ flask records) and fixed stations. Writes append-only `<path>_soundings.nc` and
 
 These files are included into the `Output` module by [`../Output.jl`](../Output.jl)
 in this order: sources, requests, readers, cell locator, placement, output
-spec, gather, NetCDF, sampler. The runner glue lives in
+spec, gather, retrieval column, NetCDF, sampler. The runner glue lives in
 [`../../Models/runner/observations.jl`](../../Models/runner/observations.jl). See
 also the parent overview [`../README.md`](../README.md) and the file schema in
 [`../../../docs/src/config/output_schema.md`](../../../docs/src/config/output_schema.md).
@@ -15,7 +15,10 @@ its own records and files but places point records with this folder's rule:
 `bind_to_mesh` calls `resolve_placement` (with `UnplacedWithoutHeight`) and
 the shared `_handle_unplaced` / `_warn_below_ground`, and its placed point
 observations choose their layer with `sample_column_layer!`, the function the
-sampler uses, so a record is sampled in the same layer by both.
+sampler uses, so a record is sampled in the same layer by both. Its
+averaging-kernel columns (`CSRetrievalColumnObjective`) use this folder's
+retrieval-column operator (`retrieval_column.jl`) on `placement_pressures!`;
+the sampler itself does not apply averaging kernels yet.
 
 ## Run Sequence
 
@@ -79,6 +82,13 @@ sampler uses, so a record is sampled in the same layer by both.
   the inversion),
   `mixing_ratio_profile!`, `column_mean_vmr`, and the layer-temperature types
   `ConstantLayerTemperature`, `SurfaceLapseTemperature`, `ProfileLayerTemperature`
+- Averaging-kernel columns, in [`retrieval_column.jl`](retrieval_column.jl):
+  `RetrievalColumn` (a retrieval's interfaces from the surface up, pressure
+  weights, column averaging kernel, prior, optional profile uncertainty),
+  `stretch_model_interfaces!`, `retrieval_rebin_matrix`,
+  `retrieval_column_weights!`, `retrieval_prior_offset`, `retrieval_profile!`,
+  `retrieval_column_value`, `retrieval_model_error_variance`,
+  `mole_fraction_unit_scale` (TM5-4DVAR's operator, host Float64, one column)
 - NetCDF, in [`observation_netcdf.jl`](observation_netcdf.jl):
   `SoundingNetCDFStream` with `append_soundings!`, `SiteNetCDFStream` with
   `append_site_record!`, `write_summary_attributes!`,
@@ -97,6 +107,7 @@ sampler uses, so a record is sampled in the same layer by both.
 - [`cell_locator.jl`](cell_locator.jl) — `CellLocation` and per-topology containing-cell lookup
 - [`observation_placement.jl`](observation_placement.jl) — vertical placement: ground interfaces, placement settings, vertical-coordinate and pressure-basis types, the rules (first configured coordinate: height above ground = record height → altitude − DEM, or pressure; then the missing-height rule), codes, layer choice, pressure-basis interfaces
 - [`observation_gather.jl`](observation_gather.jl) — device gather kernel and host twin, pressure (air-mass and total) and height reconstruction, height-method and `interp_flag` codes
+- [`retrieval_column.jl`](retrieval_column.jl) — the averaging-kernel column operator of TM5-4DVAR: retrieval-column validation, the stretch of the model column onto the retrieval's surface and top, the mass-conserving overlap rebin, the column weights, prior term and model-error variance
 - [`observation_netcdf.jl`](observation_netcdf.jl) — queued, lock-aware sounding and site NetCDF streams and their schemas
 - [`observation_sampler.jl`](observation_sampler.jl) — `ObservationSampler`, linear or nearest-window time handling, daily file rotation, counters
 

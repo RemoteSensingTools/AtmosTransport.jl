@@ -94,6 +94,21 @@ writing topology-specific NetCDF files directly.
   air mass and specific humidity), hypsometric layer heights (`AbstractLayerTemperature`
   sources), intake layer index (a `NaN` height is an error, never the lowest
   layer), mixing-ratio profiles, and column means.
+- `observations/retrieval_column.jl` is the averaging-kernel (retrieval)
+  column operator of TM5-4DVAR, as pure host Float64 functions of one column:
+  `RetrievalColumn` (a retrieval's interfaces from the surface up, pressure
+  weights summing to 1, column averaging kernel, prior in mol/mol, optional
+  profile uncertainty; validated), `stretch_model_interfaces!` (the model
+  column mapped linearly onto the retrieval's surface and top),
+  `retrieval_rebin_matrix` (the mass-conserving overlap rebin R),
+  `retrieval_column_weights!` (``H_k = Σᵢ hᵢ aᵢ Rᵢₖ``),
+  `retrieval_prior_offset` (``Σᵢ hᵢ(1 − aᵢ) x_a,ᵢ``), `retrieval_profile!`
+  (``R x``), `retrieval_column_value` and `retrieval_model_error_variance`
+  (``Σᵢ (hᵢ aᵢ σᵢ)²``), plus `mole_fraction_unit_scale` for files that state
+  ppm or ppb. Model interfaces are top first (total pressures, e.g. from
+  `placement_pressures!`). The 4D-Var's `CSRetrievalColumnObjective` uses it;
+  the forward sampler does not apply averaging kernels yet (its OCO-2 reader
+  does not read the kernel fields).
 - `observations/observation_netcdf.jl` holds the append-only point-event and
   station NetCDF sinks (`SoundingNetCDFStream`, `SiteNetCDFStream`). Writes are
   queued and flushed whenever the shared NetCDF lock (`with_netcdf_lock`) is

@@ -100,6 +100,9 @@ export AbstractPressureBasis, TotalFromHumidity, DryInterfaces
 export VerticalPlacement, VERTICAL_PLACEMENT_CODES, resolve_placement, placement_layer
 export PlacementColumn, column_layer!, sample_column_layer!, needs_column_humidity
 export AbstractMissingHeightRule, LowestLayerWithoutHeight, UnplacedWithoutHeight, missing_height_rule
+export RetrievalColumn, retrieval_layer_count, stretch_model_interfaces!, retrieval_rebin_matrix
+export retrieval_column_weights!, retrieval_prior_offset, retrieval_profile!, retrieval_column_value
+export retrieval_model_error_variance
 export read_observation_requests, build_observation_set
 export AbstractObservationSampler, NoObservationSampler, build_observation_sampler, samples_observations
 export observation_needs_humidity
@@ -122,6 +125,7 @@ include("observations/cell_locator.jl")
 include("observations/observation_placement.jl")
 include("observations/observation_output_spec.jl")
 include("observations/observation_gather.jl")
+include("observations/retrieval_column.jl")
 include("observations/observation_netcdf.jl")
 include("observations/observation_sampler.jl")
 
