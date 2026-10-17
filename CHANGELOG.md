@@ -146,6 +146,36 @@
 - The ledgers rely on IEEE arithmetic without fast-math reassociation (which
   would break `TwoSum`). They are tested on CPU and CUDA; the Metal checks
   (`test/diagnostic/test_metal_kernels.jl`) have not been run yet.
+- **Static surface fluxes regrid conservatively on every grid, with the
+  file's totals** (#59). Lat-lon and reduced-Gaussian targets now default to
+  `regridding = "conservative"` (before: bilinear). The bilinear default
+  renormalised only positive totals of files with an area variable: net-uptake
+  fields and area-less files (Zhang Rn-222, EDGAR SF₆) kept the sampling
+  error (Rn-222 −0.95 % on LL 72×37 and −0.20 % on O24; EDGAR SF₆ +47 % above
+  the conservative total), and a sampled net of the other sign flipped every
+  cell. The conservative path now regrids the per-cell rate, flux × the file's
+  `cell_area`/`area` (else the source mesh's latitude-circle area), divided by
+  each source cell's covered area (`Regridding.source_coverage`), so every
+  model total equals the file's own total to rounding on lat-lon,
+  reduced-Gaussian and cubed-sphere grids. Since the file's area now sets the
+  total, it must be in m² and agree within 1 % (norm-based) with the cell
+  areas the file's coordinates define (`GriddedIO.check_latlon_cell_area`),
+  and be positive and finite in every cell with a nonzero flux (masked zero
+  rows would drop their emission); otherwise the build stops with an error.
+  On a target that does not cover the sphere (not used by the shipped runs),
+  a source cell covered only in part puts its whole amount into the covered
+  part (documented in Operators). Before, the density was regridded
+  over great-circle polygons (CAMS total −9.8e-5 on C24) and lost the slivers
+  that reduced-Gaussian rings with different longitude counts leave uncovered
+  (6.3e-4 of the sphere on O24). Explicit `regridding = "bilinear"` rescales
+  emission and uptake separately (no cell changes sign) or stops with an
+  error; the two factors are logged and a factor more than 10 % from 1 is a
+  warning (GridFED December 2021 uptake on a 5° grid: 3.53). Runs with static sources change: the `co2`, `fossil` and `rn222`
+  tracers of the `run_ll72_*` and `run_o24_*` golden cases (cell patterns, and
+  the Rn-222 total) and of the `run_c24_*` cases (by up to 8e-5 of the
+  largest cell rate). Time-varying lat-lon series (cubed sphere only) still
+  regrid their densities per slice and are unchanged.
+
 - **Runtime CFL subcycling runs whole palindromes' worth of passes**
   (issue #61). When the runtime pilot needs `n > 1` subcycles, a transport step
   now runs `(X Y Z)^n → midpoint → (Z Y X)^n` with every flux divided by `n`
@@ -240,6 +270,33 @@
 
 ### API and configuration changes
 
+- **Time-varying surface fluxes must cover the run** (#59). A run that a
+  time-varying source's files do not cover (before their first slice, after
+  their last, or in a gap between files) now stops before it starts with an
+  `ArgumentError` naming the uncovered dates. Before, the source silently held
+  its first or last slice there: the three `catrine_c30_2021*` configs emitted
+  the 2021-12-01 00:00 CAMS slice from January to November. A slice covers
+  its CF time bounds (a `months since` stamp its month). Stamps without
+  bounds are one series over all files of the source, merged and sorted
+  (`GriddedIO.stamp_intervals`): each slice holds for the series' regular
+  step (one month, or one year from 1 January, for month starts; else the
+  smallest spacing), the last stamp for one step, and a slice before a
+  longer spacing for one step, so a gap inside or between files (Jan 1 then
+  Mar 1) is uncovered. Daily files with one 00Z stamp each are a daily
+  series. A single stamp in all files (a day, a month or a year?) and stamps
+  about a month or a year apart that are not month starts (mid-month) are an
+  error asking for CF bounds. The new key
+  `surface_flux.hold_outside_coverage = true` keeps the holding on purpose
+  (e.g. climatologies). The CATRINE signoff chunk configs (635 time-varying
+  sources) and those of `config/runs` and the golden configs whose files
+  exist on wurst (179) keep their coverage.
+- Removed `config/runs/catrine_c30_2021_fullphysics_experimental.toml`,
+  `catrine_c30_2021_fullphysics_column_experimental.toml` and
+  `catrine_c30_2021H1_fullphysics_column_experimental.toml`, with their
+  launchers `scripts/run_catrine_c30_2021_fullphysics.sh`,
+  `scripts/run_catrine_c30_2021H1_column.sh` and
+  `scripts/profile_catrine_c30_2021_fullphysics.sh`: no January–November 2021
+  CAMS files exist for them.
 - `[output.observations]` takes `dem_file`, `dem_variable`,
   `unplaced_records`, `surface_height_file` and `absolute_altitude_above_agl_m`
   (`VerticalPlacementSpec`). Both ground datasets are external and static,

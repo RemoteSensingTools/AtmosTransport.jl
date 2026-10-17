@@ -215,13 +215,14 @@ paths = [
 ]
 
 [topics.surface_flux_chemistry]
-description = "Surface-flux operators (static, time-varying, native cubed-sphere, window buffers, Kahan accumulation, integrals) and chemistry"
+description = "Surface-flux operators (static, time-varying, native cubed-sphere, window buffers, Kahan accumulation, integrals), inventory ingestion (time coverage, regridding totals) and chemistry"
 files = [
     "core/test_surface_flux_integrals.jl",
     "core/test_surface_flux_kahan_accuracy.jl",
     "core/test_surface_flux_window_buffer.jl",
     "core/test_timevarying_surface_flux.jl",
     "core/test_native_cs_surface_flux.jl",
+    "core/test_surface_flux_ingestion.jl",
     "core/test_multiday_source_clock.jl",
     "core/test_cs_chemistry.jl",
     "core/test_runtime_chemistry_recipe.jl",

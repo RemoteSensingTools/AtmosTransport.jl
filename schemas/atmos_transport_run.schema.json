@@ -559,10 +559,16 @@
           "enum": ["stepwise", "linear", "conservative"],
           "description": "time_varying = true: stepwise (default) holds each slice from its time stamp to the next, as GEOS-Chem/HEMCO does for CAMS fluxes; linear interpolates between the two bracketing slices at the start of each step; conservative applies the exact time integral of that linear interpolation over each step."
         },
+        "hold_outside_coverage": {
+          "type": "boolean",
+          "default": false,
+          "description": "time_varying = true: allow a run that extends beyond the time coverage of the files (their CF time bounds, else the stamps' spacing; GridFED without a time axis covers its year) and hold the first or last slice there, e.g. for a climatology. false (default): a run period that no slice covers is an error naming the gap."
+        },
         "regridding": {
           "type": "string",
           "enum": ["bilinear", "conservative"],
-          "description": "Lat-lon and reduced-Gaussian targets: conservative or bilinear (default). Cubed-sphere targets always regrid conservatively."
+          "default": "conservative",
+          "description": "Static lat-lon inventories. conservative (default, every topology): the per-cell rate (flux x the file's cell_area/area, else the source-mesh cell area) is regridded as an extensive field, so the model total equals the file's total. bilinear (lat-lon and reduced-Gaussian targets only): bilinear samples at the target cell centres, emission and uptake cells renormalised separately to the file's emission and uptake totals; an error when the sample misses one of them. Cubed-sphere targets always regrid conservatively."
         }
       },
       "description": "Surface emission or uptake of one tracer, added to the lowest model layer. Physical fluxes (kg of the species) are converted to model storage units with the molar mass of the tracer's species."

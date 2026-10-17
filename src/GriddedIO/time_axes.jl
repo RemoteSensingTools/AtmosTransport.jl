@@ -410,6 +410,152 @@ function decode_time_bounds(ds, name::AbstractString)
 end
 
 """
+    decode_slice_intervals(ds, name) -> Vector{TimeInterval}
+
+The interval of time that each slice of the time axis `name` of `ds` stands
+for: [`known_slice_intervals`](@ref) when the axis defines them (CF bounds, a
+`months since` axis), else [`stamp_intervals`](@ref) of its stamps
+([`decode_time`](@ref)). A series spread over several files must derive the
+intervals of its bare stamps from the stamps of all its files together
+(`stamp_intervals(sort(all stamps))`): one file of a daily series holds one
+stamp, whose period no single file tells.
+"""
+function decode_slice_intervals(ds, name::AbstractString)
+    axis = String(name)
+    known = known_slice_intervals(ds, axis)
+    known === nothing || return known
+    return stamp_intervals(decode_time(ds, axis);
+                           source = "time axis '$(axis)' of $(_dataset_path(ds))")
+end
+
+"""
+    known_slice_intervals(ds, name) -> Union{Nothing, Vector{TimeInterval}}
+
+The intervals that the time axis `name` of `ds` defines by itself: its CF
+bounds ([`decode_time_bounds`](@ref)), or, for a `months since` axis
+([`MonthsSince`](@ref)), the calendar month of each stamp. `nothing` for CF
+stamps without bounds, whose intervals depend on the whole series
+([`stamp_intervals`](@ref)).
+"""
+function known_slice_intervals(ds, name::AbstractString)
+    axis = String(name)
+    bounds = decode_time_bounds(ds, axis)
+    bounds === nothing ||
+        return [TimeInterval(bounds[1, k], bounds[2, k]) for k in axes(bounds, 2)]
+    decoder, class = _time_decoder(ds, axis, DEFAULT_TIME_DECODERS)
+    return _known_intervals(decoder, class, ds, axis)
+end
+
+_known_intervals(d::MonthsSince, class, ds, axis) =
+    [interval(MonthKey(t)) for t in _decode(d, class, ds, axis)]
+_known_intervals(::AbstractTimeDecoder, class, ds, axis) = nothing
+
+"""
+    STAMP_SPACING_TOLERANCE
+
+Spacings of interval-start stamps that differ by at most this much are the
+same step in [`stamp_intervals`](@ref) (float stamps such as `days since`
+eighths decode to the millisecond).
+"""
+const STAMP_SPACING_TOLERANCE = Dates.Second(1)
+
+"""
+    stamp_intervals(stamps; source = "the time stamps") -> Vector{TimeInterval}
+
+The interval each of the strictly increasing interval-start `stamps` (the bare
+stamps of a whole series, merged over its files) stands for. A series has a
+regular step, and each slice holds for that step:
+
+- **Month starts** (every stamp the first instant of a month): a slice holds
+  until the next stamp when that is one month later, or one year later from a
+  1 January to the next 1 January (an annual series, also after a monthly
+  part); the last stamp holds for one calendar month, or one year when the
+  last spacing is such a year. A slice before any other spacing (Jan 1 then
+  Mar 1) holds for its own month only, so the months in between are a gap.
+- **Other stamps**: the step is the smallest spacing; a slice holds until the
+  next stamp when the spacing is that step (within
+  [`STAMP_SPACING_TOLERANCE`](@ref)), else for one step (a gap follows), and
+  the last stamp holds for one step.
+
+A gap is not an error here: the coverage check of the surface-flux loaders
+refuses a run only when the run crosses it. These are `ArgumentError`s, since
+the period of a slice cannot be inferred:
+
+- a single stamp: one stamp gives no spacing, and a 1 January 00Z stamp may
+  stand for a day, a month or a year;
+- stamps about one month (28 to 31 days) or one year (365 to 366 days) apart
+  that are not all month starts, e.g. mid-month stamps (Jan 15, Feb 15, …):
+  whether each slice holds from its stamp or is centred on it is unknown;
+- stamps that do not increase strictly (a stamp in two files).
+
+The remedy is CF bounds on the time coordinate, or interval-start stamps.
+`source` names the stamps in these messages.
+"""
+function stamp_intervals(stamps::AbstractVector{DateTime}; source::AbstractString = "the time stamps")
+    n = length(stamps)
+    n >= 1 || throw(ArgumentError("$(source): no time stamps"))
+    n >= 2 || throw(ArgumentError(
+        "$(source): a single time stamp ($(only(stamps))) without CF bounds; the period it " *
+        "stands for (an hour, a day, a month, a year) cannot be inferred from one stamp. Give " *
+        "the time coordinate CF bounds, or list the other files of the series"))
+    for k in 1:(n - 1)
+        stamps[k] < stamps[k + 1] || throw(ArgumentError(
+            "$(source): the time stamps do not increase strictly ($(stamps[k]) then " *
+            "$(stamps[k + 1]); is a stamp in two files?)"))
+    end
+    return all(_month_start, stamps) ? _month_start_intervals(stamps) :
+                                       _fixed_step_intervals(stamps, source)
+end
+
+_month_start(t::DateTime) = t == DateTime(Dates.year(t), Dates.month(t))
+
+_months_apart(a::DateTime, b::DateTime) = _month_index(MonthKey(b)) - _month_index(MonthKey(a))
+
+# One month, or one year from a 1 January: the steps of a month-start series.
+_month_series_step(a::DateTime, b::DateTime) =
+    (m = _months_apart(a, b); m == 1 || (m == 12 && Dates.month(a) == 1))
+
+function _month_start_intervals(stamps)
+    n = length(stamps)
+    out = Vector{TimeInterval}(undef, n)
+    for k in 1:(n - 1)
+        stop = _month_series_step(stamps[k], stamps[k + 1]) ? stamps[k + 1] :
+               stamps[k] + Dates.Month(1)                       # a gap follows
+        out[k] = TimeInterval(stamps[k], stop)
+    end
+    annual_end = _months_apart(stamps[n - 1], stamps[n]) == 12 &&
+                 _month_series_step(stamps[n - 1], stamps[n])
+    out[n] = TimeInterval(stamps[n], stamps[n] + Dates.Month(annual_end ? 12 : 1))
+    return out
+end
+
+_period_text(p) = string(Dates.canonicalize(Dates.CompoundPeriod(p)))
+
+function _fixed_step_intervals(stamps, source)
+    n = length(stamps)
+    spacings = [stamps[k + 1] - stamps[k] for k in 1:(n - 1)]
+    step = minimum(spacings)
+    for (lo, hi, period) in ((Dates.Day(28), Dates.Day(31), "month"),
+                             (Dates.Day(365), Dates.Day(366), "year"))
+        lo - STAMP_SPACING_TOLERANCE <= step <= hi + STAMP_SPACING_TOLERANCE || continue
+        odd = stamps[findfirst(!_month_start, stamps)]
+        throw(ArgumentError(
+            "$(source): the time stamps are about one $(period) apart (at least " *
+            "$(_period_text(step))) but not all month starts ($(odd)), e.g. mid-$(period) " *
+            "stamps; whether a slice holds from its stamp or is centred on it is unknown. " *
+            "Give the time coordinate CF bounds, or stamp each slice at the start of its period"))
+    end
+    out = Vector{TimeInterval}(undef, n)
+    for k in 1:(n - 1)
+        stop = spacings[k] <= step + STAMP_SPACING_TOLERANCE ? stamps[k + 1] :
+               stamps[k] + step                                 # a gap follows
+        out[k] = TimeInterval(stamps[k], stop)
+    end
+    out[n] = TimeInterval(stamps[n], stamps[n] + step)
+    return out
+end
+
+"""
     decode_month_keys(ds, name, decoders::Tuple = DEFAULT_TIME_DECODERS) -> Vector{MonthKey}
 
 The month of each stamp of the time axis `name` of `ds`, in the axis's own

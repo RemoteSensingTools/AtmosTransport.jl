@@ -159,3 +159,26 @@ function _regrid_total(x::AbstractArray, areas::AbstractVector, ::IntensiveCellF
     n = length(areas)
     return sum(k -> Float64(x[k]) * Float64(areas[mod1(k, n)]), 1:length(x))
 end
+
+"""
+    source_coverage(r) -> Vector{Float64}
+
+The area of each source cell that the destination cells of `r` cover,
+``C_s = \\sum_t W_{ts}``, in the flat source order of `r.src_areas`. When the
+destination tiles the source, ``C_s = A^{\\rm src}_s`` to the round-off of the
+polygon intersections, and an `ExtensiveCellField()` regrid keeps
+``\\sum_s s_s``. `IdentityRegrid` and `NestedCubedSphereRegrid` cover every
+source cell exactly and return `r.src_areas`.
+
+A `ReducedGaussianMesh` destination does not tile the sphere where adjacent
+rings have different longitude counts: its cell edges are great circles, so
+the latitude two such rings share is two different polylines, and the sliver
+between them belongs to no destination cell. There ``C_s < A^{\\rm src}_s``
+(by 17 % for 5° source cells on the boundary of a 12-cell and a 24-cell ring;
+the octahedral grids change the count at every ring). A per-cell total divided
+by ``C_s`` instead of ``A^{\\rm src}_s`` before an intensive regrid, and
+multiplied by `r.dst_areas` after it, keeps its total on such destinations:
+``\\sum_t \\sum_s W_{ts}\\, s_s / C_s = \\sum_s s_s``.
+"""
+source_coverage(r::Regridder) = Float64.(vec(Array(sum(r.intersections; dims = 1))))
+source_coverage(r::Union{IdentityRegrid, NestedCubedSphereRegrid}) = r.src_areas

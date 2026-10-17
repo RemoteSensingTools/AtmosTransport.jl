@@ -29,9 +29,9 @@ scripts are frozen records and are exempt. Each `heritage/README.md` gives
 the purpose of every script and why it is kept.
 
 The campaign launchers at the top level (`run_*_campaign.py`,
-`run_catrine_c30_*.sh`, `profile_catrine_c30_2021_fullphysics.sh`,
-`run_campaign5d.sh`) drive specific production campaigns; their defaults point
-at the machines and directories of those campaigns.
+`run_catrine_c30_2022_macbook.sh`, `run_campaign5d.sh`) drive specific
+production campaigns; their defaults point at the machines and directories of
+those campaigns.
 
 ## Retired scripts
 
@@ -44,6 +44,13 @@ the file name (for example
 fits their purpose (for example `diagnostics/heritage/`;
 `finish_catrine_c30_2022_fullphysics.sh` went to `preprocessing/`), and the
 `deprecated/` runner shims are replaced by `run_transport.jl`.
+
+The C30 2021 launchers `run_catrine_c30_2021_fullphysics.sh`,
+`run_catrine_c30_2021H1_column.sh` and `profile_catrine_c30_2021_fullphysics.sh`
+were removed with the three `config/runs/catrine_c30_2021*` configs they ran:
+those configs started on 2021-01-01 with a time-varying `lmdz_co2` source that
+only had the December 2021 CAMS file, so January–November held one 3-hourly
+slice (issue #59). Recover them with `git show 740ee1f9:scripts/<name>`.
 
 ### `scripts/benchmarks/`
 

@@ -12,8 +12,11 @@ fill or non-finite values), so the series is held once. The runtime adds three
 things:
 
 1. slice times in seconds since the run start `reference_time`
-   (`GriddedIO.seconds_since`); with `run_span = (t_start, t_end)` only the
-   slices `_needed_slice_window` keeps are read;
+   (`GriddedIO.seconds_since`); with `run_span = (t_start, t_end)` the slice
+   intervals (`GriddedIO.decode_slice_intervals`: `time_bnds`, else the
+   stamps' spacing) must cover the run unless `hold_outside_coverage = true`
+   (`_check_flux_time_coverage`), and only the slices `_needed_slice_window`
+   keeps are read;
 2. per-cell rates, in place: density × `mesh.cell_areas` × the units factor
    (`GriddedIO.mass_rate_factor` to the tracer's species,
    [`surface_flux_species`](@ref): 1 for kg of that species or unnamed kg,
@@ -36,6 +39,14 @@ function _build_native_timevarying_cs_surface_flux_source(
     Nc = mesh.Nc
     panels_series, flux = NCDataset(file) do ds
         info = cs_native_flux_info(ds, variable; mesh, slices)
+        if run_span !== nothing && !_hold_outside_coverage(cfg)
+            # Time is the last Julia dimension of `CS_NATIVE_FLUX_DIMS`.
+            time_var = find_coordinate(ds, TimeAxis(); length = size(ds[variable], 4))
+            label = "surface flux of tracer $(tracer_name) (kind = cs_native; $(basename(file)))"
+            intervals = _in_coverage_context(() -> decode_slice_intervals(ds, time_var), label)
+            _check_flux_time_coverage(_interval_seconds(intervals, reference_time)...,
+                                      run_span, reference_time; source = label)
+        end
         # The source's own arrays, filled panel by panel with FT densities.
         panels = ntuple(_ -> Array{FT}(undef, Nc, Nc, length(info.slices)), CS_PANEL_COUNT)
         read_cs_native_flux!(panels, ds, variable, info.slices; mesh)

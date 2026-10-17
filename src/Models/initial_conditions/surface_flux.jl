@@ -107,16 +107,20 @@ end
 """
     FileSurfaceFluxField{FT}
 
-2-D flux density `(Nx_src, Ny_src)` loaded from a NetCDF emission file.
-Units are kg/m²/s after `_load_file_surface_flux_field` has normalised
-the native units. `native_total_mass_rate` is the pre-regrid global
-integral, preserved for the bilinear path's renormalisation (the
-conservative path does not need it).
+2-D flux density `raw` `(Nx_src, Ny_src)` loaded from a NetCDF emission file,
+in kg species m⁻² s⁻¹ after `_load_file_surface_flux_field` has normalised the
+native units, with the source cell areas `cell_area` [m²]: the file's
+`cell_area`/`area` variable, else the areas of the source mesh
+(`_lonlat_cell_areas_m2`, latitude-circle cells on the destination sphere).
+`native_total_mass_rate = Σ raw × cell_area` [kg s⁻¹] is the file's own total,
+which the conservative regrid of the per-cell rate `raw × cell_area` preserves
+and the bilinear path renormalises to.
 """
 struct FileSurfaceFluxField{FT}
     raw                    :: Array{FT, 2}
     lon                    :: Vector{Float64}
     lat                    :: Vector{Float64}
+    cell_area              :: Matrix{Float64}
     native_total_mass_rate :: Float64
 end
 
@@ -409,35 +413,42 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}; species::Symbol,
             read_raw(FT, ds, variable, MaskedAsZero())
         end
 
-        cell_area_src = haskey(ds, "cell_area") ? read_raw(ds, "cell_area", MaskedAsZero()) :
-                        haskey(ds, "area")      ? read_raw(ds, "area", MaskedAsZero()) :
-                        nothing
+        area_name = haskey(ds, "cell_area") ? "cell_area" : haskey(ds, "area") ? "area" : nothing
+        file_area = area_name === nothing ? nothing : read_raw(ds, area_name, MaskedAsZero())
 
         # Latitude ascending, longitude from the first value ≥ 0 (GriddedIO).
         orientation = latlon_orientation(lon_src, lat_src)
         raw = orient(raw, orientation)
-        cell_area_src === nothing || (cell_area_src = orient(cell_area_src, orientation))
+        file_area === nothing || (file_area = orient(file_area, orientation))
         lon_src, lat_src = orient_coordinates(lon_src, lat_src, orientation)
+        # The source cell areas: the file's (in m² of the same cells,
+        # `GriddedIO.check_latlon_cell_area`), else the band areas of the source
+        # mesh on the destination mesh's sphere.
+        mesh_area = _lonlat_cell_areas_m2(lon_src, lat_src; radius)
+        size(mesh_area) == size(raw) || throw(DimensionMismatch(
+            "the coordinates of $(file) define a $(size(mesh_area)) grid; the flux has $(size(raw))"))
+        cell_area_src = file_area === nothing ? mesh_area :
+            check_latlon_cell_area(file_area, mesh_area,
+                                   String(string(get(ds[area_name].attrib, "units", "")));
+                                   file = "$(file) ('$(area_name)')", flux = raw)
 
         # Units → kg species m⁻² s⁻¹. Coordinate-backed per-month
         # values use that slice's CF bounds/calendar; only coordinate-less
         # GridFED uses `time_index` as the ordinal month. Per-cell values
-        # (EDGAR) are divided by the file's cell areas or, without them, the
-        # band areas of the grid on the destination mesh's sphere, so the
-        # per-cell totals survive regridding whatever its radius.
+        # (EDGAR) are divided by the source cell areas, so the per-cell
+        # totals are the source's total whatever the destination radius.
         units = _flux_units(raw_var, variable, file, species)
         _in_flux_file_context(variable, file) do
             periods = _slice_periods(units.time, cfg, file, ds, raw_var, kind)
             iv = periods === nothing ? nothing : periods[time_index]
-            area = !(units.area isa PerCell) ? nothing :
-                   cell_area_src !== nothing ? cell_area_src :
-                   _lonlat_cell_areas_m2(lon_src, lat_src; radius)
+            area = units.area isa PerCell ? cell_area_src : nothing
             _to_flux_density!(raw, units, species, iv, area)
         end
 
         raw .*= FT(get(cfg, "scale", 1.0))
-        native_total_mass_rate = cell_area_src === nothing ? NaN : sum(Float64.(raw) .* cell_area_src)
-        return FileSurfaceFluxField{FT}(raw, lon_src, lat_src, native_total_mass_rate)
+        native_total_mass_rate = sum(Float64.(raw) .* cell_area_src)
+        return FileSurfaceFluxField{FT}(raw, lon_src, lat_src, cell_area_src,
+                                        native_total_mass_rate)
     finally
         close(ds)
     end
@@ -558,6 +569,122 @@ function _timevarying_file_seconds(cfg, reference_time, file::AbstractString,
     end
 end
 
+# ---------------------------------------------------------------------------
+# Time coverage of a time-varying source
+#
+# Outside its slices a time-varying source holds the first or last slice
+# (`StepwiseFlux`, `_time_interp_bracket`). For a file of the wrong period
+# (a December file in a January run) that silently emits one 3-hourly value
+# for weeks, so the run period must lie inside the intervals the slices stand
+# for (`_timevarying_source_intervals`, over all files of the source together)
+# unless the source opts in to the hold with `hold_outside_coverage = true`
+# (e.g. a climatology).
+# ---------------------------------------------------------------------------
+
+"""
+    RUN_SPAN_CLOCK_SLACK_SECONDS
+
+The runner's run span (`DrivenRunner._run_time_span`) ends this long after the
+end of its last met window, slack for the rounding of its accumulated Float64
+clock. The time-coverage check of a time-varying surface flux does not ask the
+files to cover it.
+"""
+const RUN_SPAN_CLOCK_SLACK_SECONDS = 1.0
+
+# Opt-in: a run may extend past the time coverage of the source's files, and
+# the source holds its first or last slice there.
+_hold_outside_coverage(cfg) =
+    _config_bool(cfg, "hold_outside_coverage", false, "surface-flux hold_outside_coverage")
+
+"""
+    _timevarying_source_intervals(cfg, files, variable) -> Vector{TimeInterval}
+
+The interval each slice of a time-varying source stands for, over all its
+`files` together: the intervals a file's time axis defines
+(`GriddedIO.known_slice_intervals`: CF bounds, `months since`), the months of
+the source year for GridFED files without a time axis, and, for the stamps
+without bounds, `GriddedIO.stamp_intervals` of the stamps of **all** files
+merged and sorted. So daily files with one 00Z stamp each are a daily series,
+a gap between or inside files is a gap, and only the very last stamp of the
+series is extended (by the series' step). One stamp in all, which may be a
+day, a month or a year, is an `ArgumentError`.
+"""
+function _timevarying_source_intervals(cfg, files, variable::AbstractString)
+    intervals = TimeInterval[]
+    stamps = DateTime[]
+    for file in files
+        NCDataset(file) do ds
+            ntime = size(ds[variable], ndims(ds[variable]))
+            time_var = find_coordinate(ds, TimeAxis(); length = ntime, required = false)
+            if time_var === nothing  # GridFED (`_timevarying_file_seconds` refuses others)
+                year = _surface_flux_year(cfg, file, ds)
+                append!(intervals, [interval(MonthKey(year, month)) for month in 1:12])
+            else
+                known = known_slice_intervals(ds, time_var)
+                known === nothing ? append!(stamps, decode_time(ds, time_var)) :
+                                    append!(intervals, known)
+            end
+        end
+    end
+    isempty(stamps) || append!(intervals, stamp_intervals(
+        sort(stamps); source = "the $(length(stamps)) time stamp(s) without CF bounds of its files"))
+    return intervals
+end
+
+# Run `f`, which reads the slice intervals of a source's files; an
+# ArgumentError (e.g. one stamp without bounds) names the source and the remedies.
+function _in_coverage_context(f, source::AbstractString)
+    try
+        return f()
+    catch err
+        err isa ArgumentError || rethrow()
+        throw(ArgumentError(
+            "$(source): the time coverage of its files is unknown ($(err.msg)). Give the " *
+            "time axis CF bounds, or set hold_outside_coverage = true to skip the coverage check."))
+    end
+end
+
+_interval_seconds(intervals, reference_time::DateTime) =
+    (Float64[seconds_since(iv.start, reference_time) for iv in intervals],
+     Float64[seconds_since(iv.stop, reference_time) for iv in intervals])
+
+# A short name of a source's files for messages.
+_files_label(files) = length(files) <= 2 ? join(basename.(files), ", ") :
+    "$(basename(first(files))) … $(basename(last(files))) ($(length(files)) files)"
+
+"""
+    _check_flux_time_coverage(starts, stops, run_span, reference_time; source)
+
+Throw an `ArgumentError` unless the slices with intervals
+`[starts[k], stops[k])` (seconds since `reference_time`) cover the run
+`run_span = (t_start, t_end)` without a gap, up to the clock slack
+`RUN_SPAN_CLOCK_SLACK_SECONDS` at its end. The message names the first time
+range no slice covers, the files' coverage, and the two remedies: files that
+cover the run, or `hold_outside_coverage = true`. `source` names the source.
+"""
+function _check_flux_time_coverage(starts::AbstractVector{<:Real}, stops::AbstractVector{<:Real},
+                                   run_span, reference_time::DateTime; source::AbstractString)
+    isempty(starts) && throw(ArgumentError("$(source): the time-varying flux has no time slices"))
+    t0 = Float64(run_span[1])
+    t1 = max(t0, Float64(run_span[2]) - RUN_SPAN_CLOCK_SLACK_SECONDS)
+    covered = t0                      # [t0, covered) is covered
+    for k in sortperm(starts)
+        (covered >= t1 || starts[k] > covered) && break
+        covered = max(covered, Float64(stops[k]))
+    end
+    covered >= t1 && return nothing
+    later = filter(>(covered), starts)
+    gap_end = isempty(later) ? t1 : min(t1, minimum(later))
+    at(s) = reference_time + Millisecond(round(Int64, 1000 * s))
+    throw(ArgumentError(
+        "$(source): no time slice covers $(at(covered)) to $(at(gap_end)), inside the run " *
+        "($(at(t0)) to $(at(t1))); the slices span $(at(minimum(starts))) to " *
+        "$(at(maximum(stops))). " *
+        "Outside its slices a time-varying source would hold its first or last slice. List " *
+        "files that cover the run (`files`, or `file_pattern` with `year`), or set " *
+        "hold_outside_coverage = true to hold the end slices on purpose (e.g. a climatology)."))
+end
+
 """
     _needed_slice_window(times, run_span) -> (t_lo, t_hi)
 
@@ -591,11 +718,15 @@ A `reference_time` (the run start) is required. With `run_span = (t_start, t_end
 (seconds since the run start) and a `reference_time`, every file's time axis
 is read but flux data only for the slices in
 `_needed_slice_window(times, run_span)`, which are returned; otherwise every
-slice is read.
+slice is read. With a `run_span`, the files must cover it
+(`_check_flux_time_coverage` of `_timevarying_source_intervals`, the slice
+intervals of all files together) unless `hold_outside_coverage = true`;
+`source` names the source in that error.
 """
 function _load_timevarying_surface_flux_field(cfg, ::Type{FT},
                                               reference_time::Union{DateTime, Nothing};
-                                              species::Symbol, run_span = nothing) where FT
+                                              species::Symbol, run_span = nothing,
+                                              source::AbstractString = "time-varying surface flux") where FT
     kind = _surface_flux_kind(cfg)
     kind === :none && return nothing
     _require_reference_time(reference_time)
@@ -604,6 +735,14 @@ function _load_timevarying_surface_flux_field(cfg, ::Type{FT},
         all_files, fill(nothing, length(all_files))
     else
         file_times = [_timevarying_file_seconds(cfg, reference_time, f, variable) for f in all_files]
+        if !_hold_outside_coverage(cfg)
+            label = "$(source) (kind = $(kind); $(_files_label(all_files)))"
+            intervals = _in_coverage_context(label) do
+                _timevarying_source_intervals(cfg, all_files, variable)
+            end
+            _check_flux_time_coverage(_interval_seconds(intervals, reference_time)...,
+                                      run_span, reference_time; source = label)
+        end
         t_lo, t_hi = _needed_slice_window(reduce(vcat, file_times), run_span)
         keep = [findall(t -> t_lo <= t <= t_hi, ts) for ts in file_times]
         used = findall(!isempty, keep)
@@ -670,29 +809,11 @@ function build_surface_flux_source(grid::AtmosGrid{<:LatLonMesh},
 
     source = _load_file_surface_flux_field(cfg, FT; species = surface_flux_species(tracer_name, cfg),
                                            radius = grid.horizontal.radius)
-    method = _regridding_method(cfg)
     mesh = grid.horizontal
-
-    if method === :conservative
-        rate_flat = _conservative_surface_flux_rate(source, mesh, FT)
-        rate_flat .*= FT(_surface_flux_storage_scale(tracer_name, cfg))
-        rate = reshape(rate_flat, nx(mesh), ny(mesh))
-    else
-        # Legacy bilinear sampling
-        rate = Array{FT}(undef, nx(mesh), ny(mesh))
-        for j in axes(rate, 2)
-            area = Float64(cell_area(mesh, 1, j))
-            lat = mesh.φᶜ[j]
-            for i in axes(rate, 1)
-                lon = mesh.λᶜ[i]
-                flux_density = _sample_bilinear_scalar(source.raw, source.lon, source.lat, lon, lat)
-                rate[i, j] = FT(flux_density * area)
-            end
-        end
-        _renormalize_surface_flux_rate!(rate, source)
-        rate .*= FT(_surface_flux_storage_scale(tracer_name, cfg))
-    end
-
+    rate = reshape(_surface_flux_rate(_regridding_method(cfg), source, mesh, FT;
+                                      label = "surface flux of tracer $(tracer_name)"),
+                   nx(mesh), ny(mesh))
+    rate .*= FT(_surface_flux_storage_scale(tracer_name, cfg))
     return SurfaceFluxSource(tracer_name, rate)
 end
 
@@ -708,28 +829,9 @@ function build_surface_flux_source(grid::AtmosGrid{<:ReducedGaussianMesh},
 
     source = _load_file_surface_flux_field(cfg, FT; species = surface_flux_species(tracer_name, cfg),
                                            radius = grid.horizontal.radius)
-    method = _regridding_method(cfg)
-    mesh = grid.horizontal
-
-    if method === :conservative
-        rate = _conservative_surface_flux_rate(source, mesh, FT)
-        rate .*= FT(_surface_flux_storage_scale(tracer_name, cfg))
-    else
-        # Legacy bilinear sampling
-        rate = Array{FT}(undef, ncells(mesh))
-        for j in 1:nrings(mesh)
-            lat = mesh.latitudes[j]
-            lons = ring_longitudes(mesh, j)
-            for i in eachindex(lons)
-                c = cell_index(mesh, i, j)
-                flux_density = _sample_bilinear_scalar(source.raw, source.lon, source.lat, lons[i], lat)
-                rate[c] = FT(flux_density * Float64(cell_area(mesh, c)))
-            end
-        end
-        _renormalize_surface_flux_rate!(rate, source)
-        rate .*= FT(_surface_flux_storage_scale(tracer_name, cfg))
-    end
-
+    rate = _surface_flux_rate(_regridding_method(cfg), source, grid.horizontal, FT;
+                              label = "surface flux of tracer $(tracer_name)")
+    rate .*= FT(_surface_flux_storage_scale(tracer_name, cfg))
     return SurfaceFluxSource(tracer_name, rate)
 end
 
@@ -737,11 +839,10 @@ end
     build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
                               tracer_name, cfg, ::Type{FT})
 
-CS surface-flux builder. Conservatively LL→CS
-regrids the 2-D flux density (kg/m²/s) onto the 6 CS panel cell
-centres, multiplies by each panel's cell area to yield per-cell kg
-species/s, then converts that physical rate to the model storage basis.
-Returns a
+CS surface-flux builder. Conservatively LL→CS regrids the per-cell rate
+(flux density × source cell area, kg species/s; `ConservativeFluxRegridding`)
+onto the 6 CS panels as an extensive field, so the total is the file's own,
+then converts that physical rate to the model storage basis. Returns a
 `SurfaceFluxSource` whose `cell_mass_rate` is an `NTuple{6, Matrix{FT}}`
 of interior-only `(Nc, Nc)` panels.
 
@@ -771,9 +872,8 @@ function build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
     kind === :cs_native && !_surface_flux_time_varying(cfg) && throw(ArgumentError(
         "surface_flux kind = \"cs_native\" requires time_varying = true"))
 
-    method = _regridding_method(cfg, "conservative")
-    haskey(cfg, "regridding") && method !== :conservative &&
-        @warn "CS surface-flux: `regridding = \"$(method)\"` requested; CS supports conservative only — forcing conservative."
+    _regridding_method(cfg) isa ConservativeFluxRegridding ||
+        @warn "CS surface-flux: `regridding = \"$(cfg["regridding"])\"` requested; CS supports conservative only — forcing conservative."
 
     mesh = grid.horizontal
     Nc = mesh.Nc
@@ -814,7 +914,8 @@ function _build_timevarying_cs_surface_flux_source(mesh, tracer_name::Symbol, cf
     Nc = mesh.Nc
     field = _load_timevarying_surface_flux_field(cfg, FT, reference_time;
                                                  species = surface_flux_species(tracer_name, cfg),
-                                                 run_span)
+                                                 run_span,
+                                                 source = "surface flux of tracer $(tracer_name)")
     ntime = length(field.times_sec)
     storage_scale = FT(_surface_flux_storage_scale(tracer_name, cfg))
 
