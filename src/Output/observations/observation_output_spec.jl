@@ -68,11 +68,13 @@ end
 observations_enabled(::NoObservationOutput) = false
 observations_enabled(::ObservationOutputSpec) = true
 
+# The vertical-placement keys (`_parse_vertical_placement`), shared with any
+# config table that places observation records in the model column.
+const _VERTICAL_PLACEMENT_KEYS = ("surface_height_file", "dem_file", "dem_variable", "unplaced_records",
+                                  "absolute_altitude_above_agl_m", "vertical_coordinates", "pressure_basis")
 const _OBSERVATION_OUTPUT_KEYS = ("enabled", "path", "time_interpolation", "tracers",
                                   "write_profile_for_sites", "layer_height_temperature_kelvin",
-                                  "start_time", "deflate_level", "sources",
-                                  "surface_height_file", "dem_file", "dem_variable",
-                                  "unplaced_records", "absolute_altitude_above_agl_m")
+                                  "start_time", "deflate_level", "sources", _VERTICAL_PLACEMENT_KEYS...)
 # Near-surface fallback for hypsometric layer heights when the binary carries
 # no temperature. The diffusion helpers' 260 K is a mid-troposphere value and
 # would bias intake-height placement in the lowest layers.
@@ -126,40 +128,82 @@ function _parse_observation_deflate_level(value)
     return Int(value)
 end
 
-function _parse_optional_path(obs_cfg::AbstractDict, key::AbstractString)
-    haskey(obs_cfg, key) || return nothing
-    raw = obs_cfg[key]
+function _parse_optional_path(cfg::AbstractDict, key::AbstractString, label::AbstractString)
+    haskey(cfg, key) || return nothing
+    raw = cfg[key]
     raw isa AbstractString && !isempty(strip(raw)) || throw(ArgumentError(
-        "[output.observations].$(key) must be a non-empty path; got $(repr(raw))"))
+        "$(label).$(key) must be a non-empty path; got $(repr(raw))"))
     return expand_data_path(String(raw))
 end
 
-function _parse_altitude_placement(obs_cfg::AbstractDict, has_surface::Bool)
-    haskey(obs_cfg, "absolute_altitude_above_agl_m") || return AboveGroundPlacement()
-    value = obs_cfg["absolute_altitude_above_agl_m"]
+function _parse_altitude_placement(cfg::AbstractDict, has_surface::Bool, label::AbstractString)
+    haskey(cfg, "absolute_altitude_above_agl_m") || return AboveGroundPlacement()
+    value = cfg["absolute_altitude_above_agl_m"]
     value isa Real && !(value isa Bool) && isfinite(value) && value >= 0 || throw(ArgumentError(
-        "[output.observations].absolute_altitude_above_agl_m must be a number >= 0; got $(repr(value))"))
+        "$(label).absolute_altitude_above_agl_m must be a number >= 0; got $(repr(value))"))
     has_surface || throw(ArgumentError(
-        "[output.observations].absolute_altitude_above_agl_m places records by altitude above sea " *
+        "$(label).absolute_altitude_above_agl_m places records by altitude above sea " *
         "level and needs the model surface height: set surface_height_file"))
     return AbsoluteAltitudeAbove(value)
 end
 
-# `surface_height_file`, `dem_file`/`dem_variable`, `unplaced_records`,
-# `absolute_altitude_above_agl_m` → `VerticalPlacementSpec`.
-function _parse_vertical_placement(obs_cfg::AbstractDict)
-    surface_height_file = _parse_optional_path(obs_cfg, "surface_height_file")
-    dem_file = _parse_optional_path(obs_cfg, "dem_file")
-    dem_variable = get(obs_cfg, "dem_variable", "z")
+# `vertical_coordinates`: a non-empty array of distinct coordinate names, in
+# preference order → a tuple of `AbstractVerticalCoordinate`s.
+function _parse_vertical_coordinates(cfg::AbstractDict, label::AbstractString)
+    haskey(cfg, "vertical_coordinates") || return DEFAULT_VERTICAL_COORDINATES
+    key = "$(label).vertical_coordinates"
+    choices = join(("\"$(k)\"" for k in keys(_VERTICAL_COORDINATES)), ", ")
+    raw = cfg["vertical_coordinates"]
+    raw isa AbstractVector && all(v -> v isa AbstractString, raw) || throw(ArgumentError(
+        "$(key) must be an array of coordinate names in preference order, from $(choices); got $(repr(raw))"))
+    isempty(raw) && throw(ArgumentError(
+        "$(key) must name at least one vertical coordinate ($(choices)); omit the key for the default " *
+        "[\"height_above_ground\", \"pressure\"]"))
+    coordinates = Tuple(_parse_choice(name, _VERTICAL_COORDINATES, key) for name in raw)
+    allunique(coordinates) || throw(ArgumentError("$(key) must not repeat a coordinate; got $(repr(raw))"))
+    return coordinates
+end
+
+"""
+    _parse_vertical_placement(cfg, label) -> VerticalPlacementSpec
+
+Parse the vertical-placement keys (`_VERTICAL_PLACEMENT_KEYS`) of the config
+table `cfg`, named `label` in error messages (`"[output.observations]"`):
+`surface_height_file`, `dem_file`/`dem_variable`, `unplaced_records`,
+`absolute_altitude_above_agl_m`, `vertical_coordinates` and
+`pressure_basis`. The caller checks for unknown keys. Keys that would have
+no effect are errors: `dem_variable` without `dem_file`, `dem_file` or
+`absolute_altitude_above_agl_m` (both act on placements by height) when
+`vertical_coordinates` leaves out `"height_above_ground"`, and
+`pressure_basis` when it leaves out `"pressure"`.
+"""
+function _parse_vertical_placement(cfg::AbstractDict, label::AbstractString)
+    surface_height_file = _parse_optional_path(cfg, "surface_height_file", label)
+    dem_file = _parse_optional_path(cfg, "dem_file", label)
+    dem_variable = get(cfg, "dem_variable", "z")
     dem_variable isa AbstractString && !isempty(strip(dem_variable)) || throw(ArgumentError(
-        "[output.observations].dem_variable must be a non-empty variable name; got $(repr(dem_variable))"))
-    dem_file === nothing && haskey(obs_cfg, "dem_variable") && throw(ArgumentError(
-        "[output.observations].dem_variable has no effect without dem_file"))
-    unplaced = _parse_choice(get(obs_cfg, "unplaced_records", "error"), _UNPLACED_POLICIES,
-                             "[output.observations].unplaced_records")
+        "$(label).dem_variable must be a non-empty variable name; got $(repr(dem_variable))"))
+    dem_file === nothing && haskey(cfg, "dem_variable") && throw(ArgumentError(
+        "$(label).dem_variable has no effect without dem_file"))
+    unplaced = _parse_choice(get(cfg, "unplaced_records", "error"), _UNPLACED_POLICIES,
+                             "$(label).unplaced_records")
+    coordinates = _parse_vertical_coordinates(cfg, label)
+    if !_uses_coordinate(coordinates, HeightAboveGroundCoordinate)
+        for key in ("dem_file", "absolute_altitude_above_agl_m")
+            haskey(cfg, key) && throw(ArgumentError(
+                "$(label).$(key) acts on records placed by their height above the ground and has no " *
+                "effect without \"height_above_ground\" in $(label).vertical_coordinates"))
+        end
+    end
+    _uses_coordinate(coordinates, PressureCoordinate) || !haskey(cfg, "pressure_basis") || throw(ArgumentError(
+        "$(label).pressure_basis applies to records placed by their pressure and has no effect without " *
+        "\"pressure\" in $(label).vertical_coordinates"))
+    pressure_basis = _parse_choice(get(cfg, "pressure_basis", "total"), _PRESSURE_BASES, "$(label).pressure_basis")
     return VerticalPlacementSpec(; surface_height_file, dem_file, dem_variable = String(dem_variable),
                                  unplaced,
-                                 altitude_placement = _parse_altitude_placement(obs_cfg, surface_height_file !== nothing))
+                                 altitude_placement = _parse_altitude_placement(cfg, surface_height_file !== nothing,
+                                                                                label),
+                                 coordinates, pressure_basis)
 end
 
 function _parse_observation_sources(obs_cfg::AbstractDict)
@@ -216,7 +260,7 @@ function observation_output_spec(output_cfg::AbstractDict;
         start_time = _parse_start_time(get(obs_cfg, "start_time", nothing)),
         deflate_level = _parse_observation_deflate_level(get(obs_cfg, "deflate_level", 0)),
         sources = _parse_observation_sources(obs_cfg),
-        placement = _parse_vertical_placement(obs_cfg))
+        placement = _parse_vertical_placement(obs_cfg, "[output.observations]"))
 end
 
 """

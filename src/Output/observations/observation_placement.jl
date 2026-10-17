@@ -4,16 +4,20 @@
 # A record states its height in one of three ways: a height above the ground
 # (`intake_height`, or `altitude - elevation`), an altitude above sea level
 # without its ground elevation (ObsPack aircraft-insitu and AirCore records),
-# or nothing (satellite columns, station tables without heights). The model
-# ground differs from the true ground, so a record is placed by its height
-# above the ground, measured up from the model surface with the model's own
-# hypsometric layer heights; an altitude is first turned into a height above
-# the ground with the record's elevation or a DEM at the point (never with the
-# model surface height: that would place it by absolute altitude). A record
-# with a pressure but no usable height is placed by pressure; one that can be
-# placed by none of these is refused or skipped and counted. Placement
-# is resolved once per request when the sampler is built; the layer is chosen
-# at every sample from that sample's column (`placement_layer`).
+# or nothing (satellite columns, station tables without heights); ObsPack
+# records may also give their pressure. The model ground differs from the true
+# ground, so a record is placed by its height above the ground, measured up
+# from the model surface with the model's own hypsometric layer heights; an
+# altitude is first turned into a height above the ground with the record's
+# elevation or a DEM at the point (never with the model surface height: that
+# would place it by absolute altitude). The vertical coordinates a run uses,
+# height above ground and pressure, are tried in the configured order
+# (`vertical_coordinates`; by default height first, then pressure); a record
+# that none of them place is refused or skipped and counted. Pressure
+# placement compares the record's (total) pressure with the total interface
+# pressures of the column (`AbstractPressureBasis`). Placement is resolved
+# once per request when the sampler is built; the layer is chosen at every
+# sample from that sample's column (`placement_layer`).
 #
 # The static fields involved (model-grid surface height, a point DEM) come
 # from external datasets read by GriddedIO, which builds the concrete types
@@ -167,45 +171,167 @@ struct AbsoluteAltitudeAbove <: AbstractAltitudePlacement
 end
 
 """
+    AbstractVerticalCoordinate
+
+A vertical coordinate that can place a record in the model column:
+[`HeightAboveGroundCoordinate`](@ref) or [`PressureCoordinate`](@ref).
+[`VerticalPlacementSpec`](@ref) lists the coordinates a run uses in
+preference order (`vertical_coordinates`); [`resolve_placement`](@ref) places
+each record by the first one it can.
+"""
+abstract type AbstractVerticalCoordinate end
+
+"""
+`"height_above_ground"`: the record's height ``h`` above the true ground, the
+`intake_height`, else `altitude − elevation`, else `altitude` minus the DEM
+ground elevation at the point, measured up from the model surface with the
+model's hypsometric layer heights (`vertical_placement` codes
+`record_height` and `altitude_minus_dem`).
+"""
+struct HeightAboveGroundCoordinate <: AbstractVerticalCoordinate end
+
+"""
+`"pressure"`: the record's pressure (ObsPack `pressure`, a total pressure)
+against the column's interface pressures, built as the
+[`AbstractPressureBasis`](@ref) says (`vertical_placement` code `pressure`).
+"""
+struct PressureCoordinate <: AbstractVerticalCoordinate end
+
+const _VERTICAL_COORDINATES = (height_above_ground = HeightAboveGroundCoordinate(),
+                               pressure = PressureCoordinate())
+"Height above the true ground first, then pressure: `vertical_coordinates = [\"height_above_ground\", \"pressure\"]`."
+const DEFAULT_VERTICAL_COORDINATES = (HeightAboveGroundCoordinate(), PressureCoordinate())
+vertical_coordinate_label(::HeightAboveGroundCoordinate) = :height_above_ground
+vertical_coordinate_label(::PressureCoordinate) = :pressure
+_uses_coordinate(coordinates::Tuple, ::Type{C}) where {C <: AbstractVerticalCoordinate} =
+    any(c -> c isa C, coordinates)
+
+"""
+    AbstractPressureBasis
+
+The interface pressures a pressure-placed record is compared with
+(`pressure_basis`): [`TotalFromHumidity`](@ref) (default) or
+[`DryInterfaces`](@ref). A record's pressure is the total (ambient)
+pressure, dry air plus water vapour. The air mass of a dry-basis run gives
+dry interface pressures, ``p_{k+1/2} = p_{k-1/2} + g\\,m_k/A`` (the weight of
+the dry air above), which are lower than the total pressure at the same
+interface by the weight of the water vapour above it: about 0.5 % of the
+surface pressure for 50 kg m⁻² of precipitable water.
+"""
+abstract type AbstractPressureBasis end
+
+"""
+`pressure_basis = "total"` (default): compare a record's pressure with the
+column's total interface pressures. Specific humidity ``q_k`` (kg of water
+vapour per kg of moist air) makes the moist air mass of layer ``k``
+``m_k/(1 - q_k)`` for a dry air mass ``m_k`` (kg), so on a dry-basis run the
+hydrostatic total pressures are
+
+```math
+p_{1/2} = p_\\mathrm{top}, \\qquad
+p_{k+1/2} = p_{k-1/2} + \\frac{g\\,m_k}{A\\,(1 - q_k)},
+```
+
+with ``A`` the cell area and ``p_\\mathrm{top}`` the pure-pressure model-top
+interface `A_ifc[1]`, a total pressure in the met model's hybrid coordinate
+(level 1 is the top). This inverts the preprocessing's dry conversion
+``Δp_\\mathrm{dry} = (1 - q)\\,Δp``. On merged or remapped levels the binary
+carries a dry-mass-weighted ``q``, so the inverse is not exact there; on the
+golden `pre_ll72` binary (ERA5 L137 merged to 34 levels) the rebuilt total
+surface pressure differs from the stored one by −0.012 Pa on average and
+0.125 Pa at most, where the dry interfaces are 169 Pa low on average and
+700 Pa at worst. The humidity is
+the binary's layer-mean specific humidity at the sampled boundary:
+`qv_start` / `qv_end` of lat-lon binaries preprocessed with
+`output.include_qv = true`; on cubed-sphere binaries with the GCHP VDIFF
+payload the window-start VDIFF `qv` of the next window (the run's last window
+end takes the ended window's, one window old). Reduced-Gaussian binaries, and
+cubed-sphere binaries without the VDIFF payload, carry no humidity. On a
+moist-basis run the air mass already includes the vapour and its interfaces
+are total pressures without humidity. A dry-basis run whose binaries do not
+all carry humidity cannot build them: building a sampler that places any
+record by pressure then fails unless `pressure_basis = "dry"`.
+"""
+struct TotalFromHumidity <: AbstractPressureBasis end
+
+"""
+`pressure_basis = "dry"`: compare a record's pressure with the dry interface
+pressures ``p_{k+1/2} = p_{k-1/2} + g\\,m_k/A`` of a dry-basis run, for runs
+whose binaries carry no humidity (the sampler's only rule before issue #20).
+The dry interfaces lie at lower pressure than the total ones, so a record can
+be placed one or more layers lower in the column than its total pressure
+says, most likely near the surface where the vapour weight above an
+interface is largest and the layers are thinnest. Not available on a moist-basis run.
+"""
+struct DryInterfaces <: AbstractPressureBasis end
+
+const _PRESSURE_BASES = (total = TotalFromHumidity(), dry = DryInterfaces())
+pressure_basis_label(::TotalFromHumidity) = :total
+pressure_basis_label(::DryInterfaces) = :dry
+
+"""
     VerticalPlacementSpec(; surface_height_file = nothing, dem_file = nothing, dem_variable = "z",
-                            unplaced = ErrorOnUnplaced(), altitude_placement = AboveGroundPlacement())
+                            unplaced = ErrorOnUnplaced(), altitude_placement = AboveGroundPlacement(),
+                            coordinates = DEFAULT_VERTICAL_COORDINATES,
+                            pressure_basis = TotalFromHumidity())
 
 The vertical-placement settings of `[output.observations]`: the per-grid
 model surface height dataset, an optional point DEM (file and variable), the
-[`AbstractUnplacedPolicy`](@ref), and the [`AbstractAltitudePlacement`](@ref).
+[`AbstractUnplacedPolicy`](@ref), the [`AbstractAltitudePlacement`](@ref),
+the [`AbstractVerticalCoordinate`](@ref)s in preference order (a non-empty
+tuple without repeats; by default height above ground, then pressure), and
+the [`AbstractPressureBasis`](@ref) of pressure placement.
 """
-struct VerticalPlacementSpec{U <: AbstractUnplacedPolicy, A <: AbstractAltitudePlacement}
+struct VerticalPlacementSpec{U <: AbstractUnplacedPolicy, A <: AbstractAltitudePlacement,
+                             C <: Tuple{Vararg{AbstractVerticalCoordinate}}, P <: AbstractPressureBasis}
     surface_height_file::Union{Nothing, String}
     dem_file::Union{Nothing, String}
     dem_variable::String
     unplaced::U
     altitude_placement::A
+    coordinates::C
+    pressure_basis::P
+    function VerticalPlacementSpec(surface_height_file::Union{Nothing, String}, dem_file::Union{Nothing, String},
+                                   dem_variable::String, unplaced::U, altitude_placement::A, coordinates::C,
+                                   pressure_basis::P) where {U <: AbstractUnplacedPolicy,
+                                                             A <: AbstractAltitudePlacement,
+                                                             C <: Tuple{Vararg{AbstractVerticalCoordinate}},
+                                                             P <: AbstractPressureBasis}
+        isempty(coordinates) && throw(ArgumentError("vertical placement needs at least one vertical coordinate"))
+        allunique(coordinates) || throw(ArgumentError(
+            "vertical coordinates must not repeat; got $(join(vertical_coordinate_label.(coordinates), ", "))"))
+        return new{U, A, C, P}(surface_height_file, dem_file, dem_variable, unplaced, altitude_placement,
+                               coordinates, pressure_basis)
+    end
 end
 VerticalPlacementSpec(; surface_height_file::Union{Nothing, AbstractString} = nothing,
                         dem_file::Union{Nothing, AbstractString} = nothing,
                         dem_variable::AbstractString = "z",
                         unplaced::AbstractUnplacedPolicy = ErrorOnUnplaced(),
-                        altitude_placement::AbstractAltitudePlacement = AboveGroundPlacement()) =
+                        altitude_placement::AbstractAltitudePlacement = AboveGroundPlacement(),
+                        coordinates::Tuple{Vararg{AbstractVerticalCoordinate}} = DEFAULT_VERTICAL_COORDINATES,
+                        pressure_basis::AbstractPressureBasis = TotalFromHumidity()) =
     VerticalPlacementSpec(surface_height_file === nothing ? nothing : String(surface_height_file),
                           dem_file === nothing ? nothing : String(dem_file), String(dem_variable),
-                          unplaced, altitude_placement)
+                          unplaced, altitude_placement, coordinates, pressure_basis)
 
 # The spec names files the runner loads through GriddedIO; a sampler built
 # without them would silently place fewer records, or none by absolute altitude.
-function check_terrain(spec::VerticalPlacementSpec, terrain::ObservationTerrain)
+# `label` names the config table (`"[output.observations]"`).
+function check_terrain(spec::VerticalPlacementSpec, terrain::ObservationTerrain, label::AbstractString)
     spec.surface_height_file === nothing || !(terrain.model_surface isa NoModelSurfaceHeight) ||
-        throw(ArgumentError("[output.observations].surface_height_file is set but no model surface " *
+        throw(ArgumentError("$(label).surface_height_file is set but no model surface " *
                             "height was loaded (load it with GriddedIO.read_model_surface_height)"))
     spec.dem_file === nothing || !(terrain.dem isa NoPointElevation) ||
-        throw(ArgumentError("[output.observations].dem_file is set but no DEM was loaded " *
+        throw(ArgumentError("$(label).dem_file is set but no DEM was loaded " *
                             "(load it with GriddedIO.read_point_elevation)"))
-    _check_altitude_option(spec.altitude_placement, terrain)
+    _check_altitude_option(spec.altitude_placement, terrain, label)
     return nothing
 end
-_check_altitude_option(::AboveGroundPlacement, terrain) = nothing
-_check_altitude_option(::AbsoluteAltitudeAbove, terrain) = terrain.model_surface isa NoModelSurfaceHeight &&
-    throw(ArgumentError("absolute_altitude_above_agl_m needs the model surface height " *
-                        "([output.observations].surface_height_file)"))
+_check_altitude_option(::AboveGroundPlacement, terrain, label) = nothing
+_check_altitude_option(::AbsoluteAltitudeAbove, terrain, label) = terrain.model_surface isa NoModelSurfaceHeight &&
+    throw(ArgumentError("$(label).absolute_altitude_above_agl_m needs the model surface height " *
+                        "($(label).surface_height_file)"))
 
 # -- records without any vertical coordinate ---------------------------------
 
@@ -254,7 +380,7 @@ placed each request (see `vertical_placement_codes_description`):
 |---|---|---|
 | 0 | `record_height` | the record's height above ground (`intake_height`, or `altitude − elevation`) |
 | 1 | `altitude_minus_dem` | `altitude` − DEM ground elevation at the point |
-| 2 | `pressure` | the record's pressure against the interface pressures |
+| 2 | `pressure` | the record's pressure against the interface pressures of the `pressure_basis` (total by default) |
 | 3 | `absolute_altitude` | `altitude` against model surface height + layer heights (`absolute_altitude_above_agl_m`) |
 | 4 | `lowest_layer` | no vertical coordinate, for sources whose records are column or surface products |
 """
@@ -263,7 +389,7 @@ const VERTICAL_PLACEMENT_CODES = (record_height = Int8(0), altitude_minus_dem = 
 const _VERTICAL_PLACEMENT_TEXT = (
     record_height = "height above ground from the record (intake_height, or altitude - elevation)",
     altitude_minus_dem = "altitude - DEM ground elevation",
-    pressure = "record pressure vs model interface pressures",
+    pressure = "record pressure vs model interface pressures (total, or dry: see pressure_basis)",
     absolute_altitude = "altitude above sea level vs model surface height + layer heights",
     lowest_layer = "no vertical coordinate (column or surface product): lowest model layer")
 vertical_placement_codes_description() =
@@ -301,70 +427,94 @@ function _record_altitude(r::Union{SoundingRequest, SiteRequest}, dem::AbstractP
 end
 
 """
-    resolve_placement(altitude_placement, missing_height, request, cell, terrain) -> Union{VerticalPlacement, Nothing}
+    resolve_placement(spec::VerticalPlacementSpec, missing_height, request, cell, terrain)
+        -> Union{VerticalPlacement, Nothing}
 
 Place a [`SoundingRequest`](@ref) or [`SiteRequest`](@ref) in the column of
-its containing `cell`, using the first rule that applies:
+its containing `cell` by the first of `spec.coordinates`
+([`AbstractVerticalCoordinate`](@ref), in preference order) that places it:
 
-1. the record's height above ground ``h`` (`intake_height`, or `altitude −
-   elevation` with the record's or station's elevation): `record_height`;
-2. ``h`` = `altitude` minus the DEM ground elevation at the point:
-   `altitude_minus_dem`;
-3. the record's `pressure`: `pressure`;
-4. a record without any vertical coordinate: the lowest layer
-   (`lowest_layer`) under [`LowestLayerWithoutHeight`](@ref), unplaced under
-   [`UnplacedWithoutHeight`](@ref) (`missing_height`, from
-   [`missing_height_rule`](@ref) of the record's source).
+- [`HeightAboveGroundCoordinate`](@ref): the record's height above ground
+  ``h`` (`intake_height`, or `altitude − elevation` with the record's or
+  station's elevation; `record_height`), else ``h`` = `altitude` minus the
+  DEM ground elevation at the point (`altitude_minus_dem`). The record is
+  placed ``h`` above the model surface.
+- [`PressureCoordinate`](@ref): the record's `pressure` (`pressure`), when it
+  is `valid_pressure` (finite and positive).
 
-Rules 1–2 place the record ``h`` above the model surface. A record with an
-`altitude` but no ground elevation (no record `elevation`, no DEM value) and
-no pressure cannot be placed: the result is `nothing`. The model surface
-height is never used as the true ground. A pressure counts only when it is
-`valid_pressure` (finite and positive). `AbsoluteAltitudeAbove(h₀)`
-re-places records with ``h ≥ h_0`` by pressure, else by absolute altitude:
-the stated `altitude`, else the ground elevation (the record's, else the DEM
-value at the point) plus `intake_height`; a record with neither keeps its
-height above the ground (`record_height`).
+A record that none of the coordinates place is unplaced (`nothing`) when it
+states any vertical coordinate (an `intake_height`, an `altitude`, a valid
+`pressure`), e.g. an `altitude` without a ground elevation (no record
+`elevation`, no DEM value), or a coordinate the run does not use. One without
+any vertical coordinate goes to the lowest layer (`lowest_layer`) under
+[`LowestLayerWithoutHeight`](@ref) and is unplaced under
+[`UnplacedWithoutHeight`](@ref) (`missing_height`, from
+[`missing_height_rule`](@ref) of the record's source). The model surface
+height is never used as the true ground.
+
+`spec.altitude_placement = AbsoluteAltitudeAbove(h₀)` then re-places records
+placed by a height ``h ≥ h_0`` by their pressure (when `pressure` is one of
+the coordinates), else by absolute altitude: the stated `altitude`, else the
+ground elevation (the record's, else the DEM value at the point) plus
+`intake_height`; a record with neither keeps its height above the ground.
 """
-function resolve_placement(option::AbstractAltitudePlacement, missing_height::AbstractMissingHeightRule,
+function resolve_placement(spec::VerticalPlacementSpec, missing_height::AbstractMissingHeightRule,
                            r::Union{SoundingRequest, SiteRequest}, cell::CellLocation, terrain::ObservationTerrain)
     zs = model_surface_height(terrain.model_surface, cell)
-    placement = _above_ground_placement(r, zs, terrain.dem, missing_height)
-    placement === nothing && return nothing
-    return _apply_altitude_option(option, placement, r, zs, terrain.dem)
+    placement = _first_placement(spec.coordinates, r, zs, terrain.dem)
+    if placement === nothing
+        # A record that states a coordinate is never sampled in the lowest layer for lack of a usable one.
+        _has_vertical_coordinate(r) && return nothing
+        return _without_height(missing_height, zs)
+    end
+    return _apply_altitude_option(spec.altitude_placement, spec.coordinates, placement, r, zs, terrain.dem)
 end
 
-function _above_ground_placement(r, zs::Float64, dem::AbstractPointElevation, missing_height)
+# The first coordinate, in preference order, that places the record (recursion
+# over the tuple keeps the dispatch static).
+_first_placement(::Tuple{}, r, zs::Float64, dem::AbstractPointElevation) = nothing
+function _first_placement(coordinates::Tuple, r, zs::Float64, dem::AbstractPointElevation)
+    placement = _place_by(first(coordinates), r, zs, dem)
+    return placement === nothing ? _first_placement(Base.tail(coordinates), r, zs, dem) : placement
+end
+
+function _place_by(::HeightAboveGroundCoordinate, r, zs::Float64, dem::AbstractPointElevation)
     codes = VERTICAL_PLACEMENT_CODES
     isfinite(r.intake_height_m) && return VerticalPlacement(codes.record_height, r.intake_height_m, NaN, zs)
-    if isfinite(r.altitude_m)
-        # A station's elevation can come from the file attributes while its rows
-        # give only an altitude; readers already resolved row-level elevations.
-        isfinite(r.elevation_m) &&
-            return VerticalPlacement(codes.record_height, r.altitude_m - r.elevation_m, NaN, zs)
-        ground = point_elevation(dem, r.lon, r.lat)
-        isfinite(ground) && return VerticalPlacement(codes.altitude_minus_dem, r.altitude_m - ground, NaN, zs)
-    end
-    pressure = _record_pressure(r)
-    valid_pressure(pressure) && return VerticalPlacement(codes.pressure, NaN, pressure, zs)
+    isfinite(r.altitude_m) || return nothing
+    # A station's elevation can come from the file attributes while its rows
+    # give only an altitude; readers already resolved row-level elevations.
+    isfinite(r.elevation_m) && return VerticalPlacement(codes.record_height, r.altitude_m - r.elevation_m, NaN, zs)
+    ground = point_elevation(dem, r.lon, r.lat)
+    isfinite(ground) && return VerticalPlacement(codes.altitude_minus_dem, r.altitude_m - ground, NaN, zs)
     # An altitude without any ground elevation: never placed by the model ground.
-    isfinite(r.altitude_m) && return nothing
-    return _without_height(missing_height, zs)
+    return nothing
 end
+
+function _place_by(::PressureCoordinate, r, zs::Float64, ::AbstractPointElevation)
+    pressure = _record_pressure(r)
+    valid_pressure(pressure) || return nothing
+    return VerticalPlacement(VERTICAL_PLACEMENT_CODES.pressure, NaN, pressure, zs)
+end
+
+_has_vertical_coordinate(r) =
+    isfinite(r.intake_height_m) || isfinite(r.altitude_m) || valid_pressure(_record_pressure(r))
 
 _without_height(::LowestLayerWithoutHeight, zs::Float64) =
     VerticalPlacement(VERTICAL_PLACEMENT_CODES.lowest_layer, NaN, NaN, zs)
 _without_height(::UnplacedWithoutHeight, ::Float64) = nothing
 
-_apply_altitude_option(::AboveGroundPlacement, placement::VerticalPlacement, r, zs, dem) = placement
-function _apply_altitude_option(option::AbsoluteAltitudeAbove, placement::VerticalPlacement, r, zs::Float64,
-                                dem::AbstractPointElevation)
+_apply_altitude_option(::AboveGroundPlacement, coordinates, placement::VerticalPlacement, r, zs, dem) = placement
+function _apply_altitude_option(option::AbsoluteAltitudeAbove, coordinates::Tuple, placement::VerticalPlacement,
+                                r, zs::Float64, dem::AbstractPointElevation)
     codes = VERTICAL_PLACEMENT_CODES
     # Only placements by a height above the ground are re-placed.
     placement.method in (codes.record_height, codes.altitude_minus_dem) || return placement
     placement.height_agl_m >= option.min_height_agl_m || return placement
-    pressure = _record_pressure(r)
-    valid_pressure(pressure) && return VerticalPlacement(codes.pressure, NaN, pressure, zs)
+    if _uses_coordinate(coordinates, PressureCoordinate)
+        by_pressure = _place_by(PressureCoordinate(), r, zs, dem)
+        by_pressure === nothing || return by_pressure
+    end
     altitude = _record_altitude(r, dem)
     # Without an altitude (an intake height with neither elevation nor DEM
     # value) the record stays at its height above the ground.
@@ -422,4 +572,94 @@ function placement_layer(placement::VerticalPlacement, z_half::AbstractVector, p
     placement.method == codes.lowest_layer && return length(z_half) - 1
     placement.method == codes.pressure && return pressure_layer_index(p_half, placement.pressure_pa)
     return intake_layer_index(z_half, placement.height_agl_m)
+end
+
+# -- pressure basis -----------------------------------------------------------
+
+"""
+    placement_pressures!(p_half, basis, mass_basis, air_column, humidity_column, area, g, p_top) -> p_half
+
+Interface pressures (Pa, k = 1 top) a pressure-placed record is compared
+with, for a column of air mass per cell (kg) of `mass_basis`:
+[`TotalFromHumidity`](@ref) builds the total pressures from the dry air mass
+and the specific humidity `humidity_column` (`total_interface_pressures!`) on
+a dry-basis run and takes the moist air mass as it is on a moist-basis run;
+[`DryInterfaces`](@ref) gives the dry interfaces of a dry-basis run
+(`interface_pressures!`). `humidity_column` is ignored where no humidity is
+needed.
+"""
+placement_pressures!(p_half, ::TotalFromHumidity, ::DryBasis, air_column, humidity_column, area, g, p_top) =
+    total_interface_pressures!(p_half, air_column, humidity_column, area, g, p_top)
+placement_pressures!(p_half, ::TotalFromHumidity, ::MoistBasis, air_column, humidity_column, area, g, p_top) =
+    interface_pressures!(p_half, air_column, area, g, p_top)
+placement_pressures!(p_half, ::DryInterfaces, ::DryBasis, air_column, humidity_column, area, g, p_top) =
+    interface_pressures!(p_half, air_column, area, g, p_top)
+
+"""
+    check_pressure_basis(basis, mass_basis, has_humidity, n_pressure, label) -> Bool
+
+Check, when the requests are placed, that `basis` can build the interface
+pressures of `n_pressure` pressure-placed requests on a run of `mass_basis`
+whose binaries carry specific humidity when `has_humidity`, and return
+whether sampling needs that humidity (only [`TotalFromHumidity`](@ref) on a
+dry-basis run with pressure-placed requests does). Throws for `DryInterfaces`
+on a moist-basis run, and for `TotalFromHumidity` with pressure-placed
+requests on a dry-basis run without humidity; `label` names the config table
+(`"[output.observations]"`).
+"""
+check_pressure_basis(::DryInterfaces, ::MoistBasis, has_humidity::Bool, n_pressure::Integer,
+                     label::AbstractString) = throw(ArgumentError(
+    "$(label).pressure_basis = \"dry\" needs a dry-basis run: this run's air mass is moist, so its " *
+    "interface pressures already are total pressures; omit pressure_basis"))
+check_pressure_basis(::DryInterfaces, ::DryBasis, has_humidity::Bool, n_pressure::Integer, label::AbstractString) =
+    false
+check_pressure_basis(::TotalFromHumidity, ::MoistBasis, has_humidity::Bool, n_pressure::Integer,
+                     label::AbstractString) = false
+function check_pressure_basis(::TotalFromHumidity, ::DryBasis, has_humidity::Bool, n_pressure::Integer,
+                              label::AbstractString)
+    n_pressure == 0 && return false
+    has_humidity || throw(ArgumentError(
+        "$(n_pressure) requests are placed by pressure. Record pressures are total pressures, and " *
+        "$(label).pressure_basis = \"total\" (the default) builds the total interface pressures from the " *
+        "dry air mass and the specific humidity, but the run's binaries do not all carry humidity: lat-lon " *
+        "binaries need qv_start/qv_end (preprocessed with output.include_qv = true), cubed-sphere binaries " *
+        "the GCHP VDIFF payload (include_vdiff_fields = true), and reduced-Gaussian binaries carry none. " *
+        "Set $(label).pressure_basis = \"dry\" to compare them with the " *
+        "dry interface pressures instead (they lie at lower pressure, so a record can land one or more " *
+        "layers too low), or leave \"pressure\" out of $(label).vertical_coordinates"))
+    return true
+end
+
+"""
+    PlacementColumn(nlevel)
+
+Scratch for [`column_layer!`](@ref) on a column of `nlevel` layers:
+`p_half` receives the interface pressures a pressure placement is compared
+with, and `humidity` holds the column's specific humidity (k = 1 at the
+top), which the caller fills when the pressure basis needs it.
+"""
+struct PlacementColumn
+    p_half::Vector{Float64}
+    humidity::Vector{Float64}
+end
+PlacementColumn(nlevel::Integer) = PlacementColumn(Vector{Float64}(undef, nlevel + 1), Vector{Float64}(undef, nlevel))
+
+"""
+    column_layer!(column::PlacementColumn, placement, z_half, air_column, area, g, p_top, basis, mass_basis) -> Int
+
+Model layer (k = 1 top) of a [`VerticalPlacement`](@ref) in one column, the
+rule shared by the forward sampler and any other caller: by height above the
+model surface on the hypsometric interface heights `z_half`, or the lowest
+layer (as [`placement_layer`](@ref)); a pressure placement against the
+interface pressures of the [`AbstractPressureBasis`](@ref) `basis`, built
+into `column.p_half` from `air_column` (kg per cell, of `mass_basis`), the
+cell `area` (m²), gravity `g`, the model-top pressure `p_top` and, for
+[`TotalFromHumidity`](@ref) on a dry basis, `column.humidity`.
+"""
+function column_layer!(column::PlacementColumn, placement::VerticalPlacement, z_half::AbstractVector,
+                       air_column::AbstractVector, area::Real, g::Real, p_top::Real,
+                       basis::AbstractPressureBasis, mass_basis::AbstractMassBasis)
+    placement.method == VERTICAL_PLACEMENT_CODES.pressure || return placement_layer(placement, z_half, column.p_half)
+    placement_pressures!(column.p_half, basis, mass_basis, air_column, column.humidity, area, g, p_top)
+    return pressure_layer_index(column.p_half, placement.pressure_pa)
 end

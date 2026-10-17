@@ -681,6 +681,8 @@ dem_variable = "z"
 unplaced_records = "error"               # ErrorOnUnplaced | "skip" (SkipUnplaced)
 # surface_height_file = "~/data/AtmosTransport/static/surface_height_c90_merra2.nc"  # model ground (ModelSurfaceHeight)
 # absolute_altitude_above_agl_m = 3000.0 # AbsoluteAltitudeAbove (needs surface_height_file); omitted: AboveGroundPlacement
+vertical_coordinates = ["height_above_ground", "pressure"]  # preference order (default); HeightAboveGroundCoordinate, PressureCoordinate
+pressure_basis = "total"                 # TotalFromHumidity (default) | "dry" (DryInterfaces, for binaries without humidity)
 
 [[output.observations.sources]]
 kind = "oco2_lite"                       # OCO2LiteSource: Lite files or OCO-2 v11 MIP 10-s averages
@@ -710,7 +712,9 @@ path = "~/data/AtmosTransport/observations/tccon_sites.csv"
 | `surface_height_file` | per-grid model surface height (m above sea level) → `ModelSurfaceHeight`, read by `GriddedIO.read_model_surface_height`; omitted → `NoModelSurfaceHeight`. Reference of `absolute_altitude_above_agl_m`, and written per row; never used as the true ground |
 | `dem_file`, `dem_variable` | lat-lon DEM (ground or sea surface, m above sea level) → `GriddedIO.LatLonPointElevation`; omitted → `NoPointElevation`. `dem_variable` (default `"z"`) only with `dem_file` |
 | `unplaced_records` | `"error"` (default) → `ErrorOnUnplaced`, `"skip"` → `SkipUnplaced` |
-| `absolute_altitude_above_agl_m` | number ≥ 0 → `AbsoluteAltitudeAbove(h₀)`; omitted → `AboveGroundPlacement`. Needs `surface_height_file` |
+| `absolute_altitude_above_agl_m` | number ≥ 0 → `AbsoluteAltitudeAbove(h₀)`; omitted → `AboveGroundPlacement`. Needs `surface_height_file` and `"height_above_ground"` in `vertical_coordinates` |
+| `vertical_coordinates` | non-empty array, in preference order, of `"height_above_ground"` → `HeightAboveGroundCoordinate` and `"pressure"` → `PressureCoordinate`, each at most once; default `["height_above_ground", "pressure"]`. Without `"height_above_ground"`, `dem_file` and `absolute_altitude_above_agl_m` are rejected |
+| `pressure_basis` | `"total"` (default) → `TotalFromHumidity`, `"dry"` → `DryInterfaces`: the interface pressures a pressure-placed record is compared with (below); only with `"pressure"` in `vertical_coordinates` |
 
 Source paths are templates: `{YYYYMMDD}` (or `{date}`), `{YYMMDD}`, `{YYYY}`,
 `{MM}`, `{DD}` are substituted per run day, and `*` / `?` wildcards expand in
@@ -748,8 +752,10 @@ schedules. Point-event tables (`mode = "soundings"`) read `id`, `time`, `lat`,
 **Vertical placement.** Every request is placed in the model column once,
 when the sampler is built, and the layer is chosen at every sample from that
 sample's column. The column's interface pressures come from the air mass,
-``p_{1/2} = p_\mathrm{top}``, ``p_{k+1/2} = p_{k-1/2} + g\,m_k/A``, and its
-interface heights above the model surface from the hypsometric equation,
+``p_{1/2} = p_\mathrm{top}``, ``p_{k+1/2} = p_{k-1/2} + g\,m_k/A`` (dry
+pressures on a dry-basis run; these are the pressures written to the files),
+and its interface heights above the model surface from the hypsometric
+equation,
 
 ```math
 z_{N+1/2} = 0, \qquad
@@ -760,14 +766,20 @@ with ``T_k`` the GCHP VDIFF layer temperature on cubed-sphere binaries that
 carry it, else `layer_height_temperature_kelvin`. A record at height ``h``
 above the ground is sampled in the layer ``k`` with
 ``z_{k+1/2} \le h < z_{k-1/2}`` (the lowest layer for ``h \le 0``, the top
-layer above the column). The first rule that applies places the record, and
-the rule is written per row as `vertical_placement`:
+layer above the column). A record is placed by the first of the
+`vertical_coordinates` it gives, in their order: `"height_above_ground"`
+(codes 0 and 1 below) and `"pressure"` (code 2). The default,
+`["height_above_ground", "pressure"]`, places a record by its height above
+the ground when it has one and by its pressure otherwise;
+`["pressure", "height_above_ground"]` prefers the pressure; a single
+coordinate uses only that one. The rule that placed the record is written per
+row as `vertical_placement`:
 
 | Code | `vertical_placement` | Layer |
 |---|---|---|
 | 0 | `record_height` | ``h`` = the record's `intake_height`, else `altitude − elevation` (row by row; for ObsPack station series the station's `site_elevation` when the rows have none) |
 | 1 | `altitude_minus_dem` | ``h`` = `altitude` − DEM ground elevation at the point (`dem_file`, bilinear) |
-| 2 | `pressure` | a record with no ``h`` but an ObsPack `pressure` ``p``: the layer with ``p_{k-1/2} \le p < p_{k+1/2}`` |
+| 2 | `pressure` | the record's ObsPack `pressure` ``p``: the layer with ``p_{k-1/2} \le p < p_{k+1/2}`` of the `pressure_basis` interfaces (below) |
 | 3 | `absolute_altitude` | only with `absolute_altitude_above_agl_m` (below) |
 | 4 | `lowest_layer` | a record with no vertical coordinate at all, from a source whose records are column or surface products (`missing_height_rule`: OCO-2 soundings, table rows without height columns) |
 
@@ -783,10 +795,12 @@ record's own `elevation`, else the DEM; the model surface height is **never**
 used in its place (that would place the record by its absolute altitude, the
 error this rule avoids).
 
-A record that none of these rules place cannot be placed: one with an
+A record that none of the coordinates place cannot be placed: one with an
 `altitude` but no ground elevation (no `elevation`, no `dem_file` value at the
-point) and no `pressure`, or an ObsPack record without any vertical
-coordinate. With `unplaced_records = "error"` (default) the sampler refuses
+point) and no `pressure`, one that gives only a coordinate the run does not
+use (an `intake_height` with `vertical_coordinates = ["pressure"]`), or an
+ObsPack record without any vertical coordinate. With
+`unplaced_records = "error"` (default) the sampler refuses
 to build and names the first records; with `"skip"` they are dropped and
 counted in the `n_unplaced_soundings` / `n_unplaced_sites` file attributes.
 They are never sampled in the lowest layer. Undeclared fill values do not
@@ -805,7 +819,8 @@ files have no `pressure`, so sampling them needs a `dem_file`.
 `absolute_altitude_above_agl_m = h₀` re-places records at least ``h_0`` above
 the true ground (free-tropospheric aircraft and AirCore samples, whose air
 does not follow the terrain) by their ObsPack `pressure` when they have one
-(code 2), else by their altitude ``z_\mathrm{obs}`` above sea level, as the
+and `"pressure"` is one of the `vertical_coordinates` (code 2), else by their
+altitude ``z_\mathrm{obs}`` above sea level, as the
 layer holding ``z_\mathrm{obs} - z_s`` (code 3, `absolute_altitude`; needs
 `surface_height_file`). ``z_\mathrm{obs}`` is the record's `altitude`, else
 its ground elevation (the record's, else the DEM value at the point) plus its
@@ -813,17 +828,72 @@ its ground elevation (the record's, else the DEM value at the point) plus its
 (code 0). Records below ``h_0`` keep their height above the
 ground. Whether and where to blend from terrain-following to absolute
 placement aloft is still open; the default places every record by its height
-above the ground. On a dry-basis run the interface pressures are dry partial
-pressures while ObsPack pressures are total pressures; a pressure-placed
-record then sits higher in the column than the model layer chosen by up to
-the vapour fraction ``e/p \approx q/0.622`` of the pressure (about 1% at
-700 hPa in the moist tropics, less aloft). With ``h_0 = 0`` every record that
+above the ground. With ``h_0 = 0`` every record that
 carries an altitude is placed by altitude above sea level (or pressure), as
 the GEOS-Chem ObsPack diagnostic places every record
 (`ObsPack/obspack_mod.F90`: the level where ``\Phi_s/g + \sum_l \Delta z_l``
 first reaches the ObsPack altitude). ObsPack `pressure` must declare its
 units (`Pa`, `hPa`, `mbar`, `kPa` and their spelled-out forms, any case);
 a missing or other unit is an error.
+
+**Pressure basis.** A record's pressure is the total (ambient) pressure of
+dry air and water vapour. The air mass of a dry-basis run gives the dry
+interface pressures above, the weight of the dry air above each interface;
+the total pressure there is larger by the weight of the water vapour above
+it (4.9 hPa at the surface for 50 kg m⁻² of precipitable water, 1 hPa for
+10 kg m⁻²). With `pressure_basis = "total"` (default, `TotalFromHumidity`) a
+pressure-placed record is compared with the total interface pressures. A
+layer with dry air mass ``m_k`` and specific humidity ``q_k`` (kg of vapour
+per kg of moist air) holds ``m_k/(1 - q_k)`` of moist air, so hydrostatically
+
+```math
+p_{1/2} = p_\mathrm{top}, \qquad
+p_{k+1/2} = p_{k-1/2} + \frac{g\,m_k}{A\,(1 - q_k)},
+```
+
+with ``p_\mathrm{top}`` = `A_ifc[1]`, the pure-pressure top interface of the
+met model's hybrid coordinate (a total pressure). This inverts the
+preprocessor's dry conversion ``Δp_\mathrm{dry} = (1 - q)\,Δp``. On merged
+or remapped levels the binary carries a dry-mass-weighted ``q``, so the
+inverse is not exact there: on the golden `pre_ll72` binary (ERA5 L137 merged
+to 34 levels) the rebuilt total surface pressure differs from the stored one
+by −0.012 Pa on average and 0.125 Pa at most, where the dry interfaces are
+169 Pa low on average and 700 Pa at worst.
+
+The humidity is the binary's layer-mean specific humidity at the sampled
+boundary:
+
+- lat-lon binaries preprocessed with `output.include_qv = true`: `qv_start`
+  at the run start and `qv_end` at each window end;
+- cubed-sphere binaries with the GCHP VDIFF payload (`include_vdiff_fields`):
+  VDIFF `qv` is a window-start value, so a window end takes the `qv` of the
+  next window (window 1 of the next binary after a binary's last window),
+  and the run start the first window's. The run's last window end has no
+  next window and takes the ended window's `qv`, one window old: on the
+  golden MERRA-2 C90 L72 binary the interfaces rebuilt with it are up to
+  23 Pa (99th percentile 11 Pa) from the met model's total interfaces
+  ``A + B\,p_s``, against at most 0.23 Pa with the next window's `qv`;
+- reduced-Gaussian binaries (the preprocessor refuses `include_qv`) and
+  cubed-sphere binaries without the VDIFF payload (for example the ERA5
+  N320 → cubed-sphere products) carry none.
+
+With linear time interpolation the humidity is blended between the two
+window ends like the air mass. A moist-basis run's air mass already gives
+total pressures. A dry-basis run whose binaries do not all carry humidity
+(every binary's header is checked before transport) cannot build them:
+building the sampler then fails if any record is placed by pressure, and
+`pressure_basis = "dry"` (`DryInterfaces`) compares with the dry interfaces
+instead. Those lie at lower pressure, so a record can land one or more layers
+too low (closer to the surface, where the layers are thinnest). On the GEOS
+L72 levels with ``p_s`` = 1010 hPa and
+``q = q_s\,(p_\mathrm{mid}/p_s)^\lambda``, ``\lambda`` set by the
+precipitable water, the dry interfaces put a pressure uniformly spaced
+between 900 and 1010 hPa in a lower layer 25% of the time, between 500 and
+900 hPa 6% and between 200 and 500 hPa 0.4% for a tropical column
+(``q_s`` = 18 g/kg, 50 kg m⁻²), and 5%, 1% and 0% for ``q_s`` = 4 g/kg and
+10 kg m⁻²; an independent construction of the tropical case gave 29%, 6.5%
+and 0.36%. The files keep the dry interfaces as `p_half_dry`; the attribute
+`pressure_basis` records the basis used.
 
 **External ground datasets.** Both are static and external, never part of a
 transport binary, and read through `GriddedIO`:

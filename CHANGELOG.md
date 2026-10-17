@@ -118,6 +118,45 @@
 
 ### Numerical changes
 
+- **Pressure-placed observation samples use total pressures** (issue #20,
+  finding OF-116). Observation sampling (`[output.observations]`) placed a
+  record by its pressure (ObsPack `pressure`, a total pressure) against the
+  column's dry interface pressures on dry-basis runs, which lie lower by the
+  weight of the water vapour above each interface (4.9 hPa at the surface for
+  50 kg m⁻² of precipitable water), so a record could land one or more layers
+  too low.
+  The default `pressure_basis = "total"` (`TotalFromHumidity`) now compares it
+  with the total interface pressures
+  `p[k+1] = p[k] + g·m[k] / (A·(1 − q[k]))`, built from the dry air mass and
+  the binary's specific humidity, blended in time like the air mass:
+  `qv_start` at the run start and `qv_end` at window ends on lat-lon binaries
+  preprocessed with `output.include_qv = true`; on cubed-sphere binaries with
+  the GCHP VDIFF payload the window-start VDIFF `qv` of the next window (read
+  from the binary, or the next binary's window 1). The run's last window end
+  has no next window and takes the ended window's `qv`: on the golden MERRA-2
+  C90 L72 binary its interfaces are up to 23 Pa (99th percentile 11 Pa) from
+  the met model's total interfaces, against ≤ 0.23 Pa with the next window's.
+  Reduced-Gaussian binaries and cubed-sphere binaries without the VDIFF
+  payload carry no humidity. On merged levels the binary's dry-mass-weighted
+  `q` makes the inverse inexact: on the golden `pre_ll72` binary (ERA5 L137
+  merged to 34 levels) the rebuilt total surface pressure is −0.012 Pa off on
+  average and 0.125 Pa at most (dry interfaces: 169 Pa and 700 Pa low).
+  Only rows with `vertical_placement = 2` change: their `intake_level`, layer
+  heights and `<tracer>_intake`. On the GEOS L72 levels (ps = 1010 hPa,
+  q = q_s (p_mid/ps)^λ with λ set by the precipitable water, pressures
+  uniformly spaced) 25% of pressures between 900 and 1010 hPa, 6% between
+  500 and 900 hPa and 0.4% between 200 and 500 hPa move up for a tropical
+  column (q_s = 18 g/kg, 50 kg m⁻²; an independent construction gave 29%,
+  6.5% and 0.36%), and 5%, 1% and 0% for q_s = 4 g/kg and 10 kg m⁻²; in the
+  sampler test case two of
+  three pressure-placed rows moved up one layer and their intake values by
+  −2.2 ppm (the column's per-layer CO₂ gradient). Height-placed, lowest-layer
+  and site rows, and the written `p_half_dry`, are bit-identical. A dry-basis
+  run whose binaries do not all carry humidity (every binary's header is
+  checked before transport), such as every reduced-Gaussian run, now fails to
+  build a sampler with pressure-placed records unless `pressure_basis = "dry"`
+  (`DryInterfaces`, the old comparison) is set. Moist-basis runs are unchanged (their air mass
+  already gives total pressures). No golden case samples observations.
 - **4D-Var gradients** (issue #20) change at the rounding level: the single
   reverse sweep sums the observations' contributions inside the adjoint state
   instead of adding one footprint per observation. Against the previous
@@ -489,6 +528,31 @@
   `scripts/preprocessing/build_model_surface_height.jl` from a met source's
   surface geopotential). `build_observation_sampler` takes
   `terrain = ObservationTerrain(...)` and keeps only its provenance.
+- `[output.observations]` takes `vertical_coordinates` (issue #20): the
+  vertical coordinates that may place a record, in preference order, from
+  `"height_above_ground"` (`HeightAboveGroundCoordinate`) and `"pressure"`
+  (`PressureCoordinate`), default `["height_above_ground", "pressure"]` (the
+  previous rule, bit-identical). `["pressure", "height_above_ground"]` prefers
+  a record's pressure; a single coordinate uses only that one, and a record
+  that gives only the other one is unplaced (`unplaced_records`). An empty,
+  repeating or unknown list is an error, as are `dem_file` and
+  `absolute_altitude_above_agl_m` without `"height_above_ground"` and
+  `pressure_basis` without `"pressure"`;
+  `absolute_altitude_above_agl_m` re-places by pressure only when
+  `"pressure"` is listed. And `pressure_basis` (`"total"` →
+  `TotalFromHumidity`, default; `"dry"` → `DryInterfaces`), see Numerical
+  changes. `VerticalPlacementSpec` gains `coordinates` and `pressure_basis`;
+  `resolve_placement(spec::VerticalPlacementSpec, rule, request, cell, terrain)`
+  replaces the `resolve_placement(altitude_placement, ...)` method; the shared
+  parser `_parse_vertical_placement(cfg, label)` reads the placement keys
+  (`_VERTICAL_PLACEMENT_KEYS`) of any table. `build_observation_sampler` takes
+  `has_humidity` and `observe_window_boundary!` takes `humidity` (the specific
+  humidity at the window end); new `total_interface_pressures!`,
+  `placement_pressures!`, `check_pressure_basis`, `observation_needs_humidity`,
+  the free layer rule `column_layer!` with its scratch `PlacementColumn`, and
+  `MetDrivers.load_vdiff_qv_window!` (one window's VDIFF `qv`). Observation files add
+  the attributes `vertical_coordinates` and `pressure_basis`, and the
+  `vertical_placement_codes` text of code 2 names the pressure basis.
 - Observation files add `altitude`, `pressure` (soundings),
   `vertical_placement`, `placement_height_agl` and `model_surface_height` per
   row or site, and the attributes `vertical_placement_codes`,

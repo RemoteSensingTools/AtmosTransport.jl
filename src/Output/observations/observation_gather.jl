@@ -244,6 +244,37 @@ function interface_pressures!(p_half::AbstractVector{Float64}, air_column::Abstr
     return p_half
 end
 
+"""
+    total_interface_pressures!(p_half, dry_air_column, humidity_column, area, g, p_top)
+
+Total (dry air plus water vapour) interface pressures (Pa) from a column of
+dry air mass per cell (kg) and the layers' specific humidity (kg of vapour
+per kg of moist air), top down: `p_half[1] = p_top`,
+`p_half[k+1] = p_half[k] + g·m[k] / (area·(1 − q[k]))`, the hydrostatic
+weight of the moist air `m[k]/(1 − q[k])` (see `TotalFromHumidity`). Every
+`q` must be finite and below 1; small negative values (interpolation
+undershoot) are used as they are.
+"""
+function total_interface_pressures!(p_half::AbstractVector{Float64}, air_column::AbstractVector,
+                                    humidity_column::AbstractVector, area::Real, g::Real, p_top::Real)
+    nlevel = length(air_column)
+    length(p_half) == nlevel + 1 || throw(DimensionMismatch(
+        "p_half needs $(nlevel + 1) entries for $(nlevel) layers; got $(length(p_half))"))
+    length(humidity_column) == nlevel || throw(DimensionMismatch(
+        "the humidity column has $(length(humidity_column)) layers; the air column has $(nlevel)"))
+    g_over_a = Float64(g) / Float64(area)
+    p = Float64(p_top)
+    @inbounds p_half[1] = p
+    @inbounds for k in 1:nlevel
+        q = Float64(humidity_column[k])
+        isfinite(q) && q < 1 || throw(ArgumentError(
+            "specific humidity must be finite and below 1 kg/kg; layer $(k) has $(q)"))
+        p += Float64(air_column[k]) * g_over_a / (1 - q)
+        p_half[k + 1] = p
+    end
+    return p_half
+end
+
 "How the layer temperature for hypsometric heights is obtained."
 abstract type AbstractLayerTemperature end
 "One temperature for every layer (fallback when the binary carries none)."

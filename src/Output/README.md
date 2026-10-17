@@ -60,20 +60,28 @@ writing topology-specific NetCDF files directly.
 - `observations/observation_output_spec.jl` parses `[output.observations]` into
   `ObservationOutputSpec` (or `NoObservationOutput`), rejecting unknown keys, and
   resolves `_soundings` / `_sites` file paths with the snapshot day template.
+  The placement keys (`_VERTICAL_PLACEMENT_KEYS`) go through the shared
+  `_parse_vertical_placement(cfg, label)`, which any table that places records
+  in the column can reuse.
 - `observations/observation_placement.jl` places requests in the column: the
   static ground interfaces `AbstractModelSurfaceHeight` (`ModelSurfaceHeight`,
   per-cell model surface height) and `AbstractPointElevation` (DEM; the
   concrete lat-lon type and both readers live in `GriddedIO`), bundled as
   `ObservationTerrain`; the `[output.observations]` placement settings
   (`VerticalPlacementSpec`, `ErrorOnUnplaced`/`SkipUnplaced`,
-  `AboveGroundPlacement`/`AbsoluteAltitudeAbove`); the per-source rule for
-  records without any vertical coordinate (`missing_height_rule`:
+  `AboveGroundPlacement`/`AbsoluteAltitudeAbove`, the ordered
+  `HeightAboveGroundCoordinate`/`PressureCoordinate` of `vertical_coordinates`,
+  and the pressure basis `TotalFromHumidity`/`DryInterfaces`); the per-source
+  rule for records without any vertical coordinate (`missing_height_rule`:
   `LowestLayerWithoutHeight` for OCO-2 and tables, `UnplacedWithoutHeight` for
-  ObsPack); `resolve_placement` (record height → altitude − DEM → pressure →
-  missing-height rule; `nothing` when a record cannot be placed; the model
-  surface height is never a stand-in for the true ground) into a
-  `VerticalPlacement` with a `VERTICAL_PLACEMENT_CODES` code; and `placement_layer` /
-  `pressure_layer_index`, the layer of a placement in one sampled column.
+  ObsPack); `resolve_placement` (the first configured coordinate that places
+  the record: height above ground = record height, else altitude − DEM; or
+  pressure; else the missing-height rule; `nothing` when a record cannot be
+  placed; the model surface height is never a stand-in for the true ground)
+  into a `VerticalPlacement` with a `VERTICAL_PLACEMENT_CODES` code;
+  `placement_layer` / `pressure_layer_index`, the layer of a placement in one
+  sampled column; and `placement_pressures!` / `check_pressure_basis`, the
+  total (from the specific humidity) or dry interfaces pressure placement uses.
 - `observations/cell_locator.jl` maps an observation (lon, lat) to its containing
   cell per topology (`cell_locator`, `locate` → `CellLocation` with native cell
   index, halo-aware device column, centre and area). Lat-lon and reduced
@@ -82,7 +90,8 @@ writing topology-specific NetCDF files directly.
   sampling: a pure gather kernel (`gather_columns!`, `gather_field!`) that copies
   air mass and selected tracer storage for a batch of columns into compact
   `(level, observation)` buffers, plus the host Float64 reconstruction of
-  interface pressures, hypsometric layer heights (`AbstractLayerTemperature`
+  interface pressures (air-mass interfaces, and total interfaces from the dry
+  air mass and specific humidity), hypsometric layer heights (`AbstractLayerTemperature`
   sources), intake layer index (a `NaN` height is an error, never the lowest
   layer), mixing-ratio profiles, and column means.
 - `observations/observation_netcdf.jl` holds the append-only point-event and

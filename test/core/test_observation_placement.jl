@@ -12,7 +12,7 @@ using AtmosTransport.Output: observation_output_spec, build_observation_sampler,
                              placement_layer, AboveGroundPlacement, AbsoluteAltitudeAbove,
                              SoundingRequest, SiteRequest, CellLocation, ModelSurfaceHeight,
                              ErrorOnUnplaced, SkipUnplaced, LowestLayerWithoutHeight,
-                             UnplacedWithoutHeight, missing_height_rule
+                             UnplacedWithoutHeight, missing_height_rule, VerticalPlacementSpec
 using AtmosTransport.GriddedIO: write_model_surface_height
 const O = AtmosTransport.Output
 const DR = AtmosTransport.Models.DrivenRunner
@@ -40,15 +40,30 @@ function model10()
     return (; state = CellState(DryBasis, air; co2), grid, mesh)
 end
 
+# `model10` with water vapour: the same total pressures (interfaces exactly
+# A + B·1000 hPa), so the dry air mass of layer k is (1 − q_k) Δp_k A / g, with
+# q = 0.02, 0.01, 0.005 in layers 10, 9, 8 and 0.001 above. The dry interfaces
+# then lie 219.9 Pa (bottom of layer 9) and 119.9 Pa (bottom of layer 8) above
+# the total ones. `basis = MoistBasis` stores the moist (total) air mass.
+const MOIST_Q = [fill(0.001, 7); 0.005; 0.01; 0.02]
+function moist_model10(; basis = DryBasis)
+    m = model10()
+    air = copy(m.state.air_mass)
+    basis === DryBasis && (air .*= reshape(1 .- MOIST_Q, 1, 1, 10))
+    co2 = air .* reshape(400e-6 .+ 20e-6 .* (0:9) ./ 9, 1, 1, 10)
+    q = repeat(reshape(MOIST_Q, 1, 1, 10), 4, 3, 1)
+    return (; state = CellState(basis, air; co2), grid = m.grid, mesh = m.mesh, q)
+end
+
 # An ObsPack file in the layout of the OCO-2 MIP daily files: optional
 # variables are absent when `nothing`; NaN entries are written as the fill value.
 function write_pack(path; altitude = nothing, elevation = nothing, intake = nothing, pressure = nothing,
-                    pressure_units = "hPa", lon = LON, lat = LAT)
+                    pressure_units = "hPa", lon = LON, lat = LAT, time = ORIGIN + Minute(30))
     n = length(something(altitude, intake, pressure, elevation))
     NCDataset(path, "c") do ds
         defDim(ds, "obs", n)
         defVar(ds, "time", Float64, ("obs",); attrib = Dict("units" => "seconds since 1970-01-01T00:00:00Z"))[:] =
-            fill(unix(ORIGIN + Minute(30)), n)
+            unix.(time isa AbstractVector ? time : fill(time, n))
         defVar(ds, "latitude", Float32, ("obs",))[:] = Float32.(lat isa AbstractVector ? lat : fill(lat, n))
         defVar(ds, "longitude", Float32, ("obs",))[:] = Float32.(lon isa AbstractVector ? lon : fill(lon, n))
         for (name, values) in (("altitude", altitude), ("elevation", elevation), ("intake_height", intake),
@@ -86,21 +101,23 @@ function dem_file(dir, z; name = "dem_$(round(Int, z)).nc")
 end
 
 # Build the sampler the way the runner does (terrain through GriddedIO), sample
-# two window ends, and return the soundings and sites file paths.
-function sample(dir, sources; name = "obs", keys...)
+# two window ends, and return the soundings and sites file paths. `humidity`
+# (one field for both window ends) is passed when given, and the build is told
+# the run has humidity; a pair gives the humidity of each window end.
+function sample(dir, sources; name = "obs", m = model10(), humidity = nothing, keys...)
+    q0, q1 = humidity isa Tuple ? humidity : (humidity, humidity)
     cfg = Dict{String, Any}("path" => joinpath(dir, "snap.nc"), "hours" => [0.0], "split" => "single",
         "observations" => Dict{String, Any}("path" => joinpath(dir, "$(name).nc"), "sources" => sources,
                                             (String(k) => v for (k, v) in keys)...))
     spec = observation_output_spec(cfg)
-    m = model10()
     terrain = DR._observation_terrain(spec.placement, m.mesh)
     s = quiet() do
         build_observation_sampler(spec, m.state, m.grid; origin = ORIGIN, window_seconds = (0.0, 86400.0),
-                                  halo_width = 0, terrain)
+                                  halo_width = 0, terrain, has_humidity = humidity !== nothing)
     end
     begin_observation_day!(s, "20211202", 1)
-    observe_window_boundary!(s, m.state, 0.0; next_window_seconds = 3600.0)
-    observe_window_boundary!(s, m.state, 3600.0; next_window_seconds = 3600.0)
+    observe_window_boundary!(s, m.state, 0.0; next_window_seconds = 3600.0, humidity = q0)
+    observe_window_boundary!(s, m.state, 3600.0; next_window_seconds = 3600.0, humidity = q1)
     quiet(() -> finish_observations!(s))
     close(s)
     return joinpath(dir, "$(name)_soundings.nc"), joinpath(dir, "$(name)_sites.nc")
@@ -261,7 +278,7 @@ end
         # altitude without ground and no pressure (unplaced). 650 hPa is in layer 7.
         pack = write_pack(joinpath(dir, "co2_prs_aircraft-insitu_1.nc"); altitude = [NaN, 3000.0, 3000.0],
                           pressure = [650.0, 650.0, NaN])
-        path, _ = sample(dir, Any[obspack(pack)]; name = "prs", unplaced_records = "skip")
+        path, _ = sample(dir, Any[obspack(pack)]; name = "prs", unplaced_records = "skip", pressure_basis = "dry")
         r = soundings(path)
         @test r.method == [CODES.pressure, CODES.pressure] && r.unplaced == 1
         @test r.pressure ≈ [65000.0, 65000.0] && all(isnan, r.height)
@@ -269,11 +286,11 @@ end
         @test all(r.p_half[7, k] <= 65000.0 < r.p_half[8, k] for k in 1:2)
         # Pressure units: case and blanks do not matter; an unknown or missing unit fails.
         pa = write_pack(joinpath(dir, "co2_pa_aircraft-insitu_1.nc"); pressure = [65000.0], pressure_units = " Pa ")
-        @test soundings(first(sample(dir, Any[obspack(pa)]; name = "pa"))).level == [7]
+        @test soundings(first(sample(dir, Any[obspack(pa)]; name = "pa", pressure_basis = "dry"))).level == [7]
         for (k, units) in enumerate(("psi", ""))
             bad = write_pack(joinpath(dir, "co2_bad$(k)_aircraft-insitu_1.nc"); pressure = [650.0],
                              pressure_units = units)
-            err = failure(() -> sample(dir, Any[obspack(bad)]; name = "bad$(k)"))
+            err = failure(() -> sample(dir, Any[obspack(bad)]; name = "bad$(k)", pressure_basis = "dry"))
             @test err isa ArgumentError && occursin("variable pressure has units", sprint(showerror, err))
         end
     end
@@ -285,7 +302,7 @@ end
                           pressure = [950.0, 650.0, NaN])
         path, _ = sample(dir, Any[obspack(pack)]; name = "abs", surface_height_file = surface_file(dir, 0.0),
                          dem_file = dem_file(dir, 0.0), dem_variable = "elevation",
-                         absolute_altitude_above_agl_m = 1000.0)
+                         absolute_altitude_above_agl_m = 1000.0, pressure_basis = "dry")
         r = soundings(path)
         @test r.method == [CODES.altitude_minus_dem, CODES.pressure, CODES.absolute_altitude]
         @test r.pressure[1:2] ≈ [95000.0, 65000.0] && isnan(r.pressure[3])
@@ -293,6 +310,167 @@ end
         @test r.level == [10, 7, 4]
         k = r.level[2]
         @test r.p_half[k, 2] <= 65000.0 < r.p_half[k + 1, 2]
+    end
+end
+
+# Every variable of two observation files, raw (fill values as stored).
+file_variables(path) = NCDataset(ds -> Dict(k => Array(ds[k].var) for k in keys(ds)), path, "r")
+
+@testset "pressure placement against total interface pressures (OF-116, issue #20)" begin
+    mktempdir() do dir
+        # 899 and 799 hPa lie between the dry and the total bottom interfaces of
+        # layers 9 and 8 (89780.1 / 90000 and 79880.1 / 80000 Pa); 650 hPa is
+        # mid-layer 7 for both. The intake-height rows are the control.
+        pack = write_pack(joinpath(dir, "co2_prs_aircraft-insitu_1.nc"); pressure = [899.0, 799.0, 650.0, NaN, NaN, NaN],
+                          intake = [NaN, NaN, NaN, ALTS...])
+        m = moist_model10()
+        # The analytic column: total interfaces from the dry air mass and q are A + B·1000 hPa.
+        column = m.state.air_mass[1, 2, :]
+        p_total = O.total_interface_pressures!(zeros(11), column, MOIST_Q, cell_area(m.mesh, 1, 2), GRAVITY, 100.0)
+        @test p_total ≈ vcat(100.0, 1e4 .* (1:10)) rtol = 1e-14
+        p_dry = O.interface_pressures!(zeros(11), column, cell_area(m.mesh, 1, 2), GRAVITY, 100.0)
+        @test p_dry[9:10] ≈ [80000 - 119.9, 90000 - 219.9] rtol = 1e-12
+
+        total_path, _ = sample(dir, Any[obspack(pack)]; name = "total", m, humidity = m.q)
+        r = soundings(total_path)
+        @test r.method == [fill(CODES.pressure, 3); fill(CODES.record_height, 3)]
+        @test r.level[1:3] == [9, 8, 7]                       # by total pressure; [10, 9, 7] before
+        @test r.ppm[1:3] ≈ 400 .+ 20 .* [8, 7, 6] ./ 9
+        # The file keeps the dry interfaces: they would put the first two rows one layer lower.
+        @test r.p_half[10, 1] < 89900 < 90000 && r.p_half[9, 2] < 79900 < 80000
+        dry_path, _ = sample(dir, Any[obspack(pack)]; name = "dry", m, pressure_basis = "dry")
+        d = soundings(dry_path)
+        @test d.level[1:3] == [10, 9, 7]                      # the dry-interface rule (before issue #20)
+        # Height placements and every other output do not depend on the pressure basis.
+        @test d.level[4:6] == r.level[4:6] && d.ppm[4:6] == r.ppm[4:6]
+        @test d.p_half == r.p_half && isequal(d.height, r.height) && d.method == r.method
+        NCDataset(total_path, "r") do ds
+            @test ds.attrib["pressure_basis"] == "total"
+            @test ds.attrib["vertical_coordinates"] == "height_above_ground pressure"
+        end
+        NCDataset(dry_path, "r") do ds
+            @test ds.attrib["pressure_basis"] == "dry"
+        end
+        # The default order written out is the same configuration: identical rows.
+        explicit_path, _ = sample(dir, Any[obspack(pack)]; name = "explicit", m, humidity = m.q,
+                                  vertical_coordinates = ["height_above_ground", "pressure"], pressure_basis = "total")
+        @test isequal(file_variables(explicit_path), file_variables(total_path))
+
+        # A record with a height and a pressure: placed by whichever coordinate comes first.
+        both = write_pack(joinpath(dir, "co2_both_aircraft-pfp_1.nc"); intake = [500.0], pressure = [899.0])
+        h_first = soundings(first(sample(dir, Any[obspack(both)]; name = "hfirst", m, humidity = m.q)))
+        @test h_first.method == [CODES.record_height] && h_first.level == [10]
+        p_first = soundings(first(sample(dir, Any[obspack(both)]; name = "pfirst", m, humidity = m.q,
+                                         vertical_coordinates = ["pressure", "height_above_ground"])))
+        @test p_first.method == [CODES.pressure] && p_first.level == [9]
+        # Pressure only: the intake-height rows are unplaced, never put in the lowest layer.
+        err = failure(() -> sample(dir, Any[obspack(pack)]; name = "ponly", m, humidity = m.q,
+                                   vertical_coordinates = ["pressure"]))
+        @test err isa ArgumentError
+        @test occursin("3 point events", sprint(showerror, err)) &&
+              occursin("vertical_coordinates = [\"pressure\"]", sprint(showerror, err))
+        # Absolute altitude aloft re-places by the total pressure (899 hPa: layer 9, not the dry layer 10).
+        aloft = write_pack(joinpath(dir, "co2_iag_aircraft-insitu_1.nc"); intake = [500.0, 3000.0],
+                           elevation = [0.0, 0.0], pressure = [NaN, 899.0])
+        abs_rows = soundings(first(sample(dir, Any[obspack(aloft)]; name = "abstotal", m, humidity = m.q,
+                                          surface_height_file = surface_file(dir, 0.0),
+                                          absolute_altitude_above_agl_m = 1000.0)))
+        @test abs_rows.method == [CODES.record_height, CODES.pressure] && abs_rows.level[2] == 9
+        # Height only: the pressure rows are unplaced, and no humidity is needed.
+        h_only = soundings(first(sample(dir, Any[obspack(pack)]; name = "honly", m,
+                                        vertical_coordinates = ["height_above_ground"], unplaced_records = "skip")))
+        @test h_only.unplaced == 3 && h_only.method == fill(CODES.record_height, 3) && h_only.level == r.level[4:6]
+    end
+end
+
+@testset "pressure basis: humidity requirements, moist-basis runs, time blending" begin
+    mktempdir() do dir
+        pack = write_pack(joinpath(dir, "co2_p_aircraft-insitu_1.nc"); pressure = [899.0])
+        heights = write_pack(joinpath(dir, "co2_h_aircraft-pfp_1.nc"); intake = ALTS)
+        m = moist_model10()
+        # Without humidity the default total pressures cannot be built: the error names the opt-in.
+        err = failure(() -> sample(dir, Any[obspack(pack)]; name = "nohumidity", m))
+        msg = sprint(showerror, err)
+        @test err isa ArgumentError && occursin("1 requests are placed by pressure", msg) &&
+              occursin("[output.observations].pressure_basis = \"dry\"", msg)
+        # Without pressure-placed records no humidity is needed.
+        @test soundings(first(sample(dir, Any[obspack(heights)]; name = "heights", m))).method ==
+              fill(CODES.record_height, 3)
+        # A sampler that needs the humidity refuses a window end without it, or of the wrong layout.
+        spec = observation_output_spec(Dict{String, Any}("observations" => Dict{String, Any}(
+            "path" => joinpath(dir, "strict.nc"), "sources" => Any[obspack(pack)])))
+        s = quiet(() -> build_observation_sampler(spec, m.state, m.grid; origin = ORIGIN,
+                                                  window_seconds = (0.0, 86400.0), halo_width = 0, has_humidity = true))
+        @test O.observation_needs_humidity(s) && s.spec.placement.pressure_basis isa O.TotalFromHumidity
+        @test !O.observation_needs_humidity(O.NoObservationSampler())
+        begin_observation_day!(s, "20211202", 1)
+        @test_throws ArgumentError observe_window_boundary!(s, m.state, 0.0; next_window_seconds = 3600.0)
+        @test_throws DimensionMismatch observe_window_boundary!(s, m.state, 0.0; next_window_seconds = 3600.0,
+                                                                humidity = m.q[:, :, 1:9])
+        close(s)
+
+        # A moist-basis run: the air mass is the total mass, its interfaces are total pressures without
+        # humidity, and the dry opt-in is refused.
+        moist = moist_model10(; basis = MoistBasis)
+        moist_path, _ = sample(dir, Any[obspack(pack)]; name = "moist", m = moist)
+        @test NCDataset(ds -> Int.(ds["intake_level"][:]), moist_path, "r") == [9]
+        err = failure(() -> sample(dir, Any[obspack(pack)]; name = "moistdry", m = moist, pressure_basis = "dry"))
+        @test err isa ArgumentError && occursin("needs a dry-basis run", sprint(showerror, err))
+
+        # Linear time interpolation blends the humidity like the air mass: q0 at t = 0, q0/2 at 1 h, so
+        # 0.75 q0 at 0:30. a < b < c are the total bottom interfaces of layer 9 for q0/2, 0.75 q0 and q0;
+        # (a+b)/2 is in layer 9 and (b+c)/2 in layer 10 only with the blended humidity.
+        area = cell_area(m.mesh, 1, 2)
+        column = m.state.air_mass[1, 2, :]
+        bottom9(q) = O.total_interface_pressures!(zeros(11), column, q, area, GRAVITY, 100.0)[10]
+        a, b, c = bottom9(MOIST_Q ./ 2), bottom9(0.75 .* MOIST_Q), bottom9(MOIST_Q)
+        @test a < b < c
+        pressures = [(a + b) / 2, (b + c) / 2] ./ 100
+        times = [ORIGIN + Minute(30), ORIGIN + Minute(30), ORIGIN + Hour(1), ORIGIN + Hour(1)]
+        timed = write_pack(joinpath(dir, "co2_t_aircraft-insitu_1.nc"); pressure = [pressures; pressures], time = times)
+        linear = soundings(first(sample(dir, Any[obspack(timed)]; name = "linear", m, humidity = (m.q, m.q ./ 2))))
+        # 0:30 blended; 1:00 is the final window end, emitted from its own sample (q0/2).
+        @test linear.level == [9, 10, 10, 10]
+        nearest = soundings(first(sample(dir, Any[obspack(timed)]; name = "nearest", m, humidity = (m.q, m.q ./ 2),
+                                         time_interpolation = "nearest_window")))
+        @test nearest.level == [10, 10, 10, 10]               # 0:30 rounds to the 1 h window end (q0/2)
+    end
+end
+
+@testset "cubed sphere: total pressures from VDIFF humidity panels" begin
+    mktempdir() do dir
+        # Two layers, total interfaces 100, 50000, 100000 Pa; q = 0.001 and 0.02. The dry interface
+        # between the layers is 100 + 0.999·49900 = 49950.1 Pa, so 499.8 hPa is in layer 1 by total
+        # pressure and in layer 2 by dry pressure.
+        mesh = CubedSphereMesh(; FT = Float64, Nc = 4, Hp = 2)
+        grid = AtmosGrid(mesh, HybridSigmaPressure([100.0, 0.0, 0.0], [0.0, 0.5, 1.0]), CPU(); FT = Float64)
+        q, dp = [0.001, 0.02], [49900.0, 50000.0]
+        air = ntuple(6) do _
+            a = zeros(8, 8, 2)
+            for k in 1:2, j in 1:4, i in 1:4
+                a[i + 2, j + 2, k] = (1 - q[k]) * dp[k] * cell_area(mesh, i, j) / GRAVITY
+            end
+            a
+        end
+        state = CubedSphereState(DryBasis, air; co2 = map(m -> m .* 400e-6, air), halo_width = 2)
+        pack = write_pack(joinpath(dir, "co2_cs_aircraft-insitu_1.nc"); pressure = [499.8], lon = 100.0, lat = 0.0)
+        interior = ntuple(_ -> repeat(reshape(q, 1, 1, 2), 4, 4, 1), 6)       # GCHP VDIFF layout
+        padded = ntuple(_ -> repeat(reshape(q, 1, 1, 2), 8, 8, 1), 6)         # air-mass layout
+        function level(name, humidity; keys...)
+            spec = observation_output_spec(Dict{String, Any}("observations" => Dict{String, Any}(
+                "path" => joinpath(dir, "$(name).nc"), "sources" => Any[obspack(pack)],
+                (String(k) => v for (k, v) in keys)...)))
+            s = quiet(() -> build_observation_sampler(spec, state, grid; origin = ORIGIN,
+                window_seconds = (0.0, 86400.0), halo_width = 2, has_humidity = humidity !== nothing))
+            begin_observation_day!(s, "20211202", 1)
+            observe_window_boundary!(s, state, 0.0; next_window_seconds = 3600.0, humidity)
+            observe_window_boundary!(s, state, 3600.0; next_window_seconds = 3600.0, humidity)
+            quiet(() -> finish_observations!(s)); close(s)
+            return NCDataset(ds -> Int.(ds["intake_level"][:]), joinpath(dir, "$(name)_soundings.nc"), "r")
+        end
+        @test level("interior", interior) == [1]
+        @test level("padded", padded) == [1]
+        @test level("dry", nothing; pressure_basis = "dry") == [2]
     end
 end
 
@@ -359,7 +537,7 @@ end
                                               ORIGIN, [Date(ORIGIN)]))
         end
         @test isnan(reqs[1].pressure_pa) && isnan(reqs[2].pressure_pa) && reqs[3].pressure_pa ≈ 65000.0
-        path, _ = sample(dir, Any[obspack(pack)]; name = "pfill", unplaced_records = "skip")
+        path, _ = sample(dir, Any[obspack(pack)]; name = "pfill", unplaced_records = "skip", pressure_basis = "dry")
         r = soundings(path)
         @test r.unplaced == 2 && r.method == [CODES.pressure] && r.level == [7]
         err = failure(() -> sample(dir, Any[obspack(pack)]; name = "pfill2"))
@@ -433,7 +611,8 @@ O.point_elevation(d::ConstantDEM, lon::Real, lat::Real) = d.z
     above = AboveGroundPlacement()
     lowest = LowestLayerWithoutHeight()
     unplaced = UnplacedWithoutHeight()
-    place(r, t = terrain; option = above, rule = lowest) = resolve_placement(option, rule, r, cell, t)
+    place(r, t = terrain; option = above, rule = lowest, coordinates = O.DEFAULT_VERTICAL_COORDINATES) =
+        resolve_placement(VerticalPlacementSpec(; altitude_placement = option, coordinates), rule, r, cell, t)
     p = place(request(intake = 30.0, altitude = 1000.0))
     @test p.method == CODES.record_height && p.height_agl_m == 30.0 && p.model_surface_m == 250.0
     p = place(request(altitude = 1000.0))
@@ -475,6 +654,32 @@ O.point_elevation(d::ConstantDEM, lon::Real, lat::Real) = d.z
     @test O.record_height_above_ground(NaN, 500.0, 100.0) == 400.0
     @test O.record_height_above_ground(10.0, 500.0, 100.0) == 10.0
     @test isnan(O.record_height_above_ground(NaN, 500.0, NaN))
+
+    # Coordinate order (issue #20): the first configured coordinate that places a record wins.
+    H, P = O.HeightAboveGroundCoordinate(), O.PressureCoordinate()
+    both = request(intake = 30.0, pressure = 50000.0)
+    for (coordinates, method) in (((H, P), CODES.record_height), ((P, H), CODES.pressure),
+                                  ((P,), CODES.pressure), ((H,), CODES.record_height))
+        @test place(both; coordinates).method == method
+    end
+    @test place(both; coordinates = (P, H)).pressure_pa == 50000.0
+    height_only = request(altitude = 1000.0)                  # 900 m above the 100 m DEM ground
+    @test place(height_only; coordinates = (P, H)).method == CODES.altitude_minus_dem
+    @test place(height_only; coordinates = (P,)) === nothing   # a coordinate the run does not use
+    pressure_only = request(pressure = 50000.0)
+    @test place(pressure_only; coordinates = (H, P)).method == CODES.pressure
+    @test place(pressure_only; coordinates = (H,)) === nothing
+    @test place(request(intake = 30.0); coordinates = (P,)) === nothing
+    for coordinates in ((H, P), (P, H), (P,), (H,))
+        # Neither: the source decides (column and surface products go to the lowest layer).
+        @test place(request(elevation = 10.0); coordinates).method == CODES.lowest_layer
+        @test place(request(elevation = 10.0); coordinates, rule = unplaced) === nothing
+    end
+    # Aloft, absolute-altitude placement prefers the pressure only when pressure is a coordinate.
+    aloft = request(intake = 5000.0, elevation = 300.0, pressure = 50000.0)
+    @test place(aloft; option = AbsoluteAltitudeAbove(1000.0), coordinates = (H, P)).method == CODES.pressure
+    p = place(aloft; option = AbsoluteAltitudeAbove(1000.0), coordinates = (H,))
+    @test p.method == CODES.absolute_altitude && p.height_agl_m == 5300.0 - 250.0
 
     z_half = [1000.0, 500.0, 100.0, 0.0]
     p_half = [100.0, 30000.0, 70000.0, 100000.0]

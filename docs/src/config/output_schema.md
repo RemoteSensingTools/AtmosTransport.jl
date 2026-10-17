@@ -244,12 +244,18 @@ are in the global header so consumers can reconstruct the panel layout if needed
 "containing_cell"`, `height_method_codes`, `vertical_placement_codes`, the
 source list as JSON in `sources`, the placement settings
 (`unplaced_records`, `surface_height_file`, `dem_file` (empty when not set),
-`absolute_altitude_above_agl_m` (NaN when not set)), and the snapshot
-provenance attributes. Times are Float64
+`absolute_altitude_above_agl_m` (NaN when not set), `vertical_coordinates`
+(the coordinate names in preference order, space-separated) and
+`pressure_basis` (`total` or `dry`)), and the snapshot provenance
+attributes. Times are Float64
 `seconds since 1970-01-01 00:00:00` (UTC). Level 1 is the top of the
 atmosphere. On a dry-basis run the pressure and air-mass variables carry a
 `_dry` suffix; they are dry partial pressures,
-`p_half[1] = A_ifc[1]` and `p_half[k+1] = p_half[k] + g·m[k]/area`.
+`p_half[1] = A_ifc[1]` and `p_half[k+1] = p_half[k] + g·m[k]/area`. Rows
+placed by pressure (`vertical_placement = 2`) choose their layer against the
+total interface pressures `p_half[k+1] = p_half[k] + g·m[k]/(area·(1 − q[k]))`
+built from the binary's specific humidity `q` (`pressure_basis = "total"`), or
+against these dry ones (`"dry"`); the total pressures are not written.
 In both files `<tracer>` is the profile, `<tracer>_intake` the value in the
 layer chosen by the request's vertical placement, and heights are measured
 above the model surface (see "Vertical placement" in the
