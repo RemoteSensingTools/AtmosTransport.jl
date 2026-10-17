@@ -181,6 +181,7 @@ returns a `NamedTuple`:
 | `advection :: Bool` | `true` iff structured `:m/:am/:bm/:cm` or face-indexed RG `:m/:hflux/:cm` sections are present |
 | `replay_gate :: Bool` | `true` iff the endpoint mass/flux deltas needed for replay are present |
 | `tm5_convection :: Bool` | `true` iff all four TM5 sections are present |
+| `tm5_convection_provenance` | recorded source of the TM5 sections: `tm5_convection_source`, `tm5_ec2tm_convention`, `convection_attachment` (key => value pairs; empty when none is recorded). Opening a binary rejects ERA5-derived sections without the current `tm5_ec2tm_convention` (see the [Conventions cheat sheet](@ref)) |
 | `cmfmc_convection :: Bool` | `true` iff `:cmfmc` is present (CS only) |
 | `pbl_diffusion :: Bool` | `true` iff the four PBL surface sections (`:pblh`, `:ustar`, `:pbl_hflux`, `:t2m`) are present (CS only) |
 | `gchp_vdiff :: Bool` | `true` iff all GCHP VDIFF fields and all four PBL surface fields are present (CS only) |

@@ -84,34 +84,28 @@ function resolve_mass_fix_settings(cfg)
 end
 
 """
-    resolve_tm5_convection_settings(cfg) -> NamedTuple
+    reject_removed_tm5_convection_route(cfg)
 
-Parse the optional `[tm5_convection]` section.  When `enable=true` the
-preprocessor reads ERA5 physics binaries (built by `convert_era5_physics_nc_to_bin`),
-computes TM5 entu/detu/entd/detd per hour via
-`tm5_native_fields_for_hour!`, merges to the transport Nz,
-conservatively regrids to the target horizontal grid, and writes the four
-TM5 sections into the transport binary.
-
-Fields:
-- `tm5_convection_enable :: Bool` — master switch.
-- `tm5_physics_bin_dir   :: String` — NVMe directory holding
-  `era5_physics_YYYYMMDD.bin` files produced by the physics-binary converter.
-  Empty when disabled.
+Reject a preprocessing config that still has a `[tm5_convection]` table. That
+table selected the lat-lon ERA5 physics-file route (ERA5 convection NetCDF
+converted to flat physics files, then to TM5 fields on the lat-lon grid). The
+route placed the fields 180° off in longitude and one hour early (issue #55)
+and was removed. TM5 convection comes from the ERA5 N320 → cubed-sphere
+preprocessor (`include_convection = true` in the met source's
+`[preprocessing]` table) or from the TM5-converted CATRINE archive attached
+with `scripts/preprocessing/attach_catrine_tm5_convection_cs.jl`.
 """
-function resolve_tm5_convection_settings(cfg)
-    tm5_cfg = get(cfg, "tm5_convection", Dict{String, Any}())
-    enable = _config_bool(tm5_cfg, "enable", false, "[tm5_convection].enable")
-    bin_dir = expanduser(String(get(tm5_cfg, "physics_bin_dir", "")))
-    if enable && isempty(bin_dir)
-        error("[tm5_convection] enable=true requires physics_bin_dir " *
-              "pointing at the NVMe directory of ERA5 physics binaries " *
-              "(run scripts/preprocessing/convert_era5_physics_nc_to_bin.jl first)")
-    end
-    return (
-        tm5_convection_enable = enable,
-        tm5_physics_bin_dir = bin_dir,
-    )
+function reject_removed_tm5_convection_route(cfg::AbstractDict)
+    haskey(cfg, "tm5_convection") && throw(ArgumentError(
+        "[tm5_convection] is removed: the lat-lon ERA5 physics-file route " *
+        "(physics_bin_dir, convert_era5_physics_nc_to_bin) placed the TM5 fields 180° off " *
+        "in longitude and one hour early (issue #55). Build TM5 convection on the cubed " *
+        "sphere from native ERA5 instead: an ERA5 N320 met source with " *
+        "include_convection = true in its [preprocessing] table (for example " *
+        "config/preprocessing/era5_n320_arco_full_to_c90.toml), or attach the TM5-converted " *
+        "CATRINE convection with scripts/preprocessing/attach_catrine_tm5_convection_cs.jl. " *
+        "Delete the [tm5_convection] table."))
+    return nothing
 end
 
 """
@@ -308,6 +302,7 @@ Resolve the script configuration into a compact runtime settings bundle used by
 the day-processing pipeline.
 """
 function resolve_runtime_settings(cfg)
+    reject_removed_tm5_convection_route(cfg)
     spectral_dir = expand_data_path(cfg["input"]["spectral_dir"])
     coeff_path = expand_data_path(cfg["input"]["coefficients"])
     out_dir = expand_data_path(cfg["output"]["directory"])
@@ -334,7 +329,6 @@ function resolve_runtime_settings(cfg)
         half_dt = dt / 2,
         output_float_type = resolve_output_float_type(cfg),
     ), resolve_mass_fix_settings(cfg),
-       resolve_tm5_convection_settings(cfg),
        resolve_surface_settings(cfg),
        resolve_preprocessing_cache_settings(cfg),
        resolve_balance_settings(cfg),
@@ -502,8 +496,6 @@ function log_preprocessor_configuration(settings, grid::AbstractTargetGeometry, 
             "ON  (target_ps_dry=$(settings.target_ps_dry_pa) Pa, qv_global=$(settings.qv_global_climatology))"
         end
 
-    tm5_summary = settings.tm5_convection_enable ?
-        "ON  ($(settings.tm5_physics_bin_dir))" : "OFF"
     spectral_cache_summary = isempty(settings.spectral_cache_dir) ?
         "OFF" : settings.spectral_cache_dir
     qv_preload_summary = settings.qv_preload ?
@@ -532,7 +524,6 @@ function log_preprocessor_configuration(settings, grid::AbstractTargetGeometry, 
     Mass basis:    $(settings.mass_basis)
     Include qv:    $(settings.include_qv)
     Mass fix:      $(mass_fix_summary)
-    TM5 convec:    $(tm5_summary)
     Spectral cache: $(spectral_cache_summary)
     QV preload:    $(qv_preload_summary)
     """

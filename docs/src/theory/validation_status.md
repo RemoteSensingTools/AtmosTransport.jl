@@ -129,11 +129,14 @@ algorithm. See [Advection schemes](@ref) for dispatch and order definitions.
 
 | What | Tests | Status |
 |---|---|---|
-| TM5 four-field convection (`entu/detu/entd/detd`) parity with the TM5 F90 reference | `test/core/test_tm5_preprocessing.jl`, `test/core/test_tm5_preprocessing_rates.jl`, `test/core/test_tm5_vs_cmfmc_parity.jl`, `test/core/test_tm5_driven_simulation.jl`, `test/core/test_tm5_process_day.jl`, `test/core/test_tm5_vertical_remap.jl` | green |
+| ERA5 → TM5 four-field conversion (`entu/detu/entd/detd`, `ec2tm_from_rates!`) against TM5's `tmm.F90` packing, `ECconv_to_TMconv` and `meteo.F90` closure | `test/core/test_tm5_preprocessing_rates.jl` and `test/core/test_era5_c180_tm5_convection.jl` against an independent transcription (`test/helpers/tm5_ecconv_reference.jl`) | **green since the issue-#54 fix**: bit for bit on an exactly representable column, to rounding on 500 random deep columns, input fluxes recovered at every interface. Before the fix the conversion placed ERA5 level k one interface low and dropped the cloud-top layer; the tests then compared against a copy of that loop, so the earlier "green" did not check the convention |
+| TM5 convection operator and runtime coupling | `test/core/test_tm5_preprocessing.jl`, `test/core/test_tm5_vs_cmfmc_parity.jl`, `test/core/test_tm5_driven_simulation.jl` | green |
 | `SlopesScheme` vs TM5's slopes advection (`dynamu` in `advectx.F90`) | `test/core/test_slopes_tm5_reference.jl` against an independent transcription of `dynamu` | **differs**: same Russell–Lerner face flux (TM5 with its moment re-diagnosed by minmod reproduces `SlopesScheme` to rounding), but TM5 carries prognostic moments and `SlopesScheme` does not; `SlopesScheme` is markedly more diffusive (L2 error 4.6–6.8 times TM5's after 10 revolutions of a 1-D Gaussian at Courant numbers 0.05–0.75) |
 
-The TM5 convection parity work is the most thoroughly validated cross-model
-comparison the runtime currently has. No advection option reproduces TM5's
+The ERA5 → TM5 conversion is checked against an independent transcription of
+TM5's own routines; the earlier tests compared it with a copy of the code under
+test and so missed the index errors of issue #54 (see
+[ERA5 → TM5 fields](@ref tm5-ec2tm)). No advection option reproduces TM5's
 slopes advection; a prognostic-moment scheme is postponed (see
 [Advection schemes](@ref)).
 

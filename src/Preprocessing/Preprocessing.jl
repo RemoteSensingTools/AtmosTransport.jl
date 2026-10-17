@@ -136,7 +136,8 @@ using ..Parameters: EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_P
                     SURFACE_AIR_TEMPERATURE_RANGE, SURFACE_HEAT_FLUX_MAX_ABS,
                     ECHLEVS_ML137_TROPO34, ECHLEVS_ML137_TROPO34A,
                     ECHLEVS_ML137_66L, ECHLEVS_ML137_CFL94, ECHLEVS_ML137_CFL85,
-                    ECHLEVS_ML137_FULL, ERA5_L137_ECHLEVS_PRESETS
+                    ECHLEVS_ML137_FULL, ERA5_L137_ECHLEVS_PRESETS,
+                    TM5_CONVECTION_SOURCE_KEY, TM5_EC2TM_CONVENTION_KEY, TM5_EC2TM_CONVENTION
 using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cs_face_edge_lengths, cs_corner_xyz,
                HybridSigmaPressure, PanelConnectivity,
                AbstractCubedSpherePanelConvention,
@@ -305,22 +306,14 @@ include("configuration.jl")
 # Convective mass fluxes on the binary's air-mass basis (shared with GEOS).
 include("convection_mass_basis.jl")
 
-# TM5 convection ec2tm conversion
-# (Loaded before binary_pipeline so the LL process_day hook can
-# reference TM5PreprocessingWorkspace / TM5CleanupStats by type.)
+# TM5 convection ec2tm conversion (used by the ERA5 N320 → CS pipeline).
 include("tm5_convection_conversion.jl")
-
-# ERA5 physics NC → BIN converter + mmap reader
-include("era5_physics_binary.jl")
 
 # ERA5 single-level surface reader for raw PBL diffusion fields.
 include("era5_surface_reader.jl")
 
 # TM5 boundary-layer diffusion (Holtslag-Boville non-local PBL) column kernel.
 include("tm5_bldiff.jl")
-
-# TM5 convection preprocessor pipeline wiring
-include("tm5_convection_pipeline.jl")
 
 # Transport-binary workflows and shared preprocessing contracts.
 include("binary_pipeline.jl")
@@ -459,13 +452,5 @@ export ec2tm!
 export ec2tm_from_rates!, TM5CleanupStats
 export interface_specific_humidity, ecmwf_convection_to_basis!, tm5_convection_to_basis!
 export dz_hydrostatic_virtual!, dz_hydrostatic_constT!
-export convert_era5_physics_nc_to_bin
-export ERA5PhysicsBinaryReader, ERA5PhysicsBinaryHeader
-export open_era5_physics_binary, close_era5_physics_binary, get_era5_physics_field
-export tm5_native_fields_for_hour!, merge_tm5_field_3d!
-export TM5PreprocessingWorkspace, allocate_tm5_workspace
-export compute_tm5_merged_hour_on_source!, log_tm5_cleanup_stats
-export tm5_copy_or_regrid_ll!
-export resolve_tm5_convection_settings
 
 end # module Preprocessing

@@ -38,7 +38,7 @@ end
 
 @testset "shipped preprocessing configs validate" begin
     paths = _shipped_preprocessing_configs()
-    @test length(paths) >= 60
+    @test length(paths) >= 51
     skipped = String[]
     # Shipped configs name their coefficient tables relative to the package
     # root; validation must not depend on the working directory (`Pkg.test`
@@ -63,7 +63,7 @@ end
     @info "Validated $(length(paths) - length(skipped)) of $(length(paths)) shipped " *
           "preprocessing configs; skipped $(length(skipped)) whose external inputs are " *
           "absent" * (isempty(skipped) ? "." : ": $(join(skipped, ", ")).")
-    @test length(paths) - length(skipped) >= 60
+    @test length(paths) - length(skipped) >= 51
 end
 
 @testset "coefficient tables resolve independent of the working directory" begin

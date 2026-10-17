@@ -1,8 +1,8 @@
 # Catrine LL 720×361 3-day reference — FULL PHYSICS
 #
 # Advection + constant-Kz diffusion + TM5 convection + GridFED fossil-CO2
-# surface flux. Requires the LL binary to carry TM5 sections (see
-# advdiffconv.toml for the inspector check).
+# surface flux. NOT RUNNABLE AS IS: no preprocessing route now writes TM5
+# sections on a lat-lon grid (issue #55; see advdiffconv.toml).
 #
 # Runner:   julia -t8 --project=. scripts/run_transport.jl \
 #               config/runs/catrine_ll720_3d/fullphysics.toml

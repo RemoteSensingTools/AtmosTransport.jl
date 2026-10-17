@@ -295,6 +295,10 @@ end
             # regrid, so each panel cell should be close to `tm5_val`.
             reader = TransportBinaryReader(cs_path; FT = Float64)
             @test tm5_convection_mass_basis(reader) isa DryBasis
+            # The regrid carries the source's TM5 record; this synthetic
+            # source has none (a regrid without the key is rejected on load).
+            @test reader.header.raw_header["tm5_convection_source"] == "unrecorded"
+            @test !haskey(reader.header.raw_header, "tm5_ec2tm_convention")
             win = load_window!(reader, 1)
             @test haskey(win, :tm5_fields) && win.tm5_fields !== nothing
             for fld in (:entu, :detu, :entd, :detd)
@@ -323,6 +327,37 @@ end
             end
             @test tm5_convection_mass_basis(legacy_reader) === nothing
             close(legacy_reader)
+
+            # A source whose ERA5-derived sections record the ec2tm
+            # convention (issue #54) passes the record on, so the CS output
+            # opens; the on-disk names are pinned here as literals.
+            stamp = Dict{String, Any}(
+                "tm5_convection_source" => "ec2tm_from_rates(udmf,ddmf,udrf,ddrf)",
+                "tm5_ec2tm_convention" => "tm5_halflevel_v2")
+            stamped_ll = joinpath(dir, "stamped_ll.bin")
+            stamped_cs = joinpath(dir, "stamped_cs.bin")
+            _ll_fixture_binary(stamped_ll; FT = Float64,
+                               Nx = 24, Ny = 13, Nz = 4, nwindow = 2,
+                               tm5_uniform = tm5_val, extra_header = stamp)
+            regrid_ll_binary_to_cs(stamped_ll, cs_grid, stamped_cs; FT = Float64)
+            stamped_reader = TransportBinaryReader(stamped_cs; FT = Float64)
+            for (key, value) in stamp
+                @test stamped_reader.header.raw_header[key] == value
+            end
+            close(stamped_reader)
+
+            # Sections converted from ERA5 before the fix (source recorded,
+            # no convention) are rejected before anything is regridded.
+            stale_ll = joinpath(dir, "stale_ll.bin")
+            stale_cs = joinpath(dir, "stale_cs.bin")
+            _ll_fixture_binary(stale_ll; FT = Float64,
+                               Nx = 24, Ny = 13, Nz = 4, nwindow = 2,
+                               tm5_uniform = tm5_val,
+                               extra_header = Dict{String, Any}(
+                                   "tm5_convection_source" => stamp["tm5_convection_source"]))
+            @test_throws r"issue #54" regrid_ll_binary_to_cs(stale_ll, cs_grid, stale_cs;
+                                                             FT = Float64)
+            @test !isfile(stale_cs)
         end
     end
 
