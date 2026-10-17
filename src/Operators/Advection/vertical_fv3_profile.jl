@@ -340,7 +340,7 @@ _fv3_sweep_panel_group(Nc::Integer, Nt::Integer) =
     clamp(cld(_FV3_SWEEP_TARGET_COLUMNS, Nc^2 * max(Nt, 1)), 1, 6)
 
 # Panels one launch can sweep with the scratch slots available.
-_fv3_scratch_panel_group(scratch, Nt) = min(6, size(scratch, 4) ÷ (3 * Nt))
+_fv3_scratch_panel_group(scratch, Nt) = min(6, size(scratch, 4) ÷ (3 * max(Nt, 1)))
 
 const _FV3VerticalPPM = PPMScheme{<:AbstractLimiter, <:FV3ScalarProfile}
 

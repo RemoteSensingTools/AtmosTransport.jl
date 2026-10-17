@@ -240,7 +240,8 @@ function DrivenSimulation(model::TransportModel,
     _refresh_dz_for_window!(sim)
     _refresh_pbl_kz_for_window!(sim.model.diffusion, sim)
     _stage_surface_flux_window!(sim)
-    # Reused buffers mean no startup allocations to trim.
+    # With reused window buffers there are no large startup allocations to trim
+    # (the surface sources' device copies are small).
     buffers === nothing && _reclaim_backend_pool_after_startup!(sim.model.state.air_mass)
     _start_window_prefetch!(sim, Int(start_window) + 1)
     return sim

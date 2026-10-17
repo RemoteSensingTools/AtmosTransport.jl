@@ -154,10 +154,12 @@ time. GPU prefetch is drained before the runner closes an input driver. When
 the next file has the same window layout, the new simulation refills the
 previous one's window buffers instead of allocating new ones.
 
-On a GPU, a cubed-sphere transport binary's window is loaded with one read of
-its payload into page-locked host memory, one upload, and unpacking kernels
-on the device (`MetDrivers.RawWindowStaging`); the device window equals the
-upload of a window loaded on the host.
+On a GPU, a cubed-sphere transport binary whose on-disk element type is the
+run's is loaded window by window with concurrent reads of the payload into
+page-locked host memory, section-wise uploads through a section-sized device
+buffer, and unpacking kernels on the device (`MetDrivers.RawWindowStaging`);
+the device window equals the upload of a window loaded on the host. Other
+binaries are converted on the host into a page-locked staging window.
 
 The detailed operator ordering is documented in [Operators](@ref Operator-concepts). The mass
 invariant is derived in [Mass conservation](@ref).

@@ -76,20 +76,26 @@ end
         # Raw staging (the device path, here with host arrays): one read of the
         # window payload, unpacked into a window whose halos hold stale values.
         raw = StagingMD.raw_window_staging(driver, staging.air_mass)
-        @test eltype(raw.host) === disk_FT && length(raw.host) == driver.reader.header.elems_per_window
-        unpacked = deepcopy(staging)
-        foreach(a -> fill!(a, NaN), (unpacked.air_mass..., unpacked.fluxes.am..., unpacked.deltas.dm...,
-                                     unpacked.surface.pblh..., unpacked.convection.cmfmc...))
-        for win in (3, 1, 2)
-            StagingMD.read_window_payload!(raw, driver, win)
-            @test StagingMD.unpack_window_payload!(unpacked, driver, raw) === unpacked
-            @test windows_equal(unpacked, load_transport_window(driver, win))
+        # Another on-disk element type converts on the host instead.
+        @test (raw === nothing) == (disk_FT !== FT)
+        if raw !== nothing
+            h = driver.reader.header
+            @test eltype(raw.host) === disk_FT && length(raw.host) == h.elems_per_window
+            @test length(raw.device) == maximum(s -> StagingMD._cs_section_elements(h, s), h.payload_sections)
+            unpacked = deepcopy(staging)
+            foreach(a -> fill!(a, NaN), (unpacked.air_mass..., unpacked.fluxes.am..., unpacked.deltas.dm...,
+                                         unpacked.surface.pblh..., unpacked.convection.cmfmc...))
+            for win in (3, 1, 2)
+                StagingMD.read_window_payload!(raw, driver, win)
+                @test StagingMD.unpack_window_payload!(unpacked, driver, raw) === unpacked
+                @test windows_equal(unpacked, load_transport_window(driver, win))
+            end
+            @test_throws BoundsError StagingMD.read_window_payload!(raw, driver, nwin + 1)
+            # Air mass a fraction into the window: start mass plus that fraction of dm.
+            expected = map(similar, unpacked.air_mass)
+            StagingMD.expected_air_mass!(expected, unpacked, 0.3)
+            @test all(p -> expected[p] == unpacked.air_mass[p] .+ FT(0.3) .* unpacked.deltas.dm[p], 1:6)
         end
-        @test_throws BoundsError StagingMD.read_window_payload!(raw, driver, nwin + 1)
-        # Air mass a fraction into the window: start mass plus that fraction of dm.
-        expected = map(similar, unpacked.air_mass)
-        StagingMD.expected_air_mass!(expected, unpacked, 0.3)
-        @test all(p -> expected[p] == unpacked.air_mass[p] .+ FT(0.3) .* unpacked.deltas.dm[p], 1:6)
         @test staging.deltas !== nothing && staging.surface !== nothing &&
               staging.surface.eflux !== nothing && staging.vdiff !== nothing &&
               staging.dkg !== nothing && staging.convection.tm5_fields !== nothing &&

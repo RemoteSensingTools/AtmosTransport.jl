@@ -701,16 +701,23 @@
   cached in one launch of `SeamTransferCache` point operations (`Fused`,
   twelve seams with the other group's inactive) instead of one launch per
   seam, and neither the cache nor the seam application synchronizes the host
-  on a device (the halo exchange after each sweep does). A C90 step issues 20
-  fewer launches and 8 fewer synchronizations; results are bit-identical.
-- Cubed-sphere transport binaries load windows on a GPU through raw window
-  staging (`MetDrivers.RawWindowStaging`): one `read!` of the window's
-  contiguous payload into a page-locked host buffer, one upload, and one
-  unpacking launch per payload section on the device (padded fields get zero
-  halo cells, as before). This replaces a page-faulting copy of the file
+  on a device (later work on the device queue sees their cells in order). A
+  C90 step issues 20 fewer launches and 8 fewer synchronizations; results are
+  bit-identical.
+- Cubed-sphere transport binaries whose on-disk element type is the run's
+  load windows on a GPU through raw window staging
+  (`MetDrivers.RawWindowStaging`): four concurrent `pread`s of the window's
+  contiguous payload into a page-locked host buffer (libuv thread pool; one
+  `read!` off Unix), then per payload section an upload into a device buffer
+  the size of the largest section and one unpacking launch (padded fields get
+  zero halo cells, as before). This replaces a page-faulting copy of the file
   mapping into a padded host window (31 ms per C90 L72 window, row by row for
   padded fields) and the copy of that window to the device; the device windows
-  are unchanged. `same_window_layout` also compares the on-disk element type.
+  are unchanged, and the device holds one extra section-sized buffer (14 MB at
+  C90 L72). Binaries of another element type keep the host staging window.
+  `same_window_layout` also compares the on-disk element type, and the
+  cubed-sphere runner releases the previous binary's buffers before building
+  new ones when the layouts differ.
 - The packed cubed-sphere palindrome (`strang_split_cs_mt!`) queues its halo
   exchanges (`fill_panel_halos!(…; sync = false)`, new keyword) and
   synchronizes the host once at its end instead of after each of its 16

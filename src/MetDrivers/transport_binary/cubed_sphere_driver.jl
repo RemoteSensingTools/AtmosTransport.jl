@@ -221,24 +221,27 @@ end
 # Raw window staging (device runs)
 #
 # A window's payload is one contiguous run of `elems_per_window` elements of
-# the binary. A device run reads it with one `read!` into a page-locked host
-# buffer (no page faults on the file mapping), uploads that buffer with one
-# transfer, and unpacks it on the device: each section panel is copied into its
-# window panel, a padded field receiving its interior and zero halo cells. The
-# device window is then exactly the upload of a host window loaded with
-# `load_transport_window!` (whose halos keep the zeros of the first load).
+# the binary. A device run reads it into a page-locked host buffer (concurrent
+# reads, no page faults on the file mapping), uploads it section by section
+# through a section-sized device buffer, and unpacks each section on the
+# device: each section panel is copied into its window panel, a padded field
+# receiving its interior and zero halo cells. The device window is then exactly
+# the upload of a host window loaded with `load_transport_window!` (whose halos
+# keep the zeros of the first load).
 # ---------------------------------------------------------------------------
 
 """
     RawWindowStaging(host, device)
     raw_window_staging(driver, reference_array) -> RawWindowStaging or nothing
 
-A page-locked host buffer and a device buffer, each holding one window payload
-of a cubed-sphere transport binary in its on-disk element type, for device
-runs: `read_window_payload!` fills the host buffer, `unpack_window_payload!`
-uploads it and fills a device window. `raw_window_staging` builds the buffers
-on the backend of `reference_array` (a device array or six-panel tuple), or
-returns `nothing` for drivers without raw window payloads.
+A page-locked host buffer holding one window payload of a cubed-sphere
+transport binary and a device buffer holding its largest payload section, for
+device runs: `read_window_payload!` fills the host buffer,
+`unpack_window_payload!` uploads it section by section and fills a device
+window. `raw_window_staging` builds the buffers on the backend of
+`reference_array` (a device array or six-panel tuple). It returns `nothing`
+for drivers without raw window payloads and for binaries whose on-disk element
+type is not the run's (those convert while loading on the host).
 """
 struct RawWindowStaging{H <: AbstractVector, D <: AbstractVector}
     host   :: H
@@ -250,10 +253,12 @@ raw_window_staging(::AbstractMetDriver, _reference_array) = nothing
 function raw_window_staging(driver::TransportBinaryDriver{FT, <:TransportBinaryReader{FT, DiskFT},
                                                           <:AtmosGrid{<:CubedSphereMesh}},
                             reference_array) where {FT, DiskFT}
+    DiskFT === FT || return nothing
     ref = reference_array isa Tuple ? reference_array[1] : reference_array
-    n = driver.reader.header.elems_per_window
-    host = pin_host_memory!(Vector{DiskFT}(undef, n), ref)
-    return RawWindowStaging(host, similar(ref, DiskFT, n))
+    h = driver.reader.header
+    host = pin_host_memory!(Vector{DiskFT}(undef, h.elems_per_window), ref)
+    largest = maximum(section -> _cs_section_elements(h, section), h.payload_sections)
+    return RawWindowStaging(host, similar(ref, DiskFT, largest))
 end
 
 """
@@ -355,11 +360,12 @@ end
 """
     unpack_window_payload!(window, driver, staging::RawWindowStaging) -> window
 
-Upload `staging.host` (from `read_window_payload!`) to `staging.device` and
-unpack it into the device `window` (one `Fused` launch of six
-`RawPanelUnpack`s per payload section). The transfer and kernels are queued on
-the current task's device queue; synchronize before using `window` on another
-task or refilling `staging.host`.
+Upload each payload section of `staging.host` (from `read_window_payload!`)
+that `window` stores to `staging.device` and unpack it into the device
+`window` (one `Fused` launch of six `RawPanelUnpack`s per section). Transfers
+and kernels are queued in order on the current task's device queue (a section
+upload waits for the previous unpack); synchronize before using `window` on
+another task or refilling `staging.host`.
 """
 function unpack_window_payload!(w::TransportWindow,
                                 driver::TransportBinaryDriver{FT, R, <:AtmosGrid{<:CubedSphereMesh}},
@@ -368,7 +374,6 @@ function unpack_window_payload!(w::TransportWindow,
     h.geometry.npanel == 6 || throw(ArgumentError(
         "raw window unpacking needs six panels; the binary has $(h.geometry.npanel)"))
     Hp = driver.grid.horizontal.Hp
-    copyto!(staging.device, staging.host)
     backend = get_backend(staging.device)
     fields = _cs_section_fields(w)
     o = 0
@@ -378,7 +383,8 @@ function unpack_window_payload!(w::TransportWindow,
         if entry !== nothing
             panels, padded = entry
             per_panel = n ÷ 6
-            launch!(Fused(ntuple(p -> RawPanelUnpack(p, o + (p - 1) * per_panel), Val(6))),
+            copyto!(staging.device, 1, staging.host, o + 1, n)
+            launch!(Fused(ntuple(p -> RawPanelUnpack(p, (p - 1) * per_panel), Val(6))),
                     (; dest = panels, raw = staging.device, halo = padded ? Hp : 0),
                     backend; sync = false)
         end

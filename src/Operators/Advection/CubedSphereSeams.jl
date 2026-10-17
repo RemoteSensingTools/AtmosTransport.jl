@@ -181,8 +181,8 @@ function _apply_cs_seams!(panels_rm::NTuple{6}, panels_m::NTuple{6}, cache,
                 edge, other_edge, neighbor.orientation != 0, seam, Nc, Hp, Nt;
                 ndrange=(Nc, Nz))
     end
-    # The halo exchange after the sweep reads these cells in queue order and
-    # synchronizes; the CPU backend completes each launch here.
+    # Later work on the device queue (the halo exchange after the sweep) sees
+    # these cells in queue order; the CPU backend completes each launch here.
     backend isa KA_CPU && synchronize(backend)
     return nothing
 end
