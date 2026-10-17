@@ -697,7 +697,7 @@ function process_era5_n320_to_cs_day(date::Date,
             cs_center_law = _cs_center_law_tag(target_grid),
             longitude_offset_deg = longitude_offset_deg(cs_definition(mesh)),
             planet_radius = mesh.radius,
-            extra_header = _with_replay_record(Dict{String, Any}(
+            extra_header = _with_replay_record(merge(Dict{String, Any}(
                 "preprocessor" => "process_era5_n320_to_cs_day",
                 # Declare the per-window advection substep contract so the
                 # runtime applies advection at the baked substep cadence but
@@ -734,12 +734,10 @@ function process_era5_n320_to_cs_day(date::Date,
                 "flux_time_sampling" => String(settings.flux_time_sampling),
                 "face_interpolation" => flux_header_face_interpolation(flux_method, settings),
                 "wind_regrid" => flux_header_wind_regrid(flux_method, settings),
-                "tm5_convection_source" => include_convection ?
-                    "ec2tm_from_rates(udmf,ddmf,udrf,ddrf)" : "none",
                 "global_mass_pin_enabled" => do_mass_pin,
                 "global_mass_pin_target_kg" => do_mass_pin ?
                     Float64(global_mass_target_kg) : nothing,
-            ), write_replay_on))
+            ), era5_tm5_convection_header(include_convection)), write_replay_on))
         catch
             abandon_atomic_staging(tmp_path)
             rethrow()

@@ -29,6 +29,7 @@ end
         (src.properties.format, O._TABLE_FORMATS, v -> nameof(typeof(v))),
         (out.properties.time_interpolation, O._TIME_INTERPOLATIONS, v -> nameof(typeof(v))),
         (src.properties.quality_filter, O._QUALITY_FILTERS, T -> nameof(T)),
+        (out.properties.unplaced_records, O._UNPLACED_POLICIES, v -> nameof(typeof(v))),
     )
     for (entry, table, typename) in choice_tables
         @test consts(entry) == Set(String.(keys(table)))

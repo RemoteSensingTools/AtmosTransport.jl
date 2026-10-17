@@ -126,7 +126,8 @@ end
 Generic point list as CSV, TOML, or NetCDF. Point events need `id`, `time`
 (ISO-8601 UTC), `lat`, `lon`; sites need `id`, `lat`, `lon`. Both accept
 `elevation` (m asl) and `intake_height` (m above ground) or `altitude`
-(m asl, converted with `elevation`). Sites may add `start_time`/`end_time`
+(m asl, converted with `elevation`, else placed by [`resolve_placement`](@ref)).
+Sites may add `start_time`/`end_time`
 ([`TimeRange`](@ref)) or `times` ([`TimeList`](@ref)).
 """
 struct TableSource{M <: AbstractObservationMode,

@@ -1,12 +1,10 @@
 # Catrine LL 720×361 3-day reference — ADVECTION + DIFFUSION + CONVECTION
 #
-# The LL v4 binary set includes TM5 entu/detu/entd/detd sections when
-# `[tm5_convection] enable = true` is set in the preprocessor TOML. Check
-# the inspector before running:
-#   julia --project=. scripts/diagnostics/inspect_transport_binary.jl \
-#       ~/data/AtmosTransport/met/era5/ll720x361_v4/transport_binary_v2_tropo34_dec2021_f64/era5_transport_20211201_merged1000Pa_float64.bin
-# If the capability block shows ✓ TM5 convection, this config runs. If ✗,
-# regenerate the LL binaries with TM5 enabled (plan 24).
+# NOT RUNNABLE AS IS: TM5Convection needs entu/detu/entd/detd sections, and
+# no preprocessing route now writes them on a lat-lon grid. The ERA5 spectral
+# `[tm5_convection]` route that did (plan 24) placed the fields 180° off in
+# longitude and one hour early and was removed (issue #55); readers reject
+# lat-lon binaries that carry its sections. Kept for provenance.
 #
 # Runner:   julia -t8 --project=. scripts/run_transport.jl \
 #               config/runs/catrine_ll720_3d/advdiffconv.toml

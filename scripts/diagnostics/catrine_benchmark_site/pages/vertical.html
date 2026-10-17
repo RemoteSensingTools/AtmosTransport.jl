@@ -1,0 +1,76 @@
+<h1>Vertical structure</h1>
+<p class="lede">Zonal means on dry pressure from 900 to 10 hPa: where in latitude and height the v0.5 runs differ from GCHP<span data-runs="era5 merra2"> and
+from each other</span>. The black line is GCHP's tropopause (mean of four 12 UTC samples per month).</p>
+
+<div class="controls" id="controls"></div>
+
+<section class="card">
+  <div class="card-head"><h2 id="t1"></h2></div>
+  <p class="sub" id="s1"></p>
+  <div id="grid"></div>
+  <p class="note"><b>How to read:</b> each model is interpolated to fixed dry-pressure levels in log pressure on its own grid,
+  then averaged over 4° latitude bins (area weighted). Levels below 900 hPa are left out because which columns reach them depends
+  on each model's surface pressure; the near-surface layer is covered by the <a href="surface.html">near-surface page</a>. The difference
+  panels share one colour scale.</p>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2 id="t2"></h2><span class="spacer"></span><span class="tools" id="reg-ctl"></span></div>
+  <p class="sub" id="s2"></p>
+  <div class="plot" id="prof"></div>
+</section>
+
+<script>
+SITE.ready(async () => {
+  const S = SITE, m = S.meta();
+  const st = S.state({tracer: "co2", month: "period", view: "diff", region: "global", hide: ""},
+                     {tracer: S.keys(m.tracers), view: ["abs", "diff"], region: ["global", "nh", "tropics", "sh"]});
+  const hidden = new Set(st.hide ? st.hide.split(",") : []);
+  if (st.month !== "period" && !m.months.includes(st.month)) st.month = "period";
+  if (!m.common.length && st.month === "period") st.month = m.months[m.months.length - 1];
+  const runs = S.mainRuns().filter(S.hasMonths);
+  const REG = [{key: "global", name: "Global", lo: -90, hi: 90}, {key: "nh", name: "30–90° N", lo: 30, hi: 90},
+               {key: "tropics", name: "30° S–30° N", lo: -30, hi: 30}, {key: "sh", name: "90–30° S", lo: -90, hi: -30}];
+  document.getElementById("controls").append(
+    S.control("Tracer", S.seg(m.tracers.map(t => ({key: t.key, name: t.name, title: t.long})), st.tracer, k => { st.tracer = k; draw(); })),
+    S.control("Month", S.monthSelect(m.months, st.month, k => { st.month = k; draw(); }, m.common.length > 0)));
+  const rc = document.getElementById("reg-ctl");
+  rc.append(S.legend([m.gc, ...runs], hidden, () => profile()),
+            S.seg(REG.map(r => ({key: r.key, name: r.name})), st.region, k => { st.region = k; profile(); }),
+            S.seg([{key: "diff", name: "Run − GCHP"}, {key: "abs", name: "Values"}], st.view, k => { st.view = k; profile(); }));
+  let cur = null;
+  const period = () => `${S.monthLabel(m.common[0])} – ${S.monthLabel(m.common[m.common.length - 1])}`;
+  function profile() {
+    st.hide = [...hidden].join(",");
+    S.saveState(st);
+    if (!cur) { S.emptyNote(document.getElementById("prof"), "No data for this month."); return; }
+    const t = S.tracer(st.tracer), reg = REG.find(r => r.key === st.region), lat = m.latc, P = m.plevels, nl = lat.length;
+    const w = lat.map(c => (c >= reg.lo && c <= reg.hi) ? Math.sin((c + 2) * Math.PI / 180) - Math.sin((c - 2) * Math.PI / 180) : 0);
+    const prof = f => P.map((p, j) => S.weightedMean(Array.from({length: nl}, (_, i) => f[j * nl + i]), w));
+    const diff = st.view === "diff", d = t.digits + (diff ? 1 : 0), F = cur.F;
+    const list = [];
+    const tr = (ds, f) => S.series(ds, prof(f), P, {markers: true});
+    if (!diff && !hidden.has("gc")) list.push(tr(m.gc, F.gc));
+    for (const r of runs) if (F[r.key] && !hidden.has(r.key)) list.push(tr(r, diff ? F[r.key] : F[r.key].map((x, i) => x + F.gc[i])));
+    document.getElementById("t2").innerHTML = `Mean profile: ${t.name}, ${reg.name}`;
+    document.getElementById("s2").innerHTML = (diff ? "Each run minus GCHP" : "Values") + ` (${t.unit}), area-weighted mean of the zonal means over ${reg.name === "Global" ? "the globe" : reg.name}; ${st.month === "period" ? "period mean" : S.monthLabel(st.month)}.`;
+    S.chart(document.getElementById("prof"), {height: 420, hoverAxis: "y", series: list,
+      x: {label: diff ? `run − GCHP (${t.unit})` : t.unit, zero: diff ? "ref" : false, fmt: S.valFmt(d, t.unit)},
+      y: {log: true, domain: [925, 10], ticks: [900, 700, 500, 300, 200, 100, 50, 30, 20, 10], tickFmt: String,
+          label: "dry pressure (hPa)", hover: p => `${p} hPa`}});
+  }
+  const next = S.gate();
+  async function draw() {
+    const current = next();
+    S.saveState(st);
+    const t = S.tracer(st.tracer);
+    document.getElementById("t1").innerHTML = `${t.name}: latitude–pressure sections, ${st.month === "period" ? "period mean" : S.monthLabel(st.month)}`;
+    document.getElementById("s1").innerHTML = `Zonal means (${t.unit}). ` + (st.month === "period" ? S.periodText() : "");
+    const got = await S.sectionGrid(document.getElementById("grid"), st.tracer, st.month, current);
+    if (got === undefined) return;
+    cur = got;
+    profile();
+  }
+  draw();
+});
+</script>

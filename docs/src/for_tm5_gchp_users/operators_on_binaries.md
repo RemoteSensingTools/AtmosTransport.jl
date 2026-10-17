@@ -315,6 +315,82 @@ algorithm follows `tm5/levitation.F90` closely; the column solve is
 in `src/Operators/Convection/tm5_column_solve.jl` and the kernels
 in `tm5_kernels.jl`.
 
+#### [ERA5 → TM5 fields (`ec2tm`)](@id tm5-ec2tm)
+
+The four fields come either from the TM5-converted CATRINE archive
+(`scripts/preprocessing/attach_catrine_tm5_convection_cs.jl`, converted by TM5
+itself) or from the ERA5 N320 → cubed-sphere preprocessor with
+`include_convection = true`, which converts the ERA5 time-mean UDMF, DDMF (half
+levels, kg m⁻² s⁻¹) and UDRF, DDRF (full levels, kg m⁻³ s⁻¹) on every target
+column as TM5 does: `tmm_Read_Convec_EC` in `tmm.F90` for the level layout,
+`ECconv_to_TMconv` in `phys_convec_ec2tm.F90` for the fields, and the column
+closure of `meteo.F90`. The code is `ec2tm_from_rates!`.
+
+Levels run from the model top, `k = 1`, to the surface, `k = N_z`; interface
+`k` is the top of layer `k` and interface `N_z + 1` the ground. ERA5 archives
+UDMF/DDMF level `k` as the flux through the top of layer `k`, and nothing
+crosses the ground:
+
+```math
+M^u_k = \mathrm{UDMF}_k,\quad M^d_k = \mathrm{DDMF}_k \quad (1 \le k \le N_z),
+\qquad M^u_{N_z+1} = M^d_{N_z+1} = 0 .
+```
+
+This is TM5's packing (`udmf_gg(:,0:nlev-1) = buf; udmf_gg(:,nlev) = 0`,
+"levels top down, surface implicit zero") and the layout of the IFS arrays. The
+data agree: in raw ERA5 of 2021-12-01 (0.5°, 12 UTC and 00 UTC), the lowest
+level, 137, carries UDMF above 10⁻⁶ kg m⁻² s⁻¹ in 81–82 % of the convective
+columns (median 2.5 % of the column maximum), which only the top of the lowest
+layer can carry, and level 1 is exactly zero.
+
+After small values are cleared (``M^u < 10^{-6}``, ``M^d > -10^{-6}``, rates
+below ``10^{-10}``), the detrainment rates become fluxes, ``d_k = \mathrm{DR}_k\,\Delta z_k``
+with the hydrostatic thickness ``\Delta z_k``, and each layer's budget gives its
+entrainment:
+
+```math
+e^u_k = M^u_k - M^u_{k+1} + d^u_k, \qquad
+e^d_k = M^d_k - M^d_{k+1} + d^d_k \qquad (k_\mathrm{top} \le k \le N_z),
+```
+
+out through the top, minus in through the bottom, plus detrainment (``M^d \le 0``
+points down). The cloud-top layer ``k_\mathrm{top}`` is the highest layer whose bottom
+interface carries flux, ``k_\mathrm{top} = \min\{k : M^u_{k+1} > 0\}`` (TM5's
+`do l = 1, lm; if (mflu(l) > 0)` on 0-based half levels); the downdraft top is
+found the same way, and both fields are zero above. A negative `e` or `d` is
+moved to its partner (`d ← d − e`, `e ← 0`), which keeps `e − d`. Summed over
+the column, the budgets telescope:
+
+```math
+\sum_{k \ge k_\mathrm{top}} (e^u_k - d^u_k) = M^u_{k_\mathrm{top}} - M^u_{N_z+1} = 0,
+\qquad M^u_k = \sum_{j \ge k} (e^u_j - d^u_j),
+```
+
+because no flux crosses the top of the cloud-top layer or the ground: the TM5
+fields return the input flux at every interface. TM5's column closure, which
+adds `Σd − Σe` to the layer of largest entrainment, therefore moves only
+rounding, or a flux through the model top, which neither TM5 nor this code
+excludes. Where TM5 would subtract a negative residual from `e` and could make
+it negative, this code adds its magnitude to `d` of that layer: the same net
+transport. For a dry-basis binary the inputs are first converted to dry air
+(see [`ecmwf_convection_to_basis!`](@ref)).
+
+`test/core/test_tm5_preprocessing_rates.jl` checks the conversion against an
+independent transcription of the three TM5 routines
+(`test/helpers/tm5_ecconv_reference.jl`): bit for bit on an exactly
+representable column, and to rounding on random deep columns, with the input
+fluxes recovered and no closure on consistent input.
+
+Until issue #54 was fixed, the preprocessor placed level `k` at interface
+`k + 1` (so level 137 crossed the ground) and took the first interface with
+flux as the cloud-top layer, one layer too low; the closure then moved the
+cloud-top detrainment to the layer of largest entrainment. On 3000 deep ERA5
+columns this lifted 14 % less boundary-layer tracer above 500 hPa in a 3 h TM5
+step and put the highest detraining layer about 4 levels too low; mass was
+conserved. Binaries of the fixed conversion record
+`tm5_ec2tm_convention = "tm5_halflevel_v2"`, and readers reject ERA5-derived
+TM5 sections without it (see the [Conventions cheat sheet](@ref)).
+
 #### [Level merging (`n_merge > 1`)](@id tm5-level-merging)
 
 `n_merge > 1` is an AtmosTransport approximation for the collaborative GPU

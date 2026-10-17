@@ -288,7 +288,9 @@ Base.@kwdef struct _ObsPackRecords
     lats::Vector{Float64}
     lons::Vector{Float64}
     elevation::Vector{Float64}   # m asl, NaN when absent
-    intake::Vector{Float64}      # m agl, NaN when absent
+    intake::Vector{Float64}      # m agl (intake_height, else altitude - elevation), NaN when unknown
+    altitude::Vector{Float64}    # m asl, NaN when absent
+    pressure::Vector{Float64}    # Pa, NaN when absent
     ids::Vector{String}
     site_lat::Float64            # file attributes, NaN when absent
     site_lon::Float64
@@ -296,6 +298,77 @@ Base.@kwdef struct _ObsPackRecords
 end
 
 _attr_float(ds, name) = (v = get(ds.attrib, name, nothing); v isa Real ? Float64(v) : NaN)
+
+# An optional per-record variable, all NaN when the file does not carry it.
+_optional_numeric(ds, name, n, label) = haskey(ds, name) ? _raw_numeric(ds[name], label) : fill(NaN, n)
+
+"""
+    record_height_above_ground(intake_height, altitude, elevation) -> Float64
+
+Height above the ground (m) that a record states by itself: its intake height
+when finite, else its altitude (m above sea level) minus its ground elevation
+(m above sea level) when both are finite, else `NaN`. Evaluated per record:
+ObsPack files fill `intake_height` and `elevation` row by row (the OCO-2 MIP
+v5.0.1 daily files leave both as fill on aircraft and AirCore rows).
+"""
+record_height_above_ground(intake_height::Real, altitude::Real, elevation::Real) =
+    isfinite(intake_height) ? Float64(intake_height) :
+    isfinite(altitude) && isfinite(elevation) ? Float64(altitude) - Float64(elevation) : NaN
+
+# Pressure units accepted on an ObsPack `pressure` variable, as Pa per unit;
+# matched case-insensitively with blanks removed. A missing or unknown unit is
+# an error: a pressure off by a factor 100 would place a record silently.
+const _PRESSURE_UNITS_PA = Dict("pa" => 1.0, "pascal" => 1.0, "pascals" => 1.0,
+                                "hpa" => 100.0, "hectopascal" => 100.0, "hectopascals" => 100.0,
+                                "mbar" => 100.0, "mb" => 100.0, "millibar" => 100.0, "millibars" => 100.0,
+                                "kpa" => 1000.0, "kilopascal" => 1000.0, "kilopascals" => 1000.0)
+"""
+    valid_pressure(p) -> Bool
+
+Whether a record pressure (Pa) can place the record: finite and positive. A
+pressure at or below zero is an undeclared fill value (-999.9 hPa) and is
+treated as absent.
+"""
+valid_pressure(p::Real) = isfinite(p) && p > 0
+
+_pressure_unit_key(units::AbstractString) = replace(lowercase(units), r"\s" => "")
+_pressure_unit_key(units) = nothing
+
+function _pressure_pa(ds, n, label)
+    haskey(ds, "pressure") || return fill(NaN, n)
+    var = ds["pressure"]
+    units = get(var.attrib, "units", nothing)
+    key = _pressure_unit_key(units)
+    scale = key === nothing ? nothing : get(_PRESSURE_UNITS_PA, key, nothing)
+    scale === nothing && throw(ArgumentError(
+        "$(label): variable pressure has units $(repr(units)); expected one of " *
+        "$(join(sort!(collect(keys(_PRESSURE_UNITS_PA))), ", "))"))
+    # A pressure at or below zero is an undeclared fill value (-999.9 hPa), not
+    # the top of the column: the record is then placed by its other
+    # coordinates, or is unplaced.
+    return _ignore_undeclared_fill!(_raw_numeric(var, label) .* scale, valid_pressure, label,
+                                    "pressure values are zero or negative")
+end
+
+# The lowest land surface is the Dead Sea shore, about −430 m: a ground
+# elevation below this is an undeclared fill value (the OCO-2 MIP v5.0.1 JMA
+# aircraft-flask rows give elevation = intake_height = −1000).
+const LOWEST_GROUND_ELEVATION_M = -450.0
+valid_elevation(z::Real) = isfinite(z) && z >= LOWEST_GROUND_ELEVATION_M
+# An intake below the ground is an undeclared fill value.
+valid_intake_height(h::Real) = isfinite(h) && h >= 0
+
+# Values that are finite but fail `valid` are undeclared fill values: set to
+# NaN (absent) with one warning per file, so that the record is placed by its
+# other coordinates or reported as unplaced, never placed by the fill.
+function _ignore_undeclared_fill!(values::Vector{Float64}, valid, label, what::AbstractString)
+    bad = [isfinite(x) && !valid(x) for x in values]
+    n = count(bad)
+    n == 0 && return values
+    @warn "$(label): $(n) $(what) (an undeclared fill value, e.g. $(values[findfirst(bad)])); they are ignored"
+    values[bad] .= NaN
+    return values
+end
 
 function _obspack_records(path::AbstractString)
     label = "obspack $(path)"
@@ -305,28 +378,29 @@ function _obspack_records(path::AbstractString)
         n = length(times)
         lats = _raw_numeric(_nc_variable(ds, ("latitude",), label), label)
         lons = _raw_numeric(_nc_variable(ds, ("longitude",), label), label)
-        elevation = haskey(ds, "elevation") ? _raw_numeric(ds["elevation"], label) : fill(NaN, n)
-        intake = if haskey(ds, "intake_height")
-            _raw_numeric(ds["intake_height"], label)
-        elseif haskey(ds, "altitude")
-            _raw_numeric(ds["altitude"], label) .- elevation
-        else
-            fill(NaN, n)
-        end
+        elevation = _ignore_undeclared_fill!(_optional_numeric(ds, "elevation", n, label), valid_elevation,
+                                             label, "elevation values are below $(LOWEST_GROUND_ELEVATION_M) m")
+        altitude = _optional_numeric(ds, "altitude", n, label)
+        intake_height = _ignore_undeclared_fill!(_optional_numeric(ds, "intake_height", n, label),
+                                                 valid_intake_height, label, "intake_height values are negative")
+        pressure = _pressure_pa(ds, n, label)
         ids = haskey(ds, "obspack_id") ? _string_vector(ds["obspack_id"], label) :
               [string(dataset, "~", k) for k in 1:n]
-        _check_same_length(label, n, ("latitude", lats), ("longitude", lons),
-                           ("elevation", elevation), ("intake_height", intake), ("obspack_id", ids))
+        _check_same_length(label, n, ("latitude", lats), ("longitude", lons), ("elevation", elevation),
+                           ("intake_height", intake_height), ("altitude", altitude),
+                           ("pressure", pressure), ("obspack_id", ids))
+        intake = record_height_above_ground.(intake_height, altitude, elevation)
         site_code = String(get(ds.attrib, "site_code", dataset))
-        _ObsPackRecords(; dataset, site_code, times, lats, lons, elevation, intake, ids,
+        _ObsPackRecords(; dataset, site_code, times, lats, lons, elevation, intake, altitude, pressure, ids,
                         site_lat = _attr_float(ds, "site_latitude"),
                         site_lon = _attr_float(ds, "site_longitude"),
-                        site_elevation = _attr_float(ds, "site_elevation"))
+                        site_elevation = (z = _attr_float(ds, "site_elevation"); valid_elevation(z) ? z : NaN))
     end
 end
 
-# Every record is a point event at its own time and intake height (flasks,
-# continuous records, and aircraft alike), as the OCO-2 v11 MIP requires.
+# Every record is a point event at its own time and height (flasks,
+# continuous records, and aircraft alike), as the OCO-2 v11 MIP requires; the
+# sampler places it in the column (`resolve_placement`).
 function _read_requests_file!(soundings::Vector{SoundingRequest}, ::Vector{SiteRequest},
                               ::ObsPackSource{SoundingMode}, path::AbstractString,
                               source_index::Int, origin::DateTime, stats::ReadStats, window)
@@ -338,7 +412,8 @@ function _read_requests_file!(soundings::Vector{SoundingRequest}, ::Vector{SiteR
         elseif isvalid_lonlat(rec.lons[k], rec.lats[k]) && isfinite(rec.times[k])
             push!(soundings, SoundingRequest(rec.ids[k], rec.times[k] - origin_unix,
                                              rec.lons[k], rec.lats[k], source_index,
-                                             rec.elevation[k], rec.intake[k]))
+                                             rec.elevation[k], rec.intake[k], rec.altitude[k],
+                                             rec.pressure[k]))
         else
             stats.skipped_invalid += 1
         end
@@ -357,35 +432,61 @@ end
 
 _nanmedian(v::AbstractVector{Float64}) = (x = filter(isfinite, v); isempty(x) ? NaN : median!(x))
 # `+ 0.0` folds -0.0 into 0.0 so rounding cannot split one site in two.
-_round_intake(h) = isfinite(h) ? round(h; digits = 1) + 0.0 : NaN
-_height_label(h) = isfinite(h) ? @sprintf("%gmagl", h) : "surface"
+_round_height(h) = isfinite(h) ? round(h; digits = 1) + 0.0 : NaN
+# A site's vertical identity: its height above ground when the records state
+# one, else its altitude above sea level (placed later through a ground
+# elevation), else neither (lowest layer).
+_vertical_key(intake, altitude) = isfinite(intake) ? (_round_height(intake), NaN) : (NaN, _round_height(altitude))
+_vertical_key(rec::_ObsPackRecords, k::Int) = _vertical_key(rec.intake[k], rec.altitude[k])
+_height_label((intake, altitude)) = isfinite(intake) ? @sprintf("%gmagl", intake) :
+                                    isfinite(altitude) ? @sprintf("%gmasl", altitude) : "surface"
 
-# One site per distinct intake height in the dataset, named after the dataset
+# One site per distinct vertical key in the dataset, named after the dataset
 # file (which already encodes site, platform, and lab), suffixed with the
-# intake height when the file holds more than one.
+# height when the file holds more than one. Records that give only an altitude
+# (no intake height, no row elevation) are keyed by their altitude rounded to
+# 0.1 m: a tower whose levels are stated as altitudes gets one site per level,
+# placed with the station elevation or the DEM. Station series assume a fixed
+# station; a moving platform (aircraft, ship) is warned about, since each of
+# its distinct heights would become a site at the median position.
 function _obspack_sites(::SiteCodeGrouping, rec::_ObsPackRecords, source_index::Int)
     valid = [k for k in eachindex(rec.times) if isvalid_lonlat(rec.lons[k], rec.lats[k])]
     isempty(valid) && return SiteRequest[]
-    heights = unique!(sort!([_round_intake(rec.intake[k]) for k in valid]))   # NaN sorts last
+    heights = unique!(sort!([_vertical_key(rec, k) for k in valid]))   # NaN sorts last
     lat = isfinite(rec.site_lat) ? rec.site_lat : _nanmedian(rec.lats[valid])
     lon = isfinite(rec.site_lon) ? rec.site_lon : _nanmedian(rec.lons[valid])
+    _warn_moving_platform(rec, valid, lon, lat, length(heights))
     elev = isfinite(rec.site_elevation) ? rec.site_elevation : _nanmedian(rec.elevation[valid])
     return [SiteRequest(length(heights) == 1 ? rec.dataset : string(rec.dataset, "_", _height_label(h)),
-                        lon, lat, elev, h, source_index) for h in heights]
+                        lon, lat, elev, h[1], source_index, EveryWindow(), h[2]) for h in heights]
 end
 
-# One site per distinct rounded (lat, lon, intake) triple across the records;
+# Farthest a station-series dataset may stray from its site position (degrees
+# of latitude or longitude) before it is reported as a moving platform.
+const _FIXED_STATION_SPREAD_DEG = 1.0
+
+function _warn_moving_platform(rec::_ObsPackRecords, valid, lon::Float64, lat::Float64, nsites::Int)
+    spread = maximum(k -> max(abs(rec.lats[k] - lat), abs(mod(rec.lons[k] - lon + 180, 360) - 180)), valid)
+    spread > _FIXED_STATION_SPREAD_DEG || return nothing
+    @warn "ObsPack $(rec.dataset) (mode = \"sites\", site_grouping = \"site_code\"): records lie up to " *
+          "$(round(spread; digits = 2))° from the site position ($(lat)°N, $(lon)°E), a moving platform. " *
+          "Station series sample a fixed position, so its $(nsites) distinct heights become $(nsites) " *
+          "sites at that position; sample moving platforms with mode = \"soundings\""
+    return nothing
+end
+
+# One site per distinct rounded (lat, lon, vertical key) across the records;
 # ids read `<site_code>_<lat>N_<lon>E_<height>` with signed decimal degrees.
 function _obspack_sites(::LocationGrouping, rec::_ObsPackRecords, source_index::Int)
-    seen = Dict{Tuple{Float64, Float64, Float64}, SiteRequest}()
+    seen = Dict{Tuple{Float64, Float64, Float64, Float64}, SiteRequest}()
     for k in eachindex(rec.times)
         isvalid_lonlat(rec.lons[k], rec.lats[k]) || continue
         key = (round(rec.lats[k]; digits = 2) + 0.0, round(rec.lons[k]; digits = 2) + 0.0,
-               _round_intake(rec.intake[k]))
+               _vertical_key(rec, k)...)
         haskey(seen, key) && continue
-        id = @sprintf("%s_%.2fN_%.2fE_%s", rec.site_code, key[1], key[2], _height_label(key[3]))
+        id = @sprintf("%s_%.2fN_%.2fE_%s", rec.site_code, key[1], key[2], _height_label((key[3], key[4])))
         elevation = isfinite(rec.site_elevation) ? rec.site_elevation : rec.elevation[k]
-        seen[key] = SiteRequest(id, key[2], key[1], elevation, key[3], source_index)
+        seen[key] = SiteRequest(id, key[2], key[1], elevation, key[3], source_index, EveryWindow(), key[4])
     end
     return sort!(collect(values(seen)); by = s -> s.id)
 end
@@ -458,20 +559,19 @@ _table_utc_seconds(v::Real, ::Float64, label::AbstractString, k::Int) = throw(Ar
 _table_utc_seconds(v, origin_unix::Float64, label::AbstractString, k::Int) =
     datetime2unix(_parse_iso_utc(v, "$(label) row $(k) time")) - origin_unix
 
-# Elevation (m asl) and intake height (m above ground); `altitude` (m asl)
-# is converted with the elevation when no intake height is given.
+# Elevation (m asl), height above ground, and altitude (m asl) of row `k`: the
+# height above ground is the intake height, else the altitude minus the
+# elevation (`record_height_above_ground`). An altitude without elevation is
+# kept as it is; the sampler places it through a ground elevation
+# (`resolve_placement`).
 function _table_heights(columns::_TableColumns, label::AbstractString, k::Int)
     elevation = _table_optional_float(_column(columns, _TABLE_ELEVATION_KEYS, label; required = false),
                                       label, "elevation", k)
     intake = _table_optional_float(_column(columns, _TABLE_INTAKE_KEYS, label; required = false),
                                    label, "intake_height", k)
-    isnan(intake) || return elevation, intake
     altitude = _table_optional_float(_column(columns, _TABLE_ALTITUDE_KEYS, label; required = false),
                                      label, "altitude", k)
-    isnan(altitude) && return elevation, intake
-    isnan(elevation) && throw(ArgumentError(
-        "$(label): row $(k) gives an altitude above sea level but no elevation to convert it"))
-    return elevation, altitude - elevation
+    return elevation, record_height_above_ground(intake, altitude, elevation), altitude
 end
 
 function _soundings_from_columns(columns::_TableColumns, source_index::Int, origin::DateTime,
@@ -489,9 +589,9 @@ function _soundings_from_columns(columns::_TableColumns, source_index::Int, orig
         lat = _table_float(lats[k], label, "lat")
         isvalid_lonlat(lon, lat) || throw(ArgumentError(
             "$(label): row $(k) has an invalid location ($(lon), $(lat))"))
-        elevation, intake = _table_heights(columns, label, k)
+        elevation, intake, altitude = _table_heights(columns, label, k)
         push!(out, SoundingRequest(string(ids[k]), _table_utc_seconds(times[k], origin_unix, label, k),
-                                   lon, lat, source_index, elevation, intake))
+                                   lon, lat, source_index, elevation, intake, altitude, NaN))
     end
     return out
 end
@@ -544,9 +644,9 @@ function _sites_from_columns(columns::_TableColumns, source_index::Int, origin::
         lat = _table_float(lats[k], label, "lat")
         isvalid_lonlat(lon, lat) || throw(ArgumentError(
             "$(label): row $(k) has an invalid location ($(lon), $(lat))"))
-        elevation, intake = _table_heights(columns, label, k)
+        elevation, intake, altitude = _table_heights(columns, label, k)
         push!(out, SiteRequest(string(ids[k]), lon, lat, elevation, intake, source_index,
-                               _site_schedule(columns, origin_unix, label, k)))
+                               _site_schedule(columns, origin_unix, label, k), altitude))
     end
     return out
 end
@@ -770,15 +870,16 @@ end
 function _merge_site(a::SiteRequest, b::SiteRequest)
     _same_location(a, b) || throw(ArgumentError(
         "observation site id $(repr(a.id)) appears with different locations " *
-        "($(a.lon), $(a.lat), $(a.intake_height_m)) vs ($(b.lon), $(b.lat), $(b.intake_height_m))"))
+        "(lon, lat, intake height, altitude) = ($(a.lon), $(a.lat), $(a.intake_height_m), $(a.altitude_m)) " *
+        "vs ($(b.lon), $(b.lat), $(b.intake_height_m), $(b.altitude_m))"))
     schedule = _merge_schedule(a.schedule, b.schedule, a.id)
-    return SiteRequest(a.id, a.lon, a.lat, a.elevation_m, a.intake_height_m, a.source, schedule)
+    return SiteRequest(a.id, a.lon, a.lat, a.elevation_m, a.intake_height_m, a.source, schedule, a.altitude_m)
 end
 
+_same_height(a::Float64, b::Float64) = isequal(a, b) || isapprox(a, b; atol = 0.05)
 _same_location(a::SiteRequest, b::SiteRequest) =
     isapprox(a.lon, b.lon; atol = 1e-6) && isapprox(a.lat, b.lat; atol = 1e-6) &&
-    (isequal(a.intake_height_m, b.intake_height_m) ||
-     isapprox(a.intake_height_m, b.intake_height_m; atol = 0.05))
+    _same_height(a.intake_height_m, b.intake_height_m) && _same_height(a.altitude_m, b.altitude_m)
 
 # Time lists of one site (e.g. a daily flask table) are combined; any other
 # pair of schedules must agree, since a site series has one schedule.

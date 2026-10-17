@@ -62,6 +62,13 @@ is a type the caller names, and the methods dispatch on it:
   [`write_latlon_flux`](@ref AtmosTransport.GriddedIO.write_latlon_flux), static
   fields only, on meshes whose faces the runtime rebuilds exactly from the
   written centres with `SnappedFaces`.
+- **Observation ground fields** (`[output.observations]` vertical placement):
+  the per-grid model surface height,
+  [`write_model_surface_height`](@ref AtmosTransport.GriddedIO.write_model_surface_height)
+  and [`read_model_surface_height`](@ref AtmosTransport.GriddedIO.read_model_surface_height)
+  (grid-checked, into `Output.ModelSurfaceHeight`), and a lat-lon DEM for
+  point lookups, [`read_point_elevation`](@ref AtmosTransport.GriddedIO.read_point_elevation)
+  → [`LatLonPointElevation`](@ref AtmosTransport.GriddedIO.LatLonPointElevation).
 
 The rules were measured on the TRENDY v14, GFED5, FLUXCOM-X, CAMS, GridFED and
 EDGAR files; `src/GriddedIO/README.md` lists them with their invariants.

@@ -71,7 +71,6 @@ function _ll_test_settings(::Type{FT}, spectral_dir, cache_dir, out_dir;
         met_interval = 3600.0,
         dt = 900.0,
         out_dir = out_dir,
-        tm5_convection_enable = false,
         include_surface = false,
     ))
 end

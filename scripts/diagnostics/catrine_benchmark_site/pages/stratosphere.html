@@ -1,0 +1,166 @@
+<h1>Stratosphere and upper troposphere</h1>
+<p class="lede">The top 10 % of the air mass (above ≈ 100 hPa) and the 60–90 % band (≈ 400–100 hPa). Here the long-lived
+tracers (CO₂, SF₆) carry the memory of the initial state for years, so offsets and slow drifts matter more than month-to-month
+noise.</p>
+
+<div class="controls" id="controls"></div>
+
+<section class="card">
+  <div class="card-head"><h2 id="t1"></h2></div>
+  <p class="sub">Statistics of the monthly-mean band fields against GCHP (area weighted, global).</p>
+  <div class="grid2">
+    <div><div class="panel-title">Bias (run − GCHP)</div><div class="plot" id="pb"></div></div>
+    <div><div class="panel-title">RMSE</div><div class="plot" id="pr"></div></div>
+  </div>
+  <p class="note" id="n1"></p>
+</section>
+
+<div class="tiles" id="drift"></div>
+
+<section class="card" data-run="era5">
+  <div class="card-head"><h2>Why ERA5 falls further below GCHP above 100 hPa</h2></div>
+  <p class="sub" id="s-trop"></p>
+  <div class="plot" id="ptrop"></div>
+  <div class="prose">
+  <ul>
+    <li><b>Where:</b> a tropical deficit between 70 and 30 hPa that grows through 2022 (ERA5 − MERRA-2, 20° S–20° N above
+    100 hPa: −0.27 ppm CO<sub>2</sub> in March, −0.55 in August, −0.75 in November 2022). At 100 hPa ERA5 has slightly more fossil
+    CO<sub>2</sub> than MERRA-2: the air reaches the tropopause but rises more slowly above it
+    (<a href="vertical.html#tracer=fossil&amp;view=diff">latitude–pressure sections</a>).</li>
+    <li><b>Meteorology:</b> ERA5's own tropical upwelling is weaker. The net upward mass flux across 70 hPa between 20° S and
+    20° N is 0.65–0.72 × MERRA-2's (≈ 0.6 × in June–November 2022), computed from the raw reanalyses; the transport binaries
+    reproduce raw ERA5 within about 1 %. Ploeger et al. (2021) also find a markedly slower Brewer–Dobson circulation in ERA5
+    than in ERA-Interim (<a href="https://doi.org/10.5194/acp-21-8393-2021">ACP 21, 8393</a>).</li>
+    <li><b>Vertical grid:</b> L117 layers in the tropical lower stratosphere are ≈ 0.39 km thick, against ≈ 1.15 km for L66 and
+    L72. Thicker layers carry a tracer front upward faster through vertical numerical diffusion: an earlier ERA5 L66 run with the
+    same upwelling matched GCHP's tropical fossil CO<sub>2</sub> at 70 hPa (its face-flux method also differs; the two effects
+    are not separated). GCHP (MERRA-2, L72) includes that diffusion; it is a reference, not the truth.</li>
+    <li><b>Not a v0.5 change:</b> v0.5 and pre-v0.5 ERA5 L117 mass fluxes agree at every interface from 6 to 230 hPa (RMS ratio
+    0.9997–1.0000), and the MERRA-2 run shows no such drift through the same code. The signoff therefore tests ERA5's drift
+    criterion on construction invariance and meteorological fidelity, and reports the ERA5 − GCHP trend as attributed
+    transport uncertainty (tracker OF-109).</li>
+  </ul>
+  </div>
+</section>
+
+<section class="card prose">
+  <div class="card-head"><h2>Why AtmosTransport starts below GCHP above 100 hPa</h2></div>
+  <p>GCHP's CATRINE initial state places each value of the protocol's initial field at the top interface of its layer instead of
+  at the layer middle: the whole profile is shifted up by half a layer. Reconstructing GCHP's initial field this way matches it to
+  ≤ 0.05 ppm CO₂ (≤ 0.003 ppt SF₆), against 0.62 ppm (0.07 ppt) for mid-layer placement. Because mixing ratios fall with height in
+  the stratosphere, the shift gives GCHP <b>≈ 0.35 ppm more CO₂ and ≈ 0.046 ppt more SF₆ above 100 hPa</b> than a model that starts
+  from the protocol's initial state, as the v0.5 runs do. The offset relaxes on the stratospheric flushing time, so it is still
+  visible after two years.</p>
+  <p>This is why the v0.5 signoff judges the stratospheric biases against the pre-v0.5 runs of the same initial state (criteria
+  C1–C4) and judges drift by the trend of the monthly bias (C8), never against zero. <span data-run="merra2_gcic">A MERRA-2 run started from GCHP's own
+  initial state separates the offset from transport (below).</span></p>
+</section>
+
+<section class="card" data-run="merra2_gcic">
+  <details class="more" id="gcic-box">
+    <summary>Identical-start transport check (MERRA-2 v0.5 started from GCHP's initial state)</summary>
+    <p class="sub">Same MERRA-2 run, but CO₂ and SF₆ start from GCHP's own 2021-12-01 03 UTC fields (Rn-222 and fossil CO₂ start
+    from zero in both). Without the initial-state offset, the remaining bias above 100 hPa is transport drift against GCHP.
+    This run is supporting evidence; it is not one of the two signoff runs.</p>
+    <div class="panel-title" id="pg-legend"></div>
+    <div class="plot" id="pg"></div>
+  </details>
+</section>
+
+<p class="note">Latitude–pressure structure of these differences: <a href="vertical.html">vertical structure</a>;
+maps of the band above 100 hPa: <a href="maps.html#band=above_100hPa">maps</a>.</p>
+
+<script>
+SITE.ready(async () => {
+  const S = SITE, m = S.meta(), el = S.el;
+  const [mon, ov] = await Promise.all([S.load("monthly", "monthly.js"), S.load("overview", "overview.js")]);
+  const crit = ((ov || {}).signoff || {}).criteria || {};
+  const splitC8 = Object.keys(crit).some(k => /^C8[abc]/.test(k));     // ERA5 C8 split into C8a/C8b/C8c (OF-109)
+  const st = S.state({tracer: "co2", band: "above_100hPa", hide: ""}, {tracer: S.keys(m.tracers), band: ["above_100hPa", "400_100hPa"]});
+  const hidden = new Set(st.hide ? st.hide.split(",") : []);
+  const runs = S.mainRuns().filter(S.hasMonths);
+  const gcic = m.runs.find(r => r.role === "supporting");
+  const x = m.months.map(S.midMonth);
+  const BANDS = m.bands.filter(b => b.key === "above_100hPa" || b.key === "400_100hPa").reverse();
+  const OFFSET = {co2: -0.35, sf6: -0.046};   // GCHP initial-state offset above 100 hPa at the start (attribution, C6)
+  document.getElementById("controls").append(
+    S.control("Tracer", S.seg(m.tracers.map(t => ({key: t.key, name: t.name, title: t.long})), st.tracer, k => { st.tracer = k; draw(); })),
+    S.control("Band", S.seg(BANDS.map(b => ({key: b.key, name: b.name, title: b.long})), st.band, k => { st.band = k; draw(); })),
+    S.legend(runs, hidden, () => draw()));
+
+  // OLS trend (per year) of the monthly bias from January 2022 on, defined as in the signoff (C8): x = days from
+  // 2022-01-15 to the 15th of the month / 365.25, at least three months.
+  function trend(rk, t, b) {
+    const ys = mon.stats[`${rk}|${t}|${b}|bias`] || [];
+    const pts = m.months.map((mo, i) => [mo, ys[i]]).filter(([mo, y]) => mo >= "2022-01" && y !== null);
+    if (pts.length < 3) return [null, pts.length];
+    const day = mo => Date.UTC(+mo.slice(0, 4), +mo.slice(5, 7) - 1, 15) / 86400000;
+    const xs = pts.map(([mo]) => (day(mo) - day("2022-01")) / 365.25), yv = pts.map(p => p[1]);
+    const mx = xs.reduce((a, b) => a + b) / xs.length, my = yv.reduce((a, b) => a + b) / yv.length;
+    let sxy = 0, sxx = 0;
+    xs.forEach((xx, i) => { sxy += (xx - mx) * (yv[i] - my); sxx += (xx - mx) ** 2; });
+    return [sxy / sxx, pts.length];
+  }
+  function draw() {
+    st.hide = [...hidden].join(",");
+    S.saveState(st);
+    const t = S.tracer(st.tracer), b = S.band(st.band);
+    document.getElementById("t1").innerHTML = `${t.name} ${b.key === "above_100hPa" ? "above 100 hPa" : "between 400 and 100 hPa"}`;
+    for (const [id, stat] of [["pb", "bias"], ["pr", "rmse"]]) {
+      const tr = runs.filter(r => !hidden.has(r.key)).map(r => S.series(r, x, mon.stats[`${r.key}|${t.key}|${b.key}|${stat}`], {markers: true}));
+      // dotted line: the start offset expected from GCHP's initial state alone (kept inside the y range)
+      const refs = stat === "bias" && b.key === "above_100hPa" && OFFSET[t.key] !== undefined
+        ? [{value: OFFSET[t.key], label: `initial-state offset ≈ ${String(OFFSET[t.key]).replace("-", "−")} ${t.unit}`}] : [];
+      S.chart(document.getElementById(id), {height: 280, x: S.timeAxis("month"), series: tr, refs,
+        y: {label: t.unit, zero: stat === "bias" ? "ref" : false, tozero: stat === "rmse", fmt: S.valFmt(t.digits, t.unit)}});
+    }
+    document.getElementById("n1").innerHTML = b.key === "above_100hPa" && OFFSET[t.key] !== undefined
+      ? `<b>How to read:</b> the dotted line marks the start offset expected from GCHP's initial state alone (explained below); a run that transports like GCHP stays near it and relaxes slowly towards zero. Trends are in the tiles below.`
+      : "<b>How to read:</b> zero is perfect agreement with GCHP; the trend of the bias is in the tiles below.";
+    // drift tiles
+    const box = document.getElementById("drift");
+    box.innerHTML = "";
+    for (const r of runs) {
+      const [tr, n] = trend(r.key, t.key, b.key);
+      box.append(el("div", {class: "tile"}, el("div", {class: "l"}, `${r.name}: trend of the bias`),
+        el("div", {class: "v"}, tr === null ? "–" : `${S.fmt(tr, t.digits, true)} `, el("span", {style: "font-size:14px;font-weight:500;color:var(--ink2)"}, tr === null ? "" : `${t.unit}/yr`)),
+        el("div", {class: "s"}, tr === null ? "needs at least three months from January 2022" :
+          `OLS over ${n} month${n > 1 ? "s" : ""} from January 2022${n < 24 ? " (interim; seasonal cycles bias short fits)" : ""}`)));
+    }
+    const C8 = {era5: splitC8
+                  ? "ERA5: blocking checks are construction invariance (v0.5 against pre-v0.5) and met fidelity (tropical vertical mass flux within 5 % of raw ERA5); the ERA5 − GCHP trend is reported (attributed, OF-109) and fails only if positive above +0.15 ppm/yr"
+                  : "ERA5: |trend| ≤ 0.15 ppm/yr CO<sub>2</sub> and ≤ 0.02 ppt/yr SF<sub>6</sub>",
+                merra2: "MERRA-2: within 0.025 ppm/yr CO<sub>2</sub> (0.003 ppt/yr SF<sub>6</sub>) of the pre-v0.5 run's trend"};
+    box.append(el("div", {class: "tile"}, el("div", {class: "l"}, "Signoff drift criterion (C8)"),
+      el("div", {class: "s", style: "margin-top:6px"}, S.html("Trend of the monthly bias above 100 hPa over 2022–2023. " + runs.map(r => C8[r.key]).join("; ") + "."))));
+    if (gcic && document.getElementById("pg")) gcicPlot(t, b);
+    if (document.getElementById("ptrop")) tropics(t, b);
+  }
+  // Deep tropics (20° S–20° N) of the selected band: each run minus GCHP, monthly (ERA5 mode only).
+  function tropics(t, b) {
+    document.getElementById("s-trop").innerHTML = `${t.name}, ${b.key === "above_100hPa" ? "above 100 hPa" : "400–100 hPa"}, ` +
+      `20° S–20° N: monthly mean of each run minus GCHP (${t.unit}). The MERRA-2 run keeps its initial-state offset; the ERA5 deficit grows.`;
+    const tr = runs.filter(r => !hidden.has(r.key)).map(r => S.series(r, x, mon.diff[`${r.key}|${t.key}|${b.key}|t20`], {markers: true}));
+    S.chart(document.getElementById("ptrop"), {height: 280, x: S.timeAxis("month"), series: tr,
+      y: {label: `run − GCHP (${t.unit})`, zero: "ref", fmt: S.valFmt(t.digits, t.unit)}});
+  }
+  function gcicPlot(t, b) {
+    const div = document.getElementById("pg");
+    if (!gcic || !gcic.months.length) {
+      S.emptyNote(div, "The identical-start run has not been compared with GCHP yet. This panel fills in automatically when it has.");
+      return;
+    }
+    S.clearEmpty(div);
+    const lg = document.getElementById("pg-legend");
+    lg.innerHTML = "";
+    lg.append(S.legend([S.run("merra2"), gcic], new Set(), () => {}));
+    lg.querySelectorAll("button").forEach(x => { x.disabled = true; x.style.cursor = "default"; });
+    const tr = [S.run("merra2"), gcic].filter(S.hasMonths).map(r => S.series(r, x, mon.stats[`${r.key}|${t.key}|${b.key}|bias`], {markers: true}));
+    S.chart(div, {height: 280, x: S.timeAxis("month"), series: tr,
+      y: {label: `bias (${t.unit})`, zero: "ref", fmt: S.valFmt(t.digits, t.unit)}});
+  }
+  const gbox = document.getElementById("gcic-box");
+  if (gbox) gbox.addEventListener("toggle", () => { if (gbox.open) draw(); });
+  draw();
+});
+</script>

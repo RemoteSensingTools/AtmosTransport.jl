@@ -15,7 +15,6 @@ The preprocessor writes one transport binary per day. Runtime configs under
 | `era5_*transport_binary*.toml` | ERA5 spectral to lat-lon, reduced-Gaussian, or cubed-sphere transport binaries. | Match the target grid in the filename. |
 | `geosit_*` | GEOS-IT native cubed-sphere preprocessing. | `geosit_c180_native_dec2021_f32.toml` |
 | `geosfp_*` | GEOS-FP native cubed-sphere preprocessing. | `geosfp_c720_native_to_cs180.toml` |
-| `catrine5d/` | CATRINE campaign preprocessing matrix. | Match the runtime config under `config/runs/catrine5d/`. |
 | `likely_legacy/` | Older descriptors preserved for provenance. | Avoid for new work. |
 
 ## Important knobs
@@ -27,12 +26,16 @@ live in the same TOML section:
 |---|---|---|
 | ERA5 spectral | `[input].spectral_dir`, `thermo_dir`, `coefficients` | Directories and hybrid coefficients for the spectral source. |
 | ERA5 spectral | `[surface].enable` | Include PBL surface fields when the selected config supports them. |
-| ERA5 spectral | `[tm5_convection].enable` | Include the four TM5 convection fields; `physics_bin_dir` points to converted physics input. |
 | Native GEOS | `[source].include_surface` | Include PBL surface fields. |
 | Native GEOS | `[source].include_convection` | Include CMFMC/DTRAIN convection forcing. |
 | Native GEOS | `[source].include_vdiff_fields` | Include the inputs needed by the GCHP-style VDIFF closure. |
-| ERA5 N320 | `[source].toml` | The source descriptor owns `include_surface`, `include_convection`, and `include_tm5_diffusion` under its `[preprocessing]` table. |
+| ERA5 N320 | `[source].toml` | The source descriptor owns `include_surface`, `include_convection` (the four TM5 convection fields), and `include_tm5_diffusion` under its `[preprocessing]` table. |
 | All paths | `[output].directory` | Runtime configs point `[input].folder` here. |
+
+ERA5 spectral configs carry no convection. The former `[tm5_convection]`
+table (lat-lon physics-file route) was removed and is rejected; build TM5
+convection with an ERA5 N320 source or attach it with
+`scripts/preprocessing/attach_catrine_tm5_convection_cs.jl`.
 
 For native GEOS, the dynamics time step used to interpret archived mass fluxes
 is `mass_flux_dt_seconds` in the selected source descriptor under

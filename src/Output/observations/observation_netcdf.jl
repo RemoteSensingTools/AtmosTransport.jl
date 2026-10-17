@@ -159,6 +159,7 @@ function _observation_common_attributes!(ds, mesh, mass_basis::AbstractMassBasis
         "p_half[1] = A_ifc[1]; p_half[k+1] = p_half[k] + g * air_mass[k] / cell_area " *
         "(" * _basis_word(mass_basis) * "air)"
     ds.attrib["height_method_codes"] = height_method_codes_description()
+    ds.attrib["vertical_placement_codes"] = vertical_placement_codes_description()
     define_provenance_attributes!(ds)
     for (key, value) in pairs(attributes)
         ds.attrib[String(key)] = value
@@ -191,6 +192,7 @@ _attrib(long_name) = Dict{String, Any}("long_name" => long_name)
 # checked before any file is opened.
 const _OBSERVATION_FIXED_NAMES = (
     "id", "source", "time", "latitude", "longitude", "elevation", "intake_height",
+    "altitude", "pressure", "vertical_placement", "placement_height_agl", "model_surface_height",
     "cell_lat", "cell_lon", "cell_index", "cell_i", "cell_j", "cell_panel", "cell_area",
     "sample_time_prev", "sample_time_next", "interp_weight", "interp_flag",
     "intake_level", "intake_layer_bottom_agl", "intake_layer_top_agl", "height_method",
@@ -208,6 +210,29 @@ function check_observation_tracer_names(names::AbstractVector{Symbol})
             "output variable; rename the tracer or drop it from [output.observations].tracers"))
         push!(taken, var)
     end
+    return nothing
+end
+
+# Per-request vertical placement (`VerticalPlacement`), shared by both files.
+function _def_vertical_placement_vars!(ds, dims, chunks, dl::Int)
+    _def_obs_var(ds, "vertical_placement", Int8, dims; deflate_level = dl, chunks,
+                 attrib = Dict{String, Any}(
+                     "long_name" => "method that placed the request in the column (see vertical_placement_codes)",
+                     "flag_values" => collect(Int8, values(VERTICAL_PLACEMENT_CODES)),
+                     "flag_meanings" => _VERTICAL_PLACEMENT_MEANINGS))
+    _def_obs_var(ds, "placement_height_agl", Float64, dims; deflate_level = dl, chunks,
+                 attrib = _attrib("m", "height above the model surface that selects the intake layer " *
+                                       "(NaN for pressure and lowest-layer placement)"))
+    _def_obs_var(ds, "model_surface_height", Float64, dims; deflate_level = dl, chunks,
+                 attrib = _attrib("m", "model surface height above sea level of the containing cell " *
+                                       "(NaN without surface_height_file)"))
+    return nothing
+end
+
+function _write_vertical_placement!(ds, rows, placements::AbstractVector{VerticalPlacement})
+    ds["vertical_placement"][rows] = Int8[p.method for p in placements]
+    ds["placement_height_agl"][rows] = [p.height_agl_m for p in placements]
+    ds["model_surface_height"][rows] = [p.model_surface_m for p in placements]
     return nothing
 end
 
@@ -237,12 +262,14 @@ end
 """
     SoundingBatch(; ids, sources, times, latitudes, longitudes, cells, sample_time_prev,
                   sample_time_next, weights, flags, p_half, air_mass_per_area, tracers,
-                  column_means, elevations, intake_heights, intake_levels, layer_bottom,
-                  layer_top, height_methods, intake_values)
+                  column_means, elevations, intake_heights, altitudes, pressures, placements,
+                  intake_levels, layer_bottom, layer_top, height_methods, intake_values)
 
 Columns of one emitted batch of `n` events. Profiles are `(nlevel, n)`,
 `p_half` is `(nlevel + 1, n)`, tracers `(nlevel, ntracer, n)`, column means
 and intake values `(ntracer, n)`. Times are seconds since 1970-01-01 UTC.
+`elevations`, `intake_heights`, `altitudes` and `pressures` are the records'
+own values; `placements` the [`VerticalPlacement`](@ref) of each row.
 """
 struct SoundingBatch
     ids::Vector{String}
@@ -261,6 +288,9 @@ struct SoundingBatch
     column_means::Matrix{Float64}
     elevations::Vector{Float64}
     intake_heights::Vector{Float64}
+    altitudes::Vector{Float64}
+    pressures::Vector{Float64}
+    placements::Vector{VerticalPlacement}
     intake_levels::Vector{Int32}
     layer_bottom::Vector{Float64}
     layer_top::Vector{Float64}
@@ -269,14 +299,15 @@ struct SoundingBatch
 
     function SoundingBatch(; ids, sources, times, latitudes, longitudes, cells, sample_time_prev,
                            sample_time_next, weights, flags, p_half, air_mass_per_area, tracers,
-                           column_means, elevations, intake_heights, intake_levels, layer_bottom,
-                           layer_top, height_methods, intake_values)
+                           column_means, elevations, intake_heights, altitudes, pressures, placements,
+                           intake_levels, layer_bottom, layer_top, height_methods, intake_values)
         n = length(ids)
         for (name, v) in (("sources", sources), ("times", times), ("latitudes", latitudes),
                           ("longitudes", longitudes), ("cells", cells),
                           ("sample_time_prev", sample_time_prev), ("sample_time_next", sample_time_next),
                           ("weights", weights), ("flags", flags), ("elevations", elevations),
-                          ("intake_heights", intake_heights), ("intake_levels", intake_levels),
+                          ("intake_heights", intake_heights), ("altitudes", altitudes),
+                          ("pressures", pressures), ("placements", placements), ("intake_levels", intake_levels),
                           ("layer_bottom", layer_bottom), ("layer_top", layer_top),
                           ("height_methods", height_methods))
             length(v) == n || throw(DimensionMismatch("SoundingBatch.$(name) has $(length(v)) rows; expected $(n)"))
@@ -291,7 +322,8 @@ struct SoundingBatch
         size(intake_values) == (ntracer, n) || throw(DimensionMismatch("SoundingBatch.intake_values must be (ntracer, n)"))
         return new(ids, sources, times, latitudes, longitudes, cells, sample_time_prev, sample_time_next,
                    weights, flags, p_half, air_mass_per_area, tracers, column_means, elevations,
-                   intake_heights, intake_levels, layer_bottom, layer_top, height_methods, intake_values)
+                   intake_heights, altitudes, pressures, placements, intake_levels, layer_bottom, layer_top,
+                   height_methods, intake_values)
     end
 end
 
@@ -335,7 +367,11 @@ function _define_sounding_schema!(ds, stream::SoundingNetCDFStream, mesh, origin
     obs("latitude", Float64, Dict{String, Any}("units" => "degrees_north", "standard_name" => "latitude"))
     obs("longitude", Float64, Dict{String, Any}("units" => "degrees_east", "standard_name" => "longitude"))
     obs("elevation", Float64, _attrib("m", "surface elevation above sea level from the source (NaN unknown)"))
-    obs("intake_height", Float64, _attrib("m", "intake height above ground (NaN: lowest model layer)"))
+    obs("intake_height", Float64, _attrib("m", "height above ground from the source: intake_height, " *
+                                               "else altitude - elevation (NaN unknown)"))
+    obs("altitude", Float64, _attrib("m", "altitude above sea level from the source (NaN unknown)"))
+    obs("pressure", Float64, _attrib("Pa", "pressure from the source (NaN unknown)"))
+    _def_vertical_placement_vars!(ds, ("obs",), c1, dl)
     obs("cell_lat", Float64, _attrib("degrees_north", "containing cell centre latitude"))
     obs("cell_lon", Float64, _attrib("degrees_east", "containing cell centre longitude (mesh convention)"))
     obs("cell_index", Int32, _attrib("native flat cell index within the panel / mesh"))
@@ -399,6 +435,9 @@ function _write_soundings!(stream::SoundingNetCDFStream, batch::SoundingBatch, r
     ds["longitude"][rows] = batch.longitudes
     ds["elevation"][rows] = batch.elevations
     ds["intake_height"][rows] = batch.intake_heights
+    ds["altitude"][rows] = batch.altitudes
+    ds["pressure"][rows] = batch.pressures
+    _write_vertical_placement!(ds, rows, batch.placements)
     ds["cell_lat"][rows] = [c.lat for c in cells]
     ds["cell_lon"][rows] = [c.lon for c in cells]
     ds["cell_index"][rows] = Int32[c.cell for c in cells]
@@ -431,14 +470,16 @@ end
 # -- station series (sites) -------------------------------------------------
 
 """
-    SiteNetCDFStream(path, mesh, nlevel, tracer_names, sites, cells; mass_basis, origin, deflate_level, write_profiles, attributes)
+    SiteNetCDFStream(path, mesh, nlevel, tracer_names, sites, cells, placements; mass_basis, origin,
+                     deflate_level, write_profiles, attributes)
 
 Append-only station sink: one record per met-window end with, per site, the
 mixing ratio in the layer containing the intake height (`<tracer>_intake`),
 the lowest-layer value (`<tracer>_surface`), the chosen layer and its bounds,
 surface pressure, and optionally the full profiles (`<tracer>`, `p_half`,
 air mass). Sites outside their [`TimeRange`](@ref) are written as NaN with
-`intake_level = 0`.
+`intake_level = 0`. `placements` holds each site's
+[`VerticalPlacement`](@ref), written as static metadata.
 """
 mutable struct SiteNetCDFStream <: AbstractObservationStream
     path::String
@@ -490,7 +531,8 @@ end
 
 function SiteNetCDFStream(path::AbstractString, mesh, nlevel::Integer,
                           tracer_names::AbstractVector{Symbol},
-                          sites::AbstractVector{SiteRequest}, cells::AbstractVector{CellLocation};
+                          sites::AbstractVector{SiteRequest}, cells::AbstractVector{CellLocation},
+                          placements::AbstractVector{VerticalPlacement};
                           mass_basis::Union{Symbol, AbstractMassBasis}, origin::DateTime,
                           deflate_level::Integer = 0,
                           write_profiles::Bool = false,
@@ -498,22 +540,25 @@ function SiteNetCDFStream(path::AbstractString, mesh, nlevel::Integer,
     nlevel >= 1 || throw(ArgumentError("site stream needs at least one level"))
     isempty(tracer_names) && throw(ArgumentError("site stream needs at least one tracer"))
     length(sites) == length(cells) || throw(DimensionMismatch("one cell per site is required"))
+    length(sites) == length(placements) || throw(DimensionMismatch("one placement per site is required"))
     stream = SiteNetCDFStream(String(path), nothing, 0, Int(nlevel), length(sites),
                               collect(tracer_names), _as_mass_basis(mass_basis), write_profiles,
                               false, false, Any[])
     attrs = copy(attributes)
     site_list = collect(sites)
     cell_list = collect(cells)
+    placement_list = collect(placements)
     _submit!(stream, _create_op(ds -> _define_site_schema!(ds, stream, mesh, site_list, cell_list,
-                                                          origin, Int(deflate_level), attrs)), "schema")
+                                                          placement_list, origin, Int(deflate_level), attrs)),
+             "schema")
     return stream
 end
 
 _schedule_bounds(::AbstractSiteSchedule) = (NaN, NaN)
 _schedule_bounds(range::TimeRange) = (range.start_seconds, range.stop_seconds)
 
-function _define_site_schema!(ds, stream::SiteNetCDFStream, mesh, sites, cells, origin::DateTime,
-                              dl::Int, attributes)
+function _define_site_schema!(ds, stream::SiteNetCDFStream, mesh, sites, cells, placements,
+                              origin::DateTime, dl::Int, attributes)
     nlevel, nsite = stream.nlevel, stream.nsite
     suffix = _basis_suffix(stream.mass_basis)
     word = _basis_word(stream.mass_basis)
@@ -535,7 +580,11 @@ function _define_site_schema!(ds, stream::SiteNetCDFStream, mesh, sites, cells, 
     static("latitude", [s.lat for s in sites], Dict{String, Any}("units" => "degrees_north", "standard_name" => "latitude"))
     static("longitude", [s.lon for s in sites], Dict{String, Any}("units" => "degrees_east", "standard_name" => "longitude"))
     static("elevation", [s.elevation_m for s in sites], _attrib("m", "site surface elevation above sea level (NaN unknown)"))
-    static("intake_height", [s.intake_height_m for s in sites], _attrib("m", "intake height above ground (NaN: lowest layer)"))
+    static("intake_height", [s.intake_height_m for s in sites],
+           _attrib("m", "height above ground from the source: intake_height, else altitude - elevation (NaN unknown)"))
+    static("altitude", [s.altitude_m for s in sites], _attrib("m", "altitude above sea level from the source (NaN unknown)"))
+    _def_vertical_placement_vars!(ds, ("site",), nothing, 0)
+    _write_vertical_placement!(ds, Colon(), placements)
     origin_unix = datetime2unix(origin)
     static("schedule_start", [origin_unix + _schedule_bounds(s.schedule)[1] for s in sites],
            _time_attrib("start of the site's sampling range (NaN: every window end)"))

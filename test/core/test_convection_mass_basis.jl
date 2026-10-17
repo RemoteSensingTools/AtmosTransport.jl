@@ -19,7 +19,7 @@ using .AtmosTransport.MetDrivers: ConvectionForcing, TM5_CONVECTION_MASS_BASIS_K
     tm5_convection_mass_basis
 using .AtmosTransport.Preprocessing: interface_specific_humidity, ecmwf_convection_to_basis!,
     tm5_convection_to_basis!, ec2tm_from_rates!, dz_hydrostatic_virtual!,
-    tm5_native_fields_for_hour!, _moist_to_dry_cmfmc!
+    _moist_to_dry_cmfmc!
 
 @testset "interface humidity rule (shared with GEOS CMFMC)" begin
     q = [0.001, 0.004, 0.010]
@@ -85,23 +85,36 @@ updraft_flux(p) = 0.04 * ramp(p, 1.0e5, 8.0e4) * ramp(p, 1.5e4, 4.0e4)
 downdraft_flux(p) = -0.012 * ramp(p, 5.5e4, 8.0e4) * ramp(p, 1.0e5, 9.0e4)
 bcast(v) = repeat(reshape(v, 1, 1, :), NX, NY, 1)
 
-# ECMWF-like hourly fields on the grid; `tm5_native_fields_for_hour!` takes
-# UDMF/DDMF with level k at the bottom interface of layer k.
+# ECMWF-like hourly fields on the grid. As in ERA5, UDMF/DDMF level k is the
+# flux through the top of layer k (interface k); none crosses the ground.
 function ecmwf_grid_fields(q)
     dz = zeros(NZ)
     dz_hydrostatic_virtual!(dz, TEMPERATURE, q, PS, A_IFC, B_IFC, NZ)
     mu, md = updraft_flux.(P_IFC), downdraft_flux.(P_IFC)
     udrf = [max(mu[k + 1] - mu[k], 0.0) / dz[k] for k in 1:NZ]
     ddrf = [max(md[k] - md[k + 1], 0.0) / dz[k] for k in 1:NZ]
-    return (udmf = bcast(mu[2:end]), ddmf = bcast(md[2:end]), udrf = bcast(udrf),
+    return (udmf = bcast(mu[1:NZ]), ddmf = bcast(md[1:NZ]), udrf = bcast(udrf),
             ddrf = bcast(ddrf), t = bcast(TEMPERATURE), q = bcast(q), ps = fill(PS, NX, NY))
 end
 
+# TM5 fields on every column as the ERA5 preprocessor derives them: layer
+# thickness, the fluxes on the binary's basis, then ec2tm.
 function tm5_fields(basis, q)
     f = ecmwf_grid_fields(q)
     out = ntuple(_ -> zeros(NX, NY, NZ), 4)
-    tm5_native_fields_for_hour!(out..., f.udmf, f.ddmf, f.udrf, f.ddrf, f.t, f.q, f.ps,
-                                A_IFC, B_IFC, NZ; basis)
+    columns = ntuple(_ -> zeros(NZ), 4)
+    dz = zeros(NZ)
+    for j in 1:NY, i in 1:NX
+        udmf = vcat(f.udmf[i, j, :], 0.0)     # interface Nz + 1: the ground
+        ddmf = vcat(f.ddmf[i, j, :], 0.0)
+        udrf, ddrf, q_col = f.udrf[i, j, :], f.ddrf[i, j, :], f.q[i, j, :]
+        dz_hydrostatic_virtual!(dz, f.t[i, j, :], q_col, f.ps[i, j], A_IFC, B_IFC, NZ)
+        ecmwf_convection_to_basis!(basis, udmf, ddmf, udrf, ddrf, q_col)
+        ec2tm_from_rates!(columns..., udmf, ddmf, udrf, ddrf, dz, NZ)
+        for (field, column) in zip(out, columns)
+            field[i, j, :] .= column
+        end
+    end
     return (entu = out[1], detu = out[2], entd = out[3], detd = out[4])
 end
 

@@ -7,7 +7,9 @@ field is oriented, which cell faces its coordinates imply, how its time axis is
 decoded, how a compressed input is staged, and how its flux units are read.
 It also owns the schema of the surface-flux files the model writes and the
 runtime reads (`cs_native` on the cubed sphere, lat-lon for `kind = "file"`),
-with the one writer and the one reader of each.
+with the one writer and the one reader of each, and of the static ground
+fields of observation placement (the per-grid model surface height and a
+point DEM).
 
 Every rule was measured on the files the model reads (TRENDY v14 S3, GFED5,
 FLUXCOM-X, CAMS/LMDZ, GridFED, EDGAR); the measurements are in
@@ -18,10 +20,13 @@ and the methods dispatch on it.
 
 `src/AtmosTransport.jl` loads this folder after `Regridding` and before
 `Preprocessing`. It imports `Parameters` (`SPECIES_MOLAR_MASS`,
-`CARBON_MOLAR_MASS`, `DAYS_PER_JULIAN_YEAR`), `Grids` (`LatLonMesh`,
-`CubedSphereMesh`, `cell_area`), `Output` (`define_cs_horizontal_geometry!`,
-`define_provenance_attributes!`) and `AtomicFiles`, plus NCDatasets (and its
-CFTime), Dates and SHA. It never imports `Preprocessing` or `Models`, so the runtime loaders
+`CARBON_MOLAR_MASS`, `DAYS_PER_JULIAN_YEAR`), `Grids` (the three mesh types,
+`cell_area`, the reduced-Gaussian and cubed-sphere centre helpers), `Output`
+(`define_cs_horizontal_geometry!`, `define_provenance_attributes!`, and the
+observation-placement interfaces `ModelSurfaceHeight`,
+`AbstractPointElevation`, `point_elevation`, `terrain_source`, which it
+implements) and `AtomicFiles`, plus NCDatasets (and its CFTime), Dates and
+SHA. It never imports `Preprocessing` or `Models`, so the runtime loaders
 (`Models.InitialConditionIO`) and the surface-flux builder can both use it.
 
 ## File Map
@@ -36,6 +41,7 @@ CFTime), Dates and SHA. It never imports `Preprocessing` or `Models`, so the run
 | [`flux_units.jl`](flux_units.jl) | `FluxUnits{S,A,T}` with `AbstractSubstance` (`TargetSpecies`, `Carbon`, `Species`), `AbstractAreaBasis` (`PerSquareMetre`, `PerCell`), `AbstractTimeBasis` (`PerSecond`, `PerDay`, `PerMonth`, `PerYear`); `parse_flux_units`, `kg_per_unit`, `period_seconds`, `mass_rate_factor`, `canonical_units_string`. |
 | [`cs_native_flux.jl`](cs_native_flux.jl) | The `cs_native` flux file, the runtime contract: `CS_NATIVE_FLUX_DIMS`; the writer `CSNativeFluxWriter` (`open_cs_native_writer`, `write_slices!`, `publish!`, `abandon!`); the streaming reader `cs_native_flux_info` / `read_cs_native_flux!` (the runtime's `kind = "cs_native"` loader, panel by panel into the caller's arrays); the whole-file reader `read_cs_native_flux` (the builder's readback); the cell-area gate `check_cell_area`. |
 | [`latlon_flux.jl`](latlon_flux.jl) | `write_latlon_flux`: static CF lat-lon flux files for `kind = "file"`, on meshes the runtime rebuilds exactly from their coordinates. |
+| [`surface_height.jl`](surface_height.jl) | Static ground fields of observation placement (`[output.observations]`): the per-grid model surface height dataset, `write_model_surface_height` / `read_model_surface_height` → `Output.ModelSurfaceHeight`; a lat-lon DEM for point lookups, `read_point_elevation` → `LatLonPointElevation` with the bilinear `Output.point_elevation`. |
 
 ## Invariants
 
@@ -229,11 +235,44 @@ truncated or Gaussian rows. `SnappedFaces`:
   shift of the orientation, because the runtime would otherwise regrid the
   field on different cells.
 
+### Observation ground fields
+
+- The model surface height is an external per-grid dataset, never part of a
+  transport binary. Variable `surface_height`, Float64, `units = "m"` above
+  sea level (`standard_name = "surface_altitude"`), finite everywhere, with
+  the mesh geometry: lat-lon `(lon, lat)` with the coordinates, bounds and
+  `cell_area` of the lat-lon flux files; cubed sphere `(Xdim, Ydim, nf)` with
+  `define_cs_horizontal_geometry!`; reduced Gaussian `(cell)` with
+  `longitude`, `latitude`, `cell_area`. Published atomically with the
+  provenance block. `scripts/preprocessing/build_model_surface_height.jl`
+  writes it from a met source's surface geopotential (÷ `STANDARD_GRAVITY`,
+  conservative regridding); for C90 from MERRA-2 `PHIS` it matches
+  GEOS-Chem's C90 `Met_PHIS` to 0.03 m RMS.
+- Reading checks the grid: stored centres within a unit-sphere chord of 1e-7
+  (8 eps on a Float32 mesh) of the mesh centres, a cubed-sphere `cell_area`
+  through `check_cell_area`, metre units, no fill.
+- The DEM is a lat-lon file found by coordinate name, with a 2-D elevation
+  variable in metres (`dem_variable`) giving the ground or sea surface: a
+  value below −450 m (deeper than the Dead Sea shore) is rejected as
+  bathymetry or an undeclared fill value, one above 9000 m (higher than
+  Everest) as an undeclared fill value. The variable's dimension names tell
+  the axes apart (`(lon, lat)` or the transpose, never by length).
+  Latitudes are flipped to ascending; longitudes must be strictly ascending in
+  any convention and span less than 360° (periodic when one more spacing
+  closes the circle); a gridline-registered global grid (−180…180 inclusive)
+  has its repeated last column dropped. Fill becomes NaN.
+  Lookups are bilinear between the four surrounding centres, NaN corners left
+  out; within half a spacing beyond the outermost centre the edge value is
+  used, farther out the lookup is NaN. Read whole as Float32.
+
 ## Tests
 
 `test/core/test_gridded_io_coordinates.jl`, `test_gridded_io_source_meshes.jl`,
 `test_gridded_io_time_axes.jl`, `test_gridded_io_staging.jl`,
-`test_flux_units.jl`, `test_cs_native_flux_schema.jl` (writer → reader round
+`test_flux_units.jl`, `test_gridded_io_surface_height.jl` (surface height
+round trips on every topology and their grid gates, DEM lookups, axis order, the gridline seam, and the
+bathymetry and high-fill gates, `scripts/preprocessing/build_model_surface_height.jl`),
+`test_cs_native_flux_schema.jl` (writer → reader round
 trip, atomic publication, reader checks, the cell-area gate against a frozen
 copy of the runtime gate, the streaming reader and its one-slab allocation
 bound, and the migrated `cs_native` loader against a frozen copy of the old

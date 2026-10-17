@@ -23,8 +23,11 @@ julia --project=. scripts/run_transport.jl config/examples/minimal_template.toml
 
 The `catrine5d/` configs whose input directory ends in `_tm5` are historical:
 those binaries were built on the pre-#18 mirrored `tropo34` vertical grid,
-which matches neither corrected TM5 preset. Do not use them for new results;
-regenerate their transport inputs first.
+which matches neither corrected TM5 preset, by the lat-lon ERA5 physics-file
+TM5 route that was removed (issue #55). Do not use them for new results;
+regenerate their transport inputs first, without TM5 sections. The
+`*_advdiffconv_*` configs need TM5 convection on these grids, which no
+preprocessing route now produces.
 
 ## Data Roots
 
