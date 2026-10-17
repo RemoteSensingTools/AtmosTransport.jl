@@ -270,6 +270,16 @@ function _install_convection_forcing(::AbstractConvection, model::TransportModel
     return with_convection_forcing(model, forcing)
 end
 
+# A simulation that refills the previous simulation's window storage
+# (`reuse_buffers_of`) also refills that model's convection forcing buffers.
+function _reinstall_convection_forcing(model::TransportModel, driver::AbstractMetDriver,
+                                       window::TransportWindow)
+    _validate_convection_runtime(model, driver, window)
+    _refresh_convection_forcing!(model.convection, model, window)
+    invalidate_cmfmc_cache!(model.workspace.convection_ws)
+    return model
+end
+
 @inline _refresh_convection_forcing!(::NoConvection, ::TransportModel,
                                      ::TransportWindow) = nothing
 

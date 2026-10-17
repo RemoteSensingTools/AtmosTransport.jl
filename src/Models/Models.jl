@@ -12,6 +12,7 @@ using ..State
 using ..Grids
 using ..Operators
 using ..MetDrivers
+using ..MetDrivers: same_window_layout
 # Bring Regridding + Preprocessing into Models' namespace
 # so the nested `InitialConditionIO` submodule can `using ..Regridding` etc.
 # Regridding + Preprocessing are loaded before Models in AtmosTransport.jl.

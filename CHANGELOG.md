@@ -675,6 +675,15 @@
   flux (static and time-varying sources, one launch per source and time
   segment), and the CMFMC convection substep. Each column runs the same
   arithmetic, so results are bit-identical.
+- Multi-binary cubed-sphere runs keep their window storage across binaries:
+  `DrivenSimulation(...; reuse_buffers_of = previous)` refills the previous
+  simulation's device windows, host staging window, expected-air-mass and
+  humidity buffers and convection forcing when the new driver has the same
+  window layout (`MetDrivers.same_window_layout`), and skips the startup
+  garbage collection and device-pool trim. The cubed-sphere runner passes the
+  previous binary's simulation. Each day boundary used to allocate and zero
+  new host and device windows and run a full collection (about 0.35 s per day
+  at C90). Window contents are unchanged.
 
 ### Other changes
 

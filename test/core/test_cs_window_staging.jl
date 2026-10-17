@@ -86,3 +86,44 @@ end
     end
     end
 end
+
+# A runner reuses one binary's window storage for the next binary
+# (`DrivenSimulation(...; reuse_buffers_of)`) only when `same_window_layout`
+# holds; the in-place refill then equals a fresh load of the new binary.
+@testset "Window storage refills in place across binaries with the same layout" begin
+    mktempdir() do dir
+        first, second = joinpath.(dir, ["first.bin", "second.bin"])
+        cs_handoff_fixture(first, [1.0, 1.0]; FT = Float32)
+        cs_handoff_fixture(second, [8.0, 2.0]; FT = Float32)
+        d1 = TransportBinaryDriver(first; FT = Float32, arch = CPU(), Hp = 3)
+        d2 = TransportBinaryDriver(second; FT = Float32, arch = CPU(), Hp = 3)
+        @test StagingMD.same_window_layout(d1, d2) && StagingMD.same_window_layout(d2, d1)
+        staging = load_transport_window(d1, 2)
+        for win in (1, 2)
+            StagingMD.load_transport_window!(staging, d2, win)
+            @test windows_equal(staging, load_transport_window(d2, win))
+        end
+        # Another halo, element type or payload layout does not qualify.
+        halo2 = TransportBinaryDriver(second; FT = Float32, arch = CPU(), Hp = 2)
+        float64 = TransportBinaryDriver(second; FT = Float64, arch = CPU(), Hp = 3)
+        @test !StagingMD.same_window_layout(d1, halo2)
+        @test !StagingMD.same_window_layout(d1, float64)
+        other = joinpath(dir, "no_convection.bin")
+        vc = HybridSigmaPressure(fill(100.0f0, 6), Float32.(range(0, 1; length = 6)))
+        writer = StagingMD.open_streaming_cs_transport_binary(
+            other, 3, 6, 5, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
+            FT = Float32, dt_met_seconds = 3600.0, steps_per_window = 2, mass_basis = :dry,
+            surface_pressure_basis = DrySurfacePressure())
+        try
+            StagingMD.write_streaming_cs_window!(writer,
+                (m = ntuple(_ -> fill(1f16, 3, 3, 5), 6), am = ntuple(_ -> zeros(Float32, 4, 3, 5), 6),
+                 bm = ntuple(_ -> zeros(Float32, 3, 4, 5), 6), cm = ntuple(_ -> zeros(Float32, 3, 3, 6), 6),
+                 ps = ntuple(_ -> fill(1f5, 3, 3), 6)), 3, 6)
+        finally
+            StagingMD.close_streaming_transport_binary!(writer)
+        end
+        sections = TransportBinaryDriver(other; FT = Float32, arch = CPU(), Hp = 3)
+        @test !StagingMD.same_window_layout(d1, sections)
+        foreach(close, (d1, d2, halo2, float64, sections))
+    end
+end

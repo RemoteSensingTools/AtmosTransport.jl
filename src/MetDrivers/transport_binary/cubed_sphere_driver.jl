@@ -199,12 +199,23 @@ function _copy_cs_panel!(dst::SubArray{<:Any, 3, <:Array}, data, o::Int, n::Int)
     return dst
 end
 
+# Two cubed-sphere binaries fill the same window storage when their panel
+# geometry, levels, payload sections and runtime halo agree (the element type
+# is the driver's type parameter).
+function same_window_layout(a::TransportBinaryDriver{FT, <:Any, <:AtmosGrid{<:CubedSphereMesh}},
+                            b::TransportBinaryDriver{FT, <:Any, <:AtmosGrid{<:CubedSphereMesh}}) where FT
+    ha, hb = a.reader.header, b.reader.header
+    return ha.geometry.Nc == hb.geometry.Nc && ha.geometry.npanel == hb.geometry.npanel &&
+           ha.nlevel == hb.nlevel && ha.payload_sections == hb.payload_sections &&
+           a.grid.horizontal.Hp == b.grid.horizontal.Hp
+end
+
 """
     load_transport_window!(window, driver, win) -> window
 
 Refill an existing host-resident cubed-sphere `window` (from
-`load_transport_window` on the same binary) with window `win`, without
-allocating new field arrays. Equal to `load_transport_window(driver, win)`
+`load_transport_window` on the same binary, or on one with the same layout,
+`same_window_layout`) with window `win`, without allocating new field arrays. Equal to `load_transport_window(driver, win)`
 provided the halos of `window`'s padded fields still hold the zeros of that
 first load: only interiors are written.
 """

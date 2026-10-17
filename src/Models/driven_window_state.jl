@@ -211,6 +211,24 @@ function _host_staging_window(loaded_window, driver, model_air_mass)
     return loaded_window
 end
 
+# The window storage of a finished simulation `previous` that a new simulation of
+# the same model (state and convection forcing storage) on `driver` can refill
+# (see `DrivenSimulation`'s `reuse_buffers_of`), or `nothing`. A device run keeps a host staging window
+# only with an in-place loader; `separate_prefetch` says whether the new
+# simulation needs a second device window.
+_reusable_window_buffers(::Nothing, _model, _driver, _separate_prefetch) = nothing
+
+function _reusable_window_buffers(previous::DrivenSimulation, model, driver, separate_prefetch::Bool)
+    _finish_window_prefetch!(previous)          # its buffers must be idle
+    previous.host_staging === nothing && return nothing
+    previous.model.state.air_mass === model.state.air_mass &&
+        previous.model.convection_forcing === model.convection_forcing || return nothing
+    separate_prefetch && previous.prefetch_window === previous.window && return nothing
+    same_window_layout(previous.driver, driver) || return nothing
+    return (; previous.window, previous.prefetch_window, previous.host_staging,
+              previous.expected_air_mass, previous.qv_buffer)
+end
+
 function _load_window_into_existing_backend!(existing_window,
                                              driver::AbstractMetDriver,
                                              win::Int,

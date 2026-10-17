@@ -1006,6 +1006,9 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
         end
 
         t0 = time()
+        # The previous binary's simulation: the next one refills its window
+        # buffers when the layouts agree (`reuse_buffers_of`).
+        previous_sim = nothing
         for (driver_idx, path) in enumerate(binary_paths)
             # `path` (NAS) kept for labels/logging; driver opens the staged local
             # copy when staging is enabled (driver_idx==1 already staged above).
@@ -1043,6 +1046,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                         # replays day-1 fluxes (the +1 Pg/month
                                         # co2_natural surplus).
                                         chemistry = recipe.chemistry,
+                                        reuse_buffers_of = previous_sim,
                                         start_time = total_hour * 3600.0))
             # `DrivenSimulation` may wrap `model` with a surface-flux operator;
             # keep snapshots and the return value aligned with the stepped model.
@@ -1114,6 +1118,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                      redraw = true)
             end
             close(input_resources)
+            previous_sim = sim
         end
 
         finish_observations!(sampler)
