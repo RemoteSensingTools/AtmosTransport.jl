@@ -1,202 +1,209 @@
 #!/usr/bin/env julia
 
 using Test
-using NCDatasets: NCDataset
+using NCDatasets: NCDataset, defDim, defVar
 
 import AtmosTransport
 const AT = AtmosTransport
 
 # ---------------------------------------------------------------------------
-# Plan 26 P0.D1 — observation IO round-trip + schema-validation tests.
+# Observation IO, schema v2 (`schemas/cs_observations_v2.toml`).
 #
 # Verifies:
-#   * `write_observations` emits a NetCDF that matches the
-#     `schemas/cs_observations_v1.toml` layout (dim names, var dtypes,
-#     root attrs).
-#   * `read_observations(write_observations(...))` recovers the
-#     original `CSObservationSet` bit-exact at the dtype precisions
-#     declared in the schema.
-#   * Loader rejects files that violate the schema:
-#       - wrong `cs_observations_schema` version
-#       - missing required variables
-#       - missing required attributes
-#       - wrong `date_component` dimension length
-#   * `CSObservationRecord` keyword constructor coerces dtypes and
-#     rejects non-positive sigma.
+#   * `write_observations` emits the v2 layout (dimensions, variable dtypes
+#     with Float64 coordinates, root attributes).
+#   * `read_observations(write_observations(...))` recovers every field bit
+#     for bit, NaN "absent" vertical fields included.
+#   * The loader rejects schema v1 files with an explanation, other versions,
+#     missing variables / attributes, Float32 coordinates and a wrong
+#     `date_component` length.
+#   * `CSObservationRecord` coerces dtypes, defaults the optional v2 fields,
+#     and rejects invalid values (positional and keyword constructors).
 # ---------------------------------------------------------------------------
 
 function _sample_records()
     return [
-        AT.CSObservationRecord(id = 1,
-                               date_components = (2024, 6, 15, 12, 0, 0),
-                               lat = 34.05f0, lon = -118.25f0, alt = 100.0f0,
-                               value = 420.1, value_sigma = 0.5,
-                               instrument_type = "TCCON",
-                               tracer = "CO2"),
-        AT.CSObservationRecord(id = 2,
-                               date_components = (2024, 6, 15, 13, 30, 0),
-                               lat = -33.87f0, lon = 151.21f0, alt = 50.0f0,
-                               value = 1925.3, value_sigma = 1.2,
-                               instrument_type = "ICOS",
-                               tracer = "CH4"),
-        AT.CSObservationRecord(id = 99,
-                               date_components = (2024, 12, 31, 23, 59, 59),
-                               lat = 0.0f0, lon = 0.0f0, alt = 0.0f0,
-                               value = 0.0, value_sigma = 1e-6,
-                               instrument_type = "OCO-2",
-                               tracer = "CO2"),
+        AT.CSObservationRecord(id = 1, date_components = (2024, 6, 15, 12, 0, 0),
+                               lat = 34.05, lon = -118.25, kind = "column",
+                               elevation_m = 100.0, time_window_s = 3600,
+                               value = 420.1e-6, value_sigma = 0.5e-6,
+                               instrument_type = "TCCON", tracer = "CO2"),
+        AT.CSObservationRecord(id = 2, date_components = (2024, 6, 15, 13, 30, 0),
+                               lat = -33.87, lon = 151.21, intake_height_m = 50.0, elevation_m = 12.5,
+                               value = 1925.3e-9, value_sigma = 1.2e-9, model_sigma = 3e-9,
+                               instrument_type = "ICOS", tracer = "CH4"),
+        AT.CSObservationRecord(id = 99, date_components = (2024, 12, 31, 23, 59, 59),
+                               lat = 0.123456789012345, lon = 359.987654321098, altitude_m = 5321.5,
+                               pressure_pa = 52000.0, flag = 2, value = 410e-6, value_sigma = 1e-6,
+                               instrument_type = "aircraft", tracer = "CO2"),
     ]
 end
 
-@testset "CSObservationRecord keyword constructor" begin
-    r = AT.CSObservationRecord(id = 7,
-                               date_components = (2024, 1, 1, 0, 0, 0),
-                               lat = 1, lon = 2, alt = 3,
-                               value = 10, value_sigma = 0.1,
-                               instrument_type = "X",
-                               tracer = "Y")
+@testset "CSObservationRecord v2 constructors" begin
+    r = AT.CSObservationRecord(id = 7, date_components = (2024, 1, 1, 0, 0, 0), lat = 1, lon = 2,
+                               value = 10, value_sigma = 0.1, instrument_type = "X", tracer = "Y")
     @test r.id === Int64(7)
-    @test r.date_components === (Int16(2024), Int16(1), Int16(1),
-                                 Int16(0),    Int16(0), Int16(0))
-    @test r.lat === Float32(1)
-    @test r.lon === Float32(2)
-    @test r.alt === Float32(3)
-    @test r.value === Float64(10)
-    @test r.value_sigma === Float64(0.1)
-    @test r.instrument_type == "X"
-    @test r.tracer == "Y"
+    @test r.date_components === (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0))
+    @test r.lat === 1.0 && r.lon === 2.0
+    @test r.kind === AT.PointObservationKind()
+    @test isnan(r.elevation_m) && isnan(r.intake_height_m) && isnan(r.altitude_m) && isnan(r.pressure_pa)
+    @test r.time_window_s === 0.0 && r.flag === Int8(0) && r.model_sigma === 0.0
+    @test r.value === 10.0 && r.value_sigma === 0.1
+    # Float64 coordinates keep digits a Float32 would round away (OF-84).
+    x = 12.345678901234567
+    @test AT.CSObservationRecord(id = 1, date_components = (2024, 1, 1, 0, 0, 0), lat = x, lon = x,
+                                 value = 1, value_sigma = 1, instrument_type = "I", tracer = "T").lat === x
+    @test AT.CSObservationRecord(id = 1, date_components = (2024, 1, 1, 0, 0, 0), lat = 0, lon = 0,
+                                 kind = AT.ColumnObservationKind(), value = 1, value_sigma = 1,
+                                 instrument_type = "I", tracer = "T").kind === AT.ColumnObservationKind()
 
+    ctor(; kwargs...) = AT.CSObservationRecord(; id = 1, date_components = (2024, 1, 1, 0, 0, 0),
+                                               lat = 0.0, lon = 0.0, value = 1.0, value_sigma = 1.0,
+                                               instrument_type = "I", tracer = "T", kwargs...)
+    @test ctor() isa AT.CSObservationRecord
+    @test_throws ArgumentError AT.CSObservationRecord(id = 1, date_components = (1, 2, 3, 4, 5),
+                                                      lat = 0, lon = 0, value = 0, value_sigma = 1.0,
+                                                      instrument_type = "I", tracer = "T")
+    for bad in ((lat = NaN,), (lat = Inf,), (lat = 90.5,), (lat = -91.0,), (lon = NaN,), (lon = Inf,),
+                (lon = 721.0,), (value = NaN,), (value = Inf,), (value_sigma = NaN,), (value_sigma = Inf,),
+                (value_sigma = -1.0,), (value_sigma = 0.0,), (model_sigma = -1.0,), (model_sigma = NaN,),
+                (time_window_s = -1.0,), (time_window_s = Inf,), (elevation_m = Inf,),
+                (intake_height_m = -Inf,), (altitude_m = Inf,), (pressure_pa = 0.0,), (pressure_pa = -5.0,),
+                (pressure_pa = Inf,), (kind = "satellite",), (kind = :point,))
+        @test_throws ArgumentError ctor(; bad...)
+    end
+    # Column records state no height or pressure.
+    for field in (:intake_height_m, :altitude_m, :pressure_pa)
+        err = try ctor(; kind = "column", NamedTuple{(field,)}((100.0,))...) catch e e end
+        @test err isa ArgumentError && occursin("column record", err.msg)
+    end
+    @test ctor(; kind = "column", elevation_m = 300.0).elevation_m == 300.0
+    # The positional constructor validates too.
     @test_throws ArgumentError AT.CSObservationRecord(
-        id = 1, date_components = (1, 2, 3, 4, 5),  # length 5
-        lat = 0, lon = 0, alt = 0,
-        value = 0, value_sigma = 1.0,
-        instrument_type = "I", tracer = "T")
-    @test_throws ArgumentError AT.CSObservationRecord(
-        id = 1, date_components = (2024, 1, 1, 0, 0, 0),
-        lat = 0, lon = 0, alt = 0,
-        value = 0, value_sigma = -1.0,   # non-positive sigma
-        instrument_type = "I", tracer = "T")
-
-    # Non-finite / out-of-range coordinate and payload rejections.
-    _ctor(; lat = 0.0, lon = 0.0, value = 0.0, sigma = 1.0) =
-        AT.CSObservationRecord(id = 1,
-                               date_components = (2024, 1, 1, 0, 0, 0),
-                               lat = lat, lon = lon, alt = 0.0,
-                               value = value, value_sigma = sigma,
-                               instrument_type = "I", tracer = "T")
-    @test_throws ArgumentError _ctor(lat = NaN)
-    @test_throws ArgumentError _ctor(lat = Inf)
-    @test_throws ArgumentError _ctor(lat = 90.5)
-    @test_throws ArgumentError _ctor(lat = -91.0)
-    @test_throws ArgumentError _ctor(lon = NaN)
-    @test_throws ArgumentError _ctor(lon = Inf)
-    @test_throws ArgumentError _ctor(value = NaN)
-    @test_throws ArgumentError _ctor(value = Inf)
-    @test_throws ArgumentError _ctor(sigma = NaN)
-    @test_throws ArgumentError _ctor(sigma = Inf)
+        Int64(1), (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
+        NaN, 0.0, AT.PointObservationKind(), NaN, NaN, NaN, NaN, 0.0, Int8(0),
+        420.0, 1.0, 0.0, "TCCON", "CO2")
 end
 
-@testset "CSObservationSet bit-exact NetCDF round-trip" begin
-    records = _sample_records()
-    set = AT.CSObservationSet(records;
-                              time_origin = "1900-01-01 00:00:00")
-
+@testset "CSObservationSet v2 NetCDF round trip, bit for bit" begin
+    set = AT.CSObservationSet(_sample_records(); time_origin = "1900-01-01 00:00:00")
     mktempdir() do dir
-        path = joinpath(dir, "obs_v1.nc")
-        AT.write_observations(path, set)
-        @test isfile(path)
-
+        path = joinpath(dir, "obs_v2.nc")
+        @test AT.write_observations(path, set) == path
         back = AT.read_observations(path)
         @test back isa AT.CSObservationSet
         @test back.time_origin == set.time_origin
         @test length(back) == length(set)
-        @test isempty(back) == false
         for (orig, got) in zip(set, back)
-            @test orig.id == got.id
-            @test orig.date_components == got.date_components
-            @test orig.lat === got.lat
-            @test orig.lon === got.lon
-            @test orig.alt === got.alt
-            @test orig.value === got.value
-            @test orig.value_sigma === got.value_sigma
-            @test orig.instrument_type == got.instrument_type
-            @test orig.tracer == got.tracer
+            for field in fieldnames(AT.CSObservationRecord)
+                a, b = getfield(orig, field), getfield(got, field)
+                @test a === b || (a isa Float64 && isnan(a) && isnan(b))
+            end
         end
+        # An empty set round-trips too.
+        empty_path = joinpath(dir, "empty.nc")
+        AT.write_observations(empty_path, AT.CSObservationSet(AT.CSObservationRecord[]))
+        @test isempty(AT.read_observations(empty_path))
     end
 end
 
-@testset "v1 NetCDF on-disk layout matches schema" begin
-    set = AT.CSObservationSet(_sample_records();
-                              time_origin = "2024-01-01 00:00:00")
+@testset "v2 NetCDF on-disk layout matches the schema" begin
+    set = AT.CSObservationSet(_sample_records(); time_origin = "2024-01-01 00:00:00")
     mktempdir() do dir
-        path = joinpath(dir, "obs_v1.nc")
+        path = joinpath(dir, "obs_v2.nc")
         AT.write_observations(path, set)
-
         NCDataset(path, "r") do ds
-            # Root attributes — schema-pinning + time-origin.
-            @test ds.attrib["cs_observations_schema"] == "v1"
+            @test ds.attrib["cs_observations_schema"] == "v2"
             @test ds.attrib["time_origin"] == "2024-01-01 00:00:00"
-
-            # Dimensions: `obs` and `date_component` of length 6.
             @test ds.dim["obs"] == length(set)
             @test ds.dim["date_component"] == 6
-
-            # Per-variable dtype check — must match the schema.
-            @test eltype(ds["id"][:]) === Int64
-            @test eltype(ds["date_components"][:, :]) === Int16
-            @test eltype(ds["lat"][:]) === Float32
-            @test eltype(ds["lon"][:]) === Float32
-            @test eltype(ds["alt"][:]) === Float32
-            @test eltype(ds["value"][:]) === Float64
-            @test eltype(ds["value_sigma"][:]) === Float64
+            @test eltype(ds["id"].var) === Int64
+            @test eltype(ds["date_components"].var) === Int16
+            for v in ("lat", "lon", "elevation_m", "intake_height_m", "altitude_m", "pressure_pa",
+                      "time_window_s", "value", "value_sigma", "model_sigma")
+                @test eltype(ds[v].var) === Float64
+            end
+            @test eltype(ds["flag"].var) === Int8
+            @test ds["kind"][:] == ["column", "point", "point"]
             @test ds["instrument_type"][1] isa AbstractString
             @test ds["tracer"][1] isa AbstractString
-
-            # `date_components` is (date_component=6, obs) — NetCDF order
-            # matches the column-major shape we wrote.
             @test size(ds["date_components"][:, :]) == (6, length(set))
+            @test isnan(ds["intake_height_m"][1]) && ds["intake_height_m"][2] == 50.0
         end
     end
 end
 
-@testset "read_observations rejects schema violations" begin
-    set = AT.CSObservationSet(_sample_records();
-                              time_origin = "1900-01-01 00:00:00")
+@testset "read_observations rejects v1 files and schema violations" begin
+    set = AT.CSObservationSet(_sample_records(); time_origin = "1900-01-01 00:00:00")
+    errmsg(path) = try AT.read_observations(path); "" catch e e isa ArgumentError ? e.msg : rethrow() end
     mktempdir() do dir
-        # Write a valid file, then mutate it to violate the schema in
-        # one place at a time. Each mutation produces a separate file
-        # so the loader sees a complete invalid input rather than a
-        # partial-write artifact.
         good = joinpath(dir, "good.nc")
         AT.write_observations(good, set)
         @test AT.read_observations(good) isa AT.CSObservationSet
 
-        # 1. Wrong schema version.
-        bad_version = joinpath(dir, "bad_version.nc")
-        cp(good, bad_version)
-        NCDataset(bad_version, "a") do ds
-            ds.attrib["cs_observations_schema"] = "v2"
+        # A schema-v1 file (Float32 lat/lon/alt) is rejected with the reason.
+        v1 = joinpath(dir, "v1.nc")
+        NCDataset(v1, "c") do ds
+            defDim(ds, "obs", 1)
+            defDim(ds, "date_component", 6)
+            ds.attrib["cs_observations_schema"] = "v1"
+            ds.attrib["time_origin"] = "1900-01-01 00:00:00"
+            defVar(ds, "id", Int64, ("obs",))[:] = [1]
+            defVar(ds, "date_components", Int16, ("date_component", "obs"))[:, :] =
+                reshape(Int16[2024, 1, 1, 0, 0, 0], 6, 1)
+            for v in ("lat", "lon", "alt")
+                defVar(ds, v, Float32, ("obs",))[:] = Float32[0]
+            end
+            defVar(ds, "value", Float64, ("obs",))[:] = [400.0]
+            defVar(ds, "value_sigma", Float64, ("obs",))[:] = [1.0]
+            defVar(ds, "instrument_type", String, ("obs",))[:] = ["ICOS"]
+            defVar(ds, "tracer", String, ("obs",))[:] = ["CO2"]
         end
-        @test_throws ArgumentError AT.read_observations(bad_version)
+        msg = errmsg(v1)
+        @test occursin("schema v1", msg) && occursin("Float64", msg) && occursin("intake_height_m", msg)
 
-        # 2. Missing schema attribute entirely.
-        no_attr = joinpath(dir, "no_attr.nc")
-        cp(good, no_attr)
-        NCDataset(no_attr, "a") do ds
-            delete!(ds.attrib, "cs_observations_schema")
+        # Another version, a missing schema attribute or time origin.
+        for (name, mutate!) in (("v3", ds -> ds.attrib["cs_observations_schema"] = "v3"),
+                                ("no_schema", ds -> delete!(ds.attrib, "cs_observations_schema")),
+                                ("no_origin", ds -> delete!(ds.attrib, "time_origin")))
+            path = joinpath(dir, "$(name).nc")
+            cp(good, path)
+            NCDataset(mutate!, path, "a")
+            @test_throws ArgumentError AT.read_observations(path)
         end
-        @test_throws ArgumentError AT.read_observations(no_attr)
-
-        # 3. Missing time_origin.
-        no_origin = joinpath(dir, "no_origin.nc")
-        cp(good, no_origin)
-        NCDataset(no_origin, "a") do ds
-            delete!(ds.attrib, "time_origin")
-        end
-        @test_throws ArgumentError AT.read_observations(no_origin)
-
-        # 4. Non-existent file.
         @test_throws ArgumentError AT.read_observations(joinpath(dir, "missing.nc"))
+
+        # A v2 file with Float32 coordinates, or without a v2 variable.
+        function write_v2(path; lat_type = Float64, omit = nothing, dc = 6)
+            NCDataset(path, "c") do ds
+                defDim(ds, "obs", 1)
+                defDim(ds, "date_component", dc)
+                ds.attrib["cs_observations_schema"] = "v2"
+                ds.attrib["time_origin"] = "1900-01-01 00:00:00"
+                vars = (("id", Int64, [1]), ("lat", lat_type, lat_type[10]), ("lon", Float64, [20.0]),
+                        ("kind", String, ["point"]), ("elevation_m", Float64, [NaN]),
+                        ("intake_height_m", Float64, [10.0]), ("altitude_m", Float64, [NaN]),
+                        ("pressure_pa", Float64, [NaN]), ("time_window_s", Float64, [0.0]),
+                        ("flag", Int8, Int8[0]), ("value", Float64, [400.0]), ("value_sigma", Float64, [1.0]),
+                        ("model_sigma", Float64, [0.0]), ("instrument_type", String, ["ICOS"]),
+                        ("tracer", String, ["CO2"]))
+                for (name, T, data) in vars
+                    name == omit && continue
+                    defVar(ds, name, T, ("obs",))[:] = data
+                end
+                omit == "date_components" ||
+                    (defVar(ds, "date_components", Int16, ("date_component", "obs"))[:, :] =
+                         reshape(Int16[2024, 1, 1, 0, 0, 0][1:dc], dc, 1))
+            end
+            return path
+        end
+        @test AT.read_observations(write_v2(joinpath(dir, "ok.nc"))) isa AT.CSObservationSet
+        @test occursin("Float64", errmsg(write_v2(joinpath(dir, "f32.nc"); lat_type = Float32)))
+        for v in ("kind", "intake_height_m", "pressure_pa", "flag", "model_sigma", "time_window_s",
+                  "date_components")
+            @test occursin("missing required variable", errmsg(write_v2(joinpath(dir, "no_$(v).nc"); omit = v)))
+        end
+        @test_throws ArgumentError AT.read_observations(write_v2(joinpath(dir, "dc5.nc"); dc = 5))
     end
 end
 

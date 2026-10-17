@@ -412,7 +412,7 @@ end
     @testset "functional value == evaluate_objective" begin
         for objective in (AT.CSLayerMeanObjective(3, 1, 4, 2), AT.CSColumnMeanObjective(5, 2, 2))
             f = ADJ._linear_functional(objective, 2, P.m, mesh)
-            @test f.step == 2
+            @test f.steps == fill(2, length(f.weight))
             @test f.offset == 0
             @test ADJ._evaluate_functional(f, P.rm, mesh) ≈
                   AT.evaluate_objective(objective, P.rm, P.m, mesh) rtol = 1e-14

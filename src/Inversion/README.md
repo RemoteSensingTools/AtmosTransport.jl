@@ -5,10 +5,12 @@ cost and gradient, background covariance, preconditioning, and optimizers.
 
 This folder builds on the footprint machinery in [`../Footprint/`](../Footprint/).
 Controls are surface emission-rate fields grouped into named time windows.
-Observations are scalar objectives (layer or column means) sampled after a
-given model step. Gradients come from one reverse-mode sweep that carries
-every observation's weighted departure, not from finite differences. Observations and departures can be read from and written
-to versioned NetCDF schemas.
+Observations are scalar objectives (layer means, column means, and in-situ
+point samples placed in the column) sampled after one model step or averaged
+over the steps of a time window. Gradients come from one reverse-mode sweep
+that carries every observation's weighted departure, not from finite
+differences. Observations and departures can be read from and written to
+versioned NetCDF schemas (v2).
 
 ## How It Is Loaded
 
@@ -16,25 +18,33 @@ to versioned NetCDF schemas.
 `include`s these files into `module Adjoints`, and public names are exported
 from the `Adjoints.jl` export block. The files load in two groups:
 
-1. Early, right after `ObjectiveSeeding.jl` and `FootprintResult.jl`:
-   `Observations.jl` -> `ObservationsIO.jl` -> `ObservationBinding.jl` ->
-   `DeparturesIO.jl` -> `Covariance.jl` -> `Preconditioning.jl`.
+1. Early, right after `ObjectiveSeeding.jl`, `FootprintResult.jl` and
+   `StepForcing.jl`: `Observations.jl` -> `ObservationColumns.jl` ->
+   `ObservationsIO.jl` -> `ObservationBinding.jl` -> `DeparturesIO.jl` ->
+   `Covariance.jl` -> `Preconditioning.jl`.
 2. Last, after `../Footprint/FootprintAPI.jl`: `Jacobian.jl` ->
    `CostGradient.jl` -> `Optimizer.jl`.
 
 `NCDatasets` is imported in `Adjoints.jl`. `FFTW` (Covariance), `Optim`
 (Optimizer), and `Dates` (ObservationBinding) are imported in the files that
-use them. `bind_to_mesh` uses `Output.cell_locator` / `locate`, the same cell
-lookup as the forward observation sampler.
+use them. `bind_to_mesh` uses the forward observation sampler's cell lookup
+(`Output.cell_locator` / `locate`) and placement rule
+(`Output.resolve_placement`, `VerticalPlacementSpec`, `ObservationTerrain`,
+the unplaced policy), and placed point observations choose their layer with
+`Output.sample_column_layer!`. Terrain files are read by the caller
+(`GriddedIO`, loaded after `Adjoints`) and passed in as an
+`ObservationTerrain`.
 
 ## Entry Points
 
 - [`CostGradient.jl`](CostGradient.jl): `cs_surface_flux_4dvar(panels_rm0,
   panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps, mesh,
   observations, controls; scheme, ..., tape_storage, tape_path, checkpoint,
-  preconditioner)` returns a `CS4DVarResult`. `scheme` is required so an
+  preconditioner, column_met)` returns a `CS4DVarResult` (with one
+  `CSObservationStencil` per observation). `scheme` is required so an
   inversion cannot silently choose a different forward/adjoint advection
-  operator.
+  operator; `column_met` (a `CSObservationColumnMet`) is required when any
+  observation is a `CSPlacedPointObjective`.
 - [`Optimizer.jl`](Optimizer.jl): `cs_surface_flux_4dvar_optimize(...;
   optimizer)` and `cs_surface_flux_4dvar_solve(opt, cost_fn, controls)`.
   Backends are `CSGradientDescent` and `CSLBFGS` (`Optim.LBFGS`).
@@ -47,22 +57,35 @@ lookup as the forward observation sampler.
   `CSSurfaceFluxPreconditioner(covariance, background, optim_type)` with
   `LinearOptimType` or `LogNormalOptimType`; and `apply_preconditioner!`
   with its `_inverse!`, `_tangent!`, and `_adjoint!` forms.
-- File IO: `read_observations` / `write_observations`, then `bind_to_mesh`
-  (records to `Vector{CSObservation}`), then `build_departure_set` and
-  `read_departures` / `write_departures`.
+- File IO: `read_observations` / `write_observations` (schema v2), then
+  `bind_to_mesh(set, mesh, t_start, dt; nsteps, tracer_filter,
+  out_of_range_policy, placement, terrain)` (records to `CSObservation`s),
+  then `build_departure_set(set, result::CS4DVarResult, mesh, t_start, dt,
+  nsteps)` and `read_departures` / `write_departures` (schema v2).
 
 ## File Map
 
-- [`Observations.jl`](Observations.jl) — window, observation, control,
+- [`Observations.jl`](Observations.jl) — window, time sampling
+  (`CSTimeSampling`), observation, control, stencil (`CSObservationStencil`),
   result, and iteration-log types
-- [`ObservationsIO.jl`](ObservationsIO.jl) — `CSObservationRecord`,
-  `CSObservationSet`, and NetCDF reader/writer for
-  `schemas/cs_observations_v1.toml`
-- [`ObservationBinding.jl`](ObservationBinding.jl) — `bind_to_mesh`: maps
-  time to a step index and (lat, lon) to `(panel, i, j)`
+- [`ObservationColumns.jl`](ObservationColumns.jl) — `CSObservationColumnMet`
+  (model top, gravity, layer temperature, humidity; static or per step), the
+  per-step layer of a placed point observation (`_placed_level`), and
+  `_sample_objective` (value, linear functional and level of any objective
+  on a replayed state)
+- [`ObservationsIO.jl`](ObservationsIO.jl) — `CSObservationRecord` (with
+  `PointObservationKind` / `ColumnObservationKind`), `CSObservationSet`, and
+  the NetCDF reader/writer for `schemas/cs_observations_v2.toml` (v1 files
+  are rejected)
+- [`ObservationBinding.jl`](ObservationBinding.jl) — `bind_to_mesh`: time to
+  a `CSTimeSampling` (instantaneous or Δt/ΣΔt window), (lat, lon) to the
+  containing `(panel, i, j)`, point records to `CSPlacedPointObjective`s with
+  the forward placement rule, column records to column means; the
+  out-of-range and unplaced policies
 - [`DeparturesIO.jl`](DeparturesIO.jl) — `CSDepartureRecord`,
-  `CSDepartureSet`, and strict v1 NetCDF IO for
-  `schemas/cs_departures_v1.toml`
+  `CSDepartureSet`, `build_departure_set` (joins a 4D-Var result to the
+  records by id), and strict v2 NetCDF IO for `schemas/cs_departures_v2.toml`
+  (sampled steps, weights and levels as a ragged `sample` dimension)
 - [`Covariance.jl`](Covariance.jl) — `B^(1/2) = D·L`, built per panel
   from the FFT spectral square root of a periodic Gaussian
 - [`Preconditioning.jl`](Preconditioning.jl) — χ <-> x transforms and their
@@ -85,12 +108,18 @@ lookup as the forward observation sampler.
 - Adding a covariance: subtype `AbstractCSSurfaceFluxCovariance{FT, A}`, add
   an `Nc` field (the preconditioner reads `covariance.Nc`), and implement
   `apply_B_half!`, `apply_B_half_adjoint!`, and `apply_B_half_inverse!`.
-- Changing how observations reach the model: time and space mapping is in
-  `bind_to_mesh`; sampling during the forward run (simulated values and each
-  observation's linear functional) is `_observe_cs_forward` in
-  `../Footprint/ReverseLoop.jl`; a new observation operator needs
-  `evaluate_objective` and `_linear_functional` methods
-  (`../Footprint/StepForcing.jl`).
+- Changing how observations reach the model: time, space and vertical
+  mapping is in `bind_to_mesh`; sampling during the forward run (simulated
+  values, stencils and each observation's linear functional) is
+  `_observe_cs_forward` in `../Footprint/ReverseLoop.jl`, which calls
+  `_sample_objective` once per sampled step; a new observation operator needs
+  a `_sample_objective` method (or `evaluate_objective` and
+  `_linear_functional` methods, `../Footprint/StepForcing.jl`) and a
+  `_stencil_placement` method.
+- Changing the vertical placement rule: edit `Output.resolve_placement` /
+  `Output.sample_column_layer!`; the forward sampler and the inversion change
+  together, and the parity test in `test_cs_4dvar_placed_observations.jl`
+  guards them.
 - Running an end-to-end inversion: `scripts/inversions/cs_4dvar.jl` with
   `config/inversions/*.toml`.
 
@@ -110,17 +139,30 @@ lookup as the forward observation sampler.
   Per-control `background` and `sigma` are ignored in this mode.
 - One gradient is one adjoint integration, whatever the number of
   observations. Each observation is a fixed linear functional of the tracer
-  mass after its step (`CSLinearFunctional`, weights from the replayed air
-  mass). `cs_surface_flux_4dvar` runs the forward model once for the
-  simulated values and functionals, scales each functional by
-  `(H(x) − y)/σ²`, tapes one run to the last observation step, and walks it
-  back once, adding each step's scaled weights at the step's end-of-step
-  marker (after convection, before its transpose). Window steps after the
-  last observation get a zero gradient. `checkpoint`, `tape_storage` and
-  `tape_path` apply to that one taped run.
-- `bind_to_mesh` maps `[t_start + (k−1)dt, t_start + k dt)` to step `k`. It
-  drops altitude (every observation becomes a `CSColumnMeanObjective`) and
-  returns `CSObservation{_, Float64}`.
+  mass after the steps it samples (`CSLinearFunctional`, one step per entry,
+  weights from the replayed air mass times the time-sampling weights).
+  `cs_surface_flux_4dvar` runs the forward model once for the simulated
+  values, stencils and functionals, scales each functional by
+  `(H(x) − y)/σ²`, tapes one run to the last sampled step, and walks it back
+  once, adding each step's scaled weights at the step's end-of-step marker
+  (after convection, before its transpose). Control-window steps after the
+  last sampled step get a zero gradient. `checkpoint`, `tape_storage` and
+  `tape_path` apply to that one taped run. Instantaneous observations give
+  bit-identical results to the single-step functionals they replace.
+- `bind_to_mesh` represents step `k` = `[t_start + (k−1)dt, t_start + k dt)`
+  by the state at its end. A record without a window samples the step
+  containing its time; a record with `time_window_s = W` samples the steps
+  overlapping `[t − W/2, t + W/2]`, weighted by their overlap, truncated at
+  the run's ends and renormalised (TM5-4DVAR's Δt/ΣΔt mean; a step partly in
+  the window counts its overlap). The record time decides whether it is in
+  the run; `ClampOutOfRange` samples an outside record once at the first or
+  last step. Records with a nonzero `flag` are dropped; `sigma` is
+  `√(value_sigma² + model_sigma²)`; observations carry the record `id`.
+- A placed point observation's layer is resolved at every sampled state from
+  that state's replayed air mass (dry interfaces, hypsometric heights,
+  total or dry interface pressures), never fixed at binding: the vertical
+  stencil follows the meteorology, as TM5 recomputes it from `gph` per step,
+  and every vertical coordinate (height and pressure) is in the adjoint.
 - Precision: the model `FT` comes from the panels. Window weights are
   stored as `Float64` and converted to `FT` when used.
   `IsotropicGaussianCSCovariance` floors each 1-D spectrum at
@@ -149,10 +191,16 @@ lookup as the forward observation sampler.
   - Components: `test_cs_covariance.jl`, `test_cs_preconditioning.jl`,
     `test_cs_4dvar_preconditioned.jl`, `test_cs_optimizer_dispatch.jl`,
     `test_cs_lbfgs.jl`, and `test_cs_iteration_log.jl`.
-  - IO: `test_cs_observations_io.jl`, `test_cs_observation_binding.jl`, and
-    `test_cs_departures_io.jl`.
+  - IO and binding: `test_cs_observations_io.jl`,
+    `test_cs_observation_binding.jl` (time windows, Float64 edge points,
+    placement, unplaced policy), and `test_cs_departures_io.jl`.
+  - Placed point and window observations: `test_cs_4dvar_placed_observations.jl`
+    (parity with the forward sampler, 10 m vs 5 km samples, total vs dry
+    pressure, per-step layers, window = Δt-weighted single steps, single
+    sweep vs per-observation footprints, finite differences).
   - Driver: `test_cs_inversion_driver.jl` runs
-    `config/inversions/example_synthetic.toml`.
+    `config/inversions/example_synthetic.toml`, and an observation file on
+    the `synthetic_hydrostatic` meteorology.
   - Finite-difference and optimizer testsets for the 4D-Var path:
     `test_cs_ppm_adjoint_footprint.jl`.
   - Single-sweep gradient: `test_cs_4dvar_single_sweep.jl` checks it against

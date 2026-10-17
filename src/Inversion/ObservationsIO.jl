@@ -1,90 +1,183 @@
 # ---------------------------------------------------------------------------
 # On-disk observation IO for the CS 4D-Var path.
 #
-# Loose-compat NetCDF schema documented in `schemas/cs_observations_v1.toml`.
-# Single file. Dim `obs` (unlimited) plus `date_component` (length 6).
-# Vars: id (i64), date_components (i16[6, obs]), lat / lon / alt (f32),
-# value / value_sigma (f64), instrument_type / tracer (string). Root
-# attrs: `cs_observations_schema = "v1"`, `time_origin` (ISO-8601 string).
+# NetCDF schema v2, documented in `schemas/cs_observations_v2.toml`. Single
+# file; dimension `obs` (unlimited) plus `date_component` (length 6). Root
+# attributes: `cs_observations_schema = "v2"`, `time_origin` (ISO-8601).
+# Coordinates are Float64; the vertical fields (`elevation_m`,
+# `intake_height_m`, `altitude_m`, `pressure_pa`) use NaN for "absent".
+# Files of schema v1 (Float32 lat/lon/alt) are rejected.
 #
 # In-memory layer:
 #   * `CSObservationRecord`     — one observation row.
 #   * `CSObservationSet`        — vector of records plus the file-level
 #                                 `time_origin` string.
 #   * `read_observations(path)` — open + parse + validate -> CSObservationSet.
-#   * `write_observations(path, set)` — emit a v1-compliant NetCDF file.
+#   * `write_observations(path, set)` — emit a v2 NetCDF file.
 #
-# Bridge to the 4D-Var path (`bind_to_mesh`, `CSObservation` mapping) lives
-# in `ObservationBinding.jl`, also included into the `Adjoints` module.
-# This file is the pure IO layer.
+# Bridge to the 4D-Var path (`bind_to_mesh`) lives in `ObservationBinding.jl`,
+# also included into the `Adjoints` module. This file is the pure IO layer.
 # ---------------------------------------------------------------------------
 
-const _CS_OBSERVATIONS_SCHEMA_VERSION = "v1"
+const _CS_OBSERVATIONS_SCHEMA_VERSION = "v2"
 
 # Fixed-size date tuple matches the on-disk `(date_component, obs)`
 # layout. Each component is Int16 (year fits comfortably).
 const _CSObservationDate = NTuple{6, Int16}
 
 """
-    CSObservationRecord(id, date_components, lat, lon, alt,
-                        value, value_sigma, instrument_type, tracer)
+    AbstractObservationKind
 
-One point observation row in the [`CSObservationSet`](@ref) on-disk
-schema. `date_components` is `(year, month, day, hour, minute, second)`
-as Int16 to match the NetCDF layout; `(lat, lon, alt)` are geophysical
-coordinates in degrees / metres; `value` + `value_sigma` are stored
-in the tracer's native unit (mole fraction, column density, etc.);
-`instrument_type` is the instrument-family tag (e.g. `"TCCON"`,
-`"ICOS"`, `"OCO-2"`); `tracer` names the species (e.g. `"CO2"`,
-`"CH4"`).
+What an observation record measures, the `kind` column of the observation
+file: [`PointObservationKind`](@ref) (`"point"`) or
+[`ColumnObservationKind`](@ref) (`"column"`). `bind_to_mesh` turns a point
+record into a [`CSPlacedPointObjective`](@ref) and a column record into a
+[`CSColumnMeanObjective`](@ref).
+"""
+abstract type AbstractObservationKind end
+
+"""
+`kind = "point"`: an in-situ sample at one place in the column (surface
+station, tower, flask, aircraft, AirCore). Placed in the model column by its
+height above the ground or its pressure (`intake_height_m`, `altitude_m` with
+`elevation_m` or a DEM, `pressure_pa`); a point record that gives none of the
+vertical coordinates in use cannot be placed (`unplaced_records`).
+"""
+struct PointObservationKind <: AbstractObservationKind end
+
+"""
+`kind = "column"`: a column-averaged dry mole fraction (TCCON, a satellite
+sounding). Bound to the air-mass-weighted column mean of its cell
+([`CSColumnMeanObjective`](@ref)); averaging kernels are not applied yet.
+A column record states no intake height, altitude or pressure.
+"""
+struct ColumnObservationKind <: AbstractObservationKind end
+
+const _ObservationKind = Union{PointObservationKind, ColumnObservationKind}
+const _OBSERVATION_KINDS = (point = PointObservationKind(), column = ColumnObservationKind())
+observation_kind_label(::PointObservationKind) = "point"
+observation_kind_label(::ColumnObservationKind) = "column"
+
+_parse_observation_kind(kind::_ObservationKind) = kind
+function _parse_observation_kind(kind::AbstractString)
+    key = Symbol(kind)
+    haskey(_OBSERVATION_KINDS, key) || throw(ArgumentError(
+        "observation kind must be \"point\" or \"column\"; got $(repr(kind))"))
+    return _OBSERVATION_KINDS[key]
+end
+_parse_observation_kind(kind) = throw(ArgumentError(
+    "observation kind must be PointObservationKind(), ColumnObservationKind(), \"point\" or " *
+    "\"column\"; got $(repr(kind))"))
+
+# NaN means "absent"; any other value must be finite.
+_absent_or_finite(x::Float64) = isnan(x) || isfinite(x)
+
+"""
+    CSObservationRecord(id, date_components, lat, lon, kind,
+                        elevation_m, intake_height_m, altitude_m, pressure_pa,
+                        time_window_s, flag, value, value_sigma, model_sigma,
+                        instrument_type, tracer)
+    CSObservationRecord(; id, date_components, lat, lon, value, value_sigma,
+                          instrument_type, tracer, kind = PointObservationKind(),
+                          elevation_m = NaN, intake_height_m = NaN, altitude_m = NaN,
+                          pressure_pa = NaN, time_window_s = 0, flag = 0, model_sigma = 0)
+
+One observation row of the schema-v2 [`CSObservationSet`](@ref).
+
+- `date_components`: `(year, month, day, hour, minute, second)` UTC, Int16, the
+  centre of the sampling window.
+- `lat`, `lon`: degrees, Float64 (a point within Float32 rounding of a cell
+  edge must bind to the cell that contains it).
+- `kind`: [`PointObservationKind`](@ref) or [`ColumnObservationKind`](@ref)
+  (the keyword form also takes `"point"` / `"column"`).
+- Vertical fields, NaN when the record does not give them: `elevation_m`
+  (ground, m above sea level), `intake_height_m` (m above the ground),
+  `altitude_m` (m above sea level), `pressure_pa` (total pressure, Pa,
+  positive). Column records give none of `intake_height_m`, `altitude_m`,
+  `pressure_pa`.
+- `time_window_s`: length (s, ≥ 0) of the sampling window centred on the
+  record time; 0 samples the model state of one step.
+- `flag`: quality flag, `0` = assimilate; `bind_to_mesh` drops the others.
+- `value`, `value_sigma`: observation and its 1-σ error, in the tracer's
+  native unit (dry mole fraction for trace gases); `model_sigma` (≥ 0) is a
+  model/representation error added in quadrature (σ² = value_sigma² +
+  model_sigma²).
+- `instrument_type` (e.g. `"ICOS"`, `"TCCON"`), `tracer` (e.g. `"CO2"`).
 """
 struct CSObservationRecord
     id::Int64
     date_components::_CSObservationDate
-    lat::Float32
-    lon::Float32
-    alt::Float32
+    lat::Float64
+    lon::Float64
+    kind::_ObservationKind
+    elevation_m::Float64
+    intake_height_m::Float64
+    altitude_m::Float64
+    pressure_pa::Float64
+    time_window_s::Float64
+    flag::Int8
     value::Float64
     value_sigma::Float64
+    model_sigma::Float64
     instrument_type::String
     tracer::String
 
     # Inner constructor so positional invocations are validated. The
-    # keyword constructor below is a type-coercion wrapper that
-    # forwards here.
-    function CSObservationRecord(id::Int64,
-                                  date_components::_CSObservationDate,
-                                  lat::Float32, lon::Float32, alt::Float32,
-                                  value::Float64, value_sigma::Float64,
-                                  instrument_type::String,
-                                  tracer::String)
-        isfinite(lat) || throw(ArgumentError(
-            "CSObservationRecord lat must be finite, got $lat"))
-        -90 <= lat <= 90 || throw(ArgumentError(
-            "CSObservationRecord lat must be in [-90, 90], got $lat"))
-        isfinite(lon) || throw(ArgumentError(
-            "CSObservationRecord lon must be finite, got $lon"))
-        isfinite(value) || throw(ArgumentError(
-            "CSObservationRecord value must be finite, got $value"))
-        isfinite(value_sigma) || throw(ArgumentError(
-            "CSObservationRecord value_sigma must be finite, got $value_sigma"))
-        value_sigma > 0 || throw(ArgumentError(
-            "CSObservationRecord value_sigma must be positive, got $value_sigma"))
-        return new(id, date_components, lat, lon, alt,
-                   value, value_sigma, instrument_type, tracer)
+    # keyword constructor below is a type-coercion wrapper that forwards here.
+    function CSObservationRecord(id::Int64, date_components::_CSObservationDate,
+                                 lat::Float64, lon::Float64, kind::_ObservationKind,
+                                 elevation_m::Float64, intake_height_m::Float64,
+                                 altitude_m::Float64, pressure_pa::Float64,
+                                 time_window_s::Float64, flag::Int8,
+                                 value::Float64, value_sigma::Float64, model_sigma::Float64,
+                                 instrument_type::String, tracer::String)
+        label = "CSObservationRecord id $(id)"
+        isfinite(lat) && -90 <= lat <= 90 || throw(ArgumentError(
+            "$(label): lat must be finite and in [-90, 90], got $lat"))
+        isfinite(lon) && abs(lon) <= 720 || throw(ArgumentError(
+            "$(label): lon must be finite with |lon| <= 720, got $lon"))
+        isfinite(value) || throw(ArgumentError("$(label): value must be finite, got $value"))
+        isfinite(value_sigma) && value_sigma > 0 || throw(ArgumentError(
+            "$(label): value_sigma must be finite and positive, got $value_sigma"))
+        isfinite(model_sigma) && model_sigma >= 0 || throw(ArgumentError(
+            "$(label): model_sigma must be finite and >= 0, got $model_sigma"))
+        isfinite(time_window_s) && time_window_s >= 0 || throw(ArgumentError(
+            "$(label): time_window_s must be finite and >= 0, got $time_window_s"))
+        for (name, x) in (("elevation_m", elevation_m), ("intake_height_m", intake_height_m),
+                          ("altitude_m", altitude_m))
+            _absent_or_finite(x) || throw(ArgumentError(
+                "$(label): $(name) must be finite or NaN (absent), got $x"))
+        end
+        isnan(pressure_pa) || (isfinite(pressure_pa) && pressure_pa > 0) || throw(ArgumentError(
+            "$(label): pressure_pa must be a finite positive pressure or NaN (absent), got $pressure_pa"))
+        if kind isa ColumnObservationKind
+            for (name, x) in (("intake_height_m", intake_height_m), ("altitude_m", altitude_m),
+                              ("pressure_pa", pressure_pa))
+                isnan(x) || throw(ArgumentError(
+                    "$(label) is a column record but gives $(name) = $x; a column record is " *
+                    "not placed at one height (set it to NaN, or make the record kind \"point\")"))
+            end
+        end
+        return new(id, date_components, lat, lon, kind, elevation_m, intake_height_m, altitude_m,
+                   pressure_pa, time_window_s, flag, value, value_sigma, model_sigma,
+                   instrument_type, tracer)
     end
 end
 
-function CSObservationRecord(; id::Integer,
-                              date_components,
-                              lat::Real, lon::Real, alt::Real,
-                              value::Real, value_sigma::Real,
-                              instrument_type::AbstractString,
-                              tracer::AbstractString)
-    dc = _coerce_date_components(date_components)
-    return CSObservationRecord(Int64(id), dc,
-                               Float32(lat), Float32(lon), Float32(alt),
-                               Float64(value), Float64(value_sigma),
+function CSObservationRecord(; id::Integer, date_components, lat::Real, lon::Real,
+                             value::Real, value_sigma::Real,
+                             instrument_type::AbstractString, tracer::AbstractString,
+                             kind = PointObservationKind(),
+                             elevation_m::Real = NaN, intake_height_m::Real = NaN,
+                             altitude_m::Real = NaN, pressure_pa::Real = NaN,
+                             time_window_s::Real = 0, flag::Integer = 0,
+                             model_sigma::Real = 0)
+    return CSObservationRecord(Int64(id), _coerce_date_components(date_components),
+                               Float64(lat), Float64(lon), _parse_observation_kind(kind),
+                               Float64(elevation_m), Float64(intake_height_m),
+                               Float64(altitude_m), Float64(pressure_pa),
+                               Float64(time_window_s), Int8(flag),
+                               Float64(value), Float64(value_sigma), Float64(model_sigma),
                                String(instrument_type), String(tracer))
 end
 
@@ -94,6 +187,11 @@ function _coerce_date_components(dc)
         "minute, second); got $(length(dc))"))
     return ntuple(i -> Int16(dc[i]), 6)
 end
+
+# The 1-σ error of the record's departure, σ = √(value_sigma² + model_sigma²);
+# exactly `value_sigma` without a model error.
+_total_sigma(r::CSObservationRecord) =
+    r.model_sigma == 0 ? r.value_sigma : hypot(r.value_sigma, r.model_sigma)
 
 """
     CSObservationSet(records, time_origin)
@@ -124,18 +222,49 @@ Base.getindex(set::CSObservationSet, i::Integer) = set.records[i]
 # Writer
 # ---------------------------------------------------------------------------
 
+# (name, on-disk type, record field, attributes) of the per-observation
+# variables other than `date_components` and `kind`.
+const _OBSERVATION_VARIABLES = (
+    ("id", Int64, :id, ("description" => "unique observation identifier",)),
+    ("lat", Float64, :lat, ("units" => "degrees_north", "description" => "observation latitude")),
+    ("lon", Float64, :lon, ("units" => "degrees_east", "description" => "observation longitude")),
+    ("elevation_m", Float64, :elevation_m,
+     ("units" => "m", "description" => "ground elevation above sea level; NaN = absent")),
+    ("intake_height_m", Float64, :intake_height_m,
+     ("units" => "m", "description" => "sampling height above the ground; NaN = absent")),
+    ("altitude_m", Float64, :altitude_m,
+     ("units" => "m", "description" => "sampling altitude above sea level; NaN = absent")),
+    ("pressure_pa", Float64, :pressure_pa,
+     ("units" => "Pa", "description" => "total (ambient) pressure at the sample; NaN = absent")),
+    ("time_window_s", Float64, :time_window_s,
+     ("units" => "s", "description" => "length of the sampling window centred on the record time; 0 = one model step")),
+    ("flag", Int8, :flag, ("description" => "quality flag: 0 = assimilate, any other value = do not assimilate",)),
+    ("value", Float64, :value, ("description" => "observation value in the tracer's native unit",)),
+    ("value_sigma", Float64, :value_sigma,
+     ("description" => "1-sigma observation error in the tracer's native unit",)),
+    ("model_sigma", Float64, :model_sigma,
+     ("description" => "1-sigma model/representation error added in quadrature to value_sigma",)),
+    ("instrument_type", String, :instrument_type, ("description" => "instrument family label",)),
+    ("tracer", String, :tracer, ("description" => "tracer name",)),
+)
+
+const _OBSERVATION_REQUIRED_VARIABLES =
+    ("date_components", "kind", (first(v) for v in _OBSERVATION_VARIABLES)...)
+
 """
     write_observations(path::AbstractString, set::CSObservationSet) -> String
 
-Write `set` to `path` as a v1-compliant NetCDF observations file.
-Returns the expanded path. Overwrites `path` if it already exists.
-The file follows `schemas/cs_observations_v1.toml`:
+Write `set` to `path` as a schema-v2 NetCDF observations file
+(`schemas/cs_observations_v2.toml`) and return `path`; an existing file is
+overwritten.
 
 - Dimensions: `obs` (unlimited), `date_component` (= 6).
-- Variables (typed exactly per spec): `id`, `date_components`,
-  `lat`, `lon`, `alt`, `value`, `value_sigma`, `instrument_type`,
-  `tracer`.
-- Root attributes: `cs_observations_schema = "v1"`,
+- Variables: `id` (i64), `date_components` (i16), `lat`, `lon` (f64),
+  `kind` (string `"point"` / `"column"`), `elevation_m`, `intake_height_m`,
+  `altitude_m`, `pressure_pa` (f64, NaN = absent), `time_window_s` (f64),
+  `flag` (i8), `value`, `value_sigma`, `model_sigma` (f64),
+  `instrument_type`, `tracer` (string).
+- Root attributes: `cs_observations_schema = "v2"`,
   `time_origin = set.time_origin`.
 """
 function write_observations(path::AbstractString, set::CSObservationSet)
@@ -147,58 +276,21 @@ function write_observations(path::AbstractString, set::CSObservationSet)
     NCDatasets.NCDataset(path, "c") do ds
         NCDatasets.defDim(ds, "obs", n == 0 ? Inf : n)
         NCDatasets.defDim(ds, "date_component", 6)
-
         ds.attrib["cs_observations_schema"] = _CS_OBSERVATIONS_SCHEMA_VERSION
         ds.attrib["time_origin"] = set.time_origin
 
-        ids = Vector{Int64}(undef, n)
         dates = Matrix{Int16}(undef, 6, n)
-        lats = Vector{Float32}(undef, n)
-        lons = Vector{Float32}(undef, n)
-        alts = Vector{Float32}(undef, n)
-        vals = Vector{Float64}(undef, n)
-        sigs = Vector{Float64}(undef, n)
-        instr = Vector{String}(undef, n)
-        tracs = Vector{String}(undef, n)
-        @inbounds for (i, r) in enumerate(set.records)
-            ids[i] = r.id
-            for c in 1:6
-                dates[c, i] = r.date_components[c]
-            end
-            lats[i] = r.lat
-            lons[i] = r.lon
-            alts[i] = r.alt
-            vals[i] = r.value
-            sigs[i] = r.value_sigma
-            instr[i] = r.instrument_type
-            tracs[i] = r.tracer
+        @inbounds for (i, r) in enumerate(set.records), c in 1:6
+            dates[c, i] = r.date_components[c]
         end
-
-        _write_obs_var(ds, "id", Int64, ("obs",), ids,
-                       Dict("description" => "unique observation identifier"))
-        _write_obs_var(ds, "date_components", Int16,
-                       ("date_component", "obs"), dates,
-                       Dict("description" =>
-                            "(year, month, day, hour, minute, second) per observation"))
-        _write_obs_var(ds, "lat", Float32, ("obs",), lats,
-                       Dict("units" => "degrees_north",
-                            "description" => "observation latitude"))
-        _write_obs_var(ds, "lon", Float32, ("obs",), lons,
-                       Dict("units" => "degrees_east",
-                            "description" => "observation longitude"))
-        _write_obs_var(ds, "alt", Float32, ("obs",), alts,
-                       Dict("units" => "m",
-                            "description" => "observation altitude above sea level"))
-        _write_obs_var(ds, "value", Float64, ("obs",), vals,
-                       Dict("description" =>
-                            "observation value in the tracer's native unit"))
-        _write_obs_var(ds, "value_sigma", Float64, ("obs",), sigs,
-                       Dict("description" =>
-                            "1-sigma observation error in the tracer's native unit"))
-        _write_obs_var(ds, "instrument_type", String, ("obs",), instr,
-                       Dict("description" => "instrument family label"))
-        _write_obs_var(ds, "tracer", String, ("obs",), tracs,
-                       Dict("description" => "tracer name"))
+        _write_obs_var(ds, "date_components", Int16, ("date_component", "obs"), dates,
+                       ("description" => "(year, month, day, hour, minute, second) UTC per observation",))
+        _write_obs_var(ds, "kind", String, ("obs",),
+                       String[observation_kind_label(r.kind) for r in set.records],
+                       ("description" => "\"point\" (in-situ sample in the column) or \"column\" (column average)",))
+        for (name, T, field, attrs) in _OBSERVATION_VARIABLES
+            _write_obs_var(ds, name, T, ("obs",), T[getfield(r, field) for r in set.records], attrs)
+        end
     end
     return path
 end
@@ -219,19 +311,20 @@ end
 """
     read_observations(path::AbstractString) -> CSObservationSet
 
-Parse a v1-compliant observation NetCDF written by
+Parse a schema-v2 observation NetCDF written by
 [`write_observations`](@ref) and return an in-memory
 [`CSObservationSet`](@ref).
 
 Validation (fails fast with `ArgumentError`):
 
-- Root attribute `cs_observations_schema` must equal `"v1"`.
+- Root attribute `cs_observations_schema` must equal `"v2"`. Schema-v1 files
+  are rejected: their Float32 coordinates can bind a point near a cell edge
+  to the neighbouring cell, and their single `alt` cannot place a record by
+  its height above the ground. Rewrite them as v2 with `write_observations`.
 - Root attribute `time_origin` must be present.
-- Required variables (`id`, `date_components`, `lat`, `lon`, `alt`,
-  `value`, `value_sigma`, `instrument_type`, `tracer`) must all be
-  present and dimensioned exactly per the schema.
-- `date_components` must have dimensions `(date_component=6, obs)`.
-- All `obs`-indexed variables must share the same length.
+- Every v2 variable must be present, `lat` and `lon` stored as Float64, and
+  `date_components` dimensioned `(date_component = 6, obs)`.
+- Every row must pass the [`CSObservationRecord`](@ref) checks.
 """
 function read_observations(path::AbstractString)
     isfile(path) || throw(ArgumentError(
@@ -239,56 +332,43 @@ function read_observations(path::AbstractString)
     return NCDatasets.NCDataset(path, "r") do ds
         _validate_schema_version(ds, path)
         time_origin = _require_attr(ds, "time_origin", path)
-
-        for v in ("id", "date_components", "lat", "lon", "alt", "value",
-                  "value_sigma", "instrument_type", "tracer")
+        for v in _OBSERVATION_REQUIRED_VARIABLES
             haskey(ds, v) || throw(ArgumentError(
-                "observation NetCDF $(repr(path)) is missing required " *
-                "variable $(repr(v))"))
+                "observation NetCDF $(repr(path)) is missing required variable $(repr(v))"))
         end
-
+        for v in ("lat", "lon")
+            T = eltype(ds[v].var)
+            T === Float64 || throw(ArgumentError(
+                "observation NetCDF $(repr(path)) stores $(v) as $(T); schema v2 requires Float64 " *
+                "coordinates (a Float32 point near a cell edge can bind to the neighbouring cell)"))
+        end
         n = ds.dim["obs"]
         ds.dim["date_component"] == 6 || throw(ArgumentError(
             "observation NetCDF $(repr(path)) has date_component = " *
             "$(ds.dim["date_component"]); expected 6"))
-
-        ids = Array(ds["id"][:])
         dates = Array(ds["date_components"][:, :])
-        lats = Array(ds["lat"][:])
-        lons = Array(ds["lon"][:])
-        alts = Array(ds["alt"][:])
-        vals = Array(ds["value"][:])
-        sigs = Array(ds["value_sigma"][:])
-        instr = Array(ds["instrument_type"][:])
-        tracs = Array(ds["tracer"][:])
-
         size(dates) == (6, n) || throw(ArgumentError(
             "observation NetCDF $(repr(path)) date_components has shape " *
             "$(size(dates)); expected (6, $n)"))
-        for (var, len, expected) in (("id", length(ids), n),
-                                     ("lat", length(lats), n),
-                                     ("lon", length(lons), n),
-                                     ("alt", length(alts), n),
-                                     ("value", length(vals), n),
-                                     ("value_sigma", length(sigs), n),
-                                     ("instrument_type", length(instr), n),
-                                     ("tracer", length(tracs), n))
-            len == expected || throw(ArgumentError(
-                "observation NetCDF $(repr(path)) variable $(repr(var)) " *
-                "has length $(len); expected $(expected) to match obs dim"))
+        columns = Dict{String, Vector}(v => Array(ds[v][:])
+                                       for v in _OBSERVATION_REQUIRED_VARIABLES if v != "date_components")
+        for (v, data) in columns
+            length(data) == n || throw(ArgumentError(
+                "observation NetCDF $(repr(path)) variable $(repr(v)) has length " *
+                "$(length(data)); expected $(n) to match obs dim"))
         end
-
         records = Vector{CSObservationRecord}(undef, n)
         @inbounds for i in 1:n
-            dc = ntuple(c -> Int16(dates[c, i]), 6)
-            records[i] = CSObservationRecord(Int64(ids[i]), dc,
-                                             Float32(lats[i]),
-                                             Float32(lons[i]),
-                                             Float32(alts[i]),
-                                             Float64(vals[i]),
-                                             Float64(sigs[i]),
-                                             String(instr[i]),
-                                             String(tracs[i]))
+            records[i] = CSObservationRecord(
+                Int64(columns["id"][i]), ntuple(c -> Int16(dates[c, i]), 6),
+                Float64(columns["lat"][i]), Float64(columns["lon"][i]),
+                _parse_observation_kind(String(columns["kind"][i])),
+                Float64(columns["elevation_m"][i]), Float64(columns["intake_height_m"][i]),
+                Float64(columns["altitude_m"][i]), Float64(columns["pressure_pa"][i]),
+                Float64(columns["time_window_s"][i]), Int8(columns["flag"][i]),
+                Float64(columns["value"][i]), Float64(columns["value_sigma"][i]),
+                Float64(columns["model_sigma"][i]),
+                String(columns["instrument_type"][i]), String(columns["tracer"][i]))
         end
         return CSObservationSet(records, String(time_origin))
     end
@@ -299,10 +379,15 @@ function _validate_schema_version(ds, path)
         "observation NetCDF $(repr(path)) is missing root attribute " *
         "`cs_observations_schema`; not a CS observations file"))
     got = ds.attrib["cs_observations_schema"]
+    got == "v1" && throw(ArgumentError(
+        "observation NetCDF $(repr(path)) uses schema v1, which this build no longer reads. " *
+        "Schema v2 stores Float64 lat/lon (Float32 coordinates can bind a point near a cell edge " *
+        "to the neighbouring cell) and replaces `alt` by elevation_m, intake_height_m, altitude_m " *
+        "and pressure_pa (NaN = absent), with kind, time_window_s, flag and model_sigma. Rebuild " *
+        "the file from its source data with write_observations; see schemas/cs_observations_v2.toml"))
     got == _CS_OBSERVATIONS_SCHEMA_VERSION || throw(ArgumentError(
         "observation NetCDF $(repr(path)) has cs_observations_schema = " *
-        "$(repr(got)); this build supports " *
-        "$(repr(_CS_OBSERVATIONS_SCHEMA_VERSION)) only"))
+        "$(repr(got)); this build supports $(repr(_CS_OBSERVATIONS_SCHEMA_VERSION)) only"))
     return nothing
 end
 

@@ -1,0 +1,179 @@
+# ---------------------------------------------------------------------------
+# cs_departures_v2 — NetCDF schema for one observation set's forward-pass
+# simulated values and sampling stencils, paired with the observation records
+# (`build_departure_set`, `write_departures` / `read_departures`).
+#
+# Each row is an audit record of one assimilated observation: the record's
+# provenance (id, tracer, instrument, time, Float64 coordinates, kind, time
+# window), where it was sampled (cell; vertical placement code, height above
+# the model surface or pressure; every sampled step with its weight and the
+# model level read), the observed value and errors, the simulated value, the
+# departure and its normalized form.
+#
+# Dimensions: `obs` (unlimited), `date_component` = 6, and `sample`, the
+# sampled steps of all observations as a contiguous ragged array: observation
+# n owns sample_count[n] consecutive entries of sample_step, sample_weight and
+# sample_level.
+#
+# Departure sign convention:
+#     departure = simulated_value - observed_value      (the innovation H(x) - y)
+#     normalized_departure = departure / sqrt(value_sigma^2 + model_sigma^2)
+# pinned by the root attribute `departure_sign_convention`.
+#
+# Changes from v1 (no longer read): Float64 lat/lon; `alt` and `step`
+# replaced by kind, time_window_s, the vertical placement and the sample
+# arrays; model_sigma.
+#
+# This file documents the schema; the loader/writer live in
+# `src/Inversion/DeparturesIO.jl`. Any version bump must update both.
+# ---------------------------------------------------------------------------
+
+[meta]
+version = "v2"
+shipped_in = "issue #20 (part 3)"
+intended_for = "src/Inversion/DeparturesIO.jl read_departures / write_departures"
+
+[dimensions]
+obs            = "unlimited"
+date_component = 6   # year, month, day, hour, minute, second
+sample         = "sum of sample_count"
+
+# All variables below are REQUIRED. `dims` is in NetCDF order.
+
+[variables.id]
+dtype = "i64"
+dims  = ["obs"]
+description = "unique observation identifier, the record id of the parent observations file"
+
+[variables.tracer]
+dtype = "string"
+dims  = ["obs"]
+description = "tracer name"
+
+[variables.instrument_type]
+dtype = "string"
+dims  = ["obs"]
+description = "instrument family label"
+
+[variables.date_components]
+dtype = "i16"
+dims  = ["date_component", "obs"]
+description = "(year, month, day, hour, minute, second) UTC per observation"
+
+[variables.lat]
+dtype = "f64"
+dims  = ["obs"]
+units = "degrees_north"
+description = "observation latitude (from the observations file)"
+
+[variables.lon]
+dtype = "f64"
+dims  = ["obs"]
+units = "degrees_east"
+description = "observation longitude (from the observations file)"
+
+[variables.kind]
+dtype = "string"
+dims  = ["obs"]
+description = "'point' or 'column'"
+
+[variables.time_window_s]
+dtype = "f64"
+dims  = ["obs"]
+units = "s"
+description = "sampling window centred on the record time; 0 = one model step"
+
+[variables.panel]
+dtype = "i8"
+dims  = ["obs"]
+description = "bound cubed-sphere panel index, in 1:6"
+
+[variables.i]
+dtype = "i32"
+dims  = ["obs"]
+description = "bound cubed-sphere interior cell index along panel X (1 <= i <= Nc)"
+
+[variables.j]
+dtype = "i32"
+dims  = ["obs"]
+description = "bound cubed-sphere interior cell index along panel Y (1 <= j <= Nc)"
+
+[variables.vertical_placement]
+dtype = "i8"
+dims  = ["obs"]
+description = "placement code: 0 record_height, 1 altitude_minus_dem, 2 pressure, 3 absolute_altitude (point records; Output.VERTICAL_PLACEMENT_CODES), -1 column_mean (column records); see the vertical_placement_codes attribute"
+
+[variables.placement_height_agl_m]
+dtype = "f64"
+dims  = ["obs"]
+units = "m"
+description = "height above the model surface that selects the layer; NaN unless placed by height"
+
+[variables.placement_pressure_pa]
+dtype = "f64"
+dims  = ["obs"]
+units = "Pa"
+description = "pressure that selects the layer; NaN unless placed by pressure"
+
+[variables.sample_count]
+dtype = "i32"
+dims  = ["obs"]
+description = "number of sampled model steps (>= 1); observation n owns the next sample_count[n] entries of the sample dimension"
+
+[variables.sample_step]
+dtype = "i64"
+dims  = ["sample"]
+description = "sampled model step (the state after it, after convection), strictly increasing within an observation"
+
+[variables.sample_weight]
+dtype = "f64"
+dims  = ["sample"]
+description = "time-sampling weight of the step (positive; an observation's weights sum to 1)"
+
+[variables.sample_level]
+dtype = "i32"
+dims  = ["sample"]
+description = "model level read at the step (k = 1 at the top); 0 = every level (column mean)"
+
+[variables.observed_value]
+dtype = "f64"
+dims  = ["obs"]
+description = "observation value in the tracer's native unit"
+
+[variables.simulated_value]
+dtype = "f64"
+dims  = ["obs"]
+description = "forward-pass simulated value (time-sampling-weighted)"
+
+[variables.departure]
+dtype = "f64"
+dims  = ["obs"]
+description = "simulated_value - observed_value; see departure_sign_convention"
+
+[variables.value_sigma]
+dtype = "f64"
+dims  = ["obs"]
+description = "1-sigma observation error"
+
+[variables.model_sigma]
+dtype = "f64"
+dims  = ["obs"]
+description = "1-sigma model/representation error, added in quadrature"
+
+[variables.normalized_departure]
+dtype = "f64"
+dims  = ["obs"]
+description = "departure / sqrt(value_sigma^2 + model_sigma^2), the residual of the 4D-Var cost"
+
+[attributes]
+cs_departures_schema      = "v2"   # mandatory; loader fails fast on any other value (v1 with an explanation)
+mesh_Nc                   = "REQUIRED int — mesh.Nc (the cubed-sphere panel side length in cells)"
+mesh_panel_convention     = "REQUIRED string — e.g. 'GnomonicPanelConvention' or 'GEOSNativePanelConvention'"
+mesh_cs_definition_tag    = "REQUIRED string — e.g. 'equiangular_gnomonic', 'gmao_equal_distance', or 'custom'"
+t_start                   = "REQUIRED ISO-8601 string for the model start time"
+dt_seconds                = "REQUIRED f64 — model step length in seconds"
+nsteps                    = "REQUIRED int — number of model steps in this run"
+departure_sign_convention = "simulated_minus_observed"
+vertical_placement_codes  = "written: the meaning of each vertical_placement code"
+run_id                    = "OPTIONAL string — caller-supplied attribution tag"
+iteration                 = "OPTIONAL int — 4D-Var iteration counter"

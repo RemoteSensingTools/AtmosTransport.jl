@@ -16,11 +16,11 @@
 #     `_gradient_step_panel_kernel!`).
 #   * Vector flatten helpers (`_observation_vector`, `_control_vector`).
 #   * Step-sequence truncation helpers that end the taped run at the last
-#     observation step (`_truncate_steps`, `_truncate_convection_forcing`,
+#     sampled step (`_truncate_steps`, `_truncate_convection_forcing`,
 #     `_truncate_stepwise_arg`).
 #   * `cs_surface_flux_4dvar` — the main cost/gradient entry point: one
 #     forward run, one taped run and one reverse pass with every
-#     observation's weighted departure injected at its step.
+#     observation's weighted departure injected at its sampled steps.
 # ---------------------------------------------------------------------------
 
 function _validate_control_windows(controls, nsteps::Int)
@@ -346,22 +346,27 @@ _truncate_stepwise_arg(value, n::Int) = value
 
 Evaluate the prototype CS surface-flux 4D-Var cost and gradient. Controls are
 named `CSSurfaceFluxControl`s over `CSSurfaceFluxWindow`s. Observations are
-scalar `CSObservation`s sampled after model steps (after convection, the
-state runtime output sees).
+scalar `CSObservation`s sampled after the model steps of their
+`CSTimeSampling` (one step, or a weighted time window; after convection, the
+state runtime output sees). `CSPlacedPointObjective` observations choose their
+layer at each sampled state from `column_met`, a `CSObservationColumnMet`
+(required when there are any).
 
 One cost-and-gradient evaluation is two forward runs and one reverse pass
 (with `FullCheckpoint`; the other schedules add their recomputation), whatever
 the number of observations, as in TM5-4DVAR:
 
-1. a forward run gives the simulated values `Hᵢ(x)` and each observation's
-   linear functional `hᵢ` (weights from the replayed air mass at its step);
+1. a forward run gives the simulated values `Hᵢ(x) = Σₛ ωᵢₛ hᵢ(rₛ)`, each
+   observation's stencil (`CSObservationStencil`: steps, weights, levels) and
+   its linear functional (weights from the replayed air mass at each sampled
+   step, times `ωᵢₛ`);
 2. each observation contributes `(Hᵢ(x) − yᵢ)/σᵢ²` times its functional's
-   weights to the adjoint forcing of its step;
-3. one taped forward run to the last observation step and one reverse pass,
+   weights to the adjoint forcing of each sampled step;
+3. one taped forward run to the last sampled step and one reverse pass,
    which adds each step's forcing at that step's end, give `∂J_obs/∂E` for
    every step; each control's window collects its steps.
 
-Steps after the last observation do not affect the cost and get a zero
+Steps after the last sampled step do not affect the cost and get a zero
 gradient. `checkpoint` (`FullCheckpoint()`, `StrideCheckpoint(k)`,
 `RevolveCheckpoint()`) and `tape_storage` / `tape_path` select how the one
 taped run is stored, as in `cs_surface_emission_footprint`.
@@ -416,7 +421,8 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
                                tape_storage = :device,
                                tape_path::Union{Nothing, AbstractString} = nothing,
                                checkpoint::AbstractCheckpointSchedule = FullCheckpoint(),
-                               preconditioner = nothing)
+                               preconditioner = nothing,
+                               column_met = nothing)
     FT = eltype(panels_rm0[1])
     dt_ft = FT(dt)
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
@@ -464,7 +470,7 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
     emission_rates = _surface_rates_from_controls(physical_controls, nsteps, mesh, panels_rm0[1])
     # (1) Simulated values and each observation's linear functional from one
     # forward run.
-    simulated, functionals = _observe_cs_forward(
+    simulated, functionals, stencils = _observe_cs_forward(
         panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
         mesh, observation_vec;
         scheme = scheme,
@@ -478,6 +484,7 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
         convection_op = convection_op,
         convection_forcing = convection_forcing,
         convection_workspace = convection_workspace,
+        column_met = column_met,
         build_functionals = true)
 
     # (2) Weighted departures (H(x) − y)/σ² scale each functional's weights.
@@ -493,9 +500,9 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
         scales[obs_idx] = residual / (sigma * sigma)
     end
 
-    # (3) One taped run to the last observation step and one reverse pass that
+    # (3) One taped run to the last sampled step and one reverse pass that
     # adds each step's forcing at the step's end. Footprint `t` is then
-    # ∂J_obs/∂E_t for every step up to the last observation.
+    # ∂J_obs/∂E_t for every step up to the last sampled step.
     last_step = maximum(obs -> obs.step, observation_vec)
     forcing = _assemble_step_forcing(functionals, scales, mesh,
                                      size(panels_rm0[1], 3), panels_rm0[1])
@@ -567,5 +574,6 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
         gradients,
         gradient_by_name,
         reported_controls,
-        observation_vec)
+        observation_vec,
+        stencils)
 end

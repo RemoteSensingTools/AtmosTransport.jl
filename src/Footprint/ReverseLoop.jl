@@ -46,6 +46,8 @@ struct _ZeroStart end
 
 _validate_start(start::_ObjectiveStart, mesh::CubedSphereMesh, Nz::Int) =
     _validate_objective(start.objective, mesh, Nz)
+_validate_start(::_ObjectiveStart{<:CSPlacedPointObjective}, ::CubedSphereMesh, ::Int) =
+    _placed_objective_needs_met()
 _validate_start(::Union{_SeedStart, _ZeroStart}, ::CubedSphereMesh, ::Int) = nothing
 
 # The objective recorded in the `CSFootprintResult`.
@@ -304,15 +306,24 @@ function _run_cs_footprint_forward(panels_rm0, panels_m0,
     return evaluate_objective(objective, panels_rm, panels_m, mesh)
 end
 
-# The simulated value of every observation (`evaluate_objective` after its
-# step, i.e. after convection, the state runtime output sees).
+# The simulated value of every observation (its objective after each sampled
+# step, i.e. after convection, the state runtime output sees, averaged with its
+# time-sampling weights).
 _run_cs_observations_forward(args...; kwargs...) =
     _observe_cs_forward(args...; kwargs..., build_functionals = false).simulated
 
-# One forward replay sampling `observations`: their simulated values and, with
-# `build_functionals = true`, their linear functionals (`_linear_functional`)
-# from the replayed air mass at each observation's step. The replay stops
-# after the last observation step.
+# One forward replay sampling `observations` after each step of their time
+# sampling (`CSTimeSampling`): their simulated values `H = Σ_s ω_s h(r_s)`,
+# their stencils (`CSObservationStencil`: steps, weights and the level read at
+# each step) and, with `build_functionals = true`, their linear functionals:
+# each sampled step's `_linear_functional` (weights from the replayed air mass
+# of that state) scaled by `ω_s`. Placed point observations choose their layer
+# at each sampled state from `column_met` (`_sample_objective`). The replay
+# stops after the last sampled step.
+#
+# An instantaneous observation (one step, ω = 1) gets exactly the value and
+# functional it had before time sampling existed: `0 + 1·h` and `1·w` are
+# exact.
 function _observe_cs_forward(panels_rm0, panels_m0,
                              panels_am_steps,
                              panels_bm_steps,
@@ -330,14 +341,16 @@ function _observe_cs_forward(panels_rm0, panels_m0,
                              convection_op = NoConvection(),
                              convection_forcing = nothing,
                              convection_workspace = nothing,
+                             column_met = nothing,
                              build_functionals::Bool)
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
     Nz = size(panels_rm0[1], 3)
     @inbounds for obs in observations
-        1 <= obs.step <= nsteps || throw(ArgumentError(
-            "CSObservation step $(obs.step) is outside 1:$nsteps"))
+        last(obs.sampling.steps) <= nsteps || throw(ArgumentError(
+            "CSObservation samples step $(last(obs.sampling.steps)), outside 1:$nsteps"))
         _validate_objective(obs.objective, mesh, Nz)
     end
+    _validate_column_met(observations, column_met, mesh, Nz, nsteps)
 
     panels_rm = _copy_panel_tuple(panels_rm0)
     panels_m = _copy_panel_tuple(panels_m0)
@@ -351,14 +364,20 @@ function _observe_cs_forward(panels_rm0, panels_m0,
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
 
-    obs_by_step = [Int[] for _ in 1:nsteps]
-    @inbounds for idx in eachindex(observations)
-        push!(obs_by_step[observations[idx].step], idx)
+    # (observation, sample) pairs by step, in observation order.
+    samples_by_step = [Tuple{Int, Int}[] for _ in 1:nsteps]
+    @inbounds for idx in eachindex(observations), (n, step) in enumerate(observations[idx].sampling.steps)
+        push!(samples_by_step[step], (idx, n))
     end
     FT = eltype(panels_rm0[1])
-    simulated = fill(FT(NaN), length(observations))
-    functionals = Vector{CSLinearFunctional{FT}}(undef,
-                                                 build_functionals ? length(observations) : 0)
+    nobs = length(observations)
+    simulated = zeros(FT, nobs)
+    levels = [zeros(Int, length(obs.sampling.steps)) for obs in observations]
+    # Functional entries per observation (steps, panels, i, j, k, weights) and
+    # its offset, the time-sampling-weighted sum of the steps' offsets.
+    entries = build_functionals ?
+        [(Int[], Int[], Int[], Int[], Int[], FT[]) for _ in 1:nobs] : nothing
+    offsets = zeros(FT, nobs)
     last_step = maximum(obs -> obs.step, observations; init = 0)
 
     @inbounds for step in 1:last_step
@@ -383,13 +402,35 @@ function _observe_cs_forward(panels_rm0, panels_m0,
                          convection_forcing = _step_convection_forcing(
                              convection_op, convection_forcing, step, nsteps),
                          convection_workspace)
-        for obs_idx in obs_by_step[step]
-            objective = observations[obs_idx].objective
-            simulated[obs_idx] = evaluate_objective(objective, panels_rm, panels_m, mesh)
-            build_functionals && (functionals[obs_idx] =
-                _linear_functional(objective, step, panels_m, mesh))
+        for (obs_idx, n) in samples_by_step[step]
+            obs = observations[obs_idx]
+            weight = FT(obs.sampling.weights[n])
+            value, f, level = _sample_objective(obs.objective, step, panels_rm, panels_m, mesh,
+                                                column_met, build_functionals)
+            simulated[obs_idx] += weight * value
+            levels[obs_idx][n] = level
+            if build_functionals
+                _append_entries!(entries[obs_idx], f, weight)
+                offsets[obs_idx] += weight * f.offset
+            end
         end
     end
 
-    return (; simulated, functionals)
+    stencils = [_observation_stencil(observations[i], levels[i]) for i in 1:nobs]
+    functionals = build_functionals ?
+        [CSLinearFunctional{FT}(entries[i]..., offsets[i]) for i in 1:nobs] : CSLinearFunctional{FT}[]
+    return (; simulated, functionals, stencils)
+end
+
+# Append one sampled step's functional entries, their weights scaled by the
+# sample's time-sampling weight.
+function _append_entries!(entries, f::CSLinearFunctional{FT}, weight::FT) where {FT}
+    steps, panel, i, j, k, w = entries
+    append!(steps, f.steps)
+    append!(panel, f.panel)
+    append!(i, f.i)
+    append!(j, f.j)
+    append!(k, f.k)
+    append!(w, weight .* f.weight)
+    return entries
 end
