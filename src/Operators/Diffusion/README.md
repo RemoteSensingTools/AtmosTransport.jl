@@ -18,6 +18,14 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
 - Array-level runtime entrypoint:
   [`operators.jl`](operators.jl)
   provides `apply_vertical_diffusion_vmr!`
+- Surface-flux coupling:
+  [`operators.jl`](operators.jl) defines the `AbstractSurfaceFluxCoupling`
+  policies, `surface_flux_coupling(op)` and `surface_flux_center!`, the one
+  definition of the transport-palindrome center order:
+  `V(dt/2) → S(dt) → V(dt/2)` (`SplitSurfaceFluxCoupling`, the default) or
+  `S(dt) → V(dt)` (`DiffusiveSurfaceFluxBoundary`). Production palindromes
+  call it through `palindrome_center!` (`../Advection/StrangSplitting.jl`);
+  the cubed-sphere adjoint replays and records the same composition
 - Numerical reference pieces:
   [`thomas_solve.jl`](thomas_solve.jl)
   provides the allocation-free `solve_tridiagonal!` reference
@@ -68,8 +76,9 @@ halos, against that serial kernel.
 - [`workspace.jl`](workspace.jl) — topology-aware `DiffusionWorkspace`
   allocation (including the persistent Dkg ledger carry) and device
   adaptation
-- [`operators.jl`](operators.jl) — operator hierarchy, constructor
-  validation, state-level `apply!`, array-level `apply_vertical_diffusion_vmr!`
+- [`operators.jl`](operators.jl) — operator hierarchy, surface-flux
+  coupling policies and `surface_flux_center!`, constructor validation,
+  state-level `apply!`, array-level `apply_vertical_diffusion_vmr!`
 
 ## Common Tasks
 
@@ -99,6 +108,8 @@ halos, against that serial kernel.
   [`../Advection/multitracer_strang.jl`](../Advection/multitracer_strang.jl) and
   [`../Advection/strang_apply.jl`](../Advection/strang_apply.jl)
   embed diffusion at the transport midpoint
+- The cubed-sphere adjoint (`../../Adjoints/`, `../../Footprint/`) orders its
+  replayed and recorded midpoint with `surface_flux_center!`
 - [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl)
   determines whether diffusion is active in a given run
 

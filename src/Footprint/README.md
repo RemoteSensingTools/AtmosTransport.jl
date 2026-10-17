@@ -50,16 +50,20 @@ record types, and schedules come from [`../Tape/`](../Tape/).
 - [`FootprintResult.jl`](FootprintResult.jl) — result and tape-size types
 - [`TapeRecording.jl`](TapeRecording.jl) — `_tape_byte_estimate`,
   `_record_sweep!`, `_record_and_sweep_z!` (records, then applies, one Z
-  sweep; used by all three tapes, including Lin-Rood),
+  sweep; used by all three tapes, including Lin-Rood), the per-step pieces
+  the recorders share (`_record_step_start_halos!`,
+  `_record_and_apply_center!` / `_record_center!` around
+  `surface_flux_center!`, `_record_and_apply_convection!`),
   `_record_cs_mass_tape` (linear schemes: stages `m`
   only), `_record_cs_tracer_tape` (monotone PPM: stages `m` and `rm`; the
   FV3 vertical sweeps of the Lin-Rood tape stage both as well), and
   the `_record_cs_adjoint_tape` dispatcher (Lin-Rood goes to
   `_record_cs_linrood_tape`)
 - [`ReverseLoop.jl`](ReverseLoop.jl) — `_collect_surface_footprints`,
-  `_walk_window_reverse!` (dispatch on record type), and the tape-free
-  forward replays `_run_cs_footprint_forward` and
-  `_run_cs_observations_forward`
+  `_walk_window_reverse!` (dispatch on record type), `_replay_cs_step!` (one
+  production step: step-start halo refresh, palindrome with the coupled
+  center, convection), and the tape-free forward replays
+  `_run_cs_footprint_forward` and `_run_cs_observations_forward` built on it
 - [`StrideCheckpoint.jl`](StrideCheckpoint.jl) (linear mass tape and the
   shared helpers), [`stride_checkpoint_ppm.jl`](stride_checkpoint_ppm.jl)
   (monotone-PPM tracer tape), [`stride_checkpoint_linrood.jl`](stride_checkpoint_linrood.jl)
@@ -77,7 +81,11 @@ record types, and schedules come from [`../Tape/`](../Tape/).
 - Changing what the tape records for a step: edit the recorder for that
   scheme family in [`TapeRecording.jl`](TapeRecording.jl), or
   `_record_cs_linrood_tape` in `../Adjoints/LinRoodTape.jl`. Keep the
-  forward replay in [`ReverseLoop.jl`](ReverseLoop.jl) consistent with it.
+  forward replay `_replay_cs_step!` in [`ReverseLoop.jl`](ReverseLoop.jl)
+  and production `strang_split!` consistent with it;
+  `../../test/core/test_cs_adjoint_production_parity.jl` compares the replay
+  with `TransportModel.step!`, the footprints with production finite
+  differences, and the tape layout with `cs_tape_byte_estimate`.
 - Adding a tape record type: add the record in `../Tape/TapeRecords.jl`,
   then add a branch in `_walk_window_reverse!`.
 - Changing schedule behaviour: [`StrideCheckpoint.jl`](StrideCheckpoint.jl) and the
@@ -89,23 +97,34 @@ record types, and schedules come from [`../Tape/`](../Tape/).
 
 ## Invariants
 
-- Per-step tape order for split-sweep schemes:
-  `(X Y Z)^n [D(dt/2) | midpoint | D(dt/2)] (Z Y X)^n`, then
-  optional convection, as `strang_split_cs!`. `n` is the subcycle count from
+- The replays and tapes follow the production step of a run with a
+  surface-flux operator (production `strang_split!` followed by the
+  `TransportModel.step!` convection block). Per-step tape order for
+  split-sweep schemes: `halo(1) (X Y Z)^n <center> (Z Y X)^n`, then optional
+  convection. `n` is the subcycle count from
   `_cs_static_palindrome_subcycle_count`, the production CFL schedule.
-  Lin-Rood steps record `H Z [midpoint] Z H`. There is no subcycling
+  Lin-Rood steps record `H Z <center> Z H`. There is no subcycling
   (`cfl_limit` is ignored), and Z is the scheme's vertical sweep (upwind or
   the FV3 profile).
+- `<center>` is `surface_flux_center!` with the diffusion operator's
+  coupling: `D(dt/2) | midpoint | D(dt/2)` with `SplitSurfaceFluxCoupling`,
+  `midpoint | D(dt)` with `DiffusiveSurfaceFluxBoundary` (one full-step
+  diffusion record after the midpoint), and just `midpoint` without
+  diffusion.
 - In the split-sweep tapes, the forward halo fills after initialization are
-  recorded as `_CSHaloRecord(dir)` (1 = X, 2 = Y): one after each horizontal
-  sweep, one before the X sweep of each later forward pass (the Z sweep before
-  it changed the interiors), and one before each second-half Y and X sweep
-  (Lin-Rood keeps its halo work inside `_CSLinRoodHorizRecord`). The reverse
-  pass applies `_adjoint_fill_panel_halos!` with the same `dir`.
+  recorded as `_CSHaloRecord(dir)` (1 = X, 2 = Y): the step-start refresh
+  (`fill_cs_step_start_halos!`, edges plus X-orientation corners, as production; the first X sweep would
+  otherwise read tracer halos from before the previous step's convection),
+  one after each horizontal sweep, one before the X sweep of each later
+  forward pass (the Z sweep before it changed the interiors), and one before
+  each second-half Y and X sweep (Lin-Rood keeps its halo work inside
+  `_CSLinRoodHorizRecord`; its horizontal operator refills the halos it
+  reads, so it has no step-start record). The reverse pass applies
+  `_adjoint_fill_panel_halos!` with the same `dir`.
 - The reverse walk reads the per-step footprint when it reaches each
-  `_CSMidpointRecord`. Emissions are injected at the palindrome midpoint,
-  between the two diffusion half-steps, as in the runtime surface-source
-  path.
+  `_CSMidpointRecord`. Emissions are injected where the production center
+  injects them: between the two diffusion half-steps (split coupling) or
+  before the full-step solve (diffusive boundary).
 - Footprint units: `E` is a per-cell emission rate in model-storage units,
   i.e. dry mixing ratio × carrier air mass, per second. It is not species
   kg/s and not per unit area. The footprint already includes the `dt`
@@ -115,10 +134,11 @@ record types, and schedules come from [`../Tape/`](../Tape/).
 - Monotone PPM and the FV3 vertical profile record the tracer branch state
   of the base trajectory. Pass `base_emission_rates` when you differentiate
   around non-zero emissions.
-- `StrideCheckpoint` replays the same kernels as `FullCheckpoint`, plus halo
-  refreshes at segment boundaries. Tests require agreement within
-  `atol = 1e-12` for every scheme family. `RevolveCheckpoint` can drift by about 1e-7 for monotone
-  PPM combined with diffusion or convection (see
+- `StrideCheckpoint` and `RevolveCheckpoint` replay the same kernels as
+  `FullCheckpoint`; because every step starts with the step-start halo
+  refresh, a window restarted at a step boundary records the full tape's
+  states. Tests require agreement within `atol = 1e-12` for every scheme
+  family, with diffusion and convection (see
   `../Tape/CheckpointSchedule.jl`).
 - `tape_path` requires `tape_storage = :mmap`. Stride writes
   `window_NNNNN/` directories and Revolve writes `step_NNNNN/` directories.
@@ -134,7 +154,13 @@ record types, and schedules come from [`../Tape/`](../Tape/).
   [`../../docs/src/theory/adjoint_status.md`](../../docs/src/theory/adjoint_status.md)
 - [`../../test/core/test_cs_ppm_adjoint_footprint.jl`](../../test/core/test_cs_ppm_adjoint_footprint.jl):
   footprint vs. finite differences for every scheme, diffusion, TM5, CMFMC,
-  seed entry, GPU smoke test
+  seed entry, GPU smoke test (including limited-PPM `:pinned_host` and
+  `:mmap` tapes against `:device`)
+- [`../../test/core/test_cs_adjoint_production_parity.jl`](../../test/core/test_cs_adjoint_production_parity.jl):
+  replay vs. `TransportModel.step!` for both surface-flux couplings with TM5
+  and CMFMC convection, footprints vs. production finite differences,
+  checkpoint parity with convection, tape layout vs. `cs_tape_byte_estimate`,
+  and distinct air-mass / tracer-mass reads from host-side tape storage
 - [`../../test/core/test_cs_linrood_footprint_fd.jl`](../../test/core/test_cs_linrood_footprint_fd.jl):
   Lin-Rood footprint vs. finite differences with upward vertical flux
 - [`../../test/core/test_cs_linrood_fv3_adjoint.jl`](../../test/core/test_cs_linrood_fv3_adjoint.jl):

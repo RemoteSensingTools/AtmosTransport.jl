@@ -142,6 +142,54 @@ Adapt.adapt_structure(to, op::ImplicitVerticalDiffusion) =
 @inline uses_diffusive_surface_flux_boundary(op::ImplicitVerticalDiffusion) =
     op.surface_flux_coupling isa DiffusiveSurfaceFluxBoundary
 
+"""
+    surface_flux_coupling(diffusion_op) -> AbstractSurfaceFluxCoupling
+
+The policy that orders surface flux and vertical diffusion at the palindrome
+center. `NoDiffusion` has no solve to couple to and reports the default
+`SplitSurfaceFluxCoupling()`, whose two half solves are then no-ops.
+"""
+@inline surface_flux_coupling(::NoDiffusion) = SplitSurfaceFluxCoupling()
+@inline surface_flux_coupling(op::ImplicitVerticalDiffusion) = op.surface_flux_coupling
+
+"""
+    surface_flux_center!(diffuse!, emit!, coupling, dt)
+
+Apply surface flux and vertical diffusion for one transport step of length
+`dt` at the palindrome center, in the order that `coupling` defines:
+
+| `coupling` | sequence |
+| --- | --- |
+| `SplitSurfaceFluxCoupling` | `diffuse!(dt/2)`, `emit!(dt)`, `diffuse!(dt/2)` |
+| `DiffusiveSurfaceFluxBoundary` | `emit!(dt)`, `diffuse!(dt)` |
+
+`diffuse!(τ)` applies vertical diffusion over `τ`; `emit!(τ)` adds the
+surface flux integrated over `τ`. Backward Euler is not a semigroup, so the
+two sequences differ at `O(dt²)` (see `ImplicitVerticalDiffusion`).
+
+This is the single definition of the center ordering. Production transport
+reaches it through `palindrome_center!` (`Operators.Advection`). The
+cubed-sphere adjoint forward replays call it with the same closures, and its
+tape recorders with closures that record each operation before applying it;
+the reverse walk visits those records backwards, so the adjoint transposes
+this composition.
+"""
+@inline function surface_flux_center!(diffuse!::D, emit!::E, ::SplitSurfaceFluxCoupling,
+                                      dt) where {D, E}
+    half_dt = dt / 2
+    diffuse!(half_dt)
+    emit!(dt)
+    diffuse!(half_dt)
+    return nothing
+end
+
+@inline function surface_flux_center!(diffuse!::D, emit!::E, ::DiffusiveSurfaceFluxBoundary,
+                                      dt) where {D, E}
+    emit!(dt)
+    diffuse!(dt)
+    return nothing
+end
+
 # =========================================================================
 # apply!
 # =========================================================================

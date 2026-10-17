@@ -64,6 +64,10 @@ With `n` subcycles and every flux divided by `n`:
         → X sweep
         → fill_panel_halos!(dir=1)
 
+The first X sweep reads the halos as the caller leaves them: production
+`strang_split!` and the adjoint replays refresh them with
+`fill_cs_step_start_halos!` at every step start.
+
 At `n = 1` this is Strang's X-Y-Z-Z-Y-X palindrome. For `n > 1` the
 composition stays symmetric (the reverse half is the adjoint of the forward
 half), so it keeps the palindrome's second-order splitting with the same 6n
@@ -181,6 +185,31 @@ function strang_split_cs!(panels_rm::NTuple{6},
         end
     end
 
+    return nothing
+end
+
+"""
+    fill_cs_step_start_halos!(panels_rm, panels_m, mesh)
+
+Refresh the halos of the air mass and the tracer mass at the start of a
+cubed-sphere split-sweep transport step: all four edge halos, then the corners
+in the X-sweep orientation (`fill_panel_halos!(…; dir = 1)`).
+The step's first X sweep reads these halos (`strang_split_cs!` refills them
+only between its own sweeps). Operators that run between two transport steps
+(convection, chemistry) update interior cells only, so without the refresh
+that sweep would read tracer halos from before them.
+
+Production `strang_split!` starts every split-sweep step with this call, and
+so do the cubed-sphere adjoint forward replays and tape recorders; the
+recorders follow it with `_CSHaloRecord(1)` so the reverse pass transposes it.
+After the refresh the halos are a function of the interiors alone, so a
+checkpoint window that restarts at a step boundary reproduces the full
+recording exactly.
+"""
+function fill_cs_step_start_halos!(panels_rm::NTuple{6}, panels_m::NTuple{6},
+                                   mesh::CubedSphereMesh)
+    fill_panel_halos!(panels_m, mesh; dir = 1)
+    fill_panel_halos!(panels_rm, mesh; dir = 1)
     return nothing
 end
 

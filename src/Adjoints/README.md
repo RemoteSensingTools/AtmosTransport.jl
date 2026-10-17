@@ -93,7 +93,10 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
 - Supporting a new convection or diffusion variant: add methods for
   `_apply_cs_convection_forward!` and `_apply_cs_convection_adjoint!`
   (or `_apply_cs_diffusion_adjoint!`), then update the `_require_*`
-  guards so unsupported settings fail before any tape is recorded.
+  guards so unsupported settings fail before any tape is recorded. A new
+  surface-flux coupling needs a `surface_flux_center!` method
+  (`../Operators/Diffusion/operators.jl`); production, the replays and the
+  recorders all compose the center through it.
 - Debugging a footprint/finite-difference mismatch: check that the forward
   replay matches production first (see Invariants), then run the
   kernel-level identity tests listed below.
@@ -104,9 +107,18 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
   replays. For monotone PPM, Lin-Rood and the FV3 vertical profile, it
   transposes the linearization around the recorded state, so limiter branches
   are frozen. Kernel tests check `⟨y, L·x⟩ = ⟨Lᵀ·y, x⟩` to rounding error.
-- The forward replays must match production: CMFMC replay uses the
-  production `_cmfmc_cs_panel_column_kernel!`, and TM5 column solves are
-  checked bit-for-bit. Forward replays keep no column-ledger carry: TM5,
+- The forward replays must match production. Each replayed or recorded
+  split-sweep step starts with `fill_cs_step_start_halos!`, as production
+  `strang_split!` does, and orders diffusion and the emission midpoint with
+  `surface_flux_center!` and the diffusion operator's surface-flux coupling,
+  as production's `palindrome_center!` does for a run with surface fluxes
+  (`_replay_cs_step!` in `../Footprint/ReverseLoop.jl`; the recorders in
+  `../Footprint/TapeRecording.jl` and `LinRoodTape.jl`).
+  `test_cs_adjoint_production_parity.jl` checks the replay against
+  `TransportModel.step!` and the footprints against production finite
+  differences. CMFMC replay uses the production
+  `_cmfmc_cs_panel_column_kernel!`, and TM5 column solves are checked
+  bit-for-bit. Forward replays keep no column-ledger carry: TM5,
   CMFMC and Dkg solves start from a zero carry, so each replayed solve is a
   function of the recorded state alone (the production solve with a zero
   carry, not a multi-step production run's accumulated one), and
@@ -126,6 +138,10 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
   that is all zero or non-finite.
 - Lin-Rood tapes accept only `tape_storage = :device`; `tape_path` is
   rejected.
+- The reverse walk reads staged states with a read role
+  (`_tape_panels(slot, AirMassRead())`, `TracerMassRead()` for a limited
+  sweep's tracer mass): host-side tape storage keeps one device cache per
+  role, so one kernel's two staged operands are distinct buffers.
 - Level `Nz` is the surface layer. Surface rates are added to level `Nz`,
   and footprints are read from `lambda[:, :, Nz]` on the interior
   `Hp+1:Hp+Nc` cells.

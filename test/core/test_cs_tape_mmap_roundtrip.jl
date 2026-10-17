@@ -12,7 +12,7 @@ const TapeMod = AtmosTransport.Tape
 #
 # Verifies:
 #   * Slot allocation bumps the cursor by the expected number of bytes.
-#   * stage_panels! → _tape_panels yields bit-exact equality.
+#   * stage_panels! → _tape_panels(slot, role) yields bit-exact equality.
 #   * Multiple staged slots stay disjoint and readable in any order.
 #   * Heterogeneous panel shapes (am / bm / cm-shaped tapes) survive the
 #     roundtrip with the per-panel offset bookkeeping.
@@ -64,7 +64,7 @@ end
             @test slot.offsets == expected_offsets
             @test storage.cursor == 6 * sizeof(Float64) * length(src[1])
 
-            got = TapeMod._tape_panels(slot)
+            got = TapeMod._tape_panels(slot, TapeMod.AirMassRead())
             @test length(got) == 6
             for p in 1:6
                 @test got[p] == src[p]
@@ -97,7 +97,7 @@ end
 
             # Read in reverse to mirror the adjoint walk order.
             for idx in 4:-1:1
-                got = TapeMod._tape_panels(slots[idx])
+                got = TapeMod._tape_panels(slots[idx], TapeMod.AirMassRead())
                 for p in 1:6
                     @test got[p] == srcs[idx][p]
                 end
@@ -124,7 +124,7 @@ end
             slot_cm = TapeMod._stage_panels(storage, cm)
 
             for (slot, src) in ((slot_am, am), (slot_bm, bm), (slot_cm, cm))
-                got = TapeMod._tape_panels(slot)
+                got = TapeMod._tape_panels(slot, TapeMod.AirMassRead())
                 for p in 1:6
                     @test size(got[p]) == size(src[p])
                     @test got[p] == src[p]
@@ -172,14 +172,14 @@ end
         end
     end
 
-    @testset "shape-keyed device cache amortises heterogeneous reads" begin
+    @testset "role- and shape-keyed device read caches" begin
         # Stand-in for a "GPU-ish" backend that picks up the device-cache
         # path: wrap Array{T,N} in a thin subtype so the
         # `_mmap_prepare_for_panels!(::NTuple{6, <:Array})` no-op
         # specialisation does NOT fire and we exercise the default
-        # method that populates `storage.device_caches`. Same arithmetic
-        # behaviour as Array, so copyto! / similar / eltype work
-        # unchanged.
+        # method that records the read backend (`storage.read_template`).
+        # Same arithmetic behaviour as Array, so copyto! / similar /
+        # eltype work unchanged.
         struct _PseudoDevArray{T, N} <: AbstractArray{T, N}
             data::Array{T, N}
         end
@@ -202,35 +202,47 @@ end
         Base.:(==)(a::AbstractArray, b::_PseudoDevArray) = a == b.data
 
         wrap6(panels) = ntuple(p -> _PseudoDevArray(panels[p]), 6)
+        shape_key(src) = ntuple(p -> size(src[p]), 6)
+        air, tracer = TapeMod.AirMassRead(), TapeMod.TracerMassRead()
 
         mktempdir() do dir
             storage = TapeMod.MmapCSTapeStorage(; dir = dir,
                                                 cleanup_on_finalize = false)
-            # Three heterogeneous shapes interleaved across six slots;
-            # the keyed cache must serve repeats without reallocating.
+            # Four heterogeneous shapes interleaved across six slots; the
+            # keyed caches must serve repeats without reallocating.
             shapes = [:m, :am, :bm, :cm, :m, :am]
             sources = [wrap6(_build_panels(s; Nc = 3, Hp = 3, Nz = 2,
                                            FT = Float32, seed = i))
                        for (i, s) in enumerate(shapes)]
             slots = [TapeMod._stage_panels(storage, src) for src in sources]
 
-            # Allocation must populate one cache per *distinct* shape.
-            # The four shape kinds are m=(9,9,2), am=(10,9,2),
-            # bm=(9,10,2), cm=(9,9,3) — see `_shape_panel`.
-            @test length(storage.device_caches) == 4
+            # Staging records the device backend; the caches are allocated
+            # on first read, on that backend.
+            @test storage.read_template isa _PseudoDevArray
+            @test isempty(storage.read_caches)
 
             for (slot, src) in zip(slots, sources)
-                got = TapeMod._tape_panels(slot)
+                got = TapeMod._tape_panels(slot, air)
                 @test got isa NTuple{6}
+                @test all(got[p] isa _PseudoDevArray for p in 1:6)
                 @test all(got[p] == src[p] for p in 1:6)
                 # Same cache buffer is returned for repeat shape reads.
-                @test got === storage.device_caches[ntuple(p -> size(src[p]), 6)]
+                @test got === storage.read_caches[(air, shape_key(src))]
             end
+            # One cache per distinct shape: m=(9,9,2), am=(10,9,2),
+            # bm=(9,10,2), cm=(9,9,3) — see `_shape_panel`.
+            @test length(storage.read_caches) == 4
 
-            # Reads of repeat-shape slots must NOT have grown the cache
-            # dict further.
-            @test length(storage.device_caches) == 4
+            # The other role reads into its own buffers (issue #57: a sweep
+            # record's air mass and tracer mass are read together).
+            m_read = TapeMod._tape_panels(slots[1], air)
+            rm_read = TapeMod._tape_panels(slots[5], tracer)
+            @test all(m_read[p] !== rm_read[p] for p in 1:6)
+            @test all(m_read[p] == sources[1][p] for p in 1:6)
+            @test all(rm_read[p] == sources[5][p] for p in 1:6)
+            @test length(storage.read_caches) == 5
             TapeMod.finalize_tape!(storage)
+            @test isempty(storage.read_caches)
         end
     end
 end
@@ -574,7 +586,7 @@ end
             @test got_slot.offsets == slot.offsets
             @test got_slot.shapes == slot.shapes
 
-            got = TapeMod._tape_panels(got_slot)
+            got = TapeMod._tape_panels(got_slot, TapeMod.AirMassRead())
             for p in 1:6
                 @test got[p] == src[p]
                 @test eltype(got[p]) === Float32
@@ -603,7 +615,7 @@ end
             for (id, expected) in ((3, src_cm), (2, src_am), (1, src_m))
                 slot = TapeMod.get_record(reopened, id)
                 @test slot.record_id == id
-                got = TapeMod._tape_panels(slot)
+                got = TapeMod._tape_panels(slot, TapeMod.AirMassRead())
                 for p in 1:6
                     @test got[p] == expected[p]
                 end
@@ -667,7 +679,7 @@ end
             # readonly reopen to confirm.
             TapeMod.finalize_tape!(rw)
             ro = TapeMod.load_mmap_tape(dir)
-            got = TapeMod._tape_panels(TapeMod.get_record(ro, 1))
+            got = TapeMod._tape_panels(TapeMod.get_record(ro, 1), TapeMod.AirMassRead())
             for p in 1:6
                 @test got[p] == src[p]
             end
@@ -859,7 +871,7 @@ end
 
             ro = TapeMod.load_mmap_tape(dir)
             slot = TapeMod.get_record(ro, 1)
-            got = TapeMod._tape_panels(slot)
+            got = TapeMod._tape_panels(slot, TapeMod.AirMassRead())
             for p in 1:6
                 @test got[p] == _tape_src_for_gc_test[p]
             end

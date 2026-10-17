@@ -318,15 +318,12 @@ for (scheme_type, h_sweep, v_sweep) in (
             # `m` is the current air-mass slice `(ncells, Nz)`; `rm_tracer`
             # is the per-tracer mass slice `(ncells, Nz)`. The wrapper
             # does pre-scale → mass-flux kernel → post-scale internally.
-            if emissions_op isa NoSurfaceFlux
-                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(rm_tracer, m, diffusion_op, diffusion_workspace, dt, meteo)
-            else
-                half_dt = dt / 2
-                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(rm_tracer, m, diffusion_op, diffusion_workspace, half_dt, meteo)
-                apply_surface_flux!(rm_tracer, emissions_op, workspace, dt, meteo, grid;
-                                    tracer_names = (tracer_name,))
-                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(rm_tracer, m, diffusion_op, diffusion_workspace, half_dt, meteo)
-            end
+            palindrome_center!(
+                τ -> SectionTimer.@section(:diffusion, apply_vertical_diffusion_vmr!(
+                    rm_tracer, m, diffusion_op, diffusion_workspace, τ, meteo)),
+                τ -> apply_surface_flux!(rm_tracer, emissions_op, workspace, τ, meteo, grid;
+                                         tracer_names = (tracer_name,)),
+                diffusion_op, emissions_op, dt)
             for _ in 1:n_sub
                 $v_sweep(rm_tracer, m, cm, scheme, workspace, fs)
                 $h_sweep(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, fs)

@@ -42,7 +42,8 @@ using Adapt
 using KernelAbstractions: KernelAbstractions as KA, @kernel, @index, @Const, get_backend, synchronize
 using ...State: CellState, CubedSphereState, get_tracer, tracer_index, eachtracer,
                 GCHPNonlocalPBLField
-using ..Diffusion: ImplicitVerticalDiffusion
+using ..Diffusion: ImplicitVerticalDiffusion, SplitSurfaceFluxCoupling,
+                   DiffusiveSurfaceFluxBoundary
 using ...MetDrivers: current_time
 using ...Architectures: _two_sum, _neumaier_add, launch!
 import ..AbstractOperator, ..apply!

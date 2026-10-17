@@ -131,56 +131,33 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
         rm_cur, rm_alt, m_cur, m_alt = _pass!(sweep_z_mt!, rm_cur, rm_alt, m_cur, m_alt, cm, fs)
     end
 
-    # Palindrome center.
-    # Two configurations:
-    #
-    # 1. `emissions_op isa NoSurfaceFlux` (the default): single V(dt)
-    #    at the palindrome center. NoDiffusion is a dead branch,
-    #    so with both defaults this whole block collapses to zero
-    #    floating-point work and is bit-exact with the no-op behavior.
-    #
-    # 2. `emissions_op isa SurfaceFluxOperator`: the OPERATOR_COMPOSITION.md
-    #    §3.2 arrangement, V(dt/2) → S(dt) → V(dt/2). Fresh emissions
-    #    see vertical mixing before the reverse-half horizontal sweeps
-    #    transport them. Emissions enter at the palindrome center with
-    #    the FULL dt (not halved) — sources/sinks don't participate in
-    #    the Strang half-step dance; symmetric operators around them
-    #    provide the 2nd-order accuracy.
-    #
-    # Linear-operator caveat: V(dt) = V(dt/2) ∘ V(dt/2) is exact for
-    # the continuous ODE flow but only O(dt²) for Backward Euler
-    # ((I-dt·D)⁻¹ ≠ [(I-dt/2·D)⁻¹]²). Switching from Path 1 to Path 2
-    # is therefore NOT bit-exact when `diffusion_op` is non-trivial —
-    # the two halves of V differ by O((dt·D)²). Acceptable since Path 2
-    # is only reached when the user opts in to emissions.
-    # Route through the mass-flux VMR wrapper so the palindrome-
-    # center diffusion step is column-mass conserving. `m_cur` is the
-    # current air-mass field `(Nx, Ny, Nz)` paired with `rm_cur`'s
-    # `(Nx, Ny, Nz, Nt)` tracer storage; the wrapper does the
-    # tracer_mass ↔ VMR scaling internally.
-    if emissions_op isa NoSurfaceFlux
-        apply_vertical_diffusion_vmr!(rm_cur, m_cur, diffusion_op, diffusion_workspace, dt, meteo)
-    elseif uses_diffusive_surface_flux_boundary(diffusion_op)
-        tracer_names === nothing && throw(ArgumentError(
-            "strang_split_mt!: `emissions_op` is non-trivial but " *
-            "`tracer_names` was not supplied — the surface-flux " *
-            "kernel needs per-tracer index resolution. Pass " *
-            "`tracer_names = state.tracer_names`."))
-        apply_surface_flux!(rm_cur, emissions_op, ws, dt, meteo, grid;
-                            tracer_names = tracer_names)
-        apply_vertical_diffusion_vmr!(rm_cur, m_cur, diffusion_op, diffusion_workspace, dt, meteo)
-    else
-        tracer_names === nothing && throw(ArgumentError(
-            "strang_split_mt!: `emissions_op` is non-trivial but " *
-            "`tracer_names` was not supplied — the surface-flux " *
-            "kernel needs per-tracer index resolution. Pass " *
-            "`tracer_names = state.tracer_names`."))
-        half_dt = dt === nothing ? nothing : dt / 2
-        apply_vertical_diffusion_vmr!(rm_cur, m_cur, diffusion_op, diffusion_workspace, half_dt, meteo)
-        apply_surface_flux!(rm_cur, emissions_op, ws, dt, meteo, grid;
-                            tracer_names = tracer_names)
-        apply_vertical_diffusion_vmr!(rm_cur, m_cur, diffusion_op, diffusion_workspace, half_dt, meteo)
-    end
+    # Palindrome center (`palindrome_center!`, StrangSplitting.jl). Without a
+    # surface-flux operator it is one V(dt), a no-op for NoDiffusion, so the
+    # default path does no floating-point work here. With one, the diffusion
+    # operator's coupling orders the center: V(dt/2) → S(dt) → V(dt/2)
+    # (the OPERATOR_COMPOSITION.md §3.2 arrangement) or S(dt) → V(dt).
+    # Emissions always enter with the full dt; the symmetric operators around
+    # them give the second-order accuracy. Backward Euler is not a semigroup
+    # ((I-dt·D)⁻¹ ≠ [(I-dt/2·D)⁻¹]²), so adding a surface flux with the split
+    # coupling changes the diffusion by O((dt·D)²). The mass-flux VMR wrapper
+    # keeps the diffusion column-mass conserving; it scales the
+    # `(Nx, Ny, Nz, Nt)` tracer mass by the `(Nx, Ny, Nz)` air mass. The center
+    # closures capture fresh bindings: `rm_cur`/`m_cur` are reassigned by the
+    # sweeps, and capturing them would box them.
+    emissions_op isa NoSurfaceFlux || tracer_names !== nothing || throw(ArgumentError(
+        "strang_split_mt!: `emissions_op` is non-trivial but " *
+        "`tracer_names` was not supplied — the surface-flux " *
+        "kernel needs per-tracer index resolution. Pass " *
+        "`tracer_names = state.tracer_names`."))
+    emissions_op isa NoSurfaceFlux || dt !== nothing || throw(ArgumentError(
+        "strang_split_mt!: `emissions_op` is non-trivial but `dt` was not supplied"))
+    rm_center, m_center = rm_cur, m_cur
+    palindrome_center!(
+        τ -> apply_vertical_diffusion_vmr!(rm_center, m_center, diffusion_op,
+                                           diffusion_workspace, τ, meteo),
+        τ -> apply_surface_flux!(rm_center, emissions_op, ws, τ, meteo, grid;
+                                 tracer_names = tracer_names),
+        diffusion_op, emissions_op, dt)
 
     # Reverse half: (Z → Y → X)^n_sub
     for _ in 1:n_sub

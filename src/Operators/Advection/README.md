@@ -52,7 +52,15 @@ Configuration parsing lives in
   [`CubedSphereStrang.jl`](CubedSphereStrang.jl)
 - Diffusion and surface flux are not separate outer blocks here; they are
   threaded into the palindrome midpoint through imports from
-  `../Diffusion` and `../SurfaceFlux`
+  `../Diffusion` and `../SurfaceFlux`. Every topology builds the midpoint
+  with `palindrome_center!` ([`StrangSplitting.jl`](StrangSplitting.jl)):
+  one `V(dt)` without a surface-flux operator, otherwise
+  `surface_flux_center!` with the diffusion operator's coupling,
+  `V(dt/2) → S(dt) → V(dt/2)` or `S(dt) → V(dt)`
+- A cubed-sphere split-sweep step starts with `fill_cs_step_start_halos!`
+  ([`CubedSphereStrang.jl`](CubedSphereStrang.jl), all edge halos plus the
+  X-orientation corners): the first X sweep reads halos, and convection or
+  chemistry between steps changed the interiors
 - CFL subcycling (every topology): one count `n` from the palindrome
   outflow budget against `min(m_start, m_end)` (no pass removes more than
   `cfl_limit / 2` of a cell's current mass; an invalid flux set throws), then `(X Y Z)^n → midpoint → (Z Y X)^n` with every flux
@@ -86,8 +94,9 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
   (generated with `@eval`) and face-indexed horizontal/vertical
 - [`subcycling.jl`](subcycling.jl) — palindrome CFL subcycle counts of the
   structured and face-indexed paths
-- [`StrangSplitting.jl`](StrangSplitting.jl) — structured transport
-  palindrome `strang_split!` with the diffusion/surface-flux midpoint
+- [`StrangSplitting.jl`](StrangSplitting.jl) — structured and cubed-sphere
+  `strang_split!`, and `palindrome_center!`, the diffusion/surface-flux
+  midpoint shared by every topology
 - [`strang_apply.jl`](strang_apply.jl) — model-facing `apply!` for
   structured and face-indexed states (the RG `H → V → H` path)
 - [`multitracer_strang.jl`](multitracer_strang.jl) — multi-tracer sweeps
@@ -108,7 +117,8 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
 - [`cs_subcycling.jl`](cs_subcycling.jl) — the palindrome outflow budget
   shared by all split-sweep topologies and the cubed-sphere subcycle count
 - [`CubedSphereStrang.jl`](CubedSphereStrang.jl) — panel-native
-  cubed-sphere palindrome (`strang_split_cs!`, `strang_split_cs_mt!`)
+  cubed-sphere palindrome (`strang_split_cs!`, `strang_split_cs_mt!`) and
+  the step-start halo refresh `fill_cs_step_start_halos!`
 - [`vertical_fv3_profile.jl`](vertical_fv3_profile.jl) — vertical sweep with
   FV3's `scalar_profile` (kord 8) piecewise-parabolic tracer profile
 - [`vertical_fv3_profile_adjoint.jl`](vertical_fv3_profile_adjoint.jl) —
@@ -153,6 +163,12 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
 
 - `../Diffusion` and `../SurfaceFlux` are imported into the palindrome
   midpoint; changes there can change advection runtime behavior
+- The cubed-sphere adjoint (`../../Adjoints/`, `../../Footprint/`) composes
+  its replayed and recorded steps from `fill_cs_step_start_halos!` and
+  `surface_flux_center!`, so the adjoint's forward model is the production
+  step. Change the cubed-sphere step composition in `strang_split!` together
+  with `_replay_cs_step!` and the tape recorders;
+  `test/core/test_cs_adjoint_production_parity.jl` compares them
 - [`../../State/`](../../State/) provides tracer slices, flux-state
   types, and the panel-native cubed-sphere containers
 - [`../../Grids/`](../../Grids/) provides mesh geometry and panel

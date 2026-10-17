@@ -34,13 +34,14 @@ using ...SectionTimer
 # `= nothing`, keeping the default path bit-exact with the no-op behavior.
 using ..Diffusion: AbstractDiffusion, DiffusionWorkspace, NoDiffusion,
                    apply_vertical_diffusion_vmr!, _packed_references,
-                   uses_diffusive_surface_flux_boundary
+                   uses_diffusive_surface_flux_boundary,
+                   surface_flux_coupling, surface_flux_center!
 # SurfaceFlux is loaded before Advection in Operators.jl so the palindrome
 # center can dispatch on `AbstractSurfaceFluxOperator`.
 # `NoSurfaceFlux`'s `apply_surface_flux!` method returns `nothing`, keeping
 # the default path bit-exact with the no-op behavior.
 using ..SurfaceFlux: AbstractSurfaceFluxOperator, NoSurfaceFlux,
-                     apply_surface_flux!, emission_deposit
+                     apply_surface_flux!, center_emission_deposit
 using ...State: CellState, CubedSphereState,
     AbstractStructuredFaceFluxState, AbstractFaceFluxState,
     StructuredFaceFluxState, AbstractUnstructuredFaceFluxState,

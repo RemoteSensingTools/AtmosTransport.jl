@@ -72,6 +72,18 @@
 
 ### Testing
 
+- `test/core/test_cs_adjoint_production_parity.jl` (adjoint_footprint topic)
+  checks the cubed-sphere adjoint against production: replay vs.
+  `TransportModel.step!` for both surface-flux couplings with TM5, CMFMC and
+  no convection; footprints vs. production finite differences; Stride and
+  Revolve vs. `FullCheckpoint` with convection for both limiters; the tape
+  layout vs. `cs_tape_byte_estimate`; and limited-PPM `:pinned_host` and
+  `:mmap` tapes vs. `:device` at every entry point. The Revolve test of
+  `test_cs_stride_checkpoint.jl` with monotone PPM now includes CMFMC
+  convection and asserts the `1e-12` parity of the other schedules instead of
+  `atol = 1e-5, rtol = 1e-3`; the opt-in GPU block of
+  `test_cs_ppm_adjoint_footprint.jl` compares limited-PPM `:pinned_host` and
+  `:mmap` footprints with `:device`.
 - **JET 0.12 allowed in the test environment.** On 2026-10-15 the General registry
   applied JET's rolling Julia-compatibility policy (General PR #171848), capping JET
   ≤ 0.11 to Julia 1.12; on Julia ≥ 1.13 only JET 0.12 resolves. With `[compat]`
@@ -85,6 +97,11 @@
 
 ### Numerical changes
 
+- **Cubed-sphere adjoint footprints and 4D-Var gradients** change for runs
+  with convection, with `DiffusiveSurfaceFluxBoundary`, or with limited-PPM
+  `:pinned_host` / GPU `:mmap` tapes: the replays and tapes now follow the
+  production step (issues #57 and #60, see Fixes). Forward results are
+  unchanged.
 - **ERA5 → TM5 convection conversion follows TM5's half levels** (issue #54,
   pera-noaa). ERA5 archives UDMF/DDMF level k as the flux through the top of
   layer k, with none through the ground (TM5 `tmm.F90`: "levels top down,
@@ -281,6 +298,55 @@
 
 ### Fixes
 
+- **Cubed-sphere adjoint: `:pinned_host` and GPU `:mmap` tapes handed the
+  limited-PPM reverse sweep `m === rm`** (issue #57, pera-noaa). Host-side tape
+  storage reads a staged state back through a device cache, and both policies
+  kept one cache per panel shape. A `MonotoneLimiter` or `CW84Limiter` sweep
+  record reads its air mass and tracer mass in one call, so the kernel got
+  the tracer mass twice: footprints were off by about 80 % and 4D-Var
+  gradients by about 20 % at every entry point (`FullCheckpoint`, Stride,
+  Revolve, from-seed, `cs_surface_flux_4dvar`). `:device`, CPU `:mmap` (mmap
+  views), unlimited schemes and Lin–Rood were not affected. Reads now name
+  their operand, `_tape_panels(slot, AirMassRead())` or `TracerMassRead()`,
+  and `PinnedHostCSTapeStorage` and `MmapCSTapeStorage` (the new
+  `AbstractHostCSTapeStorage`) keep one device cache per read role and panel
+  shape; `:pinned_host` and `:mmap` now agree with `:device` to rounding
+  on the CPU and on CUDA (L40S). Internal API: the one-argument
+  `_tape_panels(slot)` and `_ensure_tape_read_cache!` are replaced by
+  `_tape_panels(slot, role)`, `_register_tape_read_backend!` and
+  `_tape_read_cache!`; the mmap field `device_caches` became `read_caches`,
+  and the pinned-host field `device_cache` became `read_template` and
+  `read_caches`.
+- **Cubed-sphere adjoint replays and tapes now follow the production step**
+  (issue #60, pera-noaa). Two differences between the adjoint's forward model
+  (`run_cs_footprint_forward`, the 4D-Var simulated values, the tape
+  recorders) and `TransportModel.step!`:
+  (1) With `DiffusiveSurfaceFluxBoundary` (`[diffusion] surface_flux_boundary
+  = true`, which `geoschem_holtslag_boville_vdiff` needs) production runs
+  `S(dt) → V(dt)` at the palindrome center, while the replays always ran
+  `V(dt/2) → S(dt) → V(dt/2)`: the footprint differed from finite differences
+  of production by about 9 %. (2) Production refreshes the X halos of the air
+  mass and tracer mass at the start of every step; the replays and recorders
+  did not, so from the second step on the first X sweep read tracer halos
+  from before the previous step's convection (replay vs. production up to
+  1e-3 relative after 12 steps, growing with the step count and the
+  convective mass flux), and checkpoint windows, which restart with fresh
+  halos, disagreed with `FullCheckpoint` by about 1e-2 for limited PPM. The
+  center order is now one function, `surface_flux_center!(diffuse!, emit!,
+  coupling, dt)`, used by production (through `palindrome_center!`, now the
+  center of every topology's palindrome) and by the replays and recorders
+  (which record one full-step diffusion after the midpoint for the diffusive
+  boundary); every replayed and recorded split-sweep step starts with
+  `fill_cs_step_start_halos!`, production's refresh, and records its
+  `_CSHaloRecord(1)`. `cs_tape_byte_estimate` counts the new records. The
+  replay now equals production to rounding, footprints match production
+  finite differences to about 1e-10, and Stride and Revolve match
+  `FullCheckpoint` to 1e-16. The documented "Revolve drift of about 1e-7 from
+  limiter flips at bisection halo refills" was this missing refresh and is
+  gone. Forward production results are unchanged bit for bit (cubed-sphere
+  split-sweep and Lin–Rood, lat-lon and reduced-Gaussian palindromes, every
+  center, Float32 and Float64); adjoint footprints and gradients change for
+  runs with convection or the diffusive boundary.
 - **Observation heights: altitude-only records are placed above the ground,
   never silently in the lowest layer** (issue #56). ObsPack records that give
   an `altitude` above sea level but no `intake_height` or `elevation` had a

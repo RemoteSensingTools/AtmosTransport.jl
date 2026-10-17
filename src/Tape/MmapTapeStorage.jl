@@ -16,8 +16,9 @@
 # Each slot reserves a contiguous span of `records.bin` and holds six
 # `(record_id, panel_offset, panel_shape)` triplets. `stage_panels!`
 # copies the source panels into `Mmap.mmap` views over the reserved
-# region; `_tape_panels` returns mmap views (CPU runs) or copies them
-# into a shared device-side cache (GPU runs, see CUDA extension).
+# region; `_tape_panels(slot, role)` returns mmap views (CPU runs) or
+# copies them into a device-side read cache, one per read role and panel
+# shape (GPU runs, see CUDA extension).
 # ---------------------------------------------------------------------------
 
 using Mmap: Mmap
@@ -47,29 +48,32 @@ does not exist; if omitted, a unique temporary directory is created and
 deleted when the storage object is garbage-collected.
 
 The policy is backend-agnostic: CPU source panels yield in-place
-`Mmap.mmap` views at read time; GPU source panels go through a shared
-per-shape device-side read cache. The cache is keyed by the panel
-shape signature (`NTuple{6, NTuple{3, Int}}`) so a reverse loop that
-alternates between m-shaped (Nx,Nx,Nz), am-shaped (Nx+1,Nx,Nz),
-bm-shaped (Nx,Nx+1,Nz), and cm-shaped (Nx,Nx,Nz+1) slots reuses each
-shape's cache instead of reallocating six `similar(panel)` device
-buffers on every read.
+`Mmap.mmap` views at read time; GPU source panels go through
+device-side read caches keyed by the read role (`AirMassRead`,
+`TracerMassRead`) and the panel shape signature
+(`NTuple{6, NTuple{3, Int}}`). The role keeps the air mass and the
+tracer mass that one reverse kernel reads together in distinct
+buffers; the shape lets a reverse loop that alternates between slot
+shapes reuse each cache instead of reallocating six device buffers on
+every read.
 
 The on-disk format is the `manifest.toml` metadata plus appended raw
 panel payloads in `records.bin`.
 """
-mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
+mutable struct MmapCSTapeStorage <: AbstractHostCSTapeStorage
     bin_path::String
     manifest_path::String
     dir::String
     bin_io::IOStream
     cursor::Int64
     records::Vector{MmapTapeRecordEntry}
-    # Shape-keyed device-side read cache. Populated by
-    # `_mmap_prepare_for_panels!` for non-`Array` panel sources;
-    # stays empty for CPU runs so `_tape_panels` returns mmap views
-    # directly (zero-copy through the page cache).
-    device_caches::Dict{NTuple{6, NTuple{3, Int}}, CSPanelCache}
+    # Zero-size array on the source backend, set by
+    # `_mmap_prepare_for_panels!` for non-`Array` panel sources. It
+    # stays `nothing` for CPU runs, so `_tape_panels` returns mmap
+    # views directly (zero-copy through the page cache).
+    read_template::Union{Nothing, AbstractArray}
+    # Device-side read caches keyed by (read role, panel shapes).
+    read_caches::Dict{CSTapeReadCacheKey, CSPanelCache}
     synchronize::CSSynchronizeHook
     finalised::Bool
     closed::Bool
@@ -102,7 +106,7 @@ mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
         try
             storage = new(bin_path, manifest_path, String(dir), bin_io, Int64(0),
                           MmapTapeRecordEntry[],
-                          Dict{NTuple{6, NTuple{3, Int}}, CSPanelCache}(),
+                          nothing, Dict{CSTapeReadCacheKey, CSPanelCache}(),
                           nothing,
                           false, false, cleanup, false)
             finalizer(_mmap_storage_gc_close!, storage)
@@ -133,7 +137,7 @@ mutable struct MmapCSTapeStorage <: AbstractCSTapeStorage
         try
             storage = new(bin_path, manifest_path, String(dir), bin_io, cursor,
                           records,
-                          Dict{NTuple{6, NTuple{3, Int}}, CSPanelCache}(),
+                          nothing, Dict{CSTapeReadCacheKey, CSPanelCache}(),
                           nothing,
                           true, false, false, mode == "r")
             finalizer(_mmap_storage_gc_close!, storage)
@@ -260,14 +264,15 @@ end
     _mmap_prepare_for_panels!(storage, panels)
 
 Hook called once per slot allocation, **before** the disk reservation,
-that lets the storage install per-policy state (e.g. a shared
-device-side read cache, a backend `synchronize` callback).
+that lets the storage install per-policy state (the backend of the
+device-side read caches, a backend `synchronize` callback).
 
 The **default** method assumes the source panels are non-`Array`
-device-resident buffers (CuArray, MtlArray, …) and pre-allocates a
-backend-matched read cache via `_ensure_tape_read_cache!`. The
-specialised method for `NTuple{6, <:Array}` is a no-op so the CPU read
-path can return mmap views directly without an intermediate copy.
+device-resident buffers (CuArray, MtlArray, …) and records their backend
+via `_register_tape_read_backend!`, so the read caches are allocated
+there on first read. The specialised method for `NTuple{6, <:Array}` is a
+no-op so the CPU read path can return mmap views directly without an
+intermediate copy.
 
 The CUDA extension layers a `synchronize = CUDA.synchronize` hook on top
 of the default to amortise asynchronous device transfers; correctness
@@ -276,7 +281,7 @@ of mmap → device traffic does **not** depend on that extension because
 """
 function _mmap_prepare_for_panels!(storage::MmapCSTapeStorage,
                                    panels::NTuple{6})
-    _ensure_tape_read_cache!(storage, panels)
+    _register_tape_read_backend!(storage, panels)
     return storage
 end
 
@@ -344,32 +349,25 @@ end
 
 # Single-reader during reverse pass: the `_collect_surface_footprints`
 # loop in Footprint/ReverseLoop.jl consumes slots sequentially. Each
-# shape's cache is mutated in-place across reads, so this method is
-# not safe under concurrent multi-threaded reverse walks against the
-# same storage. Document via this comment until/unless that scenario
-# materialises.
+# read cache is mutated in place across reads, so this method is not
+# safe under concurrent multi-threaded reverse walks against the same
+# storage.
 #
-# Cache lookup is keyed by `slot.shapes` (the per-panel-shape tuple),
-# so future callers that stage heterogeneous shapes (e.g. flux-tape
-# work that pushes `panels_am` / `panels_bm` / `panels_cm` snapshots
-# alongside the air-mass tape) reuse one six-buffer cache per
-# distinct shape signature. As of A.2a the only forward-recorder that
-# uses MmapCSTapeStorage is `_record_cs_mass_tape` / _tracer_tape in
-# `src/Footprint/TapeRecording.jl`, which only stages m-shaped panels
-# (`panels_m`, `panels_rm`) — so in practice `device_caches` holds at
-# most one entry today and the multi-shape generality is forward
-# insurance.
-#
-# For GPU runs the per-shape cache is pre-allocated by
-# `_mmap_prepare_for_panels!` during `_allocate_tape_slot`, so
-# `_ensure_tape_read_cache!` returns the existing `CuArray` cache
-# without ever calling `similar(::Array)` on the mmap views.
-function _tape_panels(slot::MmapCSTapeSlot)
+# GPU runs (`read_template` set by `_mmap_prepare_for_panels!`) copy the
+# mmap views into the device cache of `(role, slot.shapes)`
+# (`_tape_read_cache!` in TapeStorage.jl). The role keeps the air mass
+# and the tracer mass that one limited-PPM sweep record hands the
+# reverse kernel in two buffers; with one cache per shape they were the
+# same buffer (issue #57). The shape key lets slots of different shapes
+# share one storage. The caches are allocated on first read, `similar`
+# to the device template, never `similar(::Array)` of the mmap views.
+# CPU runs return the views themselves: every read is a distinct view.
+function _tape_panels(slot::MmapCSTapeSlot, role::AbstractTapeReadRole)
     storage = slot.storage
     views = ntuple(p -> _mmap_view(storage.bin_io, slot.eltype,
                                    slot.shapes[p], slot.offsets[p]), 6)
-    isempty(storage.device_caches) && return views
-    cache = _ensure_tape_read_cache!(storage, views)
+    storage.read_template === nothing && return views
+    cache = _tape_read_cache!(storage, role, views)
     @inbounds for p in 1:6
         copyto!(cache[p], views[p])
     end
@@ -390,31 +388,6 @@ _after_tape_stage!(storage::MmapCSTapeStorage) =
     _sync_mmap_tape_storage!(storage)
 _after_tape_read!(storage::MmapCSTapeStorage) =
     _sync_mmap_tape_storage!(storage)
-
-# Shape-keyed device cache. The key is `ntuple(p -> size(panels[p]), 6)`,
-# which makes consecutive reads of slots with the same shape signature
-# (e.g. all `panels_m` slots in a reverse loop) reuse the same six
-# device buffers.
-#
-# Eltype handling: each `MmapCSTapeStorage` derives its on-disk eltype
-# from the first staged slot (`slot.eltype` in `_allocate_tape_slot`),
-# and `_record_cs_mass_tape` / `_record_cs_tracer_tape` stage all
-# their tape slots from arrays of the same `FT`. So in practice every
-# `_ensure_tape_read_cache!` call for the same key arrives with the
-# same eltype. The defensive `eltype` recheck below reallocates if
-# that upstream invariant ever breaks (rather than silently
-# corrupting the `copyto!`).
-function _ensure_tape_read_cache!(storage::MmapCSTapeStorage,
-                                  panels::NTuple{6})
-    key = ntuple(p -> size(panels[p]), 6)
-    cached = get(storage.device_caches, key, nothing)
-    if cached !== nothing && eltype(cached[1]) === eltype(panels[1])
-        return cached
-    end
-    fresh = ntuple(p -> similar(panels[p]), 6)
-    storage.device_caches[key] = fresh
-    return fresh
-end
 
 # ---------------------------------------------------------------------------
 # Finalisation + cleanup
@@ -465,10 +438,10 @@ function finalize_tape!(storage::MmapCSTapeStorage; quiet::Bool = false,
         !quiet && !strict &&
             @warn "MmapCSTapeStorage: bin close failed" exception = err
     end
-    # Drop the per-shape device cache so any device-resident buffers
-    # are released promptly. This matters for long-running 4D-Var
-    # loops that reuse one Julia session across many tapes.
-    empty!(storage.device_caches)
+    # Drop the device read caches so any device-resident buffers are
+    # released promptly. This matters for long-running 4D-Var loops that
+    # reuse one Julia session across many tapes.
+    empty!(storage.read_caches)
     storage.closed = true
     if storage.cleanup_on_finalize && isdir(storage.dir)
         try
@@ -701,7 +674,7 @@ end
 
 Return a slot descriptor for an existing record in `storage`. The slot
 exposes the same `offsets`/`shapes`/`eltype` fields as one produced by
-`_allocate_tape_slot`, so `_tape_panels(slot)` returns mmap views over
+`_allocate_tape_slot`, so `_tape_panels(slot, role)` returns mmap views over
 the recorded panels.
 """
 function get_record(storage::MmapCSTapeStorage, record_id::Integer)
@@ -721,7 +694,7 @@ function Base.show(io::IO, storage::MmapCSTapeStorage)
     print(io, "MmapCSTapeStorage(dir=", repr(storage.dir),
           ", records=", length(storage.records),
           ", bytes=", storage.cursor,
-          ", cache_shapes=", length(storage.device_caches),
+          ", read_caches=", length(storage.read_caches),
           storage.closed ? ", closed" : "",
           ")")
 end
