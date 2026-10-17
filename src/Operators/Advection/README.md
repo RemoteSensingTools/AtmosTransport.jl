@@ -126,7 +126,9 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
   numbers (value plus partials) to obtain the limiter branches and local
   Jacobians, and the transposed column kernel used by the Lin-Rood adjoint
 - [`CubedSphereSeams.jl`](CubedSphereSeams.jl) — canonical physical seam
-  transfers paired across panels within each directional group
+  transfers paired across panels within each directional group; a group's
+  transfers are cached in one launch (`SeamTransferCache` point operations,
+  see `Architectures.AbstractPointOp`) and applied seam by seam in queue order
 - [`ppm_subgrid_distributions.jl`](ppm_subgrid_distributions.jl) — PPM
   subcell distributions shared by CS-specific code
 - [`LinRoodSeams.jl`](LinRoodSeams.jl) — shared final seam estimates and

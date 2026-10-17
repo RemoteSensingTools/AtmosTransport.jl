@@ -697,6 +697,12 @@
   operators only read them. Interpolated fluxes, the expected air mass and
   humidity still change every substep. A C90 L72 step issued 36 fewer
   device copies (about 0.3 ms of a 4.4 ms one-tracer step).
+- Cubed-sphere seam transfers: the transfers of a directional group are
+  cached in one launch of `SeamTransferCache` point operations (`Fused`,
+  twelve seams with the other group's inactive) instead of one launch per
+  seam, and neither the cache nor the seam application synchronizes the host
+  on a device (the halo exchange after each sweep does). A C90 step issues 20
+  fewer launches and 8 fewer synchronizations; results are bit-identical.
 
 ### Other changes
 

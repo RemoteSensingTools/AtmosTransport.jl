@@ -56,21 +56,71 @@ end
     @inbounds return _gamma_clamped_x_flux(F, m[i, donor, k], rm[i, donor, k])
 end
 
-@kernel function _cs_cache_seam_kernel!(cache, @Const(rm), @Const(m), @Const(flux),
-                                       scheme, direction, edge, seam, Nc, Hp, Nt, scale)
-    s, k = @index(Global, NTuple)
-    i, j = _cs_seam_face_index(edge, s, Nc)
+"""
+    SeamTransferCache{D}(p, edge, seam, active)
+
+Cache the transfer through physical seam `seam`, edge `edge` of the
+lower-numbered panel `p`, for directional group `D` (1 = X, 2 = Y): at
+along-edge index `s` and level `k`, the signed air-mass flux and every tracer's
+face flux, read before any panel of the group is updated. A seam of the other
+group is inactive (an empty index space), so the twelve seams of a cube form
+one `Fused` launch for either group.
+"""
+struct SeamTransferCache{D} <: AbstractPointOp
+    p::Int
+    edge::Int
+    seam::Int
+    active::Bool
+end
+
+index_space(op::SeamTransferCache, ctx) = (op.active ? ctx.Nc : 0, size(ctx.cache, 2))
+
+bound_context(op::SeamTransferCache, ctx) =
+    merge(ctx, (rm = ctx.panels_rm[op.p], m = ctx.panels_m[op.p], flux = ctx.panels_flux[op.p]))
+@inline _seam_panel(op::SeamTransferCache, ctx, ::Val{:rm}) =
+    hasproperty(ctx, :rm) ? ctx.rm : select_panel(ctx.panels_rm, op.p)
+@inline _seam_panel(op::SeamTransferCache, ctx, ::Val{:m}) =
+    hasproperty(ctx, :m) ? ctx.m : select_panel(ctx.panels_m, op.p)
+@inline _seam_panel(op::SeamTransferCache, ctx, ::Val{:flux}) =
+    hasproperty(ctx, :flux) ? ctx.flux : select_panel(ctx.panels_flux, op.p)
+
+@inline function apply_point!(op::SeamTransferCache{D}, ctx, s, k) where D
+    (; cache, scheme, Nc, Hp, Nt, scale) = ctx
+    rm = _seam_panel(op, ctx, Val(:rm))
+    m = _seam_panel(op, ctx, Val(:m))
+    flux = _seam_panel(op, ctx, Val(:flux))
+    i, j = _cs_seam_face_index(op.edge, s, Nc)
     i += Hp; j += Hp
     @inbounds begin
         F = scale * flux[i, j, k]
-        sign = _cs_seam_sign(edge, eltype(m))
-        cache[s, k, Nt + 1, seam] = sign * F
+        sign = _cs_seam_sign(op.edge, eltype(m))
+        cache[s, k, Nt + 1, op.seam] = sign * F
         for t in 1:Nt
             tracer = _cs_seam_tracer(rm, t)
-            cache[s, k, t, seam] = sign * _cs_seam_tracer_flux(
-                direction, i, j, k, tracer, m, F, scheme, Nc + 2Hp)
+            cache[s, k, t, op.seam] = sign * _cs_seam_tracer_flux(
+                Val(D), i, j, k, tracer, m, F, scheme, Nc + 2Hp)
         end
     end
+    return nothing
+end
+
+# Physical seam `n` of a cube in seam-cache order: the `n`-th edge `edge` of a
+# panel `p` whose neighbor has the higher panel number (panels, then edges, in
+# increasing order, as `_apply_cs_seams!` counts them).
+function _cs_seam(conn::PanelConnectivity, n::Int)
+    seam = 0
+    for p in 1:6, edge in 1:4
+        p < conn.neighbors[p][edge].panel || continue
+        (seam += 1) == n && return (p, edge)
+    end
+    throw(ArgumentError("cubed-sphere connectivity has $seam physical seams, not 12"))
+end
+
+function _seam_cache_ops(conn::PanelConnectivity, ::Val{D}) where D
+    return Fused(ntuple(Val(12)) do n
+        p, edge = _cs_seam(conn, n)
+        SeamTransferCache{D}(p, edge, n, _cs_seam_axis(edge) == D)
+    end)
 end
 
 @kernel function _cs_apply_seam_kernel!(rm_a, m_a, rm_b, m_b, @Const(cache),
@@ -101,18 +151,13 @@ function _cache_cs_seams!(cache, panels_rm::NTuple{6}, panels_m::NTuple{6},
     (size(cache, 1), size(cache, 2), size(cache, 4)) == (Nc, Nz, 12) ||
         throw(DimensionMismatch("CS seam cache must match Nc=$Nc, Nz=$Nz and 12 physical edges"))
     size(cache, 3) >= Nt + 1 || throw(DimensionMismatch("CS seam cache needs $Nt tracer slots plus air mass"))
-    backend = get_backend(panels_rm[1])
-    kernel! = _cs_cache_seam_kernel!(backend, 64)
-    seam = 0
-    for p in 1:6, edge in 1:4
-        p < mesh.connectivity.neighbors[p][edge].panel || continue
-        seam += 1
-        _cs_seam_axis(edge) == D || continue
-        kernel!(cache, panels_rm[p], panels_m[p], panels_flux[p], scheme,
-                direction, edge, seam, Nc, Hp, Nt, eltype(panels_m[1])(scale);
-                ndrange=(Nc, Nz))
-    end
-    synchronize(backend)
+    # One launch for the group's seams. The sweeps and the seam application
+    # that read the cache follow on the same device queue, so no host
+    # synchronization is needed (host loops run synchronously).
+    ctx = (; panels_rm, panels_m, panels_flux, cache, scheme, Nc, Hp, Nt,
+           scale = eltype(panels_m[1])(scale))
+    launch!(_seam_cache_ops(mesh.connectivity, direction), ctx, get_backend(panels_rm[1]);
+            workgroup = 64, sync = false)
     return nothing
 end
 
@@ -136,7 +181,9 @@ function _apply_cs_seams!(panels_rm::NTuple{6}, panels_m::NTuple{6}, cache,
                 edge, other_edge, neighbor.orientation != 0, seam, Nc, Hp, Nt;
                 ndrange=(Nc, Nz))
     end
-    synchronize(backend)
+    # The halo exchange after the sweep reads these cells in queue order and
+    # synchronizes; the CPU backend completes each launch here.
+    backend isa KA_CPU && synchronize(backend)
     return nothing
 end
 
