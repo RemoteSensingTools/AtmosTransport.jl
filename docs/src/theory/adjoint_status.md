@@ -359,9 +359,14 @@ the retrieval's ``N`` layers from the surface up:
   ``\partial X/\partial x_i = h_i a_i`` on the retrieval layers;
 - the prior profile ``x_{a,i}`` (dry mole fraction, mol mol⁻¹; files state
   the unit, ppm and ppb are converted). The operator adds it to the model's
-  dry mole fractions, so the record value and error and the transported
-  tracer are in mol mol⁻¹ too (a record value outside [0, 1] is rejected);
-- optionally a profile uncertainty ``\sigma_i``.
+  dry mole fractions, so the record value and errors and the transported
+  tracer are in mol mol⁻¹ too: such a file states a mole-fraction unit on
+  `value`, `value_sigma` and `model_sigma` (converted to mol mol⁻¹), and a
+  record must be an absolute column average, a value in (0, 1] with errors
+  not above it;
+- optionally `retrieval_profile_sigma`, an uncertainty ``\sigma_i`` of the
+  *model* profile on the retrieval layers (mol mol⁻¹), for the model-error
+  term below.
 
 `bind_to_mesh` turns such a record into a `CSRetrievalColumnObjective`. At
 every sampled state the model's interface pressures ``p_{k+1/2}`` of its cell
@@ -425,7 +430,12 @@ sounding), the model's boundary layer is compressed onto the retrieval's
 lowest layers instead of being cut off below the retrieval surface, which
 would remove boundary-layer air, and its enhancements, from the column; a
 30 hPa mismatch moves every interface by about 3 % of its pressure. This is
-why the default is no limit, as in TM5.
+why the default is no limit, as in TM5. The same holds at the top: when the
+retrieval top lies well below the model top (a retrieval grid that stops at
+10 hPa, say), the stretch packs the whole model column, stratosphere
+included, into the retrieval's pressure range, as TM5 does, so ``X`` is a
+full-column mean of the model, not a partial column above the retrieval
+top.
 
 **Surface-pressure mismatch policy.** `max_surface_pressure_mismatch_pa`
 (`bind_to_mesh` keyword; `[observations.placement]` key of the inversion
@@ -442,15 +452,22 @@ pressure is known only at the sampled states, so the check runs in the
 4D-Var's forward replay; it depends on the meteorology only, so the same
 records are left out in every iteration.
 
-**Model-error term.** When the record gives a profile uncertainty, the
-observation error is
+**Model-error term.** When the record gives a model-profile uncertainty
+``\sigma_i`` (`retrieval_profile_sigma`), the observation error is
 ``\sigma^2 = \sigma^2_\mathrm{obs} + \sigma^2_\mathrm{mod} + \sum_i (h_i a_i \sigma_i)^2``
 (`Output.retrieval_model_error_variance`): the operator's weights on the
 retrieval layers, squared, times the profile variance, the layers taken
 independent. It depends on the record only, not on the state or the
 meteorology, so it is fixed when the record is bound and the cost stays
 quadratic in every iteration (TM5 freezes its ``\sigma_\mathrm{mod}`` at the
-first iteration for the same reason).
+first iteration for the same reason). It is analogous to, not the same as,
+TM5's term: TM5's CH4 TROPOMI routine (`averaging_kernels.F90`, line 669)
+evaluates ``\sum_k H_k^2 \sigma_k^2`` with the weights ``H = (h a) R`` on the
+model layers and the spread of the modelled profiles, and its OCO-2 routine
+adds a column model error instead. The input is an uncertainty of the
+*model* profile (representation or transport error). Do not pass the
+retrieval's a-priori uncertainty: the smoothing error it causes is already
+represented by the averaging kernel.
 
 **Diagnostics.** The stencil of an averaging-kernel column
 (`CSObservationStencil`, placement code `RETRIEVAL_COLUMN_PLACEMENT_CODE` =
@@ -461,7 +478,9 @@ with the profile model sigma (`schemas/cs_departures_v2.toml`).
 **Relation to TM5-4DVAR.** Matched: the stretch (including its averaging of
 the two offsets), the overlap matrix of `inv_rebin` with its outer
 interfaces, the column and its per-layer forcing; the test reproduces values
-computed with TM5's Fortran on fixed columns to ``10^{-14}``. Different:
+computed with TM5's Fortran on fixed columns to ``10^{-14}`` (the stretched
+interfaces exactly; ``H`` can differ in the last bit from the Fortran's
+`matmul` summation order). Different:
 
 - the operator is in the model, a linear functional of the tracer mass at
   each sampled step (a window record averages the operator over its steps),
@@ -478,9 +497,9 @@ computed with TM5's Fortran on fixed columns to ``10^{-14}``. Different:
 - a rebin that fails TM5's checks (possible only for a retrieval layer
   thinner than the stretch's rounding) is an error, not a silent zero
   departure;
-- the profile uncertainty is given on the retrieval layers by the record;
-  TM5's CH4 TROPOMI path uses the spread of the modelled profile on model
-  layers from its track file.
+- the model-profile uncertainty is given on the retrieval layers by the
+  record; TM5's CH4 TROPOMI path uses the spread of the modelled profile on
+  model layers from its track file.
 
 `test/core/test_cs_4dvar_retrieval_columns.jl` checks agreement with TM5's
 Fortran (reference values computed with `averaging_kernels.F90` itself, with

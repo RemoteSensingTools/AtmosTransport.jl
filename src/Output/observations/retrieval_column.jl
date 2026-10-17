@@ -45,6 +45,11 @@ const _MOLE_FRACTION_UNITS = Dict("mol/mol" => 1.0, "molmol-1" => 1.0, "molmol^-
                                   "umolmol-1" => 1e-6, "µmolmol-1" => 1e-6,
                                   "ppb" => 1e-9, "ppbv" => 1e-9, "nmol/mol" => 1e-9, "nmolmol-1" => 1e-9)
 
+# The mol/mol factor of a mole-fraction unit, `nothing` for anything else.
+_mole_fraction_scale(units::AbstractString) = get(_MOLE_FRACTION_UNITS, replace(lowercase(units), r"\s" => ""),
+                                                  nothing)
+_mole_fraction_scale(units) = nothing
+
 """
     mole_fraction_unit_scale(units, label) -> Float64
 
@@ -53,8 +58,7 @@ The factor that converts a dry mole fraction stated in `units` (`"mol mol-1"`,
 missing or unknown unit, naming `label`.
 """
 function mole_fraction_unit_scale(units, label::AbstractString)
-    key = units isa AbstractString ? replace(lowercase(units), r"\s" => "") : nothing
-    scale = key === nothing ? nothing : get(_MOLE_FRACTION_UNITS, key, nothing)
+    scale = _mole_fraction_scale(units)
     scale === nothing && throw(ArgumentError(
         "$(label) has units $(repr(units)); a dry mole fraction must state its unit, one of " *
         "$(join(sort!(collect(keys(_MOLE_FRACTION_UNITS))), ", "))"))
@@ -63,9 +67,9 @@ end
 
 """
     RetrievalColumn(pressure_pa, pressure_weight, averaging_kernel, prior_profile,
-                    prior_sigma, surface_pressure_pa)
+                    profile_sigma, surface_pressure_pa)
     RetrievalColumn(; pressure_pa, pressure_weight, averaging_kernel, prior_profile,
-                      prior_sigma = Float64[], surface_pressure_pa = first(pressure_pa))
+                      profile_sigma = Float64[], surface_pressure_pa = first(pressure_pa))
 
 The vertical description of one retrieved column average (a satellite or
 TCCON sounding) on its `N` retrieval layers, ordered from the surface up:
@@ -78,9 +82,11 @@ TCCON sounding) on its `N` retrieval layers, ordered from the surface up:
   dimensionless: ``∂X/∂x_i = h_i a_i``);
 - `prior_profile`: the retrieval prior ``x_{a,i}`` (`N`, dry mole fraction,
   mol mol⁻¹, in `[0, 1]`);
-- `prior_sigma`: optional profile uncertainty ``σ_i`` (`N`, mol mol⁻¹, `≥ 0`;
-  empty when absent) for the model-error term
-  [`retrieval_model_error_variance`](@ref);
+- `profile_sigma`: optional 1-σ uncertainty ``σ_i`` of the *model* profile on
+  the retrieval layers (`N`, mol mol⁻¹, in `[0, 1]`; empty when absent), the
+  input of the model-error term [`retrieval_model_error_variance`](@ref). It
+  is not the retrieval's a-priori uncertainty: the smoothing error is already
+  represented by the averaging kernel;
 - `surface_pressure_pa`: the retrieval surface pressure (Pa), equal to the
   first interface (relative tolerance 1e-6).
 
@@ -92,16 +98,16 @@ struct RetrievalColumn
     pressure_weight::Vector{Float64}
     averaging_kernel::Vector{Float64}
     prior_profile::Vector{Float64}
-    prior_sigma::Vector{Float64}
+    profile_sigma::Vector{Float64}
     surface_pressure_pa::Float64
     function RetrievalColumn(pressure_pa::AbstractVector{<:Real}, pressure_weight::AbstractVector{<:Real},
                              averaging_kernel::AbstractVector{<:Real}, prior_profile::AbstractVector{<:Real},
-                             prior_sigma::AbstractVector{<:Real}, surface_pressure_pa::Real)
+                             profile_sigma::AbstractVector{<:Real}, surface_pressure_pa::Real)
         p = collect(Float64, pressure_pa)
         h = collect(Float64, pressure_weight)
         a = collect(Float64, averaging_kernel)
         xa = collect(Float64, prior_profile)
-        σ = collect(Float64, prior_sigma)
+        σ = collect(Float64, profile_sigma)
         ps = Float64(surface_pressure_pa)
         _check_retrieval_column(p, h, a, xa, σ, ps)
         return new(p, h, a, xa, σ, ps)
@@ -109,8 +115,8 @@ struct RetrievalColumn
 end
 
 RetrievalColumn(; pressure_pa, pressure_weight, averaging_kernel, prior_profile,
-                  prior_sigma = Float64[], surface_pressure_pa = first(pressure_pa)) =
-    RetrievalColumn(pressure_pa, pressure_weight, averaging_kernel, prior_profile, prior_sigma,
+                  profile_sigma = Float64[], surface_pressure_pa = first(pressure_pa)) =
+    RetrievalColumn(pressure_pa, pressure_weight, averaging_kernel, prior_profile, profile_sigma,
                     surface_pressure_pa)
 
 function _check_retrieval_column(p, h, a, xa, σ, ps)
@@ -123,9 +129,9 @@ function _check_retrieval_column(p, h, a, xa, σ, ps)
             "retrieval column $(name) has $(length(v)) entries; the column has $(n) layers"))
     end
     isempty(σ) || length(σ) == n || throw(DimensionMismatch(
-        "retrieval column prior_sigma has $(length(σ)) entries; the column has $(n) layers (or none)"))
+        "retrieval column profile_sigma has $(length(σ)) entries; the column has $(n) layers (or none)"))
     for (name, v) in (("pressure_pa", p), ("pressure_weight", h), ("averaging_kernel", a),
-                      ("prior_profile", xa), ("prior_sigma", σ))
+                      ("prior_profile", xa), ("profile_sigma", σ))
         all(isfinite, v) || throw(ArgumentError("retrieval column $(name) must be finite; got $(v)"))
     end
     all(>(0), -diff(p)) || throw(ArgumentError(
@@ -141,7 +147,8 @@ function _check_retrieval_column(p, h, a, xa, σ, ps)
     all(x -> 0 <= x <= 1, xa) || throw(ArgumentError(
         "the retrieval prior profile is a dry mole fraction in mol/mol, within [0, 1]; got $(xa) " *
         "(a profile in ppm or ppb must be converted)"))
-    all(>=(0), σ) || throw(ArgumentError("retrieval prior_sigma must be >= 0; got $(σ)"))
+    all(x -> 0 <= x <= 1, σ) || throw(ArgumentError(
+        "retrieval profile_sigma is a mole-fraction uncertainty in mol/mol, within [0, 1]; got $(σ)"))
     isfinite(ps) && ps > 0 || throw(ArgumentError(
         "the retrieval surface pressure must be finite and positive; got $(ps)"))
     abs(ps - first(p)) <= _RETRIEVAL_SURFACE_TOLERANCE * ps || throw(ArgumentError(
@@ -153,9 +160,9 @@ end
 Base.:(==)(a::RetrievalColumn, b::RetrievalColumn) =
     a.pressure_pa == b.pressure_pa && a.pressure_weight == b.pressure_weight &&
     a.averaging_kernel == b.averaging_kernel && a.prior_profile == b.prior_profile &&
-    a.prior_sigma == b.prior_sigma && a.surface_pressure_pa == b.surface_pressure_pa
+    a.profile_sigma == b.profile_sigma && a.surface_pressure_pa == b.surface_pressure_pa
 Base.hash(c::RetrievalColumn, h::UInt) =
-    hash((c.pressure_pa, c.pressure_weight, c.averaging_kernel, c.prior_profile, c.prior_sigma,
+    hash((c.pressure_pa, c.pressure_weight, c.averaging_kernel, c.prior_profile, c.profile_sigma,
           c.surface_pressure_pa), hash(:RetrievalColumn, h))
 
 "Number of retrieval layers of a [`RetrievalColumn`](@ref)."
@@ -416,19 +423,26 @@ end
 """
     retrieval_model_error_variance(column::RetrievalColumn) -> Float64
 
-The model-error variance of the averaging-kernel column from the profile
-uncertainty ``σ_i`` of the column (`prior_sigma`), taken independent between
-retrieval layers: ``σ^2_\\mathrm{mod} = \\sum_i (h_i a_i σ_i)^2``, the
-weights of the operator on the retrieval layers, squared, times the profile
-variance (TM5-4DVar's ``\\sum H^2 σ^2``, Satellite.py of its CH4 project). Zero
-when the column gives no `prior_sigma`. It depends on the record only, so it
-is fixed for an inversion and the cost stays quadratic.
+The model-error variance of the averaging-kernel column from the uncertainty
+``σ_i`` of the model profile on the retrieval layers (`profile_sigma`), the
+layers taken independent: ``σ^2_\\mathrm{mod} = \\sum_i (h_i a_i σ_i)^2``,
+the operator's weights on the retrieval layers, squared, times the profile
+variance. Zero when the column gives no `profile_sigma`. It depends on the
+record only, so it is fixed for an inversion and the cost stays quadratic.
+
+This is analogous to, not the same as, TM5-4DVar's model error: its CH4
+TROPOMI routine (`averaging_kernels.F90`, line 669, and `Satellite.py` of the
+CH4 project) evaluates ``\\sum_k H_k^2 σ_k^2`` with the weights
+``H = (h a) R`` on the model layers and the spread of the modelled profiles
+``σ_k`` from its track file, and its OCO-2 routine adds a column model error
+instead. `profile_sigma` is not the retrieval's a-priori uncertainty, whose
+effect (the smoothing error) the averaging kernel already represents.
 """
 function retrieval_model_error_variance(column::RetrievalColumn)
-    isempty(column.prior_sigma) && return 0.0
+    isempty(column.profile_sigma) && return 0.0
     v = 0.0
-    @inbounds for i in eachindex(column.prior_sigma)
-        v += (column.pressure_weight[i] * column.averaging_kernel[i] * column.prior_sigma[i])^2
+    @inbounds for i in eachindex(column.profile_sigma)
+        v += (column.pressure_weight[i] * column.averaging_kernel[i] * column.profile_sigma[i])^2
     end
     return v
 end

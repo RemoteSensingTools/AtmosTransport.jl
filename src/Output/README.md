@@ -98,7 +98,7 @@ writing topology-specific NetCDF files directly.
   column operator of TM5-4DVAR, as pure host Float64 functions of one column:
   `RetrievalColumn` (a retrieval's interfaces from the surface up, pressure
   weights summing to 1, column averaging kernel, prior in mol/mol, optional
-  profile uncertainty; validated), `stretch_model_interfaces!` (the model
+  model-profile uncertainty `profile_sigma`; validated), `stretch_model_interfaces!` (the model
   column mapped linearly onto the retrieval's surface and top),
   `retrieval_rebin_matrix` (the mass-conserving overlap rebin R),
   `retrieval_column_weights!` (``H_k = Σᵢ hᵢ aᵢ Rᵢₖ``),

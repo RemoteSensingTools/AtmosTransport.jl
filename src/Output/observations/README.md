@@ -84,7 +84,7 @@ the sampler itself does not apply averaging kernels yet.
   `ConstantLayerTemperature`, `SurfaceLapseTemperature`, `ProfileLayerTemperature`
 - Averaging-kernel columns, in [`retrieval_column.jl`](retrieval_column.jl):
   `RetrievalColumn` (a retrieval's interfaces from the surface up, pressure
-  weights, column averaging kernel, prior, optional profile uncertainty),
+  weights, column averaging kernel, prior, optional model-profile uncertainty `profile_sigma`),
   `stretch_model_interfaces!`, `retrieval_rebin_matrix`,
   `retrieval_column_weights!`, `retrieval_prior_offset`, `retrieval_profile!`,
   `retrieval_column_value`, `retrieval_model_error_variance`,
@@ -208,7 +208,10 @@ the sampler itself does not apply averaging kernels yet.
     pressure only when `pressure` is a coordinate.
   - Placement keys that would have no effect are errors: `dem_variable`
     without `dem_file`; `dem_file` and `absolute_altitude_above_agl_m` without
-    `"height_above_ground"`; `pressure_basis` without `"pressure"`.
+    `"height_above_ground"`; `pressure_basis` without `"pressure"` (except
+    for callers whose averaging-kernel columns read the basis:
+    `_parse_vertical_placement(cfg, label; pressure_basis_for_columns = true)`,
+    the inversion driver).
   - The model surface height is never used as the true ground; it is only the
     reference of `absolute_altitude_above_agl_m`.
   - A request is never sampled in the lowest layer for lack of a height unless

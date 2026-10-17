@@ -189,14 +189,14 @@ retrieval_level = "the largest number of retrieval layers of any row"
 dtype = "f64"
 dims  = ["obs"]
 units = "Pa"
-description = "averaging-kernel columns: model minus retrieval surface pressure (time-weighted over the sampled steps), absorbed by the stretch of the model column onto the retrieval column; NaN for other rows"
+description = "averaging-kernel columns: model minus retrieval surface pressure (time-weighted over the sampled steps), absorbed by the stretch of the model column onto the retrieval column; NaN for other rows. The reader requires a pressure unit (converted to Pa)"
 
 [optional_variables.retrieval_model_profile]
 dtype = "f64"
 dims  = ["obs", "retrieval_level"]
 units = "mol mol-1"
 ordering = "surface_to_top"
-description = "averaging-kernel columns: the model's dry mole fraction on the retrieval layers (the stretched model column rebinned by pressure overlap, R x, time-weighted), from the surface up; NaN-padded, NaN for other rows"
+description = "averaging-kernel columns: the model's dry mole fraction on the retrieval layers (the stretched model column rebinned by pressure overlap, R x, time-weighted), from the surface up; NaN-padded, NaN for other rows. The reader requires ordering = 'surface_to_top' and a mole-fraction unit (converted to mol/mol)"
 
 [optional_variables.profile_model_sigma]
 dtype = "f64"

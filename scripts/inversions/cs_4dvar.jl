@@ -62,7 +62,8 @@
 #     [observations.placement]        # optional: how point records are placed
 #     vertical_coordinates = ["height_above_ground", "pressure"]
 #     pressure_basis = "total"        # or "dry" (needs no specific_humidity); also the
-#                                     # interface pressures of averaging-kernel columns
+#                                     # interface pressures of averaging-kernel columns,
+#                                     # so allowed without "pressure" in vertical_coordinates
 #     unplaced_records = "error"      # or "skip"
 #     # surface_height_file, dem_file, dem_variable,
 #     # absolute_altitude_above_agl_m: as in [output.observations]
@@ -325,7 +326,7 @@ end
 
 _observation_placement(cfg) =
     AT.Output._parse_vertical_placement(get(cfg["observations"], "placement", Dict{String, Any}()),
-                                        _PLACEMENT_LABEL)
+                                        _PLACEMENT_LABEL; pressure_basis_for_columns = true)
 
 _start_time(cfg) = AT.Output._parse_iso_utc(cfg["time"]["start"], "[time].start")
 

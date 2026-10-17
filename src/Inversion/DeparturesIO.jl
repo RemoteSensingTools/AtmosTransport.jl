@@ -629,10 +629,25 @@ function _read_departure_retrieval_block(ds, n::Int, path)
     Tuple(NCDatasets.dimnames(profile_var)) == ("retrieval_level", "obs") || throw(ArgumentError(
         "departures NetCDF $(repr(path)) variable \"retrieval_model_profile\" has dimensions " *
         "$(NCDatasets.dimnames(profile_var)); expected (retrieval_level, obs)"))
-    mismatch = Float64[ismissing(x) ? NaN : Float64(x) for x in Array(ds["surface_pressure_mismatch_pa"])]
+    # The profile states its ordering and a mole-fraction unit, the mismatch a
+    # pressure unit; supported alternatives are converted to mol/mol and Pa.
+    ordering = get(profile_var.attrib, "ordering", nothing)
+    ordering == "surface_to_top" || throw(ArgumentError(
+        "departures NetCDF $(repr(path)) variable \"retrieval_model_profile\" has ordering = $(repr(ordering)); " *
+        "it must state ordering = \"surface_to_top\" (index 1 is the retrieval surface)"))
+    profile_scale = mole_fraction_unit_scale(get(profile_var.attrib, "units", nothing),
+                                             "departures NetCDF $(repr(path)) variable \"retrieval_model_profile\"")
+    mismatch_var = ds["surface_pressure_mismatch_pa"]
+    mismatch_units = get(mismatch_var.attrib, "units", nothing)
+    mismatch_key = _pressure_unit_key(mismatch_units)
+    mismatch_scale = mismatch_key === nothing ? nothing : get(_PRESSURE_UNITS_PA, mismatch_key, nothing)
+    mismatch_scale === nothing && throw(ArgumentError(
+        "departures NetCDF $(repr(path)) variable \"surface_pressure_mismatch_pa\" has units " *
+        "$(repr(mismatch_units)); expected a pressure unit, one of $(join(sort!(collect(keys(_PRESSURE_UNITS_PA))), ", "))"))
+    mismatch = Float64[ismissing(x) ? NaN : Float64(x) * mismatch_scale for x in Array(mismatch_var)]
     sigma = Float64[Float64(nomissing("profile_model_sigma", x)) for x in Array(ds["profile_model_sigma"])]
     assimilated = Bool[nomissing("assimilated", x) != 0 for x in Array(ds["assimilated"])]
-    raw = map(x -> ismissing(x) ? NaN : Float64(x), Array(profile_var))
+    raw = map(x -> ismissing(x) ? NaN : Float64(x) * profile_scale, Array(profile_var))
     length(mismatch) == length(sigma) == length(assimilated) == size(raw, 2) == n || throw(ArgumentError(
         "departures NetCDF $(repr(path)) retrieval block variables do not have $(n) rows"))
     profiles = [begin
@@ -679,7 +694,9 @@ Validation (fails fast with `ArgumentError`):
 - The averaging-kernel column block (`surface_pressure_mismatch_pa`,
   `retrieval_model_profile (retrieval_level, obs)`, `profile_model_sigma`,
   `assimilated`) is all or nothing; without it every row has the defaults
-  (NaN, no profile, 0, assimilated).
+  (NaN, no profile, 0, assimilated). The profile must state
+  `ordering = "surface_to_top"` and a mole-fraction unit, the mismatch a
+  pressure unit (converted to mol/mol and Pa).
 - Every row must pass the [`CSDepartureRecord`](@ref) checks.
 """
 function read_departures(path::AbstractString)

@@ -111,10 +111,12 @@ One observation row of the schema-v2 [`CSObservationSet`](@ref).
 - `instrument_type` (e.g. `"ICOS"`, `"TCCON"`), `tracer` (e.g. `"CO2"`).
 - `retrieval`: the retrieval block of an averaging-kernel column record (an
   `Output.RetrievalColumn`: interface pressures from the surface up, pressure
-  weights, column averaging kernel, prior profile in mol/mol, optional profile
-  uncertainty), or `nothing`. Only column records carry one. Its model-error
-  term ``\\sum_i (h_i a_i σ_i)^2`` (`Output.retrieval_model_error_variance`,
-  zero without a profile uncertainty) is added to σ².
+  weights, column averaging kernel, prior profile in mol/mol, optional
+  model-profile uncertainty), or `nothing`. Only column records carry one;
+  such a record is an absolute column average, `value` in (0, 1] mol/mol with
+  `value_sigma` and `model_sigma` not above it. Its model-error term
+  ``\\sum_i (h_i a_i σ_i)^2`` (`Output.retrieval_model_error_variance`, zero
+  without a model-profile uncertainty) is added to σ².
 """
 struct CSObservationRecord
     id::Int64
@@ -177,10 +179,15 @@ struct CSObservationRecord
             "carry one"))
         # The column adds the retrieval prior (mol/mol) to the model's dry mole
         # fractions, so the record value is a dry mole fraction in mol/mol too.
-        retrieval === nothing || 0 <= value <= 1 && value_sigma <= 1 || throw(ArgumentError(
+        # An averaging-kernel column is an absolute column average, so its
+        # errors are smaller than the value itself (a sigma meant in ppm but
+        # read as mol/mol would drop the record out of the cost).
+        retrieval === nothing || 0 < value <= 1 && value_sigma <= value && model_sigma <= value ||
+            throw(ArgumentError(
             "$(label) has a retrieval block, whose prior is a dry mole fraction in mol/mol, but value = " *
-            "$(value) and value_sigma = $(value_sigma) are not mole fractions within [0, 1]; give the column " *
-            "average, its error and the tracer in mol/mol (a value in ppm or ppb must be converted)"))
+            "$(value), value_sigma = $(value_sigma), model_sigma = $(model_sigma): an averaging-kernel column " *
+            "is an absolute dry mole fraction in (0, 1] mol/mol and its errors do not exceed it; give the " *
+            "column average, its errors and the tracer in mol/mol (values in ppm or ppb must be converted)"))
         return new(id, date_components, lat, lon, kind, elevation_m, intake_height_m, altitude_m,
                    pressure_pa, time_window_s, flag, value, value_sigma, model_sigma,
                    instrument_type, tracer, retrieval)
@@ -333,10 +340,12 @@ overwritten.
   `retrieval_interface` (one more), `retrieval_pressure_pa` (interfaces, Pa),
   `retrieval_pressure_weight`, `retrieval_averaging_kernel`,
   `retrieval_prior_profile` (mol mol⁻¹) and, when any record gives one,
-  `retrieval_prior_sigma` (mol mol⁻¹), each `(retrieval_level or
+  `retrieval_profile_sigma` (mol mol⁻¹), each `(retrieval_level or
   retrieval_interface, obs)`, surface first (`ordering = "surface_to_top"`)
   and NaN-padded; `retrieval_surface_pressure_pa (obs)`. Records without a
-  block are NaN throughout.
+  block are NaN throughout. Such a file states `units = "mol mol-1"` on
+  `value`, `value_sigma` and `model_sigma`: its values are dry mole fractions
+  in mol/mol, the unit of the retrieval priors (every record of the file).
 """
 function write_observations(path::AbstractString, set::CSObservationSet)
     isempty(set.time_origin) && throw(ArgumentError(
@@ -366,8 +375,43 @@ function write_observations(path::AbstractString, set::CSObservationSet)
             _write_obs_var(ds, name, T, ("obs",), T[getfield(r, field) for r in set.records], attrs)
         end
         _write_retrieval_block(ds, set.records)
+        # A file with averaging-kernel columns states that its values are dry
+        # mole fractions in mol/mol (the unit of the retrieval priors).
+        if any(r -> r.retrieval !== nothing, set.records)
+            for v in _VALUE_VARIABLES
+                ds[v].attrib["units"] = "mol mol-1"
+            end
+        end
     end
     return path
+end
+
+# The record values and their errors. Without a stated unit they are in the
+# tracer's native unit and read as they are. A dry mole-fraction unit
+# ("mol mol-1", "1", "ppm", "ppb", ...) on any of them is converted to mol/mol,
+# and then all three must state one (a converted value with an unconverted
+# error would misweight the cost). A file with averaging-kernel columns, whose
+# priors are converted to mol/mol, must state one on all three.
+const _VALUE_VARIABLES = ("value", "value_sigma", "model_sigma")
+
+function _value_unit_scales(ds, path, has_retrieval::Bool)
+    scales = map(v -> _mole_fraction_scale(get(ds[v].attrib, "units", nothing)), _VALUE_VARIABLES)
+    stated = [v for (v, sc) in zip(_VALUE_VARIABLES, scales) if sc !== nothing]
+    unstated = [v for (v, sc) in zip(_VALUE_VARIABLES, scales) if sc === nothing]
+    units(v) = repr(get(ds[v].attrib, "units", nothing))
+    if has_retrieval && !isempty(unstated)
+        throw(ArgumentError(
+            "observation NetCDF $(repr(path)) has averaging-kernel column records, whose retrieval priors are " *
+            "dry mole fractions converted to mol/mol, so value, value_sigma and model_sigma must state a dry " *
+            "mole-fraction unit (\"mol mol-1\", \"ppm\", \"ppb\", ...); " *
+            join(("$(v) has units $(units(v))" for v in unstated), ", ")))
+    elseif !isempty(stated) && !isempty(unstated)
+        throw(ArgumentError(
+            "observation NetCDF $(repr(path)) states a dry mole-fraction unit on $(join(stated, ", ")) but not on " *
+            "$(join(unstated, ", ")) ($(join((units(v) for v in unstated), ", "))): the values would be " *
+            "converted to mol/mol and the rest not; state the unit on all three or on none"))
+    end
+    return NamedTuple{(:value, :value_sigma, :model_sigma)}(map(sc -> something(sc, 1.0), scales))
 end
 
 function _write_obs_var(ds, name, T, dims, data, attrs)
@@ -389,7 +433,7 @@ end
 const _RETRIEVAL_ORDERING = "surface_to_top"
 const _RETRIEVAL_ORDERING_TEXT = "index 1 is the retrieval surface; pressures strictly decrease upward"
 # (name, RetrievalColumn field, dimension, units, description) of the
-# retrieval-level variables; `retrieval_prior_sigma` is optional.
+# retrieval-level variables; `retrieval_profile_sigma` is optional.
 const _RETRIEVAL_LEVEL_VARIABLES = (
     ("retrieval_pressure_pa", :pressure_pa, "retrieval_interface", "Pa",
      "retrieval layer interface pressures (total pressure), from the surface up; NaN-padded"),
@@ -399,7 +443,7 @@ const _RETRIEVAL_LEVEL_VARIABLES = (
      "column averaging kernel a of the retrieval layers (normalized: dX/dx_i = h_i a_i); NaN-padded"),
     ("retrieval_prior_profile", :prior_profile, "retrieval_level", "mol mol-1",
      "retrieval prior profile (dry mole fraction) on the retrieval layers; NaN-padded"),
-    ("retrieval_prior_sigma", :prior_sigma, "retrieval_level", "mol mol-1",
+    ("retrieval_profile_sigma", :profile_sigma, "retrieval_level", "mol mol-1",
      "optional 1-sigma profile uncertainty on the retrieval layers for the model-error term " *
      "sum_i (h_i a_i sigma_i)^2; NaN = none"),
 )
@@ -414,9 +458,9 @@ function _write_retrieval_block(ds, records)
     nlevel = maximum(c -> c === nothing ? 0 : retrieval_layer_count(c), columns)
     NCDatasets.defDim(ds, "retrieval_level", nlevel)
     NCDatasets.defDim(ds, "retrieval_interface", nlevel + 1)
-    has_sigma = any(c -> c !== nothing && !isempty(c.prior_sigma), columns)
+    has_sigma = any(c -> c !== nothing && !isempty(c.profile_sigma), columns)
     for (name, field, dim, units, description) in _RETRIEVAL_LEVEL_VARIABLES
-        field === :prior_sigma && !has_sigma && continue
+        field === :profile_sigma && !has_sigma && continue
         len = dim == "retrieval_interface" ? nlevel + 1 : nlevel
         data = fill(NaN, len, n)
         for (i, c) in enumerate(columns)
@@ -437,7 +481,7 @@ end
 # The block as host Float64 arrays (fill values read as NaN) converted to Pa and
 # mol/mol, or `nothing` when the file has none. A partial block is an error.
 function _read_retrieval_block(ds, n::Int, path)
-    present = [v for v in (_RETRIEVAL_REQUIRED_VARIABLES..., "retrieval_prior_sigma") if haskey(ds, v)]
+    present = [v for v in (_RETRIEVAL_REQUIRED_VARIABLES..., "retrieval_profile_sigma") if haskey(ds, v)]
     isempty(present) && return nothing
     for v in _RETRIEVAL_REQUIRED_VARIABLES
         haskey(ds, v) || throw(ArgumentError(
@@ -486,7 +530,7 @@ function _retrieval_unit_scale(name, units, label)
             "$(label) has units $(repr(units)); expected a pressure unit, one of " *
             "$(join(sort!(collect(keys(_PRESSURE_UNITS_PA))), ", "))"))
         return scale
-    elseif name in ("retrieval_prior_profile", "retrieval_prior_sigma")
+    elseif name in ("retrieval_prior_profile", "retrieval_profile_sigma")
         return mole_fraction_unit_scale(units, label)
     end
     # Pressure weights and averaging kernel are dimensionless.
@@ -504,7 +548,7 @@ function _record_retrieval(block::Dict{String, Any}, i::Int, label::AbstractStri
     h = view(block["retrieval_pressure_weight"], :, i)
     a = view(block["retrieval_averaging_kernel"], :, i)
     xa = view(block["retrieval_prior_profile"], :, i)
-    σ = haskey(block, "retrieval_prior_sigma") ? view(block["retrieval_prior_sigma"], :, i) : Float64[]
+    σ = haskey(block, "retrieval_profile_sigma") ? view(block["retrieval_profile_sigma"], :, i) : Float64[]
     ps = block["retrieval_surface_pressure_pa"][i]
     all(isnan, p) && all(isnan, h) && all(isnan, a) && all(isnan, xa) && all(isnan, σ) && isnan(ps) &&
         return nothing
@@ -514,7 +558,7 @@ function _record_retrieval(block::Dict{String, Any}, i::Int, label::AbstractStri
                            ("retrieval_averaging_kernel", a, n), ("retrieval_prior_profile", xa, n))
         _check_nan_padded(v, len, name, label)
     end
-    all(isnan, σ) || _check_nan_padded(σ, n, "retrieval_prior_sigma", label)
+    all(isnan, σ) || _check_nan_padded(σ, n, "retrieval_profile_sigma", label)
     try
         return RetrievalColumn(p[1:(n + 1)], h[1:n], a[1:n], xa[1:n], all(isnan, σ) ? Float64[] : σ[1:n], ps)
     catch err
@@ -557,7 +601,7 @@ Validation (fails fast with `ArgumentError`):
 - The optional retrieval block (see [`write_observations`](@ref)) is all or
   nothing: `retrieval_pressure_pa`, `retrieval_pressure_weight`,
   `retrieval_averaging_kernel`, `retrieval_prior_profile` and
-  `retrieval_surface_pressure_pa` (`retrieval_prior_sigma` optional), with
+  `retrieval_surface_pressure_pa` (`retrieval_profile_sigma` optional), with
   `retrieval_interface = retrieval_level + 1`. Every retrieval-level variable
   states `ordering = "surface_to_top"` (index 1 is the retrieval surface);
   pressures state a pressure unit (converted to Pa), the prior and its
@@ -569,6 +613,11 @@ Validation (fails fast with `ArgumentError`):
   strictly decreasing from the surface, weights ≥ 0 summing to 1, finite
   values, prior in [0, 1] mol/mol, surface pressure equal to the first
   interface), and only column records may carry one.
+- `value`, `value_sigma` and `model_sigma` without a `units` attribute are in
+  the tracer's native unit, read as they are. A dry mole-fraction unit
+  (`"mol mol-1"`, `"1"`, `"ppm"`, `"ppb"`, …) is converted to mol/mol; it must
+  then be stated on all three, and a file with averaging-kernel columns must
+  state one on all three.
 - Every row must pass the [`CSObservationRecord`](@ref) checks, and record
   ids must be unique.
 """
@@ -610,6 +659,7 @@ function read_observations(path::AbstractString)
         value(v, i) = _observation_value(columns[v][i], v, i, path)
         absent(v, i) = (x = columns[v][i]; ismissing(x) ? NaN : Float64(x))
         block = _read_retrieval_block(ds, n, path)
+        scale = _value_unit_scales(ds, path, block !== nothing)
         records = Vector{CSObservationRecord}(undef, n)
         @inbounds for i in 1:n
             id = Int64(value("id", i))
@@ -622,8 +672,8 @@ function read_observations(path::AbstractString)
                 absent("elevation_m", i), absent("intake_height_m", i),
                 absent("altitude_m", i), absent("pressure_pa", i),
                 Float64(value("time_window_s", i)), Int8(value("flag", i)),
-                Float64(value("value", i)), Float64(value("value_sigma", i)),
-                Float64(value("model_sigma", i)),
+                Float64(value("value", i)) * scale.value, Float64(value("value_sigma", i)) * scale.value_sigma,
+                Float64(value("model_sigma", i)) * scale.model_sigma,
                 String(value("instrument_type", i)), String(value("tracer", i)), retrieval)
         end
         _check_unique_ids(records, "observation NetCDF $(repr(path))")

@@ -200,7 +200,7 @@ operator of `Output` (`RetrievalColumn`, `retrieval_column_weights!`,
   ``X = Σₖ Hₖ xₖ + Σᵢ hᵢ(1 − aᵢ) x_a,ᵢ`` on the dry mixing ratios; its
   functional has weights `Hₖ/max(mₖ, ε)` on every level and the prior term as
   offset. Its model-error term `Σᵢ (hᵢ aᵢ σᵢ)²` (a record with
-  `retrieval_prior_sigma`) is added to σ² at binding: it depends on the record
+  `retrieval_profile_sigma`) is added to σ² at binding: it depends on the record
   only, so it is frozen for the inversion. A record whose time-weighted
   model minus retrieval surface pressure exceeds
   `max_surface_pressure_mismatch_pa` follows the unplaced policy at the

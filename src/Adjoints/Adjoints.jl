@@ -75,7 +75,8 @@ using ..Output: cell_locator, locate, CellLocation,
     vertical_placement_codes_description,
     AbstractUnplacedPolicy, ErrorOnUnplaced, SkipUnplaced, placement_pressures!, _basis_needs_humidity,
     RetrievalColumn, retrieval_layer_count, retrieval_column_weights!, retrieval_prior_offset,
-    retrieval_profile!, retrieval_model_error_variance, mole_fraction_unit_scale, _PRESSURE_UNITS_PA,
+    retrieval_profile!, retrieval_model_error_variance, mole_fraction_unit_scale, _mole_fraction_scale,
+    _PRESSURE_UNITS_PA,
     _pressure_unit_key
 
 # Tape storage policies + record types live in src/Tape/

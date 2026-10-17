@@ -242,7 +242,7 @@ function _retrieval(ps; top = 0.0, n = 6, ak = collect(range(0.7, 1.1; length = 
                     prior = collect(range(4.05e-4, 3.95e-4; length = n)), sigma = Float64[])
     edges = _edges(ps; top, n)
     return O.RetrievalColumn(; pressure_pa = edges, pressure_weight = -diff(edges) ./ (edges[1] - edges[end]),
-                             averaging_kernel = ak, prior_profile = prior, prior_sigma = sigma)
+                             averaging_kernel = ak, prior_profile = prior, profile_sigma = sigma)
 end
 
 @testset "RetrievalColumn validation" begin
@@ -260,13 +260,14 @@ end
     @test bad("finite"; averaging_kernel = [1.0, NaN, 1, 1, 1, 1])
     @test bad("differs from the first"; surface_pressure_pa = 97000.0)
     @test bad("interface pressures"; pressure_pa = good.pressure_pa[1:end - 1])
-    @test bad("prior_sigma"; prior_sigma = [1e-6])
+    @test bad("profile_sigma"; profile_sigma = [1e-6])
     @test bad("top pressure"; pressure_pa = vcat(good.pressure_pa[1:end - 1], -10.0))
     # The model-error variance Σ (h a σ)², zero without σ.
     σ = fill(2e-6, 6)
-    with_sigma = O.RetrievalColumn(; kw..., prior_sigma = σ)
+    with_sigma = O.RetrievalColumn(; kw..., profile_sigma = σ)
     @test O.retrieval_model_error_variance(with_sigma) ≈ sum((good.pressure_weight .* good.averaging_kernel .* σ) .^ 2)
     @test O.retrieval_model_error_variance(good) == 0
+    @test bad("within [0, 1]"; profile_sigma = fill(2.0, 6))               # an uncertainty in ppm
     # The raw operator forms check the retrieval interfaces too.
     p_half = collect(range(100.0, 1e5; length = 9))
     @test_throws ArgumentError O.retrieval_column_weights!(zeros(8), zeros(9), p_half, reverse(good.pressure_pa),
@@ -286,6 +287,17 @@ end
 
 _same(a::AT.CSObservationRecord, b::AT.CSObservationRecord) =
     all(f -> isequal(getfield(a, f), getfield(b, f)), fieldnames(AT.CSObservationRecord))
+
+# `value_units` are the units stated on value, value_sigma and model_sigma
+# (`nothing` = none), whose data are multiplied by `value_scale`.
+const _MOLMOL = Dict{String, Any}("value" => "mol mol-1", "value_sigma" => "mol mol-1", "model_sigma" => "mol mol-1")
+function _restate_values!(ds; value_units = _MOLMOL, value_scale = 1.0)
+    for (name, units) in value_units
+        units === nothing || (ds[name].attrib["units"] = units)
+        value_scale == 1 || (ds[name][:] = ds[name][:] .* value_scale)
+    end
+    return ds
+end
 
 @testset "schema v2 round trip with and without the retrieval block" begin
     mktempdir() do dir
@@ -310,17 +322,42 @@ _same(a::AT.CSObservationRecord, b::AT.CSObservationRecord) =
             @test ds.dim["retrieval_level"] == 9 && ds.dim["retrieval_interface"] == 10
             @test ds["retrieval_pressure_pa"].attrib["ordering"] == "surface_to_top"
             @test ds["retrieval_prior_profile"].attrib["units"] == "mol mol-1"
-            @test haskey(ds, "retrieval_prior_sigma")
+            @test haskey(ds, "retrieval_profile_sigma")
             @test all(isnan, ds["retrieval_pressure_pa"][:, 1]) && isnan(ds["retrieval_surface_pressure_pa"][2])
             @test all(isnan, ds["retrieval_pressure_weight"][5:end, 4])        # NaN padding
         end
         back = AT.read_observations(path)
         @test all(_same(a, b) for (a, b) in zip(set.records, back.records))
-        @test back[4].retrieval.prior_sigma == fill(1.5e-6, 4) && isempty(back[3].retrieval.prior_sigma)
+        @test back[4].retrieval.profile_sigma == fill(1.5e-6, 4) && isempty(back[3].retrieval.profile_sigma)
         # Only column records carry a block, and their values are mole fractions in mol/mol.
         @test_throws ArgumentError _record(9; kind = "point", intake_height_m = 10.0, retrieval = _retrieval(9e4))
         err = try _record(9; value = 401.0, retrieval = _retrieval(9e4)) catch e e end
         @test err isa ArgumentError && occursin("mol/mol", err.msg)
+        @test_throws ArgumentError _record(9; value_sigma = 1e-3, retrieval = _retrieval(9e4))
+        @test_throws ArgumentError _record(9; model_sigma = 0.5, retrieval = _retrieval(9e4))
+        # A file with blocks states mol/mol on the record values.
+        NCDataset(path) do ds
+            @test all(v -> ds[v].attrib["units"] == "mol mol-1", ("value", "value_sigma", "model_sigma"))
+        end
+        # Files without blocks: no units read as they are; a stated mole-fraction
+        # unit is converted, and must be stated on all three.
+        plain_path = AT.write_observations(joinpath(dir, "plain_ppb.nc"),
+            AT.CSObservationSet([_record(1; kind = "point", intake_height_m = 10.0, value = 1.9e-6,
+                                         value_sigma = 1e-8, model_sigma = 2e-9)]; time_origin = "2024-06-15 00:00:00"))
+        NCDataset(plain_path) do ds
+            @test !haskey(ds["value"].attrib, "units")
+        end
+        NCDataset(plain_path, "a") do ds
+            _restate_values!(ds; value_units = Dict{String, Any}("value" => "ppb", "value_sigma" => "ppb",
+                                                                 "model_sigma" => "ppb"), value_scale = 1e9)
+        end
+        got = only(AT.read_observations(plain_path).records)
+        @test got.value ≈ 1.9e-6 && got.value_sigma ≈ 1e-8 && got.model_sigma ≈ 2e-9
+        NCDataset(plain_path, "a") do ds
+            delete!(ds["model_sigma"].attrib, "units")
+        end
+        err = try AT.read_observations(plain_path) catch e e end
+        @test err isa ArgumentError && occursin("on all three or on none", err.msg)
     end
 end
 
@@ -328,9 +365,11 @@ end
 # `pressure` (interfaces × records), `weight`, `kernel`, `prior` (layers ×
 # records), `surface`, optional `sigma`, with per-variable attributes.
 function _write_block_file(path, records; pressure, weight, kernel, prior, surface, sigma = nothing,
-                           attrib = Dict{String, Dict{String, Any}}(), skip = ())
+                           attrib = Dict{String, Dict{String, Any}}(), skip = (), value_units = _MOLMOL,
+                           value_scale = 1.0)
     AT.write_observations(path, AT.CSObservationSet(records; time_origin = "2024-06-15 00:00:00"))
     NCDataset(path, "a") do ds
+        _restate_values!(ds; value_units, value_scale)
         defDim(ds, "retrieval_level", size(weight, 1))
         defDim(ds, "retrieval_interface", size(pressure, 1))
         default = Dict("retrieval_pressure_pa" => Dict{String, Any}("units" => "Pa", "ordering" => "surface_to_top"),
@@ -338,14 +377,14 @@ function _write_block_file(path, records; pressure, weight, kernel, prior, surfa
                        "retrieval_averaging_kernel" => Dict{String, Any}("ordering" => "surface_to_top"),
                        "retrieval_prior_profile" => Dict{String, Any}("units" => "mol mol-1",
                                                                       "ordering" => "surface_to_top"),
-                       "retrieval_prior_sigma" => Dict{String, Any}("units" => "mol mol-1",
+                       "retrieval_profile_sigma" => Dict{String, Any}("units" => "mol mol-1",
                                                                     "ordering" => "surface_to_top"),
                        "retrieval_surface_pressure_pa" => Dict{String, Any}("units" => "Pa"))
         for (name, data, dims) in (("retrieval_pressure_pa", pressure, ("retrieval_interface", "obs")),
                                    ("retrieval_pressure_weight", weight, ("retrieval_level", "obs")),
                                    ("retrieval_averaging_kernel", kernel, ("retrieval_level", "obs")),
                                    ("retrieval_prior_profile", prior, ("retrieval_level", "obs")),
-                                   ("retrieval_prior_sigma", sigma, ("retrieval_level", "obs")),
+                                   ("retrieval_profile_sigma", sigma, ("retrieval_level", "obs")),
                                    ("retrieval_surface_pressure_pa", surface, ("obs",)))
             data === nothing && continue
             name in skip && continue
@@ -394,6 +433,25 @@ end
         hole[2] = NaN
         @test failure("hole.nc", "NaN after them"; kernel = hole)
         @test failure("molppm.nc", "ppm"; prior = b.prior .* 1e6)       # ppm labelled mol/mol
+        # The record values: in ppm (converted), without units (rejected with a block).
+        path = _write_block_file(file("valueppm.nc"), [_record(1; model_sigma = 0.5e-6)]; b..., value_scale = 1e6,
+                                 value_units = Dict{String, Any}("value" => "ppm", "value_sigma" => "ppm",
+                                                                 "model_sigma" => "umol/mol"))
+        got = only(AT.read_observations(path).records)
+        @test got.value ≈ 401e-6 && got.value_sigma ≈ 1e-6 && got.model_sigma ≈ 0.5e-6
+        @test failure("valuenounits.nc", "must state a dry mole-fraction unit";
+                      value_units = Dict{String, Any}("value" => "ppm", "value_sigma" => nothing,
+                                                      "model_sigma" => "ppm"))
+        @test failure("valueother.nc", "must state a dry mole-fraction unit";
+                      value_units = Dict{String, Any}("value" => "kg m-2", "value_sigma" => "kg m-2",
+                                                      "model_sigma" => "kg m-2"))
+        # A sigma meant in ppm but stated in mol/mol exceeds the value: rejected.
+        path = _write_block_file(file("sigmappm.nc"), [_record(1; model_sigma = 0.5e-6)]; b...)
+        NCDataset(path, "a") do ds
+            ds["model_sigma"][:] = [0.5]                                  # meant as ppm
+        end
+        err = try AT.read_observations(path) catch e e end
+        @test err isa ArgumentError && occursin("do not exceed it", sprint(showerror, err))
         # A point record must not carry a block.
         path = _write_block_file(file("point.nc"), [_record(1; kind = "point", intake_height_m = 10.0)]; b...)
         @test_throws ArgumentError AT.read_observations(path)
@@ -793,6 +851,31 @@ end
             @test !haskey(ds, "assimilated") && !haskey(ds.dim, "retrieval_level")
         end
         @test all(r -> r.assimilated && isempty(r.retrieval_profile), AT.read_departures(path).records)
+        # The reader checks the profile's ordering and units and the mismatch's
+        # units, converting ppm and hPa.
+        restated = AT.write_departures(joinpath(dir, "restated.nc"), deps)
+        NCDataset(restated, "a") do ds
+            ds["retrieval_model_profile"].attrib["units"] = "ppm"
+            ds["retrieval_model_profile"][:, :] = ds["retrieval_model_profile"][:, :] .* 1e6
+            ds["surface_pressure_mismatch_pa"].attrib["units"] = "hPa"
+            ds["surface_pressure_mismatch_pa"][:] = ds["surface_pressure_mismatch_pa"][:] ./ 100
+        end
+        again = AT.read_departures(restated)
+        @test again[2].retrieval_profile ≈ deps[2].retrieval_profile rtol = 1e-14
+        @test again[1].surface_pressure_mismatch_pa ≈ deps[1].surface_pressure_mismatch_pa rtol = 1e-14
+        for (attr, value, msg) in (("ordering", "top_to_surface", "ordering"), ("units", "kg", "units"))
+            bad = AT.write_departures(joinpath(dir, "bad_$(attr).nc"), deps)
+            NCDataset(bad, "a") do ds
+                ds["retrieval_model_profile"].attrib[attr] = value
+            end
+            err = try AT.read_departures(bad) catch e e end
+            @test err isa ArgumentError && occursin(msg, sprint(showerror, err))
+        end
+        bad = AT.write_departures(joinpath(dir, "bad_mismatch.nc"), deps)
+        NCDataset(bad, "a") do ds
+            ds["surface_pressure_mismatch_pa"].attrib["units"] = "m"
+        end
+        @test_throws ArgumentError AT.read_departures(bad)
     end
     # Row checks: only averaging-kernel rows carry the diagnostics.
     row = deps[3]

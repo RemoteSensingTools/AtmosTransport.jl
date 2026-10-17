@@ -107,17 +107,17 @@ description = "quality flag: 0 = assimilate; bind_to_mesh drops records with any
 [variables.value]
 dtype = "f64"
 dims  = ["obs"]
-description = "observation value in the tracer's native unit (dry mole fraction for trace gases)"
+description = "observation value in the tracer's native unit (dry mole fraction for trace gases); OPTIONAL units attribute: a dry mole-fraction unit ('mol mol-1', '1', 'ppm', 'ppb', ...) is converted to mol/mol and must then be stated on value, value_sigma and model_sigma alike; required (a mole-fraction unit) in files with retrieval blocks"
 
 [variables.value_sigma]
 dtype = "f64"
 dims  = ["obs"]
-description = "1-sigma observation error in the tracer's native unit, positive"
+description = "1-sigma observation error in the tracer's native unit, positive; units as for value"
 
 [variables.model_sigma]
 dtype = "f64"
 dims  = ["obs"]
-description = "1-sigma model/representation error, >= 0, added in quadrature: sigma = sqrt(value_sigma^2 + model_sigma^2) (+ sum_i (h_i a_i sigma_i)^2 for a retrieval block with retrieval_prior_sigma)"
+description = "1-sigma model/representation error, >= 0, added in quadrature: sigma = sqrt(value_sigma^2 + model_sigma^2) (+ sum_i (h_i a_i sigma_i)^2 for a retrieval block with retrieval_profile_sigma); units as for value"
 
 [variables.instrument_type]
 dtype = "string"
@@ -131,7 +131,7 @@ description = "tracer name, e.g. 'CO2', 'CH4', 'CO'"
 
 # ---------------------------------------------------------------------------
 # Optional retrieval block. All of the variables below are present or none is
-# (`retrieval_prior_sigma` is optional within the block). The writer adds the
+# (`retrieval_profile_sigma` is optional within the block). The writer adds the
 # block when any record carries one.
 #
 # Layout: a record with N retrieval layers gives its N + 1 interface pressures
@@ -148,9 +148,11 @@ description = "tracer name, e.g. 'CO2', 'CH4', 'CO'"
 # Validation per record: finite values, strictly decreasing pressures with a
 # top >= 0, weights >= 0 summing to 1 (within 1e-4), a prior in [0, 1] mol/mol,
 # uncertainties >= 0, and a surface pressure equal to the first interface
-# (relative 1e-6); only column records may carry a block, and their value and
-# value_sigma are dry mole fractions in mol/mol (within [0, 1]), the unit of
-# the prior, as is the transported tracer.
+# (relative 1e-6); only column records may carry a block. Such a record is an
+# absolute column average: value in (0, 1] mol/mol (after unit conversion),
+# value_sigma and model_sigma not above it, in the unit of the prior, as is the
+# transported tracer; a file with blocks states a mole-fraction unit on value,
+# value_sigma and model_sigma (the writer states "mol mol-1").
 # ---------------------------------------------------------------------------
 
 [optional_dimensions]
@@ -185,12 +187,12 @@ units = "mol mol-1"
 ordering = "surface_to_top"
 description = "retrieval prior profile x_prior_i (dry mole fraction); NaN-padded"
 
-[optional_variables.retrieval_prior_sigma]
+[optional_variables.retrieval_profile_sigma]
 dtype = "f64"
 dims  = ["obs", "retrieval_level"]
 units = "mol mol-1"
 ordering = "surface_to_top"
-description = "OPTIONAL 1-sigma profile uncertainty on the retrieval layers; adds the model-error term sum_i (h_i a_i sigma_i)^2 to sigma^2; NaN = none"
+description = "OPTIONAL 1-sigma uncertainty of the MODEL profile on the retrieval layers (representation/transport error, in [0, 1] mol/mol); adds the model-error term sum_i (h_i a_i sigma_i)^2 to sigma^2; NaN = none. Not the retrieval's a-priori uncertainty: the smoothing error is already in the averaging kernel"
 
 [optional_variables.retrieval_surface_pressure_pa]
 dtype = "f64"

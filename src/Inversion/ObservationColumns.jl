@@ -152,9 +152,9 @@ function _validate_retrieval_column_met(columns::Vector{CSRetrievalColumnObjecti
             "($(_INVERSION_PLACEMENT_LABEL).pressure_basis = \"total\", the default): a retrieval's pressures " *
             "are total pressures, and on a dry-basis run the model's are built from the dry air mass and the " *
             "specific humidity, but column_met has no humidity. Pass column_met = CSObservationColumnMet(; " *
-            "..., humidity), or bind the records with pressure_basis = \"dry\" (a key that needs \"pressure\" " *
-            "in vertical_coordinates; the stretch onto the retrieval surface pressure then also absorbs the " *
-            "weight of the water vapour, and the surface-pressure mismatch includes it)"))
+            "..., humidity), or bind the records with pressure_basis = \"dry\" (the stretch onto the " *
+            "retrieval surface pressure then also absorbs the weight of the water vapour, and the " *
+            "surface-pressure mismatch includes it)"))
         # The dry interfaces need a dry-basis air mass.
         check_pressure_basis(basis, met.mass_basis, met.humidity !== nothing, n, _INVERSION_PLACEMENT_LABEL)
     end

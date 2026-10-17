@@ -509,13 +509,18 @@
   column records (`retrieval_level` / `retrieval_interface` dimensions;
   `retrieval_pressure_pa`, `retrieval_pressure_weight`,
   `retrieval_averaging_kernel`, `retrieval_prior_profile`, optional
-  `retrieval_prior_sigma`, `retrieval_surface_pressure_pa`), ordered from the
+  `retrieval_profile_sigma`, `retrieval_surface_pressure_pa`), ordered from the
   surface up (`ordering = "surface_to_top"`, required) with stated units
   (pressures converted to Pa, the prior to mol/mol from `"ppm"`, `"ppb"`, …)
   and validated (strictly decreasing pressures, weights ≥ 0 summing to 1,
   finite values, a prior within [0, 1] mol/mol, the surface pressure equal to
-  the first interface; only column records, whose value and value_sigma must
-  then be mole fractions in mol/mol). `CSObservationRecord` gains
+  the first interface; only column records, which are then absolute column
+  averages: value in (0, 1] mol/mol, value_sigma and model_sigma not above
+  it). `value`, `value_sigma` and `model_sigma` may state a `units`
+  attribute: a dry mole-fraction unit (`"mol mol-1"`, `"ppm"`, `"ppb"`, …)
+  is converted to mol/mol and must be stated on all three; files with
+  retrieval blocks must state one (the writer states `"mol mol-1"`); files
+  without units read as before. `CSObservationRecord` gains
   `retrieval::Union{Nothing, Output.RetrievalColumn}` (the 16-argument
   positional constructor still builds a record without one). `bind_to_mesh`
   binds a column record with a block to the new `CSRetrievalColumnObjective`
@@ -535,9 +540,16 @@
   it is an error under `unplaced_records = "error"` and, under `"skip"`, is
   reported but left out of the cost and the gradient (its
   `CSObservationStencil` has `assimilated = false`; counted in one log
-  message); by default the stretch absorbs any mismatch, as in TM5. A
-  profile uncertainty adds the model-error term `Σᵢ (hᵢ aᵢ σᵢ)²` to σ²
-  (fixed by the record, so the cost stays quadratic).
+  message); by default the stretch absorbs any mismatch, as in TM5. An
+  uncertainty of the model profile on the retrieval layers
+  (`retrieval_profile_sigma`; not the retrieval's a-priori uncertainty) adds
+  the model-error term `Σᵢ (hᵢ aᵢ σᵢ)²` to σ² (fixed by the record, so the
+  cost stays quadratic; analogous to, not the same as, TM5's `Σ H²σ²` on
+  model layers). The inversion driver accepts
+  `[observations.placement].pressure_basis` without `"pressure"` in
+  `vertical_coordinates` (it selects the pressures of averaging-kernel
+  columns; `Output._parse_vertical_placement(...; pressure_basis_for_columns
+  = true)`); `[output.observations]` still rejects it there.
   `CSObservationStencil` gains `surface_pressure_mismatch_pa`,
   `retrieval_profile` and `assimilated` (the 9-argument constructor still
   works); new `RETRIEVAL_COLUMN_PLACEMENT_CODE` (−3). Departures v2: rows of
@@ -546,7 +558,8 @@
   (`retrieval_level`, surface first), `profile_model_sigma` and
   `assimilated`; `CSDepartureRecord` gains these fields (the 24-argument
   positional constructor still works) and `normalized_departure` divides by
-  `√(value_sigma² + model_sigma² + profile_model_sigma²)`. Files without
+  `√(value_sigma² + model_sigma² + profile_model_sigma²)`; the reader requires
+  the profile's ordering and units and the mismatch's units. Files without
   retrieval blocks are written and read as before. The forward observation
   sampler does not apply averaging kernels yet. See
   `docs/src/theory/adjoint_status.md` (averaging-kernel columns) and

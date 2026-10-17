@@ -499,5 +499,20 @@ end
         @test [s.assimilated for s in skipped.last.stencils] == [true, false]
         @test occursin("must be a positive pressure", _config_error(_hydrostatic_config(path;
             observations_extra = "[observations.placement]\nmax_surface_pressure_mismatch_pa = -1.0\n")))
+        # A column-only inversion on a dry column sets pressure_basis = "dry"
+        # without placing points by pressure; [output.observations] still
+        # rejects the key there.
+        dry_meteo = replace(HYDROSTATIC_BLOCK, r"specific_humidity = .*\n" => "")
+        height_only = "[observations.placement]\nvertical_coordinates = [\"height_above_ground\"]\n"
+        @test occursin("pressure_basis = \"dry\"", _config_error(_hydrostatic_config(path; meteo = dry_meteo,
+                                                                                    observations_extra = height_only)))
+        dry = _run_config_text(_hydrostatic_config(path; meteo = dry_meteo,
+                                                   observations_extra = height_only * "pressure_basis = \"dry\"\n"))
+        @test all(o -> o.objective.pressure_basis isa AT.Output.DryInterfaces, dry.last.observations)
+        keys = Dict{String, Any}("vertical_coordinates" => ["height_above_ground"], "pressure_basis" => "dry")
+        @test_throws ArgumentError AT.Output._parse_vertical_placement(keys, "[output.observations]")
+        @test AT.Output._parse_vertical_placement(keys, "[observations.placement]";
+                                                  pressure_basis_for_columns = true).pressure_basis isa
+              AT.Output.DryInterfaces
     end
 end
