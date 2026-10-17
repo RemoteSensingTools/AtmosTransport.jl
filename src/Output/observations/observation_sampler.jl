@@ -40,11 +40,14 @@ Base.@kwdef mutable struct ObservationCounters
     one_sided::Int = 0
     unlocated_soundings::Int = 0
     unlocated_sites::Int = 0
+    unplaced_soundings::Int = 0
+    unplaced_sites::Int = 0
     site_records::Int = 0
 end
 Base.copy(c::ObservationCounters) =
     ObservationCounters(c.emitted, c.dropped_before_start, c.dropped_after_end, c.one_sided,
-                        c.unlocated_soundings, c.unlocated_sites, c.site_records)
+                        c.unlocated_soundings, c.unlocated_sites, c.unplaced_soundings,
+                        c.unplaced_sites, c.site_records)
 
 """
     GatherPlan(cells, npanel)
@@ -82,15 +85,16 @@ end
 """
     ObservationSampler
 
-Runtime state of observation sampling: the located point events and sites,
-device gather buffers, the held first samples of events awaiting their
-second sample, the open (and retired daily) output streams, and counters.
-Built by [`build_observation_sampler`](@ref).
+Runtime state of observation sampling: the located and vertically placed
+point events and sites, device gather buffers, the held first samples of
+events awaiting their second sample, the open (and retired daily) output
+streams, and counters. Built by [`build_observation_sampler`](@ref).
 """
 mutable struct ObservationSampler{M, L <: AbstractCellLocator,
                                   TI <: AbstractObservationTimeInterpolation,
                                   B <: ObservationGatherBuffers} <: AbstractObservationSampler
     spec::ObservationOutputSpec
+    terrain_sources::NamedTuple{(:surface_height_file, :dem_file), Tuple{String, String}}
     origin::DateTime
     mesh::M
     locator::L
@@ -104,8 +108,10 @@ mutable struct ObservationSampler{M, L <: AbstractCellLocator,
     soundings::Vector{SoundingRequest}      # located, time-sorted
     sounding_times::Vector{Float64}
     sounding_cells::Vector{CellLocation}
+    sounding_placements::Vector{VerticalPlacement}
     sites::Vector{SiteRequest}
     site_cells::Vector{CellLocation}
+    site_placements::Vector{VerticalPlacement}
     buffers::B
     temperature_buffers::Union{Nothing, B}
     cursor::Int                             # first sounding not yet gathered as "new"
@@ -142,22 +148,28 @@ function _resolve_tracer_slots(state, tracers)
 end
 
 """
-    build_observation_sampler(spec, state, grid; origin, window_seconds, halo_width)
+    build_observation_sampler(spec, state, grid; origin, window_seconds, halo_width,
+                              terrain = ObservationTerrain())
 
 Read every source for the days covering `window_seconds` (seconds after
-`origin`, half-open), locate the requests on `grid.horizontal`, and prepare
-the device gather buffers. Output files are opened by `begin_observation_day!`.
-`NoObservationOutput` yields `NoObservationSampler()`.
+`origin`, half-open), locate the requests on `grid.horizontal`, place each in
+the column ([`resolve_placement`](@ref) with the static ground fields of
+`terrain`, see [`ObservationTerrain`](@ref)), and prepare the device gather
+buffers. Requests that cannot be placed fail the build or are skipped and
+counted, as `spec.placement.unplaced` says. Output files are opened by
+`begin_observation_day!`. `NoObservationOutput` yields `NoObservationSampler()`.
 """
 build_observation_sampler(::NoObservationOutput, args...; kwargs...) = NoObservationSampler()
 
 function build_observation_sampler(spec::ObservationOutputSpec, state, grid;
                                    origin::DateTime, window_seconds::Tuple{Real, Real},
-                                   halo_width::Integer)
+                                   halo_width::Integer, terrain::ObservationTerrain = ObservationTerrain())
     mesh = grid.horizontal
     vertical = grid.vertical
     iszero(vertical.B[1]) || throw(ArgumentError(
         "observation sampling needs a pure-pressure top interface (B[1] == 0); got B[1] = $(vertical.B[1])"))
+    check_terrain(spec.placement, terrain)
+    check_surface_height_layout(terrain.model_surface, mesh)
     names, slots = _resolve_tracer_slots(state, spec.tracers)
     check_observation_tracer_names(names)
     reference = _reference_array(state.air_mass)
@@ -165,38 +177,115 @@ function build_observation_sampler(spec::ObservationOutputSpec, state, grid;
     locator = cell_locator(mesh; halo_width)
     set = build_observation_set(spec.sources, origin, window_seconds)
 
-    soundings = SoundingRequest[]
-    times = Float64[]
-    cells = CellLocation[]
     counters = ObservationCounters()
-    for request in set.soundings
-        cell = locate(locator, request.lon, request.lat)
-        cell === nothing && (counters.unlocated_soundings += 1; continue)
-        push!(soundings, request)
-        push!(times, request.time_seconds)
-        push!(cells, cell)
-    end
-    sites = SiteRequest[]
-    site_cells = CellLocation[]
-    for site in set.sites
-        cell = locate(locator, site.lon, site.lat)
-        cell === nothing && (counters.unlocated_sites += 1; continue)
-        push!(sites, site)
-        push!(site_cells, cell)
-    end
+    examples = String[]   # a few unplaced requests for the message
+    soundings, cells, placements = _locate_and_place(set.soundings, locator, spec, terrain, counters, examples)
+    sites, site_cells, site_placements = _locate_and_place(set.sites, locator, spec, terrain, counters, examples)
+    _handle_unplaced(spec.placement.unplaced, counters, examples)
+    times = [r.time_seconds for r in soundings]
     buffers = ObservationGatherBuffers(reference, nlevel, slots;
                                        capacity = max(1024, length(sites) + 1))
     @info "observation sampling: $(length(soundings)) point events and $(length(sites)) station series located " *
           "($(counters.unlocated_soundings + counters.unlocated_sites) outside the mesh, " *
           "$(set.dropped_outside_window) outside the run window, $(set.skipped_invalid) source rows skipped)"
+    _log_placements(placements, site_placements, counters)
+    _warn_below_ground(soundings, placements, sites, site_placements)
     isempty(soundings) && isempty(sites) &&
         @warn "observation sampling has nothing to sample; no observation files will be written"
-    return ObservationSampler(spec, origin, mesh, locator, spec.time_interpolation, names, nlevel,
+    # Only the provenance of the terrain is kept: placements are resolved, and a
+    # global DEM (about 0.9 GB) must not live as long as the sampler.
+    terrain_sources = (surface_height_file = terrain_source(terrain.model_surface),
+                       dem_file = terrain_source(terrain.dem))
+    return ObservationSampler(spec, terrain_sources, origin, mesh, locator, spec.time_interpolation, names, nlevel,
                               Float64(vertical.A[1]), Float64(gravity(grid)),
-                              mass_basis(state), _npanel(mesh), soundings, times, cells,
-                              sites, site_cells, buffers, nothing, 1, nothing, NaN, nothing, nothing,
-                              AbstractObservationStream[], Set{String}(), false,
+                              mass_basis(state), _npanel(mesh), soundings, times, cells, placements,
+                              sites, site_cells, site_placements, buffers, nothing, 1, nothing, NaN,
+                              nothing, nothing, AbstractObservationStream[], Set{String}(), false,
                               counters, ObservationCounters(), false)
+end
+
+_count_unplaced!(c::ObservationCounters, ::SoundingRequest) = (c.unplaced_soundings += 1)
+_count_unplaced!(c::ObservationCounters, ::SiteRequest) = (c.unplaced_sites += 1)
+_count_unlocated!(c::ObservationCounters, ::SoundingRequest) = (c.unlocated_soundings += 1)
+_count_unlocated!(c::ObservationCounters, ::SiteRequest) = (c.unlocated_sites += 1)
+
+function _locate_and_place(requests::Vector{R}, locator, spec::ObservationOutputSpec,
+                           terrain::ObservationTerrain, counters::ObservationCounters,
+                           examples::Vector{String}) where {R}
+    option = spec.placement.altitude_placement
+    kept = R[]
+    cells = CellLocation[]
+    placements = VerticalPlacement[]
+    for request in requests
+        cell = locate(locator, request.lon, request.lat)
+        cell === nothing && (_count_unlocated!(counters, request); continue)
+        rule = missing_height_rule(spec.sources[request.source])
+        placement = resolve_placement(option, rule, request, cell, terrain)
+        if placement === nothing
+            _count_unplaced!(counters, request)
+            length(examples) < 5 && push!(examples, _unplaced_example(request))
+            continue
+        end
+        push!(kept, request)
+        push!(cells, cell)
+        push!(placements, placement)
+    end
+    return kept, cells, placements
+end
+
+_n_unplaced(c::ObservationCounters) = c.unplaced_soundings + c.unplaced_sites
+
+_fmt_height(x) = isfinite(x) ? string(round(x; digits = 1), " m") : "none"
+_unplaced_pressure(r::SoundingRequest) = r.pressure_pa
+_unplaced_pressure(::SiteRequest) = NaN
+_unplaced_example(r::Union{SoundingRequest, SiteRequest}) =
+    "source $(r.source) id $(repr(r.id)) at lon $(r.lon), lat $(r.lat): altitude $(_fmt_height(r.altitude_m)), " *
+    "elevation $(_fmt_height(r.elevation_m)), intake_height $(_fmt_height(r.intake_height_m)), " *
+    "pressure $(isfinite(_unplaced_pressure(r)) ? string(_unplaced_pressure(r), " Pa") : "none")"
+
+function _unplaced_message(c::ObservationCounters, examples)
+    return "$(c.unplaced_soundings) point events and $(c.unplaced_sites) station series have no height " *
+           "above the ground and no pressure: they give an altitude above sea level without a ground " *
+           "elevation (no record elevation and no dem_file value at the point), or no vertical coordinate " *
+           "at all (ObsPack). The model surface height is not used as the true ground. " *
+           "First $(length(examples)): $(join(examples, "; "))"
+end
+
+_handle_unplaced(policy::AbstractUnplacedPolicy, c::ObservationCounters, examples) =
+    _n_unplaced(c) == 0 ? nothing : _handle_unplaced_nonzero(policy, c, examples)
+_handle_unplaced_nonzero(::ErrorOnUnplaced, c::ObservationCounters, examples) = throw(ArgumentError(
+    "observation sampling cannot place every request in the column. " * _unplaced_message(c, examples) *
+    ". Set [output.observations].dem_file to a DEM covering these points (the ground elevation, " *
+    "m above sea level), or unplaced_records = \"skip\" to drop them (counted in the n_unplaced_* " *
+    "file attributes)."))
+_handle_unplaced_nonzero(::SkipUnplaced, c::ObservationCounters, examples) =
+    @warn "observation sampling skips requests it cannot place (unplaced_records = \"skip\"). " *
+          _unplaced_message(c, examples)
+
+function _log_placements(placements, site_placements, c::ObservationCounters)
+    counts = [count(p -> p.method == code, placements) + count(p -> p.method == code, site_placements)
+              for code in values(VERTICAL_PLACEMENT_CODES)]
+    summary = join(("$(n) $(name)" for (name, n) in zip(keys(VERTICAL_PLACEMENT_CODES), counts) if n > 0), ", ")
+    @info "observation vertical placement: " * (isempty(summary) ? "nothing to place" : summary) *
+          (_n_unplaced(c) > 0 ? "; $(_n_unplaced(c)) unplaced" : "")
+    return nothing
+end
+
+# Records placed more than BELOW_GROUND_TOLERANCE_M below the ground are kept
+# (sampled in the lowest layer, `placement_height_agl` records the height) but
+# reported, with the first few. Returns their number.
+function _warn_below_ground(soundings, placements, sites, site_placements)
+    rows = [(r, p) for (r, p) in Iterators.flatten((zip(soundings, placements), zip(sites, site_placements)))
+            if below_ground(p)]
+    isempty(rows) && return 0
+    examples = join(("source $(r.source) id $(repr(r.id)) at lon $(r.lon), lat $(r.lat): " *
+                     "$(round(p.height_agl_m; digits = 1)) m above the ground (altitude " *
+                     "$(_fmt_height(r.altitude_m)), elevation $(_fmt_height(r.elevation_m)), intake_height " *
+                     "$(_fmt_height(r.intake_height_m)))" for (r, p) in first(rows, 5)), "; ")
+    @warn "observation sampling: $(length(rows)) requests are more than $(BELOW_GROUND_TOLERANCE_M) m below the " *
+          "ground (a wrong elevation, DEM value, or altitude); they are sampled in the lowest layer and " *
+          "their height is written as placement_height_agl. First $(min(5, length(rows))): $(examples)"
+    return length(rows)
 end
 
 # -- output files -----------------------------------------------------------
@@ -213,7 +302,11 @@ function _stream_attributes(s::ObservationSampler)
         "sources" => _source_descriptions(s.spec),
         "layer_height_temperature_kelvin" => s.spec.layer_height_temperature_kelvin,
         "p_top" => s.p_top,
-        "gravity" => s.gravity)
+        "gravity" => s.gravity,
+        "unplaced_records" => String(unplaced_policy_label(s.spec.placement.unplaced)),
+        "surface_height_file" => s.terrain_sources.surface_height_file,
+        "dem_file" => s.terrain_sources.dem_file,
+        "absolute_altitude_above_agl_m" => _altitude_option_attribute(s.spec.placement.altitude_placement))
 end
 
 _current_streams(s::ObservationSampler) =
@@ -265,12 +358,18 @@ function _close_streams!(s::ObservationSampler)
     return nothing
 end
 
+# NaN: every record is placed above the ground.
+_altitude_option_attribute(::AboveGroundPlacement) = NaN
+_altitude_option_attribute(option::AbsoluteAltitudeAbove) = option.min_height_agl_m
+
 # Counts attributable to the currently open files (all of them for a single
-# file); request-set properties (unlocated) are run-level and repeated.
+# file); request-set properties (unlocated, unplaced) are run-level and repeated.
 function _write_file_summaries!(s::ObservationSampler)
     c, c0 = s.counters, s.counters_at_open
     unlocated = Dict{String, Any}("n_unlocated_soundings" => c.unlocated_soundings,
-                                  "n_unlocated_sites" => c.unlocated_sites)
+                                  "n_unlocated_sites" => c.unlocated_sites,
+                                  "n_unplaced_soundings" => c.unplaced_soundings,
+                                  "n_unplaced_sites" => c.unplaced_sites)
     s.soundings_stream === nothing || write_summary_attributes!(s.soundings_stream, merge(unlocated,
         Dict{String, Any}("n_emitted" => c.emitted - c0.emitted,
                           "n_before_start" => c.dropped_before_start - c0.dropped_before_start,
@@ -301,7 +400,8 @@ function _open_streams!(s::ObservationSampler, date_label::AbstractString, day_i
     end
     if !isempty(s.sites)
         path = _claim_path!(s, observation_output_path(s.spec, SiteMode(), date_label, day_index))
-        s.sites_stream = SiteNetCDFStream(path, s.mesh, s.nlevel, s.tracer_names, s.sites, s.site_cells;
+        s.sites_stream = SiteNetCDFStream(path, s.mesh, s.nlevel, s.tracer_names, s.sites, s.site_cells,
+                                          s.site_placements;
             mass_basis = s.mass_basis, origin = s.origin, deflate_level = s.spec.deflate_level,
             write_profiles = s.spec.write_profile_for_sites, attributes)
     end
@@ -563,7 +663,7 @@ function _sounding_batch(s::ObservationSampler, range::UnitRange{Int}, prev::Vec
         interface_pressures!(p, air_col, cell.area, s.gravity, s.p_top)
         layer_temperature = temperature_at(i)
         layer_heights_agl!(z_half, p, layer_temperature, s.gravity)
-        level = intake_layer_index(z_half, requests[i].intake_height_m)
+        level = placement_layer(s.sounding_placements[idx], z_half, p)
         levels[i] = Int32(level)
         bottoms[i] = z_half[level + 1]
         tops[i] = z_half[level]
@@ -584,7 +684,9 @@ function _sounding_batch(s::ObservationSampler, range::UnitRange{Int}, prev::Vec
                          cells, sample_time_prev = prev .+ origin_unix, sample_time_next = next .+ origin_unix,
                          weights, flags, p_half, air_mass_per_area = per_area, tracers = vmr,
                          column_means = means, elevations = [r.elevation_m for r in requests],
-                         intake_heights = [r.intake_height_m for r in requests], intake_levels = levels,
+                         intake_heights = [r.intake_height_m for r in requests],
+                         altitudes = [r.altitude_m for r in requests], pressures = [r.pressure_pa for r in requests],
+                         placements = s.sounding_placements[range], intake_levels = levels,
                          layer_bottom = bottoms, layer_top = tops, height_methods = methods, intake_values)
 end
 
@@ -621,7 +723,7 @@ function _emit_sites!(s::ObservationSampler, t::Float64, plan::GatherPlan, nsoun
         interface_pressures!(p_half, air_col, cell.area, s.gravity, s.p_top)
         layer_temperature = _row_layer_temperature(s, slot, temperature)
         layer_heights_agl!(z_half, p_half, layer_temperature, s.gravity)
-        level = intake_layer_index(z_half, site.intake_height_m)
+        level = placement_layer(s.site_placements[i], z_half, p_half)
         record.ps[i] = p_half[nlevel + 1]
         record.intake_level[i] = Int32(level)
         record.layer_bottom[i] = z_half[level + 1]

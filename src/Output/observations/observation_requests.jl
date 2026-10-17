@@ -70,12 +70,16 @@ _check_series_schedule(::TimeList, id) = throw(ArgumentError(
     "site $(repr(id)) has a time list; expand it into point events (build_observation_set does)"))
 
 """
-    SoundingRequest(id, time_seconds, lon, lat, source[, elevation_m, intake_height_m])
+    SoundingRequest(id, time_seconds, lon, lat, source[, elevation_m, intake_height_m[, altitude_m, pressure_pa]])
 
 One point event, sampled at `time_seconds` after the run origin (Float64 UTC
-seconds). `source` indexes the spec's `sources`. `intake_height_m` (above the
-model surface) selects the layer for the `<tracer>_intake` value; `NaN`
-means the lowest layer. `elevation_m` (above sea level) is informational.
+seconds). `source` indexes the spec's `sources`. The vertical fields are what
+the record says about its height, `NaN` when it says nothing:
+`intake_height_m` (m above the ground: the record's intake height, or its
+altitude minus its elevation), `altitude_m` (m above sea level),
+`elevation_m` (ground, m above sea level) and `pressure_pa` (Pa). The sampler
+turns them into a [`VerticalPlacement`](@ref) once, when it is built
+([`resolve_placement`](@ref)).
 """
 struct SoundingRequest
     id::String
@@ -85,16 +89,21 @@ struct SoundingRequest
     source::Int
     elevation_m::Float64
     intake_height_m::Float64
+    altitude_m::Float64
+    pressure_pa::Float64
 end
 SoundingRequest(id, time_seconds, lon, lat, source) =
     SoundingRequest(id, time_seconds, lon, lat, source, NaN, NaN)
+SoundingRequest(id, time_seconds, lon, lat, source, elevation_m, intake_height_m) =
+    SoundingRequest(id, time_seconds, lon, lat, source, elevation_m, intake_height_m, NaN, NaN)
 
 """
-    SiteRequest(id, lon, lat, elevation_m, intake_height_m, source[, schedule])
+    SiteRequest(id, lon, lat, elevation_m, intake_height_m, source[, schedule[, altitude_m]])
 
-A fixed station. `intake_height_m` (above the model surface) selects the
-model layer, with `NaN` meaning the lowest layer; `elevation_m` (above sea
-level) is informational. `schedule` defaults to [`EveryWindow`](@ref).
+A fixed station. The vertical fields have the meaning of those of
+[`SoundingRequest`](@ref) (`NaN` when unknown; a station has no pressure);
+the sampler turns them into a [`VerticalPlacement`](@ref) when it is built.
+`schedule` defaults to [`EveryWindow`](@ref).
 """
 struct SiteRequest
     id::String
@@ -104,9 +113,12 @@ struct SiteRequest
     intake_height_m::Float64
     source::Int
     schedule::AbstractSiteSchedule
+    altitude_m::Float64
 end
 SiteRequest(id, lon, lat, elevation_m, intake_height_m, source) =
     SiteRequest(id, lon, lat, elevation_m, intake_height_m, source, EveryWindow())
+SiteRequest(id, lon, lat, elevation_m, intake_height_m, source, schedule::AbstractSiteSchedule) =
+    SiteRequest(id, lon, lat, elevation_m, intake_height_m, source, schedule, NaN)
 
 """
     ObservationSet(origin, soundings, sites[, dropped_outside_window, skipped_invalid])
@@ -142,7 +154,7 @@ _expand_site!(soundings, sites, site::SiteRequest, ::AbstractSiteSchedule) = pus
 function _expand_site!(soundings, sites, site::SiteRequest, schedule::TimeList)
     for t in schedule.times_seconds
         push!(soundings, SoundingRequest(site.id, t, site.lon, site.lat, site.source,
-                                         site.elevation_m, site.intake_height_m))
+                                         site.elevation_m, site.intake_height_m, site.altitude_m, NaN))
     end
     return soundings
 end

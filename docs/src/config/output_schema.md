@@ -241,20 +241,25 @@ are in the global header so consumers can reconstruct the panel layout if needed
 `split = "daily"`; each file only when it has requests). Both carry
 `output_contract = "AtmosTransport observations v1"`, `mass_basis`,
 `run_time_origin`, `time_interpolation`, `horizontal_sampling =
-"containing_cell"`, `height_method_codes`, the source list as JSON in
-`sources`, and the snapshot provenance attributes. Times are Float64
+"containing_cell"`, `height_method_codes`, `vertical_placement_codes`, the
+source list as JSON in `sources`, the placement settings
+(`unplaced_records`, `surface_height_file`, `dem_file` (empty when not set),
+`absolute_altitude_above_agl_m` (NaN when not set)), and the snapshot
+provenance attributes. Times are Float64
 `seconds since 1970-01-01 00:00:00` (UTC). Level 1 is the top of the
 atmosphere. On a dry-basis run the pressure and air-mass variables carry a
 `_dry` suffix; they are dry partial pressures,
 `p_half[1] = A_ifc[1]` and `p_half[k+1] = p_half[k] + g·m[k]/area`.
 In both files `<tracer>` is the profile, `<tracer>_intake` the value in the
-layer containing the intake height, and intake heights are measured above the
-model surface.
+layer chosen by the request's vertical placement, and heights are measured
+above the model surface (see "Vertical placement" in the
+[TOML schema](@ref)).
 
 Only rows up to `completed_soundings` / `completed_times` are guaranteed
 complete; the summary attributes (`n_emitted`, `n_before_start`,
 `n_after_end`, `n_one_sided`, `n_unlocated_*`, `n_records`) count the rows of
-that file.
+that file; `n_unlocated_*` and `n_unplaced_*` (requests skipped with
+`unplaced_records = "skip"`) count the whole run.
 
 Soundings file (point events), dimensions `obs` (unlimited), `lev`, `ilev = lev + 1`:
 
@@ -262,7 +267,8 @@ Soundings file (point events), dimensions `obs` (unlimited), `lev`, `ilev = lev 
 |---|---|---|
 | `id`, `source` | obs | sounding_id, obspack_id, or table/site id; 1-based source index |
 | `time`, `latitude`, `longitude` | obs | event time and location |
-| `elevation`, `intake_height` | obs | from the source (NaN unknown; NaN intake = lowest layer) |
+| `elevation`, `intake_height`, `altitude`, `pressure` | obs | from the source (NaN unknown): ground elevation and altitude (m above sea level), height above ground (`intake_height`, else `altitude − elevation`), pressure (Pa) |
+| `vertical_placement`, `placement_height_agl`, `model_surface_height` | obs | placement method (see `vertical_placement_codes`), height above the model surface that chose the layer (NaN for pressure and lowest-layer placement), model surface height of the cell (NaN without `surface_height_file`) |
 | `cell_lon`, `cell_lat`, `cell_index`, `cell_i`, `cell_j`, `cell_panel`, `cell_area` | obs | containing model cell (`cell_panel` on the cubed sphere only) |
 | `sample_time_prev`, `sample_time_next`, `interp_weight` | obs | bracketing window ends and the weight of the later one |
 | `interp_flag` | obs | 0 bracketed, 1 one-sided (single sample), 2 nearest window end |
@@ -276,7 +282,8 @@ Sites file (station series), dimensions `site`, `time` (unlimited), and
 
 | Variable | Dims | Meaning |
 |---|---|---|
-| `site_id`, `source`, `latitude`, `longitude`, `elevation`, `intake_height` | site | site metadata (NaN when unknown) |
+| `site_id`, `source`, `latitude`, `longitude`, `elevation`, `intake_height`, `altitude` | site | site metadata (NaN when unknown) |
+| `vertical_placement`, `placement_height_agl`, `model_surface_height` | site | as in the soundings file |
 | `schedule_start`, `schedule_end` | site | `TimeRange` bounds (NaN for every-window sites) |
 | `cell_*` | site | containing model cell |
 | `time` | time | met-window end |

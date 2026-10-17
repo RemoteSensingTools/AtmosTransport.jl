@@ -57,9 +57,12 @@ const DAY = [Date(2021, 12, 2)]
         bad_half = joinpath(dir, "half.csv")
         write(bad_half, "id,lat,lon,start_time\nx,1,2,2021-12-02T00:00:00\n")
         @test_throws ArgumentError read_observation_requests(TableSource(bad_half, SiteMode(), AutoTableFormat()), 1, ORIGIN, DAY)
-        bad_alt = joinpath(dir, "alt.csv")
-        write(bad_alt, "id,lat,lon,altitude\nx,1,2,500\n")
-        @test_throws ArgumentError read_observation_requests(TableSource(bad_alt, SiteMode(), AutoTableFormat()), 1, ORIGIN, DAY)
+        # An altitude without elevation is read as it is; the sampler places it
+        # through a ground elevation or refuses it (test_observation_placement.jl).
+        alt_only = joinpath(dir, "alt.csv")
+        write(alt_only, "id,lat,lon,altitude\nx,1,2,500\n")
+        _, alt_sites = read_observation_requests(TableSource(alt_only, SiteMode(), AutoTableFormat()), 1, ORIGIN, DAY)
+        @test isnan(alt_sites[1].intake_height_m) && alt_sites[1].altitude_m == 500.0 && isnan(alt_sites[1].elevation_m)
         @test_throws ArgumentError TimeRange(10.0, 5.0)
         @test_throws ArgumentError TimeList(Float64[])
     end
@@ -220,6 +223,8 @@ end
                               weights = Float32[0], flags = Int8[0], p_half = reshape([1.0, 2.0, 3.0], 3, 1),
                               air_mass_per_area = ones(2, 1), tracers = fill(4e-4, 2, 1, 1),
                               column_means = fill(4e-4, 1, 1), elevations = [NaN], intake_heights = [NaN],
+                              altitudes = [NaN], pressures = [NaN],
+                              placements = [O.VerticalPlacement(O.VERTICAL_PLACEMENT_CODES.lowest_layer, NaN, NaN, NaN)],
                               intake_levels = Int32[2], layer_bottom = [0.0], layer_top = [10.0],
                               height_methods = Int8[0], intake_values = fill(4e-4, 1, 1))
         holding, release = Channel{Nothing}(1), Channel{Nothing}(1)
