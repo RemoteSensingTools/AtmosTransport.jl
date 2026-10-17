@@ -30,6 +30,7 @@ mutable struct PendingSoundings
     air::Matrix{Float64}         # (nlevel, n) in request order
     tracers::Array{Float64, 3}   # (nlevel, ntracer, n) in request order
     temperature::Union{Nothing, Matrix{Float64}}   # (nlevel, n) layer temperature, if the run has one
+    humidity::Union{Nothing, Matrix{Float64}}      # (nlevel, n) specific humidity, when pressure placement needs it
 end
 
 "Running totals reported in the summary attributes and the end-of-run log."
@@ -86,9 +87,10 @@ end
     ObservationSampler
 
 Runtime state of observation sampling: the located and vertically placed
-point events and sites, device gather buffers, the held first samples of
-events awaiting their second sample, the open (and retired daily) output
-streams, and counters. Built by [`build_observation_sampler`](@ref).
+point events and sites, the pressure basis of pressure placement, device
+gather buffers, the held first samples of events awaiting their second
+sample, the open (and retired daily) output streams, and counters. Built by
+[`build_observation_sampler`](@ref).
 """
 mutable struct ObservationSampler{M, L <: AbstractCellLocator,
                                   TI <: AbstractObservationTimeInterpolation,
@@ -112,8 +114,11 @@ mutable struct ObservationSampler{M, L <: AbstractCellLocator,
     sites::Vector{SiteRequest}
     site_cells::Vector{CellLocation}
     site_placements::Vector{VerticalPlacement}
+    pressure_basis::AbstractPressureBasis
+    needs_humidity::Bool                    # pressure-placed requests on a dry basis: humidity at every sample
     buffers::B
     temperature_buffers::Union{Nothing, B}
+    humidity_buffers::Union{Nothing, B}
     cursor::Int                             # first sounding not yet gathered as "new"
     pending::Union{Nothing, PendingSoundings}
     last_boundary::Float64                  # NaN before the first call
@@ -149,21 +154,29 @@ end
 
 """
     build_observation_sampler(spec, state, grid; origin, window_seconds, halo_width,
-                              terrain = ObservationTerrain())
+                              terrain = ObservationTerrain(), has_humidity = false)
 
 Read every source for the days covering `window_seconds` (seconds after
 `origin`, half-open), locate the requests on `grid.horizontal`, place each in
 the column ([`resolve_placement`](@ref) with the static ground fields of
 `terrain`, see [`ObservationTerrain`](@ref)), and prepare the device gather
 buffers. Requests that cannot be placed fail the build or are skipped and
-counted, as `spec.placement.unplaced` says. Output files are opened by
-`begin_observation_day!`. `NoObservationOutput` yields `NoObservationSampler()`.
+counted, as `spec.placement.unplaced` says. `has_humidity` says whether the
+run's binaries carry specific humidity: on a dry-basis run, pressure-placed
+requests need it for the total interface pressures of
+[`TotalFromHumidity`](@ref) (the default `spec.placement.pressure_basis`),
+and the build fails without it unless the basis is
+[`DryInterfaces`](@ref); every window end must then pass `humidity` to
+[`observe_window_boundary!`](@ref). Output files are opened by
+`begin_observation_day!`. `NoObservationOutput` yields
+`NoObservationSampler()`.
 """
 build_observation_sampler(::NoObservationOutput, args...; kwargs...) = NoObservationSampler()
 
 function build_observation_sampler(spec::ObservationOutputSpec, state, grid;
                                    origin::DateTime, window_seconds::Tuple{Real, Real},
-                                   halo_width::Integer, terrain::ObservationTerrain = ObservationTerrain())
+                                   halo_width::Integer, terrain::ObservationTerrain = ObservationTerrain(),
+                                   has_humidity::Bool = false)
     mesh = grid.horizontal
     vertical = grid.vertical
     iszero(vertical.B[1]) || throw(ArgumentError(
@@ -181,7 +194,11 @@ function build_observation_sampler(spec::ObservationOutputSpec, state, grid;
     examples = String[]   # a few unplaced requests for the message
     soundings, cells, placements = _locate_and_place(set.soundings, locator, spec, terrain, counters, examples)
     sites, site_cells, site_placements = _locate_and_place(set.sites, locator, spec, terrain, counters, examples)
-    _handle_unplaced(spec.placement.unplaced, counters, examples)
+    _handle_unplaced(spec.placement, counters, examples)
+    basis = mass_basis(state)
+    n_pressure = _n_pressure_placed(placements) + _n_pressure_placed(site_placements)
+    needs_humidity = check_pressure_basis(spec.placement.pressure_basis, basis, has_humidity, n_pressure,
+                                          "[output.observations]")
     times = [r.time_seconds for r in soundings]
     buffers = ObservationGatherBuffers(reference, nlevel, slots;
                                        capacity = max(1024, length(sites) + 1))
@@ -189,6 +206,8 @@ function build_observation_sampler(spec::ObservationOutputSpec, state, grid;
           "($(counters.unlocated_soundings + counters.unlocated_sites) outside the mesh, " *
           "$(set.dropped_outside_window) outside the run window, $(set.skipped_invalid) source rows skipped)"
     _log_placements(placements, site_placements, counters)
+    n_pressure > 0 && @info "observation pressure placement: $(n_pressure) requests against " *
+                            _pressure_basis_text(spec.placement.pressure_basis, basis)
     _warn_below_ground(soundings, placements, sites, site_placements)
     isempty(soundings) && isempty(sites) &&
         @warn "observation sampling has nothing to sample; no observation files will be written"
@@ -198,11 +217,19 @@ function build_observation_sampler(spec::ObservationOutputSpec, state, grid;
                        dem_file = terrain_source(terrain.dem))
     return ObservationSampler(spec, terrain_sources, origin, mesh, locator, spec.time_interpolation, names, nlevel,
                               Float64(vertical.A[1]), Float64(gravity(grid)),
-                              mass_basis(state), _npanel(mesh), soundings, times, cells, placements,
-                              sites, site_cells, site_placements, buffers, nothing, 1, nothing, NaN,
+                              basis, _npanel(mesh), soundings, times, cells, placements,
+                              sites, site_cells, site_placements, spec.placement.pressure_basis, needs_humidity,
+                              buffers, nothing, nothing, 1, nothing, NaN,
                               nothing, nothing, AbstractObservationStream[], Set{String}(), false,
                               counters, ObservationCounters(), false)
 end
+
+_n_pressure_placed(placements) = count(p -> p.method == VERTICAL_PLACEMENT_CODES.pressure, placements)
+_pressure_basis_text(::TotalFromHumidity, ::DryBasis) =
+    "total interface pressures from the dry air mass and the specific humidity"
+_pressure_basis_text(::TotalFromHumidity, ::MoistBasis) = "the (total) interface pressures of the moist air mass"
+_pressure_basis_text(::DryInterfaces, ::DryBasis) =
+    "dry interface pressures (pressure_basis = \"dry\"; record pressures are total pressures)"
 
 _count_unplaced!(c::ObservationCounters, ::SoundingRequest) = (c.unplaced_soundings += 1)
 _count_unplaced!(c::ObservationCounters, ::SiteRequest) = (c.unplaced_sites += 1)
@@ -212,7 +239,6 @@ _count_unlocated!(c::ObservationCounters, ::SiteRequest) = (c.unlocated_sites +=
 function _locate_and_place(requests::Vector{R}, locator, spec::ObservationOutputSpec,
                            terrain::ObservationTerrain, counters::ObservationCounters,
                            examples::Vector{String}) where {R}
-    option = spec.placement.altitude_placement
     kept = R[]
     cells = CellLocation[]
     placements = VerticalPlacement[]
@@ -220,7 +246,7 @@ function _locate_and_place(requests::Vector{R}, locator, spec::ObservationOutput
         cell = locate(locator, request.lon, request.lat)
         cell === nothing && (_count_unlocated!(counters, request); continue)
         rule = missing_height_rule(spec.sources[request.source])
-        placement = resolve_placement(option, rule, request, cell, terrain)
+        placement = resolve_placement(spec.placement, rule, request, cell, terrain)
         if placement === nothing
             _count_unplaced!(counters, request)
             length(examples) < 5 && push!(examples, _unplaced_example(request))
@@ -243,24 +269,32 @@ _unplaced_example(r::Union{SoundingRequest, SiteRequest}) =
     "elevation $(_fmt_height(r.elevation_m)), intake_height $(_fmt_height(r.intake_height_m)), " *
     "pressure $(isfinite(_unplaced_pressure(r)) ? string(_unplaced_pressure(r), " Pa") : "none")"
 
-function _unplaced_message(c::ObservationCounters, examples)
-    return "$(c.unplaced_soundings) point events and $(c.unplaced_sites) station series have no height " *
-           "above the ground and no pressure: they give an altitude above sea level without a ground " *
-           "elevation (no record elevation and no dem_file value at the point), or no vertical coordinate " *
-           "at all (ObsPack). The model surface height is not used as the true ground. " *
+_coordinate_text(::HeightAboveGroundCoordinate) =
+    "a height above the ground (an altitude needs a record elevation or a dem_file value at the point)"
+_coordinate_text(::PressureCoordinate) = "a pressure"
+
+function _unplaced_message(c::ObservationCounters, examples, coordinates::Tuple)
+    labels = join(("\"$(vertical_coordinate_label(x))\"" for x in coordinates), ", ")
+    usable = join(_coordinate_text.(coordinates), " or ")
+    return "$(c.unplaced_soundings) point events and $(c.unplaced_sites) station series have none of the " *
+           "vertical coordinates in use (vertical_coordinates = [$(labels)]), i.e. no $(usable): " *
+           "an altitude above sea level without a ground elevation (no record elevation and no dem_file " *
+           "value at the point), a coordinate the run does not use, or no vertical coordinate at all " *
+           "(ObsPack). The model surface height is not used as the true ground. " *
            "First $(length(examples)): $(join(examples, "; "))"
 end
 
-_handle_unplaced(policy::AbstractUnplacedPolicy, c::ObservationCounters, examples) =
-    _n_unplaced(c) == 0 ? nothing : _handle_unplaced_nonzero(policy, c, examples)
-_handle_unplaced_nonzero(::ErrorOnUnplaced, c::ObservationCounters, examples) = throw(ArgumentError(
-    "observation sampling cannot place every request in the column. " * _unplaced_message(c, examples) *
+_handle_unplaced(spec::VerticalPlacementSpec, c::ObservationCounters, examples) =
+    _n_unplaced(c) == 0 ? nothing : _handle_unplaced_nonzero(spec.unplaced, c, examples, spec.coordinates)
+_handle_unplaced_nonzero(::ErrorOnUnplaced, c::ObservationCounters, examples, coordinates) = throw(ArgumentError(
+    "observation sampling cannot place every request in the column. " *
+    _unplaced_message(c, examples, coordinates) *
     ". Set [output.observations].dem_file to a DEM covering these points (the ground elevation, " *
-    "m above sea level), or unplaced_records = \"skip\" to drop them (counted in the n_unplaced_* " *
-    "file attributes)."))
-_handle_unplaced_nonzero(::SkipUnplaced, c::ObservationCounters, examples) =
+    "m above sea level), add the coordinate the records give to vertical_coordinates, or " *
+    "unplaced_records = \"skip\" to drop them (counted in the n_unplaced_* file attributes)."))
+_handle_unplaced_nonzero(::SkipUnplaced, c::ObservationCounters, examples, coordinates) =
     @warn "observation sampling skips requests it cannot place (unplaced_records = \"skip\"). " *
-          _unplaced_message(c, examples)
+          _unplaced_message(c, examples, coordinates)
 
 function _log_placements(placements, site_placements, c::ObservationCounters)
     counts = [count(p -> p.method == code, placements) + count(p -> p.method == code, site_placements)
@@ -306,7 +340,9 @@ function _stream_attributes(s::ObservationSampler)
         "unplaced_records" => String(unplaced_policy_label(s.spec.placement.unplaced)),
         "surface_height_file" => s.terrain_sources.surface_height_file,
         "dem_file" => s.terrain_sources.dem_file,
-        "absolute_altitude_above_agl_m" => _altitude_option_attribute(s.spec.placement.altitude_placement))
+        "absolute_altitude_above_agl_m" => _altitude_option_attribute(s.spec.placement.altitude_placement),
+        "vertical_coordinates" => join(String.(vertical_coordinate_label.(s.spec.placement.coordinates)), " "),
+        "pressure_basis" => String(pressure_basis_label(s.pressure_basis)))
 end
 
 _current_streams(s::ObservationSampler) =
@@ -447,20 +483,25 @@ end
 # -- window boundaries ------------------------------------------------------
 
 """
-    observe_window_boundary!(sampler, state, time_seconds; next_window_seconds, temperature = nothing)
+    observe_window_boundary!(sampler, state, time_seconds; next_window_seconds, temperature = nothing,
+                             humidity = nothing)
 
 Sample `state` at a met-window end `time_seconds` after the run origin.
 `next_window_seconds` is the length of the window that starts now (it sets
 which soundings receive their first sample). `temperature`, when given, is
 a per-layer temperature field (K, k = 1 at the top) used for site layer
 heights, either with the air-mass layout or, on the cubed sphere, as
-interior-only panels; otherwise the configured constant applies. Call once at `t = 0`
-on the initial state and after every window.
+interior-only panels; otherwise the configured constant applies.
+`humidity` is the specific humidity (kg kg⁻¹ of moist air, k = 1 at the top)
+at this window end, in the same layouts; a sampler that places requests by
+total pressure on a dry-basis run ([`TotalFromHumidity`](@ref)) requires it
+and otherwise ignores it. Call once at `t = 0` on the initial state and
+after every window.
 """
 observe_window_boundary!(::NoObservationSampler, state, time_seconds::Real; kwargs...) = nothing
 
 function observe_window_boundary!(s::ObservationSampler, state, time_seconds::Real;
-                                  next_window_seconds::Real, temperature = nothing)
+                                  next_window_seconds::Real, temperature = nothing, humidity = nothing)
     s.finished && throw(ArgumentError("observation sampler already finished"))
     s.started || throw(ArgumentError(
         "begin_observation_day! must run before the first window boundary"))
@@ -470,30 +511,62 @@ function observe_window_boundary!(s::ObservationSampler, state, time_seconds::Re
         "next_window_seconds must be positive; got $(next_window_seconds)"))
     isnan(s.last_boundary) || t > s.last_boundary || throw(ArgumentError(
         "window boundaries must increase; got $(t) after $(s.last_boundary)"))
-    _observe!(s.time_interpolation, s, state, t, dt_next, temperature)
+    fields = (; temperature, humidity = _sampled_humidity(s, state, humidity))
+    _observe!(s.time_interpolation, s, state, t, dt_next, fields)
     s.last_boundary = t
     _reap_retired!(s)
     return nothing
 end
 
+# The humidity field the sampler gathers: `nothing` unless pressure placement
+# needs it, which then requires it at every window end.
+function _sampled_humidity(s::ObservationSampler, state, humidity)
+    s.needs_humidity || return nothing
+    humidity === nothing && throw(ArgumentError(
+        "observation sampling places requests by total pressure on a dry-basis run and needs the specific " *
+        "humidity at every window end, but none was passed (humidity = nothing)"))
+    _check_field_layout(state.air_mass, humidity, "humidity")
+    return humidity
+end
+
+# A field with the air-mass layout must match it; cubed-sphere panels are
+# checked by `_field_plan` (with or without the halo).
+_check_field_layout(air::AbstractArray, field::AbstractArray, name) = size(field) == size(air) ||
+    throw(DimensionMismatch("$(name) has size $(size(field)); the air mass has size $(size(air))"))
+_check_field_layout(air::NTuple{6}, field::NTuple{6, <:AbstractArray}, name) = nothing
+_check_field_layout(air, field, name) = throw(ArgumentError(
+    "$(name) must have the air-mass layout ($(typeof(air))); got $(typeof(field))"))
+
 # Gather the point events `range` plus every site, in one launch.
-function _gather!(s::ObservationSampler, state, range::UnitRange{Int}, temperature)
+function _gather!(s::ObservationSampler, state, range::UnitRange{Int}, fields::NamedTuple)
     cells = vcat(view(s.sounding_cells, range), s.site_cells)
     plan = GatherPlan(cells, s.npanel)
     gather_columns!(s.buffers, state, plan.columns, plan.panel_ranges)
-    _gather_temperature!(s, cells, plan, temperature)
+    _gather_temperature!(s, cells, plan, fields.temperature)
+    _gather_humidity!(s, cells, plan, fields.humidity)
     return plan
+end
+
+_field_buffers(s::ObservationSampler) =
+    ObservationGatherBuffers(s.buffers.air, s.nlevel, Int[]; capacity = s.buffers.capacity)
+
+function _gather_layer_field!(buffers::ObservationGatherBuffers, s::ObservationSampler, cells, plan::GatherPlan,
+                              field)
+    fplan = _field_plan(s, cells, plan, field)
+    gather_field!(buffers, field, fplan.columns, fplan.panel_ranges)
+    return nothing
 end
 
 _gather_temperature!(s::ObservationSampler, cells, plan::GatherPlan, ::Nothing) = nothing
 function _gather_temperature!(s::ObservationSampler, cells, plan::GatherPlan, temperature)
-    if s.temperature_buffers === nothing
-        s.temperature_buffers = ObservationGatherBuffers(s.buffers.air, s.nlevel, Int[];
-                                                         capacity = s.buffers.capacity)
-    end
-    tplan = _field_plan(s, cells, plan, temperature)
-    gather_field!(s.temperature_buffers, temperature, tplan.columns, tplan.panel_ranges)
-    return nothing
+    s.temperature_buffers === nothing && (s.temperature_buffers = _field_buffers(s))
+    return _gather_layer_field!(s.temperature_buffers, s, cells, plan, temperature)
+end
+
+_gather_humidity!(s::ObservationSampler, cells, plan::GatherPlan, ::Nothing) = nothing
+function _gather_humidity!(s::ObservationSampler, cells, plan::GatherPlan, humidity)
+    s.humidity_buffers === nothing && (s.humidity_buffers = _field_buffers(s))
+    return _gather_layer_field!(s.humidity_buffers, s, cells, plan, humidity)
 end
 
 # Lat-lon and reduced-Gaussian fields share the state layout.
@@ -503,11 +576,11 @@ function _field_plan(s::ObservationSampler, cells, plan::GatherPlan, field::NTup
     Nc = s.mesh.Nc
     n1 == Nc + 2 * s.locator.halo_width && return plan
     n1 == Nc && return GatherPlan(cells, s.npanel; column = c -> c.cell)
-    throw(DimensionMismatch("temperature panels are $(n1) wide; expected $(Nc) or $(Nc + 2 * s.locator.halo_width)"))
+    throw(DimensionMismatch("field panels are $(n1) wide; expected $(Nc) or $(Nc + 2 * s.locator.halo_width)"))
 end
 
 function _observe!(::LinearWindowInterpolation, s::ObservationSampler, state, t::Float64,
-                   dt_next::Float64, temperature)
+                   dt_next::Float64, fields::NamedTuple)
     times = s.sounding_times
     mid = searchsortedfirst(times, t)
     hi_next = searchsortedfirst(times, t + dt_next)
@@ -523,19 +596,19 @@ function _observe!(::LinearWindowInterpolation, s::ObservationSampler, state, t:
     end
     hi_next = max(hi_next, lo)
     range = lo:hi_next - 1
-    plan = _gather!(s, state, range, temperature)
+    plan = _gather!(s, state, range, fields)
     nsounding = length(range)
     if mid > lo
-        _emit_bracketed!(s, pending, lo, mid, t, plan, temperature)
+        _emit_bracketed!(s, pending, lo, mid, t, plan, fields.temperature)
     end
-    s.pending = mid < hi_next ? _hold!(s, mid, hi_next, t, plan, lo, temperature) : nothing
+    s.pending = mid < hi_next ? _hold!(s, mid, hi_next, t, plan, lo, fields.temperature) : nothing
     s.cursor = hi_next
-    _emit_sites!(s, t, plan, nsounding, temperature)
+    _emit_sites!(s, t, plan, nsounding, fields.temperature)
     return nothing
 end
 
 function _observe!(::NearestWindowSampling, s::ObservationSampler, state, t::Float64,
-                   dt_next::Float64, temperature)
+                   dt_next::Float64, fields::NamedTuple)
     times = s.sounding_times
     lo = s.cursor
     if isnan(s.last_boundary)
@@ -545,7 +618,7 @@ function _observe!(::NearestWindowSampling, s::ObservationSampler, state, t::Flo
     end
     hi = max(searchsortedfirst(times, t + dt_next / 2), lo)
     range = lo:hi - 1
-    plan = _gather!(s, state, range, temperature)
+    plan = _gather!(s, state, range, fields)
     nsounding = length(range)
     if nsounding > 0
         times_now = fill(t, nsounding)
@@ -553,12 +626,13 @@ function _observe!(::NearestWindowSampling, s::ObservationSampler, state, t::Flo
                                 fill(interp_flag(NearestWindowSampling()), nsounding),
                                 (i, k) -> s.buffers.air_host[k, plan.position[i]],
                                 (i, k, tr) -> s.buffers.tracers_host[k, tr, plan.position[i]],
-                                i -> _row_layer_temperature(s, plan.position[i], temperature))
+                                i -> _row_layer_temperature(s, plan.position[i], fields.temperature),
+                                (i, k) -> _gathered_humidity(s, k, plan.position[i]))
         append_soundings!(s.soundings_stream, batch)
         s.counters.emitted += nsounding
     end
     s.cursor = hi
-    _emit_sites!(s, t, plan, nsounding, temperature)
+    _emit_sites!(s, t, plan, nsounding, fields.temperature)
     return nothing
 end
 
@@ -590,9 +664,14 @@ function _emit_bracketed!(s::ObservationSampler, pending::Union{Nothing, Pending
         current = Float64(tracers[k, tr, plan.position[i]])
         bracketed[i] ? (1 - w[i]) * pending.tracers[k, tr, lo - pending_lo + i] + w[i] * current : current
     end
+    # The humidity is blended like the masses (it only places pressure-placed rows).
+    blend_humidity = (i, k) -> begin
+        current = _gathered_humidity(s, k, plan.position[i])
+        bracketed[i] ? (1 - w[i]) * pending.humidity[k, lo - pending_lo + i] + w[i] * current : current
+    end
     layer_temperature = i -> _row_layer_temperature(s, plan.position[i], temperature)
     batch = _sounding_batch(s, lo:mid - 1, prev, next, weights, flags, blend_air, blend_tracer,
-                            layer_temperature)
+                            layer_temperature, blend_humidity)
     append_soundings!(s.soundings_stream, batch)
     s.counters.emitted += n
     s.counters.one_sided += count(!, bracketed)
@@ -601,7 +680,8 @@ end
 
 # Copy the first samples of soundings mid:hi-1 out of the gather buffers. The
 # layer temperature is kept too: events exactly at the final window end are
-# emitted from this sample alone (`_emit_held!`).
+# emitted from this sample alone (`_emit_held!`); and the humidity, which is
+# blended like the masses when pressure placement needs it.
 function _hold!(s::ObservationSampler, mid::Int, hi::Int, t::Float64, plan::GatherPlan, lo::Int,
                 temperature)
     n = hi - mid
@@ -616,8 +696,14 @@ function _hold!(s::ObservationSampler, mid::Int, hi::Int, t::Float64, plan::Gath
             end
         end
     end
-    return PendingSoundings(mid:hi - 1, t, air, tracers, _held_temperature(s, slots, temperature))
+    humidity = s.needs_humidity ? Float64.(s.humidity_buffers.air_host[:, slots]) : nothing
+    return PendingSoundings(mid:hi - 1, t, air, tracers, _held_temperature(s, slots, temperature), humidity)
 end
+
+# Specific humidity of layer `k` in gather slot `slot`; NaN when pressure
+# placement needs none (it is then never read).
+_gathered_humidity(s::ObservationSampler, k::Int, slot::Int) =
+    s.needs_humidity ? Float64(s.humidity_buffers.air_host[k, slot]) : NaN
 
 _held_temperature(s::ObservationSampler, slots, ::Nothing) = nothing
 _held_temperature(s::ObservationSampler, slots, temperature) =
@@ -629,11 +715,12 @@ _held_layer_temperature(s::ObservationSampler, temperature::Matrix{Float64}, i::
     ProfileLayerTemperature(view(temperature, :, i))
 
 # Assemble the output rows for point events `range`; `air_at(i, k)` and
-# `tracer_at(i, k, tr)` return the (already blended) masses of the i-th row
-# and `temperature_at(i)` its `AbstractLayerTemperature` for intake heights.
+# `tracer_at(i, k, tr)` return the (already blended) masses of the i-th row,
+# `temperature_at(i)` its `AbstractLayerTemperature` for intake heights, and
+# `humidity_at(i, k)` its specific humidity (read only for pressure placement).
 function _sounding_batch(s::ObservationSampler, range::UnitRange{Int}, prev::Vector{Float64},
                          next::Vector{Float64}, weights::Vector{Float32}, flags::Vector{Int8},
-                         air_at, tracer_at, temperature_at)
+                         air_at, tracer_at, temperature_at, humidity_at)
     n = length(range)
     nlevel = s.nlevel
     ntracer = length(s.tracer_names)
@@ -650,6 +737,7 @@ function _sounding_batch(s::ObservationSampler, range::UnitRange{Int}, prev::Vec
     air_col = Vector{Float64}(undef, nlevel)
     tracer_col = Vector{Float64}(undef, nlevel)
     z_half = Vector{Float64}(undef, nlevel + 1)
+    column = _PlacementColumn(nlevel)
     cells = Vector{CellLocation}(undef, n)
     requests = view(s.soundings, range)
     for (i, idx) in enumerate(range)
@@ -663,7 +751,8 @@ function _sounding_batch(s::ObservationSampler, range::UnitRange{Int}, prev::Vec
         interface_pressures!(p, air_col, cell.area, s.gravity, s.p_top)
         layer_temperature = temperature_at(i)
         layer_heights_agl!(z_half, p, layer_temperature, s.gravity)
-        level = placement_layer(s.sounding_placements[idx], z_half, p)
+        level = _sample_layer!(column, s, s.sounding_placements[idx], z_half, p, air_col, cell.area,
+                               k -> humidity_at(i, k))
         levels[i] = Int32(level)
         bottoms[i] = z_half[level + 1]
         tops[i] = z_half[level]
@@ -697,6 +786,33 @@ _row_layer_temperature(s::ObservationSampler, slot::Int, ::Nothing) =
 _row_layer_temperature(s::ObservationSampler, slot::Int, temperature) =
     ProfileLayerTemperature(view(s.temperature_buffers.air_host, :, slot))
 
+# Scratch for the interface pressures of pressure placement.
+struct _PlacementColumn
+    p_half::Vector{Float64}
+    humidity::Vector{Float64}
+end
+_PlacementColumn(nlevel::Int) = _PlacementColumn(Vector{Float64}(undef, nlevel + 1), Vector{Float64}(undef, nlevel))
+
+# Layer of `placement` in one sampled column. Heights `z_half` and the
+# air-mass interfaces `p_half` (the pressures written to the files) choose it,
+# except for a pressure placement: its record pressure (a total pressure) is
+# compared with the interfaces of the sampler's pressure basis
+# (`placement_pressures!`), built from the column's air mass and, for
+# `TotalFromHumidity` on a dry basis, `humidity_at(k)`.
+function _sample_layer!(column::_PlacementColumn, s::ObservationSampler, placement::VerticalPlacement,
+                        z_half::AbstractVector, p_half::AbstractVector, air_col::AbstractVector, area::Real,
+                        humidity_at)
+    placement.method == VERTICAL_PLACEMENT_CODES.pressure || return placement_layer(placement, z_half, p_half)
+    if s.needs_humidity
+        @inbounds for k in eachindex(column.humidity)
+            column.humidity[k] = humidity_at(k)
+        end
+    end
+    placement_pressures!(column.p_half, s.pressure_basis, s.mass_basis, air_col, column.humidity, area,
+                         s.gravity, s.p_top)
+    return placement_layer(placement, z_half, column.p_half)
+end
+
 function _emit_sites!(s::ObservationSampler, t::Float64, plan::GatherPlan, nsounding::Int, temperature)
     stream = s.sites_stream
     stream === nothing && return nothing
@@ -710,6 +826,7 @@ function _emit_sites!(s::ObservationSampler, t::Float64, plan::GatherPlan, nsoun
     air_col = Vector{Float64}(undef, nlevel)
     tracer_col = Vector{Float64}(undef, nlevel)
     vmr = Vector{Float64}(undef, nlevel)
+    column = _PlacementColumn(nlevel)
     for (i, site) in enumerate(s.sites)
         if !site_active(site.schedule, t)
             _blank_site!(record, i, profiles)
@@ -723,7 +840,8 @@ function _emit_sites!(s::ObservationSampler, t::Float64, plan::GatherPlan, nsoun
         interface_pressures!(p_half, air_col, cell.area, s.gravity, s.p_top)
         layer_temperature = _row_layer_temperature(s, slot, temperature)
         layer_heights_agl!(z_half, p_half, layer_temperature, s.gravity)
-        level = placement_layer(s.site_placements[i], z_half, p_half)
+        level = _sample_layer!(column, s, s.site_placements[i], z_half, p_half, air_col, cell.area,
+                               k -> _gathered_humidity(s, k, slot))
         record.ps[i] = p_half[nlevel + 1]
         record.intake_level[i] = Int32(level)
         record.layer_bottom[i] = z_half[level + 1]
@@ -806,7 +924,8 @@ function _emit_held!(s::ObservationSampler, pending::PendingSoundings, n::Int)
     batch = _sounding_batch(s, first(pending.range):first(pending.range) + n - 1, times_now, times_now,
                             zeros(Float32, n), fill(interp_flag(LinearWindowInterpolation(), true), n),
                             (i, k) -> pending.air[k, i], (i, k, tr) -> pending.tracers[k, tr, i],
-                            i -> _held_layer_temperature(s, pending.temperature, i))
+                            i -> _held_layer_temperature(s, pending.temperature, i),
+                            (i, k) -> pending.humidity[k, i])
     append_soundings!(s.soundings_stream, batch)
     s.counters.emitted += n
     return nothing

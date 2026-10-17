@@ -95,6 +95,8 @@ export AbstractModelSurfaceHeight, NoModelSurfaceHeight, ModelSurfaceHeight, mod
 export AbstractPointElevation, NoPointElevation, point_elevation, ObservationTerrain
 export AbstractUnplacedPolicy, ErrorOnUnplaced, SkipUnplaced
 export AbstractAltitudePlacement, AboveGroundPlacement, AbsoluteAltitudeAbove, VerticalPlacementSpec
+export AbstractVerticalCoordinate, HeightAboveGroundCoordinate, PressureCoordinate
+export AbstractPressureBasis, TotalFromHumidity, DryInterfaces
 export VerticalPlacement, VERTICAL_PLACEMENT_CODES, resolve_placement, placement_layer
 export AbstractMissingHeightRule, LowestLayerWithoutHeight, UnplacedWithoutHeight, missing_height_rule
 export read_observation_requests, build_observation_set

@@ -42,7 +42,7 @@ end
     @test close(out) === nothing
     @test R._install_observation_sampler!(out, _obs_cfg(; enabled = false), SingleOutputFile(), nothing,
                                           nothing; cfg = Dict{String, Any}(), binary_paths = String[],
-                                          halo_width = 0) isa NoObservationSampler
+                                          halo_width = 0, has_humidity = false) isa NoObservationSampler
     @test out.observations isa NoObservationSampler
 end
 
@@ -187,6 +187,48 @@ end
     _rejects(_obs_cfg(; start_time = "2021-12"), "ISO-8601")
     _rejects(_obs_cfg(; start_time = 42), "date-time or string")
     _rejects(_obs_cfg(; enabled = "yes"), "must be true or false")
+end
+
+@testset "vertical coordinates and pressure basis (issue #20)" begin
+    H, P = O.HeightAboveGroundCoordinate(), O.PressureCoordinate()
+    placement(; kwargs...) = O.observation_output_spec(_obs_cfg(; kwargs...)).placement
+    # Default: height above the true ground first, then pressure (D28); total pressures.
+    @test placement().coordinates == (H, P) == O.DEFAULT_VERTICAL_COORDINATES
+    @test placement().pressure_basis isa O.TotalFromHumidity
+    for (names, expected) in ((["height_above_ground", "pressure"], (H, P)),
+                              (["pressure", "height_above_ground"], (P, H)),
+                              (["pressure"], (P,)), (["height_above_ground"], (H,)))
+        @test placement(; vertical_coordinates = names).coordinates == expected
+    end
+    @test placement(; pressure_basis = "dry").pressure_basis isa O.DryInterfaces
+    @test placement(; pressure_basis = "total").pressure_basis isa O.TotalFromHumidity
+    _rejects(_obs_cfg(; vertical_coordinates = String[]), "vertical_coordinates must name at least one")
+    _rejects(_obs_cfg(; vertical_coordinates = ["altitude"]), "vertical_coordinates must be one of")
+    _rejects(_obs_cfg(; vertical_coordinates = ["pressure", "pressure"]), "must not repeat a coordinate")
+    _rejects(_obs_cfg(; vertical_coordinates = ["pressure", "Pressure"]), "must not repeat a coordinate")
+    _rejects(_obs_cfg(; vertical_coordinates = "pressure"), "vertical_coordinates must be an array")
+    _rejects(_obs_cfg(; vertical_coordinates = Any["pressure", 1]), "vertical_coordinates must be an array")
+    _rejects(_obs_cfg(; pressure_basis = "moist"), "pressure_basis must be one of")
+    _rejects(_obs_cfg(; pressure_basis = 1), "pressure_basis must be a string")
+    # Keys that act on height placements have no effect without that coordinate.
+    _rejects(_obs_cfg(; vertical_coordinates = ["pressure"], dem_file = "/tmp/dem.nc"),
+             "dem_file acts on records placed by their height above the ground")
+    _rejects(_obs_cfg(; vertical_coordinates = ["pressure"], surface_height_file = "/tmp/zs.nc",
+                      absolute_altitude_above_agl_m = 0),
+             "absolute_altitude_above_agl_m acts on records placed by their height above the ground")
+    # The shared parser names the table it reads (the inversion reuses it).
+    err = try
+        O._parse_vertical_placement(Dict{String, Any}("pressure_basis" => "wet"), "[observations.placement]")
+    catch e
+        e
+    end
+    @test err isa ArgumentError && occursin("[observations.placement].pressure_basis", sprint(showerror, err))
+    @test O._parse_vertical_placement(Dict{String, Any}("vertical_coordinates" => ["pressure"]),
+                                      "[observations.placement]").coordinates == (P,)
+    @test issubset(O._VERTICAL_PLACEMENT_KEYS, O._OBSERVATION_OUTPUT_KEYS)
+    # The settings type refuses an empty or repeating coordinate list too.
+    @test_throws ArgumentError O.VerticalPlacementSpec(; coordinates = ())
+    @test_throws ArgumentError O.VerticalPlacementSpec(; coordinates = (P, P))
 end
 
 @testset "output paths follow the snapshot day template" begin

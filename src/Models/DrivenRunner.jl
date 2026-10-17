@@ -98,7 +98,7 @@ using ..MetDrivers: AbstractMetDriver, TransportBinaryDriver,
                      total_windows, window_dt, binary_capabilities,
                      inspect_binary, steps_per_window,
                      steps_per_window_schedule, release_payload!,
-                     surface_pressure_basis
+                     surface_pressure_basis, supports_moisture
 using ..InitialConditionIO: _regridding_method, _surface_flux_kind, surface_flux_species,
                             _hold_outside_coverage, RUN_SPAN_CLOCK_SLACK_SECONDS
 using ..InitialConditionIO: build_initial_mixing_ratio, _build_cs_initial_mixing_ratio,
@@ -555,6 +555,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     sampler = _install_observation_sampler!(output_resources, output_cfg, output_spec.partition,
                                             model.state, grid_of_first;
                                             cfg, binary_paths, halo_width = 0,
+                                            has_humidity = supports_moisture(first_driver),
                                             offset_seconds = (start_window - 1) * Float64(window_dt(first_driver)),
                                             span_seconds = 3600 * run_hours)
     # Observation sampling needs the per-window loop even without snapshots.
@@ -926,6 +927,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     sampler = _install_observation_sampler!(output_resources, output_cfg, output_spec.partition,
                                             model.state, grid;
                                             cfg, binary_paths, halo_width = Hp,
+                                            has_humidity = _window_humidity(window1, true) !== nothing,
                                             span_seconds = 3600 * run_hours)
     observation_clock_seconds = 0.0   # exact Float64 run clock for observation times
 

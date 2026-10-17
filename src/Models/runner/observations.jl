@@ -87,12 +87,14 @@ function _check_origin_against_binaries(origin::DateTime, binary_paths)
     return nothing
 end
 
+# `has_humidity`: whether the run's binaries carry the specific humidity that
+# `_window_humidity` hands the sampler (total pressures for pressure placement).
 function _install_observation_sampler!(output::RunSnapshotOutput, output_cfg::AbstractDict,
                                        partition::AbstractOutputPartition, state, grid;
-                                       cfg, binary_paths, halo_width::Integer,
+                                       cfg, binary_paths, halo_width::Integer, has_humidity::Bool,
                                        offset_seconds::Real = 0.0, span_seconds::Real = Inf)
     spec = observation_output_spec(output_cfg; partition)
-    sampler = _build_sampler(spec, state, grid; cfg, binary_paths, halo_width,
+    sampler = _build_sampler(spec, state, grid; cfg, binary_paths, halo_width, has_humidity,
                              offset_seconds, span_seconds)
     output.observations = sampler
     return sampler
@@ -100,7 +102,7 @@ end
 
 _build_sampler(::NoObservationOutput, state, grid; kwargs...) = NoObservationSampler()
 function _build_sampler(spec::ObservationOutputSpec, state, grid; cfg, binary_paths, halo_width,
-                        offset_seconds, span_seconds)
+                        has_humidity, offset_seconds, span_seconds)
     origin = _observation_time_origin(spec, cfg)
     _check_origin_against_binaries(origin, binary_paths)
     for mode in (SoundingMode(), SiteMode())
@@ -113,7 +115,7 @@ function _build_sampler(spec::ObservationOutputSpec, state, grid; cfg, binary_pa
     @info "observation sampling window: $(origin + Millisecond(round(Int, 1000 * window_seconds[1]))) " *
           "to $(origin + Millisecond(round(Int, 1000 * window_seconds[2]))) UTC"
     terrain = _observation_terrain(spec.placement, grid.horizontal)
-    return build_observation_sampler(spec, state, grid; origin, window_seconds, halo_width, terrain)
+    return build_observation_sampler(spec, state, grid; origin, window_seconds, halo_width, terrain, has_humidity)
 end
 
 # Per-binary entry: switch daily files, and on the first binary sample the
@@ -122,7 +124,7 @@ _begin_observation_binary!(timer, ::NoObservationSampler, sim, path, idx::Intege
 function _begin_observation_binary!(timer, sampler::AbstractObservationSampler, sim, path,
                                     idx::Integer, seconds::Real)
     begin_observation_day!(sampler, _binary_date_label(path), idx)
-    idx == 1 && _observe_window_end!(timer, sampler, sim, seconds)
+    idx == 1 && _observe_window_end!(timer, sampler, sim, seconds; run_start = true)
     return nothing
 end
 
@@ -133,11 +135,25 @@ _window_temperature(sim) = _vdiff_temperature(sim.window.vdiff)
 _vdiff_temperature(::Nothing) = nothing
 _vdiff_temperature(vdiff) = vdiff.t
 
-_observe_window_end!(timer, ::NoObservationSampler, sim, seconds::Real) = nothing
-function _observe_window_end!(timer, sampler::AbstractObservationSampler, sim, seconds::Real)
+# Specific humidity (kg kg⁻¹ of moist air, layer means, k = 1 at the top) at
+# the sampled boundary, for total interface pressures: the window's `qv_start`
+# at the run start and its `qv_end` at its end (lat-lon and reduced-Gaussian
+# binaries), else the window's GCHP VDIFF `qv` (cubed-sphere binaries, one
+# field per window, like the temperature); `nothing` when the binary carries
+# neither. `sim.window` is the window that just ended (the next one loads on
+# the next step). The runners pass `has_humidity` from the same fields.
+_window_humidity(window, run_start::Bool) =
+    window.qv_start !== nothing ? (run_start ? window.qv_start : window.qv_end) : _vdiff_humidity(window.vdiff)
+_vdiff_humidity(::Nothing) = nothing
+_vdiff_humidity(vdiff) = vdiff.qv
+
+_observe_window_end!(timer, ::NoObservationSampler, sim, seconds::Real; run_start::Bool = false) = nothing
+function _observe_window_end!(timer, sampler::AbstractObservationSampler, sim, seconds::Real;
+                              run_start::Bool = false)
     temperature = _window_temperature(sim)
+    humidity = _window_humidity(sim.window, run_start)
     next_window_seconds = Float64(window_dt(sim.driver))
     timed_io_write!(timer, () -> observe_window_boundary!(sampler, sim.model.state, Float64(seconds);
-                                                          next_window_seconds, temperature))
+                                                          next_window_seconds, temperature, humidity))
     return nothing
 end
