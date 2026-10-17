@@ -169,8 +169,8 @@ The inversion layer composes the reverse pass rather than reimplementing it:
 | `cs_surface_flux_jacobian` | Batch objectives and aggregate steps into named control windows. |
 | `cs_surface_flux_4dvar` | Evaluate observation/background cost and its control gradient, with one taped run and one reverse pass for all observations. |
 | `cs_surface_flux_4dvar_optimize` | Optimize with `CSGradientDescent` or `CSLBFGS`. |
-| `read_observations`, `bind_to_mesh` | Read point observations and bind them to CS column-mean objectives (altitude is ignored; see Current limits). |
-| `read_departures`, `write_departures` | Exchange modeled-minus-observed diagnostics. |
+| `read_observations`, `bind_to_mesh` | Read observation files (schema v2) and bind each record to its cell and time sampling: point records to `CSPlacedPointObjective`s placed in the column by the forward sampler's rule (height above ground and/or pressure), column records to column means. |
+| `build_departure_set`, `read_departures`, `write_departures` | Exchange modeled-minus-observed diagnostics with each observation's sampled steps, levels and placement. |
 
 As in TM5-4DVAR, one gradient is one adjoint integration. Each observation
 is a fixed linear functional of the tracer mass after its model step (weights
@@ -233,27 +233,27 @@ refresh in the recorders, not from limiter flips.
 | --- | --- | --- |
 | Forward integration | Separate CTM driver | `run_driven_simulation` or the lower-level CS arrays |
 | Reverse forcing | Observation operator, departures injected during one adjoint run | `CSObservation` objectives as linear functionals, injected at each step's end in one reverse pass, or an explicit seed |
-| Observation IO | System-specific files | `CSObservationSet` NetCDF IO + `bind_to_mesh` |
+| Observation IO | System-specific files | `CSObservationSet` NetCDF IO (schema v2) + `bind_to_mesh` |
 | Background covariance | B or B¹ᐟ² implementation | `DiagonalCSCovariance` / `IsotropicGaussianCSCovariance` |
 | Preconditioning | Hand-coded control transform | `CSSurfaceFluxPreconditioner` |
 | Optimization | M1QN3 / L-BFGS variants | `CSGradientDescent` / `CSLBFGS` |
 | Driver | Dedicated inversion executable | `scripts/inversions/cs_4dvar.jl` for the synthetic workflow |
 
+Point observations are placed as TM5-4DVAR places them in spirit, with
+deliberate differences: by their height above the true ground measured up
+from the model surface (TM5 compares sea-level altitudes with heights on the
+model orography and never samples layer 1), or by pressure, in the forward
+run and in the adjoint alike (TM5's adjoint ignores the pressure
+coordinate). Windows are Δt/ΣΔt means as in TM5, with a step partly inside
+the window weighted by its overlap; the sample is taken after the full step
+(after convection). See [observation operators](@ref placed-observation-operator).
+
 ## Current limits
 
-- Observations lose their altitude. `bind_to_mesh` turns every record into
-  an air-mass-weighted column mean (`CSColumnMeanObjective`) of its cell and
-  ignores `alt`, so a surface site and an aircraft sample in the same cell
-  and step get the same observation operator. That is wrong for surface
-  in-situ and aircraft data. Layer binding needs an above-ground intake
-  height or a pressure: the observation schema stores `alt` above sea level
-  and transport binaries carry no surface elevation. The forward
-  observation sampler (`[output.observations]`) already places intake
-  heights in layers. There is no averaging-kernel column operator for
-  satellite or TCCON columns either: `cs_surface_flux_4dvar` evaluates only
-  `CSLayerMeanObjective` and `CSColumnMeanObjective`, and
-  `cs_surface_emission_footprint_from_seed` gives footprints for other
-  operators but no cost.
+- Column observations (satellite, TCCON) bind to the air-mass-weighted column
+  mean of their cell; averaging kernels are not applied yet.
+- The inversion driver binds observation files on its synthetic hydrostatic
+  meteorology only; real transport binaries need the Julia API.
 - CMFMC requires `clamp = false` in the footprint path.
 - TM5 and CMFMC-matrix convection require the full, unmerged,
   non-collaborative solve (`use_collab_lu = false`, `lmax_conv = 0`,

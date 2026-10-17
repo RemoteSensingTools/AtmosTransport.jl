@@ -84,15 +84,16 @@ preconditioner writes ``x=x_b+B^{1/2}\chi``, so the optimizer works with
 
 The gradient of the observation term needs one adjoint run, not one per
 observation. With fixed meteorology each ``H_k`` is a linear function of the
-tracer mass after its model step ``s_k``, with weights ``\mathbf{w}_k`` from
-that step's air mass. A forward run gives every ``H_k(F(x))``; the reverse
-pass then starts from zero at the last observation step and, at the end of
-each step ``s``, adds the weighted departures of the observations sampled
-there,
+tracer mass after the model steps it samples (one step ``s``, or the steps of
+a time window with weights ``\omega_{ks}`` summing to 1), with weights
+``\mathbf{w}_{ks}`` from those steps' air mass. A forward run gives every
+``H_k(F(x))``; the reverse pass then starts from zero at the last sampled
+step and, at the end of each step ``s``, adds the weighted departures of the
+observations sampled there,
 
 ```math
 \lambda_s = M_{s+1}^T\lambda_{s+1}
-+ \sum_{k:\,s_k=s}\frac{H_k(F(x))-y_k}{\sigma_k^2}\,\mathbf{w}_k ,
++ \sum_{k \text{ sampled at } s}\frac{H_k(F(x))-y_k}{\sigma_k^2}\,\omega_{ks}\,\mathbf{w}_{ks} ,
 ```
 
 where ``M_{s+1}^T`` is the transposed model step. Read at each step's surface
@@ -104,11 +105,44 @@ section of the adjoint status page has the details.
 |---|---|
 | `[mesh]`, `[time]`, `[meteo]` | C3 grid, two steps and synthetic constant meteorology. |
 | `[advection]` | The scheme whose adjoint gives the gradient, parsed as in a forward run. The example uses unlimited PPM (`limiter = "none"`, accepted only by the inversion driver), which keeps the cost exactly quadratic; with zero fluxes the choice does not change the result. |
-| `[[observations.entries]]` | Receptor indices, step, observed value and uncertainty. |
+| `[[observations.entries]]` | Receptor indices, step, observed value and uncertainty (or `[observations].file`, an observation file, below). |
 | `[control]` | One spatial field shared by named emission steps. `normalize=true` divides its contribution across those steps. |
 | `[covariance]` | Prior-error scale and spatial correlation. |
 | `[preconditioner]` | Map optimizer variables to physical control values. |
 | `[optimizer]` | L-BFGS iteration and stopping settings. |
+
+Instead of inline entries, `[observations]` can read an observation file
+(schema v2, written with `write_observations`). Point records (`kind =
+"point"`: surface stations, towers, aircraft) are placed in the model column
+as the forward observation sampler places them, by their height above the
+ground or their pressure; column records (`kind = "column"`) are column
+means. The file needs the model start time and a column of physical air
+mass, the `synthetic_hydrostatic` meteorology:
+
+```toml
+[time]
+nsteps = 3
+dt_seconds = 600.0
+start = "2024-06-15T00:00:00"
+
+[meteo]
+source = "synthetic_hydrostatic"
+interface_pressures_pa = [1000.0, 30000.0, 70000.0, 100000.0]   # total, top first
+specific_humidity = [1e-5, 2e-3, 1e-2]                         # per layer, kg/kg
+
+[observations]
+file = "observations.nc"
+tracer = "CO2"
+
+[observations.placement]
+vertical_coordinates = ["height_above_ground", "pressure"]
+```
+
+Each sample reads the layer that contains it at its model step (a record with
+`time_window_s > 0` averages the steps of its window), so a 10 m intake reads
+the surface layer and a 5 km aircraft sample a layer near 540 hPa in the same
+cell. The [observation operators](@ref placed-observation-operator) section
+of the adjoint status page gives the equations.
 
 Try changing `observations.entries.value` or `covariance.sigma_value` in a
 copy of the TOML and compare the two cost components. A smaller observation
@@ -135,8 +169,10 @@ The forward and inversion TOML files are **different interfaces**. Adding
 `[adjoint]` to a forward run does not create an inversion, and the inversion
 driver rejects forward-run tables such as `[diffusion]` or `[convection]`
 that it does not read. The shipped inversion
-CLI only assembles synthetic constant meteorology and inline observations;
-real transport binaries and observation files require programmatic assembly.
+CLI assembles synthetic meteorology (constant, or a hydrostatic column) with
+inline observations or an observation file; real transport binaries require
+programmatic assembly (`bind_to_mesh` with a `CSObservationColumnMet` for
+`cs_surface_flux_4dvar`).
 `config/inversions/example_c48.toml` is a future-driver sketch, not a working
 real-data recipe. Metal forward smoke tests have passed, but Metal adjoints and comparison
 with TM5-4DVAR on real observations remain open.
