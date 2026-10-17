@@ -711,6 +711,13 @@
   mapping into a padded host window (31 ms per C90 L72 window, row by row for
   padded fields) and the copy of that window to the device; the device windows
   are unchanged. `same_window_layout` also compares the on-disk element type.
+- The packed cubed-sphere palindrome (`strang_split_cs_mt!`) queues its halo
+  exchanges (`fill_panel_halos!(…; sync = false)`, new keyword) and
+  synchronizes the host once at its end instead of after each of its 16
+  exchanges per step; with the surface flux and the diffusion solve a C90 step
+  now synchronizes 3 times. A window prefetch first waits for the stepping
+  task's queued work, which may still read the window it refills. Results
+  are bit-identical.
 
 ### Other changes
 

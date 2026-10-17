@@ -189,11 +189,12 @@ function strang_split_cs!(panels_rm::NTuple{6},
 end
 
 """
-    fill_cs_step_start_halos!(panels_rm, panels_m, mesh)
+    fill_cs_step_start_halos!(panels_rm, panels_m, mesh; sync = true)
 
 Refresh the halos of the air mass and the tracer mass at the start of a
 cubed-sphere split-sweep transport step: all four edge halos, then the corners
-in the X-sweep orientation (`fill_panel_halos!(…; dir = 1)`).
+in the X-sweep orientation (`fill_panel_halos!(…; dir = 1)`). With
+`sync = false` a device refresh is only queued.
 The step's first X sweep reads these halos (`strang_split_cs!` refills them
 only between its own sweeps). Operators that run between two transport steps
 (convection, chemistry) update interior cells only, so without the refresh
@@ -207,9 +208,9 @@ checkpoint window that restarts at a step boundary reproduces the full
 recording exactly.
 """
 function fill_cs_step_start_halos!(panels_rm::NTuple{6}, panels_m::NTuple{6},
-                                   mesh::CubedSphereMesh)
-    fill_panel_halos!(panels_m, mesh; dir = 1)
-    fill_panel_halos!(panels_rm, mesh; dir = 1)
+                                   mesh::CubedSphereMesh; sync::Bool = true)
+    fill_panel_halos!(panels_m, mesh; dir = 1, sync)
+    fill_panel_halos!(panels_rm, mesh; dir = 1, sync)
     return nothing
 end
 
@@ -338,6 +339,10 @@ function strang_split_cs_mt!(panels_rm_4d::NTuple{6},
                                  panels_am, panels_bm, panels_cm, mesh, scheme,
                                  workspace; flux_scale, cfl_limit,
                                  subcycle_count, midpoint!)
+    # One host synchronization per palindrome (the halo exchanges inside only
+    # queue their launches): it bounds how far the host runs ahead of the
+    # device, which leaves the window prefetch thread its CPU time.
+    synchronize(get_backend(panels_m[1]))
     return nothing
 end
 
@@ -348,7 +353,9 @@ end
 Packed-tracer CS split-sweep that writes each sweep directly into alternate
 panel buffers and swaps active/inactive tuples between sweeps. This removes the
 per-sweep copy-back kernels while keeping the existing KA sweep kernels. The
-final active `(rm, m)` tuple is returned.
+final active `(rm, m)` tuple is returned. On a device its halo exchanges are
+queued without a host synchronization (every sweep follows them on the same
+queue); `strang_split_cs_mt!` synchronizes once at the end.
 """
 function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
                                       panels_m::NTuple{6},
@@ -386,15 +393,15 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
     # Forward half: (X → Y → Z)^n_pal.
     for pass in 1:n_pal
         if pass > 1     # the previous Z sweep changed the interiors the X halos mirror
-            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(active_rm, mesh; dir = 1)
-            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(active_m,  mesh; dir = 1)
+            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(active_rm, mesh; dir = 1, sync = false)
+            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(active_m,  mesh; dir = 1, sync = false)
         end
         SectionTimer.@section :cs_sweep_x begin
             _sweep_x_panels_mt_pingpong!(
                 spare_rm, spare_m, active_rm, active_m, panels_am, mesh, scheme;
                 flux_scale = fs_sub, seam_flux = workspace.seam_flux)
-            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(spare_rm, mesh; dir = 1)
-            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(spare_m,  mesh; dir = 1)
+            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(spare_rm, mesh; dir = 1, sync = false)
+            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(spare_m,  mesh; dir = 1, sync = false)
         end
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
@@ -403,8 +410,8 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
             _sweep_y_panels_mt_pingpong!(
                 spare_rm, spare_m, active_rm, active_m, panels_bm, mesh, scheme;
                 flux_scale = fs_sub, seam_flux = workspace.seam_flux)
-            SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(spare_rm, mesh; dir = 2)
-            SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(spare_m,  mesh; dir = 2)
+            SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(spare_rm, mesh; dir = 2, sync = false)
+            SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(spare_m,  mesh; dir = 2, sync = false)
         end
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
@@ -436,26 +443,26 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
 
-        SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(active_rm, mesh; dir = 2)
-        SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(active_m,  mesh; dir = 2)
+        SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(active_rm, mesh; dir = 2, sync = false)
+        SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(active_m,  mesh; dir = 2, sync = false)
         SectionTimer.@section :cs_sweep_y begin
             _sweep_y_panels_mt_pingpong!(
                 spare_rm, spare_m, active_rm, active_m, panels_bm, mesh, scheme;
                 flux_scale = fs_sub, seam_flux = workspace.seam_flux)
-            SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(spare_rm, mesh; dir = 2)
-            SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(spare_m,  mesh; dir = 2)
+            SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(spare_rm, mesh; dir = 2, sync = false)
+            SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(spare_m,  mesh; dir = 2, sync = false)
         end
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
 
-        SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(active_rm, mesh; dir = 1)
-        SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(active_m,  mesh; dir = 1)
+        SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(active_rm, mesh; dir = 1, sync = false)
+        SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(active_m,  mesh; dir = 1, sync = false)
         SectionTimer.@section :cs_sweep_x begin
             _sweep_x_panels_mt_pingpong!(
                 spare_rm, spare_m, active_rm, active_m, panels_am, mesh, scheme;
                 flux_scale = fs_sub, seam_flux = workspace.seam_flux)
-            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(spare_rm, mesh; dir = 1)
-            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(spare_m,  mesh; dir = 1)
+            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(spare_rm, mesh; dir = 1, sync = false)
+            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(spare_m,  mesh; dir = 1, sync = false)
         end
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m

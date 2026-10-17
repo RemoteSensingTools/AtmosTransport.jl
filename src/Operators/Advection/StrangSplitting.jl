@@ -259,7 +259,8 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
     subcycle_count = _cs_runtime_subcycle_count(meteo)
     deposit = center_emission_deposit(surface_flux_coupling(diffusion_op), diffusion_op)
     if cs_advection_style(scheme) isa CSSplitSweepStyle
-        fill_cs_step_start_halos!(state.tracers_raw, m, grid.horizontal)
+        # Queued only: the first sweep follows on the same device queue.
+        fill_cs_step_start_halos!(state.tracers_raw, m, grid.horizontal; sync = false)
         midpoint! = (active_rm, active_m) -> palindrome_center!(
             τ -> SectionTimer.@section(:diffusion, apply_vertical_diffusion_vmr!(
                 active_rm, active_m, diffusion_op, diffusion_workspace, τ, meteo;

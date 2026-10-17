@@ -290,6 +290,9 @@ function _start_window_prefetch!(sim::DrivenSimulation, target_window::Int)
     driver = sim.driver
     model_air_mass = sim.model.state.air_mass
     host_staging = sim.host_staging
+    # The prefetch overwrites the window the stepping task used before the last
+    # swap: its queued reads of that window must be finished first.
+    Architectures.synchronize_storage!(model_air_mass)
     sim.prefetch_window_index = target_window
     sim.prefetch_task = Threads.@spawn SectionTimer.time_section(:prefetch_task_total) do
         _load_window_into_existing_backend!(
