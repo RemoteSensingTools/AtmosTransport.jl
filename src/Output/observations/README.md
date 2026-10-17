@@ -5,8 +5,8 @@ flask records) and fixed stations. Writes append-only `<path>_soundings.nc` and
 `<path>_sites.nc` files.
 
 These files are included into the `Output` module by [`../Output.jl`](../Output.jl)
-in this order: sources, requests, readers, output spec, cell locator, gather,
-NetCDF, sampler. The runner glue lives in
+in this order: sources, requests, readers, cell locator, placement, output
+spec, gather, NetCDF, sampler. The runner glue lives in
 [`../../Models/runner/observations.jl`](../../Models/runner/observations.jl). See
 also the parent overview [`../README.md`](../README.md) and the file schema in
 [`../../../docs/src/config/output_schema.md`](../../../docs/src/config/output_schema.md).
@@ -16,9 +16,12 @@ separate system.
 ## Run Sequence
 
 1. `observation_output_spec(output_cfg)` builds the spec.
-2. `build_observation_sampler(spec, state, grid; origin, window_seconds, halo_width)`
-   reads the sources into an `ObservationSet` (`build_observation_set`) and locates
-   every request.
+2. `build_observation_sampler(spec, state, grid; origin, window_seconds, halo_width,
+   terrain)` reads the sources into an `ObservationSet` (`build_observation_set`),
+   locates every request, and places it in the column (`resolve_placement`, with
+   the static ground fields of `terrain`, an `ObservationTerrain` the runner
+   reads through `GriddedIO`). Requests that cannot be placed fail the build or
+   are skipped and counted (`unplaced_records`).
 3. Per input binary, `begin_observation_day!` opens or rotates the files.
 4. At t = 0 and after every window, `observe_window_boundary!` samples the state.
 5. At the end of the run, `finish_observations!` then `close`.
@@ -42,6 +45,15 @@ separate system.
 - Cell locator, in [`cell_locator.jl`](cell_locator.jl):
   `cell_locator(mesh; halo_width)`, `locate(loc, lon, lat)` (returns
   `CellLocation` or `nothing`), `ncolumns`, `isvalid_lonlat`
+- Vertical placement, in [`observation_placement.jl`](observation_placement.jl):
+  the ground interfaces `AbstractModelSurfaceHeight` (`NoModelSurfaceHeight`,
+  `ModelSurfaceHeight`) and `AbstractPointElevation` (`NoPointElevation`; the
+  lat-lon DEM lives in `GriddedIO`), `ObservationTerrain`,
+  `VerticalPlacementSpec` with `ErrorOnUnplaced`/`SkipUnplaced` and
+  `AboveGroundPlacement`/`AbsoluteAltitudeAbove`, the source trait
+  `missing_height_rule` (`LowestLayerWithoutHeight`, `UnplacedWithoutHeight`),
+  `resolve_placement` → `VerticalPlacement` (`VERTICAL_PLACEMENT_CODES`), and
+  `placement_layer` / `pressure_layer_index`
 - Gather and host reconstruction, in [`observation_gather.jl`](observation_gather.jl):
   `ObservationGatherBuffers`, `gather_columns!`, `gather_field!`,
   `interface_pressures!`, `layer_heights_agl!`, `intake_layer_index`,
@@ -63,6 +75,7 @@ separate system.
 - [`observation_readers.jl`](observation_readers.jl) — path templates and wildcards, CF time decoding, OCO-2 Lite / ObsPack / CSV-TOML-NetCDF readers, site merging, `build_observation_set`
 - [`observation_output_spec.jl`](observation_output_spec.jl) — `[output.observations]` keys, strict ISO-8601 UTC parsing, time-interpolation types, output paths
 - [`cell_locator.jl`](cell_locator.jl) — `CellLocation` and per-topology containing-cell lookup
+- [`observation_placement.jl`](observation_placement.jl) — vertical placement: ground interfaces, placement settings, the rules (record height → altitude − DEM → pressure → missing-height rule), codes, layer choice
 - [`observation_gather.jl`](observation_gather.jl) — device gather kernel and host twin, pressure and height reconstruction, height-method and `interp_flag` codes
 - [`observation_netcdf.jl`](observation_netcdf.jl) — queued, lock-aware sounding and site NetCDF streams and their schemas
 - [`observation_sampler.jl`](observation_sampler.jl) — `ObservationSampler`, linear or nearest-window time handling, daily file rotation, counters
@@ -79,8 +92,11 @@ separate system.
 - To add a mode, grouping, table format, quality filter, or time interpolation,
   extend its NamedTuple choice table and the schema in the same way.
 - To add an `[output.observations]` key, add it to `_OBSERVATION_OUTPUT_KEYS`, add
-  a field to `ObservationOutputSpec`, parse it in `observation_output_spec`, and add
-  it to the schema.
+  a field to `ObservationOutputSpec` (or `VerticalPlacementSpec` for placement
+  keys), parse it in `observation_output_spec`, and add it to the schema.
+- A new source kind also needs a `missing_height_rule` method: whether its
+  records without any vertical coordinate are column/surface products
+  (`LowestLayerWithoutHeight`) or cannot be placed (`UnplacedWithoutHeight`).
 - To add an output variable:
   1. Define it in `_define_sounding_schema!` or `_define_site_schema!`.
   2. Write it in `_write_soundings!` or `_write_site_record!`.
@@ -118,7 +134,27 @@ separate system.
   - The layer temperature is the runner's per-layer field when one is passed
     (CS GCHP VDIFF `t`). Otherwise it is `layer_height_temperature_kelvin`
     (default 280 K).
-  - A NaN or non-positive intake height selects the lowest layer.
+  - A non-positive height selects the lowest layer; a NaN height is an error.
+- Vertical placement (issue #56) is resolved once per request at build time:
+  - A record is placed at its height above the true ground (`intake_height`,
+    `altitude − elevation`, else `altitude −` DEM ground), measured up from the
+    model surface; else by its pressure; else by its source's
+    `missing_height_rule`.
+  - The model surface height is never used as the true ground; it is only the
+    reference of `absolute_altitude_above_agl_m`.
+  - A request is never sampled in the lowest layer for lack of a height unless
+    its source declares `LowestLayerWithoutHeight`; the row then records
+    `vertical_placement = lowest_layer`.
+  - The sampler keeps only the terrain provenance, not the DEM.
+  - Undeclared fill values never place a record: ObsPack `pressure` ≤ 0
+    (`valid_pressure`), `elevation` / `site_elevation` below −450 m
+    (`valid_elevation`) and negative `intake_height` (`valid_intake_height`)
+    become NaN at read time with a warning per file.
+  - A placement more than `BELOW_GROUND_TOLERANCE_M` (100 m) below the ground
+    (`below_ground`) is sampled in the lowest layer and reported in a warning.
+  - ObsPack station series key altitude-only rows by altitude (0.1 m); a
+    `site_code` dataset whose records stray more than 1° from the site
+    position is warned about as a moving platform.
 - Each NetCDF write is queued and runs under `with_netcdf_lock`. If the lock is
   busy, the write stays queued for a later call. Each flush is synced before
   `completed_soundings` / `completed_times` is updated. A failed write poisons the
@@ -136,5 +172,6 @@ separate system.
 Under [`../../../test/core/`](../../../test/core/): `test_observation_output_spec.jl`,
 `test_observation_sources.jl`, `test_observation_schedules.jl`,
 `test_observation_schema.jl`, `test_observation_cell_locator.jl`,
-`test_observation_gather.jl`, `test_observation_sampler.jl`,
+`test_observation_gather.jl`, `test_observation_placement.jl`,
+`test_gridded_io_surface_height.jl`, `test_observation_sampler.jl`,
 `test_observation_runner.jl`, `test_async_output_lifetime.jl` (sampler close).

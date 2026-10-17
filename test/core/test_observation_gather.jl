@@ -187,7 +187,8 @@ end
     @test intake_layer_index(z, 499.9) == 2
     @test intake_layer_index(z, 500.0) == 1
     @test intake_layer_index(z, 2000.0) == 1
-    @test intake_layer_index(z, NaN) == 3
+    # A missing height is never a silent lowest-layer fallback (issue #56).
+    @test_throws ArgumentError intake_layer_index(z, NaN)
     @test intake_layer_index(z, 0.0) == 3
     @test intake_layer_index(z, -5.0) == 3
 

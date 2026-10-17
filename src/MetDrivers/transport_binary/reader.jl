@@ -126,6 +126,66 @@ function _check_tm5_convection_basis(reader::TransportBinaryReader)
     return nothing
 end
 
+"""
+    _check_tm5_convection_provenance(reader) -> nothing
+
+Reject, on opening, TM5 convection sections built by a conversion with a known
+index error. Only binaries with all four TM5 sections are checked. Sections
+attached from the TM5-converted CATRINE archive (`convection_attachment`,
+converted by TM5's own `ECconv_to_TMconv`) are accepted first; the others are
+rejected by these rules, in order:
+
+1. Lat-lon binaries of the ERA5 spectral preprocessor (header key
+   `spectral_half_dt_seconds`): their sections came from the retired lat-lon
+   physics-file route (issue #55, which also used the issue-#54 indexing).
+2. Lat-lon → cubed-sphere regrids (`preprocessor = "regrid_ll_binary_to_cs"`)
+   without [`TM5_CONVECTION_SOURCE_KEY`](@ref): written before the regrid
+   carried its source's record, from binaries of that route.
+3. A recorded [`TM5_EC2TM_CONVENTION_KEY`](@ref) other than
+   [`TM5_EC2TM_CONVENTION`](@ref).
+4. ERA5-derived sections (`TM5_CONVECTION_SOURCE_KEY` starting with `ec2tm`)
+   without the convention record: built before the issue-#54 fix, with ERA5
+   UDMF/DDMF placed one interface too low and the cloud-top layer dropped.
+
+Sections without any recorded source are accepted.
+"""
+function _check_tm5_convection_provenance(reader::TransportBinaryReader)
+    has_tm5_convection(reader) || return nothing
+    raw = reader.header.raw_header
+    # TM5's own ECconv_to_TMconv converted the attached CATRINE archive.
+    haskey(raw, "convection_attachment") && return nothing
+    name = basename(reader.path)
+    retired = "TM5 convection sections from the lat-lon ERA5 physics-file route, which " *
+              "was removed: it placed the fields 180° off in longitude and one hour early " *
+              "(issue #55) and used the ERA5 → TM5 indexing of issue #54. Regenerate the " *
+              "binary without TM5 sections, or build TM5 convection with the ERA5 N320 → " *
+              "cubed-sphere preprocessor (include_convection = true) or " *
+              "scripts/preprocessing/attach_catrine_tm5_convection_cs.jl."
+    if grid_type(reader.header) === :latlon && haskey(raw, "spectral_half_dt_seconds")
+        throw(ArgumentError("$name carries $retired"))
+    end
+    if get(raw, "preprocessor", nothing) == "regrid_ll_binary_to_cs" &&
+       !haskey(raw, TM5_CONVECTION_SOURCE_KEY)
+        throw(ArgumentError("$name is a lat-lon → cubed-sphere regrid that carries $retired"))
+    end
+    convention = get(raw, TM5_EC2TM_CONVENTION_KEY, nothing)
+    if convention !== nothing
+        String(convention) == TM5_EC2TM_CONVENTION || throw(ArgumentError(
+            "$name: TM5 convection sections record `$(TM5_EC2TM_CONVENTION_KEY) = " *
+            "$(repr(convention))`, but this version reads only " *
+            "$(repr(TM5_EC2TM_CONVENTION)). Regenerate the binary with the current preprocessor."))
+        return nothing
+    end
+    if startswith(String(get(raw, TM5_CONVECTION_SOURCE_KEY, "")), "ec2tm")
+        throw(ArgumentError(
+            "$name: its TM5 convection sections were converted from ERA5 before the fix of " *
+            "issue #54 (no `$(TM5_EC2TM_CONVENTION_KEY)` record): ERA5 UDMF/DDMF were placed " *
+            "one interface too low and the cloud-top layer was dropped, so convection lifts " *
+            "surface air too little. Regenerate the binary with the current preprocessor."))
+    end
+    return nothing
+end
+
 has_cmfmc(r::TransportBinaryReader) = :cmfmc in r.header.payload_sections
 has_surface(r::TransportBinaryReader) =
     all(s in r.header.payload_sections for s in _PBL_SURFACE_PAYLOAD_SECTIONS)
@@ -173,6 +233,7 @@ function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Flo
             header = _parse_transport_header(raw; legacy_surface_pressure_basis=inferred)
             reader = TransportBinaryReader{FT, DiskFT, G}(data, io, header, bin_path)
         end
+        _check_tm5_convection_provenance(reader)
         _check_tm5_convection_basis(reader)
         return reader
     catch

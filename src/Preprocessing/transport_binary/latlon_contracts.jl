@@ -483,14 +483,6 @@ function write_window!(io::IO,
     bytes_written += write_array!(io, merged.dcm_merged)
     bytes_written += write_array!(io, merged.dm_merged)
 
-    # TM5 convection sections (order must match
-    # _transport_push_optional_sections! in TransportBinary.jl:557-578).
-    if settings.tm5_convection_enable
-        bytes_written += write_array!(io, storage.all_entu[win_idx])
-        bytes_written += write_array!(io, storage.all_detu[win_idx])
-        bytes_written += write_array!(io, storage.all_entd[win_idx])
-        bytes_written += write_array!(io, storage.all_detd[win_idx])
-    end
     if _settings_include_surface(settings)
         bytes_written += write_array!(io, storage.all_pblh[win_idx])
         bytes_written += write_array!(io, storage.all_t2m[win_idx])

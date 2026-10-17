@@ -676,6 +676,11 @@ write_profile_for_sites = true           # also write full station profiles (e.g
 layer_height_temperature_kelvin = 280.0  # ConstantLayerTemperature for intake heights
 # start_time = "2021-12-02T00:00:00"     # required only when [input].start_date is absent
 deflate_level = 0
+dem_file = "~/data/AtmosTransport/static/dem_1min.nc"  # true ground of altitude-only records (LatLonPointElevation)
+dem_variable = "z"
+unplaced_records = "error"               # ErrorOnUnplaced | "skip" (SkipUnplaced)
+# surface_height_file = "~/data/AtmosTransport/static/surface_height_c90_merra2.nc"  # model ground (ModelSurfaceHeight)
+# absolute_altitude_above_agl_m = 3000.0 # AbsoluteAltitudeAbove (needs surface_height_file); omitted: AboveGroundPlacement
 
 [[output.observations.sources]]
 kind = "oco2_lite"                       # OCO2LiteSource: Lite files or OCO-2 v11 MIP 10-s averages
@@ -702,6 +707,10 @@ path = "~/data/AtmosTransport/observations/tccon_sites.csv"
 | `site_grouping` | `obspack` sites only: `"site_code"` → `SiteCodeGrouping`, `"location"` → `LocationGrouping` |
 | `format` | `table` only: `"auto"`, `"csv"`, `"toml"`, `"netcdf"` → `AutoTableFormat`, `CSVTableFormat`, `TOMLTableFormat`, `NetCDFTableFormat` |
 | `time_interpolation` | `"linear"` → `LinearWindowInterpolation`, `"nearest_window"` → `NearestWindowSampling` |
+| `surface_height_file` | per-grid model surface height (m above sea level) → `ModelSurfaceHeight`, read by `GriddedIO.read_model_surface_height`; omitted → `NoModelSurfaceHeight`. Reference of `absolute_altitude_above_agl_m`, and written per row; never used as the true ground |
+| `dem_file`, `dem_variable` | lat-lon DEM (ground or sea surface, m above sea level) → `GriddedIO.LatLonPointElevation`; omitted → `NoPointElevation`. `dem_variable` (default `"z"`) only with `dem_file` |
+| `unplaced_records` | `"error"` (default) → `ErrorOnUnplaced`, `"skip"` → `SkipUnplaced` |
+| `absolute_altitude_above_agl_m` | number ≥ 0 → `AbsoluteAltitudeAbove(h₀)`; omitted → `AboveGroundPlacement`. Needs `surface_height_file` |
 
 Source paths are templates: `{YYYYMMDD}` (or `{date}`), `{YYMMDD}`, `{YYYY}`,
 `{MM}`, `{DD}` are substituted per run day, and `*` / `?` wildcards expand in
@@ -709,8 +718,8 @@ the file name. A path without date tokens must match at least one file.
 
 **Station tables.** A `table` source with `mode = "sites"` reads `id`, `lat`,
 `lon`, optional `elevation` (m asl) and `intake_height` (m above ground) or
-`altitude` (m asl, converted with `elevation`). Each row's schedule follows
-from its keys:
+`altitude` (m asl, converted with `elevation`, else as described under
+"Vertical placement" below). Each row's schedule follows from its keys:
 
 | Row keys | Schedule | Output |
 |---|---|---|
@@ -724,18 +733,137 @@ ISO-8601 UTC strings or TOML date-times (no offset, or `Z`); in NetCDF tables
 numbers are rejected elsewhere. A site id that repeats (across rows, daily
 files, or sources) must keep its location; its time lists are merged, and any
 other schedules must agree. Unknown CSV/TOML columns are an error, so a
-misspelt `intake_height` cannot silently select the lowest layer. TOML site
+misspelt `intake_height` cannot silently select the lowest layer.
+ObsPack station series (`mode = "sites"`) are for fixed stations: one site
+per distinct height in a dataset (`intake_height`, else the altitude of rows
+that give only an altitude, rounded to 0.1 m), at the site position. With
+`site_grouping = "site_code"` a dataset whose records stray more than 1° from
+that position (aircraft, ship) is reported as a moving platform; sample those
+with `mode = "soundings"`. TOML site
 tables can declare `#:schema .../schemas/observation_sites.schema.json` for
 editor help; `config/examples/observation_sites_demo.toml` shows all three
 schedules. Point-event tables (`mode = "soundings"`) read `id`, `time`, `lat`,
 `lon` and the same optional height columns.
 
-**Intake layer.** The model has no orography, so the intake layer is chosen
-by height above the model's own surface, from hypsometric layer heights
-(GCHP VDIFF temperatures on cubed-sphere binaries that carry them, else the
-constant above). Each output row records the chosen layer, its bottom and top
-heights, and the model surface pressure, so mountain sites show their
-representativeness gap.
+**Vertical placement.** Every request is placed in the model column once,
+when the sampler is built, and the layer is chosen at every sample from that
+sample's column. The column's interface pressures come from the air mass,
+``p_{1/2} = p_\mathrm{top}``, ``p_{k+1/2} = p_{k-1/2} + g\,m_k/A``, and its
+interface heights above the model surface from the hypsometric equation,
+
+```math
+z_{N+1/2} = 0, \qquad
+z_{k-1/2} = z_{k+1/2} + \frac{R_d T_k}{g} \ln\frac{p_{k+1/2}}{p_{k-1/2}},
+```
+
+with ``T_k`` the GCHP VDIFF layer temperature on cubed-sphere binaries that
+carry it, else `layer_height_temperature_kelvin`. A record at height ``h``
+above the ground is sampled in the layer ``k`` with
+``z_{k+1/2} \le h < z_{k-1/2}`` (the lowest layer for ``h \le 0``, the top
+layer above the column). The first rule that applies places the record, and
+the rule is written per row as `vertical_placement`:
+
+| Code | `vertical_placement` | Layer |
+|---|---|---|
+| 0 | `record_height` | ``h`` = the record's `intake_height`, else `altitude − elevation` (row by row; for ObsPack station series the station's `site_elevation` when the rows have none) |
+| 1 | `altitude_minus_dem` | ``h`` = `altitude` − DEM ground elevation at the point (`dem_file`, bilinear) |
+| 2 | `pressure` | a record with no ``h`` but an ObsPack `pressure` ``p``: the layer with ``p_{k-1/2} \le p < p_{k+1/2}`` |
+| 3 | `absolute_altitude` | only with `absolute_altitude_above_agl_m` (below) |
+| 4 | `lowest_layer` | a record with no vertical coordinate at all, from a source whose records are column or surface products (`missing_height_rule`: OCO-2 soundings, table rows without height columns) |
+
+Placing by height above the true ground keeps a record in the same part of
+the model column as the real sample. The model's interface heights are
+measured from the model surface ``z_s`` (the cell mean of the orography), so
+the record sits at ``z_s + h`` and its layer does not depend on ``z_s``: a
+mountain station (Mauna Loa, ground 3397 m, intake 40 m) whose cell has a
+model surface near 2000 m stays in the model's lowest layer instead of being
+sampled 1.4 km above the model surface, and an aircraft 500 m above a valley
+floor is sampled 500 m above the model ground. The true ground is the
+record's own `elevation`, else the DEM; the model surface height is **never**
+used in its place (that would place the record by its absolute altitude, the
+error this rule avoids).
+
+A record that none of these rules place cannot be placed: one with an
+`altitude` but no ground elevation (no `elevation`, no `dem_file` value at the
+point) and no `pressure`, or an ObsPack record without any vertical
+coordinate. With `unplaced_records = "error"` (default) the sampler refuses
+to build and names the first records; with `"skip"` they are dropped and
+counted in the `n_unplaced_soundings` / `n_unplaced_sites` file attributes.
+They are never sampled in the lowest layer. Undeclared fill values do not
+count as coordinates: an ObsPack `pressure` at or below 0, an `elevation`
+(or `site_elevation`) below −450 m and a negative `intake_height` are read
+as absent, with one warning per file (the JMA aircraft-flask rows of the MIP
+ObsPack give `elevation` = `intake_height` = −1000 at 5 km altitude; they are
+placed by `altitude −` DEM). A record placed more than 100 m below the ground
+(a wrong elevation, DEM value or altitude) is sampled in the lowest layer and
+reported in a warning with the first records; its height is in
+`placement_height_agl`. In the OCO-2 MIP v5.0.1 daily
+ObsPack, 16.5% of the 2021-12 to 2023-12 records (97% of the aircraft-insitu
+records, all AirCore records) have fill `intake_height` and `elevation` and the
+files have no `pressure`, so sampling them needs a `dem_file`.
+
+`absolute_altitude_above_agl_m = h₀` re-places records at least ``h_0`` above
+the true ground (free-tropospheric aircraft and AirCore samples, whose air
+does not follow the terrain) by their ObsPack `pressure` when they have one
+(code 2), else by their altitude ``z_\mathrm{obs}`` above sea level, as the
+layer holding ``z_\mathrm{obs} - z_s`` (code 3, `absolute_altitude`; needs
+`surface_height_file`). ``z_\mathrm{obs}`` is the record's `altitude`, else
+its ground elevation (the record's, else the DEM value at the point) plus its
+`intake_height`; a record with neither keeps its height above the ground
+(code 0). Records below ``h_0`` keep their height above the
+ground. Whether and where to blend from terrain-following to absolute
+placement aloft is still open; the default places every record by its height
+above the ground. On a dry-basis run the interface pressures are dry partial
+pressures while ObsPack pressures are total pressures; a pressure-placed
+record then sits higher in the column than the model layer chosen by up to
+the vapour fraction ``e/p \approx q/0.622`` of the pressure (about 1% at
+700 hPa in the moist tropics, less aloft). With ``h_0 = 0`` every record that
+carries an altitude is placed by altitude above sea level (or pressure), as
+the GEOS-Chem ObsPack diagnostic places every record
+(`ObsPack/obspack_mod.F90`: the level where ``\Phi_s/g + \sum_l \Delta z_l``
+first reaches the ObsPack altitude). ObsPack `pressure` must declare its
+units (`Pa`, `hPa`, `mbar`, `kPa` and their spelled-out forms, any case);
+a missing or other unit is an error.
+
+**External ground datasets.** Both are static and external, never part of a
+transport binary, and read through `GriddedIO`:
+
+- `dem_file`: a lat-lon NetCDF file with 1-D longitude/latitude centre
+  coordinates and a 2-D elevation variable (`dem_variable`, `units = "m"`)
+  giving the **ground or sea surface** in metres above sea level. Over the
+  ocean the ground is the sea surface (0 m): clip a bathymetric product at
+  0 m over the sea. A file going below −450 m (deeper than the Dead Sea shore)
+  is rejected as bathymetry or an undeclared fill value, one going above
+  9000 m as an undeclared fill value. The variable may be stored on
+  `(lon, lat)` or `(lat, lon)` (told apart by dimension name); a
+  gridline-registered global grid (−180…180 inclusive) has its repeated seam
+  column dropped. Fill values become
+  "no ground" (the record is then unplaced or pressure-placed). It is read
+  whole as Float32 (about 0.9 GB for a global 1-arc-minute grid), used while
+  the sampler is built, and released afterwards. A suitable global choice is
+  NOAA ETOPO 2022 at 60 arc-seconds, *surface* variant (ice-sheet surface, not
+  the `bed` variant; `ETOPO_2022_v1_60s_N90W180_surface.nc` from NOAA NCEI),
+  clipped at 0 m (`z = max(z, 0)`), which also sets land below sea level
+  (Dead Sea, Caspian shore) to 0 m. On 34 days of the 2022 MIP ObsPack it
+  places every aircraft and AirCore record; the `bed` variant puts the
+  Greenland and Antarctic ground up to 3 km too low (Summit 236 m instead of
+  3203 m).
+- `surface_height_file`: the per-grid model surface height, written by
+  `GriddedIO.write_model_surface_height` and checked against the run's mesh
+  (cell centres, cubed-sphere areas, finite values, metres) when read.
+  `scripts/preprocessing/build_model_surface_height.jl --binary <a binary of
+  the grid> --source <surface geopotential file> --variable PHIS --out <file>`
+  divides the met source's surface geopotential (MERRA-2/GEOS `PHIS`, ERA5
+  `z`) by the standard gravity and regrids it conservatively onto the binary's
+  mesh; use the met source the binary was built from. For C90 from MERRA-2
+  `PHIS` the result matches GEOS-Chem's own C90 `Met_PHIS` diagnostic to
+  0.03 m RMS (0.5 m at most). It is only needed for
+  `absolute_altitude_above_agl_m`; otherwise it is written per row as
+  `model_surface_height` for diagnostics.
+
+Each output row records the placement, the height used
+(`placement_height_agl`), the model surface height, the chosen layer, its
+bottom and top heights, and the model surface pressure.
 
 **Time and files.** The run origin is the start of window 1 of the first
 binary: `[input].start_date` at 00:00 UTC, or `start_time` with an explicit

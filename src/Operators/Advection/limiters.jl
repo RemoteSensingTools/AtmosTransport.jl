@@ -35,26 +35,6 @@
 # ---- Minmod primitives ---------------------------------------------------
 
 """
-    _minmod_slope(a, b) → typeof(a)
-
-Two-argument minmod: returns the value with smaller magnitude if both
-have the same sign, zero otherwise.
-
-```math
-\\text{minmod}(a, b) = \\begin{cases}
-  \\text{sign}(a) \\min(|a|, |b|) & \\text{if } \\text{sign}(a) = \\text{sign}(b) \\\\
-  0 & \\text{otherwise}
-\\end{cases}
-```
-
-Branchless implementation using `ifelse` for GPU safety.
-"""
-@inline function _minmod_slope(a, b)
-    return ifelse(a * b <= zero(a), zero(a),
-                  ifelse(abs(a) < abs(b), a, b))
-end
-
-"""
     _minmod3(a, b, c) → typeof(a)
 
 Three-argument minmod: returns the value with smallest magnitude if all
@@ -146,20 +126,24 @@ end
 
 Positivity-preserving slope limiter.
 
-Limits the centered slope against the center value to ensure
-``c_i - |s|/2 \\geq 0``:
+Keeps the sign of the centered slope and clips its magnitude so that both
+face values ``c_i \\pm s/2`` stay non-negative, i.e. ``|s| \\le 2 c_i``:
 
 ```math
-s = \\text{minmod}\\!\\left(\\frac{c_{i+1} - c_{i-1}}{2},\\; c_i\\right)
+s = \\operatorname{sign}(s_c)\\, \\min\\bigl(|s_c|,\\; 2 \\max(c_i, 0)\\bigr),
+\\qquad s_c = \\frac{c_{i+1} - c_{i-1}}{2}
 ```
 
-Weaker than `MonotoneLimiter` (allows new maxima) but guarantees
-non-negative reconstructed values — important for species mixing
-ratios that must remain ≥ 0.
+The rule treats rising and falling profiles alike, so the reconstruction of a
+mirrored field is the mirror of the reconstruction. In moment form it is the
+zero-referenced clamp ``|s_x| \\le r_m`` of `_limited_moment`. It does not
+bound the reconstruction by the neighboring means: weaker than
+`MonotoneLimiter` (allows new maxima) but keeps reconstructed values
+non-negative — important for species mixing ratios that must remain ≥ 0.
 """
 @inline function _limited_slope(c_left, c_center, c_right, ::PositivityLimiter)
     sc = (c_right - c_left) / 2
-    return _minmod_slope(sc, c_center)
+    return sign(sc) * min(abs(sc), 2 * max(c_center, zero(c_center)))
 end
 
 # ---- Moment limiters (operating on tracer mass) --------------------------

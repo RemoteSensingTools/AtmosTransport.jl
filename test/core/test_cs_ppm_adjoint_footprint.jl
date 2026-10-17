@@ -526,9 +526,11 @@ end
     @testset "Footprint uses the production palindrome CFL schedule" begin
         mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
             _transport_cs_problem(Nc=4, Nz=3, nsteps=1)
+        # × 25 gives n = 3; × 40 would leave some cells with negative mass after
+        # the step, an invalid flux set the count rejects.
         for flux_steps in (panels_am, panels_bm, panels_cm),
             panel in flux_steps[1]
-            panel .*= 40
+            panel .*= 25
         end
 
         flux_scale = 1.5

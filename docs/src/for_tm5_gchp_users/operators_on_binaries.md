@@ -96,30 +96,62 @@ time; the runtime sees the typed value and dispatches at compile
 time. *There is no runtime branch on the scheme name.* Subtyping is
 the extension mechanism.
 
-### Cubed-sphere palindrome and the positivity budget
+### Palindrome subcycling and the positivity budget
 
-The CS Strang split is a six-leg palindrome: `X → Y → Z → Z → Y → X`.
-Each leg may be **subcycled** by an integer count `n_x`, `n_y`, `n_z`
-chosen to keep tracer mass positive. The subcycle count comes from a
-*palindrome positivity budget* tighter than per-direction CFL:
+The Strang split is a six-leg palindrome, `X → Y → Z → midpoint → Z → Y → X`
+(`H → V → midpoint → V → H` on reduced Gaussian). Every leg moves one stored
+substep flux, so each direction is applied twice per transport step. A cell's
+outflow over one palindrome is therefore bounded by the *palindrome positivity
+budget*
 
 ```
-ratio = 2 · (out_x + out_y + out_z) / m_start
-n_sub = ceil(ratio / safety_factor)
+ratio = 2 · (out_x + out_y + out_z) / min(m_start, m_end)
+m_end = m_start + 2 · (in_x + in_y + in_z − out_x − out_y − out_z)
 ```
 
 with `out_d = max(0,-a_lo) + max(0,a_hi)` (the Lin-Rood 1996
-refinement, not `max(|a_lo|, |a_hi|)`). The factor of 2 is because
-the palindrome traverses each direction twice. The preprocessor's positivity
-gate uses the same budget against `min(m, m_next)`, for cubed-sphere and
-lat-lon binaries alike. For binaries written
+refinement, not `max(|a_lo|, |a_hi|)`) and `in_d − out_d = a_lo − a_hi`;
+`m_end` is the cell's mass after the palindrome. The preprocessor's
+positivity gate uses the same budget against `min(m, m_next)` with the
+window's end mass `m_next`, for cubed-sphere and lat-lon binaries alike. For binaries written
 with adaptive substeps, the preprocessor bakes the verified count into
 `steps_per_window_by_window[k]`. The binary-scheduled runtime executes exactly
-that many transport substeps and fixes the inner directional subcycle count at
+that many transport substeps and fixes the inner subcycle count at
 one; it neither re-pilots nor refines the stored schedule.
 
-This is the analogue of TM5's CFL-driven substep, hardened against
-the palindrome's specific stacking pattern.
+Without a binary schedule (lat-lon and reduced-Gaussian binaries, direct calls
+of the Strang functions) the runtime picks one subcycle count for the whole
+step, `n = ceil(ratio / cfl_limit)` with `cfl_limit = 0.95`
+(`DEFAULT_CFL_LIMIT`) on every topology, and runs the symmetric composition
+
+```
+(X → Y → Z)^n → midpoint operators → (Z → Y → X)^n,    every flux divided by n
+```
+
+with the midpoint (diffusion, surface flux) applied once. At `n = 1` this is
+the palindrome above. The reverse half is the adjoint of the forward half, so
+the composition stays symmetric and keeps second-order splitting with the
+same `6n` sweeps; FV3's `fv_tracer2d` likewise repeats its whole 2-D operator
+`nsplt` times at flux / `nsplt`.
+
+What the runtime count guarantees: the midpoint does not change air mass and
+every `X Y Z` (or `Z Y X`) block changes a cell's mass by the same amount, so
+the masses between blocks lie between `m_start` and `m_end`; one block removes
+at most `(cfl_limit / 2) · min(m_start, m_end)`. Hence every pass removes at
+most `cfl_limit / 2` (47.5%) of the mass the cell holds when the pass starts,
+and air mass stays positive through the whole step. A cell with outflow and
+`min(m_start, m_end) ≤ 0` is an invalid flux set and the count throws an
+`ArgumentError`. Budgeting against `m_start` alone (the earlier rule) fails in
+cells that drain within the step: their later blocks start well below
+`m_start` (`test/core/test_subcycle_composition.jl` has such a cell, where
+that rule drove air mass negative). Subcycling each
+direction separately (`X^n Y^n Z^n | Z^n Y^n X^n`, the order of 0.5.0 and earlier)
+does not have this property: the `n` passes of one leg together remove the
+full-flux outflow of that direction before another direction can refill the
+cell, so in non-divergent flows the air mass went negative and uniform tracers
+were lost (issue #61). TM5 keeps per-direction loops but steps the mass through
+them and shortens the whole step when a loop would fail
+(`advectm_cfl.F90`, `Check_CFL`).
 
 ### Multi-tracer fusion
 
@@ -282,6 +314,82 @@ implicit operator. This is the path for ERA5-driven runs. The
 algorithm follows `tm5/levitation.F90` closely; the column solve is
 in `src/Operators/Convection/tm5_column_solve.jl` and the kernels
 in `tm5_kernels.jl`.
+
+#### [ERA5 → TM5 fields (`ec2tm`)](@id tm5-ec2tm)
+
+The four fields come either from the TM5-converted CATRINE archive
+(`scripts/preprocessing/attach_catrine_tm5_convection_cs.jl`, converted by TM5
+itself) or from the ERA5 N320 → cubed-sphere preprocessor with
+`include_convection = true`, which converts the ERA5 time-mean UDMF, DDMF (half
+levels, kg m⁻² s⁻¹) and UDRF, DDRF (full levels, kg m⁻³ s⁻¹) on every target
+column as TM5 does: `tmm_Read_Convec_EC` in `tmm.F90` for the level layout,
+`ECconv_to_TMconv` in `phys_convec_ec2tm.F90` for the fields, and the column
+closure of `meteo.F90`. The code is `ec2tm_from_rates!`.
+
+Levels run from the model top, `k = 1`, to the surface, `k = N_z`; interface
+`k` is the top of layer `k` and interface `N_z + 1` the ground. ERA5 archives
+UDMF/DDMF level `k` as the flux through the top of layer `k`, and nothing
+crosses the ground:
+
+```math
+M^u_k = \mathrm{UDMF}_k,\quad M^d_k = \mathrm{DDMF}_k \quad (1 \le k \le N_z),
+\qquad M^u_{N_z+1} = M^d_{N_z+1} = 0 .
+```
+
+This is TM5's packing (`udmf_gg(:,0:nlev-1) = buf; udmf_gg(:,nlev) = 0`,
+"levels top down, surface implicit zero") and the layout of the IFS arrays. The
+data agree: in raw ERA5 of 2021-12-01 (0.5°, 12 UTC and 00 UTC), the lowest
+level, 137, carries UDMF above 10⁻⁶ kg m⁻² s⁻¹ in 81–82 % of the convective
+columns (median 2.5 % of the column maximum), which only the top of the lowest
+layer can carry, and level 1 is exactly zero.
+
+After small values are cleared (``M^u < 10^{-6}``, ``M^d > -10^{-6}``, rates
+below ``10^{-10}``), the detrainment rates become fluxes, ``d_k = \mathrm{DR}_k\,\Delta z_k``
+with the hydrostatic thickness ``\Delta z_k``, and each layer's budget gives its
+entrainment:
+
+```math
+e^u_k = M^u_k - M^u_{k+1} + d^u_k, \qquad
+e^d_k = M^d_k - M^d_{k+1} + d^d_k \qquad (k_\mathrm{top} \le k \le N_z),
+```
+
+out through the top, minus in through the bottom, plus detrainment (``M^d \le 0``
+points down). The cloud-top layer ``k_\mathrm{top}`` is the highest layer whose bottom
+interface carries flux, ``k_\mathrm{top} = \min\{k : M^u_{k+1} > 0\}`` (TM5's
+`do l = 1, lm; if (mflu(l) > 0)` on 0-based half levels); the downdraft top is
+found the same way, and both fields are zero above. A negative `e` or `d` is
+moved to its partner (`d ← d − e`, `e ← 0`), which keeps `e − d`. Summed over
+the column, the budgets telescope:
+
+```math
+\sum_{k \ge k_\mathrm{top}} (e^u_k - d^u_k) = M^u_{k_\mathrm{top}} - M^u_{N_z+1} = 0,
+\qquad M^u_k = \sum_{j \ge k} (e^u_j - d^u_j),
+```
+
+because no flux crosses the top of the cloud-top layer or the ground: the TM5
+fields return the input flux at every interface. TM5's column closure, which
+adds `Σd − Σe` to the layer of largest entrainment, therefore moves only
+rounding, or a flux through the model top, which neither TM5 nor this code
+excludes. Where TM5 would subtract a negative residual from `e` and could make
+it negative, this code adds its magnitude to `d` of that layer: the same net
+transport. For a dry-basis binary the inputs are first converted to dry air
+(see [`ecmwf_convection_to_basis!`](@ref)).
+
+`test/core/test_tm5_preprocessing_rates.jl` checks the conversion against an
+independent transcription of the three TM5 routines
+(`test/helpers/tm5_ecconv_reference.jl`): bit for bit on an exactly
+representable column, and to rounding on random deep columns, with the input
+fluxes recovered and no closure on consistent input.
+
+Until issue #54 was fixed, the preprocessor placed level `k` at interface
+`k + 1` (so level 137 crossed the ground) and took the first interface with
+flux as the cloud-top layer, one layer too low; the closure then moved the
+cloud-top detrainment to the layer of largest entrainment. On 3000 deep ERA5
+columns this lifted 14 % less boundary-layer tracer above 500 hPa in a 3 h TM5
+step and put the highest detraining layer about 4 levels too low; mass was
+conserved. Binaries of the fixed conversion record
+`tm5_ec2tm_convention = "tm5_halflevel_v2"`, and readers reject ERA5-derived
+TM5 sections without it (see the [Conventions cheat sheet](@ref)).
 
 #### [Level merging (`n_merge > 1`)](@id tm5-level-merging)
 

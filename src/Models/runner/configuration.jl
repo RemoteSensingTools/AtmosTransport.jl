@@ -261,6 +261,9 @@ function validate_config(cfg::AbstractDict)
             _capture_config_error!(errors) do
                 _check_observation_tracers(spec, cfg)
             end
+            _capture_config_error!(errors) do
+                _check_observation_placement_files(spec)
+            end
         end
     end
 

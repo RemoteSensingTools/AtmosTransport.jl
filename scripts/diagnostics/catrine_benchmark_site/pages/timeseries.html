@@ -1,0 +1,83 @@
+<h1>Time series</h1>
+<p class="lede">Monthly means of each tracer by band of the air mass and latitude region, and the day-by-day agreement of
+the 3-hourly fields with GCHP.</p>
+
+<div class="controls" id="controls"></div>
+
+<section class="card">
+  <div class="card-head"><h2 id="t1"></h2></div>
+  <p class="sub" id="s1"></p>
+  <div class="plot" id="p1"></div>
+  <p class="note" id="n1"></p>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2 id="t2"></h2><span class="spacer"></span><span class="tools" id="stat-ctl"></span></div>
+  <p class="sub" id="s2"></p>
+  <div class="plot" id="p2"></div>
+  <p class="note">Each point is the mean over one day of a statistic computed on the 3-hourly instantaneous fields on the C90 grid
+  (area weighted, global). R² measures how well the spatial pattern matches, independent of a uniform offset; bias and RMSE are in
+  tracer units. Values move with the weather: a day with sharp fronts or strong convection over source regions raises the RMSE.</p>
+</section>
+
+<script>
+SITE.ready(async () => {
+  const S = SITE, m = S.meta(), el = S.el;
+  const mon = await S.load("monthly", "monthly.js");
+  const st = S.state({tracer: "co2", band: "column", region: "global", view: "abs", stat: "bias", hide: ""},
+                     {tracer: S.keys(m.tracers), band: S.keys(m.bands), region: S.keys(m.regions), view: ["abs", "diff"], stat: ["bias", "rmse", "r2"]});
+  const hidden = new Set(st.hide ? st.hide.split(",") : []);
+  const runs = S.mainRuns().filter(S.hasMonths);
+  const datasets = [m.gc, ...runs];
+  const regions = m.regions;
+  const x = m.months.map(S.midMonth);
+  const daily = {};
+
+  const ctl = document.getElementById("controls");
+  ctl.append(
+    S.control("Tracer", S.seg(m.tracers.map(t => ({key: t.key, name: t.name, title: t.long})), st.tracer, k => { st.tracer = k; draw(); })),
+    S.control("Band", S.seg(m.bands.map(b => ({key: b.key, name: b.name, title: b.long})), st.band, k => { st.band = k; draw(); })),
+    S.control("Region", S.seg(regions.map(r => ({key: r.key, name: r.name})), st.region, k => { st.region = k; draw(); })),
+    S.control("Show", S.seg([{key: "abs", name: "Values"}, {key: "diff", name: "Run − GCHP"}], st.view, k => { st.view = k; draw(); })),
+    S.legend(datasets, hidden, () => draw()));
+  document.getElementById("stat-ctl").append(S.seg([{key: "bias", name: "Bias"}, {key: "rmse", name: "RMSE"}, {key: "r2", name: "R²"}],
+    st.stat, k => { st.stat = k; draw(); }, "statistic"));
+
+  const next = S.gate();
+  async function draw() {
+    const current = next();
+    st.hide = [...hidden].join(",");
+    S.saveState(st);
+    const t = S.tracer(st.tracer), b = S.band(st.band), reg = regions.find(r => r.key === st.region);
+    const diff = st.view === "diff";
+    const d = t.digits + (diff ? 1 : 0);
+    const bandName = b.key === "column" ? "column mean" : b.name;
+    // monthly means
+    document.getElementById("t1").innerHTML = `${t.name}, ${bandName}, ${reg.name}${reg.key === "nh_sh" ? " gradient" : ""}`;
+    document.getElementById("s1").innerHTML = (diff ? "Monthly mean of each run minus GCHP" : "Monthly mean") +
+      ` (${t.unit}); ${b.long}; ` + (reg.key === "nh_sh" ? "30–90° N mean minus 90–30° S mean." : `area-weighted mean over ${reg.key === "global" ? "the globe" : reg.name}.`);
+    const list = [];
+    if (!diff && !hidden.has("gc")) list.push(S.series(m.gc, x, mon.abs[`gc|${t.key}|${b.key}|${reg.key}`], {markers: true}));
+    for (const r of runs) if (!hidden.has(r.key))
+      list.push(S.series(r, x, (diff ? mon.diff : mon.abs)[`${r.key}|${t.key}|${b.key}|${reg.key}`], {markers: true}));
+    S.chart(document.getElementById("p1"), {height: 380, x: S.timeAxis("month"), series: list,
+      y: {label: diff ? `run − GCHP (${t.unit})` : t.unit, zero: diff ? "ref" : false, fmt: S.valFmt(d, t.unit)}});
+    document.getElementById("n1").innerHTML = diff
+      ? "<b>How to read:</b> zero is perfect agreement with GCHP. December 2021 is the spin-up month."
+      : "<b>How to read:</b> the runs follow GCHP closely, so the seasonal cycle dominates; switch to <i>Run − GCHP</i> to see the differences.";
+    // daily statistics
+    const key = `daily_${t.key}`;
+    if (!daily[key]) daily[key] = await S.load(key, `daily_${t.key}.js`);
+    if (!current()) return;
+    const D = daily[key], xd = D.days;
+    const sname = {bias: "Bias", rmse: "RMSE", r2: "R²"}[st.stat];
+    document.getElementById("t2").innerHTML = `Daily agreement with GCHP: ${t.name}, ${bandName}`;
+    document.getElementById("s2").innerHTML = `${sname}${st.stat === "r2" ? "" : ` (${t.unit})`} of the 3-hourly fields against GCHP, daily mean, global (the region choice does not apply here).`;
+    const tr2 = runs.filter(r => !hidden.has(r.key)).map(r => S.series(r, xd, D.stats[`${r.key}|${b.key}|${st.stat}`], {width: 1.6}));
+    S.chart(document.getElementById("p2"), {height: 320, x: S.timeAxis("day"), series: tr2,
+      y: {label: st.stat === "r2" ? "R²" : `${sname} (${t.unit})`, zero: st.stat === "bias" ? "ref" : false, tozero: st.stat === "rmse",
+          fmt: st.stat === "r2" ? S.valFmt(4) : S.valFmt(d, t.unit)}});
+  }
+  draw();
+});
+</script>

@@ -142,6 +142,7 @@ files = [
     "core/test_linrood_seams.jl",
     "core/test_cs_ppm_launch_layouts.jl",
     "core/test_binary_cfl_check.jl",
+    "core/test_subcycle_composition.jl",
 ]
 paths = [
     "src/Operators/Advection/**",
@@ -173,11 +174,9 @@ files = [
     "core/test_tm5_workspace_lifetime.jl",
     "core/test_tm5_preprocessing.jl",
     "core/test_tm5_preprocessing_rates.jl",
-    "core/test_tm5_process_day.jl",
-    "core/test_tm5_vertical_remap.jl",
+    "core/test_tm5_convection_routes.jl",
     "core/test_tm5_attach_level_order.jl",
     "core/test_era5_c180_tm5_convection.jl",
-    "core/test_era5_physics_binary.jl",
     "core/test_era5_n320_convection.jl",
     "core/test_geos_convection.jl",
 ]
@@ -187,10 +186,8 @@ paths = [
     "src/Adjoints/ConvectionAdjoint.jl",
     "src/Preprocessing/convection_mass_basis.jl",
     "src/Preprocessing/tm5_convection_*.jl",
-    "src/Preprocessing/era5_physics_binary.jl",
     "src/Preprocessing/sources/era5_n320_mass_convection.jl",
     "scripts/preprocessing/attach_catrine_tm5_convection_cs.jl",
-    "scripts/preprocessing/convert_era5_physics_nc_to_bin.jl",
     "scripts/validation/diagnose_tm5_active_layers.jl",
 ]
 
@@ -243,7 +240,7 @@ paths = [
 ]
 
 [topics.gridded_io]
-description = "Surface-flux input files (GriddedIO): coordinates, source meshes, time axes, units, staging, cs_native and lat-lon flux files, the flux comparison and parity scripts"
+description = "Gridded input files (GriddedIO): coordinates, source meshes, time axes, units, staging, cs_native and lat-lon flux files, the model surface height and point DEM, the flux comparison and parity scripts"
 files = [
     "core/test_gridded_io_coordinates.jl",
     "core/test_gridded_io_source_meshes.jl",
@@ -252,6 +249,7 @@ files = [
     "core/test_cs_native_flux_schema.jl",
     "core/test_flux_units.jl",
     "core/test_latlon_flux_writer.jl",
+    "core/test_gridded_io_surface_height.jl",
     "core/test_compare_cs_flux_files.jl",
     "core/test_flux_port_parity_harness.jl",
 ]
@@ -261,6 +259,7 @@ paths = [
     "scripts/validation/compare_cs_flux_files.jl",
     "scripts/validation/flux_port_parity/**",
     "scripts/preprocessing/catrine_protocol_cs_fluxes.jl",
+    "scripts/preprocessing/build_model_surface_height.jl",
 ]
 
 [topics.initial_conditions]
@@ -408,11 +407,12 @@ paths = [
 ]
 
 [topics.observations]
-description = "Observation sampling output ([output.observations]): sources, schedules, cell location, gathers, the sampler, runner integration and the schema"
+description = "Observation sampling output ([output.observations]): sources, schedules, cell location, vertical placement, gathers, the sampler, runner integration and the schema"
 files = [
     "core/test_observation_cell_locator.jl",
     "core/test_observation_gather.jl",
     "core/test_observation_output_spec.jl",
+    "core/test_observation_placement.jl",
     "core/test_observation_runner.jl",
     "core/test_observation_sampler.jl",
     "core/test_observation_schedules.jl",

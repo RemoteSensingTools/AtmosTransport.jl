@@ -309,16 +309,14 @@ is bit-identical to the pre-clamp behavior.
     #       continuity by setting individual face fluxes that exceed cell
     #       mass over the window (e.g. C180 panel-4 south edge cell at
     #       lat 44°N has window-CFL ≈ 1.6 after balance).
-    #   (2) Future coarser grids or different met sources where per-substep
-    #       CFL exceeds 1 before the runtime's `_cs_static_palindrome_subcycle_count`
-    #       can subdivide.
+    #   (2) Binary-scheduled steps (`n = 1` from the binary): the write-time
+    #       gate budgets the outflow against the window's masses, not each
+    #       step's. (A runtime-chosen count, `(X Y Z)^n | midpoint | (Z Y X)^n`
+    #       at flux / n budgeted against min(m_start, m_end), keeps every
+    #       pass below half the donor mass; see cs_subcycling.jl.)
     # Without the clamp, `α = F/eps` blows up and the polynomial overflows.
     # With the clamp, α saturates at ±1 → degrades to upwind locally,
     # mass-conservation preserved (both adjacent cells see the same α).
-    # TODO: replace with adaptive per-Strang sub-stepping that scales fluxes
-    # by 1/n_palindrome and runs n_palindrome inner Strang calls, matching
-    # the FV3 (`fv_tracer2d.F90:133-191`) / TM5 (Krol et al. 2005 §2.3)
-    # convention. At that point the clamp becomes dead code and can drop.
     α_pos = clamp(F / m_l, zero(FT), one(FT))
     α_neg = clamp(F / m_r, -one(FT), zero(FT))
     f_pos = α_pos * (rm_l + (one(FT) - α_pos) * sx_l)

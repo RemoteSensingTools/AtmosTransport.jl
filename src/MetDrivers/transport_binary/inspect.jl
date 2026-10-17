@@ -102,6 +102,15 @@ function binary_dry_mass_target(reader::TransportBinaryReader)
     return (ps_dry_pa = target, source, pinned = pin_state)
 end
 
+const _TM5_CONVECTION_PROVENANCE_KEYS = (TM5_CONVECTION_SOURCE_KEY, TM5_EC2TM_CONVENTION_KEY,
+                                         "convection_attachment")
+
+function _tm5_convection_provenance(reader::TransportBinaryReader)
+    has_tm5_convection(reader) || return Pair{String, String}[]
+    raw = reader.header.raw_header
+    return [key => string(raw[key]) for key in _TM5_CONVECTION_PROVENANCE_KEYS if haskey(raw, key)]
+end
+
 """
     binary_capabilities(reader) -> NamedTuple
 
@@ -116,6 +125,10 @@ requirements are selected through the reader's geometry type. Fields:
   basis of the TM5 sections (`DryBasis()`/`MoistBasis()`); `nothing` without
   TM5 sections or when the
   binary predates the record (moist fluxes, see `TM5_CONVECTION_MASS_BASIS_KEY`).
+- `tm5_convection_provenance :: Vector{Pair{String, String}}` — the recorded
+  source of the TM5 sections (`TM5_CONVECTION_SOURCE_KEY`,
+  `TM5_EC2TM_CONVENTION_KEY`, `convection_attachment`), empty when none is
+  recorded or the binary has no TM5 sections.
 - `cmfmc_convection :: Bool` — cmfmc present (CS only; LL/RG returns false).
 - `pbl_diffusion :: Bool` — complete runnable PBL forcing (CS only).
 - `gchp_vdiff :: Bool` — complete runnable GCHP VDIFF forcing (CS only).
@@ -148,6 +161,7 @@ function binary_capabilities(reader::TransportBinaryReader)
         replay_gate      = has_flux_delta(reader),
         tm5_convection   = has_tm5_convection(reader),
         tm5_convection_mass_basis = tm5_convection_mass_basis(reader),
+        tm5_convection_provenance = _tm5_convection_provenance(reader),
         cmfmc_convection = has_cmfmc(reader),
         pbl_diffusion    = _supports_pbl_diffusion(reader),
         gchp_vdiff       = _supports_gchp_vdiff(reader),
@@ -226,6 +240,11 @@ function _print_capability_rows(io::IO, caps)
         caps.tm5_convection_mass_basis === nothing && caps.mass_basis === :dry &&
             println(io, "  ⚠ TM5 convection fluxes predate the dry-air conversion: moist fluxes " *
                         "on dry air mass, convective rates about 1 % too large")
+        isempty(caps.tm5_convection_provenance) &&
+            println(io, "  TM5 convection source not recorded")
+        for (key, value) in caps.tm5_convection_provenance
+            println(io, "  ", key, " = ", value)
+        end
     end
     println(io, "  grid_type        = ", caps.grid_type)
     source_note = caps.dry_mass_target_source === :header ? "pinned header" :

@@ -208,13 +208,11 @@ end
     return (bl, br, b0, c_0v)
 end
 
-# ORD=7 donor-state helpers. At panel-edge faces (`face_idx ∈ {1, Nc+1}`)
-# the forward `_apply_ord7_boundary` rewrites `q_R_m` and `q_L_0` with
-# the same discontinuous value `q_bdy` before monotonicity. The donor
-# cell's limited `(q_L, q_R)` therefore differs from ORD=5 at the
-# boundary, and we need to recompute `(bl, br, b0)` against the
-# corrected edges. At interior faces these helpers return the same
-# `(bl, br, b0, c)` as the ORD=5 versions (compile-time eliminated).
+# ORD=7 donor-state helpers. The donor cell's limited `(q_L, q_R)` use the
+# per-face ORD=7 edges (`_ppm_face_edge_value_ord7`): the seam value at faces
+# 1 and Nc + 1, FV3's one-sided values at faces 0, 2, Nc and Nc + 2, the ORD=5
+# interpolation elsewhere — the forward `_ppm_edge_values_ord7` exactly, so
+# `(bl, br, b0)` match the forward kernel at every face.
 @inline function _ppm_face_value_donor_state_lo_ord7(
     F::FT,
     rm_m3::FT, rm_m2::FT, rm_m1::FT, rm_0::FT, rm_p1::FT, rm_p2::FT,
@@ -229,15 +227,9 @@ end
     c_m1v = m_m1 > floor_thresh ? rm_m1 / m_m1 : zero(FT)
     c_0v  = m_0  > floor_thresh ? rm_0  / m_0  : zero(FT)
     c_p1v = m_p1 > floor_thresh ? rm_p1 / m_p1 : zero(FT)
-    q_L_m_v, q_R_m_v = _ppm_edge_values(c_m3v, c_m2v, c_m1v, c_0v, c_p1v, Val(5))
-    # Reuse a small helper for the boundary correction at the value level
-    # — mirrors `_apply_ord7_boundary` exactly (LinRood.jl:186).
-    if face_idx == 1 || face_idx == Nc + 1
-        # q_R_m is rewritten with q_bdy at boundary (q_L_m unchanged).
-        # Use the donor-state stencil's own (c_m2, c_m1, c_0, c_p1).
-        q_bdy = _ppm_face_edge_value_ord7_discontinuous(c_m1v, c_m2v, c_0v, c_p1v)
-        q_R_m_v = q_bdy
-    end
+    # Donor = left cell, spanning faces `face_idx - 1` and `face_idx`.
+    q_L_m_v = _ppm_face_edge_value_ord7(FT, c_m3v, c_m2v, c_m1v, c_0v, face_idx - 1, Nc)
+    q_R_m_v = _ppm_face_edge_value_ord7(FT, c_m2v, c_m1v, c_0v, c_p1v, face_idx, Nc)
     q_L_m_v, q_R_m_v = _apply_monotonicity(q_L_m_v, q_R_m_v, c_m1v)
     bl = q_L_m_v - c_m1v
     br = q_R_m_v - c_m1v
@@ -259,12 +251,9 @@ end
     c_0v  = m_0  > floor_thresh ? rm_0  / m_0  : zero(FT)
     c_p1v = m_p1 > floor_thresh ? rm_p1 / m_p1 : zero(FT)
     c_p2v = m_p2 > floor_thresh ? rm_p2 / m_p2 : zero(FT)
-    q_L_0_v, q_R_0_v = _ppm_edge_values(c_m2v, c_m1v, c_0v, c_p1v, c_p2v, Val(5))
-    if face_idx == 1 || face_idx == Nc + 1
-        # q_L_0 is rewritten with q_bdy at boundary (q_R_0 unchanged).
-        q_bdy = _ppm_face_edge_value_ord7_discontinuous(c_m1v, c_m2v, c_0v, c_p1v)
-        q_L_0_v = q_bdy
-    end
+    # Donor = right cell, spanning faces `face_idx` and `face_idx + 1`.
+    q_L_0_v = _ppm_face_edge_value_ord7(FT, c_m2v, c_m1v, c_0v, c_p1v, face_idx, Nc)
+    q_R_0_v = _ppm_face_edge_value_ord7(FT, c_m1v, c_0v, c_p1v, c_p2v, face_idx + 1, Nc)
     q_L_0_v, q_R_0_v = _apply_monotonicity(q_L_0_v, q_R_0_v, c_0v)
     bl = q_L_0_v - c_0v
     br = q_R_0_v - c_0v
@@ -272,10 +261,10 @@ end
     return (bl, br, b0, c_0v)
 end
 
-# ORD=7 from-rm chain: same structure as ORD=5 with the d6 boundary
-# correction inserted between `_ppm_edge_values_ord5_d6` and
-# `_apply_monotonicity_d6`. Returns the 6-tuple `∂face/∂(c-tangent)` for
-# one cell-attribute pass (rm OR m), driven by `tangents`.
+# ORD=7 from-rm chain: same structure as ORD=5 with the per-face ORD=7 edges
+# (`_ppm_edge_values_ord7`, evaluated on the D6 duals) in place of the two
+# `_ppm_edge_values_ord5_d6` calls. Returns the 6-tuple `∂face/∂(c-tangent)`
+# for one cell-attribute pass (rm OR m), driven by `tangents`.
 @inline function _linrood_ppm_face_chain_rm_ord7(
     F::FT, m_l::FT, m_r::FT,
     rm_m3::FT, rm_m2::FT, rm_m1::FT, rm_0::FT, rm_p1::FT, rm_p2::FT,
@@ -291,10 +280,8 @@ end
     c_p1 = _safe_mixing_ratio_d6(rm_p1, m_p1, tan_p1)
     c_p2 = _safe_mixing_ratio_d6(rm_p2, m_p2, tan_p2)
 
-    q_L_m, q_R_m = _ppm_edge_values_ord5_d6(c_m3, c_m2, c_m1, c_0, c_p1)
-    q_L_0, q_R_0 = _ppm_edge_values_ord5_d6(c_m2, c_m1, c_0, c_p1, c_p2)
-    q_L_m, q_R_m, q_L_0, q_R_0 = _apply_ord7_boundary_d6(
-        q_L_m, q_R_m, q_L_0, q_R_0, c_m1, c_m2, c_0, c_p1, face_idx, Nc)
+    q_L_m, q_R_m, q_L_0, q_R_0 = _ppm_edge_values_ord7(
+        FT, c_m3, c_m2, c_m1, c_0, c_p1, c_p2, face_idx, Nc)
     q_L_m, q_R_m = _apply_monotonicity_d6(q_L_m, q_R_m, c_m1)
     q_L_0, q_R_0 = _apply_monotonicity_d6(q_L_0, q_R_0, c_0)
     face = _ppm_face_value(F, m_l, m_r, c_m1, c_0,
@@ -358,8 +345,7 @@ end
         face_idx, Nc)
 
     # Donor-mass α contribution. Use the ORD=7 donor-state helpers so
-    # `(bl, br, b0)` reflects the boundary-corrected (q_L, q_R) at
-    # panel-edge donor cells.
+    # `(bl, br, b0)` reflect the ORD=7 edges of donor cells beside a seam.
     extra_m_m1 = zero(FT)
     extra_m_0  = zero(FT)
     if F >= zero(FT)
@@ -438,10 +424,9 @@ end
 end
 
 # ORD=7 from-rm x-face adjoint kernel. Mirrors the ORD=5 kernel with
-# `face_idx = iif` driving the discontinuous boundary correction at
-# panel-edge faces. The donor-state helpers also dispatch on (iif, Nc)
-# so the α-contribution `(bl, br, b0)` reflects the boundary-corrected
-# limited edges at panel-edge donor cells.
+# `face_idx = iif` selecting the ORD=7 cube-edge values of the faces at and
+# next to the panel edges. The donor-state helpers also take (iif, Nc) so the
+# α-contribution `(bl, br, b0)` reflects the same limited edges as the forward.
 @kernel function _ppm_x_face_kernel_adjoint_ord7!(
     lambda_rm, lambda_m,
     @Const(lambda_fx_face), @Const(rm), @Const(m), @Const(am),
@@ -493,10 +478,11 @@ or ORD=7. Folds `_safe_mixing_ratio` into the d6-AD chain and includes
 the donor-mass `α = F / m_donor` contribution. Atomic accumulation on
 shared cells.
 
-`ORD=7` applies the linear discontinuous-edge boundary correction at
-panel-edge faces (`face_idx ∈ {1, Nc+1}`) and recomputes the donor
-α-contribution against the corrected limited `(q_L, q_R)`. Interior
-faces are bit-equal to ORD=5.
+`ORD=7` uses the per-face cube-edge values of `_ppm_edge_values_ord7`
+(seam value at faces 1 and Nc + 1, FV3 one-sided values at faces 0, 2, Nc
+and Nc + 2) and recomputes the donor α-contribution against the same
+limited `(q_L, q_R)`. Faces whose stencil is clear of those faces are
+bit-equal to ORD=5.
 """
 function apply_ppm_x_face_adjoint!(lambda_rm, lambda_m, lambda_fx_face,
                                    rm, m, am,

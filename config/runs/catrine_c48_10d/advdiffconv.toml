@@ -4,14 +4,12 @@
 #   diffusion  = ImplicitVerticalDiffusion (constant Kz, plan 16b)
 #   convection = TM5Convection (plan 23) OR CMFMCConvection (GEOS-style)
 #
-# TM5 route requires the binary to contain entu/detu/entd/detd sections,
-# emitted by the ERA5 preprocessor when `[tm5_convection] enable = true`.
-# The current LL→CS preprocessor
-# (`scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl`, plan 40
-# Commit 3, a thin CLI over `Preprocessing.regrid_ll_binary_to_cs`) does
-# NOT yet carry those sections across the regrid. Two options:
-#   (a) regenerate the C48 binaries from TM5-enabled LL sources AFTER
-#       extending the regridder (small work)
+# TM5 route requires the binary to contain entu/detu/entd/detd sections.
+# The lat-lon ERA5 physics-file route that once produced them was removed
+# (issue #55; see README.md, Prerequisite 2). Two options:
+#   (a) build the C48 binaries with TM5 convection on the cubed sphere
+#       (ERA5 N320 source with include_convection = true, or
+#       scripts/preprocessing/attach_catrine_tm5_convection_cs.jl)
 #   (b) switch kind = "cmfmc" and use a GEOS-style C48 binary with
 #       native CMFMC+DTRAIN (currently no C48 GEOS-IT binary exists —
 #       would need to regrid C180 or preprocess a source)

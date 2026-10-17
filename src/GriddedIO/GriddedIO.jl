@@ -50,6 +50,12 @@ methods dispatch on it.
   [`check_cell_area`](@ref).
 - Lat-lon flux files for `kind = "file"` (`latlon_flux.jl`):
   [`write_latlon_flux`](@ref).
+- Static ground fields for observation placement (`surface_height.jl`): the
+  per-grid model surface height dataset, written by
+  [`write_model_surface_height`](@ref) and read by
+  [`read_model_surface_height`](@ref) into `Output.ModelSurfaceHeight`, and a
+  lat-lon DEM for point lookups, [`read_point_elevation`](@ref) →
+  [`LatLonPointElevation`](@ref) (bilinear `Output.point_elevation`).
 
 Molar masses and the year length come from `Parameters`
 (`SPECIES_MOLAR_MASS`, `CARBON_MOLAR_MASS`, `DAYS_PER_JULIAN_YEAR`).
@@ -67,8 +73,11 @@ using NCDatasets: CFTime
 using SHA: sha1
 
 using ..Parameters: SPECIES_MOLAR_MASS, CARBON_MOLAR_MASS, DAYS_PER_JULIAN_YEAR
-using ..Grids: LatLonMesh, CubedSphereMesh, cell_area
-using ..Output: define_cs_horizontal_geometry!, define_provenance_attributes!
+using ..Grids: LatLonMesh, CubedSphereMesh, ReducedGaussianMesh, cell_area, ncells, nrings,
+               ring_longitudes, cell_index, panel_cell_center_lonlat, cs_definition
+import ..Output
+using ..Output: define_cs_horizontal_geometry!, define_provenance_attributes!,
+                ModelSurfaceHeight, AbstractPointElevation
 using ..AtomicFiles: atomic_publish, open_atomic_staging, commit_atomic_staging,
                      abandon_atomic_staging
 
@@ -98,6 +107,8 @@ export CS_NATIVE_FLUX_DIMS, CSNativeFluxWriter, open_cs_native_writer, write_sli
        abandon!, cs_native_flux_info, read_cs_native_flux!, read_cs_native_flux, check_cell_area
 # latlon_flux.jl
 export write_latlon_flux, check_latlon_cell_area
+# surface_height.jl
+export write_model_surface_height, read_model_surface_height, LatLonPointElevation, read_point_elevation
 
 include("coordinates.jl")
 include("source_meshes.jl")
@@ -106,5 +117,6 @@ include("staging.jl")
 include("flux_units.jl")
 include("cs_native_flux.jl")
 include("latlon_flux.jl")
+include("surface_height.jl")
 
 end # module GriddedIO

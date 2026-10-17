@@ -46,8 +46,10 @@ other AtmosTransport modules; every later module may import from it.
     and `GLOBAL_MEAN_SPECIFIC_HUMIDITY` (0.00247 kg kg⁻¹), which turns it into
     a total-pressure target
 - Numerical defaults, in [`NumericalDefaults.jl`](NumericalDefaults.jl):
-  - `DEFAULT_CFL_LIMIT` (0.95), the Courant limit of one runtime advection
-    subcycle pass
+  - `DEFAULT_CFL_LIMIT` (0.95), the runtime palindrome outflow budget of
+    split-sweep advection on every topology (fraction of the smaller of a
+    cell's masses at the start and end of the step that one palindrome's
+    worth of subcycled passes may remove)
   - `DEFAULT_POSITIVITY_CFL_LIMIT` (0.95), the write-time substep positivity
     limit of transport binaries
   - adaptive write-time substep targets: `DEFAULT_SUBSTEP_CFL_TARGET` (0.95),
@@ -60,9 +62,8 @@ other AtmosTransport modules; every later module may import from it.
   - `DEFAULT_GEOS_SMOOTHING_SWEEPS` (8, an `Int`) and
     `DEFAULT_GEOS_SMOOTHING_WEIGHT` (0.5), the sweeps of the GEOS moisture
     filter and column-drift correction and the weight of one sweep
-  - `DEFAULT_MAX_SUBCYCLES` (4096, an `Int`), the most CFL subcycle passes one
-    advection step may need (one direction on structured grids, one Strang
-    palindrome on the cubed sphere) before the run stops
+  - `DEFAULT_MAX_SUBCYCLES` (4096, an `Int`), the most CFL subcycles one
+    split-sweep advection step may need before the run stops
   - `DEFAULT_MAX_STEPS_PER_WINDOW` (4096, an `Int`), the most write-time
     substeps per window the cubed-sphere binary coarsener accepts
   - `ADAPTIVE_SUBSTEP_MAX_REFINEMENTS` (8, an `Int`), how many times the
@@ -98,6 +99,10 @@ other AtmosTransport modules; every later module may import from it.
     `ERA5_L137_ECHLEVS_PRESETS`, the named config library
   - `TM5_CONVECTION_MASS_BASIS_KEY`, the transport-header key that records
     whether TM5 convection sections carry dry- or moist-air fluxes
+  - `TM5_CONVECTION_SOURCE_KEY`, `TM5_EC2TM_CONVENTION_KEY` and
+    `TM5_EC2TM_CONVENTION` (`"tm5_halflevel_v2"`), the header record of where
+    TM5 convection sections come from and of the ERA5 → TM5 index convention;
+    the reader rejects ERA5-derived sections without the current convention
   - `ERA5_MET_INTERVAL_SECONDS` (3600 s), the ERA5 analysis interval and the
     accumulation period of its hourly accumulated fields
   - `GEOS_MASS_FLUX_DT_SECONDS` (450 s), the FV3 dynamics step over which

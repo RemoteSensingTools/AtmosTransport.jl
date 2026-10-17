@@ -204,19 +204,22 @@ end
 # Shared PPM helpers (inline, GPU-safe)
 # ---------------------------------------------------------------------------
 
-"""Apply ORD=7 discontinuous boundary treatment at panel edges (compile-time eliminated for ORD≠7)."""
-@inline function _apply_ord7_boundary(q_L_m, q_R_m, q_L_0, q_R_0,
-                                       c_m1, c_m2, c_0, c_p1,
-                                       face_idx, Nc, ::Val{ORD}) where ORD
-    if ORD == 7
-        if face_idx == 1 || face_idx == Nc + 1
-            q_bdy = _ppm_face_edge_value_ord7_discontinuous(c_m1, c_m2, c_0, c_p1)
-            q_R_m = q_bdy
-            q_L_0 = q_bdy
-        end
-    end
-    return q_L_m, q_R_m, q_L_0, q_R_0
-end
+"""
+    _linrood_edge_values(c_m3, c_m2, c_m1, c_0, c_p1, c_p2, face_idx, Nc, ::Val{ORD})
+        -> (q_L_m, q_R_m, q_L_0, q_R_0)
+
+Unlimited edge values of the two cells beside panel-local face `face_idx` (the
+left cell `c_m1`, the right cell `c_0`) from the six-cell stencil. ORD ≠ 7: the
+`_ppm_edge_values` family of each cell. ORD = 7: one value per face with the
+cube-edge treatment of `_ppm_edge_values_ord7` (seam value at faces 1 and
+Nc + 1, FV3's one-sided values on the faces next to them).
+"""
+@inline _linrood_edge_values(c_m3, c_m2, c_m1, c_0, c_p1, c_p2, face_idx, Nc, ::Val{ORD}) where ORD =
+    (_ppm_edge_values(c_m3, c_m2, c_m1, c_0, c_p1, Val(ORD))...,
+     _ppm_edge_values(c_m2, c_m1, c_0, c_p1, c_p2, Val(ORD))...)
+
+@inline _linrood_edge_values(c_m3, c_m2, c_m1, c_0, c_p1, c_p2, face_idx, Nc, ::Val{7}) =
+    _ppm_edge_values_ord7(typeof(c_0), c_m3, c_m2, c_m1, c_0, c_p1, c_p2, face_idx, Nc)
 
 """Apply Colella-Woodward monotonicity: flatten reconstruction at local extrema."""
 @inline function _apply_monotonicity(q_L, q_R, c)
@@ -298,10 +301,8 @@ end
         c_p1 = _safe_mixing_ratio(rm[ii, jj_a + 1, k], m[ii, jj_a + 1, k])
         c_p2 = _safe_mixing_ratio(rm[ii, jj_a + 2, k], m[ii, jj_a + 2, k])
 
-        q_L_m, q_R_m = _ppm_edge_values(c_m3, c_m2, c_m1, c_0, c_p1, Val(ORD))
-        q_L_0, q_R_0 = _ppm_edge_values(c_m2, c_m1, c_0, c_p1, c_p2, Val(ORD))
-        q_L_m, q_R_m, q_L_0, q_R_0 = _apply_ord7_boundary(
-            q_L_m, q_R_m, q_L_0, q_R_0, c_m1, c_m2, c_0, c_p1, jf, Nc, Val(ORD))
+        q_L_m, q_R_m, q_L_0, q_R_0 = _linrood_edge_values(
+            c_m3, c_m2, c_m1, c_0, c_p1, c_p2, jf, Nc, Val(ORD))
         q_L_m, q_R_m = _apply_monotonicity(q_L_m, q_R_m, c_m1)
         q_L_0, q_R_0 = _apply_monotonicity(q_L_0, q_R_0, c_0)
 
@@ -327,10 +328,8 @@ end
         c_p1 = _safe_mixing_ratio(rm[ii_r + 1, jj, k], m[ii_r + 1, jj, k])
         c_p2 = _safe_mixing_ratio(rm[ii_r + 2, jj, k], m[ii_r + 2, jj, k])
 
-        q_L_m, q_R_m = _ppm_edge_values(c_m3, c_m2, c_m1, c_0, c_p1, Val(ORD))
-        q_L_0, q_R_0 = _ppm_edge_values(c_m2, c_m1, c_0, c_p1, c_p2, Val(ORD))
-        q_L_m, q_R_m, q_L_0, q_R_0 = _apply_ord7_boundary(
-            q_L_m, q_R_m, q_L_0, q_R_0, c_m1, c_m2, c_0, c_p1, iif, Nc, Val(ORD))
+        q_L_m, q_R_m, q_L_0, q_R_0 = _linrood_edge_values(
+            c_m3, c_m2, c_m1, c_0, c_p1, c_p2, iif, Nc, Val(ORD))
         q_L_m, q_R_m = _apply_monotonicity(q_L_m, q_R_m, c_m1)
         q_L_0, q_R_0 = _apply_monotonicity(q_L_0, q_R_0, c_0)
 
@@ -353,10 +352,8 @@ end
         c_m1 = q[ii_l,     jj, k]; c_0  = q[ii_r,     jj, k]
         c_p1 = q[ii_r + 1, jj, k]; c_p2 = q[ii_r + 2, jj, k]
 
-        q_L_m, q_R_m = _ppm_edge_values(c_m3, c_m2, c_m1, c_0, c_p1, Val(ORD))
-        q_L_0, q_R_0 = _ppm_edge_values(c_m2, c_m1, c_0, c_p1, c_p2, Val(ORD))
-        q_L_m, q_R_m, q_L_0, q_R_0 = _apply_ord7_boundary(
-            q_L_m, q_R_m, q_L_0, q_R_0, c_m1, c_m2, c_0, c_p1, iif, Nc, Val(ORD))
+        q_L_m, q_R_m, q_L_0, q_R_0 = _linrood_edge_values(
+            c_m3, c_m2, c_m1, c_0, c_p1, c_p2, iif, Nc, Val(ORD))
         q_L_m, q_R_m = _apply_monotonicity(q_L_m, q_R_m, c_m1)
         q_L_0, q_R_0 = _apply_monotonicity(q_L_0, q_R_0, c_0)
 
@@ -379,10 +376,8 @@ end
         c_m1 = q[ii, jj_b,     k]; c_0  = q[ii, jj_a,     k]
         c_p1 = q[ii, jj_a + 1, k]; c_p2 = q[ii, jj_a + 2, k]
 
-        q_L_m, q_R_m = _ppm_edge_values(c_m3, c_m2, c_m1, c_0, c_p1, Val(ORD))
-        q_L_0, q_R_0 = _ppm_edge_values(c_m2, c_m1, c_0, c_p1, c_p2, Val(ORD))
-        q_L_m, q_R_m, q_L_0, q_R_0 = _apply_ord7_boundary(
-            q_L_m, q_R_m, q_L_0, q_R_0, c_m1, c_m2, c_0, c_p1, jf, Nc, Val(ORD))
+        q_L_m, q_R_m, q_L_0, q_R_0 = _linrood_edge_values(
+            c_m3, c_m2, c_m1, c_0, c_p1, c_p2, jf, Nc, Val(ORD))
         q_L_m, q_R_m = _apply_monotonicity(q_L_m, q_R_m, c_m1)
         q_L_0, q_R_0 = _apply_monotonicity(q_L_0, q_R_0, c_0)
 

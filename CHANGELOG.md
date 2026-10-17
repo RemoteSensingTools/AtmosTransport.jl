@@ -2,6 +2,74 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- **Lat-lon ERA5 physics-file TM5 route removed** (issue #55, pera-noaa). The
+  `[tm5_convection]` table of ERA5 spectral preprocessing configs converted the
+  ERA5 convection NetCDF to flat physics files and then to TM5 fields on the
+  lat-lon grid. The files kept the CDS longitudes 0…360° while the route read
+  them as −180…180°, so every TM5 field sat 180° from its column, and each
+  hourly window used the mean of the previous hour. The route served only nine
+  December-2021 test configs and was retired instead of fixed. A config with a
+  `[tm5_convection]` table (even with `enable = false`) now fails with an error naming the supported
+  routes: the ERA5 N320 → cubed-sphere preprocessor with
+  `include_convection = true`, or `scripts/preprocessing/attach_catrine_tm5_convection_cs.jl`.
+  Removed: the nine configs (`config/preprocessing/catrine5d/*_tm5.toml`,
+  `config/preprocessing/era5_ll720x361_*tm5*.toml`),
+  `scripts/preprocessing/convert_era5_physics_nc_to_bin.jl`, and from
+  `Preprocessing` `convert_era5_physics_nc_to_bin`, `ERA5PhysicsBinaryReader`,
+  `ERA5PhysicsBinaryHeader`, `open_era5_physics_binary`,
+  `close_era5_physics_binary`, `get_era5_physics_field`,
+  `tm5_native_fields_for_hour!`, `merge_tm5_field_3d!`,
+  `TM5PreprocessingWorkspace`, `allocate_tm5_workspace`,
+  `compute_tm5_merged_hour_on_source!`, `log_tm5_cleanup_stats`,
+  `tm5_copy_or_regrid_ll!` and `resolve_tm5_convection_settings`
+  (`reject_removed_tm5_convection_route` takes its place), the
+  `test/real_data/test_tm5_catrine_1day.jl` check of that route, and the
+  convert hint of `scripts/downloads/download_era5_physics.py` (its
+  convection download stays). Lat-lon spectral binaries keep their header
+  schema (`include_tm5conv = false`). No lat-lon route now writes TM5
+  sections, so the lat-lon `kind = "tm5"` run configs
+  (`config/runs/catrine5d/ll*_advdiffconv_*`,
+  `config/runs/catrine_ll720_3d/{advdiffconv,fullphysics}.toml`) and run
+  configs that read binaries of the removed route or their C48/C180 regrids
+  fail on load until their inputs are rebuilt; they are kept for provenance.
+- **TM5 convection provenance checked on load** (issue #54). ERA5 N320
+  binaries with convection now record `tm5_convection_source` and
+  `tm5_ec2tm_convention = "tm5_halflevel_v2"`, and the lat-lon → cubed-sphere
+  regrid copies its source's record (`"unrecorded"` when it has none). Opening
+  a binary rejects, with a regenerate message: ERA5-derived TM5 sections
+  without the current convention (every ERA5 N320 binary built with
+  `include_convection = true` before this fix, e.g. the December-2021 and
+  2022–2023 C180 CATRINE sets), lat-lon binaries with TM5 sections from the
+  ERA5 spectral preprocessor, and lat-lon → cubed-sphere regrids of those.
+  Sections attached from the TM5-converted CATRINE archive
+  (`convection_attachment`, all v3/v4 attached sets and the golden inputs,
+  whatever other key they carry) and sections without a recorded source stay
+  accepted.
+  `binary_capabilities` gains `tm5_convection_provenance`, and
+  `inspect_binary` prints it. New constants `TM5_CONVECTION_SOURCE_KEY`,
+  `TM5_EC2TM_CONVENTION_KEY`, `TM5_EC2TM_CONVENTION`.
+
+### Post-run diagnostics
+
+- `scripts/diagnostics/catrine_benchmark_v05_site.py` builds the v0.5 CATRINE
+  benchmark web site (GCHP against the v0.5 MERRA-2 and ERA5 runs) from the
+  signoff comparison products: an overview (signoff state, key numbers,
+  agreement table per tracer and air-mass band) and pages for time series,
+  latitude–pressure sections, maps, the near-surface band, the stratosphere,
+  the mass budget, NOAA stations and the methods. Charts use self-hosted D3
+  (hover or tap for values; page scrolling is never captured on phones;
+  drag-to-zoom with a reset on daily time axes); one control row per page is
+  kept in the URL and data are loaded per view. Only finished comparison
+  seasons are read; `--datasets auto` (default) shows MERRA-2 and adds ERA5
+  once all 25 months are compared. The stations page shows GCHP and the runs
+  at eight NOAA sites (nearest C90 cell; lowest layer, or the site's height
+  through GCHP's height–dry-pressure profile) with NOAA CO₂ observations from
+  a local ObsPack (CC0 datasets only, cited) and scores each against them
+  (bias, RMSE, correlation). `catrine_benchmark_site/publish.sh` builds into a
+  staging folder and copies it to the public one (README there).
+
 ### Testing
 
 - **JET 0.12 allowed in the test environment.** On 2026-10-15 the General registry
@@ -16,6 +84,25 @@
   support yet instead of erroring.
 
 ### Numerical changes
+
+- **ERA5 → TM5 convection conversion follows TM5's half levels** (issue #54,
+  pera-noaa). ERA5 archives UDMF/DDMF level k as the flux through the top of
+  layer k, with none through the ground (TM5 `tmm.F90`: "levels top down,
+  surface implicit zero"). The ERA5 N320 preprocessor placed level k at the
+  bottom of layer k, so level 137 became a flux through the ground, and
+  `ec2tm_from_rates!` took the first interface with flux as the cloud-top
+  layer, one layer too low; the column closure then moved the cloud-top
+  detrainment to the layer of largest entrainment. Now level k is interface k
+  and interface Nz + 1 is zero, and the cloud top is the layer above the first
+  interface with flux, as in TM5's `ECconv_to_TMconv`. The fields now return
+  the input fluxes at every interface and match an independent transcription
+  of TM5's code to rounding; the closure moves only rounding. On 3000 deep
+  ERA5 columns the old conversion lifted 14 % less boundary-layer tracer above
+  500 hPa in a 3 h step and detrained about 4 levels too low; mass was
+  conserved. `ec2tm_from_rates!` now rejects a non-zero flux through the
+  ground (a packing error). ERA5 TM5-convection binaries must be regenerated;
+  runs on attached CATRINE convection (the CATRINE benchmark sets) and all
+  goldens are unaffected.
 
 - **Column mass ledger carry** (OF-110). The `Float32` column mass ledgers of
   TM5 convection (and `cmfmc_matrix`, which uses the TM5 solve) and of `dkg`
@@ -89,7 +176,99 @@
   largest cell rate). Time-varying lat-lon series (cubed sphere only) still
   regrid their densities per slice and are unchanged.
 
-### Configuration
+- **Runtime CFL subcycling runs whole palindromes' worth of passes**
+  (issue #61). When the runtime pilot needs `n > 1` subcycles, a transport step
+  now runs `(X Y Z)^n → midpoint → (Z Y X)^n` with every flux divided by `n`
+  (`(H V)^n → midpoint → (V H)^n` on reduced Gaussian) instead of
+  `X^n Y^n Z^n | Z^n Y^n X^n`. The new composition is symmetric (second
+  order, same `6n` sweeps) and identical at `n = 1`. The old order subcycled
+  each direction alone, so the passes of one leg still removed that
+  direction's full-flux outflow before another direction refilled the cell:
+  in exactly non-divergent flows air mass went negative (to −0.46 of a cell's
+  mass at C12, n = 6) and uniform tracers were lost. All topologies now take
+  one count from the palindrome budget
+  `2 (out_x + out_y + out_z) / (n m_ref) ≤ cfl_limit` with
+  `m_ref = min(m, m_end)`, `m_end = m + 2 (in − out)` the cell's mass after
+  the step (the reference mass of the write-time positivity gate). Between
+  `X Y Z` blocks a cell's mass lies between `m` and `m_end`, so every pass
+  removes at most `cfl_limit / 2` of the mass the cell holds when it starts
+  and air mass stays positive through the step. Budgeting against the
+  step-start mass `m` alone (main's per-direction counts too) does not bound
+  a cell that drains within the step: one cell of mass 1 among cells of 100
+  with inflow 1.51 in x and outflow 2.0 in y got `n = 5`, its air mass went
+  negative, and PPM gave a mixing ratio of −1.7e43 (now `n = 211`). A cell
+  with outflow and `m_ref ≤ 0`, or a non-finite flux, throws an
+  `ArgumentError` (main also failed, with an "exceeded max_n_sub" error);
+  the lat-lon and
+  reduced-Gaussian default `cfl_limit` is `DEFAULT_CFL_LIMIT` (0.95, was 1.0
+  per direction), like the cubed sphere. The footprint/4D-Var tape recorders
+  record the same composition. Only runs whose pilot returns `n > 1` change:
+  cubed-sphere binaries with the `binary_schedule` contract run `n = 1`, and
+  lat-lon binaries written with the default positivity gate (the same
+  palindrome budget) stay below it. The reduced-Gaussian write-time gate still
+  bounds horizontal and vertical outflow separately (each `≤ 0.95 m`), so a
+  reduced-Gaussian binary near that gate can now subcycle at run time (static
+  palindrome ratio up to 3.8, `n = 4`). Golden outputs do not change: their
+  worst static ratios are below the budget (`pre_o24`: 0.61). The per-direction
+  pass-count helpers (`_x/_y/_z_subcycling_pass_count`, the face-indexed
+  `_sweep_*_face_subcycled!`) are removed; the corrected
+  `operators_on_binaries.md` no longer claims the per-leg counts keep mass
+  positive.
+- **`PositivityLimiter` keeps downhill slopes** (issue #62). Its slope was
+  `minmod(s_c, c_i)`, which is zero whenever the centred slope is negative, so
+  the limiter acted as a sign test and treated rising and falling profiles
+  differently (mirror asymmetry 0.25 in a 1-D test). It now keeps the sign
+  and clips the magnitude to `|s| ≤ 2 c_i`, the bound that keeps both face
+  values non-negative. Selectable only from Julia (`SlopesScheme(PositivityLimiter())`).
+- **Lin–Rood `ppm_order = 7` uses one edge value per face** (issue #62). The
+  seam value replaced the edges only at the panel-edge faces, so the face
+  kernels rebuilt the cell next to a seam with a cross-seam fourth-order edge
+  when they evaluated its interior face. ORD=7 now follows FV3's cube-edge
+  values (`tp_core.F90`, `iord < 8`): the Putman–Lin seam average at the
+  panel edge and one-sided `5/14, 11/14, −2/14` edges on the faces beside it,
+  in the forward and adjoint kernels alike. Solid-body rotation errors fall
+  by 10–31% (C8–C64). Runs with `ppm_order = 7` change; `ppm_order = 5` (the
+  default, and all golden cases) is bit-identical.
+
+### Fixes
+
+- **Observation heights: altitude-only records are placed above the ground,
+  never silently in the lowest layer** (issue #56). ObsPack records that give
+  an `altitude` above sea level but no `intake_height` or `elevation` had a
+  `NaN` height and were sampled in the lowest model layer without a message.
+  This is the aircraft-insitu layout: in the OCO-2 MIP v5.0.1 daily ObsPack,
+  16.5% of the 2021-12 to 2023-12 records fill both per row, including 97% of
+  aircraft-insitu and all AirCore records. Heights are now resolved row by row
+  (`intake_height`, else `altitude − elevation`). An altitude without an
+  elevation becomes a height above the true ground through a DEM
+  (`dem_file`), and the record is placed that far above the model surface.
+  A record with no such height but a `pressure` is placed by pressure. The
+  model surface height is never used as the true ground. Records that still
+  cannot be placed, and ObsPack records with no vertical coordinate at all,
+  stop the sampler build (`unplaced_records = "error"`, the default) or are
+  skipped and counted (`"skip"`, `n_unplaced_*` attributes). A table row with
+  an altitude but no elevation no longer fails at read time; it follows the
+  same rules. `absolute_altitude_above_agl_m` optionally places
+  free-tropospheric records by pressure or by altitude above sea level against
+  the model surface height (`surface_height_file`); a record with only an
+  intake height takes its ground from the DEM there. Point events with an intake height (or
+  altitude and elevation) are sampled as before, except ObsPack rows whose
+  file has an `intake_height` variable but a fill value on that row: they used
+  `NaN` (lowest layer) and now use `altitude − elevation`.
+  Undeclared fill values are not placed: an ObsPack `pressure` ≤ 0, an
+  `elevation` (or `site_elevation`) below −450 m and a negative
+  `intake_height` are ignored with a warning (the JMA aircraft-flask rows of
+  the MIP ObsPack give elevation = intake_height = −1000 at 5 km altitude and
+  were sampled in the lowest layer; they are now placed by altitude − DEM).
+  Records placed more than 100 m below the ground are reported in a warning.
+  In ObsPack station series (`mode = "sites"`), rows that give only an
+  altitude are keyed by that altitude (one site per level of a tower that
+  states its levels as altitudes) instead of forming one lowest-layer
+  "surface" site; a dataset whose records stray more than 1° from the site
+  position (a moving platform) is reported, since each of its heights becomes
+  a site at that position.
+
+### API and configuration changes
 
 - **Time-varying surface fluxes must cover the run** (#59). A run that a
   time-varying source's files do not cover (before their first slice, after
@@ -118,6 +297,31 @@
   `scripts/run_catrine_c30_2021H1_column.sh` and
   `scripts/profile_catrine_c30_2021_fullphysics.sh`: no January–November 2021
   CAMS files exist for them.
+- `[output.observations]` takes `dem_file`, `dem_variable`,
+  `unplaced_records`, `surface_height_file` and `absolute_altitude_above_agl_m`
+  (`VerticalPlacementSpec`). Both ground datasets are external and static,
+  read through `GriddedIO`: the DEM by `read_point_elevation` (ground or sea
+  surface in m; a file below −450 m is rejected as bathymetry and one above
+  9000 m as an undeclared fill; the axes are told apart by dimension name, so
+  a `(lat, lon)`-stored DEM is read correctly; a gridline-registered global
+  DEM, −180…180 inclusive, has its repeated seam column dropped), the per-grid
+  model surface height by `read_model_surface_height` (written by
+  `write_model_surface_height` and
+  `scripts/preprocessing/build_model_surface_height.jl` from a met source's
+  surface geopotential). `build_observation_sampler` takes
+  `terrain = ObservationTerrain(...)` and keeps only its provenance.
+- Observation files add `altitude`, `pressure` (soundings),
+  `vertical_placement`, `placement_height_agl` and `model_surface_height` per
+  row or site, and the attributes `vertical_placement_codes`,
+  `n_unplaced_soundings`, `n_unplaced_sites`, `unplaced_records`,
+  `surface_height_file`, `dem_file`, `absolute_altitude_above_agl_m`.
+- `SoundingRequest` gains `altitude_m` and `pressure_pa`, `SiteRequest`
+  gains `altitude_m` (the old positional constructors remain);
+  `SoundingBatch` takes `altitudes`, `pressures` and `placements`;
+  `SiteNetCDFStream` takes the sites' placements. `intake_layer_index` throws
+  on a `NaN` height instead of returning the lowest layer.
+  `resolve_placement(option, missing_height_rule(source), request, cell, terrain)`
+  places one request.
 
 ## 0.5.0 — 2026-10-13
 

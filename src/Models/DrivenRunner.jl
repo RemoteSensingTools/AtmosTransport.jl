@@ -105,6 +105,7 @@ using ..InitialConditionIO: build_initial_mixing_ratio, _build_cs_initial_mixing
                              pack_initial_tracer_mass, _cs_pack_interior_into_halo!,
                              build_surface_flux_sources,
                              TotalSurfacePressure
+using ...GriddedIO: read_model_surface_height, read_point_elevation
 using ..BinaryPathExpander: expand_binary_paths
 using ..InputStaging: InputStager, staged_path_for!, cleanup_staging!
 using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, SnapshotFrame,
@@ -119,6 +120,7 @@ using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, S
                 samples_observations, begin_observation_day!, observe_window_boundary!,
                 finish_observations!, check_observation_tracer_names,
                 observation_output_path, SoundingMode, SiteMode,
+                VerticalPlacementSpec, ObservationTerrain, NoModelSurfaceHeight, NoPointElevation,
                 _SNAPSHOT_SCHEDULE_KEYS, _SNAPSHOT_INTERVAL_KEYS, _schedule_has_times
 # TransportModel + DrivenSimulation live alongside us in the Models module;
 # reach up to the parent and pull them in.

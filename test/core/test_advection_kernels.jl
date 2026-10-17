@@ -150,6 +150,40 @@ end
     @test _limited_moment(-0.25, -1.0, PositivityLimiter()) == 0.0
 end
 
+# Issue #62: the positivity slope keeps its sign and is clipped to |s| ≤ 2c, the
+# bound that keeps both face values c ± s/2 non-negative. A sign test that
+# zeroed every downhill slope made the transport depend on the flow direction.
+@testset "PositivityLimiter slope keeps its sign, |s| ≤ 2c" begin
+    lim = PositivityLimiter()
+    slope = Operators.Advection._limited_slope
+    @test slope(10.5, 10.0, 9.5, lim) == -0.5      # downhill slope kept
+    @test slope(9.5, 10.0, 10.5, lim) == 0.5
+    @test slope(0.0, 0.1, 0.6, lim) == 0.2         # clipped at 2c
+    @test slope(0.6, 0.1, 0.0, lim) == -0.2
+    @test slope(3.0, 1.0, 0.5, lim) == -1.25       # within the bound: centred slope
+    @test slope(0.2, 0.0, 0.4, lim) == 0.0         # empty cell: no slope
+
+    # A mirrored profile advected the other way gives the mirrored result, and a
+    # positive tracer stays non-negative.
+    N, C = 100, 0.4
+    nrev = round(Int, N / C)
+    xc = (1:N) .- 0.5
+    c0 = 0.02 .+ exp.(-((xc .- 30) ./ 5) .^ 2) .* (1 .+ 0.5 .* tanh.((xc .- 30) ./ 3)) .+
+         0.8 .* (abs.(xc .- 72) .< 6)
+    function advect_1d(c, courant, nsweeps)
+        m = ones(N, 1, 1); rm = reshape(copy(c), N, 1, 1)
+        am = fill(courant, N + 1, 1, 1); ws = AdvectionWorkspace(m)
+        for _ in 1:nsweeps
+            Operators.Advection.sweep_x!(rm, m, am, SlopesScheme(lim), ws)
+        end
+        return vec(rm) ./ vec(m)
+    end
+    right = advect_1d(c0, C, nrev)
+    left = reverse(advect_1d(reverse(c0), -C, nrev))
+    @test maximum(abs.(right .- left)) < 1e-12
+    @test minimum(advect_1d(c0, C, 10nrev)) >= 0
+end
+
 @testset "structured monotone advection supports signed VMR" begin
     FT = Float64
     grid, m, _, rm_absolute, am, bm, cm = build_test_problem(FT)
@@ -749,29 +783,21 @@ end
 end
 
 # =========================================================================
-# Plan 13 regression test: the unified static CFL pilot must return n_sub=1
-# for the reference synthetic flow (CFL ≈ 0.15 at the equator) with the
-# default cfl_limit of 0.95, and the static CFL must be within (0, cfl_limit).
+# Plan 13 regression test: the static palindrome CFL pilot must return
+# n_sub=1 for the reference synthetic flow (CFL ≈ 0.15 at the equator) with
+# the default cfl_limit of 0.95.
 # =========================================================================
 
 @testset "Unified CFL pilot (plan 13)" begin
     for FT in (Float64, Float32)
         precision_tag = FT == Float64 ? "F64" : "F32"
         _, m, _, _, am, bm, cm = build_test_problem(FT)
-        ws = AdvectionWorkspace(m)
 
-        cfl_limit = FT(0.95)
-        n_x = Operators.Advection._x_subcycling_pass_count(am, m, ws, cfl_limit)
-        n_y = Operators.Advection._y_subcycling_pass_count(bm, m, ws, cfl_limit)
-        n_z = Operators.Advection._z_subcycling_pass_count(cm, m, ws, cfl_limit)
-
-        println("    $precision_tag: n_sub = ($n_x, $n_y, $n_z)")
-        # Reference problem is built at CFL ~0.15 on smallest mass; with
-        # 6x safety factor vs cfl_limit=0.95 and outflow-based static,
-        # expect n_sub=1 for all directions.
-        @test n_x == 1
-        @test n_y == 1
-        @test n_z == 1
+        n_sub = Operators.Advection._structured_palindrome_subcycle_count(am, bm, cm, m, FT(0.95))
+        println("    $precision_tag: n_sub = $n_sub")
+        # Reference problem is built at CFL ~0.15 on smallest mass, so even the
+        # palindrome budget 2 (out_x + out_y + out_z) / m stays below 0.95.
+        @test n_sub == 1
     end
 end
 

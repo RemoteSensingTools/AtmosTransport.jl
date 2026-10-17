@@ -92,8 +92,8 @@ end
 
 @testset "Plan 25 Commit 3b — LinRoodPPMScheme(7) footprint vs FD" begin
     # End-to-end adjoint identity for the ORD=7 scheme. The reverse
-    # path differs from ORD=5 only at panel-edge faces, where the
-    # `_apply_ord7_boundary_d6` correction in the per-kernel adjoints
+    # path differs from ORD=5 only at and next to panel-edge faces, where the
+    # ORD=7 edge values (`_ppm_edge_values_ord7`) in the per-kernel adjoints
     # propagates through the tape via the `_CSLinRoodHorizRecord{…, ORD}`
     # binding. Identical structure to the ORD=5 test above.
     mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =

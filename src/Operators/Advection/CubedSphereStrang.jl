@@ -2,7 +2,8 @@
 # Cubed-sphere Strang splitting orchestrator for src
 #
 # Performs X → Y → Z → Z → Y → X dimensionally-split advection on 6
-# gnomonic panels with halo exchange between horizontal sweeps. The panel
+# gnomonic panels with halo exchange between horizontal sweeps; with n CFL
+# subcycles, (X → Y → Z)^n → midpoint → (Z → Y → X)^n at flux / n. The panel
 # sweeps are in cs_sweep_{common,x,y,z}.jl, the workspace in cs_workspace.jl
 # and the subcycle count in cs_subcycling.jl.
 #
@@ -40,33 +41,44 @@
                      cfl_limit=DEFAULT_CFL_LIMIT)
 
 Perform one Strang-split advection step on a 6-panel cubed-sphere field
-with automatic CFL-based subcycling per direction.
+with automatic CFL-based subcycling.
 
 ## Splitting sequence
 
-    X sweep (n_x subcycles)
-    → fill_panel_halos!(dir=1)     ← exchange halos between panels (X direction)
-    → Y sweep (n_y subcycles)
-    → fill_panel_halos!(dir=2)     ← exchange halos between panels (Y direction)
-    → Z sweep (n_z subcycles)      ← first Z half-step
-    → Z sweep (n_z subcycles)      ← second Z half-step (palindrome)
-    → fill_panel_halos!(dir=2)
-    → Y sweep (n_y subcycles)
-    → fill_panel_halos!(dir=1)
-    → X sweep (n_x subcycles)
+With `n` subcycles and every flux divided by `n`:
 
-This sequence follows Strang's X-Y-Z-Z-Y-X ordering. Second-order splitting
-requires sufficiently accurate subflows; the palindrome alone does not prove
-the transport's temporal order. Horizontal groups pair physical seam transfers
-before halo exchange supplies neighboring values for the next reconstruction.
+    repeat n times:                ← forward half, (X Y Z)^n
+        [fill_panel_halos!(dir=1)] ← from the second pass on: Z changed the interiors
+        X sweep
+        → fill_panel_halos!(dir=1) ← exchange halos between panels (X direction)
+        → Y sweep
+        → fill_panel_halos!(dir=2) ← exchange halos between panels (Y direction)
+        → Z sweep
+    midpoint!()                    ← diffusion / surface flux, once
+    repeat n times:                ← reverse half, (Z Y X)^n
+        Z sweep
+        → fill_panel_halos!(dir=2)
+        → Y sweep
+        → fill_panel_halos!(dir=2)
+        → fill_panel_halos!(dir=1)
+        → X sweep
+        → fill_panel_halos!(dir=1)
+
+At `n = 1` this is Strang's X-Y-Z-Z-Y-X palindrome. For `n > 1` the
+composition stays symmetric (the reverse half is the adjoint of the forward
+half), so it keeps the palindrome's second-order splitting with the same 6n
+sweeps. Second-order splitting requires sufficiently accurate subflows; the
+composition alone does not prove the transport's temporal order. Horizontal
+groups pair physical seam transfers before halo exchange supplies neighboring
+values for the next reconstruction.
 
 ## Subcycling
 
-All six legs use one count from the initial-mass palindrome budget
-`2 * (out_x + out_y + out_z) / m_start`, with flux divided by that count.
-A supplied `subcycle_count` uses the binary's schedule; a workspace built with
-`binary_cfl_check = BinaryCFLCheck()` (`[advection] check_binary_cfl = true`)
-checks it against the runtime budget.
+The count comes from the palindrome budget
+`2 * (out_x + out_y + out_z) / (n min(m_start, m_end)) ≤ cfl_limit`, `m_end`
+the cell's mass after the step (`_cs_static_palindrome_subcycle_count`). A supplied `subcycle_count` uses the
+binary's schedule; a workspace built with `binary_cfl_check = BinaryCFLCheck()`
+(`[advection] check_binary_cfl = true`) checks it against the runtime budget.
 
 ## Panel array layout
 
@@ -89,7 +101,9 @@ kernels only update interior cells; halo regions are filled by
   require `mesh.Hp ≥ 2` (Slopes) or `mesh.Hp ≥ 3` (PPM).
 - `workspace`: pre-allocated `CSAdvectionWorkspace` buffers.
 - `flux_scale`: overall scaling applied to all fluxes (default 1.0).
-- `cfl_limit`: maximum CFL per subcycle pass (default `DEFAULT_CFL_LIMIT`, 0.95).
+- `cfl_limit`: palindrome outflow budget per subcycle, as a fraction of the
+  smaller of the cell's masses at the start and end of the step (default
+  `DEFAULT_CFL_LIMIT`, 0.95).
 """
 function strang_split_cs!(panels_rm::NTuple{6},
                           panels_m::NTuple{6},
@@ -114,63 +128,57 @@ function strang_split_cs!(panels_rm::NTuple{6},
     n_pal = _cs_palindrome_subcycles(workspace.binary_cfl_check, "strang_split_cs!",
                                      subcycle_count, panels_am, panels_bm, panels_cm,
                                      panels_m, Nc, Hp, Nz, cfl_ft; flux_scale = fs)
-    n_x = n_pal
-    n_y = n_pal
-    n_z = n_pal
+    _record_cs_subcycle_growth!(workspace, n_pal, n_pal, n_pal)
+    fs_sub = fs / FT(n_pal)
 
-    _record_cs_subcycle_growth!(workspace, n_x, n_y, n_z)
+    # ---- Forward half: (X → Y → Z)^n_pal ----
+    for pass in 1:n_pal
+        if pass > 1     # the previous Z sweep changed the interiors the X halos mirror
+            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm, mesh; dir=1)
+            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,  mesh; dir=1)
+        end
+        SectionTimer.@section :cs_sweep_x begin
+            _sweep_cs_horizontal!(
+                panels_rm, panels_m, panels_am, mesh, scheme, workspace, Val(1); flux_scale=fs_sub)
+            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm, mesh; dir=1)
+            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,  mesh; dir=1)
+        end
 
-    fs_x = fs / FT(n_x)
-    fs_y = fs / FT(n_y)
-    fs_z = fs / FT(n_z)
+        SectionTimer.@section :cs_sweep_y begin
+            _sweep_cs_horizontal!(
+                panels_rm, panels_m, panels_bm, mesh, scheme, workspace, Val(2); flux_scale=fs_sub)
+            SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm, mesh; dir=2)
+            SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,  mesh; dir=2)
+        end
 
-    # ---- X sweep (subcycled) ----
-    SectionTimer.@section :cs_sweep_x for _ in 1:n_x
-        _sweep_cs_horizontal!(panels_rm, panels_m, panels_am, mesh,
-                              scheme, workspace, Val(1); flux_scale=fs_x)
-        SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm, mesh; dir=1)
-        SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,  mesh; dir=1)
-    end
-
-    # ---- Y sweep (subcycled) ----
-    SectionTimer.@section :cs_sweep_y for _ in 1:n_y
-        _sweep_cs_horizontal!(panels_rm, panels_m, panels_bm, mesh,
-                              scheme, workspace, Val(2); flux_scale=fs_y)
-        SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm, mesh; dir=2)
-        SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,  mesh; dir=2)
-    end
-
-    # ---- Z sweep × 2 (subcycled) ----
-    SectionTimer.@section :cs_sweep_z for _ in 1:n_z
-        _sweep_z_panels!(panels_rm, panels_m, panels_cm, mesh, scheme, workspace;
-                         flux_scale = fs_z)
+        SectionTimer.@section :cs_sweep_z _sweep_z_panels!(
+            panels_rm, panels_m, panels_cm, mesh, scheme, workspace; flux_scale = fs_sub)
     end
 
     midpoint! === nothing || midpoint!()
 
-    SectionTimer.@section :cs_sweep_z for _ in 1:n_z
-        _sweep_z_panels!(panels_rm, panels_m, panels_cm, mesh, scheme, workspace;
-                         flux_scale = fs_z)
-    end
+    # ---- Reverse half: (Z → Y → X)^n_pal ----
+    for _ in 1:n_pal
+        SectionTimer.@section :cs_sweep_z _sweep_z_panels!(
+            panels_rm, panels_m, panels_cm, mesh, scheme, workspace; flux_scale = fs_sub)
 
-    # ---- Reverse: Y sweep (subcycled) ----
-    SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm, mesh; dir=2)
-    SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,  mesh; dir=2)
-    SectionTimer.@section :cs_sweep_y for _ in 1:n_y
-        _sweep_cs_horizontal!(panels_rm, panels_m, panels_bm, mesh,
-                              scheme, workspace, Val(2); flux_scale=fs_y)
         SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm, mesh; dir=2)
         SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,  mesh; dir=2)
-    end
+        SectionTimer.@section :cs_sweep_y begin
+            _sweep_cs_horizontal!(
+                panels_rm, panels_m, panels_bm, mesh, scheme, workspace, Val(2); flux_scale=fs_sub)
+            SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm, mesh; dir=2)
+            SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,  mesh; dir=2)
+        end
 
-    # ---- Reverse: X sweep (subcycled) ----
-    SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm, mesh; dir=1)
-    SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,  mesh; dir=1)
-    SectionTimer.@section :cs_sweep_x for _ in 1:n_x
-        _sweep_cs_horizontal!(panels_rm, panels_m, panels_am, mesh,
-                              scheme, workspace, Val(1); flux_scale=fs_x)
         SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm, mesh; dir=1)
         SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,  mesh; dir=1)
+        SectionTimer.@section :cs_sweep_x begin
+            _sweep_cs_horizontal!(
+                panels_rm, panels_m, panels_am, mesh, scheme, workspace, Val(1); flux_scale=fs_sub)
+            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm, mesh; dir=1)
+            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,  mesh; dir=1)
+        end
     end
 
     return nothing
@@ -224,62 +232,61 @@ function _strang_split_cs_mt_copyback!(panels_rm_4d::NTuple{6},
     n_pal = _cs_palindrome_subcycles(workspace.binary_cfl_check, "strang_split_cs_mt!",
                                      subcycle_count, panels_am, panels_bm, panels_cm,
                                      panels_m, Nc, Hp, Nz, cfl_ft; flux_scale = fs)
-    n_x = n_pal
-    n_y = n_pal
-    n_z = n_pal
+    _record_cs_subcycle_growth!(workspace, n_pal, n_pal, n_pal)
+    fs_sub = fs / FT(n_pal)
 
-    _record_cs_subcycle_growth!(workspace, n_x, n_y, n_z)
+    # Forward half: (X → Y → Z)^n_pal.
+    for pass in 1:n_pal
+        if pass > 1     # the previous Z sweep changed the interiors the X halos mirror
+            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm_4d, mesh; dir = 1)
+            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,     mesh; dir = 1)
+        end
+        SectionTimer.@section :cs_sweep_x begin
+            _sweep_cs_horizontal!(
+                panels_rm_4d, panels_m, panels_am, mesh, scheme, workspace, Val(1); flux_scale=fs_sub)
+            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm_4d, mesh; dir = 1)
+            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,     mesh; dir = 1)
+        end
 
-    fs_x = fs / FT(n_x)
-    fs_y = fs / FT(n_y)
-    fs_z = fs / FT(n_z)
+        SectionTimer.@section :cs_sweep_y begin
+            _sweep_cs_horizontal!(
+                panels_rm_4d, panels_m, panels_bm, mesh, scheme, workspace, Val(2); flux_scale=fs_sub)
+            SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm_4d, mesh; dir = 2)
+            SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,     mesh; dir = 2)
+        end
 
-    SectionTimer.@section :cs_sweep_x for _ in 1:n_x
-        _sweep_cs_horizontal!(panels_rm_4d, panels_m, panels_am, mesh,
-                              scheme, workspace, Val(1); flux_scale=fs_x)
-        SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm_4d, mesh; dir = 1)
-        SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,     mesh; dir = 1)
-    end
-
-    SectionTimer.@section :cs_sweep_y for _ in 1:n_y
-        _sweep_cs_horizontal!(panels_rm_4d, panels_m, panels_bm, mesh,
-                              scheme, workspace, Val(2); flux_scale=fs_y)
-        SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm_4d, mesh; dir = 2)
-        SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,     mesh; dir = 2)
-    end
-
-    SectionTimer.@section :cs_sweep_z for _ in 1:n_z
-        for p in 1:6
+        SectionTimer.@section :cs_sweep_z for p in 1:6
             _sweep_z_panel_mt!(panels_rm_4d[p], panels_m[p], panels_cm[p],
-                               scheme, rm_4d_A, m_A, Nc, Hp, Nz, Nt; flux_scale = fs_z)
+                               scheme, rm_4d_A, m_A, Nc, Hp, Nz, Nt; flux_scale = fs_sub)
         end
     end
 
     midpoint! === nothing || midpoint!()
 
-    SectionTimer.@section :cs_sweep_z for _ in 1:n_z
-        for p in 1:6
+    # Reverse half: (Z → Y → X)^n_pal.
+    for _ in 1:n_pal
+        SectionTimer.@section :cs_sweep_z for p in 1:6
             _sweep_z_panel_mt!(panels_rm_4d[p], panels_m[p], panels_cm[p],
-                               scheme, rm_4d_A, m_A, Nc, Hp, Nz, Nt; flux_scale = fs_z)
+                               scheme, rm_4d_A, m_A, Nc, Hp, Nz, Nt; flux_scale = fs_sub)
         end
-    end
 
-    SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm_4d, mesh; dir = 2)
-    SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,     mesh; dir = 2)
-    SectionTimer.@section :cs_sweep_y for _ in 1:n_y
-        _sweep_cs_horizontal!(panels_rm_4d, panels_m, panels_bm, mesh,
-                              scheme, workspace, Val(2); flux_scale=fs_y)
         SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm_4d, mesh; dir = 2)
         SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,     mesh; dir = 2)
-    end
+        SectionTimer.@section :cs_sweep_y begin
+            _sweep_cs_horizontal!(
+                panels_rm_4d, panels_m, panels_bm, mesh, scheme, workspace, Val(2); flux_scale=fs_sub)
+            SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm_4d, mesh; dir = 2)
+            SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,     mesh; dir = 2)
+        end
 
-    SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm_4d, mesh; dir = 1)
-    SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,     mesh; dir = 1)
-    SectionTimer.@section :cs_sweep_x for _ in 1:n_x
-        _sweep_cs_horizontal!(panels_rm_4d, panels_m, panels_am, mesh,
-                              scheme, workspace, Val(1); flux_scale=fs_x)
         SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm_4d, mesh; dir = 1)
         SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,     mesh; dir = 1)
+        SectionTimer.@section :cs_sweep_x begin
+            _sweep_cs_horizontal!(
+                panels_rm_4d, panels_m, panels_am, mesh, scheme, workspace, Val(1); flux_scale=fs_sub)
+            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm_4d, mesh; dir = 1)
+            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,     mesh; dir = 1)
+        end
     end
 
     return nothing
@@ -339,45 +346,43 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
     n_pal = _cs_palindrome_subcycles(workspace.binary_cfl_check, "strang_split_cs_mt_pingpong!",
                                      subcycle_count, panels_am, panels_bm, panels_cm,
                                      panels_m, Nc, Hp, Nz, cfl_ft; flux_scale = fs)
-    n_x = n_pal
-    n_y = n_pal
-    n_z = n_pal
-
-    _record_cs_subcycle_growth!(workspace, n_x, n_y, n_z)
-
-    fs_x = fs / FT(n_x)
-    fs_y = fs / FT(n_y)
-    fs_z = fs / FT(n_z)
+    _record_cs_subcycle_growth!(workspace, n_pal, n_pal, n_pal)
+    fs_sub = fs / FT(n_pal)
 
     active_rm = panels_rm_4d
     active_m = panels_m
     spare_rm = panels_rm_4d_buf
     spare_m = panels_m_buf
 
-    SectionTimer.@section :cs_sweep_x for _ in 1:n_x
-        _sweep_x_panels_mt_pingpong!(spare_rm, spare_m, active_rm, active_m,
-                                     panels_am, mesh, scheme; flux_scale = fs_x,
-                                     seam_flux = workspace.seam_flux)
-        SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(spare_rm, mesh; dir = 1)
-        SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(spare_m,  mesh; dir = 1)
+    # Forward half: (X → Y → Z)^n_pal.
+    for pass in 1:n_pal
+        if pass > 1     # the previous Z sweep changed the interiors the X halos mirror
+            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(active_rm, mesh; dir = 1)
+            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(active_m,  mesh; dir = 1)
+        end
+        SectionTimer.@section :cs_sweep_x begin
+            _sweep_x_panels_mt_pingpong!(
+                spare_rm, spare_m, active_rm, active_m, panels_am, mesh, scheme;
+                flux_scale = fs_sub, seam_flux = workspace.seam_flux)
+            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(spare_rm, mesh; dir = 1)
+            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(spare_m,  mesh; dir = 1)
+        end
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
-    end
 
-    SectionTimer.@section :cs_sweep_y for _ in 1:n_y
-        _sweep_y_panels_mt_pingpong!(spare_rm, spare_m, active_rm, active_m,
-                                     panels_bm, mesh, scheme; flux_scale = fs_y,
-                                     seam_flux = workspace.seam_flux)
-        SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(spare_rm, mesh; dir = 2)
-        SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(spare_m,  mesh; dir = 2)
+        SectionTimer.@section :cs_sweep_y begin
+            _sweep_y_panels_mt_pingpong!(
+                spare_rm, spare_m, active_rm, active_m, panels_bm, mesh, scheme;
+                flux_scale = fs_sub, seam_flux = workspace.seam_flux)
+            SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(spare_rm, mesh; dir = 2)
+            SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(spare_m,  mesh; dir = 2)
+        end
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
-    end
 
-    SectionTimer.@section :cs_sweep_z for _ in 1:n_z
-        _sweep_z_panels_mt_pingpong!(spare_rm, spare_m, active_rm, active_m,
-                                     panels_cm, mesh, scheme, workspace;
-                                     flux_scale = fs_z)
+        SectionTimer.@section :cs_sweep_z _sweep_z_panels_mt_pingpong!(
+            spare_rm, spare_m, active_rm, active_m, panels_cm, mesh, scheme, workspace;
+            flux_scale = fs_sub)
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
     end
@@ -394,34 +399,35 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
         midpoint!(active_rm, active_m)
     end
 
-    SectionTimer.@section :cs_sweep_z for _ in 1:n_z
-        _sweep_z_panels_mt_pingpong!(spare_rm, spare_m, active_rm, active_m,
-                                     panels_cm, mesh, scheme, workspace;
-                                     flux_scale = fs_z)
+    # Reverse half: (Z → Y → X)^n_pal.
+    for _ in 1:n_pal
+        SectionTimer.@section :cs_sweep_z _sweep_z_panels_mt_pingpong!(
+            spare_rm, spare_m, active_rm, active_m, panels_cm, mesh, scheme, workspace;
+            flux_scale = fs_sub)
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
-    end
 
-    SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(active_rm, mesh; dir = 2)
-    SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(active_m,  mesh; dir = 2)
-    SectionTimer.@section :cs_sweep_y for _ in 1:n_y
-        _sweep_y_panels_mt_pingpong!(spare_rm, spare_m, active_rm, active_m,
-                                     panels_bm, mesh, scheme; flux_scale = fs_y,
-                                     seam_flux = workspace.seam_flux)
-        SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(spare_rm, mesh; dir = 2)
-        SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(spare_m,  mesh; dir = 2)
+        SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(active_rm, mesh; dir = 2)
+        SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(active_m,  mesh; dir = 2)
+        SectionTimer.@section :cs_sweep_y begin
+            _sweep_y_panels_mt_pingpong!(
+                spare_rm, spare_m, active_rm, active_m, panels_bm, mesh, scheme;
+                flux_scale = fs_sub, seam_flux = workspace.seam_flux)
+            SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(spare_rm, mesh; dir = 2)
+            SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(spare_m,  mesh; dir = 2)
+        end
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
-    end
 
-    SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(active_rm, mesh; dir = 1)
-    SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(active_m,  mesh; dir = 1)
-    SectionTimer.@section :cs_sweep_x for _ in 1:n_x
-        _sweep_x_panels_mt_pingpong!(spare_rm, spare_m, active_rm, active_m,
-                                     panels_am, mesh, scheme; flux_scale = fs_x,
-                                     seam_flux = workspace.seam_flux)
-        SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(spare_rm, mesh; dir = 1)
-        SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(spare_m,  mesh; dir = 1)
+        SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(active_rm, mesh; dir = 1)
+        SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(active_m,  mesh; dir = 1)
+        SectionTimer.@section :cs_sweep_x begin
+            _sweep_x_panels_mt_pingpong!(
+                spare_rm, spare_m, active_rm, active_m, panels_am, mesh, scheme;
+                flux_scale = fs_sub, seam_flux = workspace.seam_flux)
+            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(spare_rm, mesh; dir = 1)
+            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(spare_m,  mesh; dir = 1)
+        end
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
     end
