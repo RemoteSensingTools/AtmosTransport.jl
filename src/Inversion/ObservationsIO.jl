@@ -179,14 +179,14 @@ struct CSObservationRecord
             "carry one"))
         # The column adds the retrieval prior (mol/mol) to the model's dry mole
         # fractions, so the record value is a dry mole fraction in mol/mol too.
-        # An averaging-kernel column is an absolute column average, so its
-        # errors are smaller than the value itself (a sigma meant in ppm but
-        # read as mol/mol would drop the record out of the cost).
-        retrieval === nothing || 0 < value <= 1 && value_sigma <= value && model_sigma <= value ||
+        # The errors are not bounded by the value: a low-signal retrieval
+        # (10 ± 20 ppb) is legitimate. Unit slips are caught by the units that
+        # files with retrieval blocks must declare (`read_observations`).
+        retrieval === nothing || 0 < value <= 1 && value_sigma <= 1 && model_sigma <= 1 ||
             throw(ArgumentError(
             "$(label) has a retrieval block, whose prior is a dry mole fraction in mol/mol, but value = " *
             "$(value), value_sigma = $(value_sigma), model_sigma = $(model_sigma): an averaging-kernel column " *
-            "is an absolute dry mole fraction in (0, 1] mol/mol and its errors do not exceed it; give the " *
+            "is an absolute dry mole fraction in (0, 1] mol/mol with errors of at most 1 mol/mol; give the " *
             "column average, its errors and the tracer in mol/mol (values in ppm or ppb must be converted)"))
         return new(id, date_components, lat, lon, kind, elevation_m, intake_height_m, altitude_m,
                    pressure_pa, time_window_s, flag, value, value_sigma, model_sigma,

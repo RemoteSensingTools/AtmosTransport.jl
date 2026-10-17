@@ -515,8 +515,9 @@
   and validated (strictly decreasing pressures, weights ≥ 0 summing to 1,
   finite values, a prior within [0, 1] mol/mol, the surface pressure equal to
   the first interface; only column records, which are then absolute column
-  averages: value in (0, 1] mol/mol, value_sigma and model_sigma not above
-  it). `value`, `value_sigma` and `model_sigma` may state a `units`
+  averages: value in (0, 1] mol/mol, value_sigma and model_sigma at most
+  1 mol/mol; errors larger than the value, as for a low-signal retrieval, are
+  accepted). `value`, `value_sigma` and `model_sigma` may state a `units`
   attribute: a dry mole-fraction unit (`"mol mol-1"`, `"ppm"`, `"ppb"`, …)
   is converted to mol/mol and must be stated on all three; files with
   retrieval blocks must state one (the writer states `"mol mol-1"`); files

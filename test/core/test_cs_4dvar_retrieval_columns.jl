@@ -333,8 +333,11 @@ end
         @test_throws ArgumentError _record(9; kind = "point", intake_height_m = 10.0, retrieval = _retrieval(9e4))
         err = try _record(9; value = 401.0, retrieval = _retrieval(9e4)) catch e e end
         @test err isa ArgumentError && occursin("mol/mol", err.msg)
-        @test_throws ArgumentError _record(9; value_sigma = 1e-3, retrieval = _retrieval(9e4))
-        @test_throws ArgumentError _record(9; model_sigma = 0.5, retrieval = _retrieval(9e4))
+        # Errors may exceed the value (a low-signal retrieval), but not 1 mol/mol.
+        @test _record(9; value_sigma = 1e-3, retrieval = _retrieval(9e4)).value_sigma == 1e-3
+        @test _record(9; model_sigma = 0.5, retrieval = _retrieval(9e4)).model_sigma == 0.5
+        @test_throws ArgumentError _record(9; value_sigma = 1.5, retrieval = _retrieval(9e4))
+        @test_throws ArgumentError _record(9; model_sigma = 2.0, retrieval = _retrieval(9e4))
         # A file with blocks states mol/mol on the record values.
         NCDataset(path) do ds
             @test all(v -> ds[v].attrib["units"] == "mol mol-1", ("value", "value_sigma", "model_sigma"))
@@ -445,13 +448,22 @@ end
         @test failure("valueother.nc", "must state a dry mole-fraction unit";
                       value_units = Dict{String, Any}("value" => "kg m-2", "value_sigma" => "kg m-2",
                                                       "model_sigma" => "kg m-2"))
-        # A sigma meant in ppm but stated in mol/mol exceeds the value: rejected.
-        path = _write_block_file(file("sigmappm.nc"), [_record(1; model_sigma = 0.5e-6)]; b...)
+        # A low-signal retrieval, errors larger than the value (10 ± 20 ppb), is
+        # legitimate and read as given.
+        path = _write_block_file(file("lowsignal.nc"), [_record(1; model_sigma = 0.5e-6)]; b...)
         NCDataset(path, "a") do ds
-            ds["model_sigma"][:] = [0.5]                                  # meant as ppm
+            ds["value"][:] = [1e-8]
+            ds["value_sigma"][:] = [2e-8]
+            ds["model_sigma"][:] = [3e-8]
+        end
+        got = only(AT.read_observations(path).records)
+        @test got.value == 1e-8 && got.value_sigma == 2e-8 && got.model_sigma == 3e-8
+        # An error beyond 1 mol/mol cannot be a dry mole fraction: rejected.
+        NCDataset(path, "a") do ds
+            ds["value_sigma"][:] = [2.0]
         end
         err = try AT.read_observations(path) catch e e end
-        @test err isa ArgumentError && occursin("do not exceed it", sprint(showerror, err))
+        @test err isa ArgumentError && occursin("at most 1 mol/mol", sprint(showerror, err))
         # A point record must not carry a block.
         path = _write_block_file(file("point.nc"), [_record(1; kind = "point", intake_height_m = 10.0)]; b...)
         @test_throws ArgumentError AT.read_observations(path)
