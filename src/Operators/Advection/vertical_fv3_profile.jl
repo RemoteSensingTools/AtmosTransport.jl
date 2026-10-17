@@ -254,14 +254,16 @@ flux is capped at the donor's whole tracer content, as in `_slopes_face_flux`.
 end
 
 """
-Vertical sweep of one cubed-sphere panel with the FV3 profile; one work item
-per column and tracer. The `t = 1` items also update the air mass, exactly as
-every other sweep does. The surface and model-top interfaces carry no tracer
-flux.
+    _fv3_column_sweep!(rm_out, rm, m_out, m, cm, scratch, profile, ii, jj, t, slot,
+                       Nz, Hp, flux_scale)
+
+Vertical sweep with the FV3 profile of tracer `t` in interior column
+`(ii, jj)` of one panel, using scratch slot `slot` (`FV3Column`) as working
+storage. The `t = 1` call also updates the column's air mass, exactly as every
+other sweep does. The surface and model-top interfaces carry no tracer flux.
 """
-@kernel function _cs_zsweep_fv3_kernel!(rm_out, @Const(rm), m_out, @Const(m), @Const(cm),
-                                        scratch, profile, Nz, Hp, flux_scale)
-    ii, jj, t = @index(Global, NTuple)
+@inline function _fv3_column_sweep!(rm_out, rm, m_out, m, cm, scratch, profile,
+                                    ii, jj, t, slot, Nz, Hp, flux_scale)
     @inbounds begin
         i = ii + Hp
         j = jj + Hp
@@ -272,7 +274,7 @@ flux.
                 m_out[i, j, k] = m[i, j, k] + cm_t - cm_b
             end
         end
-        col  = FV3Column(scratch, ii, jj, t)
+        col  = FV3Column(scratch, ii, jj, slot)
         rm_t = TracerView(rm, Int32(t))
         _fv3_unlimited_edges!(col, rm_t, m, i, j, Nz)
         above = _fv3_layer_profile(col, Int32(1), Nz, profile)
@@ -287,7 +289,58 @@ flux.
         end
         rm_out[i, j, Nz, t] = rm_t[i, j, Nz] + f_top
     end
+    return nothing
 end
+
+"""
+Vertical sweep of one cubed-sphere panel with the FV3 profile; one work item
+per column and tracer, tracer `t` in scratch slot `t`.
+"""
+@kernel function _cs_zsweep_fv3_kernel!(rm_out, @Const(rm), m_out, @Const(m), @Const(cm),
+                                        scratch, profile, Nz, Hp, flux_scale)
+    ii, jj, t = @index(Global, NTuple)
+    _fv3_column_sweep!(rm_out, rm, m_out, m, cm, scratch, profile, ii, jj, t, t,
+                       Nz, Hp, flux_scale)
+end
+
+"""
+Vertical sweep of the consecutive panels `first_panel, first_panel + 1, …`
+with the FV3 profile, one work item per column, tracer and panel. The arrays
+are six-panel tuples; work item `slot` handles tracer
+`t = (slot - 1) % Nt + 1` of panel `first_panel + (slot - 1) ÷ Nt` in scratch
+slot `slot`, so every column computes exactly what the per-panel kernel does.
+"""
+@kernel function _cs_zsweep_fv3_panels_kernel!(rm_out, @Const(rm), m_out, @Const(m), @Const(cm),
+                                               scratch, profile, first_panel, Nt, Nz, Hp,
+                                               flux_scale)
+    ii, jj, slot = @index(Global, NTuple)
+    offset = (slot - 1) ÷ Nt
+    p = first_panel + offset
+    t = slot - offset * Nt
+    _fv3_column_sweep!(select_panel(rm_out, p), select_panel(rm, p), select_panel(m_out, p),
+                       select_panel(m, p), select_panel(cm, p), scratch, profile,
+                       ii, jj, t, slot, Nz, Hp, flux_scale)
+end
+
+# Each work item of the FV3 sweep walks its whole column serially, so a launch
+# needs many columns to occupy a GPU: a C90 panel with one tracer has 8100, a
+# small fraction of what an L40S runs at once. The packed sweep therefore
+# launches several panels together until a launch has about this many columns.
+const _FV3_SWEEP_TARGET_COLUMNS = 1 << 16
+
+"""
+    _fv3_sweep_panel_group(Nc, Nt) -> Int
+
+Panels per launch of the packed FV3 vertical sweep (1 to 6) for panels of
+`Nc × Nc` columns and `Nt` tracers: enough panels for about
+`_FV3_SWEEP_TARGET_COLUMNS` work items. The column scratch holds one slot per
+tracer and panel of a launch (`CSAdvectionWorkspace`).
+"""
+_fv3_sweep_panel_group(Nc::Integer, Nt::Integer) =
+    clamp(cld(_FV3_SWEEP_TARGET_COLUMNS, Nc^2 * max(Nt, 1)), 1, 6)
+
+# Panels one launch can sweep with the scratch slots available.
+_fv3_scratch_panel_group(scratch, Nt) = min(6, size(scratch, 4) ÷ (3 * Nt))
 
 const _FV3VerticalPPM = PPMScheme{<:AbstractLimiter, <:FV3ScalarProfile}
 
@@ -324,7 +377,9 @@ function _sweep_z_panel_fv3!(rm_4d_out, m_out, rm_4d, m, cm, scratch,
     return nothing
 end
 
-# Packed-tracer ping-pong path (production).
+# Packed-tracer ping-pong path (production): the panels are swept in groups of
+# `_fv3_scratch_panel_group` panels per launch (all six when the workspace was
+# built with `_fv3_sweep_panel_group` slots).
 function _sweep_z_panels_mt_pingpong!(panels_rm_4d_out::NTuple{6},
                                       panels_m_out::NTuple{6},
                                       panels_rm_4d::NTuple{6},
@@ -337,12 +392,19 @@ function _sweep_z_panels_mt_pingpong!(panels_rm_4d_out::NTuple{6},
     Nc, Hp = mesh.Nc, mesh.Hp
     Nz = size(panels_m[1], 3)
     Nt = size(panels_rm_4d[1], 4)
-    _check_column_scratch(workspace.column_scratch, Nc, Nz, Nt)
-    for p in 1:6
-        _sweep_z_panel_fv3!(panels_rm_4d_out[p], panels_m_out[p],
-                            panels_rm_4d[p], panels_m[p], panels_cm[p],
-                            workspace.column_scratch, scheme.vertical, Nc, Hp, Nz, Nt;
-                            flux_scale)
+    scratch = workspace.column_scratch
+    _check_column_scratch(scratch, Nc, Nz, Nt)
+    FT = eltype(panels_m[1])
+    backend = get_backend(panels_rm_4d[1])
+    group = _fv3_scratch_panel_group(scratch, Nt)
+    kernel! = _cs_zsweep_fv3_panels_kernel!(backend, (32, 4, 1))
+    for first_panel in 1:group:6
+        npanels = min(group, 7 - first_panel)
+        _profiled_launch_and_sync!(backend, :cs_kernel_launch_z_mt, :cs_kernel_sync_z_mt) do
+            kernel!(panels_rm_4d_out, panels_rm_4d, panels_m_out, panels_m, panels_cm,
+                    scratch, scheme.vertical, first_panel, Nt, Int32(Nz), Int32(Hp),
+                    FT(flux_scale); ndrange = (Nc, Nc, Nt * npanels))
+        end
     end
     return panels_rm_4d_out, panels_m_out
 end

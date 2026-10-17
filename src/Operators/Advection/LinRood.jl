@@ -179,7 +179,9 @@ function CSLinRoodAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
                                      n_tracers::Integer = 0,
                                      column_scratch::Bool = false)
     cs = CSAdvectionWorkspace(mesh, Nz; FT, array_type, n_tracers, seam_transport=false,
-                              column_scratch, column_scratch_tracers = 1)   # tracers run one by one
+                              column_scratch,
+                              column_scratch_tracers = 1,                # tracers run one by one,
+                              column_scratch_panels = 1)                 # one panel at a time
     lr = LinRoodWorkspace(mesh; FT = FT, Nz = Nz, array_type = array_type)
     return CSLinRoodAdvectionWorkspace{typeof(cs), typeof(lr)}(cs, lr)
 end
@@ -189,7 +191,8 @@ function CSLinRoodAdvectionWorkspace(mesh::CubedSphereMesh,
                                      n_tracers::Integer = 0,
                                      column_scratch::Bool = false) where {FT <: AbstractFloat}
     cs = CSAdvectionWorkspace(mesh, prototype; n_tracers, seam_transport=false, column_scratch,
-                              column_scratch_tracers = 1)                    # tracers run one by one
+                              column_scratch_tracers = 1,                    # tracers run one by one,
+                              column_scratch_panels = 1)                     # one panel at a time
     lr = LinRoodWorkspace(mesh, prototype)
     return CSLinRoodAdvectionWorkspace{typeof(cs), typeof(lr)}(cs, lr)
 end

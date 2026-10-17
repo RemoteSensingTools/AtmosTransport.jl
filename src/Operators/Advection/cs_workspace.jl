@@ -53,9 +53,11 @@ Pre-allocated cubed-sphere transport workspace.
   its storage scales with edge length, not panel area. Lin–Rood workspaces
   disable this split-sweep cache (`seam_transport=false`).
 - `column_scratch` is the per-column, per-tracer working storage of the FV3
-  vertical profile (`Nc × Nc × (Nz+1) × 3 max(Nt_s, 1)`, `Nt_s =
-  column_scratch_tracers`, the packed tracer count by default); it is empty
-  unless the workspace is built with `column_scratch=true`.
+  vertical profile (`Nc × Nc × (Nz+1) × 3 max(Nt_s, 1) G`, `Nt_s =
+  column_scratch_tracers`, the packed tracer count by default, and `G =
+  column_scratch_panels` the panels one packed sweep launch covers, by default
+  `_fv3_sweep_panel_group(Nc, Nt_s)`); it is empty unless the workspace is
+  built with `column_scratch=true`.
 - `max_subcycles` tracks this workspace's high-water mark for CFL diagnostics;
   keeping it with the workspace prevents unrelated simulations sharing state.
 - `binary_cfl_check` (`NoBinaryCFLCheck()` by default, or `BinaryCFLCheck()`)
@@ -85,6 +87,8 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
                               seam_transport::Bool = true,
                               column_scratch::Bool = false,
                               column_scratch_tracers::Integer = n_tracers,
+                              column_scratch_panels::Integer =
+                                  _fv3_sweep_panel_group(mesh.Nc, column_scratch_tracers),
                               binary_cfl_check::AbstractBinaryCFLCheck = NoBinaryCFLCheck())
     N = mesh.Nc + 2 * mesh.Hp
     Nt = Int(n_tracers)
@@ -97,7 +101,8 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
     rm_4d_pp_buf = Nt > 0 ? ntuple(_ -> array_type(zeros(FT, N, N, Nz, Nt)), 6) :
                             ntuple(_ -> rm_4d_A, 6)
     seam_flux = similar(rm_4d_A, FT, mesh.Nc, Nz, max(Nt, 1) + 1, seam_transport ? 12 : 0)
-    scratch = _column_scratch(rm_4d_A, mesh.Nc, Nz, Int(column_scratch_tracers), column_scratch)
+    scratch = _column_scratch(rm_4d_A, mesh.Nc, Nz, Int(column_scratch_tracers),
+                              Int(column_scratch_panels), column_scratch)
     return CSAdvectionWorkspace{FT, typeof(rm_A),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
                                 typeof(rm_4d_pp_buf), typeof(binary_cfl_check)}(
@@ -111,6 +116,8 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh,
                               seam_transport::Bool = true,
                               column_scratch::Bool = false,
                               column_scratch_tracers::Integer = n_tracers,
+                              column_scratch_panels::Integer =
+                                  _fv3_sweep_panel_group(mesh.Nc, column_scratch_tracers),
                               binary_cfl_check::AbstractBinaryCFLCheck = NoBinaryCFLCheck()) where {FT <: AbstractFloat}
     N = mesh.Nc + 2 * mesh.Hp
     Nz = size(prototype, 3)
@@ -124,7 +131,8 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh,
     rm_4d_pp_buf = Nt > 0 ? ntuple(_ -> similar(prototype, FT, N, N, Nz, Nt), 6) :
                             ntuple(_ -> rm_4d_A, 6)
     seam_flux = similar(rm_4d_A, FT, mesh.Nc, Nz, max(Nt, 1) + 1, seam_transport ? 12 : 0)
-    scratch = _column_scratch(rm_4d_A, mesh.Nc, Nz, Int(column_scratch_tracers), column_scratch)
+    scratch = _column_scratch(rm_4d_A, mesh.Nc, Nz, Int(column_scratch_tracers),
+                              Int(column_scratch_panels), column_scratch)
     return CSAdvectionWorkspace{FT, typeof(rm_A),
                                 typeof(m_pp_buf), typeof(rm_4d_A),
                                 typeof(rm_4d_pp_buf), typeof(binary_cfl_check)}(
@@ -133,9 +141,14 @@ function CSAdvectionWorkspace(mesh::CubedSphereMesh,
 end
 
 # Per-column, per-tracer working storage of the FV3 vertical profile
-# (`FV3Column` in `vertical_fv3_profile.jl`); empty unless a scheme needs it.
-_column_scratch(prototype, Nc, Nz, Nt, needed::Bool) =
-    needed ? similar(prototype, Nc, Nc, Nz + 1, 3 * max(Nt, 1)) : similar(prototype, 0, 0, 0, 0)
+# (`FV3Column` in `vertical_fv3_profile.jl`) for `panels` panels per launch;
+# empty unless a scheme needs it.
+function _column_scratch(prototype, Nc, Nz, Nt, panels, needed::Bool)
+    needed || return similar(prototype, 0, 0, 0, 0)
+    1 <= panels <= 6 || throw(ArgumentError(
+        "CSAdvectionWorkspace: column_scratch_panels must be in 1:6, got $panels"))
+    return similar(prototype, Nc, Nc, Nz + 1, 3 * max(Nt, 1) * panels)
+end
 
 function Adapt.adapt_structure(to, ws::CSAdvectionWorkspace{FT}) where FT
     rm_A = Adapt.adapt(to, ws.rm_A)

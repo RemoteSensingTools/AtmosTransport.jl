@@ -659,6 +659,17 @@
   `resolve_placement(option, missing_height_rule(source), request, cell, terrain)`
   places one request.
 
+### Performance
+
+- Cubed-sphere FV3 vertical sweep (`vertical = "fv3_kord8"`): the packed sweep
+  launches several panels at once, up to all six, until a launch has about
+  65 536 columns (`_fv3_sweep_panel_group`); it used to launch each panel
+  separately, a C90 one-tracer launch running 8100 columns. Each column computes
+  exactly what it did before, so results are bit-identical.
+  `CSAdvectionWorkspace` takes `column_scratch_panels` (default from that rule;
+  Lin-Rood workspaces use 1) and its column scratch holds one slot per tracer
+  and panel of a launch.
+
 ### Other changes
 
 - `merge_thin_levels` (`[vertical] transform = "merge_layers_thinner_than"`,
