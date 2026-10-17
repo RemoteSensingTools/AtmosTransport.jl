@@ -397,6 +397,90 @@ end
     @test decode_bounds(time_file(dir, [0.0]; units = "days since 2000-01-01")) === nothing
 end
 
+@testset "decode_slice_intervals: the interval each slice stands for" begin
+    dir = mktempdir()
+    intervals(path) = NCDataset(ds -> GIO.decode_slice_intervals(ds, "time"), path)
+    ivs(pairs...) = [TimeInterval(a, b) for (a, b) in pairs]
+    d(args...) = DateTime(args...)
+    # CF bounds win over the stamps (here mid-interval stamps).
+    bounded = time_file(dir, [12.0, 36.0]; units = "hours since 2022-01-01", extra = ds -> begin
+        NCDatasets.variable(ds, "time").attrib["bounds"] = "time_bnds"
+        defDim(ds, "nv", 2)
+        defVar(ds, "time_bnds", Float64, ("nv", "time"))[:, :] = [0.0 24.0; 24.0 72.0]
+    end)
+    @test intervals(bounded) == ivs(d(2022, 1, 1) => d(2022, 1, 2), d(2022, 1, 2) => d(2022, 1, 4))
+    # Without bounds, slice k holds until the next stamp, the last slice for the
+    # step of the series (3-hourly CAMS-like stamps)…
+    @test intervals(time_file(dir, [0.0, 3.0, 6.0]; units = "hours since 2021-12-31 18:00")) ==
+          ivs(d(2021, 12, 31, 18) => d(2021, 12, 31, 21), d(2021, 12, 31, 21) => d(2022, 1, 1),
+              d(2022, 1, 1) => d(2022, 1, 1, 3))
+    # … or for one calendar month when the stamps are consecutive month starts
+    # (December has 31 days, not the 30 of the last spacing).
+    @test intervals(time_file(dir, [0.0, 30.0]; units = "days since 2022-11-01")) ==
+          ivs(d(2022, 11, 1) => d(2022, 12, 1), d(2022, 12, 1) => d(2023, 1, 1))
+    # Stamps a month apart that are not month starts are ambiguous (review A4).
+    @test occursin("not all month starts",
+                   error_text(() -> intervals(time_file(dir, [0.0, 30.0]; units = "days since 2022-11-02"))))
+    # `months since` stamps are months, also a single one.
+    @test intervals(time_file(dir, [0.0]; units = "months since 2022-02-01")) ==
+          ivs(d(2022, 2, 1) => d(2022, 3, 1))
+    # A single CF stamp without bounds has no interval, also a month start: a
+    # 1 January 00Z stamp may be a day, a month or a year (review A1, A9, A12);
+    # stamps must increase.
+    for (v, units) in ((3.0, "hours since 2022-01-01"), (0.0, "hours since 2022-02-01"),
+                       (0.0, "days since 2022-01-01"))
+        msg = error_text(() -> intervals(time_file(dir, [v]; units)))
+        @test occursin("single time stamp", msg) && occursin("bounds", msg)
+    end
+    @test occursin("increase", error_text(() -> intervals(time_file(dir, [3.0, 0.0]; units = "hours since 2022-01-01"))))
+end
+
+@testset "stamp_intervals: the regular step of a series, gaps, ambiguous stamps" begin
+    d(args...) = DateTime(args...)
+    ivs(pairs...) = [TimeInterval(a, b) for (a, b) in pairs]
+    si(stamps) = GIO.stamp_intervals(stamps; source = "test stamps")
+    # Daily files with one 00Z stamp each, merged: a daily series (review A1/A2).
+    @test si([d(2022, 1, 1), d(2022, 1, 2), d(2022, 1, 3)]) ==
+          ivs(d(2022, 1, 1) => d(2022, 1, 2), d(2022, 1, 2) => d(2022, 1, 3),
+              d(2022, 1, 3) => d(2022, 1, 4))
+    # A gap inside a monthly series (Jan 1, Mar 1; review A3): January holds
+    # its month only, February has no slice.
+    @test si([d(2022, 1, 1), d(2022, 3, 1)]) ==
+          ivs(d(2022, 1, 1) => d(2022, 2, 1), d(2022, 3, 1) => d(2022, 4, 1))
+    # The same per file.
+    dir = mktempdir()
+    @test NCDataset(ds -> GIO.decode_slice_intervals(ds, "time"),
+                    time_file(dir, [0.0, 59.0]; units = "days since 2022-01-01")) ==
+          ivs(d(2022, 1, 1) => d(2022, 2, 1), d(2022, 3, 1) => d(2022, 4, 1))
+    # A gap in a fixed-step series: the step is the smallest spacing.
+    @test si([d(2022, 1, 1), d(2022, 1, 2), d(2022, 1, 4), d(2022, 1, 5)]) ==
+          ivs(d(2022, 1, 1) => d(2022, 1, 2), d(2022, 1, 2) => d(2022, 1, 3),
+              d(2022, 1, 4) => d(2022, 1, 5), d(2022, 1, 5) => d(2022, 1, 6))
+    # Spacings within STAMP_SPACING_TOLERANCE are one step.
+    @test last(si([d(2022, 1, 1), d(2022, 1, 1, 3), d(2022, 1, 1, 6, 0, 0, 400)])) ==
+          TimeInterval(d(2022, 1, 1, 6, 0, 0, 400), d(2022, 1, 1, 9, 0, 0, 400))
+    # Annual series from 1 January, also after a monthly part (the CATRINE SF6
+    # c90 file: 2021-12, 2022, 2023).
+    @test si([d(2021, 1, 1), d(2022, 1, 1)]) ==
+          ivs(d(2021, 1, 1) => d(2022, 1, 1), d(2022, 1, 1) => d(2023, 1, 1))
+    @test si([d(2021, 12, 1), d(2022, 1, 1), d(2023, 1, 1)]) ==
+          ivs(d(2021, 12, 1) => d(2022, 1, 1), d(2022, 1, 1) => d(2023, 1, 1),
+              d(2023, 1, 1) => d(2024, 1, 1))
+    # Twelve months from July is not an annual step: July holds its month.
+    @test first(si([d(2021, 7, 1), d(2022, 7, 1)])) == TimeInterval(d(2021, 7, 1), d(2021, 8, 1))
+    # Mid-month stamps without bounds (review A4): an error that says so.
+    mid = [d(2022, m, 15) for m in 1:12]
+    for stamps in (mid, mid[1:2], [d(2021, 7, 1, 12), d(2022, 7, 1, 12)])
+        msg = error_text(() -> si(stamps))
+        @test occursin("test stamps", msg) && occursin("not all month starts", msg) &&
+              occursin("mid-", msg) && occursin("bounds", msg)
+    end
+    # One stamp, or none, has no period; a stamp in two files is an error.
+    @test occursin("single time stamp", error_text(() -> si([d(2022, 1, 1)])))
+    @test occursin("no time stamps", error_text(() -> si(DateTime[])))
+    @test occursin("in two files", error_text(() -> si([d(2022, 1, 1), d(2022, 1, 1)])))
+end
+
 @testset "fill values and malformed axes" begin
     dir = mktempdir()
     path = time_file(dir, [0.0, -1.0]; units = "hours since 2021-12-01", fill = -1.0)

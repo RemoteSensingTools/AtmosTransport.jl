@@ -234,13 +234,3 @@ end
     end
     return (ent_negative, det_negative)
 end
-
-# Record the air-mass basis of the TM5 convection sections in a binary
-# header (`TM5_CONVECTION_MASS_BASIS_KEY`); `nothing` when the binary carries
-# no TM5 sections, or copies sections whose basis is not recorded.
-_with_tm5_convection_basis(header::AbstractDict, ::Nothing) = header
-
-function _with_tm5_convection_basis(header::AbstractDict, basis::AbstractMassBasis)
-    header[TM5_CONVECTION_MASS_BASIS_KEY] = String(mass_basis_symbol(basis))
-    return header
-end

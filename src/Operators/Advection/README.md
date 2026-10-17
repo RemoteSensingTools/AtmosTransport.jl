@@ -37,7 +37,9 @@ the model-facing `apply!` entrypoints that the transport block calls.
 `limiter="cw84"` selects the complete Colella–Woodward PPM (`CW84Limiter`).
 `scheme="linrood"` selects the CS cross-term path; `ppm_order=5` (default) or
 `7` chooses its edge-value family. ORD=7 retains the order-5 interior and adds
-special panel-edge treatment. It does not select a seventh-order transport
+special panel-edge treatment: one edge value per face, the Putman–Lin seam
+average at the panel edge and FV3's one-sided values on the faces beside it
+(`_ppm_edge_values_ord7`), in the forward and adjoint kernels alike. It does not select a seventh-order transport
 method. Its configured vertical default is `fv3_kord8`; `vertical="upwind"`
 selects first-order vertical transport. Both have an adjoint.
 Configuration parsing lives in
@@ -51,6 +53,11 @@ Configuration parsing lives in
 - Diffusion and surface flux are not separate outer blocks here; they are
   threaded into the palindrome midpoint through imports from
   `../Diffusion` and `../SurfaceFlux`
+- CFL subcycling (every topology): one count `n` from the palindrome
+  outflow budget against `min(m_start, m_end)` (no pass removes more than
+  `cfl_limit / 2` of a cell's current mass; an invalid flux set throws), then `(X Y Z)^n → midpoint → (Z Y X)^n` with every flux
+  divided by `n` (`H V` / `V H` on reduced Gaussian); `n = 1` is the plain
+  palindrome
 - This folder is the main place where topology-specific transport
   execution diverges while the public operator API stays uniform
 
@@ -77,8 +84,8 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
   buffers of the structured and face-indexed sweeps
 - [`sweeps.jl`](sweeps.jl) — directional sweeps: structured x/y/z
   (generated with `@eval`) and face-indexed horizontal/vertical
-- [`subcycling.jl`](subcycling.jl) — CFL subcycling pass counts and
-  subcycled sweeps
+- [`subcycling.jl`](subcycling.jl) — palindrome CFL subcycle counts of the
+  structured and face-indexed paths
 - [`StrangSplitting.jl`](StrangSplitting.jl) — structured transport
   palindrome `strang_split!` with the diffusion/surface-flux midpoint
 - [`strang_apply.jl`](strang_apply.jl) — model-facing `apply!` for
@@ -98,7 +105,8 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
   cubed-sphere panel sweeps (shared kernels and gamma-clamped upwind, then
   per direction, with paired seam transfers for X and Y)
 - [`cs_workspace.jl`](cs_workspace.jl) — `CSAdvectionWorkspace`
-- [`cs_subcycling.jl`](cs_subcycling.jl) — static palindrome CFL subcycle count
+- [`cs_subcycling.jl`](cs_subcycling.jl) — the palindrome outflow budget
+  shared by all split-sweep topologies and the cubed-sphere subcycle count
 - [`CubedSphereStrang.jl`](CubedSphereStrang.jl) — panel-native
   cubed-sphere palindrome (`strang_split_cs!`, `strang_split_cs_mt!`)
 - [`vertical_fv3_profile.jl`](vertical_fv3_profile.jl) — vertical sweep with

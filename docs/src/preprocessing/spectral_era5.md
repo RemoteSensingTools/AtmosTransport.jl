@@ -25,6 +25,13 @@ be applied. ECMWF distributes spectral data via CDS / MARS; the unified
 downloader is `scripts/downloads/download_data.jl`, with ERA5 recipes under
 `config/downloads/`.
 
+The spectral path writes no convection sections. Its former
+`[tm5_convection]` table (ERA5 convection NetCDF to TM5 fields on the
+lat-lon grid) placed the fields 180° off in longitude and one hour early and
+was removed; a config that still has the table is rejected. TM5 convection
+comes from the ERA5 N320 → cubed-sphere path (`include_convection = true`)
+or from the attached TM5-converted CATRINE archive.
+
 The preprocessor **prefers** one extra day past the requested range
 so the last window of each day can read its forward-flux endpoints
 from the next day's hour-0 instantaneous fields. **All three target

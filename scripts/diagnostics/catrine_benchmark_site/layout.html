@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="build" content="{{VERSION}}">
+<title>{{TITLE}} · AtmosTransport v0.5 CATRINE benchmark</title>
+<link rel="stylesheet" href="assets/site.css?v={{VERSION}}">
+<script src="assets/site.js?v={{VERSION}}"></script>
+<script src="data/meta.js?v={{VERSION}}"></script>
+<script defer src="assets/d3.min.js"></script>
+</head>
+<body data-page="{{PAGE}}">
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="brand-main">AtmosTransport v0.5</span><span class="brand-sub">CATRINE C90 benchmark against GCHP</span></a>
+    <nav class="tabs" aria-label="sections">{{NAV}}</nav>
+  </div>
+</header>
+<div class="status-strip"><div class="wrap" id="status-strip"></div></div>
+<main class="wrap">
+{{BODY}}
+</main>
+<footer class="wrap site-footer">
+  Built {{GENERATED}} by <code>scripts/diagnostics/catrine_benchmark_v05_site.py</code> (AtmosTransport.jl {{REVISION}}) from the
+  signoff comparison products. GCHP is a reference, not truth. Charts: <a href="assets/d3.LICENSE.txt">D3.js 7.9.0</a> (ISC licence), served from this site.
+</footer>
+</body>
+</html>

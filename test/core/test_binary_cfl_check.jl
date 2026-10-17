@@ -16,12 +16,13 @@ const M = AtmosTransport.Models
 const CS_STYLE = M.CubedSphereRuntimeRecipeStyle()
 const LL_STYLE = M.LatLonRuntimeRecipeStyle()
 
-# Unit air mass with `cm = 0.6` below every interior level-1 cell: the
-# palindrome budget is 2 × 0.6 = 1.2, so a 0.95 CFL limit needs 2 subcycles.
+# Air mass 2 in level 1 (1 below) with `cm = 0.6` below every interior level-1
+# cell: the cell ends the step with 2 − 2 × 0.6 = 0.8, so the palindrome budget
+# is 2 × 0.6 / min(2, 0.8) = 1.5 and a 0.95 CFL limit needs 2 subcycles.
 function steep_cm_fixture(; Nc = 4, Hp = 1, Nz = 3)
     mesh = CubedSphereMesh(; Nc, Hp, FT = Float64)
     N = Nc + 2Hp
-    panels_m = ntuple(_ -> ones(N, N, Nz), 6)
+    panels_m = ntuple(_ -> (m = ones(N, N, Nz); m[:, :, 1] .= 2.0; m), 6)
     panels_rm = ntuple(_ -> fill(4e-4, N, N, Nz), 6)
     fill_panel_halos!(panels_m, mesh; dir = 0)
     fill_panel_halos!(panels_rm, mesh; dir = 0)

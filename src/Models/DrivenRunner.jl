@@ -99,11 +99,13 @@ using ..MetDrivers: AbstractMetDriver, TransportBinaryDriver,
                      inspect_binary, steps_per_window,
                      steps_per_window_schedule, release_payload!,
                      surface_pressure_basis
-using ..InitialConditionIO: _regridding_method, _surface_flux_kind, surface_flux_species
+using ..InitialConditionIO: _regridding_method, _surface_flux_kind, surface_flux_species,
+                            _hold_outside_coverage, RUN_SPAN_CLOCK_SLACK_SECONDS
 using ..InitialConditionIO: build_initial_mixing_ratio, _build_cs_initial_mixing_ratio,
                              pack_initial_tracer_mass, _cs_pack_interior_into_halo!,
                              build_surface_flux_sources,
                              TotalSurfacePressure
+using ...GriddedIO: read_model_surface_height, read_point_elevation
 using ..BinaryPathExpander: expand_binary_paths
 using ..InputStaging: InputStager, staged_path_for!, cleanup_staging!
 using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, SnapshotFrame,
@@ -118,6 +120,7 @@ using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, S
                 samples_observations, begin_observation_day!, observe_window_boundary!,
                 finish_observations!, check_observation_tracer_names,
                 observation_output_path, SoundingMode, SiteMode,
+                VerticalPlacementSpec, ObservationTerrain, NoModelSurfaceHeight, NoPointElevation,
                 _SNAPSHOT_SCHEDULE_KEYS, _SNAPSHOT_INTERVAL_KEYS, _schedule_has_times
 # TransportModel + DrivenSimulation live alongside us in the Models module;
 # reach up to the parent and pull them in.
@@ -462,14 +465,15 @@ function _runtime_output_origin(origin::Union{DateTime, Nothing}, driver;
 end
 
 # Run interval `(0, t_end)` in seconds since the run start; time-varying flux
-# files are read only where the run can use them. `t_end` is the end of the
-# run's windows (`run_hours`, from every binary's header) plus 1 s for rounding
-# in the accumulated Float64 run clock; `_check_flux_run_span` guards against a
-# binary that ends later anyway. `[input] end_date` adds nothing: with `folder`
+# files are read only where the run can use them, and must cover it. `t_end`
+# is the end of the run's windows (`run_hours`, from every binary's header)
+# plus `RUN_SPAN_CLOCK_SLACK_SECONDS` (1 s) for rounding in the accumulated
+# Float64 run clock, which the coverage check does not ask the files to cover;
+# `_check_flux_run_span` guards against a binary that ends later anyway. `[input] end_date` adds nothing: with `folder`
 # every day through it has a binary, and with `binary_paths` it is not read.
 # Without `start_date` (`_flux_run_span` returns `nothing`) there are no
 # time-varying fluxes to check: `validate_config` requires the date for them.
-_run_time_span(run_hours::Real) = (0.0, 3600 * Float64(run_hours) + 1.0)
+_run_time_span(run_hours::Real) = (0.0, 3600 * Float64(run_hours) + RUN_SPAN_CLOCK_SLACK_SECONDS)
 
 _flux_run_span(cfg, run_hours::Real) =
     _run_reference_time(cfg) === nothing ? nothing : _run_time_span(run_hours)

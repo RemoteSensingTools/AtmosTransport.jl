@@ -296,10 +296,11 @@ Base.close(remap::ERA5HumidityRemap) = close_era5_day!(remap.handles)
 
 TM5 entrainment and detrainment on every target column from the raw ECMWF
 diagnostics already mapped to the target (`conv_fields`), following TM5's
-`tmm_Read_Convec_EC`: layer thickness from the target `T`, `q` and `ps`
-(`dz_hydrostatic_virtual!`), the fluxes put on the air-mass `basis` of the
-binary with [`ecmwf_convection_to_basis!`](@ref) (`DryBasis()` multiplies
-them by `1 − q`), then [`ec2tm_from_rates!`](@ref).
+`tmm_Read_Convec_EC`: UDMF/DDMF level `k` becomes interface `k` (the top of
+layer `k`) and the ground interface `Nz + 1` is zero, layer thickness from the
+target `T`, `q` and `ps` (`dz_hydrostatic_virtual!`), the fluxes put on the
+air-mass `basis` of the binary with [`ecmwf_convection_to_basis!`](@ref)
+(`DryBasis()` multiplies them by `1 − q`), then [`ec2tm_from_rates!`](@ref).
 """
 function derive_c180_tm5_convection!(
         tm5_fields::ERA5C180TM5ConvectionFields{FT},
@@ -317,16 +318,19 @@ function derive_c180_tm5_convection!(
         local_stats = thread_stats === nothing ? nothing : thread_stats[tid]
         Nz = size(window_fields.t[p], 3)
         @inbounds for j in axes(window_fields.t[p], 2), i in axes(window_fields.t[p], 1)
-            scratch.udmf_col[1] = zero(FT)
-            scratch.ddmf_col[1] = zero(FT)
+            # GRIB level k (1 = model top) is the flux through the top of
+            # layer k, interface k; none crosses the ground, interface Nz + 1
+            # (TM5 tmm.F90: `udmf_gg(:,0:nlev-1) = buf; udmf_gg(:,nlev) = 0`).
             for k in 1:Nz
-                scratch.udmf_col[k + 1] = conv_fields.udmf[p][i, j, k]
-                scratch.ddmf_col[k + 1] = conv_fields.ddmf[p][i, j, k]
+                scratch.udmf_col[k] = conv_fields.udmf[p][i, j, k]
+                scratch.ddmf_col[k] = conv_fields.ddmf[p][i, j, k]
                 scratch.udrf_col[k] = conv_fields.udrf[p][i, j, k]
                 scratch.ddrf_col[k] = conv_fields.ddrf[p][i, j, k]
                 scratch.t_col[k] = window_fields.t[p][i, j, k]
                 scratch.q_col[k] = window_fields.qv[p][i, j, k]
             end
+            scratch.udmf_col[Nz + 1] = zero(FT)
+            scratch.ddmf_col[Nz + 1] = zero(FT)
             dz_hydrostatic_virtual!(scratch.dz_col, scratch.t_col, scratch.q_col,
                                      window_fields.ps[p][i, j], vc.A, vc.B, Nz)
             ecmwf_convection_to_basis!(basis, scratch.udmf_col, scratch.ddmf_col,

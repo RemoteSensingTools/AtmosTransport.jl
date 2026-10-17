@@ -36,7 +36,9 @@ concurrent processes from colliding.
 The legacy split-file ERA5 producers remain available for inputs consumed by
 the 0.5° preprocessing path: `download_era5_spectral_hourly.py` writes the
 hourly spectral GRIB streams, and `download_era5_physics.py` writes the model-
-level convection and thermodynamic NetCDF files.
+level thermodynamic NetCDF files (`[input].thermo_dir`). Its optional
+convection NetCDF files are raw diagnostics only: no preprocessing path reads
+them, since TM5 convection is built from the ERA5 N320 convection GRIB stream.
 
 ### Examples
 

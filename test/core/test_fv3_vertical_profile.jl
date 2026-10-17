@@ -309,8 +309,12 @@ test_profiles(Nz) = (
             panels_rm = ntuple(p -> panels_m[p] .* (400e-6 .+ 1e-5 .* sin.(reshape(1:Nz, 1, 1, :) .+ p)), 6)
             state = CubedSphereState(DryBasis, mesh, panels_m; CO2 = panels_rm)
             fluxes = allocate_face_fluxes(mesh, Nz; FT, basis = DryBasis)
+            # 0.1, not 0.2: the alternating fluxes drain every other level, and
+            # the split path must run one palindrome (n = 1) like Lin-Rood; at
+            # 0.2 a level ends the step with as little as 0.2 of its mass and the split
+            # path's budget against min(m, m_end) subcycles.
             for p in 1:6, k in 2:Nz
-                fluxes.cm[p][:, :, k] .= 0.2 * min(mcol[k - 1], mcol[k]) * (-1)^k
+                fluxes.cm[p][:, :, k] .= 0.1 * min(mcol[k - 1], mcol[k]) * (-1)^k
             end
             model = TransportModel(state, fluxes, grid, scheme)
             apply!(state, fluxes, grid, scheme, FT(1); workspace = model.workspace.advection_ws)

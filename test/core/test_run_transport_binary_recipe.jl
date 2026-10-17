@@ -72,10 +72,15 @@ function write_runtime_recipe_surface_flux_file(path::AbstractString)
         vlon[:] = [-135.0, -45.0, 45.0, 135.0]
         vlat[:] = [45.0, -45.0]
         vtime[:] = [0.0]
+        # Every 90° × 90° cell has the area R² (π/2)(sin 90° − sin 0°) [m²] (the
+        # loader checks a file's cell areas against its coordinates); one cell
+        # emits 7 kg CO₂ s⁻¹.
+        area = AtmosTransport.Parameters.EARTH_RADIUS^2 * π / 2
         raw = zeros(Float64, 4, 2)
-        raw[1, 1] = 7 * _RUNTIME_RECIPE_JANUARY_SECONDS
+        raw[1, 1] = 7 * _RUNTIME_RECIPE_JANUARY_SECONDS / area
         vtotal[:, :, 1] = raw
-        varea[:, :] = reshape(Float64.(1:8), 4, 2)
+        varea[:, :] = fill(area, 4, 2)
+        varea.attrib["units"] = "m2"
         vtotal.attrib["units"] = "kgCO2/month/m2"
     finally
         close(ds)

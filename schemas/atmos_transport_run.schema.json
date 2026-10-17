@@ -559,10 +559,16 @@
           "enum": ["stepwise", "linear", "conservative"],
           "description": "time_varying = true: stepwise (default) holds each slice from its time stamp to the next, as GEOS-Chem/HEMCO does for CAMS fluxes; linear interpolates between the two bracketing slices at the start of each step; conservative applies the exact time integral of that linear interpolation over each step."
         },
+        "hold_outside_coverage": {
+          "type": "boolean",
+          "default": false,
+          "description": "time_varying = true: allow a run that extends beyond the time coverage of the files (their CF time bounds, else the stamps' spacing; GridFED without a time axis covers its year) and hold the first or last slice there, e.g. for a climatology. false (default): a run period that no slice covers is an error naming the gap."
+        },
         "regridding": {
           "type": "string",
           "enum": ["bilinear", "conservative"],
-          "description": "Lat-lon and reduced-Gaussian targets: conservative or bilinear (default). Cubed-sphere targets always regrid conservatively."
+          "default": "conservative",
+          "description": "Static lat-lon inventories. conservative (default, every topology): the per-cell rate (flux x the file's cell_area/area, else the source-mesh cell area) is regridded as an extensive field, so the model total equals the file's total. bilinear (lat-lon and reduced-Gaussian targets only): bilinear samples at the target cell centres, emission and uptake cells renormalised separately to the file's emission and uptake totals; an error when the sample misses one of them. Cubed-sphere targets always regrid conservatively."
         }
       },
       "description": "Surface emission or uptake of one tracer, added to the lowest model layer. Physical fluxes (kg of the species) are converted to model storage units with the molar mass of the tracer's species."
@@ -737,6 +743,38 @@
           "minItems": 1,
           "items": {"$ref": "#/definitions/observation_source"},
           "description": "Where requests come from ([[output.observations.sources]] → AbstractObservationSource)."
+        },
+        "surface_height_file": {
+          "type": "string",
+          "description": "Per-grid model surface height dataset (m above sea level; GriddedIO.write_model_surface_height, scripts/preprocessing/build_model_surface_height.jl) → ModelSurfaceHeight. Reference of absolute_altitude_above_agl_m and written per row as model_surface_height; never used as the true ground."
+        },
+        "dem_file": {
+          "type": "string",
+          "description": "Lat-lon digital elevation model (ground or sea surface in m above sea level, 0 over the ocean, nothing below -450 m or above 9000 m; recommended: NOAA ETOPO 2022 60 arc-second surface variant clipped at 0 m) → GriddedIO.LatLonPointElevation, interpolated bilinearly as the true ground of each record whose altitude has no elevation. Without it such records are placed by pressure or are unplaced."
+        },
+        "dem_variable": {
+          "type": "string",
+          "default": "z",
+          "description": "Elevation variable of dem_file (2-D on lon, lat; units metres). Only with dem_file."
+        },
+        "unplaced_records": {
+          "description": "Requests that cannot be placed: an altitude without a ground elevation (no record elevation, no dem_file value) and no pressure, or an ObsPack record without any vertical coordinate (AbstractUnplacedPolicy).",
+          "default": "error",
+          "oneOf": [
+            {
+              "const": "error",
+              "description": "ErrorOnUnplaced: building the sampler fails and names them."
+            },
+            {
+              "const": "skip",
+              "description": "SkipUnplaced: drop them; counted in the n_unplaced_soundings / n_unplaced_sites file attributes."
+            }
+          ]
+        },
+        "absolute_altitude_above_agl_m": {
+          "type": "number",
+          "minimum": 0,
+          "description": "AbsoluteAltitudeAbove: records at least this many metres above the ground are placed by their pressure when they have one, else by altitude above sea level against model surface height + layer heights. Omitted: AboveGroundPlacement for every record. Needs surface_height_file (and a ground: record elevation or dem_file)."
         }
       }
     },

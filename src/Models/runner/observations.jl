@@ -45,6 +45,27 @@ function _check_observation_tracers(spec::ObservationOutputSpec, cfg)
     return nothing
 end
 
+# The placement datasets must exist; their grid is checked when they are read.
+_check_observation_placement_files(::NoObservationOutput) = nothing
+function _check_observation_placement_files(spec::ObservationOutputSpec)
+    for (key, path) in (("surface_height_file", spec.placement.surface_height_file),
+                        ("dem_file", spec.placement.dem_file))
+        path === nothing || isfile(path) || throw(ArgumentError(
+            "[output.observations].$(key) = $(repr(path)) does not exist"))
+    end
+    return nothing
+end
+
+# Static ground fields of `[output.observations]`, read through GriddedIO on
+# the run's horizontal mesh (never from transport binaries).
+function _observation_terrain(placement::VerticalPlacementSpec, mesh)
+    model_surface = placement.surface_height_file === nothing ? NoModelSurfaceHeight() :
+                    read_model_surface_height(placement.surface_height_file, mesh)
+    dem = placement.dem_file === nothing ? NoPointElevation() :
+          read_point_elevation(placement.dem_file; variable = placement.dem_variable)
+    return ObservationTerrain(; model_surface, dem)
+end
+
 function _binary_label_date(path::AbstractString)
     label = _binary_date_label(path)
     isempty(label) && return nothing
@@ -91,7 +112,8 @@ function _build_sampler(spec::ObservationOutputSpec, state, grid; cfg, binary_pa
     window_seconds = (t0, t0 + Float64(span_seconds))
     @info "observation sampling window: $(origin + Millisecond(round(Int, 1000 * window_seconds[1]))) " *
           "to $(origin + Millisecond(round(Int, 1000 * window_seconds[2]))) UTC"
-    return build_observation_sampler(spec, state, grid; origin, window_seconds, halo_width)
+    terrain = _observation_terrain(spec.placement, grid.horizontal)
+    return build_observation_sampler(spec, state, grid; origin, window_seconds, halo_width, terrain)
 end
 
 # Per-binary entry: switch daily files, and on the first binary sample the

@@ -63,7 +63,7 @@ using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
 # Regridding + Preprocessing are loaded before Models (AtmosTransport.jl)
 # so we can pull in the LL→CS conservative regridder + panel unpacking
 # helpers for the CS file-based IC path.
-using ..Regridding: build_regridder, apply_regridder!, default_regrid_cache_dir
+using ..Regridding: build_regridder, apply_regridder!, default_regrid_cache_dir, source_coverage
 using ..Preprocessing: unpack_flat_to_panels_3d!, unpack_flat_to_panels_2d!,
                        CS_PANEL_COUNT
 using ..Operators.SurfaceFlux: SurfaceFluxSource, TimeVaryingSurfaceFluxSource,
@@ -74,11 +74,13 @@ using ..Operators.SurfaceFlux: SurfaceFluxSource, TimeVaryingSurfaceFluxSource,
 using ...GriddedIO: find_coordinate, LongitudeAxis, LatitudeAxis, TimeAxis, VerticalAxis,
                     latlon_orientation, orient, orient_coordinates, read_raw, MaskedAsZero,
                     source_latlon_mesh, decode_time, decode_time_bounds, decode_month_keys,
-                    decode_month_seconds,
+                    decode_month_seconds, decode_slice_intervals, known_slice_intervals,
+                    stamp_intervals, interval, MonthKey,
                     parse_flux_units,
                     AbstractTimeBasis, PerSquareMetre, PerCell, PerMonth, TimeInterval,
                     FluxUnits, kg_per_unit, period_seconds, seconds_since,
-                    mass_rate_factor, cs_native_flux_info, read_cs_native_flux!
+                    mass_rate_factor, cs_native_flux_info, read_cs_native_flux!,
+                    check_latlon_cell_area
 # Grid accessors used by both LL/RG and CS surface-flux builders
 using ..Grids: AbstractHorizontalMesh, nx, ny, ncells
 

@@ -119,3 +119,66 @@ const _edges = ADV._ppm_edge_values
         @test qRp == 3.0
     end
 end
+
+# ---------------------------------------------------------------------------
+# Lin-Rood ORD=7 cube-edge treatment (issue #62). The face kernels rebuild the
+# parabolas of both donor cells at every face. Each cell must get the same
+# parabola at its two faces: the seam value on its seam face, and edges next
+# to a seam built only from the panel's own cells (FV3 `tp_core.F90` `xppm`:
+# `al(1)`, `al(2) = c3 q1 + c2 q2 + c1 q3`). Previously cell 1 took the seam
+# value at face 1 but a cross-seam fourth-order left edge at face 2.
+#
+# The donor parabola is read back from the kernel output: with unit air mass
+# and a uniform flux ±a, the face value is
+#   F > 0 (donor = left cell):  c + (1-a)((1-a) br - a bl)
+#   F < 0 (donor = right cell): c + (1-a)((1-a) bl - a br)
+# with bl = q_L - c, br = q_R - c, so two Courant fractions give (bl, br) of
+# every cell as seen through its right face and through its left face.
+# ---------------------------------------------------------------------------
+@testset "Lin-Rood ORD=7 gives each cell one parabola (seam consistency)" begin
+    Nc, Hp, Nz = 8, 3, 1
+    N = Nc + 2Hp
+    f(x) = exp(0.15x) + 0.1x                        # monotone: no extremum flattening
+    q1d = [f(i - Hp - 0.5) for i in 1:N]            # local cell i - Hp, halos continue the profile
+    c(i) = q1d[Hp + i]
+    m = ones(N, N, Nz)
+    backend = ADV.get_backend(m)
+
+    function face_values(kind, dir, F)
+        q = dir == 1 ? [q1d[i] for i in 1:N, j in 1:N, k in 1:Nz] :
+                       [q1d[j] for i in 1:N, j in 1:N, k in 1:Nz]
+        flux = dir == 1 ? fill(F, Nc + 1, Nc, Nz) : fill(F, Nc, Nc + 1, Nz)
+        out = zero(flux)
+        kernel! = dir == 1 ? (kind === :rm ? ADV._ppm_x_face_kernel! : ADV._ppm_x_face_from_q_kernel!) :
+                             (kind === :rm ? ADV._ppm_y_face_kernel! : ADV._ppm_y_face_from_q_kernel!)
+        args = kind === :rm ? (out, q, m, flux) : (out, q, flux, m)   # rm-input: (rm, m, flux)
+        kernel!(backend, 64)(args..., Hp, Nc, Val(7); ndrange = size(flux))
+        ADV.synchronize(backend)
+        return dir == 1 ? out[:, 2, 1] : out[2, :, 1]
+    end
+
+    a1, a2 = 0.25, 0.6
+    one_sided(q1, q2, q3) = 5 / 14 * q1 + 11 / 14 * q2 - 2 / 14 * q3   # FV3 c3 q1 + c2 q2 + c1 q3
+    for kind in (:rm, :q), dir in (1, 2)
+        @testset "$(kind)-input, $(dir == 1 ? "x" : "y") faces" begin
+            vp = (face_values(kind, dir, a1), face_values(kind, dir, a2))
+            vn = (face_values(kind, dir, -a1), face_values(kind, dir, -a2))
+            # (bl, br) of cell i through its right face i+1 and through its left face i
+            through_right(i) = [-a1 1-a1; -a2 1-a2] \ [(vp[1][i+1] - c(i)) / (1 - a1),
+                                                        (vp[2][i+1] - c(i)) / (1 - a2)]
+            through_left(i)  = [1-a1 -a1; 1-a2 -a2] \ [(vn[1][i] - c(i)) / (1 - a1),
+                                                        (vn[2][i] - c(i)) / (1 - a2)]
+            @test all(i -> isapprox(through_right(i), through_left(i); atol = 1e-12), 1:Nc)
+
+            # Cell 1: seam value on the left, one-sided value on the right.
+            bl, br = through_left(1)
+            @test bl + c(1) ≈ ADV._ppm_face_edge_value_ord7_discontinuous(c(0), c(-1), c(1), c(2)) atol = 1e-12
+            @test br + c(1) ≈ one_sided(c(1), c(2), c(3)) atol = 1e-12
+            # Cell Nc: one-sided value on the left, seam value on the right.
+            bl, br = through_right(Nc)
+            @test bl + c(Nc) ≈ one_sided(c(Nc), c(Nc - 1), c(Nc - 2)) atol = 1e-12
+            @test br + c(Nc) ≈ ADV._ppm_face_edge_value_ord7_discontinuous(c(Nc), c(Nc - 1),
+                                                                            c(Nc + 1), c(Nc + 2)) atol = 1e-12
+        end
+    end
+end

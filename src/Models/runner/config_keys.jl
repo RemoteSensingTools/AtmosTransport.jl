@@ -69,9 +69,11 @@ _init_kind_group(kind::AbstractString) = get(_INIT_KINDS, lowercase(kind), nothi
 # the series keys only by time-varying sources.
 const _SURFACE_FLUX_KEYS = ("kind", "file", "variable", "time_index", "month", "year",
                             "files", "file_pattern", "scale", "species",
-                            "time_varying", "temporal_scheme", "regridding")
+                            "time_varying", "temporal_scheme", "hold_outside_coverage",
+                            "regridding")
 const _SURFACE_FLUX_MONTH_KINDS = ("gridfed_fossil_co2", "zhang_rn222")
-const _SURFACE_FLUX_SERIES_KEYS = ("files", "file_pattern", "temporal_scheme")
+const _SURFACE_FLUX_SERIES_KEYS = ("files", "file_pattern", "temporal_scheme",
+                                   "hold_outside_coverage")
 
 # `[output]` (`runtime_output_spec`), in precedence order within each alias group.
 const _OUTPUT_PATH_KEYS = ("path", "snapshot_file", "filename")

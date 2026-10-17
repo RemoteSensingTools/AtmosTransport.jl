@@ -121,6 +121,25 @@ function regrid_transport_binary(input_path::String,
 end
 
 """
+    carried_tm5_convection_record(source_header, source_has_tm5) -> Dict{String, Any}
+
+Header record of TM5 convection sections that a binary-to-binary tool copies
+from its source: the source's `TM5_CONVECTION_SOURCE_KEY` (`"unrecorded"` when
+it has none) and its `TM5_EC2TM_CONVENTION_KEY`, if present. Empty when the
+source has no TM5 sections. Readers reject a lat-lon → cubed-sphere regrid with
+TM5 sections and no source record: it predates this record and copied
+sections of the retired lat-lon route.
+"""
+function carried_tm5_convection_record(source_header::AbstractDict, source_has_tm5::Bool)
+    source_has_tm5 || return Dict{String, Any}()
+    record = Dict{String, Any}(
+        TM5_CONVECTION_SOURCE_KEY => get(source_header, TM5_CONVECTION_SOURCE_KEY, "unrecorded"))
+    haskey(source_header, TM5_EC2TM_CONVENTION_KEY) &&
+        (record[TM5_EC2TM_CONVENTION_KEY] = source_header[TM5_EC2TM_CONVENTION_KEY])
+    return record
+end
+
+"""
     regrid_ll_binary_to_cs(ll_binary_path, cs_grid, out_path; FT=Float64, mass_basis=nothing)
 
 Regrid an existing LL transport binary to a cubed-sphere binary.
@@ -388,7 +407,8 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             "poisson_balanced"  => true,
             "horizontal_balance" => HORIZONTAL_BALANCE_TAG,
             "adaptive_substeps" => out_policy.adaptive_substeps,
-        ), source_mass_fix), column_balance_weights), write_replay_check))
+        ), source_mass_fix, carried_tm5_convection_record(h.raw_header, source_has_tm5)),
+           column_balance_weights), write_replay_check))
     writer = CubedSphereBinaryWriter(inner_writer, mass_basis_from_symbol(output_basis);
                                      Nc = Nc,
                                      npanel = CS_PANEL_COUNT,

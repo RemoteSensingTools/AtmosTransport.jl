@@ -90,17 +90,18 @@ record types, and schedules come from [`../Tape/`](../Tape/).
 ## Invariants
 
 - Per-step tape order for split-sweep schemes:
-  `X(n) Y(n) Z(n) [D(dt/2) | midpoint | D(dt/2)] Z(n) Y(n) X(n)`, then
-  optional convection. `n` is the subcycle count from
+  `(X Y Z)^n [D(dt/2) | midpoint | D(dt/2)] (Z Y X)^n`, then
+  optional convection, as `strang_split_cs!`. `n` is the subcycle count from
   `_cs_static_palindrome_subcycle_count`, the production CFL schedule.
   Lin-Rood steps record `H Z [midpoint] Z H`. There is no subcycling
   (`cfl_limit` is ignored), and Z is the scheme's vertical sweep (upwind or
   the FV3 profile).
 - In the split-sweep tapes, the forward halo fills after initialization are
   recorded as `_CSHaloRecord(dir)` (1 = X, 2 = Y): one after each horizontal
-  sweep, and one before each of the second-half Y and X blocks (Lin-Rood keeps
-  its halo work inside `_CSLinRoodHorizRecord`). The reverse pass applies
-  `_adjoint_fill_panel_halos!` with the same `dir`.
+  sweep, one before the X sweep of each later forward pass (the Z sweep before
+  it changed the interiors), and one before each second-half Y and X sweep
+  (Lin-Rood keeps its halo work inside `_CSLinRoodHorizRecord`). The reverse
+  pass applies `_adjoint_fill_panel_halos!` with the same `dir`.
 - The reverse walk reads the per-step footprint when it reaches each
   `_CSMidpointRecord`. Emissions are injected at the palindrome midpoint,
   between the two diffusion half-steps, as in the runtime surface-source

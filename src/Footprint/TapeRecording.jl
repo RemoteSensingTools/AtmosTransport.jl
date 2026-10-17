@@ -111,10 +111,12 @@ function _tape_byte_estimate(panels_m0,
         n_pal = _cs_static_palindrome_subcycle_count(
             panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
             flux_scale = fs)
-        n_x = n_y = n_z = n_pal
 
-        sweep_records += 2n_x + 2n_y + 2n_z
-        halo_records += 2n_x + 2n_y + 2
+        # (X Y Z)^n | midpoint | (Z Y X)^n, as `strang_split_cs!`: 6n sweeps;
+        # halo fills: 2 per forward pass plus one before each later X pass,
+        # 4 per reverse pass.
+        sweep_records += 6n_pal
+        halo_records += 7n_pal - 1
         midpoint_records += 1
         if !(_diffusion_sequence_at(diffusion_op, step, nsteps,
                                     "diffusion_op") isa NoDiffusion)
@@ -123,42 +125,33 @@ function _tape_byte_estimate(panels_m0,
         end
         convection_op isa NoConvection || (convection_records += 1)
 
-        fs_x = fs / FT(n_x)
-        fs_y = fs / FT(n_y)
-        fs_z = fs / FT(n_z)
+        fs_sub = fs / FT(n_pal)
 
-        for _ in 1:n_x
+        for pass in 1:n_pal
+            pass > 1 && fill_panel_halos!(panels_m, mesh; dir=1)
             _sweep_cs_horizontal!(dummy_rm, panels_m, panels_am, mesh,
-                                  scheme, ws, Val(1); flux_scale=fs_x)
+                                  scheme, ws, Val(1); flux_scale=fs_sub)
             fill_panel_halos!(panels_m, mesh; dir=1)
-        end
-        for _ in 1:n_y
             _sweep_cs_horizontal!(dummy_rm, panels_m, panels_bm, mesh,
-                                  scheme, ws, Val(2); flux_scale=fs_y)
+                                  scheme, ws, Val(2); flux_scale=fs_sub)
             fill_panel_halos!(panels_m, mesh; dir=2)
-        end
-        for _ in 1:n_z
             for p in 1:6
                 _sweep_z_panel!(dummy_rm[p], panels_m[p], panels_cm[p], scheme,
-                                ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_z)
+                                ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_sub)
             end
         end
-        for _ in 1:n_z
+        for _ in 1:n_pal
             for p in 1:6
                 _sweep_z_panel!(dummy_rm[p], panels_m[p], panels_cm[p], scheme,
-                                ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_z)
+                                ws.rm_A, ws.m_A, Nc, Hp, Nz; flux_scale=fs_sub)
             end
-        end
-        fill_panel_halos!(panels_m, mesh; dir=2)
-        for _ in 1:n_y
-            _sweep_cs_horizontal!(dummy_rm, panels_m, panels_bm, mesh,
-                                  scheme, ws, Val(2); flux_scale=fs_y)
             fill_panel_halos!(panels_m, mesh; dir=2)
-        end
-        fill_panel_halos!(panels_m, mesh; dir=1)
-        for _ in 1:n_x
+            _sweep_cs_horizontal!(dummy_rm, panels_m, panels_bm, mesh,
+                                  scheme, ws, Val(2); flux_scale=fs_sub)
+            fill_panel_halos!(panels_m, mesh; dir=2)
+            fill_panel_halos!(panels_m, mesh; dir=1)
             _sweep_cs_horizontal!(dummy_rm, panels_m, panels_am, mesh,
-                                  scheme, ws, Val(1); flux_scale=fs_x)
+                                  scheme, ws, Val(1); flux_scale=fs_sub)
             fill_panel_halos!(panels_m, mesh; dir=1)
         end
     end
@@ -335,30 +328,28 @@ function _record_cs_mass_tape(panels_m0,
         n_pal = _cs_static_palindrome_subcycle_count(
             panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
             flux_scale = fs)
-        n_x = n_y = n_z = n_pal
-        fs_x = fs / FT(n_x)
-        fs_y = fs / FT(n_y)
-        fs_z = fs / FT(n_z)
+        fs_sub = fs / FT(n_pal)
 
-        for _ in 1:n_x
-            record_ops && _record_sweep!(ops, :x, scheme, panels_m, panels_am, fs_x, storage)
+        # Forward half (X Y Z)^n_pal, as `strang_split_cs!`.
+        for pass in 1:n_pal
+            if pass > 1
+                fill_panel_halos!(panels_m, mesh; dir=1)
+                record_ops && push!(ops, _CSHaloRecord(1))
+            end
+            record_ops && _record_sweep!(ops, :x, scheme, panels_m, panels_am, fs_sub, storage)
             _sweep_cs_horizontal!(dummy_rm, panels_m, panels_am, mesh,
-                                  scheme, ws, Val(1); flux_scale=fs_x)
+                                  scheme, ws, Val(1); flux_scale=fs_sub)
             fill_panel_halos!(panels_m, mesh; dir=1)
             record_ops && push!(ops, _CSHaloRecord(1))
-        end
 
-        for _ in 1:n_y
-            record_ops && _record_sweep!(ops, :y, scheme, panels_m, panels_bm, fs_y, storage)
+            record_ops && _record_sweep!(ops, :y, scheme, panels_m, panels_bm, fs_sub, storage)
             _sweep_cs_horizontal!(dummy_rm, panels_m, panels_bm, mesh,
-                                  scheme, ws, Val(2); flux_scale=fs_y)
+                                  scheme, ws, Val(2); flux_scale=fs_sub)
             fill_panel_halos!(panels_m, mesh; dir=2)
             record_ops && push!(ops, _CSHaloRecord(2))
-        end
 
-        for _ in 1:n_z
             _record_and_sweep_z!(ops, scheme, dummy_rm, panels_m, panels_cm, ws, mesh,
-                                 fs_z, storage; record_ops)
+                                 fs_sub, storage; record_ops)
         end
 
         # Diffusion + midpoint records are pure scheduling metadata for
@@ -386,27 +377,24 @@ function _record_cs_mass_tape(panels_m0,
             end
         end
 
-        for _ in 1:n_z
+        # Reverse half (Z Y X)^n_pal.
+        for _ in 1:n_pal
             _record_and_sweep_z!(ops, scheme, dummy_rm, panels_m, panels_cm, ws, mesh,
-                                 fs_z, storage; record_ops)
-        end
+                                 fs_sub, storage; record_ops)
 
-        fill_panel_halos!(panels_m, mesh; dir=2)
-        record_ops && push!(ops, _CSHaloRecord(2))
-        for _ in 1:n_y
-            record_ops && _record_sweep!(ops, :y, scheme, panels_m, panels_bm, fs_y, storage)
-            _sweep_cs_horizontal!(dummy_rm, panels_m, panels_bm, mesh,
-                                  scheme, ws, Val(2); flux_scale=fs_y)
             fill_panel_halos!(panels_m, mesh; dir=2)
             record_ops && push!(ops, _CSHaloRecord(2))
-        end
+            record_ops && _record_sweep!(ops, :y, scheme, panels_m, panels_bm, fs_sub, storage)
+            _sweep_cs_horizontal!(dummy_rm, panels_m, panels_bm, mesh,
+                                  scheme, ws, Val(2); flux_scale=fs_sub)
+            fill_panel_halos!(panels_m, mesh; dir=2)
+            record_ops && push!(ops, _CSHaloRecord(2))
 
-        fill_panel_halos!(panels_m, mesh; dir=1)
-        record_ops && push!(ops, _CSHaloRecord(1))
-        for _ in 1:n_x
-            record_ops && _record_sweep!(ops, :x, scheme, panels_m, panels_am, fs_x, storage)
+            fill_panel_halos!(panels_m, mesh; dir=1)
+            record_ops && push!(ops, _CSHaloRecord(1))
+            record_ops && _record_sweep!(ops, :x, scheme, panels_m, panels_am, fs_sub, storage)
             _sweep_cs_horizontal!(dummy_rm, panels_m, panels_am, mesh,
-                                  scheme, ws, Val(1); flux_scale=fs_x)
+                                  scheme, ws, Val(1); flux_scale=fs_sub)
             fill_panel_halos!(panels_m, mesh; dir=1)
             record_ops && push!(ops, _CSHaloRecord(1))
         end
@@ -487,32 +475,31 @@ function _record_cs_tracer_tape(panels_rm0,
         n_pal = _cs_static_palindrome_subcycle_count(
             panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
             flux_scale = fs)
-        n_x = n_y = n_z = n_pal
-        fs_x = fs / FT(n_x)
-        fs_y = fs / FT(n_y)
-        fs_z = fs / FT(n_z)
+        fs_sub = fs / FT(n_pal)
 
-        for _ in 1:n_x
-            record_ops && _record_sweep!(ops, :x, scheme, panels_m, panels_rm, panels_am, fs_x, storage)
+        # Forward half (X Y Z)^n_pal, as `strang_split_cs!`.
+        for pass in 1:n_pal
+            if pass > 1
+                fill_panel_halos!(panels_rm, mesh; dir=1)
+                fill_panel_halos!(panels_m, mesh; dir=1)
+                record_ops && push!(ops, _CSHaloRecord(1))
+            end
+            record_ops && _record_sweep!(ops, :x, scheme, panels_m, panels_rm, panels_am, fs_sub, storage)
             _sweep_cs_horizontal!(panels_rm, panels_m, panels_am, mesh,
-                                  scheme, ws, Val(1); flux_scale=fs_x)
+                                  scheme, ws, Val(1); flux_scale=fs_sub)
             fill_panel_halos!(panels_rm, mesh; dir=1)
             fill_panel_halos!(panels_m, mesh; dir=1)
             record_ops && push!(ops, _CSHaloRecord(1))
-        end
 
-        for _ in 1:n_y
-            record_ops && _record_sweep!(ops, :y, scheme, panels_m, panels_rm, panels_bm, fs_y, storage)
+            record_ops && _record_sweep!(ops, :y, scheme, panels_m, panels_rm, panels_bm, fs_sub, storage)
             _sweep_cs_horizontal!(panels_rm, panels_m, panels_bm, mesh,
-                                  scheme, ws, Val(2); flux_scale=fs_y)
+                                  scheme, ws, Val(2); flux_scale=fs_sub)
             fill_panel_halos!(panels_rm, mesh; dir=2)
             fill_panel_halos!(panels_m, mesh; dir=2)
             record_ops && push!(ops, _CSHaloRecord(2))
-        end
 
-        for _ in 1:n_z
             _record_and_sweep_z!(ops, scheme, panels_rm, panels_m, panels_cm, ws, mesh,
-                                 fs_z, storage; record_ops)
+                                 fs_sub, storage; record_ops)
         end
 
         diffusion_op_step = _diffusion_sequence_at(diffusion_op, step, nsteps,
@@ -547,30 +534,27 @@ function _record_cs_tracer_tape(panels_rm0,
                 half_dt, diffusion_meteo; halo_width = mesh.Hp)
         end
 
-        for _ in 1:n_z
+        # Reverse half (Z Y X)^n_pal.
+        for _ in 1:n_pal
             _record_and_sweep_z!(ops, scheme, panels_rm, panels_m, panels_cm, ws, mesh,
-                                 fs_z, storage; record_ops)
-        end
+                                 fs_sub, storage; record_ops)
 
-        fill_panel_halos!(panels_rm, mesh; dir=2)
-        fill_panel_halos!(panels_m, mesh; dir=2)
-        record_ops && push!(ops, _CSHaloRecord(2))
-        for _ in 1:n_y
-            record_ops && _record_sweep!(ops, :y, scheme, panels_m, panels_rm, panels_bm, fs_y, storage)
-            _sweep_cs_horizontal!(panels_rm, panels_m, panels_bm, mesh,
-                                  scheme, ws, Val(2); flux_scale=fs_y)
             fill_panel_halos!(panels_rm, mesh; dir=2)
             fill_panel_halos!(panels_m, mesh; dir=2)
             record_ops && push!(ops, _CSHaloRecord(2))
-        end
+            record_ops && _record_sweep!(ops, :y, scheme, panels_m, panels_rm, panels_bm, fs_sub, storage)
+            _sweep_cs_horizontal!(panels_rm, panels_m, panels_bm, mesh,
+                                  scheme, ws, Val(2); flux_scale=fs_sub)
+            fill_panel_halos!(panels_rm, mesh; dir=2)
+            fill_panel_halos!(panels_m, mesh; dir=2)
+            record_ops && push!(ops, _CSHaloRecord(2))
 
-        fill_panel_halos!(panels_rm, mesh; dir=1)
-        fill_panel_halos!(panels_m, mesh; dir=1)
-        record_ops && push!(ops, _CSHaloRecord(1))
-        for _ in 1:n_x
-            record_ops && _record_sweep!(ops, :x, scheme, panels_m, panels_rm, panels_am, fs_x, storage)
+            fill_panel_halos!(panels_rm, mesh; dir=1)
+            fill_panel_halos!(panels_m, mesh; dir=1)
+            record_ops && push!(ops, _CSHaloRecord(1))
+            record_ops && _record_sweep!(ops, :x, scheme, panels_m, panels_rm, panels_am, fs_sub, storage)
             _sweep_cs_horizontal!(panels_rm, panels_m, panels_am, mesh,
-                                  scheme, ws, Val(1); flux_scale=fs_x)
+                                  scheme, ws, Val(1); flux_scale=fs_sub)
             fill_panel_halos!(panels_rm, mesh; dir=1)
             fill_panel_halos!(panels_m, mesh; dir=1)
             record_ops && push!(ops, _CSHaloRecord(1))

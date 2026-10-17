@@ -242,6 +242,13 @@ end
                   errors_of(Dict{String, Any}("input" => input, "tracers" => Dict("co2" => Dict(
                       "init" => Dict("kind" => "uniform"),
                       "surface_flux" => Dict("kind" => "file", "regridding" => "conservativ"))))))
+        # The time-coverage opt-in of time-varying sources must be a Bool (#59).
+        coverage(value) = errors_of(Dict{String, Any}("input" => input, "tracers" => Dict("co2" => Dict(
+            "init" => Dict("kind" => "uniform"),
+            "surface_flux" => Dict("kind" => "lmdz_co2", "time_varying" => true,
+                                   "hold_outside_coverage" => value)))))
+        @test !any(contains("hold_outside_coverage"), coverage(true))
+        @test any(contains("hold_outside_coverage"), coverage("yes"))
     end
     w = key_messages(Dict("tracers" => Dict("co2" => Dict(
         "init" => Dict("kind" => "uniform"),

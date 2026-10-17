@@ -114,9 +114,6 @@ function expected_payload_sections(settings)
     sections = String["m", "am", "bm", "cm", "ps"]
     settings.include_qv && append!(sections, ["qv_start", "qv_end"])
     append!(sections, ["dam", "dbm", "dcm", "dm"])
-    # TM5 sections follow the deltas, matching the
-    # ordering in _transport_push_optional_sections!.
-    settings.tm5_convection_enable && append!(sections, ["entu", "detu", "entd", "detd"])
     _settings_include_surface(settings) && append!(sections, ["pblh", "t2m", "ustar", "pbl_hflux"])
     return sections
 end
@@ -189,8 +186,8 @@ function build_v4_header(date::Date,
         "n_cm" => counts.n_cm, "n_ps" => counts.n_ps,
         "n_qv_start" => counts.n_qv_start, "n_qv_end" => counts.n_qv_end,
         "n_cmfmc" => 0,
-        "n_entu" => counts.n_entu, "n_detu" => counts.n_detu,
-        "n_entd" => counts.n_entd, "n_detd" => counts.n_detd,
+        # This route writes no TM5 convection sections; the keys stay in the schema.
+        "n_entu" => 0, "n_detu" => 0, "n_entd" => 0, "n_detd" => 0,
         "n_pblh" => counts.n_pblh, "n_t2m" => counts.n_t2m,
         "n_ustar" => counts.n_ustar, "n_pbl_hflux" => counts.n_hflux,
         "n_temperature" => 0,
@@ -198,7 +195,7 @@ function build_v4_header(date::Date,
         "include_flux_delta" => true,
         "include_qv_endpoints" => settings.include_qv,
         "include_cmfmc" => false,
-        "include_tm5conv" => settings.tm5_convection_enable,
+        "include_tm5conv" => false,
         "include_surface" => include_surface,
         "surface_payload" => include_surface ? "pbl_raw_v2" : "none",
         "include_temperature" => false,
@@ -251,10 +248,6 @@ function build_v4_header(date::Date,
 
     settings.mass_fix_enable && (settings.include_qv || settings.mass_basis == :dry) &&
         (header["mass_fix_target_ps_dry_pa"] = settings.target_ps_dry_pa)
-    # ERA5 convective fluxes are put on the binary's basis before ec2tm.
-    _with_tm5_convection_basis(header, settings.tm5_convection_enable ?
-                                       mass_basis_from_symbol(settings.mass_basis) : nothing)
-
     _with_column_weights_record(header, _check_spectral_column_weights(grid, settings))
     merge!(header, target_header_metadata(grid))
     validate_transport_contract!(header)
@@ -303,7 +296,6 @@ binary.
 """
 function window_element_counts(grid::LatLonTargetGeometry, Nz::Int;
                                 include_qv::Bool=false,
-                                tm5_convection::Bool=false,
                                 include_surface::Bool=false)
     Nx = nlon(grid)
     Ny = nlat(grid)
@@ -315,7 +307,6 @@ function window_element_counts(grid::LatLonTargetGeometry, Nz::Int;
     n_ps = Int64(Nx) * Ny
     n_qv_start = include_qv ? n_m : Int64(0)
     n_qv_end = include_qv ? n_m : Int64(0)
-    n_tm5 = tm5_convection ? n_m : Int64(0)  # each of entu/detu/entd/detd is (Nx, Ny, Nz)
     n_sfc = include_surface ? n_ps : Int64(0)
 
     return (
@@ -330,10 +321,6 @@ function window_element_counts(grid::LatLonTargetGeometry, Nz::Int;
         n_dbm = n_bm,
         n_dcm = n_cm,
         n_dm = n_m,
-        n_entu = n_tm5,
-        n_detu = n_tm5,
-        n_entd = n_tm5,
-        n_detd = n_tm5,
         n_pblh = n_sfc,
         n_t2m = n_sfc,
         n_ustar = n_sfc,
@@ -341,7 +328,7 @@ function window_element_counts(grid::LatLonTargetGeometry, Nz::Int;
         elems_per_window = n_m + n_am + n_bm + n_cm + n_ps +
                            n_qv_start + n_qv_end +
                            n_am + n_bm + n_cm + n_m +
-                           4 * n_tm5 + 4 * n_sfc,
+                           4 * n_sfc,
     )
 end
 

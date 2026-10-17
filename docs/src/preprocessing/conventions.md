@@ -100,6 +100,19 @@ binary without that key predates the ERA5 moist-to-dry conversion: readers
 currently warn so the frozen production archive remains usable, and will
 reject such binaries after that archive is regenerated.
 
+TM5 sections record where they come from. The ERA5 N320 writer sets
+`tm5_convection_source = "ec2tm_from_rates(udmf,ddmf,udrf,ddrf)"` and
+`tm5_ec2tm_convention = "tm5_halflevel_v2"`: ERA5 UDMF/DDMF level `k` is the
+flux through the top of layer `k`, nothing crosses the ground, and the cloud
+top is the layer above the first interface with flux (see
+[ERA5 → TM5 fields](@ref tm5-ec2tm)). The CATRINE attachment records
+`convection_attachment`. On opening, readers reject ERA5-derived sections
+without the current convention (built before issue #54), lat-lon binaries
+with TM5 sections from the ERA5 spectral preprocessor (the retired
+physics-file route, issue #55), and lat-lon → cubed-sphere regrids of those;
+each error asks for regeneration. Sections without a recorded source are
+accepted.
+
 The transport-binary core fields (`:m`, `:am`, `:bm`, `:cm`, `:dm`)
 are stored as **per-cell mass** and **per-substep mass amount**
 (`flux_kind = :substep_mass_amount`), not per-area / per-second

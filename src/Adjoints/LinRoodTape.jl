@@ -384,9 +384,9 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
 
     # ORD ∈ {5, 7}: the adjoint kernels carry `Val(ORD)` end-to-end
     # (record type binds it; `_apply_cs_linrood_horizontal_adjoint!`
-    # reads it from the record). The ORD=7 reverse-pass applies the
-    # discontinuous-edge boundary correction at panel-edge faces
-    # (`face_idx ∈ {1, Nc+1}`) so the tape and the FD reference match.
+    # reads it from the record). The ORD=7 reverse pass applies the
+    # cube-edge values of the faces at and next to the panel edges
+    # (`_ppm_edge_values_ord7`) so the tape and the FD reference match.
     (ORD == 5 || ORD == 7) || throw(ArgumentError(
         "LinRoodPPMScheme adjoint tape supports ORD ∈ {5, 7}; got " *
         "ORD=$(ORD)."))

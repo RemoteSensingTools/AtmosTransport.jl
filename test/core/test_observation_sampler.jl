@@ -263,6 +263,8 @@ end
                                  p_half = reshape(collect(1.0:ph_levels), ph_levels, 1),
                                  air_mass_per_area = ones(nlevel, 1), tracers = fill(4e-4, nlevel, ntracer, 1),
                                  column_means = fill(4e-4, ntracer, 1), elevations = [NaN], intake_heights = [NaN],
+                                 altitudes = [NaN], pressures = [NaN],
+                                 placements = [O.VerticalPlacement(O.VERTICAL_PLACEMENT_CODES.lowest_layer, NaN, NaN, NaN)],
                                  intake_levels = Int32[nlevel], layer_bottom = [0.0], layer_top = [10.0],
                                  height_methods = Int8[0], intake_values = fill(4e-4, ntracer, 1))
         end
@@ -288,7 +290,11 @@ end
         end
         @test_throws ArgumentError SoundingNetCDFStream(joinpath(dir, "t.nc"), mesh, 2, Symbol[]; mass_basis = :dry, origin = ORIGIN)
         site = O.SiteRequest("a", 0.0, 0.0, NaN, NaN, 1)
-        sstream = SiteNetCDFStream(joinpath(dir, "sites.nc"), mesh, 2, [:co2], [site], [cell]; mass_basis = :moist, origin = ORIGIN)
+        lowest = O.VerticalPlacement(O.VERTICAL_PLACEMENT_CODES.lowest_layer, NaN, NaN, NaN)
+        @test_throws DimensionMismatch SiteNetCDFStream(joinpath(dir, "bad.nc"), mesh, 2, [:co2], [site], [cell],
+                                                        O.VerticalPlacement[]; mass_basis = :moist, origin = ORIGIN)
+        sstream = SiteNetCDFStream(joinpath(dir, "sites.nc"), mesh, 2, [:co2], [site], [cell], [lowest];
+                                   mass_basis = :moist, origin = ORIGIN)
         record = SiteRecord(0.0, 1, 2, 1; profiles = false)
         record.ps .= 1e5; record.intake_level .= 2; record.layer_bottom .= 0; record.layer_top .= 10
         record.height_method .= 0; record.values .= 4e-4; record.surface_values .= 4e-4

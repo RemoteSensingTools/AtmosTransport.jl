@@ -267,6 +267,7 @@ function _native_preprocessing_plan(cfg::AbstractDict)
         "[numerics] column_balance_weights applies to ERA5 spectral configs; native sources " *
         "set column_balance_weights in their met-source [preprocessing] table"))
     reject_removed_balance_mode(get(cfg, "numerics", Dict{String, Any}()))
+    reject_removed_tm5_convection_route(cfg)
     src_cfg = cfg["source"]
     toml_relpath = String(src_cfg["toml"])
     toml_path = isabspath(toml_relpath) ? toml_relpath : _package_path(toml_relpath)

@@ -18,7 +18,7 @@ function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                 scheme::AbstractAdvectionScheme, dt;
                 workspace::AdvectionWorkspace,
                 diffusion_workspace = nothing,
-                cfl_limit::Real = one(eltype(state.air_mass)),
+                cfl_limit::Real = DEFAULT_CFL_LIMIT,
                 diffusion_op::AbstractDiffusion = NoDiffusion(),
                 emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                 meteo = nothing) where {B <: AbstractMassBasis}
@@ -45,7 +45,7 @@ end
                          ::NoAdvection, dt;
                          workspace = nothing,
                          diffusion_workspace = nothing,
-                         cfl_limit::Real = one(eltype(state.air_mass)),
+                         cfl_limit::Real = DEFAULT_CFL_LIMIT,
                          diffusion_op::AbstractDiffusion = NoDiffusion(),
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
@@ -230,7 +230,7 @@ end
                          ::NoAdvection, dt;
                          workspace = nothing,
                          diffusion_workspace = nothing,
-                         cfl_limit::Real = one(eltype(state.air_mass)),
+                         cfl_limit::Real = DEFAULT_CFL_LIMIT,
                          diffusion_op::AbstractDiffusion = NoDiffusion(),
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
@@ -255,6 +255,9 @@ end
 # H → V → (D or D/2 → S → D/2) → V → H palindrome center. The advection
 # sweeps remain per-tracer on face-indexed meshes, so the surface-flux
 # hook uses the single-tracer `(ncells, Nz)` array-level entry point.
+# One subcycle count `n` from the palindrome outflow budget
+# (`_face_indexed_palindrome_subcycle_count`) gives the composition
+# (H → V)^n → center → (V → H)^n with every flux divided by `n`.
 for (scheme_type, h_sweep, v_sweep) in (
     (:AbstractConstantScheme,    :sweep_horizontal!, :sweep_vertical!),
 )
@@ -263,7 +266,7 @@ for (scheme_type, h_sweep, v_sweep) in (
                           scheme::$scheme_type, dt;
                           workspace::AdvectionWorkspace,
                           diffusion_workspace = nothing,
-                          cfl_limit::Real = one(eltype(state.air_mass)),
+                          cfl_limit::Real = DEFAULT_CFL_LIMIT,
                           diffusion_op::AbstractDiffusion = NoDiffusion(),
                           emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                           meteo = nothing) where {B <: AbstractMassBasis}
@@ -279,6 +282,10 @@ for (scheme_type, h_sweep, v_sweep) in (
 
         n_tr = ntracers(state)
         n_tr == 0 && return nothing
+
+        # Every tracer starts from the same air mass, so one count serves all.
+        n_sub = _face_indexed_palindrome_subcycle_count(hflux, cm, m, grid.horizontal, cfl_limit_ft)
+        fs = inv(eltype(m)(n_sub))
 
         m_save = n_tr > 1 ? similar(m) : m
         if n_tr > 1
@@ -301,8 +308,10 @@ for (scheme_type, h_sweep, v_sweep) in (
             rm_tracer = selectdim(raw, last_dim, idx)
             tracer_name = tracer_names[idx]
 
-            _sweep_horizontal_face_subcycled!(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, cfl_limit_ft)
-            _sweep_vertical_face_subcycled!(rm_tracer, m, cm, scheme, workspace, cfl_limit_ft)
+            for _ in 1:n_sub
+                $h_sweep(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, fs)
+                $v_sweep(rm_tracer, m, cm, scheme, workspace, fs)
+            end
             # Route through the mass-flux VMR wrapper so the
             # Strang-coupled per-tracer diffusion step is column-mass
             # conserving (preserves Σ tracer_mass per column to roundoff).
@@ -318,8 +327,10 @@ for (scheme_type, h_sweep, v_sweep) in (
                                     tracer_names = (tracer_name,))
                 SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(rm_tracer, m, diffusion_op, diffusion_workspace, half_dt, meteo)
             end
-            _sweep_vertical_face_subcycled!(rm_tracer, m, cm, scheme, workspace, cfl_limit_ft)
-            _sweep_horizontal_face_subcycled!(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, cfl_limit_ft)
+            for _ in 1:n_sub
+                $v_sweep(rm_tracer, m, cm, scheme, workspace, fs)
+                $h_sweep(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, fs)
+            end
         end
 
         return nothing
