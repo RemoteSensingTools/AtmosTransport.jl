@@ -154,7 +154,7 @@ record types, and schedules come from [`../Tape/`](../Tape/).
   kernels do use atomics, so a multithreaded CPU or GPU reverse pass is
   reproducible to rounding only; single-threaded it is bit for bit.)
 - `_seed_objective!` computes the seed weights on the host (`1 / max(m, eps)`,
-  `1 / Σm`) where the old seed kernels divided on the device; IEEE division
+  `1 / max(Σm, eps)`) where the old seed kernels divided on the device; IEEE division
   gives the same bits on CPU and CUDA (not checked on Metal).
 - `<center>` is `surface_flux_center!` with the diffusion operator's
   coupling: `D(dt/2) | midpoint | D(dt/2)` with `SplitSurfaceFluxCoupling`,

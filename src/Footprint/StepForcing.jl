@@ -66,10 +66,11 @@ end
     _linear_functional(objective, step, panels_m, mesh) -> CSLinearFunctional
 
 `objective` as a linear functional of the tracer mass at the end of `step`,
-with weights from the air mass `panels_m` of that state. The weights are
-exactly the adjoint seeds the objectives have always used:
-`1 / max(m, eps)` for `CSLayerMeanObjective` (the floor of its evaluation)
-and `1 / Σₖ m` for `CSColumnMeanObjective` (the same column sum as before).
+with weights from the air mass `panels_m` of that state. The weights are the
+derivatives of the objectives' evaluations, air-mass floor included:
+`1 / max(m, eps)` for `CSLayerMeanObjective` and `1 / max(Σₖ m, eps)` for
+`CSColumnMeanObjective` (the column seed had no floor before; the two agree for
+every column holding more than `eps` of air).
 """
 function _linear_functional(obj::CSLayerMeanObjective, step::Integer, panels_m,
                             mesh::CubedSphereMesh)
@@ -92,7 +93,7 @@ function _linear_functional(obj::CSColumnMeanObjective, step::Integer, panels_m,
     jj = mesh.Hp + obj.j
     Nz = size(panels_m[p], 3)
     denom = sum(@view panels_m[p][ii, jj, :])
-    weight = one(FT) / FT(denom)
+    weight = one(FT) / max(FT(denom), _objective_mass_floor(FT))
     return CSLinearFunctional{FT}(step, fill(p, Nz), fill(obj.i, Nz), fill(obj.j, Nz),
                                   1:Nz, fill(weight, Nz), zero(FT))
 end

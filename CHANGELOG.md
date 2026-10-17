@@ -4,6 +4,13 @@
 
 ### Breaking changes
 
+- **Adjoint API (issue #20).** A user-defined `AbstractCSFootprintObjective`
+  needs a `_linear_functional(objective, step, panels_m, mesh)` method (its
+  weights as a `CSLinearFunctional`) to be used in `cs_surface_flux_4dvar`
+  and as a footprint seed; validation, evaluation and seeding methods alone no
+  longer suffice. The exported `CSTapeByteEstimate` gains a `step_records`
+  field before `total_records` (positional construction changes), and
+  `total_records` now includes one end-of-step record per step.
 - **Lat-lon ERA5 physics-file TM5 route removed** (issue #55, pera-noaa). The
   `[tm5_convection]` table of ERA5 spectral preprocessing configs converted the
   ERA5 convection NetCDF to flat physics files and then to TM5 fields on the
@@ -417,7 +424,7 @@
   forward run and its own reverse pass, so one gradient cost
   `O(N_obs)` adjoint runs. Each observation is a fixed sparse linear
   functional of the tracer mass after its step (`CSLinearFunctional`, weights
-  from the replayed air mass: `1/max(m, eps)` for a layer, `1/Σm` for a column). Its
+  from the replayed air mass: `1/max(m, eps)` for a layer, `1/max(Σm, eps)` for a column). Its
   weighted departure `(H(x) − y)/σ²` times those weights is added to the
   adjoint state at the end of its step, after convection and before the
   transposed convection: `λ_s = M_{s+1}ᵀ λ_{s+1} + Σ_{i: s_i = s} (H_i − y_i)/σ_i² w_i`.
@@ -439,7 +446,9 @@
   `FootprintAPI.jl`); the Stride and Revolve drivers take an adjoint start
   (objective seed, explicit seed, or zero) and a step forcing.
   `_seed_objective!` zeroes the adjoint state and adds the objective's linear
-  functional; the seeds are bit-identical.
+  functional; the seeds are bit-identical, except that the column seed now
+  carries the `eps` air-mass floor of the column objective's evaluation (it
+  differs only for columns holding less than `eps` of air).
 - **Time-varying surface fluxes must cover the run** (#59). A run that a
   time-varying source's files do not cover (before their first slice, after
   their last, or in a gap between files) now stops before it starts with an

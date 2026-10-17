@@ -372,7 +372,8 @@ end
 
 
 # Tape record types (_CSSweepRecord, _CSHaloRecord,
-# _CSMidpointRecord, _CSDiffusionRecord, _CSConvectionRecord) and the
+# _CSMidpointRecord, _CSDiffusionRecord, _CSConvectionRecord,
+# _CSStepEndRecord) and the
 # _CSTapeOp union live in `src/Tape/TapeRecords.jl` and are imported
 # via `using ..Tape` at the top of this module. The `S <: CSAdjointSupportedScheme`
 # type constraint on `_CSSweepRecord.scheme` is relaxed to plain `S`
