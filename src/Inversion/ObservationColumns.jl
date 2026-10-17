@@ -76,8 +76,8 @@ function CSObservationColumnMet(; p_top::Real, gravity::Real = STANDARD_GRAVITY,
     isfinite(gravity) && gravity > 0 || throw(ArgumentError(
         "CSObservationColumnMet gravity must be finite and positive, got $gravity"))
     t = _layer_temperature_source(temperature)
-    _check_column_source(t, "temperature")
-    _check_column_source(humidity, "humidity")
+    _check_temperature_source(t)
+    _check_humidity_source(humidity)
     return CSObservationColumnMet(Float64(p_top), Float64(gravity), t, humidity, mass_basis)
 end
 
@@ -88,15 +88,17 @@ function _layer_temperature_source(kelvin::Real)
 end
 _layer_temperature_source(t) = t
 
-# The forms a per-layer column field may take (see the docstring).
-_check_column_source(::Nothing, name) = nothing
-_check_column_source(::AbstractLayerTemperature, name) = nothing
-_check_column_source(::NTuple{6, AbstractArray{<:Real, 3}}, name) = nothing
-_check_column_source(::AbstractVector{<:NTuple{6, AbstractArray{<:Real, 3}}}, name) = nothing
-_check_column_source(x, name) = throw(ArgumentError(
-    "CSObservationColumnMet $(name) must be " *
-    (name == "temperature" ? "a number of kelvin, an Output.AbstractLayerTemperature, " : "nothing, ") *
+# The forms the temperature and the humidity may take (see the docstring).
+const _ColumnPanels = Union{NTuple{6, AbstractArray{<:Real, 3}},
+                            AbstractVector{<:NTuple{6, AbstractArray{<:Real, 3}}}}
+_check_temperature_source(::Union{AbstractLayerTemperature, _ColumnPanels}) = nothing
+_check_temperature_source(x) = throw(ArgumentError(
+    "CSObservationColumnMet temperature must be a number of kelvin, an Output.AbstractLayerTemperature, " *
     "an NTuple{6} of per-layer panel arrays, or a vector of them (one per model step); got $(typeof(x))"))
+_check_humidity_source(::Union{Nothing, _ColumnPanels}) = nothing
+_check_humidity_source(x) = throw(ArgumentError(
+    "CSObservationColumnMet humidity must be nothing, an NTuple{6} of per-layer panel arrays of specific " *
+    "humidity (kg/kg), or a vector of them (one per model step); got $(typeof(x))"))
 
 # Shapes against the run, before the replay.
 _check_column_field(::Nothing, name, mesh, Nz, nsteps) = nothing

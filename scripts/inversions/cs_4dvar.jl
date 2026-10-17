@@ -450,6 +450,8 @@ function _build_synthetic_hydrostatic_problem(cfg, mesh, nsteps, FT)
 end
 
 function _float_vector(table, key)
+    haskey(table, key) || throw(ArgumentError(
+        "[meteo].$(key) is required with source = \"synthetic_hydrostatic\""))
     raw = table[key]
     raw isa AbstractVector && all(x -> x isa Real && !(x isa Bool), raw) || throw(ArgumentError(
         "[meteo].$(key) must be an array of numbers; got $(repr(raw))"))

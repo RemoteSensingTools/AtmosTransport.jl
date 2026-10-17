@@ -43,8 +43,9 @@ struct RejectOutOfRange <: AbstractOutOfRangePolicy end
 struct SkipOutOfRange <: AbstractOutOfRangePolicy end
 
 """
-Move observations outside the valid model-step range to its nearest end: the
-record is sampled once, at the first or last step, whatever its time window.
+Keep observations outside the valid model-step range: a record whose time
+window reaches into the run samples the part inside it (truncated and
+renormalised), any other record the nearest step (first or last).
 """
 struct ClampOutOfRange <: AbstractOutOfRangePolicy end
 
@@ -89,8 +90,12 @@ its time sampling, the cell that contains it, and its objective.
   `step >= 1` is enforced when `nsteps === nothing`) is handled by
   `out_of_range_policy`: [`RejectOutOfRange`](@ref) (default, `"reject"`)
   throws, [`SkipOutOfRange`](@ref) (`"skip"`) drops it,
-  [`ClampOutOfRange`](@ref) (`"clamp"`) samples it once at step `1` or
-  `nsteps`.
+  [`ClampOutOfRange`](@ref) (`"clamp"`) samples the part of its window inside
+  the run (truncated and renormalised) when the window reaches into the run,
+  else step `1` or `nsteps`. Skipped and clamped records are counted in an
+  `@info`. Records with a time window need `nsteps`.
+- **Ids.** Record ids must be unique (departures are joined to records by
+  id).
 - **Cell.** `(lat, lon)` (Float64) → the cell containing the point
   (`Output.locate`, the forward observation sampler's locator).
 - **Point records** ([`PointObservationKind`](@ref)) become
@@ -146,6 +151,7 @@ function _bind_to_mesh(set::CSObservationSet,
     nsteps_max = nsteps === nothing ? typemax(Int) : Int(nsteps)
     tracer_match = tracer_filter === nothing ? nothing : String(tracer_filter)
 
+    _check_unique_ids(set.records, "bind_to_mesh")
     locator = cell_locator(mesh)
     out = CSObservation[]
     sizehint!(out, length(set))
@@ -153,15 +159,24 @@ function _bind_to_mesh(set::CSObservationSet,
     examples = String[]
     placed_requests = SoundingRequest[]
     placements = VerticalPlacement[]
-    n_flagged = 0
+    n_flagged = n_skipped = n_clamped = 0
 
     for record in set.records
         tracer_match === nothing || record.tracer == tracer_match || continue
         record.flag == 0 || (n_flagged += 1; continue)
-        sampling = _record_time_sampling(policy, record, t_start, dt_f, nsteps, nsteps_max)
-        sampling === nothing && continue
-        cell = locate(locator, mod(record.lon, 360.0), record.lat)
-        request = _sounding_request(record, _seconds_after(record.date_components, t_start))
+        nsteps === nothing && record.time_window_s > 0 && throw(ArgumentError(
+            "observation id $(record.id) has a time window (time_window_s = $(record.time_window_s)); " *
+            "bind_to_mesh needs `nsteps` to clip windows to the run"))
+        t = _seconds_after(record.date_components, t_start)
+        k = floor(Int, t / dt_f) + 1
+        sampling = if 1 <= k <= nsteps_max
+            _window_sampling(t, record.time_window_s, k, dt_f, nsteps_max)
+        else
+            outside = _out_of_range_sampling(policy, record, t, k, dt_f, nsteps, nsteps_max)
+            outside === nothing ? (n_skipped += 1; continue) : (n_clamped += 1; outside)
+        end
+        cell = locate(locator, record.lon, record.lat)
+        request = _sounding_request(record, t)
         objective = _bind_objective(record.kind, request, cell, placement, terrain)
         if objective === nothing
             _count_unplaced!(counters, request)
@@ -178,6 +193,10 @@ function _bind_to_mesh(set::CSObservationSet,
                      context = "bind_to_mesh")
     _warn_below_ground(placed_requests, placements, SiteRequest[], VerticalPlacement[]; context = "bind_to_mesh")
     n_flagged > 0 && @info "bind_to_mesh: $(n_flagged) records with a nonzero flag are not assimilated"
+    n_skipped > 0 && @info "bind_to_mesh: $(n_skipped) records outside the run are skipped (SkipOutOfRange)"
+    n_clamped > 0 && @info "bind_to_mesh: $(n_clamped) records outside the run are clamped (ClampOutOfRange): " *
+                           "a record whose window overlaps the run samples that part of the window, the " *
+                           "others the first or last step"
     return out
 end
 
@@ -211,50 +230,49 @@ _seconds_after(dc::NTuple{6, Int16}, t_start::Dates.DateTime) =
 _record_datetime(dc::NTuple{6, Int16}) =
     Dates.DateTime(Int(dc[1]), Int(dc[2]), Int(dc[3]), Int(dc[4]), Int(dc[5]), Int(dc[6]))
 
-# The record's `CSTimeSampling` on the run grid, or the out-of-range policy's
-# answer (`nothing` to drop the record).
-function _record_time_sampling(policy::AbstractOutOfRangePolicy, record::CSObservationRecord,
-                               t_start::Dates.DateTime, dt_f::Float64,
-                               nsteps::Union{Nothing, Integer}, nsteps_max::Int)
-    k = _step_index_from_date(record.date_components, t_start, dt_f)
-    if !(1 <= k <= nsteps_max)
-        adjusted = _out_of_range_step(policy, record, k, nsteps, nsteps_max)
-        return adjusted === nothing ? nothing : CSTimeSampling(adjusted)
-    end
-    return _window_sampling(_seconds_after(record.date_components, t_start), record.time_window_s,
-                            k, dt_f, nsteps_max)
-end
-
 """
     _window_sampling(t, window, k, dt, nsteps_max) -> CSTimeSampling
 
-Time sampling of a record at `t` seconds after the run start, in step `k`:
-step `k` alone without a window; with a window `W > 0`, every step `s` whose
-interval `[(s−1)dt, s·dt)` overlaps `[t − W/2, t + W/2]` clipped to the run
-`[0, nsteps_max·dt]`, weighted by its overlap and renormalised.
+Time sampling of a record at `t` seconds after the run start, in step `k` of
+the run: step `k` alone without a window; with a window `W > 0`, the steps
+overlapping it (`_window_overlap`), or step `k` when rounding leaves none.
 """
 function _window_sampling(t::Float64, window::Float64, k::Int, dt::Float64, nsteps_max::Int)
     window == 0 && return CSTimeSampling(k)
-    run_end = nsteps_max == typemax(Int) ? Inf : nsteps_max * dt
+    return something(_window_overlap(t, window, dt, nsteps_max), CSTimeSampling(k))
+end
+
+"""
+    _window_overlap(t, window, dt, nsteps) -> Union{CSTimeSampling, Nothing}
+
+Every step `s` whose interval `[(s−1)dt, s·dt)` overlaps the window
+`[t − W/2, t + W/2]` clipped to the run `[0, nsteps·dt]`, weighted by its
+overlap and renormalised; `nothing` when the window does not reach into the
+run. At most `nsteps` steps, whatever the window.
+"""
+function _window_overlap(t::Float64, window::Float64, dt::Float64, nsteps::Int)
+    window > 0 || return nothing
     a = max(t - window / 2, 0.0)
-    b = min(t + window / 2, run_end)
-    first_step = max(floor(Int, a / dt) + 1, 1)
-    last_step = min(ceil(Int, b / dt), nsteps_max)
+    b = min(t + window / 2, nsteps * dt)
+    b > a || return nothing
     steps = Int[]
     overlaps = Float64[]
-    for s in first_step:last_step
+    for s in max(floor(Int, a / dt) + 1, 1):min(ceil(Int, b / dt), nsteps)
         overlap = min(b, s * dt) - max(a, (s - 1) * dt)
         overlap > 0 || continue
         push!(steps, s)
         push!(overlaps, overlap)
     end
-    # A window narrower than rounding around a step boundary keeps its step.
-    isempty(steps) && return CSTimeSampling(k)
+    isempty(steps) && return nothing
     return CSTimeSampling(steps, overlaps ./ sum(overlaps))
 end
 
-function _out_of_range_step(::RejectOutOfRange, record, k::Int,
-                            nsteps::Union{Nothing, Integer}, nsteps_max::Int)
+# Records whose time lies outside the run: the policy's sampling, or `nothing`
+# to drop the record. A clamped record samples the part of its window inside
+# the run (truncated and renormalised, as a window at the run's end), and a
+# record without a window, or whose window misses the run, the nearest step.
+function _out_of_range_sampling(::RejectOutOfRange, record, t::Float64, k::Int, dt::Float64,
+                                nsteps::Union{Nothing, Integer}, nsteps_max::Int)
     throw(ArgumentError(
         "observation id $(record.id) at " *
         "$(_date_components_string(record.date_components)) " *
@@ -263,12 +281,15 @@ function _out_of_range_step(::RejectOutOfRange, record, k::Int,
         "`out_of_range_policy = SkipOutOfRange()` or `ClampOutOfRange()` to handle"))
 end
 
-@inline _out_of_range_step(::SkipOutOfRange, record, k::Int,
-                           nsteps::Union{Nothing, Integer}, nsteps_max::Int) = nothing
+_out_of_range_sampling(::SkipOutOfRange, record, t::Float64, k::Int, dt::Float64,
+                       nsteps::Union{Nothing, Integer}, nsteps_max::Int) = nothing
 
-@inline _out_of_range_step(::ClampOutOfRange, record, k::Int,
-                           nsteps::Union{Nothing, Integer}, nsteps_max::Int) =
-    clamp(k, 1, nsteps_max)
+_out_of_range_sampling(::ClampOutOfRange, record, t::Float64, k::Int, dt::Float64,
+                       nsteps::Union{Nothing, Integer}, nsteps_max::Int) =
+    _clamped_sampling(t, record.time_window_s, k, dt, nsteps_max)
+
+_clamped_sampling(t::Float64, window::Float64, k::Int, dt::Float64, nsteps_max::Int) =
+    something(_window_overlap(t, window, dt, nsteps_max), CSTimeSampling(clamp(k, 1, nsteps_max)))
 
 @inline function _step_index_from_date(dc::NTuple{6, Int16},
                                        t_start::Dates.DateTime,
@@ -291,8 +312,10 @@ _date_components_string(dc::NTuple{6, Int16}) =
 # Observations are bound to the cell that contains them, with the locator the
 # forward observation sampler uses (`Output.cell_locator`): the inverse
 # gnomonic map of the mesh; a point on a face belongs to the cell to its east or
-# north (`locate`). Longitudes of any wrap are reduced to [0, 360) first.
+# north (`locate`). The longitude is passed as given, as the sampler passes it:
+# `locate` takes any convention, while reducing it first (`mod(lon, 360)`)
+# rounds a longitude within ~1e-14 below 0 to 360 and can change the cell.
 @inline function _locate_cs_cell(lat_deg::Float64, lon_deg::Float64, locator)
-    cell = locate(locator, mod(lon_deg, 360.0), lat_deg)
+    cell = locate(locator, lon_deg, lat_deg)
     return (cell.panel, cell.i, cell.j)
 end

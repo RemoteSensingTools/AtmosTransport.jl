@@ -7,13 +7,14 @@
 # Dimensions `obs` (unlimited), `date_component = 6` and `sample` (the sampled
 # steps of every observation, a contiguous ragged array: observation `n` owns
 # `sample_count[n]` consecutive samples). Per observation: the record's id,
-# tracer, instrument, date, Float64 lat/lon, kind and time window; the bound
-# cell; the vertical placement (code, height above the model surface,
-# pressure); observed and simulated values, departure, value and model sigma
-# and the normalized departure. Per sample: step, weight and the level read.
-# Root attributes: `cs_departures_schema = "v2"`, mesh identity, time grid,
+# tracer, instrument, date, Float64 lat/lon, kind, time window and whether
+# ClampOutOfRange kept it from outside the run; the bound cell; the vertical
+# placement (code, height above the model surface, pressure); observed and
+# simulated values, departure, value and model sigma and the normalized
+# departure. Per sample: step, weight and the level read. Root attributes:
+# `cs_departures_schema = "v2"`, mesh identity, time grid,
 # `departure_sign_convention = "simulated_minus_observed"`, the placement
-# codes, and optional `run_id` / `iteration`.
+# codes, `n_clamped`, and optional `run_id` / `iteration`.
 #
 # Sign convention: `departure = simulated_value - observed_value` (the 4D-Var
 # innovation `H(x) - y`); `normalized_departure = departure / σ` with
@@ -44,7 +45,7 @@ _departure_placement_codes_description() =
 
 """
     CSDepartureRecord(; id, tracer, instrument_type, date_components, lat, lon,
-                        kind, time_window_s, panel, i, j,
+                        kind, time_window_s, clamped, panel, i, j,
                         vertical_placement, placement_height_agl_m, placement_pressure_pa,
                         steps, weights, levels,
                         observed_value, simulated_value, departure,
@@ -52,7 +53,8 @@ _departure_placement_codes_description() =
 
 One audit row of the CS departure file (schema v2): the observation record's
 provenance (`id`, `tracer`, `instrument_type`, `date_components`, Float64
-`lat`/`lon`, `kind`, `time_window_s`), where it was sampled (the cell
+`lat`/`lon`, `kind`, `time_window_s`; `clamped` when its time lies outside
+the run and `ClampOutOfRange` kept it), where it was sampled (the cell
 `panel, i, j`; the `vertical_placement` code — `Output.VERTICAL_PLACEMENT_CODES`
 for point records, [`COLUMN_MEAN_PLACEMENT_CODE`](@ref) for column records —
 with the height above the model surface or the pressure that placed it, NaN
@@ -72,6 +74,7 @@ struct CSDepartureRecord
     lon::Float64
     kind::_ObservationKind
     time_window_s::Float64
+    clamped::Bool
     panel::Int8
     i::Int32
     j::Int32
@@ -91,7 +94,7 @@ struct CSDepartureRecord
     # Inner constructor: every route (keyword, positional, reader) is checked.
     function CSDepartureRecord(id::Int64, tracer::String, instrument_type::String,
                                date_components::_CSObservationDate, lat::Float64, lon::Float64,
-                               kind::_ObservationKind, time_window_s::Float64,
+                               kind::_ObservationKind, time_window_s::Float64, clamped::Bool,
                                panel::Int8, i::Int32, j::Int32, vertical_placement::Int8,
                                placement_height_agl_m::Float64, placement_pressure_pa::Float64,
                                steps::Vector{Int64}, weights::Vector{Float64}, levels::Vector{Int32},
@@ -148,7 +151,7 @@ struct CSDepartureRecord
             throw(ArgumentError(
                 "$(label): normalized_departure = $normalized_departure but departure / " *
                 "sqrt(value_sigma^2 + model_sigma^2) = $expected_normalized"))
-        return new(id, tracer, instrument_type, date_components, lat, lon, kind, time_window_s,
+        return new(id, tracer, instrument_type, date_components, lat, lon, kind, time_window_s, clamped,
                    panel, i, j, vertical_placement, placement_height_agl_m, placement_pressure_pa,
                    steps, weights, levels, observed_value, simulated_value, departure,
                    value_sigma, model_sigma, normalized_departure)
@@ -157,14 +160,15 @@ end
 
 function CSDepartureRecord(; id::Integer, tracer::AbstractString, instrument_type::AbstractString,
                            date_components, lat::Real, lon::Real, kind = PointObservationKind(),
-                           time_window_s::Real = 0, panel::Integer, i::Integer, j::Integer,
+                           time_window_s::Real = 0, clamped::Bool = false,
+                           panel::Integer, i::Integer, j::Integer,
                            vertical_placement::Integer, placement_height_agl_m::Real = NaN,
                            placement_pressure_pa::Real = NaN, steps, weights, levels,
                            observed_value::Real, simulated_value::Real, departure::Real,
                            value_sigma::Real, model_sigma::Real = 0, normalized_departure::Real)
     return CSDepartureRecord(Int64(id), String(tracer), String(instrument_type),
                              _coerce_date_components(date_components), Float64(lat), Float64(lon),
-                             _parse_observation_kind(kind), Float64(time_window_s),
+                             _parse_observation_kind(kind), Float64(time_window_s), clamped,
                              Int8(panel), Int32(i), Int32(j), Int8(vertical_placement),
                              Float64(placement_height_agl_m), Float64(placement_pressure_pa),
                              collect(Int64, steps), collect(Float64, weights), collect(Int32, levels),
@@ -283,8 +287,9 @@ Validation (`ArgumentError` on any violation):
   (point → [`CSPlacedPointObjective`](@ref), column →
   [`CSColumnMeanObjective`](@ref)), the containing cell of the record's
   Float64 `(lat, lon)`, the time sampling re-derived from the record date and
-  window on the run grid `t_start`, `dt`, `nsteps` (records moved by
-  `ClampOutOfRange` cannot be written), the value, and
+  window on the run grid `t_start`, `dt`, `nsteps` (for a record outside the
+  run, as `ClampOutOfRange` binds it; such rows are marked `clamped`), the
+  value, and
   ``σ = \\sqrt{\\text{value\\_sigma}^2 + \\text{model\\_sigma}^2}``;
 - each stencil matches its observation's cell and time sampling.
 
@@ -342,12 +347,12 @@ function build_departure_set(set::CSObservationSet,
         cell == (obs.objective.panel, obs.objective.i, obs.objective.j) || throw(ArgumentError(
             "$(label): the record's (lat, lon) = ($(rec.lat), $(rec.lon)) is in cell $(cell), " *
             "the observation in $((obs.objective.panel, obs.objective.i, obs.objective.j))"))
-        k_rec = _step_index_from_date(rec.date_components, t_start_dt, dt_f)
-        1 <= k_rec <= nsteps || throw(ArgumentError(
-            "$(label): the record time maps to step $(k_rec), outside [1, $nsteps]; records moved " *
-            "into the run by ClampOutOfRange cannot be written as departures"))
-        expected = _window_sampling(_seconds_after(rec.date_components, t_start_dt), rec.time_window_s,
-                                    k_rec, dt_f, Int(nsteps))
+        # A record outside the run reaches the 4D-Var only through ClampOutOfRange.
+        t_rec = _seconds_after(rec.date_components, t_start_dt)
+        k_rec = floor(Int, t_rec / dt_f) + 1
+        clamped = !(1 <= k_rec <= nsteps)
+        expected = clamped ? _clamped_sampling(t_rec, rec.time_window_s, k_rec, dt_f, Int(nsteps)) :
+                             _window_sampling(t_rec, rec.time_window_s, k_rec, dt_f, Int(nsteps))
         expected == obs.sampling || throw(ArgumentError(
             "$(label): the observation samples steps $(obs.sampling.steps) with weights " *
             "$(obs.sampling.weights), but the record maps to $(expected.steps) with " *
@@ -370,7 +375,7 @@ function build_departure_set(set::CSObservationSet,
         records[k] = CSDepartureRecord(
             id = rec.id, tracer = rec.tracer, instrument_type = rec.instrument_type,
             date_components = rec.date_components, lat = rec.lat, lon = rec.lon,
-            kind = rec.kind, time_window_s = rec.time_window_s,
+            kind = rec.kind, time_window_s = rec.time_window_s, clamped = clamped,
             panel = stencil.panel, i = stencil.i, j = stencil.j,
             vertical_placement = stencil.placement_method,
             placement_height_agl_m = stencil.height_agl_m, placement_pressure_pa = stencil.pressure_pa,
@@ -407,6 +412,8 @@ const _DEPARTURE_VARIABLES = (
     ("lon", Float64, :lon, ("units" => "degrees_east", "description" => "observation longitude")),
     ("time_window_s", Float64, :time_window_s,
      ("units" => "s", "description" => "sampling window centred on the record time; 0 = one model step")),
+    ("clamped", Int8, :clamped,
+     ("description" => "1 when the record time lies outside the run and ClampOutOfRange kept it, else 0",)),
     ("panel", Int8, :panel, ("description" => "bound cubed-sphere panel (1:6)",)),
     ("i", Int32, :i, ("description" => "bound CS interior cell index along panel X",)),
     ("j", Int32, :j, ("description" => "bound CS interior cell index along panel Y",)),
@@ -435,7 +442,7 @@ const _CS_DEPARTURES_REQUIRED_VARS = ("date_components", "kind", "sample_count",
 
 const _CS_DEPARTURES_REQUIRED_ATTRS = (
     "mesh_Nc", "mesh_panel_convention", "mesh_cs_definition_tag",
-    "t_start", "dt_seconds", "nsteps", "departure_sign_convention",
+    "t_start", "dt_seconds", "nsteps", "departure_sign_convention", "n_clamped",
 )
 
 """
@@ -466,6 +473,7 @@ function write_departures(path::AbstractString, set::CSDepartureSet)
         ds.attrib["nsteps"] = Int64(set.nsteps)
         ds.attrib["departure_sign_convention"] = _CS_DEPARTURE_SIGN_CONVENTION
         ds.attrib["vertical_placement_codes"] = _departure_placement_codes_description()
+        ds.attrib["n_clamped"] = Int64(count(r -> r.clamped, set.records))
         set.run_id === nothing || (ds.attrib["run_id"] = set.run_id)
         set.iteration === nothing || (ds.attrib["iteration"] = Int64(set.iteration))
 
@@ -521,8 +529,9 @@ Validation (fails fast with `ArgumentError`):
   with Float32 coordinates and a single step, are rejected).
 - Every required root attribute must be present:
   `mesh_Nc`, `mesh_panel_convention`, `mesh_cs_definition_tag`,
-  `t_start`, `dt_seconds`, `nsteps`, `departure_sign_convention`, the last
-  equal to `"simulated_minus_observed"`.
+  `t_start`, `dt_seconds`, `nsteps`, `departure_sign_convention` (equal to
+  `"simulated_minus_observed"`), and `n_clamped` (the number of rows marked
+  `clamped`).
 - Every required variable must be present, `date_components` dimensioned
   `(date_component = 6, obs)`, every `obs` variable of the `obs` length, and
   the `sample_count`s must add up to the `sample` length.
@@ -573,18 +582,26 @@ function read_departures(path::AbstractString)
             "$(sum(Int, counts; init = 0)) (each must be positive); sample_step/weight/level have " *
             "$(nsample)/$(length(sample_weight))/$(length(sample_level)) entries"))
 
+        for (v, data) in columns
+            v in ("placement_height_agl_m", "placement_pressure_pa") && continue
+            any(ismissing, data) && throw(ArgumentError(
+                "departures NetCDF $(repr(path)) variable $(repr(v)) has fill values"))
+        end
+        (any(ismissing, sample_step) || any(ismissing, sample_weight) || any(ismissing, sample_level)) &&
+            throw(ArgumentError("departures NetCDF $(repr(path)) has fill values in its sample arrays"))
         records = Vector{CSDepartureRecord}(undef, n)
         stop = 0
         @inbounds for k in 1:n
             start = stop + 1
             stop += Int(counts[k])
-            col(name) = columns[name][k]
+            # The placement height and pressure read a fill value as unused (NaN).
+            col(name) = (x = columns[name][k]; ismissing(x) ? NaN : x)
             records[k] = CSDepartureRecord(
                 id = col("id"), tracer = String(col("tracer")),
                 instrument_type = String(col("instrument_type")),
                 date_components = ntuple(c -> Int16(dates[c, k]), 6),
                 lat = col("lat"), lon = col("lon"), kind = String(col("kind")),
-                time_window_s = col("time_window_s"),
+                time_window_s = col("time_window_s"), clamped = col("clamped") != 0,
                 panel = col("panel"), i = col("i"), j = col("j"),
                 vertical_placement = col("vertical_placement"),
                 placement_height_agl_m = col("placement_height_agl_m"),
@@ -596,6 +613,10 @@ function read_departures(path::AbstractString)
                 model_sigma = col("model_sigma"), normalized_departure = col("normalized_departure"))
         end
 
+        n_clamped = count(r -> r.clamped, records)
+        Int(ds.attrib["n_clamped"]) == n_clamped || throw(ArgumentError(
+            "departures NetCDF $(repr(path)) has n_clamped = $(ds.attrib["n_clamped"]) but " *
+            "$(n_clamped) rows marked clamped"))
         run_id = haskey(ds.attrib, "run_id") ? String(ds.attrib["run_id"]) : nothing
         iteration = haskey(ds.attrib, "iteration") ? Int(ds.attrib["iteration"]) : nothing
         return CSDepartureSet(records;

@@ -15,7 +15,8 @@
   files store Float64 coordinates, the record kind and window, the vertical
   placement (code, height above the model surface, pressure), `model_sigma`,
   and every sampled step with its weight and level as a ragged `sample`
-  dimension, instead of `alt` and `step`; `normalized_departure` divides by
+  dimension, instead of `alt` and `step`, plus a `clamped` flag per row and
+  an `n_clamped` attribute; `normalized_departure` divides by
   `√(value_sigma² + model_sigma²)` (`schemas/cs_departures_v2.toml`).
   `CSObservationRecord` and `CSDepartureRecord` change accordingly.
   `build_departure_set(set, result::CS4DVarResult, mesh, t_start, dt, nsteps)`
@@ -520,8 +521,17 @@
   layer's mixing ratio and its functional weight `1/max(m, eps)` there. A
   record with `time_window_s = W > 0` samples the steps overlapping
   `[t − W/2, t + W/2]` with weights proportional to the overlap (TM5-4DVAR's
-  Δt/ΣΔt), truncated at the run's ends and renormalised (`CSTimeSampling`);
-  `CSLinearFunctional` and the step forcing carry entries at several steps.
+  Δt/ΣΔt), truncated at the run's ends and renormalised (`CSTimeSampling`;
+  window records need `nsteps`); `CSLinearFunctional` and the step forcing
+  carry entries at several steps. `ClampOutOfRange` now keeps the part of an
+  outside record's window inside the run (else the first or last step, as
+  before), counts clamped and skipped records in an `@info`, and departure
+  rows mark such records `clamped`. Record ids must be unique
+  (`CSObservationSet`, `read_observations`, `bind_to_mesh`), and the optional
+  vertical fields read a declared `_FillValue` (xarray's NaN) as absent. The
+  inversion samples the end of the model step containing a record's time (or
+  its window mean), the forward sampler window ends (linear or nearest):
+  both read the same layer and value of the same state.
   Instantaneous observations give bit-identical costs and gradients to
   before (checked on 75 scheme/physics/checkpoint combinations, Float32, and
   the footprints and Jacobians). `CS4DVarResult.stencils`

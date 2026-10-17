@@ -196,8 +196,8 @@ _total_sigma(r::CSObservationRecord) =
 """
     CSObservationSet(records, time_origin)
 
-Collection of [`CSObservationRecord`](@ref) rows that share an absolute
-`time_origin` string (an ISO-8601 timestamp, e.g.
+Collection of [`CSObservationRecord`](@ref) rows, with unique ids, that share
+an absolute `time_origin` string (an ISO-8601 timestamp, e.g.
 `"1900-01-01 00:00:00"`). The on-disk format always carries the origin
 even though the per-record dates are stored as absolute components —
 the origin tags the convention so a downstream consumer that wants to
@@ -207,6 +207,23 @@ record dates.
 struct CSObservationSet
     records::Vector{CSObservationRecord}
     time_origin::String
+    function CSObservationSet(records::Vector{CSObservationRecord}, time_origin::String)
+        _check_unique_ids(records, "CSObservationSet")
+        return new(records, time_origin)
+    end
+end
+
+# Record ids are unique: departures are joined to records by id.
+function _check_unique_ids(records, label::AbstractString)
+    seen = Dict{Int64, Int}()
+    for (row, r) in enumerate(records)
+        first_row = get(seen, r.id, 0)
+        first_row == 0 || throw(ArgumentError(
+            "$(label): observation id $(r.id) appears in rows $(first_row) and $(row); record ids must be " *
+            "unique (departures are joined to records by id)"))
+        seen[r.id] = row
+    end
+    return nothing
 end
 
 CSObservationSet(records::AbstractVector{CSObservationRecord};
@@ -324,7 +341,11 @@ Validation (fails fast with `ArgumentError`):
 - Root attribute `time_origin` must be present.
 - Every v2 variable must be present, `lat` and `lon` stored as Float64, and
   `date_components` dimensioned `(date_component = 6, obs)`.
-- Every row must pass the [`CSObservationRecord`](@ref) checks.
+- `elevation_m`, `intake_height_m`, `altitude_m` and `pressure_pa` read NaN or
+  a declared fill value (`_FillValue`, e.g. xarray's NaN) as absent; any other
+  variable with a fill value is an error.
+- Every row must pass the [`CSObservationRecord`](@ref) checks, and record
+  ids must be unique.
 """
 function read_observations(path::AbstractString)
     isfile(path) || throw(ArgumentError(
@@ -357,22 +378,33 @@ function read_observations(path::AbstractString)
                 "observation NetCDF $(repr(path)) variable $(repr(v)) has length " *
                 "$(length(data)); expected $(n) to match obs dim"))
         end
+        any(ismissing, dates) && throw(ArgumentError(
+            "observation NetCDF $(repr(path)) has fill values in date_components"))
+        # The optional vertical fields read fill values (e.g. xarray's
+        # `_FillValue = NaN`) as absent; any other variable must be complete.
+        value(v, i) = _observation_value(columns[v][i], v, i, path)
+        absent(v, i) = (x = columns[v][i]; ismissing(x) ? NaN : Float64(x))
         records = Vector{CSObservationRecord}(undef, n)
         @inbounds for i in 1:n
             records[i] = CSObservationRecord(
-                Int64(columns["id"][i]), ntuple(c -> Int16(dates[c, i]), 6),
-                Float64(columns["lat"][i]), Float64(columns["lon"][i]),
-                _parse_observation_kind(String(columns["kind"][i])),
-                Float64(columns["elevation_m"][i]), Float64(columns["intake_height_m"][i]),
-                Float64(columns["altitude_m"][i]), Float64(columns["pressure_pa"][i]),
-                Float64(columns["time_window_s"][i]), Int8(columns["flag"][i]),
-                Float64(columns["value"][i]), Float64(columns["value_sigma"][i]),
-                Float64(columns["model_sigma"][i]),
-                String(columns["instrument_type"][i]), String(columns["tracer"][i]))
+                Int64(value("id", i)), ntuple(c -> Int16(dates[c, i]), 6),
+                Float64(value("lat", i)), Float64(value("lon", i)),
+                _parse_observation_kind(String(value("kind", i))),
+                absent("elevation_m", i), absent("intake_height_m", i),
+                absent("altitude_m", i), absent("pressure_pa", i),
+                Float64(value("time_window_s", i)), Int8(value("flag", i)),
+                Float64(value("value", i)), Float64(value("value_sigma", i)),
+                Float64(value("model_sigma", i)),
+                String(value("instrument_type", i)), String(value("tracer", i)))
         end
+        _check_unique_ids(records, "observation NetCDF $(repr(path))")
         return CSObservationSet(records, String(time_origin))
     end
 end
+
+_observation_value(x, v, i, path) = ismissing(x) ? throw(ArgumentError(
+    "observation NetCDF $(repr(path)) variable $(repr(v)) has a fill value in row $(i); only " *
+    "elevation_m, intake_height_m, altitude_m and pressure_pa may be absent (NaN or fill)")) : x
 
 function _validate_schema_version(ds, path)
     haskey(ds.attrib, "cs_observations_schema") || throw(ArgumentError(

@@ -444,6 +444,8 @@ end
                            observations_extra = "[observations.placement]\nvertical_coordinates = [\"altitude\"]\n")))
         @test occursin("interface_pressures_pa", _config_error(_hydrostatic_config(obs_path;
             meteo = replace(HYDROSTATIC_BLOCK, "[1000.0, 10000.0" => "[10000.0, 1000.0"))))
+        @test occursin("[meteo].interface_pressures_pa is required", _config_error(_hydrostatic_config(obs_path;
+            meteo = replace(HYDROSTATIC_BLOCK, r"interface_pressures_pa = .*\n" => ""))))
         # A point record without a vertical coordinate: error, or skip and count.
         mktempdir() do sub
             path = _write_driver_observations(joinpath(sub, "obs.nc");

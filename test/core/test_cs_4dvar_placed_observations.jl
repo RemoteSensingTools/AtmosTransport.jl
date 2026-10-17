@@ -206,6 +206,9 @@ end
     err = try _fourdvar(P, _bind(P, record), _controls(P); met = column_met(P; humidity = nothing)) catch e e end
     @test err isa ArgumentError && occursin("pressure_basis = \"dry\"", sprint(showerror, err))
     @test _fourdvar(P, dry_obs, _controls(P); met = column_met(P; humidity = nothing)).simulated == dry.simulated
+    # The humidity is panels (or per-step panels), not a temperature type.
+    err = try column_met(P; humidity = O.ConstantLayerTemperature(280.0)) catch e e end
+    @test err isa ArgumentError && occursin("humidity must be nothing", err.msg)
     # Placed observations need the column meteorology.
     err = try _fourdvar(P, dry_obs, _controls(P); met = nothing) catch e e end
     @test err isa ArgumentError && occursin("column_met", sprint(showerror, err))
@@ -286,6 +289,8 @@ end
                         for c in eachindex(controls)]
             @test _relerr(unit(w), expected) <= 1e-12
             @test [only(r.stencils).levels for r in parts] == [[l] for l in only(w.stencils).levels]
+            # The placed sample changes layer within its window (the air mass evolves).
+            o.objective isa AT.CSPlacedPointObjective && @test length(unique(only(w.stencils).levels)) > 1
         end
     end
 end

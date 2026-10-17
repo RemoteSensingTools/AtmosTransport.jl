@@ -139,7 +139,7 @@ end
 @testset "CSDepartureRecord — positional constructor goes through validation" begin
     args(; departure = 1.0, simulated = 11.0, panel = Int8(1)) =
         (Int64(1), "CO2", "TCCON", (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
-         0.0, 0.0, AT.PointObservationKind(), 0.0, panel, Int32(1), Int32(1), CODES.record_height, 10.0, NaN,
+         0.0, 0.0, AT.PointObservationKind(), 0.0, false, panel, Int32(1), Int32(1), CODES.record_height, 10.0, NaN,
          Int64[1], [1.0], Int32[3], 10.0, simulated, departure, 2.0, 0.0, departure / 2)
     @test AT.CSDepartureRecord(args()...) isa AT.CSDepartureRecord
     @test_throws ArgumentError AT.CSDepartureRecord(args(departure = -1.0)...)
@@ -202,8 +202,12 @@ end
     @test occursin("not a record", _errmsg(() -> _build(inputs; observations = replace_obs(1, hand))))
     foreign = AT.CSObservation(o.sampling, o.objective, o.value, o.sigma; id = 999)
     @test occursin("not a record", _errmsg(() -> _build(inputs; observations = replace_obs(1, foreign))))
-    # Duplicate ids in the set.
-    dup = AT.CSObservationSet([inputs.set.records; inputs.set.records[1]]; time_origin = T0_TEST_STR)
+    # Repeated ids: rejected by the set itself, and by build_departure_set for
+    # a set changed after construction.
+    @test occursin("record ids must be unique",
+                   _errmsg(() -> AT.CSObservationSet([inputs.set.records; inputs.set.records[1]])))
+    dup = AT.CSObservationSet(copy(inputs.set.records); time_origin = T0_TEST_STR)
+    push!(dup.records, inputs.set.records[1])
     @test occursin("more than once", _errmsg(() -> AT.build_departure_set(dup, obs, sims, st, inputs.mesh,
                                                                           T0_TEST_STR, DT_TEST, 24)))
     # A moved cell, another time sampling, value or sigma.
@@ -229,14 +233,31 @@ end
                               O.VerticalPlacement(CODES.record_height, 10.0, NaN, NaN), O.TotalFromHumidity()),
                               o.value, o.sigma; id = o.id)
     @test occursin("column record bound to", _errmsg(() -> _build(inputs; observations = replace_obs(1, placed))))
-    # A record moved into the run by ClampOutOfRange.
-    late = AT.CSObservationRecord(id = 50, date_components = _dc_at(30DT_TEST), lat = inputs.set.records[1].lat,
-                                  lon = inputs.set.records[1].lon, kind = "column", value = 1.0, value_sigma = 1.0,
-                                  instrument_type = "I", tracer = "CO2")
-    late_set = AT.CSObservationSet([late]; time_origin = T0_TEST_STR)
-    clamped = AT.bind_to_mesh(late_set, inputs.mesh, T0_TEST, DT_TEST; nsteps = 24, out_of_range_policy = "clamp")
-    @test occursin("ClampOutOfRange", _errmsg(() -> AT.build_departure_set(late_set, clamped, [1.0],
-        _column_stencil.(clamped), inputs.mesh, T0_TEST_STR, DT_TEST, 24)))
+end
+
+@testset "build_departure_set — records kept by ClampOutOfRange are marked clamped" begin
+    mesh = _mesh()
+    lons, lats = AT.panel_cell_center_lonlat(mesh, 1)
+    rec(id, t, window) = AT.CSObservationRecord(; id, date_components = _dc_at(t), lat = lats[2, 2], lon = lons[2, 2],
+        kind = "column", time_window_s = window, value = 1.0, value_sigma = 1.0, instrument_type = "I", tracer = "CO2")
+    set = AT.CSObservationSet([rec(50, 30DT_TEST, 0.0), rec(51, 25DT_TEST, 6DT_TEST), rec(52, 3.5DT_TEST, 0.0)];
+                              time_origin = T0_TEST_STR)
+    obs = AT.bind_to_mesh(set, mesh, T0_TEST, DT_TEST; nsteps = 24, out_of_range_policy = "clamp")
+    dep = AT.build_departure_set(set, obs, fill(1.5, 3), _column_stencil.(obs), mesh, T0_TEST_STR, DT_TEST, 24)
+    @test [r.clamped for r in dep] == [true, true, false]
+    @test dep[1].steps == [24] && dep[2].steps == [23, 24] && dep[2].weights == [0.5, 0.5]
+    mktempdir() do dir
+        path = joinpath(dir, "clamped.nc")
+        AT.write_departures(path, dep)
+        @test NCDataset(ds -> ds.attrib["n_clamped"], path, "r") == 2
+        @test [r.clamped for r in AT.read_departures(path)] == [true, true, false]
+        NCDataset(ds -> ds.attrib["n_clamped"] = 1, path, "a")
+        @test occursin("n_clamped", _errmsg(() -> AT.read_departures(path)))
+    end
+    # A clamped observation must keep the clamped sampling of its record.
+    moved = AT.CSObservation(AT.CSTimeSampling(24), obs[2].objective, obs[2].value, obs[2].sigma; id = 51)
+    @test occursin("maps to", _errmsg(() -> AT.build_departure_set(set, [obs[1], moved, obs[3]], fill(1.5, 3),
+        _column_stencil.([obs[1], moved, obs[3]]), mesh, T0_TEST_STR, DT_TEST, 24)))
 end
 
 @testset "CSDepartureSet — per-record bounds vs run metadata" begin
@@ -331,8 +352,9 @@ end
             @test occursin("-1 = column_mean", ds.attrib["vertical_placement_codes"])
             @test occursin("2 = pressure", ds.attrib["vertical_placement_codes"])
             @test ds.dim["obs"] == 3 && ds.dim["date_component"] == 6 && ds.dim["sample"] == 5
+            @test ds.attrib["n_clamped"] == 0
             types = Dict("id" => Int64, "date_components" => Int16, "lat" => Float64, "lon" => Float64,
-                         "time_window_s" => Float64, "panel" => Int8, "i" => Int32, "j" => Int32,
+                         "time_window_s" => Float64, "clamped" => Int8, "panel" => Int8, "i" => Int32, "j" => Int32,
                          "vertical_placement" => Int8, "placement_height_agl_m" => Float64,
                          "placement_pressure_pa" => Float64, "sample_count" => Int32, "sample_step" => Int64,
                          "sample_weight" => Float64, "sample_level" => Int32, "observed_value" => Float64,
@@ -362,7 +384,7 @@ end
         @test_throws ArgumentError AT.read_departures(
             mutated("sign", ds -> ds.attrib["departure_sign_convention"] = "observed_minus_simulated"))
         for attr in ("mesh_Nc", "mesh_panel_convention", "mesh_cs_definition_tag", "t_start", "dt_seconds",
-                     "nsteps", "departure_sign_convention")
+                     "nsteps", "departure_sign_convention", "n_clamped")
             @test_throws ArgumentError AT.read_departures(mutated("no_$(attr)", ds -> delete!(ds.attrib, attr)))
         end
         @test_throws ArgumentError AT.read_departures(joinpath(dir, "missing.nc"))
@@ -372,8 +394,8 @@ end
         @test_throws ArgumentError AT.read_departures(mutated("weights", ds -> ds["sample_weight"][2] = 0.9))
         @test_throws ArgumentError AT.read_departures(mutated("departure", ds -> ds["departure"][1] = -5.0))
         # Missing variables: rewrite the file without one.
-        function without(var)
-            path = joinpath(dir, "no_var_$(var).nc")
+        function without(var; fill = nothing, fillvalue = NaN)
+            path = joinpath(dir, "no_var_$(var)_$(fill === nothing).nc")
             NCDataset(good, "r") do src
                 NCDataset(path, "c") do ds
                     for (d, n) in src.dim
@@ -385,16 +407,23 @@ end
                     for name in keys(src)
                         name == var && continue
                         data = Array(src[name])
-                        v = defVar(ds, name, eltype(src[name].var), dimnames(src[name]))
+                        attrib = name == fill ? Dict{String, Any}("_FillValue" => fillvalue) : Dict{String, Any}()
+                        v = defVar(ds, name, eltype(src[name].var), dimnames(src[name]); attrib)
                         v[ntuple(_ -> Colon(), ndims(data))...] = data
                     end
                 end
             end
             return path
         end
-        for var in ("lat", "kind", "vertical_placement", "sample_count", "sample_step", "sample_weight",
+        for var in ("lat", "kind", "clamped", "vertical_placement", "sample_count", "sample_step", "sample_weight",
                     "sample_level", "model_sigma", "normalized_departure")
             @test occursin("missing required variable", _errmsg(() -> AT.read_departures(without(var))))
         end
+        # The unused placement height and pressure may be fill values
+        # (`_FillValue = NaN`); other variables may not.
+        back = AT.read_departures(without("none"; fill = "placement_pressure_pa"))
+        @test all(r -> isnan(r.placement_pressure_pa), back)
+        @test occursin("fill values", _errmsg(() -> AT.read_departures(           # every departure is 0.5
+            without("none"; fill = "departure", fillvalue = 0.5))))
     end
 end

@@ -84,15 +84,34 @@ end
     @test s.steps == [22, 23, 24] && s.weights ≈ [0.2, 0.4, 0.4] && sum(s.weights) ≈ 1
     @test at(23.5DT_TEST, 100DT_TEST).steps == 1:24
     @test sum(at(23.5DT_TEST, 100DT_TEST).weights) ≈ 1
-    # Without an upper bound only the start truncates.
-    s = only(AT.bind_to_mesh(_set([_record(id = 1, dc = _dc_at(23.5DT_TEST), lat = lats[2, 2], lon = lons[2, 2],
-                                           time_window_s = 4DT_TEST)]), _mesh(), T0_TEST, DT_TEST)).sampling
-    @test s.steps == [22, 23, 24, 25, 26] && s.weights ≈ [0.125, 0.25, 0.25, 0.25, 0.125]
-    # Out-of-range window records: the record time decides; clamp samples one step.
+    # A window of any length is clipped to the run (at most nsteps steps).
+    @test at(12DT_TEST, 1e12).steps == 1:24
+    # Windows need the run length.
+    err = try
+        AT.bind_to_mesh(_set([_record(id = 1, dc = _dc_at(23.5DT_TEST), lat = lats[2, 2], lon = lons[2, 2],
+                                      time_window_s = 4DT_TEST)]), _mesh(), T0_TEST, DT_TEST)
+    catch e
+        e
+    end
+    @test err isa ArgumentError && occursin("needs `nsteps`", err.msg)
+    # Out-of-range window records: the record time decides.
     @test_throws ArgumentError at(-DT_TEST, 4DT_TEST)
-    @test isempty(_bind([_record(id = 1, dc = _dc_at(-DT_TEST), lat = lats[2, 2], lon = lons[2, 2],
-                                 time_window_s = 4DT_TEST)]; out_of_range_policy = "skip"))
-    @test at(-DT_TEST, 4DT_TEST; out_of_range_policy = "clamp") == AT.CSTimeSampling(1)
+    @test (@test_logs (:info, r"1 records outside the run are skipped") _bind([_record(id = 1,
+        dc = _dc_at(-DT_TEST), lat = lats[2, 2], lon = lons[2, 2], time_window_s = 4DT_TEST)];
+        out_of_range_policy = "skip")) == AT.CSObservation[]
+end
+
+@testset "bind_to_mesh — ClampOutOfRange keeps the window's part inside the run" begin
+    lons, lats = AT.panel_cell_center_lonlat(_mesh(), 2)
+    rec(id, t, window) = _record(; id, dc = _dc_at(t), lat = lats[2, 2], lon = lons[2, 2], time_window_s = window)
+    records = [rec(1, -0.5DT_TEST, 5DT_TEST),     # [−3, 2) h: steps 1 and 2 of the run, renormalised
+               rec(2, 25DT_TEST, 6DT_TEST),       # [22, 28) h: steps 23 and 24
+               rec(3, -5DT_TEST, 2DT_TEST),       # [−6, −4) h misses the run: the first step
+               rec(4, 30DT_TEST, 0),              # no window: the last step
+               rec(5, 3.5DT_TEST, 0)]             # inside the run
+    obs = @test_logs (:info, r"4 records outside the run are clamped") _bind(records; out_of_range_policy = "clamp")
+    @test [o.sampling for o in obs] == [AT.CSTimeSampling([1, 2], [0.5, 0.5]), AT.CSTimeSampling([23, 24], [0.5, 0.5]),
+                                        AT.CSTimeSampling(1), AT.CSTimeSampling(24), AT.CSTimeSampling(4)]
     # The observation is complete after its last sampled step.
     o = only(_bind([_record(id = 1, dc = _dc_at(5.5DT_TEST), lat = lats[2, 2], lon = lons[2, 2],
                             time_window_s = 3DT_TEST)]))
@@ -219,6 +238,25 @@ end
     lat, lon = points[1]
     wrapped(l) = _cell(only(_bind([_record(id = 1, dc = _dc_at(0), lat = lat, lon = l)])))
     @test wrapped(lon) == wrapped(lon + 360) == wrapped(lon - 360)
+    # Longitudes next to the 0/360 and 180 meridians: the longitude reaches
+    # `locate` as given (reducing −1e-14 with mod(lon, 360) gives 360.0 and the
+    # neighbouring cell).
+    boundary = [(0.0, -1e-14), (0.0, 360 - 1e-13), (0.0, 180 + 1e-13), (0.0, 180 - 1e-13), (0.0, -180 + 1e-13),
+                (10.0, -1e-14), (-35.0, 360 - 1e-13), (0.0, 0.0), (0.0, 360.0)]
+    obs = _bind([_record(id = k, dc = _dc_at(0), lat = lat, lon = lon) for (k, (lat, lon)) in enumerate(boundary)])
+    @test [_cell(o) for o in obs] == [(c = O.locate(locator, lon, lat); (c.panel, c.i, c.j)) for (lat, lon) in boundary]
+    reduced = O.locate(locator, mod(-1e-14, 360.0), 0.0)
+    @test (reduced.panel, reduced.i, reduced.j) != _cell(obs[1])      # the case the reduction got wrong
+end
+
+@testset "bind_to_mesh — record ids are unique" begin
+    lons, lats = AT.panel_cell_center_lonlat(_mesh(), 1)
+    r(id) = _record(; id, dc = _dc_at(0), lat = lats[1, 1], lon = lons[1, 1])
+    err = try AT.CSObservationSet([r(1), r(2), r(1)]) catch e e end
+    @test err isa ArgumentError && occursin("observation id 1 appears in rows 1 and 3", err.msg)
+    set = _set([r(1), r(2)])
+    push!(set.records, r(2))                       # a set changed after construction
+    @test_throws ArgumentError AT.bind_to_mesh(set, _mesh(), T0_TEST, DT_TEST; nsteps = 24)
 end
 
 # Points within Float32 rounding of a cell edge: the Float64 record binds to the

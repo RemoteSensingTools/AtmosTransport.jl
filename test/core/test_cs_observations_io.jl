@@ -207,6 +207,54 @@ end
     end
 end
 
+@testset "read_observations: fill values and repeated ids" begin
+    mktempdir() do dir
+        # An xarray-style file: float variables carry `_FillValue = NaN`, so
+        # NCDatasets reads NaN entries as missing; elevation uses -9999.
+        path = joinpath(dir, "xarray.nc")
+        NCDataset(path, "c") do ds
+            defDim(ds, "obs", 2)
+            defDim(ds, "date_component", 6)
+            ds.attrib["cs_observations_schema"] = "v2"
+            ds.attrib["time_origin"] = "1900-01-01 00:00:00"
+            nanfill = Dict("_FillValue" => NaN)
+            defVar(ds, "id", Int64, ("obs",))[:] = [1, 2]
+            defVar(ds, "date_components", Int16, ("date_component", "obs"))[:, :] =
+                repeat(Int16[2024, 1, 1, 0, 0, 0], 1, 2)
+            defVar(ds, "lat", Float64, ("obs",); attrib = nanfill)[:] = [10.0, 20.0]
+            defVar(ds, "lon", Float64, ("obs",); attrib = nanfill)[:] = [30.0, 40.0]
+            defVar(ds, "kind", String, ("obs",))[:] = ["point", "column"]
+            defVar(ds, "elevation_m", Float64, ("obs",); attrib = Dict("_FillValue" => -9999.0))[:] =
+                [120.0, -9999.0]
+            defVar(ds, "intake_height_m", Float64, ("obs",); attrib = nanfill)[:] = [10.0, NaN]
+            defVar(ds, "altitude_m", Float64, ("obs",); attrib = nanfill)[:] = [NaN, NaN]
+            defVar(ds, "pressure_pa", Float64, ("obs",); attrib = nanfill)[:] = [NaN, NaN]
+            for (v, data) in (("time_window_s", [0.0, 3600.0]), ("value", [400.0, 401.0]),
+                              ("value_sigma", [1.0, 2.0]), ("model_sigma", [0.0, 0.5]))
+                defVar(ds, v, Float64, ("obs",); attrib = nanfill)[:] = data
+            end
+            defVar(ds, "flag", Int8, ("obs",))[:] = Int8[0, 0]
+            defVar(ds, "instrument_type", String, ("obs",))[:] = ["ICOS", "TCCON"]
+            defVar(ds, "tracer", String, ("obs",))[:] = ["CO2", "CO2"]
+        end
+        set = AT.read_observations(path)
+        @test set[1].intake_height_m == 10.0 && set[1].elevation_m == 120.0
+        @test isnan(set[1].altitude_m) && isnan(set[1].pressure_pa)
+        @test isnan(set[2].elevation_m) && isnan(set[2].intake_height_m)
+        @test set[2].kind === AT.ColumnObservationKind() && set[2].model_sigma == 0.5
+        # A fill value in a required variable is an error.
+        NCDataset(ds -> ds["value"][2] = NaN, path, "a")
+        err = try AT.read_observations(path) catch e e end
+        @test err isa ArgumentError && occursin("\"value\" has a fill value in row 2", err.msg)
+        # Repeated ids are rejected.
+        dup = joinpath(dir, "dup.nc")
+        AT.write_observations(dup, AT.CSObservationSet(_sample_records()))
+        NCDataset(ds -> ds["id"][3] = 1, dup, "a")
+        err = try AT.read_observations(dup) catch e e end
+        @test err isa ArgumentError && occursin("observation id 1 appears in rows 1 and 3", err.msg)
+    end
+end
+
 @testset "write_observations rejects empty time_origin" begin
     @test_throws ArgumentError AT.write_observations(
         tempname(), AT.CSObservationSet(_sample_records(); time_origin = ""))

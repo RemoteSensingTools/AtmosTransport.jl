@@ -499,7 +499,7 @@ paths = [
     "schemas/cs_*.toml",
     # The placement rule and column helpers placed point observations share
     # with the forward observation sampler.
-    "src/Output/observations/observation_{placement,gather,requests}.jl",
+    "src/Output/observations/observation_{placement,gather,requests,sampler,cell_locator}.jl",
     "test/helpers/cs_observation_columns.jl",
 ]
 

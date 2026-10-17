@@ -289,8 +289,19 @@ steps fully inside the window weigh ``\Delta t``, a step partly inside weighs
 its overlap, and the window is truncated at the run's ends and renormalised.
 A window narrower than a step inside one interval is the instantaneous
 sample. Whether a record is in the run is decided by its time ``t``
-(`out_of_range_policy`); `ClampOutOfRange` samples a record outside the run
-once, at the first or last step.
+(`out_of_range_policy`); `ClampOutOfRange` keeps a record outside the run:
+the part of its window inside the run, truncated and renormalised, or the
+first or last step when it has no window or the window misses the run
+(departure rows mark such records `clamped`). Window records need the run
+length (`nsteps`), which bounds their steps.
+
+This time sampling differs from the forward observation sampler's: the
+sampler takes its samples at met-window ends (a linear blend of the two ends
+around the record time, or the nearest end), while the inversion takes the
+state at the end of the model step containing the record time (up to one
+step ``\Delta t`` after it) or the Δt-weighted mean over its window. Both
+place a sample in the same layer of the same state and read the same value
+there; for an arbitrary record time they sample different states.
 
 `CS4DVarResult.stencils` returns, per observation, the cell, the sampled
 steps and weights, the level read at each step, the placement code and the
@@ -313,8 +324,10 @@ its overlap (TM5 counts the half steps fully inside); the basis is dry; and
 records carry their flag, elevation, intake height and pressure.
 
 `test/core/test_cs_4dvar_placed_observations.jl` checks parity with the
-forward sampler (same layer and value through `build_observation_sampler` in
-nearest-window mode and through `bind_to_mesh` + `cs_surface_flux_4dvar`), a
+forward sampler on one state (same layer and value through
+`build_observation_sampler` in nearest-window mode, records sampled at the
+window end that closes their model step, and through `bind_to_mesh` +
+`cs_surface_flux_4dvar`), a
 10 m intake against a 5 km aircraft sample, total against dry pressure
 placement, layers that follow the replayed air mass step by step, a window
 observation's value and gradient against the Δt-weighted sum of its

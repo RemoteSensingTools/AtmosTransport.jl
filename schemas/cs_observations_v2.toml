@@ -5,7 +5,9 @@
 #
 # Single-file format. One unlimited dimension `obs` plus a fixed-size
 # `date_component` dimension of length 6 (year, month, day, hour, minute,
-# second). Coordinates are Float64. The vertical fields use NaN for "absent";
+# second). Coordinates are Float64. Record ids are unique. The vertical fields
+# use NaN (or a declared _FillValue, such as xarray's NaN) for "absent"; no
+# other variable may hold fill values;
 # a point record must give at least one vertical coordinate the inversion's
 # `vertical_coordinates` use (an intake height; an altitude with a ground
 # elevation, from the record or a DEM; a pressure). Root attributes pin the
@@ -36,7 +38,7 @@ date_component = 6   # year, month, day, hour, minute, second
 [variables.id]
 dtype = "i64"
 dims  = ["obs"]
-description = "unique observation identifier (departures are joined to records by id)"
+description = "unique observation identifier (departures are joined to records by id; the loader rejects repeated ids)"
 
 [variables.date_components]
 dtype = "i16"

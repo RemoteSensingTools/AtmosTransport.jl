@@ -154,10 +154,18 @@ the unplaced policy), and placed point observations choose their layer with
   containing its time; a record with `time_window_s = W` samples the steps
   overlapping `[t − W/2, t + W/2]`, weighted by their overlap, truncated at
   the run's ends and renormalised (TM5-4DVAR's Δt/ΣΔt mean; a step partly in
-  the window counts its overlap). The record time decides whether it is in
-  the run; `ClampOutOfRange` samples an outside record once at the first or
-  last step. Records with a nonzero `flag` are dropped; `sigma` is
-  `√(value_sigma² + model_sigma²)`; observations carry the record `id`.
+  the window counts its overlap). Window records need `nsteps`. The record
+  time decides whether it is in the run; `ClampOutOfRange` keeps an outside
+  record (the part of its window inside the run, else the first or last
+  step; departure rows mark it `clamped`), and skipped and clamped records
+  are counted in an `@info`. Records with a nonzero `flag` are dropped;
+  record ids are unique (checked by `CSObservationSet`, `read_observations`
+  and `bind_to_mesh`); `sigma` is `√(value_sigma² + model_sigma²)`;
+  observations carry the record `id`.
+- This time sampling differs from the forward sampler's (window ends,
+  linearly blended or nearest): the inversion samples the end of the model
+  step containing the record time, up to `dt` later, or the window mean.
+  Parity with the sampler holds for the same sampled state.
 - A placed point observation's layer is resolved at every sampled state from
   that state's replayed air mass (dry interfaces, hypsometric heights,
   total or dry interface pressures), never fixed at binding: the vertical
