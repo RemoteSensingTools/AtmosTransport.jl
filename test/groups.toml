@@ -450,6 +450,7 @@ paths = [
 description = "Adjoint kernels and footprints: Lin-Rood and PPM transposes, footprint finite-difference checks, tape storage and checkpointing (full, stride, revolve)"
 files = [
     "core/test_linrood_kernel_adjoints.jl",
+    "core/test_cs_adjoint_production_parity.jl",
     "core/test_cs_linrood_footprint_fd.jl",
     "core/test_cs_linrood_fv3_adjoint.jl",
     "core/test_cs_ppm_adjoint_footprint.jl",
@@ -462,6 +463,9 @@ paths = [
     "src/Footprint/**",
     "src/Tape/**",
     "src/Operators/Advection/linrood_adjoint*.jl",
+    # The production step composition the adjoint replays and records.
+    "src/Operators/Advection/{StrangSplitting,CubedSphereStrang}.jl",
+    "src/Operators/Diffusion/operators.jl",
 ]
 
 [topics.inversion]

@@ -403,7 +403,7 @@ end
 end
 
 # ---------------------------------------------------------------- footprint tape
-@testset "footprint tape records (X Y Z)^n | midpoint | (Z Y X)^n" begin
+@testset "footprint tape records [halo] (X Y Z)^n | midpoint | (Z Y X)^n" begin
     mesh, m0, am, bm, cm = _cs_flow_problem(:strain, 0.20)
     I = _cs_interior(mesh)
     q = ntuple(p -> [1 + 0.3 * sin(3i + 2j + p) for i in 1:mesh.Nc+6, j in 1:mesh.Nc+6, k in 1:1], 6)
@@ -431,7 +431,9 @@ end
         end
         forward = reduce(vcat, [vcat(pass > 1 ? [:h1] : Symbol[], [:x, :h1, :y, :h2, :z]) for pass in 1:n])
         reverse_half = repeat([:z, :h2, :y, :h2, :h1, :x, :h1], n)
-        @test kinds == vcat(forward, [:mid], reverse_half)
+        # The leading X halo record is production's step-start refresh
+        # (`fill_cs_step_start_halos!`).
+        @test kinds == vcat([:h1], forward, [:mid], reverse_half)
 
         est = AT.cs_tape_byte_estimate(m0, [am], [bm], [cm], mesh, scheme)
         @test est.sweep_records == count(in((:x, :y, :z)), kinds)

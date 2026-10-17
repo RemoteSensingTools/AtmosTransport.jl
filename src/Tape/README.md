@@ -118,10 +118,13 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
   and forcing/operator objects are kept by reference, so callers must not
   change them before the reverse pass ends.
 - `RevolveCheckpoint` is plain bisection, not optimal binomial Revolve.
-  With monotone PPM plus diffusion or convection it can differ from
-  `FullCheckpoint` by about 1e-7, because halo refills at bisection points
-  can flip limiter branches. `StrideCheckpoint` agrees with it within the
-  tested `atol = 1e-12`.
+  Every recorded step starts with production's step-start halo refresh, so a
+  window that restarts at a step boundary records the states of the full
+  tape: `StrideCheckpoint` and `RevolveCheckpoint` agree with
+  `FullCheckpoint` within the tested `atol = 1e-12` for every scheme family,
+  with diffusion and convection. (The former ~1e-7 Revolve drift with
+  monotone PPM plus convection was that refresh missing from the recorders,
+  issue #60, not limiter flips.)
 
 ## Related Docs And Tests
 

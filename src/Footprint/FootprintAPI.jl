@@ -23,12 +23,14 @@ time. Optional `emission_rates[t][panel][i, j]` entries are midpoint surface
 emission rates in model-storage units per second (dry mixing ratio × carrier
 air mass per second, integrated over the cell). Convert physical species-mass
 inventories and per-area rates before calling this low-level API.
-If `diffusion_op` is supplied, the helper applies
-`V(dt/2) -> emissions -> V(dt/2)` at the control midpoint and requires a
-panel-native `DiffusionWorkspace` with filled `layer_thickness`. If
-`convection_op=CMFMCConvection()` or `TM5Convection()` is supplied, the
-helper applies the corresponding CS convection column operator after each
-transport step. `flux_scale` multiplies all transport fluxes and is shared
+Each step is the production cubed-sphere step of a run with surface
+fluxes: the step-start halo refresh, the transport palindrome, and the
+optional convection column operator (`CMFMCConvection()`, `TM5Convection()`
+or `CMFMCMatrixConvection`) after it. If `diffusion_op` is supplied, the
+palindrome center follows its `surface_flux_coupling`:
+`V(dt/2) -> emissions -> V(dt/2)` (`SplitSurfaceFluxCoupling`) or
+`emissions -> V(dt)` (`DiffusiveSurfaceFluxBoundary`); diffusion requires a
+panel-native `DiffusionWorkspace` with filled `layer_thickness`. `flux_scale` multiplies all transport fluxes and is shared
 with the tape/reverse APIs so forward finite differences exercise the same
 model trajectory.
 """
@@ -80,8 +82,9 @@ Supported CS schemes are the split-sweep `UpwindScheme()`,
 vertical sweeps, store tracer branch states from the base trajectory; pass
 `base_emission_rates` when differentiating around nonzero surface emissions.
 Optional `ImplicitVerticalDiffusion` support transposes the Backward-Euler
-column solve in kernels on CPU/GPU and uses the same midpoint placement as
-surface-flux runtime transport. Optional `CMFMCConvection` support transposes
+column solve in kernels on CPU/GPU and uses the runtime's surface-flux
+coupling at the palindrome center (`V(dt/2) -> emissions -> V(dt/2)`, or
+`emissions -> V(dt)` with `DiffusiveSurfaceFluxBoundary`). Optional `CMFMCConvection` support transposes
 the well-mixed sub-cloud, updraft, and tendency passes; optional
 `TM5Convection` and `CMFMCMatrixConvection` support replays the same
 column matrix and applies the transposed LU solve after each reverse

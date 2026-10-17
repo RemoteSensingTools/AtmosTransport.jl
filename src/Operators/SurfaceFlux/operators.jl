@@ -252,6 +252,19 @@ emission_deposit(_diffusion_op) = SurfaceLayerDeposit()
 emission_deposit(op::ImplicitVerticalDiffusion{<:Any, <:GCHPNonlocalPBLField}) =
     map(ProfileDeposit, op.kz_field.emission_profile)
 
+"""
+    center_emission_deposit(coupling, diffusion_op)
+
+Where the cubed-sphere palindrome center deposits fresh surface emissions:
+the surface layer with `SplitSurfaceFluxCoupling`, and the diffusion scheme's
+own placement, `emission_deposit(diffusion_op)`, with
+`DiffusiveSurfaceFluxBoundary` (the only coupling GEOS-Chem's non-local VDIFF
+accepts).
+"""
+center_emission_deposit(::SplitSurfaceFluxCoupling, _diffusion_op) = SurfaceLayerDeposit()
+center_emission_deposit(::DiffusiveSurfaceFluxBoundary, diffusion_op) =
+    emission_deposit(diffusion_op)
+
 @inline _panel_deposit(d::SurfaceLayerDeposit, _p) = d
 @inline _panel_deposit(d::NTuple{6, <:ProfileDeposit}, p) = d[p]
 

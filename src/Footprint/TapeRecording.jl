@@ -9,6 +9,10 @@
 #   * `_record_and_sweep_z!` — records, then applies, one vertical sweep;
 #     shared by all three tapes (including Lin-Rood) so the record always
 #     holds the state entering the sweep.
+#   * `_record_step_start_halos!`, `_record_and_apply_center!`,
+#     `_record_and_apply_convection!` — the per-step pieces the recorders
+#     share: production's step-start halo refresh, the coupled palindrome
+#     center (`surface_flux_center!`) and the convection block.
 #   * `_record_cs_mass_tape` — air-mass tape only (linear schemes).
 #   * `_record_cs_tracer_tape` — air-mass + tracer-mass tape
 #     (monotone PPM and other nonlinear schemes).
@@ -48,9 +52,11 @@ function _tape_byte_estimate(panels_m0,
     diffusion_records = 0
     diffusion_state_records = 0
     @inbounds for step in 1:nsteps
-        if !(_diffusion_sequence_at(diffusion_op, step, nsteps,
-                                    "diffusion_op") isa NoDiffusion)
-            diffusion_records += 2
+        diffusion_op_step = _diffusion_sequence_at(diffusion_op, step, nsteps,
+                                                   "diffusion_op")
+        if !(diffusion_op_step isa NoDiffusion)
+            diffusion_records += _center_diffusion_records(
+                surface_flux_coupling(diffusion_op_step))
             diffusion_state_records += 1
         end
     end
@@ -108,19 +114,22 @@ function _tape_byte_estimate(panels_m0,
         panels_am = panels_am_steps[step]
         panels_bm = panels_bm_steps[step]
         panels_cm = panels_cm_steps[step]
+        fill_cs_step_start_halos!(dummy_rm, panels_m, mesh)
         n_pal = _cs_static_palindrome_subcycle_count(
             panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
             flux_scale = fs)
 
-        # (X Y Z)^n | midpoint | (Z Y X)^n, as `strang_split_cs!`: 6n sweeps;
-        # halo fills: 2 per forward pass plus one before each later X pass,
-        # 4 per reverse pass.
+        # [halo] (X Y Z)^n | center | (Z Y X)^n, as production: 6n sweeps;
+        # halo fills: the step-start refresh, 2 per forward pass plus one
+        # before each later X pass, 4 per reverse pass.
         sweep_records += 6n_pal
-        halo_records += 7n_pal - 1
+        halo_records += 7n_pal
         midpoint_records += 1
-        if !(_diffusion_sequence_at(diffusion_op, step, nsteps,
-                                    "diffusion_op") isa NoDiffusion)
-            diffusion_records += 2
+        diffusion_op_step = _diffusion_sequence_at(diffusion_op, step, nsteps,
+                                                   "diffusion_op")
+        if !(diffusion_op_step isa NoDiffusion)
+            diffusion_records += _center_diffusion_records(
+                surface_flux_coupling(diffusion_op_step))
             diffusion_state_records += 1
         end
         convection_op isa NoConvection || (convection_records += 1)
@@ -160,9 +169,9 @@ function _tape_byte_estimate(panels_m0,
     # m + rm for nonlinear). `state_records` is the total number of
     # staged panel tuples on the tape — i.e. how many full panel
     # snapshots get written. Diffusion stores ONE staged m-panel
-    # tuple per step but contributes TWO `_CSDiffusionRecord` ops
-    # (the palindrome's `V(dt/2) → emissions → V(dt/2)`); see
-    # `_record_cs_mass_tape` for the staging path.
+    # tuple per step but contributes one `_CSDiffusionRecord` op per
+    # solve of the palindrome center: two for `V(dt/2) → S → V(dt/2)`,
+    # one for `S → V(dt)` (`surface_flux_center!`).
     sweep_state_records = _staged_tuples_per_sweep(scheme) * sweep_records
     state_records = sweep_state_records + diffusion_state_records + convection_records
 
@@ -171,7 +180,7 @@ function _tape_byte_estimate(panels_m0,
     # counts — sweep + halo + midpoint + diffusion + convection —
     # NOT `state_records + halo + midpoint`, since `state_records`
     # double-counts nonlinear staging vs op count and under-counts
-    # the diffusion palindrome's two ops sharing one staged state.
+    # the split diffusion center's two ops sharing one staged state.
     total_records = sweep_records + halo_records + midpoint_records +
                     diffusion_records + convection_records
     bytes_per_state = _bytes_per_panel_tuple(panels_m0)
@@ -276,6 +285,102 @@ function _record_and_sweep_z!(ops, scheme, panels_rm, panels_m, panels_cm, ws,
     return nothing
 end
 
+# ---------------------------------------------------------------------------
+# Per-step pieces shared by the mass, tracer and Lin-Rood recorders. Each one
+# applies the production operation (where the recorder applies it) and records
+# it, so the forward that the reverse walk transposes is the production step
+#
+#   [halo(1)] (X Y Z)^n  <center>  (Z Y X)^n  [convection]
+#
+# with `<center>` from `surface_flux_center!`, production's palindrome center
+# for a run with a surface-flux operator, and the same sequence as the forward
+# replay `_replay_cs_step!` (ReverseLoop.jl). Lin-Rood has no step-start halo
+# record (see `_replay_cs_transport!`).
+# ---------------------------------------------------------------------------
+
+# Step-start halo refresh of a split-sweep step (`fill_cs_step_start_halos!`,
+# as in production `strang_split!`) and its record. The refresh always runs:
+# the propagation-only passes of the checkpoint drivers must reach the states
+# of the recording passes.
+function _record_step_start_halos!(ops, panels_rm, panels_m, mesh::CubedSphereMesh;
+                                   record_ops::Bool)
+    fill_cs_step_start_halos!(panels_rm, panels_m, mesh)
+    record_ops && push!(ops, _CSHaloRecord(1))
+    return nothing
+end
+
+# The air mass that the center's diffusion records hold: one staged state,
+# shared by both half solves of the split center (diffusion leaves `m`
+# unchanged), or none without diffusion.
+_stage_center_air_mass(_storage, ::NoDiffusion, _panels_m) = nothing
+_stage_center_air_mass(storage, _diffusion_op, panels_m) = _stage_panels(storage, panels_m)
+
+_record_center_diffusion!(_ops, ::NoDiffusion, _workspace, _panels_m, _dt) = nothing
+_record_center_diffusion!(ops, diffusion_op, workspace, panels_m, dt) =
+    push!(ops, _CSDiffusionRecord(diffusion_op, workspace, panels_m, dt))
+
+# Palindrome center of one step for the recorders that apply the forward (the
+# tracer and Lin-Rood tapes): `surface_flux_center!` with closures that record
+# each diffusion solve and the emission midpoint, then apply them. The reverse
+# walk reads the step's footprint at the `_CSMidpointRecord`.
+function _record_and_apply_center!(ops, panels_rm, panels_m, mesh::CubedSphereMesh,
+                                   storage, dt, absolute_step::Int,
+                                   diffusion_op, diffusion_ws, diffusion_meteo,
+                                   base_rates; record_ops::Bool)
+    panels_m_center = record_ops ?
+        _stage_center_air_mass(storage, diffusion_op, panels_m) : nothing
+    diffuse! = τ -> begin
+        record_ops && _record_center_diffusion!(ops, diffusion_op, diffusion_ws,
+                                                panels_m_center, τ)
+        apply_vertical_diffusion_vmr!(panels_rm, panels_m, diffusion_op, diffusion_ws,
+                                      τ, diffusion_meteo; halo_width = mesh.Hp)
+    end
+    emit! = τ -> begin
+        record_ops && push!(ops, _CSMidpointRecord(absolute_step))
+        base_rates === nothing || _add_surface_rates!(panels_rm, base_rates, τ, mesh)
+        nothing
+    end
+    surface_flux_center!(diffuse!, emit!, surface_flux_coupling(diffusion_op), dt)
+    return nothing
+end
+
+# The mass tape's center: the same records, nothing applied (the mass tape
+# never changes the tracer mass, and diffusion leaves the air mass unchanged).
+function _record_center!(ops, panels_m, storage, dt, absolute_step::Int,
+                         diffusion_op, diffusion_ws)
+    panels_m_center = _stage_center_air_mass(storage, diffusion_op, panels_m)
+    surface_flux_center!(
+        τ -> _record_center_diffusion!(ops, diffusion_op, diffusion_ws, panels_m_center, τ),
+        _ -> push!(ops, _CSMidpointRecord(absolute_step)),
+        surface_flux_coupling(diffusion_op), dt)
+    return nothing
+end
+
+# Convection after the palindrome, as in `TransportModel.step!`: record the air
+# mass entering it, then apply it (`nothing` forcing: convection off).
+_record_convection!(_ops, ::NoConvection, _forcing, _storage, _panels_m, _dt) = nothing
+_record_convection!(ops, convection_op, forcing, storage, panels_m, dt) =
+    push!(ops, _CSConvectionRecord(convection_op, forcing,
+                                   _stage_panels(storage, panels_m), dt))
+
+function _record_and_apply_convection!(ops, panels_rm, panels_m, mesh::CubedSphereMesh,
+                                       storage, dt, convection_op, forcing,
+                                       convection_workspace; record_ops::Bool)
+    record_ops && _record_convection!(ops, convection_op, forcing, storage, panels_m, dt)
+    _apply_cs_convection_forward!(panels_rm, panels_m, forcing, convection_op, dt,
+                                  convection_workspace, mesh)
+    return nothing
+end
+
+# Diffusion records per step of a palindrome center with `coupling`, counted
+# by running the center composition itself so the estimate cannot drift from
+# the recorders.
+function _center_diffusion_records(coupling)
+    count = Ref(0)
+    surface_flux_center!(_ -> (count[] += 1), _ -> nothing, coupling, 1)
+    return count[]
+end
+
 function _record_cs_mass_tape(panels_m0,
                               panels_am_steps,
                               panels_bm_steps,
@@ -326,6 +431,9 @@ function _record_cs_mass_tape(panels_m0,
         panels_am = panels_am_steps[step]
         panels_bm = panels_bm_steps[step]
         panels_cm = panels_cm_steps[step]
+        # Production's step-start refresh: the forward replay fills the rm
+        # halos here, so the reverse must transpose that fill.
+        _record_step_start_halos!(ops, dummy_rm, panels_m, mesh; record_ops)
         n_pal = _cs_static_palindrome_subcycle_count(
             panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
             flux_scale = fs)
@@ -361,21 +469,11 @@ function _record_cs_mass_tape(panels_m0,
         if record_ops
             diffusion_op_step = _diffusion_sequence_at(diffusion_op, step, nsteps,
                                                        "diffusion_op")
-            absolute_step = step + step_offset
-            if diffusion_op_step isa NoDiffusion
-                push!(ops, _CSMidpointRecord(absolute_step))
-            else
-                diffusion_ws_step = _diffusion_sequence_at(diffusion_workspace, step,
-                                                           nsteps,
-                                                           "diffusion_workspace")
-                panels_m_midpoint = _stage_panels(storage, panels_m)
-                half_dt = FT(dt) / FT(2)
-                push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
-                                              panels_m_midpoint, half_dt))
-                push!(ops, _CSMidpointRecord(absolute_step))
-                push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
-                                              panels_m_midpoint, half_dt))
-            end
+            diffusion_ws_step = diffusion_op_step isa NoDiffusion ? nothing :
+                _diffusion_sequence_at(diffusion_workspace, step, nsteps,
+                                       "diffusion_workspace")
+            _record_center!(ops, panels_m, storage, FT(dt), step + step_offset,
+                            diffusion_op_step, diffusion_ws_step)
         end
 
         # Reverse half (Z Y X)^n_pal.
@@ -404,13 +502,11 @@ function _record_cs_mass_tape(panels_m0,
         # mass-tape recorder (forward propagation of `panels_m`
         # through convection happens in `_record_cs_tracer_tape`, not
         # here). Skip entirely under propagation-only mode.
-        if record_ops && !(convection_op isa NoConvection)
-            forcing_step = _convection_forcing_at(convection_forcing, step, nsteps)
-            forcing_step === nothing && throw(ArgumentError(
-                "convection_op=$(typeof(convection_op)) requires `convection_forcing`"))
-            push!(ops, _CSConvectionRecord(convection_op, forcing_step,
-                                           _stage_panels(storage, panels_m),
-                                           FT(dt)))
+        if record_ops
+            _record_convection!(ops, convection_op,
+                                _step_convection_forcing(convection_op, convection_forcing,
+                                                         step, nsteps),
+                                storage, panels_m, FT(dt))
         end
     end
 
@@ -473,6 +569,9 @@ function _record_cs_tracer_tape(panels_rm0,
         panels_am = panels_am_steps[step]
         panels_bm = panels_bm_steps[step]
         panels_cm = panels_cm_steps[step]
+        # Production's step-start refresh: the first X sweep reads halos of
+        # the interiors the previous step's convection left.
+        _record_step_start_halos!(ops, panels_rm, panels_m, mesh; record_ops)
         n_pal = _cs_static_palindrome_subcycle_count(
             panels_am, panels_bm, panels_cm, panels_m, Nc, Hp, Nz, cfl_ft;
             flux_scale = fs)
@@ -505,35 +604,15 @@ function _record_cs_tracer_tape(panels_rm0,
 
         diffusion_op_step = _diffusion_sequence_at(diffusion_op, step, nsteps,
                                                    "diffusion_op")
-        absolute_step = step + step_offset
-        if diffusion_op_step isa NoDiffusion
-            record_ops && push!(ops, _CSMidpointRecord(absolute_step))
-            base_emission_rates !== nothing &&
-                _add_surface_rates!(panels_rm, base_emission_rates[step], dt_ft, mesh)
-        else
-            diffusion_ws_step = _diffusion_sequence_at(diffusion_workspace, step,
-                                                       nsteps,
-                                                       "diffusion_workspace")
-            half_dt = dt_ft / FT(2)
-            if record_ops
-                panels_m_midpoint = _stage_panels(storage, panels_m)
-                push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
-                                              panels_m_midpoint, half_dt))
-            end
-            apply_vertical_diffusion_vmr!(
-                panels_rm, panels_m, diffusion_op_step, diffusion_ws_step,
-                half_dt, diffusion_meteo; halo_width = mesh.Hp)
-            record_ops && push!(ops, _CSMidpointRecord(absolute_step))
-            base_emission_rates !== nothing &&
-                _add_surface_rates!(panels_rm, base_emission_rates[step], dt_ft, mesh)
-            if record_ops
-                push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
-                                              panels_m_midpoint, half_dt))
-            end
-            apply_vertical_diffusion_vmr!(
-                panels_rm, panels_m, diffusion_op_step, diffusion_ws_step,
-                half_dt, diffusion_meteo; halo_width = mesh.Hp)
-        end
+        diffusion_ws_step = diffusion_op_step isa NoDiffusion ? nothing :
+            _diffusion_sequence_at(diffusion_workspace, step, nsteps,
+                                   "diffusion_workspace")
+        _record_and_apply_center!(ops, panels_rm, panels_m, mesh, storage, dt_ft,
+                                  step + step_offset, diffusion_op_step,
+                                  diffusion_ws_step, diffusion_meteo,
+                                  base_emission_rates === nothing ? nothing :
+                                      base_emission_rates[step];
+                                  record_ops)
 
         # Reverse half (Z Y X)^n_pal.
         for _ in 1:n_pal
@@ -561,19 +640,12 @@ function _record_cs_tracer_tape(panels_rm0,
             record_ops && push!(ops, _CSHaloRecord(1))
         end
 
-        if !(convection_op isa NoConvection)
-            forcing_step = _convection_forcing_at(convection_forcing, step, nsteps)
-            forcing_step === nothing && throw(ArgumentError(
-                "convection_op=$(typeof(convection_op)) requires `convection_forcing`"))
-            if record_ops
-                push!(ops, _CSConvectionRecord(convection_op, forcing_step,
-                                               _stage_panels(storage, panels_m),
-                                               dt_ft))
-            end
-            _apply_cs_convection_forward!(panels_rm, panels_m, forcing_step,
-                                          convection_op, dt_ft,
-                                          convection_workspace, mesh)
-        end
+        _record_and_apply_convection!(ops, panels_rm, panels_m, mesh, storage, dt_ft,
+                                      convection_op,
+                                      _step_convection_forcing(convection_op,
+                                                               convection_forcing,
+                                                               step, nsteps),
+                                      convection_workspace; record_ops)
     end
 
     return ops, panels_rm, panels_m

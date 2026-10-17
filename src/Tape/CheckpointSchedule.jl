@@ -80,17 +80,16 @@ Trade-off vs `StrideCheckpoint(K)`:
 | `StrideCheckpoint(K)`          | O(nsteps/K)     | ~2 × nsteps   |
 | `RevolveCheckpoint()` (bisect) | O(log nsteps)   | O(nsteps × log nsteps) |
 
-**Parity caveat.** Bisection introduces more
-`fill_panel_halos!(...; dir=0)` boundaries than stride or
-FullCheckpoint. For the monotone-PPM limiter combined with strongly
-nonlinear physics (`ImplicitVerticalDiffusion` + `CMFMCConvection`
-or `TM5Convection`), this can cause the limiter to flip at panel-
-edge halo cells and produce O(1e-7) absolute drift vs
-FullCheckpoint — physically valid to FD-identity tolerance, but
-NOT bit-exact. Linear schemes (`UpwindScheme`,
-`SlopesScheme(NoLimiter())`, `PPMScheme(NoLimiter())`), nonlinear
-PPM without physics, and LinRood are all bit-exact to ~1e-12.
-Use `StrideCheckpoint(K)` when bit-exact parity is required.
+**Parity.** Every recorded step starts with production's step-start halo
+refresh (`fill_cs_step_start_halos!`), so the halos a step reads are a
+function of its interior state and a window that restarts at a bisection
+point records the same states as `FullCheckpoint`. Footprints agree with
+`FullCheckpoint` to rounding (tested at `atol = 1e-12`) for every supported
+scheme, including monotone PPM with `ImplicitVerticalDiffusion` and
+`CMFMCConvection` or `TM5Convection`. An earlier O(1e-7) Revolve drift in
+that configuration came from the recorders omitting that refresh (the
+first X sweep after convection read stale tracer halos in the full tape but
+fresh ones in a restarted window; issue #60), not from limiter flips.
 """
 struct RevolveCheckpoint <: AbstractCheckpointSchedule end
 

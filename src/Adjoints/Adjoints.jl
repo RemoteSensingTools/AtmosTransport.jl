@@ -6,8 +6,11 @@ Prototype adjoint and footprint utilities.
 The shipped path here is a kernelized CS split-sweep reverse pass for tracer
 mass with fixed meteorology/air-mass evolution. It accumulates
 surface-emission footprints from an adjoint seed without perturbing each
-surface cell. The optional vertical-diffusion slot mirrors the runtime
-surface-source palindrome: half diffusion, midpoint emissions, half diffusion.
+surface cell. Each step is composed as production composes it: the step-start
+halo refresh, and at the palindrome center the diffusion operator's
+surface-flux coupling (`surface_flux_center!`): half diffusion, midpoint
+emissions, half diffusion, or emissions before one full diffusion solve with
+`DiffusiveSurfaceFluxBoundary`.
 The optional convection slot transposes the CS `CMFMCConvection`,
 `TM5Convection` and `CMFMCMatrixConvection` column operators.
 """
@@ -24,6 +27,7 @@ using ..Grids: CubedSphereMesh, reciprocal_edge,
     panel_cell_center_lonlat,
     panel_convention, cs_definition, cs_definition_tag
 using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
+    CSSplitSweepStyle, CSLinRoodStyle, cs_advection_style, fill_cs_step_start_halos!,
     MonotoneLimiter, CW84Limiter, PPMScheme, SameAsHorizontal, SlopesScheme, UpwindScheme,
     LinRoodPPMScheme, NoAdvection, FV3ScalarProfile, AbstractLimiter,
     fill_panel_halos!, strang_split_cs!, copy_corners!,
@@ -41,7 +45,8 @@ using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
     _advection_mass_floor, _ppm_edge_weights,  # shared with the forward fluxes (AdvectionAdjoint.jl)
     needs_column_scratch, _fv3_adjoint_column_scratch, _sweep_z_panels_fv3_adjoint!
 using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
-    apply_vertical_diffusion_vmr!, _dkg_transfer_ratios
+    apply_vertical_diffusion_vmr!, _dkg_transfer_ratios,
+    surface_flux_coupling, surface_flux_center!
 using ..Operators.Convection: CMFMCConvection, _require_edge_cloud_base, CMFMCWorkspace,
     NoConvection, TM5Convection, TM5Workspace,
     CMFMCMatrixConvection, CMFMCMatrixWorkspace,
@@ -342,6 +347,17 @@ function _convection_forcing_at(convection_forcing, step::Int, nsteps::Int)
     else
         return convection_forcing
     end
+end
+
+# The convection forcing of `step`, or `nothing` when convection is off. An
+# active convection operator without forcing is an error.
+_step_convection_forcing(::NoConvection, _convection_forcing, _step::Int, _nsteps::Int) =
+    nothing
+function _step_convection_forcing(convection_op, convection_forcing, step::Int, nsteps::Int)
+    forcing_step = _convection_forcing_at(convection_forcing, step, nsteps)
+    forcing_step === nothing && throw(ArgumentError(
+        "convection_op=$(typeof(convection_op)) requires `convection_forcing`"))
+    return forcing_step
 end
 
 # Tape storage policies + staging API live in

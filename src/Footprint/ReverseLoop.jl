@@ -9,9 +9,10 @@
 #
 # `_run_cs_footprint_forward` and `_run_cs_observations_forward` are the
 # forward-replay helpers used by FD identity tests, 4D-Var simulation
-# evaluation, and Jacobian aggregation. They share the same Strang-
-# palindrome-with-emissions structure as the production runtime, but
-# without writing to a tape.
+# evaluation, and Jacobian aggregation. Both advance each step with
+# `_replay_cs_step!`, which composes the step as production does (step-start
+# halo refresh, palindrome with the coupled center, convection) without
+# writing to a tape.
 # ---------------------------------------------------------------------------
 
 function _collect_surface_footprints(lambda_panels, ops, panels_m0,
@@ -114,6 +115,61 @@ function _walk_window_reverse!(footprints, lambda_panels, ops,
     return nothing
 end
 
+# One step of the adjoint's forward model: the production cubed-sphere step,
+# `strang_split!` followed by the `TransportModel.step!` convection block, of a
+# run with a surface-flux operator. A footprint is the derivative with respect
+# to the surface emissions, so the palindrome center is always
+# `surface_flux_center!` with the diffusion operator's coupling; `emit!(τ)`
+# adds the step's surface sources integrated over `τ`. The tape recorders
+# (`TapeRecording.jl`, `LinRoodTape.jl`) apply and record the same sequence.
+function _replay_cs_step!(panels_rm, panels_m, panels_am, panels_bm, panels_cm,
+                          mesh::CubedSphereMesh, scheme, ws, emit!;
+                          dt, flux_scale, cfl_limit,
+                          diffusion_op, diffusion_workspace, diffusion_meteo,
+                          convection_op, convection_forcing, convection_workspace)
+    diffuse! = τ -> apply_vertical_diffusion_vmr!(
+        panels_rm, panels_m, diffusion_op, diffusion_workspace, τ, diffusion_meteo;
+        halo_width = mesh.Hp)
+    coupling = surface_flux_coupling(diffusion_op)
+    midpoint! = () -> surface_flux_center!(diffuse!, emit!, coupling, dt)
+    _replay_cs_transport!(cs_advection_style(scheme), panels_rm, panels_m,
+                          panels_am, panels_bm, panels_cm, mesh, scheme, ws,
+                          midpoint!; flux_scale, cfl_limit)
+    _apply_cs_convection_forward!(panels_rm, panels_m, convection_forcing,
+                                  convection_op, dt, convection_workspace, mesh)
+    return nothing
+end
+
+# Split-sweep schemes: production `strang_split!` refreshes the X halos of m
+# and rm at every step start (`fill_cs_step_start_halos!`), then runs the
+# palindrome. Without the refresh the first X sweep reads rm halos from before
+# the previous step's convection.
+function _replay_cs_transport!(::CSSplitSweepStyle, panels_rm, panels_m,
+                               panels_am, panels_bm, panels_cm,
+                               mesh::CubedSphereMesh, scheme, ws, midpoint!;
+                               flux_scale, cfl_limit)
+    fill_cs_step_start_halos!(panels_rm, panels_m, mesh)
+    strang_split_cs!(panels_rm, panels_m, panels_am, panels_bm, panels_cm,
+                     mesh, scheme, ws;
+                     flux_scale = flux_scale,
+                     cfl_limit = cfl_limit,
+                     midpoint! = midpoint!)
+    return nothing
+end
+
+# Lin-Rood: the unsplit horizontal operator (`fv_tp_2d_cs!`) refills the edge
+# and corner halos it reads, so production's step-start fills are never read
+# and the replay omits them. The split-sweep `strang_split_cs!` has no face
+# kernels for `LinRoodPPMScheme`.
+function _replay_cs_transport!(::CSLinRoodStyle, panels_rm, panels_m,
+                               panels_am, panels_bm, panels_cm,
+                               mesh::CubedSphereMesh, scheme, ws, midpoint!;
+                               flux_scale, cfl_limit)
+    _linrood_run_forward_step!(panels_rm, panels_m, panels_am, panels_bm, panels_cm,
+                               mesh, scheme, ws, midpoint!; flux_scale = flux_scale)
+    return nothing
+end
+
 function _run_cs_footprint_forward(panels_rm0, panels_m0,
                                    panels_am_steps,
                                    panels_bm_steps,
@@ -149,58 +205,29 @@ function _run_cs_footprint_forward(panels_rm0, panels_m0,
     _require_cs_convection_workspace(convection_op, convection_workspace)
 
     @inbounds for step in 1:nsteps
-        midpoint! = nothing
         diffusion_op_step = _diffusion_sequence_at(diffusion_op, step, nsteps,
                                                    "diffusion_op")
         diffusion_ws_step = diffusion_op_step isa NoDiffusion ? nothing :
             _diffusion_sequence_at(diffusion_workspace, step, nsteps,
                                    "diffusion_workspace")
-        needs_midpoint = !(diffusion_op_step isa NoDiffusion) ||
-                         emission_rates !== nothing ||
-                         (perturbation !== nothing && perturbation.step == step)
-        if needs_midpoint
-            midpoint! = () -> begin
-                if !(diffusion_op_step isa NoDiffusion)
-                    apply_vertical_diffusion_vmr!(
-                        panels_rm, panels_m, diffusion_op_step, diffusion_ws_step,
-                        dt / 2, diffusion_meteo; halo_width = mesh.Hp)
-                end
-                emission_rates !== nothing &&
-                    _add_surface_rates!(panels_rm, emission_rates[step], dt, mesh)
-                perturbation !== nothing && perturbation.step == step &&
-                    _add_surface_perturbation!(panels_rm, perturbation, dt, mesh)
-                if !(diffusion_op_step isa NoDiffusion)
-                    apply_vertical_diffusion_vmr!(
-                        panels_rm, panels_m, diffusion_op_step, diffusion_ws_step,
-                        dt / 2, diffusion_meteo; halo_width = mesh.Hp)
-                end
-                nothing
-            end
+        emit! = τ -> begin
+            emission_rates !== nothing &&
+                _add_surface_rates!(panels_rm, emission_rates[step], τ, mesh)
+            perturbation !== nothing && perturbation.step == step &&
+                _add_surface_perturbation!(panels_rm, perturbation, τ, mesh)
+            nothing
         end
-        if scheme isa LinRoodPPMScheme
-            # LinRood uses a 3-phase unsplit horizontal + Z sweep
-            # composition; the standard split-sweep `strang_split_cs!`
-            # doesn't have face kernels for LinRoodPPMScheme.
-            _linrood_run_forward_step!(panels_rm, panels_m,
-                panels_am_steps[step], panels_bm_steps[step],
-                panels_cm_steps[step], mesh, scheme, ws, midpoint!;
-                flux_scale = flux_scale)
-        else
-            strang_split_cs!(panels_rm, panels_m,
-                             panels_am_steps[step], panels_bm_steps[step], panels_cm_steps[step],
-                             mesh, scheme, ws;
-                             flux_scale = flux_scale,
-                             cfl_limit = cfl_limit,
-                             midpoint! = midpoint!)
-        end
-        if !(convection_op isa NoConvection)
-            forcing_step = _convection_forcing_at(convection_forcing, step, nsteps)
-            forcing_step === nothing && throw(ArgumentError(
-                "convection_op=$(typeof(convection_op)) requires `convection_forcing`"))
-            _apply_cs_convection_forward!(panels_rm, panels_m, forcing_step,
-                                          convection_op, dt,
-                                          convection_workspace, mesh)
-        end
+        _replay_cs_step!(panels_rm, panels_m, panels_am_steps[step],
+                         panels_bm_steps[step], panels_cm_steps[step],
+                         mesh, scheme, ws, emit!;
+                         dt, flux_scale, cfl_limit,
+                         diffusion_op = diffusion_op_step,
+                         diffusion_workspace = diffusion_ws_step,
+                         diffusion_meteo,
+                         convection_op,
+                         convection_forcing = _step_convection_forcing(
+                             convection_op, convection_forcing, step, nsteps),
+                         convection_workspace)
     end
 
     return evaluate_objective(objective, panels_rm, panels_m, mesh)
@@ -251,55 +278,27 @@ function _run_cs_observations_forward(panels_rm0, panels_m0,
     simulated = fill(FT(NaN), length(observations))
 
     @inbounds for step in 1:nsteps
-        midpoint! = nothing
         diffusion_op_step = _diffusion_sequence_at(diffusion_op, step, nsteps,
                                                    "diffusion_op")
         diffusion_ws_step = diffusion_op_step isa NoDiffusion ? nothing :
             _diffusion_sequence_at(diffusion_workspace, step, nsteps,
                                    "diffusion_workspace")
-        needs_midpoint = !(diffusion_op_step isa NoDiffusion) ||
-                         emission_rates !== nothing
-        if needs_midpoint
-            midpoint! = () -> begin
-                if !(diffusion_op_step isa NoDiffusion)
-                    apply_vertical_diffusion_vmr!(
-                        panels_rm, panels_m, diffusion_op_step, diffusion_ws_step,
-                        dt / 2, diffusion_meteo; halo_width = mesh.Hp)
-                end
-                emission_rates !== nothing &&
-                    _add_surface_rates!(panels_rm, emission_rates[step], dt, mesh)
-                if !(diffusion_op_step isa NoDiffusion)
-                    apply_vertical_diffusion_vmr!(
-                        panels_rm, panels_m, diffusion_op_step, diffusion_ws_step,
-                        dt / 2, diffusion_meteo; halo_width = mesh.Hp)
-                end
-                nothing
-            end
+        emit! = τ -> begin
+            emission_rates !== nothing &&
+                _add_surface_rates!(panels_rm, emission_rates[step], τ, mesh)
+            nothing
         end
-        if scheme isa LinRoodPPMScheme
-            # LinRood uses a 3-phase unsplit horizontal + Z sweep
-            # composition; the standard split-sweep `strang_split_cs!`
-            # doesn't have face kernels for LinRoodPPMScheme.
-            _linrood_run_forward_step!(panels_rm, panels_m,
-                panels_am_steps[step], panels_bm_steps[step],
-                panels_cm_steps[step], mesh, scheme, ws, midpoint!;
-                flux_scale = flux_scale)
-        else
-            strang_split_cs!(panels_rm, panels_m,
-                             panels_am_steps[step], panels_bm_steps[step], panels_cm_steps[step],
-                             mesh, scheme, ws;
-                             flux_scale = flux_scale,
-                             cfl_limit = cfl_limit,
-                             midpoint! = midpoint!)
-        end
-        if !(convection_op isa NoConvection)
-            forcing_step = _convection_forcing_at(convection_forcing, step, nsteps)
-            forcing_step === nothing && throw(ArgumentError(
-                "convection_op=$(typeof(convection_op)) requires `convection_forcing`"))
-            _apply_cs_convection_forward!(panels_rm, panels_m, forcing_step,
-                                          convection_op, dt,
-                                          convection_workspace, mesh)
-        end
+        _replay_cs_step!(panels_rm, panels_m, panels_am_steps[step],
+                         panels_bm_steps[step], panels_cm_steps[step],
+                         mesh, scheme, ws, emit!;
+                         dt, flux_scale, cfl_limit,
+                         diffusion_op = diffusion_op_step,
+                         diffusion_workspace = diffusion_ws_step,
+                         diffusion_meteo,
+                         convection_op,
+                         convection_forcing = _step_convection_forcing(
+                             convection_op, convection_forcing, step, nsteps),
+                         convection_workspace)
         for obs_idx in obs_by_step[step]
             simulated[obs_idx] = evaluate_objective(
                 observations[obs_idx].objective, panels_rm, panels_m, mesh)

@@ -90,6 +90,75 @@ with the corresponding operator, forcing, and workspace keywords. Unsupported
 physics combinations fail validation instead of silently using an incomplete
 transpose.
 
+## The forward model the adjoint transposes
+
+A footprint is a derivative of the production model, so the adjoint's forward
+model is the production step of a run with surface fluxes
+(`TransportModel.step!`: the transport palindrome of `strang_split!`, then
+convection). Write `x_n` for the tracer mass on the six panels, interiors and
+halos, before step `n` of length `Δt`. Read operator products right to left:
+
+```math
+x_{n+1} = \mathcal{K}_n \, \mathcal{R}_n \, \mathcal{C}_n \, \mathcal{F}_n \, \mathcal{H} \, x_n ,
+\qquad
+\mathcal{F}_n = (\mathcal{Z}\mathcal{Y}\mathcal{X})^{s}, \quad
+\mathcal{R}_n = (\mathcal{X}\mathcal{Y}\mathcal{Z})^{s}.
+```
+
+- ``\mathcal{H}`` is the step-start halo refresh (`fill_cs_step_start_halos!`):
+  every edge halo cell, then every corner cell in the X-sweep orientation,
+  becomes a copy of an interior cell of a neighbouring panel. The first X
+  sweep of the step reads these halos, and the previous step's convection
+  changed the interiors they mirror.
+- ``\mathcal{F}_n`` and ``\mathcal{R}_n`` are the two halves of the transport
+  palindrome with `s` CFL subcycles, every flux divided by `s`, with the halo
+  exchanges between sweeps.
+- ``\mathcal{K}_n`` is the convection column operator (TM5 or CMFMC).
+- ``\mathcal{C}_n`` is the palindrome center. With surface-flux injection
+  ``\mathcal{S}_n(\Delta t)`` (adds ``E_n \Delta t`` to the surface layer) and
+  the backward-Euler diffusion solve ``\mathcal{V}(\tau) = (I - \tau D)^{-1}``,
+  the diffusion operator's `surface_flux_coupling` selects
+
+```math
+\mathcal{C}_n =
+\begin{cases}
+\mathcal{V}(\Delta t/2)\,\mathcal{S}_n(\Delta t)\,\mathcal{V}(\Delta t/2) & \texttt{SplitSurfaceFluxCoupling} \\
+\mathcal{V}(\Delta t)\,\mathcal{S}_n(\Delta t) & \texttt{DiffusiveSurfaceFluxBoundary}
+\end{cases}
+```
+
+Backward Euler is not a semigroup, ``\mathcal{V}(\Delta t) \neq
+\mathcal{V}(\Delta t/2)^2``, so the two couplings are different models that
+differ at ``O((\Delta t\,D)^2)``; the adjoint must transpose the one the run
+uses. One function, `surface_flux_center!`, defines this order for production
+(through `palindrome_center!`), for the tape-free forward replays and for the
+tape recorders.
+
+The reverse pass applies the transposes in the opposite order,
+``\mathcal{H}^T \mathcal{F}_n^T \mathcal{C}_n^T \mathcal{R}_n^T \mathcal{K}_n^T``.
+``E_n`` enters only through ``\mathcal{S}_n``, so
+
+```math
+\frac{\partial J}{\partial E_n} = \Delta t \, \lambda_n^{S}\big|_{k = N_z},
+```
+
+where ``\lambda_n^{S}`` is the adjoint state at the position of
+``\mathcal{S}_n``: the final seed propagated back through all later steps,
+``\mathcal{K}_n^T``, ``\mathcal{R}_n^T``, and the part of the center after
+the injection, ``\mathcal{V}(\Delta t/2)^T`` or ``\mathcal{V}(\Delta t)^T``.
+The tape marks that position with its midpoint record. ``\mathcal{H}`` is a
+linear copy, ``h = P\,i`` from interior to halo, so ``\mathcal{H}^T`` adds each
+halo sensitivity into its source interior cell and zeroes the halo. Without
+``\mathcal{H}`` the replayed X sweep would read halos copied before the
+previous step's convection: a different operator from production, whose
+error grew with the step count and the convective mass flux, and which
+also made a checkpoint window that restarts with fresh halos disagree with
+the full tape. Lin–Rood's horizontal operator refills the halos it reads, so
+its steps need no ``\mathcal{H}``.
+`test/core/test_cs_adjoint_production_parity.jl` checks the replay against
+`TransportModel.step!` for both couplings with TM5 and CMFMC convection, and
+the footprints against finite differences of the production model.
+
 ## From footprints to 4D-Var
 
 The inversion layer composes the reverse pass rather than reimplementing it:
@@ -139,9 +208,13 @@ The `checkpoint` keyword controls the memory/recompute trade-off:
 
 `RevolveCheckpoint()` is a bisection schedule inspired by Revolve, not the
 optimal binomial Griewank-Walther schedule and not a user-specified snapshot
-budget. Use `StrideCheckpoint(k)` when bitwise parity with a full checkpoint is
-more important than minimum storage; nonlinear limiter branches can differ at
-roundoff level after recursive replay.
+budget. All three schedules record the same states: every step starts from
+the step-start halo refresh, so a window that restarts at a step boundary
+sees the halos of the full tape. Stride and Revolve footprints agree with
+`FullCheckpoint` to rounding (tested at `1e-12`) for every supported scheme,
+including limited PPM with diffusion and convection. An earlier Revolve drift
+of order `1e-7` in that configuration came from a missing step-start halo
+refresh in the recorders, not from limiter flips.
 
 ## How this maps to established systems
 

@@ -431,7 +431,8 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
 
         # Production LinRood Strang palindrome (linrood_horizontal.jl,
         # `_strang_split_linrood_ppm_cs!`):
-        #     H → Z_half → midpoint/diffusion/emissions → Z_half → H
+        #     H → Z_half → center (surface_flux_center!) → Z_half → H
+        # No step-start halo record: H refills the halos it reads.
         # The tape mirrors this exactly so that the FD-reference forward
         # in `_linrood_run_forward_step!` and the recorded forward are
         # the same operator (up to numerical rounding).
@@ -450,37 +451,19 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
         _record_and_sweep_z!(ops, z_scheme, panels_rm, panels_m, panels_cm, ws, mesh,
                              FT(flux_scale), storage; record_ops)
 
-        # Diffusion + midpoint + emissions (between the two Z halves).
+        # Palindrome center between the two Z halves: diffusion and the
+        # emission midpoint in the coupling's order (`surface_flux_center!`).
         diffusion_op_step = _diffusion_sequence_at(diffusion_op, step, nsteps,
                                                     "diffusion_op")
-        if diffusion_op_step isa NoDiffusion
-            record_ops && push!(ops, _CSMidpointRecord(absolute_step))
-            base_emission_rates !== nothing &&
-                _add_surface_rates!(panels_rm, base_emission_rates[step], dt_ft, mesh)
-        else
-            diffusion_ws_step = _diffusion_sequence_at(diffusion_workspace, step,
-                                                       nsteps,
-                                                       "diffusion_workspace")
-            half_dt = dt_ft / FT(2)
-            if record_ops
-                panels_m_midpoint = _stage_panels(storage, panels_m)
-                push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
-                                              panels_m_midpoint, half_dt))
-            end
-            apply_vertical_diffusion_vmr!(
-                panels_rm, panels_m, diffusion_op_step, diffusion_ws_step,
-                half_dt, diffusion_meteo; halo_width = mesh.Hp)
-            record_ops && push!(ops, _CSMidpointRecord(absolute_step))
-            base_emission_rates !== nothing &&
-                _add_surface_rates!(panels_rm, base_emission_rates[step], dt_ft, mesh)
-            if record_ops
-                push!(ops, _CSDiffusionRecord(diffusion_op_step, diffusion_ws_step,
-                                              panels_m_midpoint, half_dt))
-            end
-            apply_vertical_diffusion_vmr!(
-                panels_rm, panels_m, diffusion_op_step, diffusion_ws_step,
-                half_dt, diffusion_meteo; halo_width = mesh.Hp)
-        end
+        diffusion_ws_step = diffusion_op_step isa NoDiffusion ? nothing :
+            _diffusion_sequence_at(diffusion_workspace, step, nsteps,
+                                   "diffusion_workspace")
+        _record_and_apply_center!(ops, panels_rm, panels_m, mesh, storage, dt_ft,
+                                  absolute_step, diffusion_op_step, diffusion_ws_step,
+                                  diffusion_meteo,
+                                  base_emission_rates === nothing ? nothing :
+                                      base_emission_rates[step];
+                                  record_ops)
 
         # Z half-sweep (second half), recorded before it is applied.
         _record_and_sweep_z!(ops, z_scheme, panels_rm, panels_m, panels_cm, ws, mesh,
@@ -493,19 +476,12 @@ function _record_cs_linrood_tape(panels_rm0, panels_m0,
         record_ops && push!(ops, record_b)
 
         # Convection (optional, post-transport).
-        if !(convection_op isa NoConvection)
-            forcing_step = _convection_forcing_at(convection_forcing, step, nsteps)
-            forcing_step === nothing && throw(ArgumentError(
-                "convection_op=$(typeof(convection_op)) requires `convection_forcing`"))
-            if record_ops
-                push!(ops, _CSConvectionRecord(convection_op, forcing_step,
-                                               _stage_panels(storage, panels_m),
-                                               dt_ft))
-            end
-            _apply_cs_convection_forward!(panels_rm, panels_m, forcing_step,
-                                          convection_op, dt_ft,
-                                          convection_workspace, mesh)
-        end
+        _record_and_apply_convection!(ops, panels_rm, panels_m, mesh, storage, dt_ft,
+                                      convection_op,
+                                      _step_convection_forcing(convection_op,
+                                                               convection_forcing,
+                                                               step, nsteps),
+                                      convection_workspace; record_ops)
     end
 
     return ops, panels_rm, panels_m
