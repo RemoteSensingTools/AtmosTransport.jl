@@ -10,6 +10,7 @@
 # ---------------------------------------------------------------------------
 
 using Test
+using Logging: NullLogger, with_logger
 
 # The driver is a script, not a module — include it so `run_inversion`
 # is exposed at the top level.
@@ -466,5 +467,37 @@ end
         @test occursin("outside [1, 3]", _config_error(_hydrostatic_config(late)))
         @test occursin("no observation is left",
                        _config_error(_hydrostatic_config(late; observations_extra = "out_of_range_policy = \"skip\"\n")))
+    end
+end
+
+# Issue #20, part 4: column records with a retrieval block are averaging-kernel
+# columns; `[observations.placement].max_surface_pressure_mismatch_pa` bounds
+# the model minus retrieval surface pressure (the column's is 1000 hPa).
+@testset "cs_4dvar.jl driver — averaging-kernel columns, max_surface_pressure_mismatch_pa (#20)" begin
+    mktempdir() do dir
+        mesh = AT.CubedSphereMesh(Nc = 3, Hp = 3, FT = Float64)
+        lons, lats = AT.panel_cell_center_lonlat(mesh, 2)
+        retrieval(ps) = AT.Output.RetrievalColumn(; pressure_pa = collect(range(ps, 0.0; length = 6)),
+                                                  pressure_weight = fill(0.2, 5),
+                                                  averaging_kernel = [0.6, 0.8, 1.0, 1.1, 1.2],
+                                                  prior_profile = fill(1.2e-7, 5))
+        column(id, ps) = AT.CSObservationRecord(; id, date_components = (2024, 6, 15, 0, 15, 0), lat = lats[2, 2],
+                                                lon = lons[2, 2], kind = "column", value = 1e-7, value_sigma = 1e-8,
+                                                instrument_type = "test", tracer = "CO2", retrieval = retrieval(ps))
+        path = joinpath(dir, "ak.nc")
+        AT.write_observations(path, AT.CSObservationSet([column(1, 99000.0), column(2, 96000.0)]))
+        free = _run_config_text(_hydrostatic_config(path))
+        @test all(o -> o.objective isa AT.CSRetrievalColumnObjective, free.last.observations)
+        @test all(s -> s.assimilated, free.last.stencils)
+        @test [s.surface_pressure_mismatch_pa for s in free.last.stencils] ≈ [1000.0, 4000.0] rtol = 1e-9
+        limit = "[observations.placement]\nmax_surface_pressure_mismatch_pa = 2000.0\n"
+        @test occursin("max_surface_pressure_mismatch_pa", _config_error(_hydrostatic_config(path;
+                                                                                observations_extra = limit)))
+        skipped = with_logger(NullLogger()) do
+            _run_config_text(_hydrostatic_config(path; observations_extra = limit * "unplaced_records = \"skip\"\n"))
+        end
+        @test [s.assimilated for s in skipped.last.stencils] == [true, false]
+        @test occursin("must be a positive pressure", _config_error(_hydrostatic_config(path;
+            observations_extra = "[observations.placement]\nmax_surface_pressure_mismatch_pa = -1.0\n")))
     end
 end

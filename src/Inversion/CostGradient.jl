@@ -341,6 +341,20 @@ function _truncate_stepwise_arg(value::AbstractVector, n::Int)
 end
 _truncate_stepwise_arg(value, n::Int) = value
 
+# Count the observations left out of the cost by the surface-pressure screen of
+# averaging-kernel columns (`SkipUnplaced`). The screened set depends on the
+# meteorology only, so it is the same in every evaluation of an inversion; the
+# message is logged once per set (keyed by the record ids).
+function _log_unassimilated(observations, stencils)
+    ids = Int64[observations[i].id for i in eachindex(stencils) if !stencils[i].assimilated]
+    isempty(ids) && return nothing
+    @info "cs_surface_flux_4dvar: $(length(ids)) averaging-kernel column observations are not assimilated: " *
+          "the model surface pressure differs from the retrieval's by more than " *
+          "max_surface_pressure_mismatch_pa (unplaced_records = \"skip\"); their stencils are marked " *
+          "assimilated = false" _id = (:retrieval_surface_pressure_screen, hash(ids)) maxlog = 1
+    return nothing
+end
+
 """
     cs_surface_flux_4dvar(..., observations, controls; scheme, kwargs...) -> CS4DVarResult
 
@@ -349,8 +363,12 @@ named `CSSurfaceFluxControl`s over `CSSurfaceFluxWindow`s. Observations are
 scalar `CSObservation`s sampled after the model steps of their
 `CSTimeSampling` (one step, or a weighted time window; after convection, the
 state runtime output sees). `CSPlacedPointObjective` observations choose their
-layer at each sampled state from `column_met`, a `CSObservationColumnMet`
-(required when there are any).
+layer, and `CSRetrievalColumnObjective` observations (averaging-kernel
+columns) build their weights, at each sampled state from `column_met`, a
+`CSObservationColumnMet` (required when there are any). An averaging-kernel
+column whose surface-pressure mismatch exceeds its limit is an error, or,
+under `SkipUnplaced`, is reported with its simulated value and residual but
+left out of the cost and the gradient (its stencil is not `assimilated`).
 
 One cost-and-gradient evaluation is two forward runs and one reverse pass
 (with `FullCheckpoint`; the other schedules add their recomputation), whatever
@@ -488,6 +506,9 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
         build_functionals = true)
 
     # (2) Weighted departures (H(x) − y)/σ² scale each functional's weights.
+    # An observation that is not assimilated (an averaging-kernel column
+    # screened out by its surface-pressure mismatch) keeps its residual but
+    # adds nothing to the cost or the forcing.
     residuals = Vector{FT}(undef, length(observation_vec))
     scales = Vector{FT}(undef, length(observation_vec))
     observation_cost = zero(FT)
@@ -496,44 +517,50 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
         residual = simulated[obs_idx] - FT(obs.value)
         sigma = FT(obs.sigma)
         residuals[obs_idx] = residual
+        stencils[obs_idx].assimilated || (scales[obs_idx] = zero(FT); continue)
         observation_cost += FT(0.5) * (residual / sigma)^2
         scales[obs_idx] = residual / (sigma * sigma)
     end
+    active = findall(s -> s.assimilated, stencils)
+    _log_unassimilated(observation_vec, stencils)
 
     # (3) One taped run to the last sampled step and one reverse pass that
     # adds each step's forcing at the step's end. Footprint `t` is then
-    # ∂J_obs/∂E_t for every step up to the last sampled step.
-    last_step = maximum(obs -> obs.step, observation_vec)
-    forcing = _assemble_step_forcing(functionals, scales, mesh,
-                                     size(panels_rm0[1], 3), panels_rm0[1])
-    footprint = only(_cs_surface_footprints(
-        panels_rm0, panels_m0,
-        _truncate_steps(panels_am_steps, last_step),
-        _truncate_steps(panels_bm_steps, last_step),
-        _truncate_steps(panels_cm_steps, last_step),
-        mesh, [_ZeroStart()];
-        scheme, checkpoint,
-        dt = dt_ft,
-        flux_scale = FT(flux_scale),
-        cfl_limit,
-        base_emission_rates = _truncate_stepwise_arg(emission_rates, last_step),
-        diffusion_op = _truncate_stepwise_arg(diffusion_op, last_step),
-        diffusion_workspace = _truncate_stepwise_arg(diffusion_workspace, last_step),
-        diffusion_meteo,
-        convection_op,
-        convection_forcing = _truncate_convection_forcing(convection_forcing, last_step),
-        convection_workspace,
-        tape_storage, tape_path, forcing))
-
-    # Physical-space gradient. In preconditioned mode this is
-    # `∂J_obs/∂x` per control; in unconditioned mode it doubles as the
-    # final reported gradient `∂J/∂x`. Window steps after the last
-    # observation do not affect the cost (`ignore_future`).
+    # ∂J_obs/∂E_t for every step up to the last sampled step. Without any
+    # assimilated observation the observation gradient is zero.
     physical_gradients = [_zero_surface_like(control.value) for control in physical_controls]
-    @inbounds for control_idx in eachindex(physical_controls)
-        _add_window_gradient!(physical_gradients[control_idx], footprint,
-                              physical_controls[control_idx].window, one(FT);
-                              ignore_future = true)
+    if !isempty(active)
+        last_step = maximum(idx -> observation_vec[idx].step, active)
+        forcing = _assemble_step_forcing(functionals[active], scales[active], mesh,
+                                         size(panels_rm0[1], 3), panels_rm0[1])
+        footprint = only(_cs_surface_footprints(
+            panels_rm0, panels_m0,
+            _truncate_steps(panels_am_steps, last_step),
+            _truncate_steps(panels_bm_steps, last_step),
+            _truncate_steps(panels_cm_steps, last_step),
+            mesh, [_ZeroStart()];
+            scheme, checkpoint,
+            dt = dt_ft,
+            flux_scale = FT(flux_scale),
+            cfl_limit,
+            base_emission_rates = _truncate_stepwise_arg(emission_rates, last_step),
+            diffusion_op = _truncate_stepwise_arg(diffusion_op, last_step),
+            diffusion_workspace = _truncate_stepwise_arg(diffusion_workspace, last_step),
+            diffusion_meteo,
+            convection_op,
+            convection_forcing = _truncate_convection_forcing(convection_forcing, last_step),
+            convection_workspace,
+            tape_storage, tape_path, forcing))
+
+        # Physical-space gradient. In preconditioned mode this is
+        # `∂J_obs/∂x` per control; in unconditioned mode it doubles as the
+        # final reported gradient `∂J/∂x`. Window steps after the last
+        # observation do not affect the cost (`ignore_future`).
+        @inbounds for control_idx in eachindex(physical_controls)
+            _add_window_gradient!(physical_gradients[control_idx], footprint,
+                                  physical_controls[control_idx].window, one(FT);
+                                  ignore_future = true)
+        end
     end
 
     # Either: (a) apply T'^T to physical gradient and add χ for the

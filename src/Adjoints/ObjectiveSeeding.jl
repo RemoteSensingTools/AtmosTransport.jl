@@ -1,8 +1,10 @@
 # ---------------------------------------------------------------------------
 # Footprint-objective seeding + evaluation.
 #
-# Defines the abstract objective type and three concrete subtypes
-# (`CSLayerMeanObjective`, `CSColumnMeanObjective`, `CSSeedObjective`),
+# Defines the abstract objective type and its concrete subtypes
+# (`CSLayerMeanObjective`, `CSColumnMeanObjective`, the 4D-Var observation
+# objectives `CSPlacedPointObjective` and `CSRetrievalColumnObjective`, which
+# need the column meteorology of the sampled state, and `CSSeedObjective`),
 # plus the kernels that:
 #
 #   * validate an objective against mesh/Nz bounds,
@@ -79,6 +81,66 @@ struct CSPlacedPointObjective{B <: AbstractPressureBasis} <: AbstractCSFootprint
 end
 
 """
+    CSRetrievalColumnObjective(panel, i, j, area, retrieval, pressure_basis;
+                               max_surface_pressure_mismatch_pa = Inf,
+                               mismatch_policy = ErrorOnUnplaced())
+
+Averaging-kernel column average of the physical CS interior cell
+`(panel, i, j)` (area `area`, m²): a retrieved column (satellite or TCCON
+sounding) compared with the model through the retrieval's own layers,
+pressure weights, averaging kernel and prior (`retrieval`, an
+`Output.RetrievalColumn`). At every sampled state the model's interface
+pressures of `pressure_basis` (total pressures from the dry air mass and the
+specific humidity, `TotalFromHumidity`, or the dry interfaces,
+`DryInterfaces`) are stretched onto the retrieval column and the dry mixing
+ratios ``x_k = r_k/\\max(m_k, ε)`` are rebinned onto its layers (TM5-4DVar's
+operator, `Output.retrieval_column_weights!`):
+
+```math
+X = \\sum_k H_k\\, x_k + \\sum_i h_i (1 - a_i)\\, x_{a,i}, \\qquad
+H_k = \\sum_i h_i a_i R_{ik}.
+```
+
+`max_surface_pressure_mismatch_pa` bounds the time-weighted difference
+between the model and the retrieval surface pressure; a record above it is
+an error under `mismatch_policy = ErrorOnUnplaced()` and is left out of the
+cost (reported, not assimilated) under `SkipUnplaced()`. Sampling it needs
+the column meteorology (`cs_surface_flux_4dvar(...; column_met)`); built by
+`bind_to_mesh` from a column record with a retrieval block.
+"""
+struct CSRetrievalColumnObjective{B <: AbstractPressureBasis, U <: AbstractUnplacedPolicy} <:
+       AbstractCSFootprintObjective
+    panel::Int
+    i::Int
+    j::Int
+    area::Float64
+    retrieval::RetrievalColumn
+    pressure_basis::B
+    max_surface_pressure_mismatch_pa::Float64
+    mismatch_policy::U
+    function CSRetrievalColumnObjective(panel::Integer, i::Integer, j::Integer, area::Real,
+                                        retrieval::RetrievalColumn, pressure_basis::B,
+                                        max_surface_pressure_mismatch_pa::Real,
+                                        mismatch_policy::U) where {B <: AbstractPressureBasis,
+                                                                   U <: AbstractUnplacedPolicy}
+        isfinite(area) && area > 0 || throw(ArgumentError(
+            "CSRetrievalColumnObjective area must be finite and positive, got $area"))
+        max_surface_pressure_mismatch_pa > 0 || throw(ArgumentError(
+            "max_surface_pressure_mismatch_pa must be positive (Inf for no limit), got " *
+            "$(max_surface_pressure_mismatch_pa)"))
+        return new{B, U}(Int(panel), Int(i), Int(j), Float64(area), retrieval, pressure_basis,
+                         Float64(max_surface_pressure_mismatch_pa), mismatch_policy)
+    end
+end
+
+CSRetrievalColumnObjective(panel::Integer, i::Integer, j::Integer, area::Real, retrieval::RetrievalColumn,
+                           pressure_basis::AbstractPressureBasis;
+                           max_surface_pressure_mismatch_pa::Real = Inf,
+                           mismatch_policy::AbstractUnplacedPolicy = ErrorOnUnplaced()) =
+    CSRetrievalColumnObjective(panel, i, j, area, retrieval, pressure_basis, max_surface_pressure_mismatch_pa,
+                               mismatch_policy)
+
+"""
     CSSeedObjective()
 
 Marker objective used when the caller supplies an explicit final adjoint
@@ -98,7 +160,8 @@ function _validate_objective(obj::CSLayerMeanObjective, mesh::CubedSphereMesh, N
     return nothing
 end
 
-function _validate_objective(obj::Union{CSColumnMeanObjective, CSPlacedPointObjective},
+function _validate_objective(obj::Union{CSColumnMeanObjective, CSPlacedPointObjective,
+                                       CSRetrievalColumnObjective},
                              mesh::CubedSphereMesh, Nz::Int)
     1 <= obj.panel <= 6 || throw(ArgumentError("panel must be in 1:6, got $(obj.panel)"))
     1 <= obj.i <= mesh.Nc || throw(ArgumentError("i must be in 1:$(mesh.Nc), got $(obj.i)"))
@@ -106,10 +169,16 @@ function _validate_objective(obj::Union{CSColumnMeanObjective, CSPlacedPointObje
     return nothing
 end
 
-# A placed point objective chooses its layer from the column meteorology of the
-# sampled state, which only the 4D-Var path carries.
+# A placed point objective chooses its layer, and an averaging-kernel column
+# its weights, from the column meteorology of the sampled state, which only the
+# 4D-Var path carries.
 _placed_objective_needs_met() = throw(ArgumentError(
     "a CSPlacedPointObjective chooses its layer from the column meteorology of the sampled state " *
+    "(CSObservationColumnMet); use it as an observation of cs_surface_flux_4dvar(...; column_met). " *
+    "The footprint and Jacobian entry points take only objectives with a fixed stencil " *
+    "(CSLayerMeanObjective, CSColumnMeanObjective)"))
+_retrieval_objective_needs_met() = throw(ArgumentError(
+    "a CSRetrievalColumnObjective builds its weights from the interface pressures of the sampled state " *
     "(CSObservationColumnMet); use it as an observation of cs_surface_flux_4dvar(...; column_met). " *
     "The footprint and Jacobian entry points take only objectives with a fixed stencil " *
     "(CSLayerMeanObjective, CSColumnMeanObjective)"))
@@ -182,6 +251,8 @@ end
 
 evaluate_objective(::CSPlacedPointObjective, panels_rm, panels_m, mesh::CubedSphereMesh) =
     _placed_objective_needs_met()
+evaluate_objective(::CSRetrievalColumnObjective, panels_rm, panels_m, mesh::CubedSphereMesh) =
+    _retrieval_objective_needs_met()
 
 # ---------------------------------------------------------------------------
 # Adjoint seeding + per-step surface accumulator

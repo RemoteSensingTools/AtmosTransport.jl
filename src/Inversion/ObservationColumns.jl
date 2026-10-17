@@ -125,11 +125,41 @@ function _check_column_field(steps::AbstractVector{<:NTuple{6}}, name, mesh, Nz,
     return nothing
 end
 
-# Before the replay: every placed point observation can choose its layer.
-_validate_column_met(observations, met, mesh::CubedSphereMesh, Nz::Int, nsteps::Int) =
+# Before the replay: every placed point observation can choose its layer, and
+# every averaging-kernel column can build its interface pressures.
+function _validate_column_met(observations, met, mesh::CubedSphereMesh, Nz::Int, nsteps::Int)
     _validate_placed_column_met(CSPlacedPointObjective[o.objective for o in observations
                                                        if o.objective isa CSPlacedPointObjective],
                                 met, mesh, Nz, nsteps)
+    _validate_retrieval_column_met(CSRetrievalColumnObjective[o.objective for o in observations
+                                                              if o.objective isa CSRetrievalColumnObjective],
+                                   met, mesh, Nz, nsteps)
+    return nothing
+end
+
+function _validate_retrieval_column_met(columns::Vector{CSRetrievalColumnObjective}, met, mesh::CubedSphereMesh,
+                                        Nz::Int, nsteps::Int)
+    isempty(columns) && return nothing
+    met isa CSObservationColumnMet || throw(ArgumentError(
+        "$(length(columns)) observations are averaging-kernel columns (CSRetrievalColumnObjective), which " *
+        "build their weights from the interface pressures of each sampled state; pass " *
+        "column_met = CSObservationColumnMet(; p_top, gravity, humidity)"))
+    _check_column_field(met.humidity, "humidity", mesh, Nz, nsteps)
+    for basis in unique(o.pressure_basis for o in columns)
+        n = count(o -> o.pressure_basis == basis, columns)
+        _basis_needs_humidity(basis, met.mass_basis) && met.humidity === nothing && throw(ArgumentError(
+            "$(n) observations are averaging-kernel columns on total interface pressures " *
+            "($(_INVERSION_PLACEMENT_LABEL).pressure_basis = \"total\", the default): a retrieval's pressures " *
+            "are total pressures, and on a dry-basis run the model's are built from the dry air mass and the " *
+            "specific humidity, but column_met has no humidity. Pass column_met = CSObservationColumnMet(; " *
+            "..., humidity), or bind the records with pressure_basis = \"dry\" (a key that needs \"pressure\" " *
+            "in vertical_coordinates; the stretch onto the retrieval surface pressure then also absorbs the " *
+            "weight of the water vapour, and the surface-pressure mismatch includes it)"))
+        # The dry interfaces need a dry-basis air mass.
+        check_pressure_basis(basis, met.mass_basis, met.humidity !== nothing, n, _INVERSION_PLACEMENT_LABEL)
+    end
+    return nothing
+end
 function _validate_placed_column_met(placed::Vector{CSPlacedPointObjective}, met, mesh::CubedSphereMesh,
                                      Nz::Int, nsteps::Int)
     isempty(placed) && return nothing
@@ -189,33 +219,133 @@ function _placed_level(obj::CSPlacedPointObjective, step::Int, panels_m, mesh::C
 end
 
 # The value of `objective` on the state after `step`, its linear functional of
-# that state (`nothing` unless `build`), and the level it read (0 when it reads
-# more than one level, as a column mean). An objective with a fixed stencil
-# needs only `evaluate_objective` and `_linear_functional` methods.
+# that state (`nothing` unless `build`), the level it read (0 when it reads
+# more than one level, as a column mean), and the step's diagnostics of an
+# averaging-kernel column (`nothing` for other objectives). An objective with a
+# fixed stencil needs only `evaluate_objective` and `_linear_functional`
+# methods.
 _sample_objective(obj::AbstractCSFootprintObjective, step::Int, panels_rm, panels_m, mesh, met, build::Bool) =
     (evaluate_objective(obj, panels_rm, panels_m, mesh),
-     build ? _linear_functional(obj, step, panels_m, mesh) : nothing, _fixed_level(obj))
+     build ? _linear_functional(obj, step, panels_m, mesh) : nothing, _fixed_level(obj), nothing)
 _fixed_level(obj::CSLayerMeanObjective) = obj.level
 _fixed_level(::AbstractCSFootprintObjective) = 0
 function _sample_objective(obj::CSPlacedPointObjective, step::Int, panels_rm, panels_m, mesh,
                            met::CSObservationColumnMet, build::Bool)
     layer = CSLayerMeanObjective(obj.panel, obj.i, obj.j, _placed_level(obj, step, panels_m, mesh, met))
     return (evaluate_objective(layer, panels_rm, panels_m, mesh),
-            build ? _linear_functional(layer, step, panels_m, mesh) : nothing, layer.level)
+            build ? _linear_functional(layer, step, panels_m, mesh) : nothing, layer.level, nothing)
+end
+
+"""
+    _sample_objective(objective::CSRetrievalColumnObjective, step, panels_rm, panels_m, mesh, met, build)
+
+An averaging-kernel column on the state after `step`. The interface pressures
+of the objective's pressure basis come from the replayed air-mass column
+``m_k`` of its cell and the column meteorology (`Output.placement_pressures!`:
+total pressures from ``m_k`` and the specific humidity, or the dry
+interfaces); `Output.retrieval_column_weights!` gives the weights ``H_k`` on
+the dry mixing ratios ``x_k = r_k/\\max(m_k, ε)``. The value is
+
+``X = c + \\sum_k w_k\\, r_k``, ``w_k = H_k / \\max(m_k, ε)``,
+
+with ``c`` the prior term (`Output.retrieval_prior_offset`): linear in the
+tracer mass with the weights ``w_k`` of its functional (the pressures depend
+only on the meteorology), so the functional is the exact derivative of the
+value. Also returns the model minus retrieval surface pressure and the
+rebinned profile ``R x`` (surface first) of the step.
+"""
+function _sample_objective(obj::CSRetrievalColumnObjective, step::Int, panels_rm, panels_m, mesh,
+                           met::CSObservationColumnMet, build::Bool)
+    FT = eltype(panels_m[obj.panel])
+    air = _host_column(panels_m, obj.panel, obj.i, obj.j, mesh)
+    tracer = _host_column(panels_rm, obj.panel, obj.i, obj.j, mesh)
+    nz = length(air)
+    humidity = _basis_needs_humidity(obj.pressure_basis, met.mass_basis) ?
+        _host_column(_step_panels(met.humidity, step), obj.panel, obj.i, obj.j, mesh) : Float64[]
+    p_half = placement_pressures!(Vector{Float64}(undef, nz + 1), obj.pressure_basis, met.mass_basis, air,
+                                  humidity, obj.area, met.gravity, met.p_top)
+    s = Vector{Float64}(undef, nz + 1)
+    H = retrieval_column_weights!(Vector{Float64}(undef, nz), s, p_half, obj.retrieval)
+    floor = Float64(_objective_mass_floor(FT))
+    weight = FT[FT(H[k] / max(Float64(air[k]), floor)) for k in 1:nz]
+    offset = FT(retrieval_prior_offset(obj.retrieval))
+    # The value is the functional applied to this state, in its entry order.
+    value = offset
+    @inbounds for k in 1:nz
+        value += weight[k] * tracer[k]
+    end
+    f = build ? CSLinearFunctional{FT}(step, fill(obj.panel, nz), fill(obj.i, nz), fill(obj.j, nz), 1:nz,
+                                       weight, offset) : nothing
+    x = Float64[Float64(tracer[k]) / max(Float64(air[k]), floor) for k in 1:nz]
+    profile = retrieval_profile!(Vector{Float64}(undef, retrieval_layer_count(obj.retrieval)), s, p_half,
+                                 obj.retrieval, x)
+    sample = (; surface_pressure_mismatch_pa = p_half[end] - obj.retrieval.surface_pressure_pa, profile)
+    return (value, f, 0, sample)
 end
 
 # The stencil's placement code, height above the model surface and pressure,
 # and its cell ((0, 0, 0) for an operator without a single cell).
 _stencil_placement(::CSColumnMeanObjective) = (COLUMN_MEAN_PLACEMENT_CODE, NaN, NaN)
+_stencil_placement(::CSRetrievalColumnObjective) = (RETRIEVAL_COLUMN_PLACEMENT_CODE, NaN, NaN)
 _stencil_placement(::AbstractCSFootprintObjective) = (FIXED_LEVEL_PLACEMENT_CODE, NaN, NaN)
 _stencil_placement(obj::CSPlacedPointObjective) =
     (obj.placement.method, obj.placement.height_agl_m, obj.placement.pressure_pa)
-_objective_cell(o::Union{CSLayerMeanObjective, CSColumnMeanObjective, CSPlacedPointObjective}) =
-    (o.panel, o.i, o.j)
+_objective_cell(o::Union{CSLayerMeanObjective, CSColumnMeanObjective, CSPlacedPointObjective,
+                         CSRetrievalColumnObjective}) = (o.panel, o.i, o.j)
 _objective_cell(::AbstractCSFootprintObjective) = (0, 0, 0)
 
-function _observation_stencil(obs::CSObservation, levels::Vector{Int})
+function _observation_stencil(obs::CSObservation, levels::Vector{Int},
+                              surface_pressure_mismatch_pa::Float64 = NaN,
+                              retrieval_profile::Vector{Float64} = Float64[], assimilated::Bool = true)
     method, height, pressure = _stencil_placement(obs.objective)
     return CSObservationStencil(_objective_cell(obs.objective)..., copy(obs.sampling.steps),
-                                copy(obs.sampling.weights), levels, method, height, pressure)
+                                copy(obs.sampling.weights), levels, method, height, pressure,
+                                surface_pressure_mismatch_pa, retrieval_profile, assimilated)
+end
+
+# The time-weighted diagnostics of an averaging-kernel column: add one sampled
+# step's surface-pressure mismatch and rebinned profile with its weight.
+_accumulate_retrieval_sample!(mismatch, profiles, idx::Int, ::Nothing, weight::Float64) = nothing
+function _accumulate_retrieval_sample!(mismatch::Vector{Float64}, profiles::Vector{Vector{Float64}}, idx::Int,
+                                       sample::NamedTuple, weight::Float64)
+    if isempty(profiles[idx])
+        profiles[idx] = zeros(length(sample.profile))
+        mismatch[idx] = 0.0
+    end
+    mismatch[idx] += weight * sample.surface_pressure_mismatch_pa
+    profiles[idx] .+= weight .* sample.profile
+    return nothing
+end
+
+"""
+    _screen_surface_pressure(observations, mismatch) -> Vector{Bool}
+
+Whether each observation is assimilated: an averaging-kernel column whose
+time-weighted model minus retrieval surface pressure `mismatch[i]` exceeds
+its `max_surface_pressure_mismatch_pa` is an `ArgumentError` under
+`ErrorOnUnplaced()` (all such records are named, up to five) and is left out
+of the cost under `SkipUnplaced()`. Every other observation is assimilated.
+"""
+function _screen_surface_pressure(observations, mismatch::Vector{Float64})
+    assimilated = trues(length(observations))
+    rejected = String[]
+    n_rejected = 0
+    for (idx, obs) in enumerate(observations)
+        obj = obs.objective
+        obj isa CSRetrievalColumnObjective || continue
+        abs(mismatch[idx]) <= obj.max_surface_pressure_mismatch_pa && continue
+        if obj.mismatch_policy isa SkipUnplaced
+            assimilated[idx] = false
+        else
+            n_rejected += 1
+            length(rejected) < 5 && push!(rejected, "id $(obs.id) (Δps = $(round(mismatch[idx]; digits = 1)) Pa, " *
+                                                     "limit $(obj.max_surface_pressure_mismatch_pa) Pa)")
+        end
+    end
+    n_rejected == 0 || throw(ArgumentError(
+        "$(n_rejected) averaging-kernel column observations differ from the model surface pressure by more " *
+        "than max_surface_pressure_mismatch_pa: $(join(rejected, ", "))$(n_rejected > 5 ? ", …" : ""). " *
+        "Raise the limit, or set $(_INVERSION_PLACEMENT_LABEL).unplaced_records = \"skip\" to leave them out " *
+        "of the cost"))
+    return collect(Bool, assimilated)
 end

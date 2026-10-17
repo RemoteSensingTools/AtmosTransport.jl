@@ -22,7 +22,10 @@
 #     (`Output.resolve_placement` with the run's `VerticalPlacementSpec` and
 #     `ObservationTerrain`) into a `CSPlacedPointObjective`; its layer is chosen
 #     at every sampled state by `Output.sample_column_layer!`. A column record
-#     becomes a `CSColumnMeanObjective`.
+#     with a retrieval block becomes a `CSRetrievalColumnObjective` (its
+#     averaging kernel on the model column stretched onto the retrieval
+#     column, built at every sampled state), one without a block a
+#     `CSColumnMeanObjective`.
 # ---------------------------------------------------------------------------
 
 import Dates
@@ -69,7 +72,8 @@ _parse_out_of_range_policy(raw) = throw(ArgumentError(
 """
     bind_to_mesh(set::CSObservationSet, mesh::CubedSphereMesh, t_start::Dates.DateTime, dt::Real;
                  nsteps = nothing, tracer_filter = nothing, out_of_range_policy = RejectOutOfRange(),
-                 placement = VerticalPlacementSpec(), terrain = ObservationTerrain())
+                 placement = VerticalPlacementSpec(), terrain = ObservationTerrain(),
+                 max_surface_pressure_mismatch_pa = Inf)
         -> Vector{CSObservation}
 
 Bind each record of `set` to a [`CSObservation`](@ref) of the CS 4D-Var path:
@@ -108,13 +112,30 @@ its time sampling, the cell that contains it, and its objective.
   record that gives none of the coordinates in use is unplaced: an
   `ArgumentError` with `unplaced_records = "error"` (default), dropped and
   counted with `SkipUnplaced()`.
-- **Column records** ([`ColumnObservationKind`](@ref)) become
-  [`CSColumnMeanObjective`](@ref)s (averaging kernels are not applied yet).
+- **Column records** ([`ColumnObservationKind`](@ref)) with a retrieval
+  block become [`CSRetrievalColumnObjective`](@ref)s: the averaging-kernel
+  column on the interface pressures of `placement.pressure_basis` (total
+  pressures from the humidity by default), with the surface-pressure limit
+  `max_surface_pressure_mismatch_pa` (Pa, positive; `Inf`, the default, lets
+  the stretch absorb any mismatch, as TM5) and the unplaced policy of
+  `placement` as its mismatch policy: a record whose model surface pressure
+  differs from the retrieval's by more than the limit is an error under
+  `unplaced_records = "error"`, and is left out of the cost (and counted)
+  under `"skip"`. The model surface pressure is known only at the sampled
+  states, so the check runs in the 4D-Var's forward replay; it is the surface
+  pressure of the pressure basis, so with `DryInterfaces` the mismatch also
+  contains the weight of the water vapour (about 0.5 % of the surface
+  pressure, more in the tropics). Column records without a block become
+  [`CSColumnMeanObjective`](@ref)s.
 - Records with a nonzero `flag` are not assimilated (dropped); records of
   another tracer are dropped when `tracer_filter` names one.
 - The observation `sigma` is ``\\sqrt{\\sigma_\\mathrm{value}^2 +
-  \\sigma_\\mathrm{model}^2}`` (exactly `value_sigma` without a model
-  error); the observation carries the record `id`.
+  \\sigma_\\mathrm{model}^2 + \\sigma_\\mathrm{prof}^2}`` (exactly
+  `value_sigma` without a model error), where ``\\sigma_\\mathrm{prof}^2 =
+  \\sum_i (h_i a_i \\sigma_i)^2`` is the model-error term of an
+  averaging-kernel column with a profile uncertainty ``\\sigma_i``
+  (`Output.retrieval_model_error_variance`; fixed by the record, so the cost
+  stays quadratic); the observation carries the record `id`.
 
 `set.time_origin` is documentation only.
 """
@@ -126,9 +147,14 @@ function bind_to_mesh(set::CSObservationSet,
                       tracer_filter::Union{Nothing, AbstractString} = nothing,
                       out_of_range_policy = RejectOutOfRange(),
                       placement::VerticalPlacementSpec = VerticalPlacementSpec(),
-                      terrain::ObservationTerrain = ObservationTerrain())
+                      terrain::ObservationTerrain = ObservationTerrain(),
+                      max_surface_pressure_mismatch_pa::Real = Inf)
     policy = _parse_out_of_range_policy(out_of_range_policy)
-    return _bind_to_mesh(set, mesh, t_start, dt, policy; nsteps, tracer_filter, placement, terrain)
+    max_surface_pressure_mismatch_pa > 0 || throw(ArgumentError(
+        "max_surface_pressure_mismatch_pa must be a positive pressure (Pa), or Inf for no limit; got " *
+        "$(max_surface_pressure_mismatch_pa)"))
+    return _bind_to_mesh(set, mesh, t_start, dt, policy; nsteps, tracer_filter, placement, terrain,
+                         max_surface_pressure_mismatch_pa = Float64(max_surface_pressure_mismatch_pa))
 end
 
 function _bind_to_mesh(set::CSObservationSet,
@@ -139,7 +165,8 @@ function _bind_to_mesh(set::CSObservationSet,
                        nsteps::Union{Nothing, Integer},
                        tracer_filter::Union{Nothing, AbstractString},
                        placement::VerticalPlacementSpec,
-                       terrain::ObservationTerrain)
+                       terrain::ObservationTerrain,
+                       max_surface_pressure_mismatch_pa::Float64)
     dt_f = Float64(dt)
     isfinite(dt_f) && dt_f > 0 || throw(ArgumentError("dt must be positive, got $dt"))
     if nsteps !== nothing
@@ -177,7 +204,8 @@ function _bind_to_mesh(set::CSObservationSet,
         end
         cell = locate(locator, record.lon, record.lat)
         request = _sounding_request(record, t)
-        objective = _bind_objective(record.kind, request, cell, placement, terrain)
+        objective = _bind_objective(record.kind, record, request, cell, placement, terrain,
+                                    max_surface_pressure_mismatch_pa)
         if objective === nothing
             _count_unplaced!(counters, request)
             length(examples) < 5 && push!(examples, _unplaced_example(request))
@@ -207,17 +235,23 @@ _sounding_request(r::CSObservationRecord, time_seconds::Float64) =
                     r.altitude_m, r.pressure_pa)
 
 # Point records: placed in the column (nothing when unplaced). Column records:
-# the column mean of their cell.
-function _bind_objective(::PointObservationKind, request::SoundingRequest, cell::CellLocation,
-                         spec::VerticalPlacementSpec, terrain::ObservationTerrain)
+# the averaging-kernel column of their cell when they carry a retrieval block,
+# else its column mean.
+function _bind_objective(::PointObservationKind, record::CSObservationRecord, request::SoundingRequest,
+                         cell::CellLocation, spec::VerticalPlacementSpec, terrain::ObservationTerrain,
+                         max_surface_pressure_mismatch_pa::Float64)
     vp = resolve_placement(spec, UnplacedWithoutHeight(), request, cell, terrain)
     vp === nothing && return nothing
     return CSPlacedPointObjective(cell.panel, cell.i, cell.j, cell.area, vp, spec.pressure_basis)
 end
 
-_bind_objective(::ColumnObservationKind, request::SoundingRequest, cell::CellLocation,
-                spec::VerticalPlacementSpec, terrain::ObservationTerrain) =
-    CSColumnMeanObjective(cell.panel, cell.i, cell.j)
+function _bind_objective(::ColumnObservationKind, record::CSObservationRecord, request::SoundingRequest,
+                         cell::CellLocation, spec::VerticalPlacementSpec, terrain::ObservationTerrain,
+                         max_surface_pressure_mismatch_pa::Float64)
+    record.retrieval === nothing && return CSColumnMeanObjective(cell.panel, cell.i, cell.j)
+    return CSRetrievalColumnObjective(cell.panel, cell.i, cell.j, cell.area, record.retrieval,
+                                      spec.pressure_basis, max_surface_pressure_mismatch_pa, spec.unplaced)
+end
 
 # ---------------------------------------------------------------------------
 # Time sampling

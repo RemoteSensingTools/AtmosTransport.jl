@@ -61,11 +61,17 @@
 #     out_of_range_policy = "reject"  # reject | skip | clamp
 #     [observations.placement]        # optional: how point records are placed
 #     vertical_coordinates = ["height_above_ground", "pressure"]
-#     pressure_basis = "total"        # or "dry" (needs no specific_humidity)
+#     pressure_basis = "total"        # or "dry" (needs no specific_humidity); also the
+#                                     # interface pressures of averaging-kernel columns
 #     unplaced_records = "error"      # or "skip"
 #     # surface_height_file, dem_file, dem_variable,
 #     # absolute_altitude_above_agl_m: as in [output.observations]
 #     layer_height_temperature_kelvin = 280.0   # without meteo temperature_kelvin
+#     # Averaging-kernel columns (column records with a retrieval block): the
+#     # largest |model − retrieval surface pressure| (Pa) the stretch onto the
+#     # retrieval column may absorb; above it a record is an error, or is left
+#     # out of the cost with unplaced_records = "skip". Default: no limit.
+#     max_surface_pressure_mismatch_pa = 5000.0
 #
 #     # or inline [[observations.entries]] blocks:
 #     [[observations.entries]]
@@ -130,8 +136,10 @@ const _LBFGS_KEYS = ("m", "show_trace")
 const _HYDROSTATIC_METEO_KEYS = ("interface_pressures_pa", "specific_humidity", "temperature_kelvin")
 const _OBSERVATION_FILE_KEYS = ("file", "tracer", "out_of_range_policy", "placement")
 # `[observations.placement]`: the forward sampler's placement keys, plus the
-# constant layer temperature of the hypsometric heights.
-const _OBSERVATION_PLACEMENT_KEYS = (AT.Output._VERTICAL_PLACEMENT_KEYS..., "layer_height_temperature_kelvin")
+# constant layer temperature of the hypsometric heights and the surface-pressure
+# limit of averaging-kernel columns.
+const _OBSERVATION_PLACEMENT_KEYS = (AT.Output._VERTICAL_PLACEMENT_KEYS..., "layer_height_temperature_kelvin",
+                                     "max_surface_pressure_mismatch_pa")
 const _INVERSION_TABLE_KEYS = Dict(
     "mesh"           => ("Nc", "Hp", "float_type"),
     "time"           => ("nsteps", "dt_seconds", "start"),
@@ -302,7 +310,17 @@ function _bind_observation_file(cfg, mesh)
     return AT.bind_to_mesh(AT.read_observations(path), mesh, _start_time(cfg), cfg["time"]["dt_seconds"];
                            nsteps = cfg["time"]["nsteps"], tracer_filter = tracer,
                            out_of_range_policy = get(obs_cfg, "out_of_range_policy", "reject"),
-                           placement, terrain = AT.Models.DrivenRunner._observation_terrain(placement, mesh))
+                           placement, terrain = AT.Models.DrivenRunner._observation_terrain(placement, mesh),
+                           max_surface_pressure_mismatch_pa = _max_surface_pressure_mismatch(cfg))
+end
+
+# The surface-pressure limit of averaging-kernel columns (Pa), Inf without one.
+function _max_surface_pressure_mismatch(cfg)
+    placement = get(cfg["observations"], "placement", Dict{String, Any}())
+    value = get(placement, "max_surface_pressure_mismatch_pa", Inf)
+    value isa Real && !(value isa Bool) && value > 0 || throw(ArgumentError(
+        "$(_PLACEMENT_LABEL).max_surface_pressure_mismatch_pa must be a positive pressure (Pa); got $(repr(value))"))
+    return Float64(value)
 end
 
 _observation_placement(cfg) =
