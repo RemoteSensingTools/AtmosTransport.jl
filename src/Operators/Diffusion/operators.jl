@@ -663,34 +663,36 @@ function _apply_cs_dkg_mass!(rm::NTuple{6}, air_mass::NTuple{6}, op,
             throw(DimensionMismatch("Dkg factor panel $p must have shape $((Nc, Nj, Nz))"))
         _check_dkg_ledger_carry(carry, p, (Nc, Nj), Nt, packed, tracer)
     end
+    all(p -> size(rm[p]) == size(rm[1]), 2:6) || throw(DimensionMismatch(
+        "Dkg panels must share one shape; got $(map(size, rm))"))
     update_field!(op.kz_field, current_time(meteo))
-    for p in 1:6
-        Nc, Ny = size(rm[p], 1) - 2Hp, size(rm[p], 2) - 2Hp
-        Nz, Nt = size(rm[p], 3), size(rm[p], 4)
-        backend = get_backend(rm[p])
-        dkg = panel_field(op.kz_field, p)
-        carry_p = _dkg_carry_panel(carry, p, packed, tracer)
-        column_tile = _cs_dkg_mass_workgroupsize(backend, FT)
-        tracer_tile = _cs_dkg_tracer_workgroupsize(backend, FT)
-        if packed && Nt > 1 && tracer_tile !== nothing
-            # Queue the read-only tracer solves after factor construction on
-            # the same backend stream. The panel synchronization completes both.
-            launch!(_vertical_diffusion_cs_dkg_factors_kernel!, backend, column_tile, (Nc, Ny),
-                    workspace.factors[p], air_mass[p], dkg, FT(dt), Nz, Hp; sync = false)
-            launch!(_vertical_diffusion_cs_mass_dkg_tracers_kernel!, backend, tracer_tile,
-                    (Nc, Ny, Nt), rm[p], carry_p, air_mass[p], dkg, workspace.factors[p], FT(dt),
-                    Nz, Hp; sync = false)
-        elseif packed
-            launch!(_vertical_diffusion_cs_mass_dkg_packed_kernel!, backend, column_tile,
-                    (Nc, Ny), rm[p], carry_p, air_mass[p], dkg, workspace.factors[p], FT(dt), Nz,
-                    Nt, Hp; sync = false)
-        else
-            launch!(_vertical_diffusion_cs_mass_dkg_kernel!, backend, column_tile, (Nc, Ny),
-                    rm[p], carry_p, air_mass[p], dkg, workspace.factors[p], FT(dt), Nz, Hp,
-                    tracer === nothing ? 1 : Int(tracer); sync = false)
-        end
-        synchronize(backend)
+    # One launch covers all six panels (the third index selects the panel), so
+    # each column runs alone in a launch of 6 Nc² columns instead of Nc².
+    Nc, Ny = size(rm[1], 1) - 2Hp, size(rm[1], 2) - 2Hp
+    Nz, Nt = size(rm[1], 3), size(rm[1], 4)
+    backend = get_backend(rm[1])
+    dkg = ntuple(p -> panel_field(op.kz_field, p), 6)
+    carry_panels = ntuple(p -> _dkg_carry_panel(carry, p, packed, tracer), 6)
+    column_tile = _cs_dkg_mass_workgroupsize(backend, FT)
+    tracer_tile = _cs_dkg_tracer_workgroupsize(backend, FT)
+    if packed && Nt > 1 && tracer_tile !== nothing
+        # Queue the read-only tracer solves after factor construction on the
+        # same backend stream; the synchronization below completes both.
+        launch!(_vertical_diffusion_cs_dkg_factors_panels_kernel!, backend, column_tile,
+                (Nc, Ny, 6), workspace.factors, air_mass, dkg, FT(dt), Nz, Hp; sync = false)
+        launch!(_vertical_diffusion_cs_mass_dkg_tracers_panels_kernel!, backend, tracer_tile,
+                (Nc, Ny, 6Nt), rm, carry_panels, air_mass, dkg, workspace.factors, FT(dt),
+                Nz, Nt, Hp; sync = false)
+    elseif packed
+        launch!(_vertical_diffusion_cs_mass_dkg_packed_panels_kernel!, backend, column_tile,
+                (Nc, Ny, 6), rm, carry_panels, air_mass, dkg, workspace.factors, FT(dt), Nz,
+                Nt, Hp; sync = false)
+    else
+        launch!(_vertical_diffusion_cs_mass_dkg_panels_kernel!, backend, column_tile,
+                (Nc, Ny, 6), rm, carry_panels, air_mass, dkg, workspace.factors, FT(dt), Nz, Hp,
+                tracer === nothing ? 1 : Int(tracer); sync = false)
     end
+    synchronize(backend)
     return nothing
 end
 

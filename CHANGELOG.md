@@ -669,6 +669,12 @@
   `CSAdvectionWorkspace` takes `column_scratch_panels` (default from that rule;
   Lin-Rood workspaces use 1) and its column scratch holds one slot per tracer
   and panel of a launch.
+- Cubed-sphere column operators launch once for all six panels instead of
+  once per panel: the conservative Dkg diffusion solve (also the GEOS-Chem
+  non-local VDIFF; one synchronization per call instead of six), the surface
+  flux (static and time-varying sources, one launch per source and time
+  segment), and the CMFMC convection substep. Each column runs the same
+  arithmetic, so results are bit-identical.
 
 ### Other changes
 

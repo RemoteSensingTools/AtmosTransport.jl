@@ -17,13 +17,11 @@ else
             field = Adapt.adapt(CuArray, DkgState.PrecomputedCSDkgField(d))
             op = DkgDiff.ImplicitVerticalDiffusion(; kz_field=field)
             workspace = DkgDiff.DiffusionWorkspace(air, 1, Nt)
-            serial! = DkgDiff._vertical_diffusion_cs_mass_dkg_packed_kernel!(
+            serial! = DkgDiff._vertical_diffusion_cs_mass_dkg_packed_panels_kernel!(
                 get_backend(actual[1]), (8, 8))
             serial_carry = map(c -> zero(c), workspace.ledger_carry)
-            for p in 1:6
-                serial!(expected[p], serial_carry[p], air[p], DkgState.panel_field(field, p),
-                        workspace.factors[p], one(FT), Nz, Nt, 1; ndrange=(Nc, Nc))
-            end
+            serial!(expected, serial_carry, air, ntuple(p -> DkgState.panel_field(field, p), 6),
+                    workspace.factors, one(FT), Nz, Nt, 1; ndrange=(Nc, Nc, 6))
             CUDA.synchronize()
             DkgDiff.apply_vertical_diffusion_vmr!(actual, air, op, workspace, one(FT); halo_width=1)
             @test map(Array, actual) == map(Array, expected)
