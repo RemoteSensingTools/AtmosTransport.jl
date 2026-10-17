@@ -148,6 +148,8 @@ function DrivenSimulation(model::TransportModel,
         host_staging = buffers.host_staging
         loaded_window = load_transport_window!(host_staging, driver, start_window)
         window = _copy_window_payload!(buffers.window, loaded_window)
+        # The prefetch below refills the (pinned) staging window.
+        Architectures.synchronize_storage!(model.state.air_mass)
         prefetch_window = separate_prefetch ? buffers.prefetch_window : window
         expected_air_mass = buffers.expected_air_mass
         qv_buffer = buffers.qv_buffer

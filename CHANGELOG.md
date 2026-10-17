@@ -684,6 +684,13 @@
   previous binary's simulation. Each day boundary used to allocate and zero
   new host and device windows and run a full collection (about 0.35 s per day
   at C90). Window contents are unchanged.
+- The host staging window of a device run is page-locked
+  (`Architectures.pin_host_memory!`; CUDA only), so each window upload is a
+  direct DMA transfer (24 GB/s instead of 12 GB/s on an L40S, without
+  occupying the prefetch thread). The prefetch waits for the upload on its own
+  stream (`Architectures.synchronize_storage!`) before handing the window over;
+  before, an upload staged through the driver's pageable path could in
+  principle still be in flight when the stepping task used the window.
 
 ### Other changes
 

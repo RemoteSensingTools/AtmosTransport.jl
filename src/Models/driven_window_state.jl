@@ -202,13 +202,15 @@ end
 
 # The first host window becomes the staging buffer of a device-resident run when
 # the driver can refill it in place; CPU runs use each loaded window directly
-# (it becomes the simulation's window), so they keep loading fresh ones.
+# (it becomes the simulation's window), so they keep loading fresh ones. The
+# staging window is page-locked where the backend supports it, so its copies to
+# the device are direct, asynchronous transfers (each load synchronizes them).
 function _host_staging_window(loaded_window, driver, model_air_mass)
     _window_backend_adapter(model_air_mass) === Array && return nothing
     _window_backend_adapter(loaded_window.air_mass) === Array || return nothing
     hasmethod(load_transport_window!, Tuple{typeof(loaded_window), typeof(driver), Int}) ||
         return nothing
-    return loaded_window
+    return Architectures.pin_host_memory!(loaded_window, model_air_mass)
 end
 
 # The window storage of a finished simulation `previous` that a new simulation of
@@ -244,6 +246,10 @@ function _load_window_into_existing_backend!(existing_window,
     end
     SectionTimer.time_section(:window_backend_copy) do
         _copy_window_payload!(existing_window, loaded)
+        # Copies from the pinned staging window are asynchronous on this task's
+        # queue: finish them before the staging window is refilled or the device
+        # window is handed to the stepping task.
+        Architectures.synchronize_storage!(model_air_mass)
     end
     return existing_window
 end
