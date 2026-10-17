@@ -48,6 +48,8 @@ _validate_start(start::_ObjectiveStart, mesh::CubedSphereMesh, Nz::Int) =
     _validate_objective(start.objective, mesh, Nz)
 _validate_start(::_ObjectiveStart{<:CSPlacedPointObjective}, ::CubedSphereMesh, ::Int) =
     _placed_objective_needs_met()
+_validate_start(::_ObjectiveStart{<:CSRetrievalColumnObjective}, ::CubedSphereMesh, ::Int) =
+    _retrieval_objective_needs_met()
 _validate_start(::Union{_SeedStart, _ZeroStart}, ::CubedSphereMesh, ::Int) = nothing
 
 # The objective recorded in the `CSFootprintResult`.
@@ -318,8 +320,11 @@ _run_cs_observations_forward(args...; kwargs...) =
 # each step) and, with `build_functionals = true`, their linear functionals:
 # each sampled step's `_linear_functional` (weights from the replayed air mass
 # of that state) scaled by `ω_s`. Placed point observations choose their layer
-# at each sampled state from `column_met` (`_sample_objective`). The replay
-# stops after the last sampled step.
+# at each sampled state from `column_met` (`_sample_objective`), and
+# averaging-kernel columns build their weights there; a column whose
+# time-weighted surface-pressure mismatch exceeds its limit is an error or is
+# marked not assimilated in its stencil (`_screen_surface_pressure`). The
+# replay stops after the last sampled step.
 #
 # An instantaneous observation (one step, ω = 1) gets exactly the value and
 # functional it had before time sampling existed: `0 + 1·h` and `1·w` are
@@ -378,6 +383,10 @@ function _observe_cs_forward(panels_rm0, panels_m0,
     entries = build_functionals ?
         [(Int[], Int[], Int[], Int[], Int[], FT[]) for _ in 1:nobs] : nothing
     offsets = zeros(FT, nobs)
+    # Averaging-kernel columns: time-weighted surface-pressure mismatch and
+    # rebinned profile (NaN and empty for other observations).
+    mismatch = fill(NaN, nobs)
+    profiles = [Float64[] for _ in 1:nobs]
     last_step = maximum(obs -> obs.step, observations; init = 0)
 
     @inbounds for step in 1:last_step
@@ -405,10 +414,11 @@ function _observe_cs_forward(panels_rm0, panels_m0,
         for (obs_idx, n) in samples_by_step[step]
             obs = observations[obs_idx]
             weight = FT(obs.sampling.weights[n])
-            value, f, level = _sample_objective(obs.objective, step, panels_rm, panels_m, mesh,
-                                                column_met, build_functionals)
+            value, f, level, sample = _sample_objective(obs.objective, step, panels_rm, panels_m, mesh,
+                                                        column_met, build_functionals)
             simulated[obs_idx] += weight * value
             levels[obs_idx][n] = level
+            _accumulate_retrieval_sample!(mismatch, profiles, obs_idx, sample, obs.sampling.weights[n])
             if build_functionals
                 _append_entries!(entries[obs_idx], f, weight)
                 offsets[obs_idx] += weight * f.offset
@@ -416,7 +426,9 @@ function _observe_cs_forward(panels_rm0, panels_m0,
         end
     end
 
-    stencils = [_observation_stencil(observations[i], levels[i]) for i in 1:nobs]
+    assimilated = _screen_surface_pressure(observations, mismatch)
+    stencils = [_observation_stencil(observations[i], levels[i], mismatch[i], profiles[i], assimilated[i])
+                for i in 1:nobs]
     functionals = build_functionals ?
         [CSLinearFunctional{FT}(entries[i]..., offsets[i]) for i in 1:nobs] : CSLinearFunctional{FT}[]
     return (; simulated, functionals, stencils)

@@ -17,8 +17,14 @@
 #
 # Departure sign convention:
 #     departure = simulated_value - observed_value      (the innovation H(x) - y)
-#     normalized_departure = departure / sqrt(value_sigma^2 + model_sigma^2)
-# pinned by the root attribute `departure_sign_convention`.
+#     normalized_departure = departure / sqrt(value_sigma^2 + model_sigma^2 + profile_model_sigma^2)
+# pinned by the root attribute `departure_sign_convention` (profile_model_sigma:
+# the model-error term of averaging-kernel columns, 0 for every other row and
+# for files without the retrieval block).
+#
+# Optional retrieval block (issue #20, part 4): written when any row is an
+# averaging-kernel column (vertical_placement = -3); see [optional_dimensions]
+# and [optional_variables].
 #
 # Changes from v1 (no longer read): Float64 lat/lon; `alt` and `step`
 # replaced by kind, time_window_s, the vertical placement and the sample
@@ -57,7 +63,7 @@ description = "instrument family label"
 
 [variables.date_components]
 dtype = "i16"
-dims  = ["date_component", "obs"]
+dims  = ["obs", "date_component"]
 description = "(year, month, day, hour, minute, second) UTC per observation"
 
 [variables.lat]
@@ -106,7 +112,7 @@ description = "bound cubed-sphere interior cell index along panel Y (1 <= j <= N
 [variables.vertical_placement]
 dtype = "i8"
 dims  = ["obs"]
-description = "placement code: 0 record_height, 1 altitude_minus_dem, 2 pressure, 3 absolute_altitude (point records; Output.VERTICAL_PLACEMENT_CODES), -1 column_mean (column records); see the vertical_placement_codes attribute"
+description = "placement code: 0 record_height, 1 altitude_minus_dem, 2 pressure, 3 absolute_altitude (point records; Output.VERTICAL_PLACEMENT_CODES), -1 column_mean, -3 retrieval_column (averaging-kernel column) (column records); see the vertical_placement_codes attribute"
 
 [variables.placement_height_agl_m]
 dtype = "f64"
@@ -168,7 +174,39 @@ description = "1-sigma model/representation error, added in quadrature"
 [variables.normalized_departure]
 dtype = "f64"
 dims  = ["obs"]
-description = "departure / sqrt(value_sigma^2 + model_sigma^2), the residual of the 4D-Var cost"
+description = "departure / sqrt(value_sigma^2 + model_sigma^2 + profile_model_sigma^2), the residual of the 4D-Var cost"
+
+# ---------------------------------------------------------------------------
+# Optional retrieval block: all four variables or none. Without it every row
+# reads as surface_pressure_mismatch_pa = NaN, no retrieval profile,
+# profile_model_sigma = 0, assimilated = 1.
+# ---------------------------------------------------------------------------
+
+[optional_dimensions]
+retrieval_level = "the largest number of retrieval layers of any row"
+
+[optional_variables.surface_pressure_mismatch_pa]
+dtype = "f64"
+dims  = ["obs"]
+units = "Pa"
+description = "averaging-kernel columns: model minus retrieval surface pressure (time-weighted over the sampled steps), absorbed by the stretch of the model column onto the retrieval column; NaN for other rows. The reader requires a pressure unit (converted to Pa)"
+
+[optional_variables.retrieval_model_profile]
+dtype = "f64"
+dims  = ["obs", "retrieval_level"]
+units = "mol mol-1"
+ordering = "surface_to_top"
+description = "averaging-kernel columns: the model's dry mole fraction on the retrieval layers (the stretched model column rebinned by pressure overlap, R x, time-weighted), from the surface up; NaN-padded, NaN for other rows. The reader requires ordering = 'surface_to_top' and a mole-fraction unit (converted to mol/mol)"
+
+[optional_variables.profile_model_sigma]
+dtype = "f64"
+dims  = ["obs"]
+description = "1-sigma model error of an averaging-kernel column, sqrt(sum_i (h_i a_i sigma_i)^2) from its profile uncertainty (0 without one, and for other rows), added in quadrature"
+
+[optional_variables.assimilated]
+dtype = "i8"
+dims  = ["obs"]
+description = "1 when the row is in the 4D-Var cost; 0 for an averaging-kernel column whose surface-pressure mismatch exceeded max_surface_pressure_mismatch_pa under unplaced_records = skip (reported, not assimilated)"
 
 [attributes]
 cs_departures_schema      = "v2"   # mandatory; loader fails fast on any other value (v1 with an explanation)

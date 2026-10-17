@@ -72,7 +72,12 @@ using ..Output: cell_locator, locate, CellLocation,
     AbstractPressureBasis, PlacementColumn, sample_column_layer!, needs_column_humidity,
     AbstractLayerTemperature, ConstantLayerTemperature, ProfileLayerTemperature,
     ObservationCounters, _handle_unplaced, _count_unplaced!, _unplaced_example, _warn_below_ground,
-    vertical_placement_codes_description
+    vertical_placement_codes_description,
+    AbstractUnplacedPolicy, ErrorOnUnplaced, SkipUnplaced, placement_pressures!, _basis_needs_humidity,
+    RetrievalColumn, retrieval_layer_count, retrieval_column_weights!, retrieval_prior_offset,
+    retrieval_profile!, retrieval_model_error_variance, mole_fraction_unit_scale, _mole_fraction_scale,
+    _PRESSURE_UNITS_PA,
+    _pressure_unit_key
 
 # Tape storage policies + record types live in src/Tape/
 # (loaded before Adjoints in src/AtmosTransport.jl). Re-imported here so
@@ -435,10 +440,12 @@ include("../Inversion/Optimizer.jl")
 
 
 export AbstractCSFootprintObjective
-export CSLayerMeanObjective, CSColumnMeanObjective, CSPlacedPointObjective, CSSeedObjective, CSFootprintResult
+export CSLayerMeanObjective, CSColumnMeanObjective, CSPlacedPointObjective, CSRetrievalColumnObjective
+export CSSeedObjective, CSFootprintResult
 export CSSurfaceFluxWindow, CSSurfaceFluxJacobianResult
 export CSTimeSampling, CSObservation, CSSurfaceFluxControl, CS4DVarResult, CS4DVarSolveResult
 export CSObservationStencil, COLUMN_MEAN_PLACEMENT_CODE, FIXED_LEVEL_PLACEMENT_CODE
+export RETRIEVAL_COLUMN_PLACEMENT_CODE
 export CSObservationColumnMet
 export AbstractObservationKind, PointObservationKind, ColumnObservationKind
 export CSObservationRecord, CSObservationSet, read_observations, write_observations

@@ -116,8 +116,10 @@ Instead of inline entries, `[observations]` can read an observation file
 "point"`: surface stations, towers, aircraft) are placed in the model column
 as the forward observation sampler places them, by their height above the
 ground or their pressure; column records (`kind = "column"`) are column
-means. The file needs the model start time and a column of physical air
-mass, the `synthetic_hydrostatic` meteorology:
+means, or, when they carry a retrieval block (the retrieval's layers,
+pressure weights, averaging kernel and prior), averaging-kernel columns. The
+file needs the model start time and a column of physical air mass, the
+`synthetic_hydrostatic` meteorology:
 
 ```toml
 [time]
@@ -136,13 +138,15 @@ tracer = "CO2"
 
 [observations.placement]
 vertical_coordinates = ["height_above_ground", "pressure"]
+# max_surface_pressure_mismatch_pa = 5000.0   # averaging-kernel columns; default no limit
 ```
 
 Each sample reads the layer that contains it at its model step (a record with
 `time_window_s > 0` averages the steps of its window), so a 10 m intake reads
 the surface layer and a 5 km aircraft sample a layer near 540 hPa in the same
-cell. The [observation operators](@ref placed-observation-operator) section
-of the adjoint status page gives the equations.
+cell. The [observation operators](@ref placed-observation-operator) and
+[averaging-kernel columns](@ref retrieval-column-operator) sections of the
+adjoint status page give the equations.
 
 Try changing `observations.entries.value` or `covariance.sigma_value` in a
 copy of the TOML and compare the two cost components. A smaller observation

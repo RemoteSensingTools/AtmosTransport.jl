@@ -178,10 +178,19 @@ instead of being placed: a [`CSLayerMeanObjective`](@ref) naming its level,
 or another fixed operator.
 """
 const FIXED_LEVEL_PLACEMENT_CODE = Int8(-2)
+"""
+Stencil placement code of an observation whose objective is an
+averaging-kernel column ([`CSRetrievalColumnObjective`](@ref)): every level
+of the column, weighted by the retrieval's pressure weights and averaging
+kernel on the model column stretched onto the retrieval column.
+"""
+const RETRIEVAL_COLUMN_PLACEMENT_CODE = Int8(-3)
 
 """
     CSObservationStencil(panel, i, j, steps, weights, levels, placement_method,
-                         height_agl_m, pressure_pa)
+                         height_agl_m, pressure_pa,
+                         surface_pressure_mismatch_pa = NaN, retrieval_profile = Float64[],
+                         assimilated = true)
 
 Where an observation was sampled in a 4D-Var evaluation, returned per
 observation in [`CS4DVarResult`](@ref)`.stencils`: the cell `(panel, i, j)`,
@@ -190,10 +199,21 @@ model level sampled at each step (`levels`, k = 1 at the top, resolved from
 the replayed column at the end of that step; `0` for an operator that reads
 more than one level, as a column mean), the `placement_method`
 (`Output.VERTICAL_PLACEMENT_CODES` for a [`CSPlacedPointObjective`](@ref),
-[`COLUMN_MEAN_PLACEMENT_CODE`](@ref) or
+[`COLUMN_MEAN_PLACEMENT_CODE`](@ref),
+[`RETRIEVAL_COLUMN_PLACEMENT_CODE`](@ref) or
 [`FIXED_LEVEL_PLACEMENT_CODE`](@ref) otherwise), and the height above the
 model surface (m) or the pressure (Pa) that placed it (NaN when not used).
 An operator without a single cell has the cell `(0, 0, 0)`.
+
+For an averaging-kernel column ([`CSRetrievalColumnObjective`](@ref)):
+`surface_pressure_mismatch_pa`, the model minus the retrieval surface
+pressure (Pa; time-weighted over the sampled steps; NaN for other
+operators); `retrieval_profile`, the model's dry mixing ratios on the
+retrieval layers (surface first, the rebinned profile ``R x``,
+time-weighted; empty for other operators); and `assimilated`, `false` when
+the surface-pressure mismatch exceeded `max_surface_pressure_mismatch_pa`
+under `SkipUnplaced()`: the observation's simulated value is reported, but
+it is not in the cost.
 """
 struct CSObservationStencil
     panel::Int
@@ -205,7 +225,14 @@ struct CSObservationStencil
     placement_method::Int8
     height_agl_m::Float64
     pressure_pa::Float64
+    surface_pressure_mismatch_pa::Float64
+    retrieval_profile::Vector{Float64}
+    assimilated::Bool
 end
+
+CSObservationStencil(panel, i, j, steps, weights, levels, placement_method, height_agl_m, pressure_pa) =
+    CSObservationStencil(panel, i, j, steps, weights, levels, placement_method, height_agl_m, pressure_pa,
+                         NaN, Float64[], true)
 
 """
     CSSurfaceFluxControl(window, value; background=nothing, sigma=nothing)
@@ -265,7 +292,10 @@ total, observation and background costs, the simulated values and
 residuals `H(x) − y` per observation, the gradient per control (and by
 control name), the controls and observations evaluated, and `stencils`, one
 [`CSObservationStencil`](@ref) per observation (the steps, weights and
-levels it was sampled at).
+levels it was sampled at). An observation whose stencil is not `assimilated`
+(an averaging-kernel column screened out by its surface-pressure mismatch)
+keeps its simulated value and residual but adds nothing to the cost and the
+gradient.
 """
 struct CS4DVarResult{FT, A2 <: AbstractArray{FT, 2}}
     cost::FT

@@ -504,6 +504,67 @@
 
 ### API and configuration changes
 
+- **Averaging-kernel (retrieval) columns in the 4D-Var** (issue #20, part 4).
+  Observation schema v2 gains an optional, NaN-padded retrieval block for
+  column records (`retrieval_level` / `retrieval_interface` dimensions;
+  `retrieval_pressure_pa`, `retrieval_pressure_weight`,
+  `retrieval_averaging_kernel`, `retrieval_prior_profile`, optional
+  `retrieval_profile_sigma`, `retrieval_surface_pressure_pa`), ordered from the
+  surface up (`ordering = "surface_to_top"`, required) with stated units
+  (pressures converted to Pa, the prior to mol/mol from `"ppm"`, `"ppb"`, …)
+  and validated (strictly decreasing pressures, weights ≥ 0 summing to 1,
+  finite values, a prior within [0, 1] mol/mol, the surface pressure equal to
+  the first interface; only column records, which are then absolute column
+  averages: value in (0, 1] mol/mol, value_sigma and model_sigma at most
+  1 mol/mol; errors larger than the value, as for a low-signal retrieval, are
+  accepted). `value`, `value_sigma` and `model_sigma` may state a `units`
+  attribute: a dry mole-fraction unit (`"mol mol-1"`, `"ppm"`, `"ppb"`, …)
+  is converted to mol/mol and must be stated on all three; files with
+  retrieval blocks must state one (the writer states `"mol mol-1"`); files
+  without units read as before. `CSObservationRecord` gains
+  `retrieval::Union{Nothing, Output.RetrievalColumn}` (the 16-argument
+  positional constructor still builds a record without one). `bind_to_mesh`
+  binds a column record with a block to the new `CSRetrievalColumnObjective`
+  and keeps column means for the others: at every sampled state the model's
+  total interface pressures (dry air mass plus humidity; or the dry
+  interfaces with `pressure_basis = "dry"`) are stretched onto the retrieval
+  column and the dry mixing ratios rebinned onto its layers by pressure
+  overlap, `X = Σᵢ hᵢ aᵢ (R x)ᵢ + Σᵢ hᵢ (1 − aᵢ) x_a,ᵢ`, TM5-4DVAR's operator
+  (`averaging_kernels.F90`), with functional weights `Hₖ/max(mₖ, ε)` and the
+  prior term as offset. The operator is shared in `Output`
+  (`RetrievalColumn`, `stretch_model_interfaces!`, `retrieval_rebin_matrix`,
+  `retrieval_column_weights!`, `retrieval_prior_offset`, `retrieval_profile!`,
+  `retrieval_column_value`, `retrieval_model_error_variance`). New keyword
+  `bind_to_mesh(...; max_surface_pressure_mismatch_pa = Inf)` (inversion
+  driver: `[observations.placement].max_surface_pressure_mismatch_pa`): a
+  record whose time-weighted model minus retrieval surface pressure exceeds
+  it is an error under `unplaced_records = "error"` and, under `"skip"`, is
+  reported but left out of the cost and the gradient (its
+  `CSObservationStencil` has `assimilated = false`; counted in one log
+  message); by default the stretch absorbs any mismatch, as in TM5. An
+  uncertainty of the model profile on the retrieval layers
+  (`retrieval_profile_sigma`; not the retrieval's a-priori uncertainty) adds
+  the model-error term `Σᵢ (hᵢ aᵢ σᵢ)²` to σ² (fixed by the record, so the
+  cost stays quadratic; analogous to, not the same as, TM5's `Σ H²σ²` on
+  model layers). The inversion driver accepts
+  `[observations.placement].pressure_basis` without `"pressure"` in
+  `vertical_coordinates` (it selects the pressures of averaging-kernel
+  columns; `Output._parse_vertical_placement(...; pressure_basis_for_columns
+  = true)`); `[output.observations]` still rejects it there.
+  `CSObservationStencil` gains `surface_pressure_mismatch_pa`,
+  `retrieval_profile` and `assimilated` (the 9-argument constructor still
+  works); new `RETRIEVAL_COLUMN_PLACEMENT_CODE` (−3). Departures v2: rows of
+  averaging-kernel columns carry code −3, and files with such rows add
+  `surface_pressure_mismatch_pa`, `retrieval_model_profile`
+  (`retrieval_level`, surface first), `profile_model_sigma` and
+  `assimilated`; `CSDepartureRecord` gains these fields (the 24-argument
+  positional constructor still works) and `normalized_departure` divides by
+  `√(value_sigma² + model_sigma² + profile_model_sigma²)`; the reader requires
+  the profile's ordering and units and the mismatch's units. Files without
+  retrieval blocks are written and read as before. The forward observation
+  sampler does not apply averaging kernels yet. See
+  `docs/src/theory/adjoint_status.md` (averaging-kernel columns) and
+  `test/core/test_cs_4dvar_retrieval_columns.jl`.
 - **Point observations placed in the column, and time windows, in the 4D-Var**
   (issue #20, part 3). `bind_to_mesh(set, mesh, t_start, dt; nsteps,
   tracer_filter, out_of_range_policy, placement, terrain)` turns each point

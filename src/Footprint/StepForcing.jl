@@ -119,6 +119,8 @@ _linear_functional(::CSSeedObjective, ::Integer, _panels_m, ::CubedSphereMesh) =
 
 _linear_functional(::CSPlacedPointObjective, ::Integer, _panels_m, ::CubedSphereMesh) =
     _placed_objective_needs_met()
+_linear_functional(::CSRetrievalColumnObjective, ::Integer, _panels_m, ::CubedSphereMesh) =
+    _retrieval_objective_needs_met()
 
 # `h(rm)` on the host for a functional of one step, on the tracer mass of that
 # step: gathers the entries' tracer masses (one small copy per entry). For
