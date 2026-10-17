@@ -1,0 +1,110 @@
+<h1>Mass budget</h1>
+<p class="lede">How much of each tracer is in the atmosphere, compared with GCHP, and whether each model's tracer mass changes
+only by its own emissions (and, for Rn-222, decay).</p>
+
+<div class="controls" id="controls"></div>
+
+<div class="tiles" id="tiles"></div>
+
+<section class="card">
+  <div class="card-head"><h2 id="t1"></h2></div>
+  <p class="sub" id="s1"></p>
+  <div class="plot" id="pb"></div>
+  <p class="note" id="n1"></p>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2 id="t2"></h2><span class="spacer"></span><span class="tools" id="zoom-ctl"></span></div>
+  <p class="sub" id="s2"></p>
+  <div class="plot" id="pm"></div>
+  <p class="note" id="n2"></p>
+</section>
+
+<script>
+SITE.ready(async () => {
+  const S = SITE, m = S.meta(), el = S.el;
+  const [mass, ov] = await Promise.all([S.load("mass", "mass.js"), S.load("overview", "overview.js")]);
+  const st = S.state({tracer: "co2", hide: "", scale: "gchp"}, {tracer: S.keys(m.tracers), scale: ["gchp", "ours"]});
+  const hidden = new Set(st.hide ? st.hide.split(",") : []);
+  const runs = S.mainRuns().filter(S.hasMonths);
+  const xr = S.xRange();
+  const MB = {co2: "co2_natural", fossil: "co2_fossil_from_dec2021", sf6: "sf6", rn222: "rn222"};
+  document.getElementById("controls").append(
+    S.control("Tracer", S.seg(m.tracers.map(t => ({key: t.key, name: t.name, title: t.long})), st.tracer, k => { st.tracer = k; draw(); })),
+    S.legend([m.gc, ...runs], hidden, () => draw()));
+  document.getElementById("zoom-ctl").append(S.seg([{key: "gchp", name: "Fit all"}, {key: "ours", name: "Fit AtmosTransport"}], st.scale,
+    k => { st.scale = k; draw(); }, "y scale"));
+
+  // tiles: dry-air mass and the whole-run conservation check
+  const tiles = document.getElementById("tiles");
+  for (const r of runs) {
+    const air = Object.values((mass.air || {})[r.key] || {});
+    tiles.append(el("div", {class: "tile"}, el("div", {class: "l"}, `${r.name}: dry air / GCHP`),
+      el("div", {class: "v"}, air.length ? S.fmt(air.reduce((a, b) => a + b) / air.length, 6) : "–"),
+      el("div", {class: "s"}, air.length ? `${air.length} season${air.length > 1 ? "s" : ""}; pre-v0.5 runs had 1.00416 (the v0.5 dry-air target now matches GCHP's)` : "no season compared")));
+  }
+  const ctile = el("div", {class: "tile"});
+  tiles.append(ctile);
+
+  const next = S.gate();
+  async function draw() {
+    const current = next();
+    st.hide = [...hidden].join(",");
+    S.saveState(st);
+    const t = S.tracer(st.tracer);
+    const D = await S.load(`daily_${t.key}`, `daily_${t.key}.js`);
+    if (!current()) return;
+    // conservation tile
+    ctile.innerHTML = "";
+    ctile.append(el("div", {class: "l"}, S.html(`${t.name}: conservation over the run (signoff C9)`)));
+    for (const r of runs) {
+      const c = ((mass.c9 || {})[r.key] || {})[MB[t.key]];
+      ctile.append(el("div", {class: "s", style: "margin-top:4px"}, el("b", {}, `${S.runName(r)}: `),
+        c ? S.html(`${S.sigfmt(c.value, 2)} ${t.key === "rn222" ? "of the emitted amount (largest month)" : "mol/mol"}: ` +
+                   `${c.ok ? "within" : "<b>above</b>"} the limit of ${S.sigfmt(c.limit, 2)} so far`) : "not available"));
+    }
+    // burden ratio
+    document.getElementById("t1").innerHTML = `${t.name}: global burden relative to GCHP`;
+    document.getElementById("s1").innerHTML = "Global tracer mass of each run relative to GCHP's at the same 3-hourly times, (run / GCHP − 1) in %, daily mean.";
+    const pct = a => (a || []).map(v => v === null ? null : 100 * (v - 1));
+    const tr = runs.filter(r => !hidden.has(r.key)).map(r => S.series(r, D.days, pct(D.burden_ratio[r.key])));
+    S.chart(document.getElementById("pb"), {height: 320, x: S.timeAxis("day"), series: tr,
+      y: {label: "run vs GCHP (%)", suffix: " %", zero: "ref", fmt: v => `${S.fmt(v, 4, true)} %`}});
+    document.getElementById("n1").innerHTML = {
+      co2: "<b>How to read:</b> CO<sub>2</sub> carries its initial state, so the offset mostly reflects the initial fields (GCHP's half-layer shift adds CO<sub>2</sub> aloft); changes over time come from the emitted CO<sub>2</sub>, which is the same in all models to 0.06 %.",
+      fossil: "<b>How to read:</b> fossil CO<sub>2</sub> starts at zero and has the same emissions in all models (GCHP's agree with ours to 2×10<sup>−6</sup>), so the global masses agree closely. The relative difference shrinks as the burden grows: it is a fixed amount from the first hours of the run.",
+      sf6: "<b>How to read:</b> SF<sub>6</sub> carries its initial state (GCHP's half-layer shift adds SF<sub>6</sub> aloft), and GCHP's SF<sub>6</sub> emissions are 0.48 % higher than the protocol's, so GCHP's extra SF<sub>6</sub> slowly accumulates.",
+      rn222: "<b>How to read:</b> <sup>222</sup>Rn is a balance of emission and decay (half-life 3.8 days). GCHP decays it with a 3.83 d half-life instead of 3.8235 d and holds ≈ 0.2 % more <sup>222</sup>Rn than the exact protocol solution."}[t.key];
+    // conservation residual
+    document.getElementById("t2").innerHTML = `${t.name}: true mass balance`;
+    const isRn = t.key === "rn222";
+    document.getElementById("s2").innerHTML = isRn
+      ? "Residual at the end of each month (burden change − emissions + decay since the start of the month) as a fraction of the amount emitted in that month (AtmosTransport only)."
+      : "Residual = change of the global burden − the model's own emissions since the start, as a global-mean dry mole fraction (mol/mol); zero means exact conservation.";
+    const tr2 = [], sci = v => S.sigfmt(v, 3);
+    for (const r of runs) {
+      if (hidden.has(r.key)) continue;
+      const s = (((mass.runs || {})[r.key] || {}).series || {})[t.key];
+      if (!s || !s.t.length) continue;
+      const keep = s.t.map((x, i) => x < xr[1] ? i : -1).filter(i => i >= 0);      // the months on the site
+      tr2.push(S.series(r, keep.map(i => s.t[i]), keep.map(i => s.v[i]), isRn ? {line: false, markers: true, size: 8, fmt: sci} : {fmt: sci}));
+    }
+    let lo = Infinity, hi = -Infinity;
+    for (const tr of tr2) for (const v of tr.y) if (v !== null) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    const g = (mass.gc || {})[t.key];
+    if (g && !isRn && !hidden.has("gc")) {      // GCHP covers 25 months; show the months on the site
+      const keep = g.t.map((t, i) => t < xr[1] ? i : -1).filter(i => i >= 0);
+      tr2.push(S.series(m.gc, keep.map(i => g.t[i]), keep.map(i => g.v[i]), {fmt: sci}));
+    }
+    const pad = 0.1 * Math.max(hi - lo, Math.abs(hi), Math.abs(lo), 1e-30);
+    const yd = st.scale === "ours" && isFinite(lo) ? [Math.min(lo, 0) - pad, Math.max(hi, 0) + pad] : undefined;
+    S.chart(document.getElementById("pm"), {height: 320, x: S.timeAxis("day"), series: tr2,
+      y: {label: isRn ? "residual / emitted" : "residual (mol/mol)", zero: true, domain: yd}});
+    document.getElementById("zoom-ctl").style.display = isRn ? "none" : "";
+    document.getElementById("n2").innerHTML = isRn
+      ? "<b>How to read:</b> <sup>222</sup>Rn is checked month by month because it decays in days; the signoff limit (C9) is 10<sup>−8</sup> of the amount emitted in a month."
+      : "<b>How to read:</b> GCHP's residual uses its own <code>SpeciesConcVV × Met_AD</code> and emission diagnostics (it reaches +4.4×10<sup>−9</sup> mol/mol for CO<sub>2</sub> after 25 months); use <i>Fit AtmosTransport</i> to zoom on the AtmosTransport residuals. The AtmosTransport runs are evaluated month by month (each month is one restart) and chained; the small jumps at the restarts are included in the signoff numbers above.";
+  }
+  draw();
+});
+</script>

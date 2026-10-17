@@ -68,13 +68,6 @@ struct WindowStorage{FT}
     all_ps       :: Vector{Array{FT, 2}}
     all_qv_start :: Vector{Array{FT, 3}}   # empty vector when include_qv=false
     all_qv_end   :: Vector{Array{FT, 3}}   # empty vector when include_qv=false
-    # Four TM5 convection sections on the merged
-    # transport grid, one per window.  Empty vectors when
-    # tm5_convection=false.  Shape per window: (Nx, Ny, Nz).
-    all_entu     :: Vector{Array{FT, 3}}
-    all_detu     :: Vector{Array{FT, 3}}
-    all_entd     :: Vector{Array{FT, 3}}
-    all_detd     :: Vector{Array{FT, 3}}
     all_pblh     :: Vector{Array{FT, 2}}
     all_t2m      :: Vector{Array{FT, 2}}
     all_ustar    :: Vector{Array{FT, 2}}
@@ -111,16 +104,6 @@ struct NativeQVWorkspace{FT} <: AbstractQVWorkspace{FT}
     qv_thermo     :: Array{Float64, 3}   # (Nx_thermo, Ny_thermo, Nz_native) or empty
     needs_interp  :: Bool
     qv_daily      :: Array{Float64, 4}   # (Nx_thermo, Ny_thermo, Nz_native, Nt) or empty
-end
-
-struct TM5SourcePressureWorkspace{G, P}
-    grid      :: G
-    sp        :: Matrix{Float64}
-    P_buf     :: Matrix{Float64}
-    fft_buf   :: Vector{ComplexF64}
-    field_2d  :: Matrix{Float64}
-    fft_out   :: Vector{ComplexF64}
-    bfft_plan :: P
 end
 
 Base.summary(ws::SpectralTransformWorkspace) =
@@ -174,36 +157,6 @@ function allocate_transform_workspace(grid::LatLonTargetGeometry, T::Int, Nz_nat
                                       bfft_plans)
 end
 
-function allocate_tm5_source_pressure_workspace(grid::LatLonTargetGeometry, T::Int)
-    Nx = nlon(grid)
-    Ny = nlat(grid)
-    fft_buf = zeros(ComplexF64, Nx)
-    bfft_plan = plan_bfft(fft_buf)
-    return TM5SourcePressureWorkspace(
-        grid,
-        Array{Float64}(undef, Nx, Ny),
-        zeros(Float64, T + 1, T + 1),
-        fft_buf,
-        Array{Float64}(undef, Nx, Ny),
-        zeros(ComplexF64, Nx),
-        bfft_plan,
-    )
-end
-
-function synthesize_tm5_source_pressure!(ws::TM5SourcePressureWorkspace,
-                                         lnsp_spec::AbstractMatrix{ComplexF64},
-                                         T::Integer;
-                                         ps_offset::Real = 0.0)
-    lon_shift = deg2rad(ws.grid.lons[1])
-    spectral_to_grid!(ws.field_2d, lnsp_spec, Int(T), ws.grid.lats,
-                      nlon(ws.grid), ws.P_buf, ws.fft_buf;
-                      fft_out = ws.fft_out,
-                      bfft_plan = ws.bfft_plan,
-                      lon_shift_rad = lon_shift)
-    @. ws.sp = exp(ws.field_2d) + Float64(ps_offset)
-    return ws.sp
-end
-
 """
     allocate_merge_workspace(grid, Nz_native, Nz, FT) -> MergeWorkspace{FT}
 
@@ -232,18 +185,15 @@ function allocate_merge_workspace(grid::LatLonTargetGeometry, Nz_native::Int, Nz
 end
 
 """
-    allocate_window_storage(Nt, FT; include_qv=false, tm5_convection=false,
+    allocate_window_storage(Nt, FT; include_qv=false,
                             include_surface=false) -> WindowStorage{FT}
 
-Allocate per-window storage for the daily output payloads. When
-`tm5_convection=true`, also allocate the four TM5 section vectors.
+Allocate per-window storage for the daily output payloads.
 """
 function allocate_window_storage(Nt::Int, ::Type{FT};
                                  include_qv::Bool=false,
-                                 tm5_convection::Bool=false,
                                  include_surface::Bool=false) where FT
     _qv_vec() = include_qv ? Vector{Array{FT, 3}}(undef, Nt) : Vector{Array{FT, 3}}()
-    _tm5_vec() = tm5_convection ? Vector{Array{FT, 3}}(undef, Nt) : Vector{Array{FT, 3}}()
     _sfc_vec() = include_surface ? Vector{Array{FT, 2}}(undef, Nt) : Vector{Array{FT, 2}}()
     return WindowStorage{FT}(Vector{Array{FT, 3}}(undef, Nt),
                              Vector{Array{FT, 3}}(undef, Nt),
@@ -251,7 +201,6 @@ function allocate_window_storage(Nt::Int, ::Type{FT};
                              Vector{Array{FT, 3}}(undef, Nt),
                              Vector{Array{FT, 2}}(undef, Nt),
                              _qv_vec(), _qv_vec(),
-                             _tm5_vec(), _tm5_vec(), _tm5_vec(), _tm5_vec(),
                              _sfc_vec(), _sfc_vec(), _sfc_vec(), _sfc_vec())
 end
 
@@ -682,10 +631,6 @@ function process_window!(win_idx::Int,
                          qv::AbstractQVWorkspace{FT},
                          storage::WindowStorage{FT},
                          ps_offsets::AbstractVector{<:Real};
-                         physics_reader = nothing,
-                         tm5_ws = nothing,
-                         tm5_source_ps = nothing,
-                         tm5_stats = nothing,
                          surface_reader = nothing) where FT
     Nx = size(transform.sp, 1)
     Ny = size(transform.sp, 2)
@@ -707,20 +652,6 @@ function process_window!(win_idx::Int,
     merge_native_window!(merged, transform, qv, vertical, settings)
     store_window_fields!(storage, merged, transform.sp, qv, win_idx)
 
-    # TM5 convection step — runs only when the caller wired up a physics BIN
-    # reader and TM5 workspace.  The physics BIN omits PS.  Native LL keeps
-    # using the target PS fast path; source!=target LL synthesizes PS on the
-    # physics source grid and applies the same scalar mass-fix offset as the
-    # target transport grid before TM5 conversion.
-    if settings.tm5_convection_enable && physics_reader !== nothing
-        ps_tm5 = tm5_source_ps === nothing ? transform.sp :
-                 synthesize_tm5_source_pressure!(
-                     tm5_source_ps, spec.lnsp_all[hour], spec.T;
-                     ps_offset = ps_offsets[win_idx])
-        _store_window_tm5_fields!(storage, win_idx,
-                                   physics_reader, tm5_ws,
-                                   ps_tm5, vertical, tm5_stats, FT)
-    end
     if _settings_include_surface(settings) && surface_reader !== nothing
         _store_window_surface_fields!(storage, win_idx, surface_reader, FT)
     end
@@ -742,37 +673,5 @@ function _store_window_surface_fields!(storage::WindowStorage{FT},
     storage.all_t2m[win_idx] = surface.t2m
     storage.all_ustar[win_idx] = surface.ustar
     storage.all_hflux[win_idx] = surface.hflux
-    return nothing
-end
-
-# Per-window TM5 compute + store.
-# `ps_source` is on the TM5 physics source grid. For source==target this is
-# the main transport `transform.sp`; for lower-resolution LL targets it comes
-# from `TM5SourcePressureWorkspace`.
-# `win_idx` is the 1-indexed physics-BIN hour slot (matches the
-# 24 hourly slices in the Commit-2 daily BIN).
-function _store_window_tm5_fields!(storage::WindowStorage{FT},
-                                    win_idx::Int,
-                                    physics_reader,
-                                    tm5_ws::TM5PreprocessingWorkspace{FT},
-                                    ps_source::AbstractMatrix,
-                                    vertical,
-                                    tm5_stats,
-                                    ::Type{FT}) where FT
-    compute_tm5_merged_hour_on_source!(
-        tm5_ws, physics_reader, win_idx, ps_source,
-        vertical.ab.a_ifc, vertical.ab.b_ifc,
-        vertical.Nz_native, vertical.merge_map;
-        stats = tm5_stats)
-
-    Nx_t, Ny_t, Nz = tm5_ws.target_nlon, tm5_ws.target_nlat, size(tm5_ws.entu_merged_src, 3)
-    storage.all_entu[win_idx] = Array{FT, 3}(undef, Nx_t, Ny_t, Nz)
-    storage.all_detu[win_idx] = Array{FT, 3}(undef, Nx_t, Ny_t, Nz)
-    storage.all_entd[win_idx] = Array{FT, 3}(undef, Nx_t, Ny_t, Nz)
-    storage.all_detd[win_idx] = Array{FT, 3}(undef, Nx_t, Ny_t, Nz)
-    tm5_copy_or_regrid_ll!(storage.all_entu[win_idx], tm5_ws.entu_merged_src, tm5_ws)
-    tm5_copy_or_regrid_ll!(storage.all_detu[win_idx], tm5_ws.detu_merged_src, tm5_ws)
-    tm5_copy_or_regrid_ll!(storage.all_entd[win_idx], tm5_ws.entd_merged_src, tm5_ws)
-    tm5_copy_or_regrid_ll!(storage.all_detd[win_idx], tm5_ws.detd_merged_src, tm5_ws)
     return nothing
 end

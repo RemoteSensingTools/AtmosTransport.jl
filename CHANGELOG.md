@@ -2,6 +2,74 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- **Lat-lon ERA5 physics-file TM5 route removed** (issue #55, pera-noaa). The
+  `[tm5_convection]` table of ERA5 spectral preprocessing configs converted the
+  ERA5 convection NetCDF to flat physics files and then to TM5 fields on the
+  lat-lon grid. The files kept the CDS longitudes 0…360° while the route read
+  them as −180…180°, so every TM5 field sat 180° from its column, and each
+  hourly window used the mean of the previous hour. The route served only nine
+  December-2021 test configs and was retired instead of fixed. A config with a
+  `[tm5_convection]` table (even with `enable = false`) now fails with an error naming the supported
+  routes: the ERA5 N320 → cubed-sphere preprocessor with
+  `include_convection = true`, or `scripts/preprocessing/attach_catrine_tm5_convection_cs.jl`.
+  Removed: the nine configs (`config/preprocessing/catrine5d/*_tm5.toml`,
+  `config/preprocessing/era5_ll720x361_*tm5*.toml`),
+  `scripts/preprocessing/convert_era5_physics_nc_to_bin.jl`, and from
+  `Preprocessing` `convert_era5_physics_nc_to_bin`, `ERA5PhysicsBinaryReader`,
+  `ERA5PhysicsBinaryHeader`, `open_era5_physics_binary`,
+  `close_era5_physics_binary`, `get_era5_physics_field`,
+  `tm5_native_fields_for_hour!`, `merge_tm5_field_3d!`,
+  `TM5PreprocessingWorkspace`, `allocate_tm5_workspace`,
+  `compute_tm5_merged_hour_on_source!`, `log_tm5_cleanup_stats`,
+  `tm5_copy_or_regrid_ll!` and `resolve_tm5_convection_settings`
+  (`reject_removed_tm5_convection_route` takes its place), the
+  `test/real_data/test_tm5_catrine_1day.jl` check of that route, and the
+  convert hint of `scripts/downloads/download_era5_physics.py` (its
+  convection download stays). Lat-lon spectral binaries keep their header
+  schema (`include_tm5conv = false`). No lat-lon route now writes TM5
+  sections, so the lat-lon `kind = "tm5"` run configs
+  (`config/runs/catrine5d/ll*_advdiffconv_*`,
+  `config/runs/catrine_ll720_3d/{advdiffconv,fullphysics}.toml`) and run
+  configs that read binaries of the removed route or their C48/C180 regrids
+  fail on load until their inputs are rebuilt; they are kept for provenance.
+- **TM5 convection provenance checked on load** (issue #54). ERA5 N320
+  binaries with convection now record `tm5_convection_source` and
+  `tm5_ec2tm_convention = "tm5_halflevel_v2"`, and the lat-lon → cubed-sphere
+  regrid copies its source's record (`"unrecorded"` when it has none). Opening
+  a binary rejects, with a regenerate message: ERA5-derived TM5 sections
+  without the current convention (every ERA5 N320 binary built with
+  `include_convection = true` before this fix, e.g. the December-2021 and
+  2022–2023 C180 CATRINE sets), lat-lon binaries with TM5 sections from the
+  ERA5 spectral preprocessor, and lat-lon → cubed-sphere regrids of those.
+  Sections attached from the TM5-converted CATRINE archive
+  (`convection_attachment`, all v3/v4 attached sets and the golden inputs,
+  whatever other key they carry) and sections without a recorded source stay
+  accepted.
+  `binary_capabilities` gains `tm5_convection_provenance`, and
+  `inspect_binary` prints it. New constants `TM5_CONVECTION_SOURCE_KEY`,
+  `TM5_EC2TM_CONVENTION_KEY`, `TM5_EC2TM_CONVENTION`.
+
+### Post-run diagnostics
+
+- `scripts/diagnostics/catrine_benchmark_v05_site.py` builds the v0.5 CATRINE
+  benchmark web site (GCHP against the v0.5 MERRA-2 and ERA5 runs) from the
+  signoff comparison products: an overview (signoff state, key numbers,
+  agreement table per tracer and air-mass band) and pages for time series,
+  latitude–pressure sections, maps, the near-surface band, the stratosphere,
+  the mass budget, NOAA stations and the methods. Charts use self-hosted D3
+  (hover or tap for values; page scrolling is never captured on phones;
+  drag-to-zoom with a reset on daily time axes); one control row per page is
+  kept in the URL and data are loaded per view. Only finished comparison
+  seasons are read; `--datasets auto` (default) shows MERRA-2 and adds ERA5
+  once all 25 months are compared. The stations page shows GCHP and the runs
+  at eight NOAA sites (nearest C90 cell; lowest layer, or the site's height
+  through GCHP's height–dry-pressure profile) with NOAA CO₂ observations from
+  a local ObsPack (CC0 datasets only, cited) and scores each against them
+  (bias, RMSE, correlation). `catrine_benchmark_site/publish.sh` builds into a
+  staging folder and copies it to the public one (README there).
+
 ### Testing
 
 - **JET 0.12 allowed in the test environment.** On 2026-10-15 the General registry
@@ -16,6 +84,25 @@
   support yet instead of erroring.
 
 ### Numerical changes
+
+- **ERA5 → TM5 convection conversion follows TM5's half levels** (issue #54,
+  pera-noaa). ERA5 archives UDMF/DDMF level k as the flux through the top of
+  layer k, with none through the ground (TM5 `tmm.F90`: "levels top down,
+  surface implicit zero"). The ERA5 N320 preprocessor placed level k at the
+  bottom of layer k, so level 137 became a flux through the ground, and
+  `ec2tm_from_rates!` took the first interface with flux as the cloud-top
+  layer, one layer too low; the column closure then moved the cloud-top
+  detrainment to the layer of largest entrainment. Now level k is interface k
+  and interface Nz + 1 is zero, and the cloud top is the layer above the first
+  interface with flux, as in TM5's `ECconv_to_TMconv`. The fields now return
+  the input fluxes at every interface and match an independent transcription
+  of TM5's code to rounding; the closure moves only rounding. On 3000 deep
+  ERA5 columns the old conversion lifted 14 % less boundary-layer tracer above
+  500 hPa in a 3 h step and detrained about 4 levels too low; mass was
+  conserved. `ec2tm_from_rates!` now rejects a non-zero flux through the
+  ground (a packing error). ERA5 TM5-convection binaries must be regenerated;
+  runs on attached CATRINE convection (the CATRINE benchmark sets) and all
+  goldens are unaffected.
 
 - **Column mass ledger carry** (OF-110). The `Float32` column mass ledgers of
   TM5 convection (and `cmfmc_matrix`, which uses the TM5 solve) and of `dkg`

@@ -37,16 +37,15 @@ Runtime ≈ 2–4 min per day at Nc=48. Total ≈ 30 min for 10 days.
 ### 2. (Only for `advdiffconv.toml`) TM5 convection sections in the binary
 
 `TM5Convection` reads entu/detu/entd/detd from the transport binary.
-These are emitted by the ERA5 LL preprocessor when
-`[tm5_convection] enable = true` is set (plan 24 Commit 4).
+No lat-lon route produces them any more: the ERA5 spectral preprocessor's
+`[tm5_convection]` table (the lat-lon physics-file route) was removed (issue
+#55), and readers reject lat-lon binaries that carry its sections and their
+LL→CS regrids. Options:
 
-The LL→C48 regridder (`regrid_ll_transport_binary_to_cs.jl`, plan 40
-Commit 3 — a thin CLI over `Preprocessing.regrid_ll_binary_to_cs`)
-does **not** currently carry the TM5 sections across. Options:
-
-- **(a) Extend the regridder** to pass-through TM5 sections from the LL
-  source when they exist. Small work; once done, regenerate the C48
-  binaries with a TM5-enabled LL source and `advdiffconv.toml` runs.
+- **(a) Attach TM5 convection on the cubed sphere**: build a C48 binary from
+  native ERA5 (an ERA5 N320 met source with `include_convection = true`) or
+  attach the TM5-converted CATRINE archive with
+  `scripts/preprocessing/attach_catrine_tm5_convection_cs.jl`.
 - **(b) Switch to `kind = "cmfmc"`** if you have a GEOS-style C48 binary
   with native CMFMC+DTRAIN sections. No C48 GEOS-IT binary exists today;
   would need either a C180→C48 coarsen or C48 preprocessing from source.
@@ -92,7 +91,7 @@ from the binary into the operator each window.
 |---|---|
 | Profile/precomputed/derived Kz from TOML | `ImplicitVerticalDiffusion` supports them; need per-kind TOML schema + builder dispatch. Constant Kz covers today's needs. |
 | `[tracers.*.surface_flux]` (emissions) for CS | `build_surface_flux_source` now dispatches on CS grids (plan 40 Commit 1d) and `run_driven_simulation` picks it up from TOML (plan 40 Commit 6a via `build_surface_flux_sources`). Fossil tracer gets kg/s-per-cell emissions when `[tracers.co2_fossil.surface_flux]` is present. |
-| TM5 section carry-through in LL→CS regrid | Blocker for `advdiffconv.toml` specifically; see Prerequisite #2 above. |
+| TM5 sections for C48 | Blocker for `advdiffconv.toml` specifically; see Prerequisite #2 above. |
 
 **Resolved (plan 40 Commit 1c / 2, 2026-04-24):** file-based CS initial
 conditions now work via the unified

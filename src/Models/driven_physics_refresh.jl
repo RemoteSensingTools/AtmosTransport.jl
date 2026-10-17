@@ -192,8 +192,9 @@ function _validate_convection_window!(::TM5Convection,
             "TM5Convection requires `window.convection.tm5_fields` " *
             "(NamedTuple with :entu, :detu, :entd, :detd) to be populated; " *
             "driver $(typeof(driver)) provided convection forcing without TM5 fields. " *
-            "Preprocess the binary with `scripts/preprocessing/preprocess_transport_binary.jl` " *
-            "and `[tm5_convection] enable = true` in the preprocessing config, or fall back to " *
+            "Build TM5 convection on the cubed sphere: an ERA5 N320 met source with " *
+            "`include_convection = true` in its [preprocessing] table, or " *
+            "`scripts/preprocessing/attach_catrine_tm5_convection_cs.jl`; or fall back to " *
             "`CMFMCConvection()` if you have GEOS-FP CMFMC data instead."))
     return nothing
 end

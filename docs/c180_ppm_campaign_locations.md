@@ -103,7 +103,7 @@ GEOS-native C180 horizontal geometry as the GEOS-IT binaries.
 
 Durable config/script:
 
-- LL source config: `config/preprocessing/era5_ll720x361_cfl85_dec2021_f32_tm5_surface.toml`
+- LL source config: `config/preprocessing/era5_ll720x361_cfl85_dec2021_f32_tm5_surface.toml` (deleted with the retired lat-lon physics-file TM5 route, #55; see git history)
 - Build/regrid script: `scripts/preprocessing/build_era5_geos_c180_cfl85_tm5_surface.sh`
 
 Output locations:

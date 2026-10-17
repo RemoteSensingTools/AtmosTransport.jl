@@ -1,0 +1,102 @@
+<h1>Near surface and boundary layer</h1>
+<p class="lede">The lowest 10 % of each column's air mass (surface to ≈ 910 hPa), where the emitted tracers enter the atmosphere.
+Rn-222 and fossil CO₂ start from zero everywhere, so their near-surface fields test boundary-layer mixing, convection and
+emission injection without any initial-state effect.</p>
+
+<div class="controls" id="controls"></div>
+
+<section class="card">
+  <div class="card-head"><h2 id="t1"></h2></div>
+  <p class="sub">Statistics of the monthly-mean near-surface fields against GCHP (area weighted, global).</p>
+  <div class="grid2">
+    <div><div class="panel-title">Bias (run − GCHP)</div><div class="plot" id="pb"></div></div>
+    <div><div class="panel-title">RMSE</div><div class="plot" id="pr"></div></div>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2 id="t2"></h2></div>
+  <p class="sub" id="s2"></p>
+  <div id="grid"></div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2 id="t3"></h2><span class="spacer"></span><span class="tools" id="view-ctl"></span></div>
+  <p class="sub" id="s3"></p>
+  <div class="plot" id="lat"></div>
+</section>
+
+<section class="card prose">
+  <div class="card-head"><h2>What to know about the near-surface comparison</h2></div>
+  <ul>
+    <li data-run="merra2"><b>Boundary-layer mixing as in GCHP.</b> The MERRA-2 run uses GEOS-Chem's non-local boundary-layer mixing
+      (VDIFF) and GEOS convective mass fluxes, like GCHP, on the same MERRA-2 boundary-layer height (identical to GCHP's
+      <code>Met_PBLH</code> to 0.006 m RMS).<span data-run="era5"> The ERA5 run uses TM5's diffusion and TM5 convection on ERA5
+      fields, so it is expected to differ more from GCHP near the surface.</span></li>
+    <li data-run="merra2"><b>The MERRA-2 run is the OF-108 rerun.</b> A roundoff check in the non-local mixing sent whole-column emissions to the
+      lowest layer when any layer was slightly negative; the fix (merged before this run) applies the fallback only where the
+      redistribution itself makes a layer negative or a negative layer more negative.<span data-run="era5"> The ERA5 run does not use this code path.</span></li>
+    <li><b>Two exact v0.5 changes raise near-surface Rn-222</b> relative to earlier AtmosTransport runs: the symmetric
+      half-window radioactive-decay split (+0.38 %) and the dry-air mass now matching GCHP's (+0.42 % in mole fraction).
+      Both are corrections; GCHP itself decays Rn-222 with a 3.83 d half-life instead of the protocol's 3.8235 d.</li>
+    <li><b>Open finding OF-104:</b> relative to GCHP, AtmosTransport keeps slightly more of its Rn-222 in the lowest 10 % of
+      the air mass (measured ≈ 0.5–1 % in the pre-fix MERRA-2 runs); emissions, boundary-layer height, dry pressure and
+      decay are ruled out, so the cause is in the mixing operators. It is being followed up.</li>
+  </ul>
+</section>
+
+<script>
+SITE.ready(async () => {
+  const S = SITE, m = S.meta();
+  const BAND = "sfc_910hPa";
+  const mon = await S.load("monthly", "monthly.js");
+  const st = S.state({tracer: "rn222", month: "period", view: "abs", hide: ""}, {tracer: S.keys(m.tracers), view: ["abs", "diff"]});
+  const hidden = new Set(st.hide ? st.hide.split(",") : []);
+  if (st.month !== "period" && !m.months.includes(st.month)) st.month = "period";
+  if (!m.common.length && st.month === "period") st.month = m.months[m.months.length - 1];
+  const runs = S.mainRuns().filter(S.hasMonths);
+  const x = m.months.map(S.midMonth);
+  document.getElementById("controls").append(
+    S.control("Tracer", S.seg(m.tracers.map(t => ({key: t.key, name: t.name, title: t.long})), st.tracer, k => { st.tracer = k; draw(); })),
+    S.control("Month", S.monthSelect(m.months, st.month, k => { st.month = k; maps(); }, m.common.length > 0)),
+    S.legend([m.gc, ...runs], hidden, () => { stats(); lat(); }));
+  document.getElementById("view-ctl").append(S.seg([{key: "abs", name: "Values"}, {key: "diff", name: "Run − GCHP"}], st.view, k => { st.view = k; lat(); }));
+  let F = null;
+  function stats() {
+    st.hide = [...hidden].join(",");
+    S.saveState(st);
+    const t = S.tracer(st.tracer);
+    document.getElementById("t1").innerHTML = `${t.name} near the surface, month by month`;
+    for (const [id, stat] of [["pb", "bias"], ["pr", "rmse"]]) {
+      const tr = runs.filter(r => !hidden.has(r.key)).map(r => S.series(r, x, mon.stats[`${r.key}|${t.key}|${BAND}|${stat}`], {markers: true}));
+      S.chart(document.getElementById(id), {height: 260, x: S.timeAxis("month"), series: tr,
+        y: {label: t.unit, zero: stat === "bias" ? "ref" : false, tozero: stat === "rmse", fmt: S.valFmt(t.digits, t.unit)}});
+    }
+  }
+  function lat() {
+    st.hide = [...hidden].join(",");
+    S.saveState(st);
+    if (!F) { S.emptyNote(document.getElementById("lat"), "No data for this month."); return; }
+    const t = S.tracer(st.tracer);
+    document.getElementById("t3").innerHTML = `${t.name} near the surface by latitude`;
+    document.getElementById("s3").innerHTML = (st.view === "diff" ? "Each run minus GCHP" : "Values") + ` (${t.unit}), mean over longitude; ${st.month === "period" ? "period mean" : S.monthLabel(st.month)}. The north–south gradient is a classic test of interhemispheric transport (SF₆, fossil CO₂).`;
+    S.latitudeChart(document.getElementById("lat"), F, st.tracer, st.view, hidden);
+  }
+  const next = S.gate();
+  async function maps() {
+    const current = next();
+    S.saveState(st);
+    const t = S.tracer(st.tracer);
+    document.getElementById("t2").innerHTML = `${t.name} near the surface, ${st.month === "period" ? "period mean" : S.monthLabel(st.month)}`;
+    document.getElementById("s2").innerHTML = `Mean of the lowest 10 % of the air mass (${t.unit}). ` +
+      (st.month === "period" ? S.periodText() + " " : "") + "The difference maps share one colour scale.";
+    const got = await S.mapGrid(document.getElementById("grid"), st.tracer, BAND, st.month, current);
+    if (got === undefined) return;
+    F = got;
+    lat();
+  }
+  function draw() { stats(); maps(); }
+  await S.load("coast", "coast.js");
+  draw();
+});
+</script>

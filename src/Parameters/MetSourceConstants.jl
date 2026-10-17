@@ -91,6 +91,31 @@ Transport-binary header key recording the air-mass basis (`"dry"` or
 const TM5_CONVECTION_MASS_BASIS_KEY = "tm5_convection_mass_basis"
 
 """
+Transport-header key naming the source of the TM5 convection sections. ERA5
+N320 binaries record `"ec2tm_from_rates(udmf,ddmf,udrf,ddrf)"` (or `"none"`
+without convection); the lat-lon → cubed-sphere regrid copies its source's
+value (`"unrecorded"` when the source has none).
+"""
+const TM5_CONVECTION_SOURCE_KEY = "tm5_convection_source"
+
+"""
+Transport-header key recording the index convention of TM5 convection sections
+derived from ERA5 by `ec2tm_from_rates!`; its current value is
+[`TM5_EC2TM_CONVENTION`](@ref).
+"""
+const TM5_EC2TM_CONVENTION_KEY = "tm5_ec2tm_convention"
+
+"""
+Current ERA5 → TM5 convection convention, as in TM5 (`tmm.F90`,
+`ECconv_to_TMconv`): ERA5 UDMF/DDMF level `k` is the flux through the top of
+layer `k`, none crosses the ground, and the cloud (downdraft) top is the layer
+above the first interface that carries flux. ERA5-derived TM5 sections without
+this value were built with the convention of issue #54 and are rejected when a
+binary is opened.
+"""
+const TM5_EC2TM_CONVENTION = "tm5_halflevel_v2"
+
+"""
 GEOS FV3 dynamics time step [s]. GEOS-FP and GEOS-IT accumulate the mass fluxes
 `MFXC`/`MFYC` over this step, not over the hourly met interval.
 """
@@ -116,6 +141,7 @@ const SURFACE_AIR_TEMPERATURE_RANGE = (150.0, 350.0)
 const SURFACE_HEAT_FLUX_MAX_ABS = 5000.0
 
 export ERA5_NATIVE_LEVEL_COUNT, ERA5_MET_INTERVAL_SECONDS, TM5_CONVECTION_MASS_BASIS_KEY,
+       TM5_CONVECTION_SOURCE_KEY, TM5_EC2TM_CONVENTION_KEY, TM5_EC2TM_CONVENTION,
        GEOS_MASS_FLUX_DT_SECONDS,
        GEOS_MET_INTERVAL_SECONDS, GEOS_3HOURLY_INTERVAL_SECONDS, GMAO_CS_LONGITUDE_OFFSET_DEG,
        SURFACE_AIR_TEMPERATURE_RANGE, SURFACE_HEAT_FLUX_MAX_ABS,
