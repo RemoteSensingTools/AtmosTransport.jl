@@ -7,7 +7,7 @@
 #      ConvectionForcing}`, populated by `load_transport_window!`
 #      once per met window.
 #   2. On the model: `model.convection_forcing::ConvectionForcing`,
-#      refreshed every substep by `DrivenSimulation._refresh_forcing!`
+#      refreshed at each window's first substep by `DrivenSimulation._refresh_forcing!`
 #      via `copy_convection_forcing!`.
 #
 # Both slots carry the same struct type. Capability (which of

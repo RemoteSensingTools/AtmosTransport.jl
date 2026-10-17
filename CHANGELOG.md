@@ -691,6 +691,12 @@
   stream (`Architectures.synchronize_storage!`) before handing the window over;
   before, an upload staged through the driver's pageable path could in
   principle still be in flight when the stepping task used the window.
+- `DrivenSimulation` copies window-constant fluxes (and scales them for
+  `full_window_mass_amount` binaries) and the convection forcing into the
+  model at the first substep of each window instead of every substep; the
+  operators only read them. Interpolated fluxes, the expected air mass and
+  humidity still change every substep. A C90 L72 step issued 36 fewer
+  device copies (about 0.3 ms of a 4.4 ms one-tracer step).
 
 ### Other changes
 

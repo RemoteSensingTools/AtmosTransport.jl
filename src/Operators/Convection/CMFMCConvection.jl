@@ -31,8 +31,8 @@ NOT line-by-line GCHP RAS — see the module-top comment for the two
 intentional divergences (cloud-base proxy + Pass-0 closure).
 
 No struct fields — the forcing arrays (`cmfmc`, optionally `dtrain`)
-arrive via `TransportModel.convection_forcing`, populated each substep by
-`DrivenSimulation._refresh_forcing!` from `sim.window.convection`.
+arrive via `TransportModel.convection_forcing`, populated at the first substep
+of each window by `DrivenSimulation._refresh_forcing!` from `sim.window.convection`.
 
 # Basis convention
 

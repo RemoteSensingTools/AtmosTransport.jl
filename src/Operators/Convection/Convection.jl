@@ -36,8 +36,8 @@ topologies (LL / RG / CS).
 
 The operator takes `ConvectionForcing` directly (not a transport
 window or driver). `_refresh_forcing!` populates
-`model.convection_forcing` each substep by copying from
-`sim.window.convection`. `TransportModel.step!` executes the convection
+`model.convection_forcing` at the first substep of each window by copying
+from `sim.window.convection`. `TransportModel.step!` executes the convection
 block between transport and chemistry. No `meteo` kwarg — the forcing
 arrays are the time information; the operator does not call
 `current_time`.
