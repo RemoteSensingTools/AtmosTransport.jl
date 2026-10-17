@@ -6,11 +6,58 @@
 
 # The LL → CS regrid has no winds or OMEGA of its own (payload only), but it
 # runs a cubed-sphere column balance whose closure is recorded per window.
-_regrid_window_evidence(::Type{FT}, balance_diag, cm_diag) where FT =
+_regrid_window_evidence(::Type{FT}, closure::AbstractColumnClosureRecord) where FT =
     FluxFidelityEvidenceBundle(
         NoFluxFidelityEvidence{CubedSphereTargetGeometry,FT,SourcePayloadOnly}(SourcePayloadOnly()),
         NoSourceOmegaEvidence{CubedSphereTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega()),
-        column_closure_record(balance_diag, cm_diag))
+        closure)
+
+# The balance and the `cm` diagnosis run for `base_steps` substeps; an adaptive
+# output schedule then rescales `am`, `bm`, `cm` to `steps`. The record states
+# the closure of the stored fluxes (`rescaled_column_closure_record`); call it
+# before `m_next` is converted to the stored `dm`.
+_regrid_stored_closure_record(bal_diag, cm_diag, am, bm, m, m_next, cs_grid,
+                              base_steps::Int, steps::Int) =
+    rescaled_column_closure_record(column_closure_record(bal_diag, cm_diag),
+                                   am, bm, m, m_next, cs_grid.face_table,
+                                   base_steps, steps, cs_grid.poisson_scratch)
+
+# The pole rows of a lat-lon source are ordinary cells: the wind recovery takes
+# their zonal wind from `am` like every other row. ERA5 spectral lat-lon
+# binaries (the only writer of `spectral_half_dt_seconds` is `build_v4_header`)
+# written before the fix of issue #58 zeroed the pole-row zonal fluxes before
+# the column balance, which then put its correction there: the stored pole-row
+# `am` is neither zero nor the wind, and only the header tells such a binary
+# apart. Returns the refusal message, or `nothing` for an acceptable source.
+function _pole_row_zonal_flux_refusal(raw::AbstractDict, path)
+    haskey(raw, "spectral_half_dt_seconds") || return nothing
+    get(raw, POLE_ROW_ZONAL_FLUX_KEY, nothing) == "open" && return nothing
+    return "regrid_ll_binary_to_cs: $(basename(path)) is an ERA5 spectral lat-lon " *
+           "binary without `$(POLE_ROW_ZONAL_FLUX_KEY) = \"open\"` in its header. " *
+           "Binaries written before 2026-10-14 closed the zonal faces of the pole " *
+           "rows (issue #58), so their pole-row wind is not in the file. Regenerate " *
+           "the source with the current preprocessor."
+end
+
+# Output substep count of one CS window. The fluxes arrive scaled for `steps`
+# substeps; an adaptive policy raises the count until the per-substep Courant
+# ratio of the CS window meets its target and rescales the amounts (all of them
+# are linear in 1/steps, the balance and `cm` included). A fixed policy keeps
+# the requested count; the write-time gate then checks it.
+function _select_regrid_output_steps!(policy::SubstepSchedulePolicy, steps::Int,
+                                      m, am, bm, cm, m_next)
+    policy.adaptive_substeps || return steps
+    for _ in 1:ADAPTIVE_SUBSTEP_MAX_REFINEMENTS
+        ratio = verify_substep_positivity_cs!(m, am, bm, cm;
+                                              cfl_limit = policy.substep_cfl_target,
+                                              m_next = m_next).ratio
+        new_steps = next_substeps(policy, steps, ratio)
+        new_steps == steps && break
+        rescale_substep_amounts!((am..., bm..., cm...), steps, new_steps)
+        steps = new_steps
+    end
+    return steps
+end
 
 function _ll_binary_to_cs_regridder_cache_key(grid::CubedSphereTargetGeometry,
                                               Nx_ll::Integer,
@@ -106,10 +153,24 @@ This reuses the entire CS regrid/continuity/write infrastructure from the
 spectral→CS path — the only difference is the data source (binary reader
 instead of spectral synthesis).
 
-Timestep metadata (`dt_met_seconds`, `steps_per_window`) is read directly
-from the source header by default. Passing `steps_per_window` overrides the
-output substep count: LL winds are recovered with the source scaling, then CS
-face fluxes are reconstructed with the output scaling.
+The met interval comes from the source header. The LL winds of window `w` are
+recovered with that window's own source scaling,
+`flux_application_seconds(dt_met, steps_w, flux_kind)` with `steps_w` from
+`steps_per_window_by_window` (the stored `am`, `bm` are amounts of each
+window's own substep count). The CS output substep count is a property of the
+CS grid, not of the source, whose count the narrow lat-lon pole-row cells set:
+by default every CS window gets the smallest count whose per-substep Courant
+ratio meets `positivity_cfl_limit` (the fluxes are reconstructed for one
+substep, balanced, and rescaled), and the output carries that per-window
+schedule. Passing `steps_per_window` fixes one count for all windows instead.
+
+The pole rows of the source are ordinary cells whose zonal faces carry flux,
+so the pole-row `u` is recovered from `am` like every other row. ERA5 spectral
+lat-lon binaries written before the fix of issue #58 (2026-10-14) closed those
+faces before the column balance; the stored pole-row `am` is then the balance
+correction, not the wind. They are recognised by their header (an ERA5
+spectral lat-lon binary without `pole_row_zonal_flux = "open"`) and refused
+before any output is opened. Regenerate them with the current preprocessor.
 
 ## Keyword arguments
 - `FT::Type = Float64` — on-disk float type for the output CS binary.
@@ -120,8 +181,9 @@ face fluxes are reconstructed with the output scaling.
   `apply_dry_basis_native!`, which this function does not do. Invariant
   14 mandates `:dry` end-to-end; use a dry source.
 - `steps_per_window::Union{Nothing, Integer} = nothing` — output substep
-  count. `nothing` = match the source; larger values reduce stored
-  per-substep fluxes while preserving the window-integrated transport.
+  count. `nothing` = per window from the CS Courant number (see above); an
+  integer fixes the count for every window (stored per-substep fluxes scale
+  with `1/steps_per_window`, the window-integrated transport does not).
 - `allow_terminal_zero_tendency::Bool = false` — diagnostic-only escape hatch
   for legacy LL sources that do not carry `dm`. Production-safe regrids should
   leave this at `false` so the final CS window is closed against an explicit
@@ -160,6 +222,9 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     geometry = binary_geometry(reader)
     geometry isa LatLonBinaryGeometry || throw(ArgumentError(
         "LL-to-CS regridding requires a lat-lon binary; got $(grid_type(reader))"))
+    # Decided from the header, before any output file is opened.
+    pole_refusal = _pole_row_zonal_flux_refusal(h.raw_header, ll_binary_path)
+    pole_refusal === nothing || (close(reader); throw(ArgumentError(pole_refusal)))
     if surface_pressure_basis(reader) isa DrySurfacePressure
         close(reader)
         throw(ArgumentError(
@@ -214,28 +279,37 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         haskey(h.raw_header, key) && (source_mass_fix[key] = h.raw_header[key])
     end
 
-    # Timestep metadata comes from the source header. The stored `am/bm`
-    # are per-substep mass (flux_kind = :substep_mass_amount) with the
-    # source's own `steps_per_window`, and the CS writer reuses the same
-    # substep count — so the per-substep semantics match end-to-end.
+    # Timestep metadata comes from the source header. The stored `am/bm` are
+    # amounts over `flux_application_seconds` of each window's own source
+    # substep count (`steps_per_window_by_window`; an adaptive LL schedule
+    # varies by window), so winds are recovered with the per-window source
+    # scaling.
     #
-    # `steps_per_window` keyword overrides the substep count for the CS
-    # output. Recover winds with the source scaling, then reconstruct CS
-    # face fluxes with the output scaling; using one factor for both would
-    # cancel the override. The forward delta (dm) is rescaled by
-    # `fill_cs_window_mass_tendency!`, so a larger value produces smaller
-    # per-substep flux without changing the window-integrated transport.
+    # The output substep count belongs to the CS grid, not to the source: the
+    # LL count is set by the LL Courant number, which the narrow pole-row cells
+    # dominate (issue #58). By default each CS window gets the count its own
+    # per-substep Courant ratio needs (fluxes reconstructed for one substep,
+    # then rescaled; `_select_regrid_output_steps!`). An explicit
+    # `steps_per_window` fixes the count for every window; the positivity gate
+    # checks it.
     met_interval = Float64(h.dt_met_seconds)
-    src_steps_per_met = Int(h.steps_per_window)
-    steps_per_met = steps_per_window === nothing ? src_steps_per_met : Int(steps_per_window)
-    steps_per_met >= 1 || throw(ArgumentError(
-        "steps_per_window must be ≥ 1, got $(steps_per_met)"))
-    if steps_per_met != src_steps_per_met
-        @info @sprintf("  steps_per_window override: source=%d → output=%d (%.3fx flux per substep)",
-                       src_steps_per_met, steps_per_met, src_steps_per_met / steps_per_met)
-    end
-    src_dt_factor = FT(met_interval / (2 * src_steps_per_met))
-    out_dt_factor = FT(met_interval / (2 * steps_per_met))
+    src_steps = Int.(h.steps_per_window_by_window)
+    src_flux_kind = flux_kind(reader)
+    steps_per_window === nothing || steps_per_window >= 1 || throw(ArgumentError(
+        "steps_per_window must be ≥ 1, got $(steps_per_window)"))
+    out_policy = SubstepSchedulePolicy(
+        adaptive_substeps = steps_per_window === nothing,
+        substep_cfl_target = positivity_cfl_limit,
+        max_steps_per_window = DEFAULT_MAX_STEPS_PER_WINDOW)
+    base_steps = steps_per_window === nothing ? 1 : Int(steps_per_window)
+    out_schedule = fill(base_steps, Nt)
+    @info steps_per_window === nothing ?
+        @sprintf("  Output substeps: per window from the CS Courant number (target %.2f); source %d–%d",
+                 positivity_cfl_limit, minimum(src_steps), maximum(src_steps)) :
+        @sprintf("  Output substeps: %d per window (explicit); source %d–%d",
+                 base_steps, minimum(src_steps), maximum(src_steps))
+    src_dt_factor(win) = FT(flux_application_seconds(met_interval, src_steps[win], src_flux_kind))
+    out_dt_factor = FT(flux_application_seconds(met_interval, base_steps, :substep_mass_amount))
     gravity = FT(STANDARD_GRAVITY)
 
     @info @sprintf("  LL source: %s (%d×%d×%d, %d windows)",
@@ -309,7 +383,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         FT=FT,
         dt_met_seconds=met_interval,
         half_dt_seconds=met_interval / 2,
-        steps_per_window=steps_per_met,
+        steps_per_window=base_steps,
         include_flux_delta=true,
         include_surface=source_has_surface,
         include_tm5conv=source_has_tm5,
@@ -332,6 +406,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             "regrid_method"     => "conservative",
             "poisson_balanced"  => true,
             "horizontal_balance" => HORIZONTAL_BALANCE_TAG,
+            "adaptive_substeps" => out_policy.adaptive_substeps,
         ), source_mass_fix, carried_tm5_convection_record(h.raw_header, source_has_tm5)),
            column_balance_weights), write_replay_check))
     writer = CubedSphereBinaryWriter(inner_writer, mass_basis_from_symbol(output_basis);
@@ -369,7 +444,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         recover_ll_cell_center_winds!(cs_ws.u_cc, cs_ws.v_cc,
             am_ll, bm_ll, ps_ll,
             A_ifc, B_ifc, ll_lats, Δy_ll, Δlon_ll,
-            FT(ll_mesh.radius), gravity, src_dt_factor)
+            FT(ll_mesh.radius), gravity, src_dt_factor(win_idx))
 
         # Regrid geographic winds to CS + rotate to panel-local
         regrid_3d_to_cs_panels!(cs_ws.u_cs_panels, regridder, cs_ws.u_cc, cs_ws, Nc)
@@ -477,7 +552,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         t_bal = time()
         bal_diag = balance_cs_column_mass_fluxes!(
             cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
-            cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
+            cs_grid.face_table, cs_grid.cell_degree, base_steps,
             cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
             max_iter=DEFAULT_POISSON_BALANCE_MAX_ITER,
             project_every=Int(cs_balance_project_every),
@@ -490,15 +565,20 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
 
         sync_all_cs_boundary_mirrors!(cur_am, cur_bm, cs_grid.mesh.connectivity, Nc, Nz)
 
-        fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, steps_per_met)
+        fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, base_steps)
         for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
         cm_diag = _diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
                                             cur_m, Nc, Nz, bal_diag,
                                             "LL-to-CS window $(win - 1)", balance_weights)
+        out_schedule[win - 1] = _select_regrid_output_steps!(
+            out_policy, base_steps, cur_m, cur_am, cur_bm, cur_cm, cs_ws.m_next_panels)
+        closure = _regrid_stored_closure_record(bal_diag, cm_diag, cur_am, cur_bm, cur_m,
+                                                cs_ws.m_next_panels, cs_grid, base_steps,
+                                                out_schedule[win - 1])
         pos_diag = if write_replay_on
             contract = verify_cs_window_contract!(cur_m, cur_am, cur_bm, cur_cm,
                                                   cs_ws.m_next_panels,
-                                                  steps_per_met, win - 1;
+                                                  out_schedule[win - 1], win - 1;
                                                   replay_tol = replay_tol,
                                                   positivity_cfl_limit = positivity_cfl_limit)
             if worst_replay_win == 0 || contract.replay.max_rel_err > worst_replay_rel
@@ -529,7 +609,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                            entd=cur_entd, detd=cur_detd),))
         end
         write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(
-            win - 1, window_nt, _regrid_window_evidence(FT, bal_diag, cm_diag)))
+            win - 1, window_nt, _regrid_window_evidence(FT, closure)))
 
         if should_log_window(win - 1, Nt)
             @info @sprintf("    Window %2d/%d: wrote (colbal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
@@ -573,7 +653,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     t_bal = time()
     bal_diag = balance_cs_column_mass_fluxes!(
         cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
-        cs_grid.face_table, cs_grid.cell_degree, steps_per_met,
+        cs_grid.face_table, cs_grid.cell_degree, base_steps,
         cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
         max_iter=DEFAULT_POISSON_BALANCE_MAX_ITER,
         project_every=Int(cs_balance_project_every),
@@ -586,15 +666,20 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
 
     sync_all_cs_boundary_mirrors!(cur_am, cur_bm, cs_grid.mesh.connectivity, Nc, Nz)
 
-    fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, steps_per_met)
+    fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, base_steps)
     for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
     cm_diag = _diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
                                         cur_m, Nc, Nz, bal_diag,
                                         "LL-to-CS window $Nt", balance_weights)
+    out_schedule[Nt] = _select_regrid_output_steps!(
+        out_policy, base_steps, cur_m, cur_am, cur_bm, cur_cm, cs_ws.m_next_panels)
+    closure = _regrid_stored_closure_record(bal_diag, cm_diag, cur_am, cur_bm, cur_m,
+                                            cs_ws.m_next_panels, cs_grid, base_steps,
+                                            out_schedule[Nt])
     pos_diag = if write_replay_on
         contract = verify_cs_window_contract!(cur_m, cur_am, cur_bm, cur_cm,
                                               cs_ws.m_next_panels,
-                                              steps_per_met, Nt;
+                                              out_schedule[Nt], Nt;
                                               replay_tol = replay_tol,
                                               positivity_cfl_limit = positivity_cfl_limit)
         if worst_replay_win == 0 || contract.replay.max_rel_err > worst_replay_rel
@@ -625,14 +710,18 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                        entd=cur_entd, detd=cur_detd),))
     end
     write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(
-        Nt, window_nt, _regrid_window_evidence(FT, bal_diag, cm_diag)))
+        Nt, window_nt, _regrid_window_evidence(FT, closure)))
 
     @info @sprintf("    Window %2d/%d (last): colbal %.2fs  pre=%.2e post=%.2e iter=%d",
                    Nt, Nt, t_bal, bal_diag.max_pre_residual,
                    bal_diag.max_post_residual, bal_diag.max_cg_iter)
 
+    set_streaming_steps_per_window_schedule!(writer.inner, out_schedule)
     close_streaming_binary!(writer)
     close(reader)
+    @info @sprintf("  Output substep schedule: min=%d max=%d (%s)",
+                   minimum(out_schedule), maximum(out_schedule),
+                   out_policy.adaptive_substeps ? "CS Courant number" : "explicit")
 
     @info @sprintf("  Column balance summary: pre=%.3e  post=%.3e  max_iter=%d",
                    worst_pre, worst_post, worst_iter)
@@ -648,7 +737,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     # require_substep_positivity=true if the gate failed, otherwise warns.
     summarize_cs_positivity_status(worst_positivity;
                                    cfl_limit = positivity_cfl_limit,
-                                   steps_per_window = steps_per_met,
+                                   steps_per_window = maximum(out_schedule),
                                    require_substep_positivity = require_substep_positivity,
                                    quarantine_path = writer_staging_path(writer))
     # Reached only when positivity passed, or when require_substep_positivity=false

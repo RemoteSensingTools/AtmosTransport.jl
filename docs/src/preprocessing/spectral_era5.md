@@ -126,6 +126,79 @@ limit never binds. On a reduced Gaussian target `T` is set by the widest ring
 wavenumbers above `M`. The ERA5 N320 reader synthesises at the file
 truncation, T639, on rings of 18 to 1280 points.
 
+## Pole rows
+
+The lat-lon targets and the cubed-sphere staging grid are `LatLonMesh`es
+whose rows are cells: row `j` lies between the latitude faces
+``φ_{j-1/2}`` and ``φ_{j+1/2}``, with ``φ_{1/2} = -90°`` and
+``φ_{N_y+1/2} = +90°``. The two pole rows are therefore cells centred at
+``±(90° − Δφ/2)`` (±87.57° on 72 × 37, ±89.75° on 720 × 361), not pole
+points. Every row, the pole rows included, carries the zonal mass amount
+through its west faces,
+
+```math
+a_{i-1/2,\,j,\,k} = \frac{U_{i-1/2,\,j,\,k}}{\cos φ_j}\;
+                    Δp_{i-1/2,\,j,\,k}\;\frac{R}{g}\;Δφ\;\frac{Δt}{2},
+```
+
+with ``U = u \cos φ`` the synthesized pseudo-wind. Only the meridional
+faces on the poles have zero length, ``R \cos(±90°)\,Δλ = 0``, so
+``b_{i,\,1/2,\,k} = b_{i,\,N_y+1/2,\,k} = 0``; these are the only
+closed faces (`close_pole_faces!`).
+
+A flow that crosses the pole enters a pole-row cell through its interior
+meridional face and leaves it through the zonal faces. If those faces were
+closed, the pole-row column budget could not balance; the column balance,
+one Poisson solve whose correction is a global potential, would then remove
+the cross-polar column flux and change `bm` at every latitude. That
+happened until issue #58 (October 2026): the zeroing, once removed
+(`docs/resources/bug_archive/SESSION1_GRID_CM_FIX_2026-04-03.md`), had come
+back as a polar-CFL safeguard and stayed in the v4 spectral preprocessor.
+`test/core/test_spectral_pole_rows.jl` measures this with a solid-body
+rotation about an axis tilted 45° from the pole, one full-column layer, on
+96 × 48: for every face row it fits the ratio of the stored amounts to the
+rotation's and reports the worst ``|\text{ratio} − 1|``. Before the fix the
+stored `bm` at the first interior face row was 0.002 of the rotation's
+(``|\text{ratio} − 1| = 0.998``) and 0.93 at the equator, the pole-row `am`
+was zero, and the cubed-sphere staging recovered `u = 0` in the pole rows, so
+the C24 face amounts poleward of 75° were 5.1 % off (RMS). (In the issue
+reporter's 34-level case the surface-layer ratio at the first interior face
+row was −0.08.) With the pole-row faces open, the stored `am` and `bm` match
+the rotation within 1e-3 in every row (``|\text{ratio} − 1|``), the recovered
+pole-row `u` within 5e-3 of its maximum, and the C24 face amounts poleward of
+75° within 5e-3 (RMS).
+
+The price is the zonal Courant number of the narrow pole-row cells,
+``u\,Δt / (R \cos φ_1 Δλ)``, whose zonal width is
+``R \cos φ_1 Δλ``: 24 km on 72 × 37, 970 m on 360 × 181 and 242 m on
+720 × 361. The lat-lon runtime does not cluster the polar rows zonally (TM5's
+reduced grid does), so this Courant number sets the adaptive substep count.
+On real ERA5 (2021-12-01, `ml137_tropo34`, dry basis with the mass fix), per
+hourly window:
+
+| Target    | Pole-row faces closed (before) | Open (now)          | Day total |
+|-----------|--------------------------------|---------------------|-----------|
+| 72 × 37   | 4 (the configured `dt`)        | 7–10 (mean 7.8)     | 2.0×      |
+| 360 × 181 | 43–63 (mean 49)                | 113–177 (mean 139)  | 2.8×      |
+| 720 × 361 | 155–244 (mean 184)             | 437–715 (mean 538)  | 2.9×      |
+
+The lat-lon transport cost of a run grows by about the same factor (an
+estimate: the advection sweeps scale with the substep count; the runtime was
+not timed). The preprocessing time grows little (one day, 360 × 181 on 4
+threads: 207 s against 183 s; 720 × 361 on 6 threads: 466 s against 426 s). Clustering the polar rows, as TM5 does, is
+the remedy and is left for a later change.
+
+The cubed-sphere staging grid is not advected, so the substep count of the
+spectral → cubed-sphere path does not change. The lat-lon → cubed-sphere
+regrid (`regrid_ll_binary_to_cs`) recovers the pole-row wind from `am` like
+every other row, and it no longer copies the source's substep count, which the
+lat-lon pole rows now set: by default each cubed-sphere window gets the
+smallest count whose per-substep Courant ratio meets the positivity limit.
+ERA5 spectral lat-lon binaries written before the fix carry no
+`pole_row_zonal_flux = "open"` header key; their stored pole-row `am` is the
+column balance's correction, not the wind (it is not zero), so the regrid
+refuses them by that key. Regenerate them.
+
 ## Per-window pipeline
 
 For each of the day's 24 hourly windows:
@@ -145,9 +218,11 @@ For each of the day's 24 hourly windows:
       native layers between two selected interfaces are summed into one
       output layer.
     - Without `echlevs`, `merge_thin_levels` merges adjacent native
-      layers until each is at least `merge_min_thickness_Pa` thick at
-      standard surface pressure (1000 Pa = 10 hPa). With `echlevs` the
-      key is ignored.
+      layers from the surface up, closing each group as soon as it is
+      `merge_min_thickness_Pa` thick at standard surface pressure
+      (1000 Pa = 10 hPa). The native layers left above the last group
+      form the top output layer, which can be thinner (33 Pa, native
+      layers 1–9, at 1000 Pa on L137). With `echlevs` the key is ignored.
 
 3. **Mass-fix** (`mass_support.jl::pin_global_mean_ps_using_qv!`)
     - Optional, gated by `[mass_fix] enable = true`.
@@ -175,6 +250,16 @@ For each of the day's 24 hourly windows:
       day-boundary tracer-mass jumps over a multi-week run.
 
 4. **Dry-basis conversion** (`mass_support.jl::apply_dry_basis_native!`)
+    - The humidity of `era5_thermo_ml_YYYYMMDD.nc` is a set of point
+      values at longitudes `0, Δ, …, 360° − Δ` and latitudes
+      `90°, …, −90°` (`Δ = 0.5°`; `download_era5_physics.py` checks this
+      layout). It is bilinearly interpolated to the target (or staging)
+      cell centres `(−180° + (i − ½)Δλ, −90° + (j − ½)Δφ)` with weights
+      built from the file's own coordinates (`read_thermo_coordinates`,
+      `LatLonBilinearWeights`). This holds also for a 720 × 361 target,
+      whose cell centres lie half a point spacing east of the archive's
+      points (and up to 0.25° off in latitude near the poles), so the
+      array is never copied as it is.
     - Multiplies cell-centered DELP and PS by `(1 − qv)`; multiplies
       face-staggered mass fluxes by face-averaged `(1 − qv_face)`.
     - Applied **before** the binary write; the binary is dry-basis

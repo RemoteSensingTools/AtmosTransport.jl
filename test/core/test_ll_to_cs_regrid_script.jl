@@ -40,6 +40,7 @@ function _ll_fixture_binary(path::AbstractString;
                             tm5_basis = :default,
                             am_uniform::Real = 0,
                             bm_uniform::Real = 0,
+                            flux_scale_by_window = ones(nwindow),
                             surface_pressure_basis::AbstractSurfacePressureBasis = TotalSurfacePressure(),
                             extra_header::AbstractDict = Dict{String, Any}(),
                             radius::Real = AtmosTransport.Parameters.EARTH_RADIUS)
@@ -117,8 +118,8 @@ function _ll_fixture_binary(path::AbstractString;
     for win in 1:nwindow
         base = (
             m = copy(m),
-            am = am,
-            bm = bm,
+            am = am .* FT(flux_scale_by_window[win]),
+            bm = bm .* FT(flux_scale_by_window[win]),
             cm = cm,
             ps = ps,
             dm = win < nwindow ? zeros(FT, Nx, Ny, Nz) : copy(dm_final),
@@ -146,6 +147,31 @@ function _ll_fixture_binary(path::AbstractString;
     return (; Nx, Ny, Nz, nwindow,
             final_dm_fraction = Float64(final_dm_fraction),
             window_totals = fill(sum(m), nwindow))
+end
+
+# Rewrite the per-window substep schedule of a fixture's header in place (the
+# stored amounts stay as written).
+function _set_source_schedule!(path::AbstractString, schedule)
+    r = TransportBinaryReader(path; FT = Float64)
+    nb = r.header.header_bytes
+    close(r)
+    raw = open(io -> read(io, nb), path)
+    h = JSON3.read(String(raw[1:findfirst(==(0x00), raw) - 1]), Dict{String, Any})
+    AtmosTransport.MetDrivers.set_transport_header_steps_per_window_schedule!(h, schedule)
+    json = Vector{UInt8}(JSON3.write(h))
+    open(io -> write(io, json, zeros(UInt8, nb - length(json))), path, "r+")
+    return path
+end
+
+# Window-integrated horizontal transport of one window of a CS binary: the
+# stored per-substep amounts times the window's substep count.
+function _cs_window_transport(path::AbstractString, win::Integer)
+    reader = TransportBinaryReader(path; FT = Float64)
+    w = load_window!(reader, win)
+    steps = reader.header.steps_per_window_by_window[win]
+    l1 = sum(p -> sum(abs, p), w.am) + sum(p -> sum(abs, p), w.bm)
+    close(reader)
+    return steps, l1, steps * l1
 end
 
 @testset "plan 40 Commit 3 — regrid_ll_binary_to_cs end-to-end" begin
@@ -425,23 +451,120 @@ end
                                    run_cache = run_cache)
             @test length(run_cache.entries) == 1
 
-            function _horizontal_flux_l1(path)
-                reader = TransportBinaryReader(path; FT = Float64)
-                win = load_window!(reader, 1)
-                steps = reader.header.steps_per_window
-                total = sum(map(p -> sum(abs, p), win.am)) +
-                        sum(map(p -> sum(abs, p), win.bm))
-                close(reader)
-                return steps, total
-            end
+            steps_default, flux_default, transport_default = _cs_window_transport(cs_default_path, 1)
+            steps_override, flux_override, transport_override = _cs_window_transport(cs_override_path, 1)
 
-            steps_default, flux_default = _horizontal_flux_l1(cs_default_path)
-            steps_override, flux_override = _horizontal_flux_l1(cs_override_path)
-
-            @test steps_default == 2
             @test steps_override == 4
             @test flux_default > 0
-            @test isapprox(flux_override / flux_default, 0.5; rtol = 1e-6)
+            # Per-substep amounts scale with 1/steps; the window transport does not.
+            @test isapprox(flux_override / flux_default, steps_default / 4; rtol = 1e-6)
+            @test isapprox(transport_override, transport_default; rtol = 1e-6)
+        end
+    end
+
+    # The output substep count belongs to the CS grid. The source's count is set
+    # by the lat-lon Courant number, which the narrow pole-row cells dominate
+    # once their zonal faces are open (issue #58); copying it made every CS
+    # window carry that many substeps. By default each CS window now gets the
+    # smallest count whose per-substep Courant ratio meets the positivity limit.
+    @testset "default output substeps follow the CS Courant number" begin
+        mktempdir() do dir
+            ll_path = joinpath(dir, "ll_fixture.bin")
+            cs_default_path = joinpath(dir, "cs_default.bin")
+            cs_fixed_path = joinpath(dir, "cs_fixed.bin")
+            # Strong enough that a C4 window needs more than one substep.
+            _ll_fixture_binary(ll_path; FT = Float64, Nx = 24, Ny = 13, Nz = 4,
+                               nwindow = 2, am_uniform = 60.0)
+            _set_source_schedule!(ll_path, [64, 64])
+            cs_grid = build_target_geometry(Val(:cubed_sphere), Dict{String, Any}(
+                "Nc" => 4, "regridder_cache_dir" => joinpath(dir, "cr_cache")), Float64)
+            regrid_ll_binary_to_cs(ll_path, cs_grid, cs_default_path; FT = Float64)
+            regrid_ll_binary_to_cs(ll_path, cs_grid, cs_fixed_path; FT = Float64,
+                                   steps_per_window = 64)
+
+            reader = TransportBinaryReader(cs_default_path; FT = Float64)
+            schedule = copy(reader.header.steps_per_window_by_window)
+            @test reader.header.raw_header["adaptive_substeps"] === true
+            ratios = map(1:2) do win
+                w = load_window!(reader, win)
+                # The fixture's mass does not change, so `m` is also the endpoint.
+                AtmosTransport.Preprocessing.verify_substep_positivity_cs!(
+                    w.m, w.am, w.bm, w.cm).ratio
+            end
+            close(reader)
+            @test all(>(1), schedule)
+            @test maximum(schedule) < 64                     # main: 64 (the source's)
+            @test all(<=(0.95), ratios)
+            # Minimal: one substep fewer would exceed the limit.
+            @test all(ratios .* schedule ./ (schedule .- 1) .> 0.95)
+            for win in 1:2
+                @test isapprox(_cs_window_transport(cs_default_path, win)[3],
+                               _cs_window_transport(cs_fixed_path, win)[3]; rtol = 1e-6)
+            end
+        end
+    end
+
+    # The stored LL amounts are per substep of each window's own count: an
+    # adaptive LL schedule (here 2 then 4 substeps, the same wind) must give
+    # the same CS fluxes in both windows. Recovering the winds with the
+    # header's maximum count made window 1 twice too strong.
+    @testset "per-window source substeps (adaptive LL schedule)" begin
+        mktempdir() do dir
+            ll_path = joinpath(dir, "ll_fixture.bin")
+            cs_path = joinpath(dir, "cs_fixture.bin")
+            _ll_fixture_binary(ll_path; FT = Float64, Nx = 24, Ny = 13, Nz = 4,
+                               nwindow = 2, am_uniform = 100.0,
+                               flux_scale_by_window = [1.0, 0.5])
+            _set_source_schedule!(ll_path, [2, 4])
+            r = TransportBinaryReader(ll_path; FT = Float64)
+            @test r.header.steps_per_window_by_window == [2, 4]
+            close(r)
+
+            cs_grid = build_target_geometry(Val(:cubed_sphere), Dict{String, Any}(
+                "Nc" => 4, "regridder_cache_dir" => joinpath(dir, "cr_cache")), Float64)
+            regrid_ll_binary_to_cs(ll_path, cs_grid, cs_path; FT = Float64,
+                                   steps_per_window = 4)
+            reader = TransportBinaryReader(cs_path; FT = Float64)
+            @test reader.header.steps_per_window == 4
+            l1(w) = sum(p -> sum(abs, p), w.am) + sum(p -> sum(abs, p), w.bm)
+            flux1, flux2 = l1(load_window!(reader, 1)), l1(load_window!(reader, 2))
+            close(reader)
+            @test flux1 > 0
+            @test isapprox(flux1, flux2; rtol = 1e-6)    # main: flux1 = 2 flux2
+        end
+    end
+
+    # ERA5 spectral LL binaries written before the fix of issue #58 closed the
+    # pole-row zonal faces before the column balance, which put its correction
+    # there: the stored pole-row `am` is nonzero but not the wind, so the
+    # payload cannot tell such a binary apart. The writer's header key can.
+    @testset "pre-#58 ERA5 spectral sources are refused by header" begin
+        mktempdir() do dir
+            cs_grid = build_target_geometry(Val(:cubed_sphere), Dict{String, Any}(
+                "Nc" => 4, "regridder_cache_dir" => joinpath(dir, "cr_cache")), Float64)
+            spectral = Dict{String, Any}("spectral_half_dt_seconds" => 450.0)
+            # Legacy: an ERA5 spectral header without the key, with nonzero
+            # pole-row `am` (as the balance leaves it).
+            legacy = joinpath(dir, "ll_legacy.bin")
+            _ll_fixture_binary(legacy; FT = Float64, Nx = 24, Ny = 13, Nz = 4,
+                               nwindow = 2, am_uniform = 100.0, extra_header = spectral)
+            err = try
+                regrid_ll_binary_to_cs(legacy, cs_grid, joinpath(dir, "cs_legacy.bin"); FT = Float64)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ArgumentError && occursin("issue #58", err.msg)   # main: no error
+            # Refused before any output (or staging file) is opened.
+            @test !any(startswith("cs_legacy"), readdir(dir))
+            # The same source written by the current preprocessor is accepted.
+            current = joinpath(dir, "ll_current.bin")
+            _ll_fixture_binary(current; FT = Float64, Nx = 24, Ny = 13, Nz = 4,
+                               nwindow = 2, am_uniform = 100.0,
+                               extra_header = merge(spectral, Dict{String, Any}(
+                                   AtmosTransport.Preprocessing.POLE_ROW_ZONAL_FLUX_KEY => "open")))
+            regrid_ll_binary_to_cs(current, cs_grid, joinpath(dir, "cs_current.bin"); FT = Float64)
+            @test isfile(joinpath(dir, "cs_current.bin"))
         end
     end
 

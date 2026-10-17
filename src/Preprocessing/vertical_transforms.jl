@@ -131,9 +131,12 @@ end
 """
     MergeLayersThinnerThan(min_thickness_Pa; reference_surface_pressure_Pa = STANDARD_PRESSURE)
 
-Typed wrapper for the existing `merge_thin_levels` algorithm: greedily
-merge adjacent native layers until each output layer exceeds
-`min_thickness_Pa` at the reference surface pressure.
+Typed wrapper for the `merge_thin_levels` algorithm: merge adjacent native
+layers from the surface up, closing each group as soon as its thickness at the
+reference surface pressure reaches `min_thickness_Pa`. The native layers left
+above the last group become the top output layer, which can be thinner than
+`min_thickness_Pa` (ERA5 L137 at 100 Pa: 117 layers, top layer 6.8 Pa from
+native layers 1–4); every other output layer is at least that thick.
 """
 Base.@kwdef struct MergeLayersThinnerThan <: AbstractVerticalTransform
     min_thickness_Pa              :: Float64

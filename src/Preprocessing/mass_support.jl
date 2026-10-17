@@ -164,7 +164,7 @@ end
 Fill south/north face surface pressures with the same Jensen/geometric mean
 used by `compute_mass_fluxes!` for native meridional mass flux thickness.
 Polar boundary values are copied from the adjacent pole row; the corresponding
-mass fluxes are zeroed separately by `apply_structured_pole_constraints!`.
+mass fluxes are zeroed separately by `close_pole_faces!`.
 """
 function fill_yface_surface_pressure!(ps_yface::AbstractMatrix{<:Real},
                                       ps_cell::AbstractMatrix{<:Real})
@@ -505,27 +505,46 @@ function merge_qv!(qv_merged::Array{FT, 3}, qv_native::Array{FT, 3},
     end
 end
 
+# Horizontal size `(Nx, Ny)` of the thermo `q` variable, stored either
+# `(longitude, latitude, level, time)` or `(time, level, latitude, longitude)`.
+function _thermo_horizontal_size(q_var)
+    return dimnames(q_var)[1] == "longitude" ? (size(q_var, 1), size(q_var, 2)) :
+                                               (size(q_var, 4), size(q_var, 3))
+end
+
+# The thermo file's longitude and latitude coordinate values in file order,
+# found by name as `GriddedIO.find_coordinate` finds them and checked against
+# the horizontal size of `q`.
+function _thermo_file_coordinates(ds)
+    Nx, Ny = _thermo_horizontal_size(ds["q"])
+    lon = ds[find_coordinate(ds, LongitudeAxis(); length = Nx)][:]
+    lat = ds[find_coordinate(ds, LatitudeAxis(); length = Ny)][:]
+    return lon, lat
+end
+
 """
     read_qv_from_thermo(thermo_path, hour_idx, Nx, Ny, Nz; FT=Float32)
 
 Read hourly ERA5 model-level specific humidity from the thermo NetCDF
-sidecar. The returned field is in the canonical staging layout:
-`(longitude_cell_center_in_-180..180, south_to_north_latitude, level)`.
+sidecar as `(longitude, south_to_north_latitude, level)`.
 
-Two normalizations relative to raw NetCDF data:
+Two reorderings relative to the raw NetCDF data, both decided from the file's
+coordinate variables (found as `GriddedIO.find_coordinate` finds them):
 
-1. **Latitude orientation.** ERA5 native latitudes run north-to-south
-   (`latitude[1] = +90`). When detected, the array is reversed along the
-   latitude axis so `j=1` is the south pole.
-2. **Longitude convention.** ERA5 longitudes are cell-centered at
-   `0, Δ, 2Δ, …, 360-Δ`. The downstream staging mesh uses cell-centered
-   `-180+Δ/2, …, 180-Δ/2`. When the NetCDF longitudes start at or near 0°,
-   the array is rolled by `Nx ÷ 2` columns so the midpoint of the array
-   lands at the meridian. After the roll, index `i=1` corresponds to the
-   westernmost staging-grid cell (the one centered closest to -180°).
+1. **Latitude orientation.** ERA5 latitudes run north to south
+   (`latitude[1] = +90`); the array is then reversed along latitude so `j = 1`
+   is the southernmost row.
+2. **Longitude order.** A `0 … 360 − Δ` longitude axis is rolled by `Nx ÷ 2`
+   columns, so the column of longitude 180° comes first.
 
-The roll uses NetCDF metadata (`longitude` variable) — not implicit array
-ordering — so files in either convention are handled correctly.
+The values stay where the file put them. ERA5 thermo fields are point values
+at longitudes `0, Δ, …, 360 − Δ` and latitudes `90, 90 − Δ, …, −90`
+(`scripts/downloads/download_era5_physics.py` checks this layout), so after
+the reordering index `(i, j)` holds the value at
+`(−180 + (i − 1)Δ, −90 + (j − 1)Δ)`. These are not the cell centres of a
+lat-lon staging mesh (`−180 + (i − ½)Δ`); [`read_thermo_coordinates`](@ref)
+returns the coordinates of the reordered array, and the lat-lon workspaces
+interpolate with them.
 """
 function read_qv_from_thermo(thermo_path::String, hour_idx::Int, Nx::Int, Ny::Int, Nz::Int;
                              FT::Type{<:AbstractFloat}=Float32)
@@ -538,22 +557,53 @@ function read_qv_from_thermo(thermo_path::String, hour_idx::Int, Nx::Int, Ny::In
             q_raw = FT.(q_var[hour_idx, :, :, :])
             q = permutedims(q_raw, (3, 2, 1))
         end
-        if size(q, 2) == Ny && ds["latitude"][1] > ds["latitude"][end]
+        lon, lat = _thermo_file_coordinates(ds)
+        if size(q, 2) == Ny && lat[1] > lat[end]
             q = q[:, end:-1:1, :]
         end
-        q = _normalize_lon_to_centered(q, ds["longitude"][:])
+        q = _normalize_lon_to_centered(q, lon)
         return q
     end
 end
 
 """
+    read_thermo_coordinates(thermo_path) -> (lon, lat)
+
+Longitudes and latitudes [degrees] of the humidity values in the arrays
+[`read_qv_from_thermo`](@ref) and [`read_daily_qv_from_thermo`](@ref) return:
+the file's coordinate variables (found by name through
+`GriddedIO.find_coordinate`), reordered as the data are (latitude south to
+north; a `0 … 360` longitude axis rolled by `Nx ÷ 2`) and written in
+`[−180°, 180°)`. For the ERA5 thermo archive this is
+`lon[i] = −180 + (i − 1)Δ` and `lat[j] = −90 + (j − 1)Δ`.
+"""
+function read_thermo_coordinates(thermo_path::String)
+    NCDataset(thermo_path) do ds
+        lon_raw, lat_raw = _thermo_file_coordinates(ds)
+        lon_file = _coordinate_values(lon_raw, "longitude")
+        lat = _coordinate_values(lat_raw, "latitude")
+        lat[1] > lat[end] && reverse!(lat)
+        lon = vec(_normalize_lon_to_centered(reshape(lon_file, :, 1, 1), lon_file))
+        return mod.(lon .+ 180, 360) .- 180, lat
+    end
+end
+
+function _coordinate_values(values::AbstractVector, name::AbstractString)
+    any(ismissing, values) && throw(ArgumentError(
+        "thermo $(name) coordinate contains missing values"))
+    return Float64.(collect(values))
+end
+
+"""
     _normalize_lon_to_centered(field, lons) -> field
 
-Roll a 3D `(Nx, Ny, Nz)` field along the longitude axis so the array
-lands in cell-centered `[-180, 180)` convention. Detects the source
-longitude convention from the NetCDF `longitude` variable: when source
-longitudes start at or near 0° (i.e. `0..360-Δ` convention), rolls by
-`Nx ÷ 2` columns; when source already starts near -180°, no-op.
+Roll a 3D `(Nx, Ny, Nz)` field along the longitude axis into the
+`[-180, 180)` order. Detects the source longitude convention from the
+NetCDF `longitude` variable: when source longitudes start at or near 0°
+(i.e. `0..360-Δ` convention), rolls by `Nx ÷ 2` columns; when source
+already starts near -180°, no-op. The roll reorders values; it does not
+change where they sit: point values at `0, Δ, …` land at `-180, -180 + Δ, …`
+(see [`read_thermo_coordinates`](@ref)).
 
 Returns `field` unchanged when `length(lons) ≠ size(field, 1)` (mismatch
 that the caller will catch downstream) or when the source is already in
@@ -601,11 +651,12 @@ function read_daily_qv_from_thermo(thermo_path::String,
         dims = dimnames(q_var)
         Nt = _qv_time_count(q_var, dims)
         out = Array{FT}(undef, Nx, Ny, Nz, Nt)
-        lat_descending = ds["latitude"][1] > ds["latitude"][end]
-        lons = ds["longitude"][:]
-        # Same convention as read_qv_from_thermo: roll longitude axis from
-        # 0..360 to staging-mesh -180..180 cell-centered convention. Detected
-        # from NetCDF metadata so files in either layout are handled.
+        lons, lats = _thermo_file_coordinates(ds)
+        lat_descending = lats[1] > lats[end]
+        # Same reordering as read_qv_from_thermo: roll a 0..360 longitude axis
+        # into -180..180 order (values keep their positions; see
+        # `read_thermo_coordinates`). Detected from the coordinate variables
+        # so files in either layout are handled.
         roll_lon = (length(lons) == Nx && lons[1] >= 0 && lons[end] > 180)
         block = max(time_block, 1)
 

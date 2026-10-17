@@ -146,6 +146,55 @@
 - The ledgers rely on IEEE arithmetic without fast-math reassociation (which
   would break `TwoSum`). They are tested on CPU and CUDA; the Metal checks
   (`test/diagnostic/test_metal_kernels.jl`) have not been run yet.
+- **ERA5 spectral pole rows are ordinary cells** (issue #58, pera-noaa). The
+  spectral preprocessor set the zonal mass flux of the two pole rows of every
+  lat-lon target and cubed-sphere staging grid to zero, although these rows
+  are cells centred at ±(90° − Δφ/2). A flow across the pole then had no path
+  through the polar cap: the lat-lon column balance re-routed `bm` at every
+  latitude (real ERA5 72 × 37: 4.5–10 % RMS in `bm` equatorward of 80°, 55 %
+  poleward), and the cubed-sphere staging recovered `u = 0` in the pole rows
+  (C24 poleward of 75°: 9 % in `am`/`bm`, 82 % in `cm`). Only the meridional
+  faces on the poles stay closed. The narrow pole-row cells raise the
+  lat-lon substep count (real ERA5 day, per hourly window: 72 × 37 4 → 7–10,
+  360 × 181 43–63 → 113–177, 720 × 361 155–244 → 437–715; 2.0–2.9× more
+  substeps, and about that much more lat-lon transport time). The same zeroing
+  had been removed once before (bug archive, 2026-04-03); a regression test
+  now keeps it out. ERA5 N320 and reduced-Gaussian targets are unaffected.
+  ERA5 spectral lat-lon binaries now record `pole_row_zonal_flux = "open"` in
+  their header.
+- **Lat-lon → cubed-sphere regrid** (`regrid_ll_binary_to_cs`):
+  - winds are recovered with each window's own source substep count
+    (`steps_per_window_by_window`, through `flux_application_seconds`), not
+    the header maximum; with an adaptive lat-lon schedule a window with fewer
+    substeps was regridded too strong by the ratio;
+  - the output substep count no longer copies the source's (which the
+    lat-lon pole rows now set): by default each cubed-sphere window gets the
+    smallest count whose per-substep Courant ratio meets the positivity
+    limit, written as a per-window schedule; `steps_per_window` still fixes
+    one count for all windows;
+  - ERA5 spectral lat-lon sources without the `pole_row_zonal_flux = "open"`
+    header key (written before the #58 fix) are refused before any output is
+    opened. Their stored pole-row `am` is the column balance's correction,
+    not zero and not the wind, so only the header identifies them;
+    regenerate them;
+  - with the adaptive schedule the `column_closure_*` header keys are
+    evaluated again on the rescaled stored fluxes
+    (`rescaled_column_closure_record`); they described the one-substep
+    balance and were N times the stored amounts.
+- **ERA5 humidity on lat-lon targets** (issue #63, pera-noaa). The thermo
+  `q` is a set of point values at longitudes 0, Δ, … (index 1 at −180° after
+  the roll), but the lat-lon and cubed-sphere-staging interpolation read it
+  as cell-centred, half a source spacing (0.25°) east, and a 720 × 361 target
+  copied the 720 × 361 archive without interpolating (also up to 0.25° off in
+  latitude near the poles). `q` is now always interpolated bilinearly with
+  weights built from the file's coordinates, which are read through
+  `GriddedIO.find_coordinate`. Real ERA5: `q` changes by 1–2.5e-4 kg/kg RMS
+  (up to 6e-3 at sharp gradients), the dry air mass by 2e-4 RMS (up to 0.6 %
+  locally). The reduced-Gaussian path was already right and is unchanged.
+- Golden outputs that change: `pre_ll72` (#58 and #63), `pre_c24` (#58 and
+  #63) and the runs on them (`run_ll72_*`, `run_c24_*`). `pre_o24` and the
+  N320, MERRA-2 and GEOS cases do not change.
+
 - **Static surface fluxes regrid conservatively on every grid, with the
   file's totals** (#59). Lat-lon and reduced-Gaussian targets now default to
   `regridding = "conservative"` (before: bilinear). The bilinear default
@@ -322,6 +371,17 @@
   on a `NaN` height instead of returning the lowest layer.
   `resolve_placement(option, missing_height_rule(source), request, cell, terrain)`
   places one request.
+
+### Other changes
+
+- `merge_thin_levels` (`[vertical] transform = "merge_layers_thinner_than"`,
+  spectral `merge_min_thickness_Pa`): its top-down pass could never change the
+  result and is removed; the produced level sets are bit-identical (for
+  level sets without a zero-thickness layer, which includes all ERA5 sets). The
+  documentation now states the rule: groups close from the surface up, and
+  the native layers left at the top form a top layer that can be thinner than
+  the minimum (6.8 Pa for the L117 set at 100 Pa; folding it into an L116 set
+  waits for the next regeneration).
 
 ## 0.5.0 — 2026-10-13
 

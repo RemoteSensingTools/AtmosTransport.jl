@@ -383,7 +383,14 @@ explicit latitude-cosine multiplier in the `bm` formula.
 
 Sign convention: positive `am` = eastward mass flux; positive `bm` = northward.
 
-Pole rows `j=1` and `j=Nlat` have `am = 0` (no zonal transport through poles).
+The pole rows `j = 1` and `j = Nlat` are ordinary cells, centred at
+`±(90° − Δφ/2)`: their zonal faces carry the synthesized flux like every other
+row. Only the meridional faces on the poles (`bm[:, 1, :]`, `bm[:, Nlat+1, :]`,
+at `φ = ±90°`) have zero length and carry no flux. Closing the pole-row zonal
+faces would leave a flow that crosses the pole no path through the polar cap;
+the column balance would then re-route `bm` at every latitude (issue #58; the
+same zeroing was removed once before, see
+`docs/resources/bug_archive/SESSION1_GRID_CM_FIX_2026-04-03.md`, section 3).
 
 ## Vertical flux
 
@@ -413,7 +420,11 @@ function compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps,
     dlon = grid.dlon        # [radians] — longitudinal grid spacing
     dlat = grid.dlat        # [radians] — latitudinal grid spacing
     # --- Zonal mass flux: am[i, j, k] at west face of cell (i, j) ---
-    # Positive am = eastward. Pole rows (j=1, j=Nlat) are zeroed.
+    # Positive am = eastward. Every row carries its flux, the pole rows
+    # included: they are cells centred at ±(90° − Δφ/2), not pole points.
+    # Do NOT zero am in rows 1 and Nlat (issue #58; bug archive
+    # SESSION1_GRID_CM_FIX_2026-04-03.md, section 3); the regression test is
+    # test/core/test_spectral_pole_rows.jl.
     # Face ps uses Jensen correction: exp(mean(ln ps)) instead of mean(exp(ln ps)).
     # log(ps) is computed inline to avoid allocating a scratch matrix.
     @inbounds for k in 1:Nz, j in 1:Nlat, i in 1:(Nlon + 1)
@@ -421,15 +432,10 @@ function compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps,
         i_r = i <= Nlon ? i : 1        # periodic wrap: east neighbour of Nlon+1 is 1
         ps_face = exp((log(ps[i_l, j]) + log(ps[i_r, j])) / 2)  # Jensen-corrected
         dp_face = abs(dA[k] + dB[k] * ps_face)  # face-level pressure thickness [Pa]
-        cos_lat = grid.cos_lat[j]
-        if j == 1 || j == Nlat
-            am[i, j, k] = 0  # no zonal flux at pole rows
-        else
-            # u_stag is U·cos(φ) from spectral synthesis; dividing by cos(φ)
-            # recovers the physical zonal wind u [m/s].
-            # am = u × R/g × Δp × Δφ × Δt/2   [kg per half-step]
-            am[i, j, k] = u_stag[i, j, k] / cos_lat * dp_face * R_g * dlat * half_dt
-        end
+        # u_stag is U·cos(φ) from spectral synthesis; dividing by cos(φ)
+        # recovers the physical zonal wind u [m/s].
+        # am = u × R/g × Δp × Δφ × Δt/2   [kg per half-step]
+        am[i, j, k] = u_stag[i, j, k] / grid.cos_lat[j] * dp_face * R_g * dlat * half_dt
     end
 
     # --- Meridional mass flux: bm[i, j, k] at south face of cell (i, j) ---

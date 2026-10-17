@@ -127,7 +127,7 @@ Files directly in this folder; the subfolders have their own READMEs
 - [`reduced_transport_helpers.jl`](reduced_transport_helpers.jl) — RG workspaces, humidity, spectral synthesis, fluxes, level merge
 - [`reduced_window_buffer.jl`](reduced_window_buffer.jl) — RG two-slot window buffer and workspace, ingest/drain/flush
 - [`reduced_spectral_day.jl`](reduced_spectral_day.jl) — RG window synthesis, pin/dry/merge and next-day end point, `balance_window!`, driver hooks, RG `process_day`
-- [`mass_support.jl`](mass_support.jl) — LL merge/remap, LL Poisson and column balance, qv readers, `apply_dry_basis_native!`, `pin_global_mean_ps!`, `pin_global_mean_ps_using_qv!`
+- [`mass_support.jl`](mass_support.jl) — LL merge/remap, LL Poisson and column balance, qv readers and their coordinates (`read_thermo_coordinates`, through `GriddedIO.find_coordinate`), `apply_dry_basis_native!`, `pin_global_mean_ps!`, `pin_global_mean_ps_using_qv!`
 - [`ring_poisson_balance.jl`](ring_poisson_balance.jl) — RG `CompressedLaplacian`, `balance_compressed_column_fluxes!`
 - [`cs_face_table.jl`](cs_face_table.jl) — CS global cell and face indexing (the face table)
 - [`cs_poisson_solver.jl`](cs_poisson_solver.jl) — CS graph Laplacian, PCG solver, correction mapping, mirror synchronization
@@ -211,6 +211,7 @@ Files directly in this folder; the subfolders have their own READMEs
   `test_{ll,rg,cs}_preprocessor_contract.jl`, `test_preprocessor_substep_schedule.jl`,
   `test_replay_consistency.jl`, `test_global_ps_pin.jl`, `test_poisson_balance.jl`,
   `test_rg_poisson_balance.jl`, `test_vertical_transforms.jl`,
+  `test_spectral_pole_rows.jl`, `test_qv_longitude_normalization.jl`,
   `test_preprocessing_integrity.jl`, `test_preprocessing_cache_io.jl`; byte
   reproducibility in `test_ll_spectral_unified_driver.jl`,
   `test_rg_preprocessor_unified_driver.jl`, `test_cs_spectral_unified_driver.jl`.

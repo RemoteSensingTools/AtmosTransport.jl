@@ -118,13 +118,14 @@ balanced correction. See the binary-format guide for the full schema.
   directly, the MERRA-2 workflow defaults `substep_cfl_target` to
   `DEFAULT_SUBSTEP_CFL_TARGET`, N320 to `ERA5_N320_SUBSTEP_CFL_TARGET` and the
   coarsener to `COARSEN_SUBSTEP_CFL_TARGET`; the spectral and GEOS `process_day`
-  methods default it to `positivity_cfl_limit`.
+  methods default it to `positivity_cfl_limit`, and so does
+  `regrid_ll_binary_to_cs`, which is adaptive unless `steps_per_window` is given.
 - `next_substeps` returns `ceil(steps * ratio / substep_cfl_target)`, never
   below the current count and clamped to the bounds; fixed policies keep the count.
 - On a change the workflow rescales (`rescale_substep_amounts!`, spectral
-  paths), re-prepares from native fluxes (GEOS), or rebuilds fluxes from winds
+  paths and the LL → CS regrid), re-prepares from native fluxes (GEOS), or rebuilds fluxes from winds
   (N320, MERRA-2), then repeats balance, `cm`, and the positivity check.
-  GEOS, N320, and MERRA-2 stop after `ADAPTIVE_SUBSTEP_MAX_REFINEMENTS`
+  GEOS, N320, MERRA-2 and the LL → CS regrid stop after `ADAPTIVE_SUBSTEP_MAX_REFINEMENTS`
   refinements.
 - Counts are written to `steps_per_window_by_window`
   (`set_streaming_steps_per_window_schedule!`,
@@ -136,7 +137,7 @@ balanced correction. See the binary-format guide for the full schema.
 - [`core.jl`](core.jl) — `HEADER_SIZE`, `exact_steps_per_window`, `poisson_balance_target_scale`, provenance and fingerprints, LL `build_v4_header`, payload sizing, `existing_output_schema_matches`
 - [`flux_fidelity.jl`](flux_fidelity.jl) — typed evidence/statuses, deterministic face maps, independent sampled evaluators, algebraic and OMEGA accumulators, final header certification
 - [`window_contracts.jl`](window_contracts.jl) — abstract contract/workspace/writer types, mass-basis symbols, `SubstepSchedulePolicy`, `ReadyWindow`, `PreverifiedWindow`, `PreprocessorRunCache`, trait generics
-- [`latlon_workspaces.jl`](latlon_workspaces.jl) — LL spectral workspaces and `WindowStorage`, qv loading, mass fix, dry basis, merge, `process_window!`
+- [`latlon_workspaces.jl`](latlon_workspaces.jl) — LL spectral workspaces and `WindowStorage`, qv loading (bilinear from the thermo points to the cell centres, `LatLonBilinearWeights`), mass fix, dry basis, merge, `close_pole_faces!`, `process_window!`
 - [`latlon_contracts.jl`](latlon_contracts.jl) — `next_day_merged_fields`, `apply_poisson_balance!`, LL window serializer, LL positivity gate, `LatLonContract`
 - [`cubed_sphere_contracts.jl`](cubed_sphere_contracts.jl) — CS mass-tendency and delta helpers, CS replay and positivity gates, `CubedSphereContract`
 - [`reduced_gaussian_contracts.jl`](reduced_gaussian_contracts.jl) — RG positivity and stub-flux gates, `ReducedGaussianContract`
@@ -145,7 +146,7 @@ balanced correction. See the binary-format guide for the full schema.
 - [`topology_dispatch.jl`](topology_dispatch.jl) — `preprocessor_pair_supported` fallback, `ensure_preprocessor_pair_supported`, fallback `process_day`
 - [`latlon_spectral.jl`](latlon_spectral.jl) — ERA5 spectral to LL `process_day`, `LatLonDeferredBinaryWriter`, LL hooks
 - [`cubed_sphere_spectral.jl`](cubed_sphere_spectral.jl) — ERA5 spectral to CS `process_day` through an LL staging grid, CS hooks
-- [`cubed_sphere_regrid.jl`](cubed_sphere_regrid.jl) — `regrid_transport_binary`, `regrid_ll_binary_to_cs` (fixed substeps, own loop)
+- [`cubed_sphere_regrid.jl`](cubed_sphere_regrid.jl) — `regrid_transport_binary`, `regrid_ll_binary_to_cs` (output substeps per window from the CS Courant number unless `steps_per_window` fixes them; winds recovered with each source window's own count; refuses ERA5 spectral LL sources without `pole_row_zonal_flux = "open"`; own loop)
 - GEOS-IT/FP to CS, in include order:
   [`geos_cs_mass_helpers.jl`](geos_cs_mass_helpers.jl) — DELP ↔ air mass, surface pressure, pressure-fixer mass evolution, residual smoothing;
   [`geos_cs_omega.jl`](geos_cs_omega.jl) — OMEGA-consistent `cm` target (PCHIP time interpolation, regularization, reconstruction);

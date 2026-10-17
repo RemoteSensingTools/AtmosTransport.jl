@@ -352,6 +352,7 @@ files = [
     "core/test_preprocessing_cache_io.jl",
     "core/test_ll_spectral_unified_driver.jl",
     "core/test_cs_spectral_unified_driver.jl",
+    "core/test_spectral_pole_rows.jl",
     "core/test_rg_preprocessor_unified_driver.jl",
     "core/test_geos_reader.jl",
     "core/test_geos_cs_passthrough.jl",

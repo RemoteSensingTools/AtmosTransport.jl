@@ -158,7 +158,7 @@ using ..State: AbstractMassBasis, DryBasis, MoistBasis,
 using ..Regridding: build_regridder, apply_regridder!, coarsen_sum!, coarsen_area_weighted!,
                     default_regrid_cache_dir
 using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField
-using ..GriddedIO: source_latlon_mesh, SnappedFaces
+using ..GriddedIO: source_latlon_mesh, SnappedFaces, find_coordinate, LongitudeAxis, LatitudeAxis
 using ..MetDrivers: LatLonBinaryGeometry, CubedSphereBinaryGeometry, TransportBinaryReader,
                     mesh_definition,
                     TransportBinaryHeader, binary_geometry, grid_type,
@@ -183,7 +183,7 @@ using ..MetDrivers: LatLonBinaryGeometry, CubedSphereBinaryGeometry, TransportBi
                     recompute_cm_from_dm_target!, recompute_faceindexed_cm_from_dm_target!,
                     verify_window_continuity, verify_window_continuity_ll,
                     verify_window_continuity_rg, verify_window_continuity_cs,
-                    delta_semantics,
+                    delta_semantics, flux_kind, flux_application_seconds,
                     surface_pressure_basis,
                     replay_tolerance, run_replay_gate, ReplayScratch,
                     structured_replay_layout, faceindexed_replay_layout
