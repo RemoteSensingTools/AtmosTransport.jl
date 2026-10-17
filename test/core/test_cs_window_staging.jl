@@ -73,6 +73,19 @@ end
         end
         driver = TransportBinaryDriver(path; FT, arch = CPU(), Hp)
         staging = load_transport_window(driver, 1)
+        # Raw staging (the device path, here with host arrays): one read of the
+        # window payload, unpacked into a window whose halos hold stale values.
+        raw = StagingMD.raw_window_staging(driver, staging.air_mass)
+        @test eltype(raw.host) === disk_FT && length(raw.host) == driver.reader.header.elems_per_window
+        unpacked = deepcopy(staging)
+        foreach(a -> fill!(a, NaN), (unpacked.air_mass..., unpacked.fluxes.am..., unpacked.deltas.dm...,
+                                     unpacked.surface.pblh..., unpacked.convection.cmfmc...))
+        for win in (3, 1, 2)
+            StagingMD.read_window_payload!(raw, driver, win)
+            @test StagingMD.unpack_window_payload!(unpacked, driver, raw) === unpacked
+            @test windows_equal(unpacked, load_transport_window(driver, win))
+        end
+        @test_throws BoundsError StagingMD.read_window_payload!(raw, driver, nwin + 1)
         @test staging.deltas !== nothing && staging.surface !== nothing &&
               staging.surface.eflux !== nothing && staging.vdiff !== nothing &&
               staging.dkg !== nothing && staging.convection.tm5_fields !== nothing &&

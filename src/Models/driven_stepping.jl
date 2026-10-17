@@ -146,10 +146,8 @@ function DrivenSimulation(model::TransportModel,
     else
         # Refill the previous simulation's storage, as a prefetch would.
         host_staging = buffers.host_staging
-        loaded_window = load_transport_window!(host_staging, driver, start_window)
-        window = _copy_window_payload!(buffers.window, loaded_window)
-        # The prefetch below refills the (pinned) staging window.
-        Architectures.synchronize_storage!(model.state.air_mass)
+        window = _load_window_into_existing_backend!(buffers.window, driver, start_window,
+                                                     model.state.air_mass, host_staging)
         prefetch_window = separate_prefetch ? buffers.prefetch_window : window
         expected_air_mass = buffers.expected_air_mass
         qv_buffer = buffers.qv_buffer

@@ -150,7 +150,14 @@ Across input files, the runner retains the model's state and numerical
 workspaces. A new `DrivenSimulation` refreshes forcing, diffusion layer
 thickness, and convection caches for the next file. It carries the accumulated
 simulation clock forward, so time-varying emissions continue at the correct
-time. GPU prefetch is drained before the runner closes an input driver.
+time. GPU prefetch is drained before the runner closes an input driver. When
+the next file has the same window layout, the new simulation refills the
+previous one's window buffers instead of allocating new ones.
+
+On a GPU, a cubed-sphere transport binary's window is loaded with one read of
+its payload into page-locked host memory, one upload, and unpacking kernels
+on the device (`MetDrivers.RawWindowStaging`); the device window equals the
+upload of a window loaded on the host.
 
 The detailed operator ordering is documented in [Operators](@ref Operator-concepts). The mass
 invariant is derived in [Mass conservation](@ref).

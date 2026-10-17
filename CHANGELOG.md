@@ -703,6 +703,14 @@
   seam, and neither the cache nor the seam application synchronizes the host
   on a device (the halo exchange after each sweep does). A C90 step issues 20
   fewer launches and 8 fewer synchronizations; results are bit-identical.
+- Cubed-sphere transport binaries load windows on a GPU through raw window
+  staging (`MetDrivers.RawWindowStaging`): one `read!` of the window's
+  contiguous payload into a page-locked host buffer, one upload, and one
+  unpacking launch per payload section on the device (padded fields get zero
+  halo cells, as before). This replaces a page-faulting copy of the file
+  mapping into a padded host window (31 ms per C90 L72 window, row by row for
+  padded fields) and the copy of that window to the device; the device windows
+  are unchanged. `same_window_layout` also compares the on-disk element type.
 
 ### Other changes
 

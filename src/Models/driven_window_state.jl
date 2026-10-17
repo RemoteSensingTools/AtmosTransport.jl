@@ -200,24 +200,28 @@ function _copy_window_payload!(dest::TransportWindow{B},
     return dest
 end
 
-# The first host window becomes the staging buffer of a device-resident run when
-# the driver can refill it in place; CPU runs use each loaded window directly
-# (it becomes the simulation's window), so they keep loading fresh ones. The
-# staging window is page-locked where the backend supports it, so its copies to
-# the device are direct, asynchronous transfers (each load synchronizes them).
+# Staging of the window loads of a device-resident run: the driver's raw window
+# buffers when it has them (`raw_window_staging`: one read into page-locked
+# host memory, one upload, unpacking on the device), else the first host window
+# when the driver can refill it in place, page-locked where the backend
+# supports it. CPU runs use each loaded window directly (it becomes the
+# simulation's window), so they keep loading fresh ones.
 function _host_staging_window(loaded_window, driver, model_air_mass)
     _window_backend_adapter(model_air_mass) === Array && return nothing
     _window_backend_adapter(loaded_window.air_mass) === Array || return nothing
+    raw = raw_window_staging(driver, model_air_mass)
+    raw === nothing || return raw
     hasmethod(load_transport_window!, Tuple{typeof(loaded_window), typeof(driver), Int}) ||
         return nothing
     return Architectures.pin_host_memory!(loaded_window, model_air_mass)
 end
 
-# The window storage of a finished simulation `previous` that a new simulation of
-# the same model (state and convection forcing storage) on `driver` can refill
-# (see `DrivenSimulation`'s `reuse_buffers_of`), or `nothing`. A device run keeps a host staging window
-# only with an in-place loader; `separate_prefetch` says whether the new
-# simulation needs a second device window.
+# The window storage of a finished simulation `previous` that a new simulation
+# of the same model (state and convection forcing storage) on `driver` can
+# refill (see `DrivenSimulation`'s `reuse_buffers_of`), or `nothing`. A device
+# run keeps staging only with raw window buffers or an in-place loader;
+# `separate_prefetch` says whether the new simulation needs a second device
+# window.
 _reusable_window_buffers(::Nothing, _model, _driver, _separate_prefetch) = nothing
 
 function _reusable_window_buffers(previous::DrivenSimulation, model, driver, separate_prefetch::Bool)
@@ -236,21 +240,39 @@ function _load_window_into_existing_backend!(existing_window,
                                              win::Int,
                                              model_air_mass,
                                              host_staging = nothing)
-    adaptor = _window_backend_adapter(model_air_mass)
-    loaded = SectionTimer.time_section(:window_load_host) do
-        host_staging === nothing || adaptor === Array ? _load_window(driver, win) :
-            load_transport_window!(host_staging, driver, win)
-    end
-    if adaptor === Array
-        return loaded
-    end
+    _window_backend_adapter(model_air_mass) === Array &&
+        return SectionTimer.time_section(() -> _load_window(driver, win), :window_load_host)
+    _staged_window_load!(existing_window, driver, win, host_staging)
+    # The uploads (asynchronous from page-locked memory) and unpack kernels run
+    # on this task's queue: finish them before the staging buffers are refilled
+    # or the device window is handed to the stepping task.
     SectionTimer.time_section(:window_backend_copy) do
-        _copy_window_payload!(existing_window, loaded)
-        # Copies from the pinned staging window are asynchronous on this task's
-        # queue: finish them before the staging window is refilled or the device
-        # window is handed to the stepping task.
         Architectures.synchronize_storage!(model_air_mass)
     end
+    return existing_window
+end
+
+# One device window load by staging kind: none (a fresh host window), a host
+# window refilled in place, or raw window buffers.
+function _staged_window_load!(existing_window, driver, win, ::Nothing)
+    loaded = SectionTimer.time_section(() -> _load_window(driver, win), :window_load_host)
+    SectionTimer.time_section(() -> _copy_window_payload!(existing_window, loaded),
+                              :window_backend_copy)
+    return existing_window
+end
+
+function _staged_window_load!(existing_window, driver, win, staging::TransportWindow)
+    loaded = SectionTimer.time_section(() -> load_transport_window!(staging, driver, win),
+                                       :window_load_host)
+    SectionTimer.time_section(() -> _copy_window_payload!(existing_window, loaded),
+                              :window_backend_copy)
+    return existing_window
+end
+
+function _staged_window_load!(existing_window, driver, win, staging::RawWindowStaging)
+    SectionTimer.time_section(() -> read_window_payload!(staging, driver, win), :window_load_host)
+    SectionTimer.time_section(() -> unpack_window_payload!(existing_window, driver, staging),
+                              :window_backend_copy)
     return existing_window
 end
 

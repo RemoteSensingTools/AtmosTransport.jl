@@ -140,16 +140,33 @@ end
 # the first load and the result equals `load_transport_window`.
 # ---------------------------------------------------------------------------
 
-# Destination of every payload section in an existing cubed-sphere window:
-# padded fields receive their interior, the others the whole panel.
+# The panels of an existing cubed-sphere window that receive each payload
+# section, and whether they are halo-padded (padded fields receive their
+# interior, the others the whole panel).
+function _cs_section_fields(w::TransportWindow)
+    fields = Dict{Symbol, Tuple{Any, Bool}}(:m  => (w.air_mass, true),
+                                            :ps => (w.surface_pressure, false),
+                                            :am => (w.fluxes.am, true),
+                                            :bm => (w.fluxes.bm, true),
+                                            :cm => (w.fluxes.cm, true))
+    w.deltas === nothing || (fields[:dm] = (w.deltas.dm, true))
+    for (section, panels) in _cs_unpadded_section_fields(w)
+        fields[section] = (panels, false)
+    end
+    return fields
+end
+
+# Destination of every payload section in an existing host window: the
+# interior of a padded field, the whole panel otherwise.
 function _cs_section_targets(w::TransportWindow, Hp::Int)
     interior(a) = view(a, (Hp + 1):(size(a, 1) - Hp), (Hp + 1):(size(a, 2) - Hp), :)
-    targets = Dict{Symbol, Any}(:m  => map(interior, w.air_mass),
-                                :ps => w.surface_pressure,
-                                :am => map(interior, w.fluxes.am),
-                                :bm => map(interior, w.fluxes.bm),
-                                :cm => map(interior, w.fluxes.cm))
-    w.deltas === nothing || (targets[:dm] = map(interior, w.deltas.dm))
+    return Dict{Symbol, Any}(section => (padded ? map(interior, panels) : panels)
+                             for (section, (panels, padded)) in _cs_section_fields(w))
+end
+
+# The whole-panel (unpadded) fields of a window by payload section.
+function _cs_unpadded_section_fields(w::TransportWindow)
+    targets = Dict{Symbol, Any}()
     c = w.convection
     if c !== nothing
         c.cmfmc === nothing || (targets[:cmfmc] = c.cmfmc)
@@ -180,6 +197,176 @@ function _cs_section_targets(w::TransportWindow, Hp::Int)
     return targets
 end
 
+# ---------------------------------------------------------------------------
+# Raw window staging (device runs)
+#
+# A window's payload is one contiguous run of `elems_per_window` elements of
+# the binary. A device run reads it with one `read!` into a page-locked host
+# buffer (no page faults on the file mapping), uploads that buffer with one
+# transfer, and unpacks it on the device: each section panel is copied into its
+# window panel, a padded field receiving its interior and zero halo cells. The
+# device window is then exactly the upload of a host window loaded with
+# `load_transport_window!` (whose halos keep the zeros of the first load).
+# ---------------------------------------------------------------------------
+
+"""
+    RawWindowStaging(host, device)
+    raw_window_staging(driver, reference_array) -> RawWindowStaging or nothing
+
+A page-locked host buffer and a device buffer, each holding one window payload
+of a cubed-sphere transport binary in its on-disk element type, for device
+runs: `read_window_payload!` fills the host buffer, `unpack_window_payload!`
+uploads it and fills a device window. `raw_window_staging` builds the buffers
+on the backend of `reference_array` (a device array or six-panel tuple), or
+returns `nothing` for drivers without raw window payloads.
+"""
+struct RawWindowStaging{H <: AbstractVector, D <: AbstractVector}
+    host   :: H
+    device :: D
+end
+
+raw_window_staging(::AbstractMetDriver, _reference_array) = nothing
+
+function raw_window_staging(driver::TransportBinaryDriver{FT, <:TransportBinaryReader{FT, DiskFT},
+                                                          <:AtmosGrid{<:CubedSphereMesh}},
+                            reference_array) where {FT, DiskFT}
+    ref = reference_array isa Tuple ? reference_array[1] : reference_array
+    n = driver.reader.header.elems_per_window
+    host = pin_host_memory!(Vector{DiskFT}(undef, n), ref)
+    return RawWindowStaging(host, similar(ref, DiskFT, n))
+end
+
+"""
+    read_window_payload!(staging::RawWindowStaging, driver, win) -> staging
+
+Read window `win` of `driver`'s binary into `staging.host`: on Unix as
+`_RAW_READ_CHUNKS` concurrent `pread`s on libuv's thread pool (`@threadcall`,
+no Julia thread is blocked), elsewhere with one `read!`.
+"""
+function read_window_payload!(staging::RawWindowStaging,
+                              driver::TransportBinaryDriver{FT, <:TransportBinaryReader{FT, DiskFT},
+                                                            <:AtmosGrid{<:CubedSphereMesh}},
+                              win::Int) where {FT, DiskFT}
+    reader = driver.reader
+    h = reader.header
+    buffer = staging.host
+    eltype(buffer) === DiskFT && length(buffer) == h.elems_per_window || throw(DimensionMismatch(
+        "raw window staging holds $(length(buffer)) $(eltype(buffer)) values; " *
+        "$(basename(reader.path)) has $(h.elems_per_window) $(DiskFT) values per window"))
+    1 <= win <= h.nwindow || throw(BoundsError(1:h.nwindow, win))
+    position = h.header_bytes + _transport_window_offset(reader, win) * sizeof(DiskFT)
+    if Sys.isunix()
+        _concurrent_pread!(buffer, reader.io, position)
+    else
+        lock(reader.io)
+        try
+            seek(reader.io, position)
+            read!(reader.io, buffer)
+        finally
+            unlock(reader.io)
+        end
+    end
+    return staging
+end
+
+# A single reader copies a window from the page cache at about 6 GB/s; four
+# concurrent reads of its quarters reach 10-17 GB/s (C90 L72 window, 156 MB).
+const _RAW_READ_CHUNKS = 4
+
+# Fill `buffer` from byte `position` of the file behind `io` with concurrent
+# `pread`s (which leave the stream's file offset alone).
+function _concurrent_pread!(buffer::Vector, io::IOStream, position::Integer)
+    descriptor = Base.cconvert(Cint, fd(io))
+    nbytes = sizeof(buffer)
+    chunk = cld(nbytes, _RAW_READ_CHUNKS)
+    GC.@preserve buffer begin
+        base = Ptr{UInt8}(pointer(buffer))
+        @sync for c in 0:(_RAW_READ_CHUNKS - 1)
+            first = c * chunk
+            n = min(chunk, nbytes - first)
+            n > 0 && @async _pread_all(descriptor, base + first, n, Int64(position + first))
+        end
+    end
+    return buffer
+end
+
+function _pread_all(descriptor::Cint, destination::Ptr{UInt8}, nbytes::Int, offset::Int64)
+    done = 0
+    while done < nbytes
+        got = @threadcall(:pread, Cssize_t, (Cint, Ptr{UInt8}, Csize_t, Int64),
+                          descriptor, destination + done, nbytes - done, offset + done)
+        got < 0 && Base.systemerror("pread of a transport binary window", true)
+        got == 0 && throw(EOFError())
+        done += got
+    end
+    return nothing
+end
+
+"""
+Copy panel `p` of one payload section from the raw device buffer `ctx.raw`,
+starting after element `offset`, into `ctx.dest[p]`: with `ctx.halo > 0` (a
+padded field) the section fills the interior and the halo cells become zero,
+otherwise it fills the whole panel. Values convert to the panel's element type.
+"""
+struct RawPanelUnpack <: AbstractPointOp
+    p::Int
+    offset::Int
+end
+
+index_space(::RawPanelUnpack, ctx) = size(ctx.dest[1])
+bound_context(op::RawPanelUnpack, ctx) = merge(ctx, (panel = ctx.dest[op.p],))
+@inline _unpack_panel(op::RawPanelUnpack, ctx) =
+    hasproperty(ctx, :panel) ? ctx.panel : select_panel(ctx.dest, op.p)
+
+@inline _raw_index(ii, jj, nx, ny) = ii + nx * (jj - 1)
+@inline _raw_index(ii, jj, nx, ny, k) = ii + nx * (jj - 1) + nx * ny * (k - 1)
+
+@inline function apply_point!(op::RawPanelUnpack, ctx, i, j, K...)
+    (; raw, halo) = ctx
+    a = _unpack_panel(op, ctx)
+    nx, ny = size(a, 1) - 2halo, size(a, 2) - 2halo
+    ii, jj = i - halo, j - halo
+    T = eltype(a)
+    @inbounds a[i, j, K...] = 1 <= ii <= nx && 1 <= jj <= ny ?
+        T(raw[op.offset + _raw_index(ii, jj, nx, ny, K...)]) : zero(T)
+    return nothing
+end
+
+"""
+    unpack_window_payload!(window, driver, staging::RawWindowStaging) -> window
+
+Upload `staging.host` (from `read_window_payload!`) to `staging.device` and
+unpack it into the device `window` (one `Fused` launch of six
+`RawPanelUnpack`s per payload section). The transfer and kernels are queued on
+the current task's device queue; synchronize before using `window` on another
+task or refilling `staging.host`.
+"""
+function unpack_window_payload!(w::TransportWindow,
+                                driver::TransportBinaryDriver{FT, R, <:AtmosGrid{<:CubedSphereMesh}},
+                                staging::RawWindowStaging) where {FT, R}
+    h = driver.reader.header
+    h.geometry.npanel == 6 || throw(ArgumentError(
+        "raw window unpacking needs six panels; the binary has $(h.geometry.npanel)"))
+    Hp = driver.grid.horizontal.Hp
+    copyto!(staging.device, staging.host)
+    backend = get_backend(staging.device)
+    fields = _cs_section_fields(w)
+    o = 0
+    for section in h.payload_sections
+        n = _cs_section_elements(h, section)
+        entry = get(fields, section, nothing)
+        if entry !== nothing
+            panels, padded = entry
+            per_panel = n ÷ 6
+            launch!(Fused(ntuple(p -> RawPanelUnpack(p, o + (p - 1) * per_panel), Val(6))),
+                    (; dest = panels, raw = staging.device, halo = padded ? Hp : 0),
+                    backend; sync = false)
+        end
+        o += n
+    end
+    return w
+end
+
 # One panel of `n` elements starting after offset `o` of the mmap'd payload.
 @inline _copy_cs_panel!(dst::Array, data, o::Int, n::Int) = copyto!(dst, 1, data, o + 1, n)
 
@@ -199,14 +386,16 @@ function _copy_cs_panel!(dst::SubArray{<:Any, 3, <:Array}, data, o::Int, n::Int)
     return dst
 end
 
-# Two cubed-sphere binaries fill the same window storage when their panel
-# geometry, levels, payload sections and runtime halo agree (the element type
-# is the driver's type parameter).
+# Two cubed-sphere binaries fill the same window storage (including a raw
+# staging buffer) when their panel geometry, levels, payload sections,
+# on-disk element type and runtime halo agree (the runtime element type is the
+# driver's type parameter).
 function same_window_layout(a::TransportBinaryDriver{FT, <:Any, <:AtmosGrid{<:CubedSphereMesh}},
                             b::TransportBinaryDriver{FT, <:Any, <:AtmosGrid{<:CubedSphereMesh}}) where FT
     ha, hb = a.reader.header, b.reader.header
     return ha.geometry.Nc == hb.geometry.Nc && ha.geometry.npanel == hb.geometry.npanel &&
            ha.nlevel == hb.nlevel && ha.payload_sections == hb.payload_sections &&
+           ha.on_disk_float_type == hb.on_disk_float_type &&
            a.grid.horizontal.Hp == b.grid.horizontal.Hp
 end
 
