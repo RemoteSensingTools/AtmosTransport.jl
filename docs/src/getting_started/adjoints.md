@@ -82,6 +82,24 @@ Here ``y_k`` and ``\sigma_k`` are the observations and their uncertainties;
 preconditioner writes ``x=x_b+B^{1/2}\chi``, so the optimizer works with
 ``\chi`` and the background cost becomes ``\frac12\chi^T\chi``.
 
+The gradient of the observation term needs one adjoint run, not one per
+observation. With fixed meteorology each ``H_k`` is a linear function of the
+tracer mass after its model step ``s_k``, with weights ``\mathbf{w}_k`` from
+that step's air mass. A forward run gives every ``H_k(F(x))``; the reverse
+pass then starts from zero at the last observation step and, at the end of
+each step ``s``, adds the weighted departures of the observations sampled
+there,
+
+```math
+\lambda_s = M_{s+1}^T\lambda_{s+1}
++ \sum_{k:\,s_k=s}\frac{H_k(F(x))-y_k}{\sigma_k^2}\,\mathbf{w}_k ,
+```
+
+where ``M_{s+1}^T`` is the transposed model step. Read at each step's surface
+emissions, ``\lambda`` gives the gradient for all observations at once, as in
+TM5-4DVAR. The [single-sweep gradient](@ref single-sweep-4dvar-gradient)
+section of the adjoint status page has the details.
+
 | Config section | Role in the example |
 |---|---|
 | `[mesh]`, `[time]`, `[meteo]` | C3 grid, two steps and synthetic constant meteorology. |

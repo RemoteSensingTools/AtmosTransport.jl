@@ -33,8 +33,8 @@ The shipped pieces, all exported through `AtmosTransport.Adjoints`:
 | --- | --- |
 | `cs_surface_emission_footprint` | Forward → tape → reverse pass driver for CS, returning `dJ/dE_t` at every surface step |
 | `cs_surface_emission_footprint_from_seed` | Same, but accepts an explicit final `dJ/drm` seed for arbitrary observation operators |
-| `cs_surface_flux_jacobian` | Batches layer/column objectives, aggregates per-step footprints into named user windows |
-| `cs_surface_flux_4dvar` | 4D-Var cost / gradient with named controls, step-indexed scalar observations, diagonal background |
+| `cs_surface_flux_jacobian` | Batches layer/column objectives on one recorded tape (one reverse walk per objective), aggregates per-step footprints into named user windows |
+| `cs_surface_flux_4dvar` | 4D-Var cost / gradient with named controls, step-indexed scalar observations, diagonal background; one taped run and one reverse pass per gradient, whatever the number of observations ([single-sweep gradient](@ref single-sweep-4dvar-gradient)) |
 | `cs_surface_flux_4dvar_optimize` | Dependency-free gradient-descent driver for the above |
 | `cs_surface_flux_4dvar_solve` | Production driver with optimizer choice (`CSGradientDescent` / `CSLBFGS`) |
 
@@ -90,7 +90,9 @@ footprint paths are checked against finite-difference emission gradients in
 ### Checkpoint schedules
 
 `src/Tape/CheckpointSchedule.jl` ships three checkpoint policies,
-selectable via the `checkpoint` kwarg of `cs_surface_emission_footprint`:
+selectable via the `checkpoint` kwarg of `cs_surface_emission_footprint`,
+`cs_surface_emission_footprint_from_seed`, `cs_surface_flux_jacobian` and
+`cs_surface_flux_4dvar`:
 
 | Policy | Memory | Recompute |
 | --- | --- | --- |
@@ -127,12 +129,81 @@ records currently require `:device` storage.
 | `DeparturesIO.jl` | Departures-file IO |
 
 These are all on CI. Full inversion tests:
-`test_cs_4dvar_preconditioned.jl`, `test_cs_lbfgs.jl`,
+`test_cs_4dvar_single_sweep.jl`, `test_cs_4dvar_preconditioned.jl`, `test_cs_lbfgs.jl`,
 `test_cs_inversion_driver.jl`, `test_cs_inversion_truth_recovery.jl`,
 `test_cs_iteration_log.jl`, `test_cs_observations_io.jl`,
 `test_cs_observation_binding.jl`, `test_cs_departures_io.jl`,
 `test_cs_covariance.jl`, `test_cs_preconditioning.jl`,
 `test_cs_optimizer_dispatch.jl`.
+
+### [Single-sweep 4D-Var gradient](@id single-sweep-4dvar-gradient)
+
+`cs_surface_flux_4dvar` computes the observation term of the cost and its
+gradient with one taped forward run and one reverse pass, whatever the number
+of observations, as TM5-4DVAR does.
+
+**Observations as linear functionals.** An observation ``i`` is sampled after
+model step ``s_i``, after convection: the state runtime output and the forward
+observation sampler see. The meteorology is fixed, so the air mass ``m`` of
+every step is known before any tracer is transported, and the observation
+operator is a fixed sparse linear functional of the tracer mass
+``\mathbf{r}_{s_i}`` at that step,
+
+```math
+H_i(x) = h_i(\mathbf{r}_{s_i}) = c_i + \sum_e w_{ie}\, r_{s_i}[e],
+```
+
+with weights from the replayed air mass at ``s_i``: ``w = 1/\max(m, \epsilon)``
+on one cell for `CSLayerMeanObjective` (``\epsilon`` the machine epsilon, the
+floor of its evaluation), ``w = 1/\sum_k m_k`` on every level of a column for
+`CSColumnMeanObjective`, and ``c_i = 0`` for both (the offset carries
+tracer-independent terms such as an averaging kernel's prior term). Its
+gradient ``\partial h_i/\partial\mathbf{r}_{s_i}`` is the weight vector
+``\mathbf{w}_i``.
+
+**One reverse sweep.** Write ``M_s`` for the tangent-linear model of step
+``s`` (the transport palindrome with the surface-flux center, then
+convection) and ``\lambda_s`` for the adjoint state at the end of step ``s``.
+The cost ``\mathcal{J}_\mathrm{obs} = \tfrac12\sum_i ((H_i(x) - y_i)/\sigma_i)^2``
+has the gradient of a sum, so all observations share one recursion,
+
+```math
+\lambda_{N} = f_{N}, \qquad
+\lambda_{s} = M_{s+1}^{T}\,\lambda_{s+1} + f_{s}, \qquad
+f_{s} = \sum_{i:\,s_i = s} \frac{H_i(x) - y_i}{\sigma_i^{2}}\,\mathbf{w}_i ,
+```
+
+run from the last observation step ``N`` back to the first step. Every
+recorder ends each step with an end-of-step marker (`_CSStepEndRecord`, after
+the convection record); the reverse walk adds ``f_s`` there, before it
+transposes that step's convection. This is the TM5-4DVAR structure: its
+forcing enters just before the adjoint of the operator after which the forward
+run sampled. Where the walk reaches the midpoint of step ``t`` (the
+palindrome center, where the step's surface emissions enter) it reads
+``\Delta t\,\lambda`` as ``\partial\mathcal{J}_\mathrm{obs}/\partial E_t``,
+and each control window sums its steps.
+
+The forcing entries are grouped by step, panel and cell; the injection
+kernel gives each cell one work item, which adds the cell's entries in input
+order, so the injection is deterministic without atomics. With
+`FullCheckpoint` one evaluation therefore costs a forward run for ``H(x)``
+and the weights, one taped forward run to the last observation step, and one
+reverse pass; `StrideCheckpoint` adds its checkpoint propagation pass and
+`RevolveCheckpoint` its ``O(\log N)`` recomputation, as for a footprint. Steps
+after the last observation do not affect the cost and get a zero gradient.
+`checkpoint`, `tape_storage` and `tape_path` choose how that one taped run is
+stored. `test/core/test_cs_4dvar_single_sweep.jl` checks the gradient
+against one footprint per observation (the previous algorithm, rebuilt in the
+test) for upwind, unlimited slopes and PPM, monotone PPM and Lin–Rood with
+diffusion of both surface-flux couplings, TM5 and CMFMC convection and the
+three checkpoint schedules, and for CW84-limited PPM and Lin–Rood with the
+FV3 vertical sweep
+(``10^{-12}`` relative in Float64, ``10^{-5}`` in Float32), and counts tape
+reads to confirm one recording and one reverse pass per gradient.
+
+`cs_surface_flux_jacobian` likewise records its tape once and walks it once
+per objective (with `FullCheckpoint`); each walk is the one a separate
+`cs_surface_emission_footprint` call makes.
 
 ## What is not yet shipped
 
@@ -141,7 +212,6 @@ These are all on CI. Full inversion tests:
 | **Optimal binomial Revolve** | `RevolveCheckpoint` ships as the bisection variant — logarithmic memory but not the Griewank–Walther optimal recompute count. Optimal binomial Revolve is the next refinement. |
 | **Optimized/clamped convection adjoints** | CMFMC `clamp = true` and TM5/CMFMC-matrix collaborative, truncated, or merged solves are rejected by the footprint API until their exact branches are taped and transposed. |
 | **TM5-4DVAR cross-validation** | Synthetic truth-recovery via `test_cs_inversion_truth_recovery.jl` is on CI; a side-by-side parity run against TM5-4DVAR on real data has not been published. |
-| **Single-sweep 4D-Var gradient** | `cs_surface_flux_4dvar` runs one taped forward and reverse run per observation (`src/Inversion/CostGradient.jl`), so the cost of one gradient grows linearly with the number of observations. Injecting all weighted departures into one reverse sweep, as TM5-4DVAR does, is needed before real-data inversions with ObsPack or satellite volumes. |
 | **Vertical observation binding** | `bind_to_mesh` ignores the observation altitude and binds every record to a column mean (`CSColumnMeanObjective`), which is wrong for surface in-situ and aircraft data. Layer binding needs an above-ground height or a pressure in the observation schema (`alt` is above sea level and binaries carry no surface elevation). No averaging-kernel column objective exists: the 4D-Var path evaluates only `CSLayerMeanObjective` and `CSColumnMeanObjective`, and `cs_surface_emission_footprint_from_seed` gives footprints for other operators but no cost. |
 | **Tangent-linear model** | Forward TL is not exposed as a separate driver. If you need it, use the reverse pass plus identity seeding. |
 
