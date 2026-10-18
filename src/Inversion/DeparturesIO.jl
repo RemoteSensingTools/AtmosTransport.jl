@@ -578,6 +578,16 @@ function _expected_sampling(rec::CSObservationRecord, t_start::Dates.DateTime, d
     return expected, clamped
 end
 
+# Structural equality, field by field and arrays by value (NaN equals NaN):
+# a cell average's member objective and the co-sample of the same record must
+# be the same operator, even when built as separate objects.
+function _same_structure(a, b)
+    typeof(a) === typeof(b) || return false
+    a isa AbstractArray && return size(a) == size(b) && all(_same_structure(x, y) for (x, y) in zip(a, b))
+    (isbits(a) || isempty(fieldnames(typeof(a)))) && return isequal(a, b)
+    return all(_same_structure(getfield(a, f), getfield(b, f)) for f in fieldnames(typeof(a)))
+end
+
 # The row of a cell average, the term of the cost (row id `row_id`, number
 # `number`): the average checked against its records as `bind_to_mesh` builds
 # it (assimilable column records of its cell and time sampling, co-sampled
@@ -609,8 +619,16 @@ function _average_departure_row(obs::CSObservation, stencil::CSObservationStenci
             "(bind_to_mesh binds them with assimilate = false)"))
         member.assimilate && throw(ArgumentError(
             "$(label): member record $(id) is assimilated itself; it enters the cost through the average"))
+        _same_structure(member.objective, o.members[n]) || throw(ArgumentError(
+            "$(label): member record $(id) is co-sampled with a different observation operator than the " *
+            "average uses for it ($(nameof(typeof(member.objective))) vs $(nameof(typeof(o.members[n]))), or " *
+            "different settings)"))
     end
     members = [set.records[row_of[id]] for id in o.ids]
+    tracers = unique(r.tracer for r in members)
+    length(tracers) == 1 || throw(ArgumentError(
+        "$(label): its member records mix tracers ($(join(tracers, ", "))); a cell average combines records " *
+        "of one tracer"))
     w = [1 / r.value_sigma^2 for r in members]
     o.weights ≈ w ./ sum(w) || throw(ArgumentError(
         "$(label): the weights $(o.weights) are not the members' normalized 1/value_sigma^2"))

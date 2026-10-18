@@ -428,6 +428,49 @@ end
         e
     end
     @test err isa ArgumentError && occursin("has no observation", err.msg)
+    # ... sampled by the same operator as each member's co-sample (here a dry
+    # pressure basis where the co-sample uses total pressures) ...
+    avg4 = only_group[4].objective
+    m1 = only_group[1].objective
+    dry = AT.CSRetrievalColumnObjective(m1.panel, m1.i, m1.j, m1.area, group[1].retrieval, O.DryInterfaces())
+    swapped = AT.CSObservation(only_group[4].sampling,
+                               AT.CSCellAverageObjective(avg4.panel, avg4.i, avg4.j, [dry; avg4.members[2:end]],
+                                                         avg4.weights, avg4.ids;
+                                                         measurement_sigma = avg4.measurement_sigma,
+                                                         model_sigma = avg4.model_sigma,
+                                                         correlation = avg4.correlation),
+                               only_group[4].value, only_group[4].sigma; id = only_group[4].id)
+    err = try
+        AT.build_departure_set(_set(group), _fourdvar(P, [only_group[1:3]; swapped], controls), P.mesh,
+                               "2024-06-15 00:00:00", DT, P.nsteps)
+    catch e
+        e
+    end
+    @test err isa ArgumentError && occursin("different observation operator", err.msg)
+    # ... and of one tracer (bind_to_mesh groups by tracer).
+    mixed = [_record(41; a..., t = 100.0, value = 402e-6, value_sigma = 0.5e-6, retrieval = _level(97000.0)),
+             _record(42; a..., t = 110.0, value = 1.9e-6, value_sigma = 0.5e-8, tracer = "CH4",
+                     retrieval = _level(97000.0))]
+    bound = with_logger(NullLogger()) do
+        _bind(P, mixed)
+    end
+    cos = [AT.CSObservation(o.sampling, o.objective, o.value, o.sigma; id = o.id, assimilate = false) for o in bound]
+    wm = (1 ./ [0.5e-6, 0.5e-8] .^ 2) ./ sum(1 ./ [0.5e-6, 0.5e-8] .^ 2)
+    σm = sqrt(1 / sum(1 ./ [0.5e-6, 0.5e-8] .^ 2))
+    σmod = sqrt(sum(wm[i] * (mixed[i].model_sigma^2 + O.retrieval_model_error_variance(mixed[i].retrieval))
+                    for i in 1:2))
+    mixed_avg = AT.CSObservation(cos[1].sampling,
+                                 AT.CSCellAverageObjective(m1.panel, m1.i, m1.j, [o.objective for o in cos], wm,
+                                                           [41, 42]; measurement_sigma = σm, model_sigma = σmod,
+                                                           correlation = 0.0),
+                                 dot(wm, [402e-6, 1.9e-6]), hypot(σm, σmod); id = 41)
+    err = try
+        AT.build_departure_set(_set(mixed), _fourdvar(P, [cos; mixed_avg], controls), P.mesh,
+                               "2024-06-15 00:00:00", DT, P.nsteps)
+    catch e
+        e
+    end
+    @test err isa ArgumentError && occursin("mix tracers", err.msg)
     # A cell average cannot hold an averaging-kernel column with a surface-pressure limit.
     limited = AT.CSRetrievalColumnObjective(only_group[1].objective.panel, only_group[1].objective.i,
                                             only_group[1].objective.j, only_group[1].objective.area,
