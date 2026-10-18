@@ -222,8 +222,8 @@ The ledger runs only where the operator conserves mass by construction. The
 linear-algebra routines stay plain solves. TM5 convection uses the cloud
 levels; with level merging (`n_merge > 1`) its ledger covers the fine layers
 that aggregation, coarse solve and split change, because the split also
-rounds every fine layer. `dkg` diffusion uses layers that exchange mass and
-leaves isolated layers bit-exact. CMFMC convection uses the whole column
+rounds every fine layer. `dkg` diffusion and the flux form of Kz diffusion
+use layers that exchange mass and leave isolated layers bit-exact. CMFMC convection uses the whole column
 where nothing leaves it: the `cmfmc` flux through the model top is exactly
 zero and every layer holds air (`m` and `m/area` above the operator's
 `tiny`); the clamped variant (`clamp = true`), which clips negative values
@@ -237,6 +237,60 @@ A delta-form solve, `(I + B) Δ = −B q` followed by `q += Δ`, would remove th
 bias at its source and also improve local accuracy. It needs the matrix
 before factorisation for every tracer batch, which exceeds the shared-memory
 budget of the collaborative GPU kernel.
+
+### Flux-form update of the Kz diffusion
+
+Implicit diffusion with a Kz field solves the backward-Euler system
+`A q′ = q` for the new mixing ratio, with
+`b_k = 1 + Δt (D_{k−½} + D_{k+½})/m_k` on the diagonal and `−Δt D_{k∓½}/m_k`
+beside it (`D` the interface exchange in kg s⁻¹). Row `k` times `m_k` states
+`m_k q′_k = m_k q_k + F_{k−½} − F_{k+½}` with `F_{k+½} = Δt D_{k+½} (q′_k −
+q′_{k+1})`, so writing back `m_k q′_k` conserves the column in exact
+arithmetic. In `Float32` the computed `q′` solves the system with rounded
+entries. In the pure-pressure levels near the model top, `Δt D/m_k` is the
+same in every column (mass and exchange both scale with the cell area), so the
+rounding of `b_k` has the same sign in every column. The solve works on the
+departure from the column minimum, which is non-negative, so the error of the
+column total keeps one sign as well: it acts like a matrix whose columns do
+not sum to one. In the `Float32` lat-lon L72 golden run it cost a tracer
+without background 2.0e-6 of its mass per day, through about 376 solves a day
+(finding OF-113).
+
+The tracer mass is therefore updated from the fluxes, not from `m_k q′_k`:
+each `F_{k+½}` is computed once from the solved departures and applied with
+opposite signs to its two layers, `rm′_k = (rm_k + F_{k−½}) − F_{k+½}`. The
+column total telescopes; only the two roundings per layer change it. Those
+carry no common sign in general, but where the fluxes keep one direction, a
+flux between half an ulp of the receiving layer and half an ulp of the giving
+one is recorded by one layer only. Adding the net flux `F_{k−½} − F_{k+½}` in
+one step makes this worse: a small net change rounds into a large background
+the same way on every solve (CO₂ in the run below: +1.7e-7 per day instead of
+−9.4e-9). That again leaves a drift of one sign (CO₂
+below). The column ledger with its carry, as for `dkg` diffusion, returns it.
+The solve and the fluxes are those of the matrix form, the two agree in exact
+arithmetic, and the adjoint transposes the same operator. Layers without
+exchange keep their mass bit for bit.
+
+Diffusion's own change of each global total in one day of the lat-lon L72
+golden run (`run_ll72_upwind_cpu_f32`, 376 solves), relative to the burden
+(fossil CO₂: to the emitted mass):
+
+| Tracer | matrix form | flux form | flux form, ledger without carry | flux form, ledger and carry |
+|---|---|---|---|---|
+| blob (no background) | −2.0e-6 | +1.2e-8 | +2.7e-10 | −1.5e-10 |
+| CO₂ (with surface fluxes) | −2.6e-9 | −9.4e-9 | +2.7e-10 | +1.5e-11 |
+| fossil CO₂ | −2.6e-7 | +4.2e-9 | +2.4e-8 | −3.5e-10 |
+| Rn-222 | −7.9e-8 | +1.3e-8 | +1.7e-9 | +4.6e-10 |
+| uniform 400 ppm | +2.0e-9 | −1.0e-10 | −1.0e-10 | −4.3e-11 |
+
+The flux form alone removes the bias of the solve but leaves about 1e-8 per
+day, more than the matrix form for CO₂; without the carry the ledger leaves
+a fossil-CO₂ drift, as it did for `dkg` diffusion. With both, diffusion
+changes each total by less than 5e-10 per day. In repeated `Float32` solves of
+test columns with pure-pressure upper levels, the field plus the outstanding
+carries conserves the global total to 2e-15, against 7.7e-7 to 5.1e-6 for the
+matrix form in 192 solves (`test/core/test_diffusion_flux_form.jl`, CPU and
+CUDA).
 
 ### `Float64` geometry and constants, rounded once
 
@@ -302,10 +356,10 @@ emission totals by less than 1e-9.
 (the 400 ppm offset above). Output fields are stored in `Float32`; budgets
 must use the `_total_mass` variables, not sums of output fields.
 
-**Not covered.** The ledger does not cover the VMR-form Thomas diffusion path
-(local Kz fields), at about 2–3e-6 per month in `Float32`, or the clamped
-CMFMC variant, at about 5e-6 per month. Neither is used by the production
-configurations.
+**Not covered.** The ledger does not cover the clamped CMFMC variant, at
+about 5e-6 per month, which the production configurations do not use. Kz
+diffusion (local-Kz fields, and the lat-lon and reduced-Gaussian runs) is
+covered since its flux-form update (see above).
 
 Global mass fixers, which rescale tracer fields to a target total, would hide
 operator errors instead of removing them and are not used.

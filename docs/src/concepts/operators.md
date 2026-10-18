@@ -127,8 +127,10 @@ palindrome and are therefore rejected with `NoAdvection`.
 | `NoDiffusion()` | Identity no-op; default when `[diffusion]` is absent or `kind = "none"`. |
 | `ImplicitVerticalDiffusion{FT, KzF, SFC}` | Backward-Euler vertical diffusion driven by an `AbstractTimeVaryingField` Kz. `SFC` chooses midpoint source splitting or source-before-full-solve ordering. |
 
-Generic Kz diffusion uses a per-column backward-Euler tridiagonal solve with
-a supported transpose in the CS adjoint. The exact TM5 Dkg path instead uses
+Generic Kz diffusion uses a per-column backward-Euler tridiagonal solve for
+the new mixing ratio and updates tracer mass in flux form (each interface flux
+leaves one layer and enters the next), with a supported transpose in the CS
+adjoint. The exact TM5 Dkg path instead uses
 column-conservative bidiagonal factors directly on tracer storage, preserving
 weak transfers and signed mass budgets. Its reverse applies the factor
 transposes in reverse order. See [Adjoint status](@ref) for supported combinations.
