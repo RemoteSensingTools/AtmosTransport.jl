@@ -395,3 +395,6 @@ _native_output_filename(::AbstractGEOSSettings, date::Date, FT::Type) =
 has_convection(s::GEOSSettings) = s.include_convection
 has_surface(s::GEOSSettings) = s.include_surface || s.include_vdiff_fields
 has_vdiff_fields(s::GEOSSettings) = s.include_vdiff_fields
+# GEOS-IT A1 carries EFLUX, which GEOS-Chem's non-local PBL needs alongside the
+# VDIFF profiles. The GEOS-FP fallback readers do not read it.
+has_pbl_eflux(s::GEOSSettings{:geosit}) = s.include_vdiff_fields

@@ -520,7 +520,8 @@ kind  = "constant"              # "none" | "constant" |
                                 # "geoschem_nonlocal_vdiff" (CS-only; GEOS-Chem's
                                 #   non-local PBL scheme incl. counter-gradient
                                 #   transport of fresh emissions; needs VDIFF +
-                                #   :pbl_eflux, e.g. the MERRA-2 GEOS-Chem archive;
+                                #   :pbl_eflux, e.g. the MERRA-2 GEOS-Chem archive
+                                #   or GEOS-IT with include_vdiff_fields;
                                 #   always S(dt)->V(dt)) |
                                 # "tm5_dkg" (CS-only; exact TM5 dry-air
                                 #   interface exchange — requires a
