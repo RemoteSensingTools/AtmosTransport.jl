@@ -102,8 +102,9 @@ soundings; the OCO-2 MIP converter reads the retrieval fields with
   `PointObservationKind` / `ColumnObservationKind` and an optional
   `retrieval::Output.RetrievalColumn`), `CSObservationSet`, and the NetCDF
   reader/writer for `schemas/cs_observations_v2.toml`, including the optional
-  NaN-padded retrieval block with each record's `retrieval_mapping` (units,
-  ordering and padding checks; v1 files are rejected)
+  NaN-padded retrieval block with each record's `retrieval_mapping` and
+  optional prior column `retrieval_prior_column` (units, ordering and padding
+  checks; v1 files are rejected)
 - [`ObservationBinding.jl`](ObservationBinding.jl) — `bind_to_mesh`: time to
   a `CSTimeSampling` (instantaneous or Δt/ΣΔt window), (lat, lon) to the
   containing `(panel, i, j)`, point records to `CSPlacedPointObjective`s with
@@ -119,7 +120,9 @@ soundings; the OCO-2 MIP converter reads the retrieval fields with
   (sampled steps, weights and levels as a ragged `sample` dimension; the
   optional block of averaging-kernel columns: surface-pressure mismatch,
   retrieval-level model profile, profile model sigma; `assimilated`, the
-  record `flag` of co-samples and `cell_average_id`)
+  record `flag` of co-samples and `cell_average_id`; one row per cell
+  average, placement code −4, so the assimilated rows are the terms of the
+  cost)
 - [`OCO2MIPObservations.jl`](OCO2MIPObservations.jl) — the OCO-2/OCO-3 v11
   MIP 10-second files to schema v2: field mapping, units (ppm → mol/mol,
   hPa → Pa), flags from the MIP `assimilate_flag` and data types, the hat or

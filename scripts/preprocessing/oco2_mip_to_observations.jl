@@ -13,7 +13,7 @@
 # Options:
 #     --start YYYY-MM-DD[THH:MM:SS]   first record time (inclusive; default: the file's first)
 #     --stop  YYYY-MM-DD[THH:MM:SS]   last record time (exclusive; default: after the file's last)
-#     --data-types LN,LG,OG           the experiment's data types (flag 0 when assimilable)
+#     --data-types LN,LG,OG           the experiment's data types (flag 0 when assimilable; SAM for OCO-3 maps)
 #     --assimilate-flags 1            MIP assimilate_flag values to assimilate (e.g. 1,2)
 #     --model-sigma file              the MIP model_error, or a constant in ppm (e.g. 0.5)
 #     --mapping hat                   hat: the 20 levels as given (default); tm5: TM5's 19 layers
@@ -70,7 +70,7 @@ function main(args = ARGS)
         data_types = _list(get(options, "--data-types", "LN,LG,OG")),
         assimilate_flags = parse.(Int, _list(get(options, "--assimilate-flags", "1"))),
         model_sigma = model_sigma == "file" ? :file : parse(Float64, model_sigma),
-        mapping = Symbol(get(options, "--mapping", "hat")),
+        mapping = AT.Output.oco2_level_form_from_label(get(options, "--mapping", "hat"), "--mapping"),
         tracer = get(options, "--tracer", "CO2"),
         instrument = get(options, "--instrument", nothing))
     println("wrote $(length(paths)) observation files", isempty(paths) ? "" : ": $(first(paths)) … $(last(paths))")

@@ -89,8 +89,9 @@ this folder's `read_oco2_retrieval_columns`.
 - Averaging-kernel columns, in [`retrieval_column.jl`](retrieval_column.jl):
   `RetrievalColumn{M}` (a retrieval's pressures from the surface up, pressure
   weights, column averaging kernel, prior, optional model-profile uncertainty
-  `profile_sigma`, and its mapping `M`: `LayerRebin` for layer means between
-  interfaces, `HatLevelProjection` for values on levels, linear between them),
+  `profile_sigma`, its mapping `M`: `LayerRebin` for layer means between
+  interfaces, `HatLevelProjection` for values on levels, linear between them,
+  and an optional prior column `prior_column`),
   `stretch_model_interfaces!`, `retrieval_rebin_matrix`,
   `retrieval_projection_matrix`, `retrieval_column_weights!`,
   `retrieval_prior_offset`, `retrieval_profile!`, `retrieval_column_value`,

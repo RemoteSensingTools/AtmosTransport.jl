@@ -426,8 +426,8 @@ function _define_sounding_schema!(ds, stream::SoundingNetCDFStream, mesh, origin
     end
     for name in stream.retrieval_tracers
         obs(String(name) * _AK_COLUMN_SUFFIX, Float64, _attrib(units,
-            "$(name) averaging-kernel column of the sounding's retrieval: sum_i h_i a_i (P x)_i + " *
-            "sum_i h_i (1 - a_i) x_prior_i on the sampled profile (NaN without a retrieval)"))
+            "$(name) averaging-kernel column of the sounding's retrieval: X_prior + sum_i h_i a_i " *
+            "((P x)_i - x_prior_i) on the sampled profile x (NaN without a retrieval)"))
     end
     return nothing
 end

@@ -98,7 +98,9 @@ writing topology-specific NetCDF files directly.
   column operator, as pure host Float64 functions of one column:
   `RetrievalColumn{M}` (a retrieval's pressures from the surface up, pressure
   weights summing to 1, column averaging kernel, prior in mol/mol, optional
-  model-profile uncertainty `profile_sigma`, and the mapping `M`; validated),
+  model-profile uncertainty `profile_sigma`, the mapping `M`, and an optional
+  prior column ``X_a``, e.g. OCO-2's `xco2_apriori`, for ``X = X_a + Σ h a (P x
+  − x_a)``; validated),
   `stretch_model_interfaces!` (the model column mapped linearly onto the
   retrieval's surface and top), the projection ``P`` of the mapping
   (`LayerRebin`: TM5-4DVAR's mass-conserving overlap rebin R,

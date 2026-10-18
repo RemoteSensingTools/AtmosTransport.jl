@@ -5,7 +5,7 @@
 #
 # Each row is an audit record of one observation (assimilated, or co-sampled:
 # a flagged record bound with flagged_records = "cosample", or a member of a
-# cell average; cell averages themselves are not rows): the record's
+# cell average; a cell average is a row of its own): the record's
 # provenance (id, tracer, instrument, time, Float64 coordinates, kind, time
 # window), where it was sampled (cell; vertical placement code, height above
 # the model surface or pressure; every sampled step with its weight and the
@@ -221,7 +221,12 @@ description = "the observation record's flag: 0 = assimilate; any other value = 
 [optional_variables.cell_average_id]
 dtype = "i64"
 dims  = ["obs"]
-description = "the cell average the record belongs to (CellAverage), named by the id of its earliest record; 0 = none. Such a row is not assimilated itself. Written when any row belongs to one"
+description = "the cell average the row belongs to (CellAverage), named by the id of its earliest record; 0 = none. Member rows are not assimilated themselves; the average's own row (vertical_placement = -4, id = -cell_average_id) is the term of the cost, with the observed and simulated averages, value_sigma = the measurement error of the average and model_sigma its model error. Written when any row belongs to one"
+
+[optional_variables.cell_average_correlation]
+dtype = "f64"
+dims  = ["obs"]
+description = "cell-average rows: the correlation between the errors of distinct records of the average, in its value_sigma; NaN for other rows. Written when any row is a cell average"
 
 [attributes]
 cs_departures_schema      = "v2"   # mandatory; loader fails fast on any other value (v1 with an explanation)

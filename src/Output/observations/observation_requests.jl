@@ -94,7 +94,7 @@ struct SoundingRequest
     intake_height_m::Float64
     altitude_m::Float64
     pressure_pa::Float64
-    retrieval::Union{Nothing, RetrievalColumn}
+    retrieval::Union{Nothing, AnyRetrievalColumn}
 end
 SoundingRequest(id, time_seconds, lon, lat, source) =
     SoundingRequest(id, time_seconds, lon, lat, source, NaN, NaN)

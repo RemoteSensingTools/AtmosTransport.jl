@@ -110,28 +110,29 @@ cost (reported, not assimilated) under `SkipUnplaced()`. Sampling it needs
 the column meteorology (`cs_surface_flux_4dvar(...; column_met)`); built by
 `bind_to_mesh` from a column record with a retrieval block.
 """
-struct CSRetrievalColumnObjective{B <: AbstractPressureBasis, U <: AbstractUnplacedPolicy} <:
-       AbstractCSFootprintObjective
+struct CSRetrievalColumnObjective{M <: AbstractRetrievalMapping, B <: AbstractPressureBasis,
+                                  U <: AbstractUnplacedPolicy} <: AbstractCSFootprintObjective
     panel::Int
     i::Int
     j::Int
     area::Float64
-    retrieval::RetrievalColumn
+    retrieval::RetrievalColumn{M}
     pressure_basis::B
     max_surface_pressure_mismatch_pa::Float64
     mismatch_policy::U
     function CSRetrievalColumnObjective(panel::Integer, i::Integer, j::Integer, area::Real,
-                                        retrieval::RetrievalColumn, pressure_basis::B,
+                                        retrieval::RetrievalColumn{M}, pressure_basis::B,
                                         max_surface_pressure_mismatch_pa::Real,
-                                        mismatch_policy::U) where {B <: AbstractPressureBasis,
+                                        mismatch_policy::U) where {M <: AbstractRetrievalMapping,
+                                                                   B <: AbstractPressureBasis,
                                                                    U <: AbstractUnplacedPolicy}
         isfinite(area) && area > 0 || throw(ArgumentError(
             "CSRetrievalColumnObjective area must be finite and positive, got $area"))
         max_surface_pressure_mismatch_pa > 0 || throw(ArgumentError(
             "max_surface_pressure_mismatch_pa must be positive (Inf for no limit), got " *
             "$(max_surface_pressure_mismatch_pa)"))
-        return new{B, U}(Int(panel), Int(i), Int(j), Float64(area), retrieval, pressure_basis,
-                         Float64(max_surface_pressure_mismatch_pa), mismatch_policy)
+        return new{M, B, U}(Int(panel), Int(i), Int(j), Float64(area), retrieval, pressure_basis,
+                            Float64(max_surface_pressure_mismatch_pa), mismatch_policy)
     end
 end
 
@@ -143,7 +144,8 @@ CSRetrievalColumnObjective(panel::Integer, i::Integer, j::Integer, area::Real, r
                                mismatch_policy)
 
 """
-    CSCellAverageObjective(panel, i, j, members, weights, ids)
+    CSCellAverageObjective(panel, i, j, members, weights, ids;
+                           measurement_sigma = NaN, model_sigma = NaN, correlation = NaN)
 
 The weighted mean ``\\sum_n w_n h_n`` of column objectives `members` of one
 physical CS interior cell `(panel, i, j)` (`CSRetrievalColumnObjective`s or
@@ -153,7 +155,13 @@ with `cell_averaging = CellAverage(...)`, the weights proportional to
 ``1/σ_n^2``. The operators are linear, so its functional is the same
 weighted sum of the members' functionals: the gradient of the averaged
 observation is the weighted combination of the members' gradients. Sampled
-like its members (`cs_surface_flux_4dvar(...; column_met)`).
+like its members (`cs_surface_flux_4dvar(...; column_met)`). The
+surface-pressure screen applies to records, not averages, so an
+averaging-kernel member must have no surface-pressure limit
+(`max_surface_pressure_mismatch_pa = Inf`). `measurement_sigma`,
+`model_sigma` and `correlation` record how the average's error was built
+(``σ_\\mathrm{meas}``, ``σ_\\mathrm{mod}``, ``ρ``; departure files report
+them).
 """
 struct CSCellAverageObjective <: AbstractCSFootprintObjective
     panel::Int
@@ -162,8 +170,13 @@ struct CSCellAverageObjective <: AbstractCSFootprintObjective
     members::Vector{AbstractCSFootprintObjective}
     weights::Vector{Float64}
     ids::Vector{Int64}
+    measurement_sigma::Float64
+    model_sigma::Float64
+    correlation::Float64
     function CSCellAverageObjective(panel::Integer, i::Integer, j::Integer, members::AbstractVector,
-                                    weights::AbstractVector{<:Real}, ids::AbstractVector{<:Integer})
+                                    weights::AbstractVector{<:Real}, ids::AbstractVector{<:Integer};
+                                    measurement_sigma::Real = NaN, model_sigma::Real = NaN,
+                                    correlation::Real = NaN)
         n = length(members)
         n >= 1 && length(weights) == n && length(ids) == n || throw(ArgumentError(
             "CSCellAverageObjective needs members with one weight and one id each; got $(n), " *
@@ -175,13 +188,21 @@ struct CSCellAverageObjective <: AbstractCSFootprintObjective
             (m.panel, m.i, m.j) == (panel, i, j) || throw(ArgumentError(
                 "a cell average combines objectives of one cell $((panel, i, j)); a member is in " *
                 "$((m.panel, m.i, m.j))"))
+            _screens_records(m) && throw(ArgumentError(
+                "a cell average cannot contain an averaging-kernel column with a surface-pressure limit " *
+                "(max_surface_pressure_mismatch_pa = $(m.max_surface_pressure_mismatch_pa) Pa): the screen applies " *
+                "to records, and the average would assimilate a screened record"))
         end
         all(w -> isfinite(w) && w > 0, weights) && abs(sum(weights) - 1) <= 8n * eps(Float64) ||
             throw(ArgumentError("cell-average weights must be positive and sum to 1; got $(weights)"))
         return new(Int(panel), Int(i), Int(j), collect(AbstractCSFootprintObjective, members),
-                   collect(Float64, weights), collect(Int64, ids))
+                   collect(Float64, weights), collect(Int64, ids), Float64(measurement_sigma), Float64(model_sigma),
+                   Float64(correlation))
     end
 end
+
+_screens_records(m::CSRetrievalColumnObjective) = isfinite(m.max_surface_pressure_mismatch_pa)
+_screens_records(::AbstractCSFootprintObjective) = false
 
 """
     CSSeedObjective()

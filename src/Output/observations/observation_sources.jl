@@ -103,49 +103,29 @@ abstract type AbstractAveragingKernelOutput end
 struct NoAveragingKernels <: AbstractAveragingKernelOutput end
 
 """
-    AveragingKernelColumns(tracers, mapping = :hat)
+    AveragingKernelColumns(tracers, mapping = HatLevelProjection())
 
 `averaging_kernel_tracers = [...]` on an `oco2_lite` source: the reader also
 reads each sounding's retrieval (levels, pressure weights, averaging kernel,
-prior; [`read_oco2_retrieval_columns`](@ref)), and the sampler writes, for
-each tracer of `tracers`, the averaging-kernel column
-``X = \\sum_i h_i a_i (P x)_i + \\sum_i h_i (1 - a_i) x_{a,i}`` of the
-sampled profile as `<tracer>_ak_column`, with the operator of the 4D-Var
+prior, prior column; [`read_oco2_retrieval_columns`](@ref)), and the sampler
+writes, for each tracer of `tracers`, the averaging-kernel column
+``X = X_a + \\sum_i h_i a_i ((P x)_i - x_{a,i})`` of the sampled profile as
+`<tracer>_ak_column`, with the operator of the 4D-Var
 ([`retrieval_column_weights!`](@ref)). `mapping` (`averaging_kernel_mapping`)
-is `:hat` (the levels as given, [`HatLevelProjection`](@ref)) or `:tm5`
-(TM5-4DVar's 19 layers, [`tm5_layer_column`](@ref)). The prior term belongs
-to the retrieved gas, so name the tracer that carries it (total CO2), not
-components of it.
+is [`HatLevelProjection`](@ref) (`"hat"`, the levels as given) or
+[`LayerRebin`](@ref) (`"tm5"`, TM5-4DVar's 19 layers,
+[`tm5_layer_column`](@ref)). The prior term belongs to the retrieved gas, so
+name the tracer that carries it (total CO2), not components of it.
 """
-struct AveragingKernelColumns <: AbstractAveragingKernelOutput
+struct AveragingKernelColumns{M <: AbstractRetrievalMapping} <: AbstractAveragingKernelOutput
     tracers::Vector{Symbol}
-    mapping::Symbol
-    function AveragingKernelColumns(tracers::AbstractVector, mapping::Symbol = :hat)
+    mapping::M
+    function AveragingKernelColumns(tracers::AbstractVector,
+                                    mapping::M = HatLevelProjection()) where {M <: AbstractRetrievalMapping}
         isempty(tracers) && throw(ArgumentError("averaging-kernel output needs at least one tracer"))
         allunique(tracers) || throw(ArgumentError("averaging-kernel tracers repeat: $(tracers)"))
-        haskey(_OCO2_LEVEL_FORMS, mapping) || throw(ArgumentError(
-            "averaging-kernel mapping must be one of $(join(repr.(String.(keys(_OCO2_LEVEL_FORMS))), ", ")); " *
-            "got $(repr(String(mapping)))"))
-        return new(Symbol.(tracers), mapping)
+        return new{M}(Symbol.(tracers), mapping)
     end
-end
-
-# How a level retrieval (OCO-2/OCO-3) enters the operator: the levels as given
-# (hat projection) or TM5-4DVar's 19 layers.
-const _OCO2_LEVEL_FORMS = (hat = identity, tm5 = tm5_layer_column)
-
-"""
-    oco2_level_form(mapping::Symbol, column) -> RetrievalColumn
-
-A level retrieval as the operator uses it: unchanged for `:hat`
-([`HatLevelProjection`](@ref)), TM5-4DVar's layer form for `:tm5`
-([`tm5_layer_column`](@ref)).
-"""
-function oco2_level_form(mapping::Symbol, column::RetrievalColumn)
-    haskey(_OCO2_LEVEL_FORMS, mapping) || throw(ArgumentError(
-        "the mapping of a level retrieval must be one of $(join(repr.(String.(keys(_OCO2_LEVEL_FORMS))), ", ")); " *
-        "got $(repr(String(mapping)))"))
-    return _OCO2_LEVEL_FORMS[mapping](column)
 end
 
 averaging_kernel_tracers(::NoAveragingKernels) = Symbol[]
@@ -306,10 +286,10 @@ function _parse_averaging_kernel(cfg, label)
         throw(ArgumentError("$(label).averaging_kernel_tracers must be a non-empty array of tracer names; got " *
                             "$(repr(tracers))"))
     mapping = get(cfg, "averaging_kernel_mapping", "hat")
-    mapping isa AbstractString && haskey(_OCO2_LEVEL_FORMS, Symbol(mapping)) || throw(ArgumentError(
-        "$(label).averaging_kernel_mapping must be one of $(join(repr.(String.(keys(_OCO2_LEVEL_FORMS))), ", ")); " *
-        "got $(repr(mapping))"))
-    return AveragingKernelColumns(Symbol.(tracers), Symbol(mapping))
+    mapping isa AbstractString || throw(ArgumentError(
+        "$(label).averaging_kernel_mapping must be a string; got $(repr(mapping))"))
+    return AveragingKernelColumns(Symbol.(tracers),
+                                  oco2_level_form_from_label(mapping, "$(label).averaging_kernel_mapping"))
 end
 
 _check_oco2_mode(::SoundingMode, label) = nothing

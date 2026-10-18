@@ -325,7 +325,11 @@ in pressure between them. Read per record:
   with their `units` (hPa);
 - `pressure_weight`, `xco2_averaging_kernel` (normalized, used as it is, not
   multiplied by the weights) and `co2_profile_apriori` (converted to mol/mol
-  with its `units`, ppm).
+  with its `units`, ppm);
+- `xco2_apriori`, the prior column, when the file has it (converted to
+  mol/mol): the column is then ``X_a + \\sum_j h_j a_j (c_j - x_{a,j})``.
+  For the 10-s averages it differs from ``\\sum_j h_j x_{a,j}`` (the weights
+  and the prior were averaged separately) by up to about 0.01 ppm.
 
 The files store the levels from space to the surface; each record is turned
 surface first (by its pressures, so either order is read correctly). The
@@ -358,13 +362,17 @@ function read_oco2_retrieval_columns(ds, rows::AbstractVector{<:Integer}; label:
             "$(label): $(name) has shape $(size(v)); xco2_averaging_kernel has $(size(kernel))"))
     end
     ids = _raw_ids(ds, cols, label)
+    prior_column = haskey(ds, "xco2_apriori") ?
+        _raw_block(ds["xco2_apriori"], cols, label) .*
+        mole_fraction_unit_scale(get(ds["xco2_apriori"].attrib, "units", nothing), "$(label) xco2_apriori") :
+        fill(NaN, length(cols))
     return map(rows) do row
         c = row - lo + 1
         p = view(pressure, :, c)
         order = p[1] < p[nlevel] ? (nlevel:-1:1) : (1:nlevel)       # surface first
         try
             RetrievalColumn(p[order], weight[order, c], kernel[order, c], prior[order, c], Float64[], p[order[1]],
-                            HatLevelProjection())
+                            HatLevelProjection(), prior_column[c])
         catch err
             err isa Union{ArgumentError, DimensionMismatch} || rethrow()
             throw(ArgumentError("$(label) sounding_id $(ids[c]): $(sprint(showerror, err))"))

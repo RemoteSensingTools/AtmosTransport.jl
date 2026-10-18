@@ -526,11 +526,16 @@
     The model column, stretched onto the levels as before, is projected onto
     the levels' hat functions in dry air (the L2, Galerkin, projection
     ``c = M⁻¹ b``, ``M_ji = ∫φ_j φ_i dp_dry``, ``b_j = ∫φ_j x dp_dry``; one
-    tridiagonal solve), then ``X = Σ h_j a_j c_j + Σ h_j (1 − a_j) x_a,j``
-    with the file's weights, kernel and prior. It conserves the model's column
-    with the hat integrals as weights and reproduces profiles the retrieval
-    can represent: a model equal to the retrieval's prior gives the prior
-    column to 1e-5 ppm (a plain hat average would be 0.0185 ppm low). The
+    tridiagonal solve), then ``X = X_a + Σ h_j a_j (c_j − x_a,j)`` (the MIP
+    protocol's eq. 2) with the file's weights, kernel, prior and prior column
+    ``X_a`` (`xco2_apriori`; new optional `RetrievalColumn.prior_column` and
+    observation-file variable `retrieval_prior_column`; without it ``X_a =
+    Σ h x_a``, which for the 10-s averages differs by up to ~0.01 ppm). It
+    conserves the model's column with the hat integrals as weights and
+    reproduces profiles the retrieval can represent: a model equal to the
+    retrieval's prior, on a fine column aligned with the levels, gives ``X_a``
+    to 1e-5 ppm (on GEOS L72, 1e-5 to 2.1e-3 ppm; a plain hat average would
+    be 0.0185 ppm low). The
     mapping is a type of the shared operator (`retrieval_column_weights!`,
     `retrieval_profile!`, `retrieval_column_value` take the layers' air
     masses; new `retrieval_projection_matrix`), used by the 4D-Var and the
@@ -543,8 +548,9 @@
     OCO-3 v11 MIP 10-second files into schema-v2 column records with a level
     block (one file per day or month), every record of the time range, with
     `flag = 1 + assimilate_flag` for records outside the experiment's data
-    types (LN, LG, OG by default) and assimilation flags (1 by default);
-    `mapping = :tm5` writes TM5's layer form. `write_observations` takes
+    types (LN, LG, OG by default; `SAM` for OCO-3's data type 0) and
+    assimilation flags (1 by default); `mapping = Output.LayerRebin()`
+    (`--mapping tm5`) writes TM5's layer form. `write_observations` takes
     extra root `attributes`.
   - *Co-sampling.* `bind_to_mesh(...; flagged_records = "cosample")`
     (`CosampleFlaggedRecords`; driver key `[observations].flagged_records`)
@@ -559,10 +565,13 @@
     one cell, step sampling and overpass into one observation
     (`CSCellAverageObjective`, `CELL_AVERAGE_PLACEMENT_CODE`) with 1/σ²
     weights, ``σ²_meas = ΣΣ w_i w_j ρ_ij σ_i σ_j/(Σw)²`` and the model error
-    added once; the members stay as co-samples and departure rows carry
-    `cell_average_id`. `inflate_cell_model_error` is the alternative that
-    keeps the records and multiplies each model-error variance by the group
-    size.
+    added once; the members stay as co-samples, and departure files have a
+    row for each average (placement code −4, `id = −cell_average_id`,
+    σ_meas, σ_mod and `cell_average_correlation`) besides the member rows
+    (`cell_average_id`), so Σ normalized_departure² over assimilated rows is
+    2 J_obs. `inflate_cell_model_error` is the alternative that keeps the
+    records and multiplies each record's `model_sigma²` by the group size
+    (not the profile-error term).
   - *Forward sampler.* `oco2_lite` sources take `averaging_kernel_tracers`
     (opt-in; `AveragingKernelColumns`) and `averaging_kernel_mapping`
     (`"hat"`, `"tm5"`): the reader also reads each sounding's retrieval

@@ -409,11 +409,12 @@ function _stream_attributes(s::ObservationSampler)
         "vertical_coordinates" => join(String.(vertical_coordinate_label.(s.spec.placement.coordinates)), " "),
         "pressure_basis" => String(pressure_basis_label(s.spec.placement.pressure_basis)),
         (isempty(s.retrieval_tracers) ? () :
-         ("averaging_kernel_columns" => "<tracer>_ak_column = sum_i h_i a_i (P x)_i + sum_i h_i (1 - a_i) x_prior_i " *
-                                        "on the sampled profile x, the 4D-Var operator (P: hat projection of " *
-                                        "the model column stretched onto the retrieval levels, or TM5's 19-layer " *
-                                        "rebin with averaging_kernel_mapping = tm5), on the interface pressures " *
-                                        "of pressure_basis",))...)
+         ("averaging_kernel_columns" => "<tracer>_ak_column = X_prior + sum_i h_i a_i ((P x)_i - x_prior_i) " *
+                                        "on the sampled profile x, the 4D-Var operator (X_prior: the file's " *
+                                        "xco2_apriori, else sum_i h_i x_prior_i; P: L2 projection of the model " *
+                                        "column stretched onto the retrieval levels onto their hat functions, or " *
+                                        "TM5's 19-layer rebin with averaging_kernel_mapping = tm5), on the " *
+                                        "interface pressures of pressure_basis",))...)
 end
 
 _current_streams(s::ObservationSampler) =

@@ -282,7 +282,7 @@ Soundings file (point events), dimensions `obs` (unlimited), `lev`, `ilev = lev 
 | `air_mass_per_area_dry` | (lev, obs) | layer air mass per area (kg m⁻²) |
 | `intake_level`, `intake_layer_bottom_agl`, `intake_layer_top_agl`, `height_method` | obs | layer holding the intake and its heights above the model surface |
 | `<tracer>`, `<tracer>_column_mean`, `<tracer>_intake` | (lev, obs); obs; obs | dry mole fraction profile, air-mass-weighted column mean, intake-layer value |
-| `<tracer>_ak_column` | obs | only for the tracers of `averaging_kernel_tracers` (OCO-2/OCO-3 sources, opt-in): the averaging-kernel column of the sampled profile, ``\sum_j h_j a_j c_j + \sum_j h_j (1 - a_j) x_{a,j}`` with the sounding's retrieval and the 4D-Var's operator (Float64; NaN for rows without a retrieval); the file then states the operator in `averaging_kernel_columns` |
+| `<tracer>_ak_column` | obs | only for the tracers of `averaging_kernel_tracers` (OCO-2/OCO-3 sources, opt-in): the averaging-kernel column of the sampled profile, ``X_a + \sum_j h_j a_j (c_j - x_{a,j})`` with the sounding's retrieval (``X_a``: the file's `xco2_apriori`, else ``\sum_j h_j x_{a,j}``) and the 4D-Var's operator (Float64; NaN for rows without a retrieval); the file then states the operator in `averaging_kernel_columns` |
 
 Sites file (station series), dimensions `site`, `time` (unlimited), and
 `lev`/`ilev` when `write_profile_for_sites = true`:

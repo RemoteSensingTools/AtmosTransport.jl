@@ -124,9 +124,11 @@ stretched column, so the rows of ``P`` sum to 1 and, with the hat integrals
 ``h_j = \\sum_k B_{jk} / \\sum_k m_k`` as weights, ``\\sum_j h_j c_j`` is the
 model's air-mass-weighted column mean: the projection conserves the column.
 It reproduces every profile the retrieval can represent (piecewise linear on
-the levels), to the discretization of the model's layer means. Entries of
-``P`` can be negative near sharp structure. Stored as
-`retrieval_mapping = "hat_levels"`.
+the levels), to the discretization of the model's layer means. ``P``, the
+inverse of the consistent mass matrix times ``B``, has negative entries in
+general (about −0.2 in every row on a GEOS L72 column); the weights
+``H = (h \\circ a)^T P`` of OCO-2 retrievals stayed positive in the cases
+measured. Stored as `retrieval_mapping = "hat_levels"`.
 """
 struct HatLevelProjection <: AbstractRetrievalMapping end
 
@@ -157,10 +159,10 @@ _min_value_count(::HatLevelProjection) = 2
 
 """
     RetrievalColumn(pressure_pa, pressure_weight, averaging_kernel, prior_profile,
-                    profile_sigma, surface_pressure_pa[, mapping = LayerRebin()])
+                    profile_sigma, surface_pressure_pa[, mapping = LayerRebin()[, prior_column = NaN]])
     RetrievalColumn(; pressure_pa, pressure_weight, averaging_kernel, prior_profile,
                       profile_sigma = Float64[], surface_pressure_pa = first(pressure_pa),
-                      mapping = LayerRebin())
+                      mapping = LayerRebin(), prior_column = NaN)
 
 The vertical description of one retrieved column average (a satellite or
 TCCON sounding) with `N` retrieval values, ordered from the surface up. The
@@ -190,9 +192,15 @@ Fields:
   averaging kernel;
 - `surface_pressure_pa`: the retrieval surface pressure (Pa), equal to the
   first pressure (relative tolerance 1e-6);
-- `mapping`: the [`AbstractRetrievalMapping`](@ref).
+- `mapping`: the [`AbstractRetrievalMapping`](@ref);
+- `prior_column`: optional, the retrieval's prior column ``X_a`` (mol mol⁻¹,
+  in `[0, 1]`; `NaN` when absent), e.g. the OCO-2 `xco2_apriori`. When given,
+  the column is ``X = X_a + \\sum_i h_i a_i ((P x)_i - x_{a,i})`` (the MIP
+  protocol's eq. 2); without it ``X_a = \\sum_i h_i x_{a,i}``. The two differ
+  when the weights and the prior were averaged separately (OCO-2 10-s
+  averages: a few thousandths of a ppm).
 
-Every value must be finite. See [`retrieval_column_weights!`](@ref) for the
+Every value but an absent `prior_column` must be finite. See [`retrieval_column_weights!`](@ref) for the
 operator.
 """
 struct RetrievalColumn{M <: AbstractRetrievalMapping}
@@ -203,10 +211,11 @@ struct RetrievalColumn{M <: AbstractRetrievalMapping}
     profile_sigma::Vector{Float64}
     surface_pressure_pa::Float64
     mapping::M
+    prior_column::Float64
     function RetrievalColumn(pressure_pa::AbstractVector{<:Real}, pressure_weight::AbstractVector{<:Real},
                              averaging_kernel::AbstractVector{<:Real}, prior_profile::AbstractVector{<:Real},
                              profile_sigma::AbstractVector{<:Real}, surface_pressure_pa::Real,
-                             mapping::M = LayerRebin()) where {M <: AbstractRetrievalMapping}
+                             mapping::M = LayerRebin(), prior_column::Real = NaN) where {M <: AbstractRetrievalMapping}
         p = collect(Float64, pressure_pa)
         h = collect(Float64, pressure_weight)
         a = collect(Float64, averaging_kernel)
@@ -214,15 +223,18 @@ struct RetrievalColumn{M <: AbstractRetrievalMapping}
         σ = collect(Float64, profile_sigma)
         ps = Float64(surface_pressure_pa)
         _check_retrieval_column(p, h, a, xa, σ, ps, mapping)
-        return new{M}(p, h, a, xa, σ, ps, mapping)
+        Xa = Float64(prior_column)
+        isnan(Xa) || 0 <= Xa <= 1 || throw(ArgumentError(
+            "the retrieval prior column is a dry mole fraction in mol/mol, within [0, 1], or NaN (absent); got $(Xa)"))
+        return new{M}(p, h, a, xa, σ, ps, mapping, Xa)
     end
 end
 
 RetrievalColumn(; pressure_pa, pressure_weight, averaging_kernel, prior_profile,
                   profile_sigma = Float64[], surface_pressure_pa = first(pressure_pa),
-                  mapping::AbstractRetrievalMapping = LayerRebin()) =
+                  mapping::AbstractRetrievalMapping = LayerRebin(), prior_column::Real = NaN) =
     RetrievalColumn(pressure_pa, pressure_weight, averaging_kernel, prior_profile, profile_sigma,
-                    surface_pressure_pa, mapping)
+                    surface_pressure_pa, mapping, prior_column)
 
 function _check_retrieval_column(p, h, a, xa, σ, ps, mapping::AbstractRetrievalMapping)
     n = length(h)
@@ -269,10 +281,13 @@ Base.:(==)(a::RetrievalColumn, b::RetrievalColumn) =
     a.pressure_pa == b.pressure_pa && a.pressure_weight == b.pressure_weight &&
     a.averaging_kernel == b.averaging_kernel && a.prior_profile == b.prior_profile &&
     a.profile_sigma == b.profile_sigma && a.surface_pressure_pa == b.surface_pressure_pa &&
-    a.mapping == b.mapping
+    a.mapping == b.mapping && isequal(a.prior_column, b.prior_column)
 Base.hash(c::RetrievalColumn, h::UInt) =
     hash((c.pressure_pa, c.pressure_weight, c.averaging_kernel, c.prior_profile, c.profile_sigma,
-          c.surface_pressure_pa, c.mapping), hash(:RetrievalColumn, h))
+          c.surface_pressure_pa, c.mapping, c.prior_column), hash(:RetrievalColumn, h))
+
+# The two concrete column types, a small union for fields that hold either.
+const AnyRetrievalColumn = Union{RetrievalColumn{LayerRebin}, RetrievalColumn{HatLevelProjection}}
 
 """
     retrieval_layer_count(column::RetrievalColumn) -> Int
@@ -546,12 +561,18 @@ end
     retrieval_prior_offset(column::RetrievalColumn) -> Float64
     retrieval_prior_offset(h, a, prior) -> Float64
 
-The prior term of the averaging-kernel column,
-``c = \\sum_i (h_i - h_i a_i)\\, x_{a,i}``, which does not depend on the model
-(TM5: `dot_product(pres_weights - W, prior_profile)`).
+The prior term of the averaging-kernel column, which does not depend on the
+model: ``c = X_a - \\sum_i h_i a_i\\, x_{a,i}`` with the column's
+`prior_column` ``X_a`` when it gives one (``X = X_a + \\sum_i h_i a_i
+((P x)_i - x_{a,i})``, the MIP protocol's form), else
+``c = \\sum_i (h_i - h_i a_i)\\, x_{a,i}`` (TM5: `dot_product(pres_weights -
+W, prior_profile)`; the raw form always).
 """
 retrieval_prior_offset(column::RetrievalColumn) =
-    retrieval_prior_offset(column.pressure_weight, column.averaging_kernel, column.prior_profile)
+    _prior_offset(column.prior_column, column.pressure_weight, column.averaging_kernel, column.prior_profile)
+
+_prior_offset(Xa::Float64, h, a, prior) =
+    isnan(Xa) ? retrieval_prior_offset(h, a, prior) : Xa - sum(h[i] * a[i] * prior[i] for i in eachindex(h))
 
 function retrieval_prior_offset(h::AbstractVector, a::AbstractVector, prior::AbstractVector)
     length(h) == length(a) == length(prior) || throw(DimensionMismatch(
@@ -681,9 +702,10 @@ pressure weights are the layer thicknesses ``Δp_i``, normalized to the column
 between the bottom and top levels. TM5 divides by the surface pressure
 instead, so its weights sum to ``1 - σ_\\mathrm{top}`` (0.9999 for OCO-2)
 and its column is that fraction of this one. A `profile_sigma` is averaged
-like the kernel. For comparisons with TM5-4DVAR; the hat projection
-([`HatLevelProjection`](@ref)) is the consistent mapping of level
-retrievals.
+like the kernel. The prior column is TM5's, ``\\sum_i h_i x_{a,i}`` on its
+layers (a `prior_column` of the record is not carried). For comparisons with
+TM5-4DVAR; the hat projection ([`HatLevelProjection`](@ref)) is the
+consistent mapping of level retrievals.
 """
 function tm5_layer_column(column::RetrievalColumn{HatLevelProjection})
     p = column.pressure_pa
@@ -694,6 +716,33 @@ function tm5_layer_column(column::RetrievalColumn{HatLevelProjection})
                            midpoint(column.prior_profile),
                            isempty(column.profile_sigma) ? Float64[] : midpoint(column.profile_sigma),
                            column.surface_pressure_pa, LayerRebin())
+end
+
+"""
+    oco2_level_form(mapping::AbstractRetrievalMapping, column::RetrievalColumn{HatLevelProjection})
+
+A level retrieval (OCO-2/OCO-3) in the form the operator uses under
+`mapping`: unchanged for [`HatLevelProjection`](@ref) (the levels as given,
+the default), TM5-4DVar's 19 layers for [`LayerRebin`](@ref)
+([`tm5_layer_column`](@ref), the "tm5" mode).
+"""
+oco2_level_form(::HatLevelProjection, column::RetrievalColumn{HatLevelProjection}) = column
+oco2_level_form(::LayerRebin, column::RetrievalColumn{HatLevelProjection}) = tm5_layer_column(column)
+
+# The level forms by their config and command-line names.
+const OCO2_LEVEL_FORMS = (hat = HatLevelProjection(), tm5 = LayerRebin())
+
+"""
+    oco2_level_form_from_label(label, context) -> AbstractRetrievalMapping
+
+The mapping named `"hat"` ([`HatLevelProjection`](@ref)) or `"tm5"`
+([`LayerRebin`](@ref) on TM5's 19 layers) in configs and on the command line.
+"""
+function oco2_level_form_from_label(label::AbstractString, context::AbstractString)
+    key = Symbol(label)
+    haskey(OCO2_LEVEL_FORMS, key) || throw(ArgumentError(
+        "$(context) must be one of $(join(repr.(String.(keys(OCO2_LEVEL_FORMS))), ", ")); got $(repr(label))"))
+    return OCO2_LEVEL_FORMS[key]
 end
 
 """

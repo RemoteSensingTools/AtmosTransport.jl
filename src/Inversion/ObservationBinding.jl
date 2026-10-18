@@ -430,7 +430,9 @@ function _cell_average_observation(averaging::CellAverage, members::AbstractVect
     model = sum(weights[i] * (records[i].model_sigma^2 + _profile_model_sigma(records[i])^2) for i in eachindex(σ))
     first_member = first(members).objective
     objective = CSCellAverageObjective(first_member.panel, first_member.i, first_member.j,
-                                       [m.objective for m in members], weights, [r.id for r in records])
+                                       [m.objective for m in members], weights, [r.id for r in records];
+                                       measurement_sigma = sqrt(measurement), model_sigma = sqrt(model),
+                                       correlation = averaging.correlation)
     value = sum(weights[i] * records[i].value for i in eachindex(σ))
     return CSObservation(first(members).sampling, objective, value, sqrt(measurement + model);
                          id = first(records).id)
@@ -446,8 +448,9 @@ assimilated column records grouped as `CellAverage` groups them (same tracer,
 model cell and step sampling as `bind_to_mesh` would bind them, within
 `time_tolerance_s` of the group's earliest record) get their model-error
 variance multiplied by the number ``k`` of records in their group,
-`model_sigma → √k · model_sigma` (the profile term of an averaging-kernel
-column, from the retrieval block, is left as it is). The model error of
+`model_sigma → √k · model_sigma`, i.e. `model_sigma²` times ``k``; the
+profile-error term ``\\sum_i (h_i a_i σ_i)^2`` of an averaging-kernel column
+(from its retrieval block) is not inflated. The model error of
 records that sample the same model column is correlated, so ``k`` records
 should not reduce it ``k``-fold; inflating each by ``k`` gives the group the
 weight of one record's model error. Bind the returned set with the same run

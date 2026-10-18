@@ -17,8 +17,8 @@
 # ---------------------------------------------------------------------------
 
 # Data type codes of the MIP files (`data_type`, also the last digit of the
-# sounding id) and their labels.
-const OCO2_MIP_DATA_TYPES = (LN = 1, LG = 2, LT = 3, LTR = 4, ON = 5, OG = 6, OT = 7, OTR = 8, MIX = 9)
+# sounding id) and their labels; 0 is OCO-3's snapshot area maps (SAM).
+const OCO2_MIP_DATA_TYPES = (SAM = 0, LN = 1, LG = 2, LT = 3, LTR = 4, ON = 5, OG = 6, OT = 7, OTR = 8, MIX = 9)
 
 function _oco2_mip_data_type_codes(data_types)
     codes = Int[]
@@ -61,8 +61,9 @@ end
 
 """
     read_oco2_mip_observations(path; time_range = nothing, data_types = ("LN", "LG", "OG"),
-                               assimilate_flags = (1,), model_sigma = :file, mapping = :hat,
-                               instrument = nothing, tracer = "CO2") -> CSObservationSet
+                               assimilate_flags = (1,), model_sigma = :file,
+                               mapping = Output.HatLevelProjection(), instrument = nothing,
+                               tracer = "CO2") -> CSObservationSet
 
 The records of an OCO-2 or OCO-3 v11 MIP 10-second file (read-only) as an
 observation set of schema v2 ([`CSObservationRecord`](@ref)), one per
@@ -82,12 +83,12 @@ record whose time (`date`, truncated to the second) lies in
 | `flag` | 0 when `assimilate_flag ∈ assimilate_flags` and the data type is in `data_types`; else `1 + assimilate_flag` |
 | `instrument_type` | `"<instrument>_<data type>"`, e.g. `"OCO2_OG"` |
 | `tracer` | `tracer` |
-| `retrieval` | the 20 levels (`sigma_levels × psurf`, hPa → Pa), `pressure_weight`, `xco2_averaging_kernel`, `co2_profile_apriori` (ppm → mol/mol), surface first (`Output.read_oco2_retrieval_columns`) |
+| `retrieval` | the 20 levels (`sigma_levels × psurf`, hPa → Pa), `pressure_weight`, `xco2_averaging_kernel`, `co2_profile_apriori` (ppm → mol/mol), surface first, and the prior column `xco2_apriori` (ppm → mol/mol; `Output.read_oco2_retrieval_columns`) |
 
 `data_types` name the experiment's data types (`LN` land nadir, `LG` land
 glint, `LT` land target, `LTR` land transition, `ON` ocean nadir, `OG` ocean
-glint, `OT`, `OTR`, `MIX` mixed land/water; the MIP assimilates LN, LG and
-OG). `assimilate_flags` are the MIP `assimilate_flag` values to assimilate
+glint, `OT`, `OTR`, `MIX` mixed land/water, `SAM` OCO-3 snapshot area maps;
+the MIP assimilates LN, LG and OG). `assimilate_flags` are the MIP `assimilate_flag` values to assimilate
 (1; TM5-4DVar's MIP setup also takes the withheld 2). Every record of the
 range is kept: flag 1 marks `assimilate_flag = 0` (sparse, target,
 transition, mixed scenes; evaluation only), 2 an assimilable record whose
@@ -95,8 +96,9 @@ data type is outside `data_types`, 3 a withheld record (`assimilate_flag =
 2`), unless `assimilate_flags` selects them. Bind with
 `flagged_records = "cosample"` to co-sample them.
 
-`mapping` is `:hat` (the levels as given, `Output.HatLevelProjection`, the
-default) or `:tm5` (TM5-4DVar's 19 layers, `Output.tm5_layer_column`).
+`mapping` is `Output.HatLevelProjection()` (the levels as given, the
+default) or `Output.LayerRebin()` (TM5-4DVar's 19 layers,
+`Output.tm5_layer_column`; the CLI's `--mapping tm5`).
 `instrument` defaults to the first token of the file's `ShortName`
 (`"OCO2"`, `"OCO3"`). Sounding ids are unique within one file; OCO-2 and
 OCO-3 ids can coincide, so give each instrument its own set.
@@ -112,6 +114,9 @@ function read_oco2_mip_observations(path::AbstractString; time_range = nothing, 
     end
 end
 
+_oco2_mip_mapping_text(::HatLevelProjection) = "hat: the 20 levels as given (retrieval_mapping = hat_levels)"
+_oco2_mip_mapping_text(::LayerRebin) = "tm5: TM5-4DVar's 19 layers (retrieval_mapping = layer_rebin)"
+
 function _oco2_mip_rows(dates, time_range)
     time_range === nothing && return collect(eachindex(dates))
     start, stop = time_range
@@ -121,7 +126,8 @@ end
 
 function _oco2_mip_records(ds, path, rows::AbstractVector{<:Integer}, dates, label;
                            data_types = ("LN", "LG", "OG"), assimilate_flags = (1,), model_sigma = :file,
-                           mapping::Symbol = :hat, instrument = nothing, tracer::AbstractString = "CO2")
+                           mapping::AbstractRetrievalMapping = HatLevelProjection(), instrument = nothing,
+                           tracer::AbstractString = "CO2")
     isempty(rows) && return CSObservationRecord[]
     types = _oco2_mip_data_type_codes(data_types)
     flags_in = Int.(collect(assimilate_flags))
@@ -164,8 +170,8 @@ const _OCO2_MIP_PARTITIONS = (day = ("{YYYYMMDD}", Dates.DateFormat("yyyymmdd"),
 """
     convert_oco2_mip_observations(path, output; partition = :day, time_range = nothing,
                                   data_types = ("LN", "LG", "OG"), assimilate_flags = (1,),
-                                  model_sigma = :file, mapping = :hat, instrument = nothing,
-                                  tracer = "CO2") -> Vector{String}
+                                  model_sigma = :file, mapping = Output.HatLevelProjection(),
+                                  instrument = nothing, tracer = "CO2") -> Vector{String}
 
 Convert an OCO-2 or OCO-3 v11 MIP 10-second file to observation files of
 schema v2 ([`write_observations`](@ref)), one per day (`partition = :day`,
@@ -178,7 +184,8 @@ paths written, in time order.
 """
 function convert_oco2_mip_observations(path::AbstractString, output::AbstractString; partition::Symbol = :day,
                                        time_range = nothing, data_types = ("LN", "LG", "OG"),
-                                       assimilate_flags = (1,), model_sigma = :file, mapping::Symbol = :hat,
+                                       assimilate_flags = (1,), model_sigma = :file,
+                                       mapping::AbstractRetrievalMapping = HatLevelProjection(),
                                        instrument = nothing, tracer::AbstractString = "CO2")
     haskey(_OCO2_MIP_PARTITIONS, partition) || throw(ArgumentError(
         "partition must be :day or :month; got $(repr(partition))"))
@@ -193,8 +200,7 @@ function convert_oco2_mip_observations(path::AbstractString, output::AbstractStr
         "oco2_mip_data_types" => join(uppercase.(String.(collect(data_types))), " "),
         "oco2_mip_assimilate_flags" => join(string.(collect(assimilate_flags)), " "),
         "oco2_mip_model_sigma" => model_sigma === :file ? "model_error" : "$(model_sigma) ppm",
-        "oco2_mip_mapping" => mapping === :hat ? "hat: the 20 levels as given (retrieval_mapping = hat_levels)" :
-                              "tm5: TM5-4DVar's 19 layers (retrieval_mapping = layer_rebin)",
+        "oco2_mip_mapping" => _oco2_mip_mapping_text(mapping),
         "oco2_mip_flag_convention" => "flag = 0: assimilated in this experiment; otherwise 1 + the MIP " *
                                       "assimilate_flag (1: evaluation-only scenes, 2: assimilable but outside " *
                                       "the experiment's data types, 3: withheld for evaluation)")

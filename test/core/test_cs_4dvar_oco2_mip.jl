@@ -43,11 +43,11 @@ const DT = 600.0
 _dc(s) = (t = T0 + Second(round(Int, s)); (year(t), month(t), day(t), hour(t), minute(t), second(t)))
 
 # An OCO-2 level retrieval at surface pressure `ps` (Pa), surface first, in mol/mol.
-function _level(ps; tilt = 0.0, sigma = Float64[], mapping = :hat)
+function _level(ps; tilt = 0.0, sigma = Float64[], mapping = O.HatLevelProjection(), prior_column = NaN)
     r = oco2_fixture_retrieval(ps / 100; tilt)
     column = O.RetrievalColumn(; pressure_pa = reverse(OCO2_SIGMA .* ps), pressure_weight = reverse(r.pw),
                                averaging_kernel = reverse(r.ak), prior_profile = reverse(r.prior) .* 1e-6,
-                               profile_sigma = sigma, mapping = O.HatLevelProjection())
+                               profile_sigma = sigma, mapping = O.HatLevelProjection(), prior_column)
     return O.oco2_level_form(mapping, column)
 end
 
@@ -161,11 +161,11 @@ end
 # retrieval's, with a profile uncertainty), a TM5-mode record and a column mean.
 function _level_observations(P; kwargs...)
     a, b = _site(P), _site(P; panel = 5, i = 3, j = 1)
-    records = [_record(1; a..., t = 100.0, value = 402e-6, retrieval = _level(97000.0)),
+    records = [_record(1; a..., t = 100.0, value = 402e-6, retrieval = _level(97000.0; prior_column = 404.2e-6)),
                _record(2; a..., t = 1000.0, time_window_s = 1500.0, value = 399e-6,
                        retrieval = _level(101500.0; tilt = 0.3, sigma = fill(1e-6, 20))),
                _record(3; b..., t = 700.0, time_window_s = 900.0, value = 404e-6, retrieval = _level(99500.0; tilt = -0.2)),
-               _record(4; b..., t = 1500.0, value = 405e-6, retrieval = _level(98500.0; mapping = :tm5)),
+               _record(4; b..., t = 1500.0, value = 405e-6, retrieval = _level(98500.0; mapping = O.LayerRebin())),
                _record(5; a..., t = 1700.0, value = 403e-6)]
     return _bind(P, records; kwargs...)
 end
@@ -348,13 +348,36 @@ end
     # Departures: the members are rows (co-samples of the average), the average is not.
     result = _fourdvar(P, obs, controls)
     deps = AT.build_departure_set(_set(records), result, P.mesh, "2024-06-15 00:00:00", DT, P.nsteps)
-    @test [d.id for d in deps.records] == [21, 22, 24, 25, 23, 26]
-    @test [d.cell_average_id for d in deps.records] == [21, 21, 0, 0, 21, 0]
-    @test [d.assimilated for d in deps.records] == [false, false, true, true, false, true]
+    @test [d.id for d in deps.records] == [21, 22, 24, 25, 23, 26, -21]
+    @test [d.cell_average_id for d in deps.records] == [21, 21, 0, 0, 21, 0, 21]
+    @test [d.assimilated for d in deps.records] == [false, false, true, true, false, true, true]
+    row = deps.records[end]
+    @test row.vertical_placement == AT.CELL_AVERAGE_PLACEMENT_CODE && row.cell_average_correlation == 0
+    @test row.observed_value == obs[end].value && row.simulated_value == result.simulated[end]
+    @test row.value_sigma^2 ≈ 1 / sum(1 ./ σ .^ 2) rtol = 1e-12
+    @test row.model_sigma^2 ≈ σ_mod2 rtol = 1e-12
+    # The assimilated rows are the terms of the cost.
+    assimilated_rows(d) = [r for r in d.records if r.assimilated]
+    @test sum(r.normalized_departure^2 for r in assimilated_rows(deps)) ≈ 2 * result.observation_cost rtol = 1e-12
+    plain = with_logger(NullLogger()) do
+        _bind(P, records)
+    end
+    r_plain = _fourdvar(P, plain, controls)
+    d_plain = AT.build_departure_set(_set(records), r_plain, P.mesh, "2024-06-15 00:00:00", DT, P.nsteps)
+    @test sum(r.normalized_departure^2 for r in assimilated_rows(d_plain)) ≈ 2 * r_plain.observation_cost rtol = 1e-12
     mktempdir() do dir
         back = AT.read_departures(AT.write_departures(joinpath(dir, "avg.nc"), deps))
-        @test [d.cell_average_id for d in back.records] == [21, 21, 0, 0, 21, 0]
+        @test [d.cell_average_id for d in back.records] == [21, 21, 0, 0, 21, 0, 21]
+        for (x, y) in zip(deps.records, back.records)
+            @test all(f -> isequal(getfield(x, f), getfield(y, f)), fieldnames(AT.CSDepartureRecord))
+        end
     end
+    # A cell average cannot hold an averaging-kernel column with a surface-pressure limit.
+    limited = AT.CSRetrievalColumnObjective(only_group[1].objective.panel, only_group[1].objective.i,
+                                            only_group[1].objective.j, only_group[1].objective.area,
+                                            group[1].retrieval, O.TotalFromHumidity();
+                                            max_surface_pressure_mismatch_pa = 5000.0)
+    @test_throws ArgumentError AT.CSCellAverageObjective(limited.panel, limited.i, limited.j, [limited], [1.0], [21])
     # The alternative: keep the records, inflate their model error by k.
     inflated = AT.inflate_cell_model_error(_set(records), P.mesh, T0, DT; nsteps = P.nsteps)
     @test [r.model_sigma for r in inflated.records] ≈
@@ -413,7 +436,7 @@ end
         zero_controls = [AT.CSSurfaceFluxControl(AT.CSSurfaceFluxWindow(:all, 1:P.nsteps),
                                                  ntuple(_ -> zeros(P.Nc, P.Nc), 6))]
         met = column_met(P; gravity = AT.gravity(grid))
-        for (path, mapping) in ((hat, :hat), (tm5, :tm5))
+        for (path, mapping) in ((hat, O.HatLevelProjection()), (tm5, O.LayerRebin()))
             set = AT.read_oco2_mip_observations(mip; mapping)
             obs = AT.bind_to_mesh(set, P.mesh, T0, DT; nsteps = P.nsteps)
             result = _fourdvar(P, obs, zero_controls; met)

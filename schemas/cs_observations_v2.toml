@@ -206,6 +206,12 @@ dims  = ["obs"]
 units = "Pa"
 description = "retrieval surface pressure (total), equal to the first retrieval pressure; NaN = no block"
 
+[optional_variables.retrieval_prior_column]
+dtype = "f64"
+dims  = ["obs"]
+units = "mol mol-1"
+description = "OPTIONAL retrieval prior column X_a (the OCO-2 xco2_apriori; a mole-fraction unit, converted to mol/mol): the simulated column is X_a + sum_i h_i a_i ((P x)_i - x_prior_i) (MIP protocol eq. 2); NaN = absent, then X_a = sum_i h_i x_prior_i. Written when any record gives one"
+
 [optional_variables.retrieval_mapping]
 dtype = "string"
 dims  = ["obs"]

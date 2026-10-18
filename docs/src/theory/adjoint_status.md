@@ -549,12 +549,18 @@ thickness; ``M`` is tridiagonal (neighbouring hats overlap), so
 the operator of the layer case with ``P`` in place of the rebin ``R``:
 
 ```math
-X = \sum_j h_j a_j c_j + \sum_j h_j (1 - a_j)\, x_{a,j}
+X = X_a + \sum_j h_j a_j (c_j - x_{a,j})
   = \sum_k H_k x_k + c, \qquad H = (h \circ a)^\mathsf{T} M^{-1} B,
 ```
 
-with ``h``, ``a`` and ``x_a`` from the file (the kernel is already normalized:
-it is not multiplied by ``h``). ``X`` is still linear in the tracer: the
+with ``h``, ``a``, ``x_a`` and the prior column ``X_a`` from the file (the
+MIP protocol's eq. 2; the kernel is already normalized: it is not multiplied
+by ``h``). ``X_a`` is the file's `xco2_apriori`, carried by the converter and
+the forward sampler's reader (`retrieval_prior_column` in observation files);
+a record without one uses ``X_a = \sum_j h_j x_{a,j}``, the form of the layer
+case. The 10-s averages of the weights and of the prior were taken separately,
+so the two differ: by up to about 0.01 ppm (−0.012 ppm for sounding
+20210804153946), a shift of every simulated column. ``X`` is still linear in the tracer: the
 4D-Var functional is exact as before, with weights ``H_k/\max(m_k,
 \epsilon)`` built from the replayed air mass and pressures of each sampled
 step.
@@ -571,16 +577,22 @@ can represent: a model profile that is piecewise linear on the levels, the
 retrieval's own representation, gives its level values back exactly (to the
 discretization of the model's layer means, second order in the layer
 thickness), so the kernel is applied to the level values it was derived for.
-A model profile equal to the retrieval's prior gives the prior column: on 960
-OCO-2 records of 2019-07-01 (prior sampled on a 760-layer column),
-``X - \sum_j h_j x_{a,j}`` is −7e-6 ppm (5–95 %: −9e-6 to −4e-6). The hat
+A model profile equal to the retrieval's prior gives the prior column, to the
+projection's discretization: on 960 OCO-2 records of 2019-07-01, with the
+prior sampled as the layer means of a fine column aligned with the levels
+(760 layers), ``X - X_a`` is −7e-6 ppm (5–95 %: −9e-6 to −4e-6). On a GEOS L72
+column, whose layers do not line up with the levels, ``|X - \sum_j h_j
+x_{a,j}|`` ranges from 1e-5 to 2.1e-3 ppm and single level values ``c_j``
+differ from ``x_{a,j}`` by up to 0.57 ppm (independent review): the level
+values carry the model's coarse vertical sampling, the column much less. The hat
 average ``\int \varphi_j x / \int \varphi_j`` (``M`` lumped onto its diagonal),
 which is not a projection, puts that column −0.0185 ppm low (−0.021 to
 −0.012), because the prior is curved in the stratosphere; for a +10 ppm
 boundary layer below ``\sigma = 0.95`` it is 0.018 ppm below the projection.
-The weights ``H`` can have small negative entries near sharp structure, which
-a linear operator allows (``P`` has some); on these records, on that column
-and on a 72-layer column, none of ``H`` was negative.
+``P``, the inverse of the consistent mass matrix times ``B``, has negative
+entries in general (about −0.21 to −0.23 in every row on a GEOS L72 column),
+which a linear operator allows; the column weights ``H`` stayed positive on
+OCO-2 records (on L72, ``\min_k H_k`` was 0.23–0.39 of their mean).
 
 **The top level.** The top level sits at ``\sigma = 10^{-4}`` (10 Pa), not at
 0. The stretch maps the whole model column, from its top (about 1 Pa for
@@ -645,9 +657,10 @@ second, as TM5 reads it); `latitude`, `longitude`; `kind = "column"`;
 `xco2_uncertainty` and `model_error` (or a constant, `--model-sigma`) →
 `value`, `value_sigma`, `model_sigma` (ppm → mol/mol); the levels
 (``\sigma \cdot p_s``, hPa → Pa), weights, kernel and prior (ppm → mol/mol),
-turned surface first. Every record of the time range is written: `flag = 0`
+turned surface first, and the prior column `xco2_apriori`. Every record of the time range is written: `flag = 0`
 when its `assimilate_flag` is in the experiment's set (`--assimilate-flags`,
-1 by default) and its data type too (`--data-types`: LN, LG, OG by default),
+1 by default) and its data type too (`--data-types`: LN, LG, OG by default;
+`SAM` names OCO-3's snapshot area maps, `data_type = 0`),
 else `flag = 1 + assimilate_flag` (1 evaluation-only scenes, 2 assimilable
 but outside the data types, 3 withheld). `instrument_type` is
 `<instrument>_<data type>` (`OCO2_OG`); the files record the source file,
@@ -691,11 +704,17 @@ the within-span correlation is already in ``\sigma_i``); the model error
 ``\bar H`` is a `CSCellAverageObjective`, exact for the linear operators: its
 gradient is the ``w``-weighted combination of the members'. The members stay
 as co-samples, so departures keep one row per record, with the average's
-`cell_average_id`; the average itself is not a row. Averaging needs
-`max_surface_pressure_mismatch_pa = Inf`. The alternative,
+`cell_average_id`, and the average is a row of its own, the term of the cost
+(placement code −4, `id = −cell_average_id`, ``\bar y``, ``\bar H x``,
+``\sigma_\mathrm{meas}`` in `value_sigma`, the model error in `model_sigma`,
+``\rho`` in `cell_average_correlation`): over the assimilated rows,
+``\sum`` `normalized_departure`² ``= 2 J_\mathrm{obs}``. Averaging needs
+`max_surface_pressure_mismatch_pa = Inf` (a `CSCellAverageObjective` built by
+hand is checked the same way). The alternative,
 `inflate_cell_model_error(set, mesh, t_start, dt; ...)` (`mode =
 "inflate_model_error"`), keeps the records and multiplies each record's
-model-error variance by the number ``k`` of records of its group.
+`model_sigma²` by the number ``k`` of records of its group; the profile-error
+term of an averaging-kernel column is not inflated.
 
 **Forward sampler.** An `oco2_lite` source of `[output.observations]` with
 `averaging_kernel_tracers = ["co2"]` (opt-in) also reads each sounding's

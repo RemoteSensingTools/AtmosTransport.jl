@@ -131,7 +131,8 @@ end
 
 # The column X of a model profile equal to the retrieval's own prior (piecewise
 # linear on the levels), sampled as the layer means of a model grid with N
-# layers per interval between levels, minus the prior column Σ h x_a (ppm).
+# layers per interval between levels, minus the retrieval's prior column (the
+# file's X_a when the record carries one, else Σ h x_a), in ppm.
 function _prior_profile_departure(column; N = 40)
     levels = column.pressure_pa
     n = length(levels)
@@ -141,7 +142,8 @@ function _prior_profile_departure(column; N = 40)
                  v[j] + (v[j + 1] - v[j]) * (p - levels[j]) / (levels[j + 1] - levels[j]))
     x = [interp((p_half[k] + p_half[k + 1]) / 2) for k in 1:(length(p_half) - 1)]
     X = O.retrieval_column_value(p_half, diff(p_half), column, x)
-    return (X - dot(column.pressure_weight, v)) * 1e6
+    Xa = isnan(column.prior_column) ? dot(column.pressure_weight, v) : column.prior_column
+    return (X - Xa) * 1e6
 end
 
 @testset "file pressure weights: c = prior gives xco2_apriori" begin
@@ -157,15 +159,26 @@ end
         apriori = NCDataset(path) do ds
             Float64(ds["xco2_apriori"][1])
         end
-        # The column of the prior itself (c = x_a) is the retrieval's prior
-        # column, within the Float32 precision of the file.
+        # The record carries the file's prior column X_a (xco2_apriori), and the
+        # column of the prior itself (c = x_a) is X_a: X = X_a + Σ h a (c − x_a).
+        @test column.prior_column == apriori * 1e-6
         prior_column = dot(column.pressure_weight .* column.averaging_kernel, column.prior_profile) +
                        O.retrieval_prior_offset(column)
-        @test abs(prior_column * 1e6 - apriori) < 1e-4
+        @test prior_column ≈ apriori * 1e-6 rtol = 1e-15
+        # Without X_a the prior column is Σ h x_a, within the Float32 precision of
+        # the file's fields.
+        bare = O.RetrievalColumn(column.pressure_pa, column.pressure_weight, column.averaging_kernel,
+                                 column.prior_profile, Float64[], column.surface_pressure_pa, column.mapping)
+        @test isnan(bare.prior_column)
+        @test O.retrieval_prior_offset(bare) ≈ dot(bare.pressure_weight .- bare.pressure_weight .* bare.averaging_kernel,
+                                                   bare.prior_profile) rtol = 1e-15
+        @test abs((dot(bare.pressure_weight .* bare.averaging_kernel, bare.prior_profile) +
+                   O.retrieval_prior_offset(bare)) * 1e6 - apriori) < 1e-4
         # A model profile equal to the retrieval's prior gives the prior column
         # (the projection reproduces the retrieval's representation; a hat
         # average without the mass matrix is 0.02 ppm low here).
         @test abs(_prior_profile_departure(column)) < 1e-5
+        @test abs(_prior_profile_departure(bare)) < 1e-5
         # A model profile equal to a constant c gives c at every level.
         p_half = vcat(1.0, collect(range(2000.0, 99500.0; length = 30)))
         air = diff(p_half)
@@ -182,6 +195,9 @@ end
 # interpolated linearly to the layer midpoints) and Satellite.py 707-717 (flip
 # to surface first; h = Δp/p_surface; stretch and inv_rebin; the column).
 function _tm5_transcription(psurf_hpa, sigma, ak_toa, prior_toa, model_profile_sfc, model_levels_sfc)
+    # TM5 stores pres_levels as float32 (Observations.py, about line 7024),
+    # rounding the levels by up to ~0.004 Pa; the transcription keeps Float64
+    # to compare the construction, not that rounding.
     pres_levels = sigma .* (100.0 * psurf_hpa)                       # TOA first
     mid = 0.5 .* (pres_levels[2:end] .+ pres_levels[1:(end - 1)])
     lerp(x, y, t) = [y[i] + (y[i + 1] - y[i]) * (t[i] - x[i]) / (x[i + 1] - x[i]) for i in eachindex(t)]
@@ -246,7 +262,9 @@ _record(id, retrieval; kind = "column", flag = 0) =
 _same(a, b) = all(f -> isequal(getfield(a, f), getfield(b, f)), fieldnames(typeof(a)))
 
 @testset "schema v2: level records (retrieval_mapping = hat_levels)" begin
-    level = _level_column(98000.0; sigma = fill(1e-6, 20))
+    level = O.RetrievalColumn(; (f => getfield(_level_column(98000.0; sigma = fill(1e-6, 20)), f)
+                                 for f in (:pressure_pa, :pressure_weight, :averaging_kernel, :prior_profile,
+                                           :profile_sigma, :mapping))..., prior_column = 4.003e-4)
     layer = O.tm5_layer_column(level)
     mktempdir() do dir
         set = AT.CSObservationSet([_record(1, level), _record(2, layer), _record(3, nothing),
@@ -254,6 +272,8 @@ _same(a, b) = all(f -> isequal(getfield(a, f), getfield(b, f)), fieldnames(typeo
         path = AT.write_observations(joinpath(dir, "levels.nc"), set; attributes = Dict("source_file" => "x"))
         NCDataset(path) do ds
             @test ds["retrieval_mapping"][:] == ["hat_levels", "layer_rebin", "", "hat_levels"]
+            @test isequal(ds["retrieval_prior_column"][:], [4.003e-4, NaN, NaN, NaN])
+            @test ds["retrieval_prior_column"].attrib["units"] == "mol mol-1"
             @test ds.dim["retrieval_level"] == 20 && ds.dim["retrieval_interface"] == 21
             @test all(isnan, ds["retrieval_pressure_pa"][21, [1, 4]])     # 20 levels, NaN-padded
             @test ds.attrib["source_file"] == "x"
@@ -325,6 +345,7 @@ end
             @test c.averaging_kernel == reverse(Float64.(Float32.(rec.ak)))   # not multiplied by the weights
             @test c.pressure_weight == reverse(Float64.(Float32.(rec.pw)))
             @test c.prior_profile ≈ reverse(Float64.(Float32.(rec.prior))) .* 1e-6 rtol = 1e-15
+            @test c.prior_column ≈ Float64(sum(Float32.(rec.pw) .* Float32.(rec.prior))) * 1e-6 rtol = 1e-15
         end
         # Flags: 0 = assimilated (af ∈ {1}, LN/LG/OG); else 1 + assimilate_flag.
         @test [r.flag for r in set.records] == [0, 0, 3, 1, 0, 0]
@@ -332,14 +353,14 @@ end
                                                            "OCO2_LG"]
         # Options: data types, assimilate flags, model sigma, time range, TM5 mode.
         only_og = AT.read_oco2_mip_observations(path; data_types = ("OG",), assimilate_flags = (1, 2),
-                                                model_sigma = 0.5, mapping = :tm5,
+                                                model_sigma = 0.5, mapping = O.LayerRebin(),
                                                 time_range = (DateTime(2018, 7, 1, 12, 0, 15),
                                                               DateTime(2018, 7, 1, 12, 1)))
         @test [r.id for r in only_og.records] == [r.id for r in recs[2:5]]
         @test [r.flag for r in only_og.records] == [2, 3, 1, 0]
         @test all(r -> r.model_sigma ≈ 0.5e-6, only_og.records)
-        @test all(r -> r.retrieval.mapping isa O.LayerRebin && O.retrieval_layer_count(r.retrieval) == 19,
-                  only_og.records)
+        @test all(r -> r.retrieval.mapping isa O.LayerRebin && O.retrieval_layer_count(r.retrieval) == 19 &&
+                       isnan(r.retrieval.prior_column), only_og.records)            # TM5 computes its own X_a
         @test_throws ArgumentError AT.read_oco2_mip_observations(path; data_types = ("XX",))
         # Files per day, round trip.
         paths = AT.convert_oco2_mip_observations(path, joinpath(dir, "obs_{YYYYMMDD}.nc"))
@@ -369,6 +390,19 @@ end
 
 const MIP_FILE = "/kiwi-data/Data/model/OCO2MIP/observation_input/OCO2_b11.2_10sec_GOOD_r2.nc4"
 
+@testset "converter: OCO-3 snapshot area maps (data_type 0, SAM)" begin
+    mktempdir() do dir
+        rec = (; id = 2020010112000010, time = DateTime(2020, 1, 1, 12), lat = 34.0, lon = -118.0, xco2 = 412.0,
+               unc = 0.7, model_error = 0.3, psurf = 990.0, altitude = 100.0, data_type = 0, assimilate_flag = 1,
+               oco2_fixture_retrieval(990.0)...)
+        path = write_oco2_mip_fixture(joinpath(dir, "OCO3_b11_10sec_GOOD_r2.nc4"), [rec];
+                                      short_name = "OCO3_v11_XCO2_10sec_avg")
+        default = only(AT.read_oco2_mip_observations(path).records)
+        @test default.instrument_type == "OCO3_SAM" && default.flag == 2         # not in LN, LG, OG
+        @test only(AT.read_oco2_mip_observations(path; data_types = ("SAM",)).records).flag == 0
+    end
+end
+
 @testset "converter: real MIP records (read only, when the file exists)" begin
     if !isfile(MIP_FILE)
         @info "skipping the real-record converter check: $(MIP_FILE) not found"
@@ -392,10 +426,12 @@ const MIP_FILE = "/kiwi-data/Data/model/OCO2MIP/observation_input/OCO2_b11.2_10s
             @test issorted(c.pressure_pa; rev = true)
             @test c.surface_pressure_pa ≈ 100 * psurf[k] rtol = 1e-6
             @test abs(sum(c.pressure_weight) - 1) < 1e-5
-            # The file's own prior column (c = prior) is xco2_apriori, up to the
-            # 10-s averaging of the weights and the prior separately.
+            # Σ h x_a differs from xco2_apriori (the 10-s averages of the weights
+            # and the prior are taken separately); the operator uses the latter.
             worst = max(worst, abs(dot(c.pressure_weight, c.prior_profile) * 1e6 - apriori[k]))
-            # A model profile equal to the record's prior gives its prior column.
+            # A model profile equal to the record's prior gives the file's prior
+            # column xco2_apriori, to the projection's discretization.
+            @test c.prior_column ≈ apriori[k] * 1e-6 rtol = 1e-7
             k <= 10 && @test abs(_prior_profile_departure(c)) < 1e-5
             @test r.flag == ((af[k] == 1 && dtype[k] in (1, 2, 6)) ? 0 : 1 + af[k])
         end
