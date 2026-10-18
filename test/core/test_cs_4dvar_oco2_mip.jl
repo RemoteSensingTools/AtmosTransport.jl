@@ -11,8 +11,9 @@
 #     windows and TM5-mode records (rtol 1e-12, Float64); central finite
 #     differences of the cost;
 #   * co-sampling: flagged records are simulated and reported with their flag
-#     but change neither the cost nor the gradient (bit for bit), and are not
-#     screened; departures carry them;
+#     but change neither the cost nor the reverse pass's forcing and tape
+#     length (bit for bit; the gradient bit for bit with one thread), and are
+#     not screened; departures carry them;
 #   * cell averaging: the averaged observation's value, error and gradient are
 #     the 1/σ²-weighted combinations of its members'; the error formula with
 #     and without correlation; the model-error inflation alternative;
@@ -235,12 +236,35 @@ end
     @test AT.bind_to_mesh(_set(records), P.mesh, T0, DT; nsteps = P.nsteps, flagged_records = AT.CosampleFlaggedRecords(),
                           limit...)[2].id == 11
     @test_throws ArgumentError _bind(P, records; flagged_records = "keep")
+    rates = ADJ._surface_rates_from_controls(controls, P.nsteps, P.mesh, P.rm[1])
+    # What the reverse pass receives: the step forcing of the assimilated
+    # observations and the length of the taped run.
+    function reverse_input(observations, scheme)
+        f = ADJ._observe_cs_forward(P.rm, P.m, P.am, P.bm, P.cm, P.mesh, observations; scheme, dt = DT,
+                                    emission_rates = rates, column_met = column_met(P), build_functionals = true)
+        active = findall(s -> s.assimilated, f.stencils)
+        scales = [(f.simulated[i] - observations[i].value) / observations[i].sigma^2 for i in active]
+        forcing = ADJ._assemble_step_forcing(f.functionals[active], scales, P.mesh, P.Nz, P.rm[1])
+        return forcing, maximum(observations[i].step for i in active)
+    end
     for scheme in (AT.UpwindScheme(), AT.PPMScheme(AT.MonotoneLimiter()))
         r_drop = _fourdvar(P, dropped, controls; scheme)
         r_co = _fourdvar(P, cosampled, controls; scheme)
-        # The cost and the gradient are those without the flagged records, bit for bit.
+        # The cost is that without the flagged records, and the reverse pass
+        # receives the same forcing and tape length, bit for bit.
         @test r_co.cost == r_drop.cost && r_co.observation_cost == r_drop.observation_cost
-        @test all(r_co.gradients[c][q] == r_drop.gradients[c][q] for c in eachindex(controls), q in 1:6)
+        (f_drop, n_drop), (f_co, n_co) = reverse_input(dropped, scheme), reverse_input(cosampled, scheme)
+        @test n_co == n_drop == 2                                            # record 13 (step 3) does not extend the tape
+        @test all(getfield(f_co, name) == getfield(f_drop, name) for name in fieldnames(typeof(f_co)))
+        # The gradient: bit for bit with one thread. With several threads the
+        # threaded adjoint kernels are not bit-reproducible from run to run
+        # (two identical calls differ at ~1e-22 of the largest entry, also on
+        # main), so the comparison allows that rounding there.
+        if Threads.nthreads() == 1
+            @test all(r_co.gradients[c][q] == r_drop.gradients[c][q] for c in eachindex(controls), q in 1:6)
+        else
+            @test _relerr(r_co.gradients, r_drop.gradients) <= 1e-14
+        end
         @test r_co.simulated[[1, 3, 6]] == r_drop.simulated
         @test [s.assimilated for s in r_co.stencils] == [o.assimilate for o in cosampled]
         # A co-sample's simulated value is the one the record has when it is assimilated.

@@ -547,7 +547,8 @@
     (`CosampleFlaggedRecords`; driver key `[observations].flagged_records`)
     binds records with a nonzero flag as co-samples (`assimilate = false`):
     simulated and reported in `CS4DVarResult` and departure files (new
-    `flag` column), never in the cost or the gradient (bit for bit), not
+    `flag` column), never in the cost or the gradient (the cost and the
+    reverse pass's forcing are bit for bit those without them), not
     screened, not extending the taped run. Default `"drop"` as before.
   - *Cell averages.* `bind_to_mesh(...; cell_averaging = CellAverage(;
     time_tolerance_s, correlation))` (driver table

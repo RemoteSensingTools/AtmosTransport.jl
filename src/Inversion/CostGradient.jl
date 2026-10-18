@@ -374,7 +374,8 @@ left out of the cost and the gradient (its stencil is not `assimilated`).
 Co-samples (`CSObservation(...; assimilate = false)`: flagged records bound
 with `flagged_records = "cosample"`, the members of cell averages) are
 simulated and reported the same way, never in the cost or the gradient, and
-do not extend the taped run: adding them changes neither (bit for bit).
+do not extend the taped run: adding them leaves the cost and the reverse
+pass's forcing unchanged, bit for bit.
 
 One cost-and-gradient evaluation is two forward runs and one reverse pass
 (with `FullCheckpoint`; the other schedules add their recomputation), whatever

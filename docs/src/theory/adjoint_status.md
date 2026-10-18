@@ -652,7 +652,11 @@ as co-samples, `CSObservation(...; assimilate = false)`: the forward replay
 simulates them, `CS4DVarResult` reports their simulated values, residuals and
 stencils (`assimilated = false`), but they add nothing to the cost or the
 gradient, are not screened by the surface-pressure limit, and do not extend
-the taped run: the cost and the gradient are bit for bit those without them.
+the taped run: the cost is bit for bit that without them, and the reverse pass
+receives bit-identical forcing and tape length (the gradient is bit for bit
+that without them single-threaded; with several threads the adjoint kernels
+are not bit-reproducible from one call to the next, at about ``10^{-22}`` of
+the largest entry, with or without co-samples).
 Departure files carry each row's `flag` (`build_departure_set`), so one file
 holds the co-samples of all records. The default (`"drop"`) is unchanged.
 
