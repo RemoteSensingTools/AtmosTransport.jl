@@ -143,6 +143,12 @@ end
 # One launch for the six panels (queued; the stepping task's later work sees it).
 function expected_air_mass!(dest::NTuple{6}, window::TransportWindow, λ::Real)
     window.deltas === nothing && return _copy_cs_storage!(dest, window.air_mass)
+    # The kernel indexes without bounds checks (the host code it replaced threw).
+    for p in 1:6
+        size(dest[p]) == size(window.air_mass[p]) == size(window.deltas.dm[p]) ||
+            throw(DimensionMismatch("expected air mass, panel $p: destination $(size(dest[p])), " *
+                                    "air mass $(size(window.air_mass[p])), dm $(size(window.deltas.dm[p]))"))
+    end
     ctx = (; dest, m = window.air_mass, dm = window.deltas.dm,
            λ = convert(eltype(dest[1]), λ))
     launch!(Fused(ntuple(ExpectedAirMass, Val(6))), ctx, get_backend(dest[1]); sync = false)
@@ -320,7 +326,10 @@ function _pread_all(descriptor::Cint, destination::Ptr{UInt8}, nbytes::Int, offs
     while done < nbytes
         got = @threadcall(:pread, Cssize_t, (Cint, Ptr{UInt8}, Csize_t, Int64),
                           descriptor, destination + done, nbytes - done, offset + done)
-        got < 0 && Base.systemerror("pread of a transport binary window", true)
+        # `pread` ran on a libuv worker thread, so this thread's errno does not
+        # describe the failure; report the call instead.
+        got < 0 && throw(ErrorException("pread of a transport binary window failed (returned $got) " *
+                                        "reading $(nbytes - done) bytes at offset $(offset + done)"))
         got == 0 && throw(EOFError())
         done += got
     end
@@ -383,6 +392,15 @@ function unpack_window_payload!(w::TransportWindow,
         if entry !== nothing
             panels, padded = entry
             per_panel = n ÷ 6
+            # The unpack kernel indexes without bounds checks: check the section
+            # against the window panels and the staging buffers on the host.
+            halo = padded ? Hp : 0
+            dims = size(panels[1])
+            interior = (dims[1] - 2halo) * (dims[2] - 2halo) * prod(dims[3:end]; init = 1)
+            n == 6interior && length(staging.device) >= n && length(staging.host) >= o + n ||
+                throw(DimensionMismatch("raw window section $section: $n values on disk, window " *
+                                        "panels hold 6 × $interior; staging $(length(staging.host)) host / " *
+                                        "$(length(staging.device)) device values for offset $o"))
             copyto!(staging.device, 1, staging.host, o + 1, n)
             launch!(Fused(ntuple(p -> RawPanelUnpack(p, (p - 1) * per_panel), Val(6))),
                     (; dest = panels, raw = staging.device, halo = padded ? Hp : 0),

@@ -125,7 +125,9 @@ launches (one per panel, filling its four corners), and a packed tracer field
 6 edge launches (one per panel) and 6 corner launches, with a synchronization
 after the edges and after the corners. Measured on an NVIDIA L40S for a C90
 field with 72 levels in Float32 (edges, corners and synchronization), one
-exchange takes about 25 µs instead of 120 µs.
+exchange takes about 25 µs instead of 120 µs. Inside the packed cubed-sphere
+palindrome (`strang_split_cs_mt!`) the exchanges are only queued
+(`sync = false`): the palindrome synchronizes once, at its end.
 
 ## One transport window
 
