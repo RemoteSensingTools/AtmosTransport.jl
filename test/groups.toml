@@ -195,6 +195,7 @@ paths = [
 description = "Vertical diffusion: implicit and conservative Dkg solves, Kz fields, TM5 bldiff, GCHP non-local PBL, layer thickness (dz) from dry or total pressure"
 files = [
     "core/test_conservative_dkg.jl",
+    "core/test_diffusion_flux_form.jl",
     "core/test_diffusion_mass_flux_conservation.jl",
     "core/test_diffusion_palindrome_contract.jl",
     "core/test_dz_helpers_virtual_T.jl",
