@@ -113,7 +113,7 @@ hooks of the production step (`AbstractStepRecorder`; production passes
   (`initial_adjoint`). Formerly the replay always built the coupled center
   ``V(\Delta t/2) S V(\Delta t/2)`` (finding OF-115).
 - The replay carries production's persistent operator state (the Kahan
-  compensation of the surface source, the convection and Dkg diffusion ledger
+  compensation of the surface source, the convection and Kz/Dkg diffusion ledger
   carries, the CMFMC CFL cache), and checkpoints save it, so the forward
   replay, the tape recording and every checkpoint restart equal the production
   run bit for bit.
@@ -123,7 +123,11 @@ hooks of the production step (`AbstractStepRecorder`; production passes
 - `cs_adjoint_inputs(sim; tracer)` captures the adjoint's inputs from a
   production `DrivenSimulation` (per-step face fluxes as production refreshes
   them, per-window convection forcing, diffusion layer thickness and Kz,
-  emission rates, the schedule, fresh workspaces). Diffusion records carry the
+  emission rates, the schedule, fresh workspaces). Capture rejects initial nonzero
+  compensation or carries and valid CMFMC CFL caches, including models continued
+  across binaries at iteration zero. `CSStepSchedule(sim)` validates the production
+  operators and retains chemistry. Reset windows and targets use the model backend.
+  Diffusion records carry the
   forward's clock, so time-varying Kz fields are transposed at the times
   production evaluated them.
 

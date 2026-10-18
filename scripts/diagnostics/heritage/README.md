@@ -33,7 +33,6 @@ MFXC/DELP continuity residual.
 | `per_column_depth_histogram.jl` | Histogram of per-column TM5 convection active depth (from detu) over a C180 binary | Config comments cite it for measured convection reach; walks the payload through private `_cs_section_elements` |
 | `plot_c30_trendy_hovmoller.py` | Hovmoller and zonal growth-rate figures for the 3-model (CLM, JULES-ES, ORCHIDEE) C30 TRENDY run vs OCO-2 and GRESO | Run replaced by the 23-model campaign; `../rank_trendy_hovmoller.py` covers it except the GRESO growth-rate panel. Hard-codes a GRESO CSV in another user's home |
 | `plot_convection_profiles_per_panel_percentiles.jl` | Per-panel 10/50/90 percentile profiles at t=24 h for three convection schemes, 4-tracer spike experiment (log axis) | Template of the retired percentile-plot family, whose members differ only in scheme list, labels or axis scale |
-| `plot_cs_column_adjoint_2day_map.jl` | Two-day CS column-mean adjoint footprint map from real binaries, with physics, scheme, tape-storage and CUDA options | Broken since 2026-05-20 (calls about 17 now-unexported names unqualified). Only real-met adjoint footprint recipe, relevant to inversions; largest trim candidate (1370 lines) |
 | `plot_linrood_la_footprint.jl` | CairoMakie map of the LA LinRood footprint `.bin` from `../linrood_la_footprint.jl` | Plotting companion of the kept demo; needs CairoMakie (docs environment only) |
 | `plot_linrood_la_footprint_c180.py` | Matplotlib plot of the C180 LA footprint CSV | Plots the CSV written by `linrood_la_footprint_c180.jl` |
 | `plot_sif_fluxcom_hovmoller.py` | Monthly zonal GPP totals of the 2021 SIF and FLUXCOM-X drivers | Recipe for flux-driver Hovmollers; hard-codes a `/kiwi-data` FLUXCOM-X pilot path |
@@ -42,3 +41,9 @@ MFXC/DELP continuity residual.
 | `r2_slope_3d_vs_geoschem.py` | Full-3D per-cell R2 and regression slope of a 4-tracer run vs GEOS-Chem per timestep | Dec-2021 campaign gate; `../catrine_compare_vs_geoschem.py` has column and band R2, not the per-cell metric. Two configs name it; hard-codes the GC directory and start time |
 | `synthetic_closed_advection_conservation.jl` | Closed-domain air and tracer mass conservation of LL and CS (cross-panel) advection across schemes and float types on synthetic fluxes | Standalone side-by-side report (LL, CS interior and mirrored seams, a deliberately invalid seam) over one and eight steps; the conservation itself is tested in `test/core/test_cubed_sphere_advection.jl` |
 | `verify_emissions_vs_geoschem.jl` | Compares the applied surface emissions (loader, conservative LL to CS regrid, temporal scheme) with GEOS-Chem `Emis*` per species, timestep and cell on C180 | No maintained tool compares applied fluxes per cell. Repoint `BIN` and set `GC_DIR` before reuse |
+
+`plot_cs_column_adjoint_2day_map.jl` was removed when the cubed-sphere adjoint
+moved to the production step plan. It called retired tape/reverse drivers and
+manually composed window resets. Use `cs_adjoint_inputs(sim)` and
+`cs_surface_emission_footprint` for a real-met footprint with production cadence
+and reset semantics; plot the returned panel footprints separately.

@@ -57,7 +57,9 @@ Storage types, record types, and schedules come from [`../Tape/`](../Tape/).
   adjoint input of a driven configuration from production (per-step face
   fluxes after window loading and flux scaling, per-window convection forcing,
   diffusion layer thickness and Kz, the tracer's static emission rates, fresh
-  workspaces).
+  workspaces; nonzero initial compensation/carries or a valid CMFMC CFL
+  cache are rejected). Schedule construction validates production operators,
+  retains chemistry, and places reset targets on the model backend.
 - [`StepForcing.jl`](StepForcing.jl): `CSLinearFunctional` (an observation as
   `offset + Σ weight · rm_step[panel][i, j, k]`, each entry at one step: one
   step for an instantaneous observation, several for a time window; built by
@@ -243,6 +245,10 @@ Storage types, record types, and schedules come from [`../Tape/`](../Tape/).
 - [`../../test/core/test_cs_stride_checkpoint.jl`](../../test/core/test_cs_stride_checkpoint.jl),
   [`../../test/core/test_cs_tape_path.jl`](../../test/core/test_cs_tape_path.jl),
   [`../../test/core/test_cs_tape_mmap_roundtrip.jl`](../../test/core/test_cs_tape_mmap_roundtrip.jl)
+- Opt-in GPU reset parity:
+  [`../../test/diagnostic/test_cs_adjoint_reset_gpu.jl`](../../test/diagnostic/test_cs_adjoint_reset_gpu.jl)
+  checks captured `:preserve_vmr` targets, untaped/taped replay and checkpoint
+  gradients on CUDA (load CUDA before AtmosTransport in the root project).
 - Opt-in GPU and Lin-Rood checks:
   [`../../test/diagnostic/test_cs_transport_adjoint_gpu.jl`](../../test/diagnostic/test_cs_transport_adjoint_gpu.jl),
   [`../../test/diagnostic/test_linrood_adjoint_integration.jl`](../../test/diagnostic/test_linrood_adjoint_integration.jl)

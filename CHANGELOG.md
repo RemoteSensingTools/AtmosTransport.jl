@@ -4,6 +4,14 @@
 
 ### Breaking changes
 
+- Cubed-sphere adjoint schedule construction validates the production operators
+  and retains chemistry, preventing unsupported decay from being dropped.
+  `cs_adjoint_inputs` rejects non-fresh initial Kahan compensation, convection
+  or diffusion/Dkg carries, and valid CMFMC CFL caches, even at iteration zero.
+  Captured air-mass reset targets now use the model backend, including CUDA
+  `:preserve_vmr` resets. The OCO-2 MIP reference uses plan replay; the broken
+  heritage two-day column-adjoint plotting script is retired.
+
 - **Cubed-sphere adjoint replays the production step plan (owner decision
   D31; findings OF-114, OF-115).** A `StepPlan` (`Operators.StepPlans`) now
   describes the model step: the stages of window advance, window start, every

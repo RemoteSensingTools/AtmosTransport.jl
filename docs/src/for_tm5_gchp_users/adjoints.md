@@ -96,7 +96,17 @@ convection forcing and diffusion layer thickness of each met window, the
 tracer's emission rates, the schedule and fresh workspaces — so the adjoint
 of a driven run needs no hand assembly. Every entry point checks the whole step plan before it
 records anything (below): an operator without an adjoint is an error that
-names it, never a silent approximation.
+names it, never a silent approximation. `CSStepSchedule(sim)` also runs that
+check and retains the production chemistry operator, so a schedule cannot hide
+unsupported decay. Captured air-mass reset targets are computed on the model's
+backend, including CUDA with `air_mass_reset_mode = :preserve_vmr`.
+
+Capture requires fresh persistent operator state, in addition to `iteration == 0`.
+It rejects nonzero Kahan compensation, convection or diffusion/Dkg ledger carries,
+and a valid CMFMC CFL cache before consuming the simulation. A model continued
+from a previous binary can retain these values even when its new simulation is
+at iteration zero. Build a fresh model for capture; continuation from existing
+operator state is not supported.
 
 ## The forward model the adjoint transposes
 

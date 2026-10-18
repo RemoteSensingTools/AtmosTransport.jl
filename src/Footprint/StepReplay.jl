@@ -20,14 +20,17 @@
                    start_time = 0, window_start_air_mass = nothing,
                    window_end_air_mass = nothing)
     CSStepSchedule(plan::StepPlan; steps_per_window = 1, window_dt, start_time = 0,
-                   binary_substeps = false, window_start_air_mass = nothing,
+                   binary_substeps = false, chemistry = NoChemistry(),
+                   window_start_air_mass = nothing,
                    window_end_air_mass = nothing)
 
 The production step a cubed-sphere adjoint differentiates: the step plan and
 the met windows it runs on. The keyword form builds the plan as
 `DrivenSimulation` does (`StepPlan(; physics_cadence, window_contract =
 binary_window_contract, air_mass_reset)`); `DrivenSimulation`'s own schedule
-is `CSStepSchedule(sim)`.
+is `CSStepSchedule(sim)`. That constructor validates the simulation's operators
+and retains its chemistry operator; replay never replaces it with a no-op.
+Unsupported chemistry is rejected by the adjoint setup guard.
 
 - `steps_per_window` — advection steps per met window: an integer (every
   window) or one entry per window (the run may not go beyond them). Step `s`
@@ -49,13 +52,14 @@ is `CSStepSchedule(sim)`.
 The default (`CSStepSchedule(window_dt = dt)`) is one step per window and the
 full operator suite at every step, `TransportModel.step!`'s composition.
 """
-struct CSStepSchedule{P <: StepPlan, FT, WS, WE}
+struct CSStepSchedule{P <: StepPlan, FT, WS, WE, CH}
     plan                  :: P
     steps_per_window      :: Vector{Int}
     periodic              :: Bool      # one entry for every window (integer `steps_per_window`)
     window_dt             :: FT
     start_time            :: Float64
     binary_substeps       :: Bool
+    chemistry             :: CH
     window_start_air_mass :: WS
     window_end_air_mass   :: WE
 end
@@ -63,6 +67,7 @@ end
 function CSStepSchedule(plan::StepPlan; steps_per_window = 1, window_dt,
                         start_time::Real = 0,
                         binary_substeps::Bool = false,
+                        chemistry = NoChemistry(),
                         window_start_air_mass = nothing,
                         window_end_air_mass = nothing)
     periodic = steps_per_window isa Integer
@@ -77,8 +82,8 @@ function CSStepSchedule(plan::StepPlan; steps_per_window = 1, window_dt,
                             nwindows)
     _validate_reset_targets(plan.window_end, window_end_air_mass, "window_end_air_mass", nwindows)
     return CSStepSchedule{typeof(plan), typeof(window_dt), typeof(window_start_air_mass),
-                          typeof(window_end_air_mass)}(
-        plan, steps, periodic, window_dt, Float64(start_time), binary_substeps,
+                          typeof(window_end_air_mass), typeof(chemistry)}(
+        plan, steps, periodic, window_dt, Float64(start_time), binary_substeps, chemistry,
         window_start_air_mass, window_end_air_mass)
 end
 
@@ -199,7 +204,7 @@ air_mass_reset_target(::WindowEndAirMass, m::_CSReplayMeteo) = m.window_end_air_
 # The replay
 # ---------------------------------------------------------------------------
 
-mutable struct _CSReplay{P, ST, G, M, AS, AW, DO, DU, DW, E, RB, BR, C, CW, CF, ME, RS, RE, FT}
+mutable struct _CSReplay{P, ST, G, M, AS, AW, DO, DU, DW, E, RB, BR, C, CW, CF, CH, ME, RS, RE, FT}
     plan                 :: P
     steps                :: _ResolvedSchedule{FT}
     state                :: ST
@@ -217,6 +222,7 @@ mutable struct _CSReplay{P, ST, G, M, AS, AW, DO, DU, DW, E, RB, BR, C, CW, CF, 
     convection           :: C
     convection_workspace :: CW
     convection_forcing   :: CF       # forcing or per-step vector
+    chemistry            :: CH       # retained from the production schedule
     meteo                :: ME
     start_targets        :: RS
     end_targets          :: RE
@@ -325,7 +331,7 @@ function _build_cs_replay(panels_rm0, panels_m0, panels_am_steps, panels_bm_step
     return _CSReplay(schedule.plan, steps, state, grid, mesh, fluxes, scheme, advection_ws,
                      diffusion_op, diffusion_workspace, diffusion_ws, emissions, rate_buffer,
                      emission_rates, convection_op, convection_workspace,
-                     convection_forcing, meteo, start_targets, end_targets)
+                     convection_forcing, schedule.chemistry, meteo, start_targets, end_targets)
 end
 
 _first_target(::Nothing) = nothing
@@ -371,7 +377,7 @@ function _replay_operators(r::_CSReplay, s::Int, diffusion_op)
     return StepOperators(r.state, r.fluxes[s], r.grid, r.advection, r.advection_workspace,
                          diffusion_op, diffusion_op isa NoDiffusion ? nothing : r.diffusion_workspace,
                          r.emissions, r.convection, r.convection_workspace,
-                         _forcing_at(r.convection_forcing, s), NoChemistry())
+                         _forcing_at(r.convection_forcing, s), r.chemistry)
 end
 
 """

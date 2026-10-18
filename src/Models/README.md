@@ -68,7 +68,10 @@ read.
   replays), `cs_adjoint_inputs(sim; tracer)` (every adjoint input captured
   from production's met refresh: per-step fluxes, per-window convection
   forcing and diffusion geometry, emission rates, fresh workspaces; consumes
-  the simulation) and `require_adjoint_support(sim)` /
+  the simulation; rejects non-fresh persistent operator state). Schedule
+  construction validates the production operators, retains chemistry, and
+  computes air-mass reset targets on the model backend. Also provides
+  `require_adjoint_support(sim)` /
   `require_adjoint_support(model)`
 - [`RuntimeRecipeStyles.jl`](RuntimeRecipeStyles.jl) — runtime-style traits
   (`AbstractRuntimeRecipeStyle` + LatLon/ReducedGaussian/CubedSphere) the

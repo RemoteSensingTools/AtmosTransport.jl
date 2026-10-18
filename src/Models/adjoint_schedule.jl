@@ -14,6 +14,7 @@ replays the same plan; its per-step face fluxes and the per-window convection
 forcing are the caller's (see `cs_surface_emission_footprint`).
 """
 function Adjoints.CSStepSchedule(sim::DrivenSimulation)
+    require_adjoint_support(sim)
     windows = sim.start_window:sim.stop_window
     plan = sim.plan
     needs_start = any(s -> s isa AirMassResetStage, plan.window_advance)
@@ -23,6 +24,7 @@ function Adjoints.CSStepSchedule(sim::DrivenSimulation)
     return CSStepSchedule(plan; steps_per_window = sim.steps_per_window_schedule[windows],
                           window_dt = sim.window_dt, start_time = sim.start_time,
                           binary_substeps = uses_binary_substep_contract(sim.driver),
+                          chemistry = sim.model.chemistry,
                           window_start_air_mass = starts, window_end_air_mass = ends)
 end
 
@@ -47,7 +49,10 @@ met refresh through every window (not its tracer transport, which it leaves
 in an unspecified state), so `sim` cannot be run afterwards: build a second,
 identical simulation for the production run. Memory grows with the run: one
 set of face fluxes per step. A time-varying surface source of `tracer` is an
-error (pass its per-step rates yourself).
+error (pass its per-step rates yourself). Initial persistent operator state must
+be fresh: nonzero surface-source Kahan compensation, diffusion/Dkg or convection
+ledger carries, or a valid CMFMC CFL cache are rejected before capture. This
+also rejects continued models whose new simulation has `iteration == 0`.
 
 ```julia
 inputs = cs_adjoint_inputs(sim; tracer = :CO2)
@@ -67,6 +72,7 @@ function cs_adjoint_inputs(sim::DrivenSimulation; tracer::Symbol = first(sim.mod
     idx === nothing && throw(ArgumentError(
         "tracer $(repr(tracer)) is not in the simulation ($(model.state.tracer_names))"))
     require_adjoint_support(sim)
+    _require_fresh_adjoint_state(model)
 
     panels_rm0 = map(copy, get_tracer(model.state, idx))
     panels_m0 = map(copy, model.state.air_mass)
@@ -116,6 +122,28 @@ function cs_adjoint_inputs(sim::DrivenSimulation; tracer::Symbol = first(sim.mod
             panels_cm_steps = [cm...], mesh = model.grid.horizontal, kwargs)
 end
 
+# Capture currently supports fresh operator state only. Iteration zero alone
+# does not establish freshness: the runner reuses a model across daily binaries.
+# Reject before met refresh consumes the simulation, including a valid CMFMC
+# CFL cache (which replay would otherwise invalidate/reset).
+_initial_adjoint_state(::Nothing) = true
+_initial_adjoint_state(a::AbstractArray) = all(iszero, a)
+_initial_adjoint_state(t::Tuple) = all(_initial_adjoint_state, t)
+_initial_adjoint_state(s::NamedTuple) =
+    _initial_adjoint_state(s.carry) && (!hasproperty(s, :valid) || !s.valid)
+
+function _require_fresh_adjoint_state(model)
+    for (name, op) in (("surface emissions", model.emissions),
+                       ("diffusion", model.workspace.diffusion_ws),
+                       ("convection", model.workspace.convection_ws))
+        _initial_adjoint_state(Operators.StepPlans.operator_state(op)) ||
+            throw(ArgumentError("cs_adjoint_inputs cannot discard initial persistent operator state " *
+                "of $name (Kahan compensation, ledger carry or valid CMFMC CFL cache); " *
+                "capture a fresh model, rather than one continued from a previous binary"))
+    end
+    return nothing
+end
+
 # The per-step emission rates of `tracer`: its static surface source, or
 # nothing (no source for it).
 _adjoint_emission_rates(::NoSurfaceFlux, _tracer, _n) = nothing
@@ -131,7 +159,8 @@ end
 # The air mass of window `w` at fraction `λ` (0: start, 1: the end the binary
 # makes authoritative), computed as the simulation computes its reset target.
 function _window_air_mass(sim::DrivenSimulation, w::Int, λ)
-    window = _load_window(sim.driver, w)
+    window = _adapt_window_to_model_backend(_load_window(sim.driver, w),
+                                            sim.model.state.air_mass)
     dest = _allocate_storage_like(window.air_mass)
     λ == 0 ? _copy_storage!(dest, window.air_mass) :
              expected_air_mass!(dest, window, one(typeof(sim.Δt)))
