@@ -345,11 +345,12 @@ end
     r_members = _fourdvar(P, members, controls)
     @test _relerr(r.gradients, r_members.gradients) <= 1e-12
     @test r.observation_cost ≈ 0.5 * ((r.simulated[4] - only_group[4].value) / only_group[4].sigma)^2 rtol = 1e-14
-    # Departures: the members are rows (co-samples of the average), the average is not.
+    # Departures: the members are rows (co-samples of the average), and so is
+    # the average, numbered 1, with a row id above every record id (26 + 1).
     result = _fourdvar(P, obs, controls)
     deps = AT.build_departure_set(_set(records), result, P.mesh, "2024-06-15 00:00:00", DT, P.nsteps)
-    @test [d.id for d in deps.records] == [21, 22, 24, 25, 23, 26, -21]
-    @test [d.cell_average_id for d in deps.records] == [21, 21, 0, 0, 21, 0, 21]
+    @test [d.id for d in deps.records] == [21, 22, 24, 25, 23, 26, 27]
+    @test [d.cell_average_id for d in deps.records] == [1, 1, 0, 0, 1, 0, 1]
     @test [d.assimilated for d in deps.records] == [false, false, true, true, false, true, true]
     row = deps.records[end]
     @test row.vertical_placement == AT.CELL_AVERAGE_PLACEMENT_CODE && row.cell_average_correlation == 0
@@ -367,11 +368,66 @@ end
     @test sum(r.normalized_departure^2 for r in assimilated_rows(d_plain)) ≈ 2 * r_plain.observation_cost rtol = 1e-12
     mktempdir() do dir
         back = AT.read_departures(AT.write_departures(joinpath(dir, "avg.nc"), deps))
-        @test [d.cell_average_id for d in back.records] == [21, 21, 0, 0, 21, 0, 21]
+        @test [d.cell_average_id for d in back.records] == [1, 1, 0, 0, 1, 0, 1]
         for (x, y) in zip(deps.records, back.records)
             @test all(f -> isequal(getfield(x, f), getfield(y, f)), fieldnames(AT.CSDepartureRecord))
         end
     end
+    # Record ids of any sign (0 and negative included) keep the departure ids
+    # unique: the average's row id is above every record id of the set.
+    signed = [_record(0; a..., t = 100.0, value = 402e-6, value_sigma = 0.5e-6, retrieval = _level(97000.0)),
+              _record(-21; a..., t = 110.0, value = 403e-6, value_sigma = 0.8e-6),
+              _record(-22; b..., t = 105.0, value = 404e-6)]
+    signed_obs = with_logger(NullLogger()) do
+        _bind(P, signed; cell_averaging = AT.CellAverage())
+    end
+    signed_deps = AT.build_departure_set(_set(signed), _fourdvar(P, signed_obs, controls), P.mesh,
+                                         "2024-06-15 00:00:00", DT, P.nsteps)
+    @test [d.id for d in signed_deps.records] == [0, -21, -22, 1]
+    @test [d.cell_average_id for d in signed_deps.records] == [1, 1, 0, 1]
+    # Departure ids must be unique, and every member row names an average row.
+    twin = deps.records[1]
+    kw = Dict(f => getfield(twin, f) for f in fieldnames(AT.CSDepartureRecord))
+    @test_throws ArgumentError AT.CSDepartureSet([deps.records[3], AT.CSDepartureRecord(; kw...,
+                                                     id = deps.records[3].id)]; mesh_Nc = deps.mesh_Nc,
+                                                 mesh_panel_convention = deps.mesh_panel_convention,
+                                                 mesh_cs_definition_tag = deps.mesh_cs_definition_tag,
+                                                 t_start = deps.t_start, dt_seconds = deps.dt_seconds,
+                                                 nsteps = deps.nsteps)
+    @test_throws ArgumentError AT.CSDepartureSet(deps.records[1:6]; mesh_Nc = deps.mesh_Nc,
+                                                 mesh_panel_convention = deps.mesh_panel_convention,
+                                                 mesh_cs_definition_tag = deps.mesh_cs_definition_tag,
+                                                 t_start = deps.t_start, dt_seconds = deps.dt_seconds,
+                                                 nsteps = deps.nsteps)
+    # A hand-built average is checked against its records as bind_to_mesh
+    # builds it: here of two flagged (not assimilable) records.
+    flagged = [_record(31; a..., t = 100.0, value = 402e-6, flag = 1),
+               _record(32; a..., t = 110.0, value = 403e-6, flag = 1)]
+    co = with_logger(NullLogger()) do
+        _bind(P, flagged; flagged_records = "cosample")
+    end
+    w2 = [0.5, 0.5]
+    fake = AT.CSObservation(co[1].sampling,
+                            AT.CSCellAverageObjective(co[1].objective.panel, co[1].objective.i, co[1].objective.j,
+                                                      [o.objective for o in co], w2, [31, 32];
+                                                      measurement_sigma = sqrt(0.5) * 1e-6, model_sigma = 0.0,
+                                                      correlation = 0.0),
+                            402.5e-6, sqrt(0.5) * 1e-6; id = 999)
+    r_fake = _fourdvar(P, [co; fake], controls)
+    err = try
+        AT.build_departure_set(_set(flagged), r_fake, P.mesh, "2024-06-15 00:00:00", DT, P.nsteps)
+    catch e
+        e
+    end
+    @test err isa ArgumentError && occursin("flag 1", err.msg)
+    # ... and its members must be co-sampled observations of the run.
+    err = try
+        AT.build_departure_set(_set(group), _fourdvar(P, only_group[4:4], controls), P.mesh,
+                               "2024-06-15 00:00:00", DT, P.nsteps)
+    catch e
+        e
+    end
+    @test err isa ArgumentError && occursin("has no observation", err.msg)
     # A cell average cannot hold an averaging-kernel column with a surface-pressure limit.
     limited = AT.CSRetrievalColumnObjective(only_group[1].objective.panel, only_group[1].objective.i,
                                             only_group[1].objective.j, only_group[1].objective.area,

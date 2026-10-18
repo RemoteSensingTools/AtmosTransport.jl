@@ -221,7 +221,7 @@ description = "the observation record's flag: 0 = assimilate; any other value = 
 [optional_variables.cell_average_id]
 dtype = "i64"
 dims  = ["obs"]
-description = "the cell average the row belongs to (CellAverage), named by the id of its earliest record; 0 = none. Member rows are not assimilated themselves; the average's own row (vertical_placement = -4, id = -cell_average_id) is the term of the cost, with the observed and simulated averages, value_sigma = the measurement error of the average and model_sigma its model error. Written when any row belongs to one"
+description = "the cell average the row belongs to (CellAverage), numbered 1, 2, ... in observation order; 0 = none. Member rows are not assimilated themselves; the average's own row (vertical_placement = -4, its id above every record id of the observation set: the largest record id, at least 0, plus cell_average_id) is the term of the cost, with the observed and simulated averages, value_sigma = the measurement error of the average and model_sigma its model error. Written when any row belongs to one"
 
 [optional_variables.cell_average_correlation]
 dtype = "f64"

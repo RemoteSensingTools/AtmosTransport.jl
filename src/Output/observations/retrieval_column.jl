@@ -502,10 +502,12 @@ profile ``x_k`` (dry mole fraction, `k = 1` at the top),
 ```math
 X = \\sum_k H_k\\, x_k + c, \\qquad
 H_k = \\sum_i h_i\\, a_i\\, P_{ik}, \\qquad
-c = \\sum_i h_i\\,(1 - a_i)\\, x_{a,i}
+c = X_a - \\sum_i h_i\\, a_i\\, x_{a,i}
 ```
 
-([`retrieval_prior_offset`](@ref)). ``P`` maps the model column, stretched
+([`retrieval_prior_offset`](@ref)) with the column's prior column ``X_a``
+(`prior_column`) when it gives one, ``X_a = \\sum_i h_i x_{a,i}`` (so
+``c = \\sum_i h_i (1 - a_i) x_{a,i}``) when not. ``P`` maps the model column, stretched
 onto the retrieval column ([`stretch_model_interfaces!`](@ref)), onto the
 retrieval's values as its `mapping` says: the rebin ``R`` of
 [`LayerRebin`](@ref) ([`retrieval_rebin_matrix`](@ref); the column of

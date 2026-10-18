@@ -581,8 +581,8 @@ A model profile equal to the retrieval's prior gives the prior column, to the
 projection's discretization: on 960 OCO-2 records of 2019-07-01, with the
 prior sampled as the layer means of a fine column aligned with the levels
 (760 layers), ``X - X_a`` is −7e-6 ppm (5–95 %: −9e-6 to −4e-6). On a GEOS L72
-column, whose layers do not line up with the levels, ``|X - \sum_j h_j
-x_{a,j}|`` ranges from 1e-5 to 2.1e-3 ppm and single level values ``c_j``
+column, whose layers do not line up with the levels, ``|X - X_a| = |\sum_j
+h_j a_j (c_j - x_{a,j})|`` ranges from 1e-5 to 2.1e-3 ppm and single level values ``c_j``
 differ from ``x_{a,j}`` by up to 0.57 ppm (independent review): the level
 values carry the model's coarse vertical sampling, the column much less. The hat
 average ``\int \varphi_j x / \int \varphi_j`` (``M`` lumped onto its diagonal),
@@ -609,7 +609,8 @@ kernel and prior interpolated to the layer midpoints, the weights
 ``\Delta p_i``, then the layer operator (rebin ``R``). TM5 divides the
 thicknesses by ``p_s``, so its weights sum to ``1 - 10^{-4}``; this mode
 normalizes them to 1 (TM5's column is 0.9999 times this one). It is for
-comparisons with TM5-4DVAR co-samples (converter `mapping = :tm5`, forward
+comparisons with TM5-4DVAR co-samples (converter `mapping = Output.LayerRebin()`
+or `--mapping tm5`, forward
 sampler `averaging_kernel_mapping = "tm5"`). For a +10 ppm boundary layer
 below ``\sigma = 0.95`` on the prior, the mode is 0.009 ppm above the hat
 projection (5–95 %: +0.002 to +0.017; 960 records of 2019-07-01).
@@ -705,7 +706,8 @@ the within-span correlation is already in ``\sigma_i``); the model error
 gradient is the ``w``-weighted combination of the members'. The members stay
 as co-samples, so departures keep one row per record, with the average's
 `cell_average_id`, and the average is a row of its own, the term of the cost
-(placement code −4, `id = −cell_average_id`, ``\bar y``, ``\bar H x``,
+(placement code −4, `cell_average_id` its number 1, 2, …, a row id above
+every record id of the observation set, ``\bar y``, ``\bar H x``,
 ``\sigma_\mathrm{meas}`` in `value_sigma`, the model error in `model_sigma`,
 ``\rho`` in `cell_average_correlation`): over the assimilated rows,
 ``\sum`` `normalized_departure`² ``= 2 J_\mathrm{obs}``. Averaging needs

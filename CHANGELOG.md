@@ -566,7 +566,8 @@
     (`CSCellAverageObjective`, `CELL_AVERAGE_PLACEMENT_CODE`) with 1/σ²
     weights, ``σ²_meas = ΣΣ w_i w_j ρ_ij σ_i σ_j/(Σw)²`` and the model error
     added once; the members stay as co-samples, and departure files have a
-    row for each average (placement code −4, `id = −cell_average_id`,
+    row for each average (placement code −4, numbered by `cell_average_id`,
+    with a row id above every record id; departure ids are checked unique;
     σ_meas, σ_mod and `cell_average_correlation`) besides the member rows
     (`cell_average_id`), so Σ normalized_departure² over assimilated rows is
     2 J_obs. `inflate_cell_model_error` is the alternative that keeps the
