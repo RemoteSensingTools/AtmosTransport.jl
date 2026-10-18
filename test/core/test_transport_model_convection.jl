@@ -330,8 +330,11 @@ end
     @test chem_sub.total_dt[] == 1800.0
     # Both cadences keep the binary's window-end air-mass reset.
     @test AtmosTransport.Models._binary_window_contract(sim_sub)
-    @test !AtmosTransport.Models._uses_binary_transport_schedule(sim_sub)
-    @test AtmosTransport.Models._uses_binary_transport_schedule(sim_window)
+    SP = AtmosTransport.Operators.StepPlans
+    @test sim_sub.plan.cadence isa SP.SubstepPhysics
+    @test sim_window.plan.cadence isa SP.WindowPhysics
+    @test any(s -> s isa SP.AirMassResetStage{SP.WindowEndAirMass}, sim_sub.plan.window_end)
+    @test any(s -> s isa SP.AirMassResetStage{SP.WindowEndAirMass}, sim_window.plan.window_end)
 
     resolve = AtmosTransport.Models._resolve_physics_cadence
     @test resolve(nothing) === :window

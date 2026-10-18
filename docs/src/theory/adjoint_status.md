@@ -87,6 +87,63 @@ CMFMC and CMFMC-matrix have column adjoint-identity tests; the TM5/CMFMC
 footprint paths are checked against finite-difference emission gradients in
 `test_cs_ppm_adjoint_footprint.jl`.
 
+### [The step plan: the adjoint replays production](@id adjoint-step-plan)
+
+The forward model the reverse pass transposes is the production step by
+construction (owner decision D31). A `StepPlan` (`Operators/StepPlan`)
+describes a run's step in four phases — window advance, window start, every
+step, window end — with the physics cadence, the binary window contract and
+the air-mass reset mode resolved once. `TransportModel.step!` and
+`DrivenSimulation` execute it; the adjoint replays the same plan with the
+production operators on a single-tracer state (`CSStepSchedule`; for a
+driven run `CSStepSchedule(sim)`) and records its tape through the recorder
+hooks of the production step (`AbstractStepRecorder`; production passes
+`NoStepRecorder()`, whose hooks are no-ops). Consequences:
+
+- `physics_cadence = :window` (the driven-run default under a binary window
+  contract): convection is recorded once per met window, after the window's
+  last step and the air-mass reset to the window's end mass, over the window
+  length, with the window's forcing and (CMFMC) the CFL sub-step count of the
+  forward call. Formerly the adjoint applied convection every step (finding
+  OF-114).
+- A configuration without surface sources has the center ``V(\Delta t)``;
+  footprints and 4D-Var always carry a surface-flux operator (zero rates
+  allowed), and `cs_surface_emission_footprint_from_seed(...; surface_flux =
+  false)` gives the initial-condition sensitivity of a no-emission run
+  (`initial_adjoint`). Formerly the replay always built the coupled center
+  ``V(\Delta t/2) S V(\Delta t/2)`` (finding OF-115).
+- The replay carries production's persistent operator state (the Kahan
+  compensation of the surface source, the convection and Kz/Dkg diffusion ledger
+  carries, the CMFMC CFL cache), and checkpoints save it, so the forward
+  replay, the tape recording and every checkpoint restart equal the production
+  run bit for bit.
+- `require_adjoint_support(plan, ops)` (also `require_adjoint_support(sim)`)
+  rejects, before recording, every stage or operator without a record and an
+  adjoint (`adjoint_support(x)` is the trait), naming it.
+- `cs_adjoint_inputs(sim; tracer)` captures the adjoint's inputs from a
+  production `DrivenSimulation` (per-step face fluxes as production refreshes
+  them, per-window convection forcing, diffusion layer thickness and Kz,
+  emission rates, the schedule, fresh workspaces). Capture rejects initial nonzero
+  compensation or carries and valid CMFMC CFL caches, including models continued
+  across binaries at iteration zero. `CSStepSchedule(sim)` validates the production
+  operators and retains chemistry. Reset windows and targets use the model backend.
+  Diffusion records carry the
+  forward's clock, so time-varying Kz fields are transposed at the times
+  production evaluated them.
+
+`test/core/test_cs_adjoint_step_plan_parity.jl` is the parity matrix: Upwind,
+unlimited slopes, monotone PPM and Lin–Rood (plus CW84 PPM, unlimited PPM and
+Lin–Rood ORD 5 with upwind vertical) under `:window` and `:substep` cadence,
+with and without the binary window contract, TM5, CMFMC and CMFMC-matrix
+convection, both diffusion couplings, diffusion without surface sources and
+both reset modes. Each case compares the forward replay, the tape recording and
+a restart from a checkpoint inside a met window with the production
+`DrivenSimulation` (`==` in one thread), Full/Stride/Revolve footprints with
+each other, and, on a subset, footprints and the initial-condition sensitivity
+with central differences of the production simulation (Upwind ``\sim
+10^{-14}``, monotone PPM ``4\times10^{-12}``, Lin–Rood ``5\times10^{-11}``
+relative).
+
 ### Checkpoint schedules
 
 `src/Tape/CheckpointSchedule.jl` ships three checkpoint policies,
@@ -103,7 +160,11 @@ selectable via the `checkpoint` kwarg of `cs_surface_emission_footprint`,
 `RevolveCheckpoint()` has no snapshot-budget argument. It is a recursive
 bisection variant rather than the optimal binomial Revolve: peak snapshots are
 proportional to the recursion depth and total replay work is
-`O(N log N)`. It is covered in `test/core/test_cs_stride_checkpoint.jl`.
+`O(N log N)`. It is covered in `test/core/test_cs_stride_checkpoint.jl`. All
+three schedules share one driver per policy for every scheme family; a
+checkpoint is a replay snapshot (tracer and air mass with halos plus the
+persistent operator state), so a restart inside a met window runs that
+window's remaining steps and window-end stages exactly as the recording run.
 
 ### Tape storage backends
 

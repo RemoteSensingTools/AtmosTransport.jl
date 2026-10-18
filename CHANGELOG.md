@@ -4,6 +4,76 @@
 
 ### Breaking changes
 
+- Cubed-sphere adjoint schedule construction validates the production operators
+  and retains chemistry, preventing unsupported decay from being dropped.
+  `cs_adjoint_inputs` rejects non-fresh initial Kahan compensation, convection
+  or diffusion/Dkg carries, and valid CMFMC CFL caches, even at iteration zero.
+  Captured air-mass reset targets now use the model backend, including CUDA
+  `:preserve_vmr` resets. The OCO-2 MIP reference uses plan replay; the broken
+  heritage two-day column-adjoint plotting script is retired.
+
+- **Cubed-sphere adjoint replays the production step plan (owner decision
+  D31; findings OF-114, OF-115).** A `StepPlan` (`Operators.StepPlans`) now
+  describes the model step: the stages of window advance, window start, every
+  step and window end, with the physics cadence, the binary window contract
+  and the air-mass reset mode resolved once. `TransportModel.step!` and
+  `DrivenSimulation` execute it (production results are bit-identical), and
+  the cubed-sphere adjoint replays the same plan with the production
+  operators on a single-tracer state, recording its tape through recorder
+  hooks of the production step (`AbstractStepRecorder`; production passes the
+  no-op `NoStepRecorder()`). The separate replay composition
+  (`_replay_cs_step!`, the mass/tracer/Lin-Rood recorders, the per-family
+  Stride drivers) is removed. Consequences for the adjoint API:
+  - New `schedule = CSStepSchedule(...)` keyword on every entry point
+    (`cs_surface_emission_footprint`, `..._from_seed`, `run_cs_footprint_forward`,
+    `cs_surface_flux_jacobian`, `cs_surface_flux_4dvar`, `cs_tape_byte_estimate`):
+    the plan, steps per met window, window length, start time, binary subcycle
+    contract and air-mass reset targets; `CSStepSchedule(sim)` gives a
+    `DrivenSimulation`'s, and `cs_adjoint_inputs(sim; tracer)` captures every
+    adjoint input of a cubed-sphere driven configuration from production (per-
+    step face fluxes after window loading and flux scaling, per-window
+    convection forcing and diffusion geometry, emission rates, fresh
+    workspaces). Without it the schedule is one step of `dt` per met
+    window with the full operator suite every step (the former behaviour).
+    Under `physics_cadence = :window` with a binary window contract,
+    convection is recorded once per window over the window length (OF-114;
+    the adjoint used to apply it every step).
+  - `dt` defaults to `nothing` (one when no schedule is given; with a
+    schedule its step dt). `cfl_limit` other than `DEFAULT_CFL_LIMIT` is an
+    error (production uses the default).
+  - `cs_surface_emission_footprint_from_seed(...; surface_flux = false)` and
+    `run_cs_footprint_forward(...; surface_flux = false)` replay a
+    configuration without surface sources: the palindrome center is one
+    `V(dt)` solve, as in production (OF-115; the replay always built
+    `V(dt/2) S V(dt/2)` with `S = 0`). `CSFootprintResult` gains
+    `initial_adjoint`, `dJ/drm` at the initial state (positional
+    construction changes); without a surface-flux operator `footprints` is
+    empty.
+  - Surface emissions go through the production surface-flux kernel (Kahan
+    compensated) and convection through the production `apply!` with its
+    ledger carry and the CMFMC CFL cache; checkpoints save this persistent
+    state. Footprints and 4D-Var values change at rounding level; the
+    forward replay, the tape recording and every checkpoint restart equal
+    the production run bit for bit.
+  - `require_adjoint_support(plan, ops...)`, `require_adjoint_support(sim)`
+    and the trait `adjoint_support(x)`: every entry point rejects, before
+    recording, a plan with a stage or operator without a record and an
+    adjoint (for example exponential-decay chemistry, the collaborative TM5
+    solve, clamped CMFMC), naming it.
+  - Tape records: `_CSMidpointRecord` carries its emission interval,
+    `_CSConvectionRecord` the forward call's CFL sub-step count,
+    `_CSDiffusionRecord` the forward's clock (time-varying Kz is transposed
+    at the time production evaluated it), and a new
+    `_CSAirMassResetRecord` transposes the reset. Lin-Rood horizontal records
+    are built from the production `fv_tp_2d_cs!`'s hooks;
+    `cs_tape_byte_estimate` counts their face fluxes too.
+  - `DrivenSimulation` gains a `plan` field and drops
+    `physics_every_substep`.
+  - `test/core/test_cs_adjoint_step_plan_parity.jl` is the parity matrix
+    (replay, recording and checkpoint restarts == production bit for bit
+    across schemes, cadences, convection, diffusion couplings, no-emission
+    diffusion and reset modes; gradients vs. production finite differences).
+
 - **Observation and departure files: schema v2 (issue #20, part 3; findings
   OF-84, OF-15).** `read_observations` and `read_departures` reject schema-v1
   files with an explanation (internal development: no reader for v1).

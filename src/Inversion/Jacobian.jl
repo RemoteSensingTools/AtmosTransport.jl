@@ -78,9 +78,8 @@ named time windows. Each returned `footprints[obj, window]` entry is an
 per-step emission-rate footprints; use `CSSurfaceFluxWindow(...;
 normalize=true)` for average-rate controls or explicit `weights` for a
 custom temporal basis. `kwargs` are those of `cs_surface_emission_footprint`.
-With the default `FullCheckpoint` the forward run is taped once and the tape
-is walked once per objective; `StrideCheckpoint` and `RevolveCheckpoint` run
-their schedule per objective.
+Every checkpoint schedule records (and recomputes) the forward run once and
+walks it once per objective.
 """
 function cs_surface_flux_jacobian(panels_rm0, panels_m0,
                                   panels_am_steps,

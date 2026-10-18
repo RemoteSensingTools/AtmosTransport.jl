@@ -31,8 +31,9 @@ include(joinpath(@__DIR__, "..", "core", "test_cs_ppm_adjoint_footprint.jl"))
 # switch points (kinks), where central FD averages the two one-sided derivatives
 # and disagrees with the correct one-sided adjoint by an eps-INDEPENDENT ~1.4e-3.
 # That is a finite-difference artifact, NOT an adjoint error — proven 2026-06-02:
-# the recorded forward (`_record_linrood_horizontal_substep!`, record_ops=false)
-# is bit-identical to production `fv_tp_2d_cs!`; the single-substep VJP matches FD
+# the recorded forward (then a phase-by-phase copy of `fv_tp_2d_cs!`; the tape
+# is now recorded from production `fv_tp_2d_cs!` itself) was bit-identical to
+# production `fv_tp_2d_cs!`; the single-substep VJP matches FD
 # to 1e-7; and this footprint identity matches to ~1e-11 on smooth fields for both
 # ORD=5 and ORD=7. It was ~1e-8 until issue #10 was fixed: the Z half-sweeps
 # staged the post-sweep air mass. (The split-sweep footprint test below validates

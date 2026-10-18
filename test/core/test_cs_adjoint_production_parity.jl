@@ -12,15 +12,16 @@
 #   diffusion operator's surface-flux coupling at the palindrome center, and
 #   the step-start halo refresh that follows the previous step's convection.
 #
-# Ledger carry. Production TM5 and CMFMC convection keep a persistent
-# per-column ledger carry (the sub-ulp part of each column's rounding
-# residual); the adjoint replay starts every solve from a zero carry by design
-# (src/Adjoints/README.md). The parity tests compare the replay against
-# production with the carry zeroed before every step (the replay's semantics)
-# and against production with its persistent carry; both agree to rounding.
-# Production surface fluxes use a compensated sum and the replay a plain sum,
-# hence the 1e-12 bounds; the defects these tests guard against are 1e-4 or
-# larger.
+# Since the adjoint replays the production step plan (D31) with the
+# production operators and their persistent state (the convection ledger
+# carry, the surface source's Kahan compensation), the replay equals
+# `TransportModel.step!` bit for bit (`==` in one thread; with several threads
+# a 1e-13 bound, as the halo and Lin-Rood adjoint kernels use atomics). The
+# adjoint's default schedule is one step per met window, so `_production`
+# invalidates the CMFMC CFL cache before each step, as `DrivenSimulation`
+# does when it installs a window's convection forcing.
+# test_cs_adjoint_step_plan_parity.jl covers driven runs with several steps
+# per window and both physics cadences.
 
 using Test
 using Random
@@ -130,18 +131,12 @@ const CONVECTIONS = (
     cmfmc = (op = AT.CMFMCConvection(), forcing = _cmfmc_forcing()),
 )
 
-# Zero a convection workspace's ledger carry (persistent production state).
-_zero_carry!(c::AbstractArray) = fill!(c, zero(eltype(c)))
-_zero_carry!(c::Tuple) = foreach(_zero_carry!, c)
-_zero_carry!(c::Base.RefValue) = _zero_carry!(c[])
-_zero_ledger_carry!(ws) = hasproperty(ws, :ledger_carry) ? _zero_carry!(ws.ledger_carry) : nothing
-
 # Production `TransportModel.step!` run. It always carries a surface-flux
 # operator (zero rates for `rate_scale = 0`): a footprint is the derivative
 # with respect to the emissions, so the adjoint's forward model is a run with
 # one.
 function _production(scheme, conv::Symbol; diffusion = AT.NoDiffusion(), nsteps = NSTEPS,
-                     dt = 1800.0, rate_scale = 1.0, zero_carry = true)
+                     dt = 1800.0, rate_scale = 1.0)
     state = AT.CubedSphereState(AT.DryBasis, MESH, ntuple(p -> copy(PB.m[p]), 6);
                                 CO2 = ntuple(p -> copy(PB.rm[p]), 6))
     fluxes = AT.allocate_face_fluxes(MESH, NZ; FT = Float64, basis = AT.DryBasis)
@@ -160,7 +155,7 @@ function _production(scheme, conv::Symbol; diffusion = AT.NoDiffusion(), nsteps 
             copyto!(model.fluxes.bm[p], PB.bm[s][p])
             copyto!(model.fluxes.cm[p], PB.cm[s][p])
         end
-        zero_carry && conv !== :none && _zero_ledger_carry!(model.workspace.convection_ws)
+        conv !== :none && AT.invalidate_cmfmc_cache!(model.workspace.convection_ws)
         AT.step!(model, dt)
     end
     return model
@@ -203,6 +198,7 @@ function _replay_vmr(scheme, conv::Symbol; diffusion = AT.NoDiffusion(), nsteps 
 end
 
 _maxrel(a, b) = maximum(abs.(a .- b) ./ abs.(b))
+exact(a, b) = Threads.nthreads() == 1 ? a == b : _maxrel(a, b) <= 1e-13
 
 _footprint_maxrel(a, b) =
     maximum(maximum(abs.(a.footprints[s][p] .- b.footprints[s][p]))
@@ -236,11 +232,7 @@ _scheme_label(scheme) = scheme isa AT.UpwindScheme ? "Upwind" :
             scheme in schemes, coupling in COUPLINGS, conv in (:none, :tm5, :cmfmc)
         diffusion = _kz_diffusion(coupling)
         replay = _replay_vmr(scheme, conv; diffusion)
-        # Zero carry, as the replay applies it.
-        @test _maxrel(replay, _production_vmr(_production(scheme, conv; diffusion))) <= 1e-12
-        # Production's persistent carry: rounding-level difference only.
-        @test _maxrel(replay, _production_vmr(
-            _production(scheme, conv; diffusion, zero_carry = false))) <= 1e-12
+        @test exact(replay, _production_vmr(_production(scheme, conv; diffusion)))
     end
 
     # Lin-Rood's horizontal operator refills the halos it reads, so its replay
@@ -250,8 +242,8 @@ _scheme_label(scheme) = scheme isa AT.UpwindScheme ? "Upwind" :
                                  (AT.SplitSurfaceFluxCoupling(), :cmfmc))
         scheme = AT.LinRoodPPMScheme()
         diffusion = _kz_diffusion(coupling)
-        @test _maxrel(_replay_vmr(scheme, conv; diffusion),
-                      _production_vmr(_production(scheme, conv; diffusion))) <= 1e-12
+        @test exact(_replay_vmr(scheme, conv; diffusion),
+                    _production_vmr(_production(scheme, conv; diffusion)))
     end
 
     # `run_cs_footprint_forward` (the finite-difference reference) composes the
@@ -267,7 +259,7 @@ _scheme_label(scheme) = scheme isa AT.UpwindScheme ? "Upwind" :
         model = _production(scheme, :tm5; diffusion)
         prod = ADJ.evaluate_objective(objective, AT.get_tracer(model.state, :CO2),
                                       model.state.air_mass, MESH)
-        @test abs(replay - prod) <= 1e-12 * abs(prod)
+        @test exact([replay], [prod])
     end
 end
 

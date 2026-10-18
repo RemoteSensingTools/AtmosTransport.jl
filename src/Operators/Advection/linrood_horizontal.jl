@@ -14,15 +14,22 @@ Averages X-first and Y-first PPM orderings, then shares the final seam
 mixing-ratio estimates between neighboring panels before their flux updates.
 The transverse formulation follows FV3; the explicit seam projection is
 AtmosTransport's conservative interface coupling.
+
+`recorder` observes the phases (`record_linrood_horizontal!`); the production
+`NoStepRecorder()` makes every hook a no-op. The cubed-sphere adjoint builds
+its `_CSLinRoodHorizRecord` from these hooks.
 """
 function fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                        mesh::CubedSphereMesh, ::Val{ORD}, ws, ws_lr::LinRoodWorkspace;
-                       damp_coeff=0.0) where ORD
+                       damp_coeff=0.0,
+                       recorder::AbstractStepRecorder = NoStepRecorder()) where ORD
     Nc = mesh.Nc; Hp = mesh.Hp; Nz = size(rm_panels[1], 3)
     N = Nc + 2Hp
     backend = get_backend(rm_panels[1])
 
-    # Optional divergence damping
+    # Optional divergence damping (no adjoint record: rejected while recording)
+    damp_coeff > 0 && !(recorder isa NoStepRecorder) && throw(ArgumentError(
+        "fv_tp_2d_cs! divergence damping (damp_coeff > 0) has no adjoint record"))
     damp_coeff > 0 && apply_divergence_damping_cs!(rm_panels, m_panels, mesh, ws, damp_coeff)
 
     # Pre-instantiate all kernels (avoid repeated compilation inside loops)
@@ -42,6 +49,7 @@ function fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
     fill_panel_halos!(m_panels, mesh)
     copy_corners!(rm_panels, mesh, 2)
     copy_corners!(m_panels, mesh, 2)
+    record_linrood_horizontal!(recorder, Val(:start), rm_panels, m_panels)
 
     # Initialize q_buf with original mixing ratio (halos persist for outer PPM)
     for p in eachindex(ws_lr.q_buf)
@@ -56,6 +64,7 @@ function fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                  ws_lr.fy_in[p], Hp; ndrange=(Nc, Nc, Nz))
     end
     synchronize(backend)
+    record_linrood_horizontal!(recorder, Val(:phase2), ws_lr.q_buf)
 
     # ═══════════════════════════════════════════════════════════════════════
     # Phase 2: X-corners → outer X-PPM on q_i + inner X-PPM + pre-advect q_j
@@ -83,6 +92,7 @@ function fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
                  ws_lr.fx_in[p], Hp; ndrange=(Nc, Nc, Nz))
     end
     synchronize(backend)
+    record_linrood_horizontal!(recorder, Val(:phase3), ws_lr.q_buf)
 
     # ═══════════════════════════════════════════════════════════════════════
     # Phase 3: Y-corners on q_j → outer Y-PPM → averaged update
@@ -93,7 +103,10 @@ function fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
         yq_face_k!(ws_lr.fy_out[p], ws_lr.q_buf[p], bm_panels[p], m_panels[p],
                    Hp, Nc, Val(ORD); ndrange=(Nc, Nc + 1, Nz))
     end
+    # The transverse predictors read the inner faces before the seam projection.
+    record_linrood_horizontal!(recorder, Val(:faces), ws_lr.fx_in, ws_lr.fy_in)
     _share_lr_seam_faces!(ws_lr.fx_in, ws_lr.fx_out, ws_lr.fy_in, ws_lr.fy_out, mesh)
+    record_linrood_horizontal!(recorder, Val(:finish), ws_lr.fx_out, am_panels, bm_panels, Val(ORD))
     for p in eachindex(ws_lr.fx_in)
         update_k!(ws.rm_A, ws.m_A,
                   rm_panels[p], m_panels[p], am_panels[p], bm_panels[p],
@@ -245,20 +258,26 @@ function strang_split_linrood_ppm!(rm_panels, m_panels, am_panels, bm_panels, cm
     return nothing
 end
 
+# Production Lin-Rood palindrome H → Z → center → Z → H. `recorder` observes
+# both horizontal operators (inside `fv_tp_2d_cs!`) and both vertical sweeps.
 function _strang_split_linrood_ppm_cs!(rm_panels, m_panels, am_panels, bm_panels, cm_panels,
                                        mesh::CubedSphereMesh, ::Val{ORD},
                                        ws::CSLinRoodAdvectionWorkspace;
                                        cfl_limit=DEFAULT_CFL_LIMIT, midpoint! = nothing,
                                        damp_coeff=0.0,
-                                       vertical::AbstractAdvectionScheme = UpwindScheme()) where ORD
+                                       vertical::AbstractAdvectionScheme = UpwindScheme(),
+                                       recorder::AbstractStepRecorder = NoStepRecorder()) where ORD
     _ = cfl_limit
+    unit = one(eltype(m_panels[1]))
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
-                 mesh, Val(ORD), ws.cs, ws.linrood; damp_coeff)
+                 mesh, Val(ORD), ws.cs, ws.linrood; damp_coeff, recorder)
+    record_sweep!(recorder, :z, vertical, m_panels, rm_panels, cm_panels, unit)
     _sweep_z_panels!(rm_panels, m_panels, cm_panels, mesh, vertical, ws.cs)
     midpoint! === nothing || midpoint!()
+    record_sweep!(recorder, :z, vertical, m_panels, rm_panels, cm_panels, unit)
     _sweep_z_panels!(rm_panels, m_panels, cm_panels, mesh, vertical, ws.cs)
     fv_tp_2d_cs!(rm_panels, m_panels, am_panels, bm_panels,
-                 mesh, Val(ORD), ws.cs, ws.linrood; damp_coeff = 0.0)
+                 mesh, Val(ORD), ws.cs, ws.linrood; damp_coeff = 0.0, recorder)
     return nothing
 end
 

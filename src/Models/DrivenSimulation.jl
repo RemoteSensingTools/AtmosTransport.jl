@@ -62,7 +62,7 @@ output, progress reporting, and capability checks against every file.
 `SurfaceFluxSource` lives with the surface-flux operator in
 `src/Operators/SurfaceFlux/`.
 """
-mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, PT, HS}
+mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, PT, HS, PL}
     model                 :: ModelT
     driver                :: DriverT
     window                :: WindowT
@@ -90,7 +90,10 @@ mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, PT, HS
     use_midpoint_forcing        :: Bool
     interpolate_fluxes_within_window :: Bool
     air_mass_reset_mode         :: Symbol
-    physics_every_substep       :: Bool
+    # The model step of this run (`StepPlan`): which stages run at window
+    # advance, window start, every step and window end. Built from the
+    # physics cadence, the driver's window contract and the reset mode.
+    plan                        :: PL
     # Host window refilled in place for each device-resident window load (GPU
     # runs with an in-place loader), or `nothing`. Used by one load at a time:
     # a synchronous load first waits for an outstanding prefetch.

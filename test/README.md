@@ -176,3 +176,9 @@ seeds. Run it on an explicitly selected device, with scalar indexing disabled:
 ATMOSTR_RUN_TRANSPORT_ADJOINT_GPU_TESTS=1 ATMOSTR_ADJOINT_GPU_NAME=V100 \
 CUDA_VISIBLE_DEVICES=<authorized UUID> julia --project=. test/diagnostic/test_cs_transport_adjoint_gpu.jl
 ```
+
+The opt-in CUDA reset diagnostic uses the root project, where CUDA is available:
+`ATMOSTR_RUN_CS_ADJOINT_RESET_GPU_TESTS=1 CUDA_VISIBLE_DEVICES=1 julia --project=. test/diagnostic/test_cs_adjoint_reset_gpu.jl`.
+It checks that captured `:preserve_vmr` targets stay on the GPU, replay matches
+production, and Full/Stride gradients agree. Acquire the assigned GPU lock before
+running it.

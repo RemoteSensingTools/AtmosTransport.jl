@@ -257,28 +257,30 @@ _footprints(P, scheme, objective; kwargs...) = AT.cs_surface_emission_footprint(
 end
 
 @testset "Lin–Rood FV3 vertical: tape replay and FD forward equal production, ORD $ord" for ord in (5, 7)
-    # Production Lin–Rood (`_cs_transport_step!` → `_strang_split_linrood_ppm_cs!`),
-    # the tape's forward replay and the footprint API's forward reach the same
-    # interior state bit for bit, so the adjoint transposes the production model.
+    # Production Lin–Rood (`_strang_split_linrood_ppm_cs!`) and the adjoint's
+    # replay of the step plan, with and without the tape recorder, reach the
+    # same interior state bit for bit.
     P = _fv3_linrood_problem(; direction = -1)
     scheme = AT.LinRoodPPMScheme(ord; vertical = FV3_PPM)
     Nc, Hp = P.mesh.Nc, P.mesh.Hp
     I = Hp+1:Hp+Nc
     production = (map(copy, P.rm), map(copy, P.m))
     ws_prod = Adv.CSLinRoodAdvectionWorkspace(P.mesh, P.m[1]; column_scratch = true)
-    fd_forward = (map(copy, P.rm), map(copy, P.m))
-    ws_fd = Adv.CSAdvectionWorkspace(P.mesh, P.rm[1]; column_scratch = true)
     for s in 1:P.nsteps
         am = ntuple(p -> Adv._cs_flux_x_interior(P.am[s][p], Nc, Hp), 6)
         bm = ntuple(p -> Adv._cs_flux_y_interior(P.bm[s][p], Nc, Hp), 6)
         Adv._strang_split_linrood_ppm_cs!(production..., am, bm, P.cm[s], P.mesh, Val(ord),
                                           ws_prod; vertical = scheme.vertical)
-        AT.Adjoints._linrood_run_forward_step!(fd_forward..., P.am[s], P.bm[s], P.cm[s],
-                                               P.mesh, scheme, ws_fd, nothing)
     end
-    _, tape_rm, tape_m = AT.Adjoints._record_cs_linrood_tape(
-        P.rm, P.m, P.am, P.bm, P.cm, P.mesh, scheme; dt = 1.0)
-    for (rm, m) in ((tape_rm, tape_m), fd_forward)
+    # The adjoint's replay of the step plan, without and with its tape recorder.
+    replay(recorded) = begin
+        r, _ = AT.Adjoints._cs_replay_for_call(P.rm, P.m, P.am, P.bm, P.cm, P.mesh;
+                                               scheme, dt = 1.0, surface_flux = false)
+        recorded ? AT.Adjoints._record_cs_tape!(r, 1:P.nsteps, AT.DeviceCSTapeStorage()) :
+                   AT.Adjoints._replay_steps!(r, 1:P.nsteps)
+        (AT.Adjoints._replay_rm(r), AT.Adjoints._replay_m(r))
+    end
+    for (rm, m) in (replay(true), replay(false))
         @test all(p -> rm[p][I, I, :] == production[1][p][I, I, :], 1:6)
         @test all(p -> m[p][I, I, :] == production[2][p][I, I, :], 1:6)
     end
@@ -310,7 +312,8 @@ end
                                        AT.LinRoodPPMScheme(5; vertical))
         @test est.sweep_records == 8            # H, Z, Z, H per step
         @test est.state_records == staged       # 2 × 4-state H + 2 × (1 or 2)-state Z
+        # Five face-panel tuples per H record: fx_in, fx_out, fy_in, am, bm.
         face_tuple_bytes = sizeof(Float64) * 6 * (P.Nc + 1) * P.Nc * P.Nz
-        @test est.state_bytes == est.state_records * est.bytes_per_state + 12face_tuple_bytes
+        @test est.state_bytes == est.state_records * est.bytes_per_state + 20face_tuple_bytes
     end
 end

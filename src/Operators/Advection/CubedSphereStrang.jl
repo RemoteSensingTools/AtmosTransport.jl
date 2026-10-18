@@ -333,12 +333,13 @@ function strang_split_cs_mt!(panels_rm_4d::NTuple{6},
                              flux_scale = one(eltype(panels_m[1])),
                              cfl_limit::Real = DEFAULT_CFL_LIMIT,
                              subcycle_count::Union{Nothing, Integer} = nothing,
-                             midpoint! = nothing)
+                             midpoint! = nothing,
+                             recorder::AbstractStepRecorder = NoStepRecorder())
     strang_split_cs_mt_pingpong!(panels_rm_4d, panels_m,
                                  workspace.rm_4d_pp_buf, workspace.m_pp_buf,
                                  panels_am, panels_bm, panels_cm, mesh, scheme,
                                  workspace; flux_scale, cfl_limit,
-                                 subcycle_count, midpoint!)
+                                 subcycle_count, midpoint!, recorder)
     # One host synchronization per palindrome (the halo exchanges inside only
     # queue their launches): it bounds how far the host runs ahead of the
     # device, which leaves the window prefetch thread its CPU time.
@@ -356,6 +357,11 @@ per-sweep copy-back kernels while keeping the existing KA sweep kernels. The
 final active `(rm, m)` tuple is returned. On a device its halo exchanges are
 queued without a host synchronization (every sweep follows them on the same
 queue); `strang_split_cs_mt!` synchronizes once at the end.
+
+`recorder` observes the palindrome (`record_sweep!` before each sweep,
+`record_halo!` after each halo exchange); the production `NoStepRecorder()`
+makes every hook a no-op. The cubed-sphere adjoint records its tape through
+these hooks, so its reverse pass transposes this sequence.
 """
 function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
                                       panels_m::NTuple{6},
@@ -370,7 +376,8 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
                                       flux_scale = one(eltype(panels_m[1])),
                                       cfl_limit::Real = DEFAULT_CFL_LIMIT,
                                       subcycle_count::Union{Nothing, Integer} = nothing,
-                                      midpoint! = nothing)
+                                      midpoint! = nothing,
+                                      recorder::AbstractStepRecorder = NoStepRecorder())
     Nc, Hp = mesh.Nc, mesh.Hp
     Nz = size(panels_m[1], 3)
     Nt = size(panels_rm_4d[1], 4)
@@ -395,7 +402,9 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
         if pass > 1     # the previous Z sweep changed the interiors the X halos mirror
             SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(active_rm, mesh; dir = 1, sync = false)
             SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(active_m,  mesh; dir = 1, sync = false)
+            record_halo!(recorder, 1)
         end
+        record_sweep!(recorder, :x, scheme, active_m, active_rm, panels_am, fs_sub)
         SectionTimer.@section :cs_sweep_x begin
             _sweep_x_panels_mt_pingpong!(
                 spare_rm, spare_m, active_rm, active_m, panels_am, mesh, scheme;
@@ -403,9 +412,11 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
             SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(spare_rm, mesh; dir = 1, sync = false)
             SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(spare_m,  mesh; dir = 1, sync = false)
         end
+        record_halo!(recorder, 1)
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
 
+        record_sweep!(recorder, :y, scheme, active_m, active_rm, panels_bm, fs_sub)
         SectionTimer.@section :cs_sweep_y begin
             _sweep_y_panels_mt_pingpong!(
                 spare_rm, spare_m, active_rm, active_m, panels_bm, mesh, scheme;
@@ -413,9 +424,11 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
             SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(spare_rm, mesh; dir = 2, sync = false)
             SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(spare_m,  mesh; dir = 2, sync = false)
         end
+        record_halo!(recorder, 2)
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
 
+        record_sweep!(recorder, :z, scheme, active_m, active_rm, panels_cm, fs_sub)
         SectionTimer.@section :cs_sweep_z _sweep_z_panels_mt_pingpong!(
             spare_rm, spare_m, active_rm, active_m, panels_cm, mesh, scheme, workspace;
             flux_scale = fs_sub)
@@ -437,6 +450,7 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
 
     # Reverse half: (Z → Y → X)^n_pal.
     for _ in 1:n_pal
+        record_sweep!(recorder, :z, scheme, active_m, active_rm, panels_cm, fs_sub)
         SectionTimer.@section :cs_sweep_z _sweep_z_panels_mt_pingpong!(
             spare_rm, spare_m, active_rm, active_m, panels_cm, mesh, scheme, workspace;
             flux_scale = fs_sub)
@@ -445,6 +459,8 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
 
         SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(active_rm, mesh; dir = 2, sync = false)
         SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(active_m,  mesh; dir = 2, sync = false)
+        record_halo!(recorder, 2)
+        record_sweep!(recorder, :y, scheme, active_m, active_rm, panels_bm, fs_sub)
         SectionTimer.@section :cs_sweep_y begin
             _sweep_y_panels_mt_pingpong!(
                 spare_rm, spare_m, active_rm, active_m, panels_bm, mesh, scheme;
@@ -452,11 +468,14 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
             SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(spare_rm, mesh; dir = 2, sync = false)
             SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(spare_m,  mesh; dir = 2, sync = false)
         end
+        record_halo!(recorder, 2)
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
 
         SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(active_rm, mesh; dir = 1, sync = false)
         SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(active_m,  mesh; dir = 1, sync = false)
+        record_halo!(recorder, 1)
+        record_sweep!(recorder, :x, scheme, active_m, active_rm, panels_am, fs_sub)
         SectionTimer.@section :cs_sweep_x begin
             _sweep_x_panels_mt_pingpong!(
                 spare_rm, spare_m, active_rm, active_m, panels_am, mesh, scheme;
@@ -464,6 +483,7 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
             SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(spare_rm, mesh; dir = 1, sync = false)
             SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(spare_m,  mesh; dir = 1, sync = false)
         end
+        record_halo!(recorder, 1)
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
     end

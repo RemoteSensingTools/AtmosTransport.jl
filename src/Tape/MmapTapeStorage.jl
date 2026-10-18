@@ -347,7 +347,7 @@ end
 # Slot read — CPU returns mmap views; GPU is overloaded in the CUDA ext.
 # ---------------------------------------------------------------------------
 
-# Single-reader during reverse pass: the `_collect_surface_footprints`
+# Single-reader during reverse pass: the `_walk_window_reverse!`
 # loop in Footprint/ReverseLoop.jl consumes slots sequentially. Each
 # read cache is mutated in place across reads, so this method is not
 # safe under concurrent multi-threaded reverse walks against the same

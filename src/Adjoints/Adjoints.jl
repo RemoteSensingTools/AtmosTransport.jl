@@ -3,16 +3,18 @@
 
 Prototype adjoint and footprint utilities.
 
-The shipped path here is a kernelized CS split-sweep reverse pass for tracer
-mass with fixed meteorology/air-mass evolution. It accumulates
-surface-emission footprints from an adjoint seed without perturbing each
-surface cell. Each step is composed as production composes it: the step-start
-halo refresh, and at the palindrome center the diffusion operator's
-surface-flux coupling (`surface_flux_center!`): half diffusion, midpoint
-emissions, half diffusion, or emissions before one full diffusion solve with
-`DiffusiveSurfaceFluxBoundary`.
-The optional convection slot transposes the CS `CMFMCConvection`,
-`TM5Convection` and `CMFMCMatrixConvection` column operators.
+The shipped path is a kernelized cubed-sphere reverse pass for tracer mass
+with fixed meteorology/air-mass evolution. It accumulates surface-emission
+footprints (and the initial-condition sensitivity) from an adjoint seed or
+observation forcing without perturbing each surface cell.
+
+The forward model is the production step by construction: the adjoint
+replays the production `StepPlan` (`CSStepSchedule`: physics cadence, met
+windows, air-mass resets) with the production operators on a single-tracer
+state, records its tape through the recorder hooks of the production step
+(`Operators.AbstractStepRecorder`) and walks the tape backwards with each
+operator's adjoint. `require_adjoint_support` rejects a plan containing an
+operator without an adjoint before anything is recorded.
 """
 module Adjoints
 
@@ -44,7 +46,7 @@ using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
     fv_tp_2d_cs!, _sweep_z_panels!, _cs_flux_x_interior, _cs_flux_y_interior,
     _advection_mass_floor, _ppm_edge_weights,  # shared with the forward fluxes (AdvectionAdjoint.jl)
     needs_column_scratch, _fv3_adjoint_column_scratch, _sweep_z_panels_fv3_adjoint!
-using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
+using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion, DiffusionWorkspace,
     apply_vertical_diffusion_vmr!, _dkg_transfer_ratios,
     surface_flux_coupling, surface_flux_center!
 using ..Operators.Convection: CMFMCConvection, _require_edge_cloud_base, CMFMCWorkspace,
@@ -59,8 +61,28 @@ using ..Operators.Convection: CMFMCConvection, _require_edge_cloud_base, CMFMCWo
 using ..State: AbstractCubedSphereField,
     LocalHoltslagBovilleKzField, AbstractCSDkgField, PrecomputedCSDkgField, GCHPNonlocalPBLField,
     field_value, panel_field, update_field!
-using ..MetDrivers: ConvectionForcing, current_time
-using ..Architectures: _kahan_add
+using ..MetDrivers: ConvectionForcing
+import ..MetDrivers: current_time, uses_binary_substep_contract
+using ..Architectures: _kahan_add, CPU
+using ..Grids: AtmosGrid, HybridSigmaPressure
+using ..State: CubedSphereState, CubedSphereFaceFluxState
+using ..Operators: AbstractAdvectionScheme, apply!
+using ..Operators.SurfaceFlux: NoSurfaceFlux, SurfaceFluxOperator, SurfaceFluxSource
+using ..Operators.Chemistry: AbstractChemistryOperator, NoChemistry
+using ..Operators.Convection: CMFMCEdgeCloudBase
+# The step plan the adjoint replays and the recorder hooks its tape recorder
+# implements (Operators/StepPlan, Operators/StepRecording.jl).
+using ..Operators.StepPlans: StepPlan, StepOperators, StepTiming, AbstractStepStage,
+    TransportStage, ConvectionStage, ChemistryBeforeStage, ChemistryAfterStage,
+    AirMassResetStage, WindowStartAirMass, WindowEndAirMass, plan_stages,
+    execute_window_advance!, execute_window_start!, execute_step_stages!,
+    execute_window_end!, operator_state, restore_operator_state!, reset_operator_state!,
+    _cs_advection_workspace_for
+import ..Operators.StepPlans: air_mass_reset_target
+using ..Operators: AbstractStepRecorder, NoStepRecorder
+import ..Operators: record_halo!, record_sweep!, record_center!, record_diffusion!,
+    record_emission!, record_linrood_horizontal!, record_convection!,
+    record_air_mass_reset!, record_chemistry!
 using ..Parameters: DEFAULT_CFL_LIMIT, DEFAULT_LINROOD_PPM_ORDER, STANDARD_GRAVITY
 using ..State: AbstractMassBasis, DryBasis
 # Observation binding and vertical placement (Inversion/): the cell locator and
@@ -99,7 +121,7 @@ using ..Tape: AbstractCSTapeStorage,
               _bytes_per_panel_tuple, finalize_tape!,
               load_mmap_tape, get_record,
               _CSSweepRecord, _CSHaloRecord, _CSMidpointRecord, _CSStepEndRecord,
-              _CSDiffusionRecord, _CSConvectionRecord, _CSTapeOp,
+              _CSDiffusionRecord, _CSConvectionRecord, _CSAirMassResetRecord, _CSTapeOp,
               AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint,
               RevolveCheckpoint,
               checkpoint_window_count, checkpoint_window_range
@@ -250,14 +272,6 @@ function CSAdjointWorkspace(mesh::CubedSphereMesh,
     return CSAdjointWorkspace{FT, typeof(lambda_A), typeof(scratch)}(lambda_A, seam_seeds, scratch)
 end
 
-struct _SingleSurfaceRatePerturbation{FT}
-    step::Int
-    panel::Int
-    i::Int
-    j::Int
-    rate_delta::FT
-end
-
 _copy_panel_tuple(panels) = ntuple(p -> copy(panels[p]), 6)
 
 function _zero_panel_tuple_like(panels)
@@ -300,50 +314,6 @@ function _validate_emission_rates(rates, nsteps::Int, mesh::CubedSphereMesh,
 end
 
 
-@kernel function _add_surface_rates_kernel!(panel_rm, @Const(panel_rate),
-                                            dt, Hp, Nz)
-    i, j = @index(Global, NTuple)
-    @inbounds panel_rm[i + Hp, j + Hp, Nz] += panel_rate[i, j] * dt
-end
-
-@kernel function _add_surface_perturbation_kernel!(panel_rm, dt_rate,
-                                                   i, j, Nz)
-    _ = @index(Global)
-    @inbounds panel_rm[i, j, Nz] += dt_rate
-end
-
-function _add_surface_rates!(panels_rm, rates::NTuple{6}, dt, mesh::CubedSphereMesh)
-    Hp = mesh.Hp
-    Nz = size(panels_rm[1], 3)
-    @inbounds for p in 1:6
-        panel_rm = panels_rm[p]
-        panel_rate = rates[p]
-        size(panel_rate) == (mesh.Nc, mesh.Nc) || throw(DimensionMismatch(
-            "surface rate panel $p has shape $(size(panel_rate)); expected $((mesh.Nc, mesh.Nc))"))
-        backend = get_backend(panel_rm)
-        kernel! = _add_surface_rates_kernel!(backend, (16, 16))
-        kernel!(panel_rm, panel_rate, eltype(panel_rm)(dt), Int32(Hp), Int32(Nz);
-                ndrange = (mesh.Nc, mesh.Nc))
-        synchronize(backend)
-    end
-    return nothing
-end
-
-function _add_surface_perturbation!(panels_rm, perturb::_SingleSurfaceRatePerturbation,
-                                    dt, mesh::CubedSphereMesh)
-    Hp = mesh.Hp
-    Nz = size(panels_rm[1], 3)
-    panel_rm = panels_rm[perturb.panel]
-    backend = get_backend(panel_rm)
-    kernel! = _add_surface_perturbation_kernel!(backend, 1)
-    kernel!(panel_rm,
-            eltype(panel_rm)(perturb.rate_delta) * eltype(panel_rm)(dt),
-            Int32(Hp + perturb.i), Int32(Hp + perturb.j), Int32(Nz);
-            ndrange = 1)
-    synchronize(backend)
-    return nothing
-end
-
 # Split-sweep advection adjoint kernels.
 include("AdvectionAdjoint.jl")
 include("CubedSphereSeams.jl")
@@ -362,30 +332,6 @@ include("DiffusionAdjoint.jl")
 include("ConvectionAdjoint.jl")
 
 
-function _convection_forcing_at(convection_forcing, step::Int, nsteps::Int)
-    convection_forcing_is_vector = convection_forcing isa AbstractVector
-    if convection_forcing === nothing
-        return nothing
-    elseif convection_forcing_is_vector
-        length(convection_forcing) == nsteps || throw(ArgumentError(
-            "convection_forcing length $(length(convection_forcing)) does not match nsteps $nsteps"))
-        return convection_forcing[step]
-    else
-        return convection_forcing
-    end
-end
-
-# The convection forcing of `step`, or `nothing` when convection is off. An
-# active convection operator without forcing is an error.
-_step_convection_forcing(::NoConvection, _convection_forcing, _step::Int, _nsteps::Int) =
-    nothing
-function _step_convection_forcing(convection_op, convection_forcing, step::Int, nsteps::Int)
-    forcing_step = _convection_forcing_at(convection_forcing, step, nsteps)
-    forcing_step === nothing && throw(ArgumentError(
-        "convection_op=$(typeof(convection_op)) requires `convection_forcing`"))
-    return forcing_step
-end
-
 # Tape storage policies + staging API live in
 # `src/Tape/TapeStorage.jl` and are imported via `using ..Tape` at
 # the top of this module.
@@ -400,29 +346,29 @@ end
 # there; the constraint is now enforced at the
 # `_record_sweep!`/`_adjoint_scheme_sweep!` call sites below.
 
-# LinRoodPPMScheme tape record + forward/reverse
-# integration. Defines `_CSLinRoodHorizRecord`,
-# `_record_cs_linrood_tape`, `_apply_cs_linrood_horizontal_adjoint!`.
+# LinRoodPPMScheme tape record and its reverse: `_CSLinRoodHorizRecord`,
+# `_apply_cs_linrood_horizontal_adjoint!`.
 include("LinRoodTape.jl")
 
-# Tape-recorder kernels.
+# The adjoint's forward model: `CSStepSchedule` and the replay of the
+# production step plan (`_CSReplay`).
+include("../Footprint/StepReplay.jl")
+
+# The setup guard: `adjoint_support` and `require_adjoint_support`.
+include("AdjointSupport.jl")
+
+# Tape and counting recorders (the production step's recorder hooks) and the
+# record builders / tape-size estimate.
+include("../Footprint/TapeRecorder.jl")
 include("../Footprint/TapeRecording.jl")
 
-
-
-# Reverse-loop driver + forward-replay helpers.
+# Reverse walk + forward replays.
 include("../Footprint/ReverseLoop.jl")
 
-
-# Stride and Revolve checkpoint drivers for the linear mass, monotone-PPM
-# tracer and LinRood tapes. They reuse the tape recorders and
-# `_walk_window_reverse!` defined above; the FootprintAPI below dispatches
-# on the `checkpoint` kwarg between `_collect_surface_footprints`
-# (FullCheckpoint), `_collect_surface_footprints_stride` and
-# `_collect_surface_footprints_revolve`.
+# Full, Stride and Revolve checkpoint drivers, one implementation for every
+# scheme family: they save and restore replay snapshots, record windows of
+# the replay and walk them with `_walk_window_reverse!`.
 include("../Footprint/StrideCheckpoint.jl")
-include("../Footprint/stride_checkpoint_ppm.jl")
-include("../Footprint/stride_checkpoint_linrood.jl")
 include("../Footprint/revolve_checkpoint.jl")
 
 
@@ -481,7 +427,8 @@ export cs_tape_byte_estimate
 export cs_surface_flux_jacobian
 export cs_surface_flux_4dvar, cs_surface_flux_4dvar_optimize
 export AbstractCSOptimizer, CSGradientDescent, CSLBFGS, cs_surface_flux_4dvar_solve
-export require_adjoint_support
+export require_adjoint_support, adjoint_support
+export CSStepSchedule
 export CSIterationLog, CSIterationLogEntry
 
 end # module Adjoints

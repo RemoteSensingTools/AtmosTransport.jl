@@ -11,6 +11,25 @@ using ..SectionTimer
 using ..State
 using ..Grids
 using ..Operators
+# The step plan (Operators/StepPlan): `TransportModel.step!` and
+# `DrivenSimulation` execute it; the cubed-sphere adjoint records the same plan.
+using ..Operators.StepPlans: TransportStage, ConvectionStage, ChemistryBeforeStage,
+                             ChemistryAfterStage, StepDt, WindowDt,
+                             WindowStartAirMass, WindowEndAirMass,
+                             execute_stage!, execute_window_advance!,
+                             execute_window_start!, execute_step_stages!,
+                             execute_window_end!,
+                             _resolve_physics_cadence, _PHYSICS_CADENCES,
+                             _normalize_air_mass_reset_mode, _AIR_MASS_RESET_MODES,
+                             _reset_air_mass!, _refresh_state_halos!,
+                             _cs_advection_workspace_for, _reject_binary_cfl_check,
+                             _symmetric_decay_split, _half_step
+import ..Operators.StepPlans: air_mass_reset_target
+using ..Operators.StepPlans: AirMassResetStage
+# The cubed-sphere adjoint replays the plan a DrivenSimulation executes
+# (`CSStepSchedule(sim)`, `require_adjoint_support(sim)`, adjoint_schedule.jl).
+import ..Adjoints
+using ..Adjoints: CSStepSchedule, require_adjoint_support
 using ..MetDrivers
 using ..MetDrivers: same_window_layout, RawWindowStaging, raw_window_staging,
                     read_window_payload!, unpack_window_payload!
@@ -69,6 +88,8 @@ include("DrivenSimulation.jl")
 include("driven_window_state.jl")
 include("driven_physics_refresh.jl")
 include("driven_stepping.jl")
+include("adjoint_schedule.jl")    # the adjoint of a DrivenSimulation configuration
+export cs_adjoint_inputs
 include("DrivenRunner.jl")        # library-level driven runner
 using .DrivenRunner: run_driven_simulation, validate_config, TransportTracerSpec
 export run_driven_simulation, validate_config, TransportTracerSpec

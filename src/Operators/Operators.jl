@@ -20,6 +20,10 @@ using ..MetDrivers
 
 include("AbstractOperators.jl")
 
+# Step recorders: the observation hooks the production step calls (no-ops for
+# `NoStepRecorder`) and the cubed-sphere adjoint records its tape through.
+include("StepRecording.jl")
+
 # Diffusion is included BEFORE Advection so `strang_split_mt!`
 # (palindrome integration) can import
 # `NoDiffusion`, `AbstractDiffusion`, and
@@ -49,6 +53,11 @@ using .Advection
 
 include("Chemistry/Chemistry.jl")
 using .Chemistry
+
+# The model step as data (`StepPlan`): executed by `TransportModel.step!` and
+# `DrivenSimulation`, recorded and transposed by the cubed-sphere adjoint.
+include("StepPlan/StepPlan.jl")
+using .StepPlans
 
 export AdvectionWorkspace, strang_split!, strang_split_mt!
 export TracerView
@@ -89,6 +98,10 @@ export TM5Workspace
 export CMFMCMatrixConvection                    # GEOS rates → TM5 LU (conservative CMFMC)
 export CMFMCMatrixWorkspace, invalidate_cmfmc_matrix_cache!
 export apply_convection!
+
+# Step plans and recorders
+export StepPlan, StepOperators, StepTiming
+export AbstractStepRecorder, NoStepRecorder
 
 # Cubed-sphere advection
 export fill_panel_halos!, copy_corners!, strang_split_cs!, strang_split_cs_mt!,

@@ -85,20 +85,11 @@ _relerr(g, ref) = maximum(maximum(abs.(g[c][p] .- ref[c][p])) for c in eachindex
 
 function _replayed_states(P, controls; scheme)
     rates = ADJ._surface_rates_from_controls(controls, P.nsteps, P.mesh, P.rm[1])
-    m = ntuple(q -> copy(P.m[q]), 6)
-    rm = ntuple(q -> copy(P.rm[q]), 6)
-    Adv.fill_panel_halos!(m, P.mesh; dir = 0)
-    Adv.fill_panel_halos!(rm, P.mesh; dir = 0)
-    ws = Adv.CSAdvectionWorkspace(P.mesh, rm[1]; column_scratch = ADJ.needs_column_scratch(scheme))
-    states = map(1:P.nsteps) do s
-        ADJ._replay_cs_step!(rm, m, P.am[s], P.bm[s], P.cm[s], P.mesh, scheme, ws,
-                             τ -> ADJ._add_surface_rates!(rm, rates[s], τ, P.mesh);
-                             dt = DT, flux_scale = 1.0, cfl_limit = AT.Parameters.DEFAULT_CFL_LIMIT,
-                             diffusion_op = AT.NoDiffusion(), diffusion_workspace = nothing,
-                             diffusion_meteo = nothing, convection_op = AT.NoConvection(),
-                             convection_forcing = nothing, convection_workspace = nothing)
-        (m = ntuple(q -> copy(m[q]), 6), rm = ntuple(q -> copy(rm[q]), 6))
-    end
+    replay, _ = ADJ._cs_replay_for_call(P.rm, P.m, P.am, P.bm, P.cm, P.mesh;
+                                       scheme, dt = DT, emission_rates = rates)
+    states = NamedTuple[]
+    ADJ._replay_steps!(replay, 1:P.nsteps; on_step_end = (s, state) -> push!(states,
+        (m = map(copy, ADJ._replay_m(replay)), rm = map(copy, ADJ._replay_rm(replay)))))
     return states, rates
 end
 

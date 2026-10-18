@@ -468,10 +468,12 @@ end
         @test est.step_records == 2        # one end-of-step marker per step (issue #20)
         @test est.state_records == 20      # 2*(4-state H) + 2*(1-state Z)
         @test est.total_records == 12      # 8 sweeps + 2 midpoints + 2 step ends
+        # Each H record also stages five face-panel tuples: fx_in, fx_out,
+        # fy_in and the interior face fluxes am, bm it read.
         face_tuple_bytes = sizeof(Float64) * 6 * (mesh.Nc + 1) * mesh.Nc *
                            size(panels_m[1], 3)
         @test est.state_bytes == est.state_records * est.bytes_per_state +
-                                 12 * face_tuple_bytes
+                                 20 * face_tuple_bytes
     end
 end
 

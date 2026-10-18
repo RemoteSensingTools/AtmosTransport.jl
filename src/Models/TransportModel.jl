@@ -76,41 +76,9 @@ _diffusion_workspace_for(::AbstractDiffusion, state) = DiffusionWorkspace(state)
 
 _convection_workspace_for(::NoConvection, state, grid) = nothing
 
-_cs_advection_workspace_for(scheme::AbstractAdvectionScheme,
-                            state::CubedSphereState,
-                            grid::AtmosGrid{<:CubedSphereMesh};
-                            binary_cfl_check::AbstractBinaryCFLCheck = NoBinaryCFLCheck()) =
-    CSAdvectionWorkspace(grid.horizontal, state.air_mass[1];
-                         n_tracers = ntracers(state),
-                         column_scratch = Operators.Advection.needs_column_scratch(scheme),
-                         binary_cfl_check)
-
-# Lin-Rood and no advection take no subcycle count from the binary, so they
-# cannot honor `BinaryCFLCheck()`.
-function _cs_advection_workspace_for(scheme::LinRoodPPMScheme,
-                                     state::CubedSphereState,
-                                     grid::AtmosGrid{<:CubedSphereMesh};
-                                     binary_cfl_check::AbstractBinaryCFLCheck = NoBinaryCFLCheck())
-    _reject_binary_cfl_check(binary_cfl_check, scheme)
-    return CSLinRoodAdvectionWorkspace(grid.horizontal, state.air_mass[1];
-                                       n_tracers = ntracers(state),
-                                       column_scratch = Operators.Advection.needs_column_scratch(scheme))
-end
-
-# No advection means no advection buffers. Diffusion has an independent
-# workspace and therefore does not affect this dispatch.
-function _cs_advection_workspace_for(scheme::NoAdvection,
-                                     state::CubedSphereState,
-                                     grid::AtmosGrid{<:CubedSphereMesh};
-                                     binary_cfl_check::AbstractBinaryCFLCheck = NoBinaryCFLCheck())
-    _reject_binary_cfl_check(binary_cfl_check, scheme)
-    return nothing
-end
-
-_reject_binary_cfl_check(::NoBinaryCFLCheck, scheme) = nothing
-_reject_binary_cfl_check(::BinaryCFLCheck, scheme) = throw(ArgumentError(
-    "BinaryCFLCheck() needs a split-sweep advection scheme; $(nameof(typeof(scheme))) " *
-    "takes no subcycle count from the binary."))
+# The cubed-sphere advection workspace of a scheme (`_cs_advection_workspace_for`)
+# is defined with the step plan (`Operators.StepPlans`), which the adjoint replay
+# shares.
 
 # The check a workspace carries (`NoBinaryCFLCheck()` for workspaces without one).
 _workspace_binary_cfl_check(ws::CSAdvectionWorkspace) = ws.binary_cfl_check
@@ -420,65 +388,48 @@ function Adapt.adapt_structure(to, model::TransportModel)
 end
 
 """
+    step_operators(model::TransportModel) -> StepOperators
+
+The state, fluxes and operators of `model` in the form the stages of a
+[`StepPlan`](@ref) act on.
+"""
+step_operators(model::TransportModel) =
+    StepOperators(model.state, model.fluxes, model.grid, model.advection,
+                  model.workspace.advection_ws, model.diffusion,
+                  model.workspace.diffusion_ws, model.emissions, model.convection,
+                  model.workspace.convection_ws, model.convection_forcing,
+                  model.chemistry)
+
+"""
     transport_step!(model::TransportModel, dt; meteo = nothing)
 
-Advance `model.state` by one transport step: advection with
-vertical diffusion at the palindrome center and surface emissions.
-The diffusion operator's coupling policy selects either
+Advance `model.state` by one transport step (the plan's `TransportStage`):
+advection with vertical diffusion at the palindrome center and surface
+emissions. The diffusion operator's coupling policy selects either
 `V(dt/2) -> S(dt) -> V(dt/2)` or `S(dt) -> V(dt)` when both diffusion
-and a surface source are active.
+and a surface source are active; without a surface-flux operator the center
+is one solve `V(dt)`.
 
 Binary-scheduled driven runs use this block at the per-window
 advection substep cadence stored in the transport binary. Convection
 and chemistry are separate physics blocks and can run at the met-window
 cadence via [`convection_chemistry_step!`](@ref).
 """
-function transport_step!(model::TransportModel, dt; meteo = nothing)
-    SectionTimer.@section :advection apply!(model.state, model.fluxes, model.grid, model.advection, dt;
-           workspace = model.workspace.advection_ws,
-           diffusion_workspace = model.workspace.diffusion_ws,
-           diffusion_op = model.diffusion,
-           emissions_op = model.emissions,
-           meteo = meteo)
-    return nothing
-end
+transport_step!(model::TransportModel, dt; meteo = nothing) =
+    execute_stage!(TransportStage(), step_operators(model), StepTiming(dt), meteo,
+                   NoStepRecorder())
 
-# Constant-rate ExponentialDecay is linear and autonomous over a met window,
-# so two exact half-steps place the window-integrated emissions at the window
-# midpoint. A time-varying rate is not autonomous and retains the historical
-# end-step order: sampling its two halves on opposite sides of a forcing
-# boundary would apply part of the next interval's rate to this interval.
-# NoChemistry is included so the default remains a compile-time no-op. A
-# CompositeChemistry is split only when every member has the same safe
-# property; future/non-decay chemistry retains the historical end-step order.
-@inline _symmetric_decay_split(
-    ::ExponentialDecay{FT, N, R}) where {FT, N, R <: NTuple{N, ConstantField}} = true
-@inline _symmetric_decay_split(::ExponentialDecay) = false
-@inline _symmetric_decay_split(::NoChemistry) = true
-@inline _symmetric_decay_split(op::CompositeChemistry) =
-    all(_symmetric_decay_split, op.schemes)
-@inline _symmetric_decay_split(::AbstractChemistryOperator) = false
+_chemistry_before_emissions!(model::TransportModel, dt; meteo = nothing) =
+    execute_stage!(ChemistryBeforeStage(StepDt()), step_operators(model), StepTiming(dt),
+                   meteo, NoStepRecorder())
 
-@inline _half_step(dt) = dt / 2
+_chemistry_after_emissions!(model::TransportModel, dt; meteo = nothing) =
+    execute_stage!(ChemistryAfterStage(StepDt()), step_operators(model), StepTiming(dt),
+                   meteo, NoStepRecorder())
 
-function _chemistry_before_emissions!(model::TransportModel, dt; meteo = nothing)
-    _symmetric_decay_split(model.chemistry) || return nothing
-    SectionTimer.@section :chemistry apply!(model.state, meteo, model.grid,
-                                            model.chemistry, _half_step(dt))
-    return nothing
-end
-
-function _chemistry_after_emissions!(model::TransportModel, dt; meteo = nothing)
-    chemistry_dt = _symmetric_decay_split(model.chemistry) ? _half_step(dt) : dt
-    SectionTimer.@section :chemistry apply!(model.state, meteo, model.grid,
-                                            model.chemistry, chemistry_dt)
-    return nothing
-end
-
-function _convection_step!(model::TransportModel, dt)
-    _convection_block!(model.convection, model, dt)
-    return nothing
-end
+_convection_step!(model::TransportModel, dt) =
+    execute_stage!(ConvectionStage(StepDt()), step_operators(model), StepTiming(dt),
+                   nothing, NoStepRecorder())
 
 """
     convection_chemistry_step!(model::TransportModel, dt; meteo = nothing)
@@ -493,22 +444,18 @@ function convection_chemistry_step!(model::TransportModel, dt; meteo = nothing)
     return nothing
 end
 
-@inline _convection_block!(::NoConvection, model::TransportModel, dt) = nothing
-
-function _convection_block!(op::AbstractConvection, model::TransportModel, dt)
-    SectionTimer.@section :convection apply!(model.state, model.convection_forcing,
-                                             model.grid, op, dt;
-                                             workspace = model.workspace.convection_ws)
-    return nothing
-end
+# The plan `TransportModel.step!` executes: the full operator composition at
+# every step (no met windows).
+const _MODEL_STEP_PLAN = StepPlan(; physics_cadence = :substep)
 
 """
     step!(model::TransportModel, dt; meteo = nothing)
 
-Advance `model.state` by one full runtime step. Exponential decay uses the
-symmetric composition decay(dt/2) → transport/emissions(dt) →
-convection(dt) → decay(dt/2). Other chemistry operators keep the
-transport/emissions(dt) → convection(dt) → chemistry(dt) order.
+Advance `model.state` by one full runtime step: the `step` stages of the
+substep [`StepPlan`](@ref). Exponential decay uses the symmetric composition
+decay(dt/2) → transport/emissions(dt) → convection(dt) → decay(dt/2). Other
+chemistry operators keep the transport/emissions(dt) → convection(dt) →
+chemistry(dt) order.
 
 With defaults `diffusion = NoDiffusion()`, `emissions = NoSurfaceFlux()`,
 `chemistry = NoChemistry()`, `convection = NoConvection()`, every live
@@ -521,10 +468,7 @@ to thread `current_time(meteo)` through operators
 that consume time-varying fields.
 """
 function step!(model::TransportModel, dt; meteo = nothing)
-    _chemistry_before_emissions!(model, dt; meteo = meteo)
-    transport_step!(model, dt; meteo = meteo)
-    _convection_step!(model, dt)
-    _chemistry_after_emissions!(model, dt; meteo = meteo)
+    execute_step_stages!(_MODEL_STEP_PLAN, step_operators(model), StepTiming(dt), meteo)
     return nothing
 end
 

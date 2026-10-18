@@ -51,8 +51,11 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
 - Persistence: `finalize_tape!`, `load_mmap_tape(dir; readonly = true)`,
   `get_record(storage, id)` in [`MmapTapeStorage.jl`](MmapTapeStorage.jl).
 - Records in [`TapeRecords.jl`](TapeRecords.jl): `_CSSweepRecord`,
-  `_CSHaloRecord`, `_CSMidpointRecord`, `_CSStepEndRecord`,
-  `_CSDiffusionRecord`, `_CSConvectionRecord`, and the union `_CSTapeOp`.
+  `_CSHaloRecord`, `_CSMidpointRecord` (step and emission interval),
+  `_CSStepEndRecord`, `_CSDiffusionRecord`, `_CSConvectionRecord` (with the
+  interval it integrated and the forward call's CFL sub-step count),
+  `_CSAirMassResetRecord`, and the union `_CSTapeOp`. The adjoint's tape
+  recorder pushes them from the production step's recorder hooks.
 - Schedules in [`CheckpointSchedule.jl`](CheckpointSchedule.jl):
   `FullCheckpoint()`, `StrideCheckpoint(K)`, `RevolveCheckpoint()`, plus
   `checkpoint_window_count` and `checkpoint_window_range` (Full and Stride

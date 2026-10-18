@@ -733,8 +733,9 @@ function _adjoint_scheme_sweep!(lambda_panels, m_before, rm_before, flux_panels,
     return nothing
 end
 
-# Reverse of an FV3-profile vertical sweep. Only `_record_and_sweep_z!` records
-# this scheme (Lin–Rood's vertical sweeps), so the record is always a Z sweep.
+# Reverse of an FV3-profile vertical sweep. Only Lin–Rood's vertical sweeps
+# record this scheme (the production Lin–Rood palindrome's `record_sweep!`
+# hooks), so the record is always a Z sweep.
 # The transpose is column-local and in place on `lambda_panels`
 # (`_sweep_z_panels_fv3_adjoint!`); `m_before` and `rm_before` are the state
 # that entered the forward sweep.
