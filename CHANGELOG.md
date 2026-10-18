@@ -209,7 +209,8 @@
   uniformly over `[h/2, 3h/2]` about `h` = 10, 100, 300, 1000 and 3000 m,
   0, 2.7, 4.5, 13 and 12.6 % change layer in the tropics, 0, 0.7, 1.2, 3.7
   and 3.1 % at northern and 0, 1.3, 2.2, 6.8 and 6.1 % at southern
-  mid-latitudes (one layer up; a record at 10 m stays in the ~130 m surface
+  mid-latitudes (one layer down, since the interfaces rise past a fixed
+  intake height; a record at 10 m stays in the ~130 m surface
   layer). On the golden `pre_ll72` binary (ERA5 L137 merged to 34 levels,
   280 K) the tropical change is the same, 2.0 %, and the new heights match
   the hydrostatic heights of the met model's total interfaces `A + B·ps`
