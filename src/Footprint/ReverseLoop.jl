@@ -47,6 +47,8 @@ _validate_start(::_ObjectiveStart{<:CSPlacedPointObjective}, ::CubedSphereMesh, 
     _placed_objective_needs_met()
 _validate_start(::_ObjectiveStart{<:CSRetrievalColumnObjective}, ::CubedSphereMesh, ::Int) =
     _retrieval_objective_needs_met()
+_validate_start(::_ObjectiveStart{<:CSCellAverageObjective}, ::CubedSphereMesh, ::Int) =
+    _cell_average_needs_4dvar()
 _validate_start(::Union{_SeedStart, _ZeroStart}, ::CubedSphereMesh, ::Int) = nothing
 
 # The objective recorded in the `CSFootprintResult`.

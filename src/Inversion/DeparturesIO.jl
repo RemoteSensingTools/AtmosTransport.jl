@@ -13,9 +13,11 @@
 # simulated values, departure, value and model sigma and the normalized
 # departure. Per sample: step, weight and the level read. Files with
 # averaging-kernel column rows add a retrieval block: the model minus
-# retrieval surface pressure, the model profile on the retrieval layers (a
-# `retrieval_level` dimension, NaN-padded), the profile model sigma and whether
-# the row was assimilated. Root attributes:
+# retrieval surface pressure, the model profile on the retrieval layers or
+# levels (a `retrieval_level` dimension, NaN-padded) and the profile model
+# sigma. Whether each row is in the cost (`assimilated`), the record's flag
+# (co-sampled records) and the cell average a record belongs to are written
+# when any row needs them. Root attributes:
 # `cs_departures_schema = "v2"`, mesh identity, time grid,
 # `departure_sign_convention = "simulated_minus_observed"`, the placement
 # codes, `n_clamped`, and optional `run_id` / `iteration`.
@@ -43,13 +45,16 @@ const _CS_DEPARTURE_SIGN_CONVENTION = "simulated_minus_observed"
 _departure_placement_codes(::PointObservationKind) =
     (VERTICAL_PLACEMENT_CODES.record_height, VERTICAL_PLACEMENT_CODES.altitude_minus_dem,
      VERTICAL_PLACEMENT_CODES.pressure, VERTICAL_PLACEMENT_CODES.absolute_altitude)
-_departure_placement_codes(::ColumnObservationKind) = (COLUMN_MEAN_PLACEMENT_CODE, RETRIEVAL_COLUMN_PLACEMENT_CODE)
+_departure_placement_codes(::ColumnObservationKind) = (COLUMN_MEAN_PLACEMENT_CODE, RETRIEVAL_COLUMN_PLACEMENT_CODE,
+                                                      CELL_AVERAGE_PLACEMENT_CODE)
 
 _departure_placement_codes_description() =
     vertical_placement_codes_description() * "; $(COLUMN_MEAN_PLACEMENT_CODE) = column_mean: " *
     "air-mass-weighted column mean (kind = column, sample_level = 0); $(RETRIEVAL_COLUMN_PLACEMENT_CODE) = " *
     "retrieval_column: averaging-kernel column on the model column stretched onto the retrieval column " *
-    "(kind = column, sample_level = 0)"
+    "(kind = column, sample_level = 0); $(CELL_AVERAGE_PLACEMENT_CODE) = cell_average: the inverse-variance-" *
+    "weighted mean of the column records of one cell and overpass (kind = column, sample_level = 0; its id is " *
+    "above every record id of the observation set)"
 
 """
     CSDepartureRecord(; id, tracer, instrument_type, date_components, lat, lon,
@@ -59,7 +64,8 @@ _departure_placement_codes_description() =
                         observed_value, simulated_value, departure,
                         value_sigma, model_sigma, normalized_departure,
                         surface_pressure_mismatch_pa = NaN, retrieval_profile = Float64[],
-                        profile_model_sigma = 0, assimilated = true)
+                        profile_model_sigma = 0, assimilated = true, flag = 0, cell_average_id = 0,
+                        cell_average_correlation = NaN)
 
 One audit row of the CS departure file (schema v2): the observation record's
 provenance (`id`, `tracer`, `instrument_type`, `date_components`, Float64
@@ -73,11 +79,30 @@ when unused; the sampled `steps`, their time-sampling `weights` and the
 forward-pass values. An averaging-kernel column row
 ([`RETRIEVAL_COLUMN_PLACEMENT_CODE`](@ref)) also carries the model minus
 retrieval surface pressure `surface_pressure_mismatch_pa` (Pa), the model
-profile on the retrieval layers `retrieval_profile` (surface first, mol/mol),
-its profile model error `profile_model_sigma` (``\\sqrt{\\sum_i (h_i a_i
-σ_i)^2}``, 0 without a profile uncertainty) and `assimilated` (`false` when
-the surface-pressure screen left it out of the cost); other rows have NaN,
-an empty profile, 0 and `true`. The constructor rejects non-finite values and
+profile on the retrieval layers or levels `retrieval_profile` (surface first,
+mol/mol) and its profile model error `profile_model_sigma`
+(``\\sqrt{\\sum_i (h_i a_i σ_i)^2}``, 0 without a profile uncertainty);
+other rows have NaN, an empty profile and 0.
+
+`assimilated` says whether the row itself is a term of the cost. It is
+`false` for a co-sampled record (its `flag`, the record's, is not 0:
+`flagged_records = "cosample"`), for a record averaged into a cell average
+(`cell_average_id`, the number of the average, 1, 2, … in observation
+order, is not 0; the average is in the cost, the record is reported on its
+own), and for an
+averaging-kernel column the surface-pressure screen left out; a row with a
+nonzero flag or a cell average is never assimilated.
+
+A cell average itself ([`CELL_AVERAGE_PLACEMENT_CODE`](@ref)) is a row too,
+the term of the cost: its `cell_average_id` (shared with its member rows),
+an `id` above every record id of the observation set (the largest record id,
+at least 0, plus `cell_average_id`), the observed and simulated
+averages, `value_sigma` the measurement error of the average
+``σ_\\mathrm{meas}`` (with the correlation ``ρ`` between its records,
+`cell_average_correlation`; NaN on other rows), `model_sigma` its model error,
+assimilated, flag 0; tracer, instrument, date, coordinates and window are
+those of its earliest record. Over the assimilated rows,
+``\\sum \\text{normalized\\_departure}^2 = 2 J_\\mathrm{obs}``. The constructor rejects non-finite values and
 checks the sign convention `departure = simulated_value − observed_value` and
 `normalized_departure = departure / σ`, ``σ = \\sqrt{\\text{value\\_sigma}^2 +
 \\text{model\\_sigma}^2 + \\text{profile\\_model\\_sigma}^2}``.
@@ -111,6 +136,9 @@ struct CSDepartureRecord
     retrieval_profile::Vector{Float64}
     profile_model_sigma::Float64
     assimilated::Bool
+    flag::Int8
+    cell_average_id::Int64
+    cell_average_correlation::Float64
 
     # Inner constructor: every route (keyword, positional, reader) is checked.
     function CSDepartureRecord(id::Int64, tracer::String, instrument_type::String,
@@ -123,7 +151,8 @@ struct CSDepartureRecord
                                value_sigma::Float64, model_sigma::Float64,
                                normalized_departure::Float64, surface_pressure_mismatch_pa::Float64,
                                retrieval_profile::Vector{Float64}, profile_model_sigma::Float64,
-                               assimilated::Bool)
+                               assimilated::Bool, flag::Int8, cell_average_id::Int64,
+                               cell_average_correlation::Float64)
         label = "CSDepartureRecord id $(id)"
         isfinite(lat) && -90 <= lat <= 90 || throw(ArgumentError(
             "$(label): lat must be finite and in [-90, 90], got $lat"))
@@ -141,7 +170,7 @@ struct CSDepartureRecord
         vertical_placement != VERTICAL_PLACEMENT_CODES.pressure || isfinite(placement_pressure_pa) ||
             throw(ArgumentError("$(label): a pressure placement needs a finite placement_pressure_pa"))
         vertical_placement in (VERTICAL_PLACEMENT_CODES.pressure, COLUMN_MEAN_PLACEMENT_CODE,
-                               RETRIEVAL_COLUMN_PLACEMENT_CODE) ||
+                               RETRIEVAL_COLUMN_PLACEMENT_CODE, CELL_AVERAGE_PLACEMENT_CODE) ||
             isfinite(placement_height_agl_m) || throw(ArgumentError(
             "$(label): a placement by height needs a finite placement_height_agl_m"))
         n = length(steps)
@@ -173,10 +202,28 @@ struct CSDepartureRecord
                 "non-empty, finite retrieval_profile"))
         else
             isnan(surface_pressure_mismatch_pa) && isempty(retrieval_profile) && profile_model_sigma == 0 &&
-                assimilated || throw(ArgumentError(
+                (assimilated || flag != 0 || cell_average_id != 0) || throw(ArgumentError(
                 "$(label): only averaging-kernel column rows (vertical_placement " *
-                "$(RETRIEVAL_COLUMN_PLACEMENT_CODE)) carry a surface-pressure mismatch, a retrieval profile, a " *
-                "profile model sigma or assimilated = false"))
+                "$(RETRIEVAL_COLUMN_PLACEMENT_CODE)) carry a surface-pressure mismatch, a retrieval profile or a " *
+                "profile model sigma, and only they, co-sampled records (flag != 0) and records of a cell " *
+                "average are not assimilated"))
+        end
+        flag == 0 || !assimilated || throw(ArgumentError(
+            "$(label): a record with flag $(flag) (not to be assimilated) is co-sampled, never assimilated"))
+        cell_average_id >= 0 || throw(ArgumentError(
+            "$(label): cell_average_id must be >= 0 (0 = none), got $(cell_average_id)"))
+        if vertical_placement == CELL_AVERAGE_PLACEMENT_CODE
+            cell_average_id > 0 && flag == 0 && assimilated &&
+                isfinite(cell_average_correlation) && 0 <= cell_average_correlation <= 1 || throw(ArgumentError(
+                "$(label): a cell-average row has a positive cell_average_id, flag 0, is assimilated and gives " *
+                "its correlation in [0, 1]; got cell_average_id $(cell_average_id), flag $(flag), assimilated " *
+                "$(assimilated), correlation $(cell_average_correlation)"))
+        else
+            cell_average_id == 0 || !assimilated || throw(ArgumentError(
+                "$(label): a record of cell average $(cell_average_id) enters the cost through the average; its own " *
+                "row is not assimilated"))
+            isnan(cell_average_correlation) || throw(ArgumentError(
+                "$(label): only cell-average rows carry a cell_average_correlation"))
         end
         # Arithmetic invariants of the sign convention.
         expected_departure = simulated_value - observed_value
@@ -193,7 +240,8 @@ struct CSDepartureRecord
                    panel, i, j, vertical_placement, placement_height_agl_m, placement_pressure_pa,
                    steps, weights, levels, observed_value, simulated_value, departure,
                    value_sigma, model_sigma, normalized_departure, surface_pressure_mismatch_pa,
-                   retrieval_profile, profile_model_sigma, assimilated)
+                   retrieval_profile, profile_model_sigma, assimilated, flag, cell_average_id,
+                   cell_average_correlation)
     end
 end
 
@@ -208,7 +256,7 @@ CSDepartureRecord(id::Int64, tracer::String, instrument_type::String, date_compo
     CSDepartureRecord(id, tracer, instrument_type, date_components, lat, lon, kind, time_window_s, clamped,
                       panel, i, j, vertical_placement, placement_height_agl_m, placement_pressure_pa, steps,
                       weights, levels, observed_value, simulated_value, departure, value_sigma, model_sigma,
-                      normalized_departure, NaN, Float64[], 0.0, true)
+                      normalized_departure, NaN, Float64[], 0.0, true, Int8(0), Int64(0), NaN)
 
 function CSDepartureRecord(; id::Integer, tracer::AbstractString, instrument_type::AbstractString,
                            date_components, lat::Real, lon::Real, kind = PointObservationKind(),
@@ -219,7 +267,8 @@ function CSDepartureRecord(; id::Integer, tracer::AbstractString, instrument_typ
                            observed_value::Real, simulated_value::Real, departure::Real,
                            value_sigma::Real, model_sigma::Real = 0, normalized_departure::Real,
                            surface_pressure_mismatch_pa::Real = NaN, retrieval_profile = Float64[],
-                           profile_model_sigma::Real = 0, assimilated::Bool = true)
+                           profile_model_sigma::Real = 0, assimilated::Bool = true, flag::Integer = 0,
+                           cell_average_id::Integer = 0, cell_average_correlation::Real = NaN)
     return CSDepartureRecord(Int64(id), String(tracer), String(instrument_type),
                              _coerce_date_components(date_components), Float64(lat), Float64(lon),
                              _parse_observation_kind(kind), Float64(time_window_s), clamped,
@@ -229,7 +278,8 @@ function CSDepartureRecord(; id::Integer, tracer::AbstractString, instrument_typ
                              Float64(observed_value), Float64(simulated_value), Float64(departure),
                              Float64(value_sigma), Float64(model_sigma), Float64(normalized_departure),
                              Float64(surface_pressure_mismatch_pa), collect(Float64, retrieval_profile),
-                             Float64(profile_model_sigma), assimilated)
+                             Float64(profile_model_sigma), assimilated, Int8(flag), Int64(cell_average_id),
+                             Float64(cell_average_correlation))
 end
 
 """
@@ -277,6 +327,8 @@ function CSDepartureSet(records::AbstractVector{CSDepartureRecord};
     # Bounds check every record against the run-level metadata, so neither
     # direct construction nor `read_departures` admits a step past the run or a
     # cell outside the mesh.
+    _check_unique_ids(records, "CSDepartureSet")
+    _check_cell_averages(records)
     @inbounds for (k, r) in enumerate(records)
         last(r.steps) <= nsteps || throw(ArgumentError(
             "CSDepartureSet record $k samples step $(last(r.steps)), outside [1, $nsteps] (run nsteps)"))
@@ -294,6 +346,19 @@ function CSDepartureSet(records::AbstractVector{CSDepartureRecord};
                           Int(nsteps),
                           run_id === nothing ? nothing : String(run_id),
                           iteration === nothing ? nothing : Int(iteration))
+end
+
+# Every cell average has one row, and every member row names one.
+function _check_cell_averages(records)
+    averages = Int64[r.cell_average_id for r in records if r.vertical_placement == CELL_AVERAGE_PLACEMENT_CODE]
+    allunique(averages) || throw(ArgumentError(
+        "CSDepartureSet: a cell average has more than one row (cell_average_id $(averages))"))
+    for r in records
+        r.vertical_placement == CELL_AVERAGE_PLACEMENT_CODE || r.cell_average_id == 0 ||
+            r.cell_average_id in averages || throw(ArgumentError(
+            "CSDepartureSet: row id $(r.id) belongs to cell average $(r.cell_average_id), which has no row"))
+    end
+    return nothing
 end
 
 Base.length(set::CSDepartureSet) = length(set.records)
@@ -338,7 +403,14 @@ _kind_matches(::AbstractObservationKind, r, ::AbstractCSFootprintObjective) = fa
 Build a [`CSDepartureSet`](@ref) from a 4D-Var evaluation: its observations
 (bound from `set` by `bind_to_mesh`), simulated values and stencils
 ([`CSObservationStencil`](@ref)), joined to the records of `set` by record
-id, one row per observation in observation order.
+id, one row per observation in observation order. Co-sampled records
+(`flagged_records = "cosample"`) are rows with their `flag` and
+`assimilated = false`. A cell average ([`CSCellAverageObjective`](@ref)) is
+a row (placement code [`CELL_AVERAGE_PLACEMENT_CODE`](@ref), its measurement
+and model sigma and correlation, `cell_average_id` its number 1, 2, … and a
+row id above every record id of `set`), and so are its records, as
+co-samples with the average's `cell_average_id`; a hand-built average is
+checked against its records as `bind_to_mesh` builds it.
 
 Validation (`ArgumentError` on any violation):
 
@@ -393,10 +465,36 @@ function build_departure_set(set::CSObservationSet,
     t_start_dt = _parse_iso_datetime(t_start)
     dt_f = Float64(dt)
     locator = cell_locator(mesh)
+    # The cell averages, numbered 1, 2, … in observation order, the average
+    # of each averaged record, and the row ids of the averages: above every
+    # record id of the set.
+    average_number = Dict{Int, Int64}()
+    average_of = Dict{Int64, Int64}()
+    for (k, obs) in enumerate(observations)
+        obs.objective isa CSCellAverageObjective || continue
+        number = average_number[k] = length(average_number) + 1
+        for member in obs.objective.ids
+            haskey(average_of, member) && throw(ArgumentError(
+                "build_departure_set: record id $(member) is a member of two cell averages"))
+            average_of[member] = number
+        end
+    end
+    id_offset = max(Int64(0), maximum(r -> r.id, set.records; init = Int64(0)))
+    id_offset <= typemax(Int64) - length(average_number) || throw(ArgumentError(
+        "build_departure_set: no row id above the record ids is left for $(length(average_number)) cell averages"))
+    member_observations = Dict(obs.id => obs for obs in observations
+                               if !(obs.objective isa CSCellAverageObjective))
 
-    records = Vector{CSDepartureRecord}(undef, n)
+    records = CSDepartureRecord[]
+    sizehint!(records, n)
     @inbounds for k in 1:n
         obs = observations[k]
+        if obs.objective isa CSCellAverageObjective
+            push!(records, _average_departure_row(obs, stencils[k], simulated[k], set, row_of, member_observations,
+                                                  locator, t_start_dt, dt_f, Int(nsteps), k,
+                                                  id_offset + average_number[k], average_number[k]))
+            continue
+        end
         stencil = stencils[k]
         sim = simulated[k]
         isfinite(sim) || throw(ArgumentError(
@@ -416,12 +514,7 @@ function build_departure_set(set::CSObservationSet,
         cell == (obs.objective.panel, obs.objective.i, obs.objective.j) || throw(ArgumentError(
             "$(label): the record's (lat, lon) = ($(rec.lat), $(rec.lon)) is in cell $(cell), " *
             "the observation in $((obs.objective.panel, obs.objective.i, obs.objective.j))"))
-        # A record outside the run reaches the 4D-Var only through ClampOutOfRange.
-        t_rec = _seconds_after(rec.date_components, t_start_dt)
-        k_rec = floor(Int, t_rec / dt_f) + 1
-        clamped = !(1 <= k_rec <= nsteps)
-        expected = clamped ? _clamped_sampling(t_rec, rec.time_window_s, k_rec, dt_f, Int(nsteps)) :
-                             _window_sampling(t_rec, rec.time_window_s, k_rec, dt_f, Int(nsteps))
+        expected, clamped = _expected_sampling(rec, t_start_dt, dt_f, Int(nsteps))
         expected == obs.sampling || throw(ArgumentError(
             "$(label): the observation samples steps $(obs.sampling.steps) with weights " *
             "$(obs.sampling.weights), but the record maps to $(expected.steps) with " *
@@ -441,7 +534,11 @@ function build_departure_set(set::CSObservationSet,
         normalized = departure / _total_sigma(rec)
         isfinite(departure) && isfinite(normalized) || throw(ArgumentError(
             "$(label): the departure overflowed ($departure, normalized $normalized)"))
-        records[k] = CSDepartureRecord(
+        cell_average_id = get(average_of, rec.id, Int64(0))
+        cell_average_id == 0 || !obs.assimilate || throw(ArgumentError(
+            "$(label): the record is a member of cell average $(cell_average_id), but its own observation is " *
+            "assimilated (bind_to_mesh co-samples the members)"))
+        push!(records, CSDepartureRecord(
             id = rec.id, tracer = rec.tracer, instrument_type = rec.instrument_type,
             date_components = rec.date_components, lat = rec.lat, lon = rec.lon,
             kind = rec.kind, time_window_s = rec.time_window_s, clamped = clamped,
@@ -454,7 +551,7 @@ function build_departure_set(set::CSObservationSet,
             normalized_departure = normalized,
             surface_pressure_mismatch_pa = stencil.surface_pressure_mismatch_pa,
             retrieval_profile = stencil.retrieval_profile, profile_model_sigma = _profile_model_sigma(rec),
-            assimilated = stencil.assimilated)
+            assimilated = stencil.assimilated, flag = rec.flag, cell_average_id = cell_average_id))
     end
 
     return CSDepartureSet(records;
@@ -468,6 +565,105 @@ function build_departure_set(set::CSObservationSet,
                           nsteps = Int(nsteps),
                           run_id = run_id,
                           iteration = iteration)
+end
+
+# The time sampling a record maps to on the run grid and whether its time is
+# outside the run (it then reaches the 4D-Var only through ClampOutOfRange).
+function _expected_sampling(rec::CSObservationRecord, t_start::Dates.DateTime, dt::Float64, nsteps::Int)
+    t_rec = _seconds_after(rec.date_components, t_start)
+    k_rec = floor(Int, t_rec / dt) + 1
+    clamped = !(1 <= k_rec <= nsteps)
+    expected = clamped ? _clamped_sampling(t_rec, rec.time_window_s, k_rec, dt, nsteps) :
+                         _window_sampling(t_rec, rec.time_window_s, k_rec, dt, nsteps)
+    return expected, clamped
+end
+
+# Structural equality, field by field and arrays by value (NaN equals NaN):
+# a cell average's member objective and the co-sample of the same record must
+# be the same operator, even when built as separate objects.
+function _same_structure(a, b)
+    typeof(a) === typeof(b) || return false
+    a isa AbstractArray && return size(a) == size(b) && all(_same_structure(x, y) for (x, y) in zip(a, b))
+    (isbits(a) || isempty(fieldnames(typeof(a)))) && return isequal(a, b)
+    return all(_same_structure(getfield(a, f), getfield(b, f)) for f in fieldnames(typeof(a)))
+end
+
+# The row of a cell average, the term of the cost (row id `row_id`, number
+# `number`): the average checked against its records as `bind_to_mesh` builds
+# it (assimilable column records of its cell and time sampling, co-sampled
+# themselves, 1/σ² weights, the value, the measurement and model sigma), and
+# the provenance of its earliest record.
+function _average_departure_row(obs::CSObservation, stencil::CSObservationStencil, sim, set::CSObservationSet,
+                                row_of::Dict{Int64, Int}, member_observations::AbstractDict, locator,
+                                t_start::Dates.DateTime, dt::Float64, nsteps::Int, k::Int, row_id::Int64,
+                                number::Int64)
+    o = obs.objective
+    label = "build_departure_set observation $k (cell average $(number))"
+    isfinite(sim) || throw(ArgumentError("$(label): the simulated value is not finite (got $sim)"))
+    for (n, id) in enumerate(o.ids)
+        haskey(row_of, id) || throw(ArgumentError(
+            "$(label): member id $(id) is not a record of the observation set"))
+        rec = set.records[row_of[id]]
+        rec.flag == 0 && rec.kind isa ColumnObservationKind || throw(ArgumentError(
+            "$(label): member record $(id) is a $(observation_kind_label(rec.kind)) record with flag $(rec.flag); " *
+            "a cell average combines assimilable column records (flag 0)"))
+        _kind_matches(rec, o.members[n]) || throw(ArgumentError(
+            "$(label): member record $(id) does not match its objective $(nameof(typeof(o.members[n])))"))
+        _locate_cs_cell(rec.lat, rec.lon, locator) == (o.panel, o.i, o.j) || throw(ArgumentError(
+            "$(label): member record $(id) is not in the average's cell $((o.panel, o.i, o.j))"))
+        first(_expected_sampling(rec, t_start, dt, nsteps)) == obs.sampling || throw(ArgumentError(
+            "$(label): member record $(id) does not sample the average's steps $(obs.sampling.steps)"))
+        member = get(member_observations, id, nothing)
+        member === nothing && throw(ArgumentError(
+            "$(label): member record $(id) has no observation; the members of a cell average are co-sampled " *
+            "(bind_to_mesh binds them with assimilate = false)"))
+        member.assimilate && throw(ArgumentError(
+            "$(label): member record $(id) is assimilated itself; it enters the cost through the average"))
+        _same_structure(member.objective, o.members[n]) || throw(ArgumentError(
+            "$(label): member record $(id) is co-sampled with a different observation operator than the " *
+            "average uses for it ($(nameof(typeof(member.objective))) vs $(nameof(typeof(o.members[n]))), or " *
+            "different settings)"))
+    end
+    members = [set.records[row_of[id]] for id in o.ids]
+    tracers = unique(r.tracer for r in members)
+    length(tracers) == 1 || throw(ArgumentError(
+        "$(label): its member records mix tracers ($(join(tracers, ", "))); a cell average combines records " *
+        "of one tracer"))
+    w = [1 / r.value_sigma^2 for r in members]
+    o.weights ≈ w ./ sum(w) || throw(ArgumentError(
+        "$(label): the weights $(o.weights) are not the members' normalized 1/value_sigma^2"))
+    value = sum(o.weights[i] * members[i].value for i in eachindex(members))
+    Float64(obs.value) == value || throw(ArgumentError(
+        "$(label): the observed average $(obs.value) is not the weighted mean $(value) of its records"))
+    isfinite(o.measurement_sigma) && isfinite(o.model_sigma) && isfinite(o.correlation) || throw(ArgumentError(
+        "$(label): the cell average does not record its measurement and model sigma and correlation; build it " *
+        "with bind_to_mesh(...; cell_averaging = CellAverage(...))"))
+    σ = [r.value_sigma for r in members]
+    measurement = sum(o.weights[i] * o.weights[j] * (i == j ? 1.0 : o.correlation) * σ[i] * σ[j]
+                      for i in eachindex(σ), j in eachindex(σ))
+    model = sum(o.weights[i] * (members[i].model_sigma^2 + _profile_model_sigma(members[i])^2) for i in eachindex(σ))
+    isapprox(o.measurement_sigma, sqrt(measurement); rtol = 1e-12) &&
+        isapprox(o.model_sigma, sqrt(model); rtol = 1e-12) || throw(ArgumentError(
+        "$(label): its measurement and model sigma ($(o.measurement_sigma), $(o.model_sigma)) are not those of " *
+        "its records ($(sqrt(measurement)), $(sqrt(model)))"))
+    isapprox(Float64(obs.sigma), hypot(o.measurement_sigma, o.model_sigma); rtol = 1e-12) || throw(ArgumentError(
+        "$(label): sigma $(obs.sigma) is not sqrt(measurement_sigma^2 + model_sigma^2)"))
+    (stencil.panel, stencil.i, stencil.j) == (o.panel, o.i, o.j) && stencil.steps == obs.sampling.steps &&
+        stencil.weights == obs.sampling.weights || throw(ArgumentError(
+        "$(label): its stencil does not belong to the observation"))
+    first_record = first(members)
+    clamped = last(_expected_sampling(first_record, t_start, dt, nsteps))
+    departure = Float64(sim) - Float64(obs.value)
+    return CSDepartureRecord(
+        id = row_id, tracer = first_record.tracer, instrument_type = first_record.instrument_type,
+        date_components = first_record.date_components, lat = first_record.lat, lon = first_record.lon,
+        kind = ColumnObservationKind(), time_window_s = first_record.time_window_s,
+        clamped = clamped, panel = stencil.panel, i = stencil.i, j = stencil.j,
+        vertical_placement = stencil.placement_method, steps = stencil.steps, weights = stencil.weights,
+        levels = stencil.levels, observed_value = Float64(obs.value), simulated_value = Float64(sim),
+        departure = departure, value_sigma = o.measurement_sigma, model_sigma = o.model_sigma,
+        normalized_departure = departure / Float64(obs.sigma), assimilated = stencil.assimilated,
+        cell_average_id = number, cell_average_correlation = o.correlation)
 end
 
 # ---------------------------------------------------------------------------
@@ -528,7 +724,10 @@ dimension: observation `n` owns `sample_count[n]` consecutive entries of
 `sample_step`, `sample_weight` and `sample_level`. When any row is an
 averaging-kernel column, the file adds `surface_pressure_mismatch_pa`,
 `retrieval_model_profile` (on a `retrieval_level` dimension, surface first,
-NaN-padded), `profile_model_sigma` and `assimilated` for every row.
+NaN-padded) and `profile_model_sigma` for every row. `assimilated` is
+written when any row is an averaging-kernel column or not assimilated,
+`flag` when any row has a nonzero flag (co-sampled records), and
+`cell_average_id` when any row belongs to a cell average.
 """
 function write_departures(path::AbstractString, set::CSDepartureSet)
     mkpath(dirname(abspath(path)))
@@ -577,16 +776,44 @@ function write_departures(path::AbstractString, set::CSDepartureSet)
                        reduce(vcat, (r.levels for r in set.records); init = Int32[]),
                        ("description" => "model level read at the step (k = 1 at the top); 0 = every level (column mean)",))
         _write_departure_retrieval_block(ds, set.records)
+        _write_departure_assimilation!(ds, set.records)
     end
     return path
 end
 
+# Whether each row is in the cost, its record's flag and its cell average,
+# each written when any row needs it (absent: assimilated, flag 0, no average).
+function _write_departure_assimilation!(ds, records)
+    if any(r -> r.vertical_placement == RETRIEVAL_COLUMN_PLACEMENT_CODE || !r.assimilated, records)
+        _write_dep_var(ds, "assimilated", Int8, ("obs",), Int8[r.assimilated for r in records],
+                       ("description" => "1 when the row is a term of the 4D-Var cost; 0 for a co-sampled record " *
+                        "(flag != 0), a record of a cell average (cell_average_id != 0, in the cost through the " *
+                        "average), or an averaging-kernel column left out by max_surface_pressure_mismatch_pa " *
+                        "(unplaced_records = skip)",))
+    end
+    any(r -> r.flag != 0, records) &&
+        _write_dep_var(ds, "flag", Int8, ("obs",), Int8[r.flag for r in records],
+                       ("description" => "the observation record's flag: 0 = assimilate, any other value = " *
+                        "co-sampled only (simulated and reported, not assimilated)",))
+    any(r -> r.cell_average_id != 0, records) &&
+        _write_dep_var(ds, "cell_average_id", Int64, ("obs",), Int64[r.cell_average_id for r in records],
+                       ("description" => "number (1, 2, ...) of the cell average the row belongs to: its member " *
+                        "records (not assimilated themselves) and the average's own row (vertical_placement -4, " *
+                        "a row id above every record id, in the cost); 0 = none",))
+    any(r -> r.vertical_placement == CELL_AVERAGE_PLACEMENT_CODE, records) &&
+        _write_dep_var(ds, "cell_average_correlation", Float64, ("obs",),
+                       Float64[r.cell_average_correlation for r in records],
+                       ("description" => "cell-average rows: the correlation between the errors of distinct records " *
+                        "of the average, in value_sigma (the measurement error of the average); NaN for other rows",))
+    return nothing
+end
+
 # The averaging-kernel column diagnostics, written when any row is such a
-# column: `retrieval_level` (the most retrieval layers of any row), the
-# surface-pressure mismatch, the retrieval-level model profile (NaN-padded,
-# surface first), the profile model sigma and the assimilated flag.
+# column: `retrieval_level` (the most retrieval layers or levels of any row),
+# the surface-pressure mismatch, the retrieval-level model profile (NaN-padded,
+# surface first) and the profile model sigma; `assimilated` comes with them.
 const _DEPARTURE_RETRIEVAL_VARIABLES = ("surface_pressure_mismatch_pa", "retrieval_model_profile",
-                                        "profile_model_sigma", "assimilated")
+                                        "profile_model_sigma")
 
 function _write_departure_retrieval_block(ds, records)
     any(r -> r.vertical_placement == RETRIEVAL_COLUMN_PLACEMENT_CODE, records) || return nothing
@@ -604,25 +831,38 @@ function _write_departure_retrieval_block(ds, records)
                     "by the stretch of the model column onto the retrieval column; NaN for other rows"))
     _write_dep_var(ds, "retrieval_model_profile", Float64, ("retrieval_level", "obs"), profiles,
                    ("units" => "mol mol-1", "ordering" => "surface_to_top", "description" =>
-                    "averaging-kernel columns: the model's dry mole fraction on the retrieval layers (the " *
-                    "stretched model column rebinned by pressure overlap, time-weighted), from the surface up; " *
-                    "NaN-padded, NaN for other rows"))
+                    "averaging-kernel columns: the model's dry mole fraction on the retrieval layers or levels " *
+                    "(the stretched model column rebinned by pressure overlap, or projected onto the levels' hat " *
+                    "functions, time-weighted), from the surface up; NaN-padded, NaN for other rows"))
     _write_dep_var(ds, "profile_model_sigma", Float64, ("obs",), Float64[r.profile_model_sigma for r in records],
                    ("description" => "1-sigma model error of an averaging-kernel column, sqrt(sum_i (h_i a_i " *
                     "sigma_i)^2) from its profile uncertainty, added in quadrature; 0 for other rows",))
-    _write_dep_var(ds, "assimilated", Int8, ("obs",), Int8[r.assimilated for r in records],
-                   ("description" => "1 when the row is in the 4D-Var cost; 0 for an averaging-kernel column " *
-                    "left out by max_surface_pressure_mismatch_pa (unplaced_records = skip)",))
     return nothing
 end
 
-# The block as per-row vectors (defaults when the file has none).
+# An optional per-row integer variable (`default` when the file has none).
+function _optional_departure_column(ds, name, n::Int, path, default)
+    haskey(ds, name) || return fill(default, n)
+    data = Array(ds[name])
+    length(data) == n || throw(ArgumentError(
+        "departures NetCDF $(repr(path)) variable $(repr(name)) has $(length(data)) rows; expected $(n)"))
+    any(ismissing, data) && throw(ArgumentError("departures NetCDF $(repr(path)) variable $(repr(name)) has fill values"))
+    return data
+end
+
+# The block as per-row vectors (defaults when the file has none), with
+# `assimilated` (required with the block, optional without), `flag` and
+# `cell_average_id`.
 function _read_departure_retrieval_block(ds, n::Int, path)
     present = [v for v in _DEPARTURE_RETRIEVAL_VARIABLES if haskey(ds, v)]
-    isempty(present) && return (fill(NaN, n), [Float64[] for _ in 1:n], zeros(n), trues(n))
-    length(present) == length(_DEPARTURE_RETRIEVAL_VARIABLES) || throw(ArgumentError(
+    assimilated = Bool[x != 0 for x in _optional_departure_column(ds, "assimilated", n, path, Int8(1))]
+    flags = Int8.(_optional_departure_column(ds, "flag", n, path, Int8(0)))
+    averages = (Int64.(_optional_departure_column(ds, "cell_average_id", n, path, Int64(0))),
+                Float64.(_optional_departure_column(ds, "cell_average_correlation", n, path, NaN)))
+    isempty(present) && return (fill(NaN, n), [Float64[] for _ in 1:n], zeros(n), assimilated, flags, averages)
+    length(present) == length(_DEPARTURE_RETRIEVAL_VARIABLES) && haskey(ds, "assimilated") || throw(ArgumentError(
         "departures NetCDF $(repr(path)) has a partial retrieval block ($(join(present, ", "))); it needs " *
-        "all of $(join(_DEPARTURE_RETRIEVAL_VARIABLES, ", "))"))
+        "all of $(join((_DEPARTURE_RETRIEVAL_VARIABLES..., "assimilated"), ", "))"))
     nomissing(name, x) = ismissing(x) ? throw(ArgumentError(
         "departures NetCDF $(repr(path)) variable $(repr(name)) has fill values")) : x
     profile_var = ds["retrieval_model_profile"]
@@ -646,7 +886,6 @@ function _read_departure_retrieval_block(ds, n::Int, path)
         "$(repr(mismatch_units)); expected a pressure unit, one of $(join(sort!(collect(keys(_PRESSURE_UNITS_PA))), ", "))"))
     mismatch = Float64[ismissing(x) ? NaN : Float64(x) * mismatch_scale for x in Array(mismatch_var)]
     sigma = Float64[Float64(nomissing("profile_model_sigma", x)) for x in Array(ds["profile_model_sigma"])]
-    assimilated = Bool[nomissing("assimilated", x) != 0 for x in Array(ds["assimilated"])]
     raw = map(x -> ismissing(x) ? NaN : Float64(x) * profile_scale, Array(profile_var))
     length(mismatch) == length(sigma) == length(assimilated) == size(raw, 2) == n || throw(ArgumentError(
         "departures NetCDF $(repr(path)) retrieval block variables do not have $(n) rows"))
@@ -657,7 +896,7 @@ function _read_departure_retrieval_block(ds, n::Int, path)
                         "departures NetCDF $(repr(path)) retrieval_model_profile row $(k) is not NaN-padded"))
                     col[1:count]
                 end for k in 1:n]
-    return (mismatch, profiles, sigma, assimilated)
+    return (mismatch, profiles, sigma, assimilated, flags, averages)
 end
 
 function _write_dep_var(ds, name, T, dims, data, attrs)
@@ -693,8 +932,9 @@ Validation (fails fast with `ArgumentError`):
   the `sample_count`s must add up to the `sample` length.
 - The averaging-kernel column block (`surface_pressure_mismatch_pa`,
   `retrieval_model_profile (retrieval_level, obs)`, `profile_model_sigma`,
-  `assimilated`) is all or nothing; without it every row has the defaults
-  (NaN, no profile, 0, assimilated). The profile must state
+  with `assimilated`) is all or nothing; without it every row has the defaults
+  (NaN, no profile, 0). `assimilated`, `flag` and `cell_average_id` are
+  optional otherwise (defaults: assimilated, flag 0, no cell average). The profile must state
   `ordering = "surface_to_top"` and a mole-fraction unit, the mismatch a
   pressure unit (converted to mol/mol and Pa).
 - Every row must pass the [`CSDepartureRecord`](@ref) checks.
@@ -751,7 +991,7 @@ function read_departures(path::AbstractString)
         end
         (any(ismissing, sample_step) || any(ismissing, sample_weight) || any(ismissing, sample_level)) &&
             throw(ArgumentError("departures NetCDF $(repr(path)) has fill values in its sample arrays"))
-        mismatch, profiles, profile_sigma, assimilated = _read_departure_retrieval_block(ds, n, path)
+        mismatch, profiles, profile_sigma, assimilated, flags, averages = _read_departure_retrieval_block(ds, n, path)
         records = Vector{CSDepartureRecord}(undef, n)
         stop = 0
         @inbounds for k in 1:n
@@ -775,7 +1015,8 @@ function read_departures(path::AbstractString)
                 departure = col("departure"), value_sigma = col("value_sigma"),
                 model_sigma = col("model_sigma"), normalized_departure = col("normalized_departure"),
                 surface_pressure_mismatch_pa = mismatch[k], retrieval_profile = profiles[k],
-                profile_model_sigma = profile_sigma[k], assimilated = assimilated[k])
+                profile_model_sigma = profile_sigma[k], assimilated = assimilated[k], flag = flags[k],
+                cell_average_id = averages[1][k], cell_average_correlation = averages[2][k])
         end
 
         n_clamped = count(r -> r.clamped, records)

@@ -887,6 +887,27 @@
           "items": {"type": "integer"},
           "description": "quality_filter = \"flag_values\" only (required there): accepted flag values, e.g. [1]."
         },
+        "averaging_kernel_tracers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1},
+          "description": "oco2_lite only, opt-in (AveragingKernelColumns): also read each sounding's retrieval (levels, pressure weights, averaging kernel, prior) and write <tracer>_ak_column, the averaging-kernel column of the sampled profile, for these sampled tracers (the tracer the retrieval measures, e.g. total CO2). Omitted: NoAveragingKernels, output unchanged."
+        },
+        "averaging_kernel_mapping": {
+          "description": "oco2_lite with averaging_kernel_tracers only: how the 20 retrieval levels enter the operator.",
+          "default": "hat",
+          "oneOf": [
+            {
+              "const": "hat",
+              "description": "HatLevelProjection: the levels as given; the model profile projected onto their hat functions."
+            },
+            {
+              "const": "tm5",
+              "description": "tm5_layer_column: TM5-4DVar's 19 layers (levels as interfaces, midpoint kernel and prior), LayerRebin."
+            }
+          ]
+        },
         "site_grouping": {
           "description": "obspack sites only (AbstractSiteGrouping).",
           "default": "site_code",
@@ -941,7 +962,9 @@
                 {"required": ["quality_flag_max"]},
                 {"required": ["quality_variable"]},
                 {"required": ["quality_filter"]},
-                {"required": ["quality_flag_values"]}
+                {"required": ["quality_flag_values"]},
+                {"required": ["averaging_kernel_tracers"]},
+                {"required": ["averaging_kernel_mapping"]}
               ]
             },
             "required": ["mode"]
@@ -956,7 +979,9 @@
                 {"required": ["quality_variable"]},
                 {"required": ["site_grouping"]},
                 {"required": ["quality_filter"]},
-                {"required": ["quality_flag_values"]}
+                {"required": ["quality_flag_values"]},
+                {"required": ["averaging_kernel_tracers"]},
+                {"required": ["averaging_kernel_mapping"]}
               ]
             },
             "required": ["mode"]
@@ -1004,6 +1029,10 @@
             "required": ["kind", "mode"]
           },
           "then": {"not": {"required": ["site_grouping"]}}
+        },
+        {
+          "if": {"not": {"required": ["averaging_kernel_tracers"]}},
+          "then": {"not": {"required": ["averaging_kernel_mapping"]}}
         }
       ]
     },

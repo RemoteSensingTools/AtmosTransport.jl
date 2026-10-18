@@ -70,10 +70,100 @@ _parse_out_of_range_policy(raw) = throw(ArgumentError(
     "SkipOutOfRange(), or ClampOutOfRange()."))
 
 """
+    AbstractFlaggedRecordPolicy
+
+What `bind_to_mesh` does with records whose `flag` is not 0 (not to be
+assimilated): [`DropFlaggedRecords`](@ref) (`"drop"`, the default) or
+[`CosampleFlaggedRecords`](@ref) (`"cosample"`).
+"""
+abstract type AbstractFlaggedRecordPolicy end
+
+"""`flagged_records = "drop"` (default): records with a nonzero flag are not bound."""
+struct DropFlaggedRecords <: AbstractFlaggedRecordPolicy end
+
+"""
+`flagged_records = "cosample"`: records with a nonzero flag are bound as
+co-samples (`CSObservation(...; assimilate = false)`): simulated on the
+forward replay and reported with their flag, never in the cost or the
+gradient. The OCO-2 MIP needs co-samples of every record, the withheld and
+evaluation-only ones included.
+"""
+struct CosampleFlaggedRecords <: AbstractFlaggedRecordPolicy end
+
+_parse_flagged_records(policy::AbstractFlaggedRecordPolicy) = policy
+function _parse_flagged_records(raw::AbstractString)
+    raw == "drop" && return DropFlaggedRecords()
+    raw == "cosample" && return CosampleFlaggedRecords()
+    throw(ArgumentError("flagged_records must be \"drop\" or \"cosample\"; got $(repr(raw))"))
+end
+_parse_flagged_records(raw) = throw(ArgumentError(
+    "flagged_records must be DropFlaggedRecords(), CosampleFlaggedRecords(), \"drop\" or \"cosample\"; got " *
+    "$(repr(raw))"))
+
+_binds_flagged(::DropFlaggedRecords) = false
+_binds_flagged(::CosampleFlaggedRecords) = true
+
+"""
+    AbstractCellAveraging
+
+Whether `bind_to_mesh` averages column records that fall in one model cell:
+[`NoCellAveraging`](@ref) (the default) or [`CellAverage`](@ref). The
+alternative that keeps every record and inflates its model error instead is
+[`inflate_cell_model_error`](@ref).
+"""
+abstract type AbstractCellAveraging end
+
+"""`cell_averaging = NoCellAveraging()` (default): every record is its own observation."""
+struct NoCellAveraging <: AbstractCellAveraging end
+
+"""
+    CellAverage(; time_tolerance_s = 60.0, correlation = 0.0)
+
+Average the assimilated column records (flag 0) of one tracer that fall in
+the same model cell, sample the same model steps with the same weights, and
+lie within `time_tolerance_s` of the earliest record of their group (records
+of one overpass: an OCO-2 orbit crosses a C90 cell in about 15 s, and the
+next orbit passes 99 minutes later). A group of ``n ≥ 2`` records
+``y_i`` with measurement errors ``σ_i`` (`value_sigma`) becomes one
+observation with weights ``w_i = 1/σ_i^2``:
+
+```math
+\\bar y = \\frac{\\sum_i w_i y_i}{\\sum_i w_i}, \\qquad
+\\bar H = \\frac{\\sum_i w_i H_i}{\\sum_i w_i}, \\qquad
+σ^2_\\mathrm{meas} = \\frac{\\sum_i \\sum_j w_i w_j ρ_{ij} σ_i σ_j}{(\\sum_i w_i)^2}, \\qquad
+\\bar σ^2 = σ^2_\\mathrm{meas} + \\frac{\\sum_i w_i σ^2_{\\mathrm{mod},i}}{\\sum_i w_i},
+```
+
+with ``ρ_{ii} = 1`` and ``ρ_{ij} =`` `correlation` between distinct records
+(0 by default: separate 10-s spans; their within-span correlation is already
+in ``σ_i``), and ``σ^2_{\\mathrm{mod},i}`` the record's model error
+(`model_sigma²` plus the profile term of an averaging-kernel column), added
+once, not reduced by the averaging. ``\\bar H`` is a
+[`CSCellAverageObjective`](@ref); the operators are linear, so its gradient is
+the ``w``-weighted combination of the members'. The members stay bound as
+co-samples (`assimilate = false`), so every record keeps its own simulated
+value. Needs `max_surface_pressure_mismatch_pa = Inf` (the screen applies to
+records, not averages).
+"""
+struct CellAverage <: AbstractCellAveraging
+    time_tolerance_s::Float64
+    correlation::Float64
+    function CellAverage(time_tolerance_s::Real, correlation::Real)
+        isfinite(time_tolerance_s) && time_tolerance_s >= 0 || throw(ArgumentError(
+            "CellAverage time_tolerance_s must be finite and >= 0; got $(time_tolerance_s)"))
+        isfinite(correlation) && 0 <= correlation <= 1 || throw(ArgumentError(
+            "CellAverage correlation must be in [0, 1]; got $(correlation)"))
+        return new(Float64(time_tolerance_s), Float64(correlation))
+    end
+end
+CellAverage(; time_tolerance_s::Real = 60.0, correlation::Real = 0.0) = CellAverage(time_tolerance_s, correlation)
+
+"""
     bind_to_mesh(set::CSObservationSet, mesh::CubedSphereMesh, t_start::Dates.DateTime, dt::Real;
                  nsteps = nothing, tracer_filter = nothing, out_of_range_policy = RejectOutOfRange(),
                  placement = VerticalPlacementSpec(), terrain = ObservationTerrain(),
-                 max_surface_pressure_mismatch_pa = Inf)
+                 max_surface_pressure_mismatch_pa = Inf, flagged_records = DropFlaggedRecords(),
+                 cell_averaging = NoCellAveraging())
         -> Vector{CSObservation}
 
 Bind each record of `set` to a [`CSObservation`](@ref) of the CS 4D-Var path:
@@ -127,8 +217,17 @@ its time sampling, the cell that contains it, and its objective.
   contains the weight of the water vapour (about 0.5 % of the surface
   pressure, more in the tropics). Column records without a block become
   [`CSColumnMeanObjective`](@ref)s.
-- Records with a nonzero `flag` are not assimilated (dropped); records of
-  another tracer are dropped when `tracer_filter` names one.
+- Records with a nonzero `flag` are not assimilated: dropped with
+  `flagged_records = DropFlaggedRecords()` (`"drop"`, the default), bound as
+  co-samples (`CSObservation(...; assimilate = false)`: simulated and
+  reported, never in the cost or the gradient) with
+  [`CosampleFlaggedRecords`](@ref) (`"cosample"`). Records of another tracer
+  are dropped when `tracer_filter` names one.
+- **Cell averaging.** With `cell_averaging = CellAverage(...)`, assimilated
+  column records of one cell, step sampling and overpass become one
+  inverse-variance-weighted observation ([`CellAverage`](@ref),
+  [`CSCellAverageObjective`](@ref)), appended after the records, whose own
+  observations become co-samples.
 - The observation `sigma` is ``\\sqrt{\\sigma_\\mathrm{value}^2 +
   \\sigma_\\mathrm{model}^2 + \\sigma_\\mathrm{prof}^2}`` (exactly
   `value_sigma` without a model error), where ``\\sigma_\\mathrm{prof}^2 =
@@ -148,15 +247,24 @@ function bind_to_mesh(set::CSObservationSet,
                       out_of_range_policy = RejectOutOfRange(),
                       placement::VerticalPlacementSpec = VerticalPlacementSpec(),
                       terrain::ObservationTerrain = ObservationTerrain(),
-                      max_surface_pressure_mismatch_pa::Real = Inf)
+                      max_surface_pressure_mismatch_pa::Real = Inf,
+                      flagged_records = DropFlaggedRecords(),
+                      cell_averaging::AbstractCellAveraging = NoCellAveraging())
     policy = _parse_out_of_range_policy(out_of_range_policy)
     max_surface_pressure_mismatch_pa > 0 || throw(ArgumentError(
         "max_surface_pressure_mismatch_pa must be a positive pressure (Pa), or Inf for no limit; got " *
         "$(max_surface_pressure_mismatch_pa)"))
-    return _bind_to_mesh(set, mesh, t_start, dt, policy; nsteps, tracer_filter, placement, terrain,
-                         max_surface_pressure_mismatch_pa = Float64(max_surface_pressure_mismatch_pa))
+    cell_averaging isa CellAverage && isfinite(max_surface_pressure_mismatch_pa) && throw(ArgumentError(
+        "cell averaging (CellAverage) needs max_surface_pressure_mismatch_pa = Inf: the surface-pressure screen " *
+        "applies to records, and an average would assimilate a screened record"))
+    observations, records = _bind_to_mesh(set, mesh, t_start, dt, policy; nsteps, tracer_filter, placement,
+                                          terrain, max_surface_pressure_mismatch_pa =
+                                              Float64(max_surface_pressure_mismatch_pa),
+                                          flagged = _parse_flagged_records(flagged_records))
+    return _average_in_cells(cell_averaging, observations, records)
 end
 
+# The observations and, for each, the record it was bound from.
 function _bind_to_mesh(set::CSObservationSet,
                        mesh::CubedSphereMesh,
                        t_start::Dates.DateTime,
@@ -166,7 +274,8 @@ function _bind_to_mesh(set::CSObservationSet,
                        tracer_filter::Union{Nothing, AbstractString},
                        placement::VerticalPlacementSpec,
                        terrain::ObservationTerrain,
-                       max_surface_pressure_mismatch_pa::Float64)
+                       max_surface_pressure_mismatch_pa::Float64,
+                       flagged::AbstractFlaggedRecordPolicy)
     dt_f = Float64(dt)
     isfinite(dt_f) && dt_f > 0 || throw(ArgumentError("dt must be positive, got $dt"))
     if nsteps !== nothing
@@ -181,27 +290,22 @@ function _bind_to_mesh(set::CSObservationSet,
     _check_unique_ids(set.records, "bind_to_mesh")
     locator = cell_locator(mesh)
     out = CSObservation[]
+    bound = CSObservationRecord[]
     sizehint!(out, length(set))
     counters = ObservationCounters()
     examples = String[]
     placed_requests = SoundingRequest[]
     placements = VerticalPlacement[]
-    n_flagged = n_skipped = n_clamped = 0
+    n_flagged = n_cosampled = n_skipped = n_clamped = 0
 
     for record in set.records
         tracer_match === nothing || record.tracer == tracer_match || continue
-        record.flag == 0 || (n_flagged += 1; continue)
-        nsteps === nothing && record.time_window_s > 0 && throw(ArgumentError(
-            "observation id $(record.id) has a time window (time_window_s = $(record.time_window_s)); " *
-            "bind_to_mesh needs `nsteps` to clip windows to the run"))
-        t = _seconds_after(record.date_components, t_start)
-        k = floor(Int, t / dt_f) + 1
-        sampling = if 1 <= k <= nsteps_max
-            _window_sampling(t, record.time_window_s, k, dt_f, nsteps_max)
-        else
-            outside = _out_of_range_sampling(policy, record, t, k, dt_f, nsteps, nsteps_max)
-            outside === nothing ? (n_skipped += 1; continue) : (n_clamped += 1; outside)
-        end
+        assimilate = record.flag == 0
+        assimilate || _binds_flagged(flagged) || (n_flagged += 1; continue)
+        sampling, outside, t = _record_sampling(record, t_start, dt_f, nsteps, nsteps_max, policy)
+        sampling === nothing && (n_skipped += 1; continue)
+        outside && (n_clamped += 1)
+        assimilate || (n_cosampled += 1)
         cell = locate(locator, record.lon, record.lat)
         request = _sounding_request(record, t)
         objective = _bind_objective(record.kind, record, request, cell, placement, terrain,
@@ -215,18 +319,175 @@ function _bind_to_mesh(set::CSObservationSet,
             push!(placed_requests, request)
             push!(placements, objective.placement)
         end
-        push!(out, CSObservation(sampling, objective, record.value, _total_sigma(record); id = record.id))
+        push!(out, CSObservation(sampling, objective, record.value, _total_sigma(record); id = record.id,
+                                 assimilate))
+        push!(bound, record)
     end
     _handle_unplaced(placement, counters, examples; label = _INVERSION_PLACEMENT_LABEL,
                      context = "bind_to_mesh")
     _warn_below_ground(placed_requests, placements, SiteRequest[], VerticalPlacement[]; context = "bind_to_mesh")
     n_flagged > 0 && @info "bind_to_mesh: $(n_flagged) records with a nonzero flag are not assimilated"
+    n_cosampled > 0 && @info "bind_to_mesh: $(n_cosampled) records with a nonzero flag are co-sampled " *
+                             "(flagged_records = \"cosample\"): simulated and reported, not assimilated"
     n_skipped > 0 && @info "bind_to_mesh: $(n_skipped) records outside the run are skipped (SkipOutOfRange)"
     n_clamped > 0 && @info "bind_to_mesh: $(n_clamped) records outside the run are clamped (ClampOutOfRange): " *
                            "a record whose window overlaps the run samples that part of the window, the " *
                            "others the first or last step"
+    return out, bound
+end
+
+# The time sampling of a record (`nothing` for one the out-of-range policy
+# skips), whether its time lies outside the run, and its time (seconds after
+# `t_start`).
+function _record_sampling(record::CSObservationRecord, t_start::Dates.DateTime, dt::Float64,
+                          nsteps::Union{Nothing, Integer}, nsteps_max::Int, policy::AbstractOutOfRangePolicy)
+    nsteps === nothing && record.time_window_s > 0 && throw(ArgumentError(
+        "observation id $(record.id) has a time window (time_window_s = $(record.time_window_s)); " *
+        "bind_to_mesh needs `nsteps` to clip windows to the run"))
+    t = _seconds_after(record.date_components, t_start)
+    k = floor(Int, t / dt) + 1
+    1 <= k <= nsteps_max && return (_window_sampling(t, record.time_window_s, k, dt, nsteps_max), false, t)
+    return (_out_of_range_sampling(policy, record, t, k, dt, nsteps, nsteps_max), true, t)
+end
+
+# ---------------------------------------------------------------------------
+# Cell averaging
+# ---------------------------------------------------------------------------
+
+# Groups of two or more indices whose `keys` are equal and whose `times` lie
+# within `tolerance` of the group's earliest time; groups in order of their
+# first index, members in time order.
+function _time_clusters(keys::AbstractVector, times::AbstractVector{Float64}, tolerance::Float64)
+    by_key = Dict{Any, Vector{Int}}()
+    order = Any[]
+    for (idx, key) in enumerate(keys)
+        key === nothing && continue
+        haskey(by_key, key) || push!(order, key)
+        push!(get!(by_key, key, Int[]), idx)
+    end
+    groups = Vector{Int}[]
+    for key in order
+        members = sort(by_key[key]; by = idx -> (times[idx], idx))
+        start = 1
+        for n in 2:(length(members) + 1)
+            n <= length(members) && times[members[n]] - times[members[start]] <= tolerance && continue
+            n - start >= 2 && push!(groups, members[start:(n - 1)])
+            start = n
+        end
+    end
+    sort!(groups; by = first)
+    return groups
+end
+
+# The grouping key of a bound observation: tracer, cell and time sampling of an
+# assimilated column observation, `nothing` for any other.
+_cell_key(obs::CSObservation, record::CSObservationRecord) =
+    obs.assimilate && record.kind isa ColumnObservationKind &&
+        obs.objective isa Union{CSRetrievalColumnObjective, CSColumnMeanObjective} ?
+    (record.tracer, obs.objective.panel, obs.objective.i, obs.objective.j, obs.sampling.steps,
+     obs.sampling.weights) : nothing
+
+_average_in_cells(::NoCellAveraging, observations, records) = observations
+
+function _average_in_cells(averaging::CellAverage, observations::Vector{CSObservation},
+                           records::Vector{CSObservationRecord})
+    times = Float64[Dates.value(_record_datetime(r.date_components)) / 1000 for r in records]
+    groups = _time_clusters([_cell_key(o, r) for (o, r) in zip(observations, records)], times,
+                            averaging.time_tolerance_s)
+    out = copy(observations)
+    for group in groups
+        for idx in group
+            o = observations[idx]
+            out[idx] = CSObservation(o.sampling, o.objective, o.value, o.sigma; id = o.id, assimilate = false)
+        end
+        push!(out, _cell_average_observation(averaging, observations[group], records[group]))
+    end
+    isempty(groups) || @info "bind_to_mesh: $(sum(length, groups)) column records are averaged into " *
+                             "$(length(groups)) cell averages (CellAverage, time_tolerance_s = " *
+                             "$(averaging.time_tolerance_s)); the records are co-sampled"
     return out
 end
+
+"""
+    _cell_average_observation(averaging, members, records) -> CSObservation
+
+The averaged observation of a group of bound column observations of one cell
+and time sampling ([`CellAverage`](@ref)): weights ``w_i = 1/σ_i^2`` from the
+records' `value_sigma`, value and objective the normalized weighted means,
+``σ^2 = σ^2_\\mathrm{meas} + \\sum_i \\tilde w_i σ^2_{\\mathrm{mod},i}`` with
+``σ^2_\\mathrm{meas} = \\sum_{ij} \\tilde w_i \\tilde w_j ρ_{ij} σ_i σ_j``. Its
+id is the id of the group's earliest record.
+"""
+function _cell_average_observation(averaging::CellAverage, members::AbstractVector{<:CSObservation},
+                                   records::AbstractVector{CSObservationRecord})
+    w = [1 / r.value_sigma^2 for r in records]
+    weights = w ./ sum(w)
+    σ = [r.value_sigma for r in records]
+    measurement = 0.0
+    for i in eachindex(σ), j in eachindex(σ)
+        measurement += weights[i] * weights[j] * (i == j ? 1.0 : averaging.correlation) * σ[i] * σ[j]
+    end
+    model = sum(weights[i] * (records[i].model_sigma^2 + _profile_model_sigma(records[i])^2) for i in eachindex(σ))
+    first_member = first(members).objective
+    objective = CSCellAverageObjective(first_member.panel, first_member.i, first_member.j,
+                                       [m.objective for m in members], weights, [r.id for r in records];
+                                       measurement_sigma = sqrt(measurement), model_sigma = sqrt(model),
+                                       correlation = averaging.correlation)
+    value = sum(weights[i] * records[i].value for i in eachindex(σ))
+    return CSObservation(first(members).sampling, objective, value, sqrt(measurement + model);
+                         id = first(records).id)
+end
+
+"""
+    inflate_cell_model_error(set::CSObservationSet, mesh, t_start, dt; nsteps = nothing,
+                             time_tolerance_s = 60.0, tracer_filter = nothing,
+                             out_of_range_policy = RejectOutOfRange()) -> CSObservationSet
+
+The alternative to [`CellAverage`](@ref) that keeps every record: the
+assimilated column records grouped as `CellAverage` groups them (same tracer,
+model cell and step sampling as `bind_to_mesh` would bind them, within
+`time_tolerance_s` of the group's earliest record) get their model-error
+variance multiplied by the number ``k`` of records in their group,
+`model_sigma → √k · model_sigma`, i.e. `model_sigma²` times ``k``; the
+profile-error term ``\\sum_i (h_i a_i σ_i)^2`` of an averaging-kernel column
+(from its retrieval block) is not inflated. The model error of
+records that sample the same model column is correlated, so ``k`` records
+should not reduce it ``k``-fold; inflating each by ``k`` gives the group the
+weight of one record's model error. Bind the returned set with the same run
+grid; departures built from it report the inflated `model_sigma`. Every
+other record is returned unchanged.
+"""
+function inflate_cell_model_error(set::CSObservationSet, mesh::CubedSphereMesh, t_start::Dates.DateTime, dt::Real;
+                                  nsteps::Union{Nothing, Integer} = nothing, time_tolerance_s::Real = 60.0,
+                                  tracer_filter::Union{Nothing, AbstractString} = nothing,
+                                  out_of_range_policy = RejectOutOfRange())
+    isfinite(time_tolerance_s) && time_tolerance_s >= 0 || throw(ArgumentError(
+        "time_tolerance_s must be finite and >= 0; got $(time_tolerance_s)"))
+    policy = _parse_out_of_range_policy(out_of_range_policy)
+    dt_f = Float64(dt)
+    isfinite(dt_f) && dt_f > 0 || throw(ArgumentError("dt must be positive, got $dt"))
+    nsteps_max = nsteps === nothing ? typemax(Int) : Int(nsteps)
+    locator = cell_locator(mesh)
+    keys = map(set.records) do r
+        tracer_filter === nothing || r.tracer == tracer_filter || return nothing
+        r.flag == 0 && r.kind isa ColumnObservationKind || return nothing
+        sampling, _, _ = _record_sampling(r, t_start, dt_f, nsteps, nsteps_max, policy)
+        sampling === nothing && return nothing
+        cell = locate(locator, r.lon, r.lat)
+        (r.tracer, cell.panel, cell.i, cell.j, sampling.steps, sampling.weights)
+    end
+    times = Float64[Dates.value(_record_datetime(r.date_components)) / 1000 for r in set.records]
+    records = copy(set.records)
+    for group in _time_clusters(keys, times, Float64(time_tolerance_s)), idx in group
+        records[idx] = _with_model_sigma(records[idx], sqrt(length(group)) * records[idx].model_sigma)
+    end
+    return CSObservationSet(records, set.time_origin)
+end
+
+_with_model_sigma(r::CSObservationRecord, model_sigma::Float64) =
+    CSObservationRecord(r.id, r.date_components, r.lat, r.lon, r.kind, r.elevation_m, r.intake_height_m,
+                        r.altitude_m, r.pressure_pa, r.time_window_s, r.flag, r.value, r.value_sigma, model_sigma,
+                        r.instrument_type, r.tracer, r.retrieval)
 
 # The record as a forward-sampler point request (source 1), so it is placed
 # by exactly the forward rule.

@@ -338,11 +338,20 @@ Python to the track file's moist profiles, with an explicit surface-pressure
 mismatch limit (`max_surface_pressure_mismatch_pa`) and a model-error term
 fixed by the record. See [averaging-kernel columns](@ref retrieval-column-operator).
 
+OCO-2 and OCO-3 retrievals sit on 20 levels. TM5-4DVAR turns the levels into
+the interfaces of 19 layers, interpolates the kernel and prior to the layer
+midpoints and uses ``h = \Delta p/p_s`` (summing to 0.9999); AtmosTransport
+projects the model profile onto the levels' hat functions with the file's
+pressure weights instead, which conserves the column and keeps the
+retrieval's representation. TM5's form is available for comparisons (with its
+weights normalized to 1). Records not assimilated (withheld,
+evaluation-only) can be co-sampled without entering the cost, which the MIP
+asks for and TM5's MIP setup does differently (it assimilates
+`assimilate_flag` 1 and 2). See [level retrievals](@ref hat-level-projection)
+and [OCO-2 MIP records](@ref oco2-mip-records).
+
 ## Current limits
 
-- The forward observation sampler writes OCO-2 soundings as air-mass-weighted
-  column means; averaging kernels are applied only in the 4D-Var (column
-  records with a retrieval block).
 - The inversion driver binds observation files on its synthetic hydrostatic
   meteorology only; real transport binaries need the Julia API.
 - CMFMC requires `clamp = false` in the footprint path.

@@ -170,8 +170,11 @@ Storage types, record types, and schedules come from [`../Tape/`](../Tape/).
 - The injection kernel gives each cell of a (step, panel) pair one work
   item, which adds the cell's entries in input order: deterministic, no
   atomics. (The halo and Lin-Rood face adjoint kernels do use atomics, so a
-  multithreaded CPU or GPU reverse pass is reproducible to rounding only;
-  single-threaded it is bit for bit.)
+  multithreaded CPU or GPU reverse pass is reproducible to rounding only,
+  about 1e-22 of the largest gradient entry between two identical calls;
+  single-threaded it is bit for bit. Tests compare gradients with
+  `gradients_match` in `test/helpers/cs_observation_columns.jl`: `==`
+  single-threaded, 1e-13 relative otherwise.)
 - `<center>` is production's `palindrome_center!`: `D(dt/2) | emission |
   D(dt/2)` with `SplitSurfaceFluxCoupling`, `emission | D(dt)` with
   `DiffusiveSurfaceFluxBoundary`, `emission` alone without diffusion, and
