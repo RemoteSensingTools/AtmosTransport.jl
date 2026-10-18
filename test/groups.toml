@@ -142,6 +142,7 @@ files = [
     "core/test_linrood_seams.jl",
     "core/test_cs_ppm_launch_layouts.jl",
     "core/test_binary_cfl_check.jl",
+    "core/test_subcycle_composition.jl",
 ]
 paths = [
     "src/Operators/Advection/**",
@@ -173,11 +174,9 @@ files = [
     "core/test_tm5_workspace_lifetime.jl",
     "core/test_tm5_preprocessing.jl",
     "core/test_tm5_preprocessing_rates.jl",
-    "core/test_tm5_process_day.jl",
-    "core/test_tm5_vertical_remap.jl",
+    "core/test_tm5_convection_routes.jl",
     "core/test_tm5_attach_level_order.jl",
     "core/test_era5_c180_tm5_convection.jl",
-    "core/test_era5_physics_binary.jl",
     "core/test_era5_n320_convection.jl",
     "core/test_geos_convection.jl",
 ]
@@ -187,10 +186,8 @@ paths = [
     "src/Adjoints/ConvectionAdjoint.jl",
     "src/Preprocessing/convection_mass_basis.jl",
     "src/Preprocessing/tm5_convection_*.jl",
-    "src/Preprocessing/era5_physics_binary.jl",
     "src/Preprocessing/sources/era5_n320_mass_convection.jl",
     "scripts/preprocessing/attach_catrine_tm5_convection_cs.jl",
-    "scripts/preprocessing/convert_era5_physics_nc_to_bin.jl",
     "scripts/validation/diagnose_tm5_active_layers.jl",
 ]
 
@@ -198,6 +195,7 @@ paths = [
 description = "Vertical diffusion: implicit and conservative Dkg solves, Kz fields, TM5 bldiff, GCHP non-local PBL, layer thickness (dz) from dry or total pressure"
 files = [
     "core/test_conservative_dkg.jl",
+    "core/test_diffusion_flux_form.jl",
     "core/test_diffusion_mass_flux_conservation.jl",
     "core/test_diffusion_palindrome_contract.jl",
     "core/test_dz_helpers_virtual_T.jl",
@@ -218,13 +216,14 @@ paths = [
 ]
 
 [topics.surface_flux_chemistry]
-description = "Surface-flux operators (static, time-varying, native cubed-sphere, window buffers, Kahan accumulation, integrals) and chemistry"
+description = "Surface-flux operators (static, time-varying, native cubed-sphere, window buffers, Kahan accumulation, integrals), inventory ingestion (time coverage, regridding totals) and chemistry"
 files = [
     "core/test_surface_flux_integrals.jl",
     "core/test_surface_flux_kahan_accuracy.jl",
     "core/test_surface_flux_window_buffer.jl",
     "core/test_timevarying_surface_flux.jl",
     "core/test_native_cs_surface_flux.jl",
+    "core/test_surface_flux_ingestion.jl",
     "core/test_multiday_source_clock.jl",
     "core/test_cs_chemistry.jl",
     "core/test_runtime_chemistry_recipe.jl",
@@ -242,7 +241,7 @@ paths = [
 ]
 
 [topics.gridded_io]
-description = "Surface-flux input files (GriddedIO): coordinates, source meshes, time axes, units, staging, cs_native and lat-lon flux files, the flux comparison and parity scripts"
+description = "Gridded input files (GriddedIO): coordinates, source meshes, time axes, units, staging, cs_native and lat-lon flux files, the model surface height and point DEM, the flux comparison and parity scripts"
 files = [
     "core/test_gridded_io_coordinates.jl",
     "core/test_gridded_io_source_meshes.jl",
@@ -251,6 +250,7 @@ files = [
     "core/test_cs_native_flux_schema.jl",
     "core/test_flux_units.jl",
     "core/test_latlon_flux_writer.jl",
+    "core/test_gridded_io_surface_height.jl",
     "core/test_compare_cs_flux_files.jl",
     "core/test_flux_port_parity_harness.jl",
 ]
@@ -260,6 +260,7 @@ paths = [
     "scripts/validation/compare_cs_flux_files.jl",
     "scripts/validation/flux_port_parity/**",
     "scripts/preprocessing/catrine_protocol_cs_fluxes.jl",
+    "scripts/preprocessing/build_model_surface_height.jl",
 ]
 
 [topics.initial_conditions]
@@ -352,6 +353,7 @@ files = [
     "core/test_preprocessing_cache_io.jl",
     "core/test_ll_spectral_unified_driver.jl",
     "core/test_cs_spectral_unified_driver.jl",
+    "core/test_spectral_pole_rows.jl",
     "core/test_rg_preprocessor_unified_driver.jl",
     "core/test_geos_reader.jl",
     "core/test_geos_cs_passthrough.jl",
@@ -407,11 +409,13 @@ paths = [
 ]
 
 [topics.observations]
-description = "Observation sampling output ([output.observations]): sources, schedules, cell location, gathers, the sampler, runner integration and the schema"
+description = "Observation sampling output ([output.observations]): sources, schedules, cell location, vertical placement, gathers, the sampler, runner integration and the schema; the averaging-kernel operator of level retrievals (hat projection, TM5 mode) and the OCO-2 MIP converter"
 files = [
+    "core/test_retrieval_hat_projection.jl",
     "core/test_observation_cell_locator.jl",
     "core/test_observation_gather.jl",
     "core/test_observation_output_spec.jl",
+    "core/test_observation_placement.jl",
     "core/test_observation_runner.jl",
     "core/test_observation_sampler.jl",
     "core/test_observation_schedules.jl",
@@ -448,6 +452,7 @@ paths = [
 description = "Adjoint kernels and footprints: Lin-Rood and PPM transposes, footprint finite-difference checks, tape storage and checkpointing (full, stride, revolve)"
 files = [
     "core/test_linrood_kernel_adjoints.jl",
+    "core/test_cs_adjoint_production_parity.jl",
     "core/test_cs_linrood_footprint_fd.jl",
     "core/test_cs_linrood_fv3_adjoint.jl",
     "core/test_cs_ppm_adjoint_footprint.jl",
@@ -460,11 +465,18 @@ paths = [
     "src/Footprint/**",
     "src/Tape/**",
     "src/Operators/Advection/linrood_adjoint*.jl",
+    # The production step composition the adjoint replays and records.
+    "src/Operators/Advection/{StrangSplitting,CubedSphereStrang}.jl",
+    "src/Operators/Diffusion/operators.jl",
 ]
 
 [topics.inversion]
-description = "4D-Var inversion: adjoint identities and gradient Taylor tests, covariance and preconditioning, optimizers and iteration logs, observation and departure files, the inversion driver and synthetic truth recovery"
+description = "4D-Var inversion: the single-sweep gradient and the reused-tape Jacobian, placed point, averaging-kernel column (layer and level retrievals) and time-window observations, co-sampling, cell averaging, forward-sampler parity, adjoint identities and gradient Taylor tests, covariance and preconditioning, optimizers and iteration logs, observation and departure files, the inversion driver and synthetic truth recovery"
 files = [
+    "core/test_cs_4dvar_single_sweep.jl",
+    "core/test_cs_4dvar_placed_observations.jl",
+    "core/test_cs_4dvar_retrieval_columns.jl",
+    "core/test_cs_4dvar_oco2_mip.jl",
     "core/test_adjoint_identity_model_space.jl",
     "core/test_adjoint_identity_preconditioned.jl",
     "core/test_gradient_taylor_sweep.jl",
@@ -483,9 +495,20 @@ files = [
 paths = [
     "src/Inversion/**",
     "src/Footprint/**",
+    # The end-of-step record and objective seeds behind the single-sweep gradient.
+    "src/Tape/TapeRecords.jl",
+    "src/Adjoints/ObjectiveSeeding.jl",
     "scripts/inversions/**",
+    "scripts/preprocessing/oco2_mip_to_observations.jl",
     "config/inversions/**",
     "schemas/cs_*.toml",
+    # The placement rule and column helpers placed point observations share
+    # with the forward observation sampler.
+    "src/Output/observations/observation_{placement,gather,requests,sampler}.jl",
+    "src/Output/observations/cell_locator.jl",
+    # The averaging-kernel column operator of the 4D-Var's retrieval columns.
+    "src/Output/observations/retrieval_column.jl",
+    "test/helpers/cs_observation_columns.jl",
 ]
 
 [topics.downloads]

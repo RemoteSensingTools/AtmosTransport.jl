@@ -34,7 +34,7 @@ function _collect_surface_footprints_revolve(panels_m0,
                                              mesh::CubedSphereMesh,
                                              scheme::CSAdjointLinearScheme,
                                              ::RevolveCheckpoint,
-                                             objective::AbstractCSFootprintObjective,
+                                             start,
                                              dt;
                                              cfl_limit,
                                              flux_scale,
@@ -46,12 +46,12 @@ function _collect_surface_footprints_revolve(panels_m0,
                                              convection_workspace = nothing,
                                              tape_storage = :device,
                                              tape_path::Union{Nothing, AbstractString} = nothing,
-                                             final_adjoint_seed = nothing)
+                                             forcing::AbstractStepForcing = NoStepForcing())
     FT = eltype(panels_m0[1])
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps,
                                        panels_cm_steps)
     Nz = size(panels_m0[1], 3)
-    final_adjoint_seed === nothing && _validate_objective(objective, mesh, Nz)
+    _validate_start(start, mesh, Nz)
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
     tape_storage isa AbstractCSTapeStorage && throw(ArgumentError(
@@ -84,8 +84,7 @@ function _collect_surface_footprints_revolve(panels_m0,
         step_offset = 0,
         record_ops = false)
 
-    lambda_panels = _build_stride_lambda_panels(final_m, final_adjoint_seed,
-                                                objective, mesh, FT)
+    lambda_panels = _initial_adjoint_state(start, final_m, mesh)
 
     footprints = [_zero_surface_rates(mesh, panels_m0[1]) for _ in 1:nsteps]
     ws = CSAdjointWorkspace(mesh, lambda_panels[1])
@@ -117,7 +116,8 @@ function _collect_surface_footprints_revolve(panels_m0,
             try
                 _walk_window_reverse!(footprints, lambda_panels, ops_window, mesh, ws, dt;
                                       diffusion_meteo = diffusion_meteo,
-                                      convection_workspace = convection_workspace)
+                                      convection_workspace = convection_workspace,
+                                      forcing = forcing)
             finally
                 finalize_tape!(storage_w; quiet = true,
                            strict = tape_path !== nothing)
@@ -152,10 +152,7 @@ function _collect_surface_footprints_revolve(panels_m0,
 
     reverse_range!(initial_m, 0, nsteps)
 
-    lag_steps = [nsteps - step for step in 1:nsteps]
-    A2 = typeof(footprints[1][1])
-    return CSFootprintResult{FT, typeof(objective), A2}(
-        objective, footprints, lag_steps, FT(dt), zero(FT), FT(NaN))
+    return _footprint_result(start, footprints, dt)
 end
 
 function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
@@ -165,7 +162,7 @@ function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
                                              mesh::CubedSphereMesh,
                                              scheme::CSAdjointNonlinearScheme,
                                              ::RevolveCheckpoint,
-                                             objective::AbstractCSFootprintObjective,
+                                             start,
                                              dt;
                                              cfl_limit,
                                              flux_scale,
@@ -178,12 +175,12 @@ function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
                                              convection_workspace = nothing,
                                              tape_storage = :device,
                                              tape_path::Union{Nothing, AbstractString} = nothing,
-                                             final_adjoint_seed = nothing)
+                                             forcing::AbstractStepForcing = NoStepForcing())
     FT = eltype(panels_m0[1])
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps,
                                        panels_cm_steps)
     Nz = size(panels_m0[1], 3)
-    final_adjoint_seed === nothing && _validate_objective(objective, mesh, Nz)
+    _validate_start(start, mesh, Nz)
     _validate_emission_rates(base_emission_rates, nsteps, mesh, "base_emission_rates")
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
@@ -218,8 +215,7 @@ function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
         step_offset = 0,
         record_ops = false)
 
-    lambda_panels = _build_stride_lambda_panels(final_m, final_adjoint_seed,
-                                                objective, mesh, FT)
+    lambda_panels = _initial_adjoint_state(start, final_m, mesh)
 
     footprints = [_zero_surface_rates(mesh, panels_m0[1]) for _ in 1:nsteps]
     ws = CSAdjointWorkspace(mesh, lambda_panels[1])
@@ -251,7 +247,8 @@ function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
             try
                 _walk_window_reverse!(footprints, lambda_panels, ops_window, mesh, ws, dt;
                                       diffusion_meteo = diffusion_meteo,
-                                      convection_workspace = convection_workspace)
+                                      convection_workspace = convection_workspace,
+                                      forcing = forcing)
             finally
                 finalize_tape!(storage_w; quiet = true,
                            strict = tape_path !== nothing)
@@ -285,10 +282,7 @@ function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
 
     reverse_range!(initial_rm, initial_m, 0, nsteps)
 
-    lag_steps = [nsteps - step for step in 1:nsteps]
-    A2 = typeof(footprints[1][1])
-    return CSFootprintResult{FT, typeof(objective), A2}(
-        objective, footprints, lag_steps, FT(dt), zero(FT), FT(NaN))
+    return _footprint_result(start, footprints, dt)
 end
 
 function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
@@ -298,7 +292,7 @@ function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
                                              mesh::CubedSphereMesh,
                                              scheme::CSAdjointLinRoodScheme,
                                              ::RevolveCheckpoint,
-                                             objective::AbstractCSFootprintObjective,
+                                             start,
                                              dt;
                                              cfl_limit,
                                              flux_scale,
@@ -311,12 +305,12 @@ function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
                                              convection_workspace = nothing,
                                              tape_storage = :device,
                                              tape_path::Union{Nothing, AbstractString} = nothing,
-                                             final_adjoint_seed = nothing)
+                                             forcing::AbstractStepForcing = NoStepForcing())
     FT = eltype(panels_m0[1])
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps,
                                        panels_cm_steps)
     Nz = size(panels_m0[1], 3)
-    final_adjoint_seed === nothing && _validate_objective(objective, mesh, Nz)
+    _validate_start(start, mesh, Nz)
     _validate_emission_rates(base_emission_rates, nsteps, mesh, "base_emission_rates")
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
@@ -356,8 +350,7 @@ function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
         step_offset = 0,
         record_ops = false)
 
-    lambda_panels = _build_stride_lambda_panels(final_m, final_adjoint_seed,
-                                                objective, mesh, FT)
+    lambda_panels = _initial_adjoint_state(start, final_m, mesh)
 
     footprints = [_zero_surface_rates(mesh, panels_m0[1]) for _ in 1:nsteps]
     ws = CSAdjointWorkspace(mesh, lambda_panels[1];
@@ -389,7 +382,8 @@ function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
             try
                 _walk_window_reverse!(footprints, lambda_panels, ops_window, mesh, ws, dt;
                                       diffusion_meteo = diffusion_meteo,
-                                      convection_workspace = convection_workspace)
+                                      convection_workspace = convection_workspace,
+                                      forcing = forcing)
             finally
                 finalize_tape!(storage_w; quiet = true,
                            strict = tape_path !== nothing)
@@ -423,8 +417,5 @@ function _collect_surface_footprints_revolve(panels_rm0, panels_m0,
 
     reverse_range!(initial_rm, initial_m, 0, nsteps)
 
-    lag_steps = [nsteps - step for step in 1:nsteps]
-    A2 = typeof(footprints[1][1])
-    return CSFootprintResult{FT, typeof(objective), A2}(
-        objective, footprints, lag_steps, FT(dt), zero(FT), FT(NaN))
+    return _footprint_result(start, footprints, dt)
 end

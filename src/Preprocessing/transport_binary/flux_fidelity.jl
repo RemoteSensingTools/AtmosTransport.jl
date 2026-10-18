@@ -202,6 +202,33 @@ function full_window_column_closure_record(r::ColumnClosureRecord, am, bm, m, m_
                                amounts * r.booked_residual_kg, r.cm_residual_to_tolerance)
 end
 
+"""
+    rescaled_column_closure_record(record, am, bm, m, m_next, ft, balanced_steps, steps, scratch) -> record′
+
+Closure record of a payload balanced for `balanced_steps` substeps and then
+rescaled to `steps` (the adaptive output schedule of the LL → CS regrid,
+`rescale_substep_amounts!`). The stored `am`, `bm`, `cm` are the balanced
+amounts times `balanced_steps/steps` in the storage type, a product that rounds
+unless the ratio is a power of two. The column closure is evaluated again on
+the stored `am`, `bm` for `steps` substeps (`recheck_cs_column_closure`), so the
+projected residual and its ratio describe the payload as written. The residual
+folded into `cm` is scaled with `cm`; its ratio to the tolerance is kept from
+the diagnosis (an upper bound: the tolerance floor `closure_tol` does not scale).
+With `steps == balanced_steps` nothing was rescaled and `record` is returned.
+"""
+rescaled_column_closure_record(r::NoColumnClosureRecord, _am, _bm, _m, _m_next,
+                               _ft, _balanced_steps, _steps, _scratch) = r
+function rescaled_column_closure_record(r::ColumnClosureRecord, am, bm, m, m_next,
+                                        ft::CSGlobalFaceTable, balanced_steps::Integer,
+                                        steps::Integer, scratch::CSPoissonScratch)
+    steps == balanced_steps && return r
+    stored = recheck_cs_column_closure(am, bm, m, m_next, ft, Int(steps), scratch, (;))
+    return ColumnClosureRecord(Float64(stored.final_column_projected_residual),
+                               Float64(stored.final_column_residual_ratio),
+                               r.booked_residual_kg * balanced_steps / steps,
+                               r.cm_residual_to_tolerance)
+end
+
 struct FluxFidelityEvidenceBundle{F,O,C<:AbstractColumnClosureRecord}
     flux::F
     omega::O
@@ -1169,8 +1196,10 @@ _map_structured_fidelity_column!(column, native, vertical, ps_face::Float64,
 
 Rebuild the sampled lat-lon face amounts from the staggered spectral winds,
 face pressure thickness and (dry basis) face humidity, column by column: the
-native column at the face, then the configured vertical map and the polar
-zero-flux constraint. Memory is `O(Nz)`; no full-grid flux array is built.
+native column at the face, then the configured vertical map. The pole rows are
+ordinary cells whose zonal faces carry flux (issue #58); only the meridional
+faces on the poles (`bm[:, 1, :]`, `bm[:, Ny+1, :]`) are closed. Memory is
+`O(Nz)`; no full-grid flux array is built.
 """
 function capture_structured_wind_flux_samples(sampler::StructuredFidelitySampler,
                                               am::AbstractArray{FT,3},
@@ -1208,13 +1237,11 @@ function capture_structured_wind_flux_samples(sampler::StructuredFidelitySampler
                 thick = abs(Float64(dA[k]) + Float64(dB[k]) * ps_face)
                 qfactor = dry ? 1 - clamp(0.5 * (Float64(qfield[il, j, k]) +
                                                  Float64(qfield[ir, j, k])), 0.0, 0.999999) : 1.0
-                native[k] = FT((j == 1 || j == Ny) ? 0.0 :
-                    Float64(transform.u_stag[i, j, k]) / Float64(grid.cos_lat[j]) *
-                    thick * R_g * dlat * dt_amount * qfactor)
+                native[k] = FT(Float64(transform.u_stag[i, j, k]) / Float64(grid.cos_lat[j]) *
+                               thick * R_g * dlat * dt_amount * qfactor)
             end
             _map_structured_fidelity_column!(column, native, vertical,
                                              _xface_surface_pressure(sp, i, j), mapping)
-            (j == 1 || j == Ny) && fill!(column, zero(FT))
             reference_column = view(am, i, j, :)
         else
             i, j = Tuple(CartesianIndices((Nx, Ny + 1))[f - na])

@@ -252,8 +252,21 @@ emission_deposit(_diffusion_op) = SurfaceLayerDeposit()
 emission_deposit(op::ImplicitVerticalDiffusion{<:Any, <:GCHPNonlocalPBLField}) =
     map(ProfileDeposit, op.kz_field.emission_profile)
 
+"""
+    center_emission_deposit(coupling, diffusion_op)
+
+Where the cubed-sphere palindrome center deposits fresh surface emissions:
+the surface layer with `SplitSurfaceFluxCoupling`, and the diffusion scheme's
+own placement, `emission_deposit(diffusion_op)`, with
+`DiffusiveSurfaceFluxBoundary` (the only coupling GEOS-Chem's non-local VDIFF
+accepts).
+"""
+center_emission_deposit(::SplitSurfaceFluxCoupling, _diffusion_op) = SurfaceLayerDeposit()
+center_emission_deposit(::DiffusiveSurfaceFluxBoundary, diffusion_op) =
+    emission_deposit(diffusion_op)
+
 @inline _panel_deposit(d::SurfaceLayerDeposit, _p) = d
-@inline _panel_deposit(d::NTuple{6, <:ProfileDeposit}, p) = d[p]
+@inline _panel_deposit(d::NTuple{6, <:ProfileDeposit}, p) = select_panel(d, p)   # also inside kernels
 
 function _cs_interior_shape(q_panel, Hp, rate_panel, src, p)
     Nc, Ny = size(q_panel, 1) - 2Hp, size(q_panel, 2) - 2Hp
@@ -269,12 +282,12 @@ function _apply_cs_surface_flux!(q_raw::NTuple{6}, src::SurfaceFluxSource, dt_FT
     rates = src.cell_mass_rate
     rates isa NTuple{6} || throw(ArgumentError(
         "apply_surface_flux!: cubed-sphere source $(src.tracer_name) must provide NTuple{6} panel rates"))
-    kernel = _surface_flux_cs_kernel!(backend, (16, 16))
-    for p in 1:6
-        Nc, Ny, Nz = _cs_interior_shape(q_raw[p], Hp, rates[p], src, p)
-        kernel(q_raw[p], rates[p], src.compensation[p], dt_FT, t_idx, Nz, Hp,
-               _panel_deposit(deposit, p); ndrange = (Nc, Ny))
-    end
+    shapes = ntuple(p -> _cs_interior_shape(q_raw[p], Hp, rates[p], src, p), 6)
+    allequal(shapes) || throw(DimensionMismatch(
+        "surface source $(src.tracer_name): cubed-sphere panels differ in shape, $(shapes)"))
+    Nc, Ny, Nz = shapes[1]
+    kernel = _surface_flux_cs_panels_kernel!(backend, (16, 16))
+    kernel(q_raw, rates, src.compensation, dt_FT, t_idx, Nz, Hp, deposit; ndrange = (Nc, Ny, 6))
     return nothing
 end
 
@@ -291,14 +304,17 @@ function _apply_cs_surface_flux!(q_raw::NTuple{6}, src::TimeVaryingSurfaceFluxSo
     buffer = _stage_flux_slices!(src.window_buffer, src.cell_mass_rate_series,
                                  _segment_slices(segments))
     slots = buffer.slots
-    kernel = _surface_flux_cs_interp_kernel!(backend, (16, 16))
-    for p in 1:6
-        Nc, Ny, Nz = _cs_interior_shape(q_raw[p], Hp, slots[p], src, p)
-        for (i0, i1, w0, w1, frac) in segments
-            kernel(q_raw[p], slots[p], src.compensation[p], FT(w0), FT(w1),
-                   _buffer_slot(buffer, i0), _buffer_slot(buffer, i1),
-                   dt_FT * FT(frac), t_idx, Nz, Hp, _panel_deposit(deposit, p); ndrange = (Nc, Ny))
-        end
+    shapes = ntuple(p -> _cs_interior_shape(q_raw[p], Hp, slots[p], src, p), 6)
+    allequal(shapes) || throw(DimensionMismatch(
+        "surface source $(src.tracer_name): cubed-sphere panels differ in shape, $(shapes)"))
+    Nc, Ny, Nz = shapes[1]
+    # One launch per segment covers all six panels; each panel still receives
+    # its segments in order, so its compensated sums are unchanged.
+    kernel = _surface_flux_cs_interp_panels_kernel!(backend, (16, 16))
+    for (i0, i1, w0, w1, frac) in segments
+        kernel(q_raw, slots, src.compensation, FT(w0), FT(w1),
+               _buffer_slot(buffer, i0), _buffer_slot(buffer, i1),
+               dt_FT * FT(frac), t_idx, Nz, Hp, deposit; ndrange = (Nc, Ny, 6))
     end
     return nothing
 end

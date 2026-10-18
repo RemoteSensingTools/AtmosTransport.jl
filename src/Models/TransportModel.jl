@@ -37,7 +37,7 @@ inactive operator slots compile to no-op dispatches.
   `ConvectionForcing()` (all-nothing placeholder). `DrivenSimulation`
   construction allocates real buffers via
   `allocate_convection_forcing_like`; `_refresh_forcing!` populates them
-  from `sim.window.convection` each substep.
+  from `sim.window.convection` at the first substep of each window.
 
 Helpers `with_convection(model, op)` and
 `with_convection_forcing(model, forcing)` parallel

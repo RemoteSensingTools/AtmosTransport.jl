@@ -17,7 +17,8 @@ by scripts, tests, and user code.
 `Adjoints/Adjoints.jl` (after `Operators`), followed by `using .Adjoints`.
 [`Adjoints.jl`](Adjoints.jl) includes files in an order that matters,
 because later files use types defined earlier:
-`ObjectiveSeeding.jl` and `Footprint/FootprintResult.jl`; then the
+`ObjectiveSeeding.jl`, `Footprint/FootprintResult.jl` and
+`Footprint/StepForcing.jl`; then the
 `Inversion/` type, IO, covariance, and preconditioner files; then inline
 helpers (`CSAdjointWorkspace`, `_add_surface_rates!`); then the kernel files
 in this folder ending with `LinRoodTape.jl`; then the remaining
@@ -45,8 +46,10 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
   cache, and (with `column_scratch = true`) the per-column storage of the FV3
   vertical sweep's reverse pass.
 - Objectives in [`ObjectiveSeeding.jl`](ObjectiveSeeding.jl):
-  `CSLayerMeanObjective`, `CSColumnMeanObjective`, `CSSeedObjective`, and
-  `evaluate_objective`.
+  `CSLayerMeanObjective`, `CSColumnMeanObjective`, `CSPlacedPointObjective`
+  (an in-situ sample placed in the column; its layer is chosen per sampled
+  state from the column meteorology, so only `cs_surface_flux_4dvar` takes
+  it), `CSSeedObjective`, and `evaluate_objective`.
 - Reverse kernels called by `_walk_window_reverse!`
   (`../Footprint/ReverseLoop.jl`): `_adjoint_scheme_sweep!`,
   `_adjoint_fill_panel_halos!`, `_apply_cs_diffusion_adjoint!`,
@@ -59,7 +62,9 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
 - [`Adjoints.jl`](Adjoints.jl) — module, imports from `Operators`/`Tape`,
   scheme unions, include order, workspace, surface-rate kernels, exports
 - [`ObjectiveSeeding.jl`](ObjectiveSeeding.jl) — objective types, forward
-  evaluation, final-time seed `_seed_objective!`, per-step surface read-out
+  evaluation, final-time seed `_seed_objective!` (zero the adjoint state, then
+  add the objective's linear functional from `../Footprint/StepForcing.jl`;
+  the seed values are unchanged), per-step surface read-out
   `_accumulate_surface_footprint!`
 - [`AdvectionAdjoint.jl`](AdvectionAdjoint.jl) — per-scheme face
   coefficients, x/y/z sweep adjoint kernels, `_adjoint_scheme_sweep!`.
@@ -93,7 +98,10 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
 - Supporting a new convection or diffusion variant: add methods for
   `_apply_cs_convection_forward!` and `_apply_cs_convection_adjoint!`
   (or `_apply_cs_diffusion_adjoint!`), then update the `_require_*`
-  guards so unsupported settings fail before any tape is recorded.
+  guards so unsupported settings fail before any tape is recorded. A new
+  surface-flux coupling needs a `surface_flux_center!` method
+  (`../Operators/Diffusion/operators.jl`); production, the replays and the
+  recorders all compose the center through it.
 - Debugging a footprint/finite-difference mismatch: check that the forward
   replay matches production first (see Invariants), then run the
   kernel-level identity tests listed below.
@@ -104,9 +112,19 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
   replays. For monotone PPM, Lin-Rood and the FV3 vertical profile, it
   transposes the linearization around the recorded state, so limiter branches
   are frozen. Kernel tests check `⟨y, L·x⟩ = ⟨Lᵀ·y, x⟩` to rounding error.
-- The forward replays must match production: CMFMC replay uses the
-  production `_cmfmc_cs_panel_column_kernel!`, and TM5 column solves are
-  checked bit-for-bit. Forward replays keep no column-ledger carry: TM5,
+- The forward replays must match production. Each replayed or recorded
+  split-sweep step starts with `fill_cs_step_start_halos!`, as production
+  `strang_split!` does, and orders diffusion and the emission midpoint with
+  `surface_flux_center!` and the diffusion operator's surface-flux coupling,
+  as production's `palindrome_center!` does for a run with surface fluxes
+  (`_replay_cs_step!` in `../Footprint/ReverseLoop.jl`; the recorders in
+  `../Footprint/TapeRecording.jl` and `LinRoodTape.jl`).
+  `test_cs_adjoint_production_parity.jl` checks the replay against
+  `TransportModel.step!` and the footprints against production finite
+  differences. CMFMC replay runs the production column update
+  `_cmfmc_cs_column!` one panel per launch (`_cmfmc_cs_panel_column_kernel!`;
+  production launches the six panels together), and TM5 column solves are checked
+  bit-for-bit. Forward replays keep no column-ledger carry: TM5,
   CMFMC and Dkg solves start from a zero carry, so each replayed solve is a
   function of the recorded state alone (the production solve with a zero
   carry, not a multi-step production run's accumulated one), and
@@ -126,6 +144,10 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
   that is all zero or non-finite.
 - Lin-Rood tapes accept only `tape_storage = :device`; `tape_path` is
   rejected.
+- The reverse walk reads staged states with a read role
+  (`_tape_panels(slot, AirMassRead())`, `TracerMassRead()` for a limited
+  sweep's tracer mass): host-side tape storage keeps one device cache per
+  role, so one kernel's two staged operands are distinct buffers.
 - Level `Nz` is the surface layer. Surface rates are added to level `Nz`,
   and footprints are read from `lambda[:, :, Nz]` on the interior
   `Hp+1:Hp+Nc` cells.

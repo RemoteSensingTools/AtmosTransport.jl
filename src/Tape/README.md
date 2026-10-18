@@ -31,9 +31,10 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
   - `DeviceCSTapeStorage()` in [`TapeStorage.jl`](TapeStorage.jl): snapshots
     stay on the source backend.
   - `PinnedHostCSTapeStorage()` in [`TapeStorage.jl`](TapeStorage.jl): host
-    copies plus one shared device read cache. The generic method allocates
-    plain `Array`s; the CUDA extension overrides `_allocate_tape_slot` and
-    `stage_panels!` for `CuArray` panels to use `CUDA.pin` memory.
+    copies read back through device read caches, one per read role and panel
+    shape. The generic method allocates plain `Array`s; the CUDA extension
+    overrides `_allocate_tape_slot` and `stage_panels!` for `CuArray` panels
+    to use `CUDA.pin` memory.
   - `MmapCSTapeStorage(; dir, cleanup_on_finalize)` in
     [`MmapTapeStorage.jl`](MmapTapeStorage.jl): appends payloads to
     `records.bin` and writes `manifest.toml` on `finalize_tape!`.
@@ -41,12 +42,17 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
   `_resolve_tape_path` and `_build_window_storage` turn the public
   `tape_storage` / `tape_path` kwargs into one storage per tape or window.
 - Slot API: `_stage_panels(storage, panels)` allocates and fills a slot;
-  `_tape_panels(slot)` returns readable panels; `stage_panels!` refills.
+  `_tape_panels(slot, role)` returns readable panels; `stage_panels!` refills.
+  The read role (`AirMassRead()`, `TracerMassRead()`, subtypes of
+  `AbstractTapeReadRole`) names the reverse-kernel operand the read feeds.
+  `PinnedHostCSTapeStorage` and `MmapCSTapeStorage` (the
+  `AbstractHostCSTapeStorage` policies) keep one device read cache per role
+  and panel shape, so two reads for one kernel never share a buffer.
 - Persistence: `finalize_tape!`, `load_mmap_tape(dir; readonly = true)`,
   `get_record(storage, id)` in [`MmapTapeStorage.jl`](MmapTapeStorage.jl).
 - Records in [`TapeRecords.jl`](TapeRecords.jl): `_CSSweepRecord`,
-  `_CSHaloRecord`, `_CSMidpointRecord`, `_CSDiffusionRecord`,
-  `_CSConvectionRecord`, and the union `_CSTapeOp`.
+  `_CSHaloRecord`, `_CSMidpointRecord`, `_CSStepEndRecord`,
+  `_CSDiffusionRecord`, `_CSConvectionRecord`, and the union `_CSTapeOp`.
 - Schedules in [`CheckpointSchedule.jl`](CheckpointSchedule.jl):
   `FullCheckpoint()`, `StrideCheckpoint(K)`, `RevolveCheckpoint()`, plus
   `checkpoint_window_count` and `checkpoint_window_range` (Full and Stride
@@ -56,22 +62,26 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
 
 - [`Tape.jl`](Tape.jl) — module definition, export list, include order
   (`TapeStorage` -> `TapeRecords` -> `MmapTapeStorage` -> `CheckpointSchedule`)
-- [`TapeStorage.jl`](TapeStorage.jl) — abstract policy, device and
-  pinned-host policies, slot types, staging hooks, `_resolve_tape_path`,
-  no-op `finalize_tape!` fallback, `_bytes_per_panel_tuple`
+- [`TapeStorage.jl`](TapeStorage.jl) — abstract policies, read roles, the
+  role- and shape-keyed device read caches of host-side storage
+  (`_tape_read_cache!`), device and pinned-host policies, slot types,
+  staging hooks, `_resolve_tape_path`, no-op `finalize_tape!` fallback,
+  `_bytes_per_panel_tuple`
 - [`TapeRecords.jl`](TapeRecords.jl) — record structs pushed by the forward
   recorder and the `_CSTapeOp` union
 - [`MmapTapeStorage.jl`](MmapTapeStorage.jl) — on-disk policy: cursor
-  reservation, per-shape device read cache, manifest writer and loader,
-  `_build_window_storage`
+  reservation, mmap reads (views on the CPU, the role- and shape-keyed device
+  caches on a GPU), manifest writer and loader, `_build_window_storage`
 - [`CheckpointSchedule.jl`](CheckpointSchedule.jl) — schedule types and
   stride window arithmetic
 
 ## Common Tasks
 
-- Adding a storage policy: subtype `AbstractCSTapeStorage`, implement
-  `_allocate_tape_slot`, `stage_panels!`, `_tape_panels`, and (if it holds
-  resources) `finalize_tape!`; add a `_tape_storage(::Val{:name})` method.
+- Adding a storage policy: subtype `AbstractCSTapeStorage` (or
+  `AbstractHostCSTapeStorage` if reads copy into device caches), implement
+  `_allocate_tape_slot`, `stage_panels!`, `_tape_panels(slot, role)`, and (if
+  it holds resources) `finalize_tape!`; add a `_tape_storage(::Val{:name})`
+  method.
 - Adding a record type: define it in [`TapeRecords.jl`](TapeRecords.jl),
   add it to `_CSTapeOp`, and add a branch in `_walk_window_reverse!`
   (`../Footprint/ReverseLoop.jl`).
@@ -90,6 +100,10 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
   (`CSAdjointSupportedScheme`) happens where records are built and consumed.
 - `_CSLinRoodHorizRecord` is defined in `../Adjoints/LinRoodTape.jl` and is
   not part of `_CSTapeOp`; the reverse loop handles it in its own branch.
+- Every recorder ends each step with `_CSStepEndRecord(step)` (absolute
+  step, after convection). It carries no payload; the reverse loop adds the
+  4D-Var observation forcing of that step there and does nothing without a
+  forcing. `CSTapeByteEstimate.step_records` counts these markers.
 - Mmap manifests describe one finalised `records.bin`. The recording
   constructor deletes any old manifest before truncating the binary.
   `load_mmap_tape` rejects tapes that are not finalised, use another version
@@ -99,15 +113,22 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
 - Each mmap record stores its own eltype. The loader accepts only
   `Float32`, `Float64`, and `Float16`. On the CPU, `_tape_panels` returns
   mmap views without copying. On the GPU, it copies into a device cache
-  keyed by shape.
+  keyed by read role and shape.
+- A host-side read stays valid until the next read with the same role. A
+  reverse kernel that takes two staged states reads them with two roles:
+  the limited-PPM sweep record reads `m` with `AirMassRead()` and `rm` with
+  `TracerMassRead()` (one shared cache gave the kernel `m === rm`, issue #57).
 - Only staged slots are copied. Flux tuples (`_CSSweepRecord.panels_flux`)
   and forcing/operator objects are kept by reference, so callers must not
   change them before the reverse pass ends.
 - `RevolveCheckpoint` is plain bisection, not optimal binomial Revolve.
-  With monotone PPM plus diffusion or convection it can differ from
-  `FullCheckpoint` by about 1e-7, because halo refills at bisection points
-  can flip limiter branches. `StrideCheckpoint` agrees with it within the
-  tested `atol = 1e-12`.
+  Every recorded step starts with production's step-start halo refresh, so a
+  window that restarts at a step boundary records the states of the full
+  tape: `StrideCheckpoint` and `RevolveCheckpoint` agree with
+  `FullCheckpoint` within the tested `atol = 1e-12` for every scheme family,
+  with diffusion and convection. (The former ~1e-7 Revolve drift with
+  monotone PPM plus convection was that refresh missing from the recorders,
+  issue #60, not limiter flips.)
 
 ## Related Docs And Tests
 

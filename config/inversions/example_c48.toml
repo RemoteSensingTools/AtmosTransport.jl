@@ -1,14 +1,13 @@
 # Plan 26 P0.C4 — placeholder C48 inversion config.
 #
 # This is the SCHEMA reference for a production C48 inversion. The
-# driver's `[meteo.source] = "synthetic_constant"` is the only met
-# backend wired up in v1; a real-met backend (preprocessed C48
-# binaries) is gated on the ERA5/GEOS-IT downloads still in flight
-# at 2026-05-13 and ships in a follow-up. Do not run this config
-# verbatim against the current driver — it documents the intended
-# parameter shape and serves as the template for the eventual
-# C48 14-day stretch run. The current driver rejects the sketched
-# `meteo.binary_path` and `observations.path` keys as unknown.
+# driver's meteorology sources are synthetic (`synthetic_constant`,
+# `synthetic_hydrostatic`); a transport-binary backend (preprocessed C48
+# binaries) ships in a follow-up. Do not run this config verbatim against
+# the current driver — it documents the intended parameter shape and
+# serves as the template for the eventual C48 14-day stretch run. The
+# current driver rejects the sketched `meteo.source` and
+# `meteo.binary_path` as unknown.
 
 [mesh]
 Nc = 48
@@ -17,6 +16,7 @@ float_type = "Float64"
 
 [time]
 nsteps = 336                  # 14 days at 1-hour timesteps
+start = "2024-01-01T00:00:00" # binds the observation records to steps
 dt_seconds = 3600.0
 
 [meteo]
@@ -29,7 +29,11 @@ binary_path = "/data/preprocessed/c48_2024_jan.bin"
 scheme = "ppm"
 
 [observations]
-path = "data/observations/c48_co2_2024_jan.nc"   # v1 NetCDF schema
+file = "data/observations/c48_co2_2024_jan.nc"   # schema v2 (read_observations)
+tracer = "CO2"
+
+[observations.placement]                         # point records: height above ground, then pressure
+vertical_coordinates = ["height_above_ground", "pressure"]
 
 [control]
 name = "daily_emissions"

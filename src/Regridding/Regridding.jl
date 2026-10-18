@@ -67,7 +67,10 @@ required by CR.jl's spherical dual-DFS intersection search.
   degenerate polygons at the poles. Also, its cell polygons use great-circle
   edges to approximate curved latitude boundaries. This approximation is
   visible on unusually coarse synthetic rings and converges as ring
-  resolution increases.
+  resolution increases. Where adjacent rings have different longitude counts
+  the two great-circle polylines of their shared latitude leave a sliver that
+  no cell covers (6.3e-4 of the sphere on O24); `source_coverage` gives the
+  covered part of each source cell.
 
 ## Architecture reference
 
@@ -108,7 +111,7 @@ using SHA
 using StaticArrays: SA
 
 export build_regridder, save_regridder, load_regridder, default_regrid_cache_dir
-export save_esmf_weights, apply_regridder!, regrid_conservation_report
+export save_esmf_weights, apply_regridder!, regrid_conservation_report, source_coverage
 export cubed_sphere_face_corners
 export IdentityRegrid, meshes_equivalent
 export meshes_nested, AbstractNestingDirection, Restriction, Prolongation,

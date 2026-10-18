@@ -63,6 +63,21 @@ struct _CSMidpointRecord
 end
 
 """
+    _CSStepEndRecord(step)
+
+Marker record at the end of model step `step`, after convection: the state
+that runtime output and the forward observation sampler see. Every recorder
+pushes one per step. The reverse pass injects the adjoint forcing of the
+observations sampled after step `step` here, so the forcing enters before the
+transpose of that step's convection (TM5-4DVAR adds its forcing just before the
+adjoint of the operator after which the forward run sampled). Without a forcing
+the record is a no-op.
+"""
+struct _CSStepEndRecord
+    step::Int
+end
+
+"""
     _CSDiffusionRecord{FT, T, D, W}
 
 Forward-recorded implicit vertical-diffusion application. `op` is the
@@ -96,6 +111,7 @@ const _CSTapeOp = Union{
     _CSSweepRecord,
     _CSHaloRecord,
     _CSMidpointRecord,
+    _CSStepEndRecord,
     _CSDiffusionRecord,
     _CSConvectionRecord,
 }

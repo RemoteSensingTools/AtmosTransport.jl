@@ -37,8 +37,21 @@ how a TOML option reaches an operator, is [`../README.md`](../README.md).
 - Observation glue in [`observations.jl`](observations.jl):
   - `_install_observation_sampler!`, `_begin_observation_binary!`, and
     `_observe_window_end!` drive the sampler.
-  - `_check_observation_time_origin` and `_check_observation_tracers` are used
-    by `validate_config`.
+  - `_observation_terrain` reads the static ground fields of
+    `[output.observations]` (`surface_height_file`, `dem_file`) through
+    `GriddedIO` and passes them to `build_observation_sampler`.
+  - `_boundary_humidity` hands the sampler the specific humidity of each
+    sampled boundary when it places records by total pressure:
+    `_WindowFieldHumidity` takes `qv_start` at the run start and `qv_end` at
+    window ends (lat-lon binaries with `include_qv`);
+    `_NextWindowVDIFFHumidity` (cubed sphere) reads the window-start VDIFF
+    `qv` of the next window with `load_vdiff_qv_window!` (the next binary's
+    window 1 after a binary's last window; the run's last window end falls
+    back to the ended window's, marked `HACK`). `has_humidity` of the sampler
+    requires every binary to carry humidity (`_binary_observation_humidity`
+    of the header capabilities, checked before transport).
+  - `_check_observation_time_origin`, `_check_observation_tracers` and
+    `_check_observation_placement_files` are used by `validate_config`.
 - Progress in [`progress.jl`](progress.jl): `RunProgressTimer` with its
   reporter (`ProgressBar`, `ProgressLines`, `NoProgress`), `timed_io_read!`,
   `timed_transport!`, `timed_io_write!`, `tick_window!`,

@@ -160,11 +160,13 @@ struct MonotoneLimiter  <: AbstractLimiter end
 """
     PositivityLimiter <: AbstractLimiter
 
-Limits the slope to keep the reconstructed face values non-negative:
-``s = \\text{minmod}(s, c_i)``, ensuring ``c_i \\pm s/2 \\geq 0``.
+Limits the slope to keep the reconstructed face values non-negative: the
+centered slope keeps its sign and is clipped to ``|s| \\le 2 c_i``
+(``s = \\operatorname{sign}(s_c) \\min(|s_c|, 2 c_i)``), so ``c_i \\pm s/2 \\geq 0``.
 
-Weaker than `MonotoneLimiter` but sufficient for species that must
-remain positive (e.g., tracer mixing ratios).
+Weaker than `MonotoneLimiter` (it does not bound new maxima) but sufficient
+for species that must remain positive (e.g., tracer mixing ratios). Requires
+a non-negative tracer; not for signed (anomaly) tracers.
 """
 struct PositivityLimiter <: AbstractLimiter end
 

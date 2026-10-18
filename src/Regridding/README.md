@@ -49,6 +49,11 @@ and the stepping loop do not call it.
   rel_error)`, Float64 sums (extensive: `Σx`; intensive: `Σ x·area`); a
   leading dimension that differs from `length(r.src_areas)` /
   `length(r.dst_areas)` throws `DimensionMismatch`.
+- `source_coverage(r)` in [`quantity_regrid.jl`](quantity_regrid.jl): the
+  area of each source cell that the destination covers, `C_s = Σ_t W_ts`
+  (`r.src_areas` for `IdentityRegrid` and `NestedCubedSphereRegrid`). The
+  static surface-flux sources divide their per-cell rates by it, so their
+  totals survive destinations that do not tile the source.
 - `default_regrid_cache_dir()` in [`weights_io.jl`](weights_io.jl):
   `ATMOSTR_REGRID_CACHE_DIR` if set and not empty, else
   `~/.cache/AtmosTransport/cr_regridding`.
@@ -86,9 +91,19 @@ and the stepping loop do not call it.
   `_regridder_cache_key`), `default_regrid_cache_dir`, `build_regridder`,
   JLD2 save/load, ESMF export, and `apply_regridder!` for `Regridder`
 - [`quantity_regrid.jl`](quantity_regrid.jl): `apply_regridder!` by quantity
-  kind and `regrid_conservation_report`
+  kind, `regrid_conservation_report` and `source_coverage`
 
 ## Invariants
+
+- A `ReducedGaussianMesh` destination does not tile the sphere where adjacent
+  rings have different longitude counts: its cells have great-circle edges,
+  so the latitude two such rings share is two different polylines and the
+  sliver between them belongs to no cell. On the octahedral O24 grid (counts
+  20, 24, 28, … per ring) 6.3e-4 of the sphere is uncovered, and a 1° (0.5°)
+  source cell loses up to 6.4 % (13.5 %) of its area; the regridder's
+  `dst_areas` there are the intersection row sums. An extensive regrid through
+  `r.src_areas` loses those slivers; divide by `source_coverage(r)` instead to
+  keep the total.
 
 - The cache key is the SHA-1 of the string
   `atmostransport_regridder_v<_REGRIDDER_CACHE_VERSION>` (currently 3), the

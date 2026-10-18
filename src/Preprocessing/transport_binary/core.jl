@@ -114,12 +114,19 @@ function expected_payload_sections(settings)
     sections = String["m", "am", "bm", "cm", "ps"]
     settings.include_qv && append!(sections, ["qv_start", "qv_end"])
     append!(sections, ["dam", "dbm", "dcm", "dm"])
-    # TM5 sections follow the deltas, matching the
-    # ordering in _transport_push_optional_sections!.
-    settings.tm5_convection_enable && append!(sections, ["entu", "detu", "entd", "detd"])
     _settings_include_surface(settings) && append!(sections, ["pblh", "t2m", "ustar", "pbl_hflux"])
     return sections
 end
+
+"""
+Header key with which the ERA5 spectral lat-lon writer (`build_v4_header`)
+records that the zonal faces of the two pole rows carry the synthesized flux
+(`"open"`, issue #58). Binaries written before 2026-10-14 lack it: they zeroed
+the pole-row zonal fluxes before the column balance, which then put its
+correction there, so their stored pole-row `am` is neither zero nor the wind.
+`regrid_ll_binary_to_cs` refuses ERA5 spectral lat-lon sources without it.
+"""
+const POLE_ROW_ZONAL_FLUX_KEY = "pole_row_zonal_flux"
 
 """
     build_v4_header(date, grid, vertical, settings, FT, counts, sizes, provenance)
@@ -179,8 +186,8 @@ function build_v4_header(date::Date,
         "n_cm" => counts.n_cm, "n_ps" => counts.n_ps,
         "n_qv_start" => counts.n_qv_start, "n_qv_end" => counts.n_qv_end,
         "n_cmfmc" => 0,
-        "n_entu" => counts.n_entu, "n_detu" => counts.n_detu,
-        "n_entd" => counts.n_entd, "n_detd" => counts.n_detd,
+        # This route writes no TM5 convection sections; the keys stay in the schema.
+        "n_entu" => 0, "n_detu" => 0, "n_entd" => 0, "n_detd" => 0,
         "n_pblh" => counts.n_pblh, "n_t2m" => counts.n_t2m,
         "n_ustar" => counts.n_ustar, "n_pbl_hflux" => counts.n_hflux,
         "n_temperature" => 0,
@@ -188,7 +195,7 @@ function build_v4_header(date::Date,
         "include_flux_delta" => true,
         "include_qv_endpoints" => settings.include_qv,
         "include_cmfmc" => false,
-        "include_tm5conv" => settings.tm5_convection_enable,
+        "include_tm5conv" => false,
         "include_surface" => include_surface,
         "surface_payload" => include_surface ? "pbl_raw_v2" : "none",
         "include_temperature" => false,
@@ -210,6 +217,7 @@ function build_v4_header(date::Date,
         "var_names" => var_names,
         "date" => Dates.format(date, "yyyy-mm-dd"),
         "spectral_half_dt_seconds" => settings.half_dt,
+        POLE_ROW_ZONAL_FLUX_KEY => "open",
         # Poisson fields driven by the same TransportBinaryContract above — single source of truth.
         "poisson_balance_target_scale"     => contract.poisson_balance_target_scale,
         "poisson_balance_target_semantics" => contract.poisson_balance_target_semantics,
@@ -240,10 +248,6 @@ function build_v4_header(date::Date,
 
     settings.mass_fix_enable && (settings.include_qv || settings.mass_basis == :dry) &&
         (header["mass_fix_target_ps_dry_pa"] = settings.target_ps_dry_pa)
-    # ERA5 convective fluxes are put on the binary's basis before ec2tm.
-    _with_tm5_convection_basis(header, settings.tm5_convection_enable ?
-                                       mass_basis_from_symbol(settings.mass_basis) : nothing)
-
     _with_column_weights_record(header, _check_spectral_column_weights(grid, settings))
     merge!(header, target_header_metadata(grid))
     validate_transport_contract!(header)
@@ -292,7 +296,6 @@ binary.
 """
 function window_element_counts(grid::LatLonTargetGeometry, Nz::Int;
                                 include_qv::Bool=false,
-                                tm5_convection::Bool=false,
                                 include_surface::Bool=false)
     Nx = nlon(grid)
     Ny = nlat(grid)
@@ -304,7 +307,6 @@ function window_element_counts(grid::LatLonTargetGeometry, Nz::Int;
     n_ps = Int64(Nx) * Ny
     n_qv_start = include_qv ? n_m : Int64(0)
     n_qv_end = include_qv ? n_m : Int64(0)
-    n_tm5 = tm5_convection ? n_m : Int64(0)  # each of entu/detu/entd/detd is (Nx, Ny, Nz)
     n_sfc = include_surface ? n_ps : Int64(0)
 
     return (
@@ -319,10 +321,6 @@ function window_element_counts(grid::LatLonTargetGeometry, Nz::Int;
         n_dbm = n_bm,
         n_dcm = n_cm,
         n_dm = n_m,
-        n_entu = n_tm5,
-        n_detu = n_tm5,
-        n_entd = n_tm5,
-        n_detd = n_tm5,
         n_pblh = n_sfc,
         n_t2m = n_sfc,
         n_ustar = n_sfc,
@@ -330,7 +328,7 @@ function window_element_counts(grid::LatLonTargetGeometry, Nz::Int;
         elems_per_window = n_m + n_am + n_bm + n_cm + n_ps +
                            n_qv_start + n_qv_end +
                            n_am + n_bm + n_cm + n_m +
-                           4 * n_tm5 + 4 * n_sfc,
+                           4 * n_sfc,
     )
 end
 
@@ -443,6 +441,12 @@ function existing_output_schema_matches(bin_path::AbstractString,
             get(disk_header, "column_balance_weights", "mass") ==
                 get(expected_header, "column_balance_weights", "mass") ||
                 push!(changed, "column_balance_weights")
+            # Optional key: absent on ERA5 spectral lat-lon binaries written
+            # with closed pole-row zonal faces (before issue #58) and on all
+            # other writers.
+            get(disk_header, POLE_ROW_ZONAL_FLUX_KEY, nothing) ==
+                get(expected_header, POLE_ROW_ZONAL_FLUX_KEY, nothing) ||
+                push!(changed, POLE_ROW_ZONAL_FLUX_KEY)
             # Optional key: absent on binaries without TM5 sections and on
             # TM5 binaries written before the fluxes were put on the binary's basis.
             get(disk_header, TM5_CONVECTION_MASS_BASIS_KEY, nothing) ==

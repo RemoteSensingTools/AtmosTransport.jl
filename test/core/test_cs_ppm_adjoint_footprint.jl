@@ -526,9 +526,11 @@ end
     @testset "Footprint uses the production palindrome CFL schedule" begin
         mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
             _transport_cs_problem(Nc=4, Nz=3, nsteps=1)
+        # × 25 gives n = 3; × 40 would leave some cells with negative mass after
+        # the step, an invalid flux set the count rejects.
         for flux_steps in (panels_am, panels_bm, panels_cm),
             panel in flux_steps[1]
-            panel .*= 40
+            panel .*= 25
         end
 
         flux_scale = 1.5
@@ -1025,6 +1027,61 @@ end
                 iterations=1,
                 initial_step=0.1f0)
             @test gpu_solve.controls[1].value[1] isa CUDA.CuArray
+        end
+
+        @testset "GPU host tape storage keeps limited-PPM m and rm reads apart (#57)" begin
+            # `:pinned_host` and `:mmap` read staged states back through
+            # device caches; a limited-PPM sweep record reads its air mass and
+            # tracer mass together, so one shared cache handed the reverse
+            # kernel `m === rm` (footprint error ~0.8). NoLimiter tapes no rm
+            # and could not see it.
+            FT = Float64
+            mesh = AT.CubedSphereMesh(Nc = 4, Hp = 3, FT = FT)
+            Nc, Hp, Nz, nsteps = mesh.Nc, mesh.Hp, 5, 4
+            N = Nc + 2Hp
+            m = ntuple(p -> [FT(2.0 + 0.25k + 0.01p + 0.03sin(0.7i + 0.3j + p))
+                             for i in 1:N, j in 1:N, k in 1:Nz], 6)
+            rm = ntuple(p -> [m[p][i, j, k] * FT(0.08 + 0.01sin(0.27i + 0.13j + 0.19k + 0.07p))
+                              for i in 1:N, j in 1:N, k in 1:Nz], 6)
+            Adv.fill_panel_halos!(m, mesh; dir = 0)
+            Adv.fill_panel_halos!(rm, mesh; dir = 0)
+            face(dims, range_i, range_j, f) = ntuple(p -> begin
+                a = zeros(FT, dims...)
+                for k in 1:Nz, j in range_j, i in range_i
+                    a[i, j, k] = f(p, i, j, k)
+                end
+                CUDA.CuArray(a)
+            end, 6)
+            am = [face((N + 1, N, Nz), Hp+1:Hp+Nc+1, Hp+1:Hp+Nc,
+                       (p, i, j, k) -> 0.05sin(0.2s + 0.3p + 0.7i + 0.4j + 0.2k)) for s in 1:nsteps]
+            bm = [face((N, N + 1, Nz), Hp+1:Hp+Nc, Hp+1:Hp+Nc+1,
+                       (p, i, j, k) -> 0.04cos(0.3s + 0.5p + 0.4i + 0.6j + 0.1k)) for s in 1:nsteps]
+            cm = [ntuple(p -> begin
+                      c = zeros(FT, N, N, Nz + 1)
+                      for k in 2:Nz, j in Hp+1:Hp+Nc, i in Hp+1:Hp+Nc
+                          c[i, j, k] = -0.03(1 + 0.3sin(i + j + k + p + s))
+                      end
+                      CUDA.CuArray(c)
+                  end, 6) for s in 1:nsteps]
+            m_g = ntuple(p -> CUDA.CuArray(m[p]), 6)
+            rm_g = ntuple(p -> CUDA.CuArray(rm[p]), 6)
+            objective = AT.CSLayerMeanObjective(2, 2, 3, Nz)
+            maxrel(a, b) =
+                maximum(maximum(abs.(Array(a.footprints[s][p]) .- Array(b.footprints[s][p])))
+                        for s in eachindex(a.footprints), p in 1:6) /
+                maximum(maximum(abs.(Array(b.footprints[s][p])))
+                        for s in eachindex(b.footprints), p in 1:6)
+            for limiter in (AT.MonotoneLimiter(), AT.CW84Limiter()),
+                checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(2))
+                footprint(storage) = AT.cs_surface_emission_footprint(
+                    rm_g, m_g, am, bm, cm, mesh, objective;
+                    scheme = AT.PPMScheme(limiter), dt = FT(30),
+                    tape_storage = storage, checkpoint)
+                reference = footprint(:device)
+                @test reference.footprints[1][1] isa CUDA.CuArray
+                @test maxrel(footprint(:pinned_host), reference) <= 1e-12
+                @test maxrel(footprint(:mmap), reference) <= 1e-12
+            end
         end
     end
 end

@@ -21,8 +21,8 @@ const TapeMod = AtmosTransport.Tape
 #     `base_emission_rates`.
 #   * `cs_surface_emission_footprint_from_seed` parity under Stride and
 #     Revolve.
-#   * `RevolveCheckpoint()` parity for the same tapes (FD-grade tolerance
-#     for monotone PPM + implicit diffusion), including nsteps == 1.
+#   * `RevolveCheckpoint()` parity for the same tapes, including monotone
+#     PPM + implicit diffusion + CMFMC convection and nsteps == 1.
 #   * Argument validation: LinRood with non-`:device` storage, a
 #     pre-constructed tape storage under Stride/Revolve, and
 #     `StrideCheckpoint(0)` reject with ArgumentError.
@@ -79,24 +79,15 @@ end
 _column_mean_objective(mesh::AT.CubedSphereMesh) =
     AT.CSColumnMeanObjective(1, max(2, mesh.Nc ÷ 2), max(2, mesh.Nc ÷ 2))
 
-# Stride and Full call the same forward / reverse kernels in the
-# same order on the same inputs, but two effects introduce tiny
-# (well-below-physics) drift:
-#   * Reduction-order / SIMD-grouping differences at the LLVM level
-#     across machines or Julia patch versions (~Float64 epsilon).
-#   * Each stride-window recorder call begins with
-#     `fill_panel_halos!(panels_m, mesh; dir=0)` which freshly
-#     recomputes panel-corner halos from the interior. In the
-#     FullCheckpoint path the corners at the start of step k+1 are
-#     whatever step k's `dir=1` X-halo fill happened to leave them —
-#     consistent with the interior but written by a different code
-#     path. The interior-cell adjoint is unchanged, but cross-panel
-#     halo entries that feed PPM stencils at panel edges can drift
-#     by O(1e-13) absolute when a window boundary falls between two
-#     steps.
-# `atol = 1e-12` (~10⁴ × Float64 epsilon) is well below the
-# FD-identity tolerances in this suite (1e-9 relative or looser), and
-# lets stride parity tests be robust to both effects.
+# Stride, Revolve and Full call the same forward / reverse kernels in
+# the same order on the same inputs. Every recorded step starts with
+# production's step-start halo refresh (`fill_cs_step_start_halos!`),
+# so a window that restarts at a step boundary records the same states
+# as the full tape. What remains is rounding: the reverse walk sums the
+# halo adjoints with atomic adds, whose order can differ between runs
+# with several threads (~Float64 epsilon). `atol = 1e-12` (~10⁴ ×
+# Float64 epsilon) is well below the FD-identity tolerances in this
+# suite (1e-9 relative or looser).
 function _footprints_equal(a, b)
     length(a.footprints) == length(b.footprints) || return false
     for step in eachindex(a.footprints)
@@ -543,8 +534,8 @@ end
 
 @testset "StrideCheckpoint vs FullCheckpoint — LinRoodPPMScheme ORD=7" begin
     # Plan-25 Commit 3b: with the ORD=7 face-kernel adjoints in place
-    # (`_apply_ord7_boundary_d6` + ORD=7 grad/chain helpers in
-    # `linrood_adjoint_*.jl`), `LinRoodPPMScheme(7)` runs through
+    # (the ORD=7 grad/chain helpers in `linrood_adjoint_*.jl`, which
+    # evaluate `_ppm_edge_values_ord7` on duals), `LinRoodPPMScheme(7)` runs through
     # the tape end-to-end. This testset mirrors the ORD=5
     # "StrideCheckpoint vs FullCheckpoint — LinRoodPPMScheme" testset
     # above, using the same `_footprints_equal` parity helper.
@@ -943,27 +934,14 @@ end
     @test _footprints_equal(ref, rev)
 end
 
-@testset "RevolveCheckpoint with implicit diffusion — nonlinear PPM (FD-grade)" begin
-    # Documented limitation: RevolveCheckpoint's recursive bisection
-    # introduces more `fill_panel_halos!(...; dir=0)` boundaries than
-    # FullCheckpoint or stride, which compounds through the monotone
-    # PPM limiter when combined with strongly nonlinear physics
-    # (implicit diffusion, especially convection). The
-    # `_footprints_equal` parity check at `atol=1e-12` fails for
-    # nonlinear PPM + diffusion + CMFMC convection — drift reaches
-    # O(1e-7) absolute / O(0.2) relative because the limiter flips
-    # at panel-edge halos that the bisection refreshes differently
-    # from FullCheckpoint.
-    #
-    # The gradient is still physically valid to FD-identity tolerance
-    # (FD threshold is ~1e-8 for these schemes; the Revolve drift is
-    # within that envelope when measured against finite differences,
-    # not against another adjoint). For production use that needs
-    # bit-exact parity with FullCheckpoint, use `StrideCheckpoint(K)`.
-    #
-    # This testset asserts FD-grade tolerance (atol=1e-5, rtol=1e-3)
-    # to lock in that the Revolve adjoint is at least
-    # physics-meaningful even where it drifts from FullCheckpoint.
+@testset "RevolveCheckpoint with implicit diffusion and CMFMC convection — nonlinear PPM" begin
+    # Revolve's bisection restarts the recording at many step boundaries.
+    # Before every recorded step started with production's step-start halo
+    # refresh, the first X sweep of a step in the full tape read tracer halos
+    # from before the previous step's convection, while a restarted window
+    # read fresh ones: Revolve differed from FullCheckpoint by 2.6e-6 relative
+    # here (issue #60), which used to be attributed to limiter flips. The
+    # bisection replays the full tape's states exactly now.
     mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
         ; Nc = 4, Nz = 5, nsteps = 6, FT = Float64)
     FT = eltype(panels_m[1])
@@ -984,23 +962,41 @@ end
     kz_field = AT.CubedSphereField(ntuple(_ -> AT.ConstantField{FT, 3}(FT(2.0)), 6))
     op_diff = AT.ImplicitVerticalDiffusion(; kz_field)
 
+    # CMFMC convection context (as in the StrideCheckpoint test above).
+    cmfmc = ntuple(_ -> begin
+        c = zeros(FT, mesh.Nc, mesh.Nc, Nz + 1)
+        c[:, :, 2] .= FT(0.012)
+        c[:, :, 3] .= FT(0.020)
+        c[:, :, 4] .= FT(0.015)
+        c
+    end, 6)
+    dtrain = ntuple(_ -> begin
+        d = zeros(FT, mesh.Nc, mesh.Nc, Nz)
+        d[:, :, 2] .= FT(0.006)
+        d[:, :, 3] .= FT(0.005)
+        d
+    end, 6)
+    convection = (convection_op = AT.CMFMCConvection(),
+                  convection_forcing = AT.ConvectionForcing(cmfmc, dtrain, nothing),
+                  convection_workspace = AT.CMFMCWorkspace(
+                      panels_m; cell_metrics = ntuple(_ -> ones(FT, mesh.Nc, mesh.Nc), 6)))
+
     objective = _column_mean_objective(mesh)
     scheme = AT.PPMScheme(AT.MonotoneLimiter())
 
-    ref = AT.cs_surface_emission_footprint(
-        panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
-        scheme = scheme, dt = 1.0,
-        diffusion_op = op_diff, diffusion_workspace = ws_diff)
-
-    rev = AT.cs_surface_emission_footprint(
-        panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
-        scheme = scheme, dt = 1.0,
-        diffusion_op = op_diff, diffusion_workspace = ws_diff,
-        checkpoint = AT.RevolveCheckpoint())
-
-    for step in eachindex(ref.footprints), p in 1:6
-        @test isapprox(ref.footprints[step][p], rev.footprints[step][p];
-                       atol = 1e-5, rtol = 1e-3)
+    @testset "$label" for (label, physics) in (
+            ("diffusion", (; diffusion_op = op_diff, diffusion_workspace = ws_diff)),
+            ("diffusion + CMFMC convection", (; diffusion_op = op_diff,
+                                                diffusion_workspace = ws_diff,
+                                                convection...)))
+        ref = AT.cs_surface_emission_footprint(
+            panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+            scheme = scheme, dt = 1.0, physics...)
+        rev = AT.cs_surface_emission_footprint(
+            panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+            scheme = scheme, dt = 1.0, physics...,
+            checkpoint = AT.RevolveCheckpoint())
+        @test _footprints_equal(ref, rev)
     end
 end
 

@@ -100,6 +100,43 @@ _test_vc() = Pre.HybridSigmaPressure(_TEST_A, _TEST_B)
     end
 
     # -----------------------------------------------------------------------
+    # merge_thin_levels: the thickness rule, pinned on ERA5 L137 (issue #63).
+    # Groups close from the surface up as soon as they reach the minimum; the
+    # remnant above the last group is kept as the top layer and may be
+    # thinner. At 100 Pa (the L117 CATRINE set,
+    # `era5_n320_arco_diffusion_to_c90_l117_li.toml`) that top layer is 6.8 Pa;
+    # in a real L117 binary (2022-01-15) at most 0.005 of its mass crosses its
+    # lower interface per stored substep amount (layers 2–4: 0.012–0.05), so
+    # it is numerically benign. Folding it into layer 2 (L116) changes the
+    # level set and waits for the next regeneration; until then these numbers
+    # must not change.
+    # -----------------------------------------------------------------------
+
+    @testset "merge_thin_levels: layer thicknesses on ERA5 L137" begin
+        l137 = Pre.load_hybrid_coefficients(
+            joinpath(@__DIR__, "..", "..", "config", "era5_L137_coefficients.toml"))
+        ps = 101325.0
+        for (min_dp, Nz, top_dp, top_native, groups) in
+                ((100.0, 117, 6.8, 4, [4, 10, 4, 3, 2, 2, 2, 1]),
+                 (1000.0, 68, 33.0, 9, [9, 20, 7, 5, 4, 4, 3, 3]))
+            merged, mm = Pre.merge_thin_levels(l137; min_thickness_Pa = min_dp, p_surface = ps)
+            dp = [Pre.level_thickness(merged, k, ps) for k in 1:Pre.n_levels(merged)]
+            native = [Pre.level_thickness(l137, k, ps) for k in 1:Pre.n_levels(l137)]
+            @test length(dp) == Nz
+            @test round(dp[1]; digits = 1) == top_dp        # the remnant: thinner than min_dp
+            @test count(==(1), mm) == top_native
+            @test [count(==(l), mm) for l in 1:8] == groups
+            @test all(>=(min_dp), dp[2:end])                # every other layer reaches min_dp
+            # Each group closes at the first native layer that reaches min_dp.
+            @test all(l -> sum(native[findall(==(l), mm)[2:end]]; init = 0.0) < min_dp, 2:Nz)
+            @test issubset(merged.A, l137.A) && sum(dp) ≈ sum(native)
+        end
+        # Without a remnant the top group reaches the minimum as well.
+        merged, mm = Pre.merge_thin_levels(_test_vc(); min_thickness_Pa = 100.0)
+        @test Pre.n_levels(merged) == 5 && mm == 1:5
+    end
+
+    # -----------------------------------------------------------------------
     # MergeAbovePressure: GEOS-IT L72 mesospheric scenario
     # -----------------------------------------------------------------------
 

@@ -636,7 +636,13 @@ end
                                                (DateTime(2014, 1, 2), (0.0, 3600.0)),
                                                (DateTime(2014, 1, 1, 12), (0.0, 86400.0 + 1.0)),
                                                (DateTime(2013, 12, 1), (0.0, 86400.0)))
-                source = build_surface_flux_source(grid, :co2, cfg, FT; reference_time, run_span)
+                # A run outside the file's time coverage holds an end slice, as
+                # the frozen loader did, only on request.
+                covered = reference_time >= DateTime(2014, 1, 1)
+                covered || @test_throws ArgumentError build_surface_flux_source(
+                    grid, :co2, cfg, FT; reference_time, run_span)
+                cfg_run = covered ? cfg : merge(cfg, Dict{String, Any}("hold_outside_coverage" => true))
+                source = build_surface_flux_source(grid, :co2, cfg_run, FT; reference_time, run_span)
                 frozen = frozen_native_source(mesh, cfg, FT, reference_time; run_span)
                 @test same_source(source, frozen)
                 @test source.scheme isa StepwiseFlux

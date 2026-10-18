@@ -10,6 +10,7 @@
 # ---------------------------------------------------------------------------
 
 using Test
+using Logging: NullLogger, with_logger
 
 # The driver is a script, not a module — include it so `run_inversion`
 # is exposed at the top level.
@@ -323,4 +324,244 @@ end
     # Missing config file.
     @test_throws ArgumentError run_inversion(joinpath(tempdir(),
         "does_not_exist_$(rand(UInt64)).toml"))
+end
+
+# ---------------------------------------------------------------------------
+# Issue #20: an observation file (schema v2) bound with `bind_to_mesh`, point
+# records placed in the `synthetic_hydrostatic` column by
+# `[observations.placement]` (the forward sampler's parser and rule).
+# ---------------------------------------------------------------------------
+
+const HYDROSTATIC_BLOCK = """
+[meteo]
+source = "synthetic_hydrostatic"
+interface_pressures_pa = [1000.0, 10000.0, 20000.0, 30000.0, 45000.0, 60000.0, 75000.0, 85000.0, 92000.0, 97000.0, 100000.0]
+specific_humidity = [1e-5, 1e-5, 5e-5, 2e-4, 6e-4, 1.5e-3, 3e-3, 6e-3, 1e-2, 1.4e-2]
+"""
+
+function _hydrostatic_config(obs_path; meteo = HYDROSTATIC_BLOCK, observations_extra = "", time_extra = "start = \"2024-06-15T00:00:00\"\n")
+    return """
+    [mesh]
+    Nc = 3
+    Hp = 3
+    float_type = "Float64"
+
+    [time]
+    nsteps = 3
+    dt_seconds = 600.0
+    $(time_extra)
+    $(meteo)
+
+    [advection]
+    scheme = "upwind"
+
+    [observations]
+    file = "$(obs_path)"
+    $(observations_extra)
+
+    [control]
+    name = "all_steps"
+    steps = [1, 2, 3]
+    normalize = true
+    initial = "zeros"
+
+    [optimizer]
+    kind = "lbfgs"
+    iterations = 3
+    """
+end
+
+function _write_driver_observations(path; extra = AT.CSObservationRecord[])
+    mesh = AT.CubedSphereMesh(Nc = 3, Hp = 3, FT = Float64)
+    lons, lats = AT.panel_cell_center_lonlat(mesh, 2)
+    record(id; kwargs...) = AT.CSObservationRecord(; id, date_components = (2024, 6, 15, 0, 15, 0),
+        lat = lats[2, 2], lon = lons[2, 2], value = 1e-7, value_sigma = 1e-8, instrument_type = "test",
+        tracer = "CO2", kwargs...)
+    records = [record(1; intake_height_m = 10.0),
+               record(2; altitude_m = 5000.0, elevation_m = 0.0),
+               record(3; pressure_pa = 70000.0, time_window_s = 1200.0),
+               record(4; kind = "column", time_window_s = 3600.0),
+               record(5; intake_height_m = 10.0, tracer = "CH4"),
+               extra...]
+    AT.write_observations(path, AT.CSObservationSet(records; time_origin = "2024-06-15 00:00:00"))
+    return path
+end
+
+@testset "cs_4dvar.jl driver — observation file + synthetic_hydrostatic (#20)" begin
+    mktempdir() do dir
+        obs_path = _write_driver_observations(joinpath(dir, "obs.nc"))
+        cfg = _hydrostatic_config(obs_path; observations_extra = "tracer = \"CO2\"\n")
+        result = _run_config_text(cfg)
+        @test result isa AT.CS4DVarSolveResult
+        last = result.last
+        @test [o.id for o in last.observations] == [1, 2, 3, 4]       # the CH4 record is filtered out
+        @test last.stencils[1].levels == [10]                          # 10 m intake: surface layer
+        @test last.stencils[2].levels == [5]                           # 5 km aircraft: about 540 hPa
+        @test last.stencils[3].levels == fill(6, 3) && last.stencils[3].steps == [1, 2, 3]   # 700 hPa: 600-750 hPa
+        @test last.stencils[4].levels == zeros(Int, 3)                 # column mean over the window
+        @test last.cost < result.cost_history[1]
+
+        # The hydrostatic air mass: m = (1 − q)(p_{k+1} − p_k) A / g.
+        parsed = TOML.parse(cfg)
+        mesh = AT.CubedSphereMesh(Nc = 3, Hp = 3, FT = Float64)
+        meteo = _build_meteo(parsed, mesh, 3, Float64)
+        p, q = parsed["meteo"]["interface_pressures_pa"], parsed["meteo"]["specific_humidity"]
+        @test meteo.panels_m[2][3 + 1, 3 + 2, 10] ≈
+              (1 - q[10]) * (p[11] - p[10]) * AT.cell_area(mesh, 1, 2) / AT.Parameters.STANDARD_GRAVITY rtol = 1e-14
+        @test meteo.column_met.p_top == 1000.0 && meteo.column_met.humidity !== nothing
+
+        # Pressure placement needs the humidity unless the basis is dry.
+        dry_meteo = replace(HYDROSTATIC_BLOCK, r"specific_humidity = .*\n" => "")
+        @test occursin("pressure_basis = \"dry\"", _config_error(_hydrostatic_config(obs_path; meteo = dry_meteo)))
+        dry = _run_config_text(_hydrostatic_config(obs_path; meteo = dry_meteo,
+            observations_extra = "[observations.placement]\npressure_basis = \"dry\"\n"))
+        @test dry isa AT.CS4DVarSolveResult
+        # Height first, then pressure; a layer-temperature profile.
+        profile = HYDROSTATIC_BLOCK * "temperature_kelvin = [220.0, 220.0, 225.0, 235.0, 250.0, 262.0, 272.0, 280.0, 285.0, 288.0]\n"
+        cold = _run_config_text(_hydrostatic_config(obs_path; meteo = profile,
+                                                    observations_extra = "tracer = \"CO2\"\n"))
+        @test cold.last.stencils[2].levels == [5]
+
+        # Configuration errors.
+        no_start = _hydrostatic_config(obs_path; time_extra = "")
+        @test occursin("needs [time].start", _config_error(no_start))
+        constant = replace(_hydrostatic_config(obs_path), HYDROSTATIC_BLOCK => "[meteo]\nsource = \"synthetic_constant\"\n")
+        @test occursin("synthetic_hydrostatic", _config_error(constant))
+        @test occursin("apply to source = \"synthetic_hydrostatic\" only",
+                       _config_error(replace(read(CONFIG, String), "source = \"synthetic_constant\"" =>
+                           "source = \"synthetic_constant\"\nspecific_humidity = [0.0, 0.0, 0.0]")))
+        @test occursin("exactly one of", _config_error(replace(_hydrostatic_config(obs_path),
+            "[control]" => "[[observations.entries]]\nstep = 1\nobjective = \"column_mean\"\npanel = 1\ni = 1\nj = 1\nvalue = 0.0\nsigma = 1.0\n\n[control]")))
+        @test occursin("apply to an observation `file`", _config_error(replace(read(CONFIG, String),
+            "[[observations.entries]]" => "[observations]\ntracer = \"CO2\"\n\n[[observations.entries]]")))
+        @test occursin("Unknown [observations.placement] option(s): coordinates",
+                       _config_error(_hydrostatic_config(obs_path;
+                           observations_extra = "[observations.placement]\ncoordinates = [\"pressure\"]\n")))
+        @test occursin("has no effect with [meteo].temperature_kelvin",
+                       _config_error(_hydrostatic_config(obs_path; meteo = profile,
+                           observations_extra = "[observations.placement]\nlayer_height_temperature_kelvin = 270.0\n")))
+        @test occursin("[observations.placement].vertical_coordinates",
+                       _config_error(_hydrostatic_config(obs_path;
+                           observations_extra = "[observations.placement]\nvertical_coordinates = [\"altitude\"]\n")))
+        @test occursin("interface_pressures_pa", _config_error(_hydrostatic_config(obs_path;
+            meteo = replace(HYDROSTATIC_BLOCK, "[1000.0, 10000.0" => "[10000.0, 1000.0"))))
+        @test occursin("[meteo].interface_pressures_pa is required", _config_error(_hydrostatic_config(obs_path;
+            meteo = replace(HYDROSTATIC_BLOCK, r"interface_pressures_pa = .*\n" => ""))))
+        # A point record without a vertical coordinate: error, or skip and count.
+        mktempdir() do sub
+            path = _write_driver_observations(joinpath(sub, "obs.nc");
+                extra = [AT.CSObservationRecord(id = 9, date_components = (2024, 6, 15, 0, 15, 0), lat = 10.0,
+                                                lon = 20.0, value = 1e-7, value_sigma = 1e-8,
+                                                instrument_type = "test", tracer = "CO2")])
+            @test occursin("cannot place every request", _config_error(_hydrostatic_config(path)))
+            skipped = _run_config_text(_hydrostatic_config(path;
+                observations_extra = "tracer = \"CO2\"\n[observations.placement]\nunplaced_records = \"skip\"\n"))
+            @test [o.id for o in skipped.last.observations] == [1, 2, 3, 4]
+        end
+        # Out-of-range records follow out_of_range_policy.
+        late = joinpath(dir, "late.nc")
+        mesh3 = AT.CubedSphereMesh(Nc = 3, Hp = 3, FT = Float64)
+        AT.write_observations(late, AT.CSObservationSet([AT.CSObservationRecord(id = 1,
+            date_components = (2024, 6, 16, 0, 0, 0), lat = 0.0, lon = 0.0, kind = "column", value = 1e-7,
+            value_sigma = 1e-8, instrument_type = "test", tracer = "CO2")]))
+        @test occursin("outside [1, 3]", _config_error(_hydrostatic_config(late)))
+        @test occursin("no observation is left",
+                       _config_error(_hydrostatic_config(late; observations_extra = "out_of_range_policy = \"skip\"\n")))
+    end
+end
+
+# Issue #20, part 4: column records with a retrieval block are averaging-kernel
+# columns; `[observations.placement].max_surface_pressure_mismatch_pa` bounds
+# the model minus retrieval surface pressure (the column's is 1000 hPa).
+@testset "cs_4dvar.jl driver — averaging-kernel columns, max_surface_pressure_mismatch_pa (#20)" begin
+    mktempdir() do dir
+        mesh = AT.CubedSphereMesh(Nc = 3, Hp = 3, FT = Float64)
+        lons, lats = AT.panel_cell_center_lonlat(mesh, 2)
+        retrieval(ps) = AT.Output.RetrievalColumn(; pressure_pa = collect(range(ps, 0.0; length = 6)),
+                                                  pressure_weight = fill(0.2, 5),
+                                                  averaging_kernel = [0.6, 0.8, 1.0, 1.1, 1.2],
+                                                  prior_profile = fill(1.2e-7, 5))
+        column(id, ps) = AT.CSObservationRecord(; id, date_components = (2024, 6, 15, 0, 15, 0), lat = lats[2, 2],
+                                                lon = lons[2, 2], kind = "column", value = 1e-7, value_sigma = 1e-8,
+                                                instrument_type = "test", tracer = "CO2", retrieval = retrieval(ps))
+        path = joinpath(dir, "ak.nc")
+        AT.write_observations(path, AT.CSObservationSet([column(1, 99000.0), column(2, 96000.0)]))
+        free = _run_config_text(_hydrostatic_config(path))
+        @test all(o -> o.objective isa AT.CSRetrievalColumnObjective, free.last.observations)
+        @test all(s -> s.assimilated, free.last.stencils)
+        @test [s.surface_pressure_mismatch_pa for s in free.last.stencils] ≈ [1000.0, 4000.0] rtol = 1e-9
+        limit = "[observations.placement]\nmax_surface_pressure_mismatch_pa = 2000.0\n"
+        @test occursin("max_surface_pressure_mismatch_pa", _config_error(_hydrostatic_config(path;
+                                                                                observations_extra = limit)))
+        skipped = with_logger(NullLogger()) do
+            _run_config_text(_hydrostatic_config(path; observations_extra = limit * "unplaced_records = \"skip\"\n"))
+        end
+        @test [s.assimilated for s in skipped.last.stencils] == [true, false]
+        @test occursin("must be a positive pressure", _config_error(_hydrostatic_config(path;
+            observations_extra = "[observations.placement]\nmax_surface_pressure_mismatch_pa = -1.0\n")))
+        # A column-only inversion on a dry column sets pressure_basis = "dry"
+        # without placing points by pressure; [output.observations] still
+        # rejects the key there.
+        dry_meteo = replace(HYDROSTATIC_BLOCK, r"specific_humidity = .*\n" => "")
+        height_only = "[observations.placement]\nvertical_coordinates = [\"height_above_ground\"]\n"
+        @test occursin("pressure_basis = \"dry\"", _config_error(_hydrostatic_config(path; meteo = dry_meteo,
+                                                                                    observations_extra = height_only)))
+        dry = _run_config_text(_hydrostatic_config(path; meteo = dry_meteo,
+                                                   observations_extra = height_only * "pressure_basis = \"dry\"\n"))
+        @test all(o -> o.objective.pressure_basis isa AT.Output.DryInterfaces, dry.last.observations)
+        keys = Dict{String, Any}("vertical_coordinates" => ["height_above_ground"], "pressure_basis" => "dry")
+        @test_throws ArgumentError AT.Output._parse_vertical_placement(keys, "[output.observations]")
+        @test AT.Output._parse_vertical_placement(keys, "[observations.placement]";
+                                                  pressure_basis_for_columns = true).pressure_basis isa
+              AT.Output.DryInterfaces
+    end
+end
+
+# Issue #20 follow-up (D30): level columns (OCO-2's hat projection), co-sampled
+# flagged records and cell averaging through the driver's TOML keys.
+@testset "cs_4dvar.jl driver — level columns, flagged_records, cell_averaging (D30)" begin
+    mktempdir() do dir
+        mesh = AT.CubedSphereMesh(Nc = 3, Hp = 3, FT = Float64)
+        lons, lats = AT.panel_cell_center_lonlat(mesh, 2)
+        σ = vcat(1e-4, collect(1:19) ./ 19)
+        level(ps) = AT.Output.RetrievalColumn(; pressure_pa = reverse(σ .* ps), pressure_weight = fill(0.05, 20),
+                                              averaging_kernel = collect(range(1.0, 0.4; length = 20)),
+                                              prior_profile = fill(1.2e-7, 20), mapping = AT.Output.HatLevelProjection())
+        record(id, sec, flag) = AT.CSObservationRecord(; id, date_components = (2024, 6, 15, 0, 15, sec), flag,
+                                                       lat = lats[2, 2], lon = lons[2, 2], kind = "column",
+                                                       value = 1e-7, value_sigma = 1e-8, model_sigma = 0.5e-8,
+                                                       instrument_type = "OCO2_OG", tracer = "CO2",
+                                                       retrieval = level(99000.0))
+        path = joinpath(dir, "levels.nc")
+        AT.write_observations(path, AT.CSObservationSet([record(1, 0, 0), record(2, 10, 0), record(3, 20, 1)]))
+        quiet(f) = with_logger(f, NullLogger())
+        base = quiet(() -> _run_config_text(_hydrostatic_config(path)))
+        @test [o.id for o in base.last.observations] == [1, 2]
+        @test all(o -> o.objective.retrieval.mapping isa AT.Output.HatLevelProjection, base.last.observations)
+        cosampled = quiet(() -> _run_config_text(_hydrostatic_config(path;
+            observations_extra = "flagged_records = \"cosample\"\n")))
+        @test [o.assimilate for o in cosampled.last.observations] == [true, true, false]
+        # The co-sample changes nothing the optimizer sees: bit for bit
+        # single-threaded; with threads the atomics of the halo and Lin-Rood
+        # adjoint kernels make the gradient reproducible to rounding only.
+        if Threads.nthreads() == 1
+            @test cosampled.cost_history == base.cost_history
+            @test cosampled.last.gradients[1][2] == base.last.gradients[1][2]
+        else
+            @test cosampled.cost_history ≈ base.cost_history rtol = 1e-13
+            @test cosampled.last.gradients[1][2] ≈ base.last.gradients[1][2] rtol = 1e-13
+        end
+        averaged = quiet(() -> _run_config_text(_hydrostatic_config(path;
+            observations_extra = "[observations.cell_averaging]\nmode = \"average\"\ntime_tolerance_s = 60.0\n")))
+        @test [o.assimilate for o in averaged.last.observations] == [false, false, true]
+        @test averaged.last.observations[end].objective isa AT.CSCellAverageObjective
+        @test averaged.last.observations[end].sigma ≈ sqrt(1e-16 / 2 + 0.25e-16) rtol = 1e-12
+        inflated = quiet(() -> _run_config_text(_hydrostatic_config(path;
+            observations_extra = "[observations.cell_averaging]\nmode = \"inflate_model_error\"\n")))
+        @test [o.sigma for o in inflated.last.observations] ≈ fill(sqrt(1e-16 + 2 * 0.25e-16), 2) rtol = 1e-12
+        @test occursin("[observations.cell_averaging].mode", _config_error(_hydrostatic_config(path;
+            observations_extra = "[observations.cell_averaging]\nmode = \"median\"\n")))
+        @test occursin("flagged_records", _config_error(_hydrostatic_config(path;
+            observations_extra = "flagged_records = \"keep\"\n")))
+    end
 end

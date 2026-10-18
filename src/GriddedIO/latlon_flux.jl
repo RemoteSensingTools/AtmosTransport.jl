@@ -171,3 +171,49 @@ function write_latlon_flux(path::AbstractString, mesh::LatLonMesh, variables;
         end
     end
 end
+
+"""
+    check_latlon_cell_area(area, mesh_area, units; file, rtol = 1e-2, flux = nothing) -> area
+
+The cell-area gate of a lat-lon flux file whose `cell_area` or `area` variable
+sets the inventory's total (`area` [m²], oriented like the flux). Its `units`
+must be square metres (`"m2"`, `"m^2"`, `"m**2"`; an empty string, for an
+absent attribute, is accepted), and it must agree with `mesh_area`, the cell
+areas of the mesh that the file's coordinates define on the runtime sphere, as
+`isapprox(area, mesh_area; rtol)`: the norm-based relative difference
+‖a − A‖ ≤ `rtol` max(‖a‖, ‖A‖) (Frobenius norm). The default 1 % passes any
+Earth-radius convention (6.371 versus 6.378137 × 10⁶ m is 0.22 % in area) and
+the files' own cell definitions, while areas in km² or a land fraction, which
+would scale the emitted total, fail. A size mismatch is a `DimensionMismatch`.
+
+With `flux` (the flux slice, oriented like `area`), every cell whose flux is
+nonzero must have a finite, positive area: the norm test alone passes a few
+masked (zero) rows, such as polar rows, and their emission would be dropped
+without a word (per-cell units give a cell without area no flux; per-m² units
+give it no rate).
+"""
+function check_latlon_cell_area(area::AbstractMatrix, mesh_area::AbstractMatrix,
+                                units::AbstractString; file::AbstractString,
+                                rtol::Real = 1e-2, flux::Union{Nothing, AbstractMatrix} = nothing)
+    u = lowercase(replace(strip(units), " " => ""))
+    isempty(u) || u in ("m2", "m^2", "m**2") || throw(ArgumentError(
+        "cell areas in $(file) have units $(repr(units)); expected m2"))
+    size(area) == size(mesh_area) || throw(DimensionMismatch(
+        "cell areas in $(file) have size $(size(area)); the flux grid has $(size(mesh_area))"))
+    if flux !== nothing
+        size(flux) == size(area) || throw(DimensionMismatch(
+            "cell areas in $(file) have size $(size(area)); the flux has $(size(flux))"))
+        bad = findall(i -> flux[i] != 0 && !(isfinite(area[i]) && area[i] > 0), eachindex(area))
+        isempty(bad) || throw(ArgumentError(
+            "cell areas in $(file) are zero, negative or not finite in $(length(bad)) cell(s) " *
+            "with a nonzero flux (first: cell $(Tuple(CartesianIndices(area)[first(bad)])), " *
+            "area $(area[first(bad)])); their emission would be dropped. Expected square " *
+            "metres of every cell"))
+    end
+    isapprox(area, mesh_area; rtol) || throw(ArgumentError(
+        "cell areas in $(file) differ from the areas of the grid its coordinates define by " *
+        "$(round(sqrt(sum(abs2, area .- mesh_area) / sum(abs2, mesh_area)); sigdigits = 3)) " *
+        "(relative norm); " *
+        "expected square metres of the same cells"))
+    return area
+end

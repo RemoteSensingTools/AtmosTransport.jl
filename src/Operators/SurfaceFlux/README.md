@@ -86,8 +86,11 @@ the device; now each tracer holds a few 0.19 MB slices there.
   emitted mass is placed by `SurfaceLayerDeposit` or `ProfileDeposit` (GEOS-Chem
   non-local VDIFF spreads fresh emissions over the PBL, see `emission_deposit`)
 - [`operators.jl`](operators.jl) — operator hierarchy, source-to-tracer
-  lookup, state-level `apply!`, array-level `apply_surface_flux!`, and
-  `stage_surface_flux_window!` for an operator
+  lookup, state-level `apply!`, array-level `apply_surface_flux!`,
+  `stage_surface_flux_window!` for an operator, and the deposit choice of
+  the cubed-sphere palindrome center (`emission_deposit`, and
+  `center_emission_deposit`: the surface layer with the split coupling, the
+  diffusion scheme's own placement with `DiffusiveSurfaceFluxBoundary`)
 - [`integrals.jl`](integrals.jl) — global emission totals from the same
   temporal reconstruction the operator applies: the rate at an instant, the
   pieces of one step, and the integral over a run's steps (Float64 sums)

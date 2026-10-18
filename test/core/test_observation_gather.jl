@@ -187,7 +187,8 @@ end
     @test intake_layer_index(z, 499.9) == 2
     @test intake_layer_index(z, 500.0) == 1
     @test intake_layer_index(z, 2000.0) == 1
-    @test intake_layer_index(z, NaN) == 3
+    # A missing height is never a silent lowest-layer fallback (issue #56).
+    @test_throws ArgumentError intake_layer_index(z, NaN)
     @test intake_layer_index(z, 0.0) == 3
     @test intake_layer_index(z, -5.0) == 3
 
@@ -216,4 +217,52 @@ end
     @test intake_layer_index(z, 100.0) == 72
     @test intake_layer_index(z, 300.0) == 70
     @test intake_layer_index(z, 500.0) == 69
+end
+
+@testset "total interface pressures from the dry air mass and specific humidity (issue #20)" begin
+    # A tropical L72 column: total interfaces A + B·ps, specific humidity
+    # 18 g/kg at the surface falling as (p/ps)^2.7 (about 50 kg m⁻² of
+    # precipitable water), dry air mass (1 − q) Δp A / g per layer.
+    cfg = O.TOML.parsefile(joinpath(@__DIR__, "..", "..", "config", "geos_L72_coefficients.toml"))
+    A = Float64.(cfg["coefficients"]["a"])
+    B = Float64.(cfg["coefficients"]["b"])
+    ps, g, area = 101000.0, 9.80665, 1e10
+    p_ref = A .+ B .* ps
+    q = 0.018 .* ((p_ref[1:end-1] .+ p_ref[2:end]) ./ (2ps)) .^ 2.7
+    dry = (1 .- q) .* diff(p_ref) .* area ./ g
+    p_total = O.total_interface_pressures!(zeros(73), dry, q, area, g, A[1])
+    @test p_total ≈ p_ref rtol = 1e-13
+    @test O.total_interface_pressures!(zeros(73), Float32.(dry), Float32.(q), area, g, A[1]) ≈ p_ref rtol = 1e-6
+    # The dry interfaces lie lower by the weight of the vapour above: 4.9 hPa at the surface here.
+    p_dry = interface_pressures!(zeros(73), dry, area, g, A[1])
+    @test p_ref .- p_dry ≈ vcat(0.0, cumsum(q .* diff(p_ref))) rtol = 1e-10
+    @test 480 < p_ref[end] - p_dry[end] < 500
+    # The pressure basis selects the interfaces; a moist-basis air mass already is the total mass.
+    @test O.placement_pressures!(zeros(73), O.TotalFromHumidity(), DryBasis(), dry, q, area, g, A[1]) == p_total
+    @test O.placement_pressures!(zeros(73), O.DryInterfaces(), DryBasis(), dry, q, area, g, A[1]) == p_dry
+    moist = diff(p_ref) .* area ./ g
+    @test O.placement_pressures!(zeros(73), O.TotalFromHumidity(), MoistBasis(), moist, fill(NaN, 72), area, g,
+                                 A[1]) ≈ p_ref rtol = 1e-13
+    # Invalid humidity is refused; a small negative value (interpolation undershoot) is used as is.
+    bad = copy(q); bad[40] = 1.0
+    @test_throws ArgumentError O.total_interface_pressures!(zeros(73), dry, bad, area, g, A[1])
+    bad[40] = NaN
+    @test_throws ArgumentError O.total_interface_pressures!(zeros(73), dry, bad, area, g, A[1])
+    @test_throws DimensionMismatch O.total_interface_pressures!(zeros(73), dry, q[1:71], area, g, A[1])
+    @test_throws DimensionMismatch O.total_interface_pressures!(zeros(72), dry, q, area, g, A[1])
+    undershoot = copy(q); undershoot[1] = -1e-9
+    @test issorted(O.total_interface_pressures!(zeros(73), dry, undershoot, area, g, A[1]))
+
+    # The sampler-free layer rule: pressure placements against the basis's interfaces, the rest by height.
+    column = O.PlacementColumn(72)
+    column.humidity .= q
+    z_half = layer_heights_agl!(zeros(73), p_dry, ConstantLayerTemperature(280.0), g)
+    p_record = (p_dry[70] + p_ref[70]) / 2                    # between the dry and total bottom of layer 69
+    pressure = O.VerticalPlacement(O.VERTICAL_PLACEMENT_CODES.pressure, NaN, p_record, NaN)
+    @test O.column_layer!(column, pressure, z_half, dry, area, g, A[1], O.TotalFromHumidity(), DryBasis()) == 69
+    @test column.p_half == p_total
+    @test O.column_layer!(column, pressure, z_half, dry, area, g, A[1], O.DryInterfaces(), DryBasis()) == 70
+    height = O.VerticalPlacement(O.VERTICAL_PLACEMENT_CODES.record_height, 100.0, NaN, NaN)
+    @test O.column_layer!(column, height, z_half, dry, area, g, A[1], O.TotalFromHumidity(), DryBasis()) ==
+          intake_layer_index(z_half, 100.0)
 end

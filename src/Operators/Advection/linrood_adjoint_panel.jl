@@ -264,8 +264,8 @@ held at their input values (no cross-panel transfer) and return a
 input `rm`, `m` are NOT mutated.
 
 `ord` selects the PPM order (Val(5) or Val(7)) that the face kernels
-use. ORD=7 forwards through the discontinuous-edge boundary correction
-at panel-edge faces.
+use. ORD=7 forwards through the cube-edge values of the faces at and next
+to the panel edges (`_ppm_edge_values_ord7`).
 """
 function record_linrood_substep!(rm, m, am, bm,
                                   mesh::CubedSphereMesh{FT};

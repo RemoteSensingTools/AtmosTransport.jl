@@ -263,3 +263,159 @@ end
         @test sampled.state.tracers_raw == reference.state.tracers_raw
     end
 end
+
+# Two-window 2×2 lat-lon binary with three layers whose total interfaces are
+# 10, 28500, 66500 and 95000 Pa under the humidity qa: dry air mass
+# (1 − qa) Δp A / g, unchanged in time (no fluxes). With `humid`, window 1
+# carries qv_start = qa, qv_end = 0 and window 2 qv_start = 0, qv_end = 2qa.
+const QA = [0.001, 0.01, 0.02]
+function humid_ll_binary(path; humid = true)
+    mesh = LatLonMesh(; FT = Float64, Nx = 2, Ny = 2)
+    A, B = [10.0, 0.0, 0.0, 0.0], [0.0, 0.3, 0.7, 1.0]
+    grid = AtmosGrid(mesh, HybridSigmaPressure(A, B), CPU(); FT = Float64)
+    dp = diff(A .+ B .* 95000.0)
+    m = [(1 - QA[k]) * dp[k] * cell_area(mesh, i, j) / G for i in 1:2, j in 1:2, k in 1:3]
+    q(v) = repeat(reshape(v, 1, 1, 3), 2, 2, 1)
+    base = (m = m, am = zeros(3, 2, 3), bm = zeros(2, 3, 3), cm = zeros(2, 2, 4), ps = fill(95000.0, 2, 2))
+    windows = humid ? [merge(base, (qv_start = q(QA), qv_end = q(zeros(3)))),
+                       merge(base, (qv_start = q(zeros(3)), qv_end = q(2 .* QA)))] : [base, base]
+    write_transport_binary(path, grid, windows; FT = Float64, dt_met_seconds = 3600.0, half_dt_seconds = 1800.0,
+                           steps_per_window = 1, mass_basis = :dry, surface_pressure_basis = TotalSurfacePressure(),
+                           source_flux_sampling = :window_start_endpoint, flux_sampling = :window_constant)
+    return path
+end
+
+function obspack_pressures(path, times, pressures_hpa)
+    NCDataset(path, "c") do ds
+        defDim(ds, "obs", length(times))
+        defVar(ds, "time", Float64, ("obs",); attrib = Dict("units" => "seconds since 1970-01-01T00:00:00Z"))[:] =
+            datetime2unix.(times)
+        defVar(ds, "latitude", Float32, ("obs",))[:] = fill(10f0, length(times))
+        defVar(ds, "longitude", Float32, ("obs",))[:] = fill(-100f0, length(times))
+        defVar(ds, "pressure", Float32, ("obs",); attrib = Dict("units" => "hPa"))[:] = Float32.(pressures_hpa)
+        defVar(ds, "obspack_id", String, ("obs",))[:] = ["p~$(k)" for k in eachindex(times)]
+    end
+    return path
+end
+
+@testset "pressure placement takes the binary's humidity at each window end (issue #20)" begin
+    mktempdir() do dir
+        # Bottom interface of layer 2: 66500 Pa with qa, 66091.5 Pa dry (q = 0), 66916.3 Pa with 2qa.
+        # 664 hPa at t = 0 is in layer 2 only with qv_start of window 1 (qa); 662 hPa at 1 h is in layer 3
+        # with qv_end of window 1 (0); 667 hPa at 2 h is in layer 2 only with qv_end of window 2 (2qa).
+        pack = obspack_pressures(joinpath(dir, "co2_x_aircraft-insitu_1.nc"),
+                                 [ORIGIN, ORIGIN + Hour(1), ORIGIN + Hour(2)], [664.0, 662.0, 667.0])
+        sources = Any[Dict{String, Any}("kind" => "obspack", "mode" => "soundings", "path" => pack)]
+        levels(path) = NCDataset(ds -> Int.(ds["intake_level"][:]), path, "r")
+        humid = humid_ll_binary(joinpath(dir, "transport_20211202.bin"))
+        quiet(() -> run_driven_simulation(ll_cfg(dir, [humid]; observations = sources)))
+        @test levels(joinpath(dir, "obs_soundings.nc")) == [2, 3, 2]
+        NCDataset(joinpath(dir, "obs_soundings.nc"), "r") do ds
+            @test ds.attrib["pressure_basis"] == "total"
+            @test all(ds["vertical_placement"][:] .== 2)
+        end
+        # A binary without humidity needs the explicit dry opt-in, which compares with dry interfaces.
+        dry_dir = mkpath(joinpath(dir, "dry"))
+        dry = humid_ll_binary(joinpath(dry_dir, "transport_20211202.bin"); humid = false)
+        err = try
+            quiet(() -> run_driven_simulation(ll_cfg(dry_dir, [dry]; observations = sources)))
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError && occursin("pressure_basis = \"dry\"", sprint(showerror, err))
+        cfg = ll_cfg(dry_dir, [dry]; observations = sources)
+        cfg["output"]["observations"]["pressure_basis"] = "dry"
+        quiet(() -> run_driven_simulation(cfg))
+        @test levels(joinpath(dry_dir, "obs_soundings.nc")) == [3, 3, 3]
+    end
+end
+
+@testset "runner humidity: sampled fields and per-binary capability (issue #20)" begin
+    R = AtmosTransport.Models.DrivenRunner
+    qs, qe, vq = fill(0.01, 2, 2, 3), fill(0.02, 2, 2, 3), ntuple(_ -> fill(0.03, 4, 4, 3), 6)
+    structured = (qv_start = qs, qv_end = qe, vdiff = nothing)
+    @test R._window_humidity(structured, true) === qs && R._window_humidity(structured, false) === qe
+    cubed = (qv_start = nothing, qv_end = nothing, vdiff = (t = vq, qv = vq))
+    @test R._window_humidity(cubed, true) === vq && R._window_humidity(cubed, false) === vq
+    @test R._window_humidity((qv_start = nothing, qv_end = nothing, vdiff = nothing), false) === nothing
+    caps(humidity, grid, sections = Symbol[]) = (humidity = humidity, grid_type = grid, payload_sections = sections)
+    @test R._binary_observation_humidity(caps(true, :latlon))
+    @test R._binary_observation_humidity(caps(false, :cubed_sphere, [:m, :vdiff_t, :vdiff_qv]))
+    @test !R._binary_observation_humidity(caps(false, :latlon, [:vdiff_qv]))   # lat-lon windows load no VDIFF
+    @test !R._binary_observation_humidity(caps(false, :cubed_sphere, [:m]))
+    @test R._run_observation_humidity([true, true], ["a", "b"], false)
+    @test !R._run_observation_humidity([true, false], ["a", "b"], true)
+    @test R._run_observation_humidity(nothing, ["a"], true)
+
+    # A later binary without humidity stops the run before transport, not midway.
+    mktempdir() do dir
+        pack = obspack_pressures(joinpath(dir, "co2_x_aircraft-insitu_1.nc"), [ORIGIN + Minute(30)], [664.0])
+        sources = Any[Dict{String, Any}("kind" => "obspack", "mode" => "soundings", "path" => pack)]
+        day1 = humid_ll_binary(joinpath(dir, "transport_20211202.bin"))
+        day2 = humid_ll_binary(joinpath(dir, "transport_20211203.bin"); humid = false)
+        err = try
+            quiet(() -> run_driven_simulation(ll_cfg(dir, [day1, day2]; observations = sources)))
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError && occursin("do not all carry humidity", sprint(showerror, err))
+        @test !isfile(joinpath(dir, "obs_soundings.nc"))
+    end
+end
+
+# Cubed-sphere binary (Nc = 3, two layers, no fluxes) with a GCHP VDIFF payload
+# whose layer-1 humidity is `q1[w]` in window w (layer 2 dry). The dry air is
+# fixed, (1 − 0.01) Δp A / g with Δp = 49900 and 50000 Pa, so the total
+# interface between the layers is 100 + 49401 / (1 − q1).
+function cs_vdiff_binary(path, q1)
+    FT, Nc, Nz = Float64, 3, 2
+    vc = HybridSigmaPressure(FT[100, 0, 0], FT[0, 0.5, 1])
+    area = CubedSphereMesh(; FT, Nc).cell_areas          # the mesh the runner rebuilds from the header
+    m = ntuple(_ -> cat((1 - 0.01) * 49900 .* area ./ G, 50000 .* area ./ G; dims = 3), 6)
+    p3(v) = ntuple(_ -> fill(FT(v), Nc, Nc, Nz), 6)
+    writer = AtmosTransport.MetDrivers.open_streaming_cs_transport_binary(path, Nc, 6, Nz, length(q1), vc;
+        planet_radius = AtmosTransport.Parameters.EARTH_RADIUS, FT, dt_met_seconds = 3600.0, steps_per_window = 1,
+        mass_basis = :dry, surface_pressure_basis = DrySurfacePressure(), include_gchp_vdiff = true)
+    try
+        for q in q1
+            qv = ntuple(_ -> cat(fill(q, Nc, Nc), zeros(Nc, Nc); dims = 3), 6)
+            window = (m, am = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz), 6), bm = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz), 6),
+                      cm = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), 6),
+                      ps = ntuple(_ -> fill(FT(100 + 0.99 * 49900 + 50000), Nc, Nc), 6),
+                      vdiff = (u = p3(0), v = p3(0), t = p3(280), qv))
+            AtmosTransport.MetDrivers.write_streaming_cs_window!(writer, window, Nc, 6)
+        end
+    finally
+        AtmosTransport.MetDrivers.close_streaming_transport_binary!(writer)
+    end
+    return path
+end
+
+@testset "cubed sphere: a window end takes the next window's VDIFF humidity (issue #20)" begin
+    mktempdir() do dir
+        # q1 = 0.01, 0.03 (binary a), 0.05, 0.07 (binary b): the total interface is 50000, 51028.9,
+        # 52101.6 and 53219.4 Pa. VDIFF qv is a window-start value, so the humidity at 1 h, 2 h and 3 h
+        # is that of the next window: 505, 516 and 527 hPa are in layer 1 with it and in layer 2 with the
+        # ended window's (the lag). The final window end (4 h) takes the ended window's (0.07).
+        a = cs_vdiff_binary(joinpath(dir, "a.bin"), [0.01, 0.03])
+        b = cs_vdiff_binary(joinpath(dir, "b.bin"), [0.05, 0.07])
+        pack = obspack_pressures(joinpath(dir, "co2_cs_aircraft-insitu_1.nc"),
+                                 [ORIGIN + Hour(h) for h in 1:4], [505.0, 516.0, 527.0, 527.0])
+        cfg = Dict{String, Any}(
+            "input" => Dict("binary_paths" => [a, b]),
+            "numerics" => Dict("float_type" => "Float64"),
+            "advection" => Dict("scheme" => "upwind"),
+            "tracers" => Dict("co2" => Dict("init" => Dict("kind" => "uniform", "background" => 400e-6))),
+            "output" => Dict{String, Any}("enabled" => false,
+                "observations" => Dict{String, Any}("path" => joinpath(dir, "obs.nc"),
+                    "start_time" => "2021-12-02T00:00:00",
+                    "sources" => Any[Dict{String, Any}("kind" => "obspack", "mode" => "soundings", "path" => pack)])))
+        quiet(() -> run_driven_simulation(cfg))
+        NCDataset(joinpath(dir, "obs_soundings.nc"), "r") do ds
+            @test all(ds["vertical_placement"][:] .== 2)
+            @test Int.(ds["intake_level"][:]) == [1, 1, 1, 1]       # [2, 2, 2, 1] with the ended window's qv
+        end
+    end
+end

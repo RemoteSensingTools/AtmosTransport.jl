@@ -559,10 +559,16 @@
           "enum": ["stepwise", "linear", "conservative"],
           "description": "time_varying = true: stepwise (default) holds each slice from its time stamp to the next, as GEOS-Chem/HEMCO does for CAMS fluxes; linear interpolates between the two bracketing slices at the start of each step; conservative applies the exact time integral of that linear interpolation over each step."
         },
+        "hold_outside_coverage": {
+          "type": "boolean",
+          "default": false,
+          "description": "time_varying = true: allow a run that extends beyond the time coverage of the files (their CF time bounds, else the stamps' spacing; GridFED without a time axis covers its year) and hold the first or last slice there, e.g. for a climatology. false (default): a run period that no slice covers is an error naming the gap."
+        },
         "regridding": {
           "type": "string",
           "enum": ["bilinear", "conservative"],
-          "description": "Lat-lon and reduced-Gaussian targets: conservative or bilinear (default). Cubed-sphere targets always regrid conservatively."
+          "default": "conservative",
+          "description": "Static lat-lon inventories. conservative (default, every topology): the per-cell rate (flux x the file's cell_area/area, else the source-mesh cell area) is regridded as an extensive field, so the model total equals the file's total. bilinear (lat-lon and reduced-Gaussian targets only): bilinear samples at the target cell centres, emission and uptake cells renormalised separately to the file's emission and uptake totals; an error when the sample misses one of them. Cubed-sphere targets always regrid conservatively."
         }
       },
       "description": "Surface emission or uptake of one tracer, added to the lowest model layer. Physical fluxes (kg of the species) are converted to model storage units with the molar mass of the tracer's species."
@@ -737,6 +743,71 @@
           "minItems": 1,
           "items": {"$ref": "#/definitions/observation_source"},
           "description": "Where requests come from ([[output.observations.sources]] → AbstractObservationSource)."
+        },
+        "surface_height_file": {
+          "type": "string",
+          "description": "Per-grid model surface height dataset (m above sea level; GriddedIO.write_model_surface_height, scripts/preprocessing/build_model_surface_height.jl) → ModelSurfaceHeight. Reference of absolute_altitude_above_agl_m and written per row as model_surface_height; never used as the true ground."
+        },
+        "dem_file": {
+          "type": "string",
+          "description": "Lat-lon digital elevation model (ground or sea surface in m above sea level, 0 over the ocean, nothing below -450 m or above 9000 m; recommended: NOAA ETOPO 2022 60 arc-second surface variant clipped at 0 m) → GriddedIO.LatLonPointElevation, interpolated bilinearly as the true ground of each record whose altitude has no elevation. Without it such records are placed by pressure or are unplaced."
+        },
+        "dem_variable": {
+          "type": "string",
+          "default": "z",
+          "description": "Elevation variable of dem_file (2-D on lon, lat; units metres). Only with dem_file."
+        },
+        "unplaced_records": {
+          "description": "Requests that cannot be placed: an altitude without a ground elevation (no record elevation, no dem_file value) and no pressure, or an ObsPack record without any vertical coordinate (AbstractUnplacedPolicy).",
+          "default": "error",
+          "oneOf": [
+            {
+              "const": "error",
+              "description": "ErrorOnUnplaced: building the sampler fails and names them."
+            },
+            {
+              "const": "skip",
+              "description": "SkipUnplaced: drop them; counted in the n_unplaced_soundings / n_unplaced_sites file attributes."
+            }
+          ]
+        },
+        "absolute_altitude_above_agl_m": {
+          "type": "number",
+          "minimum": 0,
+          "description": "AbsoluteAltitudeAbove: records at least this many metres above the ground are placed by their pressure when they have one (and \"pressure\" is in vertical_coordinates), else by altitude above sea level against model surface height + layer heights. Omitted: AboveGroundPlacement for every record. Needs surface_height_file (and a ground: record elevation or dem_file) and \"height_above_ground\" in vertical_coordinates."
+        },
+        "vertical_coordinates": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "default": ["height_above_ground", "pressure"],
+          "description": "Vertical coordinates that may place a record, in preference order (a tuple of AbstractVerticalCoordinate): each record is placed by the first one it gives. A record that gives none of them is unplaced (unplaced_records), unless it gives no vertical coordinate at all and its source's records are column or surface products (lowest layer). Without \"height_above_ground\", dem_file and absolute_altitude_above_agl_m are rejected.",
+          "items": {
+            "oneOf": [
+              {
+                "const": "height_above_ground",
+                "description": "HeightAboveGroundCoordinate: the height above the true ground (intake_height, else altitude - elevation, else altitude - dem_file ground), measured up from the model surface."
+              },
+              {
+                "const": "pressure",
+                "description": "PressureCoordinate: the record's (total) pressure against the column's interface pressures (pressure_basis)."
+              }
+            ]
+          }
+        },
+        "pressure_basis": {
+          "description": "Interface pressures a pressure-placed record is compared with (AbstractPressureBasis); only with \"pressure\" in vertical_coordinates. Record pressures are total pressures; the air mass of a dry-basis run gives dry interface pressures, lower by the weight of the water vapour above each interface.",
+          "default": "total",
+          "oneOf": [
+            {
+              "const": "total",
+              "description": "TotalFromHumidity: total interface pressures p[k+1] = p[k] + g m[k] / (A (1 - q[k])) from the dry air mass and the binary's specific humidity: qv_start/qv_end of lat-lon binaries preprocessed with output.include_qv, or on the cubed sphere the next window's (window-start) GCHP VDIFF qv (include_vdiff_fields); reduced-Gaussian binaries carry none. A moist-basis air mass is used as it is. A dry-basis run whose binaries do not all carry humidity fails when any record is placed by pressure."
+            },
+            {
+              "const": "dry",
+              "description": "DryInterfaces: the dry interface pressures p[k+1] = p[k] + g m[k] / A of a dry-basis run, for binaries without humidity; a record can land one or more layers too low (closer to the surface) in humid columns."
+            }
+          ]
         }
       }
     },
@@ -816,6 +887,27 @@
           "items": {"type": "integer"},
           "description": "quality_filter = \"flag_values\" only (required there): accepted flag values, e.g. [1]."
         },
+        "averaging_kernel_tracers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1},
+          "description": "oco2_lite only, opt-in (AveragingKernelColumns): also read each sounding's retrieval (levels, pressure weights, averaging kernel, prior) and write <tracer>_ak_column, the averaging-kernel column of the sampled profile, for these sampled tracers (the tracer the retrieval measures, e.g. total CO2). Omitted: NoAveragingKernels, output unchanged."
+        },
+        "averaging_kernel_mapping": {
+          "description": "oco2_lite with averaging_kernel_tracers only: how the 20 retrieval levels enter the operator.",
+          "default": "hat",
+          "oneOf": [
+            {
+              "const": "hat",
+              "description": "HatLevelProjection: the levels as given; the model profile projected onto their hat functions."
+            },
+            {
+              "const": "tm5",
+              "description": "tm5_layer_column: TM5-4DVar's 19 layers (levels as interfaces, midpoint kernel and prior), LayerRebin."
+            }
+          ]
+        },
         "site_grouping": {
           "description": "obspack sites only (AbstractSiteGrouping).",
           "default": "site_code",
@@ -870,7 +962,9 @@
                 {"required": ["quality_flag_max"]},
                 {"required": ["quality_variable"]},
                 {"required": ["quality_filter"]},
-                {"required": ["quality_flag_values"]}
+                {"required": ["quality_flag_values"]},
+                {"required": ["averaging_kernel_tracers"]},
+                {"required": ["averaging_kernel_mapping"]}
               ]
             },
             "required": ["mode"]
@@ -885,7 +979,9 @@
                 {"required": ["quality_variable"]},
                 {"required": ["site_grouping"]},
                 {"required": ["quality_filter"]},
-                {"required": ["quality_flag_values"]}
+                {"required": ["quality_flag_values"]},
+                {"required": ["averaging_kernel_tracers"]},
+                {"required": ["averaging_kernel_mapping"]}
               ]
             },
             "required": ["mode"]
@@ -933,6 +1029,10 @@
             "required": ["kind", "mode"]
           },
           "then": {"not": {"required": ["site_grouping"]}}
+        },
+        {
+          "if": {"not": {"required": ["averaging_kernel_tracers"]}},
+          "then": {"not": {"required": ["averaging_kernel_mapping"]}}
         }
       ]
     },

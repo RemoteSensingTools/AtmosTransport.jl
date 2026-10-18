@@ -37,7 +37,9 @@ the model-facing `apply!` entrypoints that the transport block calls.
 `limiter="cw84"` selects the complete Colella–Woodward PPM (`CW84Limiter`).
 `scheme="linrood"` selects the CS cross-term path; `ppm_order=5` (default) or
 `7` chooses its edge-value family. ORD=7 retains the order-5 interior and adds
-special panel-edge treatment. It does not select a seventh-order transport
+special panel-edge treatment: one edge value per face, the Putman–Lin seam
+average at the panel edge and FV3's one-sided values on the faces beside it
+(`_ppm_edge_values_ord7`), in the forward and adjoint kernels alike. It does not select a seventh-order transport
 method. Its configured vertical default is `fv3_kord8`; `vertical="upwind"`
 selects first-order vertical transport. Both have an adjoint.
 Configuration parsing lives in
@@ -50,7 +52,20 @@ Configuration parsing lives in
   [`CubedSphereStrang.jl`](CubedSphereStrang.jl)
 - Diffusion and surface flux are not separate outer blocks here; they are
   threaded into the palindrome midpoint through imports from
-  `../Diffusion` and `../SurfaceFlux`
+  `../Diffusion` and `../SurfaceFlux`. Every topology builds the midpoint
+  with `palindrome_center!` ([`StrangSplitting.jl`](StrangSplitting.jl)):
+  one `V(dt)` without a surface-flux operator, otherwise
+  `surface_flux_center!` with the diffusion operator's coupling,
+  `V(dt/2) → S(dt) → V(dt/2)` or `S(dt) → V(dt)`
+- A cubed-sphere split-sweep step starts with `fill_cs_step_start_halos!`
+  ([`CubedSphereStrang.jl`](CubedSphereStrang.jl), all edge halos plus the
+  X-orientation corners): the first X sweep reads halos, and convection or
+  chemistry between steps changed the interiors
+- CFL subcycling (every topology): one count `n` from the palindrome
+  outflow budget against `min(m_start, m_end)` (no pass removes more than
+  `cfl_limit / 2` of a cell's current mass; an invalid flux set throws), then `(X Y Z)^n → midpoint → (Z Y X)^n` with every flux
+  divided by `n` (`H V` / `V H` on reduced Gaussian); `n = 1` is the plain
+  palindrome
 - This folder is the main place where topology-specific transport
   execution diverges while the public operator API stays uniform
 
@@ -77,10 +92,11 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
   buffers of the structured and face-indexed sweeps
 - [`sweeps.jl`](sweeps.jl) — directional sweeps: structured x/y/z
   (generated with `@eval`) and face-indexed horizontal/vertical
-- [`subcycling.jl`](subcycling.jl) — CFL subcycling pass counts and
-  subcycled sweeps
-- [`StrangSplitting.jl`](StrangSplitting.jl) — structured transport
-  palindrome `strang_split!` with the diffusion/surface-flux midpoint
+- [`subcycling.jl`](subcycling.jl) — palindrome CFL subcycle counts of the
+  structured and face-indexed paths
+- [`StrangSplitting.jl`](StrangSplitting.jl) — structured and cubed-sphere
+  `strang_split!`, and `palindrome_center!`, the diffusion/surface-flux
+  midpoint shared by every topology
 - [`strang_apply.jl`](strang_apply.jl) — model-facing `apply!` for
   structured and face-indexed states (the RG `H → V → H` path)
 - [`multitracer_strang.jl`](multitracer_strang.jl) — multi-tracer sweeps
@@ -91,16 +107,20 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
   fusion policy (CUDA) one launch fills all 24 panel edges and, for `dir = 1`
   or `2`, a second the corners; on Metal there are 24 edge launches and, for
   `dir = 1` or `2`, 6 corner launches, each with bound panel arrays; one
-  synchronization follows the last launch under either policy. On the CPU the
-  same bodies run as loops
+  synchronization follows the last launch under either policy unless
+  `sync = false` (the packed palindrome queues its exchanges and synchronizes
+  once at the end of `strang_split_cs_mt!`). On the CPU the same bodies run as
+  loops
 - [`cs_sweep_common.jl`](cs_sweep_common.jl), [`cs_sweep_x.jl`](cs_sweep_x.jl),
   [`cs_sweep_y.jl`](cs_sweep_y.jl), [`cs_sweep_z.jl`](cs_sweep_z.jl) —
   cubed-sphere panel sweeps (shared kernels and gamma-clamped upwind, then
   per direction, with paired seam transfers for X and Y)
 - [`cs_workspace.jl`](cs_workspace.jl) — `CSAdvectionWorkspace`
-- [`cs_subcycling.jl`](cs_subcycling.jl) — static palindrome CFL subcycle count
+- [`cs_subcycling.jl`](cs_subcycling.jl) — the palindrome outflow budget
+  shared by all split-sweep topologies and the cubed-sphere subcycle count
 - [`CubedSphereStrang.jl`](CubedSphereStrang.jl) — panel-native
-  cubed-sphere palindrome (`strang_split_cs!`, `strang_split_cs_mt!`)
+  cubed-sphere palindrome (`strang_split_cs!`, `strang_split_cs_mt!`) and
+  the step-start halo refresh `fill_cs_step_start_halos!`
 - [`vertical_fv3_profile.jl`](vertical_fv3_profile.jl) — vertical sweep with
   FV3's `scalar_profile` (kord 8) piecewise-parabolic tracer profile
 - [`vertical_fv3_profile_adjoint.jl`](vertical_fv3_profile_adjoint.jl) —
@@ -108,7 +128,9 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
   numbers (value plus partials) to obtain the limiter branches and local
   Jacobians, and the transposed column kernel used by the Lin-Rood adjoint
 - [`CubedSphereSeams.jl`](CubedSphereSeams.jl) — canonical physical seam
-  transfers paired across panels within each directional group
+  transfers paired across panels within each directional group; a group's
+  transfers are cached in one launch (`SeamTransferCache` point operations,
+  see `Architectures.AbstractPointOp`) and applied seam by seam in queue order
 - [`ppm_subgrid_distributions.jl`](ppm_subgrid_distributions.jl) — PPM
   subcell distributions shared by CS-specific code
 - [`LinRoodSeams.jl`](LinRoodSeams.jl) — shared final seam estimates and
@@ -145,6 +167,12 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
 
 - `../Diffusion` and `../SurfaceFlux` are imported into the palindrome
   midpoint; changes there can change advection runtime behavior
+- The cubed-sphere adjoint (`../../Adjoints/`, `../../Footprint/`) composes
+  its replayed and recorded steps from `fill_cs_step_start_halos!` and
+  `surface_flux_center!`, so the adjoint's forward model is the production
+  step. Change the cubed-sphere step composition in `strang_split!` together
+  with `_replay_cs_step!` and the tape recorders;
+  `test/core/test_cs_adjoint_production_parity.jl` compares them
 - [`../../State/`](../../State/) provides tracer slices, flux-state
   types, and the panel-native cubed-sphere containers
 - [`../../Grids/`](../../Grids/) provides mesh geometry and panel

@@ -125,7 +125,9 @@ launches (one per panel, filling its four corners), and a packed tracer field
 6 edge launches (one per panel) and 6 corner launches, with a synchronization
 after the edges and after the corners. Measured on an NVIDIA L40S for a C90
 field with 72 levels in Float32 (edges, corners and synchronization), one
-exchange takes about 25 µs instead of 120 µs.
+exchange takes about 25 µs instead of 120 µs. Inside the packed cubed-sphere
+palindrome (`strang_split_cs_mt!`) the exchanges are only queued
+(`sync = false`): the palindrome synchronizes once, at its end.
 
 ## One transport window
 
@@ -150,7 +152,16 @@ Across input files, the runner retains the model's state and numerical
 workspaces. A new `DrivenSimulation` refreshes forcing, diffusion layer
 thickness, and convection caches for the next file. It carries the accumulated
 simulation clock forward, so time-varying emissions continue at the correct
-time. GPU prefetch is drained before the runner closes an input driver.
+time. GPU prefetch is drained before the runner closes an input driver. When
+the next file has the same window layout, the new simulation refills the
+previous one's window buffers instead of allocating new ones.
+
+On a GPU, a cubed-sphere transport binary whose on-disk element type is the
+run's is loaded window by window with concurrent reads of the payload into
+page-locked host memory, section-wise uploads through a section-sized device
+buffer, and unpacking kernels on the device (`MetDrivers.RawWindowStaging`);
+the device window equals the upload of a window loaded on the host. Other
+binaries are converted on the host into a page-locked staging window.
 
 The detailed operator ordering is documented in [Operators](@ref Operator-concepts). The mass
 invariant is derived in [Mass conservation](@ref).

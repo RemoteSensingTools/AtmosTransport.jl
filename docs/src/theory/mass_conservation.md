@@ -189,8 +189,19 @@ additional persistent workspace and use Float32 arithmetic on Float32 states.
 
 The adjoint reverses the two passes with the same ratios. Tests cover signed
 and positive tracers, weak transfers down to `dt*D/m = 1e-14`, stiff columns,
-zero exchange, and constant total-mass gradients. The public array-level VMR
-solver and other diffusion geometries retain their existing Thomas paths.
+zero exchange, and constant total-mass gradients.
+
+Kz diffusion fields (the lat-lon and reduced-Gaussian runs, and local-Kz
+cubed-sphere runs) keep the Thomas solve, but only for the new mixing ratio
+`g`. The tracer mass is then updated in flux form: each interface flux
+`F[k] = dt*D[k]*(g[k] - g[k+1])` is computed once and applied with opposite
+signs to layers `k` and `k+1`, so the column total telescopes. Writing back
+`m[k]*g[k]` instead lost mass with one sign in `Float32`, because the rounding
+of the diagonal `1 + u[k] + d[k-1]` is the same in every column of the
+pure-pressure levels (2.0e-6 of a tracer per day in a lat-lon L72 run). The
+remaining rounding goes through the same column ledger with persistent carry
+as the Dkg solve ([Tracer Conservation in Single Precision](@ref)). The
+VMR-level reference solve keeps the matrix form.
 The conservation statement assumes positive carrier masses and closed column
 boundaries; the existing zero-carrier sink convention is preserved separately.
 Floating-point storage still introduces roundoff, so conservation of the

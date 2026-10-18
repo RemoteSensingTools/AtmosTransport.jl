@@ -97,13 +97,16 @@ using ..MetDrivers: AbstractMetDriver, TransportBinaryDriver,
                      load_transport_window, driver_grid, air_mass_basis,
                      total_windows, window_dt, binary_capabilities,
                      inspect_binary, steps_per_window,
-                     steps_per_window_schedule, release_payload!,
-                     surface_pressure_basis
-using ..InitialConditionIO: _regridding_method, _surface_flux_kind, surface_flux_species
+                     steps_per_window_schedule, release_payload!, same_window_layout,
+                     surface_pressure_basis, supports_moisture,
+                     TransportBinaryReader, load_vdiff_qv_window!
+using ..InitialConditionIO: _regridding_method, _surface_flux_kind, surface_flux_species,
+                            _hold_outside_coverage, RUN_SPAN_CLOCK_SLACK_SECONDS
 using ..InitialConditionIO: build_initial_mixing_ratio, _build_cs_initial_mixing_ratio,
                              pack_initial_tracer_mass, _cs_pack_interior_into_halo!,
                              build_surface_flux_sources,
                              TotalSurfacePressure
+using ...GriddedIO: read_model_surface_height, read_point_elevation
 using ..BinaryPathExpander: expand_binary_paths
 using ..InputStaging: InputStager, staged_path_for!, cleanup_staging!
 using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, SnapshotFrame,
@@ -116,8 +119,10 @@ using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, S
                 NoObservationOutput, ObservationOutputSpec, observation_output_spec,
                 AbstractObservationSampler, NoObservationSampler, build_observation_sampler,
                 samples_observations, begin_observation_day!, observe_window_boundary!,
-                finish_observations!, check_observation_tracer_names,
+                finish_observations!, check_observation_tracer_names, observation_needs_humidity,
+                averaging_kernel_tracers,
                 observation_output_path, SoundingMode, SiteMode,
+                VerticalPlacementSpec, ObservationTerrain, NoModelSurfaceHeight, NoPointElevation,
                 _SNAPSHOT_SCHEDULE_KEYS, _SNAPSHOT_INTERVAL_KEYS, _schedule_has_times
 # TransportModel + DrivenSimulation live alongside us in the Models module;
 # reach up to the parent and pull them in.
@@ -275,6 +280,8 @@ function _run_driven_simulation_inputs(cfg, input_cfg, binary_paths, arch::Abstr
     _validate_input_binary_expectations(caps, input_cfg, first(binary_paths))
     # (window length, window count) of every binary, for the snapshot schedule.
     window_layout = [(item.caps.window_seconds, item.caps.nwindow) for item in binary_caps]
+    # Whether each binary carries the specific humidity observation sampling reads.
+    binary_humidity = [_binary_observation_humidity(item.caps) for item in binary_caps]
     run_cfg = get(cfg, "run", Dict{String, Any}())
     _check_window_range(window_layout;
                         start_window = Int(get(run_cfg, "start_window", 1)),
@@ -291,7 +298,7 @@ function _run_driven_simulation_inputs(cfg, input_cfg, binary_paths, arch::Abstr
             _with_run_resource(input_resources) do
                 _run_driven_simulation_for(Val(caps.grid_type), binary_paths, cfg,
                                            stager, arch, output_resources, input_resources,
-                                           window_layout)
+                                           window_layout, binary_humidity)
             end
         end
     finally
@@ -360,24 +367,24 @@ end
 _run_driven_simulation_for(::Val{:latlon}, binary_paths::Vector{String}, cfg,
                            stager::InputStager, arch::AbstractArchitecture,
                            output_resources::RunSnapshotOutput, input_resources::RunInputResources,
-                           window_layout) =
+                           window_layout, binary_humidity) =
     _run_driven_simulation_structured(binary_paths, cfg, stager, arch, output_resources,
-                                      input_resources, window_layout)
+                                      input_resources, window_layout, binary_humidity)
 _run_driven_simulation_for(::Val{:reduced_gaussian}, binary_paths::Vector{String}, cfg,
                            stager::InputStager, arch::AbstractArchitecture,
                            output_resources::RunSnapshotOutput, input_resources::RunInputResources,
-                           window_layout) =
+                           window_layout, binary_humidity) =
     _run_driven_simulation_structured(binary_paths, cfg, stager, arch, output_resources,
-                                      input_resources, window_layout)
+                                      input_resources, window_layout, binary_humidity)
 _run_driven_simulation_for(::Val{:cubed_sphere}, binary_paths::Vector{String}, cfg,
                            stager::InputStager, arch::AbstractArchitecture,
                            output_resources::RunSnapshotOutput, input_resources::RunInputResources,
-                           window_layout) =
+                           window_layout, binary_humidity) =
     _run_driven_simulation_cs(binary_paths, cfg, stager, arch, output_resources,
-                              input_resources, window_layout)
+                              input_resources, window_layout, binary_humidity)
 function _run_driven_simulation_for(::Val{grid_type}, _binary_paths::Vector{String},
                                     _cfg, _stager::InputStager, _arch, _output_resources::RunSnapshotOutput, _input_resources::RunInputResources,
-                                    _window_layout) where grid_type
+                                    _window_layout, _binary_humidity) where grid_type
     throw(ArgumentError("Unsupported transport-binary grid_type=$(grid_type)."))
 end
 
@@ -462,14 +469,15 @@ function _runtime_output_origin(origin::Union{DateTime, Nothing}, driver;
 end
 
 # Run interval `(0, t_end)` in seconds since the run start; time-varying flux
-# files are read only where the run can use them. `t_end` is the end of the
-# run's windows (`run_hours`, from every binary's header) plus 1 s for rounding
-# in the accumulated Float64 run clock; `_check_flux_run_span` guards against a
-# binary that ends later anyway. `[input] end_date` adds nothing: with `folder`
+# files are read only where the run can use them, and must cover it. `t_end`
+# is the end of the run's windows (`run_hours`, from every binary's header)
+# plus `RUN_SPAN_CLOCK_SLACK_SECONDS` (1 s) for rounding in the accumulated
+# Float64 run clock, which the coverage check does not ask the files to cover;
+# `_check_flux_run_span` guards against a binary that ends later anyway. `[input] end_date` adds nothing: with `folder`
 # every day through it has a binary, and with `binary_paths` it is not read.
 # Without `start_date` (`_flux_run_span` returns `nothing`) there are no
 # time-varying fluxes to check: `validate_config` requires the date for them.
-_run_time_span(run_hours::Real) = (0.0, 3600 * Float64(run_hours) + 1.0)
+_run_time_span(run_hours::Real) = (0.0, 3600 * Float64(run_hours) + RUN_SPAN_CLOCK_SLACK_SECONDS)
 
 _flux_run_span(cfg, run_hours::Real) =
     _run_reference_time(cfg) === nothing ? nothing : _run_time_span(run_hours)
@@ -491,7 +499,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                            arch::AbstractArchitecture,
                                            output_resources::RunSnapshotOutput,
                                            input_resources::RunInputResources,
-                                           window_layout = nothing)
+                                           window_layout = nothing, binary_humidity = nothing)
     FT = _cfg_float_type(cfg)
     assert_float_type!(arch, FT)
     run_cfg = get(cfg, "run", Dict{String, Any}())
@@ -551,6 +559,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     sampler = _install_observation_sampler!(output_resources, output_cfg, output_spec.partition,
                                             model.state, grid_of_first;
                                             cfg, binary_paths, halo_width = 0,
+                                            has_humidity = _run_observation_humidity(binary_humidity, binary_paths,
+                                                                                     supports_moisture(first_driver)),
                                             offset_seconds = (start_window - 1) * Float64(window_dt(first_driver)),
                                             span_seconds = 3600 * run_hours)
     # Observation sampling needs the per-window loop even without snapshots.
@@ -802,7 +812,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                    arch::AbstractArchitecture,
                                    output_resources::RunSnapshotOutput,
                                    input_resources::RunInputResources,
-                                   window_layout = nothing)
+                                   window_layout = nothing, binary_humidity = nothing)
     FT   = _cfg_float_type(cfg)
     assert_float_type!(arch, FT)
 
@@ -922,7 +932,10 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     sampler = _install_observation_sampler!(output_resources, output_cfg, output_spec.partition,
                                             model.state, grid;
                                             cfg, binary_paths, halo_width = Hp,
+                                            has_humidity = _run_observation_humidity(binary_humidity, binary_paths,
+                                                                                     _window_humidity(window1, true) !== nothing),
                                             span_seconds = 3600 * run_hours)
+    observation_humidity = _cs_observation_humidity(sampler, model.state, binary_paths)
     observation_clock_seconds = 0.0   # exact Float64 run clock for observation times
 
     # Build surface-flux sources from the parsed tracer specs and log per-source
@@ -994,6 +1007,9 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
         end
 
         t0 = time()
+        # The previous binary's simulation: the next one refills its window
+        # buffers when the layouts agree (`reuse_buffers_of`).
+        previous_sim = nothing
         for (driver_idx, path) in enumerate(binary_paths)
             # `path` (NAS) kept for labels/logging; driver opens the staged local
             # copy when staging is enabled (driver_idx==1 already staged above).
@@ -1016,6 +1032,11 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
             # Keep state, flux arrays, and numerical workspaces across files.
             # The new simulation refreshes forcing, diffusion geometry, and caches.
             initialize_air_mass = driver_idx == 1
+            # Hand over the previous binary's window buffers only when they fit;
+            # otherwise drop them first, so the new ones need not coexist.
+            reusable_sim = previous_sim !== nothing &&
+                           same_window_layout(previous_sim.driver, driver) ? previous_sim : nothing
+            previous_sim = nothing
             sim = timed_io_read!(timer,
                 () -> DrivenSimulation(model, driver;
                                         start_window = 1, stop_window = stop_window,
@@ -1031,6 +1052,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                         # replays day-1 fluxes (the +1 Pg/month
                                         # co2_natural surplus).
                                         chemistry = recipe.chemistry,
+                                        reuse_buffers_of = reusable_sim,
                                         start_time = total_hour * 3600.0))
             # `DrivenSimulation` may wrap `model` with a surface-flux operator;
             # keep snapshots and the return value aligned with the stepped model.
@@ -1038,7 +1060,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
             model = sim.model
             day_start_seconds = observation_clock_seconds
             windows_done = 0
-            _begin_observation_binary!(timer, sampler, sim, path, driver_idx, day_start_seconds)
+            _begin_observation_binary!(timer, sampler, sim, path, driver_idx, day_start_seconds;
+                                       humidity = observation_humidity)
 
             day_t0 = time()
             set_progress_status!(timer;
@@ -1068,7 +1091,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                     total_hour += window_hours
                     windows_done += 1
                     _observe_window_end!(timer, sampler, sim,
-                                         day_start_seconds + windows_done * Float64(window_dt(driver)))
+                                         day_start_seconds + windows_done * Float64(window_dt(driver));
+                                         humidity = observation_humidity, binary_index = driver_idx)
                     while do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
                           _snapshot_due(total_hour, snapshot_schedule_hours[snap_idx], window_hours)
                         capture_cs!(total_hour)
@@ -1100,6 +1124,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                      redraw = true)
             end
             close(input_resources)
+            previous_sim = sim
         end
 
         finish_observations!(sampler)

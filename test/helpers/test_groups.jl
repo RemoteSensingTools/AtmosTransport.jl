@@ -88,6 +88,15 @@ end
 
 matches_glob(path::AbstractString, pattern::AbstractString) = occursin(glob_regex(pattern), path)
 
+"""`a{b,c}d` as `["abd", "acd"]`, every brace group expanded (no nesting)."""
+function expand_braces(pattern::AbstractString)
+    m = match(r"\{([^{}]*)\}", pattern)
+    m === nothing && return [String(pattern)]
+    head = pattern[firstindex(pattern):prevind(pattern, m.offset)]
+    tail = pattern[(m.offset + ncodeunits(m.match)):end]
+    return reduce(vcat, [expand_braces(head * alt * tail) for alt in split(m.captures[1], ",")])
+end
+
 """Topics whose `paths` match the repository-relative `path`."""
 topics_for_path(g::Groups, path::AbstractString) =
     [t.name for t in g.topics if any(p -> matches_glob(path, p), t.paths)]
@@ -216,9 +225,13 @@ function validate_groups(g::Groups, test_root::AbstractString, repo_root::Abstra
     end
     length(unique(g.quick)) == length(g.quick) || push!(problems, "the quick set lists a file twice")
     files = repository_files(repo_root)
-    for t in g.topics, p in t.paths
-        any(f -> matches_glob(f, p), files) ||
-            push!(problems, "topic '$(t.name)' path '$p' matches no file of the repository")
+    # Each alternative of a `{a,b}` group must match a file: a misspelt
+    # alternative would otherwise hide behind the ones that match.
+    for t in g.topics, p in t.paths, alt in expand_braces(p)
+        any(f -> matches_glob(f, alt), files) ||
+            push!(problems, alt == p ?
+                "topic '$(t.name)' path '$p' matches no file of the repository" :
+                "topic '$(t.name)' path '$p': alternative '$alt' matches no file of the repository")
     end
     src_dirs = Dict{String, Bool}()
     for f in files

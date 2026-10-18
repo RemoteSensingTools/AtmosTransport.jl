@@ -298,6 +298,7 @@ kind     = "file"
 file     = "/path/to/air_sea_flux.nc"
 variable = "co2_flux_ocean"
 species  = "co2"                    # required: the name "ocean" implies no species
+# regridding = "conservative"       # default; "bilinear" on lat-lon and reduced Gaussian
 ```
 
 Registered surface-flux source kinds (`_SURFACE_FLUX_KINDS` in
@@ -326,6 +327,39 @@ inventories use `kgC m-2 s-1` (CAMS/LMDZ), `kgCO2/month/m2` (GridFED, each
 month's length), `Tonnes` (EDGAR, per cell and year) and `kg/m2/s` (Zhang
 Rn-222). Time-varying lat-lon sources must be per m²; `cs_native` files must be
 kg (of the species or of carbon) m⁻² s⁻¹.
+
+**Regridding.** A static lat-lon inventory is put onto the model mesh by
+`regridding`:
+
+- `"conservative"` (the default on every topology): the per-cell rate, the
+  flux times the file's `cell_area` or `area` variable (else the
+  latitude-circle area of the source cell), is regridded as an extensive
+  field, so the model's total equals the file's own total to rounding, for
+  net-uptake fields and files without an area variable alike. A file's
+  area variable must be in m² and agree within 1 % with the cell areas its
+  coordinates define (`GriddedIO.check_latlon_cell_area`), else the run stops
+  with an error: areas in km² or a land fraction would scale the total. A
+  cell with a nonzero flux must also have a positive, finite area: masked
+  (zero) rows would drop their emission. On
+  reduced-Gaussian targets, whose great-circle cells leave slivers between
+  rings uncovered, each source cell's amount goes to the target cells it
+  overlaps, so the total is kept there too. On a target that does not cover
+  the sphere, a source cell covered only in part puts its whole amount into
+  the covered part (see [Operators](@ref Operator-concepts)).
+- `"bilinear"` (lat-lon and reduced-Gaussian targets, only when set): the
+  flux density sampled at each target cell centre times the cell area. The
+  emitting and the uptake cells are then rescaled separately to the file's
+  emission and uptake totals, so the total is the file's and no cell changes
+  sign. When the sample misses all of the file's emission or all of its
+  uptake (one uptake cell between the sampled centres), the run stops with an
+  error. The two factors keep the totals, not the cell values, and can be far
+  from 1 (3.53 for the GridFED December 2021 uptake on a 5° grid); they are
+  logged, and a factor more than 10 % from 1 is a warning. Bilinear sampling
+  still aliases point sources cell by cell.
+
+Cubed-sphere targets always regrid conservatively (`"bilinear"` there logs a
+warning and is ignored). The equations are in the surface-flux section of
+[Operators](@ref Operator-concepts).
 
 **Time-varying emission** (cubed-sphere). A source whose inventory has
 sub-monthly time slices (e.g. the LMDZ/CAMS biospheric flux) can drive the
@@ -386,7 +420,37 @@ binary's header). Every listed file's time axis is
 read, but flux data only for those slices. Every temporal scheme blends only
 the two slices around a time, so results are unchanged. A binary that runs past
 that end stops the run with an error before it starts. Time-varying sources
-require `start_date`. The loaded series stays in host memory; a GPU run copies
+require `start_date`.
+
+**Time coverage.** The run must lie inside the time the slices stand for.
+A slice stands for the interval of its CF time bounds when the time axis has
+them; GridFED files without a time axis cover their year, a `months since`
+axis its months. Stamps without bounds are read as one series over **all**
+the listed files (merged and sorted; `GriddedIO.stamp_intervals`): a slice
+holds until the next stamp when that is the series' regular step (one month
+or one year from 1 January for month starts, else the smallest spacing), and
+the last stamp holds for one step. Daily files with one 00Z stamp each are
+thus a daily series; a slice before a longer spacing (Jan 1 then Mar 1, a
+missing day) holds for one step, leaving a gap. One stamp in all the files
+(it may stand for a day, a month or a year) and stamps about a month or a year
+apart that are not month starts (mid-month stamps) have no known period and
+stop the run with an error asking for CF time bounds.
+A part of the run, or a gap between or inside files, that no slice covers
+stops the run before it starts, with an error naming the uncovered dates: outside its
+slices a source holds its first or last slice, so a December CAMS file in a
+January run would emit its last 3-hourly value for weeks. Set
+`hold_outside_coverage = true` to hold the end slices on purpose, e.g. for a
+climatology:
+
+```toml
+[tracers.co2_natural.surface_flux]
+kind                  = "lmdz_co2"
+files                 = ["/path/to/z_cams_l_cams55_202112_FT24r2_ra_sfc_3h_co2_flux.nc"]
+time_varying          = true
+hold_outside_coverage = true      # default false: a run outside the files is an error
+```
+
+The loaded series stays in host memory; a GPU run copies
 only the slices of the current met window to the device (see
 [Operators](@ref Operator-concepts)), so the device memory of a time-varying
 source does not grow with the run length.
@@ -406,6 +470,8 @@ loader; new files come from `GriddedIO.open_cs_native_writer`):
 - values are start-stamped slices on a strictly increasing time axis (decoded
   by `GriddedIO.decode_time`), with no fill or non-finite values; they are read
   panel by panel into the run's own arrays (`GriddedIO.read_cs_native_flux!`);
+  `time_bnds` (written by `GriddedIO.open_cs_native_writer`), else the
+  stamps, set the time coverage above;
 - a stored `cell_area` must agree with the runtime mesh areas
   (`isapprox(…; rtol = 1e-4)` per panel), so a file built on another cube
   geometry is refused.
@@ -611,11 +677,20 @@ write_profile_for_sites = true           # also write full station profiles (e.g
 layer_height_temperature_kelvin = 280.0  # ConstantLayerTemperature for intake heights
 # start_time = "2021-12-02T00:00:00"     # required only when [input].start_date is absent
 deflate_level = 0
+dem_file = "~/data/AtmosTransport/static/dem_1min.nc"  # true ground of altitude-only records (LatLonPointElevation)
+dem_variable = "z"
+unplaced_records = "error"               # ErrorOnUnplaced | "skip" (SkipUnplaced)
+# surface_height_file = "~/data/AtmosTransport/static/surface_height_c90_merra2.nc"  # model ground (ModelSurfaceHeight)
+# absolute_altitude_above_agl_m = 3000.0 # AbsoluteAltitudeAbove (needs surface_height_file); omitted: AboveGroundPlacement
+vertical_coordinates = ["height_above_ground", "pressure"]  # preference order (default); HeightAboveGroundCoordinate, PressureCoordinate
+pressure_basis = "total"                 # TotalFromHumidity (default) | "dry" (DryInterfaces, for binaries without humidity)
 
 [[output.observations.sources]]
 kind = "oco2_lite"                       # OCO2LiteSource: Lite files or OCO-2 v11 MIP 10-s averages
 path = "/kiwi-data/Data/model/OCO2MIP/observation_input/OCO2_b11.2_10sec_GOOD_r2.nc4"
 quality_filter = "none"                  # NoQualityFilter; default "flag_max" = QualityFlagFilter("xco2_quality_flag", 0)
+# averaging_kernel_tracers = ["co2"]     # opt-in: write co2_ak_column with each sounding's averaging kernel
+# averaging_kernel_mapping = "hat"       # "hat" (the 20 levels, default) | "tm5" (TM5's 19 layers)
 
 [[output.observations.sources]]
 kind = "obspack"                         # ObsPackSource
@@ -633,10 +708,18 @@ path = "~/data/AtmosTransport/observations/tccon_sites.csv"
 | `kind` | `"oco2_lite"` → `OCO2LiteSource`, `"obspack"` → `ObsPackSource`, `"table"` → `TableSource` |
 | `mode` | `"soundings"` → `SoundingMode` (point events), `"sites"` → `SiteMode` (station series); required for `obspack` and `table` |
 | `quality_filter` | `oco2_lite` only: `"flag_max"` (default) → `QualityFlagFilter(quality_variable, quality_flag_max)` keeps flags `<= max`; `"flag_values"` → `QualityFlagValues(quality_variable, quality_flag_values)` keeps listed flags (MIP `assimilate_flag`: 0 not assimilated, 1 assimilated, 2 withheld, so `[1]` selects the assimilated set); `"none"` → `NoQualityFilter`. Keys of the other filters are rejected. |
+| `averaging_kernel_tracers` | `oco2_lite` only, opt-in: array of sampled tracer names → `AveragingKernelColumns`. The reader also reads each sounding's retrieval (`pressure_levels`, or `sigma_levels` × `psurf`; `pressure_weight`, `xco2_averaging_kernel`, `co2_profile_apriori`, `xco2_apriori`) and the soundings file gets `<tracer>_ak_column`, the averaging-kernel column of the sampled profile with the 4D-Var's operator, on the interface pressures of `pressure_basis` (total pressures need the binaries' humidity). Name the tracer the retrieval measures (total CO2): the prior term belongs to it. Omitted → `NoAveragingKernels`, output unchanged |
+| `averaging_kernel_mapping` | with `averaging_kernel_tracers` only: `"hat"` (default; the 20 levels as given, `HatLevelProjection`) or `"tm5"` (TM5-4DVar's 19 layers, `tm5_layer_column`) |
 | `split` (in `[output]`) | `"single"` → `SingleOutputFile`, `"daily"` → `DailyOutputFiles`; observation files follow it |
 | `site_grouping` | `obspack` sites only: `"site_code"` → `SiteCodeGrouping`, `"location"` → `LocationGrouping` |
 | `format` | `table` only: `"auto"`, `"csv"`, `"toml"`, `"netcdf"` → `AutoTableFormat`, `CSVTableFormat`, `TOMLTableFormat`, `NetCDFTableFormat` |
 | `time_interpolation` | `"linear"` → `LinearWindowInterpolation`, `"nearest_window"` → `NearestWindowSampling` |
+| `surface_height_file` | per-grid model surface height (m above sea level) → `ModelSurfaceHeight`, read by `GriddedIO.read_model_surface_height`; omitted → `NoModelSurfaceHeight`. Reference of `absolute_altitude_above_agl_m`, and written per row; never used as the true ground |
+| `dem_file`, `dem_variable` | lat-lon DEM (ground or sea surface, m above sea level) → `GriddedIO.LatLonPointElevation`; omitted → `NoPointElevation`. `dem_variable` (default `"z"`) only with `dem_file` |
+| `unplaced_records` | `"error"` (default) → `ErrorOnUnplaced`, `"skip"` → `SkipUnplaced` |
+| `absolute_altitude_above_agl_m` | number ≥ 0 → `AbsoluteAltitudeAbove(h₀)`; omitted → `AboveGroundPlacement`. Needs `surface_height_file` and `"height_above_ground"` in `vertical_coordinates` |
+| `vertical_coordinates` | non-empty array, in preference order, of `"height_above_ground"` → `HeightAboveGroundCoordinate` and `"pressure"` → `PressureCoordinate`, each at most once; default `["height_above_ground", "pressure"]`. Without `"height_above_ground"`, `dem_file` and `absolute_altitude_above_agl_m` are rejected |
+| `pressure_basis` | `"total"` (default) → `TotalFromHumidity`, `"dry"` → `DryInterfaces`: the interface pressures a pressure-placed record is compared with (below); only with `"pressure"` in `vertical_coordinates` |
 
 Source paths are templates: `{YYYYMMDD}` (or `{date}`), `{YYMMDD}`, `{YYYY}`,
 `{MM}`, `{DD}` are substituted per run day, and `*` / `?` wildcards expand in
@@ -644,8 +727,8 @@ the file name. A path without date tokens must match at least one file.
 
 **Station tables.** A `table` source with `mode = "sites"` reads `id`, `lat`,
 `lon`, optional `elevation` (m asl) and `intake_height` (m above ground) or
-`altitude` (m asl, converted with `elevation`). Each row's schedule follows
-from its keys:
+`altitude` (m asl, converted with `elevation`, else as described under
+"Vertical placement" below). Each row's schedule follows from its keys:
 
 | Row keys | Schedule | Output |
 |---|---|---|
@@ -659,18 +742,203 @@ ISO-8601 UTC strings or TOML date-times (no offset, or `Z`); in NetCDF tables
 numbers are rejected elsewhere. A site id that repeats (across rows, daily
 files, or sources) must keep its location; its time lists are merged, and any
 other schedules must agree. Unknown CSV/TOML columns are an error, so a
-misspelt `intake_height` cannot silently select the lowest layer. TOML site
+misspelt `intake_height` cannot silently select the lowest layer.
+ObsPack station series (`mode = "sites"`) are for fixed stations: one site
+per distinct height in a dataset (`intake_height`, else the altitude of rows
+that give only an altitude, rounded to 0.1 m), at the site position. With
+`site_grouping = "site_code"` a dataset whose records stray more than 1° from
+that position (aircraft, ship) is reported as a moving platform; sample those
+with `mode = "soundings"`. TOML site
 tables can declare `#:schema .../schemas/observation_sites.schema.json` for
 editor help; `config/examples/observation_sites_demo.toml` shows all three
 schedules. Point-event tables (`mode = "soundings"`) read `id`, `time`, `lat`,
 `lon` and the same optional height columns.
 
-**Intake layer.** The model has no orography, so the intake layer is chosen
-by height above the model's own surface, from hypsometric layer heights
-(GCHP VDIFF temperatures on cubed-sphere binaries that carry them, else the
-constant above). Each output row records the chosen layer, its bottom and top
-heights, and the model surface pressure, so mountain sites show their
-representativeness gap.
+**Vertical placement.** Every request is placed in the model column once,
+when the sampler is built, and the layer is chosen at every sample from that
+sample's column. The column's interface pressures come from the air mass,
+``p_{1/2} = p_\mathrm{top}``, ``p_{k+1/2} = p_{k-1/2} + g\,m_k/A`` (dry
+pressures on a dry-basis run; these are the pressures written to the files),
+and its interface heights above the model surface from the hypsometric
+equation,
+
+```math
+z_{N+1/2} = 0, \qquad
+z_{k-1/2} = z_{k+1/2} + \frac{R_d T_k}{g} \ln\frac{p_{k+1/2}}{p_{k-1/2}},
+```
+
+with ``T_k`` the GCHP VDIFF layer temperature on cubed-sphere binaries that
+carry it, else `layer_height_temperature_kelvin`. A record at height ``h``
+above the ground is sampled in the layer ``k`` with
+``z_{k+1/2} \le h < z_{k-1/2}`` (the lowest layer for ``h \le 0``, the top
+layer above the column). A record is placed by the first of the
+`vertical_coordinates` it gives, in their order: `"height_above_ground"`
+(codes 0 and 1 below) and `"pressure"` (code 2). The default,
+`["height_above_ground", "pressure"]`, places a record by its height above
+the ground when it has one and by its pressure otherwise;
+`["pressure", "height_above_ground"]` prefers the pressure; a single
+coordinate uses only that one. The rule that placed the record is written per
+row as `vertical_placement`:
+
+| Code | `vertical_placement` | Layer |
+|---|---|---|
+| 0 | `record_height` | ``h`` = the record's `intake_height`, else `altitude − elevation` (row by row; for ObsPack station series the station's `site_elevation` when the rows have none) |
+| 1 | `altitude_minus_dem` | ``h`` = `altitude` − DEM ground elevation at the point (`dem_file`, bilinear) |
+| 2 | `pressure` | the record's ObsPack `pressure` ``p``: the layer with ``p_{k-1/2} \le p < p_{k+1/2}`` of the `pressure_basis` interfaces (below) |
+| 3 | `absolute_altitude` | only with `absolute_altitude_above_agl_m` (below) |
+| 4 | `lowest_layer` | a record with no vertical coordinate at all, from a source whose records are column or surface products (`missing_height_rule`: OCO-2 soundings, table rows without height columns) |
+
+Placing by height above the true ground keeps a record in the same part of
+the model column as the real sample. The model's interface heights are
+measured from the model surface ``z_s`` (the cell mean of the orography), so
+the record sits at ``z_s + h`` and its layer does not depend on ``z_s``: a
+mountain station (Mauna Loa, ground 3397 m, intake 40 m) whose cell has a
+model surface near 2000 m stays in the model's lowest layer instead of being
+sampled 1.4 km above the model surface, and an aircraft 500 m above a valley
+floor is sampled 500 m above the model ground. The true ground is the
+record's own `elevation`, else the DEM; the model surface height is **never**
+used in its place (that would place the record by its absolute altitude, the
+error this rule avoids).
+
+A record that none of the coordinates place cannot be placed: one with an
+`altitude` but no ground elevation (no `elevation`, no `dem_file` value at the
+point) and no `pressure`, one that gives only a coordinate the run does not
+use (an `intake_height` with `vertical_coordinates = ["pressure"]`), or an
+ObsPack record without any vertical coordinate. With
+`unplaced_records = "error"` (default) the sampler refuses
+to build and names the first records; with `"skip"` they are dropped and
+counted in the `n_unplaced_soundings` / `n_unplaced_sites` file attributes.
+They are never sampled in the lowest layer. Undeclared fill values do not
+count as coordinates: an ObsPack `pressure` at or below 0, an `elevation`
+(or `site_elevation`) below −450 m and a negative `intake_height` are read
+as absent, with one warning per file (the JMA aircraft-flask rows of the MIP
+ObsPack give `elevation` = `intake_height` = −1000 at 5 km altitude; they are
+placed by `altitude −` DEM). A record placed more than 100 m below the ground
+(a wrong elevation, DEM value or altitude) is sampled in the lowest layer and
+reported in a warning with the first records; its height is in
+`placement_height_agl`. In the OCO-2 MIP v5.0.1 daily
+ObsPack, 16.5% of the 2021-12 to 2023-12 records (97% of the aircraft-insitu
+records, all AirCore records) have fill `intake_height` and `elevation` and the
+files have no `pressure`, so sampling them needs a `dem_file`.
+
+`absolute_altitude_above_agl_m = h₀` re-places records at least ``h_0`` above
+the true ground (free-tropospheric aircraft and AirCore samples, whose air
+does not follow the terrain) by their ObsPack `pressure` when they have one
+and `"pressure"` is one of the `vertical_coordinates` (code 2), else by their
+altitude ``z_\mathrm{obs}`` above sea level, as the
+layer holding ``z_\mathrm{obs} - z_s`` (code 3, `absolute_altitude`; needs
+`surface_height_file`). ``z_\mathrm{obs}`` is the record's `altitude`, else
+its ground elevation (the record's, else the DEM value at the point) plus its
+`intake_height`; a record with neither keeps its height above the ground
+(code 0). Records below ``h_0`` keep their height above the
+ground. Whether and where to blend from terrain-following to absolute
+placement aloft is still open; the default places every record by its height
+above the ground. With ``h_0 = 0`` every record that
+carries an altitude is placed by altitude above sea level (or pressure), as
+the GEOS-Chem ObsPack diagnostic places every record
+(`ObsPack/obspack_mod.F90`: the level where ``\Phi_s/g + \sum_l \Delta z_l``
+first reaches the ObsPack altitude). ObsPack `pressure` must declare its
+units (`Pa`, `hPa`, `mbar`, `kPa` and their spelled-out forms, any case);
+a missing or other unit is an error.
+
+**Pressure basis.** A record's pressure is the total (ambient) pressure of
+dry air and water vapour. The air mass of a dry-basis run gives the dry
+interface pressures above, the weight of the dry air above each interface;
+the total pressure there is larger by the weight of the water vapour above
+it (4.9 hPa at the surface for 50 kg m⁻² of precipitable water, 1 hPa for
+10 kg m⁻²). With `pressure_basis = "total"` (default, `TotalFromHumidity`) a
+pressure-placed record is compared with the total interface pressures. A
+layer with dry air mass ``m_k`` and specific humidity ``q_k`` (kg of vapour
+per kg of moist air) holds ``m_k/(1 - q_k)`` of moist air, so hydrostatically
+
+```math
+p_{1/2} = p_\mathrm{top}, \qquad
+p_{k+1/2} = p_{k-1/2} + \frac{g\,m_k}{A\,(1 - q_k)},
+```
+
+with ``p_\mathrm{top}`` = `A_ifc[1]`, the pure-pressure top interface of the
+met model's hybrid coordinate (a total pressure). This inverts the
+preprocessor's dry conversion ``Δp_\mathrm{dry} = (1 - q)\,Δp``. On merged
+or remapped levels the binary carries a dry-mass-weighted ``q``, so the
+inverse is not exact there: on the golden `pre_ll72` binary (ERA5 L137 merged
+to 34 levels) the rebuilt total surface pressure differs from the stored one
+by −0.012 Pa on average and 0.125 Pa at most, where the dry interfaces are
+169 Pa low on average and 700 Pa at worst.
+
+The humidity is the binary's layer-mean specific humidity at the sampled
+boundary:
+
+- lat-lon binaries preprocessed with `output.include_qv = true`: `qv_start`
+  at the run start and `qv_end` at each window end;
+- cubed-sphere binaries with the GCHP VDIFF payload (`include_vdiff_fields`):
+  VDIFF `qv` is a window-start value, so a window end takes the `qv` of the
+  next window (window 1 of the next binary after a binary's last window),
+  and the run start the first window's. The run's last window end has no
+  next window and takes the ended window's `qv`, one window old: on the
+  golden MERRA-2 C90 L72 binary the interfaces rebuilt with it are up to
+  23 Pa (99th percentile 11 Pa) from the met model's total interfaces
+  ``A + B\,p_s``, against at most 0.23 Pa with the next window's `qv`;
+- reduced-Gaussian binaries (the preprocessor refuses `include_qv`) and
+  cubed-sphere binaries without the VDIFF payload (for example the ERA5
+  N320 → cubed-sphere products) carry none.
+
+With linear time interpolation the humidity is blended between the two
+window ends like the air mass. A moist-basis run's air mass already gives
+total pressures. A dry-basis run whose binaries do not all carry humidity
+(every binary's header is checked before transport) cannot build them:
+building the sampler then fails if any record is placed by pressure, and
+`pressure_basis = "dry"` (`DryInterfaces`) compares with the dry interfaces
+instead. Those lie at lower pressure, so a record can land one or more layers
+too low (closer to the surface, where the layers are thinnest). On the GEOS
+L72 levels with ``p_s`` = 1010 hPa and
+``q = q_s\,(p_\mathrm{mid}/p_s)^\lambda``, ``\lambda`` set by the
+precipitable water, the dry interfaces put a pressure uniformly spaced
+between 900 and 1010 hPa in a lower layer 25% of the time, between 500 and
+900 hPa 6% and between 200 and 500 hPa 0.4% for a tropical column
+(``q_s`` = 18 g/kg, 50 kg m⁻²), and 5%, 1% and 0% for ``q_s`` = 4 g/kg and
+10 kg m⁻²; an independent construction of the tropical case gave 29%, 6.5%
+and 0.36%. The files keep the dry interfaces as `p_half_dry`; the attribute
+`pressure_basis` records the basis used.
+
+**External ground datasets.** Both are static and external, never part of a
+transport binary, and read through `GriddedIO`:
+
+- `dem_file`: a lat-lon NetCDF file with 1-D longitude/latitude centre
+  coordinates and a 2-D elevation variable (`dem_variable`, `units = "m"`)
+  giving the **ground or sea surface** in metres above sea level. Over the
+  ocean the ground is the sea surface (0 m): clip a bathymetric product at
+  0 m over the sea. A file going below −450 m (deeper than the Dead Sea shore)
+  is rejected as bathymetry or an undeclared fill value, one going above
+  9000 m as an undeclared fill value. The variable may be stored on
+  `(lon, lat)` or `(lat, lon)` (told apart by dimension name); a
+  gridline-registered global grid (−180…180 inclusive) has its repeated seam
+  column dropped. Fill values become
+  "no ground" (the record is then unplaced or pressure-placed). It is read
+  whole as Float32 (about 0.9 GB for a global 1-arc-minute grid), used while
+  the sampler is built, and released afterwards. A suitable global choice is
+  NOAA ETOPO 2022 at 60 arc-seconds, *surface* variant (ice-sheet surface, not
+  the `bed` variant; `ETOPO_2022_v1_60s_N90W180_surface.nc` from NOAA NCEI),
+  clipped at 0 m (`z = max(z, 0)`), which also sets land below sea level
+  (Dead Sea, Caspian shore) to 0 m. On 34 days of the 2022 MIP ObsPack it
+  places every aircraft and AirCore record; the `bed` variant puts the
+  Greenland and Antarctic ground up to 3 km too low (Summit 236 m instead of
+  3203 m).
+- `surface_height_file`: the per-grid model surface height, written by
+  `GriddedIO.write_model_surface_height` and checked against the run's mesh
+  (cell centres, cubed-sphere areas, finite values, metres) when read.
+  `scripts/preprocessing/build_model_surface_height.jl --binary <a binary of
+  the grid> --source <surface geopotential file> --variable PHIS --out <file>`
+  divides the met source's surface geopotential (MERRA-2/GEOS `PHIS`, ERA5
+  `z`) by the standard gravity and regrids it conservatively onto the binary's
+  mesh; use the met source the binary was built from. For C90 from MERRA-2
+  `PHIS` the result matches GEOS-Chem's own C90 `Met_PHIS` diagnostic to
+  0.03 m RMS (0.5 m at most). It is only needed for
+  `absolute_altitude_above_agl_m`; otherwise it is written per row as
+  `model_surface_height` for diagnostics.
+
+Each output row records the placement, the height used
+(`placement_height_agl`), the model surface height, the chosen layer, its
+bottom and top heights, and the model surface pressure.
 
 **Time and files.** The run origin is the start of window 1 of the first
 binary: `[input].start_date` at 00:00 UTC, or `start_time` with an explicit

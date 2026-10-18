@@ -35,8 +35,12 @@ remap retain it where reproducing IFS geometry requires it.
   `run_unified_preprocessor_day!` ([`transport_binary/README.md`](transport_binary/README.md)).
 - Other tools with CLIs under [`../../scripts/preprocessing/`](../../scripts/preprocessing/):
   `regrid_transport_binary` / `regrid_ll_binary_to_cs` (LL binary to CS),
-  `coarsen_nested_cs_transport_binary` (experimental, not exported),
-  `convert_era5_physics_nc_to_bin` (TM5 convection input).
+  `coarsen_nested_cs_transport_binary` (experimental, not exported).
+- TM5 convection sections come from the ERA5 N320 to CS path
+  (`include_convection = true` in the met source) or from
+  [`../../scripts/preprocessing/attach_catrine_tm5_convection_cs.jl`](../../scripts/preprocessing/attach_catrine_tm5_convection_cs.jl).
+  The lat-lon spectral path writes none; a config with a `[tm5_convection]`
+  table is rejected (`reject_removed_tm5_convection_route`).
 
 ## Supported Source and Target Pairs
 
@@ -123,7 +127,7 @@ Files directly in this folder; the subfolders have their own READMEs
 - [`reduced_transport_helpers.jl`](reduced_transport_helpers.jl) — RG workspaces, humidity, spectral synthesis, fluxes, level merge
 - [`reduced_window_buffer.jl`](reduced_window_buffer.jl) — RG two-slot window buffer and workspace, ingest/drain/flush
 - [`reduced_spectral_day.jl`](reduced_spectral_day.jl) — RG window synthesis, pin/dry/merge and next-day end point, `balance_window!`, driver hooks, RG `process_day`
-- [`mass_support.jl`](mass_support.jl) — LL merge/remap, LL Poisson and column balance, qv readers, `apply_dry_basis_native!`, `pin_global_mean_ps!`, `pin_global_mean_ps_using_qv!`
+- [`mass_support.jl`](mass_support.jl) — LL merge/remap, LL Poisson and column balance, qv readers and their coordinates (`read_thermo_coordinates`, through `GriddedIO.find_coordinate`), `apply_dry_basis_native!`, `pin_global_mean_ps!`, `pin_global_mean_ps_using_qv!`
 - [`ring_poisson_balance.jl`](ring_poisson_balance.jl) — RG `CompressedLaplacian`, `balance_compressed_column_fluxes!`
 - [`cs_face_table.jl`](cs_face_table.jl) — CS global cell and face indexing (the face table)
 - [`cs_poisson_solver.jl`](cs_poisson_solver.jl) — CS graph Laplacian, PCG solver, correction mapping, mirror synchronization
@@ -134,10 +138,8 @@ Files directly in this folder; the subfolders have their own READMEs
 - [`cs_native_fluxes.jl`](cs_native_fluxes.jl) — `geos_native_to_face_flux!` with panel halo sync, `compute_cs_cm_pressure_fixer!`
 - [`face_line_integrals.jl`](face_line_integrals.jl) — `LineIntegralFaceFluxes` (cube-face fluxes integrated from N320 or spectral staging-grid winds)
 - [`flux_construction.jl`](flux_construction.jl) — typed flux methods and wind regrids shared by MERRA-2, ERA5 N320, and spectral ERA5-to-CS
-- [`era5_physics_binary.jl`](era5_physics_binary.jl) — ERA5 physics NetCDF to flat BIN converter and reader
 - [`era5_surface_reader.jl`](era5_surface_reader.jl) — ERA5 single-level PBL fields (`open_era5_surface_reader`, `load_era5_surface_window`)
-- [`tm5_convection_conversion.jl`](tm5_convection_conversion.jl) — `ec2tm!`, `ec2tm_from_rates!` (ECMWF to TM5 entu/detu/entd/detd)
-- [`tm5_convection_pipeline.jl`](tm5_convection_pipeline.jl) — per-hour TM5 fields on the physics grid (`compute_tm5_merged_hour_on_source!`)
+- [`tm5_convection_conversion.jl`](tm5_convection_conversion.jl) — `ec2tm!`, `ec2tm_from_rates!` (ECMWF to TM5 entu/detu/entd/detd), hydrostatic `dz`
 - [`tm5_bldiff.jl`](tm5_bldiff.jl) — TM5 `bldiff` column kernels; `tm5_bldiff_dkg_column!` feeds the N320 `dkg` payload
 
 ## Common Tasks
@@ -191,6 +193,12 @@ Files directly in this folder; the subfolders have their own READMEs
   must be 100–3600, warns outside 400–500); the GEOS writer uses
   `round(dt_met_seconds / mass_flux_dt)` source substeps per window.
 - ERA5 spectral: `met_interval / dt` must be an integer (`exact_steps_per_window`).
+- ERA5 → TM5 convection (`ec2tm_from_rates!`): UDMF/DDMF level `k` is the
+  flux through the top of layer `k`, so callers pass `[GRIB levels 1..Nz; 0]`
+  (interface `Nz + 1`, the ground, must be zero), and the cloud top is the
+  layer above the first interface with flux, as in TM5. Writers record
+  `era5_tm5_convection_header` (`tm5_ec2tm_convention = "tm5_halflevel_v2"`);
+  readers reject ERA5-derived TM5 sections without it.
 
 ## Related Docs And Tests
 
@@ -203,6 +211,7 @@ Files directly in this folder; the subfolders have their own READMEs
   `test_{ll,rg,cs}_preprocessor_contract.jl`, `test_preprocessor_substep_schedule.jl`,
   `test_replay_consistency.jl`, `test_global_ps_pin.jl`, `test_poisson_balance.jl`,
   `test_rg_poisson_balance.jl`, `test_vertical_transforms.jl`,
+  `test_spectral_pole_rows.jl`, `test_qv_longitude_normalization.jl`,
   `test_preprocessing_integrity.jl`, `test_preprocessing_cache_io.jl`; byte
   reproducibility in `test_ll_spectral_unified_driver.jl`,
   `test_rg_preprocessor_unified_driver.jl`, `test_cs_spectral_unified_driver.jl`.

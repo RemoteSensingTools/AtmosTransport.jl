@@ -2,22 +2,169 @@
 
 ## Unreleased
 
-### Fixes
+### Breaking changes
 
-- **GEOS-IT binaries carry `:pbl_eflux`, so `geoschem_nonlocal_vdiff` runs on
-  GEOS-IT.** GEOS-Chem's non-local PBL scheme needs the surface latent heat flux,
-  which only the MERRA-2 path wrote; GEOS-IT binaries with the VDIFF fields were
-  rejected at run time although the GEOS-IT A1 collection carries `EFLUX`. With
-  `include_vdiff_fields = true` the GEOS-IT reader now reads `EFLUX` (finite and
-  magnitude-checked like `HFLUX`), block coarsening (e.g. C180 → C90) area-weights
-  it like `HFLUX`, and the writer adds `:pbl_eflux`. Every other section is
-  bit-identical (checked on GEOS-IT C180 → C90, 2021-12-01: `pbl_eflux` matches a
-  2×2 mean of raw A1 `EFLUX`, correlation 1.000000). GEOS-FP is unchanged: its
-  fallback readers do not read the VDIFF inputs. No golden case writes the VDIFF
-  fields from GEOS-IT, so goldens do not change.
+- **Observation and departure files: schema v2 (issue #20, part 3; findings
+  OF-84, OF-15).** `read_observations` and `read_departures` reject schema-v1
+  files with an explanation (internal development: no reader for v1).
+  Observation files store Float64 `lat`/`lon` (a Float32 point within
+  rounding of a cell edge could bind to the neighbouring cell) and replace
+  `alt` by `elevation_m`, `intake_height_m`, `altitude_m` and `pressure_pa`
+  (NaN = absent), with new `kind` (`"point"` / `"column"`), `time_window_s`,
+  `flag` and `model_sigma` (`schemas/cs_observations_v2.toml`). Departure
+  files store Float64 coordinates, the record kind and window, the vertical
+  placement (code, height above the model surface, pressure), `model_sigma`,
+  and every sampled step with its weight and level as a ragged `sample`
+  dimension, instead of `alt` and `step`, plus a `clamped` flag per row and
+  an `n_clamped` attribute; `normalized_departure` divides by
+  `√(value_sigma² + model_sigma²)` (`schemas/cs_departures_v2.toml`).
+  `CSObservationRecord` and `CSDepartureRecord` change accordingly.
+  `build_departure_set(set, result::CS4DVarResult, mesh, t_start, dt, nsteps)`
+  (or with `observations, simulated, stencils`) joins observations to records
+  by id, so filtered or skipped records need no pre-filtering of the set; the
+  old `(set, observations, simulated, ...)` signature is gone.
+- **4D-Var observations (issue #20, part 3).** `bind_to_mesh` binds point
+  records to `CSPlacedPointObjective`s placed in the column (it used to drop
+  the altitude and bind every record to a column mean) and returns a
+  `Vector{CSObservation}` of mixed objective types; records with a nonzero
+  `flag` are dropped. `CSObservation` gains `sampling::CSTimeSampling` and
+  `id` (positional construction of the struct changes; `CSObservation(step,
+  objective, value, sigma)` still builds an instantaneous observation).
+  `CS4DVarResult` gains a `stencils` field (positional construction changes).
+  `CSLinearFunctional` stores one step per entry (`steps`, instead of the
+  scalar `step`).
+- **OCO-2 follow-up of issue #20 (D30): struct fields.** `CSObservation`
+  gains `assimilate` (positional construction of the struct changes; the
+  `CSObservation(step or sampling, objective, value, sigma; id, assimilate =
+  true)` constructors are unchanged for existing calls). `CSDepartureRecord`
+  gains `flag` and `cell_average_id` (positional construction changes; the
+  keyword constructor defaults them to 0). `Output.RetrievalColumn` is
+  parametric in its mapping (`RetrievalColumn{LayerRebin}` by default, a new
+  last field `mapping`); `Output.SoundingRequest` gains `retrieval`
+  (`nothing` from the existing constructors) and `Output.SoundingBatch` an
+  optional `retrieval_values`. In departure files `assimilated` is no longer
+  part of the retrieval block: it is written whenever a row is not
+  assimilated (co-samples) or is an averaging-kernel column.
+- **Adjoint API (issue #20).** A user-defined `AbstractCSFootprintObjective`
+  needs a `_linear_functional(objective, step, panels_m, mesh)` method (its
+  weights as a `CSLinearFunctional`) to be used in `cs_surface_flux_4dvar`
+  and as a footprint seed; validation, evaluation and seeding methods alone no
+  longer suffice. The exported `CSTapeByteEstimate` gains a `step_records`
+  field before `total_records` (positional construction changes), and
+  `total_records` now includes one end-of-step record per step.
+- **Lat-lon ERA5 physics-file TM5 route removed** (issue #55, pera-noaa). The
+  `[tm5_convection]` table of ERA5 spectral preprocessing configs converted the
+  ERA5 convection NetCDF to flat physics files and then to TM5 fields on the
+  lat-lon grid. The files kept the CDS longitudes 0…360° while the route read
+  them as −180…180°, so every TM5 field sat 180° from its column, and each
+  hourly window used the mean of the previous hour. The route served only nine
+  December-2021 test configs and was retired instead of fixed. A config with a
+  `[tm5_convection]` table (even with `enable = false`) now fails with an error naming the supported
+  routes: the ERA5 N320 → cubed-sphere preprocessor with
+  `include_convection = true`, or `scripts/preprocessing/attach_catrine_tm5_convection_cs.jl`.
+  Removed: the nine configs (`config/preprocessing/catrine5d/*_tm5.toml`,
+  `config/preprocessing/era5_ll720x361_*tm5*.toml`),
+  `scripts/preprocessing/convert_era5_physics_nc_to_bin.jl`, and from
+  `Preprocessing` `convert_era5_physics_nc_to_bin`, `ERA5PhysicsBinaryReader`,
+  `ERA5PhysicsBinaryHeader`, `open_era5_physics_binary`,
+  `close_era5_physics_binary`, `get_era5_physics_field`,
+  `tm5_native_fields_for_hour!`, `merge_tm5_field_3d!`,
+  `TM5PreprocessingWorkspace`, `allocate_tm5_workspace`,
+  `compute_tm5_merged_hour_on_source!`, `log_tm5_cleanup_stats`,
+  `tm5_copy_or_regrid_ll!` and `resolve_tm5_convection_settings`
+  (`reject_removed_tm5_convection_route` takes its place), the
+  `test/real_data/test_tm5_catrine_1day.jl` check of that route, and the
+  convert hint of `scripts/downloads/download_era5_physics.py` (its
+  convection download stays). Lat-lon spectral binaries keep their header
+  schema (`include_tm5conv = false`). No lat-lon route now writes TM5
+  sections, so the lat-lon `kind = "tm5"` run configs
+  (`config/runs/catrine5d/ll*_advdiffconv_*`,
+  `config/runs/catrine_ll720_3d/{advdiffconv,fullphysics}.toml`) and run
+  configs that read binaries of the removed route or their C48/C180 regrids
+  fail on load until their inputs are rebuilt; they are kept for provenance.
+- **TM5 convection provenance checked on load** (issue #54). ERA5 N320
+  binaries with convection now record `tm5_convection_source` and
+  `tm5_ec2tm_convention = "tm5_halflevel_v2"`, and the lat-lon → cubed-sphere
+  regrid copies its source's record (`"unrecorded"` when it has none). Opening
+  a binary rejects, with a regenerate message: ERA5-derived TM5 sections
+  without the current convention (every ERA5 N320 binary built with
+  `include_convection = true` before this fix, e.g. the December-2021 and
+  2022–2023 C180 CATRINE sets), lat-lon binaries with TM5 sections from the
+  ERA5 spectral preprocessor, and lat-lon → cubed-sphere regrids of those.
+  Sections attached from the TM5-converted CATRINE archive
+  (`convection_attachment`, all v3/v4 attached sets and the golden inputs,
+  whatever other key they carry) and sections without a recorded source stay
+  accepted.
+  `binary_capabilities` gains `tm5_convection_provenance`, and
+  `inspect_binary` prints it. New constants `TM5_CONVECTION_SOURCE_KEY`,
+  `TM5_EC2TM_CONVENTION_KEY`, `TM5_EC2TM_CONVENTION`.
+
+### Post-run diagnostics
+
+- `scripts/diagnostics/catrine_benchmark_v05_site.py` builds the v0.5 CATRINE
+  benchmark web site (GCHP against the v0.5 MERRA-2 and ERA5 runs) from the
+  signoff comparison products: an overview (signoff state, key numbers,
+  agreement table per tracer and air-mass band) and pages for time series,
+  latitude–pressure sections, maps, the near-surface band, the stratosphere,
+  the mass budget, NOAA stations and the methods. Charts use self-hosted D3
+  (hover or tap for values; page scrolling is never captured on phones;
+  drag-to-zoom with a reset on daily time axes); one control row per page is
+  kept in the URL and data are loaded per view. Only finished comparison
+  seasons are read; `--datasets auto` (default) shows MERRA-2 and adds ERA5
+  once all 25 months are compared. The stations page shows GCHP and the runs
+  at eight NOAA sites (nearest C90 cell; lowest layer, or the site's height
+  through GCHP's height–dry-pressure profile) with NOAA CO₂ observations from
+  a local ObsPack (CC0 datasets only, cited) and scores each against them
+  (bias, RMSE, correlation). `catrine_benchmark_site/publish.sh` builds into a
+  staging folder and copies it to the public one (README there).
 
 ### Testing
 
+- `test/core/test_cs_4dvar_placed_observations.jl` (inversion topic, new)
+  checks point observations placed in the column and time windows: parity
+  with the forward sampler (`build_observation_sampler` in nearest-window
+  mode and `bind_to_mesh` + `cs_surface_flux_4dvar` give the same layer and
+  value for intake-height, altitude, DEM and pressure records); a 10 m intake
+  and a 5 km aircraft sample in one cell read layers 10 and 5 with different
+  values; total against dry pressure placement; layers that follow the
+  replayed air mass step by step (checked against an independent replay); a
+  window observation's value and gradient against the Δt-weighted sum of its
+  single-step observations (`1e-12`); the single sweep against
+  per-observation footprints for placed and window observations (`1e-12`;
+  upwind, monotone PPM, Lin-Rood, TM5 convection, Full and Stride
+  checkpoints); and central finite differences of the cost.
+  `test_cs_observation_binding.jl`, `test_cs_observations_io.jl` and
+  `test_cs_departures_io.jl` move to schema v2 and add Float64 edge points,
+  window weights (including truncation at the run's ends), placement by
+  intake height, altitude minus elevation or DEM and pressure, the unplaced
+  policy, flags and model sigma, and v1 rejection; `test_cs_inversion_driver.jl`
+  runs an observation file on `synthetic_hydrostatic` meteorology.
+- `test/core/test_cs_4dvar_single_sweep.jl` (inversion topic) checks the
+  single-sweep 4D-Var gradient against one `cs_surface_emission_footprint` per
+  observation rebuilt in the test (upwind, unlimited slopes and PPM, monotone
+  PPM, Lin-Rood; no physics, diffusion with both surface-flux couplings, TM5
+  and CMFMC; observations at the first and last step, two in one column and
+  step, two in one cell and step, at different steps), `StrideCheckpoint(2)`
+  and `RevolveCheckpoint()` against `FullCheckpoint`, the `tape_path` layout
+  (exactly one schedule's windows), one recording and one reverse pass per
+  gradient (counted through a tape storage) for one and seven observations,
+  the reused-tape Jacobian against per-objective footprints, and the step
+  forcing's injection. The tape-layout tests of
+  `test_cs_adjoint_production_parity.jl`, `test_subcycle_composition.jl` and
+  `test_cs_tape_mmap_roundtrip.jl` now expect the end-of-step record that
+  closes every step.
+- `test/core/test_cs_adjoint_production_parity.jl` (adjoint_footprint topic)
+  checks the cubed-sphere adjoint against production: replay vs.
+  `TransportModel.step!` for both surface-flux couplings with TM5, CMFMC and
+  no convection; footprints vs. production finite differences; Stride and
+  Revolve vs. `FullCheckpoint` with convection for both limiters; the tape
+  layout vs. `cs_tape_byte_estimate`; and limited-PPM `:pinned_host` and
+  `:mmap` tapes vs. `:device` at every entry point. The Revolve test of
+  `test_cs_stride_checkpoint.jl` with monotone PPM now includes CMFMC
+  convection and asserts the `1e-12` parity of the other schedules instead of
+  `atol = 1e-5, rtol = 1e-3`; the opt-in GPU block of
+  `test_cs_ppm_adjoint_footprint.jl` compares limited-PPM `:pinned_host` and
+  `:mmap` footprints with `:device`.
 - **JET 0.12 allowed in the test environment.** On 2026-10-15 the General registry
   applied JET's rolling Julia-compatibility policy (General PR #171848), capping JET
   ≤ 0.11 to Julia 1.12; on Julia ≥ 1.13 only JET 0.12 resolves. With `[compat]`
@@ -30,6 +177,134 @@
   support yet instead of erroring.
 
 ### Numerical changes
+
+- **Kz vertical diffusion updates tracer mass in flux form, with the column
+  ledger (finding OF-113).** `ImplicitVerticalDiffusion` with a Kz field
+  (lat-lon and reduced-Gaussian runs, `tm5_beljaars_viterbo_local_kz` and
+  `geoschem_holtslag_boville_vdiff` on the cubed sphere) still solves the
+  backward-Euler system for the new mixing ratio, but no longer writes back
+  `m_k (g_k + c)`. In `Float32` that lost tracer mass with one sign: in the
+  pure-pressure levels `Δt D/m` is the same in every column (exactly with
+  isothermal layer thickness and uniform Kz, as in the golden configurations;
+  approximately otherwise), so the rounding
+  of the diagonal `1 + Δt (D_{k−½} + D_{k+½})/m_k` is too, and the solved
+  departure from the column minimum is non-negative (diffusion alone: −2.0e-6
+  of a background-free tracer per day in `run_ll72_upwind_cpu_f32`). The
+  tracer mass is now updated from the interface fluxes
+  `F_{k+½} = Δt D_{k+½} (g_k − g_{k+1})`, `rm_k ← (rm_k + F_{k−½}) − F_{k+½}`,
+  so the column total telescopes, and the remaining rounding (which keeps one
+  sign where fluxes keep one direction: −9.4e-9 of CO₂ per day) goes through
+  the column mass ledger with persistent carry of the `dkg` solve. Diffusion's
+  own change of each total in that run is now below 5e-10 per day (blob
+  −1.5e-10, CO₂ +1.5e-11, fossil CO₂ −3.5e-10 of the emitted mass, Rn-222
+  +4.6e-10). The solve and fluxes are unchanged and both forms agree in exact
+  arithmetic, so the adjoint is unchanged; layers without exchange keep their
+  mass bit for bit. The VMR-level reference `apply_vertical_diffusion!` keeps
+  the matrix form. The flux form trades local accuracy for column
+  conservation: per-layer rounding scales with `ε·Δt D/m` (`Float32`, strongly
+  mixed columns: worst cell 1.4e-4 relative against 1.0e-5 for the matrix form,
+  column error per solve 3e-8 against 5e-6; damped by the next mixing solve),
+  which is why the golden fields below change by more than a few ulps.
+  Golden changes (one day; `blob` total drift before → after, then the largest
+  change of a field and of a column mean relative to its maximum):
+  `run_ll72_upwind_cpu_f32` −2.0e-6 → +1.8e-8 (fields 2.5e-5, column means
+  3.2e-6); `run_ll72_slopes_gpu_f32` −2.2e-6 → +1.3e-8 (2.5e-5, 3.4e-6);
+  `run_c24_upwind_cpu_f32` −6.3e-7 → −1.1e-10 (1.6e-5, 1.5e-6);
+  `run_c24_slopes_gpu_f32` −7.0e-7 → −1.1e-8 (1.7e-5, 1.3e-6);
+  `run_c24_linrood_cpu_f32` −7.0e-7 → −5.9e-9 (column means 2.3e-4 and
+  blob cells 2.6e-3 at isolated upper-level points where the nonlinear Lin–Rood
+  limiter amplifies rounding; 99 % of cells within 8.7e-7, and the new run is
+  closer to a `Float64` run: fossil CO₂ column means within 3.2e-7 instead of
+  2.3e-4); `run_c90_era5_localkz_gpu_f32` (SF₆ without sources −2.6e-7 →
+  −2.8e-10; fields 1.7e-5, column means 1.7e-5) and
+  `run_c90_merra2_hbvdiff_gpu_f32` (uniform −6.1e-10 → +1.2e-9; fields
+  8.3e-5, column means 8.5e-6). The uniform tracer stays at the advection
+  level (at most 1.1e-8 per day). `Float64` cases (`run_ll72_ppm_cpu_f64`,
+  `run_ll72_ppm_cw84_cpu_f64`, `run_o24_upwind_cpu_f64`, `run_c24_ppm_cpu_f64`,
+  `run_c24_ppm_cw84_cpu_f64`) change by at most 1.7e-14 of a field's maximum
+  (totals 1.9e-16); their drifts stay at 0 or ±1.5e-16. Cases with `tm5_dkg` or
+  `geoschem_nonlocal_vdiff` diffusion and preprocessing are bit-identical. The
+  kernel also fuses the mass/mixing-ratio conversions and launches all six
+  cubed-sphere panels at once: on an L40S a C90 L72 call with ten `Float32`
+  tracers takes 1.35 ms instead of 4.06 ms, a 1° L72 lat-lon call 2.70 ms
+  instead of 5.89 ms. `DiffusionWorkspace` gains `exchange` and `elimination`
+  column scratch, and lat-lon and reduced-Gaussian workspaces now hold a
+  `ledger_carry`; the per-tracer reduced-Gaussian transport passes
+  `tracer = idx`, as the per-tracer Lin–Rood path does
+  (`test/core/test_diffusion_flux_form.jl`).
+- **Pressure-placed observation samples use total pressures** (issue #20,
+  finding OF-116). Observation sampling (`[output.observations]`) placed a
+  record by its pressure (ObsPack `pressure`, a total pressure) against the
+  column's dry interface pressures on dry-basis runs, which lie lower by the
+  weight of the water vapour above each interface (4.9 hPa at the surface for
+  50 kg m⁻² of precipitable water), so a record could land one or more layers
+  too low.
+  The default `pressure_basis = "total"` (`TotalFromHumidity`) now compares it
+  with the total interface pressures
+  `p[k+1] = p[k] + g·m[k] / (A·(1 − q[k]))`, built from the dry air mass and
+  the binary's specific humidity, blended in time like the air mass:
+  `qv_start` at the run start and `qv_end` at window ends on lat-lon binaries
+  preprocessed with `output.include_qv = true`; on cubed-sphere binaries with
+  the GCHP VDIFF payload the window-start VDIFF `qv` of the next window (read
+  from the binary, or the next binary's window 1). The run's last window end
+  has no next window and takes the ended window's `qv`: on the golden MERRA-2
+  C90 L72 binary its interfaces are up to 23 Pa (99th percentile 11 Pa) from
+  the met model's total interfaces, against ≤ 0.23 Pa with the next window's.
+  Reduced-Gaussian binaries and cubed-sphere binaries without the VDIFF
+  payload carry no humidity. On merged levels the binary's dry-mass-weighted
+  `q` makes the inverse inexact: on the golden `pre_ll72` binary (ERA5 L137
+  merged to 34 levels) the rebuilt total surface pressure is −0.012 Pa off on
+  average and 0.125 Pa at most (dry interfaces: 169 Pa and 700 Pa low).
+  Only rows with `vertical_placement = 2` change: their `intake_level`, layer
+  heights and `<tracer>_intake`. On the GEOS L72 levels (ps = 1010 hPa,
+  q = q_s (p_mid/ps)^λ with λ set by the precipitable water, pressures
+  uniformly spaced) 25% of pressures between 900 and 1010 hPa, 6% between
+  500 and 900 hPa and 0.4% between 200 and 500 hPa move up for a tropical
+  column (q_s = 18 g/kg, 50 kg m⁻²; an independent construction gave 29%,
+  6.5% and 0.36%), and 5%, 1% and 0% for q_s = 4 g/kg and 10 kg m⁻²; in the
+  sampler test case two of
+  three pressure-placed rows moved up one layer and their intake values by
+  −2.2 ppm (the column's per-layer CO₂ gradient). Height-placed, lowest-layer
+  and site rows, and the written `p_half_dry`, are bit-identical. A dry-basis
+  run whose binaries do not all carry humidity (every binary's header is
+  checked before transport), such as every reduced-Gaussian run, now fails to
+  build a sampler with pressure-placed records unless `pressure_basis = "dry"`
+  (`DryInterfaces`, the old comparison) is set. Moist-basis runs are unchanged (their air mass
+  already gives total pressures). No golden case samples observations.
+- **4D-Var gradients** (issue #20) change at the rounding level: the single
+  reverse sweep sums the observations' contributions inside the adjoint state
+  instead of adding one footprint per observation. Against the previous
+  algorithm the gradients agree to `1e-12` relative in Float64 and `1e-5` in
+  Float32 (`test/core/test_cs_4dvar_single_sweep.jl`); costs and simulated
+  values are unchanged. Footprints from `cs_surface_emission_footprint` and
+  `cs_surface_emission_footprint_from_seed`, and Jacobians, are unchanged bit
+  for bit (single-threaded comparison with the previous main on 390 footprint,
+  15 from-seed and 15 Jacobian cases: every scheme family, diffusion with both
+  couplings, TM5 and CMFMC, three schedules, three tape storages). Forward
+  results are unchanged.
+- **Cubed-sphere adjoint footprints and 4D-Var gradients** change for runs
+  with convection, with `DiffusiveSurfaceFluxBoundary`, or with limited-PPM
+  `:pinned_host` / GPU `:mmap` tapes: the replays and tapes now follow the
+  production step (issues #57 and #60, see Fixes). Forward results are
+  unchanged.
+- **ERA5 → TM5 convection conversion follows TM5's half levels** (issue #54,
+  pera-noaa). ERA5 archives UDMF/DDMF level k as the flux through the top of
+  layer k, with none through the ground (TM5 `tmm.F90`: "levels top down,
+  surface implicit zero"). The ERA5 N320 preprocessor placed level k at the
+  bottom of layer k, so level 137 became a flux through the ground, and
+  `ec2tm_from_rates!` took the first interface with flux as the cloud-top
+  layer, one layer too low; the column closure then moved the cloud-top
+  detrainment to the layer of largest entrainment. Now level k is interface k
+  and interface Nz + 1 is zero, and the cloud top is the layer above the first
+  interface with flux, as in TM5's `ECconv_to_TMconv`. The fields now return
+  the input fluxes at every interface and match an independent transcription
+  of TM5's code to rounding; the closure moves only rounding. On 3000 deep
+  ERA5 columns the old conversion lifted 14 % less boundary-layer tracer above
+  500 hPa in a 3 h step and detrained about 4 levels too low; mass was
+  conserved. `ec2tm_from_rates!` now rejects a non-zero flux through the
+  ground (a packing error). ERA5 TM5-convection binaries must be regenerated;
+  runs on attached CATRINE convection (the CATRINE benchmark sets) and all
+  goldens are unaffected.
 
 - **Column mass ledger carry** (OF-110). The `Float32` column mass ledgers of
   TM5 convection (and `cmfmc_matrix`, which uses the TM5 solve) and of `dkg`
@@ -73,6 +348,604 @@
 - The ledgers rely on IEEE arithmetic without fast-math reassociation (which
   would break `TwoSum`). They are tested on CPU and CUDA; the Metal checks
   (`test/diagnostic/test_metal_kernels.jl`) have not been run yet.
+- **ERA5 spectral pole rows are ordinary cells** (issue #58, pera-noaa). The
+  spectral preprocessor set the zonal mass flux of the two pole rows of every
+  lat-lon target and cubed-sphere staging grid to zero, although these rows
+  are cells centred at ±(90° − Δφ/2). A flow across the pole then had no path
+  through the polar cap: the lat-lon column balance re-routed `bm` at every
+  latitude (real ERA5 72 × 37: 4.5–10 % RMS in `bm` equatorward of 80°, 55 %
+  poleward), and the cubed-sphere staging recovered `u = 0` in the pole rows
+  (C24 poleward of 75°: 9 % in `am`/`bm`, 82 % in `cm`). Only the meridional
+  faces on the poles stay closed. The narrow pole-row cells raise the
+  lat-lon substep count (real ERA5 day, per hourly window: 72 × 37 4 → 7–10,
+  360 × 181 43–63 → 113–177, 720 × 361 155–244 → 437–715; 2.0–2.9× more
+  substeps, and about that much more lat-lon transport time). The same zeroing
+  had been removed once before (bug archive, 2026-04-03); a regression test
+  now keeps it out. ERA5 N320 and reduced-Gaussian targets are unaffected.
+  ERA5 spectral lat-lon binaries now record `pole_row_zonal_flux = "open"` in
+  their header.
+- **Lat-lon → cubed-sphere regrid** (`regrid_ll_binary_to_cs`):
+  - winds are recovered with each window's own source substep count
+    (`steps_per_window_by_window`, through `flux_application_seconds`), not
+    the header maximum; with an adaptive lat-lon schedule a window with fewer
+    substeps was regridded too strong by the ratio;
+  - the output substep count no longer copies the source's (which the
+    lat-lon pole rows now set): by default each cubed-sphere window gets the
+    smallest count whose per-substep Courant ratio meets the positivity
+    limit, written as a per-window schedule; `steps_per_window` still fixes
+    one count for all windows;
+  - ERA5 spectral lat-lon sources without the `pole_row_zonal_flux = "open"`
+    header key (written before the #58 fix) are refused before any output is
+    opened. Their stored pole-row `am` is the column balance's correction,
+    not zero and not the wind, so only the header identifies them;
+    regenerate them;
+  - with the adaptive schedule the `column_closure_*` header keys are
+    evaluated again on the rescaled stored fluxes
+    (`rescaled_column_closure_record`); they described the one-substep
+    balance and were N times the stored amounts.
+- **ERA5 humidity on lat-lon targets** (issue #63, pera-noaa). The thermo
+  `q` is a set of point values at longitudes 0, Δ, … (index 1 at −180° after
+  the roll), but the lat-lon and cubed-sphere-staging interpolation read it
+  as cell-centred, half a source spacing (0.25°) east, and a 720 × 361 target
+  copied the 720 × 361 archive without interpolating (also up to 0.25° off in
+  latitude near the poles). `q` is now always interpolated bilinearly with
+  weights built from the file's coordinates, which are read through
+  `GriddedIO.find_coordinate`. Real ERA5: `q` changes by 1–2.5e-4 kg/kg RMS
+  (up to 6e-3 at sharp gradients), the dry air mass by 2e-4 RMS (up to 0.6 %
+  locally). The reduced-Gaussian path was already right and is unchanged.
+- Golden outputs that change: `pre_ll72` (#58 and #63), `pre_c24` (#58 and
+  #63) and the runs on them (`run_ll72_*`, `run_c24_*`). `pre_o24` and the
+  N320, MERRA-2 and GEOS cases do not change.
+
+- **Static surface fluxes regrid conservatively on every grid, with the
+  file's totals** (#59). Lat-lon and reduced-Gaussian targets now default to
+  `regridding = "conservative"` (before: bilinear). The bilinear default
+  renormalised only positive totals of files with an area variable: net-uptake
+  fields and area-less files (Zhang Rn-222, EDGAR SF₆) kept the sampling
+  error (Rn-222 −0.95 % on LL 72×37 and −0.20 % on O24; EDGAR SF₆ +47 % above
+  the conservative total), and a sampled net of the other sign flipped every
+  cell. The conservative path now regrids the per-cell rate, flux × the file's
+  `cell_area`/`area` (else the source mesh's latitude-circle area), divided by
+  each source cell's covered area (`Regridding.source_coverage`), so every
+  model total equals the file's own total to rounding on lat-lon,
+  reduced-Gaussian and cubed-sphere grids. Since the file's area now sets the
+  total, it must be in m² and agree within 1 % (norm-based) with the cell
+  areas the file's coordinates define (`GriddedIO.check_latlon_cell_area`),
+  and be positive and finite in every cell with a nonzero flux (masked zero
+  rows would drop their emission); otherwise the build stops with an error.
+  On a target that does not cover the sphere (not used by the shipped runs),
+  a source cell covered only in part puts its whole amount into the covered
+  part (documented in Operators). Before, the density was regridded
+  over great-circle polygons (CAMS total −9.8e-5 on C24) and lost the slivers
+  that reduced-Gaussian rings with different longitude counts leave uncovered
+  (6.3e-4 of the sphere on O24). Explicit `regridding = "bilinear"` rescales
+  emission and uptake separately (no cell changes sign) or stops with an
+  error; the two factors are logged and a factor more than 10 % from 1 is a
+  warning (GridFED December 2021 uptake on a 5° grid: 3.53). Runs with static sources change: the `co2`, `fossil` and `rn222`
+  tracers of the `run_ll72_*` and `run_o24_*` golden cases (cell patterns, and
+  the Rn-222 total) and of the `run_c24_*` cases (by up to 8e-5 of the
+  largest cell rate). Time-varying lat-lon series (cubed sphere only) still
+  regrid their densities per slice and are unchanged.
+
+- **Runtime CFL subcycling runs whole palindromes' worth of passes**
+  (issue #61). When the runtime pilot needs `n > 1` subcycles, a transport step
+  now runs `(X Y Z)^n → midpoint → (Z Y X)^n` with every flux divided by `n`
+  (`(H V)^n → midpoint → (V H)^n` on reduced Gaussian) instead of
+  `X^n Y^n Z^n | Z^n Y^n X^n`. The new composition is symmetric (second
+  order, same `6n` sweeps) and identical at `n = 1`. The old order subcycled
+  each direction alone, so the passes of one leg still removed that
+  direction's full-flux outflow before another direction refilled the cell:
+  in exactly non-divergent flows air mass went negative (to −0.46 of a cell's
+  mass at C12, n = 6) and uniform tracers were lost. All topologies now take
+  one count from the palindrome budget
+  `2 (out_x + out_y + out_z) / (n m_ref) ≤ cfl_limit` with
+  `m_ref = min(m, m_end)`, `m_end = m + 2 (in − out)` the cell's mass after
+  the step (the reference mass of the write-time positivity gate). Between
+  `X Y Z` blocks a cell's mass lies between `m` and `m_end`, so every pass
+  removes at most `cfl_limit / 2` of the mass the cell holds when it starts
+  and air mass stays positive through the step. Budgeting against the
+  step-start mass `m` alone (main's per-direction counts too) does not bound
+  a cell that drains within the step: one cell of mass 1 among cells of 100
+  with inflow 1.51 in x and outflow 2.0 in y got `n = 5`, its air mass went
+  negative, and PPM gave a mixing ratio of −1.7e43 (now `n = 211`). A cell
+  with outflow and `m_ref ≤ 0`, or a non-finite flux, throws an
+  `ArgumentError` (main also failed, with an "exceeded max_n_sub" error);
+  the lat-lon and
+  reduced-Gaussian default `cfl_limit` is `DEFAULT_CFL_LIMIT` (0.95, was 1.0
+  per direction), like the cubed sphere. The footprint/4D-Var tape recorders
+  record the same composition. Only runs whose pilot returns `n > 1` change:
+  cubed-sphere binaries with the `binary_schedule` contract run `n = 1`, and
+  lat-lon binaries written with the default positivity gate (the same
+  palindrome budget) stay below it. The reduced-Gaussian write-time gate still
+  bounds horizontal and vertical outflow separately (each `≤ 0.95 m`), so a
+  reduced-Gaussian binary near that gate can now subcycle at run time (static
+  palindrome ratio up to 3.8, `n = 4`). Golden outputs do not change: their
+  worst static ratios are below the budget (`pre_o24`: 0.61). The per-direction
+  pass-count helpers (`_x/_y/_z_subcycling_pass_count`, the face-indexed
+  `_sweep_*_face_subcycled!`) are removed; the corrected
+  `operators_on_binaries.md` no longer claims the per-leg counts keep mass
+  positive.
+- **`PositivityLimiter` keeps downhill slopes** (issue #62). Its slope was
+  `minmod(s_c, c_i)`, which is zero whenever the centred slope is negative, so
+  the limiter acted as a sign test and treated rising and falling profiles
+  differently (mirror asymmetry 0.25 in a 1-D test). It now keeps the sign
+  and clips the magnitude to `|s| ≤ 2 c_i`, the bound that keeps both face
+  values non-negative. Selectable only from Julia (`SlopesScheme(PositivityLimiter())`).
+- **Lin–Rood `ppm_order = 7` uses one edge value per face** (issue #62). The
+  seam value replaced the edges only at the panel-edge faces, so the face
+  kernels rebuilt the cell next to a seam with a cross-seam fourth-order edge
+  when they evaluated its interior face. ORD=7 now follows FV3's cube-edge
+  values (`tp_core.F90`, `iord < 8`): the Putman–Lin seam average at the
+  panel edge and one-sided `5/14, 11/14, −2/14` edges on the faces beside it,
+  in the forward and adjoint kernels alike. Solid-body rotation errors fall
+  by 10–31% (C8–C64). Runs with `ppm_order = 7` change; `ppm_order = 5` (the
+  default, and all golden cases) is bit-identical.
+
+### Fixes
+
+- **GEOS-IT binaries carry `:pbl_eflux`, so `geoschem_nonlocal_vdiff` runs on
+  GEOS-IT.** GEOS-Chem's non-local PBL scheme needs the surface latent heat flux,
+  which only the MERRA-2 path wrote; GEOS-IT binaries with the VDIFF fields were
+  rejected at run time although the GEOS-IT A1 collection carries `EFLUX`. With
+  `include_vdiff_fields = true` the GEOS-IT reader now reads `EFLUX` (finite and
+  magnitude-checked like `HFLUX`), block coarsening (e.g. C180 → C90) area-weights
+  it like `HFLUX`, and the writer adds `:pbl_eflux`. Every other section is
+  bit-identical (checked on GEOS-IT C180 → C90, 2021-12-01: `pbl_eflux` matches a
+  2×2 mean of raw A1 `EFLUX`, correlation 1.000000). GEOS-FP is unchanged: its
+  fallback readers do not read the VDIFF inputs. No golden case writes the VDIFF
+  fields from GEOS-IT, so goldens do not change.
+
+- **Cubed-sphere adjoint: `:pinned_host` and GPU `:mmap` tapes handed the
+  limited-PPM reverse sweep `m === rm`** (issue #57, pera-noaa). Host-side tape
+  storage reads a staged state back through a device cache, and both policies
+  kept one cache per panel shape. A `MonotoneLimiter` or `CW84Limiter` sweep
+  record reads its air mass and tracer mass in one call, so the kernel got
+  the tracer mass twice: footprints were off by about 80 % and 4D-Var
+  gradients by about 20 % at every entry point (`FullCheckpoint`, Stride,
+  Revolve, from-seed, `cs_surface_flux_4dvar`). `:device`, CPU `:mmap` (mmap
+  views), unlimited schemes and Lin–Rood were not affected. Reads now name
+  their operand, `_tape_panels(slot, AirMassRead())` or `TracerMassRead()`,
+  and `PinnedHostCSTapeStorage` and `MmapCSTapeStorage` (the new
+  `AbstractHostCSTapeStorage`) keep one device cache per read role and panel
+  shape; `:pinned_host` and `:mmap` now agree with `:device` to rounding
+  on the CPU and on CUDA (L40S). Internal API: the one-argument
+  `_tape_panels(slot)` and `_ensure_tape_read_cache!` are replaced by
+  `_tape_panels(slot, role)`, `_register_tape_read_backend!` and
+  `_tape_read_cache!`; the mmap field `device_caches` became `read_caches`,
+  and the pinned-host field `device_cache` became `read_template` and
+  `read_caches`.
+- **Cubed-sphere adjoint replays and tapes now follow the production step**
+  (issue #60, pera-noaa). Two differences between the adjoint's forward model
+  (`run_cs_footprint_forward`, the 4D-Var simulated values, the tape
+  recorders) and `TransportModel.step!`:
+  (1) With `DiffusiveSurfaceFluxBoundary` (`[diffusion] surface_flux_boundary
+  = true`, which `geoschem_holtslag_boville_vdiff` needs) production runs
+  `S(dt) → V(dt)` at the palindrome center, while the replays always ran
+  `V(dt/2) → S(dt) → V(dt/2)`: the footprint differed from finite differences
+  of production by about 9 %. (2) Production refreshes the X halos of the air
+  mass and tracer mass at the start of every step; the replays and recorders
+  did not, so from the second step on the first X sweep read tracer halos
+  from before the previous step's convection (replay vs. production up to
+  1e-3 relative after 12 steps, growing with the step count and the
+  convective mass flux), and checkpoint windows, which restart with fresh
+  halos, disagreed with `FullCheckpoint` by about 1e-2 for limited PPM. The
+  center order is now one function, `surface_flux_center!(diffuse!, emit!,
+  coupling, dt)`, used by production (through `palindrome_center!`, now the
+  center of every topology's palindrome) and by the replays and recorders
+  (which record one full-step diffusion after the midpoint for the diffusive
+  boundary); every replayed and recorded split-sweep step starts with
+  `fill_cs_step_start_halos!`, production's refresh, and records its
+  `_CSHaloRecord(1)`. `cs_tape_byte_estimate` counts the new records. The
+  replay now equals production to rounding, footprints match production
+  finite differences to about 1e-10, and Stride and Revolve match
+  `FullCheckpoint` to 1e-16. The documented "Revolve drift of about 1e-7 from
+  limiter flips at bisection halo refills" was this missing refresh and is
+  gone. Forward production results are unchanged bit for bit (cubed-sphere
+  split-sweep and Lin–Rood, lat-lon and reduced-Gaussian palindromes, every
+  center, Float32 and Float64); adjoint footprints and gradients change for
+  runs with convection or the diffusive boundary.
+- **Observation heights: altitude-only records are placed above the ground,
+  never silently in the lowest layer** (issue #56). ObsPack records that give
+  an `altitude` above sea level but no `intake_height` or `elevation` had a
+  `NaN` height and were sampled in the lowest model layer without a message.
+  This is the aircraft-insitu layout: in the OCO-2 MIP v5.0.1 daily ObsPack,
+  16.5% of the 2021-12 to 2023-12 records fill both per row, including 97% of
+  aircraft-insitu and all AirCore records. Heights are now resolved row by row
+  (`intake_height`, else `altitude − elevation`). An altitude without an
+  elevation becomes a height above the true ground through a DEM
+  (`dem_file`), and the record is placed that far above the model surface.
+  A record with no such height but a `pressure` is placed by pressure. The
+  model surface height is never used as the true ground. Records that still
+  cannot be placed, and ObsPack records with no vertical coordinate at all,
+  stop the sampler build (`unplaced_records = "error"`, the default) or are
+  skipped and counted (`"skip"`, `n_unplaced_*` attributes). A table row with
+  an altitude but no elevation no longer fails at read time; it follows the
+  same rules. `absolute_altitude_above_agl_m` optionally places
+  free-tropospheric records by pressure or by altitude above sea level against
+  the model surface height (`surface_height_file`); a record with only an
+  intake height takes its ground from the DEM there. Point events with an intake height (or
+  altitude and elevation) are sampled as before, except ObsPack rows whose
+  file has an `intake_height` variable but a fill value on that row: they used
+  `NaN` (lowest layer) and now use `altitude − elevation`.
+  Undeclared fill values are not placed: an ObsPack `pressure` ≤ 0, an
+  `elevation` (or `site_elevation`) below −450 m and a negative
+  `intake_height` are ignored with a warning (the JMA aircraft-flask rows of
+  the MIP ObsPack give elevation = intake_height = −1000 at 5 km altitude and
+  were sampled in the lowest layer; they are now placed by altitude − DEM).
+  Records placed more than 100 m below the ground are reported in a warning.
+  In ObsPack station series (`mode = "sites"`), rows that give only an
+  altitude are keyed by that altitude (one site per level of a tower that
+  states its levels as altitudes) instead of forming one lowest-layer
+  "surface" site; a dataset whose records stray more than 1° from the site
+  position (a moving platform) is reported, since each of its heights becomes
+  a site at that position.
+
+### API and configuration changes
+
+- **OCO-2/OCO-3 level retrievals, the MIP converter, co-sampling and cell
+  averages** (issue #20 follow-up, decision D30).
+  - *Hat projection.* A retrieval block may describe values on levels, the
+    profile linear in pressure between them (`retrieval_mapping =
+    "hat_levels"`, `Output.HatLevelProjection`; OCO-2/OCO-3: 20 levels "on
+    layer boundaries"), besides layer means (`"layer_rebin"`,
+    `Output.LayerRebin`, the default and the only form of earlier files).
+    The model column, stretched onto the levels as before, is projected onto
+    the levels' hat functions in dry air (the L2, Galerkin, projection
+    ``c = M⁻¹ b``, ``M_ji = ∫φ_j φ_i dp_dry``, ``b_j = ∫φ_j x dp_dry``; one
+    tridiagonal solve), then ``X = X_a + Σ h_j a_j (c_j − x_a,j)`` (the MIP
+    protocol's eq. 2) with the file's weights, kernel, prior and prior column
+    ``X_a`` (`xco2_apriori`; new optional `RetrievalColumn.prior_column` and
+    observation-file variable `retrieval_prior_column`; without it ``X_a =
+    Σ h x_a``, which for the 10-s averages differs by up to ~0.01 ppm). It
+    conserves the model's column with the hat integrals as weights and
+    reproduces profiles the retrieval can represent: a model equal to the
+    retrieval's prior, on a fine column aligned with the levels, gives ``X_a``
+    to 1e-5 ppm (on GEOS L72, 1e-5 to 2.1e-3 ppm; a plain hat average would
+    be 0.0185 ppm low). The
+    mapping is a type of the shared operator (`retrieval_column_weights!`,
+    `retrieval_profile!`, `retrieval_column_value` take the layers' air
+    masses; new `retrieval_projection_matrix`), used by the 4D-Var and the
+    forward sampler; layer records give bit-identical results.
+    `Output.tm5_layer_column` builds TM5-4DVar's 19-layer form (levels as
+    interfaces, midpoint kernel and prior, weights normalized to 1) for
+    comparisons. Observation files store `retrieval_mapping` per record.
+  - *Converter.* `read_oco2_mip_observations` / `convert_oco2_mip_observations`
+    and `scripts/preprocessing/oco2_mip_to_observations.jl` turn the OCO-2 and
+    OCO-3 v11 MIP 10-second files into schema-v2 column records with a level
+    block (one file per day or month), every record of the time range, with
+    `flag = 1 + assimilate_flag` for records outside the experiment's data
+    types (LN, LG, OG by default; `SAM` for OCO-3's data type 0) and
+    assimilation flags (1 by default); `mapping = Output.LayerRebin()`
+    (`--mapping tm5`) writes TM5's layer form. `write_observations` takes
+    extra root `attributes`.
+  - *Co-sampling.* `bind_to_mesh(...; flagged_records = "cosample")`
+    (`CosampleFlaggedRecords`; driver key `[observations].flagged_records`)
+    binds records with a nonzero flag as co-samples (`assimilate = false`):
+    simulated and reported in `CS4DVarResult` and departure files (new
+    `flag` column), never in the cost or the gradient (the cost and the
+    reverse pass's forcing are bit for bit those without them), not
+    screened, not extending the taped run. Default `"drop"` as before.
+  - *Cell averages.* `bind_to_mesh(...; cell_averaging = CellAverage(;
+    time_tolerance_s, correlation))` (driver table
+    `[observations.cell_averaging]`) averages assimilated column records of
+    one cell, step sampling and overpass into one observation
+    (`CSCellAverageObjective`, `CELL_AVERAGE_PLACEMENT_CODE`) with 1/σ²
+    weights, ``σ²_meas = ΣΣ w_i w_j ρ_ij σ_i σ_j/(Σw)²`` and the model error
+    added once; the members stay as co-samples, and departure files have a
+    row for each average (placement code −4, numbered by `cell_average_id`,
+    with a row id above every record id; departure ids are checked unique;
+    σ_meas, σ_mod and `cell_average_correlation`) besides the member rows
+    (`cell_average_id`), so Σ normalized_departure² over assimilated rows is
+    2 J_obs. `inflate_cell_model_error` is the alternative that keeps the
+    records and multiplies each record's `model_sigma²` by the group size
+    (not the profile-error term).
+  - *Forward sampler.* `oco2_lite` sources take `averaging_kernel_tracers`
+    (opt-in; `AveragingKernelColumns`) and `averaging_kernel_mapping`
+    (`"hat"`, `"tm5"`): the reader also reads each sounding's retrieval
+    (`Output.read_oco2_retrieval_columns`, Lite or MIP files) and the
+    soundings file gets `<tracer>_ak_column` from the shared operator.
+    Without the key the output is unchanged.
+  - Docs: `docs/src/theory/adjoint_status.md` (level retrievals; OCO-2 MIP
+    records), `schemas/cs_observations_v2.toml`, `schemas/cs_departures_v2.toml`,
+    the TOML and output schema pages. Tests:
+    `test/core/test_retrieval_hat_projection.jl`,
+    `test/core/test_cs_4dvar_oco2_mip.jl`.
+- **Averaging-kernel (retrieval) columns in the 4D-Var** (issue #20, part 4).
+  Observation schema v2 gains an optional, NaN-padded retrieval block for
+  column records (`retrieval_level` / `retrieval_interface` dimensions;
+  `retrieval_pressure_pa`, `retrieval_pressure_weight`,
+  `retrieval_averaging_kernel`, `retrieval_prior_profile`, optional
+  `retrieval_profile_sigma`, `retrieval_surface_pressure_pa`), ordered from the
+  surface up (`ordering = "surface_to_top"`, required) with stated units
+  (pressures converted to Pa, the prior to mol/mol from `"ppm"`, `"ppb"`, …)
+  and validated (strictly decreasing pressures, weights ≥ 0 summing to 1,
+  finite values, a prior within [0, 1] mol/mol, the surface pressure equal to
+  the first interface; only column records, which are then absolute column
+  averages: value in (0, 1] mol/mol, value_sigma and model_sigma at most
+  1 mol/mol; errors larger than the value, as for a low-signal retrieval, are
+  accepted). `value`, `value_sigma` and `model_sigma` may state a `units`
+  attribute: a dry mole-fraction unit (`"mol mol-1"`, `"ppm"`, `"ppb"`, …)
+  is converted to mol/mol and must be stated on all three; files with
+  retrieval blocks must state one (the writer states `"mol mol-1"`); files
+  without units read as before. `CSObservationRecord` gains
+  `retrieval::Union{Nothing, Output.RetrievalColumn}` (the 16-argument
+  positional constructor still builds a record without one). `bind_to_mesh`
+  binds a column record with a block to the new `CSRetrievalColumnObjective`
+  and keeps column means for the others: at every sampled state the model's
+  total interface pressures (dry air mass plus humidity; or the dry
+  interfaces with `pressure_basis = "dry"`) are stretched onto the retrieval
+  column and the dry mixing ratios rebinned onto its layers by pressure
+  overlap, `X = Σᵢ hᵢ aᵢ (R x)ᵢ + Σᵢ hᵢ (1 − aᵢ) x_a,ᵢ`, TM5-4DVAR's operator
+  (`averaging_kernels.F90`), with functional weights `Hₖ/max(mₖ, ε)` and the
+  prior term as offset. The operator is shared in `Output`
+  (`RetrievalColumn`, `stretch_model_interfaces!`, `retrieval_rebin_matrix`,
+  `retrieval_column_weights!`, `retrieval_prior_offset`, `retrieval_profile!`,
+  `retrieval_column_value`, `retrieval_model_error_variance`). New keyword
+  `bind_to_mesh(...; max_surface_pressure_mismatch_pa = Inf)` (inversion
+  driver: `[observations.placement].max_surface_pressure_mismatch_pa`): a
+  record whose time-weighted model minus retrieval surface pressure exceeds
+  it is an error under `unplaced_records = "error"` and, under `"skip"`, is
+  reported but left out of the cost and the gradient (its
+  `CSObservationStencil` has `assimilated = false`; counted in one log
+  message); by default the stretch absorbs any mismatch, as in TM5. An
+  uncertainty of the model profile on the retrieval layers
+  (`retrieval_profile_sigma`; not the retrieval's a-priori uncertainty) adds
+  the model-error term `Σᵢ (hᵢ aᵢ σᵢ)²` to σ² (fixed by the record, so the
+  cost stays quadratic; analogous to, not the same as, TM5's `Σ H²σ²` on
+  model layers). The inversion driver accepts
+  `[observations.placement].pressure_basis` without `"pressure"` in
+  `vertical_coordinates` (it selects the pressures of averaging-kernel
+  columns; `Output._parse_vertical_placement(...; pressure_basis_for_columns
+  = true)`); `[output.observations]` still rejects it there.
+  `CSObservationStencil` gains `surface_pressure_mismatch_pa`,
+  `retrieval_profile` and `assimilated` (the 9-argument constructor still
+  works); new `RETRIEVAL_COLUMN_PLACEMENT_CODE` (−3). Departures v2: rows of
+  averaging-kernel columns carry code −3, and files with such rows add
+  `surface_pressure_mismatch_pa`, `retrieval_model_profile`
+  (`retrieval_level`, surface first), `profile_model_sigma` and
+  `assimilated`; `CSDepartureRecord` gains these fields (the 24-argument
+  positional constructor still works) and `normalized_departure` divides by
+  `√(value_sigma² + model_sigma² + profile_model_sigma²)`; the reader requires
+  the profile's ordering and units and the mismatch's units. Files without
+  retrieval blocks are written and read as before. The forward observation
+  sampler does not apply averaging kernels yet. See
+  `docs/src/theory/adjoint_status.md` (averaging-kernel columns) and
+  `test/core/test_cs_4dvar_retrieval_columns.jl`.
+- **Point observations placed in the column, and time windows, in the 4D-Var**
+  (issue #20, part 3). `bind_to_mesh(set, mesh, t_start, dt; nsteps,
+  tracer_filter, out_of_range_policy, placement, terrain)` turns each point
+  record into a forward-sampler request and places it with the forward rule
+  (`Output.resolve_placement` with an `Output.VerticalPlacementSpec`: ordered
+  `vertical_coordinates`, height above the true ground measured from the model
+  surface and/or pressure; pressure basis; altitude option; unplaced policy;
+  and an `Output.ObservationTerrain` with the model surface height and a DEM)
+  into a `CSPlacedPointObjective`; column records bind to column means. At
+  every sampled state the layer is chosen from the replayed air mass and the
+  new `CSObservationColumnMet` (model-top pressure, gravity, layer
+  temperature, humidity; static or per step; `cs_surface_flux_4dvar(...;
+  column_met)`) with `Output.sample_column_layer!`, which the forward sampler
+  now also calls, so both choose the same layer; the observation is that
+  layer's mixing ratio and its functional weight `1/max(m, eps)` there. A
+  record with `time_window_s = W > 0` samples the steps overlapping
+  `[t − W/2, t + W/2]` with weights proportional to the overlap (TM5-4DVAR's
+  Δt/ΣΔt), truncated at the run's ends and renormalised (`CSTimeSampling`;
+  window records need `nsteps`); `CSLinearFunctional` and the step forcing
+  carry entries at several steps. `ClampOutOfRange` now keeps the part of an
+  outside record's window inside the run (else the first or last step, as
+  before), counts clamped and skipped records in an `@info`, and departure
+  rows mark such records `clamped`. Record ids must be unique
+  (`CSObservationSet`, `read_observations`, `bind_to_mesh`), and the optional
+  vertical fields read a declared `_FillValue` (xarray's NaN) as absent. The
+  inversion samples the end of the model step containing a record's time (or
+  its window mean), the forward sampler window ends (linear or nearest):
+  both read the same layer and value of the same state.
+  Instantaneous observations give bit-identical costs and gradients to
+  before (checked on 75 scheme/physics/checkpoint combinations, Float32, and
+  the footprints and Jacobians). `CS4DVarResult.stencils`
+  (`CSObservationStencil`) returns each observation's steps, weights,
+  levels and placement. Observation `sigma` is
+  `√(value_sigma² + model_sigma²)`.
+- **Inversion driver: observation files and hydrostatic meteorology**
+  (issue #20). `scripts/inversions/cs_4dvar.jl` reads `[observations].file`
+  (schema v2) with `tracer` and `out_of_range_policy`, places its point
+  records with `[observations.placement]` (the `[output.observations]`
+  placement keys through the shared `_parse_vertical_placement`, plus
+  `layer_height_temperature_kelvin`), and needs `[time].start` and the new
+  `[meteo].source = "synthetic_hydrostatic"` (`interface_pressures_pa`,
+  optional `specific_humidity` and `temperature_kelvin`; dry air mass
+  `m = (1 − q)Δp A/g` per cell, no fluxes). Inline `[[observations.entries]]`
+  stay. A 4D-Var on transport-binary meteorology is assembled with the Julia
+  API.
+- **Single-sweep 4D-Var gradient** (issue #20). `cs_surface_flux_4dvar` now
+  computes the observation-term gradient with one taped forward run (to the
+  last observation step) and one reverse pass, whatever the number of
+  observations, as TM5-4DVAR does; before, every observation re-ran a taped
+  forward run and its own reverse pass, so one gradient cost
+  `O(N_obs)` adjoint runs. Each observation is a fixed sparse linear
+  functional of the tracer mass after its step (`CSLinearFunctional`, weights
+  from the replayed air mass: `1/max(m, eps)` for a layer, `1/max(Σm, eps)` for a column). Its
+  weighted departure `(H(x) − y)/σ²` times those weights is added to the
+  adjoint state at the end of its step, after convection and before the
+  transposed convection: `λ_s = M_{s+1}ᵀ λ_{s+1} + Σ_{i: s_i = s} (H_i − y_i)/σ_i² w_i`.
+  Window steps after the last observation get a zero gradient, as before.
+  `cs_surface_flux_4dvar` gains `checkpoint` (`FullCheckpoint()`,
+  `StrideCheckpoint(k)`, `RevolveCheckpoint()`) and `tape_path`; before, it
+  supported only `FullCheckpoint` and no `tape_path`. Every tape recorder now
+  ends each step with an end-of-step record (`_CSStepEndRecord`, no payload),
+  where the reverse pass injects that step's forcing; `CSTapeByteEstimate`
+  gains `step_records`, and `total_records` counts these records.
+- `cs_surface_flux_jacobian` records the forward tape once and walks it once
+  per objective (with `FullCheckpoint`, the default) instead of recording one
+  tape per objective. Each walk is the one a separate
+  `cs_surface_emission_footprint` call makes.
+- Internally, `cs_surface_emission_footprint`,
+  `cs_surface_emission_footprint_from_seed`, `cs_surface_flux_jacobian` and
+  `cs_surface_flux_4dvar` share one checkpoint dispatch
+  (`_cs_surface_footprints`, replacing the duplicated dispatch in
+  `FootprintAPI.jl`); the Stride and Revolve drivers take an adjoint start
+  (objective seed, explicit seed, or zero) and a step forcing.
+  `_seed_objective!` zeroes the adjoint state and adds the objective's linear
+  functional; the seeds are bit-identical, except that the column seed now
+  carries the `eps` air-mass floor of the column objective's evaluation (it
+  differs only for columns holding less than `eps` of air).
+- **Time-varying surface fluxes must cover the run** (#59). A run that a
+  time-varying source's files do not cover (before their first slice, after
+  their last, or in a gap between files) now stops before it starts with an
+  `ArgumentError` naming the uncovered dates. Before, the source silently held
+  its first or last slice there: the three `catrine_c30_2021*` configs emitted
+  the 2021-12-01 00:00 CAMS slice from January to November. A slice covers
+  its CF time bounds (a `months since` stamp its month). Stamps without
+  bounds are one series over all files of the source, merged and sorted
+  (`GriddedIO.stamp_intervals`): each slice holds for the series' regular
+  step (one month, or one year from 1 January, for month starts; else the
+  smallest spacing), the last stamp for one step, and a slice before a
+  longer spacing for one step, so a gap inside or between files (Jan 1 then
+  Mar 1) is uncovered. Daily files with one 00Z stamp each are a daily
+  series. A single stamp in all files (a day, a month or a year?) and stamps
+  about a month or a year apart that are not month starts (mid-month) are an
+  error asking for CF bounds. The new key
+  `surface_flux.hold_outside_coverage = true` keeps the holding on purpose
+  (e.g. climatologies). The CATRINE signoff chunk configs (635 time-varying
+  sources) and those of `config/runs` and the golden configs whose files
+  exist on wurst (179) keep their coverage.
+- Removed `config/runs/catrine_c30_2021_fullphysics_experimental.toml`,
+  `catrine_c30_2021_fullphysics_column_experimental.toml` and
+  `catrine_c30_2021H1_fullphysics_column_experimental.toml`, with their
+  launchers `scripts/run_catrine_c30_2021_fullphysics.sh`,
+  `scripts/run_catrine_c30_2021H1_column.sh` and
+  `scripts/profile_catrine_c30_2021_fullphysics.sh`: no January–November 2021
+  CAMS files exist for them.
+- `[output.observations]` takes `dem_file`, `dem_variable`,
+  `unplaced_records`, `surface_height_file` and `absolute_altitude_above_agl_m`
+  (`VerticalPlacementSpec`). Both ground datasets are external and static,
+  read through `GriddedIO`: the DEM by `read_point_elevation` (ground or sea
+  surface in m; a file below −450 m is rejected as bathymetry and one above
+  9000 m as an undeclared fill; the axes are told apart by dimension name, so
+  a `(lat, lon)`-stored DEM is read correctly; a gridline-registered global
+  DEM, −180…180 inclusive, has its repeated seam column dropped), the per-grid
+  model surface height by `read_model_surface_height` (written by
+  `write_model_surface_height` and
+  `scripts/preprocessing/build_model_surface_height.jl` from a met source's
+  surface geopotential). `build_observation_sampler` takes
+  `terrain = ObservationTerrain(...)` and keeps only its provenance.
+- `[output.observations]` takes `vertical_coordinates` (issue #20): the
+  vertical coordinates that may place a record, in preference order, from
+  `"height_above_ground"` (`HeightAboveGroundCoordinate`) and `"pressure"`
+  (`PressureCoordinate`), default `["height_above_ground", "pressure"]` (the
+  previous rule, bit-identical). `["pressure", "height_above_ground"]` prefers
+  a record's pressure; a single coordinate uses only that one, and a record
+  that gives only the other one is unplaced (`unplaced_records`). An empty,
+  repeating or unknown list is an error, as are `dem_file` and
+  `absolute_altitude_above_agl_m` without `"height_above_ground"` and
+  `pressure_basis` without `"pressure"`;
+  `absolute_altitude_above_agl_m` re-places by pressure only when
+  `"pressure"` is listed. And `pressure_basis` (`"total"` →
+  `TotalFromHumidity`, default; `"dry"` → `DryInterfaces`), see Numerical
+  changes. `VerticalPlacementSpec` gains `coordinates` and `pressure_basis`;
+  `resolve_placement(spec::VerticalPlacementSpec, rule, request, cell, terrain)`
+  replaces the `resolve_placement(altitude_placement, ...)` method; the shared
+  parser `_parse_vertical_placement(cfg, label)` reads the placement keys
+  (`_VERTICAL_PLACEMENT_KEYS`) of any table. `build_observation_sampler` takes
+  `has_humidity` and `observe_window_boundary!` takes `humidity` (the specific
+  humidity at the window end); new `total_interface_pressures!`,
+  `placement_pressures!`, `check_pressure_basis`, `observation_needs_humidity`,
+  the free layer rule `column_layer!` with its scratch `PlacementColumn`, and
+  `MetDrivers.load_vdiff_qv_window!` (one window's VDIFF `qv`). Observation files add
+  the attributes `vertical_coordinates` and `pressure_basis`, and the
+  `vertical_placement_codes` text of code 2 names the pressure basis.
+- Observation files add `altitude`, `pressure` (soundings),
+  `vertical_placement`, `placement_height_agl` and `model_surface_height` per
+  row or site, and the attributes `vertical_placement_codes`,
+  `n_unplaced_soundings`, `n_unplaced_sites`, `unplaced_records`,
+  `surface_height_file`, `dem_file`, `absolute_altitude_above_agl_m`.
+- `SoundingRequest` gains `altitude_m` and `pressure_pa`, `SiteRequest`
+  gains `altitude_m` (the old positional constructors remain);
+  `SoundingBatch` takes `altitudes`, `pressures` and `placements`;
+  `SiteNetCDFStream` takes the sites' placements. `intake_layer_index` throws
+  on a `NaN` height instead of returning the lowest layer.
+  `resolve_placement(option, missing_height_rule(source), request, cell, terrain)`
+  places one request.
+
+### Performance
+
+- Cubed-sphere FV3 vertical sweep (`vertical = "fv3_kord8"`): the packed sweep
+  launches several panels at once, up to all six, until a launch has about
+  65 536 columns (`_fv3_sweep_panel_group`); it used to launch each panel
+  separately, a C90 one-tracer launch running 8100 columns. Each column computes
+  exactly what it did before, so results are bit-identical.
+  `CSAdvectionWorkspace` takes `column_scratch_panels` (default from that rule;
+  Lin-Rood workspaces use 1) and its column scratch holds one slot per tracer
+  and panel of a launch.
+- Cubed-sphere column operators launch once for all six panels instead of
+  once per panel: the conservative Dkg diffusion solve (also the GEOS-Chem
+  non-local VDIFF; one synchronization per call instead of six), the surface
+  flux (static and time-varying sources, one launch per source and time
+  segment), and the CMFMC convection substep. Each column runs the same
+  arithmetic, so results are bit-identical.
+- Multi-binary cubed-sphere runs keep their window storage across binaries:
+  `DrivenSimulation(...; reuse_buffers_of = previous)` refills the previous
+  simulation's device windows, host staging window, expected-air-mass and
+  humidity buffers and convection forcing when the new driver has the same
+  window layout (`MetDrivers.same_window_layout`), and skips the startup
+  garbage collection and device-pool trim. The cubed-sphere runner passes the
+  previous binary's simulation. Each day boundary used to allocate and zero
+  new host and device windows and run a full collection (about 0.35 s per day
+  at C90). Window contents are unchanged.
+- The host staging window of a device run is page-locked
+  (`Architectures.pin_host_memory!`; CUDA only), so each window upload is a
+  direct DMA transfer (24 GB/s instead of 12 GB/s on an L40S, without
+  occupying the prefetch thread). The prefetch waits for the upload on its own
+  stream (`Architectures.synchronize_storage!`) before handing the window over;
+  before, an upload staged through the driver's pageable path could in
+  principle still be in flight when the stepping task used the window.
+- `DrivenSimulation` copies window-constant fluxes (and scales them for
+  `full_window_mass_amount` binaries) and the convection forcing into the
+  model at the first substep of each window instead of every substep; the
+  operators only read them. Interpolated fluxes, the expected air mass and
+  humidity still change every substep. A C90 L72 step issued 36 fewer
+  device copies (about 0.3 ms of a 4.4 ms one-tracer step).
+- Cubed-sphere seam transfers: the transfers of a directional group are
+  cached in one launch of `SeamTransferCache` point operations (`Fused`,
+  twelve seams with the other group's inactive) instead of one launch per
+  seam, and neither the cache nor the seam application synchronizes the host
+  on a device (later work on the device queue sees their cells in order). A
+  C90 step issues 20 fewer launches and 8 fewer synchronizations; results are
+  bit-identical.
+- Cubed-sphere transport binaries whose on-disk element type is the run's
+  load windows on a GPU through raw window staging
+  (`MetDrivers.RawWindowStaging`): four concurrent `pread`s of the window's
+  contiguous payload into a page-locked host buffer (libuv thread pool; one
+  `read!` off Unix), then per payload section an upload into a device buffer
+  the size of the largest section and one unpacking launch (padded fields get
+  zero halo cells, as before). This replaces a page-faulting copy of the file
+  mapping into a padded host window (31 ms per C90 L72 window, row by row for
+  padded fields) and the copy of that window to the device; the device windows
+  are unchanged, and the device holds one extra section-sized buffer (14 MB at
+  C90 L72). Binaries of another element type keep the host staging window.
+  `same_window_layout` also compares the on-disk element type, and the
+  cubed-sphere runner releases the previous binary's buffers before building
+  new ones when the layouts differ.
+- The packed cubed-sphere palindrome (`strang_split_cs_mt!`) queues its halo
+  exchanges (`fill_panel_halos!(…; sync = false)`, new keyword) and
+  synchronizes the host once at its end instead of after each of its 16
+  exchanges per step; with the surface flux and the diffusion solve a C90 step
+  now synchronizes 3 times. A window prefetch first waits for the stepping
+  task's queued work, which may still read the window it refills. Results
+  are bit-identical.
+- `expected_air_mass!` on cubed-sphere windows with flux deltas computes all
+  six panels in one launch (`ExpectedAirMass` point operations) instead of six
+  copies and six broadcasts per substep.
+
+### Other changes
+
+- `merge_thin_levels` (`[vertical] transform = "merge_layers_thinner_than"`,
+  spectral `merge_min_thickness_Pa`): its top-down pass could never change the
+  result and is removed; the produced level sets are bit-identical (for
+  level sets without a zero-thickness layer, which includes all ERA5 sets). The
+  documentation now states the rule: groups close from the surface up, and
+  the native layers left at the top form a top layer that can be thinner than
+  the minimum (6.8 Pa for the L117 set at 100 Pa; folding it into an L116 set
+  waits for the next regeneration).
 
 ## 0.5.0 — 2026-10-13
 

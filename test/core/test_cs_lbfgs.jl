@@ -91,7 +91,7 @@ end
         return AT.CS4DVarResult(
             cost, cost, 0.0, Float64[], Float64[], [gradients],
             Dict{Symbol, typeof(gradients)}(:one => gradients),
-            collect(controls), AT.CSObservation[])
+            collect(controls), AT.CSObservation[], AT.CSObservationStencil[])
     end
 
     # At the initial point ‖g‖∞ = 0.75 <= 0.8 while

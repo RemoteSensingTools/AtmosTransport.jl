@@ -14,7 +14,7 @@ import AtmosTransport.Adjoints:
     PinnedHostCSTapeSlot,
     MmapCSTapeStorage,
     _allocate_tape_slot,
-    _ensure_tape_read_cache!,
+    _register_tape_read_backend!,
     _mmap_prepare_for_panels!,
     stage_panels!
 using AtmosTransport.Architectures: GPU
@@ -58,13 +58,18 @@ function AtmosTransport.Architectures._reclaim_backend_pool!(::CUDA.AbstractGPUA
     return nothing
 end
 
+# Pinned host staging of device windows (`pin_host_memory!`): `CUDA.pin`
+# registers each host array in place with the driver.
+AtmosTransport.Architectures._pin_host_memory!(storage, ::CUDA.AbstractGPUArray) =
+    AtmosTransport.Architectures.foreach_host_array(a -> isempty(a) || CUDA.pin(a), storage)
+
 _pinned_host_panel(a::CuArray{T,N}) where {T,N} =
     CUDA.pin(Array{T,N}(undef, size(a)))
 
 function _allocate_tape_slot(storage::PinnedHostCSTapeStorage,
                              panels::NTuple{6,<:CuArray})
     storage.synchronize = CUDA.synchronize
-    _ensure_tape_read_cache!(storage, panels)
+    _register_tape_read_backend!(storage, panels)
     host_panels = ntuple(p -> _pinned_host_panel(panels[p]), 6)
     return PinnedHostCSTapeSlot(storage, host_panels)
 end
@@ -80,8 +85,9 @@ end
 
 # Plan 26 Phase A.1 — Mmap tape policy on GPU. `_mmap_prepare_for_panels!`
 # is called from `_allocate_tape_slot(::MmapCSTapeStorage, panels)` BEFORE
-# disk reservation; it installs a shared CuArray read cache and the
-# CUDA.synchronize hook so subsequent `copyto!(::Array, ::CuArray)` and
+# disk reservation; it records the CuArray backend of the per-role read
+# caches (allocated on first read) and installs the CUDA.synchronize hook
+# so subsequent `copyto!(::Array, ::CuArray)` and
 # `copyto!(::CuArray, ::Array)` operations against the mmap views are
 # wrapped by a device sync. No specialised `_allocate_tape_slot` or
 # `stage_panels!` is needed: both default to mmap-write / mmap-read,
@@ -90,7 +96,7 @@ end
 function _mmap_prepare_for_panels!(storage::MmapCSTapeStorage,
                                    panels::NTuple{6,<:CuArray})
     storage.synchronize = CUDA.synchronize
-    _ensure_tape_read_cache!(storage, panels)
+    _register_tape_read_backend!(storage, panels)
     return storage
 end
 

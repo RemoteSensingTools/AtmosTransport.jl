@@ -68,13 +68,6 @@ struct WindowStorage{FT}
     all_ps       :: Vector{Array{FT, 2}}
     all_qv_start :: Vector{Array{FT, 3}}   # empty vector when include_qv=false
     all_qv_end   :: Vector{Array{FT, 3}}   # empty vector when include_qv=false
-    # Four TM5 convection sections on the merged
-    # transport grid, one per window.  Empty vectors when
-    # tm5_convection=false.  Shape per window: (Nx, Ny, Nz).
-    all_entu     :: Vector{Array{FT, 3}}
-    all_detu     :: Vector{Array{FT, 3}}
-    all_entd     :: Vector{Array{FT, 3}}
-    all_detd     :: Vector{Array{FT, 3}}
     all_pblh     :: Vector{Array{FT, 2}}
     all_t2m      :: Vector{Array{FT, 2}}
     all_ustar    :: Vector{Array{FT, 2}}
@@ -91,16 +84,68 @@ Placeholder humidity workspace for moist-only runs.
 struct NoQVWorkspace{FT} <: AbstractQVWorkspace{FT} end
 
 """
+    LatLonBilinearWeights(src_lon, src_lat, dst_lon, dst_lat)
+
+Separable bilinear interpolation from point values on a latitude-longitude
+source grid to the target points `(dst_lon[i], dst_lat[j])`, all in degrees.
+`src_lon` is strictly increasing within one 360° period (periodic), `src_lat`
+strictly increasing. Target longitude `i` lies between the source columns
+`i0[i]` and `i1[i]` with weight `wi[i]` on `i1[i]`; target latitude `j`
+between the source rows `j0[j]` and `j1[j]` with weight `wj[j]` on `j1[j]`.
+A target latitude beyond the outermost source row takes that row's values.
+
+The weights come from the source coordinates themselves, so a source whose
+points coincide with the target points (no shift) reduces to a copy, and a
+point-registered source is never read as cell-centred (issue #63).
+"""
+struct LatLonBilinearWeights
+    i0 :: Vector{Int}
+    i1 :: Vector{Int}
+    wi :: Vector{Float64}
+    j0 :: Vector{Int}
+    j1 :: Vector{Int}
+    wj :: Vector{Float64}
+end
+
+function LatLonBilinearWeights(src_lon::AbstractVector{<:Real}, src_lat::AbstractVector{<:Real},
+                               dst_lon::AbstractVector{<:Real}, dst_lat::AbstractVector{<:Real})
+    Nx, Ny = length(src_lon), length(src_lat)
+    Nx >= 2 && Ny >= 2 || throw(ArgumentError(
+        "bilinear source grid needs at least 2 longitudes and 2 latitudes; got $(Nx)×$(Ny)"))
+    all(>(0), diff(src_lon)) && src_lon[end] - src_lon[1] < 360 || throw(ArgumentError(
+        "source longitudes must increase strictly within one 360° period"))
+    all(>(0), diff(src_lat)) || throw(ArgumentError(
+        "source latitudes must increase strictly (south to north)"))
+    λ0 = Float64(src_lon[1])
+    i0 = Vector{Int}(undef, length(dst_lon)); i1 = similar(i0); wi = Vector{Float64}(undef, length(dst_lon))
+    for (n, λ) in pairs(dst_lon)
+        x = λ0 + mod(Float64(λ) - λ0, 360.0)            # in [λ0, λ0 + 360)
+        a = searchsortedlast(src_lon, x)                 # ≥ 1
+        λb = a == Nx ? λ0 + 360.0 : Float64(src_lon[a + 1])
+        i0[n], i1[n] = a, a == Nx ? 1 : a + 1
+        wi[n] = (x - src_lon[a]) / (λb - src_lon[a])
+    end
+    j0 = Vector{Int}(undef, length(dst_lat)); j1 = similar(j0); wj = Vector{Float64}(undef, length(dst_lat))
+    for (n, φ) in pairs(dst_lat)
+        a = clamp(searchsortedlast(src_lat, φ), 1, Ny - 1)
+        j0[n], j1[n] = a, a + 1
+        wj[n] = clamp((Float64(φ) - src_lat[a]) / (src_lat[a + 1] - src_lat[a]), 0.0, 1.0)
+    end
+    return LatLonBilinearWeights(i0, i1, wi, j0, j1, wj)
+end
+
+"""
     NativeQVWorkspace
 
 Humidity workspace backed by daily ERA5 thermo NetCDF files.
 
-When the thermo grid resolution differs from the target grid (e.g. thermo is
-720×361 but target is 96×48), `qv_thermo` holds the raw read and
-`_interpolate_qv_to_target!` bilinear-interpolates into `qv_native`.
-When resolutions match, `qv_thermo` is empty and the read goes directly
-into `qv_native`. `qv_daily` is an optional in-memory daily preload in
-thermo-grid coordinates; it avoids repeated NetCDF chunk decompression.
+`qv_thermo` holds the read on the thermo grid and `weights` bilinear-
+interpolates it into `qv_native` on the target cell centres, always: the
+thermo values are point values at the file coordinates
+([`read_thermo_coordinates`](@ref)), which are not the target cell centres
+even when the two grids have the same dimensions. `qv_daily` is an optional
+in-memory daily preload in thermo-grid order; it avoids repeated NetCDF chunk
+decompression.
 """
 struct NativeQVWorkspace{FT} <: AbstractQVWorkspace{FT}
     thermo_path   :: String
@@ -108,19 +153,9 @@ struct NativeQVWorkspace{FT} <: AbstractQVWorkspace{FT}
     qv_native_ft  :: Array{FT, 3}
     qv_merged     :: Array{FT, 3}
     include_qv    :: Bool
-    qv_thermo     :: Array{Float64, 3}   # (Nx_thermo, Ny_thermo, Nz_native) or empty
-    needs_interp  :: Bool
+    qv_thermo     :: Array{Float64, 3}   # (Nx_thermo, Ny_thermo, Nz_native)
+    weights       :: LatLonBilinearWeights
     qv_daily      :: Array{Float64, 4}   # (Nx_thermo, Ny_thermo, Nz_native, Nt) or empty
-end
-
-struct TM5SourcePressureWorkspace{G, P}
-    grid      :: G
-    sp        :: Matrix{Float64}
-    P_buf     :: Matrix{Float64}
-    fft_buf   :: Vector{ComplexF64}
-    field_2d  :: Matrix{Float64}
-    fft_out   :: Vector{ComplexF64}
-    bfft_plan :: P
 end
 
 Base.summary(ws::SpectralTransformWorkspace) =
@@ -174,36 +209,6 @@ function allocate_transform_workspace(grid::LatLonTargetGeometry, T::Int, Nz_nat
                                       bfft_plans)
 end
 
-function allocate_tm5_source_pressure_workspace(grid::LatLonTargetGeometry, T::Int)
-    Nx = nlon(grid)
-    Ny = nlat(grid)
-    fft_buf = zeros(ComplexF64, Nx)
-    bfft_plan = plan_bfft(fft_buf)
-    return TM5SourcePressureWorkspace(
-        grid,
-        Array{Float64}(undef, Nx, Ny),
-        zeros(Float64, T + 1, T + 1),
-        fft_buf,
-        Array{Float64}(undef, Nx, Ny),
-        zeros(ComplexF64, Nx),
-        bfft_plan,
-    )
-end
-
-function synthesize_tm5_source_pressure!(ws::TM5SourcePressureWorkspace,
-                                         lnsp_spec::AbstractMatrix{ComplexF64},
-                                         T::Integer;
-                                         ps_offset::Real = 0.0)
-    lon_shift = deg2rad(ws.grid.lons[1])
-    spectral_to_grid!(ws.field_2d, lnsp_spec, Int(T), ws.grid.lats,
-                      nlon(ws.grid), ws.P_buf, ws.fft_buf;
-                      fft_out = ws.fft_out,
-                      bfft_plan = ws.bfft_plan,
-                      lon_shift_rad = lon_shift)
-    @. ws.sp = exp(ws.field_2d) + Float64(ps_offset)
-    return ws.sp
-end
-
 """
     allocate_merge_workspace(grid, Nz_native, Nz, FT) -> MergeWorkspace{FT}
 
@@ -232,18 +237,15 @@ function allocate_merge_workspace(grid::LatLonTargetGeometry, Nz_native::Int, Nz
 end
 
 """
-    allocate_window_storage(Nt, FT; include_qv=false, tm5_convection=false,
+    allocate_window_storage(Nt, FT; include_qv=false,
                             include_surface=false) -> WindowStorage{FT}
 
-Allocate per-window storage for the daily output payloads. When
-`tm5_convection=true`, also allocate the four TM5 section vectors.
+Allocate per-window storage for the daily output payloads.
 """
 function allocate_window_storage(Nt::Int, ::Type{FT};
                                  include_qv::Bool=false,
-                                 tm5_convection::Bool=false,
                                  include_surface::Bool=false) where FT
     _qv_vec() = include_qv ? Vector{Array{FT, 3}}(undef, Nt) : Vector{Array{FT, 3}}()
-    _tm5_vec() = tm5_convection ? Vector{Array{FT, 3}}(undef, Nt) : Vector{Array{FT, 3}}()
     _sfc_vec() = include_surface ? Vector{Array{FT, 2}}(undef, Nt) : Vector{Array{FT, 2}}()
     return WindowStorage{FT}(Vector{Array{FT, 3}}(undef, Nt),
                              Vector{Array{FT, 3}}(undef, Nt),
@@ -251,7 +253,6 @@ function allocate_window_storage(Nt::Int, ::Type{FT};
                              Vector{Array{FT, 3}}(undef, Nt),
                              Vector{Array{FT, 2}}(undef, Nt),
                              _qv_vec(), _qv_vec(),
-                             _tm5_vec(), _tm5_vec(), _tm5_vec(), _tm5_vec(),
                              _sfc_vec(), _sfc_vec(), _sfc_vec(), _sfc_vec())
 end
 
@@ -273,15 +274,14 @@ function allocate_qv_workspace(grid::LatLonTargetGeometry,
 
     setup.needs_qv || return NoQVWorkspace{FT}()
 
-    # Detect thermo/target grid mismatch
-    Nx_thermo, Ny_thermo = _detect_thermo_grid_size(setup.thermo_path)
-    needs_interp = (Nx_thermo != Nx || Ny_thermo != Ny)
-    qv_thermo = needs_interp ? Array{Float64}(undef, Nx_thermo, Ny_thermo, Nz_native) :
-                               Array{Float64}(undef, 0, 0, 0)
-    if needs_interp
-        @info @sprintf("  QV interpolation: thermo %d×%d → target %d×%d",
-                       Nx_thermo, Ny_thermo, Nx, Ny)
-    end
+    # The thermo values are point values at the file coordinates; interpolate
+    # them to the target cell centres with weights built from those
+    # coordinates, also when the dimensions match (issue #63).
+    thermo_lon, thermo_lat = read_thermo_coordinates(setup.thermo_path)
+    Nx_thermo, Ny_thermo = length(thermo_lon), length(thermo_lat)
+    weights = LatLonBilinearWeights(thermo_lon, thermo_lat, grid.lons, grid.lats)
+    @info @sprintf("  QV interpolation: thermo %d×%d points → target %d×%d cell centres",
+                   Nx_thermo, Ny_thermo, Nx, Ny)
 
     qv_daily = maybe_preload_qv_day(setup.thermo_path, Nx_thermo, Ny_thermo,
                                     Nz_native, settings)
@@ -291,26 +291,9 @@ function allocate_qv_workspace(grid::LatLonTargetGeometry,
                                  Array{FT}(undef, Nx, Ny, Nz_native),
                                  Array{FT}(undef, Nx, Ny, Nz),
                                  settings.include_qv,
-                                 qv_thermo,
-                                 needs_interp,
+                                 Array{Float64}(undef, Nx_thermo, Ny_thermo, Nz_native),
+                                 weights,
                                  qv_daily)
-end
-
-"""
-    _detect_thermo_grid_size(thermo_path) -> (Nx, Ny)
-
-Read the lon/lat dimensions of the thermo NetCDF file.
-"""
-function _detect_thermo_grid_size(thermo_path::String)
-    NCDataset(thermo_path) do ds
-        q_var = ds["q"]
-        dims = dimnames(q_var)
-        if dims[1] == "longitude"
-            return (size(q_var, 1), size(q_var, 2))
-        else
-            return (size(q_var, 4), size(q_var, 3))
-        end
-    end
 end
 
 @inline has_daily_qv(qv::NativeQVWorkspace) = size(qv.qv_daily, 4) > 0
@@ -321,94 +304,54 @@ read_window_qv!(::NoQVWorkspace, args...) = nothing
     read_window_qv!(qv, win_idx, Nx, Ny, Nz_native)
 
 Load the humidity field associated with one analysis window into the native
-humidity workspace. When the thermo grid differs from the target grid,
-bilinear-interpolates QV to the target resolution.
+humidity workspace: read it on the thermo grid and bilinear-interpolate it to
+the target cell centres (`qv.weights`).
 """
 function read_window_qv!(qv::NativeQVWorkspace,
                          win_idx::Int,
                          Nx::Int,
                          Ny::Int,
                          Nz_native::Int)
-    if qv.needs_interp
-        Nx_t = size(qv.qv_thermo, 1)
-        Ny_t = size(qv.qv_thermo, 2)
-        if has_daily_qv(qv)
-            @views qv.qv_thermo .= qv.qv_daily[:, :, :, win_idx]
-        else
-            qv.qv_thermo .= read_qv_from_thermo(qv.thermo_path, win_idx, Nx_t, Ny_t, Nz_native; FT=Float64)
-        end
-        _interpolate_ll_qv!(qv.qv_native, qv.qv_thermo, Nx, Ny, Nx_t, Ny_t, Nz_native)
+    size(qv.qv_native) == (Nx, Ny, Nz_native) || throw(DimensionMismatch(
+        "humidity workspace is $(size(qv.qv_native)), the window needs ($Nx, $Ny, $Nz_native)"))
+    Nx_t, Ny_t = size(qv.qv_thermo, 1), size(qv.qv_thermo, 2)
+    if has_daily_qv(qv)
+        @views qv.qv_thermo .= qv.qv_daily[:, :, :, win_idx]
     else
-        if has_daily_qv(qv)
-            @views qv.qv_native .= qv.qv_daily[:, :, :, win_idx]
-        else
-            qv.qv_native .= read_qv_from_thermo(qv.thermo_path, win_idx, Nx, Ny, Nz_native; FT=Float64)
-        end
+        qv.qv_thermo .= read_qv_from_thermo(qv.thermo_path, win_idx, Nx_t, Ny_t, Nz_native; FT=Float64)
     end
+    _interpolate_ll_qv!(qv.qv_native, qv.qv_thermo, qv.weights)
     return nothing
 end
 
 """
-    _interpolate_ll_qv!(dst, src, Nx_dst, Ny_dst, Nx_src, Ny_src, Nz)
+    _interpolate_ll_qv!(dst, src, weights::LatLonBilinearWeights)
 
-Bilinear-interpolate QV from a regular LL source grid (ERA5 reanalysis,
-pole-inclusive: lats include both `-90` and `+90`) to the staging mesh
-target grid (cell-centered: lats span `-90 + Δ/2` to `90 - Δ/2` where
-`Δ = 180/Ny_dst`).
-
-Both source and target use cell-centered longitudes in `[-180, 180)` —
-caller is responsible for normalizing the source longitude convention
-upstream (see [`_normalize_lon_to_centered`](@ref) in `mass_support.jl`).
-
-The target latitude convention here matches `LatLonMesh.φᶜ`, so the
-interpolated QV lands at the same physical points as `transform.sp`,
-`merged.m_merged`, and the rest of the staging fields.
-
-Source grid layout (ERA5):
-- Longitudes: cell-centered, `Nx_src` points spanning a full `360°`
-  with spacing `Δλ = 360/Nx_src`. After [`_normalize_lon_to_centered`](@ref)
-  the array is in `[-180, 180)` convention.
-- Latitudes: pole-inclusive, `Ny_src` points spanning the full `180°`
-  with spacing `Δφ = 180/(Ny_src - 1)`, including both poles.
-
-Target grid layout (staging `LatLonMesh`):
-- Longitudes: cell-centered, `Nx_dst` points, spacing `Δλ = 360/Nx_dst`.
-- Latitudes: cell-centered, `Ny_dst` points, spacing `Δφ = 180/Ny_dst`,
-  starting at `-90 + Δφ/2` (south pole face is *not* a cell center).
+Bilinear-interpolate QV from the thermo grid `src` (point values, in the
+order of [`read_qv_from_thermo`](@ref)) to the target cell centres `dst`
+with the separable `weights` built from both grids' coordinates. For the
+ERA5 archive the source points are `(−180 + (i − 1)Δ, −90 + (j − 1)Δ)`
+(pole-inclusive) and the targets the `LatLonMesh` cell centres
+`(−180 + (i − ½)Δλ, −90 + (j − ½)Δφ)`, so the interpolated QV lands at the
+same points as `transform.sp`, `merged.m_merged` and the other staging
+fields.
 """
 function _interpolate_ll_qv!(dst::AbstractArray{<:Real, 3}, src::AbstractArray{<:Real, 3},
-                              Nx_dst::Int, Ny_dst::Int,
-                              Nx_src::Int, Ny_src::Int,
-                              Nz::Int)
-    Δlon_src = 360.0 / Nx_src
-    Δlat_src = 180.0 / (Ny_src - 1)   # source pole-inclusive
-    Δlon_dst = 360.0 / Nx_dst
-    Δlat_dst = 180.0 / Ny_dst         # target cell-centered (no -1)
-
-    @inbounds for k in 1:Nz, j in 1:Ny_dst, i in 1:Nx_dst
-        # Target cell center in degrees
-        lon = -180.0 + (i - 0.5) * Δlon_dst
-        lat = -90.0 + (j - 0.5) * Δlat_dst
-
-        # Source fractional indices — source is pole-inclusive so
-        # j_src = 1 corresponds to lat = -90, j_src = Ny_src to lat = +90.
-        if_val = (lon + 180.0) / Δlon_src + 0.5
-        jf_val = (lat + 90.0) / Δlat_src + 1.0
-
-        i0 = clamp(floor(Int, if_val), 1, Nx_src)
-        j0 = clamp(floor(Int, jf_val), 1, Ny_src - 1)
-        i1 = i0 == Nx_src ? 1 : i0 + 1  # periodic longitude
-        j1 = min(j0 + 1, Ny_src)
-
-        wi = if_val - floor(if_val)
-        wj = jf_val - j0
-
-        dst[i, j, k] = (1 - wi) * (1 - wj) * src[i0, j0, k] +
-                        wi       * (1 - wj) * src[i1, j0, k] +
-                        (1 - wi) * wj       * src[i0, j1, k] +
-                        wi       * wj       * src[i1, j1, k]
+                              w::LatLonBilinearWeights)
+    size(dst, 1) == length(w.i0) && size(dst, 2) == length(w.j0) ||
+        throw(DimensionMismatch("interpolation weights are for $(length(w.i0))×$(length(w.j0)) " *
+                                "targets, the field is $(size(dst, 1))×$(size(dst, 2))"))
+    size(src, 3) == size(dst, 3) || throw(DimensionMismatch(
+        "source has $(size(src, 3)) levels, the target $(size(dst, 3))"))
+    @inbounds for k in axes(dst, 3), j in axes(dst, 2)
+        j0, j1, wj = w.j0[j], w.j1[j], w.wj[j]
+        for i in axes(dst, 1)
+            i0, i1, wi = w.i0[i], w.i1[i], w.wi[i]
+            dst[i, j, k] = (1 - wj) * ((1 - wi) * src[i0, j0, k] + wi * src[i1, j0, k]) +
+                           wj       * ((1 - wi) * src[i0, j1, k] + wi * src[i1, j1, k])
+        end
     end
-    return nothing
+    return dst
 end
 
 read_next_day_qv!(::NoQVWorkspace, args...) = nothing
@@ -428,14 +371,9 @@ function read_next_day_qv!(qv::NativeQVWorkspace,
     next_thermo_path = joinpath(settings.thermo_dir,
                                 "era5_thermo_ml_$(Dates.format(date + Day(1), "yyyymmdd")).nc")
     isfile(next_thermo_path) || error("Thermo file not found: $next_thermo_path")
-    if qv.needs_interp
-        Nx_t = size(qv.qv_thermo, 1)
-        Ny_t = size(qv.qv_thermo, 2)
-        qv.qv_thermo .= read_qv_from_thermo(next_thermo_path, 1, Nx_t, Ny_t, Nz_native; FT=Float64)
-        _interpolate_ll_qv!(qv.qv_native, qv.qv_thermo, Nx, Ny, Nx_t, Ny_t, Nz_native)
-    else
-        qv.qv_native .= read_qv_from_thermo(next_thermo_path, 1, Nx, Ny, Nz_native; FT=Float64)
-    end
+    Nx_t, Ny_t = size(qv.qv_thermo, 1), size(qv.qv_thermo, 2)
+    qv.qv_thermo .= read_qv_from_thermo(next_thermo_path, 1, Nx_t, Ny_t, Nz_native; FT=Float64)
+    _interpolate_ll_qv!(qv.qv_native, qv.qv_thermo, qv.weights)
     return nothing
 end
 
@@ -505,18 +443,21 @@ function store_qv_output!(storage::WindowStorage,
 end
 
 """
-    apply_structured_pole_constraints!(am, bm)
+    close_pole_faces!(bm)
 
-Enforce the structured lat-lon polar boundary conditions after vertical merging.
+Zero the meridional fluxes through the two pole faces of a global lat-lon
+mesh, `bm[:, 1, :]` (`φ = −90°`) and `bm[:, Ny+1, :]` (`φ = +90°`). These faces
+have zero length and are the only closed faces of the mesh. The pole rows are
+ordinary cells and keep their zonal fluxes `am[:, 1, :]` and `am[:, Ny, :]`:
+zeroing those leaves a flow across the pole no path through the polar cap, and
+the column balance then re-routes `bm` at every latitude (issue #58; the same
+zeroing was removed once before, see
+`docs/resources/bug_archive/SESSION1_GRID_CM_FIX_2026-04-03.md`, section 3).
 """
-function apply_structured_pole_constraints!(am::AbstractArray{FT, 3},
-                                            bm::AbstractArray{FT, 3}) where FT
-    Ny = size(am, 2)
-    @views am[:, 1, :] .= zero(FT)
-    @views am[:, Ny, :] .= zero(FT)
+function close_pole_faces!(bm::AbstractArray{FT, 3}) where FT
     @views bm[:, 1, :] .= zero(FT)
-    @views bm[:, Ny + 1, :] .= zero(FT)
-    return nothing
+    @views bm[:, size(bm, 2), :] .= zero(FT)
+    return bm
 end
 
 """
@@ -558,7 +499,7 @@ function merge_native_window!(merged::MergeWorkspace{FT},
         merge_cell_field!(merged.bm_merged, merged.bm_native, vertical.merge_map)
     end
 
-    apply_structured_pole_constraints!(merged.am_merged, merged.bm_merged)
+    close_pole_faces!(merged.bm_merged)
 
     recompute_cm_from_divergence!(merged.cm_merged, merged.am_merged, merged.bm_merged, merged.m_merged;
                                   B_ifc=vertical.merged_vc.B)
@@ -682,10 +623,6 @@ function process_window!(win_idx::Int,
                          qv::AbstractQVWorkspace{FT},
                          storage::WindowStorage{FT},
                          ps_offsets::AbstractVector{<:Real};
-                         physics_reader = nothing,
-                         tm5_ws = nothing,
-                         tm5_source_ps = nothing,
-                         tm5_stats = nothing,
                          surface_reader = nothing) where FT
     Nx = size(transform.sp, 1)
     Ny = size(transform.sp, 2)
@@ -707,20 +644,6 @@ function process_window!(win_idx::Int,
     merge_native_window!(merged, transform, qv, vertical, settings)
     store_window_fields!(storage, merged, transform.sp, qv, win_idx)
 
-    # TM5 convection step — runs only when the caller wired up a physics BIN
-    # reader and TM5 workspace.  The physics BIN omits PS.  Native LL keeps
-    # using the target PS fast path; source!=target LL synthesizes PS on the
-    # physics source grid and applies the same scalar mass-fix offset as the
-    # target transport grid before TM5 conversion.
-    if settings.tm5_convection_enable && physics_reader !== nothing
-        ps_tm5 = tm5_source_ps === nothing ? transform.sp :
-                 synthesize_tm5_source_pressure!(
-                     tm5_source_ps, spec.lnsp_all[hour], spec.T;
-                     ps_offset = ps_offsets[win_idx])
-        _store_window_tm5_fields!(storage, win_idx,
-                                   physics_reader, tm5_ws,
-                                   ps_tm5, vertical, tm5_stats, FT)
-    end
     if _settings_include_surface(settings) && surface_reader !== nothing
         _store_window_surface_fields!(storage, win_idx, surface_reader, FT)
     end
@@ -742,37 +665,5 @@ function _store_window_surface_fields!(storage::WindowStorage{FT},
     storage.all_t2m[win_idx] = surface.t2m
     storage.all_ustar[win_idx] = surface.ustar
     storage.all_hflux[win_idx] = surface.hflux
-    return nothing
-end
-
-# Per-window TM5 compute + store.
-# `ps_source` is on the TM5 physics source grid. For source==target this is
-# the main transport `transform.sp`; for lower-resolution LL targets it comes
-# from `TM5SourcePressureWorkspace`.
-# `win_idx` is the 1-indexed physics-BIN hour slot (matches the
-# 24 hourly slices in the Commit-2 daily BIN).
-function _store_window_tm5_fields!(storage::WindowStorage{FT},
-                                    win_idx::Int,
-                                    physics_reader,
-                                    tm5_ws::TM5PreprocessingWorkspace{FT},
-                                    ps_source::AbstractMatrix,
-                                    vertical,
-                                    tm5_stats,
-                                    ::Type{FT}) where FT
-    compute_tm5_merged_hour_on_source!(
-        tm5_ws, physics_reader, win_idx, ps_source,
-        vertical.ab.a_ifc, vertical.ab.b_ifc,
-        vertical.Nz_native, vertical.merge_map;
-        stats = tm5_stats)
-
-    Nx_t, Ny_t, Nz = tm5_ws.target_nlon, tm5_ws.target_nlat, size(tm5_ws.entu_merged_src, 3)
-    storage.all_entu[win_idx] = Array{FT, 3}(undef, Nx_t, Ny_t, Nz)
-    storage.all_detu[win_idx] = Array{FT, 3}(undef, Nx_t, Ny_t, Nz)
-    storage.all_entd[win_idx] = Array{FT, 3}(undef, Nx_t, Ny_t, Nz)
-    storage.all_detd[win_idx] = Array{FT, 3}(undef, Nx_t, Ny_t, Nz)
-    tm5_copy_or_regrid_ll!(storage.all_entu[win_idx], tm5_ws.entu_merged_src, tm5_ws)
-    tm5_copy_or_regrid_ll!(storage.all_detu[win_idx], tm5_ws.detu_merged_src, tm5_ws)
-    tm5_copy_or_regrid_ll!(storage.all_entd[win_idx], tm5_ws.entd_merged_src, tm5_ws)
-    tm5_copy_or_regrid_ll!(storage.all_detd[win_idx], tm5_ws.detd_merged_src, tm5_ws)
     return nothing
 end

@@ -112,6 +112,10 @@ end
             loaded = MD.load_window!(reader, 1)
             @test loaded.vdiff.u == vdiff.u && loaded.vdiff.v == vdiff.v
             @test loaded.vdiff.t == vdiff.t && loaded.vdiff.qv == vdiff.qv
+            # One window's humidity alone (observation sampling reads the next window's).
+            qv = ntuple(_ -> zeros(FT, Nc, Nc, Nz), np)
+            @test MD.load_vdiff_qv_window!(qv, reader, 1) === qv && qv == vdiff.qv
+            @test_throws DimensionMismatch MD.load_vdiff_qv_window!(ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), np), reader, 1)
             @test loaded.surface.pblh == surface.pblh                 # neighbours unaffected
         finally
             close(reader.io)

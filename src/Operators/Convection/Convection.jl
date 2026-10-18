@@ -36,8 +36,8 @@ topologies (LL / RG / CS).
 
 The operator takes `ConvectionForcing` directly (not a transport
 window or driver). `_refresh_forcing!` populates
-`model.convection_forcing` each substep by copying from
-`sim.window.convection`. `TransportModel.step!` executes the convection
+`model.convection_forcing` at the first substep of each window by copying
+from `sim.window.convection`. `TransportModel.step!` executes the convection
 block between transport and chemistry. No `meteo` kwarg — the forcing
 arrays are the time information; the operator does not call
 `current_time`.
@@ -65,7 +65,7 @@ using ...State: CellState, CubedSphereState
 using ...Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cell_areas_by_latitude
 using ...MetDrivers: ConvectionForcing
 using ...Architectures: _kahan_add, _neumaier_sum, _ledger_residual, _ledger_deposit,
-                       _load_ledger_carry, _store_ledger_carry!, launch!
+                       _load_ledger_carry, _store_ledger_carry!, launch!, select_panel
 import ..apply!
 import ..AbstractConvection             # global root from src/Operators/AbstractOperators.jl
 

@@ -91,20 +91,71 @@ end
 struct NoQualityFilter <: AbstractQualityFilter end
 
 """
-    OCO2LiteSource(path_template, quality_filter)
+    AbstractAveragingKernelOutput
+
+Whether an OCO-2 source's soundings also get the averaging-kernel column of
+the sampled model profile: [`NoAveragingKernels`](@ref) (the default) or
+[`AveragingKernelColumns`](@ref).
+"""
+abstract type AbstractAveragingKernelOutput end
+
+"No averaging-kernel columns (the default): the reader reads no retrieval fields."
+struct NoAveragingKernels <: AbstractAveragingKernelOutput end
+
+"""
+    AveragingKernelColumns(tracers, mapping = HatLevelProjection())
+
+`averaging_kernel_tracers = [...]` on an `oco2_lite` source: the reader also
+reads each sounding's retrieval (levels, pressure weights, averaging kernel,
+prior, prior column; [`read_oco2_retrieval_columns`](@ref)), and the sampler
+writes, for each tracer of `tracers`, the averaging-kernel column
+``X = X_a + \\sum_i h_i a_i ((P x)_i - x_{a,i})`` of the sampled profile as
+`<tracer>_ak_column`, with the operator of the 4D-Var
+([`retrieval_column_weights!`](@ref)). `mapping` (`averaging_kernel_mapping`)
+is [`HatLevelProjection`](@ref) (`"hat"`, the levels as given) or
+[`LayerRebin`](@ref) (`"tm5"`, TM5-4DVar's 19 layers,
+[`tm5_layer_column`](@ref)). The prior term belongs to the retrieved gas, so
+name the tracer that carries it (total CO2), not components of it.
+"""
+struct AveragingKernelColumns{M <: AbstractRetrievalMapping} <: AbstractAveragingKernelOutput
+    tracers::Vector{Symbol}
+    mapping::M
+    function AveragingKernelColumns(tracers::AbstractVector,
+                                    mapping::M = HatLevelProjection()) where {M <: AbstractRetrievalMapping}
+        isempty(tracers) && throw(ArgumentError("averaging-kernel output needs at least one tracer"))
+        allunique(tracers) || throw(ArgumentError("averaging-kernel tracers repeat: $(tracers)"))
+        return new{M}(Symbol.(tracers), mapping)
+    end
+end
+
+averaging_kernel_tracers(::NoAveragingKernels) = Symbol[]
+averaging_kernel_tracers(a::AveragingKernelColumns) = a.tracers
+
+"""
+    OCO2LiteSource(path_template, quality_filter[, averaging_kernel = NoAveragingKernels()])
 
 NASA OCO-2/OCO-3 Lite XCO2 files, or the OCO-2 v11 MIP 10-second average
 files (same `sounding_id`, `time`, `latitude`, `longitude` layout). Records
-passing `quality_filter` become point events.
+passing `quality_filter` become point events. With
+`averaging_kernel = AveragingKernelColumns(tracers)` (opt-in) the reader also
+reads each record's retrieval and the sampler writes averaging-kernel
+columns of the named tracers ([`AveragingKernelColumns`](@ref)).
 """
-struct OCO2LiteSource{Q <: AbstractQualityFilter} <: AbstractObservationSource
+struct OCO2LiteSource{Q <: AbstractQualityFilter, A <: AbstractAveragingKernelOutput} <: AbstractObservationSource
     path_template::String
     quality_filter::Q
-    OCO2LiteSource(path_template::AbstractString, quality_filter::Q) where {Q <: AbstractQualityFilter} =
-        new{Q}(String(path_template), quality_filter)
+    averaging_kernel::A
+    OCO2LiteSource(path_template::AbstractString, quality_filter::Q,
+                   averaging_kernel::A = NoAveragingKernels()) where {Q <: AbstractQualityFilter,
+                                                                       A <: AbstractAveragingKernelOutput} =
+        new{Q, A}(String(path_template), quality_filter, averaging_kernel)
 end
 OCO2LiteSource(path_template::AbstractString, quality_flag_max::Integer) =
     OCO2LiteSource(path_template, QualityFlagFilter("xco2_quality_flag", quality_flag_max))
+
+"The tracers whose averaging-kernel columns a source asks for (none by default)."
+averaging_kernel_tracers(source::OCO2LiteSource) = averaging_kernel_tracers(source.averaging_kernel)
+averaging_kernel_tracers(::AbstractObservationSource) = Symbol[]
 
 """
     ObsPackSource(path_template, mode, site_grouping)
@@ -126,7 +177,8 @@ end
 Generic point list as CSV, TOML, or NetCDF. Point events need `id`, `time`
 (ISO-8601 UTC), `lat`, `lon`; sites need `id`, `lat`, `lon`. Both accept
 `elevation` (m asl) and `intake_height` (m above ground) or `altitude`
-(m asl, converted with `elevation`). Sites may add `start_time`/`end_time`
+(m asl, converted with `elevation`, else placed by [`resolve_placement`](@ref)).
+Sites may add `start_time`/`end_time`
 ([`TimeRange`](@ref)) or `times` ([`TimeList`](@ref)).
 """
 struct TableSource{M <: AbstractObservationMode,
@@ -149,7 +201,8 @@ source_path_template(source::AbstractObservationSource) = source.path_template
 # the allowed keys and the parser, so adding a kind touches one type only.
 const _SOURCE_TYPES = (oco2_lite = OCO2LiteSource, obspack = ObsPackSource, table = TableSource)
 source_keys(::Type{<:OCO2LiteSource}) = ("kind", "path", "mode", "quality_filter", "quality_variable",
-                                          "quality_flag_max", "quality_flag_values")
+                                          "quality_flag_max", "quality_flag_values", "averaging_kernel_tracers",
+                                          "averaging_kernel_mapping")
 source_keys(::Type{<:ObsPackSource}) = ("kind", "path", "mode", "site_grouping")
 source_keys(::Type{<:TableSource}) = ("kind", "path", "mode", "format")
 
@@ -217,7 +270,26 @@ end
 
 function _parse_source(::Type{<:OCO2LiteSource}, cfg, path, label)
     _check_oco2_mode(_source_mode(cfg, label; default = SoundingMode()), label)
-    return OCO2LiteSource(path, _parse_quality_filter(cfg, label))
+    return OCO2LiteSource(path, _parse_quality_filter(cfg, label), _parse_averaging_kernel(cfg, label))
+end
+
+# `averaging_kernel_tracers` opts in to the averaging-kernel columns;
+# `averaging_kernel_mapping` ("hat", the default, or "tm5") applies only then.
+function _parse_averaging_kernel(cfg, label)
+    if !haskey(cfg, "averaging_kernel_tracers")
+        haskey(cfg, "averaging_kernel_mapping") && throw(ArgumentError(
+            "$(label).averaging_kernel_mapping has no effect without averaging_kernel_tracers"))
+        return NoAveragingKernels()
+    end
+    tracers = cfg["averaging_kernel_tracers"]
+    tracers isa AbstractVector && !isempty(tracers) && all(t -> t isa AbstractString && !isempty(t), tracers) ||
+        throw(ArgumentError("$(label).averaging_kernel_tracers must be a non-empty array of tracer names; got " *
+                            "$(repr(tracers))"))
+    mapping = get(cfg, "averaging_kernel_mapping", "hat")
+    mapping isa AbstractString || throw(ArgumentError(
+        "$(label).averaging_kernel_mapping must be a string; got $(repr(mapping))"))
+    return AveragingKernelColumns(Symbol.(tracers),
+                                  oco2_level_form_from_label(mapping, "$(label).averaging_kernel_mapping"))
 end
 
 _check_oco2_mode(::SoundingMode, label) = nothing

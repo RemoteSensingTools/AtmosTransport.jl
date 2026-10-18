@@ -90,6 +90,75 @@ with the corresponding operator, forcing, and workspace keywords. Unsupported
 physics combinations fail validation instead of silently using an incomplete
 transpose.
 
+## The forward model the adjoint transposes
+
+A footprint is a derivative of the production model, so the adjoint's forward
+model is the production step of a run with surface fluxes
+(`TransportModel.step!`: the transport palindrome of `strang_split!`, then
+convection). Write `x_n` for the tracer mass on the six panels, interiors and
+halos, before step `n` of length `Δt`. Read operator products right to left:
+
+```math
+x_{n+1} = \mathcal{K}_n \, \mathcal{R}_n \, \mathcal{C}_n \, \mathcal{F}_n \, \mathcal{H} \, x_n ,
+\qquad
+\mathcal{F}_n = (\mathcal{Z}\mathcal{Y}\mathcal{X})^{s}, \quad
+\mathcal{R}_n = (\mathcal{X}\mathcal{Y}\mathcal{Z})^{s}.
+```
+
+- ``\mathcal{H}`` is the step-start halo refresh (`fill_cs_step_start_halos!`):
+  every edge halo cell, then every corner cell in the X-sweep orientation,
+  becomes a copy of an interior cell of a neighbouring panel. The first X
+  sweep of the step reads these halos, and the previous step's convection
+  changed the interiors they mirror.
+- ``\mathcal{F}_n`` and ``\mathcal{R}_n`` are the two halves of the transport
+  palindrome with `s` CFL subcycles, every flux divided by `s`, with the halo
+  exchanges between sweeps.
+- ``\mathcal{K}_n`` is the convection column operator (TM5 or CMFMC).
+- ``\mathcal{C}_n`` is the palindrome center. With surface-flux injection
+  ``\mathcal{S}_n(\Delta t)`` (adds ``E_n \Delta t`` to the surface layer) and
+  the backward-Euler diffusion solve ``\mathcal{V}(\tau) = (I - \tau D)^{-1}``,
+  the diffusion operator's `surface_flux_coupling` selects
+
+```math
+\mathcal{C}_n =
+\begin{cases}
+\mathcal{V}(\Delta t/2)\,\mathcal{S}_n(\Delta t)\,\mathcal{V}(\Delta t/2) & \texttt{SplitSurfaceFluxCoupling} \\
+\mathcal{V}(\Delta t)\,\mathcal{S}_n(\Delta t) & \texttt{DiffusiveSurfaceFluxBoundary}
+\end{cases}
+```
+
+Backward Euler is not a semigroup, ``\mathcal{V}(\Delta t) \neq
+\mathcal{V}(\Delta t/2)^2``, so the two couplings are different models that
+differ at ``O((\Delta t\,D)^2)``; the adjoint must transpose the one the run
+uses. One function, `surface_flux_center!`, defines this order for production
+(through `palindrome_center!`), for the tape-free forward replays and for the
+tape recorders.
+
+The reverse pass applies the transposes in the opposite order,
+``\mathcal{H}^T \mathcal{F}_n^T \mathcal{C}_n^T \mathcal{R}_n^T \mathcal{K}_n^T``.
+``E_n`` enters only through ``\mathcal{S}_n``, so
+
+```math
+\frac{\partial J}{\partial E_n} = \Delta t \, \lambda_n^{S}\big|_{k = N_z},
+```
+
+where ``\lambda_n^{S}`` is the adjoint state at the position of
+``\mathcal{S}_n``: the final seed propagated back through all later steps,
+``\mathcal{K}_n^T``, ``\mathcal{R}_n^T``, and the part of the center after
+the injection, ``\mathcal{V}(\Delta t/2)^T`` or ``\mathcal{V}(\Delta t)^T``.
+The tape marks that position with its midpoint record. ``\mathcal{H}`` is a
+linear copy, ``h = P\,i`` from interior to halo, so ``\mathcal{H}^T`` adds each
+halo sensitivity into its source interior cell and zeroes the halo. Without
+``\mathcal{H}`` the replayed X sweep would read halos copied before the
+previous step's convection: a different operator from production, whose
+error grew with the step count and the convective mass flux, and which
+also made a checkpoint window that restarts with fresh halos disagree with
+the full tape. Lin–Rood's horizontal operator refills the halos it reads, so
+its steps need no ``\mathcal{H}``.
+`test/core/test_cs_adjoint_production_parity.jl` checks the replay against
+`TransportModel.step!` for both couplings with TM5 and CMFMC convection, and
+the footprints against finite differences of the production model.
+
 ## From footprints to 4D-Var
 
 The inversion layer composes the reverse pass rather than reimplementing it:
@@ -98,10 +167,21 @@ The inversion layer composes the reverse pass rather than reimplementing it:
 | --- | --- |
 | `cs_surface_emission_footprint` | One scalar objective to per-step emission sensitivities. |
 | `cs_surface_flux_jacobian` | Batch objectives and aggregate steps into named control windows. |
-| `cs_surface_flux_4dvar` | Evaluate observation/background cost and its control gradient. |
+| `cs_surface_flux_4dvar` | Evaluate observation/background cost and its control gradient, with one taped run and one reverse pass for all observations. |
 | `cs_surface_flux_4dvar_optimize` | Optimize with `CSGradientDescent` or `CSLBFGS`. |
-| `read_observations`, `bind_to_mesh` | Read point observations and bind them to CS column-mean objectives (altitude is ignored; see Current limits). |
-| `read_departures`, `write_departures` | Exchange modeled-minus-observed diagnostics. |
+| `read_observations`, `bind_to_mesh` | Read observation files (schema v2) and bind each record to its cell and time sampling: point records to `CSPlacedPointObjective`s placed in the column by the forward sampler's rule (height above ground and/or pressure), column records to column means. |
+| `build_departure_set`, `read_departures`, `write_departures` | Exchange modeled-minus-observed diagnostics with each observation's sampled steps, levels and placement. |
+
+As in TM5-4DVAR, one gradient is one adjoint integration. Each observation
+is a fixed linear functional of the tracer mass after its model step (weights
+from the replayed air mass); `cs_surface_flux_4dvar` runs the forward model
+for the simulated values, tapes one run to the last observation step, and
+walks that tape back once, adding every observation's weighted departure
+`(H(x) − y)/σ²` at the end of its step, before the transposed convection of
+that step (TM5 adds its forcing just before the adjoint of the operator after
+which it sampled). See the [single-sweep gradient](@ref single-sweep-4dvar-gradient).
+`cs_surface_flux_jacobian` records its tape once and walks it once per
+objective.
 
 Controls are `CSSurfaceFluxControl` values associated with
 `CSSurfaceFluxWindow`s. A `CSSurfaceFluxPreconditioner` can apply either a
@@ -111,8 +191,8 @@ the exact keyword contracts in [Adjoints and checkpointing API](@ref).
 
 ## Tape and checkpoint choices
 
-The forward pass records typed advection, halo, midpoint, diffusion, and
-convection operations. Lin-Rood horizontal updates use an additional dedicated
+The forward pass records typed advection, halo, midpoint, diffusion,
+convection, and end-of-step operations. Lin-Rood horizontal updates use an additional dedicated
 record. The reverse loop dispatches on those record types and calls the
 matching transpose kernel.
 
@@ -121,7 +201,7 @@ matching transpose kernel.
 | Value | Use |
 | --- | --- |
 | `:device` | Default and simplest choice for short runs. |
-| `:pinned_host` | Move staged data to pinned host memory when device memory is limiting. |
+| `:pinned_host` | Move staged data to pinned host memory when device memory is limiting. Reads come back through one device buffer per operand (air mass, tracer mass). |
 | `:mmap` | Store records under an on-disk directory for long or inspectable runs. |
 
 With `:mmap`, pass `tape_path` when the files must persist beyond the API call.
@@ -139,46 +219,60 @@ The `checkpoint` keyword controls the memory/recompute trade-off:
 
 `RevolveCheckpoint()` is a bisection schedule inspired by Revolve, not the
 optimal binomial Griewank-Walther schedule and not a user-specified snapshot
-budget. Use `StrideCheckpoint(k)` when bitwise parity with a full checkpoint is
-more important than minimum storage; nonlinear limiter branches can differ at
-roundoff level after recursive replay.
+budget. All three schedules record the same states: every step starts from
+the step-start halo refresh, so a window that restarts at a step boundary
+sees the halos of the full tape. Stride and Revolve footprints agree with
+`FullCheckpoint` to rounding (tested at `1e-12`) for every supported scheme,
+including limited PPM with diffusion and convection. An earlier Revolve drift
+of order `1e-7` in that configuration came from a missing step-start halo
+refresh in the recorders, not from limiter flips.
 
 ## How this maps to established systems
 
 | Task | TM5-4DVAR / GEOS-Chem adjoint | AtmosTransport |
 | --- | --- | --- |
 | Forward integration | Separate CTM driver | `run_driven_simulation` or the lower-level CS arrays |
-| Reverse forcing | Observation operator | `CSObservation` objectives or an explicit seed |
-| Observation IO | System-specific files | `CSObservationSet` NetCDF IO + `bind_to_mesh` |
+| Reverse forcing | Observation operator, departures injected during one adjoint run | `CSObservation` objectives as linear functionals, injected at each step's end in one reverse pass, or an explicit seed |
+| Observation IO | System-specific files | `CSObservationSet` NetCDF IO (schema v2) + `bind_to_mesh` |
 | Background covariance | B or B¹ᐟ² implementation | `DiagonalCSCovariance` / `IsotropicGaussianCSCovariance` |
 | Preconditioning | Hand-coded control transform | `CSSurfaceFluxPreconditioner` |
 | Optimization | M1QN3 / L-BFGS variants | `CSGradientDescent` / `CSLBFGS` |
 | Driver | Dedicated inversion executable | `scripts/inversions/cs_4dvar.jl` for the synthetic workflow |
 
+Point observations are placed as TM5-4DVAR places them in spirit, with
+deliberate differences: by their height above the true ground measured up
+from the model surface (TM5 compares sea-level altitudes with heights on the
+model orography and never samples layer 1), or by pressure, in the forward
+run and in the adjoint alike (TM5's adjoint ignores the pressure
+coordinate). Windows are Δt/ΣΔt means as in TM5, with a step partly inside
+the window weighted by its overlap; the sample is taken after the full step
+(after convection). See [observation operators](@ref placed-observation-operator).
+
+Satellite and TCCON columns with a retrieval block use TM5-4DVAR's
+averaging-kernel operator (`averaging_kernels.F90`: the stretch of the model
+column onto the retrieval column, the mass-conserving rebin of `inv_rebin`,
+``X = \sum_i h_i a_i (R x)_i + \sum_i h_i (1 - a_i) x_{a,i}``), applied in the
+model to the dry mixing ratios on total interface pressures rather than in
+Python to the track file's moist profiles, with an explicit surface-pressure
+mismatch limit (`max_surface_pressure_mismatch_pa`) and a model-error term
+fixed by the record. See [averaging-kernel columns](@ref retrieval-column-operator).
+
+OCO-2 and OCO-3 retrievals sit on 20 levels. TM5-4DVAR turns the levels into
+the interfaces of 19 layers, interpolates the kernel and prior to the layer
+midpoints and uses ``h = \Delta p/p_s`` (summing to 0.9999); AtmosTransport
+projects the model profile onto the levels' hat functions with the file's
+pressure weights instead, which conserves the column and keeps the
+retrieval's representation. TM5's form is available for comparisons (with its
+weights normalized to 1). Records not assimilated (withheld,
+evaluation-only) can be co-sampled without entering the cost, which the MIP
+asks for and TM5's MIP setup does differently (it assimilates
+`assimilate_flag` 1 and 2). See [level retrievals](@ref hat-level-projection)
+and [OCO-2 MIP records](@ref oco2-mip-records).
+
 ## Current limits
 
-- One adjoint run per observation. `cs_surface_flux_4dvar` runs the forward
-  model once for the simulated values, then for every observation re-runs it
-  with a tape up to the observation's step and runs a separate reverse pass.
-  The cost of one cost-and-gradient evaluation therefore grows linearly with
-  the number of observations, where TM5-4DVAR injects all weighted
-  departures into a single adjoint sweep. This is practical for small
-  synthetic experiments, not for ObsPack (about `10⁵` records) or OCO-2
-  (about `10⁶` soundings) volumes, where one gradient would need that many
-  adjoint runs.
-- Observations lose their altitude. `bind_to_mesh` turns every record into
-  an air-mass-weighted column mean (`CSColumnMeanObjective`) of its cell and
-  ignores `alt`, so a surface site and an aircraft sample in the same cell
-  and step get the same observation operator. That is wrong for surface
-  in-situ and aircraft data. Layer binding needs an above-ground intake
-  height or a pressure: the observation schema stores `alt` above sea level
-  and transport binaries carry no surface elevation. The forward
-  observation sampler (`[output.observations]`) already places intake
-  heights in layers. There is no averaging-kernel column operator for
-  satellite or TCCON columns either: `cs_surface_flux_4dvar` evaluates only
-  `CSLayerMeanObjective` and `CSColumnMeanObjective`, and
-  `cs_surface_emission_footprint_from_seed` gives footprints for other
-  operators but no cost.
+- The inversion driver binds observation files on its synthetic hydrostatic
+  meteorology only; real transport binaries need the Julia API.
 - CMFMC requires `clamp = false` in the footprint path.
 - TM5 and CMFMC-matrix convection require the full, unmerged,
   non-collaborative solve (`use_collab_lu = false`, `lmax_conv = 0`,

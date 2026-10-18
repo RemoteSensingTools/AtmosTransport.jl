@@ -31,8 +31,8 @@ NOT line-by-line GCHP RAS — see the module-top comment for the two
 intentional divergences (cloud-base proxy + Pass-0 closure).
 
 No struct fields — the forcing arrays (`cmfmc`, optionally `dtrain`)
-arrive via `TransportModel.convection_forcing`, populated each substep by
-`DrivenSimulation._refresh_forcing!` from `sim.window.convection`.
+arrive via `TransportModel.convection_forcing`, populated at the first substep
+of each window by `DrivenSimulation._refresh_forcing!` from `sim.window.convection`.
 
 # Basis convention
 
@@ -344,19 +344,18 @@ function apply_convection!(q_raw::NTuple{6, <:AbstractArray{FT, 4}},
     sdt = FT(dt) / FT(n_sub)
 
     backend = get_backend(q_raw[1])
-    kernel = _cmfmc_cs_panel_column_kernel!(backend, (16, 16))
+    # One launch per substep covers the six panels (the third index selects
+    # the panel); each column runs as in a one-panel launch.
+    kernel = _cmfmc_cs_panels_column_kernel!(backend, (16, 16))
     # The clamped variant is not ledgered and keeps no carry.
     carry = op.clamp ? nothing : _cmfmc_ledger_carry!(workspace, (Nc, Nc, Nt))
+    carry_panels = ntuple(p -> carry === nothing ? nothing : carry[p], 6)
+    cloud_base = ntuple(p -> _panel_cloud_base(op.cloud_base, forcing, p), 6)
 
     for _ in 1:n_sub
-        for p in 1:6
-            kernel(q_raw[p], carry === nothing ? nothing : carry[p], air_mass[p], cmfmc[p],
-                   dtrain_arr[p], cell_areas[p],
-                   _panel_cloud_base(op.cloud_base, forcing, p),
-                   workspace.qc_scratch[p],
-                   Nz, Nt, sdt, Hp, Val(has_dtrain_val), Val(op.clamp);
-                   ndrange = (Nc, Nc))
-        end
+        kernel(q_raw, carry_panels, air_mass, cmfmc, dtrain_arr, cell_areas, cloud_base,
+               workspace.qc_scratch, Nz, Nt, sdt, Hp, Val(has_dtrain_val), Val(op.clamp);
+               ndrange = (Nc, Nc, 6))
     end
     synchronize(backend)
     return nothing

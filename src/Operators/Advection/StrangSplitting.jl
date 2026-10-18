@@ -52,6 +52,10 @@ Perform one full Strang-split advection step on a structured mesh.
   half    half   full  half    half
 ```
 
+When the palindrome outflow budget needs `n > 1` subcycles, the step runs
+`(X → Y → Z)^n → midpoint → (Z → Y → X)^n` with every flux divided by `n`
+(see [`strang_split_mt!`](@ref)).
+
 All `Nt = ntracers(state)` tracers are advanced together in a single
 multi-tracer kernel launch per direction. The mass update is computed
 once per cell; tracer fluxes are evaluated per-tracer inside the
@@ -72,7 +76,7 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                        scheme::AbstractAdvectionScheme;
                        workspace::AdvectionWorkspace,
                        diffusion_workspace = nothing,
-                       cfl_limit::Real = one(eltype(state.air_mass)),
+                       cfl_limit::Real = DEFAULT_CFL_LIMIT,
                        diffusion_op::AbstractDiffusion = NoDiffusion(),
                        emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                        meteo = nothing,
@@ -102,6 +106,30 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                        workspace::AdvectionWorkspace) where {B <: AbstractMassBasis}
     throw(ArgumentError("CubedSphereMesh remains metadata-only in src; structured advection is only supported on LatLonMesh until cubed-sphere geometry/connectivity are implemented"))
 end
+
+"""
+    palindrome_center!(diffuse!, emit!, diffusion_op, emissions_op, dt)
+
+Physics at the center of one transport palindrome of length `dt`. Without a
+surface-flux operator (`NoSurfaceFlux`) the center is one vertical diffusion
+solve, `diffuse!(dt)` (a no-op for `NoDiffusion`). With one, the diffusion
+operator's coupling orders the two through `surface_flux_center!`:
+`V(dt/2) → S(dt) → V(dt/2)` (`SplitSurfaceFluxCoupling`) or `S(dt) → V(dt)`
+(`DiffusiveSurfaceFluxBoundary`).
+
+`diffuse!(τ)` and `emit!(τ)` apply vertical diffusion and the surface flux
+over `τ` to the caller's state. Every production palindrome (cubed-sphere,
+lat-lon and reduced-Gaussian) builds its center with this function. The
+cubed-sphere adjoint replays a run with a surface-flux operator (a footprint
+is the derivative with respect to its emissions), so it calls
+`surface_flux_center!` with the same coupling.
+"""
+@inline palindrome_center!(diffuse!::D, emit!::E, _diffusion_op, ::NoSurfaceFlux,
+                           dt) where {D, E} = (diffuse!(dt); nothing)
+
+@inline palindrome_center!(diffuse!::D, emit!::E, diffusion_op,
+                           ::AbstractSurfaceFluxOperator, dt) where {D, E} =
+    surface_flux_center!(diffuse!, emit!, surface_flux_coupling(diffusion_op), dt)
 
 @inline function _copy_cs_storage!(dest::NTuple{6}, src::NTuple{6})
     @inbounds for p in 1:6
@@ -227,40 +255,20 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
     n_tr = ntracers(state)
     n_tr == 0 && return nothing
 
-    fill_panel_halos!(state.air_mass, grid.horizontal; dir=1)
-
     m = state.air_mass
     subcycle_count = _cs_runtime_subcycle_count(meteo)
+    deposit = center_emission_deposit(surface_flux_coupling(diffusion_op), diffusion_op)
     if cs_advection_style(scheme) isa CSSplitSweepStyle
-        fill_panel_halos!(state.tracers_raw, grid.horizontal; dir=1)
-        midpoint! = if emissions_op isa NoSurfaceFlux
-            (active_rm, active_m) -> SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                active_rm, active_m, diffusion_op, diffusion_workspace, dt, meteo;
-                halo_width = state.halo_width)
-        elseif uses_diffusive_surface_flux_boundary(diffusion_op)
-            (active_rm, active_m) -> begin
-                apply_surface_flux!(active_rm, emissions_op, workspace, dt, meteo, grid;
-                                    tracer_names = state.tracer_names,
-                                    halo_width = state.halo_width,
-                                    deposit = emission_deposit(diffusion_op))
-                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    active_rm, active_m, diffusion_op, diffusion_workspace, dt, meteo;
-                    halo_width = state.halo_width)
-            end
-        else
-            half_dt = dt / 2
-            (active_rm, active_m) -> begin
-                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    active_rm, active_m, diffusion_op, diffusion_workspace, half_dt, meteo;
-                    halo_width = state.halo_width)
-                apply_surface_flux!(active_rm, emissions_op, workspace, dt, meteo, grid;
-                                    tracer_names = state.tracer_names,
-                                    halo_width = state.halo_width)
-                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    active_rm, active_m, diffusion_op, diffusion_workspace, half_dt, meteo;
-                    halo_width = state.halo_width)
-            end
-        end
+        # Queued only: the first sweep follows on the same device queue.
+        fill_cs_step_start_halos!(state.tracers_raw, m, grid.horizontal; sync = false)
+        midpoint! = (active_rm, active_m) -> palindrome_center!(
+            τ -> SectionTimer.@section(:diffusion, apply_vertical_diffusion_vmr!(
+                active_rm, active_m, diffusion_op, diffusion_workspace, τ, meteo;
+                halo_width = state.halo_width)),
+            τ -> apply_surface_flux!(active_rm, emissions_op, workspace, τ, meteo, grid;
+                                     tracer_names = state.tracer_names,
+                                     halo_width = state.halo_width, deposit),
+            diffusion_op, emissions_op, dt)
         _cs_transport_step!(CSSplitSweepStyle(), state.tracers_raw, m, fluxes,
                             grid.horizontal, scheme, workspace;
                             cfl_limit = cfl_limit,
@@ -269,6 +277,10 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
         return nothing
     end
 
+    # Lin-Rood transports one tracer at a time from the same initial air mass.
+    # Its horizontal operator (`fv_tp_2d_cs!`) refills the edge and corner
+    # halos of rm and m before it reads them, so these fills are not read.
+    fill_panel_halos!(m, grid.horizontal; dir=1)
     m_save = n_tr > 1 ? _similar_cs_storage(m) : m
     if n_tr > 1
         _copy_cs_storage!(m_save, m)
@@ -284,34 +296,14 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
         rm_tracer = get_tracer(state, idx)
         fill_panel_halos!(rm_tracer, grid.horizontal; dir=1)
         tracer_name = tracer_names[idx]
-        midpoint! = if emissions_op isa NoSurfaceFlux
-            () -> SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                rm_tracer, m, diffusion_op, diffusion_workspace, dt, meteo;
-                halo_width = state.halo_width, tracer = idx)
-        elseif uses_diffusive_surface_flux_boundary(diffusion_op)
-            () -> begin
-                apply_surface_flux!(rm_tracer, emissions_op, workspace, dt, meteo, grid;
-                                    tracer_names = (tracer_name,),
-                                    halo_width = state.halo_width,
-                                    deposit = emission_deposit(diffusion_op))
-                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    rm_tracer, m, diffusion_op, diffusion_workspace, dt, meteo;
-                    halo_width = state.halo_width, tracer = idx)
-            end
-        else
-            half_dt = dt / 2
-            () -> begin
-                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    rm_tracer, m, diffusion_op, diffusion_workspace, half_dt, meteo;
-                    halo_width = state.halo_width, tracer = idx)
-                apply_surface_flux!(rm_tracer, emissions_op, workspace, dt, meteo, grid;
-                                    tracer_names = (tracer_name,),
-                                    halo_width = state.halo_width)
-                SectionTimer.@section :diffusion apply_vertical_diffusion_vmr!(
-                    rm_tracer, m, diffusion_op, diffusion_workspace, half_dt, meteo;
-                    halo_width = state.halo_width, tracer = idx)
-            end
-        end
+        midpoint! = () -> palindrome_center!(
+            τ -> SectionTimer.@section(:diffusion, apply_vertical_diffusion_vmr!(
+                rm_tracer, m, diffusion_op, diffusion_workspace, τ, meteo;
+                halo_width = state.halo_width, tracer = idx)),
+            τ -> apply_surface_flux!(rm_tracer, emissions_op, workspace, τ, meteo, grid;
+                                     tracer_names = (tracer_name,),
+                                     halo_width = state.halo_width, deposit),
+            diffusion_op, emissions_op, dt)
         _cs_transport_step!(cs_advection_style(scheme),
                             rm_tracer, m, fluxes, grid.horizontal, scheme, workspace;
                             cfl_limit = cfl_limit,

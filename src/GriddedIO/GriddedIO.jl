@@ -32,7 +32,10 @@ methods dispatch on it.
   any CFTime call, and [`decode_month_keys`](@ref), the months of an axis in its
   own calendar; [`MonthKey`](@ref), [`TimeInterval`](@ref),
   [`month_keys`](@ref), [`interval`](@ref), [`seconds_since`](@ref),
-  [`decode_month_seconds`](@ref), [`check_last_month`](@ref).
+  [`decode_month_seconds`](@ref), [`check_last_month`](@ref); the interval
+  each slice stands for, [`decode_slice_intervals`](@ref) (one file),
+  [`known_slice_intervals`](@ref) and [`stamp_intervals`](@ref) (a series of
+  files).
 - Staging (`staging.jl`): [`stage_input`](@ref) decompresses `.nc.gz` and
   single-member `.nc.tar.gz` inputs into a cache directory.
 - Flux units (`flux_units.jl`): [`parse_flux_units`](@ref) →
@@ -47,6 +50,12 @@ methods dispatch on it.
   [`check_cell_area`](@ref).
 - Lat-lon flux files for `kind = "file"` (`latlon_flux.jl`):
   [`write_latlon_flux`](@ref).
+- Static ground fields for observation placement (`surface_height.jl`): the
+  per-grid model surface height dataset, written by
+  [`write_model_surface_height`](@ref) and read by
+  [`read_model_surface_height`](@ref) into `Output.ModelSurfaceHeight`, and a
+  lat-lon DEM for point lookups, [`read_point_elevation`](@ref) →
+  [`LatLonPointElevation`](@ref) (bilinear `Output.point_elevation`).
 
 Molar masses and the year length come from `Parameters`
 (`SPECIES_MOLAR_MASS`, `CARBON_MOLAR_MASS`, `DAYS_PER_JULIAN_YEAR`).
@@ -64,8 +73,11 @@ using NCDatasets: CFTime
 using SHA: sha1
 
 using ..Parameters: SPECIES_MOLAR_MASS, CARBON_MOLAR_MASS, DAYS_PER_JULIAN_YEAR
-using ..Grids: LatLonMesh, CubedSphereMesh, cell_area
-using ..Output: define_cs_horizontal_geometry!, define_provenance_attributes!
+using ..Grids: LatLonMesh, CubedSphereMesh, ReducedGaussianMesh, cell_area, ncells, nrings,
+               ring_longitudes, cell_index, panel_cell_center_lonlat, cs_definition
+import ..Output
+using ..Output: define_cs_horizontal_geometry!, define_provenance_attributes!,
+                ModelSurfaceHeight, AbstractPointElevation
 using ..AtomicFiles: atomic_publish, open_atomic_staging, commit_atomic_staging,
                      abandon_atomic_staging
 
@@ -80,7 +92,8 @@ export AbstractFaceRule, SnappedFaces, UniformSpanFaces, source_latlon_mesh
 export TimeInterval, MonthKey, month_keys, interval, seconds_since, check_last_month
 export AbstractTimeDecoder, CFDecoder, MonthsSince, DecimalYears, AuxiliaryTimeVariable,
        AbstractMonthStamp, MonthStart, MidMonth, MonthEnd, DEFAULT_TIME_DECODERS, decode_time,
-       decode_time_bounds, decode_month_keys, decode_month_seconds
+       decode_time_bounds, decode_slice_intervals, known_slice_intervals, stamp_intervals,
+       STAMP_SPACING_TOLERANCE, decode_month_keys, decode_month_seconds
 # staging.jl
 export stage_input
 # flux_units.jl
@@ -93,7 +106,9 @@ export FluxUnits, parse_flux_units, kg_per_unit, period_seconds, mass_rate_facto
 export CS_NATIVE_FLUX_DIMS, CSNativeFluxWriter, open_cs_native_writer, write_slices!, publish!,
        abandon!, cs_native_flux_info, read_cs_native_flux!, read_cs_native_flux, check_cell_area
 # latlon_flux.jl
-export write_latlon_flux
+export write_latlon_flux, check_latlon_cell_area
+# surface_height.jl
+export write_model_surface_height, read_model_surface_height, LatLonPointElevation, read_point_elevation
 
 include("coordinates.jl")
 include("source_meshes.jl")
@@ -102,5 +117,6 @@ include("staging.jl")
 include("flux_units.jl")
 include("cs_native_flux.jl")
 include("latlon_flux.jl")
+include("surface_height.jl")
 
 end # module GriddedIO

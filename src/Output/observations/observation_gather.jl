@@ -244,6 +244,37 @@ function interface_pressures!(p_half::AbstractVector{Float64}, air_column::Abstr
     return p_half
 end
 
+"""
+    total_interface_pressures!(p_half, dry_air_column, humidity_column, area, g, p_top)
+
+Total (dry air plus water vapour) interface pressures (Pa) from a column of
+dry air mass per cell (kg) and the layers' specific humidity (kg of vapour
+per kg of moist air), top down: `p_half[1] = p_top`,
+`p_half[k+1] = p_half[k] + g·m[k] / (area·(1 − q[k]))`, the hydrostatic
+weight of the moist air `m[k]/(1 − q[k])` (see `TotalFromHumidity`). Every
+`q` must be finite and below 1; small negative values (interpolation
+undershoot) are used as they are.
+"""
+function total_interface_pressures!(p_half::AbstractVector{Float64}, air_column::AbstractVector,
+                                    humidity_column::AbstractVector, area::Real, g::Real, p_top::Real)
+    nlevel = length(air_column)
+    length(p_half) == nlevel + 1 || throw(DimensionMismatch(
+        "p_half needs $(nlevel + 1) entries for $(nlevel) layers; got $(length(p_half))"))
+    length(humidity_column) == nlevel || throw(DimensionMismatch(
+        "the humidity column has $(length(humidity_column)) layers; the air column has $(nlevel)"))
+    g_over_a = Float64(g) / Float64(area)
+    p = Float64(p_top)
+    @inbounds p_half[1] = p
+    @inbounds for k in 1:nlevel
+        q = Float64(humidity_column[k])
+        isfinite(q) && q < 1 || throw(ArgumentError(
+            "specific humidity must be finite and below 1 kg/kg; layer $(k) has $(q)"))
+        p += Float64(air_column[k]) * g_over_a / (1 - q)
+        p_half[k + 1] = p
+    end
+    return p_half
+end
+
 "How the layer temperature for hypsometric heights is obtained."
 abstract type AbstractLayerTemperature end
 "One temperature for every layer (fallback when the binary carries none)."
@@ -335,19 +366,48 @@ function layer_heights_agl!(z_half::AbstractVector{Float64}, p_half::AbstractVec
 end
 
 """
-    intake_layer_index(z_half, intake_height) -> Int
+    intake_layer_index(z_half, height) -> Int
 
-Layer `k` with `z_half[k+1] <= h < z_half[k]` (k = 1 top). A `NaN` or
-non-positive height selects the lowest layer; a height above the column top
-selects layer 1.
+Layer `k` with `z_half[k+1] <= h < z_half[k]` (k = 1 top), `h` in metres
+above the model surface. A non-positive height selects the lowest layer; a
+height above the column top selects layer 1. A `NaN` height is an
+`ArgumentError`: requests without a height are placed explicitly
+([`placement_layer`](@ref)), never by a `NaN` fallback.
 """
 function intake_layer_index(z_half::AbstractVector, intake_height::Real)
     nlevel = length(z_half) - 1
-    (isnan(intake_height) || intake_height <= 0) && return nlevel
+    isnan(intake_height) && throw(ArgumentError(
+        "intake_layer_index needs a height; a request without one must be placed explicitly (placement_layer)"))
+    intake_height <= 0 && return nlevel
     @inbounds for k in nlevel:-1:1
         intake_height < z_half[k] && return k
     end
     return 1
+end
+
+"""
+    sample_column_layer!(column::PlacementColumn, p_half, z_half, placement, air_column, area, g, p_top,
+                         temperature, basis, mass_basis) -> Int
+
+The layer (k = 1 top) of a [`VerticalPlacement`](@ref) in one sampled column,
+from the column alone: the interface pressures of the air mass
+(`interface_pressures!` into `p_half`, ``p_{k+1/2} = p_{k-1/2} + g\\,m_k/A``
+from `p_top`), the hypsometric interface heights above the model surface
+(`layer_heights_agl!` into `z_half`, with the `AbstractLayerTemperature`
+`temperature`), then [`column_layer!`](@ref). `column.humidity` must hold
+the column's specific humidity when a pressure placement needs it
+([`TotalFromHumidity`](@ref) on a dry basis). The forward observation sampler
+and the inversion's placed point observations both choose their layers with
+this function.
+"""
+function sample_column_layer!(column::PlacementColumn, p_half::AbstractVector{Float64},
+                              z_half::AbstractVector{Float64}, placement::VerticalPlacement,
+                              air_column::AbstractVector, area::Real, g::Real, p_top::Real,
+                              temperature::AbstractLayerTemperature, basis::AbstractPressureBasis,
+                              mass_basis::AbstractMassBasis)
+    interface_pressures!(p_half, air_column, area, g, p_top)
+    layer_heights_agl!(z_half, p_half, temperature, g)
+    return column_layer!(column, placement, z_half, air_column, area, g, p_top, basis, mass_basis)
 end
 
 "Air-mass-weighted column mean mixing ratio; NaN when the column holds no air."

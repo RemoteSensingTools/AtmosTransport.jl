@@ -43,11 +43,10 @@
 # reverse BEFORE calling ec2tm (this function must not perform a
 # runtime reorientation).
 #
-# ECMWF convective fluxes are per unit of total (moist) air. The
-# preprocessors put them on the binary's air-mass basis with
-# `ecmwf_convection_to_basis!` (convection_mass_basis.jl) just before
-# `ec2tm_from_rates!`: `tm5_native_fields_for_hour!` (spectral lat-lon
-# path) and `derive_c180_tm5_convection!` (ERA5 N320 → cubed sphere).
+# ECMWF convective fluxes are per unit of total (moist) air. The ERA5 N320
+# → cubed-sphere preprocessor (`derive_c180_tm5_convection!`) puts them on
+# the binary's air-mass basis with `ecmwf_convection_to_basis!`
+# (convection_mass_basis.jl) just before `ec2tm_from_rates!`.
 # ---------------------------------------------------------------------------
 
 """
@@ -77,20 +76,7 @@ to zero, following the ECMWF-rounding-artifact clean-up documented
 in `phys_convec_ec2tm.F90` (ECMWF diagnostics can produce
 ~-1e-19 values from rounding).
 
-For every location, computes:
-
-```
-k = 1:          entu[1]   = detu[1]   (updraft starts in layer 1)
-                entd[1]   = detd[1]   (no flux at TOA)
-k ∈ 2:Nz:       entu[k]   = detu[k]   + mflu_ec[k+1] - mflu_ec[k]
-                entd[k]   = detd[k]   - mfld_ec[k]   + mfld_ec[k-1]
-                (where mfld_ec sign-flipped internally)
-```
-
-Wait — above formula is written in TM5 convention (k=1=surface).
-Let me re-write in AtmosTransport orientation explicitly.
-
-**AtmosTransport orientation** (k=1=TOA):
+For every location it computes, in AtmosTransport orientation (k=1=TOA):
 
 - Layer k has interface `k` at its TOP (higher altitude side) and
   interface `k+1` at its BOTTOM (lower altitude side).
@@ -195,9 +181,10 @@ end
 # The minimal `ec2tm!` above takes already-integrated fluxes and does
 # simple clamping. Real ERA5 GRIB data carries
 #   - detrainment RATES (kg/m³/s), not fluxes — needs dz integration.
-#   - "uptop-only" active mass flux profile — no updraft below uptop,
-#     so entrainment/detrainment should be zero there, not computed
-#     from zeros that could produce small negative noise.
+#   - an active mass-flux profile only from the cloud top down — no
+#     updraft above the cloud-top layer, so entrainment/detrainment
+#     should be zero there, not computed from zeros that could
+#     produce small negative noise.
 #   - noise-level negatives that accumulate if not cleaned up.
 #
 # `ec2tm_from_rates!` ports TM5's full algorithm (F90 at
@@ -228,6 +215,10 @@ the corresponding cleanup branch.
   `levels_detd_neg` — levels where the indicated output went
   negative and got fixed via symmetric redistribution with its
   complementary rate.
+- `columns_closure_entu`, `columns_closure_entd` — columns where the
+  column closure moved a non-zero residual `Σdet − Σent`. For ERA5
+  input that residual is rounding (or a flux through the model top);
+  see `ec2tm_from_rates!`.
 
 # Interpretation
 
@@ -269,10 +260,14 @@ AtmosTransport orientation (k=1=TOA, k=Nz=surface).
 
 - `udmf::AbstractVector{FT}`, length `Nz+1` — updraft mass flux at
   half levels (kg/m²/s). Half level `k` is the interface at the
-  TOP of layer `k`; `udmf[Nz+1]` is the surface interface. Must be
-  ≥ 0.
+  TOP of layer `k`; `udmf[Nz+1]` is the ground and must be zero
+  (after clipping; an `ArgumentError` otherwise). ERA5 archives
+  UDMF level `k` (1 = model top) as the flux through the top of
+  layer `k`, so callers pass `[GRIB levels 1..Nz; 0]`, as TM5's
+  `tmm.F90` does (`udmf_gg(:,0:nlev-1) = buf; udmf_gg(:,nlev) = 0`).
+  Must be ≥ 0.
 - `ddmf::AbstractVector{FT}`, length `Nz+1` — downdraft mass flux
-  at half levels, ECMWF convention (≤ 0).
+  at half levels, ECMWF convention (≤ 0), packed like `udmf`.
 - `udrf_rate::AbstractVector{FT}`, length `Nz` — updraft
   detrainment RATE at layer centers (kg/m³/s).
 - `ddrf_rate::AbstractVector{FT}`, length `Nz` — downdraft
@@ -290,25 +285,35 @@ AtmosTransport orientation (k=1=TOA, k=Nz=surface).
    `udrf_rate < 1e-10 → 0`, `ddrf_rate < 1e-10 → 0`.
 2. **dz integration** (F90 L146-151): `detu = udrf × dz` (kg/m³/s
    → kg/m²/s). Same for detd.
-3. **uptop/dotop search** (F90 L153-173): find the first level
-   from TOA (`k=1..Nz`) with nonzero flux. If none, zero out
-   everything in that direction.
-4. **Mass-budget closure** (F90 L175-212): for each active
-   direction, `entu[k] = udmf[k] - udmf[k+1] + detu[k]` from
-   `uptop` down. Above `uptop-1` stays zero.
+3. **Cloud-top search** (F90 L153-173, `do l = 1, lm; if (mflu(l) > 0)`):
+   the cloud-top layer `uptop` is the highest layer whose BOTTOM
+   interface carries updraft, i.e. `uptop = k - 1` for the first
+   interface `k ∈ 2:Nz+1` with `udmf[k] > 0`; `dotop` likewise with
+   `ddmf[k] < 0`. The model-top interface 1 is not searched, as in
+   TM5. If none, zero out everything in that direction.
+4. **Layer budgets** (F90 L175-212): for each active direction,
+   `entu[k] = udmf[k] - udmf[k+1] + detu[k]` (out through the top,
+   minus in through the bottom, plus detrainment) for `k = uptop:Nz`;
+   layers above `uptop` stay zero.
 5. **Symmetric negative redistribution** (F90 L214-232): if
    `entu[k] < 0`, add `-entu[k]` to `detu[k]` and zero `entu[k]`.
    Same for `detu<0` (adds to entu), and the same two for
    downdraft.
+6. **Column closure** (TM5 `meteo.F90:2023-2052`): the residual
+   `Σdetu − Σentu` is added to the layer of largest entrainment (on
+   the detrainment side when it is negative, so nothing turns
+   negative).
 
 # Mass conservation
 
-Within the cloud window, the sum
-`entu[k] - detu[k] - (udmf[k] - udmf[k+1])` should be zero per
-layer — equivalent to the mass-budget closure at step 4.
-Negative redistribution (step 5) preserves this sum because it
-only SWAPS between entu↔detu (or entd↔detd) without changing the
-net `entu - detu`.
+In every layer `entu[k] - detu[k] = udmf[k] - udmf[k+1]`, the flux
+convergence (step 4; the redistribution of step 5 keeps
+`entu - detu`). Summed over the column this telescopes to
+`udmf[uptop] - udmf[Nz+1] = 0`: no flux crosses the top of the
+cloud-top layer or the ground, so the TM5 fields reproduce the input
+fluxes at every interface and the closure of step 6 moves only
+rounding (or a flux through the model top, which TM5 does not
+exclude either).
 """
 function ec2tm_from_rates!(entu::AbstractVector{FT}, detu::AbstractVector{FT},
                             entd::AbstractVector{FT}, detd::AbstractVector{FT},
@@ -374,26 +379,25 @@ function ec2tm_from_rates!(entu::AbstractVector{FT}, detu::AbstractVector{FT},
         end
     end
 
-    # uptop / dotop search (F90 L153-173).  First level from TOA
-    # with a nonzero flux.
-    uptop = 0
-    @inbounds for k in 1:(Nz + 1)
-        if udmf[k] > zero(FT)
-            uptop = k
-            break
-        end
-    end
-    dotop = 0
-    @inbounds for k in 1:(Nz + 1)
-        if ddmf[k] < zero(FT)
-            dotop = k
-            break
-        end
-    end
+    # No flux crosses the ground: ERA5 level k is the top of layer k and the
+    # surface interface carries none (TM5 tmm.F90 `udmf_gg(:,nlev) = 0`).
+    # A non-zero value here means the caller packed the GRIB levels one
+    # interface too low (issue #54) or reversed the level order.
+    (udmf[Nz + 1] == zero(FT) && ddmf[Nz + 1] == zero(FT)) || throw(ArgumentError(
+        "ec2tm_from_rates!: the ground (interface Nz + 1 = $(Nz + 1)) carries " *
+        "udmf = $(udmf[Nz + 1]), ddmf = $(ddmf[Nz + 1]). ERA5 UDMF/DDMF level k is the " *
+        "flux through the top of layer k and none crosses the ground: pass the GRIB " *
+        "levels 1..Nz as interfaces 1..Nz and set interface Nz + 1 to zero."))
 
-    # Updraft mass-budget closure.  F90 uses `mflu(l-1) - mflu(l)` in
-    # 0-based; Julia 1-based shifts the flux indices by +1 so interface
-    # "above layer l" is `udmf[l]` and "below" is `udmf[l+1]`.
+    # Cloud-top and downdraft-top layers (F90 L153-173, TM5's
+    # `do l = 1, lm; if (mflu(l) > 0)` on 0-based half levels): the highest
+    # layer whose bottom interface carries flux.
+    uptop = _tm5_draft_top_layer(>(zero(FT)), udmf, Nz)
+    dotop = _tm5_draft_top_layer(<(zero(FT)), ddmf, Nz)
+
+    # Updraft layer budgets.  F90 `mflu(l-1) - mflu(l)` on 0-based half
+    # levels is `udmf[k] - udmf[k + 1]` here: interface k is the top of
+    # layer k, interface k + 1 its bottom.
     if uptop > 0 && uptop <= Nz
         # Above the cloud top, entrainment/detrainment are zero.
         @inbounds for k in 1:(uptop - 1)
@@ -446,13 +450,14 @@ function ec2tm_from_rates!(entu::AbstractVector{FT}, detu::AbstractVector{FT},
     end
 
     # Column-integrated net-zero closure (TM5 `meteo.F90:2023-2052`).
-    # The mass-budget step leaves `Σentu - Σdetu = udmf[uptop]` —
-    # the non-zero updraft flux at the cloud-top interface, which
-    # would otherwise propagate as a fictitious "leak" at the top
-    # of the column. TM5 shoves this residual into the layer of
-    # maximum entrainment so that `Σentu == Σdetu` exactly, which
-    # is the condition the downstream convection matrix needs for
-    # column tracer mass conservation (matrix row-sums = 1).
+    # The layer budgets telescope to `Σentu - Σdetu = udmf[uptop] -
+    # udmf[Nz + 1]`, zero: no flux crosses the top of the cloud-top layer
+    # (the search above) or the ground (checked above). What remains is
+    # rounding, plus a flux through the model top (interface 1), which TM5
+    # does not exclude either. TM5 moves the residual to the layer of
+    # maximum entrainment so that `Σentu == Σdetu` exactly, the condition
+    # the convection matrix needs for column tracer mass conservation
+    # (matrix row-sums = 1); it is kept here as that safety net.
     #
     # We mirror TM5's defaults exactly for the fallback case where
     # the column has imbalanced sums but no positive entrainment
@@ -559,6 +564,33 @@ function ec2tm_from_rates!(entu::AbstractVector{FT}, detu::AbstractVector{FT},
     end
 
     return nothing
+end
+
+"""
+    era5_tm5_convection_header(include_convection::Bool) -> Dict{String, Any}
+
+Header record of TM5 convection sections that a writer derived from ERA5 with
+[`ec2tm_from_rates!`](@ref): their source
+(`TM5_CONVECTION_SOURCE_KEY => "ec2tm_from_rates(udmf,ddmf,udrf,ddrf)"`) and the
+index convention (`TM5_EC2TM_CONVENTION_KEY => TM5_EC2TM_CONVENTION`), which
+readers require of ERA5-derived sections. Without convection the record is
+only the source `"none"`.
+"""
+function era5_tm5_convection_header(include_convection::Bool)
+    include_convection || return Dict{String, Any}(TM5_CONVECTION_SOURCE_KEY => "none")
+    return Dict{String, Any}(
+        TM5_CONVECTION_SOURCE_KEY => "ec2tm_from_rates(udmf,ddmf,udrf,ddrf)",
+        TM5_EC2TM_CONVENTION_KEY => TM5_EC2TM_CONVENTION)
+end
+
+# Highest layer whose bottom interface carries flux (`predicate(flux[k])` for
+# the first interface k in 2:Nz+1, layer k - 1), or 0 for none. TM5's
+# `do l = 1, lm` over 0-based half levels: half level l is our interface l + 1.
+@inline function _tm5_draft_top_layer(predicate, flux::AbstractVector, Nz::Integer)
+    @inbounds for k in 2:(Nz + 1)
+        predicate(flux[k]) && return k - 1
+    end
+    return 0
 end
 
 @inline function _ec2tm_rates_check_shapes(entu, detu, entd, detd,
@@ -686,154 +718,4 @@ function dz_hydrostatic_constT!(dz::AbstractVector{FT},
         dz[k] = R_over_g * T_ft * dp / p_eff
     end
     return dz
-end
-
-# ---------------------------------------------------------------------------
-# Grid-level pipeline that produces merged (Nz) TM5
-# fields from native-L137 ERA5 physics data.
-#
-# Per-column flow:
-#   dz           ← dz_hydrostatic_virtual! from T, Q, ps, ak, bk
-#   udmf ... ddrf ← ecmwf_convection_to_basis! (× (1 − q) for a dry binary)
-#   (entu, detu, ← ec2tm_from_rates! from (udmf, ddmf, udrf_rate,
-#    entd, detd)                           ddrf_rate, dz)
-#   merged       ← merge_cell_field!-style accumulate per merge_map
-#
-# The merged-step preserves column-integrated mass budget because
-# TM5 fields are integrated FLUXES (kg/m²/s after the ec2tm `×dz`
-# step), and summing fluxes over native layers that map to a
-# merged layer is the right physical reduction.
-# ---------------------------------------------------------------------------
-
-"""
-    tm5_native_fields_for_hour!(entu, detu, entd, detd,
-                                  udmf_hour, ddmf_hour, udrf_hour, ddrf_hour,
-                                  t_hour, q_hour, ps_hour,
-                                  ak_full, bk_full, Nz_native;
-                                  basis, stats=nothing, scratch=nothing) -> nothing
-
-Grid-level entry point: for each column `(i, j)` in the 2D grid,
-compute `dz` from `(T, Q, ps)`, put the ECMWF fields on the air-mass `basis`
-of the binary (`DryBasis()` or `MoistBasis()`, required) with
-[`ecmwf_convection_to_basis!`](@ref), then call `ec2tm_from_rates!`.
-Writes results into the 3D `(Nlon, Nlat, Nz_native)` output arrays.
-The layer thickness `dz` is geometric and uses the moist `T_v`.
-
-All input 3D arrays are native-level (137 layers for ERA5);
-2D `ps_hour` is surface pressure in Pa. `stats` counters are
-bumped across all columns. `scratch` is an optional 4-tuple
-of length-Nz_native vectors to avoid per-column allocation;
-when `nothing`, fresh ones are allocated inside.
-"""
-function tm5_native_fields_for_hour!(
-        entu::AbstractArray{FT, 3},
-        detu::AbstractArray{FT, 3},
-        entd::AbstractArray{FT, 3},
-        detd::AbstractArray{FT, 3},
-        udmf_hour::AbstractArray{FT, 3},
-        ddmf_hour::AbstractArray{FT, 3},
-        udrf_hour::AbstractArray{FT, 3},
-        ddrf_hour::AbstractArray{FT, 3},
-        t_hour::AbstractArray{FT, 3},
-        q_hour::AbstractArray{FT, 3},
-        ps_hour::AbstractArray{FT, 2},
-        ak_full::AbstractVector,
-        bk_full::AbstractVector,
-        Nz_native::Integer;
-        basis::AbstractMassBasis,
-        stats = nothing,
-        scratch = nothing) where {FT <: AbstractFloat}
-
-    Nlon, Nlat, Nlev = size(entu)
-    Nlev == Nz_native || throw(ArgumentError(
-        "output Nz_native=$Nlev ≠ expected $Nz_native"))
-
-    # Per-column scratch (reused across columns).
-    if scratch === nothing
-        udmf_col = Vector{FT}(undef, Nz_native + 1)
-        ddmf_col = Vector{FT}(undef, Nz_native + 1)
-        udrf_col = Vector{FT}(undef, Nz_native)
-        ddrf_col = Vector{FT}(undef, Nz_native)
-        t_col    = Vector{FT}(undef, Nz_native)
-        q_col    = Vector{FT}(undef, Nz_native)
-        dz_col   = Vector{FT}(undef, Nz_native)
-        entu_col = Vector{FT}(undef, Nz_native)
-        detu_col = Vector{FT}(undef, Nz_native)
-        entd_col = Vector{FT}(undef, Nz_native)
-        detd_col = Vector{FT}(undef, Nz_native)
-    else
-        (udmf_col, ddmf_col, udrf_col, ddrf_col,
-         t_col, q_col, dz_col,
-         entu_col, detu_col, entd_col, detd_col) = scratch
-    end
-
-    @inbounds for j in 1:Nlat, i in 1:Nlon
-        # ERA5 archives mass fluxes on half-levels 1:Nz_native, including
-        # half-level 137 at the surface. TM5's interface vector also includes
-        # half-level 0 at the model top. With Julia's one-based indexing,
-        # half-level 0 therefore occupies element 1 and archived half-level k
-        # occupies element k + 1:
-        #   udmf_col[1]     = 0   (half-level 0, TOA)
-        #   udmf_col[k + 1] = udmf_hour[i, j, k]  for k=1:Nz_native
-        # Thus the last archived value is stored at element Nz_native + 1,
-        # the surface interface; the +1 is an index shift, not an inferred
-        # missing boundary.
-        udmf_col[1] = zero(FT)
-        ddmf_col[1] = zero(FT)
-        for k in 1:Nz_native
-            udmf_col[k + 1] = udmf_hour[i, j, k]
-            ddmf_col[k + 1] = ddmf_hour[i, j, k]
-            udrf_col[k]     = udrf_hour[i, j, k]
-            ddrf_col[k]     = ddrf_hour[i, j, k]
-            t_col[k]        = t_hour[i, j, k]
-            q_col[k]        = q_hour[i, j, k]
-        end
-
-        dz_hydrostatic_virtual!(dz_col, t_col, q_col, ps_hour[i, j],
-                                 ak_full, bk_full, Nz_native)
-        ecmwf_convection_to_basis!(basis, udmf_col, ddmf_col, udrf_col, ddrf_col, q_col)
-
-        ec2tm_from_rates!(entu_col, detu_col, entd_col, detd_col,
-                           udmf_col, ddmf_col, udrf_col, ddrf_col,
-                           dz_col, Nz_native; stats = stats)
-
-        for k in 1:Nz_native
-            entu[i, j, k] = entu_col[k]
-            detu[i, j, k] = detu_col[k]
-            entd[i, j, k] = entd_col[k]
-            detd[i, j, k] = detd_col[k]
-        end
-    end
-    return nothing
-end
-
-"""
-    merge_tm5_field_3d!(merged, native, merge_map)
-
-Accumulate a native-level TM5 field (Nlon, Nlat, Nz_native) onto
-merged output levels (Nlon, Nlat, Nz_merged) using the native-to-
-merged level map. Matches the semantics of `merge_cell_field!` for
-mass/flux fields: sum native layers that map to the same merged
-layer.
-
-For TM5 entrainment/detrainment fluxes (kg/m²/s), summing over a
-consolidated layer preserves the column-integrated mass budget
-exactly.
-"""
-function merge_tm5_field_3d!(merged::AbstractArray{FT, 3},
-                              native::AbstractArray{FT, 3},
-                              merge_map::AbstractVector{<:Integer}) where FT
-    size(native, 1) == size(merged, 1) || throw(ArgumentError(
-        "Nlon mismatch: native $(size(native,1)), merged $(size(merged,1))"))
-    size(native, 2) == size(merged, 2) || throw(ArgumentError(
-        "Nlat mismatch"))
-    size(native, 3) == length(merge_map) || throw(ArgumentError(
-        "Nz_native $(size(native,3)) ≠ merge_map length $(length(merge_map))"))
-
-    fill!(merged, zero(FT))
-    @inbounds for k in eachindex(merge_map)
-        km = merge_map[k]
-        @views merged[:, :, km] .+= native[:, :, k]
-    end
-    return merged
 end

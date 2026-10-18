@@ -4,9 +4,20 @@
 """
     merge_thin_levels(vc; min_thickness_Pa=1000, p_surface=STANDARD_PRESSURE)
 
-Merge adjacent vertical levels that are thinner than `min_thickness_Pa` at
-the reference surface pressure. Returns `(merged_vc, merge_map)` where
-`merge_map[k]` maps native level `k` to the merged level index.
+Merge adjacent native layers into output layers, from the surface up: a group
+closes as soon as its summed thickness at the reference surface pressure
+`p_surface` reaches `min_thickness_Pa`. The native layers left above the last
+closed group (their summed thickness is below the minimum) form the top output
+layer, so **the top layer can be thinner than `min_thickness_Pa`**; every other
+output layer is at least that thick. For ERA5 L137 at 101 325 Pa, 100 Pa gives
+117 layers with a 6.8 Pa top layer (native layers 1–4) and 1000 Pa gives 68
+layers with a 33 Pa top layer (native layers 1–9).
+
+Returns `(merged_vc, merge_map)` where `merge_map[k]` maps native layer `k`
+to its output layer. The kept interfaces keep their native `A` and `B`.
+The level sets are bit-identical to those of the top-down pass removed on
+2026-10-14 for every level set without a zero-thickness layer (all ERA5 sets);
+only a degenerate set with a zero-thickness layer can round differently.
 """
 function merge_thin_levels(vc::HybridSigmaPressure{FT};
                            min_thickness_Pa::Real = FT(1000),
@@ -14,37 +25,22 @@ function merge_thin_levels(vc::HybridSigmaPressure{FT};
     Nz = n_levels(vc)
     ps = FT(p_surface)
     min_dp = FT(min_thickness_Pa)
-    dp = [level_thickness(vc, k, ps) for k in 1:Nz]
 
-    top_ifaces = Int[1]
-    acc = zero(FT)
-    for k in 1:Nz
-        acc += dp[k]
-        if acc >= min_dp
-            push!(top_ifaces, k + 1)
-            acc = zero(FT)
-        end
-    end
-
-    bot_ifaces = Int[Nz + 1]
+    # Kept interfaces, bottom-up: the surface, then the upper interface of each
+    # group whose thickness reached `min_dp`.
+    keep = Int[Nz + 1]
     acc = zero(FT)
     for k in Nz:-1:1
-        acc += dp[k]
+        acc += level_thickness(vc, k, ps)
         if acc >= min_dp
-            pushfirst!(bot_ifaces, k)
+            pushfirst!(keep, k)
             acc = zero(FT)
         end
     end
-
-    first_bot = bot_ifaces[1]
-    keep = Int[]
-    for i in top_ifaces
-        i <= first_bot && push!(keep, i)
-    end
-    (isempty(keep) || keep[end] < first_bot) && push!(keep, first_bot)
-    for i in bot_ifaces
-        i > keep[end] && push!(keep, i)
-    end
+    # The model top closes the remnant above the last group as its own layer.
+    # (Folding a thin remnant into the layer below would change the produced
+    # level sets, e.g. ERA5 L117 → L116; deferred to the next regeneration.)
+    keep[1] == 1 || pushfirst!(keep, 1)
 
     merged_vc = HybridSigmaPressure(FT[vc.A[k] for k in keep], FT[vc.B[k] for k in keep])
     Nz_merged = n_levels(merged_vc)
