@@ -82,7 +82,7 @@ record whose time (`date`, truncated to the second) lies in
 | `flag` | 0 when `assimilate_flag ∈ assimilate_flags` and the data type is in `data_types`; else `1 + assimilate_flag` |
 | `instrument_type` | `"<instrument>_<data type>"`, e.g. `"OCO2_OG"` |
 | `tracer` | `tracer` |
-| `retrieval` | the 20 levels (`sigma_levels × psurf`, hPa → Pa), `pressure_weight`, `xco2_averaging_kernel`, `co2_profile_apriori` (ppm → mol/mol), surface first ([`Output.read_oco2_retrieval_columns`](@ref)) |
+| `retrieval` | the 20 levels (`sigma_levels × psurf`, hPa → Pa), `pressure_weight`, `xco2_averaging_kernel`, `co2_profile_apriori` (ppm → mol/mol), surface first (`Output.read_oco2_retrieval_columns`) |
 
 `data_types` name the experiment's data types (`LN` land nadir, `LG` land
 glint, `LT` land target, `LTR` land transition, `ON` ocean nadir, `OG` ocean
