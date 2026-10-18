@@ -102,9 +102,13 @@ end
 
 # Build the sampler the way the runner does (terrain through GriddedIO), sample
 # two window ends, and return the soundings and sites file paths. `humidity`
-# (one field for both window ends) is passed when given, and the build is told
-# the run has humidity; a pair gives the humidity of each window end.
-function sample(dir, sources; name = "obs", m = model10(), humidity = nothing, keys...)
+# (one field for both window ends; a pair gives the humidity of each window end)
+# is by default the model's own, `m.q`, and zero for the vapour-free `model10`
+# (whose total pressures and virtual temperatures then equal the dry pressures
+# and temperatures); the build is told the run has humidity unless
+# `humidity = nothing`.
+model_humidity(m) = hasproperty(m, :q) ? m.q : zeros(size(m.state.air_mass))
+function sample(dir, sources; name = "obs", m = model10(), humidity = model_humidity(m), keys...)
     q0, q1 = humidity isa Tuple ? humidity : (humidity, humidity)
     cfg = Dict{String, Any}("path" => joinpath(dir, "snap.nc"), "hours" => [0.0], "split" => "single",
         "observations" => Dict{String, Any}("path" => joinpath(dir, "$(name).nc"), "sources" => sources,
@@ -128,7 +132,8 @@ function soundings(path)
         (id = ds["id"][:], level = Int.(ds["intake_level"][:]), method = Int8.(ds["vertical_placement"][:]),
          height = Float64.(ds["placement_height_agl"][:]), zs = Float64.(ds["model_surface_height"][:]),
          ppm = 1e6 .* Float64.(ds["co2_intake"][:]), pressure = Float64.(ds["pressure"][:]),
-         unplaced = ds.attrib["n_unplaced_soundings"], p_half = Float64.(ds["p_half_dry"][:, :]))
+         unplaced = ds.attrib["n_unplaced_soundings"], p_half = Float64.(ds["p_half_dry"][:, :]),
+         bottom = Float64.(ds["intake_layer_bottom_agl"][:]), top = Float64.(ds["intake_layer_top_agl"][:]))
     end
 end
 
@@ -341,8 +346,11 @@ file_variables(path) = NCDataset(ds -> Dict(k => Array(ds[k].var) for k in keys(
         dry_path, _ = sample(dir, Any[obspack(pack)]; name = "dry", m, pressure_basis = "dry")
         d = soundings(dry_path)
         @test d.level[1:3] == [10, 9, 7]                      # the dry-interface rule (before issue #20)
-        # Height placements and every other output do not depend on the pressure basis.
+        # The height rows keep their layers (500, 3000 and 8000 m are far from the interfaces), but
+        # their layer heights follow the basis (OF-117): on the total pressures with the virtual
+        # temperature they are higher than by the dry rule. Every other output is the same.
         @test d.level[4:6] == r.level[4:6] && d.ppm[4:6] == r.ppm[4:6]
+        @test all(r.top[4:6] .> d.top[4:6])
         @test d.p_half == r.p_half && isequal(d.height, r.height) && d.method == r.method
         NCDataset(total_path, "r") do ds
             @test ds.attrib["pressure_basis"] == "total"
@@ -376,7 +384,7 @@ file_variables(path) = NCDataset(ds -> Dict(k => Array(ds[k].var) for k in keys(
                                           surface_height_file = surface_file(dir, 0.0),
                                           absolute_altitude_above_agl_m = 1000.0)))
         @test abs_rows.method == [CODES.record_height, CODES.pressure] && abs_rows.level[2] == 9
-        # Height only: the pressure rows are unplaced, and no humidity is needed.
+        # Height only: the pressure rows are unplaced (the heights still use the humidity).
         h_only = soundings(first(sample(dir, Any[obspack(pack)]; name = "honly", m,
                                         vertical_coordinates = ["height_above_ground"], unplaced_records = "skip")))
         @test h_only.unplaced == 3 && h_only.method == fill(CODES.record_height, 3) && h_only.level == r.level[4:6]
@@ -389,13 +397,16 @@ end
         heights = write_pack(joinpath(dir, "co2_h_aircraft-pfp_1.nc"); intake = ALTS)
         m = moist_model10()
         # Without humidity the default total pressures cannot be built: the error names the opt-in.
-        err = failure(() -> sample(dir, Any[obspack(pack)]; name = "nohumidity", m))
+        err = failure(() -> sample(dir, Any[obspack(pack)]; name = "nohumidity", m, humidity = nothing))
         msg = sprint(showerror, err)
-        @test err isa ArgumentError && occursin("1 requests are placed by pressure", msg) &&
+        @test err isa ArgumentError && occursin("1 requests are placed in the model column", msg) &&
               occursin("[output.observations].pressure_basis = \"dry\"", msg)
-        # Without pressure-placed records no humidity is needed.
-        @test soundings(first(sample(dir, Any[obspack(heights)]; name = "heights", m))).method ==
-              fill(CODES.record_height, 3)
+        # Records placed by height need it too (OF-117): their layer heights are built on the total
+        # pressures with the virtual temperature. The dry opt-in needs none.
+        err = failure(() -> sample(dir, Any[obspack(heights)]; name = "heights", m, humidity = nothing))
+        @test err isa ArgumentError && occursin("3 requests are placed in the model column", sprint(showerror, err))
+        @test soundings(first(sample(dir, Any[obspack(heights)]; name = "heights_dry", m, humidity = nothing,
+                                     pressure_basis = "dry"))).method == fill(CODES.record_height, 3)
         # A sampler that needs the humidity refuses a window end without it, or of the wrong layout.
         spec = observation_output_spec(Dict{String, Any}("observations" => Dict{String, Any}(
             "path" => joinpath(dir, "strict.nc"), "sources" => Any[obspack(pack)])))
@@ -434,6 +445,61 @@ end
         nearest = soundings(first(sample(dir, Any[obspack(timed)]; name = "nearest", m, humidity = (m.q, m.q ./ 2),
                                          time_interpolation = "nearest_window")))
         @test nearest.level == [10, 10, 10, 10]               # 0:30 rounds to the 1 h window end (q0/2)
+    end
+end
+
+@testset "height placement on total pressures with the virtual temperature (OF-117)" begin
+    mktempdir() do dir
+        # moist_model10 at 280 K: the top of the surface layer is R_d·280·(1 + c·0.02)/g·ln(1000/900 hPa)
+        # = 874.0 m on the total pressures with the virtual temperature, and 849.1 m by the dry rule
+        # (dry interfaces 995.80 and 897.80 hPa, T): an intake at 860 m is in layer 10 by the
+        # default basis and in layer 9 by the dry one (and was in layer 9 before OF-117).
+        m = moist_model10()
+        R, c = AtmosTransport.Parameters.R_DRY_AIR, AtmosTransport.Parameters.VIRTUAL_TEMPERATURE_FACTOR
+        area = cell_area(m.mesh, 1, 2)
+        column = m.state.air_mass[1, 2, :]
+        top_total = R * 280 * (1 + c * MOIST_Q[10]) / GRAVITY * log(1e5 / 9e4)
+        p_dry = O.interface_pressures!(zeros(11), column, area, GRAVITY, 100.0)
+        top_dry = R * 280 / GRAVITY * log(p_dry[11] / p_dry[10])
+        @test top_dry < 860 < top_total
+        @test round(top_total; digits = 1) == 874.0 && round(top_dry; digits = 1) == 849.1
+        tower = write_pack(joinpath(dir, "co2_twr_tower-insitu_1.nc"); intake = [860.0], elevation = [0.0])
+        for mode in ("linear", "nearest_window")
+            total = soundings(first(sample(dir, Any[obspack(tower)]; name = "total_$(mode)", m,
+                                           time_interpolation = mode)))
+            dry = soundings(first(sample(dir, Any[obspack(tower)]; name = "dry_$(mode)", m, pressure_basis = "dry",
+                                         time_interpolation = mode)))
+            @test total.level == [10] && dry.level == [9]
+            @test total.top ≈ [top_total] rtol = 1e-6                   # Float32 in the files
+            @test dry.bottom ≈ [top_dry] rtol = 1e-6
+            @test total.ppm ≈ [420.0] && dry.ppm ≈ [400 + 20 * 8 / 9]
+        end
+        # Station series: the layer at every window end.
+        for (basis, level, top) in (("total", 10, top_total), ("dry", 9, nothing))
+            _, sites_path = sample(dir, Any[obspack(tower; mode = "sites")]; name = "sites_$(basis)", m,
+                                   pressure_basis = basis)
+            NCDataset(sites_path, "r") do ds
+                @test all(==(level), ds["intake_level"][1, :])
+                top === nothing || @test all(isapprox.(ds["intake_layer_top_agl"][1, :], top; rtol = 1e-6))
+            end
+        end
+        # Linear time interpolation blends the humidity of the heights like the air mass: q0 at t = 0 and
+        # q0/2 at 1 h give 0.75 q0 at 0:30; nearest_window takes the 1 h end (q0/2). a < b < c are the tops
+        # of the surface layer for q0/2, 0.75 q0 and q0.
+        top10(q) = begin
+            p = O.total_interface_pressures!(zeros(11), column, q, area, GRAVITY, 100.0)
+            R * 280 * (1 + c * q[10]) / GRAVITY * log(p[11] / p[10])
+        end
+        a, b, c_ = top10(MOIST_Q ./ 2), top10(0.75 .* MOIST_Q), top10(MOIST_Q)
+        @test a < b < c_
+        pair = write_pack(joinpath(dir, "co2_blend_tower-insitu_1.nc"); intake = [(b + c_) / 2, (a + b) / 2],
+                          elevation = [0.0, 0.0])
+        linear = soundings(first(sample(dir, Any[obspack(pair)]; name = "blend_linear", m,
+                                        humidity = (m.q, m.q ./ 2))))
+        @test linear.level == [9, 10]               # with q0 alone: [10, 10]
+        nearest = soundings(first(sample(dir, Any[obspack(pair)]; name = "blend_nearest", m,
+                                         humidity = (m.q, m.q ./ 2), time_interpolation = "nearest_window")))
+        @test nearest.level == [9, 9]
     end
 end
 
@@ -517,7 +583,8 @@ end
         m = model10()
         s = quiet(() -> build_observation_sampler(spec, m.state, m.grid; origin = ORIGIN,
                                                   window_seconds = (0.0, 86400.0), halo_width = 0,
-                                                  terrain = DR._observation_terrain(spec.placement, m.mesh)))
+                                                  terrain = DR._observation_terrain(spec.placement, m.mesh),
+                                                  has_humidity = true))
         held = [getfield(s, f) for f in fieldnames(typeof(s))]
         @test !any(x -> x isa ObservationTerrain || x isa O.AbstractPointElevation ||
                         x isa O.AbstractModelSurfaceHeight, held)
@@ -569,7 +636,7 @@ end
         m = model10()
         s = @test_logs (:warn, r"1 requests are more than 100.0 m below the ground") match_mode = :any begin
             build_observation_sampler(spec, m.state, m.grid; origin = ORIGIN, window_seconds = (0.0, 86400.0),
-                                      halo_width = 0)
+                                      halo_width = 0, has_humidity = true)
         end
         @test [p.height_agl_m for p in s.sounding_placements] == [-400.0, 3000.0]
         close(s)

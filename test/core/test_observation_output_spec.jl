@@ -216,8 +216,9 @@ end
     _rejects(_obs_cfg(; vertical_coordinates = ["pressure"], surface_height_file = "/tmp/zs.nc",
                       absolute_altitude_above_agl_m = 0),
              "absolute_altitude_above_agl_m acts on records placed by their height above the ground")
-    _rejects(_obs_cfg(; vertical_coordinates = ["height_above_ground"], pressure_basis = "dry"),
-             "pressure_basis applies to records placed by their pressure")
+    # The pressure basis also sets the layer heights, so it applies without pressure placement (OF-117).
+    @test placement(; vertical_coordinates = ["height_above_ground"], pressure_basis = "dry").pressure_basis isa
+          O.DryInterfaces
     # The shared parser names the table it reads (the inversion reuses it).
     err = try
         O._parse_vertical_placement(Dict{String, Any}("pressure_basis" => "wet"), "[observations.placement]")

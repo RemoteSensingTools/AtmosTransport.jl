@@ -178,6 +178,53 @@
 
 ### Numerical changes
 
+- **Observation layer heights use total pressures and the virtual
+  temperature** (finding OF-117, decision D31). The hypsometric interface
+  heights above the model surface, with which observation sampling
+  (`[output.observations]`, sites and soundings, both time modes) and the
+  4D-Var's placed point observations (`CSPlacedPointObjective`, through the
+  shared `Output.sample_column_layer!`) place records by height, integrated
+  `dz = R_d T / g · ln(p[k+1] / p[k])` over the dry interface pressures of a
+  dry-basis run. The hydrostatic thickness of moist air is
+  `dz = R_d T_v / g · ln(p[k+1] / p[k])` on total pressures with the virtual
+  temperature `T_v = T (1 + c q)`, `c = R_v/R_d − 1` (`VIRTUAL_TEMPERATURE_FACTOR`,
+  0.61, as in the diffusion layer thicknesses). The default
+  `pressure_basis = "total"` (`TotalFromHumidity`) now builds the heights on
+  the total interfaces `p[k+1] = p[k] + g·m[k] / (A·(1 − q[k]))` with `T_v`
+  (`Output.placement_heights!`, `VirtualLayerTemperature`), from the same
+  humidity as the total pressures (`qv_start`/`qv_end` on lat-lon, the next
+  window's VDIFF `qv` on the cubed sphere; blended in time like the air mass),
+  and `T` from the VDIFF temperature or `layer_height_temperature_kelvin`;
+  `pressure_basis = "dry"` keeps the old rule, now documented as an
+  approximation, so one key sets the basis of pressure and height placement.
+  In an analytic column (heights given, pressures from the hydrostatic
+  equation with `T_v`) the new heights are exact to 1e-12; the old ones were
+  1.9–2.3 % low near the surface with 26 kg m⁻² of precipitable water. On the
+  golden MERRA-2 C90 L72 binary (2022-01-15, four windows, VDIFF `T` and
+  `q`) the heights near the surface rise by 2.0 % in the tropics (|φ| ≤ 15°,
+  median precipitable water 42 kg m⁻²; at most 2.7 %): 2.1 m at 100 m,
+  6.1 m at 300 m, 19 m at 1000 m, 41 m at 3000 m (1.35 %); by 0.55 % at
+  northern mid-latitudes (30–60° N, January, 8.8 kg m⁻²; 1.7 m at 300 m) and
+  1.0 % at southern ones (18.5 kg m⁻²; 3.1 m at 300 m). Of records spread
+  uniformly over `[h/2, 3h/2]` about `h` = 10, 100, 300, 1000 and 3000 m,
+  0, 2.7, 4.5, 13 and 12.6 % change layer in the tropics, 0, 0.7, 1.2, 3.7
+  and 3.1 % at northern and 0, 1.3, 2.2, 6.8 and 6.1 % at southern
+  mid-latitudes (one layer up; a record at 10 m stays in the ~130 m surface
+  layer). On the golden `pre_ll72` binary (ERA5 L137 merged to 34 levels,
+  280 K) the tropical change is the same, 2.0 %, and the new heights match
+  the hydrostatic heights of the met model's total interfaces `A + B·ps`
+  with `T_v` to 1.2 cm below 20 km (old: 18.5 m on average, 108 m at most).
+  Rows change in `intake_layer_bottom_agl` / `intake_layer_top_agl` and,
+  where the layer changes, in `intake_level` and `<tracer>_intake`; the
+  written `p_half_dry`, pressure-placed rows and averaging-kernel columns are
+  unchanged. Because every row reports its layer heights, a dry-basis run
+  whose binaries do not all carry humidity now fails to build a sampler with
+  any request (before: only with pressure-placed ones) unless
+  `pressure_basis = "dry"`; likewise every placed point observation of the
+  4D-Var needs `column_met.humidity` under the default basis. Moist-basis
+  runs keep `T` (no humidity is gathered there; their pressures were total
+  already). No golden case samples observations, so the goldens are
+  unchanged.
 - **Pressure-placed observation samples use total pressures** (issue #20,
   finding OF-116). Observation sampling (`[output.observations]`) placed a
   record by its pressure (ObsPack `pressure`, a total pressure) against the
@@ -516,6 +563,16 @@
 
 ### API and configuration changes
 
+- **`pressure_basis` sets the layer heights too** (OF-117). The key of
+  `[output.observations]` and `[observations.placement]` now applies with
+  any `vertical_coordinates` (it was rejected without `"pressure"`), and
+  `_parse_vertical_placement` loses its `pressure_basis_for_columns`
+  keyword. `Output.needs_column_humidity(basis, mass_basis)` replaces
+  `needs_column_humidity(placement, basis, mass_basis)` and the internal
+  `_basis_needs_humidity`: on a dry basis `TotalFromHumidity` needs the
+  humidity for every placement. `check_pressure_basis` counts every placed
+  request. New: `Output.placement_heights!` and
+  `Output.VirtualLayerTemperature`.
 - **OCO-2/OCO-3 level retrievals, the MIP converter, co-sampling and cell
   averages** (issue #20 follow-up, decision D30).
   - *Hat projection.* A retrieval block may describe values on levels, the

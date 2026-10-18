@@ -46,6 +46,7 @@ end
                 "observations" => Dict{String, Any}(
                     "path" => joinpath(dir, "obs.nc"),
                     "start_time" => "2021-12-02T00:00:00",
+                    "pressure_basis" => "dry",   # the synthetic binary carries no humidity
                     "sources" => Any[Dict{String, Any}("kind" => "table", "mode" => "soundings", "path" => csv),
                                      Dict{String, Any}("kind" => "table", "mode" => "sites", "path" => sites)])))
         ok, errors = validate_config(cfg)
@@ -96,6 +97,7 @@ end
                 "observations" => Dict{String, Any}(
                     "path" => joinpath(dir, "obs_{date}.nc"),
                     "start_time" => "2021-12-02T00:00:00",
+                    "pressure_basis" => "dry",   # the synthetic binary carries no humidity
                     "sources" => Any[Dict{String, Any}("kind" => "table", "mode" => "soundings", "path" => csv)])))
         quiet(() -> run_driven_simulation(cfg))
         NCDataset(joinpath(dir, "obs_20211202_soundings.nc"), "r") do ds
@@ -136,7 +138,7 @@ end
         end
         reference = run_with(joinpath(dir, "reference.nc"), nothing)
         sampled = run_with(joinpath(dir, "sampled.nc"), Dict{String, Any}(
-            "path" => joinpath(dir, "obs.nc"), "start_time" => "2021-12-02T00:00:00",
+            "path" => joinpath(dir, "obs.nc"), "start_time" => "2021-12-02T00:00:00", "pressure_basis" => "dry",
             "sources" => Any[Dict{String, Any}("kind" => "table", "mode" => "soundings", "path" => csv)]))
         @test reference[1] == sampled[1]
         @test reference[2] == sampled[2]
@@ -165,7 +167,7 @@ end
                                                               "total_molecules" => 1e35))),
                 "output" => Dict{String, Any}("enabled" => false,
                     "observations" => Dict{String, Any}(
-                        "path" => obs_root, "start_time" => "2021-12-02T00:00:00",
+                        "path" => obs_root, "start_time" => "2021-12-02T00:00:00", "pressure_basis" => "dry",
                         "sources" => Any[Dict{String, Any}("kind" => "table", "mode" => "soundings", "path" => csv),
                                          Dict{String, Any}("kind" => "table", "mode" => "sites", "path" => sites)])))
             quiet(() -> run_driven_simulation(cfg))
@@ -198,10 +200,12 @@ end
     end
 end
 
+# `pressure_basis = "dry"` for binaries without humidity (`synthetic_ll_binary`).
 function ll_cfg(dir, bins; observations, start_time = "2021-12-02T00:00:00", run = Dict{String, Any}(),
-                snapshots = false)
+                snapshots = false, pressure_basis = nothing)
     obs = Dict{String, Any}("path" => joinpath(dir, "obs.nc"), "sources" => observations)
     start_time === nothing || (obs["start_time"] = start_time)
+    pressure_basis === nothing || (obs["pressure_basis"] = pressure_basis)
     output = snapshots ? Dict{String, Any}("path" => joinpath(dir, "snap.nc"), "hours" => [0.0]) :
                          Dict{String, Any}("enabled" => false)
     output["observations"] = obs
@@ -218,7 +222,8 @@ table(path; mode = "soundings") = Any[Dict{String, Any}("kind" => "table", "mode
         bin, _ = synthetic_ll_binary(joinpath(dir, "transport_20211202.bin"); nwindows = 4)
         csv = joinpath(dir, "s.csv")
         write(csv, "id,time,lat,lon\nearly,2021-12-02T00:30:00,10,-100\nmid,2021-12-02T01:30:00,10,-100\nlate,2021-12-02T03:30:00,10,-100\n")
-        cfg = ll_cfg(dir, [bin]; observations = table(csv), run = Dict{String, Any}("start_window" => 2, "stop_window" => 3))
+        cfg = ll_cfg(dir, [bin]; observations = table(csv), run = Dict{String, Any}("start_window" => 2, "stop_window" => 3),
+                     pressure_basis = "dry")
         quiet(() -> run_driven_simulation(cfg))
         NCDataset(joinpath(dir, "obs_soundings.nc"), "r") do ds
             @test ds["id"][:] == ["mid"]
@@ -235,15 +240,15 @@ end
         bin, _ = synthetic_ll_binary(joinpath(dir, "transport_20211202.bin"); nwindows = 24)
         csv = joinpath(dir, "s.csv")
         write(csv, "id,time,lat,lon\na,2021-12-02T23:30:00,10,-100\nb,2021-12-03T00:30:00,10,-100\n")
-        quiet(() -> run_driven_simulation(ll_cfg(dir, [bin]; observations = table(csv))))
+        quiet(() -> run_driven_simulation(ll_cfg(dir, [bin]; observations = table(csv), pressure_basis = "dry")))
         NCDataset(joinpath(dir, "obs_soundings.nc"), "r") do ds
             @test ds["id"][:] == ["a"]
         end
         # An origin on another day than the first binary's label is refused.
-        bad = ll_cfg(dir, [bin]; observations = table(csv), start_time = "2021-12-03T00:00:00")
+        bad = ll_cfg(dir, [bin]; observations = table(csv), start_time = "2021-12-03T00:00:00", pressure_basis = "dry")
         @test_throws ArgumentError quiet(() -> run_driven_simulation(bad))
         # start_date and start_time must agree when both are given.
-        both = ll_cfg(dir, [bin]; observations = table(csv), start_time = "2021-12-02T06:00:00")
+        both = ll_cfg(dir, [bin]; observations = table(csv), start_time = "2021-12-02T06:00:00", pressure_basis = "dry")
         both["input"] = Dict{String, Any}("folder" => dir, "start_date" => "2021-12-02", "end_date" => "2021-12-02")
         ok, errors = validate_config(both)
         @test !ok && any(e -> occursin("disagrees with", e), errors)
@@ -255,10 +260,10 @@ end
         bin, _ = synthetic_ll_binary(joinpath(dir, "transport_20211202.bin"))
         csv = joinpath(dir, "s.csv")
         write(csv, "id,time,lat,lon\na,2021-12-02T00:30:00,10,-100\n")
-        plain = ll_cfg(dir, [bin]; observations = table(csv))
+        plain = ll_cfg(dir, [bin]; observations = table(csv), pressure_basis = "dry")
         plain["output"] = Dict{String, Any}("enabled" => false)
         reference = quiet(() -> run_driven_simulation(plain))
-        sampled = quiet(() -> run_driven_simulation(ll_cfg(dir, [bin]; observations = table(csv))))
+        sampled = quiet(() -> run_driven_simulation(ll_cfg(dir, [bin]; observations = table(csv), pressure_basis = "dry")))
         @test sampled.state.air_mass == reference.state.air_mass
         @test sampled.state.tracers_raw == reference.state.tracers_raw
     end
@@ -328,6 +333,34 @@ end
         cfg["output"]["observations"]["pressure_basis"] = "dry"
         quiet(() -> run_driven_simulation(cfg))
         @test levels(joinpath(dry_dir, "obs_soundings.nc")) == [3, 3, 3]
+    end
+end
+
+@testset "layer heights take the binary's humidity at each window end (OF-117)" begin
+    mktempdir() do dir
+        # A 10 m site samples the surface layer (66500-95000 Pa under qa) at 0, 1 and 2 h. Its top is
+        # R_d·280·(1 + c·q)/g·ln(p_s/p_2) on the total pressures of that window end's humidity (qa,
+        # 0, 2qa; the lat-lon sampler's constant 280 K) with the virtual temperature; the dry rule
+        # (before OF-117) takes the dry interfaces and T at every end.
+        R, c = AtmosTransport.Parameters.R_DRY_AIR, AtmosTransport.Parameters.VIRTUAL_TEMPERATURE_FACTOR
+        dp = diff([10.0, 0.3 * 95000, 0.7 * 95000, 95000.0])
+        dry_dp = (1 .- QA) .* dp
+        top(q) = begin
+            p = 10.0 .+ vcat(0.0, cumsum(dry_dp ./ (1 .- q)))
+            R * 280 * (1 + c * q[3]) / G * log(p[4] / p[3])
+        end
+        @test top(QA) ≈ R * 280 * (1 + c * QA[3]) / G * log(95000 / 66500) rtol = 1e-14
+        sites = joinpath(dir, "sites.csv")
+        write(sites, "id,lat,lon,intake_height\nlow,10,-100,10\n")
+        humid = humid_ll_binary(joinpath(dir, "transport_20211202.bin"))
+        tops(path) = NCDataset(ds -> Float64.(ds["intake_layer_top_agl"][1, :]), path, "r")
+        quiet(() -> run_driven_simulation(ll_cfg(dir, [humid]; observations = table(sites; mode = "sites"))))
+        @test tops(joinpath(dir, "obs_sites.nc")) ≈ [top(QA), top(zeros(3)), top(2 .* QA)] rtol = 1e-6
+        dry_dir = mkpath(joinpath(dir, "dry"))
+        quiet(() -> run_driven_simulation(ll_cfg(dry_dir, [humid]; observations = table(sites; mode = "sites"),
+                                                 pressure_basis = "dry")))
+        @test tops(joinpath(dry_dir, "obs_sites.nc")) ≈ fill(top(zeros(3)), 3) rtol = 1e-6
+        @test top(2 .* QA) / top(zeros(3)) - 1 > 0.04          # 2qa: the dry rule is 4 % low here
     end
 end
 

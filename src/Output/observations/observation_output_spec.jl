@@ -172,16 +172,12 @@ table `cfg`, named `label` in error messages (`"[output.observations]"`):
 `surface_height_file`, `dem_file`/`dem_variable`, `unplaced_records`,
 `absolute_altitude_above_agl_m`, `vertical_coordinates` and
 `pressure_basis`. The caller checks for unknown keys. Keys that would have
-no effect are errors: `dem_variable` without `dem_file`, `dem_file` or
+no effect are errors: `dem_variable` without `dem_file`, and `dem_file` or
 `absolute_altitude_above_agl_m` (both act on placements by height) when
-`vertical_coordinates` leaves out `"height_above_ground"`, and
-`pressure_basis` when it leaves out `"pressure"`, unless
-`pressure_basis_for_columns = true`: a caller whose averaging-kernel columns
-also read the pressure basis (the inversion) accepts it without pressure
-placement.
+`vertical_coordinates` leaves out `"height_above_ground"`. `pressure_basis`
+applies to every coordinate (the layer heights are built on it too).
 """
-function _parse_vertical_placement(cfg::AbstractDict, label::AbstractString;
-                                   pressure_basis_for_columns::Bool = false)
+function _parse_vertical_placement(cfg::AbstractDict, label::AbstractString)
     surface_height_file = _parse_optional_path(cfg, "surface_height_file", label)
     dem_file = _parse_optional_path(cfg, "dem_file", label)
     dem_variable = get(cfg, "dem_variable", "z")
@@ -199,10 +195,6 @@ function _parse_vertical_placement(cfg::AbstractDict, label::AbstractString;
                 "effect without \"height_above_ground\" in $(label).vertical_coordinates"))
         end
     end
-    pressure_basis_for_columns || _uses_coordinate(coordinates, PressureCoordinate) ||
-        !haskey(cfg, "pressure_basis") || throw(ArgumentError(
-        "$(label).pressure_basis applies to records placed by their pressure and has no effect without " *
-        "\"pressure\" in $(label).vertical_coordinates"))
     pressure_basis = _parse_choice(get(cfg, "pressure_basis", "total"), _PRESSURE_BASES, "$(label).pressure_basis")
     return VerticalPlacementSpec(; surface_height_file, dem_file, dem_variable = String(dem_variable),
                                  unplaced,

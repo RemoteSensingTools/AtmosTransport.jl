@@ -81,7 +81,8 @@ writing topology-specific NetCDF files directly.
   into a `VerticalPlacement` with a `VERTICAL_PLACEMENT_CODES` code;
   `placement_layer` / `pressure_layer_index`, the layer of a placement in one
   sampled column; and `placement_pressures!` / `check_pressure_basis`, the
-  total (from the specific humidity) or dry interfaces pressure placement uses.
+  total (from the specific humidity) or dry interfaces pressure placement uses
+  (the same basis sets the layer heights, `placement_heights!`).
 - `observations/cell_locator.jl` maps an observation (lon, lat) to its containing
   cell per topology (`cell_locator`, `locate` → `CellLocation` with native cell
   index, halo-aware device column, centre and area). Lat-lon and reduced
@@ -91,8 +92,10 @@ writing topology-specific NetCDF files directly.
   air mass and selected tracer storage for a batch of columns into compact
   `(level, observation)` buffers, plus the host Float64 reconstruction of
   interface pressures (air-mass interfaces, and total interfaces from the dry
-  air mass and specific humidity), hypsometric layer heights (`AbstractLayerTemperature`
-  sources), intake layer index (a `NaN` height is an error, never the lowest
+  air mass and specific humidity), hypsometric layer heights on the pressure
+  basis (`placement_heights!`: total interfaces with the virtual temperature
+  `VirtualLayerTemperature` by default, dry interfaces with `T` for
+  `pressure_basis = "dry"`; `AbstractLayerTemperature` sources), intake layer index (a `NaN` height is an error, never the lowest
   layer), mixing-ratio profiles, and column means.
 - `observations/retrieval_column.jl` is the averaging-kernel (retrieval)
   column operator, as pure host Float64 functions of one column:

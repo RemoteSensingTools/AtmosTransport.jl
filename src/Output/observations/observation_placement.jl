@@ -15,7 +15,9 @@
 # (`vertical_coordinates`; by default height first, then pressure); a record
 # that none of them place is refused or skipped and counted. Pressure
 # placement compares the record's (total) pressure with the total interface
-# pressures of the column (`AbstractPressureBasis`). Placement is resolved
+# pressures of the column, and the layer heights are hypsometric on the same
+# total pressures with the virtual temperature (`AbstractPressureBasis`, one
+# choice for both). Placement is resolved
 # once per request when the sampler is built; the layer is chosen at every
 # sample from that sample's column (`placement_layer`).
 #
@@ -209,30 +211,40 @@ _uses_coordinate(coordinates::Tuple, ::Type{C}) where {C <: AbstractVerticalCoor
 """
     AbstractPressureBasis
 
-The interface pressures a pressure-placed record is compared with
-(`pressure_basis`): [`TotalFromHumidity`](@ref) (default) or
+The vertical basis of a column's placement (`pressure_basis`), one choice for
+the interface pressures a pressure-placed record (or an averaging-kernel
+column) is compared with and for the hypsometric layer heights a record
+placed by height is compared with: [`TotalFromHumidity`](@ref) (default) or
 [`DryInterfaces`](@ref). A record's pressure is the total (ambient)
 pressure, dry air plus water vapour. The air mass of a dry-basis run gives
 dry interface pressures, ``p_{k+1/2} = p_{k-1/2} + g\\,m_k/A`` (the weight of
 the dry air above), which are lower than the total pressure at the same
 interface by the weight of the water vapour above it: about 0.5 % of the
-surface pressure for 50 kg m⁻² of precipitable water.
+surface pressure for 50 kg m⁻² of precipitable water. The hydrostatic layer
+thickness is ``(R_d T_v/g)\\ln(p_{k+1/2}/p_{k-1/2})`` with total pressures
+and the virtual temperature ``T_v = T\\,(1 + 0.61\\,q)``; dry pressures and
+``T`` put heights in a humid boundary layer about 2 % low.
 """
 abstract type AbstractPressureBasis end
 
 """
 `pressure_basis = "total"` (default): compare a record's pressure with the
-column's total interface pressures. Specific humidity ``q_k`` (kg of water
+column's total interface pressures, and a record's height with the
+hypsometric heights of moist air on them. Specific humidity ``q_k`` (kg of water
 vapour per kg of moist air) makes the moist air mass of layer ``k``
 ``m_k/(1 - q_k)`` for a dry air mass ``m_k`` (kg), so on a dry-basis run the
-hydrostatic total pressures are
+hydrostatic total pressures and the interface heights above the model surface are
 
 ```math
 p_{1/2} = p_\\mathrm{top}, \\qquad
-p_{k+1/2} = p_{k-1/2} + \\frac{g\\,m_k}{A\\,(1 - q_k)},
+p_{k+1/2} = p_{k-1/2} + \\frac{g\\,m_k}{A\\,(1 - q_k)}, \\qquad
+z_{k-1/2} = z_{k+1/2} + \\frac{R_d\\,T_k\\,(1 + c\\,q_k)}{g}\\ln\\frac{p_{k+1/2}}{p_{k-1/2}},
 ```
 
-with ``A`` the cell area and ``p_\\mathrm{top}`` the pure-pressure model-top
+with ``z_{N+1/2} = 0``, ``T_k`` the layer temperature,
+``c = R_v/R_d - 1`` (`VIRTUAL_TEMPERATURE_FACTOR`, 0.61) and
+``T_k(1 + c\\,q_k)`` the virtual temperature (exact for layers of uniform
+``T`` and ``q``), ``A`` the cell area and ``p_\\mathrm{top}`` the pure-pressure model-top
 interface `A_ifc[1]`, a total pressure in the met model's hybrid coordinate
 (level 1 is the top). This inverts the preprocessing's dry conversion
 ``Δp_\\mathrm{dry} = (1 - q)\\,Δp``. On merged or remapped levels the binary
@@ -248,20 +260,29 @@ payload the window-start VDIFF `qv` of the next window (the run's last window
 end takes the ended window's, one window old). Reduced-Gaussian binaries, and
 cubed-sphere binaries without the VDIFF payload, carry no humidity. On a
 moist-basis run the air mass already includes the vapour and its interfaces
-are total pressures without humidity. A dry-basis run whose binaries do not
-all carry humidity cannot build them: building a sampler that places any
-record by pressure then fails unless `pressure_basis = "dry"`.
+are total pressures without humidity; the heights there use ``T`` (no humidity
+is gathered, so the virtual-temperature term, about 1 % of the heights in a
+humid boundary layer, is neglected). A dry-basis run whose binaries do not
+all carry humidity cannot build them: building a sampler with any request,
+whatever its vertical coordinate (every row reports its layer's heights),
+then fails unless `pressure_basis = "dry"`.
 """
 struct TotalFromHumidity <: AbstractPressureBasis end
 
 """
 `pressure_basis = "dry"`: compare a record's pressure with the dry interface
-pressures ``p_{k+1/2} = p_{k-1/2} + g\\,m_k/A`` of a dry-basis run, for runs
+pressures ``p_{k+1/2} = p_{k-1/2} + g\\,m_k/A`` of a dry-basis run, and its
+height with the hypsometric heights on them with the layer temperature ``T``,
+``z_{k-1/2} = z_{k+1/2} + (R_d T_k/g)\\ln(p_{k+1/2}/p_{k-1/2})``, for runs
 whose binaries carry no humidity (the sampler's only rule before issue #20).
-The dry interfaces lie at lower pressure than the total ones, so a record can
-be placed one or more layers lower in the column than its total pressure
-says, most likely near the surface where the vapour weight above an
-interface is largest and the layers are thinnest. Not available on a moist-basis run.
+Both are approximations. The dry interfaces lie at lower pressure than the
+total ones, so a record can be placed one or more layers lower in the column
+than its total pressure says, most likely near the surface where the vapour
+weight above an interface is largest and the layers are thinnest. The heights
+are low by the dry pressure ratio (``-q`` plus the vapour weight above over
+the pressure) and by ``T`` against ``T_v`` (``-0.61\\,q``): about 2 % in a
+humid tropical boundary layer (``q`` = 16 g/kg), 6 m at a 300 m intake. Not
+available on a moist-basis run.
 """
 struct DryInterfaces <: AbstractPressureBasis end
 
@@ -596,47 +617,53 @@ placement_pressures!(p_half, ::DryInterfaces, ::DryBasis, air_column, humidity_c
     interface_pressures!(p_half, air_column, area, g, p_top)
 
 """
-    check_pressure_basis(basis, mass_basis, has_humidity, n_pressure, label) -> Bool
+    check_pressure_basis(basis, mass_basis, has_humidity, n_column, label) -> Bool
 
-Check, when the requests are placed, that `basis` can build the interface
-pressures of `n_pressure` pressure-placed requests on a run of `mass_basis`
-whose binaries carry specific humidity when `has_humidity`, and return
-whether sampling needs that humidity (only [`TotalFromHumidity`](@ref) on a
-dry-basis run with pressure-placed requests does). Throws for `DryInterfaces`
-on a moist-basis run, and for `TotalFromHumidity` with pressure-placed
-requests on a dry-basis run without humidity; `label` names the config table
-(`"[output.observations]"`).
+Check, when the requests are placed, that `basis` can build the layer heights
+and interface pressures of `n_column` requests placed in the column on a run
+of `mass_basis` whose binaries carry specific humidity when `has_humidity`,
+and return whether sampling needs that humidity
+([`needs_column_humidity`](@ref) with at least one request:
+[`TotalFromHumidity`](@ref) on a dry-basis run). Every placed request counts,
+whatever its coordinate: its layer heights are built (and reported) on the
+basis. Throws for `DryInterfaces` on a moist-basis run, and for
+`TotalFromHumidity` with requests on a dry-basis run without humidity;
+`label` names the config table (`"[output.observations]"`).
 """
-check_pressure_basis(::DryInterfaces, ::MoistBasis, has_humidity::Bool, n_pressure::Integer,
+check_pressure_basis(::DryInterfaces, ::MoistBasis, has_humidity::Bool, n_column::Integer,
                      label::AbstractString) = throw(ArgumentError(
     "$(label).pressure_basis = \"dry\" needs a dry-basis run: this run's air mass is moist, so its " *
     "interface pressures already are total pressures; omit pressure_basis"))
-check_pressure_basis(::DryInterfaces, ::DryBasis, has_humidity::Bool, n_pressure::Integer, label::AbstractString) =
+check_pressure_basis(::DryInterfaces, ::DryBasis, has_humidity::Bool, n_column::Integer, label::AbstractString) =
     false
-check_pressure_basis(::TotalFromHumidity, ::MoistBasis, has_humidity::Bool, n_pressure::Integer,
+check_pressure_basis(::TotalFromHumidity, ::MoistBasis, has_humidity::Bool, n_column::Integer,
                      label::AbstractString) = false
-function check_pressure_basis(::TotalFromHumidity, ::DryBasis, has_humidity::Bool, n_pressure::Integer,
+function check_pressure_basis(::TotalFromHumidity, ::DryBasis, has_humidity::Bool, n_column::Integer,
                               label::AbstractString)
-    n_pressure == 0 && return false
+    n_column == 0 && return false
     has_humidity || throw(ArgumentError(
-        "$(n_pressure) requests are placed by pressure. Record pressures are total pressures, and " *
-        "$(label).pressure_basis = \"total\" (the default) builds the total interface pressures from the " *
-        "dry air mass and the specific humidity, but the run's binaries do not all carry humidity: lat-lon " *
-        "binaries need qv_start/qv_end (preprocessed with output.include_qv = true), cubed-sphere binaries " *
-        "the GCHP VDIFF payload (include_vdiff_fields = true), and reduced-Gaussian binaries carry none. " *
-        "Set $(label).pressure_basis = \"dry\" to compare them with the " *
-        "dry interface pressures instead (they lie at lower pressure, so a record can land one or more " *
-        "layers too low), or leave \"pressure\" out of $(label).vertical_coordinates"))
+        "$(n_column) requests are placed in the model column. $(label).pressure_basis = \"total\" (the " *
+        "default) builds the column's total interface pressures (record pressures and retrieval pressures " *
+        "are total pressures) and its layer heights, with the virtual temperature, from the dry air mass " *
+        "and the specific humidity, but the run's binaries do not all carry humidity: lat-lon binaries " *
+        "need qv_start/qv_end (preprocessed with output.include_qv = true), cubed-sphere binaries the GCHP " *
+        "VDIFF payload (include_vdiff_fields = true), and reduced-Gaussian binaries carry none. Set " *
+        "$(label).pressure_basis = \"dry\" to build them from the dry interface pressures and the layer " *
+        "temperature instead (an approximation: in a humid boundary layer the heights are about 2 % low, " *
+        "and the dry interfaces lie at lower pressure, so a pressure-placed record can land one or more " *
+        "layers too low)"))
     return true
 end
 
 """
     PlacementColumn(nlevel)
 
-Scratch for [`column_layer!`](@ref) on a column of `nlevel` layers:
-`p_half` receives the interface pressures a pressure placement is compared
-with, and `humidity` holds the column's specific humidity (k = 1 at the
-top), which the caller fills when the pressure basis needs it.
+Scratch for [`column_layer!`](@ref) and `sample_column_layer!` on a column of
+`nlevel` layers: `p_half` receives the interface pressures of the pressure
+basis (those a pressure placement is compared with, and the total pressures
+of the heights), and `humidity` holds the column's specific humidity (k = 1
+at the top), which the caller fills when the pressure basis needs it
+([`needs_column_humidity`](@ref)).
 """
 struct PlacementColumn
     p_half::Vector{Float64}
@@ -665,13 +692,14 @@ function column_layer!(column::PlacementColumn, placement::VerticalPlacement, z_
 end
 
 """
-    needs_column_humidity(placement, basis, mass_basis) -> Bool
+    needs_column_humidity(basis, mass_basis) -> Bool
 
-Whether choosing the layer of `placement` needs the column's specific
-humidity: a pressure placement against total pressures
-([`TotalFromHumidity`](@ref)) on a dry-basis run.
+Whether a column's layer heights and interface pressures on the
+[`AbstractPressureBasis`](@ref) `basis` need its specific humidity: on a
+dry-basis run [`TotalFromHumidity`](@ref) builds the total pressures and the
+virtual temperature from it, for every placement (the heights of
+`sample_column_layer!`) and for averaging-kernel columns.
+[`DryInterfaces`](@ref), and a moist-basis run, need none.
 """
-needs_column_humidity(placement::VerticalPlacement, basis::AbstractPressureBasis, mass_basis::AbstractMassBasis) =
-    placement.method == VERTICAL_PLACEMENT_CODES.pressure && _basis_needs_humidity(basis, mass_basis)
-_basis_needs_humidity(::TotalFromHumidity, ::DryBasis) = true
-_basis_needs_humidity(::AbstractPressureBasis, ::AbstractMassBasis) = false
+needs_column_humidity(::TotalFromHumidity, ::DryBasis) = true
+needs_column_humidity(::AbstractPressureBasis, ::AbstractMassBasis) = false

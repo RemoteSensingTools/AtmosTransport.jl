@@ -54,6 +54,8 @@ path = "~/data/AtmosTransport/output/oco2mip_example/snap_{YYYYMMDD}.nc"
 path = "~/data/AtmosTransport/output/oco2mip_example/obs_{YYYYMMDD}.nc"
 time_interpolation = "linear"    # blend the two met-window ends around each sounding
 write_profile_for_sites = true   # full profiles at the TCCON sites, every met window
+pressure_basis = "dry"           # these ERA5 N320 -> C90 binaries carry no humidity: dry interfaces and T
+                                 # for the layer heights (the default "total" needs it; see docs)
 
 # Every OCO-2 10-s average in the run window (the MIP co-samples all records).
 [[output.observations.sources]]
