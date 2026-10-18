@@ -86,20 +86,58 @@ what is missing otherwise (for example the split-sweep `PPMScheme` with the FV3
 vertical profile).
 
 Optional vertical diffusion and supported convection operators can be passed
-with the corresponding operator, forcing, and workspace keywords. Unsupported
-physics combinations fail validation instead of silently using an incomplete
-transpose.
+with the corresponding operator, forcing, and workspace keywords. The physics
+cadence, the met windows and the air-mass resets of a driven run come in as a
+`CSStepSchedule` (`schedule` keyword; `CSStepSchedule(sim)` for a
+`DrivenSimulation`). `cs_adjoint_inputs(sim; tracer)` captures every input of
+a cubed-sphere `DrivenSimulation` configuration from production itself — the
+face fluxes of each step after window loading and flux scaling, the
+convection forcing and diffusion layer thickness of each met window, the
+tracer's emission rates, the schedule and fresh workspaces — so the adjoint
+of a driven run needs no hand assembly. Every entry point checks the whole step plan before it
+records anything (below): an operator without an adjoint is an error that
+names it, never a silent approximation.
 
 ## The forward model the adjoint transposes
 
 A footprint is a derivative of the production model, so the adjoint's forward
-model is the production step of a run with surface fluxes
-(`TransportModel.step!`: the transport palindrome of `strang_split!`, then
-convection). Write `x_n` for the tracer mass on the six panels, interiors and
-halos, before step `n` of length `Δt`. Read operator products right to left:
+model is the production step, by construction rather than by a second
+implementation kept in step with it.
+
+**One description of the step.** A `StepPlan` holds the operators of a run's
+step and when they run, in four phases:
+
+| phase | when | stages |
+| --- | --- | --- |
+| `window_advance` | entering a met window after the first | air-mass reset to the new window (`air_mass_reset_mode`) |
+| `window_start` | before the first step of each window | first decay half over the window (`:window` cadence) |
+| `step` | every advection step | transport block; with `:substep` cadence also decay halves and convection over `Δt` |
+| `window_end` | after the last step of each window | reset to the window's end mass (binary contract), convection and the closing chemistry over the window (`:window` cadence) |
+
+`StepPlan(; physics_cadence, window_contract, air_mass_reset)` builds it.
+`TransportModel.step!` executes the `step` stages of the substep plan,
+`DrivenSimulation` executes all four phases of its plan (`sim.plan`), and the
+cubed-sphere adjoint replays and records the same plan
+(`CSStepSchedule(sim)`): the same stage functions, the same production
+operators (the packed-tracer palindrome, the Kahan-compensated surface source,
+the convection and diffusion operators with their ledger carries and the CMFMC
+CFL cache), on a single-tracer state.
+
+**Recording.** The production step calls an observation hook at every point
+whose input the transpose needs: before each advection sweep, after each halo
+exchange, at the palindrome center, inside Lin–Rood's horizontal operator,
+after convection, before an air-mass reset. Production passes
+`NoStepRecorder()`, for which every hook is an inlined no-op. The adjoint
+passes a tape recorder that stages the hook's input and pushes one tape record
+per hook. The tape therefore lists exactly the operators production ran, in
+production order, and the reverse walk applies their transposes backwards.
+
+Write `x_n` for the tracer mass on the six panels, interiors and halos, before
+step `n` of length `Δt`. Read operator products right to left. The transport
+block of a split-sweep step is
 
 ```math
-x_{n+1} = \mathcal{K}_n \, \mathcal{R}_n \, \mathcal{C}_n \, \mathcal{F}_n \, \mathcal{H} \, x_n ,
+\mathcal{T}_n = \mathcal{R}_n \, \mathcal{C}_n \, \mathcal{F}_n \, \mathcal{H},
 \qquad
 \mathcal{F}_n = (\mathcal{Z}\mathcal{Y}\mathcal{X})^{s}, \quad
 \mathcal{R}_n = (\mathcal{X}\mathcal{Y}\mathcal{Z})^{s}.
@@ -108,34 +146,59 @@ x_{n+1} = \mathcal{K}_n \, \mathcal{R}_n \, \mathcal{C}_n \, \mathcal{F}_n \, \m
 - ``\mathcal{H}`` is the step-start halo refresh (`fill_cs_step_start_halos!`):
   every edge halo cell, then every corner cell in the X-sweep orientation,
   becomes a copy of an interior cell of a neighbouring panel. The first X
-  sweep of the step reads these halos, and the previous step's convection
+  sweep of the step reads these halos, and the operators of the previous step
   changed the interiors they mirror.
 - ``\mathcal{F}_n`` and ``\mathcal{R}_n`` are the two halves of the transport
-  palindrome with `s` CFL subcycles, every flux divided by `s`, with the halo
-  exchanges between sweeps.
-- ``\mathcal{K}_n`` is the convection column operator (TM5 or CMFMC).
+  palindrome with `s` subcycles (from the CFL budget, or one under a binary
+  window contract), every flux divided by `s`, with the halo exchanges between
+  sweeps.
 - ``\mathcal{C}_n`` is the palindrome center. With surface-flux injection
   ``\mathcal{S}_n(\Delta t)`` (adds ``E_n \Delta t`` to the surface layer) and
   the backward-Euler diffusion solve ``\mathcal{V}(\tau) = (I - \tau D)^{-1}``,
-  the diffusion operator's `surface_flux_coupling` selects
 
 ```math
 \mathcal{C}_n =
 \begin{cases}
 \mathcal{V}(\Delta t/2)\,\mathcal{S}_n(\Delta t)\,\mathcal{V}(\Delta t/2) & \texttt{SplitSurfaceFluxCoupling} \\
-\mathcal{V}(\Delta t)\,\mathcal{S}_n(\Delta t) & \texttt{DiffusiveSurfaceFluxBoundary}
+\mathcal{V}(\Delta t)\,\mathcal{S}_n(\Delta t) & \texttt{DiffusiveSurfaceFluxBoundary} \\
+\mathcal{V}(\Delta t) & \text{no surface-flux operator}
 \end{cases}
 ```
 
 Backward Euler is not a semigroup, ``\mathcal{V}(\Delta t) \neq
-\mathcal{V}(\Delta t/2)^2``, so the two couplings are different models that
-differ at ``O((\Delta t\,D)^2)``; the adjoint must transpose the one the run
-uses. One function, `surface_flux_center!`, defines this order for production
-(through `palindrome_center!`), for the tape-free forward replays and for the
-tape recorders.
+\mathcal{V}(\Delta t/2)^2``, so the three centers are different models that
+differ at ``O((\Delta t\,D)^2)``; the adjoint transposes the one the plan has.
+Footprints and 4D-Var differentiate with respect to the emissions, so their
+plans always carry a surface-flux operator (zero rates allowed);
+`cs_surface_emission_footprint_from_seed(...; surface_flux = false)` replays a
+configuration without surface sources, whose center is one solve
+``\mathcal{V}(\Delta t)``, and returns its initial-condition sensitivity
+(`result.initial_adjoint`; every result carries it).
 
-The reverse pass applies the transposes in the opposite order,
-``\mathcal{H}^T \mathcal{F}_n^T \mathcal{C}_n^T \mathcal{R}_n^T \mathcal{K}_n^T``.
+**Physics cadence.** With `physics_cadence = :substep` (or without a binary
+window contract) step `n` is ``x_{n+1} = \mathcal{K}_n(\Delta t)\,
+\mathcal{T}_n x_n``, convection ``\mathcal{K}`` over the step. Under a
+transport binary's per-window contract and `physics_cadence = :window` (the
+default of driven runs) the steps of a met window `w` run the transport block
+only, and after the window's last step
+
+```math
+x \leftarrow \mathcal{K}_w(\Delta t_w)\,\mathcal{M}_w\,x ,
+```
+
+where ``\mathcal{M}_w`` resets the air mass to the window's end mass (the
+tracer mass is unchanged under `:preserve_tracer_mass`, scaled by
+``m_\text{new}/m_\text{old}`` under `:preserve_vmr`) and ``\mathcal{K}_w``
+is convection over the whole window ``\Delta t_w`` with the window's forcing
+(installed at its first step) and, for `CMFMCConvection`, the CFL sub-step
+count computed from the reset air mass. The tape records the convection at
+that point with that interval, forcing and sub-step count; the observation
+sampling point of the last step (its end-of-step record) follows the window
+end. A checkpoint is a step boundary of the absolute schedule, so a Stride or
+Revolve window that restarts inside a met window runs that window's remaining
+steps and its window-end stages exactly as the recording run did.
+
+The reverse pass applies the transposes in the opposite order.
 ``E_n`` enters only through ``\mathcal{S}_n``, so
 
 ```math
@@ -143,22 +206,37 @@ The reverse pass applies the transposes in the opposite order,
 ```
 
 where ``\lambda_n^{S}`` is the adjoint state at the position of
-``\mathcal{S}_n``: the final seed propagated back through all later steps,
-``\mathcal{K}_n^T``, ``\mathcal{R}_n^T``, and the part of the center after
-the injection, ``\mathcal{V}(\Delta t/2)^T`` or ``\mathcal{V}(\Delta t)^T``.
-The tape marks that position with its midpoint record. ``\mathcal{H}`` is a
-linear copy, ``h = P\,i`` from interior to halo, so ``\mathcal{H}^T`` adds each
-halo sensitivity into its source interior cell and zeroes the halo. Without
-``\mathcal{H}`` the replayed X sweep would read halos copied before the
-previous step's convection: a different operator from production, whose
-error grew with the step count and the convective mass flux, and which
-also made a checkpoint window that restarts with fresh halos disagree with
-the full tape. Lin–Rood's horizontal operator refills the halos it reads, so
-its steps need no ``\mathcal{H}``.
-`test/core/test_cs_adjoint_production_parity.jl` checks the replay against
-`TransportModel.step!` for both couplings with TM5 and CMFMC convection, and
-the footprints against finite differences of the production model.
+``\mathcal{S}_n``: the final seed propagated back through all later
+operators and the part of the center after the injection. The tape marks that
+position with its emission record. ``\mathcal{H}`` is a linear copy,
+``h = P\,i`` from interior to halo, so ``\mathcal{H}^T`` adds each halo
+sensitivity into its source interior cell and zeroes the halo. Lin–Rood's
+horizontal operator refills every halo cell it reads, so its step-start fills
+are never read and have no record.
 
+**Enforcement.** Three layers keep the adjoint the transpose of production:
+
+1. *One source of truth*: the plan above; there is no second composition of
+   the step in the adjoint.
+2. *Setup guard*: `adjoint_support(x)` is `nothing` for every stage and
+   operator the tape records and transposes, and a reason otherwise (the
+   fallback for a new stage, operator or scheme). `require_adjoint_support(plan,
+   ops)` — called by every entry point before recording, and available as
+   `require_adjoint_support(sim)` for a `DrivenSimulation` — throws an error
+   naming every unsupported piece, e.g. exponential-decay chemistry, the
+   collaborative TM5 solve or clamped CMFMC.
+3. *Parity matrix* (`test/core/test_cs_adjoint_step_plan_parity.jl`): for every
+   supported scheme family, both cadences, TM5, CMFMC and CMFMC-matrix
+   convection, both diffusion couplings, diffusion without surface sources and
+   both reset modes, the adjoint's forward replay, its tape recording and a
+   checkpoint restart inside a met window reproduce the production
+   `DrivenSimulation` bit for bit; Full, Stride and Revolve footprints agree
+   exactly; and footprints and the initial-condition sensitivity match central
+   finite differences of the production simulation. A forward feature that
+   changes the production step without a plan stage makes this test fail; a
+   plan stage or operator without an adjoint makes the guard fail.
+
+## From footprints to 4D-Var
 ## From footprints to 4D-Var
 
 The inversion layer composes the reverse pass rather than reimplementing it:
@@ -191,8 +269,9 @@ the exact keyword contracts in [Adjoints and checkpointing API](@ref).
 
 ## Tape and checkpoint choices
 
-The forward pass records typed advection, halo, midpoint, diffusion,
-convection, and end-of-step operations. Lin-Rood horizontal updates use an additional dedicated
+The forward pass records typed advection, halo, emission, diffusion,
+convection, air-mass reset and end-of-step operations through the production
+step's recorder hooks. Lin-Rood horizontal updates use an additional dedicated
 record. The reverse loop dispatches on those record types and calls the
 matching transpose kernel.
 
@@ -219,13 +298,15 @@ The `checkpoint` keyword controls the memory/recompute trade-off:
 
 `RevolveCheckpoint()` is a bisection schedule inspired by Revolve, not the
 optimal binomial Griewank-Walther schedule and not a user-specified snapshot
-budget. All three schedules record the same states: every step starts from
-the step-start halo refresh, so a window that restarts at a step boundary
-sees the halos of the full tape. Stride and Revolve footprints agree with
-`FullCheckpoint` to rounding (tested at `1e-12`) for every supported scheme,
-including limited PPM with diffusion and convection. An earlier Revolve drift
-of order `1e-7` in that configuration came from a missing step-start halo
-refresh in the recorders, not from limiter flips.
+budget. All three schedules record the same states: a checkpoint holds the
+tracer and air mass with their halos and the persistent operator state (the
+surface sources' Kahan compensation, the convection and Dkg diffusion ledger
+carries, the CMFMC CFL cache), so a window that restarts at a step boundary,
+also inside a met window, replays the recording run bit for bit. Stride and
+Revolve footprints equal `FullCheckpoint`'s (exactly in one thread; the halo
+and Lin–Rood transposes accumulate with atomics when several threads run
+them) for every supported scheme, including limited PPM with diffusion and
+convection.
 
 ## How this maps to established systems
 
@@ -268,6 +349,11 @@ fixed by the record. See [averaging-kernel columns](@ref retrieval-column-operat
 - TM5 and CMFMC-matrix convection require the full, unmerged,
   non-collaborative solve (`use_collab_lu = false`, `lmax_conv = 0`,
   `n_merge = 1`).
+- Chemistry has no adjoint record: a plan with exponential decay or other
+  chemistry is rejected by the guard.
+- The adjoint records one tracer; the per-step face fluxes and per-window
+  convection forcing of a driven run are the caller's inputs
+  (`CSStepSchedule(sim)` supplies the plan, windows and reset targets).
 - A tangent-linear driver is not exposed.
 - A real-data TM5-4DVAR or GCHP-adjoint cross-validation has not been
   published.

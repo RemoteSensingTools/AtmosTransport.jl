@@ -62,7 +62,8 @@ Private = false
 The model step as data: the `StepPlan` that `TransportModel.step!` and
 `DrivenSimulation` execute and the cubed-sphere adjoint replays, its stages,
 and the stage executors. The step recorders (`AbstractStepRecorder`,
-`NoStepRecorder`) are in the top-level section above.
+`NoStepRecorder`) are in the top-level section above. See
+[the forward model the adjoint transposes](@ref adjoint-step-plan).
 
 ```@autodocs
 Modules = [AtmosTransport.Operators.StepPlans]
