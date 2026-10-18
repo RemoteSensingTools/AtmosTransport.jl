@@ -33,6 +33,7 @@
 #     # source = "synthetic_hydrostatic"
 #     # interface_pressures_pa = [1000.0, 30000.0, 70000.0, 100000.0]   # total, top first
 #     # specific_humidity = [1e-5, 2e-3, 1e-2]   # per layer (kg/kg); omit for a dry column
+#     #                                          # (then pressure_basis = "dry" below)
 #     # temperature_kelvin = [230.0, 260.0, 285.0]   # per layer, for layer heights;
 #     #                                              # omit for layer_height_temperature_kelvin
 #     # The dry air mass of layer k in a cell of area A is
@@ -61,9 +62,10 @@
 #     out_of_range_policy = "reject"  # reject | skip | clamp
 #     [observations.placement]        # optional: how point records are placed
 #     vertical_coordinates = ["height_above_ground", "pressure"]
-#     pressure_basis = "total"        # or "dry" (needs no specific_humidity); also the
-#                                     # interface pressures of averaging-kernel columns,
-#                                     # so allowed without "pressure" in vertical_coordinates
+#     pressure_basis = "total"        # or "dry" (needs no specific_humidity): the basis of the
+#                                     # layer heights (total pressures and virtual temperature,
+#                                     # or dry pressures and T), of pressure placement and of
+#                                     # the interface pressures of averaging-kernel columns
 #     unplaced_records = "error"      # or "skip"
 #     # surface_height_file, dem_file, dem_variable,
 #     # absolute_altitude_above_agl_m: as in [output.observations]
@@ -362,7 +364,7 @@ end
 
 _observation_placement(cfg) =
     AT.Output._parse_vertical_placement(get(cfg["observations"], "placement", Dict{String, Any}()),
-                                        _PLACEMENT_LABEL; pressure_basis_for_columns = true)
+                                        _PLACEMENT_LABEL)
 
 _start_time(cfg) = AT.Output._parse_iso_utc(cfg["time"]["start"], "[time].start")
 
@@ -466,7 +468,8 @@ end
 # point observations: model top p[1], g, the layer temperature (the
 # `temperature_kelvin` profile, else the constant
 # `layer_height_temperature_kelvin`) and the humidity (absent for a dry
-# column, so pressure placement then needs pressure_basis = "dry").
+# column, so placed points and averaging-kernel columns then need
+# pressure_basis = "dry").
 function _build_synthetic_hydrostatic_problem(cfg, mesh, nsteps, FT)
     meteo = cfg["meteo"]
     p_half = _float_vector(meteo, "interface_pressures_pa")

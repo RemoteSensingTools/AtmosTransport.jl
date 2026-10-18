@@ -266,3 +266,79 @@ end
     @test O.column_layer!(column, height, z_half, dry, area, g, A[1], O.TotalFromHumidity(), DryBasis()) ==
           intake_layer_index(z_half, 100.0)
 end
+
+@testset "layer heights of an analytic hydrostatic column with humidity (OF-117)" begin
+    # A column given by its interface heights above the surface, layer temperatures
+    # and specific humidities (top first). Moist air of temperature T has the
+    # density of dry air at T_v = T (1 + c q), c = R_v/R_d - 1, so each layer of
+    # uniform T and q is exactly p_{k-1/2} = p_{k+1/2} exp(-g Δz / (R_d T_v)) on
+    # total pressures, from ps = 1010 hPa; its dry air mass is (1 - q) Δp A / g.
+    R, c, g, area = AtmosTransport.Parameters.R_DRY_AIR, AtmosTransport.Parameters.VIRTUAL_TEMPERATURE_FACTOR,
+                    9.80665, 1e10
+    z_exact = [12000.0, 8000.0, 5000.0, 3000.0, 1500.0, 800.0, 300.0, 100.0, 0.0]
+    T = [220.0, 245.0, 262.0, 275.0, 285.0, 292.0, 297.0, 300.0]
+    q = [1e-5, 1e-4, 1e-3, 4e-3, 8e-3, 12e-3, 15e-3, 16e-3]
+    p = zeros(9)
+    p[end] = 101000.0
+    for k in 8:-1:1
+        p[k] = p[k + 1] * exp(-g * (z_exact[k] - z_exact[k + 1]) / (R * T[k] * (1 + c * q[k])))
+    end
+    dry = (1 .- q) .* diff(p) .* area ./ g
+    placement = O.VerticalPlacement(O.VERTICAL_PLACEMENT_CODES.record_height, 296.0, NaN, NaN)
+    layer(basis; humidity = q) = begin
+        column = O.PlacementColumn(8)
+        column.humidity .= humidity
+        p_half, z_half = zeros(9), zeros(9)
+        level = O.sample_column_layer!(column, p_half, z_half, placement, dry, area, g, p[1],
+                                       ProfileLayerTemperature(T), basis, DryBasis())
+        (; level, p_half, z_half)
+    end
+    # The default basis recovers the heights from the dry air mass and the humidity.
+    total = layer(O.TotalFromHumidity())
+    @test total.z_half ≈ z_exact rtol = 1e-12 atol = 1e-9
+    @test total.p_half ≈ p[1] .+ vcat(0.0, cumsum(diff(p) .* (1 .- q))) rtol = 1e-13   # dry interfaces
+    # The dry basis keeps the old rule (dry interfaces, T): heights 1.9-2.3 % low in the lowest
+    # three layers here (the dry pressure ratio and T for T_v; 293.3 m for 300 m, with 26 kg m⁻² of
+    # precipitable water), and the record at 296 m lands one layer higher (6 instead of 7).
+    dry_rule = layer(O.DryInterfaces(); humidity = fill(NaN, 8))
+    @test dry_rule.z_half == layer_heights_agl!(zeros(9), dry_rule.p_half, ProfileLayerTemperature(T), g)
+    low = 1 .- dry_rule.z_half[1:8] ./ z_exact[1:8]
+    @test all(0.019 .< low[6:8] .< 0.024) && all(0.0 .< low[1:5] .< 0.019)
+    @test total.level == 7 && dry_rule.level == 6
+    # With q = 0 the two bases agree bit for bit (total pressures = dry ones, T_v = T).
+    dry0 = (1 .- 0.0) .* diff(p) .* area ./ g
+    zero_q(basis) = begin
+        column = O.PlacementColumn(8)
+        column.humidity .= 0.0
+        z_half = zeros(9)
+        O.sample_column_layer!(column, zeros(9), z_half, placement, dry0, area, g, p[1],
+                               ProfileLayerTemperature(T), basis, DryBasis())
+        z_half
+    end
+    @test zero_q(O.TotalFromHumidity()) == zero_q(O.DryInterfaces())
+    # A moist-basis air mass already gives total pressures; its heights use T (no humidity is gathered).
+    moist = diff(p) .* area ./ g
+    moist_z = zeros(9)
+    O.sample_column_layer!(O.PlacementColumn(8), zeros(9), moist_z, placement, moist, area, g, p[1],
+                           ProfileLayerTemperature(T), O.TotalFromHumidity(), MoistBasis())
+    @test moist_z ≈ layer_heights_agl!(zeros(9), p, ProfileLayerTemperature(T), g) rtol = 1e-12
+end
+
+@testset "virtual layer temperature (OF-117)" begin
+    q = [0.0, 0.01, 0.02]
+    c = AtmosTransport.Parameters.VIRTUAL_TEMPERATURE_FACTOR
+    virtual = O.VirtualLayerTemperature(ProfileLayerTemperature([250.0, 270.0, 290.0]), q)
+    @test O.layer_temperature(virtual, 1, 0.0) == 250.0
+    @test O.layer_temperature(virtual, 3, 0.0) == 290.0 * (1 + c * 0.02)
+    lapse = O.VirtualLayerTemperature(SurfaceLapseTemperature(290.0), q)
+    @test O.layer_temperature(lapse, 2, 1000.0) == (290.0 - 6.5) * (1 + c * 0.01)
+    @test O.layer_temperature(O.VirtualLayerTemperature(ConstantLayerTemperature(280.0), q), 2, 0.0) ==
+          280.0 * (1 + c * 0.01)
+    @test_throws DimensionMismatch layer_heights_agl!(zeros(5), collect(1.0:5.0), virtual, 9.80665)
+    @test_throws DimensionMismatch layer_heights_agl!(zeros(4), collect(1.0:4.0),
+        O.VirtualLayerTemperature(ConstantLayerTemperature(280.0), [0.0, 0.0]), 9.80665)
+    # Which bases need the humidity: total pressures on a dry basis only.
+    @test O.needs_column_humidity(O.TotalFromHumidity(), DryBasis())
+    @test !O.needs_column_humidity(O.DryInterfaces(), DryBasis())
+    @test !O.needs_column_humidity(O.TotalFromHumidity(), MoistBasis())
+end

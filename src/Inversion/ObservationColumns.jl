@@ -4,8 +4,8 @@
 #   * `CSObservationColumnMet` — the column meteorology a placed point
 #     observation (`CSPlacedPointObjective`) needs to choose its layer at a
 #     sampled state: model-top pressure, gravity, layer temperature (for
-#     hypsometric heights) and specific humidity (for total pressures), per
-#     step or static.
+#     hypsometric heights) and specific humidity (for total pressures and
+#     the virtual temperature of the heights), per step or static.
 #   * `_sample_objective(objective, step, panels_rm, panels_m, mesh, met,
 #     build)` — the objective's value on the state after `step`, its linear
 #     functional of that state (weights from `panels_m`, when `build`), and
@@ -15,7 +15,8 @@
 # A placed point objective's layer comes from the shared rule of the forward
 # observation sampler (`Output.sample_column_layer!`): interface pressures from
 # the replayed air mass of the sampled state, hypsometric heights above the
-# model surface, then the record's height or pressure. The layer is fixed for
+# model surface on the pressure basis (total pressures and the virtual
+# temperature by default), then the record's height or pressure. The layer is fixed for
 # the evaluation (the meteorology does not depend on the tracer), so the
 # functional is the exact derivative of the evaluated value.
 #
@@ -44,18 +45,21 @@ cell, k = 1 at the top) of the sampled state and the cell area ``A``:
   interface, the pure-pressure `A_ifc[1]` of the met model's hybrid
   coordinate) and `gravity` (m s⁻²);
 - hypsometric interface heights above the model surface,
-  ``z_{k-1/2} = z_{k+1/2} + (R_d T_k/g)\\ln(p_{k+1/2}/p_{k-1/2})``, with the
-  layer `temperature`: a number (K, every layer; the forward sampler's
+  ``z_{k-1/2} = z_{k+1/2} + (R_d T_{v,k}/g)\\ln(p_{k+1/2}/p_{k-1/2})``, with the
+  layer `temperature` ``T_k``: a number (K, every layer; the forward sampler's
   `layer_height_temperature_kelvin`, 280 K by default), an
   `Output.AbstractLayerTemperature`, per-layer panels (an `NTuple{6}` of
   arrays laid out like the air mass, with or without the halo, K, for every
   step), or a vector of such panels with one entry per model step (the state
-  after that step);
-- for pressure placement against total pressures (`TotalFromHumidity`) on a
-  dry basis, the total interface pressures
-  ``p_{k+1/2} = p_{k-1/2} + g\\,m_k/(A\\,(1 - q_k))`` with the specific
-  `humidity` ``q_k`` (kg kg⁻¹ of moist air; `nothing`, static panels, or one
-  set of panels per step, as `temperature`).
+  after that step). With the pressure basis `TotalFromHumidity` (the default)
+  on a dry basis the pressures are the total ones below and
+  ``T_{v,k} = T_k(1 + 0.61\\,q_k)`` the virtual temperature; with
+  `DryInterfaces` the dry interfaces above and ``T_{v,k} = T_k``;
+- for `TotalFromHumidity` on a dry basis (the heights of every placed point
+  observation, pressure placement, averaging-kernel columns), the total
+  interface pressures ``p_{k+1/2} = p_{k-1/2} + g\\,m_k/(A\\,(1 - q_k))``
+  with the specific `humidity` ``q_k`` (kg kg⁻¹ of moist air; `nothing`,
+  static panels, or one set of panels per step, as `temperature`).
 
 `mass_basis` is the basis of the air mass (`DryBasis()`, the default of
 transport binaries, or `MoistBasis()`).
@@ -153,7 +157,7 @@ function _validate_retrieval_column_met(columns::Vector{CSRetrievalColumnObjecti
     _check_column_field(met.humidity, "humidity", mesh, Nz, nsteps)
     for basis in unique(o.pressure_basis for o in columns)
         n = count(o -> o.pressure_basis == basis, columns)
-        _basis_needs_humidity(basis, met.mass_basis) && met.humidity === nothing && throw(ArgumentError(
+        needs_column_humidity(basis, met.mass_basis) && met.humidity === nothing && throw(ArgumentError(
             "$(n) observations are averaging-kernel columns on total interface pressures " *
             "($(_INVERSION_PLACEMENT_LABEL).pressure_basis = \"total\", the default): a retrieval's pressures " *
             "are total pressures, and on a dry-basis run the model's are built from the dry air mass and the " *
@@ -175,11 +179,10 @@ function _validate_placed_column_met(placed::Vector{CSPlacedPointObjective}, met
         "column_met = CSObservationColumnMet(; p_top, gravity, temperature, humidity)"))
     _check_column_field(met.temperature, "temperature", mesh, Nz, nsteps)
     _check_column_field(met.humidity, "humidity", mesh, Nz, nsteps)
+    # Every placed observation builds its layer heights on its pressure basis.
     for basis in unique(o.pressure_basis for o in placed)
-        n_pressure = count(o -> o.pressure_basis == basis &&
-                                o.placement.method == VERTICAL_PLACEMENT_CODES.pressure, placed)
-        check_pressure_basis(basis, met.mass_basis, met.humidity !== nothing, n_pressure,
-                             _INVERSION_PLACEMENT_LABEL)
+        check_pressure_basis(basis, met.mass_basis, met.humidity !== nothing,
+                             count(o -> o.pressure_basis == basis, placed), _INVERSION_PLACEMENT_LABEL)
     end
     return nothing
 end
@@ -214,7 +217,7 @@ function _placed_level(obj::CSPlacedPointObjective, step::Int, panels_m, mesh::C
     air = _host_column(panels_m, obj.panel, obj.i, obj.j, mesh)
     nlevel = length(air)
     column = PlacementColumn(nlevel)
-    if needs_column_humidity(obj.placement, obj.pressure_basis, met.mass_basis)
+    if needs_column_humidity(obj.pressure_basis, met.mass_basis)
         column.humidity .= _host_column(_step_panels(met.humidity, step), obj.panel, obj.i, obj.j, mesh)
     end
     p_half = Vector{Float64}(undef, nlevel + 1)
@@ -270,7 +273,7 @@ function _sample_objective(obj::CSRetrievalColumnObjective, step::Int, panels_rm
     air = _host_column(panels_m, obj.panel, obj.i, obj.j, mesh)
     tracer = _host_column(panels_rm, obj.panel, obj.i, obj.j, mesh)
     nz = length(air)
-    humidity = _basis_needs_humidity(obj.pressure_basis, met.mass_basis) ?
+    humidity = needs_column_humidity(obj.pressure_basis, met.mass_basis) ?
         _host_column(_step_panels(met.humidity, step), obj.panel, obj.i, obj.j, mesh) : Float64[]
     p_half = placement_pressures!(Vector{Float64}(undef, nz + 1), obj.pressure_basis, met.mass_basis, air,
                                   humidity, obj.area, met.gravity, met.p_top)

@@ -682,7 +682,7 @@ unplaced_records = "error"               # ErrorOnUnplaced | "skip" (SkipUnplace
 # surface_height_file = "~/data/AtmosTransport/static/surface_height_c90_merra2.nc"  # model ground (ModelSurfaceHeight)
 # absolute_altitude_above_agl_m = 3000.0 # AbsoluteAltitudeAbove (needs surface_height_file); omitted: AboveGroundPlacement
 vertical_coordinates = ["height_above_ground", "pressure"]  # preference order (default); HeightAboveGroundCoordinate, PressureCoordinate
-pressure_basis = "total"                 # TotalFromHumidity (default) | "dry" (DryInterfaces, for binaries without humidity)
+pressure_basis = "total"                 # TotalFromHumidity (default) | "dry" (DryInterfaces, for binaries without humidity): layer heights and pressure placement
 
 [[output.observations.sources]]
 kind = "oco2_lite"                       # OCO2LiteSource: Lite files or OCO-2 v11 MIP 10-s averages
@@ -718,7 +718,7 @@ path = "~/data/AtmosTransport/observations/tccon_sites.csv"
 | `unplaced_records` | `"error"` (default) → `ErrorOnUnplaced`, `"skip"` → `SkipUnplaced` |
 | `absolute_altitude_above_agl_m` | number ≥ 0 → `AbsoluteAltitudeAbove(h₀)`; omitted → `AboveGroundPlacement`. Needs `surface_height_file` and `"height_above_ground"` in `vertical_coordinates` |
 | `vertical_coordinates` | non-empty array, in preference order, of `"height_above_ground"` → `HeightAboveGroundCoordinate` and `"pressure"` → `PressureCoordinate`, each at most once; default `["height_above_ground", "pressure"]`. Without `"height_above_ground"`, `dem_file` and `absolute_altitude_above_agl_m` are rejected |
-| `pressure_basis` | `"total"` (default) → `TotalFromHumidity`, `"dry"` → `DryInterfaces`: the interface pressures a pressure-placed record is compared with (below); only with `"pressure"` in `vertical_coordinates` |
+| `pressure_basis` | `"total"` (default) → `TotalFromHumidity`, `"dry"` → `DryInterfaces`: the vertical basis of placement, one choice for the interface pressures a pressure-placed record (and an averaging-kernel column) is compared with and for the layer heights of every row (below) |
 
 Source paths are templates: `{YYYYMMDD}` (or `{date}`), `{YYMMDD}`, `{YYYY}`,
 `{MM}`, `{DD}` are substituted per run day, and `*` / `?` wildcards expand in
@@ -759,15 +759,23 @@ sample's column. The column's interface pressures come from the air mass,
 ``p_{1/2} = p_\mathrm{top}``, ``p_{k+1/2} = p_{k-1/2} + g\,m_k/A`` (dry
 pressures on a dry-basis run; these are the pressures written to the files),
 and its interface heights above the model surface from the hypsometric
-equation,
+equation of moist air on the total interface pressures ``p_{k+1/2}`` of
+`pressure_basis = "total"` (the default, see "Pressure basis" below),
 
 ```math
 z_{N+1/2} = 0, \qquad
-z_{k-1/2} = z_{k+1/2} + \frac{R_d T_k}{g} \ln\frac{p_{k+1/2}}{p_{k-1/2}},
+z_{k-1/2} = z_{k+1/2} + \frac{R_d T_{v,k}}{g} \ln\frac{p_{k+1/2}}{p_{k-1/2}}, \qquad
+T_{v,k} = T_k\,(1 + c\,q_k),
 ```
 
 with ``T_k`` the GCHP VDIFF layer temperature on cubed-sphere binaries that
-carry it, else `layer_height_temperature_kelvin`. A record at height ``h``
+carry it, else `layer_height_temperature_kelvin`, ``q_k`` the specific
+humidity and ``c = R_v/R_d - 1`` (`VIRTUAL_TEMPERATURE_FACTOR`, 0.61, as in
+the diffusion layer thicknesses). Moist air at ``T`` has the density of dry
+air at the virtual temperature ``T_v``, so for layers of uniform ``T`` and
+``q`` these are the hydrostatic heights exactly. With
+`pressure_basis = "dry"` they are built from the dry interfaces and ``T``,
+an approximation (below). A record at height ``h``
 above the ground is sampled in the layer ``k`` with
 ``z_{k+1/2} \le h < z_{k-1/2}`` (the lowest layer for ``h \le 0``, the top
 layer above the column). A record is placed by the first of the
@@ -840,13 +848,17 @@ first reaches the ObsPack altitude). ObsPack `pressure` must declare its
 units (`Pa`, `hPa`, `mbar`, `kPa` and their spelled-out forms, any case);
 a missing or other unit is an error.
 
-**Pressure basis.** A record's pressure is the total (ambient) pressure of
+**Pressure basis.** `pressure_basis` is one choice for the interface
+pressures of pressure placement and for the layer heights of every row. A
+record's pressure is the total (ambient) pressure of
 dry air and water vapour. The air mass of a dry-basis run gives the dry
 interface pressures above, the weight of the dry air above each interface;
 the total pressure there is larger by the weight of the water vapour above
 it (4.9 hPa at the surface for 50 kg m⁻² of precipitable water, 1 hPa for
 10 kg m⁻²). With `pressure_basis = "total"` (default, `TotalFromHumidity`) a
-pressure-placed record is compared with the total interface pressures. A
+pressure-placed record is compared with the total interface pressures, and
+the layer heights are hypsometric on them with the virtual temperature
+(above). A
 layer with dry air mass ``m_k`` and specific humidity ``q_k`` (kg of vapour
 per kg of moist air) holds ``m_k/(1 - q_k)`` of moist air, so hydrostatically
 
@@ -883,21 +895,47 @@ boundary:
 
 With linear time interpolation the humidity is blended between the two
 window ends like the air mass. A moist-basis run's air mass already gives
-total pressures. A dry-basis run whose binaries do not all carry humidity
+total pressures; its heights use ``T`` (no humidity is gathered there, so the
+virtual-temperature term, about 1 % of the heights in a humid boundary layer,
+is neglected). A dry-basis run whose binaries do not all carry humidity
 (every binary's header is checked before transport) cannot build them:
-building the sampler then fails if any record is placed by pressure, and
-`pressure_basis = "dry"` (`DryInterfaces`) compares with the dry interfaces
-instead. Those lie at lower pressure, so a record can land one or more layers
-too low (closer to the surface, where the layers are thinnest). On the GEOS
-L72 levels with ``p_s`` = 1010 hPa and
-``q = q_s\,(p_\mathrm{mid}/p_s)^\lambda``, ``\lambda`` set by the
-precipitable water, the dry interfaces put a pressure uniformly spaced
-between 900 and 1010 hPa in a lower layer 25% of the time, between 500 and
-900 hPa 6% and between 200 and 500 hPa 0.4% for a tropical column
-(``q_s`` = 18 g/kg, 50 kg m⁻²), and 5%, 1% and 0% for ``q_s`` = 4 g/kg and
-10 kg m⁻²; an independent construction of the tropical case gave 29%, 6.5%
-and 0.36%. The files keep the dry interfaces as `p_half_dry`; the attribute
-`pressure_basis` records the basis used.
+building the sampler then fails if it has any request (every row reports its
+layer heights), and `pressure_basis = "dry"` (`DryInterfaces`) uses the dry
+interfaces and ``T`` instead, an approximation for both:
+
+- the dry interfaces lie at lower pressure, so a pressure-placed record can
+  land one or more layers too low (closer to the surface, where the layers
+  are thinnest): on the GEOS L72 levels with ``p_s`` = 1010 hPa and
+  ``q = q_s\,(p_\mathrm{mid}/p_s)^\lambda``, ``\lambda`` set by the
+  precipitable water, the dry interfaces put a pressure uniformly spaced
+  between 900 and 1010 hPa in a lower layer 25% of the time, between 500 and
+  900 hPa 6% and between 200 and 500 hPa 0.4% for a tropical column
+  (``q_s`` = 18 g/kg, 50 kg m⁻²), and 5%, 1% and 0% for ``q_s`` = 4 g/kg and
+  10 kg m⁻²; an independent construction of the tropical case gave 29%, 6.5%
+  and 0.36%;
+- the heights are low by the dry pressure ratio (``-q`` plus the vapour
+  weight above over the pressure) and by ``T`` against ``T_v``
+  (``-0.61\,q``). On the golden MERRA-2 C90 L72 binary (2022-01-15, four
+  windows, VDIFF ``T`` and ``q``) the dry rule puts the interfaces near the
+  surface 2.0 % low in the tropics (``|φ| \le 15°``, median precipitable
+  water 42 kg m⁻²; at most 2.7 %): 2.1 m at 100 m, 6.1 m at 300 m, 19 m at
+  1000 m and 41 m at 3000 m (1.35 %); 0.55 % at northern mid-latitudes
+  (30–60° N, January, 8.8 kg m⁻²; 1.7 m at 300 m) and 1.0 % at southern
+  ones (18.5 kg m⁻²; 3.1 m at 300 m). The layer of a record changes when its
+  height lies between the two heights of an interface: for records spread
+  uniformly over ``[h/2, 3h/2]`` about ``h`` = 10, 100, 300, 1000 and
+  3000 m, 0, 2.7, 4.5, 13 and 12.6 % change layer in the tropics, 0, 0.7,
+  1.2, 3.7 and 3.1 % at northern and 0, 1.3, 2.2, 6.8 and 6.1 % at southern
+  mid-latitudes (a record at 10 m always stays in the surface layer, about
+  130 m thick). On the golden `pre_ll72` binary (ERA5, 34 merged levels,
+  280 K) the tropical bias is the same, 2.0 %, and the heights of the total
+  basis agree with those of the met model's total interfaces
+  ``A + B\,p_s`` with ``T_v`` to 1.2 cm below 20 km (the dry rule: 18.5 m
+  on average, 108 m at most).
+
+The files keep the dry interfaces as `p_half_dry`; the attribute
+`pressure_basis` records the basis used, of the pressures and the heights
+(`intake_layer_bottom_agl`, `intake_layer_top_agl`).
 
 **External ground datasets.** Both are static and external, never part of a
 transport binary, and read through `GriddedIO`:

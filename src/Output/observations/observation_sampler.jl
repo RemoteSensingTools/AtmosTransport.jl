@@ -30,7 +30,7 @@ mutable struct PendingSoundings
     air::Matrix{Float64}         # (nlevel, n) in request order
     tracers::Array{Float64, 3}   # (nlevel, ntracer, n) in request order
     temperature::Union{Nothing, Matrix{Float64}}   # (nlevel, n) layer temperature, if the run has one
-    humidity::Union{Nothing, Matrix{Float64}}      # (nlevel, n) specific humidity, when pressure placement needs it
+    humidity::Union{Nothing, Matrix{Float64}}      # (nlevel, n) specific humidity, when the pressure basis needs it
 end
 
 "Running totals reported in the summary attributes and the end-of-run log."
@@ -87,7 +87,8 @@ end
     ObservationSampler
 
 Runtime state of observation sampling: the located and vertically placed
-point events and sites, whether pressure placement needs the humidity,
+point events and sites, whether the column's heights and pressures need the
+humidity,
 device gather buffers, the held first samples of events awaiting their second
 sample, the open (and retired daily) output streams, and counters. Built by
 [`build_observation_sampler`](@ref).
@@ -114,7 +115,7 @@ mutable struct ObservationSampler{M, L <: AbstractCellLocator,
     sites::Vector{SiteRequest}
     site_cells::Vector{CellLocation}
     site_placements::Vector{VerticalPlacement}
-    needs_humidity::Bool                    # pressure-placed requests or AK columns on a dry basis: humidity at every sample
+    needs_humidity::Bool                    # TotalFromHumidity on a dry basis with requests: humidity at every sample
     retrieval_tracers::Vector{Symbol}       # tracers with averaging-kernel columns (`<tracer>_ak_column`), any source
     retrieval_slots::Vector{Vector{Tuple{Int, Int}}}   # per source: (column of retrieval_tracers, sampled tracer slot)
     buffers::B
@@ -163,10 +164,10 @@ the column ([`resolve_placement`](@ref) with the static ground fields of
 `terrain`, see [`ObservationTerrain`](@ref)), and prepare the device gather
 buffers. Requests that cannot be placed fail the build or are skipped and
 counted, as `spec.placement.unplaced` says. `has_humidity` says whether the
-run's binaries carry specific humidity: on a dry-basis run, pressure-placed
-requests need it for the total interface pressures of
-[`TotalFromHumidity`](@ref) (the default `spec.placement.pressure_basis`),
-and the build fails without it unless the basis is
+run's binaries carry specific humidity: on a dry-basis run every request needs
+it for the total interface pressures and the virtual-temperature layer heights
+of [`TotalFromHumidity`](@ref) (the default `spec.placement.pressure_basis`;
+`check_pressure_basis`), and the build fails without it unless the basis is
 [`DryInterfaces`](@ref); every window end must then pass `humidity` to
 [`observe_window_boundary!`](@ref). Output files are opened by
 `begin_observation_day!`. `NoObservationOutput` yields
@@ -200,9 +201,10 @@ function build_observation_sampler(spec::ObservationOutputSpec, state, grid;
     basis = mass_basis(state)
     n_pressure = _n_pressure_placed(placements) + _n_pressure_placed(site_placements)
     n_retrieval = count(r -> r.retrieval !== nothing, soundings)
-    needs_humidity = check_pressure_basis(spec.placement.pressure_basis, basis, has_humidity, n_pressure,
-                                          _OUTPUT_OBSERVATIONS_LABEL) |
-                     _check_retrieval_pressure_basis(spec.placement.pressure_basis, basis, has_humidity, n_retrieval)
+    # Every row's layer heights (and the pressures of pressure placement and
+    # averaging-kernel columns) are built on the pressure basis.
+    needs_humidity = check_pressure_basis(spec.placement.pressure_basis, basis, has_humidity,
+                                          length(soundings) + length(sites), _OUTPUT_OBSERVATIONS_LABEL)
     times = [r.time_seconds for r in soundings]
     buffers = ObservationGatherBuffers(reference, nlevel, slots;
                                        capacity = max(1024, length(sites) + 1))
@@ -210,6 +212,8 @@ function build_observation_sampler(spec::ObservationOutputSpec, state, grid;
           "($(counters.unlocated_soundings + counters.unlocated_sites) outside the mesh, " *
           "$(set.dropped_outside_window) outside the run window, $(set.skipped_invalid) source rows skipped)"
     _log_placements(placements, site_placements, counters)
+    isempty(soundings) && isempty(sites) ||
+        @info "observation layer heights: " * _height_basis_text(spec.placement.pressure_basis, basis)
     n_pressure > 0 && @info "observation pressure placement: $(n_pressure) requests against " *
                             _pressure_basis_text(spec.placement.pressure_basis, basis)
     n_retrieval > 0 && @info "observation averaging-kernel columns: $(n_retrieval) soundings, tracers " *
@@ -252,28 +256,12 @@ function _averaging_kernel_slots(spec::ObservationOutputSpec, names::AbstractVec
     return tracers, slots
 end
 
-# Averaging-kernel columns compare the model with total-pressure retrievals:
-# on a dry-basis run with `TotalFromHumidity` they need the humidity. Returns
-# whether sampling needs it.
-_check_retrieval_pressure_basis(basis::AbstractPressureBasis, mass_basis::AbstractMassBasis, has_humidity::Bool,
-                                n::Integer) = n > 0 && _retrieval_needs_humidity(basis, mass_basis, has_humidity, n)
-_retrieval_needs_humidity(::AbstractPressureBasis, ::AbstractMassBasis, has_humidity::Bool, n::Integer) = false
-function _retrieval_needs_humidity(::TotalFromHumidity, ::DryBasis, has_humidity::Bool, n::Integer)
-    has_humidity || throw(ArgumentError(
-        "$(n) soundings get averaging-kernel columns, whose retrieval pressures are total pressures, and " *
-        "$(_OUTPUT_OBSERVATIONS_LABEL).pressure_basis = \"total\" (the default) builds the model's total " *
-        "interface pressures from the dry air mass and the specific humidity, but the run's binaries do not " *
-        "carry humidity. Use binaries with humidity, or set $(_OUTPUT_OBSERVATIONS_LABEL).pressure_basis = " *
-        "\"dry\" (the stretch onto the retrieval surface pressure then also absorbs the weight of the water " *
-        "vapour)"))
-    return true
-end
-
 """
     observation_needs_humidity(sampler) -> Bool
 
 Whether [`observe_window_boundary!`](@ref) needs the specific humidity: the
-sampler places requests by total pressure on a dry-basis run.
+sampler builds its columns' heights and pressures on total pressures
+([`TotalFromHumidity`](@ref)) on a dry-basis run.
 """
 observation_needs_humidity(::NoObservationSampler) = false
 observation_needs_humidity(s::ObservationSampler) = s.needs_humidity
@@ -284,6 +272,13 @@ _pressure_basis_text(::TotalFromHumidity, ::DryBasis) =
 _pressure_basis_text(::TotalFromHumidity, ::MoistBasis) = "the (total) interface pressures of the moist air mass"
 _pressure_basis_text(::DryInterfaces, ::DryBasis) =
     "dry interface pressures (pressure_basis = \"dry\"; record pressures are total pressures)"
+_height_basis_text(::TotalFromHumidity, ::DryBasis) =
+    "hypsometric on the total interface pressures with the virtual temperature (from the specific humidity)"
+_height_basis_text(::TotalFromHumidity, ::MoistBasis) =
+    "hypsometric on the (total) interface pressures of the moist air mass with the layer temperature"
+_height_basis_text(::DryInterfaces, ::DryBasis) =
+    "hypsometric on the dry interface pressures with the layer temperature (pressure_basis = \"dry\", an " *
+    "approximation: about 2 % low in a humid boundary layer)"
 
 _count_unplaced!(c::ObservationCounters, ::SoundingRequest) = (c.unplaced_soundings += 1)
 _count_unplaced!(c::ObservationCounters, ::SiteRequest) = (c.unplaced_sites += 1)
@@ -566,9 +561,10 @@ a per-layer temperature field (K, k = 1 at the top) used for site layer
 heights, either with the air-mass layout or, on the cubed sphere, as
 interior-only panels; otherwise the configured constant applies.
 `humidity` is the specific humidity (kg kg⁻¹ of moist air, k = 1 at the top)
-at this window end, in the same layouts; a sampler that places requests by
-total pressure on a dry-basis run ([`TotalFromHumidity`](@ref)) requires it
-and otherwise ignores it. Call once at `t = 0` on the initial state and
+at this window end, in the same layouts; a sampler that builds its columns on
+total pressures on a dry-basis run ([`TotalFromHumidity`](@ref): the layer
+heights of every row, pressure placement, averaging-kernel columns) requires
+it and otherwise ignores it. Call once at `t = 0` on the initial state and
 after every window.
 """
 observe_window_boundary!(::NoObservationSampler, state, time_seconds::Real; kwargs...) = nothing
@@ -591,13 +587,13 @@ function observe_window_boundary!(s::ObservationSampler, state, time_seconds::Re
     return nothing
 end
 
-# The humidity field the sampler gathers: `nothing` unless pressure placement
+# The humidity field the sampler gathers: `nothing` unless the pressure basis
 # needs it, which then requires it at every window end.
 function _sampled_humidity(s::ObservationSampler, state, humidity)
     s.needs_humidity || return nothing
     humidity === nothing && throw(ArgumentError(
-        "observation sampling places requests by total pressure on a dry-basis run and needs the specific " *
-        "humidity at every window end, but none was passed (humidity = nothing)"))
+        "observation sampling builds its columns' heights and pressures on total pressures on a dry-basis run " *
+        "and needs the specific humidity at every window end, but none was passed (humidity = nothing)"))
     _check_field_layout(state.air_mass, humidity, "humidity")
     return humidity
 end
@@ -737,7 +733,7 @@ function _emit_bracketed!(s::ObservationSampler, pending::Union{Nothing, Pending
         current = Float64(tracers[k, tr, plan.position[i]])
         bracketed[i] ? (1 - w[i]) * pending.tracers[k, tr, lo - pending_lo + i] + w[i] * current : current
     end
-    # The humidity is blended like the masses (it only places pressure-placed rows).
+    # The humidity is blended like the masses (the heights and pressures of the pressure basis).
     blend_humidity = (i, k) -> begin
         current = _gathered_humidity(s, k, plan.position[i])
         bracketed[i] ? (1 - w[i]) * pending.humidity[k, lo - pending_lo + i] + w[i] * current : current
@@ -754,7 +750,7 @@ end
 # Copy the first samples of soundings mid:hi-1 out of the gather buffers. The
 # layer temperature is kept too: events exactly at the final window end are
 # emitted from this sample alone (`_emit_held!`); and the humidity, which is
-# blended like the masses when pressure placement needs it.
+# blended like the masses when the pressure basis needs it.
 function _hold!(s::ObservationSampler, mid::Int, hi::Int, t::Float64, plan::GatherPlan, lo::Int,
                 temperature)
     n = hi - mid
@@ -773,8 +769,8 @@ function _hold!(s::ObservationSampler, mid::Int, hi::Int, t::Float64, plan::Gath
     return PendingSoundings(mid:hi - 1, t, air, tracers, _held_temperature(s, slots, temperature), humidity)
 end
 
-# Specific humidity of layer `k` in gather slot `slot`; NaN when pressure
-# placement needs none (it is then never read).
+# Specific humidity of layer `k` in gather slot `slot`; NaN when the pressure
+# basis needs none (it is then never read).
 _gathered_humidity(s::ObservationSampler, k::Int, slot::Int) =
     s.needs_humidity ? Float64(s.humidity_buffers.air_host[k, slot]) : NaN
 
@@ -790,7 +786,8 @@ _held_layer_temperature(s::ObservationSampler, temperature::Matrix{Float64}, i::
 # Assemble the output rows for point events `range`; `air_at(i, k)` and
 # `tracer_at(i, k, tr)` return the (already blended) masses of the i-th row,
 # `temperature_at(i)` its `AbstractLayerTemperature` for intake heights, and
-# `humidity_at(i, k)` its specific humidity (read only for pressure placement).
+# `humidity_at(i, k)` its specific humidity (read only when the pressure basis
+# needs it).
 function _sounding_batch(s::ObservationSampler, range::UnitRange{Int}, prev::Vector{Float64},
                          next::Vector{Float64}, weights::Vector{Float32}, flags::Vector{Int8},
                          air_at, tracer_at, temperature_at, humidity_at)
@@ -837,8 +834,7 @@ function _sounding_batch(s::ObservationSampler, range::UnitRange{Int}, prev::Vec
             means[tr, i] = column_mean_vmr(air_col, tracer_col)
             intake_values[tr, i] = profile[level]
         end
-        _retrieval_columns!(retrieval_values, i, s, requests[i], column, air_col, cell.area, vmr,
-                            k -> humidity_at(i, k))
+        _retrieval_columns!(retrieval_values, i, s, requests[i], column, air_col, cell.area, vmr)
     end
     return SoundingBatch(; ids = [r.id for r in requests], sources = Int32[r.source for r in requests],
                          times = [origin_unix + r.time_seconds for r in requests],
@@ -858,17 +854,13 @@ end
 # row's interface pressures of the run's pressure basis (total pressures from
 # the air mass and humidity by default), its air masses and the sampled
 # mixing-ratio profiles `vmr[:, tracer, i]`. Rows without a retrieval stay NaN.
-_retrieval_columns!(::Nothing, i, s, request, column, air_col, area, vmr, humidity_at) = nothing
+# `column.humidity` holds the row's humidity when the basis needs it (filled by
+# `_sample_layer!` for the same row).
+_retrieval_columns!(::Nothing, i, s, request, column, air_col, area, vmr) = nothing
 function _retrieval_columns!(values::Matrix{Float64}, i::Int, s::ObservationSampler, request::SoundingRequest,
-                             column::PlacementColumn, air_col::AbstractVector, area::Real, vmr::Array{Float64, 3},
-                             humidity_at)
+                             column::PlacementColumn, air_col::AbstractVector, area::Real, vmr::Array{Float64, 3})
     retrieval = request.retrieval
     retrieval === nothing && return nothing
-    if s.needs_humidity
-        @inbounds for k in eachindex(column.humidity)
-            column.humidity[k] = humidity_at(k)
-        end
-    end
     placement_pressures!(column.p_half, s.spec.placement.pressure_basis, s.mass_basis, air_col, column.humidity,
                          area, s.gravity, s.p_top)
     for (slot, tracer) in s.retrieval_slots[request.source]
@@ -886,11 +878,12 @@ _row_layer_temperature(s::ObservationSampler, slot::Int, temperature) =
 
 # Layer of `placement` in one sampled column (`sample_column_layer!`, which
 # also fills the interface pressures `p_half` and heights `z_half`); the
-# humidity column is filled only for a pressure placement that needs it.
+# humidity column is filled whenever the pressure basis needs it (the heights
+# of every placement use it).
 function _sample_layer!(column::PlacementColumn, p_half::AbstractVector{Float64}, z_half::AbstractVector{Float64},
                         s::ObservationSampler, placement::VerticalPlacement, air_col::AbstractVector, area::Real,
                         layer_temperature::AbstractLayerTemperature, humidity_at)
-    if s.needs_humidity && placement.method == VERTICAL_PLACEMENT_CODES.pressure
+    if s.needs_humidity
         @inbounds for k in eachindex(column.humidity)
             column.humidity[k] = humidity_at(k)
         end

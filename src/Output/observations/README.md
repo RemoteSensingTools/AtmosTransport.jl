@@ -34,11 +34,11 @@ this folder's `read_oco2_retrieval_columns`.
    `ObservationTerrain` the runner reads through `GriddedIO`). Requests that
    cannot be placed fail the build or are skipped and counted
    (`unplaced_records`). `check_pressure_basis` then checks that the pressure
-   basis can serve the pressure-placed requests (`has_humidity`: the binaries
-   carry specific humidity).
+   basis can build the column's heights and pressures for every request
+   (`has_humidity`: the binaries carry specific humidity).
 3. Per input binary, `begin_observation_day!` opens or rotates the files.
 4. At t = 0 and after every window, `observe_window_boundary!` samples the state
-   (with the window end's specific humidity when pressure placement needs it).
+   (with the window end's specific humidity when the pressure basis needs it).
 5. At the end of the run, `finish_observations!` then `close`.
 
 ## Entry Points
@@ -77,15 +77,17 @@ this folder's `read_oco2_retrieval_columns`.
   (`VERTICAL_PLACEMENT_CODES`), `placement_layer` / `pressure_layer_index`,
   `placement_pressures!` / `check_pressure_basis`, the sampler-free layer
   rule `column_layer!` with its scratch `PlacementColumn`, and
-  `needs_column_humidity(placement, basis, mass_basis)`
+  `needs_column_humidity(basis, mass_basis)`
 - Gather and host reconstruction, in [`observation_gather.jl`](observation_gather.jl):
   `ObservationGatherBuffers`, `gather_columns!`, `gather_field!`,
   `interface_pressures!`, `total_interface_pressures!`, `layer_heights_agl!`,
-  `intake_layer_index`, `sample_column_layer!` (a column's layer from its air
-  mass: dry interfaces, hypsometric heights, then `column_layer!`; shared with
-  the inversion),
+  `placement_heights!` (the heights of a pressure basis), `intake_layer_index`,
+  `sample_column_layer!` (a column's layer from its air mass: air-mass
+  interfaces, hypsometric heights on the pressure basis, then `column_layer!`;
+  shared with the inversion),
   `mixing_ratio_profile!`, `column_mean_vmr`, and the layer-temperature types
   `ConstantLayerTemperature`, `SurfaceLapseTemperature`, `ProfileLayerTemperature`
+  and `VirtualLayerTemperature` (`T * (1 + 0.61 * q)`)
 - Averaging-kernel columns, in [`retrieval_column.jl`](retrieval_column.jl):
   `RetrievalColumn{M}` (a retrieval's pressures from the surface up, pressure
   weights, column averaging kernel, prior, optional model-profile uncertainty
@@ -177,16 +179,22 @@ this folder's `read_oco2_retrieval_columns`.
 - Pressure reconstruction needs `B[1] == 0`:
   - `p_half[1] = A[1]` and `p_half[k+1] = p_half[k] + g * m[k] / area`.
   - On `DryBasis` these are dry pressures, and the variables are named `ps_dry`,
-    `p_half_dry`, and `air_mass_per_area_dry`. Heights and the written
-    pressures always use them.
+    `p_half_dry`, and `air_mass_per_area_dry`. The written pressures always
+    use them; the heights use the pressure basis (below).
   - Pressure placement compares the record's total pressure with the
     interfaces of `pressure_basis`: by default (`TotalFromHumidity`) the total
     pressures `p_half[k+1] = p_half[k] + g * m[k] / (area * (1 - q[k]))` from
     the binary's specific humidity on `DryBasis` (the moist air mass's
     interfaces on `MoistBasis`); `DryInterfaces` (`"dry"`) uses the dry ones.
-  - On `DryBasis` with pressure-placed requests, `TotalFromHumidity` needs
-    humidity: the build fails without it (`has_humidity = false`), and every
-    window end must pass it. The runner passes `qv_start` at the run start and
+  - The layer heights are built on the same basis (OF-117): hypsometric on
+    the total pressures with the virtual temperature `T * (1 + 0.61 * q)`
+    (`placement_heights!`, `VirtualLayerTemperature`) for
+    `TotalFromHumidity` on `DryBasis`; on the dry interfaces with `T` for
+    `DryInterfaces` (an approximation, about 2 % low in a humid boundary
+    layer); on the moist air mass's interfaces with `T` on `MoistBasis`.
+  - On `DryBasis` with any request, `TotalFromHumidity` needs humidity (every
+    row reports its layer heights): the build fails without it
+    (`has_humidity = false`), and every window end must pass it. The runner passes `qv_start` at the run start and
     `qv_end` at window ends (lat-lon binaries with `include_qv`), or on the
     cubed sphere the next window's window-start VDIFF `qv` (the run's last
     window end: the ended window's). Reduced-Gaussian binaries carry none.
@@ -198,13 +206,14 @@ this folder's `read_oco2_retrieval_columns`.
     column's interface pressures and heights first. The sampler and the
     inversion's `CSPlacedPointObjective` both call it, so a change here
     changes both identically
-    (`test/core/test_cs_4dvar_placed_observations.jl` checks their parity).
-    Only pressure-placed rows read it, so the other rows do not change with
-    the basis.
+    (`test/core/test_cs_4dvar_placed_observations.jl` checks their parity,
+    on both bases). Pressure-placed rows read the basis's pressures; every
+    row's heights follow the basis.
 - Mixing ratio is tracer storage divided by air mass, and NaN where air mass ≤ 0.
   The column mean is Σ tracer / Σ air.
 - Layer `k = 1` is the top:
-  - Heights are hypsometric with `R_DRY_AIR`.
+  - Heights are hypsometric with `R_DRY_AIR` and, on the total basis, the
+    virtual temperature (`VIRTUAL_TEMPERATURE_FACTOR`).
   - The layer temperature is the runner's per-layer field when one is passed
     (CS GCHP VDIFF `t`). Otherwise it is `layer_height_temperature_kelvin`
     (default 280 K).
@@ -222,10 +231,8 @@ this folder's `read_oco2_retrieval_columns`.
     pressure only when `pressure` is a coordinate.
   - Placement keys that would have no effect are errors: `dem_variable`
     without `dem_file`; `dem_file` and `absolute_altitude_above_agl_m` without
-    `"height_above_ground"`; `pressure_basis` without `"pressure"` (except
-    for callers whose averaging-kernel columns read the basis:
-    `_parse_vertical_placement(cfg, label; pressure_basis_for_columns = true)`,
-    the inversion driver).
+    `"height_above_ground"`. `pressure_basis` applies with any coordinates
+    (it also sets the layer heights).
   - The model surface height is never used as the true ground; it is only the
     reference of `absolute_altitude_above_agl_m`.
   - A request is never sampled in the lowest layer for lack of a height unless

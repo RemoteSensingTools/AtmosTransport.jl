@@ -56,7 +56,10 @@ or its pressure — and is resolved once, by `bind_to_mesh` with
 `Output.resolve_placement`, the rule of the forward observation sampler. The
 layer itself is chosen every time the objective is sampled, from the replayed
 air mass of that state and the [`CSObservationColumnMet`](@ref) (hypsometric
-layer heights; interface pressures of `pressure_basis`), with
+layer heights and interface pressures, both on `pressure_basis`: total
+pressures and the virtual temperature from the humidity for
+`TotalFromHumidity`, the dry interfaces and the layer temperature for
+`DryInterfaces`), with
 `Output.sample_column_layer!`. Sampling it therefore needs the column
 meteorology: `cs_surface_flux_4dvar(...; column_met)`; the final-time
 footprint and Jacobian entry points do not take it.

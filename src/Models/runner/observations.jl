@@ -94,7 +94,8 @@ function _check_origin_against_binaries(origin::DateTime, binary_paths)
 end
 
 # `has_humidity`: whether the run's binaries carry the specific humidity that
-# `_window_humidity` hands the sampler (total pressures for pressure placement).
+# `_window_humidity` hands the sampler (total pressures and virtual temperature
+# of the default pressure basis).
 function _install_observation_sampler!(output::RunSnapshotOutput, output_cfg::AbstractDict,
                                        partition::AbstractOutputPartition, state, grid;
                                        cfg, binary_paths, halo_width::Integer, has_humidity::Bool,
@@ -147,13 +148,15 @@ end
 
 # GCHP VDIFF layer temperature (cubed-sphere binaries only, interior panels,
 # k = 1 at the top) of the window that just ended; otherwise the sampler's
-# constant applies. Virtual-temperature effects are neglected.
+# constant applies. The sampler turns it into the virtual temperature with the
+# boundary humidity (`TotalFromHumidity` on a dry basis).
 _window_temperature(sim) = _vdiff_temperature(sim.window.vdiff)
 _vdiff_temperature(::Nothing) = nothing
 _vdiff_temperature(vdiff) = vdiff.t
 
 # Specific humidity (kg kg⁻¹ of moist air, layer means, k = 1 at the top) at
-# a sampled boundary, for total interface pressures, by where it comes from:
+# a sampled boundary, for total interface pressures and virtual temperature,
+# by where it comes from:
 #
 # - `_WindowFieldHumidity`: the window's own fields, `qv_start` at the run
 #   start and `qv_end` at the window's end (lat-lon binaries written with
