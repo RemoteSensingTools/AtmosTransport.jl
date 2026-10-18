@@ -312,15 +312,13 @@ for (scheme_type, h_sweep, v_sweep) in (
                 $h_sweep(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, fs)
                 $v_sweep(rm_tracer, m, cm, scheme, workspace, fs)
             end
-            # Route through the mass-flux VMR wrapper so the
-            # Strang-coupled per-tracer diffusion step is column-mass
-            # conserving (preserves Σ tracer_mass per column to roundoff).
-            # `m` is the current air-mass slice `(ncells, Nz)`; `rm_tracer`
-            # is the per-tracer mass slice `(ncells, Nz)`. The wrapper
-            # does pre-scale → mass-flux kernel → post-scale internally.
+            # Per-tracer diffusion on tracer mass: `m` is the current air-mass
+            # slice `(ncells, Nz)`, `rm_tracer` the tracer's mass slice
+            # `(ncells, Nz)`; the flux-form update conserves each column, and
+            # `tracer = idx` selects the tracer's column-ledger carry.
             palindrome_center!(
                 τ -> SectionTimer.@section(:diffusion, apply_vertical_diffusion_vmr!(
-                    rm_tracer, m, diffusion_op, diffusion_workspace, τ, meteo)),
+                    rm_tracer, m, diffusion_op, diffusion_workspace, τ, meteo; tracer = idx)),
                 τ -> apply_surface_flux!(rm_tracer, emissions_op, workspace, τ, meteo, grid;
                                          tracer_names = (tracer_name,)),
                 diffusion_op, emissions_op, dt)

@@ -225,6 +225,60 @@
   runs keep `T` (no humidity is gathered there; their pressures were total
   already). No golden case samples observations, so the goldens are
   unchanged.
+- **Kz vertical diffusion updates tracer mass in flux form, with the column
+  ledger (finding OF-113).** `ImplicitVerticalDiffusion` with a Kz field
+  (lat-lon and reduced-Gaussian runs, `tm5_beljaars_viterbo_local_kz` and
+  `geoschem_holtslag_boville_vdiff` on the cubed sphere) still solves the
+  backward-Euler system for the new mixing ratio, but no longer writes back
+  `m_k (g_k + c)`. In `Float32` that lost tracer mass with one sign: in the
+  pure-pressure levels `Δt D/m` is the same in every column (exactly with
+  isothermal layer thickness and uniform Kz, as in the golden configurations;
+  approximately otherwise), so the rounding
+  of the diagonal `1 + Δt (D_{k−½} + D_{k+½})/m_k` is too, and the solved
+  departure from the column minimum is non-negative (diffusion alone: −2.0e-6
+  of a background-free tracer per day in `run_ll72_upwind_cpu_f32`). The
+  tracer mass is now updated from the interface fluxes
+  `F_{k+½} = Δt D_{k+½} (g_k − g_{k+1})`, `rm_k ← (rm_k + F_{k−½}) − F_{k+½}`,
+  so the column total telescopes, and the remaining rounding (which keeps one
+  sign where fluxes keep one direction: −9.4e-9 of CO₂ per day) goes through
+  the column mass ledger with persistent carry of the `dkg` solve. Diffusion's
+  own change of each total in that run is now below 5e-10 per day (blob
+  −1.5e-10, CO₂ +1.5e-11, fossil CO₂ −3.5e-10 of the emitted mass, Rn-222
+  +4.6e-10). The solve and fluxes are unchanged and both forms agree in exact
+  arithmetic, so the adjoint is unchanged; layers without exchange keep their
+  mass bit for bit. The VMR-level reference `apply_vertical_diffusion!` keeps
+  the matrix form. The flux form trades local accuracy for column
+  conservation: per-layer rounding scales with `ε·Δt D/m` (`Float32`, strongly
+  mixed columns: worst cell 1.4e-4 relative against 1.0e-5 for the matrix form,
+  column error per solve 3e-8 against 5e-6; damped by the next mixing solve),
+  which is why the golden fields below change by more than a few ulps.
+  Golden changes (one day; `blob` total drift before → after, then the largest
+  change of a field and of a column mean relative to its maximum):
+  `run_ll72_upwind_cpu_f32` −2.0e-6 → +1.8e-8 (fields 2.5e-5, column means
+  3.2e-6); `run_ll72_slopes_gpu_f32` −2.2e-6 → +1.3e-8 (2.5e-5, 3.4e-6);
+  `run_c24_upwind_cpu_f32` −6.3e-7 → −1.1e-10 (1.6e-5, 1.5e-6);
+  `run_c24_slopes_gpu_f32` −7.0e-7 → −1.1e-8 (1.7e-5, 1.3e-6);
+  `run_c24_linrood_cpu_f32` −7.0e-7 → −5.9e-9 (column means 2.3e-4 and
+  blob cells 2.6e-3 at isolated upper-level points where the nonlinear Lin–Rood
+  limiter amplifies rounding; 99 % of cells within 8.7e-7, and the new run is
+  closer to a `Float64` run: fossil CO₂ column means within 3.2e-7 instead of
+  2.3e-4); `run_c90_era5_localkz_gpu_f32` (SF₆ without sources −2.6e-7 →
+  −2.8e-10; fields 1.7e-5, column means 1.7e-5) and
+  `run_c90_merra2_hbvdiff_gpu_f32` (uniform −6.1e-10 → +1.2e-9; fields
+  8.3e-5, column means 8.5e-6). The uniform tracer stays at the advection
+  level (at most 1.1e-8 per day). `Float64` cases (`run_ll72_ppm_cpu_f64`,
+  `run_ll72_ppm_cw84_cpu_f64`, `run_o24_upwind_cpu_f64`, `run_c24_ppm_cpu_f64`,
+  `run_c24_ppm_cw84_cpu_f64`) change by at most 1.7e-14 of a field's maximum
+  (totals 1.9e-16); their drifts stay at 0 or ±1.5e-16. Cases with `tm5_dkg` or
+  `geoschem_nonlocal_vdiff` diffusion and preprocessing are bit-identical. The
+  kernel also fuses the mass/mixing-ratio conversions and launches all six
+  cubed-sphere panels at once: on an L40S a C90 L72 call with ten `Float32`
+  tracers takes 1.35 ms instead of 4.06 ms, a 1° L72 lat-lon call 2.70 ms
+  instead of 5.89 ms. `DiffusionWorkspace` gains `exchange` and `elimination`
+  column scratch, and lat-lon and reduced-Gaussian workspaces now hold a
+  `ledger_carry`; the per-tracer reduced-Gaussian transport passes
+  `tracer = idx`, as the per-tracer Lin–Rood path does
+  (`test/core/test_diffusion_flux_form.jl`).
 - **Pressure-placed observation samples use total pressures** (issue #20,
   finding OF-116). Observation sampling (`[output.observations]`) placed a
   record by its pressure (ObsPack `pressure`, a total pressure) against the
