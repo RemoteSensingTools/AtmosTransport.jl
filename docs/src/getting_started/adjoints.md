@@ -135,11 +135,24 @@ specific_humidity = [1e-5, 2e-3, 1e-2]                         # per layer, kg/k
 [observations]
 file = "observations.nc"
 tracer = "CO2"
+# flagged_records = "cosample"   # simulate and report records with a nonzero flag, never assimilate them
 
 [observations.placement]
 vertical_coordinates = ["height_above_ground", "pressure"]
 # max_surface_pressure_mismatch_pa = 5000.0   # averaging-kernel columns; default no limit
+
+# [observations.cell_averaging]   # column records of one model cell and overpass
+# mode = "average"                # or "inflate_model_error"
+# time_tolerance_s = 60.0
 ```
+
+OCO-2 and OCO-3 records of the v11 MIP 10-second files become observation
+files with `scripts/preprocessing/oco2_mip_to_observations.jl` (one file per
+day; every record, those not to be assimilated with a nonzero flag), and are
+compared with the model through the
+[hat projection](@ref hat-level-projection) of their 20-level retrievals; see
+[OCO-2 MIP records](@ref oco2-mip-records) for the converter, co-sampling and
+cell averages.
 
 Each sample reads the layer that contains it at its model step (a record with
 `time_window_s > 0` averages the steps of its window), so a 10 m intake reads

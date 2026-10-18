@@ -347,8 +347,11 @@ little sensitivity. A column record that carries a **retrieval block**
 (schema v2, `schemas/cs_observations_v2.toml`) is compared with the model
 through that retrieval's own vertical description, with the operator of
 TM5-4DVAR (`deps/tm5-cy3-4dvar/base/f2py/src/averaging_kernels.F90`, the OCO-2
-routine `applyaveragingkernel` and the rebin `inv_rebin`). The block gives
-the retrieval's ``N`` layers from the surface up:
+routine `applyaveragingkernel` and the rebin `inv_rebin`). A block describes
+either layer means (`retrieval_mapping = "layer_rebin"`, this section) or
+values on levels with the profile linear between them (`"hat_levels"`, the
+OCO-2/OCO-3 retrievals; see [level retrievals](@ref hat-level-projection)).
+A layer block gives the retrieval's ``N`` layers from the surface up:
 
 - interfaces ``p^r_1 > p^r_2 > \dots > p^r_{N+1} \ge 0`` (Pa, total pressure),
   with ``p^r_1 = p^r_s`` the retrieval surface pressure and ``p^r_{N+1} =
@@ -512,6 +515,219 @@ per observation and step (``10^{-12}``; upwind, monotone PPM, Lin–Rood, TM5
 convection, Full and Stride checkpoints), central finite differences with
 window records, the mismatch policy, and the departure diagnostics.
 
+### [Level retrievals (OCO-2, OCO-3): the hat projection](@id hat-level-projection)
+
+The OCO-2 and OCO-3 retrievals (Lite files and the v11 MIP 10-second files)
+give their prior and column averaging kernel on 20 **levels**,
+``\sigma_j = p_j/p_s`` from ``10^{-4}`` (top) to 1 (surface), "defined on layer
+boundaries": the retrieval's state vector holds the profile at the levels and
+the profile is linear in pressure between them. Their pressure weights are
+the integrals of the levels' hat functions ``\varphi_j`` (``\varphi_j(p_j) =
+1``, falling linearly to 0 at the neighbouring levels): the trapezoid rule,
+half-thickness end levels, with a dry-air correction. A record whose block
+has `retrieval_mapping = "hat_levels"` (`Output.HatLevelProjection`) stores
+the 20 level pressures, weights ``h_j``, kernel ``a_j`` and prior ``x_{a,j}``
+surface first, and the model column is projected onto the hats.
+
+**Projection.** The model interfaces are stretched as for layer retrievals,
+the model surface onto the bottom level and the model top onto the top level
+(``s_{k\pm1/2}``, each layer keeping its share of the column). The level values
+``c_j`` of the model profile are its L2 (Galerkin) projection onto the hats in
+dry air: the piecewise-linear profile ``\sum_j c_j \varphi_j`` closest to the
+model profile, weighted by dry air,
+
+```math
+\sum_i M_{ji}\, c_i = b_j, \qquad
+M_{ji} = \int \varphi_j \varphi_i \,\mathrm{d}p_\mathrm{dry}, \qquad
+b_j = \int \varphi_j\, x\, \mathrm{d}p_\mathrm{dry} = \sum_k B_{jk} x_k, \qquad
+B_{jk} = \frac{m_k}{s_{k+1/2} - s_{k-1/2}} \int_{s_{k-1/2}}^{s_{k+1/2}} \varphi_j(p)\, \mathrm{d}p ,
+```
+
+each stretched layer's dry air ``m_k`` spread evenly over its pressure
+thickness; ``M`` is tridiagonal (neighbouring hats overlap), so
+``P = M^{-1} B`` costs one tridiagonal solve per column and step. The column is
+the operator of the layer case with ``P`` in place of the rebin ``R``:
+
+```math
+X = X_a + \sum_j h_j a_j (c_j - x_{a,j})
+  = \sum_k H_k x_k + c, \qquad H = (h \circ a)^\mathsf{T} M^{-1} B,
+```
+
+with ``h``, ``a``, ``x_a`` and the prior column ``X_a`` from the file (the
+MIP protocol's eq. 2; the kernel is already normalized: it is not multiplied
+by ``h``). ``X_a`` is the file's `xco2_apriori`, carried by the converter and
+the forward sampler's reader (`retrieval_prior_column` in observation files);
+a record without one uses ``X_a = \sum_j h_j x_{a,j}``, the form of the layer
+case. The 10-s averages of the weights and of the prior were taken separately,
+so the two differ: by up to about 0.01 ppm (−0.012 ppm for sounding
+20210804153946), a shift of every simulated column. ``X`` is still linear in the tracer: the
+4D-Var functional is exact as before, with weights ``H_k/\max(m_k,
+\epsilon)`` built from the replayed air mass and pressures of each sampled
+step.
+
+**Why the projection.** The basis contains the constants (the hats sum to 1
+over the stretched column), so the projection preserves the column integral:
+the rows of ``P`` sum to 1, and with the hat integrals of the model's dry air
+as weights, ``h^m_j = \sum_k B_{jk} / \sum_k m_k``, the projected profile has
+the model's dry column mean exactly, ``\sum_j h^m_j c_j = \sum_k m_k x_k /
+\sum_k m_k``. The file's weights are the same integrals with the retrieval's
+own humidity, so the column is conserved with them to the difference of the
+two dry-air corrections. And a projection reproduces every profile its basis
+can represent: a model profile that is piecewise linear on the levels, the
+retrieval's own representation, gives its level values back exactly (to the
+discretization of the model's layer means, second order in the layer
+thickness), so the kernel is applied to the level values it was derived for.
+A model profile equal to the retrieval's prior gives the prior column, to the
+projection's discretization: on 960 OCO-2 records of 2019-07-01, with the
+prior sampled as the layer means of a fine column aligned with the levels
+(760 layers), ``X - X_a`` is −7e-6 ppm (5–95 %: −9e-6 to −4e-6). On a GEOS L72
+column, whose layers do not line up with the levels, ``|X - X_a| = |\sum_j
+h_j a_j (c_j - x_{a,j})|`` ranges from 1e-5 to 2.1e-3 ppm and single level values ``c_j``
+differ from ``x_{a,j}`` by up to 0.57 ppm (independent review): the level
+values carry the model's coarse vertical sampling, the column much less. The hat
+average ``\int \varphi_j x / \int \varphi_j`` (``M`` lumped onto its diagonal),
+which is not a projection, puts that column −0.0185 ppm low (−0.021 to
+−0.012), because the prior is curved in the stratosphere; for a +10 ppm
+boundary layer below ``\sigma = 0.95`` it is 0.018 ppm below the projection.
+``P``, the inverse of the consistent mass matrix times ``B``, has negative
+entries in general (about −0.21 to −0.23 in every row on a GEOS L72 column),
+which a linear operator allows; the column weights ``H`` stayed positive on
+OCO-2 records (on L72, ``\min_k H_k`` was 0.23–0.39 of their mean).
+
+**The top level.** The top level sits at ``\sigma = 10^{-4}`` (10 Pa), not at
+0. The stretch maps the whole model column, from its top (about 1 Pa for
+GEOS, 0 for ERA5) to its surface, onto ``[10^{-4} p_s, p_s]``, every layer
+keeping its share, so nothing is cut off: the model stratosphere above 53 hPa
+falls under the top half-hat (``h \approx 0.026``) and the model's air above
+10 Pa (``10^{-4}`` of the column) is squeezed into it. The weights sum to 1
+over the levels.
+
+**TM5-4DVAR's 19 layers.** `Output.tm5_layer_column` builds TM5-4DVAR's layer
+form of the same record (`proj/tracer/CO2/py/Observations.py`, 7016–7052;
+`Satellite.py`, 707–717): the 20 levels as the interfaces of 19 layers, the
+kernel and prior interpolated to the layer midpoints, the weights
+``\Delta p_i``, then the layer operator (rebin ``R``). TM5 divides the
+thicknesses by ``p_s``, so its weights sum to ``1 - 10^{-4}``; this mode
+normalizes them to 1 (TM5's column is 0.9999 times this one). It is for
+comparisons with TM5-4DVAR co-samples (converter `mapping = Output.LayerRebin()`
+or `--mapping tm5`, forward
+sampler `averaging_kernel_mapping = "tm5"`). For a +10 ppm boundary layer
+below ``\sigma = 0.95`` on the prior, the mode is 0.009 ppm above the hat
+projection (5–95 %: +0.002 to +0.017; 960 records of 2019-07-01).
+
+**The MIP point formula.** The MIP protocol writes the column as
+``X = X_\mathrm{prior} + \sum_j h_j a_j (c_j - c_{\mathrm{prior},j})`` with
+``c_j`` the model profile at the levels, without saying how to transform the
+model to them. Point values are not column-conserving: for a +10 ppm
+boundary layer below ``\sigma = 0.95`` (``\Delta X`` = +0.49 ppm) the point
+form is 0.232 ppm below the hat projection (5–95 %: 0.230–0.236 ppm; 960
+records of 2019-07-01).
+At ``c = x_a``, TM5's unnormalized weights put its column 0.033 ppm below the
+point form. Neither point values nor boxes centred on the levels are offered.
+
+**Tests.** `test/core/test_retrieval_hat_projection.jl`: the projection
+matrix against an independent construction (exact integration of the hats and
+their products), rows summing to 1, column conservation with the hat
+integrals, a piecewise-linear profile reproduced at every level, ends and
+kinks included, within ``\Delta \max|v'|/N^2`` for ``N`` layers per interval
+(second order), a model profile equal to the prior giving the prior column
+within 1e-5 ppm (synthetic and real MIP records), TM5 mode against a
+transcription of TM5's Python, level records in schema v2.
+`test/core/test_cs_4dvar_oco2_mip.jl`: the single sweep against a seeded
+footprint per observation and step for level columns, windows and TM5-mode
+records (``10^{-12}``, upwind and monotone PPM), and central finite
+differences.
+
+### [OCO-2 MIP records: converter, co-sampling, cell averages](@id oco2-mip-records)
+
+**Converter.** `read_oco2_mip_observations(path; ...)` reads an OCO-2 or OCO-3
+v11 MIP 10-second file (`OCO2_b11.2_10sec_GOOD_r2/r3.nc4`,
+`OCO3_b11_10sec_GOOD_r2.nc4`) into schema-v2 column records with a level
+block, and `convert_oco2_mip_observations(path, output; partition = :day)`
+writes one file per day (`{YYYYMMDD}`) or month (`{YYYYMM}`):
+
+```bash
+julia --project=. scripts/preprocessing/oco2_mip_to_observations.jl \
+    OCO2_b11.2_10sec_GOOD_r2.nc4 'obs/oco2_mip_{YYYYMMDD}.nc' \
+    --start 2019-01-01 --stop 2019-02-01 --data-types LN,LG,OG --assimilate-flags 1
+```
+
+`sounding_id` → `id`; `date[1:6]` → `date_components` (truncated to the
+second, as TM5 reads it); `latitude`, `longitude`; `kind = "column"`;
+`altitude` → `elevation_m`; `time_window_s = 0`; `xco2_2019_scale`,
+`xco2_uncertainty` and `model_error` (or a constant, `--model-sigma`) →
+`value`, `value_sigma`, `model_sigma` (ppm → mol/mol); the levels
+(``\sigma \cdot p_s``, hPa → Pa), weights, kernel and prior (ppm → mol/mol),
+turned surface first, and the prior column `xco2_apriori`. Every record of the time range is written: `flag = 0`
+when its `assimilate_flag` is in the experiment's set (`--assimilate-flags`,
+1 by default) and its data type too (`--data-types`: LN, LG, OG by default;
+`SAM` names OCO-3's snapshot area maps, `data_type = 0`),
+else `flag = 1 + assimilate_flag` (1 evaluation-only scenes, 2 assimilable
+but outside the data types, 3 withheld). `instrument_type` is
+`<instrument>_<data type>` (`OCO2_OG`); the files record the source file,
+the options and the mapping as root attributes. OCO-2 and OCO-3 sounding ids
+can coincide, so keep the instruments in separate sets.
+
+**Forward-only co-sampling.** The MIP needs co-samples of every record,
+withheld and evaluation-only ones included. `bind_to_mesh(...;
+flagged_records = "cosample")` (`CosampleFlaggedRecords`; the inversion
+driver's `[observations].flagged_records`) binds records with a nonzero flag
+as co-samples, `CSObservation(...; assimilate = false)`: the forward replay
+simulates them, `CS4DVarResult` reports their simulated values, residuals and
+stencils (`assimilated = false`), but they add nothing to the cost or the
+gradient, are not screened by the surface-pressure limit, and do not extend
+the taped run: the cost is bit for bit that without them, and the reverse pass
+receives bit-identical forcing and tape length (the gradient is bit for bit
+that without them single-threaded; with several threads the adjoint kernels
+are not bit-reproducible from one call to the next, at about ``10^{-22}`` of
+the largest entry, with or without co-samples).
+Departure files carry each row's `flag` (`build_departure_set`), so one file
+holds the co-samples of all records. The default (`"drop"`) is unchanged.
+
+**Cell averages.** About 59 % of the assimilated OCO-2 10-s records share a
+C90 cell with another record of the same orbit (1.43 per orbit and cell, about
+9 s apart). `cell_averaging = CellAverage(; time_tolerance_s = 60,
+correlation = 0)` (`[observations.cell_averaging]`, `mode = "average"`)
+averages the assimilated column records of one tracer, cell and step sampling
+that lie within `time_tolerance_s` of the earliest record of their group. With
+``w_i = 1/\sigma_i^2`` (`value_sigma`):
+
+```math
+\bar y = \frac{\sum_i w_i y_i}{\sum_i w_i}, \quad
+\bar H = \frac{\sum_i w_i H_i}{\sum_i w_i}, \quad
+\sigma^2_\mathrm{meas} = \frac{\sum_i\sum_j w_i w_j \rho_{ij}\sigma_i\sigma_j}{(\sum_i w_i)^2}, \quad
+\bar\sigma^2 = \sigma^2_\mathrm{meas} + \frac{\sum_i w_i \sigma^2_{\mathrm{mod},i}}{\sum_i w_i},
+```
+
+``\rho_{ii} = 1`` and ``\rho_{ij} = `` `correlation` between distinct spans (0:
+the within-span correlation is already in ``\sigma_i``); the model error
+(`model_sigma` and the profile term) is added once, not reduced.
+``\bar H`` is a `CSCellAverageObjective`, exact for the linear operators: its
+gradient is the ``w``-weighted combination of the members'. The members stay
+as co-samples, so departures keep one row per record, with the average's
+`cell_average_id`, and the average is a row of its own, the term of the cost
+(placement code −4, `cell_average_id` its number 1, 2, …, a row id above
+every record id of the observation set, ``\bar y``, ``\bar H x``,
+``\sigma_\mathrm{meas}`` in `value_sigma`, the model error in `model_sigma`,
+``\rho`` in `cell_average_correlation`): over the assimilated rows,
+``\sum`` `normalized_departure`² ``= 2 J_\mathrm{obs}``. Averaging needs
+`max_surface_pressure_mismatch_pa = Inf` (a `CSCellAverageObjective` built by
+hand is checked the same way). The alternative,
+`inflate_cell_model_error(set, mesh, t_start, dt; ...)` (`mode =
+"inflate_model_error"`), keeps the records and multiplies each record's
+`model_sigma²` by the number ``k`` of records of its group; the profile-error
+term of an averaging-kernel column is not inflated.
+
+**Forward sampler.** An `oco2_lite` source of `[output.observations]` with
+`averaging_kernel_tracers = ["co2"]` (opt-in) also reads each sounding's
+retrieval (`Output.read_oco2_retrieval_columns`) and writes
+`co2_ak_column`, the same operator (`averaging_kernel_mapping = "hat"` or
+`"tm5"`) on the sampled profile and the interface pressures of
+`pressure_basis`. Without the key the output is unchanged. The test checks
+that, in nearest-window mode, the sampler's value equals the 4D-Var's
+simulated value of the same record converted to schema v2 (``10^{-13}``), and
+that the default sounding file is identical.
+
 ## What is not yet shipped
 
 | Item | Notes |
@@ -519,7 +735,6 @@ window records, the mismatch policy, and the departure diagnostics.
 | **Optimal binomial Revolve** | `RevolveCheckpoint` ships as the bisection variant — logarithmic memory but not the Griewank–Walther optimal recompute count. Optimal binomial Revolve is the next refinement. |
 | **Optimized/clamped convection adjoints** | CMFMC `clamp = true` and TM5/CMFMC-matrix collaborative, truncated, or merged solves are rejected by the footprint API until their exact branches are taped and transposed. |
 | **TM5-4DVAR cross-validation** | Synthetic truth-recovery via `test_cs_inversion_truth_recovery.jl` is on CI; a side-by-side parity run against TM5-4DVAR on real data has not been published. |
-| **Averaging kernels in the forward observation sampler** | The 4D-Var applies averaging kernels to column records with a retrieval block ([averaging-kernel columns](@ref retrieval-column-operator)); the forward sampler's OCO-2 sounding output still writes air-mass-weighted column means. The operator is shared (`Output.retrieval_column_weights!`), but the OCO-2 reader does not read the kernel fields yet, and OCO-2 Lite gives them on 20 levels, which need a conversion to the layer form. |
 | **Inversion driver on transport binaries** | `scripts/inversions/cs_4dvar.jl` binds observation files only on its synthetic meteorology (`synthetic_hydrostatic`); a 4D-Var on transport-binary meteorology is assembled with the Julia API (`bind_to_mesh`, `CSObservationColumnMet`, `cs_surface_flux_4dvar`). |
 | **Tangent-linear model** | Forward TL is not exposed as a separate driver. If you need it, use the reverse pass plus identity seeding. |
 

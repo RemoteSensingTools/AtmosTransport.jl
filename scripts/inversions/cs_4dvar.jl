@@ -73,6 +73,14 @@
 #     # retrieval column may absorb; above it a record is an error, or is left
 #     # out of the cost with unplaced_records = "skip". Default: no limit.
 #     max_surface_pressure_mismatch_pa = 5000.0
+#     # Records with a nonzero flag (in [observations]): "drop" (default) or
+#     # "cosample" (simulated and reported, never in the cost or gradient):
+#     # flagged_records = "cosample"
+#     [observations.cell_averaging]   # optional: column records of one model cell
+#     mode = "average"                # average them (1/σ² weights; σ_mod once), or
+#                                     # "inflate_model_error": keep them, model_sigma × √k
+#     time_tolerance_s = 60.0         # records within this of the group's first
+#     correlation = 0.0               # "average" only: ρ between distinct records
 #
 #     # or inline [[observations.entries]] blocks:
 #     [[observations.entries]]
@@ -135,7 +143,10 @@ const Adv = AtmosTransport.Operators.Advection
 const _GRADIENT_DESCENT_KEYS = ("initial_step", "min_step", "step_shrink", "line_search")
 const _LBFGS_KEYS = ("m", "show_trace")
 const _HYDROSTATIC_METEO_KEYS = ("interface_pressures_pa", "specific_humidity", "temperature_kelvin")
-const _OBSERVATION_FILE_KEYS = ("file", "tracer", "out_of_range_policy", "placement")
+const _OBSERVATION_FILE_KEYS = ("file", "tracer", "out_of_range_policy", "placement", "flagged_records",
+                                "cell_averaging")
+const _CELL_AVERAGING_KEYS = ("mode", "time_tolerance_s", "correlation")
+const _CELL_AVERAGING_MODES = ("average", "inflate_model_error")
 # `[observations.placement]`: the forward sampler's placement keys, plus the
 # constant layer temperature of the hypsometric heights and the surface-pressure
 # limit of averaging-kernel columns.
@@ -237,6 +248,15 @@ function _validate_observation_source(cfg)
             throw(ArgumentError(
                 "[observations.placement].layer_height_temperature_kelvin has no effect with " *
                 "[meteo].temperature_kelvin, the layer temperatures of the hydrostatic column"))
+        averaging = get(obs, "cell_averaging", Dict{String, Any}())
+        averaging isa AbstractDict || throw(ArgumentError("[observations.cell_averaging] must be a table"))
+        AT.ConfigChecks.check_known_keys(averaging, _CELL_AVERAGING_KEYS, "[observations.cell_averaging]")
+        isempty(averaging) || get(averaging, "mode", nothing) in _CELL_AVERAGING_MODES || throw(ArgumentError(
+            "[observations.cell_averaging].mode must be one of $(join(repr.(_CELL_AVERAGING_MODES), ", ")); got " *
+            "$(repr(get(averaging, "mode", nothing)))"))
+        get(averaging, "mode", nothing) == "inflate_model_error" &&
+            _warn_unread(averaging, ("correlation",), "[observations.cell_averaging]",
+                         "with mode = \"inflate_model_error\"")
     end
     if get(cfg["meteo"], "source", nothing) != "synthetic_hydrostatic"
         extra = [k for k in _HYDROSTATIC_METEO_KEYS if haskey(cfg["meteo"], k)]
@@ -308,11 +328,27 @@ function _bind_observation_file(cfg, mesh)
     tracer = get(obs_cfg, "tracer", nothing)
     tracer === nothing || tracer isa AbstractString || throw(ArgumentError(
         "[observations].tracer must be a tracer name; got $(repr(tracer))"))
-    return AT.bind_to_mesh(AT.read_observations(path), mesh, _start_time(cfg), cfg["time"]["dt_seconds"];
-                           nsteps = cfg["time"]["nsteps"], tracer_filter = tracer,
-                           out_of_range_policy = get(obs_cfg, "out_of_range_policy", "reject"),
+    start, dt, nsteps = _start_time(cfg), cfg["time"]["dt_seconds"], cfg["time"]["nsteps"]
+    out_of_range_policy = get(obs_cfg, "out_of_range_policy", "reject")
+    set, cell_averaging = _cell_averaging(get(obs_cfg, "cell_averaging", Dict{String, Any}()),
+                                          AT.read_observations(path), mesh, start, dt, nsteps, tracer,
+                                          out_of_range_policy)
+    return AT.bind_to_mesh(set, mesh, start, dt; nsteps, tracer_filter = tracer, out_of_range_policy,
                            placement, terrain = AT.Models.DrivenRunner._observation_terrain(placement, mesh),
-                           max_surface_pressure_mismatch_pa = _max_surface_pressure_mismatch(cfg))
+                           max_surface_pressure_mismatch_pa = _max_surface_pressure_mismatch(cfg),
+                           flagged_records = get(obs_cfg, "flagged_records", "drop"), cell_averaging)
+end
+
+# `[observations.cell_averaging]`: the observation set to bind (with inflated
+# model errors for "inflate_model_error") and the `cell_averaging` of
+# `bind_to_mesh` (`CellAverage` for "average").
+function _cell_averaging(table, set, mesh, start, dt, nsteps, tracer, out_of_range_policy)
+    isempty(table) && return set, AT.NoCellAveraging()
+    tolerance = get(table, "time_tolerance_s", 60.0)
+    table["mode"] == "average" &&
+        return set, AT.CellAverage(; time_tolerance_s = tolerance, correlation = get(table, "correlation", 0.0))
+    return AT.inflate_cell_model_error(set, mesh, start, dt; nsteps, time_tolerance_s = tolerance,
+                                       tracer_filter = tracer, out_of_range_policy), AT.NoCellAveraging()
 end
 
 # The surface-pressure limit of averaging-kernel columns (Pa), Inf without one.
@@ -550,7 +586,7 @@ function run_inversion(config_path::AbstractString)
 
     meteo = _build_meteo(cfg, mesh, nsteps, FT)
     observations = _build_observations(cfg, mesh, FT)
-    isempty(observations) && throw(ArgumentError(
+    any(o -> o.assimilate, observations) || throw(ArgumentError(
         "no observation is left to assimilate (check [observations].tracer, out_of_range_policy, " *
         "the records' flags and [observations.placement].unplaced_records)"))
     # Build the covariance once and share it with the preconditioner so

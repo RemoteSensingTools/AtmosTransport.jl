@@ -516,3 +516,52 @@ end
               AT.Output.DryInterfaces
     end
 end
+
+# Issue #20 follow-up (D30): level columns (OCO-2's hat projection), co-sampled
+# flagged records and cell averaging through the driver's TOML keys.
+@testset "cs_4dvar.jl driver — level columns, flagged_records, cell_averaging (D30)" begin
+    mktempdir() do dir
+        mesh = AT.CubedSphereMesh(Nc = 3, Hp = 3, FT = Float64)
+        lons, lats = AT.panel_cell_center_lonlat(mesh, 2)
+        σ = vcat(1e-4, collect(1:19) ./ 19)
+        level(ps) = AT.Output.RetrievalColumn(; pressure_pa = reverse(σ .* ps), pressure_weight = fill(0.05, 20),
+                                              averaging_kernel = collect(range(1.0, 0.4; length = 20)),
+                                              prior_profile = fill(1.2e-7, 20), mapping = AT.Output.HatLevelProjection())
+        record(id, sec, flag) = AT.CSObservationRecord(; id, date_components = (2024, 6, 15, 0, 15, sec), flag,
+                                                       lat = lats[2, 2], lon = lons[2, 2], kind = "column",
+                                                       value = 1e-7, value_sigma = 1e-8, model_sigma = 0.5e-8,
+                                                       instrument_type = "OCO2_OG", tracer = "CO2",
+                                                       retrieval = level(99000.0))
+        path = joinpath(dir, "levels.nc")
+        AT.write_observations(path, AT.CSObservationSet([record(1, 0, 0), record(2, 10, 0), record(3, 20, 1)]))
+        quiet(f) = with_logger(f, NullLogger())
+        base = quiet(() -> _run_config_text(_hydrostatic_config(path)))
+        @test [o.id for o in base.last.observations] == [1, 2]
+        @test all(o -> o.objective.retrieval.mapping isa AT.Output.HatLevelProjection, base.last.observations)
+        cosampled = quiet(() -> _run_config_text(_hydrostatic_config(path;
+            observations_extra = "flagged_records = \"cosample\"\n")))
+        @test [o.assimilate for o in cosampled.last.observations] == [true, true, false]
+        # The co-sample changes nothing the optimizer sees: bit for bit
+        # single-threaded; with threads the atomics of the halo and Lin-Rood
+        # adjoint kernels make the gradient reproducible to rounding only.
+        if Threads.nthreads() == 1
+            @test cosampled.cost_history == base.cost_history
+            @test cosampled.last.gradients[1][2] == base.last.gradients[1][2]
+        else
+            @test cosampled.cost_history ≈ base.cost_history rtol = 1e-13
+            @test cosampled.last.gradients[1][2] ≈ base.last.gradients[1][2] rtol = 1e-13
+        end
+        averaged = quiet(() -> _run_config_text(_hydrostatic_config(path;
+            observations_extra = "[observations.cell_averaging]\nmode = \"average\"\ntime_tolerance_s = 60.0\n")))
+        @test [o.assimilate for o in averaged.last.observations] == [false, false, true]
+        @test averaged.last.observations[end].objective isa AT.CSCellAverageObjective
+        @test averaged.last.observations[end].sigma ≈ sqrt(1e-16 / 2 + 0.25e-16) rtol = 1e-12
+        inflated = quiet(() -> _run_config_text(_hydrostatic_config(path;
+            observations_extra = "[observations.cell_averaging]\nmode = \"inflate_model_error\"\n")))
+        @test [o.sigma for o in inflated.last.observations] ≈ fill(sqrt(1e-16 + 2 * 0.25e-16), 2) rtol = 1e-12
+        @test occursin("[observations.cell_averaging].mode", _config_error(_hydrostatic_config(path;
+            observations_extra = "[observations.cell_averaging]\nmode = \"median\"\n")))
+        @test occursin("flagged_records", _config_error(_hydrostatic_config(path;
+            observations_extra = "flagged_records = \"keep\"\n")))
+    end
+end

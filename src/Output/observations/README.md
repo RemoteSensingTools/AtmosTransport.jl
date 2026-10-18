@@ -5,8 +5,8 @@ flask records) and fixed stations. Writes append-only `<path>_soundings.nc` and
 `<path>_sites.nc` files.
 
 These files are included into the `Output` module by [`../Output.jl`](../Output.jl)
-in this order: sources, requests, readers, cell locator, placement, output
-spec, gather, retrieval column, NetCDF, sampler. The runner glue lives in
+in this order: retrieval column, sources, requests, readers, cell locator,
+placement, output spec, gather, NetCDF, sampler. The runner glue lives in
 [`../../Models/runner/observations.jl`](../../Models/runner/observations.jl). See
 also the parent overview [`../README.md`](../README.md) and the file schema in
 [`../../../docs/src/config/output_schema.md`](../../../docs/src/config/output_schema.md).
@@ -17,8 +17,12 @@ the shared `_handle_unplaced` / `_warn_below_ground`, and its placed point
 observations choose their layer with `sample_column_layer!`, the function the
 sampler uses, so a record is sampled in the same layer by both. Its
 averaging-kernel columns (`CSRetrievalColumnObjective`) use this folder's
-retrieval-column operator (`retrieval_column.jl`) on `placement_pressures!`;
-the sampler itself does not apply averaging kernels yet.
+retrieval-column operator (`retrieval_column.jl`) on `placement_pressures!`,
+and so does the sampler for OCO-2/OCO-3 sources with
+`averaging_kernel_tracers` (`<tracer>_ak_column`), so a sounding gets the
+same column in both. The OCO-2 MIP converter of the inversion
+(`../../Inversion/OCO2MIPObservations.jl`) reads the retrieval fields with
+this folder's `read_oco2_retrieval_columns`.
 
 ## Run Sequence
 
@@ -83,12 +87,22 @@ the sampler itself does not apply averaging kernels yet.
   `mixing_ratio_profile!`, `column_mean_vmr`, and the layer-temperature types
   `ConstantLayerTemperature`, `SurfaceLapseTemperature`, `ProfileLayerTemperature`
 - Averaging-kernel columns, in [`retrieval_column.jl`](retrieval_column.jl):
-  `RetrievalColumn` (a retrieval's interfaces from the surface up, pressure
-  weights, column averaging kernel, prior, optional model-profile uncertainty `profile_sigma`),
+  `RetrievalColumn{M}` (a retrieval's pressures from the surface up, pressure
+  weights, column averaging kernel, prior, optional model-profile uncertainty
+  `profile_sigma`, its mapping `M`: `LayerRebin` for layer means between
+  interfaces, `HatLevelProjection` for values on levels, linear between them,
+  and an optional prior column `prior_column`),
   `stretch_model_interfaces!`, `retrieval_rebin_matrix`,
-  `retrieval_column_weights!`, `retrieval_prior_offset`, `retrieval_profile!`,
-  `retrieval_column_value`, `retrieval_model_error_variance`,
-  `mole_fraction_unit_scale` (TM5-4DVAR's operator, host Float64, one column)
+  `retrieval_projection_matrix`, `retrieval_column_weights!`,
+  `retrieval_prior_offset`, `retrieval_profile!`, `retrieval_column_value`,
+  `retrieval_model_error_variance`, `tm5_layer_column` (TM5-4DVAR's 19-layer
+  form of a level retrieval), `mole_fraction_unit_scale` (host Float64, one
+  column)
+- OCO-2/OCO-3 retrieval fields, in
+  [`observation_readers.jl`](observation_readers.jl):
+  `read_oco2_retrieval_columns` (Lite and MIP 10-s files, surface first),
+  read only for sources with `averaging_kernel_tracers`
+  (`AveragingKernelColumns` in [`observation_sources.jl`](observation_sources.jl))
 - NetCDF, in [`observation_netcdf.jl`](observation_netcdf.jl):
   `SoundingNetCDFStream` with `append_soundings!`, `SiteNetCDFStream` with
   `append_site_record!`, `write_summary_attributes!`,
@@ -102,14 +116,14 @@ the sampler itself does not apply averaging kernels yet.
 
 - [`observation_sources.jl`](observation_sources.jl) — source descriptors, the choice tables (`_SOURCE_TYPES`, `_OBSERVATION_MODES`, `_SITE_GROUPINGS`, `_TABLE_FORMATS`, `_QUALITY_FILTERS`), source-table parsing
 - [`observation_requests.jl`](observation_requests.jl) — request and schedule types, `ObservationSet`, time-list expansion into point events
-- [`observation_readers.jl`](observation_readers.jl) — path templates and wildcards, CF time decoding, OCO-2 Lite / ObsPack / CSV-TOML-NetCDF readers, site merging, `build_observation_set`
+- [`observation_readers.jl`](observation_readers.jl) — path templates and wildcards, CF time decoding, OCO-2 Lite / ObsPack / CSV-TOML-NetCDF readers, the OCO-2/OCO-3 retrieval fields (`read_oco2_retrieval_columns`), site merging, `build_observation_set`
 - [`observation_output_spec.jl`](observation_output_spec.jl) — `[output.observations]` keys, the shared vertical-placement parser, strict ISO-8601 UTC parsing, time-interpolation types, output paths
 - [`cell_locator.jl`](cell_locator.jl) — `CellLocation` and per-topology containing-cell lookup
 - [`observation_placement.jl`](observation_placement.jl) — vertical placement: ground interfaces, placement settings, vertical-coordinate and pressure-basis types, the rules (first configured coordinate: height above ground = record height → altitude − DEM, or pressure; then the missing-height rule), codes, layer choice, pressure-basis interfaces
 - [`observation_gather.jl`](observation_gather.jl) — device gather kernel and host twin, pressure (air-mass and total) and height reconstruction, height-method and `interp_flag` codes
-- [`retrieval_column.jl`](retrieval_column.jl) — the averaging-kernel column operator of TM5-4DVAR: retrieval-column validation, the stretch of the model column onto the retrieval's surface and top, the mass-conserving overlap rebin, the column weights, prior term and model-error variance
+- [`retrieval_column.jl`](retrieval_column.jl) — the averaging-kernel column operator: retrieval-column validation, the mapping types (`LayerRebin`, `HatLevelProjection`), the stretch of the model column onto the retrieval's surface and top, the projections (TM5-4DVAR's mass-conserving overlap rebin; the dry-air L2 (Galerkin) projection onto the levels' hat functions), the column weights, prior term and model-error variance, TM5's 19-layer form
 - [`observation_netcdf.jl`](observation_netcdf.jl) — queued, lock-aware sounding and site NetCDF streams and their schemas
-- [`observation_sampler.jl`](observation_sampler.jl) — `ObservationSampler`, linear or nearest-window time handling, daily file rotation, counters
+- [`observation_sampler.jl`](observation_sampler.jl) — `ObservationSampler`, linear or nearest-window time handling, daily file rotation, counters, averaging-kernel columns of soundings with a retrieval
 
 ## Common Tasks
 

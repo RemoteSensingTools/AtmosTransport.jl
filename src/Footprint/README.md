@@ -163,7 +163,10 @@ record types, and schedules come from [`../Tape/`](../Tape/).
   item, which adds the cell's entries in input order. The injection is
   deterministic and needs no atomics. (The halo and Lin-Rood face adjoint
   kernels do use atomics, so a multithreaded CPU or GPU reverse pass is
-  reproducible to rounding only; single-threaded it is bit for bit.)
+  reproducible to rounding only, about 1e-22 of the largest gradient entry
+  between two identical calls; single-threaded it is bit for bit. Tests compare
+  gradients with `gradients_match` in `test/helpers/cs_observation_columns.jl`:
+  `==` single-threaded, 1e-13 relative otherwise.)
 - `_seed_objective!` computes the seed weights on the host (`1 / max(m, eps)`,
   `1 / max(Σm, eps)`) where the old seed kernels divided on the device; IEEE division
   gives the same bits on CPU and CUDA (not checked on Metal).

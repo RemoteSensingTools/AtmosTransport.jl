@@ -63,3 +63,14 @@ end
 
 column_met(P; kwargs...) = _COL_AT.CSObservationColumnMet(; p_top = P.p_top, gravity = COLUMN_GRAVITY,
                                                           humidity = P.qpanels, kwargs...)
+
+# The halo-adjoint and Lin-Rood face adjoint kernels accumulate with atomics,
+# so a multithreaded reverse pass reproduces itself only to rounding (two
+# identical calls differ at ~1e-22 of the largest gradient entry). Gradient
+# equalities are therefore bit for bit single-threaded and to 1e-13 relative
+# otherwise. `a`, `b`: vectors of per-control panel tuples (`CS4DVarResult.gradients`).
+function gradients_match(a, b)
+    Threads.nthreads() == 1 && return all(a[c][q] == b[c][q] for c in eachindex(b), q in 1:6)
+    scale = maximum(maximum(abs.(b[c][q])) for c in eachindex(b), q in 1:6)
+    return maximum(maximum(abs.(a[c][q] .- b[c][q])) for c in eachindex(b), q in 1:6) <= 1e-13 * scale
+end
