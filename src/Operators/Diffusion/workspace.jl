@@ -5,23 +5,28 @@ Preallocated storage for implicit vertical diffusion.
 
 - `factors` stores tracer-independent Thomas superdiagonal factors, or the
   forward transfer/retention ratios for conservative Dkg mass transport.
+- `exchange` stores each column's interface exchange `D_{k+½}` [kg s⁻¹]
+  (built from Kz and `layer_thickness`, or read from a `dkg` field) for the
+  implicit solve, and `elimination` its forward-elimination values. The
+  flux-form tracer-mass update needs both after the solve (see
+  `diffusion_kernels.jl`). Both have the shape of `factors`.
 - `layer_thickness` stores geometric layer thickness [m] used to convert
   cell-centered Kz [m² s⁻¹] into interface mass exchange [kg s⁻¹].
-- `references` stores one cancellation-reducing column reference per packed
-  tracer for VMR solves (`(Nx, Ny, Nt)` per cubed-sphere panel and for
-  lat-lon, `(ncells, Nt)` for reduced-Gaussian). Single-tracer solves and the
-  conservative Dkg mass path keep their reference in registers.
+- `references` has one entry per column and tracer (`(Nx, Ny, Nt)` per
+  cubed-sphere panel and for lat-lon, `(ncells, Nt)` for reduced-Gaussian). It
+  ties the workspace to the state's tracer count and is the shape of
+  `ledger_carry`; the column solves keep their mixing-ratio reference in
+  registers.
 - `hybrid_coefficients` persistently stages the vertical A/B vectors on the
   workspace backend. Window refreshes reuse this storage for dry-pressure
   recovery and hydrostatic `dz`, avoiding per-panel device allocations.
-- `ledger_carry` is persistent state of the conservative Dkg column mass
-  ledger: per column and tracer, the part of the last solve's rounding
-  residual that the largest exchanging layer could not hold (about half its
-  ulp at most; see `_ledger_deposit`). Cubed-sphere workspaces hold
-  `(Nx, Ny, Nt)` zeros per panel, shaped like `references`; other topologies,
-  which have no Dkg path, hold `nothing`. Restarts do not store it: a
-  restarted run drops about half an ulp of each column's largest layer,
-  once.
+- `ledger_carry` is persistent state of the column mass ledgers of the
+  conservative Dkg solve and the flux-form Kz solve: per column and tracer,
+  the part of the last solve's rounding residual that the largest exchanging
+  layer could not hold (about half its ulp at most; see `_ledger_deposit`).
+  It holds zeros shaped like `references` (`nothing` when `references` is
+  `nothing`). Restarts do not store it: a restarted run drops about half an
+  ulp of each column's largest layer, once.
 
 The workspace owns only diffusion data. Advection and convection buffers live
 in their respective workspace types.
@@ -43,23 +48,30 @@ function HybridCoefficientWorkspace(layer_thickness)
                                       similar(reference, FT, ninterface), false, false)
 end
 
-struct DiffusionWorkspace{F, D, R, C, L}
+struct DiffusionWorkspace{F, D, R, C, L, E, G}
     factors         :: F
     layer_thickness :: D
     references      :: R
     hybrid_coefficients :: C
     ledger_carry    :: L
+    exchange        :: E
+    elimination     :: G
 end
 
 DiffusionWorkspace(factors, layer_thickness, references,
                    hybrid_coefficients = HybridCoefficientWorkspace(layer_thickness)) =
     DiffusionWorkspace(factors, layer_thickness, references, hybrid_coefficients,
-                       _zero_ledger_carry(references))
+                       _zero_ledger_carry(references), _column_scratch(factors),
+                       _column_scratch(factors))
 
-# One carry per column and tracer, shaped like the per-tracer references of a
-# cubed-sphere workspace. Only the cubed-sphere Dkg path keeps a ledger.
-_zero_ledger_carry(references::NTuple{6, AbstractArray}) =
-    ntuple(p -> fill!(similar(references[p]), zero(eltype(references[p]))), 6)
+# Column scratch shaped like the Thomas factors (one array, or one per panel).
+_column_scratch(factors::NTuple{6, AbstractArray}) = map(_column_scratch, factors)
+_column_scratch(factors::AbstractArray) = fill!(similar(factors), zero(eltype(factors)))
+
+# One carry per column and tracer, shaped like the per-tracer references. The
+# conservative Dkg solve and the flux-form Kz solve keep a column ledger.
+_zero_ledger_carry(references::NTuple{6, AbstractArray}) = map(_zero_ledger_carry, references)
+_zero_ledger_carry(references::AbstractArray) = fill!(similar(references), zero(eltype(references)))
 _zero_ledger_carry(references) = nothing
 
 function DiffusionWorkspace(air_mass::AbstractArray{FT, N}, n_tracers::Integer = 0) where {FT, N}
@@ -101,6 +113,8 @@ function Adapt.adapt_structure(to, workspace::DiffusionWorkspace)
         Adapt.adapt(to, workspace.references),
         Adapt.adapt(to, workspace.hybrid_coefficients),
         Adapt.adapt(to, workspace.ledger_carry),
+        Adapt.adapt(to, workspace.exchange),
+        Adapt.adapt(to, workspace.elimination),
     )
 end
 

@@ -261,35 +261,49 @@ function apply!(state::CubedSphereState, meteo, grid,
 end
 
 # =========================================================================
-# Lower-level apply_vertical_diffusion! — array-level entry point
+# Array-level entry points
 # =========================================================================
 
 """
-    apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt,
-                              meteo = nothing) -> nothing
+    apply_vertical_diffusion!(q, air_mass, op, workspace, dt, meteo = nothing;
+                              [halo_width]) -> nothing
 
-Low-level entry point. Applies one Backward-Euler diffusion step to a
-raw tracer buffer in any of the supported layouts:
+VMR-level reference solve: one Backward-Euler diffusion step applied to
+mixing ratios `q` (in and out), written back in matrix form `q′ = g + c` (see
+`diffusion_kernels.jl`). Production states hold tracer mass and use
+[`apply_vertical_diffusion_vmr!`](@ref), whose flux-form update conserves each
+column in `Float32`; this method serves as the reference those paths are
+compared with. Layouts:
 
-- structured packed tracers: `q_raw :: (Nx, Ny, Nz, Nt)`
-- face-indexed packed tracers: `q_raw :: (ncells, Nz, Nt)`
-- face-indexed single-tracer slice: `q_raw :: (ncells, Nz)`
-
-This is the function `strang_split_mt!` calls at the palindrome
-center. The face-indexed reduced-Gaussian path also
-uses it at its H → V → D → V → H center slot.
+- structured packed tracers: `q :: (Nx, Ny, Nz, Nt)`
+- face-indexed packed tracers: `q :: (ncells, Nz, Nt)`
+- face-indexed single-tracer slice: `q :: (ncells, Nz)`
+- cubed sphere: six halo-padded panels `(Nc + 2Hp, Nc + 2Hp, Nz[, Nt])`
+  (`halo_width = Hp`), with a Kz or a precomputed `dkg` field
 
 `meteo` is threaded through to `update_field!(op.kz_field, t)` as the Float64
-clock `t = current_time(meteo)` (`0.0` if `meteo === nothing`).
-`air_mass` is mandatory because the solver conserves tracer mass, not the
-geometric integral of mixing ratio.
-
-`NoDiffusion` is a no-op: the method is `= nothing` so Julia's
-dispatch reduces the call site to a dead branch when
-`diffusion_op isa NoDiffusion`. This makes the palindrome
-integration compile to an identity.
+clock `t = current_time(meteo)` (`0.0` if `meteo === nothing`). `air_mass` is
+mandatory because the coefficients are those of the tracer-mass exchange.
+`NoDiffusion` is a no-op method, so call sites compile to nothing.
 """
 function apply_vertical_diffusion! end
+
+"""
+    apply_vertical_diffusion_vmr!(rm, air_mass, op, workspace, dt, meteo = nothing;
+                                  [halo_width, tracer]) -> nothing
+
+Apply one Backward-Euler diffusion step to tracer mass `rm` (in and out):
+structured `(Nx, Ny, Nz, Nt)`, face-indexed `(ncells, Nz, Nt)` or
+`(ncells, Nz)`, or six halo-padded cubed-sphere panels
+`(Nc + 2Hp, Nc + 2Hp, Nz[, Nt])` with `halo_width = Hp`. This is the entry
+point of the transport palindrome and of the cubed-sphere adjoint replays. For Kz fields
+the column solve gives the new mixing ratio and the tracer mass is updated in
+flux form, `rm_k += F_{k−½} − F_{k+½}`, so each column total changes only by
+unbiased rounding (`diffusion_kernels.jl`). Precomputed cubed-sphere `dkg`
+fields use the conservative mass solve of `conservative_dkg.jl`.
+
+`NoDiffusion` is a no-op method, so call sites compile to nothing.
+"""
 function apply_vertical_diffusion_vmr! end
 
 apply_vertical_diffusion!(q_raw::NTuple{6}, air_mass::NTuple{6},
@@ -298,7 +312,7 @@ apply_vertical_diffusion!(q_raw::NTuple{6}, air_mass::NTuple{6},
 apply_vertical_diffusion_vmr!(q_raw::NTuple{6}, air_mass::NTuple{6},
                               ::NoDiffusion, workspace, dt,
                               meteo = nothing; halo_width = 0, tracer = nothing) = nothing
-# LL/RG mass-flux NoDiffusion stubs.
+# LL/RG NoDiffusion stubs.
 apply_vertical_diffusion!(q_raw::AbstractArray{<:Any, 4},
                           air_mass::AbstractArray{<:Any, 3},
                           ::NoDiffusion, workspace, dt,
@@ -322,169 +336,263 @@ apply_vertical_diffusion_vmr!(q_raw::AbstractArray{<:Any, 3},
 apply_vertical_diffusion_vmr!(q_raw::AbstractArray{<:Any, 2},
                               air_mass::AbstractArray{<:Any, 2},
                               ::NoDiffusion, workspace, dt,
-                              meteo = nothing) = nothing
+                              meteo = nothing; tracer = nothing) = nothing
 
-@inline function _check_diffusion_workspace_shape(dz_scratch, w_scratch,
-                                                  expected_shape, shape_label)
-    size(dz_scratch) == size(w_scratch) ||
-        throw(DimensionMismatch("w_scratch and dz_scratch sizes must match"))
-    size(dz_scratch) == expected_shape || throw(DimensionMismatch(
-        "workspace scratch arrays are $(size(dz_scratch)) but q_raw " *
-        "$shape_label shape is $(expected_shape)"))
-    return nothing
-end
+# ---------------------------------------------------------------------------
+# Column solves: shape checks and launches
+# ---------------------------------------------------------------------------
 
-@inline function _check_cs_diffusion_workspace_shape(dz_scratch, w_scratch,
-                                                     expected_shape, panel)
-    size(dz_scratch) == size(w_scratch) ||
-        throw(DimensionMismatch("cubed-sphere w_scratch and dz_scratch sizes must match on panel $panel"))
-    size(dz_scratch) == expected_shape || throw(DimensionMismatch(
-        "cubed-sphere workspace scratch arrays on panel $panel are $(size(dz_scratch)) " *
-        "but the interior panel shape is $(expected_shape)"))
-    return nothing
-end
+# The column arrays a solve uses: the Thomas ratios, the interface exchange
+# and the elimination scratch, plus the layer thickness for Kz fields.
+_column_workspace_arrays(workspace, ::KzExchange) =
+    (factors = workspace.factors, exchange = workspace.exchange,
+     elimination = workspace.elimination, layer_thickness = workspace.layer_thickness)
+_column_workspace_arrays(workspace, ::DkgExchange) =
+    (factors = workspace.factors, exchange = workspace.exchange,
+     elimination = workspace.elimination)
 
-function apply_vertical_diffusion!(q_raw::NTuple{6, A},
-                                   air_mass::NTuple{6, <:AbstractArray{FT, 3}},
-                                   op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace::DiffusionWorkspace, dt,
-                                   meteo = nothing;
-                                   halo_width::Integer) where {FT, A <: AbstractArray{FT, 3},
-                                                                KzF <: AbstractCSDkgField{FT}}
-    w_scratch = workspace.factors
-    update_field!(op.kz_field, current_time(meteo))
-    Hp = Int(halo_width)
-    @inbounds for p in 1:6
-        panel_q = q_raw[p]
-        panel_m = air_mass[p]
-        Nc = size(panel_q, 1) - 2 * Hp
-        Ny = size(panel_q, 2) - 2 * Hp
-        Nz = size(panel_q, 3)
-        size(w_scratch[p]) == (Nc, Ny, Nz) || throw(DimensionMismatch(
-            "cubed-sphere dkg workspace panel $p has shape $(size(w_scratch[p])); expected $((Nc, Ny, Nz))"))
-        panel_dkg = panel_field(op.kz_field, p)
-        backend = get_backend(panel_q)
-        launch!(_vertical_diffusion_cs_single_dkg_kernel!, backend, (8, 8), (Nc, Ny), panel_q,
-                panel_m, panel_dkg, w_scratch[p], FT(dt), Nz, Hp)
+function _check_column_workspace(arrays::NamedTuple, expected, label)
+    for (name, array) in pairs(arrays)
+        array isa AbstractArray && size(array) == expected || throw(DimensionMismatch(
+            "diffusion workspace `$name` $label has shape " *
+            "$(array isa AbstractArray ? size(array) : typeof(array)); expected $expected. " *
+            "Build the workspace with DiffusionWorkspace(state)."))
     end
     return nothing
 end
 
-function apply_vertical_diffusion!(q_raw::NTuple{6, A},
-                                   air_mass::NTuple{6, <:AbstractArray{FT, 3}},
-                                   op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace::DiffusionWorkspace, dt,
-                                   meteo = nothing;
-                                   halo_width::Integer) where {FT, A <: AbstractArray{FT, 4},
-                                                                KzF <: AbstractCSDkgField{FT}}
-    w_scratch = workspace.factors
-    reference_scratch = workspace.references
-    length(w_scratch) == 6 && length(reference_scratch) == 6 ||
-        throw(DimensionMismatch(
-            "cubed-sphere dkg workspace must provide 6 factor and reference panels"))
-    update_field!(op.kz_field, current_time(meteo))
-    Hp = Int(halo_width)
-    @inbounds for p in 1:6
-        panel_q = q_raw[p]
-        panel_m = air_mass[p]
-        Nc = size(panel_q, 1) - 2 * Hp
-        Ny = size(panel_q, 2) - 2 * Hp
-        Nz = size(panel_q, 3)
-        Nt = size(panel_q, 4)
-        size(w_scratch[p]) == (Nc, Ny, Nz) || throw(DimensionMismatch(
-            "cubed-sphere dkg workspace panel $p has shape $(size(w_scratch[p])); expected $((Nc, Ny, Nz))"))
-        size(reference_scratch[p]) == (Nc, Ny, Nt) || throw(DimensionMismatch(
-            "cubed-sphere dkg reference panel $p has shape $(size(reference_scratch[p])); expected $((Nc, Ny, Nt))"))
-        panel_dkg = panel_field(op.kz_field, p)
-        backend = get_backend(panel_q)
-        launch!(_vertical_diffusion_cs_dkg_kernel!, backend, (8, 8), (Nc, Ny), panel_q, panel_m,
-                panel_dkg, w_scratch[p], reference_scratch[p], FT(dt), Nz, Nt, Hp)
+"""
+    _column_ledger_carry(form, carry, columns, Nt, packed, tracer, label) -> (carry, first_slot)
+
+Ledger carry of a column solve and the carry slot of its first tracer. The
+flux form keeps a carry per column and tracer (`DiffusionWorkspace.ledger_carry`,
+shaped `(columns..., Nt)`): packed tracers use slots `1:Nt`; a single-tracer
+array uses slot `tracer`, its index in the state, and keeps no carry with
+`tracer = nothing`, so the call is a function of its input alone (adjoint
+replays rely on this). A workspace without a carry gives the ledger without one.
+The matrix-form reference keeps no ledger.
+"""
+_column_ledger_carry(::_MixingRatioMatrixForm, carry, columns, Nt, packed, tracer, label) =
+    (nothing, 1)
+
+function _column_ledger_carry(::_TracerMassFluxForm, carry, columns, Nt, packed, tracer, label)
+    if packed
+        carry === nothing && return nothing, 1
+        size(carry) == (columns..., Nt) || throw(DimensionMismatch(
+            "diffusion ledger carry $label has shape $(size(carry)); packed tracers need " *
+            "$((columns..., Nt)). Build the workspace with DiffusionWorkspace(state)."))
+        return carry, 1
     end
+    tracer === nothing && return nothing, 1
+    carry isa AbstractArray && size(carry)[1:end-1] == columns &&
+        1 <= tracer <= size(carry, ndims(carry)) || throw(ArgumentError(
+            "diffusion tracer = $tracer needs a workspace ledger carry with that tracer slot " *
+            "and columns $columns $label; build the workspace with DiffusionWorkspace(state)."))
+    return carry, Int(tracer)
+end
+
+_exchange_source(op::ImplicitVerticalDiffusion, workspace) =
+    KzExchange(op.kz_field, workspace.layer_thickness)
+_panel_exchange_sources(op::ImplicitVerticalDiffusion{FT, <:AbstractCSDkgField}, workspace) where FT =
+    ntuple(p -> DkgExchange(panel_field(op.kz_field, p)), 6)
+_panel_exchange_sources(op::ImplicitVerticalDiffusion{FT, <:AbstractCubedSphereField}, workspace) where FT =
+    ntuple(p -> KzExchange(panel_field(op.kz_field, p), workspace.layer_thickness[p]), 6)
+
+# Structured lat-lon, packed tracers (Nx, Ny, Nz, Nt).
+function _diffuse_columns!(form, q_raw::AbstractArray{FT, 4}, air_mass::AbstractArray{FT, 3},
+                           op::ImplicitVerticalDiffusion, workspace::DiffusionWorkspace,
+                           dt, meteo; tracer = nothing) where FT
+    Nx, Ny, Nz, Nt = size(q_raw)
+    size(air_mass) == (Nx, Ny, Nz) || throw(DimensionMismatch(
+        "lat-lon diffusion: air_mass shape $(size(air_mass)) does not match the tracer " *
+        "spatial shape $((Nx, Ny, Nz))"))
+    source = _exchange_source(op, workspace)
+    _check_column_workspace(_column_workspace_arrays(workspace, source), (Nx, Ny, Nz), "(lat-lon)")
+    carry, first_slot = _column_ledger_carry(form, workspace.ledger_carry, (Nx, Ny), Nt, true,
+                                             tracer, "(lat-lon)")
+    update_field!(op.kz_field, current_time(meteo))
+    launch!(_vertical_diffusion_structured_kernel!, get_backend(q_raw), (8, 8), (Nx, Ny),
+            form, q_raw, air_mass, source, workspace.exchange, workspace.factors,
+            workspace.elimination, carry, FT(dt), Nz, Nt, first_slot)
     return nothing
 end
 
-function apply_vertical_diffusion!(q_raw::NTuple{6, A},
-                                   air_mass::NTuple{6, <:AbstractArray{FT, 3}},
-                                   op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace::DiffusionWorkspace, dt,
-                                   meteo = nothing;
-                                   halo_width::Integer) where {FT, A <: AbstractArray{FT, 3},
-                                                                KzF <: AbstractCubedSphereField{FT}}
-    hasproperty(workspace, :factors) && hasproperty(workspace, :layer_thickness) ||
-        throw(ArgumentError(
-            "cubed-sphere diffusion requires a workspace with panel-native " *
-            "`factors` and `layer_thickness` tuples"))
-
-    w_scratch = workspace.factors
-    dz_scratch = workspace.layer_thickness
-    length(w_scratch) == 6 && length(dz_scratch) == 6 ||
-        throw(DimensionMismatch(
-            "cubed-sphere diffusion workspace must provide 6 factor and geometry panels"))
-
+# Face-indexed reduced Gaussian, packed (ncells, Nz, Nt) or single (ncells, Nz).
+function _diffuse_columns!(form, q_raw::Union{AbstractArray{FT, 3}, AbstractArray{FT, 2}},
+                           air_mass::AbstractArray{FT, 2}, op::ImplicitVerticalDiffusion,
+                           workspace::DiffusionWorkspace, dt, meteo; tracer = nothing) where FT
+    ncells, Nz = size(q_raw, 1), size(q_raw, 2)
+    Nt = size(q_raw, 3)
+    size(air_mass) == (ncells, Nz) || throw(DimensionMismatch(
+        "reduced-Gaussian diffusion: air_mass shape $(size(air_mass)) does not match the " *
+        "tracer spatial shape $((ncells, Nz))"))
+    source = _exchange_source(op, workspace)
+    _check_column_workspace(_column_workspace_arrays(workspace, source), (ncells, Nz),
+                            "(face-indexed)")
+    carry, first_slot = _column_ledger_carry(form, workspace.ledger_carry, (ncells,), Nt,
+                                             ndims(q_raw) == 3, tracer, "(face-indexed)")
     update_field!(op.kz_field, current_time(meteo))
-
-    Hp = Int(halo_width)
-    @inbounds for p in 1:6
-        panel_q = q_raw[p]
-        panel_m = air_mass[p]
-        size(panel_q) == size(panel_m) || throw(DimensionMismatch(
-            "cubed-sphere diffusion panel $p: q shape $(size(panel_q)) does not match " *
-            "air_mass shape $(size(panel_m))"))
-        Nc = size(panel_q, 1) - 2 * Hp
-        Ny = size(panel_q, 2) - 2 * Hp
-        Nz = size(panel_q, 3)
-        _check_cs_diffusion_workspace_shape(dz_scratch[p], w_scratch[p], (Nc, Ny, Nz), p)
-        panel_kz = panel_field(op.kz_field, p)
-        backend = get_backend(panel_q)
-        launch!(_vertical_diffusion_cs_single_kernel!, backend, (8, 8), (Nc, Ny), panel_q,
-                panel_m, panel_kz, dz_scratch[p], w_scratch[p], FT(dt), Nz, Hp)
-    end
+    launch!(_vertical_diffusion_face_kernel!, get_backend(q_raw), 256, ncells,
+            form, q_raw, air_mass, source, workspace.exchange, workspace.factors,
+            workspace.elimination, carry, FT(dt), Nz, Nt, first_slot)
     return nothing
 end
 
-function apply_vertical_diffusion!(q_raw::NTuple{6, A},
-                                   air_mass::NTuple{6, <:AbstractArray{FT, 3}},
-                                   op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace::DiffusionWorkspace, dt,
-                                   meteo = nothing;
-                                   halo_width::Integer) where {FT, A <: AbstractArray{FT, 4},
-                                                                KzF <: AbstractCubedSphereField{FT}}
-    hasproperty(workspace, :factors) && hasproperty(workspace, :layer_thickness) &&
-        hasproperty(workspace, :references) ||
-        throw(ArgumentError(
-            "cubed-sphere diffusion requires a workspace with panel-native " *
-            "`factors`, `layer_thickness`, and `references` tuples"))
-
-    w_scratch = workspace.factors
-    dz_scratch = workspace.layer_thickness
-    reference_scratch = workspace.references
-    length(w_scratch) == 6 && length(dz_scratch) == 6 &&
-        length(reference_scratch) == 6 || throw(DimensionMismatch(
-            "cubed-sphere diffusion workspace must provide 6 factor, geometry, and reference panels"))
-
-    update_field!(op.kz_field, current_time(meteo))
-
+# Cubed sphere: six halo-padded panels (Nc + 2Hp, Ny + 2Hp, Nz[, Nt]), one launch.
+function _diffuse_panels!(form, q_raw::NTuple{6, A}, air_mass::NTuple{6},
+                          op::ImplicitVerticalDiffusion, workspace::DiffusionWorkspace,
+                          dt, meteo, halo_width::Integer; tracer = nothing) where {A <: AbstractArray}
+    FT = eltype(A)
     Hp = Int(halo_width)
-    @inbounds for p in 1:6
-        panel_q = q_raw[p]
-        panel_m = air_mass[p]
-        size(panel_q)[1:3] == size(panel_m) || throw(DimensionMismatch(
-            "cubed-sphere packed diffusion panel $p: q spatial shape " *
-            "$(size(panel_q)[1:3]) does not match air_mass shape $(size(panel_m))"))
-        Nc = size(panel_q, 1) - 2 * Hp
-        Ny = size(panel_q, 2) - 2 * Hp
-        Nz = size(panel_q, 3)
-        Nt = size(panel_q, 4)
-        _check_cs_diffusion_workspace_shape(dz_scratch[p], w_scratch[p], (Nc, Ny, Nz), p)
-        size(reference_scratch[p]) == (Nc, Ny, Nt) || throw(DimensionMismatch(
-            "cubed-sphere diffusion reference panel $p has shape $(size(reference_scratch[p])); expected $((Nc, Ny, Nt))"))
-        panel_kz = panel_field(op.kz_field, p)
-        backend = get_backend(panel_q)
-        launch!(_vertical_diffusion_cs_kernel!, backend, (8, 8), (Nc, Ny), panel_q, panel_m,
-                panel_kz, dz_scratch[p], w_scratch[p], reference_scratch[p], FT(dt), Nz, Nt, Hp)
+    Hp >= 0 || throw(ArgumentError("halo_width must be nonnegative; got $Hp"))
+    shape = size(q_raw[1])
+    all(p -> size(q_raw[p]) == shape, 2:6) || throw(DimensionMismatch(
+        "cubed-sphere diffusion panels must share one shape; got $(map(size, q_raw))"))
+    Nc, Ny, Nz = shape[1] - 2Hp, shape[2] - 2Hp, shape[3]
+    packed = ndims(A) == 4
+    Nt = packed ? shape[4] : 1
+    Nc > 0 && Ny > 0 || throw(DimensionMismatch(
+        "cubed-sphere panel shape $shape has no interior with halo_width = $Hp"))
+    sources = _panel_exchange_sources(op, workspace)
+    carry = workspace.ledger_carry
+    carry_panels = ntuple(_ -> nothing, 6)
+    first_slot = 1
+    for p in 1:6
+        size(air_mass[p]) == shape[1:3] || throw(DimensionMismatch(
+            "cubed-sphere diffusion panel $p: tracer spatial shape $(shape[1:3]) does not " *
+            "match air_mass shape $(size(air_mass[p]))"))
+        arrays = _column_workspace_arrays(workspace, sources[p])
+        arrays = map(a -> a isa NTuple{6} ? a[p] : a, arrays)
+        _check_column_workspace(arrays, (Nc, Ny, Nz), "panel $p")
+        _, first_slot = _column_ledger_carry(form, carry isa NTuple{6} ? carry[p] : carry,
+                                             (Nc, Ny), Nt, packed, tracer, "on panel $p")
     end
+    if form isa _TracerMassFluxForm && carry isa NTuple{6} && (packed || tracer !== nothing)
+        carry_panels = carry
+    end
+    update_field!(op.kz_field, current_time(meteo))
+    launch!(_vertical_diffusion_panels_kernel!, get_backend(q_raw[1]), (8, 8, 1), (Nc, Ny, 6),
+            form, q_raw, air_mass, sources, workspace.exchange, workspace.factors,
+            workspace.elimination, carry_panels, FT(dt), Nz, Nt, Hp, first_slot)
     return nothing
 end
+
+# ---------------------------------------------------------------------------
+# VMR-level reference solves (matrix form)
+# ---------------------------------------------------------------------------
+
+apply_vertical_diffusion!(q_raw::AbstractArray{FT, 4}, air_mass::AbstractArray{FT, 3},
+                          op::ImplicitVerticalDiffusion{FT, <:AbstractTimeVaryingField{FT, 3}},
+                          workspace::DiffusionWorkspace, dt, meteo = nothing) where FT =
+    _diffuse_columns!(_MixingRatioMatrixForm(), q_raw, air_mass, op, workspace, dt, meteo)
+
+apply_vertical_diffusion!(q_raw::Union{AbstractArray{FT, 3}, AbstractArray{FT, 2}},
+                          air_mass::AbstractArray{FT, 2},
+                          op::ImplicitVerticalDiffusion{FT, <:AbstractTimeVaryingField{FT, 2}},
+                          workspace::DiffusionWorkspace, dt, meteo = nothing) where FT =
+    _diffuse_columns!(_MixingRatioMatrixForm(), q_raw, air_mass, op, workspace, dt, meteo)
+
+apply_vertical_diffusion!(q_raw::NTuple{6, A}, air_mass::NTuple{6, <:AbstractArray{FT, 3}},
+                          op::ImplicitVerticalDiffusion{FT, <:AbstractCubedSphereField{FT}},
+                          workspace::DiffusionWorkspace, dt, meteo = nothing;
+                          halo_width::Integer) where {
+                              FT, A <: Union{AbstractArray{FT, 3}, AbstractArray{FT, 4}}} =
+    _diffuse_panels!(_MixingRatioMatrixForm(), q_raw, air_mass, op, workspace, dt, meteo,
+                     halo_width)
+
+# ---------------------------------------------------------------------------
+# Tracer-mass solves: flux form with the column ledger for Kz fields
+# ---------------------------------------------------------------------------
+
+function apply_vertical_diffusion_vmr!(q_raw::NTuple{6, A},
+                                       air_mass::NTuple{6},
+                                       op::ImplicitVerticalDiffusion{FT, KzF},
+                                       workspace::DiffusionWorkspace, dt,
+                                       meteo = nothing;
+                                       halo_width::Integer,
+                                       tracer::Union{Nothing, Integer} = nothing) where {
+                                           FT, A <: AbstractArray{FT, 3},
+                                           KzF <: AbstractCubedSphereField{FT}}
+    _diffuse_panels!(_TracerMassFluxForm(), q_raw, air_mass, op, workspace, dt, meteo, halo_width;
+                     tracer)
+    return nothing
+end
+
+function apply_vertical_diffusion_vmr!(q_raw::NTuple{6, A},
+                                       air_mass::NTuple{6},
+                                       op::ImplicitVerticalDiffusion{FT, KzF},
+                                       workspace::DiffusionWorkspace, dt,
+                                       meteo = nothing;
+                                       halo_width::Integer) where {FT, A <: AbstractArray{FT, 4},
+                                                                    KzF <: AbstractCubedSphereField{FT}}
+    _diffuse_panels!(_TracerMassFluxForm(), q_raw, air_mass, op, workspace, dt, meteo, halo_width)
+    return nothing
+end
+
+"""
+    _packed_references(workspace, columns, n_tracers, FT, backend)
+    _packed_references(workspace, q_raw)
+
+Per-tracer column array of a packed lat-lon or reduced-Gaussian workspace (the
+shape of its ledger carry), checked against the columns `(Nx, Ny)` or
+`(ncells,)`, the tracer count, the element type and the backend of the state,
+so a workspace built for another state fails before any tracer is touched.
+"""
+function _packed_references(workspace::DiffusionWorkspace, columns::Tuple, n_tracers::Integer,
+                            ::Type{FT}, backend) where FT
+    references = workspace.references
+    shape = (columns..., Int(n_tracers))
+    references isa AbstractArray && size(references) == shape && eltype(references) === FT &&
+        typeof(get_backend(references)) === typeof(backend) && return references
+    throw(DimensionMismatch(
+        "packed diffusion needs per-tracer column references of shape $shape, element type $FT " *
+        "and the state's backend; build the workspace with DiffusionWorkspace(state) or " *
+        "DiffusionWorkspace(air_mass, n_tracers)"))
+end
+_packed_references(workspace::DiffusionWorkspace, q_raw::AbstractArray) =
+    _packed_references(workspace, size(q_raw)[1:end-2], size(q_raw, ndims(q_raw)), eltype(q_raw),
+                       get_backend(q_raw))
+
+# Lat-lon packed tracer mass.
+function apply_vertical_diffusion_vmr!(q_raw::AbstractArray{FT, 4},
+                                       air_mass::AbstractArray{FT, 3},
+                                       op::ImplicitVerticalDiffusion{FT, KzF},
+                                       workspace::DiffusionWorkspace, dt,
+                                       meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 3}}
+    size(q_raw, ndims(q_raw)) == 0 && return nothing
+    _packed_references(workspace, q_raw)
+    _diffuse_columns!(_TracerMassFluxForm(), q_raw, air_mass, op, workspace, dt, meteo)
+    return nothing
+end
+
+# Face-indexed reduced-Gaussian packed tracer mass.
+function apply_vertical_diffusion_vmr!(q_raw::AbstractArray{FT, 3},
+                                       air_mass::AbstractArray{FT, 2},
+                                       op::ImplicitVerticalDiffusion{FT, KzF},
+                                       workspace::DiffusionWorkspace, dt,
+                                       meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 2}}
+    size(q_raw, ndims(q_raw)) == 0 && return nothing
+    _packed_references(workspace, q_raw)
+    _diffuse_columns!(_TracerMassFluxForm(), q_raw, air_mass, op, workspace, dt, meteo)
+    return nothing
+end
+
+# Face-indexed reduced-Gaussian single-tracer mass; `tracer` selects its
+# ledger carry slot (the per-tracer reduced-Gaussian transport passes it).
+function apply_vertical_diffusion_vmr!(q_raw::AbstractArray{FT, 2},
+                                       air_mass::AbstractArray{FT, 2},
+                                       op::ImplicitVerticalDiffusion{FT, KzF},
+                                       workspace::DiffusionWorkspace, dt,
+                                       meteo = nothing;
+                                       tracer::Union{Nothing, Integer} = nothing) where {
+                                           FT, KzF <: AbstractTimeVaryingField{FT, 2}}
+    _diffuse_columns!(_TracerMassFluxForm(), q_raw, air_mass, op, workspace, dt, meteo; tracer)
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
+# Cubed-sphere tracer-mass <-> mixing-ratio scaling (VMR-level comparisons)
+# ---------------------------------------------------------------------------
 
 function _cs_scale_tracer_mass_to_vmr!(q_raw::NTuple{6, A},
                                        air_mass::NTuple{6},
@@ -492,8 +600,7 @@ function _cs_scale_tracer_mass_to_vmr!(q_raw::NTuple{6, A},
     # Single barrier at the end: the six CS panels are spatially
     # independent within this scale step, so the six kernel launches
     # can stream through the backend's queue and we only need one
-    # synchronize() before the caller observes the result. Saves five
-    # device-host round-trips per call.
+    # synchronize() before the caller observes the result.
     Hp = Int(halo_width)
     backend = get_backend(q_raw[1])
     @inbounds for p in 1:6
@@ -589,14 +696,18 @@ function _cs_scale_vmr_to_tracer_mass!(q_raw::NTuple{6, A},
     return q_raw
 end
 
+# ---------------------------------------------------------------------------
+# Precomputed cubed-sphere Dkg: conservative mass solve (conservative_dkg.jl)
+# ---------------------------------------------------------------------------
+
 """
     apply_vertical_diffusion_vmr!(rm, air_mass, op, workspace, dt, meteo;
                                   halo_width, tracer = nothing)
 
 Cubed-sphere helper for state variables stored as tracer mass. The implicit
 solver uses the current dry air mass. Precomputed Dkg uses conservative
-bidiagonal factors directly on tracer mass. Other fields convert mass to VMR,
-apply the column solve, then restore tracer mass before advection resumes.
+bidiagonal factors directly on tracer mass. Kz fields solve for the mixing
+ratio and update the tracer mass in flux form before advection resumes.
 
 The Dkg solve keeps a column mass ledger whose sub-ulp remainder persists in
 `workspace.ledger_carry`, one value per column and tracer (see
@@ -693,224 +804,5 @@ function _apply_cs_dkg_mass!(rm::NTuple{6}, air_mass::NTuple{6}, op,
                 tracer === nothing ? 1 : Int(tracer); sync = false)
     end
     synchronize(backend)
-    return nothing
-end
-
-function apply_vertical_diffusion_vmr!(q_raw::NTuple{6, A},
-                                       air_mass::NTuple{6},
-                                       op::ImplicitVerticalDiffusion{FT, KzF},
-                                       workspace::DiffusionWorkspace, dt,
-                                       meteo = nothing;
-                                       halo_width::Integer,
-                                       tracer = nothing) where {FT, A <: AbstractArray{FT, 3},
-                                                                KzF <: AbstractCubedSphereField{FT}}
-    _cs_scale_tracer_mass_to_vmr!(q_raw, air_mass, halo_width)
-    # Mass-flux kernel needs `air_mass` for coefficient construction.
-    apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt, meteo;
-                              halo_width = halo_width)
-    _cs_scale_vmr_to_tracer_mass!(q_raw, air_mass, halo_width)
-    return nothing
-end
-
-function apply_vertical_diffusion_vmr!(q_raw::NTuple{6, A},
-                                       air_mass::NTuple{6},
-                                       op::ImplicitVerticalDiffusion{FT, KzF},
-                                       workspace::DiffusionWorkspace, dt,
-                                       meteo = nothing;
-                                       halo_width::Integer) where {FT, A <: AbstractArray{FT, 4},
-                                                                    KzF <: AbstractCubedSphereField{FT}}
-    _cs_scale_tracer_mass_to_vmr!(q_raw, air_mass, halo_width)
-    # Mass-flux kernel needs `air_mass` for coefficient construction.
-    apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt, meteo;
-                              halo_width = halo_width)
-    _cs_scale_vmr_to_tracer_mass!(q_raw, air_mass, halo_width)
-    return nothing
-end
-
-# ---------------------------------------------------------------------------
-# Mass-flux LL packed + face-indexed RG paths. These methods take `air_mass`
-# explicitly and dispatch to the topology-specific kernel variants.
-# ---------------------------------------------------------------------------
-
-"""
-    _packed_references(workspace, columns, n_tracers, FT, backend)
-    _packed_references(workspace, q_raw)
-
-Per-tracer column references of a packed lat-lon or reduced-Gaussian solve (the
-anomaly shift of the Float32 conservation fix): the workspace's array, checked
-against the columns `(Nx, Ny)` or `(ncells,)`, the tracer count, the element type
-and the backend of the state, so a mismatch fails before any tracer is touched.
-"""
-function _packed_references(workspace::DiffusionWorkspace, columns::Tuple, n_tracers::Integer,
-                            ::Type{FT}, backend) where FT
-    references = workspace.references
-    shape = (columns..., Int(n_tracers))
-    references isa AbstractArray && size(references) == shape && eltype(references) === FT &&
-        typeof(get_backend(references)) === typeof(backend) && return references
-    throw(DimensionMismatch(
-        "packed diffusion needs per-tracer column references of shape $shape, element type $FT " *
-        "and the state's backend; build the workspace with DiffusionWorkspace(state) or " *
-        "DiffusionWorkspace(air_mass, n_tracers)"))
-end
-_packed_references(workspace::DiffusionWorkspace, q_raw::AbstractArray) =
-    _packed_references(workspace, size(q_raw)[1:end-2], size(q_raw, ndims(q_raw)), eltype(q_raw),
-                       get_backend(q_raw))
-
-function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 4},
-                                   air_mass::AbstractArray{FT, 3},
-                                   op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace::DiffusionWorkspace, dt,
-                                   meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 3}}
-    w_scratch  = workspace.factors
-    dz_scratch = workspace.layer_thickness
-    Nx, Ny, Nz, Nt = size(q_raw)
-    _check_diffusion_workspace_shape(dz_scratch, w_scratch, (Nx, Ny, Nz),
-                                     "spatial")
-    size(air_mass) == (Nx, Ny, Nz) || throw(DimensionMismatch(
-        "LL mass-flux diffusion: air_mass shape $(size(air_mass)) does not " *
-        "match q_raw spatial shape $((Nx, Ny, Nz))"))
-    references = _packed_references(workspace, q_raw)
-    update_field!(op.kz_field, current_time(meteo))
-    backend = get_backend(q_raw)
-    launch!(_vertical_diffusion_kernel_mass_flux!, backend, (8, 8), (Nx, Ny), q_raw, air_mass,
-            op.kz_field, dz_scratch, w_scratch, references, FT(dt), Nz, Nt)
-    return nothing
-end
-
-function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 3},
-                                   air_mass::AbstractArray{FT, 2},
-                                   op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace::DiffusionWorkspace, dt,
-                                   meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 2}}
-    w_scratch  = workspace.factors
-    dz_scratch = workspace.layer_thickness
-    ncells, Nz, Nt = size(q_raw)
-    _check_diffusion_workspace_shape(dz_scratch, w_scratch, (ncells, Nz),
-                                     "face-indexed")
-    size(air_mass) == (ncells, Nz) || throw(DimensionMismatch(
-        "RG mass-flux diffusion: air_mass shape $(size(air_mass)) does not " *
-        "match q_raw spatial shape $((ncells, Nz))"))
-    references = _packed_references(workspace, q_raw)
-    update_field!(op.kz_field, current_time(meteo))
-    backend = get_backend(q_raw)
-    launch!(_vertical_diffusion_face_kernel_mass_flux!, backend, 256, ncells, q_raw, air_mass,
-            op.kz_field, dz_scratch, w_scratch, references, FT(dt), Nz, Nt)
-    return nothing
-end
-
-function apply_vertical_diffusion!(q_raw::AbstractArray{FT, 2},
-                                   air_mass::AbstractArray{FT, 2},
-                                   op::ImplicitVerticalDiffusion{FT, KzF},
-                                   workspace::DiffusionWorkspace, dt,
-                                   meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 2}}
-    w_scratch  = workspace.factors
-    dz_scratch = workspace.layer_thickness
-    ncells, Nz = size(q_raw)
-    _check_diffusion_workspace_shape(dz_scratch, w_scratch, (ncells, Nz),
-                                     "face-indexed")
-    size(air_mass) == (ncells, Nz) || throw(DimensionMismatch(
-        "RG mass-flux diffusion: air_mass shape $(size(air_mass)) does not " *
-        "match q_raw shape $((ncells, Nz))"))
-    update_field!(op.kz_field, current_time(meteo))
-    backend = get_backend(q_raw)
-    launch!(_vertical_diffusion_face_single_kernel_mass_flux!, backend, 256, ncells, q_raw,
-            air_mass, op.kz_field, dz_scratch, w_scratch, FT(dt), Nz)
-    return nothing
-end
-
-# Mass-VMR scaling helpers for the LL + RG arrays.
-
-function _ll_scale_tracer_mass_to_vmr!(q_raw::AbstractArray{FT, 4},
-                                       air_mass::AbstractArray{FT, 3}) where {FT}
-    Nx, Ny, Nz, Nt = size(q_raw)
-    backend = get_backend(q_raw)
-    launch!(_ll_tracer_mass_to_vmr_kernel!, backend, (8, 8, 1, 1), (Nx, Ny, Nz, Nt), q_raw,
-            air_mass)
-    return q_raw
-end
-
-function _ll_scale_vmr_to_tracer_mass!(q_raw::AbstractArray{FT, 4},
-                                       air_mass::AbstractArray{FT, 3}) where {FT}
-    Nx, Ny, Nz, Nt = size(q_raw)
-    backend = get_backend(q_raw)
-    launch!(_ll_vmr_to_tracer_mass_kernel!, backend, (8, 8, 1, 1), (Nx, Ny, Nz, Nt), q_raw,
-            air_mass)
-    return q_raw
-end
-
-function _face_scale_tracer_mass_to_vmr!(q_raw::AbstractArray{FT, 3},
-                                         air_mass::AbstractArray{FT, 2}) where {FT}
-    ncells, Nz, Nt = size(q_raw)
-    backend = get_backend(q_raw)
-    launch!(_face_tracer_mass_to_vmr_kernel!, backend, (256, 1, 1), (ncells, Nz, Nt), q_raw,
-            air_mass)
-    return q_raw
-end
-
-function _face_scale_vmr_to_tracer_mass!(q_raw::AbstractArray{FT, 3},
-                                         air_mass::AbstractArray{FT, 2}) where {FT}
-    ncells, Nz, Nt = size(q_raw)
-    backend = get_backend(q_raw)
-    launch!(_face_vmr_to_tracer_mass_kernel!, backend, (256, 1, 1), (ncells, Nz, Nt), q_raw,
-            air_mass)
-    return q_raw
-end
-
-function _face_scale_tracer_mass_to_vmr!(q_raw::AbstractArray{FT, 2},
-                                         air_mass::AbstractArray{FT, 2}) where {FT}
-    ncells, Nz = size(q_raw)
-    backend = get_backend(q_raw)
-    launch!(_face_single_tracer_mass_to_vmr_kernel!, backend, (256, 1), (ncells, Nz), q_raw,
-            air_mass)
-    return q_raw
-end
-
-function _face_scale_vmr_to_tracer_mass!(q_raw::AbstractArray{FT, 2},
-                                         air_mass::AbstractArray{FT, 2}) where {FT}
-    ncells, Nz = size(q_raw)
-    backend = get_backend(q_raw)
-    launch!(_face_single_vmr_to_tracer_mass_kernel!, backend, (256, 1), (ncells, Nz), q_raw,
-            air_mass)
-    return q_raw
-end
-
-# LL packed VMR wrapper: pre-scale tracer_mass → VMR, mass-flux solve,
-# post-scale VMR → tracer_mass.
-function apply_vertical_diffusion_vmr!(q_raw::AbstractArray{FT, 4},
-                                       air_mass::AbstractArray{FT, 3},
-                                       op::ImplicitVerticalDiffusion{FT, KzF},
-                                       workspace::DiffusionWorkspace, dt,
-                                       meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 3}}
-    size(q_raw, ndims(q_raw)) == 0 && return nothing
-    _packed_references(workspace, q_raw)               # check before the state is rescaled
-    _ll_scale_tracer_mass_to_vmr!(q_raw, air_mass)
-    apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt, meteo)
-    _ll_scale_vmr_to_tracer_mass!(q_raw, air_mass)
-    return nothing
-end
-
-# Face-indexed RG packed VMR wrapper.
-function apply_vertical_diffusion_vmr!(q_raw::AbstractArray{FT, 3},
-                                       air_mass::AbstractArray{FT, 2},
-                                       op::ImplicitVerticalDiffusion{FT, KzF},
-                                       workspace::DiffusionWorkspace, dt,
-                                       meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 2}}
-    size(q_raw, ndims(q_raw)) == 0 && return nothing
-    _packed_references(workspace, q_raw)               # check before the state is rescaled
-    _face_scale_tracer_mass_to_vmr!(q_raw, air_mass)
-    apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt, meteo)
-    _face_scale_vmr_to_tracer_mass!(q_raw, air_mass)
-    return nothing
-end
-
-# Face-indexed RG single-tracer VMR wrapper.
-function apply_vertical_diffusion_vmr!(q_raw::AbstractArray{FT, 2},
-                                       air_mass::AbstractArray{FT, 2},
-                                       op::ImplicitVerticalDiffusion{FT, KzF},
-                                       workspace::DiffusionWorkspace, dt,
-                                       meteo = nothing) where {FT, KzF <: AbstractTimeVaryingField{FT, 2}}
-    _face_scale_tracer_mass_to_vmr!(q_raw, air_mass)
-    apply_vertical_diffusion!(q_raw, air_mass, op, workspace, dt, meteo)
-    _face_scale_vmr_to_tracer_mass!(q_raw, air_mass)
     return nothing
 end
