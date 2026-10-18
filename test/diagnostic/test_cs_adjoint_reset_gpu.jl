@@ -43,7 +43,8 @@ else
             @test map(Array, _interior(ADJ._replay_rm(recorded))) == expected
             resets = filter(op -> op isa AT.Tape._CSAirMassResetRecord, tape)
             @test length(resets) == 3 # two window ends and one window advance
-            @test all(op -> all(p -> p isa CuArray, op.panels_new_m), resets)
+            # The record stores its reset target in a tape slot (device storage).
+            @test all(op -> all(p -> p isa CuArray, op.panels_new_m.panels), resets)
             kwargs = Base.structdiff(inp.kwargs, NamedTuple{(:surface_flux, :emission_rates)})
             footprint(checkpoint) = AT.cs_surface_emission_footprint(inp.panels_rm0, inp.panels_m0,
                 inp.panels_am_steps, inp.panels_bm_steps, inp.panels_cm_steps, inp.mesh,
