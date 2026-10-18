@@ -720,6 +720,76 @@
   `resolve_placement(option, missing_height_rule(source), request, cell, terrain)`
   places one request.
 
+### Performance
+
+- Cubed-sphere FV3 vertical sweep (`vertical = "fv3_kord8"`): the packed sweep
+  launches several panels at once, up to all six, until a launch has about
+  65 536 columns (`_fv3_sweep_panel_group`); it used to launch each panel
+  separately, a C90 one-tracer launch running 8100 columns. Each column computes
+  exactly what it did before, so results are bit-identical.
+  `CSAdvectionWorkspace` takes `column_scratch_panels` (default from that rule;
+  Lin-Rood workspaces use 1) and its column scratch holds one slot per tracer
+  and panel of a launch.
+- Cubed-sphere column operators launch once for all six panels instead of
+  once per panel: the conservative Dkg diffusion solve (also the GEOS-Chem
+  non-local VDIFF; one synchronization per call instead of six), the surface
+  flux (static and time-varying sources, one launch per source and time
+  segment), and the CMFMC convection substep. Each column runs the same
+  arithmetic, so results are bit-identical.
+- Multi-binary cubed-sphere runs keep their window storage across binaries:
+  `DrivenSimulation(...; reuse_buffers_of = previous)` refills the previous
+  simulation's device windows, host staging window, expected-air-mass and
+  humidity buffers and convection forcing when the new driver has the same
+  window layout (`MetDrivers.same_window_layout`), and skips the startup
+  garbage collection and device-pool trim. The cubed-sphere runner passes the
+  previous binary's simulation. Each day boundary used to allocate and zero
+  new host and device windows and run a full collection (about 0.35 s per day
+  at C90). Window contents are unchanged.
+- The host staging window of a device run is page-locked
+  (`Architectures.pin_host_memory!`; CUDA only), so each window upload is a
+  direct DMA transfer (24 GB/s instead of 12 GB/s on an L40S, without
+  occupying the prefetch thread). The prefetch waits for the upload on its own
+  stream (`Architectures.synchronize_storage!`) before handing the window over;
+  before, an upload staged through the driver's pageable path could in
+  principle still be in flight when the stepping task used the window.
+- `DrivenSimulation` copies window-constant fluxes (and scales them for
+  `full_window_mass_amount` binaries) and the convection forcing into the
+  model at the first substep of each window instead of every substep; the
+  operators only read them. Interpolated fluxes, the expected air mass and
+  humidity still change every substep. A C90 L72 step issued 36 fewer
+  device copies (about 0.3 ms of a 4.4 ms one-tracer step).
+- Cubed-sphere seam transfers: the transfers of a directional group are
+  cached in one launch of `SeamTransferCache` point operations (`Fused`,
+  twelve seams with the other group's inactive) instead of one launch per
+  seam, and neither the cache nor the seam application synchronizes the host
+  on a device (later work on the device queue sees their cells in order). A
+  C90 step issues 20 fewer launches and 8 fewer synchronizations; results are
+  bit-identical.
+- Cubed-sphere transport binaries whose on-disk element type is the run's
+  load windows on a GPU through raw window staging
+  (`MetDrivers.RawWindowStaging`): four concurrent `pread`s of the window's
+  contiguous payload into a page-locked host buffer (libuv thread pool; one
+  `read!` off Unix), then per payload section an upload into a device buffer
+  the size of the largest section and one unpacking launch (padded fields get
+  zero halo cells, as before). This replaces a page-faulting copy of the file
+  mapping into a padded host window (31 ms per C90 L72 window, row by row for
+  padded fields) and the copy of that window to the device; the device windows
+  are unchanged, and the device holds one extra section-sized buffer (14 MB at
+  C90 L72). Binaries of another element type keep the host staging window.
+  `same_window_layout` also compares the on-disk element type, and the
+  cubed-sphere runner releases the previous binary's buffers before building
+  new ones when the layouts differ.
+- The packed cubed-sphere palindrome (`strang_split_cs_mt!`) queues its halo
+  exchanges (`fill_panel_halos!(…; sync = false)`, new keyword) and
+  synchronizes the host once at its end instead of after each of its 16
+  exchanges per step; with the surface flux and the diffusion solve a C90 step
+  now synchronizes 3 times. A window prefetch first waits for the stepping
+  task's queued work, which may still read the window it refills. Results
+  are bit-identical.
+- `expected_air_mass!` on cubed-sphere windows with flux deltas computes all
+  six panels in one launch (`ExpectedAirMass` point operations) instead of six
+  copies and six broadcasts per substep.
+
 ### Other changes
 
 - `merge_thin_levels` (`[vertical] transform = "merge_layers_thinner_than"`,

@@ -121,8 +121,9 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
   `../Footprint/TapeRecording.jl` and `LinRoodTape.jl`).
   `test_cs_adjoint_production_parity.jl` checks the replay against
   `TransportModel.step!` and the footprints against production finite
-  differences. CMFMC replay uses the production
-  `_cmfmc_cs_panel_column_kernel!`, and TM5 column solves are checked
+  differences. CMFMC replay runs the production column update
+  `_cmfmc_cs_column!` one panel per launch (`_cmfmc_cs_panel_column_kernel!`;
+  production launches the six panels together), and TM5 column solves are checked
   bit-for-bit. Forward replays keep no column-ledger carry: TM5,
   CMFMC and Dkg solves start from a zero carry, so each replayed solve is a
   function of the recorded state alone (the production solve with a zero

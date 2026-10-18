@@ -168,8 +168,8 @@ Profile / derived / precomputed Kz fields exist in `src/State/Fields/` — see
 The convection subtypes consume a `ConvectionForcing` carrier (declared in
 `src/MetDrivers/ConvectionForcing.jl`) — different physics, identical
 plumbing. `_refresh_forcing!` populates `model.convection_forcing`
-each substep by copying from the current met window; the operator
-does not call `current_time` itself.
+at the first substep of each window by copying from the current met
+window; the operator does not call `current_time` itself.
 
 **TOML config** (`[convection]` block):
 

@@ -549,7 +549,8 @@ Tests (`test/core/test_fv3_vertical_profile.jl`):
 - Uniform fields are preserved, column mass telescopes and results stay
   non-negative, in both precisions.
 - A six-panel sweep equals the column kernel column by column, the
-  single-tracer and packed sweeps agree, and `TransportModel` builds the
+  single-tracer and packed sweeps agree, launching the panels in groups of
+  1, 2, 4 or 6 gives identical results, and `TransportModel` builds the
   column scratch and runs the sweep.
 
 Checks on an L40S (C90, L72, four tracers, 200–400 random sweeps at

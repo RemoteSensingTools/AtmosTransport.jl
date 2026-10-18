@@ -452,24 +452,18 @@ function _get_or_compute_n_sub!(ws::CMFMCWorkspace,
     return ws.cached_n_sub[]
 end
 
-@kernel function _cmfmc_cs_panel_column_kernel!(
-    tracers_raw,                 # (Nc+2Hp, Nc+2Hp, Nz, Nt), modified in place
-    ledger_carry,                # (Nc, Nc, Nt) column ledger carry, or nothing
-    @Const(air_mass),            # (Nc+2Hp, Nc+2Hp, Nz)
-    @Const(cmfmc),               # (Nc, Nc, Nz+1) at interfaces
-    @Const(dtrain),              # (Nc, Nc, Nz) at centers
-    @Const(cell_areas),          # (Nc, Nc)
-    cloud_base,                  # (Nc, Nc) archived cloud-base layer, or nothing
-    qc_scratch,                  # (Nc+2Hp, Nc+2Hp, Nz) — workspace
-    Nz::Int,
-    Nt::Int,
-    dt,
-    Hp::Int,
-    ::Val{has_dtrain},
-    ::Val{do_clamp}
-) where {has_dtrain, do_clamp}
-    i, j = @index(Global, NTuple)
+"""
+    _cmfmc_cs_column!(tracers_raw, ledger_carry, air_mass, cmfmc, dtrain, cell_areas,
+                      cloud_base, qc_scratch, i, j, Nz, Nt, dt, Hp, Val(has_dtrain),
+                      Val(do_clamp))
 
+One CMFMC convection substep of interior column `(i, j)` of one cubed-sphere
+panel, all `Nt` packed tracers (the arguments are that panel's arrays, see
+`_cmfmc_cs_panel_column_kernel!`).
+"""
+@inline function _cmfmc_cs_column!(tracers_raw, ledger_carry, air_mass, cmfmc, dtrain, cell_areas,
+                                   cloud_base, qc_scratch, i, j, Nz, Nt, dt, Hp,
+                                   ::Val{has_dtrain}, ::Val{do_clamp}) where {has_dtrain, do_clamp}
     FT = eltype(tracers_raw)
     tiny = _cmfmc_tiny(FT)
     ii = i + Hp
@@ -611,6 +605,46 @@ end
             end
         end
     end
+    return nothing
+end
+
+@kernel function _cmfmc_cs_panel_column_kernel!(
+    tracers_raw,                 # (Nc+2Hp, Nc+2Hp, Nz, Nt), modified in place
+    ledger_carry,                # (Nc, Nc, Nt) column ledger carry, or nothing
+    @Const(air_mass),            # (Nc+2Hp, Nc+2Hp, Nz)
+    @Const(cmfmc),               # (Nc, Nc, Nz+1) at interfaces
+    @Const(dtrain),              # (Nc, Nc, Nz) at centers
+    @Const(cell_areas),          # (Nc, Nc)
+    cloud_base,                  # (Nc, Nc) archived cloud-base layer, or nothing
+    qc_scratch,                  # (Nc+2Hp, Nc+2Hp, Nz) — workspace
+    Nz::Int,
+    Nt::Int,
+    dt,
+    Hp::Int,
+    ::Val{has_dtrain},
+    ::Val{do_clamp}
+) where {has_dtrain, do_clamp}
+    i, j = @index(Global, NTuple)
+    _cmfmc_cs_column!(tracers_raw, ledger_carry, air_mass, cmfmc, dtrain, cell_areas, cloud_base,
+                      qc_scratch, i, j, Nz, Nt, dt, Hp, Val(has_dtrain), Val(do_clamp))
+end
+
+"""
+Six-panel variant of `_cmfmc_cs_panel_column_kernel!`: every array argument
+is a six-panel tuple (`ledger_carry` and `cloud_base` tuples of panels or of
+`nothing`s), the third index selects the panel, and each column runs
+`_cmfmc_cs_column!` exactly as the one-panel kernel does.
+"""
+@kernel function _cmfmc_cs_panels_column_kernel!(tracers_raw, ledger_carry, @Const(air_mass),
+                                                 @Const(cmfmc), @Const(dtrain),
+                                                 @Const(cell_areas), cloud_base, qc_scratch,
+                                                 Nz::Int, Nt::Int, dt, Hp::Int,
+                                                 has_dtrain::Val, do_clamp::Val)
+    i, j, p = @index(Global, NTuple)
+    _cmfmc_cs_column!(select_panel(tracers_raw, p), select_panel(ledger_carry, p),
+                      select_panel(air_mass, p), select_panel(cmfmc, p), select_panel(dtrain, p),
+                      select_panel(cell_areas, p), select_panel(cloud_base, p),
+                      select_panel(qc_scratch, p), i, j, Nz, Nt, dt, Hp, has_dtrain, do_clamp)
 end
 
 # =========================================================================

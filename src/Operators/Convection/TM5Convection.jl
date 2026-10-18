@@ -31,8 +31,8 @@ limit. Defaults remain the full-column legacy solve. CS adjoint footprints
 still require the full-column, unmerged legacy variant.
 
 The forcing arrays `(entu, detu, entd, detd)` arrive via
-`TransportModel.convection_forcing.tm5_fields`, populated each
-substep by `DrivenSimulation._refresh_forcing!` from
+`TransportModel.convection_forcing.tm5_fields`, populated at the first
+substep of each window by `DrivenSimulation._refresh_forcing!` from
 `sim.window.convection`.
 
 # Level merging (`n_merge > 1`)

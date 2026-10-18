@@ -44,7 +44,11 @@ read.
 - [`DrivenSimulation.jl`](DrivenSimulation.jl) — the `DrivenSimulation`
   type, runtime compatibility checks, flux storage scaling
 - [`driven_window_state.jl`](driven_window_state.jl) — state halos, air-mass
-  reset at window ends, window payload copies and prefetch
+  reset at window ends, window payload copies and prefetch; device window
+  loads stage through the driver's raw window buffers or a page-locked host
+  window, and `reuse_buffers_of` hands one binary's window storage to the
+  next (the cubed-sphere runner passes the previous binary's simulation when
+  `same_window_layout` holds)
 - [`driven_physics_refresh.jl`](driven_physics_refresh.jl) — per-window
   physics refresh (diffusion dz and Kz, convection forcing), midpoint forcing
 - [`driven_stepping.jl`](driven_stepping.jl) — window advance, the

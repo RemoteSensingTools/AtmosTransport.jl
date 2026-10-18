@@ -82,6 +82,15 @@ Keyword arguments:
   steps before and after the window's transport + surface sources; other
   chemistry operators run after transport and convection
 - `callbacks=NamedTuple()`
+- `reuse_buffers_of=nothing` — a previous `DrivenSimulation` of the same model,
+  typically that of the preceding daily binary. If its driver has the same
+  window layout (`same_window_layout`) and it kept a host staging window, its
+  device windows, host staging window, expected-air-mass and humidity buffers
+  and the model's convection forcing are refilled in place instead of
+  allocated, and the startup trim of the device memory pool (a garbage
+  collection and pool reclaim) is skipped. Its prefetch is finished first.
+  Otherwise new buffers are allocated as without it. Window contents are the
+  same either way.
 - `start_time=0` — simulation clock origin [s]. Multi-binary runners MUST pass
   the accumulated run time here when rebuilding the sim per binary: `sim.time`
   feeds `current_time(meteo)`, which time-varying surface-flux sources use to
@@ -103,6 +112,7 @@ function DrivenSimulation(model::TransportModel,
                           surface_sources = (),
                           chemistry::AbstractChemistryOperator = NoChemistry(),
                           callbacks = NamedTuple(),
+                          reuse_buffers_of::Union{Nothing, DrivenSimulation} = nothing,
                           start_time::Real = 0) where {D <: AbstractMetDriver}
     1 <= start_window <= stop_window <= total_windows(driver) ||
         throw(ArgumentError("invalid window range: start_window=$(start_window), stop_window=$(stop_window), total_windows=$(total_windows(driver))"))
@@ -114,22 +124,35 @@ function DrivenSimulation(model::TransportModel,
     _check_grid_compatibility(model.grid, driver_grid(driver))
     _check_basis_compatibility(model, driver)
 
-    # Read/decode the first forcing window once. Adapt its host payload twice
-    # when prefetching so the two device buffers remain independently writable.
-    loaded_window = _load_window(driver, start_window)
-    window = _adapt_window_to_model_backend(loaded_window, model.state.air_mass)
     prefetch_enabled = _prefetch_enabled(prefetch_windows, model.state.air_mass)
-    prefetch_window = if prefetch_enabled && start_window < stop_window
-        # A custom driver may already supply device arrays; adapting those to
-        # the same backend can alias, so copy that window explicitly instead.
-        _window_backend_adapter(loaded_window.air_mass) === Array ?
-            _adapt_window_to_model_backend(loaded_window, model.state.air_mass) : deepcopy(window)
+    separate_prefetch = prefetch_enabled && start_window < stop_window
+    buffers = _reusable_window_buffers(reuse_buffers_of, model, driver, separate_prefetch)
+    if buffers === nothing
+        # Read/decode the first forcing window once. Adapt its host payload twice
+        # when prefetching so the two device buffers remain independently writable.
+        loaded_window = _load_window(driver, start_window)
+        window = _adapt_window_to_model_backend(loaded_window, model.state.air_mass)
+        prefetch_window = if separate_prefetch
+            # A custom driver may already supply device arrays; adapting those to
+            # the same backend can alias, so copy that window explicitly instead.
+            _window_backend_adapter(loaded_window.air_mass) === Array ?
+                _adapt_window_to_model_backend(loaded_window, model.state.air_mass) : deepcopy(window)
+        else
+            window
+        end
+        expected_air_mass = _allocate_storage_like(model.state.air_mass)
+        qv_buffer = _allocate_qv_buffer(window)
+        host_staging = _host_staging_window(loaded_window, driver, model.state.air_mass)
     else
-        window
+        # Refill the previous simulation's storage, as a prefetch would.
+        host_staging = buffers.host_staging
+        window = _load_window_into_existing_backend!(buffers.window, driver, start_window,
+                                                     model.state.air_mass, host_staging)
+        prefetch_window = separate_prefetch ? buffers.prefetch_window : window
+        expected_air_mass = buffers.expected_air_mass
+        qv_buffer = buffers.qv_buffer
     end
     prefetch_task = _empty_prefetch_task()
-    expected_air_mass = _allocate_storage_like(model.state.air_mass)
-    qv_buffer = _allocate_qv_buffer(window)
     surface_sources_adapted = _adapt_sources_to_model_backend(Tuple(surface_sources), model.state.air_mass)
     foreach(source -> _check_surface_source_compatibility(model.state, source), surface_sources_adapted)
 
@@ -147,7 +170,8 @@ function DrivenSimulation(model::TransportModel,
         emissions_op = SurfaceFluxOperator(PerTracerFluxMap(surface_sources_adapted))
         model = with_emissions(model, emissions_op)
     end
-    model = _install_convection_forcing(model, driver, window)
+    model = buffers === nothing ? _install_convection_forcing(model, driver, window) :
+                                  _reinstall_convection_forcing(model, driver, window)
     FT = _storage_eltype(model.state.air_mass)
     step_schedule = _driver_step_schedule(driver)
     all(>(0), step_schedule) || throw(ArgumentError(
@@ -162,7 +186,6 @@ function DrivenSimulation(model::TransportModel,
                   (flux_interpolation_mode(driver) === :interpolate) : Bool(interpolate_fluxes_within_window)
     reset_mode = _normalize_air_mass_reset_mode(air_mass_reset_mode)
     every_substep = _resolve_physics_cadence(physics_cadence) === :substep
-    host_staging = _host_staging_window(loaded_window, driver, model.state.air_mass)
 
     sim = DrivenSimulation{typeof(model), typeof(driver), typeof(window),
                            typeof(expected_air_mass), typeof(qv_buffer), FT,
@@ -217,7 +240,9 @@ function DrivenSimulation(model::TransportModel,
     _refresh_dz_for_window!(sim)
     _refresh_pbl_kz_for_window!(sim.model.diffusion, sim)
     _stage_surface_flux_window!(sim)
-    _reclaim_backend_pool_after_startup!(sim.model.state.air_mass)
+    # With reused window buffers there are no large startup allocations to trim
+    # (the surface sources' device copies are small).
+    buffers === nothing && _reclaim_backend_pool_after_startup!(sim.model.state.air_mass)
     _start_window_prefetch!(sim, Int(start_window) + 1)
     return sim
 end

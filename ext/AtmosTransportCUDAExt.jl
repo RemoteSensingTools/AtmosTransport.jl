@@ -58,6 +58,11 @@ function AtmosTransport.Architectures._reclaim_backend_pool!(::CUDA.AbstractGPUA
     return nothing
 end
 
+# Pinned host staging of device windows (`pin_host_memory!`): `CUDA.pin`
+# registers each host array in place with the driver.
+AtmosTransport.Architectures._pin_host_memory!(storage, ::CUDA.AbstractGPUArray) =
+    AtmosTransport.Architectures.foreach_host_array(a -> isempty(a) || CUDA.pin(a), storage)
+
 _pinned_host_panel(a::CuArray{T,N}) where {T,N} =
     CUDA.pin(Array{T,N}(undef, size(a)))
 

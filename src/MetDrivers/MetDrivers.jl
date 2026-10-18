@@ -12,7 +12,10 @@ module MetDrivers
 
 using Adapt
 using Printf: @sprintf
-using ..Architectures: array_adapter_for
+using ..Architectures: array_adapter_for, AbstractPointOp, Fused, select_panel,
+                       pin_host_memory!
+import ..Architectures: index_space, apply_point!, bound_context, launch!
+using KernelAbstractions: get_backend
 using ..State
 using ..Grids
 using ..Parameters: EARTH_RADIUS, STANDARD_GRAVITY,

@@ -7,7 +7,7 @@
 #      ConvectionForcing}`, populated by `load_transport_window!`
 #      once per met window.
 #   2. On the model: `model.convection_forcing::ConvectionForcing`,
-#      refreshed every substep by `DrivenSimulation._refresh_forcing!`
+#      refreshed at each window's first substep by `DrivenSimulation._refresh_forcing!`
 #      via `copy_convection_forcing!`.
 #
 # Both slots carry the same struct type. Capability (which of
@@ -67,7 +67,7 @@ the initial value of `TransportModel.convection_forcing`;
 # See also
 
 - [`has_convection_forcing`](@ref) — capability probe.
-- [`copy_convection_forcing!`](@ref) — per-substep refresh copy.
+- [`copy_convection_forcing!`](@ref) — per-window refresh copy.
 - [`allocate_convection_forcing_like`](@ref) — sim-construction
   allocation.
 """
@@ -154,7 +154,7 @@ end
 
 Copy `src`'s arrays into `dst`'s preallocated buffers in place.
 Preserves `===` identity of the destination's arrays — this is what
-makes the per-substep refresh zero-allocation after the sim-construction
+makes the per-window refresh zero-allocation after the sim-construction
 allocation step.
 
 Enforces strict capability match first: both sides must
@@ -163,7 +163,8 @@ This catches both directions of mismatch (dst has a field src lacks,
 or vice versa) — both are silent correctness hazards.
 
 Used by `DrivenSimulation._refresh_forcing!` to populate
-`sim.model.convection_forcing` from `sim.window.convection` each substep.
+`sim.model.convection_forcing` from `sim.window.convection` at the first
+substep of each window.
 """
 function copy_convection_forcing!(dst::ConvectionForcing, src::ConvectionForcing)
     _check_capability_match(dst, src)

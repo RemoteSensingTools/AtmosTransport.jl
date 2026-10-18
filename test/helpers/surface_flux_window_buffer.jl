@@ -5,6 +5,7 @@
 # reference, a small cubed-sphere state on any array type, and a window driver.
 
 using Adapt
+using KernelAbstractions: @kernel, @index, @Const
 using AtmosTransport
 using AtmosTransport: CubedSphereState, DryBasis, SurfaceFluxOperator, PerTracerFluxMap,
                       apply_surface_flux!, CubedSphereMesh, HybridSigmaPressure, AtmosGrid,
@@ -86,12 +87,21 @@ function Adapt.adapt_structure(to, src::FullSeriesReference)
     return FullSeriesReference(src.tracer_name, series, src.times, src.scheme, compensation)
 end
 
+# One panel per launch, as before the six-panel kernel: the reference launch
+# structure, with the production cell arithmetic (`SF._deposit!`).
+@kernel function reference_cs_interp_kernel!(q_raw, @Const(series), comp, w0, w1, i0, i1,
+                                             dt, tracer_idx, Nz, Hp, deposit)
+    ii, jj = @index(Global, NTuple)
+    @inbounds SF._deposit!(q_raw, comp, (w0 * series[ii, jj, i0] + w1 * series[ii, jj, i1]) * dt,
+                           ii, jj, Hp, Nz, tracer_idx, deposit)
+end
+
 function SF._apply_cs_surface_flux!(q_raw::NTuple{6}, src::FullSeriesReference, dt_FT::FT,
                                     t_idx, Hp, backend, meteo, deposit) where FT
     series = src.series
     segments = SF._flux_temporal_segments(src.scheme, src.times, Float64(SF.current_time(meteo)),
                                           Float64(dt_FT))
-    kernel = SF._surface_flux_cs_interp_kernel!(backend, (16, 16))
+    kernel = reference_cs_interp_kernel!(backend, (16, 16))
     for p in 1:6
         Nc, Ny, Nz = SF._cs_interior_shape(q_raw[p], Hp, series[p], src, p)
         for (i0, i1, w0, w1, frac) in segments
