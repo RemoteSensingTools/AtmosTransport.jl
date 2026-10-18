@@ -11,14 +11,20 @@
 # ClampOutOfRange kept it from outside the run; the bound cell; the vertical
 # placement (code, height above the model surface, pressure); observed and
 # simulated values, departure, value and model sigma and the normalized
-# departure. Per sample: step, weight and the level read. Root attributes:
+# departure. Per sample: step, weight and the level read. Files with
+# averaging-kernel column rows add a retrieval block: the model minus
+# retrieval surface pressure, the model profile on the retrieval layers (a
+# `retrieval_level` dimension, NaN-padded), the profile model sigma and whether
+# the row was assimilated. Root attributes:
 # `cs_departures_schema = "v2"`, mesh identity, time grid,
 # `departure_sign_convention = "simulated_minus_observed"`, the placement
 # codes, `n_clamped`, and optional `run_id` / `iteration`.
 #
 # Sign convention: `departure = simulated_value - observed_value` (the 4D-Var
 # innovation `H(x) - y`); `normalized_departure = departure / σ` with
-# `σ = √(value_sigma² + model_sigma²)`, the σ of the cost.
+# `σ = √(value_sigma² + model_sigma² + profile_model_sigma²)`, the σ of the
+# cost (`profile_model_sigma` is zero except for averaging-kernel columns with
+# a profile uncertainty).
 #
 # In-memory layer:
 #   * `CSDepartureRecord`   — one departure row.
@@ -37,11 +43,13 @@ const _CS_DEPARTURE_SIGN_CONVENTION = "simulated_minus_observed"
 _departure_placement_codes(::PointObservationKind) =
     (VERTICAL_PLACEMENT_CODES.record_height, VERTICAL_PLACEMENT_CODES.altitude_minus_dem,
      VERTICAL_PLACEMENT_CODES.pressure, VERTICAL_PLACEMENT_CODES.absolute_altitude)
-_departure_placement_codes(::ColumnObservationKind) = (COLUMN_MEAN_PLACEMENT_CODE,)
+_departure_placement_codes(::ColumnObservationKind) = (COLUMN_MEAN_PLACEMENT_CODE, RETRIEVAL_COLUMN_PLACEMENT_CODE)
 
 _departure_placement_codes_description() =
     vertical_placement_codes_description() * "; $(COLUMN_MEAN_PLACEMENT_CODE) = column_mean: " *
-    "air-mass-weighted column mean (kind = column, sample_level = 0)"
+    "air-mass-weighted column mean (kind = column, sample_level = 0); $(RETRIEVAL_COLUMN_PLACEMENT_CODE) = " *
+    "retrieval_column: averaging-kernel column on the model column stretched onto the retrieval column " *
+    "(kind = column, sample_level = 0)"
 
 """
     CSDepartureRecord(; id, tracer, instrument_type, date_components, lat, lon,
@@ -49,7 +57,9 @@ _departure_placement_codes_description() =
                         vertical_placement, placement_height_agl_m, placement_pressure_pa,
                         steps, weights, levels,
                         observed_value, simulated_value, departure,
-                        value_sigma, model_sigma, normalized_departure)
+                        value_sigma, model_sigma, normalized_departure,
+                        surface_pressure_mismatch_pa = NaN, retrieval_profile = Float64[],
+                        profile_model_sigma = 0, assimilated = true)
 
 One audit row of the CS departure file (schema v2): the observation record's
 provenance (`id`, `tracer`, `instrument_type`, `date_components`, Float64
@@ -60,10 +70,17 @@ for point records, [`COLUMN_MEAN_PLACEMENT_CODE`](@ref) for column records —
 with the height above the model surface or the pressure that placed it, NaN
 when unused; the sampled `steps`, their time-sampling `weights` and the
 `levels` read at each, k = 1 at the top and 0 for a column mean), and the
-forward-pass values. The constructor rejects non-finite values and checks the
-sign convention `departure = simulated_value − observed_value` and
+forward-pass values. An averaging-kernel column row
+([`RETRIEVAL_COLUMN_PLACEMENT_CODE`](@ref)) also carries the model minus
+retrieval surface pressure `surface_pressure_mismatch_pa` (Pa), the model
+profile on the retrieval layers `retrieval_profile` (surface first, mol/mol),
+its profile model error `profile_model_sigma` (``\\sqrt{\\sum_i (h_i a_i
+σ_i)^2}``, 0 without a profile uncertainty) and `assimilated` (`false` when
+the surface-pressure screen left it out of the cost); other rows have NaN,
+an empty profile, 0 and `true`. The constructor rejects non-finite values and
+checks the sign convention `departure = simulated_value − observed_value` and
 `normalized_departure = departure / σ`, ``σ = \\sqrt{\\text{value\\_sigma}^2 +
-\\text{model\\_sigma}^2}``.
+\\text{model\\_sigma}^2 + \\text{profile\\_model\\_sigma}^2}``.
 """
 struct CSDepartureRecord
     id::Int64
@@ -90,6 +107,10 @@ struct CSDepartureRecord
     value_sigma::Float64
     model_sigma::Float64
     normalized_departure::Float64
+    surface_pressure_mismatch_pa::Float64
+    retrieval_profile::Vector{Float64}
+    profile_model_sigma::Float64
+    assimilated::Bool
 
     # Inner constructor: every route (keyword, positional, reader) is checked.
     function CSDepartureRecord(id::Int64, tracer::String, instrument_type::String,
@@ -100,7 +121,9 @@ struct CSDepartureRecord
                                steps::Vector{Int64}, weights::Vector{Float64}, levels::Vector{Int32},
                                observed_value::Float64, simulated_value::Float64, departure::Float64,
                                value_sigma::Float64, model_sigma::Float64,
-                               normalized_departure::Float64)
+                               normalized_departure::Float64, surface_pressure_mismatch_pa::Float64,
+                               retrieval_profile::Vector{Float64}, profile_model_sigma::Float64,
+                               assimilated::Bool)
         label = "CSDepartureRecord id $(id)"
         isfinite(lat) && -90 <= lat <= 90 || throw(ArgumentError(
             "$(label): lat must be finite and in [-90, 90], got $lat"))
@@ -117,7 +140,8 @@ struct CSDepartureRecord
             throw(ArgumentError("$(label): placement height and pressure must be finite or NaN"))
         vertical_placement != VERTICAL_PLACEMENT_CODES.pressure || isfinite(placement_pressure_pa) ||
             throw(ArgumentError("$(label): a pressure placement needs a finite placement_pressure_pa"))
-        vertical_placement in (VERTICAL_PLACEMENT_CODES.pressure, COLUMN_MEAN_PLACEMENT_CODE) ||
+        vertical_placement in (VERTICAL_PLACEMENT_CODES.pressure, COLUMN_MEAN_PLACEMENT_CODE,
+                               RETRIEVAL_COLUMN_PLACEMENT_CODE) ||
             isfinite(placement_height_agl_m) || throw(ArgumentError(
             "$(label): a placement by height needs a finite placement_height_agl_m"))
         n = length(steps)
@@ -140,23 +164,51 @@ struct CSDepartureRecord
             "$(label): value_sigma must be finite and positive, got $value_sigma"))
         isfinite(model_sigma) && model_sigma >= 0 || throw(ArgumentError(
             "$(label): model_sigma must be finite and >= 0, got $model_sigma"))
+        isfinite(profile_model_sigma) && profile_model_sigma >= 0 || throw(ArgumentError(
+            "$(label): profile_model_sigma must be finite and >= 0, got $profile_model_sigma"))
+        if vertical_placement == RETRIEVAL_COLUMN_PLACEMENT_CODE
+            isfinite(surface_pressure_mismatch_pa) && !isempty(retrieval_profile) &&
+                all(isfinite, retrieval_profile) || throw(ArgumentError(
+                "$(label): an averaging-kernel column row needs a finite surface_pressure_mismatch_pa and a " *
+                "non-empty, finite retrieval_profile"))
+        else
+            isnan(surface_pressure_mismatch_pa) && isempty(retrieval_profile) && profile_model_sigma == 0 &&
+                assimilated || throw(ArgumentError(
+                "$(label): only averaging-kernel column rows (vertical_placement " *
+                "$(RETRIEVAL_COLUMN_PLACEMENT_CODE)) carry a surface-pressure mismatch, a retrieval profile, a " *
+                "profile model sigma or assimilated = false"))
+        end
         # Arithmetic invariants of the sign convention.
         expected_departure = simulated_value - observed_value
         isapprox(departure, expected_departure; atol = 1e-12, rtol = 1e-9) || throw(ArgumentError(
             "$(label): departure = $departure but simulated_value - observed_value = " *
             "$expected_departure (the sign convention is `simulated_minus_observed`)"))
-        sigma = model_sigma == 0 ? value_sigma : hypot(value_sigma, model_sigma)
+        sigma = _combined_sigma(value_sigma, model_sigma, profile_model_sigma)
         expected_normalized = departure / sigma
         isapprox(normalized_departure, expected_normalized; atol = 1e-12, rtol = 1e-9) ||
             throw(ArgumentError(
                 "$(label): normalized_departure = $normalized_departure but departure / " *
-                "sqrt(value_sigma^2 + model_sigma^2) = $expected_normalized"))
+                "sqrt(value_sigma^2 + model_sigma^2 + profile_model_sigma^2) = $expected_normalized"))
         return new(id, tracer, instrument_type, date_components, lat, lon, kind, time_window_s, clamped,
                    panel, i, j, vertical_placement, placement_height_agl_m, placement_pressure_pa,
                    steps, weights, levels, observed_value, simulated_value, departure,
-                   value_sigma, model_sigma, normalized_departure)
+                   value_sigma, model_sigma, normalized_departure, surface_pressure_mismatch_pa,
+                   retrieval_profile, profile_model_sigma, assimilated)
     end
 end
+
+# A row without averaging-kernel column diagnostics, positionally.
+CSDepartureRecord(id::Int64, tracer::String, instrument_type::String, date_components::_CSObservationDate,
+                  lat::Float64, lon::Float64, kind::_ObservationKind, time_window_s::Float64, clamped::Bool,
+                  panel::Int8, i::Int32, j::Int32, vertical_placement::Int8, placement_height_agl_m::Float64,
+                  placement_pressure_pa::Float64, steps::Vector{Int64}, weights::Vector{Float64},
+                  levels::Vector{Int32}, observed_value::Float64, simulated_value::Float64,
+                  departure::Float64, value_sigma::Float64, model_sigma::Float64,
+                  normalized_departure::Float64) =
+    CSDepartureRecord(id, tracer, instrument_type, date_components, lat, lon, kind, time_window_s, clamped,
+                      panel, i, j, vertical_placement, placement_height_agl_m, placement_pressure_pa, steps,
+                      weights, levels, observed_value, simulated_value, departure, value_sigma, model_sigma,
+                      normalized_departure, NaN, Float64[], 0.0, true)
 
 function CSDepartureRecord(; id::Integer, tracer::AbstractString, instrument_type::AbstractString,
                            date_components, lat::Real, lon::Real, kind = PointObservationKind(),
@@ -165,7 +217,9 @@ function CSDepartureRecord(; id::Integer, tracer::AbstractString, instrument_typ
                            vertical_placement::Integer, placement_height_agl_m::Real = NaN,
                            placement_pressure_pa::Real = NaN, steps, weights, levels,
                            observed_value::Real, simulated_value::Real, departure::Real,
-                           value_sigma::Real, model_sigma::Real = 0, normalized_departure::Real)
+                           value_sigma::Real, model_sigma::Real = 0, normalized_departure::Real,
+                           surface_pressure_mismatch_pa::Real = NaN, retrieval_profile = Float64[],
+                           profile_model_sigma::Real = 0, assimilated::Bool = true)
     return CSDepartureRecord(Int64(id), String(tracer), String(instrument_type),
                              _coerce_date_components(date_components), Float64(lat), Float64(lon),
                              _parse_observation_kind(kind), Float64(time_window_s), clamped,
@@ -173,7 +227,9 @@ function CSDepartureRecord(; id::Integer, tracer::AbstractString, instrument_typ
                              Float64(placement_height_agl_m), Float64(placement_pressure_pa),
                              collect(Int64, steps), collect(Float64, weights), collect(Int32, levels),
                              Float64(observed_value), Float64(simulated_value), Float64(departure),
-                             Float64(value_sigma), Float64(model_sigma), Float64(normalized_departure))
+                             Float64(value_sigma), Float64(model_sigma), Float64(normalized_departure),
+                             Float64(surface_pressure_mismatch_pa), collect(Float64, retrieval_profile),
+                             Float64(profile_model_sigma), assimilated)
 end
 
 """
@@ -264,9 +320,15 @@ function _parse_iso_datetime(s::AbstractString)
         "(accepted formats: 'yyyy-mm-ddTHH:MM:SS' or 'yyyy-mm-dd HH:MM:SS')"))
 end
 
-_kind_matches(::PointObservationKind, ::CSPlacedPointObjective) = true
-_kind_matches(::ColumnObservationKind, ::CSColumnMeanObjective) = true
-_kind_matches(::AbstractObservationKind, ::AbstractCSFootprintObjective) = false
+# Whether an observation's objective is the one `bind_to_mesh` makes of its
+# record: a placed point for a point record; an averaging-kernel column for a
+# column record with a retrieval block (the same block), a column mean for one
+# without.
+_kind_matches(r::CSObservationRecord, o::AbstractCSFootprintObjective) = _kind_matches(r.kind, r, o)
+_kind_matches(::PointObservationKind, r, ::CSPlacedPointObjective) = true
+_kind_matches(::ColumnObservationKind, r, ::CSColumnMeanObjective) = r.retrieval === nothing
+_kind_matches(::ColumnObservationKind, r, o::CSRetrievalColumnObjective) = r.retrieval == o.retrieval
+_kind_matches(::AbstractObservationKind, r, ::AbstractCSFootprintObjective) = false
 
 """
     build_departure_set(set::CSObservationSet, result::CS4DVarResult, mesh, t_start, dt, nsteps;
@@ -284,14 +346,19 @@ Validation (`ArgumentError` on any violation):
   record of `set` (hand-built observations have id 0 and no record);
 - every simulated value is finite;
 - each observation matches its record as `bind_to_mesh` binds it: the kind
-  (point → [`CSPlacedPointObjective`](@ref), column →
+  (point → [`CSPlacedPointObjective`](@ref), column with a retrieval block →
+  [`CSRetrievalColumnObjective`](@ref) with that block, column without one →
   [`CSColumnMeanObjective`](@ref)), the containing cell of the record's
   Float64 `(lat, lon)`, the time sampling re-derived from the record date and
   window on the run grid `t_start`, `dt`, `nsteps` (for a record outside the
   run, as `ClampOutOfRange` binds it; such rows are marked `clamped`), the
   value, and
-  ``σ = \\sqrt{\\text{value\\_sigma}^2 + \\text{model\\_sigma}^2}``;
+  ``σ = \\sqrt{\\text{value\\_sigma}^2 + \\text{model\\_sigma}^2 +
+  \\text{profile\\_model\\_sigma}^2}``;
 - each stencil matches its observation's cell and time sampling.
+
+Averaging-kernel column rows take the surface-pressure mismatch, the
+retrieval-level model profile and `assimilated` from their stencil.
 
 `t_start` is an ISO-8601 string (`Dates.format(t, "yyyy-mm-dd HH:MM:SS")`).
 """
@@ -340,9 +407,11 @@ function build_departure_set(set::CSObservationSet,
             "observation set (departures are built for observations bound by bind_to_mesh)"))
         rec = set.records[row_of[obs.id]]
         label = "build_departure_set observation $k (record id $(rec.id))"
-        _kind_matches(rec.kind, obs.objective) || throw(ArgumentError(
-            "$(label): a $(observation_kind_label(rec.kind)) record bound to a " *
-            "$(nameof(typeof(obs.objective)))"))
+        _kind_matches(rec, obs.objective) || throw(ArgumentError(
+            "$(label): a $(observation_kind_label(rec.kind)) record " *
+            "$(rec.retrieval === nothing ? "" : "with a retrieval block ")bound to a " *
+            "$(nameof(typeof(obs.objective)))$(obs.objective isa CSRetrievalColumnObjective ?
+                                               " of another retrieval block" : "")"))
         cell = _locate_cs_cell(rec.lat, rec.lon, locator)
         cell == (obs.objective.panel, obs.objective.i, obs.objective.j) || throw(ArgumentError(
             "$(label): the record's (lat, lon) = ($(rec.lat), $(rec.lon)) is in cell $(cell), " *
@@ -361,7 +430,7 @@ function build_departure_set(set::CSObservationSet,
             "$(label): observation value $(obs.value) differs from the record's $(rec.value)"))
         Float64(obs.sigma) == _total_sigma(rec) || throw(ArgumentError(
             "$(label): observation sigma $(obs.sigma) differs from the record's " *
-            "sqrt(value_sigma^2 + model_sigma^2) = $(_total_sigma(rec))"))
+            "sqrt(value_sigma^2 + model_sigma^2 + profile_model_sigma^2) = $(_total_sigma(rec))"))
         (stencil.panel, stencil.i, stencil.j) == cell && stencil.steps == obs.sampling.steps &&
             stencil.weights == obs.sampling.weights || throw(ArgumentError(
             "$(label): its stencil (cell $((stencil.panel, stencil.i, stencil.j)), steps " *
@@ -382,7 +451,10 @@ function build_departure_set(set::CSObservationSet,
             steps = stencil.steps, weights = stencil.weights, levels = stencil.levels,
             observed_value = observed, simulated_value = Float64(sim), departure = departure,
             value_sigma = rec.value_sigma, model_sigma = rec.model_sigma,
-            normalized_departure = normalized)
+            normalized_departure = normalized,
+            surface_pressure_mismatch_pa = stencil.surface_pressure_mismatch_pa,
+            retrieval_profile = stencil.retrieval_profile, profile_model_sigma = _profile_model_sigma(rec),
+            assimilated = stencil.assimilated)
     end
 
     return CSDepartureSet(records;
@@ -433,7 +505,8 @@ const _DEPARTURE_VARIABLES = (
     ("model_sigma", Float64, :model_sigma,
      ("description" => "1-sigma model/representation error, added in quadrature",)),
     ("normalized_departure", Float64, :normalized_departure,
-     ("description" => "departure / sqrt(value_sigma^2 + model_sigma^2), the residual of the 4D-Var cost",)),
+     ("description" => "departure / sqrt(value_sigma^2 + model_sigma^2 + profile_model_sigma^2), the residual " *
+                       "of the 4D-Var cost (profile_model_sigma: averaging-kernel columns, else 0)",)),
 )
 
 const _CS_DEPARTURES_REQUIRED_VARS = ("date_components", "kind", "sample_count", "sample_step",
@@ -452,7 +525,10 @@ Write `set` to `path` as a schema-v2 NetCDF departures file (see
 `schemas/cs_departures_v2.toml`) and return `path`; an existing file is
 overwritten. The sampled steps form a contiguous ragged array on the `sample`
 dimension: observation `n` owns `sample_count[n]` consecutive entries of
-`sample_step`, `sample_weight` and `sample_level`.
+`sample_step`, `sample_weight` and `sample_level`. When any row is an
+averaging-kernel column, the file adds `surface_pressure_mismatch_pa`,
+`retrieval_model_profile` (on a `retrieval_level` dimension, surface first,
+NaN-padded), `profile_model_sigma` and `assimilated` for every row.
 """
 function write_departures(path::AbstractString, set::CSDepartureSet)
     mkpath(dirname(abspath(path)))
@@ -500,8 +576,88 @@ function write_departures(path::AbstractString, set::CSDepartureSet)
         _write_dep_var(ds, "sample_level", Int32, ("sample",),
                        reduce(vcat, (r.levels for r in set.records); init = Int32[]),
                        ("description" => "model level read at the step (k = 1 at the top); 0 = every level (column mean)",))
+        _write_departure_retrieval_block(ds, set.records)
     end
     return path
+end
+
+# The averaging-kernel column diagnostics, written when any row is such a
+# column: `retrieval_level` (the most retrieval layers of any row), the
+# surface-pressure mismatch, the retrieval-level model profile (NaN-padded,
+# surface first), the profile model sigma and the assimilated flag.
+const _DEPARTURE_RETRIEVAL_VARIABLES = ("surface_pressure_mismatch_pa", "retrieval_model_profile",
+                                        "profile_model_sigma", "assimilated")
+
+function _write_departure_retrieval_block(ds, records)
+    any(r -> r.vertical_placement == RETRIEVAL_COLUMN_PLACEMENT_CODE, records) || return nothing
+    n = length(records)
+    nlevel = maximum(r -> length(r.retrieval_profile), records)
+    NCDatasets.defDim(ds, "retrieval_level", nlevel)
+    profiles = fill(NaN, nlevel, n)
+    for (k, r) in enumerate(records)
+        profiles[1:length(r.retrieval_profile), k] .= r.retrieval_profile
+    end
+    _write_dep_var(ds, "surface_pressure_mismatch_pa", Float64, ("obs",),
+                   Float64[r.surface_pressure_mismatch_pa for r in records],
+                   ("units" => "Pa", "description" =>
+                    "averaging-kernel columns: model minus retrieval surface pressure (time-weighted), absorbed " *
+                    "by the stretch of the model column onto the retrieval column; NaN for other rows"))
+    _write_dep_var(ds, "retrieval_model_profile", Float64, ("retrieval_level", "obs"), profiles,
+                   ("units" => "mol mol-1", "ordering" => "surface_to_top", "description" =>
+                    "averaging-kernel columns: the model's dry mole fraction on the retrieval layers (the " *
+                    "stretched model column rebinned by pressure overlap, time-weighted), from the surface up; " *
+                    "NaN-padded, NaN for other rows"))
+    _write_dep_var(ds, "profile_model_sigma", Float64, ("obs",), Float64[r.profile_model_sigma for r in records],
+                   ("description" => "1-sigma model error of an averaging-kernel column, sqrt(sum_i (h_i a_i " *
+                    "sigma_i)^2) from its profile uncertainty, added in quadrature; 0 for other rows",))
+    _write_dep_var(ds, "assimilated", Int8, ("obs",), Int8[r.assimilated for r in records],
+                   ("description" => "1 when the row is in the 4D-Var cost; 0 for an averaging-kernel column " *
+                    "left out by max_surface_pressure_mismatch_pa (unplaced_records = skip)",))
+    return nothing
+end
+
+# The block as per-row vectors (defaults when the file has none).
+function _read_departure_retrieval_block(ds, n::Int, path)
+    present = [v for v in _DEPARTURE_RETRIEVAL_VARIABLES if haskey(ds, v)]
+    isempty(present) && return (fill(NaN, n), [Float64[] for _ in 1:n], zeros(n), trues(n))
+    length(present) == length(_DEPARTURE_RETRIEVAL_VARIABLES) || throw(ArgumentError(
+        "departures NetCDF $(repr(path)) has a partial retrieval block ($(join(present, ", "))); it needs " *
+        "all of $(join(_DEPARTURE_RETRIEVAL_VARIABLES, ", "))"))
+    nomissing(name, x) = ismissing(x) ? throw(ArgumentError(
+        "departures NetCDF $(repr(path)) variable $(repr(name)) has fill values")) : x
+    profile_var = ds["retrieval_model_profile"]
+    Tuple(NCDatasets.dimnames(profile_var)) == ("retrieval_level", "obs") || throw(ArgumentError(
+        "departures NetCDF $(repr(path)) variable \"retrieval_model_profile\" has dimensions " *
+        "$(NCDatasets.dimnames(profile_var)); expected (retrieval_level, obs)"))
+    # The profile states its ordering and a mole-fraction unit, the mismatch a
+    # pressure unit; supported alternatives are converted to mol/mol and Pa.
+    ordering = get(profile_var.attrib, "ordering", nothing)
+    ordering == "surface_to_top" || throw(ArgumentError(
+        "departures NetCDF $(repr(path)) variable \"retrieval_model_profile\" has ordering = $(repr(ordering)); " *
+        "it must state ordering = \"surface_to_top\" (index 1 is the retrieval surface)"))
+    profile_scale = mole_fraction_unit_scale(get(profile_var.attrib, "units", nothing),
+                                             "departures NetCDF $(repr(path)) variable \"retrieval_model_profile\"")
+    mismatch_var = ds["surface_pressure_mismatch_pa"]
+    mismatch_units = get(mismatch_var.attrib, "units", nothing)
+    mismatch_key = _pressure_unit_key(mismatch_units)
+    mismatch_scale = mismatch_key === nothing ? nothing : get(_PRESSURE_UNITS_PA, mismatch_key, nothing)
+    mismatch_scale === nothing && throw(ArgumentError(
+        "departures NetCDF $(repr(path)) variable \"surface_pressure_mismatch_pa\" has units " *
+        "$(repr(mismatch_units)); expected a pressure unit, one of $(join(sort!(collect(keys(_PRESSURE_UNITS_PA))), ", "))"))
+    mismatch = Float64[ismissing(x) ? NaN : Float64(x) * mismatch_scale for x in Array(mismatch_var)]
+    sigma = Float64[Float64(nomissing("profile_model_sigma", x)) for x in Array(ds["profile_model_sigma"])]
+    assimilated = Bool[nomissing("assimilated", x) != 0 for x in Array(ds["assimilated"])]
+    raw = map(x -> ismissing(x) ? NaN : Float64(x) * profile_scale, Array(profile_var))
+    length(mismatch) == length(sigma) == length(assimilated) == size(raw, 2) == n || throw(ArgumentError(
+        "departures NetCDF $(repr(path)) retrieval block variables do not have $(n) rows"))
+    profiles = [begin
+                    col = view(raw, :, k)
+                    count = something(findfirst(isnan, col), length(col) + 1) - 1
+                    all(isnan, view(col, (count + 1):length(col))) || throw(ArgumentError(
+                        "departures NetCDF $(repr(path)) retrieval_model_profile row $(k) is not NaN-padded"))
+                    col[1:count]
+                end for k in 1:n]
+    return (mismatch, profiles, sigma, assimilated)
 end
 
 function _write_dep_var(ds, name, T, dims, data, attrs)
@@ -535,6 +691,12 @@ Validation (fails fast with `ArgumentError`):
 - Every required variable must be present, `date_components` dimensioned
   `(date_component = 6, obs)`, every `obs` variable of the `obs` length, and
   the `sample_count`s must add up to the `sample` length.
+- The averaging-kernel column block (`surface_pressure_mismatch_pa`,
+  `retrieval_model_profile (retrieval_level, obs)`, `profile_model_sigma`,
+  `assimilated`) is all or nothing; without it every row has the defaults
+  (NaN, no profile, 0, assimilated). The profile must state
+  `ordering = "surface_to_top"` and a mole-fraction unit, the mismatch a
+  pressure unit (converted to mol/mol and Pa).
 - Every row must pass the [`CSDepartureRecord`](@ref) checks.
 """
 function read_departures(path::AbstractString)
@@ -589,6 +751,7 @@ function read_departures(path::AbstractString)
         end
         (any(ismissing, sample_step) || any(ismissing, sample_weight) || any(ismissing, sample_level)) &&
             throw(ArgumentError("departures NetCDF $(repr(path)) has fill values in its sample arrays"))
+        mismatch, profiles, profile_sigma, assimilated = _read_departure_retrieval_block(ds, n, path)
         records = Vector{CSDepartureRecord}(undef, n)
         stop = 0
         @inbounds for k in 1:n
@@ -610,7 +773,9 @@ function read_departures(path::AbstractString)
                 levels = sample_level[start:stop],
                 observed_value = col("observed_value"), simulated_value = col("simulated_value"),
                 departure = col("departure"), value_sigma = col("value_sigma"),
-                model_sigma = col("model_sigma"), normalized_departure = col("normalized_departure"))
+                model_sigma = col("model_sigma"), normalized_departure = col("normalized_departure"),
+                surface_pressure_mismatch_pa = mismatch[k], retrieval_profile = profiles[k],
+                profile_model_sigma = profile_sigma[k], assimilated = assimilated[k])
         end
 
         n_clamped = count(r -> r.clamped, records)

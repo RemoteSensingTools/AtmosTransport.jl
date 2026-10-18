@@ -248,10 +248,20 @@ coordinate). Windows are Δt/ΣΔt means as in TM5, with a step partly inside
 the window weighted by its overlap; the sample is taken after the full step
 (after convection). See [observation operators](@ref placed-observation-operator).
 
+Satellite and TCCON columns with a retrieval block use TM5-4DVAR's
+averaging-kernel operator (`averaging_kernels.F90`: the stretch of the model
+column onto the retrieval column, the mass-conserving rebin of `inv_rebin`,
+``X = \sum_i h_i a_i (R x)_i + \sum_i h_i (1 - a_i) x_{a,i}``), applied in the
+model to the dry mixing ratios on total interface pressures rather than in
+Python to the track file's moist profiles, with an explicit surface-pressure
+mismatch limit (`max_surface_pressure_mismatch_pa`) and a model-error term
+fixed by the record. See [averaging-kernel columns](@ref retrieval-column-operator).
+
 ## Current limits
 
-- Column observations (satellite, TCCON) bind to the air-mass-weighted column
-  mean of their cell; averaging kernels are not applied yet.
+- The forward observation sampler writes OCO-2 soundings as air-mass-weighted
+  column means; averaging kernels are applied only in the 4D-Var (column
+  records with a retrieval block).
 - The inversion driver binds observation files on its synthetic hydrostatic
   meteorology only; real transport binaries need the Julia API.
 - CMFMC requires `clamp = false` in the footprint path.

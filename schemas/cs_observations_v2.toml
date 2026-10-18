@@ -18,6 +18,13 @@
 # by elevation_m, intake_height_m, altitude_m and pressure_pa; new kind,
 # time_window_s, flag and model_sigma.
 #
+# Optional retrieval block (issue #20, part 4): column records of a satellite
+# or TCCON retrieval may carry its vertical description, and are then bound to
+# an averaging-kernel column (TM5-4DVar's operator: the model column stretched
+# onto the retrieval column, rebinned by pressure overlap,
+# X = sum_i h_i a_i (R x)_i + sum_i h_i (1 - a_i) x_prior_i). See
+# [optional_dimensions] and [optional_variables] below.
+#
 # This file documents the schema; the loader/writer live in
 # `src/Inversion/ObservationsIO.jl`. Any version bump must update both.
 # ---------------------------------------------------------------------------
@@ -42,7 +49,7 @@ description = "unique observation identifier (departures are joined to records b
 
 [variables.date_components]
 dtype = "i16"
-dims  = ["date_component", "obs"]
+dims  = ["obs", "date_component"]
 description = "(year, month, day, hour, minute, second) UTC per observation: the centre of its sampling window"
 
 [variables.lat]
@@ -60,7 +67,7 @@ description = "observation longitude, any convention with |lon| <= 720"
 [variables.kind]
 dtype = "string"
 dims  = ["obs"]
-description = "'point' (an in-situ sample placed in the column) or 'column' (a column average, bound to the air-mass-weighted column mean)"
+description = "'point' (an in-situ sample placed in the column) or 'column' (a column average: an averaging-kernel column with a retrieval block, else the air-mass-weighted column mean)"
 
 [variables.elevation_m]
 dtype = "f64"
@@ -100,17 +107,17 @@ description = "quality flag: 0 = assimilate; bind_to_mesh drops records with any
 [variables.value]
 dtype = "f64"
 dims  = ["obs"]
-description = "observation value in the tracer's native unit (dry mole fraction for trace gases)"
+description = "observation value in the tracer's native unit (dry mole fraction for trace gases); OPTIONAL units attribute: a dry mole-fraction unit ('mol mol-1', '1', 'ppm', 'ppb', ...) is converted to mol/mol and must then be stated on value, value_sigma and model_sigma alike; required (a mole-fraction unit) in files with retrieval blocks"
 
 [variables.value_sigma]
 dtype = "f64"
 dims  = ["obs"]
-description = "1-sigma observation error in the tracer's native unit, positive"
+description = "1-sigma observation error in the tracer's native unit, positive; units as for value"
 
 [variables.model_sigma]
 dtype = "f64"
 dims  = ["obs"]
-description = "1-sigma model/representation error, >= 0, added in quadrature: sigma = sqrt(value_sigma^2 + model_sigma^2)"
+description = "1-sigma model/representation error, >= 0, added in quadrature: sigma = sqrt(value_sigma^2 + model_sigma^2) (+ sum_i (h_i a_i sigma_i)^2 for a retrieval block with retrieval_profile_sigma); units as for value"
 
 [variables.instrument_type]
 dtype = "string"
@@ -121,6 +128,77 @@ description = "instrument family label, e.g. 'TCCON', 'ICOS', 'aircraft'"
 dtype = "string"
 dims  = ["obs"]
 description = "tracer name, e.g. 'CO2', 'CH4', 'CO'"
+
+# ---------------------------------------------------------------------------
+# Optional retrieval block. All of the variables below are present or none is
+# (`retrieval_profile_sigma` is optional within the block). The writer adds the
+# block when any record carries one.
+#
+# Layout: a record with N retrieval layers gives its N + 1 interface pressures
+# and N layer values first along the retrieval dimensions, NaN after them (NaN
+# padding to the longest record); N is the number of its pressure weights. A
+# record without a block (any point record, a column record bound to the
+# air-mass-weighted column mean) is NaN throughout. Ordering: index 1 is the
+# retrieval surface and pressures strictly decrease upward; every
+# retrieval-level variable states it with ordering = "surface_to_top" (the
+# loader requires the attribute). Units: pressures state a pressure unit
+# (Pa, hPa, ...; converted to Pa), the prior and its uncertainty a dry
+# mole-fraction unit ("mol mol-1", "1", "ppm", "ppb", ...; converted to
+# mol/mol), weights and kernel are dimensionless ("1" or no units).
+# Validation per record: finite values, strictly decreasing pressures with a
+# top >= 0, weights >= 0 summing to 1 (within 1e-4), a prior in [0, 1] mol/mol,
+# uncertainties >= 0, and a surface pressure equal to the first interface
+# (relative 1e-6); only column records may carry a block. Such a record is an
+# absolute column average: value in (0, 1] mol/mol (after unit conversion),
+# value_sigma and model_sigma not above it, in the unit of the prior, as is the
+# transported tracer; a file with blocks states a mole-fraction unit on value,
+# value_sigma and model_sigma (the writer states "mol mol-1").
+# ---------------------------------------------------------------------------
+
+[optional_dimensions]
+retrieval_level     = "the largest number of retrieval layers of any record"
+retrieval_interface = "retrieval_level + 1"
+
+[optional_variables.retrieval_pressure_pa]
+dtype = "f64"
+dims  = ["obs", "retrieval_interface"]
+units = "Pa"
+ordering = "surface_to_top"
+description = "retrieval layer interface pressures (total pressure), from the surface up: index 1 is the retrieval surface pressure, the last the retrieval top (>= 0); NaN-padded"
+
+[optional_variables.retrieval_pressure_weight]
+dtype = "f64"
+dims  = ["obs", "retrieval_level"]
+units = "1"
+ordering = "surface_to_top"
+description = "pressure weights h_i of the retrieval layers (>= 0, sum to 1); NaN-padded"
+
+[optional_variables.retrieval_averaging_kernel]
+dtype = "f64"
+dims  = ["obs", "retrieval_level"]
+units = "1"
+ordering = "surface_to_top"
+description = "column averaging kernel a_i, normalized (dX/dx_i = h_i a_i); NaN-padded"
+
+[optional_variables.retrieval_prior_profile]
+dtype = "f64"
+dims  = ["obs", "retrieval_level"]
+units = "mol mol-1"
+ordering = "surface_to_top"
+description = "retrieval prior profile x_prior_i (dry mole fraction); NaN-padded"
+
+[optional_variables.retrieval_profile_sigma]
+dtype = "f64"
+dims  = ["obs", "retrieval_level"]
+units = "mol mol-1"
+ordering = "surface_to_top"
+description = "OPTIONAL 1-sigma uncertainty of the MODEL profile on the retrieval layers (representation/transport error, in [0, 1] mol/mol); adds the model-error term sum_i (h_i a_i sigma_i)^2 to sigma^2; NaN = none. Not the retrieval's a-priori uncertainty: the smoothing error is already in the averaging kernel"
+
+[optional_variables.retrieval_surface_pressure_pa]
+dtype = "f64"
+dims  = ["obs"]
+units = "Pa"
+description = "retrieval surface pressure (total), equal to the first retrieval interface; NaN = no block"
 
 [attributes]
 cs_observations_schema = "v2"   # mandatory; loader fails fast on any other value (v1 with an explanation)
