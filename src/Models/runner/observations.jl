@@ -41,7 +41,13 @@ function _check_observation_tracers(spec::ObservationOutputSpec, cfg)
     isempty(missing_names) || throw(ArgumentError(
         "[output.observations].tracers names $(join(String.(missing_names), ", ")), which " *
         "[tracers] does not define; defined: $(join(sort!(String.(collect(defined))), ", "))"))
-    check_observation_tracer_names(spec.tracers)
+    # Averaging-kernel columns are written for sampled tracers only.
+    kernel_tracers = unique!(reduce(vcat, (averaging_kernel_tracers(s) for s in spec.sources); init = Symbol[]))
+    unsampled = [t for t in kernel_tracers if !(t in spec.tracers)]
+    isempty(unsampled) || throw(ArgumentError(
+        "[output.observations].sources ask for averaging-kernel columns of $(join(String.(unsampled), ", ")), " *
+        "which [output.observations].tracers does not sample"))
+    check_observation_tracer_names(spec.tracers; averaging_kernel_tracers = kernel_tracers)
     return nothing
 end
 

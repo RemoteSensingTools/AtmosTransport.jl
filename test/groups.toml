@@ -408,8 +408,9 @@ paths = [
 ]
 
 [topics.observations]
-description = "Observation sampling output ([output.observations]): sources, schedules, cell location, vertical placement, gathers, the sampler, runner integration and the schema"
+description = "Observation sampling output ([output.observations]): sources, schedules, cell location, vertical placement, gathers, the sampler, runner integration and the schema; the averaging-kernel operator of level retrievals (hat projection, TM5 mode) and the OCO-2 MIP converter"
 files = [
+    "core/test_retrieval_hat_projection.jl",
     "core/test_observation_cell_locator.jl",
     "core/test_observation_gather.jl",
     "core/test_observation_output_spec.jl",
@@ -469,11 +470,12 @@ paths = [
 ]
 
 [topics.inversion]
-description = "4D-Var inversion: the single-sweep gradient and the reused-tape Jacobian, placed point, averaging-kernel column and time-window observations, adjoint identities and gradient Taylor tests, covariance and preconditioning, optimizers and iteration logs, observation and departure files, the inversion driver and synthetic truth recovery"
+description = "4D-Var inversion: the single-sweep gradient and the reused-tape Jacobian, placed point, averaging-kernel column (layer and level retrievals) and time-window observations, co-sampling, cell averaging, forward-sampler parity, adjoint identities and gradient Taylor tests, covariance and preconditioning, optimizers and iteration logs, observation and departure files, the inversion driver and synthetic truth recovery"
 files = [
     "core/test_cs_4dvar_single_sweep.jl",
     "core/test_cs_4dvar_placed_observations.jl",
     "core/test_cs_4dvar_retrieval_columns.jl",
+    "core/test_cs_4dvar_oco2_mip.jl",
     "core/test_adjoint_identity_model_space.jl",
     "core/test_adjoint_identity_preconditioned.jl",
     "core/test_gradient_taylor_sweep.jl",
@@ -496,6 +498,7 @@ paths = [
     "src/Tape/TapeRecords.jl",
     "src/Adjoints/ObjectiveSeeding.jl",
     "scripts/inversions/**",
+    "scripts/preprocessing/oco2_mip_to_observations.jl",
     "config/inversions/**",
     "schemas/cs_*.toml",
     # The placement rule and column helpers placed point observations share

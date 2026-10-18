@@ -70,7 +70,8 @@ _check_series_schedule(::TimeList, id) = throw(ArgumentError(
     "site $(repr(id)) has a time list; expand it into point events (build_observation_set does)"))
 
 """
-    SoundingRequest(id, time_seconds, lon, lat, source[, elevation_m, intake_height_m[, altitude_m, pressure_pa]])
+    SoundingRequest(id, time_seconds, lon, lat, source[, elevation_m, intake_height_m[, altitude_m, pressure_pa[,
+                    retrieval]]])
 
 One point event, sampled at `time_seconds` after the run origin (Float64 UTC
 seconds). `source` indexes the spec's `sources`. The vertical fields are what
@@ -79,7 +80,9 @@ the record says about its height, `NaN` when it says nothing:
 altitude minus its elevation), `altitude_m` (m above sea level),
 `elevation_m` (ground, m above sea level) and `pressure_pa` (Pa). The sampler
 turns them into a [`VerticalPlacement`](@ref) once, when it is built
-([`resolve_placement`](@ref)).
+([`resolve_placement`](@ref)). `retrieval` is the sounding's
+[`RetrievalColumn`](@ref) when its source asks for averaging-kernel columns
+([`AveragingKernelColumns`](@ref)), else `nothing`.
 """
 struct SoundingRequest
     id::String
@@ -91,11 +94,15 @@ struct SoundingRequest
     intake_height_m::Float64
     altitude_m::Float64
     pressure_pa::Float64
+    retrieval::Union{Nothing, RetrievalColumn}
 end
 SoundingRequest(id, time_seconds, lon, lat, source) =
     SoundingRequest(id, time_seconds, lon, lat, source, NaN, NaN)
 SoundingRequest(id, time_seconds, lon, lat, source, elevation_m, intake_height_m) =
     SoundingRequest(id, time_seconds, lon, lat, source, elevation_m, intake_height_m, NaN, NaN)
+SoundingRequest(id, time_seconds, lon, lat, source, elevation_m, intake_height_m, altitude_m, pressure_pa) =
+    SoundingRequest(id, time_seconds, lon, lat, source, elevation_m, intake_height_m, altitude_m, pressure_pa,
+                    nothing)
 
 """
     SiteRequest(id, lon, lat, elevation_m, intake_height_m, source[, schedule[, altitude_m]])

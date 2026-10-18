@@ -131,11 +131,17 @@ function _validate_column_met(observations, met, mesh::CubedSphereMesh, Nz::Int,
     _validate_placed_column_met(CSPlacedPointObjective[o.objective for o in observations
                                                        if o.objective isa CSPlacedPointObjective],
                                 met, mesh, Nz, nsteps)
-    _validate_retrieval_column_met(CSRetrievalColumnObjective[o.objective for o in observations
-                                                              if o.objective isa CSRetrievalColumnObjective],
+    _validate_retrieval_column_met(CSRetrievalColumnObjective[r for o in observations
+                                                              for r in _retrieval_columns(o.objective)],
                                    met, mesh, Nz, nsteps)
     return nothing
 end
+
+# The averaging-kernel columns an objective samples: itself, a cell average's
+# members, or none.
+_retrieval_columns(o::CSRetrievalColumnObjective) = (o,)
+_retrieval_columns(o::CSCellAverageObjective) = Tuple(m for m in o.members if m isa CSRetrievalColumnObjective)
+_retrieval_columns(::AbstractCSFootprintObjective) = ()
 
 function _validate_retrieval_column_met(columns::Vector{CSRetrievalColumnObjective}, met, mesh::CubedSphereMesh,
                                         Nz::Int, nsteps::Int)
@@ -244,7 +250,10 @@ of the objective's pressure basis come from the replayed air-mass column
 ``m_k`` of its cell and the column meteorology (`Output.placement_pressures!`:
 total pressures from ``m_k`` and the specific humidity, or the dry
 interfaces); `Output.retrieval_column_weights!` gives the weights ``H_k`` on
-the dry mixing ratios ``x_k = r_k/\\max(m_k, ε)``. The value is
+the dry mixing ratios ``x_k = r_k/\\max(m_k, ε)``, with the projection of the
+column's mapping (the rebin of a layer column, or the hat projection of a
+level column, which weights each layer by its replayed air mass ``m_k``). The
+value is
 
 ``X = c + \\sum_k w_k\\, r_k``, ``w_k = H_k / \\max(m_k, ε)``,
 
@@ -252,7 +261,8 @@ with ``c`` the prior term (`Output.retrieval_prior_offset`): linear in the
 tracer mass with the weights ``w_k`` of its functional (the pressures depend
 only on the meteorology), so the functional is the exact derivative of the
 value. Also returns the model minus retrieval surface pressure and the
-rebinned profile ``R x`` (surface first) of the step.
+model profile on the retrieval layers or levels ``P x`` (surface first) of
+the step.
 """
 function _sample_objective(obj::CSRetrievalColumnObjective, step::Int, panels_rm, panels_m, mesh,
                            met::CSObservationColumnMet, build::Bool)
@@ -265,7 +275,7 @@ function _sample_objective(obj::CSRetrievalColumnObjective, step::Int, panels_rm
     p_half = placement_pressures!(Vector{Float64}(undef, nz + 1), obj.pressure_basis, met.mass_basis, air,
                                   humidity, obj.area, met.gravity, met.p_top)
     s = Vector{Float64}(undef, nz + 1)
-    H = retrieval_column_weights!(Vector{Float64}(undef, nz), s, p_half, obj.retrieval)
+    H = retrieval_column_weights!(Vector{Float64}(undef, nz), s, p_half, air, obj.retrieval)
     floor = Float64(_objective_mass_floor(FT))
     weight = FT[FT(H[k] / max(Float64(air[k]), floor)) for k in 1:nz]
     offset = FT(retrieval_prior_offset(obj.retrieval))
@@ -277,21 +287,52 @@ function _sample_objective(obj::CSRetrievalColumnObjective, step::Int, panels_rm
     f = build ? CSLinearFunctional{FT}(step, fill(obj.panel, nz), fill(obj.i, nz), fill(obj.j, nz), 1:nz,
                                        weight, offset) : nothing
     x = Float64[Float64(tracer[k]) / max(Float64(air[k]), floor) for k in 1:nz]
-    profile = retrieval_profile!(Vector{Float64}(undef, retrieval_layer_count(obj.retrieval)), s, p_half,
+    profile = retrieval_profile!(Vector{Float64}(undef, retrieval_layer_count(obj.retrieval)), s, p_half, air,
                                  obj.retrieval, x)
     sample = (; surface_pressure_mismatch_pa = p_half[end] - obj.retrieval.surface_pressure_pa, profile)
     return (value, f, 0, sample)
+end
+
+"""
+    _sample_objective(objective::CSCellAverageObjective, step, panels_rm, panels_m, mesh, met, build)
+
+A cell average on the state after `step`: each member sampled on that state
+(`_sample_objective`), the value ``\\sum_n w_n h_n`` and the functional
+``\\sum_n w_n f_n`` with the members' weights merged level by level (one cell)
+and their offsets combined. The members' retrieval diagnostics are not
+combined (`nothing`): the members are reported as co-samples.
+"""
+function _sample_objective(obj::CSCellAverageObjective, step::Int, panels_rm, panels_m, mesh,
+                           met, build::Bool)
+    FT = eltype(panels_m[obj.panel])
+    nz = size(panels_m[obj.panel], 3)
+    value = zero(FT)
+    weight = zeros(FT, nz)
+    offset = zero(FT)
+    for (member, w) in zip(obj.members, obj.weights)
+        v, f, _, _ = _sample_objective(member, step, panels_rm, panels_m, mesh, met, build)
+        value += FT(w) * v
+        build || continue
+        @inbounds for e in eachindex(f.weight)
+            weight[f.k[e]] += FT(w) * f.weight[e]
+        end
+        offset += FT(w) * f.offset
+    end
+    f = build ? CSLinearFunctional{FT}(step, fill(obj.panel, nz), fill(obj.i, nz), fill(obj.j, nz), 1:nz,
+                                       weight, offset) : nothing
+    return (value, f, 0, nothing)
 end
 
 # The stencil's placement code, height above the model surface and pressure,
 # and its cell ((0, 0, 0) for an operator without a single cell).
 _stencil_placement(::CSColumnMeanObjective) = (COLUMN_MEAN_PLACEMENT_CODE, NaN, NaN)
 _stencil_placement(::CSRetrievalColumnObjective) = (RETRIEVAL_COLUMN_PLACEMENT_CODE, NaN, NaN)
+_stencil_placement(::CSCellAverageObjective) = (CELL_AVERAGE_PLACEMENT_CODE, NaN, NaN)
 _stencil_placement(::AbstractCSFootprintObjective) = (FIXED_LEVEL_PLACEMENT_CODE, NaN, NaN)
 _stencil_placement(obj::CSPlacedPointObjective) =
     (obj.placement.method, obj.placement.height_agl_m, obj.placement.pressure_pa)
 _objective_cell(o::Union{CSLayerMeanObjective, CSColumnMeanObjective, CSPlacedPointObjective,
-                         CSRetrievalColumnObjective}) = (o.panel, o.i, o.j)
+                         CSRetrievalColumnObjective, CSCellAverageObjective}) = (o.panel, o.i, o.j)
 _objective_cell(::AbstractCSFootprintObjective) = (0, 0, 0)
 
 function _observation_stencil(obs::CSObservation, levels::Vector{Int},
@@ -320,7 +361,8 @@ end
 """
     _screen_surface_pressure(observations, mismatch) -> Vector{Bool}
 
-Whether each observation is assimilated: an averaging-kernel column whose
+Whether each observation is assimilated: a co-sample (`assimilate = false`)
+never is, and is not screened. An averaging-kernel column whose
 time-weighted model minus retrieval surface pressure `mismatch[i]` exceeds
 its `max_surface_pressure_mismatch_pa` is an `ArgumentError` under
 `ErrorOnUnplaced()` (all such records are named, up to five) and is left out
@@ -331,6 +373,7 @@ function _screen_surface_pressure(observations, mismatch::Vector{Float64})
     rejected = String[]
     n_rejected = 0
     for (idx, obs) in enumerate(observations)
+        obs.assimilate || (assimilated[idx] = false; continue)
         obj = obs.objective
         obj isa CSRetrievalColumnObjective || continue
         abs(mismatch[idx]) <= obj.max_surface_pressure_mismatch_pa && continue

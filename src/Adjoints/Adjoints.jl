@@ -76,6 +76,9 @@ using ..Output: cell_locator, locate, CellLocation,
     AbstractUnplacedPolicy, ErrorOnUnplaced, SkipUnplaced, placement_pressures!, _basis_needs_humidity,
     RetrievalColumn, retrieval_layer_count, retrieval_column_weights!, retrieval_prior_offset,
     retrieval_profile!, retrieval_model_error_variance, mole_fraction_unit_scale, _mole_fraction_scale,
+    AbstractRetrievalMapping, LayerRebin, HatLevelProjection, tm5_layer_column, retrieval_mapping_label,
+    _parse_retrieval_mapping, retrieval_pressure_count, read_oco2_retrieval_columns, oco2_level_form,
+    _nc_variable, _raw_block,
     _PRESSURE_UNITS_PA,
     _pressure_unit_key
 
@@ -202,6 +205,8 @@ include("../Inversion/ObservationBinding.jl")
 # On-disk departures (forward-pass simulated values and sampling stencils
 # paired with their originating observation records).
 include("../Inversion/DeparturesIO.jl")
+# OCO-2 / OCO-3 v11 MIP 10-second files → observation schema v2.
+include("../Inversion/OCO2MIPObservations.jl")
 
 # Surface-flux background-error covariance B and its
 # spectral square root B^(1/2) for the preconditioned 4D-Var path.
@@ -441,6 +446,10 @@ include("../Inversion/Optimizer.jl")
 
 export AbstractCSFootprintObjective
 export CSLayerMeanObjective, CSColumnMeanObjective, CSPlacedPointObjective, CSRetrievalColumnObjective
+export CSCellAverageObjective, CELL_AVERAGE_PLACEMENT_CODE
+export AbstractFlaggedRecordPolicy, DropFlaggedRecords, CosampleFlaggedRecords
+export AbstractCellAveraging, NoCellAveraging, CellAverage, inflate_cell_model_error
+export read_oco2_mip_observations, convert_oco2_mip_observations
 export CSSeedObjective, CSFootprintResult
 export CSSurfaceFluxWindow, CSSurfaceFluxJacobianResult
 export CSTimeSampling, CSObservation, CSSurfaceFluxControl, CS4DVarResult, CS4DVarSolveResult

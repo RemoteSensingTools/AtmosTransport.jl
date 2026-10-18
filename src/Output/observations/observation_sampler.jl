@@ -114,7 +114,9 @@ mutable struct ObservationSampler{M, L <: AbstractCellLocator,
     sites::Vector{SiteRequest}
     site_cells::Vector{CellLocation}
     site_placements::Vector{VerticalPlacement}
-    needs_humidity::Bool                    # pressure-placed requests on a dry basis: humidity at every sample
+    needs_humidity::Bool                    # pressure-placed requests or AK columns on a dry basis: humidity at every sample
+    retrieval_tracers::Vector{Symbol}       # tracers with averaging-kernel columns (`<tracer>_ak_column`), any source
+    retrieval_slots::Vector{Vector{Tuple{Int, Int}}}   # per source: (column of retrieval_tracers, sampled tracer slot)
     buffers::B
     temperature_buffers::Union{Nothing, B}
     humidity_buffers::Union{Nothing, B}
@@ -183,7 +185,8 @@ function build_observation_sampler(spec::ObservationOutputSpec, state, grid;
     check_terrain(spec.placement, terrain, _OUTPUT_OBSERVATIONS_LABEL)
     check_surface_height_layout(terrain.model_surface, mesh)
     names, slots = _resolve_tracer_slots(state, spec.tracers)
-    check_observation_tracer_names(names)
+    retrieval_tracers, retrieval_slots = _averaging_kernel_slots(spec, names)
+    check_observation_tracer_names(names; averaging_kernel_tracers = retrieval_tracers)
     reference = _reference_array(state.air_mass)
     nlevel = size(reference, ndims(reference))
     locator = cell_locator(mesh; halo_width)
@@ -196,8 +199,10 @@ function build_observation_sampler(spec::ObservationOutputSpec, state, grid;
     _handle_unplaced(spec.placement, counters, examples)
     basis = mass_basis(state)
     n_pressure = _n_pressure_placed(placements) + _n_pressure_placed(site_placements)
+    n_retrieval = count(r -> r.retrieval !== nothing, soundings)
     needs_humidity = check_pressure_basis(spec.placement.pressure_basis, basis, has_humidity, n_pressure,
-                                          _OUTPUT_OBSERVATIONS_LABEL)
+                                          _OUTPUT_OBSERVATIONS_LABEL) |
+                     _check_retrieval_pressure_basis(spec.placement.pressure_basis, basis, has_humidity, n_retrieval)
     times = [r.time_seconds for r in soundings]
     buffers = ObservationGatherBuffers(reference, nlevel, slots;
                                        capacity = max(1024, length(sites) + 1))
@@ -207,6 +212,9 @@ function build_observation_sampler(spec::ObservationOutputSpec, state, grid;
     _log_placements(placements, site_placements, counters)
     n_pressure > 0 && @info "observation pressure placement: $(n_pressure) requests against " *
                             _pressure_basis_text(spec.placement.pressure_basis, basis)
+    n_retrieval > 0 && @info "observation averaging-kernel columns: $(n_retrieval) soundings, tracers " *
+                             "$(join(String.(retrieval_tracers), ", ")), on " *
+                             _pressure_basis_text(spec.placement.pressure_basis, basis)
     _warn_below_ground(soundings, placements, sites, site_placements)
     isempty(soundings) && isempty(sites) &&
         @warn "observation sampling has nothing to sample; no observation files will be written"
@@ -217,7 +225,7 @@ function build_observation_sampler(spec::ObservationOutputSpec, state, grid;
     return ObservationSampler(spec, terrain_sources, origin, mesh, locator, spec.time_interpolation, names, nlevel,
                               Float64(vertical.A[1]), Float64(gravity(grid)),
                               basis, _npanel(mesh), soundings, times, cells, placements,
-                              sites, site_cells, site_placements, needs_humidity,
+                              sites, site_cells, site_placements, needs_humidity, retrieval_tracers, retrieval_slots,
                               buffers, nothing, nothing, 1, nothing, NaN,
                               nothing, nothing, AbstractObservationStream[], Set{String}(), false,
                               counters, ObservationCounters(), false)
@@ -225,6 +233,41 @@ end
 
 # The config table named in the sampler's messages.
 const _OUTPUT_OBSERVATIONS_LABEL = "[output.observations]"
+
+# The tracers with averaging-kernel columns (the union over the sources, in
+# order of appearance) and, per source, its (column, sampled tracer slot)
+# pairs. Each must be a sampled tracer.
+function _averaging_kernel_slots(spec::ObservationOutputSpec, names::AbstractVector{Symbol})
+    tracers = Symbol[]
+    for source in spec.sources, t in averaging_kernel_tracers(source)
+        t in names || throw(ArgumentError(
+            "$(_OUTPUT_OBSERVATIONS_LABEL).sources asks for averaging-kernel columns of $(t), which is not a " *
+            "sampled tracer; sampled: $(join(String.(names), ", "))"))
+        t in tracers || push!(tracers, t)
+    end
+    slots = Vector{Tuple{Int, Int}}[Tuple{Int, Int}[(something(findfirst(==(t), tracers)),
+                                                      something(findfirst(==(t), names)))
+                                                     for t in averaging_kernel_tracers(source)]
+                                    for source in spec.sources]
+    return tracers, slots
+end
+
+# Averaging-kernel columns compare the model with total-pressure retrievals:
+# on a dry-basis run with `TotalFromHumidity` they need the humidity. Returns
+# whether sampling needs it.
+_check_retrieval_pressure_basis(basis::AbstractPressureBasis, mass_basis::AbstractMassBasis, has_humidity::Bool,
+                                n::Integer) = n > 0 && _retrieval_needs_humidity(basis, mass_basis, has_humidity, n)
+_retrieval_needs_humidity(::AbstractPressureBasis, ::AbstractMassBasis, has_humidity::Bool, n::Integer) = false
+function _retrieval_needs_humidity(::TotalFromHumidity, ::DryBasis, has_humidity::Bool, n::Integer)
+    has_humidity || throw(ArgumentError(
+        "$(n) soundings get averaging-kernel columns, whose retrieval pressures are total pressures, and " *
+        "$(_OUTPUT_OBSERVATIONS_LABEL).pressure_basis = \"total\" (the default) builds the model's total " *
+        "interface pressures from the dry air mass and the specific humidity, but the run's binaries do not " *
+        "carry humidity. Use binaries with humidity, or set $(_OUTPUT_OBSERVATIONS_LABEL).pressure_basis = " *
+        "\"dry\" (the stretch onto the retrieval surface pressure then also absorbs the weight of the water " *
+        "vapour)"))
+    return true
+end
 
 """
     observation_needs_humidity(sampler) -> Bool
@@ -364,7 +407,13 @@ function _stream_attributes(s::ObservationSampler)
         "dem_file" => s.terrain_sources.dem_file,
         "absolute_altitude_above_agl_m" => _altitude_option_attribute(s.spec.placement.altitude_placement),
         "vertical_coordinates" => join(String.(vertical_coordinate_label.(s.spec.placement.coordinates)), " "),
-        "pressure_basis" => String(pressure_basis_label(s.spec.placement.pressure_basis)))
+        "pressure_basis" => String(pressure_basis_label(s.spec.placement.pressure_basis)),
+        (isempty(s.retrieval_tracers) ? () :
+         ("averaging_kernel_columns" => "<tracer>_ak_column = sum_i h_i a_i (P x)_i + sum_i h_i (1 - a_i) x_prior_i " *
+                                        "on the sampled profile x, the 4D-Var operator (P: hat projection of " *
+                                        "the model column stretched onto the retrieval levels, or TM5's 19-layer " *
+                                        "rebin with averaging_kernel_mapping = tm5), on the interface pressures " *
+                                        "of pressure_basis",))...)
 end
 
 _current_streams(s::ObservationSampler) =
@@ -454,7 +503,8 @@ function _open_streams!(s::ObservationSampler, date_label::AbstractString, day_i
     if !isempty(s.soundings)
         path = _claim_path!(s, observation_output_path(s.spec, SoundingMode(), date_label, day_index))
         s.soundings_stream = SoundingNetCDFStream(path, s.mesh, s.nlevel, s.tracer_names;
-            mass_basis = s.mass_basis, origin = s.origin, deflate_level = s.spec.deflate_level, attributes)
+            mass_basis = s.mass_basis, origin = s.origin, deflate_level = s.spec.deflate_level, attributes,
+            retrieval_tracers = s.retrieval_tracers)
     end
     if !isempty(s.sites)
         path = _claim_path!(s, observation_output_path(s.spec, SiteMode(), date_label, day_index))
@@ -762,6 +812,7 @@ function _sounding_batch(s::ObservationSampler, range::UnitRange{Int}, prev::Vec
     column = PlacementColumn(nlevel)
     cells = Vector{CellLocation}(undef, n)
     requests = view(s.soundings, range)
+    retrieval_values = isempty(s.retrieval_tracers) ? nothing : fill(NaN, length(s.retrieval_tracers), n)
     for (i, idx) in enumerate(range)
         cell = s.sounding_cells[idx]
         cells[i] = cell
@@ -785,6 +836,8 @@ function _sounding_batch(s::ObservationSampler, range::UnitRange{Int}, prev::Vec
             means[tr, i] = column_mean_vmr(air_col, tracer_col)
             intake_values[tr, i] = profile[level]
         end
+        _retrieval_columns!(retrieval_values, i, s, requests[i], column, air_col, cell.area, vmr,
+                            k -> humidity_at(i, k))
     end
     return SoundingBatch(; ids = [r.id for r in requests], sources = Int32[r.source for r in requests],
                          times = [origin_unix + r.time_seconds for r in requests],
@@ -795,7 +848,32 @@ function _sounding_batch(s::ObservationSampler, range::UnitRange{Int}, prev::Vec
                          intake_heights = [r.intake_height_m for r in requests],
                          altitudes = [r.altitude_m for r in requests], pressures = [r.pressure_pa for r in requests],
                          placements = s.sounding_placements[range], intake_levels = levels,
-                         layer_bottom = bottoms, layer_top = tops, height_methods = methods, intake_values)
+                         layer_bottom = bottoms, layer_top = tops, height_methods = methods, intake_values,
+                         retrieval_values)
+end
+
+# The averaging-kernel columns of row `i` (a sounding with a retrieval) for
+# its source's tracers: the shared operator (`retrieval_column_value`) on the
+# row's interface pressures of the run's pressure basis (total pressures from
+# the air mass and humidity by default), its air masses and the sampled
+# mixing-ratio profiles `vmr[:, tracer, i]`. Rows without a retrieval stay NaN.
+_retrieval_columns!(::Nothing, i, s, request, column, air_col, area, vmr, humidity_at) = nothing
+function _retrieval_columns!(values::Matrix{Float64}, i::Int, s::ObservationSampler, request::SoundingRequest,
+                             column::PlacementColumn, air_col::AbstractVector, area::Real, vmr::Array{Float64, 3},
+                             humidity_at)
+    retrieval = request.retrieval
+    retrieval === nothing && return nothing
+    if s.needs_humidity
+        @inbounds for k in eachindex(column.humidity)
+            column.humidity[k] = humidity_at(k)
+        end
+    end
+    placement_pressures!(column.p_half, s.spec.placement.pressure_basis, s.mass_basis, air_col, column.humidity,
+                         area, s.gravity, s.p_top)
+    for (slot, tracer) in s.retrieval_slots[request.source]
+        values[slot, i] = retrieval_column_value(column.p_half, air_col, retrieval, view(vmr, :, tracer, i))
+    end
+    return nothing
 end
 
 # Layer temperature for heights: the gathered per-layer field when the run

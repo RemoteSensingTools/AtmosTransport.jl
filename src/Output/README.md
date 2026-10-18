@@ -95,20 +95,26 @@ writing topology-specific NetCDF files directly.
   sources), intake layer index (a `NaN` height is an error, never the lowest
   layer), mixing-ratio profiles, and column means.
 - `observations/retrieval_column.jl` is the averaging-kernel (retrieval)
-  column operator of TM5-4DVAR, as pure host Float64 functions of one column:
-  `RetrievalColumn` (a retrieval's interfaces from the surface up, pressure
+  column operator, as pure host Float64 functions of one column:
+  `RetrievalColumn{M}` (a retrieval's pressures from the surface up, pressure
   weights summing to 1, column averaging kernel, prior in mol/mol, optional
-  model-profile uncertainty `profile_sigma`; validated), `stretch_model_interfaces!` (the model
-  column mapped linearly onto the retrieval's surface and top),
-  `retrieval_rebin_matrix` (the mass-conserving overlap rebin R),
-  `retrieval_column_weights!` (``H_k = Σᵢ hᵢ aᵢ Rᵢₖ``),
-  `retrieval_prior_offset` (``Σᵢ hᵢ(1 − aᵢ) x_a,ᵢ``), `retrieval_profile!`
-  (``R x``), `retrieval_column_value` and `retrieval_model_error_variance`
-  (``Σᵢ (hᵢ aᵢ σᵢ)²``), plus `mole_fraction_unit_scale` for files that state
-  ppm or ppb. Model interfaces are top first (total pressures, e.g. from
-  `placement_pressures!`). The 4D-Var's `CSRetrievalColumnObjective` uses it;
-  the forward sampler does not apply averaging kernels yet (its OCO-2 reader
-  does not read the kernel fields).
+  model-profile uncertainty `profile_sigma`, and the mapping `M`; validated),
+  `stretch_model_interfaces!` (the model column mapped linearly onto the
+  retrieval's surface and top), the projection ``P`` of the mapping
+  (`LayerRebin`: TM5-4DVAR's mass-conserving overlap rebin R,
+  `retrieval_rebin_matrix`; `HatLevelProjection`: the air-mass-weighted
+  projection onto the hat functions of levels, OCO-2/OCO-3;
+  `retrieval_projection_matrix`), `retrieval_column_weights!`
+  (``H_k = Σᵢ hᵢ aᵢ Pᵢₖ``), `retrieval_prior_offset`
+  (``Σᵢ hᵢ(1 − aᵢ) x_a,ᵢ``), `retrieval_profile!` (``P x``),
+  `retrieval_column_value`, `retrieval_model_error_variance`
+  (``Σᵢ (hᵢ aᵢ σᵢ)²``), `tm5_layer_column` (TM5's 19 layers of a level
+  retrieval), plus `mole_fraction_unit_scale` for files that state ppm or
+  ppb. Model interfaces are top first (total pressures, e.g. from
+  `placement_pressures!`); the hat projection also takes the layers' air
+  masses. The 4D-Var's `CSRetrievalColumnObjective` and the forward sampler
+  (OCO-2 sources with `averaging_kernel_tracers`, whose reader then reads the
+  kernel fields with `read_oco2_retrieval_columns`) both use it.
 - `observations/observation_netcdf.jl` holds the append-only point-event and
   station NetCDF sinks (`SoundingNetCDFStream`, `SiteNetCDFStream`). Writes are
   queued and flushed whenever the shared NetCDF lock (`with_netcdf_lock`) is

@@ -93,12 +93,14 @@ pressure weights, averaging kernel and prior (`retrieval`, an
 pressures of `pressure_basis` (total pressures from the dry air mass and the
 specific humidity, `TotalFromHumidity`, or the dry interfaces,
 `DryInterfaces`) are stretched onto the retrieval column and the dry mixing
-ratios ``x_k = r_k/\\max(m_k, ε)`` are rebinned onto its layers (TM5-4DVar's
-operator, `Output.retrieval_column_weights!`):
+ratios ``x_k = r_k/\\max(m_k, ε)`` are mapped onto its layers or levels by
+the projection ``P`` of the retrieval's mapping (the rebin ``R`` of TM5-4DVar
+for a layer column, the hat projection for a level column;
+`Output.retrieval_column_weights!`):
 
 ```math
 X = \\sum_k H_k\\, x_k + \\sum_i h_i (1 - a_i)\\, x_{a,i}, \\qquad
-H_k = \\sum_i h_i a_i R_{ik}.
+H_k = \\sum_i h_i a_i P_{ik}.
 ```
 
 `max_surface_pressure_mismatch_pa` bounds the time-weighted difference
@@ -141,6 +143,47 @@ CSRetrievalColumnObjective(panel::Integer, i::Integer, j::Integer, area::Real, r
                                mismatch_policy)
 
 """
+    CSCellAverageObjective(panel, i, j, members, weights, ids)
+
+The weighted mean ``\\sum_n w_n h_n`` of column objectives `members` of one
+physical CS interior cell `(panel, i, j)` (`CSRetrievalColumnObjective`s or
+`CSColumnMeanObjective`s; `weights` positive, summing to 1; `ids` the record
+ids of the members): a cell average of soundings, built by `bind_to_mesh`
+with `cell_averaging = CellAverage(...)`, the weights proportional to
+``1/σ_n^2``. The operators are linear, so its functional is the same
+weighted sum of the members' functionals: the gradient of the averaged
+observation is the weighted combination of the members' gradients. Sampled
+like its members (`cs_surface_flux_4dvar(...; column_met)`).
+"""
+struct CSCellAverageObjective <: AbstractCSFootprintObjective
+    panel::Int
+    i::Int
+    j::Int
+    members::Vector{AbstractCSFootprintObjective}
+    weights::Vector{Float64}
+    ids::Vector{Int64}
+    function CSCellAverageObjective(panel::Integer, i::Integer, j::Integer, members::AbstractVector,
+                                    weights::AbstractVector{<:Real}, ids::AbstractVector{<:Integer})
+        n = length(members)
+        n >= 1 && length(weights) == n && length(ids) == n || throw(ArgumentError(
+            "CSCellAverageObjective needs members with one weight and one id each; got $(n), " *
+            "$(length(weights)), $(length(ids))"))
+        for m in members
+            m isa Union{CSRetrievalColumnObjective, CSColumnMeanObjective} || throw(ArgumentError(
+                "a cell average combines column objectives (CSRetrievalColumnObjective, CSColumnMeanObjective); " *
+                "got $(nameof(typeof(m)))"))
+            (m.panel, m.i, m.j) == (panel, i, j) || throw(ArgumentError(
+                "a cell average combines objectives of one cell $((panel, i, j)); a member is in " *
+                "$((m.panel, m.i, m.j))"))
+        end
+        all(w -> isfinite(w) && w > 0, weights) && abs(sum(weights) - 1) <= 8n * eps(Float64) ||
+            throw(ArgumentError("cell-average weights must be positive and sum to 1; got $(weights)"))
+        return new(Int(panel), Int(i), Int(j), collect(AbstractCSFootprintObjective, members),
+                   collect(Float64, weights), collect(Int64, ids))
+    end
+end
+
+"""
     CSSeedObjective()
 
 Marker objective used when the caller supplies an explicit final adjoint
@@ -161,7 +204,7 @@ function _validate_objective(obj::CSLayerMeanObjective, mesh::CubedSphereMesh, N
 end
 
 function _validate_objective(obj::Union{CSColumnMeanObjective, CSPlacedPointObjective,
-                                       CSRetrievalColumnObjective},
+                                       CSRetrievalColumnObjective, CSCellAverageObjective},
                              mesh::CubedSphereMesh, Nz::Int)
     1 <= obj.panel <= 6 || throw(ArgumentError("panel must be in 1:6, got $(obj.panel)"))
     1 <= obj.i <= mesh.Nc || throw(ArgumentError("i must be in 1:$(mesh.Nc), got $(obj.i)"))
@@ -181,6 +224,11 @@ _retrieval_objective_needs_met() = throw(ArgumentError(
     "a CSRetrievalColumnObjective builds its weights from the interface pressures of the sampled state " *
     "(CSObservationColumnMet); use it as an observation of cs_surface_flux_4dvar(...; column_met). " *
     "The footprint and Jacobian entry points take only objectives with a fixed stencil " *
+    "(CSLayerMeanObjective, CSColumnMeanObjective)"))
+
+_cell_average_needs_4dvar() = throw(ArgumentError(
+    "a CSCellAverageObjective (a cell average of column records) is sampled by cs_surface_flux_4dvar(...; " *
+    "column_met); the footprint and Jacobian entry points take only objectives with a fixed stencil " *
     "(CSLayerMeanObjective, CSColumnMeanObjective)"))
 
 function _validate_objective(::CSSeedObjective, mesh::CubedSphereMesh, Nz::Int)
@@ -253,6 +301,8 @@ evaluate_objective(::CSPlacedPointObjective, panels_rm, panels_m, mesh::CubedSph
     _placed_objective_needs_met()
 evaluate_objective(::CSRetrievalColumnObjective, panels_rm, panels_m, mesh::CubedSphereMesh) =
     _retrieval_objective_needs_met()
+evaluate_objective(::CSCellAverageObjective, panels_rm, panels_m, mesh::CubedSphereMesh) =
+    _cell_average_needs_4dvar()
 
 # ---------------------------------------------------------------------------
 # Adjoint seeding + per-step surface accumulator

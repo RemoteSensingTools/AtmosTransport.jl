@@ -251,6 +251,7 @@ function _read_requests_file!(soundings::Vector{SoundingRequest}, ::Vector{SiteR
         lons = _raw_numeric(_nc_variable(ds, ("longitude",), label), label)
         keep = _quality_mask(source.quality_filter, ds, n, label)
         _check_same_length(label, n, ("time", times), ("latitude", lats), ("longitude", lons))
+        rows = Int[]
         for k in 1:n
             if !keep[k]
                 stats.skipped_quality += 1
@@ -259,13 +260,119 @@ function _read_requests_file!(soundings::Vector{SoundingRequest}, ::Vector{SiteR
             elseif !(isvalid_lonlat(lons[k], lats[k]) && isfinite(times[k]) && !iszero(ids[k]))
                 stats.skipped_invalid += 1
             else
-                push!(soundings, SoundingRequest(string(ids[k]), times[k] - origin_unix,
-                                                 lons[k], lats[k], source_index))
+                push!(rows, k)
             end
+        end
+        retrievals = _sounding_retrievals(source.averaging_kernel, ds, rows, label)
+        for (k, retrieval) in zip(rows, retrievals)
+            push!(soundings, SoundingRequest(string(ids[k]), times[k] - origin_unix, lons[k], lats[k],
+                                             source_index, NaN, NaN, NaN, NaN, retrieval))
         end
     end
     return nothing
 end
+
+# The retrieval of each kept record when the source asks for averaging-kernel
+# columns (in the form its mapping uses); no retrieval fields are read otherwise.
+_sounding_retrievals(::NoAveragingKernels, ds, rows, label) = Iterators.repeated(nothing, length(rows))
+_sounding_retrievals(a::AveragingKernelColumns, ds, rows, label) =
+    [oco2_level_form(a.mapping, c) for c in read_oco2_retrieval_columns(ds, rows; label)]
+
+# -- OCO-2 / OCO-3 retrieval fields (averaging kernels) ---------------------
+
+# A block of columns `cols` of a (levels, records) variable, or of entries of a
+# record variable, as Float64 with fill values replaced by NaN and CF packing
+# undone (`_raw_numeric` for one block).
+function _raw_block(var, cols::UnitRange{Int}, label::AbstractString)
+    raw = ndims(var) == 1 ? Array(var.var[cols]) : Array(var.var[:, cols])
+    T = eltype(raw)
+    T <: Real || throw(ArgumentError("$(label): expected a numeric variable, got $(T)"))
+    fill_attr = _scalar_attr(var, "_FillValue")
+    fill_attr === nothing && (fill_attr = _scalar_attr(var, "missing_value"))
+    fill_raw = fill_attr isa Real ? _fill_as(T, fill_attr) : nothing
+    out = map(x -> (fill_raw !== nothing && x == fill_raw) ? NaN : Float64(x), raw)
+    scale = _scalar_attr(var, "scale_factor")
+    offset = _scalar_attr(var, "add_offset")
+    if scale isa Real || offset isa Real
+        a = scale isa Real ? Float64(scale) : 1.0
+        b = offset isa Real ? Float64(offset) : 0.0
+        out .= ifelse.(isnan.(out), out, out .* a .+ b)
+    end
+    return out
+end
+
+function _pressure_scale(var, label::AbstractString)
+    units = get(var.attrib, "units", nothing)
+    key = _pressure_unit_key(units)
+    scale = key === nothing ? nothing : get(_PRESSURE_UNITS_PA, key, nothing)
+    scale === nothing && throw(ArgumentError(
+        "$(label): variable $(NCDatasets.name(var)) has units $(repr(units)); expected a pressure unit, one of " *
+        "$(join(sort!(collect(keys(_PRESSURE_UNITS_PA))), ", "))"))
+    return scale
+end
+
+"""
+    read_oco2_retrieval_columns(ds, rows; label = "OCO-2 file") -> Vector{RetrievalColumn{HatLevelProjection}}
+
+The retrieval of records `rows` (1-based indices along `sounding_id`) of an
+open OCO-2 or OCO-3 Lite file or OCO-2 v11 MIP 10-second file, as level
+columns ([`RetrievalColumn`](@ref) with [`HatLevelProjection`](@ref)): the
+profile values of these retrievals sit on 20 levels with the profile linear
+in pressure between them. Read per record:
+
+- the level pressures: `pressure_levels (levels, sounding)` (Lite files) or
+  `sigma_levels (levels)` times `psurf (sounding)` (MIP files), converted to Pa
+  with their `units` (hPa);
+- `pressure_weight`, `xco2_averaging_kernel` (normalized, used as it is, not
+  multiplied by the weights) and `co2_profile_apriori` (converted to mol/mol
+  with its `units`, ppm).
+
+The files store the levels from space to the surface; each record is turned
+surface first (by its pressures, so either order is read correctly). The
+surface pressure is the bottom level. Every field must be finite and pass
+the `RetrievalColumn` checks (weights summing to 1); an invalid record is
+an error naming its `sounding_id`.
+"""
+function read_oco2_retrieval_columns(ds, rows::AbstractVector{<:Integer}; label::AbstractString = "OCO-2 file")
+    isempty(rows) && return RetrievalColumn{HatLevelProjection}[]
+    lo, hi = extrema(rows)
+    cols = lo:hi
+    kernel = _raw_block(_nc_variable(ds, ("xco2_averaging_kernel",), label), cols, label)
+    weight = _raw_block(_nc_variable(ds, ("pressure_weight",), label), cols, label)
+    prior_var = _nc_variable(ds, ("co2_profile_apriori",), label)
+    prior = _raw_block(prior_var, cols, label) .*
+            mole_fraction_unit_scale(get(prior_var.attrib, "units", nothing), "$(label) co2_profile_apriori")
+    pressure = if haskey(ds, "pressure_levels")
+        var = ds["pressure_levels"]
+        _raw_block(var, cols, label) .* _pressure_scale(var, label)
+    else
+        sigma_var = _nc_variable(ds, ("sigma_levels",), label)
+        sigma = _raw_block(sigma_var, 1:size(sigma_var, 1), label)
+        psurf_var = _nc_variable(ds, ("psurf",), label)
+        psurf = _raw_block(psurf_var, cols, label) .* _pressure_scale(psurf_var, label)
+        sigma .* reshape(psurf, 1, :)
+    end
+    nlevel = size(kernel, 1)
+    for (name, v) in (("pressure_weight", weight), ("co2_profile_apriori", prior), ("pressures", pressure))
+        size(v) == size(kernel) || throw(ArgumentError(
+            "$(label): $(name) has shape $(size(v)); xco2_averaging_kernel has $(size(kernel))"))
+    end
+    ids = _raw_ids(ds, cols, label)
+    return map(rows) do row
+        c = row - lo + 1
+        p = view(pressure, :, c)
+        order = p[1] < p[nlevel] ? (nlevel:-1:1) : (1:nlevel)       # surface first
+        try
+            RetrievalColumn(p[order], weight[order, c], kernel[order, c], prior[order, c], Float64[], p[order[1]],
+                            HatLevelProjection())
+        catch err
+            err isa Union{ArgumentError, DimensionMismatch} || rethrow()
+            throw(ArgumentError("$(label) sounding_id $(ids[c]): $(sprint(showerror, err))"))
+        end
+    end
+end
+
+_raw_ids(ds, cols, label) = haskey(ds, "sounding_id") ? Array(ds["sounding_id"].var[cols]) : collect(cols)
 
 _quality_mask(::NoQualityFilter, ds, n::Int, label) = trues(n)
 function _quality_mask(filter::QualityFlagFilter, ds, n::Int, label)

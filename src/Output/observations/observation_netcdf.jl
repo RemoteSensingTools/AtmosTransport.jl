@@ -199,12 +199,23 @@ const _OBSERVATION_FIXED_NAMES = (
     "site_id", "schedule_start", "schedule_end", "lev", "ilev", "obs", "site",
     "ps", "ps_dry", "p_half", "p_half_dry", "air_mass_per_area", "air_mass_per_area_dry")
 const _OBSERVATION_TRACER_SUFFIXES = ("", "_column_mean", "_intake", "_surface")
+# Suffix of the averaging-kernel column of a tracer (sources with
+# `averaging_kernel_tracers` only).
+const _AK_COLUMN_SUFFIX = "_ak_column"
 
-"Throw if tracer names would collide with each other or with built-in variables."
-function check_observation_tracer_names(names::AbstractVector{Symbol})
+"""
+    check_observation_tracer_names(names; averaging_kernel_tracers = Symbol[])
+
+Throw if tracer output names (each tracer with its suffixes, and
+`<tracer>_ak_column` for the tracers with averaging-kernel columns) would
+collide with each other or with built-in variables.
+"""
+function check_observation_tracer_names(names::AbstractVector{Symbol};
+                                        averaging_kernel_tracers::AbstractVector{Symbol} = Symbol[])
     taken = Set{String}(_OBSERVATION_FIXED_NAMES)
-    for name in names, suffix in _OBSERVATION_TRACER_SUFFIXES
-        var = String(name) * suffix
+    variables = vcat([(name, String(name) * suffix) for name in names for suffix in _OBSERVATION_TRACER_SUFFIXES],
+                     [(name, String(name) * _AK_COLUMN_SUFFIX) for name in averaging_kernel_tracers])
+    for (name, var) in variables
         var in taken && throw(ArgumentError(
             "observation output variable $(repr(var)) for tracer $(name) collides with another " *
             "output variable; rename the tracer or drop it from [output.observations].tracers"))
@@ -244,7 +255,9 @@ end
 Append-only point-event sink. Each appended batch writes one row per event:
 identity, time, location, containing cell, bracketing sample times and
 weight, interface pressures, per-layer air mass per area, each tracer's
-mixing-ratio profile and column mean, and the intake-layer value.
+mixing-ratio profile and column mean, and the intake-layer value. With
+`retrieval_tracers` (sources with averaging-kernel columns) it also writes
+`<tracer>_ak_column` (Float64, NaN for rows without a retrieval).
 """
 mutable struct SoundingNetCDFStream <: AbstractObservationStream
     path::String
@@ -252,6 +265,7 @@ mutable struct SoundingNetCDFStream <: AbstractObservationStream
     count::Int
     nlevel::Int
     tracer_names::Vector{Symbol}
+    retrieval_tracers::Vector{Symbol}
     mass_basis::AbstractMassBasis
     has_panel::Bool
     closed::Bool
@@ -263,13 +277,17 @@ end
     SoundingBatch(; ids, sources, times, latitudes, longitudes, cells, sample_time_prev,
                   sample_time_next, weights, flags, p_half, air_mass_per_area, tracers,
                   column_means, elevations, intake_heights, altitudes, pressures, placements,
-                  intake_levels, layer_bottom, layer_top, height_methods, intake_values)
+                  intake_levels, layer_bottom, layer_top, height_methods, intake_values,
+                  retrieval_values = nothing)
 
 Columns of one emitted batch of `n` events. Profiles are `(nlevel, n)`,
 `p_half` is `(nlevel + 1, n)`, tracers `(nlevel, ntracer, n)`, column means
 and intake values `(ntracer, n)`. Times are seconds since 1970-01-01 UTC.
 `elevations`, `intake_heights`, `altitudes` and `pressures` are the records'
 own values; `placements` the [`VerticalPlacement`](@ref) of each row.
+`retrieval_values` are the averaging-kernel columns `(n_retrieval_tracers,
+n)` of a sampler with averaging-kernel output (NaN where a row has none), or
+`nothing`.
 """
 struct SoundingBatch
     ids::Vector{String}
@@ -296,11 +314,13 @@ struct SoundingBatch
     layer_top::Vector{Float64}
     height_methods::Vector{Int8}
     intake_values::Matrix{Float64}
+    retrieval_values::Union{Nothing, Matrix{Float64}}
 
     function SoundingBatch(; ids, sources, times, latitudes, longitudes, cells, sample_time_prev,
                            sample_time_next, weights, flags, p_half, air_mass_per_area, tracers,
                            column_means, elevations, intake_heights, altitudes, pressures, placements,
-                           intake_levels, layer_bottom, layer_top, height_methods, intake_values)
+                           intake_levels, layer_bottom, layer_top, height_methods, intake_values,
+                           retrieval_values = nothing)
         n = length(ids)
         for (name, v) in (("sources", sources), ("times", times), ("latitudes", latitudes),
                           ("longitudes", longitudes), ("cells", cells),
@@ -320,10 +340,12 @@ struct SoundingBatch
             throw(DimensionMismatch("SoundingBatch.tracers must be (nlevel, ntracer, n)"))
         size(column_means) == (ntracer, n) || throw(DimensionMismatch("SoundingBatch.column_means must be (ntracer, n)"))
         size(intake_values) == (ntracer, n) || throw(DimensionMismatch("SoundingBatch.intake_values must be (ntracer, n)"))
+        retrieval_values === nothing || size(retrieval_values, 2) == n ||
+            throw(DimensionMismatch("SoundingBatch.retrieval_values must be (n_retrieval_tracers, n)"))
         return new(ids, sources, times, latitudes, longitudes, cells, sample_time_prev, sample_time_next,
                    weights, flags, p_half, air_mass_per_area, tracers, column_means, elevations,
                    intake_heights, altitudes, pressures, placements, intake_levels, layer_bottom, layer_top,
-                   height_methods, intake_values)
+                   height_methods, intake_values, retrieval_values)
     end
 end
 
@@ -333,10 +355,12 @@ function SoundingNetCDFStream(path::AbstractString, mesh, nlevel::Integer,
                               tracer_names::AbstractVector{Symbol};
                               mass_basis::Union{Symbol, AbstractMassBasis}, origin::DateTime,
                               deflate_level::Integer = 0,
-                              attributes::AbstractDict = Dict{String, Any}())
+                              attributes::AbstractDict = Dict{String, Any}(),
+                              retrieval_tracers::AbstractVector{Symbol} = Symbol[])
     nlevel >= 1 || throw(ArgumentError("sounding stream needs at least one level"))
     isempty(tracer_names) && throw(ArgumentError("sounding stream needs at least one tracer"))
     stream = SoundingNetCDFStream(String(path), nothing, 0, Int(nlevel), collect(tracer_names),
+                                  collect(Symbol, retrieval_tracers),
                                   _as_mass_basis(mass_basis), _has_panel(mesh), false, false, Any[])
     attrs = copy(attributes)
     _submit!(stream, _create_op(ds -> _define_sounding_schema!(ds, stream, mesh, origin,
@@ -400,6 +424,11 @@ function _define_sounding_schema!(ds, stream::SoundingNetCDFStream, mesh, origin
         obs(String(name) * "_column_mean", Float32, _attrib(units, "$(name) air-mass-weighted column mean mixing ratio"))
         obs(String(name) * "_intake", Float32, _attrib(units, "$(name) mixing ratio in the intake layer"))
     end
+    for name in stream.retrieval_tracers
+        obs(String(name) * _AK_COLUMN_SUFFIX, Float64, _attrib(units,
+            "$(name) averaging-kernel column of the sounding's retrieval: sum_i h_i a_i (P x)_i + " *
+            "sum_i h_i (1 - a_i) x_prior_i on the sampled profile (NaN without a retrieval)"))
+    end
     return nothing
 end
 
@@ -461,9 +490,21 @@ function _write_soundings!(stream::SoundingNetCDFStream, batch::SoundingBatch, r
         ds[String(name) * "_column_mean"][rows] = Float32.(view(batch.column_means, t, :))
         ds[String(name) * "_intake"][rows] = Float32.(view(batch.intake_values, t, :))
     end
+    _write_retrieval_values!(ds, stream.retrieval_tracers, batch.retrieval_values, rows)
     NCDatasets.sync(ds)
     ds.attrib["completed_soundings"] = last(rows)
     NCDatasets.sync(ds)
+    return nothing
+end
+
+_write_retrieval_values!(ds, tracers, ::Nothing, rows) =
+    isempty(tracers) || throw(ArgumentError("the sounding stream has averaging-kernel columns; the batch has none"))
+function _write_retrieval_values!(ds, tracers, values::Matrix{Float64}, rows)
+    size(values, 1) == length(tracers) || throw(DimensionMismatch(
+        "the batch has $(size(values, 1)) averaging-kernel tracers; the stream has $(length(tracers))"))
+    for (t, name) in enumerate(tracers)
+        ds[String(name) * _AK_COLUMN_SUFFIX][rows] = view(values, t, :)
+    end
     return nothing
 end
 

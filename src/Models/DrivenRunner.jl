@@ -120,6 +120,7 @@ using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, S
                 AbstractObservationSampler, NoObservationSampler, build_observation_sampler,
                 samples_observations, begin_observation_day!, observe_window_boundary!,
                 finish_observations!, check_observation_tracer_names, observation_needs_humidity,
+                averaging_kernel_tracers,
                 observation_output_path, SoundingMode, SiteMode,
                 VerticalPlacementSpec, ObservationTerrain, NoModelSurfaceHeight, NoPointElevation,
                 _SNAPSHOT_SCHEDULE_KEYS, _SNAPSHOT_INTERVAL_KEYS, _schedule_has_times
