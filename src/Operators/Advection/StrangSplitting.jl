@@ -168,12 +168,14 @@ function _cs_transport_step!(::CSSplitSweepStyle,
                              workspace::CSAdvectionWorkspace;
                              cfl_limit::Real = DEFAULT_CFL_LIMIT,
                              subcycle_count::Union{Nothing, Integer} = nothing,
-                             midpoint! = nothing)
+                             midpoint! = nothing,
+                             recorder::AbstractStepRecorder = NoStepRecorder())
     strang_split_cs_mt!(rm_4d, m, fluxes.am, fluxes.bm, fluxes.cm,
                         mesh, scheme, workspace;
                         cfl_limit = cfl_limit,
                         subcycle_count = subcycle_count,
-                        midpoint! = midpoint!)
+                        midpoint! = midpoint!,
+                        recorder = recorder)
     return nothing
 end
 
@@ -197,7 +199,8 @@ function _cs_transport_step!(::CSLinRoodStyle,
                              workspace::CSLinRoodAdvectionWorkspace;
                              cfl_limit::Real = DEFAULT_CFL_LIMIT,
                              subcycle_count::Union{Nothing, Integer} = nothing,
-                             midpoint! = nothing) where ORD
+                             midpoint! = nothing,
+                             recorder::AbstractStepRecorder = NoStepRecorder()) where ORD
     _ = subcycle_count
     # The runtime driver Hp-pads the flux panels; the LinRood cross-term kernels
     # expect the interior faces only. Strip the halo here (see
@@ -211,7 +214,8 @@ function _cs_transport_step!(::CSLinRoodStyle,
                                   mesh, Val(ORD), workspace;
                                   cfl_limit = cfl_limit,
                                   midpoint! = midpoint!,
-                                  vertical = scheme.vertical)
+                                  vertical = scheme.vertical,
+                                  recorder = recorder)
     return nothing
 end
 
@@ -245,7 +249,8 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
                        diffusion_op::AbstractDiffusion = NoDiffusion(),
                        emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                        meteo = nothing,
-                       dt::Union{Nothing, Real} = nothing) where {B <: AbstractMassBasis}
+                       dt::Union{Nothing, Real} = nothing,
+                       recorder::AbstractStepRecorder = NoStepRecorder()) where {B <: AbstractMassBasis}
     _preflight_diffusion(diffusion_op, diffusion_workspace, dt,
                          state.air_mass, ntracers(state), state.halo_width)
     (!(diffusion_op isa NoDiffusion) || !(emissions_op isa NoSurfaceFlux)) &&
@@ -261,25 +266,34 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
     if cs_advection_style(scheme) isa CSSplitSweepStyle
         # Queued only: the first sweep follows on the same device queue.
         fill_cs_step_start_halos!(state.tracers_raw, m, grid.horizontal; sync = false)
-        midpoint! = (active_rm, active_m) -> palindrome_center!(
-            τ -> SectionTimer.@section(:diffusion, apply_vertical_diffusion_vmr!(
-                active_rm, active_m, diffusion_op, diffusion_workspace, τ, meteo;
-                halo_width = state.halo_width)),
-            τ -> apply_surface_flux!(active_rm, emissions_op, workspace, τ, meteo, grid;
-                                     tracer_names = state.tracer_names,
-                                     halo_width = state.halo_width, deposit),
-            diffusion_op, emissions_op, dt)
+        record_halo!(recorder, 1)
+        midpoint! = (active_rm, active_m) -> begin
+            record_center!(recorder, active_m, diffusion_op)
+            palindrome_center!(
+                τ -> (record_diffusion!(recorder, diffusion_op, diffusion_workspace, τ);
+                      SectionTimer.@section(:diffusion, apply_vertical_diffusion_vmr!(
+                          active_rm, active_m, diffusion_op, diffusion_workspace, τ, meteo;
+                          halo_width = state.halo_width))),
+                τ -> (record_emission!(recorder, τ);
+                      apply_surface_flux!(active_rm, emissions_op, workspace, τ, meteo, grid;
+                                          tracer_names = state.tracer_names,
+                                          halo_width = state.halo_width, deposit)),
+                diffusion_op, emissions_op, dt)
+        end
         _cs_transport_step!(CSSplitSweepStyle(), state.tracers_raw, m, fluxes,
                             grid.horizontal, scheme, workspace;
                             cfl_limit = cfl_limit,
                             subcycle_count = subcycle_count,
-                            midpoint! = midpoint!)
+                            midpoint! = midpoint!,
+                            recorder = recorder)
         return nothing
     end
 
     # Lin-Rood transports one tracer at a time from the same initial air mass.
     # Its horizontal operator (`fv_tp_2d_cs!`) refills the edge and corner
-    # halos of rm and m before it reads them, so these fills are not read.
+    # halos of rm and m before it reads them, so these fills are not read
+    # (and a recorder gets no record of them: their output never reaches the
+    # result, so their tangent is zero).
     fill_panel_halos!(m, grid.horizontal; dir=1)
     m_save = n_tr > 1 ? _similar_cs_storage(m) : m
     if n_tr > 1
@@ -296,19 +310,25 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
         rm_tracer = get_tracer(state, idx)
         fill_panel_halos!(rm_tracer, grid.horizontal; dir=1)
         tracer_name = tracer_names[idx]
-        midpoint! = () -> palindrome_center!(
-            τ -> SectionTimer.@section(:diffusion, apply_vertical_diffusion_vmr!(
-                rm_tracer, m, diffusion_op, diffusion_workspace, τ, meteo;
-                halo_width = state.halo_width, tracer = idx)),
-            τ -> apply_surface_flux!(rm_tracer, emissions_op, workspace, τ, meteo, grid;
-                                     tracer_names = (tracer_name,),
-                                     halo_width = state.halo_width, deposit),
-            diffusion_op, emissions_op, dt)
+        midpoint! = () -> begin
+            record_center!(recorder, m, diffusion_op)
+            palindrome_center!(
+                τ -> (record_diffusion!(recorder, diffusion_op, diffusion_workspace, τ);
+                      SectionTimer.@section(:diffusion, apply_vertical_diffusion_vmr!(
+                          rm_tracer, m, diffusion_op, diffusion_workspace, τ, meteo;
+                          halo_width = state.halo_width, tracer = idx))),
+                τ -> (record_emission!(recorder, τ);
+                      apply_surface_flux!(rm_tracer, emissions_op, workspace, τ, meteo, grid;
+                                          tracer_names = (tracer_name,),
+                                          halo_width = state.halo_width, deposit)),
+                diffusion_op, emissions_op, dt)
+        end
         _cs_transport_step!(cs_advection_style(scheme),
                             rm_tracer, m, fluxes, grid.horizontal, scheme, workspace;
                             cfl_limit = cfl_limit,
                             subcycle_count = subcycle_count,
-                            midpoint! = midpoint!)
+                            midpoint! = midpoint!,
+                            recorder = recorder)
     end
 
     return nothing

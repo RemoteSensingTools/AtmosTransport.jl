@@ -27,6 +27,9 @@ using Adapt
 using DocStringExtensions
 
 import ..AbstractOperator, ..apply!
+import ..AbstractStepRecorder, ..NoStepRecorder, ..record_halo!, ..record_sweep!,
+       ..record_center!, ..record_diffusion!, ..record_emission!,
+       ..record_linrood_horizontal!
 using ...SectionTimer
 # Diffusion is loaded before Advection in Operators.jl so the palindrome
 # center of `strang_split_mt!` can dispatch on `AbstractDiffusion`

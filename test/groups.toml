@@ -464,8 +464,11 @@ paths = [
     "src/Tape/**",
     "src/Operators/Advection/linrood_adjoint*.jl",
     # The production step composition the adjoint replays and records.
-    "src/Operators/Advection/{StrangSplitting,CubedSphereStrang}.jl",
+    "src/Operators/Advection/{StrangSplitting,CubedSphereStrang,linrood_horizontal,strang_apply}.jl",
     "src/Operators/Diffusion/operators.jl",
+    "src/Operators/StepPlan/**",
+    "src/Operators/StepRecording.jl",
+    "src/Models/{driven_stepping,TransportModel}.jl",
 ]
 
 [topics.inversion]

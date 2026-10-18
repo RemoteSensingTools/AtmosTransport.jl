@@ -6,81 +6,9 @@
 
 @inline _empty_prefetch_task() = Task(() -> nothing)
 
-_refresh_state_halos!(state, _mesh) = state
-
-function _refresh_state_halos!(state::CubedSphereState, mesh::CubedSphereMesh)
-    fill_panel_halos!(state.air_mass, mesh; dir = 1)
-    fill_panel_halos!(state.tracers_raw, mesh; dir = 1)
-    return state
-end
-
-function _reset_air_mass_preserve_vmr!(state::CellState, new_air_mass, _mesh)
-    old_air_mass = state.air_mass
-    FT = eltype(old_air_mass)
-    floor_m = eps(FT)
-    for (_name, rm) in eachtracer(state)
-        @. rm = ifelse(old_air_mass > floor_m,
-                       rm / old_air_mass * new_air_mass,
-                       zero(FT))
-    end
-    copyto!(old_air_mass, new_air_mass)
-    return state
-end
-
-function _reset_air_mass_preserve_vmr!(state::CubedSphereState,
-                                       new_air_mass::NTuple{6},
-                                       mesh::CubedSphereMesh)
-    fill_panel_halos!(new_air_mass, mesh; dir = 1)
-    FT = eltype(state.air_mass[1])
-    floor_m = eps(FT)
-    for p in 1:6
-        old_p = state.air_mass[p]
-        new_p = new_air_mass[p]
-        raw_p = state.tracers_raw[p]
-        for idx in 1:length(tracer_names(state))
-            rm = selectdim(raw_p, ndims(raw_p), idx)
-            @. rm = ifelse(old_p > floor_m,
-                           rm / old_p * new_p,
-                           zero(FT))
-        end
-        copyto!(old_p, new_p)
-    end
-    return _refresh_state_halos!(state, mesh)
-end
-
-function _reset_air_mass_preserve_tracer_mass!(state::CellState, new_air_mass, _mesh)
-    copyto!(state.air_mass, new_air_mass)
-    return state
-end
-
-function _reset_air_mass_preserve_tracer_mass!(state::CubedSphereState,
-                                               new_air_mass::NTuple{6},
-                                               mesh::CubedSphereMesh)
-    fill_panel_halos!(new_air_mass, mesh; dir = 1)
-    for p in 1:6
-        copyto!(state.air_mass[p], new_air_mass[p])
-    end
-    return _refresh_state_halos!(state, mesh)
-end
-
-const _AIR_MASS_RESET_MODES = (:none, :preserve_vmr, :preserve_tracer_mass)
-
-function _normalize_air_mass_reset_mode(air_mass_reset_mode)
-    mode = air_mass_reset_mode === nothing ? :none : Symbol(air_mass_reset_mode)
-    mode in _AIR_MASS_RESET_MODES ||
-        throw(ArgumentError("air_mass_reset_mode must be one of :none, " *
-                            ":preserve_vmr, or :preserve_tracer_mass; got $(repr(mode))"))
-    return mode
-end
-
-function _reset_air_mass!(state, new_air_mass, mesh, mode::Symbol)
-    mode === :none && return state
-    mode === :preserve_vmr &&
-        return _reset_air_mass_preserve_vmr!(state, new_air_mass, mesh)
-    mode === :preserve_tracer_mass &&
-        return _reset_air_mass_preserve_tracer_mass!(state, new_air_mass, mesh)
-    throw(ArgumentError("unknown air_mass_reset_mode $(repr(mode))"))
-end
+# State halos and the air-mass reset (`_refresh_state_halos!`,
+# `_reset_air_mass!`, `_normalize_air_mass_reset_mode`) live with the step plan
+# (`Operators.StepPlans`), whose `AirMassResetStage` applies them.
 
 @inline function _allocate_qv_buffer(window)
     has_humidity_endpoints(window) || return nothing

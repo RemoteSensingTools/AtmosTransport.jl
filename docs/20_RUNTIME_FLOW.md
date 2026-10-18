@@ -49,31 +49,39 @@ step!(sim)
 └── invoke callbacks
 ```
 
-The implementation lives in `src/Models/driven_stepping.jl`. In simplified
-form:
+The implementation lives in `src/Models/driven_stepping.jl`; the schedule is
+the simulation's `StepPlan` (`sim.plan`, `src/Operators/StepPlan/`), built once
+from `physics_cadence`, the driver's window contract and
+`air_mass_reset_mode`. In simplified form:
 
 ```julia
-_maybe_advance_window!(sim)
+_maybe_advance_window!(sim)          # runs the plan's window-advance stages (air-mass reset)
 substep = substep_index(sim)
 _refresh_forcing!(sim, substep)
 
-if _uses_binary_transport_schedule(sim)
-    substep == 1 && _chemistry_before_emissions!(sim.model, sim.window_dt; meteo = sim)
-    transport_step!(sim.model, sim.Δt; meteo = sim)
-else
-    step!(sim.model, sim.Δt; meteo = sim)
-end
+ops = step_operators(sim.model); timing = StepTiming(sim.Δt, sim.window_dt)
+substep == 1 && execute_window_start!(sim.plan, ops, timing, sim)
+execute_step_stages!(sim.plan, ops, timing, sim)
 
 sim.iteration += 1
 sim.time = _clock_time(sim)     # Float64, from window and step counters
 
-if _uses_binary_transport_schedule(sim) &&
-   sim.iteration == sim.current_window_end_iteration
-    _maybe_reset_to_window_endpoint!(sim)
-    _convection_step!(sim.model, sim.window_dt)
-    _chemistry_after_emissions!(sim.model, sim.window_dt; meteo = sim)
-end
+sim.iteration == sim.current_window_end_iteration &&
+    execute_window_end!(sim.plan, ops, timing, sim)
 ```
+
+With a binary window contract and `physics_cadence = :window` the plan is
+
+```text
+window_advance: AirMassReset(mode, window start)
+window_start:   ChemistryBefore(window_dt)
+step:           Transport
+window_end:     AirMassReset(mode, window end) → Convection(window_dt) → ChemistryAfter(window_dt)
+```
+
+and otherwise every step runs `ChemistryBefore(dt) → Transport →
+Convection(dt) → ChemistryAfter(dt)` (with the window-end reset under a
+window contract). The cubed-sphere adjoint replays the same plan.
 
 A version-4 transport binary carries the advection substep schedule. It does
 not request convection and chemistry at every stored advection substep.
@@ -122,7 +130,9 @@ _convection_step!(model, dt)
 _chemistry_after_emissions!(model, dt; meteo)  # decay(dt/2), otherwise chemistry(dt)
 ```
 
-`step!(model, dt)` calls these in order. `NoDiffusion`, `NoSurfaceFlux`,
+`step!(model, dt)` runs these in order: they are the `step` stages of the
+substep `StepPlan` (`ChemistryBeforeStage`, `TransportStage`,
+`ConvectionStage`, `ChemistryAfterStage`), executed on `step_operators(model)`. `NoDiffusion`, `NoSurfaceFlux`,
 `NoConvection`, and `NoChemistry` provide explicit identity methods; callers
 do not need `nothing` checks or string branches in the operator loop.
 

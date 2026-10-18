@@ -56,3 +56,16 @@ Modules = [AtmosTransport.Operators.Chemistry]
 Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```
+
+## Step plans
+
+The model step as data: the `StepPlan` that `TransportModel.step!` and
+`DrivenSimulation` execute and the cubed-sphere adjoint replays, its stages,
+and the stage executors. The step recorders (`AbstractStepRecorder`,
+`NoStepRecorder`) are in the top-level section above.
+
+```@autodocs
+Modules = [AtmosTransport.Operators.StepPlans]
+Order   = [:module, :constant, :type, :function, :macro]
+Private = false
+```

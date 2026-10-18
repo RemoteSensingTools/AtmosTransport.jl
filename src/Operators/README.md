@@ -10,6 +10,11 @@ separate where their storage and numerical kernels genuinely differ.
 ## What This Tree Owns
 
 - The shared operator entrypoint contract in [`AbstractOperators.jl`](AbstractOperators.jl)
+- The step recorders in [`StepRecording.jl`](StepRecording.jl): the
+  observation hooks the production step calls (no-ops for `NoStepRecorder`),
+  through which the cubed-sphere adjoint records its tape
+- The model step as data, [`StepPlan/`](StepPlan/README.md): the stages a run
+  executes at window advance, window start, every step and window end
 - The operator module assembly and public exports in [`Operators.jl`](Operators.jl)
 - The concrete submodules:
   - [`Advection/`](Advection/README.md)
@@ -20,12 +25,18 @@ separate where their storage and numerical kernels genuinely differ.
 
 ## Runtime Composition Today
 
-- [`TransportModel.step!`](../Models/TransportModel.jl) currently runs:
+- A [`StepPlan`](StepPlan/README.md) holds the composition.
+  [`TransportModel.step!`](../Models/TransportModel.jl) executes the `step`
+  stages of the substep plan:
+  - first constant-rate decay half-step
   - transport block: advection, with diffusion and surface flux embedded
     at the Strang midpoint
   - convection block, executed when the model carries a non-`NoConvection`
     operator
-  - chemistry block
+  - closing chemistry block
+- `DrivenSimulation` executes all four phases of its plan; under a binary
+  window contract with `physics_cadence = :window` convection and chemistry
+  run once per met window. The cubed-sphere adjoint replays the same plan.
 
 ## Topology Coverage
 
@@ -48,6 +59,14 @@ operator × topology matrix.
   CMFMC kernels, workspaces, forcing contract
 - [`Chemistry/`](Chemistry/README.md) — source/sink operators applied
   after transport
+- [`StepRecording.jl`](StepRecording.jl) — `AbstractStepRecorder`,
+  `NoStepRecorder` and the recorder hooks (`record_sweep!`, `record_halo!`,
+  `record_center!`, `record_diffusion!`, `record_emission!`,
+  `record_linrood_horizontal!`, `record_convection!`,
+  `record_air_mass_reset!`, `record_chemistry!`)
+- [`StepPlan/`](StepPlan/README.md) — `StepPlan`, its stages, `StepOperators`,
+  the stage executors, the air-mass reset, and the persistent-operator-state
+  snapshots the adjoint's checkpoints use
 
 ## Include-Order Dependencies
 
@@ -61,6 +80,8 @@ encodes real dependencies:
   consumed inside the current palindrome
 - `Chemistry` is loaded after `Advection` because it is a separate
   post-transport block
+- `StepRecording.jl` is included first (the palindromes call its hooks) and
+  `StepPlan/` last (its stages call every operator family)
 
 If you refactor include order here, re-check `using` imports inside the
 submodules before assuming it is cosmetic.

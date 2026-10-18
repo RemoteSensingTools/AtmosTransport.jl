@@ -180,7 +180,8 @@ function apply!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},
                 cfl_limit::Real = DEFAULT_CFL_LIMIT,
                 diffusion_op::AbstractDiffusion = NoDiffusion(),
                 emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
-                meteo = nothing) where {B <: AbstractMassBasis}
+                meteo = nothing,
+                recorder::AbstractStepRecorder = NoStepRecorder()) where {B <: AbstractMassBasis}
     strang_split!(state, fluxes, grid, scheme;
                   workspace = workspace,
                   diffusion_workspace = diffusion_workspace,
@@ -188,7 +189,8 @@ function apply!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},
                   diffusion_op = diffusion_op,
                   emissions_op = emissions_op,
                   meteo = meteo,
-                  dt = dt)
+                  dt = dt,
+                  recorder = recorder)
     return nothing
 end
 
@@ -205,7 +207,10 @@ end
                          cfl_limit::Real = DEFAULT_CFL_LIMIT,
                          diffusion_op::AbstractDiffusion = NoDiffusion(),
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
-                         meteo = nothing) where {B <: AbstractMassBasis}
+                         meteo = nothing,
+                         recorder::AbstractStepRecorder = NoStepRecorder()) where {B <: AbstractMassBasis}
+    recorder isa NoStepRecorder || throw(ArgumentError(
+        "NoAdvection (scheme = \"none\") has no record in the cubed-sphere adjoint tape"))
     _noadvection_reject_emissions_op(emissions_op)
     _preflight_diffusion(diffusion_op, diffusion_workspace, dt,
                          state.air_mass, ntracers(state), state.halo_width)

@@ -167,12 +167,13 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
 
 - `../Diffusion` and `../SurfaceFlux` are imported into the palindrome
   midpoint; changes there can change advection runtime behavior
-- The cubed-sphere adjoint (`../../Adjoints/`, `../../Footprint/`) composes
-  its replayed and recorded steps from `fill_cs_step_start_halos!` and
-  `surface_flux_center!`, so the adjoint's forward model is the production
-  step. Change the cubed-sphere step composition in `strang_split!` together
-  with `_replay_cs_step!` and the tape recorders;
-  `test/core/test_cs_adjoint_production_parity.jl` compares them
+- The cubed-sphere adjoint (`../../Adjoints/`, `../../Footprint/`) replays
+  the production step: the CS `strang_split!`, the packed ping-pong
+  palindrome, the Lin-Rood palindrome and `fv_tp_2d_cs!` take a `recorder`
+  (`../StepRecording.jl`) and call its hooks before every sweep, after every
+  halo exchange, at the center and inside the Lin-Rood operator; production
+  passes `NoStepRecorder()`, whose hooks are no-ops. A new tracer-changing
+  operation in these palindromes needs a hook (and a tape record)
 - [`../../State/`](../../State/) provides tracer slices, flux-state
   types, and the panel-native cubed-sphere containers
 - [`../../Grids/`](../../Grids/) provides mesh geometry and panel

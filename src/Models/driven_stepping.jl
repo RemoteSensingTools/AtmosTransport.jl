@@ -17,11 +17,9 @@ function _maybe_advance_window!(sim::DrivenSimulation)
         sim.Δt = sim.window_dt / typeof(sim.Δt)(sim.steps_per_window)
         _take_prefetched_window!(sim, next_window)
         _stage_surface_flux_window!(sim)
-        if sim.air_mass_reset_mode !== :none
-            _reset_air_mass!(sim.model.state, sim.window.air_mass,
-                             sim.model.grid.horizontal,
-                             sim.air_mass_reset_mode)
-        end
+        # The plan's window-advance stages: the air-mass reset to the window
+        # just entered (`air_mass_reset_mode`).
+        execute_window_advance!(sim.plan, step_operators(sim.model), _step_timing(sim), sim)
         if sim.qv_buffer !== nothing && !has_humidity_endpoints(sim.window)
             throw(ArgumentError("driver humidity endpoint support changed between windows"))
         end
@@ -38,15 +36,17 @@ function _maybe_advance_window!(sim::DrivenSimulation)
     return nothing
 end
 
-function _maybe_reset_to_window_endpoint!(sim::DrivenSimulation)
-    (sim.air_mass_reset_mode !== :none && _binary_window_contract(sim)) ||
-        return nothing
+# The air-mass reset targets of the plan's `AirMassResetStage`s: the air mass
+# of the window just entered, and the binary's authoritative window-end mass.
+air_mass_reset_target(::WindowStartAirMass, sim::DrivenSimulation) = sim.window.air_mass
+
+function air_mass_reset_target(::WindowEndAirMass, sim::DrivenSimulation)
     expected_air_mass!(sim.expected_air_mass, sim.window, one(typeof(sim.Δt)))
-    _reset_air_mass!(sim.model.state, sim.expected_air_mass,
-                     sim.model.grid.horizontal,
-                     sim.air_mass_reset_mode)
-    return nothing
+    return sim.expected_air_mass
 end
+
+# The time steps of the current step: the advection step and its met window.
+_step_timing(sim::DrivenSimulation) = StepTiming(sim.Δt, sim.window_dt)
 
 """
     DrivenSimulation(model, driver; kwargs...)
@@ -72,7 +72,8 @@ Keyword arguments:
   every advection substep (the cadence before 2026-05-31), for
   cadence-sensitivity comparisons on the same binary. The window-end air-mass
   reset is the same for both. Other binaries run the full operator suite every
-  substep either way.
+  substep either way. The resulting [`StepPlan`](@ref) is `sim.plan`; the
+  cubed-sphere adjoint replays the same plan (`CSStepSchedule`).
 - `prefetch_windows=true` — on a device backend with more than one Julia
   thread, load the next met window on a second thread while the current one
   runs. `false` loads each window when it is needed and keeps one device
@@ -185,12 +186,13 @@ function DrivenSimulation(model::TransportModel,
     flux_interp = interpolate_fluxes_within_window === nothing ?
                   (flux_interpolation_mode(driver) === :interpolate) : Bool(interpolate_fluxes_within_window)
     reset_mode = _normalize_air_mass_reset_mode(air_mass_reset_mode)
-    every_substep = _resolve_physics_cadence(physics_cadence) === :substep
+    plan = StepPlan(; physics_cadence, window_contract = uses_binary_substep_contract(driver),
+                    air_mass_reset = reset_mode)
 
     sim = DrivenSimulation{typeof(model), typeof(driver), typeof(window),
                            typeof(expected_air_mass), typeof(qv_buffer), FT,
                            typeof(callbacks), typeof(prefetch_task),
-                           typeof(host_staging)}(
+                           typeof(host_staging), typeof(plan)}(
         model,
         driver,
         window,
@@ -218,7 +220,7 @@ function DrivenSimulation(model::TransportModel,
         use_midpoint_forcing,
         flux_interp,
         reset_mode,
-        every_substep,
+        plan,
         host_staging,
     )
 
@@ -319,21 +321,12 @@ end
 # split into exact half-steps around the window's transport/emissions, unless
 # `physics_cadence = :substep` (`[run] physics_cadence`) asks for every advection
 # substep; the window-end mass reset is the same for both cadences, so an A/B
-# comparison on one binary changes only where physics runs.
+# comparison on one binary changes only where physics runs. `sim.plan`
+# (`StepPlan`) encodes this schedule.
 @inline _binary_window_contract(sim::DrivenSimulation) = uses_binary_substep_contract(sim.driver)
-@inline _uses_binary_transport_schedule(sim::DrivenSimulation) =
-    _binary_window_contract(sim) && !sim.physics_every_substep
 
-# `physics_cadence` (`:window`, `:substep` or `nothing` for `:window`).
-const _PHYSICS_CADENCES = (:window, :substep)
-
-function _resolve_physics_cadence(physics_cadence)
-    physics_cadence === nothing && return :window
-    cadence = Symbol(physics_cadence)
-    cadence in _PHYSICS_CADENCES || throw(ArgumentError(
-        "physics_cadence must be :window or :substep; got $(repr(physics_cadence))"))
-    return cadence
-end
+# `physics_cadence` (`:window`, `:substep` or `nothing` for `:window`) is
+# resolved by `Operators.StepPlans._resolve_physics_cadence`.
 
 function step!(sim::DrivenSimulation)
     sim.iteration < sim.final_iteration ||
@@ -343,29 +336,21 @@ function step!(sim::DrivenSimulation)
     substep = substep_index(sim)
     SectionTimer.@section :forcing_refresh _refresh_forcing!(sim, substep)
 
-    # The default path keeps the live operator suite in one call.
-    # Transport binaries carry an advection substep contract, not a
-    # physics cadence contract, so driven
-    # binary-scheduled runs apply only the transport block at each stored
-    # substep. Exact exponential decay half-steps bracket the complete met
-    # window, placing its integrated emissions at the midpoint; convection
-    # remains at the end. Non-decay chemistry retains its end-window call.
-    if _uses_binary_transport_schedule(sim)
-        substep == 1 &&
-            _chemistry_before_emissions!(sim.model, sim.window_dt; meteo = sim)
-        transport_step!(sim.model, sim.Δt; meteo = sim)
-    else
-        step!(sim.model, sim.Δt; meteo = sim)
-    end
+    # The plan (`sim.plan`) holds the schedule. Without a binary window
+    # contract, or with `physics_cadence = :substep`, every step runs the full
+    # operator suite. Binary-scheduled `:window` runs apply only the transport
+    # block at each stored substep: exact exponential decay half-steps bracket
+    # the complete met window, placing its integrated emissions at the
+    # midpoint, and convection and the closing chemistry run after the
+    # window's last step, behind the window-end air-mass reset.
+    ops = step_operators(sim.model)
+    timing = _step_timing(sim)
+    substep == 1 && execute_window_start!(sim.plan, ops, timing, sim)
+    execute_step_stages!(sim.plan, ops, timing, sim)
     sim.iteration += 1
     sim.time = _clock_time(sim)
-    if _binary_window_contract(sim) && sim.iteration == sim.current_window_end_iteration
-        _maybe_reset_to_window_endpoint!(sim)
-        if !sim.physics_every_substep
-            _convection_step!(sim.model, sim.window_dt)
-            _chemistry_after_emissions!(sim.model, sim.window_dt; meteo = sim)
-        end
-    end
+    sim.iteration == sim.current_window_end_iteration &&
+        execute_window_end!(sim.plan, ops, timing, sim)
     for callback in values(sim.callbacks)
         callback(sim)
     end

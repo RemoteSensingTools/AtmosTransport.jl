@@ -25,17 +25,25 @@ read.
 
 ## Runtime Composition Today
 
-- `TransportModel.step!` runs:
+- The composition is a `StepPlan` (`../Operators/StepPlan/`).
+  `TransportModel.step!` executes the `step` stages of the substep plan:
+  - first constant-rate decay half-step
   - transport block (advection, with diffusion and surface flux at
     the Strang midpoint)
   - convection block (CMFMC, matrix CMFMC, or TM5 on supported topologies)
-  - chemistry block
+  - closing chemistry block
+- `DrivenSimulation` builds `sim.plan` from `physics_cadence`, the driver's
+  binary window contract and `air_mass_reset_mode`, and executes its four
+  phases: window advance (inside `_maybe_advance_window!`), window start
+  (first step of a window), every step, window end (after the window's last
+  step).
 
 ## File Map
 
 - [`Models.jl`](Models.jl) — submodule assembly
 - [`TransportModel.jl`](TransportModel.jl) — main model struct,
-  constructors, operator installers, runtime block order
+  constructors, operator installers, `step_operators(model)` and `step!`
+  (the substep `StepPlan`)
 - [`Simulation.jl`](Simulation.jl) — simple fixed-step loop for direct
   model runs
 - [`Callbacks.jl`](Callbacks.jl) — schedules (`IterationInterval`,
@@ -43,8 +51,8 @@ read.
   `DrivenSimulation(...; callbacks)`, after Oceananigans
 - [`DrivenSimulation.jl`](DrivenSimulation.jl) — the `DrivenSimulation`
   type, runtime compatibility checks, flux storage scaling
-- [`driven_window_state.jl`](driven_window_state.jl) — state halos, air-mass
-  reset at window ends, window payload copies and prefetch; device window
+- [`driven_window_state.jl`](driven_window_state.jl) — window payload copies
+  and prefetch (the air-mass reset is the plan's `AirMassResetStage`); device window
   loads stage through the driver's raw window buffers or a page-locked host
   window, and `reuse_buffers_of` hands one binary's window storage to the
   next (the cubed-sphere runner passes the previous binary's simulation when
@@ -52,7 +60,8 @@ read.
 - [`driven_physics_refresh.jl`](driven_physics_refresh.jl) — per-window
   physics refresh (diffusion dz and Kz, convection forcing), midpoint forcing
 - [`driven_stepping.jl`](driven_stepping.jl) — window advance, the
-  constructor, `step!`, `run_window!`, `run!`
+  constructor (builds `sim.plan`), `step!` (executes the plan's phases), the
+  air-mass reset targets (`air_mass_reset_target`), `run_window!`, `run!`
 - [`RuntimeRecipeStyles.jl`](RuntimeRecipeStyles.jl) — runtime-style traits
   (`AbstractRuntimeRecipeStyle` + LatLon/ReducedGaussian/CubedSphere) the
   physics-spec `materialize` methods dispatch on
