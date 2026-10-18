@@ -97,7 +97,7 @@ using ..MetDrivers: AbstractMetDriver, TransportBinaryDriver,
                      load_transport_window, driver_grid, air_mass_basis,
                      total_windows, window_dt, binary_capabilities,
                      inspect_binary, steps_per_window,
-                     steps_per_window_schedule, release_payload!,
+                     steps_per_window_schedule, release_payload!, same_window_layout,
                      surface_pressure_basis, supports_moisture,
                      TransportBinaryReader, load_vdiff_qv_window!
 using ..InitialConditionIO: _regridding_method, _surface_flux_kind, surface_flux_species,
@@ -1007,6 +1007,9 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
         end
 
         t0 = time()
+        # The previous binary's simulation: the next one refills its window
+        # buffers when the layouts agree (`reuse_buffers_of`).
+        previous_sim = nothing
         for (driver_idx, path) in enumerate(binary_paths)
             # `path` (NAS) kept for labels/logging; driver opens the staged local
             # copy when staging is enabled (driver_idx==1 already staged above).
@@ -1029,6 +1032,11 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
             # Keep state, flux arrays, and numerical workspaces across files.
             # The new simulation refreshes forcing, diffusion geometry, and caches.
             initialize_air_mass = driver_idx == 1
+            # Hand over the previous binary's window buffers only when they fit;
+            # otherwise drop them first, so the new ones need not coexist.
+            reusable_sim = previous_sim !== nothing &&
+                           same_window_layout(previous_sim.driver, driver) ? previous_sim : nothing
+            previous_sim = nothing
             sim = timed_io_read!(timer,
                 () -> DrivenSimulation(model, driver;
                                         start_window = 1, stop_window = stop_window,
@@ -1044,6 +1052,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                         # replays day-1 fluxes (the +1 Pg/month
                                         # co2_natural surplus).
                                         chemistry = recipe.chemistry,
+                                        reuse_buffers_of = reusable_sim,
                                         start_time = total_hour * 3600.0))
             # `DrivenSimulation` may wrap `model` with a surface-flux operator;
             # keep snapshots and the return value aligned with the stepped model.
@@ -1115,6 +1124,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                      redraw = true)
             end
             close(input_resources)
+            previous_sim = sim
         end
 
         finish_observations!(sampler)

@@ -143,6 +143,16 @@ uses_binary_substep_contract(::Nothing) = false
 """Does this driver provide specific humidity for dry-mass correction?"""
 supports_moisture(::AbstractMetDriver) = false
 
+"""
+    same_window_layout(a, b) -> Bool
+
+Whether the windows of driver `b` have the fields, shapes and element type of
+the windows of driver `a`, so window storage built from `a` can be refilled in
+place from `b` (`load_transport_window!`). The default is `false`; a driver
+type that can tell adds a method.
+"""
+same_window_layout(::AbstractMetDriver, ::AbstractMetDriver) = false
+
 export AbstractMetDriver, AbstractMassFluxMetDriver
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule,
        load_transport_window

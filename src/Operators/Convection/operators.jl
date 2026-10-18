@@ -22,8 +22,8 @@
 #            workspace) where {B <: AbstractMassBasis}
 #
 # mutating `state.tracers_raw` in place and returning `state`. The forcing
-# arrives via `TransportModel.convection_forcing`, populated each substep
-# by `DrivenSimulation._refresh_forcing!`. No `meteo` kwarg — unlike
+# arrives via `TransportModel.convection_forcing`, populated at each window's
+# first substep by `DrivenSimulation._refresh_forcing!`. No `meteo` kwarg — unlike
 # `ImplicitVerticalDiffusion` (which needs time to refresh Kz) or
 # `SurfaceFluxOperator` (which needs time to sample `StepwiseField`
 # emission rates), convection forcing IS the time information; the

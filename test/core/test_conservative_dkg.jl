@@ -25,17 +25,17 @@ end
         field = DkgState.PrecomputedCSDkgField(d)
         ws = DkgDiff.DiffusionWorkspace(m, 1, Nt)
         backend = get_backend(actual[1])
-        factor! = DkgDiff._vertical_diffusion_cs_dkg_factors_kernel!(backend, (32,2))
-        solve! = DkgDiff._vertical_diffusion_cs_mass_dkg_tracers_kernel!(backend, (32,1,2))
+        factor! = DkgDiff._vertical_diffusion_cs_dkg_factors_panels_kernel!(backend, (32,2))
+        solve! = DkgDiff._vertical_diffusion_cs_mass_dkg_tracers_panels_kernel!(backend, (32,1,2))
+        panels = ntuple(p -> DkgState.panel_field(field, p), 6)
+        factor!(ws.factors, m, panels, one(FT), Nz, 1; ndrange=(Nc,Nc,6))
+        synchronize(backend)
+        factors_before = map(copy, ws.factors)
+        solve!(actual, ws.ledger_carry, m, panels, ws.factors, one(FT), Nz, Nt, 1;
+               ndrange=(Nc,Nc,6Nt))
+        synchronize(backend)
         for p in 1:6
-            panel = DkgState.panel_field(field, p)
-            factor!(ws.factors[p], m[p], panel, one(FT), Nz, 1; ndrange=(Nc,Nc))
-            synchronize(backend)
-            factors_before = copy(ws.factors[p])
-            solve!(actual[p], ws.ledger_carry[p], m[p], panel, ws.factors[p], one(FT), Nz, 1;
-                   ndrange=(Nc,Nc,Nt))
-            synchronize(backend)
-            @test isequal(ws.factors[p], factors_before)
+            @test isequal(ws.factors[p], factors_before[p])
             @test actual[p][[1,end],:,:,:] == original[p][[1,end],:,:,:]
             @test actual[p][:,[1,end],:,:] == original[p][:,[1,end],:,:]
             for i in (1,Nc), j in (1,Nc)

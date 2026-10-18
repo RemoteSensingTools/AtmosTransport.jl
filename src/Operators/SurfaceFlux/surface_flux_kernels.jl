@@ -164,28 +164,37 @@ end
 end
 
 """
-    _surface_flux_cs_kernel!(q_raw, rate, comp, dt, tracer_idx, Nz, Hp, deposit)
+    _surface_flux_cs_panels_kernel!(q_raw, rate, comp, dt, tracer_idx, Nz, Hp, deposit)
 
-Cubed-sphere surface-flux kernel for one halo-padded panel, single-tracer
+Cubed-sphere surface-flux kernel for all six halo-padded panels, single-tracer
 `(Nc + 2Hp, Nc + 2Hp, Nz)` or packed `(…, Nz, Nt)` (`tracer_idx` selects the
-slab; ignored for single-tracer panels). `rate`/`comp` are interior `(Nc, Nc)`.
+slab; ignored for single-tracer panels). `q_raw`, `rate` and `comp` are
+six-panel tuples (`rate`/`comp` interior `(Nc, Nc)` panels), `deposit` is
+`SurfaceLayerDeposit()` or a tuple of per-panel `ProfileDeposit`s, and the
+third index selects the panel.
 """
-@kernel function _surface_flux_cs_kernel!(q_raw, @Const(rate), comp, dt, tracer_idx, Nz, Hp, deposit)
-    ii, jj = @index(Global, NTuple)
-    @inbounds _deposit!(q_raw, comp, rate[ii, jj] * dt, ii, jj, Hp, Nz, tracer_idx, deposit)
+@kernel function _surface_flux_cs_panels_kernel!(q_raw, @Const(rate), comp, dt, tracer_idx, Nz,
+                                                 Hp, deposit)
+    ii, jj, p = @index(Global, NTuple)
+    rate_p = select_panel(rate, p)
+    @inbounds _deposit!(select_panel(q_raw, p), select_panel(comp, p), rate_p[ii, jj] * dt,
+                        ii, jj, Hp, Nz, tracer_idx, _panel_deposit(deposit, p))
 end
 
 """
-    _surface_flux_cs_interp_kernel!(q_raw, series, comp, w0, w1, i0, i1, dt, tracer_idx, Nz, Hp, deposit)
+    _surface_flux_cs_interp_panels_kernel!(q_raw, series, comp, w0, w1, i0, i1, dt,
+                                           tracer_idx, Nz, Hp, deposit)
 
 Time-interpolated variant: the increment is `(w0·series[i0] + w1·series[i1])·dt`.
-`series` is one panel of a time-varying source's window buffer, `(Nc, Nc, capacity)`,
-and `i0`, `i1` are the buffer slots holding the two slices.
+`series` holds the six panels of a time-varying source's window buffer, each
+`(Nc, Nc, capacity)`, and `i0`, `i1` are the buffer slots holding the two slices.
 """
-@kernel function _surface_flux_cs_interp_kernel!(q_raw, @Const(series), comp, w0, w1, i0, i1,
-                                                  dt, tracer_idx, Nz, Hp, deposit)
-    ii, jj = @index(Global, NTuple)
-    @inbounds _deposit!(q_raw, comp, (w0 * series[ii, jj, i0] + w1 * series[ii, jj, i1]) * dt,
-                        ii, jj, Hp, Nz, tracer_idx, deposit)
+@kernel function _surface_flux_cs_interp_panels_kernel!(q_raw, @Const(series), comp, w0, w1,
+                                                        i0, i1, dt, tracer_idx, Nz, Hp, deposit)
+    ii, jj, p = @index(Global, NTuple)
+    series_p = select_panel(series, p)
+    @inbounds _deposit!(select_panel(q_raw, p), select_panel(comp, p),
+                        (w0 * series_p[ii, jj, i0] + w1 * series_p[ii, jj, i1]) * dt,
+                        ii, jj, Hp, Nz, tracer_idx, _panel_deposit(deposit, p))
 end
 

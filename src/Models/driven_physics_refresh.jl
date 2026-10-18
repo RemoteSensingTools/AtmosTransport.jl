@@ -270,6 +270,16 @@ function _install_convection_forcing(::AbstractConvection, model::TransportModel
     return with_convection_forcing(model, forcing)
 end
 
+# A simulation that refills the previous simulation's window storage
+# (`reuse_buffers_of`) also refills that model's convection forcing buffers.
+function _reinstall_convection_forcing(model::TransportModel, driver::AbstractMetDriver,
+                                       window::TransportWindow)
+    _validate_convection_runtime(model, driver, window)
+    _refresh_convection_forcing!(model.convection, model, window)
+    invalidate_cmfmc_cache!(model.workspace.convection_ws)
+    return model
+end
+
 @inline _refresh_convection_forcing!(::NoConvection, ::TransportModel,
                                      ::TransportWindow) = nothing
 
@@ -279,18 +289,24 @@ function _refresh_convection_forcing!(::AbstractConvection, model::TransportMode
     return nothing
 end
 
+# Forcing of the step `substep` of the current window. Interpolated fluxes,
+# the expected air mass and humidity change every step. Window-constant fluxes
+# and the convection forcing change only with the window: the operators read
+# the model's copies and never write them, so they are copied (and the fluxes
+# scaled) at the window's first step only.
 function _refresh_forcing!(sim::DrivenSimulation, substep::Int)
     λ = _substep_fraction(substep, sim.steps_per_window, typeof(sim.Δt), sim.use_midpoint_forcing)
     if sim.interpolate_fluxes_within_window
         interpolate_fluxes!(sim.model.fluxes, sim.window, λ)
-    else
+        _apply_runtime_flux_storage_scale!(sim)
+    elseif substep == 1
         copy_fluxes!(sim.model.fluxes, sim.window.fluxes)
+        _apply_runtime_flux_storage_scale!(sim)
     end
-    _apply_runtime_flux_storage_scale!(sim)
     expected_air_mass!(sim.expected_air_mass, sim.window, λ)
     if sim.qv_buffer !== nothing
         interpolate_qv!(sim.qv_buffer, sim.window, λ)
     end
-    _refresh_convection_forcing!(sim.model.convection, sim.model, sim.window)
+    substep == 1 && _refresh_convection_forcing!(sim.model.convection, sim.model, sim.window)
     return λ
 end

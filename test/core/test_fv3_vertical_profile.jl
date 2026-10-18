@@ -13,7 +13,7 @@ using .AtmosTransport.Operators.Advection: CSAdvectionWorkspace, strang_split_cs
     strang_split_cs_mt!, needs_column_scratch, _sweep_z_panel!,
     _sweep_z_panel_mt_pingpong!, _sweep_z_panels_mt_pingpong!, _sweep_z_panel_fv3!,
     _fv3_unlimited_edges!, _fv3_layer_profile, _fv3_interface_flux, FV3Column,
-    _require_structured_vertical
+    _require_structured_vertical, _fv3_sweep_panel_group
 using .AtmosTransport.State: CubedSphereState, DryBasis
 
 include(joinpath(@__DIR__, "..", "helpers", "fv3_scalar_profile_reference.jl"))
@@ -256,6 +256,21 @@ test_profiles(Nz) = (
             q2 = [rm_mt[p][i, j, k, 2] / m_mt[p][i, j, k] for p in 1:6, i in I, j in I, k in 1:Nz]
             @test maximum(abs.(q2 .- 411)) <= 16eps(FT(411))
 
+            # Panel groups of any size give the per-panel result bit for bit:
+            # the scratch slots change, the arithmetic of each column does not.
+            for group in (1, 2, 4)
+                wsg = CSAdvectionWorkspace(mesh, m[1]; n_tracers = Nt, column_scratch = true,
+                                           column_scratch_panels = group)
+                @test size(wsg.column_scratch, 4) == 3 * Nt * group
+                rm_g, m_g = map(similar, rm_4d), map(similar, m)
+                _sweep_z_panels_mt_pingpong!(rm_g, m_g, rm_4d, m, cm, mesh, FV3_PPM, wsg)
+                @test all(p -> view(rm_g[p], I, I, :, :) == view(rm_out[p], I, I, :, :) &&
+                               view(m_g[p], I, I, :) == view(m_out[p], I, I, :), 1:6)
+            end
+            @test_throws ArgumentError CSAdvectionWorkspace(mesh, m[1]; n_tracers = Nt,
+                                                            column_scratch = true,
+                                                            column_scratch_panels = 7)
+
             # The single-tracer path runs the same kernel.
             ws1 = CSAdvectionWorkspace(mesh, m[1]; column_scratch = true)
             m_1, rm_1 = map(copy, m), map(copy, rm)
@@ -285,7 +300,9 @@ test_profiles(Nz) = (
         end
         model = TransportModel(state, fluxes, grid, FV3_PPM)
         ws = model.workspace.advection_ws
-        @test size(ws.column_scratch) == (Nc, Nc, Nz + 1, 3)
+        # One tracer on 4 × 4 panels: all six panels share one sweep launch.
+        @test _fv3_sweep_panel_group(Nc, 1) == 6
+        @test size(ws.column_scratch) == (Nc, Nc, Nz + 1, 3 * 6)
         mass0 = sum(p -> sum(view(state.tracers.CO2[p], Hp+1:Hp+Nc, Hp+1:Hp+Nc, :)), 1:6)
         q_before = state.tracers.CO2[1][Hp+1, Hp+1, :] ./ state.air_mass[1][Hp+1, Hp+1, :]
         apply!(state, fluxes, grid, FV3_PPM, FT(1); workspace = ws)

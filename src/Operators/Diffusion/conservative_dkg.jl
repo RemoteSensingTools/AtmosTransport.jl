@@ -155,40 +155,54 @@ end
     return nothing
 end
 
-# Single-tracer panel: `slot` is the tracer's carry slot.
-@kernel function _vertical_diffusion_cs_mass_dkg_kernel!(rm, carry, @Const(air_mass),
-                                                        dkg_field, factors,
-                                                        dt, Nz::Int, Hp::Int, slot::Int)
-    ii, jj = @index(Global, NTuple)
-    _dkg_factor_column!(factors, air_mass, dkg_field, dt, ii, jj, Nz, Hp)
-    _dkg_diffuse_mass_column!(rm, carry, air_mass, dkg_field, factors, dt, ii, jj, Nz, Hp, 1, slot)
-end
-
-@kernel function _vertical_diffusion_cs_mass_dkg_packed_kernel!(rm, carry, @Const(air_mass),
-                                                               dkg_field, factors,
-                                                               dt, Nz::Int, Nt::Int, Hp::Int)
-    ii, jj = @index(Global, NTuple)
-    _dkg_factor_column!(factors, air_mass, dkg_field, dt, ii, jj, Nz, Hp)
-    for t in 1:Nt
-        _dkg_diffuse_mass_column!(rm, carry, air_mass, dkg_field, factors, dt, ii, jj, Nz, Hp, t, t)
-    end
-end
-
 # Backend extensions may separate the tracer solves from factor construction.
 # Every tracer still uses the same column arithmetic and read-only factors.
 @inline _cs_dkg_mass_workgroupsize(backend, ::Type) = (8, 8)
 @inline _cs_dkg_tracer_workgroupsize(backend, ::Type) = nothing
 
-@kernel function _vertical_diffusion_cs_dkg_factors_kernel!(factors, @Const(air_mass),
-                                                           dkg_field, dt,
-                                                           Nz::Int, Hp::Int)
-    ii, jj = @index(Global, NTuple)
-    _dkg_factor_column!(factors, air_mass, dkg_field, dt, ii, jj, Nz, Hp)
+# The kernels launch over all six panels. Their arguments are six-panel tuples
+# (`carry` a tuple of panel carries or of `nothing`s); the third index selects
+# the panel, and for the split tracer solve the panel and tracer
+# (`slot = (p - 1) Nt + t`). `select_panel` picks the panel arrays with
+# constant tuple indices. A single-tracer panel uses carry slot `slot`.
+@kernel function _vertical_diffusion_cs_mass_dkg_panels_kernel!(rm, carry, @Const(air_mass),
+                                                               dkg_field, factors,
+                                                               dt, Nz::Int, Hp::Int, slot::Int)
+    ii, jj, p = @index(Global, NTuple)
+    m_p, dkg_p, factors_p = select_panel(air_mass, p), select_panel(dkg_field, p), select_panel(factors, p)
+    _dkg_factor_column!(factors_p, m_p, dkg_p, dt, ii, jj, Nz, Hp)
+    _dkg_diffuse_mass_column!(select_panel(rm, p), select_panel(carry, p), m_p, dkg_p, factors_p,
+                              dt, ii, jj, Nz, Hp, 1, slot)
 end
 
-@kernel function _vertical_diffusion_cs_mass_dkg_tracers_kernel!(rm, carry, @Const(air_mass),
-                                                               dkg_field, @Const(factors),
-                                                               dt, Nz::Int, Hp::Int)
-    ii, jj, t = @index(Global, NTuple)
-    _dkg_diffuse_mass_column!(rm, carry, air_mass, dkg_field, factors, dt, ii, jj, Nz, Hp, t, t)
+@kernel function _vertical_diffusion_cs_mass_dkg_packed_panels_kernel!(rm, carry, @Const(air_mass),
+                                                                      dkg_field, factors,
+                                                                      dt, Nz::Int, Nt::Int, Hp::Int)
+    ii, jj, p = @index(Global, NTuple)
+    rm_p, carry_p = select_panel(rm, p), select_panel(carry, p)
+    m_p, dkg_p, factors_p = select_panel(air_mass, p), select_panel(dkg_field, p), select_panel(factors, p)
+    _dkg_factor_column!(factors_p, m_p, dkg_p, dt, ii, jj, Nz, Hp)
+    for t in 1:Nt
+        _dkg_diffuse_mass_column!(rm_p, carry_p, m_p, dkg_p, factors_p, dt, ii, jj, Nz, Hp, t, t)
+    end
+end
+
+@kernel function _vertical_diffusion_cs_dkg_factors_panels_kernel!(factors, @Const(air_mass),
+                                                                  dkg_field, dt,
+                                                                  Nz::Int, Hp::Int)
+    ii, jj, p = @index(Global, NTuple)
+    _dkg_factor_column!(select_panel(factors, p), select_panel(air_mass, p),
+                        select_panel(dkg_field, p), dt, ii, jj, Nz, Hp)
+end
+
+@kernel function _vertical_diffusion_cs_mass_dkg_tracers_panels_kernel!(rm, carry, @Const(air_mass),
+                                                                       dkg_field, @Const(factors),
+                                                                       dt, Nz::Int, Nt::Int, Hp::Int)
+    ii, jj, slot = @index(Global, NTuple)
+    offset = (slot - 1) ÷ Nt
+    p = offset + 1
+    t = slot - offset * Nt
+    _dkg_diffuse_mass_column!(select_panel(rm, p), select_panel(carry, p), select_panel(air_mass, p),
+                              select_panel(dkg_field, p), select_panel(factors, p),
+                              dt, ii, jj, Nz, Hp, t, t)
 end

@@ -10,6 +10,7 @@ runtime validation, so grid metadata cannot diverge from model storage.
 """
 module Architectures
 
+using Adapt
 using DocStringExtensions
 using KernelAbstractions: KernelAbstractions as KA, @kernel, @index
 
@@ -323,6 +324,47 @@ function reclaim_backend_pool!(reference_array)
 end
 
 _reclaim_backend_pool!(::Any) = nothing
+
+"""
+    pin_host_memory!(storage, reference_array) -> storage
+
+Page-lock the host arrays in `storage` (a transport window, or any nest of
+tuples, named tuples and structs that `Adapt` walks) for copies to the device
+of `reference_array` (or of the first panel of a tuple), so those copies run
+as direct DMA transfers instead of being staged through a driver buffer. Such
+copies are asynchronous: wait with `synchronize_storage!` before the host
+arrays are rewritten or the device arrays are used on another task. A no-op
+for CPU references and backends without pinned host memory. The arrays stay
+pinned until they are garbage collected.
+"""
+function pin_host_memory!(storage, reference_array)
+    ref = reference_array isa Tuple ? reference_array[1] : reference_array
+    Base.invokelatest(_pin_host_memory!, storage, ref)
+    return storage
+end
+
+_pin_host_memory!(_storage, ::Any) = nothing
+
+# Calls `f` on every host `Array` that `Adapt` reaches in `storage`; the
+# containers Adapt rebuilds on the way are discarded.
+struct _HostArrayVisitor{F}
+    f::F
+end
+Adapt.adapt_storage(visitor::_HostArrayVisitor, a::Array) = (visitor.f(a); a)
+foreach_host_array(f, storage) = (Adapt.adapt(_HostArrayVisitor(f), storage); nothing)
+
+"""
+    synchronize_storage!(reference_array)
+
+Wait for the work queued on the current task's queue of the device that holds
+`reference_array` (or the first panel of a tuple): kernels and copies,
+including asynchronous copies from pinned host memory. A no-op on the CPU.
+"""
+function synchronize_storage!(reference_array)
+    ref = reference_array isa Tuple ? reference_array[1] : reference_array
+    KA.synchronize(KA.get_backend(ref))
+    return nothing
+end
 
 _is_architecture_array(::CPU, backing) = backing isa Array
 

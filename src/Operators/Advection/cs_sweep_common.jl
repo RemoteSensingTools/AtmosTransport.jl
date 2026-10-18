@@ -217,8 +217,9 @@ end
         launch!()
         # Intra-stream workspace dependency only: panel p's sweep/copy-back and
         # panel p+1's sweep share `rm_4d_A`/`m_A`, but they are issued on one
-        # ordered GPU stream, so no host barrier is needed on GPU — the periodic
-        # sync lands at the `fill_panel_halos!` boundary. The per-kernel host
+        # ordered GPU stream, so no host barrier is needed on GPU — the packed
+        # palindrome synchronizes once at its end (`strang_split_cs_mt!`), and
+        # unpacked callers at their `fill_panel_halos!` (sync = true). The per-kernel host
         # `synchronize` here was the dominant launch-bound bubble (GPU profiling
         # 2026-06-13: ~3 host barriers per panel per sweep). On the CPU backend
         # kernels already run synchronously and this call is a no-op; it is kept

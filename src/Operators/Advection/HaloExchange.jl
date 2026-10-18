@@ -222,7 +222,7 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    fill_panel_halos!(panels::NTuple{6}, mesh::CubedSphereMesh; dir=0)
+    fill_panel_halos!(panels::NTuple{6}, mesh::CubedSphereMesh; dir=0, sync=true)
 
 Fill halo regions of a 6-panel cubed-sphere field by copying interior data
 from neighboring panels with correct edge-to-edge orientation mapping.
@@ -236,19 +236,20 @@ If `dir` is 1 or 2, corner fill is performed for the given sweep direction
 On a GPU with the default fusion policy (CUDA) this is one launch for all panel
 edges, a second for the corners when `dir` is 1 or 2, and one synchronization;
 on Metal the 24 edges and 6 corner blocks are launched one by one with their
-panel arrays bound, then synchronized once.
+panel arrays bound, then synchronized once. With `sync = false` a device fill
+is only queued (later work on the same queue sees its result).
 """
 function fill_panel_halos!(panels::NTuple{6, A},
                            mesh::CubedSphereMesh;
-                           dir::Int = 0) where {A <: AbstractArray}
+                           dir::Int = 0, sync::Bool = true) where {A <: AbstractArray}
     ctx = _halo_context(panels, mesh)
     mesh.Hp == 0 && return nothing
     edges = _edge_halo_fills(mesh.connectivity)
     backend = get_backend(panels[1])
     if dir in (1, 2)
-        launch!(Sequence(edges, _corner_halo_fills(dir)), ctx, backend)
+        launch!(Sequence(edges, _corner_halo_fills(dir)), ctx, backend; sync)
     else
-        launch!(edges, ctx, backend)
+        launch!(edges, ctx, backend; sync)
     end
     return nothing
 end
