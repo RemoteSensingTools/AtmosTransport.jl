@@ -541,10 +541,16 @@ end
         cosampled = quiet(() -> _run_config_text(_hydrostatic_config(path;
             observations_extra = "flagged_records = \"cosample\"\n")))
         @test [o.assimilate for o in cosampled.last.observations] == [true, true, false]
-        # The co-sample changes nothing the optimizer sees (to the run-to-run
-        # rounding of the threaded adjoint; bit for bit in test_cs_4dvar_oco2_mip.jl).
-        @test cosampled.cost_history ≈ base.cost_history rtol = 1e-12
-        @test cosampled.last.gradients[1][2] ≈ base.last.gradients[1][2] rtol = 1e-10
+        # The co-sample changes nothing the optimizer sees: bit for bit
+        # single-threaded; with threads the atomics of the halo and Lin-Rood
+        # adjoint kernels make the gradient reproducible to rounding only.
+        if Threads.nthreads() == 1
+            @test cosampled.cost_history == base.cost_history
+            @test cosampled.last.gradients[1][2] == base.last.gradients[1][2]
+        else
+            @test cosampled.cost_history ≈ base.cost_history rtol = 1e-13
+            @test cosampled.last.gradients[1][2] ≈ base.last.gradients[1][2] rtol = 1e-13
+        end
         averaged = quiet(() -> _run_config_text(_hydrostatic_config(path;
             observations_extra = "[observations.cell_averaging]\nmode = \"average\"\ntime_tolerance_s = 60.0\n")))
         @test [o.assimilate for o in averaged.last.observations] == [false, false, true]

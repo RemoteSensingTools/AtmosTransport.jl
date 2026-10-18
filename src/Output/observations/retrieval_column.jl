@@ -17,9 +17,9 @@
 #          interfaces; P = R, the mass-conserving rebin by pressure overlap
 #          (TM5's `inv_rebin`, averaging_kernels.F90:60-146);
 #        * `HatLevelProjection`: values sit on N levels and the profile is
-#          linear in pressure between them (OCO-2/OCO-3); P projects the model
-#          profile onto the linear hat basis functions of the levels, each
-#          model layer weighted by its air mass under the hat;
+#          linear in pressure between them (OCO-2/OCO-3); P is the L2
+#          (Galerkin) projection of the model profile onto the levels' hat
+#          functions in dry air, P = M⁻¹ B with the tridiagonal hat mass matrix;
 #   3. X = Σᵢ hᵢ aᵢ (P x)ᵢ + Σᵢ hᵢ (1 − aᵢ) x_a,ᵢ.
 #
 # X is linear in the model profile x: X = Σₖ Hₖ xₖ + c with
@@ -105,23 +105,27 @@ between them: the OCO-2 and OCO-3 retrievals (20 levels, "defined on layer
 boundaries", the first at ``σ = 10^{-4}``), whose pressure weights are the
 integrals of the levels' hat functions (the trapezoid rule with half-thickness
 end levels, with a dry-air correction). The model column, stretched onto
-the retrieval levels (top level to bottom level), is projected onto the hat
-basis functions ``φ_j`` of the levels (``φ_j(p_j) = 1``, linear to 0 at the
-neighbouring levels):
+the retrieval levels (top level to bottom level), is projected onto the
+retrieval's basis, the hat functions ``φ_j`` of the levels (``φ_j(p_j) = 1``,
+linear to 0 at the neighbouring levels): the level values ``c`` are the
+L2 (Galerkin) projection in dry air,
 
 ```math
-c_j = \\frac{\\int φ_j(p)\\, x(p)\\, \\mathrm{d}p_\\mathrm{dry}}{\\int φ_j(p)\\, \\mathrm{d}p_\\mathrm{dry}}
-    = \\sum_k P_{jk}\\, x_k, \\qquad
-P_{jk} = \\frac{m_k F_{jk}}{\\sum_{k'} m_{k'} F_{jk'}}, \\qquad
-F_{jk} = \\frac{1}{Δs_k} \\int_{s_{k-1/2}}^{s_{k+1/2}} φ_j(p)\\, \\mathrm{d}p,
+\\sum_i M_{ji}\\, c_i = b_j, \\qquad
+M_{ji} = \\int φ_j φ_i\\, \\mathrm{d}p_\\mathrm{dry}, \\qquad
+b_j = \\int φ_j\\, x\\, \\mathrm{d}p_\\mathrm{dry} = \\sum_k B_{jk}\\, x_k, \\qquad
+B_{jk} = \\frac{m_k}{Δs_k} \\int_{s_{k-1/2}}^{s_{k+1/2}} φ_j(p)\\, \\mathrm{d}p,
 ```
 
-each stretched model layer ``k`` (air mass ``m_k``, the run's dry air mass by
-default, spread evenly over its pressure thickness ``Δs_k``) weighted by its
-air mass under the hat. The hats sum to 1 over the stretched column, so with
-the hat integrals as weights, ``h_j = \\sum_k m_k F_{jk} / \\sum_k m_k``, the
-weighted sum ``\\sum_j h_j c_j`` is the model's air-mass-weighted column mean:
-the projection conserves the column. Stored as
+so ``P = M^{-1} B``, with each stretched model layer ``k`` (air mass
+``m_k``, the run's dry air mass by default) spread evenly over its pressure
+thickness ``Δs_k``; ``M`` is tridiagonal. The hats sum to 1 over the
+stretched column, so the rows of ``P`` sum to 1 and, with the hat integrals
+``h_j = \\sum_k B_{jk} / \\sum_k m_k`` as weights, ``\\sum_j h_j c_j`` is the
+model's air-mass-weighted column mean: the projection conserves the column.
+It reproduces every profile the retrieval can represent (piecewise linear on
+the levels), to the discretization of the model's layer means. Entries of
+``P`` can be negative near sharp structure. Stored as
 `retrieval_mapping = "hat_levels"`.
 """
 struct HatLevelProjection <: AbstractRetrievalMapping end
@@ -386,35 +390,45 @@ function _check_retrieval_interfaces(r::AbstractVector)
     return nothing
 end
 
-# The hat projection of the stretched model column onto retrieval levels:
-# `f(j, k, F)` for every level `j` (surface first) and stretched model layer
-# `k` (top first) whose hat overlaps it, with `F` = ∫ φ_j dp over the layer /
-# its thickness, the layer mean of the hat. Between neighbouring levels j and
-# j + 1 (pressures r_j > r_{j+1}) the hats are φ_j = (p − r_{j+1})/(r_j − r_{j+1})
-# and φ_{j+1} = 1 − φ_j. The outermost levels are those of the stretched model
+# The pieces of the hat projection on the stretched model column `s` (top
+# first), the model air masses `air` and the retrieval levels `r` (surface
+# first): `B[j, k]` = ∫ φ_j dp_dry over stretched layer k, and the tridiagonal
+# mass matrix `M[j, i]` = ∫ φ_j φ_i dp_dry, the air of each layer spread evenly
+# over its pressure thickness. Between neighbouring levels j and j + 1
+# (pressures r_j > r_{j+1}) the hats are φ_j = (p − r_{j+1})/(r_j − r_{j+1}) and
+# φ_{j+1} = 1 − φ_j. The outermost levels are those of the stretched model
 # column, as the outer interfaces of the rebin (they equal the retrieval
 # surface and top to rounding), so the hats sum to 1 over every stretched
-# layer. The integral of a linear function over [u, v] is (v − u) times its
-# value at the midpoint.
-function _foreach_hat_overlap(f, s::AbstractVector{Float64}, r::AbstractVector)
+# layer. On each piece [u, v] of a layer between two levels the hats are linear:
+# the midpoint rule is exact for them and Simpson's rule for their products.
+function _hat_projection_pieces(s::AbstractVector{Float64}, air::AbstractVector, r::AbstractVector)
     nz = length(s) - 1
     n = length(r)
+    B = zeros(n, nz)
+    diagonal = zeros(n)
+    offdiagonal = zeros(n - 1)
     @inbounds for k in 1:nz
         s_lo, s_hi = s[k], s[k + 1]
-        thickness = s_hi - s_lo
+        density = Float64(air[k]) / (s_hi - s_lo)
         for j in 1:(n - 1)
             hi = j == 1 ? s[nz + 1] : Float64(r[j])
             lo = j == n - 1 ? s[1] : Float64(r[j + 1])
             (s_lo >= hi || lo >= s_hi) && continue
             u = max(s_lo, lo)
             v = min(s_hi, hi)
-            share = (v - u) / thickness
-            lower = ((u + v) / 2 - lo) / (hi - lo)       # φ_j at the midpoint of [u, v]
-            f(j, k, share * lower)
-            f(j + 1, k, share * (1 - lower))
+            mass = density * (v - u)
+            φu, φv = (u - lo) / (hi - lo), (v - lo) / (hi - lo)       # φ_j at u and v
+            φm = (φu + φv) / 2
+            B[j, k] += mass * φm
+            B[j + 1, k] += mass * (1 - φm)
+            diagonal[j] += mass * (φu^2 + 4φm^2 + φv^2) / 6
+            diagonal[j + 1] += mass * ((1 - φu)^2 + 4(1 - φm)^2 + (1 - φv)^2) / 6
+            offdiagonal[j] += mass * (φu * (1 - φu) + 4φm * (1 - φm) + φv * (1 - φv)) / 6
         end
     end
-    return nothing
+    all(>(0), diagonal) || throw(ArgumentError(
+        "a retrieval level has no model air under its hat (hat mass-matrix diagonal: $(diagonal))"))
+    return B, LinearAlgebra.SymTridiagonal(diagonal, offdiagonal)
 end
 
 # The entries `f(i, k, P)` of the projection matrix of a mapping, on the
@@ -425,15 +439,10 @@ _foreach_projection_entry(f, ::LayerRebin, s::AbstractVector{Float64}, air, r::A
 
 function _foreach_projection_entry(f, ::HatLevelProjection, s::AbstractVector{Float64}, air::AbstractVector,
                                    r::AbstractVector)
-    # The air mass under each hat, then each layer's share of it.
-    under = zeros(length(r))
-    _foreach_hat_overlap(s, r) do j, k, F
-        @inbounds under[j] += Float64(air[k]) * F
-    end
-    all(>(0), under) || throw(ArgumentError(
-        "a retrieval level has no model air under its hat (air mass under the hats: $(under))"))
-    _foreach_hat_overlap(s, r) do j, k, F
-        @inbounds f(j, k, Float64(air[k]) * F / under[j])
+    B, M = _hat_projection_pieces(s, air, r)
+    P = M \ B                                   # the L2 projection, P = M⁻¹ B
+    @inbounds for k in axes(P, 2), j in axes(P, 1)
+        f(j, k, P[j, k])
     end
     return nothing
 end
@@ -592,7 +601,7 @@ The projection matrix ``P`` (`N × Nz`, retrieval values surface first, model
 layers top first) of the column's mapping on the model column (interface
 pressures `p_half`, Pa, top first; air masses `air`, kg per cell, read by the
 hat projection only) stretched onto the retrieval column: the rebin ``R``
-for [`LayerRebin`](@ref), the air-mass-weighted hat projection for
+for [`LayerRebin`](@ref), the dry-air L2 projection onto the levels' hats for
 [`HatLevelProjection`](@ref). ``(P x)_i`` is the model profile at retrieval
 value ``i`` and every row sums to 1.
 """

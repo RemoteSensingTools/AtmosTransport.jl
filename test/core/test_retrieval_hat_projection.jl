@@ -9,20 +9,24 @@
 # profile linear in pressure between them; the pressure weights are the
 # levels' hat integrals (trapezoid rule, half-thickness end levels, with a
 # dry-air correction). The model column, stretched onto the retrieval levels,
-# is projected onto the hat functions φ_j, each model layer weighted by its
-# air mass under the hat:
+# is projected onto the hat functions φ_j in dry air (the L2, Galerkin,
+# projection):
 #
-#     c_j = ∫ φ_j x dp_dry / ∫ φ_j dp_dry,   X = Σ_j h_j a_j c_j + Σ_j h_j (1 − a_j) x_a,j.
+#     M c = b,  M_ji = ∫ φ_j φ_i dp_dry,  b_j = ∫ φ_j x dp_dry,
+#     X = Σ_j h_j a_j c_j + Σ_j h_j (1 − a_j) x_a,j.
 #
 # Checked here:
 #   * the projection matrix against an independent construction (exact
-#     trapezoid integration of the hats over every stretched layer);
+#     trapezoid and Simpson integration of the hats and their products over
+#     every stretched layer);
 #   * rows sum to 1; column conservation: Σ_j h_j c_j is the model's
 #     air-mass-weighted column mean with h the hat integrals;
-#   * reproduction: a constant profile at every level, a profile linear in
-#     pressure at every interior level of a symmetric grid; at the end levels
-#     and at kinks c_j is the hat mean of the profile;
-#   * with the file's pressure weights, c = prior gives xco2_apriori;
+#   * reproduction: a constant profile exactly, and a profile piecewise linear
+#     on the levels (the retrieval's own representation) at every level, ends
+#     and kinks included, to the second-order discretization of the model's
+#     layer means;
+#   * with the file's pressure weights, c = prior gives xco2_apriori, and a
+#     model profile equal to the retrieval's prior gives the prior column;
 #   * TM5 mode against a transcription of TM5-4DVar's Observations.py
 #     (7016-7052) and Satellite.py (707-717);
 #   * schema v2 round trip of level records (retrieval_mapping);
@@ -67,64 +71,77 @@ end
         column = _level_column(m.p_half[end] * (1 + 0.1 * (rand(rng) - 0.5)))
         P = O.retrieval_projection_matrix(m.p_half, m.air, column)
         ref = hat_projection_reference(m.p_half, m.air, column.pressure_pa)
-        @test P ≈ ref.P atol = 1e-14
+        @test P ≈ ref.P atol = 1e-12                                  # a tridiagonal solve: rounding × condition
         @test all(r -> isapprox(r, 1; atol = 1e-14), sum(P; dims = 2))
         # Column conservation: with the hat integrals of the model's air as
         # weights, the projected profile has the model's column mean.
         @test dot(ref.hat, P * m.x) ≈ dot(m.air, m.x) / sum(m.air) rtol = 1e-14
         # The weights of the column are (h a)ᵀ P.
         H = O.retrieval_column_weights!(zeros(length(m.x)), zeros(length(m.p_half)), m.p_half, m.air, column)
-        @test H ≈ vec((column.pressure_weight .* column.averaging_kernel)' * ref.P) atol = 1e-15
+        @test H ≈ vec((column.pressure_weight .* column.averaging_kernel)' * ref.P) atol = 1e-14
         @test O.retrieval_column_value(m.p_half, m.air, column, m.x) ≈
               dot(H, m.x) + O.retrieval_prior_offset(column) rtol = 1e-15
     end
 end
 
-@testset "hat projection: what it reproduces" begin
+@testset "hat projection: profiles on the retrieval's basis are reproduced at every level" begin
     ps = 98000.0
     levels = _oco2_levels(ps)
     column = _level_column(ps)
-    # Model layers: every interval between levels split into 32 equal layers,
-    # no humidity, the model column spanning exactly the retrieval levels (the
-    # stretch is the identity).
-    p_half = sort!(unique!(vcat([collect(range(levels[j + 1], levels[j]; length = 33)) for j in 1:19]...)))
-    air = diff(p_half)
-    nz = length(air)
-    P = O.retrieval_projection_matrix(p_half, air, column)
-    mid = (p_half[1:nz] .+ p_half[2:end]) ./ 2
-    # A constant profile is reproduced at every level.
-    @test P * fill(4.07e-4, nz) ≈ fill(4.07e-4, 20) rtol = 1e-14
-    # A profile linear in pressure (layer means = midpoint values) is
-    # reproduced at every interior level, whose hat is symmetric and evenly
-    # layered; the end levels take the mean over their half hat, the value a
-    # third of the way in (exact for the continuous profile, to O(δ²) for its
-    # layer means).
-    slope = 2e-10
-    x = 3.9e-4 .+ slope .* mid
-    c = P * x
     Δ = ps / 19
-    @test c[3:18] ≈ 3.9e-4 .+ slope .* levels[3:18] rtol = 1e-13
-    # (32 layers per interval: the layer means differ from the profile by
-    # O(δ²), Δ·slope/6144 at the end level.)
-    @test abs(c[1] - (3.9e-4 + slope * (levels[1] - Δ / 3))) < Δ * slope / 3000
-    @test abs(c[1] - (3.9e-4 + slope * levels[1])) > Δ * slope / 4      # not the level value
-    # A profile piecewise linear on the levels (kinks at every level): at a
-    # kink the hat mean differs from the level value by (s₊ − s₋)Δ/6, the
-    # mass-lumped projection that D30 specifies; the column is conserved all the
-    # same.
+    # A profile piecewise linear on the levels (a kink at every level), sampled
+    # as the layer means of a model grid that splits every interval between
+    # levels into N equal layers (no humidity; the model column spans exactly
+    # the retrieval levels, so the stretch is the identity).
     v = 4.0e-4 .+ 1e-6 .* sin.(1:20)                                  # level values, surface first
+    slopes = [(v[j + 1] - v[j]) / (levels[j + 1] - levels[j]) for j in 1:19]
     interp(p) = (j = clamp(searchsortedlast(-levels, -p), 1, 19);
                  v[j] + (v[j + 1] - v[j]) * (p - levels[j]) / (levels[j + 1] - levels[j]))
-    fine(k) = (q = range(p_half[k], p_half[k + 1]; length = 401); sum(interp.(q[1:(end - 1)] .+ step(q) / 2)) / 400)
-    xp = [fine(k) for k in 1:nz]
-    cp = P * xp
-    lumped = [j == 1 ? (2v[1] + v[2]) / 3 : j == 20 ? (2v[20] + v[19]) / 3 :
-              (v[j + 1] * (levels[j] - levels[j + 1]) + v[j - 1] * (levels[j - 1] - levels[j]) +
-               2v[j] * (levels[j - 1] - levels[j + 1])) / (3 * (levels[j - 1] - levels[j + 1])) for j in 1:20]
-    @test maximum(abs.(cp .- lumped)) < 1e-9                         # O(δ²) of the layer means
-    @test maximum(abs.(cp .- v)) > 5e-8                              # not the level values at kinks
-    hat = hat_projection_reference(p_half, air, levels).hat
-    @test dot(hat, cp) ≈ dot(air, xp) / sum(air) rtol = 1e-14
+    errors = map((8, 32)) do N
+        p_half = sort!(unique!(vcat([collect(range(levels[j + 1], levels[j]; length = N + 1)) for j in 1:19]...)))
+        air = diff(p_half)
+        nz = length(air)
+        P = O.retrieval_projection_matrix(p_half, air, column)
+        # The layer mean of a linear piece is its midpoint value.
+        x = [interp((p_half[k] + p_half[k + 1]) / 2) for k in 1:nz]
+        c = P * x
+        # A constant profile is reproduced exactly at every level.
+        @test P * fill(4.07e-4, nz) ≈ fill(4.07e-4, 20) rtol = 1e-14
+        # The piecewise-linear profile is reproduced at every level, the end
+        # levels and the kinks included, to the discretization of the layer
+        # means: ∫φ_j x over a layer of thickness δ with x its mean differs by
+        # δ³ φ'_j v'/12, which gives |c − v| ≲ Δ max|v'| / N² (measured: 0.21 of it).
+        @test maximum(abs.(c .- v)) <= Δ * maximum(abs.(slopes)) / N^2
+        # The column is conserved, with the hat integrals of the model's air.
+        hat = hat_projection_reference(p_half, air, levels).hat
+        @test dot(hat, c) ≈ dot(air, x) / sum(air) rtol = 1e-14
+        maximum(abs.(c .- v))
+    end
+    @test errors[1] / errors[2] ≈ 16 rtol = 0.05                       # second order in the layer thickness
+    # A profile linear in pressure is reproduced exactly at every level (its
+    # layer means integrate exactly against the hats where the layering is
+    # symmetric, and the end levels are exact too: the projection reproduces
+    # the basis).
+    p_half = sort!(unique!(vcat([collect(range(levels[j + 1], levels[j]; length = 33)) for j in 1:19]...)))
+    nz = length(p_half) - 1
+    x = 3.9e-4 .+ 2e-10 .* (p_half[1:nz] .+ p_half[2:end]) ./ 2
+    c = O.retrieval_projection_matrix(p_half, diff(p_half), column) * x
+    @test maximum(abs.(c .- (3.9e-4 .+ 2e-10 .* levels))) <= Δ * 2e-10 / 32^2
+end
+
+# The column X of a model profile equal to the retrieval's own prior (piecewise
+# linear on the levels), sampled as the layer means of a model grid with N
+# layers per interval between levels, minus the prior column Σ h x_a (ppm).
+function _prior_profile_departure(column; N = 40)
+    levels = column.pressure_pa
+    n = length(levels)
+    v = column.prior_profile
+    p_half = sort!(unique!(vcat([collect(range(levels[j + 1], levels[j]; length = N + 1)) for j in 1:(n - 1)]...)))
+    interp(p) = (j = clamp(searchsortedlast(-levels, -p), 1, n - 1);
+                 v[j] + (v[j + 1] - v[j]) * (p - levels[j]) / (levels[j + 1] - levels[j]))
+    x = [interp((p_half[k] + p_half[k + 1]) / 2) for k in 1:(length(p_half) - 1)]
+    X = O.retrieval_column_value(p_half, diff(p_half), column, x)
+    return (X - dot(column.pressure_weight, v)) * 1e6
 end
 
 @testset "file pressure weights: c = prior gives xco2_apriori" begin
@@ -145,6 +162,10 @@ end
         prior_column = dot(column.pressure_weight .* column.averaging_kernel, column.prior_profile) +
                        O.retrieval_prior_offset(column)
         @test abs(prior_column * 1e6 - apriori) < 1e-4
+        # A model profile equal to the retrieval's prior gives the prior column
+        # (the projection reproduces the retrieval's representation; a hat
+        # average without the mass matrix is 0.02 ppm low here).
+        @test abs(_prior_profile_departure(column)) < 1e-5
         # A model profile equal to a constant c gives c at every level.
         p_half = vcat(1.0, collect(range(2000.0, 99500.0; length = 30)))
         air = diff(p_half)
@@ -338,8 +359,8 @@ end
         script = joinpath(@__DIR__, "..", "..", "scripts", "preprocessing", "oco2_mip_to_observations.jl")
         cli = Module(:OCO2MIPConverterCLI)
         Base.include(cli, script)
-        written = Base.invokelatest(cli.main, [path, joinpath(dir, "cli_{YYYYMMDD}.nc"), "--data-types", "OG",
-                                               "--mapping", "tm5", "--model-sigma", "0.4"])
+        args = [path, joinpath(dir, "cli_{YYYYMMDD}.nc"), "--data-types", "OG", "--mapping", "tm5", "--model-sigma", "0.4"]
+        written = Base.invokelatest(() -> cli.main(args))
         cli_set = AT.read_observations(only(written))
         @test [r.flag for r in cli_set.records] == [0, 2, 3, 1, 0, 2]
         @test all(r -> r.model_sigma ≈ 0.4e-6 && r.retrieval.mapping isa O.LayerRebin, cli_set.records)
@@ -374,6 +395,8 @@ const MIP_FILE = "/kiwi-data/Data/model/OCO2MIP/observation_input/OCO2_b11.2_10s
             # The file's own prior column (c = prior) is xco2_apriori, up to the
             # 10-s averaging of the weights and the prior separately.
             worst = max(worst, abs(dot(c.pressure_weight, c.prior_profile) * 1e6 - apriori[k]))
+            # A model profile equal to the record's prior gives its prior column.
+            k <= 10 && @test abs(_prior_profile_departure(c)) < 1e-5
             @test r.flag == ((af[k] == 1 && dtype[k] in (1, 2, 6)) ? 0 : 1 + af[k])
         end
         @test worst < 0.02

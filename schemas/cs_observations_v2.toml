@@ -209,7 +209,7 @@ description = "retrieval surface pressure (total), equal to the first retrieval 
 [optional_variables.retrieval_mapping]
 dtype = "string"
 dims  = ["obs"]
-description = "how the retrieval values relate to retrieval_pressure_pa: 'layer_rebin' (means over the layers between the interfaces; the model column is rebinned by pressure overlap, TM5-4DVar's operator) or 'hat_levels' (values on the levels, linear in pressure between them, OCO-2/OCO-3; the model column is projected onto the levels' hat functions, each layer weighted by its dry air mass); empty without a block. Written with every block; a file without it holds layer records only"
+description = "how the retrieval values relate to retrieval_pressure_pa: 'layer_rebin' (means over the layers between the interfaces; the model column is rebinned by pressure overlap, TM5-4DVar's operator) or 'hat_levels' (values on the levels, linear in pressure between them, OCO-2/OCO-3; the model column is projected onto the levels' hat functions in dry air, the L2 projection c = M^-1 b); empty without a block. Written with every block; a file without it holds layer records only"
 
 [attributes]
 cs_observations_schema = "v2"   # mandatory; loader fails fast on any other value (v1 with an explanation)

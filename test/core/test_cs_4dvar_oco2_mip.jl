@@ -256,15 +256,9 @@ end
         (f_drop, n_drop), (f_co, n_co) = reverse_input(dropped, scheme), reverse_input(cosampled, scheme)
         @test n_co == n_drop == 2                                            # record 13 (step 3) does not extend the tape
         @test all(getfield(f_co, name) == getfield(f_drop, name) for name in fieldnames(typeof(f_co)))
-        # The gradient: bit for bit with one thread. With several threads the
-        # threaded adjoint kernels are not bit-reproducible from run to run
-        # (two identical calls differ at ~1e-22 of the largest entry, also on
-        # main), so the comparison allows that rounding there.
-        if Threads.nthreads() == 1
-            @test all(r_co.gradients[c][q] == r_drop.gradients[c][q] for c in eachindex(controls), q in 1:6)
-        else
-            @test _relerr(r_co.gradients, r_drop.gradients) <= 1e-14
-        end
+        # The gradient: bit for bit single-threaded, to rounding with threads
+        # (the atomics of the threaded adjoint; `gradients_match`).
+        @test gradients_match(r_co.gradients, r_drop.gradients)
         @test r_co.simulated[[1, 3, 6]] == r_drop.simulated
         @test [s.assimilated for s in r_co.stencils] == [o.assimilate for o in cosampled]
         # A co-sample's simulated value is the one the record has when it is assimilated.

@@ -524,10 +524,13 @@
     layer boundaries"), besides layer means (`"layer_rebin"`,
     `Output.LayerRebin`, the default and the only form of earlier files).
     The model column, stretched onto the levels as before, is projected onto
-    the levels' hat functions, each layer weighted by its dry air mass:
-    ``c_j = ∫φ_j x dp_dry / ∫φ_j dp_dry``, then ``X = Σ h_j a_j c_j +
-    Σ h_j (1 − a_j) x_a,j`` with the file's weights, kernel and prior. With the
-    hat integrals as weights it conserves the model's column exactly. The
+    the levels' hat functions in dry air (the L2, Galerkin, projection
+    ``c = M⁻¹ b``, ``M_ji = ∫φ_j φ_i dp_dry``, ``b_j = ∫φ_j x dp_dry``; one
+    tridiagonal solve), then ``X = Σ h_j a_j c_j + Σ h_j (1 − a_j) x_a,j``
+    with the file's weights, kernel and prior. It conserves the model's column
+    with the hat integrals as weights and reproduces profiles the retrieval
+    can represent: a model equal to the retrieval's prior gives the prior
+    column to 1e-5 ppm (a plain hat average would be 0.0185 ppm low). The
     mapping is a type of the shared operator (`retrieval_column_weights!`,
     `retrieval_profile!`, `retrieval_column_value` take the layers' air
     masses; new `retrieval_projection_matrix`), used by the 4D-Var and the

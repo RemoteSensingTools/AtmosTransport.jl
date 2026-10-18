@@ -82,9 +82,13 @@ function oco2_fixture_retrieval(psurf; tilt = 0.0)
     return (; ak, prior, pw = oco2_pressure_weights(100 * psurf; q))
 end
 
-# An independent construction of the hat projection: stretch, then for every
-# stretched layer the exact integral of each hat by the trapezoid rule on the
-# union of the layer edges and the levels (the hats are linear between them).
+# An independent construction of the hat projection (the dry-air L2 projection
+# onto the levels' hats): stretch, then for every stretched layer the exact
+# integrals of each hat (trapezoid rule) and of each product of two hats
+# (Simpson's rule) on the union of the layer edges and the levels, between
+# which the hats are linear; B[j, k] = (m_k/Δs_k) ∫_k φ_j, M = Σ_k (m_k/Δs_k)
+# ∫_k φ_j φ_i, P = M \ B. `hat` are the hat integrals of the model's air as
+# weights (summing to 1).
 function hat_projection_reference(p_half, air, levels)
     nz = length(p_half) - 1
     n = length(levels)
@@ -93,18 +97,25 @@ function hat_projection_reference(p_half, air, levels)
     φ(j, p) = begin
         hi = j == 1 ? Inf : nodes[j - 1]
         lo = j == n ? -Inf : nodes[j + 1]
-        p >= nodes[j] ? (j == 1 ? 1.0 : (hi - p) / (hi - nodes[j])) :
-                        (j == n ? 1.0 : (p - lo) / (nodes[j] - lo))
+        max(p >= nodes[j] ? (j == 1 ? 1.0 : (hi - p) / (hi - nodes[j])) :
+                            (j == n ? 1.0 : (p - lo) / (nodes[j] - lo)), 0.0)
     end
-    integral = zeros(n, nz)
+    B = zeros(n, nz)
+    M = zeros(n, n)
     for k in 1:nz
+        density = air[k] / (s[k + 1] - s[k])
         pts = sort!(unique!(vcat(s[k], s[k + 1], filter(p -> s[k] < p < s[k + 1], nodes))))
-        for j in 1:n
-            integral[j, k] = sum((pts[t + 1] - pts[t]) * (max(φ(j, pts[t]), 0) + max(φ(j, pts[t + 1]), 0)) / 2
-                                 for t in 1:(length(pts) - 1))
+        for t in 1:(length(pts) - 1)
+            a, b = pts[t], pts[t + 1]
+            m = (a + b) / 2
+            for j in 1:n
+                B[j, k] += density * (b - a) * (φ(j, a) + φ(j, b)) / 2
+                for i in 1:n
+                    M[j, i] += density * (b - a) * (φ(j, a) * φ(i, a) + 4φ(j, m) * φ(i, m) + φ(j, b) * φ(i, b)) / 6
+                end
+            end
         end
     end
-    F = integral ./ reshape(diff(s), 1, :)
-    under = F * air
-    return (; P = (F .* reshape(air, 1, :)) ./ under, hat = under ./ sum(under), s)
+    under = vec(sum(B; dims = 2))
+    return (; P = M \ B, M, B, hat = under ./ sum(under), s)
 end

@@ -801,7 +801,7 @@ end
     @test r.simulated == free.simulated
     kept = _fourdvar(P, screened[2:3], controls)
     @test r.observation_cost == kept.observation_cost
-    @test all(r.gradients[c][q] == kept.gradients[c][q] for c in eachindex(controls), q in 1:6)
+    @test gradients_match(r.gradients, kept.gradients)        # bit for bit single-threaded (helper)
     @test r.residuals[1] == r.simulated[1] - screened[1].value
     # The count is logged.
     @test_logs (:info, r"1 averaging-kernel column observations are not assimilated") match_mode = :any _fourdvar(P, screened, controls)

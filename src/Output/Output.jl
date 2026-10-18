@@ -31,6 +31,7 @@ module Output
 using Dates
 using HDF5_jll
 using JSON3
+import LinearAlgebra
 using NCDatasets
 using Printf
 using Statistics: median!

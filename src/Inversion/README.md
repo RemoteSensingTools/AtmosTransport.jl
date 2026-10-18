@@ -219,8 +219,8 @@ soundings; the OCO-2 MIP converter reads the retrieval fields with
   weights at every sampled state: the cell's interface pressures of its
   pressure basis (total from the humidity by default) stretched onto the
   retrieval column and mapped onto its values by the mapping's projection
-  (TM5-4DVAR's rebin for layers; for levels, the hat projection weighting each
-  layer by its replayed dry air mass), ``X = Σₖ Hₖ xₖ + Σᵢ hᵢ(1 − aᵢ) x_a,ᵢ``
+  (TM5-4DVAR's rebin for layers; for levels, the dry-air L2 projection onto
+  the hats, from the replayed dry air mass), ``X = Σₖ Hₖ xₖ + Σᵢ hᵢ(1 − aᵢ) x_a,ᵢ``
   on the dry mixing ratios; its
   functional has weights `Hₖ/max(mₖ, ε)` on every level and the prior term as
   offset. Its model-error term `Σᵢ (hᵢ aᵢ σᵢ)²` (a record with

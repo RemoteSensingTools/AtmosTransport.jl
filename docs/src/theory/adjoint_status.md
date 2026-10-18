@@ -531,49 +531,56 @@ surface first, and the model column is projected onto the hats.
 
 **Projection.** The model interfaces are stretched as for layer retrievals,
 the model surface onto the bottom level and the model top onto the top level
-(``s_{k\pm1/2}``, each layer keeping its share of the column). The level value
-of the model profile is its hat-weighted mean in dry air,
+(``s_{k\pm1/2}``, each layer keeping its share of the column). The level values
+``c_j`` of the model profile are its L2 (Galerkin) projection onto the hats in
+dry air: the piecewise-linear profile ``\sum_j c_j \varphi_j`` closest to the
+model profile, weighted by dry air,
 
 ```math
-c_j = \frac{\int \varphi_j(p)\, x(p)\, \mathrm{d}p_\mathrm{dry}}{\int \varphi_j(p)\, \mathrm{d}p_\mathrm{dry}}
-    = \sum_k P_{jk}\, x_k, \qquad
-P_{jk} = \frac{m_k F_{jk}}{\sum_{k'} m_{k'} F_{jk'}}, \qquad
-F_{jk} = \frac{1}{s_{k+1/2} - s_{k-1/2}} \int_{s_{k-1/2}}^{s_{k+1/2}} \varphi_j(p)\, \mathrm{d}p ,
+\sum_i M_{ji}\, c_i = b_j, \qquad
+M_{ji} = \int \varphi_j \varphi_i \,\mathrm{d}p_\mathrm{dry}, \qquad
+b_j = \int \varphi_j\, x\, \mathrm{d}p_\mathrm{dry} = \sum_k B_{jk} x_k, \qquad
+B_{jk} = \frac{m_k}{s_{k+1/2} - s_{k-1/2}} \int_{s_{k-1/2}}^{s_{k+1/2}} \varphi_j(p)\, \mathrm{d}p ,
 ```
 
-each stretched layer weighted by its dry air mass ``m_k`` under the hat (the
-air spread evenly over the layer's pressure thickness), and the column is
+each stretched layer's dry air ``m_k`` spread evenly over its pressure
+thickness; ``M`` is tridiagonal (neighbouring hats overlap), so
+``P = M^{-1} B`` costs one tridiagonal solve per column and step. The column is
 the operator of the layer case with ``P`` in place of the rebin ``R``:
 
 ```math
 X = \sum_j h_j a_j c_j + \sum_j h_j (1 - a_j)\, x_{a,j}
-  = \sum_k H_k x_k + c, \qquad H_k = \sum_j h_j a_j P_{jk},
+  = \sum_k H_k x_k + c, \qquad H = (h \circ a)^\mathsf{T} M^{-1} B,
 ```
 
 with ``h``, ``a`` and ``x_a`` from the file (the kernel is already normalized:
-it is not multiplied by ``h``). The 4D-Var functional is exact as before
-(weights ``H_k/\max(m_k, \epsilon)`` from the replayed air mass and
-pressures of each sampled step).
+it is not multiplied by ``h``). ``X`` is still linear in the tracer: the
+4D-Var functional is exact as before, with weights ``H_k/\max(m_k,
+\epsilon)`` built from the replayed air mass and pressures of each sampled
+step.
 
-**Why the hats.** The hats sum to 1 over the stretched column, so with the
-hat integrals of the model's dry air as weights, ``h^m_j = \sum_k m_k F_{jk} /
-\sum_k m_k``, the projected profile has the model's dry column mean exactly:
-``\sum_j h^m_j c_j = \sum_k m_k x_k / \sum_k m_k``. The file's weights are the
-same integrals with the retrieval's own humidity, so the projection is
-column-conserving with the file's weights to the difference of the two dry-air
-corrections. It uses the retrieval's representation (values at the levels,
-linear between them) instead of reinterpreting the levels as layers: in the
-continuous limit, ``\sum_j h_j a_j c_j = \frac{1}{M}\int \tilde a(p)\,
-x(p)\,\mathrm{d}p_\mathrm{dry}`` with ``\tilde a`` the kernel interpolated
-linearly between the levels. The projection reproduces a constant profile at
-every level and a profile linear in pressure at every interior level whose
-hat is evenly layered; at the end levels and at the kinks of a profile that is
-piecewise linear on the levels, ``c_j`` is the hat mean (at the surface level,
-the value a third of the way into the bottom interval): the formula is the
-mass-lumped projection. For a model profile equal to the retrieval's own prior
-(piecewise linear, curved in the stratosphere), ``X`` differs from the prior
-column ``\sum_j h_j x_{a,j}`` by −0.02 ppm (median of 960 OCO-2 records of
-2019-07-01, 5–95 %: −0.021 to −0.012 ppm).
+**Why the projection.** The basis contains the constants (the hats sum to 1
+over the stretched column), so the projection preserves the column integral:
+the rows of ``P`` sum to 1, and with the hat integrals of the model's dry air
+as weights, ``h^m_j = \sum_k B_{jk} / \sum_k m_k``, the projected profile has
+the model's dry column mean exactly, ``\sum_j h^m_j c_j = \sum_k m_k x_k /
+\sum_k m_k``. The file's weights are the same integrals with the retrieval's
+own humidity, so the column is conserved with them to the difference of the
+two dry-air corrections. And a projection reproduces every profile its basis
+can represent: a model profile that is piecewise linear on the levels, the
+retrieval's own representation, gives its level values back exactly (to the
+discretization of the model's layer means, second order in the layer
+thickness), so the kernel is applied to the level values it was derived for.
+A model profile equal to the retrieval's prior gives the prior column: on 960
+OCO-2 records of 2019-07-01 (prior sampled on a 760-layer column),
+``X - \sum_j h_j x_{a,j}`` is −7e-6 ppm (5–95 %: −9e-6 to −4e-6). The hat
+average ``\int \varphi_j x / \int \varphi_j`` (``M`` lumped onto its diagonal),
+which is not a projection, puts that column −0.0185 ppm low (−0.021 to
+−0.012), because the prior is curved in the stratosphere; for a +10 ppm
+boundary layer below ``\sigma = 0.95`` it is 0.018 ppm below the projection.
+The weights ``H`` can have small negative entries near sharp structure, which
+a linear operator allows (``P`` has some); on these records, on that column
+and on a 72-layer column, none of ``H`` was negative.
 
 **The top level.** The top level sits at ``\sigma = 10^{-4}`` (10 Pa), not at
 0. The stretch maps the whole model column, from its top (about 1 Pa for
@@ -591,25 +598,28 @@ kernel and prior interpolated to the layer midpoints, the weights
 thicknesses by ``p_s``, so its weights sum to ``1 - 10^{-4}``; this mode
 normalizes them to 1 (TM5's column is 0.9999 times this one). It is for
 comparisons with TM5-4DVAR co-samples (converter `mapping = :tm5`, forward
-sampler `averaging_kernel_mapping = "tm5"`). On OCO-2 records the mode and the
-hat projection agree to a few hundredths of a ppm (tm5 − hat: +0.021 ppm
-median, 5–95 % +0.007 to +0.038, on a C90 MERRA-2 state of 2022-07-01).
+sampler `averaging_kernel_mapping = "tm5"`). For a +10 ppm boundary layer
+below ``\sigma = 0.95`` on the prior, the mode is 0.009 ppm above the hat
+projection (5–95 %: +0.002 to +0.017; 960 records of 2019-07-01).
 
 **The MIP point formula.** The MIP protocol writes the column as
 ``X = X_\mathrm{prior} + \sum_j h_j a_j (c_j - c_{\mathrm{prior},j})`` with
 ``c_j`` the model profile at the levels, without saying how to transform the
 model to them. Point values are not column-conserving: for a +10 ppm
-boundary layer below ``\sigma = 0.95`` the point form is 0.21–0.22 ppm below
-the hat projection (and 0.20–0.24 ppm below the continuous column in the
-analysis of 2000 records), where TM5's 19 layers stay within 0.004 ppm of it.
+boundary layer below ``\sigma = 0.95`` (``\Delta X`` = +0.49 ppm) the point
+form is 0.232 ppm below the hat projection (5–95 %: 0.230–0.236 ppm; 960
+records of 2019-07-01).
 At ``c = x_a``, TM5's unnormalized weights put its column 0.033 ppm below the
 point form. Neither point values nor boxes centred on the levels are offered.
 
 **Tests.** `test/core/test_retrieval_hat_projection.jl`: the projection
-matrix against an independent construction (exact trapezoid integration of the
-hats), rows summing to 1, column conservation with the hat integrals, the
-reproduction properties above, the prior column of a MIP file, TM5 mode
-against a transcription of TM5's Python, level records in schema v2.
+matrix against an independent construction (exact integration of the hats and
+their products), rows summing to 1, column conservation with the hat
+integrals, a piecewise-linear profile reproduced at every level, ends and
+kinks included, within ``\Delta \max|v'|/N^2`` for ``N`` layers per interval
+(second order), a model profile equal to the prior giving the prior column
+within 1e-5 ppm (synthetic and real MIP records), TM5 mode against a
+transcription of TM5's Python, level records in schema v2.
 `test/core/test_cs_4dvar_oco2_mip.jl`: the single sweep against a seeded
 footprint per observation and step for level columns, windows and TM5-mode
 records (``10^{-12}``, upwind and monotone PPM), and central finite

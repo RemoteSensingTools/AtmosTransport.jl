@@ -102,7 +102,7 @@ writing topology-specific NetCDF files directly.
   `stretch_model_interfaces!` (the model column mapped linearly onto the
   retrieval's surface and top), the projection ``P`` of the mapping
   (`LayerRebin`: TM5-4DVAR's mass-conserving overlap rebin R,
-  `retrieval_rebin_matrix`; `HatLevelProjection`: the air-mass-weighted
+  `retrieval_rebin_matrix`; `HatLevelProjection`: the dry-air L2 (Galerkin)
   projection onto the hat functions of levels, OCO-2/OCO-3;
   `retrieval_projection_matrix`), `retrieval_column_weights!`
   (``H_k = Σᵢ hᵢ aᵢ Pᵢₖ``), `retrieval_prior_offset`
