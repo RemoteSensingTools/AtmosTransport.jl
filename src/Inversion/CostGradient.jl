@@ -342,11 +342,13 @@ end
 _truncate_stepwise_arg(value, n::Int) = value
 
 # Count the observations left out of the cost by the surface-pressure screen of
-# averaging-kernel columns (`SkipUnplaced`). The screened set depends on the
-# meteorology only, so it is the same in every evaluation of an inversion; the
-# message is logged once per set (keyed by the record ids).
+# averaging-kernel columns (`SkipUnplaced`); co-samples (`assimilate = false`)
+# are counted when they are bound. The screened set depends on the meteorology
+# only, so it is the same in every evaluation of an inversion; the message is
+# logged once per set (keyed by the record ids).
 function _log_unassimilated(observations, stencils)
-    ids = Int64[observations[i].id for i in eachindex(stencils) if !stencils[i].assimilated]
+    ids = Int64[observations[i].id for i in eachindex(stencils)
+                if observations[i].assimilate && !stencils[i].assimilated]
     isempty(ids) && return nothing
     @info "cs_surface_flux_4dvar: $(length(ids)) averaging-kernel column observations are not assimilated: " *
           "the model surface pressure differs from the retrieval's by more than " *
@@ -369,6 +371,11 @@ columns) build their weights, at each sampled state from `column_met`, a
 column whose surface-pressure mismatch exceeds its limit is an error, or,
 under `SkipUnplaced`, is reported with its simulated value and residual but
 left out of the cost and the gradient (its stencil is not `assimilated`).
+Co-samples (`CSObservation(...; assimilate = false)`: flagged records bound
+with `flagged_records = "cosample"`, the members of cell averages) are
+simulated and reported the same way, never in the cost or the gradient, and
+do not extend the taped run: adding them leaves the cost and the reverse
+pass's forcing unchanged, bit for bit.
 
 One cost-and-gradient evaluation is two forward runs and one reverse pass
 (with `FullCheckpoint`; the other schedules add their recomputation), whatever
@@ -506,9 +513,9 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
         build_functionals = true)
 
     # (2) Weighted departures (H(x) − y)/σ² scale each functional's weights.
-    # An observation that is not assimilated (an averaging-kernel column
-    # screened out by its surface-pressure mismatch) keeps its residual but
-    # adds nothing to the cost or the forcing.
+    # An observation that is not assimilated (a co-sample, or an
+    # averaging-kernel column screened out by its surface-pressure mismatch)
+    # keeps its residual but adds nothing to the cost or the forcing.
     residuals = Vector{FT}(undef, length(observation_vec))
     scales = Vector{FT}(undef, length(observation_vec))
     observation_cost = zero(FT)

@@ -126,8 +126,8 @@ Base.:(==)(a::CSTimeSampling, b::CSTimeSampling) = a.steps == b.steps && a.weigh
 Base.hash(s::CSTimeSampling, h::UInt) = hash(s.weights, hash(s.steps, hash(:CSTimeSampling, h)))
 
 """
-    CSObservation(step, objective, value, sigma; id = 0)
-    CSObservation(sampling::CSTimeSampling, objective, value, sigma; id = 0)
+    CSObservation(step, objective, value, sigma; id = 0, assimilate = true)
+    CSObservation(sampling::CSTimeSampling, objective, value, sigma; id = 0, assimilate = true)
 
 Scalar observation of the CS 4D-Var surface-flux path: `objective` sampled
 as `sampling` says (one step, or a weighted window of steps; see
@@ -136,6 +136,13 @@ deviation `sigma`. `step` is the last sampled step, after which the
 observation is complete (the only one for an instantaneous observation).
 `id` is the identifier of the observation record it was bound from
 (`bind_to_mesh`), `0` for an observation built by hand.
+
+`assimilate = false` makes it a **co-sample**: `cs_surface_flux_4dvar`
+simulates it on the forward replay and reports its simulated value, residual
+and stencil (with `assimilated = false`), but it adds nothing to the cost or
+the gradient, and does not extend the taped run. `bind_to_mesh` co-samples
+records with a nonzero flag under `flagged_records = "cosample"`, and the
+members of cell averages ([`CellAverage`](@ref)).
 """
 struct CSObservation{O <: AbstractCSFootprintObjective, FT <: AbstractFloat}
     step::Int
@@ -144,26 +151,27 @@ struct CSObservation{O <: AbstractCSFootprintObjective, FT <: AbstractFloat}
     value::FT
     sigma::FT
     id::Int64
+    assimilate::Bool
     function CSObservation{O, FT}(sampling::CSTimeSampling, objective::O, value::FT, sigma::FT,
-                                  id::Int64) where {O <: AbstractCSFootprintObjective,
-                                                    FT <: AbstractFloat}
+                                  id::Int64, assimilate::Bool) where {O <: AbstractCSFootprintObjective,
+                                                                      FT <: AbstractFloat}
         isfinite(value) || throw(ArgumentError("CSObservation value must be finite, got $value"))
         isfinite(sigma) || throw(ArgumentError("CSObservation sigma must be finite, got $sigma"))
         sigma > 0 || throw(ArgumentError("CSObservation sigma must be positive, got $sigma"))
-        return new{O, FT}(last(sampling.steps), sampling, objective, value, sigma, id)
+        return new{O, FT}(last(sampling.steps), sampling, objective, value, sigma, id, assimilate)
     end
 end
 
 function CSObservation(sampling::CSTimeSampling, objective::AbstractCSFootprintObjective,
-                       value::Real, sigma::Real; id::Integer = 0)
+                       value::Real, sigma::Real; id::Integer = 0, assimilate::Bool = true)
     FT = promote_type(typeof(float(value)), typeof(float(sigma)))
-    return CSObservation{typeof(objective), FT}(sampling, objective, FT(value), FT(sigma), Int64(id))
+    return CSObservation{typeof(objective), FT}(sampling, objective, FT(value), FT(sigma), Int64(id), assimilate)
 end
 
 function CSObservation(step::Integer, objective::AbstractCSFootprintObjective,
-                       value::Real, sigma::Real; id::Integer = 0)
+                       value::Real, sigma::Real; id::Integer = 0, assimilate::Bool = true)
     step > 0 || throw(ArgumentError("CSObservation step must be positive, got $step"))
-    return CSObservation(CSTimeSampling(step), objective, value, sigma; id)
+    return CSObservation(CSTimeSampling(step), objective, value, sigma; id, assimilate)
 end
 
 """
@@ -185,6 +193,12 @@ of the column, weighted by the retrieval's pressure weights and averaging
 kernel on the model column stretched onto the retrieval column.
 """
 const RETRIEVAL_COLUMN_PLACEMENT_CODE = Int8(-3)
+"""
+Stencil placement code of a cell average of column records
+([`CSCellAverageObjective`](@ref), [`CellAverage`](@ref)): every level of
+the cell, the inverse-variance-weighted mean of its members' operators.
+"""
+const CELL_AVERAGE_PLACEMENT_CODE = Int8(-4)
 
 """
     CSObservationStencil(panel, i, j, steps, weights, levels, placement_method,
@@ -200,8 +214,8 @@ the replayed column at the end of that step; `0` for an operator that reads
 more than one level, as a column mean), the `placement_method`
 (`Output.VERTICAL_PLACEMENT_CODES` for a [`CSPlacedPointObjective`](@ref),
 [`COLUMN_MEAN_PLACEMENT_CODE`](@ref),
-[`RETRIEVAL_COLUMN_PLACEMENT_CODE`](@ref) or
-[`FIXED_LEVEL_PLACEMENT_CODE`](@ref) otherwise), and the height above the
+[`RETRIEVAL_COLUMN_PLACEMENT_CODE`](@ref), [`CELL_AVERAGE_PLACEMENT_CODE`](@ref)
+or [`FIXED_LEVEL_PLACEMENT_CODE`](@ref) otherwise), and the height above the
 model surface (m) or the pressure (Pa) that placed it (NaN when not used).
 An operator without a single cell has the cell `(0, 0, 0)`.
 
@@ -209,11 +223,15 @@ For an averaging-kernel column ([`CSRetrievalColumnObjective`](@ref)):
 `surface_pressure_mismatch_pa`, the model minus the retrieval surface
 pressure (Pa; time-weighted over the sampled steps; NaN for other
 operators); `retrieval_profile`, the model's dry mixing ratios on the
-retrieval layers (surface first, the rebinned profile ``R x``,
-time-weighted; empty for other operators); and `assimilated`, `false` when
-the surface-pressure mismatch exceeded `max_surface_pressure_mismatch_pa`
-under `SkipUnplaced()`: the observation's simulated value is reported, but
-it is not in the cost.
+retrieval layers or levels (surface first, the projected profile ``P x``,
+time-weighted; empty for other operators).
+
+`assimilated` is `false` for a co-sample (an observation built with
+`assimilate = false`: a flagged record under `flagged_records = "cosample"`,
+or a member of a cell average) and for an averaging-kernel column whose
+surface-pressure mismatch exceeded `max_surface_pressure_mismatch_pa` under
+`SkipUnplaced()`: the observation's simulated value is reported, but it is
+not in the cost.
 """
 struct CSObservationStencil
     panel::Int
@@ -293,9 +311,9 @@ residuals `H(x) − y` per observation, the gradient per control (and by
 control name), the controls and observations evaluated, and `stencils`, one
 [`CSObservationStencil`](@ref) per observation (the steps, weights and
 levels it was sampled at). An observation whose stencil is not `assimilated`
-(an averaging-kernel column screened out by its surface-pressure mismatch)
-keeps its simulated value and residual but adds nothing to the cost and the
-gradient.
+(a co-sample, or an averaging-kernel column screened out by its
+surface-pressure mismatch) keeps its simulated value and residual but adds
+nothing to the cost and the gradient.
 """
 struct CS4DVarResult{FT, A2 <: AbstractArray{FT, 2}}
     cost::FT

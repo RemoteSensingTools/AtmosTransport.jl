@@ -8,7 +8,9 @@
 # `intake_height_m`, `altitude_m`, `pressure_pa`) use NaN for "absent".
 # Column records may carry an optional retrieval-level block (averaging-kernel
 # columns): dimensions `retrieval_level` / `retrieval_interface`, NaN-padded,
-# surface first. Files of schema v1 (Float32 lat/lon/alt) are rejected.
+# surface first, with each record's mapping (`retrieval_mapping`: layer means
+# between interfaces, or values on levels). Files of schema v1 (Float32
+# lat/lon/alt) are rejected.
 #
 # In-memory layer:
 #   * `CSObservationRecord`     — one observation row.
@@ -110,9 +112,11 @@ One observation row of the schema-v2 [`CSObservationSet`](@ref).
   model_sigma²).
 - `instrument_type` (e.g. `"ICOS"`, `"TCCON"`), `tracer` (e.g. `"CO2"`).
 - `retrieval`: the retrieval block of an averaging-kernel column record (an
-  `Output.RetrievalColumn`: interface pressures from the surface up, pressure
-  weights, column averaging kernel, prior profile in mol/mol, optional
-  model-profile uncertainty), or `nothing`. Only column records carry one;
+  `Output.RetrievalColumn`: pressures from the surface up, pressure weights,
+  column averaging kernel, prior profile in mol/mol, optional model-profile
+  uncertainty, and its mapping: layer means between interfaces,
+  `Output.LayerRebin`, or values on levels, `Output.HatLevelProjection`), or
+  `nothing`. Only column records carry one;
   such a record is an absolute column average, `value` in (0, 1] mol/mol with
   `value_sigma` and `model_sigma` not above it. Its model-error term
   ``\\sum_i (h_i a_i σ_i)^2`` (`Output.retrieval_model_error_variance`, zero
@@ -321,11 +325,12 @@ const _OBSERVATION_REQUIRED_VARIABLES =
     ("date_components", "kind", (first(v) for v in _OBSERVATION_VARIABLES)...)
 
 """
-    write_observations(path::AbstractString, set::CSObservationSet) -> String
+    write_observations(path::AbstractString, set::CSObservationSet; attributes = Dict()) -> String
 
 Write `set` to `path` as a schema-v2 NetCDF observations file
 (`schemas/cs_observations_v2.toml`) and return `path`; an existing file is
-overwritten.
+overwritten. `attributes` are extra root attributes (provenance; not read
+back), which may not replace `cs_observations_schema` or `time_origin`.
 
 - Dimensions: `obs` (unlimited), `date_component` (= 6).
 - Variables: `id` (i64), `date_components` (i16), `lat`, `lon` (f64),
@@ -336,20 +341,29 @@ overwritten.
 - Root attributes: `cs_observations_schema = "v2"`,
   `time_origin = set.time_origin`.
 - When any record has a retrieval block (an averaging-kernel column): the
-  dimensions `retrieval_level` (the most layers of any record) and
-  `retrieval_interface` (one more), `retrieval_pressure_pa` (interfaces, Pa),
+  dimensions `retrieval_level` (the most layers or levels of any record) and
+  `retrieval_interface` (one more), `retrieval_pressure_pa` (Pa: the
+  interfaces of a layer record, the levels of a level record),
   `retrieval_pressure_weight`, `retrieval_averaging_kernel`,
   `retrieval_prior_profile` (mol mol⁻¹) and, when any record gives one,
   `retrieval_profile_sigma` (mol mol⁻¹), each `(retrieval_level or
   retrieval_interface, obs)`, surface first (`ordering = "surface_to_top"`)
-  and NaN-padded; `retrieval_surface_pressure_pa (obs)`. Records without a
+  and NaN-padded; `retrieval_surface_pressure_pa (obs)`; and
+  `retrieval_mapping (obs)`, the record's mapping (`"layer_rebin"` or
+  `"hat_levels"`, empty without a block) and, when any record gives one,
+  `retrieval_prior_column (obs)` (mol mol⁻¹, NaN = absent). Records without a
   block are NaN throughout. Such a file states `units = "mol mol-1"` on
   `value`, `value_sigma` and `model_sigma`: its values are dry mole fractions
   in mol/mol, the unit of the retrieval priors (every record of the file).
 """
-function write_observations(path::AbstractString, set::CSObservationSet)
+function write_observations(path::AbstractString, set::CSObservationSet;
+                            attributes::AbstractDict = Dict{String, Any}())
     isempty(set.time_origin) && throw(ArgumentError(
         "CSObservationSet.time_origin must be a non-empty ISO-8601 string"))
+    for key in ("cs_observations_schema", "time_origin")
+        haskey(attributes, key) && throw(ArgumentError(
+            "write_observations attributes may not set $(repr(key)); the writer owns it"))
+    end
     # The records vector is mutable after construction: recheck before
     # touching `path`, so no file is written that `read_observations` rejects.
     _check_unique_ids(set.records, "CSObservationSet written to $(repr(path))")
@@ -361,6 +375,9 @@ function write_observations(path::AbstractString, set::CSObservationSet)
         NCDatasets.defDim(ds, "date_component", 6)
         ds.attrib["cs_observations_schema"] = _CS_OBSERVATIONS_SCHEMA_VERSION
         ds.attrib["time_origin"] = set.time_origin
+        for (key, value) in attributes
+            ds.attrib[String(key)] = value
+        end
 
         dates = Matrix{Int16}(undef, 6, n)
         @inbounds for (i, r) in enumerate(set.records), c in 1:6
@@ -436,17 +453,22 @@ const _RETRIEVAL_ORDERING_TEXT = "index 1 is the retrieval surface; pressures st
 # retrieval-level variables; `retrieval_profile_sigma` is optional.
 const _RETRIEVAL_LEVEL_VARIABLES = (
     ("retrieval_pressure_pa", :pressure_pa, "retrieval_interface", "Pa",
-     "retrieval layer interface pressures (total pressure), from the surface up; NaN-padded"),
+     "retrieval pressures (total pressure), from the surface up: the layer interfaces of a layer_rebin record, " *
+     "the levels of a hat_levels record; NaN-padded"),
     ("retrieval_pressure_weight", :pressure_weight, "retrieval_level", "1",
-     "pressure weights h of the retrieval layers (sum to 1); NaN-padded"),
+     "pressure weights h of the retrieval layers or levels (sum to 1); NaN-padded"),
     ("retrieval_averaging_kernel", :averaging_kernel, "retrieval_level", "1",
-     "column averaging kernel a of the retrieval layers (normalized: dX/dx_i = h_i a_i); NaN-padded"),
+     "column averaging kernel a of the retrieval layers or levels (normalized: dX/dx_i = h_i a_i); NaN-padded"),
     ("retrieval_prior_profile", :prior_profile, "retrieval_level", "mol mol-1",
-     "retrieval prior profile (dry mole fraction) on the retrieval layers; NaN-padded"),
+     "retrieval prior profile (dry mole fraction) on the retrieval layers or levels; NaN-padded"),
     ("retrieval_profile_sigma", :profile_sigma, "retrieval_level", "mol mol-1",
-     "optional 1-sigma profile uncertainty on the retrieval layers for the model-error term " *
+     "optional 1-sigma profile uncertainty on the retrieval layers or levels for the model-error term " *
      "sum_i (h_i a_i sigma_i)^2; NaN = none"),
 )
+# Each record's mapping; a file without the variable holds layer records only.
+const _RETRIEVAL_MAPPING_VARIABLE = "retrieval_mapping"
+# Each record's prior column (optional; NaN = absent).
+const _RETRIEVAL_PRIOR_COLUMN_VARIABLE = "retrieval_prior_column"
 const _RETRIEVAL_REQUIRED_VARIABLES = ("retrieval_pressure_pa", "retrieval_pressure_weight",
                                        "retrieval_averaging_kernel", "retrieval_prior_profile",
                                        "retrieval_surface_pressure_pa")
@@ -474,14 +496,28 @@ function _write_retrieval_block(ds, records)
     _write_obs_var(ds, "retrieval_surface_pressure_pa", Float64, ("obs",),
                    Float64[c === nothing ? NaN : c.surface_pressure_pa for c in columns],
                    ("units" => "Pa", "description" =>
-                    "retrieval surface pressure (total), equal to the first retrieval interface; NaN = no block"))
+                    "retrieval surface pressure (total), equal to the first retrieval pressure; NaN = no block"))
+    _write_obs_var(ds, _RETRIEVAL_MAPPING_VARIABLE, String, ("obs",),
+                   String[c === nothing ? "" : retrieval_mapping_label(c.mapping) for c in columns],
+                   ("description" => "how the retrieval values relate to retrieval_pressure_pa: \"layer_rebin\" = " *
+                    "means over the layers between the interfaces (the model column is rebinned by pressure " *
+                    "overlap), \"hat_levels\" = values on the levels, linear in pressure between them (the model " *
+                    "column is projected onto the levels' hat functions); empty = no block",))
+    if any(c -> c !== nothing && !isnan(c.prior_column), columns)
+        _write_obs_var(ds, _RETRIEVAL_PRIOR_COLUMN_VARIABLE, Float64, ("obs",),
+                       Float64[c === nothing ? NaN : c.prior_column for c in columns],
+                       ("units" => "mol mol-1", "description" =>
+                        "OPTIONAL retrieval prior column X_a (e.g. OCO-2 xco2_apriori): the simulated column is " *
+                        "X_a + sum_i h_i a_i ((P x)_i - x_prior_i); NaN = absent, then X_a = sum_i h_i x_prior_i",))
+    end
     return nothing
 end
 
 # The block as host Float64 arrays (fill values read as NaN) converted to Pa and
 # mol/mol, or `nothing` when the file has none. A partial block is an error.
 function _read_retrieval_block(ds, n::Int, path)
-    present = [v for v in (_RETRIEVAL_REQUIRED_VARIABLES..., "retrieval_profile_sigma") if haskey(ds, v)]
+    present = [v for v in (_RETRIEVAL_REQUIRED_VARIABLES..., "retrieval_profile_sigma", _RETRIEVAL_MAPPING_VARIABLE,
+                           _RETRIEVAL_PRIOR_COLUMN_VARIABLE) if haskey(ds, v)]
     isempty(present) && return nothing
     for v in _RETRIEVAL_REQUIRED_VARIABLES
         haskey(ds, v) || throw(ArgumentError(
@@ -513,6 +549,20 @@ function _read_retrieval_block(ds, n::Int, path)
         vec(_float_matrix(surface)) .* _retrieval_unit_scale("retrieval_surface_pressure_pa",
                                                              get(surface.attrib, "units", nothing),
                                                              label("retrieval_surface_pressure_pa"))
+    if haskey(ds, _RETRIEVAL_MAPPING_VARIABLE)
+        mapping = ds[_RETRIEVAL_MAPPING_VARIABLE]
+        Tuple(NCDatasets.dimnames(mapping)) == ("obs",) || throw(ArgumentError(
+            "$(label(_RETRIEVAL_MAPPING_VARIABLE)) has dimensions $(NCDatasets.dimnames(mapping)); expected (obs,)"))
+        block[_RETRIEVAL_MAPPING_VARIABLE] = String[ismissing(x) ? "" : String(x) for x in Array(mapping)]
+    end
+    if haskey(ds, _RETRIEVAL_PRIOR_COLUMN_VARIABLE)
+        var = ds[_RETRIEVAL_PRIOR_COLUMN_VARIABLE]
+        Tuple(NCDatasets.dimnames(var)) == ("obs",) || throw(ArgumentError(
+            "$(label(_RETRIEVAL_PRIOR_COLUMN_VARIABLE)) has dimensions $(NCDatasets.dimnames(var)); expected (obs,)"))
+        block[_RETRIEVAL_PRIOR_COLUMN_VARIABLE] =
+            vec(_float_matrix(var)) .* mole_fraction_unit_scale(get(var.attrib, "units", nothing),
+                                                                 label(_RETRIEVAL_PRIOR_COLUMN_VARIABLE))
+    end
     for (name, data) in block
         size(data, ndims(data)) == n || throw(ArgumentError(
             "$(label(name)) has $(size(data, ndims(data))) records; expected $(n) to match obs dim"))
@@ -550,17 +600,30 @@ function _record_retrieval(block::Dict{String, Any}, i::Int, label::AbstractStri
     xa = view(block["retrieval_prior_profile"], :, i)
     σ = haskey(block, "retrieval_profile_sigma") ? view(block["retrieval_profile_sigma"], :, i) : Float64[]
     ps = block["retrieval_surface_pressure_pa"][i]
-    all(isnan, p) && all(isnan, h) && all(isnan, a) && all(isnan, xa) && all(isnan, σ) && isnan(ps) &&
+    mapping_label = haskey(block, _RETRIEVAL_MAPPING_VARIABLE) ? block[_RETRIEVAL_MAPPING_VARIABLE][i] : nothing
+    prior_column = haskey(block, _RETRIEVAL_PRIOR_COLUMN_VARIABLE) ? block[_RETRIEVAL_PRIOR_COLUMN_VARIABLE][i] : NaN
+    if all(isnan, p) && all(isnan, h) && all(isnan, a) && all(isnan, xa) && all(isnan, σ) && isnan(ps) &&
+       isnan(prior_column)
+        something(mapping_label, "") == "" || throw(ArgumentError(
+            "$(label) has $(_RETRIEVAL_MAPPING_VARIABLE) = $(repr(mapping_label)) but no retrieval block"))
         return nothing
+    end
+    mapping = mapping_label === nothing ? LayerRebin() :
+        mapping_label == "" ? throw(ArgumentError(
+            "$(label) has a retrieval block but an empty $(_RETRIEVAL_MAPPING_VARIABLE); name its mapping " *
+            "(\"layer_rebin\" or \"hat_levels\")")) :
+        _parse_retrieval_mapping(mapping_label, label)
     n = something(findfirst(isnan, h), length(h) + 1) - 1
     n >= 1 || throw(ArgumentError("$(label) has a retrieval block without pressure weights"))
-    for (name, v, len) in (("retrieval_pressure_pa", p, n + 1), ("retrieval_pressure_weight", h, n),
+    np = retrieval_pressure_count(mapping, n)
+    for (name, v, len) in (("retrieval_pressure_pa", p, np), ("retrieval_pressure_weight", h, n),
                            ("retrieval_averaging_kernel", a, n), ("retrieval_prior_profile", xa, n))
         _check_nan_padded(v, len, name, label)
     end
     all(isnan, σ) || _check_nan_padded(σ, n, "retrieval_profile_sigma", label)
     try
-        return RetrievalColumn(p[1:(n + 1)], h[1:n], a[1:n], xa[1:n], all(isnan, σ) ? Float64[] : σ[1:n], ps)
+        return RetrievalColumn(p[1:np], h[1:n], a[1:n], xa[1:n], all(isnan, σ) ? Float64[] : σ[1:n], ps, mapping,
+                               prior_column)
     catch err
         err isa Union{ArgumentError, DimensionMismatch} || rethrow()
         throw(ArgumentError("$(label): $(sprint(showerror, err))"))
@@ -601,18 +664,21 @@ Validation (fails fast with `ArgumentError`):
 - The optional retrieval block (see [`write_observations`](@ref)) is all or
   nothing: `retrieval_pressure_pa`, `retrieval_pressure_weight`,
   `retrieval_averaging_kernel`, `retrieval_prior_profile` and
-  `retrieval_surface_pressure_pa` (`retrieval_profile_sigma` optional), with
-  `retrieval_interface = retrieval_level + 1`. Every retrieval-level variable
+  `retrieval_surface_pressure_pa` (`retrieval_profile_sigma`,
+  `retrieval_mapping` and `retrieval_prior_column` optional), with
+  `retrieval_interface = retrieval_level + 1`. `retrieval_mapping` names each block's mapping (`"layer_rebin"`: the
+  pressures are the `N + 1` interfaces of `N` layers; `"hat_levels"`: the `N`
+  levels themselves); a file without it holds layer records only. Every retrieval-level variable
   states `ordering = "surface_to_top"` (index 1 is the retrieval surface);
   pressures state a pressure unit (converted to Pa), the prior and its
   uncertainty a mole-fraction unit (`"mol mol-1"`, `"1"`, `"ppm"`, `"ppb"`,
   …; converted to mol/mol), weights and kernel are dimensionless. A record's
-  values come first and NaN pads the rest (the number of layers is that of
-  its pressure weights); a record whose block entries are all NaN has none.
-  Each block must pass the `Output.RetrievalColumn` checks (pressures
+  values come first and NaN pads the rest (the number of layers or levels is
+  that of its pressure weights); a record whose block entries are all NaN has
+  none. Each block must pass the `Output.RetrievalColumn` checks (pressures
   strictly decreasing from the surface, weights ≥ 0 summing to 1, finite
   values, prior in [0, 1] mol/mol, surface pressure equal to the first
-  interface), and only column records may carry one.
+  pressure), and only column records may carry one.
 - `value`, `value_sigma` and `model_sigma` without a `units` attribute are in
   the tracer's native unit, read as they are. A dry mole-fraction unit
   (`"mol mol-1"`, `"1"`, `"ppm"`, `"ppb"`, …) is converted to mol/mol; it must

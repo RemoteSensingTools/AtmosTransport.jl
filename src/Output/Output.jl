@@ -31,6 +31,7 @@ module Output
 using Dates
 using HDF5_jll
 using JSON3
+import LinearAlgebra
 using NCDatasets
 using Printf
 using Statistics: median!
@@ -100,9 +101,12 @@ export AbstractPressureBasis, TotalFromHumidity, DryInterfaces
 export VerticalPlacement, VERTICAL_PLACEMENT_CODES, resolve_placement, placement_layer
 export PlacementColumn, column_layer!, sample_column_layer!, needs_column_humidity
 export AbstractMissingHeightRule, LowestLayerWithoutHeight, UnplacedWithoutHeight, missing_height_rule
+export AbstractRetrievalMapping, LayerRebin, HatLevelProjection, tm5_layer_column
 export RetrievalColumn, retrieval_layer_count, stretch_model_interfaces!, retrieval_rebin_matrix
+export retrieval_projection_matrix
 export retrieval_column_weights!, retrieval_prior_offset, retrieval_profile!, retrieval_column_value
-export retrieval_model_error_variance
+export retrieval_model_error_variance, read_oco2_retrieval_columns
+export AbstractAveragingKernelOutput, NoAveragingKernels, AveragingKernelColumns
 export read_observation_requests, build_observation_set
 export AbstractObservationSampler, NoObservationSampler, build_observation_sampler, samples_observations
 export observation_needs_humidity
@@ -118,6 +122,7 @@ include("netcdf_schema.jl")
 include("netcdf_writer.jl")
 include("netcdf_stream.jl")
 include("binary_writer.jl")
+include("observations/retrieval_column.jl")
 include("observations/observation_sources.jl")
 include("observations/observation_requests.jl")
 include("observations/observation_readers.jl")
@@ -125,7 +130,6 @@ include("observations/cell_locator.jl")
 include("observations/observation_placement.jl")
 include("observations/observation_output_spec.jl")
 include("observations/observation_gather.jl")
-include("observations/retrieval_column.jl")
 include("observations/observation_netcdf.jl")
 include("observations/observation_sampler.jl")
 

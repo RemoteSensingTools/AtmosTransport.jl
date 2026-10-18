@@ -73,6 +73,10 @@ quality_filter = "none"
 # quality_filter = "flag_values"     # QualityFlagValues
 # quality_variable = "assimilate_flag"
 # quality_flag_values = [1]
+# Also the averaging-kernel column of each sounding (co2_ak_column), with the
+# operator of the 4D-Var (opt-in; "tm5" for TM5-4DVar's 19-layer form):
+# averaging_kernel_tracers = ["co2"]
+# averaging_kernel_mapping = "hat"
 
 # Stations from a table (see config/examples/observation_sites_demo.toml).
 [[output.observations.sources]]
