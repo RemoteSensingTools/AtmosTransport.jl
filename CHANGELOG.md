@@ -172,7 +172,9 @@
   `geoschem_holtslag_boville_vdiff` on the cubed sphere) still solves the
   backward-Euler system for the new mixing ratio, but no longer writes back
   `m_k (g_k + c)`. In `Float32` that lost tracer mass with one sign: in the
-  pure-pressure levels `Δt D/m` is the same in every column, so the rounding
+  pure-pressure levels `Δt D/m` is the same in every column (exactly with
+  isothermal layer thickness and uniform Kz, as in the golden configurations;
+  approximately otherwise), so the rounding
   of the diagonal `1 + Δt (D_{k−½} + D_{k+½})/m_k` is too, and the solved
   departure from the column minimum is non-negative (diffusion alone: −2.0e-6
   of a background-free tracer per day in `run_ll72_upwind_cpu_f32`). The
@@ -186,7 +188,11 @@
   +4.6e-10). The solve and fluxes are unchanged and both forms agree in exact
   arithmetic, so the adjoint is unchanged; layers without exchange keep their
   mass bit for bit. The VMR-level reference `apply_vertical_diffusion!` keeps
-  the matrix form.
+  the matrix form. The flux form trades local accuracy for column
+  conservation: per-layer rounding scales with `ε·Δt D/m` (`Float32`, strongly
+  mixed columns: worst cell 1.4e-4 relative against 1.0e-5 for the matrix form,
+  column error per solve 3e-8 against 5e-6; damped by the next mixing solve),
+  which is why the golden fields below change by more than a few ulps.
   Golden changes (one day; `blob` total drift before → after, then the largest
   change of a field and of a column mean relative to its maximum):
   `run_ll72_upwind_cpu_f32` −2.0e-6 → +1.8e-8 (fields 2.5e-5, column means

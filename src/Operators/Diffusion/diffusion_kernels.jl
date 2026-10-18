@@ -34,8 +34,9 @@
 # entries were rounded, among them b_k = fl(1 + x_k) with
 # x_k = Δt (D_{k−½} + D_{k+½})/m_k ≪ 1. In the pure-pressure levels near the
 # model top, x_k is the same in every column (m_k and D_{k±½} scale with the
-# cell area, which cancels), so the rounding of b_k has the same sign in every
-# column, and the anomaly g ≥ 0. Writing back m_k (g_k + c) then changes the
+# cell area, which cancels; exactly so with isothermal dz and a uniform Kz, as
+# in the golden configs, approximately otherwise), so the rounding of b_k has
+# the same sign in every column, and the anomaly g ≥ 0. Writing back m_k (g_k + c) then changes the
 # global mass by a bias of one sign on every solve: −2.0e-6 of a tracer per day
 # in the Float32 lat-lon L72 golden run, which applies about 376 solves a day
 # (finding OF-113).
@@ -49,8 +50,14 @@
 # The column total telescopes: it changes only through the rounding of the
 # 2 Nz additions, about half an ulp of each layer. (Adding the net flux
 # F_{k−½} − F_{k+½} in one step instead rounds a small net change into a
-# large background, which in the golden run lost 1.7e-7 of the CO₂ per day
-# without the ledger, against 9.4e-9 for the two additions.) Where the fluxes
+# large background, which in the golden run changed the CO₂ total by +1.7e-7
+# per day without the ledger, against −9.4e-9 for the two additions.) The flux
+# form trades local accuracy for column conservation: it differs from the
+# matrix form by m_k r_k, with r the residual of the computed solve
+# (~ ε (1 + 2x_k)), so per-layer errors scale with ε·x_k (Float32 probe, x up
+# to 1e3: worst cell 1.4e-4 relative against 1.0e-5 for the matrix form;
+# column error per solve 3e-8 against 5e-6; damped by the next mixing solve;
+# see docs/src/theory/float32_conservation.md). Where the fluxes
 # keep one
 # direction that rounding can still keep one sign, so the column mass ledger
 # with persistent carry of the conservative `dkg` solve returns it (see

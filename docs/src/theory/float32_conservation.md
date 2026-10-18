@@ -248,8 +248,10 @@ beside it (`D` the interface exchange in kg s⁻¹). Row `k` times `m_k` states
 q′_{k+1})`, so writing back `m_k q′_k` conserves the column in exact
 arithmetic. In `Float32` the computed `q′` solves the system with rounded
 entries. In the pure-pressure levels near the model top, `Δt D/m_k` is the
-same in every column (mass and exchange both scale with the cell area), so the
-rounding of `b_k` has the same sign in every column. The solve works on the
+same in every column (mass and exchange both scale with the cell area; exactly
+so with isothermal layer thickness and a horizontally uniform Kz, as in the
+golden configurations, approximately otherwise), so the rounding of `b_k` has
+the same sign in every column. The solve works on the
 departure from the column minimum, which is non-negative, so the error of the
 column total keeps one sign as well: it acts like a matrix whose columns do
 not sum to one. In the `Float32` lat-lon L72 golden run it cost a tracer
@@ -265,11 +267,27 @@ flux between half an ulp of the receiving layer and half an ulp of the giving
 one is recorded by one layer only. Adding the net flux `F_{k−½} − F_{k+½}` in
 one step makes this worse: a small net change rounds into a large background
 the same way on every solve (CO₂ in the run below: +1.7e-7 per day instead of
-−9.4e-9). That again leaves a drift of one sign (CO₂
-below). The column ledger with its carry, as for `dkg` diffusion, returns it.
+−9.4e-9). Even the two additions leave a small drift of one sign where the
+fluxes keep one direction (CO₂ in the table below, −9.4e-9 per day). The
+column ledger with its carry, as for `dkg` diffusion, returns it.
 The solve and the fluxes are those of the matrix form, the two agree in exact
 arithmetic, and the adjoint transposes the same operator. Layers without
 exchange keep their mass bit for bit.
+
+The flux form trades local accuracy for column conservation. In floating
+point its result differs from the matrix form's by `m_k r_k`, with `r` the
+residual of the computed tridiagonal solve, which grows like `ε (1 + 2x_k)`
+with `x_k = Δt (D_{k−½} + D_{k+½})/m_k`: the matrix form puts its rounding into
+the column total, the flux form into the individual layers. In a `Float32`
+probe of strongly mixed boundary-layer columns (`x` up to about 1e3) against an
+exact backward-Euler solve, the worst relative error of a single cell was
+1.4e-4 for the flux form and 1.0e-5 for the matrix form, while the column
+mass error per solve was 3e-8 and 5e-6. The next strongly mixing solve damps
+this per-cell noise, so it does not accumulate, and cells stay non-negative
+unless `x` approaches `1/ε`. It is also why the golden fields of the affected
+`Float32` cases change by 2.5e-5 to 8.3e-5 of their maximum, more than a few
+ulps. In `Float64` the two forms differ by about 5e-16 for `x ≲ 1` and 5e-14
+for `x ≈ 1e3`.
 
 Diffusion's own change of each global total in one day of the lat-lon L72
 golden run (`run_ll72_upwind_cpu_f32`, 376 solves), relative to the burden
