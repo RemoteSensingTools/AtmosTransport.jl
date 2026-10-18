@@ -451,6 +451,7 @@ description = "Adjoint kernels and footprints: Lin-Rood and PPM transposes, foot
 files = [
     "core/test_linrood_kernel_adjoints.jl",
     "core/test_cs_adjoint_production_parity.jl",
+    "core/test_cs_adjoint_step_plan_parity.jl",
     "core/test_cs_linrood_footprint_fd.jl",
     "core/test_cs_linrood_fv3_adjoint.jl",
     "core/test_cs_ppm_adjoint_footprint.jl",
@@ -468,7 +469,7 @@ paths = [
     "src/Operators/Diffusion/operators.jl",
     "src/Operators/StepPlan/**",
     "src/Operators/StepRecording.jl",
-    "src/Models/{driven_stepping,TransportModel}.jl",
+    "src/Models/{driven_stepping,adjoint_schedule,TransportModel}.jl",
 ]
 
 [topics.inversion]

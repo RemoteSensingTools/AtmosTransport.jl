@@ -1,22 +1,19 @@
 # ---------------------------------------------------------------------------
-# Reverse-loop driver + paired forward replay helpers.
+# Reverse walk + forward replays.
 #
-# `_collect_surface_footprints` allocates the per-step footprints and
-# calls `_walk_window_reverse!`, which walks the recorded tape in reverse,
-# dispatching on each record type to call the appropriate per-physics
-# adjoint kernel (advection, halo, diffusion, convection, LinRood
-# horizontal), injecting the step forcing at end-of-step markers, and
-# accumulating per-step surface footprints. `_initial_adjoint_state` builds
-# the adjoint state the walk starts from (`_ObjectiveStart`, `_SeedStart`,
-# `_ZeroStart`).
+# `_walk_window_reverse!` walks a recorded tape backwards, dispatching on each
+# record type to the per-physics adjoint kernel (advection, halo, diffusion,
+# convection, air-mass reset, Lin-Rood horizontal), injecting the step forcing
+# at end-of-step markers and accumulating per-step surface footprints at the
+# emission records. `_initial_adjoint_state` builds the adjoint state the walk
+# starts from (`_ObjectiveStart`, `_SeedStart`, `_ZeroStart`).
 #
 # `_run_cs_footprint_forward` and `_observe_cs_forward` (with its wrapper
-# `_run_cs_observations_forward`) are the forward-replay helpers used by FD
-# identity tests and 4D-Var simulation evaluation; `_observe_cs_forward` also
-# returns each observation's linear functional. Both advance each step with
-# `_replay_cs_step!`, which composes the step as production does (step-start
-# halo refresh, palindrome with the coupled center, convection) without
-# writing to a tape.
+# `_run_cs_observations_forward`) are the forward replays used by FD identity
+# tests and the 4D-Var simulated values; `_observe_cs_forward` also returns
+# each observation's linear functional. Both run the production step plan
+# (`_CSReplay`, `StepReplay.jl`) with `NoStepRecorder()`: the same calls the
+# tape recorder observes, without a tape.
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -73,65 +70,30 @@ _initial_adjoint_state(start::_SeedStart, _final_m, ::CubedSphereMesh) =
 _initial_adjoint_state(::_ZeroStart, final_m, ::CubedSphereMesh) =
     _zero_panel_tuple_like(final_m)
 
-function _collect_surface_footprints(lambda_panels, ops, panels_m0,
-                                     mesh::CubedSphereMesh,
-                                     objective::AbstractCSFootprintObjective,
-                                     dt;
-                                     diffusion_workspace = nothing,
-                                     diffusion_meteo = nothing,
-                                     convection_workspace = nothing,
-                                     forcing::AbstractStepForcing = NoStepForcing())
-    FT = eltype(lambda_panels[1])
-    nsteps = count(op -> op isa _CSMidpointRecord, ops)
-    footprints = Vector{typeof(_zero_surface_rates(mesh, panels_m0[1]))}(undef, nsteps)
-    @inbounds for step in 1:nsteps
-        footprints[step] = _zero_surface_rates(mesh, panels_m0[1])
-    end
-
-    ws = CSAdjointWorkspace(mesh, lambda_panels[1];
-                            column_scratch = any(_needs_column_scratch, ops))
-    _walk_window_reverse!(footprints, lambda_panels, ops, mesh, ws, dt;
-                          diffusion_meteo = diffusion_meteo,
-                          convection_workspace = convection_workspace,
-                          forcing = forcing)
-
-    lag_steps = [nsteps - step for step in 1:nsteps]
-    A2 = typeof(footprints[1][1])
-    return CSFootprintResult{FT, typeof(objective), A2}(
-        objective, footprints, lag_steps, FT(dt), zero(FT), FT(NaN))
-end
-
 # Whether a tape record's reverse needs `CSAdjointWorkspace.column_scratch`
 # (the FV3 vertical profile's sweeps).
 _needs_column_scratch(op::_CSSweepRecord) = needs_column_scratch(op.scheme)
 _needs_column_scratch(op) = false
 
-# Extracted from the original `_collect_surface_footprints`
-# body so that the stride / revolve checkpoint drivers can call it once per
-# window without re-allocating `footprints` or seeding `lambda_panels` from
-# scratch. Behaviour for the `FullCheckpoint` path is unchanged: one call
-# over the whole `ops` list does the same work as before.
-#
-# Caller responsibilities:
-#   * `footprints[step]` must be pre-allocated for every `step` index that
-#     appears as `op.step` in a `_CSMidpointRecord` inside `ops`.
-#   * `lambda_panels` is mutated in place — chain calls in window-reverse
-#     order so the adjoint state flows from final to initial across windows.
+# Walk `ops` backwards from `lambda_panels` (mutated in place; chain calls in
+# window-reverse order so the adjoint state flows from final to initial across
+# windows). `footprints[step]` must exist for every step that has an emission
+# record in `ops`.
 #
 # `forcing` is added at each `_CSStepEndRecord(step)`. Writing `λ_s` for the
-# adjoint state at the end of step `s` (after convection) and `M_s` for the
-# tangent-linear step operator, the walk computes
+# adjoint state at the end of step `s` (after its window-end stages) and `M_s`
+# for the tangent-linear step operator, the walk computes
 #
 #     λ_s = M_{s+1}ᵀ λ_{s+1} + f_s,     f_s = Σ_{i: sᵢ = s} (Hᵢ(x) − yᵢ)/σᵢ² · ∂hᵢ/∂rm_s,
 #
 # from the starting state (zero for 4D-Var) at the last step back to the
-# first. At each step's midpoint record it reads `dt · λ` (the adjoint state
-# where the step's emissions enter, partway through transposing `M_s`) as the
-# emission footprint. One walk thus gives the gradient of every observation at
-# once. `NoStepForcing` (the default) adds nothing.
+# first. At each step's emission record it reads `τ · λ` (the adjoint state
+# where the step's emissions enter, partway through transposing `M_s`; `τ` the
+# emission interval) as the emission footprint. One walk thus gives the
+# gradient of every observation at once. `NoStepForcing` (the default) adds
+# nothing.
 function _walk_window_reverse!(footprints, lambda_panels, ops,
-                               mesh::CubedSphereMesh, ws, dt;
-                               diffusion_meteo = nothing,
+                               mesh::CubedSphereMesh, ws;
                                convection_workspace = nothing,
                                forcing::AbstractStepForcing = NoStepForcing())
     for op in Iterators.reverse(ops)
@@ -154,30 +116,24 @@ function _walk_window_reverse!(footprints, lambda_panels, ops,
         elseif op isa _CSHaloRecord
             _adjoint_fill_panel_halos!(lambda_panels, mesh; dir=op.dir)
         elseif op isa _CSMidpointRecord
-            _accumulate_surface_footprint!(footprints[op.step], lambda_panels, dt, mesh)
+            _accumulate_surface_footprint!(footprints[op.step], lambda_panels, op.dt, mesh)
         elseif op isa _CSDiffusionRecord
             _apply_cs_diffusion_adjoint!(lambda_panels, _tape_panels(op.panels_m, AirMassRead()), op.op,
                                          op.workspace, op.dt,
-                                         diffusion_meteo, mesh)
+                                         _RecordedClock(op.time), mesh)
         elseif op isa _CSConvectionRecord
             _apply_cs_convection_adjoint!(lambda_panels, _tape_panels(op.panels_m, AirMassRead()),
                                           op.forcing, op.op, op.dt,
-                                          convection_workspace, mesh)
+                                          convection_workspace, mesh; n_sub = op.substeps)
+        elseif op isa _CSAirMassResetRecord
+            _apply_air_mass_reset_adjoint!(lambda_panels, op)
         elseif op isa _CSLinRoodHorizRecord
-            # LinRood horizontal substep reverse.
-            # `lambda_panels` holds the tracer-rm adjoint propagated
-            # through the tape. The substep produces an internal
-            # `lambda_m_panels` (via the `c = rm / m` chain rule and
-            # the donor-cell α denominator), but the
-            # cs_surface_emission_footprint design — like the existing
-            # `_record_cs_mass_tape` / `_record_cs_tracer_tape` paths —
-            # treats meteorology (air mass evolution) as a FIXED
-            # tape input. Mass-flux Jacobians are read off the per-
-            # record `panels_m` / `panels_am` / `panels_bm` snapshots
-            # rather than propagated via dynamic `lambda_m`, so we seed
-            # `lambda_m_new = 0` for each substep and discard its
-            # output. This matches the existing PPM reverse-loop
-            # contract where there is no `lambda_panels_m` at all.
+            # LinRood horizontal substep reverse. `lambda_panels` holds the
+            # tracer-mass adjoint. Meteorology (the air-mass evolution) is a
+            # fixed tape input: the mass-flux Jacobians are read off the
+            # record's `panels_m` / `panels_am` / `panels_bm`, so the substep's
+            # internal air-mass adjoint starts from zero and is discarded, as
+            # in the split-sweep reverse, which has no air-mass adjoint at all.
             lambda_m_panels = ntuple(p -> begin
                 a = similar(lambda_panels[p]); fill!(a, zero(eltype(a))); a
             end, Val(6))
@@ -190,60 +146,120 @@ function _walk_window_reverse!(footprints, lambda_panels, ops,
     return nothing
 end
 
-# One step of the adjoint's forward model: the production cubed-sphere step,
-# `strang_split!` followed by the `TransportModel.step!` convection block, of a
-# run with a surface-flux operator. A footprint is the derivative with respect
-# to the surface emissions, so the palindrome center is always
-# `surface_flux_center!` with the diffusion operator's coupling; `emit!(τ)`
-# adds the step's surface sources integrated over `τ`. The tape recorders
-# (`TapeRecording.jl`, `LinRoodTape.jl`) apply and record the same sequence.
-function _replay_cs_step!(panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-                          mesh::CubedSphereMesh, scheme, ws, emit!;
-                          dt, flux_scale, cfl_limit,
-                          diffusion_op, diffusion_workspace, diffusion_meteo,
-                          convection_op, convection_forcing, convection_workspace)
-    diffuse! = τ -> apply_vertical_diffusion_vmr!(
-        panels_rm, panels_m, diffusion_op, diffusion_workspace, τ, diffusion_meteo;
-        halo_width = mesh.Hp)
-    coupling = surface_flux_coupling(diffusion_op)
-    midpoint! = () -> surface_flux_center!(diffuse!, emit!, coupling, dt)
-    _replay_cs_transport!(cs_advection_style(scheme), panels_rm, panels_m,
-                          panels_am, panels_bm, panels_cm, mesh, scheme, ws,
-                          midpoint!; flux_scale, cfl_limit)
-    _apply_cs_convection_forward!(panels_rm, panels_m, convection_forcing,
-                                  convection_op, dt, convection_workspace, mesh)
+# The clock a diffusion record was taken at, for `update_field!` of the
+# operator's Kz field in the reverse solve.
+struct _RecordedClock
+    time::Float64
+end
+current_time(c::_RecordedClock) = c.time
+
+# Reverse of an air-mass reset. Preserving the tracer mass leaves it unchanged
+# (identity). Preserving the mixing ratio scales the tracer mass by
+# `new_m / old_m` where `old_m > eps` (zero elsewhere), a diagonal map that is
+# its own transpose. The halo refresh that follows the reset has its own
+# `_CSHaloRecord`.
+_apply_air_mass_reset_adjoint!(_lambda, op::_CSAirMassResetRecord{Nothing}) = nothing
+
+@kernel function _preserve_vmr_reset_adjoint_kernel!(lambda, @Const(old_m), @Const(new_m))
+    I = @index(Global, Cartesian)
+    @inbounds begin
+        FT = eltype(lambda)
+        old = old_m[I]
+        lambda[I] = old > eps(FT) ? lambda[I] / old * new_m[I] : zero(FT)
+    end
+end
+
+function _apply_air_mass_reset_adjoint!(lambda_panels, op::_CSAirMassResetRecord)
+    op.mode === :preserve_vmr || throw(ArgumentError(
+        "unknown air-mass reset mode $(repr(op.mode)) on the adjoint tape"))
+    old_m = _tape_panels(op.panels_old_m, AirMassRead())
+    new_m = _tape_panels(op.panels_new_m, TracerMassRead())
+    for p in 1:6
+        backend = get_backend(lambda_panels[p])
+        _preserve_vmr_reset_adjoint_kernel!(backend, 256)(lambda_panels[p], old_m[p], new_m[p];
+                                                         ndrange = size(lambda_panels[p]))
+        synchronize(backend)
+    end
     return nothing
 end
 
-# Split-sweep schemes: production `strang_split!` refreshes the X halos of m
-# and rm at every step start (`fill_cs_step_start_halos!`), then runs the
-# palindrome. Without the refresh the first X sweep reads rm halos from before
-# the previous step's convection.
-function _replay_cs_transport!(::CSSplitSweepStyle, panels_rm, panels_m,
-                               panels_am, panels_bm, panels_cm,
-                               mesh::CubedSphereMesh, scheme, ws, midpoint!;
-                               flux_scale, cfl_limit)
-    fill_cs_step_start_halos!(panels_rm, panels_m, mesh)
-    strang_split_cs!(panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-                     mesh, scheme, ws;
-                     flux_scale = flux_scale,
-                     cfl_limit = cfl_limit,
-                     midpoint! = midpoint!)
+# ---------------------------------------------------------------------------
+# Building a replay from the keyword API
+# ---------------------------------------------------------------------------
+
+# Production runs the palindrome with `DEFAULT_CFL_LIMIT`; the adjoint replays
+# production and accepts no other limit.
+function _require_production_cfl_limit(cfl_limit)
+    cfl_limit == DEFAULT_CFL_LIMIT || throw(ArgumentError(
+        "cfl_limit = $(cfl_limit): the cubed-sphere adjoint replays the production step, " *
+        "whose palindrome budget is DEFAULT_CFL_LIMIT = $(DEFAULT_CFL_LIMIT)"))
     return nothing
 end
 
-# Lin-Rood: the unsplit horizontal operator (`fv_tp_2d_cs!`) refills the edge
-# and corner halos it reads, so production's step-start fills are never read
-# and the replay omits them. The split-sweep `strang_split_cs!` has no face
-# kernels for `LinRoodPPMScheme`.
-function _replay_cs_transport!(::CSLinRoodStyle, panels_rm, panels_m,
-                               panels_am, panels_bm, panels_cm,
-                               mesh::CubedSphereMesh, scheme, ws, midpoint!;
-                               flux_scale, cfl_limit)
-    _linrood_run_forward_step!(panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-                               mesh, scheme, ws, midpoint!; flux_scale = flux_scale)
+"""
+    _cs_replay_for_call(panels_rm0, panels_m0, am_steps, bm_steps, cm_steps, mesh;
+                        scheme, dt = nothing, schedule = nothing,
+                        nsteps = length(am_steps), surface_flux = true,
+                        emission_rates = nothing, base_emission_rates = nothing,
+                        flux_scale, cfl_limit,
+                        diffusion_op, diffusion_workspace, diffusion_meteo,
+                        convection_op, convection_forcing, convection_workspace)
+        -> (replay, dt)
+
+Validate the keyword inputs of an adjoint entry point, check that every
+operator of its step plan has an adjoint (`require_adjoint_support`) and build
+the replay of steps `1:nsteps`. `dt` is the step length (the schedule's when
+one is given).
+"""
+function _cs_replay_for_call(panels_rm0, panels_m0, panels_am_steps, panels_bm_steps,
+                             panels_cm_steps, mesh::CubedSphereMesh;
+                             scheme,
+                             dt = nothing,
+                             schedule = nothing,
+                             nsteps::Int = length(panels_am_steps),
+                             surface_flux::Bool = true,
+                             emission_rates = nothing,
+                             base_emission_rates = nothing,
+                             flux_scale = one(eltype(panels_m0[1])),
+                             cfl_limit = DEFAULT_CFL_LIMIT,
+                             diffusion_op = NoDiffusion(),
+                             diffusion_workspace = nothing,
+                             diffusion_meteo = nothing,
+                             convection_op = NoConvection(),
+                             convection_forcing = nothing,
+                             convection_workspace = nothing)
+    FT = eltype(panels_m0[1])
+    total = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
+    1 <= nsteps <= total || throw(ArgumentError("nsteps = $nsteps outside 1:$total"))
+    emission_rates !== nothing && base_emission_rates !== nothing && throw(ArgumentError(
+        "pass emission_rates or base_emission_rates, not both"))
+    rates = emission_rates === nothing ? base_emission_rates : emission_rates
+    _validate_emission_rates(rates, total, mesh, "emission rates")
+    _require_production_cfl_limit(cfl_limit)
+    _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, total)
+    _require_cs_convection_workspace(convection_op, convection_workspace)
+    convection_op isa NoConvection || _validate_convection_forcing(convection_forcing, total)
+    schedule, step_dt = _call_schedule(schedule, dt, FT)
+    replay = _build_cs_replay(panels_rm0, panels_m0, panels_am_steps, panels_bm_steps,
+                              panels_cm_steps, mesh; scheme, schedule, nsteps,
+                              flux_scale, surface_flux, emission_rates = rates,
+                              diffusion_op, diffusion_workspace, diffusion_meteo,
+                              convection_op, convection_forcing, convection_workspace)
+    require_adjoint_support(replay)
+    return replay, step_dt
+end
+
+function _validate_convection_forcing(forcing, nsteps::Int)
+    forcing === nothing && throw(ArgumentError(
+        "an active convection operator requires `convection_forcing`"))
+    forcing isa AbstractVector && length(forcing) != nsteps && throw(ArgumentError(
+        "convection_forcing length $(length(forcing)) does not match nsteps $nsteps"))
     return nothing
 end
+
+# ---------------------------------------------------------------------------
+# Forward replays
+# ---------------------------------------------------------------------------
 
 function _run_cs_footprint_forward(panels_rm0, panels_m0,
                                    panels_am_steps,
@@ -252,65 +268,18 @@ function _run_cs_footprint_forward(panels_rm0, panels_m0,
                                    mesh::CubedSphereMesh,
                                    objective::AbstractCSFootprintObjective;
                                    scheme = PPMScheme(NoLimiter()),
-                                   dt,
-                                   flux_scale = one(eltype(panels_rm0[1])),
-                                   cfl_limit = DEFAULT_CFL_LIMIT,
-                                   emission_rates = nothing,
-                                   perturbation = nothing,
-                                   diffusion_op = NoDiffusion(),
-                                   diffusion_workspace = nothing,
-                                   diffusion_meteo = nothing,
-                                   convection_op = NoConvection(),
-                                   convection_forcing = nothing,
-                                   convection_workspace = nothing)
-    nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
+                                   kwargs...)
     Nz = size(panels_rm0[1], 3)
     _validate_objective(objective, mesh, Nz)
-
-    panels_rm = _copy_panel_tuple(panels_rm0)
-    panels_m = _copy_panel_tuple(panels_m0)
-    fill_panel_halos!(panels_rm, mesh; dir = 0)
-    fill_panel_halos!(panels_m, mesh; dir = 0)
-    ws = CSAdvectionWorkspace(mesh, panels_rm[1]; column_scratch = needs_column_scratch(scheme))
-
-    if emission_rates !== nothing && length(emission_rates) != nsteps
-        throw(ArgumentError("emission_rates length $(length(emission_rates)) does not match nsteps $nsteps"))
-    end
-    _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
-    _require_cs_convection_workspace(convection_op, convection_workspace)
-
-    @inbounds for step in 1:nsteps
-        diffusion_op_step = _diffusion_sequence_at(diffusion_op, step, nsteps,
-                                                   "diffusion_op")
-        diffusion_ws_step = diffusion_op_step isa NoDiffusion ? nothing :
-            _diffusion_sequence_at(diffusion_workspace, step, nsteps,
-                                   "diffusion_workspace")
-        emit! = τ -> begin
-            emission_rates !== nothing &&
-                _add_surface_rates!(panels_rm, emission_rates[step], τ, mesh)
-            perturbation !== nothing && perturbation.step == step &&
-                _add_surface_perturbation!(panels_rm, perturbation, τ, mesh)
-            nothing
-        end
-        _replay_cs_step!(panels_rm, panels_m, panels_am_steps[step],
-                         panels_bm_steps[step], panels_cm_steps[step],
-                         mesh, scheme, ws, emit!;
-                         dt, flux_scale, cfl_limit,
-                         diffusion_op = diffusion_op_step,
-                         diffusion_workspace = diffusion_ws_step,
-                         diffusion_meteo,
-                         convection_op,
-                         convection_forcing = _step_convection_forcing(
-                             convection_op, convection_forcing, step, nsteps),
-                         convection_workspace)
-    end
-
-    return evaluate_objective(objective, panels_rm, panels_m, mesh)
+    replay, _ = _cs_replay_for_call(panels_rm0, panels_m0, panels_am_steps, panels_bm_steps,
+                                    panels_cm_steps, mesh; scheme, kwargs...)
+    _replay_steps!(replay, 1:_replay_nsteps(replay))
+    return evaluate_objective(objective, _replay_rm(replay), _replay_m(replay), mesh)
 end
 
 # The simulated value of every observation (its objective after each sampled
-# step, i.e. after convection, the state runtime output sees, averaged with its
-# time-sampling weights).
+# step, i.e. after the step's window-end stages, the state runtime output
+# sees, averaged with its time-sampling weights).
 _run_cs_observations_forward(args...; kwargs...) =
     _observe_cs_forward(args...; kwargs..., build_functionals = false).simulated
 
@@ -336,18 +305,9 @@ function _observe_cs_forward(panels_rm0, panels_m0,
                              mesh::CubedSphereMesh,
                              observations;
                              scheme = PPMScheme(NoLimiter()),
-                             dt,
-                             flux_scale = one(eltype(panels_rm0[1])),
-                             cfl_limit = DEFAULT_CFL_LIMIT,
-                             emission_rates = nothing,
-                             diffusion_op = NoDiffusion(),
-                             diffusion_workspace = nothing,
-                             diffusion_meteo = nothing,
-                             convection_op = NoConvection(),
-                             convection_forcing = nothing,
-                             convection_workspace = nothing,
                              column_met = nothing,
-                             build_functionals::Bool)
+                             build_functionals::Bool,
+                             kwargs...)
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
     Nz = size(panels_rm0[1], 3)
     @inbounds for obs in observations
@@ -356,18 +316,6 @@ function _observe_cs_forward(panels_rm0, panels_m0,
         _validate_objective(obs.objective, mesh, Nz)
     end
     _validate_column_met(observations, column_met, mesh, Nz, nsteps)
-
-    panels_rm = _copy_panel_tuple(panels_rm0)
-    panels_m = _copy_panel_tuple(panels_m0)
-    fill_panel_halos!(panels_rm, mesh; dir = 0)
-    fill_panel_halos!(panels_m, mesh; dir = 0)
-    ws = CSAdvectionWorkspace(mesh, panels_rm[1]; column_scratch = needs_column_scratch(scheme))
-
-    if emission_rates !== nothing && length(emission_rates) != nsteps
-        throw(ArgumentError("emission_rates length $(length(emission_rates)) does not match nsteps $nsteps"))
-    end
-    _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
-    _require_cs_convection_workspace(convection_op, convection_workspace)
 
     # (observation, sample) pairs by step, in observation order.
     samples_by_step = [Tuple{Int, Int}[] for _ in 1:nsteps]
@@ -389,41 +337,30 @@ function _observe_cs_forward(panels_rm0, panels_m0,
     profiles = [Float64[] for _ in 1:nobs]
     last_step = maximum(obs -> obs.step, observations; init = 0)
 
-    @inbounds for step in 1:last_step
-        diffusion_op_step = _diffusion_sequence_at(diffusion_op, step, nsteps,
-                                                   "diffusion_op")
-        diffusion_ws_step = diffusion_op_step isa NoDiffusion ? nothing :
-            _diffusion_sequence_at(diffusion_workspace, step, nsteps,
-                                   "diffusion_workspace")
-        emit! = τ -> begin
-            emission_rates !== nothing &&
-                _add_surface_rates!(panels_rm, emission_rates[step], τ, mesh)
-            nothing
-        end
-        _replay_cs_step!(panels_rm, panels_m, panels_am_steps[step],
-                         panels_bm_steps[step], panels_cm_steps[step],
-                         mesh, scheme, ws, emit!;
-                         dt, flux_scale, cfl_limit,
-                         diffusion_op = diffusion_op_step,
-                         diffusion_workspace = diffusion_ws_step,
-                         diffusion_meteo,
-                         convection_op,
-                         convection_forcing = _step_convection_forcing(
-                             convection_op, convection_forcing, step, nsteps),
-                         convection_workspace)
-        for (obs_idx, n) in samples_by_step[step]
-            obs = observations[obs_idx]
-            weight = FT(obs.sampling.weights[n])
-            value, f, level, sample = _sample_objective(obs.objective, step, panels_rm, panels_m, mesh,
-                                                        column_met, build_functionals)
-            simulated[obs_idx] += weight * value
-            levels[obs_idx][n] = level
-            _accumulate_retrieval_sample!(mismatch, profiles, obs_idx, sample, obs.sampling.weights[n])
-            if build_functionals
-                _append_entries!(entries[obs_idx], f, weight)
-                offsets[obs_idx] += weight * f.offset
+    if last_step > 0
+        replay, _ = _cs_replay_for_call(panels_rm0, panels_m0, panels_am_steps, panels_bm_steps,
+                                        panels_cm_steps, mesh; scheme, nsteps = last_step,
+                                        kwargs...)
+        sample! = (step, _state) -> begin
+            panels_rm = _replay_rm(replay)
+            panels_m = _replay_m(replay)
+            for (obs_idx, n) in samples_by_step[step]
+                obs = observations[obs_idx]
+                weight = FT(obs.sampling.weights[n])
+                value, f, level, sample = _sample_objective(obs.objective, step, panels_rm, panels_m,
+                                                            mesh, column_met, build_functionals)
+                simulated[obs_idx] += weight * value
+                levels[obs_idx][n] = level
+                _accumulate_retrieval_sample!(mismatch, profiles, obs_idx, sample,
+                                              obs.sampling.weights[n])
+                if build_functionals
+                    _append_entries!(entries[obs_idx], f, weight)
+                    offsets[obs_idx] += weight * f.offset
+                end
             end
+            return nothing
         end
+        _replay_steps!(replay, 1:last_step; on_step_end = sample!)
     end
 
     assimilated = _screen_surface_pressure(observations, mismatch)

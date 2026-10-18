@@ -13,14 +13,22 @@
 """
     CSFootprintResult
 
-Reverse-mode footprint result for one scalar objective. `footprints[t]`
-is an `NTuple{6}` of `(Nc, Nc)` arrays containing `dJ / dE`, where `E` is
-the per-cell model-storage emission rate applied at the midpoint of model
-step `t`. Storage is dry mixing ratio × carrier-air mass; these rates are
-not physical kg-species per second and are not divided by cell area.
-The derivative includes the timestep factor. `lag_steps[t] == nsteps - t`.
+Reverse-mode result for one scalar objective. `footprints[t]` is an
+`NTuple{6}` of `(Nc, Nc)` arrays containing `dJ / dE`, where `E` is the
+per-cell model-storage emission rate the surface-flux operator applies at the
+palindrome center of model step `t`. Storage is dry mixing ratio × carrier-air
+mass; these rates are not physical kg-species per second and are not divided
+by cell area. The derivative includes the timestep factor.
+`lag_steps[t] == nsteps - t`. A step plan without a surface-flux operator
+(`surface_flux = false`) has no emission entry point and an empty
+`footprints`.
+
+`initial_adjoint` is `dJ/drm` at the initial state: an `NTuple{6}` of
+halo-padded panels like the initial tracer mass (the halo cells are zero:
+halos are a function of the interiors).
 """
-struct CSFootprintResult{FT, O <: AbstractCSFootprintObjective, A2 <: AbstractArray{FT, 2}}
+struct CSFootprintResult{FT, O <: AbstractCSFootprintObjective, A2 <: AbstractArray{FT, 2},
+                         A3 <: AbstractArray{FT, 3}}
     objective::O
     footprints::Vector{NTuple{6, A2}}
     lag_steps::Vector{Int}
@@ -31,6 +39,7 @@ struct CSFootprintResult{FT, O <: AbstractCSFootprintObjective, A2 <: AbstractAr
     # Not evaluated by the reverse pass. Current built-in objectives only
     # need dJ/drm at final time, independent of final tracer mass.
     base_value::FT
+    initial_adjoint::NTuple{6, A3}
 end
 
 """

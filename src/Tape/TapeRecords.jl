@@ -53,13 +53,15 @@ struct _CSHaloRecord
 end
 
 """
-    _CSMidpointRecord(step)
+    _CSMidpointRecord(step, dt)
 
-Marker record at the Strang-palindrome midpoint of model step `step`.
-The reverse pass accumulates a surface footprint snapshot at this op.
+Marker record where the surface-flux operator of model step `step` adds `dt`
+worth of emissions (the palindrome center). The reverse pass accumulates the
+step's surface footprint `dt · λ` at this op.
 """
-struct _CSMidpointRecord
+struct _CSMidpointRecord{FT}
     step::Int
+    dt::FT
 end
 
 """
@@ -83,28 +85,46 @@ end
 Forward-recorded implicit vertical-diffusion application. `op` is the
 diffusion operator (e.g., `ImplicitVerticalDiffusion`), `workspace` is the
 operator's workspace at this step, `panels_m` is the air-mass tape slot,
-`dt` is the (half-)timestep size.
+`dt` is the (half-)timestep size and `time` the clock (`current_time`) at
+which the forward evaluated the operator's Kz field.
 """
 struct _CSDiffusionRecord{FT, T, D, W}
     op::D
     workspace::W
     panels_m::T
     dt::FT
+    time::Float64
 end
 
 """
     _CSConvectionRecord{FT, T, C, F}
 
-Forward-recorded convection step. `op` is the convection operator
-(`CMFMCConvection` or `TM5Convection`), `forcing` is the
-`ConvectionForcing` at this step, `panels_m` is the air-mass tape slot,
-`dt` is the step size.
+Forward-recorded convection application. `op` is the convection operator
+(`CMFMCConvection`, `TM5Convection` or `CMFMCMatrixConvection`), `forcing` is
+the `ConvectionForcing` it read, `panels_m` is the air-mass tape slot, `dt`
+the interval it integrated over (the advection step or the met window) and
+`substeps` the CFL sub-step count the forward call used (`CMFMCConvection`;
+1 for the others).
 """
 struct _CSConvectionRecord{FT, T, C, F}
     op::C
     forcing::F
     panels_m::T
     dt::FT
+    substeps::Int
+end
+
+"""
+    _CSAirMassResetRecord(mode, panels_old_m, panels_new_m)
+
+Forward-recorded air-mass reset to a met target. `:preserve_tracer_mass`
+leaves the tracer mass unchanged (no staged air masses); `:preserve_vmr`
+scales it by `new_m / old_m` and stages both air masses.
+"""
+struct _CSAirMassResetRecord{T}
+    mode::Symbol
+    panels_old_m::T
+    panels_new_m::T
 end
 
 const _CSTapeOp = Union{
@@ -114,4 +134,5 @@ const _CSTapeOp = Union{
     _CSStepEndRecord,
     _CSDiffusionRecord,
     _CSConvectionRecord,
+    _CSAirMassResetRecord,
 }

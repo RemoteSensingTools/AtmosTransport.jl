@@ -195,41 +195,6 @@ function _tm5_solve_column_vector_adjoint!(lambda_col, m_col,
     return nothing
 end
 
-@kernel function _tm5_cs_panel_column_single_kernel!(
-    q_raw_panel, @Const(air_mass_panel),
-    @Const(entu_panel), @Const(detu_panel),
-    @Const(entd_panel), @Const(detd_panel),
-    @Const(cell_areas_panel),
-    conv1_panel, pivots_panel, cloud_panel,
-    f_panel, amu_panel, amd_panel,
-    Hp::Int, tile_offset::Int, Nc::Int, dt)
-    t = @index(Global)
-    c_global = tile_offset + t
-    c1 = ((c_global - 1) % Nc) + 1
-    c2 = ((c_global - 1) ÷ Nc) + 1
-    i = c1 + Hp
-    j = c2 + Hp
-    @inbounds begin
-        rm_col = @view q_raw_panel[i, j, :]
-        m_col = @view air_mass_panel[i, j, :]
-        entu_col = @view entu_panel[c1, c2, :]
-        detu_col = @view detu_panel[c1, c2, :]
-        entd_col = @view entd_panel[c1, c2, :]
-        detd_col = @view detd_panel[c1, c2, :]
-        conv1_col = @view conv1_panel[:, :, t]
-        pivots_col = @view pivots_panel[:, t]
-        cloud_col = @view cloud_panel[:, t]
-        f_col = @view f_panel[:, :, t]
-        amu_col = @view amu_panel[:, t]
-        amd_col = @view amd_panel[:, t]
-        _tm5_solve_column_vector!(
-            rm_col, m_col, entu_col, detu_col, entd_col, detd_col,
-            conv1_col, pivots_col, cloud_col, dt;
-            cell_area = cell_areas_panel[c1, c2],
-            f_buf = f_col, amu_buf = amu_col, amd_buf = amd_col)
-    end
-end
-
 @kernel function _tm5_cs_panel_column_adjoint_kernel!(
     lambda_panel, @Const(air_mass_panel),
     @Const(entu_panel), @Const(detu_panel),
@@ -564,114 +529,46 @@ end
          entd = workspace.zero_entd,    detd = workspace.zero_detd))
 end
 
-function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
-                                       ::NoConvection, dt, workspace,
-                                       mesh::CubedSphereMesh)
-    return nothing
-end
+# The forward of one convection application on single-tracer panels, for the
+# per-operator adjoint identity tests: the production state-level `apply!` on
+# a one-tracer state holding the panels. The tape never calls it; the replay
+# runs production `apply!` through the step plan.
+_apply_cs_convection_forward!(panels_rm, panels_m, forcing, ::NoConvection, dt, workspace,
+                              mesh::CubedSphereMesh) = nothing
 
-function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
-                                       op::CMFMCConvection, dt,
-                                       workspace::CMFMCWorkspace,
+function _apply_cs_convection_forward!(panels_rm, panels_m, forcing, op, dt, workspace,
                                        mesh::CubedSphereMesh)
-    _require_supported_cs_convection_variant(op)
-    cmfmc, dtrain = _assert_cmfmc_adjoint_forcing(forcing)
-    _require_cmfmc_convection_workspace(workspace)
-    cell_areas = workspace.cell_metrics
-    invalidate_cmfmc_cache!(workspace)
-    n_sub = _get_or_compute_n_sub!(workspace, cmfmc, panels_m, cell_areas, dt)
-    dtrain_arr = _cmfmc_dtrain_array(cmfmc, dtrain, panels_m)
-    Nc = mesh.Nc
-    Hp = mesh.Hp
-    Nz = size(panels_rm[1], 3)
-    backend = get_backend(panels_rm[1])
-    kernel! = _cmfmc_cs_panel_column_kernel!(backend, (16, 16))    # the production forward
-    FT = eltype(panels_rm[1])
-    sdt = FT(dt) / FT(n_sub)
-    @inbounds for _ in 1:n_sub
-        for p in 1:6
-            rm_packed = reshape(panels_rm[p], size(panels_rm[p])..., 1)   # one packed tracer
-            # Same column mass ledger as the forward run, without a carry (the
-            # replay stays a function of the recorded state; see the TM5 replay).
-            kernel!(rm_packed, nothing, panels_m[p], cmfmc[p], dtrain_arr[p], cell_areas[p],
-                    nothing, workspace.qc_scratch[p],
-                    Nz, 1, sdt, Hp, Val(true), Val(false);
-                    ndrange = (Nc, Nc))
-        end
-    end
-    synchronize(backend)
-    return nothing
-end
-
-function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
-                                       op::TM5Convection, dt,
-                                       workspace::TM5Workspace,
-                                       mesh::CubedSphereMesh)
-    _require_supported_cs_convection_variant(op)
-    tm5 = _assert_tm5_adjoint_forcing(forcing)
-    _require_tm5_convection_workspace(workspace)
-    cell_areas = workspace.cell_metrics
-    Nc = mesh.Nc
-    Hp = mesh.Hp
-    N_total = Nc * Nc
-    _ensure_tm5_scratch!(workspace)
-    B = size(workspace.conv1, 3)
-    backend = get_backend(panels_rm[1])
-    kernel! = _tm5_cs_panel_column_single_kernel!(backend)
-    FT = eltype(panels_rm[1])
-    @inbounds for p in 1:6
-        for tile_off in 0:B:(N_total - 1)
-            n = min(B, N_total - tile_off)
-            kernel!(panels_rm[p], panels_m[p],
-                    tm5.entu[p], tm5.detu[p], tm5.entd[p], tm5.detd[p],
-                    cell_areas[p],
-                    workspace.conv1, workspace.pivots, workspace.cloud_dims,
-                    workspace.f_scratch,
-                    workspace.amu_scratch, workspace.amd_scratch,
-                    Hp, Int(tile_off), Nc, FT(dt);
-                    ndrange = n)
-        end
-    end
-    synchronize(backend)
-    return nothing
-end
-
-# CMFMCMatrixConvection forward = refresh-derive + TM5 forward. Cheap
-# alias-and-delegate; no kernel duplication.
-function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
-                                       op::CMFMCMatrixConvection, dt,
-                                       workspace::CMFMCMatrixWorkspace,
-                                       mesh::CubedSphereMesh)
-    _require_supported_cs_convection_variant(op)
-    synth = _refresh_and_synthesize_cmfmc_matrix_forcing!(workspace, forcing)
-    return _apply_cs_convection_forward!(panels_rm, panels_m, synth,
-                                          op.inner, dt, workspace.tm5_workspace, mesh)
-end
-
-function _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
-                                       op, dt, workspace,
-                                       mesh::CubedSphereMesh)
-    throw(ArgumentError("CS adjoint footprint forward helper supports `NoConvection`, " *
-                        "`CMFMCConvection`, `TM5Convection`, and `CMFMCMatrixConvection`; " *
-                        "got $(typeof(op))"))
-end
-
-function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
-                                       ::NoConvection, dt, workspace,
-                                       mesh::CubedSphereMesh)
+    state = CubedSphereState(DryBasis, mesh, panels_m; (_REPLAY_TRACER => panels_rm,)...)
+    apply!(state, forcing, _replay_grid(mesh, size(panels_m[1], 3)), op, dt; workspace)
+    foreach(copyto!, panels_rm, _single_tracer(state.tracers_raw))
     return nothing
 end
 
 function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
+                                       ::NoConvection, dt, workspace,
+                                       mesh::CubedSphereMesh; n_sub = 1)
+    return nothing
+end
+
+# `n_sub` is the CFL sub-step count of the forward call, which production
+# caches per met window (from the air mass of the window's first call): the
+# tape records it, and the reverse transposes the same sub-steps. Without it
+# (`nothing`, the per-operator identity tests) the count is computed from
+# `panels_m` without touching the workspace cache.
+function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
                                        op::CMFMCConvection, dt,
                                        workspace::CMFMCWorkspace,
-                                       mesh::CubedSphereMesh)
+                                       mesh::CubedSphereMesh; n_sub = nothing)
     _require_supported_cs_convection_variant(op)
     cmfmc, dtrain = _assert_cmfmc_adjoint_forcing(forcing)
     _require_cmfmc_convection_workspace(workspace)
     cell_areas = workspace.cell_metrics
-    invalidate_cmfmc_cache!(workspace)
-    n_sub = _get_or_compute_n_sub!(workspace, cmfmc, panels_m, cell_areas, dt)
+    if n_sub === nothing
+        snap = operator_state(workspace)
+        invalidate_cmfmc_cache!(workspace)
+        n_sub = _get_or_compute_n_sub!(workspace, cmfmc, panels_m, cell_areas, dt)
+        restore_operator_state!(workspace, snap)
+    end
     dtrain_arr = _cmfmc_dtrain_array(cmfmc, dtrain, panels_m)
     Nc = mesh.Nc
     Hp = mesh.Hp
@@ -695,7 +592,7 @@ end
 function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
                                        op::TM5Convection, dt,
                                        workspace::TM5Workspace,
-                                       mesh::CubedSphereMesh)
+                                       mesh::CubedSphereMesh; n_sub = 1)
     _require_supported_cs_convection_variant(op)
     tm5 = _assert_tm5_adjoint_forcing(forcing)
     _require_tm5_convection_workspace(workspace)
@@ -733,7 +630,7 @@ end
 function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
                                        op::CMFMCMatrixConvection, dt,
                                        workspace::CMFMCMatrixWorkspace,
-                                       mesh::CubedSphereMesh)
+                                       mesh::CubedSphereMesh; n_sub = 1)
     _require_supported_cs_convection_variant(op)
     synth = _refresh_and_synthesize_cmfmc_matrix_forcing!(workspace, forcing)
     return _apply_cs_convection_adjoint!(lambda_panels, panels_m, synth,
@@ -742,7 +639,7 @@ end
 
 function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
                                        op, dt, workspace,
-                                       mesh::CubedSphereMesh)
+                                       mesh::CubedSphereMesh; n_sub = 1)
     throw(ArgumentError("CS adjoint footprint reverse helper supports `NoConvection`, " *
                         "`CMFMCConvection`, `TM5Convection`, and `CMFMCMatrixConvection`; " *
                         "got $(typeof(op))"))

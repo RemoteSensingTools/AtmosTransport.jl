@@ -15,9 +15,6 @@
 #     `_gradient_step_controls`, `_control_gradient_norm`,
 #     `_gradient_step_panel_kernel!`).
 #   * Vector flatten helpers (`_observation_vector`, `_control_vector`).
-#   * Step-sequence truncation helpers that end the taped run at the last
-#     sampled step (`_truncate_steps`, `_truncate_convection_forcing`,
-#     `_truncate_stepwise_arg`).
 #   * `cs_surface_flux_4dvar` — the main cost/gradient entry point: one
 #     forward run, one taped run and one reverse pass with every
 #     observation's weighted departure injected at its sampled steps.
@@ -325,22 +322,6 @@ end
 # Step-sequence truncation helpers + 4D-Var entry
 # ---------------------------------------------------------------------------
 
-@inline function _truncate_steps(steps, n::Int)
-    return steps[1:n]
-end
-
-_truncate_convection_forcing(::Nothing, n::Int) = nothing
-function _truncate_convection_forcing(convection_forcing::AbstractVector, n::Int)
-    return convection_forcing[1:n]
-end
-_truncate_convection_forcing(convection_forcing, n::Int) = convection_forcing
-
-_truncate_stepwise_arg(::Nothing, n::Int) = nothing
-function _truncate_stepwise_arg(value::AbstractVector, n::Int)
-    return value[1:n]
-end
-_truncate_stepwise_arg(value, n::Int) = value
-
 # Count the observations left out of the cost by the surface-pressure screen of
 # averaging-kernel columns (`SkipUnplaced`). The screened set depends on the
 # meteorology only, so it is the same in every evaluation of an inversion; the
@@ -384,8 +365,11 @@ the number of observations, as in TM5-4DVAR:
    which adds each step's forcing at that step's end, give `∂J_obs/∂E` for
    every step; each control's window collects its steps.
 
-Steps after the last sampled step do not affect the cost and get a zero
-gradient. `checkpoint` (`FullCheckpoint()`, `StrideCheckpoint(k)`,
+Both runs replay the production step plan of `schedule` (a
+[`CSStepSchedule`](@ref); default: one step of `dt` per met window, the full
+operator suite every step), with the controls' rates in its surface-flux
+operator. Steps after the last sampled step do not affect the cost and get a
+zero gradient. `checkpoint` (`FullCheckpoint()`, `StrideCheckpoint(k)`,
 `RevolveCheckpoint()`) and `tape_storage` / `tape_path` select how the one
 taped run is stored, as in `cs_surface_emission_footprint`.
 
@@ -427,7 +411,8 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
                                observations,
                                controls;
                                scheme::CSAdjointSupportedScheme,
-                               dt = one(eltype(panels_rm0[1])),
+                               dt = nothing,
+                               schedule = nothing,
                                flux_scale = one(eltype(panels_rm0[1])),
                                cfl_limit = DEFAULT_CFL_LIMIT,
                                diffusion_op = NoDiffusion(),
@@ -442,7 +427,6 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
                                preconditioner = nothing,
                                column_met = nothing)
     FT = eltype(panels_rm0[1])
-    dt_ft = FT(dt)
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
     observation_vec = _observation_vector(observations)
     control_vec = _control_vector(controls)
@@ -492,7 +476,8 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
         panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
         mesh, observation_vec;
         scheme = scheme,
-        dt = dt_ft,
+        dt = dt,
+        schedule = schedule,
         flux_scale = FT(flux_scale),
         cfl_limit = cfl_limit,
         emission_rates = emission_rates,
@@ -533,23 +518,17 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
         last_step = maximum(idx -> observation_vec[idx].step, active)
         forcing = _assemble_step_forcing(functionals[active], scales[active], mesh,
                                          size(panels_rm0[1], 3), panels_rm0[1])
+        # The taped run stops at the last sampled step of the same schedule:
+        # a step inside a met window has not run that window's end stages.
         footprint = only(_cs_surface_footprints(
-            panels_rm0, panels_m0,
-            _truncate_steps(panels_am_steps, last_step),
-            _truncate_steps(panels_bm_steps, last_step),
-            _truncate_steps(panels_cm_steps, last_step),
+            panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
             mesh, [_ZeroStart()];
-            scheme, checkpoint,
-            dt = dt_ft,
+            scheme, checkpoint, dt, schedule, nsteps = last_step,
             flux_scale = FT(flux_scale),
             cfl_limit,
-            base_emission_rates = _truncate_stepwise_arg(emission_rates, last_step),
-            diffusion_op = _truncate_stepwise_arg(diffusion_op, last_step),
-            diffusion_workspace = _truncate_stepwise_arg(diffusion_workspace, last_step),
-            diffusion_meteo,
-            convection_op,
-            convection_forcing = _truncate_convection_forcing(convection_forcing, last_step),
-            convection_workspace,
+            base_emission_rates = emission_rates,
+            diffusion_op, diffusion_workspace, diffusion_meteo,
+            convection_op, convection_forcing, convection_workspace,
             tape_storage, tape_path, forcing))
 
         # Physical-space gradient. In preconditioned mode this is

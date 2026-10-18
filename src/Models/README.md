@@ -36,7 +36,8 @@ read.
   binary window contract and `air_mass_reset_mode`, and executes its four
   phases: window advance (inside `_maybe_advance_window!`), window start
   (first step of a window), every step, window end (after the window's last
-  step).
+  step). The cubed-sphere adjoint replays the same plan
+  (`CSStepSchedule(sim)`, [`adjoint_schedule.jl`](adjoint_schedule.jl)).
 
 ## File Map
 
@@ -62,6 +63,13 @@ read.
 - [`driven_stepping.jl`](driven_stepping.jl) — window advance, the
   constructor (builds `sim.plan`), `step!` (executes the plan's phases), the
   air-mass reset targets (`air_mass_reset_target`), `run_window!`, `run!`
+- [`adjoint_schedule.jl`](adjoint_schedule.jl) — `CSStepSchedule(sim)` (the
+  plan, window structure, clock and reset targets the cubed-sphere adjoint
+  replays), `cs_adjoint_inputs(sim; tracer)` (every adjoint input captured
+  from production's met refresh: per-step fluxes, per-window convection
+  forcing and diffusion geometry, emission rates, fresh workspaces; consumes
+  the simulation) and `require_adjoint_support(sim)` /
+  `require_adjoint_support(model)`
 - [`RuntimeRecipeStyles.jl`](RuntimeRecipeStyles.jl) — runtime-style traits
   (`AbstractRuntimeRecipeStyle` + LatLon/ReducedGaussian/CubedSphere) the
   physics-spec `materialize` methods dispatch on

@@ -1093,11 +1093,15 @@ end
         bm = map(a -> a .* 100, bm)
         inner_am = map(a -> Adv._cs_flux_x_interior(a, Nc, Hp), am)
         inner_bm = map(a -> Adv._cs_flux_y_interior(a, Nc, Hp), bm)
+        # The tape record is built from the production operator's recorder
+        # hooks, so recording leaves the production result unchanged.
         out, mout = map(copy, rm), map(copy, m)
-        record = Adj._record_linrood_horizontal_substep!(
-            out, mout, am, bm, mesh, 1.0, Val(ord))
-        production, pm = map(copy, rm), map(copy, m)
         ws = Adv.CSLinRoodAdvectionWorkspace(mesh, m[1])
+        recorder = Adj._CSTapeRecorder(AtmosTransport.DeviceCSTapeStorage())
+        Adv.fv_tp_2d_cs!(out, mout, inner_am, inner_bm, mesh, Val(ord), ws.cs, ws.linrood;
+                         recorder)
+        record = only(recorder.ops)
+        production, pm = map(copy, rm), map(copy, m)
         Adv.fv_tp_2d_cs!(production, pm, inner_am, inner_bm,
                         mesh, Val(ord), ws.cs, ws.linrood)
         @test max_interior_absdiff(production, out, Nc, Hp, Nz) == 0

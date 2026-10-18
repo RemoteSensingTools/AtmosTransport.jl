@@ -413,17 +413,10 @@ end
                                                  AT.Parameters.DEFAULT_CFL_LIMIT)
     @test n > 1
     for scheme in (UpwindScheme(), PPMScheme(MonotoneLimiter()))
-        record = scheme isa UpwindScheme ?
-            (() -> (AT.Adjoints._record_cs_mass_tape(m0, [am], [bm], [cm], mesh, scheme;
-                                                     cfl_limit = AT.Parameters.DEFAULT_CFL_LIMIT,
-                                                     flux_scale = 1.0, dt = 1.0)[1], nothing)) :
-            (() -> begin
-                ops, rm_tape, m_tape = AT.Adjoints._record_cs_tracer_tape(
-                    rm0, m0, [am], [bm], [cm], mesh, scheme;
-                    cfl_limit = AT.Parameters.DEFAULT_CFL_LIMIT, flux_scale = 1.0, dt = 1.0)
-                (ops, (rm_tape, m_tape))
-            end)
-        ops, final = record()
+        # The tape of one step of the adjoint's replay of the production plan.
+        replay, _ = AT.Adjoints._cs_replay_for_call(rm0, m0, [am], [bm], [cm], mesh; scheme, dt = 1.0)
+        ops = AT.Adjoints._record_cs_tape!(replay, 1:1, AT.DeviceCSTapeStorage())
+        final = (AT.Adjoints._replay_rm(replay), AT.Adjoints._replay_m(replay))
         kinds = map(ops) do op
             op isa AT.Tape._CSSweepRecord ? op.direction :
             op isa AT.Tape._CSHaloRecord ? Symbol("h", op.dir) :
@@ -444,13 +437,15 @@ end
         @test est.halo_records == count(in((:h1, :h2)), kinds)
         @test est.step_records == count(==(:end), kinds)
 
-        if final !== nothing
-            # The tape's forward trajectory is the production step.
-            rm = map(copy, rm0); m = map(copy, m0)
-            Adv.fill_panel_halos!(m, mesh; dir = 0)
-            Adv.strang_split_cs!(rm, m, am, bm, cm, mesh, scheme, Adv.CSAdvectionWorkspace(mesh, 1))
-            @test all(p -> final[1][p][I, I, :] == rm[p][I, I, :], 1:6)
-            @test all(p -> final[2][p][I, I, :] == m[p][I, I, :], 1:6)
-        end
+        # The tape's forward trajectory is the production step: the step-start
+        # halo refresh and the packed-tracer palindrome (the zero-rate
+        # emission at its center adds nothing).
+        rm = ntuple(p -> reshape(copy(rm0[p]), size(rm0[p])..., 1), 6); m = map(copy, m0)
+        Adv.fill_panel_halos!(m, mesh; dir = 0)
+        Adv.fill_cs_step_start_halos!(rm, m, mesh)
+        Adv.strang_split_cs_mt!(rm, m, am, bm, cm, mesh, scheme,
+                                Adv.CSAdvectionWorkspace(mesh, m[1]; n_tracers = 1))
+        @test all(p -> final[1][p][I, I, :] == rm[p][I, I, :, 1], 1:6)
+        @test all(p -> final[2][p][I, I, :] == m[p][I, I, :], 1:6)
     end
 end

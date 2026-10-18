@@ -173,7 +173,9 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
   (`../StepRecording.jl`) and call its hooks before every sweep, after every
   halo exchange, at the center and inside the Lin-Rood operator; production
   passes `NoStepRecorder()`, whose hooks are no-ops. A new tracer-changing
-  operation in these palindromes needs a hook (and a tape record)
+  operation in these palindromes needs a hook (and a tape record), or the
+  adjoint parity test (`test/core/test_cs_adjoint_step_plan_parity.jl`)
+  fails
 - [`../../State/`](../../State/) provides tracer slices, flux-state
   types, and the panel-native cubed-sphere containers
 - [`../../Grids/`](../../Grids/) provides mesh geometry and panel

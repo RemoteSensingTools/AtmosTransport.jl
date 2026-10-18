@@ -222,21 +222,23 @@ end
     P = hydrostatic_cs_problem(; nsteps = 4, flux_fraction = 0.03)
     p, i, j = 2, 2, 3
     Hp = P.mesh.Hp
-    # Replay the air mass independently and record the total interface
-    # pressures of the column after every step.
-    m = ntuple(q -> copy(P.m[q]), 6)
-    rm = ntuple(q -> copy(P.rm[q]), 6)
-    Adv.fill_panel_halos!(m, P.mesh; dir = 0)
-    Adv.fill_panel_halos!(rm, P.mesh; dir = 0)
-    ws = Adv.CSAdvectionWorkspace(P.mesh, rm[1])
+    # Advance the air mass independently, with the production model, and
+    # record the total interface pressures of the column after every step.
+    Nz = size(P.m[1], 3)
+    grid = AT.AtmosGrid(P.mesh, AT.HybridSigmaPressure(zeros(Nz + 1), collect(range(0.0, 1.0, Nz + 1))),
+                        AT.CPU(); FT = Float64)
+    state = AT.CubedSphereState(AT.DryBasis, P.mesh, ntuple(q -> copy(P.m[q]), 6);
+                                CO2 = ntuple(q -> copy(P.rm[q]), 6))
+    model = AT.TransportModel(state, AT.allocate_face_fluxes(P.mesh, Nz; basis = AT.DryBasis),
+                              grid, AT.UpwindScheme())
+    m = model.state.air_mass
     area = AT.cell_area(P.mesh, i, j)
     columns = Vector{Vector{Float64}}()
     for s in 1:P.nsteps
-        ADJ._replay_cs_step!(rm, m, P.am[s], P.bm[s], P.cm[s], P.mesh, AT.UpwindScheme(), ws, τ -> nothing;
-                             dt = DT, flux_scale = 1.0, cfl_limit = AT.Parameters.DEFAULT_CFL_LIMIT,
-                             diffusion_op = AT.NoDiffusion(), diffusion_workspace = nothing,
-                             diffusion_meteo = nothing, convection_op = AT.NoConvection(),
-                             convection_forcing = nothing, convection_workspace = nothing)
+        foreach(copyto!, model.fluxes.am, P.am[s])
+        foreach(copyto!, model.fluxes.bm, P.bm[s])
+        foreach(copyto!, model.fluxes.cm, P.cm[s])
+        AT.step!(model, DT)
         push!(columns, m[p][Hp + i, Hp + j, :])
     end
     total(col) = O.total_interface_pressures!(zeros(P.Nz + 1), col, COLUMN_Q, area, COLUMN_GRAVITY, P.p_top)

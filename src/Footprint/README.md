@@ -1,15 +1,18 @@
 # Footprint
 
-Surface-emission footprints for the cubed sphere: record the forward run on
-a tape, then walk it backwards.
+Surface-emission footprints for the cubed sphere: replay the production step
+plan with a tape recorder, then walk the tape backwards.
 
 This folder turns a final-time objective, an explicit final adjoint seed, or
 a set of observations sampled at earlier steps, into `dJ/dE_t`: the
-sensitivity to the surface emission rate at the midpoint of each model step.
-It records the forward palindrome on a tape and walks the tape in reverse
-using the kernels in [`../Adjoints/`](../Adjoints/), adding observation
-forcing at end-of-step markers. It also runs the strided and bisection
-checkpoint schedules.
+sensitivity to the surface emission rate the surface-flux operator applies at
+the palindrome center of each model step, and `dJ/drm_0`, the sensitivity to
+the initial tracer mass. The forward model is the production `StepPlan`
+(`../Operators/StepPlan/`), replayed with the production operators on a
+single-tracer state; its tape is written by the recorder hooks of the
+production step and walked in reverse with the kernels in
+[`../Adjoints/`](../Adjoints/), adding observation forcing at end-of-step
+markers. It also runs the strided and bisection checkpoint schedules.
 
 ## How It Is Loaded
 
@@ -18,31 +21,43 @@ checkpoint schedules.
 `Adjoints` name, and public ones are exported from the `Adjoints.jl` export
 block. Include order:
 `FootprintResult.jl` and `StepForcing.jl` (early, right after
-`ObjectiveSeeding.jl`), then, after
-all `Adjoints` kernel files and `LinRoodTape.jl`: `TapeRecording.jl` ->
-`ReverseLoop.jl` -> `StrideCheckpoint.jl` -> `stride_checkpoint_ppm.jl` ->
-`stride_checkpoint_linrood.jl` -> `revolve_checkpoint.jl` -> `FootprintAPI.jl`. Storage types,
-record types, and schedules come from [`../Tape/`](../Tape/).
+`ObjectiveSeeding.jl`), then, after all `Adjoints` kernel files and
+`LinRoodTape.jl`: `StepReplay.jl` -> (`../Adjoints/AdjointSupport.jl`) ->
+`TapeRecorder.jl` -> `TapeRecording.jl` -> `ReverseLoop.jl` ->
+`StrideCheckpoint.jl` -> `revolve_checkpoint.jl` -> `FootprintAPI.jl`.
+Storage types, record types, and schedules come from [`../Tape/`](../Tape/).
 
 ## Entry Points
 
 - [`FootprintAPI.jl`](FootprintAPI.jl):
   - `cs_surface_emission_footprint(panels_rm0, panels_m0, panels_am_steps,
-    panels_bm_steps, panels_cm_steps, mesh, objective; scheme, dt,
-    flux_scale, cfl_limit, base_emission_rates, diffusion_op, ...,
-    convection_op, ..., tape_storage, tape_path, checkpoint)` returns a
-    `CSFootprintResult`.
-  - `cs_surface_emission_footprint_from_seed(final_adjoint_rm, panels_m0, ...)`
-    is the same pass with a caller-supplied `dJ/drm_final`. `base_panels_rm0`
-    sets the tracer state the tape is recorded around. It defaults to zero
-    and only matters for limited schemes (monotone PPM, Lin-Rood).
+    panels_bm_steps, panels_cm_steps, mesh, objective; scheme, dt, schedule,
+    flux_scale, base_emission_rates, diffusion_op, ..., convection_op, ...,
+    tape_storage, tape_path, checkpoint)` returns a `CSFootprintResult`.
+  - `cs_surface_emission_footprint_from_seed(final_adjoint_rm, panels_m0, ...;
+    surface_flux = true)` is the same pass with a caller-supplied
+    `dJ/drm_final`. `base_panels_rm0` sets the tracer state the tape is
+    recorded around (zero by default; it only matters for limited schemes).
+    `surface_flux = false` replays a configuration without surface sources
+    (center `V(dt)`): no footprints, the initial-condition sensitivity in
+    `initial_adjoint`.
   - `run_cs_footprint_forward(...)` is forward only and returns the objective
     value. Use it for finite-difference checks.
   - `_cs_surface_footprints(tape_rm0, panels_m0, ..., starts; scheme,
-    checkpoint, ..., forcing)` is the one internal checkpoint dispatch behind
-    both entry points, `cs_surface_flux_jacobian` (several objectives on one
-    tape) and `cs_surface_flux_4dvar` (a zero start plus the observation
-    forcing). It returns one `CSFootprintResult` per adjoint start.
+    checkpoint, schedule, nsteps, ..., forcing)` is the one internal
+    checkpoint dispatch behind both entry points, `cs_surface_flux_jacobian`
+    (several objectives on one recording) and `cs_surface_flux_4dvar` (a zero
+    start plus the observation forcing). It returns one `CSFootprintResult`
+    per adjoint start.
+- [`StepReplay.jl`](StepReplay.jl): `CSStepSchedule` — the production step the
+  adjoint differentiates (the `StepPlan`, steps per met window, window length,
+  start time, binary subcycle contract, air-mass reset targets);
+  `CSStepSchedule(sim)` in `../Models/adjoint_schedule.jl` builds it for a
+  `DrivenSimulation`, and `cs_adjoint_inputs(sim; tracer)` there captures every
+  adjoint input of a driven configuration from production (per-step face
+  fluxes after window loading and flux scaling, per-window convection forcing,
+  diffusion layer thickness and Kz, the tracer's static emission rates, fresh
+  workspaces).
 - [`StepForcing.jl`](StepForcing.jl): `CSLinearFunctional` (an observation as
   `offset + Σ weight · rm_step[panel][i, j, k]`, each entry at one step: one
   step for an instantaneous observation, several for a time window; built by
@@ -51,14 +66,11 @@ record types, and schedules come from [`../Tape/`](../Tape/).
   (scaled functionals grouped by step and panel, on the device),
   `NoStepForcing`, `_assemble_step_forcing` and `_inject_step_forcing!`.
 - [`TapeRecording.jl`](TapeRecording.jl): `cs_tape_byte_estimate(...)` returns
-  a `CSTapeByteEstimate` without recording anything. It counts both the
-  split-sweep layouts (linear and limited PPM) and Lin-Rood's larger layout;
-  each Lin-Rood step retains ten (upwind vertical) or twelve (FV3 vertical)
-  full-panel states and six face-panel tuples before optional diffusion and
-  convection records.
+  a `CSTapeByteEstimate`: it replays the transport with a counting recorder
+  and counts the records of the plan's convection and diffusion.
 - [`FootprintResult.jl`](FootprintResult.jl): `CSFootprintResult` (with
-  `footprints[t]::NTuple{6}` of `(Nc, Nc)` arrays and
-  `lag_steps[t] == nsteps - t`) and `CSTapeByteEstimate`.
+  `footprints[t]::NTuple{6}` of `(Nc, Nc)` arrays, `lag_steps[t] == nsteps -
+  t` and `initial_adjoint`) and `CSTapeByteEstimate`.
 
 ## File Map
 
@@ -66,53 +78,48 @@ record types, and schedules come from [`../Tape/`](../Tape/).
 - [`StepForcing.jl`](StepForcing.jl) — observation operators as linear
   functionals, the step forcing of the reverse walk and its injection kernel
   (one work item per cell, entries in a fixed order, no atomics)
-- [`TapeRecording.jl`](TapeRecording.jl) — `_tape_byte_estimate`,
-  `_record_sweep!`, `_record_and_sweep_z!` (records, then applies, one Z
-  sweep; used by all three tapes, including Lin-Rood), the per-step pieces
-  the recorders share (`_record_step_start_halos!`,
-  `_record_and_apply_center!` / `_record_center!` around
-  `surface_flux_center!`, `_record_and_apply_convection!`,
-  `_record_step_end!`),
-  `_record_cs_mass_tape` (linear schemes: stages `m`
-  only), `_record_cs_tracer_tape` (monotone PPM: stages `m` and `rm`; the
-  FV3 vertical sweeps of the Lin-Rood tape stage both as well), and
-  the `_record_cs_adjoint_tape` dispatcher (Lin-Rood goes to
-  `_record_cs_linrood_tape`)
+- [`StepReplay.jl`](StepReplay.jl) — `CSStepSchedule`, the replay meteorology
+  (`_CSReplayMeteo`: clock, binary subcycle contract, reset targets), the
+  replay `_CSReplay` (single-tracer `CubedSphereState`, per-step face fluxes,
+  the production operators and a refillable surface source), `_build_cs_replay`,
+  `_replay_steps!` (executes each step's plan phases in production order and
+  calls the recorder), `_replay_snapshot` / `_replay_restore!` (checkpoints)
+- [`TapeRecorder.jl`](TapeRecorder.jl) — `_CSTapeRecorder`, the recorder hook
+  methods that stage inputs and push records (sweeps, halos, center, diffusion,
+  emission, Lin-Rood phases, convection with its sub-step count, air-mass
+  resets, end-of-step markers), and `_CSCountingRecorder` for the estimate
+- [`TapeRecording.jl`](TapeRecording.jl) — `_record_sweep!`,
+  `_center_diffusion_records`, `_record_cs_tape!`, `_record_cs_adjoint_tape`
+  (a whole run, for tests), `cs_tape_byte_estimate`
 - [`ReverseLoop.jl`](ReverseLoop.jl) — the adjoint starts (`_ObjectiveStart`,
   `_SeedStart`, `_ZeroStart`, `_initial_adjoint_state`),
-  `_collect_surface_footprints`, `_walk_window_reverse!` (dispatch on record
-  type; step forcing at `_CSStepEndRecord`), `_replay_cs_step!` (one
-  production step: step-start halo refresh, palindrome with the coupled
-  center, convection), and the tape-free forward replays
+  `_walk_window_reverse!` (dispatch on record type; step forcing at
+  `_CSStepEndRecord`), the air-mass reset transpose, `_cs_replay_for_call`
+  (input validation, the guard, the replay), and the forward replays
   `_run_cs_footprint_forward` and `_observe_cs_forward` (each observation
   sampled after every step of its `CSTimeSampling`: simulated values,
   stencils and functionals; placed point observations choose their layer from
   `column_met` at each sampled state; `_run_cs_observations_forward` wraps it)
-  built on it
-- [`StrideCheckpoint.jl`](StrideCheckpoint.jl) (linear mass tape and the
-  shared helpers), [`stride_checkpoint_ppm.jl`](stride_checkpoint_ppm.jl)
-  (monotone-PPM tracer tape), [`stride_checkpoint_linrood.jl`](stride_checkpoint_linrood.jl)
-  (Lin-Rood tape), [`revolve_checkpoint.jl`](revolve_checkpoint.jl) — the
-  `StrideCheckpoint` and `RevolveCheckpoint` drivers for the mass, tracer, and Lin-Rood tapes
-  (`_collect_surface_footprints_stride`,
-  `_collect_surface_footprints_revolve`, `_propagate_*_checkpoints`), plus
-  the `_require_checkpoint_supported` and `_require_tape_path_supported`
-  guards
+- [`StrideCheckpoint.jl`](StrideCheckpoint.jl) — `FullCheckpoint` and
+  `StrideCheckpoint` drivers (`_collect_footprints`), the shared reverse-state
+  helpers, and the `_require_checkpoint_supported`, tape-storage and
+  `tape_path` guards; [`revolve_checkpoint.jl`](revolve_checkpoint.jl) — the
+  `RevolveCheckpoint` driver. One driver per schedule serves every scheme
+  family.
 - [`FootprintAPI.jl`](FootprintAPI.jl) — public entry points;
   `_cs_objective_footprints` (several objectives, used by the Jacobian);
   `_cs_surface_footprints`, the one input validation and dispatch to Full,
-  Stride, or Revolve (`_collect_footprints`)
+  Stride, or Revolve
 
 ## Common Tasks
 
-- Changing what the tape records for a step: edit the recorder for that
-  scheme family in [`TapeRecording.jl`](TapeRecording.jl), or
-  `_record_cs_linrood_tape` in `../Adjoints/LinRoodTape.jl`. Keep the
-  forward replay `_replay_cs_step!` in [`ReverseLoop.jl`](ReverseLoop.jl)
-  and production `strang_split!` consistent with it;
-  `../../test/core/test_cs_adjoint_production_parity.jl` compares the replay
-  with `TransportModel.step!`, the footprints with production finite
-  differences, and the tape layout with `cs_tape_byte_estimate`.
+- Changing what production runs in a step: change the `StepPlan`
+  (`../Operators/StepPlan/`) or an operator; the replay follows. If the new
+  piece transforms the tracer, add a recorder hook to production, a record
+  and its transpose (`../Tape/TapeRecords.jl`, `_walk_window_reverse!`), a
+  `_CSTapeRecorder` method, and an `adjoint_support` method;
+  `../../test/core/test_cs_adjoint_step_plan_parity.jl` checks replay ==
+  production bit for bit.
 - Adding a tape record type: add the record in `../Tape/TapeRecords.jl`,
   then add a branch in `_walk_window_reverse!`.
 - Adding an observation operator: give its objective a `_linear_functional`
@@ -123,84 +130,76 @@ record types, and schedules come from [`../Tape/`](../Tape/).
   the column meteorology) adds a `_sample_objective` method in
   `../Inversion/ObservationColumns.jl` instead and is a 4D-Var observation
   only.
-- Changing schedule behaviour: [`StrideCheckpoint.jl`](StrideCheckpoint.jl) and the
-  scheme-specific `stride_checkpoint_*.jl`, `revolve_checkpoint.jl`.
-  The forward propagation passes call the same recorders with
-  `record_ops = false`, and `step_offset` shifts midpoint indices for each
-  window.
+- Changing schedule behaviour: [`StrideCheckpoint.jl`](StrideCheckpoint.jl),
+  [`revolve_checkpoint.jl`](revolve_checkpoint.jl). Propagation passes run
+  the replay with `NoStepRecorder()` (the production call path); every
+  propagation and recording starts from a restored snapshot.
 - Sizing a run before launching it: `cs_tape_byte_estimate`.
 
 ## Invariants
 
-- The replays and tapes follow the production step of a run with a
-  surface-flux operator (production `strang_split!` followed by the
-  `TransportModel.step!` convection block). Per-step tape order for
-  split-sweep schemes: `halo(1) (X Y Z)^n <center> (Z Y X)^n`, then optional
-  convection, then `end(step)`. `n` is the subcycle count from
-  `_cs_static_palindrome_subcycle_count`, the production CFL schedule.
-  Lin-Rood steps record `H Z <center> Z H`, then optional convection and
-  `end(step)`. There is no subcycling (`cfl_limit` is ignored), and Z is the
-  scheme's vertical sweep (upwind or the FV3 profile).
-- Every recorder closes each step with `_CSStepEndRecord(step)` (absolute
-  step, after convection): the state that runtime output and the forward
+- The forward model is the production step plan of the schedule
+  (`CSStepSchedule`; default one step per met window, the full operator suite
+  every step, as `TransportModel.step!`). The replay runs the production
+  stage functions and operators (packed-tracer palindrome, the
+  Kahan-compensated surface source, convection and diffusion with their
+  ledger carries and the CMFMC CFL cache) on a single-tracer
+  `CubedSphereState`, so the forward replay, the tape recording and every
+  checkpoint restart equal production bit for bit.
+- Every entry point runs `require_adjoint_support(replay)` before recording:
+  every plan stage and operator needs an `adjoint_support` method returning
+  `nothing`.
+- Per-step tape order for split-sweep schemes: `halo(1) (X Y Z)^n <center>
+  (Z Y X)^n`, then the plan's convection (every step, or after the window's
+  last step and the window-end reset), then `end(step)`. `n` is the
+  production subcycle count (CFL budget, or 1 under a binary window
+  contract). Lin-Rood steps record `H Z <center> Z H` (its step-start fills
+  are never read and have no record). Z is the scheme's vertical sweep.
+- Every step closes with `_CSStepEndRecord(step)` (absolute step, after the
+  window-end stages): the state that runtime output and the forward
   observation sampler see. The reverse walk adds the step forcing there,
-  before it transposes the step's convection, as TM5-4DVAR adds its forcing
+  before it transposes the step's last operator, as TM5-4DVAR adds its forcing
   just before the adjoint of the operator after which it sampled. With
-  `NoStepForcing` (every footprint path) the marker does nothing, so
-  footprints are bit-identical to a tape without it.
+  `NoStepForcing` the marker does nothing.
 - An observation operator is a fixed linear functional of the tracer mass at
   the steps it samples, with weights from the replayed air mass (meteorology
   is a fixed tape input) times its time-sampling weights. Its gradient is its
-  weight vector. `_seed_objective!` adds the functional at the final air mass
-  to a zeroed adjoint state, which reproduces the earlier seeds bit for bit.
-  The 4D-Var gradient starts from zero (`_ZeroStart`) and adds every
-  observation's scaled weights at each sampled step: one tape (to the last
-  sampled step) and one reverse walk per gradient. A placed point
-  observation's level is resolved per sampled step from the replayed air
-  mass, so its stencil may change from step to step; the forcing carries the
-  stencil of the forward run.
+  weight vector. The 4D-Var gradient starts from zero (`_ZeroStart`) and adds
+  every observation's scaled weights at each sampled step: one tape (to the
+  last sampled step of the same schedule) and one reverse walk per gradient.
 - The injection kernel gives each cell of a (step, panel) pair one work
-  item, which adds the cell's entries in input order. The injection is
-  deterministic and needs no atomics. (The halo and Lin-Rood face adjoint
-  kernels do use atomics, so a multithreaded CPU or GPU reverse pass is
-  reproducible to rounding only; single-threaded it is bit for bit.)
-- `_seed_objective!` computes the seed weights on the host (`1 / max(m, eps)`,
-  `1 / max(Σm, eps)`) where the old seed kernels divided on the device; IEEE division
-  gives the same bits on CPU and CUDA (not checked on Metal).
-- `<center>` is `surface_flux_center!` with the diffusion operator's
-  coupling: `D(dt/2) | midpoint | D(dt/2)` with `SplitSurfaceFluxCoupling`,
-  `midpoint | D(dt)` with `DiffusiveSurfaceFluxBoundary` (one full-step
-  diffusion record after the midpoint), and just `midpoint` without
-  diffusion.
-- In the split-sweep tapes, the forward halo fills after initialization are
-  recorded as `_CSHaloRecord(dir)` (1 = X, 2 = Y): the step-start refresh
-  (`fill_cs_step_start_halos!`, edges plus X-orientation corners, as production; the first X sweep would
-  otherwise read tracer halos from before the previous step's convection),
-  one after each horizontal sweep, one before the X sweep of each later
-  forward pass (the Z sweep before it changed the interiors), and one before
-  each second-half Y and X sweep (Lin-Rood keeps its halo work inside
-  `_CSLinRoodHorizRecord`; its horizontal operator refills the halos it
-  reads, so it has no step-start record). The reverse pass applies
-  `_adjoint_fill_panel_halos!` with the same `dir`.
-- The reverse walk reads the per-step footprint when it reaches each
-  `_CSMidpointRecord`. Emissions are injected where the production center
-  injects them: between the two diffusion half-steps (split coupling) or
-  before the full-step solve (diffusive boundary).
+  item, which adds the cell's entries in input order: deterministic, no
+  atomics. (The halo and Lin-Rood face adjoint kernels do use atomics, so a
+  multithreaded CPU or GPU reverse pass is reproducible to rounding only;
+  single-threaded it is bit for bit.)
+- `<center>` is production's `palindrome_center!`: `D(dt/2) | emission |
+  D(dt/2)` with `SplitSurfaceFluxCoupling`, `emission | D(dt)` with
+  `DiffusiveSurfaceFluxBoundary`, `emission` alone without diffusion, and
+  `D(dt)` without a surface-flux operator. Footprints and 4D-Var always have
+  a surface-flux operator (zero rates allowed).
+- Convection records carry the interval they integrate (the step or the met
+  window), the forcing they read and the CFL sub-step count of the forward
+  call; the reverse transposes the same sub-steps.
 - Footprint units: `E` is a per-cell emission rate in model-storage units,
   i.e. dry mixing ratio × carrier air mass, per second. It is not species
   kg/s and not per unit area. The footprint already includes the `dt`
   factor.
 - Air mass and fluxes are fixed tape inputs. The Lin-Rood branch computes a
   `lambda_m` for each step and then discards it.
+- The column ledger carries of convection and Dkg diffusion and the surface
+  source's Kahan compensation are part of the forward (so the replay equals
+  production bit for bit) but are rounding-level terms the reverse does not
+  transpose: each reverse kernel is the transpose of the exact operator.
+- The replay resets the caller's convection workspace to a fresh run's
+  persistent state and uses the diffusion workspaces' `factors` as scratch:
+  pass fresh workspaces, not a live production model's.
+- Diffusion records carry the clock of the forward solve; the reverse
+  evaluates a time-varying Kz field at that clock. The replay clock is
+  production's (`CSStepSchedule.start_time` plus the elapsed windows) unless
+  `diffusion_meteo` is given.
 - Monotone PPM and the FV3 vertical profile record the tracer branch state
   of the base trajectory. Pass `base_emission_rates` when you differentiate
   around non-zero emissions.
-- `StrideCheckpoint` and `RevolveCheckpoint` replay the same kernels as
-  `FullCheckpoint`; because every step starts with the step-start halo
-  refresh, a window restarted at a step boundary records the full tape's
-  states. Tests require agreement within `atol = 1e-12` for every scheme
-  family, with diffusion and convection (see
-  `../Tape/CheckpointSchedule.jl`).
 - `tape_path` requires `tape_storage = :mmap`. Stride writes
   `window_NNNNN/` directories and Revolve writes `step_NNNNN/` directories.
   Stride and Revolve reject a pre-built storage object. With
@@ -211,8 +210,14 @@ record types, and schedules come from [`../Tape/`](../Tape/).
 
 ## Related Docs And Tests
 
-- [`../../docs/src/getting_started/adjoints.md`](../../docs/src/getting_started/adjoints.md),
+- [`../../docs/src/for_tm5_gchp_users/adjoints.md`](../../docs/src/for_tm5_gchp_users/adjoints.md),
   [`../../docs/src/theory/adjoint_status.md`](../../docs/src/theory/adjoint_status.md)
+- [`../../test/core/test_cs_adjoint_step_plan_parity.jl`](../../test/core/test_cs_adjoint_step_plan_parity.jl):
+  the D31 parity matrix — replay, tape recording and checkpoint restarts ==
+  production `DrivenSimulation` bit for bit across schemes, cadences,
+  convection, diffusion couplings, no-emission diffusion and reset modes;
+  OF-114 and OF-115; the setup guard; gradients vs. production finite
+  differences
 - [`../../test/core/test_cs_ppm_adjoint_footprint.jl`](../../test/core/test_cs_ppm_adjoint_footprint.jl):
   footprint vs. finite differences for every scheme, diffusion, TM5, CMFMC,
   seed entry, GPU smoke test (including limited-PPM `:pinned_host` and
