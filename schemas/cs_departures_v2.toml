@@ -3,7 +3,9 @@
 # simulated values and sampling stencils, paired with the observation records
 # (`build_departure_set`, `write_departures` / `read_departures`).
 #
-# Each row is an audit record of one assimilated observation: the record's
+# Each row is an audit record of one observation (assimilated, or co-sampled:
+# a flagged record bound with flagged_records = "cosample", or a member of a
+# cell average; cell averages themselves are not rows): the record's
 # provenance (id, tracer, instrument, time, Float64 coordinates, kind, time
 # window), where it was sampled (cell; vertical placement code, height above
 # the model surface or pressure; every sampled step with its weight and the
@@ -177,13 +179,16 @@ dims  = ["obs"]
 description = "departure / sqrt(value_sigma^2 + model_sigma^2 + profile_model_sigma^2), the residual of the 4D-Var cost"
 
 # ---------------------------------------------------------------------------
-# Optional retrieval block: all four variables or none. Without it every row
-# reads as surface_pressure_mismatch_pa = NaN, no retrieval profile,
-# profile_model_sigma = 0, assimilated = 1.
+# Optional retrieval block: surface_pressure_mismatch_pa,
+# retrieval_model_profile and profile_model_sigma, with assimilated, all or
+# none. Without it every row reads as surface_pressure_mismatch_pa = NaN, no
+# retrieval profile, profile_model_sigma = 0. `assimilated`, `flag` and
+# `cell_average_id` are optional otherwise (absent: 1, 0, 0); the writer adds
+# each when a row needs it.
 # ---------------------------------------------------------------------------
 
 [optional_dimensions]
-retrieval_level = "the largest number of retrieval layers of any row"
+retrieval_level = "the largest number of retrieval layers or levels of any row"
 
 [optional_variables.surface_pressure_mismatch_pa]
 dtype = "f64"
@@ -196,7 +201,7 @@ dtype = "f64"
 dims  = ["obs", "retrieval_level"]
 units = "mol mol-1"
 ordering = "surface_to_top"
-description = "averaging-kernel columns: the model's dry mole fraction on the retrieval layers (the stretched model column rebinned by pressure overlap, R x, time-weighted), from the surface up; NaN-padded, NaN for other rows. The reader requires ordering = 'surface_to_top' and a mole-fraction unit (converted to mol/mol)"
+description = "averaging-kernel columns: the model's dry mole fraction on the retrieval layers or levels (the stretched model column rebinned by pressure overlap, R x, or projected onto the levels' hat functions, P x; time-weighted), from the surface up; NaN-padded, NaN for other rows. The reader requires ordering = 'surface_to_top' and a mole-fraction unit (converted to mol/mol)"
 
 [optional_variables.profile_model_sigma]
 dtype = "f64"
@@ -206,7 +211,17 @@ description = "1-sigma model error of an averaging-kernel column, sqrt(sum_i (h_
 [optional_variables.assimilated]
 dtype = "i8"
 dims  = ["obs"]
-description = "1 when the row is in the 4D-Var cost; 0 for an averaging-kernel column whose surface-pressure mismatch exceeded max_surface_pressure_mismatch_pa under unplaced_records = skip (reported, not assimilated)"
+description = "1 when the row itself is a term of the 4D-Var cost; 0 for a co-sampled record (flag != 0), a member of a cell average (cell_average_id != 0; the average is in the cost), or an averaging-kernel column whose surface-pressure mismatch exceeded max_surface_pressure_mismatch_pa under unplaced_records = skip (reported, not assimilated). Written with the retrieval block or when any row is not assimilated"
+
+[optional_variables.flag]
+dtype = "i8"
+dims  = ["obs"]
+description = "the observation record's flag: 0 = assimilate; any other value = co-sampled only (flagged_records = 'cosample'), never assimilated. Written when any row has a nonzero flag"
+
+[optional_variables.cell_average_id]
+dtype = "i64"
+dims  = ["obs"]
+description = "the cell average the record belongs to (CellAverage), named by the id of its earliest record; 0 = none. Such a row is not assimilated itself. Written when any row belongs to one"
 
 [attributes]
 cs_departures_schema      = "v2"   # mandatory; loader fails fast on any other value (v1 with an explanation)

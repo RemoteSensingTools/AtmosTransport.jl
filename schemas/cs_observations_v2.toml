@@ -22,7 +22,10 @@
 # or TCCON retrieval may carry its vertical description, and are then bound to
 # an averaging-kernel column (TM5-4DVar's operator: the model column stretched
 # onto the retrieval column, rebinned by pressure overlap,
-# X = sum_i h_i a_i (R x)_i + sum_i h_i (1 - a_i) x_prior_i). See
+# X = sum_i h_i a_i (R x)_i + sum_i h_i (1 - a_i) x_prior_i). Records on
+# levels (OCO-2/OCO-3, `retrieval_mapping = "hat_levels"`; the D30 follow-up)
+# are projected onto the levels' hat functions instead of rebinned
+# (X = sum_j h_j a_j c_j + sum_j h_j (1 - a_j) x_prior_j). See
 # [optional_dimensions] and [optional_variables] below.
 #
 # This file documents the schema; the loader/writer live in
@@ -102,7 +105,7 @@ description = "length of the sampling window centred on the record time; 0 = the
 [variables.flag]
 dtype = "i8"
 dims  = ["obs"]
-description = "quality flag: 0 = assimilate; bind_to_mesh drops records with any other value"
+description = "quality flag: 0 = assimilate; bind_to_mesh drops records with any other value, or co-samples them (simulated and reported, never assimilated) with flagged_records = 'cosample'. The OCO-2 MIP converter writes 1 + assimilate_flag for records outside the experiment's set"
 
 [variables.value]
 dtype = "f64"
@@ -134,9 +137,11 @@ description = "tracer name, e.g. 'CO2', 'CH4', 'CO'"
 # (`retrieval_profile_sigma` is optional within the block). The writer adds the
 # block when any record carries one.
 #
-# Layout: a record with N retrieval layers gives its N + 1 interface pressures
-# and N layer values first along the retrieval dimensions, NaN after them (NaN
-# padding to the longest record); N is the number of its pressure weights. A
+# Layout: a record with N retrieval layers (retrieval_mapping = "layer_rebin")
+# gives its N + 1 interface pressures and N layer values first along the
+# retrieval dimensions, NaN after them (NaN padding to the longest record); a
+# record with N levels ("hat_levels") gives its N level pressures and N level
+# values; N is the number of its pressure weights. A
 # record without a block (any point record, a column record bound to the
 # air-mass-weighted column mean) is NaN throughout. Ordering: index 1 is the
 # retrieval surface and pressures strictly decrease upward; every
@@ -147,8 +152,9 @@ description = "tracer name, e.g. 'CO2', 'CH4', 'CO'"
 # mol/mol), weights and kernel are dimensionless ("1" or no units).
 # Validation per record: finite values, strictly decreasing pressures with a
 # top >= 0, weights >= 0 summing to 1 (within 1e-4), a prior in [0, 1] mol/mol,
-# uncertainties >= 0, and a surface pressure equal to the first interface
-# (relative 1e-6); only column records may carry a block. Such a record is an
+# uncertainties >= 0, a surface pressure equal to the first pressure
+# (relative 1e-6), at least two levels for a level record; only column records
+# may carry a block. Such a record is an
 # absolute column average: value in (0, 1] mol/mol (after unit conversion),
 # value_sigma and model_sigma not above it, in the unit of the prior, as is the
 # transported tracer; a file with blocks states a mole-fraction unit on value,
@@ -156,7 +162,7 @@ description = "tracer name, e.g. 'CO2', 'CH4', 'CO'"
 # ---------------------------------------------------------------------------
 
 [optional_dimensions]
-retrieval_level     = "the largest number of retrieval layers of any record"
+retrieval_level     = "the largest number of retrieval layers or levels of any record"
 retrieval_interface = "retrieval_level + 1"
 
 [optional_variables.retrieval_pressure_pa]
@@ -164,7 +170,7 @@ dtype = "f64"
 dims  = ["obs", "retrieval_interface"]
 units = "Pa"
 ordering = "surface_to_top"
-description = "retrieval layer interface pressures (total pressure), from the surface up: index 1 is the retrieval surface pressure, the last the retrieval top (>= 0); NaN-padded"
+description = "retrieval pressures (total pressure), from the surface up: the N + 1 layer interfaces of a layer_rebin record, the N levels of a hat_levels record; index 1 is the retrieval surface pressure, the last the retrieval top (>= 0); NaN-padded"
 
 [optional_variables.retrieval_pressure_weight]
 dtype = "f64"
@@ -198,7 +204,12 @@ description = "OPTIONAL 1-sigma uncertainty of the MODEL profile on the retrieva
 dtype = "f64"
 dims  = ["obs"]
 units = "Pa"
-description = "retrieval surface pressure (total), equal to the first retrieval interface; NaN = no block"
+description = "retrieval surface pressure (total), equal to the first retrieval pressure; NaN = no block"
+
+[optional_variables.retrieval_mapping]
+dtype = "string"
+dims  = ["obs"]
+description = "how the retrieval values relate to retrieval_pressure_pa: 'layer_rebin' (means over the layers between the interfaces; the model column is rebinned by pressure overlap, TM5-4DVar's operator) or 'hat_levels' (values on the levels, linear in pressure between them, OCO-2/OCO-3; the model column is projected onto the levels' hat functions, each layer weighted by its dry air mass); empty without a block. Written with every block; a file without it holds layer records only"
 
 [attributes]
 cs_observations_schema = "v2"   # mandatory; loader fails fast on any other value (v1 with an explanation)

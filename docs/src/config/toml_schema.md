@@ -688,6 +688,8 @@ pressure_basis = "total"                 # TotalFromHumidity (default) | "dry" (
 kind = "oco2_lite"                       # OCO2LiteSource: Lite files or OCO-2 v11 MIP 10-s averages
 path = "/kiwi-data/Data/model/OCO2MIP/observation_input/OCO2_b11.2_10sec_GOOD_r2.nc4"
 quality_filter = "none"                  # NoQualityFilter; default "flag_max" = QualityFlagFilter("xco2_quality_flag", 0)
+# averaging_kernel_tracers = ["co2"]     # opt-in: write co2_ak_column with each sounding's averaging kernel
+# averaging_kernel_mapping = "hat"       # "hat" (the 20 levels, default) | "tm5" (TM5's 19 layers)
 
 [[output.observations.sources]]
 kind = "obspack"                         # ObsPackSource
@@ -705,6 +707,8 @@ path = "~/data/AtmosTransport/observations/tccon_sites.csv"
 | `kind` | `"oco2_lite"` → `OCO2LiteSource`, `"obspack"` → `ObsPackSource`, `"table"` → `TableSource` |
 | `mode` | `"soundings"` → `SoundingMode` (point events), `"sites"` → `SiteMode` (station series); required for `obspack` and `table` |
 | `quality_filter` | `oco2_lite` only: `"flag_max"` (default) → `QualityFlagFilter(quality_variable, quality_flag_max)` keeps flags `<= max`; `"flag_values"` → `QualityFlagValues(quality_variable, quality_flag_values)` keeps listed flags (MIP `assimilate_flag`: 0 not assimilated, 1 assimilated, 2 withheld, so `[1]` selects the assimilated set); `"none"` → `NoQualityFilter`. Keys of the other filters are rejected. |
+| `averaging_kernel_tracers` | `oco2_lite` only, opt-in: array of sampled tracer names → `AveragingKernelColumns`. The reader also reads each sounding's retrieval (`pressure_levels`, or `sigma_levels` × `psurf`; `pressure_weight`, `xco2_averaging_kernel`, `co2_profile_apriori`) and the soundings file gets `<tracer>_ak_column`, the averaging-kernel column of the sampled profile with the 4D-Var's operator, on the interface pressures of `pressure_basis` (total pressures need the binaries' humidity). Name the tracer the retrieval measures (total CO2): the prior term belongs to it. Omitted → `NoAveragingKernels`, output unchanged |
+| `averaging_kernel_mapping` | with `averaging_kernel_tracers` only: `"hat"` (default; the 20 levels as given, `HatLevelProjection`) or `"tm5"` (TM5-4DVar's 19 layers, `tm5_layer_column`) |
 | `split` (in `[output]`) | `"single"` → `SingleOutputFile`, `"daily"` → `DailyOutputFiles`; observation files follow it |
 | `site_grouping` | `obspack` sites only: `"site_code"` → `SiteCodeGrouping`, `"location"` → `LocationGrouping` |
 | `format` | `table` only: `"auto"`, `"csv"`, `"toml"`, `"netcdf"` → `AutoTableFormat`, `CSVTableFormat`, `TOMLTableFormat`, `NetCDFTableFormat` |

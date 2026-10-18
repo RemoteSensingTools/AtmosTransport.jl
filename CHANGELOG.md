@@ -33,6 +33,18 @@
   `CS4DVarResult` gains a `stencils` field (positional construction changes).
   `CSLinearFunctional` stores one step per entry (`steps`, instead of the
   scalar `step`).
+- **OCO-2 follow-up of issue #20 (D30): struct fields.** `CSObservation`
+  gains `assimilate` (positional construction of the struct changes; the
+  `CSObservation(step or sampling, objective, value, sigma; id, assimilate =
+  true)` constructors are unchanged for existing calls). `CSDepartureRecord`
+  gains `flag` and `cell_average_id` (positional construction changes; the
+  keyword constructor defaults them to 0). `Output.RetrievalColumn` is
+  parametric in its mapping (`RetrievalColumn{LayerRebin}` by default, a new
+  last field `mapping`); `Output.SoundingRequest` gains `retrieval`
+  (`nothing` from the existing constructors) and `Output.SoundingBatch` an
+  optional `retrieval_values`. In departure files `assimilated` is no longer
+  part of the retrieval block: it is written whenever a row is not
+  assimilated (co-samples) or is an averaging-kernel column.
 - **Adjoint API (issue #20).** A user-defined `AbstractCSFootprintObjective`
   needs a `_linear_functional(objective, step, panels_m, mesh)` method (its
   weights as a `CSLinearFunctional`) to be used in `cs_surface_flux_4dvar`
@@ -504,6 +516,60 @@
 
 ### API and configuration changes
 
+- **OCO-2/OCO-3 level retrievals, the MIP converter, co-sampling and cell
+  averages** (issue #20 follow-up, decision D30).
+  - *Hat projection.* A retrieval block may describe values on levels, the
+    profile linear in pressure between them (`retrieval_mapping =
+    "hat_levels"`, `Output.HatLevelProjection`; OCO-2/OCO-3: 20 levels "on
+    layer boundaries"), besides layer means (`"layer_rebin"`,
+    `Output.LayerRebin`, the default and the only form of earlier files).
+    The model column, stretched onto the levels as before, is projected onto
+    the levels' hat functions, each layer weighted by its dry air mass:
+    ``c_j = ∫φ_j x dp_dry / ∫φ_j dp_dry``, then ``X = Σ h_j a_j c_j +
+    Σ h_j (1 − a_j) x_a,j`` with the file's weights, kernel and prior. With the
+    hat integrals as weights it conserves the model's column exactly. The
+    mapping is a type of the shared operator (`retrieval_column_weights!`,
+    `retrieval_profile!`, `retrieval_column_value` take the layers' air
+    masses; new `retrieval_projection_matrix`), used by the 4D-Var and the
+    forward sampler; layer records give bit-identical results.
+    `Output.tm5_layer_column` builds TM5-4DVar's 19-layer form (levels as
+    interfaces, midpoint kernel and prior, weights normalized to 1) for
+    comparisons. Observation files store `retrieval_mapping` per record.
+  - *Converter.* `read_oco2_mip_observations` / `convert_oco2_mip_observations`
+    and `scripts/preprocessing/oco2_mip_to_observations.jl` turn the OCO-2 and
+    OCO-3 v11 MIP 10-second files into schema-v2 column records with a level
+    block (one file per day or month), every record of the time range, with
+    `flag = 1 + assimilate_flag` for records outside the experiment's data
+    types (LN, LG, OG by default) and assimilation flags (1 by default);
+    `mapping = :tm5` writes TM5's layer form. `write_observations` takes
+    extra root `attributes`.
+  - *Co-sampling.* `bind_to_mesh(...; flagged_records = "cosample")`
+    (`CosampleFlaggedRecords`; driver key `[observations].flagged_records`)
+    binds records with a nonzero flag as co-samples (`assimilate = false`):
+    simulated and reported in `CS4DVarResult` and departure files (new
+    `flag` column), never in the cost or the gradient (bit for bit), not
+    screened, not extending the taped run. Default `"drop"` as before.
+  - *Cell averages.* `bind_to_mesh(...; cell_averaging = CellAverage(;
+    time_tolerance_s, correlation))` (driver table
+    `[observations.cell_averaging]`) averages assimilated column records of
+    one cell, step sampling and overpass into one observation
+    (`CSCellAverageObjective`, `CELL_AVERAGE_PLACEMENT_CODE`) with 1/σ²
+    weights, ``σ²_meas = ΣΣ w_i w_j ρ_ij σ_i σ_j/(Σw)²`` and the model error
+    added once; the members stay as co-samples and departure rows carry
+    `cell_average_id`. `inflate_cell_model_error` is the alternative that
+    keeps the records and multiplies each model-error variance by the group
+    size.
+  - *Forward sampler.* `oco2_lite` sources take `averaging_kernel_tracers`
+    (opt-in; `AveragingKernelColumns`) and `averaging_kernel_mapping`
+    (`"hat"`, `"tm5"`): the reader also reads each sounding's retrieval
+    (`Output.read_oco2_retrieval_columns`, Lite or MIP files) and the
+    soundings file gets `<tracer>_ak_column` from the shared operator.
+    Without the key the output is unchanged.
+  - Docs: `docs/src/theory/adjoint_status.md` (level retrievals; OCO-2 MIP
+    records), `schemas/cs_observations_v2.toml`, `schemas/cs_departures_v2.toml`,
+    the TOML and output schema pages. Tests:
+    `test/core/test_retrieval_hat_projection.jl`,
+    `test/core/test_cs_4dvar_oco2_mip.jl`.
 - **Averaging-kernel (retrieval) columns in the 4D-Var** (issue #20, part 4).
   Observation schema v2 gains an optional, NaN-padded retrieval block for
   column records (`retrieval_level` / `retrieval_interface` dimensions;
