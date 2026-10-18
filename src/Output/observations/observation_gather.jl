@@ -336,13 +336,43 @@ interp_flag(::LinearWindowInterpolation, bracketed::Bool) =
 
 
 """
+    VirtualLayerTemperature(temperature, humidity)
+
+The virtual temperature ``T_v = T\\,(1 + c\\,q_k)`` of each layer, from the
+layer temperature ``T`` of the `AbstractLayerTemperature` `temperature` and
+the specific humidity `humidity[k]` (kg kg⁻¹ of moist air, k = 1 at the top),
+with ``c`` = `VIRTUAL_TEMPERATURE_FACTOR` (``R_v/R_d - 1``, the model's 0.61,
+as in the diffusion layer thicknesses). Moist air of temperature ``T`` has the
+density of dry air at ``T_v``, so the hypsometric thickness of a layer between
+total pressures is ``(R_d T_v/g)\\ln(p_{k+1/2}/p_{k-1/2})``
+(`placement_heights!` with [`TotalFromHumidity`](@ref)). The humidity is used as
+it is, the same values as the total pressures.
+"""
+struct VirtualLayerTemperature{T <: AbstractLayerTemperature, Q <: AbstractVector} <: AbstractLayerTemperature
+    temperature::T
+    humidity::Q
+end
+
+function _check_layer_temperature(t::VirtualLayerTemperature, nlevel::Int)
+    _check_layer_temperature(t.temperature, nlevel)
+    length(t.humidity) == nlevel || throw(DimensionMismatch(
+        "the humidity column has $(length(t.humidity)) layers; the column has $(nlevel)"))
+    return nothing
+end
+layer_temperature(t::VirtualLayerTemperature, k, z_bottom) =
+    layer_temperature(t.temperature, k, z_bottom) * (1 + VIRTUAL_TEMPERATURE_FACTOR * Float64(t.humidity[k]))
+
+"""
     layer_heights_agl!(z_half, p_half, temperature, g; R_dry = R_DRY_AIR)
 
 Hypsometric interface heights above ground (m) from interface pressures,
 `z_half[end] = 0` at the surface, accumulated upward with the layer
-temperature from `temperature` evaluated at the layer's bottom height. A
-non-positive or non-monotone pressure gives an infinite height from that
-layer upward.
+temperature from `temperature` evaluated at the layer's bottom height:
+``z_{k-1/2} = z_{k+1/2} + (R_d T_k/g)\\ln(p_{k+1/2}/p_{k-1/2})``. Exact for
+total pressures with the virtual temperature (`VirtualLayerTemperature`) of
+layers of uniform ``T_v``; `placement_heights!` chooses the pressures and the
+temperature. A non-positive or non-monotone pressure gives an infinite height
+from that layer upward.
 """
 function layer_heights_agl!(z_half::AbstractVector{Float64}, p_half::AbstractVector{Float64},
                             temperature::AbstractLayerTemperature, g::Real;
@@ -386,19 +416,53 @@ function intake_layer_index(z_half::AbstractVector, intake_height::Real)
 end
 
 """
+    placement_heights!(z_half, column::PlacementColumn, basis, mass_basis, p_half, air_column, area, g, p_top,
+                       temperature) -> z_half
+
+Hypsometric interface heights above the model surface (m, k = 1 top) of one
+column, on the vertical basis of the [`AbstractPressureBasis`](@ref) `basis`
+(`layer_heights_agl!`):
+
+- [`TotalFromHumidity`](@ref) on a dry basis: the total interface pressures
+  from the dry air mass and the specific humidity `column.humidity`
+  (`total_interface_pressures!`, into `column.p_half`) with the virtual
+  temperature ``T_v = T\\,(1 + 0.61\\,q_k)`` of `temperature`
+  (`VirtualLayerTemperature`), the hydrostatic thickness of moist air;
+- otherwise the interface pressures of the air mass, `p_half` (filled by the
+  caller): the dry interfaces with ``T`` for [`DryInterfaces`](@ref), an
+  approximation that puts heights about 2 % low in a humid boundary layer
+  (the dry pressure ratio and ``T`` instead of ``T_v`` each about 1 % for
+  ``q`` = 16 g/kg), and on a moist-basis run the total interfaces of the
+  moist air mass with ``T`` (no humidity is gathered there, so the virtual
+  temperature term, about 1 %, is neglected).
+"""
+placement_heights!(z_half, column::PlacementColumn, ::AbstractPressureBasis, ::AbstractMassBasis,
+                   p_half::AbstractVector{Float64}, air_column, area, g, p_top,
+                   temperature::AbstractLayerTemperature) =
+    layer_heights_agl!(z_half, p_half, temperature, g)
+function placement_heights!(z_half, column::PlacementColumn, ::TotalFromHumidity, ::DryBasis,
+                            p_half::AbstractVector{Float64}, air_column, area, g, p_top,
+                            temperature::AbstractLayerTemperature)
+    total_interface_pressures!(column.p_half, air_column, column.humidity, area, g, p_top)
+    return layer_heights_agl!(z_half, column.p_half, VirtualLayerTemperature(temperature, column.humidity), g)
+end
+
+"""
     sample_column_layer!(column::PlacementColumn, p_half, z_half, placement, air_column, area, g, p_top,
                          temperature, basis, mass_basis) -> Int
 
 The layer (k = 1 top) of a [`VerticalPlacement`](@ref) in one sampled column,
 from the column alone: the interface pressures of the air mass
 (`interface_pressures!` into `p_half`, ``p_{k+1/2} = p_{k-1/2} + g\\,m_k/A``
-from `p_top`), the hypsometric interface heights above the model surface
-(`layer_heights_agl!` into `z_half`, with the `AbstractLayerTemperature`
-`temperature`), then [`column_layer!`](@ref). `column.humidity` must hold
-the column's specific humidity when a pressure placement needs it
-([`TotalFromHumidity`](@ref) on a dry basis). The forward observation sampler
-and the inversion's placed point observations both choose their layers with
-this function.
+from `p_top`; dry pressures on a dry-basis run), the hypsometric interface
+heights above the model surface on the vertical basis of `basis`
+(`placement_heights!` into `z_half`, with the `AbstractLayerTemperature`
+`temperature`: total pressures and virtual temperature for
+[`TotalFromHumidity`](@ref) on a dry basis), then [`column_layer!`](@ref).
+`column.humidity` must hold the column's specific humidity whenever the basis
+needs it ([`needs_column_humidity`](@ref)), for every placement, since the
+heights use it. The forward observation sampler and the inversion's placed
+point observations both choose their layers with this function.
 """
 function sample_column_layer!(column::PlacementColumn, p_half::AbstractVector{Float64},
                               z_half::AbstractVector{Float64}, placement::VerticalPlacement,
@@ -406,7 +470,7 @@ function sample_column_layer!(column::PlacementColumn, p_half::AbstractVector{Fl
                               temperature::AbstractLayerTemperature, basis::AbstractPressureBasis,
                               mass_basis::AbstractMassBasis)
     interface_pressures!(p_half, air_column, area, g, p_top)
-    layer_heights_agl!(z_half, p_half, temperature, g)
+    placement_heights!(z_half, column, basis, mass_basis, p_half, air_column, area, g, p_top, temperature)
     return column_layer!(column, placement, z_half, air_column, area, g, p_top, basis, mass_basis)
 end
 

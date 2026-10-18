@@ -214,8 +214,10 @@ soundings; the OCO-2 MIP converter reads the retrieval fields with
   step containing the record time, up to `dt` later, or the window mean.
   Parity with the sampler holds for the same sampled state.
 - A placed point observation's layer is resolved at every sampled state from
-  that state's replayed air mass (dry interfaces, hypsometric heights,
-  total or dry interface pressures), never fixed at binding: the vertical
+  that state's replayed air mass (hypsometric heights and interface
+  pressures on its pressure basis: total pressures and the virtual
+  temperature from the humidity by default, so every placed observation
+  needs `column_met.humidity` unless `pressure_basis = "dry"`), never fixed at binding: the vertical
   stencil follows the meteorology, as TM5 recomputes it from `gph` per step,
   and every vertical coordinate (height and pressure) is in the adjoint.
 - An averaging-kernel column (`CSRetrievalColumnObjective`) builds its

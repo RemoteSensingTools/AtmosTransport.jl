@@ -29,11 +29,18 @@ function fake_ll_model(; q = 400e-6, FT = Float64)
     return (; state, grid), mesh
 end
 
-"Parse an `[output.observations]` spec rooted in `dir` (`obs.nc` or `obs_{YYYYMMDD}.nc`)."
-function sampler_spec(dir; split = "single", sources, kwargs...)
+"""
+Parse an `[output.observations]` spec rooted in `dir` (`obs.nc` or
+`obs_{YYYYMMDD}.nc`). The fixture models hold no water vapour and their
+samplers get no humidity, so the spec uses `pressure_basis = "dry"` unless
+`pressure_basis` is given (for a vapour-free column the dry and total bases
+give the same pressures and heights).
+"""
+function sampler_spec(dir; split = "single", sources, pressure_basis = "dry", kwargs...)
     obs_path = split == "daily" ? joinpath(dir, "obs_{YYYYMMDD}.nc") : joinpath(dir, "obs.nc")
     output_cfg = Dict{String, Any}("path" => joinpath(dir, "snap.nc"), "hours" => [0.0], "split" => split,
         "observations" => Dict{String, Any}("path" => obs_path, "sources" => sources,
+                                            "pressure_basis" => pressure_basis,
                                             Dict(String(k) => v for (k, v) in kwargs)...))
     return observation_output_spec(output_cfg)
 end

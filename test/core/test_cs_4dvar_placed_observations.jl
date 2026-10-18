@@ -116,25 +116,33 @@ end
                _record(3; site..., altitude_m = 3000.0),                          # altitude, DEM ground
                _record(4; site..., pressure_pa = 50000.0),                        # pressure only
                _record(5; site..., pressure_pa = 96900.0),                        # near the surface
-               _record(6; site..., intake_height_m = 300.0, pressure_pa = 20000.0)]
+               _record(6; site..., intake_height_m = 300.0, pressure_pa = 20000.0),
+               # The surface layer's top is 251.8 m on the total pressures with the virtual
+               # temperature and 246.6 m by the dry rule (dry interfaces and T, before OF-117).
+               _record(7; site..., intake_height_m = 249.0)]
     terrain = O.ObservationTerrain(; dem = DEM_1500)
     Hp = P.mesh.Hp
     A = vcat(P.p_top, zeros(P.Nz))
     grid = AT.AtmosGrid(P.mesh, AT.HybridSigmaPressure(A, collect(range(0.0, 1.0; length = P.Nz + 1))),
                         AT.CPU(); FT = Float64)
     state = AT.CubedSphereState(AT.DryBasis, P.m; co2 = P.rm, halo_width = Hp)
-    mktempdir() do dir
+    # Both paths on one pressure basis: the default total pressures with the
+    # virtual temperature (humidity passed to both), and the dry rule (none).
+    function parity(dir, basis)
+        total = basis == "total"
         pack = _write_obspack(joinpath(dir, "co2_test_aircraft-insitu_1.nc"), records)
         spec = O.observation_output_spec(Dict{String, Any}("observations" => Dict{String, Any}(
             "path" => joinpath(dir, "obs.nc"), "time_interpolation" => "nearest_window", "tracers" => ["co2"],
+            "pressure_basis" => basis,
             "sources" => Any[Dict{String, Any}("kind" => "obspack", "mode" => "soundings", "path" => pack)])))
         sampler = with_logger(NullLogger()) do
             O.build_observation_sampler(spec, state, grid; origin = T0, window_seconds = (0.0, 86400.0),
-                                        halo_width = Hp, terrain, has_humidity = true)
+                                        halo_width = Hp, terrain, has_humidity = total)
         end
         O.begin_observation_day!(sampler, "20240615", 1)
         for t in (0.0, DT)
-            O.observe_window_boundary!(sampler, state, t; next_window_seconds = DT, humidity = P.qpanels)
+            O.observe_window_boundary!(sampler, state, t; next_window_seconds = DT,
+                                       humidity = total ? P.qpanels : nothing)
         end
         with_logger(NullLogger()) do
             O.finish_observations!(sampler)
@@ -147,10 +155,12 @@ end
         end
         @test length(forward) == length(records)
 
-        obs = _bind(P, records; terrain)
+        placement = O.VerticalPlacementSpec(; pressure_basis = total ? O.TotalFromHumidity() : O.DryInterfaces())
+        obs = _bind(P, records; terrain, placement)
         zero_controls = [AT.CSSurfaceFluxControl(AT.CSSurfaceFluxWindow(:all, 1:P.nsteps),
                                                  ntuple(_ -> zeros(P.Nc, P.Nc), 6))]
-        result = _fourdvar(P, obs, zero_controls; met = column_met(P; gravity = AT.gravity(grid)))
+        met = column_met(P; gravity = AT.gravity(grid), humidity = total ? P.qpanels : nothing)
+        result = _fourdvar(P, obs, zero_controls; met)
         for (k, r) in enumerate(records)
             f = forward["rec~$(r.id)"]
             @test result.stencils[k].steps == [1]
@@ -162,12 +172,17 @@ end
             p, i, j = only(unique((o.objective.panel, o.objective.i, o.objective.j) for o in obs))
             @test result.simulated[k] == P.rm[p][Hp + i, Hp + j, f.level] / P.m[p][Hp + i, Hp + j, f.level]
         end
-        levels = [only(s.levels) for s in result.stencils]
-        @test levels[1] == P.Nz && levels[2] < levels[3] < P.Nz && levels[5] == P.Nz - 1
         @test [s.placement_method for s in result.stencils] ==
               [CODES.record_height, CODES.record_height, CODES.altitude_minus_dem, CODES.pressure,
-               CODES.pressure, CODES.record_height]
+               CODES.pressure, CODES.record_height, CODES.record_height]
+        return [only(s.levels) for s in result.stencils]
     end
+    levels = mktempdir(dir -> parity(dir, "total"))
+    @test levels[1] == P.Nz && levels[2] < levels[3] < P.Nz && levels[5] == P.Nz - 1
+    @test levels[7] == P.Nz
+    # The dry rule: 96900 Pa and the 249 m intake one layer up.
+    dry = mktempdir(dir -> parity(dir, "dry"))
+    @test dry[5] == P.Nz && dry[7] == P.Nz - 1
 end
 
 # ---------------------------------------------------------------------------
@@ -252,9 +267,11 @@ end
     expected = [pressure >= total(col)[8] ? 8 : 7 for col in columns]
     @test result.stencils[1].levels == expected
     @test length(unique(expected)) == 2
-    # The height placement uses the hypsometric heights of the same columns.
+    # The height placement uses the hypsometric heights of the same columns (on the total
+    # pressures with the virtual temperature, from the column's humidity).
     heights = map(columns) do col
         column = O.PlacementColumn(P.Nz)
+        column.humidity .= COLUMN_Q
         O.sample_column_layer!(column, zeros(P.Nz + 1), zeros(P.Nz + 1), obs[2].objective.placement, col, area,
                                COLUMN_GRAVITY, P.p_top, O.ConstantLayerTemperature(280.0), O.TotalFromHumidity(),
                                AT.DryBasis())

@@ -253,23 +253,26 @@ dry air mass ``m_k`` (kg per cell, ``k = 1`` at the top) and the column
 meteorology (`CSObservationColumnMet`: model-top pressure
 ``p_\mathrm{top}``, gravity ``g``, layer temperature ``T_k``, specific
 humidity ``q_k``), with the forward sampler's function
-`Output.sample_column_layer!`. With the cell area ``A``, the dry interface
-pressures and the hypsometric interface heights above the model surface are
+`Output.sample_column_layer!`. With the cell area ``A``, the total interface
+pressures (from the dry air mass and the humidity) and the hypsometric
+interface heights above the model surface are
 
 ```math
-p^d_{1/2} = p_\mathrm{top}, \quad
-p^d_{k+1/2} = p^d_{k-1/2} + \frac{g\,m_k}{A}, \qquad
+p_{1/2} = p_\mathrm{top}, \quad
+p_{k+1/2} = p_{k-1/2} + \frac{g\,m_k}{A\,(1-q_k)}, \qquad
 z_{N+1/2} = 0, \quad
-z_{k-1/2} = z_{k+1/2} + \frac{R_d T_k}{g}\ln\frac{p^d_{k+1/2}}{p^d_{k-1/2}} .
+z_{k-1/2} = z_{k+1/2} + \frac{R_d T_k (1 + c\,q_k)}{g}\ln\frac{p_{k+1/2}}{p_{k-1/2}},
 ```
 
-A record placed by height reads the layer with ``z_{k+1/2} \le h < z_{k-1/2}``
-(the lowest layer for ``h \le 0``). A record placed by pressure reads the
-layer with ``p_{k-1/2} \le p_\mathrm{obs} < p_{k+1/2}``, where the
-interfaces are total pressures from the dry air mass and the humidity,
-``p_{k+1/2} = p_{k-1/2} + g\,m_k / (A\,(1-q_k))`` (`pressure_basis =
-"total"`, the default), or the dry ones (`pressure_basis = "dry"`, for
-meteorology without humidity). The sampled value is the dry mixing ratio of
+with the virtual temperature ``T_k(1 + c\,q_k)``, ``c = R_v/R_d - 1``
+(`VIRTUAL_TEMPERATURE_FACTOR`, 0.61) (`pressure_basis = "total"`, the
+default). With `pressure_basis = "dry"`, for meteorology without humidity,
+both are built from the dry interfaces ``p^d_{k+1/2} = p^d_{k-1/2} +
+g\,m_k/A`` and ``T_k``: an approximation whose heights are about 2 % low in
+a humid boundary layer (finding OF-117). A record placed by height reads the
+layer with ``z_{k+1/2} \le h < z_{k-1/2}`` (the lowest layer for
+``h \le 0``); a record placed by pressure reads the layer with
+``p_{k-1/2} \le p_\mathrm{obs} < p_{k+1/2}`` of the same basis. The sampled value is the dry mixing ratio of
 that layer, ``h_s = r_{s,k_s} / \max(m_{s,k_s}, \epsilon)``. The layer
 depends only on the meteorology, not on the tracer, so it is fixed in an
 evaluation and the functional weight ``1/\max(m_{s,k_s}, \epsilon)`` is the

@@ -259,7 +259,9 @@ against these dry ones (`"dry"`); the total pressures are not written.
 In both files `<tracer>` is the profile, `<tracer>_intake` the value in the
 layer chosen by the request's vertical placement, and heights are measured
 above the model surface (see "Vertical placement" in the
-[TOML schema](@ref)).
+[TOML schema](@ref)): hypsometric on the same total pressures with the
+virtual temperature `T·(1 + 0.61 q)` (`"total"`), or on the dry interfaces
+with `T` (`"dry"`).
 
 Only rows up to `completed_soundings` / `completed_times` are guaranteed
 complete; the summary attributes (`n_emitted`, `n_before_start`,

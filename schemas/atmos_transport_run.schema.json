@@ -726,7 +726,7 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "default": 280.0,
-          "description": "ConstantLayerTemperature used for intake-layer heights. Cubed-sphere binaries with GCHP VDIFF fields use their layer temperature instead (ProfileLayerTemperature)."
+          "description": "ConstantLayerTemperature used for intake-layer heights. Cubed-sphere binaries with GCHP VDIFF fields use their layer temperature instead (ProfileLayerTemperature). With pressure_basis = \"total\" on a dry-basis run the heights use the virtual temperature of either."
         },
         "start_time": {
           "description": "Run origin, ISO-8601 UTC string or TOML date-time; only used (and then required) when [input].start_date is absent. Must equal start_date at 00:00 when both are given."
@@ -796,16 +796,16 @@
           }
         },
         "pressure_basis": {
-          "description": "Interface pressures a pressure-placed record is compared with (AbstractPressureBasis); only with \"pressure\" in vertical_coordinates. Record pressures are total pressures; the air mass of a dry-basis run gives dry interface pressures, lower by the weight of the water vapour above each interface.",
+          "description": "Vertical basis of placement (AbstractPressureBasis): the interface pressures a pressure-placed record (and an averaging-kernel column) is compared with, and the hypsometric layer heights a record placed by height is compared with (every row's intake_layer_*_agl). Record pressures are total pressures; the air mass of a dry-basis run gives dry interface pressures, lower by the weight of the water vapour above each interface, and the hydrostatic layer thickness is R_d T_v / g ln(p_bot / p_top) on total pressures with the virtual temperature T_v = T (1 + 0.61 q).",
           "default": "total",
           "oneOf": [
             {
               "const": "total",
-              "description": "TotalFromHumidity: total interface pressures p[k+1] = p[k] + g m[k] / (A (1 - q[k])) from the dry air mass and the binary's specific humidity: qv_start/qv_end of lat-lon binaries preprocessed with output.include_qv, or on the cubed sphere the next window's (window-start) GCHP VDIFF qv (include_vdiff_fields); reduced-Gaussian binaries carry none. A moist-basis air mass is used as it is. A dry-basis run whose binaries do not all carry humidity fails when any record is placed by pressure."
+              "description": "TotalFromHumidity: total interface pressures p[k+1] = p[k] + g m[k] / (A (1 - q[k])) from the dry air mass and the binary's specific humidity, and layer heights on them with the virtual temperature T (1 + 0.61 q): qv_start/qv_end of lat-lon binaries preprocessed with output.include_qv, or on the cubed sphere the next window's (window-start) GCHP VDIFF qv (include_vdiff_fields); reduced-Gaussian binaries carry none. A moist-basis air mass is used as it is (heights with T). A dry-basis run whose binaries do not all carry humidity fails to build a sampler with any request."
             },
             {
               "const": "dry",
-              "description": "DryInterfaces: the dry interface pressures p[k+1] = p[k] + g m[k] / A of a dry-basis run, for binaries without humidity; a record can land one or more layers too low (closer to the surface) in humid columns."
+              "description": "DryInterfaces: the dry interface pressures p[k+1] = p[k] + g m[k] / A of a dry-basis run and layer heights on them with T, for binaries without humidity (an approximation): a pressure-placed record can land one or more layers too low (closer to the surface) in humid columns, and the heights are about 2 % low in a humid boundary layer."
             }
           ]
         }

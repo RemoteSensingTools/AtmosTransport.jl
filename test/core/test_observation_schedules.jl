@@ -195,7 +195,8 @@ end
         # A daily partition whose path has no day token and dateless binaries would reuse one name.
         cfg = Dict{String, Any}("path" => joinpath(dir, "snap.nc"), "hours" => [0.0], "split" => "daily",
                                 "observations" => Dict{String, Any}("path" => joinpath(dir, "obs.nc"),
-                                                                    "sources" => Any[table_source(csv)]))
+                                                                    "sources" => Any[table_source(csv)],
+                                                                    "pressure_basis" => "dry"))
         s = build_observation_sampler(O.observation_output_spec(cfg), model.state, model.grid; origin = ORIGIN,
                                       window_seconds = (0.0, 86400.0), halo_width = 0)
         begin_observation_day!(s, "20211202", 1)
