@@ -32,7 +32,7 @@ files are read, so the timings isolate the operators from data loading:
   every grid, so no case subcycles. The harness refuses a case whose Courant
   number exceeds 0.5 or whose air mass drifts by more than 0.1 % over its
   steps.
-- **Backend and precision.** `--backend=cpu`, `cuda`, or `metal`, and
+- **Backend and precision.** `--backend=cpu`, `cuda`, `rocm`, or `metal`, and
   `--float-type=Float32,Float64`. Metal runs only `Float32`.
 
 The exact setup is in
@@ -44,7 +44,7 @@ The exact setup is in
 |---|---|---|
 | `advection` | Cubed-sphere advection with the scheme given by `--scheme`: the split-sweep schemes `ppm` (default, `PPMScheme(MonotoneLimiter())`), `upwind`, and `slopes`, or the Lin–Rood schemes `linrood5` and `linrood7` | cell-tracer updates per second |
 | `diffusion` | Implicit vertical diffusion with a constant diffusivity, no advection | cell-tracer updates per second |
-| `convection` | `TM5Convection` driven by constant updraft entrainment and detrainment in the middle third of the convective column; no advection. The collaborative LU solve is requested as in production runs (`use_collab_lu = true`) and used on supported GPUs: `Float32` on CUDA and Metal for convection depths up to 85 levels, `Float64` on CUDA up to 73. The CPU, and `Float64` cases deeper than 73 levels (the L137 lab cases with depth 85), use the per-thread solve. `--convection-depth` restricts the convection matrix to the bottom levels, as production ERA5 L137 runs do. | cell-tracer updates per second |
+| `convection` | `TM5Convection` driven by constant updraft entrainment and detrainment in the middle third of the convective column; no advection. The collaborative LU solve is requested as in production runs (`use_collab_lu = true`) and used on supported GPUs: `Float32` on CUDA, ROCm, and Metal for convection depths up to 85 levels, `Float64` on CUDA up to 73. The CPU, and `Float64` cases deeper than 73 levels (the L137 lab cases with depth 85), use the per-thread solve. `--convection-depth` restricts the convection matrix to the bottom levels, as production ERA5 L137 runs do. | cell-tracer updates per second |
 | `full` | Advection, vertical diffusion, and convection together | cell-tracer updates per second |
 | `io` | Serializing and reading back a host copy of the air mass, all `--tracers` tracers, and the three face-flux arrays | bytes per second |
 | `adjoint` | One forward and reverse run of `cs_surface_emission_footprint` over `--steps` steps (PPM without limiter, tape on the device) | adjoint runs per second |
@@ -212,9 +212,10 @@ julia --threads=2 --project=benchmarking benchmarking/run_benchmarks.jl \
   --output=benchmark_results.json
 ```
 
-`--backend=cuda` or `--backend=metal` loads CUDA.jl or Metal.jl before the
+`--backend=cuda`, `--backend=rocm`, or `--backend=metal` loads CUDA.jl, AMDGPU.jl, or Metal.jl before the
 package and stops if the device is not functional; Metal needs
-`--float-type=Float32`. `--preset=lab` runs the lab case matrix of
+`--float-type=Float32`. ROCm needs the isolated runtime first on `JULIA_LOAD_PATH`;
+see the [ROCm environment setup](rocm.md). `--preset=lab` runs the lab case matrix of
 `benchmarking/presets/lab.toml`, and options given on the command line
 override the preset. `--group` sets the first part of the series names;
 `julia --project=benchmarking benchmarking/run_benchmarks.jl --help` lists

@@ -85,6 +85,7 @@ const PAGES = [
     ],
     "Development" => [
         "development/benchmarks.md",
+        "development/rocm.md",
     ],
     "API" => [
         "api/public_api.md",

@@ -103,7 +103,7 @@ backend through TOML:
 ```toml
 [architecture]
 use_gpu = true
-backend = "auto"    # or "cuda" / "metal"
+backend = "auto"    # or "cuda" / "rocm" / "metal"
 
 [numerics]
 float_type = "Float32"
@@ -111,6 +111,8 @@ float_type = "Float32"
 
 - NVIDIA runs use CUDA. `Float32` is the practical production default on most
   GPUs; `Float64` is supported where hardware performance permits.
+- AMD Instinct runs use `backend = "rocm"` and AMDGPU.jl, with Float32 or
+  Float64. Hardware validation is pending; see the [ROCm runbook](../development/rocm.md).
 - Apple Silicon runs use Metal and require `Float32`. The extension has
   passed a C90/L66 forward smoke test on an M5 Pro with six and 32 tracers, including PPM, Dkg diffusion and full TM5 convection.
   Broader operator coverage and Metal adjoints remain unverified; see
@@ -126,6 +128,8 @@ checkout and the backend you need. Run **one** of these from the repository root
 julia -e 'using Pkg; Pkg.activate("gpu-env"); Pkg.develop(path="."); Pkg.add("CUDA")'
 # Apple Silicon instead:
 julia -e 'using Pkg; Pkg.activate("gpu-env"); Pkg.develop(path="."); Pkg.add("Metal")'
+# AMD Instinct
+julia -e 'using Pkg; Pkg.activate("gpu-env"); Pkg.develop(path="."); Pkg.add("AMDGPU")'
 ```
 
 Then diagnose it after the base installation succeeds:
@@ -133,6 +137,7 @@ Then diagnose it after the base installation succeeds:
 ```bash
 julia --project=gpu-env -e 'using CUDA; CUDA.versioninfo()'
 julia --project=gpu-env -e 'using Metal; Metal.versioninfo()'
+julia --project=gpu-env -e 'using AMDGPU; AMDGPU.versioninfo()'
 ```
 
 Run only the command appropriate for your hardware. Use

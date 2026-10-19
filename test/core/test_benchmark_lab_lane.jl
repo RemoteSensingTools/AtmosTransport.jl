@@ -94,6 +94,9 @@ code = { delivery = "shared", root = "~/atmostr_bench" }
 
     @testset "machine configuration errors" begin
         @test length(machines_from(MINIMAL_MACHINE)) == 1
+        rocm = only(machines_from(replace(MINIMAL_MACHINE, "\"cuda\"" => "\"rocm\"",
+                                         "[\"Float32\"]" => "[\"Float32\", \"Float64\"]")))
+        @test rocm.backend === :rocm && rocm.float_types == ["Float32", "Float64"]
         bad(text) = (@test_throws LL.MachineConfigError machines_from(text))
         message(text) = try
             machines_from(text)
@@ -146,6 +149,7 @@ code = { delivery = "shared", root = "~/atmostr_bench" }
         @test LL.backend_series_label("CPU-AMD", nothing) == "CPU-AMD"
         @test LL.backend_series_label("CPU-Intel", "ignored") == "CPU-Intel"
         @test LL.backend_series_label("GPU-CUDA", "L40S") == "GPU-CUDA L40S"
+        @test LL.backend_series_label("GPU-ROCm", "MI300X") == "GPU-ROCm MI300X"
         @test LL.backend_series_label("GPU-Metal", "M5 Pro") == "GPU-Metal M5 Pro"
         @test_throws ArgumentError LL.backend_series_label("GPU-CUDA", nothing)
         @test_throws ArgumentError LL.validate_device_label("A100/80GB")

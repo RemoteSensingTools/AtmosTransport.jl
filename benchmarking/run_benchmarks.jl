@@ -21,6 +21,13 @@ function _preload_backend!(backend::Symbol)
             error("CUDA backend requested but CUDA.functional() is false")
         isdefined(cuda, :allowscalar) &&
             Base.invokelatest(getproperty(cuda, :allowscalar), false)
+    elseif backend === :rocm
+        @info "Preloading AMDGPU for benchmark backend"
+        Core.eval(Main, :(using AMDGPU))
+        amdgpu = Base.invokelatest(getfield, Main, :AMDGPU)
+        Base.invokelatest(getproperty(amdgpu, :functional)) ||
+            error("ROCm backend requested but AMDGPU.functional() is false")
+        Base.invokelatest(getproperty(amdgpu, :allowscalar), false)
     elseif backend === :metal || backend === :gpu_metal
         @info "Preloading Metal for benchmark backend"
         Core.eval(Main, :(using Metal))

@@ -33,6 +33,21 @@ On Julia 1.11 and later `Pkg.instantiate()` alone is enough. The lab lane
 relies on that: every lab machine runs the exact Julia version pinned in
 `lab/machines.toml`, 1.11 or later (see [Lab lane](#lab-lane)).
 
+For ROCm, create the isolated environment in the
+[ROCm hardware runbook](../docs/src/development/rocm.md), then put it **first**
+on `JULIA_LOAD_PATH`:
+
+```bash
+JULIA_LOAD_PATH="/path/to/rocm-env:@:@stdlib" julia --threads=8 --project=benchmarking \
+  benchmarking/run_benchmarks.jl --backend=rocm --float-type=Float32
+```
+
+The benchmark environment includes CUDA 5, whose GPUCompiler requirement
+conflicts with AMDGPU 2.8. Keeping the AMDGPU environment first selects its
+compiler without changing the CUDA benchmark installation. Do not add both
+runtimes to one resolved environment. Loading this stack without a functional
+ROCm has been checked; hardware benchmark validation is pending.
+
 ## Running the harness
 
 ```bash
@@ -82,7 +97,7 @@ building them needs no memory beyond the field arrays themselves.
 
 | Option | Meaning |
 |---|---|
-| `--backend` | `cpu`, `cuda`, or `metal`; Metal runs are `Float32` only |
+| `--backend` | `cpu`, `cuda`, `rocm`, or `metal`; Metal runs are `Float32` only |
 | `--preset` | named case matrix from [`presets/`](presets/) (e.g. `lab`) or a preset `.toml` path |
 | `--float-type`, `--grid`, `--levels`, `--tracers`, `--operator`, `--scheme` | comma-separated case lists |
 | `--steps`, `--warmup-steps`, `--repeats` | timing: steps per timed repeat, untimed warmup steps, timed repeats |

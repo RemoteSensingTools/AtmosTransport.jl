@@ -7,6 +7,7 @@ using AtmosTransport
 const Arch = AtmosTransport.Architectures
 
 struct MockCUDAArray end
+struct MockROCArray end
 struct MockMetalArray end
 
 @testset "execution architecture selection" begin
@@ -22,9 +23,11 @@ struct MockMetalArray end
     # so adapter discovery must also recognize arrays through loaded runtimes.
     loaded = Dict{Base.PkgId, Any}(
         Arch._RUNTIME_PACKAGE_IDS.CUDA => (CuArray = MockCUDAArray,),
+        Arch._RUNTIME_PACKAGE_IDS.AMDGPU => (ROCArray = MockROCArray,),
         Arch._RUNTIME_PACKAGE_IDS.Metal => (MtlArray = MockMetalArray,),
     )
     @test Arch._loaded_gpu_adapter(MockCUDAArray(), loaded) === MockCUDAArray
+    @test Arch._loaded_gpu_adapter(MockROCArray(), loaded) === MockROCArray
     @test Arch._loaded_gpu_adapter(MockMetalArray(), loaded) === MockMetalArray
     @test Arch._loaded_gpu_adapter(zeros(Float32, 2), loaded) === Array
 
@@ -38,10 +41,16 @@ struct MockMetalArray end
     @test Arch.backend_name(Arch.GPU(:cuda)) === :cuda
     @test Arch.is_gpu(Arch.GPU(:metal))
     @test_throws MethodError Arch.GPU()
-    @test_throws ArgumentError Arch.GPU(:rocm)
+    @test Arch.GPU(:rocm) isa Arch.GPU{:rocm}
+    @test Arch.GPU("rocm") isa Arch.GPU{:rocm}
+    @test Arch._architecture_request("rocm") isa Arch.ROCmRequest
+    @test Arch.backend_name(Arch.GPU(:rocm)) === :rocm
+    @test Arch.assert_float_type!(Arch.GPU(:rocm), Float64) === nothing
+    @test_throws ArgumentError Arch.GPU(:unknown)
     @test_throws ArgumentError Arch.architecture_from_config(Dict("use_gpu" => true,
                                                                   "backend" => "cpu"))
-    @test_throws ArgumentError Arch.architecture_from_config(Dict("backend" => "rocm"))
+    @test Arch.architecture_from_config(Dict("backend" => "rocm")) isa Arch.GPU{:rocm}
+    @test_throws ArgumentError Arch.architecture_from_config(Dict("backend" => "unknown"))
     @test_throws ArgumentError Arch.architecture_from_config(Dict("backend" => :cuda))
 
     for alias in ("host", "nvidia", "apple", "apple_metal", "apple-metal", "gpu", "CPU")

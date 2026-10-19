@@ -47,7 +47,7 @@ const DASHBOARD_RESULTS_FILE = "benchmark_results.github-action-benchmark.json"
 "ssh options: never prompt, keep long benchmark sessions alive."
 const SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ServerAliveInterval=60"]
 "Hardware class each backend's records must carry (CPU classes start with this)."
-const BACKEND_CLASSES = Dict(:cpu => "CPU", :cuda => "GPU-CUDA", :metal => "GPU-Metal")
+const BACKEND_CLASSES = Dict(:cpu => "CPU", :cuda => "GPU-CUDA", :rocm => "GPU-ROCm", :metal => "GPU-Metal")
 """
 Oldest Julia a machine's `julia_version` may pin. A `git archive` has no
 `benchmarking/Manifest.toml` (it is gitignored), so the environment resolves

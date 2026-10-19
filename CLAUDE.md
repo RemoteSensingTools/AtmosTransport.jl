@@ -63,7 +63,7 @@ mass basis, supported operators, and load-time consistency gates.
   whole preprocessing and runtime cases are in `test/golden/` (see its README);
   check them before and after refactors.
 - Physics should dispatch on types, not on ad-hoc grid or scheme conditionals.
-- GPU extensions load when `using CUDA` or `using Metal` happens before
+- GPU extensions load when `using CUDA`, `using AMDGPU`, or `using Metal` happens before
   `using AtmosTransport`; `scripts/run_transport.jl` preloads the requested
   backend from `[architecture].backend`. Metal GPU runs require Float32.
 - Transport binaries are dry-basis by default; preprocessing is responsible for

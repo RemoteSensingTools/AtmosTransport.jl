@@ -83,8 +83,9 @@ function _canonical_backend(s::AbstractString)
     key = lowercase(replace(String(s), '-' => '_'))
     key in ("cpu", "processor") && return :cpu
     key in ("cuda", "gpu_cuda") && return :cuda
+    key == "rocm" && return :rocm
     key in ("metal", "gpu_metal") && return :metal
-    throw(ArgumentError("unsupported backend $(s); use cpu, cuda, or metal"))
+    throw(ArgumentError("unsupported backend $(s); use cpu, cuda, rocm, or metal"))
 end
 
 function _adapter(backend::Symbol)
@@ -101,6 +102,7 @@ end
 function _architecture(backend::Symbol)
     backend === :cpu && return CPU()
     backend === :cuda && return GPU(:cuda)
+    backend === :rocm && return GPU(:rocm)
     backend === :metal && return GPU(:metal)
     error("unsupported backend $(backend)")
 end
@@ -120,6 +122,7 @@ end
 function _backend_class(backend::Symbol)
     backend === :cpu && return "CPU-$(_cpu_vendor())"
     backend === :cuda && return "GPU-CUDA"
+    backend === :rocm && return "GPU-ROCm"
     backend === :metal && return "GPU-Metal"
     error("unsupported backend $(backend)")
 end
@@ -629,7 +632,7 @@ function _settings()
     s = ArgParseSettings(description = "AtmosTransport benchmark runner")
     @add_arg_table! s begin
         "--backend"
-            help = "Backend: cpu, cuda, or metal."
+            help = "Backend: cpu, cuda, rocm, or metal."
             default = "cpu"
         "--preset"
             help = "Named case matrix from benchmarking/presets (e.g. lab) or a preset .toml path. " *
@@ -727,6 +730,8 @@ end
 _main_module(name::Symbol) = Base.invokelatest(getfield, Main, name)
 
 _query_available_bytes(::Val{:cpu}) = Int(Sys.free_memory())
+_query_available_bytes(::Val{:rocm}) =
+    Int(Base.invokelatest(getproperty(_main_module(:AMDGPU), :free)))
 _query_available_bytes(::Val{:cuda}) =
     Int(Base.invokelatest(getproperty(_main_module(:CUDA), :available_memory)))
 function _query_available_bytes(::Val{:metal})
@@ -762,6 +767,13 @@ function _reclaim_device!(backend::Symbol)
             Base.invokelatest(getproperty(_main_module(:CUDA), :reclaim))
         catch err
             @warn "CUDA.reclaim failed" exception = err maxlog = 1
+        end
+    elseif backend === :rocm
+        try
+            hip = getproperty(_main_module(:AMDGPU), :HIP)
+            Base.invokelatest(getproperty(hip, :reclaim))
+        catch err
+            @warn "AMDGPU.HIP.reclaim failed" exception = err maxlog = 1
         end
     end
     return nothing

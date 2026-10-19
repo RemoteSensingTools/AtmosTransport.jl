@@ -73,7 +73,7 @@
         },
         "backend": {
           "type": "string",
-          "enum": ["cpu", "auto", "cuda", "metal"],
+          "enum": ["cpu", "auto", "cuda", "rocm", "metal"],
           "description": "Compute backend. Metal requires Float32 numerics."
         }
       },

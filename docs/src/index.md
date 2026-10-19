@@ -26,7 +26,8 @@ meteorology. It supports regular latitude-longitude, reduced-Gaussian, and
 cubed-sphere grids; ERA5 and GEOS meteorology; and a shared typed model for CPU
 and GPU execution. CPU and NVIDIA CUDA paths have release verification; the
 Apple Metal extension requires Float32 and has passed the C90/L66 forward
-smoke test on an M5 Pro with six and 32 tracers. See [Validation status](@ref)
+smoke test on an M5 Pro with six and 32 tracers. The AMD ROCm extension supports
+Float32/Float64 and awaits hardware validation; see its [runbook](development/rocm.md). See [Validation status](@ref)
 for measured errors and remaining coverage gaps.
 
 The package is under active development. It is a good fit for research and
@@ -92,8 +93,9 @@ for the objects and source directories behind this flow.
 - **Composable physics.** Advection, vertical diffusion, convection, surface
   fluxes, and simple chemistry are typed operators selected at configuration
   time.
-- **Portable execution.** CPU is the simplest starting point; CUDA and Metal
-  are optional backends. Metal uses `Float32` and remains a preview.
+- **Portable execution.** CPU is the simplest starting point; CUDA, Metal,
+  and ROCm are optional backends. ROCm hardware validation is pending; see the
+  [runbook](development/rocm.md). Metal uses `Float32` and remains a preview.
 - **Explicit provenance.** Only transport-binary format version 4 is accepted;
   incompatible forcing fails at load time rather than being guessed.
 

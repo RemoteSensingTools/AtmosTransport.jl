@@ -150,11 +150,12 @@ backend = "auto"              # default: "auto" if use_gpu else "cpu"
 |---|---|
 | `"cpu"` | CPU only. **Conflicts with `use_gpu = true` and errors at config-load time** (see `src/Architectures.jl`). |
 | `"cuda"` | NVIDIA CUDA via `CUDA.jl` (must be installed). |
+| `"rocm"` | AMD ROCm via `AMDGPU.jl`; Float32 and Float64. Hardware validation pending; see [ROCm runbook](../development/rocm.md). |
 | `"metal"` | Apple Silicon Metal via `Metal.jl`. F32 only. |
-| `"auto"` | Auto-detects an available GPU backend (CUDA → Metal); errors if none is available. |
-| (omitted) | If `backend` is absent, the runtime picks `CPU()` when `use_gpu = false` and auto-detects `GPU(:cuda)` or `GPU(:metal)` when `use_gpu = true`. |
+| `"auto"` | Selects the first functional GPU runtime: Metal → CUDA → ROCm on macOS; CUDA → ROCm on Linux and other hosts. Errors if none is available. |
+| (omitted) | If `backend` is absent, the runtime picks `CPU()` when `use_gpu = false` and auto-detects `GPU(:cuda)`, `GPU(:rocm)`, or `GPU(:metal)` when `use_gpu = true`. |
 
-The resolved `CPU()` or `GPU(:cuda|:metal)` architecture is stored on the grid
+The resolved `CPU()` or `GPU(:cuda|:rocm|:metal)` architecture is stored on the grid
 and also controls model-array adaptation, synchronization, and runtime checks.
 Optional GPU packages load on demand without injecting modules into `Main`.
 
@@ -165,7 +166,7 @@ Optional GPU packages load on demand without injecting modules into `Main`.
 float_type = "Float32"        # default: "Float64"; one of "Float32" / "Float64"
 ```
 
-Both precisions are supported on CPU and CUDA. Their speed and memory costs
+Both precisions are supported on CPU, CUDA, and ROCm. Their speed and memory costs
 depend on the GPU and enabled operators; the V100 experiments in
 [Validation status](@ref) cover both. Metal requires Float32. Mixing with the
 binary's `on_disk_float_type` is allowed: the runtime casts on load, which
