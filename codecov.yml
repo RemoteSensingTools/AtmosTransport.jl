@@ -1,9 +1,11 @@
 # Codecov settings (https://docs.codecov.com/docs/codecov-yaml).
 #
-# The report comes from the Julia 1 / ubuntu-latest job of
+# The report comes from the Julia 1.13 / ubuntu-latest job of
 # .github/workflows/CI.yml, which processes coverage for src/ and ext/.
-# That job runs the CPU test tiers only, so the CUDA and Metal extensions and
-# the real-data preprocessing paths count as uncovered there.
+# That job runs the CPU test tiers only. The GPU backend extensions (CUDA,
+# Metal, AMDGPU) cannot execute on a hosted CPU runner, so they are ignored
+# below; GPU coverage comes from the opt-in diagnostics in test/diagnostic/.
+# Real-data preprocessing paths still count as uncovered.
 
 coverage:
   range: 50..90
@@ -39,6 +41,9 @@ ignore:
   - "examples/**"
   - "config/**"
   - "tools/**"
+  - "ext/AtmosTransportCUDAExt.jl"
+  - "ext/AtmosTransportMetalExt.jl"
+  - "ext/AtmosTransportAMDGPUExt.jl"
   - "**/heritage/**"
   - "**/archived/**"
   - "**/likely_legacy/**"
