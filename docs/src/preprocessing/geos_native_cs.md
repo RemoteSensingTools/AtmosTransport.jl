@@ -3,14 +3,17 @@
 The GEOS path takes **GEOS-IT C180** native NetCDF — the FV3
 dynamical core's own cubed-sphere output — and writes a transport
 binary on the same cubed-sphere grid (no horizontal regrid). GEOS-FP
-native C720 hourly CTM files use the same source contract, with one
-file per UTC hour. It preserves native FV3 horizontal mass fluxes, balances
+native C720 hourly CTM files use the same source contract, with tavg and inst
+files per UTC hour. It preserves native FV3 horizontal mass fluxes, balances
 them against raw next-hour dry-air endpoints, and diagnoses the vertical mass
 flux required by that discrete continuity target.
 
 GEOS-FP C720 support covers the native hourly CTM layout
-(`GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.YYYYMMDD_HH30.V01.nc4`; test fixtures may
-also use `HH00`). Surface/convection physics from
+(`GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.YYYYMMDD_HH30.V01.nc4`, with legacy
+`HH00` also supported, plus
+`GEOS.fp.asm.inst_1hr_ctm_c0720_v72.YYYYMMDD_HH00.V01.nc4`). Both collections
+are required: tavg has no QV and its mean PS cannot supply endpoint pressure.
+Surface/convection physics from
 the 0.25° GEOS-FP products can be attached by setting
 `[source] physics_dir`, `include_surface = true`, and
 `include_convection = true`; the day handle validates and embeds those
@@ -57,11 +60,14 @@ endpoint is robust and the header records
 | `A3dyn` | 3-hourly (window-averaged) | `DTRAIN` *(only if convection is enabled)* |
 
 GEOS-IT file-naming convention: `GEOSIT.YYYYMMDD.<COLLECTION>.C180.nc`.
-GEOS-FP native CTM file-naming convention:
-`GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.YYYYMMDD_HH30.V01.nc4`. The
-preprocessor needs the **next day's hour-0** for the last window's
-forward-flux endpoint, mirroring the spectral path; the trailing peek
-at `<end+1>` is unavoidable.
+GEOS-FP maps `CTM_A1` to `tavg_1hr_ctm_c0720_v72` at HH30 and `CTM_I1`
+to `inst_1hr_ctm_c0720_v72` at HH00. Window n starts at hour n-1 and ends at
+hour n, so window 24 requires the **next day's 00Z inst file**. Files can
+be in the flat root or `YYYYMMDD/` directories. Missing inst files error;
+there is no tavg PS or zero-QV fallback. As for GEOS-IT, endpoint dry layer
+pressure is `(1-QV_inst) * (ΔA + ΔB*PS_inst)` and dry surface pressure is the
+column sum. Tavg DELP supplies the level-order heuristic, while dry MFXC/MFYC
+supply the horizontal transport with unchanged 450 s dynamics-step scaling.
 
 ## GEOS preprocessing TOML
 

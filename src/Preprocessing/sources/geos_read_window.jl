@@ -153,19 +153,35 @@ function read_window!(raw::RawWindow{FT}, settings::GEOSSettings,
     return raw
 end
 
+"""
+    read_window!(raw, settings::GEOSFPSettings, handles::GEOSFPNativeDayHandles, date, n)
+
+Window `n` spans UTC hours `n-1`..`n`. PS (units-aware → Pa) and QV (kg/kg)
+come from inst_1hr_ctm files stamped (n-1)00 and n00, with next-day 0000
+ending window 24. The shared GEOS-IT `endpoint_dry_mass!` constructs
+`m[k] = (1-QV[k]) * (ΔA[k] + ΔB[k]*PS_inst)` and `ps = sum(m; dims=3)`.
+Tavg DELP describes the mean window, so it cannot represent either endpoint;
+it supplies the level-order detection only. Dry MFXC/MFYC come from the
+window's tavg HH30 file and retain their `1/mass_flux_dt` scaling (450 s).
+All fields use the existing native panel layout and detected level order.
+"""
 function read_window!(raw::RawWindow{FT}, settings::GEOSSettings{:geosfp},
                       handles::GEOSFPNativeDayHandles, date::Date,
                       win_idx::Int) where {FT}
     nw = windows_per_day(settings, date)
     1 <= win_idx <= nw || error("window $win_idx out of range 1..$nw")
 
-    ds_n = handles.ctm[win_idx]
+    ds_avg = handles.ctm[win_idx]
+    ds_n = handles.ctm_i1[win_idx]
     ds_np1 = if win_idx < nw
-        handles.ctm[win_idx + 1]
-    elseif handles.next_ctm !== nothing
-        handles.next_ctm
+        handles.ctm_i1[win_idx + 1]
+    elseif handles.next_ctm_i1 !== nothing
+        handles.next_ctm_i1
     else
-        error("last GEOS-FP window ($win_idx of $nw) has no next-day hourly CTM endpoint")
+        datestr = Dates.format(date + Day(1), "yyyymmdd")
+        error("last GEOS-FP window ($win_idx of $nw) requires next-day instantaneous CTM endpoint " *
+              "GEOS.fp.asm.inst_1hr_ctm_c$(lpad(settings.Nc, 4, '0'))_v72.$(datestr)_0000.V01.nc4; " *
+              "open with next_day_handle=true and ensure this inst file is on disk")
     end
 
     or = handles.orientation
@@ -173,14 +189,14 @@ function read_window!(raw::RawWindow{FT}, settings::GEOSSettings{:geosfp},
 
     ps_factor_n = _ps_pa_factor(ds_n["PS"]; FT=FT)
     ps_factor_np1 = _ps_pa_factor(ds_np1["PS"]; FT=FT)
-    ps_n_total = ntuple(p -> _read_panels_2d(ds_n, "PS", 1; FT=FT)[p] .* ps_factor_n, 6)
-    ps_np1_total = ntuple(p -> _read_panels_2d(ds_np1, "PS", 1; FT=FT)[p] .* ps_factor_np1, 6)
+    ps_n_total = map(ps -> ps .* ps_factor_n, _read_panels_2d(ds_n, "PS", 1; FT=FT))
+    ps_np1_total = map(ps -> ps .* ps_factor_np1, _read_panels_2d(ds_np1, "PS", 1; FT=FT))
     qv_n_panels = _read_panels_3d(ds_n, "QV", 1, or; FT=FT)
     qv_np1_panels = _read_panels_3d(ds_np1, "QV", 1, or; FT=FT)
 
     inv_dt = inv(FT(settings.mass_flux_dt))
-    mfxc_raw = _read_panels_3d(ds_n, "MFXC", 1, or; FT=FT)
-    mfyc_raw = _read_panels_3d(ds_n, "MFYC", 1, or; FT=FT)
+    mfxc_raw = _read_panels_3d(ds_avg, "MFXC", 1, or; FT=FT)
+    mfyc_raw = _read_panels_3d(ds_avg, "MFYC", 1, or; FT=FT)
 
     @assert raw.qv      !== nothing "GEOS-FP RawWindow must carry qv"
     @assert raw.qv_next !== nothing "GEOS-FP RawWindow must carry qv_next"

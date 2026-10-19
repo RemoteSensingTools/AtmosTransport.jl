@@ -601,6 +601,16 @@
 
 ### Fixes
 
+- GEOS-FP native C720 preprocessing now requires hourly `inst_1hr_ctm` PS/QV
+  at both window endpoints, including next-day 00Z. Dry endpoint layer mass
+  uses the GEOS-IT hybrid reconstruction from instantaneous PS and QV;
+  window-mean tavg PS is no longer used and missing inst files error clearly.
+  Tavg DELP remains the level-order reference, and dry MFXC/MFYC retain the
+  450 s scaling. The source and download descriptors now require both CTM
+  collections, with HH00 inst and HH30 tavg download timestamps. GEOS-FP
+  lat-lon physics slices convert CF-decoded arrays to the requested numeric
+  type before longitude normalization, allowing valid `_FillValue` metadata.
+
 - **GEOS-IT binaries carry `:pbl_eflux`, so `geoschem_nonlocal_vdiff` runs on
   GEOS-IT.** GEOS-Chem's non-local PBL scheme needs the surface latent heat flux,
   which only the MERRA-2 path wrote; GEOS-IT binaries with the VDIFF fields were

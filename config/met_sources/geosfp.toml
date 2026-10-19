@@ -48,7 +48,7 @@ include_surface      = false  # surface physics comes from the typed 0.25° fall
 include_convection   = false  # convection physics comes from the typed 0.25° fallback path
 physics_dir          = ""     # set by preprocessing TOML when include_surface/convection=true
 physics_layout       = "auto" # auto | latlon_025 | cubed_sphere
-collections_required = ["tavg_1hr_ctm_c0720_v72"]
+collections_required = ["tavg_1hr_ctm_c0720_v72", "inst_1hr_ctm_c0720_v72"]
 
 # ---------------------------------------------------------------------------
 # Data access configuration
@@ -67,7 +67,14 @@ dataset     = "tavg_1hr_ctm_c0720_v72"
 frequency   = "hourly"
 vertical    = "v72"
 levels      = 72
-description = "Hourly native C720 CTM DELP, PS, QV, MFXC, MFYC"
+description = "Hourly mean native C720 CTM DELP, PS, CX, CY, MFXC, MFYC (HH30; no QV)"
+
+[collections.inst_1hr_ctm_c0720_v72]
+dataset     = "inst_1hr_ctm_c0720_v72"
+frequency   = "hourly"
+vertical    = "v72"
+levels      = 72
+description = "Instantaneous native C720 CTM PS and QV endpoints (HH00; next-day 00Z required)"
 
 # ---------------------------------------------------------------------------
 # Variable mapping: canonical_name → native name + collection
@@ -94,11 +101,11 @@ collection      = "asm_Nv_inst"
 
 [variables.specific_humidity]
 native_name     = "QV"
-collection      = "tavg_1hr_ctm_c0720_v72"
+collection      = "inst_1hr_ctm_c0720_v72"
 
 [variables.surface_pressure]
 native_name     = "PS"
-collection      = "tavg_1hr_ctm_c0720_v72"
+collection      = "inst_1hr_ctm_c0720_v72"
 
 [variables.pressure_thickness]
 native_name     = "DELP"

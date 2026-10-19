@@ -2,7 +2,8 @@
 # GEOS-FP C720 cubed-sphere mass flux download
 #
 # Downloads hourly CTM mass flux files from the GEOS-Chem public S3 archive.
-# ~2.7 GB per file, 24 files per day.
+# 24 tavg dynamics files + 24 inst PS/QV endpoint files per day.
+# Download the following day too for the final day's 00Z inst endpoint.
 #
 # Output: met/geosfp/C720/raw/YYYYMMDD/
 #
@@ -22,8 +23,8 @@ product = "geosfp_c720"
 
 [[download.requests]]
 name = "ctm_massflux"
-description = "Hourly C720 cubed-sphere CTM mass fluxes (MFXC, MFYC, DELP)"
-collections = ["tavg_1hr_ctm_c0720_v72"]
+description = "Hourly C720 CTM dynamics (MFXC, MFYC, DELP) and instantaneous endpoints (PS, QV)"
+collections = ["tavg_1hr_ctm_c0720_v72", "inst_1hr_ctm_c0720_v72"]
 
 [output]
 data_root = "~/data/AtmosTransport"

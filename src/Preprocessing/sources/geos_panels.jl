@@ -119,7 +119,10 @@ function _read_latlon_slice(ds::NCDataset, var_name::String,
     idx = ntuple(d -> d == lon_dim || d == lat_dim || d == lev_dim ? Colon() :
                       d == time_dim ? time_idx : 1,
                  length(dims))
-    raw = Array(v[idx...])
+    # CF decoding retains Union{Missing,T} for variables with _FillValue even
+    # when this slice has no missing values. Convert to the requested reader
+    # type before longitude normalization, which requires real-valued arrays.
+    raw = Array{FT}(v[idx...])
     kept = [dims[d] for d in eachindex(dims)
             if d == lon_dim || d == lat_dim || d == lev_dim]
     perm = if Rank == 2

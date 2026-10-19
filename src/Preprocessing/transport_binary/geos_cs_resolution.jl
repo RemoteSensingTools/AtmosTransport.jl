@@ -110,7 +110,7 @@ end
 _geos_next_endpoint_available(handles::GEOSDayHandles) =
     handles.next_ctm_i1 !== nothing
 _geos_next_endpoint_available(handles::GEOSFPNativeDayHandles) =
-    handles.next_ctm !== nothing
+    handles.next_ctm_i1 !== nothing
 
 abstract type AbstractGEOSCSResolutionStrategy end
 struct GEOSCSIdentityStrategy <: AbstractGEOSCSResolutionStrategy end
