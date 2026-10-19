@@ -49,7 +49,7 @@ end
 
 function _default_collections(source::GEOSFPSource)
     if source.product == "geosfp_c720"
-        return ["tavg_1hr_ctm_c0720_v72"]
+        return ["tavg_1hr_ctm_c0720_v72", "inst_1hr_ctm_c0720_v72"]
     elseif source.product == "geosfp_025"
         return ["A1", "A3mstE", "A3dyn"]
     else
@@ -76,7 +76,8 @@ function _geosfp_file_urls(source::GEOSFPSource, protocol::HTTPProtocol,
         # is HHMM (30-min offset for time-averaged data), URL path is Y$y/M$m/D$d/
         for coll in collections
             for hour in 0:23
-                timestamp = @sprintf("%02d30", hour)
+                minute = startswith(coll, "inst_") ? 0 : 30
+                timestamp = @sprintf("%02d%02d", hour, minute)
                 fname = "GEOS.fp.asm.$(coll).$(datestr)_$(timestamp).V01.nc4"
                 url = "$(protocol.base_url)/Y$y/M$m/D$d/$fname"
                 push!(results, (url, fname, 2700.0))  # ~2.7 GB per file

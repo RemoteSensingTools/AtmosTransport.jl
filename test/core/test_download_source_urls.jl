@@ -23,15 +23,22 @@ const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 
     tasks = DD.build_tasks(config.source, config.protocol, [Date(2024, 6, 1)],
                            config.output, config.requests)
-    @test length(tasks) == 24
+    @test length(tasks) == 48
     @test first(tasks).source_url ==
           "https://geos-chem.s3.amazonaws.com/GEOS_C720/GEOS_FP_Raw/" *
           "Y2024/M06/D01/" *
           "GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.20240601_0030.V01.nc4"
-    @test last(tasks).source_url ==
+    @test tasks[24].source_url ==
           "https://geos-chem.s3.amazonaws.com/GEOS_C720/GEOS_FP_Raw/" *
           "Y2024/M06/D01/" *
           "GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.20240601_2330.V01.nc4"
+    @test tasks[25].source_url ==
+          "https://geos-chem.s3.amazonaws.com/GEOS_C720/GEOS_FP_Raw/" *
+          "Y2024/M06/D01/GEOS.fp.asm.inst_1hr_ctm_c0720_v72.20240601_0000.V01.nc4"
+    @test last(tasks).source_url ==
+          "https://geos-chem.s3.amazonaws.com/GEOS_C720/GEOS_FP_Raw/" *
+          "Y2024/M06/D01/GEOS.fp.asm.inst_1hr_ctm_c0720_v72.20240601_2300.V01.nc4"
+    @test DD._geosfp_collections(config.source, []) == recipe["download"]["requests"][1]["collections"]
     @test all(!occursin("/tavg_1hr_ctm_c0720_v72/Y", task.source_url)
               for task in tasks)
 end
