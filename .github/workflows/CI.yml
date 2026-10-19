@@ -41,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ['1', '1.10']
+        version: ['1.10', '1.12', '1.13']
         os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
@@ -52,13 +52,13 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
       # julia-runtest records coverage by default (input `coverage: true`).
       - uses: julia-actions/julia-runtest@v1
-      # One coverage report per run: the current Julia release on Linux.
+      # One coverage report per run: the newest pinned Julia release (1.13) on Linux.
       - uses: julia-actions/julia-processcoverage@v1
-        if: matrix.version == '1' && matrix.os == 'ubuntu-latest'
+        if: matrix.version == '1.13' && matrix.os == 'ubuntu-latest'
         with:
           directories: src,ext
       - uses: codecov/codecov-action@v5
-        if: matrix.version == '1' && matrix.os == 'ubuntu-latest'
+        if: matrix.version == '1.13' && matrix.os == 'ubuntu-latest'
         with:
           files: lcov.info
           disable_search: true
