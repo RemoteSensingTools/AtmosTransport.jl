@@ -2,13 +2,22 @@
 # Native GEOS-IT / GEOS-FP NetCDF reader for the preprocessor.
 #
 # GEOS data lives on a cubed-sphere grid (C180 for GEOS-IT, C720 for GEOS-FP),
-# 72 hybrid sigma-pressure levels, daily files split by collection:
+# 72 hybrid sigma-pressure levels. GEOS-IT uses daily collection files:
 #
 #   CTM_A1   hourly  MFXC, MFYC, DELP   (window-constant dynamics-step
 #                                       horizontal mass transport, DELP)
 #   CTM_I1   hourly  PS, QV             (instantaneous endpoints)
 #   A3dyn    3-hr    DTRAIN, U, V       (held constant in 3-hr blocks; convection)
 #   A3mstE   3-hr    CMFMC              (convection, edge-based)
+#
+# GEOS-FP native C720 uses one file per hour in root_dir or root_dir/YYYYMMDD:
+#   tavg_1hr_ctm_c0720_v72.YYYYMMDD_HH30: DELP, MFXC, MFYC (no QV)
+#   inst_1hr_ctm_c0720_v72.YYYYMMDD_HH00: PS [Pa], QV [kg/kg]
+# Window n spans hour n-1 to n: inst (n-1)00 supplies its start, inst n00
+# its end, and window 24 ends at next-day 0000. Tavg PS is a window mean
+# and must never supply an endpoint. As for GEOS-IT, endpoint layer thickness
+# is reconstructed as ΔA + ΔB*PS_inst, then dried with (1-QV_inst).
+# Tavg DELP is retained for orientation detection, not used as endpoint DELP.
 #
 # Critical conventions baked into this reader:
 #
@@ -50,7 +59,7 @@ abstract type AbstractGEOSSettings <: AbstractMetSettings end
 Settings for one of the two supported GEOS flavors:
 
 - `flavor = :geosit` — GEOS-IT (file pattern `GEOSIT.{date}.{collection}.C{Nc}.nc`).
-- `flavor = :geosfp` — GEOS-FP (file pattern `GEOSFP.{date}.{collection}.C{Nc}.nc`).
+- `flavor = :geosfp` — GEOS-FP native hourly `GEOS.fp.asm.{tavg,inst}_1hr_ctm_cNNNN_v72` files.
 
 Auto-detection of level orientation runs at `open_geos_day` time when
 `level_orientation = :auto`. Set explicitly to `:bottom_up` or `:top_down`
@@ -78,7 +87,7 @@ const GEOSFPSettings = GEOSSettings{:geosfp}
 #
 # GEOS-IT C180 archive uses *daily* files: `GEOSIT.YYYYMMDD.<collection>.C180.nc`.
 # GEOS-FP C720 native archive uses *hourly* files (one file per UTC hour):
-# `GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.YYYYMMDD_HHMM.V01.nc4`.
+# `GEOS.fp.asm.{tavg,inst}_1hr_ctm_c0720_v72.YYYYMMDD_HHMM.V01.nc4`.
 # ---------------------------------------------------------------------------
 
 """
@@ -120,9 +129,31 @@ function geosfp_native_hourly_ctm_path(settings::GEOSSettings{:geosfp},
     error("GEOS-FP native hourly CTM file not found: tried " * join(candidates, ", "))
 end
 
+"""
+    geosfp_native_hourly_inst_path(settings, date, hour) -> String
+
+Resolve an instantaneous GEOS-FP CTM PS/QV endpoint at `hour` (00..23 UTC).
+Search the flat root and per-day directory, exactly as for tavg CTM files.
+Only HH00 is valid; a missing endpoint errors with both attempted paths.
+"""
+function geosfp_native_hourly_inst_path(settings::GEOSSettings{:geosfp},
+                                        date::Date, hour::Integer)
+    0 <= hour <= 23 || throw(ArgumentError("GEOS-FP hour must be 0..23, got $hour"))
+    datestr = Dates.format(date, "yyyymmdd")
+    hh = lpad(string(hour), 2, '0')
+    fname = "GEOS.fp.asm.inst_1hr_ctm_c$(lpad(settings.Nc, 4, '0'))_v72.$(datestr)_$(hh)00.V01.nc4"
+    flat = joinpath(settings.root_dir, fname)
+    daily = joinpath(settings.root_dir, datestr, fname)
+    isfile(flat) && return flat
+    isfile(daily) && return daily
+    error("GEOS-FP instantaneous hourly CTM endpoint file not found: tried $flat and $daily")
+end
+
 function geos_collection_path(settings::GEOSSettings{:geosfp}, date::Date,
                               collection::AbstractString)
-    collection in ("CTM_A1", "CTM_I1", "tavg_1hr_ctm_c0720_v72", "ctm") ||
+    collection in ("CTM_I1", "inst_1hr_ctm_c0720_v72") &&
+        return geosfp_native_hourly_inst_path(settings, date, 0)
+    collection in ("CTM_A1", "tavg_1hr_ctm_c0720_v72", "ctm") ||
         throw(ArgumentError("GEOS-FP native path resolver only supports hourly CTM collections; got $(collection)"))
     return geosfp_native_hourly_ctm_path(settings, date, 0)
 end
@@ -305,7 +336,8 @@ end
 
 mutable struct GEOSFPNativeDayHandles{V <: HybridSigmaPressure, P <: AbstractGEOSFPPhysicsFallback, C <: NCDataset}
     ctm         :: Vector{C}
-    next_ctm    :: Union{Nothing, C}
+    ctm_i1      :: Vector{C}
+    next_ctm_i1 :: Union{Nothing, C}
     physics     :: P
     orientation :: Symbol
     vc          :: V
@@ -386,27 +418,44 @@ function _try_open_geos_collection(settings::GEOSSettings, date::Date,
     end
 end
 
+"""
+    open_geosfp_native_day(settings, date; next_day_handle=true)
+
+Open 24 tavg HH30 dynamics files and 24 inst HH00 PS/QV endpoint files.
+With `next_day_handle=true`, require next-day 00Z inst for window 24's end;
+no next-day tavg file is needed. Resolve required paths before opening files
+so a missing inst file fails immediately and names the missing timestamp.
+Level orientation is detected from tavg DELP and shared by all native reads.
+"""
 function open_geosfp_native_day(settings::GEOSSettings{:geosfp}, date::Date;
                                 next_day_handle::Bool = true)
     settings.include_vdiff_fields &&
         throw(ArgumentError("GEOS-FP GCHP VDIFF binary fields are not wired yet; " *
-                            "use GEOS-IT C180 or add the required native/fallback T/U/V/QV collections."))
-    ctm = [NCDataset(geosfp_native_hourly_ctm_path(settings, date, h), "r")
-           for h in 0:23]
-    next_ctm = nothing
-    if next_day_handle
-        try
-            next_ctm = NCDataset(geosfp_native_hourly_ctm_path(settings, date + Day(1), 0), "r")
-        catch
-            # Last day of available archive.
-        end
-    end
-    orientation = settings.level_orientation === :auto ?
-                  detect_level_orientation(first(ctm)) :
-                  settings.level_orientation
+                            "use GEOS-IT C180 or wire the required native/fallback T/U/V profiles " *
+                            "and surface fields (instantaneous CTM PS/QV alone are insufficient)."))
+    ctm_paths = [geosfp_native_hourly_ctm_path(settings, date, h) for h in 0:23]
+    inst_paths = [geosfp_native_hourly_inst_path(settings, date, h) for h in 0:23]
+    next_inst_path = next_day_handle ?
+        geosfp_native_hourly_inst_path(settings, date + Day(1), 0) : nothing
     vc = load_hybrid_coefficients(expand_data_path(settings.coefficients_file))
-    physics = _open_geosfp_physics_fallback(settings, date)
-    return GEOSFPNativeDayHandles(ctm, next_ctm, physics, orientation, vc)
+    opened = NCDataset[]
+    open_ctm(path) = begin
+        ds = NCDataset(path, "r")
+        push!(opened, ds)
+        ds
+    end
+    try
+        ctm = open_ctm.(ctm_paths)
+        ctm_i1 = open_ctm.(inst_paths)
+        next_ctm_i1 = next_inst_path === nothing ? nothing : open_ctm(next_inst_path)
+        orientation = settings.level_orientation === :auto ?
+                      detect_level_orientation(first(ctm)) : settings.level_orientation
+        physics = _open_geosfp_physics_fallback(settings, date)
+        return GEOSFPNativeDayHandles(ctm, ctm_i1, next_ctm_i1, physics, orientation, vc)
+    catch
+        foreach(close, opened)
+        rethrow()
+    end
 end
 
 """Close all handles. Idempotent."""
@@ -429,7 +478,8 @@ function close_geosfp_native_day!(handles::GEOSFPNativeDayHandles)
     for ds in handles.ctm
         close(ds)
     end
-    handles.next_ctm === nothing || close(handles.next_ctm)
+    foreach(close, handles.ctm_i1)
+    handles.next_ctm_i1 === nothing || close(handles.next_ctm_i1)
     close_geosfp_physics!(handles.physics)
     return nothing
 end

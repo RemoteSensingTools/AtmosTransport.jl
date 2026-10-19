@@ -170,15 +170,25 @@ the project's own configs use historically.
 **GEOS-FP (C720).** The active descriptor is native cubed-sphere:
 
 - `config/met_sources/geosfp.toml` — the **native C720 hourly CTM**
-  product (`GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.*.nc4`).
+  products (`GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.*.nc4` and
+  `GEOS.fp.asm.inst_1hr_ctm_c0720_v72.*.nc4`).
 - `config/downloads/geosfp_c720.toml` — the **native C720**
   cubed-sphere download descriptor; the **`src/Downloads/sources/geosfp.jl`**
   downloader pulls over HTTPS from the public GEOS-Chem S3 archive into a
   local directory.
 
-`GEOSSettings{:geosfp}` opens 24 hourly native CTM files plus the
-next-day 00Z endpoint. The public archive names the hourly averaged
-files with `HH30` timestamps; test fixtures may also use `HH00`. When
+`GEOSSettings{:geosfp}` opens 24 hourly tavg CTM files (DELP for level-order
+detection, dry MFXC/MFYC) and 24 instantaneous CTM files (PS in Pa, QV in
+kg/kg), plus the next-day 00Z **inst** endpoint. Both collections are required;
+missing inst files error without a fallback. Download the following day too
+when staging a date range. Files may be in the root or `YYYYMMDD/` directories.
+The public archive names tavg files with `HH30` timestamps (legacy mirrors
+may use `HH00`) and inst files with `HH00` timestamps. Window 1 spans
+00Z..01Z, and window 24 ends at the next day's 00Z inst file. Endpoint dry
+layer pressure is `(1-QV_inst) * (ΔA + ΔB*PS_inst)` using the same hybrid
+construction as GEOS-IT, and dry surface pressure is its column sum. Tavg PS
+and DELP describe a window mean and cannot supply instantaneous endpoint mass.
+MFXC/MFYC retain their 450 s dynamics-step scaling. When
 `[source] include_surface = true` or
 `include_convection = true`, set `[source] physics_dir` to a directory
 containing `GEOSFP.YYYYMMDD.{A1,A3mstE,A3dyn}.025x03125.nc` files (or

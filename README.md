@@ -339,8 +339,8 @@ prognostic-moment scheme is postponed (see
 ## Validation
 
 - **Verification (synthetic-fixture suite):** GitHub CI runs the CPU core and
-  regridding tiers on pull requests and pushes to `main`, on Julia 1.10 and the
-  current Julia release. It covers uniform-tracer invariance, mass budgets and
+  regridding tiers on pull requests and pushes to `main`, on Julia 1.10, 1.12 and
+  1.13. It covers uniform-tracer invariance, mass budgets and
   cross-window replay. CUDA comparisons and the ten maintained GPU diagnostics
   run separately on GPU hardware; they are not exercised by the hosted CPU jobs.
   The Julia 1 job uploads line coverage of `src/` and `ext/` to
