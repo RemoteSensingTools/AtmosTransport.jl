@@ -57,22 +57,95 @@ function _geosfp_axis(ds::NCDataset, candidates)
                         join(candidates, ", ")))
 end
 
-function _centered_lons(lons::AbstractVector{<:Real})
-    out = [mod(Float64(lon) + 180.0, 360.0) - 180.0 for lon in lons]
-    # Keep the field roll in sync with `_normalize_lon_to_centered`: when the
-    # source was 0..360, the roll by Nx/2 produces sorted centered longitudes.
-    if !issorted(out)
-        out = circshift(out, length(out) ÷ 2)
-    end
-    return out
+function _validated_ll_axis(axis, name)
+    all(isfinite, axis) && !isempty(axis) && all(>(0), diff(axis)) ||
+        error("GEOS-FP physics $name coordinates must be finite, distinct, and sorted")
+    return axis
 end
 
+_centered_lons(lons::AbstractVector{<:Real}) = sort(_wrap_lon180.(lons))
+
 function _geosfp_latlon_axes(ds::NCDataset)
-    lons = _geosfp_axis(ds, ("lon", "longitude", "Xdim", "x"))
-    lats = _geosfp_axis(ds, ("lat", "latitude", "Ydim", "y"))
-    lons = _centered_lons(lons)
-    lats = lats[1] > lats[end] ? reverse(lats) : lats
+    lons = _centered_lons(_geosfp_axis(ds, ("lon", "longitude", "Xdim", "x")))
+    lats = sort(_geosfp_axis(ds, ("lat", "latitude", "Ydim", "y")))
+    _validated_ll_axis(lons, "longitude")
+    _validated_ll_axis(lats, "latitude")
+    lons[end] - lons[1] < 360 || error("GEOS-FP longitude axis must span less than 360 degrees")
     return lons, lats
+end
+
+# A dimensionless lev=1:N alone says nothing about physical orientation.
+# Prefer physical coordinate metadata; otherwise use the physics archive's
+# own I3 QV profile (as for MERRA-2), never the native CTM DELP orientation.
+function _physics_lev(ds)
+    name = _find_var_name(ds, ("lev", "level", "ilev", "edge", "interface"))
+    v = ds[name]
+    levels = Float64.(v[:])
+    all(isfinite, levels) && length(levels) > 1 &&
+        (all(>(0), diff(levels)) || all(<(0), diff(levels))) ||
+        error("GEOS-FP physics level coordinate must be finite and strictly monotonic")
+    return v, levels
+end
+
+function _physics_coordinate_orientation(ds)
+    v, levels = _physics_lev(ds)
+    positive = lowercase(String(get(v.attrib, "positive", "")))
+    units = lowercase(String(get(v.attrib, "units", "")))
+    if isempty(positive) && units in ("pa", "hpa", "mb", "mbar")
+        positive = "down"
+    end
+    isempty(positive) && return nothing
+    positive in ("up", "down") || error("GEOS-FP physics lev positive must be up or down")
+    increasing = levels[end] > levels[1]
+    return increasing == (positive == "down") ? :top_down : :bottom_up
+end
+
+function _physics_qv_orientation(ds)
+    v = ds[_find_var_name(ds, ("QV", "qv", "specific_humidity"))]
+    dims = dimnames(v)
+    ld = _find_dim(dims, ("lev", "level"))
+    td = _find_dim(dims, ("time",))
+    ld === nothing && error("GEOS-FP physics QV lacks a level dimension")
+    function endpoint_mean(k)
+        idx = ntuple(d -> d == ld ? k : d == td ? 1 : Colon(), ndims(v))
+        values = Float64.(v[idx...])
+        all(isfinite, values) && all(>=(0), values) && maximum(values) < 1 ||
+            error("GEOS-FP physics QV must be finite and in [0,1)")
+        return sum(values) / length(values)
+    end
+    q1, qn = endpoint_mean(1), endpoint_mean(size(v, ld))
+    q1 > 100qn && return :bottom_up
+    qn > 100q1 && return :top_down
+    error("Cannot detect GEOS-FP physics level order: endpoint QV means $q1, $qn; expected >100x contrast")
+end
+
+function _geosfp_physics_orientation(root, date, Nc, layout, mste, dyn)
+    cm_order = _physics_coordinate_orientation(mste)
+    dt_order = _physics_coordinate_orientation(dyn)
+    profile_order = nothing
+    path = _resolve_geosfp_physics_path(root, date, "I3", Nc, layout)
+    if path !== nothing
+        NCDataset(path, "r") do ds
+            profile_order = _physics_qv_orientation(ds)
+            # The common archive index convention must agree across collections.
+            _, qlev = _physics_lev(ds)
+            _, dlev = _physics_lev(dyn)
+            qlev == dlev || error("GEOS-FP I3 and A3dyn level coordinates disagree")
+        end
+    end
+    if cm_order === nothing || dt_order === nothing
+        profile_order === nothing && error(
+            "Cannot validate GEOS-FP physics level order: provide the physics I3 QV file " *
+            "or physical lev coordinates with a positive=up/down attribute in both A3 files")
+        _, clev = _physics_lev(mste)
+        _, dlev = _physics_lev(dyn)
+        length(clev) == length(dlev) + 1 &&
+            sign(clev[end]-clev[1]) == sign(dlev[end]-dlev[1]) ||
+            error("GEOS-FP CMFMC edges and DTRAIN layers must share the archive index convention")
+    end
+    orders = filter(!isnothing, [cm_order, dt_order, profile_order])
+    all(==(first(orders)), orders) || error("Conflicting GEOS-FP physics level orientations")
+    return first(orders)
 end
 
 function _geos_dim_length(ds::NCDataset, candidates)
@@ -134,60 +207,45 @@ function _read_latlon_slice(ds::NCDataset, var_name::String,
     end
     field = perm == collect(1:Rank) ? raw : permutedims(raw, Tuple(perm))
 
-    if haskey(ds, "lat")
-        lats_raw = ds["lat"][:]
-    elseif haskey(ds, "latitude")
-        lats_raw = ds["latitude"][:]
-    else
-        lats_raw = Float64[]
-    end
-    if !isempty(lats_raw) && length(lats_raw) == size(field, 2) && lats_raw[1] > lats_raw[end]
-        field = Rank == 2 ? field[:, end:-1:1] : field[:, end:-1:1, :]
-    end
-
-    if haskey(ds, "lon")
-        lons_raw = ds["lon"][:]
-    elseif haskey(ds, "longitude")
-        lons_raw = ds["longitude"][:]
-    else
-        lons_raw = Float64[]
-    end
-    if !isempty(lons_raw)
-        if Rank == 2
-            tmp = reshape(field, size(field, 1), size(field, 2), 1)
-            field = @view _normalize_lon_to_centered(tmp, lons_raw)[:, :, 1]
-        else
-            field = _normalize_lon_to_centered(field, lons_raw)
-        end
-    end
-    return Array{FT}(field)
+    # Apply exactly the same permutations as the coordinate axes, including
+    # nonuniform longitudes and arbitrary periodic origins.
+    lats_raw = _geosfp_axis(ds, ("lat", "latitude", "Ydim", "y"))
+    lons_raw = _geosfp_axis(ds, ("lon", "longitude", "Xdim", "x"))
+    ip = sortperm(_wrap_lon180.(lons_raw))
+    jp = sortperm(lats_raw)
+    return Rank == 2 ? field[ip, jp] : field[ip, jp, :]
 end
 
 @inline _wrap_lon180(lon::Real) = mod(Float64(lon) + 180.0, 360.0) - 180.0
 
-function _interp_regular_ll(src::AbstractMatrix{FT}, lons, lats,
-                            lon::Real, lat::Real) where FT
-    Nx, Ny = size(src)
-    λ = _wrap_lon180(lon)
-    Δλ = length(lons) > 1 ? lons[2] - lons[1] : 360.0
-    Δφ = length(lats) > 1 ? lats[2] - lats[1] : 180.0
-    x = (λ - lons[1]) / Δλ + 1.0
-    x < 1.0 && (x += Nx)
-    x >= Nx + 1 && (x -= Nx)
-    y = clamp((Float64(lat) - lats[1]) / Δφ + 1.0, 1.0, Ny)
-    i0 = clamp(floor(Int, x), 1, Nx)
-    j0 = clamp(floor(Int, y), 1, Ny - 1)
-    i1 = i0 == Nx ? 1 : i0 + 1
-    j1 = min(j0 + 1, Ny)
-    wi = x - floor(x)
-    wj = y - j0
-    return (1 - wi) * (1 - wj) * src[i0, j0] +
-           wi       * (1 - wj) * src[i1, j0] +
-           (1 - wi) * wj       * src[i0, j1] +
-           wi       * wj       * src[i1, j1]
+function _ll_stencil(lons, lats, lon::Real, lat::Real)
+    nx, ny = length(lons), length(lats)
+    λ = mod(Float64(lon) - lons[1], 360.0) + lons[1]
+    i0 = clamp(searchsortedlast(lons, λ), 1, nx)
+    i1 = i0 == nx ? 1 : i0 + 1
+    λ1 = i0 == nx ? lons[1] + 360.0 : lons[i1]
+    wi = nx == 1 ? 0.0 : (λ - lons[i0]) / (λ1 - lons[i0])
+    φ = clamp(Float64(lat), lats[1], lats[end])
+    j0 = clamp(searchsortedlast(lats, φ), 1, max(1, ny - 1))
+    j1 = min(j0 + 1, ny)
+    wj = ny == 1 ? 0.0 : (φ - lats[j0]) / (lats[j1] - lats[j0])
+    return GEOSFPLLStencil(i0, i1, j0, j1, wi, wj)
 end
 
-function _interp_regular_ll(src::AbstractArray{FT, 3}, lons, lats,
+@inline function _apply_ll_stencil(src, s::GEOSFPLLStencil)
+    i0, i1, j0, j1 = s.i0, s.i1, s.j0, s.j1
+    wi, wj = s.wi, s.wj
+    @inbounds return (1 - wi) * (1 - wj) * src[i0, j0] +
+                     wi       * (1 - wj) * src[i1, j0] +
+                     (1 - wi) * wj       * src[i0, j1] +
+                     wi       * wj       * src[i1, j1]
+end
+
+function _interp_regular_ll(src::AbstractMatrix, lons, lats, lon::Real, lat::Real)
+    return _apply_ll_stencil(src, _ll_stencil(lons, lats, lon, lat))
+end
+
+function _interp_regular_ll(src::AbstractArray{FT,3}, lons, lats,
                             lon::Real, lat::Real, k::Int) where FT
     return _interp_regular_ll(@view(src[:, :, k]), lons, lats, lon, lat)
 end
@@ -196,27 +254,23 @@ function _interpolate_ll_to_panels!(dst::NTuple{CS_PANEL_COUNT, Matrix{FT}},
                                     src::AbstractMatrix{FT},
                                     physics::GEOSFPLatLonPhysicsFallback) where FT
     @inbounds for p in 1:CS_PANEL_COUNT
-        out = dst[p]
-        tlon = physics.target_lons[p]
-        tlat = physics.target_lats[p]
-        for j in axes(out, 2), i in axes(out, 1)
-            out[i, j] = _interp_regular_ll(src, physics.lons, physics.lats,
-                                           tlon[i, j], tlat[i, j])
+        for ij in eachindex(dst[p])
+            dst[p][ij] = _apply_ll_stencil(src, physics.stencils[p][ij])
         end
     end
     return dst
 end
 
-function _interpolate_ll_to_panels!(dst::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                    src::AbstractArray{FT, 3},
+function _interpolate_ll_to_panels!(dst::NTuple{CS_PANEL_COUNT, Array{FT,3}},
+                                    src::AbstractArray{FT,3},
                                     physics::GEOSFPLatLonPhysicsFallback) where FT
     @inbounds for p in 1:CS_PANEL_COUNT
         out = dst[p]
-        tlon = physics.target_lons[p]
-        tlat = physics.target_lats[p]
-        for k in axes(out, 3), j in axes(out, 2), i in axes(out, 1)
-            out[i, j, k] = _interp_regular_ll(src, physics.lons, physics.lats,
-                                              tlon[i, j], tlat[i, j], k)
+        for k in axes(out, 3)
+            layer = @view src[:, :, k]
+            for j in axes(out, 2), i in axes(out, 1)
+                out[i, j, k] = _apply_ll_stencil(layer, physics.stencils[p][i, j])
+            end
         end
     end
     return dst

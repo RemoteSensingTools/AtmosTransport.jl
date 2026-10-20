@@ -90,6 +90,14 @@ GEOS-IT / GEOS-FP to CS:
 
 1. `read_window!` fills a `RawWindow`: dry endpoint mass from moist `PS`/`QV`
    (`endpoint_dry_mass!`), `MFXC`/`MFYC` divided by `mass_flux_dt`, top-down levels.
+   GEOS-FP fallback physics validates its own level order using physical
+   `lev` metadata or matching physics I3 QV, then normalizes CMFMC/DTRAIN
+   before coordinate-aware interpolation and drying. Cached daily stencils
+   preserve the shortened polar intervals and periodic longitude seam.
+   OF-119 requires regenerating binaries from `geosfp_c720_native_to_cs720.toml`
+   and `geosfp_c720_native_to_cs180.toml` with `latlon_025`; the former reader
+   displaced all fallback fields in latitude and inherited CTM order for
+   convection (see [details](../../docs/src/preprocessing/geos_native_cs.md)).
 2. Stagger fluxes to faces (identity or block coarsening), apply the vertical
    plan, seed `m_cur` (previous endpoint when chaining) and the target from the
    raw dry endpoint, and pin both when `[mass_fix].enable`.
@@ -170,9 +178,10 @@ Files directly in this folder; the subfolders have their own READMEs
 - Dry basis is the default: `[output].mass_basis` defaults to `"dry"`; the
   GEOS, ERA5 N320, and MERRA-2 writers reject other values; spectral dry basis
   requires `[input].thermo_dir`.
-- `k = 1` is the model top: GEOS files are flipped after
-  `detect_level_orientation`, MERRA-2 readers return top-down arrays, and
-  canonical ERA5 N320 GRIB fields are top-down. `cm` is zero at
+- `k = 1` is the model top: native GEOS CTM fields normalize after
+  `detect_level_orientation`; GEOS-FP fallback physics uses its own validated
+  order. MERRA-2 readers return top-down arrays, and canonical ERA5 N320
+  GRIB fields are top-down. `cm` is zero at
   the top (`k = 1`) and surface (`k = Nz + 1`) interfaces.
 - Balance before `cm`: horizontal fluxes are balanced against the target
   `(m_next - m) / (2 * steps)` (each substep applies them twice; see

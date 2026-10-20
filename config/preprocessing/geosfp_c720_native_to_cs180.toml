@@ -13,6 +13,9 @@ include_surface = true
 include_convection = true
 physics_dir = "~/data/AtmosTransport/met/geosfp/C720/raw_025"
 physics_layout = "latlon_025"
+# Convection validates archive order using the matching physics I3 QV file
+# when A3 lev coordinates lack physical orientation metadata (OF-119).
+# Regenerate pre-OF-119 binaries: convection order and all physics latitudes changed.
 
 [output]
 directory  = "~/data/AtmosTransport/met/geosfp/C180/preprocessed/native_c720_to_c180_v4"

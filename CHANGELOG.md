@@ -601,6 +601,18 @@
 
 ### Fixes
 
+- **OF-119: GEOS-FP physics fallback.** Validate physics archive level order
+  independently of native CTM and normalize CMFMC's 73 edges (`k → 74-k`)
+  and DTRAIN's 72 layers (`k → 73-k`) before interpolation and moist-to-dry
+  conversion. Both lat-lon and CS fallbacks use physical level metadata or
+  matching physics I3 QV; ambiguous or conflicting order errors. Bracket
+  actual latitude/longitude coordinates with cached stencils, preserving the
+  0.1875° polar latitude intervals and periodic longitude wrap. The previous
+  uniform-spacing assumption displaced all fallback fields geographically.
+  Binaries produced by `geosfp_c720_native_to_cs720.toml` and
+  `geosfp_c720_native_to_cs180.toml` with `latlon_025` must be regenerated
+  from source; reversing dry convection cannot repair humidity pairing.
+
 - GEOS-FP native C720 preprocessing now requires hourly `inst_1hr_ctm` PS/QV
   at both window endpoints, including next-day 00Z. Dry endpoint layer mass
   uses the GEOS-IT hybrid reconstruction from instantaneous PS and QV;

@@ -52,8 +52,9 @@ writers that turn these fields into transport binaries live in
 - [`geos.jl`](geos.jl) — `GEOSSettings`, GEOS-IT and GEOS-FP path resolution,
   GEOS-FP physics fallback (`physics_dir`, `physics_layout`), day handles,
   `detect_level_orientation`, `_native_output_filename`
-- [`geos_panels.jl`](geos_panels.jl) — per-panel slicers, `endpoint_dry_mass!`,
-  mass-flux scaling, settings traits
+- [`geos_panels.jl`](geos_panels.jl) — per-panel slicers, physics level-order
+  validation, lat-lon coordinate normalization and cached interpolation
+  stencils, `endpoint_dry_mass!`, mass-flux scaling, settings traits
 - [`geos_read_window.jl`](geos_read_window.jl) — `read_window!` with optional
   surface, VDIFF, and convection fields (3-hourly convection binding)
 - [`era5.jl`](era5.jl) — `ERA5GRIBSettings`, stream paths (`era5_grib_path`,
@@ -87,7 +88,13 @@ writers that turn these fields into transport binaries live in
   `"bottom_up"` or `"top_down"` to bypass detection. MERRA-2 detection errors
   unless one end of the column has more than 100 times the mean `QV` of the other.
 - GEOS-FP surface or convection fields: set `physics_dir`; `physics_layout`
-  is `auto`, `cubed_sphere`, or `latlon_025`.
+  is `auto`, `cubed_sphere`, or `latlon_025`. Convection order is validated
+  from physical `lev` metadata or the matching physics I3 QV profile,
+  independently of CTM orientation (ambiguous/conflicting evidence errors).
+  Dimensionless A3 levels require I3 in the same layout; latitude/longitude
+  interpolation brackets actual coordinates with cached daily stencils.
+  See [OF-119](../../../docs/src/preprocessing/geos_native_cs.md): binaries
+  from the C720→CS720/CS180 configs with `latlon_025` must be regenerated.
 - MERRA-2 surface, convection, VDIFF, and cloud-base fields require
   `layout = "geoschem"` (`GEOSChemArchive`).
 
