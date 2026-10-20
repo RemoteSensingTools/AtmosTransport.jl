@@ -19,12 +19,15 @@ coverage:
       default:
         target: auto
         threshold: 2%
-    # New and changed lines: lenient, because much GPU and real-data code
-    # cannot run on a hosted CPU runner.
+    # New and changed lines: reported but never failing. Runtime branches for
+    # GPU backends (src/Architectures.jl) and real-data paths cannot run on a
+    # hosted CPU runner, so a red patch status would only measure that.
+    # `target: auto` means the base project coverage (~83 %) minus `threshold`.
     patch:
       default:
         target: auto
         threshold: 20%
+        informational: true
 
 comment:
   layout: "diff, flags, files"
