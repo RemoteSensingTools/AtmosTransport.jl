@@ -6,7 +6,7 @@ CurrentModule = AtmosTransport
 
 AtmosTransport separates three concerns: the transport binary is a CPU-side
 storage format, `Adapt.jl` moves model data to the chosen backend, and
-`KernelAbstractions.jl` provides the CPU/CUDA/Metal implementations of hot
+`KernelAbstractions.jl` provides the CPU/CUDA/ROCm/Metal implementations of hot
 loops. Understanding those boundaries is more useful than memorizing a
 benchmark from one machine.
 
@@ -15,15 +15,16 @@ benchmark from one machine.
 ```toml
 [architecture]
 use_gpu = true
-backend = "cuda"   # "cpu", "cuda", "metal", or "auto"
+backend = "cuda"   # "cpu", "cuda", "rocm", "metal", or "auto"
 ```
 
-`"auto"` tries CUDA and then Metal. `"metal"` supports `Float32`; CPU and
-CUDA support both configured precisions subject to the hardware. Start with
+`"auto"` tries Metal → CUDA → ROCm on macOS and CUDA → ROCm on Linux and
+other hosts, stopping at the first functional runtime. `"metal"` supports `Float32`; CPU,
+CUDA, and ROCm support both configured precisions subject to the hardware. Start with
 the CPU quickstart, then change the backend without changing the physics
 configuration.
 
-The resolved `CPU()` or `GPU(:cuda|:metal)` value is stored on the grid. Model
+The resolved `CPU()` or `GPU(:cuda|:rocm|:metal)` value is stored on the grid. Model
 construction adapts state, workspaces, surface sources, and forcing buffers to
 that backend. The runner verifies that a requested GPU run actually owns GPU
 arrays instead of silently falling back to CPU storage.
@@ -120,7 +121,7 @@ with multiple tracers, a second kernel assigns each column/tracer pair to its
 own thread, using a 32×1×2 block. Each warp reads contiguous `i` cells, and the
 two warps process different tracers. All tracers read the same factor buffer;
 no per-tracer factor storage or additional persistent workspace is needed.
-A single tracer uses the fused factor-and-solve kernel. CPU and Metal retain
+A single tracer uses the fused factor-and-solve kernel. CPU, ROCm, and Metal retain
 the fused column loop.
 
 Only the launch decomposition changes: weak transfers, compensated sums,
@@ -179,7 +180,7 @@ flowchart LR
     MM --> H[typed host window]
     H -->|CPU run| C[CPU kernels]
     H -->|GPU run| D[persistent device window]
-    D --> G[CUDA or Metal kernels]
+    D --> G[CUDA, ROCm or Metal kernels]
 ```
 
 This distinction matters when diagnosing a regression: `window_load_host`,

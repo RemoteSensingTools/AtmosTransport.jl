@@ -62,6 +62,27 @@ end
 # one-time world-age trampoline for callers that load a backend on demand, but
 # resolving it here keeps CLI startup and optional profiling straightforward.
 # Inspecting the config costs about 1 ms.
+function _import_gpu_runtime(name)
+    @eval using $name
+    return getfield(@__MODULE__, name)
+end
+
+function _preload_auto_gpu(; isapple = Sys.isapple(),
+                           find_package = Base.find_package,
+                           load_runtime = _import_gpu_runtime)
+    candidates = isapple ? (:Metal, :CUDA, :AMDGPU) : (:CUDA, :AMDGPU)
+    for name in candidates
+        find_package(string(name)) === nothing && continue
+        try
+            runtime = load_runtime(name)
+            Base.invokelatest(runtime.functional) && return name
+        catch err
+            @debug "GPU runtime preload failed" runtime=name exception=err
+        end
+    end
+    return nothing
+end
+
 if (abspath(PROGRAM_FILE) == @__FILE__) && !isempty(ARGS)
     _cfg_path = expanduser(ARGS[1])
     if isfile(_cfg_path)
@@ -78,15 +99,20 @@ if (abspath(PROGRAM_FILE) == @__FILE__) && !isempty(ARGS)
                                             _use_gpu ? "auto" : "cpu")))
             _backend = replace(_backend, '-' => '_', ' ' => '_')
             _gpu_requested = _use_gpu ||
-                             _backend in ("auto", "gpu", "cuda", "nvidia",
+                             _backend in ("auto", "gpu", "cuda", "nvidia", "rocm",
                                           "metal", "apple", "apple_metal")
             if _gpu_requested
-                if _backend in ("metal", "apple", "apple_metal") ||
-                   (_backend in ("auto", "gpu") && Sys.isapple())
+                if _backend in ("auto", "gpu")
+                    # Stop before importing any lower-priority runtime once
+                    # a functional candidate is found.
+                    _preload_auto_gpu()
+                elseif _backend in ("metal", "apple", "apple_metal")
                     @info "Preloading Metal (GPU backend)"
                     using Metal
-                elseif _backend in ("cuda", "nvidia") ||
-                       _backend in ("auto", "gpu")
+                elseif _backend == "rocm"
+                    @info "Preloading AMDGPU (ROCm GPU backend)"
+                    using AMDGPU
+                elseif _backend in ("cuda", "nvidia")
                     @info "Preloading CUDA (GPU backend)"
                     using CUDA
                 end
@@ -162,7 +188,7 @@ _loaded_cuda_module() = get(Base.loaded_modules, _CUDA_PKGID, nothing)
 """
     _configured_backend(cfg) -> Symbol
 
-The backend the config's `[architecture]` table selects (`:cpu`, `:cuda` or
+The backend the config's `[architecture]` table selects (`:cpu`, `:cuda`, `:rocm` or
 `:metal`), as the runner resolves it; `backend = "auto"` (or `use_gpu = true`
 without a backend) detects the GPU, which loads its package.
 """

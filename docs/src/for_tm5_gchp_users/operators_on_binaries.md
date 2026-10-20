@@ -542,7 +542,7 @@ The current validation boundary is summarized in
 
 - For the sensitivity side (adjoint of every operator above), see
   [Adjoints on top of the binary](adjoints.md).
-- For how the multi-tracer kernels actually launch on CPU, CUDA, and
+- For how the multi-tracer kernels actually launch on CPU, CUDA, ROCm, and
   Metal from a single source, see
   [Kernel architecture](kernel_architecture.md).
 - For the deep-physics treatment (palindrome derivation, monotonicity, and

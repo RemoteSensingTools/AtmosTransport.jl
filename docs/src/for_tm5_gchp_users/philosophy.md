@@ -10,7 +10,7 @@ tracer transport model driven by pre-computed meteorology. If you are
 fluent in either of those codes, most of the physics terms map across
 unchanged. What differs is the *engineering shape* — the contract
 between preprocessing and runtime, how operators dispatch, and how the
-work spreads across CPU / CUDA / Metal from a single source tree.
+work spreads across CPU / CUDA / ROCm / Metal from a single source tree.
 
 This page lays out the design choices so you can carry your mental
 model in. The next pages drill into how that model is realized for
@@ -21,7 +21,7 @@ binaries, operators, adjoints, and the kernel architecture.
 > Pre-compute mass-conserving daily binaries off-line; memory-map them
 > at runtime; dispatch every physics operator through Julia's type
 > system; write one kernel per loop and let `KernelAbstractions.jl`
-> retarget it to CPU, CUDA, or Metal.
+> retarget it to CPU, CUDA, ROCm, or Metal.
 
 Everything in the docs is a consequence of that line.
 
@@ -54,7 +54,7 @@ flowchart LR
 | Mass basis | Moist (with explicit qv bookkeeping) | Moist + dry conversions per-operator | **Dry by default**, basis is a *type parameter* |
 | Multi-tracer | Tracer loop *inside* each operator | Tracer loop *inside* FV step (PPM × Nt) | Packed tracer dimension in LL and CS split-sweep kernels |
 | Adjoint | TM5-4DVAR (hand-coded) | GIGC adjoint (separate fork) | Tape + checkpoint + replay; surface-emission footprints and a CS 4D-Var scaffold |
-| Hardware | CPU clusters | CPU clusters (some GPU effort upstream) | Single-node multi-GPU (CUDA / Metal) and CPU; one source tree |
+| Hardware | CPU clusters | CPU clusters (some GPU effort upstream) | Single-node GPU (CUDA / ROCm / Metal) and CPU; one source tree |
 
 The differences are deliberate; the similarities are deliberate too.
 We deviate where Julia + KA pays off, and converge where the physics
@@ -106,7 +106,7 @@ See [Operators on top of the binary](operators_on_binaries.md).
 ### 3. One kernel, three backends
 
 Every hot loop is written once as a `KernelAbstractions.@kernel`. The
-same function targets CPU, NVIDIA CUDA, and Apple Silicon Metal,
+same function targets CPU, NVIDIA CUDA, AMD ROCm, and Apple Silicon Metal,
 selected by the `[architecture].backend` line in the TOML. There is no
 "GPU version" of any operator that is separately maintained from the
 "CPU version". Workspace structures are parametric on the array type
@@ -174,7 +174,7 @@ In return, you get a runtime that:
 
 - reads one self-describing transport product instead of reconstructing a
   forcing schema at every model step;
-- targets CPU, CUDA, and Metal from the same operator implementations;
+- targets CPU, CUDA, ROCm, and Metal from the same operator implementations;
 - exposes window loading, backend copies, and physics as separate timing
   sections; and
 - carries the numerical schedule and mass-basis contract with the data.

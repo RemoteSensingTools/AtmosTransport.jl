@@ -14,7 +14,7 @@
 #                   together. Every record carries the Julia version and the
 #                   sha256 of the resolved benchmarking/Manifest.toml, so the
 #                   dashboard shows where the environment changed.
-#   backend         "cpu", "cuda", or "metal" (passed to run_benchmarks.jl)
+#   backend         "cpu", "cuda", "rocm", or "metal" (passed to run_benchmarks.jl)
 #   float_types     float types to benchmark; Metal supports Float32 only
 #   threads         Julia threads (--threads)
 #   heap_size_hint  optional --heap-size-hint, e.g. "64G"

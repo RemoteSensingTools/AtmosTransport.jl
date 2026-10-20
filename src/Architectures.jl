@@ -4,8 +4,8 @@
 Execution architectures and their optional runtime integration.
 
 An architecture is part of a grid's type-level model contract: `CPU()` selects
-host execution, while `GPU(:cuda)` and `GPU(:metal)` select a concrete GPU
-runtime. The same object controls array adaptation, device synchronization, and
+host execution, while `GPU(:cuda)`, `GPU(:rocm)`, and `GPU(:metal)` select
+a concrete GPU runtime. The same object controls array adaptation, device synchronization, and
 runtime validation, so grid metadata cannot diverge from model storage.
 """
 module Architectures
@@ -15,7 +15,7 @@ using DocStringExtensions
 using KernelAbstractions: KernelAbstractions as KA, @kernel, @index
 
 export AbstractArchitecture, CPU, GPU
-export AbstractArchitectureRequest, CPURequest, CUDARequest, MetalRequest,
+export AbstractArchitectureRequest, CPURequest, CUDARequest, ROCmRequest, MetalRequest,
        AutoGPURequest
 export array_type, device, architecture, architecture_from_config
 export autodetect_gpu_architecture, is_gpu, ensure_runtime!, array_adapter
@@ -44,6 +44,9 @@ struct CPURequest <: AbstractArchitectureRequest end
 """Request the NVIDIA CUDA runtime."""
 struct CUDARequest <: AbstractArchitectureRequest end
 
+"""Request the AMD ROCm runtime."""
+struct ROCmRequest <: AbstractArchitectureRequest end
+
 """Request the Apple Metal runtime."""
 struct MetalRequest <: AbstractArchitectureRequest end
 
@@ -62,14 +65,14 @@ $(TYPEDEF)
 
 GPU execution architecture for backend `B`.
 
-Construct with `GPU(:cuda)` or `GPU(:metal)`. Making the backend explicit keeps
-CUDA and Metal methods unambiguous when both optional packages are loaded.
+Construct with `GPU(:cuda)`, `GPU(:rocm)`, or `GPU(:metal)`. The explicit backend
+keeps methods unambiguous when multiple optional packages are loaded.
 """
 struct GPU{B} <: AbstractArchitecture end
 
 function GPU(backend::Symbol)
-    backend in (:cuda, :metal) || throw(ArgumentError(
-        "unsupported GPU backend $(repr(backend)); expected :cuda or :metal"))
+    backend in (:cuda, :rocm, :metal) || throw(ArgumentError(
+        "unsupported GPU backend $(repr(backend)); expected :cuda, :rocm, or :metal"))
     return GPU{backend}()
 end
 
@@ -78,7 +81,7 @@ GPU(backend::AbstractString) = _gpu_architecture(_architecture_request(backend))
 array_type(::CPU) = Array
 device(::CPU) = KA.CPU()
 
-# GPU array and KernelAbstractions device methods live in the CUDA and Metal
+# GPU array and KernelAbstractions device methods live in the optional backend
 # package extensions. Without the corresponding optional package, calling
 # `array_type` or `device` for that architecture intentionally has no method.
 
@@ -92,6 +95,7 @@ backend_name(::GPU{B}) where {B} = B
 
 const _RUNTIME_PACKAGE_IDS = (
     CUDA = Base.PkgId(Base.UUID("052768ef-5323-5732-b1bb-66c8b64840ba"), "CUDA"),
+    AMDGPU = Base.PkgId(Base.UUID("21141c5a-9bdb-4563-92ae-f87d6854732e"), "AMDGPU"),
     Metal = Base.PkgId(Base.UUID("dde4c033-4e86-420c-a63e-0dd931031962"), "Metal"),
 )
 
@@ -111,18 +115,19 @@ end
 function _architecture_request(raw::AbstractString)
     raw == "cpu" && return CPURequest()
     raw == "cuda" && return CUDARequest()
+    raw == "rocm" && return ROCmRequest()
     raw == "metal" && return MetalRequest()
     raw == "auto" && return AutoGPURequest()
     canonical = _removed_architecture_spelling(raw)
     if canonical !== nothing
         throw(ArgumentError(
             "architecture.backend spelling \"$(raw)\" was removed; use one " *
-            "of the canonical values \"cpu\", \"cuda\", \"metal\", or \"auto\" " *
+            "of the canonical values \"cpu\", \"cuda\", \"rocm\", \"metal\", or \"auto\" " *
             "(\"$(canonical)\" for this backend)."))
     end
     throw(ArgumentError(
         "unknown architecture.backend = \"$(raw)\"; supported values are " *
-        "\"cpu\", \"cuda\", \"metal\", and \"auto\"."))
+        "\"cpu\", \"cuda\", \"rocm\", \"metal\", and \"auto\"."))
 end
 
 function _removed_architecture_spelling(raw::AbstractString)
@@ -131,18 +136,19 @@ function _removed_architecture_spelling(raw::AbstractString)
     normalized == "nvidia" && return "cuda"
     normalized in ("apple", "apple_metal") && return "metal"
     normalized == "gpu" && return "auto"
-    normalized in ("cpu", "cuda", "metal", "auto") && return normalized
+    normalized in ("cpu", "cuda", "rocm", "metal", "auto") && return normalized
     return nothing
 end
 
 _architecture_request(raw) = throw(ArgumentError(
     "[architecture].backend must be one of the strings \"cpu\", \"cuda\", " *
-    "\"metal\", or \"auto\"; got $(repr(raw))."))
+    "\"rocm\", \"metal\", or \"auto\"; got $(repr(raw))."))
 
 _gpu_architecture(::CUDARequest) = GPU{:cuda}()
+_gpu_architecture(::ROCmRequest) = GPU{:rocm}()
 _gpu_architecture(::MetalRequest) = GPU{:metal}()
 _gpu_architecture(request::AbstractArchitectureRequest) = throw(ArgumentError(
-    "GPU(string) requires \"cuda\" or \"metal\"; got a " *
+    "GPU(string) requires \"cuda\", \"rocm\", or \"metal\"; got a " *
     "$(nameof(typeof(request))) request."))
 
 function _resolve_architecture(::CPURequest, use_gpu::Bool)
@@ -151,6 +157,7 @@ function _resolve_architecture(::CPURequest, use_gpu::Bool)
     return CPU()
 end
 _resolve_architecture(::CUDARequest, ::Bool) = GPU{:cuda}()
+_resolve_architecture(::ROCmRequest, ::Bool) = GPU{:rocm}()
 _resolve_architecture(::MetalRequest, ::Bool) = GPU{:metal}()
 _resolve_architecture(::AutoGPURequest, ::Bool) = autodetect_gpu_architecture()
 
@@ -189,8 +196,8 @@ Return the first functional supported GPU architecture on this host.
 """
 function autodetect_gpu_architecture()
     candidates = Sys.isapple() ?
-        (GPU(:metal), GPU(:cuda)) :
-        (GPU(:cuda), GPU(:metal))
+        (GPU(:metal), GPU(:cuda), GPU(:rocm)) :
+        (GPU(:cuda), GPU(:rocm), GPU(:metal))
 
     failures = String[]
     for arch in candidates
@@ -218,6 +225,14 @@ function ensure_runtime!(::GPU{:cuda})
     return true
 end
 
+function ensure_runtime!(::GPU{:rocm})
+    AMDGPU = _load_runtime_package!(:AMDGPU)
+    Base.invokelatest(getproperty(AMDGPU, :functional)) ||
+        throw(ArgumentError("ROCm runtime is not functional on this host; check AMDGPU.versioninfo()"))
+    Base.invokelatest(getproperty(AMDGPU, :allowscalar), false)
+    return true
+end
+
 function ensure_runtime!(::GPU{:metal})
     Sys.isapple() ||
         throw(ArgumentError("Metal backend requires macOS on Apple Silicon"))
@@ -239,6 +254,11 @@ function array_adapter(arch::GPU{:cuda})
     return getproperty(_load_runtime_package!(:CUDA), :CuArray)
 end
 
+function array_adapter(arch::GPU{:rocm})
+    ensure_runtime!(arch)
+    return getproperty(_load_runtime_package!(:AMDGPU), :ROCArray)
+end
+
 function array_adapter(arch::GPU{:metal})
     ensure_runtime!(arch)
     return getproperty(_load_runtime_package!(:Metal), :MtlArray)
@@ -253,6 +273,14 @@ function device_name(arch::GPU{:cuda})
                                     Base.invokelatest(getproperty(CUDA, :device))))
 end
 
+function device_name(arch::GPU{:rocm})
+    ensure_runtime!(arch)
+    AMDGPU = _load_runtime_package!(:AMDGPU)
+    hip = getproperty(AMDGPU, :HIP)
+    return string(Base.invokelatest(getproperty(hip, :name),
+                                    Base.invokelatest(getproperty(AMDGPU, :device))))
+end
+
 function device_name(arch::GPU{:metal})
     ensure_runtime!(arch)
     Metal = _load_runtime_package!(:Metal)
@@ -265,6 +293,7 @@ end
 
 architecture_label(::CPU) = "CPU"
 architecture_label(arch::GPU{:cuda}) = "GPU (CUDA, $(device_name(arch)))"
+architecture_label(arch::GPU{:rocm}) = "GPU (ROCm, $(device_name(arch)))"
 architecture_label(arch::GPU{:metal}) = "GPU (Metal, $(device_name(arch)))"
 
 synchronize_architecture!(::CPU) = nothing
@@ -272,6 +301,12 @@ synchronize_architecture!(::CPU) = nothing
 function synchronize_architecture!(arch::GPU{:cuda})
     ensure_runtime!(arch)
     Base.invokelatest(getproperty(_load_runtime_package!(:CUDA), :synchronize))
+    return nothing
+end
+
+function synchronize_architecture!(arch::GPU{:rocm})
+    ensure_runtime!(arch)
+    Base.invokelatest(getproperty(_load_runtime_package!(:AMDGPU), :synchronize))
     return nothing
 end
 
@@ -303,6 +338,7 @@ _array_adapter_for(::Any) = Array
 
 function _loaded_gpu_adapter(reference_array, loaded_modules = Base.loaded_modules)
     for (pkgid, adapter_name) in ((_RUNTIME_PACKAGE_IDS.CUDA, :CuArray),
+                                  (_RUNTIME_PACKAGE_IDS.AMDGPU, :ROCArray),
                                   (_RUNTIME_PACKAGE_IDS.Metal, :MtlArray))
         runtime = get(loaded_modules, pkgid, nothing)
         runtime === nothing && continue
@@ -369,6 +405,10 @@ end
 _is_architecture_array(::CPU, backing) = backing isa Array
 
 function _is_architecture_array(arch::GPU{:cuda}, backing)
+    return backing isa array_adapter(arch)
+end
+
+function _is_architecture_array(arch::GPU{:rocm}, backing)
     return backing isa array_adapter(arch)
 end
 

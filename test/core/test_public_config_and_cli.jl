@@ -461,6 +461,52 @@ tryparse_toml(path) = try TOML.parsefile(path) catch; nothing end
     end
 end
 
+@testset "auto GPU preload stops at the first functional runtime" begin
+    cli = _script_module(:AutoGPUPreloadTest, "scripts/run_transport.jl")
+    preload = getfield(cli, :_preload_auto_gpu)
+    for isapple in (false, true)
+        order = isapple ? [:Metal, :CUDA, :AMDGPU] : [:CUDA, :AMDGPU]
+        for success in eachindex(order)
+            imported, probed = Symbol[], Symbol[]
+            load_runtime = name -> begin
+                push!(imported, name)
+                # Importing a later package could fail dependency resolution.
+                length(imported) > success && error("unexpected later import")
+                (; functional = () -> begin
+                    push!(probed, name)
+                    name === order[success]
+                end)
+            end
+            @test Base.invokelatest(preload; isapple,
+                find_package = _ -> "installed", load_runtime) === order[success]
+            @test imported == order[1:success]
+            @test probed == order[1:success]
+        end
+        # Missing packages and failed imports/probes must allow fallback.
+        for failure in (:missing, :import, :probe, :nonfunctional)
+            imported = Symbol[]
+            find_package = name -> failure === :missing && name == string(first(order)) ?
+                                   nothing : "installed"
+            load_runtime = name -> begin
+                push!(imported, name)
+                name === first(order) && failure === :import && error("import failed")
+                (; functional = () -> begin
+                    name === first(order) && failure === :probe && error("probe failed")
+                    name === last(order)
+                end)
+            end
+            @test Base.invokelatest(preload; isapple, find_package, load_runtime) === last(order)
+            @test imported == (failure === :missing ? order[2:end] : order)
+        end
+        @test Base.invokelatest(preload; isapple,
+            find_package = _ -> nothing,
+            load_runtime = _ -> error("absent package imported")) === nothing
+        @test Base.invokelatest(preload; isapple,
+            find_package = _ -> "installed",
+            load_runtime = _ -> (; functional = () -> false)) === nothing
+    end
+end
+
 @testset "canonical command-line parsers fail closed" begin
     cfg = joinpath(REPO_ROOT, "config", "examples", "minimal_template.toml")
 
@@ -481,6 +527,8 @@ end
     @test Base.invokelatest(configured, gpu_cfg) === :cuda          # resolved without loading CUDA
     @test Base.invokelatest(configured, Dict{String, Any}()) === :cpu
     @test Base.invokelatest(configured, Dict{String, Any}("architecture" => Dict{String, Any}("backend" => "metal"))) === :metal
+    @test Base.invokelatest(configured, Dict{String, Any}("architecture" => Dict{String, Any}("backend" => "rocm"))) === :rocm
+    @test action("window", :rocm) === :needs_cuda
     @test action("full", :cuda) === :full
     @test action("Window", :cuda) === :window
     @test action("", :cuda) === :none

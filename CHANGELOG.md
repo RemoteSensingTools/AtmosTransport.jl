@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- Optional AMDGPU.jl extension for `GPU(:rocm)` and `[architecture] backend =
+  "rocm"`, with Float32/Float64, pinned host staging, tape transfers and pool
+  reclamation. Adds an opt-in CPU/ROCm forward smoke and an MI300X/MI355X
+  installation/profiling runbook. Hardware validation is pending.
+
 ### Breaking changes
 
 - Cubed-sphere adjoint schedule construction validates the production operators

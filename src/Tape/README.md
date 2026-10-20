@@ -34,7 +34,8 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
     copies read back through device read caches, one per read role and panel
     shape. The generic method allocates plain `Array`s; the CUDA extension
     overrides `_allocate_tape_slot` and `stage_panels!` for `CuArray` panels
-    to use `CUDA.pin` memory.
+    to use `CUDA.pin` memory. The AMDGPU extension provides the same hooks
+    for `ROCArray` panels using registered host arrays and ROCm synchronization.
   - `MmapCSTapeStorage(; dir, cleanup_on_finalize)` in
     [`MmapTapeStorage.jl`](MmapTapeStorage.jl): appends payloads to
     `records.bin` and writes `manifest.toml` on `finalize_tape!`.

@@ -79,11 +79,12 @@ coverage.
   MERRA-2 wind-derived CS path (with convection and PBL inputs from the
   GEOS-Chem MERRA-2 archive). MERRA-2 data must currently be staged outside
   the unified downloader.
-- **Stable: CPU and NVIDIA CUDA; preview / experimental: Apple Metal —
+- **Stable: CPU and NVIDIA CUDA; preview / experimental: AMD ROCm and Apple Metal —
   Multi-backend.** Single codebase for CPU and GPU via
   [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl).
   CUDA path is end-to-end through the runtime driver; an Apple Silicon /
-  Metal weakdep extension exists.
+  Metal weakdep extension exists. AMD ROCm supports Float32/Float64 through
+  AMDGPU.jl; hardware validation is pending ([runbook](docs/src/development/rocm.md)).
 - **Stable — Mass-conserving.** Dry-basis air-mass bookkeeping, with **write-time
   replay gates** enabled by default in the preprocessor and **opt-in load-time
   replay validation** at runtime. Per-cell tolerances are `1e-12` (F64) /
@@ -145,6 +146,8 @@ flowchart TD
         KA["KernelAbstractions.jl"]
         CPU["CPU"]
         CUDA["NVIDIA CUDA"]
+        ROCM["AMD ROCm (hardware validation pending)"]
+        METAL["Apple Metal (Float32 preview)"]
     end
     ERA5 --> SRC
     GEOS --> SRC
@@ -159,6 +162,8 @@ flowchart TD
     OPS --> KA
     KA --> CPU
     KA --> CUDA
+    KA --> ROCM
+    KA --> METAL
 ```
 
 ### Column-Mean CO₂ Transport (ERA5 + EDGAR, GPU)
@@ -286,8 +291,8 @@ prognostic-moment scheme is postponed (see
 | --- | :---: | --- |
 | CPU (multi-threaded) | ✅ | Reference path; deterministic behavior is regression-tested |
 | NVIDIA CUDA | ✅ | End-to-end; production runs on L40S / A100 |
+| AMD ROCm | 🟡 | AMDGPU.jl extension; MI300X / MI355X hardware validation pending; Float32 and Float64 |
 | Apple Silicon Metal | 🟡 | Float32 forward smoke passed on M5 Pro with 6/32 tracers; broader coverage and adjoints pending |
-| AMD ROCm | 📐 | Backend axis in place; not wired |
 | mmap binary reader | ✅ | Read-only mmap with typed host-window copies |
 | NetCDF snapshot writer | ✅ | Typed `SingleOutputFile` / `DailyOutputFiles` |
 | Replay + flux-fidelity gates (write-time) | ✅ | Replay checks flux/mass closure; deterministic source-wind samples check horizontal construction, and source OMEGA is checked where available. Typed results and tolerances are stored in every regenerated binary header |

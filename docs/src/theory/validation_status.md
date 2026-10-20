@@ -43,7 +43,8 @@ Anchor tables:
 
 Hosted jobs are CPU-only. CUDA-gated comparisons skip without a functional GPU;
 the separate opt-in CUDA diagnostics provide the hardware evidence below.
-Passing hosted CI therefore does not certify CUDA or Metal execution.
+Passing hosted CI therefore does not certify CUDA, ROCm, or Metal execution. ROCm hardware checks are
+opt-in and pending; see the [ROCm runbook](../development/rocm.md).
 
 | Property | Test files | Status |
 |---|---|---|

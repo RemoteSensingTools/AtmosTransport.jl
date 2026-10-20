@@ -96,6 +96,16 @@ concrete operator, grid, state, numeric type, and architecture. The result is
 one user-facing workflow without a chain of topology strings or backend
 conditionals in every kernel.
 
+## Execution backends
+
+`[architecture] backend` accepts `"cpu"`, `"cuda"`, `"rocm"`, `"metal"`, or
+`"auto"`. GPU runtimes are optional package extensions. ROCm uses AMDGPU.jl
+and supports Float32 and Float64; Metal requires Float32. ROCm hardware
+validation on MI300X/MI355X is pending. See the [ROCm runbook](../development/rocm.md)
+for installation, opt-in smoke checks, and profiling. Auto detection tries
+Metal → CUDA → ROCm on macOS, and CUDA → ROCm on Linux and other hosts,
+stopping at the first functional runtime.
+
 ## Kernels written once, fused by dispatch
 
 Work that runs independently at every index of a block can be written as a
