@@ -342,14 +342,14 @@ end
 function _read_geosfp_convection_window!(raw::RawWindow{FT},
                                          ::GEOSFPNoPhysics,
                                          win_idx::Int,
-                                         orientation::Symbol) where {FT}
+                                         _ctm_orientation::Symbol) where {FT}
     error("GEOS-FP include_convection=true but no physics fallback reader was opened for window $(win_idx)")
 end
 
 function _read_geosfp_convection_window!(raw::RawWindow{FT},
                                          physics::GEOSFPCSPhysicsFallback,
                                          win_idx::Int,
-                                         orientation::Symbol) where {FT}
+                                         _ctm_orientation::Symbol) where {FT}
     physics.a3mste === nothing &&
         error("GEOS-FP convection fallback requires A3mstE but no handle is open")
     physics.a3dyn === nothing &&
@@ -360,8 +360,8 @@ function _read_geosfp_convection_window!(raw::RawWindow{FT},
     a3_idx = _a3_index_for_window(win_idx)
     cmfmc_name = _find_var_name(physics.a3mste, GEOS_CONVECTION_VAR_CANDIDATES[:cmfmc])
     dtrain_name = _find_var_name(physics.a3dyn, GEOS_CONVECTION_VAR_CANDIDATES[:dtrain])
-    cmfmc_raw  = _read_panels_3d(physics.a3mste, cmfmc_name,  a3_idx, orientation; FT=FT)
-    dtrain_raw = _read_panels_3d(physics.a3dyn,  dtrain_name, a3_idx, orientation; FT=FT)
+    cmfmc_raw  = _read_panels_3d(physics.a3mste, cmfmc_name,  a3_idx, physics.level_orientation; FT=FT)
+    dtrain_raw = _read_panels_3d(physics.a3dyn,  dtrain_name, a3_idx, physics.level_orientation; FT=FT)
     for p in 1:CS_PANEL_COUNT
         copyto!(raw.cmfmc[p],  cmfmc_raw[p])
         copyto!(raw.dtrain[p], dtrain_raw[p])
@@ -376,7 +376,7 @@ end
 function _read_geosfp_convection_window!(raw::RawWindow{FT},
                                          physics::GEOSFPLatLonPhysicsFallback,
                                          win_idx::Int,
-                                         orientation::Symbol) where {FT}
+                                         _ctm_orientation::Symbol) where {FT}
     physics.a3mste === nothing &&
         error("GEOS-FP lat-lon convection fallback requires A3mstE but no handle is open")
     physics.a3dyn === nothing &&
@@ -394,7 +394,10 @@ function _read_geosfp_convection_window!(raw::RawWindow{FT},
     dtrain_name = _find_var_name(physics.a3dyn, GEOS_CONVECTION_VAR_CANDIDATES[:dtrain])
     cmfmc_ll  = _read_latlon_slice(physics.a3mste, cmfmc_name,  win_idx, Val(3), FT)
     dtrain_ll = _read_latlon_slice(physics.a3dyn,  dtrain_name, win_idx, Val(3), FT)
-    if orientation === :bottom_up
+    # Normalize moist physics first: CMFMC edge k -> Nz+2-k (74-k for
+    # L72), DTRAIN layer k -> Nz+1-k (73-k), then interpolate and dry
+    # against the already top-down native humidity at the same physical level.
+    if physics.level_orientation === :bottom_up
         cmfmc_ll = reverse(cmfmc_ll; dims = 3)
         dtrain_ll = reverse(dtrain_ll; dims = 3)
     end

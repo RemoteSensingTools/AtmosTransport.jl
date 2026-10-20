@@ -161,6 +161,16 @@ end
 abstract type AbstractGEOSFPPhysicsFallback end
 struct GEOSFPNoPhysics <: AbstractGEOSFPPhysicsFallback end
 
+# Cached once per day; shared by every surface field and vertical level.
+struct GEOSFPLLStencil
+    i0::Int32
+    i1::Int32
+    j0::Int32
+    j1::Int32
+    wi::Float64
+    wj::Float64
+end
+
 mutable struct GEOSFPCSPhysicsFallback <: AbstractGEOSFPPhysicsFallback
     a1          :: Union{Nothing, NCDataset}
     a3mste      :: Union{Nothing, NCDataset}
@@ -168,6 +178,7 @@ mutable struct GEOSFPCSPhysicsFallback <: AbstractGEOSFPPhysicsFallback
     a1_path     :: Union{Nothing, String}
     a3mste_path :: Union{Nothing, String}
     a3dyn_path  :: Union{Nothing, String}
+    level_orientation :: Symbol  # validated physics order, independent of CTM
 end
 
 mutable struct GEOSFPLatLonPhysicsFallback <: AbstractGEOSFPPhysicsFallback
@@ -181,6 +192,8 @@ mutable struct GEOSFPLatLonPhysicsFallback <: AbstractGEOSFPPhysicsFallback
     lats        :: Vector{Float64}
     target_lons :: NTuple{CS_PANEL_COUNT, Matrix{Float64}}
     target_lats :: NTuple{CS_PANEL_COUNT, Matrix{Float64}}
+    level_orientation :: Symbol  # validated physics order, independent of CTM
+    stencils :: NTuple{CS_PANEL_COUNT, Matrix{GEOSFPLLStencil}}
 end
 
 function _geosfp_physics_collection_candidates(root::String, date::Date,
@@ -254,7 +267,7 @@ function _open_geosfp_physics_fallback(settings::GEOSSettings{:geosfp},
     isempty(settings.physics_dir) &&
         throw(ArgumentError(
             "GEOS-FP include_surface/include_convection requires [source].physics_dir " *
-            "pointing at GEOSFP.YYYYMMDD.{A1,A3mstE,A3dyn}.025x03125.nc or " *
+            "pointing at GEOSFP.YYYYMMDD.{A1,A3mstE,A3dyn,I3}.025x03125.nc or " *
             "pre-regridded GEOSFP.YYYYMMDD.<collection>.C$(settings.Nc).nc files."))
 
     root = expand_data_path(settings.physics_dir)
@@ -275,19 +288,37 @@ function _open_geosfp_physics_fallback(settings::GEOSSettings{:geosfp},
         a3dyn, a3dyn_path = _open_required_geosfp_physics(root, date, "A3dyn", settings.Nc, layout)
     end
 
-    if layout === :cubed_sphere
-        return GEOSFPCSPhysicsFallback(a1, a3mste, a3dyn,
-                                       a1_path, a3mste_path, a3dyn_path)
-    end
+    try
+        orientation = settings.include_convection ?
+            _geosfp_physics_orientation(root, date, settings.Nc, layout, a3mste, a3dyn) : :top_down
+        if layout === :cubed_sphere
+            return GEOSFPCSPhysicsFallback(a1, a3mste, a3dyn,
+                                           a1_path, a3mste_path, a3dyn_path, orientation)
+        end
 
-    mesh = source_grid(settings; FT = Float64)
-    target_lons = ntuple(p -> panel_cell_center_lonlat(mesh, p)[1], CS_PANEL_COUNT)
-    target_lats = ntuple(p -> panel_cell_center_lonlat(mesh, p)[2], CS_PANEL_COUNT)
-    coord_ds = settings.include_surface ? a1 : a3mste
-    lons, lats = _geosfp_latlon_axes(coord_ds)
-    return GEOSFPLatLonPhysicsFallback(a1, a3mste, a3dyn,
-                                       a1_path, a3mste_path, a3dyn_path,
-                                       lons, lats, target_lons, target_lats)
+        mesh = source_grid(settings; FT = Float64)
+        centers = ntuple(p -> panel_cell_center_lonlat(mesh, p), CS_PANEL_COUNT)
+        target_lons = map(first, centers)
+        target_lats = map(last, centers)
+        coord_ds = settings.include_surface ? a1 : a3mste
+        lons, lats = _geosfp_latlon_axes(coord_ds)
+        for ds in (a3mste, a3dyn)
+            ds === nothing && continue
+            _geosfp_latlon_axes(ds) == (lons, lats) ||
+                error("GEOS-FP physics collections must share the same horizontal coordinates")
+        end
+        stencils = ntuple(p -> _ll_stencil.(Ref(lons), Ref(lats),
+                                             target_lons[p], target_lats[p]), CS_PANEL_COUNT)
+        return GEOSFPLatLonPhysicsFallback(a1, a3mste, a3dyn,
+                                           a1_path, a3mste_path, a3dyn_path,
+                                           lons, lats, target_lons, target_lats,
+                                           orientation, stencils)
+    catch
+        for ds in (a1, a3mste, a3dyn)
+            ds === nothing || close(ds)
+        end
+        rethrow()
+    end
 end
 
 close_geosfp_physics!(::GEOSFPNoPhysics) = nothing

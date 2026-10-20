@@ -51,7 +51,7 @@ function _default_collections(source::GEOSFPSource)
     if source.product == "geosfp_c720"
         return ["tavg_1hr_ctm_c0720_v72", "inst_1hr_ctm_c0720_v72"]
     elseif source.product == "geosfp_025"
-        return ["A1", "A3mstE", "A3dyn"]
+        return ["A1", "A3mstE", "A3dyn", "I3"]
     else
         return String[]
     end

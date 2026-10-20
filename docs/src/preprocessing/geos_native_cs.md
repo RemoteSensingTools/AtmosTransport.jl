@@ -19,6 +19,53 @@ the 0.25° GEOS-FP products can be attached by setting
 `include_convection = true`; the day handle validates and embeds those
 payloads into the same transport binary.
 
+## GEOS-FP physics order and interpolation (OF-119)
+
+The `latlon_025` fallback uses the GEOS-Chem-processed
+`GEOSFP.YYYYMMDD.{A1,A3mstE,A3dyn,I3}.025x03125.nc` archive (0.25° latitude
+by 0.3125° longitude). Its physics level order is validated independently of
+native CTM order. Dimensionless `lev = 1:N` does not identify physical order:
+when physical level metadata is absent, provide the matching
+`GEOSFP.YYYYMMDD.I3.025x03125.nc` file. The reader compares global mean QV
+at the two I3 endpoints and requires a greater than 100-fold contrast; the
+moist end is the surface. Coordinates are resolved from each field's actual
+vertical dimension: CMFMC may use `ilev` while DTRAIN and QV use `lev`, even
+when both axes exist in the same file. I3 and A3dyn level coordinates must agree and
+CMFMC must have one extra edge in the same archive index convention.
+
+Files with physical `lev` coordinates can instead specify `positive = "up"`
+or `"down"` (pressure units imply `"down"`). Both A3 collections must agree;
+I3 evidence, when present, must also agree. The `cubed_sphere` fallback uses
+the same validation, with `GEOSFP.YYYYMMDD.I3.C<Nc>.nc` or physical level
+metadata. Missing, ambiguous, or conflicting evidence errors at day opening.
+The CTM `level_orientation` setting applies only to native CTM fields.
+The `geosfp_025` physics download defaults include A1, A3mstE, A3dyn, and I3
+so standard dimensionless archives can be opened directly.
+
+GEOS-Chem physics is normally surface-first while native FP CTM is top-down.
+Before interpolation or drying, surface-first CMFMC reverses its 73 edges
+(`k → 74-k`) and DTRAIN its 72 layers (`k → 73-k`). The normalized physics
+then uses the corresponding top-down native humidity: endpoint mean QV for
+DTRAIN, adjacent-layer and endpoint mean QV for CMFMC, with the single
+adjacent layer at the top and surface. Windows 1–3 use A3 record 1,
+windows 4–6 record 2, and so on.
+
+Horizontal interpolation brackets actual sorted coordinates. Latitude clamps
+to the endpoint rows, retaining the 0.1875° polar intervals; longitude wraps
+periodically through the last/first coordinate pair. Coordinate and field
+permutations match for descending latitude and alternate longitude origins.
+Stencils are cached once per day and reused for all surface fields and levels.
+
+**Regenerate affected binaries from source.** Before OF-119, fallback convection
+inherited CTM order, putting lower-atmosphere fluxes into thin top layers, and
+latitude interpolation used the first polar spacing everywhere, displacing
+all fallback physics fields. Both
+`config/preprocessing/geosfp_c720_native_to_cs720.toml` and
+`config/preprocessing/geosfp_c720_native_to_cs180.toml` with `latlon_025` and
+enabled surface/convection are affected. C180 coarsening inherits both defects.
+This includes CMFMC, DTRAIN, PBLH, USTAR, HFLUX, and T2M. Reversing a dry binary
+cannot fix the original humidity pairing or the geographic displacement.
+
 ## How the native fluxes are balanced
 
 The native `MFXC` and `MFYC` fields provide the starting horizontal mass-flux
@@ -58,6 +105,7 @@ endpoint is robust and the header records
 | `A1` | hourly | `PBLH`, `USTAR`, `HFLUX`, `T2M` *(GEOS-IT native or GEOS-FP physics fallback, only if surface is enabled)* |
 | `A3mstE` | 3-hourly (window-averaged) | `CMFMC` *(only if convection is enabled)* |
 | `A3dyn` | 3-hourly (window-averaged) | `DTRAIN` *(only if convection is enabled)* |
+| `I3` | 3-hourly (instantaneous) | `QV` *(GEOS-FP convection order validation when A3 coordinates lack physical metadata)* |
 
 GEOS-IT file-naming convention: `GEOSIT.YYYYMMDD.<COLLECTION>.C180.nc`.
 GEOS-FP maps `CTM_A1` to `tavg_1hr_ctm_c0720_v72` at HH30 and `CTM_I1`
@@ -233,7 +281,8 @@ When `[source] include_convection = true`:
 
 1. The reader opens `A3mstE` and `A3dyn` (3-hourly NetCDF). If either
    collection is missing, the open fails loudly — there is no silent
-   fallback.
+   fallback. GEOS-FP also requires matching I3 `QV` when the A3 fields lack
+   physical orientation metadata, as described above.
 
 2. **3-hourly hold-constant binding** — every hourly window `w`
    reads from A3 record index `(w − 1) ÷ 3 + 1`. Windows 1, 2, 3 see
