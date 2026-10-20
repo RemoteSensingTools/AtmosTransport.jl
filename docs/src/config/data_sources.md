@@ -191,9 +191,14 @@ and DELP describe a window mean and cannot supply instantaneous endpoint mass.
 MFXC/MFYC retain their 450 s dynamics-step scaling. When
 `[source] include_surface = true` or
 `include_convection = true`, set `[source] physics_dir` to a directory
-containing `GEOSFP.YYYYMMDD.{A1,A3mstE,A3dyn}.025x03125.nc` files (or
+containing `GEOSFP.YYYYMMDD.{A1,A3mstE,A3dyn,I3}.025x03125.nc` files (or
 pre-regridded CS equivalents) and the preprocessor embeds `PBLH`,
 `USTAR`, `HFLUX`, `T2M`, `CMFMC`, and `DTRAIN` in the transport binary.
+The `geosfp_025` download defaults include all four collections. I3 `QV`
+validates convection's vertical order when the A3 coordinates are dimensionless;
+it is unnecessary for surface-only preprocessing or when both A3 fields have
+physical orientation metadata. Each field's actual vertical dimension supplies
+its coordinate: CMFMC can use `ilev` while DTRAIN and QV use `lev`.
 
 **MERRA-2.** `MERRA2Settings` and the wind-derived CS writer are implemented.
 They read native 0.5° × 0.625° PS/QV/U/V fields, derive mass fluxes, and write

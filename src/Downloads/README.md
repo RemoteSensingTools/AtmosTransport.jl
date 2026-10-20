@@ -58,7 +58,7 @@ Each file adds a `build_tasks` method for one source and its protocol.
 |---|---|---|---|---|
 | [`sources/era5.jl`](sources/era5.jl) | `ERA5Source` | `ERA5` | `cds` (`mars` also accepted) | one GRIB per request group per chunk; `filename_template` tokens `{request_name}`, `{year_month}`, `{date}` |
 | [`sources/era5_arco.jl`](sources/era5_arco.jl) | `ERA5ARCOSource` | `ERA5-ARCO` | `gcs` | `ml_an_native_core/era5_core_YYYYMMDD.grib` (concatenated ARCO parts), `sfc_an_native/arco/YYYYMMDD/<var>.nc` |
-| [`sources/geosfp.jl`](sources/geosfp.jl) | `GEOSFPSource` | `GEOS-FP` | `http` | products `geosfp_c720` (24 tavg HH30 + 24 inst HH00 CTM files per day; next-day 00Z inst is needed for preprocessing) and `geosfp_025` |
+| [`sources/geosfp.jl`](sources/geosfp.jl) | `GEOSFPSource` | `GEOS-FP` | `http` | products `geosfp_c720` (24 tavg HH30 + 24 inst HH00 CTM files per day; next-day 00Z inst is needed for preprocessing) and `geosfp_025` (defaults: A1, A3mstE, A3dyn, I3; I3 QV validates convection order for dimensionless A3 coordinates) |
 | [`sources/geosit.jl`](sources/geosit.jl) | `GEOSITSource` | `GEOS-IT` | `s3` | `GEOSIT.YYYYMMDD.<coll>.C180.nc`; the default collection list includes `CTM_I1` |
 | [`sources/merra2.jl`](sources/merra2.jl) | `MERRA2Source` | `MERRA-2` | `opendap` | `MERRA2_<stream>.<collection>.YYYYMMDD.nc4` |
 

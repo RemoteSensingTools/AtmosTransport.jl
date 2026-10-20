@@ -77,18 +77,25 @@ end
 # A dimensionless lev=1:N alone says nothing about physical orientation.
 # Prefer physical coordinate metadata; otherwise use the physics archive's
 # own I3 QV profile (as for MERRA-2), never the native CTM DELP orientation.
-function _physics_lev(ds)
-    name = _find_var_name(ds, ("lev", "level", "ilev", "edge", "interface"))
+function _physics_lev(ds, field_name)
+    field = ds[field_name]
+    dims = dimnames(field)
+    ld = _find_dim(dims, ("lev", "level", "ilev", "edge", "interface"))
+    ld === nothing && error("GEOS-FP physics $field_name lacks a level dimension")
+    name = dims[ld]
+    haskey(ds, name) || error("GEOS-FP physics $field_name lacks coordinate $name")
     v = ds[name]
+    dimnames(v) == (name,) && length(v) == size(field, ld) ||
+        error("GEOS-FP physics $field_name coordinate $name must describe its level dimension")
     levels = Float64.(v[:])
     all(isfinite, levels) && length(levels) > 1 &&
         (all(>(0), diff(levels)) || all(<(0), diff(levels))) ||
-        error("GEOS-FP physics level coordinate must be finite and strictly monotonic")
+        error("GEOS-FP physics $field_name level coordinate must be finite and strictly monotonic")
     return v, levels
 end
 
-function _physics_coordinate_orientation(ds)
-    v, levels = _physics_lev(ds)
+function _physics_coordinate_orientation(ds, field_name)
+    v, levels = _physics_lev(ds, field_name)
     positive = lowercase(String(get(v.attrib, "positive", "")))
     units = lowercase(String(get(v.attrib, "units", "")))
     if isempty(positive) && units in ("pa", "hpa", "mb", "mbar")
@@ -100,10 +107,10 @@ function _physics_coordinate_orientation(ds)
     return increasing == (positive == "down") ? :top_down : :bottom_up
 end
 
-function _physics_qv_orientation(ds)
-    v = ds[_find_var_name(ds, ("QV", "qv", "specific_humidity"))]
+function _physics_qv_orientation(ds, field_name)
+    v = ds[field_name]
     dims = dimnames(v)
-    ld = _find_dim(dims, ("lev", "level"))
+    ld = _find_dim(dims, ("lev", "level", "ilev", "edge", "interface"))
     td = _find_dim(dims, ("time",))
     ld === nothing && error("GEOS-FP physics QV lacks a level dimension")
     function endpoint_mean(k)
@@ -120,16 +127,21 @@ function _physics_qv_orientation(ds)
 end
 
 function _geosfp_physics_orientation(root, date, Nc, layout, mste, dyn)
-    cm_order = _physics_coordinate_orientation(mste)
-    dt_order = _physics_coordinate_orientation(dyn)
+    cm_name = _find_var_name(mste, GEOS_CONVECTION_VAR_CANDIDATES[:cmfmc])
+    dt_name = _find_var_name(dyn, GEOS_CONVECTION_VAR_CANDIDATES[:dtrain])
+    cm_order = _physics_coordinate_orientation(mste, cm_name)
+    dt_order = _physics_coordinate_orientation(dyn, dt_name)
     profile_order = nothing
+    q_order = nothing
     path = _resolve_geosfp_physics_path(root, date, "I3", Nc, layout)
     if path !== nothing
         NCDataset(path, "r") do ds
-            profile_order = _physics_qv_orientation(ds)
+            q_name = _find_var_name(ds, ("QV", "qv", "specific_humidity"))
+            q_order = _physics_coordinate_orientation(ds, q_name)
+            profile_order = _physics_qv_orientation(ds, q_name)
             # The common archive index convention must agree across collections.
-            _, qlev = _physics_lev(ds)
-            _, dlev = _physics_lev(dyn)
+            _, qlev = _physics_lev(ds, q_name)
+            _, dlev = _physics_lev(dyn, dt_name)
             qlev == dlev || error("GEOS-FP I3 and A3dyn level coordinates disagree")
         end
     end
@@ -137,13 +149,13 @@ function _geosfp_physics_orientation(root, date, Nc, layout, mste, dyn)
         profile_order === nothing && error(
             "Cannot validate GEOS-FP physics level order: provide the physics I3 QV file " *
             "or physical lev coordinates with a positive=up/down attribute in both A3 files")
-        _, clev = _physics_lev(mste)
-        _, dlev = _physics_lev(dyn)
+        _, clev = _physics_lev(mste, cm_name)
+        _, dlev = _physics_lev(dyn, dt_name)
         length(clev) == length(dlev) + 1 &&
             sign(clev[end]-clev[1]) == sign(dlev[end]-dlev[1]) ||
             error("GEOS-FP CMFMC edges and DTRAIN layers must share the archive index convention")
     end
-    orders = filter(!isnothing, [cm_order, dt_order, profile_order])
+    orders = filter(!isnothing, [cm_order, dt_order, q_order, profile_order])
     all(==(first(orders)), orders) || error("Conflicting GEOS-FP physics level orientations")
     return first(orders)
 end

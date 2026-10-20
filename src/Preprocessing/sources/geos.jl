@@ -267,7 +267,7 @@ function _open_geosfp_physics_fallback(settings::GEOSSettings{:geosfp},
     isempty(settings.physics_dir) &&
         throw(ArgumentError(
             "GEOS-FP include_surface/include_convection requires [source].physics_dir " *
-            "pointing at GEOSFP.YYYYMMDD.{A1,A3mstE,A3dyn}.025x03125.nc or " *
+            "pointing at GEOSFP.YYYYMMDD.{A1,A3mstE,A3dyn,I3}.025x03125.nc or " *
             "pre-regridded GEOSFP.YYYYMMDD.<collection>.C$(settings.Nc).nc files."))
 
     root = expand_data_path(settings.physics_dir)

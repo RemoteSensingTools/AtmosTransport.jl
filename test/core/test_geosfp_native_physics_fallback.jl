@@ -189,8 +189,8 @@ function _def_ll_2d!(ds, name, value; units="")
     return v
 end
 
-function _def_ll_3d!(ds, name, base; nlev::Int, units="")
-    v = defVar(ds, name, Float64, ("lon", "lat", "lev", "time"); attrib = ["units" => units, "_FillValue" => 1.0e15])
+function _def_ll_3d!(ds, name, base; nlev::Int, units="", lev_dim="lev")
+    v = defVar(ds, name, Float64, ("lon", "lat", lev_dim, "time"); attrib = ["units" => units, "_FillValue" => 1.0e15])
     data = zeros(Float64, length(ds["lon"][:]), length(ds["lat"][:]), nlev, size(v, 4))
     for t in axes(data, 4)
         for k in axes(data, 3)
@@ -202,7 +202,8 @@ function _def_ll_3d!(ds, name, base; nlev::Int, units="")
     return v
 end
 
-function _write_fp_latlon_physics!(root::String, date::Date; bottom_up=true, nz=FP_NZ)
+function _write_fp_latlon_physics!(root::String, date::Date;
+                                  bottom_up=true, nz=FP_NZ, dual_axes=false)
     mkpath(root)
     datestr = Dates.format(date, "yyyymmdd")
     lons = collect(0.0:45.0:315.0)
@@ -225,16 +226,28 @@ function _write_fp_latlon_physics!(root::String, date::Date; bottom_up=true, nz=
     NCDataset(a3mste, "c") do ds
         ds.dim["lon"] = length(lons)
         ds.dim["lat"] = length(lats)
-        ds.dim["lev"] = nz + 1
+        cm_dim = dual_axes ? "ilev" : "lev"
+        if dual_axes
+            # Unused layer axis comes first and suggests the opposite order.
+            ds.dim["lev"] = nz
+            defVar(ds, "lev", collect(1:nz), ("lev",);
+                   attrib=["positive" => (bottom_up ? "down" : "up")])
+        end
+        ds.dim[cm_dim] = nz + 1
         ds.dim["time"] = 8
         defVar(ds, "lon", lons, ("lon",))
         defVar(ds, "lat", lats, ("lat",))
-        defVar(ds, "lev", collect(1:(nz + 1)), ("lev",))
-        _def_ll_3d!(ds, "CMFMC", 10.0; nlev = nz + 1, units = "kg m-2 s-1")
+        defVar(ds, cm_dim, collect(1:(nz + 1)), (cm_dim,))
+        _def_ll_3d!(ds, "CMFMC", 10.0; nlev = nz + 1, units = "kg m-2 s-1", lev_dim=cm_dim)
     end
 
     a3dyn = joinpath(root, "GEOSFP.$(datestr).A3dyn.025x03125.nc")
     NCDataset(a3dyn, "c") do ds
+        if dual_axes
+            ds.dim["ilev"] = nz + 1
+            defVar(ds, "ilev", collect(1:(nz + 1)), ("ilev",);
+                   attrib=["positive" => (bottom_up ? "down" : "up")])
+        end
         ds.dim["lon"] = length(lons)
         ds.dim["lat"] = length(lats)
         ds.dim["lev"] = nz
@@ -246,6 +259,11 @@ function _write_fp_latlon_physics!(root::String, date::Date; bottom_up=true, nz=
     end
     i3 = joinpath(root, "GEOSFP.$(datestr).I3.025x03125.nc")
     NCDataset(i3, "c") do ds
+        if dual_axes
+            ds.dim["ilev"] = nz + 1
+            defVar(ds, "ilev", collect(1:(nz + 1)), ("ilev",);
+                   attrib=["positive" => (bottom_up ? "down" : "up")])
+        end
         ds.dim["lon"] = length(lons)
         ds.dim["lat"] = length(lats)
         ds.dim["lev"] = nz
@@ -479,6 +497,119 @@ end
                 end
                 @test_throws r"Conflicting GEOS-FP physics" pp._open_geosfp_physics_fallback(settings,date)
             end
+        end
+    end
+end
+
+@testset "OF-119 dual vertical axes use each field's dimension" begin
+    pp = AtmosTransport.Preprocessing
+    date = Date(2021, 12, 1)
+    for bottom_up in (false, true)
+        mktempdir() do tmp
+            _, cm_path, dt_path = _write_fp_latlon_physics!(tmp, date;
+                bottom_up, nz=72, dual_axes=true)
+            q_path = joinpath(tmp, "GEOSFP.20211201.I3.025x03125.nc")
+            settings = GEOSFPSettings(; root_dir=tmp, Nc=4, include_convection=true,
+                physics_dir=tmp, physics_layout=:latlon_025)
+            expected = bottom_up ? :bottom_up : :top_down
+            positive = bottom_up ? "up" : "down"
+            opposite = bottom_up ? "down" : "up"
+            phys = pp._open_geosfp_physics_fallback(settings, date)
+            try
+                @test phys.level_orientation === expected
+                # Exercise all 73 edges and 72 layers through the actual reader.
+                raw = allocate_raw_window(settings; FT=Float64, Nz=72)
+                for p in 1:6
+                    fill!(raw.qv[p], 0)
+                    fill!(raw.qv_next[p], 0)
+                end
+                pp._read_geosfp_convection_window!(raw, phys, 1, :top_down)
+                for k in 1:73
+                    @test raw.cmfmc[1][1,1,k] ≈ 11 + (bottom_up ? 74-k : k)
+                end
+                for k in 1:72
+                    @test raw.dtrain[1][1,1,k] ≈ 21 + (bottom_up ? 73-k : k)
+                end
+            finally
+                pp.close_geosfp_physics!(phys)
+            end
+
+            # The unused axes now agree with QV. They cannot hide conflicting
+            # physical metadata on any of the three fields' actual axes.
+            for (path, axis) in ((cm_path, "lev"), (dt_path, "ilev"), (q_path, "ilev"))
+                NCDataset(path, "a") do ds
+                    ds[axis].attrib["positive"] = positive
+                end
+            end
+            for (path, axis) in ((cm_path, "ilev"), (dt_path, "lev"), (q_path, "lev"))
+                NCDataset(path, "a") do ds
+                    ds[axis].attrib["positive"] = opposite
+                end
+                @test_throws r"Conflicting GEOS-FP physics level orientations" pp._open_geosfp_physics_fallback(settings, date)
+                NCDataset(path, "a") do ds
+                    delete!(ds[axis].attrib, "positive")
+                end
+            end
+
+            # Dimensionless edge direction must match the actual layer axis.
+            NCDataset(cm_path, "a") do ds
+                ds["ilev"][:] = collect(73:-1:1)
+            end
+            @test_throws r"CMFMC edges and DTRAIN layers" pp._open_geosfp_physics_fallback(settings, date)
+            NCDataset(cm_path, "a") do ds
+                ds["ilev"][:] = collect(1:73)
+            end
+            NCDataset(q_path, "a") do ds
+                ds["lev"][:] = collect(72:-1:1)
+            end
+            @test_throws r"I3 and A3dyn level coordinates disagree" pp._open_geosfp_physics_fallback(settings, date)
+
+            # Physical metadata on the actual A3 axes also works without I3;
+            # unrelated axes still suggest the opposite orientation.
+            rm(q_path)
+            for (path, axis, unused) in ((cm_path, "ilev", "lev"), (dt_path, "lev", "ilev"))
+                NCDataset(path, "a") do ds
+                    ds[axis].attrib["positive"] = positive
+                    ds[unused].attrib["positive"] = opposite
+                end
+            end
+            phys = pp._open_geosfp_physics_fallback(settings, date)
+            try
+                @test phys.level_orientation === expected
+            finally
+                pp.close_geosfp_physics!(phys)
+            end
+        end
+    end
+end
+
+@testset "GEOS-FP physics download defaults satisfy dimensionless reader" begin
+    pp = AtmosTransport.Preprocessing
+    dd = AtmosTransport.DataDownloads
+    date = Date(2021, 12, 1)
+    mktempdir() do tmp
+        fixture_dir = joinpath(tmp, "fixtures")
+        _write_fp_latlon_physics!(fixture_dir, date; dual_axes=true)
+        source = dd.GEOSFPSource(Dict{String,Any}(), "geosfp_025")
+        protocol = dd.HTTPProtocol("https://example.invalid")
+        output = dd.OutputConfig(tmp, "geosfp", "C4", "daily", "raw", false, false, "")
+        tasks = dd.build_tasks(source, protocol, [date], output, Any[])
+        @test Set(basename(t.dest_path) for t in tasks) == Set(
+            "GEOSFP.20211201.$c.025x03125.nc" for c in ("A1", "A3mstE", "A3dyn", "I3"))
+        # Stage exactly what the default task list downloads, without network I/O.
+        for task in tasks
+            mkpath(dirname(task.dest_path))
+            cp(joinpath(fixture_dir, basename(task.dest_path)), task.dest_path)
+        end
+        settings = GEOSFPSettings(; root_dir=tmp, Nc=4,
+            include_surface=true, include_convection=true,
+            physics_dir=dirname(first(tasks).dest_path), physics_layout=:latlon_025)
+        phys = pp._open_geosfp_physics_fallback(settings, date)
+        try
+            @test phys.level_orientation === :bottom_up
+            @test phys.a1 !== nothing
+        finally
+            pp.close_geosfp_physics!(phys)
         end
     end
 end
