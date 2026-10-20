@@ -2,6 +2,94 @@
 
 ## Unreleased
 
+## 0.6.0 — 2026-10-20
+
+This is a breaking release. It changes numerical results in preprocessing,
+transport and observation placement, moves observation and departure files to
+schema v2, and changes the adjoint API and its replay of the production step.
+Regenerate binaries from the affected preprocessing paths listed below, and
+keep the version, forcing binary, run TOML and dependency manifest with
+reproducibility records; pin 0.5.0 to reproduce older runs. Many corrections
+answer the external review by pera-noaa (NOAA GML), GitHub issues #54–#63 and
+#20. Thank you, and thank you to Kay Suselj for the GEOS-IT EFLUX contribution
+(PR #73).
+
+### Summary
+
+- **Float32 column mass ledgers keep a persistent carry** (OF-110, OF-111,
+  PR #65): TM5 and CMFMC convection and Dkg/GEOS-Chem non-local diffusion
+  retain the sub-ulp residual between solves instead of losing it with one
+  sign. Runs with these operators change at the rounding level.
+- **Kz diffusion updates tracer mass in flux form** (OF-113, PR #81), with
+  the column ledger and persistent carry. This removes the systematic
+  Float32 column-mass drift of the matrix writeback, trading some per-layer
+  accuracy for column conservation; Kz-diffusion golden fields change.
+- **Surface fluxes must cover the run, and static fluxes default to
+  conservative regridding on every grid** (#59, PR #70). File areas and
+  source coverage set the conserved totals; explicit bilinear regridding
+  rescales emission and uptake separately. Holding outside time coverage
+  requires `surface_flux.hold_outside_coverage = true`.
+- **ERA5 spectral pole rows carry zonal flux, and lat-lon humidity uses the
+  file's coordinates** (#58, #63, PR #72). Pole-row transport and dry air
+  mass change; lat-lon pole cells require more substeps. Lat-lon →
+  cubed-sphere regridding uses each window's own substep count and computes
+  a new cubed-sphere schedule.
+- **ERA5 → TM5 convection uses TM5's half-level indexing** (#54,
+  PR #69), correcting the cloud-top and ground interfaces. ERA5-derived
+  convection provenance is checked on load; affected binaries are rejected
+  with a regenerate message.
+- **CFL subcycling runs whole palindromes**, budgets against the smaller
+  of the step-start and step-end air mass, and rejects invalid flux sets;
+  **`PositivityLimiter` keeps downhill slopes**, and **Lin–Rood ORD=7 uses
+  consistent seam-adjacent edges** (#61, #62, PR #68). Subcycled runs and
+  ORD=7 results change; ORD=5 is unaffected by the seam correction.
+- **Observations are placed by height above the true ground or pressure**
+  (#56, #20, PRs #71, #76, #77). The default uses total pressures and,
+  for heights, virtual temperature (OF-116, OF-117, PR #82); dry-basis runs
+  need humidity or an explicit `pressure_basis = "dry"`. Observation and
+  departure **schema v2** records placement, time windows and model error;
+  schema-v1 files are rejected.
+- **Averaging-kernel retrieval columns and OCO-2/OCO-3 MIP columns**
+  (#20, PRs #78, #80): shared forward/4D-Var retrieval operators, projection
+  onto the retrieval's level basis, a MIP converter, flagged co-sampling,
+  cell averages and optional averaging-kernel output from the sampler.
+- **One reverse sweep per 4D-Var gradient** (#20, PR #75), with rounding-level
+  gradient changes. **The cubed-sphere adjoint replays the forward step
+  plan** (D31, OF-114, OF-115, PR #83), including physics cadence, surface
+  coupling, persistent state and air-mass resets; unsupported operators fail
+  before recording. Production replay and checkpoint restarts agree bit for
+  bit. The earlier tape-cache and replay fixes (#57, #60, PR #67) correct
+  limited-PPM host tapes and runs with convection or diffusive boundaries.
+- **GEOS-FP native C720 endpoints use instantaneous CTM PS/QV** (PR #84),
+  including next-day 00Z. **The `latlon_025` physics fallback uses its own
+  vertical order and actual coordinates** (OF-119, PR #87), correcting
+  convection/humidity pairing and interpolation near the poles.
+  **GEOS-IT carries EFLUX as `pbl_eflux`** when VDIFF fields are included
+  (PR #73), enabling `geoschem_nonlocal_vdiff` on GEOS-IT.
+- **AMD ROCm backend** through the optional AMDGPU.jl extension
+  (`GPU(:rocm)`, PR #86), with Float32/Float64 and host staging/tape support.
+  It has not yet been run on AMD hardware; hardware validation is pending.
+- **Performance:** cubed-sphere driven runs reported **2.6× faster at one
+  tracer**, with bit-identical results (PR #79), through window staging and
+  reuse, fused panel/seam launches and fewer host synchronizations.
+  **CI tests Julia 1.10, 1.12 and 1.13 explicitly** (PR #85); JET 0.12 is
+  allowed and unsupported Julia versions skip JET (PR #74).
+- **Removed:** the lat-lon ERA5 physics-file TM5 route and its conversion
+  API, script and nine configs (PR #69); three experimental C30 configs
+  and their launchers whose flux files did not cover the run (PR #70);
+  per-direction subcycling helpers (PR #68); and the separate cubed-sphere
+  adjoint replay composition and heritage two-day column-adjoint plotting
+  script (PR #83). Observation/departure structs and several adjoint
+  constructors change; the detailed entries below list the API migration.
+
+**Regenerate affected transport binaries from source:** ERA5 spectral
+lat-lon binaries and their cubed-sphere regrids (PR #72), ERA5 N320 binaries
+with TM5 convection predating `tm5_halflevel_v2` and binaries of the removed
+lat-lon TM5 route or its regrids (PR #69), and GEOS-FP native C720 → C720/C180
+binaries built with the `latlon_025` physics fallback (OF-119, PR #87).
+Reversing stored dry convection cannot repair the fallback's humidity
+pairing. Attached CATRINE TM5 convection remains accepted.
+
 ### Added
 
 - Optional AMDGPU.jl extension for `GPU(:rocm)` and `[architecture] backend =
