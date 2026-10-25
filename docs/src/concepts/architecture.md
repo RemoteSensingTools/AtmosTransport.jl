@@ -173,11 +173,17 @@ the next file has the same window layout, the new simulation refills the
 previous one's window buffers instead of allocating new ones.
 
 On a GPU, a cubed-sphere transport binary whose on-disk element type is the
-run's is loaded window by window with concurrent reads of the payload into
-page-locked host memory, section-wise uploads through a section-sized device
-buffer, and unpacking kernels on the device (`MetDrivers.RawWindowStaging`);
-the device window equals the upload of a window loaded on the host. Other
-binaries are converted on the host into a page-locked staging window.
+run's is loaded window by window with concurrent reads of the payload and
+unpacking kernels on the device. With discrete device memory (CUDA, ROCm) the
+reads fill page-locked host memory, uploaded section by section through a
+section-sized device buffer (`MetDrivers.RawWindowStaging`). With unified
+memory (Metal, `Architectures.host_memory_model`) the reads fill a
+shared-storage device buffer that the unpack kernels read in place
+(`MetDrivers.MappedWindowStaging`): Metal.jl's host-to-device `copyto!`
+synchronizes the queue and stages through a temporary buffer on every call.
+Either way the device window equals the upload of a window loaded on the
+host. Other binaries are converted on the host into a page-locked staging
+window.
 
 The detailed operator ordering is documented in [Operators](@ref Operator-concepts). The mass
 invariant is derived in [Mass conservation](@ref).

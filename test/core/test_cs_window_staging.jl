@@ -91,6 +91,25 @@ end
                 @test windows_equal(unpacked, load_transport_window(driver, win))
             end
             @test_throws BoundsError StagingMD.read_window_payload!(raw, driver, nwin + 1)
+            # Unified-memory staging (Metal): the payload buffer is the device
+            # buffer, unpacked from each section's window offset with no upload
+            # (here one host vector stands for both views).
+            @test AtmosTransport.Architectures.host_memory_model(staging.air_mass) ===
+                  AtmosTransport.Architectures.DiscreteHostMemory()
+            @test_throws ArgumentError AtmosTransport.Architectures.host_mapped_vector(
+                disk_FT, 4, staging.air_mass)
+            payload = Vector{disk_FT}(undef, h.elems_per_window)
+            mapped = StagingMD.MappedWindowStaging(payload, payload)
+            mapped_window = deepcopy(unpacked)
+            foreach(a -> fill!(a, NaN), (mapped_window.air_mass..., mapped_window.fluxes.cm...,
+                                         mapped_window.surface.t2m..., mapped_window.dkg...))
+            for win in (2, 3, 1)
+                @test StagingMD.read_window_payload!(mapped, driver, win) === mapped
+                @test StagingMD.unpack_window_payload!(mapped_window, driver, mapped) === mapped_window
+                @test windows_equal(mapped_window, load_transport_window(driver, win))
+            end
+            short = StagingMD.MappedWindowStaging(payload, payload[1:end-1])
+            @test_throws DimensionMismatch StagingMD.unpack_window_payload!(mapped_window, driver, short)
             # Air mass a fraction into the window: start mass plus that fraction of dm.
             expected = map(similar, unpacked.air_mass)
             StagingMD.expected_air_mass!(expected, unpacked, 0.3)

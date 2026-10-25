@@ -22,6 +22,8 @@ export autodetect_gpu_architecture, is_gpu, ensure_runtime!, array_adapter
 export architecture_label, device_name, backend_name, synchronize_architecture!
 export array_adapter_for, assert_residency!, assert_float_type!
 export reclaim_backend_pool!, _kahan_add
+export HostMemoryModel, DiscreteHostMemory, UnifiedHostMemory, host_memory_model,
+       host_mapped_vector
 export launch!
 export AbstractPointOp, index_space, apply_point!, Fused, Sequence, LinearCopy, copy_arrays!
 export FusionPolicy, FuseLaunches, SeparateLaunches, fusion_policy
@@ -380,6 +382,59 @@ function pin_host_memory!(storage, reference_array)
 end
 
 _pin_host_memory!(_storage, ::Any) = nothing
+
+"""
+    HostMemoryModel
+
+Whether host code can read and write a backend's device buffers directly,
+chosen by [`host_memory_model`](@ref): `DiscreteHostMemory()` (the default:
+device memory is reached only through copies, as on CUDA and ROCm) or
+`UnifiedHostMemory()` (one memory that host and device share, as Metal's
+shared-storage buffers on Apple silicon; see [`host_mapped_vector`](@ref)).
+"""
+abstract type HostMemoryModel end
+
+"""Device memory reached from the host only through copies (CUDA, ROCm)."""
+struct DiscreteHostMemory <: HostMemoryModel end
+
+"""One memory shared by host and device (Metal on Apple silicon)."""
+struct UnifiedHostMemory <: HostMemoryModel end
+
+"""
+    host_memory_model(reference_array) -> HostMemoryModel
+
+The [`HostMemoryModel`](@ref) of the backend that holds `reference_array` (or
+the first panel of a tuple): `UnifiedHostMemory()` where a backend extension
+declares it (Metal), `DiscreteHostMemory()` otherwise. Callers dispatch on it
+to stage host data without a copy where the memory is shared.
+"""
+function host_memory_model(reference_array)
+    ref = reference_array isa Tuple ? reference_array[1] : reference_array
+    return Base.invokelatest(_host_memory_model, ref)
+end
+
+_host_memory_model(::Any) = DiscreteHostMemory()
+
+"""
+    host_mapped_vector(T, n, reference_array) -> (host::Vector{T}, device)
+
+A device vector of `n` elements of type `T` on the backend of
+`reference_array` whose memory host code reads and writes through `host`, an
+`Array` aliasing the same bytes (no copies in either direction). Defined for
+backends with `UnifiedHostMemory` only. Host writes are seen by device
+work queued afterwards; device writes by the host after a synchronization
+(`synchronize_storage!`), which must also separate device reads from later
+host writes. `host` does not keep `device` alive: hold on to `device` as long
+as `host` is used.
+"""
+function host_mapped_vector(::Type{T}, n::Integer, reference_array) where {T}
+    ref = reference_array isa Tuple ? reference_array[1] : reference_array
+    return Base.invokelatest(_host_mapped_vector, T, Int(n), ref)
+end
+
+_host_mapped_vector(::Type{T}, _n, ref) where {T} = throw(ArgumentError(
+    "host_mapped_vector: the backend of $(typeof(ref)) has no host-mapped device memory " *
+    "(host_memory_model is $(host_memory_model(ref)))"))
 
 # Calls `f` on every host `Array` that `Adapt` reaches in `storage`; the
 # containers Adapt rebuilds on the way are discarded.

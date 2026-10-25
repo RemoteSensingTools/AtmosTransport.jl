@@ -13,7 +13,8 @@ module MetDrivers
 using Adapt
 using Printf: @sprintf
 using ..Architectures: array_adapter_for, AbstractPointOp, Fused, select_panel,
-                       pin_host_memory!, copy_arrays!
+                       pin_host_memory!, copy_arrays!, host_memory_model,
+                       host_mapped_vector, DiscreteHostMemory, UnifiedHostMemory
 import ..Architectures: index_space, apply_point!, bound_context, launch!
 using KernelAbstractions: get_backend
 using ..State

@@ -31,7 +31,7 @@ using ..Operators.StepPlans: AirMassResetStage
 import ..Adjoints
 using ..Adjoints: CSStepSchedule, require_adjoint_support
 using ..MetDrivers
-using ..MetDrivers: same_window_layout, RawWindowStaging, raw_window_staging,
+using ..MetDrivers: same_window_layout, AbstractRawWindowStaging, raw_window_staging,
                     read_window_payload!, unpack_window_payload!
 # Bring Regridding + Preprocessing into Models' namespace
 # so the nested `InitialConditionIO` submodule can `using ..Regridding` etc.
