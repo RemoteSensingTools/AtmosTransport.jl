@@ -43,9 +43,9 @@ end
     @inbounds rm[i, j, k, t] += amount
 end
 
-@inline _cs_seam_tracer_flux(::Val{1}, i, j, k, rm, m, F, scheme, N) =
-    _xface_tracer_flux(Int32(i), j, k, rm, m, F, scheme, Int32(N))
-@inline _cs_seam_tracer_flux(::Val{2}, i, j, k, rm, m, F, scheme, N) =
+Base.@propagate_inbounds _cs_seam_tracer_flux(::Val{1}, i, j, k, rm, m, F, scheme, N) =
+    _xface_tracer_flux(Int32(i), j, k, rm, m, F, scheme, _HaloPaddedAxis())
+Base.@propagate_inbounds _cs_seam_tracer_flux(::Val{2}, i, j, k, rm, m, F, scheme, N) =
     _yface_tracer_flux(i, Int32(j), k, rm, m, F, scheme, Int32(N))
 @inline function _cs_seam_tracer_flux(::Val{1}, i, j, k, rm, m, F, ::UpwindScheme, N)
     donor = F >= zero(F) ? i - 1 : i

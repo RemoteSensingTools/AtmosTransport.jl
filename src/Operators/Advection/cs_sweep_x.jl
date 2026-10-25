@@ -5,8 +5,9 @@
 
 Requires sufficient halo padding: Hp >= 2 for SlopesScheme, Hp >= 3 for PPMScheme.
 The `_xface_tracer_flux` reconstruction reads neighbors up to `face_i ± 3` for PPM,
-which stays within the halo-padded array when Hp is large enough. The periodic wrap
-in `_wrap_periodic` is a safety net that should never trigger with correct Hp.
+which stays within the halo-padded array when Hp is large enough (checked by
+`_validate_halo_for_scheme`), so the kernel passes `_HaloPaddedAxis()` and the
+stencil indices are used without the periodic wrap.
 """
 function _sweep_x_panel!(rm, m, am, scheme::AbstractAdvectionScheme, rm_A, m_A, Nc, Hp, Nz;
                          flux_scale = one(eltype(m)))
