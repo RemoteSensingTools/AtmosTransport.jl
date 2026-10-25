@@ -139,6 +139,14 @@ exchange takes about 25 µs instead of 120 µs. Inside the packed cubed-sphere
 palindrome (`strang_split_cs_mt!`) the exchanges are only queued
 (`sync = false`): the palindrome synchronizes once, at its end.
 
+Every device launch of a point operation runs over the flat linear index of
+its index space and recovers the index tuple with 32-bit integer divisions
+(64-bit from 2³¹ indices on). A launch over the index tuple itself puts each
+workgroup along the first dimension only, so short first dimensions leave most
+lanes idle: 96 of 256 for a C90 field, 3 of 256 for a halo corner fill of
+width 3. On an M5 Pro the flat launch cut the GPU time of a C90 window unpack from
+4.7 to 1.0 ms.
+
 Sets of same-sized device-to-device copies go through `copy_arrays!`: on
 every device backend (CUDA, ROCm, Metal), one queued `LinearCopy` launch over
 the longest array instead of one `copyto!` per array, when all arrays live on

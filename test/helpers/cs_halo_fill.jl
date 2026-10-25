@@ -106,7 +106,7 @@ library_corners!(p, mesh, dir) = HaloAdv.copy_corners!(p, mesh, dir)
 # host loop there), so CI exercises the fused-kernel slot dispatch.
 function _kernel_launch!(op, ctx)
     backend = KernelAbstractions.CPU()
-    HaloArch._point_op_kernel!(backend, 64)(op, ctx; ndrange = HaloArch.index_space(op, ctx))
+    HaloArch._launch_point_kernel!(op, ctx, HaloArch.index_space(op, ctx), backend, 64)
     KernelAbstractions.synchronize(backend)
 end
 function kernel_fill!(p, mesh, dir)

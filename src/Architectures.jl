@@ -598,9 +598,36 @@ on CUDA the fused launch is 3–9× faster).
 """
 fusion_policy(backend) = FuseLaunches()
 
-@kernel function _point_op_kernel!(op, ctx)
-    I = @index(Global, NTuple)
-    apply_point!(op, ctx, I...)
+# A device launch runs over the linear index of the whole index space and
+# recovers the `NTuple` index with integer divisions, 32-bit where the space
+# fits (`T`). Rationale: a launch over the `NTuple` space itself puts each
+# workgroup along the first dimension only, so short first dimensions leave
+# most lanes idle (a C90 field: 96 of 256; a halo corner fill of width 3: 3 of
+# 256). On an M5 Pro the flat launch cut the GPU time of a C90 window unpack
+# from 4.7 to 1.0 ms, and the median host time of a C90 packed-tracer halo
+# exchange in the advection palindrome from 0.89 to 0.23 ms.
+@kernel function _point_op_kernel!(op, ctx, space, ::Type{T}) where {T}
+    n = @index(Global, Linear)
+    apply_point!(op, ctx, _point_index(space, (n - 1) % T)...)
+end
+
+# The 1-based `NTuple` index of 0-based linear index `r` in `space` (first
+# index fastest), computed in the integer type of `r`.
+@inline _point_index(::Tuple{Int}, r) = (Int(r) + 1,)
+@inline function _point_index(space::Tuple{Int, Int, Vararg{Int}}, r::T) where {T}
+    q, i = divrem(r, first(space) % T)
+    return (Int(i) + 1, _point_index(Base.tail(space), q)...)
+end
+
+# The index width of a launch over `n` indices.
+_point_index_type(n::Int) = n <= typemax(Int32) ? Int32 : Int
+
+function _launch_point_kernel!(op, ctx, index_space::Tuple{Vararg{Integer}}, backend, workgroup)
+    space = map(Int, index_space)
+    n = prod(space)
+    n == 0 && return nothing
+    _point_op_kernel!(backend, workgroup)(op, ctx, space, _point_index_type(n); ndrange = n)
+    return nothing
 end
 
 """
@@ -617,7 +644,7 @@ function launch!(op::AbstractPointOp, ctx, backend; workgroup::Int = 256, sync::
         # A single operation runs on its bound context; its index space comes
         # from the original one.
         space = index_space(op, ctx)
-        _point_op_kernel!(backend, workgroup)(op, bound_context(op, ctx); ndrange = space)
+        _launch_point_kernel!(op, bound_context(op, ctx), space, backend, workgroup)
         sync && KA.synchronize(backend)
     end
     return nothing
@@ -687,7 +714,7 @@ function launch!(f::Fused, ctx, backend; workgroup::Int = 256, sync::Bool = true
 end
 
 _launch_fused!(::FuseLaunches, f::Fused, ctx, backend, workgroup) =
-    _point_op_kernel!(backend, workgroup)(f, ctx; ndrange = index_space(f, ctx))
+    _launch_point_kernel!(f, ctx, index_space(f, ctx), backend, workgroup)
 
 function _launch_fused!(::SeparateLaunches, f::Fused, ctx, backend, workgroup)
     index_space(f, ctx)     # the same equal-rank check as a fused launch
