@@ -139,11 +139,14 @@ exchange takes about 25 µs instead of 120 µs. Inside the packed cubed-sphere
 palindrome (`strang_split_cs_mt!`) the exchanges are only queued
 (`sync = false`): the palindrome synchronizes once, at its end.
 
-Sets of same-sized device-to-device copies go through `copy_arrays!`: one
-queued `LinearCopy` launch over the longest array instead of one `copyto!`
-per array (the host keeps plain `copyto!`s). The cubed-sphere forcing refresh
-copies its 18 flux panels this way at every step; Metal.jl synchronizes the
-queue around every `copyto!`, which cost about 2.5 ms per step on an M5 Pro.
+Sets of same-sized device-to-device copies go through `copy_arrays!`: on
+every device backend (CUDA, ROCm, Metal), one queued `LinearCopy` launch over
+the longest array instead of one `copyto!` per array, when all arrays live on
+one backend (the host, and batches that mix backends, keep plain `copyto!`s).
+The cubed-sphere forcing refresh copies its 18 flux panels this way at every
+step. On CUDA and ROCm this saves launches; on Metal it also removes the queue
+synchronization Metal.jl performs around every `copyto!`, which cost about
+2.5 ms per step on an M5 Pro.
 
 ## One transport window
 

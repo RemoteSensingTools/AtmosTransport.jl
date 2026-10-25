@@ -241,3 +241,33 @@ end
     @test_throws DimensionMismatch Arch.copy_arrays!((zeros(Float32, 4, 5, 3),), (src[1],))
     @test_throws ArgumentError Arch.copy_arrays!(dest, src[1:2])
 end
+
+# An array that reports another backend, to build a batch that mixes backends.
+struct _OtherBackendArray{T, N} <: AbstractArray{T, N}
+    data::Array{T, N}
+end
+Base.size(a::_OtherBackendArray) = size(a.data)
+Base.getindex(a::_OtherBackendArray, i::Int...) = a.data[i...]
+Base.setindex!(a::_OtherBackendArray, v, i::Int...) = (a.data[i...] = v)
+const _OTHER_BACKEND = _CountingBackend(Ref(0))
+KernelAbstractions.get_backend(::_OtherBackendArray) = _OTHER_BACKEND
+
+@testset "copy_arrays! launches once only when every array shares one backend" begin
+    Arch = AtmosTransport.Architectures
+    src = (rand(Float32, 3, 2), rand(Float32, 2, 3))
+    @test Arch.single_launch_copy(map(similar, src), src)
+    other = _OtherBackendArray(zeros(Float32, 2, 3))
+    # Eligibility looks at every pair, not only the first.
+    @test !Arch.single_launch_copy((similar(src[1]), other), src)
+    @test !Arch.single_launch_copy(map(similar, src), (src[1], _OtherBackendArray(copy(src[2]))))
+    @test Arch.single_launch_copy((other,), (_OtherBackendArray(copy(src[2])),))
+    # A mixed batch falls back to one `copyto!` per pair (a launch on the fake
+    # backend would throw).
+    first_other = _OtherBackendArray(zeros(Float32, 3, 2))
+    dest = (first_other, similar(src[2]))
+    @test Arch.copy_arrays!(dest, src) === dest
+    @test first_other.data == src[1] && dest[2] == src[2]
+    mixed = (similar(src[1]), other)
+    @test Arch.copy_arrays!(mixed, src) === mixed
+    @test mixed[1] == src[1] && other.data == src[2]
+end

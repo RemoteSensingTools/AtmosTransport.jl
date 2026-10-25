@@ -103,8 +103,10 @@ end
 # The six panels in one queued launch (`copy_arrays!`).
 @inline _copy_cs_storage!(dest::NTuple{6}, src::NTuple{6}) = copy_arrays!(dest, src)
 
-# All 18 flux panels in one launch: the stepping loop refreshes the model's
-# fluxes every step, and separate `copyto!`s synchronize the queue on Metal.
+# All 18 flux panels in one launch on every device backend (CUDA, ROCm,
+# Metal): the stepping loop refreshes the model's fluxes every step; one launch
+# replaces 18 copies everywhere, and on Metal also the queue synchronization
+# that Metal.jl performs around every `copyto!`.
 @inline function copy_fluxes!(dest::CubedSphereFaceFluxState, src::CubedSphereFaceFluxState)
     copy_arrays!((dest.am..., dest.bm..., dest.cm...), (src.am..., src.bm..., src.cm...))
     return dest

@@ -766,18 +766,21 @@ end
 """
     copy_arrays!(dest::Tuple, src::Tuple) -> dest
 
-`copyto!(dest[k], src[k])` for every pair of equally sized arrays. When the
-first arrays of `dest` and `src` live on the same backend, all pairs are copied
-by one `LinearCopy` launch, queued on the current task's device queue without
-a host synchronization (as a device-to-device `copyto!` is on CUDA); the host
-backend copies each pair with `copyto!`. Pairs across backends (a host window
-uploaded to the device) keep one `copyto!` each.
+`copyto!(dest[k], src[k])` for every pair of equally sized arrays. When every
+array of `dest` and `src` lives on one backend (`single_launch_copy`), all
+pairs are copied by one `LinearCopy` launch, queued on the current task's
+device queue without a host synchronization; the host backend copies each pair
+with `copyto!`. A batch that mixes backends (a host window uploaded to the
+device, or arrays on different devices) keeps one `copyto!` per pair.
 
-Rationale: Metal.jl synchronizes the queue before every device-to-device
-`copyto!` and waits for its blit, so the 18 panel copies of a cubed-sphere
-flux refresh cost about 2.5 ms per step on an M5 Pro; one queued launch
-removes those synchronizations. Values are copied unchanged, so the result
-equals that of the `copyto!`s bit for bit.
+The single launch applies to every device backend (CUDA, ROCm and Metal), not
+only to Metal: it replaces a batch of copies by one launch, and copies values
+unchanged, so the result equals that of the `copyto!`s bit for bit. On CUDA
+and ROCm a device-to-device `copyto!` is already queued asynchronously, so the
+gain there is fewer launches. On Metal it also removes host synchronizations:
+Metal.jl synchronizes the queue before every device-to-device `copyto!` and
+waits for its blit, so the 18 panel copies of a cubed-sphere flux refresh cost
+about 2.5 ms per step on an M5 Pro.
 """
 function copy_arrays!(dest::Tuple, src::Tuple)
     length(dest) == length(src) || throw(ArgumentError(
@@ -788,13 +791,27 @@ function copy_arrays!(dest::Tuple, src::Tuple)
         size(d) == size(s) || throw(DimensionMismatch(
             "copy_arrays!: destination of size $(size(d)), source of size $(size(s))"))
     end
-    _copy_arrays!(KA.get_backend(first(dest)), KA.get_backend(first(src)), dest, src)
+    if single_launch_copy(dest, src)
+        launch!(LinearCopy(), (; dest, src), KA.get_backend(first(dest)); sync = false)
+    else
+        foreach(copyto!, dest, src)
+    end
     return dest
 end
 
-_copy_arrays!(backend::B, ::B, dest, src) where {B} =
-    launch!(LinearCopy(), (; dest, src), backend; sync = false)
-_copy_arrays!(_dest_backend, _src_backend, dest, src) = (foreach(copyto!, dest, src); nothing)
+"""
+    single_launch_copy(dest::Tuple, src::Tuple) -> Bool
+
+Whether `copy_arrays!` may copy the batch with one `LinearCopy` launch: every
+destination and every source reports the same `KernelAbstractions` backend
+(the kernel runs on one backend and reads and writes all arrays there).
+"""
+function single_launch_copy(dest::Tuple, src::Tuple)
+    isempty(dest) && isempty(src) && return true
+    backend = KA.get_backend(first(dest))
+    return all(a -> KA.get_backend(a) == backend, dest) &&
+           all(a -> KA.get_backend(a) == backend, src)
+end
 
 """
     select_panel(t::NTuple{6}, p)
