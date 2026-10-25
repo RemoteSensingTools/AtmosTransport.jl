@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The packed cubed-sphere palindrome (`strang_split_cs_mt!`) skips the three
+  halo exchanges per subcycle whose halos no sweep reads (after the forward Y
+  sweep and after both reverse horizontal sweeps); the adjoint tape drops
+  their records. Interiors and footprints are bit-identical, but the
+  palindrome now returns stale halos: call `fill_cs_step_start_halos!` before
+  each step, as production `strang_split!` does.
+  `cs_surface_emission_footprint_from_seed` ignores halo entries of the seed.
+
 ## 0.6.0 — 2026-10-20
 
 This is a breaking release. It changes numerical results in preprocessing,

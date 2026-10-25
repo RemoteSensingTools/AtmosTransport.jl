@@ -66,8 +66,18 @@ function _initial_adjoint_state(start::_ObjectiveStart, final_m, mesh::CubedSphe
     return lambda_panels
 end
 
-_initial_adjoint_state(start::_SeedStart, _final_m, ::CubedSphereMesh) =
-    _copy_panel_tuple(start.seed)
+# Only the interior of the final state is prognostic: the packed palindrome
+# returns stale halos (`strang_split_cs_mt_pingpong!`), so the halo entries of
+# a seed are ignored.
+function _initial_adjoint_state(start::_SeedStart, _final_m, mesh::CubedSphereMesh)
+    lambda_panels = _copy_panel_tuple(start.seed)
+    Nc, Hp = mesh.Nc, mesh.Hp
+    low, inner, high = 1:Hp, Hp+1:Hp+Nc, Hp+Nc+1:Nc+2Hp
+    for a in lambda_panels, (I, J) in ((low, :), (high, :), (inner, low), (inner, high))
+        view(a, I, J, :) .= zero(eltype(a))
+    end
+    return lambda_panels
+end
 
 _initial_adjoint_state(::_ZeroStart, final_m, ::CubedSphereMesh) =
     _zero_panel_tuple_like(final_m)
