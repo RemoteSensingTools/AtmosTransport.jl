@@ -147,7 +147,7 @@ function _cache_cs_seams!(cache, panels_rm::NTuple{6}, panels_m::NTuple{6},
                           panels_flux::NTuple{6}, mesh::CubedSphereMesh,
                           scheme::AbstractAdvectionScheme, direction::Val{D}, scale) where D
     Nc, Hp = mesh.Nc, mesh.Hp
-    # The face fluxes read the halo without bounds checks or a periodic wrap.
+    # The x face fluxes read the halo without bounds checks or a periodic wrap.
     _validate_halo_for_scheme(scheme, Hp)
     Nz, Nt = size(panels_m[1], 3), size(panels_rm[1], 4)
     (size(cache, 1), size(cache, 2), size(cache, 4)) == (Nc, Nz, 12) ||

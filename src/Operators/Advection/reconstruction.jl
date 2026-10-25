@@ -22,9 +22,11 @@
 #           ├── _limited_moment(...)         [linear/quadratic schemes]
 #           └── _slopes_face_flux(...)       [Courant-fraction formula]
 #
-# All functions are inlined, branchless (ifelse), and GPU-safe. The face
-# fluxes are `Base.@propagate_inbounds`: a caller inside `@inbounds` must pass
-# in-range stencil indices.
+# All functions are inlined, branchless (ifelse), and GPU-safe. The x and z
+# face fluxes are `Base.@propagate_inbounds`: a caller inside `@inbounds` must
+# pass in-range stencil indices. The y face fluxes stay bounds-checked: without
+# the checks the cubed-sphere y sweep ran 5–9 % slower on an L40S (Nsight
+# Systems, C90/C180 with 12 tracers, 2026-10-25) despite fewer instructions.
 # All arithmetic uses `eltype(rm)` to stay type-stable for Float32/Float64.
 #
 # Boundary conditions
@@ -171,7 +173,7 @@ Tracer mass flux through y-face `face_j` for first-order upwind.
 Closed (no-flux) at `face_j = 1` (south pole) and `face_j = Ny + 1` (north pole).
 Returns zero at boundaries.
 """
-Base.@propagate_inbounds function _yface_tracer_flux(i, face_j, k, rm, m, F, ::UpwindScheme, Ny)
+@inline function _yface_tracer_flux(i, face_j, k, rm, m, F, ::UpwindScheme, Ny)
     FT = eltype(rm)
     at_boundary = (face_j <= Int32(1)) | (face_j > Ny)
     jl = max(face_j - Int32(1), Int32(1))
@@ -405,7 +407,7 @@ Tracer mass flux through y-face `face_j` for van Leer slopes advection.
 ```
 Indices clamped: `jLL = max(face_j-2, 1)`, `jRR = min(face_j+1, Ny)`.
 """
-Base.@propagate_inbounds function _yface_tracer_flux(i, face_j, k, rm, m, F, scheme::SlopesScheme, Ny)
+@inline function _yface_tracer_flux(i, face_j, k, rm, m, F, scheme::SlopesScheme, Ny)
     FT = eltype(rm)
     limiter = scheme.limiter
     at_boundary = (face_j <= Int32(1)) | (face_j > Ny)
@@ -796,7 +798,7 @@ Tracer mass flux through y-face `face_j` for PPM advection.
   upwind there.  This matches the production PPM code's pole fallback.
 - Stencil indices clamped via `max`/`min`.
 """
-Base.@propagate_inbounds function _yface_tracer_flux(i, face_j, k, rm, m, F, scheme::PPMScheme, Ny)
+@inline function _yface_tracer_flux(i, face_j, k, rm, m, F, scheme::PPMScheme, Ny)
     FT = eltype(rm)
     limiter = scheme.limiter
     at_boundary = (face_j <= Int32(1)) | (face_j > Ny)
