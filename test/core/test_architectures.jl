@@ -221,3 +221,23 @@ end
         @test AtmosTransport.Architectures.select_panel(panels, p) === panels[p]
     end
 end
+
+# `copy_arrays!`: one launch for a set of copies, equal to their `copyto!`s.
+@testset "copy_arrays! copies every pair (host loop and device kernel path)" begin
+    Arch = AtmosTransport.Architectures
+    src = (rand(Float32, 5, 4, 3), rand(Float32, 4, 5, 3), rand(Float32, 4, 4, 4))
+    dest = map(a -> fill(NaN32, size(a)), src)
+    @test Arch.copy_arrays!(dest, src) === dest
+    @test all(map(==, dest, src))
+    @test Arch.copy_arrays!((), ()) === ()
+    # The device path: one kernel over the longest array, shorter pairs masked.
+    kernel = map(a -> fill(NaN32, size(a)), src)
+    space = Arch.index_space(Arch.LinearCopy(), (; dest = kernel, src))
+    @test space == (maximum(length, src),)
+    Arch._point_op_kernel!(KernelAbstractions.CPU(), 16)(Arch.LinearCopy(), (; dest = kernel, src);
+                                                         ndrange = space)
+    KernelAbstractions.synchronize(KernelAbstractions.CPU())
+    @test all(map(==, kernel, src))
+    @test_throws DimensionMismatch Arch.copy_arrays!((zeros(Float32, 4, 5, 3),), (src[1],))
+    @test_throws ArgumentError Arch.copy_arrays!(dest, src[1:2])
+end

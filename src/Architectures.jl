@@ -23,7 +23,7 @@ export architecture_label, device_name, backend_name, synchronize_architecture!
 export array_adapter_for, assert_residency!, assert_float_type!
 export reclaim_backend_pool!, _kahan_add
 export launch!
-export AbstractPointOp, index_space, apply_point!, Fused, Sequence
+export AbstractPointOp, index_space, apply_point!, Fused, Sequence, LinearCopy, copy_arrays!
 export FusionPolicy, FuseLaunches, SeparateLaunches, fusion_policy
 
 abstract type AbstractArchitecture end
@@ -680,6 +680,66 @@ function launch!(s::Sequence, ctx, backend; workgroup::Int = 256, sync::Bool = t
     sync && !(backend isa KA.CPU) && KA.synchronize(backend)
     return nothing
 end
+
+"""
+    LinearCopy <: AbstractPointOp
+
+At linear index `i`, `ctx.dest[k][i] = ctx.src[k][i]` for every array pair `k`
+of the tuples `ctx.dest` and `ctx.src` that has an element `i`: a set of
+copies as one launch over the longest array. The host runs the pairs as
+`copyto!`s. See [`copy_arrays!`](@ref).
+"""
+struct LinearCopy <: AbstractPointOp end
+
+index_space(::LinearCopy, ctx) = (maximum(length, ctx.dest),)
+@inline apply_point!(::LinearCopy, ctx, i) = _copy_linear_at!(ctx.dest, ctx.src, i)
+_host_apply!(::LinearCopy, ctx) = (foreach(copyto!, ctx.dest, ctx.src); nothing)
+
+# Unrolled over the pairs: constant tuple indices keep the tuples out of
+# per-thread local memory inside a device kernel (see `_slot_tree`).
+@generated function _copy_linear_at!(dest::Tuple{Vararg{Any, N}}, src::Tuple{Vararg{Any, N}},
+                                     i) where N
+    return quote
+        $(Expr(:meta, :inline))
+        Base.Cartesian.@nexprs $N k -> begin
+            i <= length(dest[k]) && @inbounds dest[k][i] = src[k][i]
+        end
+        return nothing
+    end
+end
+
+"""
+    copy_arrays!(dest::Tuple, src::Tuple) -> dest
+
+`copyto!(dest[k], src[k])` for every pair of equally sized arrays. When the
+first arrays of `dest` and `src` live on the same backend, all pairs are copied
+by one `LinearCopy` launch, queued on the current task's device queue without
+a host synchronization (as a device-to-device `copyto!` is on CUDA); the host
+backend copies each pair with `copyto!`. Pairs across backends (a host window
+uploaded to the device) keep one `copyto!` each.
+
+Rationale: Metal.jl synchronizes the queue before every device-to-device
+`copyto!` and waits for its blit, so the 18 panel copies of a cubed-sphere
+flux refresh cost about 2.5 ms per step on an M5 Pro; one queued launch
+removes those synchronizations. Values are copied unchanged, so the result
+equals that of the `copyto!`s bit for bit.
+"""
+function copy_arrays!(dest::Tuple, src::Tuple)
+    length(dest) == length(src) || throw(ArgumentError(
+        "copy_arrays! needs as many destinations as sources; got $(length(dest)) and $(length(src))"))
+    isempty(dest) && return dest
+    # The kernel indexes without bounds checks.
+    foreach(dest, src) do d, s
+        size(d) == size(s) || throw(DimensionMismatch(
+            "copy_arrays!: destination of size $(size(d)), source of size $(size(s))"))
+    end
+    _copy_arrays!(KA.get_backend(first(dest)), KA.get_backend(first(src)), dest, src)
+    return dest
+end
+
+_copy_arrays!(backend::B, ::B, dest, src) where {B} =
+    launch!(LinearCopy(), (; dest, src), backend; sync = false)
+_copy_arrays!(_dest_backend, _src_backend, dest, src) = (foreach(copyto!, dest, src); nothing)
 
 """
     select_panel(t::NTuple{6}, p)

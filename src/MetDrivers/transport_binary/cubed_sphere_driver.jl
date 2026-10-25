@@ -100,17 +100,13 @@ end
     return padded
 end
 
-@inline function _copy_cs_storage!(dest::NTuple{6}, src::NTuple{6})
-    @inbounds for p in 1:6
-        copyto!(dest[p], src[p])
-    end
-    return dest
-end
+# The six panels in one queued launch (`copy_arrays!`).
+@inline _copy_cs_storage!(dest::NTuple{6}, src::NTuple{6}) = copy_arrays!(dest, src)
 
+# All 18 flux panels in one launch: the stepping loop refreshes the model's
+# fluxes every step, and separate `copyto!`s synchronize the queue on Metal.
 @inline function copy_fluxes!(dest::CubedSphereFaceFluxState, src::CubedSphereFaceFluxState)
-    _copy_cs_storage!(dest.am, src.am)
-    _copy_cs_storage!(dest.bm, src.bm)
-    _copy_cs_storage!(dest.cm, src.cm)
+    copy_arrays!((dest.am..., dest.bm..., dest.cm...), (src.am..., src.bm..., src.cm...))
     return dest
 end
 
