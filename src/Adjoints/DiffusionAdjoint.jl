@@ -256,7 +256,6 @@ function _apply_cs_diffusion_adjoint!(lambda_panels::NTuple{6, A},
         kernel! = _vertical_diffusion_cs_single_dkg_adjoint_kernel!(backend, (8, 8))
         kernel!(panel_lambda, panel_m, panel_dkg, w_scratch[p], FT(dt), Nz, Hp;
                 ndrange = (Nc, Nc))
-        synchronize(backend)
     end
     return nothing
 end
@@ -293,7 +292,6 @@ function _apply_cs_diffusion_adjoint!(lambda_panels::NTuple{6, A},
         kernel! = _vertical_diffusion_cs_single_adjoint_kernel!(backend, (8, 8))
         kernel!(panel_lambda, panel_m, panel_kz, dz_scratch[p], w_scratch[p],
                 FT(dt), Nz, Hp; ndrange = (Nc, Nc))
-        synchronize(backend)
     end
     return nothing
 end

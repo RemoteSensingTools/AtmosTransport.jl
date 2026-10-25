@@ -109,7 +109,6 @@ function _adjoint_fill_panel_halos!(lambda_panels::NTuple{6},
             kernel! = _adjoint_corner_halo_kernel!(backend, 256)
             kernel!(q, Int32(Nc), Int32(Hp), Int32(N), Int32(dir);
                     ndrange=(Hp, Hp, size(q, 3)))
-            synchronize(backend)
         end
     end
 
@@ -125,7 +124,6 @@ function _adjoint_fill_panel_halos!(lambda_panels::NTuple{6},
             kernel!(dst, src, Int32(e), Int32(q_e), nb.orientation >= 2,
                     Int32(Nc), Int32(Hp);
                     ndrange=(Nc, Hp, size(dst, 3)))
-            synchronize(backend)
         end
     end
     return nothing

@@ -145,6 +145,10 @@ function _walk_window_reverse!(footprints, lambda_panels, ops,
             throw(ArgumentError("unknown CS adjoint tape operation $(typeof(op))"))
         end
     end
+    # The reverse kernels and device copies above are issued on the task's one
+    # ordered queue without host barriers between them; wait once, so the
+    # walk returns finished adjoint state and footprints.
+    synchronize(get_backend(lambda_panels[1]))
     return nothing
 end
 
@@ -180,7 +184,6 @@ function _apply_air_mass_reset_adjoint!(lambda_panels, op::_CSAirMassResetRecord
         backend = get_backend(lambda_panels[p])
         _preserve_vmr_reset_adjoint_kernel!(backend, 256)(lambda_panels[p], old_m[p], new_m[p];
                                                          ndrange = size(lambda_panels[p]))
-        synchronize(backend)
     end
     return nothing
 end
