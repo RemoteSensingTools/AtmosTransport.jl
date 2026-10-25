@@ -9,6 +9,9 @@
   palindrome now returns stale halos: call `fill_cs_step_start_halos!` before
   each step, as production `strang_split!` does.
   `cs_surface_emission_footprint_from_seed` ignores halo entries of the seed.
+- `DrivenSimulation` no longer interpolates `sim.expected_air_mass` every
+  step (one point-operation launch per step on device); the window-end
+  air-mass reset, its only reader, computes it. Results are unchanged.
 
 ## 0.6.0 — 2026-10-20
 
