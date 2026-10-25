@@ -61,6 +61,9 @@ Configuration parsing lives in
   ([`CubedSphereStrang.jl`](CubedSphereStrang.jl), all edge halos plus the
   X-orientation corners): the first X sweep reads halos, and convection or
   chemistry between steps changed the interiors
+- Cubed-sphere X stencils read the halo unwrapped (`_HaloPaddedAxis`) and
+  without bounds checks: `Hp ≥ required_halo_width(scheme)` is validated
+  before any seam-cache or sweep launch (`_validate_halo_for_scheme`)
 - CFL subcycling (every topology): one count `n` from the palindrome
   outflow budget against `min(m_start, m_end)` (no pass removes more than
   `cfl_limit / 2` of a cell's current mass; an invalid flux set throws), then `(X Y Z)^n → midpoint → (Z Y X)^n` with every flux

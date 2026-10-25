@@ -22,12 +22,15 @@
 #           ├── _limited_moment(...)         [linear/quadratic schemes]
 #           └── _slopes_face_flux(...)       [Courant-fraction formula]
 #
-# All functions are @inline, branchless (ifelse), and GPU-safe.
+# All functions are inlined, branchless (ifelse), and GPU-safe. The face
+# fluxes are `Base.@propagate_inbounds`: a caller inside `@inbounds` must pass
+# in-range stencil indices.
 # All arithmetic uses `eltype(rm)` to stay type-stable for Float32/Float64.
 #
 # Boundary conditions
 # -------------------
-# - X (longitude): periodic — indices wrapped via mod1(idx, Nx)
+# - X (longitude): periodic — indices wrapped via mod1(idx, Nx); cubed-sphere
+#                   panels pass `_HaloPaddedAxis()` and read the halo unwrapped
 # - Y (latitude):  closed (no-flux) at j=1 (south pole) and j=Ny+1 (north pole)
 #                   Slopes zeroed at boundary cells (j=1, j=Ny)
 # - Z (vertical):  closed (no-flux) at k=1 (TOA) and k=Nz+1 (surface)
