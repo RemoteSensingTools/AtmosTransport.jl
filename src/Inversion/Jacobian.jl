@@ -42,9 +42,10 @@ function _aggregate_surface_window(result::CSFootprintResult,
             kernel! = _add_weighted_footprint_kernel!(backend, (16, 16))
             kernel!(aggregate[p], result.footprints[step][p], weight;
                     ndrange = size(aggregate[p]))
-            synchronize(backend)
         end
     end
+    # The launches above are queued in order; one wait covers them all.
+    synchronize(get_backend(aggregate[1]))
     return aggregate
 end
 

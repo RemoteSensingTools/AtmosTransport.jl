@@ -55,7 +55,6 @@ function _accumulate_safe_mixing_ratio_halo_adjoint!(
     kernel! = _safe_mixing_ratio_halo_adjoint_kernel!(backend, 256)
     kernel!(lambda_rm, lambda_m, lambda_q, rm, m, mesh.Nc, mesh.Hp;
             ndrange=size(lambda_rm))
-    synchronize(backend)
     return nothing
 end
 
@@ -86,7 +85,6 @@ function _accumulate_linrood_halo_adjoint!(lambda_rm, lambda_m, halo_rm, halo_m,
     kernel! = _linrood_halo_adjoint_kernel!(backend, 256)
     kernel!(lambda_rm, lambda_m, halo_rm, halo_m, mesh.Nc, mesh.Hp;
             ndrange=size(lambda_rm))
-    synchronize(backend)
     return nothing
 end
 

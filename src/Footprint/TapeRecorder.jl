@@ -14,8 +14,11 @@
 # ---------------------------------------------------------------------------
 
 # Hooks may observe arrays whose producing kernels are only queued (the
-# palindrome's halo exchanges run with `sync = false`); finish them first.
-_sync_panels(panels) = synchronize(get_backend(first(panels)))
+# palindrome's halo exchanges run with `sync = false`). Device tape storage
+# stages with device copies queued behind those kernels, so it needs no host
+# barrier; host-side storage copies into host memory and finishes them first.
+_sync_panels(::DeviceCSTapeStorage, _panels) = nothing
+_sync_panels(_storage, panels) = synchronize(get_backend(first(panels)))
 
 mutable struct _CSTapeRecorder{S} <: AbstractStepRecorder
     ops                 :: Vector{Any}
@@ -46,7 +49,7 @@ record_halo!(r::_CSTapeRecorder, dir) = (push!(r.ops, _CSHaloRecord(dir)); nothi
 
 function record_sweep!(r::_CSTapeRecorder, direction::Symbol, scheme, panels_m, panels_rm,
                        panels_flux, flux_scale)
-    _sync_panels(panels_m)
+    _sync_panels(r.storage, panels_m)
     _record_sweep!(r.ops, direction, scheme, panels_m, _single_tracer(panels_rm),
                    panels_flux, flux_scale, r.storage)
     return nothing
@@ -56,7 +59,7 @@ end
 # both half solves of a split center.
 record_center!(r::_CSTapeRecorder, _panels_m, ::NoDiffusion) = (r.center_m = nothing; nothing)
 function record_center!(r::_CSTapeRecorder, panels_m, _diffusion_op)
-    _sync_panels(panels_m)
+    _sync_panels(r.storage, panels_m)
     r.center_m = _stage_panels(r.storage, panels_m)
     return nothing
 end
@@ -74,7 +77,7 @@ end
 record_emission!(r::_CSTapeRecorder, dt) = (push!(r.ops, _CSMidpointRecord(r.step, dt)); nothing)
 
 function record_convection!(r::_CSTapeRecorder, op, forcing, panels_m, dt, workspace)
-    _sync_panels(panels_m)
+    _sync_panels(r.storage, panels_m)
     push!(r.ops, _CSConvectionRecord(op, forcing, _stage_panels(r.storage, panels_m), dt,
                                      _convection_substeps(op, workspace)))
     return nothing
@@ -87,7 +90,7 @@ _convection_substeps(_op, _workspace) = 1
 
 function record_air_mass_reset!(r::_CSTapeRecorder, mode::Symbol, state, target)
     if mode === :preserve_vmr
-        _sync_panels(state.air_mass)
+        _sync_panels(r.storage, state.air_mass)
         push!(r.ops, _CSAirMassResetRecord(mode, _stage_panels(r.storage, state.air_mass),
                                            _stage_panels(r.storage, target)))
     else
@@ -105,31 +108,31 @@ record_chemistry!(::_CSTapeRecorder, op, _dt) = throw(ArgumentError(
 # Lin-Rood horizontal operator: the phases of one `fv_tp_2d_cs!` call build one
 # `_CSLinRoodHorizRecord` (see `LinRoodTape.jl`).
 function record_linrood_horizontal!(r::_CSTapeRecorder, ::Val{:start}, panels_rm, panels_m)
-    _sync_panels(panels_m)
+    _sync_panels(r.storage, panels_m)
     empty!(r.linrood)
     r.linrood[:rm] = map(copy, panels_rm)
     r.linrood[:m] = map(copy, panels_m)
     return nothing
 end
 function record_linrood_horizontal!(r::_CSTapeRecorder, ::Val{:phase2}, q_buf)
-    _sync_panels(q_buf)
+    _sync_panels(r.storage, q_buf)
     r.linrood[:q2] = map(copy, Tuple(q_buf))
     return nothing
 end
 function record_linrood_horizontal!(r::_CSTapeRecorder, ::Val{:phase3}, q_buf)
-    _sync_panels(q_buf)
+    _sync_panels(r.storage, q_buf)
     r.linrood[:q3] = map(copy, Tuple(q_buf))
     return nothing
 end
 function record_linrood_horizontal!(r::_CSTapeRecorder, ::Val{:faces}, fx_in, fy_in)
-    _sync_panels(fx_in)
+    _sync_panels(r.storage, fx_in)
     r.linrood[:fx_in] = map(copy, Tuple(fx_in))
     r.linrood[:fy_in] = map(copy, Tuple(fy_in))
     return nothing
 end
 function record_linrood_horizontal!(r::_CSTapeRecorder, ::Val{:finish}, fx_out, am, bm,
                                     ::Val{ORD}) where ORD
-    _sync_panels(fx_out)
+    _sync_panels(r.storage, fx_out)
     parts = r.linrood
     rm = parts[:rm]
     FT = eltype(rm[1])
