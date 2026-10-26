@@ -74,32 +74,54 @@ a non-uniform grid whose spacing is the layer air mass; the end rows impose the
 boundary conditions of `scalar_profile` (iv ≠ −2).
 """
 @inline function _fv3_unlimited_edges!(col::FV3Column, rm, m, i, j, Nz)
-    FT = eltype(col.scratch)
-    for k in 1:Nz
-        _set_qbar!(col, k, rm[i, j, k] / _layer_mass(m, i, j, k))
+    _fv3_eliminate!(col, rm, m, i, j, Nz)
+    for k in Nz:-1:1
+        _set_edge!(col, k, _edge(col, k) - _elim(col, k) * _edge(col, k + 1))
     end
+    return nothing
+end
 
-    grat = _layer_mass(m, i, j, 2) / _layer_mass(m, i, j, 1)
+"""
+    _fv3_eliminate!(col::FV3Column, rm, m, i, j, Nz)
+
+The layer means and the forward elimination of `_fv3_unlimited_edges!`: stores
+`q̄`, the elimination coefficients and the edge values before back
+substitution; the surface edge `Nz + 1` is final.
+"""
+@inline function _fv3_eliminate!(col::FV3Column, rm, m, i, j, Nz)
+    FT = eltype(col.scratch)
+    # The previous row's mean, edge, elimination coefficient and layer mass are
+    # carried in registers; the scratch keeps the first three for the back
+    # substitution.
+    m_1, m_2 = _layer_mass(m, i, j, 1), _layer_mass(m, i, j, 2)
+    q_1, q_2 = rm[i, j, 1] / m_1, rm[i, j, 2] / m_2
+    _set_qbar!(col, 1, q_1)
+    grat = m_2 / m_1
     bet  = grat * (grat + FT(0.5))
-    _set_edge!(col, 1, ((grat + grat) * (grat + 1) * _qbar(col, 1) + _qbar(col, 2)) / bet)
-    _set_elim!(col, 1, (1 + grat * (grat + FT(1.5))) / bet)
+    e_prev = ((grat + grat) * (grat + 1) * q_1 + q_2) / bet
+    g_prev = (1 + grat * (grat + FT(1.5))) / bet
+    _set_edge!(col, 1, e_prev)
+    _set_elim!(col, 1, g_prev)
 
     d4 = zero(FT)
+    q_prev, m_prev = q_1, m_1
     for k in 2:Nz
-        d4  = _layer_mass(m, i, j, k - 1) / _layer_mass(m, i, j, k)
-        bet = 2 + d4 + d4 - _elim(col, k - 1)
-        _set_edge!(col, k, (3 * (_qbar(col, k - 1) + d4 * _qbar(col, k)) - _edge(col, k - 1)) / bet)
-        _set_elim!(col, k, d4 / bet)
+        m_k = _layer_mass(m, i, j, k)
+        q_k = rm[i, j, k] / m_k
+        _set_qbar!(col, k, q_k)
+        d4  = m_prev / m_k
+        bet = 2 + d4 + d4 - g_prev
+        e_prev = (3 * (q_prev + d4 * q_k) - e_prev) / bet
+        g_prev = d4 / bet
+        _set_edge!(col, k, e_prev)
+        _set_elim!(col, k, g_prev)
+        q_prev, m_prev = q_k, m_k
     end
 
     a_bot = 1 + d4 * (d4 + FT(1.5))
     _set_edge!(col, Nz + 1,
-               (2 * d4 * (d4 + 1) * _qbar(col, Nz) + _qbar(col, Nz - 1) - a_bot * _edge(col, Nz)) /
-               (d4 * (d4 + FT(0.5)) - a_bot * _elim(col, Nz)))
-
-    for k in Nz:-1:1
-        _set_edge!(col, k, _edge(col, k) - _elim(col, k) * _edge(col, k + 1))
-    end
+               (2 * d4 * (d4 + 1) * q_prev + _qbar(col, Nz - 1) - a_bot * e_prev) /
+               (d4 * (d4 + FT(0.5)) - a_bot * g_prev))
     return nothing
 end
 
@@ -116,13 +138,20 @@ constrained here.
 @inline function _fv3_edge(col::AbstractFV3Column, e, Nz, profile)
     q_e = _edge(col, e)
     (e == 1 || e == Nz + 1) && return q_e
-
     q_up, q_dn = _qbar(col, e - 1), _qbar(col, e)
+    (e == 2 || e == Nz) && return _fv3_edge_value(q_e, q_up, q_up, q_dn, q_dn, e, Nz, profile)
+    return _fv3_edge_value(q_e, _qbar(col, e - 2), q_up, q_dn, _qbar(col, e + 1), e, Nz, profile)
+end
+
+# `_fv3_edge` on values: the unlimited edge `q_e` and the layer means
+# `q̄_{e−2}, …, q̄_{e+1}`; the means a branch does not use may be any value.
+@inline function _fv3_edge_value(q_e, q_upup, q_up, q_dn, q_dndn, e, Nz, profile)
+    (e == 1 || e == Nz + 1) && return q_e
     lo, hi = min(q_up, q_dn), max(q_up, q_dn)
     (e == 2 || e == Nz) && return max(min(q_e, hi), lo)
 
-    δ_above = q_up - _qbar(col, e - 2)
-    δ_below = _qbar(col, e + 1) - q_dn
+    δ_above = q_up - q_upup
+    δ_below = q_dndn - q_dn
     if δ_above * δ_below > 0
         return max(min(q_e, hi), lo)          # monotone: stay between the means
     elseif δ_above > 0
@@ -198,7 +227,20 @@ for the positive-definite `profile`, `iv = 1` for the signed one):
     q   = _qbar(col, k)
     q_L = _fv3_edge(col, k, Nz, profile)
     q_R = _fv3_edge(col, k + 1, Nz, profile)
+    (k == 1 || k == Nz) &&
+        return _fv3_layer_profile_value(FT, q, q, q, q, q, q_L, q_R, k, Nz, profile)
+    q_km1, q_kp1 = _qbar(col, k - 1), _qbar(col, k + 1)
+    (k == 2 || k == Nz - 1) &&
+        return _fv3_layer_profile_value(FT, q_km1, q_km1, q, q_kp1, q_kp1, q_L, q_R, k, Nz, profile)
+    return _fv3_layer_profile_value(FT, _qbar(col, k - 2), q_km1, q, q_kp1, _qbar(col, k + 2),
+                                    q_L, q_R, k, Nz, profile)
+end
 
+# `_fv3_layer_profile` on values: the layer means `q̄_{k−2}, …, q̄_{k+2}` and the
+# constrained edges `q_L`, `q_R` (`_fv3_edge`); the means a branch does not use
+# may be any value. `FT` is the floating-point type of the constants.
+@inline function _fv3_layer_profile_value(::Type{FT}, q_km2, q_km1, q, q_kp1, q_kp2, q_L, q_R,
+                                          k, Nz, profile) where {FT}
     if k == 1 || k == Nz
         q_L = ifelse(k == 1, _nonnegative(profile, q_L), q_L)
         q_R = ifelse(k == Nz, _nonnegative(profile, q_R), q_R)
@@ -206,16 +248,16 @@ for the positive-definite `profile`, `iv = 1` for the signed one):
         return _fv3_monotone_limit(q, q_L, q_R, q_6, (q - q_L) * (q - q_R) >= 0)
     end
 
-    δ_k  = q - _qbar(col, k - 1)
-    δ_k1 = _qbar(col, k + 1) - q
+    δ_k  = q - q_km1
+    δ_k1 = q_kp1 - q
     if k == 2 || k == Nz - 1
         q_6 = 3 * (2 * q - (q_L + q_R))
         return _fv3_monotone_limit(q, q_L, q_R, q_6, δ_k * δ_k1 < 0)
     end
 
     # Huynh's (1996) second constraint, as in fv_mapz.F90 for kord < 9
-    δ_km1 = _qbar(col, k - 1) - _qbar(col, k - 2)
-    δ_k2  = _qbar(col, k + 2) - _qbar(col, k + 1)
+    δ_km1 = q_km1 - q_km2
+    δ_k2  = q_kp2 - q_kp1
     pmp_1 = q - 2 * δ_k1
     lac_1 = pmp_1 + FT(1.5) * δ_k2
     q_L = min(max(q_L, min(q, pmp_1, lac_1)), max(q, pmp_1, lac_1))
@@ -276,18 +318,42 @@ other sweep does. The surface and model-top interfaces carry no tracer flux.
         end
         col  = FV3Column(scratch, ii, jj, slot)
         rm_t = TracerView(rm, Int32(t))
-        _fv3_unlimited_edges!(col, rm_t, m, i, j, Nz)
-        above = _fv3_layer_profile(col, Int32(1), Nz, profile)
-        f_top = zero(eltype(m))
-        for k in Int32(1):(Nz - Int32(1))
-            below = _fv3_layer_profile(col, k + Int32(1), Nz, profile)
-            f_bot = _fv3_interface_flux(flux_scale * cm[i, j, k + Int32(1)],
-                                        above, _layer_mass(m, i, j, k),
-                                        below, _layer_mass(m, i, j, k + Int32(1)))
-            rm_out[i, j, k, t] = rm_t[i, j, k] + f_top - f_bot
-            f_top, above = f_bot, below
+        _fv3_eliminate!(col, rm_t, m, i, j, Nz)
+
+        # From the surface up, each step finishes the back substitution of edge
+        # k (`_fv3_unlimited_edges!`), then evaluates layer k's profile and the
+        # flux through interface k + 1 from values held over from layer k + 1:
+        # the same operations as a top-down pass over stored edges, with the
+        # final edges and neighbouring layer means kept out of the scratch.
+        FT = eltype(scratch)
+        z = zero(FT)
+        q_kp2, q_kp1 = z, z
+        q_k, q_km1 = _qbar(col, Nz), _qbar(col, Nz - Int32(1))
+        e_kp1 = _edge(col, Nz + Int32(1))            # surface edge, final and unconstrained
+        c_kp1 = e_kp1
+        below = (z, z, z)
+        f_bot = zero(eltype(m))
+        for k in Nz:Int32(-1):Int32(1)
+            q_km2 = k > Int32(2) ? _qbar(col, k - Int32(2)) : z
+            e_k = _edge(col, k) - _elim(col, k) * e_kp1
+            c_k = _fv3_edge_value(e_k, q_km2, q_km1, q_k, q_kp1, k, Nz, profile)
+            above = _fv3_layer_profile_value(FT, q_km2, q_km1, q_k, q_kp1, q_kp2, c_k, c_kp1,
+                                             k, Nz, profile)
+            if k < Nz
+                f_top = _fv3_interface_flux(flux_scale * cm[i, j, k + Int32(1)],
+                                            above, _layer_mass(m, i, j, k),
+                                            below, _layer_mass(m, i, j, k + Int32(1)))
+                if k + Int32(1) == Nz
+                    rm_out[i, j, Nz, t] = rm_t[i, j, Nz] + f_top
+                else
+                    rm_out[i, j, k + Int32(1), t] = rm_t[i, j, k + Int32(1)] + f_top - f_bot
+                end
+                f_bot = f_top
+            end
+            below, e_kp1, c_kp1 = above, e_k, c_k
+            q_kp2, q_kp1, q_k, q_km1 = q_kp1, q_k, q_km1, q_km2
         end
-        rm_out[i, j, Nz, t] = rm_t[i, j, Nz] + f_top
+        rm_out[i, j, Int32(1), t] = rm_t[i, j, Int32(1)] + zero(eltype(m)) - f_bot
     end
     return nothing
 end

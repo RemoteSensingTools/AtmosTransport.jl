@@ -31,7 +31,6 @@ function _cache_cs_seam_seeds!(seeds, lambda::NTuple{6}, mesh::CubedSphereMesh,
         kernel!(seeds, lambda[p], lambda[q], edge, other, neighbor.orientation != 0,
                 seam, Nc, Hp; ndrange=(Nc, Nz))
     end
-    synchronize(backend)
     return nothing
 end
 
@@ -75,6 +74,5 @@ function _apply_cs_seam_adjoint!(lambda::NTuple{6}, m::NTuple{6}, rm,
         kernel!(lambda[p], m[p], rm_panel, flux[p], seeds, scheme, direction,
                 edge, seam, Nc, Hp, eltype(lambda[p])(scale); ndrange=(Nc, Nz))
     end
-    synchronize(backend)
     return nothing
 end

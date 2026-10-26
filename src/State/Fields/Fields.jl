@@ -31,6 +31,7 @@ module Fields
 
 using Adapt
 using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
+using ...Architectures: select_panel
 using ...Parameters: STANDARD_GRAVITY, CP_DRY_AIR, CP_OVER_R_DIATOMIC, THETA_REFERENCE_PRESSURE,
                      GEOSCHEM_CONSTANTS, VIRTUAL_TEMPERATURE_FACTOR, VON_KARMAN,
                      STANDARD_SEA_LEVEL_AIR_DENSITY

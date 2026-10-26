@@ -60,7 +60,10 @@ Configuration parsing lives in
 - A cubed-sphere split-sweep step starts with `fill_cs_step_start_halos!`
   ([`CubedSphereStrang.jl`](CubedSphereStrang.jl), all edge halos plus the
   X-orientation corners): the first X sweep reads halos, and convection or
-  chemistry between steps changed the interiors
+  chemistry between steps changed the interiors. The packed palindrome
+  (`strang_split_cs_mt_pingpong!`) fills halos only before the horizontal
+  sweeps that read them, so it returns stale halos; its Z sweeps and
+  midpoint operators must stay column-local (interior reads only)
 - Cubed-sphere X stencils read the halo unwrapped (`_HaloPaddedAxis`) and
   without bounds checks: `Hp ≥ required_halo_width(scheme)` is validated
   before any seam-cache or sweep launch (`_validate_halo_for_scheme`)

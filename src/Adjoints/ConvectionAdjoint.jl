@@ -585,7 +585,6 @@ function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
                     ndrange = (Nc, Nc))
         end
     end
-    synchronize(backend)
     return nothing
 end
 
@@ -618,7 +617,6 @@ function _apply_cs_convection_adjoint!(lambda_panels, panels_m, forcing,
                     ndrange = n)
         end
     end
-    synchronize(backend)
     return nothing
 end
 

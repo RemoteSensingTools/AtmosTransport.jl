@@ -163,6 +163,17 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
 - `FT` is taken from the panel eltype. `dt` and `flux_scale` are converted
   to `FT`. Kernels use KernelAbstractions, so CPU and GPU share one code
   path.
+- Reverse kernels add no explicit host barrier between operations of one
+  task. A walk queues its kernels and device copies in order on the task's
+  device queue (a CPU launch finishes before it returns), so buffers that
+  several panels or operators reuse (`CSAdjointWorkspace.lambda_A`, the seam
+  seed cache, the diffusion and convection scratch) need none between uses.
+  `_walk_window_reverse!` synchronizes once at its end. Explicit barriers
+  remain where the host reads device data (`evaluate_objective`), in
+  host-side tape staging and reads, in the recorder hooks that stage into
+  host-side tape storage, and in `_share_lr_seam_faces!`, which the Lin-Rood
+  reverse shares with the forward. A backend may also wait inside its own
+  copies (Metal's `copyto!`).
 
 ## Related Docs And Tests
 

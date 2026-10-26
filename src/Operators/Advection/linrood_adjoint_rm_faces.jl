@@ -499,7 +499,6 @@ function apply_ppm_x_face_adjoint!(lambda_rm, lambda_m, lambda_fx_face,
         _ppm_x_face_kernel_adjoint_ord7!(backend, 256)
     k!(lambda_rm, lambda_m, lambda_fx_face, rm, m, am, Hp, Nc;
        ndrange=(Nc + 1, Nc, Nz))
-    synchronize(backend)
     return nothing
 end
 
@@ -610,6 +609,5 @@ function apply_ppm_y_face_adjoint!(lambda_rm, lambda_m, lambda_fy_face,
         _ppm_y_face_kernel_adjoint_ord7!(backend, 256)
     k!(lambda_rm, lambda_m, lambda_fy_face, rm, m, bm, Hp, Nc;
        ndrange=(Nc, Nc + 1, Nz))
-    synchronize(backend)
     return nothing
 end

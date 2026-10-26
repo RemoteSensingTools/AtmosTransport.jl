@@ -306,7 +306,6 @@ function _inject_step_forcing!(lambda_panels, forcing::CSStepForcing, step::Int,
         kernel! = _inject_step_forcing_kernel!(backend, 256)
         kernel!(lambda_panels[p], forcing.segment_ptr, forcing.ii, forcing.jj, forcing.kk,
                 forcing.w, forcing.first_segment[step, p]; ndrange = count)
-        synchronize(backend)
     end
     return nothing
 end

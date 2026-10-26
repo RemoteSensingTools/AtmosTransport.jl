@@ -657,6 +657,8 @@ function _adjoint_scheme_sweep!(lambda_panels, m_before, flux_panels,
     # The face adjoints read the halo without bounds checks or a periodic wrap.
     horizontal && _validate_halo_for_scheme(scheme, Hp)
     horizontal && _cache_cs_seam_seeds!(ws.seam_seeds, lambda_panels, mesh, axis)
+    # Every panel reuses `ws.lambda_A`: its zeroing, scatter and copy-back run
+    # in queue order on a device, so no host synchronization is needed.
     @inbounds for p in 1:6
         fill!(ws.lambda_A, zero(eltype(ws.lambda_A)))
         backend = get_backend(lambda_panels[p])
@@ -679,7 +681,6 @@ function _adjoint_scheme_sweep!(lambda_panels, m_before, flux_panels,
         else
             throw(ArgumentError("unknown CS adjoint sweep direction $direction"))
         end
-        synchronize(backend)
         copyto!(lambda_panels[p], ws.lambda_A)
     end
     horizontal && _apply_cs_seam_adjoint!(lambda_panels, m_before, nothing,
@@ -725,7 +726,6 @@ function _adjoint_scheme_sweep!(lambda_panels, m_before, rm_before, flux_panels,
         else
             throw(ArgumentError("unknown CS adjoint sweep direction $direction"))
         end
-        synchronize(backend)
         copyto!(lambda_panels[p], ws.lambda_A)
     end
     horizontal && _apply_cs_seam_adjoint!(lambda_panels, m_before, rm_before,

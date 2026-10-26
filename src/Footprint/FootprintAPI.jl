@@ -195,8 +195,10 @@ end
 
 General reverse-pass entry point. `final_adjoint_rm` is an `NTuple{6}` of
 halo-padded adjoint tracer-mass arrays containing `dJ/drm_final` for any
-scalar objective or observation operator. The reverse pass and surface-gradient
-accumulation use the same CPU/GPU kernels as `cs_surface_emission_footprint`.
+scalar objective or observation operator; only its interior is read (the halos
+of the final state are not prognostic, so halo entries are ignored). The
+reverse pass and surface-gradient accumulation use the same CPU/GPU kernels as
+`cs_surface_emission_footprint`.
 
 With `surface_flux = true` (the default) the step plan carries a surface-flux
 operator and the result holds the emission footprints. `surface_flux = false`
