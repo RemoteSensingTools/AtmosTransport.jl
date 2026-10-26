@@ -198,7 +198,9 @@ in the X-sweep orientation (`fill_panel_halos!(…; dir = 1)`). With
 The step's first X sweep reads these halos (`strang_split_cs!` refills them
 only between its own sweeps). Operators that run between two transport steps
 (convection, chemistry) update interior cells only, so without the refresh
-that sweep would read tracer halos from before them.
+that sweep would read tracer halos from before them; the packed palindrome
+`strang_split_cs_mt!` also returns stale halos (it skips the fills after its
+last sweeps, which nothing reads).
 
 Production `strang_split!` starts every split-sweep step with this call, and
 so do the cubed-sphere adjoint forward replays and tape recorders; the
@@ -358,6 +360,15 @@ final active `(rm, m)` tuple is returned. On a device its halo exchanges are
 queued without a host synchronization (every sweep follows them on the same
 queue); `strang_split_cs_mt!` synchronizes once at the end.
 
+It fills halos only where a horizontal sweep reads them: before every X sweep
+(the caller's `fill_cs_step_start_halos!` before the first), after the forward
+X sweep for the Y sweep, and after the reverse Z sweep for the reverse Y
+sweep. `fill_panel_halos!` writes every halo cell from the interiors alone, and
+the Z sweeps and the midpoint operators read only interior columns, so the
+fills `strang_split_cs!` also runs after the forward Y and both reverse
+horizontal sweeps would never be read: the interiors are the same, and the
+returned halos are stale.
+
 `recorder` observes the palindrome (`record_sweep!` before each sweep,
 `record_halo!` after each halo exchange); the production `NoStepRecorder()`
 makes every hook a no-op. The cubed-sphere adjoint records its tape through
@@ -416,15 +427,13 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
 
+        # No halo fill after Y: the Z sweep and the midpoint operators are
+        # column-local, and the next horizontal sweep is preceded by its own
+        # fill (the next pass's X fill, or the reverse half's Y fill).
         record_sweep!(recorder, :y, scheme, active_m, active_rm, panels_bm, fs_sub)
-        SectionTimer.@section :cs_sweep_y begin
-            _sweep_y_panels_mt_pingpong!(
-                spare_rm, spare_m, active_rm, active_m, panels_bm, mesh, scheme;
-                flux_scale = fs_sub, seam_flux = workspace.seam_flux)
-            SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(spare_rm, mesh; dir = 2, sync = false)
-            SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(spare_m,  mesh; dir = 2, sync = false)
-        end
-        record_halo!(recorder, 2)
+        SectionTimer.@section :cs_sweep_y _sweep_y_panels_mt_pingpong!(
+            spare_rm, spare_m, active_rm, active_m, panels_bm, mesh, scheme;
+            flux_scale = fs_sub, seam_flux = workspace.seam_flux)
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
 
@@ -460,30 +469,26 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
         SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(active_rm, mesh; dir = 2, sync = false)
         SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(active_m,  mesh; dir = 2, sync = false)
         record_halo!(recorder, 2)
+        # No halo fill after Y: the X fill below rewrites every halo cell
+        # (all edges, then all corners) from the interiors alone.
         record_sweep!(recorder, :y, scheme, active_m, active_rm, panels_bm, fs_sub)
-        SectionTimer.@section :cs_sweep_y begin
-            _sweep_y_panels_mt_pingpong!(
-                spare_rm, spare_m, active_rm, active_m, panels_bm, mesh, scheme;
-                flux_scale = fs_sub, seam_flux = workspace.seam_flux)
-            SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(spare_rm, mesh; dir = 2, sync = false)
-            SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(spare_m,  mesh; dir = 2, sync = false)
-        end
-        record_halo!(recorder, 2)
+        SectionTimer.@section :cs_sweep_y _sweep_y_panels_mt_pingpong!(
+            spare_rm, spare_m, active_rm, active_m, panels_bm, mesh, scheme;
+            flux_scale = fs_sub, seam_flux = workspace.seam_flux)
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
 
         SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(active_rm, mesh; dir = 1, sync = false)
         SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(active_m,  mesh; dir = 1, sync = false)
         record_halo!(recorder, 1)
+        # No halo fill after X: the next pass starts with the column-local Z
+        # sweep and refills before its Y sweep, and the next step starts with
+        # `fill_cs_step_start_halos!`. The halos the palindrome returns are
+        # therefore stale (not a copy of the final interiors).
         record_sweep!(recorder, :x, scheme, active_m, active_rm, panels_am, fs_sub)
-        SectionTimer.@section :cs_sweep_x begin
-            _sweep_x_panels_mt_pingpong!(
-                spare_rm, spare_m, active_rm, active_m, panels_am, mesh, scheme;
-                flux_scale = fs_sub, seam_flux = workspace.seam_flux)
-            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(spare_rm, mesh; dir = 1, sync = false)
-            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(spare_m,  mesh; dir = 1, sync = false)
-        end
-        record_halo!(recorder, 1)
+        SectionTimer.@section :cs_sweep_x _sweep_x_panels_mt_pingpong!(
+            spare_rm, spare_m, active_rm, active_m, panels_am, mesh, scheme;
+            flux_scale = fs_sub, seam_flux = workspace.seam_flux)
         active_rm, spare_rm = spare_rm, active_rm
         active_m, spare_m = spare_m, active_m
     end

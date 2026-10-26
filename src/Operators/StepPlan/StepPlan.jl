@@ -24,6 +24,7 @@ Phases, in the order a met window runs them:
 module StepPlans
 
 using ...SectionTimer
+using ...Architectures: copy_arrays!
 using ...State: CellState, CubedSphereState, ConstantField, eachtracer, ntracers
 using ...Grids: AtmosGrid, CubedSphereMesh
 import ..apply!
@@ -490,8 +491,10 @@ function _reset_air_mass_preserve_vmr!(state::CubedSphereState,
                            rm / old_p * new_p,
                            zero(FT))
         end
-        copyto!(old_p, new_p)
     end
+    # One queued launch for the six panels (each panel's rescaling above read
+    # only its own old air mass); see `copy_arrays!`.
+    copy_arrays!(state.air_mass, new_air_mass)
     return _refresh_state_halos!(state, mesh)
 end
 
@@ -504,9 +507,7 @@ function _reset_air_mass_preserve_tracer_mass!(state::CubedSphereState,
                                                new_air_mass::NTuple{6},
                                                mesh::CubedSphereMesh)
     fill_panel_halos!(new_air_mass, mesh; dir = 1)
-    for p in 1:6
-        copyto!(state.air_mass[p], new_air_mass[p])
-    end
+    copy_arrays!(state.air_mass, new_air_mass)
     return _refresh_state_halos!(state, mesh)
 end
 

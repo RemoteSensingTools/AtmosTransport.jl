@@ -367,7 +367,6 @@ function _accumulate_surface_footprint!(footprint, lambda_panels, dt, mesh::Cube
         kernel! = _accumulate_surface_footprint_kernel!(backend, (16, 16))
         kernel!(footprint[p], lambda_panels[p], eltype(lambda_panels[p])(dt), Int32(Hp), Int32(Nz);
                 ndrange=(mesh.Nc, mesh.Nc))
-        synchronize(backend)
     end
     return nothing
 end

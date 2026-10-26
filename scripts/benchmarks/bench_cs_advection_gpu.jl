@@ -314,7 +314,7 @@ function run_window!(panels_m, m_save, tracers, tracers_raw, fluxes, mesh,
                      scheme, ws, n_sub::Int)
     _ = m_save
     _ = tracers
-    fill_panel_halos!(tracers_raw, mesh; dir = 1)
+    AtmosTransport.Operators.Advection.fill_cs_step_start_halos!(tracers_raw, panels_m, mesh)
     strang_split_cs_mt!(tracers_raw, panels_m, fluxes.am, fluxes.bm, fluxes.cm,
                         mesh, scheme, ws; subcycle_count = n_sub)
     return nothing

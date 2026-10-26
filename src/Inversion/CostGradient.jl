@@ -79,10 +79,11 @@ function _surface_rates_from_controls(controls, nsteps::Int,
                 kernel! = _add_weighted_footprint_kernel!(backend, (16, 16))
                 kernel!(rates[step][p], control.value[p], weight;
                         ndrange = size(rates[step][p]))
-                synchronize(backend)
             end
         end
     end
+    # The launches above are queued in order; one wait covers them all.
+    synchronize(get_backend(prototype))
     return rates
 end
 
@@ -106,9 +107,9 @@ function _add_window_gradient!(gradient, result::CSFootprintResult,
             kernel! = _add_weighted_footprint_kernel!(backend, (16, 16))
             kernel!(gradient[p], result.footprints[step][p], weight;
                     ndrange = size(gradient[p]))
-            synchronize(backend)
         end
     end
+    synchronize(get_backend(gradient[1]))
     return nothing
 end
 
@@ -179,8 +180,8 @@ function _background_cost_and_gradient!(gradient, control::CSSurfaceFluxControl)
                 kernel!(gradient[p], value, background, sigma; ndrange = size(value))
             end
         end
-        synchronize(backend)
     end
+    synchronize(get_backend(gradient[1]))
     return cost
 end
 
@@ -198,9 +199,9 @@ function _gradient_step_control(control::CSSurfaceFluxControl, gradient, step)
         kernel! = _gradient_step_panel_kernel!(backend, (16, 16))
         kernel!(dst, control.value[p], gradient[p], FT(step);
                 ndrange = size(dst))
-        synchronize(backend)
         dst
     end, 6)
+    synchronize(get_backend(stepped[1]))
     return CSSurfaceFluxControl(control.window, stepped;
                                 background = control.background,
                                 sigma = control.sigma)

@@ -1032,11 +1032,12 @@ nan_check_interval_windows = 1   # default: after every met window
 
 With `nan_check` (on by default), the run stops with an error naming the
 field, the met window, the iteration and the model time as soon as the air
-mass or a tracer holds a NaN or Inf (interior cells). The check runs
-reductions on the run's backend without copying fields to the host: two per
-check on lat-lon and reduced-Gaussian grids, one per panel for the air mass
-and for the tracers on the cubed sphere (about 0.1 ms each on an L40S). The
-window count runs over the whole run, across input files.
+mass or a tracer holds a NaN or Inf (interior cells). The check queues scans
+on the run's backend without copying fields to the host (two per check on
+lat-lon and reduced-Gaussian grids, one per panel for the air mass and for the
+tracers on the cubed sphere), which raise a flag held on the device, and reads
+that flag once per check. The window count runs over the whole run, across
+input files.
 `nan_check_interval_windows` checks after every n-th window instead. In Julia
 the check is `Callback(NaNChecker(), WindowInterval(n))`, passed to
 `DrivenSimulation(...; callbacks)` with any other callbacks (see

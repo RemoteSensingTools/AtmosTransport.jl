@@ -420,6 +420,9 @@ end
 
         m0 = total_air_mass(sim.model.state)
         rm0 = total_mass(sim.model.state, :CO2)
+        # Window air mass at the midpoint fraction of the step just taken
+        # (the window-end reset target is the same interpolation at λ = 1).
+        m_expected = similar(sim.expected_air_mass)
 
         state_window = CellState(MoistBasis, ones(Float64, 4, 3, 2); CO2=fill(400e-6, 4, 3, 2))
         fluxes_window = allocate_face_fluxes(grid.horizontal, 2; FT=Float64, basis=MoistBasis)
@@ -439,7 +442,7 @@ end
         @test all(iszero, sim.model.fluxes.am)
         @test all(iszero, sim.model.fluxes.bm)
         @test all(iszero, sim.model.fluxes.cm)
-        @test all(isapprox.(sim.expected_air_mass, 1.2; atol=eps(Float64) * 10))
+        @test all(isapprox.(AtmosTransport.expected_air_mass!(m_expected, sim.window, 0.25), 1.2; atol=eps(Float64) * 10))
         @test all(isapprox.(current_qv(sim), 0.0125; atol=eps(Float64) * 10))
 
         step!(sim)
@@ -450,7 +453,7 @@ end
         @test all(iszero, sim.model.fluxes.am)
         @test all(iszero, sim.model.fluxes.bm)
         @test all(iszero, sim.model.fluxes.cm)
-        @test all(isapprox.(sim.expected_air_mass, 1.6; atol=eps(Float64) * 10))
+        @test all(isapprox.(AtmosTransport.expected_air_mass!(m_expected, sim.window, 0.75), 1.6; atol=eps(Float64) * 10))
         @test all(isapprox.(current_qv(sim), 0.0175; atol=eps(Float64) * 10))
 
         step!(sim)
@@ -461,7 +464,7 @@ end
         @test all(iszero, sim.model.fluxes.am)
         @test all(iszero, sim.model.fluxes.bm)
         @test all(iszero, sim.model.fluxes.cm)
-        @test all(isapprox.(sim.expected_air_mass, 1.4; atol=eps(Float64) * 10))
+        @test all(isapprox.(AtmosTransport.expected_air_mass!(m_expected, sim.window, 0.25), 1.4; atol=eps(Float64) * 10))
         @test all(isapprox.(current_qv(sim), 0.0225; atol=eps(Float64) * 10))
 
         run!(sim)

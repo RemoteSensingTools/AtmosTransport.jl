@@ -130,7 +130,6 @@ function apply_linrood_update_adjoint!(lambda_rm, lambda_m,
        lambda_fx_in, lambda_fx_out, lambda_fy_in, lambda_fy_out,
        lambda_rm_new, lambda_m_new, am, bm, Hp;
        ndrange=(Nc, Nc, Nz))
-    synchronize(backend)
     return nothing
 end
 
@@ -218,7 +217,6 @@ function apply_pre_advect_y_adjoint!(lambda_rm, lambda_m, lambda_fy_face,
     k!(lambda_rm, lambda_m, lambda_fy_face,
        lambda_q_i, rm, m, bm, fy_face, Hp;
        ndrange=(Nc, Nc, Nz))
-    synchronize(backend)
     return nothing
 end
 
@@ -281,7 +279,6 @@ function apply_pre_advect_x_adjoint!(lambda_rm, lambda_m, lambda_fx_face,
     k!(lambda_rm, lambda_m, lambda_fx_face,
        lambda_q_j, rm, m, am, fx_face, Hp;
        ndrange=(Nc, Nc, Nz))
-    synchronize(backend)
     return nothing
 end
 
@@ -553,7 +550,6 @@ function apply_ppm_x_face_from_q_adjoint!(lambda_q, lambda_fx_face,
         _ppm_x_face_from_q_kernel_adjoint_ord7!(backend, 256)
     k!(lambda_q, lambda_fx_face, q, am, m, Hp, Nc;
        ndrange=(Nc + 1, Nc, Nz))
-    synchronize(backend)
     return nothing
 end
 
@@ -661,6 +657,5 @@ function apply_ppm_y_face_from_q_adjoint!(lambda_q, lambda_fy_face,
         _ppm_y_face_from_q_kernel_adjoint_ord7!(backend, 256)
     k!(lambda_q, lambda_fy_face, q, bm, m, Hp, Nc;
        ndrange=(Nc, Nc + 1, Nz))
-    synchronize(backend)
     return nothing
 end

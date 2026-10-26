@@ -66,8 +66,18 @@ function _initial_adjoint_state(start::_ObjectiveStart, final_m, mesh::CubedSphe
     return lambda_panels
 end
 
-_initial_adjoint_state(start::_SeedStart, _final_m, ::CubedSphereMesh) =
-    _copy_panel_tuple(start.seed)
+# Only the interior of the final state is prognostic: the packed palindrome
+# returns stale halos (`strang_split_cs_mt_pingpong!`), so the halo entries of
+# a seed are ignored.
+function _initial_adjoint_state(start::_SeedStart, _final_m, mesh::CubedSphereMesh)
+    lambda_panels = _copy_panel_tuple(start.seed)
+    Nc, Hp = mesh.Nc, mesh.Hp
+    low, inner, high = 1:Hp, Hp+1:Hp+Nc, Hp+Nc+1:Nc+2Hp
+    for a in lambda_panels, (I, J) in ((low, :), (high, :), (inner, low), (inner, high))
+        view(a, I, J, :) .= zero(eltype(a))
+    end
+    return lambda_panels
+end
 
 _initial_adjoint_state(::_ZeroStart, final_m, ::CubedSphereMesh) =
     _zero_panel_tuple_like(final_m)
@@ -145,6 +155,10 @@ function _walk_window_reverse!(footprints, lambda_panels, ops,
             throw(ArgumentError("unknown CS adjoint tape operation $(typeof(op))"))
         end
     end
+    # The reverse kernels and device copies above are issued on the task's one
+    # ordered queue without host barriers between them; wait once, so the
+    # walk returns finished adjoint state and footprints.
+    synchronize(get_backend(lambda_panels[1]))
     return nothing
 end
 
@@ -180,7 +194,6 @@ function _apply_air_mass_reset_adjoint!(lambda_panels, op::_CSAirMassResetRecord
         backend = get_backend(lambda_panels[p])
         _preserve_vmr_reset_adjoint_kernel!(backend, 256)(lambda_panels[p], old_m[p], new_m[p];
                                                          ndrange = size(lambda_panels[p]))
-        synchronize(backend)
     end
     return nothing
 end

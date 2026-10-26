@@ -103,8 +103,9 @@ At a boundary, `_maybe_advance_window!`:
 
 `_refresh_forcing!` then computes the current substep fraction. Depending on
 the binary's declared sampling semantics, it either interpolates fluxes or
-copies window-constant values. It also refreshes expected air mass, humidity,
-and the selected operator's `ConvectionForcing` buffers.
+copies window-constant values. It also refreshes humidity and the selected
+operator's `ConvectionForcing` buffers. The expected (window-end) air mass is
+computed only by the window-end air-mass reset that reads it.
 
 The `meteo` object passed to operators is `sim`, not `sim.driver`. This gives
 time-varying fields access to `current_time(sim)` while keeping the driver

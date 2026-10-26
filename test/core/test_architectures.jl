@@ -172,6 +172,10 @@ struct Line <: AbstractPointOp
 end
 index_space(op::Line, ctx) = (op.n,)
 @inline apply_point!(::Line, ctx, i) = nothing
+# Counts the visits of every index of `ctx.out`.
+struct Visit <: AbstractPointOp end
+index_space(::Visit, ctx) = size(ctx.out)
+@inline apply_point!(::Visit, ctx, I...) = (ctx.out[I...] += 1; nothing)
 end
 using ._PointOpTests: Mark, Increment, Line, Rebind, REBINDS, ParallelMark
 
@@ -214,9 +218,10 @@ using ._PointOpTests: Mark, Increment, Line, Rebind, REBINDS, ParallelMark
     Arch.launch!(fused, host, KernelAbstractions.CPU())
     @test host.out == expected
 
-    # The device path (one kernel, slot dispatch, masking) on the CPU backend.
+    # The device path (one kernel over the flat index, slot dispatch, masking)
+    # on the CPU backend, with a workgroup that does not divide the space.
     kernel = (; out = zeros(4, 3, 3))
-    Arch._point_op_kernel!(KernelAbstractions.CPU(), 4)(fused, kernel; ndrange = (4, 3, 3))
+    Arch._launch_point_kernel!(fused, kernel, (4, 3, 3), KernelAbstractions.CPU(), 5)
     KernelAbstractions.synchronize(KernelAbstractions.CPU())
     @test kernel.out == expected
 
@@ -235,9 +240,95 @@ using ._PointOpTests: Mark, Increment, Line, Rebind, REBINDS, ParallelMark
     @test threaded.out == expected && REBINDS[] == 0
 end
 
+# A device launch runs over the flat index of the space; every index of the
+# space must be visited exactly once, in either index width.
+@testset "flat point-operation launch visits every index once" begin
+    Arch = AtmosTransport.Architectures
+    space = (3, 4, 5, 2)
+    for T in (Int32, Int)
+        @test [Arch._point_index(space, T(r)) for r in 0:(prod(space) - 1)] ==
+              vec(Tuple.(CartesianIndices(space)))
+    end
+    @test Arch._point_index((7,), Int32(6)) == (7,)
+    # The 32-bit width covers spaces of up to typemax(Int32) indices.
+    @test Arch._point_index_type(Int(typemax(Int32))) === Int32
+    @test Arch._point_index_type(Int(typemax(Int32)) + 1) === Int
+    big = (3, 2^31)                                  # a dimension beyond Int32
+    @test Arch._point_index(big, 3 * 2^31 - 1) == big
+    @test Arch._point_index(big, 3 * (2^31 - 1) + 2) == (3, 2^31)
+    @test Arch._point_index((2^16, 2^15), Int32(typemax(Int32))) == (2^16, 2^15)
+    visits = (; out = zeros(Int, 3, 4, 5))
+    for workgroup in (1, 7, 256)
+        fill!(visits.out, 0)
+        Arch._launch_point_kernel!(_PointOpTests.Visit(), visits, size(visits.out),
+                                   KernelAbstractions.CPU(), workgroup)
+        KernelAbstractions.synchronize(KernelAbstractions.CPU())
+        @test all(==(1), visits.out)
+    end
+    # The kernel itself in the 64-bit width.
+    fill!(visits.out, 0)
+    Arch._point_op_kernel!(KernelAbstractions.CPU(), 7)(_PointOpTests.Visit(), visits,
+                                                        size(visits.out), Int; ndrange = length(visits.out))
+    KernelAbstractions.synchronize(KernelAbstractions.CPU())
+    @test all(==(1), visits.out)
+    # An empty index space launches nothing.
+    @test Arch._launch_point_kernel!(_PointOpTests.Visit(), (; out = zeros(Int, 0, 4, 5)), (0, 4, 5),
+                                     KernelAbstractions.CPU(), 256) === nothing
+end
+
 @testset "select_panel returns panel p for p in 1:6" begin
     panels = ntuple(p -> fill(p, 2), 6)
     for p in 1:6
         @test AtmosTransport.Architectures.select_panel(panels, p) === panels[p]
     end
+end
+
+# `copy_arrays!`: one launch for a set of copies, equal to their `copyto!`s.
+@testset "copy_arrays! copies every pair (host loop and device kernel path)" begin
+    Arch = AtmosTransport.Architectures
+    src = (rand(Float32, 5, 4, 3), rand(Float32, 4, 5, 3), rand(Float32, 4, 4, 4))
+    dest = map(a -> fill(NaN32, size(a)), src)
+    @test Arch.copy_arrays!(dest, src) === dest
+    @test all(map(==, dest, src))
+    @test Arch.copy_arrays!((), ()) === ()
+    # The device path: one kernel over the longest array, shorter pairs masked.
+    kernel = map(a -> fill(NaN32, size(a)), src)
+    space = Arch.index_space(Arch.LinearCopy(), (; dest = kernel, src))
+    @test space == (maximum(length, src),)
+    Arch._launch_point_kernel!(Arch.LinearCopy(), (; dest = kernel, src), space,
+                               KernelAbstractions.CPU(), 16)
+    KernelAbstractions.synchronize(KernelAbstractions.CPU())
+    @test all(map(==, kernel, src))
+    @test_throws DimensionMismatch Arch.copy_arrays!((zeros(Float32, 4, 5, 3),), (src[1],))
+    @test_throws ArgumentError Arch.copy_arrays!(dest, src[1:2])
+end
+
+# An array that reports another backend, to build a batch that mixes backends.
+struct _OtherBackendArray{T, N} <: AbstractArray{T, N}
+    data::Array{T, N}
+end
+Base.size(a::_OtherBackendArray) = size(a.data)
+Base.getindex(a::_OtherBackendArray, i::Int...) = a.data[i...]
+Base.setindex!(a::_OtherBackendArray, v, i::Int...) = (a.data[i...] = v)
+const _OTHER_BACKEND = _CountingBackend(Ref(0))
+KernelAbstractions.get_backend(::_OtherBackendArray) = _OTHER_BACKEND
+
+@testset "copy_arrays! launches once only when every array shares one backend" begin
+    Arch = AtmosTransport.Architectures
+    src = (rand(Float32, 3, 2), rand(Float32, 2, 3))
+    @test Arch.single_launch_copy(map(similar, src), src)
+    other = _OtherBackendArray(zeros(Float32, 2, 3))
+    # Eligibility looks at every pair, not only the first.
+    @test !Arch.single_launch_copy((similar(src[1]), other), src)
+    @test !Arch.single_launch_copy(map(similar, src), (src[1], _OtherBackendArray(copy(src[2]))))
+    @test Arch.single_launch_copy((other,), (_OtherBackendArray(copy(src[2])),))
+    # A mixed batch falls back to one `copyto!` per pair (a launch on the fake
+    # backend would throw).
+    first_other = _OtherBackendArray(zeros(Float32, 3, 2))
+    dest = (first_other, similar(src[2]))
+    @test Arch.copy_arrays!(dest, src) === dest
+    @test first_other.data == src[1] && dest[2] == src[2]
+    mixed = (similar(src[1]), other)
+    @test Arch.copy_arrays!(mixed, src) === mixed
+    @test mixed[1] == src[1] && other.data == src[2]
 end

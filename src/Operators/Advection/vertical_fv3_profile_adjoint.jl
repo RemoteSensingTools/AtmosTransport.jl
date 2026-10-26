@@ -274,7 +274,6 @@ function _sweep_z_panels_fv3_adjoint!(lambda_panels::NTuple{6}, panels_rm::NTupl
         kernel! = _cs_zsweep_fv3_adjoint_kernel!(backend, (32, 4))
         kernel!(lambda_panels[p], panels_rm[p], panels_m[p], panels_cm[p], scratch, profile,
                 Int32(Nz), Int32(Hp), FT(flux_scale); ndrange = (Nc, Nc))
-        synchronize(backend)
     end
     return lambda_panels
 end

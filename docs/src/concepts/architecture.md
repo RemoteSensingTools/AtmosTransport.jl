@@ -142,6 +142,23 @@ exchange takes about 25 µs instead of 120 µs. Inside the packed cubed-sphere
 palindrome (`strang_split_cs_mt!`) the exchanges are only queued
 (`sync = false`): the palindrome synchronizes once, at its end.
 
+Every device launch of a point operation runs over the flat linear index of
+its index space and recovers the index tuple with 32-bit integer divisions
+(64-bit from 2³¹ indices on). A launch over the index tuple itself puts each
+workgroup along the first dimension only, so short first dimensions leave most
+lanes idle: 96 of 256 for a C90 field, 3 of 256 for a halo corner fill of
+width 3. On an M5 Pro the flat launch cut the GPU time of a C90 window unpack from
+4.7 to 1.0 ms.
+
+Sets of same-sized device-to-device copies go through `copy_arrays!`: on
+every device backend (CUDA, ROCm, Metal), one queued `LinearCopy` launch over
+the longest array instead of one `copyto!` per array, when all arrays live on
+one backend (the host, and batches that mix backends, keep plain `copyto!`s).
+The cubed-sphere forcing refresh copies its 18 flux panels this way at every
+step. On CUDA and ROCm this saves launches; on Metal it also removes the queue
+synchronization Metal.jl performs around every `copyto!`, which cost about
+2.5 ms per step on an M5 Pro.
+
 ## One transport window
 
 At a high level, each meteorological window follows this sequence:
@@ -170,11 +187,17 @@ the next file has the same window layout, the new simulation refills the
 previous one's window buffers instead of allocating new ones.
 
 On a GPU, a cubed-sphere transport binary whose on-disk element type is the
-run's is loaded window by window with concurrent reads of the payload into
-page-locked host memory, section-wise uploads through a section-sized device
-buffer, and unpacking kernels on the device (`MetDrivers.RawWindowStaging`);
-the device window equals the upload of a window loaded on the host. Other
-binaries are converted on the host into a page-locked staging window.
+run's is loaded window by window with concurrent reads of the payload and
+unpacking kernels on the device. With discrete device memory (CUDA, ROCm) the
+reads fill page-locked host memory, uploaded section by section through a
+section-sized device buffer (`MetDrivers.RawWindowStaging`). With unified
+memory (Metal, `Architectures.host_memory_model`) the reads fill a
+shared-storage device buffer that the unpack kernels read in place
+(`MetDrivers.MappedWindowStaging`): Metal.jl's host-to-device `copyto!`
+synchronizes the queue and stages through a temporary buffer on every call.
+Either way the device window equals the upload of a window loaded on the
+host. Other binaries are converted on the host into a page-locked staging
+window.
 
 The detailed operator ordering is documented in [Operators](@ref Operator-concepts). The mass
 invariant is derived in [Mass conservation](@ref).

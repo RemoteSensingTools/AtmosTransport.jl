@@ -114,7 +114,9 @@ _cs_max_q_error(rm, m, q, I) = maximum(maximum(abs.(rm[p][I, I, :, 1] ./ m[p][I,
 end
 
 # The composition `(X Y Z)^n | midpoint | (Z Y X)^n` built from the sweep
-# primitives, with the halo fills of `strang_split_cs_mt_pingpong!`.
+# primitives, with the halo fills of `strang_split_cs_mt_pingpong!` plus one
+# after every horizontal sweep: production skips those extra fills because
+# nothing reads them, and matching this bit for bit shows it.
 function _cs_explicit_composition(rm, m, am, bm, cm, mesh, scheme, ws, n, midpoint!)
     spare_rm = ntuple(p -> zero(rm[p]), 6); spare_m = ntuple(p -> zero(m[p]), 6)
     fs = 1.0 / n
@@ -423,8 +425,9 @@ end
             op isa AT.Tape._CSMidpointRecord ? :mid :
             op isa AT.Tape._CSStepEndRecord ? :end : :other
         end
-        forward = reduce(vcat, [vcat(pass > 1 ? [:h1] : Symbol[], [:x, :h1, :y, :h2, :z]) for pass in 1:n])
-        reverse_half = repeat([:z, :h2, :y, :h2, :h1, :x, :h1], n)
+        # Halo fills only before the horizontal sweeps that read them.
+        forward = reduce(vcat, [vcat(pass > 1 ? [:h1] : Symbol[], [:x, :h1, :y, :z]) for pass in 1:n])
+        reverse_half = repeat([:z, :h2, :y, :h1, :x], n)
         # The leading X halo record is production's step-start refresh
         # (`fill_cs_step_start_halos!`); the step closes with its end-of-step
         # marker (issue #20), where the 4D-Var reverse pass adds the step's

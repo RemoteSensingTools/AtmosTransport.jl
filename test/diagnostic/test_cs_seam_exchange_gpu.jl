@@ -22,7 +22,9 @@ else
             gpu_ws = CSSeamAdv.CSAdvectionWorkspace(mesh, device_mass[1]; n_tracers=Nt)
             initial = [sum(sum(Float64, cs_seam_interior(view(a, :, :, :, t), mesh)) for a in tracer) for t in 1:Nt]
             scale = [sum(sum(abs, Float64.(cs_seam_interior(view(a, :, :, :, t), mesh))) for a in tracer) for t in 1:Nt]
-            for _ in 1:2
+            for _ in 1:2    # two model steps, each opening with the step-start halo refresh
+                CSSeamAdv.fill_cs_step_start_halos!(tracer, mass, mesh)
+                CSSeamAdv.fill_cs_step_start_halos!(device_tracer, device_mass, mesh)
                 CSSeamAdv.strang_split_cs_mt!(tracer, mass, am, bm, cm, mesh, PPMScheme(), cpu_ws; subcycle_count=1)
                 CSSeamAdv.strang_split_cs_mt!(device_tracer, device_mass, device_am, device_bm,
                     device_cm, mesh, PPMScheme(), gpu_ws; subcycle_count=1)

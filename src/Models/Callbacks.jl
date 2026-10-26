@@ -102,16 +102,51 @@ end
     NaNChecker()
 
 Callback function that stops the run with an error when the air mass or a
-tracer holds a NaN or Inf (interior cells only). It runs `mapreduce` on the
-state's backend, without copying fields to the host: one reduction for the air
-mass and one for all tracers on structured grids, one per panel for each on the
-cubed sphere (about 0.1 ms each on an L40S). The run config installs it as
-`Callback(NaNChecker(), WindowInterval(n))` (`[checks]`).
+tracer holds a NaN or Inf (interior cells only). It queues one scan per field
+(per panel on the cubed sphere) on the state's backend, each raising a flag
+held next to the state, and reads the flag back: on a clean check that one
+readback is the only host synchronization, and no field is copied. Only after
+a hit does it look for the field to name. The run config installs it as
+`Callback(NaNChecker(), WindowInterval(n))` (`[checks]`). A checker may serve
+simulations one after another (the input files of a run), but not two that run
+concurrently.
+
+Rationale: a `mapreduce` per field synchronizes and reads back each result;
+on an Apple M5 Pro the twelve reductions of a cubed-sphere check took 4.4 ms.
 """
-struct NaNChecker end
+mutable struct NaNChecker
+    flag  :: Any        # one-element `Int32` array beside `owner`; zero between checks
+    owner :: WeakRef    # the array the flag was allocated for
+end
+NaNChecker() = NaNChecker(nothing, WeakRef())
 
 _has_nonfinite(field::AbstractArray) = mapreduce(!isfinite, |, field; init = false)
 _has_nonfinite(fields::Tuple) = any(_has_nonfinite, fields)
+
+"""Sets `ctx.flag[1] = 1` where `ctx.field` is not finite."""
+struct NonfiniteScan <: AbstractPointOp end
+Architectures.index_space(::NonfiniteScan, ctx) = size(ctx.field)
+# Every thread that finds a non-finite value stores the same 1 (a benign race).
+@inline function Architectures.apply_point!(::NonfiniteScan, ctx, I...)
+    @inbounds isfinite(ctx.field[I...]) || (ctx.flag[1] = one(eltype(ctx.flag)))
+    return nothing
+end
+
+_scan_nonfinite!(flag, field::AbstractArray) =
+    launch!(NonfiniteScan(), (; field, flag), Architectures.KA.get_backend(field); sync = false)
+_scan_nonfinite!(flag, fields::Tuple) = foreach(field -> _scan_nonfinite!(flag, field), fields)
+
+# The checker's flag for the state that holds `reference`: allocated and zeroed
+# beside it at the first check of that state (the same backend and device; a
+# backend alone does not name a device).
+function _nonfinite_flag!(checker::NaNChecker, reference)
+    owner = parent(reference)
+    if checker.flag === nothing || checker.owner.value !== owner
+        checker.flag = fill!(similar(owner, Int32, 1), 0)
+        checker.owner = WeakRef(owner)
+    end
+    return checker.flag
+end
 
 # Interior views, without the cubed-sphere halos (which are not prognostic).
 _interior_view(panel::AbstractArray{<:Any, 3}, Hp) =
@@ -130,15 +165,18 @@ _checked_tracer(state::CellState, i) = selectdim(state.tracers_raw, ndims(state.
 _checked_tracer(state::CubedSphereState, i) =
     map(panel -> view(panel, :, :, :, i), _checked_tracers(state))
 
-function (::NaNChecker)(sim)
+function (checker::NaNChecker)(sim)
     state = sim.model.state
-    _has_nonfinite(_checked_air_mass(state)) && _nonfinite_error(sim, "the air mass")
-    if _has_nonfinite(_checked_tracers(state))       # name the tracer only on failure
-        names = tracer_names(state)
-        i = findfirst(i -> _has_nonfinite(_checked_tracer(state, i)), eachindex(names))
-        _nonfinite_error(sim, i === nothing ? "a tracer" : "tracer $(names[i])")
-    end
-    return nothing
+    air_mass, tracers = _checked_air_mass(state), _checked_tracers(state)
+    flag = _nonfinite_flag!(checker, air_mass isa Tuple ? air_mass[1] : air_mass)
+    _scan_nonfinite!(flag, air_mass)
+    _scan_nonfinite!(flag, tracers)
+    iszero(only(Array(flag))) && return nothing
+    fill!(flag, 0)                                   # for a later check
+    _has_nonfinite(air_mass) && _nonfinite_error(sim, "the air mass")
+    names = tracer_names(state)                      # name the tracer
+    i = findfirst(i -> _has_nonfinite(_checked_tracer(state, i)), eachindex(names))
+    _nonfinite_error(sim, i === nothing ? "a tracer" : "tracer $(names[i])")
 end
 
 _nonfinite_error(sim, what) = error(

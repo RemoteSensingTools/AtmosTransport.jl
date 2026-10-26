@@ -40,7 +40,8 @@ Geometry and topology decisions come from
 - `Parameters/` — physical constants and planetary parameters
 - `Architectures.jl` — unified CPU/vendor-specific GPU execution policies,
   kernel launching (`launch!`) and point operations (`AbstractPointOp`,
-  `Fused`, `Sequence`: a kernel body written once, fused by dispatch)
+  `Fused`, `Sequence`: a kernel body written once, fused by dispatch;
+  `copy_arrays!`: a set of device copies as one queued launch)
 - `ConfigChecks.jl` — strict TOML Booleans and known-key checks with
   "did you mean" suggestions, shared by `Output`, `Preprocessing` and `Models`
 - `AtomicFiles.jl` — publish a file only when it is complete: a sibling

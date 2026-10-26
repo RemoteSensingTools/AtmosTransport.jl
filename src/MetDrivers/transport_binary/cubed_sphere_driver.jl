@@ -100,17 +100,15 @@ end
     return padded
 end
 
-@inline function _copy_cs_storage!(dest::NTuple{6}, src::NTuple{6})
-    @inbounds for p in 1:6
-        copyto!(dest[p], src[p])
-    end
-    return dest
-end
+# The six panels in one queued launch (`copy_arrays!`).
+@inline _copy_cs_storage!(dest::NTuple{6}, src::NTuple{6}) = copy_arrays!(dest, src)
 
+# All 18 flux panels in one launch on every device backend (CUDA, ROCm,
+# Metal): the stepping loop refreshes the model's fluxes every step; one launch
+# replaces 18 copies everywhere, and on Metal also the queue synchronization
+# that Metal.jl performs around every `copyto!`.
 @inline function copy_fluxes!(dest::CubedSphereFaceFluxState, src::CubedSphereFaceFluxState)
-    _copy_cs_storage!(dest.am, src.am)
-    _copy_cs_storage!(dest.bm, src.bm)
-    _copy_cs_storage!(dest.cm, src.cm)
+    copy_arrays!((dest.am..., dest.bm..., dest.cm...), (src.am..., src.bm..., src.cm...))
     return dest
 end
 
@@ -227,33 +225,70 @@ end
 # Raw window staging (device runs)
 #
 # A window's payload is one contiguous run of `elems_per_window` elements of
-# the binary. A device run reads it into a page-locked host buffer (concurrent
-# reads, no page faults on the file mapping), uploads it section by section
-# through a section-sized device buffer, and unpacks each section on the
-# device: each section panel is copied into its window panel, a padded field
-# receiving its interior and zero halo cells. The device window is then exactly
-# the upload of a host window loaded with `load_transport_window!` (whose halos
-# keep the zeros of the first load).
+# the binary. A device run reads it into a host buffer with concurrent reads
+# (no page faults on the file mapping) and unpacks each section on the device:
+# each section panel is copied into its window panel, a padded field receiving
+# its interior and zero halo cells. With discrete device memory (CUDA, ROCm)
+# the host buffer is page-locked and each section is uploaded through a
+# section-sized device buffer first (`RawWindowStaging`); with unified memory
+# (Metal) the host buffer is a device buffer that the unpack kernels read
+# directly (`MappedWindowStaging`). The device window is then exactly the upload
+# of a host window loaded with `load_transport_window!` (whose halos keep the
+# zeros of the first load).
 # ---------------------------------------------------------------------------
 
 """
-    RawWindowStaging(host, device)
-    raw_window_staging(driver, reference_array) -> RawWindowStaging or nothing
+    AbstractRawWindowStaging
 
-A page-locked host buffer holding one window payload of a cubed-sphere
-transport binary and a device buffer holding its largest payload section, for
-device runs: `read_window_payload!` fills the host buffer,
-`unpack_window_payload!` uploads it section by section and fills a device
-window. `raw_window_staging` builds the buffers on the backend of
-`reference_array` (a device array or six-panel tuple). It returns `nothing`
-for drivers without raw window payloads and for binaries whose on-disk element
-type is not the run's (those convert while loading on the host).
+Buffers holding one raw window payload of a cubed-sphere transport binary for
+a device run: `read_window_payload!` fills `staging.host`, and
+`unpack_window_payload!` fills a device window from it. Built by
+`raw_window_staging`; the concrete type follows the backend's
+`Architectures.host_memory_model` (`RawWindowStaging` or
+`MappedWindowStaging`).
 """
-struct RawWindowStaging{H <: AbstractVector, D <: AbstractVector}
+abstract type AbstractRawWindowStaging end
+
+"""
+    RawWindowStaging(host, device)
+
+Raw window staging for discrete device memory: a page-locked host buffer
+holding one window payload and a device buffer holding its largest payload
+section; `unpack_window_payload!` uploads the window section by section
+(asynchronous copies from page-locked memory on CUDA).
+"""
+struct RawWindowStaging{H <: AbstractVector, D <: AbstractVector} <: AbstractRawWindowStaging
     host   :: H
     device :: D
 end
 
+"""
+    MappedWindowStaging(host, device)
+
+Raw window staging for unified memory: `device` holds one window payload and
+`host` is an `Array` over the same memory (`Architectures.host_mapped_vector`),
+so the reads fill device memory and `unpack_window_payload!` unpacks each
+section straight from its offset in the payload, with no upload.
+
+Rationale: on Metal, each host-to-device `copyto!` synchronizes the queue,
+copies through a temporary shared buffer and waits for the blit. On an M5 Pro
+a C90 window load (read, unpack, synchronize) took a median 65 ms with
+section uploads and 23 ms reading into a shared-storage buffer.
+"""
+struct MappedWindowStaging{H <: AbstractVector, D <: AbstractVector} <: AbstractRawWindowStaging
+    host   :: H
+    device :: D
+end
+
+"""
+    raw_window_staging(driver, reference_array) -> AbstractRawWindowStaging or nothing
+
+Raw window staging buffers for `driver` on the backend of `reference_array` (a
+device array or six-panel tuple): `MappedWindowStaging` where the backend has
+`UnifiedHostMemory`, `RawWindowStaging` otherwise. Returns `nothing` for
+drivers without raw window payloads and for binaries whose on-disk element
+type is not the run's (those convert while loading on the host).
+"""
 raw_window_staging(::AbstractMetDriver, _reference_array) = nothing
 
 function raw_window_staging(driver::TransportBinaryDriver{FT, <:TransportBinaryReader{FT, DiskFT},
@@ -261,20 +296,28 @@ function raw_window_staging(driver::TransportBinaryDriver{FT, <:TransportBinaryR
                             reference_array) where {FT, DiskFT}
     DiskFT === FT || return nothing
     ref = reference_array isa Tuple ? reference_array[1] : reference_array
-    h = driver.reader.header
-    host = pin_host_memory!(Vector{DiskFT}(undef, h.elems_per_window), ref)
+    return _raw_window_staging(host_memory_model(ref), driver.reader.header, DiskFT, ref)
+end
+
+function _raw_window_staging(::DiscreteHostMemory, h, ::Type{T}, ref) where {T}
+    host = pin_host_memory!(Vector{T}(undef, h.elems_per_window), ref)
     largest = maximum(section -> _cs_section_elements(h, section), h.payload_sections)
-    return RawWindowStaging(host, similar(ref, DiskFT, largest))
+    return RawWindowStaging(host, similar(ref, T, largest))
+end
+
+function _raw_window_staging(::UnifiedHostMemory, h, ::Type{T}, ref) where {T}
+    host, device = host_mapped_vector(T, h.elems_per_window, ref)
+    return MappedWindowStaging(host, device)
 end
 
 """
-    read_window_payload!(staging::RawWindowStaging, driver, win) -> staging
+    read_window_payload!(staging::AbstractRawWindowStaging, driver, win) -> staging
 
 Read window `win` of `driver`'s binary into `staging.host`: on Unix as
 `_RAW_READ_CHUNKS` concurrent `pread`s on libuv's thread pool (`@threadcall`,
 no Julia thread is blocked), elsewhere with one `read!`.
 """
-function read_window_payload!(staging::RawWindowStaging,
+function read_window_payload!(staging::AbstractRawWindowStaging,
                               driver::TransportBinaryDriver{FT, <:TransportBinaryReader{FT, DiskFT},
                                                             <:AtmosGrid{<:CubedSphereMesh}},
                               win::Int) where {FT, DiskFT}
@@ -367,18 +410,19 @@ bound_context(op::RawPanelUnpack, ctx) = merge(ctx, (panel = ctx.dest[op.p],))
 end
 
 """
-    unpack_window_payload!(window, driver, staging::RawWindowStaging) -> window
+    unpack_window_payload!(window, driver, staging::AbstractRawWindowStaging) -> window
 
-Upload each payload section of `staging.host` (from `read_window_payload!`)
-that `window` stores to `staging.device` and unpack it into the device
-`window` (one `Fused` launch of six `RawPanelUnpack`s per section). Transfers
-and kernels are queued in order on the current task's device queue (a section
-upload waits for the previous unpack); synchronize before using `window` on
-another task or refilling `staging.host`.
+Unpack each payload section of `staging` (filled by `read_window_payload!`)
+that `window` stores into the device `window` (one `Fused` launch of six
+`RawPanelUnpack`s per section). A `RawWindowStaging` first uploads the section
+from `staging.host` to `staging.device`; a `MappedWindowStaging` unpacks it in
+place from `staging.device`. Transfers and kernels are queued in order on the
+current task's device queue (a section upload waits for the previous unpack);
+synchronize before using `window` on another task or refilling `staging.host`.
 """
 function unpack_window_payload!(w::TransportWindow,
                                 driver::TransportBinaryDriver{FT, R, <:AtmosGrid{<:CubedSphereMesh}},
-                                staging::RawWindowStaging) where {FT, R}
+                                staging::AbstractRawWindowStaging) where {FT, R}
     h = driver.reader.header
     h.geometry.npanel == 6 || throw(ArgumentError(
         "raw window unpacking needs six panels; the binary has $(h.geometry.npanel)"))
@@ -397,12 +441,12 @@ function unpack_window_payload!(w::TransportWindow,
             halo = padded ? Hp : 0
             dims = size(panels[1])
             interior = (dims[1] - 2halo) * (dims[2] - 2halo) * prod(dims[3:end]; init = 1)
-            n == 6interior && length(staging.device) >= n && length(staging.host) >= o + n ||
+            n == 6interior && _section_fits(staging, o, n) ||
                 throw(DimensionMismatch("raw window section $section: $n values on disk, window " *
                                         "panels hold 6 × $interior; staging $(length(staging.host)) host / " *
                                         "$(length(staging.device)) device values for offset $o"))
-            copyto!(staging.device, 1, staging.host, o + 1, n)
-            launch!(Fused(ntuple(p -> RawPanelUnpack(p, (p - 1) * per_panel), Val(6))),
+            base = _stage_section!(staging, o, n)
+            launch!(Fused(ntuple(p -> RawPanelUnpack(p, base + (p - 1) * per_panel), Val(6))),
                     (; dest = panels, raw = staging.device, halo = padded ? Hp : 0),
                     backend; sync = false)
         end
@@ -410,6 +454,19 @@ function unpack_window_payload!(w::TransportWindow,
     end
     return w
 end
+
+# Whether the `n` values of the section at payload offset `o` fit the staging
+# buffers, and (`_stage_section!`) make them readable on the device, returning
+# the offset of the section in `staging.device`.
+_section_fits(s::RawWindowStaging, o, n) = length(s.device) >= n && length(s.host) >= o + n
+_section_fits(s::MappedWindowStaging, o, n) = length(s.device) >= o + n && length(s.host) >= o + n
+
+function _stage_section!(s::RawWindowStaging, o, n)
+    copyto!(s.device, 1, s.host, o + 1, n)
+    return 0
+end
+
+_stage_section!(::MappedWindowStaging, o, _n) = o
 
 # One panel of `n` elements starting after offset `o` of the mmap'd payload.
 @inline _copy_cs_panel!(dst::Array, data, o::Int, n::Int) = copyto!(dst, 1, data, o + 1, n)

@@ -60,7 +60,10 @@ Configuration parsing lives in
 - A cubed-sphere split-sweep step starts with `fill_cs_step_start_halos!`
   ([`CubedSphereStrang.jl`](CubedSphereStrang.jl), all edge halos plus the
   X-orientation corners): the first X sweep reads halos, and convection or
-  chemistry between steps changed the interiors
+  chemistry between steps changed the interiors. The packed palindrome
+  (`strang_split_cs_mt_pingpong!`) fills halos only before the horizontal
+  sweeps that read them, so it returns stale halos; its Z sweeps and
+  midpoint operators must stay column-local (interior reads only)
 - CFL subcycling (every topology): one count `n` from the palindrome
   outflow budget against `min(m_start, m_end)` (no pass removes more than
   `cfl_limit / 2` of a cell's current mass; an invalid flux set throws), then `(X Y Z)^n → midpoint → (Z Y X)^n` with every flux
