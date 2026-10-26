@@ -1069,15 +1069,19 @@ end
     # Loop column index as outermost (leftmost-innermost k: correct
     # column-major order because column slices are contiguous when
     # arrays are (Nz, …, Ncols)).
+    solve_column!(c) = _tm5_solve_column!(view(rm, :, :, c),
+                                          view(m, :, c),
+                                          view(entu, :, c), view(detu, :, c),
+                                          view(entd, :, c), view(detd, :, c),
+                                          view(conv1s, :, :, c),
+                                          view(pivs, :, c),
+                                          view(cds, :, c),
+                                          T(600))
+    # Compile outside the timed loop: the first call took 0.5 s locally and
+    # 1.2 s on a CI runner, the 256 warm columns about 1 ms.
+    solve_column!(1)
     t_correct = @elapsed for c in 1:Ncols
-        _tm5_solve_column!(view(rm, :, :, c),
-                            view(m, :, c),
-                            view(entu, :, c), view(detu, :, c),
-                            view(entd, :, c), view(detd, :, c),
-                            view(conv1s, :, :, c),
-                            view(pivs, :, c),
-                            view(cds, :, c),
-                            T(600))
+        solve_column!(c)
     end
     @test t_correct < 1.0   # generous smoke gate; actual <50 ms
 end
