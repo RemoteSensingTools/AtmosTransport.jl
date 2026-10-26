@@ -62,6 +62,22 @@ the device; now each tracer holds a few 0.19 MB slices there.
   windows) and does not depend on the run length.
 - The emission totals (`integrals.jl`) sum the host series in place.
 
+## Cubed-Sphere Launches
+
+`apply_surface_flux!` on the cube resolves each source's step on the host
+(`_cs_surface_flux_plan`: target tracer, rate arrays, segments) and launches
+one `Fused` set of `CSSurfaceFluxSegment` operations per segment index for up
+to four sources at a time (`_CS_SURFACE_FLUX_SOURCES_PER_LAUNCH`, which keeps a
+launch's arguments within the classic 4 kB limit). The sources of a map target
+distinct tracers and own their compensation arrays, so they write disjoint
+cells; each source's segments follow in stream order, so its Kahan and TwoSum
+sums see the same operations in the same order as one launch per source and
+segment (bit-identical). The operation runs as a kernel on the CPU backend too
+(`host_parallel`), since a `ProfileDeposit` walks the whole column per index.
+On an NVIDIA L40S with 72 levels and `ProfileDeposit`, a C90 step with 12
+tracers takes 0.77 ms instead of 1.14 ms (12 launches), C24 with 12 tracers
+0.13 ms instead of 0.39 ms (host time included).
+
 ## Layout Conventions
 
 - The surface is always `k = Nz`
@@ -81,10 +97,11 @@ the device; now each tracer holds a few 0.19 MB slices there.
   helpers
 - [`PerTracerFluxMap.jl`](PerTracerFluxMap.jl) — tuple-backed source map
   keyed by tracer name
-- [`surface_flux_kernels.jl`](surface_flux_kernels.jl) — structured,
-  face-indexed, and cubed-sphere surface-application kernels; on the cube the
-  emitted mass is placed by `SurfaceLayerDeposit` or `ProfileDeposit` (GEOS-Chem
-  non-local VDIFF spreads fresh emissions over the PBL, see `emission_deposit`)
+- [`surface_flux_kernels.jl`](surface_flux_kernels.jl) — structured and
+  face-indexed surface-application kernels, and the cubed-sphere
+  `CSSurfaceFluxSegment` point operation; on the cube the emitted mass is
+  placed by `SurfaceLayerDeposit` or `ProfileDeposit` (GEOS-Chem non-local
+  VDIFF spreads fresh emissions over the PBL, see `emission_deposit`)
 - [`operators.jl`](operators.jl) — operator hierarchy, source-to-tracer
   lookup, state-level `apply!`, array-level `apply_surface_flux!`,
   `stage_surface_flux_window!` for an operator, and the deposit choice of

@@ -232,11 +232,12 @@ function apply_surface_flux!(q_raw::NTuple{6, A}, op::SurfaceFluxOperator, works
     ndims(A) == 3 && length(tracer_names) != 1 && throw(ArgumentError(
         "apply_surface_flux!: cubed-sphere single-tracer panels require exactly one tracer name, got $(tracer_names)"))
     backend = get_backend(q_raw[1])
-    for src in op.flux_map.sources
-        t_idx = findfirst(==(src.tracer_name), tracer_names)
-        t_idx === nothing && continue
-        _apply_cs_surface_flux!(q_raw, src, FT(dt), t_idx, Int(halo_width), backend, meteo, deposit)
+    Hp = Int(halo_width)
+    plans = map(op.flux_map.sources) do src
+        _cs_surface_flux_plan(q_raw, src, FT(dt), findfirst(==(src.tracer_name), tracer_names),
+                              Hp, meteo)
     end
+    _launch_cs_surface_flux!(q_raw, plans, Hp, backend, deposit)
     synchronize(backend)
     return nothing
 end
@@ -276,45 +277,76 @@ function _cs_interior_shape(q_panel, Hp, rate_panel, src, p)
     return Nc, Ny, size(q_panel, 3)
 end
 
-# Static per-cell rate.
-function _apply_cs_surface_flux!(q_raw::NTuple{6}, src::SurfaceFluxSource, dt_FT, t_idx,
-                                 Hp, backend, meteo, deposit)
-    rates = src.cell_mass_rate
-    rates isa NTuple{6} || throw(ArgumentError(
-        "apply_surface_flux!: cubed-sphere source $(src.tracer_name) must provide NTuple{6} panel rates"))
+function _check_cs_panel_shapes(q_raw, rates, src, Hp)
     shapes = ntuple(p -> _cs_interior_shape(q_raw[p], Hp, rates[p], src, p), 6)
     allequal(shapes) || throw(DimensionMismatch(
         "surface source $(src.tracer_name): cubed-sphere panels differ in shape, $(shapes)"))
-    Nc, Ny, Nz = shapes[1]
-    kernel = _surface_flux_cs_panels_kernel!(backend, (16, 16))
-    kernel(q_raw, rates, src.compensation, dt_FT, t_idx, Nz, Hp, deposit; ndrange = (Nc, Ny, 6))
     return nothing
+end
+
+# What one step of a source applies on the cube: the six-panel rate arrays the
+# kernel reads (static `(Nc, Nc)` rates, or a time-varying source's window
+# buffer slots `(Nc, Nc, capacity)`), its compensation, the target tracer, the
+# step length and the step's segments `(slot0, slot1, w0, w1, frac)`, applied
+# in order. A source whose tracer the state does not carry applies nothing.
+_cs_surface_flux_plan(rates, comp, tracer, dt, segments) = (; rates, comp, tracer, dt, segments)
+_cs_surface_flux_plan(q_raw::NTuple{6}, src, dt_FT, ::Nothing, Hp, meteo) =
+    _cs_surface_flux_plan(nothing, nothing, 0, dt_FT, _FluxSegment[])
+
+# Static per-cell rate: one segment of the whole step.
+function _cs_surface_flux_plan(q_raw::NTuple{6}, src::SurfaceFluxSource, dt_FT, t_idx::Integer,
+                               Hp, meteo)
+    rates = src.cell_mass_rate
+    rates isa NTuple{6} || throw(ArgumentError(
+        "apply_surface_flux!: cubed-sphere source $(src.tracer_name) must provide NTuple{6} panel rates"))
+    _check_cs_panel_shapes(q_raw, rates, src, Hp)
+    return _cs_surface_flux_plan(rates, src.compensation, t_idx, dt_FT,
+                                 _FluxSegment[(1, 1, 1.0, 0.0, 1.0)])
 end
 
 # Time-varying series: the bracketing slices and weights come from the sim
 # clock (`current_time(meteo)`). The kernel reads the slices from the source's
 # device window buffer; the step's slices are made resident first, which copies
 # nothing when the runner has staged the window (`stage_surface_flux_window!`).
-function _apply_cs_surface_flux!(q_raw::NTuple{6}, src::TimeVaryingSurfaceFluxSource, dt_FT::FT,
-                                 t_idx, Hp, backend, meteo, deposit) where FT
+function _cs_surface_flux_plan(q_raw::NTuple{6}, src::TimeVaryingSurfaceFluxSource, dt_FT,
+                               t_idx::Integer, Hp, meteo)
     src.cell_mass_rate_series isa NTuple{6} || throw(ArgumentError(
         "apply_surface_flux!: cubed-sphere time-varying source $(src.tracer_name) must provide NTuple{6} panel series"))
     segments = _flux_temporal_segments(src.scheme, src.times, Float64(current_time(meteo)),
                                        Float64(dt_FT))
     buffer = _stage_flux_slices!(src.window_buffer, src.cell_mass_rate_series,
                                  _segment_slices(segments))
-    slots = buffer.slots
-    shapes = ntuple(p -> _cs_interior_shape(q_raw[p], Hp, slots[p], src, p), 6)
-    allequal(shapes) || throw(DimensionMismatch(
-        "surface source $(src.tracer_name): cubed-sphere panels differ in shape, $(shapes)"))
-    Nc, Ny, Nz = shapes[1]
-    # One launch per segment covers all six panels; each panel still receives
-    # its segments in order, so its compensated sums are unchanged.
-    kernel = _surface_flux_cs_interp_panels_kernel!(backend, (16, 16))
-    for (i0, i1, w0, w1, frac) in segments
-        kernel(q_raw, slots, src.compensation, FT(w0), FT(w1),
-               _buffer_slot(buffer, i0), _buffer_slot(buffer, i1),
-               dt_FT * FT(frac), t_idx, Nz, Hp, deposit; ndrange = (Nc, Ny, 6))
+    _check_cs_panel_shapes(q_raw, buffer.slots, src, Hp)
+    slots = map(((i0, i1, w0, w1, frac),) ->
+                (_buffer_slot(buffer, i0), _buffer_slot(buffer, i1), w0, w1, frac), segments)
+    return _cs_surface_flux_plan(buffer.slots, src.compensation, t_idx, dt_FT, slots)
+end
+
+# Sources per launch: a launch carries every source's six rate and six
+# compensation arrays as kernel arguments, about 0.5 kB per source; six
+# sources with a profile deposit measured 4.1 kB, four keep a launch within the
+# classic 4 kB parameter limit (CUDA before sm_70 or PTX 8.1). On an L40S, C90
+# with 12 tracers, four per launch cost 2 % more than six, twelve gained
+# nothing.
+const _CS_SURFACE_FLUX_SOURCES_PER_LAUNCH = 4
+
+_tuple_chunks(t::Tuple, ::Val{K}) where K =
+    length(t) <= K ? (t,) : (ntuple(i -> t[i], Val(K)),
+                             _tuple_chunks(ntuple(i -> t[K + i], Val(length(t) - K)), Val(K))...)
+
+# One launch per segment index and group of sources: a source's segments run in
+# stream order, so its compensated sums see the same operations in the same
+# order as one launch per source and segment.
+function _launch_cs_surface_flux!(q_raw::NTuple{6}, plans::Tuple, Hp, backend, deposit)
+    isempty(plans) && return nothing
+    Nc, Ny, Nz = size(q_raw[1], 1) - 2Hp, size(q_raw[1], 2) - 2Hp, size(q_raw[1], 3)
+    for group in _tuple_chunks(plans, Val(_CS_SURFACE_FLUX_SOURCES_PER_LAUNCH))
+        ctx = (; q_raw, rates = map(plan -> plan.rates, group), comp = map(plan -> plan.comp, group),
+               Nc, Ny, Nz, Hp, deposit)
+        for g in 1:maximum(plan -> plan.tracer == 0 ? 0 : length(plan.segments), group)
+            ops = ntuple(n -> CSSurfaceFluxSegment{n}(group[n], g), Val(length(group)))
+            launch!(Fused(ops), ctx, backend; workgroup = 256, sync = false)
+        end
     end
     return nothing
 end

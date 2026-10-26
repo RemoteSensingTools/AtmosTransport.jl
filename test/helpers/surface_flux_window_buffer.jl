@@ -5,6 +5,7 @@
 # reference, a small cubed-sphere state on any array type, and a window driver.
 
 using Adapt
+using KernelAbstractions
 using KernelAbstractions: @kernel, @index, @Const
 using AtmosTransport
 using AtmosTransport: CubedSphereState, DryBasis, SurfaceFluxOperator, PerTracerFluxMap,
@@ -87,28 +88,66 @@ function Adapt.adapt_structure(to, src::FullSeriesReference)
     return FullSeriesReference(src.tracer_name, series, src.times, src.scheme, compensation)
 end
 
-# One panel per launch, as before the six-panel kernel: the reference launch
-# structure, with the production cell arithmetic (`SF._deposit!`).
+# In the operator, the reference reads slices `i0`, `i1` of its full series.
+function SF._cs_surface_flux_plan(q_raw::NTuple{6}, src::FullSeriesReference, dt_FT,
+                                  t_idx::Integer, Hp, meteo)
+    segments = SF._flux_temporal_segments(src.scheme, src.times, Float64(SF.current_time(meteo)),
+                                          Float64(dt_FT))
+    SF._check_cs_panel_shapes(q_raw, src.series, src, Hp)
+    return SF._cs_surface_flux_plan(src.series, src.compensation, t_idx, dt_FT, segments)
+end
+
+# The launch structure before the fused operator, as a reference with the
+# production cell arithmetic (`SF._deposit!`): one launch per source, segment
+# and panel, sources in map order.
 @kernel function reference_cs_interp_kernel!(q_raw, @Const(series), comp, w0, w1, i0, i1,
                                              dt, tracer_idx, Nz, Hp, deposit)
     ii, jj = @index(Global, NTuple)
     @inbounds SF._deposit!(q_raw, comp, (w0 * series[ii, jj, i0] + w1 * series[ii, jj, i1]) * dt,
                            ii, jj, Hp, Nz, tracer_idx, deposit)
 end
+@kernel function reference_cs_static_kernel!(q_raw, @Const(rate), comp, dt, tracer_idx, Nz, Hp,
+                                             deposit)
+    ii, jj = @index(Global, NTuple)
+    @inbounds SF._deposit!(q_raw, comp, rate[ii, jj] * dt, ii, jj, Hp, Nz, tracer_idx, deposit)
+end
 
-function SF._apply_cs_surface_flux!(q_raw::NTuple{6}, src::FullSeriesReference, dt_FT::FT,
-                                    t_idx, Hp, backend, meteo, deposit) where FT
-    series = src.series
+function reference_cs_apply!(q_raw::NTuple{6}, src::FullSeriesReference, dt_FT::FT, t_idx,
+                             Hp, meteo, deposit) where FT
+    backend = KernelAbstractions.get_backend(q_raw[1])
     segments = SF._flux_temporal_segments(src.scheme, src.times, Float64(SF.current_time(meteo)),
                                           Float64(dt_FT))
     kernel = reference_cs_interp_kernel!(backend, (16, 16))
     for p in 1:6
-        Nc, Ny, Nz = SF._cs_interior_shape(q_raw[p], Hp, series[p], src, p)
+        Nc, Ny, Nz = SF._cs_interior_shape(q_raw[p], Hp, src.series[p], src, p)
         for (i0, i1, w0, w1, frac) in segments
-            kernel(q_raw[p], series[p], src.compensation[p], FT(w0), FT(w1), i0, i1,
+            kernel(q_raw[p], src.series[p], src.compensation[p], FT(w0), FT(w1), i0, i1,
                    dt_FT * FT(frac), t_idx, Nz, Hp, SF._panel_deposit(deposit, p); ndrange = (Nc, Ny))
         end
     end
+    return nothing
+end
+
+function reference_cs_apply!(q_raw::NTuple{6}, src::SurfaceFluxSource, dt_FT::FT, t_idx,
+                             Hp, meteo, deposit) where FT
+    backend = KernelAbstractions.get_backend(q_raw[1])
+    kernel = reference_cs_static_kernel!(backend, (16, 16))
+    for p in 1:6
+        Nc, Ny, Nz = SF._cs_interior_shape(q_raw[p], Hp, src.cell_mass_rate[p], src, p)
+        kernel(q_raw[p], src.cell_mass_rate[p], src.compensation[p], dt_FT, t_idx, Nz, Hp,
+               SF._panel_deposit(deposit, p); ndrange = (Nc, Ny))
+    end
+    return nothing
+end
+
+function reference_cs_apply!(q_raw::NTuple{6}, sources::Tuple, dt_FT, meteo, tracer_names;
+                             halo_width, deposit = SF.SurfaceLayerDeposit())
+    for src in sources
+        t_idx = findfirst(==(src.tracer_name), tracer_names)
+        t_idx === nothing && continue
+        reference_cs_apply!(q_raw, src, dt_FT, t_idx, halo_width, meteo, deposit)
+    end
+    KernelAbstractions.synchronize(KernelAbstractions.get_backend(q_raw[1]))
     return nothing
 end
 

@@ -156,6 +156,16 @@ index_space(::Rebind, ctx) = size(ctx.out)[1:2]
 import AtmosTransport.Architectures: bound_context
 bound_context(::Rebind, ctx) = (REBINDS[] += 1; (; target = ctx.out))
 @inline apply_point!(::Rebind, ctx, i, j) = (ctx.target[i, j, 1] = 7.0; nothing)
+# `Mark` that asks for the kernel on the host; binding is counted, which only
+# the host loops of a `Fused` set do (its kernel runs on the unbound context).
+struct ParallelMark <: AbstractPointOp
+    slot::Int; n::Int; m::Int; value::Float64
+end
+import AtmosTransport.Architectures: host_parallel
+host_parallel(::ParallelMark) = true
+index_space(op::ParallelMark, ctx) = (op.n, op.m)
+bound_context(::ParallelMark, ctx) = (REBINDS[] += 1; ctx)
+@inline apply_point!(op::ParallelMark, ctx, i, j) = (ctx.out[i, j, op.slot] = op.value; nothing)
 # A rank-1 operation, which cannot be fused with the rank-2 ones above.
 struct Line <: AbstractPointOp
     n::Int
@@ -163,7 +173,7 @@ end
 index_space(op::Line, ctx) = (op.n,)
 @inline apply_point!(::Line, ctx, i) = nothing
 end
-using ._PointOpTests: Mark, Increment, Line, Rebind, REBINDS
+using ._PointOpTests: Mark, Increment, Line, Rebind, REBINDS, ParallelMark
 
 @testset "Point operations: host loop, fused kernel, sequence" begin
     Arch = AtmosTransport.Architectures
@@ -213,6 +223,16 @@ using ._PointOpTests: Mark, Increment, Line, Rebind, REBINDS
     seq = (; out = zeros(4, 3, 3))
     Arch.launch!(Arch.Sequence(Mark(1, 4, 3, 1.0), Increment()), seq, KernelAbstractions.CPU())
     @test all(==(2.0), seq.out[:, :, 1])
+
+    # `host_parallel` operations run the kernel on the host: same result, and
+    # the fused set is not bound operation by operation.
+    @test !Arch.host_parallel(fused)
+    parallel = Arch.Fused(map(op -> ParallelMark(op.slot, op.n, op.m, op.value), ops))
+    @test Arch.host_parallel(parallel) && Arch.host_parallel(Arch.Fused(ops[1], parallel.ops[2]))
+    REBINDS[] = 0
+    threaded = (; out = zeros(4, 3, 3))
+    Arch.launch!(parallel, threaded, KernelAbstractions.CPU())
+    @test threaded.out == expected && REBINDS[] == 0
 end
 
 @testset "select_panel returns panel p for p in 1:6" begin
