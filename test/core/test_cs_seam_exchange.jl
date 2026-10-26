@@ -102,17 +102,35 @@ seam_bits(a) = reinterpret(UInt32, a)
         @test all(p -> seam_bits(actual_m[p]) == seam_bits(expected_m[p]), 1:6)
         @test all(p -> seam_bits(panels_rm[p]) ==
                        seam_bits(Nt == 1 ? expected_rm[p][:, :, :, 1] : expected_rm[p]), 1:6)
-        # The test detects a reversed order at the shared corners.
+        # The test detects a reversed order at the shared corners. About 0.3 %
+        # of transfer draws round to the same bits in either order (the draws
+        # differ between Julia versions), so up to four draws are tried.
         if shared > 0
-            reversed_rm, reversed_m = map(copy, rm), map(copy, m)
-            for op in reverse(ops.ops)
-                CSSeamAdv.launch!(CSSeamAdv.SeamTransferApply{direction}(op.p, op.q, op.edge,
-                    op.other_edge, op.reversed, op.seam, op.active, (0, 0, 0, 0), (0, 0, 0, 0),
-                    (false, false, false, false)),
-                    (; panels_rm = reversed_rm, panels_m = reversed_m, cache, Nc, Hp, Nt),
-                    CSSeamAdv.get_backend(m[1]))
+            detected = false
+            for draw in 1:4
+                draw_cache = draw == 1 ? cache : 1f7 .* randn(rng, Float32, size(cache))
+                expected_rm, expected_m = map(copy, rm), map(copy, m)
+                seam_by_seam_apply!(expected_rm, expected_m, draw_cache, mesh, direction)
+                if draw > 1     # the fused launch must match on every draw it is checked with
+                    actual_rm, actual_m = map(copy, rm), map(copy, m)
+                    panels_rm = Nt == 1 ? map(a -> a[:, :, :, 1], actual_rm) : actual_rm
+                    CSSeamAdv._apply_cs_seams!(panels_rm, actual_m, draw_cache, mesh, Val(direction))
+                    @test all(p -> seam_bits(actual_m[p]) == seam_bits(expected_m[p]), 1:6)
+                    @test all(p -> seam_bits(panels_rm[p]) ==
+                                   seam_bits(Nt == 1 ? expected_rm[p][:, :, :, 1] : expected_rm[p]), 1:6)
+                end
+                reversed_rm, reversed_m = map(copy, rm), map(copy, m)
+                for op in reverse(ops.ops)
+                    CSSeamAdv.launch!(CSSeamAdv.SeamTransferApply{direction}(op.p, op.q, op.edge,
+                        op.other_edge, op.reversed, op.seam, op.active, (0, 0, 0, 0), (0, 0, 0, 0),
+                        (false, false, false, false)),
+                        (; panels_rm = reversed_rm, panels_m = reversed_m, cache = draw_cache, Nc, Hp, Nt),
+                        CSSeamAdv.get_backend(m[1]))
+                end
+                detected = reversed_m != expected_m || reversed_rm != expected_rm
+                detected && break
             end
-            @test reversed_m != expected_m || reversed_rm != expected_rm
+            @test detected
         end
     end
 end
