@@ -111,7 +111,10 @@ stopping at the first functional runtime.
 Work that runs independently at every index of a block can be written as a
 *point operation*: a small struct (`<: AbstractPointOp` in `Architectures`)
 with an `index_space` and an `apply_point!` body for one index. The same body
-runs as one GPU kernel or as a loop on the CPU. Operations compose by type:
+runs as one GPU kernel or as a loop on the CPU (an operation with much work per
+index, such as the cubed-sphere surface-flux column walk, declares
+`host_parallel` and runs as the kernel on the CPU backend's threads instead).
+Operations compose by type:
 
 - `Fused(ops...)` combines independent operations (disjoint writes, no
   cross reads; for example the 24 panel edges of a cubed-sphere halo

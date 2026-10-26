@@ -201,6 +201,56 @@ else
         end
     end
 
+    # One fused launch per segment and group of up to four sources on CUDA
+    # equals the launch per source, segment and panel it replaced, bit for bit
+    # (nine tracers, three launch groups, a source for a tracer the state does
+    # not carry, surface and profile deposits).
+    @testset "CUDA fused surface-flux launches equal per-source launches" begin
+        for FT in (Float32, Float64), profile in (false, true)
+            mesh = CubedSphereMesh(; Nc = NC, Hp = HP, FT = FT)
+            N = NC + 2HP
+            air = ntuple(_ -> fill(FT(1e4), N, N, NZ), 6)
+            names = Tuple(Symbol(:s, n) for n in 1:9)
+            tracers = NamedTuple{names}(ntuple(n -> map(a -> a .* FT(n * 1e-4), air), 9))
+            layouts = (HOURLY, THREE_HOURLY, IRREGULAR)
+            sources() = (ntuple(n -> TimeVaryingSurfaceFluxSource(names[n],
+                             series_for(FT, length(layouts[mod1(n, 3)]), n), layouts[mod1(n, 3)],
+                             SCHEMES[mod1(n + n ÷ 3, 3)]), 8)...,
+                         SurfaceFluxSource(:s9, map(s -> s[:, :, 1], series_for(FT, 1, 9))),
+                         SurfaceFluxSource(:absent, map(s -> s[:, :, 1], series_for(FT, 1, 10))))
+            deposit = profile ?
+                ntuple(p -> SF.ProfileDeposit(CuArray(FT[k / 6 for i in 1:NC, j in 1:NC, k in 1:NZ])), 6) :
+                SF.SurfaceLayerDeposit()
+            fused = map(s -> Adapt.adapt(CuArray, s), sources())
+            reference = map(s -> s isa TimeVaryingSurfaceFluxSource ? FullSeriesReference(s, CuArray) :
+                                 Adapt.adapt(CuArray, s), sources())
+            op = SurfaceFluxOperator(PerTracerFluxMap(fused))
+            q0 = map(CuArray, CubedSphereState(DryBasis, mesh, air; tracers...).tracers_raw)
+            q_fused, q_separate = map(copy, q0), map(copy, q0)
+            W, steps = FT(5400), 7
+            dt = step_length(W, steps)
+            for w in 0:5, n in 0:(steps - 1)
+                clock = WindowTestClock(step_time(0.0, W, w, n, steps))
+                apply_surface_flux!(q_fused, op, nothing, dt, clock, nothing;
+                                    tracer_names = names, halo_width = HP, deposit)
+                reference_cs_apply!(q_separate, reference, dt, clock, names; halo_width = HP, deposit)
+            end
+            @test bitequal(map(Array, q_fused), map(Array, q_separate))
+            @test all(map((a, b) -> bitequal(map(Array, a.compensation), map(Array, b.compensation)),
+                          fused, reference))
+            # A launch's arguments stay within the classic 4 kB limit.
+            plans = map(src -> SF._cs_surface_flux_plan(q_fused, src, dt,
+                                   findfirst(==(src.tracer_name), names), HP,
+                                   WindowTestClock(0.0)), op.flux_map.sources)
+            group = first(SF._tuple_chunks(plans, Val(SF._CS_SURFACE_FLUX_SOURCES_PER_LAUNCH)))
+            ctx = (; q_raw = q_fused, rates = map(p -> p.rates, group), comp = map(p -> p.comp, group),
+                   Nc = NC, Ny = NC, Nz = NZ, Hp = HP, deposit)
+            ops = AtmosTransport.Architectures.Fused(ntuple(n -> SF.CSSurfaceFluxSegment{n}(group[n], 1),
+                                                            Val(length(group))))
+            @test sizeof(CUDA.cudaconvert(ctx)) + sizeof(ops) < 4000
+        end
+    end
+
     # The GEOS-Chem qmincg decision of `ProfileDeposit` (OF-108) on the device:
     # one case per column, x = 20 and fractions whose shares are exact, so the
     # CPU and CUDA results agree bit for bit (FMA contraction included).

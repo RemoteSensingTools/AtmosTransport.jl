@@ -25,7 +25,8 @@ export reclaim_backend_pool!, _kahan_add
 export HostMemoryModel, DiscreteHostMemory, UnifiedHostMemory, host_memory_model,
        host_mapped_vector
 export launch!
-export AbstractPointOp, index_space, apply_point!, Fused, Sequence, LinearCopy, copy_arrays!
+export AbstractPointOp, index_space, apply_point!, host_parallel, Fused, Sequence, LinearCopy,
+       copy_arrays!
 export FusionPolicy, FuseLaunches, SeparateLaunches, fusion_policy
 
 abstract type AbstractArchitecture end
@@ -532,7 +533,9 @@ It defines two methods:
 
 `launch!(op, ctx, backend)` runs it as one kernel on a device and as a loop
 over the same body on the host, where `bound_context(op, ctx)` may first
-resolve loop-invariant lookups. Operations compose by type:
+resolve loop-invariant lookups (an operation with much work per index can run
+the kernel on the host instead, see [`host_parallel`](@ref)). Operations
+compose by type:
 
 - `Fused(ops...)`: independent operations in one launch. A trailing slot index
   selects the operation; indices outside an operation's own space are skipped.
@@ -638,7 +641,7 @@ device backend (then `synchronize` unless `sync = false`), and a loop calling
 the same `apply_point!` on the host backend.
 """
 function launch!(op::AbstractPointOp, ctx, backend; workgroup::Int = 256, sync::Bool = true)
-    if backend isa KA.CPU
+    if backend isa KA.CPU && !host_parallel(op)
         _host_apply!(op, ctx)
     else
         # A single operation runs on its bound context; its index space comes
@@ -704,7 +707,7 @@ function _host_apply!(f::Fused, ctx)
 end
 
 function launch!(f::Fused, ctx, backend; workgroup::Int = 256, sync::Bool = true)
-    if backend isa KA.CPU
+    if backend isa KA.CPU && !host_parallel(f)
         _host_apply!(f, ctx)
     else
         _launch_fused!(fusion_policy(backend), f, ctx, backend, workgroup)
@@ -721,6 +724,19 @@ function _launch_fused!(::SeparateLaunches, f::Fused, ctx, backend, workgroup)
     foreach(op -> launch!(op, ctx, backend; workgroup, sync = false), f.ops)   # each binds its context
     return nothing
 end
+
+"""
+    host_parallel(op) -> Bool
+
+How `launch!` runs `op` on the host (KernelAbstractions' `CPU` backend):
+`false` (the default) runs plain loops in one thread, the fastest choice for
+light operations such as halo fills; an operation with much work per index (a
+column walk) returns `true` to run the device kernel, which the `CPU` backend
+spreads over the Julia threads. A `Fused` set runs as one kernel if any of its
+operations does; under the `Fused` contract both paths give the same results.
+"""
+host_parallel(::AbstractPointOp) = false
+host_parallel(f::Fused) = any(host_parallel, f.ops)
 
 # The slot selects an operation through a balanced tree of comparisons with
 # constant tuple indices. Indexing a tuple with a run-time value inside a GPU

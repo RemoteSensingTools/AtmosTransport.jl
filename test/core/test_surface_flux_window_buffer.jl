@@ -19,6 +19,10 @@ Asserts:
   reference), for every scheme, Float32 and Float64,
   window lengths that do and do not align with slices, one to eleven steps per
   window, packed and single-tracer panels and profile deposits;
+- one launch per segment for a group of up to four sources gives, bit for bit,
+  the launch per source, segment and panel it replaced (nine tracers, static
+  and time-varying sources, sources with one and two segments in a step, a
+  source for a tracer the state does not carry, surface and profile deposits);
 - the buffer capacity stays the largest window's slice count, independent of
   the run length, while the run reads more slices than fit in it;
 - `Adapt` moves the compensation and the window buffer to the device array
@@ -116,6 +120,45 @@ end
         q_ref, _, _ = drive!(state, grid, (FullSeriesReference(src), static()), W, 24, 11;
                              deposit = profile)
         @test bitequal(q_new, q_ref)
+    end
+end
+
+@testset "fused launches per segment equal one launch per source, segment and panel" begin
+    # Nine emitting tracers (three launch groups of at most four sources), every
+    # scheme and slice layout, a static source, and a source whose tracer the
+    # state does not carry. Stepwise and conservative-mean steps that cross a
+    # slice time have two segments, so sources have different segment counts.
+    for FT in (Float64, Float32), profile in (false, true)
+        mesh = CubedSphereMesh(; Nc = NC, Hp = HP, FT = FT)
+        N = NC + 2HP
+        air = ntuple(_ -> fill(FT(1e4), N, N, NZ), 6)
+        names = Tuple(Symbol(:s, n) for n in 1:9)
+        tracers = NamedTuple{names}(ntuple(n -> map(a -> a .* FT(n * 1e-4), air), 9))
+        layouts = (HOURLY, THREE_HOURLY, IRREGULAR)
+        sources() = (ntuple(n -> TimeVaryingSurfaceFluxSource(names[n],
+                         series_for(FT, length(layouts[mod1(n, 3)]), n), layouts[mod1(n, 3)],
+                         SCHEMES[mod1(n + n ÷ 3, 3)]), 8)...,
+                     SurfaceFluxSource(:s9, map(s -> s[:, :, 1], series_for(FT, 1, 9))),
+                     SurfaceFluxSource(:absent, map(s -> s[:, :, 1], series_for(FT, 1, 10))))
+        deposit = profile ?
+            ntuple(p -> SF.ProfileDeposit(FT[k / 6 for i in 1:NC, j in 1:NC, k in 1:NZ]), 6) :
+            SF.SurfaceLayerDeposit()
+        fused, separate = sources(), sources()
+        reference = map(s -> s isa TimeVaryingSurfaceFluxSource ? FullSeriesReference(s) : s, separate)
+        op = SurfaceFluxOperator(PerTracerFluxMap(fused))
+        q_fused = map(copy, CubedSphereState(DryBasis, mesh, air; tracers...).tracers_raw)
+        q_separate = map(copy, q_fused)
+        W, steps = FT(5400), 7
+        dt = step_length(W, steps)
+        for w in 0:5, n in 0:(steps - 1)
+            clock = WindowTestClock(step_time(0.0, W, w, n, steps))
+            apply_surface_flux!(q_fused, op, nothing, dt, clock, nothing;
+                                tracer_names = names, halo_width = HP, deposit)
+            reference_cs_apply!(q_separate, reference, dt, clock, names; halo_width = HP, deposit)
+        end
+        @test bitequal(q_fused, q_separate)
+        @test all(map((a, b) -> bitequal(a.compensation, b.compensation), fused, reference))
+        @test !bitequal(q_fused, CubedSphereState(DryBasis, mesh, air; tracers...).tracers_raw)
     end
 end
 

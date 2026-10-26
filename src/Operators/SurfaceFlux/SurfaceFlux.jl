@@ -45,7 +45,8 @@ using ...State: CellState, CubedSphereState, get_tracer, tracer_index, eachtrace
 using ..Diffusion: ImplicitVerticalDiffusion, SplitSurfaceFluxCoupling,
                    DiffusiveSurfaceFluxBoundary
 using ...MetDrivers: current_time
-using ...Architectures: _two_sum, _neumaier_add, launch!, select_panel
+using ...Architectures: _two_sum, _neumaier_add, launch!, select_panel, AbstractPointOp, Fused
+import ...Architectures: index_space, apply_point!, host_parallel
 import ..AbstractOperator, ..apply!
 
 export SurfaceFluxSource, AbstractSurfaceFluxSource, TimeVaryingSurfaceFluxSource

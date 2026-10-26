@@ -164,37 +164,49 @@ end
 end
 
 """
-    _surface_flux_cs_panels_kernel!(q_raw, rate, comp, dt, tracer_idx, Nz, Hp, deposit)
+    CSSurfaceFluxSegment{N, FT}(tracer, slot0, slot1, w0, w1, dt)
 
-Cubed-sphere surface-flux kernel for all six halo-padded panels, single-tracer
-`(Nc + 2Hp, Nc + 2Hp, Nz)` or packed `(…, Nz, Nt)` (`tracer_idx` selects the
-slab; ignored for single-tracer panels). `q_raw`, `rate` and `comp` are
-six-panel tuples (`rate`/`comp` interior `(Nc, Nc)` panels), `deposit` is
-`SurfaceLayerDeposit()` or a tuple of per-panel `ProfileDeposit`s, and the
-third index selects the panel.
+One segment of the step of the `N`-th source in the context of a cubed-sphere
+surface-flux launch, as a point operation over (column, panel): the increment
+`rate[ii, jj] * dt` of a static source, or `(w0 * slots[ii, jj, slot0] +
+w1 * slots[ii, jj, slot1]) * dt` of a time-varying one, is deposited into
+tracer `tracer` (`tracer = 0`: inactive, an empty index space). The sources
+of an operator target distinct tracers and own their compensation arrays, so
+their operations write disjoint cells and fuse into one launch per segment.
 """
-@kernel function _surface_flux_cs_panels_kernel!(q_raw, @Const(rate), comp, dt, tracer_idx, Nz,
-                                                 Hp, deposit)
-    ii, jj, p = @index(Global, NTuple)
-    rate_p = select_panel(rate, p)
-    @inbounds _deposit!(select_panel(q_raw, p), select_panel(comp, p), rate_p[ii, jj] * dt,
-                        ii, jj, Hp, Nz, tracer_idx, _panel_deposit(deposit, p))
+struct CSSurfaceFluxSegment{N, FT} <: AbstractPointOp
+    tracer::Int
+    slot0::Int
+    slot1::Int
+    w0::FT
+    w1::FT
+    dt::FT
 end
 
-"""
-    _surface_flux_cs_interp_panels_kernel!(q_raw, series, comp, w0, w1, i0, i1, dt,
-                                           tracer_idx, Nz, Hp, deposit)
-
-Time-interpolated variant: the increment is `(w0·series[i0] + w1·series[i1])·dt`.
-`series` holds the six panels of a time-varying source's window buffer, each
-`(Nc, Nc, capacity)`, and `i0`, `i1` are the buffer slots holding the two slices.
-"""
-@kernel function _surface_flux_cs_interp_panels_kernel!(q_raw, @Const(series), comp, w0, w1,
-                                                        i0, i1, dt, tracer_idx, Nz, Hp, deposit)
-    ii, jj, p = @index(Global, NTuple)
-    series_p = select_panel(series, p)
-    @inbounds _deposit!(select_panel(q_raw, p), select_panel(comp, p),
-                        (w0 * series_p[ii, jj, i0] + w1 * series_p[ii, jj, i1]) * dt,
-                        ii, jj, Hp, Nz, tracer_idx, _panel_deposit(deposit, p))
+# Segment `g` of a source's plan; inactive past its last segment.
+function CSSurfaceFluxSegment{N}(plan, g) where N
+    FT = typeof(plan.dt)
+    (plan.tracer == 0 || g > length(plan.segments)) &&
+        return CSSurfaceFluxSegment{N, FT}(0, 1, 1, zero(FT), zero(FT), zero(FT))
+    i0, i1, w0, w1, frac = plan.segments[g]
+    return CSSurfaceFluxSegment{N, FT}(plan.tracer, i0, i1, FT(w0), FT(w1), plan.dt * FT(frac))
 end
 
+index_space(op::CSSurfaceFluxSegment, ctx) = (op.tracer == 0 ? 0 : ctx.Nc * ctx.Ny, 6)
+host_parallel(::CSSurfaceFluxSegment) = true      # a column walk per index with `ProfileDeposit`
+
+@inline _cs_surface_flux_increment(rate::AbstractArray{<:Any, 2}, ii, jj, op) =
+    @inbounds rate[ii, jj] * op.dt
+@inline _cs_surface_flux_increment(slots::AbstractArray{<:Any, 3}, ii, jj, op) =
+    @inbounds (op.w0 * slots[ii, jj, op.slot0] + op.w1 * slots[ii, jj, op.slot1]) * op.dt
+
+@inline function apply_point!(op::CSSurfaceFluxSegment{N}, ctx, c, p) where N
+    (; q_raw, Nc, Nz, Hp, deposit) = ctx
+    rates, comp = ctx.rates[N], ctx.comp[N]
+    rates === nothing && return nothing      # a source without its tracer (never active)
+    jj, ii = divrem(c - 1, Nc) .+ 1
+    x = _cs_surface_flux_increment(select_panel(rates, p), ii, jj, op)
+    _deposit!(select_panel(q_raw, p), select_panel(comp, p), x, ii, jj, Hp, Nz, op.tracer,
+              _panel_deposit(deposit, p))
+    return nothing
+end
