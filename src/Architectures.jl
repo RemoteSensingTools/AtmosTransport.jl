@@ -22,8 +22,10 @@ export autodetect_gpu_architecture, is_gpu, ensure_runtime!, array_adapter
 export architecture_label, device_name, backend_name, synchronize_architecture!
 export array_adapter_for, assert_residency!, assert_float_type!
 export reclaim_backend_pool!, _kahan_add
+export HostMemoryModel, DiscreteHostMemory, UnifiedHostMemory, host_memory_model,
+       host_mapped_vector
 export launch!
-export AbstractPointOp, index_space, apply_point!, Fused, Sequence
+export AbstractPointOp, index_space, apply_point!, Fused, Sequence, LinearCopy, copy_arrays!
 export FusionPolicy, FuseLaunches, SeparateLaunches, fusion_policy
 
 abstract type AbstractArchitecture end
@@ -381,6 +383,59 @@ end
 
 _pin_host_memory!(_storage, ::Any) = nothing
 
+"""
+    HostMemoryModel
+
+Whether host code can read and write a backend's device buffers directly,
+chosen by [`host_memory_model`](@ref): `DiscreteHostMemory()` (the default:
+device memory is reached only through copies, as on CUDA and ROCm) or
+`UnifiedHostMemory()` (one memory that host and device share, as Metal's
+shared-storage buffers on Apple silicon; see [`host_mapped_vector`](@ref)).
+"""
+abstract type HostMemoryModel end
+
+"""Device memory reached from the host only through copies (CUDA, ROCm)."""
+struct DiscreteHostMemory <: HostMemoryModel end
+
+"""One memory shared by host and device (Metal on Apple silicon)."""
+struct UnifiedHostMemory <: HostMemoryModel end
+
+"""
+    host_memory_model(reference_array) -> HostMemoryModel
+
+The [`HostMemoryModel`](@ref) of the backend that holds `reference_array` (or
+the first panel of a tuple): `UnifiedHostMemory()` where a backend extension
+declares it (Metal), `DiscreteHostMemory()` otherwise. Callers dispatch on it
+to stage host data without a copy where the memory is shared.
+"""
+function host_memory_model(reference_array)
+    ref = reference_array isa Tuple ? reference_array[1] : reference_array
+    return Base.invokelatest(_host_memory_model, ref)
+end
+
+_host_memory_model(::Any) = DiscreteHostMemory()
+
+"""
+    host_mapped_vector(T, n, reference_array) -> (host::Vector{T}, device)
+
+A device vector of `n` elements of type `T` on the backend of
+`reference_array` whose memory host code reads and writes through `host`, an
+`Array` aliasing the same bytes (no copies in either direction). Defined for
+backends with `UnifiedHostMemory` only. Host writes are seen by device
+work queued afterwards; device writes by the host after a synchronization
+(`synchronize_storage!`), which must also separate device reads from later
+host writes. `host` does not keep `device` alive: hold on to `device` as long
+as `host` is used.
+"""
+function host_mapped_vector(::Type{T}, n::Integer, reference_array) where {T}
+    ref = reference_array isa Tuple ? reference_array[1] : reference_array
+    return Base.invokelatest(_host_mapped_vector, T, Int(n), ref)
+end
+
+_host_mapped_vector(::Type{T}, _n, ref) where {T} = throw(ArgumentError(
+    "host_mapped_vector: the backend of $(typeof(ref)) has no host-mapped device memory " *
+    "(host_memory_model is $(host_memory_model(ref)))"))
+
 # Calls `f` on every host `Array` that `Adapt` reaches in `storage`; the
 # containers Adapt rebuilds on the way are discarded.
 struct _HostArrayVisitor{F}
@@ -543,9 +598,36 @@ on CUDA the fused launch is 3–9× faster).
 """
 fusion_policy(backend) = FuseLaunches()
 
-@kernel function _point_op_kernel!(op, ctx)
-    I = @index(Global, NTuple)
-    apply_point!(op, ctx, I...)
+# A device launch runs over the linear index of the whole index space and
+# recovers the `NTuple` index with integer divisions, 32-bit where the space
+# fits (`T`). Rationale: a launch over the `NTuple` space itself puts each
+# workgroup along the first dimension only, so short first dimensions leave
+# most lanes idle (a C90 field: 96 of 256; a halo corner fill of width 3: 3 of
+# 256). On an M5 Pro the flat launch cut the GPU time of a C90 window unpack
+# from 4.7 to 1.0 ms, and the median host time of a C90 packed-tracer halo
+# exchange in the advection palindrome from 0.89 to 0.23 ms.
+@kernel function _point_op_kernel!(op, ctx, space, ::Type{T}) where {T}
+    n = @index(Global, Linear)
+    apply_point!(op, ctx, _point_index(space, (n - 1) % T)...)
+end
+
+# The 1-based `NTuple` index of 0-based linear index `r` in `space` (first
+# index fastest), computed in the integer type of `r`.
+@inline _point_index(::Tuple{Int}, r) = (Int(r) + 1,)
+@inline function _point_index(space::Tuple{Int, Int, Vararg{Int}}, r::T) where {T}
+    q, i = divrem(r, first(space) % T)
+    return (Int(i) + 1, _point_index(Base.tail(space), q)...)
+end
+
+# The index width of a launch over `n` indices.
+_point_index_type(n::Int) = n <= typemax(Int32) ? Int32 : Int
+
+function _launch_point_kernel!(op, ctx, index_space::Tuple{Vararg{Integer}}, backend, workgroup)
+    space = map(Int, index_space)
+    n = prod(space)
+    n == 0 && return nothing
+    _point_op_kernel!(backend, workgroup)(op, ctx, space, _point_index_type(n); ndrange = n)
+    return nothing
 end
 
 """
@@ -562,7 +644,7 @@ function launch!(op::AbstractPointOp, ctx, backend; workgroup::Int = 256, sync::
         # A single operation runs on its bound context; its index space comes
         # from the original one.
         space = index_space(op, ctx)
-        _point_op_kernel!(backend, workgroup)(op, bound_context(op, ctx); ndrange = space)
+        _launch_point_kernel!(op, bound_context(op, ctx), space, backend, workgroup)
         sync && KA.synchronize(backend)
     end
     return nothing
@@ -632,7 +714,7 @@ function launch!(f::Fused, ctx, backend; workgroup::Int = 256, sync::Bool = true
 end
 
 _launch_fused!(::FuseLaunches, f::Fused, ctx, backend, workgroup) =
-    _point_op_kernel!(backend, workgroup)(f, ctx; ndrange = index_space(f, ctx))
+    _launch_point_kernel!(f, ctx, index_space(f, ctx), backend, workgroup)
 
 function _launch_fused!(::SeparateLaunches, f::Fused, ctx, backend, workgroup)
     index_space(f, ctx)     # the same equal-rank check as a fused launch
@@ -679,6 +761,83 @@ function launch!(s::Sequence, ctx, backend; workgroup::Int = 256, sync::Bool = t
     foreach(op -> launch!(op, ctx, backend; workgroup, sync = false), s.ops)
     sync && !(backend isa KA.CPU) && KA.synchronize(backend)
     return nothing
+end
+
+"""
+    LinearCopy <: AbstractPointOp
+
+At linear index `i`, `ctx.dest[k][i] = ctx.src[k][i]` for every array pair `k`
+of the tuples `ctx.dest` and `ctx.src` that has an element `i`: a set of
+copies as one launch over the longest array. The host runs the pairs as
+`copyto!`s. See [`copy_arrays!`](@ref).
+"""
+struct LinearCopy <: AbstractPointOp end
+
+index_space(::LinearCopy, ctx) = (maximum(length, ctx.dest),)
+@inline apply_point!(::LinearCopy, ctx, i) = _copy_linear_at!(ctx.dest, ctx.src, i)
+_host_apply!(::LinearCopy, ctx) = (foreach(copyto!, ctx.dest, ctx.src); nothing)
+
+# Unrolled over the pairs: constant tuple indices keep the tuples out of
+# per-thread local memory inside a device kernel (see `_slot_tree`).
+@generated function _copy_linear_at!(dest::Tuple{Vararg{Any, N}}, src::Tuple{Vararg{Any, N}},
+                                     i) where N
+    return quote
+        $(Expr(:meta, :inline))
+        Base.Cartesian.@nexprs $N k -> begin
+            i <= length(dest[k]) && @inbounds dest[k][i] = src[k][i]
+        end
+        return nothing
+    end
+end
+
+"""
+    copy_arrays!(dest::Tuple, src::Tuple) -> dest
+
+`copyto!(dest[k], src[k])` for every pair of equally sized arrays. When every
+array of `dest` and `src` lives on one backend (`single_launch_copy`), all
+pairs are copied by one `LinearCopy` launch, queued on the current task's
+device queue without a host synchronization; the host backend copies each pair
+with `copyto!`. A batch that mixes backends (a host window uploaded to the
+device, or arrays on different devices) keeps one `copyto!` per pair.
+
+The single launch applies to every device backend (CUDA, ROCm and Metal), not
+only to Metal: it replaces a batch of copies by one launch, and copies values
+unchanged, so the result equals that of the `copyto!`s bit for bit. On CUDA
+and ROCm a device-to-device `copyto!` is already queued asynchronously, so the
+gain there is fewer launches. On Metal it also removes host synchronizations:
+Metal.jl synchronizes the queue before every device-to-device `copyto!` and
+waits for its blit, so the 18 panel copies of a cubed-sphere flux refresh cost
+about 2.5 ms per step on an M5 Pro.
+"""
+function copy_arrays!(dest::Tuple, src::Tuple)
+    length(dest) == length(src) || throw(ArgumentError(
+        "copy_arrays! needs as many destinations as sources; got $(length(dest)) and $(length(src))"))
+    isempty(dest) && return dest
+    # The kernel indexes without bounds checks.
+    foreach(dest, src) do d, s
+        size(d) == size(s) || throw(DimensionMismatch(
+            "copy_arrays!: destination of size $(size(d)), source of size $(size(s))"))
+    end
+    if single_launch_copy(dest, src)
+        launch!(LinearCopy(), (; dest, src), KA.get_backend(first(dest)); sync = false)
+    else
+        foreach(copyto!, dest, src)
+    end
+    return dest
+end
+
+"""
+    single_launch_copy(dest::Tuple, src::Tuple) -> Bool
+
+Whether `copy_arrays!` may copy the batch with one `LinearCopy` launch: every
+destination and every source reports the same `KernelAbstractions` backend
+(the kernel runs on one backend and reads and writes all arrays there).
+"""
+function single_launch_copy(dest::Tuple, src::Tuple)
+    isempty(dest) && isempty(src) && return true
+    backend = KA.get_backend(first(dest))
+    return all(a -> KA.get_backend(a) == backend, dest) &&
+           all(a -> KA.get_backend(a) == backend, src)
 end
 
 """

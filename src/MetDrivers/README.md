@@ -86,10 +86,13 @@ methods report configured source support without reading meteorological files.
   — panel-native validation and loading specializations for those common types;
   `load_transport_window!` (refill a host window in place), `same_window_layout`
   (whether another binary's windows fit the same storage), and the raw window
-  staging of device runs (`RawWindowStaging`: concurrent reads of a window's
-  contiguous payload into page-locked host memory, section-wise upload through
-  a section-sized device buffer, unpacking on the device; binaries whose
-  on-disk element type is the run's)
+  staging of device runs (`raw_window_staging`, binaries whose on-disk element
+  type is the run's: concurrent reads of a window's contiguous payload, then
+  unpacking on the device. `RawWindowStaging` for discrete device memory reads
+  into page-locked host memory and uploads section by section through a
+  section-sized device buffer; `MappedWindowStaging` for unified memory
+  (Metal, `Architectures.host_memory_model`) reads into a shared device buffer
+  that the unpack kernels read in place, with no upload)
 - [`ERA5/`](ERA5/README.md) — ERA5-specific readers, geometry, closure,
   and dry-flux building
 

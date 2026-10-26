@@ -23,6 +23,20 @@ end
 
 AtmosTransport.Architectures._total_accumulator_type(::MetalBackend) = Float32
 
+# Apple silicon shares one memory between CPU and GPU: a shared-storage buffer
+# is a device array that host code reads and writes through an `Array` over
+# the same bytes. Raw transport-window staging reads each window straight into
+# such a buffer, which the unpack kernels then read, instead of uploading it
+# with `copyto!` (which synchronizes the queue and stages through a temporary
+# buffer for every call).
+AtmosTransport.Architectures._host_memory_model(::MtlArray) =
+    AtmosTransport.Architectures.UnifiedHostMemory()
+
+function AtmosTransport.Architectures._host_mapped_vector(::Type{T}, n::Int, ::MtlArray) where {T}
+    device = MtlArray{T, 1, Metal.SharedStorage}(undef, n)
+    return (unsafe_wrap(Array, device), device)
+end
+
 # Fused point operations run faster on Metal as separate launches with their
 # arrays bound directly (see `Architectures.fusion_policy`).
 AtmosTransport.Architectures.fusion_policy(::MetalBackend) = AtmosTransport.Architectures.SeparateLaunches()

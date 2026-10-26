@@ -130,7 +130,8 @@ end
 
 # Staging of the window loads of a device-resident run: the driver's raw window
 # buffers when it has them (`raw_window_staging`: one read into page-locked
-# host memory, one upload, unpacking on the device), else the first host window
+# host memory and section uploads, or, with unified memory, into a device
+# buffer; unpacking on the device), else the first host window
 # when the driver can refill it in place, page-locked where the backend
 # supports it. CPU runs use each loaded window directly (it becomes the
 # simulation's window), so they keep loading fresh ones.
@@ -197,7 +198,7 @@ function _staged_window_load!(existing_window, driver, win, staging::TransportWi
     return existing_window
 end
 
-function _staged_window_load!(existing_window, driver, win, staging::RawWindowStaging)
+function _staged_window_load!(existing_window, driver, win, staging::AbstractRawWindowStaging)
     SectionTimer.time_section(() -> read_window_payload!(staging, driver, win), :window_load_host)
     SectionTimer.time_section(() -> unpack_window_payload!(existing_window, driver, staging),
                               :window_backend_copy)

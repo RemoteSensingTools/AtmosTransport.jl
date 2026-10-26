@@ -90,6 +90,19 @@ end
     cs2.tracers_raw[2][mesh.Hp + 2, mesh.Hp + 2, 1, 2] = NaN    # ch4 interior
     err = try check(cs2); nothing catch e; e end
     @test err isa ErrorException && contains(err.msg, "tracer ch4")
+
+    # One checker over several checks keeps its flag and clears it after a hit.
+    checker = NaNChecker()
+    run_check(state) = checker(FakeSim(; iteration = 2, window = 3, state))
+    cs.tracers_raw[5][mesh.Hp + 1, mesh.Hp + 2, 2, 1] = 4e-4    # undo the NaN above
+    @test run_check(cs) === nothing && checker.flag isa Vector{Int32}
+    flag = checker.flag
+    cs.tracers_raw[5][mesh.Hp + 1, mesh.Hp + 2, 2, 1] = NaN
+    @test_throws ErrorException run_check(cs)
+    cs.tracers_raw[5][mesh.Hp + 1, mesh.Hp + 2, 2, 1] = 4e-4
+    @test run_check(cs) === nothing && checker.flag === flag && iszero(only(flag))
+    # Another state (possibly on another device) gets its own flag.
+    @test run_check(deepcopy(cs)) === nothing && checker.flag !== flag
 end
 
 @testset "a driven simulation runs its callbacks on their schedules" begin
