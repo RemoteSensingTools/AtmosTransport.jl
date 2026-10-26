@@ -1,0 +1,106 @@
+<h1>Methods and data</h1>
+<p class="lede">How the timings were measured, what each number means, and the caveats per device.</p>
+
+<section class="card prose" id="protocol">
+  <h2>Protocol</h2>
+  <ul>
+    <li><b>Runs.</b> Forward cubed-sphere transport driven by real MERRA-2 meteorology on 72 levels (GCHP-matched preprocessing,
+      dry basis), Float32, starting 2021-12-01, 8 simulated days per run. The binaries hold 7 days (C24–C180); simulated day 8 reuses
+      the binary of day 3. C360 and C720 binaries hold 2 days and are cycled the same way; C720 uses GEOS-FP-derived binaries.</li>
+    <li><b>Steady time.</b> The wall time of each simulated day is recorded; the steady value is the <b>median over days 3 and later</b>,
+      so compilation (day 1) and warm-up (day 2) are excluded.</li>
+    <li><b>Passes.</b> Every configuration of the release and operator matrices runs twice (the main-only scaling runs once). Within a pass the versions are interleaved (v0.5.0, v0.6.0, main for each
+      configuration), and the second pass starts after the first, so slow drifts of the machine load hit all versions alike. The site
+      shows the mean of the passes and both pass values; configurations whose passes differ by more than <span id="flag-pct"></span>
+      of their mean are flagged (<span class="flag">Δ</span> in tables, † in charts).</li>
+    <li><b>Output writing off</b> (<code>[output] enabled = false</code>): the timings cover met input, the operators and time stepping.</li>
+    <li><b>Tracers.</b> 1 = the protocol CO<sub>2</sub> tracer; 4 = the protocol tracer set; 12 adds surface-flux tracers.</li>
+    <li><b>Operator sets.</b> <i>none</i> = met input and time stepping only; <i>adv</i>, <i>diff</i>, <i>conv</i> = that operator alone;
+      <i>adv+emis</i> = advection with surface fluxes (and decay); <i>all</i> = the full protocol run. Surface fluxes need advection, so there
+      is no emissions-only set.</li>
+    <li><b>Matrices per device.</b> Release: 3 versions × C24, C48, C90, C180 × 1 and 12 tracers × none, adv, all. Operator breakdown:
+      3 versions × C90, C180 × 12 tracers × diff, conv, adv+emis. Scaling (main): C24–C180 × 4 tracers × adv, all, plus C360/C720 where
+      data and memory allow. <span id="planned"></span></li>
+  </ul>
+</section>
+
+<section class="card prose" id="metrics">
+  <h2>Metrics</h2>
+  <dl>
+    <dt>s/day</dt><dd>steady wall-clock seconds per simulated day (lower is faster).</dd>
+    <dt>SYPD</dt><dd>simulated years per wall-clock day = 86400 / (365 × s/day) (higher is faster).</dd>
+    <dt>Speedup</dt><dd>s/day(old) / s/day(new); above 1 means the newer code or the device is faster.</dd>
+    <dt>Cells</dt><dd>6 N² × 72 levels for grid C<i>N</i>.</dd>
+    <dt>Cost per cell and tracer</dt><dd>s/day / (cells × tracers), in nanoseconds per simulated day. The time step changes with the grid,
+      so this is per simulated day, not per step.</dd>
+    <dt>Input-bound</dt><dd>the <i>none</i> run takes at least <span id="ib-pct"></span> of the time of the selected operator set.</dd>
+    <dt>Breakdown</dt><dd>input floor = none; advection = adv − none; diffusion = diff − none; convection = conv − none;
+      emissions = (adv+emis) − adv; interaction / rest = all − (none + the four costs). Differences of noisy timings can be negative and are shown as they are.</dd>
+    <dt>Peak memory</dt><dd>GPU runs: peak device memory reported during the run; CPU runs: peak resident memory of the Julia process.</dd>
+  </dl>
+</section>
+
+<section class="card prose" id="versions">
+  <h2>Code under test</h2>
+  <div class="table-wrap" id="version-table"></div>
+  <p>Julia 1.12.6 (the lab machines' pinned version). Each version runs from its own worktree with the project's Manifest.</p>
+</section>
+
+<section class="card prose" id="devices">
+  <h2>Devices and caveats</h2>
+  <div id="device-list"></div>
+  <p>Input-bound grids (listed per device above, and marked on the <a href="scaling.html">Scaling</a> page) are limited by met reading,
+    kernel launches and host-side stepping rather than by the operators, so their speed says little about the kernels.</p>
+</section>
+
+<section class="card prose" id="data">
+  <h2>Data</h2>
+  <ul>
+    <li><a href="data/records.csv">records.csv</a>: every timing record of every device as collected (including failed and repeated runs).</li>
+    <li><a href="data/configs.json">configs.json</a>: what the site plots: one entry per device, version, grid, tracer count and operator set
+      (mean, passes, spread, SYPD, cost, memory), the breakdowns and the failed runs.</li>
+  </ul>
+  <p>Where several records exist for the same configuration and pass, the latest successful one is used.</p>
+  <div id="failures"></div>
+  <div id="problems"></div>
+  <h3>Reproduce</h3>
+  <ol>
+    <li>Timing harness on wurst: <code>/temp1/cfranken/scaling</code> (<code>run_timing.sh</code> → <code>timing.py</code>, <code>benchmark.jl</code>;
+      see its README). Point <code>ATMOSTR_TIMING_REPO</code> at the worktree of the version under test (each worktree needs a copy of the
+      untracked <code>Manifest.toml</code>).</li>
+    <li>Collect the records: <code>python3 -I /temp1/cfranken/plan/bench_site/tools/collect_wurst.py</code> (L40S and CPU) and
+      <code>python3 -I data/M5Pro/tools/collect.py</code> (Mac); A100 results go to <code>data/A100/records.csv</code> in the same schema.</li>
+    <li>Build: <code>python3 benchmarking/site/build_site.py --data /temp1/cfranken/plan/bench_site/data --out &lt;folder&gt;</code>.</li>
+  </ol>
+</section>
+
+<script>
+SITE.ready(() => {
+  const S = SITE, B = S.bench(), el = S.el;
+  document.getElementById("flag-pct").textContent = S.pct(B.spread_flag);
+  document.getElementById("ib-pct").textContent = S.pct(B.input_bound);
+  document.getElementById("planned").textContent = `That is ${B.planned} planned runs per device; the status line under the header counts them.`;
+  S.table(document.getElementById("version-table"), [[{text: "version", cls: "l"}, {text: "commit", cls: "l"}, {text: "what", cls: "l"}]],
+    B.versions.map(v => [{html: `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;background:${v.color}"></span>${v.name}`, cls: "l nw"},
+                         {html: v.commits.map(c => `<code>${c.slice(0, 9)}</code>`).join(", "), cls: "l"}, {text: v.note, cls: "l"}]));
+  const box = document.getElementById("device-list");
+  for (const d of B.devices) {
+    const p = d.progress;
+    box.append(el("h3", {}, el("span", {style: `display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:7px;background:${d.color}`}), d.long));
+    const items = [`Backend ${d.backend}, ${d.float_type}. ${p.done} of ${p.planned} planned runs` + (p.extra ? ` plus ${p.extra} C360/C720 runs` : "") +
+                   (p.failed ? `; ${p.failed} failed` : "") + (p.last ? `; latest ${S.niceUtc(p.last)}` : "") + "."];
+    for (const c of B.caveats.filter(c => c.d === d.key)) items.push(c.html);
+    box.append(el("ul", {}, items.map(h => el("li", {html: h}))));
+    if (B.notes[d.key]) box.append(el("div", {class: "callout", html: `<b>Notes recorded with the runs</b>${B.notes[d.key]}`}));
+  }
+  if (B.waiting.length) box.append(el("p", {}, `Waiting for data: ${B.waiting.map(w => w.long).join("; ")}.`));
+  if (B.failures.length) {
+    const f = document.getElementById("failures"), tb = el("div", {class: "table-wrap"});
+    f.append(el("h3", {}, "Failed runs"), tb);
+    S.table(tb, [[{text: "device", cls: "l"}, {text: "version", cls: "l"}, {text: "configuration", cls: "l"}, "pass", {text: "status", cls: "l"}, {text: "when", cls: "l"}]],
+      B.failures.map(x => [{text: S.device(x.d) ? S.device(x.d).name : x.d, cls: "l"}, {text: x.v, cls: "l"}, {text: `${x.g}, ${S.tr(x.t)}, ${x.o}`, cls: "l"},
+                           x.p, {text: x.status, cls: "l"}, {text: S.niceUtc(x.utc), cls: "l"}]));
+  }
+  if (B.problems.length) document.getElementById("problems").append(el("h3", {}, "Input problems"), el("ul", {}, B.problems.map(p => el("li", {}, p))));
+});
+</script>

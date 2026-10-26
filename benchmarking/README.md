@@ -18,6 +18,11 @@ Two lanes feed the dashboard:
   wurst and published through the same workflow. This is how GPU numbers are
   produced; see [Lab lane](#lab-lane).
 
+The real-data release, scaling and device comparison (MERRA-2 L72 runs timed
+by the wurst harness) has its own static web site generator in
+[`site/`](site/README.md):
+`python3 benchmarking/site/build_site.py --data <records dir> --out <folder>`.
+
 ## Environment
 
 Prepare the environment from the repository root, including on Julia 1.10

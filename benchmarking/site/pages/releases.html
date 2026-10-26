@@ -1,0 +1,92 @@
+<h1>Release comparison</h1>
+<p class="lede">Seconds per simulated day for v0.5.0, v0.6.0 and main on one device, for every grid, tracer count and operator set
+of the release and operator matrices. Lower is faster. Each marker is the mean of the passes; the hollow dots joined by a thin line are the two passes.</p>
+
+<div class="controls" id="controls"></div>
+
+<section class="card">
+  <div class="card-head"><h2 id="chart-title"></h2></div>
+  <div class="sub" id="chart-sub"></div>
+  <div class="plot" id="chart"></div>
+  <div class="note" id="chart-note"></div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2 id="table-title">All configurations</h2></div>
+  <div class="sub">Seconds per simulated day (mean of the passes; tap a chart row for the pass values). Speedup = s/day(old) / s/day(new).</div>
+  <div class="table-wrap" id="table"></div>
+  <div class="note" id="table-note"></div>
+</section>
+
+<script>
+SITE.ready(() => {
+  const S = SITE, B = S.bench(), el = S.el, V = B.versions;
+  const H = B.headline || {};
+  const st = S.state({device: H.d || "L40S", ops: "all"});
+  const hidden = new Set();
+  const leg = S.legend(V.map(v => ({key: v.key, name: v.name, color: v.color, kind: "shape", shape: "circle"})), hidden, draw);
+  S.controlRow(document.getElementById("controls"), [
+    {key: "device", label: "Device", options: () => B.devices.map(d => ({key: d.key, name: d.name, title: d.long}))},
+    {key: "ops", label: "Operators", prefer: ["all"],
+     options: s => B.ops.filter(o => S.configs({d: s.device, o: o.key}).length).map(o => ({key: o.key, name: o.name, title: o.long}))}],
+    st, () => { draw(); tableDraw(); }, leg);
+  const series = V.map(v => ({...v, shape: "circle"}));
+  // release rows: the release and operator matrices (C24-C180, 1 and 12 tracers) or anything measured by two versions;
+  // main-only scaling runs (4 tracers, C360, C720) are on the Scaling page
+  const releaseRow = (d, g, t, o) => (["C24", "C48", "C90", "C180"].includes(g) && [1, 12].includes(+t)) ||
+    V.filter(v => S.cfg(d, v.key, g, t, o)).length > 1;
+  const ratio = (d, g, t, o, a, b) => { const x = S.cfg(d, a, g, t, o), y = S.cfg(d, b, g, t, o); return x && y ? x.s / y.s : null; };
+
+  function draw() {
+    const d = st.device, o = st.ops, dev = S.device(d), div = document.getElementById("chart");
+    document.getElementById("chart-title").textContent = `${dev ? dev.name : d}: ${S.op(o) ? S.op(o).long : o}`;
+    document.getElementById("chart-sub").textContent = dev ? `${dev.long}, ${dev.float_type}. Log scale: equal distances are equal speed ratios.` : "";
+    const rows = [];
+    for (const g of B.grids) for (const t of B.tracers) {
+      if (!V.some(v => S.cfg(d, v.key, g.key, t, o)) || !releaseRow(d, g.key, t, o)) continue;
+      rows.push({key: `${g.key}|${t}`, g: g.key, t, label: `${g.key} · ${t} tr`, title: `${S.gridLabel(g.key)}, ${S.tr(t)}, ${S.op(o).long}`,
+                 sep: rows.length && rows[rows.length - 1].g !== g.key});
+    }
+    if (!rows.length) { S.emptyNote(div, "No runs on this device yet."); return; }
+    S.dotRows(div, {rows, series, hidden, get: (r, s) => S.cfg(d, s.key, r.g, r.t, o), x: {label: "seconds per simulated day (log scale)"},
+      tipExtra: r => [["v0.5.0", "main"], ["v0.6.0", "main"], ["v0.5.0", "v0.6.0"]].map(([a, b]) => {
+        const x = ratio(d, r.g, r.t, o, a, b);
+        return x ? `<div class="row"><span class="n">${b} / ${a} speedup</span><span class="v">${S.times(x)}</span></div>` : "";
+      }).join("")});
+    const flagged = rows.some(r => V.some(v => { const c = S.cfg(d, v.key, r.g, r.t, o); return c && c.flag; }));
+    document.getElementById("chart-note").innerHTML = (flagged ? `† the two passes of a version differ by more than ${S.pct(B.spread_flag)} in this row. ` : "") +
+      (V.length > 1 ? "Grey bar: from the fastest to the slowest version of the row." : "");
+  }
+  function tableDraw() {
+    const d = st.device, dev = S.device(d), cs = S.configs({d});
+    document.getElementById("table-title").textContent = `All configurations on ${dev ? dev.name : d}`;
+    const have = v => cs.some(c => c.v === v);
+    const VV = V.filter(v => have(v.key));
+    const pairs = [["v0.5.0", "main"], ["v0.6.0", "main"], ["v0.5.0", "v0.6.0"]].filter(([a, b]) => have(a) && have(b)).slice(0, 2);
+    const head = [[{text: "tracers", cls: "l"}, {text: "operators", cls: "l"},
+      ...VV.map(v => ({html: `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;background:${v.color}"></span>${v.name}`})),
+      ...pairs.map(([a, b], i) => ({text: `${b} / ${a}`, cls: i === 0 ? "sep" : ""}))]];
+    const body = [];
+    for (const g of B.grids) {
+      const rows = [];
+      for (const t of B.tracers) for (const o of B.ops) {
+        const c = v => S.cfg(d, v, g.key, t, o.key);
+        if (!VV.some(v => c(v.key)) || !releaseRow(d, g.key, t, o.key)) continue;
+        const best = d3.min(VV.map(v => c(v.key)).filter(Boolean), x => x.s);
+        rows.push([{text: t, cls: "l"}, {text: o.name, cls: "l", title: o.long},
+          ...VV.map(v => { const x = c(v.key); return x ? {html: `${S.sig(x.s)}${S.flagPill(x)}`, title: x.p.length > 1 ? `passes ${S.passText(x)} s/day` : "one pass",
+                                                             cls: VV.length > 1 && x.s === best ? "best" : ""} : {text: "–", cls: "dim"}; }),
+          ...pairs.map(([a, b], i) => ({text: S.times(ratio(d, g.key, t, o.key, a, b)), cls: i === 0 ? "sep" : ""}))]);
+      }
+      if (rows.length) body.push({grp: S.gridLabel(g.key)}, ...rows);
+    }
+    S.table(document.getElementById("table"), head, body);
+    const fails = B.failures.filter(f => f.d === d);
+    document.getElementById("table-note").innerHTML = (VV.length > 1 ? "Bold = fastest version of the row. " : "") +
+      (cs.some(c => c.flag) ? "<span class=\"flag\">Δ</span> = passes differ by more than " + S.pct(B.spread_flag) + " (value shown: their difference relative to the mean)." : "") +
+      (fails.length ? ` Failed runs (not shown): ${fails.map(f => `${f.v} ${f.g} ${f.t} tr ${f.o} pass ${f.p} (${f.status})`).join("; ")}.` : "");
+  }
+  draw();
+  tableDraw();
+});
+</script>
