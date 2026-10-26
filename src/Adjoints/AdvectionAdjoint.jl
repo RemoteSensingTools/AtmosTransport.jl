@@ -22,8 +22,6 @@
 # Kernelized adjoint building blocks
 # ---------------------------------------------------------------------------
 
-@inline _wrap_periodic(idx, N) = mod1(idx, N)
-
 @inline function _upwind_face_coeffs(F, m_l, m_r)
     FT = typeof(F)
     if F >= zero(FT)
@@ -257,7 +255,7 @@ of the forward at the taped tracer masses.
     end
 end
 
-@inline function _add_x_face_adjoint!(lambda_in, m, face_i, j, k, F, scale,
+Base.@propagate_inbounds function _add_x_face_adjoint!(lambda_in, m, face_i, j, k, F, scale,
                                       ::UpwindScheme, Nx)
     i_l = _wrap_periodic(face_i - Int32(1), Nx)
     i_r = _wrap_periodic(face_i, Nx)
@@ -267,7 +265,7 @@ end
     return nothing
 end
 
-@inline function _add_x_face_adjoint!(lambda_in, m, face_i, j, k, F, scale,
+Base.@propagate_inbounds function _add_x_face_adjoint!(lambda_in, m, face_i, j, k, F, scale,
                                       ::SlopesScheme{NoLimiter}, Nx)
     i_ll = _wrap_periodic(face_i - Int32(2), Nx)
     i_l  = _wrap_periodic(face_i - Int32(1), Nx)
@@ -282,7 +280,7 @@ end
     return nothing
 end
 
-@inline function _add_x_face_adjoint!(lambda_in, m, face_i, j, k, F, scale,
+Base.@propagate_inbounds function _add_x_face_adjoint!(lambda_in, m, face_i, j, k, F, scale,
                                       ::PPMScheme{NoLimiter}, Nx)
     i_ll = _wrap_periodic(face_i - Int32(2), Nx)
     i_l  = _wrap_periodic(face_i - Int32(1), Nx)
@@ -297,7 +295,7 @@ end
     return nothing
 end
 
-@inline function _add_x_face_adjoint!(lambda_in, m, rm, face_i, j, k, F, scale,
+Base.@propagate_inbounds function _add_x_face_adjoint!(lambda_in, m, rm, face_i, j, k, F, scale,
                                       scheme::PPMScheme{<:_PPMTapedLimiter}, Nx)
     i_3  = _wrap_periodic(face_i - Int32(3), Nx)
     i_2  = _wrap_periodic(face_i - Int32(2), Nx)
@@ -321,7 +319,7 @@ end
     return nothing
 end
 
-@inline function _add_y_face_adjoint!(lambda_in, m, i, face_j, k, F, scale,
+Base.@propagate_inbounds function _add_y_face_adjoint!(lambda_in, m, i, face_j, k, F, scale,
                                       ::UpwindScheme, Ny)
     FT = typeof(F)
     at_boundary = (face_j <= Int32(1)) | (face_j > Ny)
@@ -334,7 +332,7 @@ end
     return nothing
 end
 
-@inline function _add_y_face_adjoint!(lambda_in, m, i, face_j, k, F, scale,
+Base.@propagate_inbounds function _add_y_face_adjoint!(lambda_in, m, i, face_j, k, F, scale,
                                       ::SlopesScheme{NoLimiter}, Ny)
     FT = typeof(F)
     at_boundary = (face_j <= Int32(1)) | (face_j > Ny)
@@ -373,7 +371,7 @@ end
     return nothing
 end
 
-@inline function _add_y_face_adjoint!(lambda_in, m, i, face_j, k, F, scale,
+Base.@propagate_inbounds function _add_y_face_adjoint!(lambda_in, m, i, face_j, k, F, scale,
                                       ::PPMScheme{NoLimiter}, Ny)
     FT = typeof(F)
     at_boundary = (face_j <= Int32(1)) | (face_j > Ny)
@@ -412,7 +410,7 @@ end
     return nothing
 end
 
-@inline function _add_y_face_adjoint!(lambda_in, m, rm, i, face_j, k, F, scale,
+Base.@propagate_inbounds function _add_y_face_adjoint!(lambda_in, m, rm, i, face_j, k, F, scale,
                                       scheme::PPMScheme{<:_PPMTapedLimiter}, Ny)
     at_boundary = (face_j <= Int32(1)) | (face_j > Ny)
     at_boundary && return nothing
@@ -440,7 +438,7 @@ end
     return nothing
 end
 
-@inline function _add_z_face_adjoint!(lambda_in, m, i, j, face_k, F, scale,
+Base.@propagate_inbounds function _add_z_face_adjoint!(lambda_in, m, i, j, face_k, F, scale,
                                       ::UpwindScheme, Nz)
     FT = typeof(F)
     at_boundary = (face_k <= Int32(1)) | (face_k > Nz)
@@ -453,7 +451,7 @@ end
     return nothing
 end
 
-@inline function _add_z_face_adjoint!(lambda_in, m, i, j, face_k, F, scale,
+Base.@propagate_inbounds function _add_z_face_adjoint!(lambda_in, m, i, j, face_k, F, scale,
                                       ::SlopesScheme{NoLimiter}, Nz)
     FT = typeof(F)
     at_boundary = (face_k <= Int32(1)) | (face_k > Nz)
@@ -492,7 +490,7 @@ end
     return nothing
 end
 
-@inline function _add_z_face_adjoint!(lambda_in, m, i, j, face_k, F, scale,
+Base.@propagate_inbounds function _add_z_face_adjoint!(lambda_in, m, i, j, face_k, F, scale,
                                       ::PPMScheme{NoLimiter, SameAsHorizontal}, Nz)
     FT = typeof(F)
     at_boundary = (face_k <= Int32(1)) | (face_k > Nz)
@@ -531,7 +529,7 @@ end
     return nothing
 end
 
-@inline function _add_z_face_adjoint!(lambda_in, m, rm, i, j, face_k, F, scale,
+Base.@propagate_inbounds function _add_z_face_adjoint!(lambda_in, m, rm, i, j, face_k, F, scale,
                                       scheme::CSAdjointNonlinearScheme, Nz)
     at_boundary = (face_k <= Int32(1)) | (face_k > Nz)
     at_boundary && return nothing
@@ -568,9 +566,8 @@ end
         j = jj + Hp
         bar = lambda_out[i, j, k]
         @atomic lambda_in[i, j, k] += bar
-        Nx = Int32(Nc + 2 * Hp)
-        _add_x_face_adjoint!(lambda_in, m, Int32(i),     j, k, flux_scale * am[i,     j, k],  bar, scheme, Nx)
-        _add_x_face_adjoint!(lambda_in, m, Int32(i) + 1, j, k, flux_scale * am[i + 1, j, k], -bar, scheme, Nx)
+        _add_x_face_adjoint!(lambda_in, m, Int32(i),     j, k, flux_scale * am[i,     j, k],  bar, scheme, _HaloPaddedAxis())
+        _add_x_face_adjoint!(lambda_in, m, Int32(i) + 1, j, k, flux_scale * am[i + 1, j, k], -bar, scheme, _HaloPaddedAxis())
     end
 end
 
@@ -613,9 +610,8 @@ end
         j = jj + Hp
         bar = lambda_out[i, j, k]
         @atomic lambda_in[i, j, k] += bar
-        Nx = Int32(Nc + 2 * Hp)
-        _add_x_face_adjoint!(lambda_in, m, rm, Int32(i),     j, k, flux_scale * am[i,     j, k],  bar, scheme, Nx)
-        _add_x_face_adjoint!(lambda_in, m, rm, Int32(i) + 1, j, k, flux_scale * am[i + 1, j, k], -bar, scheme, Nx)
+        _add_x_face_adjoint!(lambda_in, m, rm, Int32(i),     j, k, flux_scale * am[i,     j, k],  bar, scheme, _HaloPaddedAxis())
+        _add_x_face_adjoint!(lambda_in, m, rm, Int32(i) + 1, j, k, flux_scale * am[i + 1, j, k], -bar, scheme, _HaloPaddedAxis())
     end
 end
 
@@ -658,6 +654,8 @@ function _adjoint_scheme_sweep!(lambda_panels, m_before, flux_panels,
     Nz = size(lambda_panels[1], 3)
     horizontal = direction === :x || direction === :y
     axis = direction === :x ? Val(1) : Val(2)
+    # The face adjoints read the halo without bounds checks or a periodic wrap.
+    horizontal && _validate_halo_for_scheme(scheme, Hp)
     horizontal && _cache_cs_seam_seeds!(ws.seam_seeds, lambda_panels, mesh, axis)
     # Every panel reuses `ws.lambda_A`: its zeroing, scatter and copy-back run
     # in queue order on a device, so no host synchronization is needed.
@@ -700,6 +698,8 @@ function _adjoint_scheme_sweep!(lambda_panels, m_before, rm_before, flux_panels,
     Nz = size(lambda_panels[1], 3)
     horizontal = direction === :x || direction === :y
     axis = direction === :x ? Val(1) : Val(2)
+    # The face adjoints read the halo without bounds checks or a periodic wrap.
+    horizontal && _validate_halo_for_scheme(scheme, Hp)
     horizontal && _cache_cs_seam_seeds!(ws.seam_seeds, lambda_panels, mesh, axis)
     @inbounds for p in 1:6
         fill!(ws.lambda_A, zero(eltype(ws.lambda_A)))

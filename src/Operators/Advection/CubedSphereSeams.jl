@@ -43,9 +43,9 @@ end
     @inbounds rm[i, j, k, t] += amount
 end
 
-@inline _cs_seam_tracer_flux(::Val{1}, i, j, k, rm, m, F, scheme, N) =
-    _xface_tracer_flux(Int32(i), j, k, rm, m, F, scheme, Int32(N))
-@inline _cs_seam_tracer_flux(::Val{2}, i, j, k, rm, m, F, scheme, N) =
+Base.@propagate_inbounds _cs_seam_tracer_flux(::Val{1}, i, j, k, rm, m, F, scheme, N) =
+    _xface_tracer_flux(Int32(i), j, k, rm, m, F, scheme, _HaloPaddedAxis())
+Base.@propagate_inbounds _cs_seam_tracer_flux(::Val{2}, i, j, k, rm, m, F, scheme, N) =
     _yface_tracer_flux(i, Int32(j), k, rm, m, F, scheme, Int32(N))
 @inline function _cs_seam_tracer_flux(::Val{1}, i, j, k, rm, m, F, ::UpwindScheme, N)
     donor = F >= zero(F) ? i - 1 : i
@@ -147,6 +147,8 @@ function _cache_cs_seams!(cache, panels_rm::NTuple{6}, panels_m::NTuple{6},
                           panels_flux::NTuple{6}, mesh::CubedSphereMesh,
                           scheme::AbstractAdvectionScheme, direction::Val{D}, scale) where D
     Nc, Hp = mesh.Nc, mesh.Hp
+    # The x face fluxes read the halo without bounds checks or a periodic wrap.
+    _validate_halo_for_scheme(scheme, Hp)
     Nz, Nt = size(panels_m[1], 3), size(panels_rm[1], 4)
     (size(cache, 1), size(cache, 2), size(cache, 4)) == (Nc, Nz, 12) ||
         throw(DimensionMismatch("CS seam cache must match Nc=$Nc, Nz=$Nz and 12 physical edges"))

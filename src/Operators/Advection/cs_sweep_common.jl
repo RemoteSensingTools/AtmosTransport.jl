@@ -28,10 +28,9 @@ using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend, CPU
         # Face fluxes: am has same halo-padded layout
         am_l = flux_scale * am[i, j, k]
         am_r = flux_scale * am[i + 1, j, k]
-        # Reconstruction on the full halo-padded array (Nx = Nc + 2Hp for stencil)
-        Nx_padded = Int32(Nc + 2 * Hp)
-        flux_L = _xface_tracer_flux(Int32(i), j, k, rm, m, am_l, scheme, Nx_padded)
-        flux_R = _xface_tracer_flux(Int32(i) + Int32(1), j, k, rm, m, am_r, scheme, Nx_padded)
+        # Stencil neighbours come from the halo, so the x indices need no periodic wrap
+        flux_L = _xface_tracer_flux(Int32(i), j, k, rm, m, am_l, scheme, _HaloPaddedAxis())
+        flux_R = _xface_tracer_flux(Int32(i) + Int32(1), j, k, rm, m, am_r, scheme, _HaloPaddedAxis())
         rm_new[i, j, k] = rm[i, j, k] + flux_L - flux_R
         m_new[i, j, k]  = m[i, j, k]  + am_l - am_r
     end
@@ -80,12 +79,11 @@ end
         j = jj + Hp
         am_l = flux_scale * am[i, j, k]
         am_r = flux_scale * am[i + 1, j, k]
-        Nx_padded = Int32(Nc + 2 * Hp)
         m_new[i, j, k] = m[i, j, k] + am_l - am_r
         for t in Int32(1):Int32(Nt)
             rm_t = TracerView(rm_4d, t)
-            flux_L = _xface_tracer_flux(Int32(i), j, k, rm_t, m, am_l, scheme, Nx_padded)
-            flux_R = _xface_tracer_flux(Int32(i) + Int32(1), j, k, rm_t, m, am_r, scheme, Nx_padded)
+            flux_L = _xface_tracer_flux(Int32(i), j, k, rm_t, m, am_l, scheme, _HaloPaddedAxis())
+            flux_R = _xface_tracer_flux(Int32(i) + Int32(1), j, k, rm_t, m, am_r, scheme, _HaloPaddedAxis())
             rm_new_4d[i, j, k, t] = rm_4d[i, j, k, t] + flux_L - flux_R
         end
     end

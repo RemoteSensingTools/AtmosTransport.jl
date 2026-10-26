@@ -22,12 +22,17 @@
 #           ├── _limited_moment(...)         [linear/quadratic schemes]
 #           └── _slopes_face_flux(...)       [Courant-fraction formula]
 #
-# All functions are @inline, branchless (ifelse), and GPU-safe.
+# All functions are inlined, branchless (ifelse), and GPU-safe. The x and z
+# face fluxes are `Base.@propagate_inbounds`: a caller inside `@inbounds` must
+# pass in-range stencil indices. The y face fluxes stay bounds-checked: without
+# the checks the cubed-sphere y sweep ran 5–9 % slower on an L40S (Nsight
+# Systems, C90/C180 with 12 tracers, 2026-10-25) despite fewer instructions.
 # All arithmetic uses `eltype(rm)` to stay type-stable for Float32/Float64.
 #
 # Boundary conditions
 # -------------------
-# - X (longitude): periodic — indices wrapped via mod1(idx, Nx)
+# - X (longitude): periodic — indices wrapped via mod1(idx, Nx); cubed-sphere
+#                   panels pass `_HaloPaddedAxis()` and read the halo unwrapped
 # - Y (latitude):  closed (no-flux) at j=1 (south pole) and j=Ny+1 (north pole)
 #                   Slopes zeroed at boundary cells (j=1, j=Ny)
 # - Z (vertical):  closed (no-flux) at k=1 (TOA) and k=Nz+1 (surface)
@@ -66,6 +71,17 @@ _wrap_periodic(38, 36)  # → 2   (two right of domain end)
 @inline _wrap_periodic(idx, N) = mod1(idx, N)
 
 """
+    _HaloPaddedAxis()
+
+Passed instead of the axis length `Nx` when the x stencil reads its neighbours
+from a halo, as on cubed-sphere panels padded by `Hp ≥ required_halo_width(scheme)`:
+every stencil index then lies inside the array and `_wrap_periodic` returns it
+unchanged, without the integer division of `mod1`.
+"""
+struct _HaloPaddedAxis end
+@inline _wrap_periodic(idx, ::_HaloPaddedAxis) = idx
+
+"""
     _advection_mass_floor(FT) → FT
 
 Floor on a cell's air mass, `eps(FT)`, wherever the `UpwindScheme`,
@@ -86,7 +102,7 @@ small air mass (e.g., the uppermost model level near the TOA).
 Used by `UpwindScheme` face flux functions. The `SlopesScheme` and
 `PPMScheme` face fluxes apply the same floor themselves.
 """
-@inline function _mixing_ratio(rm, m, i, j, k)
+Base.@propagate_inbounds function _mixing_ratio(rm, m, i, j, k)
     FT = eltype(rm)
     return rm[i, j, k] / max(m[i, j, k], _advection_mass_floor(FT))
 end
@@ -97,7 +113,7 @@ end
 Safe mixing ratio for 2D `(cell, level)` arrays used by face-indexed
 (unstructured) grids.  Same floor as `_mixing_ratio`.
 """
-@inline function _mixing_ratio_2d(rm, m, c, k)
+Base.@propagate_inbounds function _mixing_ratio_2d(rm, m, c, k)
     FT = eltype(rm)
     return rm[c, k] / max(m[c, k], _advection_mass_floor(FT))
 end
@@ -139,7 +155,7 @@ Tracer mass flux ``F_q`` [kg] through x-face `face_i` for first-order upwind.
 # Boundary conditions
 Periodic in x: indices wrapped via `mod1`.
 """
-@inline function _xface_tracer_flux(face_i, j, k, rm, m, F, ::UpwindScheme, Nx)
+Base.@propagate_inbounds function _xface_tracer_flux(face_i, j, k, rm, m, F, ::UpwindScheme, Nx)
     FT = eltype(rm)
     il = _wrap_periodic(face_i - Int32(1), Nx)
     ir = _wrap_periodic(face_i, Nx)
@@ -177,7 +193,7 @@ Tracer mass flux through z-face `face_k` for first-order upwind.
 Closed (no-flux) at `face_k = 1` (TOA) and `face_k = Nz + 1` (surface).
 Returns zero at boundaries.
 """
-@inline function _zface_tracer_flux(i, j, face_k, rm, m, F, ::UpwindScheme, Nz)
+Base.@propagate_inbounds function _zface_tracer_flux(i, j, face_k, rm, m, F, ::UpwindScheme, Nz)
     FT = eltype(rm)
     at_boundary = (face_k <= Int32(1)) | (face_k > Nz)
     kl = max(face_k - Int32(1), Int32(1))
@@ -345,7 +361,7 @@ All indices wrapped via `mod1(·, Nx)` for periodic boundaries.
 4. Apply moment limiter
 5. Evaluate Courant-fraction flux via `_slopes_face_flux`
 """
-@inline function _xface_tracer_flux(face_i, j, k, rm, m, F, scheme::SlopesScheme, Nx)
+Base.@propagate_inbounds function _xface_tracer_flux(face_i, j, k, rm, m, F, scheme::SlopesScheme, Nx)
     FT = eltype(rm)
     limiter = scheme.limiter
 
@@ -440,7 +456,7 @@ thickness ~500 Pa at TOA vs ~50,000 Pa near the surface).
 
 Matches the convention in the legacy `_rl_z_kernel!` (RussellLerner.jl).
 """
-@inline function _zface_tracer_flux(i, j, face_k, rm, m, F, scheme::SlopesScheme, Nz)
+Base.@propagate_inbounds function _zface_tracer_flux(i, j, face_k, rm, m, F, scheme::SlopesScheme, Nz)
     FT = eltype(rm)
     m_floor = _advection_mass_floor(FT)
     limiter = scheme.limiter
@@ -489,7 +505,7 @@ Cell indices `c_left` and `c_right` are looked up from the mesh
 connectivity table by the caller.  The flux formula is identical to
 the structured upwind, but indexing uses `(cell, level)` layout.
 """
-@inline function _hface_tracer_flux(rm, m, F, c_left, c_right, k, ::UpwindScheme)
+Base.@propagate_inbounds function _hface_tracer_flux(rm, m, F, c_left, c_right, k, ::UpwindScheme)
     FT = eltype(rm)
     c_l = _mixing_ratio_2d(rm, m, c_left, k)
     c_r = _mixing_ratio_2d(rm, m, c_right, k)
@@ -503,7 +519,7 @@ Vertical tracer mass flux at interface between levels `k_above` and
 `k_below` for face-indexed grids.  Upwind donor selection based on
 sign of `F`.
 """
-@inline function _vface_tracer_flux(rm, m, F, c, k_above, k_below, ::UpwindScheme)
+Base.@propagate_inbounds function _vface_tracer_flux(rm, m, F, c, k_above, k_below, ::UpwindScheme)
     FT = eltype(rm)
     c_above = _mixing_ratio_2d(rm, m, c, k_above)
     c_below = _mixing_ratio_2d(rm, m, c, k_below)
@@ -732,7 +748,7 @@ Tracer mass flux through x-face `face_i` for PPM advection.
 4. Compute edge-offset moments (PPM analogue of slopes `sx`)
 5. Evaluate Courant-fraction flux via `_slopes_face_flux`
 """
-@inline function _xface_tracer_flux(face_i, j, k, rm, m, F, scheme::PPMScheme, Nx)
+Base.@propagate_inbounds function _xface_tracer_flux(face_i, j, k, rm, m, F, scheme::PPMScheme, Nx)
     FT = eltype(rm)
     limiter = scheme.limiter
 
@@ -837,7 +853,7 @@ Same as y-direction: closed at `face_k ≤ 1` (TOA) and `face_k > Nz`
 Floors mass at `_advection_mass_floor` (`eps(FT)`) to prevent NaN from
 division by zero in the thin uppermost model levels.
 """
-@inline function _zface_tracer_flux(i, j, face_k, rm, m, F, scheme::PPMScheme, Nz)
+Base.@propagate_inbounds function _zface_tracer_flux(i, j, face_k, rm, m, F, scheme::PPMScheme, Nz)
     FT = eltype(rm)
     m_floor = _advection_mass_floor(FT)
     limiter = scheme.limiter

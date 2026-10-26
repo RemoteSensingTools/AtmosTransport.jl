@@ -45,6 +45,7 @@ using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
     strang_split_linrood_ppm!, CSLinRoodAdvectionWorkspace, LinRoodWorkspace,
     fv_tp_2d_cs!, _sweep_z_panels!, _cs_flux_x_interior, _cs_flux_y_interior,
     _advection_mass_floor, _ppm_edge_weights,  # shared with the forward fluxes (AdvectionAdjoint.jl)
+    _wrap_periodic, _HaloPaddedAxis, _validate_halo_for_scheme,
     needs_column_scratch, _fv3_adjoint_column_scratch, _sweep_z_panels_fv3_adjoint!
 using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion, DiffusionWorkspace,
     apply_vertical_diffusion_vmr!, _dkg_transfer_ratios,

@@ -34,14 +34,14 @@ function _cache_cs_seam_seeds!(seeds, lambda::NTuple{6}, mesh::CubedSphereMesh,
     return nothing
 end
 
-@inline function _add_cs_seam_adjoint!(lambda, m, rm, i, j, k, F, seed, scheme, N, ::Val{1})
+Base.@propagate_inbounds function _add_cs_seam_adjoint!(lambda, m, rm, i, j, k, F, seed, scheme, N, ::Val{1})
     if rm === nothing
-        _add_x_face_adjoint!(lambda, m, Int32(i), j, k, F, seed, scheme, Int32(N))
+        _add_x_face_adjoint!(lambda, m, Int32(i), j, k, F, seed, scheme, _HaloPaddedAxis())
     else
-        _add_x_face_adjoint!(lambda, m, rm, Int32(i), j, k, F, seed, scheme, Int32(N))
+        _add_x_face_adjoint!(lambda, m, rm, Int32(i), j, k, F, seed, scheme, _HaloPaddedAxis())
     end
 end
-@inline function _add_cs_seam_adjoint!(lambda, m, rm, i, j, k, F, seed, scheme, N, ::Val{2})
+Base.@propagate_inbounds function _add_cs_seam_adjoint!(lambda, m, rm, i, j, k, F, seed, scheme, N, ::Val{2})
     if rm === nothing
         _add_y_face_adjoint!(lambda, m, i, Int32(j), k, F, seed, scheme, Int32(N))
     else

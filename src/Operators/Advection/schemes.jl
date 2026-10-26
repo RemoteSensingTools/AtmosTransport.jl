@@ -54,7 +54,8 @@ This hierarchy enables orthogonal dispatch:
 
 1. Subtype one of the three families
 2. Implement `_xface_tracer_flux`, `_yface_tracer_flux`, `_zface_tracer_flux`
-   (see `reconstruction.jl`)
+   (see `reconstruction.jl`); the x face flux must use `Nx` only through
+   `_wrap_periodic`, since cubed-sphere sweeps pass `_HaloPaddedAxis()`
 3. The universal kernel shells in `structured_kernels.jl` will automatically
    dispatch to your face-flux functions at compile time
 

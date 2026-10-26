@@ -64,6 +64,9 @@ Configuration parsing lives in
   (`strang_split_cs_mt_pingpong!`) fills halos only before the horizontal
   sweeps that read them, so it returns stale halos; its Z sweeps and
   midpoint operators must stay column-local (interior reads only)
+- Cubed-sphere X stencils read the halo unwrapped (`_HaloPaddedAxis`) and
+  without bounds checks: `Hp ≥ required_halo_width(scheme)` is validated
+  before any seam-cache or sweep launch (`_validate_halo_for_scheme`)
 - CFL subcycling (every topology): one count `n` from the palindrome
   outflow budget against `min(m_start, m_end)` (no pass removes more than
   `cfl_limit / 2` of a cell's current mass; an invalid flux set throws), then `(X Y Z)^n → midpoint → (Z Y X)^n` with every flux
