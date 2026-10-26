@@ -130,7 +130,11 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
 - [`CubedSphereSeams.jl`](CubedSphereSeams.jl) — canonical physical seam
   transfers paired across panels within each directional group; a group's
   transfers are cached in one launch (`SeamTransferCache` point operations,
-  see `Architectures.AbstractPointOp`) and applied seam by seam in queue order
+  see `Architectures.AbstractPointOp`) and applied by one `Fused` set of
+  `SeamTransferApply` operations (one launch under `FuseLaunches`); a panel
+  corner cell on two seams of the group is written by the later seam's
+  operation, earlier contribution first, so it receives the transfers in seam
+  order
 - [`ppm_subgrid_distributions.jl`](ppm_subgrid_distributions.jl) — PPM
   subcell distributions shared by CS-specific code
 - [`LinRoodSeams.jl`](LinRoodSeams.jl) — shared final seam estimates and
