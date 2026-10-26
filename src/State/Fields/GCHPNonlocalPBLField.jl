@@ -126,12 +126,11 @@ end
     end
 end
 
-@kernel function _gchp_nonlocal_pbl_kernel!(dkg, profile, p_mid, z_mid,
-                                            @Const(air_mass), @Const(area),
-                                            @Const(pblh), @Const(ustar), @Const(hflux),
-                                            @Const(eflux), @Const(u), @Const(v),
-                                            @Const(t), @Const(qv), prm, p_top, n_pbl, Hp)
-    i, j = @index(Global, NTuple)
+# One column `(i, j)` of one panel: `dkg`, `profile` and the scratch `p_mid`,
+# `z_mid` are written, the other arrays read.
+@inline function _gchp_nonlocal_pbl_column!(dkg, profile, p_mid, z_mid, air_mass, area,
+                                            pblh, ustar, hflux, eflux, u, v, t, qv,
+                                            prm, p_top, n_pbl, Hp, i, j)
     FT = eltype(dkg)
     Nz = size(dkg, 3)
     A = FT(area[i, j])
@@ -194,6 +193,24 @@ end
             profile[i, j, k] = w_below - profile[i, j, k]
         end
     end
+    return nothing
+end
+
+# All six panels in one launch (the third index selects the panel): one launch
+# per panel left the GPU nearly idle on small grids (576 columns per launch at C24).
+@kernel function _gchp_nonlocal_pbl_kernel!(dkg, profile, p_mid, z_mid,
+                                            @Const(air_mass), @Const(area),
+                                            @Const(pblh), @Const(ustar), @Const(hflux),
+                                            @Const(eflux), @Const(u), @Const(v),
+                                            @Const(t), @Const(qv), prm, p_top, n_pbl, Hp)
+    i, j, p = @index(Global, NTuple)
+    _gchp_nonlocal_pbl_column!(select_panel(dkg, p), select_panel(profile, p),
+                               select_panel(p_mid, p), select_panel(z_mid, p),
+                               select_panel(air_mass, p), area, select_panel(pblh, p),
+                               select_panel(ustar, p), select_panel(hflux, p),
+                               select_panel(eflux, p), select_panel(u, p), select_panel(v, p),
+                               select_panel(t, p), select_panel(qv, p),
+                               prm, p_top, n_pbl, Hp, i, j)
 end
 
 """
@@ -229,15 +246,14 @@ function refresh_gchp_nonlocal_pbl!(field::GCHPNonlocalPBLField, surface, vdiff,
     copyto!(field.cell_areas, cell_areas)
     areas = field.cell_areas
     backend = get_backend(field.p_mid[1])
-    kernel! = _gchp_nonlocal_pbl_kernel!(backend)
-    for p in 1:6
-        dkg = panel_field(field, p).data
-        kernel!(dkg, field.emission_profile[p], field.p_mid[p], field.z_mid[p],
-                air_mass[p], areas, surface.pblh[p], surface.ustar[p], surface.hflux[p],
-                surface.eflux[p], vdiff.u[p], vdiff.v[p], vdiff.t[p], vdiff.qv[p],
-                field.params, first(vertical.A), gchp_pbl_layer_count(vertical.A, vertical.B, field.params),
-                Int(halo_width); ndrange = size(dkg)[1:2])
-    end
+    panels(x) = ntuple(p -> x[p], 6)
+    dkg = ntuple(p -> panel_field(field, p).data, 6)
+    _gchp_nonlocal_pbl_kernel!(backend)(
+        dkg, field.emission_profile, field.p_mid, field.z_mid, air_mass, areas,
+        panels(surface.pblh), panels(surface.ustar), panels(surface.hflux), panels(surface.eflux),
+        panels(vdiff.u), panels(vdiff.v), panels(vdiff.t), panels(vdiff.qv),
+        field.params, first(vertical.A), gchp_pbl_layer_count(vertical.A, vertical.B, field.params),
+        Int(halo_width); ndrange = (size(dkg[1], 1), size(dkg[1], 2), 6))
     synchronize(backend)
     return field
 end
