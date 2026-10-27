@@ -65,12 +65,12 @@
   <div id="problems"></div>
   <h3>Reproduce</h3>
   <ol>
-    <li>Timing harness on wurst: <code>/temp1/cfranken/scaling</code> (<code>run_timing.sh</code> → <code>timing.py</code>, <code>benchmark.jl</code>;
-      see its README). Point <code>ATMOSTR_TIMING_REPO</code> at the worktree of the version under test (each worktree needs a copy of the
+    <li>Timing harness (lab copy, not yet in the repository): <code>run_timing.sh</code> → <code>timing.py</code>, <code>benchmark.jl</code>.
+      Point <code>ATMOSTR_TIMING_REPO</code> at the worktree of the version under test (each worktree needs a copy of the
       untracked <code>Manifest.toml</code>).</li>
-    <li>Collect the records: <code>python3 -I /temp1/cfranken/plan/bench_site/tools/collect_wurst.py</code> (L40S and CPU) and
-      <code>python3 -I data/M5Pro/tools/collect.py</code> (Mac); A100 results go to <code>data/A100/records.csv</code> in the same schema.</li>
-    <li>Build: <code>python3 benchmarking/site/build_site.py --data /temp1/cfranken/plan/bench_site/data --out &lt;folder&gt;</code>.</li>
+    <li>Collect the records of each device into <code>&lt;data&gt;/&lt;device&gt;/records.csv</code> (schema in
+      <code>benchmarking/site/README.md</code>).</li>
+    <li>Build: <code>python3 benchmarking/site/build_site.py --data &lt;data&gt; --out &lt;folder&gt;</code>.</li>
   </ol>
 </section>
 
@@ -79,10 +79,10 @@ SITE.ready(() => {
   const S = SITE, B = S.bench(), el = S.el;
   document.getElementById("flag-pct").textContent = S.pct(B.spread_flag);
   document.getElementById("ib-pct").textContent = S.pct(B.input_bound);
-  document.getElementById("planned").textContent = `That is ${B.planned} planned runs per device; the status line under the header counts them.`;
+  document.getElementById("planned").textContent = `That is ${B.planned} planned runs per device; a device with a reduced matrix says so in its notes below. The status line under the header counts them.`;
   S.table(document.getElementById("version-table"), [[{text: "version", cls: "l"}, {text: "commit", cls: "l"}, {text: "what", cls: "l"}]],
     B.versions.map(v => [{html: `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;background:${v.color}"></span>${v.name}`, cls: "l nw"},
-                         {html: v.commits.map(c => `<code>${c.slice(0, 9)}</code>`).join(", "), cls: "l"}, {text: v.note, cls: "l"}]));
+                         {html: [...new Set(v.commits.map(c => c.slice(0, 9)))].map(c => `<code>${c}</code>`).join(", "), cls: "l"}, {text: v.note, cls: "l"}]));
   const box = document.getElementById("device-list");
   for (const d of B.devices) {
     const p = d.progress;

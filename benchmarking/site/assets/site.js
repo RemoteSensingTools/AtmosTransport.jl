@@ -413,7 +413,9 @@ const SITE = (() => {
     const Y = (ylog ? d3.scaleLog() : d3.scaleLinear()).domain(yd).range([mt + ph, mt]);
     if (!ylog) Y.nice();
     const yt = ylog ? logTicks(yd[0], yd[1], ph * 1.25) : Y.ticks(Math.max(2, Math.round(ph / 50)));
-    const ml = Math.ceil((d3.max(yt, t => textWidth(tickLabel(t))) || 16) + 9 + 21), mr = 18, pw = Math.max(60, W - ml - mr);
+    // endLabels: name each line at its last point (direct labels when line styles alone cannot tell series apart)
+    const endW = o.endLabels ? (d3.max(S, s => textWidth(s.endLabel || s.name, 11)) || 0) + 10 : 0;
+    const ml = Math.ceil((d3.max(yt, t => textWidth(tickLabel(t))) || 16) + 9 + 21), mr = Math.max(18, endW), pw = Math.max(60, W - ml - mr);
     const xd = xs.length > 1 ? [d3.min(xs) / 1.6, d3.max(xs) * 1.6] : [xs[0] / 3, xs[0] * 3];
     const X = d3.scaleLog().domain(xd).range([0, pw]);
     const svg = C.svg.attr("width", W).attr("height", H).attr("viewBox", `0 0 ${W} ${H}`);
@@ -446,6 +448,11 @@ const SITE = (() => {
         .attr("stroke-width", 2).attr("stroke-dasharray", dash(s.dash)).attr("stroke-linecap", "round").attr("stroke-linejoin", "round");
       for (const p of pts) g.append("path").attr("d", symbolPath(s.shape || "circle", 60)).attr("transform", `translate(${X(p.x)},${Y(p.y)})`)
         .attr("fill", p.open ? SURFACE : s.color).attr("stroke", p.open ? s.color : SURFACE).attr("stroke-width", 1.5);
+      if (o.endLabels && pts.length) {
+        const p = pts[pts.length - 1];
+        g.append("text").attr("class", "end-label").attr("x", X(p.x) + 7).attr("y", Y(p.y)).attr("dy", "0.34em")
+          .style("fill", s.color).text(s.endLabel || s.name);
+      }
     }
     const mark = g.append("g").attr("pointer-events", "none");
     const ov = g.append("rect").attr("class", "overlay").attr("x", 0).attr("y", mt).attr("width", pw).attr("height", ph).attr("fill", "transparent");

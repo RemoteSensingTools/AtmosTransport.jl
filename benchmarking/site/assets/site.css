@@ -197,6 +197,7 @@ details.more[open] > summary { margin-bottom: 6px; }
 .chart text { fill: var(--ink2); font-size: 11.5px; }
 .chart text.axis-title { font-size: 12px; }
 .chart text.note { font-size: 11px; fill: var(--ink2); paint-order: stroke; stroke: var(--surface); stroke-width: 3px; }
+.chart text.end-label { font-size: 11px; paint-order: stroke; stroke: var(--surface); stroke-width: 3px; }
 .chart .guide { stroke: var(--ink2); stroke-width: 1; stroke-dasharray: 3 3; }
 .chart .brush { fill: rgba(42, 120, 214, 0.10); stroke: rgba(42, 120, 214, 0.55); stroke-width: 1; }
 .chart .band-hl { fill: #efeee9; }

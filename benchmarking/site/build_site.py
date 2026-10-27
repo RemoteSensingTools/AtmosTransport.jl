@@ -4,7 +4,8 @@
     python3 benchmarking/site/build_site.py --data <data dir> --out <site dir>
 
 <data dir>/<device>/records.csv holds one row per timed run (schema: FIELDS); an optional
-<data dir>/<device>/NOTES.md is shown on the Methods page. Devices, versions, grids, tracer counts and
+<data dir>/<device>/PUBLIC_NOTES.md is shown on the Methods page (NOTES.md is the internal run log and is
+never published). Devices, versions, grids, tracer counts and
 operator sets that have no successful run are left out of the site (no empty axes or columns), so the
 build can be repeated while the runs are still in progress. Python 3 standard library only.
 """
@@ -77,13 +78,19 @@ INPUT_BOUND = 0.5                # 'none' / selected operator set at or above th
 PLAN = dict(release=dict(versions=3, grids=("C24", "C48", "C90", "C180"), tracers=(1, 12), ops=("none", "adv", "all"), passes=2),
             opbreak=dict(versions=3, grids=("C90", "C180"), tracers=(12,), ops=("diff", "conv", "adv+emis"), passes=2),
             scaling=dict(versions=1, grids=("C24", "C48", "C90", "C180"), tracers=(4,), ops=("adv", "all"), passes=1))
+# Devices with a reduced matrix: the CPU runs the release grids up to C90 with adv and all, one pass.
+DEVICE_PLAN = {"CPU-wurst": dict(release=dict(versions=3, grids=("C24", "C48", "C90"), tracers=(1, 12), ops=("adv", "all"), passes=1))}
 HEADLINES = [("C90", 12, "all"), ("C180", 12, "all"), ("C48", 12, "all"), ("C24", 12, "all"),
              ("C90", 1, "all"), ("C48", 1, "all"), ("C24", 1, "all")]
 SECONDS_PER_YEAR_DAYS = 365.0
 
 
-def planned_runs():
-    return sum(p["versions"] * len(p["grids"]) * len(p["tracers"]) * len(p["ops"]) * p["passes"] for p in PLAN.values())
+def plan_for(d):
+    return DEVICE_PLAN.get(d, PLAN)
+
+
+def planned_runs(plan=PLAN):
+    return sum(p["versions"] * len(p["grids"]) * len(p["tracers"]) * len(p["ops"]) * p["passes"] for p in plan.values())
 
 
 def sypd(s_per_day):
@@ -159,7 +166,7 @@ def read_records(data_dir):
 def read_notes(data_dir):
     notes = {}
     for dev in sorted(os.listdir(data_dir)):
-        path = os.path.join(data_dir, dev, "NOTES.md")
+        path = os.path.join(data_dir, dev, "PUBLIC_NOTES.md")
         if os.path.isfile(path):
             with open(path, encoding="utf-8") as fh:
                 notes[dev] = markdown(fh.read())
@@ -167,13 +174,20 @@ def read_notes(data_dir):
 
 
 def markdown(text):
-    """Small Markdown subset (headings, bullet lists, paragraphs, `code`, **bold**, links) to HTML."""
+    """Small Markdown subset (headings, bullet lists, paragraphs, `code`, **bold**, *italic*, links) to HTML."""
     def inline(s):
+        # Code spans and link targets are set aside first so that * inside them stays literal; *italic*
+        # needs a non-word character on both sides, so 2*3*4 and file*name* stay as written.
+        keep = []
+        def stash(h):
+            keep.append(h)
+            return f"\x00{len(keep) - 1}\x00"
         s = html.escape(s, quote=False)
-        s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+        s = re.sub(r"`([^`]+)`", lambda m: stash(f"<code>{m[1]}</code>"), s)
+        s = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", lambda m: stash(f'<a href="{m[2]}">') + m[1] + stash("</a>"), s)
         s = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", s)
-        s = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r'<a href="\2">\1</a>', s)
-        return s
+        s = re.sub(r"(?<![\w*])\*([^*\s](?:[^*]*[^*\s])?)\*(?![\w*])", r"<i>\1</i>", s)
+        return re.sub(r"\x00(\d+)\x00", lambda m: keep[int(m[1])], s)
     out, para, items = [], [], []
     def flush():
         if para:
@@ -278,7 +292,8 @@ class Bench:
                 continue
             missing = [o for o, x in vals.items() if x is None]
             if missing:
-                planned = g in PLAN["opbreak"]["grids"] and t in PLAN["opbreak"]["tracers"]
+                ob = plan_for(d).get("opbreak")
+                planned = ob is not None and g in ob["grids"] and t in ob["tracers"]
                 if vals["all"] is not None and (planned or any(vals[o] is not None for o in ("diff", "conv", "adv+emis"))):
                     partial.append(dict(d=d, v=v, g=g, t=t, missing=missing))
                 continue
@@ -291,7 +306,7 @@ class Bench:
 
     def progress(self, d):
         counted = 0
-        for name, p in PLAN.items():
+        for name, p in plan_for(d).items():
             vs = list(VERSIONS) if p["versions"] == 3 else ["main"]
             for v in vs:
                 for g in p["grids"]:
@@ -302,7 +317,7 @@ class Bench:
                                 counted += min(len(c["p"]), p["passes"])
         extra = sum(len(c["p"]) for k, c in self.cfg.items() if k[0] == d and grid_n(k[2]) > 180)
         runs = [r for r in self.runs if r["device"] == d]
-        return dict(done=counted, planned=planned_runs(), extra=extra,
+        return dict(done=counted, planned=planned_runs(plan_for(d)), extra=extra,
                     failed=sum(1 for f in self.failures if f["d"] == d),
                     last=max((r["utc"] for r in runs), default=""))
 
@@ -563,7 +578,9 @@ def write_site(out, data, rows, version):
     with open(os.path.join(ddir, "records.csv"), "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=FIELDS)
         w.writeheader()
-        w.writerows(sorted(rows, key=lambda r: (r["device"], r["utc"])))
+        # publish only the run label (run directory / timing / config), not the host's absolute path
+        w.writerows(sorted(({**r, "result_dir": "/".join(r["result_dir"].split("/")[-3:])} for r in rows),
+                           key=lambda r: (r["device"], r["utc"])))
     with open(os.path.join(ddir, "configs.json"), "w", encoding="utf-8") as fh:
         json.dump(round_floats(dict(generated=data["generated"], note="mean of the passes; s = steady seconds per simulated day",
                                     configs=data["configs"], breakdown=data["breakdown"], failures=data["failures"])), fh, indent=1)
@@ -584,7 +601,7 @@ def write_site(out, data, rows, version):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data", required=True, help="folder with <device>/records.csv (and optional NOTES.md)")
+    ap.add_argument("--data", required=True, help="folder with <device>/records.csv (and optional PUBLIC_NOTES.md)")
     ap.add_argument("--out", required=True, help="output folder (created; must be empty or an earlier build)")
     a = ap.parse_args(argv)
     rows, problems = read_records(a.data)

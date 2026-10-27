@@ -56,7 +56,7 @@ SITE.ready(() => {
     const grids = B.grids.filter(g => S.configs({d, v, o, g: g.key}).length);
     const xt = grids.map(g => ({v: g.cells, label: g.key, g}));
     const inputFrac = (g, t) => { const a = S.cfg(d, v, g, t, o), n = S.cfg(d, v, g, t, "none"); return a && n && o !== "none" ? n.s / a.s : null; };
-    const mk = (y, extra = {}) => tracers.map(t => ({key: String(t), name: S.tr(t), color: dev.color, dash: DASH[t], shape: dev.shape,
+    const mk = (y, extra = {}) => tracers.map(t => ({key: String(t), name: S.tr(t), endLabel: `${t} tr`, color: dev.color, dash: DASH[t], shape: dev.shape,
       pts: grids.map(g => { const c = S.cfg(d, v, g.key, t, o); const f = inputFrac(g.key, t);
                             return c ? {x: g.cells, y: y(c), c, open: f !== null && f >= B.input_bound, f} : null; }).filter(Boolean)}));
     const sub = `${dev.long}, ${v === "main" ? "main" : `${v} (main not measured on this device yet)`}, ${S.op(o).long}.`;
@@ -75,7 +75,7 @@ SITE.ready(() => {
     const xl = "grid (cells, log scale)";
     const c1 = document.getElementById("c1"), c2 = document.getElementById("c2"), c3 = document.getElementById("c3");
     if (!grids.length) { [c1, c2, c3].forEach(c => S.emptyNote(c, "No runs yet.")); return; }
-    S.lines(c1, {series: mk(c => c.s), hidden, bands, height: 320, x: {ticks: xt, label: xl}, y: {label: "s per simulated day"}, head,
+    S.lines(c1, {series: mk(c => c.s), hidden, bands, height: 320, endLabels: true, x: {ticks: xt, label: xl}, y: {label: "s per simulated day"}, head,
       rowFmt: (s, p) => [`${S.sig(p.y)} s`, `${S.sig(p.c.sypd)} SYPD${fracTxt(p) ? ", " + fracTxt(p) : ""}${p.c.flag ? " †" : ""}`]});
     S.lines(c2, {series: mk(c => c.cost_ns), hidden, height: 260, x: {ticks: xt, label: xl}, y: {label: "ns per cell, tracer and day"}, head,
       rowFmt: (s, p) => [`${S.sig(p.y)} ns`, ""]});
@@ -87,7 +87,7 @@ SITE.ready(() => {
     document.getElementById("note1").innerHTML = `Open marker / shaded band: met input and stepping alone (operator set <i>none</i>) take at least ${S.pct(B.input_bound)} ` +
       `of the time of the selected set, so the operators are not what limits the speed there. ` +
       xt.filter(x => x.g.met !== "MERRA-2").map(x => `${x.label} uses ${x.g.met}-derived binaries instead of MERRA-2. `).join("") +
-      `Line style: dotted 1, dashed 4, solid 12 tracers.` +
+      `Line style: dotted 1, dashed 4, solid 12 and more tracers; each line is labelled at its last grid.` +
       (grids.some(g => tracers.some(t => (inputFrac(g.key, t) || 0) > 1)) ? " An input share above 100 % means the <i>none</i> run was slower than the run with operators (listed on the Methods page)." : "");
     // table
     const body = [];

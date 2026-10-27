@@ -7,7 +7,7 @@ from the timing records of the real-data harness (not from the synthetic cases o
 ## Build
 
 ```bash
-python3 benchmarking/site/build_site.py --data /temp1/cfranken/plan/bench_site/data --out <folder>
+python3 benchmarking/site/build_site.py --data <data> --out <folder>
 ```
 
 Python 3 standard library only. A rebuild takes about a second and can be repeated while runs are in
@@ -22,7 +22,7 @@ server after review.
 | Input | Used for |
 |---|---|
 | `<data>/<device>/records.csv` | every number on the site; schema below |
-| `<data>/<device>/NOTES.md` (optional) | shown on the Methods page under that device (small Markdown subset) |
+| `<data>/<device>/PUBLIC_NOTES.md` (optional) | shown on the Methods page under that device (small Markdown subset); the internal `NOTES.md` run log is never published |
 
 `records.csv` columns: `device, backend, float_type, version, commit, pass, grid, tracers, operators,
 sim_days, status, steady_seconds_per_day, warm_seconds_per_day, peak_mem_mib, mean_util_percent,
@@ -31,7 +31,11 @@ mean_power_w, load_avg_1m, utc, result_dir`. Device folders: `L40S`, `A100`, `M5
 `none, adv, diff, conv, adv+emis, all`; other values are ignored.
 
 Per configuration (device, version, grid, tracers, operators) and pass, the latest successful record is
-used; a pass with only failed records is listed as failed on the Methods page.
+used; a pass with only failed records is listed as failed on the Methods page. The planned matrix is
+`PLAN` in `build_site.py`; a device with a reduced matrix gets its own entry in `DEVICE_PLAN` (today the
+CPU: C24–C90, adv and all, one pass), which the progress counts and the operator page use. The published
+`data/records.csv` keeps only the last three components of `result_dir` (run, `timing`, configuration),
+so no host paths are published.
 
 ## Pages
 
@@ -42,7 +46,7 @@ used; a pass with only failed records is listed as failed on the Methods page.
 | `scaling.html` | per device, main (or the newest version measured): s/day, cost per cell and tracer, and peak memory against grid size for 1, 4 and 12 tracers; input-bound grids marked |
 | `operators.html` | per device: stacked breakdown at C90 and C180, 12 tracers, one bar per version; table |
 | `devices.html` | main: devices side by side per grid, speedup over the CPU |
-| `methods.html` | protocol, metric definitions, commits, per-device caveats (load average, flagged passes, input-bound grids, negative operator costs, `NOTES.md`), failed runs, downloads (`data/records.csv`, `data/configs.json`), how to reproduce |
+| `methods.html` | protocol, metric definitions, commits, per-device caveats (load average, flagged passes, input-bound grids, negative operator costs, `PUBLIC_NOTES.md`), failed runs, downloads (`data/records.csv`, `data/configs.json`), how to reproduce |
 
 ## Definitions
 
