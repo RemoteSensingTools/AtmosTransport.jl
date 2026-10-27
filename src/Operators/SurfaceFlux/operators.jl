@@ -330,17 +330,13 @@ end
 # nothing.
 const _CS_SURFACE_FLUX_SOURCES_PER_LAUNCH = 4
 
-_tuple_chunks(t::Tuple, ::Val{K}) where K =
-    length(t) <= K ? (t,) : (ntuple(i -> t[i], Val(K)),
-                             _tuple_chunks(ntuple(i -> t[K + i], Val(length(t) - K)), Val(K))...)
-
 # One launch per segment index and group of sources: a source's segments run in
 # stream order, so its compensated sums see the same operations in the same
 # order as one launch per source and segment.
 function _launch_cs_surface_flux!(q_raw::NTuple{6}, plans::Tuple, Hp, backend, deposit)
     isempty(plans) && return nothing
     Nc, Ny, Nz = size(q_raw[1], 1) - 2Hp, size(q_raw[1], 2) - 2Hp, size(q_raw[1], 3)
-    for group in _tuple_chunks(plans, Val(_CS_SURFACE_FLUX_SOURCES_PER_LAUNCH))
+    for group in tuple_chunks(plans, Val(_CS_SURFACE_FLUX_SOURCES_PER_LAUNCH))
         ctx = (; q_raw, rates = map(plan -> plan.rates, group), comp = map(plan -> plan.comp, group),
                Nc, Ny, Nz, Hp, deposit)
         for g in 1:maximum(plan -> plan.tracer == 0 ? 0 : length(plan.segments), group)

@@ -242,7 +242,7 @@ else
             plans = map(src -> SF._cs_surface_flux_plan(q_fused, src, dt,
                                    findfirst(==(src.tracer_name), names), HP,
                                    WindowTestClock(0.0)), op.flux_map.sources)
-            group = first(SF._tuple_chunks(plans, Val(SF._CS_SURFACE_FLUX_SOURCES_PER_LAUNCH)))
+            group = first(SF.tuple_chunks(plans, Val(SF._CS_SURFACE_FLUX_SOURCES_PER_LAUNCH)))
             ctx = (; q_raw = q_fused, rates = map(p -> p.rates, group), comp = map(p -> p.comp, group),
                    Nc = NC, Ny = NC, Nz = NZ, Hp = HP, deposit)
             ops = AtmosTransport.Architectures.Fused(ntuple(n -> SF.CSSurfaceFluxSegment{n}(group[n], 1),

@@ -153,6 +153,27 @@ for FT in (Float64, Float32)
     end
 
     # -------------------------------------------------------------------
+    # More decaying tracers than one launch carries: each decays exactly once;
+    # t11, t22, t33, t44 between them do not decay
+    # -------------------------------------------------------------------
+    @testset "CS $tag: 40 decaying tracers" begin
+        panel_shape = (6, 6, 2)
+        mesh  = CubedSphereMesh(; FT = FT, Nc = 4, Hp = 1,
+                                convention = AtmosTransport.Grids.GnomonicPanelConvention())
+        state = CubedSphereState(DryBasis, mesh, ntuple(_ -> ones(FT, panel_shape), 6);
+                                 (Symbol(:t, n) => ntuple(_ -> fill(FT(n), panel_shape), 6) for n in 1:44)...)
+        decaying = filter(n -> n % 11 != 0, 1:44)
+        op = ExponentialDecay(FT; (Symbol(:t, n) => 3_600.0 * n for n in decaying)...)
+        d  = AtmosTransport.Operators.Chemistry._decay_decrements(op, nothing, FT(3600))
+        expected = FT.(1:44)
+        for (k, n) in enumerate(decaying)
+            expected[n] = muladd(FT(n), d[k], FT(n))
+        end
+        apply!(state, nothing, nothing, op, FT(3600))
+        @test all(n -> all(p -> all(x -> isapprox(x, expected[n]; rtol = 2eps(FT)), get_tracer(state, Symbol(:t, n))[p]), 1:6), 1:44)
+    end
+
+    # -------------------------------------------------------------------
     # Zero-operator ExponentialDecay is identity (N == 0 branch)
     # -------------------------------------------------------------------
     @testset "CS $tag: zero-tracer ExponentialDecay is identity" begin

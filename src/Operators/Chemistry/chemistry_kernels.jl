@@ -1,8 +1,9 @@
 # ---------------------------------------------------------------------------
 # Multi-tracer fused decay kernel
 #
-# One KernelAbstractions launch per `apply!(::ExponentialDecay)` call. The
-# kernel iterates over every spatial cell (Cartesian index over all axes
+# One launch per array (per panel on the cubed sphere) and group of at most
+# `_DECAY_TRACERS_PER_LAUNCH` tracers; see `_launch_decay!`. The kernel
+# iterates over every spatial cell (Cartesian index over all axes
 # except the trailing tracer axis) and, for each of the operator's
 # `Nt_op ≤ ntracers(state)` selected tracers, multiplies `tracers_raw[I,
 # t_idx]` by `exp(-rate * dt)`.
@@ -13,8 +14,8 @@
 #   `tracer_index(state, op.tracer_names[n])`, so the kernel does no symbol
 #   lookups.
 # - Operating on `tracers_raw` directly (the packed 4D/3D buffer from
-#   CellState) means one kernel launch handles every selected
-#   tracer without the Julia-level per-tracer loop that the earlier
+#   CellState) means one kernel launch handles a group of selected
+#   tracers without the Julia-level per-tracer loop that the earlier
 #   `apply_chemistry!` used.
 # - The kernel is rank-agnostic: for structured `(Nx, Ny, Nz, Nt)` it
 #   launches `ndrange = (Nx, Ny, Nz)`; for face-indexed `(ncells, Nz, Nt)`

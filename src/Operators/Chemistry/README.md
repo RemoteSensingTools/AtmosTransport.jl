@@ -24,6 +24,9 @@ operators, and sequential `CompositeChemistry` composition that
 - `CubedSphereState` chemistry is live — per-panel apply over the
   `NTuple{6, Array{FT, 4}}` storage, using the same rank-agnostic
   decay kernel as the `CellState` path
+- Any number of decaying tracers: a launch carries at most
+  `_DECAY_TRACERS_PER_LAUNCH`, because CUDA rejects the kernel's run-time
+  tuple index from 32 tracers on (31 compile, 32 do not)
 - Time-varying scalar rate fields are supported through the
   `AbstractTimeVaryingField{FT, 0}` contract
 - `ExponentialDecay` is applied as exact half-steps before and after each
