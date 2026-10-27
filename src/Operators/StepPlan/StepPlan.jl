@@ -541,7 +541,6 @@ function _cs_advection_workspace_for(scheme::LinRoodPPMScheme,
                                      binary_cfl_check::AbstractBinaryCFLCheck = NoBinaryCFLCheck())
     _reject_binary_cfl_check(binary_cfl_check, scheme)
     return CSLinRoodAdvectionWorkspace(grid.horizontal, state.air_mass[1];
-                                       n_tracers = ntracers(state),
                                        column_scratch = needs_column_scratch(scheme))
 end
 

@@ -50,8 +50,10 @@ Pre-allocated cubed-sphere transport workspace.
 - `m_pp_buf`, `rm_4d_pp_buf` are full-panel spare buffers for the packed
   ping-pong path, avoiding the per-sweep copy-back kernels.
 - `seam_flux` holds one air and N-tracer transfer per physical panel edge;
-  its storage scales with edge length, not panel area. Lin–Rood workspaces
-  disable this split-sweep cache (`seam_transport=false`).
+  its storage scales with edge length, not panel area. Lin–Rood builds its
+  workspace without this split-sweep cache (`seam_transport=false`) and
+  without the 4-D tracer buffers (`n_tracers = 0`): it uses only `rm_A`,
+  `m_A` and the column scratch.
 - `column_scratch` is the per-column, per-tracer working storage of the FV3
   vertical profile (`Nc × Nc × (Nz+1) × 3 max(Nt_s, 1) G`, `Nt_s =
   column_scratch_tracers`, the packed tracer count by default, and `G =
