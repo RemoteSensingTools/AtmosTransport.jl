@@ -5,7 +5,7 @@ AtmosTransport performance over time. It follows the same broad pattern as the
 Oceananigans benchmark dashboard: Julia produces raw benchmark records plus a
 `github-action-benchmark` compatible JSON file, and one GitHub Actions
 publisher appends them to the dashboard history on the `gh-pages` branch
-(`benchmarks/data.js`, rendered by
+(`benchmarks/ci/data.js`, rendered by
 [`dashboard/render_grouped_dashboard.py`](dashboard/render_grouped_dashboard.py)).
 
 Two lanes feed the dashboard:
@@ -17,6 +17,11 @@ Two lanes feed the dashboard:
   [`lab/run_lab_benchmarks.jl`](lab/run_lab_benchmarks.jl), run by hand from
   wurst and published through the same workflow. This is how GPU numbers are
   produced; see [Lab lane](#lab-lane).
+
+The real-data release, scaling and device comparison (MERRA-2 L72 runs timed
+by the wurst harness) has its own static web site generator and timing records in
+[`site/`](site/README.md): `python3 benchmarking/site/build_site.py --out <folder>`. The `Benchmarks`
+workflow publishes it at `benchmarks/` on `gh-pages`; the per-commit dashboard is at `benchmarks/ci/`.
 
 ## Environment
 
@@ -447,11 +452,18 @@ not removed automatically; delete old ones by hand.
 - pushes to `main`: C4 CPU smoke in Float32 and Float64, published;
 - manual dispatch: CPU sweep over the `grid`, `operators`, and
   `cpu_float_types` inputs (`run_cpu`, default `true`) and optional lab
-  results (`lab_results`), published when `publish=true`.
+  results (`lab_results`), published when `publish=true` (from `main` only).
 
 All jobs run on GitHub-hosted runners. The CPU job, which runs pull-request
 code, has a read-only token. The publish job, which never runs on pull
 requests, has `contents: write` (push the dashboard data to `gh-pages`; the
 `comment-on-alert` commit comment) and `deployments: write`. It merges the
 CPU and lab records into one input for github-action-benchmark, then
-re-renders the grouped dashboard page.
+re-renders the grouped dashboard page in `benchmarks/ci/`.
+
+Two more jobs with `contents: write` share the publishing conditions. `layout`
+runs first and moves a dashboard of the older layout (`benchmarks/data.js`,
+with its history) to `benchmarks/ci/` once. `site` rebuilds the release
+benchmark site ([`site/`](site/README.md)) into `benchmarks/` whenever
+`benchmarking/site` differs from the tree recorded in the deployed
+`benchmarks/.site-tree`.

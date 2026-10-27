@@ -87,7 +87,7 @@ measure a change, run the same command on the base and on the changed
 checkout, on the same idle machine, and compare `time_per_step_seconds`
 against `mad_seconds` in the JSON output. Pull requests run tiny CPU
 benchmark smokes in CI on GitHub-hosted runners; the GPU results on the
-[performance dashboard](https://remotesensingtools.github.io/AtmosTransport.jl/benchmarks/)
+[per-commit dashboard](https://remotesensingtools.github.io/AtmosTransport.jl/benchmarks/ci/)
 come only from the maintainers' lab machines through the lab lane (the
 repository deliberately has no self-hosted runners). The
 [benchmarks page](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/development/benchmarks)

@@ -1,0 +1,108 @@
+<h1>Resolution scaling</h1>
+<p class="lede">Cost of main against grid size, from C24 up to C180 and, where the data and memory allow, C360 and C720.
+Cells = 6 N² × 72 levels. One line per tracer count; open markers are input-bound runs.</p>
+
+<div class="controls" id="controls"></div>
+
+<section class="card">
+  <div class="card-head"><h2>Seconds per simulated day</h2></div>
+  <div class="sub" id="sub1"></div>
+  <div class="plot" id="c1"></div>
+  <div class="note" id="note1"></div>
+</section>
+
+<section class="card">
+  <div class="grid2">
+    <div>
+      <h2>Cost per cell and tracer</h2>
+      <div class="sub">Nanoseconds per cell and tracer per simulated day = s/day / (cells × tracers). Flat = perfect scaling.</div>
+      <div class="plot" id="c2"></div>
+    </div>
+    <div>
+      <h2>Peak memory</h2>
+      <div class="sub" id="sub3"></div>
+      <div class="plot" id="c3"></div>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Values</h2></div>
+  <div class="table-wrap" id="table"></div>
+</section>
+
+<script>
+SITE.ready(() => {
+  const S = SITE, B = S.bench();
+  const H = B.headline || {};
+  const st = S.state({device: H.d || "L40S", ops: "all"});
+  const hidden = new Set();
+  const DASH = {1: "dot", 4: "dash", 12: null};
+  // main when the device has main runs, else the newest version measured there (said so in the subtitle)
+  const versionFor = d => ["main", "v0.6.0", "v0.5.0"].find(v => S.configs({d, v}).length);
+  const legBox = S.el("span", {});
+  S.controlRow(document.getElementById("controls"), [
+    {key: "device", label: "Device", options: () => B.devices.map(d => ({key: d.key, name: d.name, title: d.long}))},
+    {key: "ops", label: "Operators", prefer: ["all"],
+     options: s => B.ops.filter(o => S.configs({d: s.device, v: versionFor(s.device), o: o.key}).length).map(o => ({key: o.key, name: o.name, title: o.long}))}],
+    st, draw, legBox);
+
+  function draw() {
+    const d = st.device, o = st.ops, v = versionFor(d), dev = S.device(d);
+    if (!v || !dev) { ["c1", "c2", "c3"].forEach(k => S.emptyNote(document.getElementById(k), "No runs yet.")); return; }
+    const tracers = B.tracers.filter(t => S.configs({d, v, o, t}).length);
+    legBox.innerHTML = "";
+    legBox.append(S.legend(tracers.map(t => ({key: String(t), name: S.tr(t), color: dev.color, dash: DASH[t] === undefined ? null : DASH[t]})), hidden, draw));
+    const grids = B.grids.filter(g => S.configs({d, v, o, g: g.key}).length);
+    const xt = grids.map(g => ({v: g.cells, label: g.key, g}));
+    const inputFrac = (g, t) => { const a = S.cfg(d, v, g, t, o), n = S.cfg(d, v, g, t, "none"); return a && n && o !== "none" ? n.s / a.s : null; };
+    const mk = (y, extra = {}) => tracers.map(t => ({key: String(t), name: S.tr(t), endLabel: `${t} tr`, color: dev.color, dash: DASH[t], shape: dev.shape,
+      pts: grids.map(g => { const c = S.cfg(d, v, g.key, t, o); const f = inputFrac(g.key, t);
+                            return c ? {x: g.cells, y: y(c), c, open: f !== null && f >= B.input_bound, f} : null; }).filter(Boolean)}));
+    const sub = `${dev.long}, ${v === "main" ? "main" : `${v} (main not measured on this device yet)`}, ${S.op(o).long}.`;
+    document.getElementById("sub1").textContent = `${sub} Log–log axes; tap or hover a grid for the values.`;
+    // input-bound band: grids where every plotted tracer count is input-bound
+    const bands = [];
+    grids.forEach((g, i) => {
+      // every tracer count plotted at this grid needs its own 'none' baseline at or above the threshold
+      const fs = tracers.filter(t => S.cfg(d, v, g.key, t, o)).map(t => inputFrac(g.key, t));
+      if (!fs.length || fs.some(f => f === null || f < B.input_bound)) return;
+      const lo = i > 0 ? Math.sqrt(grids[i - 1].cells * g.cells) : g.cells / 1.6, hi = i < grids.length - 1 ? Math.sqrt(grids[i + 1].cells * g.cells) : g.cells * 1.6;
+      if (bands.length && Math.abs(bands[bands.length - 1].x1 - lo) < 1) bands[bands.length - 1].x1 = hi; else bands.push({x0: lo, x1: hi, label: "input-bound"});
+    });
+    const head = t => `${S.gridLabel(t.label)} <span style="font-weight:400;color:var(--muted)">${(t.v / 1e6).toFixed(t.v < 1e6 ? 3 : 1)} M cells</span>`;
+    const fracTxt = p => p.f !== null && p.f !== undefined ? `input ${S.pct(p.f)}` : "";
+    const xl = "grid (cells, log scale)";
+    const c1 = document.getElementById("c1"), c2 = document.getElementById("c2"), c3 = document.getElementById("c3");
+    if (!grids.length) { [c1, c2, c3].forEach(c => S.emptyNote(c, "No runs yet.")); return; }
+    S.lines(c1, {series: mk(c => c.s), hidden, bands, height: 320, endLabels: true, x: {ticks: xt, label: xl}, y: {label: "s per simulated day"}, head,
+      rowFmt: (s, p) => [`${S.sig(p.y)} s`, `${S.sig(p.c.sypd)} SYPD${fracTxt(p) ? ", " + fracTxt(p) : ""}${p.c.flag ? " †" : ""}`]});
+    S.lines(c2, {series: mk(c => c.cost_ns), hidden, height: 260, x: {ticks: xt, label: xl}, y: {label: "ns per cell, tracer and day"}, head,
+      rowFmt: (s, p) => [`${S.sig(p.y)} ns`, ""]});
+    const mem = mk(c => c.mem ? c.mem / 1024 : null).map(s => ({...s, pts: s.pts.filter(p => S.fin(p.y))}));
+    document.getElementById("sub3").textContent = d === "CPU-wurst" || dev.kind === "cpu" ? "Peak resident memory of the Julia process (GiB)." :
+      `Peak device memory during the run (GiB)${dev.backend === "metal" ? ", Metal working set" : ""}.`;
+    if (mem.some(s => s.pts.length)) S.lines(c3, {series: mem, hidden, height: 260, x: {ticks: xt, label: xl}, y: {label: "GiB"}, head, rowFmt: (s, p) => [`${S.sig(p.y)} GiB`, ""]});
+    else S.emptyNote(c3, "No memory readings for this device.");
+    document.getElementById("note1").innerHTML = `Open marker / shaded band: met input and stepping alone (operator set <i>none</i>) take at least ${S.pct(B.input_bound)} ` +
+      `of the time of the selected set, so the operators are not what limits the speed there. ` +
+      xt.filter(x => x.g.met !== "MERRA-2").map(x => `${x.label} uses ${x.g.met}-derived binaries instead of MERRA-2. `).join("") +
+      `Line style: dotted 1, dashed 4, solid 12 and more tracers; each line is labelled at its last grid.` +
+      (grids.some(g => tracers.some(t => (inputFrac(g.key, t) || 0) > 1)) ? " An input share above 100 % means the <i>none</i> run was slower than the run with operators (listed on the Methods page)." : "");
+    // table
+    const body = [];
+    for (const g of grids) {
+      body.push({grp: `${S.gridLabel(g.key)} · ${(g.cells / 1e6).toFixed(2)} M cells`});
+      for (const t of tracers) {
+        const c = S.cfg(d, v, g.key, t, o);
+        if (!c) continue;
+        const f = inputFrac(g.key, t);
+        body.push([{text: t, cls: "l"}, {html: `${S.sig(c.s)}${S.flagPill(c)}`}, {text: S.sig(c.sypd)}, {text: S.sig(c.cost_ns)},
+                   {text: c.mem ? S.sig(c.mem / 1024) : "–"}, {text: f === null ? "–" : S.pct(f)}]);
+      }
+    }
+    S.table(document.getElementById("table"), [[{text: "tracers", cls: "l"}, "s/day", "SYPD", "ns / cell / tracer", "peak GiB", {text: "input share", title: "none / selected operator set"}]], body);
+  }
+  draw();
+});
+</script>

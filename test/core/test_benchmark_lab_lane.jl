@@ -801,14 +801,19 @@ code = { delivery = "shared", root = "~/atmostr_bench" }
         end
         @test all(m -> m.captures[1] == "ubuntu-latest", eachmatch(r"runs-on: (.+)", code))
         # Jobs that run pull-request code get a read-only token; only the
-        # publish job (never run on pull requests) may write.
+        # publishing jobs may write, and none of them runs on pull requests:
+        # `layout` runs for pushes to main and publishing dispatches from main,
+        # and `publish` and `site` require it.
         @test !occursin("pull-requests:", code)
-        @test count("contents: write", code) == 1
         jobs = split(code, r"\n  (?=[a-z]+:\n)")
-        cpu_job = only(filter(j -> startswith(j, "cpu:"), jobs))
-        publish_job = only(filter(j -> startswith(j, "publish:"), jobs))
-        @test occursin("permissions:\n      contents: read\n", cpu_job)
-        @test occursin("contents: write", publish_job) && occursin("needs: [cpu]", publish_job)
+        job(name) = only(filter(j -> startswith(j, "$name:"), jobs))
+        writers = sort([first(split(j, ':')) for j in jobs if occursin("contents: write", j)])
+        @test writers == ["layout", "publish", "site"]
+        @test occursin("if: \${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || " *
+                       "github.event.inputs.publish == 'true') }}", job("layout"))
+        @test all(name -> occursin("needs.layout.result == 'success'", job(name)), ("publish", "site"))
+        @test occursin("permissions:\n      contents: read\n", job("cpu"))
+        @test occursin("needs: [cpu, layout]", job("publish"))
         # The dashboard entry is attributed to the dispatched commit, not to
         # whatever main points at when the publish step runs.
         @test occursin("ref: \${{ github.sha }}", workflow)

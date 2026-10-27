@@ -10,7 +10,7 @@
 <!-- Testing, coverage, and performance -->
 [![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 [![codecov](https://img.shields.io/codecov/c/github/RemoteSensingTools/AtmosTransport.jl/main?label=codecov&logo=codecov&style=flat-square)](https://codecov.io/gh/RemoteSensingTools/AtmosTransport.jl)
-[![Performance dashboard](https://img.shields.io/badge/performance-dashboard-informational?style=flat-square&logo=github)](https://remotesensingtools.github.io/AtmosTransport.jl/benchmarks/)
+[![Performance benchmarks](https://img.shields.io/badge/performance-benchmarks-informational?style=flat-square&logo=github)](https://remotesensingtools.github.io/AtmosTransport.jl/benchmarks/)
 
 > **Actively developed research software.** Supported CPU and NVIDIA CUDA
 > workflows have regression tests and documented numerical checks. Interfaces
@@ -349,8 +349,10 @@ prognostic-moment scheme is postponed (see
 - **Performance:** synthetic cubed-sphere benchmarks of each operator are
   timed on three lab machines (NVIDIA L40S, NVIDIA A100, Apple M5 Pro) and as
   small CPU smokes in CI. The
-  [performance dashboard](https://remotesensingtools.github.io/AtmosTransport.jl/benchmarks/)
-  shows them per commit; the
+  [per-commit dashboard](https://remotesensingtools.github.io/AtmosTransport.jl/benchmarks/ci/)
+  shows them; the
+  [performance benchmark site](https://remotesensingtools.github.io/AtmosTransport.jl/benchmarks/)
+  compares releases, grids and devices on real MERRA-2 runs; the
   [benchmarks page](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/development/benchmarks)
   of the manual explains what is measured.
 - **Real-data preprocessing:** opt-in ERA5 and GEOS workflows exercise the

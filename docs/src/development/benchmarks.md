@@ -4,12 +4,19 @@ AtmosTransport times its operators with a synthetic cubed-sphere benchmark
 suite in the
 [`benchmarking`](https://github.com/RemoteSensingTools/AtmosTransport.jl/tree/main/benchmarking)
 directory and publishes the history on the
-[performance dashboard](https://remotesensingtools.github.io/AtmosTransport.jl/benchmarks/).
+[per-commit dashboard](https://remotesensingtools.github.io/AtmosTransport.jl/benchmarks/ci/).
 The layout follows the Oceananigans.jl benchmark dashboard: a Julia harness
 writes raw benchmark records plus a file in the format of
 [github-action-benchmark](https://github.com/benchmark-action/github-action-benchmark),
 and a GitHub workflow appends those records to the dashboard data on the
 `gh-pages` branch.
+
+The [performance benchmark site](https://remotesensingtools.github.io/AtmosTransport.jl/benchmarks/)
+is a separate comparison on real data: releases (v0.5.0, v0.6.0, main),
+grid scaling and operator costs of MERRA-2 L72 runs on the lab GPUs, an Apple
+M5 Pro and a CPU. Its generator and timing records are in
+[`benchmarking/site`](https://github.com/RemoteSensingTools/AtmosTransport.jl/tree/main/benchmarking/site);
+the `Benchmarks` workflow rebuilds it when they change on `main`.
 
 ## What is measured
 
@@ -227,13 +234,13 @@ idle machine and compare `time_per_step_seconds` against `mad_seconds`.
 
 ## Reading the dashboard
 
-The [dashboard](https://remotesensingtools.github.io/AtmosTransport.jl/benchmarks/)
+The [dashboard](https://remotesensingtools.github.io/AtmosTransport.jl/benchmarks/ci/)
 selects an operator, a tracer count, a float type, and a metric (time per
 step, or cell-tracer updates per second). It shows CPU and GPU panels for
 grids up to `C180` and above `C180`, each with the history over commits (one
 line per group, grid, level count, advection scheme, and device) and a table
 of the latest value per case and device. The raw history is in
-[`data.js`](https://remotesensingtools.github.io/AtmosTransport.jl/benchmarks/data.js).
+[`data.js`](https://remotesensingtools.github.io/AtmosTransport.jl/benchmarks/ci/data.js).
 
 - Compare like with like: the same device, float type, grid, levels, tracer
   count, and operator. Between devices, the same case on the same commit is a
