@@ -46,6 +46,29 @@ function _make_state(FT; Nx = 4, Ny = 3, Nz = 2,
     return CellState(m; CO2 = rm_co2, Rn222 = rm_rn)
 end
 
+"""
+Tracers `t1 … t44` holding `n`, of which the 40 with `n % 11 != 0` decay with
+distinct half-lives (more than one decay launch carries); `t11, t22, t33, t44`
+sit between them and do not decay. Returns the state, the operator and each
+tracer's value after one `dt = 3600` step (one `c + c·d` update).
+"""
+function _make_many_decay_case(FT, AT)
+    state = CellState(AT(ones(FT, 4, 3, 2)); (Symbol(:t, n) => AT(fill(FT(n), 4, 3, 2)) for n in 1:44)...)
+    decaying = filter(n -> n % 11 != 0, 1:44)
+    op = ExponentialDecay(FT; (Symbol(:t, n) => 3_600.0 * n for n in decaying)...)
+    d = AtmosTransport.Operators.Chemistry._decay_decrements(op, nothing, FT(3600))
+    expected = FT.(1:44)
+    for (k, n) in enumerate(decaying)
+        expected[n] = muladd(FT(n), d[k], FT(n))
+    end
+    return state, op, expected
+end
+
+# Every cell of every tracer within a rounding of `expected`: the host and the
+# device may or may not fuse `muladd`. One decay more or less is far outside.
+_matches_many_decay(get, expected, FT) =
+    all(n -> all(x -> isapprox(x, expected[n]; rtol = 2eps(FT)), Array(get(Symbol(:t, n)))), 1:44)
+
 # Half-life of Rn-222 (3.8235 days) in seconds, matches CATRINE config value.
 const RN222_HALF_LIFE = 330_350.4
 const RN222_LAMBDA    = log(2) / RN222_HALF_LIFE
@@ -149,9 +172,24 @@ for FT in (Float64, Float32)
     end
 
     # -------------------------------------------------------------------
+    # More decaying tracers than one launch carries: each decays exactly once
+    # -------------------------------------------------------------------
+    @testset "CPU $precision_tag: 40 decaying tracers" begin
+        state, op, expected = _make_many_decay_case(FT, Array)
+        apply!(state, nothing, nothing, op, FT(3600))
+        @test _matches_many_decay(name -> get_tracer(state, name), expected, FT)
+    end
+
+    # -------------------------------------------------------------------
     # GPU agreement (F32 only on L40S / F64 only on A100)
     # -------------------------------------------------------------------
     if HAS_GPU_CHEM
+        @testset "GPU $precision_tag: 40 decaying tracers" begin
+            state, op, expected = _make_many_decay_case(FT, CUDA.CuArray)
+            apply!(state, nothing, nothing, op, FT(3600))
+            @test _matches_many_decay(name -> get_tracer(state, name), expected, FT)
+        end
+
         @testset "GPU $precision_tag: matches CPU to ULP" begin
             state_cpu = _make_state(FT)
             state_gpu = CellState(CUDA.CuArray(Array(state_cpu.air_mass));

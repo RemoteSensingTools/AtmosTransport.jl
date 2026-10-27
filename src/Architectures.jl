@@ -763,6 +763,17 @@ end
 end
 
 """
+    tuple_chunks(t::Tuple, Val(K)) -> Tuple
+
+Split `t` into consecutive tuples of `K` elements, the last one holding the
+rest; a tuple of at most `K` elements comes back as `(t,)`. Operators use it to
+split a launch over many tracers or sources into launches of bounded size.
+"""
+tuple_chunks(t::Tuple, ::Val{K}) where K =
+    length(t) <= K ? (t,) : (ntuple(i -> t[i], Val(K)),
+                             tuple_chunks(ntuple(i -> t[K + i], Val(length(t) - K)), Val(K))...)
+
+"""
     Sequence(ops::AbstractPointOp...)
 
 Point operations where later ones read what earlier ones wrote: launched in

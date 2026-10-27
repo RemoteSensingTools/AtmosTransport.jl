@@ -31,6 +31,7 @@ using ...State: CellState, CubedSphereState
 using ...State: ntracers, tracer_index, tracer_names
 using ...State: AbstractTimeVaryingField, ConstantField, field_value, update_field!
 using ...MetDrivers: current_time
+using ...Architectures: tuple_chunks
 import ..AbstractOperator, ..apply!
 
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
@@ -162,6 +163,24 @@ _decay_decrements(op::ExponentialDecay{FT, N}, meteo, dt) where {FT, N} = ntuple
     decay_decrement(FT, field_value(rate, ()), dt)
 end
 
+# Tracers per decay launch. The kernel indexes its tuples with the loop
+# counter; from 32 elements on, Julia lowers that run-time tuple index to a
+# dynamic `getfield` call that GPU compilers reject (InvalidIRError on CUDA:
+# 31 tracers compile, 32 do not). More tracers run in launches of 16.
+const _DECAY_TRACERS_PER_LAUNCH = 16
+
+# Launch the decay over the spatial axes of `raw`; the kernel's inner loop
+# covers the tracer axis. Tracers are independent, so each cell sees the same
+# operations whatever the grouping.
+function _launch_decay!(kernel!, raw, indices, decrements)
+    spatial_shape = ntuple(i -> size(raw, i), ndims(raw) - 1)
+    chunk = Val(_DECAY_TRACERS_PER_LAUNCH)
+    for (idx, dec) in zip(tuple_chunks(indices, chunk), tuple_chunks(decrements, chunk))
+        kernel!(raw, idx, dec, Int32(length(idx)); ndrange = spatial_shape)
+    end
+    return nothing
+end
+
 """
     apply!(state::CellState, meteo, grid, op::ExponentialDecay, dt; workspace=nothing)
 
@@ -192,12 +211,7 @@ function apply!(state::CellState, meteo, grid,
     raw = state.tracers_raw
     backend = get_backend(raw)
     kernel! = _exp_decay_kernel!(backend, 256)
-
-    # Launch across the spatial axes; the trailing tracer axis is handled
-    # by the kernel's inner loop over `indices`.
-    spatial_shape = ntuple(i -> size(raw, i), ndims(raw) - 1)
-    kernel!(raw, indices, decrements, Int32(N);
-            ndrange = spatial_shape)
+    _launch_decay!(kernel!, raw, indices, decrements)
     synchronize(backend)
     return state
 end
@@ -254,21 +268,11 @@ function apply!(state::CubedSphereState, meteo, grid,
 
     decrements = _decay_decrements(op, meteo, dt)
 
-    # Launch once per panel. One panel's raw has shape (Nx, Ny, Nz, Nt);
-    # ndrange iterates over (Nx, Ny, Nz) and the kernel's inner loop
-    # handles the tracer axis.
+    # Launch per panel; one panel's raw has shape (Nx, Ny, Nz, Nt).
     raws = state.tracers_raw
     backend = get_backend(raws[1])
     kernel! = _exp_decay_kernel!(backend, 256)
-
-    N_i32 = Int32(N)
-
-    @inbounds for p in 1:6
-        raw = raws[p]
-        spatial_shape = ntuple(i -> size(raw, i), ndims(raw) - 1)
-        kernel!(raw, indices, decrements, N_i32;
-                ndrange = spatial_shape)
-    end
+    foreach(raw -> _launch_decay!(kernel!, raw, indices, decrements), raws)
     synchronize(backend)
     return state
 end
