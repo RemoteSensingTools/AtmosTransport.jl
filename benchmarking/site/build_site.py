@@ -21,7 +21,7 @@ import shutil
 import statistics
 import subprocess
 import sys
-from collections import OrderedDict, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIELDS = ("device,backend,float_type,version,commit,pass,grid,tracers,operators,sim_days,status,"
@@ -74,6 +74,7 @@ LEVELS = 72
 MET = {720: "GEOS-FP"}           # grids whose binaries are not MERRA-2 derived
 SPREAD_FLAG = 0.10               # |pass 1 - pass 2| / mean above this is flagged
 INPUT_BOUND = 0.5                # 'none' / selected operator set at or above this = input-bound
+FLOAT_TYPE = "Float32"           # the site compares this precision; other rows stay in records.csv only
 # Planned matrix per device (RUN_SPEC.md), counted in runs (configs x passes); C360/C720 are extra.
 PLAN = dict(release=dict(versions=3, grids=("C24", "C48", "C90", "C180"), tracers=(1, 12), ops=("none", "adv", "all"), passes=2),
             opbreak=dict(versions=3, grids=("C90", "C180"), tracers=(12,), ops=("diff", "conv", "adv+emis"), passes=2),
@@ -529,7 +530,7 @@ def round_floats(x, digits=6):
     return x
 
 
-def payload(B, notes, now, revision, problems):
+def payload(B, notes, now, revision, problems, other_float):
     breakdowns, partial = B.breakdowns()
     tiles, points, H = tiles_and_points(B, breakdowns)
     grids = sorted({c["g"] for c in B.cfg.values()}, key=grid_n)
@@ -553,7 +554,7 @@ def payload(B, notes, now, revision, problems):
         configs=sorted(B.cfg.values(), key=lambda c: (c["d"], list(VERSIONS).index(c["v"]), grid_n(c["g"]), c["t"], list(OPS).index(c["o"]))),
         breakdown=breakdowns, partial=partial, failures=B.failures,
         tiles=tiles, points=points, headline=H, notes=notes, caveats=caveats(B), problems=problems,
-        spread_flag=SPREAD_FLAG, input_bound=INPUT_BOUND, planned=planned_runs(), levels=LEVELS)
+        float_type=FLOAT_TYPE, other_float=other_float, spread_flag=SPREAD_FLAG, input_bound=INPUT_BOUND, planned=planned_runs(), levels=LEVELS)
 
 
 def write_site(out, data, rows, version):
@@ -601,19 +602,21 @@ def write_site(out, data, rows, version):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data", required=True, help="folder with <device>/records.csv (and optional PUBLIC_NOTES.md)")
+    ap.add_argument("--data", default=os.path.join(HERE, "data"),
+                    help="folder with <device>/records.csv and optional PUBLIC_NOTES.md (default: %(default)s)")
     ap.add_argument("--out", required=True, help="output folder (created; must be empty or an earlier build)")
     a = ap.parse_args(argv)
     rows, problems = read_records(a.data)
-    B = Bench(rows)
+    B = Bench([r for r in rows if r["float_type"] == FLOAT_TYPE])
+    other_float = Counter(f"{r['device']} {r['float_type'] or 'unknown'}" for r in rows if r["float_type"] != FLOAT_TYPE)
     for d in B.unknown:
         problems.append(f"device {d!r} has no fixed colour or description in build_site.py (shown in grey)")
     now = dt.datetime.now(dt.timezone.utc)
-    data = payload(B, read_notes(a.data), now, git_revision(), problems)
+    data = payload(B, read_notes(a.data), now, git_revision(), problems, dict(sorted(other_float.items())))
     write_site(a.out, data, rows, now.strftime("%Y%m%d%H%M%S"))
     for p in problems:
         print("warning:", p, file=sys.stderr)
-    print(f"{len(rows)} records, {len(B.cfg)} configurations, {len(B.failures)} failed runs, devices: "
+    print(f"{len(B.rows)} {FLOAT_TYPE} records ({len(rows)} in all), {len(B.cfg)} configurations, {len(B.failures)} failed runs, devices: "
           f"{', '.join(B.devices) or 'none'} -> {a.out}")
 
 

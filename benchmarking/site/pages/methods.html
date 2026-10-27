@@ -60,7 +60,8 @@
     <li><a href="data/configs.json">configs.json</a>: what the site plots: one entry per device, version, grid, tracer count and operator set
       (mean, passes, spread, SYPD, cost, memory), the breakdowns and the failed runs.</li>
   </ul>
-  <p>Where several records exist for the same configuration and pass, the latest successful one is used.</p>
+  <p>Where several records exist for the same configuration and pass, the latest successful one is used.
+    <span id="other-float"></span></p>
   <div id="failures"></div>
   <div id="problems"></div>
   <h3>Reproduce</h3>
@@ -79,6 +80,9 @@ SITE.ready(() => {
   const S = SITE, B = S.bench(), el = S.el;
   document.getElementById("flag-pct").textContent = S.pct(B.spread_flag);
   document.getElementById("ib-pct").textContent = S.pct(B.input_bound);
+  const of = Object.entries(B.other_float);
+  if (of.length) document.getElementById("other-float").textContent = `The site compares ${B.float_type} runs; records.csv also holds ` +
+    of.map(([k, n]) => `${n} ${k.split(" ")[1]} records of the ${S.device(k.split(" ")[0]) ? S.device(k.split(" ")[0]).name : k.split(" ")[0]}`).join(", ") + ", which the charts leave out.";
   document.getElementById("planned").textContent = `That is ${B.planned} planned runs per device; a device with a reduced matrix says so in its notes below. The status line under the header counts them.`;
   S.table(document.getElementById("version-table"), [[{text: "version", cls: "l"}, {text: "commit", cls: "l"}, {text: "what", cls: "l"}]],
     B.versions.map(v => [{html: `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;background:${v.color}"></span>${v.name}`, cls: "l nw"},

@@ -113,12 +113,49 @@ jobs:
             benchmark_results.json
             benchmark_results.github-action-benchmark.json
 
+  layout:
+    name: Benchmark pages layout
+    # The release benchmark site (benchmarking/site, job `site`) owns
+    # benchmarks/ on gh-pages and the per-commit dashboard of `publish` lives
+    # in benchmarks/ci. Moves the dashboard of the older layout, with its
+    # history, once; a no-op afterwards. From main only, never on pull requests.
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event.inputs.publish == 'true') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Move the dashboard to benchmarks/ci
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin gh-pages
+          git worktree add gh-pages-move origin/gh-pages
+          cd gh-pages-move
+          if [[ ! -f benchmarks/data.js || -e benchmarks/ci/data.js ]]; then
+            echo "Layout is current."
+            exit 0
+          fi
+          mkdir -p benchmarks/ci
+          git mv benchmarks/data.js benchmarks/ci/data.js
+          if [[ -f benchmarks/index.html ]]; then git mv benchmarks/index.html benchmarks/ci/index.html; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Move the per-commit benchmark dashboard to benchmarks/ci"
+          # The documentation deploy also pushes to gh-pages.
+          for attempt in 1 2 3; do
+            git push origin HEAD:gh-pages && exit 0
+            git pull --rebase origin gh-pages
+          done
+          exit 1
+
   publish:
     name: Publish benchmark dashboard
-    # Never runs on pull requests. `!cancelled()` keeps a lab-only publish
-    # (run_cpu=false skips the cpu job) running.
-    if: ${{ !cancelled() && (github.event_name == 'push' || github.event.inputs.publish == 'true') }}
-    needs: [cpu]
+    # Never runs on pull requests (see `layout`). `!cancelled()` keeps a
+    # lab-only publish (run_cpu=false skips the cpu job) running.
+    if: ${{ !cancelled() && needs.layout.result == 'success' }}
+    needs: [cpu, layout]
     runs-on: ubuntu-latest
     # contents: write pushes the dashboard data to gh-pages and lets
     # comment-on-alert leave its commit comment (it comments on commits, not
@@ -231,7 +268,7 @@ jobs:
         with:
           tool: customSmallerIsBetter
           output-file-path: benchmark_results_all.github-action-benchmark.json
-          benchmark-data-dir-path: "benchmarks"
+          benchmark-data-dir-path: "benchmarks/ci"
           github-token: ${{ secrets.GITHUB_TOKEN }}
           # A dispatch payload has no head commit, so the action would look up
           # the branch head at publish time; pin the entry to the commit the
@@ -251,16 +288,82 @@ jobs:
           git fetch origin gh-pages
           git worktree add gh-pages-worktree origin/gh-pages
           python benchmarking/dashboard/render_grouped_dashboard.py \
-            gh-pages-worktree/benchmarks/data.js \
-            gh-pages-worktree/benchmarks/index.html
+            gh-pages-worktree/benchmarks/ci/data.js \
+            gh-pages-worktree/benchmarks/ci/index.html
           cd gh-pages-worktree
           git checkout -B gh-pages
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add benchmarks/index.html
+          git add benchmarks/ci/index.html
           if git diff --cached --quiet; then
             echo "Grouped dashboard is already up to date."
           else
             git commit -m "Render grouped benchmark dashboard"
             git push origin gh-pages
           fi
+
+  site:
+    name: Publish release benchmark site
+    # The real-data release comparison (benchmarking/site) at benchmarks/ on
+    # gh-pages. Rebuilt whenever benchmarking/site differs from the tree
+    # recorded in the deployed benchmarks/.site-tree, so a skipped or undone
+    # deployment is repaired by the next run. Never on pull requests.
+    needs: [layout, publish]
+    if: ${{ !cancelled() && needs.layout.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare with the deployed site
+        id: deployed
+        shell: bash
+        run: |
+          set -euo pipefail
+          tree=$(git rev-parse HEAD:benchmarking/site)
+          git fetch origin gh-pages
+          deployed=$(git show origin/gh-pages:benchmarks/.site-tree 2>/dev/null || true)
+          echo "tree=${tree}" >> "$GITHUB_OUTPUT"
+          if [[ "${deployed}" == "${tree}" ]]; then
+            echo "The deployed site is built from benchmarking/site ${tree}; nothing to publish."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the site
+        if: steps.deployed.outputs.build == 'true'
+        env:
+          TREE: ${{ steps.deployed.outputs.tree }}
+        run: |
+          python3 -I benchmarking/site/build_site.py --out _site
+          echo "${TREE}" > _site/.site-tree
+
+      - name: Publish to gh-pages benchmarks/
+        if: steps.deployed.outputs.build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git worktree add gh-pages-site origin/gh-pages
+          cd gh-pages-site
+          if [[ -f benchmarks/data.js ]]; then
+            echo "::error::benchmarks/data.js is still in the old layout; the layout job moves it to benchmarks/ci"
+            exit 1
+          fi
+          mkdir -p benchmarks
+          rsync -a --delete --exclude /ci/ ../_site/ benchmarks/
+          git add -A benchmarks
+          if git diff --cached --quiet; then
+            echo "Benchmark site is already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Benchmark site from ${GITHUB_SHA::9}"
+          # The documentation deploy also pushes to gh-pages.
+          for attempt in 1 2 3; do
+            git push origin HEAD:gh-pages && exit 0
+            git pull --rebase origin gh-pages
+          done
+          exit 1

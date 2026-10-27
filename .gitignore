@@ -19,6 +19,7 @@
 *.png
 data/
 !test/data/
+!benchmarking/site/data/
 !docs/src/assets/**/*.png
 !docs/src/assets/**/*.gif
 

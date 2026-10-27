@@ -7,6 +7,7 @@ from the timing records of the real-data harness (not from the synthetic cases o
 ## Build
 
 ```bash
+python3 benchmarking/site/build_site.py --out <folder>          # records in benchmarking/site/data
 python3 benchmarking/site/build_site.py --data <data> --out <folder>
 ```
 
@@ -14,8 +15,23 @@ Python 3 standard library only. A rebuild takes about a second and can be repeat
 progress: devices, versions, grids, tracer counts and operator sets without a successful run are left
 out (no empty axes or columns), and the status line under the header shows the progress per device.
 The output folder must be empty or an earlier build (marker file `.atmostr_bench_site`); `assets/` and
-`data/` are rewritten on every build. Nothing is published by the generator; copy the folder to the web
-server after review.
+`data/` are rewritten on every build. The generator publishes nothing itself: the `site` job of the
+`Benchmarks` workflow builds from `benchmarking/site/data` and copies the result to `benchmarks/` on
+`gh-pages` whenever `benchmarking/site` on `main` differs from the deployed build (the per-commit synthetic
+dashboard is at `benchmarks/ci/`). The site compares Float32 runs; records of other precisions stay in
+the downloadable records.csv and are counted on the Methods page.
+
+## Adding records
+
+The records in `data/` are copied from the lab data folders with
+
+```bash
+python3 -I benchmarking/site/import_records.py <lab data>
+```
+
+which keeps the columns below, cuts `result_dir` to run, `timing` and configuration (no host paths), and
+copies `PUBLIC_NOTES.md`; the internal `NOTES.md` and raw result folders stay in the lab. New records reach
+the site through a pull request that changes `data/`.
 
 ## Inputs (read only)
 
