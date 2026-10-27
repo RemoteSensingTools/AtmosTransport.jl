@@ -55,20 +55,21 @@ const PackingRunner = AtmosTransport.Models.DrivenRunner
                              FT.(range(0,1;length=Nz+1))), CPU(); FT)
             air = ntuple(p -> fill(FT(1000+p),Nc+2Hp,Nc+2Hp,Nz),6)
             ps = ntuple(p -> fill(FT(80000+1000p),Nc,Nc),6)
-            configs = Dict(Symbol("tracer", lpad(i,2,'0')) =>
+            # The packed order is the iteration order of the specs (the runner
+            # passes them sorted by name); reversed here so a sorting or
+            # dictionary round trip inside the initializer would show.
+            configs = [Symbol("tracer", lpad(i,2,'0')) =>
                 (i % 3 == 0 ? Dict{String,Any}("kind"=>"pressure_layer", "psurf_fraction"=>0.5,
                                                "total_molecules"=>1e28) :
                               Dict{String,Any}("kind"=>"uniform", "background"=>(-1)^i * i*1e-6))
-                for i in 1:nt)
-            # Retain the preceding runner's two-dictionary construction, including
-            # resize-dependent order at tracer counts 17 and 64.
-            previous = Dict{Symbol,typeof(air)}()
-            for (name, cfg) in configs
-                vmr = build_initial_mixing_ratio(air,grid,cfg;surface_pressure=ps)
-                previous[name] = pack_initial_tracer_mass(grid,air,vmr;mass_basis=DryBasis())
-            end
-            reference = CubedSphereState(DryBasis,mesh,air;previous...)
+                for i in nt:-1:1]
+            masses = [name => pack_initial_tracer_mass(grid,air,
+                          build_initial_mixing_ratio(air,grid,cfg;surface_pressure=ps);
+                          mass_basis=DryBasis())
+                      for (name, cfg) in configs]
+            reference = CubedSphereState(DryBasis,mesh,air;masses...)
             state = PackingRunner._initialize_cs_dry_state(grid,air,configs;surface_pressure=ps)
+            @test tracer_names(state) == Tuple(first.(configs))
             @test tracer_names(state) == tracer_names(reference)
             @test state.air_mass === air
             @test AtmosTransport.State.halo_width(state) == Hp
@@ -81,6 +82,8 @@ const PackingRunner = AtmosTransport.Models.DrivenRunner
             @test get_tracer(reference,first_name)[1][Hp+1,Hp+1,1] != FT(123)
             @test air[1][Hp+1,Hp+1,1] == FT(1001)
             @test_throws ArgumentError PackingRunner._initialize_cs_dry_state(grid,air,Dict();surface_pressure=ps)
+            @test_throws ArgumentError PackingRunner._initialize_cs_dry_state(
+                grid,air,[configs[1], configs[1]];surface_pressure=ps)
         end
     end
 end
