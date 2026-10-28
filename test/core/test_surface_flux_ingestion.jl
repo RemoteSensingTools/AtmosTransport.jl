@@ -102,6 +102,25 @@ function ll_stamped(path, values, units)
     return path
 end
 
+@testset "static LMDZ sources reject a month selector" begin
+    mktempdir() do dir
+        # One December slice makes month = 12 unambiguous without the guard.
+        file = ll_stamped(joinpath(dir, "lmdz.nc"), [0.0],
+                          "hours since 2021-12-01 00:00:00")
+        for extra in (Dict{String, Any}(), Dict{String, Any}("time_index" => 1))
+            cfg = Dict{String, Any}("kind" => "lmdz_co2", "file" => file, extra...)
+            field = ICIO._load_file_surface_flux_field(cfg, Float64; species = :co2)
+            expected = 1e-9 * SPECIES_MOLAR_MASS.co2 / CARBON_MOLAR_MASS
+            @test all(q -> q ≈ expected, field.raw)
+            @test_throws ArgumentError ICIO._load_file_surface_flux_field(
+                merge(cfg, Dict("month" => 12)), Float64; species = :co2)
+        end
+    end
+    # A time series still ignores month, as documented.
+    @test ICIO._surface_flux_kind(Dict("kind" => "lmdz_co2", "month" => 12,
+                                     "time_varying" => true)) === :lmdz_co2
+end
+
 @testset "time-varying sources must cover the run" begin
     mktempdir() do dir
         dec = lmdz_like_month(joinpath(dir, "z_202112.nc"), 2021, 12)

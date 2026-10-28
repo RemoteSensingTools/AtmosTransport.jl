@@ -94,13 +94,15 @@ function _make_structured_model(driver::TransportBinaryDriver;
     grid = driver_grid(driver)
     mesh = grid.horizontal
     _require_global_longitude_span(mesh)
+    basis_tag = air_mass_basis(driver)
+    basis_type = basis_tag === :dry ? DryBasis : basis_tag === :moist ? MoistBasis :
+        throw(ArgumentError("driver mass basis must be :dry or :moist; got $(repr(basis_tag))"))
     window = load_transport_window(driver, Int(start_window))
     air_mass = copy(window.air_mass)
 
     tracer_specs_tuple = Tuple(tracer_specs)
     isempty(tracer_specs_tuple) && throw(ArgumentError("at least one tracer must be configured"))
 
-    basis_type = air_mass_basis(driver) == :dry ? DryBasis : MoistBasis
     basis = basis_type()
     qv = _initial_condition_qv(window)
     pressure_basis = surface_pressure_basis(driver)

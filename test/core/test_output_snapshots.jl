@@ -11,6 +11,19 @@ using AtmosTransport
 # pull them in directly to keep this file self-sufficient.
 using .AtmosTransport.Output
 
+@testset "explicit snapshot schedules validate Float64 vectors" begin
+    hours = [6.0, 0.0, 3.0]
+    @test snapshot_hours(ExplicitSnapshotSchedule(hours)) == [0.0, 3.0, 6.0]
+    @test hours == [6.0, 0.0, 3.0]
+    @test snapshot_hours(ExplicitSnapshotSchedule([6, 0, 3])) == [0.0, 3.0, 6.0]
+    @test snapshot_hours(ExplicitSnapshotSchedule(Any[6.0, 0, 3])) == [0.0, 3.0, 6.0]
+    for invalid in (NaN, Inf, -Inf)
+        @test_throws ArgumentError ExplicitSnapshotSchedule([0.0, invalid])
+        @test_throws ArgumentError runtime_output_spec(
+            Dict("path" => "out.nc", "hours" => [0.0, invalid]), Float64)
+    end
+end
+
 @testset "Output NetCDF snapshots" begin
     @testset "write options validate compression settings" begin
         @test SnapshotWriteOptions(float_type=Float32, deflate_level=1).deflate_level == 1

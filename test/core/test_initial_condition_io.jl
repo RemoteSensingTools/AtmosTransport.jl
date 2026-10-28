@@ -954,10 +954,10 @@ end
     # was deleted. Verify the equivalence on all three topologies.
     #
     # Requires the real Catrine NetCDF file — skipped when missing
-    # (CI or fresh checkouts without `~/data/AtmosTransport/`).
+    # (CI or fresh checkouts without the configured data root).
     @testset "`catrine_co2` ≡ `file` with default Catrine path" begin
         catrine_ic_path =
-            expanduser("~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc")
+            AtmosTransport.expand_data_path("\$ATMOSTRANSPORT_DATA_ROOT/catrine/InitialConditions/startCO2_202112010000.nc")
         if !isfile(catrine_ic_path)
             @info "Skipping Catrine equivalence tests; file not present at $catrine_ic_path"
             @test_skip false
@@ -1731,5 +1731,16 @@ end
         hours = load(write_series(joinpath(dir, "utc.nc"), "hours since 2021-01-01 00:00:00 UTC"))
         @test hours.times_sec == [0.0, 3600.0, 7200.0]
         @test_throws ArgumentError load(write_series(joinpath(dir, "years.nc"), "years since 2021-01-01"))
+    end
+end
+
+@testset "catrine_co2 default follows the data root" begin
+    ICIO = AtmosTransport.Models.InitialConditionIO
+    withenv("ATMOSTRANSPORT_DATA_ROOT" => "/tmp/bf2_data") do
+        file, variable, time_index = ICIO._resolve_file_init(Dict(), :catrine_co2)
+        @test file == "/tmp/bf2_data/catrine/InitialConditions/startCO2_202112010000.nc"
+        @test (variable, time_index) == ("CO2", 1)
+        @test first(ICIO._resolve_file_init(Dict("file" => "/tmp/explicit.nc"), :catrine_co2)) ==
+              "/tmp/explicit.nc"
     end
 end

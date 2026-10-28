@@ -33,7 +33,9 @@ validate_runtime_physics_recipe(recipe, driver)
 
 grid = driver_grid(driver)
 window1 = load_transport_window(driver, 1)
-Basis = air_mass_basis(driver) === :dry ? DryBasis : MoistBasis
+basis_tag = air_mass_basis(driver)
+Basis = basis_tag === :dry ? DryBasis : basis_tag === :moist ? MoistBasis :
+    throw(ArgumentError("driver mass basis must be :dry or :moist; got \$(repr(basis_tag))"))
 air = copy(window1.air_mass)
 
 vmr = build_initial_mixing_ratio(

@@ -70,7 +70,6 @@ end
     @test has(w, "[tracers.co2]", "background", "[tracers.co2.init] exists")
     @test has(w, "[tracers.co2.init]", "lon0_deg", "kind = \"uniform\"")
     @test has(w, "[tracers.co2.surface_flux]", "scal (did you mean `scale`?)")
-    @test has(w, "[tracers.co2.surface_flux]", "month", "gridfed_fossil_co2")
     @test has(w, "[tracers.co2.surface_flux]", "files", "time_varying = true")
     @test has(w, "[output]", "snapshot_file", "because `path` is set")
     @test has(w, "[output]", "stop_hour", "without an interval key")

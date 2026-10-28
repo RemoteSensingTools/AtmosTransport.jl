@@ -197,7 +197,8 @@ parsed as the run parses them; decay
 half-lives must name a tracer, and an enabled `[output]` needs both a path and
 snapshot times (an explicit `hours = []` means none). Shape errors are
 reported before value checks. Window indices accept integers, not Booleans or
-floating-point values.
+floating-point values. Explicit halo widths must be integers ≥ 1; input dates
+accept TOML dates or date strings in either input mode.
 
 Unknown keys and tables are returned as errors (with a suggestion when a known
 key is close, e.g. `order` → `ppm_order`); known keys that the chosen kind or
@@ -295,6 +296,11 @@ function _check_physics_and_output_settings!(cfg, FT, errors)
 
     run_cfg = get(cfg, "run", Dict{String, Any}())
     if run_cfg isa AbstractDict
+        for key in ("Hp", "halo_padding")
+            haskey(run_cfg, key) && _capture_config_error!(errors) do
+                config_int(run_cfg[key], "[run].$(key)"; min = 1)
+            end
+        end
         haskey(run_cfg, "reset_air_mass_each_window") && push!(errors,
             "run.reset_air_mass_each_window was replaced by run.air_mass_reset_mode = " *
             "\"none\", \"preserve_vmr\", or \"preserve_tracer_mass\"")

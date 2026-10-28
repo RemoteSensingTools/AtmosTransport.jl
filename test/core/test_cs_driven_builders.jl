@@ -33,6 +33,36 @@ cs_physics_recipe(cfg, context, FT; kwargs...) =
     build_runtime_physics_recipe(cfg, context, FT; kwargs...)
 cs_halo_width(cfg, scheme) = configured_halo_width(cfg, scheme)
 
+struct UnknownBasisReader end
+AtmosTransport.State.mass_basis(::UnknownBasisReader) = :unknown
+
+@testset "structured model rejects an unknown driver basis before loading data" begin
+    grid = AtmosGrid(LatLonMesh(; Nx = 4, Ny = 2),
+                     HybridSigmaPressure([0.0, 0.0], [0.0, 1.0]), CPU())
+    reader = UnknownBasisReader()
+    driver = AtmosTransport.TransportBinaryDriver{Float64, typeof(reader), typeof(grid)}(reader, grid)
+    @test_throws ArgumentError AtmosTransport.Models.DrivenRunner._make_structured_model(
+        driver; FT = Float64, recipe = nothing, tracer_specs = (), arch = CPU())
+end
+
+@testset "runtime physics rejects values that change physics silently" begin
+    @test_throws ArgumentError convection_spec(Dict("cloud_base" => "dqrcu"))
+    for kind in ("tm5", "cmfmc_matrix")
+        @test_throws ArgumentError convection_spec(Dict(
+            "kind" => kind, "use_collab_lu" => true, "lmax_conv" => -1))
+        @test_throws ArgumentError convection_spec(Dict(
+            "kind" => kind, "tile_workspace_gib" => true))
+    end
+    @test_throws ArgumentError AtmosTransport.Models.diffusion_spec(
+        Dict("kind" => "constant", "value" => true))
+    for key in ("Hp", "halo_padding"), value in (true, 2.0, 2.5, "3", 0, -1)
+        @test_throws ArgumentError configured_halo_width(
+            Dict("run" => Dict(key => value)), UpwindScheme())
+    end
+    @test configured_halo_width(Dict(), NoAdvection()) == 0
+    @test configured_halo_width(Dict("run" => Dict("Hp" => 3)), UpwindScheme()) == 3
+end
+
 struct StubReader
     has_cmfmc :: Bool
     has_tm5   :: Bool

@@ -160,7 +160,10 @@ The public runner calls `validate_config` before the startup handoff into its
 runtime implementation. Its checks live in
 [`runner/configuration.jl`](runner/configuration.jl): table shapes first,
 then path existence, precision/backend compatibility, and integer window
-bounds. Tracer initialization and surface-flux values must be subtables.
+bounds. Explicit `Hp`/`halo_padding` values must be integers ≥ 1, not Booleans.
+Input dates accept TOML dates and date strings in both input modes. Unknown
+driver mass-basis tags raise `ArgumentError`. Tracer initialization and
+surface-flux values must be subtables.
 The validator opens no binaries or model state; GPU auto-detection can still
 probe optional runtimes. The CLI checks architecture shape before its separate
 backend preload.

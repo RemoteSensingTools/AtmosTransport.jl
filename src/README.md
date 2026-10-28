@@ -42,7 +42,8 @@ Geometry and topology decisions come from
   kernel launching (`launch!`) and point operations (`AbstractPointOp`,
   `Fused`, `Sequence`: a kernel body written once, fused by dispatch;
   `copy_arrays!`: a set of device copies as one queued launch)
-- `ConfigChecks.jl` — strict TOML Booleans and known-key checks with
+- `ConfigChecks.jl` — strict TOML Booleans, integers (`config_int`), dates
+  (`config_date`, accepting TOML dates or strings), and known-key checks with
   "did you mean" suggestions, shared by `Output`, `Preprocessing` and `Models`
 - `AtomicFiles.jl` — publish a file only when it is complete: a sibling
   staging file created with `O_EXCL` and mode `0o666 & ~umask`, moved onto
