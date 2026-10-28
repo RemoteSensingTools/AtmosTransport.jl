@@ -67,10 +67,10 @@ end
 # Float-type / numerics resolution (shared between native and spectral paths).
 # ---------------------------------------------------------------------------
 
-function _resolve_float_type(cfg::AbstractDict)
-    s = String(get(get(cfg, "numerics", Dict()), "float_type", "Float64"))
-    return s == "Float32" ? Float32 : Float64
-end
+# Default `Float64` on the native path; unknown values throw.
+_resolve_float_type(cfg::AbstractDict) =
+    parse_float_type(get(get(cfg, "numerics", Dict()), "float_type", "Float64"),
+                     "[numerics] float_type")
 
 _resolve_dt_met(cfg::AbstractDict) =
     Float64(get(get(cfg, "numerics", Dict()), "dt_met_seconds", DEFAULT_MET_INTERVAL_SECONDS))

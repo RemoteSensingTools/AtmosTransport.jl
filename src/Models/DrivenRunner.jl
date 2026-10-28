@@ -75,7 +75,7 @@ using ProgressMeter: Progress, next!, finish!, update!
 
 import ...expand_data_path
 using ...SectionTimer
-using ...ConfigChecks: unknown_key_messages
+using ...ConfigChecks: unknown_key_messages, parse_float_type
 using ...Parameters: GLOBAL_MEAN_DRY_SURFACE_PRESSURE
 using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 CubedSphereState, total_air_mass, total_mass, tracer_names,

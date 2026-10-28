@@ -219,7 +219,7 @@ function _process_day_geos_cs_unified(date::Date,
     vc     = vertical.merged_vc
     panel_convention = "geos_native"
 
-    steps_per_met = round(Int, FT(dt_met_seconds) / FT(settings.mass_flux_dt))
+    steps_per_met = exact_steps_per_window(dt_met_seconds, settings.mass_flux_dt)
     reader_seed = seed_m === nothing ? nothing :
         ntuple(p -> Array{FT, 3}(seed_m[p]), CS_PANEL_COUNT)
     reader = open_reader(settings, date, FT;

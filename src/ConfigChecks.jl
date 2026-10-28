@@ -1,14 +1,14 @@
 """
     ConfigChecks
 
-Shared helpers for reading TOML configuration tables: strict Boolean values and
-known-key checks that suggest the intended key for a misspelled one. `Output`,
+Shared helpers for reading TOML configuration tables: strict Boolean values,
+the `[numerics] float_type` parser, and known-key checks that suggest the intended key for a misspelled one. `Output`,
 `Preprocessing` and `Models` use them, so this module is loaded right after
 `Architectures`.
 """
 module ConfigChecks
 
-export config_bool, key_suggestion, unknown_key_messages, check_known_keys
+export config_bool, parse_float_type, key_suggestion, unknown_key_messages, check_known_keys
 
 """
     config_bool(value, path) -> Bool
@@ -24,6 +24,22 @@ end
 
 config_bool(cfg::AbstractDict, key::AbstractString, default::Bool, path::AbstractString) =
     config_bool(get(cfg, key, default), path)
+
+"""
+    parse_float_type(raw, path) -> Type{Float32} or Type{Float64}
+
+Parse a `float_type` setting. `"Float32"` and `"Float64"` are accepted in any
+letter case; anything else (including surrounding spaces) throws an
+`ArgumentError` that names the setting `path` and lists the valid values. The
+runtime and both preprocessing entry paths read `[numerics] float_type` through
+this function, each with its own default.
+"""
+function parse_float_type(raw, path::AbstractString)
+    s = raw isa AbstractString ? lowercase(raw) : ""
+    s == "float32" && return Float32
+    s == "float64" && return Float64
+    throw(ArgumentError("$(path) must be \"Float32\" or \"Float64\"; got $(repr(raw))."))
+end
 
 # Levenshtein distance between two strings, by characters.
 function _edit_distance(a::AbstractString, b::AbstractString)

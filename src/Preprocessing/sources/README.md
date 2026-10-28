@@ -106,7 +106,9 @@ writers that turn these fields into transport binaries live in
   `QV` (`endpoint_dry_mass!`); `CMFMC` and `DTRAIN` are converted to dry with
   the window-mean `QV`.
 - GEOS `mass_flux_dt` defaults to `450` s; the loader accepts
-  `[preprocessing].mass_flux_dt_seconds` in 100–3600 and warns outside 400–500.
+  `[preprocessing].mass_flux_dt_seconds` in 100–3600 that divides 3600 exactly,
+  and warns outside 400–500. `[preprocessing].level_orientation` must be
+  `auto` (default), `bottom_up` or `top_down`; anything else throws.
 - GEOS-FP requires both `tavg_1hr_ctm_c0720_v72` (DELP for orientation,
   dry MFXC/MFYC) and `inst_1hr_ctm_c0720_v72` (endpoint PS/QV), in the flat
   root or `YYYYMMDD/` subdirectories. Window n is `(n-1):00`..`n:00` UTC;

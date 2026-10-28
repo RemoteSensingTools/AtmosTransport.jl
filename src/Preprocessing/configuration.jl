@@ -48,10 +48,11 @@ end
 """
     resolve_output_float_type(cfg) -> Type
 
-Return the on-disk floating-point type requested by the config.
+Return the on-disk floating-point type requested by `[numerics] float_type`
+(default `Float32` on this spectral path). Unknown values throw.
 """
 resolve_output_float_type(cfg) =
-    String(get(cfg["numerics"], "float_type", "Float32")) == "Float64" ? Float64 : Float32
+    parse_float_type(get(cfg["numerics"], "float_type", "Float32"), "[numerics] float_type")
 
 """
     resolve_mass_fix_settings(cfg) -> NamedTuple
