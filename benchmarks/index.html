@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="build" content="20261027174855">
+<title>Overview · AtmosTransport performance benchmark</title>
+<link rel="stylesheet" href="assets/site.css?v=20261027174855">
+<script src="assets/site.js?v=20261027174855"></script>
+<script src="data/bench.js?v=20261027174855"></script>
+<script defer src="assets/d3.min.js"></script>
+</head>
+<body data-page="index">
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="brand-main">AtmosTransport performance</span><span class="brand-sub">v0.5.0 · v0.6.0 · main, MERRA-2 L72 Float32</span></a>
+    <nav class="tabs" aria-label="sections"><a href="index.html" aria-current=page>Overview</a><a href="releases.html">Releases</a><a href="scaling.html">Scaling</a><a href="operators.html">Operators</a><a href="devices.html">Devices</a><a href="methods.html">Methods</a></nav>
+  </div>
+</header>
+<div class="status-strip"><div class="wrap" id="status-strip"></div></div>
+<main class="wrap">
+<h1>How fast is AtmosTransport?</h1>
+<p class="lede" id="lede"></p>
+
+<div class="tiles" id="tiles"></div>
+
+<section class="card">
+  <div class="card-head"><h2>Key points</h2></div>
+  <ul class="points" id="points"></ul>
+</section>
+
+<div class="controls" id="controls"></div>
+
+<section class="card">
+  <div class="card-head"><h2 id="chart-title">Simulated years per day by release</h2></div>
+  <div class="sub" id="chart-sub"></div>
+  <div class="plot" id="chart"></div>
+  <div class="note" id="chart-note"></div>
+  <div class="table-wrap" id="table" style="margin-top:12px"></div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Explore</h2></div>
+  <div class="explore">
+    <a href="releases.html"><b>Releases</b><span>Every configuration on one device: v0.5.0, v0.6.0 and main, with both passes and speedups.</span></a>
+    <a href="scaling.html"><b>Scaling</b><span>Seconds per simulated day against grid size for 1, 4 and 12 tracers; cost per cell; memory.</span></a>
+    <a href="operators.html"><b>Operators</b><span>Where the time goes at C90 and C180: input, advection, diffusion, convection, emissions.</span></a>
+    <a href="devices.html"><b>Devices</b><span>L40S, A100, M5 Pro and a 32-thread CPU side by side, with the speedup over the CPU.</span></a>
+    <a href="methods.html"><b>Methods</b><span>Protocol, code versions, per-device caveats and the data download.</span></a>
+  </div>
+</section>
+
+<script>
+SITE.ready(() => {
+  const S = SITE, B = S.bench(), el = S.el;
+  const V = B.versions, D = B.devices;
+  document.getElementById("lede").textContent =
+    `Wall-clock time of real MERRA-2 L72 Float32 cubed-sphere runs (8 simulated days, output off) for ${V.map(v => v.name).join(", ")} ` +
+    `on ${D.length ? D.map(d => d.name).join(", ") : "no device yet"}. SYPD = simulated years per wall-clock day (higher is faster).`;
+
+  // ---- tiles and key points (computed by the generator from the records)
+  const tiles = document.getElementById("tiles");
+  for (const t of B.tiles) tiles.append(el("div", {class: "tile"},
+    el("div", {class: "l"}, t.l),
+    el("div", {class: "v"}, t.c ? el("span", {class: "bar-key", style: `background:${t.c}`}) : null, t.v, t.u ? el("span", {class: "u"}, t.u) : null),
+    el("div", {class: "s"}, t.s)));
+  const pts = document.getElementById("points");
+  for (const p of B.points) pts.append(el("li", {html: p}));
+  if (!B.points.length) pts.append(el("li", {}, "Waiting for the first timing records."));
+
+  // ---- one control row: grid, tracers, operators; legend = versions
+  const H = B.headline || {};
+  const st = S.state({grid: H.g || "C90", tracers: String(H.t || 12), ops: H.o || "all"});
+  const hidden = new Set();
+  const opts = {
+    grid: () => B.grids.map(g => ({key: g.key, name: S.gridLabel(g.key)})),
+    tracers: s => S.uniq(S.configs({g: s.grid}).map(c => c.t)).sort((a, b) => a - b).map(t => ({key: t, name: String(t)})),
+    ops: s => B.ops.filter(o => S.configs({g: s.grid, t: s.tracers, o: o.key}).length).map(o => ({key: o.key, name: o.name, title: o.long}))};
+  const leg = S.legend(V.map(v => ({key: v.key, name: v.name, color: v.color, kind: "sq"})), hidden, draw);
+  S.controlRow(document.getElementById("controls"), [
+    {key: "grid", label: "Grid", options: opts.grid, prefer: ["C90"]},
+    {key: "tracers", label: "Tracers", options: opts.tracers, prefer: ["12"]},
+    {key: "ops", label: "Operators", options: opts.ops, prefer: ["all"]}], st, draw, leg);
+
+  function draw() {
+    const div = document.getElementById("chart");
+    const g = st.grid, t = +st.tracers, o = st.ops;
+    const cats = D.filter(d => V.some(v => S.cfg(d.key, v.key, g, t, o))).map(d => ({key: d.key, label: d.name, title: d.long}));
+    document.getElementById("chart-title").textContent = `${S.gridLabel(g)}, ${S.tr(t)}, ${S.op(o) ? S.op(o).long : o}`;
+    document.getElementById("chart-sub").textContent = "Simulated years per wall-clock day (higher is faster); dots = the two passes. Tap or hover a device for the values.";
+    if (!cats.length) { S.emptyNote(div, "No runs of this configuration yet."); document.getElementById("table").innerHTML = ""; return; }
+    const speed = (d, a, b) => { const x = S.cfg(d, a, g, t, o), y = S.cfg(d, b, g, t, o); return x && y ? x.s / y.s : null; };
+    S.groupBars(div, {categories: cats, series: V, hidden, get: (k, v) => S.cfg(k.key, v.key, g, t, o),
+      value: c => c.sypd, passValue: (c, p) => S.sypd(p.s), unit: "SYPD", y: {label: "SYPD"},
+      tipExtra: k => [["main", "v0.5.0"], ["main", "v0.6.0"], ["v0.6.0", "v0.5.0"]].map(([b, a]) => speed(k.key, a, b))
+        .map((x, i) => x ? `<div class="row"><span class="n">${["main / v0.5.0", "main / v0.6.0", "v0.6.0 / v0.5.0"][i]} speedup</span><span class="v">${S.times(x)}</span></div>` : "").join("")});
+    const flagged = cats.some(k => V.some(v => { const c = S.cfg(k.key, v.key, g, t, o); return c && c.flag; }));
+    document.getElementById("chart-note").innerHTML = (flagged ? `† / <span class="flag">Δ</span>: the two passes differ by more than ${S.pct(B.spread_flag)}. ` : "") +
+      `${B.grids.find(x => x.key === g).met} binaries, ${(B.grids.find(x => x.key === g).cells / 1e6).toFixed(2)} M cells (6 × ${B.grids.find(x => x.key === g).n}² × ${B.levels} levels).`;
+    // compact table: s/day per version and the speedups
+    const have = v => cats.some(k => S.cfg(k.key, v, g, t, o));
+    const VV = V.filter(v => have(v.key));
+    const head = [[{text: "device", cls: "l"}, ...VV.map(v => ({html: `<span class="bar-key" style="background:${v.color};display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px"></span>${v.name}`})),
+      ...(have("main") ? [{text: "SYPD (main)"}] : []),
+      ...(have("main") && have("v0.5.0") ? [{text: "main / v0.5.0"}] : []), ...(have("main") && have("v0.6.0") ? [{text: "main / v0.6.0"}] : [])]];
+    const body = cats.map(k => {
+      const c = v => S.cfg(k.key, v, g, t, o);
+      return [{text: k.label, cls: "l", title: k.title}, ...VV.map(v => ({html: c(v.key) ? `${S.sig(c(v.key).s)}${S.flagPill(c(v.key))}` : "–"})),
+        ...(have("main") ? [{text: c("main") ? S.sig(c("main").sypd) : "–"}] : []),
+        ...(have("main") && have("v0.5.0") ? [{text: S.times(speed(k.key, "v0.5.0", "main"))}] : []),
+        ...(have("main") && have("v0.6.0") ? [{text: S.times(speed(k.key, "v0.6.0", "main"))}] : [])];
+    });
+    S.table(document.getElementById("table"), head, body);
+    document.getElementById("table").append(el("div", {class: "chart-note"}, "Seconds per simulated day (mean of the passes); speedup = s/day(old) / s/day(new)."));
+  }
+  draw();
+});
+</script>
+
+</main>
+<footer class="wrap site-footer">
+  Built 2026-10-27 17:48 UTC by <code>benchmarking/site/build_site.py</code> (AtmosTransport.jl e1f9dfe4c) from the timing records
+  (<a href="methods.html#data">download</a>). Per-commit synthetic benchmarks from CI: <a href="ci/">ci/</a>. Charts: <a href="assets/d3.LICENSE.txt">D3.js 7.9.0</a> (ISC licence), served from this site.
+</footer>
+</body>
+</html>

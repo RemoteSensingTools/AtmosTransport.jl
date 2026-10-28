@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="build" content="20261027174855">
+<title>Operator cost breakdown · AtmosTransport performance benchmark</title>
+<link rel="stylesheet" href="assets/site.css?v=20261027174855">
+<script src="assets/site.js?v=20261027174855"></script>
+<script src="data/bench.js?v=20261027174855"></script>
+<script defer src="assets/d3.min.js"></script>
+</head>
+<body data-page="operators">
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="brand-main">AtmosTransport performance</span><span class="brand-sub">v0.5.0 · v0.6.0 · main, MERRA-2 L72 Float32</span></a>
+    <nav class="tabs" aria-label="sections"><a href="index.html">Overview</a><a href="releases.html">Releases</a><a href="scaling.html">Scaling</a><a href="operators.html" aria-current=page>Operators</a><a href="devices.html">Devices</a><a href="methods.html">Methods</a></nav>
+  </div>
+</header>
+<div class="status-strip"><div class="wrap" id="status-strip"></div></div>
+<main class="wrap">
+<h1>Operator cost breakdown</h1>
+<p class="lede">Where the time of an all-operator run goes, at 12 tracers, from runs with one operator set each. The input floor is the
+run with no operator (met input and time stepping); each operator's cost is its run minus that floor; emissions = (adv+emis) − adv;
+the remainder is what the all-operator run costs beyond the sum, and it can be negative.</p>
+
+<div class="controls" id="controls"></div>
+
+<section class="card">
+  <div id="panels"></div>
+  <div class="note" id="chart-note">Segments left of zero are negative components. Black tick = the measured all-operator time. Tap or hover a bar for the values.</div>
+</section>
+
+<section class="card" id="values-card">
+  <div class="card-head"><h2>Values</h2></div>
+  <div class="sub">Seconds per simulated day (means of the passes); percentages of the all-operator time.</div>
+  <div class="table-wrap" id="table"></div>
+  <div class="note" id="table-note"></div>
+</section>
+
+<script>
+SITE.ready(() => {
+  const S = SITE, B = S.bench(), el = S.el;
+  const T = 12, K = B.components;
+  const H = B.headline || {};
+  const devs = B.devices.filter(d => B.breakdown.some(b => b.d === d.key && b.t === T) || B.partial.some(b => b.d === d.key));
+  const st = S.state({device: H.d || "L40S"});
+  const hidden = new Set();
+  const leg = S.legend(K.map(k => ({key: k.key, name: k.name, color: k.color, kind: k.color === "hatch" ? "hatch" : "sq"})), hidden, draw);
+  if (devs.length) S.controlRow(document.getElementById("controls"), [
+    {key: "device", label: "Device", options: () => devs.map(d => ({key: d.key, name: d.name, title: d.long}))}], st, draw, leg);
+  else document.getElementById("controls").remove();
+
+  function draw() {
+    const box = document.getElementById("panels"), d = st.device;
+    box.innerHTML = "";
+    if (!devs.length) {
+      box.append(el("div", {class: "empty"}, `Needs all six operator sets (${B.ops.map(o => o.name).join(", ") || "none, adv, diff, conv, adv+emis, all"}) at ${T} tracers for a version; no device has them yet.`));
+      document.getElementById("table").innerHTML = "";
+      return;
+    }
+    const bd = B.breakdown.filter(b => b.d === d && b.t === T);
+    const part = B.partial.filter(b => b.d === d && b.t === T);
+    const grids = B.grids.filter(g => bd.some(b => b.g === g.key) || part.some(b => b.g === g.key));
+    const body = [];
+    for (const g of grids) {
+      const rows = B.versions.map(v => bd.find(b => b.g === g.key && b.v === v.key)).filter(Boolean)
+        .map(b => ({key: b.v, label: b.v, color: S.version(b.v).color, parts: b.parts, total: b.all, title: `${S.device(d).name}, ${b.v}, ${g.key}, ${S.tr(T)}`}));
+      const waiting = part.filter(b => b.g === g.key);
+      const wrap = el("div", {style: "margin-bottom:14px"}, el("h2", {}, `${S.gridLabel(g.key)}, ${S.tr(T)}`));
+      const plot = el("div", {class: "plot"});
+      wrap.append(plot);
+      if (waiting.length) wrap.append(el("div", {class: "waiting-note"}, (rows.length ? "Also waiting for " : "No version has all six operator sets yet; waiting for ") +
+        waiting.map(w => `${w.v}: ${w.missing.join(", ")}`).join("; ") + "."));
+      box.append(wrap);
+      if (rows.length) S.stack(plot, {rows, comps: K, hidden});
+      else plot.remove();
+      if (rows.length) {
+        body.push({grp: S.gridLabel(g.key)});
+        for (const r of rows) body.push([{text: r.label, cls: "l"}, ...K.map(k => ({html: `${S.sig(r.parts[k.key], 2)} <span class="pass">${S.pct(r.parts[k.key] / r.total)}</span>`})),
+          {text: S.sig(r.total), cls: "sep"}]);
+      }
+    }
+    if (!grids.length) box.append(el("div", {class: "empty"}, "No 12-tracer operator runs on this device yet."));
+    // nothing complete yet: only the waiting notes, no legend, no table
+    const any = body.length > 0;
+    document.getElementById("values-card").hidden = !any;
+    document.getElementById("chart-note").hidden = !any;
+    leg.hidden = !any;
+    S.table(document.getElementById("table"), [[{text: "version", cls: "l"}, ...K.map(k => ({text: k.name, title: k.long})), {text: "all", cls: "sep"}]], body);
+    document.getElementById("table-note").innerHTML = K.map(k => `<b>${k.name}</b> = ${k.long}`).join("; ") + ".";
+  }
+  draw();
+});
+</script>
+
+</main>
+<footer class="wrap site-footer">
+  Built 2026-10-27 17:48 UTC by <code>benchmarking/site/build_site.py</code> (AtmosTransport.jl e1f9dfe4c) from the timing records
+  (<a href="methods.html#data">download</a>). Per-commit synthetic benchmarks from CI: <a href="ci/">ci/</a>. Charts: <a href="assets/d3.LICENSE.txt">D3.js 7.9.0</a> (ISC licence), served from this site.
+</footer>
+</body>
+</html>

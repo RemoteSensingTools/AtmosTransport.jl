@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="build" content="20261027174855">
+<title>Devices · AtmosTransport performance benchmark</title>
+<link rel="stylesheet" href="assets/site.css?v=20261027174855">
+<script src="assets/site.js?v=20261027174855"></script>
+<script src="data/bench.js?v=20261027174855"></script>
+<script defer src="assets/d3.min.js"></script>
+</head>
+<body data-page="devices">
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="brand-main">AtmosTransport performance</span><span class="brand-sub">v0.5.0 · v0.6.0 · main, MERRA-2 L72 Float32</span></a>
+    <nav class="tabs" aria-label="sections"><a href="index.html">Overview</a><a href="releases.html">Releases</a><a href="scaling.html">Scaling</a><a href="operators.html">Operators</a><a href="devices.html" aria-current=page>Devices</a><a href="methods.html">Methods</a></nav>
+  </div>
+</header>
+<div class="status-strip"><div class="wrap" id="status-strip"></div></div>
+<main class="wrap">
+<h1>Devices</h1>
+<p class="lede" id="lede"></p>
+
+<div class="controls" id="controls"></div>
+
+<section class="card">
+  <div class="card-head"><h2 id="chart-title"></h2></div>
+  <div class="sub">Seconds per simulated day, log scale (lower is faster); one marker shape and colour per device; hollow dots = the two passes.</div>
+  <div class="plot" id="chart"></div>
+  <div class="note" id="chart-note"></div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Values and speedup over the CPU</h2></div>
+  <div class="sub" id="table-sub"></div>
+  <div class="table-wrap" id="table"></div>
+</section>
+
+<script>
+SITE.ready(() => {
+  const S = SITE, B = S.bench(), D = B.devices;
+  const versionOf = () => ["main", "v0.6.0", "v0.5.0"].find(v => S.configs({v}).length);
+  const v = versionOf();
+  document.getElementById("lede").textContent = `${v === "main" ? "main" : `${v || "–"} (no main runs yet)`} on ${D.map(d => d.long).join("; ") || "no device yet"}` +
+    (B.waiting.length ? `. Waiting for ${B.waiting.map(w => w.name).join(", ")}.` : ".");
+  const H = B.headline || {};
+  const st = S.state({tracers: String(H.t || 12), ops: H.o || "all"});
+  const hidden = new Set();
+  const leg = S.legend(D.map(d => ({key: d.key, name: d.name, color: d.color, kind: "shape", shape: d.shape})), hidden, draw);
+  S.controlRow(document.getElementById("controls"), [
+    {key: "tracers", label: "Tracers", prefer: ["12"], options: () => S.uniq(S.configs({v}).map(c => c.t)).sort((a, b) => a - b).map(t => ({key: t, name: String(t)}))},
+    {key: "ops", label: "Operators", prefer: ["all"], options: s => B.ops.filter(o => S.configs({v, t: s.tracers, o: o.key}).length).map(o => ({key: o.key, name: o.name, title: o.long}))}],
+    st, draw, leg);
+
+  function draw() {
+    const t = +st.tracers, o = st.ops, div = document.getElementById("chart");
+    document.getElementById("chart-title").textContent = `${v}, ${S.tr(t)}, ${S.op(o) ? S.op(o).long : o}`;
+    const rows = B.grids.filter(g => D.some(d => S.cfg(d.key, v, g.key, t, o))).map(g => ({key: g.key, g: g.key, label: g.key, title: S.gridLabel(g.key)}));
+    const cpu = D.find(d => d.kind === "cpu");
+    if (!rows.length) { S.emptyNote(div, "No runs of this combination yet."); document.getElementById("table").innerHTML = ""; return; }
+    S.dotRows(div, {rows, series: D, hidden, get: (r, d) => S.cfg(d.key, v, r.g, t, o), x: {label: "seconds per simulated day (log scale)"},
+      tipExtra: r => {
+        const c0 = cpu && S.cfg(cpu.key, v, r.g, t, o);
+        return c0 ? D.filter(d => d !== cpu && S.cfg(d.key, v, r.g, t, o))
+          .map(d => `<div class="row"><span class="n">${d.name} / CPU speedup</span><span class="v">${S.times(c0.s / S.cfg(d.key, v, r.g, t, o).s)}</span></div>`).join("") : "";
+      }});
+    document.getElementById("chart-note").textContent = rows.some(r => D.some(d => { const c = S.cfg(d.key, v, r.g, t, o); return c && c.flag; }))
+      ? `† passes differ by more than ${S.pct(B.spread_flag)}.` : "";
+    const DD = D.filter(d => rows.some(r => S.cfg(d.key, v, r.g, t, o)));
+    const gpus = cpu && DD.includes(cpu) ? DD.filter(d => d !== cpu) : [];
+    document.getElementById("table-sub").textContent = "Seconds per simulated day, then SYPD" +
+      (gpus.length ? ` and the speedup over the CPU (s/day(CPU) / s/day(device), ${cpu.long}).` : "; the speedup over the CPU appears once the CPU runs are in.");
+    const head = [[{text: "grid", cls: "l"}, ...DD.map(d => ({html: `<svg width="11" height="11" viewBox="-6 -6 12 12" style="margin-right:4px;vertical-align:-1px"><path d="${S.symbolPath(d.shape, 60)}" fill="${d.color}"/></svg>${d.name}`}))]];
+    const body = rows.map(r => {
+      const c = d => S.cfg(d.key, v, r.g, t, o);
+      const best = d3.min(DD.map(c).filter(Boolean), x => x.s);
+      return [{text: S.gridLabel(r.g), cls: "l"},
+        ...DD.map(d => c(d) ? {html: `${S.sig(c(d).s)}${S.flagPill(c(d))}<br><span class="pass">${S.sig(c(d).sypd)} SYPD</span>` +
+                                     (gpus.includes(d) && c(cpu) ? `<br><span class="pass">${S.times(c(cpu).s / c(d).s)} CPU</span>` : ""),
+                               cls: c(d).s === best && DD.length > 1 ? "best" : ""} : {text: "–", cls: "dim"})];
+    });
+    S.table(document.getElementById("table"), head, body);
+  }
+  draw();
+});
+</script>
+
+</main>
+<footer class="wrap site-footer">
+  Built 2026-10-27 17:48 UTC by <code>benchmarking/site/build_site.py</code> (AtmosTransport.jl e1f9dfe4c) from the timing records
+  (<a href="methods.html#data">download</a>). Per-commit synthetic benchmarks from CI: <a href="ci/">ci/</a>. Charts: <a href="assets/d3.LICENSE.txt">D3.js 7.9.0</a> (ISC licence), served from this site.
+</footer>
+</body>
+</html>
