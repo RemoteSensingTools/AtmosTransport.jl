@@ -65,19 +65,19 @@ export interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!
 export load_surface_window!
 export ConvectionForcing, has_convection_forcing
 export copy_convection_forcing!, allocate_convection_forcing_like
-export PBLSurfaceForcing, has_pbl_surface_forcing
+export PBLSurfaceForcing
 export window_count, has_qv_endpoints, has_flux_delta, has_cmfmc
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule
 export binary_capabilities, inspect_binary
 export binary_dry_mass_target
 export has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base
-export mass_basis, grid_type, horizontal_topology, A_ifc, B_ifc
+export mass_basis, grid_type, horizontal_topology
 export surface_pressure_basis
 export uses_binary_substep_contract
 export source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics
 export flux_application_seconds, flux_storage_substep_scale
 export diagnose_cm_from_continuity!
-export recompute_cm_from_dm_target!, recompute_faceindexed_cm_from_dm_target!
+export recompute_cm_from_dm_target!
 export verify_window_continuity, verify_window_continuity_ll, verify_window_continuity_rg,
        verify_window_continuity_cs, ReplayScratch
 export ERA5ReducedGaussianGeometry

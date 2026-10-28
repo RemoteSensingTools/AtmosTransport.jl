@@ -41,8 +41,7 @@ function Base.show(io::IO, r::TransportBinaryReader)
           "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
           "├── humidity:      ", _transport_qv_summary(h), "\n",
           "├── semantics:     ", _transport_semantics_summary(h), "\n",
-          "├── poisson:       ", isnan(h.poisson_balance_target_scale) ? "unspecified" :
-                               string("scale=", h.poisson_balance_target_scale, ", ", h.poisson_balance_target_semantics), "\n",
+          "├── poisson:       ", string("scale=", h.poisson_balance_target_scale, ", ", h.poisson_balance_target_semantics), "\n",
           "└── windows:       ", h.nwindow)
 end
 
@@ -63,8 +62,6 @@ flux_sampling(r::TransportBinaryReader) = r.header.flux_sampling
 flux_kind(r::TransportBinaryReader) = r.header.flux_kind
 humidity_sampling(r::TransportBinaryReader) = r.header.humidity_sampling
 delta_semantics(r::TransportBinaryReader) = r.header.delta_semantics
-A_ifc(r::TransportBinaryReader) = r.header.A_ifc
-B_ifc(r::TransportBinaryReader) = r.header.B_ifc
 """Return `true` when both specific-humidity endpoint sections are present."""
 has_qv_endpoints(r::TransportBinaryReader) =
     :qv_start in r.header.payload_sections && :qv_end in r.header.payload_sections
@@ -469,64 +466,42 @@ function load_window!(reader::TransportBinaryReader{FT}, win::Int;
         am = isnothing(am) ? _transport_allocate_am(reader) : am
         bm = isnothing(bm) ? _transport_allocate_bm(reader) : bm
         o = _transport_window_offset(reader, win)
-        saw_m = saw_am = saw_bm = saw_cm = saw_ps = false
 
         for section in h.payload_sections
             n = _transport_section_elements(h, section)
             if section === :m
                 copyto!(m, 1, reader.data, o + 1, n)
-                saw_m = true
             elseif section === :am
                 copyto!(am, 1, reader.data, o + 1, n)
-                saw_am = true
             elseif section === :bm
                 copyto!(bm, 1, reader.data, o + 1, n)
-                saw_bm = true
             elseif section === :cm
                 copyto!(cm, 1, reader.data, o + 1, n)
-                saw_cm = true
             elseif section === :ps
                 copyto!(ps, 1, reader.data, o + 1, n)
-                saw_ps = true
             end
             o += n
         end
-
-        saw_m || error("Transport binary payload is missing required section `m`")
-        saw_am || error("Transport binary payload is missing required section `am`")
-        saw_bm || error("Transport binary payload is missing required section `bm`")
-        saw_cm || error("Transport binary payload is missing required section `cm`")
-        saw_ps || error("Transport binary payload is missing required section `ps`")
 
         fluxes = _transport_make_fluxes(Val(h.mass_basis), am, bm, cm)
         return m, ps, fluxes
     elseif _transport_is_faceindexed(h)
         hflux = isnothing(hflux) ? _transport_allocate_hflux(reader) : hflux
         o = _transport_window_offset(reader, win)
-        saw_m = saw_hflux = saw_cm = saw_ps = false
 
         for section in h.payload_sections
             n = _transport_section_elements(h, section)
             if section === :m
                 copyto!(m, 1, reader.data, o + 1, n)
-                saw_m = true
             elseif section === :hflux
                 copyto!(hflux, 1, reader.data, o + 1, n)
-                saw_hflux = true
             elseif section === :cm
                 copyto!(cm, 1, reader.data, o + 1, n)
-                saw_cm = true
             elseif section === :ps
                 copyto!(ps, 1, reader.data, o + 1, n)
-                saw_ps = true
             end
             o += n
         end
-
-        saw_m || error("Transport binary payload is missing required section `m`")
-        saw_hflux || error("Transport binary payload is missing required section `hflux`")
-        saw_cm || error("Transport binary payload is missing required section `cm`")
-        saw_ps || error("Transport binary payload is missing required section `ps`")
 
         fluxes = _transport_make_fluxes(Val(h.mass_basis), hflux, cm)
         return m, ps, fluxes
@@ -558,35 +533,27 @@ function load_flux_delta_window!(reader::TransportBinaryReader{FT}, win::Int;
     dm = isnothing(dm) ? _transport_allocate_dm(reader) : dm
 
     o = _transport_window_offset(reader, win)
-    found_any = false
     found_dam = found_dbm = found_dhflux = found_dcm = found_dm = false
     for section in h.payload_sections
         n = _transport_section_elements(h, section)
         if section === :dam
             copyto!(dam, 1, reader.data, o + 1, n)
             found_dam = true
-            found_any = true
         elseif section === :dbm
             copyto!(dbm, 1, reader.data, o + 1, n)
             found_dbm = true
-            found_any = true
         elseif section === :dhflux
             copyto!(dhflux, 1, reader.data, o + 1, n)
             found_dhflux = true
-            found_any = true
         elseif section === :dcm
             copyto!(dcm, 1, reader.data, o + 1, n)
             found_dcm = true
-            found_any = true
         elseif section === :dm
             copyto!(dm, 1, reader.data, o + 1, n)
             found_dm = true
-            found_any = true
         end
         o += n
     end
-
-    found_any || return nothing
 
     result = NamedTuple()
     if found_dam
@@ -670,22 +637,7 @@ function load_surface_window!(reader::TransportBinaryReader{FT}, win::Int;
                               ustar = nothing,
                               hflux = nothing,
                               t2m = nothing) where FT
-    surface_present = has_surface(reader)
-    surface_partial = any(s in reader.header.payload_sections
-                          for s in _PBL_SURFACE_PAYLOAD_SECTIONS) && !surface_present
-    if surface_partial
-        legacy_hflux = :hflux in reader.header.payload_sections &&
-                       !(:pbl_hflux in reader.header.payload_sections)
-        msg = "transport binary has a partial PBL surface payload; expected all " *
-              "of pblh, ustar, pbl_hflux, t2m"
-        legacy_hflux && (msg *= "\n  This binary appears to be pre-2026-05-01 " *
-                                "(commit 66bbce3): the on-disk PBL sensible-heat " *
-                                "section is `:hflux` rather than the renamed " *
-                                "`:pbl_hflux`. Regenerate via " *
-                                "scripts/preprocessing/preprocess_transport_binary.jl.")
-        throw(ArgumentError(msg))
-    end
-    surface_present || return nothing
+    has_surface(reader) || return nothing
 
     pblh = isnothing(pblh) ? _transport_allocate_surface_field(reader) : pblh
     ustar = isnothing(ustar) ? _transport_allocate_surface_field(reader) : ustar
@@ -693,28 +645,20 @@ function load_surface_window!(reader::TransportBinaryReader{FT}, win::Int;
     t2m = isnothing(t2m) ? _transport_allocate_surface_field(reader) : t2m
 
     o = _transport_window_offset(reader, win)
-    found_pblh = found_ustar = found_hflux = found_t2m = false
     for section in reader.header.payload_sections
         n = _transport_section_elements(reader.header, section)
         if section === :pblh
             copyto!(pblh, 1, reader.data, o + 1, n)
-            found_pblh = true
         elseif section === :ustar
             copyto!(ustar, 1, reader.data, o + 1, n)
-            found_ustar = true
         elseif section === :pbl_hflux
             copyto!(hflux, 1, reader.data, o + 1, n)
-            found_hflux = true
         elseif section === :t2m
             copyto!(t2m, 1, reader.data, o + 1, n)
-            found_t2m = true
         end
         o += n
     end
 
-    (found_pblh && found_ustar && found_hflux && found_t2m) ||
-        throw(ArgumentError(
-            "transport binary has an incomplete PBL surface payload in window $(win)"))
     return PBLSurfaceForcing(pblh, ustar, hflux, t2m)
 end
 
@@ -734,19 +678,15 @@ function load_qv_pair_window!(reader::TransportBinaryReader{FT}, win::Int;
     qv_end = isnothing(qv_end) ? _transport_allocate_qv(reader) : qv_end
 
     o = _transport_window_offset(reader, win)
-    found_start = false
-    found_end = false
     for section in h.payload_sections
         n = _transport_section_elements(h, section)
         if section === :qv_start
             copyto!(qv_start, 1, reader.data, o + 1, n)
-            found_start = true
         elseif section === :qv_end
             copyto!(qv_end, 1, reader.data, o + 1, n)
-            found_end = true
         end
         o += n
     end
 
-    return found_start && found_end ? (; qv_start, qv_end) : nothing
+    return (; qv_start, qv_end)
 end

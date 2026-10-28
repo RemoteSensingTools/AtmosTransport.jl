@@ -14,7 +14,9 @@ using AtmosTransport
 using .AtmosTransport.Preprocessing: verify_window_continuity_ll,
                                        verify_window_continuity_rg,
                                        verify_window_continuity_cs,
-                                       verify_storage_continuity_ll!,
+                                       apply_poisson_balance!,
+                                       LatLonContract,
+                                       SubstepSchedulePolicy,
                                        allocate_window_storage
 using .AtmosTransport.MetDrivers: replay_tolerance, ReplayScratch
 using .AtmosTransport.Parameters: REPLAY_TOLERANCE_FLOAT64, REPLAY_TOLERANCE_FLOAT32
@@ -196,23 +198,75 @@ end
         @test !(diag.max_rel_err <= replay_tolerance(Float64))
     end
 
-    @testset "verify_storage_continuity_ll!: final zero-tendency fallback is checked" begin
-        # With `last_hour_next === nothing`, the final LL window should replay
-        # against `m_cur` itself, not be skipped.
-        m = fill(Float64(1e9), 4, 3, 3)
-        am = zeros(Float64, 5, 3, 3)
-        bm = zeros(Float64, 4, 4, 3)
-        cm = zeros(Float64, 4, 3, 4)
-        cm[2, 2, 2] = 1e4  # deliberate inconsistency in the only/final window
+    @testset "LL writer adaptive balance: final-window replay gate" begin
+        # Exercise the schedule-based entry point called by the LL writer's
+        # flush_final_windows!, including its missing-next-day fallback.
+        policy = SubstepSchedulePolicy(adaptive_substeps = true,
+                                       substep_cfl_target = 0.25,
+                                       max_steps_per_window = 64)
+        for FT in (Float32, Float64), has_next_day in (false, true)
+            @testset "$FT next-day endpoint=$has_next_day" begin
+                storage = allocate_window_storage(2, FT)
+                for win in 1:2
+                    storage.all_m[win] = fill(FT(1e9), 4, 3, 3)
+                    storage.all_am[win] = zeros(FT, 5, 3, 3)
+                    storage.all_bm[win] = zeros(FT, 4, 4, 3)
+                    storage.all_cm[win] = zeros(FT, 4, 3, 4)
+                    storage.all_ps[win] = zeros(FT, 4, 3)
+                    # Divergence-free circulation forces adaptive refinement:
+                    # initial palindrome outflow/m = 0.5, target = 0.25.
+                    storage.all_am[win][:, :, 3] .= FT(2.5e8)
+                end
+                storage.all_m[2][:, :, 1] .+= FT(1e5)
+                storage.all_m[2][:, :, 2] .-= FT(1e5)
+                endpoint = copy(storage.all_m[2])
+                if has_next_day
+                    endpoint[:, :, 1] .+= FT(5e4)
+                    endpoint[:, :, 2] .-= FT(5e4)
+                end
+                last_hour_next = has_next_day ? (m = endpoint,) : nothing
+                make_contract = () -> LatLonContract{FT}(
+                    replay_tol = replay_tolerance(FT), steps_per_window = 2)
 
-        storage = allocate_window_storage(1, Float64)
-        storage.all_m[1] = copy(m)
-        storage.all_am[1] = copy(am)
-        storage.all_bm[1] = copy(bm)
-        storage.all_cm[1] = copy(cm)
-        storage.all_ps[1] = zeros(Float64, 4, 3)
+                clean = deepcopy(storage)
+                steps = [2, 2]
+                @test apply_poisson_balance!(clean, last_hour_next, steps,
+                                             make_contract(), policy) === nothing
+                @test steps == [4, 4]
+                @test clean.all_cm[1][1, 1, 2] ≈ -1e5 / (2 * steps[1])
+                @test clean.all_cm[2][1, 1, 2] ≈
+                    (has_next_day ? -5e4 / (2 * steps[2]) : 0.0)
+                for win in 1:2
+                    target = win == 1 ? clean.all_m[2] : endpoint
+                    diag = verify_window_continuity_ll(
+                        clean.all_m[win], clean.all_am[win], clean.all_bm[win],
+                        clean.all_cm[win], target, steps[win])
+                    @test diag.max_rel_err <= replay_tolerance(FT)
+                end
 
-        @test_throws ErrorException verify_storage_continuity_ll!(storage, nothing, 2, Float64)
+                # Only the final window leaks mass across the longitude seam.
+                # Poisson cannot remove the nonzero global divergence, and
+                # diagnosing cm with closed top/bottom cannot hide it. A cm
+                # perturbation alone would be overwritten before the gate.
+                storage.all_am[2][end, :, :] .+= FT(1e6)
+                @test_throws r"Write-time replay gate FAILED for LL window 2:" apply_poisson_balance!(
+                    deepcopy(storage), last_hour_next, [2, 2], make_contract(), policy)
+
+                # The same finite input completes with replay disabled. This
+                # isolates the rejection above from balance/positivity errors.
+                steps = [2, 2]
+                contract = make_contract()
+                @test apply_poisson_balance!(storage, last_hour_next, steps,
+                                             contract, policy;
+                                             write_replay_on = false) === nothing
+                @test contract.worst.ratio <= policy.substep_cfl_target
+                diag = verify_window_continuity_ll(
+                    storage.all_m[2], storage.all_am[2], storage.all_bm[2],
+                    storage.all_cm[2], endpoint, steps[2])
+                @test isfinite(diag.max_rel_err)
+                @test diag.max_rel_err > replay_tolerance(FT)
+            end
+        end
     end
 
     # -------------------------------------------------------------------
@@ -372,4 +426,30 @@ end
     @test gate_as_wired(m_cur, m_next, am .+ am_rot, bm .+ bm_rot) < 1e-14  # rotational error
     @test gate_as_wired(m_cur, m_next, am[:, :, end:-1:1], bm[:, :, end:-1:1]) < 1e-14  # level flip
     @test gate_as_wired(m_cur, m_next, broken, bm) > 1e-4                   # column budget broken
+end
+
+@testset "Hybrid staging closure requires every B interface" begin
+    P = AtmosTransport.Preprocessing
+    for FT in (Float32, Float64)
+        m = ones(FT, 1, 1, 2)
+        am = zeros(FT, 2, 1, 2)
+        am[2, 1, :] .= FT[1, 3]
+        bm = zeros(FT, 1, 2, 2)
+        cm_ll = zeros(FT, 1, 1, 3)
+        cm_rg = zeros(FT, 1, 3)
+        hflux = reshape(FT[1, 3], 1, 2)
+        left, right = Int32[1], Int32[0]
+        div = zeros(1, 2)
+
+        # Column divergence is 4: ΔB = 1/2 gives cm = [0, 1, 0].
+        P.recompute_cm_from_divergence!(cm_ll, am, bm, m; B_ifc=[0.0, 0.5, 1.0])
+        P.recompute_faceindexed_cm_from_divergence!(cm_rg, hflux, left, right, div;
+                                                    B_ifc=[0.0, 0.5, 1.0])
+        @test vec(cm_ll) == FT[0, 1, 0]
+        @test vec(cm_rg) == FT[0, 1, 0]
+        for B in (Float64[], [0.0, 1.0], [0.0, 0.25, 0.5, 1.0])
+            @test_throws ArgumentError P.recompute_cm_from_divergence!(cm_ll, am, bm, m; B_ifc=B)
+            @test_throws ArgumentError P.recompute_faceindexed_cm_from_divergence!(cm_rg, hflux, left, right, div; B_ifc=B)
+        end
+    end
 end

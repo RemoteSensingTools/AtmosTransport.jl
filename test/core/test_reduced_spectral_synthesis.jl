@@ -72,7 +72,7 @@ end
             zeros(ComplexF64, T + 1, T + 1), zeros(ComplexF64, T + 1, T + 1))
         for k in 1:Nf
             ref = zeros(nc)
-            P.spectral_to_reduced_scalar!(ref, spec[:, :, k], T, grid, cache; centered = true)
+            P.spectral_to_reduced_scalar!(ref, spec[:, :, k], T, grid, cache)
             @test out[:, k] ≈ ref rtol = 1e-12
         end
     end

@@ -59,22 +59,6 @@ function rotate_winds_to_panel_local!(u_panel::NTuple{CS_PANEL_COUNT, Array{FT, 
                                         tangent_basis, mesh.Nc, Nz)
 end
 
-"""
-    rotate_winds_to_panel_local!(..., Nc, Nz)
-
-Backward-compatible gnomonic wrapper. New preprocessing code should pass the
-actual `CubedSphereMesh` so panel convention is explicit.
-"""
-function rotate_winds_to_panel_local!(u_panel::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                       v_panel::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                       u_east::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                       v_north::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                       Nc::Int, Nz::Int) where FT
-    mesh = CubedSphereMesh(; Nc=Nc, FT=FT, radius=FT(EARTH_RADIUS),
-                            convention=GnomonicPanelConvention())
-    return rotate_winds_to_panel_local!(u_panel, v_panel, u_east, v_north, mesh, Nz)
-end
-
 # ---------------------------------------------------------------------------
 # Panel-local → east/north wind rotation
 # ---------------------------------------------------------------------------

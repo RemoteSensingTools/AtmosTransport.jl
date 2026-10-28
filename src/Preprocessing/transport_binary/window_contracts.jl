@@ -43,16 +43,6 @@
 # ===========================================================================
 
 """
-    mass_basis_symbol(::AbstractMassBasis) -> Symbol
-
-Map a basis singleton (`State.DryBasis` / `State.MoistBasis`) to the
-on-disk binary-header value (`:dry` / `:moist`). Inverse of
-`mass_basis_from_symbol`.
-"""
-@inline mass_basis_symbol(::DryBasis)   = :dry
-@inline mass_basis_symbol(::MoistBasis) = :moist
-
-"""
     mass_basis_from_symbol(s::Symbol) -> AbstractMassBasis
 
 Construct the matching basis singleton from a header `Symbol`. Throws
@@ -199,8 +189,6 @@ function rescale_substep_amounts!(arrays, old_steps::Integer, new_steps::Integer
     end
     return arrays
 end
-
-@inline contract_steps_for_window(c, _win::Integer) = c.steps_per_window
 
 function set_contract_steps_schedule!(contract, schedule::AbstractVector{<:Integer})
     steps = Int.(collect(schedule))
@@ -358,34 +346,6 @@ contract's policy demands and the worst exceeds the gate, deletes
 gate is violated but the policy is set to record-and-continue.
 """
 function summarize_status! end
-
-# Optional accessors that concrete contracts may override. The defaults
-# match `CubedSphereContract`'s current behavior so siblings can share
-# them when their policy matches; topology-specific contracts that need
-# different defaults register their own method.
-
-"""
-    contract_replay_tolerance(contract::AbstractWindowContract) -> Float64
-
-Relative replay tolerance the contract's `verify_window!` uses.
-Concrete contracts return their stored policy value.
-"""
-function contract_replay_tolerance end
-
-"""
-    contract_cfl_limit(contract::AbstractWindowContract) -> Float64
-
-Per-substep positivity CFL gate the contract enforces.
-"""
-function contract_cfl_limit end
-
-"""
-    contract_require_positivity(contract::AbstractWindowContract) -> Bool
-
-Whether `summarize_status!` errors (`true`) or warns (`false`) on a
-positivity violation. Closes-the-escape-hatch toggle from CS round-2.
-"""
-function contract_require_positivity end
 
 """
     allocate_window_workspace(args...; kwargs...)

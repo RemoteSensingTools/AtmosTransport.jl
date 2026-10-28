@@ -29,6 +29,11 @@ generics before defining its settings methods, so qualified and top-level
 queries agree. Reader methods inspect declared binary payloads; settings
 methods report configured source support without reading meteorological files.
 
+Transport-binary interface coefficients are available as `reader.header.A_ifc`
+and `reader.header.B_ifc`. Query surface availability with `has_surface(reader)`.
+Face-indexed explicit-dm closure uses `recompute_cm_from_dm_target!` with a
+`faceindexed_replay_layout` and divergence scratch.
+
 ## What This Folder Owns
 
 - The abstract met-driver capability contract used by `DrivenSimulation`

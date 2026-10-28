@@ -151,7 +151,6 @@ end
 # No-op fallback for arguments that are not a `TransportBinaryReader`.
 # Cubed-sphere binaries have their own load-time gate,
 # `_validate_replay_consistency_cs` (`cubed_sphere_driver.jl`).
-_validate_replay_consistency_ll(::Any) = nothing
 
 @inline function _rg_face_connectivity(mesh)
     nf = Grids.nfaces(mesh)
@@ -234,7 +233,6 @@ function _validate_replay_consistency_rg(reader::TransportBinaryReader{FT, DiskF
     return (worst_window = worst_win, worst_rel = worst_rel, worst_abs = worst_abs)
 end
 
-_validate_replay_consistency_rg(::Any, ::Any) = nothing
 
 function _validate_runtime_semantics(
     reader::TransportBinaryReader,

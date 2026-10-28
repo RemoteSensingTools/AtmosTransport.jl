@@ -57,6 +57,12 @@ header (LL does it when `LatLonDeferredBinaryWriter` opens). GEOS uses
 
 ## Window Contracts
 
+LL `apply_poisson_balance!` takes a per-window step vector, a `LatLonContract`,
+and a `SubstepSchedulePolicy`, including for fixed schedules. Writers publish
+through the typed writer adapters and atomic staging lifecycle. Contract policy
+values live on the concrete contract; `verify_window!`, `update_accumulator!`,
+and `summarize_status!` implement the verification interface.
+
 - Replay: `verify_window_continuity` (from `MetDrivers`) integrates the
   stored fluxes from `m_cur` over the palindrome substeps and compares with
   `m_next` in every cell; it errors when a cell's residual exceeds

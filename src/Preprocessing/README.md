@@ -183,6 +183,8 @@ Files directly in this folder; the subfolders have their own READMEs
   order. MERRA-2 readers return top-down arrays, and canonical ERA5 N320
   GRIB fields are top-down. `cm` is zero at
   the top (`k = 1`) and surface (`k = Nz + 1`) interfaces.
+- The LL and RG staging divergence closures require `B_ifc` with exactly
+  `Nz + 1` interfaces; missing or mismatched coefficients raise an error.
 - Balance before `cm`: horizontal fluxes are balanced against the target
   `(m_next - m) / (2 * steps)` (each substep applies them twice; see
   `poisson_balance_target_scale`), then `cm` is diagnosed from that explicit

@@ -753,11 +753,11 @@ function apply_dry_basis_native!(m::AbstractArray{<:Real, 3},
 end
 
 """
-    recompute_cm_from_divergence!(cm, am, bm, m; B_ifc=Float64[])
+    recompute_cm_from_divergence!(cm, am, bm, m; B_ifc)
 
 Recompute merged-level vertical mass flux from merged horizontal divergence.
-When `B_ifc` is supplied, the TM5/ERA5 hybrid-coordinate `Δb × pit` closure
-is used; otherwise pure incompressibility (cm from `-cumsum(div_h)`).
+Uses the TM5/ERA5 hybrid-coordinate `Δb × pit` closure. `B_ifc` must
+contain exactly `Nz + 1` interface coefficients.
 
 For the post-Poisson-balance correctness-critical path, prefer
 [`recompute_cm_from_dm_target!`](@ref) which uses an explicit dm target
@@ -767,36 +767,26 @@ for the unused `:window_constant` delta payload.
 """
 function recompute_cm_from_divergence!(cm::Array{FT, 3}, am::Array{FT, 3},
                                        bm::Array{FT, 3}, m::Array{FT, 3};
-                                       B_ifc::Vector{<:Real}=Float64[]) where FT
+                                       B_ifc::Vector{<:Real}) where FT
     Nx = size(m, 1)
     Ny = size(m, 2)
     Nz = size(m, 3)
+    length(B_ifc) == Nz + 1 || throw(ArgumentError(
+        "recompute_cm_from_divergence!: B_ifc must contain Nz + 1 = $(Nz + 1) interfaces; got $(length(B_ifc))"))
     fill!(cm, zero(FT))
 
-    if !isempty(B_ifc) && length(B_ifc) == Nz + 1
-        @inbounds for j in 1:Ny, i in 1:Nx
-            pit = 0.0
-            for k in 1:Nz
-                pit += (Float64(am[i + 1, j, k]) - Float64(am[i, j, k])) +
-                       (Float64(bm[i, j + 1, k]) - Float64(bm[i, j, k]))
-            end
-            acc = 0.0
-            for k in 1:Nz
-                div_h = (Float64(am[i + 1, j, k]) - Float64(am[i, j, k])) +
-                        (Float64(bm[i, j + 1, k]) - Float64(bm[i, j, k]))
-                acc = acc - div_h + (Float64(B_ifc[k + 1]) - Float64(B_ifc[k])) * pit
-                cm[i, j, k + 1] = FT(acc)
-            end
+    @inbounds for j in 1:Ny, i in 1:Nx
+        pit = 0.0
+        for k in 1:Nz
+            pit += (Float64(am[i + 1, j, k]) - Float64(am[i, j, k])) +
+                   (Float64(bm[i, j + 1, k]) - Float64(bm[i, j, k]))
         end
-    else
-        @inbounds for j in 1:Ny, i in 1:Nx
-            acc = 0.0
-            for k in 1:Nz
-                div_h = (Float64(am[i + 1, j, k]) - Float64(am[i, j, k])) +
-                        (Float64(bm[i, j + 1, k]) - Float64(bm[i, j, k]))
-                acc = acc - div_h
-                cm[i, j, k + 1] = FT(acc)
-            end
+        acc = 0.0
+        for k in 1:Nz
+            div_h = (Float64(am[i + 1, j, k]) - Float64(am[i, j, k])) +
+                    (Float64(bm[i, j + 1, k]) - Float64(bm[i, j, k]))
+            acc = acc - div_h + (Float64(B_ifc[k + 1]) - Float64(B_ifc[k])) * pit
+            cm[i, j, k + 1] = FT(acc)
         end
     end
 end
