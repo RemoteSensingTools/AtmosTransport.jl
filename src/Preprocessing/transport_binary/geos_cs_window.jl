@@ -111,7 +111,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     g = FT(STANDARD_GRAVITY)
     inv_g = inv(g)
     cell_areas = grid.mesh.cell_areas
-    steps_per_met = round(Int, FT(dt_met_seconds) / FT(settings.mass_flux_dt))
+    steps_per_met = exact_steps_per_window(dt_met_seconds, settings.mass_flux_dt)
     dt_factor = FT(settings.mass_flux_dt / 2)
     flux_scale = dt_factor / g
     target = Float64(substep_cfl_target)

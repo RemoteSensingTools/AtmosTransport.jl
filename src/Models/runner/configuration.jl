@@ -90,17 +90,9 @@ end
 @inline _cfg_architecture_section(cfg) = get(cfg, "architecture", Dict{String, Any}())
 @inline _cfg_architecture(cfg) = architecture_from_config(_cfg_architecture_section(cfg))
 
-function _cfg_float_type(cfg)
-    raw = get(get(cfg, "numerics", Dict{String, Any}()), "float_type", "Float64")
-    s = lowercase(String(raw))
-    if s == "float32"
-        return Float32
-    elseif s == "float64"
-        return Float64
-    end
-    throw(ArgumentError(
-        "[numerics] float_type must be \"Float32\" or \"Float64\"; got $(repr(raw))."))
-end
+_cfg_float_type(cfg) =
+    parse_float_type(get(get(cfg, "numerics", Dict{String, Any}()), "float_type", "Float64"),
+                     "[numerics] float_type")
 
 function _capture_config_error!(f, errors::Vector{String})
     try

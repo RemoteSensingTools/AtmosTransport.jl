@@ -165,6 +165,26 @@ _test_vc() = Pre.HybridSigmaPressure(_TEST_A, _TEST_B)
         @test plan.merge_map[end] == plan.Nz_output
     end
 
+    @testset "MergeAbovePressure: non-positive or NaN target thickness rejected" begin
+        # The greedy merge never advances past such a threshold (infinite loop).
+        for bad in (0.0, -1.0, -Inf, NaN)
+            @test_throws ArgumentError Pre.MergeAbovePressure(
+                pressure_Pa = 100.0, target_min_thickness_Pa = bad)
+        end
+        # Production config path: the constructor rejects 0 and negatives;
+        # `_vertical_float` already rejects NaN and -Inf.
+        for (bad, err) in ((0.0, ArgumentError), (-1.0, ArgumentError),
+                           (NaN, ErrorException), ("-inf", ErrorException))
+            cfg = Dict{String, Any}("transform" => "merge_above_pressure",
+                                    "pressure_Pa" => 100.0,
+                                    "target_min_thickness_Pa" => bad)
+            @test_throws err Pre._build_native_vertical_setup(cfg, _test_vc(), Float64)
+        end
+        @test Pre.MergeAbovePressure(pressure_Pa = 100.0).target_min_thickness_Pa == Inf
+        @test Pre.MergeAbovePressure(pressure_Pa = 100.0,
+                                     target_min_thickness_Pa = 50.0).target_min_thickness_Pa == 50.0
+    end
+
     @testset "MergeAbovePressure: cutoff = 0 falls back to identity" begin
         vc = _test_vc()
         # No level has midpoint pressure < 0 → eligible set is empty →
