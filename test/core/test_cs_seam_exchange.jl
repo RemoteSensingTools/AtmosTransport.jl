@@ -179,7 +179,7 @@ end
 
 @testset "CS seam cache follows its scheme and rejects incompatible geometry" begin
     mesh, m, packed, am, bm = cs_seam_fixture(Float64, 5, 3, 7, CSSeamGrids.GEOSNativePanelConvention())
-    lr = CSSeamAdv.CSLinRoodAdvectionWorkspace(mesh, m[1]; n_tracers=7)
+    lr = CSSeamAdv.CSLinRoodAdvectionWorkspace(mesh, m[1])
     @test isempty(lr.cs.seam_flux)
     original = map(copy, packed)
     @test_throws DimensionMismatch CSSeamAdv._sweep_cs_horizontal!(
