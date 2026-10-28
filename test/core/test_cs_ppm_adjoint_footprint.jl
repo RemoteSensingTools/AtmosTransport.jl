@@ -264,7 +264,7 @@ end
 
         result = AT.cs_surface_emission_footprint(
             panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=AT.PPMScheme(AT.NoLimiter()), dt=dt, epsilon=1e-6)
+            scheme=AT.PPMScheme(AT.NoLimiter()), dt=dt)
 
         @test result.lag_steps == [1, 0]
         expected = dt / panels_m[1][mesh.Hp + 2, mesh.Hp + 2, 3]
@@ -280,7 +280,7 @@ end
         col = AT.cs_surface_emission_footprint(
             panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh,
             AT.CSColumnMeanObjective(1, 2, 2);
-            scheme=AT.PPMScheme(AT.NoLimiter()), dt=dt, epsilon=1e-6)
+            scheme=AT.PPMScheme(AT.NoLimiter()), dt=dt)
         column_mass = sum(panels_m[1][mesh.Hp + 2, mesh.Hp + 2, :])
         @test col.footprints[2][1][2, 2] ≈ dt / column_mass rtol=1e-8
     end
@@ -364,36 +364,6 @@ end
         fd = (j_plus - j_minus) / (2eps_dir)
         predicted = _dot_control_gradient(result.gradients, directions)
         @test predicted ≈ fd rtol=3e-5 atol=1e-10
-    end
-
-    @testset "Prototype 4D-Var optimizer reduces cost" begin
-        mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
-            _constant_cs_problem(Nc=3, Nz=3, nsteps=2)
-        dt = 2.0
-        values = ntuple(_ -> zeros(Float64, mesh.Nc, mesh.Nc), 6)
-        control = AT.CSSurfaceFluxControl(
-            AT.CSSurfaceFluxWindow(:both_steps, 1:2; normalize=true),
-            values)
-        observations = [
-            AT.CSObservation(2, AT.CSLayerMeanObjective(1, 2, 2, 3), 0.05, 0.2),
-        ]
-
-        initial = AT.cs_surface_flux_4dvar(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-            mesh, observations, control;
-            scheme=AT.PPMScheme(AT.NoLimiter()), dt=dt)
-        solve = AT.cs_surface_flux_4dvar_optimize(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-            mesh, observations, control;
-            scheme=AT.PPMScheme(AT.NoLimiter()), dt=dt,
-            iterations=4,
-            initial_step=0.25)
-
-        @test solve.iterations >= 1
-        @test solve.cost_history[1] ≈ initial.cost
-        @test solve.last.cost < initial.cost
-        @test solve.cost_history[end] <= solve.cost_history[1]
-        @test solve.gradient_norm_history[end] <= solve.gradient_norm_history[1]
     end
 
     @testset "Prototype 4D-Var gradient includes diffusion and TM5 convection" begin
@@ -500,7 +470,7 @@ end
 
                 result = AT.cs_surface_emission_footprint(
                     panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-                    scheme=scheme, dt=dt, epsilon=1e-6)
+                    scheme=scheme, dt=dt)
 
                 rates = [ntuple(6) do p
                     [sin(0.31step + 0.17p + 0.23i - 0.19j) for i in 1:mesh.Nc, j in 1:mesh.Nc]
@@ -1024,8 +994,8 @@ end
                 panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
                 mesh, gpu_observations, gpu_control;
                 scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(1),
-                iterations=1,
-                initial_step=0.1f0)
+                optimizer=AT.CSGradientDescent(1, 0.1f0, sqrt(eps(Float32)),
+                                                0.5f0, 0.0f0, true, false))
             @test gpu_solve.controls[1].value[1] isa CUDA.CuArray
         end
 

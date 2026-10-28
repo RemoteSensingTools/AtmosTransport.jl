@@ -44,6 +44,10 @@ these files reuse. The parent overview is [`../README.md`](../README.md).
   (`source_latlon_mesh(lon, lat; radius)`, using `SnappedFaces` on the
   destination's sphere).
 
+VMR builders accept `surface_pressure`, `pressure_basis`, and `qv` for
+pressure remapping. Set `mass_basis` on `pack_initial_tracer_mass` when
+converting the resulting dry VMR to model storage.
+
 ## File Initial Conditions
 
 The file kinds read layer-mean dry VMR. A file with `ap` and `bp` interface

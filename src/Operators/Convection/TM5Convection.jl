@@ -468,8 +468,7 @@ end
                        op::TM5Convection, dt, workspace::TM5Workspace,
                        grid::AtmosGrid) -> nothing
 
-Array-level entry point — parallels the CMFMC contract at
-`operators.jl:70-89`. Dispatches on grid
+Array-level entry point for four-field TM5 forcing. Dispatches on grid
 mesh type and launches the matching KA kernel from
 `tm5_kernels.jl`. Single `synchronize(backend)`
 at the end (TM5 matrix solve is unconditionally stable; no

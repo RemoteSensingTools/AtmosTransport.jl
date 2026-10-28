@@ -2,7 +2,7 @@
 
 Implicit vertical diffusion for the transport runtime.
 
-This folder owns backward-Euler vertical diffusion, its Thomas reference and
+This folder owns backward-Euler vertical diffusion, its column solves and
 conservative Dkg factorization, and the topology-specific runtime adapters that let the same operator family
 run on structured, face-indexed, and panel-native cubed-sphere state.
 
@@ -26,9 +26,6 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
   `S(dt) → V(dt)` (`DiffusiveSurfaceFluxBoundary`). Production palindromes
   call it through `palindrome_center!` (`../Advection/StrangSplitting.jl`);
   the cubed-sphere adjoint replays and records the same composition
-- Numerical reference pieces:
-  [`thomas_solve.jl`](thomas_solve.jl)
-  provides the allocation-free `solve_tridiagonal!` reference
 - Kernel implementations:
   [`diffusion_kernels.jl`](diffusion_kernels.jl) and
   [`conservative_dkg.jl`](conservative_dkg.jl)
@@ -83,8 +80,6 @@ halos, against that serial kernel.
 ## File Map
 
 - [`Diffusion.jl`](Diffusion.jl) — submodule assembly and public exports
-- [`thomas_solve.jl`](thomas_solve.jl) — reference Thomas solve and
-  coefficient builder
 - [`diffusion_kernels.jl`](diffusion_kernels.jl) — the numerics (matrix
   solve for the mixing ratio, flux-form tracer-mass update with column
   ledger), exchange sources (`KzExchange`, `DkgExchange`), and the
@@ -113,9 +108,9 @@ halos, against that serial kernel.
   check the panel-native workspace shape and `CubedSphereField`
   handling before touching arithmetic
 - Verifying arithmetic changes:
-  keep [`thomas_solve.jl`](thomas_solve.jl) and the kernel formulas in
-  [`diffusion_kernels.jl`](diffusion_kernels.jl) aligned, and compare the
-  tracer-mass result with an independent Backward-Euler solve
+  compare the tracer-mass result from
+  [`diffusion_kernels.jl`](diffusion_kernels.jl) with an independent
+  Backward-Euler solve
   (`test/core/test_diffusion_flux_form.jl`): conservation alone does not
   show that a solve did anything
 - Tracing runtime integration:

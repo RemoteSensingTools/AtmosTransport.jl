@@ -49,7 +49,7 @@ function _footprint_result(start, footprints, lambda, dt, replay::_CSReplay)
     objective = _result_objective(start)
     lag_steps = [nsteps - step for step in 1:nsteps]
     return CSFootprintResult{FT, typeof(objective), A2, typeof(lambda[1])}(
-        objective, footprints, lag_steps, FT(dt), zero(FT), FT(NaN), lambda)
+        objective, footprints, lag_steps, FT(dt), lambda)
 end
 
 # FullCheckpoint: one tape for all starts. The storage is constructed here so
@@ -111,19 +111,6 @@ function _collect_footprints(schedule::StrideCheckpoint, replay::_CSReplay, star
         end
         _footprint_result(start, footprints, lambda, dt, replay)
     end
-end
-
-# Schedule guard of `_cs_surface_footprints` (FootprintAPI.jl), the dispatch
-# behind every footprint entry point, the Jacobian and the 4D-Var gradient.
-# `StrideCheckpoint` and `RevolveCheckpoint` are accepted for every adjoint
-# scheme family and every adjoint start. Any other scheme is rejected for
-# non-Full schedules.
-function _require_checkpoint_supported(scheme, schedule::AbstractCheckpointSchedule)
-    schedule isa FullCheckpoint && return nothing
-    scheme isa CSAdjointSupportedScheme && return nothing
-    throw(ArgumentError(
-        "checkpoint=$(schedule) is not yet supported for scheme " *
-        "$(nameof(typeof(scheme)))."))
 end
 
 # The storage checks the drivers rely on, made up front: Stride and Revolve

@@ -76,7 +76,7 @@ function _initialize_cs_dry_state(grid::AtmosGrid{<:CubedSphereMesh},
     for (name, init_cfg) in tracer_init
         vmr = _build_cs_initial_mixing_ratio(
             air_mass, grid, init_cfg, vmr;
-            surface_pressure, pressure_basis, mass_basis = DryBasis(), qv)
+            surface_pressure, pressure_basis, qv)
         index = tracer_indices[name]
         destination = ntuple(p -> selectdim(raw[p], 4, index), 6)
         _cs_pack_interior_into_halo!(destination, grid, air_mass, vmr, nothing)
@@ -108,7 +108,7 @@ function _make_structured_model(driver::TransportBinaryDriver;
     rm_arrays = map(tracer_specs_tuple) do spec
         vmr = build_initial_mixing_ratio(air_mass, grid, spec.init_cfg;
                                          surface_pressure = window.surface_pressure,
-                                         pressure_basis, mass_basis = basis, qv)
+                                         pressure_basis, qv)
         return pack_initial_tracer_mass(grid, air_mass, vmr;
                                         mass_basis = basis, qv)
     end
@@ -119,8 +119,7 @@ function _make_structured_model(driver::TransportBinaryDriver;
         mesh, nlevels(grid), FT, basis_type)
     model = TransportModel(state, fluxes, grid, recipe.advection;
                            diffusion = recipe.diffusion,
-                           convection = recipe.convection,
-                           chemistry = recipe.chemistry)
+                           convection = recipe.convection)
     adaptor = array_adapter(arch)
     return adaptor === Array ? model : Base.invokelatest(Adapt.adapt, adaptor, model)
 end

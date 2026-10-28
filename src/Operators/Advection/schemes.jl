@@ -462,10 +462,6 @@ struct CSLinRoodStyle    <: AbstractCSAdvectionStyle end
 
 @inline cs_advection_style(::AbstractAdvectionScheme) = CSSplitSweepStyle()
 @inline cs_advection_style(::LinRoodPPMScheme)        = CSLinRoodStyle()
-# `NoAdvection` doesn't run any CS execution path; the explicit
-# specialization returns the split-sweep style so callers that
-# branch on the trait don't choke on an unhandled scheme.
-@inline cs_advection_style(::NoAdvection)             = CSSplitSweepStyle()
 
 """
     required_halo_width(scheme) -> Int

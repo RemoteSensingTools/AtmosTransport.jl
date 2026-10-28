@@ -100,13 +100,6 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
     return nothing
 end
 
-function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
-                       grid::AtmosGrid{<:CubedSphereMesh},
-                       scheme::AbstractAdvectionScheme;
-                       workspace::AdvectionWorkspace) where {B <: AbstractMassBasis}
-    throw(ArgumentError("CubedSphereMesh remains metadata-only in src; structured advection is only supported on LatLonMesh until cubed-sphere geometry/connectivity are implemented"))
-end
-
 """
     palindrome_center!(diffuse!, emit!, diffusion_op, emissions_op, dt)
 
@@ -140,23 +133,6 @@ end
 
 @inline function _similar_cs_storage(src::NTuple{6})
     return ntuple(p -> similar(src[p]), 6)
-end
-
-function _cs_transport_step!(::CSSplitSweepStyle,
-                             rm_tracer, m,
-                             fluxes::CubedSphereFaceFluxState,
-                             mesh::CubedSphereMesh,
-                             scheme::AbstractAdvectionScheme,
-                             workspace::CSAdvectionWorkspace;
-                             cfl_limit::Real = DEFAULT_CFL_LIMIT,
-                             subcycle_count::Union{Nothing, Integer} = nothing,
-                             midpoint! = nothing)
-    strang_split_cs!(rm_tracer, m, fluxes.am, fluxes.bm, fluxes.cm,
-                     mesh, scheme, workspace;
-                     cfl_limit = cfl_limit,
-                     subcycle_count = subcycle_count,
-                     midpoint! = midpoint!)
-    return nothing
 end
 
 function _cs_transport_step!(::CSSplitSweepStyle,

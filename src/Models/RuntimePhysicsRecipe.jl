@@ -334,12 +334,6 @@ function validate_runtime_halo_width(scheme::AbstractAdvectionScheme, halo_width
     return nothing
 end
 
-@inline validate_runtime_combination(::AbstractRuntimeRecipeStyle,
-                                     ::AbstractAdvectionScheme,
-                                     ::AbstractDiffusion,
-                                     ::AbstractConvection,
-                                     _context) = nothing
-
 """
     validate_runtime_physics_recipe(recipe, context; halo_width=nothing)
 
@@ -354,11 +348,6 @@ function validate_runtime_physics_recipe(recipe::RuntimePhysicsRecipe,
     validate_runtime_advection(style, recipe.advection, context)
     validate_runtime_diffusion(style, recipe.diffusion, context)
     validate_runtime_convection(style, recipe.convection, context)
-    validate_runtime_combination(style,
-                                 recipe.advection,
-                                 recipe.diffusion,
-                                 recipe.convection,
-                                 context)
     halo_width === nothing || validate_runtime_halo_width(recipe.advection, halo_width)
     return recipe
 end

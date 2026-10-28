@@ -74,7 +74,6 @@ export reconstruction_order, required_halo_width
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
 
 # Diffusion solver infrastructure + operator types
-export solve_tridiagonal!
 export AbstractDiffusion, NoDiffusion, ImplicitVerticalDiffusion, DiffusionWorkspace
 export AbstractSurfaceFluxCoupling, SplitSurfaceFluxCoupling,
        DiffusiveSurfaceFluxBoundary, uses_diffusive_surface_flux_boundary

@@ -50,7 +50,7 @@ Where:
   source-before-full-solve ordering and is not a symmetric Strang split.
 
 For binary-scheduled drivers the full `step!` is bypassed; the
-runtime brackets the window's `transport_step!` substeps with exact
+runtime brackets the window's `TransportStage` substeps with exact
 constant-rate exponential-decay half-steps, then runs convection and any
 unsplit chemistry (including time-varying-rate decay) at the window end. The convection placement is GCHP-style, and is
 *different from TM5's `xyzvvzyx` interleaving* — TM5 runs convection

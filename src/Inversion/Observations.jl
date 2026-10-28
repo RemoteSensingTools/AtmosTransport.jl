@@ -388,13 +388,3 @@ struct CS4DVarSolveResult{FT, A2 <: AbstractArray{FT, 2}}
     iterations::Int
     log::Union{Nothing, CSIterationLog{FT}}
 end
-
-# Backward-compat constructor — pre-C3 call sites that don't pass a
-# log argument default to `nothing` (matching the pre-C3 behavior).
-function CS4DVarSolveResult{FT, A2}(controls, last, cost_history,
-                                     gradient_norm_history, step_history,
-                                     iterations) where {FT, A2}
-    return CS4DVarSolveResult{FT, A2}(controls, last, cost_history,
-                                       gradient_norm_history, step_history,
-                                       iterations, nothing)
-end
