@@ -1,0 +1,5 @@
+# Existing core-to-non-core sites only shrink; every allowance needs a reason.
+[allow]
+"src/AtmosTransport.jl|AtmosTransport|AtmosTransport.Analysis" = "Existing top-level package facade re-export of AtmosTransport.Analysis; preserve the public entry points until Extras/package separation. Core implementation modules must not add imports."
+"src/AtmosTransport.jl|AtmosTransport|AtmosTransport.DataDownloads" = "Existing top-level package facade re-export of AtmosTransport.DataDownloads; preserve the public entry points until Extras/package separation. Core implementation modules must not add imports."
+"src/AtmosTransport.jl|AtmosTransport|AtmosTransport.Visualization" = "Existing top-level package facade re-export of AtmosTransport.Visualization; preserve the public entry points until Extras/package separation. Core implementation modules must not add imports."

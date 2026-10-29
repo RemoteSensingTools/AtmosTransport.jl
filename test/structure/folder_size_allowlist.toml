@@ -1,0 +1,29 @@
+# Immediate Julia source bytes (tokens = bytes / 3.5). Exact current sizes; ceilings only shrink.
+
+[allow."src/Inversion"]
+bytes = 281720
+reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."
+
+[allow."src/MetDrivers/transport_binary"]
+bytes = 271344
+reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."
+
+[allow."src/Models"]
+bytes = 303997
+reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."
+
+[allow."src/Operators/Advection"]
+bytes = 429261
+reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."
+
+[allow."src/Output/observations"]
+bytes = 290536
+reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."
+
+[allow."src/Preprocessing"]
+bytes = 535117
+reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."
+
+[allow."src/Preprocessing/transport_binary"]
+bytes = 632182
+reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."

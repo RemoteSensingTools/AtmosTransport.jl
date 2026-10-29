@@ -20,6 +20,7 @@ quick = [
     "core/test_jet.jl",
     "core/test_test_groups.jl",
     "core/test_keyword_calls.jl",
+    "core/test_structure.jl",
     "core/test_physical_constants.jl",
     "core/test_readme_current.jl",
     "core/test_public_api_surface.jl",
@@ -59,6 +60,7 @@ files = [
     "core/test_runtests_runner.jl",
     "core/test_test_groups.jl",
     "core/test_keyword_calls.jl",
+    "core/test_structure.jl",
 ]
 paths = [
     "Project.toml",
@@ -66,6 +68,8 @@ paths = [
     "test/runtests.jl",
     "test/groups.toml",
     "test/helpers/test_groups.jl",
+    "test/structure/**",
+    "src/LAYERS.toml",
     "src/AtmosTransport.jl",
     "src/REVISION",
     "README.md",
@@ -92,6 +96,11 @@ paths = [
     "src/ConfigChecks.jl",
     "src/Models/runner/config_keys.jl",
     "src/Models/runner/configuration.jl",
+    "src/Models/**",
+    "src/MetDrivers/**",
+    "src/Preprocessing/**",
+    "src/Downloads/**",
+    "examples/**",
     "schemas/**",
     "config/**",
     "scripts/run_transport.jl",
@@ -237,6 +246,8 @@ paths = [
     "src/Operators/Chemistry/**",
     "src/MetDrivers/SurfaceForcing.jl",
     "src/State/Fields/StepwiseField.jl",
+    "src/Operators/StepPlan/**",
+    "src/Models/{TransportModel,driven_stepping}.jl",
     "src/Models/initial_conditions/surface_flux*.jl",
 ]
 
@@ -380,6 +391,7 @@ paths = [
 description = "Driven simulations and the run driver: window stepping, runtime operator builders, schedules, callbacks and checks, progress and section timers"
 files = [
     "core/test_driven_simulation.jl",
+    "core/test_operator_defaults.jl",
     "core/test_air_mass_reset.jl",
     "core/test_cs_driven_builders.jl",
     "core/test_cubed_sphere_runtime.jl",
@@ -545,6 +557,7 @@ paths = [
 description = "Developer harnesses: golden-output sessions and the benchmark lab lane"
 files = [
     "core/test_golden_sessions.jl",
+    "core/test_golden_compare.jl",
     "core/test_benchmark_lab_lane.jl",
 ]
 paths = [

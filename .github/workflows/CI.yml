@@ -9,6 +9,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
+env:
+  ATMOSTR_STRUCTURE_BASE: origin/${{ github.base_ref || 'main' }}
+
 jobs:
   # Early feedback: the quick set of test/groups.toml (metadata gates, Aqua,
   # JET, physics smokes) reports in minutes. It does not replace the full suite
@@ -21,6 +24,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch structure base
+        run: git fetch --no-tags --depth=1 origin "+refs/heads/${ATMOSTR_STRUCTURE_BASE#origin/}:refs/remotes/${ATMOSTR_STRUCTURE_BASE}"
       - uses: julia-actions/setup-julia@v2
         with:
           version: '1'
@@ -45,6 +50,8 @@ jobs:
         os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch structure base
+        run: git fetch --no-tags --depth=1 origin "+refs/heads/${ATMOSTR_STRUCTURE_BASE#origin/}:refs/remotes/${ATMOSTR_STRUCTURE_BASE}"
       - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}

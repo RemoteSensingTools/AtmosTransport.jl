@@ -74,6 +74,7 @@ HDF5_jll = "1.14, 2"
 JET = "0.9, 0.10, 0.11, 0.12"
 JLD2 = "0.6.4"
 JSON3 = "1.14.3"
+JuliaSyntax = "=0.4.10, =1.0.2"
 KernelAbstractions = "0.9.35"
 LinearAlgebra = "1"
 Logging = "1"
@@ -99,7 +100,8 @@ julia = "1.10"
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
+JuliaSyntax = "70703baa-626e-46a2-a12c-08ffd08c73b4"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Aqua", "JET", "Test"]
+test = ["Aqua", "JET", "JuliaSyntax", "Test"]
