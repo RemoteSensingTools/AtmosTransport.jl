@@ -69,29 +69,6 @@ const O = AtmosTransport.Output
             @test stream.closed
             @test stream.dataset === nothing
             @test_throws ArgumentError O.append_snapshot!(stream,last_frame)
-            snap = AtmosTransport.Visualization.open_snapshot(path)
-            ref = AtmosTransport.Visualization.open_snapshot(batch)
-            @test AtmosTransport.Visualization.snapshot_times(snap) == Float64.(0:3)
-            @test :co2 in AtmosTransport.Visualization.available_variables(snap)
-            for ti in 1:4
-                got = AtmosTransport.Visualization.fieldview(snap,:co2;time=ti)
-                expected = AtmosTransport.Visualization.fieldview(ref,:co2;time=ti)
-                @test isequal(got.values,expected.values)
-            end
-            if topology === :cs
-                @test snap.topology.nlevel == Nz
-                if mode == "selected"
-                    layer = AtmosTransport.Visualization.fieldview(
-                        snap, :co2;
-                        transform=AtmosTransport.Visualization.LevelSlice(), level=3)
-                    NCDataset(path) do ds
-                        @test layer.values == ds["co2"][:,:,:,2,1]
-                    end
-                    @test_throws ArgumentError AtmosTransport.Visualization.fieldview(
-                        snap, :co2;
-                        transform=AtmosTransport.Visualization.SurfaceSlice())
-                end
-            end
         end
     end
 end

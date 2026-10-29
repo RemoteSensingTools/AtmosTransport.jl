@@ -124,6 +124,13 @@ coverage.
 
 ## Architecture
 
+The source map is in [`src/README.md`](src/README.md). Core mass-budget and
+conservation checks live in [`src/Diagnostics/`](src/Diagnostics/README.md).
+Non-core Visualization, Analysis post-processing and DataDownloads live in
+[`src/Extras/`](src/Extras/README.md) with their existing module names; these
+folders have no tests and are intended to become separate packages. Core code
+never imports Extras. The optional Makie extension remains in `ext/`.
+
 ```mermaid
 flowchart TD
     subgraph IN["Input"]

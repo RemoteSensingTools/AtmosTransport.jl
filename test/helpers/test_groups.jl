@@ -207,7 +207,10 @@ function validate_groups(g::Groups, test_root::AbstractString, repo_root::Abstra
     for t in g.topics
         occursin(r"^[a-z][a-z0-9_]*$", t.name) ||
             push!(problems, "topic name '$(t.name)' is not lower_snake_case")
-        isempty(t.files) && push!(problems, "topic '$(t.name)' has no files")
+        # Extras deliberately has no tests under the owner rule; its paths still
+        # need a mapping so --changed does not run the full core suite.
+        isempty(t.files) && t.name != "extras" &&
+            push!(problems, "topic '$(t.name)' has no files")
         isempty(t.paths) && push!(problems, "topic '$(t.name)' has no paths")
         for f in t.files
             push!(get!(owners, f, String[]), t.name)

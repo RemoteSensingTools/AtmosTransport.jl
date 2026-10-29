@@ -413,7 +413,7 @@ function findings(inv)
     function use!(file, mod, owner, name, line)
         isempty(owner) || owner == mod || push!(edges, (mod, owner))
         isempty(owner) || folder_use!(file, owner, name)
-        if !is_noncore(mod) && is_noncore(owner)
+        if !is_noncore(inv, mod) && is_noncore(inv, owner)
             id = join((file, mod, owner), '|')
             noncore[id] = "$file:$line: core $mod depends on non-core $owner"
         end
@@ -494,6 +494,11 @@ is_noncore(mod) = any(m -> mod == m || startswith(mod, "$m."),
     ("AtmosTransport.Visualization", "AtmosTransport.Analysis", "AtmosTransport.DataDownloads",
      "AtmosTransportMakieExt", "AtmosTransport.Extras"))
 
+# Extras keeps its historical module names; future modules under that path
+# must obey the same boundary even when their names do not mention Extras.
+is_noncore(inv, mod) = is_noncore(mod) ||
+    startswith(get(inv.module_files, mod, ""), "src/Extras/")
+
 function allowlist(root, file)
     raw = TOML.parsefile(joinpath(root, file))
     entries = get(raw, "allow", Dict{String,Any}())
@@ -521,7 +526,56 @@ end
 
 # Compare tracked allowances with the selected base. P1's base has none; once
 # landed, raising allowances in the same diff as a violation cannot hide it.
+function relocate_x1_baseline(before, file)
+    # One-way migration of P1 identities for X1's reviewed layout. This changes
+    # only historical keys: no new digest, signature, helper or byte ceiling is
+    # accepted. A base already using the X1 layout is compared without migration.
+    extras(path) = replace(path, r"^src/(Analysis|Visualization|Downloads)(/|$)" => s"src/Extras/\1\2")
+    if file == "src/LAYERS.toml"
+        modules = get(before, "modules", Dict())
+        haskey(modules, "AtmosTransport.Diagnostics") && return before
+        haskey(modules, "AtmosTransport.Analysis") || return before
+        migrated = deepcopy(before)
+        mods = migrated["modules"]
+        # The former Analysis dependencies now belong to core Diagnostics.
+        # Analysis re-exports Diagnostics; the facade includes the new module.
+        mods["AtmosTransport.Diagnostics"] = copy(modules["AtmosTransport.Analysis"])
+        push!(mods["AtmosTransport.Analysis"], "AtmosTransport.Diagnostics")
+        push!(mods["AtmosTransport"], "AtmosTransport.Diagnostics")
+        if haskey(before, "folders")
+            # SectionTimer moved to src so late Diagnostics can follow Models
+            # without a new reverse-folder exception or a folder cycle.
+            folder(path) = path == "src/Diagnostics" ? "src" : extras(path)
+            migrated["folders"] = Dict(folder(a) => unique([folder(b) for b in deps if folder(b) != folder(a)])
+                                       for (a, deps) in before["folders"] if a != "src/Diagnostics")
+            migrated["folders"]["src/Diagnostics"] = extras.(before["folders"]["src/Analysis"])
+            push!(migrated["folders"]["src/Extras/Analysis"], "src/Diagnostics")
+            push!(migrated["folders"]["src"], "src/Diagnostics")
+            # Reuse the old facade->timer exception for facade->Diagnostics.
+            migrated["folder_order_allow"] = Dict(join(extras.(split(id, '|')), '|') => reason
+                for (id, reason) in get(before, "folder_order_allow", Dict()))
+        end
+        return migrated
+    end
+    haskey(before, "allow") || return before
+    entries = Dict{String,Any}()
+    for (id, reason) in before["allow"]
+        parts = split(id, '|')
+        core = any(p -> p in ("src/Analysis/budget_closure.jl", "src/Analysis/run_context.jl",
+                              "src/Analysis/snapshot_series.jl", "src/Analysis/mass_totals.jl"), parts) ||
+               ("src/Analysis/Analysis.jl" in parts && last(parts) != "_neumaier_sum")
+        parts = [core ? replace(p, "src/Analysis/Analysis.jl" => "src/Diagnostics/Diagnostics.jl",
+                                  "src/Analysis/" => "src/Diagnostics/",
+                                  "AtmosTransport.Analysis" => "AtmosTransport.Diagnostics") : p for p in parts]
+        entries[join(extras.(parts), '|')] = reason
+    end
+    return Dict("allow" => entries)
+end
+
 function allowance_growth(before, after, file)
+    before == after && return String[]
+    original_count = length(get(before, "allow", Dict()))
+    before = relocate_x1_baseline(before, file)
     if file == "src/LAYERS.toml"
         growth = String[]
         for table in ("modules", "folders")
@@ -536,8 +590,11 @@ function allowance_growth(before, after, file)
         return ["raised folder budget $folder" for (folder, entry) in get(after, "allow", Dict())
                 if !haskey(old, folder) || entry["bytes"] > old[folder]["bytes"]]
     end
-    return ["new $file entry $id" for id in
-            setdiff(keys(get(after, "allow", Dict())), keys(get(before, "allow", Dict())))]
+    growth = ["new $file entry $id" for id in
+              setdiff(keys(get(after, "allow", Dict())), keys(get(before, "allow", Dict())))]
+    length(get(after, "allow", Dict())) > original_count && isempty(growth) &&
+        push!(growth, "increased $file allowance count")
+    return growth
 end
 
 function check_ratchet!(errors, root, base, files)

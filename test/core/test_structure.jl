@@ -285,34 +285,53 @@ end
     end
     @test StructureCheck.is_noncore("AtmosTransportMakieExt")
     @test StructureCheck.is_noncore("AtmosTransport.Extras.Plotting")
+    @test !StructureCheck.is_noncore("AtmosTransport.Diagnostics")
+    structure_fixture() do root
+        # A neutral module name cannot bypass the Extras path boundary.
+        mkpath(joinpath(root, "src", "Extras"))
+        write(joinpath(root, "src", "Extras", "Utilities.jl"),
+              "module Utilities\nexport exposed\nexposed(x) = x\nend\n")
+        entry = joinpath(root, "src", "AtmosTransport.jl")
+        write(entry, replace(read(entry, String), "include(\"Lower.jl\")" =>
+                            "include(\"Extras/Utilities.jl\")\ninclude(\"Lower.jl\")"))
+        add_source(root, "Upper.jl", "using ..Utilities: exposed\ng(x) = exposed(x)")
+        result = check_fixture(root)
+        @test any(endswith(id, "|AtmosTransport.Utilities") for id in keys(result.findings.noncore))
+    end
 end
 
 @testset "base ref validation and git snapshot ratchet" begin
     structure_fixture() do root
-        run(`git -C $root init --quiet`)
-        # Build temporary commit objects directly; never commit the worktree.
-        run(`git -C $root add src/AtmosTransport.jl src/Lower.jl src/Upper.jl`)
-        function snapshot_ref()
-            tree = strip(read(`git -C $root write-tree`, String))
-            cmd = addenv(`git -C $root commit-tree $tree`,
-                "GIT_AUTHOR_NAME" => "Structure fixture", "GIT_AUTHOR_EMAIL" => "fixture@example.invalid",
-                "GIT_COMMITTER_NAME" => "Structure fixture", "GIT_COMMITTER_EMAIL" => "fixture@example.invalid")
-            commit = strip(read(pipeline(cmd; stdin = IOBuffer("fixture\n")), String))
-            run(`git -C $root update-ref refs/heads/fixture $commit`)
+        # Reuse existing history read-only. Package archives have none; the
+        # pure allowance tests below still exercise growth in that environment.
+        repo = StructureCheck.ROOT
+        if !ispath(joinpath(repo, ".git"))
+            @info "Skipping Git history fixture outside a checkout"
+            return
         end
-        snapshot_ref()
+        gitdir = strip(read(`git -C $repo rev-parse --absolute-git-dir`, String))
+        write(joinpath(root, ".git"), "gitdir: $gitdir\n")
+        base = get(ENV, "ATMOSTR_STRUCTURE_BASE", "origin/main")
         files = vcat(["src/LAYERS.toml", StructureCheck.FOLDER_SIZES], collect(values(StructureCheck.SNAPSHOTS)))
         errors = String[]
         StructureCheck.check_ratchet!(errors, root, "missing-ref", files)
         @test any(occursin("cannot validate structure base", e) for e in errors)
         @test any(occursin("git fetch --no-tags --depth=1 origin", e) for e in errors)
         empty!(errors)
-        StructureCheck.check_ratchet!(errors, root, "fixture", files)
+        # An absent snapshot at an existing commit is first introduction. Use
+        # a fixture-only path so this also works with depth-one checkouts.
+        StructureCheck.check_ratchet!(errors, root, base, ["test/structure/fixture-absent.toml"])
         @test isempty(errors) # valid base, absent snapshot = first introduction
-        run(`git -C $root add src/LAYERS.toml test/structure`)
-        snapshot_ref()
+        # Copy the selected base's exact snapshots, then introduce hidden debt.
+        for file in files
+            if !isempty(read(`git -C $repo ls-tree $base -- $file`, String))
+                write(joinpath(root, file), read(`git -C $repo show $base\:$file`, String))
+            end
+        end
+        StructureCheck.check_ratchet!(errors, root, base, files)
+        @test isempty(errors)
         write_toml(joinpath(root, StructureCheck.SNAPSHOTS["clone"]), Dict("allow" => Dict("new" => "hidden debt")))
-        StructureCheck.check_ratchet!(errors, root, "fixture", files)
+        StructureCheck.check_ratchet!(errors, root, base, files)
         @test any(occursin("allowlists only shrink", e) for e in errors)
     end
 end
@@ -341,4 +360,43 @@ end
     @test isempty(StructureCheck.allowance_growth(size_before, size_after, StructureCheck.FOLDER_SIZES))
     size_after["allow"]["folder"]["bytes"] = 300_001
     @test length(StructureCheck.allowance_growth(size_before, size_after, StructureCheck.FOLDER_SIZES)) == 1
+end
+
+@testset "X1 relocates identities without accepting new debt" begin
+    private_file = StructureCheck.SNAPSHOTS["private_use"]
+    old = "src/Analysis/run_context.jl|AtmosTransport.Analysis|AtmosTransport.Models.DrivenRunner|_cfg_float_type"
+    moved = "src/Diagnostics/run_context.jl|AtmosTransport.Diagnostics|AtmosTransport.Models.DrivenRunner|_cfg_float_type"
+    before = Dict("allow" => Dict(old => "existing site"))
+    after = Dict("allow" => Dict(moved => "relocated site"))
+    @test isempty(StructureCheck.allowance_growth(before, after, private_file))
+    changed = Dict("allow" => Dict(replace(moved, "_cfg_float_type" => "_new_helper") => "new site"))
+    @test !isempty(StructureCheck.allowance_growth(before, changed, private_file))
+    copied = Dict("allow" => Dict(old => "old copy", moved => "new copy"))
+    @test !isempty(StructureCheck.allowance_growth(before, copied, private_file))
+    @test !isempty(StructureCheck.allowance_growth(after, copied, private_file))
+
+    for file in (StructureCheck.SNAPSHOTS["clone"], StructureCheck.SNAPSHOTS["docstring"])
+        old = "digest|src/Analysis/mass_totals.jl|AtmosTransport.Analysis|helper|signature"
+        moved = replace(old, "src/Analysis/" => "src/Diagnostics/",
+                        "AtmosTransport.Analysis" => "AtmosTransport.Diagnostics")
+        before = Dict("allow" => Dict(old => "existing body"))
+        after = Dict("allow" => Dict(moved => "relocated body"))
+        @test isempty(StructureCheck.allowance_growth(before, after, file))
+        for field in ("digest", "signature")
+            changed = Dict("allow" => Dict(replace(moved, field => "changed") => "changed body"))
+            @test !isempty(StructureCheck.allowance_growth(before, changed, file))
+        end
+    end
+    before = Dict("allow" => Dict("src/Downloads" => Dict("bytes" => 300_000, "reason" => "existing")))
+    after = Dict("allow" => Dict("src/Extras/Downloads" => Dict("bytes" => 300_000, "reason" => "moved")))
+    @test isempty(StructureCheck.allowance_growth(before, after, StructureCheck.FOLDER_SIZES))
+    after["allow"]["src/Extras/Downloads"]["bytes"] += 1
+    @test !isempty(StructureCheck.allowance_growth(before, after, StructureCheck.FOLDER_SIZES))
+
+    before = Dict("modules" => Dict("AtmosTransport" => ["AtmosTransport.Analysis"],
+                                   "AtmosTransport.Analysis" => ["AtmosTransport.Models"]))
+    after = StructureCheck.relocate_x1_baseline(before, "src/LAYERS.toml")
+    @test isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
+    push!(after["modules"]["AtmosTransport.Diagnostics"], "AtmosTransport.Visualization")
+    @test !isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
 end

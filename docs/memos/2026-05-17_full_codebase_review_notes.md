@@ -143,10 +143,10 @@ see the [current ordering contract](../src/for_tm5_gchp_users/operators_on_binar
 
 ### 2.1 Definitely dead — safe to remove
 - **`preferred_era5_api`**
-  ([Downloads/python_interop.jl:37](../../src/Downloads/python_interop.jl#L37))
+  ([Downloads/python_interop.jl:37](../../src/Extras/Downloads/python_interop.jl#L37))
   — exported but no caller in `src/`, `test/`, or `scripts/`.
 - **`OPeNDAPProtocol.execute!` is a permanent `error()` stub**
-  ([Downloads/pipeline.jl:203](../../src/Downloads/pipeline.jl#L203)) and
+  ([Downloads/pipeline.jl:203](../../src/Extras/Downloads/pipeline.jl#L203)) and
   `MERRA2Source._default_protocol` returns `"opendap"`. The entire MERRA-2
   download path is permanently broken at runtime. Remove or implement.
 - **`PressureTendencyClosure`, `NativeVerticalFluxClosure`** — exported
@@ -527,7 +527,7 @@ dispatch would be cleaner or measurably faster.
   `ntuple(N) do n; tracer_index(...) end`. Cache a `Ref{Union{Nothing,
   NTuple{N, Int32}}}` lazily at first call.
 - **`detect_python_env` runs 4 Python subprocesses per `download_data!`**
-  ([Downloads/python_interop.jl:14](../../src/Downloads/python_interop.jl#L14))
+  ([Downloads/python_interop.jl:14](../../src/Extras/Downloads/python_interop.jl#L14))
   — never cached. Module-level `Ref` + lazy fill.
 
 ### 5.6 I/O patterns

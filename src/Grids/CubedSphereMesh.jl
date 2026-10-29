@@ -228,6 +228,14 @@ coordinate_law_tag(::GMAOEqualDistanceGnomonic) = "gmao_equal_distance_gnomonic"
 center_law_tag(::AngularMidpointCenter) = "angular_midpoint"
 center_law_tag(::FourCornerNormalizedCenter) = "four_corner_normalized"
 
+"""
+    _default_cs_definition(convention)
+
+The standard cubed-sphere definition for a panel convention: equiangular for
+`GnomonicPanelConvention`, GMAO for `GEOSNativePanelConvention`. Not exported:
+declared as a shared helper of Grids for the snapshot readers in Extras, which
+import it explicitly by name.
+"""
 function _default_cs_definition(convention::GnomonicPanelConvention)
     return EquiangularCubedSphereDefinition(; convention)
 end

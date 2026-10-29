@@ -17,7 +17,7 @@ using Dates
 # package, only its constants, logging support, and the Downloads module.
 include(joinpath(@__DIR__, "..", "..", "src", "Parameters", "Parameters.jl"))
 include(joinpath(@__DIR__, "..", "..", "src", "LogLevels.jl"))
-include(joinpath(@__DIR__, "..", "..", "src", "Downloads", "Downloads.jl"))
+include(joinpath(@__DIR__, "..", "..", "src", "Extras", "Downloads", "Downloads.jl"))
 using .DataDownloads
 
 const USAGE = "Usage: download_data.jl <config.toml> " *

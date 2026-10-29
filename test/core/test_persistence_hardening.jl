@@ -6,7 +6,6 @@ import AtmosTransport
 const AT = AtmosTransport
 const MD = AT.MetDrivers
 const TapeMod = AT.Tape
-const DD = AT.DataDownloads
 const PP = AT.Preprocessing
 
 using .AtmosTransport.Architectures: CPU
@@ -51,38 +50,6 @@ function _ll_fixture(::Type{FT}=Float32) where FT
         ps=fill(FT(90_000), 4, 3),
     )
     return grid, window
-end
-
-@testset "download verification sidecars preserve safe resume semantics" begin
-    mktempdir() do dir
-        path = joinpath(dir, "download.dat")
-        write(path, Vector{UInt8}(codeunits("complete-payload")))
-        env = DD.PythonEnvironment("python3", false, false, false, false,
-                                   false, false)
-        protocol = DD.CDSProtocol(env)
-        task = DD.DownloadTask("fixture", "dataset/request", path,
-                               Dict{String,Any}("variable" => "co2"), 1.0)
-
-        @test DD._existing_task_status(task, protocol) == (:unverifiable, 0)
-        manifest_path = DD._write_download_manifest(task, protocol)
-        @test isfile(manifest_path)
-        @test DD._existing_task_status(task, protocol) ==
-              (:verified, filesize(path))
-        different_environment = DD.CDSProtocol(DD.PythonEnvironment(
-            "/different/python", true, true, true, true, true, true))
-        @test DD._existing_task_status(task, different_environment) ==
-              (:verified, filesize(path))
-
-        changed_request = DD.DownloadTask(
-            "fixture", "dataset/request", path,
-            Dict{String,Any}("variable" => "temperature"), 1.0)
-        @test first(DD._existing_task_status(changed_request, protocol)) == :corrupt
-
-        bytes = read(path)
-        bytes[1] = bytes[1] == 0x00 ? 0x01 : bytes[1] - 0x01
-        write(path, bytes)
-        @test first(DD._existing_task_status(task, protocol)) == :corrupt
-    end
 end
 
 @testset "generation fingerprints cover source and preprocessing settings" begin

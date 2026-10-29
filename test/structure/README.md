@@ -37,7 +37,10 @@ as first introduction. Synthetic fixtures explicitly opt out of base checking.
   edge. Existing exceptions can preserve current cycles until folder cleanup.
   `noncore_allowlist.toml` snapshots current core-to-non-core dependencies.
   Core must not import/refer to Visualization, Analysis, DataDownloads, the
-  Makie extension, or future Extras modules, including through facade aliases.
+  Makie extension, or any module defined under `src/Extras/`, including through
+  facade aliases. `AtmosTransport.Diagnostics` is core and follows Models;
+  foundation `SectionTimer` lives in `src/SectionTimer.jl` so its early users
+  do not form a folder cycle with the later conservation module.
   Today's three exceptions are package-facade re-exports, retained until the
   planned Extras split; implementation modules have no exceptions.
 - T2: `duplicate_allowlist.toml` records each existing independent generic
@@ -81,6 +84,20 @@ allowance keys and dependency edges against `--base` and rejects additions
 where that base already contains the snapshot. P1's base has no snapshots, so
 this first introduction is reviewed in the PR. There is no allowance
 regeneration or accept-all flag. New allowances require an explicit owner decision.
+
+X1 migrates P1's historical identities in the comparison, without accepting
+new debt: the old Analysis conservation files and their module-assembly
+private imports map to Diagnostics, other non-core paths map into Extras,
+and SectionTimer folder edges map to `src`. Diagnostics inherits the former
+Analysis dependencies on earlier core modules; Analysis gains only its
+Diagnostics re-export edge. The old facade-to-timer folder exception now
+covers the facade's Diagnostics include. No reverse exception is added.
+Clone/docstring digests, method signatures, private helper names and byte
+ceilings survive this migration unchanged, and allowance counts cannot grow.
+Bases already using the new identities receive the ordinary exact-key
+comparison. Entries eliminated by declared sharing or other cleanup are
+removed. Duplicate, docstring, folder-size and mirror snapshots currently
+have no moved file keys; their identities and counts remain unchanged.
 
 `docs/src/development/code_map.md` is generated from the same inventory and
 checked byte for byte by the gate and repository structure test. Each folder

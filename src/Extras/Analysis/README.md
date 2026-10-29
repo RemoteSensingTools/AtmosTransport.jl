@@ -1,5 +1,7 @@
 # Analysis
 
+Non-core; no tests. See [`../README.md`](../README.md) for the Extras rules.
+
 Shared numerics for post-run diagnostics. Diagnostic command lines in
 `scripts/diagnostics/` take these numerics from here instead of carrying their
 own copies, and plotting scripts (which may stay in Python) read the NetCDF or
@@ -8,28 +10,28 @@ takes its sin-latitude bands from `EqualAreaBands`. Everything runs on host arra
 Float64 in a fixed order, so results do not depend on threading or on the
 element type of the input.
 
-`src/AtmosTransport.jl` loads this folder after `Models` and before
-`Downloads`. The functions so far need NCDatasets, Dates, LinearAlgebra and
-Statistics, the compensated sum of `Architectures`, the constants of
-`Parameters` and the NetCDF lock of `Output`; the budget closure also builds
-on the runtime's config parsing, grids, output naming and surface-flux sources
-(`Models`, `MetDrivers`, `Output`, `Operators`). No earlier module depends on
-`Analysis`. The names are
-exported from `AtmosTransport.Analysis`, not from the top level:
+`src/AtmosTransport.jl` loads this folder after core `Diagnostics` and
+`Visualization`, before `DataDownloads`. It depends on public names and declared shared helpers from
+`Architectures`, `Parameters`, `Output` and `Diagnostics`, plus NCDatasets,
+Dates, LinearAlgebra and Statistics. No core module imports `Analysis`.
+The conservation API (`budget_closure`, `carrier_drawdown`, `RunContext`,
+`daily_snapshot_series`, `drift_statistics`, `twin_relative_difference` and
+associated budget types) is implemented in core `Diagnostics` and re-exported
+here so existing scripts keep working:
 
 ```julia
 using AtmosTransport.Analysis
 ```
 
-This module is the diagnostics track of the Python → Julia port
-(`docs/memos/2026-10-10_python_flux_port_design.md`, Sections 1c and 2.8).
-Each function names the Python routine it replaces, and its tests pin values
-computed by that routine.
+The post-processing routines remain the diagnostics track of the Python → Julia
+port (`docs/memos/2026-10-10_python_flux_port_design.md`, Sections 1c and 2.8).
+Core conservation tests live under `test/core/test_analysis_*.jl` and
+`test/core/test_diagnostics_mass_balance.jl`; no tests cover Extras routines.
 
 ## Entry Points
 
 - `daily_snapshot_series(paths, variables; origin=nothing)` in
-  [`snapshot_series.jl`](snapshot_series.jl): the frames of runtime snapshot
+  [`../../Diagnostics/snapshot_series.jl`](../../Diagnostics/snapshot_series.jl): the frames of runtime snapshot
   files, concatenated in file order, as `(; times::Vector{DateTime},
   values::Dict{String, Array})` with time as the last dimension. Current files
   decode the simulation start from CF `hours since <run start>` units; `origin`
@@ -59,7 +61,7 @@ computed by that routine.
   ref_std)`, and the weighted `(; mean, rms, n)` of the per-cell difference
   (compensated sums; a Float32 field against its Float64 twin).
 - `drift_statistics(series)` and `twin_relative_difference(candidate,
-  reference)` in [`mass_totals.jl`](mass_totals.jl): the drift of a global
+  reference)` in [`../../Diagnostics/mass_totals.jl`](../../Diagnostics/mass_totals.jl): the drift of a global
   total relative to its first value with the mean, sample standard deviation
   and t-value of its increments (a source-free tracer's arithmetic error), and
   the frame-by-frame `(; raw, net)` relative difference of a total from its
@@ -81,7 +83,7 @@ computed by that routine.
   `GEOSChemTracer` names a tracer's variables, GEOS-Chem molar mass and
   half-life; `CATRINE_GEOSCHEM_TRACERS` holds the four CATRINE tracers.
 - `budget_closure(run; output_glob, tolerance, emission, tracers,
-  require_complete)` in [`budget_closure.jl`](budget_closure.jl): the global
+  require_complete)` in [`../../Diagnostics/budget_closure.jl`](../../Diagnostics/budget_closure.jl): the global
   budget of every tracer of a finished run, `ΔS = S(t₁) − S(t₀)` from
   `<tracer>_total_mass` of the run's snapshot files against the storage `E`
   its runtime sources added (`Operators.integrated_emission`), with the
@@ -95,7 +97,7 @@ computed by that routine.
   `AbstractExpectedEmission` with `expected_storage_change(method, ctx, spec,
   t0, t1)`; the default is `RuntimeSurfaceSources()`.
 - `RunContext(run_config)` and `run_snapshot_paths(ctx)` in
-  [`run_context.jl`](run_context.jl): a run seen as the runner sees it, built
+  [`../../Diagnostics/run_context.jl`](../../Diagnostics/run_context.jl): a run seen as the runner sees it, built
   with the runner's own functions (tracer specs, including the legacy
   single-tracer form of lat-lon runs, grid of the first binary,
   float type, run start, every met window with its step count and the
@@ -108,8 +110,6 @@ computed by that routine.
 
 - [`Analysis.jl`](Analysis.jl): module definition, imports, includes and
   exports.
-- [`snapshot_series.jl`](snapshot_series.jl): `daily_snapshot_series` and its
-  NetCDF helpers.
 - [`latitude_bands.jl`](latitude_bands.jl): band sets and band means.
 - [`decomposition.jl`](decomposition.jl): `doy_linear_detrend`,
   `seasonal_trend_decomposition`.
@@ -117,16 +117,12 @@ computed by that routine.
   `weighted_difference_stats`.
 - [`column_profiles.jl`](column_profiles.jl): `column_band_weights`,
   `logp_interpolate`.
-- [`mass_totals.jl`](mass_totals.jl): `drift_statistics`,
-  `twin_relative_difference`.
 - [`geoschem_archive.jl`](geoschem_archive.jl): `GEOSChemTracer`,
   `CATRINE_GEOSCHEM_TRACERS`, `GEOSChemCATRINEArchive`, `gc_path`, `gc_times`,
   `with_gc_file`, `global_totals`, `unreadable_files`.
-- [`run_context.jl`](run_context.jl): `RunContext`, `run_snapshot_paths`.
-- [`budget_closure.jl`](budget_closure.jl): `BudgetTolerance`,
-  `TracerBudget`, `BudgetReport`, `budget_closure`, `report_dict`,
-  `carrier_drawdown`, `AbstractExpectedEmission`, `RuntimeSurfaceSources`,
-  `expected_storage_change`.
+The re-exported conservation routines live in
+[`../../Diagnostics/`](../../Diagnostics/README.md): `snapshot_series.jl`,
+`mass_totals.jl`, `run_context.jl`, and `budget_closure.jl`.
 
 ## Python Routines Replaced
 

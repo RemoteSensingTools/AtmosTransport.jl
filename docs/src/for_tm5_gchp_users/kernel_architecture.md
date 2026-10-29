@@ -253,7 +253,7 @@ effects can dominate the result.
 | --- | --- |
 | Backend selection and adaptation | `src/Architectures.jl` |
 | Runtime window copies and prefetch | `src/Models/driven_window_state.jl` |
-| Section timing | `src/Diagnostics/SectionTimer.jl` |
+| Section timing | `src/SectionTimer.jl` |
 | Structured packed sweeps | `src/Operators/Advection/multitracer_kernels.jl` |
 | Cubed-sphere packed sweeps | `src/Operators/Advection/cs_sweep_{common,x,y,z}.jl` |
 | Memory-mapped binary reader | `src/MetDrivers/transport_binary/reader.jl` |

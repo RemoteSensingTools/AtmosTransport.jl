@@ -148,7 +148,7 @@ const CPU = Architectures.CPU
 const GPU = Architectures.GPU
 
 # ---- Section timer (host-side wall-clock; off unless ATMOSTR_TIMERS=1/true/on/yes) ----
-include("Diagnostics/SectionTimer.jl")
+include("SectionTimer.jl")
 using .SectionTimer
 
 # Strict Boolean and known-key checks for TOML tables (Output, Preprocessing, Models).
@@ -256,22 +256,25 @@ using .GriddedIO
 include("Preprocessing/Preprocessing.jl")
 using .Preprocessing
 
-# ---- Topology-aware snapshot visualization data layer ----
-include("Visualization/Visualization.jl")
-using .Visualization
-
 # ---- Minimal runtime/model layer ----
 include("Models/Models.jl")
 using .Models
 
+# ---- Core run diagnostics (mass budgets and conservation) ----
+include("Diagnostics/Diagnostics.jl")
+
+# ---- Non-core topology-aware snapshot visualization data layer ----
+include("Extras/Visualization/Visualization.jl")
+using .Visualization
+
 # ---- Post-run analysis numerics (band means, decompositions, skill statistics) ----
 # Numerics for the diagnostic command lines in scripts/diagnostics/. Reachable as
 # `AtmosTransport.Analysis`; its names are not re-exported at the top level.
-include("Analysis/Analysis.jl")
+include("Extras/Analysis/Analysis.jl")
 using .Analysis
 
 # ---- Download pipeline (TOML-driven met/emissions data download) ----
-include("Downloads/Downloads.jl")
+include("Extras/Downloads/Downloads.jl")
 using .DataDownloads
 
 # ---- Curated top-level API ----

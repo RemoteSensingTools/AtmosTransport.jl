@@ -906,6 +906,8 @@ end
     _neumaier_sum(f, ks, T) -> (s, c)
 
 Compensated sum of `f(k)` over `ks` in precision `T`; the total is `s + c`.
+Shared with convection and non-core analysis via the declaration in
+`src/README.md`. Iteration order is the order of `ks`.
 """
 @inline function _neumaier_sum(f, ks, ::Type{T}) where T
     s = c = zero(T)
