@@ -34,7 +34,7 @@ function _spec_int(section, key::AbstractString, default::Int, label::AbstractSt
 end
 function _spec_float64(section, key::AbstractString, default::Float64, label::AbstractString)
     v = get(section, key, default)
-    v isa Real || throw(ArgumentError("$(label).$(key) must be a number; got $(repr(v))"))
+    v isa Real && !(v isa Bool) || throw(ArgumentError("$(label).$(key) must be a number; got $(repr(v))"))
     return Float64(v)
 end
 
@@ -115,6 +115,8 @@ function _collab_lu_knobs(section)
     lmax_conv  = _spec_int(section, "lmax_conv", 0, "[convection]")
     n_merge    = _spec_int(section, "n_merge", 1, "[convection]")
 
+    lmax_conv >= 0 || throw(ArgumentError("[convection].lmax_conv must be >= 0; got $(lmax_conv)"))
+
     if (lmax_conv != 0 || n_merge != 1) && !use_collab
         throw(ArgumentError(
             "[convection] lmax_conv/n_merge only take effect with use_collab_lu = true " *
@@ -140,7 +142,7 @@ at execution time. The legacy fallback uses the full column without aggregation.
 function convection_spec(section)
     kind = _parse_convection_kind(section)
     kind !== :cmfmc && haskey(section, "cloud_base") && throw(ArgumentError(
-        "[convection] cloud_base applies to kind = \"cmfmc\" only; got kind = $(repr(String(section["kind"])))"))
+        "[convection] cloud_base applies to kind = \"cmfmc\" only; got kind = $(repr(String(get(section, "kind", "none"))))"))
     kind === :none  && return NoConvectionSpec()
     kind === :cmfmc &&
         return CMFMCConvectionSpec(_spec_bool(section, "clamp", false, "[convection]"),

@@ -123,7 +123,9 @@ Float32 effective matrix depth must fit 1..85 levels. Float64 CUDA supports
 unmerged (`n_merge=1`) depths 1..73, retaining Float64 shared storage and
 arithmetic. At depth 73 the six-tracer buffer and matrix use 48,204 bytes;
 depth 74 exceeds the 48 KiB static budget. CPU and unsupported Float64
-configurations retain the legacy solver with a warning. No automatic
+configurations retain the legacy solver with a warning that requested
+`lmax_conv` truncation and `n_merge` merging are dropped. Negative `lmax_conv`
+values raise `ArgumentError` at parsing and construction. No automatic
 truncation, aggregation, or precision conversion is applied. Defaults remain
 legacy, and CS adjoint footprints still require the full-column, unmerged
 legacy variant. Tracer batching requires neither truncation nor aggregation.

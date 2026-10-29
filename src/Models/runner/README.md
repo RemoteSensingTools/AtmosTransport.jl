@@ -124,6 +124,9 @@ how a TOML option reaches an operator, is [`../README.md`](../README.md).
   VMR × air mass:
   - LL/RG pass no `qv`, so `pack_initial_tracer_mass` rejects moist binaries.
   - The CS runner rejects moist binaries explicitly.
+- Explicit `[run].Hp` and `halo_padding` must be integers ≥ 1; Boolean values
+  are rejected. Input dates accept TOML dates or date strings, including
+  `start_date` with explicit `binary_paths`; malformed dates fail preflight.
 - Multi-file runs must cover full windows of every file
   (`_check_multifile_window_range`). CS runs also require `start_window = 1`.
 - Observation sampling has one clock:
