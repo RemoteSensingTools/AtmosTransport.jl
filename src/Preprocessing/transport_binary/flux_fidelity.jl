@@ -888,11 +888,10 @@ function combine_captured_flux_samples(a::CapturedWindFluxSamples{FT},
         "endpoint fidelity sample maps differ"))
     reference = similar(a.reference)
     candidate = similar(a.candidate)
-    weight = mean_endpoints ? 0.5 : 0.0
     for q in eachindex(reference)
         f, k = a.face[q], a.level[q]
         reference[q] = FT(_canonical_face_value(raw_am, raw_bm, ft, f, k))
-        value = mean_endpoints ? weight * (a.candidate[q] + b.candidate[q]) : a.candidate[q]
+        value = mean_endpoints ? 0.5 * (a.candidate[q] + b.candidate[q]) : a.candidate[q]
         candidate[q] = FT(scale * value)
     end
     return CapturedWindFluxSamples(copy(a.face), copy(a.level), reference, candidate)

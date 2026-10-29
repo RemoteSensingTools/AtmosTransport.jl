@@ -124,6 +124,11 @@ near-surface difference for a uniform 400 Pa surface-pressure shift.
   in place, cell areas and the units and storage factors, and the temporal
   scheme
 
+The `catrine_co2` default IC is
+`$ATMOSTRANSPORT_DATA_ROOT/catrine/InitialConditions/startCO2_202112010000.nc`
+(variable `CO2`), resolved by `expand_data_path`; the root defaults to
+`~/data/AtmosTransport`. An explicit `file` overrides it.
+
 ## Surface-Flux Kinds
 
 | `kind` | Defaults in `_resolve_surface_flux_file` | Units of the default file → kg species m⁻² s⁻¹ | `time_varying` |
@@ -131,7 +136,7 @@ near-surface difference for a uniform 400 Pa surface-pressure shift.
 | `gridfed_fossil_co2` | GridFED `TOTAL`; needs `time_index` or `month` | kgCO2/month/m2 ÷ the slice's CF time bounds/calendar month; coordinate-less legacy files alone use ordinal month plus `year`/file-name year | CS, 12 monthly slices for the coordinate-less format |
 | `edgar_sf6` | EDGAR v8 `emissions` | Tonnes (per cell and year) × 1000 ÷ cell area ÷ 365.25 d | no |
 | `zhang_rn222` | Zhang `rnemis`; `month` (default 1) | kg/m2/s | no |
-| `lmdz_co2` | CAMS `flux_apos` | kgC m-2 s-1 × M(CO2)/M(C) ≈ 3.66419; static path averages all time slices | CS |
+| `lmdz_co2` | CAMS `flux_apos` | kgC m-2 s-1 × M(CO2)/M(C) ≈ 3.66419; static path averages all time slices; `month` raises `ArgumentError` | CS |
 | `cs_native` | none; needs `file`, `variable` | kg species or kgC m⁻² s⁻¹ on the runtime cube (`GriddedIO.read_cs_native_flux!`) | CS, required |
 | `file` | none; needs `file`, `variable` | any units `GriddedIO.parse_flux_units` reads (`GriddedIO.write_latlon_flux` writes static files) | no |
 
@@ -141,7 +146,9 @@ for per-cell units (the file's `cell_area`/`area`, else the band areas of the
 grid on the destination sphere), multiply by `GriddedIO.kg_per_unit` (kg of the
 tracer's species per unit; kg of another species is an error) and divide by
 `GriddedIO.period_seconds` (per-month units: CF time bounds when present, else
-the coordinate's month in its own calendar). `time_index` is always a 1-based
+the coordinate's month in its own calendar). A static `lmdz_co2` source rejects `month`; select its input file or use a
+time-varying source. Its `time_index` is checked for validity even though the
+static source averages all slices. `time_index` is always a 1-based
 positional selector. `month` selects the unique decoded calendar month when a
 time coordinate exists, and is ordinal only for the documented legacy GridFED
 format with twelve slices and no time coordinate. Stepwise time-varying fields

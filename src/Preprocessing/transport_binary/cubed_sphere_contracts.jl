@@ -448,9 +448,6 @@ mutable struct CubedSphereContract{FT} <:
 end
 
 # Convenience accessor shims so the abstract trait surface answers.
-@inline contract_replay_tolerance(c::CubedSphereContract)    = c.replay_tol
-@inline contract_cfl_limit(c::CubedSphereContract)           = c.positivity_cfl_limit
-@inline contract_require_positivity(c::CubedSphereContract)  = c.require_substep_positivity
 
 """
     verify_window!(window, contract::CubedSphereContract, win_idx::Int;

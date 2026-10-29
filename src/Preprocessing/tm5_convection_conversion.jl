@@ -326,12 +326,6 @@ function ec2tm_from_rates!(entu::AbstractVector{FT}, detu::AbstractVector{FT},
     _ec2tm_rates_check_shapes(entu, detu, entd, detd,
                                udmf, ddmf, udrf_rate, ddrf_rate, dz, Nz)
 
-    # Initialise outputs to zero (F90 `entu = 0.0`, etc.).
-    @inbounds for k in 1:Nz
-        entu[k] = zero(FT)
-        entd[k] = zero(FT)
-    end
-
     # Copy rates into local output arrays with small-value clipping.
     # The F90 code uses local scratch `mflu` / `mfld`; we operate on
     # `udmf` / `ddmf` directly through the local helper `_mflu(k)` so
@@ -398,7 +392,7 @@ function ec2tm_from_rates!(entu::AbstractVector{FT}, detu::AbstractVector{FT},
     # Updraft layer budgets.  F90 `mflu(l-1) - mflu(l)` on 0-based half
     # levels is `udmf[k] - udmf[k + 1]` here: interface k is the top of
     # layer k, interface k + 1 its bottom.
-    if uptop > 0 && uptop <= Nz
+    if uptop > 0
         # Above the cloud top, entrainment/detrainment are zero.
         @inbounds for k in 1:(uptop - 1)
             entu[k] = zero(FT)
@@ -418,7 +412,7 @@ function ec2tm_from_rates!(entu::AbstractVector{FT}, detu::AbstractVector{FT},
     # Downdraft mass-budget closure.  Same index pattern; ddmf is
     # negative so `ddmf[k] - ddmf[k+1]` gives the right sign for a
     # positive entd output.
-    if dotop > 0 && dotop <= Nz
+    if dotop > 0
         @inbounds for k in 1:(dotop - 1)
             entd[k] = zero(FT)
             detd[k] = zero(FT)
@@ -478,7 +472,7 @@ function ec2tm_from_rates!(entu::AbstractVector{FT}, detu::AbstractVector{FT},
     # TM5's `do l = 1, lmax_conv` form.
     closure_entu = 0
     closure_entd = 0
-    if uptop > 0 && uptop <= Nz
+    if uptop > 0
         tote = zero(FT); totd = zero(FT)
         lsave_u = Nz                 # TM5 init: lsave = 1 (surface)
         max_entu = entu[Nz]          # TM5 init: maxe = entu(1)
@@ -506,7 +500,7 @@ function ec2tm_from_rates!(entu::AbstractVector{FT}, detu::AbstractVector{FT},
             closure_entu = 1
         end
     end
-    if dotop > 0 && dotop <= Nz
+    if dotop > 0
         tote_d = zero(FT); totd_d = zero(FT)
         lsave_d = dotop              # TM5 init: lsave = lmax_conv (top of cloud)
         max_entd = zero(FT)          # TM5 init: maxe = 0.0
@@ -555,12 +549,8 @@ function ec2tm_from_rates!(entu::AbstractVector{FT}, detu::AbstractVector{FT},
         stats.levels_detu_neg[]     += neg_detu
         stats.levels_entd_neg[]     += neg_entd
         stats.levels_detd_neg[]     += neg_detd
-        if hasproperty(stats, :columns_closure_entu)
-            stats.columns_closure_entu[] += closure_entu
-        end
-        if hasproperty(stats, :columns_closure_entd)
-            stats.columns_closure_entd[] += closure_entd
-        end
+        stats.columns_closure_entu[] += closure_entu
+        stats.columns_closure_entd[] += closure_entd
     end
 
     return nothing

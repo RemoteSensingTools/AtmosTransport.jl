@@ -146,6 +146,12 @@ const _SURFACE_FLUX_KINDS = (:none, :file, :cs_native, :lmdz_co2, :gridfed_fossi
 
 function _surface_flux_kind(cfg)
     kind = Symbol(lowercase(String(get(cfg, "kind", "none"))))
+    if kind === :lmdz_co2 && haskey(cfg, "month") &&
+       !_config_bool(cfg, "time_varying", false, "surface_flux.time_varying")
+        throw(ArgumentError(
+            "surface_flux.month is not supported for a static lmdz_co2 source: " *
+            "it averages all time slices in the file. Remove month or set time_varying = true."))
+    end
     if !(kind in _SURFACE_FLUX_KINDS)
         suggestion = key_suggestion(String(kind), string.(_SURFACE_FLUX_KINDS))
         throw(ArgumentError(

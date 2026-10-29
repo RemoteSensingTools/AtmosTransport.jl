@@ -5,6 +5,15 @@ abstract type AbstractOutputFormat end
 
 struct ExplicitSnapshotSchedule <: AbstractOutputSchedule
     hours::Vector{Float64}
+
+    function ExplicitSnapshotSchedule(hours::AbstractVector)
+        all(h -> h isa Real, hours) ||
+            throw(ArgumentError("output snapshot hours must be numbers"))
+        out = sort!(Float64.(hours))
+        any(!isfinite, out) &&
+            throw(ArgumentError("output snapshot hours must be finite"))
+        return new(out)
+    end
 end
 
 struct IntervalSnapshotSchedule <: AbstractOutputSchedule
@@ -64,13 +73,6 @@ struct RuntimeOutputSpec{S <: AbstractOutputSchedule,
     enabled::Bool
     format::M
     metadata::RuntimeOutputMetadata
-end
-
-function ExplicitSnapshotSchedule(hours::AbstractVector{<:Real})
-    out = sort!(Float64.(hours))
-    any(!isfinite, out) &&
-        throw(ArgumentError("output snapshot hours must be finite"))
-    return ExplicitSnapshotSchedule(out)
 end
 
 function IntervalSnapshotSchedule(; start_hour::Real=0.0,

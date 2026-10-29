@@ -351,14 +351,6 @@ function open_streaming_cs_transport_binary(
                                     tm5_convection_mass_basis)
     isempty(extra_header) || _merge_transport_extra_header!(header, extra_header)
     header["panel_convention"] = _normalize_cs_panel_convention(header["panel_convention"])
-    if !haskey(header, "cs_definition") || !haskey(header, "cs_coordinate_law") ||
-       !haskey(header, "cs_center_law") || !haskey(header, "longitude_offset_deg")
-        default_geometry = _cs_default_geometry_tags(header["panel_convention"])
-        header["cs_definition"] = get(header, "cs_definition", default_geometry.cs_definition)
-        header["cs_coordinate_law"] = get(header, "cs_coordinate_law", default_geometry.cs_coordinate_law)
-        header["cs_center_law"] = get(header, "cs_center_law", default_geometry.cs_center_law)
-        header["longitude_offset_deg"] = get(header, "longitude_offset_deg", default_geometry.longitude_offset_deg)
-    end
 
     validate_cs_writer_contract!(header)
     validate_transport_contract!(header)

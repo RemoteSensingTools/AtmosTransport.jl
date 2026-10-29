@@ -15,6 +15,22 @@ using AtmosTransport
 
 using Dates
 
+@testset "input dates accept TOML dates in both input modes" begin
+    mktempdir() do dir
+        path = joinpath(dir, "transport_20211201.bin")
+        touch(path)
+        explicit = Dict{String, Any}("binary_paths" => [path], "start_date" => Date(2021, 12, 1))
+        @test expand_binary_paths(explicit) == [path]
+        folder = Dict{String, Any}("folder" => dir, "start_date" => Date(2021, 12, 1),
+                                   "end_date" => Date(2021, 12, 1))
+        @test expand_binary_paths(folder) == [path]
+        for invalid in (true, 20211201, "2021-13-01")
+            @test_throws ArgumentError expand_binary_paths(merge(explicit, Dict("start_date" => invalid)))
+            @test_throws ArgumentError expand_binary_paths(merge(folder, Dict("end_date" => invalid)))
+        end
+    end
+end
+
 """Create a set of empty files in `dir` named per the supplied dates and
 the `YYYYMMDD` prefix/suffix. Returns the absolute paths."""
 function _touch_binary_set(dir::AbstractString, dates; prefix = "era5_", suffix = ".bin")

@@ -421,13 +421,12 @@ function spectral_to_reduced_scalar!(field::Vector{Float64},
                                      spec::AbstractMatrix{ComplexF64},
                                      T::Int,
                                      grid::ReducedGaussianTargetGeometry,
-                                     cache::ReducedSpectralThreadCache;
-                                     centered::Bool = true)
+                                     cache::ReducedSpectralThreadCache)
     mesh = grid.mesh
     @inbounds for j in 1:nrings(mesh)
         start = mesh.ring_offsets[j]
         stop = mesh.ring_offsets[j + 1] - 1
-        shift = centered ? (pi / mesh.nlon_per_ring[j]) : 0.0
+        shift = pi / mesh.nlon_per_ring[j]
         spectral_to_ring!(@view(field[start:stop]), spec, T, grid.lats[j], cache; lon_shift_rad=shift)
     end
     return field
@@ -609,9 +608,11 @@ function recompute_faceindexed_cm_from_divergence!(cm::AbstractMatrix{FT},
                                                    face_left::Vector{Int32},
                                                    face_right::Vector{Int32},
                                                    div_scratch::AbstractMatrix{Float64};
-                                                   B_ifc::Vector{<:Real}=Float64[]) where FT
+                                                   B_ifc::Vector{<:Real}) where FT
     nc = size(cm, 1)
     Nz = size(cm, 2) - 1
+    length(B_ifc) == Nz + 1 || throw(ArgumentError(
+        "recompute_faceindexed_cm_from_divergence!: B_ifc must contain Nz + 1 = $(Nz + 1) interfaces; got $(length(B_ifc))"))
     fill!(cm, zero(FT))
     fill!(div_scratch, 0.0)
 
@@ -623,25 +624,15 @@ function recompute_faceindexed_cm_from_divergence!(cm::AbstractMatrix{FT},
         right > 0 && (div_scratch[right, k] -= flux)
     end
 
-    if !isempty(B_ifc) && length(B_ifc) == Nz + 1
-        @inbounds for c in 1:nc
-            pit = 0.0
-            for k in 1:Nz
-                pit += div_scratch[c, k]
-            end
-            acc = 0.0
-            for k in 1:Nz
-                acc = acc - div_scratch[c, k] + (Float64(B_ifc[k + 1]) - Float64(B_ifc[k])) * pit
-                cm[c, k + 1] = FT(acc)
-            end
+    @inbounds for c in 1:nc
+        pit = 0.0
+        for k in 1:Nz
+            pit += div_scratch[c, k]
         end
-    else
-        @inbounds for c in 1:nc
-            acc = 0.0
-            for k in 1:Nz
-                acc = acc - div_scratch[c, k]
-                cm[c, k + 1] = FT(acc)
-            end
+        acc = 0.0
+        for k in 1:Nz
+            acc = acc - div_scratch[c, k] + (Float64(B_ifc[k + 1]) - Float64(B_ifc[k])) * pit
+            cm[c, k + 1] = FT(acc)
         end
     end
     return nothing
@@ -657,7 +648,7 @@ function spectral_to_native_fields!(work::ReducedTransformWorkspace,
                                     grid::ReducedGaussianTargetGeometry,
                                     half_dt::Float64)
     cache1 = work.caches[1]
-    spectral_to_reduced_scalar!(work.lnsp, lnsp_spec, T, grid, cache1; centered=true)
+    spectral_to_reduced_scalar!(work.lnsp, lnsp_spec, T, grid, cache1)
     @. work.sp = exp(work.lnsp)
     compute_reduced_dp_and_mass!(work.dp, work.m_arr, work.sp, work.cell_areas, ab.dA, ab.dB)
 

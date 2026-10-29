@@ -549,10 +549,6 @@ mutable struct ReducedGaussianContract{FT} <:
     end
 end
 
-@inline contract_replay_tolerance(c::ReducedGaussianContract)   = c.replay_tol
-@inline contract_cfl_limit(c::ReducedGaussianContract)          = c.positivity_cfl_limit
-@inline contract_require_positivity(c::ReducedGaussianContract) = c.require_substep_positivity
-
 function verify_window!(window, contract::ReducedGaussianContract, win_idx::Integer)
     # Lazy-allocate the three scratch buffers on first call (or
     # reallocate on a shape change). Subsequent calls reuse them.

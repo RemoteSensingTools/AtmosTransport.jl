@@ -75,7 +75,7 @@ using ProgressMeter: Progress, next!, finish!, update!
 
 import ...expand_data_path
 using ...SectionTimer
-using ...ConfigChecks: unknown_key_messages, parse_float_type
+using ...ConfigChecks: unknown_key_messages, config_int, config_date, parse_float_type
 using ...Parameters: GLOBAL_MEAN_DRY_SURFACE_PRESSURE
 using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 CubedSphereState, total_air_mass, total_mass, tracer_names,
@@ -397,7 +397,7 @@ function _run_reference_time(cfg)
     input_cfg = get(cfg, "input", nothing)
     input_cfg isa AbstractDict || return nothing
     haskey(input_cfg, "start_date") || return nothing
-    return DateTime(Date(String(input_cfg["start_date"])))
+    return DateTime(config_date(input_cfg["start_date"], "[input].start_date"))
 end
 
 function _header_date(driver)

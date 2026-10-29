@@ -318,7 +318,7 @@ end
 
 function _resolve_file_init(cfg, kind::Symbol)
     default_file, default_variable = if kind === :catrine_co2
-        ("~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc", "CO2")
+        ("\$ATMOSTRANSPORT_DATA_ROOT/catrine/InitialConditions/startCO2_202112010000.nc", "CO2")
     else
         ("", "")
     end

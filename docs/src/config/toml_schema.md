@@ -77,6 +77,8 @@ Path expansion + continuity validation lives in
 `src/Models/BinaryPathExpander.jl`.
 Shape B asserts that the resolved binaries form a contiguous date
 sequence; gaps fail at expansion time, not at first window-load.
+Both shapes accept TOML dates (e.g. `start_date = 2021-12-01`) or quoted
+date strings. A supplied `start_date` is validated in Shape A too.
 Shape A preserves the explicit list's order after expanding paths. It does
 not sort entries or validate date continuity; provide them chronologically.
 
@@ -199,6 +201,9 @@ least two Julia threads load the next met window on a second thread while the
 current one runs; `prefetch_windows = false` turns that off (for debugging; the
 results are the same). Advection belongs in the separate `[advection]` table.
 
+Explicit `[run].Hp` and `halo_padding` must be integers ≥ 1; the scheme
+determines the default when omitted. Unknown driver mass-basis tags are errors.
+
 ### `[tracers.<name>]` — per-tracer setup
 
 Each tracer gets its own block. The name is what shows up in the
@@ -227,6 +232,11 @@ CS builder in `src/Models/initial_conditions/cubed_sphere.jl`):
 | `"catrine_co2"` | yes | yes | yes | optional `file`, `variable`, `humidity_variable`, `time_index` overrides for the built-in defaults |
 | `"pressure_layer"` | no | no | yes | `lowest_layer = true` or `psurf_fraction`; optional `total_molecules` |
 | `"cs_native"` | no | no | yes | `file`, `variable`; optional `humidity_variable`, `time_index`, `vertical_order`, `clamp_negative` (default `false`) |
+
+`catrine_co2` defaults to
+`$ATMOSTRANSPORT_DATA_ROOT/catrine/InitialConditions/startCO2_202112010000.nc`,
+variable `CO2`, through `expand_data_path`; the data root defaults to
+`~/data/AtmosTransport`. Explicit `file` and `variable` override these defaults.
 
 The file kinds (`file`, `netcdf`, `file_field`, `catrine_co2`) read a
 lon-lat-level field of layer-mean dry VMR. A file with hybrid coefficients
@@ -310,7 +320,9 @@ cubed-sphere grid. Any other kind is an error. There is no `edgar_co2` kind — 
 `gridfed_fossil_co2` for the GridFED-derived fossil CO₂ inventory.
 A `file` source is one static field (a 2-D variable, or slice `time_index` of a
 3-D one); it is not a time-varying kind. `GriddedIO.write_latlon_flux` writes
-such files.
+such files. A static `lmdz_co2` source averages all time slices and rejects
+`month` with an `ArgumentError`; choose its input file or use `time_varying = true`.
+Its `time_index` must still be valid even though the mean uses all slices.
 `species` names the species whose kilograms the flux counts: `"co2"`, `"sf6"`
 or `"rn222"`, the entries of `Parameters.SPECIES_MOLAR_MASS`. Its molar mass
 converts physical kg species s⁻¹ to the model's storage units (dry VMR × dry-air
@@ -484,6 +496,8 @@ signed uptake is retained. The TRENDY ensemble example is
 
 ### `[advection]`, `[diffusion]`, `[convection]`, `[chemistry]`
 
+Numeric physics settings (for example constant diffusion `value`) reject Booleans.
+
 Each operator has a selector and per-kind options. See
 [Operators](@ref Operator-concepts) and [Advection schemes](@ref) for what each
 selector means; relevant config keys:
@@ -543,7 +557,7 @@ cloud_base = "cmfmc"            # cmfmc only: "cmfmc" = lowest layer with updraf
 # Collaborative-LU knobs (cmfmc_matrix and tm5). use_collab_lu is REQUIRED for
 # lmax_conv / n_merge to take effect — setting them without it is a hard error.
 use_collab_lu = true            # batched/collaborative column LU (fast path)
-lmax_conv     = 0               # 0 = full column; >0 retains that many bottom layers
+lmax_conv     = 0               # must be >= 0; 0 = full column; >0 retains that many bottom layers
 n_merge       = 1               # 1 = no aggregation; >1 merges adjacent vertical
                                 # layers within each column (a numerical approximation;
                                 # not additive in the tracer — use 1 for tagged-tracer
@@ -602,6 +616,9 @@ transport step. See
 [Binary format](@ref Binary-format) for the capability surface.
 
 ### `[output]` — snapshots
+
+Explicit snapshot hour lists are sorted without modifying the input vector,
+and every hour must be finite.
 
 ```toml
 [output]

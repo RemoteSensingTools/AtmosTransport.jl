@@ -1,11 +1,3 @@
-"""
-Read spectral coefficients from a GRIB message into a complex matrix.
-Returns spec[n+1, m+1] for m=0..T, n=m..T (upper triangular).
-"""
-function read_spectral_coeffs!(spec::AbstractMatrix{ComplexF64}, msg)
-    return read_spectral_coeffs!(spec, msg, Float64[])
-end
-
 function _check_eccodes_status(err::Integer, op::AbstractString)
     err == 0 && return nothing
     error("ecCodes $op failed with status code $err")
@@ -66,6 +58,10 @@ function _validate_spectral_header(msg, nvalues::Integer, spec::AbstractMatrix)
     return J
 end
 
+"""
+Read spectral coefficients from a GRIB message into a complex matrix using
+`vals` as scratch. Returns spec[n+1, m+1] for m=0..T, n=m..T.
+"""
 function read_spectral_coeffs!(spec::AbstractMatrix{ComplexF64}, msg, vals::Vector{Float64})
     handle = msg.ptr
     sz = Ref{Csize_t}(0)

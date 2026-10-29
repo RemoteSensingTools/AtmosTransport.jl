@@ -50,6 +50,13 @@ The `G` type parameter pins topology at compile time; the `Basis` parameter
 pins the writer's on-disk label to the runtime's mass basis. Constructor and
 writer validations reject incompatible combinations before promotion.
 
+Contracts use `verify_window!`, `update_accumulator!`, and `summarize_status!`;
+policy values are fields of the concrete contract. LL balancing takes the
+per-window substep schedule and its policy, including for fixed schedules,
+and daily output uses the atomic writer lifecycle. LL and RG staging
+divergence closures require `B_ifc` with exactly `Nz + 1` coefficients;
+missing or mismatched coefficients raise an error.
+
 ```mermaid
 flowchart LR
     RAW[Raw meteo<br/>GRIB / NetCDF]
