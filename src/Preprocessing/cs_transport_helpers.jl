@@ -233,7 +233,7 @@ function recover_ll_cell_center_winds!(u_cc::Array{FT, 3},
         dp = abs((A_ifc[k] - A_ifc[k + 1]) +
                  (B_ifc[k] - B_ifc[k + 1]) * ps_ll[i, j])
         area_factor = Δx_loc * dp / gravity * dt_factor
-        jn = min(j + 1, Ny + 1)
+        jn = j + 1
         v_cc[i, j, k] = area_factor > FT(1e-10) ?
             FT(0.5) * (bm_ll[i, j, k] + bm_ll[i, jn, k]) / area_factor :
             zero(FT)

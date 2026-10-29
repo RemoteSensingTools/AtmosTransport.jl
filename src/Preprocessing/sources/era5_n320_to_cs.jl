@@ -443,7 +443,7 @@ function _synthesize_into_column!(column::AbstractVector,
                                    scratch::AbstractVector{Float64})
     length(column) == length(scratch) == ncells(grid.mesh) ||
         throw(DimensionMismatch("column/scratch length mismatch with mesh ($(ncells(grid.mesh)))"))
-    spectral_to_reduced_scalar!(scratch, spec, T, grid, cache; centered = true)
+    spectral_to_reduced_scalar!(scratch, spec, T, grid, cache)
     @inbounds for c in eachindex(column)
         column[c] = scratch[c]
     end

@@ -88,6 +88,11 @@ dispatches on types rather than switching on `Symbol` values. A pre-C6 v4 file
 remains readable but is represented as `FidelityUnavailable` with reason
 `legacy_header_missing`.
 
+Interface coefficients are read through `reader.header.A_ifc` and
+`reader.header.B_ifc`. Use `has_surface(reader)` to query PBL surface
+payload availability. The reader constructor validates required header
+fields and complete optional payload groups before any window is loaded.
+
 ## Payload sections
 
 ### Required for any transport binary

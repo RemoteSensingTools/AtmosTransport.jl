@@ -38,9 +38,6 @@ PBLSurfaceForcing(pblh, ustar, hflux, t2m) = PBLSurfaceForcing(pblh, ustar, hflu
 PBLSurfaceForcing(; pblh, ustar, hflux, t2m, eflux = nothing) =
     PBLSurfaceForcing(pblh, ustar, hflux, t2m, eflux)
 
-has_pbl_surface_forcing(f::PBLSurfaceForcing) = true
-has_pbl_surface_forcing(::Nothing) = false
-
 function Adapt.adapt_structure(_to, f::PBLSurfaceForcing)
     return PBLSurfaceForcing(Adapt.adapt(_to, f.pblh),
                              Adapt.adapt(_to, f.ustar),
@@ -49,4 +46,4 @@ function Adapt.adapt_structure(_to, f::PBLSurfaceForcing)
                              Adapt.adapt(_to, f.eflux))
 end
 
-export PBLSurfaceForcing, has_pbl_surface_forcing
+export PBLSurfaceForcing

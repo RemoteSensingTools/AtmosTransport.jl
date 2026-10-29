@@ -588,20 +588,16 @@ function validate_transport_contract!(header::AbstractDict)
 
     # All fields present — validate ranges via a roundtrip construction.
     # This catches e.g. an unknown value for `flux_sampling` that slipped in.
-    try
-        TransportBinaryContract(
-            source_flux_sampling = _transport_normalize_symbol(header["source_flux_sampling"]),
-            air_mass_sampling    = _transport_normalize_symbol(header["air_mass_sampling"]),
-            flux_sampling        = _transport_normalize_symbol(header["flux_sampling"]),
-            flux_kind            = _transport_normalize_symbol(header["flux_kind"]),
-            delta_semantics      = _transport_normalize_symbol(header["delta_semantics"]),
-            humidity_sampling    = _transport_normalize_symbol(header["humidity_sampling"]),
-            poisson_balance_target_scale = Float64(header["poisson_balance_target_scale"]),
-            poisson_balance_target_semantics = String(header["poisson_balance_target_semantics"]),
-        )
-    catch e
-        rethrow(e)
-    end
+    TransportBinaryContract(
+        source_flux_sampling = _transport_normalize_symbol(header["source_flux_sampling"]),
+        air_mass_sampling    = _transport_normalize_symbol(header["air_mass_sampling"]),
+        flux_sampling        = _transport_normalize_symbol(header["flux_sampling"]),
+        flux_kind            = _transport_normalize_symbol(header["flux_kind"]),
+        delta_semantics      = _transport_normalize_symbol(header["delta_semantics"]),
+        humidity_sampling    = _transport_normalize_symbol(header["humidity_sampling"]),
+        poisson_balance_target_scale = Float64(header["poisson_balance_target_scale"]),
+        poisson_balance_target_semantics = String(header["poisson_balance_target_semantics"]),
+    )
 
     nwindow = try
         Int(header["nwindow"])

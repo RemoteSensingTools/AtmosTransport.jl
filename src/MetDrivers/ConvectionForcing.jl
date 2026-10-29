@@ -188,16 +188,6 @@ end
 # Sim-construction allocation
 # =========================================================================
 
-# Small backend-adapter helper. The implementation delegates to
-# Architectures so convection forcing follows the same CPU/CUDA/Metal
-# residency rule as transport windows and surface sources.
-@inline function _convection_backend_adapter(reference_array)
-    return array_adapter_for(reference_array)
-end
-
-@inline _convection_backend_adapter(reference_array::NTuple{6}) =
-    _convection_backend_adapter(reference_array[1])
-
 @inline _copy_convection_payload!(dst, src) = copyto!(dst, src)
 @inline function _copy_convection_payload!(dst::NTuple{N}, src::NTuple{N}) where N
     @inbounds for i in 1:N
@@ -231,7 +221,7 @@ The all-nothing placeholder `ConvectionForcing()` produces another
 all-nothing placeholder when run through this helper.
 """
 function allocate_convection_forcing_like(src::ConvectionForcing, backend_hint)
-    adaptor = _convection_backend_adapter(backend_hint)
+    adaptor = array_adapter_for(backend_hint)
 
     cmfmc = src.cmfmc === nothing ? nothing : _allocate_convection_payload_like(src.cmfmc, adaptor)
     dtrain = src.dtrain === nothing ? nothing : _allocate_convection_payload_like(src.dtrain, adaptor)
@@ -251,8 +241,8 @@ end
 # =========================================================================
 
 function Adapt.adapt_structure(to, f::ConvectionForcing)
-    cmfmc = f.cmfmc === nothing ? nothing : Adapt.adapt(to, f.cmfmc)
-    dtrain = f.dtrain === nothing ? nothing : Adapt.adapt(to, f.dtrain)
+    cmfmc = Adapt.adapt(to, f.cmfmc)
+    dtrain = Adapt.adapt(to, f.dtrain)
     tm5_fields = f.tm5_fields === nothing ? nothing : (
         entu = Adapt.adapt(to, f.tm5_fields.entu),
         detu = Adapt.adapt(to, f.tm5_fields.detu),

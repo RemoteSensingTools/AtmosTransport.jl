@@ -242,23 +242,6 @@ function recompute_cm_from_dm_target!(cm::AbstractArray{FT, 3},
 end
 
 """
-    recompute_faceindexed_cm_from_dm_target!(cm, hflux, face_left, face_right,
-                                             div_scratch, m, dm_target)
-
-Face-indexed convenience wrapper for the shared explicit-dm continuity closure.
-"""
-function recompute_faceindexed_cm_from_dm_target!(cm::AbstractMatrix{FT},
-                                                  hflux::AbstractMatrix,
-                                                  face_left::AbstractVector{<:Integer},
-                                                  face_right::AbstractVector{<:Integer},
-                                                  div_scratch::AbstractMatrix{Float64},
-                                                  m::AbstractMatrix,
-                                                  dm_target::AbstractMatrix{<:Real}) where {FT}
-    layout = faceindexed_replay_layout(face_left, face_right)
-    return recompute_cm_from_dm_target!(layout, div_scratch, cm, m, dm_target, hflux)
-end
-
-"""
     verify_window_continuity(scratch, m_cur, cm, m_next, steps_per_window)
     verify_window_continuity(layout, scratch, m_cur, cm, m_next, steps_per_window, flux_args...)
 
