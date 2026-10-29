@@ -42,7 +42,7 @@ mass basis, supported operators, and load-time consistency gates.
 - Top-level include order follows `src/AtmosTransport.jl`:
   `Architectures -> SectionTimer -> ConfigChecks -> LogLevels -> AtomicFiles ->`
   `Quantities -> Parameters ->`
-  `Grids -> State -> Output -> MetDrivers -> Operators -> Tape -> Adjoints ->`
+  `Grids -> State -> Output -> Observations -> MetDrivers -> Operators -> Tape -> Adjoints ->`
   `Regridding -> GriddedIO -> Preprocessing -> Visualization -> Models ->`
   `Analysis -> Downloads`. `Footprint/` and `Inversion/` are not modules:
   `Adjoints.jl` includes their files.

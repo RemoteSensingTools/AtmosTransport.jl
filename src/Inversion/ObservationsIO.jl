@@ -52,7 +52,7 @@ struct PointObservationKind <: AbstractObservationKind end
 """
 `kind = "column"`: a column-averaged dry mole fraction (TCCON, a satellite
 sounding). A column record with a retrieval block (its layers, pressure
-weights, averaging kernel and prior, an `Output.RetrievalColumn`) is bound
+weights, averaging kernel and prior, an `Observations.RetrievalColumn`) is bound
 to an averaging-kernel column ([`CSRetrievalColumnObjective`](@ref)); one
 without it to the air-mass-weighted column mean of its cell
 ([`CSColumnMeanObjective`](@ref)). A column record states no intake height,
@@ -112,14 +112,14 @@ One observation row of the schema-v2 [`CSObservationSet`](@ref).
   model_sigma²).
 - `instrument_type` (e.g. `"ICOS"`, `"TCCON"`), `tracer` (e.g. `"CO2"`).
 - `retrieval`: the retrieval block of an averaging-kernel column record (an
-  `Output.RetrievalColumn`: pressures from the surface up, pressure weights,
+  `Observations.RetrievalColumn`: pressures from the surface up, pressure weights,
   column averaging kernel, prior profile in mol/mol, optional model-profile
   uncertainty, and its mapping: layer means between interfaces,
-  `Output.LayerRebin`, or values on levels, `Output.HatLevelProjection`), or
+  `Observations.LayerRebin`, or values on levels, `Observations.HatLevelProjection`), or
   `nothing`. Only column records carry one;
   such a record is an absolute column average, `value` in (0, 1] mol/mol with
   `value_sigma` and `model_sigma` not above it. Its model-error term
-  ``\\sum_i (h_i a_i σ_i)^2`` (`Output.retrieval_model_error_variance`, zero
+  ``\\sum_i (h_i a_i σ_i)^2`` (`Observations.retrieval_model_error_variance`, zero
   without a model-profile uncertainty) is added to σ².
 """
 struct CSObservationRecord
@@ -373,13 +373,13 @@ function write_observations(path::AbstractString, set::CSObservationSet;
         @inbounds for (i, r) in enumerate(set.records), c in 1:6
             dates[c, i] = r.date_components[c]
         end
-        _write_obs_var(ds, "date_components", Int16, ("date_component", "obs"), dates,
+        write_observation_variable!(ds, "date_components", Int16, ("date_component", "obs"), dates,
                        ("description" => "(year, month, day, hour, minute, second) UTC per observation",))
-        _write_obs_var(ds, "kind", String, ("obs",),
+        write_observation_variable!(ds, "kind", String, ("obs",),
                        String[observation_kind_label(r.kind) for r in set.records],
                        ("description" => "\"point\" (in-situ sample in the column) or \"column\" (column average)",))
         for (name, T, field, attrs) in _OBSERVATION_VARIABLES
-            _write_obs_var(ds, name, T, ("obs",), T[getfield(r, field) for r in set.records], attrs)
+            write_observation_variable!(ds, name, T, ("obs",), T[getfield(r, field) for r in set.records], attrs)
         end
         _write_retrieval_block(ds, set.records)
         # A file with averaging-kernel columns states that its values are dry
@@ -402,7 +402,7 @@ end
 const _VALUE_VARIABLES = ("value", "value_sigma", "model_sigma")
 
 function _value_unit_scales(ds, path, has_retrieval::Bool)
-    scales = map(v -> _mole_fraction_scale(get(ds[v].attrib, "units", nothing)), _VALUE_VARIABLES)
+    scales = map(v -> mole_fraction_scale(get(ds[v].attrib, "units", nothing)), _VALUE_VARIABLES)
     stated = [v for (v, sc) in zip(_VALUE_VARIABLES, scales) if sc !== nothing]
     unstated = [v for (v, sc) in zip(_VALUE_VARIABLES, scales) if sc === nothing]
     units(v) = repr(get(ds[v].attrib, "units", nothing))
@@ -421,14 +421,7 @@ function _value_unit_scales(ds, path, has_retrieval::Bool)
     return NamedTuple{(:value, :value_sigma, :model_sigma)}(map(sc -> something(sc, 1.0), scales))
 end
 
-function _write_obs_var(ds, name, T, dims, data, attrs)
-    v = NCDatasets.defVar(ds, name, T, dims)
-    for (k, val) in attrs
-        v.attrib[k] = val
-    end
-    v[:] = data
-    return v
-end
+
 
 # ---------------------------------------------------------------------------
 # Retrieval-level block (averaging-kernel columns)
@@ -480,21 +473,21 @@ function _write_retrieval_block(ds, records)
             values = getfield(c, field)
             data[1:length(values), i] .= values
         end
-        _write_obs_var(ds, name, Float64, (dim, "obs"), data,
+        write_observation_variable!(ds, name, Float64, (dim, "obs"), data,
                        ("units" => units, "ordering" => _RETRIEVAL_ORDERING, "description" => description))
     end
-    _write_obs_var(ds, "retrieval_surface_pressure_pa", Float64, ("obs",),
+    write_observation_variable!(ds, "retrieval_surface_pressure_pa", Float64, ("obs",),
                    Float64[c === nothing ? NaN : c.surface_pressure_pa for c in columns],
                    ("units" => "Pa", "description" =>
                     "retrieval surface pressure (total), equal to the first retrieval pressure; NaN = no block"))
-    _write_obs_var(ds, _RETRIEVAL_MAPPING_VARIABLE, String, ("obs",),
+    write_observation_variable!(ds, _RETRIEVAL_MAPPING_VARIABLE, String, ("obs",),
                    String[c === nothing ? "" : retrieval_mapping_label(c.mapping) for c in columns],
                    ("description" => "how the retrieval values relate to retrieval_pressure_pa: \"layer_rebin\" = " *
                     "means over the layers between the interfaces (the model column is rebinned by pressure " *
                     "overlap), \"hat_levels\" = values on the levels, linear in pressure between them (the model " *
                     "column is projected onto the levels' hat functions); empty = no block",))
     if any(c -> c !== nothing && !isnan(c.prior_column), columns)
-        _write_obs_var(ds, _RETRIEVAL_PRIOR_COLUMN_VARIABLE, Float64, ("obs",),
+        write_observation_variable!(ds, _RETRIEVAL_PRIOR_COLUMN_VARIABLE, Float64, ("obs",),
                        Float64[c === nothing ? NaN : c.prior_column for c in columns],
                        ("units" => "mol mol-1", "description" =>
                         "OPTIONAL retrieval prior column X_a (e.g. OCO-2 xco2_apriori): the simulated column is " *
@@ -564,12 +557,7 @@ _float_matrix(var) = map(x -> ismissing(x) ? NaN : Float64(x), Array(var))
 
 function _retrieval_unit_scale(name, units, label)
     if name in ("retrieval_pressure_pa", "retrieval_surface_pressure_pa")
-        key = _pressure_unit_key(units)
-        scale = key === nothing ? nothing : get(_PRESSURE_UNITS_PA, key, nothing)
-        scale === nothing && throw(ArgumentError(
-            "$(label) has units $(repr(units)); expected a pressure unit, one of " *
-            "$(join(sort!(collect(keys(_PRESSURE_UNITS_PA))), ", "))"))
-        return scale
+        return pressure_unit_scale(units, label)
     elseif name in ("retrieval_prior_profile", "retrieval_profile_sigma")
         return mole_fraction_unit_scale(units, label)
     end
@@ -602,7 +590,7 @@ function _record_retrieval(block::Dict{String, Any}, i::Int, label::AbstractStri
         mapping_label == "" ? throw(ArgumentError(
             "$(label) has a retrieval block but an empty $(_RETRIEVAL_MAPPING_VARIABLE); name its mapping " *
             "(\"layer_rebin\" or \"hat_levels\")")) :
-        _parse_retrieval_mapping(mapping_label, label)
+        parse_retrieval_mapping(mapping_label, label)
     n = something(findfirst(isnan, h), length(h) + 1) - 1
     n >= 1 || throw(ArgumentError("$(label) has a retrieval block without pressure weights"))
     np = retrieval_pressure_count(mapping, n)
@@ -665,7 +653,7 @@ Validation (fails fast with `ArgumentError`):
   …; converted to mol/mol), weights and kernel are dimensionless. A record's
   values come first and NaN pads the rest (the number of layers or levels is
   that of its pressure weights); a record whose block entries are all NaN has
-  none. Each block must pass the `Output.RetrievalColumn` checks (pressures
+  none. Each block must pass the `Observations.RetrievalColumn` checks (pressures
   strictly decreasing from the surface, weights ≥ 0 summing to 1, finite
   values, prior in [0, 1] mol/mol, surface pressure equal to the first
   pressure), and only column records may carry one.

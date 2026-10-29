@@ -192,5 +192,14 @@ Private = false
 
 Use `MetDrivers.binary_mass_basis(reader)` for the header Symbol, and
 `State.mass_basis(tag)` / `State.basis_symbol(basis)` for tag conversion.
-Observation placement coordinates subtype `Output.AbstractPlacementCoordinate`;
+Observation placement coordinates subtype `Observations.AbstractPlacementCoordinate`;
 model vertical grids subtype `Grids.AbstractVerticalCoordinate`.
+
+Observation APIs live in `AtmosTransport.Observations` (loaded after Output,
+before Adjoints), with the `Retrievals`, `Sources`, and `Sampling` submodules.
+Snapshot capture, NetCDF schema and streams, and ATMSNAP IO remain in Output.
+`Observations.pressure_unit_scale` and `parse_iso_utc` are shared public reader
+helpers; inversion and sampling use
+`Parameters.DEFAULT_OBSERVATION_LAYER_TEMPERATURE_KELVIN` (280 K) when no layer
+temperature is supplied. CF time decoding is unchanged and remains separate
+from the later-loaded GriddedIO module.

@@ -6,7 +6,7 @@
 # A point record is bound to a `CSPlacedPointObjective` with the forward
 # observation sampler's placement rule; at every sampled state its layer is
 # chosen from the replayed air mass of that state and the column meteorology
-# (`CSObservationColumnMet`) with `Output.sample_column_layer!`, the sampler's
+# (`CSObservationColumnMet`) with `Observations.sample_column_layer!`, the sampler's
 # own function. The observation is then the mixing ratio of that layer,
 # `h = r_k / max(m_k, ε)`, and its functional has the weight `1/max(m_k, ε)`
 # there. A record with a time window samples several steps,
@@ -34,7 +34,7 @@ using Logging: NullLogger, with_logger
 import AtmosTransport
 const AT = AtmosTransport
 const ADJ = AT.Adjoints
-const O = AT.Output
+const O = AT.Observations
 const Adv = AT.Operators.Advection
 
 include(joinpath(@__DIR__, "..", "helpers", "cs_observation_columns.jl"))

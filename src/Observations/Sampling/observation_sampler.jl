@@ -197,7 +197,7 @@ function build_observation_sampler(spec::ObservationOutputSpec, state, grid;
     examples = String[]   # a few unplaced requests for the message
     soundings, cells, placements = _locate_and_place(set.soundings, locator, spec, terrain, counters, examples)
     sites, site_cells, site_placements = _locate_and_place(set.sites, locator, spec, terrain, counters, examples)
-    _handle_unplaced(spec.placement, counters, examples)
+    handle_unplaced(spec.placement, counters, examples)
     basis = mass_basis(state)
     n_pressure = _n_pressure_placed(placements) + _n_pressure_placed(site_placements)
     n_retrieval = count(r -> r.retrieval !== nothing, soundings)
@@ -219,7 +219,7 @@ function build_observation_sampler(spec::ObservationOutputSpec, state, grid;
     n_retrieval > 0 && @info "observation averaging-kernel columns: $(n_retrieval) soundings, tracers " *
                              "$(join(String.(retrieval_tracers), ", ")), on " *
                              _pressure_basis_text(spec.placement.pressure_basis, basis)
-    _warn_below_ground(soundings, placements, sites, site_placements)
+    warn_below_ground(soundings, placements, sites, site_placements)
     isempty(soundings) && isempty(sites) &&
         @warn "observation sampling has nothing to sample; no observation files will be written"
     # Only the provenance of the terrain is kept: placements are resolved, and a
@@ -280,8 +280,8 @@ _height_basis_text(::DryInterfaces, ::DryBasis) =
     "hypsometric on the dry interface pressures with the layer temperature (pressure_basis = \"dry\", an " *
     "approximation: about 2 % low in a humid boundary layer)"
 
-_count_unplaced!(c::ObservationCounters, ::SoundingRequest) = (c.unplaced_soundings += 1)
-_count_unplaced!(c::ObservationCounters, ::SiteRequest) = (c.unplaced_sites += 1)
+count_unplaced!(c::ObservationCounters, ::SoundingRequest) = (c.unplaced_soundings += 1)
+count_unplaced!(c::ObservationCounters, ::SiteRequest) = (c.unplaced_sites += 1)
 _count_unlocated!(c::ObservationCounters, ::SoundingRequest) = (c.unlocated_soundings += 1)
 _count_unlocated!(c::ObservationCounters, ::SiteRequest) = (c.unlocated_sites += 1)
 
@@ -297,8 +297,8 @@ function _locate_and_place(requests::Vector{R}, locator, spec::ObservationOutput
         rule = missing_height_rule(spec.sources[request.source])
         placement = resolve_placement(spec.placement, rule, request, cell, terrain)
         if placement === nothing
-            _count_unplaced!(counters, request)
-            length(examples) < 5 && push!(examples, _unplaced_example(request))
+            count_unplaced!(counters, request)
+            length(examples) < 5 && push!(examples, unplaced_example(request))
             continue
         end
         push!(kept, request)
@@ -311,12 +311,10 @@ end
 _n_unplaced(c::ObservationCounters) = c.unplaced_soundings + c.unplaced_sites
 
 _fmt_height(x) = isfinite(x) ? string(round(x; digits = 1), " m") : "none"
-_unplaced_pressure(r::SoundingRequest) = r.pressure_pa
-_unplaced_pressure(::SiteRequest) = NaN
-_unplaced_example(r::Union{SoundingRequest, SiteRequest}) =
+unplaced_example(r::Union{SoundingRequest, SiteRequest}) =
     "source $(r.source) id $(repr(r.id)) at lon $(r.lon), lat $(r.lat): altitude $(_fmt_height(r.altitude_m)), " *
     "elevation $(_fmt_height(r.elevation_m)), intake_height $(_fmt_height(r.intake_height_m)), " *
-    "pressure $(isfinite(_unplaced_pressure(r)) ? string(_unplaced_pressure(r), " Pa") : "none")"
+    "pressure $(isfinite(_record_pressure(r)) ? string(_record_pressure(r), " Pa") : "none")"
 
 _coordinate_text(::HeightAboveGroundCoordinate) =
     "height above the ground (an altitude needs a record elevation or a dem_file value at the point)"
@@ -344,13 +342,13 @@ end
 
 # `label` names the config table and `context` the caller in the messages; the
 # inversion's `bind_to_mesh` shares this policy.
-_handle_unplaced(spec::VerticalPlacementSpec, c::ObservationCounters, examples;
+handle_unplaced(spec::VerticalPlacementSpec, c::ObservationCounters, examples;
                  label::AbstractString = _OUTPUT_OBSERVATIONS_LABEL, context::AbstractString = "observation sampling") =
-    _n_unplaced(c) == 0 ? nothing : _handle_unplaced_nonzero(spec.unplaced, c, examples, spec.coordinates, label, context)
-_handle_unplaced_nonzero(::ErrorOnUnplaced, c::ObservationCounters, examples, coordinates, label, context) =
+    _n_unplaced(c) == 0 ? nothing : handle_unplaced_nonzero(spec.unplaced, c, examples, spec.coordinates, label, context)
+handle_unplaced_nonzero(::ErrorOnUnplaced, c::ObservationCounters, examples, coordinates, label, context) =
     throw(ArgumentError("$(context) cannot place every request in the column. " *
                         _unplaced_message(c, examples, coordinates) * " " * _unplaced_remedy(coordinates, label)))
-_handle_unplaced_nonzero(::SkipUnplaced, c::ObservationCounters, examples, coordinates, label, context) =
+handle_unplaced_nonzero(::SkipUnplaced, c::ObservationCounters, examples, coordinates, label, context) =
     @warn "$(context) skips requests it cannot place (unplaced_records = \"skip\"). " *
           _unplaced_message(c, examples, coordinates)
 
@@ -367,7 +365,7 @@ end
 # (sampled in the lowest layer, `placement_height_agl` records the height) but
 # reported, with the first few. Returns their number. `context` names the
 # caller (the inversion's `bind_to_mesh` shares the check).
-function _warn_below_ground(soundings, placements, sites, site_placements;
+function warn_below_ground(soundings, placements, sites, site_placements;
                             context::AbstractString = "observation sampling")
     rows = [(r, p) for (r, p) in Iterators.flatten((zip(soundings, placements), zip(sites, site_placements)))
             if below_ground(p)]

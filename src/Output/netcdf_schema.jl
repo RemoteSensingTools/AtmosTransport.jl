@@ -85,18 +85,31 @@ function define_provenance_attributes!(ds)
     return (; creation_date, git_commit, git_dirty)
 end
 
-function _define_common_attributes!(ds, mesh, frames, mass_basis_sym::Symbol;
-                                     options = nothing,
-                                     physics_attributes = Dict{String, String}())
+"""
+    define_product_attributes!(ds, mesh, mass_basis, title, contract)
+
+Write the ordered common NetCDF attributes shared by snapshots and observations.
+Product-specific metadata and provenance are written by the caller afterward.
+"""
+function define_product_attributes!(ds, mesh, mass_basis_sym::Symbol, title, contract)
     ds.attrib["Conventions"]    = "CF-1.8"
-    ds.attrib["title"]          = "AtmosTransport runtime snapshot"
+    ds.attrib["title"]          = title
     ds.attrib["source"]         = "AtmosTransport.jl"
     ds.attrib["institution"]    = get(ENV, "ATMOSTR_INSTITUTION",
                                        "Caltech / Frankenberg group")
     ds.attrib["grid"]            = summary(mesh)
     ds.attrib["grid_type"]       = _grid_type_string(mesh)
     ds.attrib["mass_basis"]      = String(mass_basis_sym)
-    ds.attrib["output_contract"] = _OUTPUT_CONTRACT
+    ds.attrib["output_contract"] = contract
+
+    return nothing
+end
+
+function _define_common_attributes!(ds, mesh, frames, mass_basis_sym::Symbol;
+                                     options = nothing,
+                                     physics_attributes = Dict{String, String}())
+    define_product_attributes!(ds, mesh, mass_basis_sym,
+                               "AtmosTransport runtime snapshot", _OUTPUT_CONTRACT)
 
     (; creation_date, git_commit, git_dirty) = define_provenance_attributes!(ds)
     options === nothing ||

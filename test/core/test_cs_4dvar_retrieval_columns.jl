@@ -40,7 +40,20 @@ using Logging: NullLogger, with_logger
 import AtmosTransport
 const AT = AtmosTransport
 const ADJ = AT.Adjoints
-const O = AT.Output
+const O = AT.Observations
+
+# Evaluate production profile interpolation on unit vectors for an independent matrix comparison.
+function projection_from_profiles(p_half, air, column)
+    nz = length(p_half) - 1
+    P = zeros(O.retrieval_layer_count(column), nz)
+    for k in 1:nz
+        x = zeros(nz); x[k] = 1.0
+        O.retrieval_profile!(view(P, :, k), zeros(nz + 1), p_half, air, column, x)
+    end
+    return P
+end
+
+
 const Adv = AT.Operators.Advection
 
 include(joinpath(@__DIR__, "..", "helpers", "cs_observation_columns.jl"))
@@ -147,9 +160,13 @@ function _production(profile, tm5_levels, levels, ak, prior; h = (levels[1:(end 
     nz = length(x)
     H = zeros(nz)
     s = zeros(nz + 1)
-    O.retrieval_column_weights!(H, s, p_half, levels, h, ak)
+    total_h = sum(h)
+    column = O.RetrievalColumn(; pressure_pa = levels, pressure_weight = h ./ total_h,
+                               averaging_kernel = ak, prior_profile = prior)
+    O.retrieval_column_weights!(H, s, p_half, nothing, column)
+    H .*= total_h
     X = dot(H, x) + O.retrieval_prior_offset(h, ak, prior)
-    R = O.retrieval_rebin_matrix(p_half, levels)
+    R = projection_from_profiles(p_half, nothing, column)
     return (; X, H, s, R, profile = R * x)
 end
 
@@ -212,7 +229,10 @@ end
         c = _random_columns(rng)
         p_half = reverse(c.model)
         x = reverse(c.profile)
-        R = O.retrieval_rebin_matrix(p_half, c.levels)
+        h = -diff(c.levels) ./ (c.levels[1] - c.levels[end])
+        column = O.RetrievalColumn(; pressure_pa = c.levels, pressure_weight = h,
+                                   averaging_kernel = c.ak, prior_profile = c.prior)
+        R = projection_from_profiles(p_half, nothing, column)
         s = O.stretch_model_interfaces!(zeros(length(p_half)), p_half, c.levels[1], c.levels[end])
         # TM5's outer retrieval interfaces are the stretched model's.
         edges = vcat(s[end], c.levels[2:(end - 1)], s[1])
@@ -229,7 +249,7 @@ end
         column = O.RetrievalColumn(; pressure_pa = c.levels, pressure_weight = h, averaging_kernel = ones(n),
                                    prior_profile = clamp.(c.prior, 0, 1))
         Δp = diff(p_half)
-        @test O.retrieval_column_value(p_half, column, x) ≈ dot(Δp, x) / sum(Δp) rtol = 1e-13
+        @test O.retrieval_column_value(p_half, nothing, column, x) ≈ dot(Δp, x) / sum(Δp) rtol = 1e-13
     end
 end
 
@@ -268,11 +288,6 @@ end
     @test O.retrieval_model_error_variance(with_sigma) ≈ sum((good.pressure_weight .* good.averaging_kernel .* σ) .^ 2)
     @test O.retrieval_model_error_variance(good) == 0
     @test bad("within [0, 1]"; profile_sigma = fill(2.0, 6))               # an uncertainty in ppm
-    # The raw operator forms check the retrieval interfaces too.
-    p_half = collect(range(100.0, 1e5; length = 9))
-    @test_throws ArgumentError O.retrieval_column_weights!(zeros(8), zeros(9), p_half, reverse(good.pressure_pa),
-                                                           good.pressure_weight, good.averaging_kernel)
-    @test_throws ArgumentError O.retrieval_rebin_matrix(p_half, reverse(good.pressure_pa))
 end
 
 # ---------------------------------------------------------------------------

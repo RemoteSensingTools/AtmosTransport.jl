@@ -152,7 +152,7 @@ const _CELL_AVERAGING_MODES = ("average", "inflate_model_error")
 # `[observations.placement]`: the forward sampler's placement keys, plus the
 # constant layer temperature of the hypsometric heights and the surface-pressure
 # limit of averaging-kernel columns.
-const _OBSERVATION_PLACEMENT_KEYS = (AT.Output._VERTICAL_PLACEMENT_KEYS..., "layer_height_temperature_kelvin",
+const _OBSERVATION_PLACEMENT_KEYS = (AT.Observations.VERTICAL_PLACEMENT_KEYS..., "layer_height_temperature_kelvin",
                                      "max_surface_pressure_mismatch_pa")
 const _INVERSION_TABLE_KEYS = Dict(
     "mesh"           => ("Nc", "Hp", "float_type"),
@@ -363,14 +363,14 @@ function _max_surface_pressure_mismatch(cfg)
 end
 
 _observation_placement(cfg) =
-    AT.Output._parse_vertical_placement(get(cfg["observations"], "placement", Dict{String, Any}()),
+    AT.Observations.parse_vertical_placement(get(cfg["observations"], "placement", Dict{String, Any}()),
                                         _PLACEMENT_LABEL)
 
-_start_time(cfg) = AT.Output._parse_iso_utc(cfg["time"]["start"], "[time].start")
+_start_time(cfg) = AT.Observations.parse_iso_utc(cfg["time"]["start"], "[time].start")
 
 # Near-surface layer temperature of the hypsometric heights, as the forward
 # sampler's `layer_height_temperature_kelvin` default.
-const _DEFAULT_LAYER_HEIGHT_TEMPERATURE = 280.0
+const _DEFAULT_LAYER_HEIGHT_TEMPERATURE = AT.Parameters.DEFAULT_OBSERVATION_LAYER_TEMPERATURE_KELVIN
 
 function _layer_height_temperature(cfg)
     placement = get(get(cfg, "observations", Dict()), "placement", Dict())
@@ -484,7 +484,7 @@ function _build_synthetic_hydrostatic_problem(cfg, mesh, nsteps, FT)
         t = _float_vector(meteo, "temperature_kelvin")
         length(t) == Nz && all(x -> isfinite(x) && x > 0, t) || throw(ArgumentError(
             "[meteo].temperature_kelvin must give $(Nz) positive layer temperatures; got $(t)"))
-        AT.Output.ProfileLayerTemperature(t)
+        AT.Observations.ProfileLayerTemperature(t)
     else
         _layer_height_temperature(cfg)
     end

@@ -8,7 +8,7 @@
 #     without a window sample that step, records with `time_window_s > 0` the
 #     overlap-weighted steps of their window (weights sum to 1, truncated and
 #     renormalised at the run's ends); out-of-range policies.
-#   * Geography. Float64 coordinates bind to the cell `Output.locate` gives,
+#   * Geography. Float64 coordinates bind to the cell `Observations.locate` gives,
 #     also within Float32 rounding of a cell edge (OF-84); seams, wraps.
 #   * Vertical. Point records become `CSPlacedPointObjective`s placed by the
 #     forward sampler's rule (`resolve_placement`): intake height, altitude
@@ -24,7 +24,7 @@ using Logging: NullLogger, with_logger
 
 import AtmosTransport
 const AT = AtmosTransport
-const O = AT.Output
+const O = AT.Observations
 
 const NC_TEST = 6
 const DT_TEST = 3600.0                 # 1 hour per step

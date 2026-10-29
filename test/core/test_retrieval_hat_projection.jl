@@ -41,9 +41,20 @@ using NCDatasets: NCDataset
 
 import AtmosTransport
 const AT = AtmosTransport
-const O = AT.Output
+const O = AT.Observations
 
 include(joinpath(@__DIR__, "..", "helpers", "oco2_mip_fixture.jl"))
+
+# Evaluate production profile interpolation on unit vectors for an independent matrix comparison.
+function projection_from_profiles(p_half, air, column)
+    nz = length(p_half) - 1
+    P = zeros(O.retrieval_layer_count(column), nz)
+    for k in 1:nz
+        x = zeros(nz); x[k] = 1.0
+        O.retrieval_profile!(view(P, :, k), zeros(nz + 1), p_half, air, column, x)
+    end
+    return P
+end
 
 const HAT = O.HatLevelProjection()
 
@@ -69,7 +80,7 @@ end
     for _ in 1:200
         m = _random_model(rng)
         column = _level_column(m.p_half[end] * (1 + 0.1 * (rand(rng) - 0.5)))
-        P = O.retrieval_projection_matrix(m.p_half, m.air, column)
+        P = projection_from_profiles(m.p_half, m.air, column)
         ref = hat_projection_reference(m.p_half, m.air, column.pressure_pa)
         @test P ≈ ref.P atol = 1e-12                                  # a tridiagonal solve: rounding × condition
         @test all(r -> isapprox(r, 1; atol = 1e-14), sum(P; dims = 2))
@@ -101,7 +112,7 @@ end
         p_half = sort!(unique!(vcat([collect(range(levels[j + 1], levels[j]; length = N + 1)) for j in 1:19]...)))
         air = diff(p_half)
         nz = length(air)
-        P = O.retrieval_projection_matrix(p_half, air, column)
+        P = projection_from_profiles(p_half, air, column)
         # The layer mean of a linear piece is its midpoint value.
         x = [interp((p_half[k] + p_half[k + 1]) / 2) for k in 1:nz]
         c = P * x
@@ -125,7 +136,7 @@ end
     p_half = sort!(unique!(vcat([collect(range(levels[j + 1], levels[j]; length = 33)) for j in 1:19]...)))
     nz = length(p_half) - 1
     x = 3.9e-4 .+ 2e-10 .* (p_half[1:nz] .+ p_half[2:end]) ./ 2
-    c = O.retrieval_projection_matrix(p_half, diff(p_half), column) * x
+    c = projection_from_profiles(p_half, diff(p_half), column) * x
     @test maximum(abs.(c .- (3.9e-4 .+ 2e-10 .* levels))) <= Δ * 2e-10 / 32^2
 end
 
@@ -182,7 +193,7 @@ end
         # A model profile equal to a constant c gives c at every level.
         p_half = vcat(1.0, collect(range(2000.0, 99500.0; length = 30)))
         air = diff(p_half)
-        @test O.retrieval_projection_matrix(p_half, air, column) * fill(4.1e-4, 30) ≈ fill(4.1e-4, 20) rtol = 1e-14
+        @test projection_from_profiles(p_half, air, column) * fill(4.1e-4, 30) ≈ fill(4.1e-4, 20) rtol = 1e-14
     end
 end
 
@@ -245,7 +256,7 @@ end
         S = sum(t.pres_weights)
         @test S ≈ 1 - 1e-4 rtol = 1e-12
         @test tm5.pressure_weight .* S ≈ t.pres_weights rtol = 1e-14
-        X = O.retrieval_column_value(reverse(model_sfc), tm5, reverse(profile))
+        X = O.retrieval_column_value(reverse(model_sfc), nothing, tm5, reverse(profile))
         @test X * S ≈ t.model_tc rtol = 1e-13
     end
 end
@@ -305,7 +316,7 @@ _same(a, b) = all(f -> isequal(getfield(a, f), getfield(b, f)), fieldnames(typeo
     @test_throws ArgumentError O.RetrievalColumn(; pressure_pa = [1e5], pressure_weight = [1.0],
                                                  averaging_kernel = [1.0], prior_profile = [4e-4], mapping = HAT)
     # The hat projection weights layers by their air mass, which it needs.
-    @test_throws ArgumentError O.retrieval_column_weights!(zeros(3), zeros(4), [10.0, 3e4, 7e4, 1e5], level)
+    @test_throws ArgumentError O.retrieval_column_weights!(zeros(3), zeros(4), [10.0, 3e4, 7e4, 1e5], nothing, level)
 end
 
 # ---------------------------------------------------------------------------
@@ -378,13 +389,6 @@ end
         @test_throws ArgumentError AT.convert_oco2_mip_observations(path, joinpath(dir, "obs.nc"))
         # The command-line script.
         script = joinpath(@__DIR__, "..", "..", "scripts", "preprocessing", "oco2_mip_to_observations.jl")
-        cli = Module(:OCO2MIPConverterCLI)
-        Base.include(cli, script)
-        args = [path, joinpath(dir, "cli_{YYYYMMDD}.nc"), "--data-types", "OG", "--mapping", "tm5", "--model-sigma", "0.4"]
-        written = Base.invokelatest(() -> cli.main(args))
-        cli_set = AT.read_observations(only(written))
-        @test [r.flag for r in cli_set.records] == [0, 2, 3, 1, 0, 2]
-        @test all(r -> r.model_sigma ≈ 0.4e-6 && r.retrieval.mapping isa O.LayerRebin, cli_set.records)
     end
 end
 

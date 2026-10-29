@@ -177,7 +177,7 @@ end
 """
 Stencil placement code of an observation whose objective is a column mean
 ([`CSColumnMeanObjective`](@ref)): every level of the column, no vertical
-placement. The point objectives use the `Output.VERTICAL_PLACEMENT_CODES`.
+placement. The point objectives use the `Observations.VERTICAL_PLACEMENT_CODES`.
 """
 const COLUMN_MEAN_PLACEMENT_CODE = Int8(-1)
 """
@@ -212,7 +212,7 @@ the sampled `steps` and their `weights` (its [`CSTimeSampling`](@ref)), the
 model level sampled at each step (`levels`, k = 1 at the top, resolved from
 the replayed column at the end of that step; `0` for an operator that reads
 more than one level, as a column mean), the `placement_method`
-(`Output.VERTICAL_PLACEMENT_CODES` for a [`CSPlacedPointObjective`](@ref),
+(`Observations.VERTICAL_PLACEMENT_CODES` for a [`CSPlacedPointObjective`](@ref),
 [`COLUMN_MEAN_PLACEMENT_CODE`](@ref),
 [`RETRIEVAL_COLUMN_PLACEMENT_CODE`](@ref), [`CELL_AVERAGE_PLACEMENT_CODE`](@ref)
 or [`FIXED_LEVEL_PLACEMENT_CODE`](@ref) otherwise), and the height above the

@@ -50,17 +50,17 @@ end
 
 Mixing ratio `rm / m` of the model layer that contains an in-situ sample, in
 the physical CS interior cell `(panel, i, j)` of area `area` (m², the cell
-that contains the sample). `placement` (an `Output.VerticalPlacement`) says
+that contains the sample). `placement` (an `Observations.VerticalPlacement`) says
 how the sample is placed in the column — its height above the model surface
 or its pressure — and is resolved once, by `bind_to_mesh` with
-`Output.resolve_placement`, the rule of the forward observation sampler. The
+`Observations.resolve_placement`, the rule of the forward observation sampler. The
 layer itself is chosen every time the objective is sampled, from the replayed
 air mass of that state and the [`CSObservationColumnMet`](@ref) (hypsometric
 layer heights and interface pressures, both on `pressure_basis`: total
 pressures and the virtual temperature from the humidity for
 `TotalFromHumidity`, the dry interfaces and the layer temperature for
 `DryInterfaces`), with
-`Output.sample_column_layer!`. Sampling it therefore needs the column
+`Observations.sample_column_layer!`. Sampling it therefore needs the column
 meteorology: `cs_surface_flux_4dvar(...; column_met)`; the final-time
 footprint and Jacobian entry points do not take it.
 """
@@ -92,14 +92,14 @@ Averaging-kernel column average of the physical CS interior cell
 `(panel, i, j)` (area `area`, m²): a retrieved column (satellite or TCCON
 sounding) compared with the model through the retrieval's own layers,
 pressure weights, averaging kernel and prior (`retrieval`, an
-`Output.RetrievalColumn`). At every sampled state the model's interface
+`Observations.RetrievalColumn`). At every sampled state the model's interface
 pressures of `pressure_basis` (total pressures from the dry air mass and the
 specific humidity, `TotalFromHumidity`, or the dry interfaces,
 `DryInterfaces`) are stretched onto the retrieval column and the dry mixing
 ratios ``x_k = r_k/\\max(m_k, ε)`` are mapped onto its layers or levels by
 the projection ``P`` of the retrieval's mapping (the rebin ``R`` of TM5-4DVar
 for a layer column, the hat projection for a level column;
-`Output.retrieval_column_weights!`):
+`Observations.retrieval_column_weights!`):
 
 ```math
 X = \\sum_k H_k\\, x_k + \\sum_i h_i (1 - a_i)\\, x_{a,i}, \\qquad

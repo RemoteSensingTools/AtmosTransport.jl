@@ -33,7 +33,7 @@ const NC_TEST = 6
 const DT_TEST = 3600.0
 const T0_TEST_STR = "2024-06-15 00:00:00"
 const T0_TEST = DateTime(2024, 6, 15, 0, 0, 0)
-const CODES = O.VERTICAL_PLACEMENT_CODES
+const CODES = AtmosTransport.Observations.VERTICAL_PLACEMENT_CODES
 
 _mesh() = AT.CubedSphereMesh(; Nc = NC_TEST, FT = Float64)
 
@@ -230,7 +230,7 @@ end
     # A stencil of another observation, and a kind mismatch.
     @test occursin("stencil", _errmsg(() -> _build(inputs; stencils = st[[2, 1, 3]])))
     placed = AT.CSObservation(o.sampling, AT.CSPlacedPointObjective(p, i, j, 1.0e12,
-                              O.VerticalPlacement(CODES.record_height, 10.0, NaN, NaN), O.TotalFromHumidity()),
+                              AtmosTransport.Observations.VerticalPlacement(CODES.record_height, 10.0, NaN, NaN), AtmosTransport.Observations.TotalFromHumidity()),
                               o.value, o.sigma; id = o.id)
     @test occursin("column record bound to", _errmsg(() -> _build(inputs; observations = replace_obs(1, placed))))
 end

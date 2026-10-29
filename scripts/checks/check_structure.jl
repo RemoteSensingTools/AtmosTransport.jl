@@ -572,10 +572,52 @@ function relocate_x1_baseline(before, file)
     return Dict("allow" => entries)
 end
 
+function relocate_o1_layers(before, file)
+    # O1 splits the former Output observation unit into three lower modules
+    # and a facade. Translate only its historical dependency budget; duplicate,
+    # clone, private-use and size allowances receive no new identities.
+    file == "src/LAYERS.toml" || return before
+    mods = get(before, "modules", Dict())
+    haskey(mods, "AtmosTransport.Output") || return before
+    haskey(mods, "AtmosTransport.Observations") && return before
+    migrated = deepcopy(before)
+    output = "AtmosTransport.Output"
+    observations = "AtmosTransport.Observations"
+    children = observations .* [".Retrievals", ".Sources", ".Sampling"]
+    for deps in values(migrated["modules"])
+        output in deps && append!(deps, [observations; children])
+    end
+    migrated["modules"][observations] = children
+    migrated["modules"][children[1]] = String[]
+    migrated["modules"][children[2]] = ["AtmosTransport", "AtmosTransport.ConfigChecks", children[1]]
+    migrated["modules"][children[3]] = [mods[output]; output; children[1:2]]
+    folders = get(migrated, "folders", Dict())
+    old = "src/Output/observations"
+    if haskey(folders, old)
+        new = ["src/Observations", "src/Observations/Retrievals",
+               "src/Observations/Sources", "src/Observations/Sampling"]
+        for deps in values(folders)
+            old in deps && append!(deps, new)
+        end
+        folders[new[1]] = new[2:4]
+        folders[new[2]] = String[]
+        folders[new[3]] = ["src", new[2]]
+        folders[new[4]] = [folders[old]; new[2:3]]
+        # The package facade now also includes the new facade module. This is
+        # the same foundation/facade folder exception as src -> Output.
+        "src/Output" in get(folders, "src", String[]) && push!(folders["src"], new[1])
+        exceptions = get!(migrated, "folder_order_allow", Dict())
+        haskey(exceptions, "src|src/Output") &&
+            (exceptions["src|src/Observations"] = exceptions["src|src/Output"])
+    end
+    return migrated
+end
+
 function allowance_growth(before, after, file)
     before == after && return String[]
     original_count = length(get(before, "allow", Dict()))
     before = relocate_x1_baseline(before, file)
+    before = relocate_o1_layers(before, file)
     if file == "src/LAYERS.toml"
         growth = String[]
         for table in ("modules", "folders")

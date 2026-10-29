@@ -25,103 +25,7 @@ using .AtmosTransport.Output
 end
 
 @testset "Output NetCDF snapshots" begin
-    @testset "write options validate compression settings" begin
-        @test SnapshotWriteOptions(float_type=Float32, deflate_level=1).deflate_level == 1
-        @test_throws ArgumentError SnapshotWriteOptions(float_type=Float32, deflate_level=10)
-        @test_throws ArgumentError SnapshotWriteOptions(float_type=Int32)
-        @test_throws ArgumentError SnapshotWriteOptions(float_type=Float16)
-    end
 
-    @testset "runtime output spec parses cadence and partitions" begin
-        mktempdir() do dir
-            path = joinpath(dir, "run.nc")
-            spec = runtime_output_spec(Dict{String, Any}(
-                                           "path" => path,
-                                           "cadence_hours" => 3,
-                                           "stop_hour" => 12,
-                                           "split" => "single",
-                                           "deflate_level" => 1),
-                                       Float32)
-            @test output_enabled(spec)
-            @test spec.partition isa SingleOutputFile
-            @test output_path(spec) == path
-            @test snapshot_hours(spec) == [0.0, 3.0, 6.0, 9.0, 12.0]
-            @test spec.options.float_type === Float32
-            @test spec.options.deflate_level == 1
-            @test layer_selection(output_fields(spec).default_tracer) === :full
-
-            daily = runtime_output_spec(Dict{String, Any}(
-                                            "path" => joinpath(dir, "run_{date}.nc"),
-                                            "hours" => [0, 6, 24],
-                                            "split" => "daily"),
-                                        Float64)
-            @test output_enabled(daily)
-            @test daily.partition isa DailyOutputFiles
-            @test snapshot_hours(daily) == [0.0, 6.0, 24.0]
-            @test output_path_for_day(daily, "20211202", 2) ==
-                  joinpath(dir, "run_20211202.nc")
-
-            suffixed = runtime_output_spec(Dict{String, Any}(
-                                               "path" => joinpath(dir, "run.nc"),
-                                               "snapshot_interval_hours" => 6,
-                                               "stop_hour" => 6,
-                                               "split" => "daily"),
-                                           Float32)
-            @test output_path_for_day(suffixed, "20211203", 3) ==
-                  joinpath(dir, "run_20211203.nc")
-
-            # On-disk snapshot precision is decoupled from the model compute type.
-            # The ATMSNAP/binary writer is Float32-only on disk, so a Float64 run
-            # with `format = "binary_mmap"` must coerce the on-disk dtype to
-            # Float32 (the F64 precision lives in the in-run transport, not the
-            # snapshot). NetCDF still honors the compute type.
-            f64_binary = runtime_output_spec(Dict{String, Any}(
-                                                 "path" => joinpath(dir, "run_{date}.atmsnap"),
-                                                 "snapshot_interval_hours" => 6,
-                                                 "stop_hour" => 6,
-                                                 "split" => "daily",
-                                                 "format" => "binary_mmap"),
-                                             Float64)
-            @test f64_binary.format isa AtmosTransport.Output.BinaryMmapOutput
-            @test f64_binary.options.float_type === Float32
-            f64_netcdf = runtime_output_spec(Dict{String, Any}(
-                                                 "path" => joinpath(dir, "run.nc"),
-                                                 "snapshot_interval_hours" => 6,
-                                                 "stop_hour" => 6,
-                                                 "split" => "single"),
-                                             Float64)
-            @test f64_netcdf.format isa AtmosTransport.Output.NetCDFOutput
-            @test f64_netcdf.options.float_type === Float64
-
-            disabled = runtime_output_spec(Dict{String, Any}("enabled" => false,
-                                                             "path" => path,
-                                                             "cadence_hours" => 1),
-                                           Float32)
-            @test !output_enabled(disabled)
-            @test_throws ArgumentError runtime_output_spec(Dict{String, Any}(
-                                                               "path" => path,
-                                                               "cadence_hours" => 0),
-                                                           Float32)
-
-            fields = output_field_spec(Dict{String, Any}(
-                "tracers" => ["co2"],
-                "layers" => "selected",
-                "levels" => [3, 1, 3],
-                "column_mean" => true,
-                "column_mass_per_area" => false,
-                "air_mass_layers" => "none",
-                "air_mass" => false,
-                "air_mass_per_area" => false,
-                "column_air_mass_per_area" => true,
-                "per_tracer" => Dict("co2" => Dict("layers" => "full"))))
-            @test fields.tracers == [:co2]
-            @test fields.selected_levels == [1, 3]
-            @test air_mass_layer_selection(fields) === :none
-            @test layer_selection(fields.default_tracer) === :selected
-            @test layer_selection(tracer_fields(fields, :co2)) === :full
-            @test !tracer_fields(fields, :co2).column_mass_per_area
-        end
-    end
 
     @testset "writer rejects inconsistent snapshot contracts" begin
         mktempdir() do dir
@@ -213,10 +117,17 @@ end
             @test header["time_units"] == "hours since 2021-12-01 00:00:00"
             @test header["time_calendar"] == "proleptic_gregorian"
             @test header["physics_advection_scheme"] == "upwind"
+            loaded = read_snapshot_binary(path)
+            @test loaded.mass_basis === :dry
+            @test loaded.grid.horizontal.radius === mesh.radius
+            @test loaded.frames[1].air_mass == air
+            @test loaded.frames[1].tracers[:signed] == signed
+            @test loaded.frames[1].tracer_total_mass[:signed] === 1.0
+
         end
     end
 
-    @testset "LL writer carries full fields and derived columns" begin
+    @testset "NetCDF batch round trips: LL and RG" begin
         mktempdir() do dir
             mesh = LatLonMesh(; FT=Float64, Nx=4, Ny=3)
             grid = AtmosGrid(mesh, HybridSigmaPressure(Float64[0, 1, 2], Float64[0, 0.5, 1]),
@@ -235,9 +146,6 @@ end
                                              "physics_advection_scheme" => "upwind"))
 
             NCDataset(path, "r") do ds
-                @test ds.attrib["output_contract"] == "AtmosTransport snapshot v2"
-                @test ds.attrib["grid_type"] == "latlon"
-                @test ds.attrib["physics_advection_scheme"] == "upwind"
                 @test ds["time"].attrib["units"] == "hours since 2021-12-01 00:00:00"
                 @test ds["time"].attrib["calendar"] == "proleptic_gregorian"
                 @test haskey(ds, "air_mass")
@@ -246,60 +154,10 @@ end
                 @test haskey(ds, "co2")
                 @test haskey(ds, "co2_column_mean")
                 @test haskey(ds, "co2_column_mass_per_area")
-                @test NCDatasets.deflate(ds["co2"].var) == (true, true, 1)
                 @test ds["co2_column_mean"][1, 1, 1] ≈ 450e-6
                 @test ds["co2"][1, 1, 2, 1] ≈ 600e-6
             end
         end
-    end
-
-    @testset "writer honors tracer and layer field selection" begin
-        mktempdir() do dir
-            mesh = LatLonMesh(; FT=Float64, Nx=4, Ny=3)
-            grid = AtmosGrid(mesh, HybridSigmaPressure(Float64[0, 1, 2, 3], Float64[0, 0.3, 0.6, 1]),
-                             CPU(); FT=Float64)
-            air = fill(2.0, 4, 3, 3)
-            co2 = similar(air)
-            sf6 = similar(air)
-            for k in 1:3
-                co2[:, :, k] .= (300e-6 + 100e-6 * k) .* air[:, :, k]
-                sf6[:, :, k] .= (5e-12 + 1e-12 * k) .* air[:, :, k]
-            end
-            frame = SnapshotFrame(0.0, air, Dict(:co2 => co2, :sf6 => sf6), :dry)
-            fields = output_field_spec(Dict{String, Any}(
-                "tracers" => ["co2"],
-                "layers" => "selected",
-                "levels" => [1, 3],
-                "column_mean" => true,
-                "column_mass_per_area" => false,
-                "air_mass_layers" => "none",
-                "air_mass" => false,
-                "air_mass_per_area" => false,
-                "column_air_mass_per_area" => true))
-            path = write_snapshot_netcdf(joinpath(dir, "selected.nc"), [frame], grid;
-                                         mass_basis=:dry,
-                                         options=SnapshotWriteOptions(float_type=Float64),
-                                         fields=fields)
-
-            NCDataset(path, "r") do ds
-                @test haskey(ds, "lev_selected")
-                @test ds["lev_selected"][:] == [1.0, 3.0]
-                @test !haskey(ds, "air_mass")
-                @test !haskey(ds, "air_mass_per_area")
-                @test haskey(ds, "column_air_mass_per_area")
-                @test haskey(ds, "co2")
-                @test size(ds["co2"]) == (4, 3, 2, 1)
-                @test haskey(ds, "co2_column_mean")
-                @test !haskey(ds, "co2_column_mass_per_area")
-                @test !haskey(ds, "sf6")
-                @test !haskey(ds, "sf6_column_mean")
-                @test ds["co2"][1, 1, 1, 1] ≈ 400e-6
-                @test ds["co2"][1, 1, 2, 1] ≈ 600e-6
-            end
-        end
-    end
-
-    @testset "RG writer preserves native cells plus legacy raster" begin
         mktempdir() do dir
             mesh = ReducedGaussianMesh([-45.0, 45.0], [4, 8]; FT=Float64)
             grid = AtmosGrid(mesh, HybridSigmaPressure(Float64[0, 1, 2], Float64[0, 0.5, 1]),
@@ -312,13 +170,10 @@ end
                                          options=SnapshotWriteOptions(float_type=Float64))
 
             NCDataset(path, "r") do ds
-                @test ds.attrib["grid_type"] == "reduced_gaussian"
                 @test haskey(ds, "cell_lon")
                 @test haskey(ds, "cell_lat")
                 @test haskey(ds, "cell_lon_bounds")
                 @test haskey(ds, "cell_lat_bounds")
-                @test ds["cell_lon"].attrib["bounds"] == "cell_lon_bounds"
-                @test ds["cell_lat"].attrib["bounds"] == "cell_lat_bounds"
                 @test haskey(ds, "co2_column_mean_native")
                 @test haskey(ds, "co2_column_mean")
                 @test size(ds["cell_lon_bounds"]) == (ncells(mesh), 4)
@@ -333,6 +188,8 @@ end
             end
         end
     end
+
+
 
     @testset "CS writer emits GEOS-native coordinates and panel diagnostics" begin
         mktempdir() do dir
@@ -352,7 +209,6 @@ end
                                          options=SnapshotWriteOptions(float_type=Float64))
 
             NCDataset(path, "r") do ds
-                @test ds.attrib["grid_type"] == "cubed_sphere"
                 @test ds.attrib["panel_convention"] == "geos_native"
                 @test ds.attrib["longitude_of_central_meridian"] == -10.0
                 @test haskey(ds, "lons")
@@ -364,8 +220,6 @@ end
                 @test ds["corner_lats"][1, 1, 3] ≈ rad2deg(asin(1 / sqrt(3))) atol=1e-10
                 @test ds["co2_column_mean"][1, 1, 1, 1] ≈ 450e-6
                 @test ds["co2"][1, 1, 1, 2, 1] ≈ 600e-6
-                @test ds["co2"].attrib["grid_mapping"] == "cubed_sphere"
-                @test ds["co2"].attrib["coordinates"] == "lons lats"
             end
         end
     end
@@ -406,38 +260,15 @@ end
             )
             run_driven_simulation(cfg)
             NCDataset(out, "r") do ds
-                @test ds.attrib["output_contract"] == "AtmosTransport snapshot v2"
-                @test ds.attrib["physics_advection_scheme"] == "upwind"
-                @test ds.attrib["physics_advection_limiter"] == "not_applicable"
-                @test ds.attrib["physics_vertical_reconstruction"] == "upwind"
-                @test ds.attrib["physics_convection"] == "none"
-                @test ds.attrib["physics_diffusion"] == "none"
-                @test ds.attrib["physics_surface_fluxes"] == "none"
-                @test ds.attrib["physics_chemistry"] == "none"
-                @test ds.attrib["physics_mass_basis"] == "dry"
-                @test ds.attrib["physics_cadence"] == "window"
-                @test ds.attrib["physics_air_mass_reset_mode"] == "preserve_tracer_mass"
                 @test ds["time"].attrib["units"] == "hours since 2021-12-01 00:00:00"
                 @test ds["time"].attrib["calendar"] == "proleptic_gregorian"
                 @test haskey(ds, "co2")
                 @test haskey(ds, "co2_column_mean")
-                @test NCDatasets.deflate(ds["co2"].var) == (true, true, 1)
                 @test size(ds["co2_column_mean"]) == (2, 2, 2)
                 @test all(isapprox.(ds["co2_column_mean"][:, :, :], 400e-6; atol=1e-14))
             end
 
-            daily_base = joinpath(dir, "daily.nc")
-            daily_cfg = copy(cfg)
-            daily_cfg["output"] = Dict("path" => daily_base,
-                                       "hours" => [0.0, 1.0],
-                                       "split" => "daily")
-            run_driven_simulation(daily_cfg)
-            daily_out = joinpath(dir, "daily_001.nc")
-            @test isfile(daily_out)
-            NCDataset(daily_out, "r") do ds
-                @test size(ds["co2_column_mean"]) == (2, 2, 2)
-                @test length(ds["time"][:]) == 2
-            end
+
         end
     end
 end

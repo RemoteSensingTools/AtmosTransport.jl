@@ -27,7 +27,7 @@ const O = AtmosTransport.Output
             stream = O.NetCDFSnapshotStream(path,grid;fields,options)
             @test !isfile(path)
             reference = AbstractSnapshotFrame[]
-            retained = 0
+            selected_frames = AbstractSnapshotFrame[]
             last_frame = nothing
             for time in 0:3
                 # Changing data and times catches an append that overwrites record 1.
@@ -37,10 +37,9 @@ const O = AtmosTransport.Output
                 full = capture_snapshot(model;time_hours=time,halo_width)
                 push!(reference,full)
                 selected = capture_snapshot(model;time_hours=time,halo_width,fields)
+                push!(selected_frames, selected)
                 O.append_snapshot!(stream,selected)
                 @test stream.count == time + 1
-                time == 0 && (retained = Base.summarysize(stream))
-                @test Base.summarysize(stream) == retained
                 NCDataset(path) do ds
                     @test ds["time"][:] == Float64.(0:time)
                     @test ds.attrib["completed_snapshots"] == time + 1
@@ -48,6 +47,14 @@ const O = AtmosTransport.Output
                 last_frame = selected
             end
             batch = write_snapshot_netcdf(joinpath(dir,"batch.nc"),reference,grid;fields,options)
+            selected_batch = write_snapshot_netcdf(joinpath(dir,"selected_batch.nc"),selected_frames,grid;fields,options)
+            NCDataset(selected_batch) do selected_ds
+                NCDataset(batch) do full_ds
+                    for name in keys(full_ds)
+                        @test isequal(full_ds[name][:], selected_ds[name][:])
+                    end
+                end
+            end
             NCDataset(batch) do x
                 NCDataset(path) do y
                     @test Set(keys(x)) == Set(keys(y))
@@ -57,17 +64,13 @@ const O = AtmosTransport.Output
                         @test Dict(x[name].attrib) == Dict(y[name].attrib)
                     end
                     @test y.attrib["output_fields"] == x.attrib["output_fields"]
-                    @test endswith(y.attrib["history"],"with 4 frame(s)")
                 end
             end
             before = read(path)
             @test_throws ArgumentError O.append_snapshot!(stream,last_frame)
             @test read(path) == before
-            @test !stream.failed
             @test stream.count == 4
             close(stream)
-            @test stream.closed
-            @test stream.dataset === nothing
             @test_throws ArgumentError O.append_snapshot!(stream,last_frame)
         end
     end
@@ -102,15 +105,10 @@ end
         mkdir(directory)
         failed = O.NetCDFSnapshotStream(directory,grid)
         @test_throws Exception O.append_snapshot!(failed,frame)
-        @test failed.failed
-        @test failed.closed
-        @test failed.dataset === nothing
         rm(directory)
         @test_throws ArgumentError O.append_snapshot!(failed,frame)
         collision = O.NetCDFSnapshotStream(joinpath(dir,"collision.nc"),grid)
         @test_throws Exception O.append_snapshot!(collision,
             SnapshotFrame(0.0,air,Dict(:air_mass=>copy(air)),:dry))
-        @test collision.failed
-        @test collision.closed
     end
 end

@@ -1,3 +1,31 @@
+"""
+    isvalid_lonlat(lon, lat) -> Bool
+
+Finite coordinates with `|lat| ≤ 90` and `|lon| ≤ 720`: fill values such as
+-999999 are rejected while every ordinary longitude convention passes. Readers
+filter with this predicate; `locate` enforces it.
+"""
+isvalid_lonlat(lon::Real, lat::Real) =
+    isfinite(lon) && isfinite(lat) && abs(lat) <= 90 && abs(lon) <= 720
+
+# Strict ISO-8601 shape. Julia's `yyyy` directive is variable width, so an
+# unguarded `tryparse` would accept "20211202" as the year 20,211,202.
+const _ISO_UTC_RE = r"^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?)?$"
+
+# Shared strict UTC parser for config values and table columns.
+parse_iso_utc(::Nothing, ::AbstractString) = nothing
+parse_iso_utc(value::DateTime, ::AbstractString) = value
+parse_iso_utc(value::Date, ::AbstractString) = DateTime(value)
+function parse_iso_utc(value::AbstractString, label::AbstractString)
+    s = chopsuffix(String(strip(value)), "Z")
+    parsed = occursin(_ISO_UTC_RE, s) ? tryparse(DateTime, replace(s, ' ' => 'T')) : nothing
+    parsed === nothing && throw(ArgumentError(
+        "$(label) must be an ISO-8601 UTC time such as \"2021-12-02T00:00:00\"; got $(repr(value))"))
+    return parsed
+end
+parse_iso_utc(value, label::AbstractString) = throw(ArgumentError(
+    "$(label) must be a date-time or string; got $(repr(value))"))
+
 # ---------------------------------------------------------------------------
 # Readers that turn `[[output.observations.sources]]` into sampling requests.
 #
@@ -129,7 +157,7 @@ function _cf_unix_seconds(values::AbstractVector, units::AbstractString, label::
     return Float64[origin_unix + Float64(v) * scale for v in values]
 end
 
-function _nc_variable(ds, candidates, label::AbstractString)
+function nc_variable(ds, candidates, label::AbstractString)
     for name in candidates
         haskey(ds, name) && return ds[name]
     end
@@ -141,17 +169,15 @@ _scalar_attr(var, name) = (v = get(var.attrib, name, nothing); v isa AbstractArr
 # Raw numeric values as Float64 with fill entries replaced by NaN. The fill
 # comparison happens at the stored element type (a Float64 `missing_value`
 # on Float32 data would otherwise never match), then CF packing is undone.
-function _raw_numeric(var, label::AbstractString)
-    raw = Array(var.var)
+_raw_numeric(var, label::AbstractString) = vec(_decode_fill_packing(Array(var.var), var, label))
+
+function _decode_fill_packing(raw, var, label::AbstractString)
     T = eltype(raw)
     T <: Real || throw(ArgumentError("$(label): expected a numeric variable, got $(T)"))
     fill_attr = _scalar_attr(var, "_FillValue")
     fill_attr === nothing && (fill_attr = _scalar_attr(var, "missing_value"))
     fill_raw = fill_attr isa Real ? _fill_as(T, fill_attr) : nothing
-    out = Vector{Float64}(undef, length(raw))
-    @inbounds for (k, value) in enumerate(vec(raw))
-        out[k] = (fill_raw !== nothing && value == fill_raw) ? NaN : Float64(value)
-    end
+    out = map(x -> (fill_raw !== nothing && x == fill_raw) ? NaN : Float64(x), raw)
     scale = _scalar_attr(var, "scale_factor")
     offset = _scalar_attr(var, "add_offset")
     if scale isa Real || offset isa Real
@@ -244,11 +270,11 @@ function _read_requests_file!(soundings::Vector{SoundingRequest}, ::Vector{SiteR
     label = "oco2_lite $(path)"
     origin_unix = datetime2unix(origin)
     NCDataset(path, "r") do ds
-        ids = vec(Array(_nc_variable(ds, ("sounding_id",), label).var))
+        ids = vec(Array(nc_variable(ds, ("sounding_id",), label).var))
         n = length(ids)
-        times = _time_unix_seconds(_nc_variable(ds, ("time",), label), label)
-        lats = _raw_numeric(_nc_variable(ds, ("latitude",), label), label)
-        lons = _raw_numeric(_nc_variable(ds, ("longitude",), label), label)
+        times = _time_unix_seconds(nc_variable(ds, ("time",), label), label)
+        lats = _raw_numeric(nc_variable(ds, ("latitude",), label), label)
+        lons = _raw_numeric(nc_variable(ds, ("longitude",), label), label)
         keep = _quality_mask(source.quality_filter, ds, n, label)
         _check_same_length(label, n, ("time", times), ("latitude", lats), ("longitude", lons))
         rows = Int[]
@@ -283,32 +309,14 @@ _sounding_retrievals(a::AveragingKernelColumns, ds, rows, label) =
 # A block of columns `cols` of a (levels, records) variable, or of entries of a
 # record variable, as Float64 with fill values replaced by NaN and CF packing
 # undone (`_raw_numeric` for one block).
-function _raw_block(var, cols::UnitRange{Int}, label::AbstractString)
+function raw_observation_block(var, cols::UnitRange{Int}, label::AbstractString)
     raw = ndims(var) == 1 ? Array(var.var[cols]) : Array(var.var[:, cols])
-    T = eltype(raw)
-    T <: Real || throw(ArgumentError("$(label): expected a numeric variable, got $(T)"))
-    fill_attr = _scalar_attr(var, "_FillValue")
-    fill_attr === nothing && (fill_attr = _scalar_attr(var, "missing_value"))
-    fill_raw = fill_attr isa Real ? _fill_as(T, fill_attr) : nothing
-    out = map(x -> (fill_raw !== nothing && x == fill_raw) ? NaN : Float64(x), raw)
-    scale = _scalar_attr(var, "scale_factor")
-    offset = _scalar_attr(var, "add_offset")
-    if scale isa Real || offset isa Real
-        a = scale isa Real ? Float64(scale) : 1.0
-        b = offset isa Real ? Float64(offset) : 0.0
-        out .= ifelse.(isnan.(out), out, out .* a .+ b)
-    end
-    return out
+    return _decode_fill_packing(raw, var, label)
 end
 
 function _pressure_scale(var, label::AbstractString)
     units = get(var.attrib, "units", nothing)
-    key = _pressure_unit_key(units)
-    scale = key === nothing ? nothing : get(_PRESSURE_UNITS_PA, key, nothing)
-    scale === nothing && throw(ArgumentError(
-        "$(label): variable $(NCDatasets.name(var)) has units $(repr(units)); expected a pressure unit, one of " *
-        "$(join(sort!(collect(keys(_PRESSURE_UNITS_PA))), ", "))"))
-    return scale
+    return pressure_unit_scale(units, "$(label): variable $(NCDatasets.name(var))")
 end
 
 """
@@ -341,19 +349,19 @@ function read_oco2_retrieval_columns(ds, rows::AbstractVector{<:Integer}; label:
     isempty(rows) && return RetrievalColumn{HatLevelProjection}[]
     lo, hi = extrema(rows)
     cols = lo:hi
-    kernel = _raw_block(_nc_variable(ds, ("xco2_averaging_kernel",), label), cols, label)
-    weight = _raw_block(_nc_variable(ds, ("pressure_weight",), label), cols, label)
-    prior_var = _nc_variable(ds, ("co2_profile_apriori",), label)
-    prior = _raw_block(prior_var, cols, label) .*
+    kernel = raw_observation_block(nc_variable(ds, ("xco2_averaging_kernel",), label), cols, label)
+    weight = raw_observation_block(nc_variable(ds, ("pressure_weight",), label), cols, label)
+    prior_var = nc_variable(ds, ("co2_profile_apriori",), label)
+    prior = raw_observation_block(prior_var, cols, label) .*
             mole_fraction_unit_scale(get(prior_var.attrib, "units", nothing), "$(label) co2_profile_apriori")
     pressure = if haskey(ds, "pressure_levels")
         var = ds["pressure_levels"]
-        _raw_block(var, cols, label) .* _pressure_scale(var, label)
+        raw_observation_block(var, cols, label) .* _pressure_scale(var, label)
     else
-        sigma_var = _nc_variable(ds, ("sigma_levels",), label)
-        sigma = _raw_block(sigma_var, 1:size(sigma_var, 1), label)
-        psurf_var = _nc_variable(ds, ("psurf",), label)
-        psurf = _raw_block(psurf_var, cols, label) .* _pressure_scale(psurf_var, label)
+        sigma_var = nc_variable(ds, ("sigma_levels",), label)
+        sigma = raw_observation_block(sigma_var, 1:size(sigma_var, 1), label)
+        psurf_var = nc_variable(ds, ("psurf",), label)
+        psurf = raw_observation_block(psurf_var, cols, label) .* _pressure_scale(psurf_var, label)
         sigma .* reshape(psurf, 1, :)
     end
     nlevel = size(kernel, 1)
@@ -363,7 +371,7 @@ function read_oco2_retrieval_columns(ds, rows::AbstractVector{<:Integer}; label:
     end
     ids = _raw_ids(ds, cols, label)
     prior_column = haskey(ds, "xco2_apriori") ?
-        _raw_block(ds["xco2_apriori"], cols, label) .*
+        raw_observation_block(ds["xco2_apriori"], cols, label) .*
         mole_fraction_unit_scale(get(ds["xco2_apriori"].attrib, "units", nothing), "$(label) xco2_apriori") :
         fill(NaN, length(cols))
     return map(rows) do row
@@ -384,12 +392,12 @@ _raw_ids(ds, cols, label) = haskey(ds, "sounding_id") ? Array(ds["sounding_id"].
 
 _quality_mask(::NoQualityFilter, ds, n::Int, label) = trues(n)
 function _quality_mask(filter::QualityFlagFilter, ds, n::Int, label)
-    flags = _raw_numeric(_nc_variable(ds, (filter.variable,), label), label)
+    flags = _raw_numeric(nc_variable(ds, (filter.variable,), label), label)
     _check_same_length(label, n, (filter.variable, flags))
     return [isfinite(f) && f <= filter.max for f in flags]
 end
 function _quality_mask(filter::QualityFlagValues, ds, n::Int, label)
-    flags = _raw_numeric(_nc_variable(ds, (filter.variable,), label), label)
+    flags = _raw_numeric(nc_variable(ds, (filter.variable,), label), label)
     _check_same_length(label, n, (filter.variable, flags))
     return [isfinite(f) && insorted(f, filter.values) for f in flags]
 end
@@ -446,18 +454,26 @@ treated as absent.
 """
 valid_pressure(p::Real) = isfinite(p) && p > 0
 
-_pressure_unit_key(units::AbstractString) = replace(lowercase(units), r"\s" => "")
-_pressure_unit_key(units) = nothing
+"""
+    pressure_unit_scale(units, label) -> Float64
+
+Scale a declared pressure unit (Pa, hPa/mbar or kPa) to pascals. Whitespace
+and case are ignored; absent or unknown units raise `ArgumentError`.
+"""
+function pressure_unit_scale(units, label::AbstractString)
+    key = units isa AbstractString ? replace(lowercase(units), r"\s" => "") : nothing
+    scale = key === nothing ? nothing : get(_PRESSURE_UNITS_PA, key, nothing)
+    scale === nothing && throw(ArgumentError(
+        "$(label) has units $(repr(units)); expected a pressure unit, one of " *
+        "$(join(sort!(collect(keys(_PRESSURE_UNITS_PA))), ", "))"))
+    return scale
+end
 
 function _pressure_pa(ds, n, label)
     haskey(ds, "pressure") || return fill(NaN, n)
     var = ds["pressure"]
     units = get(var.attrib, "units", nothing)
-    key = _pressure_unit_key(units)
-    scale = key === nothing ? nothing : get(_PRESSURE_UNITS_PA, key, nothing)
-    scale === nothing && throw(ArgumentError(
-        "$(label): variable pressure has units $(repr(units)); expected one of " *
-        "$(join(sort!(collect(keys(_PRESSURE_UNITS_PA))), ", "))"))
+    scale = pressure_unit_scale(units, "$(label): variable pressure")
     # A pressure at or below zero is an undeclared fill value (-999.9 hPa), not
     # the top of the column: the record is then placed by its other
     # coordinates, or is unplaced.
@@ -489,10 +505,10 @@ function _obspack_records(path::AbstractString)
     label = "obspack $(path)"
     dataset = first(splitext(basename(path)))
     return NCDataset(path, "r") do ds
-        times = _time_unix_seconds(_nc_variable(ds, ("time",), label), label)
+        times = _time_unix_seconds(nc_variable(ds, ("time",), label), label)
         n = length(times)
-        lats = _raw_numeric(_nc_variable(ds, ("latitude",), label), label)
-        lons = _raw_numeric(_nc_variable(ds, ("longitude",), label), label)
+        lats = _raw_numeric(nc_variable(ds, ("latitude",), label), label)
+        lons = _raw_numeric(nc_variable(ds, ("longitude",), label), label)
         elevation = _ignore_undeclared_fill!(_optional_numeric(ds, "elevation", n, label), valid_elevation,
                                              label, "elevation values are below $(LOWEST_GROUND_ELEVATION_M) m")
         altitude = _optional_numeric(ds, "altitude", n, label)
@@ -672,7 +688,7 @@ _table_utc_seconds(v::Real, ::Float64, label::AbstractString, k::Int) = throw(Ar
     "$(label): row $(k) has a bare number $(repr(v)) as a time; use an ISO-8601 UTC string, " *
     "a TOML date-time, or a NetCDF variable with CF time units"))
 _table_utc_seconds(v, origin_unix::Float64, label::AbstractString, k::Int) =
-    datetime2unix(_parse_iso_utc(v, "$(label) row $(k) time")) - origin_unix
+    datetime2unix(parse_iso_utc(v, "$(label) row $(k) time")) - origin_unix
 
 # Elevation (m asl), height above ground, and altitude (m asl) of row `k`: the
 # height above ground is the intake height, else the altitude minus the

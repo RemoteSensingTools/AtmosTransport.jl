@@ -21,14 +21,12 @@ The writer is intentionally topology-dispatched:
 New topologies should add methods for the small internal schema/diagnostic
 functions in this folder; they should not special-case the runner.
 
-`Output` also owns observation sampling (`observations/`): the
-`[output.observations]` contract, source readers, containing-cell locators,
-the device column gather, and the append-only `_soundings` / `_sites` NetCDF
-files written by [`build_observation_sampler`](@ref)'s sampler.
+Observation sampling lives in `AtmosTransport.Observations`.
 """
 module Output
 
-using ..Grids: cell_centers
+using ..Parameters: EARTH_RADIUS
+using ..Grids: HybridSigmaPressure, cell_centers, parse_panel_convention, parse_cs_definition
 
 using ..Grids: panel_convention_tag
 
@@ -37,13 +35,10 @@ using ..State: basis_symbol
 using Dates
 using HDF5_jll
 using JSON3
-import LinearAlgebra
 using NCDatasets
 using Printf
-using Statistics: median!
-using TOML
 using KernelAbstractions: @kernel, @index, get_backend, synchronize, CPU as KA_CPU
-using ..Architectures: compensated_total, _total_accumulator_type
+using ..Architectures: CPU, compensated_total, _total_accumulator_type
 
 using ..ConfigChecks: config_bool as _config_bool, check_known_keys as _check_known_keys
 
@@ -62,7 +57,6 @@ background task.
 """
 with_netcdf_lock(f) = lock(f, _NETCDF_IO_LOCK)
 
-using ..Parameters: R_DRY_AIR, STANDARD_LAPSE_RATE, STANDARD_TROPOPAUSE_TEMPERATURE, VIRTUAL_TEMPERATURE_FACTOR
 import ..expand_data_path
 import ..source_revision
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
@@ -85,42 +79,18 @@ export SingleOutputFile, DailyOutputFiles, RuntimeOutputSpec, RuntimeOutputMetad
 export runtime_output_spec, snapshot_hours, output_enabled, output_path
 export set_physics_attributes!, set_time_origin!
 export output_fields, output_field_spec, output_path_for_day
-export tracer_fields, layer_selection, layer_selection_label, air_mass_layer_selection
+export tracer_fields, layer_selection_label
+export read_snapshot_binary
 export capture_snapshot, write_snapshot_netcdf, write_snapshot_binary
-export define_cs_horizontal_geometry!, define_provenance_attributes!
-export column_mean_mixing_ratio, layer_mass_per_area, column_mass_per_area
-export AbstractObservationSource, OCO2LiteSource, ObsPackSource, TableSource
-export AbstractObservationMode, SoundingMode, SiteMode
-export AbstractSiteGrouping, SiteCodeGrouping, LocationGrouping
-export AbstractTableFormat, AutoTableFormat, CSVTableFormat, TOMLTableFormat, NetCDFTableFormat
-export AbstractQualityFilter, QualityFlagFilter, NoQualityFilter
-export AbstractSiteSchedule, EveryWindow, TimeRange, TimeList
-export AbstractObservationTimeInterpolation, LinearWindowInterpolation, NearestWindowSampling
-export AbstractObservationOutput, NoObservationOutput, ObservationOutputSpec, observation_output_spec
-export SoundingRequest, SiteRequest, ObservationSet
-export AbstractModelSurfaceHeight, NoModelSurfaceHeight, ModelSurfaceHeight, model_surface_height
-export AbstractPointElevation, NoPointElevation, point_elevation, ObservationTerrain
-export AbstractUnplacedPolicy, ErrorOnUnplaced, SkipUnplaced
-export AbstractAltitudePlacement, AboveGroundPlacement, AbsoluteAltitudeAbove, VerticalPlacementSpec
-export AbstractPlacementCoordinate, HeightAboveGroundCoordinate, PressureCoordinate
-export AbstractPressureBasis, TotalFromHumidity, DryInterfaces
-export VerticalPlacement, VERTICAL_PLACEMENT_CODES, resolve_placement, placement_layer
-export PlacementColumn, column_layer!, sample_column_layer!, needs_column_humidity
-export AbstractMissingHeightRule, LowestLayerWithoutHeight, UnplacedWithoutHeight, missing_height_rule
-export AbstractRetrievalMapping, LayerRebin, HatLevelProjection, tm5_layer_column
-export RetrievalColumn, retrieval_layer_count, stretch_model_interfaces!, retrieval_rebin_matrix
-export retrieval_projection_matrix
-export retrieval_column_weights!, retrieval_prior_offset, retrieval_profile!, retrieval_column_value
-export retrieval_model_error_variance, read_oco2_retrieval_columns
-export AbstractAveragingKernelOutput, NoAveragingKernels, AveragingKernelColumns
-export read_observation_requests, build_observation_set
-export AbstractObservationSampler, NoObservationSampler, build_observation_sampler, samples_observations
-export observation_needs_humidity
-export observe_window_boundary!, begin_observation_day!, finish_observations!
+export define_product_attributes!, define_cs_horizontal_geometry!, define_provenance_attributes!
+export column_mean_mixing_ratio, layer_mass_per_area
+export OUTPUT_PATH_KEYS, OUTPUT_KEYS, OUTPUT_FIELDS_KEYS, TRACER_OUTPUT_FIELDS_KEYS,
+       SNAPSHOT_SCHEDULE_KEYS, SNAPSHOT_INTERVAL_KEYS, schedule_has_times, check_output_targets
 export with_netcdf_lock
 
 include("snapshots.jl")
 include("runtime_output.jl")
+include("output_config.jl")
 include("diagnostics.jl")
 include("snapshot_totals.jl")
 include("selected_snapshots.jl")
@@ -128,15 +98,6 @@ include("netcdf_schema.jl")
 include("netcdf_writer.jl")
 include("netcdf_stream.jl")
 include("binary_writer.jl")
-include("observations/retrieval_column.jl")
-include("observations/observation_sources.jl")
-include("observations/observation_requests.jl")
-include("observations/observation_readers.jl")
-include("observations/cell_locator.jl")
-include("observations/observation_placement.jl")
-include("observations/observation_output_spec.jl")
-include("observations/observation_gather.jl")
-include("observations/observation_netcdf.jl")
-include("observations/observation_sampler.jl")
+include("binary_reader.jl")
 
 end # module Output

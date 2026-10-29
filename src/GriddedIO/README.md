@@ -41,7 +41,7 @@ SHA. It never imports `Preprocessing` or `Models`, so the runtime loaders
 | [`flux_units.jl`](flux_units.jl) | `FluxUnits{S,A,T}` with `AbstractSubstance` (`TargetSpecies`, `Carbon`, `Species`), `AbstractAreaBasis` (`PerSquareMetre`, `PerCell`), `AbstractTimeBasis` (`PerSecond`, `PerDay`, `PerMonth`, `PerYear`); `parse_flux_units`, `kg_per_unit`, `period_seconds`, `mass_rate_factor`, `canonical_units_string`. |
 | [`cs_native_flux.jl`](cs_native_flux.jl) | The `cs_native` flux file, the runtime contract: `CS_NATIVE_FLUX_DIMS`; the writer `CSNativeFluxWriter` (`open_cs_native_writer`, `write_slices!`, `publish!`, `abandon!`); the streaming reader `cs_native_flux_info` / `read_cs_native_flux!` (the runtime's `kind = "cs_native"` loader, panel by panel into the caller's arrays); the whole-file reader `read_cs_native_flux` (the builder's readback); the cell-area gate `check_cell_area`. |
 | [`latlon_flux.jl`](latlon_flux.jl) | `write_latlon_flux`: static CF lat-lon flux files for `kind = "file"`, on meshes the runtime rebuilds exactly from their coordinates; `check_latlon_cell_area`: the gate on a lat-lon file's `cell_area`/`area` (units m², within 1 % of the areas its coordinates define, norm-based; positive and finite wherever the flux is nonzero). |
-| [`surface_height.jl`](surface_height.jl) | Static ground fields of observation placement (`[output.observations]`): the per-grid model surface height dataset, `write_model_surface_height` / `read_model_surface_height` → `Output.ModelSurfaceHeight`; a lat-lon DEM for point lookups, `read_point_elevation` → `LatLonPointElevation` with the bilinear `Output.point_elevation`. |
+| [`surface_height.jl`](surface_height.jl) | Static ground fields of observation placement (`[output.observations]`): the per-grid model surface height dataset, `write_model_surface_height` / `read_model_surface_height` → `Observations.ModelSurfaceHeight`; a lat-lon DEM for point lookups, `read_point_elevation` → `LatLonPointElevation` with the bilinear `Observations.point_elevation`. |
 
 ## Invariants
 
@@ -296,3 +296,6 @@ one, bit for bit), `test_latlon_flux_writer.jl` (static files, the runtime
 reading them, and the face gate). Each freezes
 the runtime code it replaces and compares bit for bit where the behaviour is
 preserved.
+
+Terrain interfaces belong to `Observations`; `Output` supplies snapshot/NetCDF
+geometry and provenance helpers. GriddedIO loads after Observations.

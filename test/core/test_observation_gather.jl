@@ -1,10 +1,10 @@
-using Test, AtmosTransport, Random
+using Test, AtmosTransport, Random, TOML
 using KernelAbstractions: CPU as KA_CPU
-using AtmosTransport.Output: ObservationGatherBuffers, gather_columns!, gather_field!, interface_pressures!,
-                             layer_heights_agl!, intake_layer_index, column_mean_vmr,
-                             mixing_ratio_profile!, ConstantLayerTemperature,
-                             SurfaceLapseTemperature, ProfileLayerTemperature
-const O = AtmosTransport.Output
+using AtmosTransport.Observations: ObservationGatherBuffers, gather_columns!, gather_field!,
+                                   interface_pressures!, layer_heights_agl!, intake_layer_index,
+                                   column_mean_vmr, mixing_ratio_profile!, ConstantLayerTemperature,
+                                   SurfaceLapseTemperature, ProfileLayerTemperature
+const O = AtmosTransport.Observations
 
 function fake_state(topology, FT; Nz = 5, Hp = 3)
     rng = MersenneTwister(3)
@@ -95,9 +95,9 @@ end
     columns = Int32[1, 7, 24, 13]
     ncolumn = Nx * Ny
     ref_air = zeros(Float32, 5, 6); ref_tr = zeros(Float32, 5, 2, 6)
-    O._gather_columns_host!(ref_air, ref_tr, state.air_mass, state.tracers_raw, columns, slots, ncolumn, 5, 1, 3)
+    O.Sampling._gather_columns_host!(ref_air, ref_tr, state.air_mass, state.tracers_raw, columns, slots, ncolumn, 5, 1, 3)
     out_air = zeros(Float32, 5, 6); out_tr = zeros(Float32, 5, 2, 6)
-    O._gather_columns!(KA_CPU())(out_air, out_tr, state.air_mass, state.tracers_raw, columns, slots,
+    O.Sampling._gather_columns!(KA_CPU())(out_air, out_tr, state.air_mass, state.tracers_raw, columns, slots,
                                  ncolumn, 5, 1; ndrange = (5, 3))
     @test out_air == ref_air
     @test out_tr == ref_tr
@@ -168,9 +168,6 @@ end
     @test_throws DimensionMismatch layer_heights_agl!(zeros(nlevel + 1), p_half, ProfileLayerTemperature([250.0]), g)
     @test O.layer_temperature(profile, 1, 0.0) == 220.0
     @test O.layer_temperature(profile, 6, 0.0) == 270.0
-    @test O.height_method_label(ConstantLayerTemperature(1.0)) === :constant
-    @test O.height_method_label(lapse) === :surface_lapse
-    @test O.height_method_label(profile) === :profile
     z_lapse = layer_heights_agl!(zeros(nlevel + 1), p_half, lapse, g)
     z_const = layer_heights_agl!(zeros(nlevel + 1), p_half, ConstantLayerTemperature(290.0), g)
     @test z_lapse[end-1] == z_const[end-1]
@@ -203,7 +200,7 @@ end
 end
 
 @testset "intake layers on the real GEOS L72 grid (k = 1 at the top)" begin
-    cfg = O.TOML.parsefile(joinpath(@__DIR__, "..", "..", "config", "geos_L72_coefficients.toml"))
+    cfg = TOML.parsefile(joinpath(@__DIR__, "..", "..", "config", "geos_L72_coefficients.toml"))
     A = Float64.(cfg["coefficients"]["a"])
     B = Float64.(cfg["coefficients"]["b"])
     @test B[1] == 0 && B[end] == 1                  # file is top-down like the model
@@ -223,7 +220,7 @@ end
     # A tropical L72 column: total interfaces A + B·ps, specific humidity
     # 18 g/kg at the surface falling as (p/ps)^2.7 (about 50 kg m⁻² of
     # precipitable water), dry air mass (1 − q) Δp A / g per layer.
-    cfg = O.TOML.parsefile(joinpath(@__DIR__, "..", "..", "config", "geos_L72_coefficients.toml"))
+    cfg = TOML.parsefile(joinpath(@__DIR__, "..", "..", "config", "geos_L72_coefficients.toml"))
     A = Float64.(cfg["coefficients"]["a"])
     B = Float64.(cfg["coefficients"]["b"])
     ps, g, area = 101000.0, 9.80665, 1e10

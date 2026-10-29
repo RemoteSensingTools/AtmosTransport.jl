@@ -400,3 +400,17 @@ end
     push!(after["modules"]["AtmosTransport.Diagnostics"], "AtmosTransport.Visualization")
     @test !isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
 end
+
+@testset "O1 relocates observation dependencies without expanding debt budgets" begin
+    before = Dict("modules" => Dict(
+        "AtmosTransport" => ["AtmosTransport.Output"],
+        "AtmosTransport.Output" => ["AtmosTransport", "AtmosTransport.Grids"],
+        "AtmosTransport.Adjoints" => ["AtmosTransport.Output"]))
+    after = StructureCheck.relocate_o1_layers(before, "src/LAYERS.toml")
+    @test isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
+    @test StructureCheck.relocate_o1_layers(after, "src/LAYERS.toml") == after
+    push!(after["modules"]["AtmosTransport.Observations.Sources"], "AtmosTransport.GriddedIO")
+    @test !isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
+    debt = Dict("allow" => Dict("old" => "existing debt"))
+    @test StructureCheck.relocate_o1_layers(debt, "test/structure/private_use_allowlist.toml") == debt
+end

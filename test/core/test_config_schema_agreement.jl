@@ -100,9 +100,9 @@ end
     @test property_keys(p.checks) == Set(RunnerKeys._CHECKS_KEYS)
     @test property_keys(d.initial_condition) == Set(RunnerKeys._INIT_KEYS)
     @test property_keys(d.surface_flux) == Set(RunnerKeys._SURFACE_FLUX_KEYS)
-    @test property_keys(d.output) == Set(RunnerKeys._OUTPUT_KEYS)
-    @test property_keys(d.output_fields) == Set(RunnerKeys._OUTPUT_FIELDS_KEYS)
-    @test property_keys(d.tracer_output_fields) == Set(RunnerKeys._TRACER_OUTPUT_FIELDS_KEYS)
+    @test property_keys(d.output) == Set(RunnerKeys.OUTPUT_KEYS)
+    @test property_keys(d.output_fields) == Set(RunnerKeys.OUTPUT_FIELDS_KEYS)
+    @test property_keys(d.tracer_output_fields) == Set(RunnerKeys.TRACER_OUTPUT_FIELDS_KEYS)
     @test Set(String.(keys(p))) == Set(RunnerKeys._TOP_LEVEL_TABLES)
     # Flat [tracers.<name>] keys are accepted for old configs but not offered.
     @test property_keys(d.tracer) == Set(["init", "surface_flux"])

@@ -2,7 +2,7 @@
 module ObservationTestFixtures
 
 using AtmosTransport, Dates, Logging
-using AtmosTransport.Output: observation_output_spec
+using AtmosTransport.Observations: observation_output_spec
 
 export ORIGIN, GRAVITY, unix, fake_ll_model, sampler_spec, table_source, quiet
 

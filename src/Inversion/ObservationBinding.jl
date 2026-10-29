@@ -14,14 +14,14 @@
 #
 #   * Geography. `(lat, lon)` (Float64) -> the cell that contains the point,
 #     from the inverse gnomonic map of the mesh: the locator the forward
-#     observation sampler uses (`Output.cell_locator`/`locate`), so an
+#     observation sampler uses (`Observations.cell_locator`/`locate`), so an
 #     observation is sampled and inverted in the same cell.
 #
-#   * Vertical. A point record becomes an `Output.SoundingRequest` and is
+#   * Vertical. A point record becomes an `Observations.SoundingRequest` and is
 #     placed by the shared rule of the forward sampler
-#     (`Output.resolve_placement` with the run's `VerticalPlacementSpec` and
+#     (`Observations.resolve_placement` with the run's `VerticalPlacementSpec` and
 #     `ObservationTerrain`) into a `CSPlacedPointObjective`; its layer is chosen
-#     at every sampled state by `Output.sample_column_layer!`. A column record
+#     at every sampled state by `Observations.sample_column_layer!`. A column record
 #     with a retrieval block becomes a `CSRetrievalColumnObjective` (its
 #     averaging kernel on the model column stretched onto the retrieval
 #     column, built at every sampled state), one without a block a
@@ -191,14 +191,14 @@ its time sampling, the cell that contains it, and its objective.
 - **Ids.** Record ids must be unique (departures are joined to records by
   id).
 - **Cell.** `(lat, lon)` (Float64) → the cell containing the point
-  (`Output.locate`, the forward observation sampler's locator).
+  (`Observations.locate`, the forward observation sampler's locator).
 - **Point records** ([`PointObservationKind`](@ref)) become
   [`CSPlacedPointObjective`](@ref)s, placed by the forward sampler's rule
-  (`Output.resolve_placement`) with `placement` (an
-  `Output.VerticalPlacementSpec`: the ordered `vertical_coordinates`, height
+  (`Observations.resolve_placement`) with `placement` (an
+  `Observations.VerticalPlacementSpec`: the ordered `vertical_coordinates`, height
   above ground and/or pressure; the pressure basis; the altitude option; the
   unplaced policy) and the static ground fields of `terrain` (an
-  `Output.ObservationTerrain`: model surface height, point DEM). A point
+  `Observations.ObservationTerrain`: model surface height, point DEM). A point
   record that gives none of the coordinates in use is unplaced: an
   `ArgumentError` with `unplaced_records = "error"` (default), dropped and
   counted with `SkipUnplaced()`.
@@ -233,7 +233,7 @@ its time sampling, the cell that contains it, and its objective.
   `value_sigma` without a model error), where ``\\sigma_\\mathrm{prof}^2 =
   \\sum_i (h_i a_i \\sigma_i)^2`` is the model-error term of an
   averaging-kernel column with a profile uncertainty ``\\sigma_i``
-  (`Output.retrieval_model_error_variance`; fixed by the record, so the cost
+  (`Observations.retrieval_model_error_variance`; fixed by the record, so the cost
   stays quadratic); the observation carries the record `id`.
 
 `set.time_origin` is documentation only.
@@ -311,8 +311,8 @@ function _bind_to_mesh(set::CSObservationSet,
         objective = _bind_objective(record.kind, record, request, cell, placement, terrain,
                                     max_surface_pressure_mismatch_pa)
         if objective === nothing
-            _count_unplaced!(counters, request)
-            length(examples) < 5 && push!(examples, _unplaced_example(request))
+            count_unplaced!(counters, request)
+            length(examples) < 5 && push!(examples, unplaced_example(request))
             continue
         end
         if objective isa CSPlacedPointObjective
@@ -323,9 +323,9 @@ function _bind_to_mesh(set::CSObservationSet,
                                  assimilate))
         push!(bound, record)
     end
-    _handle_unplaced(placement, counters, examples; label = _INVERSION_PLACEMENT_LABEL,
+    handle_unplaced(placement, counters, examples; label = _INVERSION_PLACEMENT_LABEL,
                      context = "bind_to_mesh")
-    _warn_below_ground(placed_requests, placements, SiteRequest[], VerticalPlacement[]; context = "bind_to_mesh")
+    warn_below_ground(placed_requests, placements, SiteRequest[], VerticalPlacement[]; context = "bind_to_mesh")
     n_flagged > 0 && @info "bind_to_mesh: $(n_flagged) records with a nonzero flag are not assimilated"
     n_cosampled > 0 && @info "bind_to_mesh: $(n_cosampled) records with a nonzero flag are co-sampled " *
                              "(flagged_records = \"cosample\"): simulated and reported, not assimilated"
@@ -599,7 +599,7 @@ _date_components_string(dc::NTuple{6, Int16}) =
 # ---------------------------------------------------------------------------
 
 # Observations are bound to the cell that contains them, with the locator the
-# forward observation sampler uses (`Output.cell_locator`): the inverse
+# forward observation sampler uses (`Observations.cell_locator`): the inverse
 # gnomonic map of the mesh; a point on a face belongs to the cell to its east or
 # north (`locate`). The longitude is passed as given, as the sampler passes it:
 # `locate` takes any convention, while reducing it first (`mod(lon, 360)`)

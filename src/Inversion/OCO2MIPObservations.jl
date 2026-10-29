@@ -8,7 +8,7 @@
 # MIP assimilation flag, and the retrieval on 20 levels (sigma levels times the
 # retrieved surface pressure, pressure weights, normalized averaging kernel,
 # prior). Each record becomes a `kind = "column"` record with a retrieval
-# block (`Output.read_oco2_retrieval_columns`): the levels as given
+# block (`Observations.read_oco2_retrieval_columns`): the levels as given
 # (`HatLevelProjection`, the default) or TM5-4DVar's 19 layers
 # (`tm5_layer_column`). Every record of the time range is kept; those outside
 # the experiment's data types and assimilation flags get a nonzero flag, so
@@ -39,16 +39,16 @@ _oco2_mip_data_type_label(code::Integer) =
 # reads them (`datetime(*date[:6])`; its comment notes invalid `time` values in
 # one release).
 function _oco2_mip_dates(ds, label)
-    raw = Array(_nc_variable(ds, ("date",), label).var)
+    raw = Array(nc_variable(ds, ("date",), label).var)
     size(raw, 1) >= 6 || throw(ArgumentError("$(label): date has $(size(raw, 1)) components; expected 7"))
     return [ntuple(c -> Int16(raw[c, k]), 6) for k in axes(raw, 2)]
 end
 
 # A record variable over the block `cols`, as Float64.
-_oco2_mip_column(ds, name, cols, label) = _raw_block(_nc_variable(ds, (name,), label), cols, label)
+_oco2_mip_column(ds, name, cols, label) = raw_observation_block(nc_variable(ds, (name,), label), cols, label)
 
 function _oco2_mip_unit_scale(ds, name, label)
-    var = _nc_variable(ds, (name,), label)
+    var = nc_variable(ds, (name,), label)
     return mole_fraction_unit_scale(get(var.attrib, "units", nothing), "$(label) $(name)")
 end
 
@@ -62,7 +62,7 @@ end
 """
     read_oco2_mip_observations(path; time_range = nothing, data_types = ("LN", "LG", "OG"),
                                assimilate_flags = (1,), model_sigma = :file,
-                               mapping = Output.HatLevelProjection(), instrument = nothing,
+                               mapping = Observations.HatLevelProjection(), instrument = nothing,
                                tracer = "CO2") -> CSObservationSet
 
 The records of an OCO-2 or OCO-3 v11 MIP 10-second file (read-only) as an
@@ -83,7 +83,7 @@ record whose time (`date`, truncated to the second) lies in
 | `flag` | 0 when `assimilate_flag ∈ assimilate_flags` and the data type is in `data_types`; else `1 + assimilate_flag` |
 | `instrument_type` | `"<instrument>_<data type>"`, e.g. `"OCO2_OG"` |
 | `tracer` | `tracer` |
-| `retrieval` | the 20 levels (`sigma_levels × psurf`, hPa → Pa), `pressure_weight`, `xco2_averaging_kernel`, `co2_profile_apriori` (ppm → mol/mol), surface first, and the prior column `xco2_apriori` (ppm → mol/mol; `Output.read_oco2_retrieval_columns`) |
+| `retrieval` | the 20 levels (`sigma_levels × psurf`, hPa → Pa), `pressure_weight`, `xco2_averaging_kernel`, `co2_profile_apriori` (ppm → mol/mol), surface first, and the prior column `xco2_apriori` (ppm → mol/mol; `Observations.read_oco2_retrieval_columns`) |
 
 `data_types` name the experiment's data types (`LN` land nadir, `LG` land
 glint, `LT` land target, `LTR` land transition, `ON` ocean nadir, `OG` ocean
@@ -96,9 +96,9 @@ data type is outside `data_types`, 3 a withheld record (`assimilate_flag =
 2`), unless `assimilate_flags` selects them. Bind with
 `flagged_records = "cosample"` to co-sample them.
 
-`mapping` is `Output.HatLevelProjection()` (the levels as given, the
-default) or `Output.LayerRebin()` (TM5-4DVar's 19 layers,
-`Output.tm5_layer_column`; the CLI's `--mapping tm5`).
+`mapping` is `Observations.HatLevelProjection()` (the levels as given, the
+default) or `Observations.LayerRebin()` (TM5-4DVar's 19 layers,
+`Observations.tm5_layer_column`; the CLI's `--mapping tm5`).
 `instrument` defaults to the first token of the file's `ShortName`
 (`"OCO2"`, `"OCO3"`). Sounding ids are unique within one file; OCO-2 and
 OCO-3 ids can coincide, so give each instrument its own set.
@@ -140,7 +140,7 @@ function _oco2_mip_records(ds, path, rows::AbstractVector{<:Integer}, dates, lab
     lo, hi = extrema(rows)
     cols = lo:hi
     column(var) = _oco2_mip_column(ds, var, cols, label)
-    ids = Array(_nc_variable(ds, ("sounding_id",), label).var[cols])
+    ids = Array(nc_variable(ds, ("sounding_id",), label).var[cols])
     lats, lons, elevation = column("latitude"), column("longitude"), column("altitude")
     value = column("xco2_2019_scale") .* _oco2_mip_unit_scale(ds, "xco2_2019_scale", label)
     value_sigma = column("xco2_uncertainty") .* _oco2_mip_unit_scale(ds, "xco2_uncertainty", label)
@@ -170,7 +170,7 @@ const _OCO2_MIP_PARTITIONS = (day = ("{YYYYMMDD}", Dates.DateFormat("yyyymmdd"),
 """
     convert_oco2_mip_observations(path, output; partition = :day, time_range = nothing,
                                   data_types = ("LN", "LG", "OG"), assimilate_flags = (1,),
-                                  model_sigma = :file, mapping = Output.HatLevelProjection(),
+                                  model_sigma = :file, mapping = Observations.HatLevelProjection(),
                                   instrument = nothing, tracer = "CO2") -> Vector{String}
 
 Convert an OCO-2 or OCO-3 v11 MIP 10-second file to observation files of

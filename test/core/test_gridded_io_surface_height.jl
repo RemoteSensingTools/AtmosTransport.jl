@@ -5,8 +5,8 @@
 using Test, AtmosTransport, NCDatasets
 using AtmosTransport.GriddedIO: write_model_surface_height, read_model_surface_height,
                                 read_point_elevation, LatLonPointElevation
-using AtmosTransport.Output: ModelSurfaceHeight, CellLocation, model_surface_height, point_elevation,
-                             NoPointElevation, NoModelSurfaceHeight
+using AtmosTransport.Observations: ModelSurfaceHeight, CellLocation, model_surface_height,
+                                   point_elevation, NoPointElevation, NoModelSurfaceHeight
 const O = AtmosTransport.Output
 
 @testset "model surface height: lat-lon round trip and grid gates" begin
@@ -20,7 +20,7 @@ const O = AtmosTransport.Output
         @test h.field == field && h.path == path
         # A Float32 run mesh reads the same file (centres within Float32 rounding).
         @test read_model_surface_height(path, LatLonMesh(; FT = Float32, Nx = 4, Ny = 3)).field == field
-        cell = O.locate(O.cell_locator(mesh), 50.0, 40.0)        # i = 3, j = 3
+        cell = AtmosTransport.Observations.locate(AtmosTransport.Observations.cell_locator(mesh), 50.0, 40.0)        # i = 3, j = 3
         @test model_surface_height(h, cell) == field[3, 3]
         @test isnan(model_surface_height(NoModelSurfaceHeight(), cell))
         NCDataset(path) do ds
@@ -61,8 +61,8 @@ end
         p90 = write_model_surface_height(joinpath(dir, "zs_c90.nc"), c90, fill(5.0, 90, 90, 6))
         c90_32 = CubedSphereMesh(; FT = Float32, Nc = 90, convention = GEOSNativePanelConvention())
         @test all(p -> all(==(5.0), p), read_model_surface_height(p90, c90_32).field)
-        loc = O.cell_locator(cs; halo_width = 0)
-        cell = O.locate(loc, 10.0, 80.0)
+        loc = AtmosTransport.Observations.cell_locator(cs; halo_width = 0)
+        cell = AtmosTransport.Observations.locate(loc, 10.0, 80.0)
         @test model_surface_height(h, cell) == panels[cell.i, cell.j, cell.panel]
         # The same Nc with another panel convention is another grid.
         other = CubedSphereMesh(; FT = Float64, Nc = 4, convention = GnomonicPanelConvention())
@@ -75,7 +75,7 @@ end
         rpath = write_model_surface_height(joinpath(dir, "zs_rg.nc"), rg, values)
         rh = read_model_surface_height(rpath, rg)
         @test rh.field == values
-        rcell = O.locate(O.cell_locator(rg), 100.0, 30.0)
+        rcell = AtmosTransport.Observations.locate(AtmosTransport.Observations.cell_locator(rg), 100.0, 30.0)
         @test model_surface_height(rh, rcell) == values[rcell.cell]
     end
 end
@@ -110,7 +110,7 @@ end
         dem = read_point_elevation(global_dem)
         @test dem isa LatLonPointElevation
         @test dem.periodic && issorted(dem.lat)
-        @test O.terrain_source(dem) == global_dem
+        @test AtmosTransport.Observations.terrain_source(dem) == global_dem
         for (λ, φ) in ((-100.25, 10.7), (12.3, -45.6), (0.0, 0.0), (179.0, 33.3))
             @test point_elevation(dem, λ, φ) ≈ f(λ, φ) atol = 1e-3
         end

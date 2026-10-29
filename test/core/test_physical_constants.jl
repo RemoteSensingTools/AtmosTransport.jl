@@ -16,6 +16,7 @@ using AtmosTransport.Parameters: EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVIT
 # `Float64`. A constant added to src/Parameters must be added here too; the
 # completeness test below fails otherwise.
 const PINNED_PARAMETERS = (
+    DEFAULT_OBSERVATION_LAYER_TEMPERATURE_KELVIN = 280.0,
     # PhysicalConstants.jl
     EARTH_RADIUS = 6.371e6,
     IFS_EARTH_RADIUS = 6.371229e6,

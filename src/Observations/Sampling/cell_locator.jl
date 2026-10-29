@@ -38,7 +38,7 @@ end
     AbstractCellLocator
 
 Per-topology containing-cell lookup. The interface is `locate(loc, lon, lat)`
-and `ncolumns(loc)`; locators are immutable and `locate` is pure, so they may
+; locators are immutable and `locate` is pure, so they may
 be shared across threads.
 """
 abstract type AbstractCellLocator end
@@ -91,20 +91,6 @@ function cell_locator(mesh::CubedSphereMesh; halo_width::Integer = mesh.Hp)
                                   ntuple(p -> convert(Matrix{Float64}, centers[p][2]), 6))
 end
 
-"Number of storage columns per device slab (per panel on the cubed sphere)."
-ncolumns(loc::LatLonCellLocator) = ncells(loc.mesh)
-ncolumns(loc::ReducedGaussianCellLocator) = ncells(loc.mesh)
-ncolumns(loc::CubedSphereCellLocator) = (loc.mesh.Nc + 2 * loc.halo_width)^2
-
-"""
-    isvalid_lonlat(lon, lat) -> Bool
-
-Finite coordinates with `|lat| ≤ 90` and `|lon| ≤ 720`: fill values such as
--999999 are rejected while every ordinary longitude convention passes. Readers
-filter with this predicate; `locate` enforces it.
-"""
-isvalid_lonlat(lon::Real, lat::Real) =
-    isfinite(lon) && isfinite(lat) && abs(lat) <= 90 && abs(lon) <= 720
 
 function _check_point(lon::Real, lat::Real)
     isvalid_lonlat(lon, lat) || throw(ArgumentError(

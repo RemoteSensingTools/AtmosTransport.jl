@@ -1,7 +1,7 @@
 using Test
 if get(ENV, "ATMOSTR_RUN_SNAPSHOT_GPU_TESTS", "0") == "1"
     using CUDA, AtmosTransport, Random
-    using AtmosTransport.Output: ObservationGatherBuffers, gather_columns!, gather_field!
+    using AtmosTransport.Observations: ObservationGatherBuffers, gather_columns!, gather_field!
     using AtmosTransport.State: CellState, CubedSphereState, DryBasis
 
     expected = get(ENV, "ATMOSTR_SNAPSHOT_GPU_NAME", "")

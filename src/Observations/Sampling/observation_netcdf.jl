@@ -25,7 +25,7 @@ writes are queued closures `op(stream)` that run under the shared NetCDF lock.
 """
 abstract type AbstractObservationStream end
 
-function _check_open(stream::AbstractObservationStream, what::AbstractString)
+function _check_observation_stream_open(stream::AbstractObservationStream, what::AbstractString)
     stream.failed && throw(ArgumentError("cannot append $(what) after a NetCDF write failure"))
     stream.closed && throw(ArgumentError("cannot append $(what) to a closed stream"))
     return nothing
@@ -63,14 +63,12 @@ function _drain!(stream::AbstractObservationStream; block::Bool)
 end
 
 function _submit!(stream::AbstractObservationStream, op, what::AbstractString)
-    _check_open(stream, what)
+    _check_observation_stream_open(stream, what)
     push!(stream.queue, op)
     _drain!(stream; block = false)
     return nothing
 end
 
-"Number of queued writes not yet flushed to disk."
-pending_writes(stream::AbstractObservationStream) = length(stream.queue)
 
 function Base.close(stream::AbstractObservationStream)
     stream.closed && return nothing
@@ -142,14 +140,8 @@ _has_panel(_) = false
 
 function _observation_common_attributes!(ds, mesh, mass_basis::AbstractMassBasis, origin::DateTime,
                                          attributes::AbstractDict)
-    ds.attrib["Conventions"] = "CF-1.8"
-    ds.attrib["title"] = "AtmosTransport observation sampling"
-    ds.attrib["source"] = "AtmosTransport.jl"
-    ds.attrib["institution"] = get(ENV, "ATMOSTR_INSTITUTION", "Caltech / Frankenberg group")
-    ds.attrib["grid"] = summary(mesh)
-    ds.attrib["grid_type"] = _grid_type_string(mesh)
-    ds.attrib["mass_basis"] = String(basis_symbol(mass_basis))
-    ds.attrib["output_contract"] = _OBSERVATION_CONTRACT
+    define_product_attributes!(ds, mesh, basis_symbol(mass_basis),
+                               "AtmosTransport observation sampling", _OBSERVATION_CONTRACT)
     ds.attrib["run_time_origin"] = Dates.format(origin, dateformat"yyyy-mm-ddTHH:MM:SS") * "Z"
     ds.attrib["horizontal_sampling"] = "containing_cell"
     ds.attrib["vertical_ordering"] = "lev[1] is the top of the atmosphere; lev[end] is the surface"
@@ -438,7 +430,7 @@ is free; each flushed batch is synced before `completed_soundings` is
 published. Returns the new reserved row count.
 """
 function append_soundings!(stream::SoundingNetCDFStream, batch::SoundingBatch)
-    _check_open(stream, "soundings")
+    _check_observation_stream_open(stream, "soundings")
     n = length(batch)
     n == 0 && return stream.count
     size(batch.p_half, 1) == stream.nlevel + 1 || throw(DimensionMismatch(
@@ -670,7 +662,7 @@ lock is free; each flushed record is synced before `completed_times` is
 published. Returns the new reserved record count.
 """
 function append_site_record!(stream::SiteNetCDFStream, record::SiteRecord)
-    _check_open(stream, "site record")
+    _check_observation_stream_open(stream, "site record")
     nsite, nlevel = stream.nsite, stream.nlevel
     length(record.ps) == nsite || throw(DimensionMismatch("record has $(length(record.ps)) sites; stream has $(nsite)"))
     size(record.values) == (nsite, length(stream.tracer_names)) || throw(DimensionMismatch("values must be (nsite, ntracer)"))
@@ -707,4 +699,14 @@ function _write_site_record!(stream::SiteNetCDFStream, record::SiteRecord, r::In
     ds.attrib["completed_times"] = r
     NCDatasets.sync(ds)
     return nothing
+end
+
+"""Define a variable, assign its ordered attributes and write its values for observation IO."""
+function write_observation_variable!(ds, name, T, dims, data, attrs)
+    v = NCDatasets.defVar(ds, name, T, dims)
+    for (k, val) in attrs
+        v.attrib[k] = val
+    end
+    v[:] = data
+    return v
 end

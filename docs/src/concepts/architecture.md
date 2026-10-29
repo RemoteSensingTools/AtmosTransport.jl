@@ -217,6 +217,10 @@ src/
 ├── SectionTimer.jl  foundation timing and optional NVTX instrumentation
 ├── Preprocessing/   source readers, transforms, balancing, verification, writers
 ├── Output/          snapshot capture and NetCDF/ATMSNAP persistence
+├── Observations/    observation interfaces, loaded after Output and before Adjoints
+│   ├── Retrievals/  retrieval columns and averaging kernels
+│   ├── Sources/     sources, requests, schedules and readers
+│   └── Sampling/    location, placement, gathers, sampler and observation NetCDF
 ├── Regridding/      conservative offline remapping
 ├── GriddedIO/       conventions of gridded input files (coordinates, time axes, flux units, flux-file schemas)
 ├── Adjoints/        reverse operators and objective seeding
@@ -239,7 +243,7 @@ modules included before it:
 
 ```text
 Architectures → SectionTimer → ConfigChecks → LogLevels → AtomicFiles
-→ Quantities → Parameters → Grids → State → Output → MetDrivers → Operators
+→ Quantities → Parameters → Grids → State → Output → Observations → MetDrivers → Operators
 → Tape → Adjoints → Regridding → GriddedIO → Preprocessing → Models → Diagnostics
 → Extras/Visualization → Extras/Analysis → Extras/Downloads
 ```

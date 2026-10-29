@@ -2,8 +2,9 @@ using Test, AtmosTransport, Random
 using AtmosTransport.Grids: CubedSphereMesh, GnomonicPanelConvention, GEOSNativePanelConvention,
                             panel_cell_center_lonlat, panel_cell_corner_lonlat, cell_index,
                             ring_longitudes
-using AtmosTransport.Output: cell_locator, locate, ncolumns, isvalid_lonlat, CellLocation,
-                             LatLonCellLocator, ReducedGaussianCellLocator, CubedSphereCellLocator
+using AtmosTransport.Observations: cell_locator, locate, isvalid_lonlat, CellLocation,
+                                   LatLonCellLocator, ReducedGaussianCellLocator,
+                                   CubedSphereCellLocator
 
 # Independent lat-lon reference: linear scan over the faces.
 function brute_force_latlon(mesh, lon, lat)
@@ -48,7 +49,6 @@ end
     mesh = LatLonMesh(; FT = Float64, Nx = 8, Ny = 4)
     loc = cell_locator(mesh)
     @test loc isa LatLonCellLocator
-    @test ncolumns(loc) == 32
     @test @inferred(Union{Nothing, CellLocation}, locate(loc, 10.0, 20.0)) isa CellLocation
     for j in 1:mesh.Ny, i in 1:mesh.Nx
         c = locate(loc, mesh.λᶜ[i], mesh.φᶜ[j])
@@ -140,7 +140,6 @@ end
         mesh = ReducedGaussianMesh([-45.0, 45.0], [4, 8]; FT = FT)
         loc = cell_locator(mesh)
         @test loc isa ReducedGaussianCellLocator
-        @test ncolumns(loc) == ncells(mesh)
         @test @inferred(locate(loc, 10.0, 20.0)) isa CellLocation
         # Ring 1 (south, 4 cells of 90°): longitude bins in [0, 360).
         @test locate(loc, 0.0, -45.0).i == 1
@@ -179,7 +178,6 @@ end
         @test loc.halo_width == Hp
         @test @inferred(locate(loc, 10.0, 20.0)) isa CellLocation
         Np = mesh.Nc + 2Hp
-        @test ncolumns(loc) == Np^2
         slab = LinearIndices((Np, Np))
         corners = ntuple(p -> panel_cell_corner_lonlat(mesh, p), 6)
         for p in 1:6

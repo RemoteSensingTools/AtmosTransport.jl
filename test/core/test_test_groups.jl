@@ -41,9 +41,9 @@ end
     # Placed 4D-Var observations share the forward sampler's locator and layer
     # rule, so changing them must run the parity tests.
     groups = load_groups(joinpath(TEST_ROOT, "groups.toml"))
-    for f in ("src/Output/observations/cell_locator.jl",
-              "src/Output/observations/observation_sampler.jl",
-              "src/Output/observations/observation_placement.jl")
+    for f in ("src/Observations/Sampling/cell_locator.jl",
+              "src/Observations/Sampling/observation_sampler.jl",
+              "src/Observations/Sampling/observation_placement.jl")
         @test "inversion" in TestGroups.topics_for_path(groups, f)
     end
 end

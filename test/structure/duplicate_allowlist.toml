@@ -1,7 +1,5 @@
-# P1 snapshot of existing debt. Allowlists only shrink; new entries need owner approval.
+# Existing debt only; resolved entries removed by the owning cleanup.
 [allow]
-"_check_open|AtmosTransport.GriddedIO" = "P1 baseline: _check_open is independently defined in AtmosTransport.GriddedIO; remove this allowance when the owning cleanup lands."
-"_check_open|AtmosTransport.Output" = "P1 baseline: _check_open is independently defined in AtmosTransport.Output; remove this allowance when the owning cleanup lands."
 "_column_scratch|AtmosTransport.Operators.Advection" = "P1 baseline: _column_scratch is independently defined in AtmosTransport.Operators.Advection; remove this allowance when the owning cleanup lands."
 "_column_scratch|AtmosTransport.Operators.Diffusion" = "P1 baseline: _column_scratch is independently defined in AtmosTransport.Operators.Diffusion; remove this allowance when the owning cleanup lands."
 "_copy_cs_storage!|AtmosTransport.MetDrivers" = "P1 baseline: _copy_cs_storage! is independently defined in AtmosTransport.MetDrivers; remove this allowance when the owning cleanup lands."

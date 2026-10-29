@@ -312,7 +312,7 @@ function _check_physics_and_output_settings!(cfg, FT, errors)
         # must not be capped (the runner applies the binaries' length).
         _capture_config_error!(errors) do
             spec = runtime_output_spec(output_cfg, FT; default_cap_hours = floatmax(Float64))
-            _check_output_targets(spec, output_cfg)
+            check_output_targets(spec, output_cfg)
         end
     end
     return errors

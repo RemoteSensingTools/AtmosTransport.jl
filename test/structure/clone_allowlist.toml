@@ -1,7 +1,5 @@
-# P1 snapshot of existing debt. Allowlists only shrink; new entries need owner approval.
+# Existing debt only; resolved entries removed by the owning cleanup.
 [allow]
-"2d6e0ef063ee5621593da265da9aa38def10f5e23a11861c8cfde9dabb0f2e56|src/Inversion/DeparturesIO.jl|AtmosTransport.Adjoints|_write_dep_var|384e3db5569d180b" = "P1 baseline: src/Inversion/DeparturesIO.jl:902: _write_dep_var shares a 39-token body; remove this allowance when the owning cleanup lands."
-"2d6e0ef063ee5621593da265da9aa38def10f5e23a11861c8cfde9dabb0f2e56|src/Inversion/ObservationsIO.jl|AtmosTransport.Adjoints|_write_obs_var|c0a9899ec20b915d" = "P1 baseline: src/Inversion/ObservationsIO.jl:434: _write_obs_var shares a 39-token body; remove this allowance when the owning cleanup lands."
 "38b95192fe9308a7feb52c0381f2362177a594635dc1906d2ed431796ea0e9ff|src/Grids/LatLonMesh.jl|AtmosTransport.Grids|_check_latlon_face|00571f44c55c9bd5" = "P1 baseline: src/Grids/LatLonMesh.jl:347: _check_latlon_face shares a 25-token body; remove this allowance when the owning cleanup lands."
 "38b95192fe9308a7feb52c0381f2362177a594635dc1906d2ed431796ea0e9ff|src/Grids/ReducedGaussianMesh.jl|AtmosTransport.Grids|_check_face_index|b772d6233983a827" = "P1 baseline: src/Grids/ReducedGaussianMesh.jl:196: _check_face_index shares a 25-token body; remove this allowance when the owning cleanup lands."
 "98b0dccbfeb7e8e0b9192a984147fe19a3fc1887b0a8928a8acb6f3aee20a158|src/Grids/LatLonMesh.jl|AtmosTransport.Grids|_check_latlon_cell|eda64966db95f022" = "P1 baseline: src/Grids/LatLonMesh.jl:342: _check_latlon_cell shares a 25-token body; remove this allowance when the owning cleanup lands."
