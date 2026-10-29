@@ -158,9 +158,7 @@ _trig(λ, φ) = (sinλ = sin.(λ), cosλ = cos.(λ), sinφ = sin.(φ), cosφ = c
 
 # Source cell centres (degrees) in the regridder's cell order.
 _source_cell_centers(m::LatLonMesh) = (repeat(m.λᶜ; outer = m.Ny), repeat(m.φᶜ; inner = m.Nx))
-_source_cell_centers(m::ReducedGaussianMesh) =
-    (reduce(vcat, ring_longitudes(m, j) for j in eachindex(m.latitudes)),
-     reduce(vcat, fill(m.latitudes[j], m.nlon_per_ring[j]) for j in eachindex(m.latitudes)))
+_source_cell_centers(m::ReducedGaussianMesh) = cell_centers(m)
 
 function CartesianWindRegrid(source, target::CubedSphereMesh, Nz::Integer, ::Type{FT}) where FT
     lon, lat = _source_cell_centers(source)

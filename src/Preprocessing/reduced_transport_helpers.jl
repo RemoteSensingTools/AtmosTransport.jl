@@ -59,7 +59,7 @@ function ReducedFidelitySampler(grid::ReducedGaussianTargetGeometry,
         index = zonal ? id : id - nr + 1
         npts = zonal ? mesh.nlon_per_ring[index] : mesh.boundary_counts[index]
         first_face = zonal ? mesh.ring_offsets[index] :
-                             mesh._ncells + mesh.boundary_offsets[index]
+                             ncells(mesh) + mesh.boundary_offsets[index]
         segments = sort(collect(1:npts); by = seg -> _splitmix64(xor(
             seed, UInt64(first_face + seg - 1), UInt64(0x7f))))
         for seg in sort(segments[1:min(per_line, npts)])
@@ -316,15 +316,9 @@ function allocate_reduced_transform_workspace(grid::ReducedGaussianTargetGeometr
     nt = Threads.nthreads()
     nt_max = max(nt, 2 * nt) + 4
 
-    cell_areas = [cell_area(mesh, c) for c in 1:nc]
+    cell_areas = Grids.cell_areas(mesh)
     buffer_lengths = sort!(unique(vcat(collect(mesh.nlon_per_ring), collect(mesh.boundary_counts))))
-    face_left = Vector{Int32}(undef, nf)
-    face_right = Vector{Int32}(undef, nf)
-    for f in 1:nf
-        left, right = face_cells(mesh, f)
-        face_left[f] = Int32(left)
-        face_right[f] = Int32(right)
-    end
+    face_left, face_right = face_connectivity(mesh)
 
     caches = [ReducedSpectralThreadCache(
                  zeros(Float64, T + 1, T + 1),
@@ -498,7 +492,7 @@ function compute_reduced_horizontal_fluxes!(hflux::AbstractVector{Float64},
         nlon_s = mesh.nlon_per_ring[south_ring]
         nlon_n = mesh.nlon_per_ring[north_ring]
         dlon = 2pi / nseg
-        face0 = mesh._ncells + mesh.boundary_offsets[b] - 1
+        face0 = ncells(mesh) + mesh.boundary_offsets[b] - 1
         for seg in 1:nseg
             face = face0 + seg
             south_i = ((seg - 1) * nlon_s) ÷ nseg + 1

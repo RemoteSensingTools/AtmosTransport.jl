@@ -317,7 +317,7 @@ function open_attachment_writer(output, Nc, np, Nz, h, g, vc, metadata)
         flux_sampling = h.flux_sampling, flux_kind = h.flux_kind,
         include_flux_delta = true, mass_basis = h.mass_basis,
         surface_pressure_basis = h.surface_pressure_basis,
-        tm5_convection_mass_basis = PP.mass_basis_from_symbol(h.mass_basis),
+        tm5_convection_mass_basis = AtmosTransport.State.mass_basis(h.mass_basis),
         include_surface = true, include_tm5conv = true,
         include_precomputed_dkg = true,
         panel_convention = String(g.panel_convention),
@@ -371,7 +371,7 @@ function main(argv)
             source_mesh, target_grid.horizontal; normalize = false,
             cache_dir = abspath(args["cache_dir"]))
 
-        basis = PP.mass_basis_from_symbol(h.mass_basis)
+        basis = AtmosTransport.State.mass_basis(h.mass_basis)
         humidity = humidity_remap(basis, h.raw_header, args["era5_root"],
                                   Date(_date_label(input), dateformat"yyyymmdd"),
                                   source_mesh, abspath(args["cache_dir"]))

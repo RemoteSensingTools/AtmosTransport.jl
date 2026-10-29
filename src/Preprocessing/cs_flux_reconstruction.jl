@@ -207,17 +207,9 @@ struct CSVectorFaceGeometry{O <: Union{Nothing, OuterCellPair}, F <: Union{Nothi
 end
 
 # Small 3-vector helpers on tuples.
-@inline _dot3(a, b) = a[1] * b[1] + a[2] * b[2] + a[3] * b[3]
-@inline _cross3(a, b) = (a[2] * b[3] - a[3] * b[2], a[3] * b[1] - a[1] * b[3], a[1] * b[2] - a[2] * b[1])
-@inline _unit3(a) = a ./ sqrt(_dot3(a, a))
-# Angle between unit vectors from their chord (accurate at small angles).
-@inline _arc3(a, b) = 2 * asin(min(1.0, sqrt(_dot3(a .- b, a .- b)) / 2))
 
-@inline function _cs_cell_ijp(c, Nc)
-    p, r = divrem(c - 1, Nc * Nc)
-    j, i = divrem(r, Nc)
-    return i + 1, j + 1, p + 1
-end
+
+
 
 # Cell centres and local east/north unit vectors, by global cell index.
 function _cs_cell_bases(mesh::CubedSphereMesh)
@@ -226,9 +218,9 @@ function _cs_cell_bases(mesh::CubedSphereMesh)
     for p in 1:6
         lon, lat = panel_cell_center_lonlat(mesh, p)
         for j in 1:Nc, i in 1:Nc
-            c = _cs_global_cell(i, j, p, Nc)
+            c = cs_flat_index(i, j, p, Nc)
             λ, φ = deg2rad(Float64(lon[i, j])), deg2rad(Float64(lat[i, j]))
-            centre[c] = (cos(φ) * cos(λ), cos(φ) * sin(λ), sin(φ))
+            centre[c] = unit_xyz_from_radians(λ, φ)
             east[c]   = (-sin(λ), cos(λ), 0.0)
             north[c]  = (-sin(φ) * cos(λ), -sin(φ) * sin(λ), cos(φ))
         end
@@ -249,29 +241,29 @@ function CSVectorFaceGeometry(mesh::CubedSphereMesh, ft::CSGlobalFaceTable; orde
     Nc, R = mesh.Nc, Float64(mesh.radius)
     centre, east, north = _cs_cell_bases(mesh)
     corners = [_cs_face_corners(mesh, ft, f) for f in 1:ft.nf]
-    mid = [_unit3(a .+ b) for (a, b) in corners]
+    mid = [unit3(a .+ b) for (a, b) in corners]
     normal = map(1:ft.nf) do f
-        n = _unit3(_cross3(corners[f]...))
-        _dot3(n, centre[ft.face_right[f]] .- centre[ft.face_left[f]]) >= 0 ? n : .-n
+        n = unit3(cross3(corners[f]...))
+        dot3(n, centre[ft.face_right[f]] .- centre[ft.face_left[f]]) >= 0 ? n : .-n
     end
     cells(g) = (Int(ft.face_left[g]), Int(ft.face_right[g]))
     function weights(g)
         l, r = cells(g)
-        d_l, d_r = _arc3(centre[l], mid[g]), _arc3(centre[r], mid[g])
+        d_l, d_r = arc3(centre[l], mid[g]), arc3(centre[r], mid[g])
         return (d_r / (d_l + d_r), d_l / (d_l + d_r))
     end
     function cell_tuple(g)
-        (il, jl, pl), (ir, jr, pr) = _cs_cell_ijp(cells(g)[1], Nc), _cs_cell_ijp(cells(g)[2], Nc)
+        (il, jl, pl), (ir, jr, pr) = cs_panel_ij(cells(g)[1], Nc), cs_panel_ij(cells(g)[2], Nc)
         return Int32.((pl, il, jl, pr, ir, jr))
     end
     function coefficients(g, n)    # cells of face g, projected on normal n
         (l, r), (wl, wr) = cells(g), weights(g)
-        return (wl * _dot3(east[l], n), wl * _dot3(north[l], n), wr * _dot3(east[r], n), wr * _dot3(north[r], n))
+        return (wl * dot3(east[l], n), wl * dot3(north[l], n), wr * dot3(east[r], n), wr * dot3(north[r], n))
     end
 
     partner, w_partner = _seam_partners(ft, corners, mid, centre)
     nf = ft.nf
-    len = [R * _arc3(corners[f]...) for f in 1:nf]
+    len = [R * arc3(corners[f]...) for f in 1:nf]
     cell = [cell_tuple(f) for f in 1:nf]
     coef = [coefficients(f, normal[f]) for f in 1:nf]
     dpw = [weights(f) for f in 1:nf]
@@ -290,7 +282,7 @@ end
 # Fourth-order stencil across the interior faces with two cells on each side in
 # the panel row: the inner pair's coefficients become 9/16, the outer pair −1/16.
 function _outer_cell_pair!(coef, ft, cells, normal, east, north, Nc)
-    proj(c, n, w) = (w * _dot3(east[c], n), w * _dot3(north[c], n))
+    proj(c, n, w) = (w * dot3(east[c], n), w * dot3(north[c], n))
     faces = [f for f in 1:ft.nf if ft.mirror_panel[f] == 0 &&
              3 <= (ft.face_dir[f] == 1 ? ft.face_idx_i[f] : ft.face_idx_j[f]) <= Nc - 1]
     slot = zeros(Int32, ft.nf); slot[faces] .= 1:length(faces)
@@ -301,8 +293,8 @@ function _outer_cell_pair!(coef, ft, cells, normal, east, north, Nc)
         l, r = cells(f)
         coef[f] = (proj(l, normal[f], 9 / 16)..., proj(r, normal[f], 9 / 16)...)
         push!(cell, Int32.((p, il, jl, p, ir, jr)))
-        push!(outer_coef, (proj(_cs_global_cell(il, jl, p, Nc), normal[f], -1 / 16)...,
-                           proj(_cs_global_cell(ir, jr, p, Nc), normal[f], -1 / 16)...))
+        push!(outer_coef, (proj(cs_flat_index(il, jl, p, Nc), normal[f], -1 / 16)...,
+                           proj(cs_flat_index(ir, jr, p, Nc), normal[f], -1 / 16)...))
     end
     return OuterCellPair(slot, cell, outer_coef)
 end
@@ -338,18 +330,18 @@ function _seam_partners(ft, corners, mid, centre)
     for f in seam_faces, c in corners[f]
         push!(get!(by_corner, key(c), Int[]), f)
     end
-    between(g) = _unit3(centre[ft.face_left[g]] .+ centre[ft.face_right[g]])
+    between(g) = unit3(centre[ft.face_left[g]] .+ centre[ft.face_right[g]])
     partner, w_partner = zeros(Int, ft.nf), zeros(ft.nf)
     for f in seam_faces
-        plane = _unit3(_cross3(corners[f]...))
+        plane = unit3(cross3(corners[f]...))
         F, P = mid[f], between(f)
         for c in corners[f], g in by_corner[key(c)]
             g == f && continue
             other = key(corners[g][1]) == key(c) ? corners[g][2] : corners[g][1]
-            abs(_dot3(plane, other)) < 1e-9 || continue                  # same seam (great circle)
+            abs(dot3(plane, other)) < 1e-9 || continue                  # same seam (great circle)
             Pg = between(g)
-            _dot3(F .- P, Pg .- P) > 0 || continue                        # on the midpoint's side
-            partner[f], w_partner[f] = g, _arc3(P, F) / (_arc3(P, F) + _arc3(Pg, F))
+            dot3(F .- P, Pg .- P) > 0 || continue                        # on the midpoint's side
+            partner[f], w_partner[f] = g, arc3(P, F) / (arc3(P, F) + arc3(Pg, F))
             break
         end
     end

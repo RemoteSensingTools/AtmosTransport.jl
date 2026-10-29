@@ -89,8 +89,7 @@ function _make_structured_model(driver::TransportBinaryDriver;
     mesh = grid.horizontal
     _require_global_longitude_span(mesh)
     basis_tag = air_mass_basis(driver)
-    basis_type = basis_tag === :dry ? DryBasis : basis_tag === :moist ? MoistBasis :
-        throw(ArgumentError("driver mass basis must be :dry or :moist; got $(repr(basis_tag))"))
+    basis_type = typeof(mass_basis(basis_tag))
     window = load_transport_window(driver, Int(start_window))
     air_mass = copy(window.air_mass)
 

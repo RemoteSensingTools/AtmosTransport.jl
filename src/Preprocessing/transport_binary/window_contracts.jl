@@ -42,17 +42,6 @@
 # basis" vs "runtime basis" parallel hierarchy.
 # ===========================================================================
 
-"""
-    mass_basis_from_symbol(s::Symbol) -> AbstractMassBasis
-
-Construct the matching basis singleton from a header `Symbol`. Throws
-`ArgumentError` for unknown values.
-"""
-@inline function mass_basis_from_symbol(s::Symbol)
-    s === :dry   && return DryBasis()
-    s === :moist && return MoistBasis()
-    throw(ArgumentError("Unknown mass-basis symbol $(s); expected :dry or :moist."))
-end
 
 # ---------------------------------------------------------------------------
 # Abstract trait surface. Concrete subtypes are listed in the header above.

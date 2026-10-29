@@ -1,3 +1,7 @@
+"""Number of panels in a cubed sphere."""
+const CS_PANEL_COUNT = 6
+export CS_PANEL_COUNT
+
 # ---------------------------------------------------------------------------
 # Cubed-sphere panel connectivity for src
 #

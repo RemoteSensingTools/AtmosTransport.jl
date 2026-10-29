@@ -27,8 +27,7 @@ using .AtmosTransport.State: AbstractFaceFluxState,
                              AbstractStructuredFaceFluxState,
                              DryBasis, MoistBasis,
                              StructuredFaceFluxState, face_flux_x,
-                             face_flux_y, face_flux_z, flux_basis,
-                             mass_basis
+                             face_flux_y, face_flux_z, mass_basis
 
 # =========================================================================
 # Test 1: Module loading and type construction
@@ -50,7 +49,7 @@ using .AtmosTransport.State: AbstractFaceFluxState,
     @test isdefined(AtmosTransport, :AbstractMassBasis)
     @test isdefined(AtmosTransport, :MoistBasis)
     @test isdefined(AtmosTransport, :DryBasis)
-    @test isdefined(AtmosTransport, :flux_basis)
+    @test isdefined(AtmosTransport, :mass_basis)
 end
 
 @testset "Flux topology trait" begin
@@ -71,24 +70,24 @@ end
     am = zeros(11, 8, 4); bm = zeros(10, 9, 4); cm = zeros(10, 8, 5)
 
     dry = StructuredFaceFluxState{DryBasis}(am, bm, cm)
-    @test flux_basis(dry) isa DryBasis
+    @test mass_basis(dry) isa DryBasis
 
     moist = StructuredFaceFluxState{MoistBasis}(am, bm, cm)
-    @test flux_basis(moist) isa MoistBasis
+    @test mass_basis(moist) isa MoistBasis
 
     default = StructuredFaceFluxState(am, bm, cm)
-    @test flux_basis(default) isa DryBasis
+    @test mass_basis(default) isa DryBasis
 
     @test !(moist isa StructuredFaceFluxState{DryBasis})
     @test !(dry isa StructuredFaceFluxState{MoistBasis})
 
     alloc_dry = allocate_face_fluxes(StructuredFluxTopology(), 10, 8, 4;
                                       basis=DryBasis)
-    @test flux_basis(alloc_dry) isa DryBasis
+    @test mass_basis(alloc_dry) isa DryBasis
 
     alloc_moist = allocate_face_fluxes(StructuredFluxTopology(), 10, 8, 4;
                                         basis=MoistBasis)
-    @test flux_basis(alloc_moist) isa MoistBasis
+    @test mass_basis(alloc_moist) isa MoistBasis
 end
 
 # =========================================================================
@@ -114,7 +113,7 @@ MockStructuredFluxState{B}(am, bm, cm) where {B} =
     A = FT[0.0, 500.0, 5000.0, 30000.0, 0.0]
     B = FT[0.0, 0.0,   0.1,    0.5,     1.0]
     vc = HybridSigmaPressure(A, B)
-    grid = AtmosGrid(mesh, vc, AtmosTransport.Grids.CPU(); FT=FT)
+    grid = AtmosGrid(mesh, vc, AtmosTransport.Architectures.CPU(); FT=FT)
 
     g = grid.gravity
     ps_val = grid.reference_pressure
@@ -139,7 +138,6 @@ MockStructuredFluxState{B}(am, bm, cm) where {B} =
     mock_fluxes = MockStructuredFluxState{DryBasis}(am, bm, cm)
     @test mock_fluxes isa AbstractStructuredFaceFluxState
     @test !(mock_fluxes isa StructuredFaceFluxState)
-    @test flux_basis(mock_fluxes) isa DryBasis
     @test mass_basis(mock_fluxes) isa DryBasis
     @test_throws MethodError strang_split!(state, mock_fluxes, grid, scheme; workspace=ws)
 
@@ -273,7 +271,7 @@ end
     vc = HybridSigmaPressure(A, B)
     @test n_levels(vc) == 4
 
-    grid = AtmosGrid(mesh, vc, AtmosTransport.Grids.CPU();
+    grid = AtmosGrid(mesh, vc, AtmosTransport.Architectures.CPU();
                      FT=Float64, radius=6.371e6, gravity=9.80665)
     @test nlevels(grid) == 4
     @test floattype(grid) == Float64
@@ -297,7 +295,7 @@ function make_test_grid(; Nx=60, Ny=30, Nz=4, FT=Float64)
 
     # Use a simple CPU() arch. Since the module doesn't re-export legacy Architectures,
     # we create a minimal stand-in.
-    grid = AtmosGrid(mesh, vc, AtmosTransport.Grids.CPU();
+    grid = AtmosGrid(mesh, vc, AtmosTransport.Architectures.CPU();
                      FT=FT, radius=FT(6.371e6), gravity=FT(9.80665))
     return grid
 end

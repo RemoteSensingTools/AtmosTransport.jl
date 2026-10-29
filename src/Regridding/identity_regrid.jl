@@ -26,15 +26,13 @@ struct IdentityRegrid{M}
 end
 
 function IdentityRegrid(mesh)
-    areas = _flat_cell_areas(mesh)
+    areas = cell_areas(mesh)
     return IdentityRegrid(mesh, areas, areas)
 end
 
 # Cell areas in the flat order of the regridders: lat-lon `i` fastest, cubed
 # sphere panel by panel, reduced Gaussian by cell index.
-_flat_cell_areas(m::LatLonMesh) = vec([Float64(cell_area(m, i, j)) for i in 1:m.Nx, j in 1:m.Ny])
-_flat_cell_areas(m::CubedSphereMesh) = repeat(vec(Float64.(m.cell_areas)), 6)
-_flat_cell_areas(m::ReducedGaussianMesh) = [Float64(cell_area(m, c)) for c in 1:ncells(m)]
+
 
 # ---------------------------------------------------------------------------
 # Structural equivalence: same shape ⇒ identity passthrough is safe.

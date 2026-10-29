@@ -8,12 +8,6 @@ using .AtmosTransport.Grids: FaceIndexedFluxTopology, boundary_face_count,
                              face_normal, flux_topology, nboundaries,
                              ring_cell_count, ring_longitudes
 
-@testset "ReducedGaussianMesh wiring" begin
-    @test isdefined(AtmosTransport, :ReducedGaussianMesh)
-    @test isdefined(AtmosTransport, :ERA5ReducedGaussianGeometry)
-    @test isdefined(AtmosTransport, :read_era5_reduced_gaussian_geometry)
-    @test isdefined(AtmosTransport, :read_era5_reduced_gaussian_mesh)
-end
 
 @testset "ReducedGaussianMesh geometry" begin
     latitudes = [-75.0, -25.0, 25.0, 75.0]

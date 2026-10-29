@@ -148,7 +148,7 @@ function _parse_altitude_placement(cfg::AbstractDict, has_surface::Bool, label::
 end
 
 # `vertical_coordinates`: a non-empty array of distinct coordinate names, in
-# preference order → a tuple of `AbstractVerticalCoordinate`s.
+# preference order → a tuple of `AbstractPlacementCoordinate`s.
 function _parse_vertical_coordinates(cfg::AbstractDict, label::AbstractString)
     haskey(cfg, "vertical_coordinates") || return DEFAULT_VERTICAL_COORDINATES
     key = "$(label).vertical_coordinates"

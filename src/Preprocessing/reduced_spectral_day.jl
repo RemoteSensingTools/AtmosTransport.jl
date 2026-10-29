@@ -528,7 +528,7 @@ function process_day(date::Date,
 
     window_writer = ReducedGaussianBinaryWriter(
         writer,
-        mass_basis_from_symbol(Symbol(settings.mass_basis));
+        State.mass_basis(Symbol(settings.mass_basis));
         final_path = bin_path)
     ctx = RGSpectralUnifiedDriverContext(
         grid, settings, vertical, spec, substep_policy, date, next_day_hour0,

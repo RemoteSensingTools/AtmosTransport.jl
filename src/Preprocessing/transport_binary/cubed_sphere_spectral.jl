@@ -673,11 +673,7 @@ function process_day(date::Date,
                 include_flux_delta=true,
                 mass_basis=Symbol(settings.mass_basis),
                 surface_pressure_basis=TotalSurfacePressure(),
-                panel_convention=_cs_panel_convention_tag(grid),
-                cs_definition=_cs_definition_tag(grid),
-                cs_coordinate_law=_cs_coordinate_law_tag(grid),
-                cs_center_law=_cs_center_law_tag(grid),
-                longitude_offset_deg=longitude_offset_deg(cs_definition(grid.mesh)),
+                cs_geometry_tags(grid.mesh)...,
                 planet_radius=grid.mesh.radius,
                 extra_header=_with_replay_record(_with_column_weights_record(merge(Dict{String, Any}(
                     "preprocessor"     => "preprocess_transport_binary.jl",
@@ -716,7 +712,7 @@ function process_day(date::Date,
             @info "  Applying column CS mass-balance correction; diagnosing cm from endpoint mass tendency..."
             binary_writer = CubedSphereBinaryWriter(
                 writer,
-                mass_basis_from_symbol(Symbol(settings.mass_basis));
+                State.mass_basis(Symbol(settings.mass_basis));
                 Nc = Nc,
                 npanel = CS_PANEL_COUNT,
                 final_path = bin_path)

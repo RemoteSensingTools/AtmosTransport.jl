@@ -5,6 +5,10 @@ Minimal standalone runtime layer for `src`.
 """
 module Models
 
+using ..State: panel_interior
+
+using ..State: basis_symbol
+
 using Adapt
 using ..Architectures
 using ..SectionTimer
@@ -33,11 +37,8 @@ using ..Adjoints: CSStepSchedule, require_adjoint_support
 using ..MetDrivers
 using ..MetDrivers: same_window_layout, AbstractRawWindowStaging, raw_window_staging,
                     read_window_payload!, unpack_window_payload!
-# Bring Regridding + Preprocessing into Models' namespace
-# so the nested `InitialConditionIO` submodule can `using ..Regridding` etc.
-# Regridding + Preprocessing are loaded before Models in AtmosTransport.jl.
+# Regridding is available to the nested InitialConditionIO module.
 using ..Regridding
-using ..Preprocessing
 # Output writers (SnapshotFrame / capture_snapshot / write_snapshot_netcdf)
 # loaded by AtmosTransport.jl before Models — pull into Models' namespace
 # so the nested DrivenRunner submodule can `using ..Output: …`.

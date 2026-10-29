@@ -118,3 +118,9 @@ README contract headings are reported only during the P1 rollout.
 - Operator block ordering:
   [`Operators/README.md`](Operators/README.md) and
   [`../docs/20_RUNTIME_FLOW.md`](../docs/20_RUNTIME_FLOW.md)
+
+## Shared helpers owned here
+
+`Architectures.compensated_total` is the public compensated Float64 reduction
+for arrays and tuples of arrays, used by State mass diagnostics and Output
+snapshot totals. Backend summation policies remain unchanged.

@@ -23,6 +23,12 @@ Provides:
 """
 module Advection
 
+using ...Grids: cs_panel_edge_seam
+
+using ...Grids: face_connectivity
+
+using ...Grids: edge_interior_ij, edge_halo_ij, corner_source_ij, cs_seam_axis, cs_seam_sign, cs_seam_face_index, cs_seam
+
 using Adapt
 using DocStringExtensions
 

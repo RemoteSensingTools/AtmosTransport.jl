@@ -154,3 +154,7 @@ cubed-sphere driver). The parent overview is [`../README.md`](../README.md).
   `test_cs_optional_2d_sections.jl`, `test_cs_writer_contract_guard.jl`,
   `test_precomputed_dkg_binary_payload.jl`, `test_replay_consistency.jl`,
   `test_input_resource_lifetime.jl` (driver closes its reader on failure)
+
+`binary_mass_basis(reader)` is the header Symbol accessor (`:dry` or `:moist`).
+`State.mass_basis` returns basis instances. Geometry tags and panel packing
+come from Grids; mass-basis parsing comes from State.

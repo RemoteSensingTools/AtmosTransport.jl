@@ -653,7 +653,7 @@ function process_era5_n320_to_cs_day(date::Date,
         do_mass_pin && @info @sprintf("  Global dry-mass pin ON: target=%.9e kg (%.3f Pa dry ⟨ps⟩)",
                                       Float64(global_mass_target_kg),
                                       Float64(global_mass_target_kg) * Float64(gravity) /
-                                      (6 * sum(Float64, cs_cell_areas)))
+                                      (cs_total_area(cs_cell_areas)))
         pin_endpoint_mass! = function (m_dry, ps_dry, native_qv, merged_qv)
             do_mass_pin || return nothing
             _pin_era5_endpoint_mass!(
@@ -691,11 +691,7 @@ function process_era5_n320_to_cs_day(date::Date,
             include_precomputed_dkg = settings.include_tm5_diffusion,
             mass_basis = mass_basis,
             surface_pressure_basis = DrySurfacePressure(),
-            panel_convention = _cs_panel_convention_tag(target_grid),
-            cs_definition = _cs_definition_tag(target_grid),
-            cs_coordinate_law = _cs_coordinate_law_tag(target_grid),
-            cs_center_law = _cs_center_law_tag(target_grid),
-            longitude_offset_deg = longitude_offset_deg(cs_definition(mesh)),
+            cs_geometry_tags(mesh)...,
             planet_radius = mesh.radius,
             extra_header = _with_replay_record(merge(Dict{String, Any}(
                 "preprocessor" => "process_era5_n320_to_cs_day",
@@ -745,9 +741,9 @@ function process_era5_n320_to_cs_day(date::Date,
         do_mass_pin &&
             (inner_writer.header["mass_fix_target_ps_dry_pa"] = mass_fix_target_ps_dry_record(
                 mass_fix_target_ps_dry_pa, global_mass_target_kg,
-                6.0 * sum(Float64, cs_cell_areas), STANDARD_GRAVITY))
+                cs_total_area(cs_cell_areas), STANDARD_GRAVITY))
         writer = CubedSphereBinaryWriter(inner_writer,
-                                          mass_basis_from_symbol(mass_basis);
+                                          State.mass_basis(mass_basis);
                                           Nc = Nc,
                                           npanel = 6,
                                           final_path = String(out_path))

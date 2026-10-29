@@ -1042,11 +1042,13 @@ _accumulate_total(s, c, parts::Tuple) =
     foldl((sc, part) -> _accumulate_total(sc..., part), parts; init = (s, c))
 
 """
-    _compensated_total(values) -> Float64
+    compensated_total(values) -> Float64
 
 Compensated Float64 total of a host or device array, or of a tuple of arrays
 (cubed-sphere panels). CPU and CUDA arrays are summed in place.
 """
-_compensated_total(values) = +(_accumulate_total(0.0, 0.0, values)...)
+compensated_total(values) = +(_accumulate_total(0.0, 0.0, values)...)
+
+export compensated_total
 
 end # module Architectures

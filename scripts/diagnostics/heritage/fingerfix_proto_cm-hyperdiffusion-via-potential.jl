@@ -260,7 +260,7 @@ end
 function level_dm!(dmv::Vector{Float64}, dm, s, k::Int)
     Nc = s.Nc
     @inbounds for p in 1:6, j in 1:Nc, i in 1:Nc
-        c = P._cs_global_cell(i, j, p, Nc)
+        c = P.cs_flat_index(i, j, p, Nc)
         dmv[c] = Float64(dm[p][i,j,k])
     end
     return dmv
@@ -411,9 +411,9 @@ function _level_lap_spectrum(vfield::Vector{Float64}, s, k::Int)
     lap = Float64[]; vals = Float64[]
     @inbounds for p in 1:6, j in 2:Nc-1, i in 2:Nc-1
         s.sh[p][i, j] || continue
-        c   = P._cs_global_cell(i, j, p, Nc)
-        cip = P._cs_global_cell(i+1, j, p, Nc); cim = P._cs_global_cell(i-1, j, p, Nc)
-        cjp = P._cs_global_cell(i, j+1, p, Nc); cjm = P._cs_global_cell(i, j-1, p, Nc)
+        c   = P.cs_flat_index(i, j, p, Nc)
+        cip = P.cs_flat_index(i+1, j, p, Nc); cim = P.cs_flat_index(i-1, j, p, Nc)
+        cjp = P.cs_flat_index(i, j+1, p, Nc); cjm = P.cs_flat_index(i, j-1, p, Nc)
         v = vfield[c]
         push!(lap, v - 0.25*(vfield[cip]+vfield[cim]+vfield[cjp]+vfield[cjm]))
         push!(vals, v)

@@ -33,7 +33,7 @@ function _define_latlon_flux_axes!(ds, mesh::LatLonMesh)
            attrib = Dict("units" => "degrees_east"))[:, :] = permutedims(hcat(λᶠ[1:Nx], λᶠ[2:(Nx + 1)]))
     defVar(ds, "lat_bnds", Float64, ("nv", "lat");
            attrib = Dict("units" => "degrees_north"))[:, :] = permutedims(hcat(φᶠ[1:Ny], φᶠ[2:(Ny + 1)]))
-    area = Float64[cell_area(mesh, i, j) for i in 1:Nx, j in 1:Ny]
+    area = reshape(cell_areas(mesh), Nx, Ny)
     defVar(ds, "cell_area", Float64, ("lon", "lat");
            attrib = Dict("units" => "m2", "standard_name" => "cell_area",
                          "long_name" => "horizontal cell area"))[:, :] = area

@@ -90,7 +90,7 @@ end
 @inline _cs_basis_type(
     reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
 ) =
-    mass_basis(reader) === :dry ? DryBasis : MoistBasis
+    typeof(mass_basis(binary_mass_basis(reader)))
 
 @inline function _pad_horizontal(a::AbstractArray{T, N}, Hp::Int) where {T, N}
     dims = ntuple(d -> d <= 2 ? size(a, d) + 2 * Hp : size(a, d), N)

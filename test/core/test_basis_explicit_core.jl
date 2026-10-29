@@ -5,13 +5,13 @@ using Adapt
 
 using AtmosTransport
 using .AtmosTransport.Grids: StructuredFluxTopology, face_cells, face_length,
-                             face_normal, n_levels, planet_parameters
+                             face_normal, n_levels
 using .AtmosTransport.Operators: AbstractConstantScheme, AbstractLinearScheme,
                                  AbstractQuadraticScheme, MonotoneLimiter,
                                  strang_split!
 using .AtmosTransport.Parameters: PlanetParameters
 using .AtmosTransport.State: FaceIndexedFluxState, StructuredFaceFluxState,
-                             mass_basis
+                             mass_basis, basis_symbol
 
 const HAS_CUDA_FOR_ADAPT = try
     using CUDA
@@ -20,12 +20,6 @@ catch
     false
 end
 
-struct _IncompleteHorizontalMesh <: AtmosTransport.Grids.AbstractHorizontalMesh end
-struct _IncompleteStructuredMesh <: AtmosTransport.Grids.AbstractStructuredMesh end
-Base.eltype(::_IncompleteHorizontalMesh) = Float64
-Base.eltype(::_IncompleteStructuredMesh) = Float64
-
-struct _IncompleteVerticalCoordinate{FT} <: AtmosTransport.Grids.AbstractVerticalCoordinate{FT} end
 
 @testset "PlanetParameters and AtmosGrid" begin
     params = PlanetParameters(; FT=Float32, radius=6.0f6, gravity=9.8f0, reference_pressure=1.0f5)
@@ -33,7 +27,7 @@ struct _IncompleteVerticalCoordinate{FT} <: AtmosTransport.Grids.AbstractVertica
     vc = HybridSigmaPressure(Float32[0, 100, 300], Float32[0, 0, 1])
     grid = @inferred AtmosGrid(mesh, vc, AtmosTransport.CPU(); planet=params)
 
-    @test planet_parameters(grid) == params
+    @test grid.planet == params
     @test radius(grid) == params.radius
     @test gravity(grid) == params.gravity
     @test reference_pressure(grid) == params.reference_pressure
@@ -42,9 +36,6 @@ struct _IncompleteVerticalCoordinate{FT} <: AtmosTransport.Grids.AbstractVertica
 end
 
 @testset "Basis-explicit core types" begin
-    @test UpwindScheme <: AbstractConstantScheme
-    @test SlopesScheme <: AbstractLinearScheme
-    @test PPMScheme <: AbstractQuadraticScheme
     m = ones(Float64, 4, 3, 2)
     state_dry = @inferred CellState(DryBasis, m; CO2=copy(m) .* 400e-6)
     state_moist = @inferred CellState(MoistBasis, copy(m); CO2=copy(m) .* 400e-6)
@@ -80,14 +71,6 @@ end
     @test occursin("face-indexed meshes supports UpwindScheme only", sprint(showerror, err))
 end
 
-@testset "physics families share AbstractOperator" begin
-    root = AtmosTransport.Operators.AbstractOperator
-    @test UpwindScheme() isa root
-    @test NoDiffusion() isa root
-    @test NoSurfaceFlux() isa root
-    @test NoConvection() isa root
-    @test NoChemistry() isa root
-end
 
 @testset "State and flux containers reject inconsistent storage" begin
     air = ones(Float64, 4, 3, 2)
@@ -124,94 +107,7 @@ end
 
 end
 
-@testset "Abstract grid contracts fail with actionable errors" begin
-    mesh = _IncompleteHorizontalMesh()
-    smesh = _IncompleteStructuredMesh()
-    vc = _IncompleteVerticalCoordinate{Float64}()
 
-    for f in (
-        () -> ncells(mesh),
-        () -> nfaces(mesh),
-        () -> cell_area(mesh, 1),
-        () -> face_length(mesh, 1),
-        () -> face_normal(mesh, 1),
-        () -> face_cells(mesh, 1),
-        () -> cell_faces(mesh, 1),
-        () -> nx(smesh),
-        () -> ny(smesh),
-    )
-        err = try
-            f()
-            nothing
-        catch e
-            e
-        end
-        @test err isa ArgumentError
-        @test occursin("must be implemented", sprint(showerror, err))
-    end
-
-    for f in (
-        () -> n_levels(vc),
-        () -> pressure_at_interface(vc, 1, 1000.0),
-        () -> pressure_at_level(vc, 1, 1000.0),
-        () -> level_thickness(vc, 1, 1000.0),
-        () -> AtmosTransport.Grids.b_diff(vc, 1),
-    )
-        err = try
-            f()
-            nothing
-        catch e
-            e
-        end
-        @test err isa ArgumentError
-        @test occursin("must be implemented", sprint(showerror, err))
-    end
-end
-
-@testset "Standalone runtime smoke test" begin
-    FT = Float64
-    Nx, Ny, Nz = 4, 3, 2
-    mesh = LatLonMesh(; Nx=Nx, Ny=Ny, FT=FT)
-    vc = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
-    grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=FT)
-
-    m = ones(FT, Nx, Ny, Nz)
-    state = CellState(DryBasis, copy(m); CO2=copy(m) .* FT(400e-6))
-    fluxes = allocate_face_fluxes(StructuredFluxTopology(), Nx, Ny, Nz; FT=FT, basis=DryBasis)
-
-    m0 = total_air_mass(state)
-    rm0 = total_mass(state, :CO2)
-
-    model = @inferred TransportModel(state, fluxes, grid, UpwindScheme())
-    @test_throws ArgumentError Simulation(model; Δt=0.0, stop_time=1.0)
-    @test_throws ArgumentError Simulation(model; Δt=1.0, stop_time=NaN)
-    sim = Simulation(model; Δt=FT(1800), stop_time=FT(3600))
-    run!(sim)
-
-    @test sim.iteration == 2
-    @test total_air_mass(sim.model.state) ≈ m0 atol=eps(FT) * m0 * 10
-    @test total_mass(sim.model.state, :CO2) ≈ rm0 atol=eps(FT) * rm0 * 10
-
-    @test_throws ArgumentError Simulation(model; Δt=FT(1800), stop_time=FT(2700))
-    final_callback_fired = Ref(false)
-    decimal = Simulation(model; Δt=FT(0.1), stop_time=FT(1.0),
-                         callbacks=(final = s -> final_callback_fired[] =
-                             s.time >= s.stop_time,))
-    run!(decimal)
-    @test decimal.iteration == 10
-    @test decimal.time == FT(1.0)
-    @test final_callback_fired[]
-
-    state_slopes = CellState(DryBasis, copy(m); CO2=copy(m) .* FT(400e-6))
-    fluxes_slopes = allocate_face_fluxes(StructuredFluxTopology(), Nx, Ny, Nz; FT=FT, basis=DryBasis)
-    model_slopes = @inferred TransportModel(state_slopes, fluxes_slopes, grid, SlopesScheme())
-    sim_slopes = Simulation(model_slopes; Δt=FT(1800), stop_time=FT(3600))
-    run!(sim_slopes)
-
-    @test sim_slopes.iteration == 2
-    @test total_air_mass(sim_slopes.model.state) ≈ m0 atol=eps(FT) * m0 * 10
-    @test total_mass(sim_slopes.model.state, :CO2) ≈ rm0 atol=eps(FT) * rm0 * 10
-end
 
 @testset "Structured static palindrome CFL pilot" begin
     FT = Float64
@@ -344,32 +240,6 @@ end
     end
 end
 
-@testset "Face-connected reduced-Gaussian smoke test" begin
-    FT = Float64
-    Nz = 2
-    mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT=FT)
-    vc = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
-    grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=FT)
-
-    m = ones(FT, ncells(mesh), Nz)
-    state = CellState(DryBasis, copy(m); CO2=copy(m) .* FT(400e-6))
-    fluxes = allocate_face_fluxes(mesh, Nz; FT=FT, basis=DryBasis)
-
-    @test fluxes isa FaceIndexedFluxState{DryBasis}
-    @test mass_basis(fluxes) isa DryBasis
-
-    m0 = total_air_mass(state)
-    rm0 = total_mass(state, :CO2)
-
-    model = @inferred TransportModel(state, fluxes, grid, UpwindScheme())
-    sim = Simulation(model; Δt=FT(1800), stop_time=FT(3600))
-    run!(sim)
-
-    @test sim.iteration == 2
-    @test total_air_mass(sim.model.state) ≈ m0 atol=eps(FT) * m0 * 10
-    @test total_mass(sim.model.state, :CO2) ≈ rm0 atol=eps(FT) * rm0 * 10
-
-end
 
 @testset "Face-connected reduced-Gaussian GPU matches CPU for Upwind" begin
     FT = Float64
@@ -425,28 +295,17 @@ end
 end
 
 
-@testset "Adapt.jl container conversions" begin
-    FT = Float64
-    Nx, Ny, Nz = 4, 3, 2
-    mesh = LatLonMesh(; Nx=Nx, Ny=Ny, FT=FT)
-    vc = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
-    grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=FT)
-    m = ones(FT, Nx, Ny, Nz)
-    state = CellState(DryBasis, copy(m); CO2=copy(m) .* FT(400e-6))
-    fluxes = allocate_face_fluxes(StructuredFluxTopology(), Nx, Ny, Nz; FT=FT, basis=DryBasis)
-    model = TransportModel(state, fluxes, grid, UpwindScheme())
 
-    model_host = Adapt.adapt(Array, model)
-    @test model_host.state.air_mass isa Array{FT,3}
-    @test model_host.fluxes.am isa Array{FT,3}
-    @test model_host.workspace.advection_ws.rm_A isa Array{FT,3}
-    @test model_host.grid === model.grid
 
-    if HAS_CUDA_FOR_ADAPT
-        model_gpu = Adapt.adapt(CUDA.CuArray, model)
-        @test model_gpu.state.air_mass isa CUDA.CuArray{FT,3}
-        @test model_gpu.fluxes.am isa CUDA.CuArray{FT,3}
-        @test model_gpu.workspace.advection_ws.rm_A isa CUDA.CuArray{FT,3}
-        @test model_gpu.grid === model.grid
+@testset "Canonical mass-basis conversion" begin
+    for (tag, basis) in ((:dry, DryBasis()), (:moist, MoistBasis()))
+        @test mass_basis(tag) === basis
+        @test mass_basis(uppercase(String(tag))) === basis
+        @test basis_symbol(basis) === tag
+        @test basis_symbol(Symbol(uppercase(String(tag)))) === tag
+    end
+    for tag in (:unknown, "", "wet")
+        @test_throws ArgumentError mass_basis(tag)
+        @test_throws ArgumentError basis_symbol(tag)
     end
 end

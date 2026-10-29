@@ -715,15 +715,13 @@ function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{
             include_dtrain = has_convection(settings), include_gchp_vdiff = has_vdiff_fields(settings),
             include_pbl_eflux = has_pbl_eflux(settings),
             include_cmfmc_cloud_base = has_cmfmc_cloud_base(settings),
-            panel_convention = _cs_panel_convention_tag(grid), cs_definition = _cs_definition_tag(grid),
-            cs_coordinate_law = _cs_coordinate_law_tag(grid), cs_center_law = _cs_center_law_tag(grid),
-            longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
+            cs_geometry_tags(grid.mesh)...,
             planet_radius = grid.mesh.radius, extra_header = _with_replay_record(header, write_replay_on))
     catch
         abandon_atomic_staging(tmp_path)
         rethrow()
     end
-    return CubedSphereBinaryWriter(inner, mass_basis_from_symbol(:dry); Nc = grid.Nc, npanel = 6,
+    return CubedSphereBinaryWriter(inner, State.mass_basis(:dry); Nc = grid.Nc, npanel = 6,
                                    final_path = String(out_path))
 end
 

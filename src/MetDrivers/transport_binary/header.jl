@@ -721,10 +721,7 @@ end
 function _transport_parse_mass_basis(hdr)
     haskey(hdr, :mass_basis) ||
         throw(ArgumentError("transport binary header is missing mass_basis; regenerate the binary"))
-    basis_str = lowercase(string(hdr.mass_basis))
-    basis_str in ("dry", "moist") || throw(ArgumentError(
-        "unsupported transport binary mass_basis=$(repr(basis_str)); expected dry or moist"))
-    return Symbol(basis_str)
+    return basis_symbol(hdr.mass_basis)
 end
 
 @inline _transport_surface_pressure_basis_label(::TotalSurfacePressure) = "total"
@@ -739,21 +736,13 @@ function _transport_parse_surface_pressure_basis(value)
         "expected total or dry"))
 end
 
-function _transport_parse_mass_basis_tag(value, key::AbstractString)
-    basis_str = lowercase(string(value))
-    basis_str == "dry" && return DryBasis()
-    basis_str == "moist" && return MoistBasis()
-    throw(ArgumentError(
-        "unsupported transport binary $(key)=$(repr(basis_str)); expected dry or moist"))
-end
 
 function _transport_parse_tm5_convection_mass_basis(hdr, payload_sections)
     all(section in payload_sections for section in (:entu, :detu, :entd, :detd)) ||
         return nothing
     key = Symbol(TM5_CONVECTION_MASS_BASIS_KEY)
     haskey(hdr, key) || return nothing
-    return _transport_parse_mass_basis_tag(getproperty(hdr, key),
-                                           TM5_CONVECTION_MASS_BASIS_KEY)
+    return mass_basis(getproperty(hdr, key))
 end
 
 @inline function _transport_normalize_symbol(value)
@@ -944,14 +933,6 @@ function _parse_transport_header(raw_bytes::Vector{UInt8};
     )
 end
 
-function _transport_basis_symbol(sym::Symbol)
-    basis = Symbol(lowercase(String(sym)))
-    basis in (:dry, :moist) ||
-        throw(ArgumentError("mass_basis must be :dry or :moist; got $(repr(sym))"))
-    return basis
-end
-_transport_basis_symbol(::DryBasis) = :dry
-_transport_basis_symbol(::MoistBasis) = :moist
 
 function _transport_common_header(grid_type::String,
                                   horizontal_topology::String,

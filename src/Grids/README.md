@@ -130,3 +130,62 @@ must sit on the sphere of the mesh it is regridded to. The contract:
   - [`../../test/core/test_reduced_gaussian_mesh.jl`](../../test/core/test_reduced_gaussian_mesh.jl)
   - [`../../test/core/test_basis_explicit_core.jl`](../../test/core/test_basis_explicit_core.jl)
   - [`../../test/core/test_cubed_sphere_runtime.jl`](../../test/core/test_cubed_sphere_runtime.jl)
+
+## Depends on
+
+Parameters (planet constants and the GMAO longitude offset) and CubedSphere.jl
+(SphericalGeometry). Geometry has no
+runtime, IO, or preprocessing dependency.
+
+## Used by
+
+State, Output, MetDrivers, Operators, Adjoints and its Footprint/Inversion
+files, Regridding, GriddedIO, Preprocessing, Models, Analysis, Visualization,
+and the Makie extension.
+
+## Shared helpers owned here
+
+- `panel_convention_tag`, `parse_panel_convention`, `parse_coordinate_law`,
+  `parse_center_law`, `parse_cs_definition`, `default_cs_definition`,
+  `cs_geometry_tags`: canonical geometry tags. Parsing lowercases String and
+  Symbol tags and raises `ArgumentError` for unknown values. Serialized tags
+  remain `gnomonic` / `geos_native` with their existing law/definition strings.
+- `CS_PANEL_COUNT`, `cs_flat_index`, `cs_panel_ij`, `cs_panel_flat_range`,
+  `unpack_flat_to_panels_2d!`, `unpack_flat_to_panels_3d!`, `pack_panels!`:
+  panel-major storage, column-major within each panel; unpacking converts to
+  destination precision and validates dimensions before copying.
+- `CSGlobalFaceTable`, `build_cs_global_face_table`, `face_connectivity`:
+  unique cubed-sphere faces and Int32 face-cell connectivity vectors.
+- `edge_interior_ij`, `edge_halo_ij`, `corner_source_ij`, `cs_edge_cell`,
+  `cs_edge_face_location`, `cs_seam_face_index`, `cs_seam_axis`, `cs_seam_sign`,
+  `seam_mirror_sign`, `cs_seam`, `canonical_seams`, `cs_panel_edge_seam`: pure panel index and seam
+  metadata. Halo helpers accept `Integer`, including adjoint Int32 inputs.
+- `cell_areas`: flat Float64 values converted from the mesh's stored precision.
+  `float64_twin`, `float64_cell_areas`, `flat_float64_cell_areas` explicitly
+  recompute CS geometry in Float64. These precision policies stay distinct.
+  `cs_total_area` sums stored panel areas in Float64.
+- `lonlat_to_unit_xyz`, `dot3`, `cross3`: degree-based unit vectors and ordered
+  three-component products. Radian-based preprocessing variants retain their
+  original arithmetic.
+
+Additional files:
+
+- `PanelIndices.jl`: shared halo, corner, flat-cell and seam index mappings.
+- `CSGlobalFaceTable.jl`: unique global cubed-sphere face table, moved from
+  Preprocessing's `cs_face_table.jl`.
+- `PanelPacking.jl`: panel/flat storage conversion.
+- `SphereVectors.jl`: unit-sphere vector helpers.
+- `CellAreas.jl`: flat area vectors and explicit Float64 geometry variants.
+
+## Forward<->adjoint mirrors
+
+Advection/HaloExchange.jl and Adjoints/HaloAdjoint.jl share the index maps here;
+Advection/CubedSphereSeams.jl and Adjoints/CubedSphereSeams.jl share seam maps
+and canonical order. Numerical kernels remain in their operator modules.
+Fenced LinRoodSeams.jl retains its local face-index copy.
+
+`cell_area_matrix` expands LL band areas in mesh precision; `cell_centers`
+returns RG centres in native cell order with an explicit output precision.
+`unit_xyz_from_radians`, `unit3`, `arc3`, and `slerp3` preserve the preprocessing
+cos/sin and unfloored-normalization policies separately from degree-based
+projection and epsilon-floored mesh normalization.

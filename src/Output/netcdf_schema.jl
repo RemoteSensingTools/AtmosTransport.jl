@@ -142,7 +142,6 @@ function _define_time!(ds, times, origin::Union{Nothing, DateTime})
     return v
 end
 
-_define_time!(ds, times) = _define_time!(ds, times, nothing)
 
 # Streaming files grow along time; batch output keeps its fixed dimension.
 function _define_time!(ds, ::Nothing, origin::Union{Nothing, DateTime})
@@ -217,8 +216,7 @@ function _define_latlon_geometry!(ds, mesh::LatLonMesh, Nz::Integer, times, time
 end
 
 function _rg_native_coordinates(mesh::ReducedGaussianMesh)
-    lons = Array{Float64}(undef, ncells(mesh))
-    lats = Array{Float64}(undef, ncells(mesh))
+    lons, lats = cell_centers(mesh; FT=Float64)
     areas = Array{Float64}(undef, ncells(mesh))
     lon_bounds = Array{Float64}(undef, ncells(mesh), 4)
     lat_bounds = Array{Float64}(undef, ncells(mesh), 4)
@@ -229,8 +227,6 @@ function _rg_native_coordinates(mesh::ReducedGaussianMesh)
         lat_n = Float64(mesh.lat_faces[j + 1])
         for i in eachindex(ring_lons)
             c = cell_index(mesh, i, j)
-            lons[c] = Float64(ring_lons[i])
-            lats[c] = Float64(mesh.latitudes[j])
             areas[c] = Float64(cell_area(mesh, c))
             lon_w = (i - 1) * dlon
             lon_e = i * dlon
@@ -310,11 +306,6 @@ function _define_rg_geometry!(ds, mesh::ReducedGaussianMesh, Nz::Integer, times,
     return (; nn_map)
 end
 
-function _cs_convention_tag(mesh::CubedSphereMesh)
-    mesh.convention isa GnomonicPanelConvention && return "gnomonic"
-    mesh.convention isa GEOSNativePanelConvention && return "geos_native"
-    return "unknown"
-end
 
 function _cs_central_meridian(mesh::CubedSphereMesh)
     return longitude_offset_deg(cs_definition(mesh))
@@ -383,7 +374,7 @@ function define_cs_horizontal_geometry!(ds, mesh::CubedSphereMesh)
     defDim(ds, "Ycorner", Nc + 1)
     defDim(ds, "nf", 6)
 
-    convention_tag = _cs_convention_tag(mesh)
+    convention_tag = panel_convention_tag(mesh)
     central_meridian = _cs_central_meridian(mesh)
     coordinate_tag = coordinate_law_tag(coordinate_law(mesh))
     center_tag = center_law_tag(center_law(mesh))
@@ -474,6 +465,3 @@ function _define_geometry!(ds, mesh::CubedSphereMesh, Nz::Integer, times, time_o
     _define_time!(ds, times, time_origin)
     return (;)
 end
-
-_define_geometry!(ds, mesh, Nz::Integer, times) =
-    _define_geometry!(ds, mesh, Nz, times, nothing)

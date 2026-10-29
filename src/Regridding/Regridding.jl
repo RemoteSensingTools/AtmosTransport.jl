@@ -80,6 +80,8 @@ cache, and the mass-consistency correction applied after regridding, and
 """
 module Regridding
 
+using ..Grids: cell_areas, float64_cell_areas, flat_float64_cell_areas, cs_flat_index
+
 using ..Grids: AbstractHorizontalMesh, AbstractStructuredMesh,
                LatLonMesh, CubedSphereMesh, ReducedGaussianMesh,
                AbstractCubedSpherePanelConvention,

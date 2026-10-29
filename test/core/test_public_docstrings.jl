@@ -16,6 +16,7 @@ const DOCUMENTED_CORE_API = (
     :TransportWindow,
     :TransportTracerSpec,
     :write_transport_binary,
+    :binary_mass_basis,
     :build_runtime_physics_recipe,
     :validate_runtime_physics_recipe,
     :run!,
@@ -33,6 +34,7 @@ const DOCUMENTED_MET_DRIVER_API = (
     :load_transport_window,
     :binary_capabilities,
     :inspect_binary,
+    :binary_mass_basis,
     :has_qv_endpoints,
     :air_mass_basis,
     :driver_grid,
@@ -54,4 +56,15 @@ end
     for name in DOCUMENTED_MET_DRIVER_API
         @test has_attached_doc(AtmosTransport.MetDrivers, name)
     end
+end
+
+
+@testset "shared output geometry API has attached docstrings" begin
+    for name in (:define_cs_horizontal_geometry!, :define_provenance_attributes!)
+        @test has_attached_doc(AtmosTransport.Output, name)
+    end
+end
+
+@testset "State basis conversion API has attached docstrings" begin
+    @test has_attached_doc(AtmosTransport.State, :basis_symbol)
 end

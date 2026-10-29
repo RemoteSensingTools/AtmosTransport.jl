@@ -29,8 +29,9 @@ using Test
 using AtmosTransport
 
 using .AtmosTransport.State: CellState, DryBasis, allocate_face_fluxes
+using .AtmosTransport.Architectures: CPU as GridsCPU
 using .AtmosTransport.Grids: AtmosGrid, LatLonMesh, HybridSigmaPressure,
-                              cell_areas_by_latitude, CPU as GridsCPU
+                              cell_areas_by_latitude
 using .AtmosTransport.Operators: TM5Convection, TM5Workspace,
                                  UpwindScheme, AbstractConvection
 using .AtmosTransport.MetDrivers: ConvectionForcing, TransportWindow,

@@ -2,17 +2,7 @@
 # share header parsing, validation, mmap ownership, accessors, and inspection
 # with the other geometries; only panel layout and mesh reconstruction differ.
 
-function _cs_coordinate_law_from_symbol(sym::Symbol)
-    sym === :equiangular_gnomonic && return EquiangularGnomonic()
-    sym === :gmao_equal_distance_gnomonic && return GMAOEqualDistanceGnomonic()
-    throw(ArgumentError("unsupported cubed-sphere coordinate law :$(sym)"))
-end
 
-function _cs_center_law_from_symbol(sym::Symbol)
-    sym === :angular_midpoint && return AngularMidpointCenter()
-    sym === :four_corner_normalized && return FourCornerNormalizedCenter()
-    throw(ArgumentError("unsupported cubed-sphere center law :$(sym)"))
-end
 
 # ---------------------------------------------------------------------------
 # Section element counts
@@ -315,13 +305,7 @@ halo exchange uses the correct edge-to-edge connectivity table.
 function mesh_convention(
     reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
 )
-    conv = reader.header.geometry.panel_convention
-    if conv === :gnomonic
-        return GnomonicPanelConvention()
-    elseif conv === :geos_native
-        return GEOSNativePanelConvention()
-    end
-    throw(ArgumentError("unsupported cubed-sphere panel convention :$(conv)"))
+    return parse_panel_convention(reader.header.geometry.panel_convention)
 end
 
 """
@@ -335,8 +319,8 @@ function mesh_definition(
     reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
 )
     g = reader.header.geometry
-    return CubedSphereDefinition(_cs_coordinate_law_from_symbol(g.coordinate_law),
-                                 _cs_center_law_from_symbol(g.center_law),
+    return CubedSphereDefinition(parse_coordinate_law(g.coordinate_law),
+                                 parse_center_law(g.center_law),
                                  mesh_convention(reader);
                                  longitude_offset_deg = g.longitude_offset_deg,
                                  tag = g.definition)

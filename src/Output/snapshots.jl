@@ -115,8 +115,6 @@ function SnapshotWriteOptions(; float_type::DataType=Float32,
     end
 end
 
-_basis_symbol(::DryBasis) = :dry
-_basis_symbol(::MoistBasis) = :moist
 
 function _copy_cpu_array(a)
     return Array(a)
@@ -162,7 +160,7 @@ function capture_snapshot(model; time_hours::Real=0, halo_width::Integer=0, fiel
                                             halo_width=halo_width)
     end
     return SnapshotFrame(Float64(time_hours), air, tracers,
-                         _basis_symbol(mass_basis(model.state)))
+                         basis_symbol(mass_basis(model.state)))
 end
 
 function _frame_tracer_names(frame::AbstractSnapshotFrame)

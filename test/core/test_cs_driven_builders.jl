@@ -34,7 +34,7 @@ cs_physics_recipe(cfg, context, FT; kwargs...) =
 cs_halo_width(cfg, scheme) = configured_halo_width(cfg, scheme)
 
 struct UnknownBasisReader end
-AtmosTransport.State.mass_basis(::UnknownBasisReader) = :unknown
+AtmosTransport.MetDrivers.binary_mass_basis(::UnknownBasisReader) = :unknown
 
 @testset "structured model rejects an unknown driver basis before loading data" begin
     grid = AtmosGrid(LatLonMesh(; Nx = 4, Ny = 2),

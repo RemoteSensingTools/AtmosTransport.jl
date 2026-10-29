@@ -134,10 +134,8 @@ _basis_word(::MoistBasis) = ""
 
 # Streams take the basis as a type (`DryBasis()`) or, like the snapshot
 # writers, as `:dry` / `:moist`.
-const _MASS_BASES = (dry = DryBasis(), moist = MoistBasis())
 _as_mass_basis(basis::AbstractMassBasis) = basis
-_as_mass_basis(basis::Symbol) = haskey(_MASS_BASES, basis) ? _MASS_BASES[basis] :
-    throw(ArgumentError("mass_basis must be :dry or :moist; got $(repr(basis))"))
+_as_mass_basis(basis::Symbol) = mass_basis(basis)
 
 _has_panel(::CubedSphereMesh) = true
 _has_panel(_) = false
@@ -150,7 +148,7 @@ function _observation_common_attributes!(ds, mesh, mass_basis::AbstractMassBasis
     ds.attrib["institution"] = get(ENV, "ATMOSTR_INSTITUTION", "Caltech / Frankenberg group")
     ds.attrib["grid"] = summary(mesh)
     ds.attrib["grid_type"] = _grid_type_string(mesh)
-    ds.attrib["mass_basis"] = String(_basis_symbol(mass_basis))
+    ds.attrib["mass_basis"] = String(basis_symbol(mass_basis))
     ds.attrib["output_contract"] = _OBSERVATION_CONTRACT
     ds.attrib["run_time_origin"] = Dates.format(origin, dateformat"yyyy-mm-ddTHH:MM:SS") * "Z"
     ds.attrib["horizontal_sampling"] = "containing_cell"
@@ -375,7 +373,7 @@ function _define_sounding_schema!(ds, stream::SoundingNetCDFStream, mesh, origin
     nlevel = stream.nlevel
     suffix = _basis_suffix(stream.mass_basis)
     word = _basis_word(stream.mass_basis)
-    units = _tracer_units(_basis_symbol(stream.mass_basis))
+    units = _tracer_units(basis_symbol(stream.mass_basis))
     defDim(ds, "obs", Inf)
     defDim(ds, "lev", nlevel)
     defDim(ds, "ilev", nlevel + 1)
@@ -603,7 +601,7 @@ function _define_site_schema!(ds, stream::SiteNetCDFStream, mesh, sites, cells, 
     nlevel, nsite = stream.nlevel, stream.nsite
     suffix = _basis_suffix(stream.mass_basis)
     word = _basis_word(stream.mass_basis)
-    units = _tracer_units(_basis_symbol(stream.mass_basis))
+    units = _tracer_units(basis_symbol(stream.mass_basis))
     defDim(ds, "site", nsite)
     defDim(ds, "time", Inf)
     if stream.write_profiles

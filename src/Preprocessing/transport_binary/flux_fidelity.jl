@@ -943,16 +943,16 @@ function LineIntegralFidelityStencil(method::LineIntegralFaceFluxes,
     normals = Vector{NTuple{3,Float64}}(undef, length(sample_map.faces))
     for (slot, f) in pairs(sample_map.faces)
         a, b = _cs_face_corners(target, ft, f)
-        n = _unit3(_cross3(a, b))
-        sign = _dot3(n, centre[ft.face_right[f]] .- centre[ft.face_left[f]]) >= 0 ? 1.0 : -1.0
-        theta = _arc3(a, b)
+        n = unit3(cross3(a, b))
+        sign = dot3(n, centre[ft.face_right[f]] .- centre[ft.face_left[f]]) >= 0 ? 1.0 : -1.0
+        theta = arc3(a, b)
         segment_weight = sign * Float64(target.radius) * theta / method.samples_per_face
         face_cells = Int[]
         face_weights = Float64[]
         sizehint!(face_cells, 4 * method.samples_per_face)
         sizehint!(face_weights, 4 * method.samples_per_face)
         for q in 1:method.samples_per_face
-            x = _slerp3(a, b, theta, (q - 0.5) / method.samples_per_face)
+            x = slerp3(a, b, theta, (q - 0.5) / method.samples_per_face)
             for (c, wc) in _point_weights(source, x)
                 push!(face_cells, c)
                 push!(face_weights, segment_weight * wc)
@@ -1357,9 +1357,7 @@ function source_omega_evidence_cs(::Type{G}, cm, omega, qv, ps, A, B,
     samples = OmegaFidelitySample{FT}[]
     sizehint!(samples, length(cells.cells) * (Nz - 1))
     for c in cells.cells
-        panel, rem = divrem(c - 1, Nc * Nc)
-        j0, i0 = divrem(rem, Nc)
-        p, i, j = panel + 1, i0 + 1, j0 + 1
+        i, j, p = cs_panel_ij(c, Nc)
         area = Float64(cell_areas[i, j])
         bottom = Float64(omega[p][i, j, Nz]) *
                  (1 - Float64(qv[p][i, j, Nz]))

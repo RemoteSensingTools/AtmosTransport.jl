@@ -29,32 +29,6 @@ import ...Architectures: index_space, apply_point!, bound_context, launch!
 # Edge indexing helpers
 # ---------------------------------------------------------------------------
 
-"""Map `(edge, depth, along)` to the interior (i, j) that provides source data."""
-@inline function _edge_interior_ij(q_e::Int, d::Int, s::Int, Nc::Int, Hp::Int)
-    if     q_e == EDGE_NORTH  # read from top rows going inward
-        return (Hp + s, Hp + Nc + 1 - d)
-    elseif q_e == EDGE_SOUTH  # read from bottom rows going inward
-        return (Hp + s, Hp + d)
-    elseif q_e == EDGE_EAST   # read from right columns going inward
-        return (Hp + Nc + 1 - d, Hp + s)
-    else  # EDGE_WEST         # read from left columns going inward
-        return (Hp + d, Hp + s)
-    end
-end
-
-"""Map `(edge, depth, along)` to the halo (i, j) that receives data."""
-@inline function _edge_halo_ij(e::Int, d::Int, s::Int, Nc::Int, Hp::Int)
-    if     e == EDGE_NORTH  # above interior top
-        return (Hp + s, Hp + Nc + d)
-    elseif e == EDGE_SOUTH  # below interior bottom
-        return (Hp + s, Hp + 1 - d)
-    elseif e == EDGE_EAST   # right of interior
-        return (Hp + Nc + d, Hp + s)
-    else  # EDGE_WEST       # left of interior
-        return (Hp + 1 - d, Hp + s)
-    end
-end
-
 # ---------------------------------------------------------------------------
 # Corner fill — FV3 tp_core.F90 rotation formulas
 # ---------------------------------------------------------------------------
@@ -78,16 +52,24 @@ Formulas translated from FV3 `tp_core.F90` via `src/Grids/halo_exchange.jl`.
 
     @inbounds if dir == 1
         # X-direction: rotate Y-edge halos into corners
-        q[oi_sw, oj_sw, k] = q[oj_sw, 2*Hp + 1 - oi_sw, k]
-        q[oi_se, oj_se, k] = q[N + 1 - oj_se, oi_se - Nc, k]
-        q[oi_ne, oj_ne, k] = q[oj_ne, 2*(Nc + Hp) + 1 - oi_ne, k]
-        q[oi_nw, oj_nw, k] = q[N + 1 - oj_nw, oi_nw + Nc, k]
+        si, sj = corner_source_ij(oi_sw, oj_sw, Nc, Hp, N, dir)
+        q[oi_sw, oj_sw, k] = q[si, sj, k]
+        si, sj = corner_source_ij(oi_se, oj_se, Nc, Hp, N, dir)
+        q[oi_se, oj_se, k] = q[si, sj, k]
+        si, sj = corner_source_ij(oi_ne, oj_ne, Nc, Hp, N, dir)
+        q[oi_ne, oj_ne, k] = q[si, sj, k]
+        si, sj = corner_source_ij(oi_nw, oj_nw, Nc, Hp, N, dir)
+        q[oi_nw, oj_nw, k] = q[si, sj, k]
     else
         # Y-direction: rotate X-edge halos into corners
-        q[oi_sw, oj_sw, k] = q[2*Hp + 1 - oj_sw, oi_sw, k]
-        q[oi_se, oj_se, k] = q[Nc + oj_se, N + 1 - oi_se, k]
-        q[oi_ne, oj_ne, k] = q[2*(Nc + Hp) + 1 - oj_ne, oi_ne, k]
-        q[oi_nw, oj_nw, k] = q[oj_nw - Nc, N + 1 - oi_nw, k]
+        si, sj = corner_source_ij(oi_sw, oj_sw, Nc, Hp, N, dir)
+        q[oi_sw, oj_sw, k] = q[si, sj, k]
+        si, sj = corner_source_ij(oi_se, oj_se, Nc, Hp, N, dir)
+        q[oi_se, oj_se, k] = q[si, sj, k]
+        si, sj = corner_source_ij(oi_ne, oj_ne, Nc, Hp, N, dir)
+        q[oi_ne, oj_ne, k] = q[si, sj, k]
+        si, sj = corner_source_ij(oi_nw, oj_nw, Nc, Hp, N, dir)
+        q[oi_nw, oj_nw, k] = q[si, sj, k]
     end
     return nothing
 end
@@ -101,15 +83,23 @@ end
     oi_nw = Hp + 1 - di;  oj_nw = Hp + Nc + dj
 
     @inbounds if dir == 1
-        q[oi_sw, oj_sw, k, t] = q[oj_sw, 2*Hp + 1 - oi_sw, k, t]
-        q[oi_se, oj_se, k, t] = q[N + 1 - oj_se, oi_se - Nc, k, t]
-        q[oi_ne, oj_ne, k, t] = q[oj_ne, 2*(Nc + Hp) + 1 - oi_ne, k, t]
-        q[oi_nw, oj_nw, k, t] = q[N + 1 - oj_nw, oi_nw + Nc, k, t]
+        si, sj = corner_source_ij(oi_sw, oj_sw, Nc, Hp, N, dir)
+        q[oi_sw, oj_sw, k, t] = q[si, sj, k, t]
+        si, sj = corner_source_ij(oi_se, oj_se, Nc, Hp, N, dir)
+        q[oi_se, oj_se, k, t] = q[si, sj, k, t]
+        si, sj = corner_source_ij(oi_ne, oj_ne, Nc, Hp, N, dir)
+        q[oi_ne, oj_ne, k, t] = q[si, sj, k, t]
+        si, sj = corner_source_ij(oi_nw, oj_nw, Nc, Hp, N, dir)
+        q[oi_nw, oj_nw, k, t] = q[si, sj, k, t]
     else
-        q[oi_sw, oj_sw, k, t] = q[2*Hp + 1 - oj_sw, oi_sw, k, t]
-        q[oi_se, oj_se, k, t] = q[Nc + oj_se, N + 1 - oi_se, k, t]
-        q[oi_ne, oj_ne, k, t] = q[2*(Nc + Hp) + 1 - oj_ne, oi_ne, k, t]
-        q[oi_nw, oj_nw, k, t] = q[oj_nw - Nc, N + 1 - oi_nw, k, t]
+        si, sj = corner_source_ij(oi_sw, oj_sw, Nc, Hp, N, dir)
+        q[oi_sw, oj_sw, k, t] = q[si, sj, k, t]
+        si, sj = corner_source_ij(oi_se, oj_se, Nc, Hp, N, dir)
+        q[oi_se, oj_se, k, t] = q[si, sj, k, t]
+        si, sj = corner_source_ij(oi_ne, oj_ne, Nc, Hp, N, dir)
+        q[oi_ne, oj_ne, k, t] = q[si, sj, k, t]
+        si, sj = corner_source_ij(oi_nw, oj_nw, Nc, Hp, N, dir)
+        q[oi_nw, oj_nw, k, t] = q[si, sj, k, t]
     end
     return nothing
 end
@@ -171,8 +161,8 @@ bound_context(op::EdgeHaloFill, ctx) = merge(ctx, (dst = ctx.panels[op.p], src =
 @inline function apply_point!(op::EdgeHaloFill, ctx, s, d, K...)
     (; Nc, Hp) = ctx
     s_src = op.flip ? (Nc + 1 - s) : s
-    i_src, j_src = _edge_interior_ij(op.reciprocal, d, s_src, Nc, Hp)
-    i_dst, j_dst = _edge_halo_ij(op.e, d, s, Nc, Hp)
+    i_src, j_src = edge_interior_ij(op.reciprocal, d, s_src, Nc, Hp)
+    i_dst, j_dst = edge_halo_ij(op.e, d, s, Nc, Hp)
     @inbounds _edge_dst(op, ctx)[i_dst, j_dst, K...] = _edge_src(op, ctx)[i_src, j_src, K...]
     return nothing
 end

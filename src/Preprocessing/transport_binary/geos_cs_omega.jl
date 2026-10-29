@@ -478,8 +478,7 @@ the hard lower-layer fidelity gate.
         # drift only, not a per-column leak). [Codex P1: make this intentional.]
         dh_sum = 0.0
         for c in 1:nc
-            p_idx = (c - 1) ÷ (Nc * Nc) + 1
-            li = (c - 1) % (Nc * Nc); jl = li ÷ Nc + 1; il = li % Nc + 1
+            il, jl, p_idx = cs_panel_ij(c, Nc)
             dh_new = Float64(dm[p_idx][il, jl, k]) -
                      vdiv_scale * Float64(vdiv_om[p_idx][il, jl, k])
             rhs[c] = div[c] + dh_new
@@ -548,8 +547,7 @@ the hard lower-layer fidelity gate.
         end
         max_post = 0.0
         for c in 1:nc
-            p_idx = (c - 1) ÷ (Nc * Nc) + 1
-            li = (c - 1) % (Nc * Nc); jl = li ÷ Nc + 1; il = li % Nc + 1
+            il, jl, p_idx = cs_panel_ij(c, Nc)
             dh_new = Float64(dm[p_idx][il, jl, k]) -
                      vdiv_scale * Float64(vdiv_om[p_idx][il, jl, k])
             r = abs(div[c] - (-dh_new))

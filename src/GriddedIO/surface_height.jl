@@ -26,9 +26,6 @@ const _METRE_UNITS = ("m", "meter", "meters", "metre", "metres")
 # centres are compared with those of a Float64 twin of the mesh instead: a
 # Float32 mesh computes them in Float32 (chord 2.7e-6 from Float64 at C90).
 _centre_tolerance(mesh) = max(1e-7, 8 * eps(eltype(mesh)))
-_float64_twin(mesh::CubedSphereMesh) =
-    CubedSphereMesh(; FT = Float64, Nc = mesh.Nc, Hp = 0, definition = cs_definition(mesh),
-                    radius = Float64(mesh.radius))
 
 _is_metres(units) = units isa AbstractString && lowercase(strip(units)) in _METRE_UNITS
 
@@ -40,9 +37,8 @@ function _check_metre_units(var, name::AbstractString, path::AbstractString)
     return nothing
 end
 
-_unit_xyz(lon, lat) = (cosd(lat) * cosd(lon), cosd(lat) * sind(lon), sind(lat))
 _centre_chord(lon1, lat1, lon2, lat2) =
-    sqrt(sum(abs2, _unit_xyz(lon1, lat1) .- _unit_xyz(lon2, lat2)))
+    sqrt(sum(abs2, lonlat_to_unit_xyz(lon1, lat1) .- lonlat_to_unit_xyz(lon2, lat2)))
 
 function _check_centres(file_lon, file_lat, mesh_lon, mesh_lat, path::AbstractString, what::AbstractString,
                         tolerance::Float64)
@@ -61,20 +57,6 @@ function _check_finite_heights(values, path::AbstractString)
     n == 0 || throw(ArgumentError(
         "$(path): $(n) model surface heights are fill or non-finite; the model ground must be complete"))
     return nothing
-end
-
-# Cell centres of a reduced Gaussian mesh in native cell order.
-function _reduced_gaussian_centres(mesh::ReducedGaussianMesh)
-    lon = Vector{Float64}(undef, ncells(mesh))
-    lat = similar(lon)
-    for j in 1:nrings(mesh)
-        for (i, λ) in enumerate(ring_longitudes(mesh, j))
-            c = cell_index(mesh, i, j)
-            lon[c] = Float64(λ)
-            lat[c] = Float64(mesh.latitudes[j])
-        end
-    end
-    return lon, lat
 end
 
 # -- writer -------------------------------------------------------------------
@@ -104,7 +86,7 @@ function _define_surface_height!(ds, mesh::CubedSphereMesh, field)
 end
 
 function _define_surface_height!(ds, mesh::ReducedGaussianMesh, field)
-    lon, lat = _reduced_gaussian_centres(mesh)
+    lon, lat = cell_centers(mesh; FT=Float64)
     defDim(ds, "cell", ncells(mesh))
     defVar(ds, "longitude", Float64, ("cell",);
            attrib = Dict("units" => "degrees_east", "standard_name" => "longitude"))[:] = lon
@@ -112,7 +94,7 @@ function _define_surface_height!(ds, mesh::ReducedGaussianMesh, field)
            attrib = Dict("units" => "degrees_north", "standard_name" => "latitude"))[:] = lat
     defVar(ds, "cell_area", Float64, ("cell",);
            attrib = Dict("units" => "m2", "standard_name" => "cell_area"))[:] =
-        Float64[cell_area(mesh, c) for c in 1:ncells(mesh)]
+        cell_areas(mesh)
     defVar(ds, _SURFACE_HEIGHT_VARIABLE, Float64, ("cell",); attrib = _surface_height_attributes())[:] = field
     return nothing
 end
@@ -200,7 +182,7 @@ function _read_surface_height(ds, path::String, mesh::CubedSphereMesh)
         "$(path) has no 'lons'/'lats' cell centres; the panel layout cannot be checked"))
     file_lon = read_raw(ds, "lons", FillValueOnly())
     file_lat = read_raw(ds, "lats", FillValueOnly())
-    twin = _float64_twin(mesh)
+    twin = float64_twin(mesh)
     for p in 1:6
         lon, lat = panel_cell_center_lonlat(twin, p)
         _check_centres(view(file_lon, :, :, p), view(file_lat, :, :, p), lon, lat,
@@ -217,7 +199,7 @@ function _read_surface_height(ds, path::String, mesh::ReducedGaussianMesh)
     _check_dimnames(var, ("cell",), path)
     length(var) == ncells(mesh) || throw(DimensionMismatch(
         "'$(_SURFACE_HEIGHT_VARIABLE)' in $(path) has $(length(var)) cells; the mesh has $(ncells(mesh))"))
-    mesh_lon, mesh_lat = _reduced_gaussian_centres(mesh)
+    mesh_lon, mesh_lat = cell_centers(mesh; FT=Float64)
     _check_centres(read_raw(ds, "longitude", FillValueOnly()), read_raw(ds, "latitude", FillValueOnly()),
                    mesh_lon, mesh_lat, path, "reduced-Gaussian", _centre_tolerance(mesh))
     field = read_raw(ds, _SURFACE_HEIGHT_VARIABLE, MaskedAsNaN())

@@ -4,7 +4,7 @@ Runtime state containers and field abstractions.
 
 This folder owns the data structures that the transport runtime mutates
 or reads directly: cell-centered air mass and tracer state, face-flux
-state, meteorological snapshots, tracer accessors, basis tags, and the
+state, tracer accessors, basis tags, and the
 time-varying field contracts consumed by operators.
 
 ## Entry Points
@@ -111,3 +111,34 @@ time-varying field contracts consumed by operators.
   - [`../../test/core/test_fields.jl`](../../test/core/test_fields.jl)
   - [`../../test/core/test_reduced_gaussian_mesh.jl`](../../test/core/test_reduced_gaussian_mesh.jl)
   - [`../../test/core/test_cubed_sphere_runtime.jl`](../../test/core/test_cubed_sphere_runtime.jl)
+
+## Depends on
+
+Grids (mesh and topology interfaces), Architectures (compensated totals),
+Adapt, and the existing Fields submodule. Fields physics is maintained in its
+own cleanup PR.
+
+## Used by
+
+Output, MetDrivers, Operators, Tape, Adjoints/Footprint/Inversion, Preprocessing,
+Models, Analysis, and backend extensions.
+
+## Shared helpers owned here
+
+- `AbstractCellState`: common interface for CellState and CubedSphereState;
+  tracer lookup, iteration, properties and basis access share implementations.
+- `mass_basis`: state/flux/type access returns a basis instance. String/Symbol
+  conversion lowercases and accepts only dry/moist; unknown values raise
+  `ArgumentError`. `basis_symbol` returns the canonical Symbol. The redundant
+  `flux_basis` accessor was removed; use `mass_basis`.
+- `panel_interior`: views excluding panel halos (3D, packed 4D, or one tracer).
+- Existing tracer accessors, allocators and compensated mass diagnostics.
+
+`MetDrivers.binary_mass_basis(reader)` returns the header Symbol; the runtime
+`air_mass_basis(driver)` interface continues to return that Symbol.
+
+## Forward<->adjoint mirrors
+
+State owns storage and basis contracts, with no numerical adjoint kernels.
+Forward and adjoint consumers use the same packed tracer and halo conventions.
+Compensated runtime totals and plain preprocessing sums remain distinct.

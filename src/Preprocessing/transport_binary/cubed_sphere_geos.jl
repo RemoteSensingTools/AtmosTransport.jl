@@ -176,7 +176,7 @@ function driver_before_close_writer!(workspace::GEOSCubedSphereWindowWorkspace,
     if workspace.global_mass_pin_enabled && isfinite(workspace.global_mass_target_kg)
         writer.inner.header["mass_fix_target_ps_dry_pa"] = mass_fix_target_ps_dry_record(
             ctx.mass_fix_target_ps_dry_pa, workspace.global_mass_target_kg,
-            _cs_total_area(workspace.cell_areas), workspace.g)
+            cs_total_area(workspace.cell_areas), workspace.g)
     end
     return nothing
 end
@@ -282,11 +282,7 @@ function _process_day_geos_cs_unified(date::Date,
             include_dtrain     = settings.include_convection,
             include_gchp_vdiff = settings.include_vdiff_fields,
             include_pbl_eflux  = has_pbl_eflux(settings),
-            panel_convention   = panel_convention,
-            cs_definition      = _cs_definition_tag(grid),
-            cs_coordinate_law  = _cs_coordinate_law_tag(grid),
-            cs_center_law      = _cs_center_law_tag(grid),
-            longitude_offset_deg = longitude_offset_deg(cs_definition(grid.mesh)),
+            cs_geometry_tags(grid.mesh)...,
             planet_radius      = grid.mesh.radius,
             extra_header = _with_replay_record(_with_geos_column_weights_record(Dict{String, Any}(
                 "preprocessor" => "geos_native_to_cs",

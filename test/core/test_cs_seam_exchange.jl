@@ -33,12 +33,12 @@ function seam_by_seam_apply!(rm, m, cache, mesh, direction)
         q = conn.neighbors[p][edge].panel
         p < q || continue
         seam += 1
-        CSSeamAdv._cs_seam_axis(edge) == direction || continue
+        CSSeamAdv.cs_seam_axis(edge) == direction || continue
         other = CSSeamGrids.reciprocal_edge(conn, p, edge)
         for k in 1:Nz, s in 1:Nc
             t = conn.neighbors[p][edge].orientation != 0 ? Nc + 1 - s : s
-            i, j = Hp .+ min.(CSSeamAdv._cs_seam_face_index(edge, s, Nc), Nc)
-            u, v = Hp .+ min.(CSSeamAdv._cs_seam_face_index(other, t, Nc), Nc)
+            i, j = Hp .+ min.(CSSeamAdv.cs_seam_face_index(edge, s, Nc), Nc)
+            u, v = Hp .+ min.(CSSeamAdv.cs_seam_face_index(other, t, Nc), Nc)
             m[p][i, j, k] -= cache[s, k, Nt + 1, seam]
             m[q][u, v, k] += cache[s, k, Nt + 1, seam]
             for tr in 1:Nt

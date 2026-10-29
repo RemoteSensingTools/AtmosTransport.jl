@@ -100,7 +100,7 @@ function open_streaming_transport_binary(
     ncell   = ncells(mesh)
     nface_h = nfaces(mesh)
     nlevel  = nlevels(grid)
-    basis_sym = _transport_basis_symbol(mass_basis)
+    basis_sym = basis_symbol(mass_basis)
     payload_sections = _transport_payload_sections(grid, sample_window)
 
     _transport_validate_reduced_window(sample_window, ncell, nface_h, nlevel, basis_sym)

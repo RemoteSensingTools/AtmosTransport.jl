@@ -115,20 +115,7 @@ function ensure_supported_target(grid::AbstractTargetGeometry)
           "Supported targets: LatLon, ReducedGaussian, CubedSphere.")
 end
 
-"""
-    _latlon_area_matrix(mesh) -> Matrix
 
-Expand the latitude-band area vector from `LatLonMesh` into a full `(Nx, Ny)`
-matrix so later kernels can index cell area directly by `(i, j)`.
-"""
-function _latlon_area_matrix(mesh::LatLonMesh{FT}) where FT
-    area_by_lat = cell_areas_by_latitude(mesh)
-    area = Array{FT}(undef, mesh.Nx, mesh.Ny)
-    for j in 1:mesh.Ny
-        @views area[:, j] .= area_by_lat[j]
-    end
-    return area
-end
 
 """
     build_target_geometry(::Val{:latlon}, cfg_grid, FT) -> LatLonTargetGeometry
@@ -149,7 +136,7 @@ function build_target_geometry(::Val{:latlon}, cfg_grid, ::Type{FT}) where FT <:
         FT(deg2rad(mesh.Δλ)),
         FT(deg2rad(mesh.Δφ)),
         FT.(cosd.(mesh.φᶜ)),
-        _latlon_area_matrix(mesh),
+        cell_area_matrix(mesh),
     )
 end
 
@@ -279,10 +266,8 @@ end
 grid_kind(::CubedSphereTargetGeometry) = :cubed_sphere
 supports_spectral_massflux_preprocessing(::CubedSphereTargetGeometry) = true
 
-_cs_panel_convention_tag(::GnomonicPanelConvention) = "gnomonic"
-_cs_panel_convention_tag(::GEOSNativePanelConvention) = "geos_native"
-_cs_panel_convention_tag(grid::CubedSphereTargetGeometry) =
-    _cs_panel_convention_tag(panel_convention(grid.mesh))
+panel_convention_tag(grid::CubedSphereTargetGeometry) =
+    panel_convention_tag(grid.mesh)
 
 _cs_definition_tag(grid::CubedSphereTargetGeometry) =
     String(cs_definition_tag(cs_definition(grid.mesh)))
@@ -291,30 +276,6 @@ _cs_coordinate_law_tag(grid::CubedSphereTargetGeometry) =
 _cs_center_law_tag(grid::CubedSphereTargetGeometry) =
     center_law_tag(center_law(grid.mesh))
 
-function _parse_cs_panel_convention(raw)
-    raw isa GnomonicPanelConvention && return raw
-    raw isa GEOSNativePanelConvention && return raw
-
-    norm = lowercase(String(raw))
-    if norm == "gnomonic"
-        return GnomonicPanelConvention()
-    elseif norm == "geos_native"
-        return GEOSNativePanelConvention()
-    end
-    error("cubed_sphere: unsupported panel_convention=$(raw); " *
-          "expected \"gnomonic\" or \"geos_native\"")
-end
-
-function _parse_cs_definition(raw, convention::AbstractCubedSpherePanelConvention)
-    norm = lowercase(String(raw))
-    if norm == "gmao_equal_distance"
-        return GMAOCubedSphereDefinition(; convention)
-    elseif norm == "equiangular_gnomonic"
-        return EquiangularCubedSphereDefinition(; convention)
-    end
-    error("cubed_sphere: unsupported definition=$(raw); expected \"gmao_equal_distance\" " *
-          "or \"equiangular_gnomonic\"")
-end
 
 function target_spectral_truncation(grid::CubedSphereTargetGeometry)
     # Nyquist on the staging LL grid
@@ -332,13 +293,13 @@ function target_header_metadata(grid::CubedSphereTargetGeometry)
         "cs_coordinate_law" => _cs_coordinate_law_tag(grid),
         "cs_center_law" => _cs_center_law_tag(grid),
         "longitude_offset_deg" => longitude_offset_deg(cs_definition(grid.mesh)),
-        "panel_convention" => _cs_panel_convention_tag(grid),
+        "panel_convention" => panel_convention_tag(grid),
     )
 end
 
 function target_summary(grid::CubedSphereTargetGeometry)
     nc = 6 * grid.Nc^2
-    conv = _cs_panel_convention_tag(grid)
+    conv = panel_convention_tag(grid)
     def = _cs_definition_tag(grid)
     return "C$(grid.Nc) cubed sphere ($(nc) cells, $(def), $(conv), staging $(grid.staging_nlon)×$(grid.staging_nlat))"
 end
@@ -374,10 +335,10 @@ function build_target_geometry(::Val{:cubed_sphere}, cfg_grid, ::Type{FT}) where
     staging_nlon = Int(get(cfg_grid, "staging_nlon", max(4 * Nc, 360)))
     staging_nlat = Int(get(cfg_grid, "staging_nlat", max(2 * Nc + 1, 181)))
 
-    convention = _parse_cs_panel_convention(
+    convention = parse_panel_convention(
         get(cfg_grid, "panel_convention", "gnomonic"))
     definition = haskey(cfg_grid, "definition") ?
-        _parse_cs_definition(cfg_grid["definition"], convention) :
+        parse_cs_definition(cfg_grid["definition"], convention) :
         nothing
     mesh = CubedSphereMesh(; Nc=Nc, FT=FT, radius=FT(EARTH_RADIUS),
                             convention=convention, definition=definition)

@@ -81,7 +81,7 @@ function binary_dry_mass_target(reader::TransportBinaryReader)
     end
 
     m = _transport_section_view(reader, 1, :m)
-    dry_mass = if mass_basis(reader) === :dry
+    dry_mass = if binary_mass_basis(reader) === :dry
         sum(Float64, m)
     elseif has_qv_endpoints(reader)
         qv = _transport_section_view(reader, 1, :qv_start)
@@ -236,7 +236,7 @@ function _print_capability_rows(io::IO, caps)
     if caps.tm5_convection
         println(io, "  tm5_convection_mass_basis = ",
                 caps.tm5_convection_mass_basis === nothing ? "not recorded" :
-                    _transport_basis_symbol(caps.tm5_convection_mass_basis))
+                    basis_symbol(caps.tm5_convection_mass_basis))
         caps.tm5_convection_mass_basis === nothing && caps.mass_basis === :dry &&
             println(io, "  ⚠ TM5 convection fluxes predate the dry-air conversion: moist fluxes " *
                         "on dry air mass, convective rates about 1 % too large")

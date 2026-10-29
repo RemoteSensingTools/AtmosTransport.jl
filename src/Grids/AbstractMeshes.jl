@@ -152,7 +152,6 @@ end
 floattype(::AtmosGrid{H, V, Arch, P, FT}) where {H, V, Arch, P, FT} = FT
 nlevels(g::AtmosGrid) = n_levels(g.vertical)
 
-planet_parameters(g::AtmosGrid) = g.planet
 radius(g::AtmosGrid) = g.planet.radius
 gravity(g::AtmosGrid) = g.planet.gravity
 reference_pressure(g::AtmosGrid) = g.planet.reference_pressure
@@ -172,7 +171,7 @@ end
 function Base.propertynames(::AtmosGrid, private::Bool = false)
     names = (:horizontal, :vertical, :arch, :planet,
              :radius, :gravity, :reference_pressure)
-    return private ? names : names
+    return names
 end
 
 export AbstractHorizontalMesh, AbstractStructuredMesh
@@ -180,4 +179,4 @@ export AbstractFluxTopology, StructuredFluxTopology, FaceIndexedFluxTopology
 export flux_topology
 export AbstractVerticalCoordinate
 export AtmosGrid, floattype, nlevels  # `architecture` re-exported via Architectures
-export planet_parameters, radius, gravity, reference_pressure
+export radius, gravity, reference_pressure

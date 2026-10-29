@@ -120,7 +120,7 @@ many windows of the same day.
 """
 function n320_cell_areas(source_grid::ReducedGaussianTargetGeometry)
     mesh = source_grid.mesh
-    return [Float64(cell_area(mesh, c)) for c in 1:ncells(mesh)]
+    return cell_areas(mesh)
 end
 
 """

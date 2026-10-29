@@ -12,13 +12,19 @@ Provides:
 """
 module State
 
+using ..Grids: CS_PANEL_COUNT
+
 using Adapt
-using ..Architectures: _compensated_total
+using ..Architectures: compensated_total
 using ..Grids: AbstractHorizontalMesh, AbstractStructuredMesh, CubedSphereMesh,
     StructuredFluxTopology, FaceIndexedFluxTopology,
-    flux_topology, ncells, nfaces, nx, ny
+    ncells, nfaces, nx, ny
 
 include("Basis.jl")
+"""Common basis-tagged prognostic state interface for structured and panel storage."""
+abstract type AbstractCellState{B <: AbstractMassBasis} end
+export AbstractCellState
+
 include("CellState.jl")
 include("CubedSphereState.jl")
 include("FaceFluxState.jl")

@@ -228,11 +228,12 @@ coordinate_law_tag(::GMAOEqualDistanceGnomonic) = "gmao_equal_distance_gnomonic"
 center_law_tag(::AngularMidpointCenter) = "angular_midpoint"
 center_law_tag(::FourCornerNormalizedCenter) = "four_corner_normalized"
 
-function _default_cs_definition(convention::GnomonicPanelConvention)
+"""Return the standard geometry definition for a panel convention."""
+function default_cs_definition(convention::GnomonicPanelConvention)
     return EquiangularCubedSphereDefinition(; convention)
 end
 
-function _default_cs_definition(convention::GEOSNativePanelConvention)
+function default_cs_definition(convention::GEOSNativePanelConvention)
     return GMAOCubedSphereDefinition(; convention)
 end
 
@@ -331,7 +332,7 @@ Base.eltype(::CubedSphereMesh{FT}) where FT = FT
 Base.eltype(::Type{<:CubedSphereMesh{FT}}) where FT = FT
 
 """Number of panels (always 6 for a cubed sphere)."""
-@inline panel_count(::CubedSphereMesh) = 6
+@inline panel_count(::CubedSphereMesh) = CS_PANEL_COUNT
 
 """Return the panel-numbering convention struct (Gnomonic or GEOSNative)."""
 @inline panel_convention(m::CubedSphereMesh) = m.convention
@@ -422,7 +423,7 @@ function CubedSphereMesh(; FT::Type{<:AbstractFloat} = Float64,
     conv isa AbstractCubedSpherePanelConvention ||
         throw(ArgumentError("convention must be an AbstractCubedSpherePanelConvention, got $(typeof(conv))"))
 
-    def = definition === nothing ? _default_cs_definition(conv) : definition
+    def = definition === nothing ? default_cs_definition(conv) : definition
     def isa AbstractCubedSphereDefinition ||
         throw(ArgumentError("definition must be an AbstractCubedSphereDefinition, got $(typeof(def))"))
     if definition !== nothing && convention !== nothing &&
@@ -493,3 +494,56 @@ function Base.show(io::IO, m::CubedSphereMesh)
                              round(maximum(m.Δx)/1e3, digits=2), " km\n",
           "└── radius:    ", m.radius, " m")
 end
+
+"""Canonical serialized panel convention (`gnomonic` or `geos_native`)."""
+panel_convention_tag(::GnomonicPanelConvention) = "gnomonic"
+panel_convention_tag(::GEOSNativePanelConvention) = "geos_native"
+panel_convention_tag(mesh::CubedSphereMesh) = panel_convention_tag(panel_convention(mesh))
+
+"""Parse a panel convention, lowercasing String/Symbol tags; unknown tags raise `ArgumentError`."""
+function parse_panel_convention(raw::Union{Symbol, AbstractString})
+    tag = lowercase(String(raw))
+    tag == "gnomonic" && return GnomonicPanelConvention()
+    tag == "geos_native" && return GEOSNativePanelConvention()
+    throw(ArgumentError("unsupported panel_convention=$(repr(raw)); expected gnomonic or geos_native"))
+end
+parse_panel_convention(raw::Union{GnomonicPanelConvention, GEOSNativePanelConvention}) = raw
+parse_panel_convention(raw) =
+    throw(ArgumentError("unsupported panel_convention=$(repr(raw)); expected gnomonic or geos_native"))
+
+"""Parse a cubed-sphere coordinate-law String or Symbol tag."""
+function parse_coordinate_law(raw::Union{Symbol, AbstractString})
+    tag = lowercase(String(raw))
+    tag == "equiangular_gnomonic" && return EquiangularGnomonic()
+    tag == "gmao_equal_distance_gnomonic" && return GMAOEqualDistanceGnomonic()
+    throw(ArgumentError("unsupported cubed-sphere coordinate law $(repr(raw))"))
+end
+
+"""Parse a cubed-sphere cell-center-law String or Symbol tag."""
+function parse_center_law(raw::Union{Symbol, AbstractString})
+    tag = lowercase(String(raw))
+    tag == "angular_midpoint" && return AngularMidpointCenter()
+    tag == "four_corner_normalized" && return FourCornerNormalizedCenter()
+    throw(ArgumentError("unsupported cubed-sphere center law $(repr(raw))"))
+end
+
+"""Rebuild a named cubed-sphere definition for the supplied panel convention."""
+function parse_cs_definition(raw::Union{Symbol, AbstractString}, convention::AbstractCubedSpherePanelConvention)
+    tag = lowercase(String(raw))
+    tag == "gmao_equal_distance" && return GMAOCubedSphereDefinition(; convention)
+    tag == "equiangular_gnomonic" && return EquiangularCubedSphereDefinition(; convention)
+    throw(ArgumentError("unsupported cubed-sphere definition $(repr(raw))"))
+end
+
+"""Return the canonical binary geometry keyword values of a mesh or definition."""
+cs_geometry_tags(mesh::CubedSphereMesh) = cs_geometry_tags(cs_definition(mesh))
+function cs_geometry_tags(def::CubedSphereDefinition)
+    return (cs_definition = String(cs_definition_tag(def)),
+            cs_coordinate_law = coordinate_law_tag(coordinate_law(def)),
+            cs_center_law = center_law_tag(center_law(def)),
+            longitude_offset_deg = longitude_offset_deg(def),
+            panel_convention = panel_convention_tag(panel_convention(def)))
+end
+
+export panel_convention_tag, parse_panel_convention, parse_coordinate_law, parse_center_law
+export parse_cs_definition, default_cs_definition, cs_geometry_tags

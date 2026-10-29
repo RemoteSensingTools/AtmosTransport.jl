@@ -137,10 +137,10 @@ Files directly in this folder; the subfolders have their own READMEs
 - [`reduced_spectral_day.jl`](reduced_spectral_day.jl) — RG window synthesis, pin/dry/merge and next-day end point, `balance_window!`, driver hooks, RG `process_day`
 - [`mass_support.jl`](mass_support.jl) — LL merge/remap, LL Poisson and column balance, qv readers and their coordinates (`read_thermo_coordinates`, through `GriddedIO.find_coordinate`), `apply_dry_basis_native!`, `pin_global_mean_ps!`, `pin_global_mean_ps_using_qv!`
 - [`ring_poisson_balance.jl`](ring_poisson_balance.jl) — RG `CompressedLaplacian`, `balance_compressed_column_fluxes!`
-- [`cs_face_table.jl`](cs_face_table.jl) — CS global cell and face indexing (the face table)
+- [`../Grids/CSGlobalFaceTable.jl`](../Grids/CSGlobalFaceTable.jl) — CS global cell and face indexing (the face table)
 - [`cs_poisson_solver.jl`](cs_poisson_solver.jl) — CS graph Laplacian, PCG solver, correction mapping, mirror synchronization
 - [`cs_poisson_balance.jl`](cs_poisson_balance.jl) — `balance_cs_global_mass_fluxes!` (the CG solve on the column), `balance_cs_column_mass_fluxes!`, column weights and `spread_column_correction!`, `diagnose_cs_cm!`
-- [`cs_transport_helpers.jl`](cs_transport_helpers.jl) — CS workspace, panel packing, LL → CS regrid helpers (`regrid_2d_to_cs_panels!` / `regrid_3d_to_cs_panels!` pass the quantity kind to `Regridding.apply_regridder!`), wind recovery from LL fluxes
+- [`cs_transport_helpers.jl`](cs_transport_helpers.jl) — CS workspace, LL → CS regrid helpers (`regrid_2d_to_cs_panels!` / `regrid_3d_to_cs_panels!` pass the quantity kind to `Regridding.apply_regridder!`), wind recovery from LL fluxes
 - [`cs_flux_reconstruction.jl`](cs_flux_reconstruction.jl) — CS face fluxes from cell-center winds (`cs_face_fluxes!`)
 - [`cs_wind_rotation.jl`](cs_wind_rotation.jl) — east/north ↔ panel-local wind rotation, CS face fluxes → cell-center winds
 - [`cs_native_fluxes.jl`](cs_native_fluxes.jl) — `geos_native_to_face_flux!` with panel halo sync, `compute_cs_cm_pressure_fixer!`
@@ -232,3 +232,6 @@ Files directly in this folder; the subfolders have their own READMEs
   reproducibility in `test_ll_spectral_unified_driver.jl`,
   `test_rg_preprocessor_unified_driver.jl`, `test_cs_spectral_unified_driver.jl`.
   End-to-end cases against recorded references: [`../../test/golden/`](../../test/golden/).
+
+Panel indexing, the global face table, panel packing, geometry-tag parsing and
+flat area helpers are owned by Grids; basis-tag conversion is owned by State.

@@ -90,7 +90,7 @@ function write_snapshot_binary(path::AbstractString,
             "Nz" => Nz,
             "n_panels" => n_panels,
             "definition" => String(cs_definition_tag(cs_definition(mesh))),
-            "panel_convention" => _panel_convention_tag(mesh),
+            "panel_convention" => panel_convention_tag(mesh),
             "coordinate_law" => String(coordinate_law_tag(coordinate_law(mesh))),
             "center_law" => String(center_law_tag(center_law(mesh))),
             "planet_radius_m" => Float64(mesh.radius),
@@ -157,12 +157,6 @@ function write_snapshot_binary(path::AbstractString,
     return expanded
 end
 
-@inline function _panel_convention_tag(mesh::CubedSphereMesh)
-    conv = mesh.convention
-    conv isa GnomonicPanelConvention && return "gnomonic"
-    conv isa GEOSNativePanelConvention && return "geos_native"
-    return String(Symbol(typeof(conv).name.name))
-end
 
 @inline function _write_cs_frame_into_payload!(payload::Vector{Float32}, cursor::Int,
                                                 frame::SnapshotFrame,

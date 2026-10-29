@@ -60,7 +60,7 @@ After each closed transport step, `sum(air_mass)` and the per-tracer storage
 sum `sum(view(tracers_raw, ..., t))` must each be conserved (within
 floating-point tolerance).
 """
-struct CellState{Basis <: AbstractMassBasis, A <: AbstractArray, Raw <: AbstractArray, Names <: Tuple}
+struct CellState{Basis <: AbstractMassBasis, A <: AbstractArray, Raw <: AbstractArray, Names <: Tuple} <: AbstractCellState{Basis}
     air_mass     :: A
     tracers_raw  :: Raw
     tracer_names :: Names
@@ -123,7 +123,6 @@ function CellState(::Type{B}, air_mass::AbstractArray,
         air_mass, tracers_raw, tracer_names)
 end
 
-mass_basis(::CellState{B}) where {B <: AbstractMassBasis} = B()
 
 function Adapt.adapt_structure(to, state::CellState{B}) where {B <: AbstractMassBasis}
     air_mass    = Adapt.adapt(to, state.air_mass)
@@ -168,7 +167,7 @@ Base.keys(acc::TracerAccessor)   = getfield(acc, :state).tracer_names
 # Lazy property-style tracer access
 # ---------------------------------------------------------------------------
 
-function Base.getproperty(state::CellState, name::Symbol)
+function Base.getproperty(state::AbstractCellState, name::Symbol)
     if name === :tracers
         return TracerAccessor(state)
     else
@@ -178,7 +177,7 @@ end
 
 function Base.propertynames(::CellState, private::Bool = false)
     names = (:air_mass, :tracers_raw, :tracer_names, :tracers)
-    return private ? names : names
+    return names
 end
 
 # ---------------------------------------------------------------------------
@@ -201,21 +200,16 @@ Sum the named tracer's conservative model storage across all cells and levels
 For dry VMR tracers this is `sum(χ_dry × dry_air_mass)`, not physical kg
 species unless an explicit molecular-weight conversion is applied.
 """
-total_mass(state::CellState, name::Symbol) = _compensated_total(get_tracer(state, name))
+total_mass(state::CellState, name::Symbol) = compensated_total(get_tracer(state, name))
 
 """
     total_air_mass(state::CellState) -> Float64
 
 Sum of air mass across all cells and levels (in Float64).
 """
-total_air_mass(state::CellState) = _compensated_total(state.air_mass)
+total_air_mass(state::CellState) = compensated_total(state.air_mass)
 
-"""
-    tracer_names(state::CellState) -> NTuple{Nt, Symbol}
 
-Names of all tracers in `state`, in stored order.
-"""
-tracer_names(state::CellState) = getfield(state, :tracer_names)
 
 export CellState, TracerAccessor
 export mixing_ratio, total_mass, total_air_mass, tracer_names

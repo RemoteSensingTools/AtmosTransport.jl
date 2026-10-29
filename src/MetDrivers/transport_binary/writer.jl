@@ -106,7 +106,7 @@ function write_transport_binary(path::AbstractString,
     ncell = ncells(mesh)
     nface_h = nfaces(mesh)
     nlevel = nlevels(grid)
-    basis_sym = _transport_basis_symbol(mass_basis)
+    basis_sym = basis_symbol(mass_basis)
     payload_sections = _transport_payload_sections(grid, first(windows))
 
     for window in windows
@@ -204,7 +204,7 @@ function write_transport_binary(path::AbstractString,
     ncell = ncells(mesh)
     nface_h = nfaces(mesh)
     nlevel = nlevels(grid)
-    basis_sym = _transport_basis_symbol(mass_basis)
+    basis_sym = basis_symbol(mass_basis)
     payload_sections = _transport_payload_sections(grid, first(windows))
 
     for window in windows

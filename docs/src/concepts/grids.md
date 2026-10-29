@@ -316,3 +316,13 @@ those representations differ.
 - [State & basis](@ref) — how prognostic state is laid out on a grid.
 - [Operators](@ref Operator-concepts) — physics interfaces dispatched on grid type.
 - [Binary format](@ref) — the on-disk preprocessed-met layout.
+
+
+Cubed-sphere convention and geometry tags are owned by `AtmosTransport.Grids`:
+`panel_convention_tag`, `parse_panel_convention`, `parse_coordinate_law`,
+`parse_center_law`, `parse_cs_definition`, `default_cs_definition`, and
+`cs_geometry_tags`. String and Symbol tags parse case insensitively; unknown
+values raise `ArgumentError`. Binary headers and NetCDF attributes retain the
+canonical lowercase strings. `cell_areas(mesh)` returns flat Float64 values
+from the mesh's stored precision; `flat_float64_cell_areas(mesh)` explicitly
+recomputes cubed-sphere areas in Float64.

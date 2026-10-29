@@ -109,7 +109,7 @@ validate_runtime_physics_recipe(recipe, driver)
 
 grid = driver_grid(driver)
 window1 = load_transport_window(driver, 1)
-Basis = air_mass_basis(driver) === :dry ? DryBasis : MoistBasis
+Basis = typeof(mass_basis(air_mass_basis(driver)))
 air = copy(window1.air_mass)
 
 vmr = build_initial_mixing_ratio(
@@ -189,3 +189,8 @@ Modules = [AtmosTransport]
 Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```
+
+Use `MetDrivers.binary_mass_basis(reader)` for the header Symbol, and
+`State.mass_basis(tag)` / `State.basis_symbol(basis)` for tag conversion.
+Observation placement coordinates subtype `Output.AbstractPlacementCoordinate`;
+model vertical grids subtype `Grids.AbstractVerticalCoordinate`.
