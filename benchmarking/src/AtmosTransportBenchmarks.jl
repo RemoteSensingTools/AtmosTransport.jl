@@ -4,6 +4,7 @@ using Adapt
 using ArgParse
 using Dates
 using JSON3
+using KernelAbstractions: get_backend
 using Printf
 using SHA
 using Serialization
@@ -790,12 +791,9 @@ function _tm5_collaborative(case::BenchmarkCase)
     case.backend === :cpu && return false
     depth = effective_convection_depth(case.convection_depth, case.levels)
     depth = depth == 0 ? case.levels : depth
-    try
-        backend = AtmosTransport.Architectures.device(_architecture(case.backend))
-        return 0 < depth <= AtmosTransport.Operators.Convection._tm5_collab_max_depth(case.float_type, backend)
-    catch
-        return false   # unknown: count the tile (conservative)
-    end
+    probe = Adapt.adapt(_adapter(case.backend), Vector{case.float_type}(undef, 0))
+    backend = get_backend(probe)
+    return 0 < depth <= AtmosTransport.Operators.Convection._tm5_collab_max_depth(case.float_type, backend)
 end
 
 "Device memory the case needs: the memory-model estimate with its safety margin."

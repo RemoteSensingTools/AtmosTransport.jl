@@ -147,6 +147,8 @@ struct TM5Convection{FT} <: AbstractConvection
                                 use_collab_lu::Bool,
                                 lmax_conv::Int,
                                 n_merge::Int) where {FT}
+        lmax_conv >= 0 || throw(ArgumentError(
+            "TM5Convection: `lmax_conv` must be >= 0 (got $(lmax_conv))"))
         n_merge >= 1 || throw(ArgumentError(
             "TM5Convection: `n_merge` must be ≥ 1 (got $(n_merge))"))
         return new{FT}(tile_workspace_gib, use_collab_lu, lmax_conv, n_merge)
@@ -210,11 +212,11 @@ end
     L = _effective_lmax_conv(op, Nz)
     L_super, _, nm = _tm5_super_dims(op, Nz)
     if FT === Float64
-        @warn "TM5Convection: Float64 collaborative LU requires CUDA, depth 1..$(_TM5_COLLAB_MAX_DEPTH_FLOAT64_CUDA) within Nz, n_merge=1, and positive Nt; got depth=$(L), Nz=$(Nz), n_merge=$(nm), Nt=$(Nt), backend=$(typeof(backend)). Using the per-thread path. Set use_collab_lu=false to silence this." maxlog=1
+        @warn "TM5Convection: Float64 collaborative LU requires CUDA, depth 1..$(_TM5_COLLAB_MAX_DEPTH_FLOAT64_CUDA) within Nz, n_merge=1, and positive Nt; got depth=$(L), Nz=$(Nz), n_merge=$(nm), Nt=$(Nt), backend=$(typeof(backend)). Using the per-thread path with the full column and no level merging; requested lmax_conv/n_merge approximations are dropped. Set use_collab_lu=false to silence this." maxlog=1
     elseif FT !== Float32
-        @warn "TM5Convection: collaborative LU does not support FT=$(FT); using the per-thread path. Set use_collab_lu=false to silence this." maxlog=1
+        @warn "TM5Convection: collaborative LU does not support FT=$(FT); using the per-thread path with the full column and no level merging; requested lmax_conv/n_merge approximations are dropped. Set use_collab_lu=false to silence this." maxlog=1
     elseif backend isa KernelAbstractions.CPU
-        @warn "TM5Convection: use_collab_lu=true but backend is CPU — the collaborative kernel is GPU-only; using the per-thread path. Set use_collab_lu=false to silence this." maxlog=1
+        @warn "TM5Convection: use_collab_lu=true but backend is CPU — the collaborative kernel is GPU-only; using the per-thread path with the full column and no level merging; requested lmax_conv/n_merge approximations are dropped. Set use_collab_lu=false to silence this." maxlog=1
     else
         throw(ArgumentError(
             "TM5Convection: use_collab_lu=true requested but the collaborative LU path " *
@@ -468,8 +470,7 @@ end
                        op::TM5Convection, dt, workspace::TM5Workspace,
                        grid::AtmosGrid) -> nothing
 
-Array-level entry point — parallels the CMFMC contract at
-`operators.jl:70-89`. Dispatches on grid
+Array-level entry point for four-field TM5 forcing. Dispatches on grid
 mesh type and launches the matching KA kernel from
 `tm5_kernels.jl`. Single `synchronize(backend)`
 at the end (TM5 matrix solve is unconditionally stable; no

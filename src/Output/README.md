@@ -168,3 +168,6 @@ metadata. Daily output permits one owned background write. `capture_snapshot`
 without `fields` still returns full native storage for existing callers and
 ATMSNAP output. All selected tracers keep their independent Float64 totals,
 even when no layer or column diagnostic is requested.
+
+Explicit snapshot schedules sort a copy of the supplied hours, including
+`Vector{Float64}` inputs, and reject non-finite hours in the constructor.

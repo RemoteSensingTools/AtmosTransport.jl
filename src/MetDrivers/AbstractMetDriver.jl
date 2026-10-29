@@ -137,8 +137,6 @@ flux_interpolation_mode(::AbstractMetDriver) = :constant
 
 """Does this driver provide a verified per-window timestep contract?"""
 uses_binary_substep_contract(::Any) = false
-uses_binary_substep_contract(::AbstractMetDriver) = false
-uses_binary_substep_contract(::Nothing) = false
 
 """Does this driver provide specific humidity for dry-mass correction?"""
 supports_moisture(::AbstractMetDriver) = false

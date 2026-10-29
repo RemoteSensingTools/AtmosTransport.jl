@@ -63,7 +63,7 @@ end
 
     result = AT.cs_surface_emission_footprint(
         panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-        scheme=scheme, dt=dt, epsilon=1e-6,
+        scheme=scheme, dt=dt,
     )
 
     rates = [ntuple(6) do p
@@ -107,7 +107,7 @@ end
 
     result = AT.cs_surface_emission_footprint(
         panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-        scheme=scheme, dt=dt, epsilon=1e-6,
+        scheme=scheme, dt=dt,
     )
 
     rates = [ntuple(6) do p

@@ -400,50 +400,6 @@ step_operators(model::TransportModel) =
                   model.workspace.convection_ws, model.convection_forcing,
                   model.chemistry)
 
-"""
-    transport_step!(model::TransportModel, dt; meteo = nothing)
-
-Advance `model.state` by one transport step (the plan's `TransportStage`):
-advection with vertical diffusion at the palindrome center and surface
-emissions. The diffusion operator's coupling policy selects either
-`V(dt/2) -> S(dt) -> V(dt/2)` or `S(dt) -> V(dt)` when both diffusion
-and a surface source are active; without a surface-flux operator the center
-is one solve `V(dt)`.
-
-Binary-scheduled driven runs use this block at the per-window
-advection substep cadence stored in the transport binary. Convection
-and chemistry are separate physics blocks and can run at the met-window
-cadence via [`convection_chemistry_step!`](@ref).
-"""
-transport_step!(model::TransportModel, dt; meteo = nothing) =
-    execute_stage!(TransportStage(), step_operators(model), StepTiming(dt), meteo,
-                   NoStepRecorder())
-
-_chemistry_before_emissions!(model::TransportModel, dt; meteo = nothing) =
-    execute_stage!(ChemistryBeforeStage(StepDt()), step_operators(model), StepTiming(dt),
-                   meteo, NoStepRecorder())
-
-_chemistry_after_emissions!(model::TransportModel, dt; meteo = nothing) =
-    execute_stage!(ChemistryAfterStage(StepDt()), step_operators(model), StepTiming(dt),
-                   meteo, NoStepRecorder())
-
-_convection_step!(model::TransportModel, dt) =
-    execute_stage!(ConvectionStage(StepDt()), step_operators(model), StepTiming(dt),
-                   nothing, NoStepRecorder())
-
-"""
-    convection_chemistry_step!(model::TransportModel, dt; meteo = nothing)
-
-Advance the non-transport physics blocks once: convection block →
-chemistry block.
-"""
-function convection_chemistry_step!(model::TransportModel, dt; meteo = nothing)
-    _convection_step!(model, dt)
-    SectionTimer.@section :chemistry apply!(model.state, meteo, model.grid,
-                                            model.chemistry, dt)
-    return nothing
-end
-
 # The plan `TransportModel.step!` executes: the full operator composition at
 # every step (no met windows).
 const _MODEL_STEP_PLAN = StepPlan(; physics_cadence = :substep)
@@ -472,6 +428,6 @@ function step!(model::TransportModel, dt; meteo = nothing)
     return nothing
 end
 
-export TransportModel, step!, transport_step!, convection_chemistry_step!
+export TransportModel, step!
 export with_chemistry, with_diffusion, with_emissions
 export with_convection, with_convection_forcing

@@ -77,11 +77,6 @@ function CMFMCMatrixConvection(; tile_workspace_gib::Real = 1.0,
     return CMFMCMatrixConvection(inner)
 end
 
-# Forward the parametric eltype of the inner solver. Tests + DrivenRunner
-# treat `eltype(op)` as the operator's working precision.
-Base.eltype(::Type{CMFMCMatrixConvection{FT}}) where {FT} = FT
-Base.eltype(op::CMFMCMatrixConvection) = eltype(typeof(op))
-
 # =========================================================================
 # Workspace — composes a TM5Workspace with the per-window derived rate
 # slabs. Lives in the convection workspace slot on the model, just like

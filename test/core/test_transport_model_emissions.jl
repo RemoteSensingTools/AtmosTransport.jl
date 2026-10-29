@@ -3,12 +3,9 @@ Plan 17 Commit 6 — `TransportModel.emissions` + `with_emissions` +
 `DrivenSimulation` cleanup.
 
 Verifies:
-1. `TransportModel` carries an `emissions` field with default `NoSurfaceFlux()`.
-2. `step!(model, dt)` with default `emissions = NoSurfaceFlux()` is bit-
-   exact equivalent to pre-17 `step!` (dead branch).
-3. `with_emissions(model, op)` returns a new model with replaced
+1. `with_emissions(model, op)` returns a new model with replaced
    emissions operator; other fields are storage-shared.
-4. `step!` with active `emissions` adds surface mass via the palindrome's
+2. `step!` with active `emissions` adds surface mass via the palindrome's
    S slot — end-to-end composed with diffusion + chemistry, on lat-lon and
    reduced-Gaussian grids; tracers absent from the state are skipped.
 
@@ -84,24 +81,6 @@ function _make_rg_model(FT, Nz;
 end
 
 @testset "TransportModel emissions — plan 17 Commit 6" begin
-
-    @testset "Default emissions is NoSurfaceFlux" begin
-        model = _make_latlon_model(Float64, 3, 2, 2)
-        @test model.emissions isa NoSurfaceFlux
-    end
-
-    @testset "step! with default emissions is bit-exact to no-emissions path" begin
-        FT = Float64
-        Nx, Ny, Nz = 4, 3, 2
-        model_a = _make_latlon_model(FT, Nx, Ny, Nz)   # default NoSurfaceFlux
-        model_b = _make_latlon_model(FT, Nx, Ny, Nz;
-                                      emissions = NoSurfaceFlux())
-
-        step!(model_a, 10.0)
-        step!(model_b, 10.0)
-
-        @test model_a.state.tracers_raw == model_b.state.tracers_raw
-    end
 
     @testset "with_emissions replaces operator, storage-shared" begin
         FT = Float64

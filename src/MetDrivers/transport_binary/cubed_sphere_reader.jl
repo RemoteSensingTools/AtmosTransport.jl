@@ -47,13 +47,6 @@ function load_window!(reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinar
     panels_bm = ntuple(_ -> Array{FT}(undef, Nc, Nc + 1, Nz), np)
     panels_cm = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz + 1), np)
     surface_present = all(s in h.payload_sections for s in _PBL_SURFACE_PAYLOAD_SECTIONS)
-    surface_partial = any(s in h.payload_sections for s in _PBL_SURFACE_PAYLOAD_SECTIONS) && !surface_present
-    if surface_partial
-        legacy_hflux = :hflux in h.payload_sections && !(:pbl_hflux in h.payload_sections)
-        msg = "CS binary has a partial PBL surface payload; expected all of pblh, ustar, pbl_hflux, t2m"
-        legacy_hflux && (msg *= "\n  This binary appears to be pre-2026-05-01 (commit 66bbce3): the on-disk PBL sensible-heat section is `:hflux` rather than the renamed `:pbl_hflux`. Regenerate via scripts/preprocessing/preprocess_transport_binary.jl + regrid_ll_transport_binary_to_cs.jl.")
-        throw(ArgumentError(msg))
-    end
     panels_pblh  = surface_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc), np) : nothing
     panels_ustar = surface_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc), np) : nothing
     panels_hflux = surface_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc), np) : nothing
@@ -61,9 +54,6 @@ function load_window!(reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinar
     panels_cmfmc = :cmfmc in h.payload_sections ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz + 1), np) : nothing
     panels_dtrain = :dtrain in h.payload_sections ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
     vdiff_present = all(s in h.payload_sections for s in _GCHP_VDIFF_PAYLOAD_SECTIONS)
-    vdiff_partial = any(s in h.payload_sections for s in _GCHP_VDIFF_PAYLOAD_SECTIONS) && !vdiff_present
-    vdiff_partial &&
-        throw(ArgumentError("CS binary has a partial GCHP VDIFF payload; expected all of vdiff_u, vdiff_v, vdiff_t, vdiff_qv"))
     panels_vdiff_u  = vdiff_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
     panels_vdiff_v  = vdiff_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
     panels_vdiff_t  = vdiff_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
@@ -75,8 +65,7 @@ function load_window!(reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinar
                        for s in _CS_OPTIONAL_2D_SECTIONS if s in h.payload_sections)
 
     # TM5 convection fields — all four must be present together or
-    # all four absent. The runtime `_validate_convection_window!`
-    # rejects a partial payload, so this block trusts the header.
+    # all four absent, as validated by the reader constructor.
     tm5_present = all(s in h.payload_sections for s in (:entu, :detu, :entd, :detd))
     panels_entu = tm5_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing
     panels_detu = tm5_present ? ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), np) : nothing

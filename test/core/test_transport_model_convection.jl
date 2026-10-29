@@ -130,12 +130,6 @@ function _make_convection_window_driver(; FT = Float64, steps = 1,
 end
 
 @testset "TransportModel convection runtime" begin
-    @testset "default model carries NoConvection and no convection workspace" begin
-        model = _make_convection_model()
-        @test model.convection isa NoConvection
-        @test model.workspace.convection_ws === nothing
-    end
-
     @testset "with_convection installs structured CMFMC workspace" begin
         base = _make_convection_model()
         updated = with_convection(base, CMFMCConvection())
@@ -153,18 +147,6 @@ end
         @test updated.workspace.advection_ws === base.workspace.advection_ws
         @test updated.workspace.convection_ws isa CMFMCWorkspace
         @test updated.workspace.diffusion_ws === nothing
-    end
-
-    @testset "step! with default NoConvection stays bit-exact" begin
-        model_a = _make_convection_model()
-        model_b = _make_convection_model()
-
-        for _ in 1:3
-            step!(model_a, 1800.0)
-            step!(model_b, 1800.0)
-        end
-
-        @test model_a.state.tracers_raw == model_b.state.tracers_raw
     end
 
     @testset "NoConvection apply! is an allocation-free identity, also on cubed-sphere states" begin

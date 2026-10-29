@@ -144,12 +144,6 @@ function _refresh_pbl_kz_for_window!(field::PrecomputedCSDkgField,
     return nothing
 end
 
-@inline function _fill_dz_for_diffusion!(layer_thickness, _ps, _ak, _bk,
-        ::ImplicitVerticalDiffusion{FT, <:AbstractCSDkgField}, _window,
-        _coefficients) where FT
-    return layer_thickness
-end
-
 @inline _refresh_pbl_kz_for_window!(::NoDiffusion, _sim::DrivenSimulation) = nothing
 
 function _refresh_pbl_kz_for_window!(op::ImplicitVerticalDiffusion,

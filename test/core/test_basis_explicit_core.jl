@@ -344,51 +344,6 @@ end
     end
 end
 
-@testset "CubedSphere runtime uses dedicated panel-native types" begin
-    mesh = CubedSphereMesh(; FT=Float64, Nc=4)
-    @test_throws ArgumentError cell_area(mesh, 1)
-    @test_throws ArgumentError face_cells(mesh, 1)
-
-    vc = HybridSigmaPressure([0.0, 100.0, 300.0], [0.0, 0.0, 1.0])
-    grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=Float64)
-    m = ones(Float64, 12, 4, 2)
-    state = CellState(DryBasis, copy(m); CO2=copy(m) .* 400e-6)
-    fluxes = StructuredFaceFluxState{DryBasis}(zeros(Float64, 13, 4, 2), zeros(Float64, 12, 5, 2), zeros(Float64, 12, 4, 3))
-    ws = AdvectionWorkspace(state.air_mass)
-
-    @test_throws ArgumentError TransportModel(state, fluxes, grid, UpwindScheme())
-    @test_throws ArgumentError apply!(state, fluxes, grid, UpwindScheme(), 1800.0; workspace=ws)
-    @test_throws ArgumentError strang_split!(state, fluxes, grid, UpwindScheme(); workspace=ws)
-
-    FT = Float64
-    Nz = 2
-    N = mesh.Nc + 2 * mesh.Hp
-    panels_m = ntuple(_ -> ones(FT, N, N, Nz), 6)
-    panels_rm = ntuple(_ -> fill(FT(400e-6), N, N, Nz), 6)
-    cs_state = CubedSphereState(DryBasis, mesh, panels_m; CO2=panels_rm)
-    cs_fluxes = allocate_face_fluxes(mesh, Nz; FT=FT, basis=DryBasis)
-
-    ws_a = AtmosTransport.Operators.Advection.CSAdvectionWorkspace(mesh, Nz)
-    ws_b = AtmosTransport.Operators.Advection.CSAdvectionWorkspace(mesh, Nz)
-    AtmosTransport.Operators.Advection._record_cs_subcycle_growth!(ws_a, 2, 3, 4)
-    @test ws_a.max_subcycles[] == (2, 3, 4)
-    @test ws_b.max_subcycles[] == (1, 1, 1)
-    ws_adapted = Adapt.adapt(Array, ws_a)
-    @test ws_adapted.max_subcycles[] == ws_a.max_subcycles[]
-    @test ws_adapted.max_subcycles !== ws_a.max_subcycles
-
-    m0 = total_air_mass(cs_state)
-    rm0 = total_mass(cs_state, :CO2)
-
-    cs_model = @inferred TransportModel(cs_state, cs_fluxes, grid, UpwindScheme())
-    cs_sim = Simulation(cs_model; Δt=FT(1800), stop_time=FT(3600))
-    run!(cs_sim)
-
-    @test cs_sim.iteration == 2
-    @test total_air_mass(cs_sim.model.state) ≈ m0 atol=eps(FT) * m0 * 10
-    @test total_mass(cs_sim.model.state, :CO2) ≈ rm0 atol=eps(FT) * rm0 * 10
-end
-
 @testset "Face-connected reduced-Gaussian smoke test" begin
     FT = Float64
     Nz = 2

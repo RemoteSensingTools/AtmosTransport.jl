@@ -71,7 +71,7 @@ function _initialize_cs_dry_state(grid::AtmosGrid{<:CubedSphereMesh},
     for (index, (_name, init_cfg)) in enumerate(tracer_init)
         vmr = _build_cs_initial_mixing_ratio(
             air_mass, grid, init_cfg, vmr;
-            surface_pressure, pressure_basis, mass_basis = DryBasis(), qv)
+            surface_pressure, pressure_basis, qv)
         destination = ntuple(p -> selectdim(raw[p], 4, index), 6)
         _cs_pack_interior_into_halo!(destination, grid, air_mass, vmr, nothing)
     end
@@ -88,13 +88,15 @@ function _make_structured_model(driver::TransportBinaryDriver;
     grid = driver_grid(driver)
     mesh = grid.horizontal
     _require_global_longitude_span(mesh)
+    basis_tag = air_mass_basis(driver)
+    basis_type = basis_tag === :dry ? DryBasis : basis_tag === :moist ? MoistBasis :
+        throw(ArgumentError("driver mass basis must be :dry or :moist; got $(repr(basis_tag))"))
     window = load_transport_window(driver, Int(start_window))
     air_mass = copy(window.air_mass)
 
     tracer_specs_tuple = Tuple(tracer_specs)
     isempty(tracer_specs_tuple) && throw(ArgumentError("at least one tracer must be configured"))
 
-    basis_type = air_mass_basis(driver) == :dry ? DryBasis : MoistBasis
     basis = basis_type()
     qv = _initial_condition_qv(window)
     pressure_basis = surface_pressure_basis(driver)
@@ -102,7 +104,7 @@ function _make_structured_model(driver::TransportBinaryDriver;
     rm_arrays = map(tracer_specs_tuple) do spec
         vmr = build_initial_mixing_ratio(air_mass, grid, spec.init_cfg;
                                          surface_pressure = window.surface_pressure,
-                                         pressure_basis, mass_basis = basis, qv)
+                                         pressure_basis, qv)
         return pack_initial_tracer_mass(grid, air_mass, vmr;
                                         mass_basis = basis, qv)
     end
@@ -113,8 +115,7 @@ function _make_structured_model(driver::TransportBinaryDriver;
         mesh, nlevels(grid), FT, basis_type)
     model = TransportModel(state, fluxes, grid, recipe.advection;
                            diffusion = recipe.diffusion,
-                           convection = recipe.convection,
-                           chemistry = recipe.chemistry)
+                           convection = recipe.convection)
     adaptor = array_adapter(arch)
     return adaptor === Array ? model : Base.invokelatest(Adapt.adapt, adaptor, model)
 end

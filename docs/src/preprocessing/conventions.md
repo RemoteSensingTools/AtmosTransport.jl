@@ -142,7 +142,8 @@ The values are defined in `src/Parameters/NumericalDefaults.jl`;
 `replay_tolerance` is in `src/MetDrivers/ReplayContinuity.jl`. Used by:
 
 - **Write-time gate** in every preprocessing path
-  (`verify_storage_continuity_*!`, `verify_write_replay_cs!`).
+  (`verify_window!` with the topology contract; CS also uses
+  `verify_cs_window_contract!`).
   Failures abort the run.
 - **Opt-in load-time gate** at runtime. Enable with `[input]
   validate_replay = true`, or by constructing the driver with

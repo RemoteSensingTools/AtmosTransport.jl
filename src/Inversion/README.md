@@ -56,7 +56,9 @@ soundings; the OCO-2 MIP converter reads the retrieval fields with
   `CSRetrievalColumnObjective`.
 - [`Optimizer.jl`](Optimizer.jl): `cs_surface_flux_4dvar_optimize(...;
   optimizer)` and `cs_surface_flux_4dvar_solve(opt, cost_fn, controls)`.
-  Backends are `CSGradientDescent` and `CSLBFGS` (`Optim.LBFGS`).
+  Backends are `CSGradientDescent` and `CSLBFGS` (`Optim.LBFGS`). Configure
+  descent settings and logging on `optimizer`; other keywords describe the
+  forward/adjoint evaluation.
 - [`Jacobian.jl`](Jacobian.jl): `cs_surface_flux_jacobian(..., objectives,
   windows; kwargs...)` returns a `CSSurfaceFluxJacobianResult`; `kwargs` are
   those of `cs_surface_emission_footprint`.

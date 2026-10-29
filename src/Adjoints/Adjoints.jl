@@ -58,7 +58,7 @@ using ..Operators.Convection: CMFMCConvection, _require_edge_cloud_base, CMFMCWo
     _tm5_diagnose_cloud_dims, _tm5_build_conv1!, _tm5_lu!, _tm5_factorize!,
     _tm5_identity_pivots, _tm5_column_sum, _tm5_restore_column_mass!,
     _launch_cmfmc_matrix_derivation!,
-    _cmfmc_cs_panel_column_kernel!, _cmfmc_tiny, _cmfmc_cloud_base, _cmfmc_dtrain_array
+    _cmfmc_tiny, _cmfmc_cloud_base, _cmfmc_dtrain_array
 using ..State: AbstractCubedSphereField,
     LocalHoltslagBovilleKzField, AbstractCSDkgField, PrecomputedCSDkgField, GCHPNonlocalPBLField,
     field_value, panel_field, update_field!

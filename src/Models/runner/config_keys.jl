@@ -271,7 +271,7 @@ function _surface_flux_key_findings!(w, sf, label)
     # No source: nothing but `kind` is read (an omitted kind means "none").
     kind == "none" && return _report_unread!(w, sf, filter(!=("kind"), _SURFACE_FLUX_KEYS), label,
                                            "with kind = \"none\" (the default); no flux is emitted")
-    kind === nothing || kind in _SURFACE_FLUX_MONTH_KINDS ||
+    kind === nothing || kind == "lmdz_co2" || kind in _SURFACE_FLUX_MONTH_KINDS ||
         _report_unread!(w, sf, ("month",), label, "unless kind = \"gridfed_fossil_co2\" or \"zhang_rn222\"")
     if get(sf, "time_varying", false) === true
         # A regular-grid series reads `files`, else the twelve months of
@@ -286,7 +286,8 @@ function _surface_flux_key_findings!(w, sf, label)
     else
         _report_unread!(w, sf, _SURFACE_FLUX_SERIES_KEYS, label, "unless time_varying = true")
         kind == "lmdz_co2" &&
-            _report_unread!(w, sf, ("time_index",), label, "by a static lmdz_co2 source (time mean)")
+            _report_unread!(w, sf, ("time_index",), label,
+                            "when in range by a static lmdz_co2 source (time mean); it must still be a valid index")
     end
     return w
 end

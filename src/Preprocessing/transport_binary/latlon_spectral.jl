@@ -134,16 +134,6 @@ function promote_streaming_binary!(writer::LatLonDeferredBinaryWriter)
     return writer.final_path
 end
 
-function quarantine_streaming_binary!(writer::LatLonDeferredBinaryWriter)
-    writer.promoted && return writer.path
-    try
-        close_streaming_binary!(writer)
-    finally
-        abandon_atomic_staging(writer.path)
-    end
-    return writer.path
-end
-
 function validate_staged_binary!(writer::LatLonDeferredBinaryWriter)
     writer.inner === nothing && throw(ArgumentError(
         "lat-lon writer produced no staging artifact"))
@@ -197,8 +187,6 @@ function ingest_window!(workspace::LatLonSpectralWindowWorkspace,
         workspace.transform, workspace.qv, grid, vertical, settings)
     return nothing
 end
-
-drain_ready_windows!(::LatLonSpectralWindowWorkspace) = ()
 
 struct LLSpectralUnifiedDriverContext{G, S, V, SP, N, SR}
     grid            :: G

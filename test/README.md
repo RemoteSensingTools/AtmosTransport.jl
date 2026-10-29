@@ -69,7 +69,8 @@ julia --project=. -e 'using Pkg; Pkg.test(test_args=["--quick"])'
   `test_public_api_surface`, `test_public_docstrings`, `test_public_contracts`,
   `test_environment_variables`, `test_documentation_links`,
   `test_config_schema_agreement`, `test_config_key_checks`), the groups
-  meta-test, the required-keyword call check (`test_keyword_calls`), and
+  meta-test, the source-structure ratchet (`test_structure`), the
+  required-keyword call check (`test_keyword_calls`), and
   physics smokes: mass conservation and uniform-tracer invariance of the
   advection kernels, convection and diffusion, short driven lat-lon runs, a
   cubed-sphere run with every operator family across a file handoff, binary
@@ -109,12 +110,33 @@ untracked files,
 (calls in `src/`, `ext/`, `test/`, `scripts/`, `benchmarking/`, `examples/`,
 `docs/literate/` and `docs/scripts/` that omit a keyword every candidate
 method requires, such as `surface_pressure_basis` of the transport-binary
-writers), and then
+writers), the test-only JuliaSyntax
+[`scripts/checks/check_structure.jl`](../scripts/checks/check_structure.jl)
+source-structure ratchet (see [`structure/README.md`](structure/README.md)),
+and then
 `--quick --changed=<ref>` in one Julia process. It prints a summary and exits
 non-zero if any step failed. `JULIA="julia +1.10"` selects another Julia.
 
 CI runs `--quick` as a separate fast job for early feedback; the full suite on
 Julia 1.10 and the current release stays the merge requirement.
+
+The repository structure test reads `ATMOSTR_STRUCTURE_BASE` (default
+`origin/main`). The quick gate uses the same default and exports its selected
+ref to the tests; an explicit `<git-ref>` argument takes precedence. CI quick
+and full tests, docs, and CPU benchmarks fetch `github.base_ref` for pull
+requests, or `main` otherwise, and set `ATMOSTR_STRUCTURE_BASE=origin/<branch>`.
+A depth-one fetch suffices for the structure snapshots (`git show <base>:<path>`).
+For example, prepare the default base in a shallow checkout with:
+
+```bash
+git fetch --no-tags --depth=1 origin '+refs/heads/main:refs/remotes/origin/main'
+```
+
+A missing requested ref in a checkout fails the test with fetch instructions.
+For package archives without `.git` metadata, the test logs an `@info` and
+skips only the comparison against the base. Today's allowlists, folder budgets,
+layers, and generated code map are still checked. The quick gate also needs
+enough branch history for its merge-base diff and changed-topic selection.
 
 ## Adding a new test
 
@@ -190,3 +212,11 @@ The opt-in CUDA reset diagnostic uses the root project, where CUDA is available:
 It checks that captured `:preserve_vmr` targets stay on the GPU, replay matches
 production, and Full/Stride gradients agree. Acquire the assigned GPU lock before
 running it.
+
+`core/test_golden_compare.jl` tests the golden comparator with tiny synthetic
+NetCDF and transport-binary files, including NaN payloads and signed zero.
+It calls the comparison/report functions without running any golden cases.
+`core/test_operator_defaults.jl` checks all four optional operator defaults
+on lat-lon, reduced-Gaussian and cubed-sphere models and in `StepOperators`.
+JuliaSyntax uses the same exact version pins in the root test extras and
+this folder's project; it is not a runtime dependency.

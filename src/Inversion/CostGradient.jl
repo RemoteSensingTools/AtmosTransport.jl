@@ -446,7 +446,6 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
     _require_cs_convection_workspace(convection_op, convection_workspace)
     # Schedule, storage and tape-path checks before the forward run, not after
     # it. They create nothing: the taped run below creates `tape_path`.
-    _require_checkpoint_supported(scheme, checkpoint)
     _require_tape_storage_supported(scheme, checkpoint, tape_storage)
     _require_tape_path_supported(scheme, tape_path)
     _validate_tape_path(tape_storage, tape_path)

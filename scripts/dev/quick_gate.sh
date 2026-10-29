@@ -6,7 +6,8 @@
 #   2. calls that omit a required keyword (scripts/checks/check_keyword_calls.jl),
 #      in src/, ext/, test/, scripts/, benchmarking/, examples/, docs/literate
 #      and docs/scripts;
-#   3. the quick test set plus the topics of the changed files, in one Julia
+#   3. source structure ratchet (scripts/checks/check_structure.jl);
+#   4. the quick test set plus the topics of the changed files, in one Julia
 #      process (`test/runtests.jl --quick --changed=<ref>`).
 #
 # Every step runs; the script prints a summary and exits non-zero if any step
@@ -14,14 +15,15 @@
 #
 # Usage (from anywhere in the checkout):
 #
-#   scripts/dev/quick_gate.sh [<git-ref>]      # default ref: origin/main
+#   scripts/dev/quick_gate.sh [<git-ref>]      # default: ATMOSTR_STRUCTURE_BASE or origin/main
 #
 # Environment: JULIA (default `julia`) selects the Julia binary, e.g.
 # JULIA="julia +1.10". The test environment must be prepared once:
 #   julia --project=test -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
 
 set -u
-ref="${1:-origin/main}"
+ref="${1:-${ATMOSTR_STRUCTURE_BASE:-origin/main}}"
+export ATMOSTR_STRUCTURE_BASE="$ref"
 julia_cmd=(${JULIA:-julia})
 root="$(git rev-parse --show-toplevel)" || exit 2
 cd "$root" || exit 2
@@ -42,7 +44,7 @@ record() {  # record <step> <exit code> [<seconds>]
     fi
 }
 
-echo "== 1/3 git diff --check (${ref}...HEAD, uncommitted, untracked)"
+echo "== 1/4 git diff --check (${ref}...HEAD, uncommitted, untracked)"
 whitespace=0
 git --no-pager diff --check "${ref}...HEAD" || whitespace=1
 git --no-pager diff --check HEAD || whitespace=1
@@ -54,12 +56,17 @@ while IFS= read -r -d '' f; do
 done < <(git ls-files -z --others --exclude-standard)
 record "whitespace (git diff --check)" "$whitespace"
 
-echo "== 2/3 required-keyword calls"
+echo "== 2/4 required-keyword calls"
 start=$SECONDS
 "${julia_cmd[@]}" --startup-file=no scripts/checks/check_keyword_calls.jl
 record "required-keyword calls" "$?" "$((SECONDS - start))"
 
-echo "== 3/3 tests: --quick --changed=${ref}"
+echo "== 3/4 source structure"
+start=$SECONDS
+"${julia_cmd[@]}" --startup-file=no --project=test scripts/checks/check_structure.jl "--base=${ref}"
+record "source structure" "$?" "$((SECONDS - start))"
+
+echo "== 4/4 tests: --quick --changed=${ref}"
 start=$SECONDS
 "${julia_cmd[@]}" --startup-file=no --project=test test/runtests.jl --quick "--changed=${ref}"
 record "tests (--quick --changed=${ref})" "$?" "$((SECONDS - start))"

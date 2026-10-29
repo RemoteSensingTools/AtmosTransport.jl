@@ -83,7 +83,7 @@ _absent_or_finite(x::Float64) = isnan(x) || isfinite(x)
     CSObservationRecord(id, date_components, lat, lon, kind,
                         elevation_m, intake_height_m, altitude_m, pressure_pa,
                         time_window_s, flag, value, value_sigma, model_sigma,
-                        instrument_type, tracer[, retrieval])
+                        instrument_type, tracer, retrieval)
     CSObservationRecord(; id, date_components, lat, lon, value, value_sigma,
                           instrument_type, tracer, kind = PointObservationKind(),
                           elevation_m = NaN, intake_height_m = NaN, altitude_m = NaN,
@@ -197,16 +197,6 @@ struct CSObservationRecord
                    instrument_type, tracer, retrieval)
     end
 end
-
-# A record without a retrieval block, positionally.
-CSObservationRecord(id::Int64, date_components::_CSObservationDate, lat::Float64, lon::Float64,
-                    kind::_ObservationKind, elevation_m::Float64, intake_height_m::Float64,
-                    altitude_m::Float64, pressure_pa::Float64, time_window_s::Float64, flag::Int8,
-                    value::Float64, value_sigma::Float64, model_sigma::Float64,
-                    instrument_type::String, tracer::String) =
-    CSObservationRecord(id, date_components, lat, lon, kind, elevation_m, intake_height_m, altitude_m,
-                        pressure_pa, time_window_s, flag, value, value_sigma, model_sigma, instrument_type,
-                        tracer, nothing)
 
 function CSObservationRecord(; id::Integer, date_components, lat::Real, lon::Real,
                              value::Real, value_sigma::Real,

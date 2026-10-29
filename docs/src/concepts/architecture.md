@@ -267,6 +267,32 @@ initial-condition and surface-flux loaders in `Models` and the preprocessing
 code read and write these files through the same functions. See
 [GriddedIO](@ref GriddedIO-API) for the API.
 
+## Contributor structure checks
+
+The test-only JuliaSyntax checker at `scripts/checks/check_structure.jl`
+parses the include tree and extensions without loading the package. The
+allowed internal module and folder edges live in `src/LAYERS.toml`, along
+with a one-directional folder order and reasoned exceptions for existing
+reverse edges. Core modules cannot depend on Visualization, Analysis,
+DataDownloads, the Makie extension, or future Extras modules. Existing duplicate
+helpers, exact body clones, cross-module private uses, and detached docstrings
+are snapshotted in `test/structure/`. New violations fail, and allowances only
+shrink relative to a validated base ref; a missing base fails. Each folder has a
+65,000-token size budget (immediate Julia source bytes / 3.5), with exact
+shrink-only size allowances for today's oversized folders. README contract
+headings are reported only in this first rollout.
+
+Read the [generated code map](../development/code_map.md) and the folder
+README before editing. The map lists each folder's files, size, dependencies,
+users, public-name count, and forward/adjoint mirrors. The structure gate
+checks that it matches the source; regenerate it with
+`julia --startup-file=no --project=test scripts/checks/check_structure.jl --write-code-map`.
+
+Run `CUDA_VISIBLE_DEVICES= scripts/dev/quick_gate.sh origin/main` to check
+structure alongside required keywords, whitespace, and the selected CPU
+tests. `test/structure/README.md` describes the snapshots and static-analysis
+limits. Numerical behavior is unchanged by these checks.
+
 ## Public workflow versus extension points
 
 The stable path for a model user is deliberately small:

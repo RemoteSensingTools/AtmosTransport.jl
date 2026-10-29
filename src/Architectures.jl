@@ -17,7 +17,7 @@ using KernelAbstractions: KernelAbstractions as KA, @kernel, @index
 export AbstractArchitecture, CPU, GPU
 export AbstractArchitectureRequest, CPURequest, CUDARequest, ROCmRequest, MetalRequest,
        AutoGPURequest
-export array_type, device, architecture, architecture_from_config
+export architecture_from_config
 export autodetect_gpu_architecture, is_gpu, ensure_runtime!, array_adapter
 export architecture_label, device_name, backend_name, synchronize_architecture!
 export array_adapter_for, assert_residency!, assert_float_type!
@@ -81,15 +81,6 @@ function GPU(backend::Symbol)
 end
 
 GPU(backend::AbstractString) = _gpu_architecture(_architecture_request(backend))
-
-array_type(::CPU) = Array
-device(::CPU) = KA.CPU()
-
-# GPU array and KernelAbstractions device methods live in the optional backend
-# package extensions. Without the corresponding optional package, calling
-# `array_type` or `device` for that architecture intentionally has no method.
-
-function architecture end
 
 is_gpu(::CPU) = false
 is_gpu(::GPU) = true

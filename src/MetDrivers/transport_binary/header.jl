@@ -695,8 +695,7 @@ function Base.show(io::IO, h::TransportBinaryHeader)
           "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
           "├── humidity:      ", _transport_qv_summary(h), "\n",
           "├── semantics:     ", _transport_semantics_summary(h), "\n",
-          "├── poisson:       ", isnan(h.poisson_balance_target_scale) ? "unspecified" :
-                               string("scale=", h.poisson_balance_target_scale, ", ", h.poisson_balance_target_semantics), "\n",
+          "├── poisson:       ", string("scale=", h.poisson_balance_target_scale, ", ", h.poisson_balance_target_semantics), "\n",
           "└── header bytes:  ", h.header_bytes)
 end
 
@@ -777,8 +776,8 @@ const _TRANSPORT_ALLOWED_SOURCE_FLUX_SAMPLINGS = (
     return sym
 end
 
-@inline function _transport_parse_symbol_key(hdr, key::Symbol, default::Symbol)
-    return _transport_normalize_symbol(get(hdr, key, String(default)))
+@inline function _transport_parse_symbol_key(hdr, key::Symbol)
+    return _transport_normalize_symbol(getproperty(hdr, key))
 end
 
 @inline function _transport_default_humidity_sampling(payload_sections::AbstractVector{Symbol})
@@ -807,7 +806,7 @@ _transport_parse_grid_type(hdr) = Symbol(lowercase(string(hdr.grid_type)))
 _transport_parse_topology(hdr) = Symbol(lowercase(string(hdr.horizontal_topology)))
 
 function _transport_parse_sections(hdr)
-    sections = haskey(hdr, :payload_sections) ? collect(hdr.payload_sections) : ["m", "hflux", "cm", "ps"]
+    sections = collect(hdr.payload_sections)
     return Symbol.(lowercase.(String.(sections)))
 end
 
@@ -869,7 +868,7 @@ function _parse_transport_header(raw_bytes::Vector{UInt8};
     format_version == TRANSPORT_BINARY_FORMAT_VERSION ||
         throw(ArgumentError("Obsolete transport binary format_version=$(format_version); " *
                             "current runtime requires format_version=$(TRANSPORT_BINARY_FORMAT_VERSION). Regenerate."))
-    header_bytes = Int(get(hdr, :header_bytes, 16384))
+    header_bytes = Int(hdr.header_bytes)
     disk_ft, float_bytes = _transport_parse_on_disk_float_type(hdr)
     grid_type = _transport_parse_grid_type(hdr)
     topology = _transport_parse_topology(hdr)
@@ -887,21 +886,19 @@ function _parse_transport_header(raw_bytes::Vector{UInt8};
         _transport_parse_surface_pressure_basis(hdr.surface_pressure_basis) :
         legacy_surface_pressure_basis
     payload_sections = _transport_parse_sections(hdr)
-    source_flux_sampling = _transport_parse_symbol_key(hdr, :source_flux_sampling, :unknown)
-    air_mass_sampling    = _transport_parse_symbol_key(hdr, :air_mass_sampling,    :unknown)
-    flux_sampling        = _transport_parse_symbol_key(hdr, :flux_sampling,        :unknown)
-    flux_kind            = _transport_parse_symbol_key(hdr, :flux_kind,            :unknown)
-    humidity_sampling    = _transport_parse_symbol_key(hdr, :humidity_sampling,    :unknown)
-    delta_semantics      = _transport_parse_symbol_key(hdr, :delta_semantics,      :unknown)
-    poisson_balance_target_scale = haskey(hdr, :poisson_balance_target_scale) ?
-                                   Float64(hdr.poisson_balance_target_scale) : NaN
-    poisson_balance_target_semantics = haskey(hdr, :poisson_balance_target_semantics) ?
-                                       String(hdr.poisson_balance_target_semantics) : ""
+    source_flux_sampling = _transport_parse_symbol_key(hdr, :source_flux_sampling)
+    air_mass_sampling    = _transport_parse_symbol_key(hdr, :air_mass_sampling)
+    flux_sampling        = _transport_parse_symbol_key(hdr, :flux_sampling)
+    flux_kind            = _transport_parse_symbol_key(hdr, :flux_kind)
+    humidity_sampling    = _transport_parse_symbol_key(hdr, :humidity_sampling)
+    delta_semantics      = _transport_parse_symbol_key(hdr, :delta_semantics)
+    poisson_balance_target_scale = Float64(hdr.poisson_balance_target_scale)
+    poisson_balance_target_semantics = String(hdr.poisson_balance_target_semantics)
     steps_per_window = Int(hdr.steps_per_window)
     steps_schedule = _parse_steps_per_window_schedule(hdr, nwindow, steps_per_window)
     poisson_scale_schedule = _parse_poisson_scale_schedule(
         hdr, nwindow, poisson_balance_target_scale)
-    n_geometry_elems = Int(get(hdr, :n_geometry_elems, 0))
+    n_geometry_elems = Int(hdr.n_geometry_elems)
     elems_per_window = Int(hdr.elems_per_window)
     flux_fidelity = _parse_flux_fidelity_header(hdr, nwindow, nlevel)
     omega_fidelity = _parse_omega_fidelity_header(hdr)

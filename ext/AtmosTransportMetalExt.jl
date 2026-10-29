@@ -11,9 +11,6 @@ import Metal
 using AtmosTransport.Architectures: GPU
 using Metal: MtlArray, MetalBackend
 
-AtmosTransport.Architectures.array_type(::GPU{:metal}) = MtlArray
-AtmosTransport.Architectures.device(::GPU{:metal})     = MetalBackend()
-AtmosTransport.Architectures.architecture(::MtlArray) = GPU(:metal)
 AtmosTransport.Architectures._array_adapter_for(::MtlArray) = MtlArray
 
 function AtmosTransport.Architectures._reclaim_backend_pool!(::MtlArray)

@@ -586,12 +586,6 @@ _out_of_range_sampling(::ClampOutOfRange, record, t::Float64, k::Int, dt::Float6
 _clamped_sampling(t::Float64, window::Float64, k::Int, dt::Float64, nsteps_max::Int) =
     something(_window_overlap(t, window, dt, nsteps_max), CSTimeSampling(clamp(k, 1, nsteps_max)))
 
-@inline function _step_index_from_date(dc::NTuple{6, Int16},
-                                       t_start::Dates.DateTime,
-                                       dt_f::Real)
-    return floor(Int, _seconds_after(dc, t_start) / dt_f) + 1
-end
-
 _date_components_string(dc::NTuple{6, Int16}) =
     string(lpad(Int(dc[1]), 4, '0'), "-",
            lpad(Int(dc[2]), 2, '0'), "-",

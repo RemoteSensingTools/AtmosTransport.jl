@@ -43,8 +43,9 @@ Geometry and topology decisions come from
   `Fused`, `Sequence`: a kernel body written once, fused by dispatch;
   `copy_arrays!`: a set of device copies as one queued launch). The exported
   `_neumaier_sum(f, ks, T)` helper provides compensated sums in `ks` order to Extras
-- `ConfigChecks.jl` — strict TOML Booleans, the `float_type` parser and known-key checks with
-  "did you mean" suggestions, shared by `Output`, `Preprocessing` and `Models`
+- `ConfigChecks.jl` — strict TOML Booleans, integers (`config_int`), dates
+  (`config_date`, accepting TOML dates or strings), the `float_type` parser, and
+  known-key checks with "did you mean" suggestions, shared by `Output`, `Preprocessing` and `Models`
 - `AtomicFiles.jl` — publish a file only when it is complete: a sibling
   staging file created with `O_EXCL` and mode `0o666 & ~umask`, moved onto
   the target by one replacing rename on success, removed on error or when the
@@ -88,6 +89,26 @@ Geometry and topology decisions come from
   [`../docs/src/getting_started/inspecting_output.md`](../docs/src/getting_started/inspecting_output.md)
 - "I need to add a new operator input field":
   start with [`State/Fields/README.md`](State/Fields/README.md)
+
+## Structure checks
+
+Read the generated [code map](../docs/src/development/code_map.md) and the
+folder README before editing. [`LAYERS.toml`](LAYERS.toml) records module and
+folder dependency edges and a one-directional folder order. Existing reverse
+folder edges have reasoned, shrink-only exceptions. The test-only JuliaSyntax
+checker rejects new dependency edges, later-module references, cycles, new
+duplicate helpers, body clones, private reach-ins, and detached docstrings.
+Existing debt is snapshotted under
+[`test/structure/`](../test/structure/README.md); allowances only shrink.
+Each folder has a 65,000-token budget (immediate Julia source bytes / 3.5);
+subfolders are budgeted separately. Existing oversized folders have exact,
+shrink-only byte ceilings. Core modules cannot depend on Visualization,
+Analysis, DataDownloads, the Makie extension, or future Extras modules;
+existing package-facade re-exports are allowlisted with reasons.
+The code map lists files, sizes, dependencies/users, public-name counts and
+forward/adjoint mirrors. The gate rejects a stale map; regenerate it with
+`scripts/checks/check_structure.jl --write-code-map` under `--project=test`.
+README contract headings are reported only during the P1 rollout.
 
 ## Related Docs
 
