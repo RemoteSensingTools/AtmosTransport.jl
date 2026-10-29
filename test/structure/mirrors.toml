@@ -53,6 +53,3 @@ forward = "src/Operators/Diffusion/dz_helpers.jl"
 [[pairs]]
 adjoint = "src/Adjoints/DiffusionAdjoint.jl"
 forward = "src/Operators/Diffusion/operators.jl"
-[[pairs]]
-adjoint = "src/Adjoints/DiffusionAdjoint.jl"
-forward = "src/Operators/Diffusion/thomas_solve.jl"
