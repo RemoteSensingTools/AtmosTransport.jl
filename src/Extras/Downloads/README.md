@@ -1,5 +1,7 @@
 # Downloads
 
+Non-core; no tests. See [`../README.md`](../README.md) for the Extras rules.
+
 TOML-driven download pipeline for raw meteorological input: ERA5 (from CDS,
 MARS, or Google ARCO), GEOS-FP, GEOS-IT, and MERRA-2.
 
@@ -99,12 +101,8 @@ Each file adds a `build_tasks` method for one source and its protocol.
   forwarded while the process runs. Bounded stdout/stderr tails are retained
   for the final error log if the subprocess exhausts its retries.
 
-## Tests And Docs
+## Docs
 
-- [`../../test/core/test_persistence_hardening.jl`](../../test/core/test_persistence_hardening.jl):
-  sidecar resume semantics (identity, size, and checksum changes)
-- [`../../test/core/test_download_logging.jl`](../../test/core/test_download_logging.jl):
-  stdout isolation, log-level filtering, progress modes, and dry-run task order
-- Recipes and usage: [`../../scripts/downloads/README.md`](../../scripts/downloads/README.md),
-  [`../../docs/src/config/data_sources.md`](../../docs/src/config/data_sources.md)
-- API page: [`../../docs/src/api/downloads.md`](../../docs/src/api/downloads.md)
+- Recipes and usage: [`../../../scripts/downloads/README.md`](../../../scripts/downloads/README.md),
+  [`../../../docs/src/config/data_sources.md`](../../../docs/src/config/data_sources.md).
+- API page: [`../../../docs/src/api/downloads.md`](../../../docs/src/api/downloads.md).

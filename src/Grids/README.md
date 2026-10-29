@@ -26,6 +26,8 @@ make that decision possible.
   [`ReducedGaussianMesh.jl`](ReducedGaussianMesh.jl)
 - Cubed-sphere mesh definitions and panel conventions:
   [`CubedSphereMesh.jl`](CubedSphereMesh.jl)
+  The exported `default_cs_definition(convention)` returns the convention's
+  standard definition, used by MetDrivers, Preprocessing and the non-core snapshot reader.
 - Cubed-sphere panel connectivity:
   [`PanelConnectivity.jl`](PanelConnectivity.jl)
 - Vertical coordinate:
@@ -92,6 +94,13 @@ must sit on the sphere of the mesh it is regridded to. The contract:
   `A_ij = R² Δλ (sin φᶠ[j+1] - sin φᶠ[j])` (Δλ in radians), and sum to `4πR²`
   for a global mesh. Centres are face midpoints; for pole-centred and Gaussian
   rows they differ from the file's coordinate, which only labels the cell.
+
+## Shared helpers owned here
+
+Panel conventions, their tags and parsers, panel connectivity and halo/seam
+index math, cell areas, `CS_PANEL_COUNT` and panel pack/unpack live here and
+are exported (see the export lists in the source files); no other folder keeps
+a copy.
 
 ## Common Tasks
 

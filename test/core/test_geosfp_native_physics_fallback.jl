@@ -582,34 +582,3 @@ end
         end
     end
 end
-
-@testset "GEOS-FP physics download defaults satisfy dimensionless reader" begin
-    pp = AtmosTransport.Preprocessing
-    dd = AtmosTransport.DataDownloads
-    date = Date(2021, 12, 1)
-    mktempdir() do tmp
-        fixture_dir = joinpath(tmp, "fixtures")
-        _write_fp_latlon_physics!(fixture_dir, date; dual_axes=true)
-        source = dd.GEOSFPSource(Dict{String,Any}(), "geosfp_025")
-        protocol = dd.HTTPProtocol("https://example.invalid")
-        output = dd.OutputConfig(tmp, "geosfp", "C4", "daily", "raw", false, false, "")
-        tasks = dd.build_tasks(source, protocol, [date], output, Any[])
-        @test Set(basename(t.dest_path) for t in tasks) == Set(
-            "GEOSFP.20211201.$c.025x03125.nc" for c in ("A1", "A3mstE", "A3dyn", "I3"))
-        # Stage exactly what the default task list downloads, without network I/O.
-        for task in tasks
-            mkpath(dirname(task.dest_path))
-            cp(joinpath(fixture_dir, basename(task.dest_path)), task.dest_path)
-        end
-        settings = GEOSFPSettings(; root_dir=tmp, Nc=4,
-            include_surface=true, include_convection=true,
-            physics_dir=dirname(first(tasks).dest_path), physics_layout=:latlon_025)
-        phys = pp._open_geosfp_physics_fallback(settings, date)
-        try
-            @test phys.level_orientation === :bottom_up
-            @test phys.a1 !== nothing
-        finally
-            pp.close_geosfp_physics!(phys)
-        end
-    end
-end

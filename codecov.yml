@@ -47,6 +47,10 @@ ignore:
   - "ext/AtmosTransportCUDAExt.jl"
   - "ext/AtmosTransportMetalExt.jl"
   - "ext/AtmosTransportAMDGPUExt.jl"
+  # Non-core code (owner decision 2026-10-27): kept in the package until it moves to
+  # separate packages, but deliberately untested, so it does not count towards coverage.
+  - "src/Extras/**"
+  - "ext/AtmosTransportMakieExt.jl"
   - "**/heritage/**"
   - "**/archived/**"
   - "**/likely_legacy/**"

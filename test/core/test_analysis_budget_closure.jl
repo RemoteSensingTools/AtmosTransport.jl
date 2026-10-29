@@ -1,6 +1,6 @@
 """
-`AtmosTransport.Analysis.budget_closure` and `carrier_drawdown`
-(`src/Analysis/budget_closure.jl`, `src/Analysis/run_context.jl`) on a tiny
+`AtmosTransport.Diagnostics.budget_closure` and `carrier_drawdown`
+(`src/Diagnostics/budget_closure.jl`, `src/Diagnostics/run_context.jl`) on a tiny
 synthetic run written into `mktempdir()`.
 
 The run: two C3 transport binaries of one 24 h window each (4 advection
@@ -73,7 +73,7 @@ using Logging
 using NCDatasets
 using AtmosTransport
 using AtmosTransport: HybridSigmaPressure
-using AtmosTransport.Analysis
+using AtmosTransport.Diagnostics
 using AtmosTransport.Parameters: DRY_AIR_MOLAR_MASS, SPECIES_MOLAR_MASS
 using TOML
 const MD = AtmosTransport.MetDrivers
@@ -178,7 +178,7 @@ end
 struct FixedEmission <: AbstractExpectedEmission
     value::Float64
 end
-Analysis.expected_storage_change(m::FixedEmission, ::RunContext, spec, t0, t1) =
+Diagnostics.expected_storage_change(m::FixedEmission, ::RunContext, spec, t0, t1) =
     spec.name === :passive ? 0.0 : m.value
 
 @testset "budget closure of a synthetic run" begin
@@ -267,6 +267,8 @@ Analysis.expected_storage_change(m::FixedEmission, ::RunContext, spec, t0, t1) =
 
     # JSON report: the Python keys plus the operational level.
     d = report_dict(report)
+    # The defining module moved; persisted reports keep their method label.
+    @test d["emission"] == "AtmosTransport.Analysis.RuntimeSurfaceSources()"
     for key in ("days", "tracers", "max_relative_budget_error", "tolerance", "passed", "checks")
         @test haskey(d, key)
     end
@@ -461,7 +463,7 @@ Analysis.expected_storage_change(m::FixedEmission, ::RunContext, spec, t0, t1) =
     nonuniform = TransportTracerSpec(:blob,
         Dict{String, Any}("kind" => "gaussian_blob"), Dict{String, Any}())
     @test nonuniform.init_spec isa AtmosTransport.Models.InitialConditionIO.GaussianBlobInitialConditionSpec
-    @test Analysis._initial_carrier(nonuniform, 6.0, 3.0) == 2.0
+    @test Diagnostics._initial_carrier(nonuniform, 6.0, 3.0) == 2.0
     @test ctx_ll.windows == [(; binary = 1, start = 0.0, length = 86400.0, steps = 2, step = 43200.0)]
     @test ctx_ll.run_seconds == 86400.0
     for (start, stop) in ((3, nothing), (1, 3), (0, 1), (2, 1),   # outside 1 ≤ start ≤ stop ≤ 2

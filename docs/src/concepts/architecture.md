@@ -213,7 +213,8 @@ src/
 ├── Operators/       advection, diffusion, convection, surface flux, chemistry
 ├── MetDrivers/      version-4 binary reader, driver, and window carriers
 ├── Models/          typed model, runtime recipes, driven runner, initial conditions
-├── Analysis/        post-run diagnostics numerics: band means, decompositions, skill statistics
+├── Diagnostics/     core run budgets, snapshot series and mass drift
+├── SectionTimer.jl  foundation timing and optional NVTX instrumentation
 ├── Preprocessing/   source readers, transforms, balancing, verification, writers
 ├── Output/          snapshot capture and NetCDF/ATMSNAP persistence
 ├── Regridding/      conservative offline remapping
@@ -222,8 +223,10 @@ src/
 ├── Tape/            checkpoint schedules and tape storage
 ├── Footprint/       forward-record/reverse-loop footprint workflows
 ├── Inversion/       observations, covariance, cost functions, and optimizers
-├── Downloads/       data-source protocols and acquisition helpers
-└── Visualization/   topology-aware views and optional Makie integration
+└── Extras/          non-core, no tests, each folder intended as a separate package
+    ├── Downloads/      DataDownloads: data-source protocols and acquisition
+    ├── Visualization/  snapshot views and optional Makie integration (ext/ stays)
+    └── Analysis/       bands, decompositions, skill statistics and reference archives
 ```
 
 The top-level `src/AtmosTransport.jl` defines the package and curated exports.
@@ -237,13 +240,18 @@ modules included before it:
 ```text
 Architectures → SectionTimer → ConfigChecks → LogLevels → AtomicFiles
 → Quantities → Parameters → Grids → State → Output → MetDrivers → Operators
-→ Tape → Adjoints → Regridding → GriddedIO → Preprocessing → Visualization
-→ Models → Analysis → Downloads
+→ Tape → Adjoints → Regridding → GriddedIO → Preprocessing → Models → Diagnostics
+→ Extras/Visualization → Extras/Analysis → Extras/Downloads
 ```
 
-`Analysis` holds the numerics of post-run diagnostics. It is loaded after
-`Models` so that diagnostics can build on the runtime's own types, and no
-runtime module depends on it.
+`Diagnostics` keeps the run mass-budget checks and their snapshot-reader and
+global-total helpers in core. `Analysis` re-exports these names, so diagnostic
+scripts keep using `AtmosTransport.Analysis`. Visualization, Analysis
+post-processing and DataDownloads live under `src/Extras/`; their module names
+and plotting exports stay the same. They have no tests and each folder is
+intended to become its own package. Core must never import Extras; Extras use
+public core names and helpers declared shared in the owning README. Julia's
+optional Makie extension remains in `ext/`.
 
 Three single-file modules depend on Base and the standard library only:
 `ConfigChecks.jl` checks TOML tables, `LogLevels.jl` applies the

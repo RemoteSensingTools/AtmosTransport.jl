@@ -1,5 +1,5 @@
 """
-`AtmosTransport.Analysis.daily_snapshot_series` (`src/Analysis/snapshot_series.jl`)
+`AtmosTransport.Diagnostics.daily_snapshot_series` (`src/Diagnostics/snapshot_series.jl`)
 on snapshot-like NetCDF fixtures written into `mktempdir()`.
 
 Asserts:
@@ -26,7 +26,7 @@ using Dates
 using NCDatasets
 using AtmosTransport: CubedSphereMesh, AtmosGrid, HybridSigmaPressure, CPU, SnapshotFrame,
                       write_snapshot_netcdf
-using AtmosTransport.Analysis: daily_snapshot_series
+using AtmosTransport.Diagnostics: daily_snapshot_series
 
 const NX, NY, NF, NL = 3, 2, 6, 4
 

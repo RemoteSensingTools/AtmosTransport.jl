@@ -8,9 +8,9 @@ const ENV_REPO = normpath(joinpath(@__DIR__, "..", ".."))
 # Variable => the `src/` files that may read it (a pattern, so file moves
 # within the owning folder keep passing).
 const ENV_ALLOWLIST = Dict(
-    "ATMOSTR_TIMERS"                => r"src/Diagnostics/",
-    "ATMOSTR_NVTX"                  => r"src/Diagnostics/",
-    "ATMOSTR_ALLOC_TIMERS"          => r"src/Diagnostics/",
+    "ATMOSTR_TIMERS"                => r"src/SectionTimer\.jl$",
+    "ATMOSTR_NVTX"                  => r"src/SectionTimer\.jl$",
+    "ATMOSTR_ALLOC_TIMERS"          => r"src/SectionTimer\.jl$",
     "ATMOSTR_PROFILE_GPU"           => r"src/Operators/Advection/",
     "ATMOSTR_REGRID_CACHE_DIR"      => r"src/Regridding/",
     "NO_COLOR"                      => r"src/Models/runner/",

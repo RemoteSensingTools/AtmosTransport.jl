@@ -579,39 +579,6 @@ end
     @test_throws ArgumentError preprocess_parse([
         cfg, "--start", "2021-12-03", "--end", "2021-12-01",
     ])
-
-    download_cli = _script_module(:DownloadDataCLITest, "scripts/downloads/download_data.jl")
-    download_parse = getfield(download_cli, :_parse_cli)
-    opts = download_parse([
-        cfg, "--start", "2021-12-01", "--end", "2021-12-03", "--dry-run",
-    ])
-    @test opts.start_date == Date(2021, 12, 1)
-    @test opts.end_date == Date(2021, 12, 3)
-    @test opts.dry_run
-    @test !opts.verify
-    @test_throws ArgumentError download_parse([cfg, "--unknown"])
-    @test_throws ArgumentError download_parse([cfg, "--start"])
-    @test_throws ArgumentError download_parse([cfg, "--dry-run", "--dry-run"])
-    @test_throws ArgumentError download_parse([
-        cfg, "--start", "2021-12-03", "--end", "2021-12-01",
-    ])
-end
-
-@testset "OPeNDAP recipes refuse to download before any task runs" begin
-    DL = AtmosTransport.DataDownloads
-    cfg = TOML.parsefile(joinpath(REPO_ROOT, "config", "downloads", "merra2.toml"))
-    mktempdir() do dir
-        cfg["output"]["data_root"] = dir
-        err = try
-            DL.download_data!(cfg; start_date = Date(2021, 12, 1), end_date = Date(2021, 12, 1))
-        catch e
-            e
-        end
-        @test err isa ArgumentError && occursin("--dry-run", err.msg)
-        @test isempty(readdir(dir))                       # nothing created
-        @test DL.download_data!(cfg; start_date = Date(2021, 12, 1), end_date = Date(2021, 12, 1),
-                                dry_run = true) === nothing
-    end
 end
 
 @testset "runtime preload reports malformed architecture settings" begin
