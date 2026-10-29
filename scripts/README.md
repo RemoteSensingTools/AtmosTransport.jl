@@ -16,8 +16,8 @@ move the function there), not copy it.
 | [`visualization/`](visualization/) | Plots and animations; `atmos_viz.jl` is the topology-aware snapshot CLI |
 | [`benchmarks/`](benchmarks/) | Synthetic cubed-sphere advection and TM5 convection benchmarks; recorded experiments with their evidence in `benchmarks/results/` |
 | [`postprocess/`](postprocess/), [`inversions/`](inversions/) | Snapshot conversion, inversion prototypes |
-| [`checks/`](checks/) | Static checks: markdown citations (`check_markdown_citations.jl`) and calls that omit a required keyword (`check_keyword_calls.jl`, run by the quick gate and by `test/core/test_keyword_calls.jl`) |
-| [`dev/`](dev/) | `quick_gate.sh`, the check to run before committing: `git diff --check`, the keyword-call check, and the quick test set plus the topics of the changed files (see `test/README.md`) |
+| [`checks/`](checks/) | Static checks: the JuliaSyntax source-structure ratchet (`check_structure.jl`, run with `--project=test`; see `test/structure/README.md`), markdown citations (`check_markdown_citations.jl`) and calls that omit a required keyword (`check_keyword_calls.jl`, run by the quick gate and by `test/core/test_keyword_calls.jl`) |
+| [`dev/`](dev/) | `quick_gate.sh`, the check to run before committing: `git diff --check`, the keyword-call and source-structure checks, and the quick test set plus the topics of the changed files (see `test/README.md`) |
 
 A `heritage/` subfolder (in `scripts/` itself and in `benchmarks/`,
 `diagnostics/`, `downloads/`, `preprocessing/`, `validation/` and
@@ -27,6 +27,11 @@ data and constants of their study, and are not tested. Maintained scripts take
 every physical constant and shared default from `src/Parameters`; heritage
 scripts are frozen records and are exempt. Each `heritage/README.md` gives
 the purpose of every script and why it is kept.
+
+The structure check also verifies the generated developer code map. After
+source or mirror-file changes, run
+`julia --startup-file=no --project=test scripts/checks/check_structure.jl --write-code-map`.
+This flag updates only the map; it does not accept new allowances.
 
 The campaign launchers at the top level (`run_*_campaign.py`,
 `run_catrine_c30_2022_macbook.sh`, `run_campaign5d.sh`) drive specific

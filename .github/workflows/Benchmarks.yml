@@ -47,6 +47,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  ATMOSTR_STRUCTURE_BASE: origin/${{ github.base_ref || 'main' }}
+
 jobs:
   cpu:
     name: CPU benchmark smoke
@@ -57,6 +60,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch structure base
+        run: git fetch --no-tags --depth=1 origin "+refs/heads/${ATMOSTR_STRUCTURE_BASE#origin/}:refs/remotes/${ATMOSTR_STRUCTURE_BASE}"
 
       - uses: julia-actions/setup-julia@v2
         with:

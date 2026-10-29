@@ -84,6 +84,7 @@ const PAGES = [
         "theory/adjoint_status.md",
     ],
     "Development" => [
+        "development/code_map.md",
         "development/benchmarks.md",
         "development/rocm.md",
     ],

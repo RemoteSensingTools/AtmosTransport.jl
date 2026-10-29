@@ -86,6 +86,26 @@ Geometry and topology decisions come from
 - "I need to add a new operator input field":
   start with [`State/Fields/README.md`](State/Fields/README.md)
 
+## Structure checks
+
+Read the generated [code map](../docs/src/development/code_map.md) and the
+folder README before editing. [`LAYERS.toml`](LAYERS.toml) records module and
+folder dependency edges and a one-directional folder order. Existing reverse
+folder edges have reasoned, shrink-only exceptions. The test-only JuliaSyntax
+checker rejects new dependency edges, later-module references, cycles, new
+duplicate helpers, body clones, private reach-ins, and detached docstrings.
+Existing debt is snapshotted under
+[`test/structure/`](../test/structure/README.md); allowances only shrink.
+Each folder has a 65,000-token budget (immediate Julia source bytes / 3.5);
+subfolders are budgeted separately. Existing oversized folders have exact,
+shrink-only byte ceilings. Core modules cannot depend on Visualization,
+Analysis, DataDownloads, the Makie extension, or future Extras modules;
+existing package-facade re-exports are allowlisted with reasons.
+The code map lists files, sizes, dependencies/users, public-name counts and
+forward/adjoint mirrors. The gate rejects a stale map; regenerate it with
+`scripts/checks/check_structure.jl --write-code-map` under `--project=test`.
+README contract headings are reported only during the P1 rollout.
+
 ## Related Docs
 
 - Runtime walkthrough:

@@ -1,0 +1,58 @@
+# Forward/adjoint comparison files seeded from cleanup units.md U09-U14 and helper_index.md section 0.3. Maintain pairs when files move; no review-unit enforcement.
+[[pairs]]
+adjoint = "src/Adjoints/CubedSphereSeams.jl"
+forward = "src/Operators/Advection/CubedSphereSeams.jl"
+[[pairs]]
+adjoint = "src/Adjoints/HaloAdjoint.jl"
+forward = "src/Operators/Advection/HaloExchange.jl"
+[[pairs]]
+adjoint = "src/Adjoints/LinRoodTape.jl"
+forward = "src/Operators/Advection/LinRood.jl"
+[[pairs]]
+adjoint = "src/Operators/Advection/linrood_adjoint_kernels.jl"
+forward = "src/Operators/Advection/linrood_horizontal.jl"
+[[pairs]]
+adjoint = "src/Operators/Advection/linrood_adjoint_panel.jl"
+forward = "src/Operators/Advection/linrood_horizontal.jl"
+[[pairs]]
+adjoint = "src/Operators/Advection/linrood_adjoint_rm_faces.jl"
+forward = "src/Operators/Advection/linrood_horizontal.jl"
+[[pairs]]
+adjoint = "src/Adjoints/AdvectionAdjoint.jl"
+forward = "src/Operators/Advection/multitracer_kernels.jl"
+[[pairs]]
+adjoint = "src/Adjoints/AdvectionAdjoint.jl"
+forward = "src/Operators/Advection/reconstruction.jl"
+[[pairs]]
+adjoint = "src/Adjoints/AdvectionAdjoint.jl"
+forward = "src/Operators/Advection/structured_kernels.jl"
+[[pairs]]
+adjoint = "src/Adjoints/AdvectionAdjoint.jl"
+forward = "src/Operators/Advection/sweeps.jl"
+[[pairs]]
+adjoint = "src/Operators/Advection/vertical_fv3_profile_adjoint.jl"
+forward = "src/Operators/Advection/vertical_fv3_profile.jl"
+[[pairs]]
+adjoint = "src/Adjoints/ConvectionAdjoint.jl"
+forward = "src/Operators/Convection/cmfmc_kernels.jl"
+[[pairs]]
+adjoint = "src/Adjoints/ConvectionAdjoint.jl"
+forward = "src/Operators/Convection/tm5_column_solve.jl"
+[[pairs]]
+adjoint = "src/Adjoints/ConvectionAdjoint.jl"
+forward = "src/Operators/Convection/tm5_kernels.jl"
+[[pairs]]
+adjoint = "src/Adjoints/DiffusionAdjoint.jl"
+forward = "src/Operators/Diffusion/conservative_dkg.jl"
+[[pairs]]
+adjoint = "src/Adjoints/DiffusionAdjoint.jl"
+forward = "src/Operators/Diffusion/diffusion_kernels.jl"
+[[pairs]]
+adjoint = "src/Adjoints/DiffusionAdjoint.jl"
+forward = "src/Operators/Diffusion/dz_helpers.jl"
+[[pairs]]
+adjoint = "src/Adjoints/DiffusionAdjoint.jl"
+forward = "src/Operators/Diffusion/operators.jl"
+[[pairs]]
+adjoint = "src/Adjoints/DiffusionAdjoint.jl"
+forward = "src/Operators/Diffusion/thomas_solve.jl"

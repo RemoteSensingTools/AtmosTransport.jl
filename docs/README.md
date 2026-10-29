@@ -59,6 +59,10 @@ julia --project -e 'using DocumenterVitepress; DocumenterVitepress.dev_docs("bui
   symbols Documenter renders.
 - Add runnable tutorials under `docs/literate/`. They must be CPU-safe and
   independent of external data.
+- Read the [generated code map](src/development/code_map.md) and the folder
+  README before editing source. Regenerate the map after source/mirror changes
+  with `julia --startup-file=no --project=test scripts/checks/check_structure.jl --write-code-map`;
+  the structure test checks that the checked-in map matches the source.
 - Run the strict docs build before opening a pull request.
 
 If behavior and prose disagree, treat the code and tests as evidence and fix

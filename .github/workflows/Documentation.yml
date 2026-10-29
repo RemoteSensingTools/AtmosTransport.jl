@@ -6,6 +6,9 @@ on:
     tags: '*'
   pull_request:
 
+env:
+  ATMOSTR_STRUCTURE_BASE: origin/${{ github.base_ref || 'main' }}
+
 jobs:
   build:
     permissions:
@@ -16,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch structure base
+        run: git fetch --no-tags --depth=1 origin "+refs/heads/${ATMOSTR_STRUCTURE_BASE#origin/}:refs/remotes/${ATMOSTR_STRUCTURE_BASE}"
       - uses: julia-actions/setup-julia@v2
         with:
           version: '1'

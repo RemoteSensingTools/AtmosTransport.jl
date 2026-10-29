@@ -77,3 +77,27 @@ end
               Set(["core/test_a.jl", "core/test_b.jl", "regridding/runtests.jl"])
     end
 end
+
+@testset "runtime composition and public entry points remain reachable" begin
+    groups = load_groups(joinpath(TEST_ROOT, "groups.toml"))
+    for path in ("src/Operators/StepPlan/StepPlan.jl",
+                 "src/Models/TransportModel.jl", "src/Models/driven_stepping.jl")
+        selection = select_changed(groups, TEST_ROOT, [path])
+        @test "surface_flux_chemistry" in selection.topics
+        @test "runner" in selection.topics
+    end
+    for path in ("src/Models/DrivenRunner.jl", "src/Models/InputStaging.jl",
+                 "src/Models/RuntimePhysicsRecipe.jl", "src/MetDrivers/transport_binary/reader.jl",
+                 "src/Preprocessing/transport_binary/entrypoint.jl",
+                 "src/Downloads/Downloads.jl", "scripts/run_transport.jl",
+                 "scripts/preprocessing/preprocess_transport_binary.jl",
+                 "scripts/downloads/download_data.jl", "examples/generate_synthetic_quickstart.jl")
+        selection = select_changed(groups, TEST_ROOT, [path])
+        files = topic_files(groups, selection.topics)
+        @test "core/test_public_config_and_cli.jl" in files
+        @test !selection.full
+    end
+    @test "core/test_structure.jl" in groups.quick
+    @test "health" in TestGroups.topics_for_path(groups, "src/LAYERS.toml")
+    @test "health" in TestGroups.topics_for_path(groups, "test/structure/clone_allowlist.toml")
+end
