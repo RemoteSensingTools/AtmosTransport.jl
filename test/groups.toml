@@ -380,6 +380,7 @@ paths = [
 description = "Driven simulations and the run driver: window stepping, runtime operator builders, schedules, callbacks and checks, progress and section timers"
 files = [
     "core/test_driven_simulation.jl",
+    "core/test_air_mass_reset.jl",
     "core/test_cs_driven_builders.jl",
     "core/test_cubed_sphere_runtime.jl",
     "core/test_run_transport_binary_recipe.jl",
@@ -389,6 +390,7 @@ files = [
 ]
 paths = [
     "src/Models/**",
+    "src/Operators/StepPlan/**",
     "src/Diagnostics/**",
     "src/LogLevels.jl",
     "scripts/run_transport.jl",

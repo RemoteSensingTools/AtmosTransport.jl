@@ -27,8 +27,8 @@ _settings_include_surface(settings) =
     ratio = Float64(dt_met) / Float64(dt)
     steps = round(Int, ratio)
     isapprox(ratio, steps; atol=1e-12, rtol=0.0) ||
-        error("met_interval / dt must be an integer for the current transport-binary contract; got dt_met=$(dt_met), dt=$(dt), ratio=$(ratio)")
-    steps >= 1 || error("steps_per_window must be >= 1; got $(steps)")
+        throw(ArgumentError("met_interval / dt must be an integer for the current transport-binary contract; got dt_met=$(dt_met), dt=$(dt), ratio=$(ratio)"))
+    steps >= 1 || throw(ArgumentError("steps_per_window must be >= 1; got $(steps)"))
     return steps
 end
 

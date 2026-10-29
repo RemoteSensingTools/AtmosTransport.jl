@@ -75,7 +75,7 @@ using ProgressMeter: Progress, next!, finish!, update!
 
 import ...expand_data_path
 using ...SectionTimer
-using ...ConfigChecks: unknown_key_messages
+using ...ConfigChecks: unknown_key_messages, parse_float_type
 using ...Parameters: GLOBAL_MEAN_DRY_SURFACE_PRESSURE
 using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
                 CubedSphereState, total_air_mass, total_mass, tracer_names,
@@ -839,7 +839,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     tracer_specs = _parse_tracer_specs(cfg)
     tracer_specs === nothing &&
         error("[tracers] section is malformed; expected per-tracer subsections")
-    tracer_init = Dict(spec.name => spec.init_cfg for spec in tracer_specs)
+    # Configuration (name-sorted) order is the packed tracer order.
+    tracer_init = [spec.name => spec.init_cfg for spec in tracer_specs]
 
     # `stager` (rolling NVMe input staging) is created + torn down by the caller
     # `run_driven_simulation`; here we just route driver opens through it.
@@ -958,7 +959,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                          FT = FT,
                          recipe = recipe,
                          driver = driver1,
-                         tracers = keys(tracer_init),
+                         tracers = tracer_names(state),
                          binary_count = length(binary_paths),
                          snapshot_file = _output_display_path(output_spec))
 
@@ -1128,7 +1129,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
         @info @sprintf("Done: %.1fs  (%d snapshots, final t=%.1fh)",
                        time() - t0, snapshot_count[], total_hour)
 
-        for name in keys(tracer_init)
+        for name in tracer_names(state)
             rm1 = total_mass(state, name)
             if name in source_tracers
                 @info @sprintf("  %s total mass (with source): %.6e kg", name, rm1)

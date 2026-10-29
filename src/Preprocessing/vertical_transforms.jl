@@ -158,11 +158,21 @@ into one top cap. The GEOS-IT L72 use case is
 `pressure_Pa = 100.0` + `target_min_thickness_Pa = 50.0` — merges the
 ~14 Pa mesospheric layers into ~50 Pa output layers while keeping the
 troposphere and stratosphere at native resolution.
+`target_min_thickness_Pa` must be positive (`Inf` allowed): the greedy
+merge never advances past a zero, negative or NaN threshold.
 """
 Base.@kwdef struct MergeAbovePressure <: AbstractVerticalTransform
     pressure_Pa                   :: Float64
     target_min_thickness_Pa       :: Float64 = Inf
     reference_surface_pressure_Pa :: Float64 = STANDARD_PRESSURE
+
+    function MergeAbovePressure(pressure_Pa, target_min_thickness_Pa,
+                                reference_surface_pressure_Pa)
+        target_min_thickness_Pa > 0 || throw(ArgumentError(
+            "MergeAbovePressure target_min_thickness_Pa must be > 0 (Inf merges " *
+            "every layer above the cutoff); got $(target_min_thickness_Pa)."))
+        return new(pressure_Pa, target_min_thickness_Pa, reference_surface_pressure_Pa)
+    end
 end
 
 """

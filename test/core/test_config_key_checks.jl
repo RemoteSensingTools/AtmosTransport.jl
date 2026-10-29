@@ -31,6 +31,24 @@ key_messages(cfg) = (f = Runner._config_key_findings(cfg); vcat(f.errors, f.warn
     @test CC.config_bool(Dict("k" => false), "k", true, "a") === false
 end
 
+@testset "float_type: one strict parser on the runtime and both preprocessing paths" begin
+    numerics(raw) = Dict{String, Any}("numerics" => Dict{String, Any}("float_type" => raw))
+    resolvers = ((Runner._cfg_float_type, Float64),
+                 (AtmosTransport.Preprocessing.resolve_output_float_type, Float32),
+                 (AtmosTransport.Preprocessing._resolve_float_type, Float64))
+    for (resolve, default) in resolvers
+        @test resolve(Dict{String, Any}("numerics" => Dict{String, Any}())) === default
+        @test resolve(numerics("Float32")) === Float32
+        @test resolve(numerics("Float64")) === Float64
+        @test resolve(numerics("float64")) === Float64
+        for bad in ("Float16", "Float32 ", "double", "F64", 64)
+            err = try resolve(numerics(bad)); nothing catch e; e end
+            @test err isa ArgumentError
+            @test occursin("\"Float32\" or \"Float64\"", err.msg)
+        end
+    end
+end
+
 @testset "unknown and unread keys" begin
     has(ws, parts...) = any(w -> all(p -> occursin(p, w), parts), ws)
     @test isempty(key_messages(Dict(

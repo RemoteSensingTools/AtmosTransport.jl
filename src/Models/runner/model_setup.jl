@@ -52,32 +52,26 @@ end
 _initial_condition_qv(window) = window.qv_start !== nothing ? window.qv_start :
                                 window.vdiff === nothing ? nothing : window.vdiff.qv
 
-# Initialize one tracer at a time in its final packed slot.
+# Initialize one tracer at a time in its final packed slot. `tracer_init`
+# iterates `name => init_cfg` pairs, and the packed tracer order is that
+# iteration order: the runner passes the specs of `_parse_tracer_specs`, sorted
+# by name as on lat-lon and reduced-Gaussian grids.
 function _initialize_cs_dry_state(grid::AtmosGrid{<:CubedSphereMesh},
                                   air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                                   tracer_init; surface_pressure,
                                   pressure_basis = TotalSurfacePressure(),
                                   qv = nothing) where FT
     isempty(tracer_init) && throw(ArgumentError("at least one tracer must be configured"))
-    # Match the old mass-array dictionary's insertion and iteration order. A
-    # direct Tuple(keys(tracer_init)) differs at some dictionary capacities.
-    tracer_indices = Dict{Symbol, Int}()
-    for (name, _) in tracer_init
-        tracer_indices[name] = 0
-    end
-    names = Tuple(keys(tracer_indices))
-    for (index, name) in enumerate(names)
-        tracer_indices[name] = index
-    end
+    names = Tuple(name for (name, _) in tracer_init)
+    allunique(names) || throw(ArgumentError("duplicate tracer names in $(names)"))
     raw = ntuple(p -> similar(air_mass[p], size(air_mass[p])..., length(names)), 6)
     # Reuse one interior VMR buffer across analytic initializers. Each tracer
     # is copied into its independent packed slot before the buffer is reused.
     vmr = nothing
-    for (name, init_cfg) in tracer_init
+    for (index, (_name, init_cfg)) in enumerate(tracer_init)
         vmr = _build_cs_initial_mixing_ratio(
             air_mass, grid, init_cfg, vmr;
             surface_pressure, pressure_basis, qv)
-        index = tracer_indices[name]
         destination = ntuple(p -> selectdim(raw[p], 4, index), 6)
         _cs_pack_interior_into_halo!(destination, grid, air_mass, vmr, nothing)
     end

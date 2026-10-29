@@ -86,6 +86,27 @@ function _missing_keys(cfg, required)
     return missing
 end
 
+# Every shipped `[numerics] float_type` goes through the strict production parser.
+@testset "shipped float_type values parse" begin
+    bad = String[]
+    n = 0
+    for rel in vcat(_active_tomls("config"), _active_tomls("test/golden/configs"))
+        cfg = TOML.parsefile(joinpath(REPO_ROOT, rel))
+        numerics = get(cfg, "numerics", nothing)
+        numerics isa AbstractDict && haskey(numerics, "float_type") || continue
+        n += 1
+        try
+            AtmosTransport.ConfigChecks.parse_float_type(numerics["float_type"],
+                                                         "[numerics] float_type")
+        catch err
+            err isa ArgumentError || rethrow()
+            push!(bad, "$(rel): $(err.msg)")
+        end
+    end
+    @test n > 250
+    @test isempty(bad)
+end
+
 @testset "active preprocessing configs use unified source/topology schema" begin
     bad = String[]
     for rel in _active_tomls("config/preprocessing")

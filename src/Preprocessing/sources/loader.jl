@@ -111,7 +111,18 @@ function _build_met_settings(ctor::Type{<:GEOSSettings}, cfg::AbstractDict,
         @warn "[preprocessing] mass_flux_dt_seconds=$(mass_flux_dt) is more than 50 s from the " *
               "GEOS FV3 dynamics step ($(GEOS_MASS_FLUX_DT_SECONDS) s)."
     end
+    # Only `:bottom_up` triggers the flip, so a typo such as "bottom-up" would
+    # silently write bottom-up data as top-down.
     level_orientation    = Symbol(get(pre_cfg, "level_orientation", "auto"))
+    level_orientation in (:auto, :bottom_up, :top_down) || throw(ArgumentError(
+        "[preprocessing] level_orientation must be \"auto\", \"bottom_up\" or " *
+        "\"top_down\"; got $(repr(String(level_orientation)))."))
+    # The dynamics step must divide the hourly met window exactly: a rounded
+    # substep count scales the accumulated fluxes by the wrong factor.
+    isinteger(GEOS_MET_INTERVAL_SECONDS / mass_flux_dt) || throw(ArgumentError(
+        "[preprocessing] mass_flux_dt_seconds must divide the " *
+        "$(round(Int, GEOS_MET_INTERVAL_SECONDS)) s met window into a whole number " *
+        "of dynamics steps; got $(mass_flux_dt)."))
     include_surface      = _config_bool(pre_cfg, "include_surface", false, "[preprocessing].include_surface")
     include_convection   = _config_bool(pre_cfg, "include_convection", false, "[preprocessing].include_convection")
     include_vdiff_fields = _config_bool(pre_cfg, "include_vdiff_fields", false, "[preprocessing].include_vdiff_fields")
